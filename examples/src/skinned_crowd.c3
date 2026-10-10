@@ -100,6 +100,7 @@ fn void set_baseline(Scene* scene, Showcase* showcase, bool baseline) @local {
 fn void compare_playback(Scene* scene, Showcase* showcase) @local {
     AnimatedCrowd* crowd = scene.get(showcase.crowd, AnimatedCrowd);
     CrowdPlaybackState* playback = crowd.playback;
+
     showcase.position_error = 0;
     showcase.rotation_error = 0;
     showcase.scale_error = 0;
@@ -108,6 +109,7 @@ fn void compare_playback(Scene* scene, Showcase* showcase) @local {
     foreach (usz source, node : showcase.animated) {
         ModelInstance* instance = scene.get(node, ModelInstance);
         Transform[] poses = playback.poses[source * playback.base_pose.len:playback.base_pose.len];
+
         foreach (uint index, pose : poses) {
             Transform reference = instance.present_node(index).local;
             float position_error = (pose.position - reference.position).length();
@@ -184,6 +186,7 @@ fn void? run(
 ) @local {
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
+
     Node* camera_node = scene.add_camera(camera::perspective_deg(50, 0.1f), name: "camera")!;
     camera_node.local.position = CAMERA_POSITION;
     camera_node.local.rotation = maths::look_rotation(CAMERA_TARGET - CAMERA_POSITION, { 0, 1, 0 });
@@ -222,6 +225,7 @@ fn void? run(
 
         AnimatedCrowd* crowd = scene.get(showcase.crowd, AnimatedCrowd);
         Animator* reference = scene.get(showcase.animated[0], Animator);
+
         showcase.motion = showcase.baseline ? reference.root_motion : crowd.playback.slots[0].root_motion;
         showcase.events = showcase.baseline ? reference.event_count : crowd.playback.event_count;
         showcase.dropped_events = showcase.baseline ? reference.events_dropped : crowd.playback.events_dropped;

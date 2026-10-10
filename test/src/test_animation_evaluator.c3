@@ -83,7 +83,6 @@ fn void test_evaluator_pose_storage_rolls_back_each_allocation_failure() @test {
             base_pose: baseline[..],
             mesh_nodes: mesh_nodes[..],
             base_morph_weights: weights[..],
-            ancestor_capacity: 3,
             event_capacity: 16,
         );
         if (catch failure = attempt) {
@@ -126,7 +125,7 @@ fn void test_evaluator_event_growth_uses_strided_retained_capacity_and_zero_drop
         }
         PlaybackView playback = fixture.animator.playback();
         sz allocations = tracker.total_allocation_count();
-        EventReport report = anim::evaluate_pose(
+        PoseReport report = anim::evaluate_pose(
             playback: &playback,
             assets: &fixture.assets,
             destination: fixture.animator.pose_storage.destination,
@@ -134,7 +133,7 @@ fn void test_evaluator_event_growth_uses_strided_retained_capacity_and_zero_drop
             dt: 3.25f,
             events: { .first = &output[0].event, .stride = TaggedEvent::size, .capacity = output.len },
         );
-        assert(report.count == 16 && report.dropped == 104);
+        assert(report.events.count == 16 && report.events.dropped == 104);
         foreach (uint index, entry : output) {
             assert(entry.prefix == 0x12345678 && entry.suffix == 0x87654321);
             assert(entry.event.id == index + 1 && entry.event.time == 0.25f);
@@ -149,7 +148,7 @@ fn void test_evaluator_event_growth_uses_strided_retained_capacity_and_zero_drop
             dt: 3,
             events: {},
         );
-        assert(report.count == 0 && report.dropped == 120);
+        assert(report.events.count == 0 && report.events.dropped == 120);
         assert(tracker.total_allocation_count() == allocations);
     }
     assert(!tracker.has_leaks());

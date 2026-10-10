@@ -69,7 +69,9 @@ fn CrowdAuthoringState*? copy_crowd_authoring(Allocator allocator, CrowdInstance
     return state;
 }
 
-<* Free a copied or captured description and every nested array once. *>
+<* Free a copied or captured description and every nested array once.
+ @param [&inout] state : "Owned description; released by this call."
+*>
 fn void destroy_crowd_authoring(CrowdAuthoringState* state) {
     Allocator allocator = state.allocator;
     foreach (instance : state.instances) {
@@ -89,9 +91,11 @@ fn void destroy_crowd_authoring(CrowdAuthoringState* state) {
 
 <*
  Validate explicit configuration through ordinary playback admission.
+ @param [&in] assets : "Owns every referenced compatible clip."
  @param [&in] template : "Validated model nodes, meshes and logical defaults."
  @param placement : "Instance scale used for root-motion admission."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @require actions_per_instance > 0 && actions_per_instance <= MAX_ACTIONS
 *>
 fn void? validate_crowd_authoring(
     AssetStore* assets,
@@ -113,6 +117,7 @@ fn void? validate_crowd_authoring(
             event_capacity: 0,
         )!;
         defer destroy_crowd_playback(state);
+
         state.count = 1;
 
         restore_crowd_authoring(
@@ -127,6 +132,8 @@ fn void? validate_crowd_authoring(
 
 <*
  Restore explicit configuration into a newly allocated empty slot.
+ @param [&inout] state : "Receives the configured slot."
+ @param [&in] assets : "Owns every referenced compatible clip."
  @param base_start : "Captured authoring start of the retained base action."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
  @require index < state.count, state.slots[index].action_count == 0
@@ -151,6 +158,7 @@ fn void? restore_crowd_authoring(
 
     CrowdPlaybackSlot* slot = &state.slots[index];
     slot.root_node = source.root_node;
+
     CrowdPlayer player = state.player(state.instance_id(index)!)!;
     AnimationActionId[MAX_ACTIONS] ids;
 
@@ -207,11 +215,12 @@ fn void? restore_crowd_authoring(
 fn CrowdAuthoringState*? capture_crowd_authoring(Allocator allocator, CrowdPlaybackState* playback) {
     CrowdAuthoringState* state = alloc::new_try(allocator, CrowdAuthoringState)
       ?? c3d::CAPACITY_EXCEEDED~!;
-    state.allocator = allocator;
     defer catch destroy_crowd_authoring(state);
 
+    state.allocator = allocator;
     state.instances = alloc::new_array_try(allocator, CrowdInstanceAuthoring, playback.count)
       ?? c3d::CAPACITY_EXCEEDED~!;
+
     foreach (index, &instance : state.instances) {
         capture_crowd_instance(allocator, &playback.slots[index], instance)!;
     }
@@ -310,6 +319,7 @@ fn void? capture_crowd_instance(
     };
     destination.actions = alloc::new_array_try(allocator, CrowdActionAuthoring, slot.action_count)
       ?? c3d::CAPACITY_EXCEEDED~!;
+
     bool[MAX_BLEND_SPACES] retained_spaces;
     uint space_count;
     foreach (index, space : slot.spaces) {
@@ -319,6 +329,7 @@ fn void? capture_crowd_instance(
 
     destination.spaces = alloc::new_array_try(allocator, CrowdSpaceAuthoring, space_count)
       ?? c3d::CAPACITY_EXCEEDED~!;
+
     uint[MAX_ACTIONS] mapping;
     mapping[..] = uint::max;
     uint action_count;
@@ -333,6 +344,7 @@ fn void? capture_crowd_instance(
 
         mapping[index] = action_count;
         CrowdActionAuthoring* captured = &destination.actions[action_count];
+
         *captured = {
             .clip = action.clip,
             .speed = action.speed,
@@ -344,10 +356,14 @@ fn void? capture_crowd_instance(
             .root_motion = action.root_motion,
             .root_yaw = action.root_yaw,
         };
+
         captured.mask = alloc::new_array_try(allocator, bool, action.mask.len)
           ?? c3d::CAPACITY_EXCEEDED~!;
+
         captured.mask[..] = action.mask[..];
+
         if (c3d::same_id(slot.base_action, id)) destination.base_action = action_count;
+
         action_count++;
     }
 

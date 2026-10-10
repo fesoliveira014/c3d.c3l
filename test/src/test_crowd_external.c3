@@ -147,3 +147,69 @@ fn void test_crowd_external_profiled_clip_matches_animator_and_rejects_stale_or_
     assert(@catch(player.play(&assets, external)) == c3d::INVALID_ID);
     assert(@catch(player.play(&assets, reused)) == c3d::INVALID_ARGUMENT);
 }
+
+fn void test_crowd_external_morph_weight_width_fault_matches_animator_without_state_change() @test {
+    AssetStore assets = external_crowd_store();
+    defer asset::destroy_asset_store(&assets);
+    PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
+    TrackingAllocator tracking;
+    tracking.init(mem);
+    defer tracking.free();
+    Scene scene = scene::create_scene(&tracking, { .max_nodes = 48 });
+    defer scene::destroy_scene(&scene);
+    CrowdInstance[1] seeds = { {
+        .placement = maths::TRANSFORM_IDENTITY,
+        .pose = { .clip = fixture.posing, .time = 0.625f, .speed = 0, .loop = false },
+        .color = { 1, 1, 1, 1 },
+    } };
+    Node* owner = model::add_crowd(
+        assets: &assets,
+        scene: &scene,
+        model: fixture.mixed,
+        capacity: 1,
+        pose_bounds: animated_crowd_fixtures::PARTS_POSE_BOUNDS,
+        instances: seeds[..],
+    )!!;
+    AnimatedCrowd* crowd = scene.get(owner, AnimatedCrowd);
+    CrowdPlayer player = crowd.playback.player(crowd.playback.instance_id(0)!!)!!;
+    AnimationActionId crowd_action = crowd.playback.slots[0].base_action;
+    Node* reference = model::instantiate(&assets, &scene, fixture.mixed)!!;
+    Animator* animator = anim::add_animator(&scene, reference);
+    AnimationActionId reference_action = animator.play(&assets, fixture.posing)!!;
+    animator.action(reference_action).time = 0.625f;
+    animator.action(reference_action).speed = 0;
+    animator.action(reference_action).loop = false;
+    anim::update(&assets, &scene, 0);
+    anim::crowd_update(&assets, &scene, 0);
+    AnimationClip clip = {
+        .name = "incompatible_weight_width".copy(assets.allocator),
+        .duration = 1,
+        .targets = alloc::new_array(assets.allocator, uint, 1),
+        .tracks = alloc::new_array(assets.allocator, Track, 1),
+    };
+    clip.targets[0] = animated_crowd_fixtures::PARTS_MORPH_A;
+    clip.tracks[0] = {
+        .target = 0,
+        .path = TargetPath.MORPH_WEIGHTS,
+        .interpolation = Interpolation.LINEAR,
+        .times = alloc::new_array(assets.allocator, float, 2),
+        .values = alloc::new_array(assets.allocator, float, 4),
+    };
+    clip.tracks[0].times[1] = 1;
+    float[4] values = { 0.25f, 0.75f, 0.5f, 1 };
+    clip.tracks[0].values[..] = values[..];
+    ClipId incompatible = assets.add_clip_owned(&clip)!!;
+    assert(assets.clip(incompatible).data.tracks[0].stride() == 2);
+    assert(crowd.playback.base_morph_weights[2].len == 1);
+    uint crowd_count = crowd.playback.slots[0].action_count;
+    uint ordinary_count = animator.action_count;
+    float crowd_time = player.action(crowd_action).time;
+    float ordinary_time = animator.action(reference_action).time;
+    sz bytes = tracking.allocated();
+    assert(@catch(player.play(&assets, incompatible)) == c3d::INVALID_ARGUMENT);
+    assert(@catch(animator.play(&assets, incompatible)) == c3d::INVALID_ARGUMENT);
+    assert(crowd.playback.slots[0].action_count == crowd_count && animator.action_count == ordinary_count);
+    assert(player.try_action(crowd_action)!!.time == crowd_time);
+    assert(animator.try_action(reference_action)!!.time == ordinary_time);
+    assert(tracking.allocated() == bytes);
+}

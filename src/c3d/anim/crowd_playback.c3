@@ -2,6 +2,7 @@ module c3d::anim;
 
 import c3d;
 import c3d::asset;
+import c3d::maths;
 import c3d::pool;
 import c3d::scene;
 import std::math;
@@ -74,18 +75,11 @@ fn void CrowdPlaybackState.update(&self, AssetStore* assets, float dt) {
         CrowdPlaybackSlot* slot = &self.slots[index];
         PlaybackView playback = crowd_playback_view(self, slot);
         PoseDestination destination = crowd_destination(self, index);
-        usz ancestor_count;
-        if (slot.root_node < self.parents.len) {
-            for (int parent = self.parents[slot.root_node]; parent >= 0; parent = self.parents[parent]) {
-                self.pose_storage.ancestors[ancestor_count++] = &destination.pose[parent];
-            }
-        }
 
-        destination.motion_ancestors = self.pose_storage.ancestors[:ancestor_count];
         EventOutput output = { .stride = CrowdEvent::size, .capacity = self.events.len - self.event_count };
         if (output.capacity) output.first = &self.events[self.event_count].event;
 
-        EventReport report = evaluate_pose(
+        PoseReport report = evaluate_pose(
             playback: &playback,
             assets: assets,
             destination: destination,
@@ -94,12 +88,23 @@ fn void CrowdPlaybackState.update(&self, AssetStore* assets, float dt) {
             events: output,
         );
 
-        foreach (&event : self.events[self.event_count:report.count]) {
+        Vec3 reference;
+        if (report.motion.yaw != 0) {
+            reference = destination.pose[slot.root_node].position;
+
+            for (int parent = self.parents[slot.root_node]; parent >= 0; parent = self.parents[parent]) {
+                reference = maths::transform_point(destination.pose[parent].to_mat4(), reference);
+            }
+        }
+
+        slot.root_motion = root_motion_delta(report.motion, reference);
+
+        foreach (&event : self.events[self.event_count:report.events.count]) {
             event.instance = { .index = index, .generation = slot.generation };
         }
 
-        self.event_count += report.count;
-        self.events_dropped += math::min(report.dropped, uint::max - self.events_dropped);
+        self.event_count += report.events.count;
+        self.events_dropped += math::min(report.events.dropped, uint::max - self.events_dropped);
     }
 }
 
@@ -352,9 +357,11 @@ fn void reset_crowd_playback_slot(CrowdPlaybackState* state, uint index) {
     slot.spaces[..] = (BlendSpace1D){};
     slot.generation++;
     if (!slot.generation) slot.generation = 1;
+
     slot.root_node = state.default_root_node;
     slot.base_action = {};
     slot.root_motion = { .rotation = quaternion::IDENTITY };
+
     state.event_count = 0;
     state.events_dropped = 0;
 
@@ -396,6 +403,7 @@ fn CrowdPlaybackState*? create_crowd_playback(
     state.allocator = allocator;
     state.placements = placements;
     uint capacity = (uint)placements.len;
+
     state.slots = alloc::new_array_try(allocator, CrowdPlaybackSlot, capacity)
       ?? c3d::CAPACITY_EXCEEDED~!;
     state.base_pose = alloc::new_array_try(allocator, Transform, template.nodes.len)
@@ -406,6 +414,7 @@ fn CrowdPlaybackState*? create_crowd_playback(
       ?? c3d::CAPACITY_EXCEEDED~!;
     state.base_morph_weights = alloc::new_array_try(allocator, float[], template.meshes.len)
       ?? c3d::CAPACITY_EXCEEDED~!;
+
     state.poses = alloc::new_array_try(allocator, Transform, (sz)capacity * template.nodes.len)
       ?? c3d::CAPACITY_EXCEEDED~!;
     state.logical_weights = alloc::new_array_try(allocator, float[], (sz)capacity * template.meshes.len)
@@ -447,7 +456,6 @@ fn CrowdPlaybackState*? create_crowd_playback(
         base_pose: state.base_pose,
         mesh_nodes: state.mesh_nodes,
         base_morph_weights: state.base_morph_weights,
-        ancestor_capacity: template.nodes.len,
         event_capacity: event_capacity,
     )!;
 
@@ -536,7 +544,6 @@ fn PlaybackView crowd_playback_view(CrowdPlaybackState* state, CrowdPlaybackSlot
         .mask_storage = slot.masks,
         .blend_spaces = slot.spaces,
         .root_node = slot.root_node,
-        .root_motion = &slot.root_motion,
     };
 }
 

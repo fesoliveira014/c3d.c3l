@@ -16,7 +16,8 @@ struct RootMotionDelta {
     Quat rotation;
 }
 
-struct PlanarMotion @private {
+<* Planar displacement and yaw before pivot compensation. *>
+struct PlanarMotion {
     Vec3 translation;
     float yaw;
 }
@@ -215,12 +216,12 @@ fn void pin_root_sample(Action* action, uint track, float[] sample) @private {
     }
 }
 
-fn void publish_root_motion(
+fn PlanarMotion evaluate_root_motion(
     PlaybackView* playback,
     AssetStore* assets,
     PoseDestination destination,
 ) @private {
-    if (playback.root_node >= destination.pose.len || !destination.present[playback.root_node]) return;
+    if (playback.root_node >= destination.pose.len || !destination.present[playback.root_node]) return {};
 
     Vec3 translation;
     float yaw;
@@ -255,14 +256,18 @@ fn void publish_root_motion(
         yaw = (yaw_sum + yaw * math::max(0.0f, 1 - rotation_weight)) / math::max(1.0f, rotation_weight);
     }
 
+    return { .translation = translation, .yaw = yaw };
+}
+
+<*
+ Compose extracted motion about an evaluated root reference.
+ @param reference : "Root pivot in the instance owner's frame."
+*>
+fn RootMotionDelta root_motion_delta(PlanarMotion motion, Vec3 reference) {
+    Vec3 translation = motion.translation;
+    float yaw = motion.yaw;
     Quat rotation = quaternion::from_axis_angle{float}(MOTION_UP, yaw);
     if (yaw != 0) {
-        Vec3 reference = destination.pose[playback.root_node].position;
-
-        foreach (parent : destination.motion_ancestors) {
-            reference = maths::transform_point(parent.to_mat4(), reference);
-        }
-
         reference.y = 0;
         if (reference.x != 0 || reference.z != 0) {
             double half_sine = math::sin((double)yaw / 2);
@@ -274,10 +279,7 @@ fn void publish_root_motion(
         }
     }
 
-    *playback.root_motion = {
-        .translation = translation,
-        .rotation = rotation,
-    };
+    return { .translation = translation, .rotation = rotation };
 }
 
 fn void advance_clock(Action* action, float duration, double travel) @private {

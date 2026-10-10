@@ -29,7 +29,12 @@ struct Fixture @local {
 }
 
 fn Geometry skinned_box(Allocator allocator, ushort joint) @local {
-    Geometry box = geometry::box(allocator, 0.2f, 0.2f, 0.2f);
+    Geometry box = geometry::box(
+        allocator: allocator,
+        width: 0.2f,
+        height: 0.2f,
+        depth: 0.2f,
+    );
     box.joints = alloc::new_array(allocator, ushort[<4>], box.positions.len);
     box.weights = alloc::new_array(allocator, Vec4, box.positions.len);
     foreach (index, &weights : box.weights) {
@@ -72,7 +77,12 @@ fn Fixture make_fixture(bool with_rigid = false, bool second_skeleton = false, b
         part_a = assets.add_geometry(&first)!!;
         Geometry second = skinned_box(tmem, 1);
         part_b = assets.add_geometry(&second)!!;
-        Geometry rigid = geometry::box(tmem, 0.1f, 0.1f, 0.1f);
+        Geometry rigid = geometry::box(
+            allocator: tmem,
+            width: 0.1f,
+            height: 0.1f,
+            depth: 0.1f,
+        );
         prop = assets.add_geometry(&rigid)!!;
     };
 
@@ -377,7 +387,12 @@ fn void test_set_crowd_updates_every_part() @test {
     CrowdInstance[1] one = { walker(&fixture, placed({ 9, 0, 0 })) };
     one[0].color = { 0, 1, 0, 1 };
 
-    model::set_crowd(&fixture.assets, &fixture.scene, node, one[..])!!;
+    model::set_crowd(
+        assets: &fixture.assets,
+        scene: &fixture.scene,
+        node: node,
+        instances: one[..],
+    )!!;
 
     assert(crowd.count == 1);
     foreach (usz part : (usz[2]){ 0, 1 }) {
@@ -510,7 +525,12 @@ fn void test_view_history_keeps_crowd_palettes_per_instance() @test {
     assert(history.has_previous(&fixture.scene, node));
     PoseRecord* pose = history.previous_pose(&fixture.scene, node);
     assert(pose.palette.len == 2 * 4 && pose.instance_count == 3);
-    model::set_crowd(&fixture.assets, &fixture.scene, node, instances[:2])!!;
+    model::set_crowd(
+        assets: &fixture.assets,
+        scene: &fixture.scene,
+        node: node,
+        instances: instances[:2],
+    )!!;
     assert(pose.instance_count != fixture.scene.get(node, AnimatedCrowd).count);
 }
 
@@ -808,9 +828,51 @@ fn void test_crowd_accepts_compatible_clip_with_more_tracks() @test {
 
     CrowdInstance[1] instances = { walker(&fixture, placed({ 0, 0, 0 })) };
     instances[0].pose.clip = wide_id;
-    model::set_crowd(&fixture.assets, &fixture.scene, node, instances[..])!!;
+    model::set_crowd(
+        assets: &fixture.assets,
+        scene: &fixture.scene,
+        node: node,
+        instances: instances[..],
+    )!!;
 
     assert(base_action(fixture.scene.get(node, AnimatedCrowd), 0).cursors.len == 2);
     instances[0].pose.clip = fixture.swing;
-    model::set_crowd(&fixture.assets, &fixture.scene, node, instances[..])!!;
+    model::set_crowd(
+        assets: &fixture.assets,
+        scene: &fixture.scene,
+        node: node,
+        instances: instances[..],
+    )!!;
+}
+
+fn void test_crowd_trace_bounds_follow_nonzero_render_origin() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    CrowdInstance[2] instances = {
+        walker(&fixture, placed({ 0, 0, 0 })),
+        walker(&fixture, placed({ 6, 0, 0 }, 0, { -2, 3, 0.5f })),
+    };
+    Node* owner = add_crowd(&fixture, instances[..]);
+    AnimatedCrowd* crowd = fixture.scene.get(owner, AnimatedCrowd);
+    Vec3 origin = { 1200000, 3200, -2000000 };
+    owner.local.position = origin + (Vec3){ 10, 20, 30 };
+    part_batch(&fixture, crowd, 0).trace = true;
+    part_batch(&fixture, crowd, 1).trace = true;
+    fixture.scene.update_world();
+    @pool() {
+        render::TraceCollection collection = render::collect_trace_instances(
+            allocator: tmem,
+            scene: &fixture.scene,
+            assets: &fixture.assets,
+            origin: origin,
+        );
+        assert(collection.records.len == 4);
+        foreach (&record : collection.records) {
+            Mat4 placement = maths::rebase(owner.world, origin)
+              .mul(instances[record.instance_index].placement.to_mat4());
+            Aabb expected = maths::aabb_transform(crowd.pose_bounds, placement);
+            assert(record.bounds.min == expected.min && record.bounds.max == expected.max);
+            assert(record.bounds.min.x < 100 && record.bounds.max.x < 100);
+        }
+    };
 }

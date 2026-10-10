@@ -193,30 +193,19 @@ fn uint pack_instance_records(
  Node-local matrices of the live instances in draw order: unmirrored first, each group in array order.
  @param [out] locals : "At least batch.count long."
  @param [&in] batch : "Live count above zero."
- @param [in] crowd : "Null selects ordinary batch transforms."
- @param part : "Logical crowd mesh; ignored for ordinary batches."
 *>
-fn void write_instance_locals(
-    Mat4f[] locals,
-    InstancedMesh* batch,
-    AnimatedCrowd* crowd = null,
-    uint part = 0,
-) {
+fn void write_instance_locals(Mat4f[] locals, InstancedMesh* batch) {
     uint written;
-    foreach (uint index, transform : batch.transforms[:batch.count]) {
-        Mat4 local = crowd ? crowd.part_transform(index, part) : transform.to_mat4();
-        bool mirrored = crowd ? local.determinant() < 0 : scene::transform_mirrored(transform);
-        if (mirrored) continue;
+    foreach (transform : batch.transforms[:batch.count]) {
+        if (scene::transform_mirrored(transform)) continue;
 
-        locals[written++] = bitcast(local, Mat4f);
+        locals[written++] = bitcast(transform.to_mat4(), Mat4f);
     }
 
-    foreach (uint index, transform : batch.transforms[:batch.count]) {
-        Mat4 local = crowd ? crowd.part_transform(index, part) : transform.to_mat4();
-        bool mirrored = crowd ? local.determinant() < 0 : scene::transform_mirrored(transform);
-        if (!mirrored) continue;
+    foreach (transform : batch.transforms[:batch.count]) {
+        if (!scene::transform_mirrored(transform)) continue;
 
-        locals[written++] = bitcast(local, Mat4f);
+        locals[written++] = bitcast(transform.to_mat4(), Mat4f);
     }
 }
 
@@ -422,6 +411,7 @@ fn void? upload_instance_records(
     Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan staging = frame.upload.take(&renderer.device, bytes, STREAM_ALIGNMENT)!;
     InstanceGpu[] records = ((InstanceGpu*)staging.bytes.ptr)[:batch.count];
+
     pack_instance_records(
         records: records,
         node_world: maths::rebase(world, renderer.frame_origin),
@@ -429,6 +419,7 @@ fn void? upload_instance_records(
         crowd: crowd,
         part: part,
     );
+
     gpu::GpuSpan destination = gpu::get_allocation_span(&renderer.device, slot.allocation)!;
     renderer.pending_copies.push({ .src = staging.span, .dst = destination.checked_subspan(0, bytes)! });
 
@@ -436,6 +427,7 @@ fn void? upload_instance_records(
     slot.revision = batch.revision;
     slot.world = world;
     slot.origin = renderer.frame_origin;
+
     renderer.stats.uploads++;
     renderer.stats.upload_bytes += (uint)bytes;
 }

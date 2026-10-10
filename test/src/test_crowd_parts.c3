@@ -6,13 +6,27 @@ import c3d::asset;
 import c3d::geometry;
 import c3d::maths;
 import c3d::model;
+import c3d::render;
 import c3d::scene;
+import c3d::shader;
+import c3d::spatial;
 import c3d::test::animated_crowd_fixtures;
 import std::math;
 import std::math::quaternion;
 
 const float POINT_TOLERANCE @local = 1e-4f;
 const uint NODE_CAPACITY @local = 64;
+const uint SIGNED_TARGET_COUNT @local = 10;
+const uint SIGNED_CHANNEL_COUNT @local = 5;
+const uint[8] SIGNED_SELECTED_TARGETS @local = { 9, 7, 5, 8, 3, 6, 1, 4 };
+const float[8][2] SIGNED_SELECTED_WEIGHTS @local = {
+    { 3.5f, 3, 2.5f, -2.5f, 2, -2, 1.5f, -1.5f },
+    { 4, 3.5f, 3, -3, 2.5f, -2.5f, 2, -2 },
+};
+const float[5][2] SIGNED_CHANNEL_WEIGHTS @local = {
+    { 1.25f, 1.5f, 1.75f, 2, 2.25f },
+    { 1.5f, 1.75f, 2, 2.25f, 2.5f },
+};
 
 struct PartsAllocationProbe (Allocator) @local {
     Allocator backing;
@@ -52,7 +66,7 @@ fn void PartsAllocationProbe.release(&self, void* pointer, bool aligned) @dynami
 
 fn AssetStore parts_store() @local {
     return asset::create_asset_store(mem, {
-        .max_geometries = 4,
+        .max_geometries = 5,
         .max_textures = asset::BUILTIN_TEXTURE_COUNT,
         .max_materials = 1,
         .max_samplers = asset::BUILTIN_SAMPLER_COUNT,
@@ -176,7 +190,12 @@ fn void test_crowd_parts_match_literal_mixed_and_skin_free_worlds() @test {
             skin_free: skin_free,
         );
         instances[0] = parts_seed(fixture.missing_weights, 1);
-        model::set_crowd(&assets, &scene, node, instances[..])!!;
+        model::set_crowd(
+            assets: &assets,
+            scene: &scene,
+            node: node,
+            instances: instances[..],
+        )!!;
         assert_parts_vertices(
             assets: &assets,
             scene: &scene,
@@ -319,30 +338,60 @@ fn void test_crowd_parts_set_rolls_back_and_keeps_stale_handles_stale() @test {
     foreach (allowance : (uint[2]){ 0, 1 }) {
         probe.enforce_limit = true;
         probe.remaining = allowance;
-        assert(@catch(model::set_crowd(&assets, &scene, node, instances[..])) == c3d::CAPACITY_EXCEEDED);
+        assert(@catch(model::set_crowd(
+            assets: &assets,
+            scene: &scene,
+            node: node,
+            instances: instances[..],
+        )) == c3d::CAPACITY_EXCEEDED);
         probe.enforce_limit = false;
         assert(probe.outstanding == outstanding && crowd.playback == state && crowd.count == 2);
         assert(crowd.start_times[0] == 0.25f && old_player.try_action(old_action)!!.time == 0.25f);
         assert(state.instance_id(0)!!.generation == old_instance.generation);
     }
-    model::set_crowd(&assets, &scene, node, instances[..])!!;
+    model::set_crowd(
+        assets: &assets,
+        scene: &scene,
+        node: node,
+        instances: instances[..],
+    )!!;
     assert(crowd.playback == state && state.slots[0].actions.items.ptr == items);
     assert(@catch(state.player(old_instance)) == c3d::INVALID_ID);
     CrowdPlayer replacement = parts_player(crowd);
     assert(@catch(replacement.try_action(old_action)) == c3d::INVALID_ID);
     CrowdInstanceId before_shrink = state.instance_id(1)!!;
-    model::set_crowd(&assets, &scene, node, instances[:1])!!;
+    model::set_crowd(
+        assets: &assets,
+        scene: &scene,
+        node: node,
+        instances: instances[:1],
+    )!!;
     assert(@catch(state.player(before_shrink)) == c3d::INVALID_ID);
-    model::set_crowd(&assets, &scene, node, instances[..])!!;
+    model::set_crowd(
+        assets: &assets,
+        scene: &scene,
+        node: node,
+        instances: instances[..],
+    )!!;
     assert(@catch(state.player(before_shrink)) == c3d::INVALID_ID);
     CrowdInstanceId before_reorder = state.instance_id(0)!!;
     CrowdInstance[2] reordered = { instances[1], instances[0] };
-    model::set_crowd(&assets, &scene, node, reordered[..])!!;
+    model::set_crowd(
+        assets: &assets,
+        scene: &scene,
+        node: node,
+        instances: reordered[..],
+    )!!;
     assert(@catch(state.player(before_reorder)) == c3d::INVALID_ID);
     assert(crowd.start_times[0] == 0.625f);
     state.slots[0].generation = uint::max;
     CrowdInstanceId wrapped = state.instance_id(0)!!;
-    model::set_crowd(&assets, &scene, node, reordered[..])!!;
+    model::set_crowd(
+        assets: &assets,
+        scene: &scene,
+        node: node,
+        instances: reordered[..],
+    )!!;
     assert(state.slots[0].generation == 1 && @catch(state.player(wrapped)) == c3d::INVALID_ID);
     scene::destroy_scene(&scene);
     assert(probe.outstanding == 0);
@@ -471,7 +520,12 @@ fn void test_crowd_parts_accept_external_compatible_clip_without_track_budget() 
     assert(template.clips.len == 2);
     foreach (authored : template.clips) assert(!c3d::same_id(authored, external));
     instances[0] = parts_seed(external, 0.5f);
-    model::set_crowd(&assets, &scene, node, instances[..])!!;
+    model::set_crowd(
+        assets: &assets,
+        scene: &scene,
+        node: node,
+        instances: instances[..],
+    )!!;
     CrowdPlayer player = parts_player(scene.get(node, AnimatedCrowd));
     assert(c3d::same_id(player.base_action()!!.clip, external));
     assert(player.base_action()!!.cursors.len == 4);
@@ -509,4 +563,292 @@ fn void test_crowd_parts_action_capacities_admit_exactly_the_prepared_slots() @t
         assert(crowd.playback.slots[0].action_count == capacity && player.action(actions[0]).time == before);
         foreach (action : actions[:capacity]) assert(c3d::same_id(player.try_action(action)!!.clip, fixture.posing));
     }
+}
+
+fn GeometryId add_parts_signed_morph_geometry(AssetStore* assets, GeometryId source_id) @local {
+    @pool() {
+        Geometry* source = &assets.geometry(source_id).data;
+        Geometry geometry = {
+            .topology = Topology.TRIANGLES,
+            .positions = alloc::clone_slice(tmem, source.positions),
+            .normals = alloc::clone_slice(tmem, source.normals),
+            .targets = alloc::new_array(tmem, MorphTarget, SIGNED_TARGET_COUNT),
+            .channels = alloc::new_array(tmem, MorphChannel, SIGNED_CHANNEL_COUNT),
+            .bounds = source.bounds,
+        };
+        foreach (index, &target : geometry.targets) {
+            target.position_deltas = alloc::new_array(tmem, Vec3, source.positions.len);
+            // The two omitted targets make an all-target bound observably wrong.
+            target.position_deltas[..] = (Vec3){ 0, index == 0 || index == 2 ? 1024 : (float)index + 1, 0 };
+        }
+        foreach (uint index, &channel : geometry.channels) {
+            channel.name = string::tformat("signed_channel_%s", index);
+            channel.first_target = index * 2;
+            channel.full_weights = alloc::new_array(tmem, float, 2);
+            channel.full_weights[0] = 0.5f;
+            channel.full_weights[1] = 1;
+        }
+        return assets.add_geometry(&geometry, "animated_parts/signed_morph")!!;
+    };
+}
+
+fn ClipId add_parts_signed_weights_clip(AssetStore* assets) @local {
+    AnimationClip clip = {
+        .name = "signed_weights".copy(assets.allocator),
+        .duration = 1,
+        .targets = alloc::new_array(assets.allocator, uint, 1),
+        .tracks = alloc::new_array(assets.allocator, Track, 1),
+    };
+    clip.targets[0] = animated_crowd_fixtures::PARTS_MORPH_A;
+    clip.tracks[0] = {
+        .target = 0,
+        .path = TargetPath.MORPH_WEIGHTS,
+        .interpolation = Interpolation.LINEAR,
+        .times = alloc::new_array(assets.allocator, float, 2),
+        .values = alloc::new_array(assets.allocator, float, SIGNED_CHANNEL_COUNT * 2),
+    };
+    clip.tracks[0].times[1] = 1;
+    for (uint key = 0; key < 2; key++) {
+        clip.tracks[0].values[key * SIGNED_CHANNEL_COUNT:SIGNED_CHANNEL_COUNT] = SIGNED_CHANNEL_WEIGHTS[1][..];
+    }
+    return assets.add_clip_owned(&clip)!!;
+}
+
+fn void test_crowd_parts_signed_top_eight_packing_and_bounds_match_literal_selection() @test {
+    AssetStore assets = parts_store();
+    defer asset::destroy_asset_store(&assets);
+    PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
+    GeometryId geometry_id = add_parts_signed_morph_geometry(&assets, fixture.geometries[2]);
+    ModelMesh* mesh = &assets.model(fixture.mixed).data.meshes[2];
+    mesh.geometry = geometry_id;
+    alloc::free(assets.allocator, mesh.default_morph_weights.ptr);
+    mesh.default_morph_weights = alloc::clone_slice(assets.allocator, SIGNED_CHANNEL_WEIGHTS[0][..]);
+    ClipId weights_clip = add_parts_signed_weights_clip(&assets);
+    Scene scene = scene::create_scene(mem, { .max_nodes = NODE_CAPACITY });
+    defer scene::destroy_scene(&scene);
+    CrowdInstance[2] instances = { parts_seed(fixture.missing_weights), parts_seed(weights_clip) };
+    instances[1].placement.position = { 3, 2, -1 };
+    instances[1].placement.scale = { -2, 3, 0.5f };
+    Node* owner = model::add_crowd(
+        assets: &assets,
+        scene: &scene,
+        model: fixture.mixed,
+        capacity: 2,
+        pose_bounds: { .min = { -6, -3, -4 }, .max = { 12, 50, 4 } },
+        instances: instances[..],
+    )!!;
+    anim::crowd_update(&assets, &scene, 0);
+    scene.update_world();
+    AnimatedCrowd* crowd = scene.get(owner, AnimatedCrowd);
+    CrowdPart* part = &crowd.parts[2];
+    Geometry* geometry = &assets.geometry(geometry_id).data;
+    assert(geometry.targets.len == SIGNED_TARGET_COUNT && part.weight_count == SIGNED_CHANNEL_COUNT);
+    shader::MorphWeightsGpu[2] packed;
+    render::pack_crowd_morphs(
+        blocks: packed[..],
+        crowd: crowd,
+        part: 2,
+        channels: geometry.channels,
+    );
+    Node* reference = scene.add_mesh(geometry_id, fixture.material)!!;
+    Mesh* reference_mesh = scene.get(reference, Mesh);
+    reference_mesh.morph_weights = alloc::new_array(scene.allocator, float, SIGNED_CHANNEL_COUNT);
+    scene.update_world();
+    foreach (uint source, block : packed) {
+        assert(block.count == 8);
+        foreach (uint active, target : SIGNED_SELECTED_TARGETS) {
+            assert(block.indices[active] == target);
+            assert(bitcast(block.weights[active], uint) == bitcast(SIGNED_SELECTED_WEIGHTS[source][active], uint));
+        }
+        reference_mesh.morph_weights[..] = SIGNED_CHANNEL_WEIGHTS[source][..];
+        Aabb bounds = spatial::mesh_world_bounds(
+            assets: &assets,
+            node: reference,
+            mesh: reference_mesh,
+            skin: null,
+        );
+        float displacement = source == 0 ? 41 : 45.5f;
+        assert(bounds.min == (Vec3){ 0, displacement, 0 });
+        assert(bounds.max == (Vec3){ 1, displacement + 1, 0 });
+        Node* batch_node = scene.node(part.batch);
+        Aabb envelope = spatial::instanced_world_bounds(&assets, batch_node, scene.get(batch_node, InstancedMesh));
+        Mat4 world = owner.world.mul(crowd.part_transform(source, 2));
+        foreach (position : geometry.positions) {
+            Vec3 point = maths::transform_point(world, position + (Vec3){ 0, displacement, 0 });
+            for (uint axis = 0; axis < 3; axis++) {
+                assert(point[axis] >= envelope.min[axis] && point[axis] <= envelope.max[axis]);
+            }
+        }
+    }
+}
+
+fn void test_crowd_parts_rigid_and_morph_vertices_fit_mirrored_affine_envelopes() @test {
+    AssetStore assets = parts_store();
+    defer asset::destroy_asset_store(&assets);
+    PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
+    assets.model(fixture.mixed).data.nodes[animated_crowd_fixtures::PARTS_RIGID_NODE].local.rotation =
+      quaternion::from_axis_angle{float}({ 0, 0, 1 }, (float)math::PI / 4);
+    Scene scene = scene::create_scene(mem, { .max_nodes = NODE_CAPACITY });
+    defer scene::destroy_scene(&scene);
+    CrowdInstance[2] instances = { parts_seed(fixture.posing), parts_seed(fixture.posing) };
+    instances[0].placement.position = { -4, 1, 2 };
+    instances[1].placement.position = { 2, 0, -3 };
+    instances[1].placement.scale = { -2, 3, 0.5f };
+    instances[1].placement.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, 0.7f);
+    Node* owner = model::add_crowd(
+        assets: &assets,
+        scene: &scene,
+        model: fixture.mixed,
+        capacity: 2,
+        pose_bounds: animated_crowd_fixtures::PARTS_POSE_BOUNDS,
+        instances: instances[..],
+    )!!;
+    owner.local.position = animated_crowd_fixtures::PARTS_ROOT_POSITION;
+    AnimatedCrowd* crowd = scene.get(owner, AnimatedCrowd);
+    float diagonal = math::sqrt(0.5f);
+    for (uint phase = 0; phase < 3; phase++) {
+        if (phase == 2) {
+            foreach (&instance : instances) instance.pose = parts_seed(fixture.missing_weights, 1).pose;
+            model::set_crowd(
+                assets: &assets,
+                scene: &scene,
+                node: owner,
+                instances: instances[..],
+            )!!;
+        } else {
+            for (uint source = 0; source < 2; source++) parts_player(crowd, source).base_action()!!.time = (float)phase;
+        }
+        anim::crowd_update(&assets, &scene, 0);
+        scene.update_world();
+        Vec3[] literal = phase == 0 ? animated_crowd_fixtures::PARTS_REST_POINTS[..]
+          : (phase == 1 ? animated_crowd_fixtures::PARTS_POSED_POINTS[..]
+            : animated_crowd_fixtures::PARTS_RESTORED_POINTS[..]);
+        float rigid_x = phase == 0 ? 0 : (phase == 1 ? 4 : 2);
+        float rigid_y = phase == 2 ? 2 : 1;
+        Vec3[3] rigid = {
+            { rigid_x + 2 * diagonal, rigid_y + diagonal, 0 },
+            { rigid_x - 2 * diagonal, rigid_y + diagonal, 0 },
+            { rigid_x, rigid_y, 0 },
+        };
+        for (uint source = 0; source < 2; source++) {
+            Mat4 placement = owner.world.mul(instances[source].placement.to_mat4());
+            for (uint part_index = 1; part_index <= 3; part_index++) {
+                CrowdPart* part = &crowd.parts[part_index];
+                Node* batch_node = scene.node(part.batch);
+                Aabb envelope = spatial::instanced_world_bounds(
+                    assets: &assets,
+                    node: batch_node,
+                    batch: scene.get(batch_node, InstancedMesh),
+                );
+                Mat4 world = owner.world.mul(crowd.part_transform(source, part_index));
+                for (uint vertex = 0; vertex < animated_crowd_fixtures::PARTS_VERTEX_COUNT; vertex++) {
+                    Vec3 model_point = part_index == 1 ? rigid[vertex]
+                      : literal[part_index * animated_crowd_fixtures::PARTS_VERTEX_COUNT + vertex]
+                        - animated_crowd_fixtures::PARTS_ROOT_POSITION;
+                    Vec3 expected = maths::transform_point(placement, model_point);
+                    Vec3 actual = maths::transform_point(world, parts_morphed_vertex(
+                        assets: &assets,
+                        crowd: crowd,
+                        part: part,
+                        instance: source,
+                        vertex: vertex,
+                    ));
+                    assert((actual - expected).length() <= POINT_TOLERANCE);
+                    for (uint axis = 0; axis < 3; axis++) {
+                        assert(expected[axis] >= envelope.min[axis] && expected[axis] <= envelope.max[axis]);
+                    }
+                }
+            }
+            Mat4 affine = crowd.part_transform(source, 1);
+            Vec3 axis_x = { affine.m00, affine.m10, affine.m20 };
+            Vec3 axis_y = { affine.m01, affine.m11, affine.m21 };
+            assert(math::abs(axis_x.dot(axis_y)) > 1);
+        }
+    }
+}
+
+fn void assert_parts_admission_fault_preserves_scene(
+    AssetStore* assets,
+    Scene* scene,
+    TrackingAllocator* tracking,
+    ModelId model,
+) @local {
+    uint free_nodes = scene.world.entities.free_count;
+    sz bytes = tracking.allocated();
+    assert(@catch(model::add_crowd(
+        assets: assets,
+        scene: scene,
+        model: model,
+        capacity: 2,
+        pose_bounds: animated_crowd_fixtures::PARTS_POSE_BOUNDS,
+    )) == c3d::INVALID_ARGUMENT);
+    assert(scene.world.entities.free_count == free_nodes && tracking.allocated() == bytes);
+    assert(scene.count(AnimatedCrowd) == 0 && scene.count(InstancedMesh) == 0);
+}
+
+fn void test_crowd_parts_subset_joints_conflicting_channels_and_nan_defaults_fault_before_mutation() @test {
+    AssetStore assets = parts_store();
+    defer asset::destroy_asset_store(&assets);
+    PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
+    TrackingAllocator tracking;
+    tracking.init(mem);
+    defer tracking.free();
+    Scene scene = scene::create_scene(&tracking, { .max_nodes = NODE_CAPACITY });
+    defer scene::destroy_scene(&scene);
+    ModelTemplate* template = &assets.model(fixture.mixed).data;
+    ModelSkin* skin = &template.skins[1];
+    ModelSkin original_skin = *skin;
+    Skeleton* skeleton = &assets.skeleton(fixture.identical_skin).data;
+    Skeleton original_skeleton = *skeleton;
+    defer {
+        *skin = original_skin;
+        *skeleton = original_skeleton;
+    }
+    skin.skeleton = fixture.identical_skin;
+    skin.joint_nodes = skin.joint_nodes[:1];
+    skeleton.joint_names = skeleton.joint_names[:1];
+    skeleton.parents = skeleton.parents[:1];
+    skeleton.rest_pose = skeleton.rest_pose[:1];
+    skeleton.inverse_bind = skeleton.inverse_bind[:1];
+    assert_parts_admission_fault_preserves_scene(
+        assets: &assets,
+        scene: &scene,
+        tracking: &tracking,
+        model: fixture.mixed,
+    );
+    *skin = original_skin;
+    *skeleton = original_skeleton;
+    Geometry* geometry = &assets.geometry(fixture.geometries[2]).data;
+    MorphChannel[] original_channels = geometry.channels;
+    float[] original_defaults = template.meshes[2].default_morph_weights;
+    float[] original_second_defaults = template.meshes[3].default_morph_weights;
+    defer {
+        geometry.channels = original_channels;
+        template.meshes[2].default_morph_weights = original_defaults;
+        template.meshes[3].default_morph_weights = original_second_defaults;
+    }
+    MorphChannel[2] conflicting = { original_channels[0], original_channels[0] };
+    float[2] defaults = { 0.25f, 0.75f };
+    geometry.channels = conflicting[..];
+    template.meshes[2].default_morph_weights = defaults[..];
+    template.meshes[3].default_morph_weights = defaults[..];
+    assert_parts_admission_fault_preserves_scene(
+        assets: &assets,
+        scene: &scene,
+        tracking: &tracking,
+        model: fixture.mixed,
+    );
+    geometry.channels = original_channels;
+    template.meshes[2].default_morph_weights = original_defaults;
+    template.meshes[3].default_morph_weights = original_second_defaults;
+    float[1] nonfinite = { bitcast(0x7fc00000u, float) };
+    template.meshes[2].default_morph_weights = nonfinite[..];
+    assert_parts_admission_fault_preserves_scene(
+        assets: &assets,
+        scene: &scene,
+        tracking: &tracking,
+        model: fixture.mixed,
+    );
+    assert(bitcast(template.meshes[2].default_morph_weights[0], uint) == 0x7fc00000u);
+    template.meshes[2].default_morph_weights = original_defaults;
 }

@@ -13,11 +13,12 @@ fn void blend_pose(
     PoseScratch scratch,
 ) @private {
     Transform[] result = destination.pose;
-    result[..] = destination.base_pose[..];
     ChannelSums[] sums = scratch.channels;
     float[][] morph_result = destination.morph_weights;
     float[][] morph_sums = scratch.morph_sums;
     float[] morph_weights = scratch.morph_weights;
+
+    result[..] = destination.base_pose[..];
     foreach (index, base : destination.base_morph_weights) morph_result[index][..] = base[..];
 
     bool[MAX_ANIMATION_LAYERS] active;

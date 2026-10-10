@@ -379,7 +379,8 @@ fn char[] pose_inputs(Renderer* renderer, TracePoseSource* source, TraceInstance
             CrowdPart* part = &crowd.parts[source.part];
             if (part.skinned) {
                 palette_bytes = (usz)crowd.joint_count * Mat4f::size;
-                mem::copy(inputs.ptr, &crowd.palettes[(usz)record.instance_index * crowd.joint_count], (sz)palette_bytes);
+                Mat4* palette = &crowd.palettes[(usz)record.instance_index * crowd.joint_count];
+                mem::copy(inputs.ptr, palette, (sz)palette_bytes);
             }
 
             morphs = part.weight_count > 0;
