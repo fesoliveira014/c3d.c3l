@@ -335,6 +335,7 @@ fn void? copy_crowd_instance(
         .root_node = source.root_node,
         .base_action = source.base_action,
     };
+
     destination.actions = alloc::new_array_try(allocator, CrowdActionAuthoring, source.actions.len)
       ?? c3d::CAPACITY_EXCEEDED~!;
     destination.spaces = alloc::new_array_try(allocator, CrowdSpaceAuthoring, source.spaces.len)
@@ -344,9 +345,11 @@ fn void? copy_crowd_instance(
         destination.actions[index] = action;
         destination.actions[index].mask = {};
         destination.actions[index].weighted_mask = {};
+
         destination.actions[index].mask = alloc::new_array_try(allocator, bool, action.mask.len)
           ?? c3d::CAPACITY_EXCEEDED~!;
         destination.actions[index].mask[..] = action.mask[..];
+
         destination.actions[index].weighted_mask = alloc::new_array_try(allocator, float, action.weighted_mask.len)
           ?? c3d::CAPACITY_EXCEEDED~!;
         destination.actions[index].weighted_mask[..] = action.weighted_mask[..];
@@ -358,12 +361,14 @@ fn void? copy_crowd_instance(
         destination.spaces[index].positions = {};
         destination.spaces[index].points = {};
         destination.spaces[index].triangles = {};
+
         destination.spaces[index].actions = alloc::new_array_try(allocator, uint, space.actions.len)
           ?? c3d::CAPACITY_EXCEEDED~!;
         destination.spaces[index].positions = alloc::new_array_try(allocator, float, space.positions.len)
           ?? c3d::CAPACITY_EXCEEDED~!;
         destination.spaces[index].actions[..] = space.actions[..];
         destination.spaces[index].positions[..] = space.positions[..];
+
         destination.spaces[index].points = alloc::new_array_try(allocator, Vec2, space.points.len)
           ?? c3d::CAPACITY_EXCEEDED~!;
         destination.spaces[index].triangles = alloc::new_array_try(allocator, BlendTriangle, space.triangles.len)

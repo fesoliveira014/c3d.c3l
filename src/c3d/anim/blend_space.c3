@@ -103,6 +103,7 @@ fn BlendSpace1D*? PlaybackView.add_blend_space(
         if (!math::is_finite(duration) || duration <= 0) return c3d::INVALID_ARGUMENT~;
         (void)validate_playback_action(&assets.clip(clips[index]).data, desc, destination)!;
     }
+
     if (desc.weighted_mask) validate_weighted_joint_mask(assets, self.model, desc.weighted_mask)!;
 
     uint slot;

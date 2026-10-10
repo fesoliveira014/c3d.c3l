@@ -374,6 +374,7 @@ fn bool animator_inspector(void* component) @local {
             foreach (member : action.mask) if (member) selected++;
             imgui::text("Mask: %llu / %llu nodes", selected, action.mask.len);
         }
+
         if (action.additive) {
             ZString scale_mode = action.additive_scale == AdditiveScaleMode.MULTIPLICATIVE
               ? "multiplicative" : "difference";

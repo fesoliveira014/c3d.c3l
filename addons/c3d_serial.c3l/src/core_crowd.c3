@@ -291,6 +291,7 @@ fn void? read_crowd_v2(Reader* reader, ReadContext* context) @local {
         owned: &owned,
         value: &legacy,
     )!;
+
     CrowdAuthoringV3 source = {
         .model = legacy.model,
         .capacity = legacy.capacity,
