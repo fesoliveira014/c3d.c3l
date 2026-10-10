@@ -156,6 +156,7 @@ fn void test_traced_animated_lod_respects_source_flags_and_base_signatures() @te
         assert(mem::equals(signatures[2].ptr, signatures[3].ptr, MorphWeightsGpu::size));
         assets.geometry(coarse).data.bounds.max.x += 1;
         assets.mark_geometry_dirty(coarse);
+        model::sync_animated_lod(&assets, &scene, owner)!!;
         TraceCollection after_coarse = render::collect_trace_instances(tmem, &scene, &assets);
         assert(after_coarse.records.len == first.records.len);
         assert(mem::equals(first.records.ptr, after_coarse.records.ptr, first.records.len * TraceInstance::size));
@@ -357,7 +358,11 @@ fn void test_traced_animated_lod_capacity_prefix_and_abort_keep_distinct_slots()
             PosedTraceRes* slot = &table.slots[slot_index];
             assert(slot.built_revision == 0 && !slot.pose_valid && !slot.pending);
             assert(slot.refit_serial == 0 && slot.blas_serial == 0);
-            char[] inputs = render::pose_inputs(&renderer, &collection.poses[slot_index], &collection.records[slot_index]);
+            char[] inputs = render::pose_inputs(
+                renderer: &renderer,
+                source: &collection.poses[slot_index],
+                record: &collection.records[slot_index],
+            );
             assert(slot.update_pose(inputs) && slot.pose_serial == 2);
             assert(!slot.update_pose(inputs));
         }

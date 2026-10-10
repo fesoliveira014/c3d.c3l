@@ -314,8 +314,9 @@ fn void test_animated_lod_history_reuses_owned_storage_between_observations() @t
     {
         AnimatedLodHistoryFixture fixture;
         create_animated_history_fixture(&fixture, true);
-        fixture.history_allocator = &tracker;
         defer destroy_animated_history_fixture(&fixture);
+
+        fixture.history_allocator = &tracker;
         capture_animated_history(&fixture, &fixture.first, fixture.candidates[..]);
         sz allocations = tracker.total_allocation_count();
         for (uint frame = 0; frame < 4; frame++) {

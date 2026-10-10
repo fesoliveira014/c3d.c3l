@@ -219,6 +219,7 @@ fn PickHit[] SceneIndex.pick(
     if (!self.count) return {};
     bool[] group_live = alloc::new_array(allocator, bool, (sz)self.scene.nodes.len);
     defer alloc::free(allocator, group_live.ptr);
+
     self.scene.@each(LodGroup; Entity entity, LodGroup* group) {
         group_live[entity.index] = lod_group_is_live(
             assets: assets,
@@ -258,7 +259,15 @@ fn void prepare_triangle_picks(AssetStore* assets, Scene* scene) {
     scene.@each(LodGroup; Entity entity, LodGroup* group) {
         Node* node = scene.node(entity);
         LodGroupState* state = group.state;
-        if (lod_group_is_live(
+        if (!state.animated) {
+            if (lod_group_is_live(assets, group) && !state.desc.has_bounds_override && state.effects.sway.amplitude == 0) {
+                foreach (part : state.desc.parts[:state.desc.levels[0].part_count]) {
+                    if (triangles_are_static(assets.geometry(part.geometry), false, false)) {
+                        prepare_triangle_tree(assets, part.geometry);
+                    }
+                }
+            }
+        } else if (lod_group_is_live(
             assets: assets,
             group: group,
             scene: scene,

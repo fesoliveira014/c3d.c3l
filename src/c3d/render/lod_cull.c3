@@ -69,11 +69,11 @@ fn void? reserve_lod_bins(Renderer* renderer, LodSelection* selection) @private 
 }
 
 fn void? prepare_lod_instances(Renderer* renderer, LodSelection* selection) @private {
-    if (selection.state.animated) (void)selection.state.local_bounds(renderer.assets);
-
     resolve_lod_instances(renderer, selection)!;
+
     if (selection.state.animated) {
         selection.part_unmirrored = alloc::new_array(tmem, uint, selection.state.desc.parts.len);
+        selection.part_mirrored = alloc::new_array(tmem, bool[], selection.state.desc.parts.len);
 
         foreach (uint part, &split : selection.part_unmirrored) {
             MeshCandidate candidate = {
@@ -83,11 +83,14 @@ fn void? prepare_lod_instances(Renderer* renderer, LodSelection* selection) @pri
                 .scene_identity = selection.scene_identity,
             };
             (void)bind_animated_lod_candidate(selection, &candidate);
+            bool[] mirrored = alloc::new_array(tmem, bool, selection.state.count);
+            selection.part_mirrored[part] = mirrored;
 
             for (uint source = 0; source < selection.state.count; source++) {
                 Mat4 local = selection.state.transforms[source].to_mat4()
                   .mul(animated_lod_part_local(&candidate, source));
-                if (local.determinant() >= 0) (*split)++;
+                mirrored[source] = local.determinant() < 0;
+                if (!mirrored[source]) (*split)++;
             }
         }
     }
@@ -98,6 +101,7 @@ fn void? prepare_lod_instances(Renderer* renderer, LodSelection* selection) @pri
         selection.reject_history = true;
         renderer.cull_lod_fallbacks++;
     }
+
     LodGroupState* state = selection.state;
     LodHistoryEntry* history = selection.history;
     LodHistoryValue previous = history.committed;

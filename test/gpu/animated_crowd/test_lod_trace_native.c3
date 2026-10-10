@@ -525,7 +525,10 @@ fn void run_lod_trace_crowd_lifecycle(TraceKind kind) @private {
         owner: owner,
         phases: phases[..],
     );
-    Node* second_camera = harness.scene.add_camera(camera::perspective_deg(60, 0.1f), name: "second_lod_trace_camera")!!;
+    Node* second_camera = harness.scene.add_camera(
+        camera: camera::perspective_deg(60, 0.1f),
+        name: "second_lod_trace_camera",
+    )!!;
     Vec3 first_centre = lod_trace_crowd_centre(
         owner: owner,
         instance: &instances[0],
@@ -560,6 +563,7 @@ fn void run_lod_trace_crowd_lifecycle(TraceKind kind) @private {
     assert(renderer.scene_trace.revision == revision);
     fixture.assets.geometry(coarse).data.positions[0].x += 0.125f;
     fixture.assets.mark_geometry_dirty(coarse);
+    model::sync_animated_lod(&fixture.assets, &harness.scene, owner)!!;
     render_lod_trace(&fixture, &harness, kind)!!;
     assert_lod_trace_agreement(harness.results, "Animated LOD unchanged base after coarse edit");
     assert(renderer.scene_trace.revision == revision && renderer.stats.trace_poses == 0);
@@ -725,7 +729,11 @@ fn void run_lod_trace_real(TraceKind kind, bool quaternius) @private {
     render::configure_view(&fixture.renderer, fixture.view, view)!!;
     harness.camera.local.position = quaternius ? (Vec3){ 0, 1.1f, LOD_TRACE_CHARACTER_DISTANCE } : (Vec3){ 0, 0, 3 };
     render_lod_trace(&fixture, &harness, kind)!!;
-    assert_lod_trace_agreement(harness.results, quaternius ? "Quaternius base trace" : "AnimatedMorphCube base trace", false);
+    assert_lod_trace_agreement(
+        results: harness.results,
+        name: quaternius ? "Quaternius base trace" : "AnimatedMorphCube base trace",
+        flat: false,
+    );
     Renderer* renderer = &fixture.renderer;
     uint expected = quaternius ? 2u : 1u;
     assert(renderer.scene_trace.baseline_count == expected);
@@ -745,6 +753,7 @@ fn void run_lod_trace_real(TraceKind kind, bool quaternius) @private {
         GeometryId coarse = corpus.levels[0][1];
         fixture.assets.geometry(coarse).data.positions[0].x += 0.01f;
         fixture.assets.mark_geometry_dirty(coarse);
+        model::sync_animated_lod(&fixture.assets, &harness.scene, owner)!!;
         render_lod_trace(&fixture, &harness, kind)!!;
         assert_lod_trace_agreement(harness.results, "Real base trace after coarse-only edit", false);
         assert(renderer.scene_trace.revision == revision && renderer.stats.trace_poses == 0);

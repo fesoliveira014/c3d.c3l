@@ -370,7 +370,10 @@ fn AnimatedLodFixtures? load_animated_lod_fixtures(AssetStore* assets, String re
         verify_source(&document)!;
         sz source_geometries = document.geometries.len;
         DocumentGeometry[] entries = alloc::new_array(
-            assets.allocator, DocumentGeometry, source_geometries + REDUCED_GEOMETRIES);
+            allocator: assets.allocator,
+            $Type: DocumentGeometry,
+            elements: source_geometries + REDUCED_GEOMETRIES,
+        );
         entries[:source_geometries] = document.geometries[..];
         alloc::free(assets.allocator, document.geometries.ptr);
         document.geometries = entries[:source_geometries];

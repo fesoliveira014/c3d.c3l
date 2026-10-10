@@ -42,6 +42,7 @@ fn void? attach_animated_lod(
     defer catch scene::destroy_lod_group(scene.allocator, &group);
 
     initialize_animated_lod_source(group.state, source);
+    (void)group.state.local_bounds(assets);
     scene.add(owner, group);
 }
 
@@ -72,6 +73,8 @@ fn void? replace_animated_lod(
 
     next.state.effects = existing.state.effects;
     initialize_animated_lod_source(next.state, source);
+    (void)next.state.local_bounds(assets);
+
     LodGroup previous = *existing;
     *existing = next;
 
@@ -121,10 +124,11 @@ fn void? sync_animated_lod(AssetStore* assets, Scene* scene, Node* owner) {
     if (changed) validate_animated_lod_binding(assets, source, group.state)!;
 
     initialize_animated_lod_source(group.state, source);
+    (void)group.state.local_bounds(assets);
 }
 
 fn AnimatedLodSource? animated_lod_source(AssetStore* assets, Scene* scene, Node* owner) @local {
-    if (!owner || !scene.world.is_alive(owner.id)) return c3d::INVALID_ID~;
+    if (!scene.world.is_alive(owner.id)) return c3d::INVALID_ID~;
 
     ModelInstance* instance = scene.get(owner, ModelInstance);
     AnimatedCrowd* crowd = scene.get(owner, AnimatedCrowd);
@@ -489,27 +493,7 @@ fn void initialize_animated_lod_source(LodGroupState* state, AnimatedLodSource s
         return;
     }
 
-    AnimatedCrowd* crowd = source.crowd;
-    state.transforms = crowd.placements;
-    state.colors = crowd.colors;
-    uint count = crowd.is_prepared() ? crowd.count : 0;
-    ulong epoch = crowd.playback ? crowd.playback.identity : 1;
-    uint revision;
-    if (crowd.parts.len) revision = source.scene.world.get(crowd.parts[0].batch, InstancedMesh).revision;
-    bool changed = state.count != count || state.instance_epoch != epoch
-      || state.animated.source_revision != revision;
-    state.animated.source_revision = revision;
-    state.count = count;
-    state.instance_epoch = epoch;
-
-    if (crowd.playback) {
-        foreach (index, slot : crowd.playback.slots) {
-            changed |= state.slot_generations[index] != slot.generation;
-            state.slot_generations[index] = slot.generation;
-        }
-    }
-
-    if (changed) scene::publish_animated_lod_source(state);
+    scene::publish_crowd_lod_source(source.scene, state, source.crowd);
 }
 
 fn void? validate_animated_lod_binding(
@@ -591,4 +575,36 @@ fn void? validate_animated_lod_binding(
         }
         if (part.skeleton.generation) part.skeleton_revision = assets.skeleton(part.skeleton).header.revision;
     }
+}
+
+<*
+ Check a published source without changing scene or asset data.
+ @param [&in] assets : "Resolves the admitted source and representations."
+ @param [&in] scene : "Owns the current source components."
+ @param [&in] owner : "Node carrying the copied group."
+ @param [&in] state : "Previously admitted and published source snapshot."
+*>
+fn bool animated_lod_source_is_live(
+    AssetStore* assets,
+    Scene* scene,
+    Node* owner,
+    LodGroupState* state,
+) {
+    AnimatedLodSource? candidate = animated_lod_source(assets, scene, owner);
+    if (catch excuse = candidate) return false;
+    AnimatedLodSource source = candidate;
+
+    AnimatedLodBinding* binding = state.animated;
+    if (!c3d::same_id(binding.source_owner, owner.id)
+      || !c3d::same_id(binding.source_model, source.instance ? source.instance.source : source.crowd.model)
+      || binding.model_revision != source.model.header.revision) return false;
+
+    if (source.instance && state.mode != LodMode.SINGLE) return false;
+
+    if (source.crowd) {
+        if (state.transforms.ptr != source.crowd.placements.ptr || state.colors.ptr != source.crowd.colors.ptr) return false;
+        if (state.count != (source.crowd.is_prepared() ? source.crowd.count : 0)) return false;
+    }
+
+    return true;
 }

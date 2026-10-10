@@ -11,7 +11,7 @@ import std::math;
 const ulong INSTANCES_LAYOUT @local = 0x59d3aec48200fec8;
 const ulong BILLBOARDS_LAYOUT @local = 0x0e6e17ed81a957bb;
 const ulong LOD_V1_LAYOUT @local = 0xdb17924ea7b43e3f;
-const ulong LOD_LAYOUT @local = 0xa2d20e5979acddbb;
+const ulong LOD_LAYOUT @local = 0x8ed85fe0b352d50f;
 const ulong ANIMATED_LOD_SKIN_LAYOUT @local = 0x03ef0a55ec3ccd1c;
 const ulong ANIMATED_LOD_PART_LAYOUT @local = 0x67066c59b87af8fe;
 const ulong ANIMATED_LOD_DESC_LAYOUT @local = 0xa65aa93a04287bbc;
@@ -61,7 +61,6 @@ struct LodAuthoring @private {
     Impostor impostor;
     float impostor_min_screen_size;
     bool animated;
-    Entity source_owner;
     AnimatedLodDesc animated_desc;
 }
 
@@ -174,7 +173,6 @@ fn void? project_lod(void* component, void* value, WriteContext* context) @local
         *(LodAuthoring*)value = {
             .effects = state.effects,
             .animated = true,
-            .source_owner = state.animated.source_owner,
             .animated_desc = project_animated_lod(state, context)!,
         };
         return;
@@ -246,7 +244,7 @@ fn void? attach_billboards(void* value, ReadContext* context) @local {
 fn void? attach_lod(void* value, ReadContext* context) @local {
     LodAuthoring* source = value;
     if (source.animated) {
-        if (!c3d::same_id(source.source_owner, context.node.id) || source.has_impostor
+        if (source.has_impostor
           || source.capacity || source.transforms.len || source.colors.len || source.desc.levels.len
           || source.desc.parts.len) return c3d::INVALID_ARGUMENT~;
         if (!scene::instance_effects_valid(source.effects.sway, source.effects.fade)) return c3d::INVALID_ARGUMENT~;
@@ -261,7 +259,7 @@ fn void? attach_lod(void* value, ReadContext* context) @local {
         return;
     }
 
-    if (source.source_owner.generation || source.animated_desc.levels.len || source.animated_desc.parts.len) {
+    if (source.animated_desc.levels.len || source.animated_desc.parts.len) {
         return c3d::INVALID_ARGUMENT~;
     }
 
@@ -295,7 +293,7 @@ fn void? attach_lod(void* value, ReadContext* context) @local {
 
 fn AnimatedLodDesc? project_animated_lod(LodGroupState* state, WriteContext* context) @local {
     AnimatedLodBinding* binding = state.animated;
-    if (!c3d::same_id(binding.source_owner, context.node.id) || state.has_impostor) {
+    if (state.has_impostor) {
         return c3d::INVALID_ARGUMENT~;
     }
     context.assets.models.try_get(binding.source_model)!;

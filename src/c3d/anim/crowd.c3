@@ -61,20 +61,28 @@ fn void publish_crowd_pose(AssetStore* assets, Scene* scene, AnimatedCrowd* crow
  @require self.is_prepared(), instance < self.count, part < self.parts.len
 *>
 fn Mat4 AnimatedCrowd.part_transform(&self, uint instance, uint part) {
-    Mat4 placement = self.placements[instance].to_mat4();
-    if (self.parts[part].skinned) return placement;
+    return self.placements[instance].to_mat4().mul(self.part_local_transform(instance, part));
+}
+
+<*
+ Read one part's affine transform without instance placement.
+ @param instance : "Live logical source slot."
+ @param part : "Logical mesh in template order."
+ @require self.is_prepared(), instance < self.count, part < self.parts.len
+*>
+fn Mat4 AnimatedCrowd.part_local_transform(&self, uint instance, uint part) {
+    if (self.parts[part].skinned) return matrix::IDENTITY4;
 
     CrowdPlaybackState* playback = self.playback;
     Transform[] locals = playback.poses[(usz)instance * playback.base_pose.len:playback.base_pose.len];
     uint mesh_node = self.parts[part].template_node;
+    Mat4 world = locals[mesh_node].to_mat4();
 
-    for (uint node = 0; node <= mesh_node; node++) {
-        Mat4 local = locals[node].to_mat4();
-        int parent = playback.parents[node];
-        self.scratch_worlds[node] = parent < 0 ? local : self.scratch_worlds[parent].mul(local);
+    for (int parent = playback.parents[mesh_node]; parent >= 0; parent = playback.parents[parent]) {
+        world = locals[parent].to_mat4().mul(world);
     }
 
-    return placement.mul(self.scratch_worlds[mesh_node]);
+    return world;
 }
 
 <*

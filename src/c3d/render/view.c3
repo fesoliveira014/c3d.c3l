@@ -1098,21 +1098,33 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
             scene_reads |= prepared.scene_reads;
         };
         scene.@each(LodGroup; Entity entity, LodGroup* group) {
-            if (spatial::lod_group_is_live(self.assets, group)) {
+            if (spatial::lod_group_is_live(
+                assets: self.assets,
+                group: group,
+                scene: scene,
+                node: scene.node(entity),
+            )) {
                 bool casts = shadows_enabled && group.state.effects.cast_shadow && scene.node(entity).visible_effective;
-                foreach (part : group.state.desc.parts) {
+
+                foreach (index, part : group.state.desc.parts) {
+                    AnimatedLodPartBinding binding;
+                    if (group.state.animated) binding = group.state.animated.parts[index];
+
                     MeshPreparation prepared = prepare_mesh(
                         renderer: self,
                         geometry_id: part.geometry,
                         material_id: part.material,
-                        morphed: false,
+                        morphed: binding.weight_count > 0,
                         depth: casts || prepass,
                         gbuffer: deferred,
                         instanced: group.state.mode == LodMode.INSTANCED,
+                        crowd: group.state.animated != null && binding.skinned,
+                        skinned: group.state.animated == null || binding.skinned,
                     )!;
                     sheen |= prepared.sheen;
                     scene_reads |= prepared.scene_reads;
                 }
+
                 if (lod_impostor_live(self.assets, group.state)) {
                     prepare_impostor(
                         renderer: self,
@@ -1212,6 +1224,7 @@ fn MeshPreparation? prepare_mesh(
     bool gbuffer,
     bool instanced = false,
     bool crowd = false,
+    bool skinned = true,
 ) @private {
     if (!renderer.assets.geometries.is_live(geometry_id) || !renderer.assets.materials.is_live(material_id)) {
         renderer.stats.dangling_refs++;
@@ -1236,7 +1249,7 @@ fn MeshPreparation? prepare_mesh(
     ShaderVariant vertex = mesh_vertex_variant(
         flags:      geometry.layout.flags,
         morphed:    morphed,
-        skinned:    !instanced || crowd,
+        skinned:    skinned && (!instanced || crowd),
         base_flags: instanced_flag,
     );
     if (catch excuse = pipeline_for(renderer, data, vertex)) {
@@ -1256,7 +1269,7 @@ fn MeshPreparation? prepare_mesh(
             vertex:       mesh_vertex_variant(
                 flags:      geometry.layout.flags,
                 morphed:    morphed,
-                skinned:    !instanced || crowd,
+                skinned:    skinned && (!instanced || crowd),
                 base_flags: shader::SHADER_FLAG_DEPTH_ONLY | instanced_flag,
             ),
             material:     data,

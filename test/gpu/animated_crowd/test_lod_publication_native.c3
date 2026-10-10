@@ -126,7 +126,7 @@ fn void test_animated_lod_native_resize_present_failure_keeps_submitted_history(
             fixture: &fixture,
             pair: &pair,
             phase_offset: 0.003f * (float)(attempt + 1),
-            placement_offset: 0.08f * (float)(attempt + 1),
+            placement_offset: 0.16f * (float)(attempt + 1),
         );
         renderer.begin_frame({ .time = 0.37, .delta = 0 })!!;
         if (!renderer.has_output) {
@@ -183,7 +183,7 @@ fn void test_animated_lod_native_resize_present_failure_keeps_submitted_history(
             rejection: 0,
             still: false,
         );
-        assert(movement > CROWD_NATIVE_VELOCITY_TOLERANCE);
+        assert(movement > 10 * CROWD_NATIVE_VELOCITY_TOLERANCE);
         check_crowd_native_validation(renderer);
         if (!observed) continue;
         assert(window.poll());

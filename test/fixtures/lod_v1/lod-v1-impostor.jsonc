@@ -1,0 +1,152 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": 0,
+      "parent": null,
+      "name": "legacy_impostor",
+      "local": {
+        "position": [
+          -4,
+          1,
+          6
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "c3d.LodGroup": {
+          "version": 1,
+          "value": {
+            "desc": {
+              "levels": [
+                {
+                  "first_part": 0,
+                  "part_count": 1,
+                  "min_screen_size": 0.200000003
+                },
+                {
+                  "first_part": 1,
+                  "part_count": 1,
+                  "min_screen_size": 0
+                }
+              ],
+              "parts": [
+                {
+                  "geometry": "lod_v1/box",
+                  "material": "lod_v1/material",
+                  "local": [
+                    1,
+                    0,
+                    0,
+                    0,
+                    0.125,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                    2,
+                    0,
+                    0,
+                    1
+                  ]
+                },
+                {
+                  "geometry": "lod_v1/box",
+                  "material": "lod_v1/material",
+                  "local": [
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1
+                  ]
+                }
+              ],
+              "has_bounds_override": false,
+              "local_bounds": {
+                "min": [
+                  0,
+                  0,
+                  0
+                ],
+                "max": [
+                  0,
+                  0,
+                  0
+                ]
+              }
+            },
+            "mode": "SINGLE",
+            "capacity": 0,
+            "transforms": [],
+            "colors": [],
+            "effects": {
+              "sway": {
+                "direction": [
+                  0,
+                  0,
+                  0
+                ],
+                "amplitude": 0,
+                "frequency": 0,
+                "lean": 0,
+                "wavelength": 0,
+                "variation": 0,
+                "weight": "HEIGHT"
+              },
+              "fade": {
+                "start": 0,
+                "end": 0
+              },
+              "cast_shadow": true,
+              "receive_shadow": false,
+              "trace": false
+            },
+            "has_impostor": true,
+            "impostor": {
+              "atlas": "lod_v1/atlas",
+              "bounds": {
+                "center": [
+                  0,
+                  0,
+                  0
+                ],
+                "radius": 4
+              },
+              "frames_per_side": 2,
+              "cell_size": 4
+            },
+            "impostor_min_screen_size": 0.100000001
+          }
+        }
+      }
+    }
+  ]
+}

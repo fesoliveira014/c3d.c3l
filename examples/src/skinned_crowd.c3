@@ -35,8 +35,9 @@ const Vec2  PANEL_POSITION @local = { 16, 16 };
 const Vec2  PANEL_SIZE @local = { 390, 560 };
 const uint LOD_LEVELS @local = 3; // original, half and quarter triangle subsets share the vertex layout
 const uint TRIANGLE_CORNERS @local = 3;
-const float[LOD_LEVELS] LOD_THRESHOLDS @local = { 0.06f, 0.025f, 0 }; // projected sizes of the whole character
-const float FULL_DETAIL_BIAS @local = 16; // keeps the finite field above its finest threshold
+const float[LOD_LEVELS] LOD_THRESHOLDS @local
+  = { 0.06f, 0.025f, 0 }; // View-height fractions; lower retains more triangles farther away.
+const float FULL_DETAIL_BIAS @local = 16; // Log2 size scale; retains full detail across this field.
 const String CHARACTER @local = "../assets/quaternius/AnimationLibrary_Godot.glb";
 const String[] CLIP_NAMES @local = {
     "Walk_Loop", "Jog_Fwd_Loop", "Idle_Loop", "Sprint_Loop", "Walk_Formal_Loop", "Dance_Loop",
@@ -106,7 +107,7 @@ fn GeometryId? triangle_subset(AssetStore* assets, GeometryId geometry_id, uint 
     usz triangles = (usz)source.indices.len / TRIANGLE_CORNERS;
     usz selected = (triangles + step - 1) / step;
     uint[] indices = alloc::new_array_try(tmem, uint, (sz)(selected * TRIANGLE_CORNERS))
-      ?? CAPACITY_EXCEEDED~!;
+      ?? c3d::CAPACITY_EXCEEDED~!;
 
     for (usz triangle = 0; triangle < selected; triangle++) {
         usz source_corner = triangle * step * TRIANGLE_CORNERS;
@@ -129,7 +130,7 @@ fn void? attach_showcase_lod(
         uint mesh_count = (uint)template.meshes.len;
         LodLevel[LOD_LEVELS] levels;
         AnimatedLodPart[] parts = alloc::new_array_try(tmem, AnimatedLodPart, (sz)mesh_count * LOD_LEVELS)
-          ?? CAPACITY_EXCEEDED~!;
+          ?? c3d::CAPACITY_EXCEEDED~!;
 
         for (uint level = 0; level < LOD_LEVELS; level++) {
             levels[level] = {

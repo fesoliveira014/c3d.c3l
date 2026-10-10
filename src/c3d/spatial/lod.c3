@@ -9,7 +9,13 @@ import c3d::model;
 import c3d::scene;
 import std::math;
 
-<* Asset-only liveness unless scene/node are supplied for animated owner synchronization. *>
+<*
+ Check admitted assets and optional published source components.
+ @param [&in] assets : "Resolves every referenced asset."
+ @param [&in] group : "Copied group being inspected."
+ @param [in] scene : "Optional source scene; unchanged by this query."
+ @param [in] node : "Source owner when scene is supplied."
+*>
 fn bool lod_group_is_live(
     AssetStore* assets,
     LodGroup* group,
@@ -18,10 +24,9 @@ fn bool lod_group_is_live(
 ) {
     LodGroupState* state = group.state;
     if (state.animated) {
-        if (scene && node) {
-            if (catch model::sync_animated_lod(assets, scene, node)) return false;
-        }
+        if (scene && node && !model::animated_lod_source_is_live(assets, scene, node, state)) return false;
         if (!assets.models.is_live(state.animated.source_model)) return false;
+        if (assets.model(state.animated.source_model).header.revision != state.animated.model_revision) return false;
     }
     foreach (index, part : state.desc.parts) {
         if (!assets.geometries.is_live(part.geometry) || !assets.materials.is_live(part.material)) return false;
@@ -31,8 +36,13 @@ fn bool lod_group_is_live(
         }
         if (state.animated) {
             AnimatedLodPartBinding binding = state.animated.parts[index];
+            if (binding.geometry_revision != geometry.header.revision) return false;
             if ((binding.skeleton.generation && !assets.skeletons.is_live(binding.skeleton))
               || (binding.source_skeleton.generation && !assets.skeletons.is_live(binding.source_skeleton))) return false;
+            if (binding.skeleton.generation
+              && binding.skeleton_revision != assets.skeleton(binding.skeleton).header.revision) return false;
+            if (binding.source_skeleton.generation
+              && binding.source_skeleton_revision != assets.skeleton(binding.source_skeleton).header.revision) return false;
         }
         Material* material = &assets.material(part.material).data;
         if (material.kind == MaterialKind.CUSTOM) {
@@ -45,7 +55,13 @@ fn bool lod_group_is_live(
     return true;
 }
 
-<* Current selectable bounds; animated groups need their source scene.
+<*
+ Read current selectable bounds from a live source.
+ @param [&in] assets : "Retained geometry bounds."
+ @param [&in] node : "Owner with updated world transform."
+ @param [&in] group : "Admitted group with a live source."
+ @param origin : "World origin subtracted from the result."
+ @param [in] scene : "Required for animated groups."
  @require group.state.count > 0
  @require !group.state.animated || scene != null
 *>
@@ -82,7 +98,13 @@ fn Aabb lod_world_bounds(
     return { .min = bounds.min - reach, .max = bounds.max + reach };
 }
 
-<* World transform of a flat representation, using the current source affine.
+<*
+ Read the world transform of one admitted representation.
+ @param [&in] node : "Owner with updated world transform."
+ @param [&in] state : "Admitted copied representation."
+ @param instance : "Live logical placement index."
+ @param part : "Flat representation index."
+ @param [in] scene : "Required for animated groups."
  @require !state.animated || scene != null
 *>
 fn Mat4 lod_part_world(
@@ -129,14 +151,19 @@ fn bool animated_lod_owns_node(Scene* scene, Node* node) @private {
     return false;
 }
 
-<* Level-zero representation of a logical part; rigid groups retain flat part IDs. *>
+<*
+ Read a logical part's guaranteed level-zero representation.
+ @param [&in] state : "Admitted level zero covers every logical mesh."
+ @require !state.animated || logical_part < state.animated.channel_offsets.len - 1
+ @ensure return < state.desc.parts.len
+*>
 fn uint lod_base_representation(LodGroupState* state, uint logical_part) @private {
     if (!state.animated) return logical_part;
     LodLevel level = state.desc.levels[0];
     for (uint part = level.first_part; part < level.first_part + level.part_count; part++) {
         if (state.animated.parts[part].mesh_index == logical_part) return part;
     }
-    return uint::max;
+    unreachable();
 }
 
 <* Current bounds of one admitted animated LOD representation.

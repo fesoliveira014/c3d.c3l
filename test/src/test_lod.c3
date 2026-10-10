@@ -554,6 +554,56 @@ fn void test_lod_validation_is_atomic_and_removal_releases_storage() @test {
     assert(!tracker.has_leaks());
 }
 
+fn void test_lod_empty_rigid_group_prewarms_base_triangles_before_placements_are_published() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    Fixture fixture = make_fixture(&tracker);
+    defer destroy_fixture(&fixture);
+    LodPart[3] parts = fixture_parts(&fixture);
+    parts[1].geometry = fixture.assets.add_geometry(&fixture.assets.geometry(fixture.geometry).data)!!;
+    LodLevel[2] levels = fixture_levels();
+    Node* node = fixture.scene.add_instanced_lod_group(
+        assets: &fixture.assets,
+        desc: { .levels = levels[..], .parts = parts[..] },
+        capacity: 1,
+    )!!;
+    LodGroupState* state = fixture.scene.get(node, LodGroup).state;
+    assert(state.count == 0 && !state.animated && !state.desc.has_bounds_override);
+    assert(fixture.assets.geometry(parts[0].geometry).triangle_revision == 0);
+    assert(fixture.assets.geometry(parts[1].geometry).triangle_revision == 0);
+    sz cold_acquisitions = tracker.total_allocation_count();
+    spatial::prepare_triangle_picks(&fixture.assets, &fixture.scene);
+    assert(state.count == 0 && tracker.total_allocation_count() > cold_acquisitions);
+    foreach (part : parts[:2]) {
+        GeometryAsset* geometry = fixture.assets.geometry(part.geometry);
+        assert(geometry.triangle_revision == geometry.header.revision);
+    }
+    sz prepared_acquisitions = tracker.total_allocation_count();
+    Transform[1] placements = { maths::TRANSFORM_IDENTITY };
+    placements[0].position.z = -10;
+    fixture.scene.set_lod_instances(node, placements[..])!!;
+    fixture.scene.update_world();
+    @pool() {
+        for (uint part = 0; part < 2; part++) {
+            PickHit[] hits = spatial::pick(
+                allocator: tmem,
+                assets: &fixture.assets,
+                scene: &fixture.scene,
+                ray: { .origin = { part ? 2 : -2, 0, 0 }, .direction = { 0, 0, -1 } },
+                options: { .precision = PickPrecision.TRIANGLES, .faces = PickFaces.BOTH, .layers = uint::max },
+            );
+            assert(hits.len == 1 && hits[0].node == node);
+            assert(hits[0].instanced && hits[0].lod_group && hits[0].triangle_hit);
+            assert(hits[0].instance_index == 0 && hits[0].part_index == part);
+            assert(c3d::same_id(hits[0].geometry, parts[part].geometry));
+            assert(math::abs(hits[0].distance - 9.5f) < 1e-5f);
+            assert(tracker.total_allocation_count() == prepared_acquisitions);
+        }
+    };
+    assert(tracker.total_allocation_count() == prepared_acquisitions);
+}
+
 fn void test_lod_asset_edits_invalidate_the_whole_group() @test {
     Fixture fixture = make_fixture();
     defer destroy_fixture(&fixture);
@@ -634,9 +684,9 @@ fn LodLevel[2] fixture_levels() @local {
     };
 }
 
-fn Fixture make_fixture() @private {
+fn Fixture make_fixture(Allocator asset_allocator = mem) @private {
     Fixture fixture;
-    fixture.assets = asset::create_asset_store(mem, {
+    fixture.assets = asset::create_asset_store(asset_allocator, {
         .max_geometries = 2,
         .max_textures = asset::BUILTIN_TEXTURE_COUNT,
         .max_materials = 4,

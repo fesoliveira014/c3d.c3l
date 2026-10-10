@@ -121,9 +121,9 @@ void main() {
     if (root.lod_mode == LOD_CULL) {
         uint parity = LodMetadata(root.lod_metadata).values[source].parity;
         if (root.lod_animated != 0u) {
-            mat4 local = CullInstances(root.bounds_instances).values[source].model;
-            if (determinant(mat3(local)) < 0.0) parity ^= 1u;
+            parity = uint(CullInstances(root.bounds_instances).values[source].normal_1.w);
         }
+
         if (LodHistory(root.lod_current).values[source].level != root.lod_level
             || parity != root.lod_parity) return;
     }

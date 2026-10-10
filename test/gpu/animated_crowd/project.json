@@ -41,7 +41,10 @@
         "test_lod_bounds_native.c3",
         "test_lod_publication_native.c3",
         "../render/prepare_present_window.c3",
-        "test_lod_morph_native.c3"
+        "test_lod_morph_native.c3",
+        "test_lod_preparation_native.c3",
+        "test_lod_parity_native.c3",
+        "test_lod_dangling_native.c3"
       ]
     }
   }

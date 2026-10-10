@@ -4,16 +4,31 @@ import c3d;
 import c3d::anim;
 import c3d::asset;
 import c3d::geometry;
+import c3d::material;
 import c3d::maths;
 import c3d::model;
 import c3d::render;
 import c3d::scene;
 import c3d::shader;
+import c3d::spatial;
 import c3d::test::animated_crowd_fixtures;
 import std::math;
+import std::io;
 
 const float[3] ANIMATED_LOD_CHANNEL_DEFAULTS @local = { 0.125f, 0.75f, 0.875f };
 const float[3] ANIMATED_LOD_CHANNEL_POSE @local = { 0.875f, 0.625f, 0.125f };
+
+enum AnimatedLodAttachFaultKind @local {
+    DEAD_OWNER,
+    REUSED_OWNER,
+    RETIRED_GEOMETRY,
+    REUSED_GEOMETRY,
+    SECOND_ATTACH,
+    IMPORTED_GROUP,
+    CUSTOM_VERTEX,
+    ALLOCATION,
+    IMPOSTOR,
+}
 
 struct AnimatedLodChannelFixture @local {
     GeometryId selected;
@@ -343,7 +358,6 @@ fn void test_animated_lod_pending_crowd_reacquires_fixed_source_without_replacem
         anim::crowd_update(&assets, &scene, 0.25f);
         model::sync_animated_lod(&assets, &scene, owner)!!;
         assert(state.identity == identity && state.slot_generations[0] == generation);
-        assert(@catch(scene.resize_lod_instances(owner, 3)) == c3d::INVALID_ARGUMENT);
         model::set_crowd(&assets, &scene, owner, instances[:1])!!;
         model::sync_animated_lod(&assets, &scene, owner)!!;
         assert(state.count == 1 && state.identity == identity && state.slot_generations[0] != generation);
@@ -602,5 +616,173 @@ fn void test_animated_lod_public_replace_allocation_failure_preserves_owned_stat
             assert(allocator.outstanding == outstanding && scene.world.entities.free_count == free_nodes);
             if (crowd) assert(crowd.playback.identity == playback && crowd.playback.slots[0].generation == generation);
         }
+    };
+}
+
+fn void test_animated_lod_attach_fault_table_preserves_components_and_allocator() @test {
+    AnimatedLodAttachFaultKind[9] cases = {
+        AnimatedLodAttachFaultKind.DEAD_OWNER,
+        AnimatedLodAttachFaultKind.REUSED_OWNER,
+        AnimatedLodAttachFaultKind.RETIRED_GEOMETRY,
+        AnimatedLodAttachFaultKind.REUSED_GEOMETRY,
+        AnimatedLodAttachFaultKind.SECOND_ATTACH,
+        AnimatedLodAttachFaultKind.IMPORTED_GROUP,
+        AnimatedLodAttachFaultKind.CUSTOM_VERTEX,
+        AnimatedLodAttachFaultKind.ALLOCATION,
+        AnimatedLodAttachFaultKind.IMPOSTOR,
+    };
+    fault[9] expected = {
+        c3d::INVALID_ID, c3d::INVALID_ID, c3d::INVALID_ID, c3d::INVALID_ID,
+        c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::UNSUPPORTED,
+        c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED,
+    };
+    foreach (uint kind : { 0u, 1u }) foreach (uint index, mutation : cases) {
+        @pool() {
+            AssetStore assets = animated_lod_store();
+            defer asset::destroy_asset_store(&assets);
+            PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
+            AnimatedLodAllocationProbe allocator;
+            Scene scene = scene::create_scene(&allocator, { .max_nodes = 64 });
+            defer {
+                scene::destroy_scene(&scene);
+                assert(allocator.outstanding == 0);
+            }
+            Node* live_owner = animated_lod_contract_owner(
+                assets: &assets,
+                scene: &scene,
+                fixture: &fixture,
+                crowd: kind == 1,
+            );
+            Node retired_owner;
+            Node* owner = live_owner;
+            AnimatedLodDesc desc = animated_lod_desc(&assets, fixture.mixed);
+            LodGroupState* previous;
+            LodGroupState previous_value;
+            switch (mutation) {
+                case AnimatedLodAttachFaultKind.DEAD_OWNER:
+                case AnimatedLodAttachFaultKind.REUSED_OWNER:
+                    retired_owner = *live_owner;
+                    scene.remove(live_owner);
+                    owner = &retired_owner;
+                    if (mutation == AnimatedLodAttachFaultKind.REUSED_OWNER) {
+                        Node* reused = scene.add_node(name: "replacement_owner")!!;
+                        assert(reused.id.index == retired_owner.id.index);
+                        assert(reused.id.generation != retired_owner.id.generation);
+                    }
+                case AnimatedLodAttachFaultKind.RETIRED_GEOMETRY:
+                case AnimatedLodAttachFaultKind.REUSED_GEOMETRY:
+                    GeometryId retired = desc.parts[0].draw.geometry;
+                    assets.remove_geometry(retired);
+                    if (mutation == AnimatedLodAttachFaultKind.REUSED_GEOMETRY) {
+                        Geometry replacement = assets.geometry(fixture.geometries[1]).data;
+                        GeometryId reused = assets.add_geometry(&replacement)!!;
+                        assert(reused.index == retired.index && reused.generation != retired.generation);
+                    }
+                case AnimatedLodAttachFaultKind.SECOND_ATTACH:
+                case AnimatedLodAttachFaultKind.IMPOSTOR:
+                    model::attach_animated_lod(
+                        assets: &assets,
+                        scene: &scene,
+                        owner: owner,
+                        desc: desc,
+                    )!!;
+                    previous = scene.get(owner, LodGroup).state;
+                    previous_value = *previous;
+                case AnimatedLodAttachFaultKind.IMPORTED_GROUP:
+                    ModelTemplate* template = &assets.model(fixture.mixed).data;
+                    template.lod_groups = alloc::new_array(assets.allocator, ModelLodGroup, 1);
+                    ModelLodGroup* imported = &template.lod_groups[0];
+                    imported.node = template.meshes[1].node;
+                    imported.desc.parts = alloc::new_array(assets.allocator, LodPart, 1);
+                    imported.desc.parts[0] = desc.parts[1].draw;
+                    imported.desc.levels = alloc::new_array(assets.allocator, LodLevel, 1);
+                    imported.desc.levels[0] = { .part_count = 1 };
+                case AnimatedLodAttachFaultKind.CUSTOM_VERTEX:
+                    char[1] bytecode = { 1 };
+                    ShaderDesc shader_desc = {
+                        .fragment = bytecode[..],
+                        .vertex = { .shaded = bytecode[..], .depth = bytecode[..] },
+                    };
+                    ShaderId shader_id = assets.add_shader(&shader_desc)!!;
+                    desc.parts[desc.levels[1].first_part].draw.material =
+                      assets.add_material(material::custom(shader_id, {}))!!;
+                case AnimatedLodAttachFaultKind.ALLOCATION:
+                    allocator.reject = true;
+            }
+            usz outstanding = allocator.outstanding;
+            uint components = scene.count(LodGroup);
+            uint free_nodes = scene.world.entities.free_count;
+            fault observed;
+            if (mutation == AnimatedLodAttachFaultKind.IMPOSTOR) {
+                observed = @catch(scene.set_lod_impostor(
+                    assets: &assets,
+                    node: owner,
+                    impostor: {},
+                    min_screen_size: 0.01f,
+                ));
+            } else {
+                observed = @catch(model::attach_animated_lod(
+                    assets: &assets,
+                    scene: &scene,
+                    owner: owner,
+                    desc: desc,
+                ));
+            }
+            allocator.reject = false;
+            if (observed != expected[index]) {
+                io::printfn("attach row kind=%s mutation=%s", kind, mutation);
+                io::printfn("observed=%s expected=%s", observed, expected[index]);
+            }
+            assert(observed == expected[index]);
+            assert(allocator.outstanding == outstanding && scene.count(LodGroup) == components);
+            assert(scene.world.entities.free_count == free_nodes);
+            if (previous) {
+                assert(scene.get(owner, LodGroup).state == previous);
+                assert(mem::equals((char*)previous, (char*)&previous_value, LodGroupState::size));
+            } else {
+                assert(!scene.world.is_alive(owner.id) || !scene.has(owner, LodGroup));
+            }
+            if (mutation == AnimatedLodAttachFaultKind.ALLOCATION) assert(allocator.rejected == 1);
+        };
+    }
+}
+
+fn void test_animated_lod_removed_crowd_keeps_group_without_freed_source_aliases() @test {
+    @pool() {
+        AssetStore assets = animated_lod_store();
+        defer asset::destroy_asset_store(&assets);
+        PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
+        Scene scene = scene::create_scene(mem, { .max_nodes = 64 });
+        defer scene::destroy_scene(&scene);
+        Node* owner = animated_lod_contract_owner(
+            assets: &assets,
+            scene: &scene,
+            fixture: &fixture,
+            crowd: true,
+        );
+        model::attach_animated_lod(
+            assets: &assets,
+            scene: &scene,
+            owner: owner,
+            desc: animated_lod_desc(&assets, fixture.mixed),
+        )!!;
+        scene.update_world();
+        LodGroupState* state = scene.get(owner, LodGroup).state;
+        ulong identity = state.identity;
+        assert(state.count == 1 && state.transforms.len > 0 && state.colors.len > 0);
+        scene.remove_component(owner, AnimatedCrowd);
+        assert(scene.has(owner, LodGroup) && !scene.has(owner, AnimatedCrowd));
+        assert(scene.get(owner, LodGroup).state == state && state.identity == identity);
+        assert(state.count == 0 && state.transforms.len == 0 && state.colors.len == 0);
+        LodGroupState before = *state;
+        assert(!spatial::lod_group_is_live(
+            assets: &assets,
+            group: scene.get(owner, LodGroup),
+            scene: &scene,
+            node: owner,
+        ));
+        assert(mem::equals((char*)state, (char*)&before, LodGroupState::size));
+        scene.remove_component(owner, LodGroup);
+        assert(!scene.has(owner, LodGroup));
     };
 }

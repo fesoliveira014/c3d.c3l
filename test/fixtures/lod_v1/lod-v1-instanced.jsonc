@@ -1,0 +1,178 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": 0,
+      "parent": null,
+      "name": "legacy_instanced",
+      "local": {
+        "position": [
+          4,
+          2,
+          -8
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 9,
+      "visible": true,
+      "components": {
+        "c3d.LodGroup": {
+          "version": 1,
+          "value": {
+            "desc": {
+              "levels": [
+                {
+                  "first_part": 0,
+                  "part_count": 1,
+                  "min_screen_size": 0.200000003
+                },
+                {
+                  "first_part": 1,
+                  "part_count": 1,
+                  "min_screen_size": 0
+                }
+              ],
+              "parts": [
+                {
+                  "geometry": "lod_v1/box",
+                  "material": "lod_v1/material",
+                  "local": [
+                    1,
+                    0,
+                    0,
+                    0,
+                    0.125,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                    2,
+                    0,
+                    0,
+                    1
+                  ]
+                },
+                {
+                  "geometry": "lod_v1/box",
+                  "material": "lod_v1/material",
+                  "local": [
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1
+                  ]
+                }
+              ],
+              "has_bounds_override": false,
+              "local_bounds": {
+                "min": [
+                  0,
+                  0,
+                  0
+                ],
+                "max": [
+                  0,
+                  0,
+                  0
+                ]
+              }
+            },
+            "mode": "INSTANCED",
+            "capacity": 5,
+            "transforms": [
+              {
+                "position": [
+                  1,
+                  2,
+                  3
+                ],
+                "rotation": [
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "scale": [
+                  1,
+                  1,
+                  1
+                ]
+              }
+            ],
+            "colors": [
+              [
+                0.100000001,
+                0.200000003,
+                0.300000012,
+                1
+              ]
+            ],
+            "effects": {
+              "sway": {
+                "direction": [
+                  0,
+                  0,
+                  0
+                ],
+                "amplitude": 0,
+                "frequency": 0,
+                "lean": 0,
+                "wavelength": 0,
+                "variation": 0,
+                "weight": "HEIGHT"
+              },
+              "fade": {
+                "start": 0,
+                "end": 0
+              },
+              "cast_shadow": false,
+              "receive_shadow": true,
+              "trace": true
+            },
+            "has_impostor": false,
+            "impostor": {
+              "atlas": null,
+              "bounds": {
+                "center": [
+                  0,
+                  0,
+                  0
+                ],
+                "radius": 0
+              },
+              "frames_per_side": 0,
+              "cell_size": 0
+            },
+            "impostor_min_screen_size": 0
+          }
+        }
+      }
+    }
+  ]
+}

@@ -860,10 +860,16 @@ fn void test_animated_lod_native_quaternius_simultaneous_parent_levels_and_offsc
             }
             check_crowd_lod_native_view_parity(&actual.outputs[view].actual, &reference.outputs[view].actual);
             uint resolution = actual.outputs[view].actual.shadow_resolution;
-            mem::copy(actual.outputs[view].expected.shadow.ptr, actual.outputs[view].actual.shadow.ptr,
-                (sz)resolution * resolution * Vec4::size);
-            mem::copy(actual.outputs[view].expected.depth.ptr, actual.outputs[view].actual.depth.ptr,
-                CROWD_NATIVE_PIXELS * Vec4::size);
+            mem::copy(
+                dst: actual.outputs[view].expected.shadow.ptr,
+                src: actual.outputs[view].actual.shadow.ptr,
+                len: (sz)resolution * resolution * Vec4::size,
+            );
+            mem::copy(
+                dst: actual.outputs[view].expected.depth.ptr,
+                src: actual.outputs[view].actual.depth.ptr,
+                len: CROWD_NATIVE_PIXELS * Vec4::size,
+            );
         }
         uint level_shadow_differences;
         uint resolution = reference.outputs[0].actual.shadow_resolution;
@@ -898,10 +904,16 @@ fn void test_animated_lod_native_quaternius_simultaneous_parent_levels_and_offsc
                 assert(math::abs(value - reference_projection[component]) <= CROWD_NATIVE_DEPTH_TOLERANCE);
             }
             check_crowd_lod_native_view_parity(&actual.outputs[view].actual, &reference.outputs[view].actual);
-            check_crowd_native_image(actual.outputs[view].actual.depth, actual.outputs[view].expected.depth,
-                CROWD_NATIVE_DEPTH_TOLERANCE);
-            check_crowd_native_image(actual.outputs[view].expected.depth, actual.outputs[view].actual.depth,
-                CROWD_NATIVE_DEPTH_TOLERANCE);
+            check_crowd_native_image(
+                actual: actual.outputs[view].actual.depth,
+                expected: actual.outputs[view].expected.depth,
+                tolerance: CROWD_NATIVE_DEPTH_TOLERANCE,
+            );
+            check_crowd_native_image(
+                actual: actual.outputs[view].expected.depth,
+                expected: actual.outputs[view].actual.depth,
+                tolerance: CROWD_NATIVE_DEPTH_TOLERANCE,
+            );
             uint offscreen_shadow_differences;
             for (uint pixel = 0; pixel < resolution * resolution; pixel++) {
                 if (math::abs(actual.outputs[view].actual.shadow[pixel].x

@@ -80,6 +80,7 @@ fn PickHit[] pick(
 ) {
     bool[] group_live = alloc::new_array(allocator, bool, (sz)scene.nodes.len);
     defer alloc::free(allocator, group_live.ptr);
+
     usz capacity = scene.count(Mesh);
     scene.@each(LodGroup; Entity entity, LodGroup* group) {
         Node* node = scene.node(entity);
@@ -241,10 +242,9 @@ fn bool hit_entry(
     MaterialId material;
     if (entry.flags.lod_group) {
         LodGroup* group = scene.get(node, LodGroup);
-        if (!group || entry.instance_index >= group.state.count) return false;
+        if (entry.instance_index >= group.state.count) return false;
         LodGroupState* state = group.state;
         uint part = lod_base_representation(state, entry.part_index);
-        if (part >= state.desc.parts.len) return false;
         world = lod_part_world(
             node: node,
             state: state,

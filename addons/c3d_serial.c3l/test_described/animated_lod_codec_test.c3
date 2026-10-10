@@ -14,6 +14,11 @@ import c3d::scene;
 import c3d::serial @public;
 import std::math;
 
+const char[] LOD_V1_INSTANCED_BINARY @local = $embed("../../../test/fixtures/lod_v1/lod-v1-instanced.bin");
+const char[] LOD_V1_INSTANCED_TEXT @local = $embed("../../../test/fixtures/lod_v1/lod-v1-instanced.jsonc");
+const char[] LOD_V1_IMPOSTOR_BINARY @local = $embed("../../../test/fixtures/lod_v1/lod-v1-impostor.bin");
+const char[] LOD_V1_IMPOSTOR_TEXT @local = $embed("../../../test/fixtures/lod_v1/lod-v1-impostor.jsonc");
+
 fn AnimatedLodDesc codec_animated_lod_desc(AssetStore* assets, ModelId model_id) @local {
     ModelTemplate* template = &assets.model(model_id).data;
     uint count = (uint)template.meshes.len;
@@ -45,7 +50,8 @@ fn void assert_codec_animated_lod_owned(
     assert(c3d::same_id(restored.animated.source_model, source.animated.source_model));
     assert(restored.identity != source.identity && restored.descriptor_revision == 1);
     assert(restored.desc.levels.len == source.desc.levels.len && restored.desc.parts.len == source.desc.parts.len);
-    assert(restored.desc.parts.ptr != source.desc.parts.ptr && restored.animated.parts.ptr != source.animated.parts.ptr);
+    assert(restored.desc.parts.ptr != source.desc.parts.ptr
+      && restored.animated.parts.ptr != source.animated.parts.ptr);
     assert(restored.animated.joint_nodes.ptr != source.animated.joint_nodes.ptr);
     assert(restored.animated.joint_nodes == source.animated.joint_nodes);
     assert(restored.animated.defaults == source.animated.defaults);
@@ -58,7 +64,11 @@ fn void assert_codec_animated_lod_owned(
         assert(c3d::same_id(restored.desc.parts[index].material, source.desc.parts[index].material));
         assert(mem::equals(&restored.desc.parts[index].local, &source.desc.parts[index].local, Mat4::size));
     }
-    assert(!restored.bounds_revision && !restored.aggregate_revision);
+    assert(restored.bounds_revision == restored.revision && restored.aggregate_revision == 0);
+    if (restored.desc.has_bounds_override) {
+        assert(restored.object_bounds.min == restored.desc.local_bounds.min);
+        assert(restored.object_bounds.max == restored.desc.local_bounds.max);
+    }
 }
 
 fn void test_animated_lod_codec_ordinary_rebuilds_binding_and_restarts_animation() @test {
@@ -242,7 +252,6 @@ fn void test_animated_lod_codec_attachment_fault_keeps_pending_crowd_and_retries
         Transform* placements = crowd.placements.ptr;
         LodAuthoring source = {
             .animated = true,
-            .source_owner = owner.id,
             .animated_desc = codec_animated_lod_desc(&fixture.assets, model_id),
             .effects = { .cast_shadow = true, .receive_shadow = true },
         };
@@ -268,21 +277,6 @@ fn void test_animated_lod_codec_attachment_fault_keeps_pending_crowd_and_retries
     };
 }
 
-fn void? project_codec_lod_v1(void* component, void* value, WriteContext* context) @local {
-    LodGroupState* state = ((LodGroup*)component).state;
-    *(LodAuthoringV1*)value = {
-        .desc = state.desc,
-        .mode = state.mode,
-        .capacity = (uint)state.transforms.len,
-        .transforms = state.mode == INSTANCED ? state.transforms[:state.count] : (Transform[]) {},
-        .colors = state.mode == INSTANCED ? state.colors[:state.count] : (Vec4[]) {},
-        .effects = state.effects,
-        .has_impostor = state.has_impostor,
-        .impostor = state.impostor,
-        .impostor_min_screen_size = state.impostor_min_screen_size,
-    };
-}
-
 fn void test_animated_lod_codec_backward_rigid_v1_binary_and_text() @test {
     @pool() {
         Fixture fixture;
@@ -295,65 +289,51 @@ fn void test_animated_lod_codec_backward_rigid_v1_binary_and_text() @test {
             height: 1,
             depth: 1,
         );
-        GeometryId geometry_id = fixture.assets.add_geometry(&geometry, "legacy_box")!!;
-        MaterialId material_id = fixture.assets.add_material(material::basic({}), "legacy_material")!!;
-        Mat4 affine = matrix::IDENTITY4;
-        affine.m01 = 0.125f;
-        affine.m03 = 2;
-        LodPart[2] parts = {
-            { .geometry = geometry_id, .material = material_id, .local = affine },
-            { .geometry = geometry_id, .material = material_id, .local = matrix::IDENTITY4 },
-        };
-        LodLevel[2] levels = {
-            { .part_count = 1, .min_screen_size = 0.2f },
-            { .first_part = 1, .part_count = 1 },
-        };
-        Transform[1] placements = { maths::TRANSFORM_IDENTITY };
-        placements[0].position = { 1, 2, 3 };
-        Vec4[1] colors = { { 0.1f, 0.2f, 0.3f, 1 } };
-        Node* source = fixture.source.add_instanced_lod_group(
-            assets: &fixture.assets,
-            desc: { .parts = parts[..], .levels = levels[..] },
-            capacity: 5,
-            transforms: placements[..],
-            colors: colors[..],
-        )!!;
-        CodecEntry* entry = &serial::codecs[ecs::assigned_slot(LodGroup)!!];
-        CodecEntry saved = *entry;
-        DescribedBinding saved_binding = *entry.described;
-        char[] bytes;
-        String text;
-        {
-            defer {
-                *saved.described = saved_binding;
-                *entry = saved;
-            }
-            entry.codec.version = 1;
-            entry.described.type = serial::described_type(LodAuthoringV1)!!;
-            entry.described.codec.project = &project_codec_lod_v1;
-            bytes = serial::write_subtree(
-                allocator: tmem,
-                scene: &fixture.source,
-                assets: &fixture.assets,
-                root: source,
-            )!!;
-            text = serial::write_subtree_text(
-                allocator: tmem,
-                scene: &fixture.source,
-                assets: &fixture.assets,
-                root: source,
-            )!!;
-        }
+        GeometryId geometry_id = fixture.assets.add_geometry(&geometry, "lod_v1/box")!!;
+        MaterialId material_id = fixture.assets.add_material(material::basic({}), "lod_v1/material")!!;
+        char[8 * 16 * 4] pixels;
+        pixels[..] = 255;
+        TextureId atlas = fixture.assets.add_texture({
+            .width = 8, .height = 16, .format = RGBA8_UNORM, .layers = 1, .mip_levels = 1,
+        }, pixels[..], "lod_v1/atlas")!!;
         for (uint encoding = 0; encoding < 2; encoding++) {
             Node* restored = encoding == 0
-              ? serial::read_subtree(&fixture.destination, &fixture.assets, bytes)!!
-              : serial::read_subtree_text(&fixture.destination, &fixture.assets, text)!!;
+              ? serial::read_subtree(&fixture.destination, &fixture.assets, LOD_V1_INSTANCED_BINARY)!!
+              : serial::read_subtree_text(
+                    scene: &fixture.destination,
+                    assets: &fixture.assets,
+                    text: (String)LOD_V1_INSTANCED_TEXT,
+                )!!;
             LodGroupState* loaded = fixture.destination.get(restored, LodGroup).state;
             assert(!loaded.animated && loaded.mode == INSTANCED && loaded.count == 1);
             assert(loaded.transforms.len == 5 && loaded.desc.levels.len == 2 && loaded.desc.parts.len == 2);
             assert(loaded.desc.parts[0].local.m01 == 0.125f && loaded.desc.parts[0].local.m03 == 2);
-            assert(loaded.transforms[0].position == placements[0].position && loaded.colors[0] == colors[0]);
+            assert(loaded.transforms[0].position == (Vec3){ 1, 2, 3 });
+            assert(loaded.colors[0] == (Vec4){ 0.1f, 0.2f, 0.3f, 1 });
             assert(loaded.transforms[4].scale == (Vec3){ 1, 1, 1 } && loaded.colors[4] == (Vec4){ 1, 1, 1, 1 });
+            assert(c3d::same_id(loaded.desc.parts[0].geometry, geometry_id));
+            assert(c3d::same_id(loaded.desc.parts[1].material, material_id));
+            assert(restored.local.position == (Vec3){ 4, 2, -8 } && restored.layers == 9);
+            assert(!loaded.has_impostor && !loaded.effects.cast_shadow && loaded.effects.receive_shadow);
+            assert(!loaded.bounds_revision && !loaded.aggregate_revision);
+            fixture.destination.remove(restored);
+
+            restored = encoding == 0
+              ? serial::read_subtree(&fixture.destination, &fixture.assets, LOD_V1_IMPOSTOR_BINARY)!!
+              : serial::read_subtree_text(
+                    scene: &fixture.destination,
+                    assets: &fixture.assets,
+                    text: (String)LOD_V1_IMPOSTOR_TEXT,
+                )!!;
+            loaded = fixture.destination.get(restored, LodGroup).state;
+            assert(!loaded.animated && loaded.mode == SINGLE && loaded.count == 1);
+            assert(loaded.transforms.len == 0 && loaded.desc.parts.len == 2);
+            assert(loaded.has_impostor && loaded.impostor_min_screen_size == 0.1f);
+            assert(c3d::same_id(loaded.impostor.atlas, atlas));
+            assert(loaded.impostor.frames_per_side == 2 && loaded.impostor.cell_size == 4);
+            assert(loaded.impostor.bounds.center == (Vec3){} && loaded.impostor.bounds.radius == 4);
+            assert(restored.local.position == (Vec3){ -4, 1, 6 });
+            assert(loaded.effects.cast_shadow && !loaded.effects.receive_shadow && !loaded.effects.trace);
             assert(!loaded.bounds_revision && !loaded.aggregate_revision);
             fixture.destination.remove(restored);
         }
@@ -371,5 +351,5 @@ fn void test_animated_lod_codec_layout_fingerprints() @test {
     assert(serial::description_layout(describe::get(ModelSkin)!!)!! == 0x03ef0a55ec3ccd1c);
     assert(serial::description_layout(describe::get(AnimatedLodPart)!!)!! == 0x67066c59b87af8fe);
     assert(serial::description_layout(describe::get(AnimatedLodDesc)!!)!! == 0xa65aa93a04287bbc);
-    assert(serial::description_layout(describe::get(LodAuthoring)!!)!! == 0xa2d20e5979acddbb);
+    assert(serial::description_layout(describe::get(LodAuthoring)!!)!! == 0x8ed85fe0b352d50f);
 }

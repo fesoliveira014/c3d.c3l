@@ -331,7 +331,7 @@ fn void test_animated_lod_native_independent_view_skip_cut_abort_and_compatible_
         fixture: &fixture,
         pair: &pair,
         phase_offset: 0.04f,
-        placement_offset: 0.12f,
+        placement_offset: 0.2f,
     );
     capture_animated_lod_native_views(
         fixture: &fixture,
@@ -347,12 +347,12 @@ fn void test_animated_lod_native_independent_view_skip_cut_abort_and_compatible_
         rejection: 0,
         still: false,
     );
-    assert(first_motion > CROWD_NATIVE_VELOCITY_TOLERANCE);
+    assert(first_motion > 10 * CROWD_NATIVE_VELOCITY_TOLERANCE);
     set_animated_lod_native_motion(
         fixture: &fixture,
         pair: &pair,
         phase_offset: 0.08f,
-        placement_offset: 0.24f,
+        placement_offset: 0.4f,
     );
     capture_animated_lod_native_views(
         fixture: &fixture,
@@ -373,6 +373,7 @@ fn void test_animated_lod_native_independent_view_skip_cut_abort_and_compatible_
         rejection: 0,
         still: false,
     );
+    assert(resumed_motion > 10 * CROWD_NATIVE_VELOCITY_TOLERANCE);
     assert(resumed_motion > first_motion + CROWD_NATIVE_VELOCITY_TOLERANCE);
     render::reset_view_history(&fixture.renderer, outputs[0].view)!!;
     render::reset_view_history(&fixture.renderer, outputs[1].view)!!;
@@ -404,7 +405,7 @@ fn void test_animated_lod_native_independent_view_skip_cut_abort_and_compatible_
         fixture: &fixture,
         pair: &pair,
         phase_offset: 0.12f,
-        placement_offset: 0.36f,
+        placement_offset: 0.6f,
     );
     capture_animated_lod_native_views(
         fixture: &fixture,
@@ -601,6 +602,7 @@ fn void test_animated_lod_native_real_morph_topology_replacement_shrink_and_regr
         replacement.indices = indices;
         fixture.assets.replace_geometry(reduced, &replacement)!!;
     };
+    model::sync_animated_lod(&fixture.assets, &pair.scene, pair.crowd)!!;
     animated_lod_native_temporal_frame(
         fixture: &fixture,
         pair: &pair,
@@ -815,6 +817,7 @@ fn void test_animated_lod_native_cull_overflow_falls_back_whole_group_with_sourc
             check_crowd_lod_native_view_parity(&actual.actual, &reference.actual);
         }
     }
-    io::printn("Cull arena overflow: complete level-zero fallback, stable source parity, parent shadows; another group fits");
+    io::printn("Cull arena overflow: complete level-zero fallback, stable source parity, "
+      "parent shadows; another group fits");
     check_crowd_native_validation(renderer);
 }

@@ -73,6 +73,7 @@ struct LodSelection @private {
     float bias;
     gpu::GpuAddress[] parts;
     uint[] part_unmirrored;
+    bool[][] part_mirrored;
     bool main_visible;
     bool impostor;
     Vec3 previous_view_origin;
@@ -186,13 +187,13 @@ fn LodSelection[]? prepare_lod_view(
     usz count;
     scene.@each(LodGroup; Entity entity, LodGroup* group) {
         Node* node = scene.node(entity);
-        bool source_live = true;
-        if (group.state.animated) {
-            if (catch excuse = model::sync_animated_lod(renderer.assets, scene, node)) {
-                renderer.stats.dangling_refs++;
-                source_live = false;
-            }
-        }
+        bool source_live = spatial::lod_group_is_live(
+            assets: renderer.assets,
+            group: group,
+            scene: scene,
+            node: node,
+        );
+        if (!source_live) renderer.stats.dangling_refs++;
 
         if (source_live && node.visible_effective && group.state.count) {
             if (!spatial::lod_group_is_live(renderer.assets, group)) {

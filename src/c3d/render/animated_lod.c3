@@ -19,12 +19,21 @@ struct AnimatedLodKey @private {
     uint padding;
 }
 
+<*
+ Hash the complete initialized deformation identity.
+*>
 fn uint AnimatedLodKey.hash(self) => fnv32a::hash(@as_char_view(self));
 
-fn bool AnimatedLodKey.equals(self, AnimatedLodKey other) {
+<*
+ Compare retained deformation source and logical part.
+ @pure
+*>
+fn bool AnimatedLodKey.equals(self, AnimatedLodKey other) @operator(==) {
     return self.scene == other.scene && c3d::same_id(self.owner, other.owner)
       && self.identity == other.identity && self.part == other.part;
 }
+
+$assert AnimatedLodKey::size == 32;
 
 fn AnimatedLodKey animated_lod_key(MeshCandidate* candidate, uint part) @private {
     return {
@@ -84,8 +93,7 @@ fn Mat4 animated_lod_part_local(MeshCandidate* candidate, uint source = 0) @priv
     Mat4 authored = candidate.lod.state.desc.parts[candidate.lod_part].local;
     if (candidate.crowd) {
         AnimatedCrowd* crowd = candidate.crowd;
-        (void)crowd.part_transform(source, part.mesh_index);
-        return crowd.scratch_worlds[part.template_node].mul(authored);
+        return crowd.part_local_transform(source, part.mesh_index).mul(authored);
     }
 
     Vec4 position = candidate.node.world.apply({ 0, 0, 0, 1 });
@@ -199,6 +207,7 @@ fn gpu::GpuAddress? resolve_animated_lod_parts(Renderer* renderer, MeshCandidate
             color: { 1, 1, 1, 1 },
             seed: 0,
         );
+        records[source].normal_1.w = candidate.lod.part_mirrored[candidate.lod_part][source] ? 1 : 0;
     }
 
     renderer.deformation.animated_parts.set(key, span.address);
@@ -220,9 +229,7 @@ fn gpu::GpuAddress? resolve_animated_lod_indices(Renderer* renderer, MeshCandida
     uint written;
 
     for (uint source = 0; source < candidate.crowd.count; source++) {
-        Mat4 local = candidate.crowd.placements[source].to_mat4()
-          .mul(animated_lod_part_local(candidate, source));
-        if ((local.determinant() < 0) != candidate.mirrored) continue;
+        if (candidate.lod.part_mirrored[candidate.lod_part][source] != candidate.mirrored) continue;
 
         indices[written++] = source;
     }

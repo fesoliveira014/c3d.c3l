@@ -438,7 +438,14 @@ fn void commit_animated_lod_pose(
 
         owner.instance_count = count;
         owner.crowd_identity = 0;
-        if (candidate.crowd) capture_crowd_sources(allocator, assets, owner, candidate.crowd);
+        if (candidate.crowd) {
+            capture_crowd_sources(
+                allocator: allocator,
+                assets: assets,
+                pose: owner,
+                crowd: candidate.crowd,
+            );
+        }
         history.seen = serial;
     }
 
@@ -469,7 +476,14 @@ fn void commit_animated_lod_pose(
     pose.instance_revision = binding.source_revision;
     pose.sway = state.effects.sway;
     pose.crowd_identity = 0;
-    if (candidate.crowd) capture_crowd_sources(allocator, assets, pose, candidate.crowd);
+    if (candidate.crowd) {
+        capture_crowd_sources(
+            allocator: allocator,
+            assets: assets,
+            pose: pose,
+            crowd: candidate.crowd,
+        );
+    }
 
     pose.morphed = selected.weight_count > 0;
     if (pose.morphed && pose.morphs.len != capacity) {

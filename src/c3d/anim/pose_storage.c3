@@ -2,7 +2,7 @@ module c3d::anim;
 
 import c3d;
 import c3d::asset;
-import c3d::scene;
+import c3d::scene @public;
 import std::math;
 
 <* Owns evaluated pose and scratch arrays, borrowing immutable baselines. *>
@@ -177,4 +177,7 @@ fn void publish_animator_pose(Animator* animator, ModelInstance* instance) @priv
         Mesh* mesh = animator.scene.get(node, Mesh);
         if (mesh) mesh.morph_weights[..] = values[..];
     }
+
+    LodGroup* group = animator.scene.get(animator.instance_root, LodGroup);
+    if (group && group.state.animated) scene::publish_animated_lod_source(group.state);
 }

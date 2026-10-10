@@ -96,7 +96,6 @@ struct AnimatedLodBinding {
     Mat4[] inverse_bind;
 }
 
-
 <* Scene-owned group data; only placement elements are directly writable. *>
 struct LodGroupState {
     LodDesc desc;
@@ -196,6 +195,7 @@ fn Node*? Scene.add_instanced_lod_group(
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
  @require self.has(node, LodGroup)
  @require self.get(node, LodGroup).state.mode == LodMode.INSTANCED
+ @require !self.get(node, LodGroup).state.animated
 *>
 fn void? Scene.set_lod_instances(
     &self,
@@ -204,7 +204,6 @@ fn void? Scene.set_lod_instances(
     Vec4[] colors = {},
 ) {
     LodGroupState* state = self.get(node, LodGroup).state;
-    if (state.animated) return c3d::INVALID_ARGUMENT~;
     if (transforms.len > state.transforms.len) return c3d::CAPACITY_EXCEEDED~;
     validate_lod_instances(transforms, colors)!;
     fill_lod_instances(state, transforms, colors);
@@ -229,13 +228,13 @@ fn void Scene.publish_lod_instances(&self, Node* node, uint count) {
 <*
  Change live count, initializing newly exposed placements.
  @param [&in] node : "Carries an instanced group."
- @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
+ @return? c3d::CAPACITY_EXCEEDED
  @require self.has(node, LodGroup)
  @require self.get(node, LodGroup).state.mode == LodMode.INSTANCED
+ @require !self.get(node, LodGroup).state.animated
 *>
 fn void? Scene.resize_lod_instances(&self, Node* node, uint count) {
     LodGroupState* state = self.get(node, LodGroup).state;
-    if (state.animated) return c3d::INVALID_ARGUMENT~;
     if (count > state.transforms.len) return c3d::CAPACITY_EXCEEDED~;
     for (uint index = state.count; index < count; index++) {
         state.transforms[index] = maths::TRANSFORM_IDENTITY;
@@ -612,4 +611,33 @@ fn AnimatedLodBinding* carve_animated_lod(
         .inverse_bind = inverse_bind,
     };
     return bindings.ptr;
+}
+
+fn void publish_crowd_lod_owner(Scene* scene, Node* owner, AnimatedCrowd* crowd) @private {
+    LodGroup* group = scene.get(owner, LodGroup);
+    if (!group || !group.state.animated) return;
+
+    publish_crowd_lod_source(scene, group.state, crowd);
+}
+
+fn void publish_crowd_lod_source(Scene* scene, LodGroupState* state, AnimatedCrowd* crowd) @private {
+    state.transforms = crowd.placements;
+    state.colors = crowd.colors;
+    uint count = crowd.is_prepared() ? crowd.count : 0;
+    ulong epoch = crowd.playback ? crowd.playback.identity : 1;
+    uint revision = crowd.parts.len ? scene.world.get(crowd.parts[0].batch, InstancedMesh).revision : 0;
+    bool changed = state.count != count || state.instance_epoch != epoch
+      || state.animated.source_revision != revision;
+    state.animated.source_revision = revision;
+    state.count = count;
+    state.instance_epoch = epoch;
+
+    if (crowd.playback) {
+        foreach (index, slot : crowd.playback.slots) {
+            changed |= state.slot_generations[index] != slot.generation;
+            state.slot_generations[index] = slot.generation;
+        }
+    }
+
+    if (changed) publish_animated_lod_source(state);
 }
