@@ -616,6 +616,7 @@ fn AnimatedLodBinding* carve_animated_lod(
 fn void publish_crowd_lod_owner(Scene* scene, Node* owner, AnimatedCrowd* crowd) @private {
     LodGroup* group = scene.get(owner, LodGroup);
     if (!group || !group.state.animated) return;
+    if (group.state.transforms.ptr != crowd.placements.ptr) return;
 
     publish_crowd_lod_source(scene, group.state, crowd);
 }

@@ -187,7 +187,7 @@ fn LodSelection[]? prepare_lod_view(
     usz count;
     scene.@each(LodGroup; Entity entity, LodGroup* group) {
         Node* node = scene.node(entity);
-        bool source_live = spatial::lod_group_is_live(
+        bool source_live = !group.state.animated || spatial::lod_group_is_live(
             assets: renderer.assets,
             group: group,
             scene: scene,
