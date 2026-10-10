@@ -10,6 +10,7 @@ import c3d::render;
 import std::hash::sha256;
 import std::io::file;
 import std::io::path;
+import std::math;
 
 <* Source mesh primitives in the immutable corpus. *>
 const uint LOD_PRIMITIVES = 2;
@@ -162,7 +163,7 @@ fn void? verify_source(ModelDocument* document) @private {
         Skeleton* skeleton = source_skeleton(document, skin);
         if (mesh.node != primitive + 2 || source.topology != Topology.TRIANGLES
           || source.positions.len != SOURCE_VERTICES[primitive]
-          || source.indices.len != SOURCE_TRIANGLES[primitive] * TRIANGLE_CORNERS
+          || source.indices.len != (usz)SOURCE_TRIANGLES[primitive] * TRIANGLE_CORNERS
           || source.normals.len != source.positions.len || source.uv0.len != source.positions.len
           || source.uv1.len != source.positions.len || source.joints.len != source.positions.len
           || source.weights.len != source.positions.len || source.tangents.len || source.colors.len
@@ -191,7 +192,7 @@ fn void? read_vec3_stream(
 ) @private {
     foreach (vertex, &value : destination) {
         for (uint component = 0; component < 3; component++) {
-            value[component] = reader.f32(source[vertex_map[vertex]][component])!;
+            (*value)[component] = reader.f32(source[vertex_map[vertex]][component])!;
         }
     }
 }
@@ -204,7 +205,7 @@ fn void? read_vec2_stream(
 ) @private {
     foreach (vertex, &value : destination) {
         for (uint component = 0; component < 2; component++) {
-            value[component] = reader.f32(source[vertex_map[vertex]][component])!;
+            (*value)[component] = reader.f32(source[vertex_map[vertex]][component])!;
         }
     }
 }
@@ -217,7 +218,7 @@ fn void? read_weight_stream(
 ) @private {
     foreach (vertex, &value : destination) {
         for (uint component = 0; component < 4; component++) {
-            value[component] = reader.f32(source[vertex_map[vertex]][component])!;
+            (*value)[component] = reader.f32(source[vertex_map[vertex]][component])!;
         }
     }
 }
@@ -322,8 +323,8 @@ fn Geometry? decode_fixture(
             vertex_map: vertices,
         )!;
         foreach (vertex, &joints : result.joints) for (uint component = 0; component < 4; component++) {
-            joints[component] = reader.u16()!;
-            if (joints[component] != source.joints[vertices[vertex]][component]) return c3d::ASSET_FORMAT_ERROR~;
+            (*joints)[component] = reader.u16()!;
+            if ((*joints)[component] != source.joints[vertices[vertex]][component]) return c3d::ASSET_FORMAT_ERROR~;
         }
         read_weight_stream(
             reader: &reader,
