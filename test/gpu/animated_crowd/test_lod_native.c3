@@ -11,6 +11,7 @@ import c3d::model;
 import c3d::render @public;
 import c3d::scene;
 import c3d::shader;
+import c3d::spatial;
 import c3d::test::animated_lod_fixtures;
 import gpu;
 import std::io;
@@ -36,6 +37,7 @@ struct CrowdLodNativeSources @private {
 struct CrowdLodNativeViews @private {
     CrowdNativeOutput[2] outputs;
     gpu::MappedGpuSpan[2] histories;
+    Mat4[2] shadow_inverse;
 }
 
 fn void fill_crowd_lod_native_descriptor(
@@ -91,6 +93,7 @@ fn void? attach_crowd_lod_native_sources(
     CrowdLodNativeSources* sources,
     bool crowd,
     ClipId clip,
+    float middle_threshold = 0.001f,
 ) @private {
     sources.crowd = crowd;
     CrowdLodNativeDescriptor descriptor;
@@ -101,6 +104,7 @@ fn void? attach_crowd_lod_native_sources(
             descriptor: &descriptor,
             material: {},
         );
+        descriptor.levels[1].min_screen_size = middle_threshold;
         AnimatedLodDesc desc = crowd_lod_native_desc(&descriptor);
         desc.has_bounds_override = false;
         model::attach_animated_lod(
@@ -132,6 +136,7 @@ fn void? attach_crowd_lod_native_sources(
             descriptor: &descriptor,
             material: {},
         );
+        descriptor.levels[1].min_screen_size = middle_threshold;
         model::attach_animated_lod(
             assets: &fixture.assets,
             scene: &pair.scene,
@@ -343,6 +348,51 @@ fn void test_animated_lod_native_quaternius_crowd_and_ordinary_forced_levels_mat
     }
 }
 
+fn void? capture_crowd_lod_native_threshold_pair(
+    Fixture* fixture,
+    CrowdNativePair* pair,
+    CrowdNativeOutput* actual,
+    CrowdNativeOutput* reference,
+) @private {
+    Renderer* renderer = &fixture.renderer;
+    for (uint frame = 0; frame < CROWD_NATIVE_WARMUP; frame++) {
+        renderer.begin_frame({ .time = 0.37, .delta = 0 })!;
+        defer catch render::abort_frame(renderer);
+        foreach (index, output : (CrowdNativeOutput*[2]){ actual, reference }) {
+            pair.crowd.visible = index == 0;
+            pair.references.visible = index != 0;
+            pair.scene.update_world();
+            renderer.render_view(&pair.scene, pair.camera, output.view)!;
+            ViewRecord* record = renderer.views.get(output.view);
+            record_crowd_native_target(
+                fixture: fixture,
+                probe: &output.probe,
+                target: &record.depth,
+                mapped: output.probe.depth,
+            )!;
+            record_crowd_native_target(
+                fixture: fixture,
+                probe: &output.probe,
+                target: &record.velocity,
+                mapped: output.probe.velocity,
+            )!;
+            output.actual.velocity_format = record.velocity.format;
+            renderer.finish_view(output.view)!;
+        }
+        renderer.end_frame()!;
+    }
+    render::wait_frames(renderer)!;
+    foreach (output : (CrowdNativeOutput*[2]){ actual, reference }) {
+        gpu::invalidate_mapped_span(&renderer.device, output.probe.depth.span)!;
+        gpu::invalidate_mapped_span(&renderer.device, output.probe.velocity.span)!;
+        mem::copy(output.actual.depth.ptr, output.probe.depth.bytes.ptr, CROWD_NATIVE_PIXELS * Vec4::size);
+        mem::copy(output.actual.velocity.ptr, output.probe.velocity.bytes.ptr, CROWD_NATIVE_PIXELS * Vec4::size);
+        renderer.read_render_target(output.target, ((char*)output.actual.color.ptr)
+            [:output.actual.color.len * Vec4::size])!;
+        output.actual.stats = renderer.stats;
+    }
+}
+
 fn void test_animated_lod_native_quaternius_threshold_traversal_retains_hysteresis() @test {
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
@@ -352,7 +402,7 @@ fn void test_animated_lod_native_quaternius_threshold_traversal_retains_hysteres
     ClipId walk = crowd_native_clip_named(&fixture, corpus.model, "Walk_Loop")!!;
     float duration = fixture.assets.clip(walk).data.duration;
     Transform[CROWD_NATIVE_INSTANCES] placements = crowd_native_real_placements();
-    float[8] screen_sizes = { 1.2f, 0.99f, 1.05f, 1.11f, 0.00099f, 0.00105f, 0.00111f, 1.2f };
+    float[8] screen_sizes = { 1.2f, 0.99f, 1.05f, 1.11f, 0.495f, 0.525f, 0.555f, 1.2f };
     uint[8] expected_levels = { 0, 1, 1, 0, 2, 2, 1, 0 };
     Vec3 scaled_half_extent = { 1.5f * 0.9f, 1.4f * 1.1f, 1.5f * 0.8f };
     float unbiassed_size = 2 * scaled_half_extent.length() / 6;
@@ -379,6 +429,7 @@ fn void test_animated_lod_native_quaternius_threshold_traversal_retains_hysteres
             sources: &sources,
             crowd: crowd,
             clip: walk,
+            middle_threshold: 0.5f,
         )!!;
         set_crowd_lod_native_phase(
             fixture: &fixture,
@@ -395,37 +446,25 @@ fn void test_animated_lod_native_quaternius_threshold_traversal_retains_hysteres
         ViewDesc reference_desc = render::texture_view_desc(reference.target);
         reference_desc.post.motion_blur = true;
         render::configure_view(&fixture.renderer, reference.view, reference_desc)!!;
+        ViewDesc actual_desc = render::texture_view_desc(actual.target);
+        actual_desc.post.motion_blur = true;
+        render::configure_view(&fixture.renderer, actual.view, actual_desc)!!;
         foreach (step, size : screen_sizes) {
             uint level = expected_levels[step];
-            ViewDesc desc = render::texture_view_desc(actual.target);
-            desc.post.motion_blur = true;
-            desc.lod_bias = math::log2(size / unbiassed_size);
-            render::configure_view(&fixture.renderer, actual.view, desc)!!;
+            pair.scene.get(pair.camera, Camera).ortho_height = 6 * unbiassed_size / size;
             set_crowd_lod_native_reference_level(
                 fixture: &fixture,
                 pair: &pair,
                 corpus: &corpus,
                 level: level,
             );
-            capture_crowd_native(
+            capture_crowd_lod_native_threshold_pair(
                 fixture: &fixture,
                 pair: &pair,
-                probe: &actual.probe,
-                output: actual.target,
-                view: actual.view,
-                crowd_visible: true,
-                images: &actual.actual,
+                actual: &actual,
+                reference: &reference,
             )!!;
             check_crowd_lod_native_counts(&actual.actual.stats, level, crowd);
-            capture_crowd_native(
-                fixture: &fixture,
-                pair: &pair,
-                probe: &reference.probe,
-                output: reference.target,
-                view: reference.view,
-                crowd_visible: false,
-                images: &reference.actual,
-            )!!;
             check_crowd_native_parity(&actual.actual, &reference.actual, false);
             io::printfn("threshold size=%s expected level=%s", size, level);
             check_crowd_lod_native_sources_remain_base(
@@ -576,6 +615,36 @@ fn void? read_crowd_lod_native_output(Fixture* fixture, CrowdNativeOutput* outpu
     images.stats = renderer.stats;
 }
 
+fn void match_crowd_lod_native_shadow_bounds(
+    Fixture* fixture,
+    CrowdNativePair* pair,
+    CrowdLodNativeSources* sources,
+) @private {
+    Aabb aggregate;
+    if (sources.crowd) {
+        LodGroup* group = pair.scene.get(pair.crowd, LodGroup);
+        model::sync_animated_lod(&fixture.assets, &pair.scene, pair.crowd)!!;
+        aggregate = spatial::lod_world_bounds(
+            assets: &fixture.assets,
+            node: pair.crowd,
+            group: group,
+            scene: &pair.scene,
+        );
+    }
+    foreach (root : pair.ordinary) {
+        ModelInstance* instance = pair.scene.get(root, ModelInstance);
+        foreach (template_node : instance.mesh_nodes) {
+            Node* mesh_node = instance.present_node(template_node);
+            Mesh* mesh = pair.scene.get(mesh_node, Mesh);
+            Mat4 mesh_local = maths::inverse_affine(root.world).mul(mesh_node.world);
+            mesh.has_bounds_override = true;
+            mesh.local_bounds = sources.crowd
+                ? maths::aabb_transform(aggregate, maths::inverse_affine(mesh_node.world))
+                : maths::aabb_transform(CROWD_LOD_NATIVE_BOUNDS, maths::inverse_affine(mesh_local));
+        }
+    }
+}
+
 fn void? capture_crowd_lod_native_simultaneous(
     Fixture* fixture,
     CrowdNativePair* pair,
@@ -585,6 +654,7 @@ fn void? capture_crowd_lod_native_simultaneous(
     CrowdLodNativeViews* reference,
 ) @private {
     Renderer* renderer = &fixture.renderer;
+    match_crowd_lod_native_shadow_bounds(fixture, pair, sources);
     for (uint frame = 0; frame < CROWD_NATIVE_WARMUP; frame++) {
         renderer.begin_frame({ .time = 0.37, .delta = 0 })!;
         defer catch render::abort_frame(renderer);
@@ -596,6 +666,7 @@ fn void? capture_crowd_lod_native_simultaneous(
                 output: output,
                 actual: true,
             )!;
+            actual.shadow_inverse[index] = renderer.shadow_frusta[0].inv_view_proj;
             if (sources.crowd) {
                 record_crowd_lod_native_history(
                     fixture: fixture,
@@ -618,8 +689,9 @@ fn void? capture_crowd_lod_native_simultaneous(
                 output: &reference.outputs[index],
                 actual: false,
             )!;
+            reference.shadow_inverse[index] = renderer.shadow_frusta[0].inv_view_proj;
         }
-        if (sources.crowd) assert(renderer.deformation.crowd_palettes.len() == 1);
+        if (sources.crowd) assert(renderer.deformation.animated_palettes.len() == 1);
         assert(renderer.stats.shadow_sets_recorded == 4 && renderer.stats.shadow_sets_shared == 0);
         assert(renderer.stats.shadow_layers == 4 && renderer.stats.shadow_requests_dropped == 0);
         renderer.end_frame()!;
@@ -693,6 +765,7 @@ fn void check_crowd_lod_native_view_parity(CrowdNativeImages* actual, CrowdNativ
         if (reference.shadow[pixel].x > 0) reference_covered++;
     }
     assert(actual_covered > 0 && reference_covered > 0);
+    io::printfn("shadow coverage=%s/%s", actual_covered, reference_covered);
     check_crowd_native_image(
         actual: actual.shadow,
         expected: reference.shadow,
@@ -780,6 +853,11 @@ fn void test_animated_lod_native_quaternius_simultaneous_parent_levels_and_offsc
             reference: &reference,
         )!!;
         for (uint view = 0; view < 2; view++) {
+            float[] actual_projection = ((float*)&actual.shadow_inverse[view])[:Mat4::size / float::size];
+            float[] reference_projection = ((float*)&reference.shadow_inverse[view])[:Mat4::size / float::size];
+            foreach (component, value : actual_projection) {
+                assert(math::abs(value - reference_projection[component]) <= CROWD_NATIVE_DEPTH_TOLERANCE);
+            }
             check_crowd_lod_native_view_parity(&actual.outputs[view].actual, &reference.outputs[view].actual);
             uint resolution = actual.outputs[view].actual.shadow_resolution;
             mem::copy(actual.outputs[view].expected.shadow.ptr, actual.outputs[view].actual.shadow.ptr,
@@ -814,6 +892,11 @@ fn void test_animated_lod_native_quaternius_simultaneous_parent_levels_and_offsc
             reference: &reference,
         )!!;
         for (uint view = 0; view < 2; view++) {
+            float[] actual_projection = ((float*)&actual.shadow_inverse[view])[:Mat4::size / float::size];
+            float[] reference_projection = ((float*)&reference.shadow_inverse[view])[:Mat4::size / float::size];
+            foreach (component, value : actual_projection) {
+                assert(math::abs(value - reference_projection[component]) <= CROWD_NATIVE_DEPTH_TOLERANCE);
+            }
             check_crowd_lod_native_view_parity(&actual.outputs[view].actual, &reference.outputs[view].actual);
             check_crowd_native_image(actual.outputs[view].actual.depth, actual.outputs[view].expected.depth,
                 CROWD_NATIVE_DEPTH_TOLERANCE);

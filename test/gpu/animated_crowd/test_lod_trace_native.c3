@@ -25,6 +25,7 @@ const usz LOD_TRACE_EDGE_BUDGET @private = LOD_TRACE_PIXELS / 50;
 const float LOD_TRACE_DEPTH_TOLERANCE @private = 1e-3f;
 const float LOD_TRACE_NORMAL_AGREEMENT @private = 0.999f;
 const float LOD_TRACE_CAMERA_DISTANCE @private = 1.4f;
+const float LOD_TRACE_CHARACTER_DISTANCE @private = 1.6f;
 
 struct LodTraceDepthRoot @private {
     Mat4f inv_view_proj;
@@ -720,9 +721,9 @@ fn void run_lod_trace_real(TraceKind kind, bool quaternius) @private {
     };
     harness.scene.get(owner, LodGroup).state.effects.trace = true;
     ViewDesc view = fixture.renderer.views.get(fixture.view).desc;
-    view.lod.bias = 16;
+    view.lod_bias = 16;
     render::configure_view(&fixture.renderer, fixture.view, view)!!;
-    harness.camera.local.position = quaternius ? (Vec3){ 0, 1.1f, 3 } : (Vec3){ 0, 0, 3 };
+    harness.camera.local.position = quaternius ? (Vec3){ 0, 1.1f, LOD_TRACE_CHARACTER_DISTANCE } : (Vec3){ 0, 0, 3 };
     render_lod_trace(&fixture, &harness, kind)!!;
     assert_lod_trace_agreement(harness.results, quaternius ? "Quaternius base trace" : "AnimatedMorphCube base trace", false);
     Renderer* renderer = &fixture.renderer;

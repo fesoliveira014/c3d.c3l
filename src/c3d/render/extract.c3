@@ -575,7 +575,8 @@ fn MeshCandidate[] extract_shadow_candidates(
 
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         Node* node = scene.node(entity);
-        if (node.visible_effective && mesh.cast_shadow) {
+
+        if (!animated_lod_owns_source(scene, node) && node.visible_effective && mesh.cast_shadow) {
             SkinBinding* skin = scene.get(node, SkinBinding);
             if (!spatial::mesh_is_live(assets, mesh, skin)) {
                 counts.dangling++;
@@ -605,7 +606,8 @@ fn MeshCandidate[] extract_shadow_candidates(
     };
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
         Node* node = scene.node(entity);
-        if (batch.count && node.visible_effective && batch.cast_shadow) {
+
+        if (!animated_lod_owns_source(scene, node) && batch.count && node.visible_effective && batch.cast_shadow) {
             if (!batch_is_drawable(assets, batch)) {
                 counts.dangling++;
             } else if (assets.material(batch.material).data.common.alpha_mode != AlphaMode.BLEND) {
