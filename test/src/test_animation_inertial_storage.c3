@@ -113,7 +113,7 @@ fn void test_animation_inertial_storage_single_block_cost_alignment_and_separate
             usz expected_bytes = payload_start + (usz)sample.capacity * row_bytes;
             assert((void*)storage == allocator.pointer && allocator.acquisitions == 1 && allocator.outstanding == 1);
             assert(allocator.resizes == 0 && allocator.releases == 0);
-            assert(allocator.bytes == expected_bytes && storage.bytes == expected_bytes
+            assert((usz)allocator.bytes == expected_bytes && storage.bytes == expected_bytes
               && storage.row_bytes == row_bytes);
             assert(allocator.alignment == InertialRow::alignment && storage.rows.len == sample.capacity);
             assert(storage.nodes == sample.nodes && storage.morphs == sample.morphs);
@@ -243,7 +243,11 @@ fn void test_animation_inertial_storage_reset_clears_one_incarnation_without_tou
     for (uint neighbor = 0; neighbor < 3; neighbor++) {
         uint index = neighbor == 0 ? 0 : neighbor + 1;
         assert(mem::equals(&neighbors[neighbor], &storage.rows[index], InertialRow::size));
-        assert(mem::equals((char*)storage.rows[index].previous_pose.ptr, payloads[neighbor].ptr, (sz)storage.row_bytes));
+        assert(mem::equals(
+            a: (char*)storage.rows[index].previous_pose.ptr,
+            b: payloads[neighbor].ptr,
+            len: (sz)storage.row_bytes,
+        ));
     }
     assert(allocator.acquisitions == 1 && allocator.resizes == 0 && allocator.releases == 0);
 }

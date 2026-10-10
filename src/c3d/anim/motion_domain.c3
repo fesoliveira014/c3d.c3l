@@ -21,6 +21,21 @@ enum ConsumedScaleDomain @private {
     SAMPLING_UNPROVEN,
 }
 
+enum MotionRotationFailure @private {
+    NONE,
+    STORAGE,
+    ZERO,
+    CERTIFICATE_UNPROVEN,
+}
+
+enum MotionScaleFailure @private {
+    NONE,
+    STORAGE,
+    NONPOSITIVE,
+    NONUNIFORM,
+    NONNEUTRAL,
+}
+
 struct MotionInterval @local {
     double lower;
     double upper;
@@ -41,15 +56,22 @@ struct MotionCertificateNode @local {
     double end;
 }
 
-fn void? validate_motion_rotation_track(Track* track) @private {
-    validate_motion_track_storage(track, TargetPath.ROTATION)!;
+fn void? validate_motion_rotation_track(Track* track, MotionRotationFailure* failure = null) @private {
+    if (failure) *failure = MotionRotationFailure.NONE;
+    if (catch excuse = validate_motion_track_storage(track, TargetPath.ROTATION)) {
+        if (failure) *failure = MotionRotationFailure.STORAGE;
+        return excuse~;
+    }
 
     uint key_count = (uint)track.times.len;
     for (uint key = 0; key < key_count; key++) {
         float[] value = motion_domain_key(track, (uint)key, CUBIC_SLOT_VALUE);
         bool nonzero;
         foreach (component : value) nonzero |= component != 0;
-        if (!nonzero) return c3d::INVALID_ARGUMENT~;
+        if (!nonzero) {
+            if (failure) *failure = MotionRotationFailure.ZERO;
+            return c3d::INVALID_ARGUMENT~;
+        }
     }
 
     switch (track.interpolation) {
@@ -73,17 +95,31 @@ fn void? validate_motion_rotation_track(Track* track) @private {
                     start_time: track.times[key],
                     end_time: track.times[key + 1],
                 );
-                if (result == MotionDomainResult.INVALID) return c3d::INVALID_ARGUMENT~;
+                if (result == MotionDomainResult.INVALID) {
+                    if (failure) *failure = MotionRotationFailure.ZERO;
+                    return c3d::INVALID_ARGUMENT~;
+                }
                 unsupported |= result == MotionDomainResult.UNPROVEN;
             }
 
-            if (unsupported) return c3d::UNSUPPORTED~;
+            if (unsupported) {
+                if (failure) *failure = MotionRotationFailure.CERTIFICATE_UNPROVEN;
+                return c3d::UNSUPPORTED~;
+            }
     }
 }
 
 // A deferred band result lets the request inspect every exact constraint before reporting UNSUPPORTED.
-fn ConsumedScaleDomain? classify_consumed_scale_track(Track* track, bool additive) @private {
-    validate_motion_track_storage(track, TargetPath.SCALE)!;
+fn ConsumedScaleDomain? classify_consumed_scale_track(
+    Track* track,
+    bool additive,
+    MotionScaleFailure* failure = null,
+) @private {
+    if (failure) *failure = MotionScaleFailure.NONE;
+    if (catch excuse = validate_motion_track_storage(track, TargetPath.SCALE)) {
+        if (failure) *failure = MotionScaleFailure.STORAGE;
+        return excuse~;
+    }
     float[] reference = motion_domain_key(track, 0, CUBIC_SLOT_VALUE);
 
     uint key_count = (uint)track.times.len;
@@ -91,16 +127,25 @@ fn ConsumedScaleDomain? classify_consumed_scale_track(Track* track, bool additiv
         float[] value = motion_domain_key(track, (uint)key, CUBIC_SLOT_VALUE);
         if (additive) {
             for (uint component = 0; component < 3; component++) {
-                if (value[component] != reference[component]) return c3d::INVALID_ARGUMENT~;
+                if (value[component] != reference[component]) {
+                    if (failure) *failure = MotionScaleFailure.NONNEUTRAL;
+                    return c3d::INVALID_ARGUMENT~;
+                }
             }
         } else {
             ScalePolynomial[3] constants;
             for (uint component = 0; component < 3; component++) {
-                if (!(value[component] > 0)) return c3d::INVALID_ARGUMENT~;
+                if (!(value[component] > 0)) {
+                    if (failure) *failure = MotionScaleFailure.NONPOSITIVE;
+                    return c3d::INVALID_ARGUMENT~;
+                }
                 constants[component] = motion_constant_scale_polynomial(value[component]);
             }
 
-            if (!motion_scale_uniform(constants)) return c3d::INVALID_ARGUMENT~;
+            if (!motion_scale_uniform(constants)) {
+                if (failure) *failure = MotionScaleFailure.NONUNIFORM;
+                return c3d::INVALID_ARGUMENT~;
+            }
         }
     }
 
@@ -132,15 +177,20 @@ fn ConsumedScaleDomain? classify_consumed_scale_track(Track* track, bool additiv
                     );
                     if (additive) {
                         if (!motion_scale_neutral(polynomials[component], reference[component])) {
+                            if (failure) *failure = MotionScaleFailure.NONNEUTRAL;
                             return c3d::INVALID_ARGUMENT~;
                         }
                     } else if (!exact_scale_strict_positive(polynomials[component])) {
+                        if (failure) *failure = MotionScaleFailure.NONPOSITIVE;
                         return c3d::INVALID_ARGUMENT~;
                     }
                 }
 
                 if (additive) continue;
-                if (!motion_scale_uniform(polynomials)) return c3d::INVALID_ARGUMENT~;
+                if (!motion_scale_uniform(polynomials)) {
+                    if (failure) *failure = MotionScaleFailure.NONUNIFORM;
+                    return c3d::INVALID_ARGUMENT~;
+                }
 
                 for (uint component = 0; component < 3; component++) {
                     ScaleInteger magnitude = exact_scale_segment_magnitude(
