@@ -121,11 +121,12 @@ fn void test_animation_transition_prepare_full_animator_copies_inputs_and_boolea
         Vec2[3] points = { { 0, 0 }, { 1, 0 }, { 0, 1 } };
         BlendTriangle[1] triangles = { { .indices = { 2, 1, 0 } } };
         AnimationTransitionSpaceDesc[1] spaces = {
-        { .space = {
-            .actions = members[..], .kind = TWO_DIMENSIONAL, .points = points[..],
-            .triangles = triangles[..], .parameter_2d = { 0.25f, 0.5f },
-            .weight = 0.75f, .speed = -0.25f, .playing = true,
-        } } };
+            { .space = {
+                .actions = members[..], .kind = TWO_DIMENSIONAL, .points = points[..],
+                .triangles = triangles[..], .parameter_2d = { 0.25f, 0.5f },
+                .weight = 0.75f, .speed = -0.25f, .playing = true,
+            } },
+        };
         PreparedTransition prepared = anim::prepare_animation_transition(
             playback: &playback,
             assets: &fixture.assets,
@@ -153,7 +154,11 @@ fn void test_animation_transition_prepare_full_animator_copies_inputs_and_boolea
         playback.mask_storage[..] = false;
         foreach (row : prepared.boolean_masks[:prepared.action_count]) assert(row == source_membership[..]);
         sz acquisitions = tracker.total_allocation_count();
-        InstalledTransition installed = anim::install_animation_transition(&playback, &fixture.assets, &prepared);
+        AnimationTransitionResult installed = anim::install_animation_transition(
+            playback: &playback,
+            assets: &fixture.assets,
+            prepared: &prepared,
+        );
         assert(tracker.total_allocation_count() == acquisitions);
         assert(installed.count == 16 && *playback.action_count == 16 && playback.actions.free_count == 0);
         foreach (old : snapshot.order[:snapshot.action_count]) assert(!playback.actions.is_live(old));
@@ -260,7 +265,11 @@ fn void test_animation_transition_prepare_full_crowd_temporaries_rollback_at_eac
             motion_basis: anim::crowd_motion_basis(state, 0, state.slots[0].root_node),
         )!!;
         uint attempts = probe.attempts;
-        InstalledTransition installed = anim::install_animation_transition(&playback, &fixture.assets, &prepared);
+        AnimationTransitionResult installed = anim::install_animation_transition(
+            playback: &playback,
+            assets: &fixture.assets,
+            prepared: &prepared,
+        );
         assert(probe.attempts == attempts && installed.count == capacity);
         assert(*playback.action_count == capacity && playback.actions.free_count == 0);
         foreach (old : snapshot.order[:snapshot.action_count]) assert(!playback.actions.is_live(old));

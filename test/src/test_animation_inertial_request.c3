@@ -1057,7 +1057,9 @@ fn void test_animation_inertial_request_both_cubic_sampling_bands_preserve_owner
                     uint calls = allocator.acquisitions;
                     fault expected = subnormal ? c3d::INVALID_ARGUMENT : c3d::UNSUPPORTED;
                     assert(@catch(request_transition(
-                        &fixture, { .duration = 0.5f, .actions = targets[..] })) == expected);
+                        fixture: &fixture,
+                        description: { .duration = 0.5f, .actions = targets[..] },
+                    )) == expected);
                     assert(allocator.acquisitions == calls);
                     request_assert_blocks_unchanged(&tracker, snapshot);
                 };
@@ -1090,7 +1092,9 @@ fn void test_animation_inertial_request_stale_crowd_player_preserves_all_owner_b
             RequestBlockSnapshot[] snapshot = request_snapshot_blocks(&tracker);
             uint calls = allocator.acquisitions;
             assert(@catch(request_transition(
-                &fixture, { .duration = 0.5f, .actions = targets[..] })) == c3d::INVALID_ID);
+                fixture: &fixture,
+                description: { .duration = 0.5f, .actions = targets[..] },
+            )) == c3d::INVALID_ID);
             assert(allocator.acquisitions == calls);
             request_assert_blocks_unchanged(&tracker, snapshot);
         };
@@ -1211,5 +1215,227 @@ fn void test_animation_generalized_play_capture_allocation_failures_preserve_all
             assert(chain.pose_scale_sums.len == fixture.ordinary.assets.model(fixture.ordinary.model).data.nodes.len);
         }
         assert(!tracker.has_leaks());
+    }
+}
+
+fn void test_animation_planar_extract_yaw_and_translation_actions_remain_composable() @test {
+    foreach (capacity : (uint[2]){ 0, 4 }) {
+        foreach (first_yaw : (bool[2]){ false, true }) {
+            InertialRequestFixture fixture;
+            create_inertial_request_fixture(
+                fixture: &fixture,
+                allocator: mem,
+                crowd_actions: capacity,
+                inertia_enabled: false,
+            );
+            defer destroy_inertial_request_fixture(&fixture);
+            float[2] times = { 0, 1 };
+            float[6] values = { 0, 0, 0, 1, 0, 0 };
+            ClipId clip = request_property_clip(
+                fixture: &fixture,
+                path: TargetPath.TRANSLATION,
+                interpolation: Interpolation.LINEAR,
+                times: times[..],
+                values: values[..],
+                node: 2,
+            );
+            request_play(&fixture, clip, { .root_motion = EXTRACT, .root_yaw = first_yaw });
+            request_play(&fixture, clip, { .root_motion = EXTRACT, .root_yaw = !first_yaw });
+            request_update(&fixture, 0.25f);
+            PlaybackView playback = request_playback(&fixture);
+            assert(*playback.action_count == 2);
+            assert(playback.actions.get(playback.order[0]).root_yaw == first_yaw);
+            assert(playback.actions.get(playback.order[1]).root_yaw != first_yaw);
+            RootMotionDelta delta = fixture.crowd ? fixture.crowd.slots[0].root_motion
+              : fixture.ordinary.animator.root_motion;
+            assert(delta.translation == (Vec3){ 0.25f, 0, 0 });
+            assert(delta.rotation.v == quaternion::IDENTITY.v);
+        }
+    }
+}
+
+fn void test_animation_inertial_request_group_zero_weight_and_invalid_phases_preserve_owner_blocks() @test {
+    foreach (capacity : (uint[2]){ 0, 4 }) {
+        foreach (kind : (AnimationSpaceKind[2]){ ONE_DIMENSIONAL, TWO_DIMENSIONAL }) {
+            TrackingAllocator tracker;
+            tracker.init(mem);
+            defer tracker.free();
+            {
+                RequestAllocationProbe allocator = { .backing = &tracker };
+                InertialRequestFixture fixture;
+                create_inertial_request_fixture(&fixture, &allocator, capacity);
+                defer destroy_inertial_request_fixture(&fixture);
+                ClipId clip = request_translation_clip(
+                    fixture: &fixture,
+                    start: { 1, 0, 0 },
+                    end: { 1, 0, 0 },
+                );
+                request_play(&fixture, clip);
+                request_update(&fixture, 0.25f);
+                AnimationTargetDesc[3] targets;
+                foreach (&target : targets) {
+                    *target = anim::ANIMATION_TARGET_DEFAULT;
+                    target.clip = clip;
+                }
+                uint[3] members = { 0, 1, 2 };
+                float[2] positions = { 0, 1 };
+                Vec2[3] points = { { 0, 0 }, { 1, 0 }, { 0, 1 } };
+                BlendTriangle[1] triangles = { { .indices = { 0, 1, 2 } } };
+                uint count = kind == ONE_DIMENSIONAL ? 2 : 3;
+                AnimationTransitionSpaceDesc[1] spaces = { {
+                    .space = {
+                        .actions = members[:count],
+                        .kind = kind,
+                        .weight = 1,
+                        .speed = 1,
+                        .playing = true,
+                    },
+                    .phase = 0.5f,
+                } };
+                switch (kind) {
+                    case ONE_DIMENSIONAL:
+                        spaces[0].space.positions = positions[..];
+                    case TWO_DIMENSIONAL:
+                        spaces[0].space.points = points[..];
+                        spaces[0].space.triangles = triangles[..];
+                }
+                float[3] invalid_phases = { 1, -0.25f, float::nan };
+                for (uint invalid = 0; invalid < 4; invalid++) @pool() {
+                    spaces[0].phase = invalid ? invalid_phases[invalid - 1] : 0.5f;
+                    spaces[0].space.weight = invalid ? 1 : 0;
+                    RequestBlockSnapshot[] snapshot = request_snapshot_blocks(&tracker);
+                    uint acquisitions = allocator.acquisitions;
+                    assert(@catch(request_transition(
+                        fixture: &fixture,
+                        description: { .duration = 0.5f, .actions = targets[:count], .spaces = spaces[..] },
+                    )) == c3d::INVALID_ARGUMENT);
+                    assert(allocator.acquisitions == acquisitions);
+                    request_assert_blocks_unchanged(&tracker, snapshot);
+                };
+            }
+            assert(!tracker.has_leaks());
+        }
+    }
+}
+
+fn void test_animation_inertial_request_group_phase_controls_consumed_scale_eligibility_time() @test {
+    foreach (capacity : (uint[2]){ 0, 4 }) {
+        foreach (kind : (AnimationSpaceKind[2]){ ONE_DIMENSIONAL, TWO_DIMENSIONAL }) {
+            TrackingAllocator tracker;
+            tracker.init(mem);
+            defer tracker.free();
+            {
+                RequestAllocationProbe allocator = { .backing = &tracker };
+                InertialRequestFixture fixture;
+                create_inertial_request_fixture(&fixture, &allocator, capacity);
+                defer destroy_inertial_request_fixture(&fixture);
+                float[2] times = { 0, 1 };
+                float[6] source_values = { 0x1p-100, 0x1p-100, 0x1p-100, 0x1p-100, 0x1p-100, 0x1p-100 };
+                float[6] target_values = { 0x1p-100, 0x1p-100, 0x1p-100, 0x1p-90, 0x1p-90, 0x1p-90 };
+                ClipId source = request_property_clip(
+                    fixture: &fixture,
+                    path: TargetPath.SCALE,
+                    interpolation: Interpolation.LINEAR,
+                    times: times[..],
+                    values: source_values[..],
+                    node: 2,
+                );
+                ClipId target = request_property_clip(
+                    fixture: &fixture,
+                    path: TargetPath.SCALE,
+                    interpolation: Interpolation.LINEAR,
+                    times: times[..],
+                    values: target_values[..],
+                    node: 2,
+                );
+                PlayDesc generalized = request_generalized_desc();
+                request_play(&fixture, source, generalized);
+                request_update(&fixture, 0.125f);
+                request_update(&fixture, 0.125f);
+                AnimationTargetDesc[3] targets;
+                foreach (&description : targets) {
+                    *description = anim::ANIMATION_TARGET_DEFAULT;
+                    description.clip = target;
+                    description.play = generalized;
+                    description.start_time = 0;
+                }
+                uint[3] members = { 0, 1, 2 };
+                float[2] positions = { 0, 1 };
+                Vec2[3] points = { { 0, 0 }, { 1, 0 }, { 0, 1 } };
+                BlendTriangle[1] triangles = { { .indices = { 0, 1, 2 } } };
+                uint count = kind == ONE_DIMENSIONAL ? 2 : 3;
+                AnimationTransitionSpaceDesc[1] spaces = { {
+                    .space = {
+                        .actions = members[:count],
+                        .kind = kind,
+                        .weight = 1,
+                        .speed = 1,
+                        .playing = true,
+                    },
+                } };
+                switch (kind) {
+                    case ONE_DIMENSIONAL:
+                        spaces[0].space.positions = positions[..];
+                    case TWO_DIMENSIONAL:
+                        spaces[0].space.points = points[..];
+                        spaces[0].space.triangles = triangles[..];
+                }
+                @pool() {
+                    RequestBlockSnapshot[] snapshot = request_snapshot_blocks(&tracker);
+                    uint acquisitions = allocator.acquisitions;
+                    assert(@catch(request_transition(
+                        fixture: &fixture,
+                        description: { .duration = 1, .actions = targets[:count], .spaces = spaces[..] },
+                    )) == c3d::INVALID_ARGUMENT);
+                    assert(allocator.acquisitions == acquisitions);
+                    request_assert_blocks_unchanged(&tracker, snapshot);
+                };
+                spaces[0].phase = 0.5f;
+                request_transition(
+                    fixture: &fixture,
+                    description: { .duration = 1, .actions = targets[:count], .spaces = spaces[..] },
+                )!!;
+                PlaybackView playback = request_playback(&fixture);
+                assert(*playback.action_count == count);
+                foreach (id : playback.order[:count]) assert(playback.actions.get(id).time == 0.5f);
+                assert(request_pose(&fixture, 2).scale == (Vec3){ 0x1p-100, 0x1p-100, 0x1p-100 });
+            }
+            assert(!tracker.has_leaks());
+        }
+    }
+}
+
+fn void test_animation_inertial_status_is_an_independent_copy_of_owner_transition_state() @test {
+    foreach (enabled : (bool[2]){ false, true }) {
+        InertialRequestFixture fixture;
+        create_inertial_request_fixture(
+            fixture: &fixture,
+            allocator: mem,
+            crowd_actions: 0,
+            inertia_enabled: enabled,
+        );
+        defer destroy_inertial_request_fixture(&fixture);
+        Animator* animator = fixture.ordinary.animator;
+        AnimationInertialStatus status = animator.inertial_status();
+        assert(status.enabled == enabled && !status.active && status.elapsed == 0 && status.duration == 0);
+        if (!enabled) continue;
+
+        ClipId clip = request_translation_clip(
+            fixture: &fixture,
+            start: { 1, 0, 0 },
+            end: { 1, 0, 0 },
+        );
+        request_play(&fixture, clip);
+        request_update(&fixture, 0.25f);
+        AnimationTargetDesc[1] targets = { anim::ANIMATION_TARGET_DEFAULT };
+        targets[0].clip = clip;
+        request_transition(&fixture, { .duration = 0.5f, .actions = targets[..] })!!;
+        status = animator.inertial_status();
+        assert(status.enabled && status.active && status.elapsed == 0 && status.duration == 0.5);
+        status.duration = -1;
+        request_update(&fixture, 0.125f);
+        AnimationInertialStatus current = animator.inertial_status();
+        assert(status.elapsed == 0 && status.duration == -1);
+        assert(current.enabled && current.active && current.elapsed == 0.125 && current.duration == 0.5);
     }
 }

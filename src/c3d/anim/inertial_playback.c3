@@ -30,7 +30,7 @@ fn void capture_consumed_scale_nodes(PlaybackView* playback, bool[] consumed) @p
 }
 
 <* @require playback.inertial != null && scratch.derivative != null *>
-fn InstalledTransition begin_prepared_inertial_transition(
+fn AnimationTransitionResult begin_prepared_inertial_transition(
     PlaybackView* playback,
     AssetStore* assets,
     PreparedTransition* prepared,
@@ -41,7 +41,7 @@ fn InstalledTransition begin_prepared_inertial_transition(
     row.previous_pose[..] = destination.pose[..];
     read_inertial_morphs(destination.morph_weights, row.previous_morph);
 
-    InstalledTransition installed = install_animation_transition(playback, assets, prepared);
+    AnimationTransitionResult installed = install_animation_transition(playback, assets, prepared);
     capture_consumed_scale_nodes(playback, scratch.derivative.consumed_scale);
     blend_pose(
         playback: playback,

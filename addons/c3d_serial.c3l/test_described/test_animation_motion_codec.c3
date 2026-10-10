@@ -601,3 +601,82 @@ fn void test_animation_motion_codec_frozen_weighted_planar_versions_default_disa
         }
     };
 }
+
+fn void test_animation_motion_codec_planar_extract_yaw_mix_restores_both_owners() @test {
+    foreach (crowded : (bool[2]){ false, true }) {
+        @pool() {
+            Fixture fixture;
+            create_fixture(&fixture, 32);
+            defer destroy_fixture(&fixture);
+            serial::register_core_codecs()!!;
+            ModelId model_id = gltf::load_model(&fixture.assets, skin_fixture_path())!!;
+            ClipId clip = fixture.assets.model(model_id).data.clips[0];
+            Node* source;
+            if (crowded) {
+                CrowdActionAuthoring[2] actions;
+                foreach (index, &action : actions) {
+                    *action = {
+                        .clip = clip,
+                        .speed = 1,
+                        .weight = 0.5f,
+                        .loop = true,
+                        .playing = true,
+                        .root_motion = EXTRACT,
+                        .root_yaw = index == 0,
+                    };
+                }
+                CrowdInstanceAuthoring[1] authoring = { {
+                    .configured = true,
+                    .root_node = 2,
+                    .base_action = 0,
+                    .actions = actions[..],
+                } };
+                source = fixture.source.add_node(name: "planar_mix")!!;
+                model::attach_crowd(
+                    assets: &fixture.assets,
+                    scene: &fixture.source,
+                    node: source,
+                    model: model_id,
+                    capacity: 1,
+                    pose_bounds: { .min = { -4, -4, -4 }, .max = { 4, 4, 4 } },
+                    instances: { {
+                        .placement = maths::TRANSFORM_IDENTITY,
+                        .pose = { .clip = clip, .speed = 1, .loop = true },
+                        .color = { 1, 1, 1, 1 },
+                    } },
+                    actions_per_instance: 4,
+                    authoring: authoring[..],
+                )!!;
+                model::prepare_crowd(&fixture.assets, &fixture.source, source)!!;
+            } else {
+                source = model::instantiate(&fixture.assets, &fixture.source, model_id)!!;
+                Animator* animator = anim::add_animator(&fixture.source, source);
+                animator.root_node = 2;
+                animator.play(&fixture.assets, clip, { .root_motion = EXTRACT, .root_yaw = true })!!;
+                animator.play(&fixture.assets, clip, { .root_motion = EXTRACT })!!;
+            }
+            char[] bytes = fixture_bytes(&fixture, source);
+            String text = fixture_text(&fixture, source);
+            for (uint encoding = 0; encoding < 2; encoding++) {
+                Node* restored = encoding == 0
+                  ? serial::read_subtree(&fixture.destination, &fixture.assets, bytes)!!
+                  : serial::read_subtree_text(&fixture.destination, &fixture.assets, text)!!;
+                PlaybackView playback;
+                if (crowded) {
+                    model::prepare_crowd(&fixture.assets, &fixture.destination, restored)!!;
+                    AnimatedCrowd* crowd = fixture.destination.get(restored, AnimatedCrowd);
+                    playback = anim::crowd_playback_view(crowd.playback, &crowd.playback.slots[0]);
+                } else {
+                    playback = fixture.destination.get(restored, Animator).playback();
+                }
+                assert(*playback.action_count == 2);
+                foreach (index, id : playback.order[:2]) {
+                    Action* action = playback.actions.get(id);
+                    assert(action.root_motion == EXTRACT && action.root_yaw == (index == 0));
+                    assert(!action.extraction.generalized && !action.motion_chain);
+                }
+                fixture.destination.remove(restored);
+            }
+        };
+    }
+}

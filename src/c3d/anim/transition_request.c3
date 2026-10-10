@@ -58,7 +58,7 @@ fn AnimationTransitionResult? CrowdPlayer.inertialize(&self, AssetStore* assets,
     CrowdPlaybackSlot* slot = crowd_slot(self.state, self.instance)!;
     PlaybackView playback = crowd_playback_view(self.state, slot);
 
-    InstalledTransition installed = request_inertial_transition(
+    AnimationTransitionResult installed = request_inertial_transition(
         playback: &playback,
         assets: assets,
         desc: desc,
@@ -102,7 +102,7 @@ fn void cancel_inertial_row(InertialRow* row) @local {
 }
 
 <* @require playback.inertial != null && scratch.derivative != null *>
-fn InstalledTransition? request_inertial_transition(
+fn AnimationTransitionResult? request_inertial_transition(
     PlaybackView* playback,
     AssetStore* assets,
     AnimationTransitionDesc desc,
@@ -163,7 +163,7 @@ fn InstalledTransition? request_inertial_transition(
         playback.generalized.carrier_twist_rate = 0;
     }
 
-    InstalledTransition installed = begin_prepared_inertial_transition(
+    AnimationTransitionResult installed = begin_prepared_inertial_transition(
         playback: playback,
         assets: assets,
         prepared: &prepared,

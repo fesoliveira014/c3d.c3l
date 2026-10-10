@@ -1032,14 +1032,15 @@ fn void request_layered_inertial_native(
     targets[10].weight = 0.5f;
     AnimationTransitionSpaceDesc[1] spaces = {
         { .space = {
-        .actions = { 0, 1, 2, 3, 4, 5, 6, 7, 8 },
-        .weight = 1,
-        .speed = 1,
-        .playing = true,
-        .kind = TWO_DIMENSIONAL,
-        .points = AUTHORING_NATIVE_POINTS[..],
-        .triangles = AUTHORING_NATIVE_TRIANGLES[..],
-    } } };
+            .actions = { 0, 1, 2, 3, 4, 5, 6, 7, 8 },
+            .weight = 1,
+            .speed = 1,
+            .playing = true,
+            .kind = TWO_DIMENSIONAL,
+            .points = AUTHORING_NATIVE_POINTS[..],
+            .triangles = AUTHORING_NATIVE_TRIANGLES[..],
+        } },
+    };
     for (uint source = 0; source < CROWD_NATIVE_INSTANCES; source++) {
         Animator* animator = pair.scene.get(pair.ordinary[source], Animator);
         CrowdPlayer player = crowd_native_player(pair, source)!!;

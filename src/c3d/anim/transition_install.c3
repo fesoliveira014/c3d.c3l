@@ -3,10 +3,8 @@ module c3d::anim;
 import c3d;
 import c3d::asset;
 
-alias InstalledTransition = AnimationTransitionResult @private;
-
 <* @require prepared.action_count <= playback.actions.items.len *>
-fn InstalledTransition install_animation_transition(
+fn AnimationTransitionResult install_animation_transition(
     PlaybackView* playback,
     AssetStore* assets,
     PreparedTransition* prepared,
@@ -15,7 +13,7 @@ fn InstalledTransition install_animation_transition(
     playback.blend_spaces[..] = (BlendSpace1D){};
     foreach (&space : playback.blend_spaces_2d) reset_blend_space_2d(space);
 
-    InstalledTransition installed = {
+    AnimationTransitionResult installed = {
         .count = prepared.action_count,
         .space_count = prepared.space_count,
     };
