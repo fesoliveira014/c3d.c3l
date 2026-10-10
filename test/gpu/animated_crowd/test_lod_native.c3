@@ -10,7 +10,9 @@ import c3d::maths;
 import c3d::model;
 import c3d::render @public;
 import c3d::scene;
+import c3d::shader;
 import c3d::test::animated_lod_fixtures;
+import gpu;
 import std::io;
 import std::math;
 
@@ -31,6 +33,11 @@ struct CrowdLodNativeSources @private {
     bool crowd;
 }
 
+struct CrowdLodNativeViews @private {
+    CrowdNativeOutput[2] outputs;
+    gpu::MappedGpuSpan[2] histories;
+}
+
 fn void fill_crowd_lod_native_descriptor(
     Fixture* fixture,
     AnimatedLodFixtures* corpus,
@@ -38,7 +45,8 @@ fn void fill_crowd_lod_native_descriptor(
     MaterialId material = {},
 ) @private {
     ModelTemplate* template = &fixture.assets.model(corpus.model).data;
-    assert(template.meshes.len == animated_lod_fixtures::LOD_PRIMITIVES && animated_lod_fixtures::LOD_PRIMITIVES == 2 && animated_lod_fixtures::LOD_LEVELS == 3);
+    assert(template.meshes.len == animated_lod_fixtures::LOD_PRIMITIVES);
+    assert(animated_lod_fixtures::LOD_PRIMITIVES == 2 && animated_lod_fixtures::LOD_LEVELS == 3);
     for (uint level = 0; level < animated_lod_fixtures::LOD_LEVELS; level++) {
         descriptor.levels[level] = {
             .first_part = level * animated_lod_fixtures::LOD_PRIMITIVES,
@@ -331,6 +339,502 @@ fn void test_animated_lod_native_quaternius_crowd_and_ordinary_forced_levels_mat
                 level: level,
             )!!;
         }
+        check_crowd_native_validation(&fixture.renderer);
+    }
+}
+
+fn void test_animated_lod_native_quaternius_threshold_traversal_retains_hysteresis() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    AnimatedLodFixtures corpus = animated_lod_fixtures::load_animated_lod_fixtures(&fixture.assets, "../../..")!!;
+    crowd_native_flat_source_materials(&fixture, corpus.model);
+    ClipId walk = crowd_native_clip_named(&fixture, corpus.model, "Walk_Loop")!!;
+    float duration = fixture.assets.clip(walk).data.duration;
+    Transform[CROWD_NATIVE_INSTANCES] placements = crowd_native_real_placements();
+    float[8] screen_sizes = { 1.2f, 0.99f, 1.05f, 1.11f, 0.00099f, 0.00105f, 0.00111f, 1.2f };
+    uint[8] expected_levels = { 0, 1, 1, 0, 2, 2, 1, 0 };
+    Vec3 scaled_half_extent = { 1.5f * 0.9f, 1.4f * 1.1f, 1.5f * 0.8f };
+    float unbiassed_size = 2 * scaled_half_extent.length() / 6;
+    foreach (bool crowd : { true, false }) {
+        CrowdNativePair pair;
+        create_crowd_native_pair(
+            allocator: mem,
+            fixture: &fixture,
+            pair: &pair,
+            model: corpus.model,
+            clip: walk,
+            bounds: CROWD_LOD_NATIVE_BOUNDS,
+            placements: placements[..],
+        )!!;
+        defer scene::destroy_scene(&pair.scene);
+        *pair.scene.get(pair.camera, Camera) = camera::orthographic(6, 0.1f, 100);
+        pair.camera.local.position = { 0, 1, 12 };
+        use_crowd_native_standard_materials(&fixture, &pair)!!;
+        CrowdLodNativeSources sources;
+        attach_crowd_lod_native_sources(
+            fixture: &fixture,
+            pair: &pair,
+            corpus: &corpus,
+            sources: &sources,
+            crowd: crowd,
+            clip: walk,
+        )!!;
+        set_crowd_lod_native_phase(
+            fixture: &fixture,
+            pair: &pair,
+            sources: &sources,
+            duration: duration,
+        );
+        CrowdNativeOutput actual;
+        create_crowd_native_output(&fixture, &actual)!!;
+        defer destroy_crowd_native_output(&fixture, &actual);
+        CrowdNativeOutput reference;
+        create_crowd_native_output(&fixture, &reference)!!;
+        defer destroy_crowd_native_output(&fixture, &reference);
+        ViewDesc reference_desc = render::texture_view_desc(reference.target);
+        reference_desc.post.motion_blur = true;
+        render::configure_view(&fixture.renderer, reference.view, reference_desc)!!;
+        foreach (step, size : screen_sizes) {
+            uint level = expected_levels[step];
+            ViewDesc desc = render::texture_view_desc(actual.target);
+            desc.post.motion_blur = true;
+            desc.lod_bias = math::log2(size / unbiassed_size);
+            render::configure_view(&fixture.renderer, actual.view, desc)!!;
+            set_crowd_lod_native_reference_level(
+                fixture: &fixture,
+                pair: &pair,
+                corpus: &corpus,
+                level: level,
+            );
+            capture_crowd_native(
+                fixture: &fixture,
+                pair: &pair,
+                probe: &actual.probe,
+                output: actual.target,
+                view: actual.view,
+                crowd_visible: true,
+                images: &actual.actual,
+            )!!;
+            check_crowd_lod_native_counts(&actual.actual.stats, level, crowd);
+            capture_crowd_native(
+                fixture: &fixture,
+                pair: &pair,
+                probe: &reference.probe,
+                output: reference.target,
+                view: reference.view,
+                crowd_visible: false,
+                images: &reference.actual,
+            )!!;
+            check_crowd_native_parity(&actual.actual, &reference.actual, false);
+            io::printfn("threshold size=%s expected level=%s", size, level);
+            check_crowd_lod_native_sources_remain_base(
+                fixture: &fixture,
+                pair: &pair,
+                corpus: &corpus,
+                sources: &sources,
+            );
+        }
+        check_crowd_native_validation(&fixture.renderer);
+    }
+}
+
+fn gpu::MappedGpuSpan? allocate_crowd_lod_native_history(Renderer* renderer) @private {
+    gpu::AllocationDesc desc = {
+        .size = CROWD_NATIVE_INSTANCES * shader::LodHistoryGpu::size,
+        .alignment = render::STREAM_ALIGNMENT,
+        .memory_class = gpu::MemoryClass.CPU_READ,
+        .access = { .graphics },
+        .debug_name = "animated_lod_view_history",
+    };
+    return gpu::allocate_mapped_memory(&renderer.device, &desc);
+}
+
+fn void free_crowd_lod_native_history(Renderer* renderer, gpu::MappedGpuSpan history) @private {
+    render::wait_frames(renderer)!!;
+    gpu::GpuAllocation allocation = history.span.allocation();
+    gpu::free_allocation(&renderer.device, &allocation)!!;
+}
+
+fn void? create_crowd_lod_native_views(Fixture* fixture, CrowdLodNativeViews* views) @private {
+    create_crowd_native_output(fixture, &views.outputs[0])!;
+    defer catch destroy_crowd_native_output(fixture, &views.outputs[0]);
+    create_crowd_native_output(fixture, &views.outputs[1])!;
+    defer catch destroy_crowd_native_output(fixture, &views.outputs[1]);
+    views.histories[0] = allocate_crowd_lod_native_history(&fixture.renderer)!;
+    defer catch free_crowd_lod_native_history(&fixture.renderer, views.histories[0]);
+    views.histories[1] = allocate_crowd_lod_native_history(&fixture.renderer)!;
+    defer catch free_crowd_lod_native_history(&fixture.renderer, views.histories[1]);
+}
+
+fn void destroy_crowd_lod_native_views(Fixture* fixture, CrowdLodNativeViews* views) @private {
+    foreach (history : views.histories) free_crowd_lod_native_history(&fixture.renderer, history);
+    foreach (&output : views.outputs) destroy_crowd_native_output(fixture, output);
+}
+
+fn void? configure_crowd_lod_native_views(Fixture* fixture, CrowdLodNativeViews* views) @private {
+    for (uint index = 0; index < 2; index++) {
+        CrowdNativeOutput* output = &views.outputs[index];
+        ViewDesc desc = render::texture_view_desc(output.target);
+        desc.shading = ShadingPath.DEFERRED;
+        desc.post.motion_blur = true;
+        desc.lod_bias = CROWD_LOD_NATIVE_FORCE_BIASES[index == 0 ? 0 : 2];
+        desc.share_shadows = false;
+        render::configure_view(&fixture.renderer, output.view, desc)!;
+    }
+}
+
+fn void? record_crowd_lod_native_history(
+    Fixture* fixture,
+    CrowdNativePair* pair,
+    ViewId view,
+    gpu::MappedGpuSpan readback,
+) @private {
+    Renderer* renderer = &fixture.renderer;
+    render::LodHistoryEntry* history = &renderer.views.get(view).lod_history.entries[pair.crowd.id.index];
+    assert(history.allocation.is_valid() && history.pending.valid && history.capacity == CROWD_NATIVE_INSTANCES);
+    usz offset = (usz)(history.committed_slot ^ 1) * history.capacity * shader::LodHistoryGpu::size;
+    gpu::GpuSpan source = gpu::get_allocation_span(&renderer.device, history.allocation)!;
+    gpu::Barrier produced = { .before = { .compute, .vertex_shader }, .after = { .transfer } };
+    gpu::cmd_barrier(&renderer.commands, &produced)!;
+    gpu::BufferCopyDesc copy = {
+        .src = source.checked_subspan(offset, readback.bytes.len)!,
+        .dst = readback.span,
+    };
+    gpu::cmd_copy_buffer(&renderer.commands, &copy)!;
+    gpu::Barrier copied = { .before = { .transfer }, .after = { .host } };
+    gpu::cmd_barrier(&renderer.commands, &copied)!;
+}
+
+fn void? record_crowd_lod_native_output(
+    Fixture* fixture,
+    CrowdNativePair* pair,
+    CrowdNativeOutput* output,
+    bool actual,
+) @private {
+    pair.crowd.visible = actual;
+    pair.references.visible = !actual;
+    pair.scene.update_world();
+    Renderer* renderer = &fixture.renderer;
+    renderer.render_view(&pair.scene, pair.camera, output.view)!;
+    ViewRecord* record = renderer.views.get(output.view);
+    assert(record.desc.shading == ShadingPath.DEFERRED);
+    record_crowd_native_target(
+        fixture: fixture,
+        probe: &output.probe,
+        target: &record.depth,
+        mapped: output.probe.depth,
+    )!;
+    record_crowd_native_target(
+        fixture: fixture,
+        probe: &output.probe,
+        target: &record.velocity,
+        mapped: output.probe.velocity,
+    )!;
+    record_crowd_native_target(
+        fixture: fixture,
+        probe: &output.probe,
+        target: &record.gbuffer[GBufferChannel.NORMAL_ROUGHNESS],
+        mapped: output.probe.normal,
+    )!;
+    output.actual.has_normal = true;
+    output.actual.velocity_format = record.velocity.format;
+    output.actual.shadow_resolution = renderer.shadow_atlas.resolution;
+    assert(renderer.shadow_set.layer_count == 1 && renderer.shadow_set.light_count == 1);
+    uint layer = renderer.shadow_set.lights[0].first_layer;
+    Target shadow = {
+        .texture = renderer.shadow_atlas.texture,
+        .view = renderer.shadow_atlas.layers[layer].view,
+        .state = renderer.shadow_atlas.state,
+        .format = gpu::Format.D32_FLOAT,
+        .width = output.actual.shadow_resolution,
+        .height = output.actual.shadow_resolution,
+    };
+    record_crowd_native_target(
+        fixture: fixture,
+        probe: &output.probe,
+        target: &shadow,
+        mapped: output.probe.shadow,
+    )!;
+    renderer.shadow_atlas.state = shadow.state;
+    renderer.finish_view(output.view)!;
+}
+
+fn void? read_crowd_lod_native_output(Fixture* fixture, CrowdNativeOutput* output) @private {
+    Renderer* renderer = &fixture.renderer;
+    CrowdNativeImages* images = &output.actual;
+    renderer.read_render_target(output.target, ((char*)images.color.ptr)[:images.color.len * Vec4::size])!;
+    gpu::invalidate_mapped_span(&renderer.device, output.probe.depth.span)!;
+    gpu::invalidate_mapped_span(&renderer.device, output.probe.velocity.span)!;
+    gpu::invalidate_mapped_span(&renderer.device, output.probe.normal.span)!;
+    gpu::invalidate_mapped_span(&renderer.device, output.probe.shadow.span)!;
+    mem::copy(images.depth.ptr, output.probe.depth.bytes.ptr, CROWD_NATIVE_PIXELS * Vec4::size);
+    mem::copy(images.velocity.ptr, output.probe.velocity.bytes.ptr, CROWD_NATIVE_PIXELS * Vec4::size);
+    mem::copy(images.normal.ptr, output.probe.normal.bytes.ptr, CROWD_NATIVE_PIXELS * Vec4::size);
+    mem::copy(images.shadow.ptr, output.probe.shadow.bytes.ptr,
+        (sz)images.shadow_resolution * images.shadow_resolution * Vec4::size);
+    images.stats = renderer.stats;
+}
+
+fn void? capture_crowd_lod_native_simultaneous(
+    Fixture* fixture,
+    CrowdNativePair* pair,
+    AnimatedLodFixtures* corpus,
+    CrowdLodNativeSources* sources,
+    CrowdLodNativeViews* actual,
+    CrowdLodNativeViews* reference,
+) @private {
+    Renderer* renderer = &fixture.renderer;
+    for (uint frame = 0; frame < CROWD_NATIVE_WARMUP; frame++) {
+        renderer.begin_frame({ .time = 0.37, .delta = 0 })!;
+        defer catch render::abort_frame(renderer);
+        for (uint index = 0; index < 2; index++) {
+            CrowdNativeOutput* output = &actual.outputs[index];
+            record_crowd_lod_native_output(
+                fixture: fixture,
+                pair: pair,
+                output: output,
+                actual: true,
+            )!;
+            if (sources.crowd) {
+                record_crowd_lod_native_history(
+                    fixture: fixture,
+                    pair: pair,
+                    view: output.view,
+                    readback: actual.histories[index],
+                )!;
+            }
+        }
+        for (uint index = 0; index < 2; index++) {
+            set_crowd_lod_native_reference_level(
+                fixture: fixture,
+                pair: pair,
+                corpus: corpus,
+                level: index == 0 ? 0 : 2,
+            );
+            record_crowd_lod_native_output(
+                fixture: fixture,
+                pair: pair,
+                output: &reference.outputs[index],
+                actual: false,
+            )!;
+        }
+        if (sources.crowd) assert(renderer.deformation.crowd_palettes.len() == 1);
+        assert(renderer.stats.shadow_sets_recorded == 4 && renderer.stats.shadow_sets_shared == 0);
+        assert(renderer.stats.shadow_layers == 4 && renderer.stats.shadow_requests_dropped == 0);
+        renderer.end_frame()!;
+    }
+    render::wait_frames(renderer)!;
+    for (uint index = 0; index < 2; index++) {
+        read_crowd_lod_native_output(fixture, &actual.outputs[index])!;
+        read_crowd_lod_native_output(fixture, &reference.outputs[index])!;
+        uint level = index == 0 ? 0 : 2;
+        if (sources.crowd) {
+            gpu::invalidate_mapped_span(&renderer.device, actual.histories[index].span)!;
+            shader::LodHistoryGpu[] rows = ((shader::LodHistoryGpu*)actual.histories[index].bytes.ptr)
+                [:CROWD_NATIVE_INSTANCES];
+            AnimatedCrowd* crowd = pair.scene.get(pair.crowd, AnimatedCrowd);
+            foreach (source, row : rows) {
+                assert(row.level == level && row.reject_history == 0);
+                assert(row.generation == crowd.playback.slots[source].generation);
+                assert(row.model == bitcast(crowd.placements[source].to_mat4(), Mat4f));
+            }
+        } else {
+            foreach (owner : sources.ordinary) {
+                render::LodHistoryEntry* history = &renderer.views.get(actual.outputs[index].view)
+                    .lod_history.entries[owner.id.index];
+                assert(history.committed.valid && history.committed.level == level);
+            }
+        }
+    }
+    Stats* stats = &actual.outputs[0].actual.stats;
+    assert(stats.lod_fallbacks == 0 && stats.cull_overflows == 0 && stats.sort_overflows == 0);
+    for (uint choice = 0; choice < scene::MAX_LOD_CHOICES; choice++) {
+        uint selected = choice == 0 || choice == 2 ? CROWD_NATIVE_INSTANCES : 0;
+        uint visible = choice == 0 || choice == 2 ? 2 : 0;
+        if (sources.crowd) {
+            assert(stats.lod_counts_valid && stats.lod_instances_tested == 2 * CROWD_NATIVE_INSTANCES);
+            assert(stats.lod_selected[choice] == selected && stats.lod_visible[choice] == visible);
+        } else {
+            assert(stats.lod_objects_selected[choice] == selected && stats.lod_objects_visible[choice] == visible);
+        }
+    }
+    io::printfn("simultaneous view levels=0/2 crowd=%s selected=3/3 visible=2/2", sources.crowd);
+}
+
+fn void check_crowd_lod_native_two_source_coverage(CrowdNativeImages* images) @private {
+    uint[2] covered;
+    uint normal_covered;
+    foreach (index, depth : images.depth) {
+        if (depth.x <= 0) continue;
+        covered[(index % CROWD_NATIVE_WIDTH) < CROWD_NATIVE_WIDTH / 2 ? 0 : 1]++;
+        if (images.normal[index].w > 0.5f) normal_covered++;
+        assert(math::abs(images.velocity[index].x) < CROWD_NATIVE_STILL_TOLERANCE);
+        assert(math::abs(images.velocity[index].y) < CROWD_NATIVE_STILL_TOLERANCE);
+    }
+    assert(covered[0] > 0 && covered[1] > 0 && normal_covered > 0);
+}
+
+fn void check_crowd_lod_native_view_parity(CrowdNativeImages* actual, CrowdNativeImages* reference) @private {
+    check_crowd_lod_native_two_source_coverage(actual);
+    check_crowd_lod_native_two_source_coverage(reference);
+    check_crowd_native_image(actual.color, reference.color, CROWD_NATIVE_COLOR_TOLERANCE);
+    check_crowd_native_image(reference.color, actual.color, CROWD_NATIVE_COLOR_TOLERANCE);
+    check_crowd_native_image(actual.depth, reference.depth, CROWD_NATIVE_DEPTH_TOLERANCE);
+    check_crowd_native_image(reference.depth, actual.depth, CROWD_NATIVE_DEPTH_TOLERANCE);
+    check_crowd_native_image(actual.normal, reference.normal, CROWD_NATIVE_COLOR_TOLERANCE);
+    check_crowd_native_image(reference.normal, actual.normal, CROWD_NATIVE_COLOR_TOLERANCE);
+    assert(actual.shadow_resolution == reference.shadow_resolution && actual.shadow_resolution > 0);
+    uint resolution = actual.shadow_resolution;
+    uint actual_covered;
+    uint reference_covered;
+    for (uint pixel = 0; pixel < resolution * resolution; pixel++) {
+        if (actual.shadow[pixel].x > 0) actual_covered++;
+        if (reference.shadow[pixel].x > 0) reference_covered++;
+    }
+    assert(actual_covered > 0 && reference_covered > 0);
+    check_crowd_native_image(
+        actual: actual.shadow,
+        expected: reference.shadow,
+        tolerance: CROWD_NATIVE_DEPTH_TOLERANCE,
+        width: resolution,
+        height: resolution,
+    );
+    check_crowd_native_image(
+        actual: reference.shadow,
+        expected: actual.shadow,
+        tolerance: CROWD_NATIVE_DEPTH_TOLERANCE,
+        width: resolution,
+        height: resolution,
+    );
+}
+
+fn void test_animated_lod_native_quaternius_simultaneous_parent_levels_and_offscreen_shadows() @test {
+    Fixture fixture;
+    create_fixture(
+        allocator: mem,
+        fixture: &fixture,
+        shadow_resolution: 128,
+        max_shadow_layers: 1,
+        max_views: 12,
+        max_render_targets: 12,
+    )!!;
+    defer destroy_fixture(&fixture);
+    AnimatedLodFixtures corpus = animated_lod_fixtures::load_animated_lod_fixtures(&fixture.assets, "../../..")!!;
+    crowd_native_flat_source_materials(&fixture, corpus.model);
+    ClipId walk = crowd_native_clip_named(&fixture, corpus.model, "Walk_Loop")!!;
+    Transform[CROWD_NATIVE_INSTANCES] placements = crowd_native_real_placements();
+    placements[0].position.x = -1.5f;
+    placements[1].position.x = 1.5f;
+    placements[2].position.x = 6;
+    foreach (bool crowd : { true, false }) {
+        CrowdNativePair pair;
+        create_crowd_native_pair(
+            allocator: mem,
+            fixture: &fixture,
+            pair: &pair,
+            model: corpus.model,
+            clip: walk,
+            bounds: CROWD_LOD_NATIVE_BOUNDS,
+            placements: placements[..],
+        )!!;
+        defer scene::destroy_scene(&pair.scene);
+        *pair.scene.get(pair.camera, Camera) = camera::orthographic(6, 0.1f, 30);
+        pair.camera.local.position = { 0, 1, 12 };
+        use_crowd_native_standard_materials(&fixture, &pair)!!;
+        CrowdLodNativeSources sources;
+        attach_crowd_lod_native_sources(
+            fixture: &fixture,
+            pair: &pair,
+            corpus: &corpus,
+            sources: &sources,
+            crowd: crowd,
+            clip: walk,
+        )!!;
+        set_crowd_lod_native_phase(
+            fixture: &fixture,
+            pair: &pair,
+            sources: &sources,
+            duration: fixture.assets.clip(walk).data.duration,
+        );
+        Light sun = light::directional({ 1, 1, 1 }, 1);
+        sun.shadow.cascades = 1;
+        sun.shadow.max_distance = 25;
+        Node* light_node = pair.scene.add_light(sun)!!;
+        light_node.local.rotation = maths::look_rotation((Vec3){ -0.8f, -0.3f, -1 }.normalize(), { 0, 1, 0 });
+        pair.scene.update_world();
+        CrowdLodNativeViews actual;
+        create_crowd_lod_native_views(&fixture, &actual)!!;
+        defer destroy_crowd_lod_native_views(&fixture, &actual);
+        CrowdLodNativeViews reference;
+        create_crowd_lod_native_views(&fixture, &reference)!!;
+        defer destroy_crowd_lod_native_views(&fixture, &reference);
+        configure_crowd_lod_native_views(&fixture, &actual)!!;
+        configure_crowd_lod_native_views(&fixture, &reference)!!;
+        capture_crowd_lod_native_simultaneous(
+            fixture: &fixture,
+            pair: &pair,
+            corpus: &corpus,
+            sources: &sources,
+            actual: &actual,
+            reference: &reference,
+        )!!;
+        for (uint view = 0; view < 2; view++) {
+            check_crowd_lod_native_view_parity(&actual.outputs[view].actual, &reference.outputs[view].actual);
+            uint resolution = actual.outputs[view].actual.shadow_resolution;
+            mem::copy(actual.outputs[view].expected.shadow.ptr, actual.outputs[view].actual.shadow.ptr,
+                (sz)resolution * resolution * Vec4::size);
+            mem::copy(actual.outputs[view].expected.depth.ptr, actual.outputs[view].actual.depth.ptr,
+                CROWD_NATIVE_PIXELS * Vec4::size);
+        }
+        uint level_shadow_differences;
+        uint resolution = reference.outputs[0].actual.shadow_resolution;
+        for (uint pixel = 0; pixel < resolution * resolution; pixel++) {
+            if (math::abs(reference.outputs[0].actual.shadow[pixel].x
+                - reference.outputs[1].actual.shadow[pixel].x) > CROWD_NATIVE_DEPTH_TOLERANCE) {
+                level_shadow_differences++;
+            }
+        }
+        assert(level_shadow_differences > 0, "Reduced parent shadow level is not discriminating");
+        if (crowd) {
+            AnimatedCrowd* animated = pair.scene.get(pair.crowd, AnimatedCrowd);
+            animated.placements[2].position.x = 1000;
+            pair.scene.write_crowd_batches(animated);
+        } else {
+            sources.ordinary[2].local.position.x = 1000;
+        }
+        pair.ordinary[2].local.position.x = 1000;
+        crowd_native_update(&fixture, &pair, 0);
+        capture_crowd_lod_native_simultaneous(
+            fixture: &fixture,
+            pair: &pair,
+            corpus: &corpus,
+            sources: &sources,
+            actual: &actual,
+            reference: &reference,
+        )!!;
+        for (uint view = 0; view < 2; view++) {
+            check_crowd_lod_native_view_parity(&actual.outputs[view].actual, &reference.outputs[view].actual);
+            check_crowd_native_image(actual.outputs[view].actual.depth, actual.outputs[view].expected.depth,
+                CROWD_NATIVE_DEPTH_TOLERANCE);
+            check_crowd_native_image(actual.outputs[view].expected.depth, actual.outputs[view].actual.depth,
+                CROWD_NATIVE_DEPTH_TOLERANCE);
+            uint offscreen_shadow_differences;
+            for (uint pixel = 0; pixel < resolution * resolution; pixel++) {
+                if (math::abs(actual.outputs[view].actual.shadow[pixel].x
+                    - actual.outputs[view].expected.shadow[pixel].x) > CROWD_NATIVE_DEPTH_TOLERANCE) {
+                    offscreen_shadow_differences++;
+                }
+            }
+            assert(offscreen_shadow_differences > 0, "Offscreen source did not contribute to its parent shadow");
+            io::printfn("parent shadow view=%s offscreen changed pixels=%s", view, offscreen_shadow_differences);
+        }
+        check_crowd_lod_native_sources_remain_base(
+            fixture: &fixture,
+            pair: &pair,
+            corpus: &corpus,
+            sources: &sources,
+        );
         check_crowd_native_validation(&fixture.renderer);
     }
 }
