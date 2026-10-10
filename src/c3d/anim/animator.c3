@@ -44,6 +44,7 @@ struct Action {
 
     RootMotion root_motion;
     bool root_yaw;
+    RootExtractionDesc extraction;
     uint translation_track;
     uint rotation_track;
     Vec3 root_position;
@@ -92,6 +93,7 @@ struct PlayDesc {
     AdditiveScaleMode additive_scale;
     RootMotion root_motion;
     bool root_yaw;
+    RootExtractionDesc extraction;
 }
 
 struct ActionStorage @local {

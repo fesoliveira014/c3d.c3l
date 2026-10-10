@@ -410,6 +410,7 @@ fn Action? prepare_validated_playback_action(
     state.reference = reference;
     state.weighted_mask = weighted_mask;
     state.additive_scale = desc.additive_scale;
+    state.extraction = desc.extraction;
     state.speed = 1;
     state.weight = desc.fade_in > 0 ? 0 : 1;
     state.fade_target = 1;
