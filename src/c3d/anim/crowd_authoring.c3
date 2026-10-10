@@ -26,6 +26,7 @@ struct CrowdActionAuthoring {
     bool root_yaw;
     float[] weighted_mask;
     AdditiveScaleMode additive_scale;
+    RootExtractionDesc extraction;
 }
 
 <* Restartable space configuration referring to ordered action ordinals. *>
@@ -230,6 +231,7 @@ fn AnimationActionId? restore_playback_authoring(
                 .additive_scale = action.additive_scale,
                 .root_motion = action.root_motion,
                 .root_yaw = action.root_yaw,
+                .extraction = action.extraction,
             };
 
             ids[ordinal] = playback.play(
@@ -507,6 +509,7 @@ fn CrowdInstanceAuthoring? capture_playback_authoring(
             .root_motion = action.root_motion,
             .root_yaw = action.root_yaw,
             .additive_scale = action.additive_scale,
+            .extraction = action.extraction,
         };
 
         if (action.weighted_mask.len) {

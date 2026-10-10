@@ -16,6 +16,8 @@ struct PlaybackView {
     BlendSpace1D[] blend_spaces;
     BlendSpace2D[] blend_spaces_2d;
     uint root_node;
+    InertialRow* inertial;
+    GeneralizedPlaybackState* generalized;
 }
 
 <* Destination baselines, presence and caller-owned evaluated output. *>
@@ -47,6 +49,7 @@ struct ChannelSums {
     float rotation_weight;
     Vec3 scale;
     float scale_weight;
+    double[<3>] precise_scale;
 }
 
 <* A retained event stream's state after its first emitted crossing. *>
@@ -63,6 +66,7 @@ struct PoseScratch {
     float[] morph_weights;
     float[] sample;
     EventBookmark[] event_bookmarks;
+    PoseDerivativeScratch* derivative;
 }
 
 <* Counts from this evaluation; dropped crossings saturate at uint::max. *>
@@ -74,6 +78,8 @@ struct EventReport {
 <* Evaluated motion and retained-event counts for one pose. *>
 struct PoseReport {
     PlanarMotion motion;
+    GeneralizedMotion generalized_motion;
+    bool generalized;
     EventReport events;
 }
 
@@ -104,6 +110,22 @@ fn AnimationActionId? PlaybackView.play(
     AnimationClip* data = &assets.clips.try_get(clip)!.data;
     usz reference_count = validate_playback_action(data, desc, destination)!;
     if (desc.weighted_mask) validate_weighted_joint_mask(assets, self.model, desc.weighted_mask)!;
+    validate_action_motion_capture(
+        assets: assets,
+        model: self.model,
+        clip: data,
+        desc: desc,
+        root_node: self.root_node,
+        motion_basis: motion_basis,
+    )!;
+    validate_live_motion_addition(
+        playback: self,
+        assets: assets,
+        clip: data,
+        desc: desc,
+        basis: motion_basis,
+    )!;
+    if (self.inertial) validate_inertial_rotation_domains(data)!;
     if (!self.actions.free_count) return c3d::CAPACITY_EXCEEDED~;
 
     Action state = prepare_validated_playback_action(
@@ -115,6 +137,19 @@ fn AnimationActionId? PlaybackView.play(
         motion_basis: motion_basis,
         root_node: self.root_node,
         reference_count: reference_count,
+        precise_rotation: self.inertial != null || desc.extraction.generalized
+          || generalized_playback_chain(self) != null,
+    )!;
+
+    defer catch release_prepared_action(self.allocator, &state);
+
+    prepare_action_motion_capture(
+        allocator: self.allocator,
+        assets: assets,
+        model: self.model,
+        action: &state,
+        root_node: self.root_node,
+        motion_basis: motion_basis,
     )!;
 
     return install_playback_action(self, state, desc.mask);
@@ -193,9 +228,17 @@ fn PoseReport evaluate_pose(
     float dt,
     EventOutput events,
 ) {
+    if (playback.inertial) {
+        InertialIdentityState identity = compute_inertial_identity(playback, assets, destination.present);
+        refresh_inertial_identity(playback.inertial, identity);
+    }
     advance(playback, assets, dt);
     advance_blend_spaces(playback, assets, dt);
     advance_blend_spaces_2d(playback, assets, dt);
+    if (playback.inertial) {
+        InertialIdentityState identity = compute_inertial_identity(playback, assets, destination.present);
+        refresh_inertial_identity(playback.inertial, identity);
+    }
 
     blend_pose(
         playback: playback,
@@ -204,7 +247,34 @@ fn PoseReport evaluate_pose(
         scratch: scratch,
     );
 
-    PlanarMotion motion = evaluate_root_motion(playback, assets, destination);
+    bool generalized = playback.generalized != null && generalized_playback_chain(playback) != null;
+    if (playback.inertial) {
+        if (generalized) {
+            advance_inertial_elapsed(playback.inertial, (double)dt);
+        } else {
+            correct_inertial_pose(
+                playback: playback,
+                destination: destination,
+                scratch: scratch,
+                dt: (double)dt,
+            );
+        }
+    }
+
+    PlanarMotion motion;
+    GeneralizedMotion generalized_motion;
+    if (generalized) {
+        if (!playback.generalized.initialized) initialize_generalized_playback(playback.generalized, playback);
+        generalized_motion = evaluate_generalized_playback_motion(
+            playback: playback,
+            assets: assets,
+            destination: destination,
+            state: playback.generalized,
+            dt: (double)dt,
+        );
+    } else {
+        motion = evaluate_root_motion(playback, assets, destination);
+    }
     EventReport report = publish_events(
         playback: playback,
         assets: assets,
@@ -212,7 +282,12 @@ fn PoseReport evaluate_pose(
         bookmarks: scratch.event_bookmarks,
     );
 
-    return { .motion = motion, .events = report };
+    return {
+        .motion = motion,
+        .generalized_motion = generalized_motion,
+        .generalized = generalized,
+        .events = report,
+    };
 }
 
 <* Borrow a contiguous retained-event array. *>
@@ -238,6 +313,7 @@ fn Action? prepare_playback_action(
     PoseDestination destination,
     MotionBasis motion_basis,
     uint root_node,
+    bool precise_rotation = false,
 ) {
     AnimationClip* data = &assets.clips.try_get(clip)!.data;
     usz reference_count = validate_playback_action(data, desc, destination)!;
@@ -251,6 +327,7 @@ fn Action? prepare_playback_action(
         motion_basis: motion_basis,
         root_node: root_node,
         reference_count: reference_count,
+        precise_rotation: precise_rotation || desc.extraction.generalized,
     );
 }
 
@@ -287,6 +364,11 @@ fn AnimationActionId install_playback_action(
  @param [&inout] action : "Cleared after its arrays are freed."
 *>
 fn void release_prepared_action(Allocator allocator, Action* action) {
+    if (action.motion_chain) {
+        destroy_captured_motion_chain(action.motion_chain);
+        alloc::free(allocator, action.motion_chain);
+    }
+
     alloc::free(allocator, action.cursors.ptr);
     alloc::free(allocator, action.reference.ptr);
     alloc::free(allocator, action.weighted_mask.ptr);
@@ -353,6 +435,7 @@ fn Action? prepare_validated_playback_action(
     MotionBasis motion_basis,
     uint root_node,
     usz reference_count,
+    bool precise_rotation = false,
 ) @private {
     PlaybackView playback = { .root_node = root_node };
     Action state;
@@ -387,12 +470,25 @@ fn Action? prepare_validated_playback_action(
         usz offset;
         foreach (&track : data.tracks) {
             uint cursor;
-            sample_track(
-                track: track,
-                time: 0,
-                cursor: &cursor,
-                out: reference[offset:track.stride()],
-            );
+            if (precise_rotation && track.path == TargetPath.ROTATION) {
+                double[4] value;
+                double[4] rate;
+                sample_track_analytic(
+                    track: track,
+                    time: 0,
+                    cursor: &cursor,
+                    value: value[..],
+                    rate: rate[..],
+                );
+                foreach (index, component : value) reference[offset + (usz)index] = (float)component;
+            } else {
+                sample_track(
+                    track: track,
+                    time: 0,
+                    cursor: &cursor,
+                    out: reference[offset:track.stride()],
+                );
+            }
 
             if (track.path == TargetPath.SCALE && desc.additive_scale == AdditiveScaleMode.MULTIPLICATIVE) {
                 Vec3 scale = sample_multiplicative_scale_reference(track);
@@ -410,6 +506,7 @@ fn Action? prepare_validated_playback_action(
     state.reference = reference;
     state.weighted_mask = weighted_mask;
     state.additive_scale = desc.additive_scale;
+    state.extraction = desc.extraction;
     state.speed = 1;
     state.weight = desc.fade_in > 0 ? 0 : 1;
     state.fade_target = 1;
@@ -425,10 +522,7 @@ fn Action? prepare_validated_playback_action(
 fn void remove_action(PlaybackView* playback, uint index) @local {
     AnimationActionId id = playback.order[index];
     Action* action = playback.actions.get(id);
-    alloc::free(playback.allocator, action.cursors.ptr);
-    alloc::free(playback.allocator, action.reference.ptr);
-    alloc::free(playback.allocator, action.weighted_mask.ptr);
-    *action = {};
+    release_prepared_action(playback.allocator, action);
 
     playback.actions.remove(id);
     (*playback.action_count)--;

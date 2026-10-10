@@ -24,7 +24,8 @@ An `Animator` is a component on the synthetic root that `model::instantiate`
 returns. It owns a fixed pool of 16 actions, addressed by `AnimationActionId`.
 The pool header, live-ID order, events, 1D spaces and model-sized boolean mask
 rows share one per-animator heap block. Prepared 2D spaces use a separate fixed
-block. The scene component contains pointers, counts and the last motion delta.
+block. Optional inertial history and residuals also use fixed owner storage.
+The scene component contains pointers, counts and the last motion delta.
 
 The fixed component store reserves a value for every possible scene node,
 including unused slots: `scene_capacity * Animator::size`. The default scene
@@ -72,8 +73,8 @@ numeric values must be finite and weight nonnegative. `playing` gates only the
 clock, so paused actions still pose. Clip, layer, additive mode, masks and
 reference arrays are captured/library-owned. Recreate an action to change them.
 Clip tracks, duration and target mappings must remain unchanged and live during
-playback. Root mode/yaw and sampling data are captured too. Blend-space members
-are read-only; their space controls playback.
+playback. Root mode/yaw, generalized extraction and sampling data are captured
+too. Blend-space members are read-only; their space controls playback.
 
 While an animator exists it owns the pose of its instance: every update writes
 every present instance node's local transform and every present instance mesh's
@@ -283,7 +284,8 @@ the turn about the root node's reference position; tilt remains in the pose.
 The reference position includes static ancestors in the instance root's frame.
 Extraction requires upright, positive,
 uniform scale through the captured basis and instance root, retained throughout
-playback. Arbitrary-up motion and animated root ancestors are unsupported.
+playback. This default planar path requires static ancestors and Y-up;
+use generalized extraction for other supported frames.
 Missing root configuration, unsupported yaw basis, yaw with KEEP, and non-KEEP
 additive actions fault `INVALID_ARGUMENT` before allocating an action.
 
@@ -304,6 +306,130 @@ motion or events; the subsequent clock step does. Internal double clocks retain
 subframe precision independently of the public float sampling time. `dt` is
 finite and nonnegative, speed may be negative, and clocks must remain finite
 and representable. Paused, zero-step and zero-duration actions emit no movement.
+
+### Generalized extraction
+
+Set `PlayDesc.extraction.generalized = true` with `root_motion = EXTRACT` to
+consume motion from the final composed ancestor chain. `translation_axes`
+selects X, Y and Z in the instance-root frame; `up` is a finite unit vector in
+that frame, and `twist` selects turning about it. These captured fields replace
+the planar `root_yaw` selection for that action. Keep the motion node and frame
+fixed while its actions live.
+
+```c3
+animator.root_node = motion_node;
+animator.play(&assets, walk, {
+    .root_motion = RootMotion.EXTRACT,
+    .extraction = {
+        .generalized = true,
+        .translation_axes = { true, true, true },
+        .up = { 0, 1, 0 },
+        .twist = true,
+    },
+})!;
+```
+
+The chain may contain animated proper rotations, translations and finite
+positive uniform scales. Nonuniform scale, reflection, shear, invalid root
+layout, nonfinite values and zero quaternions fault `INVALID_ARGUMENT` at
+admission. Rotation tracks are checked over their full domain; STEP uses keys,
+LINEAR also requires a sign-corrected nonnegative endpoint dot, and CUBIC uses a
+bounded polynomial certificate. An unproved cubic domain or sampling margin
+faults `UNSUPPORTED` before playback changes. No repeated domain scan runs at
+update. Under generalized extraction, a nonneutral scale track on an additive
+action's consumed chain is invalid in either additive scale mode, including
+zero-weight or fully masked actions.
+
+The final blended and inertia-corrected chain determines the consumed motion.
+One instance-root compensation applies to every top-level branch, including
+branches outside the motion node, so applying the published delta reproduces
+the corresponding KEEP pose. The root turns about its reference position in
+the instance-root frame. Consume the delta with `apply_root_motion` once after
+update; for crowds use `Scene.apply_crowd_root_motion`. The default planar path
+keeps its previous behavior. Float32 application still accumulates drift with
+distance; compare articulated poses in their carrier's frame.
+
+## Inertial transitions
+
+Reserve storage when creating an Animator:
+
+```c3
+Animator* animator = anim::add_animator(
+    &scene, instance_root, { .inertia_enabled = true });
+```
+
+For a crowd, set `AnimatedCrowd.inertia_enabled = true` after `attach_crowd`
+and before `prepare_crowd`. Preparation fixes this option; changing it on a
+prepared owner is invalid. A crowd reserves separate history/residual rows for
+its full capacity, including inactive placements, and shares evaluation scratch.
+Each row owns a previous node pose, double velocity/offset/offset-rate rows and
+28 bytes per logical morph component, plus controls and root-motion state.
+Disabled owners reserve none of this storage. Enabled updates allocate nothing.
+
+`Animator.inertialize` and `CrowdPlayer.inertialize` replace the owner's current
+actions and groups, preserving the current composed pose and its published
+velocity with a residual that decays over `duration` update seconds. Duration
+zero switches immediately. The action array and optional `CrowdSpaceAuthoring`
+array are borrowed during the request and copied; group membership names the
+target action ordinals.
+
+```c3
+AnimationTargetDesc[1] targets = { anim::ANIMATION_TARGET_DEFAULT };
+targets[0].clip = run;
+targets[0].start_time = 0.25f;
+targets[0].speed = 1.25f;
+animator.inertialize(&assets, {
+    .duration = 0.35f,
+    .actions = targets[..],
+})!;
+```
+
+The request first validates every target and its eligibility, then allocates
+all target cursors, references and copied masks into temporary ownership.
+Failures free those resources and leave the current actions, IDs, order, pose
+and history unchanged. Source retirement and target installation follow only
+after that succeeds. Requests need no spare action slots: 16-to-16 replacement
+and a crowd's full configured action capacity are supported. Request-time
+allocations follow the ordinary play contract; the inertial history and
+residual storage was already reserved at preparation. Old source action IDs
+become stale after a successful request. Reacquire action and group pointers.
+
+A replacement while active captures the current corrected output and its
+published velocity. Pose translation, rotation and ordinary scale/morph
+residuals preserve value and velocity at onset and decay to the target. Scale
+on a consumed motion chain uses `s_target * exp(residual)` in log space, keeping
+positive uniform scale positive and velocity-matched. Regular blending is
+convex, so admitted positive-uniform scales remain positive under runtime
+weights, masks, fades and group controls. Request-time bounds also require the
+whole corrected scale window to remain representable as float. A proven
+out-of-range result faults `INVALID_ARGUMENT`; a result within the directed
+rounding margin faults `UNSUPPORTED`. A shorter transition duration may succeed;
+the runtime does not clamp accepted scale.
+
+For a consumed root, source and target use the same motion node, selected axes,
+up, twist and frame. Different clip reference positions are allowed and rebase
+to the current consumed carrier anchor. Root output adds a decaying residual
+translation/twist velocity to the target delta, with one final pivot correction.
+Events come from target actions only. The source's previous published delta
+divided by its positive update interval supplies velocity; invalid history
+starts with zero source velocity.
+
+At a STEP boundary, request onset takes the one-sided value and derivative in
+the target playback direction, including reverse starts at duration. It does
+not epsilon-seek the clock or emit events. A zero update freezes transition
+time. `cancel_inertial_transition` discards the residual while retaining target
+actions and clocks; the next pose is the target output. Inertial requests and
+cancellation require enabled storage (`@require`), rather than returning a fault
+for a disabled owner. A stale crowd player still faults `INVALID_ID`.
+
+Clips, model layout and captured references must remain live and compatible
+through playback. Recreate actions when changing captured motion settings or
+reference data. Removing an owner releases its history and target resources;
+replacing a crowd placement resets that slot's generation and history. Seeks,
+removed targets, relevant clip/model revisions and layout changes invalidate
+affected history; captured references are not silently rebuilt. Saving
+keeps authored settings and target playback, while sampled clocks, source
+velocities, history and active/interrupted residuals restart empty on restore.
 
 ## Clip events
 
@@ -505,15 +631,21 @@ python3 scripts/build.py --example animation_authoring
 `animation_authoring` pairs a crowd with an ordinary Animator for the unmodified
 CC0 Quaternius animations and AnimatedMorphCube. Its panel controls a nine-sample
 2D direction, speed, pause, a feathered upper-body/morph overlay and a
-multiplicative head-scale overlay. The Animator inspector exposes 2D parameter,
+multiplicative head-scale overlay. Character buttons request layered playback,
+a generalized jog or the source's left/right 90-degree turning clips through
+inertial transitions. Transition duration, cancellation and extracted movement
+are explicit controls; each owner consumes its output once per update.
+The Animator inspector exposes 2D parameter,
 weight, speed, pause and stop controls, and shows copied weighted-mask membership
 and the additive scale mode. Captured mask/layout/scale settings change by
 recreating their actions or groups.
 
-Animator authoring version 2 and AnimatedCrowd version 3 retain these settings
-through `c3d_serial`; old streams keep their original 1D, boolean-mask and
-DIFFERENCE defaults. Playback clocks and fades follow the existing restart rules
-([Serialization](serialization.md)).
+Animator authoring version 3 and AnimatedCrowd version 4 retain these settings,
+generalized extraction and the inertia opt-in through `c3d_serial`. Earlier
+versions retain their authored groups, masks and scale mode, default to planar
+extraction and disabled inertia, and preserve the original 1D/boolean/DIFFERENCE
+defaults where those features were absent. Playback clocks, fades and transitions
+follow the authored restart rules ([Serialization](serialization.md)).
 
 ## Layered example and CPU measurements
 

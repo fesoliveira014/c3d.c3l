@@ -44,6 +44,9 @@ struct Action {
 
     RootMotion root_motion;
     bool root_yaw;
+    RootExtractionDesc extraction;
+    CapturedMotionChain* motion_chain;
+    GeneralizedMotionReference motion_reference;
     uint translation_track;
     uint rotation_track;
     Vec3 root_position;
@@ -57,6 +60,8 @@ struct Action {
     double clock_time;
     float published_time;
     uint blend_space;
+    double analytic_speed;
+    double analytic_weight_rate;
 }
 
 <* Fixed playback slots and masks owned by one model instance. *>
@@ -80,6 +85,8 @@ struct Animator {
     BlendSpace1D[] blend_spaces;
     BlendSpace2D[] blend_spaces_2d;
     PoseStorage* pose_storage;
+    InertialStorage* inertial_storage;
+    GeneralizedPlaybackState generalized_state;
 }
 
 <* Captured configuration of a newly played action. *>
@@ -92,6 +99,7 @@ struct PlayDesc {
     AdditiveScaleMode additive_scale;
     RootMotion root_motion;
     bool root_yaw;
+    RootExtractionDesc extraction;
 }
 
 struct ActionStorage @local {
@@ -170,7 +178,7 @@ fn void? Animator.cross_fade(
  @param [&in] instance_root : "Carries ModelInstance."
  @require scene.has(instance_root, ModelInstance), !scene.has(instance_root, Animator)
 *>
-fn Animator* add_animator(Scene* scene, Node* instance_root) {
+fn Animator* add_animator(Scene* scene, Node* instance_root, AnimatorDesc desc = {}) {
     ModelInstance* instance = scene.get(instance_root, ModelInstance);
     usz mask_count = MAX_ACTIONS * instance.nodes.len;
     ActionStorage* storage = (ActionStorage*)alloc::malloc(scene.allocator, (sz)(ActionStorage::size + mask_count));
@@ -200,7 +208,20 @@ fn Animator* add_animator(Scene* scene, Node* instance_root) {
         mesh_nodes: instance.mesh_nodes,
         base_morph_weights: instance.base_morph_weights,
         event_capacity: MAX_FIRED_EVENTS,
+        inertia_enabled: desc.inertia_enabled,
     );
+
+    if (desc.inertia_enabled) {
+        uint morphs;
+        foreach (values : instance.base_morph_weights) morphs += (uint)values.len;
+        animator.inertial_storage = create_inertial_storage(
+            allocator: scene.allocator,
+            nodes: (uint)instance.nodes.len,
+            morphs: morphs,
+            capacity: 1,
+        )!!;
+        reset_inertial_row(animator.inertial_storage, 0, instance_root.id.generation);
+    }
 
     return scene.add(instance_root, animator);
 }
@@ -232,19 +253,48 @@ fn void update(AssetStore* assets, Scene* scene, float dt) {
             animator.event_count = report.events.count;
             animator.events_dropped = report.events.dropped;
 
-            publish_animator_pose(animator, instance);
+            if (report.generalized) {
+                animator.root_motion = publish_generalized_owner_motion(
+                    playback: &playback,
+                    destination: animator.pose_storage.destination,
+                    motion: report.generalized_motion,
+                    dt: (double)dt,
+                    scratch: animator.pose_storage.scratch,
+                );
+                publish_animator_pose(animator, instance);
+            } else {
+                publish_animator_pose(animator, instance);
 
-            Vec3 reference;
-            if (report.motion.yaw != 0) {
-                Node* root = instance.present_node(animator.root_node);
-                reference = root.local.position;
+                Vec3 reference;
+                if (report.motion.yaw != 0) {
+                    Node* root = instance.present_node(animator.root_node);
+                    reference = root.local.position;
 
-                for (Node* parent = root.parent; parent && parent != animator.instance_root; parent = parent.parent) {
-                    reference = maths::transform_point(parent.local.to_mat4(), reference);
+                    for (Node* parent = root.parent; parent && parent != animator.instance_root; parent = parent.parent) {
+                        reference = maths::transform_point(parent.local.to_mat4(), reference);
+                    }
                 }
+
+                animator.root_motion = root_motion_delta(report.motion, reference);
+                if (animator.inertial_storage) {
+                    animator.root_motion = publish_inertial_root_motion(
+                        row: &animator.inertial_storage.rows[0],
+                        target: animator.root_motion,
+                        target_twist: (double)report.motion.yaw,
+                        up: inertial_publication_up(&animator.inertial_storage.rows[0]),
+                        pivot: { reference.x, reference.y, reference.z },
+                        dt: (double)dt,
+                    );
+                }
+
             }
 
-            animator.root_motion = root_motion_delta(report.motion, reference);
+            record_playback_inertial_history(
+                playback: &playback,
+                destination: animator.pose_storage.destination,
+                scratch: animator.pose_storage.scratch,
+                dt: (double)dt,
+            );
         };
     };
 }
@@ -260,10 +310,10 @@ fn void free_animator(Entity entity, void* component, void* user) {
 
     foreach (id : animator.order[:animator.action_count]) {
         Action* action = animator.actions.get(id);
-        alloc::free(allocator, action.cursors.ptr);
-        alloc::free(allocator, action.reference.ptr);
-        alloc::free(allocator, action.weighted_mask.ptr);
+        release_prepared_action(allocator, action);
     }
+
+    if (animator.inertial_storage) destroy_inertial_storage(animator.inertial_storage);
 
     destroy_blend_spaces_2d(allocator, animator.blend_spaces_2d);
     destroy_pose_storage(allocator, animator.pose_storage);

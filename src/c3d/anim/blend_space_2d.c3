@@ -187,6 +187,26 @@ fn BlendSpace2D*? PlaybackView.add_blend_space_2d(
     }
 
     if (desc.weighted_mask) validate_weighted_joint_mask(assets, self.model, desc.weighted_mask)!;
+    foreach (clip : clips) {
+        AnimationClip* data = &assets.clip(clip).data;
+        validate_action_motion_capture(
+            assets: assets,
+            model: self.model,
+            clip: data,
+            desc: desc,
+            root_node: self.root_node,
+            motion_basis: motion_basis,
+        )!;
+        validate_live_motion_addition(
+            playback: self,
+            assets: assets,
+            clip: data,
+            desc: desc,
+            basis: motion_basis,
+        )!;
+        if (self.inertial) validate_inertial_rotation_domains(data)!;
+    }
+
 
     uint slot;
     while (slot < MAX_BLEND_SPACES
@@ -211,8 +231,18 @@ fn BlendSpace2D*? PlaybackView.add_blend_space_2d(
             destination: destination,
             motion_basis: motion_basis,
             root_node: self.root_node,
+            precise_rotation: self.inertial != null || desc.extraction.generalized
+              || generalized_playback_chain(self) != null,
         )!;
         prepared_count++;
+        prepare_action_motion_capture(
+            allocator: self.allocator,
+            assets: assets,
+            model: self.model,
+            action: &prepared[prepared_count - 1],
+            root_node: self.root_node,
+            motion_basis: motion_basis,
+        )!;
     }
 
     BlendSpace2D* space = &self.blend_spaces_2d[slot];
@@ -340,6 +370,7 @@ fn void advance_blend_spaces_2d(PlaybackView* playback, AssetStore* assets, floa
                 duration: clip_duration,
                 normalized: normalized,
                 weight: space.weight,
+                weight_rate: blend_space_weight_rate(fade),
             );
         }
     }

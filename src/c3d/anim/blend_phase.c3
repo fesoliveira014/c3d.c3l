@@ -13,6 +13,7 @@ struct BlendPhaseStep @private {
     double start;
     double travel;
     double phase;
+    double clock_rate;
 }
 
 fn bool? stop_blend_space_weight(BlendSpaceFade fade, float duration) @private {
@@ -60,7 +61,12 @@ fn BlendPhaseStep advance_blend_phase(
     if (start == 0 && travel < 0) start = 1;
     double end = start + travel;
 
-    return { .start = start, .travel = travel, .phase = end - math::floor(end) };
+    return {
+        .start = start,
+        .travel = travel,
+        .phase = end - math::floor(end),
+        .clock_rate = playing ? (double)speed / duration : 0,
+    };
 }
 
 fn void write_blend_space_member(
@@ -69,6 +75,7 @@ fn void write_blend_space_member(
     float duration,
     float normalized,
     float weight,
+    double weight_rate = 0,
 ) @private {
     action.previous_time = phase.start * duration;
     action.clock_delta = phase.travel * duration;
@@ -77,6 +84,8 @@ fn void write_blend_space_member(
     action.published_time = action.time;
 
     action.weight = weight * normalized;
+    action.analytic_speed = phase.clock_rate * duration;
+    action.analytic_weight_rate = weight_rate * (double)normalized;
 }
 
 fn void remove_blend_space_members(PlaybackView* playback, AnimationActionId[] members) @private {
@@ -84,4 +93,10 @@ fn void remove_blend_space_members(PlaybackView* playback, AnimationActionId[] m
         playback.actions.get(id).blend_space = 0;
         playback.stop(id)!!;
     }
+}
+
+fn double blend_space_weight_rate(BlendSpaceFade fade) @private {
+    if (*fade.rate <= 0 || *fade.target == *fade.weight) return 0;
+
+    return *fade.target < *fade.weight ? -(double)*fade.rate : (double)*fade.rate;
 }

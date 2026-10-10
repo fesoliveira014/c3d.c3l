@@ -53,10 +53,10 @@ fn void test_every_registered_core_component_has_one_expected_policy() @test {
             .identity = FootAuthoring::typeid, .phase = REFERENCES },
         { .slot = ecs::assigned_slot(LookAt)!!, .version = 1, .name = "c3d.LookAt",
             .identity = LookAuthoring::typeid, .phase = REFERENCES },
-        { .slot = ecs::assigned_slot(Animator)!!, .version = 2, .name = "c3d.Animator",
-            .identity = AnimatorAuthoringV2::typeid, .phase = OWNER },
-        { .slot = ecs::assigned_slot(AnimatedCrowd)!!, .version = 3, .name = "c3d.AnimatedCrowd",
-            .identity = CrowdAuthoringV3::typeid, .phase = OWNER },
+        { .slot = ecs::assigned_slot(Animator)!!, .version = 3, .name = "c3d.Animator",
+            .identity = AnimatorAuthoringV3::typeid, .phase = OWNER },
+        { .slot = ecs::assigned_slot(AnimatedCrowd)!!, .version = 4, .name = "c3d.AnimatedCrowd",
+            .identity = CrowdAuthoringV4::typeid, .phase = OWNER },
     };
     assert(ecs::registered_type_count == expected.len);
     serial::register_core_codecs()!!;

@@ -209,6 +209,7 @@ fn void? prepare_crowd(AssetStore* assets, Scene* scene, Node* node) {
         placements: crowd.placements,
         actions_per_instance: crowd.actions_per_instance,
         event_capacity: crowd.event_capacity,
+        inertia_enabled: crowd.inertia_enabled,
     )!;
     crowd.playback.model = crowd.model;
 

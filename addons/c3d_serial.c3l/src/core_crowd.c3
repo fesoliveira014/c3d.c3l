@@ -19,6 +19,10 @@ const ulong CROWD_ACTION_V2_LAYOUT @local = 0x8360925cddcb7715;
 const ulong CROWD_SPACE_V2_LAYOUT @local = 0x4d5777ab1cce4ecc;
 const ulong CROWD_PLAYBACK_V2_LAYOUT @local = 0x7320dbe867e06499;
 const ulong CROWD_AUTHORING_V3_LAYOUT @local = 0x5b096137b6e8478c;
+const ulong ROOT_EXTRACTION_LAYOUT @local = 0x8c0c03570afa943a;
+const ulong CROWD_ACTION_V3_LAYOUT @local = 0x57853e6ea32637ef;
+const ulong CROWD_PLAYBACK_V3_LAYOUT @local = 0x37162e1bec52fba1;
+const ulong CROWD_AUTHORING_V4_LAYOUT @local = 0xc22bea1053785e3a;
 const ulong BLEND_TRIANGLE_LAYOUT @local = 0x484666f6dc6513d7;
 
 struct CrowdAuthoring @private {
@@ -48,6 +52,29 @@ struct CrowdInstanceAuthoringV1 @private {
     SpaceAuthoring[] spaces;
 }
 
+struct CrowdActionAuthoringV2 @private {
+    ClipId clip;
+    float speed;
+    float weight;
+    uint layer;
+    bool additive;
+    bool loop;
+    bool playing;
+    bool[] mask;
+    RootMotion root_motion;
+    bool root_yaw;
+    float[] weighted_mask;
+    AdditiveScaleMode additive_scale;
+}
+
+struct CrowdInstanceAuthoringV2 @private {
+    bool configured;
+    uint root_node;
+    uint base_action;
+    CrowdActionAuthoringV2[] actions;
+    CrowdSpaceAuthoring[] spaces;
+}
+
 struct CrowdAuthoringV3 @private {
     ModelId model;
     uint capacity;
@@ -56,14 +83,27 @@ struct CrowdAuthoringV3 @private {
     CrowdInstance[] instances;
     uint actions_per_instance;
     uint event_capacity;
-    CrowdInstanceAuthoring[] playback;
+    CrowdInstanceAuthoringV2[] playback;
 }
 
-BinaryCompatibility[2] crowd_binary_compatibility @local = {
+struct CrowdAuthoringV4 @private {
+    ModelId model;
+    uint capacity;
+    Aabb pose_bounds;
+    bool trace;
+    CrowdInstance[] instances;
+    uint actions_per_instance;
+    uint event_capacity;
+    CrowdInstanceAuthoring[] playback;
+    bool inertia_enabled;
+}
+
+BinaryCompatibility[3] crowd_binary_compatibility @local = {
     { .version = 1, .read = &read_crowd_v1 },
     { .version = 2, .read = &read_crowd_v2 },
+    { .version = 3, .read = &read_crowd_v3 },
 };
-uint[2] crowd_text_default_versions @local = { 1, 2 };
+uint[3] crowd_text_default_versions @local = { 1, 2, 3 };
 
 fn void? register_crowd_codec() @private {
     describe::register_reflected(CrowdPose)!;
@@ -87,10 +127,18 @@ fn void? register_crowd_codec() @private {
         $Type: CrowdAuthoringV3,
         version: 3,
         layout: CROWD_AUTHORING_V3_LAYOUT,
+        defaults: &defaults_crowd_v3,
+    )!;
+
+    describe::register_reflected(CrowdAuthoringV4)!;
+    register_described_type(
+        $Type: CrowdAuthoringV4,
+        version: 4,
+        layout: CROWD_AUTHORING_V4_LAYOUT,
         defaults: &defaults_crowd,
     )!;
 
-    register_described_owner(AnimatedCrowd, CrowdAuthoringV3, {
+    register_described_owner(AnimatedCrowd, CrowdAuthoringV4, {
         .name = "c3d.AnimatedCrowd",
         .phase = OWNER,
         .collect = &collect_crowd,
@@ -103,16 +151,20 @@ fn void? register_crowd_codec() @private {
 
 fn void? register_animation_authoring_values() @private {
     describe::register_reflected(BlendTriangle)!;
-    describe::register_reflected(CrowdActionAuthoring)!;
+    describe::register_reflected(RootExtractionDesc)!;
+    describe::register_reflected(CrowdActionAuthoringV2)!;
     describe::register_reflected(CrowdSpaceAuthoring)!;
+    describe::register_reflected(CrowdInstanceAuthoringV2)!;
+    describe::register_reflected(CrowdActionAuthoring)!;
     describe::register_reflected(CrowdInstanceAuthoring)!;
 
     register_core_value(BlendTriangle, BLEND_TRIANGLE_LAYOUT, &defaults_blend_triangle)!;
+    register_core_value(RootExtractionDesc, ROOT_EXTRACTION_LAYOUT, &defaults_root_extraction)!;
     register_described_type(
-        $Type: CrowdActionAuthoring,
+        $Type: CrowdActionAuthoringV2,
         version: 2,
         layout: CROWD_ACTION_V2_LAYOUT,
-        defaults: &defaults_crowd_action,
+        defaults: &defaults_crowd_action_v2,
     )!;
     register_described_type(
         $Type: CrowdSpaceAuthoring,
@@ -121,11 +173,35 @@ fn void? register_animation_authoring_values() @private {
         defaults: &defaults_crowd_space,
     )!;
     register_described_type(
-        $Type: CrowdInstanceAuthoring,
+        $Type: CrowdInstanceAuthoringV2,
         version: 2,
         layout: CROWD_PLAYBACK_V2_LAYOUT,
+        defaults: &defaults_crowd_playback_v2,
+    )!;
+    register_described_type(
+        $Type: CrowdActionAuthoring,
+        version: 3,
+        layout: CROWD_ACTION_V3_LAYOUT,
+        defaults: &defaults_crowd_action,
+    )!;
+    register_described_type(
+        $Type: CrowdInstanceAuthoring,
+        version: 3,
+        layout: CROWD_PLAYBACK_V3_LAYOUT,
         defaults: &defaults_crowd_playback,
     )!;
+}
+
+fn void defaults_root_extraction(void* value) @local {
+    *(RootExtractionDesc*)value = {};
+}
+
+fn void defaults_crowd_action_v2(void* value) @local {
+    *(CrowdActionAuthoringV2*)value = { .speed = 1, .weight = 1, .loop = true, .playing = true };
+}
+
+fn void defaults_crowd_playback_v2(void* value) @local {
+    *(CrowdInstanceAuthoringV2*)value = { .root_node = anim::NO_ROOT_NODE, .base_action = uint::max };
 }
 
 fn void defaults_blend_triangle(void* value) @local {
@@ -172,8 +248,16 @@ fn void defaults_crowd_v2(void* value) @local {
     };
 }
 
-fn void defaults_crowd(void* value) @local {
+fn void defaults_crowd_v3(void* value) @local {
     *(CrowdAuthoringV3*)value = {
+        .capacity = 1,
+        .actions_per_instance = anim::DEFAULT_CROWD_ACTIONS,
+        .event_capacity = anim::DEFAULT_CROWD_EVENT_CAPACITY,
+    };
+}
+
+fn void defaults_crowd(void* value) @local {
+    *(CrowdAuthoringV4*)value = {
         .capacity = 1,
         .actions_per_instance = anim::DEFAULT_CROWD_ACTIONS,
         .event_capacity = anim::DEFAULT_CROWD_EVENT_CAPACITY,
@@ -214,7 +298,7 @@ fn void? project_crowd(void* component, void* value, WriteContext* context) @loc
         )!;
     }
 
-    *(CrowdAuthoringV3*)value = {
+    *(CrowdAuthoringV4*)value = {
         .model = crowd.model,
         .capacity = (uint)crowd.placements.len,
         .pose_bounds = crowd.pose_bounds,
@@ -223,6 +307,7 @@ fn void? project_crowd(void* component, void* value, WriteContext* context) @loc
         .actions_per_instance = crowd.actions_per_instance,
         .event_capacity = crowd.event_capacity,
         .playback = playback,
+        .inertia_enabled = crowd.inertia_enabled,
     };
 }
 
@@ -235,7 +320,7 @@ fn void? check_crowd_scalars(CrowdInstance[] instances) @local {
 }
 
 fn void? attach_crowd(void* value, ReadContext* context) @local {
-    CrowdAuthoringV3* source = value;
+    CrowdAuthoringV4* source = value;
     check_crowd_scalars(source.instances)!;
 
     model::attach_crowd(
@@ -251,6 +336,8 @@ fn void? attach_crowd(void* value, ReadContext* context) @local {
         event_capacity: source.event_capacity,
         authoring: source.playback,
     )!;
+
+    context.scene.get(context.node, AnimatedCrowd).inertia_enabled = source.inertia_enabled;
 }
 
 fn void? read_crowd_v1(Reader* reader, ReadContext* context) @local {
@@ -266,7 +353,7 @@ fn void? read_crowd_v1(Reader* reader, ReadContext* context) @local {
         value: &legacy,
     )!;
 
-    CrowdAuthoringV3 source = {
+    CrowdAuthoringV4 source = {
         .model = legacy.model,
         .capacity = legacy.capacity,
         .pose_bounds = legacy.pose_bounds,
@@ -292,7 +379,7 @@ fn void? read_crowd_v2(Reader* reader, ReadContext* context) @local {
         value: &legacy,
     )!;
 
-    CrowdAuthoringV3 source = {
+    CrowdAuthoringV4 source = {
         .model = legacy.model,
         .capacity = legacy.capacity,
         .pose_bounds = legacy.pose_bounds,
@@ -305,7 +392,50 @@ fn void? read_crowd_v2(Reader* reader, ReadContext* context) @local {
     };
 
     foreach (index, instance : legacy.playback) {
-        AnimatorAuthoringV2 converted = migrate_animation_authoring({
+        AnimatorAuthoringV3 converted = migrate_animation_authoring({
+            .root_node = instance.root_node,
+            .actions = instance.actions,
+            .spaces = instance.spaces,
+        })!;
+        source.playback[index] = {
+            .configured = instance.configured,
+            .root_node = instance.root_node,
+            .base_action = instance.base_action,
+            .actions = converted.actions,
+            .spaces = converted.spaces,
+        };
+    }
+
+    attach_crowd(&source, context)!;
+}
+
+fn void? read_crowd_v3(Reader* reader, ReadContext* context) @local {
+    CrowdAuthoringV3 legacy;
+    Acquisitions owned = { .allocator = context.allocator };
+    defer owned.release();
+
+    read_described_value(
+        type: described_type(CrowdAuthoringV3)!,
+        reader: reader,
+        context: context,
+        owned: &owned,
+        value: &legacy,
+    )!;
+
+    CrowdAuthoringV4 source = {
+        .model = legacy.model,
+        .capacity = legacy.capacity,
+        .pose_bounds = legacy.pose_bounds,
+        .trace = legacy.trace,
+        .instances = legacy.instances,
+        .actions_per_instance = legacy.actions_per_instance,
+        .event_capacity = legacy.event_capacity,
+        .playback = alloc::new_array_try(tmem, CrowdInstanceAuthoring, legacy.playback.len)
+          ?? c3d::CAPACITY_EXCEEDED~!,
+    };
+
+    foreach (index, instance : legacy.playback) {
+        AnimatorAuthoringV3 converted = migrate_animation_authoring_v2({
             .root_node = instance.root_node,
             .actions = instance.actions,
             .spaces = instance.spaces,

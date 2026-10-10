@@ -82,6 +82,14 @@ fn void? configure_motion(
     action.root_rotation = quaternion::IDENTITY;
     action.motion_basis = matrix::IDENTITY4;
 
+    if (desc.extraction.generalized) {
+        if (desc.root_motion != RootMotion.EXTRACT || desc.root_yaw || desc.additive) {
+            return c3d::INVALID_ARGUMENT~;
+        }
+
+        return;
+    }
+
     if (desc.root_yaw && desc.root_motion == RootMotion.KEEP) return c3d::INVALID_ARGUMENT~;
     if (desc.additive && desc.root_motion != RootMotion.KEEP) return c3d::INVALID_ARGUMENT~;
     if (desc.root_motion != RootMotion.KEEP && playback.root_node >= node_count) {
