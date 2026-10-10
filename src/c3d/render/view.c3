@@ -1279,6 +1279,7 @@ fn MeshPreparation? prepare_mesh(
             return {};
         }
     }
+
     if (writes_own_depth(data)) {
         MeshCandidate candidate;
         DrawItem velocity_item = {
