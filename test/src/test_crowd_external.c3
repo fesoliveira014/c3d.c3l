@@ -25,6 +25,10 @@ fn AssetStore external_crowd_store() @local {
 fn ClipId bake_external_crowd_clip(AssetStore* assets, PartsFixture* fixture) @local {
     ModelTemplate* template = &assets.model(fixture.mixed).data;
     @pool() {
+        ModelTemplate profile_target = *template;
+        profile_target.nodes = alloc::new_array(tmem, NodeTemplate, template.nodes.len);
+        profile_target.nodes[..] = template.nodes[..];
+        foreach (&node : profile_target.nodes) node.local.scale = { 1, 1, 1 };
         NodeIndexMapping[] mappings = alloc::new_array(tmem, NodeIndexMapping, template.nodes.len);
         Quat[] calibration = alloc::new_array(tmem, Quat, template.nodes.len);
         foreach (uint node, &mapping : mappings) {
@@ -38,16 +42,16 @@ fn ClipId bake_external_crowd_clip(AssetStore* assets, PartsFixture* fixture) @l
         desc.target_calibration = calibration;
         RetargetProfile profile = retarget::create_retarget_profile(
             allocator: mem,
-            source_nodes: template.nodes,
-            target: template,
+            source_nodes: profile_target.nodes,
+            target: &profile_target,
             desc: desc,
         )!!;
         defer retarget::destroy_retarget_profile(&profile);
         AnimationClip result = retarget::retarget_with_profile(
             allocator: mem,
             source: &assets.clip(fixture.posing).data,
-            source_nodes: template.nodes,
-            target: template,
+            source_nodes: profile_target.nodes,
+            target: &profile_target,
             profile: &profile,
         )!!;
         assert(result.tracks.len > assets.clip(fixture.posing).data.tracks.len);

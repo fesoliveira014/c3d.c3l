@@ -13,6 +13,7 @@ import c3d::scene;
 import c3d::test::animated_crowd_fixtures;
 import std::math;
 import std::math::quaternion;
+import std::io;
 
 struct CrowdNativeOutput @private {
     RenderTargetId target;
@@ -62,7 +63,10 @@ fn void? compare_crowd_native_paths(
             crowd_visible: true,
             images: &output.actual,
         )!;
-        uint passes = desc.depth_prepass ? 2 : 1;
+        uint passes = path == 0 ? 1 : 2; // Deferred geometry records its own depth prepass.
+        io::printfn("standard=%s path=%s tested=%s visible=%s expected=%s normal=%s velocity=%s",
+            standard, path, output.actual.stats.instances_tested, output.actual.stats.instances_visible,
+            passes * crowd.parts.len * crowd.count, output.actual.has_normal, output.actual.velocity_format);
         assert(output.actual.stats.instances_tested == passes * crowd.parts.len * crowd.count);
         assert(output.actual.stats.instances_visible == passes * crowd.parts.len * crowd.count);
         capture_crowd_native(
