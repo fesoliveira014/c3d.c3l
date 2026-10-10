@@ -45,6 +45,8 @@ struct Action {
     RootMotion root_motion;
     bool root_yaw;
     RootExtractionDesc extraction;
+    CapturedMotionChain* motion_chain;
+    GeneralizedMotionReference motion_reference;
     uint translation_track;
     uint rotation_track;
     Vec3 root_position;
@@ -58,6 +60,7 @@ struct Action {
     double clock_time;
     float published_time;
     uint blend_space;
+    double analytic_speed;
 }
 
 <* Fixed playback slots and masks owned by one model instance. *>
@@ -203,6 +206,7 @@ fn Animator* add_animator(Scene* scene, Node* instance_root, AnimatorDesc desc =
         mesh_nodes: instance.mesh_nodes,
         base_morph_weights: instance.base_morph_weights,
         event_capacity: MAX_FIRED_EVENTS,
+        inertia_enabled: desc.inertia_enabled,
     );
 
     if (desc.inertia_enabled) {

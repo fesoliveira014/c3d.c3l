@@ -11,12 +11,19 @@ fn void blend_pose(
     AssetStore* assets,
     PoseDestination destination,
     PoseScratch scratch,
+    bool onset = false,
 ) @private {
     Transform[] result = destination.pose;
     ChannelSums[] sums = scratch.channels;
     float[][] morph_result = destination.morph_weights;
     float[][] morph_sums = scratch.morph_sums;
     float[] morph_weights = scratch.morph_weights;
+
+    PoseDerivativeScratch* derivative = scratch.derivative;
+    if (derivative) {
+        derivative.velocity[..] = (PoseVelocity){};
+        derivative.morph_rates[..] = 0;
+    }
 
     result[..] = destination.base_pose[..];
     foreach (index, base : destination.base_morph_weights) morph_result[index][..] = base[..];
@@ -35,6 +42,10 @@ fn void blend_pose(
         sums[..] = (ChannelSums){};
         morph_weights[..] = 0;
         foreach (values : morph_sums) values[..] = 0;
+        if (derivative) {
+            derivative.channels[..] = (ChannelDerivativeSums){};
+            derivative.morph_sums[..] = 0;
+        }
 
         foreach (id : playback.order[:*playback.action_count]) {
             Action* action = playback.actions.get(id);
@@ -50,13 +61,27 @@ fn void blend_pose(
                 if (weight <= 0) continue;
 
                 float[] sample = samples[:track.stride()];
-                sample_track(
+                sample_pose_channel(
+                    action: action,
                     track: track,
-                    time: action.time,
-                    cursor: &action.cursors[track_index],
-                    out: sample,
+                    track_index: (uint)track_index,
+                    sample: sample,
+                    derivative: derivative,
+                    onset: onset,
                 );
                 pin_root_sample(action, (uint)track_index, sample);
+                if (derivative) accumulate_pose_derivative(
+                    derivative: derivative,
+                    action: action,
+                    track: track,
+                    track_index: (uint)track_index,
+                    node: node,
+                    mesh: destination.mesh_indices[node],
+                    mesh_widths: destination.mesh_widths,
+                    sample: sample,
+                    below: result[node],
+                    weight: weight,
+                );
 
                 switch (track.path) {
                     case TRANSLATION:
@@ -80,13 +105,23 @@ fn void blend_pose(
 
         foreach (index, &pose : result) {
             ChannelSums* sum = &sums[index];
+            if (derivative) fold_pose_derivative(derivative, (uint)index, sum, *pose);
+
             pose.position = blend_vec3(sum.translation, sum.translation_weight, pose.position);
             pose.rotation = { .v = (sum.rotation + pose.rotation.v * residual(sum.rotation_weight)).normalize() };
             pose.scale = blend_vec3(sum.scale, sum.scale_weight, pose.scale);
         }
 
+        usz morph_offset;
         foreach (index, values : morph_result) {
             float total = morph_weights[index];
+            if (derivative) {
+                foreach (usz weight_index, &rate : derivative.morph_rates[morph_offset:values.len]) {
+                    *rate = (derivative.morph_sums[morph_offset + weight_index] + *rate * residual(total))
+                      / math::max(1.0f, total);
+                }
+            }
+            morph_offset += values.len;
             foreach (weight_index, &value : values) {
                 *value = (morph_sums[index][weight_index] + *value * residual(total)) / math::max(1.0f, total);
             }
@@ -110,19 +145,35 @@ fn void blend_pose(
                 if (weight <= 0) continue;
 
                 float[] sample = samples[:stride];
-                if (track.path == TargetPath.SCALE && action.additive_scale == AdditiveScaleMode.MULTIPLICATIVE) {
+                if (!derivative && track.path == TargetPath.SCALE
+                  && action.additive_scale == AdditiveScaleMode.MULTIPLICATIVE) {
                     Vec3 scale = sample_multiplicative_scale(track, action.time, &action.cursors[track_index]);
                     sample[0] = scale.x;
                     sample[1] = scale.y;
                     sample[2] = scale.z;
                 } else {
-                    sample_track(
+                    sample_pose_channel(
+                        action: action,
                         track: track,
-                        time: action.time,
-                        cursor: &action.cursors[track_index],
-                        out: sample,
+                        track_index: (uint)track_index,
+                        sample: sample,
+                        derivative: derivative,
+                        onset: onset,
                     );
                 }
+
+                if (derivative) fold_additive_pose_derivative(
+                    derivative: derivative,
+                    action: action,
+                    track: track,
+                    node: node,
+                    mesh: destination.mesh_indices[node],
+                    mesh_widths: destination.mesh_widths,
+                    sample: sample,
+                    reference: reference,
+                    below: result[node],
+                    weight: weight,
+                );
 
                 switch (track.path) {
                     case TRANSLATION:

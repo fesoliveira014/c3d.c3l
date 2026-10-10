@@ -13,6 +13,7 @@ struct BlendPhaseStep @private {
     double start;
     double travel;
     double phase;
+    double clock_rate;
 }
 
 fn bool? stop_blend_space_weight(BlendSpaceFade fade, float duration) @private {
@@ -60,7 +61,12 @@ fn BlendPhaseStep advance_blend_phase(
     if (start == 0 && travel < 0) start = 1;
     double end = start + travel;
 
-    return { .start = start, .travel = travel, .phase = end - math::floor(end) };
+    return {
+        .start = start,
+        .travel = travel,
+        .phase = end - math::floor(end),
+        .clock_rate = playing ? (double)speed / duration : 0,
+    };
 }
 
 fn void write_blend_space_member(
@@ -77,6 +83,7 @@ fn void write_blend_space_member(
     action.published_time = action.time;
 
     action.weight = weight * normalized;
+    action.analytic_speed = phase.clock_rate * duration;
 }
 
 fn void remove_blend_space_members(PlaybackView* playback, AnimationActionId[] members) @private {

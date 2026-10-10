@@ -64,6 +64,7 @@ struct PoseScratch {
     float[] morph_weights;
     float[] sample;
     EventBookmark[] event_bookmarks;
+    PoseDerivativeScratch* derivative;
 }
 
 <* Counts from this evaluation; dropped crossings saturate at uint::max. *>
@@ -105,6 +106,15 @@ fn AnimationActionId? PlaybackView.play(
     AnimationClip* data = &assets.clips.try_get(clip)!.data;
     usz reference_count = validate_playback_action(data, desc, destination)!;
     if (desc.weighted_mask) validate_weighted_joint_mask(assets, self.model, desc.weighted_mask)!;
+    validate_action_motion_capture(
+        assets: assets,
+        model: self.model,
+        clip: data,
+        desc: desc,
+        root_node: self.root_node,
+        motion_basis: motion_basis,
+    )!;
+    if (self.inertial) validate_inertial_rotation_domains(data)!;
     if (!self.actions.free_count) return c3d::CAPACITY_EXCEEDED~;
 
     Action state = prepare_validated_playback_action(
@@ -116,6 +126,17 @@ fn AnimationActionId? PlaybackView.play(
         motion_basis: motion_basis,
         root_node: self.root_node,
         reference_count: reference_count,
+    )!;
+
+    defer catch release_prepared_action(self.allocator, &state);
+
+    prepare_action_motion_capture(
+        allocator: self.allocator,
+        assets: assets,
+        model: self.model,
+        action: &state,
+        root_node: self.root_node,
+        motion_basis: motion_basis,
     )!;
 
     return install_playback_action(self, state, desc.mask);
@@ -205,6 +226,13 @@ fn PoseReport evaluate_pose(
         scratch: scratch,
     );
 
+    if (playback.inertial) correct_inertial_pose(
+        playback: playback,
+        destination: destination,
+        scratch: scratch,
+        dt: (double)dt,
+    );
+
     PlanarMotion motion = evaluate_root_motion(playback, assets, destination);
     EventReport report = publish_events(
         playback: playback,
@@ -288,6 +316,11 @@ fn AnimationActionId install_playback_action(
  @param [&inout] action : "Cleared after its arrays are freed."
 *>
 fn void release_prepared_action(Allocator allocator, Action* action) {
+    if (action.motion_chain) {
+        destroy_captured_motion_chain(action.motion_chain);
+        alloc::free(allocator, action.motion_chain);
+    }
+
     alloc::free(allocator, action.cursors.ptr);
     alloc::free(allocator, action.reference.ptr);
     alloc::free(allocator, action.weighted_mask.ptr);
@@ -427,10 +460,7 @@ fn Action? prepare_validated_playback_action(
 fn void remove_action(PlaybackView* playback, uint index) @local {
     AnimationActionId id = playback.order[index];
     Action* action = playback.actions.get(id);
-    alloc::free(playback.allocator, action.cursors.ptr);
-    alloc::free(playback.allocator, action.reference.ptr);
-    alloc::free(playback.allocator, action.weighted_mask.ptr);
-    *action = {};
+    release_prepared_action(playback.allocator, action);
 
     playback.actions.remove(id);
     (*playback.action_count)--;

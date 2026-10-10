@@ -42,6 +42,7 @@ fn PoseStorage*? create_pose_storage_try(
     uint[] mesh_nodes,
     float[][] base_morph_weights,
     usz event_capacity,
+    bool inertia_enabled = false,
 ) {
     PoseStorage* storage = alloc::new_try(allocator, PoseStorage) ?? c3d::CAPACITY_EXCEEDED~!;
     defer catch destroy_pose_storage(allocator, storage);
@@ -82,6 +83,15 @@ fn PoseStorage*? create_pose_storage_try(
 
     scratch.sample = alloc::new_array_try(allocator, float, (sz)sample_width) ?? c3d::CAPACITY_EXCEEDED~!;
 
+    if (inertia_enabled) {
+        scratch.derivative = create_pose_derivative_scratch(
+            allocator: allocator,
+            nodes: (usz)base_pose.len,
+            base_morph_weights: base_morph_weights,
+            sample_width: sample_width,
+        )!;
+    }
+
     return storage;
 }
 
@@ -92,6 +102,7 @@ fn PoseStorage* create_pose_storage(
     uint[] mesh_nodes,
     float[][] base_morph_weights,
     usz event_capacity,
+    bool inertia_enabled = false,
 ) {
     return create_pose_storage_try(
         allocator: allocator,
@@ -99,6 +110,7 @@ fn PoseStorage* create_pose_storage(
         mesh_nodes: mesh_nodes,
         base_morph_weights: base_morph_weights,
         event_capacity: event_capacity,
+        inertia_enabled: inertia_enabled,
     )!!;
 }
 
@@ -107,6 +119,8 @@ fn PoseStorage* create_pose_storage(
  @param [&inout] storage : "Released; borrowed baselines remain untouched."
 *>
 fn void destroy_pose_storage(Allocator allocator, PoseStorage* storage) {
+    if (storage.scratch.derivative) destroy_pose_derivative_scratch(allocator, storage.scratch.derivative);
+
     foreach (values : storage.destination.morph_weights) alloc::free(allocator, values.ptr);
     foreach (values : storage.scratch.morph_sums) alloc::free(allocator, values.ptr);
 

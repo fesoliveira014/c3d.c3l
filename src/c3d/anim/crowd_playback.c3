@@ -463,6 +463,7 @@ fn CrowdPlaybackState*? create_crowd_playback(
         mesh_nodes: state.mesh_nodes,
         base_morph_weights: state.base_morph_weights,
         event_capacity: event_capacity,
+        inertia_enabled: inertia_enabled,
     )!;
 
     if (inertia_enabled) {
