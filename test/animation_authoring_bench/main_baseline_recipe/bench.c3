@@ -29,10 +29,6 @@ const float DT @local = 1.0f / 60;
 const String MODEL_PATH @local = "../../examples/assets/quaternius/AnimationLibrary_Godot.glb";
 const String MODEL_SHA @local = "272d5c1e2c27f566595ece27b6985935d42dcee1dacee1b320af9f0c40d5c97c";
 
-fn void write_report(String format, any[] values) @local {
-    io::printfn(format, ...values);
-}
-
 fn void check_source(char[] bytes) @local {
     char[32] digest = sha256::hash(bytes);
     char[64] encoded;
@@ -67,15 +63,8 @@ fn void? report_adapter(Renderer* renderer) @local {
         gpu::AdapterInfo info = gpu::get_adapter_info(&adapter)!;
         if (info.name != renderer.adapter_name) continue;
         gpu::AdapterDiagnostics diagnostics = gpu::get_adapter_diagnostics(&adapter)!;
-        write_report(
-            format: "adapter=%s driver=%s info=%s driver_version=%s",
-            values: {
-                &info.name,
-                &diagnostics.driver_name,
-                &diagnostics.driver_info,
-                &diagnostics.driver_version,
-            },
-        );
+        io::printfn("adapter=%s driver=%s info=%s driver_version=%s", info.name,
+            diagnostics.driver_name, diagnostics.driver_info, diagnostics.driver_version);
         break;
     }
 }
@@ -101,8 +90,6 @@ fn void? run_row(
     ModelId model_id,
     uint count,
     bool inertia_enabled,
-    bool legacy_planar,
-    bool phase_times,
 ) @local {
     TrackingAllocator tracker;
     tracker.init(mem);
@@ -111,7 +98,6 @@ fn void? run_row(
     defer scene::destroy_scene(&scene);
     ModelTemplate* template = &assets.model(model_id).data;
     ClipId walk = clip_named(assets, template, "Walk_Loop")!;
-    ClipId turn = clip_named(assets, template, "Turn90_L")!;
     uint root = node_named(template, "root")!;
     CrowdInstance[] instances = alloc::new_array(mem, CrowdInstance, (sz)count);
     defer alloc::free(mem, instances.ptr);
@@ -139,7 +125,6 @@ fn void? run_row(
         event_capacity: 0,
     )!;
     AnimatedCrowd* crowd = scene.get(owner, AnimatedCrowd);
-    crowd.inertia_enabled = inertia_enabled;
     model::prepare_crowd(assets, &scene, owner)!;
     WeightedJointMask mask = anim::create_feathered_joint_mask(
         allocator: mem,
@@ -153,17 +138,8 @@ fn void? run_row(
     PlayDesc play = {
         .weighted_mask = &mask,
         .root_motion = EXTRACT,
-        .extraction = {
-            .generalized = true,
-            .translation_axes = { true, true, true },
-            .up = { 0, 1, 0 },
-            .twist = true,
-        },
+        .root_yaw = true,
     };
-    if (legacy_planar) {
-        play.extraction = {};
-        play.root_yaw = true;
-    }
     for (uint index = 0; index < count; index++) {
         CrowdPlayer player = crowd.playback.player(crowd.playback.instance_id(index)!)!;
         player.stop(player.state.slots[index].base_action)!;
@@ -190,8 +166,6 @@ fn void? run_row(
     }
     double[SAMPLE_FRAMES] cpu_update;
     double[SAMPLE_FRAMES] cpu_record;
-    double[SAMPLE_FRAMES] cpu_evaluation;
-    double[SAMPLE_FRAMES] cpu_publication;
     double[SAMPLE_FRAMES] gpu_pass;
     uint gpu_count;
     ulong last_gpu = ulong::max;
@@ -199,18 +173,7 @@ fn void? run_row(
     uint upload_bytes;
     for (uint frame = 0; frame < SAMPLE_FRAMES + render::FRAMES_IN_FLIGHT; frame++) {
         time::Clock started = clock::now();
-        if (phase_times) {
-            crowd.playback.update(assets, DT);
-            time::Clock evaluated = clock::now();
-            anim::publish_crowd_pose(assets, &scene, crowd);
-            time::Clock published = clock::now();
-            if (frame < SAMPLE_FRAMES) {
-                cpu_evaluation[frame] = (double)(evaluated - started) / 1e6;
-                cpu_publication[frame] = (double)(published - evaluated) / 1e6;
-            }
-        } else {
-            anim::crowd_update(assets, &scene, DT);
-        }
+        anim::crowd_update(assets, &scene, DT);
         double update_ms = (double)(clock::now() - started) / 1e6;
         scene.update_world();
         started = clock::now();
@@ -244,116 +207,30 @@ fn void? run_row(
     sz retained = tracker.allocated();
     double request_ms;
     sz request_peak;
-    if (inertia_enabled) {
-        tracker.max_usage = tracker.usage;
-        AnimationTargetDesc[1] targets = { anim::ANIMATION_TARGET_DEFAULT };
-        targets[0].clip = turn;
-        targets[0].play = play;
-        targets[0].loop = false;
-        time::Clock request_started = clock::now();
-        for (uint index = 0; index < count; index++) {
-            CrowdPlayer player = crowd.playback.player(crowd.playback.instance_id(index)!)!;
-            player.inertialize(assets, { .duration = 0.35f, .actions = targets[..] })!;
-        }
-        request_ms = (double)(clock::now() - request_started) / 1e6;
-        request_peak = tracker.max_allocated() - retained;
-    } else {
-        io::printfn("row,count=%s,request_measurement=skipped_disabled_inertia_precondition", count);
-    }
-    usz history_bytes = crowd.playback.inertial_storage ? crowd.playback.inertial_storage.bytes : 0;
-    write_report(
-        format: "row,count=%s,inertia_enabled=%s,extraction=%s",
-        values: {
-            &count,
-            &inertia_enabled,
-            &&(legacy_planar ? "legacy_planar_EXTRACT_Y_yaw" : "generalized_XYZ_Y_twist"),
-        },
-    );
+    usz history_bytes;
+    io::printfn("row,count=%s,request_measurement=unsupported_on_main,inertia_enabled=false,extraction=legacy_planar_EXTRACT_Y_yaw", count);
     usz group_bytes = (usz)count * anim::blend_space_2d_storage_bytes(ACTION_CAPACITY);
     usz mask_bytes = (usz)count * template.nodes.len * float::size;
     usz palette_bytes = (usz)count * crowd.joint_count * Mat4f::size;
     double gpu_median = gpu_count ? percentile(gpu_pass[:gpu_count], 0.5) : 0;
     double gpu_p95 = gpu_count ? percentile(gpu_pass[:gpu_count], 0.95) : 0;
-    write_report(
-        format: "row,count=%s,iterations=%s,update_median_ms=%s,update_p95_ms=%s,record_median_ms=%s,record_p95_ms=%s",
-        values: {
-            &count,
-            &&SAMPLE_FRAMES,
-            &&percentile(cpu_update[..], 0.5),
-            &&percentile(cpu_update[..], 0.95),
-            &&percentile(cpu_record[..], 0.5),
-            &&percentile(cpu_record[..], 0.95),
-        },
-    );
-    if (phase_times) {
-        write_report(
-            format: "phases,count=%s,evaluation_median_ms=%s,evaluation_p95_ms=%s",
-            values: {
-                &count,
-                &&percentile(cpu_evaluation[..], 0.5),
-                &&percentile(cpu_evaluation[..], 0.95),
-            },
-        );
-        write_report(
-            format: "phases,count=%s,palette_batch_publication_median_ms=%s,palette_batch_publication_p95_ms=%s",
-            values: {
-                &count,
-                &&percentile(cpu_publication[..], 0.5),
-                &&percentile(cpu_publication[..], 0.95),
-            },
-        );
-    }
-    write_report(
-        format: "row,count=%s,gpu_samples=%s,gpu_pass_median_ms=%s,gpu_pass_p95_ms=%s,request_all_ms=%s",
-        values: {
-            &count,
-            &gpu_count,
-            &gpu_median,
-            &gpu_p95,
-            &request_ms,
-        },
-    );
-    write_report(
-        format: "row,count=%s,retained_bytes=%s,history_bytes=%s,two_d_bytes=%s,weighted_bytes=%s,request_peak_extra=%s",
-        values: {
-            &count,
-            &retained,
-            &history_bytes,
-            &group_bytes,
-            &mask_bytes,
-            &request_peak,
-        },
-    );
-    write_report(
-        format: "row,count=%s,palette_stream_bytes_per_frame=%s,asset_upload_bytes_last=%s",
-        values: {
-            &count,
-            &palette_bytes,
-            &upload_bytes,
-        },
-    );
-    write_report(
-        format: "row,count=%s,node_poses_per_update=%s,palette_matrices=%s,readbacks=0",
-        values: {
-            &count,
-            &&((usz)count * template.nodes.len),
-            &&crowd.palettes.len,
-        },
-    );
+    io::printfn("row,count=%s,iterations=%s,update_median_ms=%s,update_p95_ms=%s,record_median_ms=%s,record_p95_ms=%s",
+        count, SAMPLE_FRAMES, percentile(cpu_update[..], 0.5), percentile(cpu_update[..], 0.95),
+        percentile(cpu_record[..], 0.5), percentile(cpu_record[..], 0.95));
+    io::printfn("row,count=%s,gpu_samples=%s,gpu_pass_median_ms=%s,gpu_pass_p95_ms=%s,request_all_ms=%s",
+        count, gpu_count, gpu_median, gpu_p95, request_ms);
+    io::printfn("row,count=%s,retained_bytes=%s,history_bytes=%s,two_d_bytes=%s,weighted_bytes=%s,request_peak_extra=%s",
+        count, retained, history_bytes, group_bytes, mask_bytes, request_peak);
+    io::printfn("row,count=%s,palette_stream_bytes_per_frame=%s,asset_upload_bytes_last=%s,node_poses_per_update=%s,palette_matrices=%s,readbacks=0",
+        count, palette_bytes, upload_bytes, (usz)count * template.nodes.len, crowd.palettes.len);
 }
 
 fn int main(String[] arguments) {
-    uint selected_count;
-    bool inertia_enabled = true;
-    bool legacy_planar;
-    bool phase_times;
+    uint selected_count = 4096;
+    bool inertia_enabled = false;
     foreach (argument : arguments[1..]) {
         if (argument == "--inertia-off") {
             inertia_enabled = false;
-        } else if (argument == "--legacy-planar") {
-            legacy_planar = true;
-        } else if (argument == "--phase-times") {
-            phase_times = true;
         } else if (argument.starts_with("--count=")) {
             if (catch excuse = argument[8..].to_uint()) {
                 io::eprintfn("Invalid count: %s", excuse);
@@ -404,16 +281,8 @@ fn int main(String[] arguments) {
         )!!;
         defer render::destroy_renderer(&renderer);
         report_adapter(&renderer)!!;
-        io::printn("protocol=measurement_only,O3_requested,validation_off,one_view,no_readback,no_thresholds");
-        write_report(
-            format: "options,selected_count=%s,inertia_enabled=%s,legacy_planar=%s,phase_times=%s",
-            values: {
-                &selected_count,
-                &inertia_enabled,
-                &legacy_planar,
-                &phase_times,
-            },
-        );
+        io::printfn("protocol=measurement_only,O3_requested,validation_off,one_view,no_readback,baseline_main_73edb0d,semantic_feature_difference_legacy_planar,selected_count=%s,inertia_enabled=%s,no_thresholds",
+            selected_count, inertia_enabled);
         io::printn("CPU record includes frame-slot wait; GPU pass samples are asynchronously completed sums.");
         RenderTargetId target = render::create_render_target(
             &renderer, render::render_target_desc(TARGET_PIXELS, TARGET_PIXELS))!!;
@@ -427,8 +296,6 @@ fn int main(String[] arguments) {
                 model_id: model_id,
                 count: count,
                 inertia_enabled: inertia_enabled,
-                legacy_planar: legacy_planar,
-                phase_times: phase_times,
             )) {
                 io::eprintfn("Motion measurement failed at %s instances: %s", count, excuse);
                 return 1;
