@@ -92,6 +92,7 @@ fn void? sync_animated_lod(AssetStore* assets, Scene* scene, Node* owner) {
     AnimatedLodSource source = animated_lod_source(assets, scene, owner)!;
     LodGroup* group = scene.get(owner, LodGroup);
     if (!group || !group.state.animated) return c3d::INVALID_ARGUMENT~;
+
     AnimatedLodBinding* binding = group.state.animated;
     if (source.crowd && group.state.slot_generations.len != source.crowd.placements.len) {
         return c3d::INVALID_ARGUMENT~;
@@ -103,6 +104,7 @@ fn void? sync_animated_lod(AssetStore* assets, Scene* scene, Node* owner) {
     }
 
     bool changed = binding.model_revision != source.model.header.revision;
+
     foreach (index, &part : binding.parts) {
         GeometryAsset* geometry = assets.geometries.try_get(group.state.desc.parts[index].geometry)!;
         validate_material(
@@ -111,16 +113,19 @@ fn void? sync_animated_lod(AssetStore* assets, Scene* scene, Node* owner) {
             mode: group.state.mode,
             bounds_override: group.state.desc.has_bounds_override,
         )!;
+
         changed |= part.geometry_revision != geometry.header.revision;
         if (part.source_skeleton.generation) {
             SkeletonAsset* source_skeleton = assets.skeletons.try_get(part.source_skeleton)!;
             changed |= part.source_skeleton_revision != source_skeleton.header.revision;
         }
+
         if (part.skeleton.generation) {
             SkeletonAsset* skeleton = assets.skeletons.try_get(part.skeleton)!;
             changed |= part.skeleton_revision != skeleton.header.revision;
         }
     }
+
     if (changed) validate_animated_lod_binding(assets, source, group.state)!;
 
     initialize_animated_lod_source(group.state, source);
@@ -136,35 +141,44 @@ fn AnimatedLodSource? animated_lod_source(AssetStore* assets, Scene* scene, Node
 
     ModelAsset* model = assets.models.try_get(instance ? instance.source : crowd.model)!;
     ModelTemplate* template = &model.data;
+
     if (!template.nodes.len || !template.meshes.len || template.meshes.len > uint::max
       || template.nodes.len > uint::max) return c3d::INVALID_ARGUMENT~;
     if (template.lod_groups.len) return c3d::UNSUPPORTED~;
+
     if (instance && (instance.mesh_nodes.len != template.meshes.len
       || instance.base_morph_weights.len != template.meshes.len
       || instance.nodes.len != template.nodes.len || instance.node_entities.len != template.nodes.len)) {
         return c3d::INVALID_ARGUMENT~;
     }
+
     if (crowd && (!crowd.placements.len || crowd.count > crowd.placements.len)) return c3d::INVALID_ARGUMENT~;
+
     if (instance) {
         foreach (index, mesh : template.meshes) {
             if (mesh.node >= instance.nodes.len || instance.mesh_nodes[index] != mesh.node) {
                 return c3d::INVALID_ARGUMENT~;
             }
+
             Node* part = instance.present_node(mesh.node);
             if (!part) return c3d::INVALID_ID~;
+
             Mesh* live = scene.get(part, Mesh);
             if (!live || !c3d::same_id(live.geometry, mesh.geometry)
               || !c3d::same_id(live.material, mesh.material)
               || live.morph_weights.len != instance.base_morph_weights[index].len) {
                 return c3d::INVALID_ARGUMENT~;
             }
+
             ModelSkin* skin = skin_at(template, mesh.node);
             if (skin) {
                 SkinBinding* binding = scene.get(part, SkinBinding);
                 if (!binding || !c3d::same_id(binding.skeleton, skin.skeleton)
                   || binding.joints.len != skin.joint_nodes.len) return c3d::INVALID_ARGUMENT~;
+
                 foreach (joint_index, template_node : skin.joint_nodes) {
                     if (template_node >= instance.nodes.len) return c3d::INVALID_ARGUMENT~;
+
                     Node* joint = instance.present_node(template_node);
                     if (!joint) return c3d::INVALID_ID~;
                     if (binding.joints[joint_index] != joint) return c3d::INVALID_ARGUMENT~;
@@ -172,10 +186,12 @@ fn AnimatedLodSource? animated_lod_source(AssetStore* assets, Scene* scene, Node
             }
         }
     }
+
     if (crowd && crowd.is_prepared()) {
         if (crowd.parts.len != template.meshes.len || crowd.playback.slots.len != crowd.placements.len) {
             return c3d::INVALID_ARGUMENT~;
         }
+
         foreach (index, part : crowd.parts) {
             if (!scene.world.is_alive(part.batch)) return c3d::INVALID_ID~;
             InstancedMesh* live = scene.world.get(part.batch, InstancedMesh);
@@ -334,28 +350,34 @@ fn LodGroup? build_animated_lod(
     AnimatedLodDesc desc,
 ) @local {
     validate_source_shape(assets, source)!;
+
     ModelTemplate* template = &source.model.data;
     if (source.crowd && desc.has_bounds_override) return c3d::INVALID_ARGUMENT~;
 
     @pool() {
         LodPart[] draws = alloc::new_array_try(tmem, LodPart, desc.parts.len)
           ?? c3d::CAPACITY_EXCEEDED~!;
+
         foreach (index, part : desc.parts) draws[index] = part.draw;
+
         LodDesc layout = {
             .levels = desc.levels,
             .parts = draws,
             .has_bounds_override = source.crowd ? true : desc.has_bounds_override,
             .local_bounds = source.crowd ? source.crowd.pose_bounds : desc.local_bounds,
         };
+
         scene::validate_lod_layout(layout)!;
         if (desc.levels[0].part_count != template.meshes.len) return c3d::INVALID_ARGUMENT~;
 
         uint[] offsets = alloc::new_array_try(tmem, uint, template.meshes.len + 1)
           ?? c3d::CAPACITY_EXCEEDED~!;
         usz logical_count;
+
         foreach (index, mesh : template.meshes) {
             logical_count += source_defaults(source, (uint)index).len;
             if (logical_count > uint::max) return c3d::CAPACITY_EXCEEDED~;
+
             offsets[index + 1] = (uint)logical_count;
         }
 
@@ -460,10 +482,12 @@ fn LodGroup? build_animated_lod(
 
         uint[] joints;
         Mat4[] inverse_bind;
+
         if (template.skins.len) {
             joints = template.skins[0].joint_nodes;
             inverse_bind = assets.skeleton(template.skins[0].skeleton).data.inverse_bind;
         }
+
         AnimatedLodBinding binding = {
             .source_owner = source.owner.id,
             .source_model = source.instance ? source.instance.source : source.crowd.model,
@@ -476,13 +500,16 @@ fn LodGroup? build_animated_lod(
             .joint_nodes = joints,
             .inverse_bind = inverse_bind,
         };
+
         LodGroup group = scene::create_animated_lod_group(
             allocator: allocator,
             desc: layout,
             binding: binding,
             capacity: source.crowd ? (uint)source.crowd.placements.len : 0,
         )!;
+
         if (source.crowd) group.state.effects.trace = source.crowd.trace;
+
         return group;
     };
 }
@@ -502,8 +529,10 @@ fn void? validate_animated_lod_binding(
     LodGroupState* state,
 ) @local {
     validate_source_shape(assets, source)!;
+
     AnimatedLodBinding* binding = state.animated;
     ModelTemplate* template = &source.model.data;
+
     if (binding.channel_offsets.len != template.meshes.len + 1) return c3d::INVALID_ARGUMENT~;
 
     foreach (skin : template.skins) {
@@ -522,10 +551,12 @@ fn void? validate_animated_lod_binding(
         uint first = binding.channel_offsets[index];
         uint last = binding.channel_offsets[index + 1];
         if (baseline.len != (usz)(last - first)) return c3d::INVALID_ARGUMENT~;
+
         for (uint weight = 0; weight < baseline.len; weight++) {
             String name = base.data.channels.len ? base.data.channels[weight].name : "";
             if (name != binding.channel_names[first + weight]) return c3d::INVALID_ARGUMENT~;
         }
+
         if (baseline.len && !mem::equals(
             a: baseline.ptr,
             b: binding.defaults[first:baseline.len].ptr,
@@ -568,6 +599,7 @@ fn void? validate_animated_lod_binding(
     }
 
     binding.model_revision = source.model.header.revision;
+
     foreach (index, &part : binding.parts) {
         part.geometry_revision = assets.geometry(state.desc.parts[index].geometry).header.revision;
         if (part.source_skeleton.generation) {

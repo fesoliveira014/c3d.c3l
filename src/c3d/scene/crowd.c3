@@ -86,6 +86,7 @@ fn void free_crowd(Entity entity, void* component, void* user) @private {
     AnimatedCrowd* crowd = component;
     CrowdRemovalContext* context = user;
     Allocator allocator = context.allocator;
+
     LodGroup* group = context.lod_groups.find(entity);
     if (group && group.state.animated) {
         group.state.count = 0;

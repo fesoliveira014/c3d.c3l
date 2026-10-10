@@ -157,11 +157,13 @@ fn gpu::GpuAddress? resolve_animated_lod_palette(Renderer* renderer, MeshCandida
     usz matrices = (usz)count * candidate.lod.state.animated.joint_nodes.len;
     Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan span = frame.upload.take(&renderer.device, matrices * Mat4f::size, STREAM_ALIGNMENT)!;
+
     write_animated_lod_palette(
         palette: ((Mat4f*)span.bytes.ptr)[:matrices],
         candidate: candidate,
         origin: renderer.frame_origin,
     );
+
     renderer.deformation.animated_palettes.set(key, span.address);
 
     return span.address;
@@ -207,7 +209,8 @@ fn gpu::GpuAddress? resolve_animated_lod_parts(Renderer* renderer, MeshCandidate
             color: { 1, 1, 1, 1 },
             seed: 0,
         );
-        records[source].normal_1.w = candidate.lod.part_mirrored[candidate.lod_part][source] ? 1 : 0;
+        records[source].normal_1.w = candidate.crowd
+          && candidate.lod.part_mirrored[candidate.lod_part][source] ? 1 : 0;
     }
 
     renderer.deformation.animated_parts.set(key, span.address);
@@ -288,6 +291,7 @@ fn gpu::GpuAddress? upload_animated_lod_previous(
 
             selection.previous_palette = palette_span.address;
         }
+
         previous.skin = selection.previous_palette;
     }
 

@@ -260,7 +260,8 @@ fn void prepare_triangle_picks(AssetStore* assets, Scene* scene) {
         Node* node = scene.node(entity);
         LodGroupState* state = group.state;
         if (!state.animated) {
-            if (lod_group_is_live(assets, group) && !state.desc.has_bounds_override && state.effects.sway.amplitude == 0) {
+            if (lod_group_is_live(assets, group) && !state.desc.has_bounds_override
+                  && state.effects.sway.amplitude == 0) {
                 foreach (part : state.desc.parts[:state.desc.levels[0].part_count]) {
                     if (triangles_are_static(assets.geometry(part.geometry), false, false)) {
                         prepare_triangle_tree(assets, part.geometry);

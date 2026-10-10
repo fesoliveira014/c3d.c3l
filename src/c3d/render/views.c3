@@ -401,6 +401,7 @@ fn void commit_animated_lod_pose(
     LodGroupState* state = candidate.lod.state;
     AnimatedLodBinding* binding = state.animated;
     AnimatedLodPoseHistory* history = owner.animated_lod;
+
     if (!history || history.parts.len != binding.parts.len) {
         free_animated_lod_pose(allocator, history);
         history = alloc::new(allocator, AnimatedLodPoseHistory);
@@ -421,6 +422,7 @@ fn void commit_animated_lod_pose(
 
     usz capacity = candidate.crowd ? candidate.crowd.placements.len : 1;
     uint count = candidate.crowd ? candidate.crowd.count : 1;
+
     if (history.seen != serial) {
         usz palette_size = capacity * binding.joint_nodes.len;
         if (owner.palette.len != palette_size) {
@@ -446,6 +448,7 @@ fn void commit_animated_lod_pose(
                 crowd: candidate.crowd,
             );
         }
+
         history.seen = serial;
     }
 

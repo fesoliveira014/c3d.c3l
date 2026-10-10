@@ -443,12 +443,14 @@ fn Scene create_scene(Allocator allocator, SceneDesc desc) {
     scene.world.set_remove_hook(InstancedMesh, &free_instanced_mesh, scene.hook_allocator);
     scene.world.set_remove_hook(LodGroup, &free_lod_group, scene.hook_allocator);
     scene.world.set_remove_hook(BillboardBatch, &free_billboards, scene.hook_allocator);
+
     scene.crowd_removal = alloc::new(allocator, CrowdRemovalContext);
     *scene.crowd_removal = {
         .allocator = allocator,
         .lod_groups = (store::ComponentStore{LodGroup}*)scene.world.stores[store::slot{LodGroup} - 1],
     };
     scene.world.set_remove_hook(AnimatedCrowd, &free_crowd, scene.crowd_removal);
+
     return scene;
 }
 

@@ -623,11 +623,13 @@ fn void publish_crowd_lod_owner(Scene* scene, Node* owner, AnimatedCrowd* crowd)
 fn void publish_crowd_lod_source(Scene* scene, LodGroupState* state, AnimatedCrowd* crowd) @private {
     state.transforms = crowd.placements;
     state.colors = crowd.colors;
+
     uint count = crowd.is_prepared() ? crowd.count : 0;
     ulong epoch = crowd.playback ? crowd.playback.identity : 1;
     uint revision = crowd.parts.len ? scene.world.get(crowd.parts[0].batch, InstancedMesh).revision : 0;
     bool changed = state.count != count || state.instance_epoch != epoch
       || state.animated.source_revision != revision;
+
     state.animated.source_revision = revision;
     state.count = count;
     state.instance_epoch = epoch;

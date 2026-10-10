@@ -1,5 +1,7 @@
 module c3d::render::acceptance;
 
+import std::math;
+
 import c3d;
 import c3d::anim;
 import c3d::asset;
@@ -12,6 +14,7 @@ import c3d::scene;
 import c3d::spatial;
 import c3d::test::animated_crowd_fixtures;
 import std::io;
+import gpu;
 
 fn void? capture_animated_lod_dangling_output(
     Fixture* fixture,
@@ -19,17 +22,47 @@ fn void? capture_animated_lod_dangling_output(
     CrowdNativeOutput* output,
 ) @private {
     Renderer* renderer = &fixture.renderer;
+    pair.crowd.visible = true;
+    pair.references.visible = false;
+    pair.scene.update_world();
     renderer.begin_frame({ .time = 0.37, .delta = 0 })!;
     defer catch render::abort_frame(renderer);
-    record_crowd_lod_native_output(
+    renderer.render_view(&pair.scene, pair.camera, output.view)!;
+    ViewRecord* record = renderer.views.get(output.view);
+    record_crowd_native_target(
         fixture: fixture,
-        pair: pair,
-        output: output,
-        actual: true,
+        probe: &output.probe,
+        target: &record.depth,
+        mapped: output.probe.depth,
     )!;
+    assert(renderer.shadow_set.layer_count == 1 && renderer.shadow_set.light_count == 1);
+    uint layer = renderer.shadow_set.lights[0].first_layer;
+    uint resolution = renderer.shadow_atlas.resolution;
+    Target shadow = {
+        .texture = renderer.shadow_atlas.texture,
+        .view = renderer.shadow_atlas.layers[layer].view,
+        .state = renderer.shadow_atlas.state,
+        .format = gpu::Format.D32_FLOAT,
+        .width = resolution,
+        .height = resolution,
+    };
+    record_crowd_native_target(
+        fixture: fixture,
+        probe: &output.probe,
+        target: &shadow,
+        mapped: output.probe.shadow,
+    )!;
+    renderer.shadow_atlas.state = shadow.state;
+    renderer.finish_view(output.view)!;
     renderer.end_frame()!;
     render::wait_frames(renderer)!;
-    read_crowd_lod_native_output(fixture, output)!;
+    gpu::invalidate_mapped_span(&renderer.device, output.probe.depth.span)!;
+    gpu::invalidate_mapped_span(&renderer.device, output.probe.shadow.span)!;
+    mem::copy(output.actual.depth.ptr, output.probe.depth.bytes.ptr, CROWD_NATIVE_PIXELS * Vec4::size);
+    mem::copy(output.actual.shadow.ptr, output.probe.shadow.bytes.ptr,
+        (sz)resolution * resolution * Vec4::size);
+    output.actual.shadow_resolution = resolution;
+    output.actual.stats = renderer.stats;
 }
 
 fn uint animated_lod_dangling_coverage(Vec4[] pixels) @private {
@@ -39,17 +72,17 @@ fn uint animated_lod_dangling_coverage(Vec4[] pixels) @private {
 }
 
 fn void test_animated_lod_native_dangling_source_skips_whole_main_and_shadow_owner() @test {
-    Fixture fixture;
-    create_fixture(
-        allocator: mem,
-        fixture: &fixture,
-        shadow_resolution: 128,
-        max_shadow_layers: 1,
-        max_views: 16,
-        max_render_targets: 16,
-    )!!;
-    defer destroy_fixture(&fixture);
     for (uint mutation = 0; mutation < 5; mutation++) {
+        Fixture fixture;
+        create_fixture(
+            allocator: mem,
+            fixture: &fixture,
+            shadow_resolution: 128,
+            max_shadow_layers: 1,
+            max_views: 16,
+            max_render_targets: 16,
+        )!!;
+        defer destroy_fixture(&fixture);
         PartsFixture parts = animated_crowd_fixtures::add_parts_fixture(&fixture.assets)!!;
         bool crowd = mutation >= 3;
         CrowdNativePair pair;
