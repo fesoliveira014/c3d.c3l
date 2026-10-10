@@ -258,8 +258,9 @@ fn void check_bounds_native_queries(
     uint[15] seen;
     foreach (entry : index.entries[:index.count]) {
         uint source;
-        if (sources.crowd) source = entry.instance_index;
-        else {
+        if (sources.crowd) {
+            source = entry.instance_index;
+        } else {
             bool found;
             foreach (uint candidate, owner : sources.ordinary) {
                 if (entry.node == owner) {
@@ -600,8 +601,11 @@ fn void test_animated_lod_native_mixed_stretched_bounds_queries_and_cpu_release(
         for (uint parity = 0; parity < 2; parity++) {
             if (parity) {
                 for (uint source = 0; source < 2; source++) {
-                    if (crowd) pair.scene.get(pair.crowd, AnimatedCrowd).placements[source].scale.x *= -1;
-                    else sources.ordinary[source].local.scale.x *= -1;
+                    if (crowd) {
+                        pair.scene.get(pair.crowd, AnimatedCrowd).placements[source].scale.x *= -1;
+                    } else {
+                        sources.ordinary[source].local.scale.x *= -1;
+                    }
                     pair.ordinary[source].local.scale.x *= -1;
                 }
                 if (crowd) pair.scene.write_crowd_batches(pair.scene.get(pair.crowd, AnimatedCrowd));

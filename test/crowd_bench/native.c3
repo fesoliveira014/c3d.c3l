@@ -55,6 +55,33 @@ struct NativeRowMode {
 }
 
 NativeRowMode native_row_mode @private;
+struct NativeRevision {
+    Entity owner;
+    ulong playback_identity;
+    ulong lod_identity;
+    ulong source_epoch;
+    uint descriptor_revision;
+    uint publication_revision;
+    uint source_batch_revision;
+    ModelId model;
+    uint model_revision;
+    uint admitted_model_revision;
+    uint representation;
+    uint level;
+    uint logical_part;
+    uint template_node;
+    GeometryId geometry;
+    uint geometry_revision;
+    uint admitted_geometry_revision;
+    SkeletonId skeleton;
+    uint skeleton_revision;
+    uint admitted_skeleton_revision;
+    SkeletonId source_skeleton;
+    uint source_skeleton_revision;
+    uint admitted_source_skeleton_revision;
+    uint logical_weights;
+    uint live;
+}
 struct NativeFiles {
     File raw;
     File gpu;
@@ -63,6 +90,7 @@ struct NativeFiles {
     File metadata;
     File failures;
     File lod_history;
+    File revisions;
 }
 
 struct NativeSample {
@@ -127,6 +155,15 @@ struct NativeSample {
     uint trace_refits;
     uint blas_builds;
     uint blas_updates;
+    NativeRevision[] revisions;
+    ulong instance_copy_bytes;
+    ulong instance_publication_copy_bytes;
+    ulong instance_cold_copy_bytes;
+    ulong instance_other_copy_bytes;
+    ulong geometry_copy_bytes;
+    ulong geometry_revision_copy_bytes;
+    ulong geometry_cold_copy_bytes;
+    ulong geometry_other_copy_bytes;
 }
 
 struct NativeDepthRoot {
@@ -146,6 +183,7 @@ fn void close_native_files(NativeFiles* files) {
     (void)files.metadata.close();
     (void)files.failures.close();
     (void)files.lod_history.close();
+    (void)files.revisions.close();
 }
 
 fn void? create_native_files(String directory, NativeFiles* files) {
@@ -157,6 +195,7 @@ fn void? create_native_files(String directory, NativeFiles* files) {
     files.metadata = file::open(joined_path(directory, "native-metadata.csv")!, "wb")!;
     files.failures = file::open(joined_path(directory, "native-failures.csv")!, "wb")!;
     files.lod_history = file::open(joined_path(directory, "native-lod-history.csv")!, "wb")!;
+    files.revisions = file::open(joined_path(directory, "native-revisions.csv")!, "wb")!;
     io::fprintn(
         out: &files.raw,
         x: "fixture,script,configured,live,repetition,views,lod_mode,trace_kind,posed_capacity,sample,script_frame,submission_frame,"
@@ -172,7 +211,10 @@ fn void? create_native_files(String directory, NativeFiles* files) {
           "lod_history_gpu_bytes,lod_selected_0,lod_selected_1,lod_selected_2,lod_visible_0,"
           "lod_visible_1,lod_visible_2,lod_sources_tested,lod_fallbacks,selected_authored_triangles,"
           "visible_authored_triangles,trace_instances,trace_posed,trace_overflow,trace_skipped,"
-          "trace_posed_gpu_bytes,trace_poses,trace_refits,blas_builds,blas_updates",
+          "trace_posed_gpu_bytes,trace_poses,trace_refits,blas_builds,blas_updates,"
+          "evaluate_publish_releases,instance_stream_copy_bytes,instance_publication_revision_copy_bytes,"
+          "instance_cold_or_grown_copy_bytes,instance_other_copy_bytes,geometry_copy_bytes,"
+          "geometry_asset_revision_copy_bytes,geometry_cold_copy_bytes,geometry_other_copy_bytes",
     )!;
     io::fprintn(
         out: &files.gpu,
@@ -183,6 +225,15 @@ fn void? create_native_files(String directory, NativeFiles* files) {
     io::fprintn(&files.summary, "fixture,script,configured,live,repetition,views,lod_mode,trace_kind,posed_capacity,metric,samples,median_ms,p95_ms")!;
     io::fprintn(&files.storage, "fixture,script,configured,live,repetition,views,lod_mode,trace_kind,posed_capacity,category,bytes")!;
     io::fprintn(&files.metadata, "key,value")!;
+    io::fprintn(&files.revisions,
+        "fixture,script,configured,live,repetition,views,lod_mode,trace_kind,posed_capacity,"
+        "script_frame,submission_frame,owner_index,owner_generation,playback_identity,lod_identity,"
+        "source_epoch,descriptor_revision,publication_revision,source_batch_revision,model_index,"
+        "model_generation,model_revision,admitted_model_revision,representation,level,logical_part,"
+        "template_node,geometry_index,geometry_generation,geometry_revision,admitted_geometry_revision,"
+        "skeleton_index,skeleton_generation,skeleton_revision,admitted_skeleton_revision,"
+        "source_skeleton_index,source_skeleton_generation,source_skeleton_revision,"
+        "admitted_source_skeleton_revision,logical_weights,source_live")!;
     io::fprintn(&files.lod_history,
         "fixture,script,configured,live,repetition,views,lod_mode,trace_kind,posed_capacity,"
         "capture_submission,view_index,source_index,available,level,generation,reject_history,authored_triangles")!;
@@ -260,6 +311,7 @@ fn void? native_render_frame(
     ViewId[] views,
     NativeSample* sample,
     NativeSample[] samples,
+    Node* source_owner,
     CounterAllocator* renderer_counter,
     double time,
     float delta,
@@ -268,6 +320,12 @@ fn void? native_render_frame(
     renderer.begin_frame({ .time = time, .delta = delta })!;
     defer catch render::abort_frame(renderer);
     sample.submission = renderer.frame_index;
+    stage_native_revision_uploads(
+        renderer: renderer,
+        scene: scene,
+        owner: source_owner,
+        sample: sample,
+    )!;
     foreach (view : views) {
         native_previous_payload(&renderer.views.get(view).history, sample);
         renderer.render_view(scene, camera, view)!;
@@ -420,7 +478,7 @@ fn void? write_native_samples(
         foreach (elapsed : (ulong[4]){ sample.evaluate_ns, sample.publish_ns, sample.world_ns, sample.render_ns }) {
             csv_float(&files.raw, (double)elapsed / NANOSECONDS_PER_MILLISECOND)!;
         }
-        ulong[58] fields = {
+        ulong[67] fields = {
             sample.upload_bytes, sample.upload_peak, sample.device_copy_bytes, sample.current_palette,
             sample.current_morph, sample.current_records, sample.current_bounds, sample.previous_palette,
             sample.previous_morph, sample.previous_matrices, sample.previous_headers, sample.history_host,
@@ -437,6 +495,9 @@ fn void? write_native_samples(
             sample.visible_authored_triangles, sample.trace_instances, sample.trace_posed,
             sample.trace_overflow, sample.trace_skipped, sample.trace_posed_bytes, sample.trace_poses,
             sample.trace_refits, sample.blas_builds, sample.blas_updates,
+            sample.allocations.release_calls, sample.instance_copy_bytes, sample.instance_publication_copy_bytes,
+            sample.instance_cold_copy_bytes, sample.instance_other_copy_bytes, sample.geometry_copy_bytes,
+            sample.geometry_revision_copy_bytes, sample.geometry_cold_copy_bytes, sample.geometry_other_copy_bytes,
         };
         foreach (index, value : fields) csv_uint(&files.raw, value, index + 1 == fields.len)!;
     }
@@ -768,6 +829,7 @@ fn void? measure_native_row(
                         views: views[:view_count],
                         sample: sample,
                         samples: samples[..],
+                        source_owner: root,
                         renderer_counter: &renderer_counter,
                         time: (double)frame * FIXED_DT,
                         delta: FIXED_DT,
@@ -781,6 +843,7 @@ fn void? measure_native_row(
                     views: views[:view_count],
                     sample: sample,
                     samples: samples[..],
+                    source_owner: root,
                     renderer_counter: &renderer_counter,
                     time: (double)(NATIVE_CAPTURE_FRAMES - 1) * FIXED_DT,
                     delta: 0,
@@ -805,6 +868,15 @@ fn void? measure_native_row(
             samples: samples[..],
         )!;
         write_native_samples(
+            files: files,
+            corpus: corpus,
+            script: script,
+            live: live,
+            repetition: repetition,
+            views: view_count,
+            samples: samples[..],
+        )!;
+        write_native_revisions(
             files: files,
             corpus: corpus,
             script: script,
@@ -975,7 +1047,7 @@ fn void? run_native(String[] args) {
             key: "capture_byte_order",
             value: ((char*)&endian)[0] == 1 ? "little_endian_IEEE754_binary32" : "big_endian_IEEE754_binary32",
         )!;
-        native_metadata(&files, "schema_version", "2")!;
+        native_metadata(&files, "schema_version", "3")!;
         native_metadata(&files, "lod_modes_requested", selected_lod)!;
         native_metadata(&files, "trace_kind", native_trace_name(native_row_mode.trace))!;
         native_metadata_uint(&files, "trace_posed_capacity", native_row_mode.trace == NativeTraceMode.OFF
@@ -992,6 +1064,20 @@ fn void? run_native(String[] args) {
         native_metadata(&files, "lod_current_part_payload",
             "animated_parts_cache_records_live_times_InstanceGpu_per_representation_excludes_alignment")!;
         native_metadata(&files, "indirect_triangle_readback", "NA_no_indirect_argument_readback")!;
+        native_metadata(&files, "upload_revision_accounting",
+            "actual_new_pending_copy_src_equals_dst_sizes_and_pending_instance_upload_records_no_byte_estimate")!;
+        native_metadata(&files, "instance_copy_reasons",
+            "exclusive_priority_cold_or_capacity_growth_then_live_publication_revision_mismatch_then_other_world_origin_incarnation")!;
+        native_metadata(&files, "geometry_copy_reasons",
+            "exclusive_priority_asset_header_revision_mismatch_for_same_live_mirror_then_cold_mirror_then_other")!;
+        native_metadata(&files, "binding_revision_identity",
+            "no_standalone_counter_descriptor_incarnation_and_admitted_model_geometry_selected_source_skeleton_header_revisions")!;
+        native_metadata(&files, "palette_upload_kind",
+            "model_space_pose_palette_is_frame_ring_payload_not_persistent_asset_revision_buffer_copy")!;
+        native_metadata(&files, "revision_export_scope",
+            "per_frame_per_representation_global_source_identifiers_shared_by_all_views_legacy_admitted_fields_zero")!;
+        native_metadata(&files, "revision_export_overhead",
+            "same_production_geometry_and_instance_resolvers_pre_staged_before_view_no_extra_bins_or_dispatches_CPU_capture_overhead_in_record_submit")!;
         native_metadata(&files, "script_version", "1")!;
         native_metadata(&files, "placement", "ceil_sqrt_grid_spacing3_positive_x_negative_z_identity_scale_rotation")!;
         native_metadata(&files, "compiler", "C3_0.8.3")!;
@@ -1298,6 +1384,226 @@ fn void? capture_native_lod_history(
                 csv_string(&files.lod_history, "NA")!;
                 csv_string(&files.lod_history, "NA", true)!;
             }
+        }
+    }
+}
+
+
+fn GpuInstances native_instance_before(Renderer* renderer, InstanceKey key) {
+    if (try index = renderer.instances.lookup.get(key)) return renderer.instances.slots[index];
+    return {};
+}
+
+fn ulong? native_queued_copy_bytes(
+    Renderer* renderer,
+    usz first,
+    gpu::GpuAllocation allocation,
+) {
+    ulong bytes;
+    for (usz index = first; index < renderer.pending_copies.len(); index++) {
+        gpu::BufferCopyDesc copy = renderer.pending_copies[index];
+        gpu::GpuAllocation destination = copy.dst.allocation();
+        if (destination.owner != allocation.owner || destination.index != allocation.index
+          || destination.generation != allocation.generation) continue;
+        if (copy.src.size != copy.dst.size) return c3d::INVALID_ARGUMENT~;
+        bytes += copy.src.size;
+    }
+    return bytes;
+}
+
+fn void native_classify_instance_copy(
+    NativeSample* sample,
+    GpuInstances before,
+    uint capacity,
+    uint publication,
+    ulong bytes,
+) {
+    sample.instance_copy_bytes += bytes;
+    if (!before.allocation.is_valid() || before.capacity < capacity) {
+        sample.instance_cold_copy_bytes += bytes;
+    } else if (before.revision && before.revision != publication) {
+        sample.instance_publication_copy_bytes += bytes;
+    } else {
+        sample.instance_other_copy_bytes += bytes;
+    }
+}
+
+fn void? native_stage_geometry(Renderer* renderer, GeometryId geometry, NativeSample* sample) {
+    GpuGeometry before = renderer.geometries[geometry.index];
+    uint revision = renderer.assets.geometry(geometry).header.revision;
+    usz copies = renderer.pending_copies.len();
+    usz uploads = renderer.pending_geometry_uploads.len();
+    GpuGeometry* resolved = render::resolve_geometry(renderer, geometry)!;
+    if (renderer.pending_geometry_uploads.len() == uploads) return;
+    ulong bytes = native_queued_copy_bytes(renderer, copies, resolved.allocation)!;
+    sample.geometry_copy_bytes += bytes;
+    if (c3d::same_id(before.asset, geometry) && before.revision && before.revision != revision) {
+        sample.geometry_revision_copy_bytes += bytes;
+    } else if (!c3d::same_id(before.asset, geometry) || !before.revision) {
+        sample.geometry_cold_copy_bytes += bytes;
+    } else {
+        sample.geometry_other_copy_bytes += bytes;
+    }
+}
+
+fn void? stage_native_revision_uploads(
+    Renderer* renderer,
+    Scene* scene,
+    Node* owner,
+    NativeSample* sample,
+) {
+    AnimatedCrowd* crowd = scene.get(owner, AnimatedCrowd);
+    ModelTemplate* template = &renderer.assets.model(crowd.model).data;
+    LodGroup* group = scene.get(owner, LodGroup);
+    if (group) {
+        model::sync_animated_lod(renderer.assets, scene, owner)!;
+        LodGroupState* state = group.state;
+        InstanceKey key = { .scene = scene.identity, .node = owner.id, .kind = shader::INSTANCE_KIND_LOD };
+        GpuInstances before = native_instance_before(renderer, key);
+        usz copies = renderer.pending_copies.len();
+        usz uploads = renderer.pending_instance_uploads.len();
+        LodSelection selection = {
+            .scene = scene,
+            .scene_identity = scene.identity,
+            .node = owner,
+            .state = state,
+        };
+        render::resolve_lod_instances(renderer, &selection)!;
+        if (renderer.pending_instance_uploads.len() != uploads) {
+            ulong bytes = native_queued_copy_bytes(renderer, copies, selection.instances.allocation)!;
+            native_classify_instance_copy(
+                sample: sample,
+                before: before,
+                capacity: (uint)state.transforms.len,
+                publication: state.revision,
+                bytes: bytes,
+            );
+        }
+        foreach (part : state.desc.parts) native_stage_geometry(renderer, part.geometry, sample)!;
+    } else {
+        foreach (part : crowd.parts) {
+            Node* node = scene.node(part.batch);
+            InstancedMesh* batch = scene.get(node, InstancedMesh);
+            InstanceKey key = { .scene = scene.identity, .node = node.id, .kind = shader::INSTANCE_KIND_MESH };
+            GpuInstances before = native_instance_before(renderer, key);
+            usz copies = renderer.pending_copies.len();
+            usz uploads = renderer.pending_instance_uploads.len();
+            MeshCandidate candidate = {
+                .node = node,
+                .geometry = batch.geometry,
+                .material = batch.material,
+                .batch = batch,
+                .scene_identity = scene.identity,
+                .instance_count = batch.count,
+            };
+            render::attach_crowd(scene, &candidate);
+            render::resolve_instances(renderer, &candidate)!;
+            if (renderer.pending_instance_uploads.len() != uploads) {
+                uint index = renderer.instances.lookup.get(key)!;
+                ulong bytes = native_queued_copy_bytes(renderer, copies, renderer.instances.slots[index].allocation)!;
+                native_classify_instance_copy(
+                    sample: sample,
+                    before: before,
+                    capacity: (uint)batch.transforms.len,
+                    publication: batch.revision,
+                    bytes: bytes,
+                );
+            }
+            native_stage_geometry(renderer, batch.geometry, sample)!;
+        }
+    }
+    usz count = group ? group.state.desc.parts.len : template.meshes.len;
+    sample.revisions = alloc::new_array(tmem, NativeRevision, (sz)count);
+    for (uint representation = 0; representation < count; representation++) {
+        uint mesh_index = group ? group.state.animated.parts[representation].mesh_index : representation;
+        ModelMesh mesh = template.meshes[mesh_index];
+        AnimatedLodPartBinding binding;
+        if (group) {
+            binding = group.state.animated.parts[representation];
+        } else {
+            binding.mesh_index = mesh_index;
+            binding.template_node = mesh.node;
+            binding.weight_count = (uint)mesh.default_morph_weights.len;
+            foreach (skin : template.skins) {
+                if (skin.mesh_node != mesh.node) continue;
+                binding.skinned = true;
+                binding.skeleton = skin.skeleton;
+                binding.source_skeleton = skin.skeleton;
+            }
+        }
+        GeometryId geometry = group ? group.state.desc.parts[representation].geometry : mesh.geometry;
+        uint level;
+        if (group) {
+            foreach (uint index, selected : group.state.desc.levels) {
+                if (representation >= selected.first_part
+                  && representation < selected.first_part + selected.part_count) level = index;
+            }
+        }
+        InstancedMesh* batch = scene.world.get(crowd.parts[mesh_index].batch, InstancedMesh);
+        sample.revisions[representation] = {
+            .owner = owner.id,
+            .playback_identity = crowd.playback.identity,
+            .lod_identity = group ? group.state.identity : 0,
+            .source_epoch = group ? group.state.instance_epoch : crowd.playback.identity,
+            .descriptor_revision = group ? group.state.descriptor_revision : 0,
+            .publication_revision = group ? group.state.revision : batch.revision,
+            .source_batch_revision = batch.revision,
+            .model = crowd.model,
+            .model_revision = renderer.assets.model(crowd.model).header.revision,
+            .admitted_model_revision = group ? group.state.animated.model_revision : 0,
+            .representation = representation,
+            .level = level,
+            .logical_part = mesh_index,
+            .template_node = binding.template_node,
+            .geometry = geometry,
+            .geometry_revision = renderer.assets.geometry(geometry).header.revision,
+            .admitted_geometry_revision = binding.geometry_revision,
+            .skeleton = binding.skeleton,
+            .skeleton_revision = binding.skeleton.generation ? renderer.assets.skeleton(binding.skeleton).header.revision : 0,
+            .admitted_skeleton_revision = binding.skeleton_revision,
+            .source_skeleton = binding.source_skeleton,
+            .source_skeleton_revision = binding.source_skeleton.generation
+              ? renderer.assets.skeleton(binding.source_skeleton).header.revision : 0,
+            .admitted_source_skeleton_revision = binding.source_skeleton_revision,
+            .logical_weights = binding.weight_count,
+            .live = crowd.count,
+        };
+    }
+}
+
+fn void? write_native_revisions(
+    NativeFiles* files,
+    Corpus corpus,
+    Script script,
+    uint live,
+    uint repetition,
+    uint views,
+    NativeSample[] samples,
+) {
+    for (uint frame = WARMUPS; frame < NATIVE_CAPTURE_FRAMES; frame++) {
+        foreach (revision : samples[frame].revisions) {
+            native_key(
+                output: &files.revisions,
+                corpus: corpus,
+                script: script,
+                live: live,
+                repetition: repetition,
+                views: views,
+            )!;
+            csv_uint(&files.revisions, frame)!;
+            csv_uint(&files.revisions, samples[frame].submission)!;
+            ulong[30] fields = {
+                revision.owner.index, revision.owner.generation, revision.playback_identity,
+                revision.lod_identity, revision.source_epoch, revision.descriptor_revision,
+                revision.publication_revision, revision.source_batch_revision,
+                revision.model.index, revision.model.generation, revision.model_revision, revision.admitted_model_revision,
+                revision.representation, revision.level, revision.logical_part, revision.template_node,
+                revision.geometry.index, revision.geometry.generation, revision.geometry_revision, revision.admitted_geometry_revision,
+                revision.skeleton.index, revision.skeleton.generation, revision.skeleton_revision, revision.admitted_skeleton_revision,
+                revision.source_skeleton.index, revision.source_skeleton.generation, revision.source_skeleton_revision,
+                revision.admitted_source_skeleton_revision, revision.logical_weights, revision.live,
+            };
+            foreach (index, value : fields) csv_uint(&files.revisions, value, index + 1 == fields.len)!;
         }
     }
 }
