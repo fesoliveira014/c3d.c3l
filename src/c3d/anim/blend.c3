@@ -6,37 +6,28 @@ import c3d::maths;
 import c3d::scene;
 import std::math;
 
-struct ChannelSums @private {
-    Vec3 translation;
-    float translation_weight;
-    Vec4 rotation;
-    float rotation_weight;
-    Vec3 scale;
-    float scale_weight;
-}
+fn void blend_pose(
+    PlaybackView* playback,
+    AssetStore* assets,
+    PoseDestination destination,
+    PoseScratch scratch,
+) @private {
+    Transform[] result = destination.pose;
+    result[..] = destination.base_pose[..];
+    ChannelSums[] sums = scratch.channels;
+    float[][] morph_result = destination.morph_weights;
+    float[][] morph_sums = scratch.morph_sums;
+    float[] morph_weights = scratch.morph_weights;
+    foreach (index, base : destination.base_morph_weights) morph_result[index][..] = base[..];
 
-fn void blend_instance(Animator* animator, AssetStore* assets, ModelInstance* instance) @private {
-    Transform[] result = alloc::new_array(tmem, Transform, instance.nodes.len);
-    result[..] = instance.base_pose[..];
-    ChannelSums[] sums = alloc::new_array(tmem, ChannelSums, instance.nodes.len);
-    float[][] morph_result = alloc::new_array(tmem, float[], instance.base_morph_weights.len);
-    float[][] morph_sums = alloc::new_array(tmem, float[], instance.base_morph_weights.len);
-    float[] morph_weights = alloc::new_array(tmem, float, instance.base_morph_weights.len);
-    foreach (index, base : instance.base_morph_weights) {
-        morph_result[index] = alloc::new_array(tmem, float, base.len);
-        morph_result[index][..] = base[..];
-        morph_sums[index] = alloc::new_array(tmem, float, base.len);
-    }
-
-    uint max_stride;
     bool[MAX_ANIMATION_LAYERS] active;
-    foreach (id : animator.order[:animator.action_count]) {
-        Action* action = animator.actions.get(id);
+    foreach (id : playback.order[:*playback.action_count]) {
+        Action* action = playback.actions.get(id);
         if (action.weight <= 0) continue;
         active[action.layer] = true;
-        foreach (&track : assets.clip(action.clip).data.tracks) max_stride = math::max(max_stride, track.stride());
     }
-    float[] scratch = alloc::new_array(tmem, float, max_stride);
+
+    float[] samples = scratch.sample;
 
     foreach (layer, used : active) {
         if (!used) continue;
@@ -44,18 +35,17 @@ fn void blend_instance(Animator* animator, AssetStore* assets, ModelInstance* in
         morph_weights[..] = 0;
         foreach (values : morph_sums) values[..] = 0;
 
-        foreach (id : animator.order[:animator.action_count]) {
-            Action* action = animator.actions.get(id);
+        foreach (id : playback.order[:*playback.action_count]) {
+            Action* action = playback.actions.get(id);
             if (action.layer != layer || action.additive || action.weight <= 0) continue;
 
             AnimationClip* clip = &assets.clip(action.clip).data;
             foreach (track_index, &track : clip.tracks) {
                 uint node = clip.targets[track.target];
-                Node* present = instance.present_node(node);
-                if (!present || !action.mask[node]) continue;
-                if (track.path == TargetPath.MORPH_WEIGHTS && !animator.scene.has(present, Mesh)) continue;
+                if (!destination.present[node] || !action.mask[node]) continue;
+                if (track.path == TargetPath.MORPH_WEIGHTS && !destination.mesh_present[node]) continue;
 
-                float[] sample = scratch[:track.stride()];
+                float[] sample = samples[:track.stride()];
                 sample_track(
                     track: track,
                     time: action.time,
@@ -77,7 +67,7 @@ fn void blend_instance(Animator* animator, AssetStore* assets, ModelInstance* in
                         sums[node].scale += (Vec3){ sample[0], sample[1], sample[2] } * action.weight;
                         sums[node].scale_weight += action.weight;
                     case MORPH_WEIGHTS:
-                        usz mesh = mesh_index(instance, node);
+                        usz mesh = destination.mesh_indices[node];
                         foreach (index, value : sample) morph_sums[mesh][index] += value * action.weight;
                         morph_weights[mesh] += action.weight;
                 }
@@ -98,8 +88,8 @@ fn void blend_instance(Animator* animator, AssetStore* assets, ModelInstance* in
             }
         }
 
-        foreach (id : animator.order[:animator.action_count]) {
-            Action* action = animator.actions.get(id);
+        foreach (id : playback.order[:*playback.action_count]) {
+            Action* action = playback.actions.get(id);
             if (action.layer != layer || !action.additive || action.weight <= 0) continue;
 
             AnimationClip* clip = &assets.clip(action.clip).data;
@@ -109,11 +99,10 @@ fn void blend_instance(Animator* animator, AssetStore* assets, ModelInstance* in
                 float[] reference = action.reference[reference_offset:stride];
                 reference_offset += stride;
                 uint node = clip.targets[track.target];
-                Node* present = instance.present_node(node);
-                if (!present || !action.mask[node]) continue;
-                if (track.path == TargetPath.MORPH_WEIGHTS && !animator.scene.has(present, Mesh)) continue;
+                if (!destination.present[node] || !action.mask[node]) continue;
+                if (track.path == TargetPath.MORPH_WEIGHTS && !destination.mesh_present[node]) continue;
 
-                float[] sample = scratch[:stride];
+                float[] sample = samples[:stride];
                 sample_track(
                     track: track,
                     time: action.time,
@@ -138,7 +127,7 @@ fn void blend_instance(Animator* animator, AssetStore* assets, ModelInstance* in
                             sample[0] - reference[0], sample[1] - reference[1], sample[2] - reference[2],
                         } * action.weight;
                     case MORPH_WEIGHTS:
-                        usz mesh = mesh_index(instance, node);
+                        usz mesh = destination.mesh_indices[node];
                         foreach (index, value : sample) {
                             morph_result[mesh][index] += (value - reference[index]) * action.weight;
                         }
@@ -146,23 +135,6 @@ fn void blend_instance(Animator* animator, AssetStore* assets, ModelInstance* in
             }
         }
     }
-
-    foreach (usz index, pose : result) {
-        Node* node = instance.present_node(index);
-        if (node) node.local = pose;
-    }
-    foreach (index, values : morph_result) {
-        Node* node = instance.present_node(instance.mesh_nodes[index]);
-        if (!node) continue;
-        Mesh* mesh = animator.scene.get(node, Mesh);
-        if (mesh) mesh.morph_weights[..] = values[..];
-    }
-}
-
-fn usz mesh_index(ModelInstance* instance, uint node) @private {
-    usz index;
-    while (instance.mesh_nodes[index] != node) index++;
-    return index;
 }
 
 fn float residual(float total) @private => math::max(0.0f, 1 - total);

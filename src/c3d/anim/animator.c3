@@ -70,6 +70,7 @@ struct Animator {
     uint events_dropped;
 
     BlendSpace1D[] blend_spaces;
+    PoseStorage* pose_storage;
 }
 
 <* Captured configuration of a newly played action. *>
@@ -103,83 +104,16 @@ fn AnimationActionId? Animator.play(
     ClipId clip,
     PlayDesc desc = PLAY_DESC_DEFAULT,
 ) {
-    AnimationClip* data = &assets.clips.try_get(clip)!.data;
-    if (!math::is_finite(desc.fade_in) || desc.fade_in < 0 || desc.layer >= MAX_ANIMATION_LAYERS) {
-        return c3d::INVALID_ARGUMENT~;
-    }
-    if (desc.mask && desc.mask.nodes.len != self.nodes.len) return c3d::INVALID_ARGUMENT~;
+    PlaybackView playback = self.playback();
+    refresh_destination(self);
 
-    ModelInstance* instance = self.scene.get(self.instance_root, ModelInstance);
-    usz reference_count;
-    foreach (target : data.targets) {
-        if (target >= self.nodes.len) return c3d::INVALID_ARGUMENT~;
-    }
-    foreach (&track : data.tracks) {
-        reference_count += track.stride();
-        if (track.path != TargetPath.MORPH_WEIGHTS) continue;
-        uint target = data.targets[track.target];
-        bool mesh_target;
-        foreach (mesh_node : instance.mesh_nodes) mesh_target |= mesh_node == target;
-        if (!mesh_target) return c3d::INVALID_ARGUMENT~;
-        Node* node = instance.present_node(target);
-        if (!node) continue;
-        Mesh* mesh = self.scene.get(node, Mesh);
-        if (mesh && mesh.morph_weights.len != track.stride()) return c3d::INVALID_ARGUMENT~;
-    }
-    if (!self.actions.free_count) return c3d::CAPACITY_EXCEEDED~;
-
-    Action state;
-    configure_motion(
-        animator: self,
-        action: &state,
-        clip: data,
+    return playback.play(
+        assets: assets,
+        clip: clip,
         desc: desc,
-    )!;
-
-    Allocator allocator = self.scene.allocator;
-    uint[] cursors = alloc::new_array(allocator, uint, data.tracks.len);
-    defer catch alloc::free(allocator, cursors.ptr);
-
-    float[] reference;
-    if (desc.additive) reference = alloc::new_array(allocator, float, (sz)reference_count);
-    defer catch alloc::free(allocator, reference.ptr);
-
-    if (desc.additive) {
-        usz offset;
-        foreach (&track : data.tracks) {
-            uint cursor;
-            sample_track(
-                track: track,
-                time: 0,
-                cursor: &cursor,
-                out: reference[offset:track.stride()],
-            );
-            offset += track.stride();
-        }
-    }
-
-    state.clip = clip;
-    state.cursors = cursors;
-    state.reference = reference;
-    state.speed = 1;
-    state.weight = desc.fade_in > 0 ? 0 : 1;
-    state.fade_target = 1;
-    state.fade_rate = desc.fade_in > 0 ? 1 / desc.fade_in : 0;
-    state.layer = desc.layer;
-    state.additive = desc.additive;
-    state.loop = true;
-    state.playing = true;
-    AnimationActionId id = self.actions.add(state)!;
-    Action* action = self.actions.get(id);
-    action.mask = self.mask_storage[(usz)id.index * self.nodes.len:self.nodes.len];
-    if (desc.mask) {
-        action.mask[..] = desc.mask.nodes[..];
-    } else {
-        action.mask[..] = true;
-    }
-
-    self.order[self.action_count++] = id;
-    return id;
+        destination: self.pose_storage.destination,
+        motion_basis: animator_motion_basis(self),
+    );
 }
 
 <*
@@ -200,19 +134,8 @@ fn Action*? Animator.try_action(&self, AnimationActionId action) => self.actions
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT
 *>
 fn void? Animator.stop(&self, AnimationActionId action, float fade_out = 0) {
-    Action* state = self.actions.try_get(action)!;
-    if (state.blend_space) return c3d::INVALID_ARGUMENT~;
-    if (!math::is_finite(fade_out) || fade_out < 0) return c3d::INVALID_ARGUMENT~;
-
-    if (fade_out == 0) {
-        uint index;
-        while (!c3d::same_id(self.order[index], action)) index++;
-        remove_action(self, index);
-        return;
-    }
-
-    state.fade_target = 0;
-    state.fade_rate = state.weight / fade_out;
+    PlaybackView playback = self.playback();
+    playback.stop(action, fade_out)!;
 }
 
 <*
@@ -226,15 +149,8 @@ fn void? Animator.cross_fade(
     AnimationActionId to,
     float duration,
 ) {
-    Action* source = self.actions.try_get(from)!;
-    Action* target = self.actions.try_get(to)!;
-    if (source.blend_space || target.blend_space) return c3d::INVALID_ARGUMENT~;
-    if (!math::is_finite(duration) || duration <= 0 || c3d::same_id(from, to)) return c3d::INVALID_ARGUMENT~;
-
-    source.fade_target = 0;
-    source.fade_rate = source.weight / duration;
-    target.fade_target = 1;
-    target.fade_rate = math::abs(1 - target.weight) / duration;
+    PlaybackView playback = self.playback();
+    playback.cross_fade(from, to, duration)!;
 }
 
 <*
@@ -248,6 +164,7 @@ fn Animator* add_animator(Scene* scene, Node* instance_root) {
     usz mask_count = MAX_ACTIONS * instance.nodes.len;
     ActionStorage* storage = (ActionStorage*)alloc::malloc(scene.allocator, (sz)(ActionStorage::size + mask_count));
     *storage = {};
+
     storage.actions = pool::create_pool{Action, AnimationActionId}(scene.allocator, MAX_ACTIONS);
 
     Animator animator = {
@@ -261,7 +178,17 @@ fn Animator* add_animator(Scene* scene, Node* instance_root) {
         .events = storage.events[..],
         .blend_spaces = storage.blend_spaces[..],
     };
+
     animator.root_node = find_root_node(&animator);
+    animator.pose_storage = create_pose_storage(
+        allocator: scene.allocator,
+        base_pose: instance.base_pose,
+        mesh_nodes: instance.mesh_nodes,
+        base_morph_weights: instance.base_morph_weights,
+        ancestor_capacity: scene.nodes.len,
+        event_capacity: MAX_FIRED_EVENTS,
+    );
+
     return scene.add(instance_root, animator);
 }
 
@@ -276,16 +203,22 @@ fn void update(AssetStore* assets, Scene* scene, float dt) {
     instrumentation::@scope("anim.update") {
         scene.@each(Animator; Entity entity, Animator* animator) {
             ModelInstance* instance = scene.get(scene.node(entity), ModelInstance);
-            @pool() {
-                animator.root_motion = { .rotation = quaternion::IDENTITY };
-                animator.event_count = 0;
-                animator.events_dropped = 0;
-                advance(animator, assets, dt);
-                advance_blend_spaces(animator, assets, dt);
-                blend_instance(animator, assets, instance);
-                publish_root_motion(animator, assets);
-                publish_events(animator, assets);
-            };
+
+            refresh_destination(animator);
+            PlaybackView playback = animator.playback();
+            EventReport events = evaluate_pose(
+                playback: &playback,
+                assets: assets,
+                destination: animator.pose_storage.destination,
+                scratch: animator.pose_storage.scratch,
+                dt: dt,
+                events: event_output(animator.events),
+            );
+
+            animator.event_count = events.count;
+            animator.events_dropped = events.dropped;
+
+            publish_animator_pose(animator, instance);
         };
     };
 }
@@ -305,41 +238,7 @@ fn void free_animator(Entity entity, void* component, void* user) {
         alloc::free(allocator, action.reference.ptr);
     }
 
+    destroy_pose_storage(allocator, animator.pose_storage);
     pool::destroy_pool{Action, AnimationActionId}(animator.actions);
     alloc::free(allocator, animator.actions);
-}
-
-fn void remove_action(Animator* animator, uint index) @local {
-    AnimationActionId id = animator.order[index];
-    Action* action = animator.actions.get(id);
-    alloc::free(animator.scene.allocator, action.cursors.ptr);
-    alloc::free(animator.scene.allocator, action.reference.ptr);
-    *action = {};
-
-    animator.actions.remove(id);
-    animator.action_count--;
-    for (uint next = index; next < animator.action_count; next++) animator.order[next] = animator.order[next + 1];
-}
-
-fn void advance(Animator* animator, AssetStore* assets, float dt) @local {
-    for (uint index = animator.action_count; index > 0; index--) {
-        Action* action = animator.actions.get(animator.order[index - 1]);
-        action.previous_time = action.time;
-        action.clock_delta = 0;
-        if (action.blend_space) continue;
-        if (action.playing) advance_clock(action, assets.clip(action.clip).data.duration, (double)dt * action.speed);
-
-        if (action.fade_rate > 0) {
-            float step = action.fade_rate * dt;
-            float remaining = action.fade_target - action.weight;
-            if (math::abs(remaining) <= step) {
-                action.weight = action.fade_target;
-                action.fade_rate = 0;
-            } else {
-                action.weight += remaining < 0 ? -step : step;
-            }
-        }
-
-        if (action.fade_target == 0 && action.weight == 0) remove_action(animator, index - 1);
-    }
 }

@@ -6,85 +6,111 @@ import c3d::scene;
 import std::math;
 
 <*
- Advance every crowd pose by dt and write palettes, morph weights and part batches.
+ Evaluate prepared crowds and publish palettes, morph weights and batches.
  @param [&in] assets : "Holds every crowd's model, skeleton and clips."
- @param [&inout] scene : "Pending crowds skipped unchanged; prepared runtime is updated."
+ @param [&inout] scene : "Pending crowds remain unchanged."
+ @param dt : "Finite nonnegative seconds."
+ @require math::is_finite(dt) && dt >= 0
 *>
 fn void crowd_update(AssetStore* assets, Scene* scene, float dt) {
     scene.@each(AnimatedCrowd; Entity entity, AnimatedCrowd* crowd) {
-        if (crowd.is_prepared()) update_crowd(assets, scene, crowd, dt);
+        if (crowd.is_prepared()) {
+            crowd.playback.update(assets, dt);
+            publish_crowd_pose(assets, scene, crowd);
+        }
     };
 }
 
 <*
- @require assets.models.is_live(crowd.model)
+ Publish evaluated crowd outputs without advancing playback.
+ @param [&in] assets : "Resolves the model and its shared skin binding."
+ @param [&inout] scene : "Publishes the owner's generated part batches."
+ @param [&inout] crowd : "Contains the current evaluated node and morph outputs."
+ @require crowd.is_prepared(), assets.models.is_live(crowd.model)
 *>
-fn void update_crowd(AssetStore* assets, Scene* scene, AnimatedCrowd* crowd, float dt) @local {
-    ModelTemplate* template = &assets.model(crowd.model).data;
-    ModelSkin* skin = &template.skins[0];
-    Skeleton* skeleton = &assets.skeleton(skin.skeleton).data;
-    @pool() {
-        float[] sample = alloc::new_array(tmem, float, (sz)math::max((usz)4, (usz)crowd.morph_stride));
+fn void publish_crowd_pose(AssetStore* assets, Scene* scene, AnimatedCrowd* crowd) {
+    CrowdPlaybackState* playback = crowd.playback;
+
+    if (crowd.joint_count) {
+        ModelTemplate* template = &assets.model(crowd.model).data;
+        ModelSkin* skin = &template.skins[0];
+        Skeleton* skeleton = &assets.skeleton(skin.skeleton).data;
+
         for (uint instance = 0; instance < crowd.count; instance++) {
-            CrowdPose* pose = &crowd.poses[instance];
-            AnimationClip* clip = &assets.clip(pose.clip).data;
-            advance_pose(pose, clip.duration, dt);
-
-            foreach (index, &node : template.nodes) crowd.scratch_locals[index] = node.local;
-            uint[] cursors = crowd.cursors[instance * crowd.max_tracks:crowd.max_tracks];
-            foreach (track_index, &track : clip.tracks) {
-                uint node = clip.targets[track.target];
-                float[] value = sample[:track.stride()];
-                sample_track(track, pose.time, &cursors[track_index], value);
-                write_crowd_channel(crowd, instance, node, track.path, value);
+            Transform[] locals = playback.poses[(usz)instance * playback.base_pose.len:playback.base_pose.len];
+            foreach (usz index, local : locals) {
+                Mat4 matrix = local.to_mat4();
+                int parent = playback.parents[index];
+                crowd.scratch_worlds[index] = parent < 0 ? matrix : crowd.scratch_worlds[parent].mul(matrix);
             }
 
-            foreach (index, &node : template.nodes) {
-                Mat4 local = crowd.scratch_locals[index].to_mat4();
-                crowd.scratch_worlds[index] = node.parent < 0 ? local : crowd.scratch_worlds[node.parent].mul(local);
-            }
-            Mat4[] palette = crowd.palettes[instance * crowd.joint_count:crowd.joint_count];
-            foreach (joint, node : skin.joint_nodes) {
+            Mat4[] palette = crowd.palettes[(usz)instance * crowd.joint_count:crowd.joint_count];
+            foreach (usz joint, node : skin.joint_nodes) {
                 palette[joint] = crowd.scratch_worlds[node].mul(skeleton.inverse_bind[joint]);
             }
         }
-    };
+    }
+
     scene.write_crowd_batches(crowd);
 }
 
-fn void advance_pose(CrowdPose* pose, float duration, float dt) @local {
-    pose.time += dt * pose.speed;
-    if (duration == 0) {
-        pose.time = 0;
-    } else if (pose.loop) {
-        pose.time -= math::floor(pose.time / duration) * duration;
-    } else {
-        pose.time = math::clamp(pose.time, 0.0f, duration);
+<*
+ Compose one part's affine transform relative to its crowd owner.
+ @param instance : "Live logical source slot."
+ @param part : "Logical mesh in template order."
+ @require self.is_prepared(), instance < self.count, part < self.parts.len
+*>
+fn Mat4 AnimatedCrowd.part_transform(&self, uint instance, uint part) {
+    Mat4 placement = self.placements[instance].to_mat4();
+    if (self.parts[part].skinned) return placement;
+
+    CrowdPlaybackState* playback = self.playback;
+    Transform[] locals = playback.poses[(usz)instance * playback.base_pose.len:playback.base_pose.len];
+    uint mesh_node = self.parts[part].template_node;
+
+    for (uint node = 0; node <= mesh_node; node++) {
+        Mat4 local = locals[node].to_mat4();
+        int parent = playback.parents[node];
+        self.scratch_worlds[node] = parent < 0 ? local : self.scratch_worlds[parent].mul(local);
     }
+
+    return placement.mul(self.scratch_worlds[mesh_node]);
 }
 
-fn void write_crowd_channel(
-    AnimatedCrowd* crowd,
-    uint instance,
-    uint node,
-    TargetPath path,
-    float[] value,
-) @local {
-    Transform* local = &crowd.scratch_locals[node];
-    switch (path) {
-        case TRANSLATION:
-            local.position = { value[0], value[1], value[2] };
-        case ROTATION:
-            Vec4 rotation = { value[0], value[1], value[2], value[3] };
-            if (rotation.dot(local.rotation.v) < 0) rotation = -rotation;
-            local.rotation = { .v = rotation };
-        case SCALE:
-            local.scale = { value[0], value[1], value[2] };
-        case MORPH_WEIGHTS:
-            foreach (&part : crowd.parts) {
-                if (part.template_node != node) continue;
-                usz base = (usz)instance * crowd.morph_stride + part.target_offset;
-                crowd.morph_weights[base:part.target_count] = value[:part.target_count];
-            }
+<*
+ Determine one part instance's local reflection parity.
+ @require self.is_prepared(), instance < self.count, part < self.parts.len
+*>
+fn bool AnimatedCrowd.part_mirrored(&self, uint instance, uint part) {
+    if (self.parts[part].skinned) return scene::transform_mirrored(self.placements[instance]);
+
+    return self.part_transform(instance, part).determinant() < 0;
+}
+
+<*
+ Count reflected instances of one logical part.
+ @require self.is_prepared(), part < self.parts.len
+*>
+fn uint AnimatedCrowd.part_mirrored_count(&self, uint part) {
+    uint count;
+    for (uint instance = 0; instance < self.count; instance++) {
+        if (self.part_mirrored(instance, part)) count++;
     }
+
+    return count;
+}
+
+<*
+ Apply each live instance's motion without replacing playback identities.
+ @param [&inout] crowd : "Consume each update's output once."
+ @require crowd.is_prepared()
+*>
+fn void Scene.apply_crowd_root_motion(&self, AnimatedCrowd* crowd) {
+    foreach (usz index, &placement : crowd.placements[:crowd.count]) {
+        RootMotionDelta delta = crowd.playback.slots[index].root_motion;
+        placement.position += placement.rotation.rotate_vec3(placement.scale * delta.translation);
+        placement.rotation = placement.rotation.mul(delta.rotation).normalize();
+    }
+
+    self.write_crowd_batches(crowd);
 }

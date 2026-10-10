@@ -17,6 +17,7 @@ struct DeformationCache {
     HashMap{ulong, gpu::GpuAddress} morph_blocks;
     HashMap{ulong, gpu::GpuAddress} crowd_palettes;
     HashMap{ulong, gpu::GpuAddress} crowd_morphs;
+    HashMap{ulong, gpu::GpuAddress} crowd_bounds;
 }
 
 $assert geometry::MAX_ACTIVE_MORPH_TARGETS == shader::MAX_ACTIVE_MORPH_TARGETS;
@@ -49,8 +50,8 @@ fn ShaderVariant candidate_vertex_variant(GeometryFlags flags, MeshCandidate* ca
         AnimatedCrowd* crowd = candidate.crowd;
         return mesh_vertex_variant(
             flags:      flags,
-            morphed:    crowd != null && crowd.parts[candidate.crowd_part].target_count > 0,
-            skinned:    crowd != null,
+            morphed:    crowd != null && crowd.parts[candidate.crowd_part].weight_count > 0,
+            skinned:    crowd != null && crowd.parts[candidate.crowd_part].skinned,
             base_flags: base_flags | shader::SHADER_FLAG_INSTANCED,
         );
     }
@@ -79,6 +80,7 @@ fn DeformationCache create_deformation_cache(Allocator allocator) @private {
     cache.morph_blocks.init(allocator);
     cache.crowd_palettes.init(allocator);
     cache.crowd_morphs.init(allocator);
+    cache.crowd_bounds.init(allocator);
     return cache;
 }
 
@@ -87,6 +89,7 @@ fn void destroy_deformation_cache(DeformationCache* cache) @private {
     cache.morph_blocks.free();
     cache.crowd_palettes.free();
     cache.crowd_morphs.free();
+    cache.crowd_bounds.free();
 }
 
 fn void reset_deformation_cache(DeformationCache* cache) @private {
@@ -94,21 +97,62 @@ fn void reset_deformation_cache(DeformationCache* cache) @private {
     cache.morph_blocks.clear();
     cache.crowd_palettes.clear();
     cache.crowd_morphs.clear();
+    cache.crowd_bounds.clear();
+}
+
+fn gpu::GpuAddress? resolve_crowd_bounds(Renderer* renderer, MeshCandidate* candidate) @private {
+    AnimatedCrowd* crowd = candidate.crowd;
+    if (!crowd || crowd.parts[candidate.crowd_part].skinned) return (gpu::GpuAddress)0;
+
+    ulong key = (ulong)(uptr)candidate.node;
+    if (try existing = renderer.deformation.crowd_bounds.get(key)) return existing;
+
+    Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan span = frame.upload.take(
+        device: &renderer.device,
+        size: (usz)crowd.count * Mat4f::size,
+        alignment: STREAM_ALIGNMENT,
+    )!;
+    Mat4f[] bounds = ((Mat4f*)span.bytes.ptr)[:crowd.count];
+    Mat4 world = maths::rebase(candidate.node.world, renderer.frame_origin);
+
+    uint written;
+    for (uint parity = 0; parity < 2; parity++) {
+        for (uint instance = 0; instance < crowd.count; instance++) {
+            if (crowd.part_mirrored(instance, candidate.crowd_part) != (parity == 1)) continue;
+
+            bounds[written++] = bitcast(world.mul(crowd.placements[instance].to_mat4()), Mat4f);
+        }
+    }
+
+    renderer.deformation.crowd_bounds.set(key, span.address);
+
+    return span.address;
 }
 
 <*
  Palette slot of each placement in the parity-packed draw order: unmirrored instances first.
  @param [out] packed : "One entry per placement."
+ @param [in] crowd : "Null selects placement-only parity."
+ @param part : "Logical crowd mesh; ignored without a crowd."
  @require packed.len == placements.len
 *>
-fn void crowd_packed_order(uint[] packed, Transform[] placements) {
+fn void crowd_packed_order(
+    uint[] packed,
+    Transform[] placements,
+    AnimatedCrowd* crowd = null,
+    uint part = 0,
+) {
     uint unmirrored;
-    foreach (placement : placements) {
-        if (!scene::transform_mirrored(placement)) unmirrored++;
+    foreach (uint index, placement : placements) {
+        bool mirrored = crowd ? crowd.part_mirrored(index, part) : scene::transform_mirrored(placement);
+        if (!mirrored) unmirrored++;
     }
+
     uint[2] next = { 0, unmirrored };
     foreach (uint instance, placement : placements) {
-        usz parity = scene::transform_mirrored(placement) ? 1 : 0;
+        bool mirrored = crowd ? crowd.part_mirrored(instance, part) : scene::transform_mirrored(placement);
+        usz parity = mirrored ? 1 : 0;
         packed[instance] = next[parity]++;
     }
 }
@@ -147,9 +191,9 @@ fn void pack_crowd_morphs(
     uint written;
     for (uint pass = 0; pass < 2; pass++) {
         foreach (uint instance, placement : crowd.placements[:crowd.count]) {
-            if (scene::transform_mirrored(placement) != (pass == 1)) continue;
-            usz first = (usz)instance * crowd.morph_stride + target.target_offset;
-            float[] weights = crowd.morph_weights[first:target.target_count];
+            if (crowd.part_mirrored(instance, part) != (pass == 1)) continue;
+            usz first = (usz)instance * crowd.morph_stride + target.weight_offset;
+            float[] weights = crowd.morph_weights[first:target.weight_count];
             blocks[written++] = pack_morph_selection(geometry::select_morph_targets(channels, weights));
         }
     }
@@ -266,7 +310,10 @@ fn gpu::GpuAddress? resolve_morph_block(
 
 fn gpu::GpuAddress? resolve_candidate_skin(Renderer* renderer, MeshCandidate* candidate) @private {
     if (candidate.skin) return resolve_palette(renderer, candidate.node, candidate.skin);
-    if (candidate.crowd) return resolve_crowd_palettes(renderer, candidate.node.parent, candidate.crowd);
+    if (candidate.crowd && candidate.crowd.parts[candidate.crowd_part].skinned) {
+        return resolve_crowd_palettes(renderer, candidate.node.parent, candidate.crowd);
+    }
+
     return (gpu::GpuAddress)0;
 }
 
@@ -294,5 +341,5 @@ fn gpu::GpuAddress? resolve_candidate_morph(
 }
 
 fn uint candidate_skin_stride(MeshCandidate* candidate) @private {
-    return candidate.crowd ? candidate.crowd.joint_count : 0;
+    return candidate.crowd && candidate.crowd.parts[candidate.crowd_part].skinned ? candidate.crowd.joint_count : 0;
 }

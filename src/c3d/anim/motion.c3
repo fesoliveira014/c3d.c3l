@@ -67,10 +67,12 @@ fn bool upright_uniform_basis(Mat4 basis) @private {
 }
 
 fn void? configure_motion(
-    Animator* animator,
+    PlaybackView* playback,
     Action* action,
     AnimationClip* clip,
     PlayDesc desc,
+    MotionBasis motion_basis,
+    usz node_count,
 ) @private {
     action.root_motion = desc.root_motion;
     action.root_yaw = desc.root_yaw;
@@ -81,29 +83,24 @@ fn void? configure_motion(
 
     if (desc.root_yaw && desc.root_motion == RootMotion.KEEP) return c3d::INVALID_ARGUMENT~;
     if (desc.additive && desc.root_motion != RootMotion.KEEP) return c3d::INVALID_ARGUMENT~;
-    if (desc.root_motion != RootMotion.KEEP && animator.root_node >= animator.nodes.len) {
+    if (desc.root_motion != RootMotion.KEEP && playback.root_node >= node_count) {
         return c3d::INVALID_ARGUMENT~;
     }
-    if (animator.root_node >= animator.nodes.len) return;
+    if (playback.root_node >= node_count) return;
 
     foreach (uint index, track : clip.tracks) {
-        if (clip.targets[track.target] != animator.root_node) continue;
+        if (clip.targets[track.target] != playback.root_node) continue;
         if (track.path == TargetPath.TRANSLATION) action.translation_track = index;
         if (track.path == TargetPath.ROTATION) action.rotation_track = index;
     }
     if (desc.root_motion == RootMotion.KEEP) return;
 
-    ModelInstance* instance = animator.scene.get(animator.instance_root, ModelInstance);
-    Node* root = instance.present_node(animator.root_node);
-    if (!root) return;
-    if (root.transform_space != TransformSpace.PARENT) return c3d::INVALID_ARGUMENT~;
-    for (Node* parent = root.parent; parent != animator.instance_root; parent = parent.parent) {
-        if (!parent || parent.transform_space != TransformSpace.PARENT) return c3d::INVALID_ARGUMENT~;
-        action.motion_basis = parent.local.to_mat4().mul(action.motion_basis);
-    }
+    if (!motion_basis.root_present) return;
+    if (!motion_basis.parent_space || !motion_basis.ancestors_parent_space) return c3d::INVALID_ARGUMENT~;
+    action.motion_basis = motion_basis.basis;
     if (desc.root_yaw && desc.root_motion == RootMotion.EXTRACT
         && (!upright_uniform_basis(action.motion_basis)
-            || !upright_uniform_basis(matrix::IDENTITY4.scale(animator.instance_root.local.scale)))) {
+            || !upright_uniform_basis(matrix::IDENTITY4.scale(motion_basis.instance_scale)))) {
         return c3d::INVALID_ARGUMENT~;
     }
 
@@ -218,11 +215,12 @@ fn void pin_root_sample(Action* action, uint track, float[] sample) @private {
     }
 }
 
-fn void publish_root_motion(Animator* animator, AssetStore* assets) @private {
-    if (animator.root_node >= animator.nodes.len) return;
-
-    ModelInstance* instance = animator.scene.get(animator.instance_root, ModelInstance);
-    if (!instance.present_node(animator.root_node)) return;
+fn void publish_root_motion(
+    PlaybackView* playback,
+    AssetStore* assets,
+    PoseDestination destination,
+) @private {
+    if (playback.root_node >= destination.pose.len || !destination.present[playback.root_node]) return;
 
     Vec3 translation;
     float yaw;
@@ -233,10 +231,10 @@ fn void publish_root_motion(Animator* animator, AssetStore* assets) @private {
         float yaw_sum;
         float rotation_weight;
 
-        foreach (id : animator.order[:animator.action_count]) {
-            Action* action = animator.actions.get(id);
+        foreach (id : playback.order[:*playback.action_count]) {
+            Action* action = playback.actions.get(id);
             if (action.layer != layer || action.additive || action.weight <= 0
-                || !action.mask[animator.root_node]) continue;
+                || !action.mask[playback.root_node]) continue;
 
             PlanarMotion delta;
             if (action.root_motion == RootMotion.EXTRACT) delta = action_motion(action, &assets.clip(action.clip).data);
@@ -259,11 +257,10 @@ fn void publish_root_motion(Animator* animator, AssetStore* assets) @private {
 
     Quat rotation = quaternion::from_axis_angle{float}(MOTION_UP, yaw);
     if (yaw != 0) {
-        Node* root = instance.present_node(animator.root_node);
-        Vec3 reference = root.local.position;
+        Vec3 reference = destination.pose[playback.root_node].position;
 
-        for (Node* parent = root.parent; parent != animator.instance_root; parent = parent.parent) {
-            reference = maths::transform_point(parent.local.to_mat4(), reference);
+        foreach (parent : destination.motion_ancestors) {
+            reference = maths::transform_point(parent.to_mat4(), reference);
         }
 
         reference.y = 0;
@@ -277,7 +274,7 @@ fn void publish_root_motion(Animator* animator, AssetStore* assets) @private {
         }
     }
 
-    animator.root_motion = {
+    *playback.root_motion = {
         .translation = translation,
         .rotation = rotation,
     };

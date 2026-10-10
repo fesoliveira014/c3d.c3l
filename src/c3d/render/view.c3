@@ -677,6 +677,23 @@ fn void? record_raster_view(
                 Node* node = item.candidate.node;
                 Mat4 prev_world = node.world;
                 bool has_previous = temporal && record.history.has_previous(scene, node);
+                PoseRecord* pose = has_previous ? record.history.previous_pose(scene, node) : null;
+                PoseRecord* crowd_pose;
+                bool crowd_history_invalid;
+                if (temporal && item.candidate.crowd) {
+                    if (record.history.has_previous(scene, node.parent)) {
+                        crowd_pose = record.history.previous_pose(scene, node.parent);
+                    }
+
+                    crowd_history_invalid = !crowd_history_matches(
+                        assets: renderer.assets,
+                        candidate: item.candidate,
+                        pose: pose,
+                        crowd_pose: crowd_pose,
+                    );
+                    has_previous = has_previous && !crowd_history_invalid;
+                }
+
                 if (has_previous) prev_world = record.history.previous_model(scene, node);
                 VertexHistory vertices = VertexHistory.UNTRACKED;
                 if (temporal && item.candidate.vertex_motion) {
@@ -689,6 +706,7 @@ fn void? record_raster_view(
                 bool posed = item.skin != (gpu::GpuAddress)0 || item.morph != (gpu::GpuAddress)0
                   || item.candidate.batch || vertices == VertexHistory.CHANGED;
                 item.moved = (temporal && item.candidate.lod) || vertices == VertexHistory.INVALID
+                  || crowd_history_invalid
                   || (has_previous && (posed || item.custom_velocity || !(prev_world == node.world)));
                 Vec3 previous_origin = temporal && record.history.valid ? record.history.origin : renderer.frame_origin;
                 prev_world = maths::rebase(prev_world, previous_origin);
@@ -696,14 +714,10 @@ fn void? record_raster_view(
                   || (group_index == 1 && late_velocity && writes_own_depth(material_data(renderer, item.material)));
                 gpu::GpuAddress previous_pose;
                 if (has_previous && posed && redrawn_by_velocity) {
-                    PoseRecord* crowd_pose;
-                    if (item.candidate.crowd && record.history.has_previous(scene, node.parent)) {
-                        crowd_pose = record.history.previous_pose(scene, node.parent);
-                    }
                     previous_pose = upload_previous_pose(
                         renderer:       renderer,
                         item:           item,
-                        pose:           record.history.previous_pose(scene, node),
+                        pose:           pose,
                         crowd_pose:     crowd_pose,
                         instances:      &previous_instances,
                         previous_world: prev_world,
@@ -720,6 +734,11 @@ fn void? record_raster_view(
                     morph:     item.morph,
                     records:   item.instance_data,
                 );
+                if (crowd_history_invalid) {
+                    PreviousPoseGpu fallback = { .skin = addresses.skin, .morph = addresses.morph };
+                    previous_pose = upload_bytes(renderer, &fallback, PreviousPoseGpu::size)!;
+                }
+
                 gpu::MappedGpuSpan draw_span = slot.upload.take(&renderer.device, DrawRoot::size, STREAM_ALIGNMENT)!;
                 write_draw_root(
                     root:          (DrawRoot*)draw_span.bytes.ptr,
@@ -735,7 +754,8 @@ fn void? record_raster_view(
                       | ((ambient_occlusion || screen_space_gi) && group_index == 0
                         ? shader::DRAW_SCREEN_SPACE_TERMS : 0)
                       | batch_effect_flags(item.candidate)
-                      | (vertices == VertexHistory.INVALID ? shader::DRAW_VERTEX_HISTORY_INVALID : 0),
+                      | (vertices == VertexHistory.INVALID || crowd_history_invalid
+                        ? shader::DRAW_VERTEX_HISTORY_INVALID : 0),
                     sheen_lut:     sheen ? renderer.environment_state.sheen_lut.view.index : (gpu::TextureIndex)0,
                     sheen_sampler: sheen ? renderer.environment_state.sheen_sampler : (gpu::SamplerIndex)0,
                     skin:          addresses.skin,
@@ -1052,11 +1072,11 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
                 renderer:    self,
                 geometry_id: batch.geometry,
                 material_id: batch.material,
-                morphed:     part.crowd != null && part.crowd.parts[part.crowd_part].target_count > 0,
+                morphed:     part.crowd != null && part.crowd.parts[part.crowd_part].weight_count > 0,
                 depth:       casts || prepass,
                 gbuffer:     deferred,
                 instanced:   true,
-                crowd:       part.crowd != null,
+                crowd:       part.crowd != null && part.crowd.parts[part.crowd_part].skinned,
             )!;
             sheen |= prepared.sheen;
             scene_reads |= prepared.scene_reads;
@@ -1491,22 +1511,39 @@ fn gpu::GpuAddress? upload_previous_pose(
         records:   item.instance_data,
     );
     PreviousPoseGpu previous = { .skin = current.skin, .morph = current.morph };
+    uint[] crowd_order;
     if (AnimatedCrowd* crowd = candidate.crowd) {
-        bool same_count = crowd_pose && crowd_pose.instance_count == crowd.count;
-        if (item.skin != (gpu::GpuAddress)0 && same_count) {
+        crowd_order = alloc::new_array(tmem, uint, crowd.count);
+        crowd_packed_order(
+            packed: crowd_order,
+            placements: crowd.placements[:crowd.count],
+            crowd: crowd,
+            part: candidate.crowd_part,
+        );
+
+        if (item.skin != (gpu::GpuAddress)0) {
             ulong key = (ulong)(uptr)candidate.node.parent;
             gpu::GpuAddress base;
             if (try existing = instances.get(key)) {
                 base = existing;
             } else {
-                usz count = (usz)crowd.joint_count * crowd.count;
-                base = upload_bytes(renderer, crowd_pose.palette.ptr, count * Mat4f::size)!;
+                base = upload_crowd_previous_data(
+                    renderer: renderer,
+                    data: crowd_pose.palette.ptr,
+                    order: crowd_order,
+                    stride: (usz)crowd.joint_count * Mat4f::size,
+                )!;
                 instances.set(key, base);
             }
             previous.skin = offset_by_instances(base, offset, (usz)crowd.joint_count * Mat4f::size);
         }
-        if (item.morph != (gpu::GpuAddress)0 && same_count && pose.morphs.len) {
-            gpu::GpuAddress base = upload_bytes(renderer, pose.morphs.ptr, crowd.count * MorphWeightsGpu::size)!;
+        if (item.morph != (gpu::GpuAddress)0) {
+            gpu::GpuAddress base = upload_crowd_previous_data(
+                renderer: renderer,
+                data: pose.morphs.ptr,
+                order: crowd_order,
+                stride: MorphWeightsGpu::size,
+            )!;
             previous.morph = offset_by_instances(base, offset, MorphWeightsGpu::size);
         }
     } else {
@@ -1524,7 +1561,16 @@ fn gpu::GpuAddress? upload_previous_pose(
         if (try existing = instances.get(key)) {
             base = existing;
         } else {
-            base = upload_previous_worlds(renderer, pose.instances[:pose.instance_count], previous_world)!;
+            if (candidate.crowd) {
+                Mat4f[] worlds = alloc::new_array(tmem, Mat4f, pose.instance_count);
+                foreach (uint source, packed : crowd_order) {
+                    worlds[packed] = bitcast(previous_world.mul(bitcast(pose.instances[source], Mat4)), Mat4f);
+                }
+
+                base = upload_bytes(renderer, worlds.ptr, worlds.len * Mat4f::size)!;
+            } else {
+                base = upload_previous_worlds(renderer, pose.instances[:pose.instance_count], previous_world)!;
+            }
             instances.set(key, base);
         }
         previous.instances = offset_by_instances(base, offset, Mat4f::size);
@@ -1573,6 +1619,39 @@ fn gpu::GpuAddress? upload_bytes(Renderer* renderer, void* data, usz size) @priv
     gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, size, STREAM_ALIGNMENT)!;
     mem::copy(span.bytes.ptr, data, (sz)size);
     return span.address;
+}
+
+fn gpu::GpuAddress? upload_crowd_previous_data(
+    Renderer* renderer,
+    void* data,
+    uint[] order,
+    usz stride,
+) @private {
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, order.len * stride, STREAM_ALIGNMENT)!;
+
+    write_crowd_previous_data(
+        target: span.bytes,
+        data: data,
+        order: order,
+        stride: stride,
+    );
+
+    return span.address;
+}
+
+<* Copy logical source records into their current packed slots.
+ @require target.len == order.len * stride
+*>
+fn void write_crowd_previous_data(
+    char[] target,
+    void* data,
+    uint[] order,
+    usz stride,
+) @private {
+    foreach (usz source, packed : order) {
+        mem::copy(target.ptr + (usz)packed * stride, (char*)data + source * stride, (sz)stride);
+    }
 }
 
 <*

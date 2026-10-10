@@ -344,6 +344,7 @@ fn void? record_instance_cull(Renderer* renderer, CullItem[] items) @private {
             InstanceCullRoot* root = (InstanceCullRoot*)root_span.bytes.ptr;
             *root = {
                 .instances        = item.records,
+                .bounds_instances = resolve_crowd_bounds(renderer, item.candidate)!,
                 .visible          = range.visible,
                 .args             = item.args_address,
                 .counter          = counter,

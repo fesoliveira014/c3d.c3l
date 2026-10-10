@@ -85,10 +85,10 @@ shared clips stay in the store.
 
 ## Replacing clips and models
 
-A clip replacement keeps its track layout (see [Models](models.md#replacing-geometry-skeletons-and-clips)), so animators
-re-seek on the next update. A model replacement may grow the template's clip list. A prepared crowd sized its cursors from
-the longest clip it saw at `prepare_crowd`; `set_crowd` faults with `INVALID_ARGUMENT` for a clip with more tracks than
-that, and the crowd must be removed and added again.
+A clip replacement keeps its track layout (see [Models](models.md#replacing-geometry-skeletons-and-clips)), so playback
+re-seeks on the next update. A model replacement may grow the template's clip list. Crowd actions accept any live clip
+compatible with their captured node and morph layout, including clips outside that list. Cursors are allocated at play
+or seed replacement, so a longer compatible clip does not require recreating the crowd.
 
 ## Removed instance nodes
 

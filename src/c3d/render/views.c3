@@ -94,11 +94,19 @@ struct ProjectionTerms {
 *>
 struct PoseRecord {
     Mat4f[]           palette;
-    // Node-local, unlike the world-space instance records: a node moves between renderings without an
-    // edit, and the root's prev_model carries that motion, so these follow the batch revision alone.
+    // Node-local matrices: ordinary batches use packed order; crowds retain logical source order.
     Mat4f[]           instances;
     uint              instance_count;
     uint              instance_revision; // batch revision of instances; 0 = none
+    ulong             crowd_identity;
+    ModelId           crowd_model;
+    uint              crowd_model_revision;
+    SkeletonId        crowd_skeleton;
+    uint              crowd_skeleton_revision;
+    uint[]            crowd_generations;
+    GeometryId        crowd_geometry;
+    uint              crowd_geometry_revision;
+    uint              crowd_part;
     MorphWeightsGpu   morph;
     MorphWeightsGpu[] morphs;
     bool              morphed;
@@ -278,6 +286,7 @@ fn void free_view_history(Allocator allocator, ViewHistory* history) {
             alloc::free(allocator, pose.instances.ptr);
             alloc::free(allocator, pose.morphs.ptr);
             alloc::free(allocator, pose.vertices.ptr);
+            alloc::free(allocator, pose.crowd_generations.ptr);
         }
         alloc::free(allocator, history.models.ptr);
         alloc::free(allocator, history.owners.ptr);
@@ -295,6 +304,7 @@ fn void commit_pose(
     Vec3 origin,
 ) @local {
     Node* node = candidate.node;
+    pose.crowd_identity = 0;
     pose.sway = candidate.batch ? candidate.batch.sway : (InstanceSway){};
     if (candidate.vertex_motion) {
         capture_vertices(
@@ -329,18 +339,34 @@ fn void commit_pose(
         );
         pose.morph = pack_morph_selection(selection);
     }
-    if (candidate.crowd && candidate.crowd.parts[candidate.crowd_part].target_count) {
+    if (candidate.crowd) {
         AnimatedCrowd* crowd = candidate.crowd;
-        if (pose.morphs.len != crowd.placements.len) {
-            alloc::free(allocator, pose.morphs.ptr);
-            pose.morphs = alloc::new_array(allocator, MorphWeightsGpu, crowd.placements.len);
-        }
-        pack_crowd_morphs(
-            blocks:   pose.morphs[:crowd.count],
-            crowd:    crowd,
-            part:     candidate.crowd_part,
-            channels: assets.geometry(candidate.geometry).data.channels,
+        capture_crowd_sources(
+            allocator: allocator,
+            assets: assets,
+            pose: pose,
+            crowd: crowd,
         );
+        pose.crowd_geometry = candidate.geometry;
+        pose.crowd_geometry_revision = assets.geometry(candidate.geometry).header.revision;
+        pose.crowd_part = candidate.crowd_part;
+
+        CrowdPart* part = &crowd.parts[candidate.crowd_part];
+        if (part.weight_count) {
+            if (pose.morphs.len != crowd.placements.len) {
+                alloc::free(allocator, pose.morphs.ptr);
+                pose.morphs = alloc::new_array(allocator, MorphWeightsGpu, crowd.placements.len);
+            }
+
+            for (uint instance = 0; instance < crowd.count; instance++) {
+                usz first = (usz)instance * crowd.morph_stride + part.weight_offset;
+                float[] weights = crowd.morph_weights[first:part.weight_count];
+                pose.morphs[instance] = pack_morph_selection(geometry::select_morph_targets(
+                    assets.geometry(candidate.geometry).data.channels,
+                    weights,
+                ));
+            }
+        }
     }
     if (candidate.batch) {
         InstancedMesh* batch = candidate.batch;
@@ -349,8 +375,22 @@ fn void commit_pose(
             pose.instances = alloc::new_array(allocator, Mat4f, batch.transforms.len);
             pose.instance_revision = 0;
         }
-        if (pose.instance_revision != batch.revision) {
-            write_instance_locals(pose.instances, batch);
+        if (candidate.crowd) {
+            for (uint instance = 0; instance < batch.count; instance++) {
+                pose.instances[instance] = bitcast(
+                    candidate.crowd.part_transform(instance, candidate.crowd_part),
+                    Mat4f,
+                );
+            }
+
+            pose.instance_revision = batch.revision;
+        } else if (pose.instance_revision != batch.revision) {
+            write_instance_locals(
+                locals: pose.instances,
+                batch: batch,
+                crowd: candidate.crowd,
+                part: candidate.crowd_part,
+            );
             pose.instance_revision = batch.revision;
         }
         pose.instance_count = batch.count;
@@ -1056,6 +1096,60 @@ fn void commit_crowd_pose(Allocator allocator, PoseRecord* pose, AnimatedCrowd* 
         alloc::free(allocator, pose.palette.ptr);
         pose.palette = alloc::new_array(allocator, Mat4f, (sz)capacity);
     }
-    pack_crowd_palettes(pose.palette[:(usz)crowd.joint_count * crowd.count], crowd);
+    foreach (usz index, palette : crowd.palettes[:(usz)crowd.joint_count * crowd.count]) {
+        pose.palette[index] = bitcast(palette, Mat4f);
+    }
+
     pose.instance_count = crowd.count;
+    pose.crowd_identity = crowd.playback.identity;
+}
+
+fn void capture_crowd_sources(
+    Allocator allocator,
+    AssetStore* assets,
+    PoseRecord* pose,
+    AnimatedCrowd* crowd,
+) @private {
+    if (pose.crowd_generations.len != crowd.placements.len) {
+        alloc::free(allocator, pose.crowd_generations.ptr);
+        pose.crowd_generations = alloc::new_array(allocator, uint, crowd.placements.len);
+    }
+
+    for (uint instance = 0; instance < crowd.count; instance++) {
+        pose.crowd_generations[instance] = crowd.playback.slots[instance].generation;
+    }
+
+    pose.crowd_identity = crowd.playback.identity;
+    pose.crowd_model = crowd.model;
+    pose.crowd_model_revision = assets.model(crowd.model).header.revision;
+    ModelTemplate* template = &assets.model(crowd.model).data;
+    pose.crowd_skeleton = template.skins.len ? template.skins[0].skeleton : (SkeletonId){};
+    pose.crowd_skeleton_revision = template.skins.len
+      ? assets.skeleton(pose.crowd_skeleton).header.revision : 0;
+}
+
+fn bool crowd_history_matches(
+    AssetStore* assets,
+    MeshCandidate* candidate,
+    PoseRecord* pose,
+    PoseRecord* crowd_pose,
+) @private {
+    AnimatedCrowd* crowd = candidate.crowd;
+    if (!pose || !crowd_pose || pose.crowd_identity != crowd.playback.identity
+      || crowd_pose.crowd_identity != crowd.playback.identity || pose.instance_count != crowd.count
+      || crowd_pose.instance_count != crowd.count || pose.crowd_part != candidate.crowd_part
+      || !c3d::same_id(pose.crowd_model, crowd.model)
+      || pose.crowd_model_revision != assets.model(crowd.model).header.revision
+      || !c3d::same_id(pose.crowd_geometry, candidate.geometry)
+      || pose.crowd_geometry_revision != assets.geometry(candidate.geometry).header.revision) return false;
+
+    for (uint instance = 0; instance < crowd.count; instance++) {
+        if (pose.crowd_generations[instance] != crowd.playback.slots[instance].generation) return false;
+    }
+
+    ModelTemplate* template = &assets.model(crowd.model).data;
+    if (template.skins.len && (!c3d::same_id(pose.crowd_skeleton, template.skins[0].skeleton)
+      || pose.crowd_skeleton_revision != assets.skeleton(template.skins[0].skeleton).header.revision)) return false;
+
+    return true;
 }

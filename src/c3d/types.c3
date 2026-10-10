@@ -14,6 +14,8 @@ typedef ClipId         = Id;
 
 <* One animator's generational playback identity. *>
 typedef AnimationActionId = Id;
+<* One crowd owner's generational instance identity. *>
+typedef CrowdInstanceId = Id;
 typedef SkeletonId     = Id;
 typedef ViewId         = Id;
 typedef RenderTargetId = Id;

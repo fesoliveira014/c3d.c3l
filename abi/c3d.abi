@@ -306,9 +306,12 @@ const uint BILLBOARD_DIRECTIONAL = 1;
 
 root InstanceCullRoot {
     GpuAddress instances;
+    GpuAddress bounds_instances;
     GpuAddress visible;
     GpuAddress args;
     GpuAddress counter;
+    uint       _pad0;
+    uint       _pad1;
     vec4[6]    planes;
     vec4       bounds_min;
     vec4       bounds_max;

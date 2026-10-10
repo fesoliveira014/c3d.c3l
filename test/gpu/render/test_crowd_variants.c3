@@ -81,6 +81,7 @@ fn ModelId? add_wide_crowd_model(Fixture* fixture) @private {
     }
     template.meshes[0] = { .node = WIDE_JOINT_COUNT + 1, .geometry = wide, .material = fixture.plain };
     template.meshes[1] = { .node = WIDE_JOINT_COUNT + 2, .geometry = morphed, .material = fixture.plain };
+    template.meshes[1].default_morph_weights = alloc::new_array(assets.allocator, float, 1);
     foreach (index, &skin : template.skins) {
         skin.mesh_node = WIDE_JOINT_COUNT + 1 + (uint)index;
         skin.skeleton = skeleton_id;

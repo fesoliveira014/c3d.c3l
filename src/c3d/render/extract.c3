@@ -437,7 +437,8 @@ fn bool batch_is_drawable(AssetStore* assets, InstancedMesh* batch) @local {
 }
 
 fn void emit_batch_candidates(MeshCandidate[] candidates, ExtractCounts* counts, MeshCandidate template) @local {
-    uint mirrored = template.batch.mirrored_count();
+    uint mirrored = template.crowd ? template.crowd.part_mirrored_count(template.crowd_part)
+      : template.batch.mirrored_count();
     uint unmirrored = template.batch.count - mirrored;
     if (unmirrored) {
         candidates[counts.visible] = template;
