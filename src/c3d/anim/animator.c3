@@ -180,12 +180,12 @@ fn Animator* add_animator(Scene* scene, Node* instance_root) {
     };
 
     animator.root_node = find_root_node(&animator);
+
     animator.pose_storage = create_pose_storage(
         allocator: scene.allocator,
         base_pose: instance.base_pose,
         mesh_nodes: instance.mesh_nodes,
         base_morph_weights: instance.base_morph_weights,
-        ancestor_capacity: scene.nodes.len,
         event_capacity: MAX_FIRED_EVENTS,
     );
 
@@ -206,7 +206,8 @@ fn void update(AssetStore* assets, Scene* scene, float dt) {
 
             refresh_destination(animator);
             PlaybackView playback = animator.playback();
-            EventReport events = evaluate_pose(
+
+            PoseReport report = evaluate_pose(
                 playback: &playback,
                 assets: assets,
                 destination: animator.pose_storage.destination,
@@ -215,10 +216,22 @@ fn void update(AssetStore* assets, Scene* scene, float dt) {
                 events: event_output(animator.events),
             );
 
-            animator.event_count = events.count;
-            animator.events_dropped = events.dropped;
+            animator.event_count = report.events.count;
+            animator.events_dropped = report.events.dropped;
 
             publish_animator_pose(animator, instance);
+
+            Vec3 reference;
+            if (report.motion.yaw != 0) {
+                Node* root = instance.present_node(animator.root_node);
+                reference = root.local.position;
+
+                for (Node* parent = root.parent; parent && parent != animator.instance_root; parent = parent.parent) {
+                    reference = maths::transform_point(parent.local.to_mat4(), reference);
+                }
+            }
+
+            animator.root_motion = root_motion_delta(report.motion, reference);
         };
     };
 }

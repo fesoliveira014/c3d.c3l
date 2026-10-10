@@ -124,6 +124,7 @@ fn void? project_crowd(void* component, void* value, WriteContext* context) @loc
     }
 
     check_crowd_scalars(instances)!;
+
     CrowdInstanceAuthoring[] playback;
     if (crowd.is_prepared()) {
         playback = anim::capture_crowd_authoring(tmem, crowd.playback)!.instances;
@@ -193,6 +194,7 @@ fn void? read_crowd_v1(Reader* reader, ReadContext* context) @local {
         owned: &owned,
         value: &legacy,
     )!;
+
     CrowdAuthoringV2 source = {
         .model = legacy.model,
         .capacity = legacy.capacity,

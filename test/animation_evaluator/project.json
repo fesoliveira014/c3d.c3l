@@ -7,7 +7,12 @@
   "targets": {
     "animation_evaluator": {
       "type": "executable",
-      "sources": ["../src/test_anim.c3", "../src/test_anim_motion.c3", "../src/test_animation_evaluator.c3"]
+      "sources": [
+        "../src/test_anim.c3",
+        "../src/test_anim_motion.c3",
+        "../src/test_animation_evaluator.c3",
+        "../src/test_animator_ancestors.c3"
+      ]
     }
   }
 }

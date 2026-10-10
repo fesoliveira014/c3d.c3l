@@ -17,7 +17,6 @@ import std::time;
 import std::time::clock;
 
 alias WeightSpan = float[];
-alias TransformPointer = Transform*;
 
 const uint WARMUPS = 30;
 const uint SAMPLES = 120;
@@ -116,13 +115,23 @@ struct Outputs {
     File metadata;
 }
 
-fn void*? CounterAllocator.acquire(&self, sz size, AllocInitType init_type, sz alignment) @dynamic {
+fn void*? CounterAllocator.acquire(
+    &self,
+    sz size,
+    AllocInitType init_type,
+    sz alignment,
+) @dynamic {
     self.acquire_calls++;
     self.requested_bytes += (ulong)size;
     return self.tracker.acquire(size, init_type, alignment);
 }
 
-fn void*? CounterAllocator.resize(&self, void* pointer, sz size, sz alignment) @dynamic {
+fn void*? CounterAllocator.resize(
+    &self,
+    void* pointer,
+    sz size,
+    sz alignment,
+) @dynamic {
     self.resize_calls++;
     self.requested_bytes += (ulong)size;
     return self.tracker.resize(pointer, size, alignment);
@@ -453,11 +462,6 @@ fn Storage? storage_inventory(CounterAllocator* counter, Scene* scene, AnimatedC
     )!;
     result.fixed_playback += tracked_bytes(
         tracker: tracker,
-        pointer: storage.ancestors.ptr,
-        expected: storage.ancestors.len * TransformPointer::size,
-    )!;
-    result.fixed_playback += tracked_bytes(
-        tracker: tracker,
         pointer: destination.present.ptr,
         expected: destination.present.len * bool::size,
     )!;
@@ -594,7 +598,7 @@ fn Storage? storage_inventory(CounterAllocator* counter, Scene* scene, AnimatedC
     result.fixed_global = CrowdPlaybackState::size
       + nodes * (Transform::size + int::size) + meshes * (uint::size + WeightSpan::size)
       + weights * float::size + PoseStorage::size
-      + nodes * (TransformPointer::size + 2 * bool::size + uint::size + ChannelSums::size)
+      + nodes * (2 * bool::size + uint::size + ChannelSums::size)
       + meshes * (uint::size + WeightSpan::size + float::size)
       + weights * float::size + sample_width * float::size
       + nodes * Transform::size + meshes * WeightSpan::size + weights * float::size

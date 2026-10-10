@@ -695,6 +695,7 @@ fn void? record_raster_view(
                 }
 
                 if (has_previous) prev_world = record.history.previous_model(scene, node);
+
                 VertexHistory vertices = VertexHistory.UNTRACKED;
                 if (temporal && item.candidate.vertex_motion) {
                     vertices = vertex_history_of(
@@ -703,15 +704,19 @@ fn void? record_raster_view(
                         pose:      has_previous ? record.history.previous_pose(scene, node) : null,
                     );
                 }
+
                 bool posed = item.skin != (gpu::GpuAddress)0 || item.morph != (gpu::GpuAddress)0
                   || item.candidate.batch || vertices == VertexHistory.CHANGED;
                 item.moved = (temporal && item.candidate.lod) || vertices == VertexHistory.INVALID
                   || crowd_history_invalid
                   || (has_previous && (posed || item.custom_velocity || !(prev_world == node.world)));
+
                 Vec3 previous_origin = temporal && record.history.valid ? record.history.origin : renderer.frame_origin;
                 prev_world = maths::rebase(prev_world, previous_origin);
+
                 bool redrawn_by_velocity = group_index == 0
                   || (group_index == 1 && late_velocity && writes_own_depth(material_data(renderer, item.material)));
+
                 gpu::GpuAddress previous_pose;
                 if (has_previous && posed && redrawn_by_velocity) {
                     previous_pose = upload_previous_pose(
@@ -724,9 +729,11 @@ fn void? record_raster_view(
                         positions:      vertices == VertexHistory.CHANGED,
                     )!;
                 }
+
                 if (item.candidate.batch) {
                     prev_world = batch_prev_model(prev_world, maths::rebase(node.world, renderer.frame_origin));
                 }
+
                 BatchAddresses addresses = batch_addresses(
                     candidate: item.candidate,
                     range:     &item.range,
@@ -1537,6 +1544,7 @@ fn gpu::GpuAddress? upload_previous_pose(
             }
             previous.skin = offset_by_instances(base, offset, (usz)crowd.joint_count * Mat4f::size);
         }
+
         if (item.morph != (gpu::GpuAddress)0) {
             gpu::GpuAddress base = upload_crowd_previous_data(
                 renderer: renderer,
@@ -1550,10 +1558,12 @@ fn gpu::GpuAddress? upload_previous_pose(
         if (item.skin != (gpu::GpuAddress)0 && pose.palette.len == candidate.skin.joints.len) {
             previous.skin = upload_bytes(renderer, pose.palette.ptr, pose.palette.len * Mat4f::size)!;
         }
+
         if (item.morph != (gpu::GpuAddress)0 && pose.morphed) {
             previous.morph = upload_bytes(renderer, &pose.morph, MorphWeightsGpu::size)!;
         }
     }
+
     InstancedMesh* batch = candidate.batch;
     if (batch && pose.instance_count == batch.count && pose.instance_revision != batch.revision) {
         ulong key = (ulong)(uptr)candidate.node;

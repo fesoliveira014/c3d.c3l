@@ -459,7 +459,17 @@ fn void assert_parity(ParityRig* rig, bool compare_events = true) @local {
         assert(slot.action_count == animator.action_count && slot.root_node == animator.root_node);
         foreach (index, actual_id : slot.order[:slot.action_count]) {
             AnimationActionId expected_id = animator.order[index];
-            assert(parity_label(rig, instance, actual_id, true) == parity_label(rig, instance, expected_id, false));
+            assert(parity_label(
+                rig: rig,
+                instance: instance,
+                action: actual_id,
+                crowd: true,
+            ) == parity_label(
+                rig: rig,
+                instance: instance,
+                action: expected_id,
+                crowd: false,
+            ));
             assert_action_bits(slot.actions.get(actual_id), animator.action(expected_id));
         }
         foreach (space_index, actual : slot.spaces) {
@@ -475,8 +485,18 @@ fn void assert_parity(ParityRig* rig, bool compare_events = true) @local {
               && actual.playing == expected.playing);
             for (uint member = 0; member < actual.count; member++) {
                 assert_float_bits(actual.positions[member], expected.positions[member]);
-                assert(parity_label(rig, instance, actual.actions[member], true)
-                  == parity_label(rig, instance, expected.actions[member], false));
+                assert(parity_label(
+                    rig: rig,
+                    instance: instance,
+                    action: actual.actions[member],
+                    crowd: true,
+                )
+                  == parity_label(
+                      rig: rig,
+                      instance: instance,
+                      action: expected.actions[member],
+                      crowd: false,
+                  ));
             }
         }
         if (!compare_events) continue;
@@ -487,8 +507,18 @@ fn void assert_parity(ParityRig* rig, bool compare_events = true) @local {
             assert(actual.instance.index == instance && actual.instance.generation == slot.generation);
             assert(actual.event.id == expected.id && c3d::same_id(actual.event.clip, expected.clip));
             assert_float_bits(actual.event.time, expected.time);
-            assert(parity_label(rig, instance, actual.event.action, true)
-              == parity_label(rig, instance, expected.action, false));
+            assert(parity_label(
+                rig: rig,
+                instance: instance,
+                action: actual.event.action,
+                crowd: true,
+            )
+              == parity_label(
+                  rig: rig,
+                  instance: instance,
+                  action: expected.action,
+                  crowd: false,
+              ));
         }
         dropped += animator.events_dropped;
     }
@@ -1010,7 +1040,12 @@ fn void assert_event_prefix(ParityRig* rig, uint per_instance, bool reverse) @lo
         assert(event.instance.index == instance && event.instance.generation == state.slots[instance].generation);
         assert(event.event.id == marker + 10 && c3d::same_id(event.event.clip, rig.clips[0]));
         assert_float_bits(event.event.time, times[marker]);
-        assert(parity_label(rig, instance, event.event.action, true) == 1);
+        assert(parity_label(
+            rig: rig,
+            instance: instance,
+            action: event.event.action,
+            crowd: true,
+        ) == 1);
     }
     foreach (uint instance, root : rig.ordinary) {
         Animator* animator = rig.scene.get(root, Animator);
@@ -1020,7 +1055,12 @@ fn void assert_event_prefix(ParityRig* rig, uint per_instance, bool reverse) @lo
             uint marker = reverse ? 3 - index % 4 : index % 4;
             assert(event.id == marker + 10);
             assert_float_bits(event.time, times[marker]);
-            assert(parity_label(rig, instance, event.action, false) == 1);
+            assert(parity_label(
+                rig: rig,
+                instance: instance,
+                action: event.action,
+                crowd: false,
+            ) == 1);
         }
     }
 }

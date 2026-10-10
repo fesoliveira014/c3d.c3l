@@ -14,7 +14,6 @@ struct PlaybackView {
     bool[] mask_storage;
     BlendSpace1D[] blend_spaces;
     uint root_node;
-    RootMotionDelta* root_motion;
 }
 
 <* Destination baselines, presence and caller-owned evaluated output. *>
@@ -27,7 +26,6 @@ struct PoseDestination {
     float[][] base_morph_weights;
     Transform[] pose;
     float[][] morph_weights;
-    Transform*[] motion_ancestors;
 }
 
 <* Root basis captured by the target adapter when an action starts. *>
@@ -69,6 +67,12 @@ struct PoseScratch {
 struct EventReport {
     uint count;
     uint dropped;
+}
+
+<* Evaluated motion and retained-event counts for one pose. *>
+struct PoseReport {
+    PlanarMotion motion;
+    EventReport events;
 }
 
 <* Borrowed retained-event fields, contiguous or embedded in larger entries. *>
@@ -117,10 +121,6 @@ fn AnimationActionId? PlaybackView.play(
    @require self.actions.is_live(action) *>
 fn Action* PlaybackView.action(&self, AnimationActionId action) => self.actions.get(action);
 
-<* Borrow until structural changes; stale identities fail.
-   @return? c3d::INVALID_ID *>
-fn Action*? PlaybackView.try_action(&self, AnimationActionId action) => self.actions.try_get(action);
-
 <*
  Fade an action out or remove it immediately.
  @param fade_out : "Finite nonnegative seconds; zero removes immediately."
@@ -166,7 +166,7 @@ fn void? PlaybackView.cross_fade(
 
 <*
  Evaluate playback into caller-owned pose and event outputs.
- @param [&inout] playback : "Playback clocks and motion are advanced."
+ @param [&inout] playback : "Playback clocks and actions are advanced."
  @param [&in] assets : "Clips remain live throughout playback."
  @param dt : "Finite nonnegative seconds."
  @require math::is_finite(dt) && dt >= 0
@@ -182,7 +182,7 @@ fn void? PlaybackView.cross_fade(
  @require events.capacity == 0 || events.first != null
  @require events.capacity == 0 || events.stride >= FiredEvent::size
 *>
-fn EventReport evaluate_pose(
+fn PoseReport evaluate_pose(
     PlaybackView* playback,
     AssetStore* assets,
     PoseDestination destination,
@@ -190,16 +190,25 @@ fn EventReport evaluate_pose(
     float dt,
     EventOutput events,
 ) {
-    *playback.root_motion = { .rotation = quaternion::IDENTITY };
-
     advance(playback, assets, dt);
     advance_blend_spaces(playback, assets, dt);
 
-    blend_pose(playback, assets, destination, scratch);
+    blend_pose(
+        playback: playback,
+        assets: assets,
+        destination: destination,
+        scratch: scratch,
+    );
 
-    publish_root_motion(playback, assets, destination);
+    PlanarMotion motion = evaluate_root_motion(playback, assets, destination);
+    EventReport report = publish_events(
+        playback: playback,
+        assets: assets,
+        events: events,
+        bookmarks: scratch.event_bookmarks,
+    );
 
-    return publish_events(playback, assets, events, scratch.event_bookmarks);
+    return { .motion = motion, .events = report };
 }
 
 <* Borrow a contiguous retained-event array. *>
@@ -257,6 +266,7 @@ fn AnimationActionId install_playback_action(
     AnimationActionId id = playback.actions.add(owned_action)!!;
     Action* action = playback.actions.get(id);
     usz node_count = (usz)(playback.mask_storage.len / playback.actions.items.len);
+
     action.mask = playback.mask_storage[(usz)id.index * node_count:node_count];
     if (mask) {
         action.mask[..] = mask.nodes[..];
@@ -303,11 +313,11 @@ fn usz? validate_playback_action(
 
     if (desc.mask && desc.mask.nodes.len != destination.base_pose.len) return c3d::INVALID_ARGUMENT~;
 
-    usz reference_count;
     foreach (target : data.targets) {
         if (target >= destination.base_pose.len) return c3d::INVALID_ARGUMENT~;
     }
 
+    usz reference_count;
     foreach (&track : data.tracks) {
         reference_count += track.stride();
         if (track.path != TargetPath.MORPH_WEIGHTS) continue;

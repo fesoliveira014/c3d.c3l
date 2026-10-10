@@ -315,7 +315,12 @@ fn void? create_exact_rig(ReferenceRig* rig, Allocator allocator) @private {
     GeometryId geometry;
 
     @pool() {
-        Geometry shape = geometry::box(tmem, 1, 1, 1);
+        Geometry shape = geometry::box(
+            allocator: tmem,
+            width: 1,
+            height: 1,
+            depth: 1,
+        );
         shape.joints = alloc::new_array(tmem, ushort[<4>], shape.positions.len);
         shape.weights = alloc::new_array(tmem, Vec4, shape.positions.len);
         shape.joints[..] = (ushort[<4>]){ 0, 0, 0, 0 };

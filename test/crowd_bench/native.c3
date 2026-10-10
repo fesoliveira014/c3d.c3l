@@ -112,12 +112,32 @@ fn void? create_native_files(String directory, NativeFiles* files) {
     files.storage = file::open(joined_path(directory, "native-storage.csv")!, "wb")!;
     files.metadata = file::open(joined_path(directory, "native-metadata.csv")!, "wb")!;
     files.failures = file::open(joined_path(directory, "native-failures.csv")!, "wb")!;
-    io::fprintn(&files.raw, "fixture,script,configured,live,repetition,views,sample,script_frame,submission_frame,seed,dt,evaluate_ms,publish_ms,world_ms,record_submit_ms,upload_ring_bytes,upload_high_water,device_copy_bytes,current_palette_payload,current_morph_payload,current_part_record_payload,current_bounds_payload,previous_palette_payload,previous_morph_payload,previous_matrix_payload,previous_header_payload,history_host_payload,persistent_instance_gpu_bytes,renderer_host_requested,renderer_host_high_water,gpu_requested_allocations,gpu_blocks,driver_heap_usage_estimate,tested,visible,cull_submission,cull_ready,draws,cpu_known_triangles,cpu_known_instance_draws,cull_dispatches,cull_overflows,sort_dispatches,sort_overflows,shadow_layers,shared_shadow_sets,events,dropped_events,evaluate_publish_acquires,evaluate_publish_resizes,evaluate_publish_requested_bytes")!;
-    io::fprintn(&files.gpu, "fixture,script,configured,live,repetition,views,script_frame,submission_frame,scope_kind,has_view,view_index,view_generation,pass_ordinal,label,start_ns,duration_ns,gpu_state,dropped_scopes")!;
+    io::fprintn(
+        out: &files.raw,
+        x: "fixture,script,configured,live,repetition,views,sample,script_frame,submission_frame,"
+          "seed,dt,evaluate_ms,publish_ms,world_ms,record_submit_ms,upload_ring_bytes,upload_high_"
+          "water,device_copy_bytes,current_palette_payload,current_morph_payload,current_part_"
+          "record_payload,current_bounds_payload,previous_palette_payload,previous_morph_payload,"
+          "previous_matrix_payload,previous_header_payload,history_host_payload,persistent_"
+          "instance_gpu_bytes,renderer_host_requested,renderer_host_high_water,gpu_requested_"
+          "allocations,gpu_blocks,driver_heap_usage_estimate,tested,visible,cull_submission,cull_"
+          "ready,draws,cpu_known_triangles,cpu_known_instance_draws,cull_dispatches,cull_overflows,"
+          "sort_dispatches,sort_overflows,shadow_layers,shared_shadow_sets,events,dropped_events,"
+          "evaluate_publish_acquires,evaluate_publish_resizes,evaluate_publish_requested_bytes",
+    )!;
+    io::fprintn(
+        out: &files.gpu,
+        x: "fixture,script,configured,live,repetition,views,script_frame,submission_frame,scope_"
+          "kind,has_view,view_index,view_generation,pass_ordinal,label,start_ns,duration_ns,gpu_"
+          "state,dropped_scopes",
+    )!;
     io::fprintn(&files.summary, "fixture,script,configured,live,repetition,views,metric,samples,median_ms,p95_ms")!;
     io::fprintn(&files.storage, "fixture,script,configured,live,repetition,views,category,bytes")!;
     io::fprintn(&files.metadata, "key,value")!;
-    io::fprintn(&files.failures, "fixture,script,configured,live,repetition,views,fault,seed,dt,action_capacity,event_capacity")!;
+    io::fprintn(
+        out: &files.failures,
+        x: "fixture,script,configured,live,repetition,views,fault,seed,dt,action_capacity,event_capacity",
+    )!;
 }
 
 fn void? native_metadata(NativeFiles* files, String key, String value) {
@@ -751,28 +771,78 @@ fn void? run_native(String[] args) {
         native_metadata(&files, "domain", "native_gpu_measurement_not_correctness")!;
         native_metadata(&files, "validation", "false_measurements_only")!;
         native_metadata(&files, "profiling", "GPU_INTERNAL_timestamps_and_collector_enabled_overhead_not_subtracted")!;
-        native_metadata(&files, "cpu_scope", "evaluate_publish_match_cpu_scaffold_world_separate_record_submit_includes_wait_and_collector")!;
-        native_metadata(&files, "upload_scope", "ring_head_plus_overflow_includes_alignment_roots_and_staging_payload_categories_exclude_alignment")!;
-        native_metadata(&files, "part_records", "admitted_persistent_instance_stream_capacity_times_InstanceGpu_size_published_every_measured_frame")!;
-        native_metadata(&files, "draw_counters", "draws_count_submitted_calls_CPU_known_triangles_instances_exclude_GPU_culled_ranges_actual_tested_visible_are_delayed_GPU_counters")!;
-        native_metadata(&files, "previous_payload", "retained_previous_tables_layout_bytes_for_fixed_count_positive_parity_per_view_excludes_alignment")!;
-        native_metadata(&files, "tracking", "requested_scene_renderer_bytes_exclude_tracker_maps_backtraces_assets_scaffold_process_and_driver")!;
+        native_metadata(
+            files: &files,
+            key: "cpu_scope",
+            value: "evaluate_publish_match_cpu_scaffold_world_separate_record_submit_includes_wait_and_collector",
+        )!;
+        native_metadata(
+            files: &files,
+            key: "upload_scope",
+            value: "ring_head_plus_overflow_includes_alignment_roots_and_staging_payload_categories_exclude_alignment",
+        )!;
+        native_metadata(
+            files: &files,
+            key: "part_records",
+            value: "admitted_persistent_instance_stream_capacity_times_InstanceGpu_size_published_every_measured_frame",
+        )!;
+        native_metadata(
+            files: &files,
+            key: "draw_counters",
+            value: "draws_count_submitted_calls_CPU_known_triangles_instances_exclude_GPU_culled_ranges_"
+              "actual_tested_visible_are_delayed_GPU_counters",
+        )!;
+        native_metadata(
+            files: &files,
+            key: "previous_payload",
+            value: "retained_previous_tables_layout_bytes_for_fixed_count_positive_parity_per_view_excludes_alignment",
+        )!;
+        native_metadata(
+            files: &files,
+            key: "tracking",
+            value: "requested_scene_renderer_bytes_exclude_tracker_maps_backtraces_assets_scaffold_process_and_driver",
+        )!;
         native_metadata(&files, "history", "retained_array_capacity_payload_subset_of_renderer_requested_host")!;
         native_metadata(&files, "gpu_memory", "VMA_requested_allocations_and_blocks_driver_heap_usage_is_estimate")!;
-        native_metadata(&files, "timing_join", "recorder_capture_script_frame_and_scope_renderer_frame_match_submission_cull_rows_join_lod_frame_index")!;
+        native_metadata(
+            files: &files,
+            key: "timing_join",
+            value: "recorder_capture_script_frame_and_scope_renderer_frame_match_submission_cull_rows_join_"
+              "lod_frame_index",
+        )!;
         native_metadata(&files, "missing_gpu_pass", "NA_no_recorded_scope_zero_dispatches_mean_no_sort_work")!;
-        native_metadata(&files, "camera", "ortho210_near0.1_far1000_position94.5_220_94.5_direction0_-220_-189_fixed_all_sizes")!;
-        native_metadata(&files, "views", "one_or_two_identical_camera_RGBA32_FLOAT_TAA_motion_blur_shared_parent_shadow_set")!;
+        native_metadata(
+            files: &files,
+            key: "camera",
+            value: "ortho210_near0.1_far1000_position94.5_220_94.5_direction0_-220_-189_fixed_all_sizes",
+        )!;
+        native_metadata(
+            files: &files,
+            key: "views",
+            value: "one_or_two_identical_camera_RGBA32_FLOAT_TAA_motion_blur_shared_parent_shadow_set",
+        )!;
         native_metadata(&files, "shadows", "directional_one_cascade_resolution256_max_distance600")!;
-        native_metadata(&files, "captures", "outside_measured_interval_RGBA32_FLOAT_and_reverse_Z_R32_FLOAT_row_major_host_endian")!;
+        native_metadata(
+            files: &files,
+            key: "captures",
+            value: "outside_measured_interval_RGBA32_FLOAT_and_reverse_Z_R32_FLOAT_row_major_host_endian",
+        )!;
         uint endian = 1;
-        native_metadata(&files, "capture_byte_order", ((char*)&endian)[0] == 1 ? "little_endian_IEEE754_binary32" : "big_endian_IEEE754_binary32")!;
+        native_metadata(
+            files: &files,
+            key: "capture_byte_order",
+            value: ((char*)&endian)[0] == 1 ? "little_endian_IEEE754_binary32" : "big_endian_IEEE754_binary32",
+        )!;
         native_metadata(&files, "trace_lod", "lod_measurement_off")!;
         native_metadata(&files, "script_version", "1")!;
         native_metadata(&files, "placement", "ceil_sqrt_grid_spacing3_positive_x_negative_z_identity_scale_rotation")!;
         native_metadata(&files, "compiler", "C3_0.8.3")!;
         char[64] text;
-        native_metadata(&files, "compiler_optimization", (String)io::bprintf(text[..], "%s", env::COMPILER_OPT_LEVEL)!)!;
+        native_metadata(
+            files: &files,
+            key: "compiler_optimization",
+            value: (String)io::bprintf(text[..], "%s", env::COMPILER_OPT_LEVEL)!,
+        )!;
         native_metadata(&files, "compiler_safe", (String)io::bprintf(text[..], "%s", env::COMPILER_SAFE_MODE)!)!;
         native_metadata_uint(&files, "seed", SCRIPT_SEED)!;
         native_metadata_uint(&files, "dt_bits", bitcast(FIXED_DT, uint))!;
@@ -846,7 +916,8 @@ fn void? run_native(String[] args) {
 fn int main(String[] args) {
     if (catch excuse = run_native(args)) {
         io::eprintfn("crowd_bench_native: %s", excuse);
-        io::eprintn("usage: crowd_bench_native OUTPUT_DIRECTORY [REPOSITORY_ROOT] [0|64|512|4096] [all|quaternius|morph] [all|base|layered4|space4] [0|1|2]");
+        io::eprintn("usage: crowd_bench_native OUTPUT_DIRECTORY [REPOSITORY_"
+          "ROOT] [0|64|512|4096] [all|quaternius|morph] [all|base|layered4|space4] [0|1|2]");
         return 1;
     }
     return 0;

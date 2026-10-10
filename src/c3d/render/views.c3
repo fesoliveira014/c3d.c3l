@@ -339,6 +339,7 @@ fn void commit_pose(
         );
         pose.morph = pack_morph_selection(selection);
     }
+
     if (candidate.crowd) {
         AnimatedCrowd* crowd = candidate.crowd;
         capture_crowd_sources(
@@ -368,6 +369,7 @@ fn void commit_pose(
             }
         }
     }
+
     if (candidate.batch) {
         InstancedMesh* batch = candidate.batch;
         if (pose.instances.len != batch.transforms.len) {
@@ -375,6 +377,7 @@ fn void commit_pose(
             pose.instances = alloc::new_array(allocator, Mat4f, batch.transforms.len);
             pose.instance_revision = 0;
         }
+
         if (candidate.crowd) {
             for (uint instance = 0; instance < batch.count; instance++) {
                 pose.instances[instance] = bitcast(
@@ -1117,6 +1120,7 @@ fn void capture_crowd_sources(
     pose.crowd_identity = crowd.playback.identity;
     pose.crowd_model = crowd.model;
     pose.crowd_model_revision = assets.model(crowd.model).header.revision;
+
     ModelTemplate* template = &assets.model(crowd.model).data;
     pose.crowd_skeleton = template.skins.len ? template.skins[0].skeleton : (SkeletonId){};
     pose.crowd_skeleton_revision = template.skins.len

@@ -46,7 +46,12 @@ fn Node*? add_crowd(
     ModelTemplate* template = &assets.models.try_get(model)!.data;
     check_crowd_configuration(capacity, actions_per_instance, pose_bounds)!;
     check_crowd_template(assets, template)!;
-    check_instances(assets, template, capacity, instances)!;
+    check_instances(
+        assets: assets,
+        template: template,
+        capacity: capacity,
+        instances: instances,
+    )!;
     check_authoring(
         assets: assets,
         template: template,
@@ -104,7 +109,12 @@ fn void? attach_crowd(
     ModelTemplate* template = &assets.models.try_get(model)!.data;
     check_crowd_configuration(capacity, actions_per_instance, pose_bounds)!;
     check_crowd_template(assets, template)!;
-    check_instances(assets, template, capacity, instances)!;
+    check_instances(
+        assets: assets,
+        template: template,
+        capacity: capacity,
+        instances: instances,
+    )!;
     check_authoring(
         assets: assets,
         template: template,
@@ -160,10 +170,12 @@ fn void? prepare_crowd(AssetStore* assets, Scene* scene, Node* node) {
     if (crowd.is_prepared()) return;
 
     ModelTemplate* template = &assets.models.try_get(crowd.model)!.data;
+
     uint capacity = (uint)crowd.placements.len;
     check_crowd_configuration(capacity, crowd.actions_per_instance, crowd.pose_bounds)!;
     check_crowd_template(assets, template)!;
     foreach (seed : crowd.seeds[:crowd.count]) anim::validate_crowd_seed(assets, template, seed)!;
+
     if (crowd.authoring) {
         foreach (index, source : crowd.authoring.instances) {
             anim::validate_crowd_authoring(
@@ -195,13 +207,17 @@ fn void? prepare_crowd(AssetStore* assets, Scene* scene, Node* node) {
         actions_per_instance: crowd.actions_per_instance,
         event_capacity: crowd.event_capacity,
     )!;
+
     crowd.parts = alloc::new_array_try(allocator, CrowdPart, template.meshes.len)
       ?? c3d::CAPACITY_EXCEEDED~!;
+
     crowd.scratch_worlds = alloc::new_array_try(allocator, Mat4, template.nodes.len)
       ?? c3d::CAPACITY_EXCEEDED~!;
+
     crowd.joint_count = template.skins.len ? (uint)template.skins[0].joint_nodes.len : 0;
     crowd.palettes = alloc::new_array_try(allocator, Mat4, (sz)capacity * crowd.joint_count)
       ?? c3d::CAPACITY_EXCEEDED~!;
+
     crowd.morph_weights = crowd.playback.weight_values;
 
     foreach (uint index, &mesh : template.meshes) {
@@ -305,7 +321,12 @@ fn void? set_crowd(
     AnimatedCrowd* crowd = scene.get(node, AnimatedCrowd);
     ModelTemplate* template = &assets.models.try_get(crowd.model)!.data;
     check_crowd_template(assets, template)!;
-    check_instances(assets, template, (uint)crowd.placements.len, instances)!;
+    check_instances(
+        assets: assets,
+        template: template,
+        capacity: (uint)crowd.placements.len,
+        instances: instances,
+    )!;
 
     if (!crowd.is_prepared()) {
         if (crowd.authoring) {
@@ -508,6 +529,7 @@ fn Node*? add_crowd_batch(
     Transform[] transforms = alloc::new_array_try(allocator, Transform, (sz)capacity)
       ?? c3d::CAPACITY_EXCEEDED~!;
     defer catch alloc::free(allocator, transforms.ptr);
+
     Vec4[] colors = alloc::new_array_try(allocator, Vec4, (sz)capacity)
       ?? c3d::CAPACITY_EXCEEDED~!;
     defer catch alloc::free(allocator, colors.ptr);

@@ -73,7 +73,11 @@ fn void test_crowd_v1_frozen_binary_and_jsonc_restore_actual_seed_starts() @test
         });
         uint free_before = fixture.destination.world.entities.free_count;
         assert(@catch(serial::read_subtree(&fixture.destination, &fixture.assets, CROWD_V1_BINARY)) == c3d::INVALID_ID);
-        assert(@catch(serial::read_subtree_text(&fixture.destination, &fixture.assets, (String)CROWD_V1_TEXT)) == c3d::INVALID_ID);
+        assert(@catch(serial::read_subtree_text(
+            scene: &fixture.destination,
+            assets: &fixture.assets,
+            text: (String)CROWD_V1_TEXT,
+        )) == c3d::INVALID_ID);
         assert(fixture.destination.world.entities.free_count == free_before);
         assert(fixture.destination.root.first_child == null);
     };
@@ -553,11 +557,21 @@ fn void test_crowd_v2_rich_preparation_retries_every_allocation_and_pending_set_
         pending = crowd.authoring;
         ClipId saved = seeds[0].pose.clip;
         seeds[0].pose.clip = { .index = uint::max, .generation = 1 };
-        assert(@catch(model::set_crowd(&fixture.assets, &fixture.destination, root, seeds[..])) == c3d::INVALID_ID);
+        assert(@catch(model::set_crowd(
+            assets: &fixture.assets,
+            scene: &fixture.destination,
+            node: root,
+            instances: seeds[..],
+        )) == c3d::INVALID_ID);
         assert(crowd.authoring == pending && crowd.start_times[0] == 0.25f);
         seeds[0].pose.clip = saved;
         seeds[0].pose.time = 0.5f;
-        model::set_crowd(&fixture.assets, &fixture.destination, root, seeds[..])!!;
+        model::set_crowd(
+            assets: &fixture.assets,
+            scene: &fixture.destination,
+            node: root,
+            instances: seeds[..],
+        )!!;
         assert(!crowd.authoring && crowd.start_times[0] == 0.5f);
         model::prepare_crowd(&fixture.assets, &fixture.destination, root)!!;
         Action* base = crowd.playback.slots[0].actions.get(crowd.playback.slots[0].base_action);
@@ -577,12 +591,16 @@ fn void test_crowd_v2_compatible_external_clip_keys_restore_and_malformed_reads_
         });
         serial::register_core_codecs()!!;
         ModelId model_id = gltf::load_model_memory(
-            assets: &fixture.assets, bytes: CROWD_V1_MODEL,
-            base_dir: "", key: "crowd_codec/owner",
+            assets: &fixture.assets,
+            bytes: CROWD_V1_MODEL,
+            base_dir: "",
+            key: "crowd_codec/owner",
         )!!;
         ModelId external_model = gltf::load_model_memory(
-            assets: &fixture.assets, bytes: CROWD_V1_MODEL,
-            base_dir: "", key: "crowd_codec/external",
+            assets: &fixture.assets,
+            bytes: CROWD_V1_MODEL,
+            base_dir: "",
+            key: "crowd_codec/external",
         )!!;
         ClipId clip = fixture.assets.model(model_id).data.clips[0];
         ClipId external = fixture.assets.model(external_model).data.clips[0];
@@ -603,15 +621,26 @@ fn void test_crowd_v2_compatible_external_clip_keys_restore_and_malformed_reads_
         } };
         Node* source = fixture.source.add_node(name: "external")!!;
         model::attach_crowd(
-            assets: &fixture.assets, scene: &fixture.source, node: source, model: model_id,
-            capacity: 2, pose_bounds: { .min = { -4, -4, -4 }, .max = { 4, 4, 4 } },
-            instances: seeds[..], authoring: descriptions[..],
+            assets: &fixture.assets,
+            scene: &fixture.source,
+            node: source,
+            model: model_id,
+            capacity: 2,
+            pose_bounds: { .min = { -4, -4, -4 }, .max = { 4, 4, 4 } },
+            instances: seeds[..],
+            authoring: descriptions[..],
         )!!;
         char[] bytes = serial::write_subtree(
-            allocator: tmem, scene: &fixture.source, assets: &fixture.assets, root: source,
+            allocator: tmem,
+            scene: &fixture.source,
+            assets: &fixture.assets,
+            root: source,
         )!!;
         String text = serial::write_subtree_text(
-            allocator: tmem, scene: &fixture.source, assets: &fixture.assets, root: source,
+            allocator: tmem,
+            scene: &fixture.source,
+            assets: &fixture.assets,
+            root: source,
         )!!;
         for (uint encoding = 0; encoding < 2; encoding++) {
             Node* restored = encoding == 0
@@ -643,7 +672,10 @@ fn void test_crowd_v2_compatible_external_clip_keys_restore_and_malformed_reads_
         SerialDiagnostic diagnostic = serial::create_serial_diagnostic(mem);
         defer serial::destroy_serial_diagnostic(&diagnostic);
         TextDocument document = serial::parse_text(
-            allocator: tmem, source: text, limits: serial::TEXT_LIMITS_DEFAULT, diagnostic: &diagnostic,
+            allocator: tmem,
+            source: text,
+            limits: serial::TEXT_LIMITS_DEFAULT,
+            diagnostic: &diagnostic,
         )!!;
         defer serial::destroy_text_document(&document);
         uint nodes = member(&document, 0, "nodes");
@@ -662,10 +694,16 @@ fn void test_crowd_v2_compatible_external_clip_keys_restore_and_malformed_reads_
         for (uint encoding = 0; encoding < 2; encoding++) {
             Node*? result = encoding == 0
               ? serial::read_subtree(
-                  scene: &fixture.destination, assets: &fixture.assets, bytes: corrupted, options: options,
+                  scene: &fixture.destination,
+                  assets: &fixture.assets,
+                  bytes: corrupted,
+                  options: options,
               )
               : serial::read_subtree_text(
-                  scene: &fixture.destination, assets: &fixture.assets, text: corrupted_text, options: options,
+                  scene: &fixture.destination,
+                  assets: &fixture.assets,
+                  text: corrupted_text,
+                  options: options,
               );
             assert(@catch(result) == c3d::INVALID_ARGUMENT);
             assert(diagnostic.cause == c3d::INVALID_ARGUMENT && diagnostic.type_name == "c3d.AnimatedCrowd");
@@ -676,7 +714,11 @@ fn void test_crowd_v2_compatible_external_clip_keys_restore_and_malformed_reads_
 
         uint serialized_clip = member(&document, serialized_actions + 1, "clip");
         String missing_text = replace_token(text, document.values[serialized_clip], `"crowd_codec/missing"`);
-        assert(@catch(serial::read_subtree_text(&fixture.destination, &fixture.assets, missing_text)) == c3d::INVALID_ID);
+        assert(@catch(serial::read_subtree_text(
+            scene: &fixture.destination,
+            assets: &fixture.assets,
+            text: missing_text,
+        )) == c3d::INVALID_ID);
         assert(fixture.destination.world.entities.free_count == free_before);
     };
 }

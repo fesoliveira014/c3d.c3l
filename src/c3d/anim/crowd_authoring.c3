@@ -158,6 +158,7 @@ fn void? restore_crowd_authoring(
 
     CrowdPlaybackSlot* slot = &state.slots[index];
     slot.root_node = source.root_node;
+
     CrowdPlayer player = state.player(state.instance_id(index)!)!;
     AnimationActionId[MAX_ACTIONS] ids;
 
@@ -318,6 +319,7 @@ fn void? capture_crowd_instance(
     };
     destination.actions = alloc::new_array_try(allocator, CrowdActionAuthoring, slot.action_count)
       ?? c3d::CAPACITY_EXCEEDED~!;
+
     bool[MAX_BLEND_SPACES] retained_spaces;
     uint space_count;
     foreach (index, space : slot.spaces) {
@@ -327,6 +329,7 @@ fn void? capture_crowd_instance(
 
     destination.spaces = alloc::new_array_try(allocator, CrowdSpaceAuthoring, space_count)
       ?? c3d::CAPACITY_EXCEEDED~!;
+
     uint[MAX_ACTIONS] mapping;
     mapping[..] = uint::max;
     uint action_count;
@@ -341,6 +344,7 @@ fn void? capture_crowd_instance(
 
         mapping[index] = action_count;
         CrowdActionAuthoring* captured = &destination.actions[action_count];
+
         *captured = {
             .clip = action.clip,
             .speed = action.speed,
@@ -352,10 +356,14 @@ fn void? capture_crowd_instance(
             .root_motion = action.root_motion,
             .root_yaw = action.root_yaw,
         };
+
         captured.mask = alloc::new_array_try(allocator, bool, action.mask.len)
           ?? c3d::CAPACITY_EXCEEDED~!;
+
         captured.mask[..] = action.mask[..];
+
         if (c3d::same_id(slot.base_action, id)) destination.base_action = action_count;
+
         action_count++;
     }
 
