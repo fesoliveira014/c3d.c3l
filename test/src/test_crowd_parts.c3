@@ -721,7 +721,8 @@ fn void test_crowd_parts_rigid_and_morph_vertices_fit_mirrored_affine_envelopes(
         anim::crowd_update(&assets, &scene, 0);
         scene.update_world();
         Vec3[] literal = phase == 0 ? animated_crowd_fixtures::PARTS_REST_POINTS[..]
-          : (phase == 1 ? animated_crowd_fixtures::PARTS_POSED_POINTS[..] : animated_crowd_fixtures::PARTS_RESTORED_POINTS[..]);
+          : (phase == 1 ? animated_crowd_fixtures::PARTS_POSED_POINTS[..]
+            : animated_crowd_fixtures::PARTS_RESTORED_POINTS[..]);
         float rigid_x = phase == 0 ? 0 : (phase == 1 ? 4 : 2);
         float rigid_y = phase == 2 ? 2 : 1;
         Vec3[3] rigid = {
@@ -734,7 +735,11 @@ fn void test_crowd_parts_rigid_and_morph_vertices_fit_mirrored_affine_envelopes(
             for (uint part_index = 1; part_index <= 3; part_index++) {
                 CrowdPart* part = &crowd.parts[part_index];
                 Node* batch_node = scene.node(part.batch);
-                Aabb envelope = spatial::instanced_world_bounds(&assets, batch_node, scene.get(batch_node, InstancedMesh));
+                Aabb envelope = spatial::instanced_world_bounds(
+                    assets: &assets,
+                    node: batch_node,
+                    batch: scene.get(batch_node, InstancedMesh),
+                );
                 Mat4 world = owner.world.mul(crowd.part_transform(source, part_index));
                 for (uint vertex = 0; vertex < animated_crowd_fixtures::PARTS_VERTEX_COUNT; vertex++) {
                     Vec3 model_point = part_index == 1 ? rigid[vertex]
