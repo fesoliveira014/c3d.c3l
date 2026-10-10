@@ -340,7 +340,8 @@ fn PosedTraceKey trace_pose_key(ulong scene, TracePoseSource* source, TraceInsta
     if (source.lod) {
         key.lod_identity = source.lod.identity;
         key.source_identity = source.lod.instance_epoch;
-        key.slot_generation = source.lod.slot_generations[record.instance_index];
+        key.slot_generation = source.lod.mode == LodMode.INSTANCED
+          ? source.lod.slot_generations[record.instance_index] : 1;
         key.logical_part = source.lod.animated.parts[source.part].mesh_index;
     } else if (source.kind == TracePose.CROWD) {
         key.source_identity = source.crowd.playback.identity;

@@ -9,6 +9,9 @@ import c3d::render @public;
 import c3d::scene;
 import c3d::shader;
 import c3d::test::animated_crowd_fixtures;
+import std::math::matrix;
+import std::math;
+import gpu;
 
 $assert PosedTraceKey::size == 48;
 
@@ -25,7 +28,7 @@ fn AnimatedLodDesc trace_lod_desc(AssetStore* assets, ModelId model_id) @local {
     LodLevel[] levels = alloc::new_array(tmem, LodLevel, 2);
     levels[0] = { .first_part = 0, .part_count = count, .min_screen_size = 0.2f };
     levels[1] = { .first_part = count, .part_count = count, .min_screen_size = 0 };
-    AnimatedLodPart[] parts = alloc::new_array(tmem, AnimatedLodPart, 2 * count);
+    AnimatedLodPart[] parts = alloc::new_array(tmem, AnimatedLodPart, (sz)count * 2);
     for (uint level = 0; level < 2; level++) {
         foreach (uint index, mesh : template.meshes) {
             ModelSkin skin;
@@ -67,7 +70,7 @@ fn Node* trace_lod_crowd(
     PartsFixture* fixture,
     CrowdInstance[] instances,
 ) @local {
-    Node* owner = model::create_crowd(
+    Node* owner = model::add_crowd(
         assets: assets,
         scene: scene,
         model: fixture.mixed,
@@ -96,7 +99,9 @@ fn void test_traced_animated_lod_respects_source_flags_and_base_signatures() @te
         Node* owner = model::instantiate(&assets, &scene, fixture.mixed)!!;
         owner.local.position = animated_crowd_fixtures::PARTS_ROOT_POSITION;
         Animator* animator = anim::add_animator(&scene, owner);
-        AnimationActionId action = animator.play(&assets, fixture.posing, { .loop = false })!!;
+        AnimationActionId action = animator.play(&assets, fixture.posing)!!;
+        Action* played = animator.try_action(action)!!;
+        played.loop = false;
         animator.action(action).time = 1;
         anim::update(&assets, &scene, 0);
         GeometryId coarse = assets.add_geometry(&assets.geometry(fixture.geometries[1]).data)!!;
@@ -110,6 +115,10 @@ fn void test_traced_animated_lod_respects_source_flags_and_base_signatures() @te
         )!!;
         scene.update_world();
         Renderer renderer = { .assets = &assets };
+        LodGroupState* initial_state = scene.get(owner, LodGroup).state;
+        assert(!initial_state.effects.trace);
+        assert(render::collect_trace_instances(tmem, &scene, &assets).records.len == 0);
+        initial_state.effects.trace = true;
         TraceCollection first = render::collect_trace_instances(tmem, &scene, &assets);
         assert(first.records.len == 5 && first.dangling == 0);
         uint[5] seen;
@@ -131,7 +140,8 @@ fn void test_traced_animated_lod_respects_source_flags_and_base_signatures() @te
                 assert(source.kind == TracePose.ANIMATED_LOD);
                 signatures[record.part_index] = render::pose_inputs(&renderer, source, record);
                 if (record.part_index == 0 || record.part_index == 4) {
-                    assert(record.local == matrix::IDENTITY4);
+                    Mat4 identity = matrix::IDENTITY4;
+                    assert(record.local == identity);
                     assert(signatures[record.part_index].len == 2 * Mat4f::size);
                 } else {
                     assert(signatures[record.part_index].len == MorphWeightsGpu::size);
@@ -248,7 +258,7 @@ fn void test_traced_animated_lod_crowd_uses_logical_pose_order_and_fresh_keys() 
                 if (record.part_index == 0 || record.part_index == 4) {
                     usz first_matrix = (usz)record.instance_index * crowd.joint_count;
                     assert(inputs.len == (usz)crowd.joint_count * Mat4f::size);
-                    assert(mem::equals(inputs.ptr, &crowd.palettes[first_matrix], inputs.len));
+                    assert(mem::equals(inputs.ptr, (char*)&crowd.palettes[first_matrix], inputs.len));
                     assert(record.local == crowd.placements[record.instance_index].to_mat4());
                 }
             }

@@ -32,7 +32,10 @@
         "test_temporal.c3",
         "../render/test_submission.c3",
         "../render/test_crowd_variants.c3",
-        "../../fixtures/animated_crowd_fixtures.c3"
+        "../../fixtures/animated_crowd_fixtures.c3",
+        "test_lod_native.c3",
+        "test_lod_trace_native.c3",
+        "../../fixtures/animated_lod_fixtures.c3"
       ]
     }
   }

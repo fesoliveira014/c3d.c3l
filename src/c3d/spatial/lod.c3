@@ -139,6 +139,13 @@ fn uint lod_base_representation(LodGroupState* state, uint logical_part) @privat
     return uint::max;
 }
 
+<* Current bounds of one admitted animated LOD representation.
+ @param [&in] assets : "Retained geometry and skin metadata."
+ @param [&in] scene : "Current synchronized source components."
+ @param [&in] node : "Owner with updated world transform."
+ @param [&in] state : "Admitted copied representation and source binding."
+ @require state.animated != null, instance < state.count, part < state.desc.parts.len
+*>
 fn Aabb animated_lod_part_bounds(
     AssetStore* assets,
     Scene* scene,
@@ -147,7 +154,7 @@ fn Aabb animated_lod_part_bounds(
     uint instance,
     uint part,
     Vec3 origin = {},
-) @private {
+) {
     AnimatedCrowd* crowd = scene.get(node, AnimatedCrowd);
     Aabb bounds;
     if (crowd) {
