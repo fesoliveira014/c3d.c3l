@@ -1249,7 +1249,7 @@ fn void test_animation_planar_extract_yaw_and_translation_actions_remain_composa
             RootMotionDelta delta = fixture.crowd ? fixture.crowd.slots[0].root_motion
               : fixture.ordinary.animator.root_motion;
             assert(delta.translation == (Vec3){ 0.25f, 0, 0 });
-            assert(delta.rotation.v == quaternion::IDENTITY.v);
+            assert(delta.rotation.v == quaternion::IDENTITY{float}.v);
         }
     }
 }

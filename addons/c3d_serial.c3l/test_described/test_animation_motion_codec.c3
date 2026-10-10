@@ -613,6 +613,7 @@ fn void test_animation_motion_codec_planar_extract_yaw_mix_restores_both_owners(
             ClipId clip = fixture.assets.model(model_id).data.clips[0];
             Node* source;
             if (crowded) {
+                bool[4] all = { true, true, true, true };
                 CrowdActionAuthoring[2] actions;
                 foreach (index, &action : actions) {
                     *action = {
@@ -621,6 +622,7 @@ fn void test_animation_motion_codec_planar_extract_yaw_mix_restores_both_owners(
                         .weight = 0.5f,
                         .loop = true,
                         .playing = true,
+                        .mask = all[..],
                         .root_motion = EXTRACT,
                         .root_yaw = index == 0,
                     };
