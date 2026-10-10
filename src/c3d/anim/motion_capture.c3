@@ -142,6 +142,7 @@ fn void? prepare_action_motion_capture(
         captured.pose_scale_sums = alloc::new_array_try(allocator, double[<3>], template.nodes.len)
           ?? c3d::CAPACITY_EXCEEDED~!;
     }
+
     captured.model = model;
     captured.instance_scale = motion_basis.instance_scale;
 
@@ -234,6 +235,8 @@ fn RootExtractionDesc live_motion_extraction(PlayDesc desc) @local {
 }
 
 fn bool same_live_motion_extraction(RootExtractionDesc first, RootExtractionDesc second) @local {
+    if (!first.generalized && !second.generalized) return true;
+
     if (first.generalized != second.generalized || first.up != second.up || first.twist != second.twist) return false;
 
     foreach (index, axis : first.translation_axes) if (axis != second.translation_axes[index]) return false;

@@ -286,7 +286,6 @@ fn void update(AssetStore* assets, Scene* scene, float dt) {
                         dt: (double)dt,
                     );
                 }
-
             }
 
             record_playback_inertial_history(

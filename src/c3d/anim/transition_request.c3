@@ -98,7 +98,6 @@ fn void cancel_inertial_row(InertialRow* row) @local {
     row.control.active = false;
     row.control.duration = 0;
     row.control.elapsed = 0;
-    row.control.onset_pending = false;
     row.root.target_rate_pending = false;
 }
 
@@ -211,6 +210,8 @@ fn void? validate_transition_extraction_modes(PlaybackView* playback, AnimationT
 }
 
 fn bool same_transition_extraction(RootExtractionDesc first, RootExtractionDesc second) @local {
+    if (!first.generalized && !second.generalized) return true;
+
     if (first.generalized != second.generalized || first.up != second.up || first.twist != second.twist) return false;
 
     foreach (index, axis : first.translation_axes) if (axis != second.translation_axes[index]) return false;

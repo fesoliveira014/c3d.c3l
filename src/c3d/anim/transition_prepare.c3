@@ -232,7 +232,7 @@ fn void? prepare_transition_space(
 ) @local {
     if (!math::is_finite(phase) || phase < 0 || phase >= 1) return c3d::INVALID_ARGUMENT~;
 
-    if (!math::is_finite(source.speed) || !math::is_finite(source.weight) || source.weight < 0) {
+    if (!math::is_finite(source.speed) || !math::is_finite(source.weight) || source.weight <= 0) {
         return c3d::INVALID_ARGUMENT~;
     }
 

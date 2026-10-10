@@ -71,7 +71,12 @@ fn void destroy_onset_fixture(OnsetFixture* fixture) @local {
     asset::destroy_asset_store(&fixture.assets);
 }
 
-fn ClipId onset_clip(OnsetFixture* fixture, float first, float later, bool smooth) @local {
+fn ClipId onset_clip(
+    OnsetFixture* fixture,
+    float first,
+    float later,
+    bool smooth,
+) @local {
     AnimationClip clip = {
         .duration = 1,
         .tracks = alloc::new_array(mem, Track, smooth ? 4 : 2),
@@ -165,14 +170,24 @@ fn void test_animation_inertial_onset_step_side_survives_zero_updates_and_first_
                         defer destroy_onset_fixture(&fixture);
                         bool equal = mode == 4;
                         float expected = mode == 0 ? 0 : equal ? 5 : 10;
-                        ClipId source = onset_clip(&fixture, expected, expected, false);
+                        ClipId source = onset_clip(
+                            fixture: &fixture,
+                            first: expected,
+                            later: expected,
+                            smooth: false,
+                        );
                         PlaybackView playback = onset_playback(&fixture);
                         AnimationActionId source_id = fixture.crowd
                           ? fixture.player.play(&fixture.assets, source)!!
                           : fixture.animator.play(&fixture.assets, source)!!;
                         onset_update(&fixture, 0.125f);
                         onset_update(&fixture, 0.125f);
-                        ClipId target = onset_clip(&fixture, equal ? 5 : 0, equal ? 5 : 10, true);
+                        ClipId target = onset_clip(
+                            fixture: &fixture,
+                            first: equal ? 5 : 0,
+                            later: equal ? 5 : 10,
+                            smooth: true,
+                        );
                         AnimationTargetDesc[3] targets;
                         targets[..] = anim::ANIMATION_TARGET_DEFAULT;
                         uint count = group == 0 ? 1 : group == 1 ? 2 : 3;
@@ -180,7 +195,7 @@ fn void test_animation_inertial_onset_step_side_survives_zero_updates_and_first_
                         bool playing = mode != 2;
                         foreach (&action : targets[:count]) {
                             action.clip = target;
-                            action.start_time = 0.5f;
+                            action.start_time = group ? 0 : 0.5f;
                             action.speed = speed;
                             action.playing = playing;
                             action.loop = false;
@@ -303,7 +318,12 @@ fn void test_animation_inertial_onset_new_request_changes_direction_and_stop_rem
             OnsetFixture fixture;
             create_onset_fixture(&fixture, crowded);
             defer destroy_onset_fixture(&fixture);
-            ClipId target = onset_clip(&fixture, 0, 10, false);
+            ClipId target = onset_clip(
+                fixture: &fixture,
+                first: 0,
+                later: 10,
+                smooth: false,
+            );
             AnimationTargetDesc[1] targets = { anim::ANIMATION_TARGET_DEFAULT };
             targets[0].clip = target;
             targets[0].start_time = 0.5f;
@@ -345,7 +365,12 @@ fn void test_animation_inertial_onset_first_reverse_step_past_completion_keeps_d
             OnsetFixture fixture;
             create_onset_fixture(&fixture, crowded);
             defer destroy_onset_fixture(&fixture);
-            ClipId target = onset_clip(&fixture, 0, 10, false);
+            ClipId target = onset_clip(
+                fixture: &fixture,
+                first: 0,
+                later: 10,
+                smooth: false,
+            );
             AnimationTargetDesc[1] targets = { anim::ANIMATION_TARGET_DEFAULT };
             targets[0].clip = target;
             targets[0].start_time = 0.5f;
@@ -391,7 +416,12 @@ fn void test_animation_inertial_onset_immediate_request_captures_authored_pose_w
             assert(onset_pose(&fixture)[1].position == (Vec3){ 7, 0, 0 });
             assert(onset_pose(&fixture)[1].scale == (Vec3){ 1, 1, 1 });
             assert(onset_pose(&fixture)[1].rotation.v == (Vec4){ 0, 0, 0, 1 });
-            ClipId target = onset_clip(&fixture, 0, 10, false);
+            ClipId target = onset_clip(
+                fixture: &fixture,
+                first: 0,
+                later: 10,
+                smooth: false,
+            );
             AnimationTargetDesc[1] targets = { anim::ANIMATION_TARGET_DEFAULT };
             targets[0].clip = target;
             targets[0].start_time = 0.5f;
@@ -419,6 +449,64 @@ fn void test_animation_inertial_onset_immediate_request_captures_authored_pose_w
             assert(onset_pose(&fixture)[1].position == (Vec3){ 7, 0, 0 });
             assert(!row.control.history_valid && row.control.previous_dt == 0);
             onset_assert_zero_motion(&fixture);
+        }
+    }
+}
+
+fn void test_animation_inertial_onset_cancel_keeps_target_side_until_first_positive_update() @test {
+    foreach (crowded : (bool[2]){ false, true }) {
+        foreach (generalized : (bool[2]){ false, true }) {
+            foreach (speed : (float[2]){ -1, 1 }) {
+                OnsetFixture fixture;
+                create_onset_fixture(&fixture, crowded);
+                defer destroy_onset_fixture(&fixture);
+                ClipId target = onset_clip(
+                    fixture: &fixture,
+                    first: 0,
+                    later: 10,
+                    smooth: false,
+                );
+                AnimationTargetDesc[1] targets = { anim::ANIMATION_TARGET_DEFAULT };
+                targets[0].clip = target;
+                targets[0].start_time = 0.5f;
+                targets[0].speed = speed;
+                targets[0].loop = false;
+                targets[0].play = {
+                    .root_motion = RootMotion.EXTRACT,
+                    .extraction = {
+                        .generalized = generalized,
+                        .translation_axes = generalized ? (bool[3]){ true, false, false } : (bool[3]){},
+                        .up = generalized ? (Vec3){ 0, 1, 0 } : (Vec3){},
+                    },
+                };
+                AnimationTransitionResult installed = onset_request(
+                    &fixture, { .duration = 0.75f, .actions = targets[..] });
+                if (crowded) {
+                    fixture.player.cancel_inertial_transition()!!;
+                } else {
+                    fixture.animator.cancel_inertial_transition();
+                }
+                InertialRow* row = onset_history(&fixture);
+                assert(!row.control.active && row.control.onset_pending);
+                assert(row.control.duration == 0 && row.control.elapsed == 0);
+                PlaybackView playback = onset_playback(&fixture);
+                Action* action = playback.actions.get(installed.actions[0]);
+                float expected = speed < 0 ? 0 : 10;
+                for (uint frame = 0; frame < 3; frame++) {
+                    onset_update(&fixture, 0);
+                    assert(onset_pose(&fixture)[1].position.x == expected);
+                    assert(row.control.onset_pending);
+                    assert(action.time == 0.5f && action.clock_delta == 0);
+                    assert(onset_events(&fixture) == 0);
+                    onset_assert_zero_motion(&fixture);
+                }
+                onset_update(&fixture, 0.125f);
+                assert(onset_pose(&fixture)[1].position.x == expected);
+                assert(!row.control.onset_pending && !row.control.active);
+                assert(action.time == 0.5f + speed * 0.125f);
+                assert(onset_events(&fixture) == 0);
+                onset_assert_zero_motion(&fixture);
+            }
         }
     }
 }

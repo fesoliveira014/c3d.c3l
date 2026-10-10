@@ -3,7 +3,7 @@ module c3d::anim;
 import c3d;
 import c3d::asset;
 
-alias InstalledTransition = AnimationTransitionResult;
+alias InstalledTransition = AnimationTransitionResult @private;
 
 <* @require prepared.action_count <= playback.actions.items.len *>
 fn InstalledTransition install_animation_transition(

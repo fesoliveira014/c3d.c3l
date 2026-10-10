@@ -111,7 +111,9 @@ fn GeneralizedMotion evaluate_generalized_playback_motion(
                         end: action.previous_time + action.clock_delta,
                         loop: action.loop,
                         begin_side: motion_begin_sample_side(
-                            action, playback.inertial != null && playback.inertial.control.onset_pending),
+                            action: action,
+                            onset: playback.inertial != null && playback.inertial.control.onset_pending,
+                        ),
                     );
 
                     if (action.loop) {

@@ -35,7 +35,7 @@ struct AnimationTargetDesc {
     bool playing;
 }
 
-<* Request-only group authoring with an initial normalized clock. *>
+<* Request-only group authoring with an initial normalized clock and positive group weight. *>
 struct AnimationTransitionSpaceDesc {
     CrowdSpaceAuthoring space;
     float phase;

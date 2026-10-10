@@ -1,7 +1,7 @@
 module c3d::gui;
 
 import c3d;
-import c3d::anim @public;
+import c3d::anim;
 import c3d::anim::ik;
 import c3d::camera;
 import c3d::ecs;
@@ -289,11 +289,11 @@ fn bool animator_inspector(void* component) @local {
     BlendSpace1D* stopped_space;
     BlendSpace2D* stopped_space_2d;
 
-    imgui::text("Inertia enabled: %s", animator.inertial_storage ? "yes" : "no");
-    if (animator.inertial_storage) {
-        InertialControl* control = &animator.inertial_storage.rows[0].control;
-        imgui::text("Transition active: %s", control.active ? "yes" : "no");
-        imgui::text("Elapsed / duration: %.3f / %.3f s", control.elapsed, control.duration);
+    AnimationInertialStatus inertia = animator.inertial_status();
+    imgui::text("Inertia enabled: %s", inertia.enabled ? "yes" : "no");
+    if (inertia.enabled) {
+        imgui::text("Transition active: %s", inertia.active ? "yes" : "no");
+        imgui::text("Elapsed / duration: %.3f / %.3f s", inertia.elapsed, inertia.duration);
     }
 
     Vec3 motion = animator.root_motion.translation;

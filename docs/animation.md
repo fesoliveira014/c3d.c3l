@@ -351,6 +351,10 @@ distance; compare articulated poses in their carrier's frame.
 
 ## Inertial transitions
 
+`Animator.inertial_status()` returns a copied `AnimationInertialStatus` with
+enabled, active, elapsed and duration. Inspecting it exposes no writable history
+or residual storage.
+
 Reserve storage when creating an Animator:
 
 ```c3

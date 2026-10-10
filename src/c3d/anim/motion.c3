@@ -325,7 +325,9 @@ fn PlanarMotion evaluate_root_motion(
             PlanarMotion delta;
             if (action.root_motion == RootMotion.EXTRACT) {
                 StepSampleSide begin_side = motion_begin_sample_side(
-                    action, playback.inertial != null && playback.inertial.control.onset_pending);
+                    action: action,
+                    onset: playback.inertial != null && playback.inertial.control.onset_pending,
+                );
                 delta = action_motion(action, &assets.clip(action.clip).data, begin_side);
             }
 
