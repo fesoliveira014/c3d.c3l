@@ -11,10 +11,10 @@ import std::math;
 const ulong INSTANCES_LAYOUT @local = 0x59d3aec48200fec8;
 const ulong BILLBOARDS_LAYOUT @local = 0x0e6e17ed81a957bb;
 const ulong LOD_V1_LAYOUT @local = 0xdb17924ea7b43e3f;
-const ulong LOD_LAYOUT @local = 0x6927e4cf1a630b85;
-const ulong ANIMATED_LOD_SKIN_LAYOUT @local = 0x084cf13a5d7629eb;
-const ulong ANIMATED_LOD_PART_LAYOUT @local = 0xc8346be859102f7a;
-const ulong ANIMATED_LOD_DESC_LAYOUT @local = 0x25fe0b941ac7d683;
+const ulong LOD_LAYOUT @local = 0xa2d20e5979acddbb;
+const ulong ANIMATED_LOD_SKIN_LAYOUT @local = 0x03ef0a55ec3ccd1c;
+const ulong ANIMATED_LOD_PART_LAYOUT @local = 0x67066c59b87af8fe;
+const ulong ANIMATED_LOD_DESC_LAYOUT @local = 0xa65aa93a04287bbc;
 
 struct InstanceAuthoring @private {
     GeometryId geometry;

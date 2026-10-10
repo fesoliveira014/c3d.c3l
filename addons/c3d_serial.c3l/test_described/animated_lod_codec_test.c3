@@ -5,6 +5,7 @@ import c3d::anim;
 import c3d::asset;
 import c3d::asset::gltf;
 import c3d::ecs;
+import c3d::describe;
 import c3d::geometry;
 import c3d::material;
 import c3d::maths;
@@ -199,7 +200,7 @@ fn void test_animated_lod_codec_crowd_preserves_pending_owner_and_prepares_later
                 assert(crowd.count == 2 && crowd.placements.len == 4 && crowd.actions_per_instance == 6);
                 assert(crowd.event_capacity == 0 && crowd.placements[0].scale == instances[0].placement.scale);
                 assert(crowd.start_times[0] == 0.125f && crowd.start_times[1] == 0.25f);
-                assert(loaded.mode == INSTANCED && loaded.count == 2 && loaded.slot_generations.len == 4);
+                assert(loaded.mode == INSTANCED && loaded.count == 0 && loaded.slot_generations.len == 4);
                 assert(loaded.transforms.ptr == crowd.placements.ptr && loaded.colors.ptr == crowd.colors.ptr);
                 assert(loaded.desc.has_bounds_override && loaded.desc.local_bounds.min == crowd.pose_bounds.min);
                 assert(loaded.effects.cast_shadow && !loaded.effects.receive_shadow && loaded.effects.trace);
@@ -211,6 +212,7 @@ fn void test_animated_lod_codec_crowd_preserves_pending_owner_and_prepares_later
                 )!!);
                 model::prepare_crowd(&fixture.assets, &fixture.destination, restored)!!;
                 model::sync_animated_lod(&fixture.assets, &fixture.destination, restored)!!;
+                assert(loaded.count == 2 && loaded.transforms.ptr == crowd.placements.ptr);
                 assert(loaded.identity != original.identity && loaded.descriptor_revision == 1);
                 assert(crowd.playback.slots[0].actions.get(crowd.playback.slots[0].base_action).time == 0.125f);
                 assert(crowd.playback.slots[1].actions.get(crowd.playback.slots[1].base_action).time == 0.25f);
@@ -356,4 +358,18 @@ fn void test_animated_lod_codec_backward_rigid_v1_binary_and_text() @test {
             fixture.destination.remove(restored);
         }
     };
+}
+
+fn void test_animated_lod_codec_layout_fingerprints() @test {
+    describe::register_core_values()!!;
+    describe::register_reflected(LodAuthoringV1)!!;
+    describe::register_reflected(ModelSkin)!!;
+    describe::register_reflected(AnimatedLodPart)!!;
+    describe::register_reflected(AnimatedLodDesc)!!;
+    describe::register_reflected(LodAuthoring)!!;
+    assert(serial::description_layout(describe::get(LodAuthoringV1)!!)!! == 0xdb17924ea7b43e3f);
+    assert(serial::description_layout(describe::get(ModelSkin)!!)!! == 0x03ef0a55ec3ccd1c);
+    assert(serial::description_layout(describe::get(AnimatedLodPart)!!)!! == 0x67066c59b87af8fe);
+    assert(serial::description_layout(describe::get(AnimatedLodDesc)!!)!! == 0xa65aa93a04287bbc);
+    assert(serial::description_layout(describe::get(LodAuthoring)!!)!! == 0xa2d20e5979acddbb);
 }

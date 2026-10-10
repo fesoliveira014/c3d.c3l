@@ -9,6 +9,7 @@ import c3d::maths;
 import c3d::model;
 import c3d::render @public;
 import c3d::scene;
+import c3d::shader;
 import c3d::test::animated_crowd_fixtures;
 import gpu;
 import std::io;
@@ -122,7 +123,8 @@ fn void test_animated_lod_native_rgba_equal_count_parity_and_replacement() @test
         largest_motion = math::max(largest_motion, math::max(math::abs(velocity.x), math::abs(velocity.y)));
     }
     assert(largest_motion > 10 * CROWD_NATIVE_VELOCITY_TOLERANCE);
-    io::printfn("RGBA equal-count swap instances=%s parts=%s largest_expected_uv=%s", crowd.count, crowd.parts.len, largest_motion);
+    io::printfn("RGBA equal-count swap instances=%s parts=%s", crowd.count, crowd.parts.len);
+    io::printfn("Largest expected UV motion=%s", largest_motion);
     animated_lod_native_temporal_frame(
         fixture: &fixture,
         pair: &pair,
@@ -190,6 +192,7 @@ fn void? capture_animated_lod_native_views(
     CrowdNativeOutput[] outputs,
     uint views,
     bool aborted = false,
+    gpu::MappedGpuSpan[] histories = {},
 ) @private {
     Renderer* renderer = &fixture.renderer;
     renderer.begin_frame({ .time = 0.37, .delta = 0 })!;
@@ -203,6 +206,14 @@ fn void? capture_animated_lod_native_views(
                 output: &outputs[2 * view + source],
                 crowd_visible: source == 0,
             )!;
+            if (source == 0 && histories.len) {
+                record_crowd_lod_native_history(
+                    fixture: fixture,
+                    pair: pair,
+                    view: outputs[2 * view].view,
+                    readback: histories[view],
+                )!;
+            }
         }
     }
     assert(renderer.deformation.animated_palettes.len() == 1);
@@ -214,6 +225,7 @@ fn void? capture_animated_lod_native_views(
     render::wait_frames(renderer)!;
     for (uint view = 0; view < 2; view++) {
         if (!(views & (1u << view))) continue;
+        if (histories.len) gpu::invalidate_mapped_span(&renderer.device, histories[view].span)!;
         for (uint source = 0; source < 2; source++) {
             read_crowd_native_temporal(fixture, &outputs[2 * view + source])!;
         }
@@ -277,6 +289,9 @@ fn void test_animated_lod_native_independent_view_skip_cut_abort_and_compatible_
             desc: lod_trace_desc(&fixture.assets, parts.mixed),
         )!!;
     };
+    gpu::MappedGpuSpan[2] histories;
+    for (uint view = 0; view < 2; view++) histories[view] = allocate_crowd_lod_native_history(&fixture.renderer)!!;
+    defer foreach (history : histories) free_crowd_lod_native_history(&fixture.renderer, history);
     CrowdNativeOutput[4] outputs;
     for (uint index = 0; index < outputs.len; index++) {
         create_crowd_native_output(&fixture, &outputs[index])!!;
@@ -288,6 +303,7 @@ fn void test_animated_lod_native_independent_view_skip_cut_abort_and_compatible_
         pair: &pair,
         outputs: outputs[..],
         views: 3,
+        histories: histories[..],
     )!!;
     for (uint view = 0; view < 2; view++) (void)check_animated_lod_native_view_motion(
         outputs: outputs[..],
@@ -300,6 +316,7 @@ fn void test_animated_lod_native_independent_view_skip_cut_abort_and_compatible_
         pair: &pair,
         outputs: outputs[..],
         views: 3,
+        histories: histories[..],
     )!!;
     for (uint view = 0; view < 2; view++) (void)check_animated_lod_native_view_motion(
         outputs: outputs[..],
@@ -320,6 +337,7 @@ fn void test_animated_lod_native_independent_view_skip_cut_abort_and_compatible_
         pair: &pair,
         outputs: outputs[..],
         views: 1,
+        histories: histories[..],
     )!!;
     assert(skipped.valid && skipped.serial == skipped_serial);
     float first_motion = check_animated_lod_native_view_motion(
@@ -340,6 +358,7 @@ fn void test_animated_lod_native_independent_view_skip_cut_abort_and_compatible_
         pair: &pair,
         outputs: outputs[..],
         views: 3,
+        histories: histories[..],
     )!!;
     float resumed_motion = check_animated_lod_native_view_motion(
         outputs: outputs[..],
@@ -361,6 +380,7 @@ fn void test_animated_lod_native_independent_view_skip_cut_abort_and_compatible_
         pair: &pair,
         outputs: outputs[..],
         views: 3,
+        histories: histories[..],
     )!!;
     (void)check_animated_lod_native_view_motion(
         outputs: outputs[..],
@@ -391,6 +411,7 @@ fn void test_animated_lod_native_independent_view_skip_cut_abort_and_compatible_
         outputs: outputs[..],
         views: 3,
         aborted: true,
+        histories: histories[..],
     )!!;
     for (uint view = 0; view < 2; view++) {
         ViewRecord* record = fixture.renderer.views.get(outputs[2 * view].view);
@@ -402,6 +423,7 @@ fn void test_animated_lod_native_independent_view_skip_cut_abort_and_compatible_
         pair: &pair,
         outputs: outputs[..],
         views: 3,
+        histories: histories[..],
     )!!;
     for (uint view = 0; view < 2; view++) (void)check_animated_lod_native_view_motion(
         outputs: outputs[..],
@@ -414,6 +436,7 @@ fn void test_animated_lod_native_independent_view_skip_cut_abort_and_compatible_
         pair: &pair,
         outputs: outputs[..],
         views: 3,
+        histories: histories[..],
     )!!;
     for (uint view = 0; view < 2; view++) (void)check_animated_lod_native_view_motion(
         outputs: outputs[..],
@@ -421,12 +444,17 @@ fn void test_animated_lod_native_independent_view_skip_cut_abort_and_compatible_
         rejection: 0,
         still: true,
     );
+    foreach (history : histories) {
+        shader::LodHistoryGpu[] rows = ((shader::LodHistoryGpu*)history.bytes.ptr)[:CROWD_NATIVE_INSTANCES];
+        foreach (row : rows) assert(row.level == 0 && row.reject_history == 0);
+    }
     pair.scene.get(pair.camera, Camera).ortho_height = 80;
     capture_animated_lod_native_views(
         fixture: &fixture,
         pair: &pair,
         outputs: outputs[..],
         views: 3,
+        histories: histories[..],
     )!!;
     for (uint view = 0; view < 2; view++) (void)check_animated_lod_native_view_motion(
         outputs: outputs[..],
@@ -434,6 +462,15 @@ fn void test_animated_lod_native_independent_view_skip_cut_abort_and_compatible_
         rejection: 0,
         still: false,
     );
+    AnimatedCrowd* crowd = pair.scene.get(pair.crowd, AnimatedCrowd);
+    foreach (history : histories) {
+        shader::LodHistoryGpu[] rows = ((shader::LodHistoryGpu*)history.bytes.ptr)[:CROWD_NATIVE_INSTANCES];
+        foreach (source, row : rows) {
+            assert(row.level == 1 && row.reject_history == 0);
+            assert(row.generation == crowd.playback.slots[source].generation);
+            assert(row.model == bitcast(crowd.placements[source].to_mat4(), Mat4f));
+        }
+    }
     io::printfn("Independent view motion: first=%s resumed=%s; skip/cut/abort and compatible-level correspondence pass",
         first_motion, resumed_motion);
     check_crowd_native_validation(&fixture.renderer);
