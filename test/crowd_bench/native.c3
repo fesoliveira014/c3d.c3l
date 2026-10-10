@@ -767,7 +767,7 @@ fn void? run_native(String[] args) {
         native_metadata(&files, "captures", "outside_measured_interval_RGBA32_FLOAT_and_reverse_Z_R32_FLOAT_row_major_host_endian")!;
         uint endian = 1;
         native_metadata(&files, "capture_byte_order", ((char*)&endian)[0] == 1 ? "little_endian_IEEE754_binary32" : "big_endian_IEEE754_binary32")!;
-        native_metadata(&files, "trace_lod", "off_no_slice2_measurement_claim")!;
+        native_metadata(&files, "trace_lod", "lod_measurement_off")!;
         native_metadata(&files, "script_version", "1")!;
         native_metadata(&files, "placement", "ceil_sqrt_grid_spacing3_positive_x_negative_z_identity_scale_rotation")!;
         native_metadata(&files, "compiler", "C3_0.8.3")!;

@@ -69,7 +69,9 @@ fn CrowdAuthoringState*? copy_crowd_authoring(Allocator allocator, CrowdInstance
     return state;
 }
 
-<* Free a copied or captured description and every nested array once. *>
+<* Free a copied or captured description and every nested array once.
+ @param [&inout] state : "Owned description; released by this call."
+*>
 fn void destroy_crowd_authoring(CrowdAuthoringState* state) {
     Allocator allocator = state.allocator;
     foreach (instance : state.instances) {
@@ -89,9 +91,11 @@ fn void destroy_crowd_authoring(CrowdAuthoringState* state) {
 
 <*
  Validate explicit configuration through ordinary playback admission.
+ @param [&in] assets : "Owns every referenced compatible clip."
  @param [&in] template : "Validated model nodes, meshes and logical defaults."
  @param placement : "Instance scale used for root-motion admission."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @require actions_per_instance > 0 && actions_per_instance <= MAX_ACTIONS
 *>
 fn void? validate_crowd_authoring(
     AssetStore* assets,
@@ -113,6 +117,7 @@ fn void? validate_crowd_authoring(
             event_capacity: 0,
         )!;
         defer destroy_crowd_playback(state);
+
         state.count = 1;
 
         restore_crowd_authoring(
@@ -127,6 +132,8 @@ fn void? validate_crowd_authoring(
 
 <*
  Restore explicit configuration into a newly allocated empty slot.
+ @param [&inout] state : "Receives the configured slot."
+ @param [&in] assets : "Owns every referenced compatible clip."
  @param base_start : "Captured authoring start of the retained base action."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
  @require index < state.count, state.slots[index].action_count == 0
@@ -207,11 +214,12 @@ fn void? restore_crowd_authoring(
 fn CrowdAuthoringState*? capture_crowd_authoring(Allocator allocator, CrowdPlaybackState* playback) {
     CrowdAuthoringState* state = alloc::new_try(allocator, CrowdAuthoringState)
       ?? c3d::CAPACITY_EXCEEDED~!;
-    state.allocator = allocator;
     defer catch destroy_crowd_authoring(state);
 
+    state.allocator = allocator;
     state.instances = alloc::new_array_try(allocator, CrowdInstanceAuthoring, playback.count)
       ?? c3d::CAPACITY_EXCEEDED~!;
+
     foreach (index, &instance : state.instances) {
         capture_crowd_instance(allocator, &playback.slots[index], instance)!;
     }

@@ -193,30 +193,19 @@ fn uint pack_instance_records(
  Node-local matrices of the live instances in draw order: unmirrored first, each group in array order.
  @param [out] locals : "At least batch.count long."
  @param [&in] batch : "Live count above zero."
- @param [in] crowd : "Null selects ordinary batch transforms."
- @param part : "Logical crowd mesh; ignored for ordinary batches."
 *>
-fn void write_instance_locals(
-    Mat4f[] locals,
-    InstancedMesh* batch,
-    AnimatedCrowd* crowd = null,
-    uint part = 0,
-) {
+fn void write_instance_locals(Mat4f[] locals, InstancedMesh* batch) {
     uint written;
-    foreach (uint index, transform : batch.transforms[:batch.count]) {
-        Mat4 local = crowd ? crowd.part_transform(index, part) : transform.to_mat4();
-        bool mirrored = crowd ? local.determinant() < 0 : scene::transform_mirrored(transform);
-        if (mirrored) continue;
+    foreach (transform : batch.transforms[:batch.count]) {
+        if (scene::transform_mirrored(transform)) continue;
 
-        locals[written++] = bitcast(local, Mat4f);
+        locals[written++] = bitcast(transform.to_mat4(), Mat4f);
     }
 
-    foreach (uint index, transform : batch.transforms[:batch.count]) {
-        Mat4 local = crowd ? crowd.part_transform(index, part) : transform.to_mat4();
-        bool mirrored = crowd ? local.determinant() < 0 : scene::transform_mirrored(transform);
-        if (!mirrored) continue;
+    foreach (transform : batch.transforms[:batch.count]) {
+        if (!scene::transform_mirrored(transform)) continue;
 
-        locals[written++] = bitcast(local, Mat4f);
+        locals[written++] = bitcast(transform.to_mat4(), Mat4f);
     }
 }
 

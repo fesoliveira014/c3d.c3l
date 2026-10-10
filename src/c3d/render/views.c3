@@ -385,12 +385,7 @@ fn void commit_pose(
 
             pose.instance_revision = batch.revision;
         } else if (pose.instance_revision != batch.revision) {
-            write_instance_locals(
-                locals: pose.instances,
-                batch: batch,
-                crowd: candidate.crowd,
-                part: candidate.crowd_part,
-            );
+            write_instance_locals(pose.instances, batch);
             pose.instance_revision = batch.revision;
         }
         pose.instance_count = batch.count;

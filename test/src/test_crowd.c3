@@ -814,3 +814,35 @@ fn void test_crowd_accepts_compatible_clip_with_more_tracks() @test {
     instances[0].pose.clip = fixture.swing;
     model::set_crowd(&fixture.assets, &fixture.scene, node, instances[..])!!;
 }
+
+fn void test_crowd_trace_bounds_follow_nonzero_render_origin() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    CrowdInstance[2] instances = {
+        walker(&fixture, placed({ 0, 0, 0 })),
+        walker(&fixture, placed({ 6, 0, 0 }, 0, { -2, 3, 0.5f })),
+    };
+    Node* owner = add_crowd(&fixture, instances[..]);
+    AnimatedCrowd* crowd = fixture.scene.get(owner, AnimatedCrowd);
+    Vec3 origin = { 1200000, 3200, -2000000 };
+    owner.local.position = origin + (Vec3){ 10, 20, 30 };
+    part_batch(&fixture, crowd, 0).trace = true;
+    part_batch(&fixture, crowd, 1).trace = true;
+    fixture.scene.update_world();
+    @pool() {
+        render::TraceCollection collection = render::collect_trace_instances(
+            allocator: tmem,
+            scene: &fixture.scene,
+            assets: &fixture.assets,
+            origin: origin,
+        );
+        assert(collection.records.len == 4);
+        foreach (&record : collection.records) {
+            Mat4 placement = maths::rebase(owner.world, origin)
+              .mul(instances[record.instance_index].placement.to_mat4());
+            Aabb expected = maths::aabb_transform(crowd.pose_bounds, placement);
+            assert(record.bounds.min == expected.min && record.bounds.max == expected.max);
+            assert(record.bounds.min.x < 100 && record.bounds.max.x < 100);
+        }
+    };
+}

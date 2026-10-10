@@ -395,7 +395,7 @@ fn TraceCollection collect_trace_instances(
                     );
                     TracePoseSource instance = source;
                     if (source.crowd) {
-                        Mat4 placement = node.world.mul(crowd.placements[index].to_mat4());
+                        Mat4 placement = maths::rebase(node.world, origin).mul(crowd.placements[index].to_mat4());
                         record.bounds = maths::aabb_transform(crowd.pose_bounds, placement);
                     }
 
