@@ -26,6 +26,7 @@ fn PlaybackView Animator.playback(&self) {
         .blend_spaces = self.blend_spaces,
         .blend_spaces_2d = self.blend_spaces_2d,
         .root_node = self.root_node,
+        .generalized = &self.generalized_state,
         .inertial = self.inertial_storage ? &self.inertial_storage.rows[0] : null,
     };
 }

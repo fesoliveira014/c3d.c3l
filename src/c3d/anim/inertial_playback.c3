@@ -50,6 +50,23 @@ fn InstalledTransition begin_prepared_inertial_transition(
         scratch: scratch,
         onset: true,
     );
+    if (playback.generalized && generalized_playback_chain(playback)) {
+        GeneralizedMotionFrame target_onset = generalized_playback_pose_endpoint(playback, destination.pose);
+        PoseDestination source = destination;
+        source.pose = row.previous_pose;
+        (void)initialize_transition_anchor(
+            state: playback.generalized,
+            playback: playback,
+            target_onset: target_onset,
+            destination_source: source,
+        );
+        compensate_generalized_playback_target(
+            state: playback.generalized,
+            playback: playback,
+            destination: destination,
+            velocity: scratch.derivative.velocity,
+        );
+    }
     read_inertial_morphs(destination.morph_weights, scratch.derivative.morph_values);
 
     capture_inertial_pose_residuals(
@@ -90,7 +107,7 @@ fn void correct_inertial_pose(
     capture_consumed_scale_nodes(playback, derivative.consumed_scale);
     read_inertial_morphs(destination.morph_weights, derivative.morph_values);
 
-    if (row.control.active) row.control.elapsed = math::min(row.control.duration, row.control.elapsed + dt);
+    advance_inertial_elapsed(row, dt);
 
     apply_inertial_pose(
         row: row,
@@ -105,10 +122,29 @@ fn void correct_inertial_pose(
     row.control.active = row.control.elapsed < row.control.duration;
     write_inertial_morphs(derivative.morph_values, destination.morph_weights);
 
+
+}
+
+fn void record_playback_inertial_history(
+    PlaybackView* playback,
+    PoseDestination destination,
+    PoseScratch scratch,
+    double dt,
+) @private {
+    if (!playback.inertial) return;
+
+    read_inertial_morphs(destination.morph_weights, scratch.derivative.morph_values);
     record_inertial_pose_history(
-        row: row,
+        row: playback.inertial,
         published_pose: destination.pose,
-        published_morph: derivative.morph_values,
+        published_morph: scratch.derivative.morph_values,
         dt: dt,
     );
+}
+
+fn void advance_inertial_elapsed(InertialRow* row, double dt) @private {
+    if (!row.control.active) return;
+
+    row.control.elapsed = math::min(row.control.duration, row.control.elapsed + dt);
+    row.control.active = row.control.elapsed < row.control.duration;
 }

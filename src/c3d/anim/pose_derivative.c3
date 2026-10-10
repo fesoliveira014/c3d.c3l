@@ -82,6 +82,21 @@ fn void sample_pose_channel(
     PoseDerivativeScratch* derivative,
     bool onset,
 ) @private {
+    if (!derivative && action.motion_chain && track.path != TargetPath.MORPH_WEIGHTS
+      && captured_motion_track(action.motion_chain, track_index)) {
+        double[4] value;
+        double[4] rate;
+        sample_track_analytic(
+            track: track,
+            time: action.time,
+            cursor: &action.cursors[track_index],
+            value: value[:sample.len],
+            rate: rate[:sample.len],
+            side: action_sample_side(action, onset),
+        );
+        foreach (index, component : value[:sample.len]) sample[index] = (float)component;
+        return;
+    }
     if (!derivative) {
         sample_track(track: track, time: action.time, cursor: &action.cursors[track_index], out: sample);
         return;
@@ -277,4 +292,12 @@ fn void pin_analytic_rotation_derivative(Action* action, PoseDerivativeScratch* 
         sample[component] = pinned.v[component];
         rate[component] = pinned_rate.v[component];
     }
+}
+
+fn bool captured_motion_track(CapturedMotionChain* chain, uint track) @local {
+    foreach (node : chain.nodes) {
+        if (node.translation_track == track || node.rotation_track == track || node.scale_track == track) return true;
+    }
+
+    return false;
 }

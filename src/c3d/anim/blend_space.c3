@@ -115,6 +115,13 @@ fn BlendSpace1D*? PlaybackView.add_blend_space(
             root_node: self.root_node,
             motion_basis: motion_basis,
         )!;
+        validate_live_motion_addition(
+            playback: self,
+            assets: assets,
+            clip: data,
+            desc: desc,
+            basis: motion_basis,
+        )!;
         if (self.inertial) validate_inertial_rotation_domains(data)!;
     }
 

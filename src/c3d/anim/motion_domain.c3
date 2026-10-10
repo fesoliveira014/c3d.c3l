@@ -36,7 +36,7 @@ enum MotionScaleFailure @private {
     NONNEUTRAL,
 }
 
-struct MotionInterval @local {
+struct MotionInterval @private {
     double lower;
     double upper;
 }
@@ -285,7 +285,7 @@ fn bool motion_scale_neutral(ScalePolynomial polynomial, float reference) @local
       && scale_integer_compare_magnitude(polynomial.coefficients[0], expected) == 0;
 }
 
-fn double motion_outward_lower(double value) @local {
+fn double motion_outward_lower(double value) @private {
     if (!math::is_finite(value)) return value;
     if (value == 0) return -0x1p-1074;
     ulong bits = bitcast(value, ulong);
@@ -294,7 +294,7 @@ fn double motion_outward_lower(double value) @local {
     return bitcast(bits, double);
 }
 
-fn double motion_outward_upper(double value) @local {
+fn double motion_outward_upper(double value) @private {
     if (!math::is_finite(value)) return value;
     if (value == 0) return 0x1p-1074;
     ulong bits = bitcast(value, ulong);
@@ -303,9 +303,9 @@ fn double motion_outward_upper(double value) @local {
     return bitcast(bits, double);
 }
 
-fn MotionInterval motion_interval_exact(double value) @local => { .lower = value, .upper = value };
+fn MotionInterval motion_interval_exact(double value) @private => { .lower = value, .upper = value };
 
-fn MotionInterval motion_interval_add(MotionInterval left, MotionInterval right) @local => {
+fn MotionInterval motion_interval_add(MotionInterval left, MotionInterval right) @private => {
     .lower = motion_outward_lower(left.lower + right.lower),
     .upper = motion_outward_upper(left.upper + right.upper),
 };
@@ -328,7 +328,7 @@ fn MotionInterval motion_interval_multiply(MotionInterval left, MotionInterval r
     return { .lower = motion_outward_lower(lower), .upper = motion_outward_upper(upper) };
 }
 
-fn MotionInterval motion_interval_half(MotionInterval value) @local => {
+fn MotionInterval motion_interval_half(MotionInterval value) @private => {
     .lower = motion_outward_lower(value.lower * 0.5),
     .upper = motion_outward_upper(value.upper * 0.5),
 };

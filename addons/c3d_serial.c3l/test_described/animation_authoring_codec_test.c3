@@ -71,9 +71,9 @@ fn void test_animation_authoring_codec_layouts_preserve_exact_legacy_shapes() @t
     describe::register_reflected(CrowdInstance)!!;
     describe::register_reflected(CrowdAuthoringV2)!!;
     describe::register_reflected(BlendTriangle)!!;
-    describe::register_reflected(CrowdActionAuthoring)!!;
+    describe::register_reflected(CrowdActionAuthoringV2)!!;
     describe::register_reflected(CrowdSpaceAuthoring)!!;
-    describe::register_reflected(CrowdInstanceAuthoring)!!;
+    describe::register_reflected(CrowdInstanceAuthoringV2)!!;
     describe::register_reflected(AnimatorAuthoringV2)!!;
     describe::register_reflected(CrowdAuthoringV3)!!;
     assert(serial::description_layout(describe::get(ActionAuthoring)!!)!! == 0xaafb7d37846979a1);
@@ -82,9 +82,9 @@ fn void test_animation_authoring_codec_layouts_preserve_exact_legacy_shapes() @t
     assert(serial::description_layout(describe::get(CrowdInstanceAuthoringV1)!!)!! == 0xd968ade9d5937c0c);
     assert(serial::description_layout(describe::get(CrowdAuthoringV2)!!)!! == 0x73da7a68102f5e2b);
     assert(serial::description_layout(describe::get(BlendTriangle)!!)!! == 0x484666f6dc6513d7);
-    assert(serial::description_layout(describe::get(CrowdActionAuthoring)!!)!! == 0x8360925cddcb7715);
+    assert(serial::description_layout(describe::get(CrowdActionAuthoringV2)!!)!! == 0x8360925cddcb7715);
     assert(serial::description_layout(describe::get(CrowdSpaceAuthoring)!!)!! == 0x4d5777ab1cce4ecc);
-    assert(serial::description_layout(describe::get(CrowdInstanceAuthoring)!!)!! == 0x7320dbe867e06499);
+    assert(serial::description_layout(describe::get(CrowdInstanceAuthoringV2)!!)!! == 0x7320dbe867e06499);
     assert(serial::description_layout(describe::get(AnimatorAuthoringV2)!!)!! == 0x11312a6330c08681);
     assert(serial::description_layout(describe::get(CrowdAuthoringV3)!!)!! == 0x5b096137b6e8478c);
 }
@@ -567,7 +567,7 @@ fn void test_animation_authoring_codec_pending_weighted_planar_allocations_and_p
             .pose = decoded_crowd.seeds[0],
             .color = decoded_crowd.colors[0],
         } };
-        CrowdAuthoringV3 authored = {
+        CrowdAuthoringV4 authored = {
             .model = decoded_crowd.model,
             .capacity = (uint)decoded_crowd.placements.len,
             .pose_bounds = decoded_crowd.pose_bounds,

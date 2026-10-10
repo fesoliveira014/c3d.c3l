@@ -78,3 +78,36 @@ fn void? validate_inertial_rotation_domains(AnimationClip* clip) @private {
 
     if (unsupported) return c3d::UNSUPPORTED~;
 }
+
+fn void? validate_live_motion_addition(
+    PlaybackView* playback,
+    AssetStore* assets,
+    AnimationClip* clip,
+    PlayDesc desc,
+    MotionBasis basis,
+) @private {
+    CapturedMotionChain* chain = generalized_playback_chain(playback);
+    if (!chain) return;
+
+    if (desc.extraction.generalized && !same_live_motion_extraction(chain.extraction, desc.extraction)) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+    validate_generalized_motion(
+        template: &assets.models.try_get(playback.model)!.data,
+        clip: clip,
+        root: playback.root_node,
+        extraction: chain.extraction,
+        motion_basis: basis,
+        additive: desc.additive,
+        additive_scale: desc.additive_scale,
+        diagnostic: null,
+    )!;
+}
+
+fn bool same_live_motion_extraction(RootExtractionDesc first, RootExtractionDesc second) @local {
+    if (first.up != second.up || first.twist != second.twist) return false;
+
+    foreach (index, axis : first.translation_axes) if (axis != second.translation_axes[index]) return false;
+
+    return true;
+}

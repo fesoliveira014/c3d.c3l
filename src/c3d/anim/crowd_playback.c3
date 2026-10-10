@@ -31,6 +31,7 @@ struct CrowdPlaybackSlot {
     uint root_node;
     AnimationActionId base_action;
     RootMotionDelta root_motion;
+    GeneralizedPlaybackState generalized_state;
 }
 
 <* Owns crowd playback storage, baselines and one event buffer. *>
@@ -100,17 +101,34 @@ fn void CrowdPlaybackState.update(&self, AssetStore* assets, float dt) {
             }
         }
 
-        slot.root_motion = root_motion_delta(report.motion, reference);
-        if (self.inertial_storage) {
-            slot.root_motion = publish_inertial_root_motion(
-                row: &self.inertial_storage.rows[index],
-                target: slot.root_motion,
-                target_twist: (double)report.motion.yaw,
-                up: { 0, 1, 0 },
-                pivot: { reference.x, reference.y, reference.z },
+        if (report.generalized) {
+            slot.root_motion = publish_generalized_owner_motion(
+                playback: &playback,
+                destination: destination,
+                motion: report.generalized_motion,
                 dt: (double)dt,
+                scratch: self.pose_storage.scratch,
             );
+        } else {
+            slot.root_motion = root_motion_delta(report.motion, reference);
+            if (self.inertial_storage) {
+                slot.root_motion = publish_inertial_root_motion(
+                    row: &self.inertial_storage.rows[index],
+                    target: slot.root_motion,
+                    target_twist: (double)report.motion.yaw,
+                    up: { 0, 1, 0 },
+                    pivot: { reference.x, reference.y, reference.z },
+                    dt: (double)dt,
+                );
+            }
         }
+
+        record_playback_inertial_history(
+            playback: &playback,
+            destination: destination,
+            scratch: self.pose_storage.scratch,
+            dt: (double)dt,
+        );
 
         foreach (&event : self.events[self.event_count:report.events.count]) {
             event.instance = { .index = index, .generation = slot.generation };
@@ -373,6 +391,7 @@ fn void reset_crowd_playback_slot(CrowdPlaybackState* state, uint index) {
     if (!slot.generation) slot.generation = 1;
     if (state.inertial_storage) reset_inertial_row(state.inertial_storage, index, slot.generation);
 
+    slot.generalized_state = {};
     slot.root_node = state.default_root_node;
     slot.base_action = {};
     slot.root_motion = { .rotation = quaternion::IDENTITY };
@@ -532,9 +551,7 @@ fn void destroy_crowd_playback(CrowdPlaybackState* state) {
     foreach (&slot : state.slots) {
         foreach (id : slot.order[:slot.action_count]) {
             Action* action = slot.actions.get(id);
-            alloc::free(allocator, action.cursors.ptr);
-            alloc::free(allocator, action.reference.ptr);
-            alloc::free(allocator, action.weighted_mask.ptr);
+            release_prepared_action(allocator, action);
         }
 
         pool::destroy_pool{Action, AnimationActionId}(&slot.actions);
@@ -580,6 +597,7 @@ fn PlaybackView crowd_playback_view(CrowdPlaybackState* state, CrowdPlaybackSlot
         .blend_spaces = slot.spaces,
         .blend_spaces_2d = slot.spaces_2d,
         .root_node = slot.root_node,
+        .generalized = &slot.generalized_state,
         .inertial = state.inertial_storage
           ? &state.inertial_storage.rows[(usz)(slot - state.slots.ptr)] : null,
     };

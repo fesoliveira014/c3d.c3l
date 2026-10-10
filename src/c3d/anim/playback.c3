@@ -17,6 +17,7 @@ struct PlaybackView {
     BlendSpace2D[] blend_spaces_2d;
     uint root_node;
     InertialRow* inertial;
+    GeneralizedPlaybackState* generalized;
 }
 
 <* Destination baselines, presence and caller-owned evaluated output. *>
@@ -48,6 +49,7 @@ struct ChannelSums {
     float rotation_weight;
     Vec3 scale;
     float scale_weight;
+    double[<3>] precise_scale;
 }
 
 <* A retained event stream's state after its first emitted crossing. *>
@@ -76,6 +78,8 @@ struct EventReport {
 <* Evaluated motion and retained-event counts for one pose. *>
 struct PoseReport {
     PlanarMotion motion;
+    GeneralizedMotion generalized_motion;
+    bool generalized;
     EventReport events;
 }
 
@@ -113,6 +117,13 @@ fn AnimationActionId? PlaybackView.play(
         desc: desc,
         root_node: self.root_node,
         motion_basis: motion_basis,
+    )!;
+    validate_live_motion_addition(
+        playback: self,
+        assets: assets,
+        clip: data,
+        desc: desc,
+        basis: motion_basis,
     )!;
     if (self.inertial) validate_inertial_rotation_domains(data)!;
     if (!self.actions.free_count) return c3d::CAPACITY_EXCEEDED~;
@@ -226,14 +237,34 @@ fn PoseReport evaluate_pose(
         scratch: scratch,
     );
 
-    if (playback.inertial) correct_inertial_pose(
-        playback: playback,
-        destination: destination,
-        scratch: scratch,
-        dt: (double)dt,
-    );
+    bool generalized = playback.generalized != null && generalized_playback_chain(playback) != null;
+    if (playback.inertial) {
+        if (generalized) {
+            advance_inertial_elapsed(playback.inertial, (double)dt);
+        } else {
+            correct_inertial_pose(
+                playback: playback,
+                destination: destination,
+                scratch: scratch,
+                dt: (double)dt,
+            );
+        }
+    }
 
-    PlanarMotion motion = evaluate_root_motion(playback, assets, destination);
+    PlanarMotion motion;
+    GeneralizedMotion generalized_motion;
+    if (generalized) {
+        if (!playback.generalized.initialized) initialize_generalized_playback(playback.generalized, playback);
+        generalized_motion = evaluate_generalized_playback_motion(
+            playback: playback,
+            assets: assets,
+            destination: destination,
+            state: playback.generalized,
+            dt: (double)dt,
+        );
+    } else {
+        motion = evaluate_root_motion(playback, assets, destination);
+    }
     EventReport report = publish_events(
         playback: playback,
         assets: assets,
@@ -241,7 +272,12 @@ fn PoseReport evaluate_pose(
         bookmarks: scratch.event_bookmarks,
     );
 
-    return { .motion = motion, .events = report };
+    return {
+        .motion = motion,
+        .generalized_motion = generalized_motion,
+        .generalized = generalized,
+        .events = report,
+    };
 }
 
 <* Borrow a contiguous retained-event array. *>

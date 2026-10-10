@@ -20,6 +20,7 @@ fn void blend_pose(
     float[] morph_weights = scratch.morph_weights;
 
     PoseDerivativeScratch* derivative = scratch.derivative;
+    bool precise_scale = derivative != null || generalized_playback_chain(playback) != null;
     if (derivative) {
         derivative.velocity[..] = (PoseVelocity){};
         derivative.morph_rates[..] = 0;
@@ -93,7 +94,11 @@ fn void blend_pose(
                         sums[node].rotation += rotation * weight;
                         sums[node].rotation_weight += weight;
                     case SCALE:
-                        sums[node].scale += (Vec3){ sample[0], sample[1], sample[2] } * weight;
+                        if (precise_scale) {
+                            sums[node].precise_scale += (double[<3>]){ sample[0], sample[1], sample[2] } * (double)weight;
+                        } else {
+                            sums[node].scale += (Vec3){ sample[0], sample[1], sample[2] } * weight;
+                        }
                         sums[node].scale_weight += weight;
                     case MORPH_WEIGHTS:
                         usz mesh = destination.mesh_indices[node];
@@ -109,7 +114,14 @@ fn void blend_pose(
 
             pose.position = blend_vec3(sum.translation, sum.translation_weight, pose.position);
             pose.rotation = { .v = (sum.rotation + pose.rotation.v * residual(sum.rotation_weight)).normalize() };
-            pose.scale = blend_vec3(sum.scale, sum.scale_weight, pose.scale);
+            if (precise_scale) {
+                double[<3>] scale = { pose.scale.x, pose.scale.y, pose.scale.z };
+                scale = (sum.precise_scale + scale * (double)residual(sum.scale_weight))
+                  / (double)math::max(1.0f, sum.scale_weight);
+                pose.scale = inertial_publish_vector(scale);
+            } else {
+                pose.scale = blend_vec3(sum.scale, sum.scale_weight, pose.scale);
+            }
         }
 
         usz morph_offset;
