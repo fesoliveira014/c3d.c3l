@@ -707,7 +707,7 @@ fn void? measure_native_row(
             allocator: &renderer_counter,
             assets: assets,
             desc: {
-                .validation = false,
+                .validation = true,
                 .gpu_timings = true,
                 .profiler = &recorder,
                 .ray_queries = native_row_mode.trace == NativeTraceMode.HARDWARE,
@@ -911,7 +911,7 @@ fn void? run_native(String[] args) {
         create_native_files(args[1], &files)!;
         defer close_native_files(&files);
         native_metadata(&files, "domain", "native_gpu_measurement_not_correctness")!;
-        native_metadata(&files, "validation", "false_measurements_only")!;
+        native_metadata(&files, "validation", "true_validation_overhead_included")!;
         native_metadata(&files, "profiling", "GPU_INTERNAL_timestamps_and_collector_enabled_overhead_not_subtracted")!;
         native_metadata(
             files: &files,
@@ -1283,7 +1283,7 @@ fn void? capture_native_lod_history(
                 views: (uint)views.len,
             )!;
             csv_uint(&files.lod_history, submission)!;
-            csv_uint(&files.lod_history, index)!;
+            csv_uint(&files.lod_history, (ulong)index)!;
             csv_uint(&files.lod_history, source)!;
             csv_uint(&files.lod_history, available[index] ? 1 : 0)!;
             if (available[index]) {
