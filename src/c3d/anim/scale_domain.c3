@@ -22,13 +22,13 @@ const ulong EXACT_SCALE_LIMB_BASE @local = 0x100000000UL;
 
 $assert(EXACT_SCALE_LIMBS * EXACT_SCALE_LIMB_BITS > EXACT_SCALE_STURM_BOUND_BITS + 8);
 
-struct ScaleInteger @local {
+struct ScaleInteger @private {
     uint[EXACT_SCALE_LIMBS] limbs;
     uint used;
     bool negative;
 }
 
-struct ScalePolynomial @local {
+struct ScalePolynomial @private {
     ScaleInteger[4] coefficients;
     uint degree;
 }
@@ -198,7 +198,7 @@ fn ScaleInteger scale_integer_normalize(ScaleInteger value) @local {
     return value;
 }
 
-fn ScaleInteger scale_integer(ulong value) @local {
+fn ScaleInteger scale_integer(ulong value) @private {
     ScaleInteger result;
     result.limbs[0] = (uint)(value & EXACT_SCALE_LIMB_MASK);
     result.limbs[1] = (uint)(value >> EXACT_SCALE_LIMB_BITS);
@@ -215,7 +215,7 @@ fn ScaleInteger scale_integer_negate(ScaleInteger value) @local {
     return value;
 }
 
-fn int scale_integer_compare_magnitude(ScaleInteger left, ScaleInteger right) @local {
+fn int scale_integer_compare_magnitude(ScaleInteger left, ScaleInteger right) @private {
     if (left.used != right.used) return left.used < right.used ? -1 : 1;
 
     for (int index = (int)left.used - 1; index >= 0; index--) {
@@ -282,11 +282,11 @@ fn ScaleInteger scale_integer_add(ScaleInteger left, ScaleInteger right) @local 
     return result;
 }
 
-fn ScaleInteger scale_integer_subtract(ScaleInteger left, ScaleInteger right) @local {
+fn ScaleInteger scale_integer_subtract(ScaleInteger left, ScaleInteger right) @private {
     return scale_integer_add(left, scale_integer_negate(right));
 }
 
-fn ScaleInteger scale_integer_multiply(ScaleInteger left, ScaleInteger right) @local {
+fn ScaleInteger scale_integer_multiply(ScaleInteger left, ScaleInteger right) @private {
     ScaleInteger result;
     if (left.used == 0 || right.used == 0) return result;
 
@@ -309,7 +309,7 @@ fn ScaleInteger scale_integer_multiply(ScaleInteger left, ScaleInteger right) @l
     return scale_integer_normalize(result);
 }
 
-fn ScaleInteger scale_integer_shift_left(ScaleInteger value, uint bits) @local {
+fn ScaleInteger scale_integer_shift_left(ScaleInteger value, uint bits) @private {
     if (value.used == 0 || bits == 0) return value;
 
     uint words = bits / EXACT_SCALE_LIMB_BITS;
@@ -369,7 +369,7 @@ fn bool scale_float_finite(float value) @local {
     return (bitcast(value, uint) & EXACT_SCALE_FLOAT_EXPONENT_MASK) != EXACT_SCALE_FLOAT_EXPONENT_MASK;
 }
 
-fn ScaleInteger scale_float_integer(float value) @local {
+fn ScaleInteger scale_float_integer(float value) @private {
     uint bits = bitcast(value, uint);
     uint exponent = (bits & EXACT_SCALE_FLOAT_EXPONENT_MASK) >> EXACT_SCALE_FLOAT_FRACTION_BITS;
     uint significand = bits & EXACT_SCALE_FLOAT_FRACTION_MASK;
@@ -382,7 +382,7 @@ fn ScaleInteger scale_float_integer(float value) @local {
     return result;
 }
 
-fn ScalePolynomial scale_polynomial_normalize_degree(ScalePolynomial value) @local {
+fn ScalePolynomial scale_polynomial_normalize_degree(ScalePolynomial value) @private {
     value.degree = 3;
     while (value.degree && value.coefficients[value.degree].used == 0) value.degree--;
 
@@ -415,7 +415,7 @@ fn ScalePolynomial exact_scale_hermite(
     float start_tangent,
     float end_tangent,
     ScaleInteger duration,
-) @local {
+) @private {
     ScaleInteger start_value = scale_integer_shift_left(scale_float_integer(start), EXACT_SCALE_FLOAT_UNIT_BITS);
     ScaleInteger end_value = scale_integer_shift_left(scale_float_integer(end), EXACT_SCALE_FLOAT_UNIT_BITS);
     ScaleInteger start_velocity = scale_integer_multiply(scale_float_integer(start_tangent), duration);
@@ -566,7 +566,7 @@ fn uint scale_sturm_interior_roots(ScaleSturmSequence sequence) @local {
     return begin - end;
 }
 
-fn bool exact_scale_strict_positive(ScalePolynomial polynomial) @local {
+fn bool exact_scale_strict_positive(ScalePolynomial polynomial) @private {
     if (scale_polynomial_endpoint_sign(polynomial, false) <= 0
         || scale_polynomial_endpoint_sign(polynomial, true) <= 0) return false;
 
@@ -574,7 +574,7 @@ fn bool exact_scale_strict_positive(ScalePolynomial polynomial) @local {
     return scale_sturm_interior_roots(scale_sturm_sequence(polynomial)) == 0;
 }
 
-fn bool exact_scale_nonnegative(ScalePolynomial polynomial) @local {
+fn bool exact_scale_nonnegative(ScalePolynomial polynomial) @private {
     if (scale_polynomial_zero(polynomial)) return true;
     if (scale_polynomial_endpoint_sign(polynomial, false) < 0
         || scale_polynomial_endpoint_sign(polynomial, true) < 0
@@ -597,7 +597,7 @@ fn ScaleInteger exact_scale_segment_magnitude(
     float start_tangent,
     float end_tangent,
     ScaleInteger duration,
-) @local {
+) @private {
     ScaleInteger[4] candidates = {
         scale_integer_shift_left(scale_float_integer(start), EXACT_SCALE_FLOAT_UNIT_BITS),
         scale_integer_shift_left(scale_float_integer(end), EXACT_SCALE_FLOAT_UNIT_BITS),
@@ -614,7 +614,7 @@ fn ScaleInteger exact_scale_segment_magnitude(
     return maximum;
 }
 
-fn ScalePolynomial exact_scale_sample_margin(ScalePolynomial polynomial, ScaleInteger magnitude) @local {
+fn ScalePolynomial exact_scale_sample_margin(ScalePolynomial polynomial, ScaleInteger magnitude) @private {
     for (uint index = 0; index <= polynomial.degree; index++) {
         polynomial.coefficients[index] = scale_integer_shift_left(
             value: polynomial.coefficients[index],
