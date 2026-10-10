@@ -171,7 +171,7 @@ fn void? attach_showcase_lod(
                 desc: desc,
             )!;
         }
-    }
+    };
 }
 
 fn void set_baseline(Scene* scene, Showcase* showcase, bool baseline) @local {

@@ -36,7 +36,8 @@ fn void? animated_lod_native_temporal_frame(
         output: ordinary,
         crowd_visible: false,
     )!;
-    assert(renderer.deformation.animated_palettes.len() == 1, "Current source palette was uploaded more than once");
+    uint expected_palettes = pair.scene.get(pair.crowd, AnimatedCrowd).joint_count ? 1 : 0;
+    assert(renderer.deformation.animated_palettes.len() == expected_palettes);
     renderer.end_frame()!;
     render::wait_frames(renderer)!;
     read_crowd_native_temporal(fixture, crowd)!;
@@ -578,7 +579,9 @@ fn void test_animated_lod_native_real_morph_topology_replacement_shrink_and_regr
         crowd: &actual,
         ordinary: &reference,
     )!!;
-    check_crowd_native_temporal_flags(&actual.actual, 1);
+    check_crowd_native_temporal_flags(&actual.actual, 1, false);
+    check_crowd_native_velocity(actual.actual.velocity, reference.actual.velocity);
+    check_crowd_native_velocity(reference.actual.velocity, actual.actual.velocity);
     check_crowd_native_image(actual.actual.depth, reference.actual.depth, CROWD_NATIVE_DEPTH_TOLERANCE);
     check_crowd_native_image(reference.actual.depth, actual.actual.depth, CROWD_NATIVE_DEPTH_TOLERANCE);
     animated_lod_native_temporal_frame(
@@ -694,4 +697,124 @@ fn void test_animated_lod_native_real_morph_topology_replacement_shrink_and_regr
     check_crowd_native_temporal_flags(&actual.actual, 0);
     io::printn("Real morph LOD: topology, binding incarnation, shrink/regrowth reject stale history");
     check_crowd_native_validation(&fixture.renderer);
+}
+
+fn void test_animated_lod_native_cull_overflow_falls_back_whole_group_with_source_parity_and_shadows() @test {
+    Fixture fixture;
+    create_fixture(
+        allocator: mem,
+        fixture: &fixture,
+        instance_cull_bytes: 768,
+        shadow_resolution: 128,
+        max_shadow_layers: 1,
+    )!!;
+    defer destroy_fixture(&fixture);
+    PartsFixture parts = animated_crowd_fixtures::add_parts_fixture(&fixture.assets)!!;
+    CrowdNativePair pair;
+    create_crowd_native_pair(
+        allocator: mem,
+        fixture: &fixture,
+        pair: &pair,
+        model: parts.mixed,
+        clip: parts.posing,
+        bounds: animated_crowd_fixtures::PARTS_POSE_BOUNDS,
+    )!!;
+    defer scene::destroy_scene(&pair.scene);
+    use_crowd_native_standard_materials(&fixture, &pair)!!;
+    *pair.scene.get(pair.camera, Camera) = camera::orthographic(24, 0.1f, 100);
+    set_animated_lod_native_motion(
+        fixture: &fixture,
+        pair: &pair,
+        phase_offset: 0.04f,
+        placement_offset: 0.1f,
+    );
+    @pool() {
+        model::attach_animated_lod(
+            assets: &fixture.assets,
+            scene: &pair.scene,
+            owner: pair.crowd,
+            desc: lod_trace_desc(&fixture.assets, parts.mixed),
+        )!!;
+    };
+    LodLevel[2] fitting_levels = {
+        { .first_part = 0, .part_count = 1, .min_screen_size = 100 },
+        { .first_part = 1, .part_count = 1, .min_screen_size = 0 },
+    };
+    LodPart[2] fitting_parts = {
+        { .geometry = fixture.box, .material = parts.material, .local = matrix::IDENTITY4 },
+        { .geometry = fixture.box, .material = parts.material, .local = matrix::IDENTITY4 },
+    };
+    Transform[1] fitting_placement = { maths::TRANSFORM_IDENTITY };
+    fitting_placement[0].position.x = 1000;
+    Node* fitting = pair.scene.add_instanced_lod_group(
+        assets: &fixture.assets,
+        desc: { .levels = fitting_levels[..], .parts = fitting_parts[..] },
+        capacity: 1,
+        transforms: fitting_placement[..],
+        parent: pair.crowd,
+    )!!;
+    pair.scene.set_lod_effects(fitting, { .receive_shadow = true });
+    Light sun = light::directional({ 1, 1, 1 }, 1);
+    sun.shadow.cascades = 1;
+    sun.shadow.max_distance = 30;
+    Node* light_node = pair.scene.add_light(sun)!!;
+    light_node.local.rotation = maths::look_rotation((Vec3){ -0.8f, -0.3f, -1 }.normalize(), { 0, 1, 0 });
+    pair.scene.update_world();
+    CrowdLodNativeSources sources = { .crowd = true };
+    match_crowd_lod_native_shadow_bounds(&fixture, &pair, &sources);
+    CrowdNativeOutput actual;
+    create_crowd_native_output(&fixture, &actual)!!;
+    defer destroy_crowd_native_output(&fixture, &actual);
+    CrowdNativeOutput reference;
+    create_crowd_native_output(&fixture, &reference)!!;
+    defer destroy_crowd_native_output(&fixture, &reference);
+    Renderer* renderer = &fixture.renderer;
+    foreach (AntiAliasing anti_aliasing : { AntiAliasing.TAA, AntiAliasing.NONE }) {
+        foreach (output : (CrowdNativeOutput*[2]){ &actual, &reference }) {
+            ViewDesc desc = render::texture_view_desc(output.target);
+            desc.shading = ShadingPath.DEFERRED;
+            desc.post.anti_aliasing = anti_aliasing;
+            desc.post.motion_blur = true;
+            desc.lod_bias = -16;
+            desc.share_shadows = false;
+            render::configure_view(&fixture.renderer, output.view, desc)!!;
+        }
+        for (uint frame = 0; frame < CROWD_NATIVE_WARMUP; frame++) {
+            renderer.begin_frame({ .time = 0.37, .delta = 0 })!!;
+            defer catch render::abort_frame(renderer);
+            record_crowd_lod_native_output(
+                fixture: &fixture,
+                pair: &pair,
+                output: &actual,
+                actual: true,
+            )!!;
+            assert(renderer.deformation.animated_palettes.len() == 1);
+            record_crowd_lod_native_output(
+                fixture: &fixture,
+                pair: &pair,
+                output: &reference,
+                actual: false,
+            )!!;
+            renderer.end_frame()!!;
+        }
+        render::wait_frames(renderer)!!;
+        read_crowd_lod_native_output(&fixture, &actual)!!;
+        read_crowd_lod_native_output(&fixture, &reference)!!;
+        Stats* stats = &actual.actual.stats;
+        assert(stats.lod_counts_valid && stats.lod_fallbacks == 1);
+        assert(stats.lod_instances_tested == CROWD_NATIVE_INSTANCES + 1);
+        assert(stats.lod_selected[0] == CROWD_NATIVE_INSTANCES && stats.lod_selected[1] == 1);
+        assert(stats.lod_visible[0] == CROWD_NATIVE_INSTANCES && stats.lod_visible[1] == 0);
+        assert(!renderer.views.get(actual.view).lod_history.entries[pair.crowd.id.index].committed.valid);
+        if (anti_aliasing == AntiAliasing.TAA) check_crowd_native_temporal_flags(&actual.actual, 1);
+        check_crowd_native_image(actual.actual.depth, reference.actual.depth, CROWD_NATIVE_DEPTH_TOLERANCE);
+        check_crowd_native_image(reference.actual.depth, actual.actual.depth, CROWD_NATIVE_DEPTH_TOLERANCE);
+        check_crowd_native_image(actual.actual.normal, reference.actual.normal, CROWD_NATIVE_COLOR_TOLERANCE);
+        check_crowd_native_image(reference.actual.normal, actual.actual.normal, CROWD_NATIVE_COLOR_TOLERANCE);
+        if (anti_aliasing == AntiAliasing.NONE) {
+            check_crowd_lod_native_view_parity(&actual.actual, &reference.actual);
+        }
+    }
+    io::printn("Cull arena overflow: complete level-zero fallback, stable source parity, parent shadows; another group fits");
+    check_crowd_native_validation(renderer);
 }
