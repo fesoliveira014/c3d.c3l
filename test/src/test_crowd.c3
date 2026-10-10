@@ -29,7 +29,12 @@ struct Fixture @local {
 }
 
 fn Geometry skinned_box(Allocator allocator, ushort joint) @local {
-    Geometry box = geometry::box(allocator, 0.2f, 0.2f, 0.2f);
+    Geometry box = geometry::box(
+        allocator: allocator,
+        width: 0.2f,
+        height: 0.2f,
+        depth: 0.2f,
+    );
     box.joints = alloc::new_array(allocator, ushort[<4>], box.positions.len);
     box.weights = alloc::new_array(allocator, Vec4, box.positions.len);
     foreach (index, &weights : box.weights) {
@@ -72,7 +77,12 @@ fn Fixture make_fixture(bool with_rigid = false, bool second_skeleton = false, b
         part_a = assets.add_geometry(&first)!!;
         Geometry second = skinned_box(tmem, 1);
         part_b = assets.add_geometry(&second)!!;
-        Geometry rigid = geometry::box(tmem, 0.1f, 0.1f, 0.1f);
+        Geometry rigid = geometry::box(
+            allocator: tmem,
+            width: 0.1f,
+            height: 0.1f,
+            depth: 0.1f,
+        );
         prop = assets.add_geometry(&rigid)!!;
     };
 
@@ -184,6 +194,10 @@ fn InstancedMesh* part_batch(Fixture* fixture, AnimatedCrowd* crowd, usz part) @
     return fixture.scene.world.get(crowd.parts[part].batch, InstancedMesh);
 }
 
+fn Action* base_action(AnimatedCrowd* crowd, uint index) @local {
+    CrowdPlayer player = crowd.playback.player(crowd.playback.instance_id(index)!!)!!;
+    return player.base_action()!!;
+}
 fn uint live_nodes(Scene* scene) @local {
     uint count;
     foreach (&node : scene.nodes) {
@@ -194,17 +208,18 @@ fn uint live_nodes(Scene* scene) @local {
 
 fn bool near(Vec3 first, Vec3 second) @local => (first - second).length() <= TOLERANCE;
 
-fn void test_add_crowd_creates_one_batch_per_skinned_part() @test {
+fn void test_add_crowd_creates_one_batch_per_model_mesh() @test {
     foreach (with_rigid : (bool[2]){ false, true }) {
         Fixture fixture = make_fixture(with_rigid: with_rigid);
         defer destroy_fixture(&fixture);
         Node* node = add_crowd(&fixture, {}, capacity: 4);
         AnimatedCrowd* crowd = fixture.scene.get(node, AnimatedCrowd);
 
-        assert(crowd.parts.len == 2);
+        assert(crowd.parts.len == (with_rigid ? 3 : 2));
         assert(fixture.assets.model(fixture.model).data.meshes.len == (with_rigid ? 3 : 2));
         assert(crowd.palettes.len == 2 * 4);
-        assert(crowd.max_tracks == 1 && crowd.cursors.len == 4);
+        assert(crowd.playback.slots.len == 4
+          && crowd.playback.slots[0].actions.items.len == anim::DEFAULT_CROWD_ACTIONS);
         foreach (usz part : (usz[2]){ 0, 1 }) {
             InstancedMesh* batch = part_batch(&fixture, crowd, part);
             assert(batch.transforms.len == 4 && batch.has_bounds_override && !batch.trace);
@@ -213,23 +228,31 @@ fn void test_add_crowd_creates_one_batch_per_skinned_part() @test {
     }
 }
 
-fn void test_add_crowd_rejects_invalid_models() @test {
+fn void test_add_crowd_checks_model_and_seed_compatibility() @test {
     CrowdInstance[1] one;
     Fixture no_skin = make_fixture(without_skins: true);
     defer destroy_fixture(&no_skin);
-    if (catch excuse = model::add_crowd(&no_skin.assets, &no_skin.scene, no_skin.model, 4, unit_bounds())) {
-        assert(excuse == c3d::INVALID_ARGUMENT);
-    } else {
-        assert(false);
-    }
+    Node* unskinned = model::add_crowd(
+        assets: &no_skin.assets,
+        scene: &no_skin.scene,
+        model: no_skin.model,
+        capacity: 4,
+        pose_bounds: unit_bounds(),
+    )!!;
+    AnimatedCrowd* unskinned_crowd = no_skin.scene.get(unskinned, AnimatedCrowd);
+    assert(unskinned_crowd.parts.len == 2 && unskinned_crowd.joint_count == 0);
+    foreach (part : unskinned_crowd.parts) assert(!part.skinned);
 
     Fixture split = make_fixture(second_skeleton: true);
     defer destroy_fixture(&split);
-    if (catch excuse = model::add_crowd(&split.assets, &split.scene, split.model, 4, unit_bounds())) {
-        assert(excuse == c3d::INVALID_ARGUMENT);
-    } else {
-        assert(false);
-    }
+    Node* compatible = model::add_crowd(
+        assets: &split.assets,
+        scene: &split.scene,
+        model: split.model,
+        capacity: 4,
+        pose_bounds: unit_bounds(),
+    )!!;
+    assert(split.scene.get(compatible, AnimatedCrowd).parts.len == 2);
 
     Fixture fixture = make_fixture();
     defer destroy_fixture(&fixture);
@@ -237,7 +260,7 @@ fn void test_add_crowd_rejects_invalid_models() @test {
     foreign.pose.clip = { .index = 7, .generation = 3 };
     one[0] = foreign;
     if (catch excuse = model::add_crowd(&fixture.assets, &fixture.scene, fixture.model, 4, unit_bounds(), one[..])) {
-        assert(excuse == c3d::INVALID_ARGUMENT);
+        assert(excuse == c3d::INVALID_ID);
     } else {
         assert(false);
     }
@@ -346,9 +369,9 @@ fn void test_crowd_update_wraps_looping_clip_and_holds_speed_zero() @test {
     Mat4 frozen = crowd.palettes[crowd.joint_count + 1];
 
     anim::crowd_update(&fixture.assets, &fixture.scene, 0.2f);
-    assert(math::abs(crowd.poses[0].time - 0.1f) <= TOLERANCE);
-    assert(crowd.poses[1].time == 0.5f && crowd.palettes[crowd.joint_count + 1] == frozen);
-    assert(crowd.poses[2].time == 1);
+    assert(math::abs(base_action(crowd, 0).time - 0.1f) <= TOLERANCE);
+    assert(base_action(crowd, 1).time == 0.5f && crowd.palettes[crowd.joint_count + 1] == frozen);
+    assert(base_action(crowd, 2).time == 1);
 }
 
 fn void test_set_crowd_updates_every_part() @test {
@@ -364,7 +387,12 @@ fn void test_set_crowd_updates_every_part() @test {
     CrowdInstance[1] one = { walker(&fixture, placed({ 9, 0, 0 })) };
     one[0].color = { 0, 1, 0, 1 };
 
-    model::set_crowd(&fixture.assets, &fixture.scene, node, one[..])!!;
+    model::set_crowd(
+        assets: &fixture.assets,
+        scene: &fixture.scene,
+        node: node,
+        instances: one[..],
+    )!!;
 
     assert(crowd.count == 1);
     foreach (usz part : (usz[2]){ 0, 1 }) {
@@ -497,7 +525,12 @@ fn void test_view_history_keeps_crowd_palettes_per_instance() @test {
     assert(history.has_previous(&fixture.scene, node));
     PoseRecord* pose = history.previous_pose(&fixture.scene, node);
     assert(pose.palette.len == 2 * 4 && pose.instance_count == 3);
-    model::set_crowd(&fixture.assets, &fixture.scene, node, instances[:2])!!;
+    model::set_crowd(
+        assets: &fixture.assets,
+        scene: &fixture.scene,
+        node: node,
+        instances: instances[:2],
+    )!!;
     assert(pose.instance_count != fixture.scene.get(node, AnimatedCrowd).count);
 }
 
@@ -629,7 +662,7 @@ fn void test_pending_crowds_retain_colors_starts_and_atomic_part_preparation() @
     AnimatedCrowd* pending = fixture.scene.get(second, AnimatedCrowd);
     assert(!ready.is_prepared() && !pending.is_prepared());
     assert(fixture.scene.count(InstancedMesh) == 0 && !first.first_child && !second.first_child);
-    assert(ready.placements.len == 3 && ready.poses.len == 3 && ready.colors.len == 3);
+    assert(ready.placements.len == 3 && ready.seeds.len == 3 && ready.colors.len == 3);
     assert(ready.placements[1].scale == (Vec3){ 1, 1, 1 } && ready.colors[1] == (Vec4){ 1, 1, 1, 1 });
     instances[0].pose.time = 0.6f;
     instances[0].color = { 1, 0, 0, 1 };
@@ -640,8 +673,8 @@ fn void test_pending_crowds_retain_colors_starts_and_atomic_part_preparation() @
         instances: instances[..],
     )!!;
     anim::crowd_update(&fixture.assets, &fixture.scene, 0.1f);
-    assert(ready.poses[0].time == 0.25f && ready.start_times[0] == 0.25f);
-    assert(pending.poses[0].time == 0.6f && pending.start_times[0] == 0.6f);
+    assert(ready.seeds[0].time == 0.25f && ready.start_times[0] == 0.25f);
+    assert(pending.seeds[0].time == 0.6f && pending.start_times[0] == 0.6f);
     assert(pending.colors[0] == instances[0].color && !second.first_child);
 
     assert(@catch(model::prepare_crowd_subtree(&fixture.assets, &fixture.scene, group)) == c3d::CAPACITY_EXCEEDED);
@@ -657,16 +690,16 @@ fn void test_pending_crowds_retain_colors_starts_and_atomic_part_preparation() @
     assert(@catch(model::prepare_crowd(&fixture.assets, &fixture.scene, second)) == c3d::CAPACITY_EXCEEDED);
     assert(tracking.allocated() == bytes && !second.first_child);
     anim::crowd_update(&fixture.assets, &fixture.scene, 0.1f);
-    assert(math::abs(ready.poses[0].time - 0.35f) < TOLERANCE && ready.start_times[0] == 0.25f);
-    assert(pending.poses[0].time == 0.6f);
+    assert(math::abs(base_action(ready, 0).time - 0.35f) < TOLERANCE && ready.start_times[0] == 0.25f);
+    assert(pending.seeds[0].time == 0.6f);
     fixture.scene.remove(blocker);
     model::prepare_crowd(&fixture.assets, &fixture.scene, second)!!;
     assert(pending.is_prepared() && pending.colors[0] == instances[0].color);
     assert(c3d::same_id(ready.parts[0].batch, first_part));
-    ready.poses[0].time = 0.8f;
+    base_action(ready, 0).time = 0.8f;
     sz allocations = tracking.total_allocation_count();
     model::prepare_crowd_subtree(&fixture.assets, &fixture.scene, group)!!;
-    assert(tracking.total_allocation_count() == allocations && ready.poses[0].time == 0.8f);
+    assert(tracking.total_allocation_count() == allocations && base_action(ready, 0).time == 0.8f);
     assert(ready.start_times[0] == 0.25f && pending.start_times[0] == 0.6f);
     destroy_fixture(&fixture);
     assert(!tracking.has_leaks());
@@ -733,7 +766,7 @@ fn void test_pending_crowd_rejects_retired_sources_before_runtime_allocation() @
         assert(@catch(model::prepare_crowd(&fixture.assets, &fixture.scene, node)) == c3d::INVALID_ID);
         AnimatedCrowd* crowd = fixture.scene.get(node, AnimatedCrowd);
         assert(!crowd.is_prepared() && !node.first_child && !crowd.parts.len && !crowd.palettes.len);
-        assert(crowd.count == 1 && crowd.poses[0].time == 0.25f && crowd.start_times[0] == 0.25f);
+        assert(crowd.count == 1 && crowd.seeds[0].time == 0.25f && crowd.start_times[0] == 0.25f);
         assert(fixture.scene.count(InstancedMesh) == 0 && fixture.scene.world.entities.free_count == free_nodes);
         assert(tracking.allocated() == bytes && tracking.total_allocation_count() == allocations);
         destroy_fixture(&fixture);
@@ -763,7 +796,7 @@ fn ModelTemplate copy_template_with_clip(ModelTemplate* source, ClipId extra) @l
     return copy;
 }
 
-fn void test_crowd_refuses_clip_with_more_tracks() @test {
+fn void test_crowd_accepts_compatible_clip_with_more_tracks() @test {
     Fixture fixture = make_fixture();
     defer destroy_fixture(&fixture);
     Node* node = add_crowd(&fixture, {});
@@ -795,8 +828,51 @@ fn void test_crowd_refuses_clip_with_more_tracks() @test {
 
     CrowdInstance[1] instances = { walker(&fixture, placed({ 0, 0, 0 })) };
     instances[0].pose.clip = wide_id;
-    assert(@catch(model::set_crowd(&fixture.assets, &fixture.scene, node, instances[..])) == c3d::INVALID_ARGUMENT);
+    model::set_crowd(
+        assets: &fixture.assets,
+        scene: &fixture.scene,
+        node: node,
+        instances: instances[..],
+    )!!;
 
+    assert(base_action(fixture.scene.get(node, AnimatedCrowd), 0).cursors.len == 2);
     instances[0].pose.clip = fixture.swing;
-    model::set_crowd(&fixture.assets, &fixture.scene, node, instances[..])!!;
+    model::set_crowd(
+        assets: &fixture.assets,
+        scene: &fixture.scene,
+        node: node,
+        instances: instances[..],
+    )!!;
+}
+
+fn void test_crowd_trace_bounds_follow_nonzero_render_origin() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    CrowdInstance[2] instances = {
+        walker(&fixture, placed({ 0, 0, 0 })),
+        walker(&fixture, placed({ 6, 0, 0 }, 0, { -2, 3, 0.5f })),
+    };
+    Node* owner = add_crowd(&fixture, instances[..]);
+    AnimatedCrowd* crowd = fixture.scene.get(owner, AnimatedCrowd);
+    Vec3 origin = { 1200000, 3200, -2000000 };
+    owner.local.position = origin + (Vec3){ 10, 20, 30 };
+    part_batch(&fixture, crowd, 0).trace = true;
+    part_batch(&fixture, crowd, 1).trace = true;
+    fixture.scene.update_world();
+    @pool() {
+        render::TraceCollection collection = render::collect_trace_instances(
+            allocator: tmem,
+            scene: &fixture.scene,
+            assets: &fixture.assets,
+            origin: origin,
+        );
+        assert(collection.records.len == 4);
+        foreach (&record : collection.records) {
+            Mat4 placement = maths::rebase(owner.world, origin)
+              .mul(instances[record.instance_index].placement.to_mat4());
+            Aabb expected = maths::aabb_transform(crowd.pose_bounds, placement);
+            assert(record.bounds.min == expected.min && record.bounds.max == expected.max);
+            assert(record.bounds.min.x < 100 && record.bounds.max.x < 100);
+        }
+    };
 }

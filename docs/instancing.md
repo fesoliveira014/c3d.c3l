@@ -198,8 +198,8 @@ Example: `python3 scripts/build.py --example instancing`. `--fade-field` adds 4,
 
 ## Crowds
 
-A crowd draws many animated copies of one skinned model, each instance with its own clip, time and
-speed, in one draw per skinned part per parity per pass.
+A crowd draws animated copies of one model, with independent playback, in one draw per mesh part,
+parity and pass. Skinned, rigid and morph-only parts use the same logical instance identity.
 
 ```c3
 Node* crowd = model::add_crowd(
@@ -218,17 +218,20 @@ while (window.poll()) {
 }
 ```
 
-- `add_crowd` covers every skin of the template that shares one skeleton and joint list; it faults
-  `INVALID_ARGUMENT` for a template without skins, skins on different skeletons, more instances than
-  `capacity`, or an instance clip the template does not own. It creates the crowd node, which carries
-  `AnimatedCrowd`, and one child `InstancedMesh` node per skinned part: one scene node plus one per part.
-  Meshes without a skin (a rigid prop) are not drawn; `template.meshes.len - crowd.parts.len` of them
-  are left out.
+- `add_crowd` creates an `AnimatedCrowd` owner and one child `InstancedMesh` per template mesh.
+  Skin-free templates are valid. Every skin must have identical ordered joints and bitwise equal
+  inverse binds; distinct skeleton IDs with the same data are accepted. Incompatible bindings,
+  invalid morph defaults or more instances than capacity give `INVALID_ARGUMENT` before mutation.
+  Any live clip compatible with the captured node/morph layout may play; membership in the
+  template's clip list is not required.
 - Each `CrowdInstance` has a placement, a `CrowdPose` (`clip`, `time`, `speed`, `loop`) and a tint.
-  `set_crowd` replaces them and the live count for every part at once.
+  `set_crowd` replaces them and the live count for every part atomically. Replacement, shrink,
+  regrowth and reorder give fresh source/action generations; old handles never name replacements.
+  Placement, tint and root-motion helper edits preserve playback and identity.
 - Shared preparation and removal rules are in the [owner readiness table](owner_readiness.md).
 - `model::attach_crowd` attaches authoring to an existing node. It copies capacity-sized placements,
-  poses, authored start times and colors, and retains the pose bounds and initial part trace flag.
+  seed poses, authored start times and colors, and retains the pose bounds and initial part trace flag.
+  Optional neutral authoring captures per-instance actions, masks and spaces for later preparation.
   It creates no part nodes, palettes or assets. `AnimatedCrowd.is_prepared()` reports readiness;
   pending crowds produce no generated draw and `crowd_update` skips them unchanged.
 - `model::prepare_crowd(assets, scene, node)` installs all runtime arrays and part batches atomically.
@@ -237,21 +240,43 @@ while (window.poll()) {
   retains owners that prepared successfully. A failed owner retains its authoring for retry;
   preparing an already-prepared crowd is a no-op. `add_crowd` combines attachment and preparation.
 - `attach_crowd` and `set_crowd` capture each input `pose.time` in `AnimatedCrowd.start_times`.
-  `poses.clip`, `poses.speed` and `poses.loop` remain the current authored playback configuration;
-  `poses.time` is the advancing runtime clock. Direct time edits seek runtime playback without
-  changing the authored start; `set_crowd` defines a new authored start. Retained `colors` supply
-  the initial tint to every generated part. Unused initial slots have identity placement, white
-  color, zero clip/time, speed 1 and looping enabled; only the first `count` slots are live.
-- `crowd_update` advances every pose (loop wraps, otherwise the time clamps), samples its clip into one
-  model-space palette per instance, writes the placements into every part batch and bounds each batch
-  by `pose_bounds` under every placement. Poses are independent: no blending, fading or retargeting per
-  instance; a character that needs those is an `Animator` instance.
+  The input pose is a seed/base action, not writable runtime storage. `AnimatedCrowd.poses` is
+  removed: obtain `crowd.playback.instance_id(index)`, borrow a `CrowdPlayer` with `player(id)`,
+  then use `base_action()` or shared `play`, `action`, `stop`, `cross_fade` and 1D space controls.
+  `base_action()` returns `INVALID_ID` after that seed action is removed. Runtime time edits leave
+  the captured start unchanged. Reacquire player/action/space borrows after structural changes.
+- `actions_per_instance` is fixed at preparation, defaults to 4 and must be in `[1,16]`.
+  Space members consume these action slots. Regular/additive layers, copied boolean masks,
+  fades and phase-synchronized 1D spaces use the same evaluator as `Animator`. Cursors and
+  additive references allocate at play; updates allocate nothing. Retarget clips at load time.
+- `crowd_update` evaluates every live instance once, restores authored defaults for missing tracks,
+  and publishes palettes, complete logical morph weights and affine part matrices. Mesh and bind
+  transforms apply once. Part parity can differ for animated rigid meshes; sorted/visible lists
+  and previous pose data retain logical source/part correspondence.
+- Root motion is published in `crowd.playback.slots[index].root_motion`. Call
+  `scene.apply_crowd_root_motion(crowd)` once after an update to consume each live delta; movement
+  remains application-controlled. Root mode/yaw and offset-turn pivot match `Animator`.
+- One crowd-wide `events` buffer retains `event_count` entries; each entry identifies instance
+  slot/generation and its shared fired event. Order is source slot, action order, crossing order.
+  `event_capacity` defaults to 1024 and is fixed at preparation. Zero is drop-only; other sizes
+  keep the fitting prefix. `events_dropped` saturates and both counters reset every update.
+- Fixed per-instance playback payload is
+  `N*Transform::size + W*float::size + M*float[]::size`
+  `+ A*(Action::size + AnimationActionId::size + 2*uint::size + N*bool::size)`
+  `+ MAX_BLEND_SPACES*BlendSpace1D::size + CrowdPlaybackSlot::size`, multiplied by capacity,
+  where N is node count, M mesh count, W complete logical morph width and A action capacity.
+  The owner also retains copied model baselines and one shared pose scratch block. Crowd-wide
+  output and crossing scratch cost `event_capacity*(CrowdEvent::size + EventBookmark::size)`.
+  Crowd placements, tints, seeds, starts, parts and `capacity*joints*Mat4::size`
+  palettes are separate retained arrays. Active cursors/additive references add their actual
+  clip-dependent bytes at play; allocator alignment and metadata add overhead.
 - `pose_bounds` is instance-local and must cover every pose of one instance; culling and shadow fitting
   use nothing else.
 - Part nodes keep an identity local transform and are removed only by removing the crowd node, which
   removes them with it. The crowd's model must stay in the store while the crowd lives.
-- Every part reads the same palettes: all parts share the placements, so they pack instances in the
-  same parity order. Morph weights are per instance and per part.
+- Skinned parts share one logical palette per source. Rigid and morph-only parts use their own
+  animated mesh transform, retaining shear under composed nonuniform scale. Morph weights are
+  per instance and part; no per-skin palette or joint remapping is allocated.
 - `crowd_update` marks every part batch, so part records upload every frame (128 bytes per instance
   per part).
 - The renderer uploads one palette array per crowd per frame (`joints * 64` bytes per instance) and
@@ -259,8 +284,8 @@ while (window.poll()) {
   instances of a 53-joint character) the upload takes dedicated overflow memory every frame.
 - Crowds enter the ray tracing paths (shadows, ambient occlusion, reflections, probes, path tracing) only through
   `add_crowd(trace: true)`, which sets `trace` on every part batch; a part batch's `trace` can be edited afterwards
-  like any other. Each traced placement of each part takes one posed trace slot at the placement's pose, so a crowd of
-  N placements and P parts holds N x P slots: raise `RendererDesc.max_posed_trace_instances` past that (placements
+  like any other. Each traced skinned or morphed placement takes one posed trace slot; rigid-only parts retain the
+  rest-geometry path. Raise `RendererDesc.max_posed_trace_instances` past the required posed slots (placements
   beyond it are left out of the trace, counted in `Stats.trace_posed_overflow`). A slot costs the posed streams, a
   refit copy and a bottom level of its part ([scene trace](scene_trace.md#posed-instances)). Raster shadows and
   temporal views work either way. The default is untraced.
@@ -274,4 +299,10 @@ while (window.poll()) {
 
 Example: `python3 scripts/build.py --example skinned_crowd` walks 512 instances of the committed Quaternius
 character through six of its clips; `B` switches to 512 `Animator` instances of the same model for
-comparison, `--baseline` starts there.
+comparison, `--baseline` starts there. `--compare` advances both representations on every update and
+shows maximum local position, rotation, scale and morph differences. This mode includes both
+playback costs and the comparison loop; use the single-representation modes for measurements.
+`Space` pauses/resumes the first source through its base-action controls. The panel displays published
+root displacement and event/drop counts; `R` applies each update's published root delta once. The
+example's default KEEP clips publish no extracted displacement; extraction configuration belongs to
+the captured play description.

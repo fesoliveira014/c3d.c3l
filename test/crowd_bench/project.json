@@ -1,0 +1,60 @@
+{
+  "langrev": "1",
+  "dependency-search-paths": [
+    "../../lib",
+    "../../lib/gpu.c3l/lib"
+  ],
+  "dependencies": [
+    "c3d",
+    "gpu",
+    "vk",
+    "vma",
+    "spvreflect",
+    "sdl3",
+    "c3imgui",
+    "c3cg",
+    "cgltf",
+    "ufbx"
+  ],
+  "features": [],
+  "wincrt": "static",
+  "output": "build",
+  "safe": true,
+  "targets": {
+    "crowd_bench": {
+      "type": "executable",
+      "sources": [
+        "bench.c3"
+      ]
+    },
+    "crowd_bench_o3": {
+      "type": "executable",
+      "sources": [
+        "bench.c3"
+      ],
+      "opt": "O3",
+      "safe": true,
+      "output": "build_o3"
+    },
+    "crowd_bench_native": {
+      "type": "executable",
+      "sources": [
+        "bench.c3",
+        "native.c3"
+      ],
+      "dependencies": [
+        "c3d_profile",
+        "shaderc"
+      ],
+      "features": [
+        "C3D_CROWD_BENCH_NATIVE",
+        "C3D_PROFILE_GPU",
+        "C3D_PROFILE_INTERNAL",
+        "C3D_SHADER_COMPILER"
+      ],
+      "opt": "O3",
+      "safe": true,
+      "output": "build_native"
+    }
+  }
+}

@@ -358,19 +358,33 @@ fn TraceCollection collect_trace_instances(
                 collection.dangling++;
             } else if (traceable(assets, batch.geometry, batch.material)) {
                 if (batch.sway.amplitude != 0) collection.sway_at_rest++;
+
                 TracePoseSource source = { .node = node };
                 AnimatedCrowd* crowd = scene.get(node.parent, AnimatedCrowd);
                 if (crowd) {
                     foreach (uint part, &crowd_part : crowd.parts) {
                         if (!c3d::same_id(crowd_part.batch, entity)) continue;
-                        source = { .kind = TracePose.CROWD, .node = node, .crowd = crowd, .part = part };
+
+                        source = {
+                            .kind = crowd_part.skinned || crowd_part.weight_count ? TracePose.CROWD : TracePose.REST,
+                            .node = node,
+                            .crowd = crowd,
+                            .part = part,
+                        };
                     }
                 }
+
                 uint[] palette_order;
                 if (source.kind == TracePose.CROWD) {
                     palette_order = alloc::new_array(tmem, uint, batch.count);
-                    crowd_packed_order(palette_order, batch.transforms[:batch.count]);
+                    crowd_packed_order(
+                        packed: palette_order,
+                        placements: batch.transforms[:batch.count],
+                        crowd: crowd,
+                        part: source.part,
+                    );
                 }
+
                 foreach (uint index, transform : batch.transforms[:batch.count]) {
                     TraceInstance record = trace_record(
                         assets:         assets,
@@ -380,12 +394,16 @@ fn TraceCollection collect_trace_instances(
                         world:          node.world,
                         cast_shadow:    batch.cast_shadow,
                         instance_index: index,
-                        local:          transform.to_mat4(),
+                        local:          source.crowd ? crowd.part_transform(index, source.part) : transform.to_mat4(),
                         origin:         origin,
                     );
                     TracePoseSource instance = source;
+                    if (source.crowd) {
+                        Mat4 placement = maths::rebase(node.world, origin).mul(crowd.placements[index].to_mat4());
+                        record.bounds = maths::aabb_transform(crowd.pose_bounds, placement);
+                    }
+
                     if (source.kind == TracePose.CROWD) {
-                        record.bounds = maths::aabb_transform(crowd.pose_bounds, trace_instance_world(&record, origin));
                         instance.palette_index = palette_order[index];
                     }
                     collection.records[count] = record;

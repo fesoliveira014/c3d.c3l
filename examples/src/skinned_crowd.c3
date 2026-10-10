@@ -49,7 +49,17 @@ fn float Random.next(&self) @local {
 struct Showcase @local {
     Node*    crowd;
     Node*[CROWD_SIZE] animated;
+    AnimationActionId[CROWD_SIZE] base_actions;
     bool     baseline;
+    bool     compare;
+    bool     consume_motion;
+    RootMotionDelta motion;
+    uint events;
+    uint dropped_events;
+    float    position_error;
+    float    rotation_error;
+    float    scale_error;
+    float    morph_error;
 }
 
 fn String example_path(String relative) @local {
@@ -87,6 +97,41 @@ fn void set_baseline(Scene* scene, Showcase* showcase, bool baseline) @local {
     foreach (node : showcase.animated) node.visible = baseline;
 }
 
+fn void compare_playback(Scene* scene, Showcase* showcase) @local {
+    AnimatedCrowd* crowd = scene.get(showcase.crowd, AnimatedCrowd);
+    CrowdPlaybackState* playback = crowd.playback;
+
+    showcase.position_error = 0;
+    showcase.rotation_error = 0;
+    showcase.scale_error = 0;
+    showcase.morph_error = 0;
+
+    foreach (usz source, node : showcase.animated) {
+        ModelInstance* instance = scene.get(node, ModelInstance);
+        Transform[] poses = playback.poses[source * playback.base_pose.len:playback.base_pose.len];
+
+        foreach (uint index, pose : poses) {
+            Transform reference = instance.present_node(index).local;
+            float position_error = (pose.position - reference.position).length();
+            float scale_error = (pose.scale - reference.scale).length();
+            Quat difference = pose.rotation.mul(reference.rotation.conjugate()).normalize();
+            Vec3 axis = { difference.i, difference.j, difference.k };
+            float angle = 2 * math::atan2(axis.length(), math::abs(difference.l));
+            showcase.position_error = math::max(showcase.position_error, position_error);
+            showcase.rotation_error = math::max(showcase.rotation_error, angle);
+            showcase.scale_error = math::max(showcase.scale_error, scale_error);
+        }
+
+        foreach (usz mesh_index, template_node : playback.mesh_nodes) {
+            Mesh* mesh = scene.get(instance.present_node(template_node), Mesh);
+            float[] weights = playback.logical_weights[source * playback.mesh_nodes.len + mesh_index];
+            foreach (usz index, weight : weights) {
+                showcase.morph_error = math::max(showcase.morph_error, math::abs(weight - mesh.morph_weights[index]));
+            }
+        }
+    }
+}
+
 fn void panel(render::Renderer* renderer, Showcase* showcase) @local {
     imgui::set_next_window_pos(PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
     imgui::set_next_window_size(PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
@@ -96,6 +141,19 @@ fn void panel(render::Renderer* renderer, Showcase* showcase) @local {
         imgui::text("Frame: %.3f ms", (double)renderer.stats.frame_ms);
         imgui::text("Draws: %u", renderer.stats.draws);
         imgui::text("Instances: %u", renderer.stats.instances);
+        imgui::text("Space pauses slot 0; R toggles motion application");
+        imgui::text("Apply published motion: %s", showcase.consume_motion ? "on" : "off");
+        double root_x = showcase.motion.translation.x;
+        double root_z = showcase.motion.translation.z;
+        imgui::text("Root X/Z: %.5f / %.5f", root_x, root_z);
+        imgui::text("Events: %u; dropped: %u", showcase.events, showcase.dropped_events);
+        if (showcase.compare) {
+            imgui::text("Synchronized playback comparison");
+            imgui::text("Local position: %.6g m", (double)showcase.position_error);
+            imgui::text("Local rotation: %.6g rad", (double)showcase.rotation_error);
+            imgui::text("Local scale: %.6g", (double)showcase.scale_error);
+            imgui::text("Morph weight: %.6g", (double)showcase.morph_error);
+        }
     }
     imgui::end();
 }
@@ -128,6 +186,7 @@ fn void? run(
 ) @local {
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
+
     Node* camera_node = scene.add_camera(camera::perspective_deg(50, 0.1f), name: "camera")!;
     camera_node.local.position = CAMERA_POSITION;
     camera_node.local.rotation = maths::look_rotation(CAMERA_TARGET - CAMERA_POSITION, { 0, 1, 0 });
@@ -143,16 +202,48 @@ fn void? run(
         if (input.key_pressed(Scancode.B) && !input.keyboard_captured_by_gui) {
             set_baseline(scene, showcase, !showcase.baseline);
         }
+
+        if (input.key_pressed(Scancode.SPACE) && !input.keyboard_captured_by_gui) {
+            AnimatedCrowd* crowd = scene.get(showcase.crowd, AnimatedCrowd);
+            CrowdPlayer player = crowd.playback.player(crowd.playback.instance_id(0)!)!;
+            Action* base = player.base_action()!;
+            base.playing = !base.playing;
+            Animator* animator = scene.get(showcase.animated[0], Animator);
+            animator.action(showcase.base_actions[0]).playing = base.playing;
+        }
+
+        if (input.key_pressed(Scancode.R) && !input.keyboard_captured_by_gui) {
+            showcase.consume_motion = !showcase.consume_motion;
+        }
+
         gui_renderer.new_frame();
         defer {
             if (gui_renderer.frame_open) gui_renderer.finish_frame();
         }
-        if (showcase.baseline) {
-            anim::update(assets, scene, window.clock.delta);
-        } else {
-            anim::crowd_update(assets, scene, window.clock.delta);
+        if (showcase.baseline || showcase.compare) anim::update(assets, scene, window.clock.delta);
+        if (!showcase.baseline || showcase.compare) anim::crowd_update(assets, scene, window.clock.delta);
+
+        AnimatedCrowd* crowd = scene.get(showcase.crowd, AnimatedCrowd);
+        Animator* reference = scene.get(showcase.animated[0], Animator);
+
+        showcase.motion = showcase.baseline ? reference.root_motion : crowd.playback.slots[0].root_motion;
+        showcase.events = showcase.baseline ? reference.event_count : crowd.playback.event_count;
+        showcase.dropped_events = showcase.baseline ? reference.events_dropped : crowd.playback.events_dropped;
+
+        if (showcase.consume_motion) {
+            if (showcase.baseline || showcase.compare) {
+                foreach (node : showcase.animated) {
+                    Animator* animator = scene.get(node, Animator);
+                    anim::apply_root_motion(node, animator.root_motion);
+                }
+            }
+
+            if (!showcase.baseline || showcase.compare) scene.apply_crowd_root_motion(crowd);
         }
+
         scene.update_world();
+        if (showcase.compare) compare_playback(scene, showcase);
+
         panel(renderer, showcase);
         gui_renderer.finish_frame();
         platform::sync_window(window, renderer);
@@ -165,18 +256,22 @@ fn void? run(
         )!;
         if (window.clock.total - last_report >= REPORT_SECONDS) {
             last_report = window.clock.total;
-            io::printfn("%s: cpu_record %.3f ms, frame %.3f ms, draws %d, instances %d",
-                showcase.baseline ? "baseline" : "crowd", renderer.stats.cpu_record_ms, renderer.stats.frame_ms,
-                renderer.stats.draws, renderer.stats.instances);
+            String mode = showcase.baseline ? "baseline" : "crowd";
+            io::printf("%s: cpu_record %.3f ms", mode, renderer.stats.cpu_record_ms);
+            io::printf(", frame %.3f ms, draws %d", renderer.stats.frame_ms, renderer.stats.draws);
+            io::printfn(", instances %d", renderer.stats.instances);
         }
     }
 }
 
 fn int main(String[] args) {
     bool baseline;
+    bool compare;
     foreach (argument : args[1..]) {
         if (argument == "--baseline") {
             baseline = true;
+        } else if (argument == "--compare") {
+            compare = true;
         } else {
             io::eprintfn("Unknown argument: %s", argument);
             return 1;
@@ -207,7 +302,7 @@ fn int main(String[] args) {
 
     Random random = { .state = RANDOM_SEED };
     CrowdInstance[CROWD_SIZE] instances;
-    Showcase showcase;
+    Showcase showcase = { .compare = compare };
     foreach (uint index, &instance : instances) {
         ClipId clip = clips[index % clips.len];
         float duration = assets.clip(clip).data.duration;
@@ -225,6 +320,7 @@ fn int main(String[] args) {
         animated.local = instance.placement;
         Animator* animator = anim::add_animator(&scene, animated);
         AnimationActionId action_id = animator.play(&assets, clip)!!;
+        showcase.base_actions[index] = action_id;
         Action* action = animator.action(action_id);
         action.time = instance.pose.time;
         action.speed = instance.pose.speed;

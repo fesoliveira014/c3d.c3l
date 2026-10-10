@@ -281,8 +281,8 @@ serialization add-on compares, so a file saved before a compatible replacement s
 
 Existing `ModelInstance`s keep the nodes, base pose, morph baselines, lights, cameras and clip list they were created with.
 They show the new meshes, textures and clips because their ids are unchanged. Instances created afterwards use the new
-template. A crowd prepared before the replacement keeps its sizes: `set_crowd` faults with `INVALID_ARGUMENT` for a clip
-with more tracks than the crowd was prepared for.
+template. Prepared crowds keep their captured node and morph layout, while compatible clips allocate their own cursors
+at play or seed replacement. The number of tracks is not limited by the template's original clip list.
 
 Missing parts are records whose key is `<model key>#<suffix>`, where the suffix contains no further `#`, that the document
 does not name. This is the importers' sub-asset form (`#mesh`, `#material`, `#image`, `#sampler`, `#skeleton`, `#anim`).

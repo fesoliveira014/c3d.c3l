@@ -338,8 +338,9 @@ fn uint pose_input_bytes(TracePoseSource* source, AssetStore* assets) @private {
             uint palette = source.skin ? (uint)(source.skin.joints.len * Mat4f::size) : 0;
             return palette + (mesh_morphs(assets, source.mesh) ? (uint)MorphWeightsGpu::size : 0);
         case CROWD:
-            uint palette = source.crowd.joint_count * (uint)Mat4f::size;
-            return palette + (source.crowd.parts[source.part].target_count ? (uint)MorphWeightsGpu::size : 0);
+            uint palette = source.crowd.parts[source.part].skinned
+              ? source.crowd.joint_count * (uint)Mat4f::size : 0;
+            return palette + (source.crowd.parts[source.part].weight_count ? (uint)MorphWeightsGpu::size : 0);
     }
 }
 
@@ -375,15 +376,19 @@ fn char[] pose_inputs(Renderer* renderer, TracePoseSource* source, TraceInstance
             }
         case CROWD:
             AnimatedCrowd* crowd = source.crowd;
-            palette_bytes = (usz)crowd.joint_count * Mat4f::size;
-            mem::copy(inputs.ptr, &crowd.palettes[(usz)record.instance_index * crowd.joint_count], (sz)palette_bytes);
             CrowdPart* part = &crowd.parts[source.part];
-            morphs = part.target_count > 0;
+            if (part.skinned) {
+                palette_bytes = (usz)crowd.joint_count * Mat4f::size;
+                Mat4* palette = &crowd.palettes[(usz)record.instance_index * crowd.joint_count];
+                mem::copy(inputs.ptr, palette, (sz)palette_bytes);
+            }
+
+            morphs = part.weight_count > 0;
             if (morphs) {
-                usz first = (usz)record.instance_index * crowd.morph_stride + part.target_offset;
+                usz first = (usz)record.instance_index * crowd.morph_stride + part.weight_offset;
                 MorphChannel[] channels = renderer.assets.geometry(record.geometry).data.channels;
                 block = pack_morph_selection(
-                    geometry::select_morph_targets(channels, crowd.morph_weights[first:part.target_count]),
+                    geometry::select_morph_targets(channels, crowd.morph_weights[first:part.weight_count]),
                 );
             }
     }
@@ -730,9 +735,12 @@ fn gpu::GpuAddress? write_pose_root(
         case CROWD:
             AnimatedCrowd* crowd = source.crowd;
             usz slot_index = source.palette_index;
-            palette = resolve_crowd_palettes(renderer, source.node.parent, crowd)!
-              + (gpu::GpuAddress)(slot_index * crowd.joint_count * Mat4f::size);
-            if (crowd.parts[source.part].target_count) {
+            if (crowd.parts[source.part].skinned) {
+                palette = resolve_crowd_palettes(renderer, source.node.parent, crowd)!
+                  + (gpu::GpuAddress)(slot_index * crowd.joint_count * Mat4f::size);
+            }
+
+            if (crowd.parts[source.part].weight_count) {
                 morph = resolve_crowd_morphs(
                     renderer:   renderer,
                     batch_node: source.node,

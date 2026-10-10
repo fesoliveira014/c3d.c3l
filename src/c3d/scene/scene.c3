@@ -459,7 +459,7 @@ fn void destroy_scene(Scene* scene) {
     *scene = {};
 }
 
-fn void link(Node* node, Node* parent) @local {
+fn void link(Node* node, Node* parent) @private {
     node.parent = parent;
     node.next_sibling = parent.first_child;
     parent.first_child = node;

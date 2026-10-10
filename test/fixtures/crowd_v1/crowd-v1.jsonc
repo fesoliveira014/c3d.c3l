@@ -1,0 +1,151 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": 0,
+      "parent": null,
+      "name": "crowd_wire_subject",
+      "local": {
+        "position": [
+          4,
+          2,
+          -8
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 9,
+      "visible": true,
+      "components": {
+        "c3d.AnimatedCrowd": {
+          "version": 1,
+          "value": {
+            "model": "crowd_codec_reference/model",
+            "capacity": 5,
+            "pose_bounds": {
+              "min": [
+                -3,
+                -2,
+                -1
+              ],
+              "max": [
+                4,
+                6,
+                2
+              ]
+            },
+            "trace": true,
+            "instances": [
+              {
+                "placement": {
+                  "position": [
+                    1,
+                    2,
+                    3
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    -1,
+                    1,
+                    1
+                  ]
+                },
+                "pose": {
+                  "clip": "crowd_codec_reference/model#anim/0",
+                  "time": 0.75,
+                  "speed": -0.5,
+                  "loop": true
+                },
+                "color": [
+                  0.200000003,
+                  0.400000006,
+                  0.600000024,
+                  0.800000012
+                ]
+              },
+              {
+                "placement": {
+                  "position": [
+                    -2,
+                    0.5,
+                    4
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    1,
+                    2,
+                    0.5
+                  ]
+                },
+                "pose": {
+                  "clip": "crowd_codec_reference/model#anim/0",
+                  "time": 0.25,
+                  "speed": 0,
+                  "loop": false
+                },
+                "color": [
+                  0.800000012,
+                  0.600000024,
+                  0.400000006,
+                  0.200000003
+                ]
+              },
+              {
+                "placement": {
+                  "position": [
+                    5,
+                    -1,
+                    2
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "pose": {
+                  "clip": "crowd_codec_reference/model#anim/0",
+                  "time": 0.125,
+                  "speed": 1,
+                  "loop": true
+                },
+                "color": [
+                  0.100000001,
+                  0.300000012,
+                  0.5,
+                  0.699999988
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

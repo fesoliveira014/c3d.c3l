@@ -1,0 +1,16 @@
+# Authored animation fixtures
+
+These deterministic C3 recipes are project-authored and licensed under the repository's [MIT licence](../../LICENSE). Recipe version 1 identifies the layouts and controls below. [SHA256SUMS](SHA256SUMS) identifies the current recipe bytes; it is not a receipt for a historical Animator capture.
+
+| Corpus | Recipe and controls | Contract |
+| --- | --- | --- |
+| F-MIXED | [animated_crowd_fixtures.c3](animated_crowd_fixtures.c3) | Eight template nodes, five meshes, two identical ordered two-joint skins, animated rigid and two independent morph parts. The skin-free variant retains three rigid/morph meshes. |
+| F-EXACT | [fixture.c3](../animation_reference/fixture.c3), [controls.c3](../animation_reference/controls.c3), [capture.c3](../animation_reference/capture.c3), [real.c3](../animation_reference/real.c3) | Five template nodes, two two-weight morph meshes, one two-joint skin and five clips. Public Animator controls cover interpolation, masks, layers, fades, additive references, spaces, events, offset pivots and root motion. |
+
+F-MIXED's model-local authored envelope is `PARTS_POSE_BOUNDS`: min `(-6, -3, -4)`, max `(12, 6, 4)`. It covers the recipe's rest, posing and missing-weight/default-restoration clips. The literal world-space arrays use instance-root translation `(10, 0, -2)`; this translation is not part of the envelope. Each mesh has a three-vertex triangle. Nonidentity mesh/bind transforms and a scaled rigid ancestor distinguish missing and repeated transform application. Its named `lift` channel has two targets at full weights `0.5` and `1`, with separate mesh defaults `0.25` and `0.75`.
+
+F-EXACT is a control/evaluation recipe, not a crowd rendering envelope. Its exact node transforms, morph defaults, tracks and events are authored in `fixture.c3`; operation order and normalized action labels are authored in `controls.c3`. The [capture README](../animation_reference/README.md) defines its version-1 field-word format and replay command. Historical source-tree/compiler/binary provenance belongs to the capture receipts and is not inferred from this inventory.
+
+The immutable CC0 real inputs remain separate from these authored recipes: Quaternius source SHA256 `272d5c1e2c27f566595ece27b6985935d42dcee1dacee1b320af9f0c40d5c97c` and AnimatedMorphCube SHA256 `214ee56160a50dbf22543a1d66dbf860986e87f0efac3d89feac1359d0e6aeab`. Their source notices and licences remain with the files under `examples/assets/`.
+
+The signed-target and fault variants in [test_crowd_parts.c3](../src/test_crowd_parts.c3) extend the authored recipe inside their test-owned AssetStore. Five channels produce ten nonzero signed target contributions; literal top-eight indices/coefficients and displacements are independent of the production selector. Two omitted targets have large deltas so an all-target bound cannot satisfy the literal bound. This variant uses its own model-local envelope, min `(-6, -3, -4)`, max `(12, 50, 4)`, for its literal displacements `41` and `45.5`. Additional tests use the positive placement and scale `(-2, 3, 0.5)`, with affine shear, to check rigid/morph vertices against the shared authored envelope. These test-only mutations do not change the shared F-MIXED recipe or its envelope.

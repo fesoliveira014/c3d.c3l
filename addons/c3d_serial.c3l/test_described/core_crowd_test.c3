@@ -25,8 +25,13 @@ fn void test_crowd_authoring_round_trips_pending_and_restarts_captured_clocks() 
         } };
         Aabb bounds = { .min = { -1, -1, -1 }, .max = { 1, 1, 1 } };
         Node* source = model::add_crowd(
-            assets: &fixture.assets, scene: &fixture.source, model: model_id, capacity: 3,
-            pose_bounds: bounds, instances: instances[..], trace: true,
+            assets: &fixture.assets,
+            scene: &fixture.source,
+            model: model_id,
+            capacity: 3,
+            pose_bounds: bounds,
+            instances: instances[..],
+            trace: true,
         )!!;
         char[] bytes = serial::write_subtree(
             allocator: tmem,
@@ -42,7 +47,8 @@ fn void test_crowd_authoring_round_trips_pending_and_restarts_captured_clocks() 
         )!!;
         anim::crowd_update(&fixture.assets, &fixture.source, 0.5f);
         AnimatedCrowd* original = fixture.source.get(source, AnimatedCrowd);
-        assert(original.poses[0].time == 0.375f && original.start_times[0] == 0.125f);
+        assert(original.playback.slots[0].actions.get(original.playback.slots[0].base_action).time == 0.375f
+          && original.start_times[0] == 0.125f);
         assert(text == serial::write_subtree_text(
             allocator: tmem,
             scene: &fixture.source,
@@ -57,7 +63,7 @@ fn void test_crowd_authoring_round_trips_pending_and_restarts_captured_clocks() 
             assert(!loaded.is_prepared() && restored.first_child == null);
             assert(loaded.count == 1 && loaded.placements.len == 3 && loaded.trace);
             assert(loaded.colors[0] == instances[0].color && loaded.colors[2] == (Vec4){ 1, 1, 1, 1 });
-            assert(loaded.start_times[0] == 0.125f && loaded.poses[0].time == 0.125f);
+            assert(loaded.start_times[0] == 0.125f && loaded.seeds[0].time == 0.125f);
             assert(text == serial::write_subtree_text(
                 allocator: tmem,
                 scene: &fixture.destination,
@@ -68,10 +74,13 @@ fn void test_crowd_authoring_round_trips_pending_and_restarts_captured_clocks() 
             anim::crowd_update(&fixture.assets, &fixture.destination, 0.5f);
             loaded = fixture.destination.get(restored, AnimatedCrowd);
             assert(loaded.is_prepared() && loaded.parts.len == original.parts.len);
-            assert(loaded.poses[0].time == original.poses[0].time);
+            assert(loaded.playback.slots[0].actions.get(loaded.playback.slots[0].base_action).time
+              == original.playback.slots[0].actions.get(original.playback.slots[0].base_action).time);
             for (usz index = 0; index < loaded.joint_count; index++) {
                 for (uint coefficient = 0; coefficient < 16; coefficient++) {
-                    assert(math::abs(loaded.palettes[index].m[coefficient] - original.palettes[index].m[coefficient]) < 1e-6f);
+                    assert(math::abs(
+                        loaded.palettes[index].m[coefficient] - original.palettes[index].m[coefficient],
+                    ) < 1e-6f);
                 }
             }
             assert(bytes == serial::write_subtree(
@@ -132,7 +141,9 @@ fn void test_crowd_owned_array_failures_leave_existing_scene_unchanged() @test {
             .pose = { .clip = fixture.assets.model(model_id).data.clips[0], .time = 0.25f, .speed = 1, .loop = true },
             .color = { 1, 1, 1, 1 },
         } };
-        CrowdAuthoring source = {
+        CrowdAuthoringV2 source = {
+            .actions_per_instance = anim::DEFAULT_CROWD_ACTIONS,
+            .event_capacity = anim::DEFAULT_CROWD_EVENT_CAPACITY,
             .model = model_id, .capacity = 3, .instances = instances[..],
             .pose_bounds = { .min = { -1, -1, -1 }, .max = { 1, 1, 1 } },
         };

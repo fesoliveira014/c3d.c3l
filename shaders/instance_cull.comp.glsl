@@ -11,6 +11,7 @@ layout(push_constant) uniform Push {
 } pc;
 
 GPU_DECLARE_READONLY_ARRAY_REF(CullInstances, InstanceGpu);
+GPU_DECLARE_READONLY_ARRAY_REF(CullBounds, mat4);
 GPU_DECLARE_READONLY_ARRAY_REF(CullBillboards, BillboardGpu);
 GPU_DECLARE_WRITEONLY_ARRAY_REF(VisibleOutput, uint);
 GPU_DECLARE_READONLY_ARRAY_REF(LodMetadata, LodMetadataGpu);
@@ -143,8 +144,12 @@ void main() {
                 if (instance_fade_scale(effects, instance_anchor(effects, model), seed) == 0.0) return;
             }
         }
-        if (!box_visible(root, model, margin)) return;
-        center = (model * vec4((root.bounds_min.xyz + root.bounds_max.xyz) * 0.5, 1.0)).xyz;
+        mat4 bounds_model = root.bounds_instances == 0ul ? model
+            : CullBounds(root.bounds_instances).values[source];
+
+        if (!box_visible(root, bounds_model, margin)) return;
+
+        center = (bounds_model * vec4((root.bounds_min.xyz + root.bounds_max.xyz) * 0.5, 1.0)).xyz;
     }
     uint index = atomicAdd(CullArgs(root.args).instance_count, 1u);
     VisibleOutput(root.visible).values[index] = source;

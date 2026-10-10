@@ -436,9 +436,12 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer PreviousPose
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer InstanceCullRoot {
     uint64_t instances;
+    uint64_t bounds_instances;
     uint64_t visible;
     uint64_t args;
     uint64_t counter;
+    uint _pad0;
+    uint _pad1;
     vec4 planes[6];
     vec4 bounds_min;
     vec4 bounds_max;

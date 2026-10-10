@@ -256,13 +256,21 @@ Ordinary pointer references capture the current live entity, including explicit
 LookAt/IK retargeting after slot reuse. Skin joints alone retain captured template
 identity: deleting a required template joint rejects export even if its address
 was reused, rather than silently rebinding the original skin.
-AnimatedCrowd restores in OWNER with its model, capacity, live placements/colors,
-clip/speed/loop settings, captured start times, bounds and trace flag. Loads remain
+AnimatedCrowd authoring version 2 restores in OWNER with its model, capacity,
+live placements/colors, action and event capacities, seed settings, captured
+start times, bounds and trace flag. It also retains configured per-instance
+actions, copied masks, layers, additive/root settings and 1D spaces. Original
+version 1 binary and JSONC streams read with the authored defaults. Loads remain
 pending with no generated part nodes; prepare_crowd builds runtime explicitly.
 Generated batches are omitted only after checking the retained owner association.
 Exporting a generated part without its owner, or adding authored components to an
 omitted part, returns INVALID_ARGUMENT. Pending and prepared owners write the same
-authoring; sampled clocks, palettes and cursors are not persisted.
+authoring. Export omits fading-out actions and settles incoming fades without
+changing the live owner. A retained standalone base action restarts at its
+captured start; other actions and spaces restart their clocks. Explicitly empty
+playback remains empty. Sampled clocks, handles, root deltas, fired events,
+drop counters, palettes and cursors are not persisted. Failed preparation keeps
+the complete pending authoring for retry.
 
 ## Authored numeric domains
 

@@ -147,29 +147,45 @@ fn void write_instance(
  Pack the live instances, unmirrored first, each group in array order.
  @param [out] records : "At least batch.count long."
  @param [&in] batch : "Live count above zero."
+ @param [in] crowd : "Null selects ordinary batch transforms."
+ @param part : "Logical crowd mesh; ignored for ordinary batches."
  @return "Index of the first mirrored record."
 *>
-fn uint pack_instance_records(InstanceGpu[] records, Mat4 node_world, InstancedMesh* batch) {
+fn uint pack_instance_records(
+    InstanceGpu[] records,
+    Mat4 node_world,
+    InstancedMesh* batch,
+    AnimatedCrowd* crowd = null,
+    uint part = 0,
+) {
     uint written;
     foreach (index, transform : batch.transforms[:batch.count]) {
-        if (scene::transform_mirrored(transform)) continue;
+        Mat4 local = crowd ? crowd.part_transform((uint)index, part) : transform.to_mat4();
+        bool mirrored = crowd ? local.determinant() < 0 : scene::transform_mirrored(transform);
+        if (mirrored) continue;
+
         write_instance(
             record: &records[written++],
-            world:  node_world.mul(transform.to_mat4()),
+            world:  node_world.mul(local),
             color:  batch.colors[index],
             seed:   instance_seed(transform.position),
         );
     }
+
     uint split = written;
     foreach (index, transform : batch.transforms[:batch.count]) {
-        if (!scene::transform_mirrored(transform)) continue;
+        Mat4 local = crowd ? crowd.part_transform((uint)index, part) : transform.to_mat4();
+        bool mirrored = crowd ? local.determinant() < 0 : scene::transform_mirrored(transform);
+        if (!mirrored) continue;
+
         write_instance(
             record: &records[written++],
-            world:  node_world.mul(transform.to_mat4()),
+            world:  node_world.mul(local),
             color:  batch.colors[index],
             seed:   instance_seed(transform.position),
         );
     }
+
     return split;
 }
 
@@ -182,10 +198,13 @@ fn void write_instance_locals(Mat4f[] locals, InstancedMesh* batch) {
     uint written;
     foreach (transform : batch.transforms[:batch.count]) {
         if (scene::transform_mirrored(transform)) continue;
+
         locals[written++] = bitcast(transform.to_mat4(), Mat4f);
     }
+
     foreach (transform : batch.transforms[:batch.count]) {
         if (!scene::transform_mirrored(transform)) continue;
+
         locals[written++] = bitcast(transform.to_mat4(), Mat4f);
     }
 }
@@ -334,6 +353,8 @@ fn gpu::GpuAddress? resolve_instances(Renderer* renderer, MeshCandidate* candida
             index:    index,
             batch:    candidate.batch,
             world:    candidate.node.world,
+            crowd:    candidate.crowd,
+            part:     candidate.crowd_part,
         )!;
     }
     return slot.records;
@@ -374,6 +395,8 @@ fn void? upload_instance_records(
     uint index,
     InstancedMesh* batch,
     Mat4 world,
+    AnimatedCrowd* crowd,
+    uint part,
 ) @private {
     GpuInstances* slot = &renderer.instances.slots[index];
     uint capacity = (uint)batch.transforms.len;
@@ -388,7 +411,15 @@ fn void? upload_instance_records(
     Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan staging = frame.upload.take(&renderer.device, bytes, STREAM_ALIGNMENT)!;
     InstanceGpu[] records = ((InstanceGpu*)staging.bytes.ptr)[:batch.count];
-    pack_instance_records(records, maths::rebase(world, renderer.frame_origin), batch);
+
+    pack_instance_records(
+        records: records,
+        node_world: maths::rebase(world, renderer.frame_origin),
+        batch: batch,
+        crowd: crowd,
+        part: part,
+    );
+
     gpu::GpuSpan destination = gpu::get_allocation_span(&renderer.device, slot.allocation)!;
     renderer.pending_copies.push({ .src = staging.span, .dst = destination.checked_subspan(0, bytes)! });
 
@@ -396,6 +427,7 @@ fn void? upload_instance_records(
     slot.revision = batch.revision;
     slot.world = world;
     slot.origin = renderer.frame_origin;
+
     renderer.stats.uploads++;
     renderer.stats.upload_bytes += (uint)bytes;
 }

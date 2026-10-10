@@ -60,7 +60,7 @@ fn void assert_authoring(Fixture* fixture, Node* root) @private {
     assert(ragdoll.bone_joints[1] == 1 && ragdoll.bone_nodes.len == 2);
     AnimatedCrowd* crowd = scene.get(child_named(root, "crowd"), AnimatedCrowd);
     assert(crowd.count == 1 && crowd.placements.len == 3 && crowd.colors[0].w == 0.8f);
-    assert(crowd.start_times[0] == 0.125f && crowd.poses[0].time == 0.125f && !crowd.is_prepared());
+    assert(crowd.start_times[0] == 0.125f && crowd.seeds[0].time == 0.125f && !crowd.is_prepared());
     Node* constraints = child_named(root, "constraints");
     Node* hip = child_named(constraints, "hip");
     IkChain* chain = scene.get(constraints, IkChain);
