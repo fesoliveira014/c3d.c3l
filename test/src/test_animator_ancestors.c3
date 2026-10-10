@@ -8,7 +8,25 @@ import c3d::maths;
 import c3d::model;
 import c3d::scene;
 import std::io;
+import std::io::path;
 import std::math;
+
+fn AssetStore create_ancestor_store() @local {
+    return asset::create_asset_store(mem, {
+        .max_geometries = 8,
+        .max_textures = 8,
+        .max_materials = 8,
+        .max_samplers = 8,
+        .max_models = 2,
+        .max_skeletons = 2,
+        .max_clips = 8,
+    });
+}
+
+fn String ancestor_fixture_path() @local {
+    Path source = path::tnew($$FILEPATH)!!;
+    return (String)source.parent()!!.tappend("../fixtures/gltf", "skin.gltf")!!;
+}
 
 fn sz animator_allocation_bytes(uint max_nodes) @local {
     TrackingAllocator tracker;
@@ -17,13 +35,13 @@ fn sz animator_allocation_bytes(uint max_nodes) @local {
 
     sz bytes;
     {
-        AssetStore assets = create_store();
+        AssetStore assets = create_ancestor_store();
         defer asset::destroy_asset_store(&assets);
 
         Scene scene = scene::create_scene(&tracker, { .max_nodes = max_nodes });
         defer scene::destroy_scene(&scene);
 
-        ModelId model = gltf::load_model(&assets, fixture_path("skin.gltf"))!!;
+        ModelId model = gltf::load_model(&assets, ancestor_fixture_path())!!;
         Node* root = model::instantiate(&assets, &scene, model)!!;
         anim::add_animator(&scene, root);
         scene.remove_component(root, Animator);
@@ -97,9 +115,9 @@ fn void test_animator_pivot_accepts_external_chain_deeper_than_model() @test {
 
     {
         LayerFixture fixture;
-        fixture.assets = create_store();
+        fixture.assets = create_ancestor_store();
         fixture.scene = scene::create_scene(&tracker, { .max_nodes = 32 });
-        fixture.model = gltf::load_model(&fixture.assets, fixture_path("skin.gltf"))!!;
+        fixture.model = gltf::load_model(&fixture.assets, ancestor_fixture_path())!!;
         fixture.root = model::instantiate(&fixture.assets, &fixture.scene, fixture.model)!!;
         fixture.animator = anim::add_animator(&fixture.scene, fixture.root);
         defer destroy_layer_fixture(&fixture);

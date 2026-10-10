@@ -262,7 +262,6 @@ fn PlanarMotion evaluate_root_motion(
 <*
  Compose extracted motion about an evaluated root reference.
  @param reference : "Root pivot in the instance owner's frame."
- @pure
 *>
 fn RootMotionDelta root_motion_delta(PlanarMotion motion, Vec3 reference) {
     Vec3 translation = motion.translation;
