@@ -112,8 +112,8 @@ fn void? create_native_files(String directory, NativeFiles* files) {
     files.storage = file::open(joined_path(directory, "native-storage.csv")!, "wb")!;
     files.metadata = file::open(joined_path(directory, "native-metadata.csv")!, "wb")!;
     files.failures = file::open(joined_path(directory, "native-failures.csv")!, "wb")!;
-    io::fprintn(&files.raw, "fixture,script,configured,live,repetition,views,sample,script_frame,submission_frame,seed,dt,evaluate_ms,publish_ms,world_ms,record_submit_ms,upload_ring_bytes,upload_high_water,device_copy_bytes,current_palette_payload,current_morph_payload,current_part_record_payload,current_bounds_payload,previous_palette_payload,previous_morph_payload,previous_matrix_payload,previous_header_payload,history_host_payload,persistent_instance_gpu_bytes,renderer_host_requested,renderer_host_high_water,gpu_requested_allocations,gpu_blocks,driver_heap_usage_estimate,tested,visible,cull_submission,cull_ready,draws,triangles,submitted_instance_upper_bound,cull_dispatches,cull_overflows,sort_dispatches,sort_overflows,shadow_layers,shared_shadow_sets,events,dropped_events,evaluate_publish_acquires,evaluate_publish_resizes,evaluate_publish_requested_bytes")!;
-    io::fprintn(&files.gpu, "fixture,script,configured,live,repetition,views,script_frame,submission_frame,scope_kind,view_index,view_generation,pass_ordinal,label,start_ns,duration_ns,gpu_state,dropped_scopes")!;
+    io::fprintn(&files.raw, "fixture,script,configured,live,repetition,views,sample,script_frame,submission_frame,seed,dt,evaluate_ms,publish_ms,world_ms,record_submit_ms,upload_ring_bytes,upload_high_water,device_copy_bytes,current_palette_payload,current_morph_payload,current_part_record_payload,current_bounds_payload,previous_palette_payload,previous_morph_payload,previous_matrix_payload,previous_header_payload,history_host_payload,persistent_instance_gpu_bytes,renderer_host_requested,renderer_host_high_water,gpu_requested_allocations,gpu_blocks,driver_heap_usage_estimate,tested,visible,cull_submission,cull_ready,draws,cpu_known_triangles,cpu_known_instance_draws,cull_dispatches,cull_overflows,sort_dispatches,sort_overflows,shadow_layers,shared_shadow_sets,events,dropped_events,evaluate_publish_acquires,evaluate_publish_resizes,evaluate_publish_requested_bytes")!;
+    io::fprintn(&files.gpu, "fixture,script,configured,live,repetition,views,script_frame,submission_frame,scope_kind,has_view,view_index,view_generation,pass_ordinal,label,start_ns,duration_ns,gpu_state,dropped_scopes")!;
     io::fprintn(&files.summary, "fixture,script,configured,live,repetition,views,metric,samples,median_ms,p95_ms")!;
     io::fprintn(&files.storage, "fixture,script,configured,live,repetition,views,category,bytes")!;
     io::fprintn(&files.metadata, "key,value")!;
@@ -164,8 +164,10 @@ fn void native_previous_payload(ViewHistory* history, NativeSample* sample) {
     foreach (pose : history.poses) {
         sample.previous_palette += (ulong)pose.palette.len * Mat4f::size;
         sample.previous_morph += (ulong)pose.morphs.len * shader::MorphWeightsGpu::size;
-        sample.previous_matrices += (ulong)pose.instance_count * Mat4f::size;
-        if (pose.instance_count) sample.previous_headers += shader::PreviousPoseGpu::size;
+        if (pose.instances.len) {
+            sample.previous_matrices += (ulong)pose.instance_count * Mat4f::size;
+            sample.previous_headers += shader::PreviousPoseGpu::size;
+        }
     }
 }
 
@@ -271,6 +273,7 @@ fn void? write_native_gpu(
             csv_uint(&files.gpu, scope.renderer_frame)!;
             char[128] text;
             csv_string(&files.gpu, (String)io::bprintf(text[..], "%s", scope.info.kind)!)!;
+            csv_uint(&files.gpu, scope.info.has_view ? 1 : 0)!;
             csv_uint(&files.gpu, scope.info.view_index)!;
             csv_uint(&files.gpu, scope.info.view_generation)!;
             csv_uint(&files.gpu, scope.info.pass_ordinal)!;
@@ -751,6 +754,7 @@ fn void? run_native(String[] args) {
         native_metadata(&files, "cpu_scope", "evaluate_publish_match_cpu_scaffold_world_separate_record_submit_includes_wait_and_collector")!;
         native_metadata(&files, "upload_scope", "ring_head_plus_overflow_includes_alignment_roots_and_staging_payload_categories_exclude_alignment")!;
         native_metadata(&files, "part_records", "admitted_persistent_instance_stream_capacity_times_InstanceGpu_size_published_every_measured_frame")!;
+        native_metadata(&files, "draw_counters", "draws_count_submitted_calls_CPU_known_triangles_instances_exclude_GPU_culled_ranges_actual_tested_visible_are_delayed_GPU_counters")!;
         native_metadata(&files, "previous_payload", "retained_previous_tables_layout_bytes_for_fixed_count_positive_parity_per_view_excludes_alignment")!;
         native_metadata(&files, "tracking", "requested_scene_renderer_bytes_exclude_tracker_maps_backtraces_assets_scaffold_process_and_driver")!;
         native_metadata(&files, "history", "retained_array_capacity_payload_subset_of_renderer_requested_host")!;
