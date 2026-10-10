@@ -104,7 +104,8 @@ fn BlendSpace1D*? PlaybackView.add_blend_space(
     }
 
     uint slot;
-    while (slot < MAX_BLEND_SPACES && self.blend_spaces[slot].count) slot++;
+    while (slot < MAX_BLEND_SPACES
+      && (self.blend_spaces[slot].count || self.blend_spaces_2d[slot].count)) slot++;
     if (slot == MAX_BLEND_SPACES || self.actions.free_count < clips.len) return c3d::CAPACITY_EXCEEDED~;
 
     BlendSpace1D created = {

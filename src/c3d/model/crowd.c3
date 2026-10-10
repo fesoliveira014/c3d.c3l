@@ -207,6 +207,7 @@ fn void? prepare_crowd(AssetStore* assets, Scene* scene, Node* node) {
         actions_per_instance: crowd.actions_per_instance,
         event_capacity: crowd.event_capacity,
     )!;
+    crowd.playback.model = crowd.model;
 
     crowd.parts = alloc::new_array_try(allocator, CrowdPart, template.meshes.len)
       ?? c3d::CAPACITY_EXCEEDED~!;

@@ -8,11 +8,13 @@ import std::math;
 <* Borrowed playback storage; reacquire after its owner changes structure. *>
 struct PlaybackView {
     Allocator allocator;
+    ModelId model;
     Pool{Action, AnimationActionId}* actions;
     AnimationActionId[] order;
     uint* action_count;
     bool[] mask_storage;
     BlendSpace1D[] blend_spaces;
+    BlendSpace2D[] blend_spaces_2d;
     uint root_node;
 }
 
@@ -101,6 +103,7 @@ fn AnimationActionId? PlaybackView.play(
 ) {
     AnimationClip* data = &assets.clips.try_get(clip)!.data;
     usz reference_count = validate_playback_action(data, desc, destination)!;
+    if (desc.weighted_mask) validate_weighted_joint_mask(assets, self.model, desc.weighted_mask)!;
     if (!self.actions.free_count) return c3d::CAPACITY_EXCEEDED~;
 
     Action state = prepare_validated_playback_action(
@@ -192,6 +195,7 @@ fn PoseReport evaluate_pose(
 ) {
     advance(playback, assets, dt);
     advance_blend_spaces(playback, assets, dt);
+    advance_blend_spaces_2d(playback, assets, dt);
 
     blend_pose(
         playback: playback,
@@ -285,6 +289,7 @@ fn AnimationActionId install_playback_action(
 fn void release_prepared_action(Allocator allocator, Action* action) {
     alloc::free(allocator, action.cursors.ptr);
     alloc::free(allocator, action.reference.ptr);
+    alloc::free(allocator, action.weighted_mask.ptr);
     *action = {};
 }
 
@@ -312,6 +317,14 @@ fn usz? validate_playback_action(
     }
 
     if (desc.mask && desc.mask.nodes.len != destination.base_pose.len) return c3d::INVALID_ARGUMENT~;
+    if (desc.mask && desc.weighted_mask) return c3d::INVALID_ARGUMENT~;
+    if (desc.weighted_mask && desc.weighted_mask.nodes.len != destination.base_pose.len) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+
+    if (desc.additive && desc.additive_scale == AdditiveScaleMode.MULTIPLICATIVE) {
+        validate_multiplicative_scale(data)!;
+    }
 
     foreach (target : data.targets) {
         if (target >= destination.base_pose.len) return c3d::INVALID_ARGUMENT~;
@@ -362,6 +375,14 @@ fn Action? prepare_validated_playback_action(
     }
     defer catch alloc::free(allocator, reference.ptr);
 
+    float[] weighted_mask;
+    if (desc.weighted_mask) {
+        weighted_mask = alloc::new_array_try(allocator, float, desc.weighted_mask.nodes.len)
+          ?? c3d::CAPACITY_EXCEEDED~!;
+        weighted_mask[..] = desc.weighted_mask.nodes[..];
+    }
+    defer catch alloc::free(allocator, weighted_mask.ptr);
+
     if (desc.additive) {
         usz offset;
         foreach (&track : data.tracks) {
@@ -372,6 +393,12 @@ fn Action? prepare_validated_playback_action(
                 cursor: &cursor,
                 out: reference[offset:track.stride()],
             );
+            if (track.path == TargetPath.SCALE && desc.additive_scale == AdditiveScaleMode.MULTIPLICATIVE) {
+                Vec3 scale = sample_multiplicative_scale_reference(track);
+                reference[offset] = scale.x;
+                reference[offset + 1] = scale.y;
+                reference[offset + 2] = scale.z;
+            }
             offset += track.stride();
         }
     }
@@ -379,6 +406,8 @@ fn Action? prepare_validated_playback_action(
     state.clip = clip;
     state.cursors = cursors;
     state.reference = reference;
+    state.weighted_mask = weighted_mask;
+    state.additive_scale = desc.additive_scale;
     state.speed = 1;
     state.weight = desc.fade_in > 0 ? 0 : 1;
     state.fade_target = 1;
@@ -396,6 +425,7 @@ fn void remove_action(PlaybackView* playback, uint index) @local {
     Action* action = playback.actions.get(id);
     alloc::free(playback.allocator, action.cursors.ptr);
     alloc::free(playback.allocator, action.reference.ptr);
+    alloc::free(playback.allocator, action.weighted_mask.ptr);
     *action = {};
 
     playback.actions.remove(id);

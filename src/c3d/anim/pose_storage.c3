@@ -18,11 +18,13 @@ struct PoseStorage {
 fn PlaybackView Animator.playback(&self) {
     return {
         .allocator = self.scene.allocator,
+        .model = self.scene.get(self.instance_root, ModelInstance).source,
         .actions = self.actions,
         .order = self.order,
         .action_count = &self.action_count,
         .mask_storage = self.mask_storage,
         .blend_spaces = self.blend_spaces,
+        .blend_spaces_2d = self.blend_spaces_2d,
         .root_node = self.root_node,
     };
 }
