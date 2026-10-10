@@ -302,3 +302,7 @@ character through six of its clips; `B` switches to 512 `Animator` instances of 
 comparison, `--baseline` starts there. `--compare` advances both representations on every update and
 shows maximum local position, rotation, scale and morph differences. This mode includes both
 playback costs and the comparison loop; use the single-representation modes for measurements.
+`Space` pauses/resumes the first source through its base-action controls. The panel displays published
+root displacement and event/drop counts; `R` applies each update's published root delta once. The
+example's default KEEP clips publish no extracted displacement; extraction configuration belongs to
+the captured play description.

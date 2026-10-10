@@ -49,8 +49,13 @@ fn float Random.next(&self) @local {
 struct Showcase @local {
     Node*    crowd;
     Node*[CROWD_SIZE] animated;
+    AnimationActionId[CROWD_SIZE] base_actions;
     bool     baseline;
     bool     compare;
+    bool     consume_motion;
+    RootMotionDelta motion;
+    uint events;
+    uint dropped_events;
     float    position_error;
     float    rotation_error;
     float    scale_error;
@@ -134,6 +139,10 @@ fn void panel(render::Renderer* renderer, Showcase* showcase) @local {
         imgui::text("Frame: %.3f ms", (double)renderer.stats.frame_ms);
         imgui::text("Draws: %u", renderer.stats.draws);
         imgui::text("Instances: %u", renderer.stats.instances);
+        imgui::text("Space pauses slot 0; R toggles motion application");
+        imgui::text("Apply published motion: %s", showcase.consume_motion ? "on" : "off");
+        imgui::text("Root X/Z: %.5f / %.5f", (double)showcase.motion.translation.x, (double)showcase.motion.translation.z);
+        imgui::text("Events: %u; dropped: %u", showcase.events, showcase.dropped_events);
         if (showcase.compare) {
             imgui::text("Synchronized playback comparison");
             imgui::text("Local position: %.6g m", (double)showcase.position_error);
@@ -188,12 +197,43 @@ fn void? run(
         if (input.key_pressed(Scancode.B) && !input.keyboard_captured_by_gui) {
             set_baseline(scene, showcase, !showcase.baseline);
         }
+
+        if (input.key_pressed(Scancode.SPACE) && !input.keyboard_captured_by_gui) {
+            AnimatedCrowd* crowd = scene.get(showcase.crowd, AnimatedCrowd);
+            CrowdPlayer player = crowd.playback.player(crowd.playback.instance_id(0)!)!;
+            Action* base = player.base_action()!;
+            base.playing = !base.playing;
+            Animator* animator = scene.get(showcase.animated[0], Animator);
+            animator.action(showcase.base_actions[0]).playing = base.playing;
+        }
+
+        if (input.key_pressed(Scancode.R) && !input.keyboard_captured_by_gui) {
+            showcase.consume_motion = !showcase.consume_motion;
+        }
+
         gui_renderer.new_frame();
         defer {
             if (gui_renderer.frame_open) gui_renderer.finish_frame();
         }
         if (showcase.baseline || showcase.compare) anim::update(assets, scene, window.clock.delta);
         if (!showcase.baseline || showcase.compare) anim::crowd_update(assets, scene, window.clock.delta);
+
+        AnimatedCrowd* crowd = scene.get(showcase.crowd, AnimatedCrowd);
+        Animator* reference = scene.get(showcase.animated[0], Animator);
+        showcase.motion = showcase.baseline ? reference.root_motion : crowd.playback.slots[0].root_motion;
+        showcase.events = showcase.baseline ? reference.event_count : crowd.playback.event_count;
+        showcase.dropped_events = showcase.baseline ? reference.events_dropped : crowd.playback.events_dropped;
+
+        if (showcase.consume_motion) {
+            if (showcase.baseline || showcase.compare) {
+                foreach (node : showcase.animated) {
+                    Animator* animator = scene.get(node, Animator);
+                    anim::apply_root_motion(node, animator.root_motion);
+                }
+            }
+
+            if (!showcase.baseline || showcase.compare) scene.apply_crowd_root_motion(crowd);
+        }
 
         scene.update_world();
         if (showcase.compare) compare_playback(scene, showcase);
@@ -274,6 +314,7 @@ fn int main(String[] args) {
         animated.local = instance.placement;
         Animator* animator = anim::add_animator(&scene, animated);
         AnimationActionId action_id = animator.play(&assets, clip)!!;
+        showcase.base_actions[index] = action_id;
         Action* action = animator.action(action_id);
         action.time = instance.pose.time;
         action.speed = instance.pose.speed;
