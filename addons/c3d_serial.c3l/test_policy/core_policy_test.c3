@@ -41,7 +41,7 @@ fn void test_every_registered_core_component_has_one_expected_policy() @test {
             .identity = InstanceAuthoring::typeid },
         { .slot = ecs::assigned_slot(BillboardBatch)!!, .version = 1, .name = "c3d.BillboardBatch",
             .identity = BillboardAuthoring::typeid },
-        { .slot = ecs::assigned_slot(LodGroup)!!, .version = 1, .name = "c3d.LodGroup", .identity = LodAuthoring::typeid },
+        { .slot = ecs::assigned_slot(LodGroup)!!, .version = 2, .name = "c3d.LodGroup", .identity = LodAuthoring::typeid },
         { .slot = ecs::assigned_slot(ModelInstance)!!, .version = 1, .name = "c3d.ModelInstance",
             .identity = ModelAuthoring::typeid, .phase = REFERENCES },
         { .slot = ecs::assigned_slot(SkinBinding)!!, .version = 1, .name = "c3d.SkinBinding",

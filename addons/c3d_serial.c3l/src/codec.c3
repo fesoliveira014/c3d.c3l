@@ -34,6 +34,7 @@ enum RestorePhase {
     VALUE,
     REFERENCES,
     OWNER,
+    BINDINGS,
 }
 
 <* Stable stream identity and callbacks of a component. *>
