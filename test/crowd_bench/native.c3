@@ -52,6 +52,9 @@ struct NativeRowMode {
     uint posed_capacity;
     uint[3] triangles;
     ulong lod_host;
+    bool validation;
+    uint repetitions;
+    uint skip_rows;
 }
 
 NativeRowMode native_row_mode @private;
@@ -768,7 +771,7 @@ fn void? measure_native_row(
             allocator: &renderer_counter,
             assets: assets,
             desc: {
-                .validation = true,
+                .validation = native_row_mode.validation,
                 .gpu_timings = true,
                 .profiler = &recorder,
                 .ray_queries = native_row_mode.trace == NativeTraceMode.HARDWARE,
@@ -974,6 +977,14 @@ fn void? run_native(String[] args) {
         native_row_mode.trace = native_trace_mode(args.len > 8 ? args[8] : "off")!;
         native_row_mode.posed_capacity = args.len > 9 ? args[9].to_uint()! : render::DEFAULT_MAX_POSED_TRACE_INSTANCES;
         if (!native_row_mode.posed_capacity) return c3d::INVALID_ARGUMENT~;
+        String validation_mode = args.len > 10 ? args[10] : "on";
+        if (validation_mode != "on" && validation_mode != "off") return c3d::INVALID_ARGUMENT~;
+        native_row_mode.validation = validation_mode == "on";
+        native_row_mode.repetitions = args.len > 11 ? args[11].to_uint()! : REPETITIONS;
+        native_row_mode.skip_rows = args.len > 12 ? args[12].to_uint()! : 0;
+        if (!native_row_mode.repetitions || native_row_mode.repetitions > REPETITIONS) {
+            return c3d::INVALID_ARGUMENT~;
+        }
         if (population && population != 64 && population != 512 && population != 4096) return c3d::INVALID_ARGUMENT~;
         if (fixture != "all" && fixture != "quaternius" && fixture != "morph") return c3d::INVALID_ARGUMENT~;
         if (selected_script != "all" && selected_script != "base" && selected_script != "layered4"
@@ -983,7 +994,8 @@ fn void? run_native(String[] args) {
         create_native_files(args[1], &files)!;
         defer close_native_files(&files);
         native_metadata(&files, "domain", "native_gpu_measurement_not_correctness")!;
-        native_metadata(&files, "validation", "true_validation_overhead_included")!;
+        native_metadata(&files, "validation", native_row_mode.validation
+            ? "true_validation_overhead_included" : "false_optimized_measurement_only")!;
         native_metadata(&files, "profiling", "GPU_INTERNAL_timestamps_and_collector_enabled_overhead_not_subtracted")!;
         native_metadata(
             files: &files,
@@ -1092,7 +1104,8 @@ fn void? run_native(String[] args) {
         native_metadata_uint(&files, "dt_bits", bitcast(FIXED_DT, uint))!;
         native_metadata_uint(&files, "warmups", WARMUPS)!;
         native_metadata_uint(&files, "samples", SAMPLES)!;
-        native_metadata_uint(&files, "repetitions", REPETITIONS)!;
+        native_metadata_uint(&files, "repetitions", native_row_mode.repetitions)!;
+        native_metadata_uint(&files, "skipped_prefix_rows", native_row_mode.skip_rows)!;
         native_metadata_uint(&files, "drain_frames", NATIVE_DRAIN_FRAMES)!;
         native_metadata_uint(&files, "action_capacity", ACTION_CAPACITY)!;
         native_metadata_uint(&files, "event_capacity", EVENT_CAPACITY)!;
@@ -1101,6 +1114,7 @@ fn void? run_native(String[] args) {
         native_metadata_uint(&files, "profiler_scopes_per_frame", NATIVE_GPU_SCOPES)!;
         native_metadata_uint(&files, "profiler_label_bytes_per_frame", NATIVE_GPU_LABEL_BYTES)!;
         bool failed;
+        uint row_ordinal;
         foreach (corpus : CORPUS) {
             if (fixture != "all" && fixture != corpus.label) continue;
             char[] bytes = file::load(mem, joined_path(repository, corpus.relative_path)!)!;
@@ -1155,7 +1169,8 @@ fn void? run_native(String[] args) {
                         if (selected_script != "all" && selected_script != script_name(script)) continue;
                         foreach (uint views : { 1u, 2u }) {
                             if (selected_views && selected_views != views) continue;
-                            for (uint repetition = 0; repetition < REPETITIONS; repetition++) {
+                            for (uint repetition = 0; repetition < native_row_mode.repetitions; repetition++) {
+                                if (row_ordinal++ < native_row_mode.skip_rows) continue;
                                 if (catch excuse = measure_native_row(
                                     assets: &assets,
                                     model_id: model_id,
@@ -1188,7 +1203,7 @@ fn void? run_native(String[] args) {
                 }
             }
         }
-        if (failed) return c3d::INVALID_ARGUMENT~;
+        if (failed || row_ordinal < native_row_mode.skip_rows) return c3d::INVALID_ARGUMENT~;
     };
 }
 
@@ -1197,7 +1212,8 @@ fn int main(String[] args) {
         io::eprintfn("crowd_bench_native: %s", excuse);
         io::eprintn("usage: crowd_bench_native OUTPUT_DIRECTORY [REPOSITORY_"
           "ROOT] [0|64|512|4096] [all|quaternius|morph] [all|base|layered4|space4] [0|1|2] "
-          "[off|near|middle|far|all] [off|software|hardware] [POSED_CAPACITY]");
+          "[off|near|middle|far|all] [off|software|hardware] [POSED_CAPACITY] "
+          "[on|off validation] [1..3 repetitions] [SKIP_PREFIX_ROWS]");
         return 1;
     }
     return 0;
