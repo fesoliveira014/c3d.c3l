@@ -149,9 +149,11 @@ defaults are `INVALID_ARGUMENT` before publication.
 Attachment/replacement return `INVALID_ID` for dead sources/assets,
 `INVALID_ARGUMENT` for source, bind, channel or layout incompatibility,
 `CAPACITY_EXCEEDED` for allocation/capacity failure, and `UNSUPPORTED` for a source
-with imported LOD groups or incompatible custom stages. Rendering and spatial
-queries reacquire the source through `model::sync_animated_lod`; invalid source
-edits skip the whole group rather than drawing a surviving subset.
+with imported LOD groups or incompatible custom stages. Animation and crowd
+publication update source state on the scene side. After asset edits, call
+`model::sync_animated_lod` before rendering or querying. Renderers and queries
+only read the published source; stale or invalid sources skip the whole group.
+Removing a crowd invalidates its group's borrowed placements and colors.
 
 An ordinary owner may provide `has_bounds_override` and `local_bounds` covering
 all its alternatives. Without an override, retained skin/morph metadata supplies

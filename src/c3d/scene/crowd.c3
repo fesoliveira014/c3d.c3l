@@ -8,7 +8,7 @@ import c3d::maths;
 import std::math;
 
 struct CrowdRemovalContext @private {
-    Allocator allocator;
+    Allocator* allocator;
     store::ComponentStore{LodGroup}* lod_groups;
 }
 
@@ -85,7 +85,7 @@ fn void Scene.write_crowd_batches(&self, AnimatedCrowd* crowd) {
 fn void free_crowd(Entity entity, void* component, void* user) @private {
     AnimatedCrowd* crowd = component;
     CrowdRemovalContext* context = user;
-    Allocator allocator = context.allocator;
+    Allocator allocator = *context.allocator;
 
     LodGroup* group = context.lod_groups.find(entity);
     if (group && group.state.animated) {

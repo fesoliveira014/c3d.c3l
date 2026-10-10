@@ -446,7 +446,7 @@ fn Scene create_scene(Allocator allocator, SceneDesc desc) {
 
     scene.crowd_removal = alloc::new(allocator, CrowdRemovalContext);
     *scene.crowd_removal = {
-        .allocator = allocator,
+        .allocator = scene.hook_allocator,
         .lod_groups = (store::ComponentStore{LodGroup}*)scene.world.stores[store::slot{LodGroup} - 1],
     };
     scene.world.set_remove_hook(AnimatedCrowd, &free_crowd, scene.crowd_removal);
