@@ -1396,11 +1396,11 @@ fn GpuInstances native_instance_before(Renderer* renderer, InstanceKey key) {
 
 fn ulong? native_queued_copy_bytes(
     Renderer* renderer,
-    usz first,
+    sz first,
     gpu::GpuAllocation allocation,
 ) {
     ulong bytes;
-    for (usz index = first; index < renderer.pending_copies.len(); index++) {
+    for (sz index = first; index < renderer.pending_copies.len(); index++) {
         gpu::BufferCopyDesc copy = renderer.pending_copies[index];
         gpu::GpuAllocation destination = copy.dst.allocation();
         if (destination.owner != allocation.owner || destination.index != allocation.index
@@ -1431,8 +1431,8 @@ fn void native_classify_instance_copy(
 fn void? native_stage_geometry(Renderer* renderer, GeometryId geometry, NativeSample* sample) {
     GpuGeometry before = renderer.geometries[geometry.index];
     uint revision = renderer.assets.geometry(geometry).header.revision;
-    usz copies = renderer.pending_copies.len();
-    usz uploads = renderer.pending_geometry_uploads.len();
+    sz copies = renderer.pending_copies.len();
+    sz uploads = renderer.pending_geometry_uploads.len();
     GpuGeometry* resolved = render::resolve_geometry(renderer, geometry)!;
     if (renderer.pending_geometry_uploads.len() == uploads) return;
     ulong bytes = native_queued_copy_bytes(renderer, copies, resolved.allocation)!;
@@ -1460,8 +1460,8 @@ fn void? stage_native_revision_uploads(
         LodGroupState* state = group.state;
         InstanceKey key = { .scene = scene.identity, .node = owner.id, .kind = shader::INSTANCE_KIND_LOD };
         GpuInstances before = native_instance_before(renderer, key);
-        usz copies = renderer.pending_copies.len();
-        usz uploads = renderer.pending_instance_uploads.len();
+        sz copies = renderer.pending_copies.len();
+        sz uploads = renderer.pending_instance_uploads.len();
         LodSelection selection = {
             .scene = scene,
             .scene_identity = scene.identity,
@@ -1486,8 +1486,8 @@ fn void? stage_native_revision_uploads(
             InstancedMesh* batch = scene.get(node, InstancedMesh);
             InstanceKey key = { .scene = scene.identity, .node = node.id, .kind = shader::INSTANCE_KIND_MESH };
             GpuInstances before = native_instance_before(renderer, key);
-            usz copies = renderer.pending_copies.len();
-            usz uploads = renderer.pending_instance_uploads.len();
+            sz copies = renderer.pending_copies.len();
+            sz uploads = renderer.pending_instance_uploads.len();
             MeshCandidate candidate = {
                 .node = node,
                 .geometry = batch.geometry,
