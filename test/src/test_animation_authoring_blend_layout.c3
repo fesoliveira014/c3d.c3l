@@ -1,4 +1,4 @@
-module c3d::test::animation_authoring_blend_layout;
+module c3d::test::animation_blend_layout;
 
 import c3d;
 import c3d::anim @public;
@@ -29,7 +29,7 @@ struct LayoutOracle @local {
 }
 
 fn void layout_prepare(LayoutFixture* layout, uint capacity = LAYOUT_MAX_SAMPLES) @local {
-    layout.info = prepare_blend_layout(
+    layout.info = anim::prepare_blend_layout(
         points: layout.points[:layout.count],
         triangles: layout.triangles[:layout.triangle_count],
         capacity: capacity,
@@ -49,7 +49,7 @@ fn BlendLayoutView layout_view(LayoutFixture* layout) @local {
 }
 
 fn void layout_check_location(LayoutFixture* layout, Vec2 parameter) @local {
-    BlendLayoutSelection actual = select_blend_layout(layout_view(layout), parameter);
+    BlendLayoutSelection actual = anim::select_blend_layout(layout_view(layout), parameter);
     LayoutOracle expected = layout_reference_location(layout, parameter);
     double[LAYOUT_MAX_SAMPLES] weights;
     double sum;
@@ -71,7 +71,7 @@ fn void layout_expect_fault(LayoutFixture* layout, uint capacity = LAYOUT_MAX_SA
     BlendTriangleIndices[LAYOUT_MAX_TRIANGLES] old_triangles = layout.prepared_triangles;
     BlendHullIndices[LAYOUT_MAX_SAMPLES] old_hull = layout.prepared_hull;
     bool rejected;
-    if (catch failure = prepare_blend_layout(
+    if (catch failure = anim::prepare_blend_layout(
         points: layout.points[:layout.count],
         triangles: layout.triangles[:layout.triangle_count],
         capacity: capacity,
@@ -260,13 +260,13 @@ fn void test_animation_authoring_blend_layout_exact_samples_interior_and_duratio
     LayoutFixture layout = layout_triangle();
     layout_prepare(&layout);
     for (uint sample = 0; sample < layout.count; sample++) {
-        BlendLayoutSelection selected = select_blend_layout(layout_view(&layout), layout.points[sample]);
+        BlendLayoutSelection selected = anim::select_blend_layout(layout_view(&layout), layout.points[sample]);
         assert(selected.count == 1 && selected.indices[0] == sample && selected.weights[0] == 1);
         layout_check_location(&layout, layout.points[sample]);
     }
     Vec2[4] probes = { { 1, 0 }, { 0, 1 }, { 1, 1 }, { 0.5f, 0.5f } };
     foreach (parameter : probes) layout_check_location(&layout, parameter);
-    BlendLayoutSelection selected = select_blend_layout(layout_view(&layout), { 0.5f, 0.5f });
+    BlendLayoutSelection selected = anim::select_blend_layout(layout_view(&layout), { 0.5f, 0.5f });
     assert(selected.weights[0] == 0.5f && selected.weights[1] == 0.25f && selected.weights[2] == 0.25f);
     double duration = selected.weights[0] + 2.0 * selected.weights[1] + 4.0 * selected.weights[2];
     assert(duration == 2);
@@ -288,25 +288,25 @@ fn void test_animation_authoring_blend_layout_authored_ties_and_history_independ
         { -1, 0.5f }, { 2, 0.5f }, { 0.5f, -1 }, { 0.5f, 2 }, { -1, -1 }, { 2, 2 },
     };
     foreach (parameter : probes) layout_check_location(&square, parameter);
-    assert(select_blend_layout(layout_view(&square), probes[0]).authored_index == 0);
-    assert(select_blend_layout(layout_view(&square), probes[1]).authored_index == 0);
-    assert(select_blend_layout(layout_view(&square), probes[2]).authored_index == 1);
+    assert(anim::select_blend_layout(layout_view(&square), probes[0]).authored_index == 0);
+    assert(anim::select_blend_layout(layout_view(&square), probes[1]).authored_index == 0);
+    assert(anim::select_blend_layout(layout_view(&square), probes[2]).authored_index == 1);
     Vec2 near_tie = { -1, 0.70710678e-6f };
     Vec2 separated = { -1, 1.41421356e-6f };
     layout_check_location(&square, near_tie);
     layout_check_location(&square, separated);
-    assert(select_blend_layout(layout_view(&square), near_tie).authored_index == 0);
-    assert(select_blend_layout(layout_view(&square), separated).authored_index == 5);
-    BlendLayoutSelection first = select_blend_layout(layout_view(&square), probes[0]);
-    (void)select_blend_layout(layout_view(&square), probes[7]);
-    BlendLayoutSelection after = select_blend_layout(layout_view(&square), probes[0]);
+    assert(anim::select_blend_layout(layout_view(&square), near_tie).authored_index == 0);
+    assert(anim::select_blend_layout(layout_view(&square), separated).authored_index == 5);
+    BlendLayoutSelection first = anim::select_blend_layout(layout_view(&square), probes[0]);
+    (void)anim::select_blend_layout(layout_view(&square), probes[7]);
+    BlendLayoutSelection after = anim::select_blend_layout(layout_view(&square), probes[0]);
     assert(first.indices == after.indices && first.weights == after.weights);
     assert(first.kind == after.kind && first.authored_index == after.authored_index);
     @swap(square.triangles[0], square.triangles[1]);
     @swap(square.triangles[0].indices[1], square.triangles[0].indices[2]);
     layout_prepare(&square);
     foreach (parameter : probes) layout_check_location(&square, parameter);
-    assert(select_blend_layout(layout_view(&square), probes[0]).authored_index == 0);
+    assert(anim::select_blend_layout(layout_view(&square), probes[0]).authored_index == 0);
 }
 
 fn void test_animation_authoring_blend_layout_relative_tolerances_and_extents() @test {
@@ -319,8 +319,8 @@ fn void test_animation_authoring_blend_layout_relative_tolerances_and_extents() 
     layout_check_location(&triangle, { 0.25f, 0.5e-10f });
     triangle = layout_triangle();
     layout_prepare(&triangle);
-    assert(select_blend_layout(layout_view(&triangle), { -1e-7f, 0.5f }).kind == BlendLayoutLocation.TRIANGLE);
-    assert(select_blend_layout(layout_view(&triangle), { -4e-7f, 0.5f }).kind == BlendLayoutLocation.HULL);
+    assert(anim::select_blend_layout(layout_view(&triangle), { -1e-7f, 0.5f }).kind == BlendLayoutLocation.TRIANGLE);
+    assert(anim::select_blend_layout(layout_view(&triangle), { -4e-7f, 0.5f }).kind == BlendLayoutLocation.HULL);
     foreach (float scale : { 0.0009765625f, 1048576.0f }) {
         LayoutFixture scaled = layout_grid(2, 2);
         for (uint sample = 0; sample < scaled.count; sample++) {
@@ -356,7 +356,7 @@ fn void test_animation_authoring_blend_layout_capacity_and_compact_storage() @te
     BlendTriangleIndices[27] prepared_triangles;
     BlendHullIndices[16] prepared_hull;
     bool rejected;
-    if (catch failure = prepare_blend_layout(
+    if (catch failure = anim::prepare_blend_layout(
         points: too_many[..],
         triangles: triangle[..],
         capacity: 16,
@@ -507,9 +507,9 @@ fn void test_animation_authoring_blend_layout_seeded_independent_corpus() @test 
             default: unreachable();
         }
         layout_check_location(&layout, parameter);
-        BlendLayoutSelection selected = select_blend_layout(layout_view(&layout), parameter);
-        (void)select_blend_layout(layout_view(&layout), shift + (Vec2){ 10 * scale, -10 * scale });
-        BlendLayoutSelection after = select_blend_layout(layout_view(&layout), parameter);
+        BlendLayoutSelection selected = anim::select_blend_layout(layout_view(&layout), parameter);
+        (void)anim::select_blend_layout(layout_view(&layout), shift + (Vec2){ 10 * scale, -10 * scale });
+        BlendLayoutSelection after = anim::select_blend_layout(layout_view(&layout), parameter);
         assert(selected.indices == after.indices && selected.weights == after.weights);
         assert(selected.kind == after.kind && selected.authored_index == after.authored_index);
         location_counts[selected.kind.ordinal]++;

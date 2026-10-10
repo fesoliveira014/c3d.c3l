@@ -101,7 +101,9 @@ fn BlendSpace1D*? PlaybackView.add_blend_space(
         if (!math::is_finite(position) || (index && position <= positions[index - 1])) return c3d::INVALID_ARGUMENT~;
         float duration = assets.clips.try_get(clips[index])!.data.duration;
         if (!math::is_finite(duration) || duration <= 0) return c3d::INVALID_ARGUMENT~;
+        (void)validate_playback_action(&assets.clip(clips[index]).data, desc, destination)!;
     }
+    if (desc.weighted_mask) validate_weighted_joint_mask(assets, self.model, desc.weighted_mask)!;
 
     uint slot;
     while (slot < MAX_BLEND_SPACES
@@ -116,19 +118,29 @@ fn BlendSpace1D*? PlaybackView.add_blend_space(
         .speed = 1,
         .playing = true,
     };
+    Action[MAX_BLEND_SPACE_ACTIONS] prepared;
+    uint prepared_count;
     defer catch {
-        foreach (id : created.actions[:created.count]) self.stop(id)!!;
+        foreach (&action : prepared[:prepared_count]) release_prepared_action(self.allocator, action);
     }
 
-    desc.fade_in = 0;
-    foreach (index, clip : clips) {
-        created.actions[index] = self.play(
+    PlayDesc member_desc = desc;
+    member_desc.fade_in = 0;
+    foreach (clip : clips) {
+        prepared[prepared_count] = prepare_playback_action(
+            allocator: self.allocator,
             assets: assets,
             clip: clip,
-            desc: desc,
+            desc: member_desc,
             destination: destination,
             motion_basis: motion_basis,
+            root_node: self.root_node,
         )!;
+        prepared_count++;
+    }
+
+    foreach (uint index, action : prepared[:prepared_count]) {
+        created.actions[index] = install_playback_action(self, action, desc.mask);
         created.positions[index] = positions[index];
         created.count++;
     }

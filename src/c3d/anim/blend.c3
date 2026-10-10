@@ -110,12 +110,19 @@ fn void blend_pose(
                 if (weight <= 0) continue;
 
                 float[] sample = samples[:stride];
-                sample_track(
-                    track: track,
-                    time: action.time,
-                    cursor: &action.cursors[track_index],
-                    out: sample,
-                );
+                if (track.path == TargetPath.SCALE && action.additive_scale == AdditiveScaleMode.MULTIPLICATIVE) {
+                    Vec3 scale = sample_multiplicative_scale(track, action.time, &action.cursors[track_index]);
+                    sample[0] = scale.x;
+                    sample[1] = scale.y;
+                    sample[2] = scale.z;
+                } else {
+                    sample_track(
+                        track: track,
+                        time: action.time,
+                        cursor: &action.cursors[track_index],
+                        out: sample,
+                    );
+                }
 
                 switch (track.path) {
                     case TRANSLATION:
@@ -131,9 +138,8 @@ fn void blend_pose(
                         result[node].rotation = result[node].rotation.mul(weighted).normalize();
                     case SCALE:
                         if (action.additive_scale == AdditiveScaleMode.MULTIPLICATIVE) {
-                            Vec3 scale = sample_multiplicative_scale(track, action.time, &action.cursors[track_index]);
                             for (uint axis = 0; axis < 3; axis++) {
-                                double factor = 1 + (double)weight * ((double)scale[axis] / reference[axis] - 1);
+                                double factor = 1 + (double)weight * ((double)sample[axis] / reference[axis] - 1);
                                 result[node].scale[axis] = (float)((double)result[node].scale[axis] * factor);
                             }
                         } else {

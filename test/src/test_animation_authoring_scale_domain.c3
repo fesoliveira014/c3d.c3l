@@ -1,4 +1,4 @@
-module c3d::test::animation_authoring_scale_domain;
+module c3d::test::animation_scale_domain;
 
 import c3d;
 import c3d::anim @public;
@@ -16,11 +16,12 @@ fn void? validate_scale_domain_track(Track* track) @local {
 }
 
 fn void expect_scale_domain_invalid(Track* track) @local {
+    bool caught;
     if (catch excuse = validate_scale_domain_track(track)) {
         assert(excuse == c3d::INVALID_ARGUMENT);
-    } else {
-        assert(false, "invalid scale domain was admitted");
+        caught = true;
     }
+    assert(caught, "invalid scale domain was admitted");
 }
 
 fn float[18] scale_domain_cubic_values(

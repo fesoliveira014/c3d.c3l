@@ -49,7 +49,7 @@ fn AssetStore mask_store() @local {
         .max_geometries = 1,
         .max_textures = asset::BUILTIN_TEXTURE_COUNT,
         .max_materials = 1,
-        .max_samplers = 1,
+        .max_samplers = asset::BUILTIN_SAMPLER_COUNT,
         .max_environments = 1,
         .max_models = 4,
         .max_skeletons = 1,

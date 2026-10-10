@@ -67,7 +67,7 @@ $assert BLEND_LAYOUT_MAX_TRIANGLES <= uint::size * 8;
  @param prepared_hull : "Owner-prepared destination; unchanged on faults."
  @return? c3d::INVALID_ARGUMENT
  @require capacity >= 1 && capacity <= BLEND_LAYOUT_MAX_SAMPLES
- @require prepared_triangles.len >= (capacity >= 3 ? 2 * capacity - 5 : 0)
+ @require prepared_triangles.len >= (sz)(capacity >= 3 ? 2 * capacity - 5 : 0)
  @require prepared_hull.len >= capacity
 *>
 fn BlendLayoutInfo? prepare_blend_layout(
