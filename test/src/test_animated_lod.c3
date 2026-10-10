@@ -22,7 +22,7 @@ fn AnimatedLodDesc animated_lod_desc(AssetStore* assets, ModelId model_id) @loca
     LodLevel[] levels = alloc::new_array(tmem, LodLevel, 2);
     levels[0] = { .first_part = 0, .part_count = count, .min_screen_size = 0.2f };
     levels[1] = { .first_part = count, .part_count = count, .min_screen_size = 0 };
-    AnimatedLodPart[] parts = alloc::new_array(tmem, AnimatedLodPart, 2 * count);
+    AnimatedLodPart[] parts = alloc::new_array(tmem, AnimatedLodPart, (sz)count * 2);
     for (uint level = 0; level < 2; level++) {
         foreach (uint index, mesh : template.meshes) {
             ModelSkin skin;
@@ -96,8 +96,8 @@ fn void test_animated_lod_binding_and_default_faults_preserve_existing_descripto
         defer scene::destroy_scene(&scene);
         Node* owner = model::instantiate(&assets, &scene, fixture.mixed)!!;
         AnimatedLodDesc desc = animated_lod_desc(&assets, fixture.mixed);
-        ModelTemplate* alias = &assets.model(fixture.compatible_alias).data;
-        desc.parts[9].skin = alias.skins[1];
+        ModelTemplate* alias_template = &assets.model(fixture.compatible_alias).data;
+        desc.parts[9].skin = alias_template.skins[1];
         model::attach_animated_lod(
             assets: &assets,
             scene: &scene,
@@ -123,7 +123,7 @@ fn void test_animated_lod_binding_and_default_faults_preserve_existing_descripto
             owner: owner,
             desc: desc,
         )) == c3d::INVALID_ARGUMENT);
-        desc.parts[9].skin = alias.skins[1];
+        desc.parts[9].skin = alias_template.skins[1];
         desc.parts[7].default_morph_weights[0] = 0.5f;
         assert(@catch(model::replace_animated_lod(
             assets: &assets,

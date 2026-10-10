@@ -9,6 +9,7 @@ import c3d::model;
 import c3d::scene;
 import c3d::test::animated_crowd_fixtures;
 import std::math;
+import gpu;
 
 const uint ANIMATED_HISTORY_PARTS @local = animated_crowd_fixtures::PARTS_MESH_COUNT;
 
@@ -132,7 +133,7 @@ fn void create_animated_history_fixture(
         desc: {
             .parts = parts[..],
             .levels = levels[..],
-            .has_bounds_override = true,
+            .has_bounds_override = !instanced,
             .local_bounds = animated_crowd_fixtures::PARTS_POSE_BOUNDS,
         },
     )!!;

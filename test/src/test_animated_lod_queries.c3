@@ -8,6 +8,7 @@ import c3d::model;
 import c3d::scene;
 import c3d::spatial;
 import c3d::test::animated_crowd_fixtures;
+import std::math;
 
 const float ANIMATED_LOD_QUERY_TOLERANCE @local = 1e-5f;
 
@@ -24,7 +25,7 @@ fn AnimatedLodDesc animated_lod_query_desc(AssetStore* assets, ModelId model_id)
     LodLevel[] levels = alloc::new_array(tmem, LodLevel, 2);
     levels[0] = { .first_part = 0, .part_count = count, .min_screen_size = 0.2f };
     levels[1] = { .first_part = count, .part_count = count, .min_screen_size = 0 };
-    AnimatedLodPart[] parts = alloc::new_array(tmem, AnimatedLodPart, 2 * count);
+    AnimatedLodPart[] parts = alloc::new_array(tmem, AnimatedLodPart, (sz)count * 2);
     for (uint level = 0; level < 2; level++) {
         foreach (uint index, mesh : template.meshes) {
             ModelSkin skin;
@@ -73,7 +74,9 @@ fn void test_animated_lod_queries_use_posed_base_logical_parts_once() @test {
         Node* owner = model::instantiate(&assets, &scene, fixture.mixed)!!;
         owner.local.position = animated_crowd_fixtures::PARTS_ROOT_POSITION;
         Animator* animator = anim::add_animator(&scene, owner);
-        AnimationActionId action = animator.play(&assets, fixture.posing, { .loop = false })!!;
+        AnimationActionId action = animator.play(&assets, fixture.posing)!!;
+        Action* played = animator.try_action(action)!!;
+        played.loop = false;
         animator.action(action).time = 1;
         anim::update(&assets, &scene, 0);
         model::attach_animated_lod(
@@ -165,7 +168,9 @@ fn void test_animated_lod_queries_keep_retained_pose_bounds_without_cpu_streams(
         Node* owner = model::instantiate(&assets, &scene, fixture.mixed)!!;
         owner.local.position = animated_crowd_fixtures::PARTS_ROOT_POSITION;
         Animator* animator = anim::add_animator(&scene, owner);
-        AnimationActionId action = animator.play(&assets, fixture.posing, { .loop = false })!!;
+        AnimationActionId action = animator.play(&assets, fixture.posing)!!;
+        Action* played = animator.try_action(action)!!;
+        played.loop = false;
         animator.action(action).time = 1;
         anim::update(&assets, &scene, 0);
         model::attach_animated_lod(
