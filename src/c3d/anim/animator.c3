@@ -81,6 +81,7 @@ struct Animator {
     BlendSpace1D[] blend_spaces;
     BlendSpace2D[] blend_spaces_2d;
     PoseStorage* pose_storage;
+    InertialStorage* inertial_storage;
 }
 
 <* Captured configuration of a newly played action. *>
@@ -172,7 +173,7 @@ fn void? Animator.cross_fade(
  @param [&in] instance_root : "Carries ModelInstance."
  @require scene.has(instance_root, ModelInstance), !scene.has(instance_root, Animator)
 *>
-fn Animator* add_animator(Scene* scene, Node* instance_root) {
+fn Animator* add_animator(Scene* scene, Node* instance_root, AnimatorDesc desc = {}) {
     ModelInstance* instance = scene.get(instance_root, ModelInstance);
     usz mask_count = MAX_ACTIONS * instance.nodes.len;
     ActionStorage* storage = (ActionStorage*)alloc::malloc(scene.allocator, (sz)(ActionStorage::size + mask_count));
@@ -203,6 +204,18 @@ fn Animator* add_animator(Scene* scene, Node* instance_root) {
         base_morph_weights: instance.base_morph_weights,
         event_capacity: MAX_FIRED_EVENTS,
     );
+
+    if (desc.inertia_enabled) {
+        uint morphs;
+        foreach (values : instance.base_morph_weights) morphs += (uint)values.len;
+        animator.inertial_storage = create_inertial_storage(
+            allocator: scene.allocator,
+            nodes: (uint)instance.nodes.len,
+            morphs: morphs,
+            capacity: 1,
+        )!!;
+        reset_inertial_row(animator.inertial_storage, 0, instance_root.id.generation);
+    }
 
     return scene.add(instance_root, animator);
 }
@@ -266,6 +279,8 @@ fn void free_animator(Entity entity, void* component, void* user) {
         alloc::free(allocator, action.reference.ptr);
         alloc::free(allocator, action.weighted_mask.ptr);
     }
+
+    if (animator.inertial_storage) destroy_inertial_storage(animator.inertial_storage);
 
     destroy_blend_spaces_2d(allocator, animator.blend_spaces_2d);
     destroy_pose_storage(allocator, animator.pose_storage);

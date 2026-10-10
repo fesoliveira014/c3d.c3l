@@ -16,6 +16,7 @@ struct PlaybackView {
     BlendSpace1D[] blend_spaces;
     BlendSpace2D[] blend_spaces_2d;
     uint root_node;
+    InertialRow* inertial;
 }
 
 <* Destination baselines, presence and caller-owned evaluated output. *>

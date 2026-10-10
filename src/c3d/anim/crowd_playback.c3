@@ -48,6 +48,7 @@ struct CrowdPlaybackState {
     float[] weight_values;
     float[][] logical_weights;
     PoseStorage* pose_storage;
+    InertialStorage* inertial_storage;
     CrowdEvent[] events;
     uint event_count;
     uint events_dropped;
@@ -360,6 +361,7 @@ fn void reset_crowd_playback_slot(CrowdPlaybackState* state, uint index) {
     foreach (&space : slot.spaces_2d) reset_blend_space_2d(space);
     slot.generation++;
     if (!slot.generation) slot.generation = 1;
+    if (state.inertial_storage) reset_inertial_row(state.inertial_storage, index, slot.generation);
 
     slot.root_node = state.default_root_node;
     slot.base_action = {};
@@ -399,6 +401,7 @@ fn CrowdPlaybackState*? create_crowd_playback(
     Transform[] placements,
     uint actions_per_instance,
     uint event_capacity,
+    bool inertia_enabled = false,
 ) {
     CrowdPlaybackState* state = alloc::new_try(allocator, CrowdPlaybackState) ?? c3d::CAPACITY_EXCEEDED~!;
     defer catch destroy_crowd_playback(state);
@@ -462,6 +465,15 @@ fn CrowdPlaybackState*? create_crowd_playback(
         event_capacity: event_capacity,
     )!;
 
+    if (inertia_enabled) {
+        state.inertial_storage = create_inertial_storage(
+            allocator: allocator,
+            nodes: (uint)state.base_pose.len,
+            morphs: (uint)weight_stride,
+            capacity: capacity,
+        )!;
+    }
+
     uint root_node = crowd_default_root(template);
     state.default_root_node = root_node;
     foreach (usz index, &slot : state.slots) {
@@ -488,6 +500,8 @@ fn CrowdPlaybackState*? create_crowd_playback(
         }
 
         slot.generation = 1;
+        if (state.inertial_storage) reset_inertial_row(state.inertial_storage, (uint)index, slot.generation);
+
         slot.root_node = root_node;
         slot.root_motion.rotation = quaternion::IDENTITY;
         state.poses[index * state.base_pose.len:state.base_pose.len] = state.base_pose[..];
@@ -519,7 +533,9 @@ fn void destroy_crowd_playback(CrowdPlaybackState* state) {
         destroy_blend_spaces_2d(allocator, slot.spaces_2d);
     }
 
+    if (state.inertial_storage) destroy_inertial_storage(state.inertial_storage);
     if (state.pose_storage) destroy_pose_storage(allocator, state.pose_storage);
+
     foreach (values : state.base_morph_weights) alloc::free(allocator, values.ptr);
 
     alloc::free(allocator, state.slots.ptr);
@@ -553,6 +569,8 @@ fn PlaybackView crowd_playback_view(CrowdPlaybackState* state, CrowdPlaybackSlot
         .blend_spaces = slot.spaces,
         .blend_spaces_2d = slot.spaces_2d,
         .root_node = slot.root_node,
+        .inertial = state.inertial_storage
+          ? &state.inertial_storage.rows[(usz)(slot - state.slots.ptr)] : null,
     };
 }
 

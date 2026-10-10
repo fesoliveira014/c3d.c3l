@@ -3,6 +3,14 @@ module c3d::anim;
 import c3d;
 import std::math;
 
+<* Full-weight looping destination action at its first sample. *>
+const AnimationTargetDesc ANIMATION_TARGET_DEFAULT = {
+    .speed = 1,
+    .weight = 1,
+    .loop = true,
+    .playing = true,
+};
+
 <* Captured translation axes and twist in the instance-root frame. *>
 struct RootExtractionDesc {
     bool generalized;
@@ -26,14 +34,6 @@ struct AnimationTargetDesc {
     bool loop;
     bool playing;
 }
-
-<* Full-weight looping destination action at its first sample. *>
-const AnimationTargetDesc ANIMATION_TARGET_DEFAULT = {
-    .speed = 1,
-    .weight = 1,
-    .loop = true,
-    .playing = true,
-};
 
 <* Replacement actions and groups corrected over update seconds. *>
 struct AnimationTransitionDesc {
