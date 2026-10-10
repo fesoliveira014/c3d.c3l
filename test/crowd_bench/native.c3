@@ -223,14 +223,24 @@ fn void? native_render_frame(
     }
     Frame* frame = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
     sample.upload_bytes = frame.upload.head;
-    foreach (allocation : frame.upload.overflow) sample.upload_bytes += gpu::get_allocation_span(&renderer.device, allocation)!.size;
+    foreach (allocation : frame.upload.overflow) {
+        sample.upload_bytes += gpu::get_allocation_span(
+            device: &renderer.device,
+            allocation: allocation,
+        )!.size;
+    }
     sample.current_palette = (ulong)renderer.deformation.crowd_palettes.len();
     sample.current_morph = (ulong)renderer.deformation.crowd_morphs.len();
     sample.current_bounds = (ulong)renderer.deformation.crowd_bounds.len();
     foreach (slot : renderer.instances.slots) {
         if (slot.key.scene != scene.identity || slot.last_seen != sample.submission) continue;
         sample.current_records += (ulong)slot.capacity * shader::InstanceGpu::size;
-        if (slot.allocation.is_valid()) sample.persistent_instances += gpu::get_allocation_span(&renderer.device, slot.allocation)!.size;
+        if (slot.allocation.is_valid()) {
+            sample.persistent_instances += gpu::get_allocation_span(
+                device: &renderer.device,
+                allocation: slot.allocation,
+            )!.size;
+        }
     }
     renderer.end_frame()!;
     sample.render_ns = (ulong)started.to_now();
