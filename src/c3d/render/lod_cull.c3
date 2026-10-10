@@ -69,6 +69,8 @@ fn void? reserve_lod_bins(Renderer* renderer, LodSelection* selection) @private 
 }
 
 fn void? prepare_lod_instances(Renderer* renderer, LodSelection* selection) @private {
+    if (selection.state.animated) (void)selection.state.local_bounds(renderer.assets);
+
     resolve_lod_instances(renderer, selection)!;
     if (selection.state.animated) {
         selection.part_unmirrored = alloc::new_array(tmem, uint, selection.state.desc.parts.len);

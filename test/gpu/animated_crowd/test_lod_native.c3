@@ -38,11 +38,11 @@ fn void fill_crowd_lod_native_descriptor(
     MaterialId material = {},
 ) @private {
     ModelTemplate* template = &fixture.assets.model(corpus.model).data;
-    assert(template.meshes.len == LOD_PRIMITIVES && LOD_PRIMITIVES == 2 && LOD_LEVELS == 3);
-    for (uint level = 0; level < LOD_LEVELS; level++) {
+    assert(template.meshes.len == animated_lod_fixtures::LOD_PRIMITIVES && animated_lod_fixtures::LOD_PRIMITIVES == 2 && animated_lod_fixtures::LOD_LEVELS == 3);
+    for (uint level = 0; level < animated_lod_fixtures::LOD_LEVELS; level++) {
         descriptor.levels[level] = {
-            .first_part = level * LOD_PRIMITIVES,
-            .part_count = LOD_PRIMITIVES,
+            .first_part = level * animated_lod_fixtures::LOD_PRIMITIVES,
+            .part_count = animated_lod_fixtures::LOD_PRIMITIVES,
             .min_screen_size = level == 0 ? 1 : (level == 1 ? 0.001f : 0),
         };
         uint triangles;
@@ -53,7 +53,7 @@ fn void fill_crowd_lod_native_descriptor(
             GeometryId geometry = corpus.levels[primitive][level];
             assert(corpus.layouts[primitive][level].index_count % 3 == 0);
             triangles += corpus.layouts[primitive][level].index_count / 3;
-            descriptor.parts[level * LOD_PRIMITIVES + primitive] = {
+            descriptor.parts[level * animated_lod_fixtures::LOD_PRIMITIVES + primitive] = {
                 .draw = {
                     .geometry = geometry,
                     .material = material.generation ? material : mesh.material,
@@ -93,11 +93,13 @@ fn void? attach_crowd_lod_native_sources(
             descriptor: &descriptor,
             material: {},
         );
+        AnimatedLodDesc desc = crowd_lod_native_desc(&descriptor);
+        desc.has_bounds_override = false;
         model::attach_animated_lod(
             assets: &fixture.assets,
             scene: &pair.scene,
             owner: pair.crowd,
-            desc: crowd_lod_native_desc(&descriptor),
+            desc: desc,
         )!;
         return;
     }
@@ -112,12 +114,15 @@ fn void? attach_crowd_lod_native_sources(
         )!;
         actual.local = pair.ordinary[source].local;
         ModelInstance* reference = pair.scene.get(pair.ordinary[source], ModelInstance);
-        MaterialId material = pair.scene.get(reference.present_node(reference.mesh_nodes[0]), Mesh).material;
+        ModelTemplate* template = &fixture.assets.model(corpus.model).data;
+        foreach (uint part, mesh : template.meshes) {
+            pair.scene.get(reference.present_node(reference.mesh_nodes[part]), Mesh).material = mesh.material;
+        }
         fill_crowd_lod_native_descriptor(
             fixture: fixture,
             corpus: corpus,
             descriptor: &descriptor,
-            material: material,
+            material: {},
         );
         model::attach_animated_lod(
             assets: &fixture.assets,
@@ -196,6 +201,8 @@ fn void check_crowd_lod_native_counts(Stats* stats, uint level, bool crowd) @pri
     assert(stats.cull_overflows == 0 && stats.sort_overflows == 0 && stats.lod_fallbacks == 0);
     if (crowd) {
         assert(stats.lod_counts_valid && stats.lod_instances_tested == CROWD_NATIVE_INSTANCES);
+        io::printfn("selected levels: %s", stats.lod_selected);
+        io::printfn("visible levels: %s", stats.lod_visible);
         for (uint choice = 0; choice < scene::MAX_LOD_CHOICES; choice++) {
             uint expected = choice == level ? CROWD_NATIVE_INSTANCES : 0;
             assert(stats.lod_selected[choice] == expected && stats.lod_visible[choice] == expected);
@@ -314,7 +321,7 @@ fn void test_animated_lod_native_quaternius_crowd_and_ordinary_forced_levels_mat
         CrowdNativeOutput output;
         create_crowd_native_output(&fixture, &output)!!;
         defer destroy_crowd_native_output(&fixture, &output);
-        for (uint level = 0; level < LOD_LEVELS; level++) {
+        for (uint level = 0; level < animated_lod_fixtures::LOD_LEVELS; level++) {
             compare_crowd_lod_native_level(
                 fixture: &fixture,
                 pair: &pair,

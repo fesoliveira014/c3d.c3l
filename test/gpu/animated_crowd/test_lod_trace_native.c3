@@ -61,18 +61,18 @@ struct LodTraceHarness @private {
 }
 
 fn bool create_lod_trace_fixture(Fixture* fixture, TraceKind kind, uint capacity = 0) @private {
-    if (catch fault = create_fixture(
+    if (catch excuse = create_fixture(
         allocator: mem,
         fixture: fixture,
         ray_queries: kind == TraceKind.HARDWARE,
         max_posed_trace_instances: capacity,
     )) {
-        if (kind == TraceKind.HARDWARE && fault == gpu::UNSUPPORTED_FEATURE) {
-            io::eprintfn("UNRUN N07 hardware: Vulkan ray queries are unsupported");
+        if (kind == TraceKind.HARDWARE && excuse == gpu::UNSUPPORTED_FEATURE) {
+            io::eprintfn("UNRUN animated LOD hardware trace: Vulkan ray queries are unsupported");
             return false;
         }
-        io::eprintfn("N07 fixture initialization fault: %s", fault);
-        assert(false);
+        io::eprintfn("Animated LOD trace fixture initialization fault: %s", excuse);
+        unreachable("Animated LOD trace fixture initialization failed");
     }
     print_adapter(fixture);
     if (kind == TraceKind.HARDWARE) assert(fixture.renderer.caps.ray_queries.enabled);
@@ -290,7 +290,7 @@ fn void run_lod_trace_mixed(TraceKind kind) @private {
         Vec3 third = animated_crowd_fixtures::PARTS_POSED_POINTS[3 * part + 2];
         harness.camera.local.position = (first + second + third) / 3 + (Vec3){ 0, 0, LOD_TRACE_CAMERA_DISTANCE };
         render_lod_trace(&fixture, &harness, kind)!!;
-        assert_lod_trace_agreement(harness.results, "N07 mixed base part");
+        assert_lod_trace_agreement(harness.results, "Animated LOD mixed base part");
         assert_lod_trace_parts(&fixture, &harness, owner);
         assert(fixture.renderer.stats.lod_objects_selected[0] == 1);
         assert(fixture.renderer.stats.trace_poses == (part == 0 ? 4u : 0u));
