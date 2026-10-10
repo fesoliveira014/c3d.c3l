@@ -680,7 +680,16 @@ fn void? record_raster_view(
                 PoseRecord* pose = has_previous ? record.history.previous_pose(scene, node) : null;
                 PoseRecord* crowd_pose;
                 bool crowd_history_invalid;
-                if (temporal && item.candidate.crowd) {
+                if (temporal && item.candidate.animated_lod) {
+                    crowd_pose = pose;
+                    pose = record.history.previous_candidate_pose(
+                        scene: scene,
+                        assets: renderer.assets,
+                        candidate: item.candidate,
+                    );
+                    crowd_history_invalid = !pose;
+                    has_previous &= !crowd_history_invalid;
+                } else if (temporal && item.candidate.crowd) {
                     if (record.history.has_previous(scene, node.parent)) {
                         crowd_pose = record.history.previous_pose(scene, node.parent);
                     }
@@ -706,7 +715,7 @@ fn void? record_raster_view(
                 }
 
                 bool posed = item.skin != (gpu::GpuAddress)0 || item.morph != (gpu::GpuAddress)0
-                  || item.candidate.batch || vertices == VertexHistory.CHANGED;
+                  || item.candidate.batch || item.candidate.animated_lod || vertices == VertexHistory.CHANGED;
                 item.moved = (temporal && item.candidate.lod) || vertices == VertexHistory.INVALID
                   || crowd_history_invalid
                   || (has_previous && (posed || item.custom_velocity || !(prev_world == node.world)));
@@ -1089,21 +1098,33 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
             scene_reads |= prepared.scene_reads;
         };
         scene.@each(LodGroup; Entity entity, LodGroup* group) {
-            if (spatial::lod_group_is_live(self.assets, group)) {
+            if (spatial::lod_group_is_live(
+                assets: self.assets,
+                group: group,
+                scene: scene,
+                node: scene.node(entity),
+            )) {
                 bool casts = shadows_enabled && group.state.effects.cast_shadow && scene.node(entity).visible_effective;
-                foreach (part : group.state.desc.parts) {
+
+                foreach (index, part : group.state.desc.parts) {
+                    AnimatedLodPartBinding binding;
+                    if (group.state.animated) binding = group.state.animated.parts[index];
+
                     MeshPreparation prepared = prepare_mesh(
                         renderer: self,
                         geometry_id: part.geometry,
                         material_id: part.material,
-                        morphed: false,
+                        morphed: binding.weight_count > 0,
                         depth: casts || prepass,
                         gbuffer: deferred,
                         instanced: group.state.mode == LodMode.INSTANCED,
+                        crowd: group.state.animated != null && binding.skinned,
+                        skinned: group.state.animated == null || binding.skinned,
                     )!;
                     sheen |= prepared.sheen;
                     scene_reads |= prepared.scene_reads;
                 }
+
                 if (lod_impostor_live(self.assets, group.state)) {
                     prepare_impostor(
                         renderer: self,
@@ -1203,6 +1224,7 @@ fn MeshPreparation? prepare_mesh(
     bool gbuffer,
     bool instanced = false,
     bool crowd = false,
+    bool skinned = true,
 ) @private {
     if (!renderer.assets.geometries.is_live(geometry_id) || !renderer.assets.materials.is_live(material_id)) {
         renderer.stats.dangling_refs++;
@@ -1227,7 +1249,7 @@ fn MeshPreparation? prepare_mesh(
     ShaderVariant vertex = mesh_vertex_variant(
         flags:      geometry.layout.flags,
         morphed:    morphed,
-        skinned:    !instanced || crowd,
+        skinned:    skinned && (!instanced || crowd),
         base_flags: instanced_flag,
     );
     if (catch excuse = pipeline_for(renderer, data, vertex)) {
@@ -1247,7 +1269,7 @@ fn MeshPreparation? prepare_mesh(
             vertex:       mesh_vertex_variant(
                 flags:      geometry.layout.flags,
                 morphed:    morphed,
-                skinned:    !instanced || crowd,
+                skinned:    skinned && (!instanced || crowd),
                 base_flags: shader::SHADER_FLAG_DEPTH_ONLY | instanced_flag,
             ),
             material:     data,
@@ -1257,6 +1279,30 @@ fn MeshPreparation? prepare_mesh(
             return {};
         }
     }
+
+    if (writes_own_depth(data)) {
+        MeshCandidate candidate;
+        DrawItem velocity_item = {
+            .candidate = &candidate,
+            .material = material,
+            .vertex = vertex,
+            .custom_velocity = custom_velocity_stage(renderer, data, instanced)!,
+        };
+
+        foreach (&view : renderer.views.items) {
+            if (!view.live || !post::uses_velocity(&view.desc)) continue;
+
+            if (catch excuse = post::velocity_pipeline_for(
+                renderer,
+                &velocity_item,
+                post::velocity_format(&view.desc),
+            )) {
+                if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
+                return {};
+            }
+        }
+    }
+
     return {
         .sheen       = material_uses_sheen(data),
         .scene_reads = material_scene_reads(data, custom_scene_reads(renderer, data)!),
@@ -1509,6 +1555,15 @@ fn gpu::GpuAddress? upload_previous_pose(
     bool positions,
 ) @private {
     MeshCandidate* candidate = item.candidate;
+    if (candidate.animated_lod) {
+        return upload_animated_lod_previous(
+            renderer: renderer,
+            item: item,
+            pose: pose,
+            owner: crowd_pose,
+        );
+    }
+
     uint offset = instance_offset(&item.range);
     BatchAddresses current = batch_addresses(
         candidate: candidate,

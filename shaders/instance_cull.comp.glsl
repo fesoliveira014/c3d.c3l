@@ -92,7 +92,7 @@ void select_lod(InstanceCullRoot root, uint source) {
         while (level + 1u < root.lod_level_count && size < root.lod_thresholds[level / 4u][level % 4u]) level++;
         while (valid && level > 0u && size > root.lod_thresholds[(level - 1u) / 4u][(level - 1u) % 4u] * (1.0 + root.lod_projection.w)) level--;
     }
-    LodHistory(root.lod_current).values[source] = LodHistoryGpu(model, level, generation, (!valid || previous != level) ? 1u : 0u, 0u);
+    LodHistory(root.lod_current).values[source] = LodHistoryGpu(model, level, generation, (!valid || (previous != level && root.lod_animated == 0u)) ? 1u : 0u, 0u);
     atomicAdd(CullCounter(root.counter).lod_selected[level], 1u);
 }
 
@@ -119,8 +119,13 @@ void main() {
         return;
     }
     if (root.lod_mode == LOD_CULL) {
+        uint parity = LodMetadata(root.lod_metadata).values[source].parity;
+        if (root.lod_animated != 0u) {
+            parity = uint(CullInstances(root.bounds_instances).values[source].normal_1.w);
+        }
+
         if (LodHistory(root.lod_current).values[source].level != root.lod_level
-            || LodMetadata(root.lod_metadata).values[source].parity != root.lod_parity) return;
+            || parity != root.lod_parity) return;
     }
     vec3 center;
     if (root.kind == INSTANCE_KIND_BILLBOARD) {
@@ -144,7 +149,7 @@ void main() {
                 if (instance_fade_scale(effects, instance_anchor(effects, model), seed) == 0.0) return;
             }
         }
-        mat4 bounds_model = root.bounds_instances == 0ul ? model
+        mat4 bounds_model = root.bounds_instances == 0ul || root.lod_animated != 0u ? model
             : CullBounds(root.bounds_instances).values[source];
 
         if (!box_visible(root, bounds_model, margin)) return;

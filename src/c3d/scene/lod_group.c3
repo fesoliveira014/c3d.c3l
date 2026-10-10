@@ -51,9 +51,55 @@ struct LodEffects {
     bool trace;
 }
 
+<* One explicit representation of a level-zero logical model mesh. *>
+struct AnimatedLodPart {
+    LodPart draw;
+    uint mesh_index;
+    ModelSkin skin;
+    float[] default_morph_weights;
+}
+
+<* Whole-model alternatives borrowing authored part data during attachment. *>
+struct AnimatedLodDesc {
+    LodLevel[] levels;
+    AnimatedLodPart[] parts;
+    bool has_bounds_override;
+    Aabb local_bounds;
+}
+
+<* Admitted source mesh, skin and selected logical-weight correspondence. *>
+struct AnimatedLodPartBinding {
+    uint mesh_index;
+    uint template_node;
+    bool skinned;
+    SkeletonId skeleton;
+    SkeletonId source_skeleton;
+    uint source_skeleton_revision;
+    uint geometry_revision;
+    uint skeleton_revision;
+    uint weight_offset;
+    uint weight_count;
+}
+
+<* Copied binding metadata; source components are reacquired through source_owner. *>
+struct AnimatedLodBinding {
+    Entity source_owner;
+    ModelId source_model;
+    uint model_revision;
+    uint source_revision;
+    AnimatedLodPartBinding[] parts;
+    uint[] weight_indices;
+    uint[] channel_offsets;
+    String[] channel_names;
+    float[] defaults;
+    uint[] joint_nodes;
+    Mat4[] inverse_bind;
+}
+
 <* Scene-owned group data; only placement elements are directly writable. *>
 struct LodGroupState {
     LodDesc desc;
+    AnimatedLodBinding* animated;
     Impostor impostor;
     float impostor_min_screen_size;
     uint descriptor_revision;
@@ -149,6 +195,7 @@ fn Node*? Scene.add_instanced_lod_group(
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
  @require self.has(node, LodGroup)
  @require self.get(node, LodGroup).state.mode == LodMode.INSTANCED
+ @require !self.get(node, LodGroup).state.animated
 *>
 fn void? Scene.set_lod_instances(
     &self,
@@ -169,6 +216,7 @@ fn void? Scene.set_lod_instances(
  @require self.has(node, LodGroup)
  @require self.get(node, LodGroup).state.mode == LodMode.INSTANCED
  @require count <= self.get(node, LodGroup).state.transforms.len
+ @require !self.get(node, LodGroup).state.animated
 *>
 fn void Scene.publish_lod_instances(&self, Node* node, uint count) {
     LodGroupState* state = self.get(node, LodGroup).state;
@@ -183,6 +231,7 @@ fn void Scene.publish_lod_instances(&self, Node* node, uint count) {
  @return? c3d::CAPACITY_EXCEEDED
  @require self.has(node, LodGroup)
  @require self.get(node, LodGroup).state.mode == LodMode.INSTANCED
+ @require !self.get(node, LodGroup).state.animated
 *>
 fn void? Scene.resize_lod_instances(&self, Node* node, uint count) {
     LodGroupState* state = self.get(node, LodGroup).state;
@@ -415,25 +464,46 @@ fn void fill_lod_instances(LodGroupState* state, Transform[] transforms, Vec4[] 
     state.count = (uint)transforms.len;
 }
 
-fn LodGroupState*? copy_lod_group(Allocator allocator, LodDesc desc, uint capacity) @local {
+fn LodGroupState*? copy_lod_group(
+    Allocator allocator,
+    LodDesc desc,
+    uint capacity,
+    AnimatedLodBinding* binding = null,
+) @local {
     LodBlockCursor measure;
-    carve_lod_group(&measure, desc, capacity);
+    carve_lod_group(
+        cursor: &measure,
+        desc: desc,
+        capacity: capacity,
+        binding: binding,
+    );
     char*? allocation = alloc::malloc_try(allocator, (sz)measure.offset);
     if (catch allocation) return c3d::CAPACITY_EXCEEDED~;
     LodBlockCursor fill = { .base = allocation };
-    LodGroupState* state = carve_lod_group(&fill, desc, capacity);
+    LodGroupState* state = carve_lod_group(
+        cursor: &fill,
+        desc: desc,
+        capacity: capacity,
+        binding: binding,
+    );
     state.identity = ++lod_identity_counter;
     return state;
 }
 
-fn LodGroupState* carve_lod_group(LodBlockCursor* cursor, LodDesc desc, uint capacity) @local {
+fn LodGroupState* carve_lod_group(
+    LodBlockCursor* cursor,
+    LodDesc desc,
+    uint capacity,
+    AnimatedLodBinding* binding = null,
+) @local {
     LodGroupState[] states = carve_lod(cursor, LodGroupState, 1);
     LodLevel[] levels = carve_lod(cursor, LodLevel, desc.levels.len);
     LodPart[] parts = carve_lod(cursor, LodPart, desc.parts.len);
     uint[] geometry_revisions = carve_lod(cursor, uint, desc.parts.len);
-    Transform[] transforms = carve_lod(cursor, Transform, capacity);
-    Vec4[] colors = carve_lod(cursor, Vec4, capacity);
+    Transform[] transforms = carve_lod(cursor, Transform, binding ? 0 : capacity);
+    Vec4[] colors = carve_lod(cursor, Vec4, binding ? 0 : capacity);
     uint[] generations = carve_lod(cursor, uint, capacity);
+    AnimatedLodBinding* animated = carve_animated_lod(cursor, binding);
     if (cursor.base) {
         levels[..] = desc.levels[..];
         parts[..] = desc.parts[..];
@@ -448,6 +518,7 @@ fn LodGroupState* carve_lod_group(LodBlockCursor* cursor, LodDesc desc, uint cap
                 .has_bounds_override = desc.has_bounds_override,
                 .local_bounds = desc.local_bounds,
             },
+            .animated = animated,
             .effects = { .cast_shadow = true, .receive_shadow = true, .trace = true },
             .transforms = transforms,
             .colors = colors,
@@ -471,4 +542,105 @@ macro carve_lod(LodBlockCursor* cursor, $Type, usz count) @local {
 
 fn void free_lod_group(Entity entity, void* component, void* user) @private {
     destroy_lod_group(*(Allocator*)user, (LodGroup*)component);
+}
+
+<* Copy admitted animated descriptors without owning the source model or playback. *>
+fn LodGroup? create_animated_lod_group(
+    Allocator allocator,
+    LodDesc desc,
+    AnimatedLodBinding binding,
+    uint capacity,
+) @private {
+    LodGroupState* state = copy_lod_group(
+        allocator: allocator,
+        desc: desc,
+        capacity: capacity,
+        binding: &binding,
+    )!;
+    state.mode = capacity ? LodMode.INSTANCED : LodMode.SINGLE;
+    state.count = capacity ? 0 : 1;
+    state.effects.trace = false;
+    return { .state = state };
+}
+
+<* Publish source edits without changing descriptor identity or selection history. *>
+fn void publish_animated_lod_source(LodGroupState* state) @private {
+    advance_lod_revision(state);
+    state.aggregate_revision = 0;
+}
+
+fn AnimatedLodBinding* carve_animated_lod(
+    LodBlockCursor* cursor,
+    AnimatedLodBinding* source,
+) @local {
+    if (!source) return null;
+    AnimatedLodBinding[] bindings = carve_lod(cursor, AnimatedLodBinding, 1);
+    AnimatedLodPartBinding[] parts = carve_lod(cursor, AnimatedLodPartBinding, source.parts.len);
+    uint[] indices = carve_lod(cursor, uint, source.weight_indices.len);
+    uint[] offsets = carve_lod(cursor, uint, source.channel_offsets.len);
+    String[] names = carve_lod(cursor, String, source.channel_names.len);
+    float[] defaults = carve_lod(cursor, float, source.defaults.len);
+    uint[] joints = carve_lod(cursor, uint, source.joint_nodes.len);
+    Mat4[] inverse_bind = carve_lod(cursor, Mat4, source.inverse_bind.len);
+    foreach (index, name : source.channel_names) {
+        char[] text = carve_lod(cursor, char, name.len);
+        if (cursor.base) {
+            text[..] = name[..];
+            names[index] = (String)text;
+        }
+    }
+    if (!cursor.base) return null;
+
+    parts[..] = source.parts[..];
+    indices[..] = source.weight_indices[..];
+    offsets[..] = source.channel_offsets[..];
+    defaults[..] = source.defaults[..];
+    joints[..] = source.joint_nodes[..];
+    inverse_bind[..] = source.inverse_bind[..];
+    bindings[0] = {
+        .source_owner = source.source_owner,
+        .source_model = source.source_model,
+        .model_revision = source.model_revision,
+        .source_revision = source.source_revision,
+        .parts = parts,
+        .weight_indices = indices,
+        .channel_offsets = offsets,
+        .channel_names = names,
+        .defaults = defaults,
+        .joint_nodes = joints,
+        .inverse_bind = inverse_bind,
+    };
+    return bindings.ptr;
+}
+
+fn void publish_crowd_lod_owner(Scene* scene, Node* owner, AnimatedCrowd* crowd) @private {
+    LodGroup* group = scene.get(owner, LodGroup);
+    if (!group || !group.state.animated) return;
+    if (group.state.transforms.ptr != crowd.placements.ptr) return;
+
+    publish_crowd_lod_source(scene, group.state, crowd);
+}
+
+fn void publish_crowd_lod_source(Scene* scene, LodGroupState* state, AnimatedCrowd* crowd) @private {
+    state.transforms = crowd.placements;
+    state.colors = crowd.colors;
+
+    uint count = crowd.is_prepared() ? crowd.count : 0;
+    ulong epoch = crowd.playback ? crowd.playback.identity : 1;
+    uint revision = crowd.parts.len ? scene.world.get(crowd.parts[0].batch, InstancedMesh).revision : 0;
+    bool changed = state.count != count || state.instance_epoch != epoch
+      || state.animated.source_revision != revision;
+
+    state.animated.source_revision = revision;
+    state.count = count;
+    state.instance_epoch = epoch;
+
+    if (crowd.playback) {
+        foreach (index, slot : crowd.playback.slots) {
+            changed |= state.slot_generations[index] != slot.generation;
+            state.slot_generations[index] = slot.generation;
+        }
+    }
+
+    if (changed) publish_animated_lod_source(state);
 }

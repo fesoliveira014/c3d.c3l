@@ -23,10 +23,14 @@ const uint DEFAULT_MAX_POSED_TRACE_INSTANCES = 64; // 32 two-part characters; a 
 *>
 struct PosedTraceKey {
     ulong  scene;
-    Entity node;     // the mesh node, or a crowd part's batch node
-    ulong  instance; // crowd placement index; 0 for a mesh
+    Entity node;            // mesh/batch node, or animated LOD owner
+    ulong  instance;        // logical source slot; 0 for an ordinary mesh
+    ulong  lod_identity;    // descriptor incarnation; 0 without animated LOD
+    ulong  source_identity; // crowd playback identity or animated source epoch
+    uint   slot_generation;
+    uint   logical_part;    // base mesh index; 0 for an ordinary mesh
 }
-$assert PosedTraceKey::size == 2 * ulong::size + Entity::size;
+$assert PosedTraceKey::size == 4 * ulong::size + Entity::size + 2 * uint::size;
 
 <*
  Rest topology a vertex-motion slot was built for.
@@ -103,16 +107,18 @@ struct PosedDispatch @private {
 }
 
 <*
- Hash of the scene identity, the full entity and the instance.
+ Hash of the full source, part and incarnation identity.
 *>
 fn uint PosedTraceKey.hash(self) => fnv32a::hash(@as_char_view(self));
 
 <*
- Whether both keys name the same scene, entity generation and instance.
+ Whether both keys name the same source slot, logical part and incarnation.
  @pure
 *>
 fn bool PosedTraceKey.equals(self, PosedTraceKey other) @operator(==) {
-    return self.scene == other.scene && c3d::same_id(self.node, other.node) && self.instance == other.instance;
+    return self.scene == other.scene && c3d::same_id(self.node, other.node) && self.instance == other.instance
+      && self.lod_identity == other.lod_identity && self.source_identity == other.source_identity
+      && self.slot_generation == other.slot_generation && self.logical_part == other.logical_part;
 }
 
 <*
@@ -329,6 +335,22 @@ fn bool vertex_motion_held(
     return !trace.hardware_requested || slot.blas.is_valid();
 }
 
+fn PosedTraceKey trace_pose_key(ulong scene, TracePoseSource* source, TraceInstance* record) @private {
+    PosedTraceKey key = { .scene = scene, .node = source.node.id, .instance = record.instance_index };
+    if (source.lod) {
+        key.lod_identity = source.lod.identity;
+        key.source_identity = source.lod.instance_epoch;
+        key.slot_generation = source.lod.mode == LodMode.INSTANCED
+          ? source.lod.slot_generations[record.instance_index] : 1;
+        key.logical_part = source.lod.animated.parts[source.part].mesh_index;
+    } else if (source.kind == TracePose.CROWD) {
+        key.source_identity = source.crowd.playback.identity;
+        key.slot_generation = source.crowd.playback.slots[record.instance_index].generation;
+        key.logical_part = source.part;
+    }
+    return key;
+}
+
 fn uint pose_input_bytes(TracePoseSource* source, AssetStore* assets) @private {
     switch (source.kind) {
         case REST:
@@ -341,6 +363,12 @@ fn uint pose_input_bytes(TracePoseSource* source, AssetStore* assets) @private {
             uint palette = source.crowd.parts[source.part].skinned
               ? source.crowd.joint_count * (uint)Mat4f::size : 0;
             return palette + (source.crowd.parts[source.part].weight_count ? (uint)MorphWeightsGpu::size : 0);
+        case ANIMATED_LOD:
+            AnimatedLodPartBinding* part = &source.lod.animated.parts[source.part];
+            uint palette = part.skinned ? (uint)(source.lod.animated.joint_nodes.len * Mat4f::size) : 0;
+            bool morphs = assets.geometry(source.lod.desc.parts[source.part].geometry).target_count
+              && part.weight_count;
+            return palette + (morphs ? (uint)MorphWeightsGpu::size : 0);
     }
 }
 
@@ -391,6 +419,28 @@ fn char[] pose_inputs(Renderer* renderer, TracePoseSource* source, TraceInstance
                     geometry::select_morph_targets(channels, crowd.morph_weights[first:part.weight_count]),
                 );
             }
+        case ANIMATED_LOD:
+            LodSelection selection;
+            MeshCandidate candidate = trace_animated_lod_candidate(source, record, &selection);
+            AnimatedLodPartBinding* part = candidate.animated_lod;
+
+            if (part.skinned) {
+                usz joints = source.lod.animated.joint_nodes.len;
+                palette_bytes = joints * Mat4f::size;
+                if (candidate.crowd) {
+                    Mat4* palette = &candidate.crowd.palettes[(usz)record.instance_index * joints];
+                    mem::copy(inputs.ptr, palette, (sz)palette_bytes);
+                } else {
+                    write_animated_lod_palette(
+                        palette: ((Mat4f*)inputs.ptr)[:joints],
+                        candidate: &candidate,
+                        origin: renderer.frame_origin,
+                    );
+                }
+            }
+
+            morphs = renderer.assets.geometry(record.geometry).target_count && part.weight_count;
+            if (morphs) block = animated_lod_morph(renderer.assets, &candidate, record.instance_index);
     }
     if (morphs) *(MorphWeightsGpu*)(inputs.ptr + palette_bytes) = block;
     return inputs;
@@ -748,6 +798,20 @@ fn gpu::GpuAddress? write_pose_root(
                     part:       source.part,
                     channels:   renderer.assets.geometry(record.geometry).data.channels,
                 )! + (gpu::GpuAddress)(slot_index * MorphWeightsGpu::size);
+            }
+        case ANIMATED_LOD:
+            LodSelection selection;
+            MeshCandidate candidate = trace_animated_lod_candidate(source, record, &selection);
+            AnimatedLodPartBinding* part = candidate.animated_lod;
+
+            if (part.skinned) {
+                palette = resolve_animated_lod_palette(renderer, &candidate)!
+                  + (gpu::GpuAddress)((usz)record.instance_index * source.lod.animated.joint_nodes.len * Mat4f::size);
+            }
+
+            if (renderer.assets.geometry(record.geometry).target_count && part.weight_count) {
+                morph = resolve_animated_lod_morph(renderer, &candidate)!
+                  + (gpu::GpuAddress)((usz)record.instance_index * MorphWeightsGpu::size);
             }
     }
     Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];

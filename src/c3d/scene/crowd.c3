@@ -3,8 +3,14 @@ module c3d::scene;
 import c3d;
 import c3d::anim;
 import c3d::ecs;
+import c3d::ecs::store;
 import c3d::maths;
 import std::math;
+
+struct CrowdRemovalContext @private {
+    Allocator* allocator;
+    store::ComponentStore{LodGroup}* lod_groups;
+}
 
 <* Captured single-clip seed used when an instance is replaced. *>
 struct CrowdPose {
@@ -72,11 +78,23 @@ fn void Scene.write_crowd_batches(&self, AnimatedCrowd* crowd) {
         batch.local_bounds = bounds;
         self.mark_instances_dirty(self.node(part.batch));
     }
+
+    if (crowd.parts.len) publish_crowd_lod_owner(self, self.node(crowd.parts[0].batch).parent, crowd);
 }
 
 fn void free_crowd(Entity entity, void* component, void* user) @private {
     AnimatedCrowd* crowd = component;
-    Allocator allocator = *(Allocator*)user;
+    CrowdRemovalContext* context = user;
+    Allocator allocator = *context.allocator;
+
+    LodGroup* group = context.lod_groups.find(entity);
+    if (group && group.state.animated) {
+        group.state.count = 0;
+        group.state.transforms = {};
+        group.state.colors = {};
+        publish_animated_lod_source(group.state);
+    }
+
     if (crowd.playback) anim::destroy_crowd_playback(crowd.playback);
     if (crowd.authoring) anim::destroy_crowd_authoring(crowd.authoring);
 

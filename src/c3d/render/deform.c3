@@ -18,6 +18,10 @@ struct DeformationCache {
     HashMap{ulong, gpu::GpuAddress} crowd_palettes;
     HashMap{ulong, gpu::GpuAddress} crowd_morphs;
     HashMap{ulong, gpu::GpuAddress} crowd_bounds;
+    HashMap{AnimatedLodKey, gpu::GpuAddress} animated_palettes;
+    HashMap{AnimatedLodKey, gpu::GpuAddress} animated_morphs;
+    HashMap{AnimatedLodKey, gpu::GpuAddress} animated_parts;
+    HashMap{AnimatedLodKey, gpu::GpuAddress} animated_indices;
 }
 
 $assert geometry::MAX_ACTIVE_MORPH_TARGETS == shader::MAX_ACTIVE_MORPH_TARGETS;
@@ -45,6 +49,15 @@ fn ShaderVariant mesh_vertex_variant(
 
 fn ShaderVariant candidate_vertex_variant(GeometryFlags flags, MeshCandidate* candidate, uint base_flags = 0) @private {
     if (candidate.impostor) return { .shader = IMPOSTOR_VERTEX };
+    if (candidate.animated_lod) {
+        return mesh_vertex_variant(
+            flags: flags,
+            morphed: candidate.animated_lod.weight_count > 0,
+            skinned: candidate.animated_lod.skinned,
+            base_flags: base_flags | (candidate.crowd ? shader::SHADER_FLAG_INSTANCED : 0),
+        );
+    }
+
     if (candidate.billboards) return { .shader = BILLBOARD_VERTEX };
     if (candidate_instanced(candidate)) {
         AnimatedCrowd* crowd = candidate.crowd;
@@ -81,6 +94,10 @@ fn DeformationCache create_deformation_cache(Allocator allocator) @private {
     cache.crowd_palettes.init(allocator);
     cache.crowd_morphs.init(allocator);
     cache.crowd_bounds.init(allocator);
+    cache.animated_palettes.init(allocator);
+    cache.animated_morphs.init(allocator);
+    cache.animated_parts.init(allocator);
+    cache.animated_indices.init(allocator);
     return cache;
 }
 
@@ -90,6 +107,10 @@ fn void destroy_deformation_cache(DeformationCache* cache) @private {
     cache.crowd_palettes.free();
     cache.crowd_morphs.free();
     cache.crowd_bounds.free();
+    cache.animated_palettes.free();
+    cache.animated_morphs.free();
+    cache.animated_parts.free();
+    cache.animated_indices.free();
 }
 
 fn void reset_deformation_cache(DeformationCache* cache) @private {
@@ -98,6 +119,10 @@ fn void reset_deformation_cache(DeformationCache* cache) @private {
     cache.crowd_palettes.clear();
     cache.crowd_morphs.clear();
     cache.crowd_bounds.clear();
+    cache.animated_palettes.clear();
+    cache.animated_morphs.clear();
+    cache.animated_parts.clear();
+    cache.animated_indices.clear();
 }
 
 fn gpu::GpuAddress? resolve_crowd_bounds(Renderer* renderer, MeshCandidate* candidate) @private {
@@ -309,6 +334,8 @@ fn gpu::GpuAddress? resolve_morph_block(
 }
 
 fn gpu::GpuAddress? resolve_candidate_skin(Renderer* renderer, MeshCandidate* candidate) @private {
+    if (candidate.animated_lod) return resolve_animated_lod_palette(renderer, candidate);
+
     if (candidate.skin) return resolve_palette(renderer, candidate.node, candidate.skin);
     if (candidate.crowd && candidate.crowd.parts[candidate.crowd_part].skinned) {
         return resolve_crowd_palettes(renderer, candidate.node.parent, candidate.crowd);
@@ -323,6 +350,8 @@ fn gpu::GpuAddress? resolve_candidate_morph(
     ShaderVariant vertex,
 ) @private {
     if (!(vertex.flags & shader::SHADER_FLAG_MORPH)) return (gpu::GpuAddress)0;
+    if (candidate.animated_lod) return resolve_animated_lod_morph(renderer, candidate);
+
     if (candidate.crowd) {
         return resolve_crowd_morphs(
             renderer:   renderer,
@@ -341,5 +370,9 @@ fn gpu::GpuAddress? resolve_candidate_morph(
 }
 
 fn uint candidate_skin_stride(MeshCandidate* candidate) @private {
+    if (candidate.animated_lod) {
+        return candidate.crowd && candidate.animated_lod.skinned ? candidate.crowd.joint_count : 0;
+    }
+
     return candidate.crowd && candidate.crowd.parts[candidate.crowd_part].skinned ? candidate.crowd.joint_count : 0;
 }

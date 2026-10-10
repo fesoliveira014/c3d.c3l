@@ -40,7 +40,8 @@
       "type": "executable",
       "sources": [
         "bench.c3",
-        "native.c3"
+        "native.c3",
+        "../fixtures/animated_lod_fixtures.c3"
       ],
       "dependencies": [
         "c3d_profile",
@@ -53,8 +54,28 @@
         "C3D_SHADER_COMPILER"
       ],
       "opt": "O3",
-      "safe": true,
+      "safe": false,
       "output": "build_native"
+    },
+    "crowd_bench_native_safe": {
+      "type": "executable",
+      "sources": [
+        "bench.c3",
+        "native.c3",
+        "../fixtures/animated_lod_fixtures.c3"
+      ],
+      "dependencies": [
+        "c3d_profile",
+        "shaderc"
+      ],
+      "features": [
+        "C3D_CROWD_BENCH_NATIVE",
+        "C3D_PROFILE_GPU",
+        "C3D_PROFILE_INTERNAL",
+        "C3D_SHADER_COMPILER"
+      ],
+      "safe": true,
+      "output": "build_native_safe"
     }
   }
 }

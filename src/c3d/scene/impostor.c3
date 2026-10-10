@@ -38,6 +38,8 @@ fn void? Scene.set_lod_impostor(
     float min_screen_size,
 ) {
     LodGroupState* state = self.get(node, LodGroup).state;
+    if (state.animated) return c3d::UNSUPPORTED~;
+
     TextureAsset* texture = assets.textures.try_get(impostor.atlas)!;
     if (!impostor_texture_valid(impostor, &texture.desc)) return c3d::INVALID_ARGUMENT~;
     if (!math::is_finite(min_screen_size) || min_screen_size <= 0) return c3d::INVALID_ARGUMENT~;

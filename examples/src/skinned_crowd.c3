@@ -10,6 +10,7 @@ import c3d::asset;
 import c3d::asset::gltf;
 import c3d::camera;
 import c3d::gui;
+import c3d::geometry;
 import c3d::light;
 import c3d::maths;
 import c3d::model;
@@ -31,7 +32,12 @@ const float REPORT_SECONDS @local = 2;
 const Vec3  CAMERA_POSITION @local = { 0, 14, 30 };
 const Vec3  CAMERA_TARGET @local = { 0, 0, 0 };
 const Vec2  PANEL_POSITION @local = { 16, 16 };
-const Vec2  PANEL_SIZE @local = { 360, 420 };
+const Vec2  PANEL_SIZE @local = { 390, 560 };
+const uint LOD_LEVELS @local = 3; // original, half and quarter triangle subsets share the vertex layout
+const uint TRIANGLE_CORNERS @local = 3;
+const float[LOD_LEVELS] LOD_THRESHOLDS @local
+  = { 0.06f, 0.025f, 0 }; // View-height fractions; lower retains more triangles farther away.
+const float FULL_DETAIL_BIAS @local = 16; // Log2 size scale; retains full detail across this field.
 const String CHARACTER @local = "../assets/quaternius/AnimationLibrary_Godot.glb";
 const String[] CLIP_NAMES @local = {
     "Walk_Loop", "Jog_Fwd_Loop", "Idle_Loop", "Sprint_Loop", "Walk_Formal_Loop", "Dance_Loop",
@@ -39,11 +45,6 @@ const String[] CLIP_NAMES @local = {
 
 struct Random @local {
     uint state;
-}
-
-fn float Random.next(&self) @local {
-    self.state = self.state * 1664525 + 1013904223;
-    return (float)(self.state >> 8) / (float)(1 << 24);
 }
 
 struct Showcase @local {
@@ -56,10 +57,18 @@ struct Showcase @local {
     RootMotionDelta motion;
     uint events;
     uint dropped_events;
+    float lod_bias;
+    bool full_detail;
+    uint[LOD_LEVELS] lod_triangles;
     float    position_error;
     float    rotation_error;
     float    scale_error;
     float    morph_error;
+}
+
+fn float Random.next(&self) @local {
+    self.state = self.state * 1664525 + 1013904223;
+    return (float)(self.state >> 8) / (float)(1 << 24);
 }
 
 fn String example_path(String relative) @local {
@@ -88,6 +97,83 @@ fn Transform slot_placement(uint index, Random* random) @local {
         .position = { x, 0, z },
         .rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, random.next() * (float)math::PI * 2),
         .scale    = { 1, 1, 1 },
+    };
+}
+
+fn GeometryId? triangle_subset(AssetStore* assets, GeometryId geometry_id, uint step) @local {
+    Geometry source = assets.geometry(geometry_id).data;
+    if (source.topology != TRIANGLES || !source.indices.len) return c3d::INVALID_ARGUMENT~;
+
+    usz triangles = (usz)source.indices.len / TRIANGLE_CORNERS;
+    usz selected = (triangles + step - 1) / step;
+    uint[] indices = alloc::new_array_try(tmem, uint, (sz)(selected * TRIANGLE_CORNERS))
+      ?? c3d::CAPACITY_EXCEEDED~!;
+
+    for (usz triangle = 0; triangle < selected; triangle++) {
+        usz source_corner = triangle * step * TRIANGLE_CORNERS;
+        usz target_corner = triangle * TRIANGLE_CORNERS;
+        indices[target_corner:TRIANGLE_CORNERS] = source.indices[source_corner:TRIANGLE_CORNERS];
+    }
+
+    source.indices = indices;
+
+    return assets.add_geometry(&source);
+}
+
+fn void? attach_showcase_lod(
+    AssetStore* assets,
+    Scene* scene,
+    ModelTemplate* template,
+    Showcase* showcase,
+) @local {
+    @pool() {
+        uint mesh_count = (uint)template.meshes.len;
+        LodLevel[LOD_LEVELS] levels;
+        AnimatedLodPart[] parts = alloc::new_array_try(tmem, AnimatedLodPart, (sz)mesh_count * LOD_LEVELS)
+          ?? c3d::CAPACITY_EXCEEDED~!;
+
+        for (uint level = 0; level < LOD_LEVELS; level++) {
+            levels[level] = {
+                .first_part = level * mesh_count,
+                .part_count = mesh_count,
+                .min_screen_size = LOD_THRESHOLDS[level],
+            };
+
+            foreach (uint mesh_index, mesh : template.meshes) {
+                ModelSkin skin;
+                foreach (candidate : template.skins) {
+                    if (candidate.mesh_node == mesh.node) skin = candidate;
+                }
+
+                GeometryId geometry_id = level == 0
+                  ? mesh.geometry : triangle_subset(assets, mesh.geometry, 1 << level)!;
+                parts[level * mesh_count + mesh_index] = {
+                    .draw = { .geometry = geometry_id, .material = mesh.material, .local = matrix::IDENTITY4 },
+                    .mesh_index = mesh_index,
+                    .skin = skin,
+                    .default_morph_weights = mesh.default_morph_weights,
+                };
+                showcase.lod_triangles[level] += assets.geometry(geometry_id).index_count / TRIANGLE_CORNERS;
+            }
+        }
+
+        AnimatedLodDesc desc = { .levels = levels[..], .parts = parts };
+
+        model::attach_animated_lod(
+            assets: assets,
+            scene: scene,
+            owner: showcase.crowd,
+            desc: desc,
+        )!;
+
+        foreach (node : showcase.animated) {
+            model::attach_animated_lod(
+                assets: assets,
+                scene: scene,
+                owner: node,
+                desc: desc,
+            )!;
+        }
     };
 }
 
@@ -132,7 +218,9 @@ fn void compare_playback(Scene* scene, Showcase* showcase) @local {
     }
 }
 
-fn void panel(render::Renderer* renderer, Showcase* showcase) @local {
+fn void? panel(render::Renderer* renderer, Showcase* showcase) @local {
+    bool changed;
+
     imgui::set_next_window_pos(PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
     imgui::set_next_window_size(PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
     if (imgui::begin("AnimatedCrowd", null, {})) {
@@ -141,6 +229,31 @@ fn void panel(render::Renderer* renderer, Showcase* showcase) @local {
         imgui::text("Frame: %.3f ms", (double)renderer.stats.frame_ms);
         imgui::text("Draws: %u", renderer.stats.draws);
         imgui::text("Instances: %u", renderer.stats.instances);
+
+        changed |= imgui::slider_float(
+            label: "LOD bias",
+            v: &showcase.lod_bias,
+            v_min: -3,
+            v_max: 3,
+        );
+        changed |= imgui::checkbox("Force full-detail meshes", &showcase.full_detail);
+        imgui::text_unformatted("Triangle subsets; preview has holes.");
+
+        if (showcase.baseline || renderer.stats.lod_counts_valid) {
+            foreach (uint level, triangles : showcase.lod_triangles) {
+                uint selected = showcase.baseline
+                  ? renderer.stats.lod_objects_selected[level] : renderer.stats.lod_selected[level];
+                uint visible = showcase.baseline
+                  ? renderer.stats.lod_objects_visible[level] : renderer.stats.lod_visible[level];
+                imgui::text("LOD %u: %u selected", level, selected);
+                imgui::same_line();
+                imgui::text("%u visible", visible);
+                imgui::text("  %u triangles per character", triangles);
+            }
+        } else {
+            imgui::text_unformatted("LOD counts await completed GPU work.");
+        }
+
         imgui::text("Space pauses slot 0; R toggles motion application");
         imgui::text("Apply published motion: %s", showcase.consume_motion ? "on" : "off");
         double root_x = showcase.motion.translation.x;
@@ -156,6 +269,12 @@ fn void panel(render::Renderer* renderer, Showcase* showcase) @local {
         }
     }
     imgui::end();
+
+    if (changed) {
+        ViewDesc desc = renderer.views.get(renderer.default_view).desc;
+        desc.lod_bias = showcase.full_detail ? FULL_DETAIL_BIAS : showcase.lod_bias;
+        render::configure_view(renderer, renderer.default_view, desc)!;
+    }
 }
 
 fn void? draw_frame(
@@ -244,7 +363,7 @@ fn void? run(
         scene.update_world();
         if (showcase.compare) compare_playback(scene, showcase);
 
-        panel(renderer, showcase);
+        panel(renderer, showcase)!;
         gui_renderer.finish_frame();
         platform::sync_window(window, renderer);
         draw_frame(
@@ -335,6 +454,7 @@ fn int main(String[] args) {
         instances:   instances[..],
         name:        "crowd",
     )!!;
+    attach_showcase_lod(&assets, &scene, template, &showcase)!!;
     set_baseline(&scene, &showcase, baseline);
 
     if (catch excuse = run(

@@ -28,6 +28,7 @@ struct SceneDesc {
 struct Scene {
     Allocator      allocator;
     Allocator*     hook_allocator;
+    CrowdRemovalContext* crowd_removal;
     World          world;
     Node[]         nodes;
     Node*          root;
@@ -442,7 +443,14 @@ fn Scene create_scene(Allocator allocator, SceneDesc desc) {
     scene.world.set_remove_hook(InstancedMesh, &free_instanced_mesh, scene.hook_allocator);
     scene.world.set_remove_hook(LodGroup, &free_lod_group, scene.hook_allocator);
     scene.world.set_remove_hook(BillboardBatch, &free_billboards, scene.hook_allocator);
-    scene.world.set_remove_hook(AnimatedCrowd, &free_crowd, scene.hook_allocator);
+
+    scene.crowd_removal = alloc::new(allocator, CrowdRemovalContext);
+    *scene.crowd_removal = {
+        .allocator = scene.hook_allocator,
+        .lod_groups = (store::ComponentStore{LodGroup}*)scene.world.stores[store::slot{LodGroup} - 1],
+    };
+    scene.world.set_remove_hook(AnimatedCrowd, &free_crowd, scene.crowd_removal);
+
     return scene;
 }
 
@@ -454,6 +462,7 @@ fn void destroy_scene(Scene* scene) {
     while (scene.root.first_child) scene.remove(scene.root.first_child);
     ecs::destroy_world(&scene.world);
     alloc::free(scene.allocator, scene.hook_allocator);
+    alloc::free(scene.allocator, scene.crowd_removal);
     alloc::free(scene.allocator, scene.remove_queue.ptr);
     alloc::free(scene.allocator, scene.nodes.ptr);
     *scene = {};

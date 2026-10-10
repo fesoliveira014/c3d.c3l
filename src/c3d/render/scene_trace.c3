@@ -55,6 +55,7 @@ enum TracePose @private {
     REST,          // the shared geometry, as raster draws it
     MESH,          // a mesh skinned through its binding, morphed by nonzero weights, or both
     CROWD,         // one placement of a crowd part batch
+    ANIMATED_LOD,  // one logical base part of an ordinary model or crowd
     VERTEX_MOTION, // a mesh whose positions the application rewrites between revisions
 }
 
@@ -90,6 +91,8 @@ struct TracePoseSource @private {
     AnimatedCrowd* crowd;         // CROWD
     uint           part;          // CROWD: index into crowd.parts
     uint           palette_index; // CROWD: the placement's slot in the parity-packed palettes
+    Scene*         scene;         // ANIMATED_LOD: source scene, borrowed for this collection
+    LodGroupState* lod;           // animated level-zero descriptor, borrowed for this collection
 }
 
 struct TraceCollection @private {
@@ -305,9 +308,20 @@ fn TraceCollection collect_trace_instances(
     AssetStore* assets,
     Vec3 origin = {},
 ) @private {
+    bool[] group_live = alloc::new_array(allocator, bool, (sz)scene.nodes.len);
+    defer alloc::free(allocator, group_live.ptr);
+
     usz capacity = scene.count(Mesh);
     scene.@each(LodGroup; Entity entity, LodGroup* group) {
-        capacity += (usz)group.state.count * group.state.desc.levels[0].part_count;
+        group_live[entity.index] = spatial::lod_group_is_live(
+            assets: assets,
+            group: group,
+            scene: scene,
+            node: scene.node(entity),
+        );
+        if (group_live[entity.index]) {
+            capacity += (usz)group.state.count * group.state.desc.levels[0].part_count;
+        }
     };
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
         capacity += batch.count;
@@ -319,7 +333,7 @@ fn TraceCollection collect_trace_instances(
     usz count;
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         Node* node = scene.node(entity);
-        if (node.visible_effective && mesh.trace) {
+        if (node.visible_effective && mesh.trace && !animated_lod_owns_source(scene, node)) {
             SkinBinding* skin = scene.get(node, SkinBinding);
             if (!spatial::mesh_is_live(assets, mesh, skin) || !material_dependencies_live(assets, mesh.material)) {
                 collection.dangling++;
@@ -352,7 +366,7 @@ fn TraceCollection collect_trace_instances(
     };
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
         Node* node = scene.node(entity);
-        if (node.visible_effective && batch.trace && batch.count) {
+        if (node.visible_effective && batch.trace && batch.count && !animated_lod_owns_source(scene, node)) {
             if (!spatial::instanced_mesh_is_live(assets, batch)
                 || !material_dependencies_live(assets, batch.material)) {
                 collection.dangling++;
@@ -415,36 +429,75 @@ fn TraceCollection collect_trace_instances(
     scene.@each(LodGroup; Entity entity, LodGroup* group) {
         Node* node = scene.node(entity);
         LodGroupState* state = group.state;
-        if (node.visible_effective && state.count && state.effects.trace) {
-            bool live = spatial::lod_group_is_live(assets, group);
+        if (node.visible_effective && state.effects.trace) {
+            bool live = group_live[entity.index];
+            LodLevel base = state.desc.levels[0];
             if (live) {
-                foreach (part : state.desc.parts) live &= material_dependencies_live(assets, part.material);
+                foreach (part : state.desc.parts[base.first_part:base.part_count]) {
+                    live &= material_dependencies_live(assets, part.material);
+                }
             }
             if (!live) {
                 collection.dangling++;
             } else {
                 bool collected;
-                for (uint part = 0; part < state.desc.levels[0].part_count; part++) {
-                    LodPart source = state.desc.parts[part];
-                    if (!traceable(assets, source.geometry, source.material)) continue;
-                    collected = true;
+                for (uint part = base.first_part; part < base.first_part + base.part_count; part++) {
+                    LodPart draw = state.desc.parts[part];
+                    if (!traceable(assets, draw.geometry, draw.material)) continue;
+
+                    TracePoseSource pose = { .node = node };
+                    LodSelection selection;
+                    MeshCandidate candidate;
+                    if (state.animated) {
+                        pose.scene = scene;
+                        pose.lod = state;
+                        pose.part = part;
+                        pose.crowd = scene.get(node, AnimatedCrowd);
+                        TraceInstance base_record = { .geometry = draw.geometry, .material = draw.material };
+                        candidate = trace_animated_lod_candidate(&pose, &base_record, &selection);
+                        if (candidate.source_mesh && !candidate.source_mesh.trace) continue;
+
+                        AnimatedLodPartBinding* binding = candidate.animated_lod;
+                        bool morphed = assets.geometry(draw.geometry).target_count && binding.weight_count;
+                        pose.kind = binding.skinned || morphed ? TracePose.ANIMATED_LOD
+                          : candidate.source_mesh && candidate.source_mesh.vertex_motion
+                          ? TracePose.VERTEX_MOTION : TracePose.REST;
+                    }
+
+                    collected |= state.count > 0;
                     for (uint instance = 0; instance < state.count; instance++) {
+                        Mat4 placement = state.mode == LodMode.INSTANCED
+                          ? state.transforms[instance].to_mat4() : matrix::IDENTITY4;
+                        Mat4 local = state.animated
+                          ? placement.mul(animated_lod_part_local(&candidate, instance))
+                          : placement.mul(draw.local);
                         TraceInstance record = trace_record(
                             assets: assets,
                             entity: entity,
-                            geometry: source.geometry,
-                            material: source.material,
+                            geometry: draw.geometry,
+                            material: draw.material,
                             world: node.world,
                             cast_shadow: state.effects.cast_shadow,
                             instance_index: instance,
-                            local: state.mode == LodMode.INSTANCED
-                              ? state.transforms[instance].to_mat4().mul(source.local) : source.local,
+                            local: local,
                             origin: origin,
                         );
                         record.lod_identity = state.identity;
-                        record.part_index = part;
+                        record.part_index = state.animated ? state.animated.parts[part].mesh_index : part;
+                        if (state.animated) {
+                            record.bounds = spatial::animated_lod_part_bounds(
+                                assets: assets,
+                                scene: scene,
+                                node: node,
+                                state: state,
+                                instance: instance,
+                                part: part,
+                                origin: origin,
+                            );
+                        }
+
                         collection.records[count] = record;
-                        collection.poses[count++] = { .node = node };
+                        collection.poses[count++] = pose;
                     }
                 }
                 if (collected && state.effects.sway.amplitude != 0) collection.sway_at_rest++;
@@ -454,6 +507,29 @@ fn TraceCollection collect_trace_instances(
     collection.records = collection.records[:count];
     collection.poses = collection.poses[:count];
     return collection;
+}
+
+fn MeshCandidate trace_animated_lod_candidate(
+    TracePoseSource* source,
+    TraceInstance* record,
+    LodSelection* selection,
+) @private {
+    *selection = {
+        .scene = source.scene,
+        .scene_identity = source.scene.identity,
+        .node = source.node,
+        .state = source.lod,
+    };
+    MeshCandidate candidate = {
+        .node = source.node,
+        .geometry = record.geometry,
+        .material = record.material,
+        .scene_identity = source.scene.identity,
+        .lod = selection,
+        .lod_part = source.part,
+    };
+    (void)bind_animated_lod_candidate(selection, &candidate);
+    return candidate;
 }
 
 fn void discard_scene_trace(Renderer* renderer) @private {
@@ -626,7 +702,7 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
         );
         bool motion_row = pose.kind == TracePose.VERTEX_MOTION;
         PosedTraceKey key;
-        if (posed_row) key = { .scene = scene, .node = pose.node.id, .instance = record.instance_index };
+        if (posed_row) key = trace_pose_key(scene, pose, record);
         bool motion_held = motion_row && vertex_motion_held(
             renderer:    renderer,
             key:         key,

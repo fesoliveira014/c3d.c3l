@@ -15,13 +15,23 @@ The other value components use fixed-size copying attachment. ProbeVolume,
 Atmosphere, HeightFog and ReflectionProbe use their existing owner validity
 predicates on both export and decoded authoring before attachment.
 
-InstancedMesh, BillboardBatch and LodGroup also restore in the VALUE phase through
+InstancedMesh and BillboardBatch also restore in the VALUE phase through
 private authoring descriptions. They retain capacity and live entries in copied
-storage. Instanced batches preserve flags, sway, fade and bounds overrides; LOD
-retains ordered parts with full affine matrices, level thresholds, common effects
-and terminal impostor configuration. Unused transforms restart at identity,
-unused colors at white and unused billboards at `BILLBOARD_DEFAULT`. Bounds caches,
-revisions and logical LOD identities restart under normal owner rules.
+storage. Instanced batches preserve flags, sway, fade and bounds overrides. Unused
+transforms restart at identity, unused colors at white and unused billboards at
+`BILLBOARD_DEFAULT`. Bounds caches and revisions restart under normal owner rules.
+
+LodGroup authoring version 2 restores in BINDINGS, after its source owners.
+Rigid groups preserve ordered affine parts, levels, capacities, live placements,
+common effects and terminal impostors. Version-1 binary and JSONC authoring still
+reads as rigid. Animated groups preserve their source-owner reference, levels,
+logical part indices, geometry/material/skeleton keys, ordered template joint
+indices, selected morph defaults, optional ordinary bounds and common effects.
+Crowd capacity, placement, colors and its pose envelope belong to AnimatedCrowd.
+The LOD binding is rebuilt through ordinary atomic admission after ModelInstance
+or pending AnimatedCrowd has attached. Reading does not prepare a crowd, sample
+poses or create GPU resources. Derived binding maps, revisions, logical group
+identity, bounds caches and all renderer selection/history restart.
 
 ModelInstance, SkinBinding, IkChain, FootIk and LookAt restore in REFERENCES.
 Animator and AnimatedCrowd restore in OWNER. Their captured authoring, reference
@@ -70,7 +80,7 @@ order. Repeating the same transient callback is idempotent; a different callback
 for an already-transient type returns `INVALID_ARGUMENT`. Explicit replacement
 between authored and transient policies retains the existing registration rules.
 
-RestorePhase.VALUE runs before REFERENCES, then OWNER. Every node exists before these phases. The application owns codec dependencies; this is not a scheduler. ReadContext.has_component(Type) reports whether the file independently restores that type on the current node, so an owner can reject conflicting stored components before invoking a no-duplicate owner API.
+RestorePhase.VALUE runs before REFERENCES, then OWNER, then BINDINGS. Every node exists before these phases. The application owns codec dependencies; this is not a scheduler. ReadContext.has_component(Type) reports whether the file independently restores that type on the current node, so an owner can reject conflicting stored components before invoking a no-duplicate owner API.
 
 Omitting a component does not omit its node. An omitted generated node must have all its non-transient components explicitly claimed; every omitted descendant must also be claimed. Unrelated authored children/components cannot disappear silently. A saved reference to an omitted node fails INVALID_ARGUMENT.
 

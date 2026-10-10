@@ -1,13 +1,15 @@
 # Whole-object LOD
 
-`c3d::scene::LodGroup` draws one rigid object or a fixed-capacity set of placements.
+`c3d::scene::LodGroup` draws one object or a fixed-capacity set of placements.
 Each level contains geometry/material parts with local transforms. Levels may
 have different part counts. A placement selects one whole level; its parts share
 one source index, sway anchor and distance fade.
 
 Ordinary groups select on the CPU; instanced groups select on the GPU. Core owns
-both paths. Existing `Mesh` and `InstancedMesh` behavior stays unchanged. Skins,
-morphs, animated crowds and automatic simplification are outside this API.
+both paths. Rigid groups use `LodDesc`; models and animated crowds use an explicit
+`AnimatedLodDesc` attached to their existing source owner. Animated alternatives
+share that owner's playback, skin palette and logical morph weights. Automatic
+simplification, animated impostors and LOD crossfades are unsupported.
 
 Placement uploads and per-view LOD history record their [render origin](large_world.md).
 Reference changes preserve selection/hysteresis and map previous placements to
@@ -46,18 +48,120 @@ read-only after creation.
 `create_lod_group(allocator, &assets, desc, capacity)` creates an owning component
 for transfer through `scene.add(node, group)`. Use the scene allocator. Capacity
 zero selects ordinary mode; positive capacity creates an empty instanced group.
-`destroy_lod_group` frees a component not transferred to a scene. A group owner
-must not also carry another drawable, `SkinBinding` or `AnimatedCrowd`.
+`destroy_lod_group` frees a component not transferred to a scene. A rigid group
+owner must not also carry another drawable, `SkinBinding` or `AnimatedCrowd`.
+Use animated attachment below to combine LOD with a model or crowd owner.
 
 One through `MAX_LOD_LEVELS` (five) levels are accepted. Each has parts. Ranges
 partition the flat part array without gaps or overlaps. Nonfinal thresholds are
 positive, finite and strictly decreasing; the final threshold is zero. Part
 matrices are finite, nonsingular and affine.
 
-Creators report `INVALID_ARGUMENT` for malformed data, `INVALID_ID` for dead
+Rigid creators report `INVALID_ARGUMENT` for malformed data, `INVALID_ID` for dead
 assets, `UNSUPPORTED` for deformation or incompatible custom stages, and
 `CAPACITY_EXCEEDED` for exhausted storage. Validation precedes scene mutation;
 failure preserves scene and caller ownership.
+
+## Animated models and crowds
+
+`model::attach_animated_lod(&assets, &scene, owner, desc)` attaches alternatives
+to a live owner carrying exactly one of `ModelInstance` or `AnimatedCrowd`.
+The source model must have no imported LOD groups, and the owner must have no
+existing `LodGroup`. Playback and source mesh/skin components stay owned by the
+model or crowd; the renderer suppresses their separate base draws. The group
+copies levels, parts, joint/bind data, logical channel mappings, names and
+defaults into scene-owned storage. Caller arrays may be released after attachment;
+referenced model, geometry, material and skeleton assets remain borrowed.
+
+For a model with one skinned mesh, no morph channels and a compatible coarse
+geometry, an explicit two-level descriptor is:
+
+```c3
+ModelTemplate* template = &assets.model(model_id).data;
+ModelMesh mesh = template.meshes[0];
+ModelSkin skin = template.skins[0];
+LodLevel[2] levels = {
+    { .first_part = 0, .part_count = 1, .min_screen_size = 0.2f },
+    { .first_part = 1, .part_count = 1, .min_screen_size = 0 },
+};
+AnimatedLodPart[2] parts = {
+    {
+        .draw = {
+            .geometry = mesh.geometry,
+            .material = mesh.material,
+            .local = maths::TRANSFORM_IDENTITY.to_mat4(),
+        },
+        .mesh_index = 0,
+        .skin = skin,
+        .default_morph_weights = mesh.default_morph_weights,
+    },
+    {
+        .draw = {
+            .geometry = coarse_geometry,
+            .material = mesh.material,
+            .local = maths::TRANSFORM_IDENTITY.to_mat4(),
+        },
+        .mesh_index = 0,
+        .skin = skin,
+        .default_morph_weights = mesh.default_morph_weights,
+    },
+};
+AnimatedLodDesc desc = { .levels = levels[..], .parts = parts[..] };
+Node* owner = model::instantiate(&assets, &scene, model_id)!;
+model::attach_animated_lod(
+    assets: &assets,
+    scene: &scene,
+    owner: owner,
+    desc: desc,
+)!;
+```
+
+The same descriptor can attach to an ordinary model instance or an animated
+crowd using that model. Attachment to a pending crowd is allowed; it emits no
+LOD draws until crowd preparation succeeds. `mesh_index` identifies the logical mesh in
+`ModelTemplate.meshes`, independent of flat part order. Each level may contain a
+logical mesh at most once; level zero contains every template mesh exactly once.
+Its geometry and material IDs must equal the template mesh's IDs. Every base
+part and every skinned part uses an identity `draw.local`; other rigid or
+morph-only alternatives may have an additional finite nonsingular affine local.
+
+Source `Mesh`/`InstancedMesh` geometry and material IDs must remain the template's
+base IDs. Source nodes, skin bindings and joint-node identities must remain live
+and compatible. Keep source geometry unchanged when selecting a coarse level;
+put alternatives in the descriptor. `model::replace_animated_lod` validates and
+copies a complete replacement before swapping it, preserving the old group on
+failure. Replacement creates a new group incarnation; direct edits to copied
+descriptor/binding data are unsupported.
+
+All source skins and skinned alternatives share identical ordered model-local
+joint-node lists and bitwise-identical inverse binds. Vertex/index counts and
+stored joint-index width may differ; joint subsets, remapping and per-level
+palettes are unsupported. A skinned logical mesh stays skinned at every
+representation. Rigid logical meshes cannot acquire a skin through an alternative.
+
+Level zero defines logical morph weights and defaults. Named alternatives may
+omit channels. Each selected channel must match a base name exactly and have
+the same default bits. Each geometry keeps its own target/in-between metadata; weights map by
+name rather than target position. Unnamed weights retain their indexed identity
+and complete width. Unknown/duplicate mappings, nonfinite defaults and conflicting
+defaults are `INVALID_ARGUMENT` before publication.
+
+Attachment/replacement return `INVALID_ID` for dead sources/assets,
+`INVALID_ARGUMENT` for source, bind, channel or layout incompatibility,
+`CAPACITY_EXCEEDED` for allocation/capacity failure, and `UNSUPPORTED` for a source
+with imported LOD groups or incompatible custom stages. Animation and crowd
+publication update source state on the scene side. After asset edits, call
+`model::sync_animated_lod` before rendering or querying. Renderers and queries
+only read the published source; stale or invalid sources skip the whole group.
+Removing a crowd invalidates its group's borrowed placements and colors.
+
+An ordinary owner may provide `has_bounds_override` and `local_bounds` covering
+all its alternatives. Without an override, retained skin/morph metadata supplies
+current posed bounds, including after supported CPU geometry release. A crowd
+descriptor must leave `has_bounds_override` false: its group inherits the crowd's
+instance-local `pose_bounds`, covering every supported clip, blend, level and
+animated rigid part under all placements. The inherited envelope is transformed
+conservatively under mirrored and nonuniform placements.
 
 ## Updates and selection
 
@@ -80,10 +184,23 @@ An in-place producer can fill the owned transform/color arrays and call
 capacity. Publication resets placement identities and invalidates placement
 bounds and GPU records without validating or copying the arrays again.
 
+These generic placement setters apply only to rigid groups. Animated groups
+reject `set_lod_instances` and `resize_lod_instances` with `INVALID_ARGUMENT`;
+`publish_lod_instances` requires a nonanimated group. Attached crowds borrow
+placement/color arrays and live count from `AnimatedCrowd`; use its placement
+publication and `model::set_crowd` replacement operations. Ordinary animated
+groups use their source owner's transform. Pose/placement edits retain group
+identity and selection hysteresis; crowd replacement/regrowth changes source
+generations while descriptor replacement changes group incarnation.
+
 `set_lod_effects` copies sway, fade and shadow/trace flags without replacing
 placement identities or invalidating placement bounds and GPU records. Copy
 `state.effects`, edit it, then call the setter.
-Shadow and trace flags start enabled. Sway/fade follow the existing
+Shadow and trace flags start enabled for rigid and ordinary animated groups.
+An attached crowd's initial group trace flag copies `AnimatedCrowd.trace`, false
+by default. Edit the copied group effects through `set_lod_effects` to change
+its trace participation. Ordinary animated parts also respect the source
+`Mesh.trace` flag. Sway/fade follow the existing
 [instancing contracts](instancing.md#sway-and-distance-fade). A swaying group still traces, at its rest
 pose ([scene trace](scene_trace.md#what-traces)).
 
@@ -115,6 +232,15 @@ view preparation beyond the renderer's instance absence grace period lose their
 history. Per-frame selection and history processing visit active groups, while
 the persistent CPU history array remains indexed by entity slot.
 
+Animated deformation history also distinguishes logical mesh/part, source slot
+generation and selected representation. Compatible unchanged geometry, local
+transform, binding and channel mapping can reuse the view's previous submitted
+pose, including identical aliases in different levels. An incompatible level,
+topology, channel, binding or incarnation uses current-pose fallback and rejection;
+ordinary pose changes alone do not reject correspondence. Skipped/aborted views
+do not publish new observations. Update animation, morphs and world transforms
+before preparing any view, depth, shadow, velocity or trace pass of the frame.
+
 ## GPU drawing
 
 One persistent record array retains original placement order. Each view selects
@@ -124,16 +250,35 @@ selections, including offscreen casters. Views select independently.
 
 Each level/parity bin owns a visible source-index list shared by every part.
 Separate indirect arguments preserve each part's geometry counts. The final
-matrix is `owner.world * placement * part.local`; normal transforms include the
+rigid-group matrix is `owner.world * placement * part.local`; normal transforms include the
 part inverse transpose. Placement and part reflections both affect front faces.
 Blended parts share a far-to-near list by object center within each level/parity
 bin. Triangles across parts and separate parity ranges do not interleave.
+
+Animated rigid and morph-only parts instead compose their sampled source mesh
+affine with the alternative's local transform, retaining shear. Skinned parts
+use one model-space palette for the source owner, with mesh/bind transforms
+applied once. Per-part parity uses the complete composed transform. Every
+camera view and its shadow layers consume the same fixed source pose and parent
+selection, including offscreen casters; sorting/visible lists carry logical
+source indices rather than owning animation history.
 
 Persistent records reserve 160 bytes per instance of capacity: 128-byte instance
 records, 16-byte slot metadata and aligned parity-index storage. Each group/view
 also reserves two 80-byte history records per instance of capacity. Deferred
 retirement protects submissions. Previous matrices are written by classification,
 without separate per-view uploads.
+
+Animated binding metadata adds copied part records, channel maps/defaults and
+one ordered joint/bind array per group. Current palette upload is
+`live_sources * joints * 64` bytes once per group per renderer frame, reused across
+parts, levels, views and traced preparation in that frame. Ordinary groups have
+one source; crowd groups have one per live placement. This is shared palette data,
+not a palette per skin or selected level. Morph blocks and rigid affine data are
+per representation/source as needed. Temporal views additionally retain submitted
+palette, morph and instance data for compatible logical representations; the
+160-byte placement and paired 80-byte selection rows above exclude that storage.
+Crowd playback storage follows the [crowd byte formula](instancing.md#crowds).
 
 The existing cull arena preflights nonempty parities for every level across the
 main view plus `max_shadow_layers` passes. Each pass reserves 32 bytes per
@@ -147,7 +292,7 @@ preserve source indices and front faces. Fallback may draw unculled and unsorted
 invalidates temporal correspondence, and selects fresh when classification
 resumes. Other groups may still fit. GPU allocation failures remain faults.
 
-Fresh and changed LOD pixels write one into velocity alpha; stable pixels write
+Fresh and incompatible LOD pixels write one into velocity alpha; stable compatible pixels write
 zero. Velocity xy and previous depth z retain their meaning. TAA and screen-space
 GI reject those pixels without discarding view history. Custom stages using
 `write_mesh_outputs` inherit the part and velocity contracts.
@@ -161,10 +306,28 @@ failure clears the count. Existing static-triangle restrictions apply to sway,
 custom displacement and released geometry. Coarse geometry edits do not change
 base trace signatures. Physics colliders remain explicit.
 
+Animated hits identify the level-zero logical mesh and source slot, even when a
+different level or parity/sort order draws. Deformed picking uses conservative
+bounds; it does not perform posed-triangle picking. CPU release retains posed
+bound metadata where supported.
+
+Traced animated groups use level-zero geometry and distinct
+scene/owner/incarnation/logical-part/source-slot keys. Traced skinned or morphed
+sources consume posed slots; rigid-only parts use the rest-geometry path at their
+sampled affine. Capacity/overflow, same-frame sharing, still-pose reuse and
+software/hardware behavior follow [posed instances](scene_trace.md#posed-instances).
+The raster-selected coarse level never changes the base trace representation.
+Untraced groups do no posed trace work.
+
 Retiring any referenced geometry, material or shader skips the whole group.
 Asset edits that invalidate its rigid/instanced form also skip it. Render and
 spatial adapters count one dangling group rather than drawing remaining parts.
-The glTF loader supports [node-level MSFT_lod](models.md#node-level-lod).
+Animated groups also require live compatible source mesh/joint nodes, source model,
+bindings and channels. Source removal or incompatible edits skip the whole group.
+The glTF loader supports rigid [node-level MSFT_lod](models.md#node-level-lod);
+deformable optional LOD keeps its highest-detail fallback and required deformable
+LOD returns `UNSUPPORTED`. Author animated alternatives explicitly. Animated
+impostor installation returns `UNSUPPORTED`.
 Foliage accepts a copied [LOD descriptor](vegetation.md#whole-object-lod).
 
 ## Counters and example

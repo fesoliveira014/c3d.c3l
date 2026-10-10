@@ -1,14 +1,20 @@
 module c3d::serial;
 
 import c3d;
+import c3d::asset;
 import c3d::describe;
 import c3d::maths;
+import c3d::model;
 import c3d::scene;
 import std::math;
 
 const ulong INSTANCES_LAYOUT @local = 0x59d3aec48200fec8;
 const ulong BILLBOARDS_LAYOUT @local = 0x0e6e17ed81a957bb;
-const ulong LOD_LAYOUT @local = 0xdb17924ea7b43e3f;
+const ulong LOD_V1_LAYOUT @local = 0xdb17924ea7b43e3f;
+const ulong LOD_LAYOUT @local = 0x8ed85fe0b352d50f;
+const ulong ANIMATED_LOD_SKIN_LAYOUT @local = 0x03ef0a55ec3ccd1c;
+const ulong ANIMATED_LOD_PART_LAYOUT @local = 0x67066c59b87af8fe;
+const ulong ANIMATED_LOD_DESC_LAYOUT @local = 0xa65aa93a04287bbc;
 
 struct InstanceAuthoring @private {
     GeometryId geometry;
@@ -32,7 +38,7 @@ struct BillboardAuthoring @private {
     Billboard[] billboards;
 }
 
-struct LodAuthoring @private {
+struct LodAuthoringV1 @private {
     LodDesc desc;
     LodMode mode;
     uint capacity;
@@ -44,13 +50,47 @@ struct LodAuthoring @private {
     float impostor_min_screen_size;
 }
 
+struct LodAuthoring @private {
+    LodDesc desc;
+    LodMode mode;
+    uint capacity;
+    Transform[] transforms;
+    Vec4[] colors;
+    LodEffects effects;
+    bool has_impostor;
+    Impostor impostor;
+    float impostor_min_screen_size;
+    bool animated;
+    AnimatedLodDesc animated_desc;
+}
+
+BinaryCompatibility[1] lod_binary_compatibility @local = {
+    { .version = 1, .read = &read_lod_v1 },
+};
+uint[1] lod_text_default_versions @local = { 1 };
+
 fn void? register_core_batch_codecs() @private {
     describe::register_reflected(InstanceAuthoring)!;
     describe::register_reflected(BillboardAuthoring)!;
+    describe::register_reflected(LodAuthoringV1)!;
+    describe::register_reflected(ModelSkin)!;
+    describe::register_reflected(AnimatedLodPart)!;
+    describe::register_reflected(AnimatedLodDesc)!;
     describe::register_reflected(LodAuthoring)!;
+
     register_core_value(InstanceAuthoring, INSTANCES_LAYOUT, &defaults_instances)!;
     register_core_value(BillboardAuthoring, BILLBOARDS_LAYOUT, &defaults_billboards)!;
-    register_core_value(LodAuthoring, LOD_LAYOUT, &defaults_lod)!;
+    register_core_value(LodAuthoringV1, LOD_V1_LAYOUT, &defaults_lod_v1)!;
+    register_core_value(ModelSkin, ANIMATED_LOD_SKIN_LAYOUT, &defaults_animated_lod_skin)!;
+    register_core_value(AnimatedLodPart, ANIMATED_LOD_PART_LAYOUT, &defaults_animated_lod_part)!;
+    register_core_value(AnimatedLodDesc, ANIMATED_LOD_DESC_LAYOUT, &defaults_animated_lod_desc)!;
+    register_described_type(
+        $Type: LodAuthoring,
+        version: 2,
+        layout: LOD_LAYOUT,
+        defaults: &defaults_lod,
+    )!;
+
     register_described_owner(InstancedMesh, InstanceAuthoring, {
         .name = "c3d.InstancedMesh", .project = &project_instances, .attach = &attach_instances,
     })!;
@@ -58,7 +98,12 @@ fn void? register_core_batch_codecs() @private {
         .name = "c3d.BillboardBatch", .project = &project_billboards, .attach = &attach_billboards,
     })!;
     register_described_owner(LodGroup, LodAuthoring, {
-        .name = "c3d.LodGroup", .project = &project_lod, .attach = &attach_lod,
+        .name = "c3d.LodGroup",
+        .phase = BINDINGS,
+        .project = &project_lod,
+        .attach = &attach_lod,
+        .binary_compatibility = lod_binary_compatibility[..],
+        .text_default_versions = lod_text_default_versions[..],
     })!;
 }
 
@@ -68,6 +113,22 @@ fn void defaults_instances(void* value) @local {
 
 fn void defaults_billboards(void* value) @local {
     *(BillboardAuthoring*)value = { .capacity = 1 };
+}
+
+fn void defaults_lod_v1(void* value) @local {
+    *(LodAuthoringV1*)value = { .effects = { .cast_shadow = true, .receive_shadow = true, .trace = true } };
+}
+
+fn void defaults_animated_lod_skin(void* value) @local {
+    *(ModelSkin*)value = {};
+}
+
+fn void defaults_animated_lod_part(void* value) @local {
+    *(AnimatedLodPart*)value = { .draw = { .local = matrix::IDENTITY4 } };
+}
+
+fn void defaults_animated_lod_desc(void* value) @local {
+    *(AnimatedLodDesc*)value = {};
 }
 
 fn void defaults_lod(void* value) @local {
@@ -106,8 +167,18 @@ fn void? project_billboards(void* component, void* value, WriteContext* context)
 
 fn void? project_lod(void* component, void* value, WriteContext* context) @local {
     LodGroupState* state = ((LodGroup*)component).state;
-    scene::validate_lod_desc(context.assets, state.desc, state.mode)!;
     if (!scene::instance_effects_valid(state.effects.sway, state.effects.fade)) return c3d::INVALID_ARGUMENT~;
+
+    if (state.animated) {
+        *(LodAuthoring*)value = {
+            .effects = state.effects,
+            .animated = true,
+            .animated_desc = project_animated_lod(state, context)!,
+        };
+        return;
+    }
+
+    scene::validate_lod_desc(context.assets, state.desc, state.mode)!;
     *(LodAuthoring*)value = {
         .desc = state.desc,
         .mode = state.mode,
@@ -172,6 +243,26 @@ fn void? attach_billboards(void* value, ReadContext* context) @local {
 
 fn void? attach_lod(void* value, ReadContext* context) @local {
     LodAuthoring* source = value;
+    if (source.animated) {
+        if (source.has_impostor
+          || source.capacity || source.transforms.len || source.colors.len || source.desc.levels.len
+          || source.desc.parts.len) return c3d::INVALID_ARGUMENT~;
+        if (!scene::instance_effects_valid(source.effects.sway, source.effects.fade)) return c3d::INVALID_ARGUMENT~;
+
+        model::attach_animated_lod(
+            assets: context.assets,
+            scene: context.scene,
+            owner: context.node,
+            desc: source.animated_desc,
+        )!;
+        context.scene.set_lod_effects(context.node, source.effects);
+        return;
+    }
+
+    if (source.animated_desc.levels.len || source.animated_desc.parts.len) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+
     if (source.mode == SINGLE) {
         if (source.capacity || source.transforms.len || source.colors.len) return c3d::INVALID_ARGUMENT~;
     } else if (!source.capacity || source.transforms.len > source.capacity) {
@@ -198,4 +289,75 @@ fn void? attach_lod(void* value, ReadContext* context) @local {
             min_screen_size: source.impostor_min_screen_size,
         )!;
     }
+}
+
+fn AnimatedLodDesc? project_animated_lod(LodGroupState* state, WriteContext* context) @local {
+    AnimatedLodBinding* binding = state.animated;
+    if (state.has_impostor) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+    context.assets.models.try_get(binding.source_model)!;
+
+    AnimatedLodPart[] parts = alloc::new_array_try(tmem, AnimatedLodPart, state.desc.parts.len)
+      ?? c3d::CAPACITY_EXCEEDED~!;
+
+    foreach (index, &part : parts) {
+        AnimatedLodPartBinding* admitted = &binding.parts[index];
+        context.assets.geometries.try_get(state.desc.parts[index].geometry)!;
+        context.assets.materials.try_get(state.desc.parts[index].material)!;
+        if (admitted.skinned) context.assets.skeletons.try_get(admitted.skeleton)!;
+
+        float[] defaults = alloc::new_array_try(tmem, float, admitted.weight_count)
+          ?? c3d::CAPACITY_EXCEEDED~!;
+        foreach (weight, &value : defaults) {
+            uint logical = binding.weight_indices[admitted.weight_offset + weight];
+            *value = binding.defaults[binding.channel_offsets[admitted.mesh_index] + logical];
+        }
+
+        *part = {
+            .draw = state.desc.parts[index],
+            .mesh_index = admitted.mesh_index,
+            .skin = admitted.skinned ? (ModelSkin){
+                .mesh_node = admitted.template_node,
+                .skeleton = admitted.skeleton,
+                .joint_nodes = binding.joint_nodes,
+            } : (ModelSkin){},
+            .default_morph_weights = defaults,
+        };
+    }
+
+    return {
+        .levels = state.desc.levels,
+        .parts = parts,
+        .has_bounds_override = state.mode == SINGLE && state.desc.has_bounds_override,
+        .local_bounds = state.mode == SINGLE ? state.desc.local_bounds : (Aabb){},
+    };
+}
+
+fn void? read_lod_v1(Reader* reader, ReadContext* context) @local {
+    LodAuthoringV1 legacy;
+    Acquisitions owned = { .allocator = context.allocator };
+    defer owned.release();
+
+    read_described_value(
+        type: described_type(LodAuthoringV1)!,
+        reader: reader,
+        context: context,
+        owned: &owned,
+        value: &legacy,
+    )!;
+
+    LodAuthoring source = {
+        .desc = legacy.desc,
+        .mode = legacy.mode,
+        .capacity = legacy.capacity,
+        .transforms = legacy.transforms,
+        .colors = legacy.colors,
+        .effects = legacy.effects,
+        .has_impostor = legacy.has_impostor,
+        .impostor = legacy.impostor,
+        .impostor_min_screen_size = legacy.impostor_min_screen_size,
+    };
+
+    attach_lod(&source, context)!;
 }
