@@ -11,6 +11,22 @@ const double INERTIAL_TEST_ORACLE_SERIES_LIMIT @local = 0.01;
 const uint INERTIAL_TEST_SEED @local = 3532026;
 const uint INERTIAL_TEST_CORPUS_COUNT @local = 2000;
 
+fn InertialScalarState sample_test_log_scale(
+    InertialScalarState source,
+    InertialScalarState target,
+    double duration,
+    double elapsed,
+) @local {
+    InertialScalarState onset = anim::inertial_onset_scale_residual(source, target);
+    InertialScalarState residual = anim::inertial_scalar_residual(
+        offset: onset.value,
+        velocity: onset.rate,
+        duration: duration,
+        elapsed: elapsed,
+    );
+    return anim::inertial_correct_log_scale(residual, target);
+}
+
 fn Matrix3 inertial_oracle_identity() @local {
     return { .m = { 1, 0, 0, 0, 1, 0, 0, 0, 1 } };
 }
@@ -72,9 +88,13 @@ fn Matrix3 inertial_oracle_rodrigues(double[<3>] rotation) @local {
         second = 2 * half_sine * half_sine / square;
     }
     Matrix3 skew = inertial_oracle_skew(rotation);
-    return inertial_oracle_add(inertial_oracle_identity(), inertial_oracle_add(
-        inertial_oracle_scale(skew, first),
-        inertial_oracle_scale(inertial_oracle_product(skew, skew), second)));
+    return inertial_oracle_add(
+        left: inertial_oracle_identity(),
+        right: inertial_oracle_add(
+            left: inertial_oracle_scale(skew, first),
+            right: inertial_oracle_scale(inertial_oracle_product(skew, skew), second),
+        ),
+    );
 }
 
 fn Matrix3 inertial_oracle_rodrigues_derivative(double[<3>] rotation, double[<3>] velocity) @local {
@@ -99,13 +119,23 @@ fn Matrix3 inertial_oracle_rodrigues_derivative(double[<3>] rotation, double[<3>
     }
     Matrix3 skew = inertial_oracle_skew(rotation);
     Matrix3 skew_rate = inertial_oracle_skew(velocity);
-    Matrix3 product_rate = inertial_oracle_add(inertial_oracle_product(skew_rate, skew),
-        inertial_oracle_product(skew, skew_rate));
+    Matrix3 product_rate = inertial_oracle_add(
+        left: inertial_oracle_product(skew_rate, skew),
+        right: inertial_oracle_product(skew, skew_rate),
+    );
     return inertial_oracle_add(
-        inertial_oracle_add(inertial_oracle_scale(skew, first_derivative * angle_rate),
-            inertial_oracle_scale(skew_rate, first)),
-        inertial_oracle_add(inertial_oracle_scale(inertial_oracle_product(skew, skew),
-            second_derivative * angle_rate), inertial_oracle_scale(product_rate, second)));
+        left: inertial_oracle_add(
+            left: inertial_oracle_scale(skew, first_derivative * angle_rate),
+            right: inertial_oracle_scale(skew_rate, first),
+        ),
+        right: inertial_oracle_add(
+            left: inertial_oracle_scale(
+                value: inertial_oracle_product(skew, skew),
+                amount: second_derivative * angle_rate,
+            ),
+            right: inertial_oracle_scale(product_rate, second),
+        ),
+    );
 }
 
 fn double[<3>] inertial_oracle_spatial_rate(
@@ -118,9 +148,15 @@ fn double[<3>] inertial_oracle_spatial_rate(
     Matrix3 target_matrix = inertial_oracle_quaternion_matrix(target);
     Matrix3 combined = inertial_oracle_product(residual_matrix, target_matrix);
     Matrix3 derivative = inertial_oracle_add(
-        inertial_oracle_product(inertial_oracle_rodrigues_derivative(rotation, residual_rate), target_matrix),
-        inertial_oracle_product(residual_matrix,
-            inertial_oracle_product(inertial_oracle_skew(target_rate), target_matrix)));
+        left: inertial_oracle_product(
+            left: inertial_oracle_rodrigues_derivative(rotation, residual_rate),
+            right: target_matrix,
+        ),
+        right: inertial_oracle_product(
+            left: residual_matrix,
+            right: inertial_oracle_product(inertial_oracle_skew(target_rate), target_matrix),
+        ),
+    );
     Matrix3 spatial = inertial_oracle_product(derivative, inertial_oracle_transpose(combined));
     return { (spatial.m21 - spatial.m12) * 0.5, (spatial.m02 - spatial.m20) * 0.5,
         (spatial.m10 - spatial.m01) * 0.5 };
@@ -219,18 +255,33 @@ fn void test_animation_inertial_math_quintic_matches_independent_horner_and_endp
             inertial_assert_scalar({ .value = vector.value[axis], .rate = vector.rate[axis] }, expected);
         }
     }
-    InertialScalarState onset = anim::inertial_scalar_residual(offset: 3, velocity: -2, duration: 2, elapsed: 0);
+    InertialScalarState onset = anim::inertial_scalar_residual(
+        offset: 3,
+        velocity: -2,
+        duration: 2,
+        elapsed: 0,
+    );
     assert(onset.value == 3 && onset.rate == -2);
-    InertialScalarState zero = anim::inertial_scalar_residual(offset: 3, velocity: -2, duration: 0, elapsed: 0);
+    InertialScalarState zero = anim::inertial_scalar_residual(
+        offset: 3,
+        velocity: -2,
+        duration: 0,
+        elapsed: 0,
+    );
     assert(zero.value == 0 && zero.rate == 0);
 }
 
 fn void test_animation_inertial_math_log_scale_preserves_positive_physical_velocity() @test {
     InertialScalarState source = { .value = 1, .rate = -10 };
     InertialScalarState target = { .value = 1 };
-    InertialScalarState onset = anim::inertial_log_scale(source: source, target: target, duration: 1, elapsed: 0);
+    InertialScalarState onset = sample_test_log_scale(
+        source: source,
+        target: target,
+        duration: 1,
+        elapsed: 0,
+    );
     assert(onset.value == 1 && onset.rate == -10);
-    InertialScalarState quarter = anim::inertial_log_scale(
+    InertialScalarState quarter = sample_test_log_scale(
         source: source,
         target: target,
         duration: 1,
@@ -239,9 +290,14 @@ fn void test_animation_inertial_math_log_scale_preserves_positive_physical_veloc
     double expected = math::exp(-1.845703125);
     assert(math::abs(quarter.value - expected) < 1e-12 && quarter.value > 0);
     assert(math::abs(quarter.rate - expected * -3.1640625) < 1e-12);
-    InertialScalarState finished = anim::inertial_log_scale(source: source, target: target, duration: 1, elapsed: 1);
+    InertialScalarState finished = sample_test_log_scale(
+        source: source,
+        target: target,
+        duration: 1,
+        elapsed: 1,
+    );
     assert(finished.value == target.value && finished.rate == target.rate);
-    InertialScalarState tiny = anim::inertial_log_scale(
+    InertialScalarState tiny = sample_test_log_scale(
         source: { .value = 1e-30, .rate = -1e-29 },
         target: { .value = 2e-30, .rate = 1e-30 },
         duration: 0.1,
@@ -306,12 +362,15 @@ fn void test_animation_inertial_math_half_turn_ties_and_transported_onset_rate()
     double[<3>] target_rate = { 3, -1, 2 };
     Quaternion identity = { .v = { 0, 0, 0, 1 } };
     double[<3>] transported = anim::inertial_onset_rotation_rate(residual, source_rate, target_rate);
-    inertial_assert_rate(inertial_oracle_spatial_rate(
-        rotation: residual,
-        residual_rate: transported,
-        target: identity,
-        target_rate: target_rate,
-    ), source_rate);
+    inertial_assert_rate(
+        actual: inertial_oracle_spatial_rate(
+            rotation: residual,
+            residual_rate: transported,
+            target: identity,
+            target_rate: target_rate,
+        ),
+        expected: source_rate,
+    );
     double[<3>] naive = inertial_oracle_spatial_rate(
         rotation: residual,
         residual_rate: source_rate - target_rate,
@@ -348,12 +407,15 @@ fn void test_animation_inertial_math_fixed_angles_signs_and_series_boundary() @t
             );
             inertial_assert_matrix(actual.orientation, inertial_oracle_quaternion_matrix(signed_source));
             inertial_assert_rate(actual.angular_velocity, source_rate);
-            inertial_assert_rate(inertial_oracle_spatial_rate(
-                rotation: initial,
-                residual_rate: initial_rate,
-                target: signed_target,
-                target_rate: target_rate,
-            ), source_rate);
+            inertial_assert_rate(
+                actual: inertial_oracle_spatial_rate(
+                    rotation: initial,
+                    residual_rate: initial_rate,
+                    target: signed_target,
+                    target_rate: target_rate,
+                ),
+                expected: source_rate,
+            );
         }
     }
 }
@@ -403,8 +465,10 @@ fn void test_animation_inertial_math_seeded_rotations_and_interruptions_match_in
             residual[coordinate] = oracle.value;
             residual_rate[coordinate] = oracle.rate;
         }
-        Matrix3 expected_orientation = inertial_oracle_product(inertial_oracle_rodrigues(residual),
-            inertial_oracle_quaternion_matrix(target));
+        Matrix3 expected_orientation = inertial_oracle_product(
+            left: inertial_oracle_rodrigues(residual),
+            right: inertial_oracle_quaternion_matrix(target),
+        );
         double[<3>] expected_rate = inertial_oracle_spatial_rate(
             rotation: residual,
             residual_rate: residual_rate,
@@ -414,12 +478,15 @@ fn void test_animation_inertial_math_seeded_rotations_and_interruptions_match_in
         inertial_assert_matrix(actual.orientation, expected_orientation);
         inertial_assert_rate(actual.angular_velocity, expected_rate);
         maximum_rate_error = math::max(maximum_rate_error, (actual.angular_velocity - expected_rate).length());
-        inertial_assert_rate(inertial_oracle_spatial_rate(
-            rotation: initial,
-            residual_rate: initial_rate,
-            target: first_target,
-            target_rate: target_rate,
-        ), source_rate);
+        inertial_assert_rate(
+            actual: inertial_oracle_spatial_rate(
+                rotation: initial,
+                residual_rate: initial_rate,
+                target: first_target,
+                target_rate: target_rate,
+            ),
+            expected: source_rate,
+        );
         double[<3>] naive_rate = inertial_oracle_spatial_rate(
             rotation: initial,
             residual_rate: source_rate - target_rate,
@@ -431,7 +498,10 @@ fn void test_animation_inertial_math_seeded_rotations_and_interruptions_match_in
         double[<3>] replacement_rate = inertial_random_vector(&random) * 2.5;
         double[<3>] replacement_initial = anim::inertial_rotation_log(actual.orientation.mul(replacement.conjugate()));
         double[<3>] replacement_initial_rate = anim::inertial_onset_rotation_rate(
-            replacement_initial, actual.angular_velocity, replacement_rate);
+            residual: replacement_initial,
+            source_rate: actual.angular_velocity,
+            target_rate: replacement_rate,
+        );
         InertialRotationState restarted = anim::inertial_correct_rotation(
             initial: replacement_initial,
             initial_rate: replacement_initial_rate,

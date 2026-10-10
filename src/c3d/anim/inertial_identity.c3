@@ -13,7 +13,6 @@ struct InertialIdentityState @private {
     ulong fingerprint;
     ulong layout;
     bool valid;
-    bool pending_seek;
 }
 
 fn InertialIdentityState compute_inertial_identity(
@@ -44,9 +43,7 @@ fn InertialIdentityState compute_inertial_identity(
     foreach (present : target_present) layout.update_byte(present ? 1 : 0);
 
     foreach (id : playback.order[:*playback.action_count]) {
-        if (!playback.actions.is_live(id)) return identity;
         Action* action = playback.actions.get(id);
-        if (!assets.clips.is_live(action.clip)) return identity;
         ClipAsset* clip = assets.clips.get(action.clip);
 
         inertial_identity_word(&metadata, id.index);
@@ -54,7 +51,9 @@ fn InertialIdentityState compute_inertial_identity(
         inertial_identity_word(&metadata, action.clip.index);
         inertial_identity_word(&metadata, action.clip.generation);
         inertial_identity_word(&metadata, clip.header.revision);
-        identity.pending_seek |= action.time != action.published_time;
+        if (action.time != action.published_time) {
+            inertial_identity_word(&metadata, bitcast(action.time, uint));
+        }
 
         inertial_identity_word(&layout, action.layer);
         inertial_identity_word(&layout, (uint)action.root_motion);
@@ -83,7 +82,7 @@ fn InertialIdentityState compute_inertial_identity(
 fn bool inertial_history_is_current(InertialRow* row, InertialIdentityState identity) @private {
     InertialIdentityState cached = row.control.identity;
 
-    return row.control.history_valid && identity.valid && !identity.pending_seek
+    return row.control.history_valid && identity.valid
       && cached.valid && cached.fingerprint == identity.fingerprint && cached.layout == identity.layout;
 }
 
@@ -92,9 +91,10 @@ fn void refresh_inertial_identity(InertialRow* row, InertialIdentityState identi
     bool changed = cached.valid
       && (cached.fingerprint != identity.fingerprint || cached.layout != identity.layout);
 
-    if (!identity.valid || identity.pending_seek || changed) {
+    if (!identity.valid || changed) {
         row.control.history_valid = false;
         row.control.active = false;
+        row.control.onset_pending = false;
         row.control.duration = 0;
         row.control.elapsed = 0;
         row.root.target_rate_pending = false;

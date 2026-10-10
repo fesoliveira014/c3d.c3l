@@ -260,6 +260,7 @@ fn void update(AssetStore* assets, Scene* scene, float dt) {
                     motion: report.generalized_motion,
                     dt: (double)dt,
                     scratch: animator.pose_storage.scratch,
+                    chain: report.consumed_chain,
                 );
                 publish_animator_pose(animator, instance);
             } else {
@@ -282,7 +283,6 @@ fn void update(AssetStore* assets, Scene* scene, float dt) {
                         target: animator.root_motion,
                         target_twist: (double)report.motion.yaw,
                         up: inertial_publication_up(&animator.inertial_storage.rows[0]),
-                        pivot: { reference.x, reference.y, reference.z },
                         dt: (double)dt,
                     );
                 }

@@ -10,6 +10,18 @@ import std::core::mem::allocators;
 import std::io;
 import std::math;
 
+const RequestAdditionKind[3] REQUEST_ADDITION_KINDS @local = {
+    RequestAdditionKind.SINGLE,
+    RequestAdditionKind.SPACE_1D,
+    RequestAdditionKind.SPACE_2D,
+};
+
+enum RequestAdditionKind @local {
+    SINGLE,
+    SPACE_1D,
+    SPACE_2D,
+}
+
 struct RequestAllocationProbe (Allocator) @local {
     Allocator backing;
     uint acquisitions;
@@ -36,7 +48,7 @@ struct RequestTargets @local {
     WeightedJointMask weighted;
     uint[2] members;
     float[2] positions;
-    CrowdSpaceAuthoring[1] spaces;
+    AnimationTransitionSpaceDesc[1] spaces;
     AnimationTransitionDesc description;
 }
 
@@ -71,11 +83,15 @@ fn void create_inertial_request_fixture(
     InertialRequestFixture* fixture,
     Allocator allocator,
     uint crowd_actions,
+    bool inertia_enabled = true,
 ) @local {
     create_layer_fixture(&fixture.ordinary, allocator);
     fixture.ordinary.scene.remove_component(fixture.ordinary.root, Animator);
     fixture.ordinary.animator = anim::add_animator(
-        &fixture.ordinary.scene, fixture.ordinary.root, { .inertia_enabled = true });
+        scene: &fixture.ordinary.scene,
+        instance_root: fixture.ordinary.root,
+        desc: { .inertia_enabled = inertia_enabled },
+    );
     if (!crowd_actions) return;
     fixture.placements[0] = maths::TRANSFORM_IDENTITY;
     fixture.crowd = anim::create_crowd_playback(
@@ -84,7 +100,7 @@ fn void create_inertial_request_fixture(
         placements: fixture.placements[..],
         actions_per_instance: crowd_actions,
         event_capacity: 64,
-        inertia_enabled: true,
+        inertia_enabled: inertia_enabled,
     )!!;
     fixture.crowd.model = fixture.ordinary.model;
     fixture.crowd.count = 1;
@@ -122,8 +138,11 @@ fn void request_update(InertialRequestFixture* fixture, float dt) @local {
 }
 
 fn void? request_transition(InertialRequestFixture* fixture, AnimationTransitionDesc description) @local {
-    if (fixture.crowd) return fixture.player.inertialize(&fixture.ordinary.assets, description);
-    return fixture.ordinary.animator.inertialize(&fixture.ordinary.assets, description);
+    if (fixture.crowd) {
+        fixture.player.inertialize(&fixture.ordinary.assets, description)!;
+    } else {
+        fixture.ordinary.animator.inertialize(&fixture.ordinary.assets, description)!;
+    }
 }
 
 fn AnimationActionId request_play(InertialRequestFixture* fixture, ClipId clip, PlayDesc desc = {}) @local {
@@ -276,12 +295,14 @@ fn void create_request_targets(InertialRequestFixture* fixture, RequestTargets* 
     targets.members = { 0, 1 };
     targets.positions = { 0, 1 };
     targets.spaces[0] = {
-        .actions = targets.members[..],
-        .positions = targets.positions[..],
-        .parameter = 0.25f,
-        .weight = 1,
-        .speed = 0.5f,
-        .playing = true,
+        .space = {
+            .actions = targets.members[..],
+            .positions = targets.positions[..],
+            .parameter = 0.25f,
+            .weight = 1,
+            .speed = 0.5f,
+            .playing = true,
+        },
     };
     targets.description = { .duration = 0.5f, .actions = targets.actions[..], .spaces = targets.spaces[..] };
 }
@@ -319,6 +340,77 @@ fn PlayDesc request_generalized_desc() @local {
         .root_motion = RootMotion.EXTRACT,
         .extraction = { .generalized = true, .translation_axes = { true, true, true }, .up = { 0, 1, 0 } },
     };
+}
+
+fn void? request_try_addition(
+    InertialRequestFixture* fixture,
+    ClipId[] clips,
+    PlayDesc desc,
+    RequestAdditionKind kind,
+) @local {
+    AssetStore* assets = &fixture.ordinary.assets;
+    switch (kind) {
+        case SINGLE:
+            if (fixture.crowd) {
+                fixture.player.play(assets, clips[0], desc)!;
+            } else {
+                fixture.ordinary.animator.play(assets, clips[0], desc)!;
+            }
+        case SPACE_1D:
+            float[3] positions = { 0, 1, 2 };
+            if (fixture.crowd) {
+                fixture.player.add_blend_space(
+                    assets: assets,
+                    clips: clips,
+                    positions: positions[:clips.len],
+                    desc: desc,
+                )!;
+            } else {
+                fixture.ordinary.animator.add_blend_space(
+                    assets: assets,
+                    clips: clips,
+                    positions: positions[:clips.len],
+                    desc: desc,
+                )!;
+            }
+        case SPACE_2D:
+            Vec2[3] coordinates = { { 0, 0 }, { 1, 0 }, { 0, 1 } };
+            BlendTriangle[1] triangles = { { .indices = { 0, 1, 2 } } };
+            if (fixture.crowd) {
+                fixture.player.add_blend_space_2d(
+                    assets: assets,
+                    clips: clips,
+                    coordinates: coordinates[..],
+                    triangles: triangles[..],
+                    desc: desc,
+                )!;
+            } else {
+                fixture.ordinary.animator.add_blend_space_2d(
+                    assets: assets,
+                    clips: clips,
+                    coordinates: coordinates[..],
+                    triangles: triangles[..],
+                    desc: desc,
+                )!;
+            }
+    }
+}
+
+fn ClipId request_sampling_band_clip(InertialRequestFixture* fixture, bool subnormal) @local {
+    float[2] times = { subnormal ? 0 : 0x1p-149, 1 };
+    float key = subnormal ? 0x1p-126 : 1;
+    float outgoing = subnormal ? -bitcast(0x017fffffu, float) : -4;
+    float incoming = subnormal ? 0x1p-124 : 4;
+    float[18] values = { 0, 0, 0, key, key, key, outgoing, outgoing, outgoing,
+        incoming, incoming, incoming, key, key, key, 0, 0, 0 };
+    return request_property_clip(
+        fixture: fixture,
+        path: TargetPath.SCALE,
+        interpolation: Interpolation.CUBIC_SPLINE,
+        times: times[..],
+        values: values[..],
+        node: 2,
+    );
 }
 
 fn void test_animation_inertial_request_full_capacity_copies_targets_and_hands_off_events() @test {
@@ -708,6 +800,415 @@ fn void test_animation_inertial_request_exact_invalid_precedes_sampling_unsuppor
                 assert(caught && allocator.acquisitions == calls);
                 request_assert_blocks_unchanged(&tracker, snapshot);
             };
+        }
+        assert(!tracker.has_leaks());
+    }
+}
+
+fn void test_animation_generalized_play_and_groups_reject_atomically_before_acquiring_storage() @test {
+    foreach (capacity : (uint[2]){ 0, 4 }) {
+        foreach (kind : REQUEST_ADDITION_KINDS) {
+            for (uint rejection = 0; rejection < 5; rejection++) {
+                TrackingAllocator tracker;
+                tracker.init(mem);
+                defer tracker.free();
+                {
+                    RequestAllocationProbe allocator = { .backing = &tracker };
+                    InertialRequestFixture fixture;
+                    create_inertial_request_fixture(&fixture, &allocator, capacity);
+                    defer destroy_inertial_request_fixture(&fixture);
+                    ClipId source = request_translation_clip(
+                        fixture: &fixture,
+                        start: { 1, 0, 0 },
+                        end: { 1, 0, 0 },
+                    );
+                    PlayDesc desc = request_generalized_desc();
+                    request_play(&fixture, source, desc);
+                    request_update(&fixture, 0.25f);
+
+                    ClipId rejected;
+                    float[2] times = { 0, 1 };
+                    float[6] scales = { 1, 2, 1, 1, 2, 1 };
+                    float[8] rotations;
+                    switch (rejection) {
+                        case 0:
+                        case 1:
+                            rejected = request_sampling_band_clip(&fixture, rejection == 1);
+                        case 2:
+                            rejected = request_property_clip(
+                                fixture: &fixture,
+                                path: TargetPath.SCALE,
+                                interpolation: Interpolation.LINEAR,
+                                times: times[..],
+                                values: scales[..],
+                                node: 2,
+                            );
+                        case 3:
+                            rejected = request_property_clip(
+                                fixture: &fixture,
+                                path: TargetPath.ROTATION,
+                                interpolation: Interpolation.LINEAR,
+                                times: times[..],
+                                values: rotations[..],
+                                node: 3,
+                            );
+                        case 4:
+                            rejected = request_sampling_band_clip(&fixture, true);
+                            desc = { .additive = true, .additive_scale = AdditiveScaleMode.MULTIPLICATIVE };
+                        default:
+                            assert(false);
+                    }
+                    ClipId[3] clips = { rejected, rejected, rejected };
+                    @pool() {
+                        RequestBlockSnapshot[] snapshot = request_snapshot_blocks(&tracker);
+                        uint calls = allocator.acquisitions;
+                        fault expected = rejection < 2 ? c3d::UNSUPPORTED : c3d::INVALID_ARGUMENT;
+                        assert(@catch(request_try_addition(
+                            fixture: &fixture,
+                            clips: clips[..],
+                            desc: desc,
+                            kind: kind,
+                        )) == expected);
+                        assert(allocator.acquisitions == calls);
+                        request_assert_blocks_unchanged(&tracker, snapshot);
+                    };
+                }
+                assert(!tracker.has_leaks());
+            }
+        }
+    }
+}
+
+fn void test_animation_generalized_play_and_groups_exact_faults_precede_other_track_and_member_bands() @test {
+    foreach (capacity : (uint[2]){ 0, 4 }) {
+        TrackingAllocator tracker;
+        tracker.init(mem);
+        defer tracker.free();
+        {
+            RequestAllocationProbe allocator = { .backing = &tracker };
+            InertialRequestFixture fixture;
+            create_inertial_request_fixture(&fixture, &allocator, capacity);
+            defer destroy_inertial_request_fixture(&fixture);
+            PlayDesc desc = request_generalized_desc();
+            ClipId source = request_translation_clip(
+                fixture: &fixture,
+                start: { 1, 0, 0 },
+                end: { 1, 0, 0 },
+            );
+            request_play(&fixture, source, desc);
+            request_update(&fixture, 0.25f);
+            ClipId band = request_sampling_band_clip(&fixture, true);
+            float[2] times = { 0, 1 };
+            float[6] scales = { 1, 2, 1, 1, 2, 1 };
+            ClipId nonuniform = request_property_clip(
+                fixture: &fixture,
+                path: TargetPath.SCALE,
+                interpolation: Interpolation.LINEAR,
+                times: times[..],
+                values: scales[..],
+                node: 2,
+            );
+            float[8] rotations;
+            AnimationClip* band_data = &fixture.ordinary.assets.clip(band).data;
+            Track[2] tracks = {
+                make_track(
+                    path: TargetPath.SCALE,
+                    interpolation: Interpolation.CUBIC_SPLINE,
+                    times: band_data.tracks[0].times,
+                    values: band_data.tracks[0].values,
+                ),
+                make_track(
+                    path: TargetPath.ROTATION,
+                    interpolation: Interpolation.LINEAR,
+                    times: times[..],
+                    values: rotations[..],
+                    target: 1,
+                ),
+            };
+            uint[2] targets = { 2, 3 };
+            ClipId combined = add_clip(
+                assets: &fixture.ordinary.assets,
+                key: "",
+                tracks: tracks[..],
+                targets: targets[..],
+                duration: 1,
+            );
+            foreach (kind : REQUEST_ADDITION_KINDS) @pool() {
+                ClipId[3] clips = { band, nonuniform, source };
+                if (kind == RequestAdditionKind.SINGLE) clips[0] = combined;
+                RequestBlockSnapshot[] snapshot = request_snapshot_blocks(&tracker);
+                uint calls = allocator.acquisitions;
+                assert(@catch(request_try_addition(
+                    fixture: &fixture,
+                    clips: clips[..],
+                    desc: desc,
+                    kind: kind,
+                )) == c3d::INVALID_ARGUMENT);
+                assert(allocator.acquisitions == calls);
+                request_assert_blocks_unchanged(&tracker, snapshot);
+            };
+        }
+        assert(!tracker.has_leaks());
+    }
+}
+
+fn void test_animation_generalized_and_planar_extract_play_and_groups_reject_both_orders_atomically() @test {
+    foreach (capacity : (uint[2]){ 0, 4 }) {
+        foreach (generalized_source : (bool[2]){ false, true }) {
+            TrackingAllocator tracker;
+            tracker.init(mem);
+            defer tracker.free();
+            {
+                RequestAllocationProbe allocator = { .backing = &tracker };
+                InertialRequestFixture fixture;
+                create_inertial_request_fixture(&fixture, &allocator, capacity);
+                defer destroy_inertial_request_fixture(&fixture);
+                PlayDesc generalized = request_generalized_desc();
+                PlayDesc planar = { .root_motion = RootMotion.EXTRACT };
+                ClipId source = request_translation_clip(
+                    fixture: &fixture,
+                    start: { 1, 0, 0 },
+                    end: { 1, 0, 0 },
+                );
+                request_play(&fixture, source, generalized_source ? generalized : planar);
+                request_update(&fixture, 0.25f);
+                ClipId band = request_sampling_band_clip(&fixture, true);
+                foreach (kind : REQUEST_ADDITION_KINDS) @pool() {
+                    ClipId incoming = generalized_source ? source : band;
+                    ClipId[3] clips = { incoming, incoming, incoming };
+                    RequestBlockSnapshot[] snapshot = request_snapshot_blocks(&tracker);
+                    uint calls = allocator.acquisitions;
+                    assert(@catch(request_try_addition(
+                        fixture: &fixture,
+                        clips: clips[..],
+                        desc: generalized_source ? planar : generalized,
+                        kind: kind,
+                    )) == c3d::INVALID_ARGUMENT);
+                    assert(allocator.acquisitions == calls);
+                    request_assert_blocks_unchanged(&tracker, snapshot);
+                };
+            }
+            assert(!tracker.has_leaks());
+        }
+    }
+}
+
+fn void test_animation_generalized_shifted_cubic_controls_publish_literal_positive_owner_scales() @test {
+    foreach (capacity : (uint[2]){ 0, 4 }) {
+        foreach (subnormal : (bool[2]){ false, true }) {
+            foreach (inertia_enabled : (bool[2]){ false, true }) {
+                InertialRequestFixture fixture;
+                create_inertial_request_fixture(
+                    fixture: &fixture,
+                    allocator: mem,
+                    crowd_actions: capacity,
+                    inertia_enabled: inertia_enabled,
+                );
+                defer destroy_inertial_request_fixture(&fixture);
+                float[2] times = { subnormal ? 0 : 0x1p-149, 1 };
+                float key = subnormal ? 0x1p-125 : 2;
+                float outgoing = subnormal ? -bitcast(0x017fffffu, float) : -4;
+                float incoming = subnormal ? 0x1p-124 : 4;
+                float[18] values = { 0, 0, 0, key, key, key, outgoing, outgoing, outgoing,
+                    incoming, incoming, incoming, key, key, key, 0, 0, 0 };
+                ClipId clip = request_property_clip(
+                    fixture: &fixture,
+                    path: TargetPath.SCALE,
+                    interpolation: Interpolation.CUBIC_SPLINE,
+                    times: times[..],
+                    values: values[..],
+                    node: 2,
+                );
+                request_play(&fixture, clip, request_generalized_desc());
+                request_update(&fixture, 0.5f);
+                Vec3 published = request_pose(&fixture, 2).scale;
+                float expected = subnormal ? 0x1p-126 : 1;
+                assert(published.x == expected && published.y == expected && published.z == expected);
+            }
+        }
+    }
+}
+
+fn void test_animation_inertial_request_both_cubic_sampling_bands_preserve_owner_blocks() @test {
+    foreach (capacity : (uint[2]){ 0, 4 }) {
+        TrackingAllocator tracker;
+        tracker.init(mem);
+        defer tracker.free();
+        {
+            RequestAllocationProbe allocator = { .backing = &tracker };
+            InertialRequestFixture fixture;
+            create_inertial_request_fixture(&fixture, &allocator, capacity);
+            defer destroy_inertial_request_fixture(&fixture);
+            PlayDesc generalized = request_generalized_desc();
+            ClipId source = request_translation_clip(
+                fixture: &fixture,
+                start: { 1, 0, 0 },
+                end: { 1, 0, 0 },
+            );
+            request_play(&fixture, source, generalized);
+            request_update(&fixture, 0.25f);
+            foreach (subnormal : (bool[2]){ false, true }) {
+                ClipId band = request_sampling_band_clip(&fixture, subnormal);
+                AnimationTargetDesc[1] targets = { anim::ANIMATION_TARGET_DEFAULT };
+                targets[0].clip = band;
+                targets[0].play = generalized;
+                @pool() {
+                    RequestBlockSnapshot[] snapshot = request_snapshot_blocks(&tracker);
+                    uint calls = allocator.acquisitions;
+                    fault expected = subnormal ? c3d::INVALID_ARGUMENT : c3d::UNSUPPORTED;
+                    assert(@catch(request_transition(
+                        &fixture, { .duration = 0.5f, .actions = targets[..] })) == expected);
+                    assert(allocator.acquisitions == calls);
+                    request_assert_blocks_unchanged(&tracker, snapshot);
+                };
+            }
+        }
+        assert(!tracker.has_leaks());
+    }
+}
+
+fn void test_animation_inertial_request_stale_crowd_player_preserves_all_owner_blocks() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    {
+        RequestAllocationProbe allocator = { .backing = &tracker };
+        InertialRequestFixture fixture;
+        create_inertial_request_fixture(&fixture, &allocator, 4);
+        defer destroy_inertial_request_fixture(&fixture);
+        ClipId clip = request_translation_clip(
+            fixture: &fixture,
+            start: { 1, 0, 0 },
+            end: { 1, 0, 0 },
+        );
+        request_play(&fixture, clip);
+        request_update(&fixture, 0.25f);
+        anim::reset_crowd_playback_slot(fixture.crowd, 0);
+        AnimationTargetDesc[1] targets = { anim::ANIMATION_TARGET_DEFAULT };
+        targets[0].clip = clip;
+        @pool() {
+            RequestBlockSnapshot[] snapshot = request_snapshot_blocks(&tracker);
+            uint calls = allocator.acquisitions;
+            assert(@catch(request_transition(
+                &fixture, { .duration = 0.5f, .actions = targets[..] })) == c3d::INVALID_ID);
+            assert(allocator.acquisitions == calls);
+            request_assert_blocks_unchanged(&tracker, snapshot);
+        };
+    }
+    assert(!tracker.has_leaks());
+}
+
+fn void test_animation_inertial_request_generalized_source_to_in_place_target_uses_linear_scale_residual() @test {
+    foreach (capacity : (uint[2]){ 0, 4 }) {
+        InertialRequestFixture fixture;
+        create_inertial_request_fixture(&fixture, mem, capacity);
+        defer destroy_inertial_request_fixture(&fixture);
+        float[2] times = { 0, 1 };
+        float[6] positive = { 1, 1, 1, 1, 1, 1 };
+        float[6] negative = { -1, -1, -1, -1, -1, -1 };
+        ClipId source = request_property_clip(
+            fixture: &fixture,
+            path: TargetPath.SCALE,
+            interpolation: Interpolation.LINEAR,
+            times: times[..],
+            values: positive[..],
+            node: 2,
+        );
+        ClipId target = request_property_clip(
+            fixture: &fixture,
+            path: TargetPath.SCALE,
+            interpolation: Interpolation.LINEAR,
+            times: times[..],
+            values: negative[..],
+            node: 2,
+        );
+        request_play(&fixture, source, request_generalized_desc());
+        request_update(&fixture, 0.25f);
+        request_update(&fixture, 0.25f);
+        AnimationTargetDesc[1] targets = { anim::ANIMATION_TARGET_DEFAULT };
+        targets[0].clip = target;
+        request_transition(&fixture, { .duration = 1, .actions = targets[..] })!!;
+        assert(request_history(&fixture).offset[2].scale == (double[<3>]){ 2, 2, 2 });
+        assert(request_pose(&fixture, 2).scale == (Vec3){ 1, 1, 1 });
+        request_update(&fixture, 0.5f);
+        assert(request_pose(&fixture, 2).scale == (Vec3){ 0, 0, 0 });
+        request_update(&fixture, 0.5f);
+        assert(request_pose(&fixture, 2).scale == (Vec3){ -1, -1, -1 });
+    }
+}
+
+fn uint measure_generalized_play_allocations(uint crowd_actions) @local {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    uint acquisitions;
+    {
+        RequestAllocationProbe allocator = { .backing = &tracker };
+        InertialRequestFixture fixture;
+        create_inertial_request_fixture(
+            fixture: &fixture,
+            allocator: &allocator,
+            crowd_actions: crowd_actions,
+            inertia_enabled: false,
+        );
+        defer destroy_inertial_request_fixture(&fixture);
+        ClipId clip = request_translation_clip(
+            fixture: &fixture,
+            start: { 1, 0, 0 },
+            end: { 1, 0, 0 },
+        );
+        request_update(&fixture, 0);
+        allocator.acquisitions = 0;
+        request_play(&fixture, clip, request_generalized_desc());
+        acquisitions = allocator.acquisitions;
+        assert(acquisitions > 0);
+    }
+    assert(!tracker.has_leaks());
+    return acquisitions;
+}
+
+fn void test_animation_generalized_play_capture_allocation_failures_preserve_all_owner_blocks() @test {
+    foreach (capacity : (uint[2]){ 0, 4 }) {
+        uint acquisitions = measure_generalized_play_allocations(capacity);
+        TrackingAllocator tracker;
+        tracker.init(mem);
+        defer tracker.free();
+        {
+            RequestAllocationProbe allocator = { .backing = &tracker };
+            InertialRequestFixture fixture;
+            create_inertial_request_fixture(
+                fixture: &fixture,
+                allocator: &allocator,
+                crowd_actions: capacity,
+                inertia_enabled: false,
+            );
+            defer destroy_inertial_request_fixture(&fixture);
+            ClipId clip = request_translation_clip(
+                fixture: &fixture,
+                start: { 1, 0, 0 },
+                end: { 1, 0, 0 },
+            );
+            request_update(&fixture, 0);
+            ClipId[1] clips = { clip };
+            for (uint failure = 1; failure <= acquisitions; failure++) @pool() {
+                RequestBlockSnapshot[] snapshot = request_snapshot_blocks(&tracker);
+                sz outstanding = allocator.outstanding;
+                allocator.acquisitions = 0;
+                allocator.failure = failure;
+                assert(@catch(request_try_addition(
+                    fixture: &fixture,
+                    clips: clips[..],
+                    desc: request_generalized_desc(),
+                    kind: RequestAdditionKind.SINGLE,
+                )) == c3d::CAPACITY_EXCEEDED);
+                assert(allocator.acquisitions == failure && allocator.outstanding == outstanding);
+                request_assert_blocks_unchanged(&tracker, snapshot);
+            };
+            allocator.failure = 0;
+            request_play(&fixture, clip, request_generalized_desc());
+            PlaybackView playback = request_playback(&fixture);
+            CapturedMotionChain* chain = playback.actions.get(playback.order[0]).motion_chain;
+            assert(chain.pose_scale_sums.len == fixture.ordinary.assets.model(fixture.ordinary.model).data.nodes.len);
         }
         assert(!tracker.has_leaks());
     }

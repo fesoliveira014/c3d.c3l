@@ -1,7 +1,7 @@
 module c3d::gui;
 
 import c3d;
-import c3d::anim;
+import c3d::anim @public;
 import c3d::anim::ik;
 import c3d::camera;
 import c3d::ecs;
@@ -289,6 +289,13 @@ fn bool animator_inspector(void* component) @local {
     BlendSpace1D* stopped_space;
     BlendSpace2D* stopped_space_2d;
 
+    imgui::text("Inertia enabled: %s", animator.inertial_storage ? "yes" : "no");
+    if (animator.inertial_storage) {
+        InertialControl* control = &animator.inertial_storage.rows[0].control;
+        imgui::text("Transition active: %s", control.active ? "yes" : "no");
+        imgui::text("Elapsed / duration: %.3f / %.3f s", control.elapsed, control.duration);
+    }
+
     Vec3 motion = animator.root_motion.translation;
     imgui::text("Root delta: %.3f, %.3f, %.3f", motion.x, motion.y, motion.z);
     imgui::text("Root turn: %.3f, %.3f, %.3f, %.3f",
@@ -365,7 +372,24 @@ fn bool animator_inspector(void* component) @local {
         imgui::text("Layer: %u (%s)", action.layer, action.additive ? "additive" : "regular");
         ZString mode = action.root_motion == RootMotion.KEEP ? "keep"
             : action.root_motion == RootMotion.STRIP_XZ ? "strip XZ" : "extract";
-        imgui::text("Root: %s, yaw %s", mode, action.root_yaw ? "yes" : "no");
+        if (action.extraction.generalized) {
+            imgui::text("Root: %s, generalized", mode);
+            imgui::text("Extract X: %s", action.extraction.translation_axes[0] ? "yes" : "no");
+            imgui::same_line();
+            imgui::text("Y: %s", action.extraction.translation_axes[1] ? "yes" : "no");
+            imgui::same_line();
+            imgui::text("Z: %s", action.extraction.translation_axes[2] ? "yes" : "no");
+            imgui::text("Up X: %.3f", action.extraction.up.x);
+            imgui::same_line();
+            imgui::text("Y: %.3f", action.extraction.up.y);
+            imgui::same_line();
+            imgui::text("Z: %.3f", action.extraction.up.z);
+            imgui::text("Twist: %s", action.extraction.twist ? "yes" : "no");
+        } else {
+            imgui::text("Root: %s, planar", mode);
+            imgui::text("Extract yaw: %s", action.root_yaw ? "yes" : "no");
+        }
+
         usz selected;
         if (action.weighted_mask.len) {
             foreach (weight : action.weighted_mask) if (weight > 0) selected++;

@@ -49,8 +49,9 @@ struct ChannelSums {
     float rotation_weight;
     Vec3 scale;
     float scale_weight;
-    double[<3>] precise_scale;
 }
+
+$assert ChannelSums::size == 52;
 
 <* A retained event stream's state after its first emitted crossing. *>
 struct EventBookmark {
@@ -80,6 +81,7 @@ struct PoseReport {
     PlanarMotion motion;
     GeneralizedMotion generalized_motion;
     bool generalized;
+    CapturedMotionChain* consumed_chain;
     EventReport events;
 }
 
@@ -108,24 +110,14 @@ fn AnimationActionId? PlaybackView.play(
     MotionBasis motion_basis,
 ) {
     AnimationClip* data = &assets.clips.try_get(clip)!.data;
-    usz reference_count = validate_playback_action(data, desc, destination)!;
-    if (desc.weighted_mask) validate_weighted_joint_mask(assets, self.model, desc.weighted_mask)!;
-    validate_action_motion_capture(
-        assets: assets,
-        model: self.model,
-        clip: data,
-        desc: desc,
-        root_node: self.root_node,
-        motion_basis: motion_basis,
-    )!;
-    validate_live_motion_addition(
+    usz reference_count = validate_playback_addition(
         playback: self,
         assets: assets,
         clip: data,
         desc: desc,
+        destination: destination,
         basis: motion_basis,
     )!;
-    if (self.inertial) validate_inertial_rotation_domains(data)!;
     if (!self.actions.free_count) return c3d::CAPACITY_EXCEEDED~;
 
     Action state = prepare_validated_playback_action(
@@ -140,7 +132,6 @@ fn AnimationActionId? PlaybackView.play(
         precise_rotation: self.inertial != null || desc.extraction.generalized
           || generalized_playback_chain(self) != null,
     )!;
-
     defer catch release_prepared_action(self.allocator, &state);
 
     prepare_action_motion_capture(
@@ -150,6 +141,7 @@ fn AnimationActionId? PlaybackView.play(
         action: &state,
         root_node: self.root_node,
         motion_basis: motion_basis,
+        derivatives_enabled: self.inertial != null,
     )!;
 
     return install_playback_action(self, state, desc.mask);
@@ -232,22 +224,27 @@ fn PoseReport evaluate_pose(
         InertialIdentityState identity = compute_inertial_identity(playback, assets, destination.present);
         refresh_inertial_identity(playback.inertial, identity);
     }
+
     advance(playback, assets, dt);
     advance_blend_spaces(playback, assets, dt);
     advance_blend_spaces_2d(playback, assets, dt);
+
     if (playback.inertial) {
         InertialIdentityState identity = compute_inertial_identity(playback, assets, destination.present);
         refresh_inertial_identity(playback.inertial, identity);
     }
 
+    CapturedMotionChain* consumed_chain = generalized_playback_chain(playback);
     blend_pose(
         playback: playback,
         assets: assets,
         destination: destination,
         scratch: scratch,
+        onset: playback.inertial != null && playback.inertial.control.onset_pending && dt == 0,
+        consumed_chain: consumed_chain,
     );
 
-    bool generalized = playback.generalized != null && generalized_playback_chain(playback) != null;
+    bool generalized = playback.generalized != null && consumed_chain != null;
     if (playback.inertial) {
         if (generalized) {
             advance_inertial_elapsed(playback.inertial, (double)dt);
@@ -264,17 +261,25 @@ fn PoseReport evaluate_pose(
     PlanarMotion motion;
     GeneralizedMotion generalized_motion;
     if (generalized) {
-        if (!playback.generalized.initialized) initialize_generalized_playback(playback.generalized, playback);
+        if (!playback.generalized.initialized) initialize_generalized_playback(
+            state: playback.generalized,
+            playback: playback,
+            chain: consumed_chain,
+        );
         generalized_motion = evaluate_generalized_playback_motion(
             playback: playback,
             assets: assets,
             destination: destination,
             state: playback.generalized,
             dt: (double)dt,
+            chain: consumed_chain,
         );
     } else {
         motion = evaluate_root_motion(playback, assets, destination);
     }
+
+    if (playback.inertial && dt > 0) playback.inertial.control.onset_pending = false;
+
     EventReport report = publish_events(
         playback: playback,
         assets: assets,
@@ -286,6 +291,7 @@ fn PoseReport evaluate_pose(
         .motion = motion,
         .generalized_motion = generalized_motion,
         .generalized = generalized,
+        .consumed_chain = consumed_chain,
         .events = report,
     };
 }
@@ -360,7 +366,7 @@ fn AnimationActionId install_playback_action(
 }
 
 <*
- Release an uninstalled action's owned arrays.
+ Release an action's owned arrays.
  @param [&inout] action : "Cleared after its arrays are freed."
 *>
 fn void release_prepared_action(Allocator allocator, Action* action) {

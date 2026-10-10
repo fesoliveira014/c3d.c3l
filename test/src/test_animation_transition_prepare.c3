@@ -120,11 +120,12 @@ fn void test_animation_transition_prepare_full_animator_copies_inputs_and_boolea
         uint[3] members = { 0, 1, 2 };
         Vec2[3] points = { { 0, 0 }, { 1, 0 }, { 0, 1 } };
         BlendTriangle[1] triangles = { { .indices = { 2, 1, 0 } } };
-        CrowdSpaceAuthoring[1] spaces = { {
+        AnimationTransitionSpaceDesc[1] spaces = {
+        { .space = {
             .actions = members[..], .kind = TWO_DIMENSIONAL, .points = points[..],
             .triangles = triangles[..], .parameter_2d = { 0.25f, 0.5f },
             .weight = 0.75f, .speed = -0.25f, .playing = true,
-        } };
+        } } };
         PreparedTransition prepared = anim::prepare_animation_transition(
             playback: &playback,
             assets: &fixture.assets,
@@ -291,7 +292,7 @@ fn void test_animation_transition_prepare_invalid_targets_and_groups_fail_before
     Vec2[3] points = { { 0, 0 }, { 1, 0 }, { 0, 1 } };
     BlendTriangle[1] triangles = { { .indices = { 0, 1, 2 } } };
     uint[3] members;
-    CrowdSpaceAuthoring[1] spaces;
+    AnimationTransitionSpaceDesc[1] spaces;
     for (uint invalid = 0; invalid < 9; invalid++) {
         targets[..] = anim::ANIMATION_TARGET_DEFAULT;
         foreach (&target : targets) target.clip = clip;
@@ -299,10 +300,10 @@ fn void test_animation_transition_prepare_invalid_targets_and_groups_fail_before
         members[1] = 1;
         members[2] = 2;
         triangles[0].indices = { 0, 1, 2 };
-        spaces[0] = {
+        spaces[0] = { .space = {
             .actions = members[..], .kind = TWO_DIMENSIONAL, .points = points[..],
             .triangles = triangles[..], .weight = 1, .speed = 1, .playing = true,
-        };
+        } };
         AnimationTransitionDesc desc = { .duration = 1, .actions = targets[..], .spaces = spaces[..] };
         fault expected = c3d::INVALID_ARGUMENT;
         switch (invalid) {
@@ -315,7 +316,7 @@ fn void test_animation_transition_prepare_invalid_targets_and_groups_fail_before
                 expected = c3d::INVALID_ID;
             case 5: members[1] = 0;
             case 6: triangles[0].indices[2] = 99;
-            case 7: spaces[0].parameter_2d.x = float::nan;
+            case 7: spaces[0].space.parameter_2d.x = float::nan;
             case 8: members[2] = 3;
         }
         uint attempts = probe.attempts;

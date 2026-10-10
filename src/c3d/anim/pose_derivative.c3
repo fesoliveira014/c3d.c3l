@@ -16,6 +16,7 @@ struct ChannelDerivativeSums @private {
 
 struct PoseDerivativeScratch @private {
     ChannelDerivativeSums[] channels;
+    double[<3>][] scale_values;
     PoseVelocity[] velocity;
     double[] morph_sums;
     double[] morph_rates;
@@ -41,6 +42,8 @@ fn PoseDerivativeScratch*? create_pose_derivative_scratch(
 
     scratch.channels = alloc::new_array_try(allocator, ChannelDerivativeSums, (sz)nodes)
       ?? c3d::CAPACITY_EXCEEDED~!;
+    scratch.scale_values = alloc::new_array_try(allocator, double[<3>], (sz)nodes)
+      ?? c3d::CAPACITY_EXCEEDED~!;
     scratch.velocity = alloc::new_array_try(allocator, PoseVelocity, (sz)nodes)
       ?? c3d::CAPACITY_EXCEEDED~!;
     scratch.morph_weight_rates = alloc::new_array_try(allocator, double, base_morph_weights.len)
@@ -63,6 +66,7 @@ fn PoseDerivativeScratch*? create_pose_derivative_scratch(
 
 fn void destroy_pose_derivative_scratch(Allocator allocator, PoseDerivativeScratch* scratch) @private {
     alloc::free(allocator, scratch.channels.ptr);
+    alloc::free(allocator, scratch.scale_values.ptr);
     alloc::free(allocator, scratch.velocity.ptr);
     alloc::free(allocator, scratch.morph_sums.ptr);
     alloc::free(allocator, scratch.morph_rates.ptr);
@@ -235,7 +239,7 @@ fn void fold_pose_derivative(
     double scale_residual = residual(sums.scale_weight);
     double scale_residual_rate = residual_weight_rate(sums.scale_weight, rates.scale_weight_rate);
     double[<3>] scale_value =
-      (sums.precise_scale + inertial_pose_vector(below.scale) * scale_residual) / scale_total;
+      (derivative.scale_values[node] + inertial_pose_vector(below.scale) * scale_residual) / scale_total;
     velocity.scale = (rates.scale + velocity.scale * scale_residual
       + inertial_pose_vector(below.scale) * scale_residual_rate
       - scale_value * denominator_weight_rate(sums.scale_weight, rates.scale_weight_rate)) / scale_total;
@@ -343,6 +347,7 @@ fn void fold_additive_pose_derivative(
 
 fn usz pose_derivative_storage_bytes(PoseDerivativeScratch* scratch) @private {
     return PoseDerivativeScratch::size + (usz)scratch.channels.len * ChannelDerivativeSums::size
+      + (usz)scratch.scale_values.len * double[<3>]::size
       + (usz)scratch.velocity.len * PoseVelocity::size
       + (usz)scratch.morph_values.len * float::size
       + (usz)scratch.consumed_scale.len * bool::size

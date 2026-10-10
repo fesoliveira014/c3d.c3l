@@ -120,8 +120,28 @@ fn void? configure_motion(
     action.cycle_yaw = cycle.yaw;
 }
 
-fn Vec3 motion_position(Action* action, AnimationClip* clip, float time) @private {
+fn Vec3 motion_position(
+    Action* action,
+    AnimationClip* clip,
+    float time,
+    StepSampleSide side = StepSampleSide.EXACT,
+) @private {
     if (action.translation_track == NO_MOTION_TRACK) return {};
+    if (side != StepSampleSide.EXACT) {
+        double[3] values;
+        double[3] rate;
+        uint cursor;
+        sample_track_analytic(
+            track: &clip.tracks[action.translation_track],
+            time: time,
+            cursor: &cursor,
+            value: values[..],
+            rate: rate[..],
+            side: side,
+        );
+        return { (float)values[0], (float)values[1], (float)values[2] };
+    }
+
     float[3] values;
     uint cursor;
     sample_track(
@@ -133,8 +153,28 @@ fn Vec3 motion_position(Action* action, AnimationClip* clip, float time) @privat
     return { values[0], values[1], values[2] };
 }
 
-fn Quat motion_rotation(Action* action, AnimationClip* clip, float time) @private {
+fn Quat motion_rotation(
+    Action* action,
+    AnimationClip* clip,
+    float time,
+    StepSampleSide side = StepSampleSide.EXACT,
+) @private {
     if (action.rotation_track == NO_MOTION_TRACK) return quaternion::IDENTITY;
+    if (side != StepSampleSide.EXACT) {
+        double[4] values;
+        double[4] rate;
+        uint cursor;
+        sample_track_analytic(
+            track: &clip.tracks[action.rotation_track],
+            time: time,
+            cursor: &cursor,
+            value: values[..],
+            rate: rate[..],
+            side: side,
+        );
+        return { .v = { (float)values[0], (float)values[1], (float)values[2], (float)values[3] } };
+    }
+
     float[4] values;
     uint cursor;
     sample_track(
@@ -153,14 +193,30 @@ fn float yaw_angle(Quat rotation) @private {
 
 fn float wrap_yaw(float value) @private => math::atan2(math::sin(value), math::cos(value));
 
-fn PlanarMotion sample_motion(Action* action, AnimationClip* clip, float time) @private {
-    Vec3 displacement = motion_position(action, clip, time) - action.root_position;
+fn PlanarMotion sample_motion(
+    Action* action,
+    AnimationClip* clip,
+    float time,
+    StepSampleSide side = StepSampleSide.EXACT,
+) @private {
+    Vec3 displacement = motion_position(
+        action: action,
+        clip: clip,
+        time: time,
+        side: side,
+    ) - action.root_position;
     displacement.y = 0;
     displacement = maths::transform_dir(action.motion_basis, displacement);
     displacement.y = 0;
     float yaw;
     if (action.root_yaw) {
-        yaw = wrap_yaw(yaw_angle(motion_rotation(action, clip, time)) - yaw_angle(action.root_rotation));
+        Quat rotation = motion_rotation(
+            action: action,
+            clip: clip,
+            time: time,
+            side: side,
+        );
+        yaw = wrap_yaw(yaw_angle(rotation) - yaw_angle(action.root_rotation));
     }
     return { .translation = displacement, .yaw = yaw };
 }
@@ -193,9 +249,27 @@ fn PlanarMotion cycle_power(PlanarMotion cycle, double count) @private {
     return result;
 }
 
-fn PlanarMotion action_motion(Action* action, AnimationClip* clip) @private {
+fn StepSampleSide motion_begin_sample_side(Action* action, bool onset) @private {
+    StepSampleSide side = action_sample_side(action, onset);
+    if (onset && side == StepSampleSide.EXACT && action.clock_delta != 0) {
+        side = action.clock_delta < 0 ? StepSampleSide.LEFT : StepSampleSide.RIGHT;
+    }
+
+    return side;
+}
+
+fn PlanarMotion action_motion(
+    Action* action,
+    AnimationClip* clip,
+    StepSampleSide begin_side = StepSampleSide.EXACT,
+) @private {
     if (action.clock_delta == 0) return {};
-    PlanarMotion first = sample_motion(action, clip, (float)action.previous_time);
+    PlanarMotion first = sample_motion(
+        action: action,
+        clip: clip,
+        time: (float)action.previous_time,
+        side: begin_side,
+    );
     double end = (double)action.previous_time + action.clock_delta;
     PlanarMotion last;
     if (action.loop) {
@@ -249,7 +323,11 @@ fn PlanarMotion evaluate_root_motion(
             if (weight <= 0) continue;
 
             PlanarMotion delta;
-            if (action.root_motion == RootMotion.EXTRACT) delta = action_motion(action, &assets.clip(action.clip).data);
+            if (action.root_motion == RootMotion.EXTRACT) {
+                StepSampleSide begin_side = motion_begin_sample_side(
+                    action, playback.inertial != null && playback.inertial.control.onset_pending);
+                delta = action_motion(action, &assets.clip(action.clip).data, begin_side);
+            }
 
             if (action.translation_track != NO_MOTION_TRACK) {
                 sum += delta.translation * weight;

@@ -120,6 +120,7 @@ fn ConsumedScaleDomain? classify_consumed_scale_track(
         if (failure) *failure = MotionScaleFailure.STORAGE;
         return excuse~;
     }
+
     float[] reference = motion_domain_key(track, 0, CUBIC_SLOT_VALUE);
 
     uint key_count = (uint)track.times.len;
@@ -417,6 +418,7 @@ fn MotionDomainResult motion_quaternion_certificate(
     }
 
     if (maximum == 0) return MotionDomainResult.INVALID;
+
     int exponent;
     (void)math::frexp(maximum, &exponent);
     MotionQuaternionCubic normalized = input;
@@ -484,13 +486,19 @@ fn MotionDomainResult motion_quaternion_certificate(
 
         if (maximum_interval_width > MOTION_QUATERNION_WIDTH_BOUND) return MotionDomainResult.UNPROVEN;
         if (positive) continue;
+
         double midpoint = (node.begin + node.end) * 0.5;
         if (scaling_exact && motion_exact_quaternion_zero(normalized, midpoint)) return MotionDomainResult.INVALID;
         if (node.depth == MOTION_QUATERNION_MAX_DEPTH) return MotionDomainResult.UNPROVEN;
 
         MotionCertificateNode left;
         MotionCertificateNode right;
-        motion_split_certificate(node: node, left: &left, right: &right, midpoint: midpoint);
+        motion_split_certificate(
+            node: node,
+            left: &left,
+            right: &right,
+            midpoint: midpoint,
+        );
         pending[pending_count++] = right;
         pending[pending_count++] = left;
     }

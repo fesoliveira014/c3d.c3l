@@ -324,7 +324,8 @@ fn void motion_native_capture_request(
         oracle.offset[index].position = source.position - target.position;
         oracle.offset_rate[index].position = oracle.velocity[index].position - rates[index].position;
         oracle.offset[index].angular = motion_native_log(
-            motion_native_product(source.rotation, motion_native_inverse(target.rotation)));
+            rotation: motion_native_product(source.rotation, motion_native_inverse(target.rotation)),
+        );
         double[<3>] rate = oracle.velocity[index].angular
           - motion_native_rotate(motion_native_exp(oracle.offset[index].angular), rates[index].angular);
         oracle.offset_rate[index].angular = motion_native_inverse_jacobian(oracle.offset[index].angular, rate);
@@ -385,8 +386,12 @@ fn void motion_native_check_and_record(
         }
         if (independent && node.parent >= 0) {
             errors.position = math::max(errors.position, (actual.position - target.position).length());
-            errors.rotation = math::max(errors.rotation, motion_native_log(
-                motion_native_product(actual.rotation, motion_native_inverse(target.rotation))).length());
+            errors.rotation = math::max(
+                x: errors.rotation,
+                y: motion_native_log(
+                    rotation: motion_native_product(actual.rotation, motion_native_inverse(target.rotation)),
+                ).length(),
+            );
             for (uint axis = 0; axis < 3; axis++) {
                 errors.scale = math::max(errors.scale, math::abs(actual.scale[axis] - target.scale[axis]));
             }
@@ -395,8 +400,12 @@ fn void motion_native_check_and_record(
         if (oracle.history && dt > 0) {
             oracle.velocity[index] = {
                 .position = (actual.position - oracle.previous[index].position) / dt,
-                .angular = motion_native_log(motion_native_product(
-                    actual.rotation, motion_native_inverse(oracle.previous[index].rotation))) / dt,
+                .angular = motion_native_log(
+                    rotation: motion_native_product(
+                        first: actual.rotation,
+                        second: motion_native_inverse(oracle.previous[index].rotation),
+                    ),
+                ) / dt,
                 .scale = (actual.scale - oracle.previous[index].scale) / dt,
             };
         }
@@ -470,7 +479,12 @@ fn void save_motion_native_image(CrowdNativeImages* images, bool morph, uint fra
             expected ? "expected" : "actual",
         );
         file::save(filename, ((char*)images.color.ptr)[:images.color.len * Vec4::size])!!;
-        io::printfn("native motion capture=%s width=%s height=%s", filename, CROWD_NATIVE_WIDTH, CROWD_NATIVE_HEIGHT);
+        io::printfn(
+            "native motion capture=%s width=%s height=%s",
+            filename,
+            CROWD_NATIVE_WIDTH,
+            CROWD_NATIVE_HEIGHT,
+        );
     };
 }
 
@@ -481,17 +495,31 @@ fn void motion_native_accumulate_carrier(
     Vec3 pivot,
     MotionNativeErrors* errors,
 ) @private {
-    oracle.carrier.position += motion_native_rotate(oracle.carrier.rotation,
-        oracle.carrier.scale * motion_native_vector(delta.translation));
-    oracle.carrier.rotation = motion_native_normalize(motion_native_product(
-        oracle.carrier.rotation, motion_native_rotation(delta.rotation)));
+    oracle.carrier.position += motion_native_rotate(
+        rotation: oracle.carrier.rotation,
+        point: oracle.carrier.scale * motion_native_vector(delta.translation),
+    );
+    oracle.carrier.rotation = motion_native_normalize(
+        rotation: motion_native_product(
+            first: oracle.carrier.rotation,
+            second: motion_native_rotation(delta.rotation),
+        ),
+    );
     MotionNativePose published = motion_native_pose(actual);
-    errors.carrier_drift = math::max(errors.carrier_drift,
-        (published.position - oracle.carrier.position).length());
-    errors.carrier_rotation = math::max(errors.carrier_rotation, motion_native_log(
-        motion_native_product(published.rotation, motion_native_inverse(oracle.carrier.rotation))).length());
-    double[<3>] expected_pivot = oracle.carrier.position + motion_native_rotate(oracle.carrier.rotation,
-        oracle.carrier.scale * motion_native_vector(pivot));
+    errors.carrier_drift = math::max(
+        x: errors.carrier_drift,
+        y: (published.position - oracle.carrier.position).length(),
+    );
+    errors.carrier_rotation = math::max(
+        x: errors.carrier_rotation,
+        y: motion_native_log(
+            rotation: motion_native_product(published.rotation, motion_native_inverse(oracle.carrier.rotation)),
+        ).length(),
+    );
+    double[<3>] expected_pivot = oracle.carrier.position + motion_native_rotate(
+        rotation: oracle.carrier.rotation,
+        point: oracle.carrier.scale * motion_native_vector(pivot),
+    );
     Vec3 actual_pivot = maths::transform_point(actual.to_mat4(), pivot);
     errors.pivot_drift = math::max(errors.pivot_drift,
         (motion_native_vector(actual_pivot) - expected_pivot).length());
@@ -509,9 +537,12 @@ fn void check_motion_native_pair(CrowdNativePair* pair, MotionNativeErrors* erro
             Transform reference = instance.present_node((usz)index).local;
             assert(local.position.distance(reference.position) <= MOTION_NATIVE_POSITION_EPSILON);
             assert(local.scale.distance(reference.scale) <= MOTION_NATIVE_SCALE_EPSILON);
-            assert(motion_native_log(motion_native_product(
-                motion_native_rotation(local.rotation),
-                motion_native_inverse(motion_native_rotation(reference.rotation)))).length()
+            assert(motion_native_log(
+                rotation: motion_native_product(
+                    first: motion_native_rotation(local.rotation),
+                    second: motion_native_inverse(motion_native_rotation(reference.rotation)),
+                ),
+            ).length()
               <= MOTION_NATIVE_ROTATION_EPSILON);
             Mat4 actual_relative = local.to_mat4();
             for (int parent = playback.parents[index]; parent >= 0; parent = playback.parents[parent]) {
@@ -565,8 +596,17 @@ fn void diagnose_motion_native_pixels(
             }
         }
     }
-    io::printfn("motion raster model=%s frame=%s pass=%s failing_pixels=%s max_nearest=%s worst_x=%s worst_y=%s bound=%s",
-        morph ? "AnimatedMorphCube" : "Quaternius", frame, pass, failed, maximum, worst_x, worst_y, tolerance);
+    io::printfn(
+        "motion raster model=%s frame=%s pass=%s failing_pixels=%s max_nearest=%s worst_x=%s worst_y=%s bound=%s",
+        morph ? "AnimatedMorphCube" : "Quaternius",
+        frame,
+        pass,
+        failed,
+        maximum,
+        worst_x,
+        worst_y,
+        tolerance,
+    );
 }
 
 fn void run_motion_native_window(bool morph) @private {
@@ -826,9 +866,16 @@ fn void run_motion_native_window(bool morph) @private {
                 frame: frame,
                 expected: true,
             );
-            io::printfn("motion raster counters frame=%s parts=%s crowd_draws=%s ordinary_draws=%s tested=%s visible=%s instances=%s",
-                frame, crowd.parts.len, output.actual.stats.draws, output.expected.stats.draws,
-                output.actual.stats.instances_tested, output.actual.stats.instances_visible, output.actual.stats.instances);
+            io::printfn(
+                "motion raster counters frame=%s parts=%s crowd_draws=%s ordinary_draws=%s tested=%s visible=%s instances=%s",
+                frame,
+                crowd.parts.len,
+                output.actual.stats.draws,
+                output.expected.stats.draws,
+                output.actual.stats.instances_tested,
+                output.actual.stats.instances_visible,
+                output.actual.stats.instances,
+            );
             diagnose_motion_native_pixels(
                 actual: output.actual.color,
                 expected: output.expected.color,
@@ -867,13 +914,31 @@ fn void run_motion_native_window(bool morph) @private {
     }
     assert(simulated >= 20 && errors.requests == 30 && errors.checked_nodes > 0);
     if (morph) assert(errors.checked_morphs == (MOTION_NATIVE_FRAMES + 1) * CROWD_NATIVE_INSTANCES * 2);
-    io::printfn("motion native morph=%s frames=%s seconds=%s requests=%s captures=%s", morph,
-        MOTION_NATIVE_FRAMES, simulated, errors.requests, native_captures);
-    io::printfn("independent non-top-level local position=%s rotation=%s scale=%s full_morph=%s checked_nodes=%s",
-        errors.position, errors.rotation, errors.scale, errors.morph, errors.checked_nodes);
-    io::printfn("carrier_relative=%s published-delta accumulation drift=%s pivot=%s rotation=%s radius=%s bytes=%s",
-        errors.carrier_relative, errors.carrier_drift, errors.pivot_drift, errors.carrier_rotation,
-        errors.radius, tracker.allocated());
+    io::printfn(
+        "motion native morph=%s frames=%s seconds=%s requests=%s captures=%s",
+        morph,
+        MOTION_NATIVE_FRAMES,
+        simulated,
+        errors.requests,
+        native_captures,
+    );
+    io::printfn(
+        "independent non-top-level local position=%s rotation=%s scale=%s full_morph=%s checked_nodes=%s",
+        errors.position,
+        errors.rotation,
+        errors.scale,
+        errors.morph,
+        errors.checked_nodes,
+    );
+    io::printfn(
+        "carrier_relative=%s published-delta accumulation drift=%s pivot=%s rotation=%s radius=%s bytes=%s",
+        errors.carrier_relative,
+        errors.carrier_drift,
+        errors.pivot_drift,
+        errors.carrier_rotation,
+        errors.radius,
+        tracker.allocated(),
+    );
     check_crowd_native_validation(&fixture.renderer);
 }
 
@@ -965,7 +1030,8 @@ fn void request_layered_inertial_native(
     targets[10].clip = scale_clip;
     targets[10].play = { .layer = 2, .additive = true, .additive_scale = scale_mode };
     targets[10].weight = 0.5f;
-    CrowdSpaceAuthoring[1] spaces = { {
+    AnimationTransitionSpaceDesc[1] spaces = {
+        { .space = {
         .actions = { 0, 1, 2, 3, 4, 5, 6, 7, 8 },
         .weight = 1,
         .speed = 1,
@@ -973,25 +1039,31 @@ fn void request_layered_inertial_native(
         .kind = TWO_DIMENSIONAL,
         .points = AUTHORING_NATIVE_POINTS[..],
         .triangles = AUTHORING_NATIVE_TRIANGLES[..],
-    } };
+    } } };
     for (uint source = 0; source < CROWD_NATIVE_INSTANCES; source++) {
         Animator* animator = pair.scene.get(pair.ordinary[source], Animator);
         CrowdPlayer player = crowd_native_player(pair, source)!!;
         AnimationActionId old_ordinary = animator.order[0];
         AnimationActionId old_crowded = player.state.slots[source].order[0];
-        animator.inertialize(&fixture.assets, { .duration = 0.6f, .actions = targets[..], .spaces = spaces[..] })!!;
-        player.inertialize(&fixture.assets, { .duration = 0.6f, .actions = targets[..], .spaces = spaces[..] })!!;
+        AnimationTransitionResult ordinary_result = animator.inertialize(
+            assets: &fixture.assets,
+            desc: { .duration = 0.6f, .actions = targets[..], .spaces = spaces[..] },
+        )!!;
+        AnimationTransitionResult crowd_result = player.inertialize(
+            assets: &fixture.assets,
+            desc: { .duration = 0.6f, .actions = targets[..], .spaces = spaces[..] },
+        )!!;
         assert(@catch(animator.try_action(old_ordinary)) == c3d::INVALID_ID);
         assert(@catch(player.try_action(old_crowded)) == c3d::INVALID_ID);
         assert(animator.event_count == 0);
         CrowdPlaybackSlot* slot = &player.state.slots[source];
         assert(animator.action_count == 11 && slot.action_count == 11);
-        controls.ordinary[source] = &animator.blend_spaces_2d[0];
-        controls.crowd[source] = &slot.spaces_2d[0];
-        controls.ordinary_overlay[source] = animator.action(animator.order[9]);
-        controls.crowd_overlay[source] = slot.actions.get(slot.order[9]);
-        controls.ordinary_scale[source] = animator.action(animator.order[10]);
-        controls.crowd_scale[source] = slot.actions.get(slot.order[10]);
+        controls.ordinary[source] = ordinary_result.spaces[0].two_dimensional;
+        controls.crowd[source] = crowd_result.spaces[0].two_dimensional;
+        controls.ordinary_overlay[source] = animator.action(ordinary_result.actions[9]);
+        controls.crowd_overlay[source] = player.action(crowd_result.actions[9]);
+        controls.ordinary_scale[source] = animator.action(ordinary_result.actions[10]);
+        controls.crowd_scale[source] = player.action(crowd_result.actions[10]);
         assert(controls.ordinary_overlay[source].weighted_mask == mask.nodes);
         assert(controls.crowd_overlay[source].weighted_mask == mask.nodes);
         assert(controls.ordinary_overlay[source].weighted_mask.ptr != mask.nodes.ptr);
@@ -1034,9 +1106,15 @@ fn void compare_layered_inertial_reference(
             Transform expected = second.present_node(index).local;
             errors.position = math::max(errors.position, (double)observed.position.distance(expected.position));
             errors.scale = math::max(errors.scale, (double)observed.scale.distance(expected.scale));
-            errors.rotation = math::max(errors.rotation, motion_native_log(motion_native_product(
-                motion_native_rotation(observed.rotation),
-                motion_native_inverse(motion_native_rotation(expected.rotation)))).length());
+            errors.rotation = math::max(
+                x: errors.rotation,
+                y: motion_native_log(
+                    rotation: motion_native_product(
+                        first: motion_native_rotation(observed.rotation),
+                        second: motion_native_inverse(motion_native_rotation(expected.rotation)),
+                    ),
+                ).length(),
+            );
         }
         foreach (node : first.mesh_nodes) {
             float[] observed = actual.scene.get(first.present_node(node), Mesh).morph_weights;
@@ -1079,10 +1157,13 @@ fn void test_animation_authoring_motion_native_layered_planar_masks_scale_and_re
     defer anim::destroy_weighted_joint_mask(&mask);
     foreach (index, name : AUTHORING_NATIVE_CLIPS) {
         ClipId clip = crowd_native_clip_named(&fixture, model_id, name)!!;
-        fixture.assets.set_clip_events(clip, {
-            { .time = 0, .id = (uint)index },
-            { .time = fixture.assets.clip(clip).data.duration * 0.5f, .id = 100 + (uint)index },
-        })!!;
+        fixture.assets.set_clip_events(
+            clip: clip,
+            events: {
+                { .time = 0, .id = (uint)index },
+                { .time = fixture.assets.clip(clip).data.duration * 0.5f, .id = 100 + (uint)index },
+            },
+        )!!;
     }
     Transform[CROWD_NATIVE_INSTANCES] placements = crowd_native_real_placements();
     CrowdNativePair enabled;
@@ -1236,9 +1317,21 @@ fn void test_animation_authoring_motion_native_layered_planar_masks_scale_and_re
         }
     }
     assert(requests == 10 && target_events > 0 && settled_frames > 0);
-    io::printfn("layered inertial frames=%s seconds=20 requests=%s targets=11 group=9 captures=%s settled_frames=%s target_events=%s",
-        AUTHORING_NATIVE_FRAMES, requests * CROWD_NATIVE_INSTANCES, captures, settled_frames, target_events);
-    io::printfn("disabled-inertia KEEP settled reference position=%s rotation=%s scale=%s morph=%s active_pair_relative=%s root_delta_export=none",
-        settled.position, settled.rotation, settled.scale, settled.morph, parity.carrier_relative);
+    io::printfn(
+        "layered inertial frames=%s seconds=20 requests=%s targets=11 group=9 captures=%s settled_frames=%s target_events=%s",
+        AUTHORING_NATIVE_FRAMES,
+        requests * CROWD_NATIVE_INSTANCES,
+        captures,
+        settled_frames,
+        target_events,
+    );
+    io::printfn(
+        "disabled-inertia KEEP settled reference position=%s rotation=%s scale=%s morph=%s active_pair_relative=%s root_delta_export=none",
+        settled.position,
+        settled.rotation,
+        settled.scale,
+        settled.morph,
+        parity.carrier_relative,
+    );
     check_crowd_native_validation(&fixture.renderer);
 }

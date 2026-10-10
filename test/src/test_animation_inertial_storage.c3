@@ -203,12 +203,11 @@ fn void test_animation_inertial_storage_reset_clears_one_incarnation_without_tou
             .previous_dt = 0.125, .duration = 3, .elapsed = 1,
         };
         row.root = {
-            .published_translation = { 1, 2, 3 }, .published_twist = 0.5,
+            .published_translation = { 1, 2, 3 },
             .translation_rate = { 4, 5, 6 }, .twist_rate = 0.25,
             .source_translation_rate = { 7, 8, 9 }, .source_twist_rate = 0.125,
             .residual_translation_rate = { -1, -2, -3 }, .residual_twist_rate = -0.5,
-            .anchor_translation = { 9, 8, 7 }, .anchor_rotation = { .l = 1 },
-            .pivot = { 3, 0, 2 }, .target_rate_pending = true,
+            .target_rate_pending = true,
         };
     }
     InertialRow[3] neighbors = { storage.rows[0], storage.rows[2], storage.rows[3] };
@@ -238,8 +237,7 @@ fn void test_animation_inertial_storage_reset_clears_one_incarnation_without_tou
     foreach (values : (double[][3]){ cleared.morph_velocity, cleared.morph_offset, cleared.morph_offset_velocity }) {
         foreach (value : values) assert(value == 0);
     }
-    RootInertialState empty = { .latest_up = { 0, 1, 0 }, .source_up = { 0, 1, 0 },
-          .anchor_rotation = { .l = 1 } };
+    RootInertialState empty = { .latest_up = { 0, 1, 0 }, .source_up = { 0, 1, 0 } };
     assert(mem::equals(&cleared.root, &empty, RootInertialState::size));
     for (uint neighbor = 0; neighbor < 3; neighbor++) {
         uint index = neighbor == 0 ? 0 : neighbor + 1;

@@ -368,6 +368,7 @@ fn void test_animation_pose_rate_fades_group_phase_member_rates_while_paused_and
                 normalized: 0.3f,
                 weight: group_weight,
                 weight_rate: 0.6,
+                derivatives_enabled: true,
             );
             anim::write_blend_space_member(
                 action: second,
@@ -376,6 +377,7 @@ fn void test_animation_pose_rate_fades_group_phase_member_rates_while_paused_and
                 normalized: 0.7f,
                 weight: group_weight,
                 weight_rate: 0.6,
+                derivatives_enabled: true,
             );
             fixture.expected_weight_rate = { 0.6 * (double)0.3f, 0.6 * (double)0.7f };
             for (uint repetition = 0; repetition < 16; repetition++) pose_fade_check_oracle(&fixture);
@@ -414,6 +416,7 @@ fn void test_animation_pose_rate_fades_consumed_keep_rotation_is_safe_without_po
             extraction: { .generalized = true, .translation_axes = { true, true, true }, .up = { 0, 0, 1 } },
         )!!;
         defer anim::destroy_captured_motion_chain(&chain);
+        chain.pose_scale_sums = alloc::new_array(mem, double[<3>], nodes.len);
         Action* extracted = fixture.actions.get(fixture.order[0]);
         extracted.weight = 0;
         extracted.motion_chain = &chain;
@@ -430,6 +433,7 @@ fn void test_animation_pose_rate_fades_consumed_keep_rotation_is_safe_without_po
             assets: &fixture.assets,
             destination: fixture.pose.destination,
             scratch: fixture.pose.scratch,
+            consumed_chain: &chain,
         );
         double[<4>] expected = {
             fixture.rotations[0], fixture.rotations[1], fixture.rotations[2], fixture.rotations[3],

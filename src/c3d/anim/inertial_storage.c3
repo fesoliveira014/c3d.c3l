@@ -14,6 +14,7 @@ struct InertialControl @private {
     uint generation;
     bool history_valid;
     bool active;
+    bool onset_pending;
     double previous_dt;
     double duration;
     double elapsed;
@@ -22,7 +23,6 @@ struct InertialControl @private {
 
 struct RootInertialState @private {
     double[<3>] published_translation;
-    double published_twist;
     double[<3>] translation_rate;
     double twist_rate;
     double[<3>] latest_up;
@@ -31,9 +31,6 @@ struct RootInertialState @private {
     double source_twist_rate;
     double[<3>] residual_translation_rate;
     double residual_twist_rate;
-    double[<3>] anchor_translation;
-    Quaternion anchor_rotation;
-    double[<3>] pivot;
     bool target_rate_pending;
 }
 
@@ -142,7 +139,6 @@ fn void reset_inertial_row(InertialStorage* storage, uint index, uint generation
     row.root = {
         .latest_up = { 0, 1, 0 },
         .source_up = { 0, 1, 0 },
-        .anchor_rotation = { .l = 1 },
     };
 }
 

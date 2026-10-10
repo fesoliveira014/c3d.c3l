@@ -49,6 +49,7 @@ fn InstalledTransition begin_prepared_inertial_transition(
         destination: destination,
         scratch: scratch,
         onset: true,
+        consumed_chain: generalized_playback_chain(playback),
     );
 
     if (playback.generalized && generalized_playback_chain(playback)) {
@@ -82,6 +83,7 @@ fn InstalledTransition begin_prepared_inertial_transition(
         consumed_scale: scratch.derivative.consumed_scale,
     );
 
+    row.control.onset_pending = true;
     row.control.duration = prepared.duration;
     row.control.elapsed = 0;
     row.control.active = prepared.duration > 0;

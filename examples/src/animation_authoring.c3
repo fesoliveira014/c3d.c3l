@@ -235,7 +235,7 @@ fn void? request_character_playback(
     CrowdPlayer player = crowd.playback.player(crowd.playback.instance_id(0)!)!;
     ModelTemplate* template = &assets.model(pair.model).data;
     AnimationTargetDesc[LAYERED_ACTION_COUNT] targets;
-    CrowdSpaceAuthoring[1] spaces;
+    AnimationTransitionSpaceDesc[1] spaces;
     uint target_count = 1;
     uint space_count;
 
@@ -266,7 +266,7 @@ fn void? request_character_playback(
         targets[SCALE_ACTION_INDEX].play = { .layer = 2, .additive = true, .additive_scale = MULTIPLICATIVE };
         targets[SCALE_ACTION_INDEX].weight = controls.scale_weight;
 
-        spaces[0] = {
+        spaces[0] = { .space = {
             .actions = { 0, 1, 2, 3, 4, 5, 6, 7, 8 },
             .weight = 1,
             .speed = controls.speed,
@@ -275,7 +275,7 @@ fn void? request_character_playback(
             .points = SAMPLE_POINTS[..],
             .triangles = SAMPLE_TRIANGLES[..],
             .parameter_2d = controls.parameter,
-        };
+        } };
         space_count = 1;
     } else {
         String clip_name;
@@ -308,8 +308,8 @@ fn void? request_character_playback(
         .actions = targets[:target_count],
         .spaces = spaces[:space_count],
     };
-    animator.inertialize(assets, transition)!;
-    player.inertialize(assets, transition)!;
+    AnimationTransitionResult ordinary_result = animator.inertialize(assets, transition)!;
+    AnimationTransitionResult crowd_result = player.inertialize(assets, transition)!;
 
     pair.choice = controls.choice;
     pair.crowd_space = null;
@@ -320,18 +320,17 @@ fn void? request_character_playback(
     pair.ordinary_scale = null;
     pair.crowd_motion = null;
     pair.ordinary_motion = null;
-    CrowdPlaybackSlot* slot = &crowd.playback.slots[0];
 
     if (pair.choice == LAYERED) {
-        pair.crowd_space = &slot.spaces_2d[0];
-        pair.ordinary_space = &animator.blend_spaces_2d[0];
-        pair.crowd_overlay = slot.actions.get(slot.order[UPPER_ACTION_INDEX]);
-        pair.ordinary_overlay = animator.action(animator.order[UPPER_ACTION_INDEX]);
-        pair.crowd_scale = slot.actions.get(slot.order[SCALE_ACTION_INDEX]);
-        pair.ordinary_scale = animator.action(animator.order[SCALE_ACTION_INDEX]);
+        pair.crowd_space = crowd_result.spaces[0].two_dimensional;
+        pair.ordinary_space = ordinary_result.spaces[0].two_dimensional;
+        pair.crowd_overlay = player.action(crowd_result.actions[UPPER_ACTION_INDEX]);
+        pair.ordinary_overlay = animator.action(ordinary_result.actions[UPPER_ACTION_INDEX]);
+        pair.crowd_scale = player.action(crowd_result.actions[SCALE_ACTION_INDEX]);
+        pair.ordinary_scale = animator.action(ordinary_result.actions[SCALE_ACTION_INDEX]);
     } else {
-        pair.crowd_motion = slot.actions.get(slot.order[0]);
-        pair.ordinary_motion = animator.action(animator.order[0]);
+        pair.crowd_motion = player.action(crowd_result.actions[0]);
+        pair.ordinary_motion = animator.action(ordinary_result.actions[0]);
     }
 }
 

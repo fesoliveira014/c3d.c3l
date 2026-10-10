@@ -438,10 +438,13 @@ fn void test_animation_motion_capture_failure_releases_every_partial_allocation(
     MotionCaptureAllocator allocator = { .backing = &tracker };
     MotionAdmissionFixture fixture;
     create_motion_admission_fixture(&fixture);
-    CapturedMotionChain completed = capture_admission_fixture(&fixture, &allocator);
-    uint acquisitions = allocator.acquisitions;
-    assert(acquisitions > 0);
-    anim::destroy_captured_motion_chain(&completed);
+    uint acquisitions;
+    {
+        CapturedMotionChain completed = capture_admission_fixture(&fixture, &allocator);
+        defer anim::destroy_captured_motion_chain(&completed);
+        acquisitions = allocator.acquisitions;
+        assert(acquisitions > 0);
+    }
     assert(allocator.outstanding == 0 && !tracker.has_leaks());
     for (uint failure = 1; failure <= acquisitions; failure++) {
         allocator.acquisitions = 0;

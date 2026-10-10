@@ -4,24 +4,6 @@ import c3d;
 import c3d::maths;
 import std::math;
 
-<* Reject nonfinite source channels and finite zero rotations before capture.
-   @return? c3d::INVALID_ARGUMENT *>
-fn void? validate_inertial_pose_source(Transform[] pose, float[] morph) @private {
-    foreach (node : pose) {
-        for (uint axis = 0; axis < 3; axis++) {
-            if (!math::is_finite(node.position[axis]) || !math::is_finite(node.scale[axis])) {
-                return c3d::INVALID_ARGUMENT~;
-            }
-        }
-
-        if (!inertial_rotation_valid(inertial_pose_rotation(node.rotation))) return c3d::INVALID_ARGUMENT~;
-    }
-
-    foreach (weight : morph) {
-        if (!math::is_finite(weight)) return c3d::INVALID_ARGUMENT~;
-    }
-}
-
 <* Capture residuals from the displayed source and admitted target onset.
    @param [&inout] row : "Reserved residual rows; history remains unchanged."
    @require source_pose.len == row.previous_pose.len && target_pose.len == source_pose.len
@@ -42,6 +24,7 @@ fn void capture_inertial_pose_residuals(
         Transform target = target_pose[index];
         PoseVelocity source_rate = row.control.history_valid ? row.velocity[index] : (PoseVelocity){};
         PoseVelocity target_rate = target_velocity[index];
+
         row.offset[index].translation = inertial_pose_vector(source.position) - inertial_pose_vector(target.position);
         row.offset_velocity[index].translation = source_rate.translation - target_rate.translation;
 
@@ -50,7 +33,10 @@ fn void capture_inertial_pose_residuals(
         double[<3>] angular_offset = inertial_rotation_log(source_rotation.mul(target_rotation.conjugate()));
         row.offset[index].angular = angular_offset;
         row.offset_velocity[index].angular = inertial_onset_rotation_rate(
-            angular_offset, source_rate.angular, target_rate.angular);
+            residual: angular_offset,
+            source_rate: source_rate.angular,
+            target_rate: target_rate.angular,
+        );
 
         if (consumed_scale[index]) {
             InertialScalarState residual = inertial_onset_scale_residual(
@@ -186,6 +172,7 @@ fn void record_inertial_pose_history(
               (inertial_pose_vector(pose.position) - inertial_pose_vector(previous.position)) / dt;
             row.velocity[index].scale =
               (inertial_pose_vector(pose.scale) - inertial_pose_vector(previous.scale)) / dt;
+
             Quaternion current_rotation = inertial_normalize_rotation(inertial_pose_rotation(pose.rotation));
             Quaternion previous_rotation = inertial_normalize_rotation(inertial_pose_rotation(previous.rotation));
             row.velocity[index].angular =

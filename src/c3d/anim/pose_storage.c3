@@ -61,6 +61,7 @@ fn PoseStorage*? create_pose_storage_try(
     destination.mesh_widths = alloc::new_array_try(allocator, uint, mesh_nodes.len) ?? c3d::CAPACITY_EXCEEDED~!;
 
     destination.pose = alloc::new_array_try(allocator, Transform, base_pose.len) ?? c3d::CAPACITY_EXCEEDED~!;
+    destination.pose[..] = base_pose[..];
     destination.morph_weights = alloc::new_array_try(allocator, float[], base_morph_weights.len)
       ?? c3d::CAPACITY_EXCEEDED~!;
 
@@ -75,6 +76,7 @@ fn PoseStorage*? create_pose_storage_try(
 
     foreach (usz index, base : base_morph_weights) {
         destination.morph_weights[index] = alloc::new_array_try(allocator, float, base.len) ?? c3d::CAPACITY_EXCEEDED~!;
+        destination.morph_weights[index][..] = base[..];
         scratch.morph_sums[index] = alloc::new_array_try(allocator, float, base.len) ?? c3d::CAPACITY_EXCEEDED~!;
         destination.mesh_indices[mesh_nodes[index]] = (uint)index;
         destination.mesh_present[mesh_nodes[index]] = true;

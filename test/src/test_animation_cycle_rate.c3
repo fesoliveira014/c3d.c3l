@@ -360,7 +360,10 @@ fn void cycle_rate_check(CycleRateFixture* fixture, bool forward_boundary = fals
         CycleRateMatrix center = cycle_rate_oracle(fixture, 0, node);
         CycleRateMatrix next = cycle_rate_oracle(fixture, CYCLE_RATE_TEST_STEP, node);
         CycleRateMatrix other = cycle_rate_oracle(
-            fixture, forward_boundary ? 2 * CYCLE_RATE_TEST_STEP : -CYCLE_RATE_TEST_STEP, node);
+            fixture: fixture,
+            shift: forward_boundary ? 2 * CYCLE_RATE_TEST_STEP : -CYCLE_RATE_TEST_STEP,
+            node: node,
+        );
         CycleRateMatrix derivative;
         for (uint row = 0; row < 3; row++) for (uint column = 0; column < 4; column++) {
             derivative.cells[row][column] = forward_boundary
@@ -436,6 +439,7 @@ fn void test_animation_cycle_rate_paused_group_fade_includes_zero_weight_members
                 normalized: 0.25f,
                 weight: weight,
                 weight_rate: 0.8,
+                derivatives_enabled: true,
             );
             anim::write_blend_space_member(
                 action: second,
@@ -444,6 +448,7 @@ fn void test_animation_cycle_rate_paused_group_fade_includes_zero_weight_members
                 normalized: 0.75f,
                 weight: weight,
                 weight_rate: 0.8,
+                derivatives_enabled: true,
             );
             fixture.expected_weight_rate = { 0.2, 0.6 };
             uint acquisitions = allocator.acquisitions;

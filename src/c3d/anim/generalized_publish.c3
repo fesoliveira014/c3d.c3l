@@ -9,6 +9,7 @@ fn RootMotionDelta publish_generalized_owner_motion(
     GeneralizedMotion motion,
     double dt,
     PoseScratch scratch,
+    CapturedMotionChain* chain = null,
 ) @private {
     GeneralizedPlaybackState* state = playback.generalized;
     double[<3>] up = { state.extraction.up.x, state.extraction.up.y, state.extraction.up.z };
@@ -26,8 +27,6 @@ fn RootMotionDelta publish_generalized_owner_motion(
             InertialQuinticBasis basis = inertial_quintic_basis(row.control.elapsed / row.control.duration);
             motion.translation += row.root.residual_translation_rate * (basis.value * dt);
             motion.twist += row.root.residual_twist_rate * (basis.value * dt);
-            double[<3>] pivot = generalized_pivot_displacement(up, motion.twist, row.root.pivot);
-            motion.translation = (motion.translation - pivot) + pivot;
         }
     }
 
@@ -39,7 +38,6 @@ fn RootMotionDelta publish_generalized_owner_motion(
     if (playback.inertial && dt > 0) {
         InertialRow* row = playback.inertial;
         row.root.published_translation = { published.translation.x, published.translation.y, published.translation.z };
-        row.root.published_twist = motion.twist;
         row.root.latest_up = up;
         row.root.translation_rate = row.root.published_translation / dt;
         row.root.twist_rate = motion.twist / dt;
@@ -54,6 +52,7 @@ fn RootMotionDelta publish_generalized_owner_motion(
         published: &published,
         dt: dt,
         velocity: scratch.derivative ? scratch.derivative.velocity : (PoseVelocity[]) {},
+        chain: chain,
     );
 
     if (playback.inertial) {

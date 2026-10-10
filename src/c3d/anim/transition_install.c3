@@ -3,10 +3,7 @@ module c3d::anim;
 import c3d;
 import c3d::asset;
 
-struct InstalledTransition @private {
-    AnimationActionId[MAX_ACTIONS] actions;
-    uint count;
-}
+alias InstalledTransition = AnimationTransitionResult;
 
 <* @require prepared.action_count <= playback.actions.items.len *>
 fn InstalledTransition install_animation_transition(
@@ -18,7 +15,10 @@ fn InstalledTransition install_animation_transition(
     playback.blend_spaces[..] = (BlendSpace1D){};
     foreach (&space : playback.blend_spaces_2d) reset_blend_space_2d(space);
 
-    InstalledTransition installed = { .count = prepared.action_count };
+    InstalledTransition installed = {
+        .count = prepared.action_count,
+        .space_count = prepared.space_count,
+    };
     foreach (uint index, &action : prepared.actions[:prepared.action_count]) {
         JointMask mask = { .nodes = prepared.boolean_masks[index] };
         installed.actions[index] = install_playback_action(
@@ -43,6 +43,7 @@ fn InstalledTransition install_animation_transition(
                     .playing = source.playing,
                 };
                 space.positions[:source.count] = source.positions[:source.count];
+                installed.spaces[slot] = { .kind = ONE_DIMENSIONAL, .one_dimensional = space };
 
                 foreach (uint index, ordinal : source.members[:source.count]) {
                     space.actions[index] = installed.actions[ordinal];
@@ -69,6 +70,7 @@ fn InstalledTransition install_animation_transition(
                 space.phase = source.phase;
                 space.speed = source.speed;
                 space.playing = source.playing;
+                installed.spaces[slot] = { .kind = TWO_DIMENSIONAL, .two_dimensional = space };
 
                 foreach (uint index, ordinal : source.members[:source.count]) {
                     space.actions[index] = installed.actions[ordinal];

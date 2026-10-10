@@ -108,6 +108,7 @@ fn void CrowdPlaybackState.update(&self, AssetStore* assets, float dt) {
                 motion: report.generalized_motion,
                 dt: (double)dt,
                 scratch: self.pose_storage.scratch,
+                chain: report.consumed_chain,
             );
         } else {
             slot.root_motion = root_motion_delta(report.motion, reference);
@@ -117,7 +118,6 @@ fn void CrowdPlaybackState.update(&self, AssetStore* assets, float dt) {
                     target: slot.root_motion,
                     target_twist: (double)report.motion.yaw,
                     up: inertial_publication_up(&self.inertial_storage.rows[index]),
-                    pivot: { reference.x, reference.y, reference.z },
                     dt: (double)dt,
                 );
             }

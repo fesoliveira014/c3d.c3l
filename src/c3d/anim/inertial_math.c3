@@ -78,28 +78,6 @@ fn InertialVectorState inertial_vector_residual(
     };
 }
 
-<* Correct positive scale with a log residual and physical rate.
-   @require source.value > 0 && target.value > 0
-   @require math::is_finite(duration) && duration >= 0
-   @require math::is_finite(elapsed) && elapsed >= 0 *>
-fn InertialScalarState inertial_log_scale(
-    InertialScalarState source,
-    InertialScalarState target,
-    double duration,
-    double elapsed,
-) @private {
-    if (duration == 0 || elapsed >= duration) return target;
-
-    InertialScalarState residual = inertial_scalar_residual(
-        offset: math::ln(source.value / target.value),
-        velocity: source.rate / source.value - target.rate / target.value,
-        duration: duration,
-        elapsed: elapsed,
-    );
-    double value = target.value * math::exp(residual.value);
-    return { .value = value, .rate = value * (target.rate / target.value + residual.rate) };
-}
-
 <* Capture an admitted scale residual in log coordinates.
    @require source.value > 0 && target.value > 0 *>
 fn InertialScalarState inertial_onset_scale_residual(
@@ -221,8 +199,9 @@ fn bool inertial_rotation_valid(Quaternion value) @private {
 <* Normalize admitted finite nonzero quaternion components without magnitude limits.
    @require inertial_rotation_valid(value) *>
 fn Quaternion inertial_normalize_rotation(Quaternion value) @private {
-    double maximum = math::max(math::max(math::abs(value.v.x), math::abs(value.v.y)),
-      math::max(math::abs(value.v.z), math::abs(value.v.w)));
+    double first = math::max(math::abs(value.v.x), math::abs(value.v.y));
+    double second = math::max(math::abs(value.v.z), math::abs(value.v.w));
+    double maximum = math::max(first, second);
     double[<4>] scaled = value.v / maximum;
 
     return { .v = scaled / scaled.length() };

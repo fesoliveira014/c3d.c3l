@@ -44,8 +44,10 @@ fn TransitionMotionIdentity? validate_transition_motion_identity(
         }
     }
 
+    bool target_consumes_chain;
     foreach (target : desc.actions) {
         if (!target.play.extraction.generalized || target.play.root_motion != RootMotion.EXTRACT) continue;
+        target_consumes_chain = true;
         if (identity.consumes_chain) {
             if (!transition_extraction_equal(identity.extraction, target.play.extraction)) {
                 return c3d::INVALID_ARGUMENT~;
@@ -56,7 +58,7 @@ fn TransitionMotionIdentity? validate_transition_motion_identity(
         }
     }
 
-    if (!identity.consumes_chain) return identity;
+    if (!target_consumes_chain) return identity;
     if (playback.root_node >= template.nodes.len || playback.root_node >= destination.pose.len
       || !destination.present[playback.root_node] || !motion_basis.root_present || !motion_basis.parent_space
       || !motion_basis.ancestors_parent_space) return c3d::INVALID_ARGUMENT~;
@@ -92,7 +94,7 @@ fn TransitionMotionIdentity? validate_transition_motion_identity(
     return identity;
 }
 
-fn void? validate_transition_source_pose(PoseDestination destination) @local {
+fn void? validate_transition_source_pose(PoseDestination destination) @private {
     foreach (index, pose : destination.pose) {
         if (!destination.present[index]) continue;
         foreach (component : pose.position) if (!math::is_finite(component)) return c3d::INVALID_ARGUMENT~;

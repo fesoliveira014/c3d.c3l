@@ -29,14 +29,15 @@ struct GeneralizedPlaybackState @private {
    @param [&in] playback : "Contains at least one admitted generalized action."
    @param consumed : "Final motion already consumed by the application."
    @param anchor : "Target reference rebase, or identity for ordinary playback."
-   @require generalized_playback_chain(playback) != null *>
+   @require chain != null || generalized_playback_chain(playback) != null *>
 fn void initialize_generalized_playback(
     GeneralizedPlaybackState* state,
     PlaybackView* playback,
     GeneralizedMotionFrame consumed = GENERALIZED_FRAME_IDENTITY,
     GeneralizedMotionFrame anchor = GENERALIZED_FRAME_IDENTITY,
+    CapturedMotionChain* chain = null,
 ) @private {
-    CapturedMotionChain* chain = generalized_playback_chain(playback);
+    if (!chain) chain = generalized_playback_chain(playback);
     *state = {
         .model = playback.model,
         .root_node = chain.root_node,
@@ -64,10 +65,11 @@ fn GeneralizedMotion evaluate_generalized_playback_motion(
     PoseDestination destination,
     GeneralizedPlaybackState* state,
     double dt,
+    CapturedMotionChain* chain = null,
 ) @private {
     if (playback.root_node >= destination.pose.len || !destination.present[playback.root_node]) return {};
 
-    CapturedMotionChain* chain = generalized_playback_chain(playback);
+    if (!chain) chain = generalized_playback_chain(playback);
     if (!chain) return {};
 
     double[<3>] up = { state.extraction.up.x, state.extraction.up.y, state.extraction.up.z };
@@ -108,6 +110,8 @@ fn GeneralizedMotion evaluate_generalized_playback_motion(
                         begin: action.previous_time,
                         end: action.previous_time + action.clock_delta,
                         loop: action.loop,
+                        begin_side: motion_begin_sample_side(
+                            action, playback.inertial != null && playback.inertial.control.onset_pending),
                     );
 
                     if (action.loop) {
@@ -204,8 +208,9 @@ fn void finish_generalized_playback(
     RootMotionDelta* published = null,
     double dt = 0,
     PoseVelocity[] velocity = {},
+    CapturedMotionChain* chain = null,
 ) @private {
-    CapturedMotionChain* chain = generalized_playback_chain(playback);
+    if (!chain) chain = generalized_playback_chain(playback);
     if (!chain) return;
 
     double[<3>] up = { state.extraction.up.x, state.extraction.up.y, state.extraction.up.z };
@@ -229,6 +234,7 @@ fn void finish_generalized_playback(
         playback: playback,
         destination: destination,
         velocity: velocity,
+        chain: chain,
     );
 }
 
@@ -243,8 +249,9 @@ fn void compensate_generalized_playback_target(
     PlaybackView* playback,
     PoseDestination destination,
     PoseVelocity[] velocity = {},
+    CapturedMotionChain* chain = null,
 ) @private {
-    CapturedMotionChain* chain = generalized_playback_chain(playback);
+    if (!chain) chain = generalized_playback_chain(playback);
     if (!chain) return;
 
     GeneralizedMotionFrame target_anchor = compose_generalized_frames(state.anchor, state.cycle_anchor);
@@ -313,6 +320,7 @@ fn double initialize_transition_anchor(
     double[<3>] translation_rate = state.carrier_translation_rate;
     double twist_rate = state.carrier_twist_rate;
     GeneralizedMotionFrame source = generalized_playback_pose_endpoint(playback, destination_source.pose);
+
     source.scale = 1;
     target_onset.scale = 1;
     GeneralizedMotionFrame carrier = compose_generalized_frames(consumed, source);

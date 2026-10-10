@@ -19,7 +19,6 @@ fn void test_animation_inertial_root_source_final_rate_zero_step_and_discrete_de
         target: {},
         target_twist: 0,
         up: { 0, 1, 0 },
-        pivot: { 1, 0, 2 },
         dt: 0,
     );
     assert(zero.translation == (Vec3){} && row.root.target_rate_pending);
@@ -29,14 +28,13 @@ fn void test_animation_inertial_root_source_final_rate_zero_step_and_discrete_de
         target: target,
         target_twist: 0.05,
         up: { 0, 1, 0 },
-        pivot: { 1, 0, 2 },
         dt: 0.1,
     );
     double expected_x = (double)target.translation.x + (4 - (double)target.translation.x / 0.1) * 0.05;
     assert(math::abs((double)actual.translation.x - expected_x) < 3e-8);
     assert(math::abs(actual.translation.y - 0.1f) < 1e-8);
     assert(math::abs(actual.translation.z + 0.05f) < 1e-8);
-    assert(math::abs(row.root.published_twist - 0.125) < 1e-15);
+    assert(math::abs(row.root.twist_rate - 1.25) < 1e-15);
     assert(row.root.translation_rate.x == (double)actual.translation.x / 0.1);
     assert(!row.root.target_rate_pending);
     row.control.active = false;
@@ -45,7 +43,6 @@ fn void test_animation_inertial_root_source_final_rate_zero_step_and_discrete_de
         target: target,
         target_twist: 0.05,
         up: { 0, 1, 0 },
-        pivot: { 1, 0, 2 },
         dt: 0.1,
     );
     assert(finished.translation == target.translation && finished.rotation.v == target.rotation.v);

@@ -72,6 +72,7 @@ fn void*? PlaybackOwnerAllocationProbe.resize(
 fn void PlaybackOwnerAllocationProbe.release(&self, void* pointer, bool aligned) @dynamic {
     self.backing.release(pointer, aligned);
 }
+
 fn PlaybackTestMatrix playback_test_identity() @local {
     PlaybackTestMatrix result;
     for (uint axis = 0; axis < 4; axis++) result.cells[axis][axis] = 1;
@@ -218,6 +219,7 @@ fn void playback_test_raw_pose(GeneralizedPlaybackFixture* fixture, float time, 
         assets: &fixture.assets,
         destination: fixture.pose.destination,
         scratch: fixture.pose.scratch,
+        consumed_chain: anim::generalized_playback_chain(&fixture.view),
     );
     output[..] = fixture.pose.destination.pose[..];
     action.time = saved;
@@ -271,6 +273,7 @@ fn void create_generalized_playback_fixture(
         root: 2,
         extraction: extraction,
     )!!;
+    fixture.chain.pose_scale_sums = alloc::new_array(mem, double[<3>], fixture.nodes.len);
     fixture.chain.instance_scale = { 1, 1, 1 };
     fixture.assets.clips = pool::create_pool{ClipAsset, ClipId}(mem, 1);
     ClipId clip_id = fixture.assets.clips.add({ .data = clip })!!;
@@ -361,6 +364,7 @@ fn void test_animation_generalized_playback_animated_ancestors_and_all_branches_
             assets: &fixture.assets,
             destination: fixture.pose.destination,
             scratch: fixture.pose.scratch,
+            consumed_chain: anim::generalized_playback_chain(&fixture.view),
         );
         Transform[5] keep;
         keep[..] = fixture.pose.destination.pose[..];
@@ -420,6 +424,7 @@ fn void test_animation_generalized_playback_loop_and_reverse_cycle_anchor_recons
                 assets: &fixture.assets,
                 destination: fixture.pose.destination,
                 scratch: fixture.pose.scratch,
+                consumed_chain: anim::generalized_playback_chain(&fixture.view),
             );
             Transform[5] keep;
             keep[..] = fixture.pose.destination.pose[..];
@@ -449,7 +454,9 @@ fn void test_animation_generalized_playback_loop_and_reverse_cycle_anchor_recons
                 keep: keep[..],
             );
             PlaybackTestMatrix phase = playback_test_motion(
-                playback_test_expected_endpoint(&fixture, keep[..]), playback_test_up(&fixture));
+                motion: playback_test_expected_endpoint(&fixture, keep[..]),
+                up: playback_test_up(&fixture),
+            );
             PlaybackTestMatrix expected = playback_test_product(anchor, phase);
             for (uint row = 0; row < 3; row++) for (uint column = 0; column < 4; column++) {
                 assert(math::abs(consumed.cells[row][column] - expected.cells[row][column])
@@ -482,6 +489,7 @@ fn void test_animation_generalized_playback_axes_weighted_layers_and_exact_emitt
             assets: &fixture.assets,
             destination: fixture.pose.destination,
             scratch: fixture.pose.scratch,
+            consumed_chain: anim::generalized_playback_chain(&fixture.view),
         );
         Transform[5] keep;
         keep[..] = fixture.pose.destination.pose[..];
@@ -528,6 +536,7 @@ fn void test_animation_generalized_playback_axes_weighted_layers_and_exact_emitt
         );
     }
 }
+
 fn AnimationClip playback_test_owned_clip(GeneralizedPlaybackFixture* fixture) @local {
     AnimationClip clip = {
         .duration = 1,
@@ -593,7 +602,9 @@ fn void test_animation_generalized_playback_animator_consumption_matches_keep_wi
         Transform[5] endpoint;
         playback_test_raw_pose(&fixture, 1, endpoint[..]);
         PlaybackTestMatrix cycle = playback_test_motion(
-            playback_test_expected_endpoint(&fixture, endpoint[..]), playback_test_up(&fixture));
+            motion: playback_test_expected_endpoint(&fixture, endpoint[..]),
+            up: playback_test_up(&fixture),
+        );
         PlaybackTestMatrix reverse_cycle = playback_test_rigid_inverse(cycle);
         uint frames = mode == 0 ? 8 : 20;
         uint acquisitions = allocator.acquisitions;
@@ -635,6 +646,7 @@ fn void test_animation_generalized_playback_animator_consumption_matches_keep_wi
         assert(previous.translation.length() > 0 || previous.rotation.v != (Vec4){ 0, 0, 0, 1 });
     }
 }
+
 fn void playback_test_owner_world_snapshot(Scene* scene, Node* owner, Mat4[] snapshot) @local {
     scene.update_world();
     ModelInstance* instance = scene.get(owner, ModelInstance);

@@ -98,6 +98,7 @@ fn GeneralizedMotionReference capture_generalized_motion_reference(
     double[<3>] up = { captured_up.x, captured_up.y, captured_up.z };
     // Admission preserves authoring; this unit direction constructs proper double rigid rotations.
     up /= up.length();
+
     GeneralizedMotionReference reference = {
         .frame = sample_generalized_endpoint(
             chain: chain,

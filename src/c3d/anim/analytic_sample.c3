@@ -151,6 +151,7 @@ fn void analytic_cubic(
     float[] first_tangent = analytic_key_values(track, key, CUBIC_SLOT_OUT_TANGENT);
     float[] second = analytic_key_values(track, key + 1, CUBIC_SLOT_VALUE);
     float[] second_tangent = analytic_key_values(track, key + 1, CUBIC_SLOT_IN_TANGENT);
+
     double complement = 1 - fraction;
     double square = fraction * fraction;
     double h00 = complement * complement * (1 + 2 * fraction);

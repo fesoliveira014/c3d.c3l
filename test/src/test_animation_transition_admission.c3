@@ -175,7 +175,7 @@ fn void test_animation_transition_admission_additive_scale_neutrality_ignores_ze
     tracker.init(mem);
     defer tracker.free();
     LayerFixture fixture;
-    initialize_transition_admission_source(&fixture, &tracker);
+    AnimationActionId source_id = initialize_transition_admission_source(&fixture, &tracker);
     defer destroy_layer_fixture(&fixture);
     ClipId nonneutral = transition_admission_scale(&fixture, { 1, 1, 1 }, { 2, 2, 2 });
     ClipId neutral = transition_admission_scale(&fixture, { 2, 4, 8 }, { 2, 4, 8 });
@@ -183,10 +183,12 @@ fn void test_animation_transition_admission_additive_scale_neutrality_ignores_ze
     JointMask mask = { .nodes = excluded[..] };
     PlaybackView playback = fixture.animator.playback();
     foreach (mode : (AdditiveScaleMode[2]){ DIFFERENCE, MULTIPLICATIVE }) {
-        AnimationTargetDesc[1] targets = { anim::ANIMATION_TARGET_DEFAULT };
-        targets[0].clip = nonneutral;
-        targets[0].weight = 0;
-        targets[0].play = { .additive = true, .mask = &mask, .additive_scale = mode };
+        AnimationTargetDesc[2] targets = { anim::ANIMATION_TARGET_DEFAULT, anim::ANIMATION_TARGET_DEFAULT };
+        targets[0].clip = fixture.animator.action(source_id).clip;
+        targets[0].play = { .root_motion = EXTRACT, .extraction = transition_admission_extraction() };
+        targets[1].clip = nonneutral;
+        targets[1].weight = 0;
+        targets[1].play = { .additive = true, .mask = &mask, .additive_scale = mode };
         sz acquisitions = tracker.total_allocation_count();
         assert(@catch(anim::validate_transition_motion_identity(
             playback: &playback,
@@ -195,7 +197,7 @@ fn void test_animation_transition_admission_additive_scale_neutrality_ignores_ze
             destination: fixture.animator.pose_storage.destination,
             motion_basis: anim::animator_motion_basis(fixture.animator),
         )) == c3d::INVALID_ARGUMENT);
-        targets[0].clip = neutral;
+        targets[1].clip = neutral;
         TransitionMotionIdentity accepted = anim::validate_transition_motion_identity(
             playback: &playback,
             assets: &fixture.assets,

@@ -183,20 +183,23 @@ fn void test_animation_inertial_owners_crowd_creation_failure_at_every_allocatio
     foreach (capacity : (uint[2]){ 1, 4 }) {
         foreach (actions : (uint[2]){ 4, 16 }) {
             InertialOwnerAllocationProbe probe = { .backing = mem };
-            CrowdPlaybackState* state = anim::create_crowd_playback(
-                allocator: &probe,
-                template: &template,
-                placements: placements[:capacity],
-                actions_per_instance: actions,
-                event_capacity: 0,
-                inertia_enabled: true,
-            )!!;
-            uint acquisitions = probe.acquisitions;
-            assert(state.inertial_storage.rows.len == capacity && state.inertial_storage.morphs == 2);
-            foreach (index, row : state.inertial_storage.rows) {
-                assert(row.control.generation == state.slots[index].generation);
+            uint acquisitions;
+            {
+                CrowdPlaybackState* state = anim::create_crowd_playback(
+                    allocator: &probe,
+                    template: &template,
+                    placements: placements[:capacity],
+                    actions_per_instance: actions,
+                    event_capacity: 0,
+                    inertia_enabled: true,
+                )!!;
+                defer anim::destroy_crowd_playback(state);
+                acquisitions = probe.acquisitions;
+                assert(state.inertial_storage.rows.len == capacity && state.inertial_storage.morphs == 2);
+                foreach (index, row : state.inertial_storage.rows) {
+                    assert(row.control.generation == state.slots[index].generation);
+                }
             }
-            anim::destroy_crowd_playback(state);
             assert(probe.outstanding == 0);
             for (uint failure = 1; failure <= acquisitions; failure++) {
                 InertialOwnerAllocationProbe failing = { .backing = mem, .failure = failure };

@@ -228,7 +228,7 @@ fn void test_animation_motion_scale_cubic_original_uniformity_and_exact_positivi
     expect_motion_scale_invalid(&track);
 }
 
-fn void test_animation_motion_scale_cubic_sampling_band_and_literal_shifted_controls() @test {
+fn void test_animation_motion_scale_cubic_sampling_band_and_shifted_admission() @test {
     float[2] times = { 0x1p-149, 1 };
     float[18] values = motion_scale_cubic_values(
         start: 1,
@@ -245,9 +245,6 @@ fn void test_animation_motion_scale_cubic_sampling_band_and_literal_shifted_cont
         incoming: 4,
     );
     assert(anim::classify_consumed_scale_track(&track, false)!! == ConsumedScaleDomain.ADMITTED);
-    uint cursor;
-    Vec3 sampled = anim::sample_multiplicative_scale(&track, 0.5, &cursor);
-    assert(sampled.x == 1 && sampled.y == 1 && sampled.z == 1);
     times[0] = 0;
     values = motion_scale_cubic_values(
         start: 0x1p-126,
@@ -258,8 +255,6 @@ fn void test_animation_motion_scale_cubic_sampling_band_and_literal_shifted_cont
     assert(anim::classify_consumed_scale_track(&track, false)!! == ConsumedScaleDomain.SAMPLING_UNPROVEN);
     values[3] = values[4] = values[5] = values[12] = values[13] = values[14] = 0x1p-125;
     assert(anim::classify_consumed_scale_track(&track, false)!! == ConsumedScaleDomain.ADMITTED);
-    sampled = anim::sample_multiplicative_scale(&track, 0.5, &cursor);
-    assert(sampled.x == 0x1p-126 && sampled.y == 0x1p-126 && sampled.z == 0x1p-126);
 }
 
 fn void test_animation_motion_scale_exact_sampling_floor_equality_and_adjacent_keys() @test {

@@ -35,9 +35,32 @@ struct AnimationTargetDesc {
     bool playing;
 }
 
+<* Request-only group authoring with an initial normalized clock. *>
+struct AnimationTransitionSpaceDesc {
+    CrowdSpaceAuthoring space;
+    float phase;
+}
+
+<* Borrowed installed group, valid until playback changes structure. *>
+struct AnimationTransitionGroup {
+    AnimationSpaceKind kind;
+    union {
+        BlendSpace1D* one_dimensional;
+        BlendSpace2D* two_dimensional;
+    }
+}
+
+<* Installed action IDs follow target ordinals; group borrows follow descriptions. *>
+struct AnimationTransitionResult {
+    AnimationActionId[MAX_ACTIONS] actions;
+    uint count;
+    AnimationTransitionGroup[MAX_BLEND_SPACES] spaces;
+    uint space_count;
+}
+
 <* Replacement actions and groups corrected over update seconds. *>
 struct AnimationTransitionDesc {
     float duration;
     AnimationTargetDesc[] actions;
-    CrowdSpaceAuthoring[] spaces;
+    AnimationTransitionSpaceDesc[] spaces;
 }

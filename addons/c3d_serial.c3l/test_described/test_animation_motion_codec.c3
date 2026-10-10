@@ -197,10 +197,14 @@ fn void test_animation_motion_codec_animator_active_and_interrupted_export_prese
                 Animator* expected = anim::add_animator(
                     &fixture.destination, reference, { .inertia_enabled = true });
                 expected.root_node = 2;
-                AnimationActionId reference_id = expected.play(&fixture.assets, clip, {
-                    .root_motion = EXTRACT,
-                    .extraction = motion_codec_extraction(),
-                })!!;
+                AnimationActionId reference_id = expected.play(
+                    assets: &fixture.assets,
+                    clip: clip,
+                    desc: {
+                        .root_motion = EXTRACT,
+                        .extraction = motion_codec_extraction(),
+                    },
+                )!!;
                 expected.action(reference_id).speed = 0.5f;
                 expected.action(reference_id).weight = 0.75f;
                 foreach (float step : { 0.0f, 0.125f, 0.25f }) {
@@ -262,7 +266,9 @@ fn void test_animation_motion_codec_pending_and_prepared_crowd_restart_enabled_s
                 } else {
                     assert(original.authoring && !original.is_prepared());
                     assert_motion_codec_extraction(
-                        original.authoring.instances[0].actions[0].extraction, motion_codec_extraction());
+                        actual: original.authoring.instances[0].actions[0].extraction,
+                        expected: motion_codec_extraction(),
+                    );
                 }
                 for (uint encoding = 0; encoding < 2; encoding++) {
                     Node* restored = encoding == 0
@@ -314,10 +320,14 @@ fn void test_animation_motion_codec_malformed_up_binary_and_text_fail_atomically
                 source = model::instantiate(&fixture.assets, &fixture.source, model_id)!!;
                 Animator* animator = anim::add_animator(&fixture.source, source, { .inertia_enabled = true });
                 animator.root_node = 2;
-                animator.play(&fixture.assets, fixture.assets.model(model_id).data.clips[0], {
-                    .root_motion = EXTRACT,
-                    .extraction = motion_codec_extraction(),
-                })!!;
+                animator.play(
+                    assets: &fixture.assets,
+                    clip: fixture.assets.model(model_id).data.clips[0],
+                    desc: {
+                        .root_motion = EXTRACT,
+                        .extraction = motion_codec_extraction(),
+                    },
+                )!!;
             }
             char[] bytes = fixture_bytes(&fixture, source);
             String text = fixture_text(&fixture, source);
@@ -447,44 +457,49 @@ fn void test_animation_motion_codec_pending_prepare_allocation_faults_retain_set
             .inertia_enabled = true,
         };
         FailingAllocator allocator;
-        Scene retry = scene::create_scene(&allocator, { .max_nodes = 32 });
-        uint scene_allocations = allocator.outstanding;
-        CodecEntry* codec = &serial::codecs[ecs::assigned_slot(AnimatedCrowd)!!];
-        uint failures;
-        bool completed;
-        for (uint failure = 1; failure <= 256; failure++) {
-            allocator.failure = 0;
-            Node* owner = retry.add_node(name: "retry")!!;
-            ReadContext context = { .scene = &retry, .assets = &fixture.assets, .node = owner };
-            codec.described.codec.attach(&authored, &context)!!;
-            AnimatedCrowd* crowd = retry.get(owner, AnimatedCrowd);
-            CrowdAuthoringState* pending = crowd.authoring;
-            uint retained = allocator.outstanding;
-            uint nodes = retry.world.entities.free_count;
-            allocator.attempts = 0;
-            allocator.failure = failure;
-            fault result = @catch(model::prepare_crowd(&fixture.assets, &retry, owner));
-            allocator.failure = 0;
-            if (result) {
-                assert(result == c3d::CAPACITY_EXCEEDED);
-                failures++;
-                assert(allocator.outstanding == retained && retry.world.entities.free_count == nodes);
-                assert(crowd.inertia_enabled && !crowd.is_prepared() && crowd.authoring == pending);
-                assert_motion_codec_extraction(pending.instances[0].actions[0].extraction, motion_codec_extraction());
-                model::prepare_crowd(&fixture.assets, &retry, owner)!!;
-            } else {
-                completed = true;
+        {
+            Scene retry = scene::create_scene(&allocator, { .max_nodes = 32 });
+            defer scene::destroy_scene(&retry);
+            uint scene_allocations = allocator.outstanding;
+            CodecEntry* codec = &serial::codecs[ecs::assigned_slot(AnimatedCrowd)!!];
+            uint failures;
+            bool completed;
+            for (uint failure = 1; failure <= 256; failure++) {
+                allocator.failure = 0;
+                Node* owner = retry.add_node(name: "retry")!!;
+                ReadContext context = { .scene = &retry, .assets = &fixture.assets, .node = owner };
+                codec.described.codec.attach(&authored, &context)!!;
+                AnimatedCrowd* crowd = retry.get(owner, AnimatedCrowd);
+                CrowdAuthoringState* pending = crowd.authoring;
+                uint retained = allocator.outstanding;
+                uint nodes = retry.world.entities.free_count;
+                allocator.attempts = 0;
+                allocator.failure = failure;
+                fault result = @catch(model::prepare_crowd(&fixture.assets, &retry, owner));
+                allocator.failure = 0;
+                if (result) {
+                    assert(result == c3d::CAPACITY_EXCEEDED);
+                    failures++;
+                    assert(allocator.outstanding == retained && retry.world.entities.free_count == nodes);
+                    assert(crowd.inertia_enabled && !crowd.is_prepared() && crowd.authoring == pending);
+                    assert_motion_codec_extraction(
+                        actual: pending.instances[0].actions[0].extraction,
+                        expected: motion_codec_extraction(),
+                    );
+                    model::prepare_crowd(&fixture.assets, &retry, owner)!!;
+                } else {
+                    completed = true;
+                }
+                assert_motion_codec_empty_history(crowd.playback.inertial_storage, 3);
+                assert(crowd.inertia_enabled && crowd.is_prepared() && !crowd.authoring);
+                Action* action = crowd.playback.slots[0].actions.get(crowd.playback.slots[0].base_action);
+                assert_motion_codec_extraction(action.extraction, motion_codec_extraction());
+                retry.remove(owner);
+                assert(allocator.outstanding == scene_allocations);
+                if (completed) break;
             }
-            assert_motion_codec_empty_history(crowd.playback.inertial_storage, 3);
-            assert(crowd.inertia_enabled && crowd.is_prepared() && !crowd.authoring);
-            Action* action = crowd.playback.slots[0].actions.get(crowd.playback.slots[0].base_action);
-            assert_motion_codec_extraction(action.extraction, motion_codec_extraction());
-            retry.remove(owner);
-            assert(allocator.outstanding == scene_allocations);
-            if (completed) break;
+            assert(completed && failures > 0);
         }
-        assert(completed && failures > 0);
-        scene::destroy_scene(&retry);
         assert(allocator.outstanding == 0);
     };
 }

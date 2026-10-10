@@ -55,6 +55,7 @@ struct CapturedMotionChain @private {
     uint clip_track_count;
     RootExtractionDesc extraction;
     CapturedMotionNode[] nodes;
+    double[<3>][] pose_scale_sums;
     uint[] top_level_nodes;
     String[] model_names;
     int[] model_parents;
@@ -71,7 +72,12 @@ fn void? validate_generalized_motion(
     MotionAdmissionDiagnostic* diagnostic,
 ) @private {
     clear_motion_admission_diagnostic(diagnostic);
-    validate_motion_model_layout(template, clip, root, diagnostic)!;
+    validate_motion_model_layout(
+        template: template,
+        clip: clip,
+        root: root,
+        diagnostic: diagnostic,
+    )!;
     validate_motion_up(extraction, diagnostic)!;
 
     if (!motion_basis.root_present || !motion_basis.parent_space || !motion_basis.ancestors_parent_space) {
@@ -202,7 +208,12 @@ fn CapturedMotionChain? create_captured_motion_chain(
     uint root,
     RootExtractionDesc extraction,
 ) @private {
-    validate_motion_model_layout(template, clip, root, null)!;
+    validate_motion_model_layout(
+        template: template,
+        clip: clip,
+        root: root,
+        diagnostic: null,
+    )!;
     validate_motion_up(extraction, null)!;
 
     sz chain_count;
@@ -276,6 +287,7 @@ fn CapturedMotionChain? create_captured_motion_chain(
 fn void destroy_captured_motion_chain(CapturedMotionChain* captured) @private {
     foreach (name : captured.model_names) alloc::free(captured.allocator, name.ptr);
     alloc::free(captured.allocator, captured.nodes.ptr);
+    alloc::free(captured.allocator, captured.pose_scale_sums.ptr);
     alloc::free(captured.allocator, captured.top_level_nodes.ptr);
     alloc::free(captured.allocator, captured.model_names.ptr);
     alloc::free(captured.allocator, captured.model_parents.ptr);

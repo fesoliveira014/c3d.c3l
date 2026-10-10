@@ -12,6 +12,7 @@ fn void blend_pose(
     PoseDestination destination,
     PoseScratch scratch,
     bool onset = false,
+    CapturedMotionChain* consumed_chain = null,
 ) @private {
     Transform[] result = destination.pose;
     ChannelSums[] sums = scratch.channels;
@@ -20,8 +21,9 @@ fn void blend_pose(
     float[] morph_weights = scratch.morph_weights;
 
     PoseDerivativeScratch* derivative = scratch.derivative;
-    CapturedMotionChain* consumed_chain = generalized_playback_chain(playback);
     bool precise_scale = derivative != null || consumed_chain != null;
+    double[<3>][] scale_values = derivative ? derivative.scale_values
+      : consumed_chain ? consumed_chain.pose_scale_sums : (double[<3>][]){};
     if (derivative) {
         derivative.velocity[..] = (PoseVelocity){};
         derivative.morph_rates[..] = 0;
@@ -42,6 +44,7 @@ fn void blend_pose(
     foreach (layer, used : active) {
         if (!used) continue;
         sums[..] = (ChannelSums){};
+        if (precise_scale) scale_values[..] = (double[<3>]){};
         morph_weights[..] = 0;
         foreach (values : morph_sums) values[..] = 0;
         if (derivative) {
@@ -85,6 +88,7 @@ fn void blend_pose(
                     );
                 }
                 pin_root_sample(action, (uint)track_index, sample);
+
                 if (derivative) accumulate_pose_derivative(
                     derivative: derivative,
                     action: action,
@@ -112,7 +116,7 @@ fn void blend_pose(
                         sums[node].rotation_weight += weight;
                     case SCALE:
                         if (precise_scale) {
-                            sums[node].precise_scale +=
+                            scale_values[node] +=
                               (double[<3>]){ sample[0], sample[1], sample[2] } * (double)weight;
                         } else {
                             sums[node].scale += (Vec3){ sample[0], sample[1], sample[2] } * weight;
@@ -128,13 +132,18 @@ fn void blend_pose(
 
         foreach (index, &pose : result) {
             ChannelSums* sum = &sums[index];
-            if (derivative) fold_pose_derivative(derivative, (uint)index, sum, *pose);
+            if (derivative) fold_pose_derivative(
+                derivative: derivative,
+                node: (uint)index,
+                sums: sum,
+                below: *pose,
+            );
 
             pose.position = blend_vec3(sum.translation, sum.translation_weight, pose.position);
             pose.rotation = { .v = (sum.rotation + pose.rotation.v * residual(sum.rotation_weight)).normalize() };
             if (precise_scale) {
                 double[<3>] scale = { pose.scale.x, pose.scale.y, pose.scale.z };
-                scale = (sum.precise_scale + scale * (double)residual(sum.scale_weight))
+                scale = (scale_values[index] + scale * (double)residual(sum.scale_weight))
                   / (double)math::max(1.0f, sum.scale_weight);
                 pose.scale = inertial_publish_vector(scale);
             } else {
@@ -157,6 +166,7 @@ fn void blend_pose(
                     );
                 }
             }
+
             morph_offset += values.len;
             foreach (weight_index, &value : values) {
                 *value = (morph_sums[index][weight_index] + *value * residual(total)) / math::max(1.0f, total);

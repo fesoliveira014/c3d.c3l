@@ -215,7 +215,10 @@ fn void? check_animator_scalars(AnimatorAuthoringV3* source) @local {
 fn void? attach_animator(void* value, ReadContext* context) @local {
     AnimatorAuthoringV3* source = value;
     Animator* animator = anim::add_animator(
-        context.scene, context.node, { .inertia_enabled = source.inertia_enabled });
+        scene: context.scene,
+        instance_root: context.node,
+        desc: { .inertia_enabled = source.inertia_enabled },
+    );
     defer catch context.scene.remove_component(context.node, Animator);
 
     animator.root_node = source.root_node;

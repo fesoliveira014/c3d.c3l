@@ -175,8 +175,14 @@ fn ClipId? add_hierarchy_native_clip(AssetStore* assets, bool shifted) @private 
     String key = shifted ? "hierarchy_motion/shifted" : "hierarchy_motion/source";
     ClipId? result = assets.add_clip_owned(&clip, key);
     if (catch excuse = result) {
-        io::printfn("hierarchy fixture stage=clip key=%s tracks=%s targets=%s duration=%s fault=%s",
-            key, clip.tracks.len, clip.targets.len, clip.duration, excuse);
+        io::printfn(
+            "hierarchy fixture stage=clip key=%s tracks=%s targets=%s duration=%s fault=%s",
+            key,
+            clip.tracks.len,
+            clip.targets.len,
+            clip.duration,
+            excuse,
+        );
         return excuse~;
     }
     return result;
@@ -205,8 +211,13 @@ fn ModelId? add_hierarchy_native_model(AssetStore* assets) @private {
     skeleton.inverse_bind[0] = matrix::IDENTITY4;
     SkeletonId? skin_result = assets.add_skeleton_owned(&skeleton, "hierarchy_motion/skin");
     if (catch excuse = skin_result) {
-        io::printfn("hierarchy fixture stage=skin joints=%s parents=%s binds=%s fault=%s",
-            skeleton.joint_names.len, skeleton.parents.len, skeleton.inverse_bind.len, excuse);
+        io::printfn(
+            "hierarchy fixture stage=skin joints=%s parents=%s binds=%s fault=%s",
+            skeleton.joint_names.len,
+            skeleton.parents.len,
+            skeleton.inverse_bind.len,
+            excuse,
+        );
         asset::free_skeleton(allocator, &skeleton);
         return excuse~;
     }
@@ -251,8 +262,14 @@ fn ModelId? add_hierarchy_native_model(AssetStore* assets) @private {
     template.clips[1] = add_hierarchy_native_clip(assets, true)!;
     ModelId? result = assets.add_model_owned(&template, "hierarchy_motion/model");
     if (catch excuse = result) {
-        io::printfn("hierarchy fixture stage=model nodes=%s meshes=%s skins=%s clips=%s fault=%s",
-            template.nodes.len, template.meshes.len, template.skins.len, template.clips.len, excuse);
+        io::printfn(
+            "hierarchy fixture stage=model nodes=%s meshes=%s skins=%s clips=%s fault=%s",
+            template.nodes.len,
+            template.meshes.len,
+            template.skins.len,
+            template.clips.len,
+            excuse,
+        );
         return excuse~;
     }
     return result;
@@ -309,7 +326,9 @@ fn void hierarchy_native_compensate(
     MotionNativeRotation rotation = motion_native_exp({ 0, correction.yaw, 0 });
     double[<3>] angular_rate = { 0, -oracle.carrier_twist_rate, 0 };
     double[<3>] translation_rate = -motion_native_rotate(
-        motion_native_exp({ 0, -oracle.carrier.yaw, 0 }), oracle.carrier_world_rate)
+        rotation: motion_native_exp({ 0, -oracle.carrier.yaw, 0 }),
+        point: oracle.carrier_world_rate,
+    )
       + angular_rate.cross(correction.position);
     foreach (index, node : template.nodes) {
         if (node.parent >= 0) continue;
@@ -431,7 +450,8 @@ fn void hierarchy_native_apply_residual(
     foreach (index, &pose : poses) {
         pose.position += oracle.pose.offset[index].position * h0 + oracle.pose.offset_rate[index].position * h1;
         MotionNativeRotation residual_rotation = motion_native_exp(
-          oracle.pose.offset[index].angular * h0 + oracle.pose.offset_rate[index].angular * h1);
+            rotation: oracle.pose.offset[index].angular * h0 + oracle.pose.offset_rate[index].angular * h1,
+        );
         pose.rotation = motion_native_product(residual_rotation, pose.rotation);
     }
     foreach (index, &weight : morph) {
@@ -465,7 +485,9 @@ fn void hierarchy_native_compare(
     double[<3>][4] points = { {}, { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };
     foreach (usz index, node : template.nodes) {
         HierarchyNativeFrame expected_relative = hierarchy_native_compose(
-            expected_motion_inverse, expected_world[index]);
+            first: expected_motion_inverse,
+            second: expected_world[index],
+        );
         HierarchyNativeFrame actual = hierarchy_native_compose(actual_motion_inverse, actual_relative[index]);
         HierarchyNativeFrame placed = hierarchy_native_compose(oracle.carrier, expected_world[index]);
         foreach (point : points) {
@@ -484,7 +506,9 @@ fn void hierarchy_native_compare(
     double carrier_error = (motion_native_vector(owner.local.position) - expected_carrier).length();
     errors.carrier = math::max(errors.carrier, carrier_error);
     double[<3>] expected_pivot = hierarchy_native_point(
-        hierarchy_native_compose(oracle.carrier, expected_world[HIERARCHY_NATIVE_ROOT]), {}) * 0.5
+        frame: hierarchy_native_compose(oracle.carrier, expected_world[HIERARCHY_NATIVE_ROOT]),
+        point: {},
+    ) * 0.5
       + (double[<3>]){ source_x, 0, 0 };
     Node* root_node = instance.present_node(HIERARCHY_NATIVE_ROOT);
     double[<3>] actual_pivot = motion_native_vector(maths::transform_point(root_node.world, {}));
@@ -502,10 +526,19 @@ fn void save_hierarchy_native_image(CrowdNativeImages* images, uint frame, bool 
     @pool() {
         String directory = env::tget_var("C3D_ANIMATION_CAPTURE_DIR") ?? "";
         if (!directory.len) return;
-        String filename = string::tformat("%s/hierarchy-frame-%04d-%s.rgba32f.bin",
-            directory, frame, expected ? "expected" : "actual");
+        String filename = string::tformat(
+            "%s/hierarchy-frame-%04d-%s.rgba32f.bin",
+            directory,
+            frame,
+            expected ? "expected" : "actual",
+        );
         file::save(filename, ((char*)images.color.ptr)[:images.color.len * Vec4::size])!!;
-        io::printfn("hierarchy capture=%s width=%s height=%s", filename, CROWD_NATIVE_WIDTH, CROWD_NATIVE_HEIGHT);
+        io::printfn(
+            "hierarchy capture=%s width=%s height=%s",
+            filename,
+            CROWD_NATIVE_WIDTH,
+            CROWD_NATIVE_HEIGHT,
+        );
     };
 }
 
@@ -730,9 +763,16 @@ fn void test_animation_authoring_motion_native_hierarchy_worlds_and_interrupted_
                 )!!;
                 save_hierarchy_native_image(&output.actual, frame * 2 + path, false);
                 save_hierarchy_native_image(&output.expected, frame * 2 + path, true);
-                io::printfn("hierarchy frame=%s path=%s parts=%s tested=%s visible=%s draws=%s/%s",
-                    frame, path, crowd.parts.len, output.actual.stats.instances_tested,
-                    output.actual.stats.instances_visible, output.actual.stats.draws, output.expected.stats.draws);
+                io::printfn(
+                    "hierarchy frame=%s path=%s parts=%s tested=%s visible=%s draws=%s/%s",
+                    frame,
+                    path,
+                    crowd.parts.len,
+                    output.actual.stats.instances_tested,
+                    output.actual.stats.instances_visible,
+                    output.actual.stats.draws,
+                    output.expected.stats.draws,
+                );
                 check_crowd_native_parity(&output.actual, &output.expected, false);
                 captures++;
             }
@@ -741,12 +781,29 @@ fn void test_animation_authoring_motion_native_hierarchy_worlds_and_interrupted_
     assert(errors.requests == 9);
     assert(errors.node_samples == HIERARCHY_NATIVE_FRAMES * CROWD_NATIVE_INSTANCES * HIERARCHY_NATIVE_NODES);
     assert(errors.translation_travel > 1 && errors.turning_travel > 1);
-    io::printfn("hierarchy frames=%s seconds=%s requests=%s captures=%s node_samples=%s",
-        HIERARCHY_NATIVE_FRAMES, (double)HIERARCHY_NATIVE_FRAMES * HIERARCHY_NATIVE_DT,
-        errors.requests, captures, errors.node_samples);
-    io::printfn("hierarchy independent relative=%s world=%s carrier=%s pivot=%s delta=%s twist=%s radius=%s",
-        errors.relative, errors.world, errors.carrier, errors.pivot, errors.delta, errors.twist, errors.radius);
-    io::printfn("hierarchy independent translation_travel=%s turning_travel=%s retained_bytes=%s",
-        errors.translation_travel, errors.turning_travel, tracker.allocated());
+    io::printfn(
+        "hierarchy frames=%s seconds=%s requests=%s captures=%s node_samples=%s",
+        HIERARCHY_NATIVE_FRAMES,
+        (double)HIERARCHY_NATIVE_FRAMES * HIERARCHY_NATIVE_DT,
+        errors.requests,
+        captures,
+        errors.node_samples,
+    );
+    io::printfn(
+        "hierarchy independent relative=%s world=%s carrier=%s pivot=%s delta=%s twist=%s radius=%s",
+        errors.relative,
+        errors.world,
+        errors.carrier,
+        errors.pivot,
+        errors.delta,
+        errors.twist,
+        errors.radius,
+    );
+    io::printfn(
+        "hierarchy independent translation_travel=%s turning_travel=%s retained_bytes=%s",
+        errors.translation_travel,
+        errors.turning_travel,
+        tracker.allocated(),
+    );
     check_crowd_native_validation(&fixture.renderer);
 }

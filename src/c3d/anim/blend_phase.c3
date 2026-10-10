@@ -55,6 +55,7 @@ fn BlendPhaseStep advance_blend_phase(
     float speed,
     bool playing,
     double duration,
+    bool derivatives_enabled = false,
 ) @private {
     double travel = playing ? (double)dt * speed / duration : 0;
     double start = phase;
@@ -65,7 +66,7 @@ fn BlendPhaseStep advance_blend_phase(
         .start = start,
         .travel = travel,
         .phase = end - math::floor(end),
-        .clock_rate = playing ? (double)speed / duration : 0,
+        .clock_rate = derivatives_enabled && playing ? (double)speed / duration : 0,
     };
 }
 
@@ -76,6 +77,7 @@ fn void write_blend_space_member(
     float normalized,
     float weight,
     double weight_rate = 0,
+    bool derivatives_enabled = false,
 ) @private {
     action.previous_time = phase.start * duration;
     action.clock_delta = phase.travel * duration;
@@ -84,8 +86,10 @@ fn void write_blend_space_member(
     action.published_time = action.time;
 
     action.weight = weight * normalized;
-    action.analytic_speed = phase.clock_rate * duration;
-    action.analytic_weight_rate = weight_rate * (double)normalized;
+    if (derivatives_enabled) {
+        action.analytic_speed = phase.clock_rate * duration;
+        action.analytic_weight_rate = weight_rate * (double)normalized;
+    }
 }
 
 fn void remove_blend_space_members(PlaybackView* playback, AnimationActionId[] members) @private {

@@ -33,6 +33,18 @@ struct PoseTestAllocator (Allocator) @local {
     bool deny;
 }
 
+fn void? validate_pose_test_source(Transform[] pose, float[] morph) @local {
+    bool[] present = alloc::new_array(mem, bool, pose.len);
+    defer alloc::free(mem, present.ptr);
+    present[..] = true;
+    float[][1] morph_rows = { morph };
+    return anim::validate_transition_source_pose({
+        .pose = pose,
+        .present = present,
+        .morph_weights = morph_rows[..],
+    });
+}
+
 fn void*? PoseTestAllocator.acquire(
     &self,
     sz size,
@@ -154,28 +166,28 @@ fn void test_animation_inertial_pose_source_preflight_finite_and_invalid_channel
     float[1] morph = { -3 };
     pose[0].scale = { -1, 2, -3 };
     pose[0].rotation = { .v = { 0, 0, 0, float::min } };
-    anim::validate_inertial_pose_source(pose[..], morph[..])!!;
+    validate_pose_test_source(pose[..], morph[..])!!;
     pose[0].rotation.v.w = float::max;
-    anim::validate_inertial_pose_source(pose[..], morph[..])!!;
+    validate_pose_test_source(pose[..], morph[..])!!;
     Transform original = pose[0];
     foreach (float invalid : { float::nan, float::inf, -float::inf }) {
         pose[0] = original;
         pose[0].position.y = invalid;
-        assert(@catch(anim::validate_inertial_pose_source(pose[..], morph[..])) == c3d::INVALID_ARGUMENT);
+        assert(@catch(validate_pose_test_source(pose[..], morph[..])) == c3d::INVALID_ARGUMENT);
         pose[0] = original;
         pose[0].scale.z = invalid;
-        assert(@catch(anim::validate_inertial_pose_source(pose[..], morph[..])) == c3d::INVALID_ARGUMENT);
+        assert(@catch(validate_pose_test_source(pose[..], morph[..])) == c3d::INVALID_ARGUMENT);
         pose[0] = original;
         pose[0].rotation.v.x = invalid;
-        assert(@catch(anim::validate_inertial_pose_source(pose[..], morph[..])) == c3d::INVALID_ARGUMENT);
+        assert(@catch(validate_pose_test_source(pose[..], morph[..])) == c3d::INVALID_ARGUMENT);
         pose[0] = original;
         morph[0] = invalid;
-        assert(@catch(anim::validate_inertial_pose_source(pose[..], morph[..])) == c3d::INVALID_ARGUMENT);
+        assert(@catch(validate_pose_test_source(pose[..], morph[..])) == c3d::INVALID_ARGUMENT);
         morph[0] = -3;
     }
     pose[0] = original;
     pose[0].rotation = {};
-    assert(@catch(anim::validate_inertial_pose_source(pose[..], morph[..])) == c3d::INVALID_ARGUMENT);
+    assert(@catch(validate_pose_test_source(pose[..], morph[..])) == c3d::INVALID_ARGUMENT);
 }
 
 fn void test_animation_inertial_pose_no_history_display_onset_and_extreme_morph_offsets() @test {
@@ -278,8 +290,11 @@ fn void test_animation_inertial_pose_moving_target_independent_oracle_and_interr
             duration: 1,
             elapsed: 0.25,
         );
-        pose_test_near(sample.target[0].position[axis],
-            (double)current_target.position[axis] + position.value, POSE_TEST_FLOAT_EPSILON);
+        pose_test_near(
+            actual: sample.target[0].position[axis],
+            expected: (double)current_target.position[axis] + position.value,
+            epsilon: POSE_TEST_FLOAT_EPSILON,
+        );
         pose_test_near(sample.velocity[0].translation[axis], rate[axis] + position.rate);
         PoseTestResidual scale = pose_test_horner(
             offset: onset_scale[axis],
@@ -291,22 +306,36 @@ fn void test_animation_inertial_pose_moving_target_independent_oracle_and_interr
             (double)current_target.scale[axis] + scale.value, POSE_TEST_FLOAT_EPSILON);
         pose_test_near(sample.velocity[0].scale[axis], scale_rate[axis] + scale.rate);
     }
-    PoseTestResidual turn = pose_test_horner(offset: 0, initial_rate: -0.4, duration: 1, elapsed: 0.25);
+    PoseTestResidual turn = pose_test_horner(
+        offset: 0,
+        initial_rate: -0.4,
+        duration: 1,
+        elapsed: 0.25,
+    );
     pose_test_near(
         actual: pose_test_turn_angle(sample.target[0].rotation),
         expected: pose_test_turn_angle(current_target.rotation) + turn.value,
         epsilon: POSE_TEST_FLOAT_EPSILON,
     );
     pose_test_near(sample.velocity[0].angular.z, 0.4 + turn.rate);
-    PoseTestResidual morph = pose_test_horner(offset: 0.5, initial_rate: -1, duration: 1, elapsed: 0.25);
+    PoseTestResidual morph = pose_test_horner(
+        offset: 0.5,
+        initial_rate: -1,
+        duration: 1,
+        elapsed: 0.25,
+    );
     pose_test_near(sample.target_morph[0], -0.75 + morph.value, POSE_TEST_FLOAT_EPSILON);
     pose_test_near(sample.morph_rate[0], 1 + morph.rate);
     record_pose_test_case(&sample, false, 0.25);
     for (uint axis = 0; axis < 3; axis++) {
-        pose_test_near(row.velocity[0].translation[axis],
-            ((double)sample.target[0].position[axis] - (double)sample.source[0].position[axis]) / 0.25);
-        pose_test_near(row.velocity[0].scale[axis],
-            ((double)sample.target[0].scale[axis] - (double)sample.source[0].scale[axis]) / 0.25);
+        pose_test_near(
+            actual: row.velocity[0].translation[axis],
+            expected: ((double)sample.target[0].position[axis] - (double)sample.source[0].position[axis]) / 0.25,
+        );
+        pose_test_near(
+            actual: row.velocity[0].scale[axis],
+            expected: ((double)sample.target[0].scale[axis] - (double)sample.source[0].scale[axis]) / 0.25,
+        );
     }
     pose_test_near(row.morph_velocity[0], ((double)sample.target_morph[0] - sample.source_morph[0]) / 0.25);
     pose_test_near(
@@ -364,7 +393,12 @@ fn void test_animation_inertial_pose_consumed_log_scale_and_unrelated_linear_sca
     sample.consumed = { true, false };
     capture_pose_test_case(&sample);
     apply_pose_test_case(&sample, 0.25);
-    PoseTestResidual residual = pose_test_horner(offset: 0, initial_rate: -10, duration: 1, elapsed: 0.25);
+    PoseTestResidual residual = pose_test_horner(
+        offset: 0,
+        initial_rate: -10,
+        duration: 1,
+        elapsed: 0.25,
+    );
     assert(residual.value == -1.845703125 && residual.rate == -3.1640625);
     double expected_log = math::exp(residual.value);
     for (uint axis = 0; axis < 3; axis++) {
@@ -480,7 +514,7 @@ fn void test_animation_inertial_pose_reserved_rows_do_not_acquire_or_resize() @t
             sample.target_morph[0] = 0.6f;
             sample.velocity = {};
             sample.morph_rate = {};
-            anim::validate_inertial_pose_source(sample.source[..], sample.source_morph[..])!!;
+            validate_pose_test_source(sample.source[..], sample.source_morph[..])!!;
             capture_pose_test_case(&sample);
             apply_pose_test_case(&sample, 0.25);
             record_pose_test_case(&sample, false, 0.25);

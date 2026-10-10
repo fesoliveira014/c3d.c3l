@@ -101,30 +101,25 @@ fn BlendSpace1D*? PlaybackView.add_blend_space(
         if (!math::is_finite(position) || (index && position <= positions[index - 1])) return c3d::INVALID_ARGUMENT~;
         float duration = assets.clips.try_get(clips[index])!.data.duration;
         if (!math::is_finite(duration) || duration <= 0) return c3d::INVALID_ARGUMENT~;
-        (void)validate_playback_action(&assets.clip(clips[index]).data, desc, destination)!;
     }
 
-    if (desc.weighted_mask) validate_weighted_joint_mask(assets, self.model, desc.weighted_mask)!;
+    bool unsupported;
     foreach (clip : clips) {
         AnimationClip* data = &assets.clip(clip).data;
-        validate_action_motion_capture(
-            assets: assets,
-            model: self.model,
-            clip: data,
-            desc: desc,
-            root_node: self.root_node,
-            motion_basis: motion_basis,
-        )!;
-        validate_live_motion_addition(
+        if (catch excuse = validate_playback_addition(
             playback: self,
             assets: assets,
             clip: data,
             desc: desc,
+            destination: destination,
             basis: motion_basis,
-        )!;
-        if (self.inertial) validate_inertial_rotation_domains(data)!;
+        )) {
+            if (excuse != c3d::UNSUPPORTED) return excuse~;
+            unsupported = true;
+        }
     }
 
+    if (unsupported) return c3d::UNSUPPORTED~;
 
     uint slot;
     while (slot < MAX_BLEND_SPACES
@@ -168,6 +163,7 @@ fn BlendSpace1D*? PlaybackView.add_blend_space(
             action: &prepared[prepared_count - 1],
             root_node: self.root_node,
             motion_basis: motion_basis,
+            derivatives_enabled: self.inertial != null,
         )!;
     }
 
@@ -251,6 +247,7 @@ fn void advance_blend_spaces(PlaybackView* playback, AssetStore* assets, float d
             speed: space.speed,
             playing: space.playing,
             duration: duration,
+            derivatives_enabled: playback.inertial != null,
         );
         space.phase = phase.phase;
 
@@ -264,7 +261,8 @@ fn void advance_blend_spaces(PlaybackView* playback, AssetStore* assets, float d
                 duration: clip_duration,
                 normalized: normalized,
                 weight: space.weight,
-                weight_rate: blend_space_weight_rate(fade),
+                weight_rate: playback.inertial ? blend_space_weight_rate(fade) : 0,
+                derivatives_enabled: playback.inertial != null,
             );
         }
     }

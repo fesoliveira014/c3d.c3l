@@ -62,7 +62,8 @@ fn PreparedTransition? validate_animation_transition(
 
     foreach (index, source : desc.spaces) {
         prepare_transition_space(
-            source: source,
+            source: source.space,
+            phase: source.phase,
             destination: &prepared.spaces[index],
             action_count: (uint)desc.actions.len,
             capacity: (uint)playback.actions.items.len,
@@ -184,6 +185,7 @@ fn PreparedTransition? prepare_animation_transition(
             action: &prepared.actions[index],
             root_node: playback.root_node,
             motion_basis: motion_basis,
+            derivatives_enabled: playback.inertial != null,
         )!;
 
         if (target.play.mask) {
@@ -223,10 +225,13 @@ fn void release_prepared_transition(PreparedTransition* prepared) @private {
 
 fn void? prepare_transition_space(
     CrowdSpaceAuthoring source,
+    float phase,
     PreparedTransitionSpace* destination,
     uint action_count,
     uint capacity,
 ) @local {
+    if (!math::is_finite(phase) || phase < 0 || phase >= 1) return c3d::INVALID_ARGUMENT~;
+
     if (!math::is_finite(source.speed) || !math::is_finite(source.weight) || source.weight < 0) {
         return c3d::INVALID_ARGUMENT~;
     }
@@ -275,4 +280,5 @@ fn void? prepare_transition_space(
     destination.speed = source.speed;
     destination.weight = source.weight;
     destination.playing = source.playing;
+    destination.phase = (double)phase;
 }

@@ -4,6 +4,22 @@ import c3d;
 import c3d::anim @public;
 import std::math;
 
+fn InertialScalarState sample_test_log_scale(
+    InertialScalarState source,
+    InertialScalarState target,
+    double duration,
+    double elapsed,
+) @local {
+    InertialScalarState onset = anim::inertial_onset_scale_residual(source, target);
+    InertialScalarState residual = anim::inertial_scalar_residual(
+        offset: onset.value,
+        velocity: onset.rate,
+        duration: duration,
+        elapsed: elapsed,
+    );
+    return anim::inertial_correct_log_scale(residual, target);
+}
+
 fn ScaleEligibilityInput constant_scale_eligibility(float scale, double velocity, double duration) @local {
     return { .base = { scale, scale, scale }, .velocity = velocity, .duration = duration };
 }
@@ -93,7 +109,7 @@ fn void test_animation_scale_eligibility_counterexamples_reject_without_input_mu
             elapsed: 0.25,
         );
         assert(residual.value == sign * 189);
-        InertialScalarState published = anim::inertial_log_scale(
+        InertialScalarState published = sample_test_log_scale(
             source: source,
             target: target,
             duration: 1,
@@ -120,7 +136,7 @@ fn void test_animation_scale_eligibility_same_histories_accept_shorter_duration_
             double fraction = elapsed / duration;
             double h1 = (((-3 * fraction + 8) * fraction - 6) * fraction * fraction + 1) * fraction;
             double expected = target.value * math::exp(duration * input.velocity * h1);
-            InertialScalarState published = anim::inertial_log_scale(
+            InertialScalarState published = sample_test_log_scale(
                 source: source,
                 target: target,
                 duration: duration,
@@ -158,7 +174,7 @@ fn void test_animation_scale_eligibility_margin_and_uncertain_cache_are_unsuppor
     expect_scale_eligibility_fault(&exact, c3d::UNSUPPORTED);
 }
 
-fn void test_animation_scale_eligibility_directed_exp_and_extreme_products_match_frozen_gate() @test {
+fn void test_animation_scale_eligibility_directed_exp_encloses_native_and_extreme_products_reject() @test {
     double[15] exponents = { -2000, -1024, -256, -193, -3.25, -0.125, 0, 0.125, 3.25, 100, 193, 256, 512, 1024, 2000 };
     foreach (exponent : exponents) {
         MotionInterval enclosed = anim::eligibility_exp(exponent);
@@ -176,8 +192,8 @@ fn void test_animation_scale_eligibility_directed_exp_and_extreme_products_match
         expect_scale_eligibility_fault(&input, c3d::INVALID_ARGUMENT);
     }
     MotionInterval zero = anim::eligibility_product(
-        anim::motion_interval_exact(0),
-        { .lower = double::max, .upper = double::inf },
+        left: anim::motion_interval_exact(0),
+        right: { .lower = double::max, .upper = double::inf },
     );
     assert(zero.lower == 0 && zero.upper == 0);
 }

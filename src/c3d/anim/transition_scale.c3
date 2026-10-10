@@ -65,7 +65,6 @@ fn bool consumed_transition_node(
 ) @local {
     bool generalized;
     foreach (target : desc.actions) generalized |= target.play.extraction.generalized;
-    foreach (id : playback.order[:*playback.action_count]) generalized |= playback.actions.get(id).motion_chain != null;
     if (!generalized) return false;
 
     ModelTemplate* template = &assets.model(playback.model).data;
@@ -176,6 +175,7 @@ fn InertialScalarState transition_node_scale(
                 float weight = weights[index];
                 if (description.play.mask && !description.play.mask.nodes[node]) weight = 0;
                 if (description.play.weighted_mask) weight *= description.play.weighted_mask.nodes[node];
+
                 double[3] value;
                 double[3] rate;
                 uint cursor;
@@ -188,6 +188,7 @@ fn InertialScalarState transition_node_scale(
                     side: speeds[index] < 0 ? StepSampleSide.LEFT
                       : speeds[index] > 0 ? StepSampleSide.RIGHT : StepSampleSide.EXACT,
                 );
+
                 Vec3 sampled = { (float)value[0], (float)value[1], (float)value[2] };
                 sum += inertial_pose_vector(sampled) * (double)weight;
                 sum_rate += (double[<3>]){ rate[0], rate[1], rate[2] } * (speeds[index] * (double)weight);

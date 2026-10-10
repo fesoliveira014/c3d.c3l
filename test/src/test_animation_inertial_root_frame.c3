@@ -23,7 +23,10 @@ fn void create_root_frame_fixture(RootFrameFixture* fixture, bool crowd) @local 
     create_layer_fixture(&fixture.ordinary);
     fixture.ordinary.scene.remove_component(fixture.ordinary.root, Animator);
     fixture.ordinary.animator = anim::add_animator(
-        &fixture.ordinary.scene, fixture.ordinary.root, { .inertia_enabled = true });
+        scene: &fixture.ordinary.scene,
+        instance_root: fixture.ordinary.root,
+        desc: { .inertia_enabled = true },
+    );
     if (!crowd) return;
     fixture.placements[0] = maths::TRANSFORM_IDENTITY;
     fixture.crowd = anim::create_crowd_playback(
@@ -31,7 +34,7 @@ fn void create_root_frame_fixture(RootFrameFixture* fixture, bool crowd) @local 
         template: &fixture.ordinary.assets.model(fixture.ordinary.model).data,
         placements: fixture.placements[..],
         actions_per_instance: 4,
-        event_capacity: 0,
+        event_capacity: 16,
         inertia_enabled: true,
     )!!;
     fixture.crowd.model = fixture.ordinary.model;
@@ -114,8 +117,11 @@ fn Transform root_frame_pose(RootFrameFixture* fixture) @local {
 }
 
 fn void? root_frame_transition(RootFrameFixture* fixture, AnimationTransitionDesc description) @local {
-    if (fixture.crowd) return fixture.player.inertialize(&fixture.ordinary.assets, description);
-    return fixture.ordinary.animator.inertialize(&fixture.ordinary.assets, description);
+    if (fixture.crowd) {
+        fixture.player.inertialize(&fixture.ordinary.assets, description)!;
+    } else {
+        fixture.ordinary.animator.inertialize(&fixture.ordinary.assets, description)!;
+    }
 }
 
 fn void assert_root_frame_decay(
@@ -236,5 +242,172 @@ fn void test_animation_inertial_root_frame_differing_target_extract_up_is_reject
         assert(mem::equals((char*)&action_before, (char*)action, Action::size));
         RootMotionDelta after = root_frame_motion(&fixture);
         assert(after.translation == motion_before.translation && after.rotation.v == motion_before.rotation.v);
+    }
+}
+
+fn double root_frame_reference_decay(double elapsed, double duration) @local {
+    if (elapsed >= duration) return 0;
+
+    double fraction = elapsed / duration;
+    double square = fraction * fraction;
+    return 1 - 10 * square * fraction + 15 * square * square - 6 * square * square * fraction;
+}
+
+fn ClipId root_frame_target_rate_clip(RootFrameFixture* fixture) @local {
+    float[2] times = { 0, 1 };
+    float[6] positions = { 0, 0, 0, 4, -2, 1 };
+    Quat endpoint = quaternion::from_axis_angle{float}({ 0, 0, 1 }, 1.5f);
+    float[8] rotations = { 0, 0, 0, 1, endpoint.v.x, endpoint.v.y, endpoint.v.z, endpoint.v.w };
+    Track[2] tracks = {
+        make_track(
+            path: TargetPath.TRANSLATION,
+            interpolation: Interpolation.LINEAR,
+            times: times[..],
+            values: positions[..],
+        ),
+        make_track(
+            path: TargetPath.ROTATION,
+            interpolation: Interpolation.LINEAR,
+            times: times[..],
+            values: rotations[..],
+        ),
+    };
+    uint[1] targets = { 2 };
+    ClipId clip = add_clip(
+        assets: &fixture.ordinary.assets,
+        key: "",
+        tracks: tracks[..],
+        targets: targets[..],
+        duration: 1,
+    );
+    ClipEvent[2] events = { { .time = 0.5f, .id = 101 }, { .time = 0.75f, .id = 102 } };
+    fixture.ordinary.assets.set_clip_events(clip, events[..])!!;
+    return clip;
+}
+
+fn void root_frame_request_rate_target(RootFrameFixture* fixture, ClipId clip) @local {
+    AnimationTargetDesc[1] target = { anim::ANIMATION_TARGET_DEFAULT };
+    target[0].clip = clip;
+    target[0].loop = false;
+    target[0].play = {
+        .root_motion = RootMotion.EXTRACT,
+        .extraction = {
+            .generalized = true,
+            .translation_axes = { true, true, true },
+            .up = { 0, 0, 1 },
+            .twist = true,
+        },
+    };
+    root_frame_transition(fixture, { .duration = 1, .actions = target[..] })!!;
+}
+
+fn double root_frame_reference_target_turn(RootFrameFixture* fixture, ClipId clip) @local {
+    Track* track = &fixture.ordinary.assets.clip(clip).data.tracks[1];
+    return 2 * math::atan2((double)track.values[6], (double)track.values[7]);
+}
+
+fn double[<3>] root_frame_reference_target_delta(double begin, double end, double turn) @local {
+    double travel = end - begin;
+    double sine = math::sin(turn * begin);
+    double cosine = math::cos(turn * begin);
+    return { (4 * cosine - 2 * sine) * travel, (-4 * sine - 2 * cosine) * travel, travel };
+}
+
+fn void test_animation_inertial_root_frame_first_target_mean_rate_converges_to_source_at_small_steps() @test {
+    foreach (crowded : (bool[2]){ false, true }) {
+        foreach (step : (float[2]){ 1e-4f, 5e-5f }) {
+            RootFrameFixture fixture;
+            create_root_frame_fixture(&fixture, crowded);
+            defer destroy_root_frame_fixture(&fixture);
+            ClipId source = root_frame_source_clip(&fixture);
+            ClipId target = root_frame_target_rate_clip(&fixture);
+            root_frame_play_source(&fixture, source);
+            root_frame_update(&fixture, 0.125f);
+            root_frame_update(&fixture, 0.125f);
+            InertialRow* row = root_frame_history(&fixture);
+            double[<3>] source_rate = row.root.translation_rate;
+            double source_turn_rate = row.root.twist_rate;
+            root_frame_request_rate_target(&fixture, target);
+            root_frame_update(&fixture, 0);
+            assert(row.root.target_rate_pending);
+            root_frame_update(&fixture, step);
+            double dt = step;
+            double decay = root_frame_reference_decay(dt, 1);
+            double[<3>] target_rate = { 4, -2, 1 };
+            double target_turn_rate = root_frame_reference_target_turn(&fixture, target);
+            double[<3>] expected = (target_rate + (source_rate - target_rate) * decay) * dt;
+            RootMotionDelta actual = root_frame_motion(&fixture);
+            double[<3>] observed = { actual.translation.x, actual.translation.y, actual.translation.z };
+            assert((observed / dt - source_rate).length() < ROOT_FRAME_RATE_EPSILON);
+            assert((observed - expected).length() < ROOT_FRAME_MOTION_EPSILON * dt);
+            double expected_turn = (target_turn_rate + (source_turn_rate - target_turn_rate) * decay) * dt;
+            double observed_turn = 2 * math::atan2((double)actual.rotation.v.z, (double)actual.rotation.v.w);
+            assert(math::abs(observed_turn / dt - source_turn_rate) < ROOT_FRAME_RATE_EPSILON);
+            assert(math::abs(observed_turn - expected_turn) < ROOT_FRAME_MOTION_EPSILON * dt);
+            assert(row.control.elapsed == dt && !row.root.target_rate_pending);
+        }
+    }
+}
+
+fn void test_animation_inertial_root_frame_extra_displacement_sums_discrete_residual_rates_through_completion() @test {
+    foreach (crowded : (bool[2]){ false, true }) {
+        RootFrameFixture fixture;
+        create_root_frame_fixture(&fixture, crowded);
+        defer destroy_root_frame_fixture(&fixture);
+        ClipId source = root_frame_source_clip(&fixture);
+        ClipId target = root_frame_target_rate_clip(&fixture);
+        root_frame_play_source(&fixture, source);
+        root_frame_update(&fixture, 0.125f);
+        root_frame_update(&fixture, 0.125f);
+        InertialRow* row = root_frame_history(&fixture);
+        double[<3>] source_rate = row.root.translation_rate;
+        double source_turn_rate = row.root.twist_rate;
+        root_frame_request_rate_target(&fixture, target);
+        double target_turn = root_frame_reference_target_turn(&fixture, target);
+        double[<3>] residual_rate = source_rate - (double[<3>]){ 4, -2, 1 };
+        double residual_turn_rate = source_turn_rate - target_turn;
+        double elapsed;
+        double clock;
+        double[<3>] observed_extra;
+        double[<3>] expected_extra;
+        double observed_extra_turn;
+        double expected_extra_turn;
+        uint crossed_events;
+        foreach (step : (float[7]){ 0.0625f, 0.09375f, 0.125f, 0.21875f, 0.25f, 0.1875f, 0.125f }) {
+            double dt = step;
+            double next_clock = math::min(1.0, clock + dt);
+            double[<3>] raw = root_frame_reference_target_delta(clock, next_clock, target_turn);
+            double raw_turn = target_turn * (next_clock - clock);
+            elapsed = math::min(1.0, elapsed + dt);
+            double decay = root_frame_reference_decay(elapsed, 1);
+            double[<3>] extra = residual_rate * (decay * dt);
+            double extra_turn = residual_turn_rate * decay * dt;
+            root_frame_update(&fixture, step);
+            RootMotionDelta actual = root_frame_motion(&fixture);
+            double[<3>] observed = { actual.translation.x, actual.translation.y, actual.translation.z };
+            double observed_turn = 2 * math::atan2((double)actual.rotation.v.z, (double)actual.rotation.v.w);
+            assert((observed - raw - extra).length() < ROOT_FRAME_MOTION_EPSILON);
+            assert(math::abs(observed_turn - raw_turn - extra_turn) < ROOT_FRAME_MOTION_EPSILON);
+            observed_extra += observed - raw;
+            expected_extra += extra;
+            observed_extra_turn += observed_turn - raw_turn;
+            expected_extra_turn += extra_turn;
+            uint event_count = fixture.crowd ? fixture.crowd.event_count : fixture.ordinary.animator.event_count;
+            for (uint index = 0; index < event_count; index++) {
+                FiredEvent event = fixture.crowd ? fixture.crowd.events[index].event
+                  : fixture.ordinary.animator.events[index];
+                assert(c3d::same_id(event.clip, target));
+                assert(event.id == (crossed_events == 0 ? 101 : 102));
+                assert(event.time == (crossed_events == 0 ? 0.5f : 0.75f));
+                crossed_events++;
+            }
+            clock = next_clock;
+        }
+        assert((observed_extra - expected_extra).length() < ROOT_FRAME_MOTION_EPSILON);
+        assert(math::abs(observed_extra_turn - expected_extra_turn) < ROOT_FRAME_MOTION_EPSILON);
+        assert(crossed_events == 2 && row.control.elapsed == 1 && !row.control.active);
+        root_frame_update(&fixture, 0);
+        RootMotionDelta after = root_frame_motion(&fixture);
+        assert(after.translation == (Vec3){} && after.rotation.v == quaternion::IDENTITY{float}.v);
     }
 }

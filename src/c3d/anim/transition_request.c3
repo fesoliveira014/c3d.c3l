@@ -6,16 +6,19 @@ import std::math;
 
 <*
  Replace playback with copied targets and a decaying pose residual.
+ All source action IDs and borrows become stale.
  @param [&in] assets : "Target clips remain live throughout playback."
  @param desc : "Target arrays are borrowed only during this call."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
  @require self.inertial_storage != null
+ @ensure return.count == desc.actions.len && return.space_count == desc.spaces.len
+ @ensure @transition_result_matches_order(return, self.order[:self.action_count])
 *>
-fn void? Animator.inertialize(&self, AssetStore* assets, AnimationTransitionDesc desc) {
+fn AnimationTransitionResult? Animator.inertialize(&self, AssetStore* assets, AnimationTransitionDesc desc) {
     refresh_destination(self);
     PlaybackView playback = self.playback();
 
-    (void)request_inertial_transition(
+    AnimationTransitionResult installed = request_inertial_transition(
         playback: &playback,
         assets: assets,
         desc: desc,
@@ -29,6 +32,8 @@ fn void? Animator.inertialize(&self, AssetStore* assets, AnimationTransitionDesc
     self.event_count = 0;
     self.events_dropped = 0;
     self.root_motion = { .rotation = quaternion::IDENTITY };
+
+    return installed;
 }
 
 <* Discard the residual while keeping target playback.
@@ -39,12 +44,15 @@ fn void Animator.cancel_inertial_transition(&self) {
 
 <*
  Replace this instance's playback with copied targets.
+ All source action IDs and borrows become stale.
  @param [&in] assets : "Target clips remain live throughout playback."
  @param desc : "Target arrays are borrowed only during this call."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
  @require self.state.inertial_storage != null
+ @ensure return.count == desc.actions.len && return.space_count == desc.spaces.len
+ @ensure @transition_result_matches_crowd(return, self)
 *>
-fn void? CrowdPlayer.inertialize(&self, AssetStore* assets, AnimationTransitionDesc desc) {
+fn AnimationTransitionResult? CrowdPlayer.inertialize(&self, AssetStore* assets, AnimationTransitionDesc desc) {
     CrowdPlaybackSlot* slot = crowd_slot(self.state, self.instance)!;
     PlaybackView playback = crowd_playback_view(self.state, slot);
 
@@ -72,6 +80,8 @@ fn void? CrowdPlayer.inertialize(&self, AssetStore* assets, AnimationTransitionD
         self.state.events[kept++] = event;
     }
     self.state.event_count = kept;
+
+    return installed;
 }
 
 <* Discard this instance's residual while keeping target playback.
@@ -86,6 +96,7 @@ fn void cancel_inertial_row(InertialRow* row) @local {
     row.control.active = false;
     row.control.duration = 0;
     row.control.elapsed = 0;
+    row.control.onset_pending = false;
     row.root.target_rate_pending = false;
 }
 
@@ -198,4 +209,19 @@ fn bool same_transition_extraction(RootExtractionDesc first, RootExtractionDesc 
     foreach (index, axis : first.translation_axes) if (axis != second.translation_axes[index]) return false;
 
     return true;
+}
+
+macro bool @transition_result_matches_order(AnimationTransitionResult result, AnimationActionId[] order) @private {
+    if (result.count != order.len) return false;
+
+    foreach (index, id : result.actions[:result.count]) {
+        if (!c3d::same_id(id, order[index])) return false;
+    }
+
+    return true;
+}
+
+macro bool @transition_result_matches_crowd(AnimationTransitionResult result, CrowdPlayer* player) @private {
+    CrowdPlaybackSlot* slot = &player.state.slots[player.instance.index];
+    return @transition_result_matches_order(result, slot.order[:slot.action_count]);
 }
