@@ -9,6 +9,7 @@ import std::math;
  All source action IDs and borrows become stale.
  @param [&in] assets : "Target clips remain live throughout playback."
  @param desc : "Target arrays are borrowed only during this call."
+ @return "Target-ordinal IDs and group borrows."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
  @require self.inertial_storage != null
  @ensure return.count == desc.actions.len && return.space_count == desc.spaces.len
@@ -47,6 +48,7 @@ fn void Animator.cancel_inertial_transition(&self) {
  All source action IDs and borrows become stale.
  @param [&in] assets : "Target clips remain live throughout playback."
  @param desc : "Target arrays are borrowed only during this call."
+ @return "Target-ordinal IDs and group borrows."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
  @require self.state.inertial_storage != null
  @ensure return.count == desc.actions.len && return.space_count == desc.spaces.len
@@ -111,6 +113,7 @@ fn InstalledTransition? request_inertial_transition(
 ) @private {
     InertialIdentityState source_identity = compute_inertial_identity(playback, assets, destination.present);
     bool source_history_current = inertial_history_is_current(playback.inertial, source_identity);
+
     PreparedTransition validation = validate_animation_transition(
         playback: playback,
         assets: assets,
@@ -119,7 +122,9 @@ fn InstalledTransition? request_inertial_transition(
         motion_basis: motion_basis,
         defer_unsupported: true,
     )!;
+
     validate_transition_extraction_modes(playback, desc)!;
+
     TransitionMotionIdentity identity = validate_transition_motion_identity(
         playback: playback,
         assets: assets,
@@ -128,6 +133,7 @@ fn InstalledTransition? request_inertial_transition(
         motion_basis: motion_basis,
         defer_unsupported: true,
     )!;
+
     bool unsupported = validation.unsupported || identity.unsupported;
     if (catch excuse = validate_transition_scale_eligibility(
         playback: playback,
@@ -140,6 +146,7 @@ fn InstalledTransition? request_inertial_transition(
         if (excuse != c3d::UNSUPPORTED) return excuse~;
         unsupported = true;
     }
+
     if (unsupported) return c3d::UNSUPPORTED~;
 
     PreparedTransition prepared = prepare_animation_transition(

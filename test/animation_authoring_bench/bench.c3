@@ -242,6 +242,67 @@ fn void? run_row(
     }
     render::wait_frames(renderer)!;
     sz retained = tracker.allocated();
+    usz slot_bytes = (usz)crowd.playback.slots.len * CrowdPlaybackSlot::size;
+    usz generalized_bytes = (usz)crowd.playback.slots.len * GeneralizedPlaybackState::size;
+    usz scene_animator_bytes = (usz)scene.world.capacity * Animator::size;
+    usz scene_crowd_bytes = (usz)scene.world.capacity * AnimatedCrowd::size;
+    usz action_slots;
+    usz action_bytes;
+    usz pool_metadata_bytes;
+    usz boolean_mask_bytes;
+    usz one_d_bytes;
+    usz group_bytes;
+    usz cursor_bytes;
+    usz reference_bytes;
+    usz mask_bytes;
+    usz chain_count;
+    usz chain_header_bytes;
+    usz chain_node_bytes;
+    usz chain_layout_bytes;
+    usz chain_name_bytes;
+    usz chain_scale_bytes;
+    foreach (&slot : crowd.playback.slots) {
+        action_slots += slot.actions.items.len;
+        action_bytes += (usz)slot.actions.items.len * Action::size;
+        pool_metadata_bytes += (usz)(slot.actions.generations.len + slot.actions.free.len) * uint::size
+          + (usz)slot.order.len * AnimationActionId::size;
+        boolean_mask_bytes += (usz)slot.masks.len * bool::size;
+        one_d_bytes += (usz)slot.spaces.len * BlendSpace1D::size;
+        group_bytes += anim::blend_space_2d_storage_bytes((uint)slot.actions.items.len);
+        foreach (id : slot.order[:slot.action_count]) {
+            Action* action = slot.actions.get(id);
+            cursor_bytes += (usz)action.cursors.len * uint::size;
+            reference_bytes += (usz)action.reference.len * float::size;
+            mask_bytes += (usz)action.weighted_mask.len * float::size;
+            if (!action.motion_chain) continue;
+
+            CapturedMotionChain* chain = action.motion_chain;
+            chain_count++;
+            chain_header_bytes += CapturedMotionChain::size;
+            chain_node_bytes += (usz)chain.nodes.len * CapturedMotionNode::size;
+            chain_layout_bytes += (usz)chain.top_level_nodes.len * uint::size
+              + (usz)chain.model_names.len * String::size + (usz)chain.model_parents.len * int::size;
+            foreach (name : chain.model_names) chain_name_bytes += name.len;
+            chain_scale_bytes += (usz)chain.pose_scale_sums.len * double[<3>]::size;
+        }
+    }
+
+    PoseDerivativeScratch* derivative = crowd.playback.pose_storage.scratch.derivative;
+    usz derivative_bytes = derivative ? anim::pose_derivative_storage_bytes(derivative) : 0;
+    usz derivative_scale_bytes = derivative ? (usz)derivative.scale_values.len * double[<3>]::size : 0;
+    usz channel_bytes = (usz)crowd.playback.pose_storage.scratch.channels.len * ChannelSums::size;
+    usz inertial_bytes = crowd.playback.inertial_storage ? crowd.playback.inertial_storage.bytes : 0;
+    usz inertial_headers = crowd.playback.inertial_storage
+      ? (usz)crowd.playback.inertial_storage.rows.len * InertialRow::size : 0;
+    usz inertial_payload = crowd.playback.inertial_storage
+      ? (usz)crowd.playback.inertial_storage.rows.len * crowd.playback.inertial_storage.row_bytes : 0;
+    usz capture_bytes = chain_header_bytes + chain_node_bytes + chain_layout_bytes + chain_name_bytes + chain_scale_bytes;
+    usz attributed_bytes = CrowdPlaybackState::size + PoseStorage::size + scene_animator_bytes + scene_crowd_bytes
+      + slot_bytes + action_bytes
+      + pool_metadata_bytes + boolean_mask_bytes + one_d_bytes + group_bytes + cursor_bytes + reference_bytes
+      + mask_bytes + capture_bytes + derivative_bytes + channel_bytes + inertial_bytes;
+    sz other_bytes = retained - (sz)attributed_bytes;
+
     double request_ms;
     sz request_peak;
     if (inertia_enabled) {
@@ -260,7 +321,6 @@ fn void? run_row(
     } else {
         io::printfn("row,count=%s,request_measurement=skipped_disabled_inertia_precondition", count);
     }
-    usz history_bytes = crowd.playback.inertial_storage ? crowd.playback.inertial_storage.bytes : 0;
     write_report(
         format: "row,count=%s,inertia_enabled=%s,extraction=%s",
         values: {
@@ -269,8 +329,6 @@ fn void? run_row(
             &&(legacy_planar ? "legacy_planar_EXTRACT_Y_yaw" : "generalized_XYZ_Y_twist"),
         },
     );
-    usz group_bytes = (usz)count * anim::blend_space_2d_storage_bytes(ACTION_CAPACITY);
-    usz mask_bytes = (usz)count * template.nodes.len * float::size;
     usz palette_bytes = (usz)count * crowd.joint_count * Mat4f::size;
     double gpu_median = gpu_count ? percentile(gpu_pass[:gpu_count], 0.5) : 0;
     double gpu_p95 = gpu_count ? percentile(gpu_pass[:gpu_count], 0.95) : 0;
@@ -314,13 +372,54 @@ fn void? run_row(
         },
     );
     write_report(
-        format: "row,count=%s,retained_bytes=%s,history_bytes=%s,two_d_bytes=%s,weighted_bytes=%s,request_peak_extra=%s",
+        format: "row,count=%s,retained_bytes=%s,inertial_storage_bytes=%s,two_d_bytes=%s,weighted_bytes=%s",
         values: {
             &count,
             &retained,
-            &history_bytes,
+            &inertial_bytes,
             &group_bytes,
             &mask_bytes,
+        },
+    );
+    write_report(
+        format: "retained,count=%s,action_capacity_slots=%s,action_slots_bytes=%s,slot_records_bytes=%s",
+        values: { &count, &action_slots, &action_bytes, &slot_bytes },
+    );
+    write_report(
+        format: "retained,count=%s,embedded_generalized_bytes=%s,pool_metadata_bytes=%s,boolean_masks_bytes=%s",
+        values: { &count, &generalized_bytes, &pool_metadata_bytes, &boolean_mask_bytes },
+    );
+    write_report(
+        format: "retained,count=%s,scene_component_capacity=%s,scene_animator_records_bytes=%s,scene_crowd_records_bytes=%s",
+        values: { &count, &&scene.world.capacity, &scene_animator_bytes, &scene_crowd_bytes },
+    );
+    write_report(
+        format: "retained,count=%s,one_d_bytes=%s,cursor_bytes=%s,reference_bytes=%s,channel_sums_bytes=%s",
+        values: { &count, &one_d_bytes, &cursor_bytes, &reference_bytes, &channel_bytes },
+    );
+    write_report(
+        format: "retained,count=%s,motion_captures=%s,capture_total_bytes=%s,capture_headers_bytes=%s",
+        values: { &count, &chain_count, &capture_bytes, &chain_header_bytes },
+    );
+    write_report(
+        format: "retained,count=%s,capture_nodes_bytes=%s,capture_layout_bytes=%s,capture_names_bytes=%s",
+        values: { &count, &chain_node_bytes, &chain_layout_bytes, &chain_name_bytes },
+    );
+    write_report(
+        format: "retained,count=%s,capture_scale_sums_bytes=%s,derivative_scratch_bytes=%s,derivative_scale_values_bytes=%s",
+        values: { &count, &chain_scale_bytes, &derivative_bytes, &derivative_scale_bytes },
+    );
+    write_report(
+        format: "retained,count=%s,inertial_row_headers_bytes=%s,inertial_payload_bytes=%s,inertial_header_padding_bytes=%s",
+        values: { &count, &inertial_headers, &inertial_payload,
+            &&(inertial_bytes - inertial_headers - inertial_payload) },
+    );
+    write_report(
+        format: "retained,count=%s,attributed_playback_bytes=%s,other_scene_bytes=%s,request_peak_extra=%s",
+        values: {
+            &count,
+            &attributed_bytes,
+            &other_bytes,
             &request_peak,
         },
     );
@@ -373,6 +472,20 @@ fn int main(String[] arguments) {
         }
     }
     @pool() {
+        write_report(
+            format: "layout,Action=%s,CrowdPlaybackSlot=%s,GeneralizedPlaybackState=%s,ChannelSums=%s",
+            values: { &&Action::size, &&CrowdPlaybackSlot::size, &&GeneralizedPlaybackState::size, &&ChannelSums::size },
+        );
+        write_report(
+            format: "layout,CapturedMotionChain=%s,scale_value=%s,PoseDerivativeScratch=%s,PoseVelocity=%s",
+            values: { &&CapturedMotionChain::size, &&double[<3>]::size,
+                &&PoseDerivativeScratch::size, &&PoseVelocity::size },
+        );
+        write_report(
+            format: "layout,RootInertialState=%s,InertialRow=%s,InertialControl=%s",
+            values: { &&RootInertialState::size, &&InertialRow::size, &&InertialControl::size },
+        );
+
         AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
         defer asset::destroy_asset_store(&assets);
         char[] bytes = file::load(tmem, MODEL_PATH)!!;

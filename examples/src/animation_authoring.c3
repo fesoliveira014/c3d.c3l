@@ -261,21 +261,24 @@ fn void? request_character_playback(
         targets[UPPER_ACTION_INDEX].play = { .layer = 1, .weighted_mask = &upper };
         targets[UPPER_ACTION_INDEX].speed = -0.75f;
         targets[UPPER_ACTION_INDEX].weight = controls.upper_weight;
+
         targets[SCALE_ACTION_INDEX] = anim::ANIMATION_TARGET_DEFAULT;
         targets[SCALE_ACTION_INDEX].clip = pair.scale_clip;
         targets[SCALE_ACTION_INDEX].play = { .layer = 2, .additive = true, .additive_scale = MULTIPLICATIVE };
         targets[SCALE_ACTION_INDEX].weight = controls.scale_weight;
 
-        spaces[0] = { .space = {
-            .actions = { 0, 1, 2, 3, 4, 5, 6, 7, 8 },
-            .weight = 1,
-            .speed = controls.speed,
-            .playing = !controls.paused,
-            .kind = TWO_DIMENSIONAL,
-            .points = SAMPLE_POINTS[..],
-            .triangles = SAMPLE_TRIANGLES[..],
-            .parameter_2d = controls.parameter,
-        } };
+        spaces[0] = {
+            .space = {
+                .actions = { 0, 1, 2, 3, 4, 5, 6, 7, 8 },
+                .weight = 1,
+                .speed = controls.speed,
+                .playing = !controls.paused,
+                .kind = TWO_DIMENSIONAL,
+                .points = SAMPLE_POINTS[..],
+                .triangles = SAMPLE_TRIANGLES[..],
+                .parameter_2d = controls.parameter,
+            },
+        };
         space_count = 1;
     } else {
         String clip_name;
@@ -485,6 +488,7 @@ fn void? run(
         }
 
         panel(&controls);
+
         if (controls.request) {
             request_character_playback(
                 assets: assets,

@@ -369,7 +369,7 @@ Disabled owners reserve none of this storage. Enabled updates allocate nothing.
 `Animator.inertialize` and `CrowdPlayer.inertialize` replace the owner's current
 actions and groups, preserving the current composed pose and its published
 velocity with a residual that decays over `duration` update seconds. Duration
-zero switches immediately. The action array and optional `CrowdSpaceAuthoring`
+zero switches immediately. The action array and optional `AnimationTransitionSpaceDesc`
 array are borrowed during the request and copied; group membership names the
 target action ordinals.
 
@@ -1105,3 +1105,23 @@ each final foot pose, phase/status, errors, reach margins, limit mode, support
 scale, incoming and final sole clearance, pause/rebase events and capture index.
 An early `--frames=N` limit does
 not satisfy the bounded run. Vulkan validation is enabled.
+
+
+Inertial requests return an `AnimationTransitionResult`. Its `actions[:count]`
+contains the installed IDs in target-ordinal order; `spaces[:space_count]`
+contains the typed 1D or 2D group borrows in description order. All replaced
+source IDs and borrows become stale. Use the returned IDs with `Animator.action`
+or `CrowdPlayer.action`, and reacquire group borrows after playback changes
+structure.
+
+Request groups use `AnimationTransitionSpaceDesc`: `space` is a
+`CrowdSpaceAuthoring` description and `phase` is finite in `[0,1)`. Each member
+starts at `phase * clip.duration`; group clocks override member `start_time`.
+This phase belongs to the event-time request and is not restartable serialized
+crowd authoring. Restored group clocks retain the existing zero-phase restart.
+
+A newly prepared owner exposes its authored baseline before its first update.
+An immediate request has zero source velocity until a positive update establishes
+history. STEP request onsets retain their directional side through zero updates
+and use that side for the first traveled root endpoint; clocks and event times
+are unchanged.
