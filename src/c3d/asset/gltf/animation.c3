@@ -151,7 +151,14 @@ fn AnimationClip? convert_clip(Importer* importer, gltf::Animation* animation) @
             foreach (time : track.times) clip.duration = math::max(clip.duration, time);
         }
     }
+
     clip.targets = clip.targets[:target_count];
+    clip.events = asset::parse_gltf_clip_events(
+        allocator: allocator,
+        extras: animation.extras.data ? animation.extras.data.str_view() : "",
+        duration: clip.duration,
+    )!;
+
     return clip;
 }
 

@@ -1,0 +1,103 @@
+; FBX 7.4.0 project file
+; Repository-authored fixture version 1. SPDX-License-Identifier: MIT
+
+FBXHeaderExtension: {
+    FBXHeaderVersion: 1003
+    FBXVersion: 7400
+    Creator: "c3d"
+}
+GlobalSettings: {
+    Version: 1000
+    Properties70: {
+        P: "UpAxis", "int", "Integer", "", 1
+        P: "UpAxisSign", "int", "Integer", "", 1
+        P: "FrontAxis", "int", "Integer", "", 2
+        P: "FrontAxisSign", "int", "Integer", "", 1
+        P: "CoordAxis", "int", "Integer", "", 0
+        P: "CoordAxisSign", "int", "Integer", "", 1
+        P: "UnitScaleFactor", "double", "Number", "", 100
+        P: "OriginalUnitScaleFactor", "double", "Number", "", 100
+        P: "TimeMode", "enum", "", "", 11
+        P: "TimeSpanStart", "KTime", "Time", "", 0
+        P: "TimeSpanStop", "KTime", "Time", "", 46186158000
+    }
+}
+Documents: {
+    Count: 1
+    Document: 1, "", "Scene" {
+        Properties70: {
+            P: "ActiveAnimStackName", "KString", "", "", "Translate"
+        }
+        RootNode: 0
+    }
+}
+Objects: {
+    Model: 100, "Model::Carrier", "Null" {
+        Version: 232
+        Properties70: {
+            P: "Lcl Translation", "Lcl Translation", "", "A", 0,0,0
+            P: "Lcl Rotation", "Lcl Rotation", "", "A", 0,0,0
+            P: "Lcl Scaling", "Lcl Scaling", "", "A", 1,1,1
+        }
+    }
+    Model: 101, "Model::Hip", "Null" {
+        Version: 232
+        Properties70: {
+            P: "Lcl Translation", "Lcl Translation", "", "A", 0,1,0
+            P: "Lcl Rotation", "Lcl Rotation", "", "A", 0,0,0
+            P: "Lcl Scaling", "Lcl Scaling", "", "A", 1,1,1
+        }
+    }
+    Model: 102, "Model::Foot", "Null" {
+        Version: 232
+        Properties70: {
+            P: "Lcl Translation", "Lcl Translation", "", "A", 0,-1,0
+            P: "Lcl Rotation", "Lcl Rotation", "", "A", 0,0,0
+            P: "Lcl Scaling", "Lcl Scaling", "", "A", 1,1,1
+        }
+    }
+    AnimationStack: 200, "AnimStack::Translate", "" {
+        Properties70: {
+            P: "c3d_events", "KString", "", "U", "{&quot;version&quot;:1,&quot;events&quot;:[{&quot;time&quot;:1,&quot;id&quot;:4294967295},{&quot;time&quot;:0.5,&quot;id&quot;:7},{&quot;time&quot;:0,&quot;id&quot;:0},{&quot;time&quot;:0.5,&quot;id&quot;:7},{&quot;time&quot;:0.5,&quot;id&quot;:11}]}"
+            P: "LocalStart", "KTime", "Time", "", 0
+            P: "LocalStop", "KTime", "Time", "", 46186158000
+        }
+    }
+    AnimationLayer: 201, "AnimLayer::TranslateLayer", "" {
+    }
+    AnimationCurveNode: 202, "AnimCurveNode::T", "" {
+        Properties70: {
+            P: "d|X", "Number", "", "A", 0
+            P: "d|Y", "Number", "", "A", 0
+            P: "d|Z", "Number", "", "A", 0
+        }
+    }
+    AnimationCurve: 203, "AnimCurve::TranslateX", "" {
+        Default: 0
+        KeyVer: 4009
+        KeyTime: *2 {
+            a: 0,46186158000
+        }
+        KeyValueFloat: *2 {
+            a: 0,1
+        }
+        KeyAttrFlags: *1 {
+            a: 1028
+        }
+        KeyAttrDataFloat: *4 {
+            a: 0,0,0,0
+        }
+        KeyAttrRefCount: *1 {
+            a: 2
+        }
+    }
+}
+Connections: {
+    C: "OO", 100,0
+    C: "OO", 101,100
+    C: "OO", 102,101
+    C: "OO", 201,200
+    C: "OO", 202,201
+    C: "OP", 202,100, "Lcl Translation"
+    C: "OP", 203,202, "d|X"
+}

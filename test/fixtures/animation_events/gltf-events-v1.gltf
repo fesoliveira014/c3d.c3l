@@ -1,0 +1,21 @@
+{
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [{"name": "carrier"}],
+  "buffers": [{"uri": "data:application/octet-stream;base64,AAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAQAAAQEA=", "byteLength": 32}],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 8},
+    {"buffer": 0, "byteOffset": 8, "byteLength": 24}
+  ],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [1]},
+    {"bufferView": 1, "componentType": 5126, "count": 2, "type": "VEC3"}
+  ],
+  "animations": [{
+    "name": "translate",
+    "samplers": [{"input": 0, "output": 1, "interpolation": "LINEAR"}],
+    "channels": [{"sampler": 0, "target": {"node": 0, "path": "translation"}}],
+    "extras": {"c3d_events":{"version":1,"events":[{"time":1,"id":9},{"time":0,"id":0},{"time":0.5,"id":4294967295},{"time":0.5,"id":3},{"time":0.5,"id":3}]}}
+  }]
+}
