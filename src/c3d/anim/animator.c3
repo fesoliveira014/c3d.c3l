@@ -61,6 +61,7 @@ struct Action {
     float published_time;
     uint blend_space;
     double analytic_speed;
+    double analytic_weight_rate;
 }
 
 <* Fixed playback slots and masks owned by one model instance. *>
@@ -280,7 +281,7 @@ fn void update(AssetStore* assets, Scene* scene, float dt) {
                         row: &animator.inertial_storage.rows[0],
                         target: animator.root_motion,
                         target_twist: (double)report.motion.yaw,
-                        up: { 0, 1, 0 },
+                        up: inertial_publication_up(&animator.inertial_storage.rows[0]),
                         pivot: { reference.x, reference.y, reference.z },
                         dt: (double)dt,
                     );

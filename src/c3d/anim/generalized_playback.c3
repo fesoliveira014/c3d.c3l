@@ -18,6 +18,7 @@ struct GeneralizedPlaybackState @private {
     GeneralizedMotionFrame consumed;
     GeneralizedMotionFrame anchor;
     GeneralizedMotionFrame cycle_anchor;
+    GeneralizedMotion cycle_rate;
     double[<3>] carrier_translation_rate;
     double carrier_twist_rate;
     GeneralizedPlaybackCycle[MAX_ACTIONS] cycles;
@@ -73,12 +74,16 @@ fn GeneralizedMotion evaluate_generalized_playback_motion(
     up /= up.length();
     GeneralizedMotion result;
     GeneralizedMotion cycle_result;
+    GeneralizedMotion cycle_rate;
 
     for (uint layer = 0; layer < MAX_ANIMATION_LAYERS; layer++) {
         GeneralizedMotion sum;
         GeneralizedMotion cycle_sum;
+        GeneralizedMotion cycle_rate_sum;
         double translation_weight;
+        double translation_weight_rate;
         double twist_weight;
+        double twist_weight_rate;
 
         foreach (id : playback.order[:*playback.action_count]) {
             Action* action = playback.actions.get(id);
@@ -123,7 +128,8 @@ fn GeneralizedMotion evaluate_generalized_playback_motion(
             }
 
             double weight = action_node_weight(action, playback.root_node);
-            if (weight <= 0) continue;
+            double weight_rate = action_node_weight_rate(action, playback.root_node);
+            if (weight <= 0 && weight_rate == 0) continue;
 
             bool translation;
             bool twist;
@@ -136,28 +142,45 @@ fn GeneralizedMotion evaluate_generalized_playback_motion(
             if (translation) {
                 sum.translation += delta.translation * weight;
                 cycle_sum.translation += cycles.translation * weight;
+                cycle_rate_sum.translation += cycles.translation * weight_rate;
                 translation_weight += weight;
+                translation_weight_rate += weight_rate;
             }
 
             if (twist) {
                 sum.twist += delta.twist * weight;
                 cycle_sum.twist += cycles.twist * weight;
+                cycle_rate_sum.twist += cycles.twist * weight_rate;
                 twist_weight += weight;
+                twist_weight_rate += weight_rate;
             }
         }
 
         double translation_below = math::max(0.0, 1 - translation_weight);
         double translation_total = math::max(1.0, translation_weight);
         result.translation = (sum.translation + result.translation * translation_below) / translation_total;
-        cycle_result.translation =
+        double below_rate = translation_weight < 1 || (translation_weight == 1 && translation_weight_rate < 0)
+          ? -translation_weight_rate : 0;
+        double divisor_rate = translation_weight > 1 || (translation_weight == 1 && translation_weight_rate > 0)
+          ? translation_weight_rate : 0;
+        double[<3>] folded_cycle =
           (cycle_sum.translation + cycle_result.translation * translation_below) / translation_total;
+        cycle_rate.translation = (cycle_rate_sum.translation + cycle_rate.translation * translation_below
+          + cycle_result.translation * below_rate - folded_cycle * divisor_rate) / translation_total;
+        cycle_result.translation = folded_cycle;
         double twist_below = math::max(0.0, 1 - twist_weight);
         double twist_total = math::max(1.0, twist_weight);
         result.twist = (sum.twist + result.twist * twist_below) / twist_total;
-        cycle_result.twist = (cycle_sum.twist + cycle_result.twist * twist_below) / twist_total;
+        below_rate = twist_weight < 1 || (twist_weight == 1 && twist_weight_rate < 0) ? -twist_weight_rate : 0;
+        divisor_rate = twist_weight > 1 || (twist_weight == 1 && twist_weight_rate > 0) ? twist_weight_rate : 0;
+        double folded_twist = (cycle_sum.twist + cycle_result.twist * twist_below) / twist_total;
+        cycle_rate.twist = (cycle_rate_sum.twist + cycle_rate.twist * twist_below
+          + cycle_result.twist * below_rate - folded_twist * divisor_rate) / twist_total;
+        cycle_result.twist = folded_twist;
     }
 
     state.cycle_anchor = generalized_frame_from_motion(cycle_result, up);
+    state.cycle_rate = cycle_rate;
 
     return result;
 }
@@ -223,10 +246,14 @@ fn void compensate_generalized_playback_target(
         double[<3>] up = { state.extraction.up.x, state.extraction.up.y, state.extraction.up.z };
         up /= up.length();
         Quaternion inverse_rotation = state.consumed.rotation.conjugate();
-        double[<3>] angular_rate = inverse_rotation.rotate_vec3(-up * state.carrier_twist_rate);
-        double[<3>] translation_rate =
-          -inverse_rotation.rotate_vec3(state.carrier_translation_rate) / state.consumed.scale
-          + angular_rate.cross(correction.position);
+        double[<3>] anchor_translation_rate = state.anchor.rotation.rotate_vec3(
+            state.cycle_rate.translation * state.anchor.scale);
+        double[<3>] anchor_angular_rate = state.anchor.rotation.rotate_vec3(up * state.cycle_rate.twist);
+        double[<3>] carrier_angular_rate = up * state.carrier_twist_rate;
+        double[<3>] angular_rate = inverse_rotation.rotate_vec3(anchor_angular_rate - carrier_angular_rate);
+        double[<3>] translation_rate = inverse_rotation.rotate_vec3(
+            anchor_translation_rate - state.carrier_translation_rate) / state.consumed.scale
+          - inverse_rotation.rotate_vec3(carrier_angular_rate).cross(correction.position);
 
         foreach (node : chain.top_level_nodes) {
             PoseVelocity* rate = &velocity[node];

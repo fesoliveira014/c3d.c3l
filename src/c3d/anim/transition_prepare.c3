@@ -172,6 +172,7 @@ fn PreparedTransition? prepare_animation_transition(
             destination: destination,
             motion_basis: motion_basis,
             root_node: playback.root_node,
+            precise_rotation: playback.inertial != null || target.play.extraction.generalized,
         )!;
         prepared.action_count++;
 

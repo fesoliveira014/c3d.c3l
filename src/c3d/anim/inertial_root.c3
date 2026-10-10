@@ -39,8 +39,15 @@ fn RootMotionDelta publish_inertial_root_motion(
 
     row.root.published_translation = { target.translation.x, target.translation.y, target.translation.z };
     row.root.published_twist = twist;
+    row.root.latest_up = up;
     row.root.translation_rate = row.root.published_translation / dt;
     row.root.twist_rate = twist / dt;
 
     return target;
+}
+
+fn double[<3>] inertial_publication_up(InertialRow* row) @private {
+    if (row.control.active) return row.root.source_up;
+
+    return { 0, 1, 0 };
 }

@@ -38,7 +38,9 @@ fn void transition_target_controls(
                     .extent = space.layout.extent,
                 };
                 BlendLayoutSelection selected = select_blend_layout(layout, space.parameter_2d);
-                foreach (index, member : selected.indices[:selected.count]) normalized[member] = selected.weights[index];
+                foreach (index, member : selected.indices[:selected.count]) {
+                    normalized[member] = selected.weights[index];
+                }
         }
 
         double duration;
@@ -55,7 +57,12 @@ fn void transition_target_controls(
     }
 }
 
-fn bool consumed_transition_node(PlaybackView* playback, AssetStore* assets, AnimationTransitionDesc desc, uint node) @local {
+fn bool consumed_transition_node(
+    PlaybackView* playback,
+    AssetStore* assets,
+    AnimationTransitionDesc desc,
+    uint node,
+) @local {
     bool generalized;
     foreach (target : desc.actions) generalized |= target.play.extraction.generalized;
     foreach (id : playback.order[:*playback.action_count]) generalized |= playback.actions.get(id).motion_chain != null;
@@ -75,6 +82,7 @@ fn void? validate_transition_scale_eligibility(
     AnimationTransitionDesc desc,
     PreparedTransition* prepared,
     PoseDestination destination,
+    bool source_history_current = true,
 ) @private {
     float[MAX_ACTIONS] weights;
     double[MAX_ACTIONS] speeds;
@@ -110,9 +118,11 @@ fn void? validate_transition_scale_eligibility(
         InertialRow* row = playback.inertial;
         InertialScalarState source = {
             .value = inertial_uniform_scale_mean(inertial_pose_vector(destination.pose[node].scale)),
-            .rate = row.control.history_valid ? inertial_uniform_scale_mean(row.velocity[node].scale) : 0,
+            .rate = source_history_current && row.control.history_valid
+              ? inertial_uniform_scale_mean(row.velocity[node].scale) : 0,
         };
-        if (!math::is_finite(source.value) || source.value <= 0 || !math::is_finite(target.value) || target.value <= 0) {
+        if (!math::is_finite(source.value) || source.value <= 0
+          || !math::is_finite(target.value) || target.value <= 0) {
             return c3d::INVALID_ARGUMENT~;
         }
         float[3] eligible_base = { base.scale.x, base.scale.y, base.scale.z };

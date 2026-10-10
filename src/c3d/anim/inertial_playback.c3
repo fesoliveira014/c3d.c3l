@@ -84,6 +84,7 @@ fn InstalledTransition begin_prepared_inertial_transition(
     row.control.active = prepared.duration > 0;
     row.root.source_translation_rate = row.control.history_valid ? row.root.translation_rate : (double[<3>]){};
     row.root.source_twist_rate = row.control.history_valid ? row.root.twist_rate : 0;
+    row.root.source_up = row.root.latest_up;
     row.root.target_rate_pending = row.control.active;
 
     correct_inertial_pose(

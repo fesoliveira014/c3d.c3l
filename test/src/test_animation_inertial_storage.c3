@@ -238,7 +238,8 @@ fn void test_animation_inertial_storage_reset_clears_one_incarnation_without_tou
     foreach (values : (double[][3]){ cleared.morph_velocity, cleared.morph_offset, cleared.morph_offset_velocity }) {
         foreach (value : values) assert(value == 0);
     }
-    RootInertialState empty = { .anchor_rotation = { .l = 1 } };
+    RootInertialState empty = { .latest_up = { 0, 1, 0 }, .source_up = { 0, 1, 0 },
+          .anchor_rotation = { .l = 1 } };
     assert(mem::equals(&cleared.root, &empty, RootInertialState::size));
     for (uint neighbor = 0; neighbor < 3; neighbor++) {
         uint index = neighbor == 0 ? 0 : neighbor + 1;

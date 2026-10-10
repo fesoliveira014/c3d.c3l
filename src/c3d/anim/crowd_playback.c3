@@ -116,7 +116,7 @@ fn void CrowdPlaybackState.update(&self, AssetStore* assets, float dt) {
                     row: &self.inertial_storage.rows[index],
                     target: slot.root_motion,
                     target_twist: (double)report.motion.yaw,
-                    up: { 0, 1, 0 },
+                    up: inertial_publication_up(&self.inertial_storage.rows[index]),
                     pivot: { reference.x, reference.y, reference.z },
                     dt: (double)dt,
                 );

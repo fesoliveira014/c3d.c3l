@@ -75,6 +75,7 @@ fn void write_blend_space_member(
     float duration,
     float normalized,
     float weight,
+    double weight_rate = 0,
 ) @private {
     action.previous_time = phase.start * duration;
     action.clock_delta = phase.travel * duration;
@@ -84,6 +85,7 @@ fn void write_blend_space_member(
 
     action.weight = weight * normalized;
     action.analytic_speed = phase.clock_rate * duration;
+    action.analytic_weight_rate = weight_rate * (double)normalized;
 }
 
 fn void remove_blend_space_members(PlaybackView* playback, AnimationActionId[] members) @private {
@@ -91,4 +93,10 @@ fn void remove_blend_space_members(PlaybackView* playback, AnimationActionId[] m
         playback.actions.get(id).blend_space = 0;
         playback.stop(id)!!;
     }
+}
+
+fn double blend_space_weight_rate(BlendSpaceFade fade) @private {
+    if (*fade.rate <= 0 || *fade.target == *fade.weight) return 0;
+
+    return *fade.target < *fade.weight ? -(double)*fade.rate : (double)*fade.rate;
 }

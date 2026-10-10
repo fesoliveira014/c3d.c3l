@@ -38,6 +38,7 @@ fn RootMotionDelta publish_generalized_owner_motion(
         InertialRow* row = playback.inertial;
         row.root.published_translation = { published.translation.x, published.translation.y, published.translation.z };
         row.root.published_twist = motion.twist;
+        row.root.latest_up = up;
         row.root.translation_rate = row.root.published_translation / dt;
         row.root.twist_rate = motion.twist / dt;
         if (!row.control.active) row.root.target_rate_pending = false;

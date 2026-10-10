@@ -157,6 +157,8 @@ fn BlendSpace1D*? PlaybackView.add_blend_space(
             destination: destination,
             motion_basis: motion_basis,
             root_node: self.root_node,
+            precise_rotation: self.inertial != null || desc.extraction.generalized
+              || generalized_playback_chain(self) != null,
         )!;
         prepared_count++;
         prepare_action_motion_capture(
@@ -262,6 +264,7 @@ fn void advance_blend_spaces(PlaybackView* playback, AssetStore* assets, float d
                 duration: clip_duration,
                 normalized: normalized,
                 weight: space.weight,
+                weight_rate: blend_space_weight_rate(fade),
             );
         }
     }

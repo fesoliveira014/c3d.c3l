@@ -17,6 +17,7 @@ struct InertialControl @private {
     double previous_dt;
     double duration;
     double elapsed;
+    InertialIdentityState identity;
 }
 
 struct RootInertialState @private {
@@ -24,6 +25,8 @@ struct RootInertialState @private {
     double published_twist;
     double[<3>] translation_rate;
     double twist_rate;
+    double[<3>] latest_up;
+    double[<3>] source_up;
     double[<3>] source_translation_rate;
     double source_twist_rate;
     double[<3>] residual_translation_rate;
@@ -135,7 +138,11 @@ fn void reset_inertial_row(InertialStorage* storage, uint index, uint generation
     row.morph_offset_velocity[..] = 0;
 
     row.control = { .generation = generation };
-    row.root = { .anchor_rotation = { .l = 1 } };
+    row.root = {
+        .latest_up = { 0, 1, 0 },
+        .source_up = { 0, 1, 0 },
+        .anchor_rotation = { .l = 1 },
+    };
 }
 
 fn usz? inertial_row_storage_bytes(uint nodes, uint morphs) @local {

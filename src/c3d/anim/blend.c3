@@ -20,7 +20,8 @@ fn void blend_pose(
     float[] morph_weights = scratch.morph_weights;
 
     PoseDerivativeScratch* derivative = scratch.derivative;
-    bool precise_scale = derivative != null || generalized_playback_chain(playback) != null;
+    CapturedMotionChain* consumed_chain = generalized_playback_chain(playback);
+    bool precise_scale = derivative != null || consumed_chain != null;
     if (derivative) {
         derivative.velocity[..] = (PoseVelocity){};
         derivative.morph_rates[..] = 0;
@@ -32,7 +33,7 @@ fn void blend_pose(
     bool[MAX_ANIMATION_LAYERS] active;
     foreach (id : playback.order[:*playback.action_count]) {
         Action* action = playback.actions.get(id);
-        if (action.weight <= 0) continue;
+        if (action.weight <= 0 && (!derivative || action_weight_rate(action) == 0)) continue;
         active[action.layer] = true;
     }
 
@@ -46,11 +47,13 @@ fn void blend_pose(
         if (derivative) {
             derivative.channels[..] = (ChannelDerivativeSums){};
             derivative.morph_sums[..] = 0;
+            derivative.morph_weight_rates[..] = 0;
         }
 
         foreach (id : playback.order[:*playback.action_count]) {
             Action* action = playback.actions.get(id);
-            if (action.layer != layer || action.additive || action.weight <= 0) continue;
+            if (action.layer != layer || action.additive) continue;
+            if (action.weight <= 0 && (!derivative || action_weight_rate(action) == 0)) continue;
 
             AnimationClip* clip = &assets.clip(action.clip).data;
             foreach (track_index, &track : clip.tracks) {
@@ -59,7 +62,8 @@ fn void blend_pose(
                 if (track.path == TargetPath.MORPH_WEIGHTS && !destination.mesh_present[node]) continue;
 
                 float weight = action_node_weight(action, node);
-                if (weight <= 0) continue;
+                double weight_rate = derivative ? action_node_weight_rate(action, node) : 0;
+                if (weight <= 0 && weight_rate == 0) continue;
 
                 float[] sample = samples[:track.stride()];
                 sample_pose_channel(
@@ -69,6 +73,7 @@ fn void blend_pose(
                     sample: sample,
                     derivative: derivative,
                     onset: onset,
+                    consumed: consumed_chain && captured_motion_node(consumed_chain, node),
                 );
                 pin_root_sample(action, (uint)track_index, sample);
                 if (derivative) accumulate_pose_derivative(
@@ -82,7 +87,10 @@ fn void blend_pose(
                     sample: sample,
                     below: result[node],
                     weight: weight,
+                    weight_rate: weight_rate,
                 );
+
+                if (weight <= 0) continue;
 
                 switch (track.path) {
                     case TRANSLATION:
@@ -95,7 +103,8 @@ fn void blend_pose(
                         sums[node].rotation_weight += weight;
                     case SCALE:
                         if (precise_scale) {
-                            sums[node].precise_scale += (double[<3>]){ sample[0], sample[1], sample[2] } * (double)weight;
+                            sums[node].precise_scale +=
+                              (double[<3>]){ sample[0], sample[1], sample[2] } * (double)weight;
                         } else {
                             sums[node].scale += (Vec3){ sample[0], sample[1], sample[2] } * weight;
                         }
@@ -129,8 +138,14 @@ fn void blend_pose(
             float total = morph_weights[index];
             if (derivative) {
                 foreach (usz weight_index, &rate : derivative.morph_rates[morph_offset:values.len]) {
-                    *rate = (derivative.morph_sums[morph_offset + weight_index] + *rate * residual(total))
-                      / math::max(1.0f, total);
+                    *rate = fold_morph_rate(
+                        sum: morph_sums[index][weight_index],
+                        sum_rate: derivative.morph_sums[morph_offset + weight_index],
+                        total: total,
+                        total_rate: derivative.morph_weight_rates[index],
+                        below: values[weight_index],
+                        below_rate: *rate,
+                    );
                 }
             }
             morph_offset += values.len;
@@ -141,7 +156,8 @@ fn void blend_pose(
 
         foreach (id : playback.order[:*playback.action_count]) {
             Action* action = playback.actions.get(id);
-            if (action.layer != layer || !action.additive || action.weight <= 0) continue;
+            if (action.layer != layer || !action.additive) continue;
+            if (action.weight <= 0 && (!derivative || action_weight_rate(action) == 0)) continue;
 
             AnimationClip* clip = &assets.clip(action.clip).data;
             usz reference_offset;
@@ -154,7 +170,8 @@ fn void blend_pose(
                 if (track.path == TargetPath.MORPH_WEIGHTS && !destination.mesh_present[node]) continue;
 
                 float weight = action_node_weight(action, node);
-                if (weight <= 0) continue;
+                double weight_rate = derivative ? action_node_weight_rate(action, node) : 0;
+                if (weight <= 0 && weight_rate == 0) continue;
 
                 float[] sample = samples[:stride];
                 if (!derivative && track.path == TargetPath.SCALE
@@ -171,6 +188,7 @@ fn void blend_pose(
                         sample: sample,
                         derivative: derivative,
                         onset: onset,
+                        consumed: consumed_chain && captured_motion_node(consumed_chain, node),
                     );
                 }
 
@@ -185,7 +203,10 @@ fn void blend_pose(
                     reference: reference,
                     below: result[node],
                     weight: weight,
+                    weight_rate: weight_rate,
                 );
+
+                if (weight <= 0) continue;
 
                 switch (track.path) {
                     case TRANSLATION:

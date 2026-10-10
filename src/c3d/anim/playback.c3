@@ -137,6 +137,8 @@ fn AnimationActionId? PlaybackView.play(
         motion_basis: motion_basis,
         root_node: self.root_node,
         reference_count: reference_count,
+        precise_rotation: self.inertial != null || desc.extraction.generalized
+          || generalized_playback_chain(self) != null,
     )!;
 
     defer catch release_prepared_action(self.allocator, &state);
@@ -226,9 +228,17 @@ fn PoseReport evaluate_pose(
     float dt,
     EventOutput events,
 ) {
+    if (playback.inertial) {
+        InertialIdentityState identity = compute_inertial_identity(playback, assets, destination.present);
+        refresh_inertial_identity(playback.inertial, identity);
+    }
     advance(playback, assets, dt);
     advance_blend_spaces(playback, assets, dt);
     advance_blend_spaces_2d(playback, assets, dt);
+    if (playback.inertial) {
+        InertialIdentityState identity = compute_inertial_identity(playback, assets, destination.present);
+        refresh_inertial_identity(playback.inertial, identity);
+    }
 
     blend_pose(
         playback: playback,
@@ -303,6 +313,7 @@ fn Action? prepare_playback_action(
     PoseDestination destination,
     MotionBasis motion_basis,
     uint root_node,
+    bool precise_rotation = false,
 ) {
     AnimationClip* data = &assets.clips.try_get(clip)!.data;
     usz reference_count = validate_playback_action(data, desc, destination)!;
@@ -316,6 +327,7 @@ fn Action? prepare_playback_action(
         motion_basis: motion_basis,
         root_node: root_node,
         reference_count: reference_count,
+        precise_rotation: precise_rotation || desc.extraction.generalized,
     );
 }
 
@@ -423,6 +435,7 @@ fn Action? prepare_validated_playback_action(
     MotionBasis motion_basis,
     uint root_node,
     usz reference_count,
+    bool precise_rotation = false,
 ) @private {
     PlaybackView playback = { .root_node = root_node };
     Action state;
@@ -457,12 +470,25 @@ fn Action? prepare_validated_playback_action(
         usz offset;
         foreach (&track : data.tracks) {
             uint cursor;
-            sample_track(
-                track: track,
-                time: 0,
-                cursor: &cursor,
-                out: reference[offset:track.stride()],
-            );
+            if (precise_rotation && track.path == TargetPath.ROTATION) {
+                double[4] value;
+                double[4] rate;
+                sample_track_analytic(
+                    track: track,
+                    time: 0,
+                    cursor: &cursor,
+                    value: value[..],
+                    rate: rate[..],
+                );
+                foreach (index, component : value) reference[offset + (usz)index] = (float)component;
+            } else {
+                sample_track(
+                    track: track,
+                    time: 0,
+                    cursor: &cursor,
+                    out: reference[offset:track.stride()],
+                );
+            }
 
             if (track.path == TargetPath.SCALE && desc.additive_scale == AdditiveScaleMode.MULTIPLICATIVE) {
                 Vec3 scale = sample_multiplicative_scale_reference(track);
