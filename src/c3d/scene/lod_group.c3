@@ -229,7 +229,7 @@ fn void Scene.publish_lod_instances(&self, Node* node, uint count) {
 <*
  Change live count, initializing newly exposed placements.
  @param [&in] node : "Carries an instanced group."
- @return? c3d::CAPACITY_EXCEEDED
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
  @require self.has(node, LodGroup)
  @require self.get(node, LodGroup).state.mode == LodMode.INSTANCED
 *>

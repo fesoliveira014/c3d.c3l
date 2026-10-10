@@ -487,7 +487,7 @@ fn void? validate_animated_lod_binding(
         float[] baseline = source_defaults(source, (uint)index);
         uint first = binding.channel_offsets[index];
         uint last = binding.channel_offsets[index + 1];
-        if (baseline.len != last - first) return c3d::INVALID_ARGUMENT~;
+        if (baseline.len != (usz)(last - first)) return c3d::INVALID_ARGUMENT~;
         for (uint weight = 0; weight < baseline.len; weight++) {
             String name = base.data.channels.len ? base.data.channels[weight].name : "";
             if (name != binding.channel_names[first + weight]) return c3d::INVALID_ARGUMENT~;

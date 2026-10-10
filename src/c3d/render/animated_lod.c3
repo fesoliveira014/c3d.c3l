@@ -21,6 +21,11 @@ struct AnimatedLodKey @private {
 
 fn uint AnimatedLodKey.hash(self) => fnv32a::hash(@as_char_view(self));
 
+fn bool AnimatedLodKey.equals(self, AnimatedLodKey other) {
+    return self.scene == other.scene && c3d::same_id(self.owner, other.owner)
+      && self.identity == other.identity && self.part == other.part;
+}
+
 fn AnimatedLodKey animated_lod_key(MeshCandidate* candidate, uint part) @private {
     return {
         .scene = candidate.scene_identity,

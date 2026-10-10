@@ -78,9 +78,20 @@ fn PickHit[] pick(
     Ray ray,
     PickOptions options = PICK_OPTIONS_DEFAULT,
 ) {
+    bool[] group_live = alloc::new_array(allocator, bool, (sz)scene.nodes.len);
+    defer alloc::free(allocator, group_live.ptr);
     usz capacity = scene.count(Mesh);
     scene.@each(LodGroup; Entity entity, LodGroup* group) {
-        capacity += (usz)group.state.count * group.state.desc.levels[0].part_count;
+        Node* node = scene.node(entity);
+        group_live[entity.index] = lod_group_is_live(
+            assets: assets,
+            group: group,
+            scene: scene,
+            node: node,
+        );
+        if (group_live[entity.index]) {
+            capacity += (usz)group.state.count * group.state.desc.levels[0].part_count;
+        }
     };
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
         capacity += batch.count;
@@ -92,7 +103,7 @@ fn PickHit[] pick(
     usz count;
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         Node* node = scene.node(entity);
-        if (node.visible_effective && (options.layers & node.layers) != 0) {
+        if (node.visible_effective && (options.layers & node.layers) != 0 && !animated_lod_owns_node(scene, node)) {
             SkinBinding* skin = scene.get(node, SkinBinding);
             if (mesh_is_live(assets, mesh, skin)) {
                 SceneEntry entry = mesh_entry(
@@ -117,6 +128,7 @@ fn PickHit[] pick(
         Node* node = scene.node(entity);
         float distance;
         if (batch.count && node.visible_effective && (options.layers & node.layers) != 0
+            && !animated_lod_owns_node(scene, node)
             && instanced_mesh_is_live(assets, batch)
             && maths::ray_intersects_aabb(ray, instanced_world_bounds(assets, node, batch), &distance)) {
             SceneEntryFlags flags = batch_flags(
@@ -169,8 +181,13 @@ fn PickHit[] pick(
         LodGroupState* state = group.state;
         float distance;
         if (state.count && node.visible_effective && (options.layers & node.layers)
-            && lod_group_is_live(assets, group)
-            && maths::ray_intersects_aabb(ray, lod_world_bounds(assets, node, group), &distance)) {
+            && group_live[entity.index]
+            && maths::ray_intersects_aabb(ray, lod_world_bounds(
+                assets: assets,
+                node: node,
+                group: group,
+                scene: scene,
+            ), &distance)) {
             for (uint instance = 0; instance < state.count; instance++) {
                 for (uint part = 0; part < state.desc.levels[0].part_count; part++) {
                     SceneEntry entry = lod_entry(
@@ -179,6 +196,7 @@ fn PickHit[] pick(
                         state: state,
                         instance: instance,
                         part: part,
+                        scene: scene,
                     );
                     if (hit_entry(
                         assets: assets,
@@ -222,15 +240,20 @@ fn bool hit_entry(
     GeometryId geometry;
     MaterialId material;
     if (entry.flags.lod_group) {
-        LodGroupState* state = scene.get(node, LodGroup).state;
+        LodGroup* group = scene.get(node, LodGroup);
+        if (!group || entry.instance_index >= group.state.count) return false;
+        LodGroupState* state = group.state;
+        uint part = lod_base_representation(state, entry.part_index);
+        if (part >= state.desc.parts.len) return false;
         world = lod_part_world(
             node: node,
             state: state,
             instance: entry.instance_index,
-            part: entry.part_index,
+            part: part,
+            scene: scene,
         );
-        geometry = state.desc.parts[entry.part_index].geometry;
-        material = state.desc.parts[entry.part_index].material;
+        geometry = state.desc.parts[part].geometry;
+        material = state.desc.parts[part].material;
     } else if (entry.flags.instanced) {
         InstancedMesh* batch = scene.get(node, InstancedMesh);
         float batch_distance;

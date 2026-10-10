@@ -108,7 +108,7 @@ fn void? SceneIndex.refresh(&self, AssetStore* assets, Scene* scene) {
     bool changed;
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         Node* node = scene.node(entity);
-        if (node.visible_effective) {
+        if (node.visible_effective && !animated_lod_owns_node(scene, node)) {
             SkinBinding* skin = scene.get(node, SkinBinding);
             if (mesh_is_live(assets, mesh, skin)) {
                 if (needed < self.entries.len) {
@@ -128,7 +128,7 @@ fn void? SceneIndex.refresh(&self, AssetStore* assets, Scene* scene) {
     };
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
         Node* node = scene.node(entity);
-        if (node.visible_effective && batch.count) {
+        if (node.visible_effective && batch.count && !animated_lod_owns_node(scene, node)) {
             if (instanced_mesh_is_live(assets, batch)) {
                 changed |= store_batch(
                     index:  self,
@@ -145,7 +145,7 @@ fn void? SceneIndex.refresh(&self, AssetStore* assets, Scene* scene) {
     };
     scene.@each(BillboardBatch; Entity entity, BillboardBatch* batch) {
         Node* node = scene.node(entity);
-        if (node.visible_effective && batch.count) {
+        if (node.visible_effective && batch.count && !animated_lod_owns_node(scene, node)) {
             if (billboard_batch_is_live(assets, batch)) {
                 changed |= store_billboard_batch(
                     index: self,
@@ -162,8 +162,13 @@ fn void? SceneIndex.refresh(&self, AssetStore* assets, Scene* scene) {
     scene.@each(LodGroup; Entity entity, LodGroup* group) {
         Node* node = scene.node(entity);
         LodGroupState* state = group.state;
-        if (node.visible_effective && state.count) {
-            if (lod_group_is_live(assets, group)) {
+        if (node.visible_effective) {
+            if (lod_group_is_live(
+                assets: assets,
+                group: group,
+                scene: scene,
+                node: node,
+            )) {
                 uint parts = state.desc.levels[0].part_count;
                 for (uint instance = 0; instance < state.count; instance++) {
                     for (uint part = 0; part < parts; part++) {
@@ -174,6 +179,7 @@ fn void? SceneIndex.refresh(&self, AssetStore* assets, Scene* scene) {
                                 state: state,
                                 instance: instance,
                                 part: part,
+                                scene: scene,
                             );
                             changed |= store_entry(&self.entries[needed], entry);
                         }
@@ -211,12 +217,23 @@ fn PickHit[] SceneIndex.pick(
     PickOptions options = PICK_OPTIONS_DEFAULT,
 ) {
     if (!self.count) return {};
+    bool[] group_live = alloc::new_array(allocator, bool, (sz)self.scene.nodes.len);
+    defer alloc::free(allocator, group_live.ptr);
+    self.scene.@each(LodGroup; Entity entity, LodGroup* group) {
+        group_live[entity.index] = lod_group_is_live(
+            assets: assets,
+            group: group,
+            scene: self.scene,
+            node: self.scene.node(entity),
+        );
+    };
     if (self.tree_revision != self.revision) build_tree(self);
     PickHit[] hits = alloc::new_array(allocator, PickHit, (sz)self.count);
     usz count;
     self.tree.@each_ray_hit(ray, math::FLOAT_MAX; uint primitive) {
         SceneEntry* entry = &self.entries[primitive];
-        if ((options.layers & entry.node.layers) != 0) {
+        if ((options.layers & entry.node.layers) != 0
+            && (!entry.flags.lod_group || group_live[entry.node.id.index])) {
             bool hit = hit_entry(
                 assets:  assets,
                 scene:   self.scene,
@@ -239,18 +256,32 @@ fn PickHit[] SceneIndex.pick(
 *>
 fn void prepare_triangle_picks(AssetStore* assets, Scene* scene) {
     scene.@each(LodGroup; Entity entity, LodGroup* group) {
+        Node* node = scene.node(entity);
         LodGroupState* state = group.state;
-        if (lod_group_is_live(assets, group) && !state.desc.has_bounds_override && state.effects.sway.amplitude == 0) {
-            foreach (part : state.desc.parts[:state.desc.levels[0].part_count]) {
-                if (triangles_are_static(assets.geometry(part.geometry), false, false)) {
-                    prepare_triangle_tree(assets, part.geometry);
-                }
+        if (lod_group_is_live(
+            assets: assets,
+            group: group,
+            scene: scene,
+            node: node,
+        ) && state.count) {
+            LodLevel level = state.desc.levels[0];
+            for (uint part = level.first_part; part < level.first_part + level.part_count; part++) {
+                SceneEntry entry = lod_entry(
+                    assets: assets,
+                    node: node,
+                    state: state,
+                    instance: 0,
+                    part: part,
+                    scene: scene,
+                );
+                if (entry.flags.static_triangles) prepare_triangle_tree(assets, entry.geometry);
             }
         }
     };
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
-        SkinBinding* skin = scene.get(scene.node(entity), SkinBinding);
-        if (mesh_is_live(assets, mesh, skin)) {
+        Node* node = scene.node(entity);
+        SkinBinding* skin = scene.get(node, SkinBinding);
+        if (!animated_lod_owns_node(scene, node) && mesh_is_live(assets, mesh, skin)) {
             GeometryAsset* record = assets.geometry(mesh.geometry);
             if (triangles_are_static(record, skin != null, mesh.has_bounds_override)) {
                 prepare_triangle_tree(assets, mesh.geometry);
@@ -258,7 +289,7 @@ fn void prepare_triangle_picks(AssetStore* assets, Scene* scene) {
         }
     };
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
-        if (instanced_mesh_is_live(assets, batch)
+        if (!animated_lod_owns_node(scene, scene.node(entity)) && instanced_mesh_is_live(assets, batch)
             && batch_triangles_static(assets.geometry(batch.geometry), batch.has_bounds_override)) {
             prepare_triangle_tree(assets, batch.geometry);
         }
