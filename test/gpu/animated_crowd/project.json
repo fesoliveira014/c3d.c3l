@@ -29,6 +29,7 @@
         "test_native.c3",
         "test_controls.c3",
         "test_real.c3",
+        "test_temporal.c3",
         "../render/test_submission.c3",
         "../render/test_crowd_variants.c3",
         "../../fixtures/animated_crowd_fixtures.c3"

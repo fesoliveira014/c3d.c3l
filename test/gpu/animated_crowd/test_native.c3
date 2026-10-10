@@ -49,6 +49,7 @@ struct CrowdNativeProbe @private {
     gpu::MappedGpuSpan depth;
     gpu::MappedGpuSpan velocity;
     gpu::MappedGpuSpan normal;
+    gpu::MappedGpuSpan shadow;
 }
 
 struct CrowdNativePair @private {
@@ -67,9 +68,11 @@ struct CrowdNativeImages @private {
     Vec4[] depth;
     Vec4[] velocity;
     Vec4[] normal;
+    Vec4[] shadow;
     Stats stats;
     gpu::Format velocity_format;
     bool has_normal;
+    uint shadow_resolution;
 }
 
 fn void check_near_pixel(uint actual, uint expected) @private {
@@ -87,6 +90,7 @@ fn CrowdNativeImages create_crowd_native_images(Allocator allocator) @private {
         .depth = alloc::new_array(allocator, Vec4, CROWD_NATIVE_PIXELS),
         .velocity = alloc::new_array(allocator, Vec4, CROWD_NATIVE_PIXELS),
         .normal = alloc::new_array(allocator, Vec4, CROWD_NATIVE_PIXELS),
+        .shadow = alloc::new_array(allocator, Vec4, CROWD_NATIVE_PIXELS),
     };
 }
 
@@ -95,6 +99,7 @@ fn void destroy_crowd_native_images(Allocator allocator, CrowdNativeImages* imag
     alloc::free(allocator, images.depth.ptr);
     alloc::free(allocator, images.velocity.ptr);
     alloc::free(allocator, images.normal.ptr);
+    alloc::free(allocator, images.shadow.ptr);
     *images = {};
 }
 
@@ -125,6 +130,11 @@ fn void? create_crowd_native_probe(Fixture* fixture, CrowdNativeProbe* probe) @p
         gpu::GpuAllocation allocation = probe.normal.span.allocation();
         gpu::free_allocation(&fixture.renderer.device, &allocation)!!;
     }
+    probe.shadow = allocate_crowd_native_readback(&fixture.renderer, "crowd_native_shadow")!;
+    defer catch {
+        gpu::GpuAllocation allocation = probe.shadow.span.allocation();
+        gpu::free_allocation(&fixture.renderer.device, &allocation)!!;
+    }
     probe.output = fixture.renderer.create_buffer({
         .size = CROWD_NATIVE_PIXELS * Vec4::size,
         .debug_name = "crowd_native_output",
@@ -134,7 +144,7 @@ fn void? create_crowd_native_probe(Fixture* fixture, CrowdNativeProbe* probe) @p
 
 fn void destroy_crowd_native_probe(Renderer* renderer, CrowdNativeProbe* probe) @private {
     render::wait_frames(renderer)!!;
-    foreach (mapped : (gpu::MappedGpuSpan[3]){ probe.depth, probe.velocity, probe.normal }) {
+    foreach (mapped : (gpu::MappedGpuSpan[4]){ probe.depth, probe.velocity, probe.normal, probe.shadow }) {
         gpu::GpuAllocation allocation = mapped.span.allocation();
         gpu::free_allocation(&renderer.device, &allocation)!!;
     }
@@ -217,6 +227,25 @@ fn void? capture_crowd_native(
                     mapped: probe.normal,
                 )!;
             }
+            images.shadow_resolution = renderer.shadow_set.layer_count ? renderer.shadow_atlas.resolution : 0;
+            if (images.shadow_resolution) {
+                assert(images.shadow_resolution * images.shadow_resolution <= CROWD_NATIVE_PIXELS);
+                Target shadow = {
+                    .texture = renderer.shadow_atlas.texture,
+                    .view = renderer.shadow_atlas.layers[0].view,
+                    .state = renderer.shadow_atlas.state,
+                    .format = gpu::Format.D32_FLOAT,
+                    .width = images.shadow_resolution,
+                    .height = images.shadow_resolution,
+                };
+                record_crowd_native_target(
+                    fixture: fixture,
+                    probe: probe,
+                    target: &shadow,
+                    mapped: probe.shadow,
+                )!;
+                renderer.shadow_atlas.state = shadow.state;
+            }
         }
         renderer.finish_view(view)!;
         renderer.end_frame()!;
@@ -232,16 +261,27 @@ fn void? capture_crowd_native(
         gpu::invalidate_mapped_span(&renderer.device, probe.normal.span)!;
         mem::copy(images.normal.ptr, probe.normal.bytes.ptr, images.normal.len * Vec4::size);
     }
+    if (images.shadow_resolution) {
+        gpu::invalidate_mapped_span(&renderer.device, probe.shadow.span)!;
+        mem::copy(images.shadow.ptr, probe.shadow.bytes.ptr,
+            images.shadow_resolution * images.shadow_resolution * Vec4::size);
+    }
 }
 
-fn void check_crowd_native_image(Vec4[] actual, Vec4[] expected, float tolerance) @private {
-    for (int y = 1; y + 1 < (int)CROWD_NATIVE_HEIGHT; y++) {
-        for (int x = 1; x + 1 < (int)CROWD_NATIVE_WIDTH; x++) {
-            Vec4 pixel = actual[y * (int)CROWD_NATIVE_WIDTH + x];
+fn void check_crowd_native_image(
+    Vec4[] actual,
+    Vec4[] expected,
+    float tolerance,
+    uint width = CROWD_NATIVE_WIDTH,
+    uint height = CROWD_NATIVE_HEIGHT,
+) @private {
+    for (int y = 1; y + 1 < (int)height; y++) {
+        for (int x = 1; x + 1 < (int)width; x++) {
+            Vec4 pixel = actual[y * (int)width + x];
             bool matched;
             for (int dy = -1; dy <= 1 && !matched; dy++) {
                 for (int dx = -1; dx <= 1; dx++) {
-                    Vec4 delta = math::abs(pixel - expected[(y + dy) * (int)CROWD_NATIVE_WIDTH + x + dx]);
+                    Vec4 delta = math::abs(pixel - expected[(y + dy) * (int)width + x + dx]);
                     float error = math::max(math::max(delta.x, delta.y), math::max(delta.z, delta.w));
                     if (error <= tolerance) matched = true;
                 }

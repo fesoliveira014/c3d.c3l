@@ -46,6 +46,7 @@ fn void? compare_crowd_native_paths(
     CrowdNativeOutput* output,
     bool standard = false,
     bool tinted = true,
+    bool shadow = false,
 ) @private {
     AnimatedCrowd* crowd = pair.scene.get(pair.crowd, AnimatedCrowd);
     for (uint path = 0; path < 3; path++) {
@@ -64,6 +65,7 @@ fn void? compare_crowd_native_paths(
             images: &output.actual,
         )!;
         uint passes = path == 0 ? 1 : 2; // Deferred geometry records its own depth prepass.
+        if (shadow) passes += output.actual.stats.shadow_layers;
         io::printfn("standard=%s path=%s tested=%s visible=%s expected=%s normal=%s velocity=%s",
             standard, path, output.actual.stats.instances_tested, output.actual.stats.instances_visible,
             passes * crowd.parts.len * crowd.count, output.actual.has_normal, output.actual.velocity_format);
@@ -79,6 +81,31 @@ fn void? compare_crowd_native_paths(
             images: &output.expected,
         )!;
         check_crowd_native_parity(&output.actual, &output.expected, tinted);
+        if (shadow) {
+            uint resolution = output.actual.shadow_resolution;
+            assert(resolution && resolution == output.expected.shadow_resolution);
+            uint covered;
+            foreach (pixel : output.actual.shadow[:resolution * resolution]) if (pixel.x > 0) covered++;
+            assert(covered > 0, "Crowd shadow atlas has empty coverage");
+            covered = 0;
+            foreach (pixel : output.expected.shadow[:resolution * resolution]) if (pixel.x > 0) covered++;
+            assert(covered > 0, "Ordinary shadow atlas has empty coverage");
+            check_crowd_native_image(
+                actual: output.actual.shadow,
+                expected: output.expected.shadow,
+                tolerance: CROWD_NATIVE_DEPTH_TOLERANCE,
+                width: resolution,
+                height: resolution,
+            );
+            check_crowd_native_image(
+                actual: output.expected.shadow,
+                expected: output.actual.shadow,
+                tolerance: CROWD_NATIVE_DEPTH_TOLERANCE,
+                width: resolution,
+                height: resolution,
+            );
+            assert(output.actual.stats.shadow_layers == 1);
+        }
         if (standard && path == 2) {
             assert(output.actual.has_normal && output.expected.has_normal);
             check_crowd_native_image(output.actual.normal, output.expected.normal, CROWD_NATIVE_COLOR_TOLERANCE);
