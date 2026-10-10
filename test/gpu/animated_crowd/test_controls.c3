@@ -116,7 +116,11 @@ fn ClipId? add_crowd_native_controls_clip(AssetStore* assets) @private {
         .events = alloc::new_array(allocator, ClipEvent, 2),
     };
     defer catch asset::free_clip(allocator, &clip);
-    uint[3] targets = { PARTS_RIGID_NODE, PARTS_MORPH_B, PARTS_JOINT_ROOT };
+    uint[3] targets = {
+        animated_crowd_fixtures::PARTS_RIGID_NODE,
+        animated_crowd_fixtures::PARTS_MORPH_B,
+        animated_crowd_fixtures::PARTS_JOINT_ROOT,
+    };
     clip.targets[..] = targets[..];
     Quat rigid = quaternion::from_axis_angle{float}({ 0, 0, 1 }, 0.9f);
     Quat yaw = quaternion::from_axis_angle{float}({ 0, 1, 0 }, 0.5f);
@@ -217,7 +221,7 @@ fn void? use_crowd_native_standard_materials(Fixture* fixture, CrowdNativePair* 
             fixture.assets.mark_material_dirty(mesh.material);
         }
     }
-    Node* sun = pair.scene.add_light(light::directional({ 1, 1, 1 }, 2))!;
+    Node* sun = pair.scene.add_light(light::directional({ 1, 1, 1 }, 2, false))!;
     sun.local.rotation = maths::look_rotation((Vec3){ 0, -0.3f, -1 }.normalize(), { 0, 1, 0 });
 }
 
@@ -241,7 +245,7 @@ fn void test_crowd_native_independent_controls_and_affine_shear_match_standard_d
         pair: &pair,
         model: parts.mixed,
         clip: parts.posing,
-        bounds: PARTS_POSE_BOUNDS,
+        bounds: animated_crowd_fixtures::PARTS_POSE_BOUNDS,
         placements: placements[..],
     )!!;
     defer scene::destroy_scene(&pair.scene);

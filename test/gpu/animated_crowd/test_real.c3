@@ -48,7 +48,7 @@ fn ClipId? crowd_native_clip_named(Fixture* fixture, ModelId model, String name)
     foreach (clip : fixture.assets.model(model).data.clips) {
         if (fixture.assets.clip(clip).data.name == name) return clip;
     }
-    return c3d::NOT_FOUND~;
+    return NOT_FOUND~;
 }
 
 fn void crowd_native_flat_source_materials(Fixture* fixture, ModelId model) @private {

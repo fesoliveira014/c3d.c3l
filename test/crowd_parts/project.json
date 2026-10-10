@@ -8,7 +8,7 @@
   "targets": {
     "crowd_parts": {
       "type": "executable",
-      "sources": ["../src/test_crowd.c3", "../src/test_crowd_parts.c3", "../src/test_crowd_history.c3", "../fixtures/animated_crowd_fixtures.c3"]
+      "sources": ["../src/test_crowd.c3", "../src/test_crowd_parts.c3", "../src/test_crowd_history.c3", "../src/test_crowd_external.c3", "../fixtures/animated_crowd_fixtures.c3"]
     }
   }
 }
