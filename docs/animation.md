@@ -316,11 +316,56 @@ assets.set_clip_events(walk, footsteps[..])!;
 ```
 
 The setter copies and stably sorts events by time. IDs are application-defined;
-no callback or importer event parser is installed. Invalid times (nonfinite or
-outside `[0,duration]`) fault `INVALID_ARGUMENT`; a dead clip faults `INVALID_ID`.
-Failure leaves the old table intact. Replacing a table between updates is valid.
-`add_clip_owned` instead takes ownership of an already sorted valid table.
-Retargeting copies events into independent owned arrays.
+no callback is installed. Invalid times (nonfinite or outside `[0,duration]`)
+fault `INVALID_ARGUMENT`; a dead clip faults `INVALID_ID`. Failure leaves the
+old table intact. Replacing a table between updates is valid. `add_clip_owned`
+instead takes ownership of an already sorted valid table. Retargeting copies
+events into independent owned arrays.
+
+### Imported tables
+
+A glTF animation imports a versioned table from `animation.extras.c3d_events`:
+
+```json
+{"c3d_events":{"version":1,"events":[{"time":0.25,"id":7}]}}
+```
+
+For FBX, the animation stack's string property `c3d_events` contains the inner
+JSON object, `{"version":1,"events":[{"time":0.25,"id":7}]}`. Both importers
+read it whenever `LoadOptions.animations` is enabled, including store-free
+and asynchronous loading. Animation-only and profiled FBX loading read the
+same property. Disabled animation imports do not read event metadata.
+Absent metadata or an empty array produces an empty table. Replacing a clip
+replaces its table, so absent metadata clears previously imported events.
+
+`version` and `id` use the exact value of each JSON number token. Integral
+spellings such as `1`, `1.0`, `1e0` and `10e-1` are equivalent. IDs range from
+0 through 4294967295; repeated IDs and negative-zero spellings are valid.
+Fractional, negative nonzero or overflowing IDs fault `ASSET_FORMAT_ERROR`.
+A nonintegral version faults `ASSET_FORMAT_ERROR`; any integer version other
+than 1 faults `UNSUPPORTED`, including integers beyond 64 bits.
+
+`time` is finite decoded clip-local seconds in `[0,duration]`, read as double
+and stored as float. Events never extend the track-derived duration; a
+zero-duration clip permits only time-zero markers. FBX uses the decoded origin
+after baking with `trim_start_time = true`. Author markers against the resulting
+clip times, including when the source stack starts before or after zero.
+Do not use the stack's absolute scene times.
+
+Missing required fields, wrong types, malformed recognized metadata and invalid
+values fault `ASSET_FORMAT_ERROR`. Repeated decoded keys within the table object
+or any direct event entry also fault, including unknown keys and escaped spellings
+of the same key. Single unknown fields, duplicates inside nested unknown values,
+and unrelated extras or properties are ignored. Unrelated glTF numeric values
+do not inherit the event ID or version limits. Import failure leaves shared
+assets unchanged and releases decoded event arrays.
+
+Imported events are stably sorted by time, retaining authored order at equal
+times. The table owns its explicit IDs and has no event names or payloads.
+[Serialization](serialization.md) saves keyed clip references rather than clip
+payloads or event tables; preload the imported assets before restoring playback.
+
+### Event delivery
 
 After update, read `animator.events[:animator.event_count]`. Each `FiredEvent`
 contains action ID, clip ID, authored ID and time. Every retained advancing

@@ -99,6 +99,14 @@ fn AnimationClip? convert_stack(Importer* importer, ufbx::AnimStack* stack, allo
     foreach (&track : clip.tracks) {
         foreach (time : track.times) clip.duration = math::max(clip.duration, time);
     }
+
+    ufbx::Prop* events = ufbx::find_prop(&stack.props, "c3d_events");
+    if (events) {
+        if (events.type != ufbx::PropType.STRING) return c3d::ASSET_FORMAT_ERROR~;
+
+        clip.events = asset::parse_clip_events(allocator, events.value_str, clip.duration)!;
+    }
+
     return clip;
 }
 
