@@ -1,12 +1,13 @@
 module c3d::anim;
 
 import c3d;
-import c3d::maths;
+import c3d::maths @public;
 import std::math;
 
 struct ChannelDerivativeSums @private {
     double[<3>] translation;
     double[<4>] rotation;
+    double[<4>] rotation_value;
     double[<3>] scale;
 }
 
@@ -147,6 +148,9 @@ fn void accumulate_pose_derivative(
     double[] rate = derivative.sample_rate[:sample.len];
     if (!action.extraction.generalized && action.root_motion != RootMotion.KEEP) {
         if (track_index == action.translation_track) rate[0] = rate[2] = 0;
+        if (track_index == action.rotation_track && action.root_yaw) {
+            pin_analytic_rotation_derivative(action, derivative);
+        }
     }
 
     ChannelDerivativeSums* sums = &derivative.channels[node];
@@ -159,6 +163,9 @@ fn void accumulate_pose_derivative(
             Vec4 rotation = { sample[0], sample[1], sample[2], sample[3] };
             double sign = rotation.dot(below.rotation.v) < 0 ? -1 : 1;
             sums.rotation += (double[<4>]){ rate[0], rate[1], rate[2], rate[3] } * ((double)weight * sign);
+            sums.rotation_value += (double[<4>]){
+                derivative.sample[0], derivative.sample[1], derivative.sample[2], derivative.sample[3],
+            } * ((double)weight * sign);
         case MORPH_WEIGHTS:
             usz offset = derivative_morph_offset(mesh_widths, mesh);
             foreach (usz index, value : rate) derivative.morph_sums[offset + index] += value * weight;
@@ -178,8 +185,9 @@ fn void fold_pose_derivative(
     velocity.scale = (rates.scale + velocity.scale * (double)residual(sums.scale_weight))
       / (double)math::max(1.0f, sums.scale_weight);
 
-    Vec4 combined = sums.rotation + below.rotation.v * residual(sums.rotation_weight);
-    double[<4>] raw = { combined.x, combined.y, combined.z, combined.w };
+    double[<4>] below_rotation = { below.rotation.v.x, below.rotation.v.y,
+      below.rotation.v.z, below.rotation.v.w };
+    double[<4>] raw = rates.rotation_value + below_rotation * (double)residual(sums.rotation_weight);
     double[<4>] raw_rate = rates.rotation
       + rotation_derivative(below.rotation, velocity.angular) * (double)residual(sums.rotation_weight);
     double[<4>] unit = analytic_unit_rotation(raw);
@@ -245,4 +253,28 @@ fn usz pose_derivative_storage_bytes(PoseDerivativeScratch* scratch) @private {
       + (usz)scratch.consumed_scale.len * bool::size
       + (usz)(scratch.morph_sums.len + scratch.morph_rates.len
           + scratch.sample.len + scratch.sample_rate.len) * double::size;
+}
+
+fn void pin_analytic_rotation_derivative(Action* action, PoseDerivativeScratch* derivative) @local {
+    double[] sample = derivative.sample[:4];
+    double[] rate = derivative.sample_rate[:4];
+    Quaternion rotation = { .v = { sample[0], sample[1], sample[2], sample[3] } };
+    Quaternion rotation_rate = { .v = { rate[0], rate[1], rate[2], rate[3] } };
+    double[<4>] projected = { 0, sample[1], 0, sample[3] };
+    double[<4>] projected_rate = { 0, rate[1], 0, rate[3] };
+    if (projected.length() < (double)maths::TWIST_EPSILON) return;
+
+    Quaternion twist = { .v = analytic_unit_rotation(projected) };
+    Quaternion twist_rate = { .v = normalized_rotation_derivative(projected, projected_rate) };
+    Quat reference_twist = maths::twist_about(action.root_rotation, (Vec3){ 0, 1, 0 });
+    Quaternion reference = inertial_pose_rotation(reference_twist);
+    Quaternion pinned = reference.mul(twist.conjugate()).mul(rotation);
+    Quaternion first_rate = reference.mul(twist_rate.conjugate()).mul(rotation);
+    Quaternion second_rate = reference.mul(twist.conjugate()).mul(rotation_rate);
+    Quaternion pinned_rate = { .v = first_rate.v + second_rate.v };
+
+    for (uint component = 0; component < 4; component++) {
+        sample[component] = pinned.v[component];
+        rate[component] = pinned_rate.v[component];
+    }
 }

@@ -299,18 +299,26 @@ fn void test_animation_generalized_motion_xyz_selection_and_unselected_channels(
     }
 }
 
-fn GeneralizedTestMatrix test_generalized_cycle_matrix(double time, double[<3>] pivot) @local {
+fn GeneralizedTestMatrix test_generalized_cycle_matrix(
+    double time,
+    double[<3>] pivot,
+    double[<2>] endpoint,
+) @local {
     int cycles = (int)math::floor(time);
     double phase = time - cycles;
     double[<3>] up = { 0, 1, 0 };
-    GeneralizedTestMatrix cycle = generalized_test_rodrigues(up, cycles < 0 ? -0.5 : 0.5);
-    GeneralizedTestMatrix forward = generalized_test_rodrigues(up, 0.5);
+    endpoint /= endpoint.length();
+    double cycle_angle = 2 * math::atan2(endpoint.x, endpoint.y);
+    GeneralizedTestMatrix cycle = generalized_test_rodrigues(up, cycles < 0 ? -cycle_angle : cycle_angle);
+    GeneralizedTestMatrix forward = generalized_test_rodrigues(up, cycle_angle);
     double[<3>] full = (double[<3>]){ 0.8, 0.2, 0.3 } + pivot - generalized_test_point(forward, pivot);
     if (cycles < 0) full = generalized_test_point(cycle, -full);
     for (uint axis = 0; axis < 3; axis++) cycle.values[axis][3] = full[axis];
     GeneralizedTestMatrix accumulated = generalized_test_identity();
     for (int index = 0; index < math::abs(cycles); index++) accumulated = generalized_test_multiply(accumulated, cycle);
-    GeneralizedTestMatrix partial = generalized_test_rodrigues(up, phase * 0.5);
+    // LINEAR chooses normalized interpolation for this close pair, so angle is not proportional to time.
+    double partial_angle = 2 * math::atan2(phase * endpoint.x, 1 - phase + phase * endpoint.y);
+    GeneralizedTestMatrix partial = generalized_test_rodrigues(up, partial_angle);
     double[<3>] displacement = (double[<3>]){ 0.8, 0.2, 0.3 } * phase
       + pivot - generalized_test_point(partial, pivot);
     for (uint axis = 0; axis < 3; axis++) partial.values[axis][3] = displacement[axis];
@@ -351,7 +359,11 @@ fn void test_animation_generalized_motion_loops_reverse_subdivision_and_zero_ide
             end: finish,
             loop: true,
         );
-        GeneralizedTestMatrix expected = test_generalized_cycle_matrix(finish, reference.frame.position);
+        GeneralizedTestMatrix expected = test_generalized_cycle_matrix(
+            time: finish,
+            pivot: reference.frame.position,
+            endpoint: { end.v.y, end.v.w },
+        );
         assert((full.translation - generalized_test_point(expected, {})).length() < 1e-6);
         foreach (count : divisions) {
             GeneralizedMotion accumulated;
@@ -360,8 +372,8 @@ fn void test_animation_generalized_motion_loops_reverse_subdivision_and_zero_ide
                     chain: &chain,
                     clip: &clip,
                     reference: &reference,
-                    begin: finish * step / count,
-                    end: finish * (step + 1) / count,
+                    begin: finish * (double)step / (double)count,
+                    end: finish * (double)(step + 1) / (double)count,
                     loop: true,
                 );
                 accumulated = anim::compose_generalized_motion(accumulated, delta, reference.up);

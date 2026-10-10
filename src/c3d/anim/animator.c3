@@ -264,6 +264,16 @@ fn void update(AssetStore* assets, Scene* scene, float dt) {
             }
 
             animator.root_motion = root_motion_delta(report.motion, reference);
+            if (animator.inertial_storage) {
+                animator.root_motion = publish_inertial_root_motion(
+                    row: &animator.inertial_storage.rows[0],
+                    target: animator.root_motion,
+                    target_twist: (double)report.motion.yaw,
+                    up: { 0, 1, 0 },
+                    pivot: { reference.x, reference.y, reference.z },
+                    dt: (double)dt,
+                );
+            }
         };
     };
 }

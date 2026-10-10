@@ -101,6 +101,16 @@ fn void CrowdPlaybackState.update(&self, AssetStore* assets, float dt) {
         }
 
         slot.root_motion = root_motion_delta(report.motion, reference);
+        if (self.inertial_storage) {
+            slot.root_motion = publish_inertial_root_motion(
+                row: &self.inertial_storage.rows[index],
+                target: slot.root_motion,
+                target_twist: (double)report.motion.yaw,
+                up: { 0, 1, 0 },
+                pivot: { reference.x, reference.y, reference.z },
+                dt: (double)dt,
+            );
+        }
 
         foreach (&event : self.events[self.event_count:report.events.count]) {
             event.instance = { .index = index, .generation = slot.generation };
