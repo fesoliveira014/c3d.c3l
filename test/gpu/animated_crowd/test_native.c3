@@ -48,6 +48,7 @@ struct CrowdNativeProbe @private {
     ComputeShaderId shader;
     gpu::MappedGpuSpan depth;
     gpu::MappedGpuSpan velocity;
+    gpu::MappedGpuSpan normal;
 }
 
 struct CrowdNativePair @private {
@@ -65,8 +66,10 @@ struct CrowdNativeImages @private {
     Vec4[] color;
     Vec4[] depth;
     Vec4[] velocity;
+    Vec4[] normal;
     Stats stats;
     gpu::Format velocity_format;
+    bool has_normal;
 }
 
 fn void check_near_pixel(uint actual, uint expected) @private {
@@ -83,6 +86,7 @@ fn CrowdNativeImages create_crowd_native_images(Allocator allocator) @private {
         .color = alloc::new_array(allocator, Vec4, CROWD_NATIVE_PIXELS),
         .depth = alloc::new_array(allocator, Vec4, CROWD_NATIVE_PIXELS),
         .velocity = alloc::new_array(allocator, Vec4, CROWD_NATIVE_PIXELS),
+        .normal = alloc::new_array(allocator, Vec4, CROWD_NATIVE_PIXELS),
     };
 }
 
@@ -90,6 +94,7 @@ fn void destroy_crowd_native_images(Allocator allocator, CrowdNativeImages* imag
     alloc::free(allocator, images.color.ptr);
     alloc::free(allocator, images.depth.ptr);
     alloc::free(allocator, images.velocity.ptr);
+    alloc::free(allocator, images.normal.ptr);
     *images = {};
 }
 
@@ -115,6 +120,11 @@ fn void? create_crowd_native_probe(Fixture* fixture, CrowdNativeProbe* probe) @p
         gpu::GpuAllocation allocation = probe.velocity.span.allocation();
         gpu::free_allocation(&fixture.renderer.device, &allocation)!!;
     }
+    probe.normal = allocate_crowd_native_readback(&fixture.renderer, "crowd_native_normal")!;
+    defer catch {
+        gpu::GpuAllocation allocation = probe.normal.span.allocation();
+        gpu::free_allocation(&fixture.renderer.device, &allocation)!!;
+    }
     probe.output = fixture.renderer.create_buffer({
         .size = CROWD_NATIVE_PIXELS * Vec4::size,
         .debug_name = "crowd_native_output",
@@ -124,7 +134,7 @@ fn void? create_crowd_native_probe(Fixture* fixture, CrowdNativeProbe* probe) @p
 
 fn void destroy_crowd_native_probe(Renderer* renderer, CrowdNativeProbe* probe) @private {
     render::wait_frames(renderer)!!;
-    foreach (mapped : (gpu::MappedGpuSpan[2]){ probe.depth, probe.velocity }) {
+    foreach (mapped : (gpu::MappedGpuSpan[3]){ probe.depth, probe.velocity, probe.normal }) {
         gpu::GpuAllocation allocation = mapped.span.allocation();
         gpu::free_allocation(&renderer.device, &allocation)!!;
     }
@@ -198,6 +208,15 @@ fn void? capture_crowd_native(
                 target: &record.velocity,
                 mapped: probe.velocity,
             )!;
+            images.has_normal = record.desc.shading == ShadingPath.DEFERRED;
+            if (images.has_normal) {
+                record_crowd_native_target(
+                    fixture: fixture,
+                    probe: probe,
+                    target: &record.gbuffer[GBufferChannel.NORMAL_ROUGHNESS],
+                    mapped: probe.normal,
+                )!;
+            }
         }
         renderer.finish_view(view)!;
         renderer.end_frame()!;
@@ -209,6 +228,10 @@ fn void? capture_crowd_native(
     gpu::invalidate_mapped_span(&renderer.device, probe.velocity.span)!;
     mem::copy(images.depth.ptr, probe.depth.bytes.ptr, images.depth.len * Vec4::size);
     mem::copy(images.velocity.ptr, probe.velocity.bytes.ptr, images.velocity.len * Vec4::size);
+    if (images.has_normal) {
+        gpu::invalidate_mapped_span(&renderer.device, probe.normal.span)!;
+        mem::copy(images.normal.ptr, probe.normal.bytes.ptr, images.normal.len * Vec4::size);
+    }
 }
 
 fn void check_crowd_native_image(Vec4[] actual, Vec4[] expected, float tolerance) @private {
@@ -234,6 +257,7 @@ fn void check_crowd_native_coverage(CrowdNativeImages* images, bool tinted = tru
     foreach (index, depth : images.depth) {
         if (depth.x <= 0) continue;
         covered++;
+        if (!tinted) sources[(index % CROWD_NATIVE_WIDTH) * CROWD_NATIVE_INSTANCES / CROWD_NATIVE_WIDTH]++;
         for (uint source = 0; source < CROWD_NATIVE_INSTANCES; source++) {
             Vec4 delta = math::abs(images.color[index] - CROWD_NATIVE_TINTS[source]);
             if (math::max(math::max(delta.x, delta.y), delta.z) <= CROWD_NATIVE_COLOR_TOLERANCE) sources[source]++;
@@ -244,12 +268,12 @@ fn void check_crowd_native_coverage(CrowdNativeImages* images, bool tinted = tru
         if (images.velocity_format == gpu::Format.RGBA16_FLOAT) assert(velocity.w == 0);
     }
     assert(covered > 0, "Crowd frame has empty depth coverage");
-    if (tinted) foreach (count : sources) assert(count > 0, "A logical source tint is missing");
+    foreach (count : sources) assert(count > 0, "A logical source has empty coverage");
 }
 
-fn void check_crowd_native_parity(CrowdNativeImages* crowd, CrowdNativeImages* ordinary) @private {
-    check_crowd_native_coverage(crowd);
-    check_crowd_native_coverage(ordinary);
+fn void check_crowd_native_parity(CrowdNativeImages* crowd, CrowdNativeImages* ordinary, bool tinted = true) @private {
+    check_crowd_native_coverage(crowd, tinted);
+    check_crowd_native_coverage(ordinary, tinted);
     check_crowd_native_image(crowd.color, ordinary.color, CROWD_NATIVE_COLOR_TOLERANCE);
     check_crowd_native_image(ordinary.color, crowd.color, CROWD_NATIVE_COLOR_TOLERANCE);
     check_crowd_native_image(crowd.depth, ordinary.depth, CROWD_NATIVE_DEPTH_TOLERANCE);
