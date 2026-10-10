@@ -51,5 +51,5 @@ and paused playback. Instance 1 is explicitly configured with no actions,
 spaces, root node or base action. The prepared capture follows genuine crowd
 preparation and a 0.25-second update; runtime clocks remain excluded.
 
-The recipe has been authored but must be executed and its output hashes
-verified before claiming capture completion.
+The six committed outputs were captured using the guarded historical writers
+at the commit above. `SHA256SUMS` records the committed file hashes.

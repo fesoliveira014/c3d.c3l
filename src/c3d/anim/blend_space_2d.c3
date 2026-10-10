@@ -182,6 +182,7 @@ fn BlendSpace2D*? PlaybackView.add_blend_space_2d(
     foreach (clip : clips) {
         AnimationClip* data = &assets.clips.try_get(clip)!.data;
         if (!math::is_finite(data.duration) || data.duration <= 0) return c3d::INVALID_ARGUMENT~;
+
         (void)validate_playback_action(data, desc, destination)!;
     }
     if (desc.weighted_mask) validate_weighted_joint_mask(assets, self.model, desc.weighted_mask)!;
@@ -199,6 +200,7 @@ fn BlendSpace2D*? PlaybackView.add_blend_space_2d(
 
     PlayDesc member_desc = desc;
     member_desc.fade_in = 0;
+
     foreach (clip : clips) {
         prepared[prepared_count] = prepare_playback_action(
             allocator: self.allocator,
@@ -301,6 +303,7 @@ fn void advance_blend_spaces_2d(PlaybackView* playback, AssetStore* assets, floa
 
         float step = space.fade_rate * dt;
         float remaining = space.fade_target - space.weight;
+
         if (space.fade_rate > 0) {
             if (math::abs(remaining) <= step) {
                 space.weight = space.fade_target;
@@ -309,6 +312,7 @@ fn void advance_blend_spaces_2d(PlaybackView* playback, AssetStore* assets, floa
                 space.weight += remaining < 0 ? -step : step;
             }
         }
+
         if (space.weight == 0 && space.fade_target == 0) {
             remove_blend_space_2d(playback, space);
             continue;
@@ -323,10 +327,12 @@ fn void advance_blend_spaces_2d(PlaybackView* playback, AssetStore* assets, floa
         };
         BlendLayoutSelection selected = select_blend_layout(layout, space.parameter);
         double duration;
+
         foreach (uint index, member : selected.indices[:selected.count]) {
             double member_duration = assets.clip(playback.actions.get(space.actions[member]).clip).data.duration;
             duration += member_duration * selected.weights[index];
         }
+
         double travel = space.playing ? (double)dt * space.speed / duration : 0;
         double start = space.phase;
         if (start == 0 && travel < 0) start = 1;
@@ -340,10 +346,12 @@ fn void advance_blend_spaces_2d(PlaybackView* playback, AssetStore* assets, floa
             action.clock_time = space.phase * clip_duration;
             action.time = (float)action.clock_time;
             action.published_time = action.time;
+
             float normalized;
             foreach (uint selected_index, member : selected.indices[:selected.count]) {
                 if (member == index) normalized = selected.weights[selected_index];
             }
+
             action.weight = space.weight * normalized;
         }
     }
@@ -352,6 +360,7 @@ fn void advance_blend_spaces_2d(PlaybackView* playback, AssetStore* assets, floa
 fn usz blend_space_2d_storage_bytes(uint capacity) @private {
     usz offset = MAX_BLEND_SPACES * BlendSpace2D::size;
     uint triangles = capacity * 2 > 5 ? capacity * 2 - 5 : 0;
+
     for (uint slot = 0; slot < MAX_BLEND_SPACES; slot++) {
         offset = align_blend_space_storage(offset, BlendSpace2D::alignment);
         offset = align_blend_space_storage(offset, AnimationActionId::alignment);
@@ -369,6 +378,7 @@ fn BlendSpace2D[]? create_blend_spaces_2d(Allocator allocator, uint capacity) @p
     usz bytes = blend_space_2d_storage_bytes(capacity);
     char* storage = (char*)(allocator.acquire((sz)bytes, AllocInitType.ZERO, BlendSpace2D::alignment)
       ?? c3d::CAPACITY_EXCEEDED~!);
+
     BlendSpace2D[] spaces = ((BlendSpace2D*)storage)[:MAX_BLEND_SPACES];
     usz offset = MAX_BLEND_SPACES * BlendSpace2D::size;
     uint triangles = capacity * 2 > 5 ? capacity * 2 - 5 : 0;

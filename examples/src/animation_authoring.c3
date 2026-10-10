@@ -253,7 +253,9 @@ fn void panel(Controls* controls) @local {
             v_min: 0,
             v_max: 1,
         );
+
         imgui::checkbox("Pause", &controls.paused);
+
         imgui::text("Maximum pose difference: %.6g", (double)controls.pose_error);
         imgui::text("Maximum morph difference: %.6g", (double)controls.morph_error);
         imgui::text("16 fixed action slots; copied mask and 2D layout rows");
@@ -275,7 +277,9 @@ fn void? run(
     Node* camera_node = scene.add_camera(camera::perspective_deg(50, 0.1f))!;
     camera_node.local.position = { 0, 3, 10 };
     camera_node.local.rotation = maths::look_rotation((Vec3){ 0, 1, -1 } - camera_node.local.position, { 0, 1, 0 });
+
     Controls controls = { .speed = 1, .upper_weight = 0.6f, .scale_weight = 0.5f };
+
     anim::update(assets, scene, 0);
     anim::crowd_update(assets, scene, 0);
     scene.update_world();
@@ -292,11 +296,14 @@ fn void? run(
         panel(&controls);
         apply_controls(character, &controls);
         apply_controls(morph, &controls);
+
         anim::update(assets, scene, window.clock.delta);
         anim::crowd_update(assets, scene, window.clock.delta);
         scene.update_world();
+
         compare_pair(scene, character, &controls);
         compare_pair(scene, morph, &controls);
+
         gui_renderer.finish_frame();
         platform::sync_window(window, renderer);
 
@@ -306,6 +313,7 @@ fn void? run(
         if (renderer.has_output) {
             renderer.render_view(scene, camera_node, renderer.default_view)!;
             renderer.finish_view(renderer.default_view)!;
+
             OverlayContext overlay = renderer.begin_overlay()!;
             gui_renderer.record(&overlay)!;
             renderer.end_overlay(&overlay)!;

@@ -407,6 +407,7 @@ fn bool animator_inspector(void* component) @local {
         animator.stop_blend_space(stopped_space)!!;
         changed = true;
     }
+
     if (stopped_space_2d) {
         animator.stop_blend_space_2d(stopped_space_2d)!!;
         changed = true;

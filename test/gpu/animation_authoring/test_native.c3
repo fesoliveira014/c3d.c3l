@@ -10,7 +10,9 @@ import c3d::render @public;
 import c3d::scene;
 import gpu;
 import std::io;
+import std::io::file;
 import std::math;
+import std::os::env;
 
 const uint AUTHORING_NATIVE_FRAMES @private = 1200;
 const float AUTHORING_NATIVE_DT @private = 1.0f / 60;
@@ -185,6 +187,33 @@ fn double authoring_native_linear_component(Track* track, float time, uint compo
       + fraction * track.values[(usz)(key + 1) * width + component];
 }
 
+fn void save_authoring_native_image(
+    CrowdNativeImages* images,
+    bool morph,
+    uint frame,
+    bool expected,
+) @private {
+    @pool() {
+        String directory = env::tget_var("C3D_ANIMATION_CAPTURE_DIR") ?? "";
+        if (!directory.len) return;
+        String filename = string::tformat(
+            "%s/%s-frame-%04d-%s.rgba32f.bin",
+            directory,
+            morph ? "morph-cube" : "quaternius",
+            frame,
+            expected ? "expected" : "actual",
+        );
+        file::save(filename, ((char*)images.color.ptr)[:images.color.len * Vec4::size])!!;
+        io::printfn(
+            "native capture=%s width=%s height=%s frame=%s",
+            filename,
+            CROWD_NATIVE_WIDTH,
+            CROWD_NATIVE_HEIGHT,
+            frame,
+        );
+    };
+}
+
 fn void check_authoring_native_pose(
     Fixture* fixture,
     CrowdNativePair* pair,
@@ -356,6 +385,18 @@ fn void run_authoring_native_window(bool morph) @private {
                 images: &output.expected,
             )!!;
             check_crowd_native_parity(&output.actual, &output.expected, false);
+            save_authoring_native_image(
+                images: &output.actual,
+                morph: morph,
+                frame: frame,
+                expected: false,
+            );
+            save_authoring_native_image(
+                images: &output.expected,
+                morph: morph,
+                frame: frame,
+                expected: true,
+            );
             native_captures++;
         }
     }

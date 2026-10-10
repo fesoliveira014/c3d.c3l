@@ -139,6 +139,7 @@ fn void? validate_multiplicative_scale_track(Track* track) @local {
             }
 
             uint key_count = (uint)track.times.len;
+
             for (uint key = 0; key + 1 < key_count; key++) {
                 Vec3 start = scale_key(track, key, CUBIC_SLOT_VALUE);
                 Vec3 end = scale_key(track, key + 1, CUBIC_SLOT_VALUE);

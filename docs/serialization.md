@@ -249,11 +249,15 @@ The shared NodeReference layout is registered by register_core_value_types;
 SkinAuthoring exposes the decoded skeleton and required joint references to
 other owner preflight callbacks. Missing binary asset keys retain the key in
 SerialDiagnostic, matching JSONC diagnostics.
-Animator restores in OWNER after ModelInstance and reference components. Export
-projects its template nodes and Mesh morph weights to the captured baselines
+Animator authoring version 2 restores in OWNER after ModelInstance and reference
+components. Version-1 binary and JSONC streams retain their original reader/defaults.
+Export projects its template nodes and Mesh morph weights to the captured baselines
 without changing the source scene. The instance root retains its current placement.
-Action masks, layers, clips, speed, loop/playing flags, root-motion mode and blend
-space configuration persist; action times, space phases, events and fades restart.
+Action boolean/weighted masks, layers, clips, speed, loop/playing flags,
+root-motion mode, additive scale mode and 1D/2D space configuration persist.
+2D coordinates, triangles and member ordinals are copied; weighted rows retain
+their authored node weights. Action times, space phases, events and fades restart.
+Older streams default to boolean masks, 1D groups and DIFFERENCE additive scale.
 Active fades settle at their targets; fading-out actions and spaces are omitted,
 while settled zero-weight actions remain. Handles are newly allocated. An absent
 configured root slot retains its mode and contributes zero root motion.
@@ -266,11 +270,12 @@ Ordinary pointer references capture the current live entity, including explicit
 LookAt/IK retargeting after slot reuse. Skin joints alone retain captured template
 identity: deleting a required template joint rejects export even if its address
 was reused, rather than silently rebinding the original skin.
-AnimatedCrowd authoring version 2 restores in OWNER with its model, capacity,
+AnimatedCrowd authoring version 3 restores in OWNER with its model, capacity,
 live placements/colors, action and event capacities, seed settings, captured
 start times, bounds and trace flag. It also retains configured per-instance
-actions, copied masks, layers, additive/root settings and 1D spaces. Original
-version 1 binary and JSONC streams read with the authored defaults. Loads remain
+actions, copied boolean/weighted masks, layers, additive scale/root settings and
+1D/2D spaces. Version-1 and version-2 binary and JSONC streams remain readable;
+new fields receive the original boolean-mask, 1D and DIFFERENCE defaults. Loads remain
 pending with no generated part nodes; prepare_crowd builds runtime explicitly.
 Generated batches are omitted only after checking the retained owner association.
 Exporting a generated part without its owner, or adding authored components to an
@@ -297,8 +302,9 @@ contracts. Existing shared runtime validators also govern serialization.
 | Force | `force` and `local_point` components | Finite; no added range restriction |
 | Buoyancy | `fluid_density`, `linear_drag` | Finite; no added range restriction |
 | PhysicsBody | BodyDesc `linear_velocity` and `angular_velocity` components, `linear_damping`, `angular_damping`, `gravity_scale` | Finite; no added range restriction |
-| Animator | Action `speed`; blend-space `parameter`, `speed` | Finite; negative speeds allowed |
+| Animator | Action `speed`; 1D/2D blend-space coordinates, parameter and `speed` | Finite; negative speeds allowed |
 | Animator | Action and blend-space `weight` | Finite and nonnegative; no upper cap |
+| Animator / AnimatedCrowd | Weighted mask node values | Finite and in `[0,1]`; full captured node width |
 | AnimatedCrowd | Pose `speed`, captured start time | Finite; negative values allowed |
 | Ragdoll | Aggregate `weight`, each `bone_weights` value, `drive_strength` | Finite and nonnegative; no upper cap |
 | NavVolume | BOX `box`; CONVEX `verts[:vert_count]`, `min_y`, `max_y`; CYLINDER `base`, `radius`, `height` | Finite active fields; `min_y <= max_y`; cylinder radius and height positive |

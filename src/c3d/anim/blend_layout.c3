@@ -84,6 +84,7 @@ fn BlendLayoutInfo? prepare_blend_layout(
 
     prepared_triangles[:prepared.info.triangle_count] = prepared.triangles[:prepared.info.triangle_count];
     prepared_hull[:prepared.info.hull_count] = prepared.hull[:prepared.info.hull_count];
+
     return prepared.info;
 }
 
@@ -119,6 +120,7 @@ fn BlendLayoutSelection select_blend_layout(BlendLayoutView layout, Vec2 paramet
         second = math::max(second, 0.0);
         third = math::max(third, 0.0);
         double sum = first + second + third;
+
         return {
             .indices = triangle.indices,
             .weights = { (float)(first / sum), (float)(second / sum), (float)(third / sum) },
@@ -131,6 +133,7 @@ fn BlendLayoutSelection select_blend_layout(BlendLayoutView layout, Vec2 paramet
     double[BLEND_LAYOUT_MAX_SAMPLES] distances;
     double[BLEND_LAYOUT_MAX_SAMPLES] fractions;
     double closest = double::max;
+
     foreach (uint index, edge : layout.hull) {
         Vec2 a = layout.points[edge.indices[0]];
         Vec2 b = layout.points[edge.indices[1]];
@@ -191,6 +194,7 @@ fn BlendLayoutPrepared? validate_blend_layout(Vec2[] points, BlendTriangle[] tri
     double max_x = -double::max;
     double min_y = double::max;
     double max_y = -double::max;
+
     foreach (uint sample, point : points) {
         if (!math::is_finite(point.x) || !math::is_finite(point.y)) return c3d::INVALID_ARGUMENT~;
 
@@ -213,6 +217,7 @@ fn BlendLayoutPrepared? validate_blend_layout(Vec2[] points, BlendTriangle[] tri
     bool[BLEND_LAYOUT_MAX_SAMPLES] used;
     bool[BLEND_LAYOUT_MAX_SAMPLES][BLEND_LAYOUT_MAX_SAMPLES] directed;
     bool[BLEND_LAYOUT_MAX_TRIANGLES][BLEND_LAYOUT_MAX_TRIANGLES] adjacency;
+
     foreach (uint index, input : triangles) {
         uint a = input.indices[0];
         uint b = input.indices[1];
@@ -231,6 +236,7 @@ fn BlendLayoutPrepared? validate_blend_layout(Vec2[] points, BlendTriangle[] tri
         }
 
         prepared.triangles[index] = triangle;
+
         for (uint edge = 0; edge < 3; edge++) {
             uint from = triangle.indices[edge];
             uint to = triangle.indices[(edge + 1) % 3];
@@ -238,6 +244,7 @@ fn BlendLayoutPrepared? validate_blend_layout(Vec2[] points, BlendTriangle[] tri
 
             directed[from][to] = true;
             used[from] = true;
+
             foreach (uint sample, point : points) {
                 if (sample != from && sample != to && blend_on_open_edge(point, points[from], points[to])) {
                     return c3d::INVALID_ARGUMENT~;
