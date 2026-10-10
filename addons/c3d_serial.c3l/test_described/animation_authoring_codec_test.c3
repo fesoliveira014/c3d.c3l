@@ -755,7 +755,7 @@ fn void test_animation_authoring_codec_animator_malformed_weighted_and_planar_re
     };
 }
 
-fn void test_animation_authoring_codec_prepared_crowd_exports_new_fields_without_mutation_and_restarts() @test {
+fn void test_animation_authoring_codec_prepared_crowd_exports_planar_masks_and_scale_without_mutation_and_restarts() @test {
     @pool() {
         Fixture fixture;
         create_fixture(&fixture, 32);
