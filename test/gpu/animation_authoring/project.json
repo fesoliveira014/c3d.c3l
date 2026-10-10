@@ -28,6 +28,7 @@
       "sources": [
         "test_native.c3",
         "test_motion_native.c3",
+        "test_hierarchy_motion_native.c3",
         "../animated_crowd/test_native.c3",
         "../animated_crowd/test_controls.c3",
         "../animated_crowd/test_real.c3",

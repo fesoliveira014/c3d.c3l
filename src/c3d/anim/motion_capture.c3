@@ -62,6 +62,7 @@ fn void? prepare_action_motion_capture(
     )!;
     captured.model = model;
     captured.instance_scale = motion_basis.instance_scale;
+
     action.motion_chain = captured;
     action.motion_reference = capture_generalized_motion_reference(captured, clip);
 }
@@ -70,6 +71,7 @@ fn void? validate_inertial_rotation_domains(AnimationClip* clip) @private {
     bool unsupported;
     foreach (&track : clip.tracks) {
         if (track.path != TargetPath.ROTATION) continue;
+
         if (catch excuse = validate_motion_rotation_track(track)) {
             if (excuse != c3d::UNSUPPORTED) return excuse~;
             unsupported = true;
@@ -92,6 +94,7 @@ fn void? validate_live_motion_addition(
     if (desc.extraction.generalized && !same_live_motion_extraction(chain.extraction, desc.extraction)) {
         return c3d::INVALID_ARGUMENT~;
     }
+
     validate_generalized_motion(
         template: &assets.models.try_get(playback.model)!.data,
         clip: clip,

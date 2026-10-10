@@ -884,3 +884,361 @@ fn void test_animation_authoring_motion_native_quaternius_turns_reverse_loops_an
 fn void test_animation_authoring_motion_native_morph_cube_full_logical_weights_and_interrupted_requests() @test {
     run_motion_native_window(true);
 }
+
+fn void configure_layered_inertial_reference(
+    Fixture* fixture,
+    CrowdNativePair* pair,
+    AuthoringNativeControls* controls,
+    WeightedJointMask* mask,
+    ClipId scale_clip,
+    AdditiveScaleMode scale_mode,
+) @private {
+    for (uint source = 0; source < CROWD_NATIVE_INSTANCES; source++) {
+        Animator* animator = pair.scene.get(pair.ordinary[source], Animator);
+        CrowdPlayer player = crowd_native_player(pair, source)!!;
+        foreach (&space : animator.blend_spaces_2d) {
+            if (space.count) animator.stop_blend_space_2d(space)!!;
+        }
+        foreach (&space : player.state.slots[source].spaces_2d) {
+            if (space.count) player.stop_blend_space_2d(space)!!;
+        }
+    }
+    crowd_native_stop_all(pair)!!;
+    ClipId[9] clips;
+    foreach (index, name : AUTHORING_NATIVE_CLIPS) {
+        clips[index] = crowd_native_clip_named(fixture, pair.model, name)!!;
+    }
+    ClipId upper_clip = crowd_native_clip_named(fixture, pair.model, "Pistol_Idle_Loop")!!;
+    for (uint source = 0; source < CROWD_NATIVE_INSTANCES; source++) {
+        Animator* animator = pair.scene.get(pair.ordinary[source], Animator);
+        CrowdPlayer player = crowd_native_player(pair, source)!!;
+        controls.ordinary[source] = animator.add_blend_space_2d(
+            assets: &fixture.assets,
+            clips: clips[..],
+            coordinates: AUTHORING_NATIVE_POINTS[..],
+            triangles: AUTHORING_NATIVE_TRIANGLES[..],
+        )!!;
+        controls.crowd[source] = player.add_blend_space_2d(
+            assets: &fixture.assets,
+            clips: clips[..],
+            coordinates: AUTHORING_NATIVE_POINTS[..],
+            triangles: AUTHORING_NATIVE_TRIANGLES[..],
+        )!!;
+        PlayDesc upper = { .layer = 1, .weighted_mask = mask };
+        controls.ordinary_overlay[source] = animator.action(animator.play(&fixture.assets, upper_clip, upper)!!);
+        controls.crowd_overlay[source] = player.action(player.play(&fixture.assets, upper_clip, upper)!!);
+        PlayDesc scale = { .layer = 2, .additive = true, .additive_scale = scale_mode };
+        controls.ordinary_scale[source] = animator.action(animator.play(&fixture.assets, scale_clip, scale)!!);
+        controls.crowd_scale[source] = player.action(player.play(&fixture.assets, scale_clip, scale)!!);
+        foreach (action : (Action*[2]){ controls.ordinary_overlay[source], controls.crowd_overlay[source] }) {
+            action.speed = -0.75f;
+            action.weight = 0.6f;
+        }
+        foreach (action : (Action*[2]){ controls.ordinary_scale[source], controls.crowd_scale[source] }) action.weight = 0.5f;
+    }
+}
+
+fn void request_layered_inertial_native(
+    Fixture* fixture,
+    CrowdNativePair* pair,
+    AuthoringNativeControls* controls,
+    WeightedJointMask* mask,
+    ClipId scale_clip,
+    AdditiveScaleMode scale_mode,
+) @private {
+    ClipId[9] clips;
+    foreach (index, name : AUTHORING_NATIVE_CLIPS) {
+        clips[index] = crowd_native_clip_named(fixture, pair.model, name)!!;
+    }
+    ClipId upper_clip = crowd_native_clip_named(fixture, pair.model, "Pistol_Idle_Loop")!!;
+    AnimationTargetDesc[11] targets;
+    for (uint index = 0; index < clips.len; index++) {
+        targets[index] = anim::ANIMATION_TARGET_DEFAULT;
+        targets[index].clip = clips[index];
+    }
+    targets[9] = anim::ANIMATION_TARGET_DEFAULT;
+    targets[9].clip = upper_clip;
+    targets[9].play = { .layer = 1, .weighted_mask = mask };
+    targets[9].speed = -0.75f;
+    targets[9].weight = 0.6f;
+    targets[10] = anim::ANIMATION_TARGET_DEFAULT;
+    targets[10].clip = scale_clip;
+    targets[10].play = { .layer = 2, .additive = true, .additive_scale = scale_mode };
+    targets[10].weight = 0.5f;
+    CrowdSpaceAuthoring[1] spaces = { {
+        .actions = { 0, 1, 2, 3, 4, 5, 6, 7, 8 },
+        .weight = 1,
+        .speed = 1,
+        .playing = true,
+        .kind = TWO_DIMENSIONAL,
+        .points = AUTHORING_NATIVE_POINTS[..],
+        .triangles = AUTHORING_NATIVE_TRIANGLES[..],
+    } };
+    for (uint source = 0; source < CROWD_NATIVE_INSTANCES; source++) {
+        Animator* animator = pair.scene.get(pair.ordinary[source], Animator);
+        CrowdPlayer player = crowd_native_player(pair, source)!!;
+        AnimationActionId old_ordinary = animator.order[0];
+        AnimationActionId old_crowded = player.state.slots[source].order[0];
+        animator.inertialize(&fixture.assets, { .duration = 0.6f, .actions = targets[..], .spaces = spaces[..] })!!;
+        player.inertialize(&fixture.assets, { .duration = 0.6f, .actions = targets[..], .spaces = spaces[..] })!!;
+        assert(@catch(animator.try_action(old_ordinary)) == c3d::INVALID_ID);
+        assert(@catch(player.try_action(old_crowded)) == c3d::INVALID_ID);
+        assert(animator.event_count == 0);
+        CrowdPlaybackSlot* slot = &player.state.slots[source];
+        assert(animator.action_count == 11 && slot.action_count == 11);
+        controls.ordinary[source] = &animator.blend_spaces_2d[0];
+        controls.crowd[source] = &slot.spaces_2d[0];
+        controls.ordinary_overlay[source] = animator.action(animator.order[9]);
+        controls.crowd_overlay[source] = slot.actions.get(slot.order[9]);
+        controls.ordinary_scale[source] = animator.action(animator.order[10]);
+        controls.crowd_scale[source] = slot.actions.get(slot.order[10]);
+        assert(controls.ordinary_overlay[source].weighted_mask == mask.nodes);
+        assert(controls.crowd_overlay[source].weighted_mask == mask.nodes);
+        assert(controls.ordinary_overlay[source].weighted_mask.ptr != mask.nodes.ptr);
+        assert(controls.crowd_overlay[source].weighted_mask.ptr != mask.nodes.ptr);
+    }
+}
+
+fn void drive_layered_inertial_native(AuthoringNativeControls* controls, uint frame) @private {
+    uint interval = frame / 120;
+    for (uint source = 0; source < CROWD_NATIVE_INSTANCES; source++) {
+        Vec2 parameter = AUTHORING_NATIVE_PARAMETERS[(interval + source) % (uint)AUTHORING_NATIVE_PARAMETERS.len];
+        float speed = source == 1 ? -0.75f : (interval >= 5 ? -1.25f : 1.0f);
+        bool playing = interval != 2 && interval != 7;
+        float weight = interval == 3 ? 0 : (interval == 4 ? 0.25f : 1);
+        foreach (space : (BlendSpace2D*[2]){ controls.ordinary[source], controls.crowd[source] }) {
+            space.parameter = parameter;
+            space.speed = speed;
+            space.playing = playing;
+            space.weight = weight;
+        }
+        foreach (action : (Action*[2]){ controls.ordinary_overlay[source], controls.crowd_overlay[source] }) {
+            action.playing = playing;
+        }
+        foreach (action : (Action*[2]){ controls.ordinary_scale[source], controls.crowd_scale[source] }) {
+            action.playing = playing;
+        }
+    }
+}
+
+fn void compare_layered_inertial_reference(
+    CrowdNativePair* actual,
+    CrowdNativePair* reference,
+    MotionNativeErrors* errors,
+) @private {
+    for (uint source = 0; source < CROWD_NATIVE_INSTANCES; source++) {
+        ModelInstance* first = actual.scene.get(actual.ordinary[source], ModelInstance);
+        ModelInstance* second = reference.scene.get(reference.ordinary[source], ModelInstance);
+        foreach (usz index, baseline : first.base_pose) {
+            Transform observed = first.present_node(index).local;
+            Transform expected = second.present_node(index).local;
+            errors.position = math::max(errors.position, (double)observed.position.distance(expected.position));
+            errors.scale = math::max(errors.scale, (double)observed.scale.distance(expected.scale));
+            errors.rotation = math::max(errors.rotation, motion_native_log(motion_native_product(
+                motion_native_rotation(observed.rotation),
+                motion_native_inverse(motion_native_rotation(expected.rotation)))).length());
+        }
+        foreach (node : first.mesh_nodes) {
+            float[] observed = actual.scene.get(first.present_node(node), Mesh).morph_weights;
+            float[] expected = reference.scene.get(second.present_node(node), Mesh).morph_weights;
+            foreach (index, value : observed) {
+                errors.morph = math::max(errors.morph, math::abs((double)value - expected[index]));
+            }
+        }
+    }
+    assert(errors.position <= MOTION_NATIVE_POSITION_EPSILON);
+    assert(errors.rotation <= MOTION_NATIVE_ROTATION_EPSILON);
+    assert(errors.scale <= MOTION_NATIVE_SCALE_EPSILON);
+    assert(errors.morph <= MOTION_NATIVE_MORPH_EPSILON);
+}
+
+fn void test_animation_authoring_motion_native_layered_planar_masks_scale_and_repeated_full_requests() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    Fixture fixture;
+    create_fixture(&tracker, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    ModelId model_id = load_crowd_native_cc0(
+        fixture: &fixture,
+        filename: CROWD_NATIVE_QUATERNIUS,
+        expected_hash: CROWD_NATIVE_QUATERNIUS_SHA,
+    )!!;
+    crowd_native_flat_source_materials(&fixture, model_id);
+    ModelTemplate* template = &fixture.assets.model(model_id).data;
+    ClipId first = crowd_native_clip_named(&fixture, model_id, "Idle_Loop")!!;
+    ClipId scale = authoring_native_scale_clip(&fixture, model_id)!!;
+    WeightedJointMask mask = anim::create_feathered_joint_mask(
+        allocator: mem,
+        assets: &fixture.assets,
+        model: model_id,
+        names: { "DEF-spine.001" },
+        weights: { 0.8f },
+        depths: { 2 },
+    )!!;
+    defer anim::destroy_weighted_joint_mask(&mask);
+    foreach (index, name : AUTHORING_NATIVE_CLIPS) {
+        ClipId clip = crowd_native_clip_named(&fixture, model_id, name)!!;
+        fixture.assets.set_clip_events(clip, {
+            { .time = 0, .id = (uint)index },
+            { .time = fixture.assets.clip(clip).data.duration * 0.5f, .id = 100 + (uint)index },
+        })!!;
+    }
+    Transform[CROWD_NATIVE_INSTANCES] placements = crowd_native_real_placements();
+    CrowdNativePair enabled;
+    create_crowd_native_pair(
+        allocator: &tracker,
+        fixture: &fixture,
+        pair: &enabled,
+        model: model_id,
+        clip: first,
+        bounds: { .min = { -4, -4, -4 }, .max = { 4, 4, 4 } },
+        placements: placements[..],
+        tinted: false,
+    )!!;
+    defer scene::destroy_scene(&enabled.scene);
+    configure_motion_native_pair(&fixture, &enabled, false);
+    CrowdNativePair reference;
+    create_crowd_native_pair(
+        allocator: &tracker,
+        fixture: &fixture,
+        pair: &reference,
+        model: model_id,
+        clip: first,
+        bounds: { .min = { -4, -4, -4 }, .max = { 4, 4, 4 } },
+        placements: placements[..],
+        tinted: false,
+    )!!;
+    defer scene::destroy_scene(&reference.scene);
+    AuthoringNativeControls actual_controls;
+    AuthoringNativeControls reference_controls;
+    configure_layered_inertial_reference(
+        fixture: &fixture,
+        pair: &enabled,
+        controls: &actual_controls,
+        mask: &mask,
+        scale_clip: scale,
+        scale_mode: MULTIPLICATIVE,
+    );
+    configure_layered_inertial_reference(
+        fixture: &fixture,
+        pair: &reference,
+        controls: &reference_controls,
+        mask: &mask,
+        scale_clip: scale,
+        scale_mode: MULTIPLICATIVE,
+    );
+    CrowdNativeOutput output;
+    create_crowd_native_output(&fixture, &output)!!;
+    defer destroy_crowd_native_output(&fixture, &output);
+    ViewDesc desc = render::texture_view_desc(output.target);
+    desc.depth_prepass = true;
+    desc.post.motion_blur = true;
+    render::configure_view(&fixture.renderer, output.view, desc)!!;
+    *enabled.scene.get(enabled.camera, Camera) = camera::orthographic(6, 0.1f, 100);
+    enabled.camera.local.position = { 0, 1, 12 };
+    MotionNativeErrors parity;
+    MotionNativeErrors settled;
+    uint requests;
+    uint target_events;
+    uint captures;
+    uint settled_frames;
+    uint since_request = 1200;
+    for (uint frame = 0; frame < AUTHORING_NATIVE_FRAMES; frame++) {
+        bool request = frame == 120 || frame == 150 || frame == 300 || frame == 420 || frame == 450
+          || frame == 600 || frame == 780 || frame == 900 || frame == 930 || frame == 1050;
+        if (request) {
+            AdditiveScaleMode mode = requests % 2 == 0 ? DIFFERENCE : MULTIPLICATIVE;
+            request_layered_inertial_native(
+                fixture: &fixture,
+                pair: &enabled,
+                controls: &actual_controls,
+                mask: &mask,
+                scale_clip: scale,
+                scale_mode: mode,
+            );
+            configure_layered_inertial_reference(
+                fixture: &fixture,
+                pair: &reference,
+                controls: &reference_controls,
+                mask: &mask,
+                scale_clip: scale,
+                scale_mode: mode,
+            );
+            requests++;
+            since_request = 0;
+        }
+        drive_layered_inertial_native(&actual_controls, frame);
+        drive_layered_inertial_native(&reference_controls, frame);
+        sz acquisitions = tracker.total_allocation_count();
+        crowd_native_update(&fixture, &enabled, AUTHORING_NATIVE_DT);
+        crowd_native_update(&fixture, &reference, AUTHORING_NATIVE_DT);
+        assert(tracker.total_allocation_count() == acquisitions);
+        check_motion_native_pair(&enabled, &parity);
+        since_request++;
+        if (since_request > 40) {
+            compare_layered_inertial_reference(&enabled, &reference, &settled);
+            settled_frames++;
+        }
+        for (uint source = 0; source < CROWD_NATIVE_INSTANCES; source++) {
+            Animator* animator = enabled.scene.get(enabled.ordinary[source], Animator);
+            assert(animator.root_motion.translation == (Vec3){});
+            assert(animator.root_motion.rotation.v == quaternion::IDENTITY{float}.v);
+            foreach (event : animator.events[:animator.event_count]) {
+                Action* target = animator.try_action(event.action)!!;
+                assert(c3d::same_id(target.clip, event.clip));
+                assert(target.root_motion == KEEP);
+                target_events++;
+            }
+            RootMotionDelta crowded = enabled.scene.get(enabled.crowd, AnimatedCrowd).playback.slots[source].root_motion;
+            assert(crowded.translation == (Vec3){} && crowded.rotation.v == quaternion::IDENTITY{float}.v);
+        }
+        enabled.crowd.visible = true;
+        enabled.references.visible = false;
+        enabled.scene.update_world();
+        fixture.renderer.begin_frame({ .time = (double)frame * AUTHORING_NATIVE_DT, .delta = AUTHORING_NATIVE_DT })!!;
+        fixture.renderer.render_view(&enabled.scene, enabled.camera, output.view)!!;
+        fixture.renderer.finish_view(output.view)!!;
+        fixture.renderer.end_frame()!!;
+        if (frame == 0 || frame == 150 || frame == 450 || frame + 1 == AUTHORING_NATIVE_FRAMES) {
+            capture_crowd_native(
+                fixture: &fixture,
+                pair: &enabled,
+                probe: &output.probe,
+                output: output.target,
+                view: output.view,
+                crowd_visible: true,
+                images: &output.actual,
+            )!!;
+            capture_crowd_native(
+                fixture: &fixture,
+                pair: &enabled,
+                probe: &output.probe,
+                output: output.target,
+                view: output.view,
+                crowd_visible: false,
+                images: &output.expected,
+            )!!;
+            save_motion_native_image(
+                images: &output.actual,
+                morph: false,
+                frame: frame + AUTHORING_NATIVE_FRAMES,
+                expected: false,
+            );
+            save_motion_native_image(
+                images: &output.expected,
+                morph: false,
+                frame: frame + AUTHORING_NATIVE_FRAMES,
+                expected: true,
+            );
+            check_crowd_native_parity(&output.actual, &output.expected, false);
+            captures++;
+        }
+    }
+    assert(requests == 10 && target_events > 0 && settled_frames > 0);
+    io::printfn("layered inertial frames=%s seconds=20 requests=%s targets=11 group=9 captures=%s settled_frames=%s target_events=%s",
+        AUTHORING_NATIVE_FRAMES, requests * CROWD_NATIVE_INSTANCES, captures, settled_frames, target_events);
+    io::printfn("disabled-inertia KEEP settled reference position=%s rotation=%s scale=%s morph=%s active_pair_relative=%s root_delta_export=none",
+        settled.position, settled.rotation, settled.scale, settled.morph, parity.carrier_relative);
+    check_crowd_native_validation(&fixture.renderer);
+}

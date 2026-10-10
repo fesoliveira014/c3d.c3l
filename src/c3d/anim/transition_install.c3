@@ -43,6 +43,7 @@ fn InstalledTransition install_animation_transition(
                     .playing = source.playing,
                 };
                 space.positions[:source.count] = source.positions[:source.count];
+
                 foreach (uint index, ordinal : source.members[:source.count]) {
                     space.actions[index] = installed.actions[ordinal];
                     Action* action = playback.actions.get(space.actions[index]);
@@ -50,6 +51,7 @@ fn InstalledTransition install_animation_transition(
                     action.playing = false;
                     action.weight = index == 0 ? source.weight : 0;
                 }
+
             case TWO_DIMENSIONAL:
                 BlendSpace2D* space = &playback.blend_spaces_2d[slot];
                 space.count = source.count;
@@ -67,6 +69,7 @@ fn InstalledTransition install_animation_transition(
                 space.phase = source.phase;
                 space.speed = source.speed;
                 space.playing = source.playing;
+
                 foreach (uint index, ordinal : source.members[:source.count]) {
                     space.actions[index] = installed.actions[ordinal];
                     Action* action = playback.actions.get(space.actions[index]);

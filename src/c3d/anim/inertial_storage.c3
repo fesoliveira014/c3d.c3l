@@ -90,6 +90,7 @@ fn InertialStorage*? create_inertial_storage(
         element_size: row_bytes,
         alignment: InertialRow::alignment,
     )!;
+
     char* block = (char*)(allocator.acquire((sz)bytes, AllocInitType.ZERO, InertialRow::alignment)
       ?? c3d::CAPACITY_EXCEEDED~!);
 
@@ -152,6 +153,7 @@ fn usz? inertial_row_storage_bytes(uint nodes, uint morphs) @local {
         element_size: Transform::size,
         alignment: Transform::alignment,
     )!;
+
     for (uint field = 0; field < 3; field++) {
         offset = inertial_region_end(
             offset: offset,
@@ -160,12 +162,14 @@ fn usz? inertial_row_storage_bytes(uint nodes, uint morphs) @local {
             alignment: PoseVelocity::alignment,
         )!;
     }
+
     offset = inertial_region_end(
         offset: offset,
         count: morphs,
         element_size: float::size,
         alignment: float::alignment,
     )!;
+
     for (uint field = 0; field < 3; field++) {
         offset = inertial_region_end(
             offset: offset,

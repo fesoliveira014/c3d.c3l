@@ -106,8 +106,14 @@ fn void sample_pose_channel(
         foreach (index, component : value[:sample.len]) sample[index] = (float)component;
         return;
     }
+
     if (!derivative) {
-        sample_track(track: track, time: action.time, cursor: &action.cursors[track_index], out: sample);
+        sample_track(
+            track: track,
+            time: action.time,
+            cursor: &action.cursors[track_index],
+            out: sample,
+        );
         return;
     }
 
@@ -121,6 +127,7 @@ fn void sample_pose_channel(
         rate: rate,
         side: action_sample_side(action, onset),
     );
+
     double speed = action.blend_space ? action.analytic_speed : action.playing ? (double)action.speed : 0;
     foreach (index, component : value) {
         sample[index] = (float)component;
@@ -284,6 +291,7 @@ fn void fold_additive_pose_derivative(
 ) @private {
     double[] rate = derivative.sample_rate[:sample.len];
     PoseVelocity* velocity = &derivative.velocity[node];
+
     switch (track.path) {
         case TRANSLATION:
             velocity.translation += (double[<3>]){ rate[0], rate[1], rate[2] } * (double)weight
@@ -339,7 +347,7 @@ fn usz pose_derivative_storage_bytes(PoseDerivativeScratch* scratch) @private {
       + (usz)scratch.morph_values.len * float::size
       + (usz)scratch.consumed_scale.len * bool::size
       + (usz)(scratch.morph_sums.len + scratch.morph_rates.len + scratch.morph_weight_rates.len
-          + scratch.sample.len + scratch.sample_rate.len) * double::size;
+      + scratch.sample.len + scratch.sample_rate.len) * double::size;
 }
 
 fn void pin_analytic_rotation_derivative(Action* action, PoseDerivativeScratch* derivative) @local {
@@ -355,6 +363,7 @@ fn void pin_analytic_rotation_derivative(Action* action, PoseDerivativeScratch* 
     Quaternion twist_rate = { .v = normalized_rotation_derivative(projected, projected_rate) };
     Quat reference_twist = maths::twist_about(action.root_rotation, (Vec3){ 0, 1, 0 });
     Quaternion reference = inertial_pose_rotation(reference_twist);
+
     Quaternion pinned = reference.mul(twist.conjugate()).mul(rotation);
     Quaternion first_rate = reference.mul(twist_rate.conjugate()).mul(rotation);
     Quaternion second_rate = reference.mul(twist.conjugate()).mul(rotation_rate);

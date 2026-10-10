@@ -98,7 +98,12 @@ fn void? validate_transition_scale_eligibility(
     bool unsupported;
 
     foreach (uint node, base : destination.base_pose) {
-        if (!consumed_transition_node(playback, assets, desc, node)) continue;
+        if (!consumed_transition_node(
+            playback: playback,
+            assets: assets,
+            desc: desc,
+            node: node,
+        )) continue;
         AdmittedScaleExtrema[MAX_ACTIONS] domains;
         uint domain_count;
         InertialScalarState target = { .value = inertial_uniform_scale_mean(inertial_pose_vector(base.scale)) };
@@ -125,6 +130,7 @@ fn void? validate_transition_scale_eligibility(
           || !math::is_finite(target.value) || target.value <= 0) {
             return c3d::INVALID_ARGUMENT~;
         }
+
         float[3] eligible_base = { base.scale.x, base.scale.y, base.scale.z };
         InertialScalarState residual = inertial_onset_scale_residual(source, target);
         ScaleEligibilityInput input = {
@@ -156,6 +162,7 @@ fn InertialScalarState transition_node_scale(
 ) @local {
     Vec3 target_scale = base;
     double[<3>] target_rate;
+
     for (uint layer = 0; layer < MAX_ANIMATION_LAYERS; layer++) {
         double[<3>] sum;
         double[<3>] sum_rate;

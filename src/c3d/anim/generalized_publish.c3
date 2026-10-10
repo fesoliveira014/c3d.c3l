@@ -13,6 +13,7 @@ fn RootMotionDelta publish_generalized_owner_motion(
     GeneralizedPlaybackState* state = playback.generalized;
     double[<3>] up = { state.extraction.up.x, state.extraction.up.y, state.extraction.up.z };
     up /= up.length();
+
     if (playback.inertial && dt > 0) {
         InertialRow* row = playback.inertial;
         if (row.control.active) {
@@ -34,6 +35,7 @@ fn RootMotionDelta publish_generalized_owner_motion(
         .translation = inertial_publish_vector(motion.translation),
         .rotation = inertial_publish_rotation(inertial_rotation_exp(up * motion.twist)),
     };
+
     if (playback.inertial && dt > 0) {
         InertialRow* row = playback.inertial;
         row.root.published_translation = { published.translation.x, published.translation.y, published.translation.z };
@@ -53,6 +55,7 @@ fn RootMotionDelta publish_generalized_owner_motion(
         dt: dt,
         velocity: scratch.derivative ? scratch.derivative.velocity : (PoseVelocity[]) {},
     );
+
     if (playback.inertial) {
         correct_inertial_pose(
             playback: playback,

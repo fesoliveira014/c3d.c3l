@@ -48,6 +48,7 @@ fn InertialIdentityState compute_inertial_identity(
         Action* action = playback.actions.get(id);
         if (!assets.clips.is_live(action.clip)) return identity;
         ClipAsset* clip = assets.clips.get(action.clip);
+
         inertial_identity_word(&metadata, id.index);
         inertial_identity_word(&metadata, id.generation);
         inertial_identity_word(&metadata, action.clip.index);
@@ -61,6 +62,7 @@ fn InertialIdentityState compute_inertial_identity(
         layout.update_byte(action.additive ? 1 : 0);
         layout.update_byte(action.root_yaw ? 1 : 0);
         inertial_identity_extraction(&layout, action.extraction);
+
         if (action.motion_chain) {
             inertial_identity_word(&layout, action.motion_chain.root_node);
             inertial_identity_word(&layout, (uint)action.motion_chain.model_names.len);
@@ -110,7 +112,9 @@ fn void inertial_identity_word(Fnv64a* hash, uint value) @local {
 
 fn void inertial_identity_extraction(Fnv64a* hash, RootExtractionDesc extraction) @local {
     hash.update_byte(extraction.generalized ? 1 : 0);
+
     foreach (axis : extraction.translation_axes) hash.update_byte(axis ? 1 : 0);
+
     hash.update_byte(extraction.twist ? 1 : 0);
     inertial_identity_word(hash, bitcast(extraction.up.x, uint));
     inertial_identity_word(hash, bitcast(extraction.up.y, uint));

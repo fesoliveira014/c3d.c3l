@@ -72,6 +72,7 @@ fn GeneralizedMotion evaluate_generalized_playback_motion(
 
     double[<3>] up = { state.extraction.up.x, state.extraction.up.y, state.extraction.up.z };
     up /= up.length();
+
     GeneralizedMotion result;
     GeneralizedMotion cycle_result;
     GeneralizedMotion cycle_rate;
@@ -92,6 +93,7 @@ fn GeneralizedMotion evaluate_generalized_playback_motion(
             GeneralizedMotion delta;
             GeneralizedMotion cycles;
             AnimationClip* clip = &assets.clip(action.clip).data;
+
             if (action.motion_chain) {
                 GeneralizedPlaybackCycle* retained = &state.cycles[id.index];
                 if (!c3d::same_id(retained.action, id)) {
@@ -114,7 +116,9 @@ fn GeneralizedMotion evaluate_generalized_playback_motion(
                           - math::floor(action.previous_time / duration);
                         if (crossings != 0) {
                             GeneralizedMotionFrame crossing = generalized_cycle_anchor(
-                                &action.motion_reference, crossings * duration);
+                                reference: &action.motion_reference,
+                                time: crossings * duration,
+                            );
                             GeneralizedMotion motion = {
                                 .translation = crossing.position,
                                 .twist = action.motion_reference.cycle.twist * crossings,
@@ -139,6 +143,7 @@ fn GeneralizedMotion evaluate_generalized_playback_motion(
                 translation: &translation,
                 twist: &twist,
             );
+
             if (translation) {
                 sum.translation += delta.translation * weight;
                 cycle_sum.translation += cycles.translation * weight;
@@ -168,6 +173,7 @@ fn GeneralizedMotion evaluate_generalized_playback_motion(
         cycle_rate.translation = (cycle_rate_sum.translation + cycle_rate.translation * translation_below
           + cycle_result.translation * below_rate - folded_cycle * divisor_rate) / translation_total;
         cycle_result.translation = folded_cycle;
+
         double twist_below = math::max(0.0, 1 - twist_weight);
         double twist_total = math::max(1.0, twist_weight);
         result.twist = (sum.twist + result.twist * twist_below) / twist_total;
@@ -204,6 +210,7 @@ fn void finish_generalized_playback(
 
     double[<3>] up = { state.extraction.up.x, state.extraction.up.y, state.extraction.up.z };
     up /= up.length();
+
     GeneralizedMotionFrame emitted = generalized_frame_from_motion(final_motion, up);
     if (published) {
         emitted.position = inertial_pose_vector(published.translation);
@@ -214,6 +221,7 @@ fn void finish_generalized_playback(
         state.carrier_translation_rate = state.consumed.rotation.rotate_vec3(emitted.position / dt);
         state.carrier_twist_rate = final_motion.twist / dt;
     }
+
     state.consumed = compose_generalized_frames(state.consumed, emitted);
 
     compensate_generalized_playback_target(
@@ -245,20 +253,21 @@ fn void compensate_generalized_playback_target(
     if (velocity.len) {
         double[<3>] up = { state.extraction.up.x, state.extraction.up.y, state.extraction.up.z };
         up /= up.length();
+
         Quaternion inverse_rotation = state.consumed.rotation.conjugate();
         double[<3>] anchor_translation_rate = state.anchor.rotation.rotate_vec3(
-            state.cycle_rate.translation * state.anchor.scale);
+          state.cycle_rate.translation * state.anchor.scale);
         double[<3>] anchor_angular_rate = state.anchor.rotation.rotate_vec3(up * state.cycle_rate.twist);
         double[<3>] carrier_angular_rate = up * state.carrier_twist_rate;
         double[<3>] angular_rate = inverse_rotation.rotate_vec3(anchor_angular_rate - carrier_angular_rate);
         double[<3>] translation_rate = inverse_rotation.rotate_vec3(
-            anchor_translation_rate - state.carrier_translation_rate) / state.consumed.scale
+          anchor_translation_rate - state.carrier_translation_rate) / state.consumed.scale
           - inverse_rotation.rotate_vec3(carrier_angular_rate).cross(correction.position);
 
         foreach (node : chain.top_level_nodes) {
             PoseVelocity* rate = &velocity[node];
             double[<3>] position = correction.rotation.rotate_vec3(
-                inertial_pose_vector(destination.pose[node].position) * correction.scale);
+              inertial_pose_vector(destination.pose[node].position) * correction.scale);
             rate.translation = translation_rate + angular_rate.cross(position)
               + correction.rotation.rotate_vec3(rate.translation * correction.scale);
             rate.angular = angular_rate + correction.rotation.rotate_vec3(rate.angular);
@@ -280,7 +289,9 @@ fn GeneralizedMotionFrame generalized_playback_pose_endpoint(
 
     for (sz index = chain.nodes.len; index > 0; index--) {
         result = compose_generalized_frames(
-            result, generalized_frame_from_transform(pose[chain.nodes[index - 1].model_node]));
+            parent: result,
+            local: generalized_frame_from_transform(pose[chain.nodes[index - 1].model_node]),
+        );
     }
 
     return result;
@@ -318,6 +329,7 @@ fn double initialize_transition_anchor(
 
     return 1;
 }
+
 fn CapturedMotionChain* generalized_playback_chain(PlaybackView* playback) @private {
     foreach (id : playback.order[:*playback.action_count]) {
         Action* action = playback.actions.get(id);
@@ -335,10 +347,12 @@ fn void generalized_playback_channels(
 ) @local {
     *translation = false;
     *twist = false;
+
     foreach (track : clip.tracks) {
         uint node = clip.targets[track.target];
         foreach (ancestor : chain.nodes) {
             if (ancestor.model_node != node) continue;
+
             if (track.path == TargetPath.TRANSLATION || track.path == TargetPath.ROTATION
               || track.path == TargetPath.SCALE) *translation = true;
             if (track.path == TargetPath.ROTATION) *twist = true;

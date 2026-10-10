@@ -66,15 +66,24 @@ fn void blend_pose(
                 if (weight <= 0 && weight_rate == 0) continue;
 
                 float[] sample = samples[:track.stride()];
-                sample_pose_channel(
-                    action: action,
-                    track: track,
-                    track_index: (uint)track_index,
-                    sample: sample,
-                    derivative: derivative,
-                    onset: onset,
-                    consumed: consumed_chain && captured_motion_node(consumed_chain, node),
-                );
+                if (!precise_scale) {
+                    sample_track(
+                        track: track,
+                        time: action.time,
+                        cursor: &action.cursors[track_index],
+                        out: sample,
+                    );
+                } else {
+                    sample_pose_channel(
+                        action: action,
+                        track: track,
+                        track_index: (uint)track_index,
+                        sample: sample,
+                        derivative: derivative,
+                        onset: onset,
+                        consumed: consumed_chain && captured_motion_node(consumed_chain, node),
+                    );
+                }
                 pin_root_sample(action, (uint)track_index, sample);
                 if (derivative) accumulate_pose_derivative(
                     derivative: derivative,
@@ -180,6 +189,13 @@ fn void blend_pose(
                     sample[0] = scale.x;
                     sample[1] = scale.y;
                     sample[2] = scale.z;
+                } else if (!precise_scale) {
+                    sample_track(
+                        track: track,
+                        time: action.time,
+                        cursor: &action.cursors[track_index],
+                        out: sample,
+                    );
                 } else {
                     sample_pose_channel(
                         action: action,

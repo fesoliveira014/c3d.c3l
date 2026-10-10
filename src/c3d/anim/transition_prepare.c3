@@ -95,6 +95,7 @@ fn PreparedTransition? validate_animation_transition(
         PlayDesc structural = target.play;
         structural.additive_scale = AdditiveScaleMode.DIFFERENCE;
         (void)validate_playback_action(clip, structural, destination)!;
+
         if (target.play.weighted_mask) {
             validate_weighted_joint_mask(assets, playback.model, target.play.weighted_mask)!;
         }
@@ -242,7 +243,9 @@ fn void? prepare_transition_space(
                     return c3d::INVALID_ARGUMENT~;
                 }
             }
+
             destination.positions[:source.positions.len] = source.positions[..];
+
         case TWO_DIMENSIONAL:
             if (!math::is_finite(source.parameter_2d.x) || !math::is_finite(source.parameter_2d.y)
               || source.points.len != source.actions.len || source.actions.len > capacity

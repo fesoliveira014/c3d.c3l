@@ -17,12 +17,14 @@ import std::io;
 import std::io::path;
 import std::math;
 
-const uint ACTION_CAPACITY @local = 16; // Nine members and two overlays; 16 action slots plus 1008 B of 2D rows per owner.
+const uint ACTION_CAPACITY @local = 16; // Nine members and two overlays; 16 action slots
+  // plus 1008 B of 2D rows per owner.
 const uint UPPER_ACTION_INDEX @local = 9;
 const uint SCALE_ACTION_INDEX @local = 10;
 const uint LAYERED_ACTION_COUNT @local = 11; // Nine blend members plus upper-body and scale overlays.
 const float TRANSITION_SECONDS @local = 0.35f; // Preserves a visible transition without delaying repeated controls.
-const uint SCENE_CAPACITY @local = 512; // Four owners, camera and light; 513 * Node::size bytes plus fixed component rows.
+const uint SCENE_CAPACITY @local = 512; // Four owners, camera and light;
+  // 513 * Node::size bytes plus fixed component rows.
 const String[9] LOCOMOTION_NAMES @local = {
     "Jog_Bwd_L_Loop", "Jog_Bwd_Loop", "Jog_Bwd_R_Loop",
     "Jog_Left_Loop", "Idle_Loop", "Jog_Right_Loop",
@@ -493,6 +495,7 @@ fn void? run(
             )!;
             controls.request = false;
         }
+
         if (controls.cancel) {
             scene.get(character.ordinary, Animator).cancel_inertial_transition();
             AnimatedCrowd* crowd = scene.get(character.crowd, AnimatedCrowd);
@@ -506,6 +509,7 @@ fn void? run(
 
         anim::update(assets, scene, window.clock.delta);
         anim::crowd_update(assets, scene, window.clock.delta);
+
         if (controls.consume_motion) {
             Animator* animator = scene.get(character.ordinary, Animator);
             anim::apply_root_motion(character.ordinary, animator.root_motion);
@@ -528,6 +532,7 @@ fn void? run(
             renderer.finish_view(renderer.default_view)!;
 
             OverlayContext overlay = renderer.begin_overlay()!;
+
             gui_renderer.record(&overlay)!;
             renderer.end_overlay(&overlay)!;
         }

@@ -50,6 +50,7 @@ fn InstalledTransition begin_prepared_inertial_transition(
         scratch: scratch,
         onset: true,
     );
+
     if (playback.generalized && generalized_playback_chain(playback)) {
         GeneralizedMotionFrame target_onset = generalized_playback_pose_endpoint(playback, destination.pose);
         PoseDestination source = destination;
@@ -67,6 +68,7 @@ fn InstalledTransition begin_prepared_inertial_transition(
             velocity: scratch.derivative.velocity,
         );
     }
+
     read_inertial_morphs(destination.morph_weights, scratch.derivative.morph_values);
 
     capture_inertial_pose_residuals(
@@ -79,6 +81,7 @@ fn InstalledTransition begin_prepared_inertial_transition(
         target_morph_rate: scratch.derivative.morph_rates,
         consumed_scale: scratch.derivative.consumed_scale,
     );
+
     row.control.duration = prepared.duration;
     row.control.elapsed = 0;
     row.control.active = prepared.duration > 0;
@@ -121,9 +124,8 @@ fn void correct_inertial_pose(
         elapsed: row.control.elapsed,
     );
     row.control.active = row.control.elapsed < row.control.duration;
+
     write_inertial_morphs(derivative.morph_values, destination.morph_weights);
-
-
 }
 
 fn void record_playback_inertial_history(

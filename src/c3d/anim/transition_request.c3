@@ -14,6 +14,7 @@ import std::math;
 fn void? Animator.inertialize(&self, AssetStore* assets, AnimationTransitionDesc desc) {
     refresh_destination(self);
     PlaybackView playback = self.playback();
+
     (void)request_inertial_transition(
         playback: &playback,
         assets: assets,
@@ -46,6 +47,7 @@ fn void Animator.cancel_inertial_transition(&self) {
 fn void? CrowdPlayer.inertialize(&self, AssetStore* assets, AnimationTransitionDesc desc) {
     CrowdPlaybackSlot* slot = crowd_slot(self.state, self.instance)!;
     PlaybackView playback = crowd_playback_view(self.state, slot);
+
     InstalledTransition installed = request_inertial_transition(
         playback: &playback,
         assets: assets,
@@ -61,6 +63,7 @@ fn void? CrowdPlayer.inertialize(&self, AssetStore* assets, AnimationTransitionD
         slot.base_action = id;
         break;
     }
+
     slot.root_motion = { .rotation = quaternion::IDENTITY };
 
     uint kept;
@@ -142,6 +145,7 @@ fn InstalledTransition? request_inertial_transition(
         playback.generalized.carrier_translation_rate = {};
         playback.generalized.carrier_twist_rate = 0;
     }
+
     InstalledTransition installed = begin_prepared_inertial_transition(
         playback: playback,
         assets: assets,
