@@ -235,8 +235,14 @@ For below `(2,3,4)`, reference `(2,4,8)`, sample `(4,2,16)` and weight 0.5,
 the result is `(3,2.25,6)`. The scale mode and time-zero reference are captured
 at play. Every scale track and its reference must stay finite and strictly
 positive across its full domain. Admission checks STEP/LINEAR keys and cubic
-interior extrema once; invalid data returns `INVALID_ARGUMENT` before creating
-an action or group. Sampling and updates do not repeat that domain scan.
+interior extrema once. Nonpositive domains return `INVALID_ARGUMENT` before
+creating an action or group. CUBIC segments also need an exact minimum of at
+least `FLT_MIN + 2^-40 * M`, where `FLT_MIN = 2^-126` and `M` is the largest
+magnitude of a key or duration-scaled tangent. This directed margin covers the
+double sampler error and keeps its float result positive. Positive curves below
+the margin return `UNSUPPORTED` before mutation. STEP and LINEAR retain their
+key-only checks, including positive subnormals. Runtime applies no clamp or
+repeated domain scan.
 
 An additive action keeps the reference pose it sampled at `play` until it is played again. After
 `replace_clip_owned`, running actions re-seek on the new tracks, but an additive action's reference pose and

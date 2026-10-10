@@ -224,6 +224,7 @@ fn BlendSpace2D*? PlaybackView.add_blend_space_2d(
     space.points[:space.count] = coordinates[..];
     space.triangles[:space.triangle_count] = admitted_triangles[:space.triangle_count];
     space.hull[:space.hull_count] = admitted_hull[:space.hull_count];
+
     space.parameter = coordinates[0];
     space.weight = desc.fade_in > 0 ? 0 : 1;
     space.fade_target = 1;

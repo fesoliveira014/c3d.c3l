@@ -318,7 +318,7 @@ fn void? validate_crowd_seed(AssetStore* assets, ModelTemplate* template, CrowdP
  Prepare an owned seed action without changing the crowd slot.
  @param [&inout] state : "Retains fixed storage throughout staging."
  @param [&in] assets : "Owns the referenced clip."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
  @require index < state.slots.len
 *>
 fn Action? prepare_crowd_seed(

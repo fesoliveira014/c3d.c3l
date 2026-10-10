@@ -370,7 +370,7 @@ fn void test_animation_scale_playback_reference_uses_time_zero_between_authored_
     }
 }
 
-fn void test_animation_scale_playback_constant_subnormal_maximum_and_adjacent_inputs_survive_all_modes() @test {
+fn void test_animation_scale_playback_constant_magnitude_sampling_respects_the_cubic_band() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
     defer tracker.free();
@@ -391,6 +391,33 @@ fn void test_animation_scale_playback_constant_subnormal_maximum_and_adjacent_in
                 times: times[..],
                 values: mode == Interpolation.CUBIC_SPLINE ? cubic[..] : ordinary[..],
             );
+            if (mode == Interpolation.CUBIC_SPLINE && magnitude == 0x1p-149f) {
+                PlaybackView[2] owners = {
+                    fixture.ordinary.animator.playback(),
+                    anim::crowd_playback_view(fixture.crowd, &fixture.crowd.slots[0]),
+                };
+                foreach (index, &owner : owners) {
+                    ScalePlaybackSnapshot snapshot = snapshot_scale_playback(owner);
+                    defer destroy_scale_playback_snapshot(&snapshot);
+                    sz acquisitions = tracker.total_allocation_count();
+                    PlayDesc desc = { .additive = true, .additive_scale = AdditiveScaleMode.MULTIPLICATIVE };
+                    AnimationActionId? attempt;
+                    if (index == 0) {
+                        attempt = fixture.ordinary.animator.play(&fixture.ordinary.assets, clip, desc);
+                    } else {
+                        attempt = fixture.player.play(&fixture.ordinary.assets, clip, desc);
+                    }
+                    bool rejected;
+                    if (catch excuse = attempt) {
+                        assert(excuse == c3d::UNSUPPORTED);
+                        rejected = true;
+                    }
+                    assert(rejected && tracker.total_allocation_count() == acquisitions);
+                    assert_scale_playback_unchanged(owner, &snapshot);
+                }
+                fixture.ordinary.assets.remove_clip(clip);
+                continue;
+            }
             AnimationActionId[2] actions = play_scale_playback_pair(
                 fixture: &fixture,
                 clip: clip,
@@ -407,6 +434,98 @@ fn void test_animation_scale_playback_constant_subnormal_maximum_and_adjacent_in
             fixture.player.stop(actions[1])!!;
             fixture.ordinary.assets.remove_clip(clip);
         }
+    }
+}
+
+fn void test_animation_scale_playback_both_cubic_zero_samples_are_unsupported_before_mutation() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    ScalePlaybackFixture fixture;
+    create_scale_playback_fixture(&fixture, { 1, 1, 1 }, &tracker);
+    defer destroy_scale_playback_fixture(&fixture);
+    float[2] constant_times = { 0, 1 };
+    float[6] constant_values = { 1, 1, 1, 1, 1, 1 };
+    ClipId constant = scale_playback_clip(
+        fixture: &fixture,
+        interpolation: Interpolation.LINEAR,
+        times: constant_times[..],
+        values: constant_values[..],
+    );
+    (void)play_scale_playback_pair(
+        fixture: &fixture,
+        clip: constant,
+        desc: { .additive = true, .additive_scale = AdditiveScaleMode.MULTIPLICATIVE },
+        weight: 1,
+        time: 0.5f,
+    );
+    update_scale_playback_pair(&fixture, { 1, 1, 1 });
+    for (uint shape = 0; shape < 2; shape++) {
+        float[2] times = { 0, 1 };
+        if (shape == 0) times[0] = 0x1p-149;
+        float value = shape == 0 ? 1.0f : 0x1p-126f;
+        float outgoing = shape == 0 ? -4.0f : -bitcast(0x017fffffu, float);
+        float incoming = shape == 0 ? 4.0f : 0x1p-124f;
+        float[18] values = { 0, 0, 0, value, value, value, outgoing, outgoing, outgoing,
+            incoming, incoming, incoming, value, value, value, 0, 0, 0 };
+        ClipId unsafe = scale_playback_clip(
+            fixture: &fixture,
+            interpolation: Interpolation.CUBIC_SPLINE,
+            times: times[..],
+            values: values[..],
+        );
+        AnimationClip* data = &fixture.ordinary.assets.clip(unsafe).data;
+        uint cursor;
+        assert(anim::sample_multiplicative_scale(&data.tracks[0], 0.5f, &cursor).x == 0);
+        PlaybackView[2] owners = {
+            fixture.ordinary.animator.playback(),
+            anim::crowd_playback_view(fixture.crowd, &fixture.crowd.slots[0]),
+        };
+        foreach (index, &owner : owners) {
+            ScalePlaybackSnapshot snapshot = snapshot_scale_playback(owner);
+            defer destroy_scale_playback_snapshot(&snapshot);
+            sz acquisitions = tracker.total_allocation_count();
+            bool rejected;
+            AnimationActionId? attempt;
+            PlayDesc desc = { .additive = true, .additive_scale = AdditiveScaleMode.MULTIPLICATIVE };
+            if (index == 0) {
+                attempt = fixture.ordinary.animator.play(&fixture.ordinary.assets, unsafe, desc);
+            } else {
+                attempt = fixture.player.play(&fixture.ordinary.assets, unsafe, desc);
+            }
+            if (catch excuse = attempt) {
+                assert(excuse == c3d::UNSUPPORTED);
+                rejected = true;
+            }
+            assert(rejected && tracker.total_allocation_count() == acquisitions);
+            assert_scale_playback_unchanged(owner, &snapshot);
+            update_scale_playback_pair(&fixture, { 1, 1, 1 });
+        }
+        fixture.ordinary.assets.remove_clip(unsafe);
+        for (uint component = 0; component < 3; component++) {
+            values[3 + component] = value * 2;
+            values[12 + component] = value * 2;
+        }
+        ClipId supported = scale_playback_clip(
+            fixture: &fixture,
+            interpolation: Interpolation.CUBIC_SPLINE,
+            times: times[..],
+            values: values[..],
+        );
+        AnimationActionId[2] actions = play_scale_playback_pair(
+            fixture: &fixture,
+            clip: supported,
+            desc: { .additive = true, .additive_scale = AdditiveScaleMode.MULTIPLICATIVE },
+            weight: 1,
+            time: 0.5f,
+        );
+        data = &fixture.ordinary.assets.clip(supported).data;
+        assert(anim::sample_multiplicative_scale(&data.tracks[0], 0.5f, &cursor).x > 0);
+        update_scale_playback_pair(&fixture, { 0.5f, 0.5f, 0.5f });
+        fixture.ordinary.animator.stop(actions[0])!!;
+        fixture.player.stop(actions[1])!!;
+        fixture.ordinary.assets.remove_clip(supported);
+        update_scale_playback_pair(&fixture, { 1, 1, 1 });
     }
 }
 

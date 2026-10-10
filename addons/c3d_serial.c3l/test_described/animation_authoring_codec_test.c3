@@ -228,9 +228,12 @@ fn void test_animation_authoring_codec_animator_planar_groups_masks_modes_restar
             space.parameter = { 1.25f, 1.5f };
             space.speed = -0.5f;
             if (side == 3) {
-                animator.add_blend_space(&fixture.assets, { clip, clip }, { -1, 2 }, {
-                    .layer = 1, .weighted_mask = &mask,
-                })!!;
+                animator.add_blend_space(
+                    assets: &fixture.assets,
+                    clips: { clip, clip },
+                    positions: { -1, 2 },
+                    desc: { .layer = 1, .weighted_mask = &mask },
+                )!!;
             }
             anim::update(&fixture.assets, &fixture.source, 0.375f);
             Action[anim::MAX_ACTIONS] before;
@@ -641,4 +644,346 @@ fn void test_animation_authoring_codec_pending_weighted_planar_allocations_and_p
         scene::destroy_scene(&retry);
         assert(allocator.outstanding == 0);
     };
+}
+
+fn void test_animation_authoring_codec_animator_malformed_weighted_and_planar_reads_leave_empty_scene() @test {
+    @pool() {
+        Fixture fixture;
+        create_fixture(&fixture, 32);
+        defer destroy_fixture(&fixture);
+        serial::register_core_codecs()!!;
+        ModelId model_id = gltf::load_model(&fixture.assets, skin_fixture_path())!!;
+        Node* source = model::instantiate(&fixture.assets, &fixture.source, model_id)!!;
+        Animator* animator = anim::add_animator(&fixture.source, source);
+        ClipId clip = fixture.assets.model(model_id).data.clips[0];
+        WeightedJointMask mask = codec_feathered_mask(&fixture.assets, model_id);
+        mask.nodes[0] = bitcast(0x3e123456u, float);
+        Vec2[3] points = { { 0, 0 }, { 1, 0 }, { 0, 1 } };
+        BlendTriangle[1] triangles = { { .indices = { 0, 1, 2 } } };
+        animator.add_blend_space_2d(
+            assets: &fixture.assets,
+            clips: { clip, clip, clip },
+            coordinates: points[..],
+            triangles: triangles[..],
+            desc: { .weighted_mask = &mask, .additive = true, .additive_scale = MULTIPLICATIVE },
+        )!!;
+        char[] bytes = serial::write_subtree(
+            allocator: tmem,
+            scene: &fixture.source,
+            assets: &fixture.assets,
+            root: source,
+        )!!;
+        String text = serial::write_subtree_text(
+            allocator: tmem,
+            scene: &fixture.source,
+            assets: &fixture.assets,
+            root: source,
+        )!!;
+        SerialDiagnostic diagnostic = serial::create_serial_diagnostic(mem);
+        defer serial::destroy_serial_diagnostic(&diagnostic);
+        TextDocument document = serial::parse_text(
+            allocator: tmem,
+            source: text,
+            limits: serial::TEXT_LIMITS_DEFAULT,
+            diagnostic: &diagnostic,
+        )!!;
+        defer serial::destroy_text_document(&document);
+        uint nodes = member(&document, 0, "nodes");
+        uint components = member(&document, nodes + 1, "components");
+        uint saved = member(&document, components, "c3d.Animator");
+        uint value = member(&document, saved, "value");
+        uint actions = member(&document, value, "actions");
+        uint spaces = member(&document, value, "spaces");
+        uint weighted = member(&document, actions + 1, "weighted_mask");
+        uint faces = member(&document, spaces + 1, "triangles");
+        uint indices = member(&document, faces + 1, "indices");
+        uint membership = member(&document, spaces + 1, "actions");
+        uint scale_mode = member(&document, actions + 1, "additive_scale");
+        usz weight_offset;
+        uint matches;
+        for (usz offset = 0; offset + uint::size <= bytes.len; offset++) {
+            Reader reader = serial::reader_over(bytes[offset:uint::size]);
+            if (reader.read_uint()!! != 0x3e123456u) continue;
+            if (matches == 0) weight_offset = offset;
+            matches++;
+        }
+        assert(matches == 3);
+        usz triangle_indices = codec_unique_layout_offset(bytes, 0x484666f6dc6513d7)
+          + ulong::size + 3 * uint::size;
+        usz group_members = codec_unique_layout_offset(bytes, 0x4d5777ab1cce4ecc)
+          + ulong::size + 3 * uint::size;
+        uint[6] tokens = { weighted + 1, weighted + 1, weighted, indices, membership, scale_mode };
+        String[6] replacements = {
+            `"f32:7fc00001"`, "1.5", "[0.5,0.5,0.5]", "[99,1,2]", "[0,0,2]", `"UNKNOWN"`,
+        };
+        usz[6] offsets = {
+            weight_offset, weight_offset, weight_offset - 2 * uint::size,
+            triangle_indices, group_members + uint::size, weight_offset + 4 * float::size,
+        };
+        uint[6] words = { 0x7fc00001, 0x3fc00000, 3, 99, 0, 99 };
+        uint free_before = fixture.destination.world.entities.free_count;
+        ReadOptions options = serial::READ_OPTIONS_DEFAULT;
+        options.diagnostic = &diagnostic;
+        foreach (case_index, token : tokens) {
+            char[] malformed = alloc::clone_slice(tmem, bytes);
+            Writer patch = serial::writer_over(malformed[offsets[case_index]:uint::size]);
+            patch.write_uint(words[case_index]);
+            String malformed_text = replace_token(text, document.values[token], replacements[case_index]);
+            for (uint encoding = 0; encoding < 2; encoding++) {
+                Node*? result = encoding == 0
+                  ? serial::read_subtree(
+                        scene: &fixture.destination,
+                        assets: &fixture.assets,
+                        bytes: malformed,
+                        options: options,
+                    )
+                  : serial::read_subtree_text(
+                        scene: &fixture.destination,
+                        assets: &fixture.assets,
+                        text: malformed_text,
+                        options: options,
+                    );
+                fault expected = case_index == 5 || (case_index == 2 && encoding == 0)
+                  ? c3d::ASSET_FORMAT_ERROR : c3d::INVALID_ARGUMENT;
+                assert(@catch(result) == expected);
+                assert(diagnostic.cause == expected && diagnostic.type_name == "c3d.Animator");
+                assert(fixture.destination.world.entities.free_count == free_before);
+                assert(fixture.destination.root.first_child == null);
+                assert(fixture.destination.count(Animator) == 0 && fixture.destination.count(ModelInstance) == 0);
+            }
+        }
+    };
+}
+
+fn void test_animation_authoring_codec_prepared_crowd_exports_new_fields_without_mutation_and_restarts() @test {
+    @pool() {
+        Fixture fixture;
+        create_fixture(&fixture, 32);
+        defer destroy_fixture(&fixture);
+        serial::register_core_codecs()!!;
+        ModelId model_id = gltf::load_model(&fixture.assets, skin_fixture_path())!!;
+        ClipId clip = fixture.assets.model(model_id).data.clips[0];
+        WeightedJointMask mask = codec_feathered_mask(&fixture.assets, model_id);
+        CodecBlendGrid grid = codec_blend_grid(clip, 3);
+        CrowdInstance[1] seeds = { {
+            .placement = maths::TRANSFORM_IDENTITY,
+            .pose = { .clip = clip, .time = 0.125f, .speed = 0.5f, .loop = true },
+            .color = { 1, 1, 1, 1 },
+        } };
+        Node* source = fixture.source.add_node(name: "prepared_weighted_planar")!!;
+        model::attach_crowd(
+            assets: &fixture.assets,
+            scene: &fixture.source,
+            node: source,
+            model: model_id,
+            capacity: 2,
+            pose_bounds: { .min = { -4, -4, -4 }, .max = { 4, 4, 4 } },
+            instances: seeds[..],
+            actions_per_instance: 10,
+        )!!;
+        model::prepare_crowd(&fixture.assets, &fixture.source, source)!!;
+        AnimatedCrowd* original = fixture.source.get(source, AnimatedCrowd);
+        CrowdPlayer player = original.playback.player(original.playback.instance_id(0)!!)!!;
+        player.base_action()!!.weight = 0.4f;
+        BlendSpace2D* space = player.add_blend_space_2d(
+            assets: &fixture.assets,
+            clips: grid.clips[:grid.count],
+            coordinates: grid.points[:grid.count],
+            triangles: grid.triangles[:grid.triangle_count],
+            desc: { .weighted_mask = &mask, .additive = true, .additive_scale = MULTIPLICATIVE },
+        )!!;
+        space.parameter = { 1.25f, 1.5f };
+        space.weight = 0.6f;
+        space.speed = -0.5f;
+        anim::crowd_update(&fixture.assets, &fixture.source, 0.375f);
+        CrowdPlaybackSlot* slot = &original.playback.slots[0];
+        CrowdPlaybackSlot slot_before = *slot;
+        BlendSpace2D control_before = *space;
+        Vec2[] points_before = alloc::clone_slice(tmem, space.points[:space.count]);
+        BlendTriangleIndices[] triangles_before = alloc::clone_slice(tmem, space.triangles[:space.triangle_count]);
+        Action[anim::MAX_ACTIONS] actions_before;
+        foreach (index, id : slot.order[:slot.action_count]) actions_before[index] = *slot.actions.get(id);
+        Transform[] poses_before = alloc::clone_slice(tmem, original.playback.poses);
+        float[] morphs_before = alloc::clone_slice(tmem, original.morph_weights);
+        Mat4[] palettes_before = alloc::clone_slice(tmem, original.palettes);
+        char[] bytes = serial::write_subtree(
+            allocator: tmem,
+            scene: &fixture.source,
+            assets: &fixture.assets,
+            root: source,
+        )!!;
+        String text = serial::write_subtree_text(
+            allocator: tmem,
+            scene: &fixture.source,
+            assets: &fixture.assets,
+            root: source,
+        )!!;
+        assert(mem::equals(&slot_before, slot, CrowdPlaybackSlot::size));
+        assert(mem::equals(&control_before, space, BlendSpace2D::size));
+        assert(space.points[:space.count] == points_before);
+        assert(mem::equals(space.triangles[:space.triangle_count], triangles_before));
+        foreach (index, id : slot.order[:slot.action_count]) {
+            assert(mem::equals(&actions_before[index], slot.actions.get(id), Action::size));
+            if (index) assert(slot.actions.get(id).weighted_mask == mask.nodes);
+        }
+        assert(mem::equals(original.playback.poses, poses_before));
+        assert(original.morph_weights == morphs_before && mem::equals(original.palettes, palettes_before));
+        for (uint encoding = 0; encoding < 2; encoding++) {
+            Node* restored = encoding == 0
+              ? serial::read_subtree(&fixture.destination, &fixture.assets, bytes)!!
+              : serial::read_subtree_text(&fixture.destination, &fixture.assets, text)!!;
+            AnimatedCrowd* loaded = fixture.destination.get(restored, AnimatedCrowd);
+            assert(!loaded.is_prepared() && loaded.authoring);
+            CrowdInstanceAuthoring authored = loaded.authoring.instances[0];
+            assert(authored.base_action == 0 && authored.actions.len == 10 && authored.spaces.len == 1);
+            assert(authored.actions[0].weight == 0.4f && authored.actions[0].speed == 0.5f);
+            assert(authored.spaces[0].actions[0] == 1 && authored.spaces[0].actions[8] == 9);
+            assert(mem::equals(authored.spaces[0].triangles, grid.triangles[:grid.triangle_count]));
+            assert(authored.spaces[0].parameter_2d == control_before.parameter);
+            model::prepare_crowd(&fixture.assets, &fixture.destination, restored)!!;
+            CrowdPlaybackSlot* restarted = &loaded.playback.slots[0];
+            assert(c3d::same_id(restarted.base_action, restarted.order[0]));
+            assert(restarted.actions.get(restarted.base_action).time == 0.125f);
+            BlendSpace2D* planar = &restarted.spaces_2d[0];
+            assert(planar.count == 9 && planar.phase == 0 && planar.fade_rate == 0);
+            assert(planar.weight == 0.6f && planar.parameter == control_before.parameter);
+            assert(planar.reversed == control_before.reversed);
+            foreach (member, id : planar.actions[:planar.count]) {
+                assert(c3d::same_id(id, restarted.order[member + 1]));
+                Action* action = restarted.actions.get(id);
+                assert(action.time == 0 && action.weighted_mask == mask.nodes);
+                assert(action.additive_scale == MULTIPLICATIVE && action.additive);
+            }
+            assert(loaded.playback.event_count == 0 && restarted.root_motion.translation == (Vec3){});
+            fixture.destination.remove(restored);
+        }
+    };
+}
+
+fn void test_animation_authoring_codec_both_owners_omit_outgoing_and_settle_incoming_planar_fades() @test {
+    foreach (crowded : (bool[2]){ false, true }) {
+        foreach (outgoing : (bool[2]){ false, true }) {
+            @pool() {
+                Fixture fixture;
+                create_fixture(&fixture, 32);
+                defer destroy_fixture(&fixture);
+                serial::register_core_codecs()!!;
+                ModelId model_id = gltf::load_model(&fixture.assets, skin_fixture_path())!!;
+                ClipId clip = fixture.assets.model(model_id).data.clips[0];
+                WeightedJointMask mask = codec_feathered_mask(&fixture.assets, model_id);
+                Vec2[3] points = { { 0, 0 }, { 1, 0 }, { 0, 1 } };
+                BlendTriangle[1] triangles = { { .indices = { 2, 1, 0 } } };
+                Node* source;
+                Animator* animator;
+                AnimatedCrowd* crowd;
+                BlendSpace2D* space;
+                if (crowded) {
+                    source = fixture.source.add_node(name: "fade_crowd")!!;
+                    model::attach_crowd(
+                        assets: &fixture.assets,
+                        scene: &fixture.source,
+                        node: source,
+                        model: model_id,
+                        capacity: 1,
+                        pose_bounds: { .min = { -4, -4, -4 }, .max = { 4, 4, 4 } },
+                        instances: { {
+                            .placement = maths::TRANSFORM_IDENTITY,
+                            .pose = { .clip = clip, .speed = 1, .loop = true },
+                            .color = { 1, 1, 1, 1 },
+                        } },
+                        actions_per_instance: 4,
+                    )!!;
+                    model::prepare_crowd(&fixture.assets, &fixture.source, source)!!;
+                    crowd = fixture.source.get(source, AnimatedCrowd);
+                    CrowdPlayer player = crowd.playback.player(crowd.playback.instance_id(0)!!)!!;
+                    player.stop(crowd.playback.slots[0].base_action)!!;
+                    space = player.add_blend_space_2d(
+                        assets: &fixture.assets,
+                        clips: { clip, clip, clip },
+                        coordinates: points[..],
+                        triangles: triangles[..],
+                        desc: { .weighted_mask = &mask, .additive = true, .additive_scale = MULTIPLICATIVE },
+                    )!!;
+                    if (outgoing) {
+                        player.stop_blend_space_2d(space, 2)!!;
+                    } else {
+                        player.fade_blend_space_2d(space, 0.4f, 2)!!;
+                    }
+                } else {
+                    source = model::instantiate(&fixture.assets, &fixture.source, model_id)!!;
+                    animator = anim::add_animator(&fixture.source, source);
+                    space = animator.add_blend_space_2d(
+                        assets: &fixture.assets,
+                        clips: { clip, clip, clip },
+                        coordinates: points[..],
+                        triangles: triangles[..],
+                        desc: { .weighted_mask = &mask, .additive = true, .additive_scale = MULTIPLICATIVE },
+                    )!!;
+                    if (outgoing) {
+                        animator.stop_blend_space_2d(space, 2)!!;
+                    } else {
+                        animator.fade_blend_space_2d(space, 0.4f, 2)!!;
+                    }
+                }
+                space.parameter = { 0.25f, 0.5f };
+                space.speed = -0.5f;
+                if (crowded) {
+                    anim::crowd_update(&fixture.assets, &fixture.source, 0.25f);
+                } else {
+                    anim::update(&fixture.assets, &fixture.source, 0.25f);
+                }
+                assert(space.count == 3 && space.weight > 0.4f && space.fade_rate > 0);
+                BlendSpace2D before = *space;
+                Action[anim::MAX_ACTIONS] actions_before;
+                foreach (member, id : space.actions[:space.count]) {
+                    actions_before[member] = crowded
+                      ? *crowd.playback.slots[0].actions.get(id) : *animator.action(id);
+                }
+                char[] bytes = serial::write_subtree(
+                    allocator: tmem,
+                    scene: &fixture.source,
+                    assets: &fixture.assets,
+                    root: source,
+                )!!;
+                String text = serial::write_subtree_text(
+                    allocator: tmem,
+                    scene: &fixture.source,
+                    assets: &fixture.assets,
+                    root: source,
+                )!!;
+                assert(mem::equals(&before, space, BlendSpace2D::size));
+                foreach (member, id : space.actions[:space.count]) {
+                    Action* action = crowded ? crowd.playback.slots[0].actions.get(id) : animator.action(id);
+                    assert(mem::equals(&actions_before[member], action, Action::size));
+                }
+                for (uint encoding = 0; encoding < 2; encoding++) {
+                    Node* restored = encoding == 0
+                      ? serial::read_subtree(&fixture.destination, &fixture.assets, bytes)!!
+                      : serial::read_subtree_text(&fixture.destination, &fixture.assets, text)!!;
+                    BlendSpace2D* loaded_space;
+                    uint action_count;
+                    if (crowded) {
+                        AnimatedCrowd* loaded = fixture.destination.get(restored, AnimatedCrowd);
+                        assert(loaded.authoring.instances[0].base_action == uint::max);
+                        assert(loaded.authoring.instances[0].spaces.len == (outgoing ? 0 : 1));
+                        model::prepare_crowd(&fixture.assets, &fixture.destination, restored)!!;
+                        loaded_space = &loaded.playback.slots[0].spaces_2d[0];
+                        action_count = loaded.playback.slots[0].action_count;
+                    } else {
+                        Animator* loaded = fixture.destination.get(restored, Animator);
+                        loaded_space = &loaded.blend_spaces_2d[0];
+                        action_count = loaded.action_count;
+                    }
+                    assert(action_count == (outgoing ? 0 : 3));
+                    assert(loaded_space.count == (outgoing ? 0 : 3));
+                    if (!outgoing) {
+                        assert(loaded_space.weight == 0.4f && loaded_space.fade_rate == 0);
+                        assert(loaded_space.fade_target == 0.4f && loaded_space.phase == 0);
+                        assert(loaded_space.parameter == before.parameter && loaded_space.speed == -0.5f);
+                    }
+                    fixture.destination.remove(restored);
+                }
+            };
+        }
+    }
 }

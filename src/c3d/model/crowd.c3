@@ -26,7 +26,7 @@ struct CrowdInstance {
  @param actions_per_instance : "Fixed concurrent actions per placement."
  @param event_capacity : "Fixed event entries across the whole crowd."
  @param authoring : "Optional copied explicit configuration, one per active instance."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED, c3d::UNSUPPORTED, c3d::UNSUPPORTED
  @require capacity > 0
 *>
 fn Node*? add_crowd(
@@ -286,7 +286,7 @@ fn void? prepare_crowd(AssetStore* assets, Scene* scene, Node* node) {
  @param [&in] assets : "Owns the models and compatible seed clips."
  @param [&inout] scene : "Prepared owners remain unchanged."
  @param [in] root : "Null selects the scene root."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
 *>
 fn void? prepare_crowd_subtree(AssetStore* assets, Scene* scene, Node* root = null) {
     if (!root) root = scene.root;

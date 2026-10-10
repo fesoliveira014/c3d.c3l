@@ -4,10 +4,13 @@ import c3d;
 import c3d::maths;
 import std::math;
 
-const uint EXACT_SCALE_LIMBS @local = 256; // Fixed 8,192-bit admission scratch covers every binary32 Hermite input.
+const uint EXACT_SCALE_LIMBS @local = 256; // Admission stack: 1,032 B per integer; 16,532 B per Sturm sequence.
 const uint EXACT_SCALE_LIMB_BITS @local = 32;
-const uint EXACT_SCALE_COEFFICIENT_BOUND_BITS @local = 630;
-const uint EXACT_SCALE_STURM_BOUND_BITS @local = 7 * EXACT_SCALE_COEFFICIENT_BOUND_BITS + 32;
+const uint EXACT_SCALE_COEFFICIENT_BOUND_BITS @local = 630; // 277 + 278 input bits + 40 margin + 5 sum bits < 630.
+const uint EXACT_SCALE_STURM_BOUND_BITS @local =
+  7 * EXACT_SCALE_COEFFICIENT_BOUND_BITS + 32; // Two pseudo-remainders: C -> 3C -> 7C; 32 factor/carry bits.
+const uint SCALE_CUBIC_SAMPLE_ERROR_BITS @local = 40; // 32 ops plus fraction sensitivity < 512 * 2^-53 < E=2^-40.
+const float SCALE_CUBIC_MINIMUM_NORMAL @local = 0x1p-126f;
 const uint EXACT_SCALE_FLOAT_FRACTION_BITS @local = 23;
 const uint EXACT_SCALE_FLOAT_UNIT_BITS @local = 149;
 const uint EXACT_SCALE_FLOAT_EXPONENT_MASK @local = 0x7f800000;
@@ -139,6 +142,7 @@ fn void? validate_multiplicative_scale_track(Track* track) @local {
             }
 
             uint key_count = (uint)track.times.len;
+            bool unsupported;
 
             for (uint key = 0; key + 1 < key_count; key++) {
                 Vec3 start = scale_key(track, key, CUBIC_SLOT_VALUE);
@@ -146,7 +150,9 @@ fn void? validate_multiplicative_scale_track(Track* track) @local {
                 Vec3 start_tangent = scale_key(track, key, CUBIC_SLOT_OUT_TANGENT);
                 Vec3 end_tangent = scale_key(track, key + 1, CUBIC_SLOT_IN_TANGENT);
                 ScaleInteger duration = scale_integer_subtract(
-                    scale_float_integer(track.times[key + 1]), scale_float_integer(track.times[key]));
+                    left: scale_float_integer(track.times[key + 1]),
+                    right: scale_float_integer(track.times[key]),
+                );
 
                 for (uint component = 0; component < 3; component++) {
                     ScalePolynomial polynomial = exact_scale_hermite(
@@ -157,8 +163,20 @@ fn void? validate_multiplicative_scale_track(Track* track) @local {
                         duration: duration,
                     );
                     if (!exact_scale_strict_positive(polynomial)) return c3d::INVALID_ARGUMENT~;
+
+                    ScaleInteger magnitude = exact_scale_segment_magnitude(
+                        start: start[component],
+                        end: end[component],
+                        start_tangent: start_tangent[component],
+                        end_tangent: end_tangent[component],
+                        duration: duration,
+                    );
+                    ScalePolynomial guarded = exact_scale_sample_margin(polynomial, magnitude);
+                    unsupported |= !exact_scale_nonnegative(guarded);
                 }
             }
+
+            if (unsupported) return c3d::UNSUPPORTED~;
     }
 }
 
@@ -407,10 +425,12 @@ fn ScalePolynomial exact_scale_hermite(
     ScalePolynomial result;
     result.coefficients[0] = start_value;
     result.coefficients[1] = start_velocity;
+
     ScaleInteger three_differences = scale_integer_multiply(difference, scale_integer(3));
     ScaleInteger two_start_velocities = scale_integer_multiply(start_velocity, scale_integer(2));
     ScaleInteger quadratic = scale_integer_subtract(three_differences, two_start_velocities);
     result.coefficients[2] = scale_integer_subtract(quadratic, end_velocity);
+
     ScaleInteger negative_two_differences = scale_integer_negate(scale_integer_multiply(difference, scale_integer(2)));
     ScaleInteger cubic = scale_integer_add(negative_two_differences, start_velocity);
     result.coefficients[3] = scale_integer_add(cubic, end_velocity);
@@ -444,8 +464,10 @@ fn ScalePolynomial scale_polynomial_pseudo_remainder(ScalePolynomial dividend, S
         }
 
         for (uint index = 0; index <= divisor.degree; index++) {
-            remainder.coefficients[index + offset] = scale_integer_subtract(remainder.coefficients[index + offset],
-              scale_integer_multiply(highest, divisor.coefficients[index]));
+            remainder.coefficients[index + offset] = scale_integer_subtract(
+                left: remainder.coefficients[index + offset],
+                right: scale_integer_multiply(highest, divisor.coefficients[index]),
+            );
         }
 
         remainder = scale_polynomial_normalize_degree(remainder);
@@ -467,7 +489,9 @@ fn ScaleSturmSequence scale_sturm_sequence(ScalePolynomial polynomial) @local {
 
     while (result.terms[result.count - 1].degree != 0) {
         ScalePolynomial remainder = scale_polynomial_pseudo_remainder(
-            result.terms[result.count - 2], result.terms[result.count - 1]);
+            dividend: result.terms[result.count - 2],
+            divisor: result.terms[result.count - 1],
+        );
         if (scale_polynomial_zero(remainder)) break;
 
         for (uint index = 0; index <= remainder.degree; index++) {
@@ -508,8 +532,10 @@ fn int scale_polynomial_interior_limit_sign(ScalePolynomial polynomial, bool end
         for (uint index = order; index <= polynomial.degree; index++) {
             uint factor = 1;
             for (uint falling = 0; falling < order; falling++) factor *= index - falling;
-            derivative = scale_integer_add(derivative,
-              scale_integer_multiply(polynomial.coefficients[index], scale_integer(factor)));
+            derivative = scale_integer_add(
+                left: derivative,
+                right: scale_integer_multiply(polynomial.coefficients[index], scale_integer(factor)),
+            );
         }
 
         int sign = scale_integer_sign(derivative);
@@ -546,5 +572,63 @@ fn bool exact_scale_strict_positive(ScalePolynomial polynomial) @local {
 
     // Endpoint positivity and an exact root count also reject an interior zero touch.
     return scale_sturm_interior_roots(scale_sturm_sequence(polynomial)) == 0;
+}
+
+fn bool exact_scale_nonnegative(ScalePolynomial polynomial) @local {
+    if (scale_polynomial_zero(polynomial)) return true;
+    if (scale_polynomial_endpoint_sign(polynomial, false) < 0
+        || scale_polynomial_endpoint_sign(polynomial, true) < 0
+        || scale_polynomial_interior_limit_sign(polynomial, false) < 0) return false;
+
+    ScaleSturmSequence sequence = scale_sturm_sequence(polynomial);
+    uint roots = scale_sturm_interior_roots(sequence);
+    if (roots == 0) return true;
+
+    ScalePolynomial greatest_common_divisor = sequence.terms[sequence.count - 1];
+    if (greatest_common_divisor.degree != 1) return false;
+
+    uint even_roots = scale_sturm_interior_roots(scale_sturm_sequence(greatest_common_divisor));
+    return roots == even_roots;
+}
+
+fn ScaleInteger exact_scale_segment_magnitude(
+    float start,
+    float end,
+    float start_tangent,
+    float end_tangent,
+    ScaleInteger duration,
+) @local {
+    ScaleInteger[4] candidates = {
+        scale_integer_shift_left(scale_float_integer(start), EXACT_SCALE_FLOAT_UNIT_BITS),
+        scale_integer_shift_left(scale_float_integer(end), EXACT_SCALE_FLOAT_UNIT_BITS),
+        scale_integer_multiply(scale_float_integer(start_tangent), duration),
+        scale_integer_multiply(scale_float_integer(end_tangent), duration),
+    };
+    ScaleInteger maximum;
+
+    foreach (candidate : candidates) {
+        candidate.negative = false;
+        if (scale_integer_compare_magnitude(candidate, maximum) > 0) maximum = candidate;
+    }
+
+    return maximum;
+}
+
+fn ScalePolynomial exact_scale_sample_margin(ScalePolynomial polynomial, ScaleInteger magnitude) @local {
+    for (uint index = 0; index <= polynomial.degree; index++) {
+        polynomial.coefficients[index] = scale_integer_shift_left(
+            value: polynomial.coefficients[index],
+            bits: SCALE_CUBIC_SAMPLE_ERROR_BITS,
+        );
+    }
+
+    ScaleInteger minimum_normal = scale_integer_shift_left(
+        value: scale_float_integer(SCALE_CUBIC_MINIMUM_NORMAL),
+        bits: EXACT_SCALE_FLOAT_UNIT_BITS + SCALE_CUBIC_SAMPLE_ERROR_BITS,
+    );
+    ScaleInteger floor = scale_integer_add(minimum_normal, magnitude);
+    polynomial.coefficients[0] = scale_integer_subtract(polynomial.coefficients[0], floor);
+
+    return scale_polynomial_normalize_degree(polynomial);
 }
 

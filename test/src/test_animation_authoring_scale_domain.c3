@@ -24,6 +24,15 @@ fn void expect_scale_domain_invalid(Track* track) @local {
     assert(caught, "invalid scale domain was admitted");
 }
 
+fn void expect_scale_domain_unsupported(Track* track) @local {
+    bool caught;
+    if (catch excuse = validate_scale_domain_track(track)) {
+        assert(excuse == c3d::UNSUPPORTED);
+        caught = true;
+    }
+    assert(caught, "uncertified sampled scale domain was admitted");
+}
+
 fn float[18] scale_domain_cubic_values(
     float start,
     float end,
@@ -62,44 +71,105 @@ fn void test_animation_scale_domain_step_linear_and_unrelated_channels() @test {
 
 fn void test_animation_scale_domain_cubic_interior_zero_negative_and_adjacent_positive() @test {
     float[2] times = { 0, 1 };
-    float[18] values = scale_domain_cubic_values(start: 1, end: 1, outgoing: -4, incoming: 4);
+    float[18] values = scale_domain_cubic_values(
+        start: 1,
+        end: 1,
+        outgoing: -4,
+        incoming: 4,
+    );
     Track track = scale_domain_track(Interpolation.CUBIC_SPLINE, times[..], values[..]);
     expect_scale_domain_invalid(&track);
     uint cursor;
     Vec3 at_minimum = anim::sample_multiplicative_scale(&track, 0.5, &cursor);
     assert(at_minimum.x == 0);
-    values = scale_domain_cubic_values(start: 1, end: 1, outgoing: -8, incoming: 8);
+    values = scale_domain_cubic_values(
+        start: 1,
+        end: 1,
+        outgoing: -8,
+        incoming: 8,
+    );
     expect_scale_domain_invalid(&track);
     at_minimum = anim::sample_multiplicative_scale(&track, 0.5, &cursor);
     assert(at_minimum.x == -1);
     float adjacent = bitcast(0x3f800001u, float);
-    values = scale_domain_cubic_values(start: adjacent, end: adjacent, outgoing: -4, incoming: 4);
+    values = scale_domain_cubic_values(
+        start: adjacent,
+        end: adjacent,
+        outgoing: -4,
+        incoming: 4,
+    );
     validate_scale_domain_track(&track)!!;
     at_minimum = anim::sample_multiplicative_scale(&track, 0.5, &cursor);
     assert(at_minimum.x == 0x1p-23 && at_minimum.y == 0x1p-23 && at_minimum.z == 0x1p-23);
     float below = bitcast(0x3f7fffffu, float);
-    values = scale_domain_cubic_values(start: below, end: below, outgoing: -4, incoming: 4);
+    values = scale_domain_cubic_values(
+        start: below,
+        end: below,
+        outgoing: -4,
+        incoming: 4,
+    );
     expect_scale_domain_invalid(&track);
 }
 
 fn void test_animation_scale_domain_exact_binary32_timestamp_and_endpoint_provenance() @test {
     float[2] times = { 0x1p-149, 1 };
-    float[18] values = scale_domain_cubic_values(start: 1, end: 1, outgoing: -4, incoming: 4);
+    float[18] values = scale_domain_cubic_values(
+        start: 1,
+        end: 1,
+        outgoing: -4,
+        incoming: 4,
+    );
     Track track = scale_domain_track(Interpolation.CUBIC_SPLINE, times[..], values[..]);
+    expect_scale_domain_unsupported(&track);
+    uint cursor;
+    assert(anim::sample_multiplicative_scale(&track, 0.5f, &cursor).x == 0);
+    values = scale_domain_cubic_values(
+        start: 2,
+        end: 2,
+        outgoing: -4,
+        incoming: 4,
+    );
     validate_scale_domain_track(&track)!!;
+    assert(anim::sample_multiplicative_scale(&track, 0.5f, &cursor).x == 1);
+    values = scale_domain_cubic_values(
+        start: 1,
+        end: 1,
+        outgoing: -4,
+        incoming: 4,
+    );
     times[0] = 0;
     expect_scale_domain_invalid(&track);
-    values = scale_domain_cubic_values(start: 1, end: 0x1p-63, outgoing: 0x1p60, incoming: 1);
+    values = scale_domain_cubic_values(
+        start: 1,
+        end: 0x1p-63,
+        outgoing: 0x1p60,
+        incoming: 1,
+    );
     expect_scale_domain_invalid(&track);
-    values = scale_domain_cubic_values(start: 1, end: 0x1p-149, outgoing: 0, incoming: 0);
-    validate_scale_domain_track(&track)!!;
-    values = scale_domain_cubic_values(start: 1, end: 0, outgoing: 0x1p60, incoming: -0x1p60);
+    values = scale_domain_cubic_values(
+        start: 1,
+        end: 0x1p-149,
+        outgoing: 0,
+        incoming: 0,
+    );
+    expect_scale_domain_unsupported(&track);
+    values = scale_domain_cubic_values(
+        start: 1,
+        end: 0,
+        outgoing: 0x1p60,
+        incoming: -0x1p60,
+    );
     expect_scale_domain_invalid(&track);
 }
 
 fn void test_animation_scale_domain_cubic_two_extrema_and_off_center_zero_touch() @test {
     float[2] times = { 0, 1 };
-    float[18] values = scale_domain_cubic_values(start: 1, end: 2, outgoing: 6, incoming: 6);
+    float[18] values = scale_domain_cubic_values(
+        start: 1,
+        end: 2,
+        outgoing: 6,
+        incoming: 6,
+    );
     Track track = scale_domain_track(Interpolation.CUBIC_SPLINE, times[..], values[..]);
     validate_scale_domain_track(&track)!!;
     double root_offset = math::sqrt(0.05);
@@ -111,7 +181,12 @@ fn void test_animation_scale_domain_cubic_two_extrema_and_off_center_zero_touch(
         assert(expected > 1 && expected < 2);
         assert(math::abs((double)actual.x - expected) < 1e-6);
     }
-    values = scale_domain_cubic_values(start: 0.0625, end: 1.125, outgoing: -0.4375, incoming: 3.5625);
+    values = scale_domain_cubic_values(
+        start: 0.0625,
+        end: 1.125,
+        outgoing: -0.4375,
+        incoming: 3.5625,
+    );
     expect_scale_domain_invalid(&track);
     Vec3 touch = anim::sample_multiplicative_scale(&track, 0.25, &cursor);
     assert(touch.x == 0);
@@ -126,7 +201,7 @@ fn void test_animation_scale_domain_cubic_two_extrema_and_off_center_zero_touch(
     assert(touch.x == -0.00390625);
 }
 
-fn void test_animation_scale_domain_has_no_magnitude_floor_or_ceiling() @test {
+fn void test_animation_scale_domain_sampling_band_preserves_step_and_linear_subnormals() @test {
     float[2] times = { -0x1.fffffep127, 0x1.fffffep127 };
     float[3] magnitudes = { 0x1p-149, 0x1p-120, 0x1.fffffep127 };
     uint cursor;
@@ -138,6 +213,15 @@ fn void test_animation_scale_domain_has_no_magnitude_floor_or_ceiling() @test {
             incoming: 0,
         );
         Track track = scale_domain_track(Interpolation.CUBIC_SPLINE, times[..], values[..]);
+        if (magnitude == 0x1p-149f) {
+            expect_scale_domain_unsupported(&track);
+            float[6] linear = { magnitude, magnitude, magnitude, magnitude, magnitude, magnitude };
+            Track convex = scale_domain_track(Interpolation.LINEAR, times[..], linear[..]);
+            validate_scale_domain_track(&convex)!!;
+            convex.interpolation = Interpolation.STEP;
+            validate_scale_domain_track(&convex)!!;
+            continue;
+        }
         validate_scale_domain_track(&track)!!;
         Vec3 sample = anim::sample_multiplicative_scale(&track, 0, &cursor);
         assert(sample.x == magnitude && sample.y == magnitude && sample.z == magnitude);
@@ -153,6 +237,62 @@ fn void test_animation_scale_domain_has_no_magnitude_floor_or_ceiling() @test {
     }
 }
 
+fn void test_animation_scale_domain_rounding_counterexample_and_clear_floor_curve() @test {
+    float[2] times = { 0, 1 };
+    float tangent = bitcast(0x017fffffu, float);
+    float[18] values = scale_domain_cubic_values(
+        start: 0x1p-126,
+        end: 0x1p-126,
+        outgoing: -tangent,
+        incoming: 0x1p-124,
+    );
+    Track track = scale_domain_track(Interpolation.CUBIC_SPLINE, times[..], values[..]);
+    expect_scale_domain_unsupported(&track);
+    uint cursor;
+    assert(anim::sample_multiplicative_scale(&track, 0.5f, &cursor).x == 0);
+    values = scale_domain_cubic_values(
+        start: 0x1p-125,
+        end: 0x1p-125,
+        outgoing: -tangent,
+        incoming: 0x1p-124,
+    );
+    validate_scale_domain_track(&track)!!;
+    Vec3 sample = anim::sample_multiplicative_scale(&track, 0.5f, &cursor);
+    assert(sample.x == 0x1p-126f && sample.y == sample.x && sample.z == sample.x);
+}
+
+fn void test_animation_scale_domain_exact_floor_endpoints_are_inclusive() @test {
+    float[2] times = { 0, 1 };
+    float[18] values = scale_domain_cubic_values(
+        start: 0x1p-125,
+        end: 0x1p-125,
+        outgoing: 0x1p-86,
+        incoming: -0x1p-86,
+    );
+    Track track = scale_domain_track(Interpolation.CUBIC_SPLINE, times[..], values[..]);
+    validate_scale_domain_track(&track)!!;
+    uint cursor;
+    assert(anim::sample_multiplicative_scale(&track, 0, &cursor).x == 0x1p-125f);
+    assert(anim::sample_multiplicative_scale(&track, 1, &cursor).x == 0x1p-125f);
+    assert(anim::sample_multiplicative_scale(&track, 0.5f, &cursor).x > 0);
+    float below = bitcast(0x00ffffffu, float);
+    values = scale_domain_cubic_values(
+        start: below,
+        end: below,
+        outgoing: 0x1p-86,
+        incoming: -0x1p-86,
+    );
+    expect_scale_domain_unsupported(&track);
+    float above = bitcast(0x01000001u, float);
+    values = scale_domain_cubic_values(
+        start: above,
+        end: above,
+        outgoing: 0x1p-86,
+        incoming: -0x1p-86,
+    );
+    validate_scale_domain_track(&track)!!;
+}
+
 fn void test_animation_scale_domain_reference_is_the_interpolated_time_zero_sample() @test {
     float[2] times = { -1, 1 };
     float[6] linear_values = { 2, 4, 8, 4, 8, 16 };
@@ -164,7 +304,12 @@ fn void test_animation_scale_domain_reference_is_the_interpolated_time_zero_samp
     validate_scale_domain_track(&step)!!;
     Vec3 step_reference = anim::sample_multiplicative_scale_reference(&step);
     assert(step_reference.x == 2 && step_reference.y == 4 && step_reference.z == 8);
-    float[18] cubic_values = scale_domain_cubic_values(start: 2, end: 4, outgoing: 1, incoming: 1);
+    float[18] cubic_values = scale_domain_cubic_values(
+        start: 2,
+        end: 4,
+        outgoing: 1,
+        incoming: 1,
+    );
     Track cubic = scale_domain_track(Interpolation.CUBIC_SPLINE, times[..], cubic_values[..]);
     validate_scale_domain_track(&cubic)!!;
     Vec3 cubic_reference = anim::sample_multiplicative_scale_reference(&cubic);
@@ -202,7 +347,12 @@ fn void test_animation_scale_domain_sampling_matches_independent_quadratic_and_c
 
 fn void test_animation_scale_domain_rejects_nonfinite_tangents_and_bad_time_or_width() @test {
     float[2] times = { 0, 1 };
-    float[18] values = scale_domain_cubic_values(start: 1, end: 2, outgoing: 0, incoming: 0);
+    float[18] values = scale_domain_cubic_values(
+        start: 1,
+        end: 2,
+        outgoing: 0,
+        incoming: 0,
+    );
     Track track = scale_domain_track(Interpolation.CUBIC_SPLINE, times[..], values[..]);
     values[6] = bitcast(0x7f800000u, float);
     expect_scale_domain_invalid(&track);
