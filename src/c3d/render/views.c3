@@ -198,6 +198,7 @@ fn PoseRecord* ViewHistory.previous_pose(&self, Scene* scene, Node* node) {
  @param [&in] scene : "Scene containing the live candidate."
  @param [&in] assets : "Owns the admitted representation's assets."
  @param [&in] candidate : "Current selected draw representation."
+ @return "Null when compatible submitted history is unavailable."
 *>
 fn PoseRecord* ViewHistory.previous_candidate_pose(
     &self,
@@ -443,6 +444,7 @@ fn void commit_animated_lod_pose(
 
     AnimatedLodPartPose* part = &history.parts[candidate.lod_part];
     if (part.seen == serial) return;
+
     AnimatedLodPartBinding* selected = candidate.animated_lod;
     part.seen = serial;
     part.part = candidate.lod_part;

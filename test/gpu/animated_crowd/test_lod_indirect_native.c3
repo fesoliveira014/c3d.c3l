@@ -202,9 +202,9 @@ fn bool? capture_indirect_replay(
                 .mirrored = candidate.mirrored,
                 .indexed = geometry.layout.index_count > 0,
                 .elements = geometry.layout.index_count ? geometry.layout.index_count : geometry.layout.vertex_count,
-                .command_offset = render::CULL_COUNTER_BYTES + index * INDIRECT_REPLAY_COMMAND_STRIDE,
+                .command_offset = render::CULL_COUNTER_BYTES + (usz)index * INDIRECT_REPLAY_COMMAND_STRIDE,
                 .source_offset = render::CULL_COUNTER_BYTES + candidates.len * INDIRECT_REPLAY_COMMAND_STRIDE
-                  + index * instances.len * uint::size,
+                  + (usz)index * instances.len * uint::size,
             };
         }
         render::prepare_cull_stage(renderer, items, true)!;
@@ -309,11 +309,13 @@ fn void test_animated_lod_native_indirect_quaternius_three_levels_match_literal_
         descriptor: &descriptor,
         material: {},
     );
+    AnimatedLodDesc animated_desc = crowd_lod_native_desc(&descriptor);
+    animated_desc.has_bounds_override = false;
     model::attach_animated_lod(
         assets: &fixture.assets,
         scene: &scene,
         owner: owner,
-        desc: crowd_lod_native_desc(&descriptor),
+        desc: animated_desc,
     )!!;
     Node* camera = scene.add_camera(camera::orthographic(6, 0.1f, 100))!!;
     camera.local.position = { 0, 1, 12 };

@@ -129,6 +129,7 @@ fn void write_animated_lod_palette(
 
     AnimatedLodBinding* binding = candidate.lod.state.animated;
     Mat4 inverse_owner = maths::inverse_affine(maths::rebase(candidate.node.world, origin));
+
     foreach (index, joint : binding.joint_nodes) {
         Node* joint_node = candidate.model_instance.present_node(joint);
         palette[index] = bitcast(
@@ -172,9 +173,11 @@ fn gpu::GpuAddress? resolve_animated_lod_morph(Renderer* renderer, MeshCandidate
         alignment: STREAM_ALIGNMENT,
     )!;
     MorphWeightsGpu[] blocks = ((MorphWeightsGpu*)span.bytes.ptr)[:count];
+
     for (uint source = 0; source < count; source++) {
         blocks[source] = animated_lod_morph(renderer.assets, candidate, source);
     }
+
     renderer.deformation.animated_morphs.set(key, span.address);
 
     return span.address;
@@ -188,6 +191,7 @@ fn gpu::GpuAddress? resolve_animated_lod_parts(Renderer* renderer, MeshCandidate
     Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan span = frame.upload.take(&renderer.device, (usz)count * InstanceGpu::size, STREAM_ALIGNMENT)!;
     InstanceGpu[] records = ((InstanceGpu*)span.bytes.ptr)[:count];
+
     for (uint source = 0; source < count; source++) {
         write_instance(
             record: &records[source],
@@ -196,6 +200,7 @@ fn gpu::GpuAddress? resolve_animated_lod_parts(Renderer* renderer, MeshCandidate
             seed: 0,
         );
     }
+
     renderer.deformation.animated_parts.set(key, span.address);
 
     return span.address;
@@ -213,6 +218,7 @@ fn gpu::GpuAddress? resolve_animated_lod_indices(Renderer* renderer, MeshCandida
     )!;
     uint[] indices = ((uint*)span.bytes.ptr)[:candidate.instance_count];
     uint written;
+
     for (uint source = 0; source < candidate.crowd.count; source++) {
         Mat4 local = candidate.crowd.placements[source].to_mat4()
           .mul(animated_lod_part_local(candidate, source));
@@ -220,6 +226,7 @@ fn gpu::GpuAddress? resolve_animated_lod_indices(Renderer* renderer, MeshCandida
 
         indices[written++] = source;
     }
+
     renderer.deformation.animated_indices.set(key, span.address);
 
     return span.address;
@@ -228,6 +235,7 @@ fn gpu::GpuAddress? resolve_animated_lod_indices(Renderer* renderer, MeshCandida
 fn uint animated_lod_history_levels(MeshCandidate* candidate) @private {
     LodGroupState* state = candidate.lod.state;
     uint mask;
+
     foreach (uint level_index, level : state.desc.levels) {
         foreach (uint offset, part : state.animated.parts[level.first_part:level.part_count]) {
             if (part.mesh_index != candidate.animated_lod.mesh_index) continue;
@@ -263,12 +271,14 @@ fn gpu::GpuAddress? upload_animated_lod_previous(
             )!;
             Mat4f[] palette = ((Mat4f*)palette_span.bytes.ptr)[:matrices];
             write_animated_lod_palette(palette, candidate, renderer.frame_origin);
+
             for (uint source = 0; source < count; source++) {
                 if (!animated_lod_previous_valid(owner, candidate, source)) continue;
 
                 usz first = (usz)source * joints;
                 palette[first:joints] = owner.palette[first:joints];
             }
+
             selection.previous_palette = palette_span.address;
         }
         previous.skin = selection.previous_palette;
@@ -280,10 +290,12 @@ fn gpu::GpuAddress? upload_animated_lod_previous(
         alignment: STREAM_ALIGNMENT,
     )!;
     Mat4f[] locals = ((Mat4f*)local_span.bytes.ptr)[:count];
+
     for (uint source = 0; source < count; source++) {
         locals[source] = animated_lod_previous_valid(pose, candidate, source) ? pose.instances[source]
           : bitcast(animated_lod_part_local(candidate, source), Mat4f);
     }
+
     previous.instances = local_span.address;
 
     if (item.morph != (gpu::GpuAddress)0) {
@@ -293,10 +305,12 @@ fn gpu::GpuAddress? upload_animated_lod_previous(
             alignment: STREAM_ALIGNMENT,
         )!;
         MorphWeightsGpu[] blocks = ((MorphWeightsGpu*)morph_span.bytes.ptr)[:count];
+
         for (uint source = 0; source < count; source++) {
             blocks[source] = animated_lod_previous_valid(pose, candidate, source) ? pose.morphs[source]
               : animated_lod_morph(renderer.assets, candidate, source);
         }
+
         previous.morph = morph_span.address;
     }
 

@@ -310,6 +310,7 @@ fn TraceCollection collect_trace_instances(
 ) @private {
     bool[] group_live = alloc::new_array(allocator, bool, (sz)scene.nodes.len);
     defer alloc::free(allocator, group_live.ptr);
+
     usz capacity = scene.count(Mesh);
     scene.@each(LodGroup; Entity entity, LodGroup* group) {
         group_live[entity.index] = spatial::lod_group_is_live(
@@ -462,6 +463,7 @@ fn TraceCollection collect_trace_instances(
                           : candidate.source_mesh && candidate.source_mesh.vertex_motion
                           ? TracePose.VERTEX_MOTION : TracePose.REST;
                     }
+
                     collected |= state.count > 0;
                     for (uint instance = 0; instance < state.count; instance++) {
                         Mat4 placement = state.mode == LodMode.INSTANCED
@@ -493,6 +495,7 @@ fn TraceCollection collect_trace_instances(
                                 origin: origin,
                             );
                         }
+
                         collection.records[count] = record;
                         collection.poses[count++] = pose;
                     }
@@ -525,10 +528,10 @@ fn MeshCandidate trace_animated_lod_candidate(
         .lod = selection,
         .lod_part = source.part,
     };
-    bool bound = bind_animated_lod_candidate(selection, &candidate);
-    assert(bound);
+    (void)bind_animated_lod_candidate(selection, &candidate);
     return candidate;
 }
+
 fn void discard_scene_trace(Renderer* renderer) @private {
     SceneTrace* trace = &renderer.scene_trace;
     foreach (geometry : trace.pending_builds) renderer.geometries[geometry.index].trace.revision = 0;

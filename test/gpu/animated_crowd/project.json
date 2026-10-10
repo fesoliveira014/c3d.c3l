@@ -37,7 +37,8 @@
         "test_lod_trace_native.c3",
         "../../fixtures/animated_lod_fixtures.c3",
         "test_lod_temporal_native.c3",
-        "test_lod_indirect_native.c3"
+        "test_lod_indirect_native.c3",
+        "test_lod_bounds_native.c3"
       ]
     }
   }

@@ -355,7 +355,8 @@ fn gpu::GpuAddress? resolve_lod_part(Renderer* renderer, MeshCandidate* candidat
         .impostor = candidate.impostor ? resolve_impostor(renderer, selection)! : (gpu::GpuAddress)0,
         .history_origin_delta = { history_delta.x, history_delta.y, history_delta.z, 0 },
         .current_origin_delta = { current_delta.x, current_delta.y, current_delta.z, 0 },
-        .part_instances = candidate.animated_lod ? resolve_animated_lod_parts(renderer, candidate)! : (gpu::GpuAddress)0,
+        .part_instances = candidate.animated_lod
+          ? resolve_animated_lod_parts(renderer, candidate)! : (gpu::GpuAddress)0,
         .history_levels = candidate.animated_lod ? animated_lod_history_levels(candidate) : 0,
     };
     *address = upload_bytes(renderer, &part, LodPartGpu::size)!;

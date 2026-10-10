@@ -16,7 +16,14 @@ struct AnimatedLodSource @local {
     AnimatedCrowd* crowd;
 }
 
-<* Attach copied alternatives; playback and source components remain owned by the model. *>
+<*
+ Attach copied alternatives to a model or crowd.
+ @param [&in] assets : "Resolves borrowed asset identities."
+ @param [&inout] scene : "Owns the copied alternatives."
+ @param [&in] owner : "Existing model or crowd owner."
+ @param desc : "Arrays are copied after complete admission."
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
+*>
 fn void? attach_animated_lod(
     AssetStore* assets,
     Scene* scene,
@@ -33,11 +40,19 @@ fn void? attach_animated_lod(
         desc: desc,
     )!;
     defer catch scene::destroy_lod_group(scene.allocator, &group);
+
     initialize_animated_lod_source(group.state, source);
     scene.add(owner, group);
 }
 
-<* Replace only the descriptor after complete validation and allocation. *>
+<*
+ Replace alternatives after complete admission.
+ @param [&in] assets : "Resolves borrowed asset identities."
+ @param [&inout] scene : "Owns the copied alternatives."
+ @param [&in] owner : "Existing model or crowd owner."
+ @param desc : "Arrays are copied after complete admission."
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
+*>
 fn void? replace_animated_lod(
     AssetStore* assets,
     Scene* scene,
@@ -54,6 +69,7 @@ fn void? replace_animated_lod(
         source: source,
         desc: desc,
     )!;
+
     next.state.effects = existing.state.effects;
     initialize_animated_lod_source(next.state, source);
     LodGroup previous = *existing;
@@ -62,7 +78,13 @@ fn void? replace_animated_lod(
     scene::destroy_lod_group(scene.allocator, &previous);
 }
 
-<* Reacquire source data; admitted bind/channel invariants are rescanned only after asset changes. *>
+<*
+ Refresh admitted source bindings after asset changes.
+ @param [&in] assets : "Resolves borrowed asset identities."
+ @param [&inout] scene : "Owns the copied alternatives."
+ @param [&in] owner : "Existing model or crowd owner."
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
+*>
 fn void? sync_animated_lod(AssetStore* assets, Scene* scene, Node* owner) {
     AnimatedLodSource source = animated_lod_source(assets, scene, owner)!;
     LodGroup* group = scene.get(owner, LodGroup);
@@ -103,6 +125,7 @@ fn void? sync_animated_lod(AssetStore* assets, Scene* scene, Node* owner) {
 
 fn AnimatedLodSource? animated_lod_source(AssetStore* assets, Scene* scene, Node* owner) @local {
     if (!owner || !scene.world.is_alive(owner.id)) return c3d::INVALID_ID~;
+
     ModelInstance* instance = scene.get(owner, ModelInstance);
     AnimatedCrowd* crowd = scene.get(owner, AnimatedCrowd);
     if ((instance != null) == (crowd != null)) return c3d::INVALID_ARGUMENT~;
@@ -209,9 +232,11 @@ fn void? validate_shared_skin(
     Skeleton* skeleton = &assets.skeletons.try_get(skin.skeleton)!.data;
     if (!skin.joint_nodes.len || skin.joint_nodes.len != skeleton.inverse_bind.len
       || skin.joint_nodes.len != expected_nodes.len) return c3d::INVALID_ARGUMENT~;
+
     foreach (index, node : skin.joint_nodes) {
         if (node >= template.nodes.len || node != expected_nodes[index]) return c3d::INVALID_ARGUMENT~;
     }
+
     if (!mem::equals(skeleton.inverse_bind.ptr, expected_bind.ptr, (sz)(expected_bind.len * Mat4::size))) {
         return c3d::INVALID_ARGUMENT~;
     }
@@ -222,11 +247,13 @@ fn void? validate_source_shape(AssetStore* assets, AnimatedLodSource source) @lo
     foreach (index, node : template.nodes) {
         if (node.parent < -1 || node.parent >= (int)index) return c3d::INVALID_ARGUMENT~;
     }
+
     foreach (index, mesh : template.meshes) {
         if (mesh.node >= template.nodes.len) return c3d::INVALID_ARGUMENT~;
         foreach (previous : template.meshes[:index]) {
             if (previous.node == mesh.node) return c3d::INVALID_ARGUMENT~;
         }
+
         GeometryAsset* geometry = assets.geometries.try_get(mesh.geometry)!;
         assets.materials.try_get(mesh.material)!;
         float[] defaults = source_defaults(source, (uint)index);
@@ -234,14 +261,17 @@ fn void? validate_source_shape(AssetStore* assets, AnimatedLodSource source) @lo
         foreach (weight : defaults) {
             if (!math::is_finite(weight)) return c3d::INVALID_ARGUMENT~;
         }
+
         foreach (channel_index, channel : geometry.data.channels) {
             if (!channel.name.len) continue;
             foreach (previous : geometry.data.channels[:channel_index]) {
                 if (channel.name == previous.name) return c3d::INVALID_ARGUMENT~;
             }
         }
+
         if (geometry_is_skinned(geometry) && !skin_at(template, mesh.node)) return c3d::INVALID_ARGUMENT~;
     }
+
     if (!template.skins.len) return;
 
     ModelSkin first = template.skins[0];
@@ -273,6 +303,7 @@ fn uint? mapped_weight(
         }
         return c3d::INVALID_ARGUMENT~;
     }
+
     if (weight_width(base) != weight_width(selected)) return c3d::INVALID_ARGUMENT~;
     if (base.data.channels.len && base.data.channels[weight].name.len) return c3d::INVALID_ARGUMENT~;
     return weight;
@@ -286,6 +317,7 @@ fn void? validate_material(
 ) @local {
     Material* material = &assets.materials.try_get(material_id)!.data;
     if (material.kind != MaterialKind.CUSTOM) return;
+
     CustomVertex* vertex = &assets.shaders.try_get(material.custom.shader)!.desc.vertex;
     if (vertex.shaded.len && (!bounds_override
       || (mode == LodMode.INSTANCED && !vertex.instanced_shaded.len))) return c3d::UNSUPPORTED~;
@@ -322,10 +354,12 @@ fn LodGroup? build_animated_lod(
             if (logical_count > uint::max) return c3d::CAPACITY_EXCEEDED~;
             offsets[index + 1] = (uint)logical_count;
         }
+
         String[] names = alloc::new_array_try(tmem, String, (sz)logical_count)
           ?? c3d::CAPACITY_EXCEEDED~!;
         float[] defaults = alloc::new_array_try(tmem, float, (sz)logical_count)
           ?? c3d::CAPACITY_EXCEEDED~!;
+
         foreach (index, mesh : template.meshes) {
             GeometryAsset* geometry = assets.geometry(mesh.geometry);
             float[] baseline = source_defaults(source, (uint)index);
@@ -338,6 +372,7 @@ fn LodGroup? build_animated_lod(
             selected_count += part.default_morph_weights.len;
             if (selected_count > uint::max) return c3d::CAPACITY_EXCEEDED~;
         }
+
         uint[] indices = alloc::new_array_try(tmem, uint, (sz)selected_count)
           ?? c3d::CAPACITY_EXCEEDED~!;
         AnimatedLodPartBinding[] parts = alloc::new_array_try(tmem, AnimatedLodPartBinding, desc.parts.len)
@@ -345,17 +380,20 @@ fn LodGroup? build_animated_lod(
         bool[] seen = alloc::new_array_try(tmem, bool, template.meshes.len)
           ?? c3d::CAPACITY_EXCEEDED~!;
         usz next_weight;
+
         foreach (level_index, level : desc.levels) {
             seen[..] = false;
             foreach (usz local_index, part : desc.parts[level.first_part:level.part_count]) {
                 uint representation = level.first_part + (uint)local_index;
                 if (part.mesh_index >= template.meshes.len || seen[part.mesh_index]) return c3d::INVALID_ARGUMENT~;
                 seen[part.mesh_index] = true;
+
                 ModelMesh mesh = template.meshes[part.mesh_index];
                 GeometryAsset* base = assets.geometry(mesh.geometry);
                 GeometryAsset* selected = assets.geometries.try_get(part.draw.geometry)!;
                 bool skinned = geometry_is_skinned(base);
                 if (geometry_is_skinned(selected) != skinned) return c3d::INVALID_ARGUMENT~;
+
                 ModelSkin* skin = skin_at(template, mesh.node);
                 if (skin) {
                     Skeleton* skeleton = &assets.skeleton(skin.skeleton).data;
@@ -371,22 +409,27 @@ fn LodGroup? build_animated_lod(
                 } else if (part.skin.skeleton.generation || part.skin.joint_nodes.len) {
                     return c3d::INVALID_ARGUMENT~;
                 }
+
                 if ((level_index == 0 || skinned) && !identity_matrix(part.draw.local)) {
                     return c3d::INVALID_ARGUMENT~;
                 }
+
                 float[] baseline = source_defaults(source, part.mesh_index);
                 if (part.default_morph_weights.len != weight_width(selected)) return c3d::INVALID_ARGUMENT~;
                 if (level_index == 0 && (!c3d::same_id(part.draw.geometry, mesh.geometry)
                   || !c3d::same_id(part.draw.material, mesh.material))) return c3d::INVALID_ARGUMENT~;
+
                 validate_material(
                     assets: assets,
                     material_id: part.draw.material,
                     mode: source.crowd ? LodMode.INSTANCED : LodMode.SINGLE,
                     bounds_override: layout.has_bounds_override,
                 )!;
+
                 uint first_weight = (uint)next_weight;
                 bool[] selected_seen = alloc::new_array_try(tmem, bool, baseline.len)
                   ?? c3d::CAPACITY_EXCEEDED~!;
+
                 foreach (uint weight, value : part.default_morph_weights) {
                     if (!math::is_finite(value)) return c3d::INVALID_ARGUMENT~;
                     uint mapped = mapped_weight(base, selected, weight)!;
@@ -395,6 +438,7 @@ fn LodGroup? build_animated_lod(
                     selected_seen[mapped] = true;
                     indices[next_weight++] = mapped;
                 }
+
                 parts[representation] = {
                     .mesh_index = part.mesh_index,
                     .template_node = mesh.node,
@@ -409,6 +453,7 @@ fn LodGroup? build_animated_lod(
                 };
             }
         }
+
         uint[] joints;
         Mat4[] inverse_bind;
         if (template.skins.len) {
@@ -443,6 +488,7 @@ fn void initialize_animated_lod_source(LodGroupState* state, AnimatedLodSource s
         state.count = 1;
         return;
     }
+
     AnimatedCrowd* crowd = source.crowd;
     state.transforms = crowd.placements;
     state.colors = crowd.colors;
@@ -455,12 +501,14 @@ fn void initialize_animated_lod_source(LodGroupState* state, AnimatedLodSource s
     state.animated.source_revision = revision;
     state.count = count;
     state.instance_epoch = epoch;
+
     if (crowd.playback) {
         foreach (index, slot : crowd.playback.slots) {
             changed |= state.slot_generations[index] != slot.generation;
             state.slot_generations[index] = slot.generation;
         }
     }
+
     if (changed) scene::publish_animated_lod_source(state);
 }
 
@@ -473,6 +521,7 @@ fn void? validate_animated_lod_binding(
     AnimatedLodBinding* binding = state.animated;
     ModelTemplate* template = &source.model.data;
     if (binding.channel_offsets.len != template.meshes.len + 1) return c3d::INVALID_ARGUMENT~;
+
     foreach (skin : template.skins) {
         validate_shared_skin(
             assets: assets,
@@ -482,6 +531,7 @@ fn void? validate_animated_lod_binding(
             expected_bind: binding.inverse_bind,
         )!;
     }
+
     foreach (index, mesh : template.meshes) {
         GeometryAsset* base = assets.geometry(mesh.geometry);
         float[] baseline = source_defaults(source, (uint)index);
@@ -492,34 +542,47 @@ fn void? validate_animated_lod_binding(
             String name = base.data.channels.len ? base.data.channels[weight].name : "";
             if (name != binding.channel_names[first + weight]) return c3d::INVALID_ARGUMENT~;
         }
-        if (baseline.len && !mem::equals(baseline.ptr, binding.defaults[first:baseline.len].ptr, (sz)(baseline.len * float::size))) {
+        if (baseline.len && !mem::equals(
+            a: baseline.ptr,
+            b: binding.defaults[first:baseline.len].ptr,
+            len: (sz)(baseline.len * float::size),
+        )) {
             return c3d::INVALID_ARGUMENT~;
         }
     }
+
     foreach (index, part : binding.parts) {
         if (part.mesh_index >= template.meshes.len || template.meshes[part.mesh_index].node != part.template_node) {
             return c3d::INVALID_ARGUMENT~;
         }
+
         GeometryAsset* selected = assets.geometries.try_get(state.desc.parts[index].geometry)!;
         GeometryAsset* base = assets.geometries.try_get(template.meshes[part.mesh_index].geometry)!;
         if (geometry_is_skinned(selected) != part.skinned || weight_width(selected) != part.weight_count) {
             return c3d::INVALID_ARGUMENT~;
         }
+
         for (uint weight = 0; weight < part.weight_count; weight++) {
             if (mapped_weight(base, selected, weight)! != binding.weight_indices[part.weight_offset + weight]) {
                 return c3d::INVALID_ARGUMENT~;
             }
         }
+
         if (part.skeleton.generation) {
             validate_shared_skin(
                 assets: assets,
                 template: template,
-                skin: { .mesh_node = part.template_node, .skeleton = part.skeleton, .joint_nodes = binding.joint_nodes },
+                skin: {
+                    .mesh_node = part.template_node,
+                    .skeleton = part.skeleton,
+                    .joint_nodes = binding.joint_nodes,
+                },
                 expected_nodes: binding.joint_nodes,
                 expected_bind: binding.inverse_bind,
             )!;
         }
     }
+
     binding.model_revision = source.model.header.revision;
     foreach (index, &part : binding.parts) {
         part.geometry_revision = assets.geometry(state.desc.parts[index].geometry).header.revision;

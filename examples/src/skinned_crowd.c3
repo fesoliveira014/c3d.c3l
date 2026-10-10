@@ -101,7 +101,8 @@ fn Transform slot_placement(uint index, Random* random) @local {
 
 fn GeometryId? triangle_subset(AssetStore* assets, GeometryId geometry_id, uint step) @local {
     Geometry source = assets.geometry(geometry_id).data;
-    if (source.topology != TRIANGLES || !source.indices.len) return INVALID_ARGUMENT~;
+    if (source.topology != TRIANGLES || !source.indices.len) return c3d::INVALID_ARGUMENT~;
+
     usz triangles = (usz)source.indices.len / TRIANGLE_CORNERS;
     usz selected = (triangles + step - 1) / step;
     uint[] indices = alloc::new_array_try(tmem, uint, (sz)(selected * TRIANGLE_CORNERS))
@@ -112,6 +113,7 @@ fn GeometryId? triangle_subset(AssetStore* assets, GeometryId geometry_id, uint 
         usz target_corner = triangle * TRIANGLE_CORNERS;
         indices[target_corner:TRIANGLE_CORNERS] = source.indices[source_corner:TRIANGLE_CORNERS];
     }
+
     source.indices = indices;
 
     return assets.add_geometry(&source);

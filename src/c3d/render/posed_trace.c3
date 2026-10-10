@@ -350,6 +350,7 @@ fn PosedTraceKey trace_pose_key(ulong scene, TracePoseSource* source, TraceInsta
     }
     return key;
 }
+
 fn uint pose_input_bytes(TracePoseSource* source, AssetStore* assets) @private {
     switch (source.kind) {
         case REST:
@@ -365,7 +366,8 @@ fn uint pose_input_bytes(TracePoseSource* source, AssetStore* assets) @private {
         case ANIMATED_LOD:
             AnimatedLodPartBinding* part = &source.lod.animated.parts[source.part];
             uint palette = part.skinned ? (uint)(source.lod.animated.joint_nodes.len * Mat4f::size) : 0;
-            bool morphs = assets.geometry(source.lod.desc.parts[source.part].geometry).target_count && part.weight_count;
+            bool morphs = assets.geometry(source.lod.desc.parts[source.part].geometry).target_count
+              && part.weight_count;
             return palette + (morphs ? (uint)MorphWeightsGpu::size : 0);
     }
 }
@@ -421,6 +423,7 @@ fn char[] pose_inputs(Renderer* renderer, TracePoseSource* source, TraceInstance
             LodSelection selection;
             MeshCandidate candidate = trace_animated_lod_candidate(source, record, &selection);
             AnimatedLodPartBinding* part = candidate.animated_lod;
+
             if (part.skinned) {
                 usz joints = source.lod.animated.joint_nodes.len;
                 palette_bytes = joints * Mat4f::size;
@@ -800,6 +803,7 @@ fn gpu::GpuAddress? write_pose_root(
             LodSelection selection;
             MeshCandidate candidate = trace_animated_lod_candidate(source, record, &selection);
             AnimatedLodPartBinding* part = candidate.animated_lod;
+
             if (part.skinned) {
                 palette = resolve_animated_lod_palette(renderer, &candidate)!
                   + (gpu::GpuAddress)((usz)record.instance_index * source.lod.animated.joint_nodes.len * Mat4f::size);

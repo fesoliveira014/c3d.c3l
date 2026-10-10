@@ -74,6 +74,7 @@ fn void? prepare_lod_instances(Renderer* renderer, LodSelection* selection) @pri
     resolve_lod_instances(renderer, selection)!;
     if (selection.state.animated) {
         selection.part_unmirrored = alloc::new_array(tmem, uint, selection.state.desc.parts.len);
+
         foreach (uint part, &split : selection.part_unmirrored) {
             MeshCandidate candidate = {
                 .node = selection.node,
@@ -82,6 +83,7 @@ fn void? prepare_lod_instances(Renderer* renderer, LodSelection* selection) @pri
                 .scene_identity = selection.scene_identity,
             };
             (void)bind_animated_lod_candidate(selection, &candidate);
+
             for (uint source = 0; source < selection.state.count; source++) {
                 Mat4 local = selection.state.transforms[source].to_mat4()
                   .mul(animated_lod_part_local(&candidate, source));
