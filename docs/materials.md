@@ -404,6 +404,9 @@ Fresnel; direct lights add a mirrored-light transmission lobe. Transmissive
 surfaces never see each other, the custom readers of the same list or ordinary
 blends: glass behind glass shows the opaque scene through both.
 
+`python3 scripts/build.py --example transparency` draws a glass slab over a checkered backdrop;
+R steps the slab's roughness through 0, 0.25, 0.5 and 1.
+
 ## Importing materials
 
 glTF materials arrive through `c3d::asset::gltf`, which selects Basic for
