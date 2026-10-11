@@ -10,7 +10,8 @@ import std::math::vector;
 *>
 const uint TRANSPARENCY_LAYER_CAPACITY_MAX = 16; // At most seventeen depth images and geometry capture passes.
 
-const uint TRANSPARENCY_TARGET_COUNT @private = TRANSPARENCY_LAYER_CAPACITY_MAX + 9; // Extra depth plus four color pairs.
+// Extra depth plus four color pairs.
+const uint TRANSPARENCY_TARGET_COUNT @private = TRANSPARENCY_LAYER_CAPACITY_MAX + 9;
 
 <*
  Four exact depth groups with a sorted remainder.
@@ -156,6 +157,7 @@ fn TransparencyPyramid? allocate_transparency_pyramid(
     for (uint mip = 0; mip < pyramid.mip_count; mip++) {
         gpu::TextureViewDesc view_desc = { .base_mip = mip, .mip_count = 1 };
         pyramid.levels[mip] = gpu::create_texture_view(&renderer.device, pyramid.image.texture, &view_desc)!;
+
         uint mip_width = material::texture_mip_extent(width, mip);
         uint mip_height = material::texture_mip_extent(height, mip);
         pyramid.texel_bytes += (usz)mip_width * mip_height * 4 * ushort::size;
@@ -231,6 +233,7 @@ fn void retire_transparency_state(RetireList* retire, TransparencyState* state) 
 
     foreach (target : transparency_targets(state)) {
         if (!target.texture.is_valid()) continue;
+
         if (target.attachment.is_valid()) {
             retire.push({ .kind = RetiredKind.ATTACHMENT_VIEW, .attachment_view = target.attachment });
         }

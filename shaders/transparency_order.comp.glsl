@@ -5,6 +5,9 @@
 
 layout(local_size_x = TRANSPARENCY_ORDER_GROUP_SIZE) in;
 
+const uint TRANSPARENCY_UINT_BYTES = 4u;
+const uint TRANSPARENCY_INDIRECT_INSTANCE_COUNT_WORD = 1u;
+
 layout(push_constant) uniform Push {
     uint64_t root_gpu;
 } pc;
@@ -28,6 +31,7 @@ void main() {
     if (index >= root.count || index >= visible_count) return;
 
     uint source = TransparencyOrderIndices(root.source_indices).values[index];
-    uint destination = ((source - root.first) * root.stride) / 4u + 1u;
+    uint destination = ((source - root.first) * root.stride) / TRANSPARENCY_UINT_BYTES
+      + TRANSPARENCY_INDIRECT_INSTANCE_COUNT_WORD;
     TransparencyOrderOutput(root.output_args).values[destination] = 1u;
 }

@@ -26,6 +26,7 @@ fn void? acquire_transparency_snapshot(Renderer* renderer, ViewRecord* record, b
         height: record.hdr_color.height,
         debug_name: "scene_color_pyramid",
     )!;
+
     retire_transparency_snapshot(renderer, record);
     record.scene_pyramid = replacement;
     record.scene_pyramid_frame_state = replacement.image.state;

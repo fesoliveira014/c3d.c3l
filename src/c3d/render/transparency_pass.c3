@@ -127,7 +127,7 @@ fn void? record_transparency_resolve(
             commands: &renderer.commands,
             vertex_root: (gpu::GpuAddress)0,
             fragment_root: root,
-            vertex_count: 3,
+            vertex_count: FULLSCREEN_VERTEX_COUNT,
             instance_count: 1,
         )!;
         gpu::cmd_end_render_pass(&renderer.commands)!;
@@ -183,8 +183,10 @@ fn void? record_transparency_pyramid(
                 .source_storage = mip > 0 ? 1 : 0,
             };
             gpu::GpuAddress root = upload_bytes(renderer, &data, TransparencyMipRoot::size)!;
-            uint dispatch_width = (width + shader::TRANSPARENCY_MIP_GROUP_SIZE - 1) / shader::TRANSPARENCY_MIP_GROUP_SIZE;
-            uint dispatch_height = (height + shader::TRANSPARENCY_MIP_GROUP_SIZE - 1) / shader::TRANSPARENCY_MIP_GROUP_SIZE;
+            uint dispatch_width = (width + shader::TRANSPARENCY_MIP_GROUP_SIZE - 1)
+              / shader::TRANSPARENCY_MIP_GROUP_SIZE;
+            uint dispatch_height = (height + shader::TRANSPARENCY_MIP_GROUP_SIZE - 1)
+              / shader::TRANSPARENCY_MIP_GROUP_SIZE;
             gpu::cmd_dispatch(&renderer.commands, root, { dispatch_width, dispatch_height, 1 })!;
 
             gpu::Barrier next = { .before = { .compute }, .after = { .compute } };
@@ -261,6 +263,7 @@ fn void? record_transparency_own_depth(Renderer* renderer, ViewRecord* record, D
         state.raster.front_face = item.front_face;
         state.raster.topology = primitive_topology(item.geometry.topology);
         gpu::cmd_set_graphics_state(&renderer.commands, &state)!;
+
         if (candidate_instanced(item.candidate)) {
             record_batch_draw(
                 renderer: renderer,
