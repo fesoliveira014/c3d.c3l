@@ -50,10 +50,11 @@ grain on rougher surfaces.
 - **Hit.** The hit surface is shaded from its material: `STANDARD` and `PHYSICAL` with the
   Standard BRDF (a Physical hit loses clearcoat, sheen and transmission), `BASIC` unlit, `TOON`
   with its bands and rim, `CUSTOM` as a grey Lambert surface, since custom shader code cannot run
-  at a hit. Direct light comes from the view's lights; a light that casts shadows in raster casts
-  them at the hit through a shadow ray. Emission, the ambient fill and the lighting environment
-  add to it. Textures sample at a level of detail from the ray's cone footprint (ray cones,
-  Akenine-Möller et al. 2019); normal and occlusion maps are not read at hits.
+  at a hit. Direct light comes from the [reflection light list](#reflection-lights); a light that
+  casts shadows casts them at the hit through a shadow ray. Emission, the ambient fill and the
+  lighting environment add to it. Textures sample at a level of detail from the ray's cone
+  footprint (ray cones, Akenine-Möller et al. 2019); normal maps are read at hits and occlusion
+  maps are not.
 - **Back face.** A reflection ray passes the back of a single-sided surface, as raster culls it,
   and reflects what lies behind; double-sided materials shade both sides
   ([facing](scene_trace.md#facing)).
@@ -67,6 +68,17 @@ roughness over a 5x5 footprint that widens with roughness; mirror-like pixels ar
 
 Traced reflections ignore a view's clip plane: they trace the whole scene. A planar mirror is a
 clipped view of its own (see [clip plane](views.md#clip-plane)).
+
+## Reflection lights
+
+The pass packs its own light list each frame, apart from the view's. It holds every light eligible for
+the camera's `layers`, so a finite light outside the camera frustum still lights a reflected surface.
+Lights keep the view's budget order and stop at `RendererDesc.max_lights`. The list lives in the frame's
+upload ring.
+
+A light skips a hit whose node `layers` do not intersect `Light.layers`, before its shadow ray, as in
+raster. Ambient and emission do not use the mask. Every light with shadows enabled casts a shadow ray at
+a hit, whether it uses a shadow atlas or ray-traced shadows in raster; the atlas is not read.
 
 ## Lighting
 
@@ -89,8 +101,9 @@ two compute dispatches. `render_view` prepares the scene trace and the split-sum
 The post panel's "Ray tracing" header toggles reflections on a deferred view and sets the
 threshold.
 
-`examples/rt_effects` shows a mirror floor reflecting an emissive panel above the view and a row
-of metal spheres from roughness 0 to 1. `R` toggles reflections, `[` and `]` move the threshold,
+`examples/rt_effects` shows a mirror floor reflecting an emissive panel above the view, a chalk
+sphere above the view lit by a warm lamp outside the camera frustum and not by a cold lamp whose
+`layers` exclude the sphere, and a row of metal spheres from roughness 0 to 1. `R` toggles reflections, `[` and `]` move the threshold,
 `A` cycles ambient occlusion; `--gpu-timings --benchmark N` prints the mean pass times. The
 rendering benchmarks take `--reflections on|off` on a deferred view ([benchmarking](benchmarking.md))
 and report `gpu_rt_reflections_ms`.
@@ -104,7 +117,6 @@ python3 scripts/build.py --example rt_effects
 - Deferred views only; forward views always apply reflection probes.
 - One ray per pixel and a spatial blur; no temporal accumulation beyond what TAA provides.
 - Hits see the traced scene: skinned and morphed meshes appear at their raster pose; crowd placements appear only through `add_crowd(trace: true)`; custom vertex stages and `BLEND` meshes are absent.
-- Hits use the view's light list, which drops finite lights outside the camera frustum, and
-  apply no light layers. Every hit loops the whole list (no clustering) with a shadow ray per
-  shadowing light in reach, so hit cost grows with the light count.
+- Every hit loops the whole reflection light list (no clustering) with a shadow ray per shadowing
+  light in reach, so hit cost grows with the light count.
 - Hit shading evaluates the Standard lobes only; normal maps apply at hits.

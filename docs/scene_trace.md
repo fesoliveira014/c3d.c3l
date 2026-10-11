@@ -18,7 +18,7 @@ An instance enters the trace when all of these hold:
 - the material's alpha mode is `OPAQUE` or `MASK`;
 - the material has no custom vertex stage.
 
-A mesh contributes one instance at its node's world matrix. An instanced batch contributes one instance per live transform, at `node.world * transforms[i]`. Camera layers and frusta play no part: an object behind the camera traces like any other.
+A mesh contributes one instance at its node's world matrix. An instanced batch contributes one instance per live transform, at `node.world * transforms[i]`. Camera layers and frusta play no part: an object behind the camera traces like any other. Every row carries its node's `layers`, which hit shading tests against `Light.layers`.
 
 | Instance | Traces |
 | --- | --- |
@@ -184,7 +184,7 @@ The instance mask selects rows: every row carries `TRACE_MASK_ALL`, and rows of 
 - `barycentrics`: the weights of the triangle's second and third corners.
 - `t`: the distance along `direction` as given. It is a world distance when `direction` is normalized.
 
-`TraceInstanceGpu` gives the hit's `GeometryRoot`, material block address, material kind, `TRACE_INSTANCE_ALPHA_MASK` and `TRACE_INSTANCE_DOUBLE_SIDED` flags, the instance mask and both affine transforms as rows. Which faces a ray meets is set by the entry point ([Facing](#facing)). A masked row (`TRACE_INSTANCE_ALPHA_MASK`) reports a triangle only where its coverage reaches the material's `alpha_cutoff`: base color alpha times the base map's alpha at the hit's UV (sampled at the top mip), times vertex alpha when the geometry has colors; a custom material uses slot 0's alpha. Both kinds apply the same test, so they report the same hits.
+`TraceInstanceGpu` gives the hit's `GeometryRoot`, material block address, material kind, `TRACE_INSTANCE_ALPHA_MASK` and `TRACE_INSTANCE_DOUBLE_SIDED` flags, the instance mask, the node's receiver `layers` and both affine transforms as rows. Which faces a ray meets is set by the entry point ([Facing](#facing)). A masked row (`TRACE_INSTANCE_ALPHA_MASK`) reports a triangle only where its coverage reaches the material's `alpha_cutoff`: base color alpha times the base map's alpha at the hit's UV (sampled at the top mip), times vertex alpha when the geometry has colors; a custom material uses slot 0's alpha. Both kinds apply the same test, so they report the same hits.
 
 The traversal keeps a stack of `BVH_STACK_DEPTH` entries per level; builds never exceed that depth.
 
@@ -208,7 +208,7 @@ TraceSurface surface = surface_from_hit(scene, hit, direction, cone_width);
 
 `TraceSurface` holds the world position, the shading and geometric normals, albedo (base colour
 times its map and vertex colour), emission, metallic and roughness (Standard and Physical rows;
-0 and 1 otherwise), the material kind and block address, and `back_face`, set when the ray hit
+0 and 1 otherwise), the material kind and block address, the row's receiver `layers`, and `back_face`, set when the ray hit
 the back of a single-sided surface (only `trace_scene_with_back_faces` reports such hits). Standard and Physical normal maps apply to the shading
 normal, through the tangent stream when the geometry has one and through the triangle's edges
 otherwise. A double-sided surface hit from behind reports flipped normals instead. Maps sample at the level of detail a ray cone of width `cone_width` (world

@@ -698,7 +698,9 @@ light.layers = 2;
 ```
 
 Here cameras seeing layer 1 or 2 can include the bulb, but it illuminates only
-meshes carrying layer 2. Ambient and emissive do not use direct-light masks.
+meshes carrying layer 2. Ambient and emissive do not use direct-light masks. Traced hits
+(reflections, probe updates and the path tracer) apply the same receiver mask through their
+row's node layers.
 
 ## Decals
 
