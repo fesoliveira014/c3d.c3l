@@ -231,6 +231,9 @@ struct Renderer {
     gpu::AcquiredImage      acquired;
     gpu::CompletionPoint    output_submission;
     gpu::TextureState       frame_shadow_state;
+    ColoredShadowStates     frame_colored_states;
+    bool                    colored_shadows;
+    bool                    frame_colored_shadows; // colored_shadows as the frame began
     bool                    frame_submitted;
     uint                    recording_slot;
     Target                  window_target;
@@ -523,6 +526,8 @@ fn void? begin_renderer_frame(Renderer* self, FrameInfo info, bool acquire_outpu
         }
 
         self.frame_shadow_state = self.shadow_atlas.state;
+        self.frame_colored_states = self.shadow_atlas.colored.states;
+        self.frame_colored_shadows = self.colored_shadows;
         // An aborted frame keeps frame_index, so its set must not match a view of the retried frame.
         self.shadow_set.published = false;
         foreach (&record : self.targets.items) {
@@ -1149,6 +1154,7 @@ fn void abort_frame(Renderer* renderer) {
         post::clear_exposure_readback(renderer, renderer.recording_slot);
         renderer.cull_readbacks[renderer.recording_slot].pending = false;
         renderer.shadow_atlas.state = renderer.frame_shadow_state;
+        renderer.shadow_atlas.colored.states = renderer.frame_colored_states;
         foreach (&record : renderer.targets.items) record.target.state = record.frame_state;
         foreach (index, &preview : renderer.previews) preview.image.state = renderer.frame_preview_states[index];
         restore_probe_states(renderer);

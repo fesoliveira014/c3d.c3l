@@ -18,12 +18,14 @@ struct ShadowDraw @private {
     Material* material;
     ShaderVariant vertex;
     gpu::PipelineHandle pipeline;
+    gpu::PipelineHandle tint_pipeline;
     gpu::GpuAddress skin;
     gpu::GpuAddress morph;
     gpu::GpuAddress alpha;
     gpu::GpuAddress instance_data;
     gpu::GpuAddress effects;
     bool masked;
+    bool translucent;
     bool wireframe;
     bool reflected;
     gpu::CullMode cull;
@@ -42,6 +44,7 @@ fn gpu::PipelineHandle? shadow_pipeline_for(
     ShaderVariant vertex,
     Material* material = null,
     bool vertex_color = false,
+    bool tint = false,
 ) @private {
     renderer.stats.pipeline_lookups++;
     PipelineKey key = {
@@ -51,6 +54,12 @@ fn gpu::PipelineHandle? shadow_pipeline_for(
         .samples = gpu::SampleCount.ONE,
         .polygon = wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
     };
+    if (tint) {
+        key.fragment.shader = SHADOW_TRANSMITTANCE;
+        key.color_formats[0] = COLORED_TRANSMITTANCE_FORMAT;
+        key.color_count = 1;
+        key.depth_format = gpu::Format.UNDEFINED;
+    }
     if (vertex.shader == IMPOSTOR_VERTEX) key.fragment = { .shader = IMPOSTOR_DEPTH };
     if (material && material.kind == MaterialKind.CUSTOM) {
         ShaderRes* published = resolve_shader(renderer, material.custom.shader)!;
@@ -79,10 +88,15 @@ fn ShaderVariant depth_only_vertex_variant(GeometryFlags flags, bool morphed = f
     );
 }
 
+fn bool shadow_pipeline_skippable(Renderer* renderer, Material* material, fault excuse) @private {
+    return material.kind == MaterialKind.CUSTOM && pipeline_rejected(renderer, material.custom.shader, excuse);
+}
+
 fn ShadowDraw[]? prepare_shadow_draws(
     Renderer* renderer,
     MeshCandidate[] candidates,
     InstanceEffectsView* effects_view,
+    bool colored = false,
 ) @private {
     ShadowDraw[] draws = alloc::new_array(tmem, ShadowDraw, candidates.len);
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
@@ -99,6 +113,7 @@ fn ShadowDraw[]? prepare_shadow_draws(
             }
             custom_header = resolved.address;
         }
+        bool translucent = colored && casts_translucent_shadow(material);
         ShadowDraw* draw = &draws[count];
         GpuGeometry* geometry = candidate.impostor ? acquire_impostor_geometry(renderer) : resolve_geometry(renderer, candidate.geometry)!;
         if (candidate.impostor) resolve_lod_part(renderer, candidate)!;
@@ -115,26 +130,43 @@ fn ShadowDraw[]? prepare_shadow_draws(
             .morph = resolve_candidate_morph(renderer, candidate, vertex)!,
             .alpha = custom_header,
             .instance_data = candidate_instanced(candidate) ? resolve_instances(renderer, candidate)! : (gpu::GpuAddress)0,
-            .masked = material.common.alpha_mode == AlphaMode.MASK,
+            .masked = !translucent && material.common.alpha_mode == AlphaMode.MASK,
+            .translucent = translucent,
             .wireframe = material.common.wireframe && renderer.caps.line_polygon_mode,
             .reflected = (candidate_world(candidate).determinant() < 0) != candidate.mirrored,
             .cull = material.common.double_sided ? gpu::CullMode.NONE : gpu::CullMode.BACK,
         };
+        bool colored_vertices = geometry.layout.flags.has_colors || candidate_instanced(candidate);
         gpu::PipelineHandle? pipeline = shadow_pipeline_for(
             renderer:     renderer,
             wireframe:    draw.wireframe,
             vertex:       vertex,
             material:     material,
-            vertex_color: draw.masked && (geometry.layout.flags.has_colors || candidate_instanced(candidate)),
+            vertex_color: draw.masked && colored_vertices,
         );
         if (catch excuse = pipeline) {
-            if (material.kind != MaterialKind.CUSTOM || !pipeline_rejected(renderer, material.custom.shader, excuse)) {
-                return excuse~;
-            }
+            if (!shadow_pipeline_skippable(renderer, material, excuse)) return excuse~;
+
             continue;
         }
-        draw.material = material;
         draw.pipeline = pipeline;
+        if (translucent) {
+            gpu::PipelineHandle? tint_pipeline = shadow_pipeline_for(
+                renderer:     renderer,
+                wireframe:    draw.wireframe,
+                vertex:       vertex,
+                material:     material,
+                vertex_color: colored_vertices,
+                tint:         true,
+            );
+            if (catch excuse = tint_pipeline) {
+                if (!shadow_pipeline_skippable(renderer, material, excuse)) return excuse~;
+
+                continue;
+            }
+            draw.tint_pipeline = tint_pipeline;
+        }
+        draw.material = material;
         draw.effects = resolve_instance_effects(
             renderer:     renderer,
             effects_view: effects_view,
@@ -142,7 +174,7 @@ fn ShadowDraw[]? prepare_shadow_draws(
             geometry:     geometry,
         )!;
         count++;
-        if (!draw.masked || material.kind == MaterialKind.CUSTOM) continue;
+        if ((!draw.masked && !translucent) || material.kind == MaterialKind.CUSTOM) continue;
         TextureSlot base_map;
         switch (material.kind) {
             case BASIC: base_map = material.basic.map;
@@ -152,11 +184,30 @@ fn ShadowDraw[]? prepare_shadow_draws(
             case CUSTOM: unreachable();
         }
         TextureBinding binding = resolve_texture_slot(renderer, base_map)!;
+        if (translucent) {
+            gpu::MappedGpuSpan caster = slot.upload.take(
+                device:    &renderer.device,
+                size:      TranslucentCasterGpu::size,
+                alignment: STREAM_ALIGNMENT,
+            )!;
+            write_translucent_caster_block((TranslucentCasterGpu*)caster.bytes.ptr, material, binding);
+            draw.alpha = caster.address;
+            continue;
+        }
         gpu::MappedGpuSpan alpha = slot.upload.take(&renderer.device, BasicMaterialGpu::size, STREAM_ALIGNMENT)!;
         write_shadow_material_block((BasicMaterialGpu*)alpha.bytes.ptr, material, binding);
         draw.alpha = alpha.address;
     }
     return draws[:count];
+}
+
+fn gpu::GraphicsState? shadow_layer_state(uint resolution, float bias) @private {
+    gpu::GraphicsState state = gpu::render_geometry_state(resolution, resolution)!;
+    state.viewport = flipped_viewport(resolution, resolution);
+    state.depth = { .test_enable = true, .write_enable = true, .compare = gpu::CompareOp.GREATER };
+    state.raster.depth_bias_enable = bias != 0;
+    state.raster.depth_bias_slope = -bias;
+    return state;
 }
 
 fn void? record_shadow_layer(
@@ -166,6 +217,8 @@ fn void? record_shadow_layer(
     CullRange[] ranges,
     uint layer,
     float bias,
+    ShadowDraw[] translucent = {},
+    CullRange[] translucent_ranges = {},
 ) @private {
     uint resolution = renderer.shadow_atlas.resolution;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
@@ -189,11 +242,7 @@ fn void? record_shadow_layer(
         .clear = { .depth = 0 },
     };
     gpu::RenderPassDesc pass = { .depth = &depth, .width = resolution, .height = resolution };
-    gpu::GraphicsState state = gpu::render_geometry_state(resolution, resolution)!;
-    state.viewport = flipped_viewport(resolution, resolution);
-    state.depth = { .test_enable = true, .write_enable = true, .compare = gpu::CompareOp.GREATER };
-    state.raster.depth_bias_enable = bias != 0;
-    state.raster.depth_bias_slope = -bias;
+    gpu::GraphicsState state = shadow_layer_state(resolution, bias)!;
     gpu::PipelineHandle first = draws.len
       ? draws[0].pipeline : shadow_pipeline_for(renderer, false, depth_only_vertex_variant({}))!;
     gpu::cmd_bind_pipeline(&renderer.commands, first)!;
@@ -209,6 +258,17 @@ fn void? record_shadow_layer(
     )!;
     gpu::cmd_end_render_pass(&renderer.commands)!;
     renderer.stats.shadow_layers++;
+    if (!translucent.len) return;
+
+    record_colored_layer(
+        renderer:       renderer,
+        draws:          translucent,
+        ranges:         translucent_ranges,
+        layer:          layer,
+        frame:          frame.address,
+        view_reflected: matrices.view.determinant() < 0,
+        bias:           bias,
+    )!;
 }
 
 fn void? record_depth_draws(
@@ -219,13 +279,14 @@ fn void? record_depth_draws(
     bool view_reflected,
     gpu::GraphicsState* state,
     gpu::PipelineHandle first,
+    bool tint = false,
 ) @private {
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     ShadowDrawState bound = { .pipeline = first };
     bool state_set;
     foreach (index, draw : draws) {
         ShadowDrawState wanted = {
-            .pipeline = draw.pipeline,
+            .pipeline = tint ? draw.tint_pipeline : draw.pipeline,
             .cull = draw.cull,
             .front_face = draw.reflected != view_reflected
               ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,
@@ -330,6 +391,7 @@ fn void? record_shadows(
         counts: &counts,
         lod: effects_view.lod,
         origin: renderer.frame_origin,
+        colored: renderer.frame_colored_shadows,
     );
     renderer.stats.dangling_refs += counts.dangling;
     CameraMatrices[] shadow_matrices = alloc::new_array(tmem, CameraMatrices, allocation.layer_count);
@@ -410,8 +472,14 @@ fn void? record_shadows(
     foreach (index, candidate : candidates) {
         if (participating[index]) candidates[included++] = candidate;
     }
-    ShadowDraw[] draws = prepare_shadow_draws(renderer, candidates[:included], effects_view)!;
+    ShadowDraw[] draws = prepare_shadow_draws(
+        renderer:       renderer,
+        candidates:     candidates[:included],
+        effects_view:   effects_view,
+        colored:        renderer.frame_colored_shadows,
+    )!;
     ShadowDraw[][] layer_draws = alloc::new_array(tmem, ShadowDraw[], allocation.layer_count);
+    uint[] layer_opaque = alloc::new_array(tmem, uint, allocation.layer_count);
     CullRange[][] layer_ranges = alloc::new_array(tmem, CullRange[], allocation.layer_count);
     CullItem[][] layer_culls = alloc::new_array(tmem, CullItem[], allocation.layer_count);
     usz cull_count;
@@ -419,7 +487,15 @@ fn void? record_shadows(
         ShadowDraw[] visible = alloc::new_array(tmem, ShadowDraw, draws.len);
         uint count;
         foreach (draw : draws) {
-            if (maths::frustum_intersects_aabb(&frustum_matrices.frustum, draw.candidate.world_bounds)) {
+            if (!draw.translucent
+                && maths::frustum_intersects_aabb(&frustum_matrices.frustum, draw.candidate.world_bounds)) {
+                visible[count++] = draw;
+            }
+        }
+        layer_opaque[layer] = count;
+        foreach (draw : draws) {
+            if (draw.translucent
+                && maths::frustum_intersects_aabb(&frustum_matrices.frustum, draw.candidate.world_bounds)) {
                 visible[count++] = draw;
             }
         }
@@ -437,7 +513,20 @@ fn void? record_shadows(
     prepare_cull_stage(renderer, atlas_culls, culling)!;
     record_pending_copies(renderer, &renderer.commands)!;
     record_instance_cull(renderer, atlas_culls)!;
+    bool translucent_casters;
+    foreach (layer, visible : layer_draws) translucent_casters |= visible.len > layer_opaque[layer];
+    if (translucent_casters) {
+        acquire_colored_shadows(renderer)!;
+        foreach (layer, visible : layer_draws) {
+            if (visible.len == layer_opaque[layer]) continue;
+
+            ColoredShadowLayer* images = &renderer.shadow_atlas.colored.layers[layer];
+            shadows[layer].colored_transmittance = images.transmittance_view.index;
+            shadows[layer].colored_depth = images.depth_view.index;
+        }
+    }
     transition_shadow_atlas(&renderer.shadow_atlas, &renderer.commands, DEPTH_ATTACHMENT_STATE)!;
+    if (translucent_casters) transition_colored_shadows(&renderer.shadow_atlas.colored, &renderer.commands, true)!;
     @profile_pass(renderer, Pass.SHADOW_ATLAS) {
         foreach (request : allocation.requests) {
             Light* light = scene.get(scene.node(request.light), Light);
@@ -449,13 +538,16 @@ fn void? record_shadows(
                     kind: light.kind,
                     layer_index: index,
                 )!;
+                uint opaque_count = layer_opaque[layer];
                 record_shadow_layer(
                     renderer: renderer,
                     matrices: &shadow_matrices[layer],
-                    draws: layer_draws[layer],
-                    ranges: layer_ranges[layer],
+                    draws: layer_draws[layer][:opaque_count],
+                    ranges: layer_ranges[layer][:opaque_count],
                     layer: layer,
                     bias: light.shadow.bias,
+                    translucent: layer_draws[layer][opaque_count..],
+                    translucent_ranges: layer_ranges[layer][opaque_count..],
                 )!;
                 end_profile_scope(renderer, layer_scope)!;
             }
@@ -466,6 +558,7 @@ fn void? record_shadows(
         commands: &renderer.commands,
         next: gpu::sampled_at({ .fragment_shader }),
     )!;
+    if (translucent_casters) transition_colored_shadows(&renderer.shadow_atlas.colored, &renderer.commands, false)!;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan shadow_span = slot.upload.take(
         device: &renderer.device,

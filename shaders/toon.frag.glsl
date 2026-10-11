@@ -56,9 +56,9 @@ void main() {
 
         LightSample light_sample = sample_light(light, v_world_pos);
         float response = toon_response(material, dot(normal, light_sample.direction));
-        float visibility = 1.0;
+        vec3 visibility = vec3(1.0);
         if ((draw.flags & DRAW_RECEIVE_SHADOW) != 0u && light_casts_shadow(light)) {
-            visibility = shadow_visibility(frame, light, v_world_pos, normal, view_depth);
+            visibility = shadow_transmittance(frame, light, v_world_pos, normal, view_depth);
         }
         color += base_color.rgb / PI * response * light_sample.radiance * visibility;
     }

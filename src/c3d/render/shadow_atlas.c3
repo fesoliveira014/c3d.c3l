@@ -16,6 +16,7 @@ struct ShadowAtlas {
     uint resolution;
     gpu::SamplerIndex sampler;
     gpu::TextureState state;
+    ColoredShadows colored;
 }
 
 fn void? transition_shadow_atlas(ShadowAtlas* atlas, gpu::CommandList* commands, gpu::TextureState next) @private {
@@ -79,6 +80,7 @@ fn ShadowAtlas? create_shadow_atlas(
 }
 
 fn void destroy_shadow_atlas(gpu::Device* device, ShadowAtlas* atlas) @private {
+    destroy_colored_shadows(device, atlas);
     foreach (layer : atlas.layers) {
         if (layer.view.is_valid()) (void)gpu::destroy_texture_view(device, layer.view);
         if (layer.attachment.is_valid()) (void)gpu::destroy_attachment_view(device, layer.attachment);

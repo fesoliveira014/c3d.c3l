@@ -49,6 +49,7 @@ enum ShaderName : int {
     FOG_SCATTERING,
     FOG_INTEGRATION,
     DEPTH_ONLY,
+    SHADOW_TRANSMITTANCE,
     GRADE,
     FXAA,
     FXAA_FRAGMENT,
@@ -205,6 +206,8 @@ const char[*] FOG_INTEGRATION_SPIRV @private = $embed("../../../shaders/spv/fog_
 const char[*] MESH_DEPTH_ONLY_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only.spv");
 const char[*] DEPTH_ONLY_SPIRV @private = $embed("../../../shaders/spv/depth_only.spv");
 const char[*] DEPTH_ONLY_VERTEX_COLOR_SPIRV @private = $embed("../../../shaders/spv/depth_only_vertex_color.spv");
+const char[*] SHADOW_TRANSMITTANCE_SPIRV @private = $embed("../../../shaders/spv/shadow_transmittance.spv");
+const char[*] SHADOW_TRANSMITTANCE_VERTEX_COLOR_SPIRV @private = $embed("../../../shaders/spv/shadow_transmittance_vertex_color.spv");
 const char[*] MESH_SKINNED_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned.spv");
 const char[*] MESH_SKINNED_U16_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_u16.spv");
 const char[*] MESH_MORPH_SPIRV @private = $embed("../../../shaders/spv/mesh_morph.spv");
@@ -287,7 +290,7 @@ const char[*] TRACE_REFIT_SPIRV @private = $embed("../../../shaders/spv/trace_re
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[144] SHADER_ENTRIES = {
+const ShaderEntry[146] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -354,6 +357,8 @@ const ShaderEntry[144] SHADER_ENTRIES = {
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY }, .spirv = MESH_DEPTH_ONLY_SPIRV[..] },
     { .variant = { .shader = DEPTH_ONLY }, .spirv = DEPTH_ONLY_SPIRV[..] },
     { .variant = { .shader = DEPTH_ONLY, .flags = SHADER_FLAG_VERTEX_COLOR }, .spirv = DEPTH_ONLY_VERTEX_COLOR_SPIRV[..] },
+    { .variant = { .shader = SHADOW_TRANSMITTANCE }, .spirv = SHADOW_TRANSMITTANCE_SPIRV[..] },
+    { .variant = { .shader = SHADOW_TRANSMITTANCE, .flags = SHADER_FLAG_VERTEX_COLOR }, .spirv = SHADOW_TRANSMITTANCE_VERTEX_COLOR_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED }, .spirv = MESH_SKINNED_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED_U16 }, .spirv = MESH_SKINNED_U16_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_MORPH }, .spirv = MESH_MORPH_SPIRV[..] },
