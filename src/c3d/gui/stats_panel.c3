@@ -53,6 +53,20 @@ fn void? stats_panel(Renderer* renderer) {
     }
     imgui::text("Lights: %u", stats.lights);
     imgui::text("Lights dropped: %u", stats.lights_dropped);
+
+    if (imgui::collapsing_header("Optical shadows", {})) {
+        imgui::text("Optical atlas layers: %u", stats.optical_shadow_layers);
+        imgui::text("Capture passes: %u", stats.optical_shadow_capture_passes);
+        imgui::text("Product passes: %u", stats.optical_shadow_product_passes);
+        imgui::text("Store passes: %u", stats.optical_shadow_store_passes);
+        imgui::text("Blocker passes: %u", stats.optical_shadow_blocker_passes);
+        imgui::text("Overflow passes: %u", stats.optical_shadow_overflow_passes);
+        imgui::text("Optical trace overflows: %u", stats.optical_trace_overflows);
+        imgui::text("Atlas payload: %llu bytes", (ulong)stats.optical_shadow_payload_bytes);
+        imgui::text("Product scratch: %llu bytes", (ulong)stats.optical_shadow_scratch_bytes);
+        imgui::text("Layer capacity: %u", renderer.transmission_shadow_layers);
+    }
+
     imgui::text("Decals: %u", stats.decals);
     imgui::text("Decals dropped: %u", stats.decals_dropped);
     imgui::text("Probe rays: %u", stats.probe_rays);

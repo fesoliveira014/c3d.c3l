@@ -301,6 +301,17 @@ fn int main(String[] args) {
     Mesh* ground_mesh = scene.get(ground, Mesh);
     Node* sphere = scene.add_mesh(sphere_geometry, sphere_material, name: "sphere")!!;
     sphere.local.position = { 1.5f, 0.5f, 0 };
+    PhysicalParams glass_params = material::PHYSICAL_PARAMS_DEFAULT;
+    glass_params.standard.base_color = { 0.2f, 0.75f, 1, 1 };
+    glass_params.standard.roughness = 0.15f;
+    glass_params.transmission = 1;
+    MaterialCommon glass_common = material::MATERIAL_COMMON_DEFAULT;
+    glass_common.alpha_mode = AlphaMode.BLEND;
+    glass_common.double_sided = true;
+    MaterialId glass_material = assets.add_material(material::physical(glass_params, glass_common), "glass")!!;
+    Node* glass = scene.add_mesh(box_geometry, glass_material, name: "colored_glass")!!;
+    glass.local.position = { -1.5f, 2, 0 };
+
     Node* box = scene.add_mesh(box_geometry, box_material, name: "off_camera_box")!!;
     box.local.position = { 0, 2, 11 };
     Mesh* box_mesh = scene.get(box, Mesh);
@@ -308,6 +319,7 @@ fn int main(String[] args) {
     Light sun = light::directional({ 1, 0.95f, 0.85f }, 3);
     sun.shadow.enabled = true;
     sun.shadow.ray_traced = true;
+    sun.shadow.colored_transmission = true;
     Node* sun_node = scene.add_light(sun, name: "sun")!!;
     sun_node.local.rotation = maths::look_rotation((Vec3){ 0.1f, -0.4f, -1 }.normalize(), { 0, 1, 0 });
 

@@ -373,6 +373,9 @@ fn gpu::GpuAddress? record_optical_shadow_atlas(
     if (!demanded) return (gpu::GpuAddress)0;
 
     acquire_optical_shadow_atlas(renderer)!;
+    renderer.stats.optical_shadow_payload_bytes = renderer.optical_shadow_atlas.texel_bytes;
+    renderer.stats.optical_shadow_scratch_bytes = renderer.optical_shadow_atlas.scratch_bytes;
+
     ExtractCounts counts;
     MeshCandidate[] candidates = extract_shadow_candidates(
         allocator: tmem,
@@ -422,6 +425,8 @@ fn gpu::GpuAddress? record_optical_shadow_atlas(
                 .view_proj = bitcast(matrices.view_proj, Mat4f),
             };
             shadows[layer].optical_index = layer + 1;
+            renderer.stats.optical_shadow_layers++;
+            renderer.stats.optical_shadow_blocker_passes += 2;
             record_optical_shadow_blockers(
                 renderer: renderer,
                 matrices: &matrices,
@@ -471,6 +476,9 @@ fn gpu::GpuAddress? record_optical_shadow_atlas(
                     layer: layer,
                     group: group,
                 )!;
+                renderer.stats.optical_shadow_capture_passes++;
+                renderer.stats.optical_shadow_product_passes++;
+                renderer.stats.optical_shadow_store_passes++;
             }
             record_optical_shadow_geometry(
                 renderer: renderer,
@@ -482,6 +490,7 @@ fn gpu::GpuAddress? record_optical_shadow_atlas(
                 phase: { .previous_depth = previous, .phase = shader::OPTICAL_SHADOW_CAPTURE },
                 clear_depth: true,
             )!;
+            renderer.stats.optical_shadow_overflow_passes++;
         }
     }
 

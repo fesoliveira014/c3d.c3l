@@ -152,6 +152,15 @@ struct Stats {
     uint  shadow_requests_dropped;
     uint  shadow_sets_recorded;   // this frame: raster views that built a shadow set, empty sets included
     uint  shadow_sets_shared;     // this frame: raster views that bound a set an earlier view recorded
+    uint  optical_shadow_layers;
+    uint  optical_shadow_capture_passes;
+    uint  optical_shadow_product_passes;
+    uint  optical_shadow_store_passes;
+    uint  optical_shadow_blocker_passes;
+    uint  optical_shadow_overflow_passes;
+    uint  optical_trace_overflows;
+    usz   optical_shadow_payload_bytes;
+    usz   optical_shadow_scratch_bytes;
     uint  shadow_lights_unshared; // this frame: lights drawn unshadowed because the bound set lacks them, in views whose shadow camera is not their own
     ShadowTiming[] shadow_timings;
     uint  environment_prepares;
@@ -222,6 +231,8 @@ fn void reset_frame_stats(Stats* stats) @private {
     stats.texture_capacity = previous.texture_capacity;
     stats.texture_views = previous.texture_views;
     stats.texture_heap_capacity = previous.texture_heap_capacity;
+    stats.optical_shadow_payload_bytes = previous.optical_shadow_payload_bytes;
+    stats.optical_shadow_scratch_bytes = previous.optical_shadow_scratch_bytes;
     $if $feat(C3D_PROFILE_GPU):
         stats.gpu_frame_index = previous.gpu_frame_index;
         stats.gpu_timing_state = previous.gpu_timing_state;

@@ -26,6 +26,8 @@ fn gpu::GpuAddress? pack_optical_shadows(
         retire_optical_scene_trace(renderer);
         retire_optical_shadow_atlas(&renderer.pending_upload_retire, &renderer.optical_shadow_atlas);
         renderer.optical_shadow_preparation = false;
+        renderer.stats.optical_shadow_payload_bytes = 0;
+        renderer.stats.optical_shadow_scratch_bytes = 0;
         return (gpu::GpuAddress)0;
     }
 

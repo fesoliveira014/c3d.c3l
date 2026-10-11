@@ -1246,7 +1246,10 @@ fn gpu::GpuAddress? record_optical_scene_trace(Renderer* renderer, Scene* scene)
         optical: true,
     );
     renderer.optical_trace_overflow = collection.records.len > renderer.max_trace_instances;
-    if (renderer.optical_trace_overflow) return write_optical_trace_metadata(renderer, scene);
+    if (renderer.optical_trace_overflow) {
+        renderer.stats.optical_trace_overflows++;
+        return write_optical_trace_metadata(renderer, scene);
+    }
 
     // Generic rows claim posed slots first; optical-only rows reuse the same epoch and geometry mirrors.
     trace.software_requested = true;

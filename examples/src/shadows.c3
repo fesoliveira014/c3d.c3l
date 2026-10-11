@@ -122,6 +122,8 @@ fn bool edit_float(
 
 fn void common_shadow_controls(Light* light) @local {
     imgui::checkbox("Enabled", &light.shadow.enabled);
+    imgui::checkbox("Colored transmission", &light.shadow.colored_transmission);
+
     int priority = light.shadow.priority;
     if (imgui::drag_int_ex(
         label: "Priority",
@@ -366,6 +368,7 @@ fn void? run_gui(
     Node* off_camera_box,
     Node* ground,
     Orbit* orbit,
+    uint frame_limit,
 ) @local {
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
@@ -390,6 +393,7 @@ fn void? run_gui(
     Vec2 previous_shadow_position;
     float shadow_texel_motion;
     bool shadow_position_valid;
+    uint frames;
 
     while (window.poll()) {
         bool keyboard_was_captured = window.input.keyboard_captured_by_gui;
@@ -515,6 +519,8 @@ fn void? run_gui(
             shadow_texel_motion = 0;
         }
         previous_world_offset = world_offset;
+        frames++;
+        if (frame_limit && frames >= frame_limit) break;
     }
 }
 
@@ -548,7 +554,9 @@ fn TextureId add_mask_checker(AssetStore* assets) @local {
 
 fn int main(String[] args) {
     bool gpu_timings;
-    foreach (argument : args[1..]) {
+    uint frame_limit;
+    for (usz index = 1; index < args.len; index++) {
+        String argument = args[index];
         if (argument == "--gpu-timings") {
             $if $feat(C3D_PROFILE_GPU):
                 gpu_timings = true;
@@ -556,6 +564,9 @@ fn int main(String[] args) {
                 io::eprintfn("--gpu-timings needs GPU profiling: c3c build <target> --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL");
                 return 1;
             $endif
+        } else if (argument == "--frames" && index + 1 < args.len) {
+            frame_limit = args[++index].to_uint() ?? 0;
+            if (!frame_limit) return 1;
         } else {
             io::printfn("Unknown argument: %s", argument);
             return 1;
@@ -639,6 +650,18 @@ fn int main(String[] args) {
     scene.ambient_intensity = 0.04f;
 
     Node* ground = scene.add_mesh(ground_geometry, ground_material, name: "ground_receiver")!!;
+    PhysicalParams glass_params = material::PHYSICAL_PARAMS_DEFAULT;
+    glass_params.standard.base_color = { 0.2f, 0.75f, 1, 1 };
+    glass_params.standard.roughness = 0.15f;
+    glass_params.transmission = 1;
+    MaterialCommon glass_common = material::MATERIAL_COMMON_DEFAULT;
+    glass_common.alpha_mode = AlphaMode.BLEND;
+    glass_common.double_sided = true;
+    MaterialId glass_material = assets.add_material(material::physical(glass_params, glass_common), "glass")!!;
+    Node* glass = scene.add_mesh(plane_geometry, glass_material, name: "colored_glass")!!;
+    glass.local.position = { 2, 3, 2 };
+    glass.local.scale = { 2, 2, 2 };
+
     Node* standard_box = scene.add_mesh(box_geometry, standard_box_material, name: "standard_box")!!;
     standard_box.local.position = { -2.5f, 1, 1 };
     Node* solid_box = scene.add_mesh(box_geometry, basic_box_material, name: "basic_box")!!;
@@ -653,6 +676,7 @@ fn int main(String[] args) {
     Light primary = light::directional({ 1, 0.95f, 0.85f }, 3);
     primary.layers = 1;
     primary.shadow.priority = 10;
+    primary.shadow.colored_transmission = true;
     Node* primary_sun = scene.add_light(primary, name: "primary_sun")!!;
     primary_sun.layers = 1;
     primary_sun.local.rotation = maths::look_rotation((Vec3){ -0.5f, -1, -0.3f }.normalize(), { 0, 1, 0 });
@@ -672,6 +696,7 @@ fn int main(String[] args) {
     );
     spot.layers = 1;
     spot.shadow.enabled = true;
+    spot.shadow.colored_transmission = true;
     spot.shadow.priority = 10;
     Node* spot_node = scene.add_light(spot, name: "spot_shadow_light")!!;
     spot_node.layers = 1;
@@ -682,6 +707,7 @@ fn int main(String[] args) {
     Light point = light::point({ 0.72f, 0.84f, 1 }, 65, 12);
     point.layers = 1;
     point.shadow.enabled = true;
+    point.shadow.colored_transmission = true;
     point.shadow.priority = 10;
     Node* point_node = scene.add_light(point, name: "point_shadow_light")!!;
     point_node.layers = 1;
@@ -851,6 +877,7 @@ fn int main(String[] args) {
         off_camera_box: off_camera_box,
         ground: ground,
         orbit: &orbit,
+        frame_limit: frame_limit,
     )) {
         io::printfn("GUI failed: %s", excuse);
         return 1;
