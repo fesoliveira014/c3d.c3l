@@ -23,16 +23,9 @@ struct PreparedModelDocument @private {
     CoverageStatistics[] textures;
     PreparedGeometry[] geometries;
     HashMap{String, bool} named;
-    ulong incoming_items;
+    ulong items;
     bool all_keys_named;
     bool clip_targets_valid;
-}
-
-struct PublicationEstimate @private {
-    ulong items_used;
-    ulong required_items;
-    bool required_exact;
-    bool admitted;
 }
 
 fn PreparedModelDocument? prepare_model_document(ModelDocument* document) @private {
@@ -133,12 +126,7 @@ fn PreparedModelDocument? prepare_model_document(ModelDocument* document) @priva
             }
         }
 
-        prepared.incoming_items = publication_items(
-            document: document,
-            prepared: &prepared,
-            store: null,
-            old: {},
-        );
+        prepared.items = publication_items(document);
     };
 
     prepared.document = *document;
@@ -345,140 +333,17 @@ fn ModelReplaceReport? replace_prepared_model_document(
     return report;
 }
 
-fn ulong add_publication_items(ulong first, ulong second) @private {
-    return first > ulong::max - second ? ulong::max : first + second;
-}
+// A replaced entry keeps its match's structure, so the document also measures the payload replacement frees.
+fn ulong publication_items(ModelDocument* document) @private {
+    ModelTemplate* template = &document.template;
+    usz items = 1 + document.samplers.len + document.textures.len + document.materials.len
+      + document.geometries.len + document.skeletons.len + document.clips.len
+      + template.nodes.len + template.meshes.len;
 
-fn ulong publication_items(
-    ModelDocument* document,
-    PreparedModelDocument* prepared,
-    AssetStore* store,
-    AssetRef old,
-) @private {
-    ulong items;
-    if (document) {
-        items = 1;
-        items = add_publication_items(items, document.samplers.len);
-        items = add_publication_items(items, document.textures.len);
-        items = add_publication_items(items, document.materials.len);
-        items = add_publication_items(items, document.geometries.len);
-        items = add_publication_items(items, document.skeletons.len);
-        items = add_publication_items(items, document.clips.len);
-        ModelTemplate* template = &document.template;
-        items = add_publication_items(items, template.nodes.len);
-        items = add_publication_items(items, template.meshes.len);
-        items = add_publication_items(items, template.skins.len);
-        items = add_publication_items(items, template.clips.len);
-        items = add_publication_items(items, template.lod_groups.len);
-        foreach (skin : template.skins) items = add_publication_items(items, skin.joint_nodes.len);
-        foreach (group : template.lod_groups) {
-            items = add_publication_items(items, group.desc.levels.len);
-            items = add_publication_items(items, group.desc.parts.len);
-        }
-        foreach (&entry : document.geometries) {
-            items = add_publication_items(items, entry.data.targets.len);
-            items = add_publication_items(items, entry.data.channels.len);
-        }
-        foreach (&entry : document.skeletons) {
-            items = add_publication_items(items, entry.data.parents.len);
-            items = add_publication_items(items, entry.data.joint_names.len);
-        }
-        foreach (&entry : document.clips) {
-            items = add_publication_items(items, entry.data.targets.len);
-            items = add_publication_items(items, entry.data.tracks.len);
-            items = add_publication_items(items, 1);
-        }
-        items = add_publication_items(items, prepared.named.table.len);
-        items = add_publication_items(items, (ulong)prepared.named.len());
-        return items;
-    }
-    items = 1;
-    switch (old.kind) {
-        case MODEL:
-            ModelTemplate* template = &store.models.items[old.id.index].data;
-            items = add_publication_items(items, template.nodes.len);
-            items = add_publication_items(items, template.meshes.len);
-            items = add_publication_items(items, template.skins.len);
-            items = add_publication_items(items, template.lod_groups.len);
-        case GEOMETRY:
-            Geometry* geometry = &store.geometries.items[old.id.index].data;
-            items = add_publication_items(items, geometry.targets.len);
-            items = add_publication_items(items, geometry.channels.len);
-        case SKELETON:
-            items = add_publication_items(items, store.skeletons.items[old.id.index].data.joint_names.len);
-        case CLIP:
-            items = add_publication_items(items, store.clips.items[old.id.index].data.tracks.len);
-        case TEXTURE:
-        case SAMPLER:
-        case MATERIAL:
-        case SHADER:
-        case COMPUTE_SHADER:
-        case ENVIRONMENT:
-        case CUSTOM:
-        case FONT:
-    }
+    foreach (&group : template.lod_groups) items += group.desc.parts.len;
+    foreach (&entry : document.clips) items += entry.data.tracks.len;
+
     return items;
-}
-
-fn PublicationEstimate estimate_model_publication(
-    AssetStore* store,
-    PreparedModelDocument* prepared,
-    ModelId model,
-    ulong allowance,
-    bool bounded,
-) @private {
-    bool live_model = model.generation && store.models.is_live(model);
-    ulong estimation = add_publication_items(prepared.named.table.len, (ulong)prepared.named.len());
-    if (live_model) estimation = add_publication_items(estimation, 1);
-    if (model.generation) {
-        estimation = add_publication_items(estimation, store.keys.table.len);
-        estimation = add_publication_items(estimation, (ulong)store.keys.len());
-    }
-    PublicationEstimate estimate = {
-        .required_items = add_publication_items(prepared.incoming_items, estimation),
-    };
-    if (bounded && (estimate.required_items == ulong::max || allowance < estimate.required_items)) return estimate;
-    estimate.items_used = estimation;
-    ulong attempt = prepared.incoming_items;
-    if (live_model) {
-        attempt = add_publication_items(attempt, publication_items(
-            document: null,
-            prepared: null,
-            store: store,
-            old: typed_ref(AssetKind.MODEL, model),
-        ));
-    }
-    foreach (bucket : prepared.named.table) {
-        for (map::Entry{String, bool}* entry = bucket; entry; entry = entry.next) {
-            if (!model.generation || entry.key == prepared.document.key) continue;
-            if (try old = store.find(entry.key)) {
-                if (old.kind == AssetKind.GEOMETRY || old.kind == AssetKind.SKELETON || old.kind == AssetKind.CLIP
-                  || old.kind == AssetKind.TEXTURE || old.kind == AssetKind.MATERIAL || old.kind == AssetKind.SAMPLER) {
-                    attempt = add_publication_items(attempt, publication_items(
-                        document: null,
-                        prepared: null,
-                        store: store,
-                        old: old,
-                    ));
-                }
-            }
-        }
-    }
-    if (model.generation) {
-        ulong inventory = add_publication_items(store.keys.table.len, (ulong)store.keys.len());
-        attempt = add_publication_items(attempt, inventory);
-        foreach (bucket : store.keys.table) {
-            for (map::Entry{String, AssetRef}* entry = bucket; entry; entry = entry.next) {
-                if (is_missing_part(prepared.document.key, entry.key, &prepared.named)) {
-                    attempt = add_publication_items(attempt, 1);
-                }
-            }
-        }
-    }
-    estimate.required_items = add_publication_items(estimate.items_used, attempt);
-    estimate.required_exact = estimate.required_items != ulong::max;
-    estimate.admitted = !bounded || (estimate.required_items != ulong::max && estimate.required_items <= allowance);
-    return estimate;
 }
 
 fn TextureId add_prepared_texture(AssetStore* store, DocumentTexture* entry, CoverageStatistics statistics) @private {

@@ -152,11 +152,7 @@ fn void? panel(Showcase* showcase) @local {
     imgui::text("Largest frame while preparing: %.1f ms", timings.prepare_frame_max_ms);
 
     if (showcase.publication.deferred) {
-        if (showcase.publication.required_exact) {
-            imgui::text("Deferred model requires %llu items", showcase.publication.required_items);
-        } else {
-            imgui::text("Deferred model requires at least %llu items", showcase.publication.required_items);
-        }
+        imgui::text("Deferred model requires %llu items", showcase.publication.required_items);
         if (imgui::button("Use reported item allowance")) {
             showcase.limits.items = showcase.publication.required_items;
         }

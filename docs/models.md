@@ -461,34 +461,30 @@ requests that this call moved to `PUBLISHED` or commit `FAILED`; earlier worker 
 
 ### Publication allowance and reports
 
-`PublishLimits.items` is a logical inventory allowance per call. Zero is unbounded. Decoded documents are admitted
+`PublishLimits.items` is a logical item allowance per call. Zero is unbounded. Decoded documents are admitted
 atomically in FIFO order; a head that cannot fit stops the call, and later smaller documents do not bypass it. An
 admitted commit failure consumes its charge and leaves existing assets unchanged.
 
-Items count asset entries, template and nested structural arrays, compared names, prepared metadata cleanup and old
-payload cleanup. Replacement also counts key-map buckets, live entries and collected missing parts. Every variable
-owner-thread traversal is represented by the charge function. Keys and compared names have a string-length exception;
-items do not count their bytes or promise a CPU instruction or wall-clock limit. Missing parts keep their existing
-namespace membership and kind/key order; sorting is O(n log n), bounded by the configured store inventory.
+A document's charge is one item for the model and one per entry, template node, template mesh, LOD part and clip
+track. A replacement is charged like an addition: a matched entry keeps its structure, so the incoming document also
+measures the payload the replacement frees. The worker computes the charge while decoding; admission on the owner
+thread reads it without traversing anything. Items do not count key or name bytes and promise no CPU instruction or
+wall-clock limit.
 
-The key map is sized for built-in pools at store creation and extended when a custom pool is first registered.
-Publication does not trigger a table rehash. Matching and estimating the current charge consumes items in the call,
-without publishing or retaining a preflight between calls. Checked accounting saturates rather than wrapping.
+One replacement step is outside the charge: collecting missing parts scans the store's key map once, a cost set by the
+store's key capacity rather than by the document. The key map is sized for built-in pools at store creation and
+extended when a custom pool is first registered; publication does not trigger a table rehash.
 
 | `PublishReport` field | Meaning |
 | --- | --- |
 | `published` | Requests this call published. |
 | `failed` | Commit failures in this call, excluding earlier decode failures. |
-| `items_used` | Charged estimation and admitted publication/cleanup work. |
+| `items_used` | Charges of the requests this call admitted. |
 | `deferred` | A decoded head could not fit. |
-| `required_items` | The deferred head's requirement; zero when none. |
-| `required_exact` | True for a complete estimate; false for the minimum estimation reserve. |
+| `required_items` | The deferred head's charge; zero when none. |
 
-The minimum reserve combines incoming items with the complete estimation cost, computed from current table sizes
-and liveness before traversal. A call below this reserve spends no items and defers immediately. A call at that
-reserve either admits the head or returns its exact fresh-call requirement after one full estimation. The caller
-can choose that larger allowance or explicitly select unbounded publication. A depleted finite allowance stays finite;
-its zero remainder does not become unbounded.
+A deferred head spends nothing. The caller can raise the allowance to `required_items` or select unbounded
+publication. A depleted finite allowance stays finite; its zero remainder does not become unbounded.
 
 ### Cancellation and request lifetime
 

@@ -67,14 +67,13 @@ struct PublishLimits {
 }
 
 <*
- Publication transitions and logical work charged by one call.
+ Publication transitions and items charged by one call.
 *>
 struct PublishReport {
     uint  published;
     uint  failed;
     ulong items_used;
-    ulong required_items;
-    bool  required_exact;
+    ulong required_items; // the deferred head's charge; zero when none
     bool  deferred;
 }
 
@@ -195,34 +194,26 @@ fn uint AsyncLoader.publish(&self) {
 
 <*
  Publish FIFO requests within a logical item allowance.
- @return "Current-call work and the deferred head's requirement."
+ @return "Current-call work and the deferred head's charge."
 *>
 fn PublishReport AsyncLoader.publish_within(&self, PublishLimits limits) {
     std::time::Clock started = clock::now();
     LoaderState* state = self.state;
     state.lock.lock();
     defer state.lock.unlock();
+
     PublishReport report;
-    bool bounded = limits.items != 0;
     while (state.decoded_head) {
         uint index = state.decoded_head - 1;
         LoadSlot* slot = &state.slots[index];
-        ulong remaining = bounded ? limits.items - report.items_used : 0;
-        PublicationEstimate estimate = asset::estimate_model_publication(
-            store:     state.assets,
-            prepared:  &slot.prepared,
-            model:     slot.request.replace,
-            allowance: remaining,
-            bounded:   bounded,
-        );
-        report.items_used = add_saturated(report.items_used, estimate.items_used);
-        if (!estimate.admitted) {
-            report.required_items = estimate.required_items;
-            report.required_exact = estimate.required_exact;
+        ulong items = slot.prepared.items;
+        if (limits.items && items > limits.items - report.items_used) {
+            report.required_items = items;
             report.deferred = true;
             break;
         }
-        report.items_used = add_saturated(report.items_used, estimate.required_items - estimate.items_used);
+
+        report.items_used += items;
         remove_decoded(state, index);
         publish_slot(state.assets, slot);
         asset::destroy_prepared_model_document(&slot.prepared);
@@ -234,6 +225,7 @@ fn PublishReport AsyncLoader.publish_within(&self, PublishLimits limits) {
             state.counters.commit_failures = add_saturated(state.counters.commit_failures, 1);
         }
     }
+
     state.counters.publication_items = add_saturated(state.counters.publication_items, report.items_used);
     state.counters.publication_ns = add_saturated(state.counters.publication_ns, (ulong)started.to_now());
     return report;

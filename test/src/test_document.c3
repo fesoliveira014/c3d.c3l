@@ -612,58 +612,6 @@ fn void test_independent_preparation_rejects_format_and_negative_weights_without
     assert(!tracker.has_leaks());
 }
 
-fn void test_default_replacement_reserves_full_estimation_before_scanning() @test {
-    TrackingAllocator tracker;
-    tracker.init(mem);
-    defer tracker.free();
-    {
-        AssetStore assets = asset::create_asset_store(&tracker, asset::default_asset_store_desc());
-        defer asset::destroy_asset_store(&assets);
-        ModelDocument first = loading_fixtures::full_model_document(&tracker, "reservation");
-        defer asset::destroy_model_document(&first);
-        ModelId model = assets.publish_document(&first)!!;
-        GeometryId geometry = assets.find_geometry("reservation#geometry")!!;
-        PoolCounts before_counts = pool_counts(&assets);
-        ModelDocument next = loading_fixtures::full_model_document(&tracker, "reservation");
-        defer asset::destroy_model_document(&next);
-        next.geometries[0].data.positions[0] = { -3, 0, 0 };
-        next.geometries[0].data.finalize();
-        asset::PreparedModelDocument prepared = asset::prepare_model_document(&next)!!;
-        defer asset::destroy_prepared_model_document(&prepared);
-        asset::PublicationEstimate deferred = asset::estimate_model_publication(
-            store: &assets,
-            prepared: &prepared,
-            model: model,
-            allowance: prepared.incoming_items,
-            bounded: true,
-        );
-        assert(!deferred.admitted && !deferred.required_exact && deferred.items_used == 0);
-        assert(deferred.required_items > prepared.incoming_items && same_counts(before_counts, pool_counts(&assets)));
-        asset::PublicationEstimate exact = asset::estimate_model_publication(
-            store: &assets,
-            prepared: &prepared,
-            model: model,
-            allowance: deferred.required_items,
-            bounded: true,
-        );
-        assert(!exact.admitted && exact.required_exact && exact.items_used > 0);
-        assert(exact.required_items > deferred.required_items && same_counts(before_counts, pool_counts(&assets)));
-        assert(assets.model(model).header.revision == 1 && assets.geometry(geometry).data.positions[0].x != -3);
-        asset::PublicationEstimate admitted = asset::estimate_model_publication(
-            store: &assets,
-            prepared: &prepared,
-            model: model,
-            allowance: exact.required_items,
-            bounded: true,
-        );
-        assert(admitted.admitted && admitted.required_items == exact.required_items);
-        ModelReplaceReport report = asset::replace_prepared_model_document(&assets, model, &prepared)!!;
-        assert(report.replaced == 7 && report.added == 0 && report.missing == 0);
-        assert(assets.geometry(geometry).header.revision == 2 && assets.geometry(geometry).data.positions[0].x == -3);
-    }
-    assert(!tracker.has_leaks());
-}
-
 fn void test_document_coverage_statistics_are_derived_and_revision_owned() @test {
     TrackingAllocator tracker;
     tracker.init(mem);

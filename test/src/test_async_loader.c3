@@ -141,15 +141,7 @@ fn LoadStatus settle(AsyncLoader* loader, LoadId id) @local {
 
 fn AsyncLoader start_loader(AssetStore* assets) @local => loader::create_async_loader(mem, assets, 2)!!;
 
-fn PublicationEstimate estimate_head(AssetStore* assets, AsyncLoader* loader, LoadId id) @local {
-    return asset::estimate_model_publication(
-        store:     assets,
-        prepared:  &loader.state.slots[id.index].prepared,
-        model:     loader.state.slots[id.index].request.replace,
-        allowance: 0,
-        bounded:   false,
-    );
-}
+fn ulong decoded_items(AsyncLoader* loader, LoadId id) @local => loader.state.slots[id.index].prepared.items;
 
 fn usz[8] store_counts(AssetStore* assets) @local {
     return {
@@ -567,28 +559,27 @@ fn void test_strict_fifo_defers_oversized_head_and_preserves_fresh_allowances() 
     assert(settle(&loader, head).phase == LoadPhase.DECODED);
     assert(settle(&loader, follower).phase == LoadPhase.DECODED);
     sz keys = assets.keys.len();
-    ulong minimum = loader.state.slots[head.index].prepared.incoming_items;
-    PublicationEstimate head_bill = estimate_head(&assets, &loader, head);
-    PublicationEstimate follower_bill = estimate_head(&assets, &loader, follower);
-    assert(minimum > 1 && head_bill.required_items > follower_bill.required_items);
+    ulong head_items = decoded_items(&loader, head);
+    ulong follower_items = decoded_items(&loader, follower);
+    assert(head_items - 1 > follower_items);
 
-    PublishReport tiny = loader.publish_within({ .items = minimum - 1 });
-    assert(tiny.deferred && !tiny.required_exact && tiny.required_items == head_bill.required_items);
+    PublishReport tiny = loader.publish_within({ .items = head_items - 1 });
+    assert(tiny.deferred && tiny.required_items == head_items);
     assert(tiny.items_used == 0 && tiny.published == 0 && tiny.failed == 0);
     assert(loader.status(head).phase == LoadPhase.DECODED && loader.status(follower).phase == LoadPhase.DECODED);
     assert(assets.keys.len() == keys);
 
-    PublishReport first = loader.publish_within({ .items = head_bill.required_items });
-    assert(first.published == 1 && first.failed == 0 && first.items_used == head_bill.required_items);
-    assert(first.deferred && first.required_items > 0 && !first.required_exact);
+    PublishReport first = loader.publish_within({ .items = head_items });
+    assert(first.published == 1 && first.failed == 0 && first.items_used == head_items);
+    assert(first.deferred && first.required_items == follower_items);
     assert(loader.status(head).phase == LoadPhase.PUBLISHED && loader.status(follower).phase == LoadPhase.DECODED);
-    PublishReport next = loader.publish_within({ .items = follower_bill.required_items });
-    assert(next.published == 1 && next.failed == 0 && next.items_used == follower_bill.required_items);
-    assert(!next.deferred && next.required_items == 0 && !next.required_exact);
+    PublishReport next = loader.publish_within({ .items = follower_items });
+    assert(next.published == 1 && next.failed == 0 && next.items_used == follower_items);
+    assert(!next.deferred && next.required_items == 0);
     assert(loader.publish() == 0);
     LoaderCounters counters = loader.counters();
-    assert(counters.published == 2 && counters.publications == 2 && counters.decoded == 0);
-    assert(counters.publication_items == first.items_used + next.items_used);
+    assert(counters.publications == 2 && counters.decoded == 0);
+    assert(counters.publication_items == head_items + follower_items);
 }
 
 fn void test_failed_commit_consumes_items_before_the_next_fifo_request() @test {
@@ -604,16 +595,10 @@ fn void test_failed_commit_consumes_items_before_the_next_fifo_request() @test {
         LoadId success = loader.request(generated_request("success.gltf"))!!;
         assert(settle(&loader, failed).phase == LoadPhase.DECODED);
         assert(settle(&loader, success).phase == LoadPhase.DECODED);
-        sz keys = assets.keys.len();
-        PublicationEstimate uncharged = estimate_head(&assets, &loader, failed);
-        PublishReport deferred = loader.publish_within({ .items = uncharged.required_items - 1 });
-        assert(deferred.deferred && !deferred.required_exact && deferred.required_items == uncharged.required_items);
-        assert(deferred.items_used == 0 && deferred.published == 0 && deferred.failed == 0);
-        assert(assets.keys.len() == keys && loader.status(failed).phase == LoadPhase.DECODED);
         ModelId collision = gltf::load_model(&assets, "collision.gltf")!!;
-        PublicationEstimate failed_bill = estimate_head(&assets, &loader, failed);
-        PublicationEstimate success_bill = estimate_head(&assets, &loader, success);
-        ulong allowance = failed_bill.required_items + (admit_follower ? success_bill.required_items : 0);
+        ulong failed_items = decoded_items(&loader, failed);
+        ulong success_items = decoded_items(&loader, success);
+        ulong allowance = failed_items + (admit_follower ? success_items : 0);
 
         PublishReport report = loader.publish_within({ .items = allowance });
         assert(report.failed == 1 && report.published == (uint)admit_follower && report.items_used == allowance);
@@ -623,18 +608,40 @@ fn void test_failed_commit_consumes_items_before_the_next_fifo_request() @test {
             assert(!report.deferred && report.required_items == 0);
             assert(loader.status(success).phase == LoadPhase.PUBLISHED);
         } else {
-            assert(report.deferred && !report.required_exact);
+            assert(report.deferred && report.required_items == success_items);
             assert(loader.status(success).phase == LoadPhase.DECODED);
         }
         assert(loader.publish() == (admit_follower ? 0 : 1));
         assert(loader.status(success).phase == LoadPhase.PUBLISHED && loader.publish() == 0);
         LoaderCounters counters = loader.counters();
         assert(counters.commit_failures == 1 && counters.publications == 1 && counters.decode_failures == 0);
-        assert(counters.publication_items == failed_bill.required_items + success_bill.required_items);
+        assert(counters.publication_items == failed_items + success_items);
         loader::destroy_async_loader(&loader);
         asset::destroy_asset_store(&assets);
         assert(tracker.allocated() == 0);
     }
+}
+
+fn void test_replacement_publishes_within_a_frame_allowance() @test {
+    GatedSource source = create_gated_source(mem);
+    defer destroy_gated_source(&source);
+    AssetStore assets = gated_store(mem, &source);
+    defer asset::destroy_asset_store(&assets);
+    AsyncLoader loader = loader::create_async_loader(mem, &assets)!!;
+    defer loader::destroy_async_loader(&loader);
+    LoadId added = loader.request(generated_request("model.gltf"))!!;
+    assert(settle(&loader, added).phase == LoadPhase.DECODED && loader.publish() == 1);
+    ModelId model = loader.status(added).model;
+    loader.release(added)!!;
+
+    LoadRequest request = generated_request("model.gltf");
+    request.replace = model;
+    LoadId replacement = loader.request(request)!!;
+    assert(settle(&loader, replacement).phase == LoadPhase.DECODED);
+
+    PublishReport report = loader.publish_within({ .items = 1024 });
+    assert(report.published == 1 && !report.deferred);
+    assert(loader.status(replacement).phase == LoadPhase.PUBLISHED && assets.model(model).header.revision == 2);
 }
 
 fn void test_reports_exclude_earlier_decode_failure_and_cancellation() @test {
@@ -652,11 +659,11 @@ fn void test_reports_exclude_earlier_decode_failure_and_cancellation() @test {
     assert(settle(&loader, cancelled).phase == LoadPhase.DECODED);
     assert(settle(&loader, published).phase == LoadPhase.DECODED);
     loader.cancel(cancelled)!!;
-    PublicationEstimate bill = estimate_head(&assets, &loader, published);
+    ulong items = decoded_items(&loader, published);
 
     PublishReport report = loader.publish_within({});
-    assert(report.published == 1 && report.failed == 0 && report.items_used == bill.required_items);
-    assert(!report.deferred && report.required_items == 0 && !report.required_exact);
+    assert(report.published == 1 && report.failed == 0 && report.items_used == items);
+    assert(!report.deferred && report.required_items == 0);
     PublishReport empty = loader.publish_within({});
     assert(empty.published == 0 && empty.failed == 0 && empty.items_used == 0);
     assert(!empty.deferred && empty.required_items == 0);
