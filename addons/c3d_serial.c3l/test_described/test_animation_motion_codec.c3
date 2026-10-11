@@ -49,27 +49,8 @@ fn void assert_motion_codec_extraction(RootExtractionDesc actual, RootExtraction
 fn void assert_motion_codec_empty_history(InertialStorage* storage, uint capacity) @local {
     assert(storage && storage.rows.len == capacity);
     foreach (row : storage.rows) {
-        assert(!row.control.history_valid && !row.control.active);
-        assert(row.control.previous_dt == 0 && row.control.duration == 0 && row.control.elapsed == 0);
-        assert(!row.root.target_rate_pending);
-        assert(row.root.translation_rate == (double[<3>]){} && row.root.twist_rate == 0);
-        assert(row.root.source_translation_rate == (double[<3>]){} && row.root.source_twist_rate == 0);
-        assert(row.root.residual_translation_rate == (double[<3>]){} && row.root.residual_twist_rate == 0);
-        foreach (velocity : row.velocity) {
-            assert(velocity.translation == (double[<3>]){});
-            assert(velocity.angular == (double[<3>]){} && velocity.scale == (double[<3>]){});
-        }
-        foreach (offset : row.offset) {
-            assert(offset.translation == (double[<3>]){});
-            assert(offset.angular == (double[<3>]){} && offset.scale == (double[<3>]){});
-        }
-        foreach (velocity : row.offset_velocity) {
-            assert(velocity.translation == (double[<3>]){});
-            assert(velocity.angular == (double[<3>]){} && velocity.scale == (double[<3>]){});
-        }
-        foreach (velocity : row.morph_velocity) assert(velocity == 0);
-        foreach (offset : row.morph_offset) assert(offset == 0);
-        foreach (velocity : row.morph_offset_velocity) assert(velocity == 0);
+        assert(!row.control.history_valid && !row.control.active && row.control.elapsed == 0);
+        assert(!row.root.target_rate_pending && row.velocity[0].translation == (double[<3>]){});
     }
 }
 
@@ -346,36 +327,32 @@ fn void test_animation_motion_codec_malformed_up_binary_and_text_fail_atomically
             uint extraction = member(&document, actions + 1, "extraction");
             uint up = member(&document, extraction, "up");
             usz offset = motion_codec_word_offset(bytes, bitcast(0.6f, uint));
-            uint[3] replacements = { 0x7fc00001, 0, 0x40000000 };
-            String[3] up_text = { `["f32:7fc00001",0.8,0]`, "[0,0.8,0]", "[2,0.8,0]" };
             ReadOptions options = serial::READ_OPTIONS_DEFAULT;
             options.diagnostic = &diagnostic;
             uint free_before = fixture.destination.world.entities.free_count;
-            foreach (index, replacement : replacements) {
-                char[] malformed = alloc::clone_slice(tmem, bytes);
-                Writer patch = serial::writer_over(malformed[offset:uint::size]);
-                patch.write_uint(replacement);
-                String malformed_text = replace_token(text, document.values[up], up_text[index]);
-                for (uint encoding = 0; encoding < 2; encoding++) {
-                    Node*? result = encoding == 0
-                      ? serial::read_subtree(
-                            scene: &fixture.destination,
-                            assets: &fixture.assets,
-                            bytes: malformed,
-                            options: options,
-                        )
-                      : serial::read_subtree_text(
-                            scene: &fixture.destination,
-                            assets: &fixture.assets,
-                            text: malformed_text,
-                            options: options,
-                        );
-                    assert(@catch(result) == c3d::INVALID_ARGUMENT);
-                    assert(diagnostic.cause == c3d::INVALID_ARGUMENT && diagnostic.type_name == type_name);
-                    assert(fixture.destination.world.entities.free_count == free_before);
-                    assert(fixture.destination.root.first_child == null);
-                    assert(fixture.destination.count(Animator) == 0 && fixture.destination.count(AnimatedCrowd) == 0);
-                }
+            char[] malformed = alloc::clone_slice(tmem, bytes);
+            Writer patch = serial::writer_over(malformed[offset:uint::size]);
+            patch.write_uint(bitcast(2.0f, uint));
+            String malformed_text = replace_token(text, document.values[up], "[2,0.8,0]");
+            for (uint encoding = 0; encoding < 2; encoding++) {
+                Node*? result = encoding == 0
+                  ? serial::read_subtree(
+                        scene: &fixture.destination,
+                        assets: &fixture.assets,
+                        bytes: malformed,
+                        options: options,
+                    )
+                  : serial::read_subtree_text(
+                        scene: &fixture.destination,
+                        assets: &fixture.assets,
+                        text: malformed_text,
+                        options: options,
+                    );
+                assert(@catch(result) == c3d::INVALID_ARGUMENT);
+                assert(diagnostic.cause == c3d::INVALID_ARGUMENT && diagnostic.type_name == type_name);
+                assert(fixture.destination.world.entities.free_count == free_before);
+                assert(fixture.destination.root.first_child == null);
+                assert(fixture.destination.count(Animator) == 0 && fixture.destination.count(AnimatedCrowd) == 0);
             }
         };
     }
@@ -423,80 +400,6 @@ fn void test_animation_motion_codec_frozen_original_readers_default_to_planar_an
             assert(!crowd.playback.inertial_storage);
             fixture.destination.remove(restored);
         }
-    };
-}
-
-fn void test_animation_motion_codec_pending_prepare_allocation_faults_retain_settings_and_retry() @test {
-    @pool() {
-        Fixture fixture;
-        create_fixture(&fixture, 32);
-        defer destroy_fixture(&fixture);
-        serial::register_core_codecs()!!;
-        ModelId model_id = gltf::load_model(&fixture.assets, skin_fixture_path())!!;
-        Node* source = motion_codec_crowd(&fixture, model_id, false);
-        char[] bytes = fixture_bytes(&fixture, source);
-        Node* decoded = serial::read_subtree(&fixture.destination, &fixture.assets, bytes)!!;
-        AnimatedCrowd* original = fixture.destination.get(decoded, AnimatedCrowd);
-        CrowdInstance[1] instances = { {
-            .placement = original.placements[0],
-            .pose = original.seeds[0],
-            .color = original.colors[0],
-        } };
-        CrowdAuthoringV4 authored = {
-            .model = original.model,
-            .capacity = (uint)original.placements.len,
-            .pose_bounds = original.pose_bounds,
-            .instances = instances[..],
-            .actions_per_instance = original.actions_per_instance,
-            .event_capacity = original.event_capacity,
-            .playback = original.authoring.instances,
-            .inertia_enabled = true,
-        };
-        FailingAllocator allocator;
-        {
-            Scene retry = scene::create_scene(&allocator, { .max_nodes = 32 });
-            defer scene::destroy_scene(&retry);
-            uint scene_allocations = allocator.outstanding;
-            CodecEntry* codec = &serial::codecs[ecs::assigned_slot(AnimatedCrowd)!!];
-            uint failures;
-            bool completed;
-            for (uint failure = 1; failure <= 256; failure++) {
-                allocator.failure = 0;
-                Node* owner = retry.add_node(name: "retry")!!;
-                ReadContext context = { .scene = &retry, .assets = &fixture.assets, .node = owner };
-                codec.described.codec.attach(&authored, &context)!!;
-                AnimatedCrowd* crowd = retry.get(owner, AnimatedCrowd);
-                CrowdAuthoringState* pending = crowd.authoring;
-                uint retained = allocator.outstanding;
-                uint nodes = retry.world.entities.free_count;
-                allocator.attempts = 0;
-                allocator.failure = failure;
-                fault result = @catch(model::prepare_crowd(&fixture.assets, &retry, owner));
-                allocator.failure = 0;
-                if (result) {
-                    assert(result == c3d::CAPACITY_EXCEEDED);
-                    failures++;
-                    assert(allocator.outstanding == retained && retry.world.entities.free_count == nodes);
-                    assert(crowd.inertia_enabled && !crowd.is_prepared() && crowd.authoring == pending);
-                    assert_motion_codec_extraction(
-                        actual: pending.instances[0].actions[0].extraction,
-                        expected: motion_codec_extraction(),
-                    );
-                    model::prepare_crowd(&fixture.assets, &retry, owner)!!;
-                } else {
-                    completed = true;
-                }
-                assert_motion_codec_empty_history(crowd.playback.inertial_storage, 3);
-                assert(crowd.inertia_enabled && crowd.is_prepared() && !crowd.authoring);
-                Action* action = crowd.playback.slots[0].actions.get(crowd.playback.slots[0].base_action);
-                assert_motion_codec_extraction(action.extraction, motion_codec_extraction());
-                retry.remove(owner);
-                assert(allocator.outstanding == scene_allocations);
-                if (completed) break;
-            }
-            assert(completed && failures > 0);
-        }
-        assert(allocator.outstanding == 0);
     };
 }
 

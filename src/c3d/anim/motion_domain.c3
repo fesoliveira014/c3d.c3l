@@ -21,13 +21,6 @@ enum ConsumedScaleDomain @private {
     SAMPLING_UNPROVEN,
 }
 
-enum MotionRotationFailure @private {
-    NONE,
-    STORAGE,
-    ZERO,
-    CERTIFICATE_UNPROVEN,
-}
-
 enum MotionScaleFailure @private {
     NONE,
     STORAGE,
@@ -56,22 +49,15 @@ struct MotionCertificateNode @local {
     double end;
 }
 
-fn void? validate_motion_rotation_track(Track* track, MotionRotationFailure* failure = null) @private {
-    if (failure) *failure = MotionRotationFailure.NONE;
-    if (catch excuse = validate_motion_track_storage(track, TargetPath.ROTATION)) {
-        if (failure) *failure = MotionRotationFailure.STORAGE;
-        return excuse~;
-    }
+fn void? validate_motion_rotation_track(Track* track) @private {
+    validate_motion_track_storage(track, TargetPath.ROTATION)!;
 
     uint key_count = (uint)track.times.len;
     for (uint key = 0; key < key_count; key++) {
         float[] value = motion_domain_key(track, (uint)key, CUBIC_SLOT_VALUE);
         bool nonzero;
         foreach (component : value) nonzero |= component != 0;
-        if (!nonzero) {
-            if (failure) *failure = MotionRotationFailure.ZERO;
-            return c3d::INVALID_ARGUMENT~;
-        }
+        if (!nonzero) return c3d::INVALID_ARGUMENT~;
     }
 
     switch (track.interpolation) {
@@ -95,17 +81,11 @@ fn void? validate_motion_rotation_track(Track* track, MotionRotationFailure* fai
                     start_time: track.times[key],
                     end_time: track.times[key + 1],
                 );
-                if (result == MotionDomainResult.INVALID) {
-                    if (failure) *failure = MotionRotationFailure.ZERO;
-                    return c3d::INVALID_ARGUMENT~;
-                }
+                if (result == MotionDomainResult.INVALID) return c3d::INVALID_ARGUMENT~;
                 unsupported |= result == MotionDomainResult.UNPROVEN;
             }
 
-            if (unsupported) {
-                if (failure) *failure = MotionRotationFailure.CERTIFICATE_UNPROVEN;
-                return c3d::UNSUPPORTED~;
-            }
+            if (unsupported) return c3d::UNSUPPORTED~;
     }
 }
 
