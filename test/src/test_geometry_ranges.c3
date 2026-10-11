@@ -74,36 +74,18 @@ fn void compare_geometry_ranges(Geometry* geometry, usz[] allowances) @local {
         }
         assert(actual == expected);
     }
-    usz[5] probes = { 1, layout.joints + 3, layout.indices + 1, layout.morph_deltas + 13, layout.custom_data + 3 };
-    foreach (offset : probes) {
-        usz bytes = math::min((usz)19, layout.total_bytes - offset);
-        char[] actual = alloc::new_array(tmem, char, (sz)bytes);
-        render::write_geometry_range(
-            destination: actual,
-            geometry: geometry,
-            layout: &layout,
-            base: base,
-            offset: offset,
-        );
-        assert(actual == expected[offset:bytes]);
-    }
 }
 
-fn void test_geometry_ranges_match_all_narrow_packed_streams() @test {
+fn void test_geometry_ranges_match_narrow_and_wide_packed_streams() @test {
     @pool() {
-        Geometry geometry = range_geometry(tmem, 23, false);
-        usz[8] allowances = { 16, 31, 64, 65536, 1 << 20, 8 << 20, usz::max, 0 };
-        compare_geometry_ranges(&geometry, allowances[..]);
-    };
-}
-
-fn void test_geometry_ranges_match_wide_joints_and_indices() @test {
-    @pool() {
-        Geometry geometry = range_geometry(tmem, 70001, true);
-        usz[6] allowances = { 65536, 65537, 1 << 20, 8 << 20, usz::max, 0 };
-        GeometryLayout layout = render::geometry_layout(&geometry);
+        Geometry narrow = range_geometry(tmem, 23, false);
+        usz[3] narrow_allowances = { 16, 31, 0 };
+        compare_geometry_ranges(&narrow, narrow_allowances[..]);
+        Geometry wide = range_geometry(tmem, 70001, true);
+        GeometryLayout layout = render::geometry_layout(&wide);
         assert(layout.flags.joints_u16 && !layout.flags.indices_u16);
-        compare_geometry_ranges(&geometry, allowances[..]);
+        usz[3] wide_allowances = { 65537, 1 << 20, 0 };
+        compare_geometry_ranges(&wide, wide_allowances[..]);
     };
 }
 

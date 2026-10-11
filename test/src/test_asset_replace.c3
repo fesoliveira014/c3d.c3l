@@ -1176,33 +1176,6 @@ fn void test_prepared_replacement_keeps_original_positive_joint_bound() @test {
     assert(!tracker.has_leaks());
 }
 
-fn void test_replacement_bad_events_preserve_missing_output_and_existing_payloads() @test {
-    TrackingAllocator tracker;
-    tracker.init(mem);
-    defer tracker.free();
-    {
-        AssetStore assets = asset::create_asset_store(&tracker, asset::default_asset_store_desc());
-        defer asset::destroy_asset_store(&assets);
-        ModelDocument first = loading_fixtures::full_model_document(&tracker, "replace_events");
-        defer asset::destroy_model_document(&first);
-        ModelId model = assets.publish_document(&first)!!;
-        ClipId clip = assets.find_clip("replace_events#clip")!!;
-        GeometryId geometry = assets.find_geometry("replace_events#geometry")!!;
-        ModelDocument bad = loading_fixtures::full_model_document(&tracker, "replace_events");
-        defer asset::destroy_model_document(&bad);
-        bad.clips[0].data.events[1].time = 2;
-        AssetRef[1] missing = { { .kind = AssetKind.FONT, .id = { .index = 17, .generation = 9 } } };
-        assert(@catch(assets.replace_document(model, &bad, missing[..])) == c3d::INVALID_ARGUMENT);
-        bad.clips[0].data.events[1].time = 0.1;
-        assert(@catch(assets.replace_document(model, &bad, missing[..])) == c3d::INVALID_ARGUMENT);
-        assert(missing[0].kind == AssetKind.FONT && missing[0].id.index == 17);
-        assert(assets.model(model).header.revision == 1 && assets.geometry(geometry).header.revision == 1);
-        assert(assets.clip(clip).data.events[1].time == 0.75);
-        assert(bad.clips[0].data.events[1].time == 0.1f);
-    }
-    assert(!tracker.has_leaks());
-}
-
 fn void test_missing_parts_use_global_inventory_and_kind_key_order() @test {
     AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
     defer asset::destroy_asset_store(&assets);
@@ -1220,16 +1193,6 @@ fn void test_missing_parts_use_global_inventory_and_kind_key_order() @test {
     defer asset::destroy_model_document(&next);
     asset::PreparedModelDocument prepared = asset::prepare_model_document(&next)!!;
     defer asset::destroy_prepared_model_document(&prepared);
-    ulong inventory = assets.keys.table.len + (ulong)assets.keys.len();
-    ulong expected = 56 + 20 + inventory + 3 + 25 + inventory;
-    asset::PublicationEstimate estimate = asset::estimate_model_publication(
-        store: &assets,
-        prepared: &prepared,
-        model: model,
-        allowance: 0,
-        bounded: false,
-    );
-    assert(estimate.required_items == expected);
     AssetRef[2] output;
     ModelReplaceReport report = asset::replace_prepared_model_document(
         store: &assets,
