@@ -59,6 +59,7 @@ struct Action {
     double clock_delta;
     double clock_time;
     float published_time;
+    uint clip_revision;
     uint blend_space;
     double analytic_speed;
     double analytic_weight_rate;
@@ -220,7 +221,7 @@ fn Animator* add_animator(Scene* scene, Node* instance_root, AnimatorDesc desc =
             morphs: morphs,
             capacity: 1,
         )!!;
-        reset_inertial_row(animator.inertial_storage, 0, instance_root.id.generation);
+        reset_inertial_row(animator.inertial_storage, 0);
     }
 
     return scene.add(instance_root, animator);

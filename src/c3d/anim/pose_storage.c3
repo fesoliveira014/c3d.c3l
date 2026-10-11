@@ -145,7 +145,14 @@ fn void refresh_destination(Animator* animator) @private {
     ModelInstance* instance = animator.scene.get(animator.instance_root, ModelInstance);
     PoseDestination* destination = &animator.pose_storage.destination;
 
-    foreach (usz index, &present : destination.present) *present = instance.present_node(index) != null;
+    bool layout_changed;
+    foreach (usz index, &present : destination.present) {
+        bool current = instance.present_node(index) != null;
+        layout_changed |= current != *present;
+        *present = current;
+    }
+
+    if (layout_changed && animator.inertial_storage) animator.inertial_storage.rows[0].control.history_valid = false;
 
     destination.mesh_present[..] = false;
     foreach (usz index, node_index : instance.mesh_nodes) {

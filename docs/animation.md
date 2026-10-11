@@ -430,10 +430,12 @@ Clips, model layout and captured references must remain live and compatible
 through playback. Recreate actions when changing captured motion settings or
 reference data. Removing an owner releases its history and target resources;
 replacing a crowd placement resets that slot's generation and history. Seeks,
-removed targets, relevant clip/model revisions and layout changes invalidate
-affected history; captured references are not silently rebuilt. Saving
-keeps authored settings and target playback, while sampled clocks, source
-velocities, history and active/interrupted residuals restart empty on restore.
+removed target nodes and clip/model revisions invalidate the owner's velocity
+history; an active residual keeps decaying. Other playback changes, such as
+play, stop, fades and weights, keep history and residuals; captured references
+are not silently rebuilt. Saving keeps authored settings and target playback,
+while sampled clocks, source velocities, history and active/interrupted
+residuals restart empty on restore.
 
 ## Clip events
 

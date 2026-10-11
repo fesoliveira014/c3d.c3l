@@ -389,7 +389,7 @@ fn void reset_crowd_playback_slot(CrowdPlaybackState* state, uint index) {
     foreach (&space : slot.spaces_2d) reset_blend_space_2d(space);
     slot.generation++;
     if (!slot.generation) slot.generation = 1;
-    if (state.inertial_storage) reset_inertial_row(state.inertial_storage, index, slot.generation);
+    if (state.inertial_storage) reset_inertial_row(state.inertial_storage, index);
 
     slot.generalized_state = {};
     slot.root_node = state.default_root_node;
@@ -530,7 +530,6 @@ fn CrowdPlaybackState*? create_crowd_playback(
         }
 
         slot.generation = 1;
-        if (state.inertial_storage) reset_inertial_row(state.inertial_storage, (uint)index, slot.generation);
 
         slot.root_node = root_node;
         slot.root_motion.rotation = quaternion::IDENTITY;

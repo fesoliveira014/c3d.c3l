@@ -81,7 +81,6 @@ fn void? validate_transition_scale_eligibility(
     AnimationTransitionDesc desc,
     PreparedTransition* prepared,
     PoseDestination destination,
-    bool source_history_current = true,
 ) @private {
     float[MAX_ACTIONS] weights;
     double[MAX_ACTIONS] speeds;
@@ -122,8 +121,7 @@ fn void? validate_transition_scale_eligibility(
         InertialRow* row = playback.inertial;
         InertialScalarState source = {
             .value = inertial_uniform_scale_mean(inertial_pose_vector(destination.pose[node].scale)),
-            .rate = source_history_current && row.control.history_valid
-              ? inertial_uniform_scale_mean(row.velocity[node].scale) : 0,
+            .rate = row.control.history_valid ? inertial_uniform_scale_mean(row.velocity[node].scale) : 0,
         };
         if (!math::is_finite(source.value) || source.value <= 0
           || !math::is_finite(target.value) || target.value <= 0) {

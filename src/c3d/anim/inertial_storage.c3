@@ -11,14 +11,13 @@ struct PoseVelocity @private {
 }
 
 struct InertialControl @private {
-    uint generation;
+    uint model_revision;
     bool history_valid;
     bool active;
     bool onset_pending;
     double previous_dt;
     double duration;
     double elapsed;
-    InertialIdentityState identity;
 }
 
 struct RootInertialState @private {
@@ -112,7 +111,7 @@ fn InertialStorage*? create_inertial_storage(
         row.morph_offset = carve_inertial_array(&cursor, double, morphs);
         row.morph_offset_velocity = carve_inertial_array(&cursor, double, morphs);
 
-        reset_inertial_row(storage, (uint)index, 0);
+        reset_inertial_row(storage, (uint)index);
     }
 
     return storage;
@@ -124,7 +123,7 @@ fn void destroy_inertial_storage(InertialStorage* storage) @private {
 }
 
 <* @require index < storage.rows.len *>
-fn void reset_inertial_row(InertialStorage* storage, uint index, uint generation) @private {
+fn void reset_inertial_row(InertialStorage* storage, uint index) @private {
     InertialRow* row = &storage.rows[index];
     row.previous_pose[..] = maths::TRANSFORM_IDENTITY;
     row.velocity[..] = (PoseVelocity){};
@@ -135,7 +134,7 @@ fn void reset_inertial_row(InertialStorage* storage, uint index, uint generation
     row.morph_offset[..] = 0;
     row.morph_offset_velocity[..] = 0;
 
-    row.control = { .generation = generation };
+    row.control = {};
     row.root = {
         .latest_up = { 0, 1, 0 },
         .source_up = { 0, 1, 0 },

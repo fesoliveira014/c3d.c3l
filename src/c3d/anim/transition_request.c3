@@ -110,9 +110,6 @@ fn AnimationTransitionResult? request_inertial_transition(
     PoseScratch scratch,
     MotionBasis motion_basis,
 ) @private {
-    InertialIdentityState source_identity = compute_inertial_identity(playback, assets, destination.present);
-    bool source_history_current = inertial_history_is_current(playback.inertial, source_identity);
-
     PreparedTransition validation = validate_animation_transition(
         playback: playback,
         assets: assets,
@@ -140,7 +137,6 @@ fn AnimationTransitionResult? request_inertial_transition(
         desc: desc,
         prepared: &validation,
         destination: destination,
-        source_history_current: source_history_current,
     )) {
         if (excuse != c3d::UNSUPPORTED) return excuse~;
         unsupported = true;
@@ -157,22 +153,18 @@ fn AnimationTransitionResult? request_inertial_transition(
     )!;
     defer release_prepared_transition(&prepared);
 
-    refresh_inertial_identity(playback.inertial, source_identity);
-    if (!source_history_current && playback.generalized) {
+    if (!playback.inertial.control.history_valid && playback.generalized) {
         playback.generalized.carrier_translation_rate = {};
         playback.generalized.carrier_twist_rate = 0;
     }
 
-    AnimationTransitionResult installed = begin_prepared_inertial_transition(
+    return begin_prepared_inertial_transition(
         playback: playback,
         assets: assets,
         prepared: &prepared,
         destination: destination,
         scratch: scratch,
     );
-    playback.inertial.control.identity = compute_inertial_identity(playback, assets, destination.present);
-
-    return installed;
 }
 
 fn RootExtractionDesc transition_action_extraction(PlayDesc desc) @local {

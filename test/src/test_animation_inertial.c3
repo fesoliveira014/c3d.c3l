@@ -597,7 +597,7 @@ fn void test_animation_inertial_storage_reset_clears_one_incarnation_without_tou
         row.morph_offset[..] = -(double)float::max * 2;
         row.morph_offset_velocity[..] = 0x1p-140;
         row.control = {
-            .generation = (uint)index + 7, .history_valid = true, .active = true,
+            .history_valid = true, .active = true,
             .previous_dt = 0.125, .duration = 3, .elapsed = 1,
         };
         row.root = {
@@ -617,9 +617,9 @@ fn void test_animation_inertial_storage_reset_clears_one_incarnation_without_tou
     defer {
         foreach (bytes : payloads) alloc::free(mem, bytes.ptr);
     }
-    for (uint reset = 0; reset < 100; reset++) anim::reset_inertial_row(storage, 1, reset + 10);
+    for (uint reset = 0; reset < 100; reset++) anim::reset_inertial_row(storage, 1);
     InertialRow* cleared = &storage.rows[1];
-    assert(cleared.control.generation == 109 && !cleared.control.history_valid && !cleared.control.active);
+    assert(!cleared.control.history_valid && !cleared.control.active);
     assert(cleared.control.previous_dt == 0 && cleared.control.duration == 0 && cleared.control.elapsed == 0);
     foreach (pose : cleared.previous_pose) {
         assert(pose.position == (Vec3){} && pose.scale == (Vec3){ 1, 1, 1 });
@@ -696,7 +696,6 @@ fn void test_animation_inertial_owners_animator_opt_in_has_one_private_row_and_r
         Animator* enabled = anim::add_animator(&fixture.scene, fixture.root, { .inertia_enabled = true });
         InertialStorage* storage = enabled.inertial_storage;
         assert(storage && storage.rows.len == 1 && storage.nodes == 4 && storage.morphs == 1);
-        assert(storage.rows[0].control.generation == fixture.root.id.generation);
         assert(!storage.rows[0].control.history_valid && !storage.rows[0].control.active);
         assert(storage.rows[0].previous_pose.ptr != enabled.pose_storage.destination.pose.ptr);
         void* block = storage;
@@ -761,7 +760,6 @@ fn void test_animation_inertial_owners_prepared_crowd_reserves_capacity_and_repl
             assert(storage && storage.rows.len == 4 && crowd.count == 2);
             assert(storage.nodes == 4 && storage.morphs == 1);
             foreach (index, &row : storage.rows) {
-                assert(row.control.generation == crowd.playback.slots[index].generation);
                 assert(!row.control.history_valid && !row.control.active);
                 row.control.history_valid = true;
                 row.control.active = true;
@@ -786,7 +784,6 @@ fn void test_animation_inertial_owners_prepared_crowd_reserves_capacity_and_repl
             assert(@catch(crowd.playback.player(stale)) == c3d::INVALID_ID);
             foreach (index, row : storage.rows) {
                 assert(crowd.playback.slots[index].generation == generations[index] + 1);
-                assert(row.control.generation == crowd.playback.slots[index].generation);
                 assert(!row.control.history_valid && !row.control.active && !row.root.target_rate_pending);
                 assert(row.velocity[0].translation == (double[<3>]){} && row.morph_offset[0] == 0);
             }
@@ -819,9 +816,6 @@ fn void test_animation_inertial_owners_crowd_creation_failure_at_every_allocatio
         defer anim::destroy_crowd_playback(state);
         attempts = probe.attempts;
         assert(state.inertial_storage.rows.len == placements.len && state.inertial_storage.morphs == 2);
-        foreach (index, row : state.inertial_storage.rows) {
-            assert(row.control.generation == state.slots[index].generation);
-        }
     }
     assert(probe.outstanding == 0);
     for (uint failure = 1; failure <= attempts; failure++) {
@@ -948,7 +942,7 @@ fn void test_animation_inertial_pose_no_history_display_onset_and_extreme_morph_
     PoseTestCase sample = create_pose_test_case();
     defer anim::destroy_inertial_storage(sample.storage);
     InertialRow* row = &sample.storage.rows[0];
-    row.control = { .generation = 17, .active = true, .duration = 4, .elapsed = 0.5 };
+    row.control = { .active = true, .duration = 4, .elapsed = 0.5 };
     row.velocity[..] = { .translation = { 999, 999, 999 }, .scale = { 999, 999, 999 } };
     row.morph_velocity[..] = 999;
     sample.source[0].position = { 6, -1, 2 };
@@ -979,7 +973,7 @@ fn void test_animation_inertial_pose_no_history_display_onset_and_extreme_morph_
         assert(sample.target_morph[index] == sample.source_morph[index]);
         pose_test_near(sample.morph_rate[index], 0);
     }
-    assert(!row.control.history_valid && row.control.generation == 17 && row.control.active);
+    assert(!row.control.history_valid && row.control.active);
     assert(row.control.duration == 4 && row.control.elapsed == 0.5 && row.control.previous_dt == 0);
     assert(row.previous_pose[0].position.x == 0 && row.previous_morph[0] == 0);
     sample.target[0].position = { 9, 8, 7 };
@@ -1142,7 +1136,7 @@ fn void test_animation_inertial_pose_zero_step_and_tiny_dt_use_finite_double_his
     PoseTestCase sample = create_pose_test_case();
     defer anim::destroy_inertial_storage(sample.storage);
     InertialRow* row = &sample.storage.rows[0];
-    row.control = { .generation = 31, .active = true, .duration = 2, .elapsed = 0.75 };
+    row.control = { .active = true, .duration = 2, .elapsed = 0.75 };
     sample.source[0].position = { -float::max, -float::max, -float::max };
     sample.source[0].scale = { -float::max, -float::max, -float::max };
     sample.source_morph[0] = -float::max;
@@ -1175,8 +1169,7 @@ fn void test_animation_inertial_pose_zero_step_and_tiny_dt_use_finite_double_his
     pose_test_vector(row.velocity[0].angular, previous_velocity.angular);
     assert(row.previous_morph[0] == float::max && row.morph_velocity[0] == previous_morph_rate);
     assert(row.control.previous_dt == previous_control.previous_dt && row.control.history_valid);
-    assert(row.control.generation == 31 && row.control.active
-      && row.control.duration == 2 && row.control.elapsed == 0.75);
+    assert(row.control.active && row.control.duration == 2 && row.control.elapsed == 0.75);
     sample.target[0].position = { -float::max, -float::max, -float::max };
     sample.target[0].scale = { -float::max, -float::max, -float::max };
     sample.target_morph[0] = -float::max;
@@ -1481,12 +1474,6 @@ fn void test_animation_inertial_onset_direction_reverse_completion_and_cancel_ke
         onset_assert_zero_motion(&owner);
         assert(math::abs((double)pose[1].position.x - 0.3549382716049) < ONSET_TEST_EPSILON);
         assert(row.control.active);
-        PlaybackView playback = owner.animator.playback();
-        playback.stop(playback.order[0])!!;
-        anim::update(&owner.assets, &owner.scene, 0);
-        assert(pose[1].position.x == 0);
-        assert(!row.control.active && !row.control.onset_pending);
-        onset_assert_zero_motion(&owner);
     }
 
     {
@@ -1582,7 +1569,7 @@ fn void test_animation_inertial_onset_immediate_request_captures_authored_pose_w
     }
 }
 
-fn ClipId identity_translation_clip(
+fn ClipId history_translation_clip(
     LayerFixture* fixture,
     uint node = 3,
     Vec3 first = { 2, 0, 3 },
@@ -1596,16 +1583,7 @@ fn ClipId identity_translation_clip(
     );
 }
 
-fn InertialIdentityState identity_for_animator(LayerFixture* fixture) @local {
-    PlaybackView playback = fixture.animator.playback();
-    return anim::compute_inertial_identity(
-        playback: &playback,
-        assets: &fixture.assets,
-        target_present: fixture.animator.pose_storage.destination.present,
-    );
-}
-
-fn ModelTemplate copy_identity_model(ModelTemplate* source) @local {
+fn ModelTemplate copy_history_model(ModelTemplate* source) @local {
     assert(!source.lod_groups.len && !source.lights.len && !source.cameras.len);
     ModelTemplate copy = {
         .nodes = alloc::new_array(mem, NodeTemplate, source.nodes.len),
@@ -1631,255 +1609,44 @@ fn ModelTemplate copy_identity_model(ModelTemplate* source) @local {
     return copy;
 }
 
-fn bool identity_reference_unchanged(char[] bytes, Action* action) @local {
-    return mem::equals(bytes.ptr, (char*)&action.motion_reference, (usz)bytes.len);
+fn void test_animation_inertial_history_invalidates_on_revisions_and_removed_nodes() @test {
+    LayerFixture fixture;
+    create_inertial_owner(&fixture);
+    defer destroy_layer_fixture(&fixture);
+    ClipId clip = history_translation_clip(&fixture);
+    fixture.animator.play(&fixture.assets, clip)!!;
+    InertialRow* row = inertial_owner_row(&fixture);
+    anim::update(&fixture.assets, &fixture.scene, 0.125f);
+    anim::update(&fixture.assets, &fixture.scene, 0.125f);
+    assert(row.velocity[3].translation.x == 2);
+
+    ClipEvent[1] events = { { .time = 0.5f, .id = 123 } };
+    fixture.assets.set_clip_events(clip, events[..])!!;
+    anim::update(&fixture.assets, &fixture.scene, 0.125f);
+    assert(row.velocity[3].translation.x == 0);
+    anim::update(&fixture.assets, &fixture.scene, 0.125f);
+    assert(row.velocity[3].translation.x == 2);
+
+    ModelTemplate replacement = copy_history_model(&fixture.assets.model(fixture.model).data);
+    fixture.assets.replace_model_owned(fixture.model, &replacement)!!;
+    anim::update(&fixture.assets, &fixture.scene, 0.125f);
+    assert(row.velocity[3].translation.x == 0);
+    anim::update(&fixture.assets, &fixture.scene, 0.125f);
+    assert(row.velocity[3].translation.x == 2);
+
+    ModelInstance* instance = fixture.scene.get(fixture.root, ModelInstance);
+    fixture.scene.remove(instance.present_node(1));
+    anim::update(&fixture.assets, &fixture.scene, 0.125f);
+    assert(row.velocity[3].translation.x == 0);
 }
 
-fn void test_animation_inertial_identity_normal_clocks_keep_identity_and_seek_queries_are_read_only() @test {
-    TrackingAllocator tracker;
-    tracker.init(mem);
-    defer tracker.free();
-    {
-        LayerFixture fixture;
-        create_inertial_owner(&fixture, &tracker);
-        defer destroy_layer_fixture(&fixture);
-        ClipId clip = identity_translation_clip(&fixture);
-        AnimationActionId id = fixture.animator.play(&fixture.assets, clip)!!;
-        anim::update(&fixture.assets, &fixture.scene, 0.125f);
-        anim::update(&fixture.assets, &fixture.scene, 0.125f);
-        InertialRow* row = &fixture.animator.inertial_storage.rows[0];
-        InertialIdentityState first = identity_for_animator(&fixture);
-        anim::refresh_inertial_identity(row, first);
-        assert(anim::inertial_history_is_current(row, first));
-        sz allocations = tracker.total_allocation_count();
-        for (uint frame = 0; frame < 4; frame++) {
-            anim::update(&fixture.assets, &fixture.scene, 0.0625f);
-            InertialIdentityState current = identity_for_animator(&fixture);
-            assert(current.fingerprint == first.fingerprint && current.layout == first.layout);
-            assert(anim::inertial_history_is_current(row, current));
-        }
-        assert(tracker.total_allocation_count() == allocations);
-        Action* action = fixture.animator.action(id);
-        action.time = 0.75f;
-        char[InertialRow::size] row_before;
-        char[Action::size] action_before;
-        mem::copy(&row_before, row, InertialRow::size);
-        mem::copy(&action_before, action, Action::size);
-        InertialIdentityState sought = identity_for_animator(&fixture);
-        assert(!anim::inertial_history_is_current(row, sought));
-        assert(sought.fingerprint != first.fingerprint && sought.layout == first.layout);
-        assert(mem::equals((char*)&row_before, (char*)row, InertialRow::size));
-        assert(mem::equals((char*)&action_before, (char*)action, Action::size));
-        assert(tracker.total_allocation_count() == allocations);
-        anim::refresh_inertial_identity(row, sought);
-        assert(!row.control.history_valid && !row.control.active);
-        assert(row.control.duration == 0 && row.control.elapsed == 0 && !row.root.target_rate_pending);
-        assert(action.time == 0.75f && action.published_time == 0.5f);
-    }
-    assert(!tracker.has_leaks());
-}
-
-fn void test_animation_inertial_identity_sanctioned_revisions_invalidate_without_rebuilding_references() @test {
-    TrackingAllocator tracker;
-    tracker.init(mem);
-    defer tracker.free();
-    {
-        LayerFixture fixture;
-        create_inertial_owner(&fixture, &tracker);
-        defer destroy_layer_fixture(&fixture);
-        ClipId clip = identity_translation_clip(&fixture, 2);
-        AnimationActionId id = fixture.animator.play(&fixture.assets, clip, {
-            .root_motion = RootMotion.EXTRACT,
-            .extraction = { .generalized = true, .translation_axes = { true, false, true }, .up = { 0, 1, 0 } },
-        })!!;
-        anim::update(&fixture.assets, &fixture.scene, 0.125f);
-        anim::update(&fixture.assets, &fixture.scene, 0.125f);
-        InertialRow* row = &fixture.animator.inertial_storage.rows[0];
-        InertialIdentityState original = identity_for_animator(&fixture);
-        anim::refresh_inertial_identity(row, original);
-        Action* action = fixture.animator.action(id);
-        char[GeneralizedMotionReference::size] reference_before;
-        mem::copy(&reference_before, &action.motion_reference, GeneralizedMotionReference::size);
-        CapturedMotionChain* captured = action.motion_chain;
-        ClipEvent[1] events = { { .time = 0.5f, .id = 123 } };
-        fixture.assets.set_clip_events(clip, events[..])!!;
-        sz allocations = tracker.total_allocation_count();
-        InertialIdentityState revised_clip = identity_for_animator(&fixture);
-        assert(revised_clip.fingerprint != original.fingerprint);
-        assert(!anim::inertial_history_is_current(row, revised_clip));
-        anim::refresh_inertial_identity(row, revised_clip);
-        assert(!row.control.history_valid);
-        assert(action.motion_chain == captured);
-        assert(identity_reference_unchanged(reference_before[..], action));
-        assert(tracker.total_allocation_count() == allocations);
-        anim::update(&fixture.assets, &fixture.scene, 0.125f);
-        InertialIdentityState current = identity_for_animator(&fixture);
-        anim::refresh_inertial_identity(row, current);
-        assert(anim::inertial_history_is_current(row, current));
-        ModelTemplate replacement = copy_identity_model(&fixture.assets.model(fixture.model).data);
-        fixture.assets.replace_model_owned(fixture.model, &replacement)!!;
-        InertialIdentityState revised_model = identity_for_animator(&fixture);
-        assert(revised_model.fingerprint != current.fingerprint && revised_model.layout == current.layout);
-        assert(!anim::inertial_history_is_current(row, revised_model));
-        anim::refresh_inertial_identity(row, revised_model);
-        assert(!row.control.history_valid && action.motion_chain == captured);
-        assert(identity_reference_unchanged(reference_before[..], action));
-    }
-    assert(!tracker.has_leaks());
-}
-
-fn void test_animation_inertial_identity_presence_root_and_order_changes_are_detected_without_allocating() @test {
-    TrackingAllocator tracker;
-    tracker.init(mem);
-    defer tracker.free();
-    {
-        LayerFixture fixture;
-        create_inertial_owner(&fixture, &tracker);
-        defer destroy_layer_fixture(&fixture);
-        ClipId clip = identity_translation_clip(&fixture);
-        AnimationActionId first = fixture.animator.play(&fixture.assets, clip)!!;
-        AnimationActionId second = fixture.animator.play(&fixture.assets, clip)!!;
-        anim::update(&fixture.assets, &fixture.scene, 0.125f);
-        anim::update(&fixture.assets, &fixture.scene, 0.125f);
-        InertialRow* row = &fixture.animator.inertial_storage.rows[0];
-        InertialIdentityState original = identity_for_animator(&fixture);
-        anim::refresh_inertial_identity(row, original);
-        sz allocations = tracker.total_allocation_count();
-        fixture.animator.root_node = 3;
-        InertialIdentityState new_root = identity_for_animator(&fixture);
-        assert(new_root.layout != original.layout && !anim::inertial_history_is_current(row, new_root));
-        fixture.animator.root_node = 2;
-        fixture.animator.order[0] = second;
-        fixture.animator.order[1] = first;
-        InertialIdentityState new_order = identity_for_animator(&fixture);
-        assert(new_order.fingerprint != original.fingerprint && !anim::inertial_history_is_current(row, new_order));
-        fixture.animator.order[0] = first;
-        fixture.animator.order[1] = second;
-        ModelInstance* instance = fixture.scene.get(fixture.root, ModelInstance);
-        fixture.scene.remove(instance.present_node(3));
-        anim::refresh_destination(fixture.animator);
-        InertialIdentityState missing = identity_for_animator(&fixture);
-        assert(missing.layout != original.layout && !anim::inertial_history_is_current(row, missing));
-        fixture.animator.stop(second)!!;
-        InertialIdentityState removed_action = identity_for_animator(&fixture);
-        assert(removed_action.fingerprint != original.fingerprint);
-        assert(!anim::inertial_history_is_current(row, removed_action));
-        anim::refresh_inertial_identity(row, removed_action);
-        assert(!row.control.history_valid && !row.control.active);
-        assert(tracker.total_allocation_count() == allocations);
-    }
-    assert(!tracker.has_leaks());
-}
-
-fn void test_animation_inertial_identity_crowd_reset_changes_incarnation_and_isolates_other_slot() @test {
-    TrackingAllocator tracker;
-    tracker.init(mem);
-    defer tracker.free();
-    {
-        LayerFixture fixture;
-        create_inertial_owner(&fixture, &tracker);
-        defer destroy_layer_fixture(&fixture);
-        Transform[2] placements = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
-        CrowdPlaybackState* state = anim::create_crowd_playback(
-            allocator: &tracker,
-            template: &fixture.assets.model(fixture.model).data,
-            placements: placements[..],
-            actions_per_instance: 4,
-            event_capacity: 0,
-            inertia_enabled: true,
-        )!!;
-        defer anim::destroy_crowd_playback(state);
-        state.model = fixture.model;
-        state.count = 2;
-        ClipId first_clip = identity_translation_clip(&fixture);
-        ClipId second_clip = identity_translation_clip(
-            fixture: &fixture,
-            node: 3,
-            first: { 8, 0, 3 },
-            last: { 12, 0, 3 },
-        );
-        ClipId first_target = layer_translation(&fixture, { 6, 0, 3 });
-        ClipId second_target = layer_translation(&fixture, { 14, 0, 3 });
-        CrowdPlayer first = state.player(state.instance_id(0)!!)!!;
-        CrowdPlayer second = state.player(state.instance_id(1)!!)!!;
-        first.play(&fixture.assets, first_clip)!!;
-        AnimationActionId second_id = second.play(&fixture.assets, second_clip)!!;
-        second.action(second_id).time = 0.25f;
-        state.update(&fixture.assets, 0.125f);
-        state.update(&fixture.assets, 0.125f);
-        InertialRow* first_row = &state.inertial_storage.rows[0];
-        InertialRow* second_row = &state.inertial_storage.rows[1];
-        assert(first_row.previous_pose[3].position.x == 2.5f);
-        assert(second_row.previous_pose[3].position.x == 10);
-        assert(first_row.velocity[3].translation.x == 2);
-        assert(second_row.velocity[3].translation.x == 4);
-        AnimationTargetDesc[1] targets = { anim::ANIMATION_TARGET_DEFAULT };
-        targets[0].clip = first_target;
-        first.inertialize(&fixture.assets, { .duration = 0.5f, .actions = targets[..] })!!;
-        targets[0].clip = second_target;
-        second.inertialize(&fixture.assets, { .duration = 0.75f, .actions = targets[..] })!!;
-        assert(first_row.previous_pose[3].position.x == 2.5f);
-        assert(second_row.previous_pose[3].position.x == 10);
-        assert(first_row.offset[3].translation.x == -3.5);
-        assert(second_row.offset[3].translation.x == -4);
-        assert(first_row.offset_velocity[3].translation.x == 2);
-        assert(second_row.offset_velocity[3].translation.x == 4);
-        state.update(&fixture.assets, 0.125f);
-        float first_pose = 3.046875f;
-        float second_pose = 10.576003f;
-        assert(first_row.previous_pose[3].position.x == first_pose);
-        assert(second_row.previous_pose[3].position.x == second_pose);
-        assert(first_row.velocity[3].translation.x == ((double)first_pose - 2.5) / 0.125);
-        assert(second_row.velocity[3].translation.x == ((double)second_pose - 10) / 0.125);
-        assert(first_row.offset[3].translation.x == -3.5 && second_row.offset[3].translation.x == -4);
-        assert(first_row.offset_velocity[3].translation.x == 2 && second_row.offset_velocity[3].translation.x == 4);
-        PlaybackView first_view = anim::crowd_playback_view(state, &state.slots[0]);
-        PlaybackView second_view = anim::crowd_playback_view(state, &state.slots[1]);
-        InertialIdentityState old_first = anim::compute_inertial_identity(
-            playback: &first_view,
-            assets: &fixture.assets,
-            target_present: state.pose_storage.destination.present,
-        );
-        InertialIdentityState old_second = anim::compute_inertial_identity(
-            playback: &second_view,
-            assets: &fixture.assets,
-            target_present: state.pose_storage.destination.present,
-        );
-        anim::refresh_inertial_identity(first_view.inertial, old_first);
-        anim::refresh_inertial_identity(second_view.inertial, old_second);
-        assert(anim::inertial_history_is_current(first_view.inertial, old_first));
-        sz allocations = tracker.total_allocation_count();
-        uint generation = first_view.inertial.control.generation;
-        anim::reset_crowd_playback_slot(state, 0);
-        first_view = anim::crowd_playback_view(state, &state.slots[0]);
-        InertialIdentityState reset = anim::compute_inertial_identity(
-            playback: &first_view,
-            assets: &fixture.assets,
-            target_present: state.pose_storage.destination.present,
-        );
-        assert(first_view.inertial.control.generation != generation);
-        assert(!first_view.inertial.control.history_valid && !first_view.inertial.control.identity.valid);
-        assert(reset.fingerprint != old_first.fingerprint);
-        assert(!anim::inertial_history_is_current(first_view.inertial, reset));
-        InertialIdentityState retained = anim::compute_inertial_identity(
-            playback: &second_view,
-            assets: &fixture.assets,
-            target_present: state.pose_storage.destination.present,
-        );
-        assert(retained.fingerprint == old_second.fingerprint && retained.layout == old_second.layout);
-        assert(anim::inertial_history_is_current(second_view.inertial, retained));
-        assert(tracker.total_allocation_count() == allocations);
-    }
-    assert(!tracker.has_leaks());
-}
-
-fn void test_animation_inertial_identity_paused_seek_invalidates_once_and_later_request_captures_velocity() @test {
+fn void test_animation_inertial_history_paused_seek_invalidates_once_and_later_request_captures_velocity() @test {
     foreach (zero_speed : (bool[2]){ false, true }) {
         LayerFixture fixture;
         create_inertial_owner(&fixture);
         defer destroy_layer_fixture(&fixture);
         ClipId paused_clip = layer_translation(&fixture, { 6, 0, 3 });
-        ClipId moving_clip = identity_translation_clip(&fixture);
+        ClipId moving_clip = history_translation_clip(&fixture);
         ClipId target_clip = layer_translation(&fixture, { 0, 0, 3 });
         AnimationActionId paused = fixture.animator.play(&fixture.assets, paused_clip)!!;
         fixture.animator.play(&fixture.assets, moving_clip)!!;
@@ -1891,10 +1658,10 @@ fn void test_animation_inertial_identity_paused_seek_invalidates_once_and_later_
         assert(playback.inertial.velocity[3].translation.x == 1);
         action.time = 0.75f;
         anim::update(&fixture.assets, &fixture.scene, 0.125f);
-        assert(action.time == 0.75f && action.published_time == 0);
+        assert(action.time == 0.75f);
         assert(playback.inertial.velocity[3].translation.x == 0);
         anim::update(&fixture.assets, &fixture.scene, 0.125f);
-        assert(action.time == 0.75f && action.published_time == 0);
+        assert(action.time == 0.75f);
         assert(playback.inertial.control.history_valid && playback.inertial.velocity[3].translation.x == 1);
         AnimationTargetDesc[1] targets = { anim::ANIMATION_TARGET_DEFAULT };
         targets[0].clip = target_clip;
@@ -2227,6 +1994,32 @@ fn void test_animation_inertial_request_onset_zero_step_interruption_and_cancel_
     assert(!inertial_owner_row(&fixture).control.active && playback.actions.is_live(installed));
     anim::update(&fixture.assets, &fixture.scene, 0);
     assert(inertial_owner_pose(&fixture).position.x == -4 && *playback.action_count == 1);
+}
+
+fn void test_animation_inertial_request_survives_unrelated_play_and_stop() @test {
+    LayerFixture fixture;
+    create_inertial_owner(&fixture);
+    defer destroy_layer_fixture(&fixture);
+    ClipId source = request_translation_clip(&fixture, { 0, 0, 0 }, { 1, 0, 0 });
+    ClipId target = request_translation_clip(&fixture, { 10, 0, 0 }, { 10, 0, 0 });
+    ClipId overlay = layer_translation(&fixture, { 0, 1, 0 }, 1);
+    fixture.animator.play(&fixture.assets, source)!!;
+    anim::update(&fixture.assets, &fixture.scene, 0.125f);
+    anim::update(&fixture.assets, &fixture.scene, 0.125f);
+    AnimationTargetDesc[1] description = { anim::ANIMATION_TARGET_DEFAULT };
+    description[0].clip = target;
+    fixture.animator.inertialize(&fixture.assets, { .duration = 0.5f, .actions = description[..] })!!;
+    anim::update(&fixture.assets, &fixture.scene, 0.125f);
+
+    AnimationActionId played = fixture.animator.play(&fixture.assets, overlay, { .layer = 1 })!!;
+    anim::update(&fixture.assets, &fixture.scene, 0.125f);
+    AnimationInertialStatus status = fixture.animator.inertial_status();
+    assert(status.active && status.elapsed == 0.25);
+
+    fixture.animator.stop(played)!!;
+    anim::update(&fixture.assets, &fixture.scene, 0.125f);
+    status = fixture.animator.inertial_status();
+    assert(status.active && status.elapsed == 0.375);
 }
 
 fn void test_animation_inertial_request_rotation_uses_shortest_twenty_degree_transition() @test {

@@ -220,19 +220,11 @@ fn PoseReport evaluate_pose(
     float dt,
     EventOutput events,
 ) {
-    if (playback.inertial) {
-        InertialIdentityState identity = compute_inertial_identity(playback, assets, destination.present);
-        refresh_inertial_identity(playback.inertial, identity);
-    }
+    if (playback.inertial) refresh_inertial_model_revision(playback, assets);
 
     advance(playback, assets, dt);
     advance_blend_spaces(playback, assets, dt);
     advance_blend_spaces_2d(playback, assets, dt);
-
-    if (playback.inertial) {
-        InertialIdentityState identity = compute_inertial_identity(playback, assets, destination.present);
-        refresh_inertial_identity(playback.inertial, identity);
-    }
 
     CapturedMotionChain* consumed_chain = generalized_playback_chain(playback);
     blend_pose(
@@ -538,10 +530,25 @@ fn void remove_action(PlaybackView* playback, uint index) @local {
 fn void advance(PlaybackView* playback, AssetStore* assets, float dt) @local {
     for (uint index = *playback.action_count; index > 0; index--) {
         Action* action = playback.actions.get(playback.order[index - 1]);
+        ClipAsset* clip = assets.clip(action.clip);
         action.previous_time = action.time;
         action.clock_delta = 0;
+
+        // Zero marks a revision not yet observed since the action was created or restored.
+        bool revised = action.clip_revision != 0 && action.clip_revision != clip.header.revision;
+        action.clip_revision = clip.header.revision;
+
+        bool sought;
+        if (!action.blend_space && action.time != action.published_time) {
+            action.clock_time = action.time;
+            action.published_time = action.time;
+            sought = true;
+        }
+
+        if (playback.inertial && (revised || sought)) playback.inertial.control.history_valid = false;
         if (action.blend_space) continue;
-        if (action.playing) advance_clock(action, assets.clip(action.clip).data.duration, (double)dt * action.speed);
+
+        if (action.playing) advance_clock(action, clip.data.duration, (double)dt * action.speed);
 
         if (action.fade_rate > 0) {
             float step = action.fade_rate * dt;
@@ -556,4 +563,13 @@ fn void advance(PlaybackView* playback, AssetStore* assets, float dt) @local {
 
         if (action.fade_target == 0 && action.weight == 0) remove_action(playback, index - 1);
     }
+}
+
+fn void refresh_inertial_model_revision(PlaybackView* playback, AssetStore* assets) @local {
+    InertialControl* control = &playback.inertial.control;
+    uint revision = assets.model(playback.model).header.revision;
+    if (control.model_revision == revision) return;
+
+    control.history_valid = false;
+    control.model_revision = revision;
 }
