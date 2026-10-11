@@ -10,6 +10,8 @@ const gpu::Format WEIGHTED_REVEALAGE_FORMAT @private = gpu::Format.R16_FLOAT; //
 
 fn bool joins_weighted_pass(Material* material, TransparencyMode mode) @private {
     if (mode != TransparencyMode.WEIGHTED) return false;
+    if (material.kind == MaterialKind.PHYSICAL && material.physical.transmission > 0) return false;
+
     MaterialCommon* common = &material.common;
     return material.kind != MaterialKind.CUSTOM
       && common.alpha_mode == AlphaMode.BLEND

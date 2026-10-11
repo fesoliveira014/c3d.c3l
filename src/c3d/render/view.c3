@@ -321,7 +321,6 @@ fn void? record_raster_view(
         usz weighted_filled;
         SceneReads scene_read_reads;
         SceneReads transparent_reads;
-        SceneReads weighted_reads;
         bool scene_read_mips;
         bool sheen;
         ShadingPath shading = record.desc.shading;
@@ -423,7 +422,6 @@ fn void? record_raster_view(
                     case TRANSPARENT:
                         if (weighted) {
                             index = weighted_start + weighted_filled++;
-                            weighted_reads |= material_scene_reads(material_description, custom_reads);
                         } else {
                             index = transparent_start + transparent_filled++;
                             transparent_reads |= material_scene_reads(material_description, custom_reads);
@@ -565,9 +563,8 @@ fn void? record_raster_view(
                 // Refracted samples are fogged to their own depth.
                 scene_read_reads.depth |= scene_read_reads.color;
                 transparent_reads.depth |= transparent_reads.color;
-                weighted_reads.depth |= weighted_reads.color;
             }
-            view_reads = scene_read_reads | transparent_reads | weighted_reads;
+            view_reads = scene_read_reads | transparent_reads;
             acquire_scene_snapshots(renderer, record, view_reads)!;
             if (weighted_items.len) acquire_weighted_targets(renderer, record)!;
             if (record.desc.ray_tracing.reflections) acquire_environment_lut(renderer)!;
@@ -834,8 +831,7 @@ fn void? record_raster_view(
             }
         };
 
-        SceneReads blended_reads = transparent_reads | weighted_reads;
-        bool transparent_after_split = scene_read_items.len > 0 || blended_reads != (SceneReads){} || fog_pass
+        bool transparent_after_split = scene_read_items.len > 0 || transparent_reads != (SceneReads){} || fog_pass
           || weighted_items.len > 0;
         instrumentation::@scope("view.record") {
             if (environments.atmosphere) {
@@ -954,11 +950,11 @@ fn void? record_raster_view(
             )!;
             if (fog_pass) {
                 // The fog split: snapshots and the bounce source stay unfogged; blended draws fog themselves.
-                if (blended_reads != (SceneReads){}) record_scene_snapshots(renderer, record, blended_reads)!;
+                if (transparent_reads != (SceneReads){}) record_scene_snapshots(renderer, record, transparent_reads)!;
                 if (screen_space_gi) record_ssgi_color_copy(renderer, record)!;
                 record_fog_pass(renderer, record, frame_span.address)!;
-            } else if (transparent_after_split && blended_reads != (SceneReads){}) {
-                record_scene_snapshots(renderer, record, blended_reads)!;
+            } else if (transparent_after_split && transparent_reads != (SceneReads){}) {
+                record_scene_snapshots(renderer, record, transparent_reads)!;
             }
             if (weighted_items.len) record_weighted_transparency(renderer, record, weighted_items)!;
             if (transparent_after_split && transparent_items.len) {
