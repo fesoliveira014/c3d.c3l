@@ -67,9 +67,10 @@ sets cover the same quad. Custom fragments use normal scene-read declarations.
 
 `BlendMode` controls source-over or additive composition. Additive RGB preserves
 destination alpha. In a view with `transparency = WEIGHTED`, a source-over batch
-with a built-in material records in the
+with a built-in material, or a custom fragment that supplies a
+[weighted form](custom_shaders.md#weighted-transparency), records in the
 [weighted pass](materials.md#weighted-transparency) and skips its sort; an additive batch
-and a batch with a custom fragment keep both. Depth testing follows the material; blended draws do not
+and a custom fragment without that form keep both. Depth testing follows the material; blended draws do not
 write depth. Fog and per-view clip planes use the existing material/view rules.
 Transparent camera velocity keeps its normal behaviour.
 

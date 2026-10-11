@@ -156,7 +156,8 @@ delivery. Zero-area/zero-scale output is omitted without removing the simulated
 particle. Pick indices identify compacted draw records, not stable particles.
 
 `add_particle_shader` creates a shared fragment-only shader using core's depth
-snapshot. `add_particle_material` copies a 32-byte payload and creates a blended,
+snapshot, with its [weighted form](custom_shaders.md#weighted-transparency), so source-over
+particles take part in a view with `transparency = WEIGHTED`. `add_particle_material` copies a 32-byte payload and creates a blended,
 depth-tested, double-sided material with depth writes off. Slot 0 is an optional
 sprite map. `ParticleMaterialParams.color` multiplies particle/texture colour.
 
