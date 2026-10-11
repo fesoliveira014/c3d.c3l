@@ -50,6 +50,16 @@ const float SWEEP_AMPLITUDE @local = 0.8f;
 const Vec3 GLOW_OFFSET @local = { 0, 0.2f, 0.15f }; // off the quads' shared axis, so the planes meet apart
 const Vec3 GLOW_QUAD_SCALE @local = { 1.3f, 1, 1.3f };
 const Vec4 GLOW_COLOR @local = { 0.95f, 0.85f, 0.2f, 0.6f };
+const Vec3 SUN_TRAVEL @local = { -0.6f, -0.3f, -1 }; // toward the backdrop, so the glass shadows land beside the panes
+const Vec3 AMBER_PANE_POSITION @local = { -1.9f, 1.3f, 0.9f };
+const Vec3 AMBER_PANE_SCALE @local = { 0.9f, 1, 1.3f };
+const Vec4 AMBER_PANE_COLOR @local = { 1, 0.55f, 0.15f, 0.65f };
+const Vec3 ABSORBER_SIZE @local = { 0.8f, 1.3f, 0.5f };
+const Vec3 ABSORBER_POSITION @local = { 1.9f, 0.85f, 0.9f };
+const Vec4 ABSORBER_COLOR @local = { 0.9f, 1, 0.9f, 1 };
+const float ABSORBER_THICKNESS @local = 1.0f;
+const float ABSORBER_ATTENUATION_DISTANCE @local = 0.5f;
+const Vec3 ABSORBER_ATTENUATION_COLOR @local = { 0.15f, 0.7f, 0.35f };
 
 struct GlowParams @local {
     Vec4 color;
@@ -97,6 +107,32 @@ fn Material glass_material(float roughness, Vec4 tint = { 1, 1, 1, 1 }) @local {
     params.transmission = 1;
     params.ior = GLASS_IOR;
     params.thickness = GLASS_THICKNESS;
+    return material::physical(params);
+}
+
+fn Material amber_pane_material() @local {
+    PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
+    params.standard.base_color = AMBER_PANE_COLOR;
+    params.standard.metallic = 0;
+    params.standard.roughness = 0.05f;
+    params.transmission = 1;
+    params.ior = GLASS_IOR;
+    MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
+    common.alpha_mode = AlphaMode.BLEND;
+    common.double_sided = true;
+    return material::physical(params, common);
+}
+
+fn Material absorber_material() @local {
+    PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
+    params.standard.base_color = ABSORBER_COLOR;
+    params.standard.metallic = 0;
+    params.standard.roughness = 0.05f;
+    params.transmission = 1;
+    params.ior = GLASS_IOR;
+    params.thickness = ABSORBER_THICKNESS;
+    params.attenuation_distance = ABSORBER_ATTENUATION_DISTANCE;
+    params.attenuation_color = ABSORBER_ATTENUATION_COLOR;
     return material::physical(params);
 }
 
@@ -157,6 +193,7 @@ fn int main() {
     GeometryId slab;
     GeometryId rear_slab;
     GeometryId ball;
+    GeometryId absorber_slab;
     @pool() {
         Geometry plane_geometry = geometry::plane(tmem, 1, 1);
         plane = assets.add_geometry(&plane_geometry, "transparency/plane")!!;
@@ -169,18 +206,25 @@ fn int main() {
 
         Geometry ball_geometry = geometry::sphere(tmem, PROP_RADIUS);
         ball = assets.add_geometry(&ball_geometry, "transparency/ball")!!;
+
+        Geometry absorber_geometry = geometry::box(tmem, ABSORBER_SIZE.x, ABSORBER_SIZE.y, ABSORBER_SIZE.z);
+        absorber_slab = assets.add_geometry(&absorber_geometry, "transparency/absorber")!!;
     };
 
     MaterialId glass = assets.add_material(glass_material(ROUGHNESS_STEPS[0]), "transparency/glass")!!;
     MaterialId rear_glass = assets.add_material(glass_material(0, REAR_GLASS_TINT), "transparency/rear_glass")!!;
-    MaterialId backdrop_material = assets.add_material(material::basic({
-        .color = { 1, 1, 1, 1 },
-        .map   = material::texture_slot(
+    MaterialId amber_pane = assets.add_material(amber_pane_material(), "transparency/amber_pane")!!;
+    MaterialId absorber = assets.add_material(absorber_material(), "transparency/absorber")!!;
+    MaterialId backdrop_material = assets.add_material(material::standard({
+        .base_color     = { 1, 1, 1, 1 },
+        .base_color_map = material::texture_slot(
             texture:   asset::TEXTURE_CHECKER,
             sampler:   asset::SAMPLER_NEAREST,
             uv_set:    0,
             transform: { .scale = BACKDROP_TILES },
         ),
+        .metallic       = 0,
+        .roughness      = 1,
     }), "transparency/backdrop")!!;
     MaterialId cross_first = assets.add_material(blended_material(CROSS_FIRST_COLOR), "transparency/cross_first")!!;
     MaterialId cross_second = assets.add_material(blended_material(CROSS_SECOND_COLOR), "transparency/cross_second")!!;
@@ -220,6 +264,12 @@ fn int main() {
     pane.local.position = SLAB_POSITION;
     Node* rear_pane = scene.add_mesh(rear_slab, rear_glass, name: "rear glass")!!;
     rear_pane.local.position = REAR_SLAB_POSITION;
+    Node* amber = scene.add_mesh(plane, amber_pane, name: "amber pane")!!;
+    amber.local.position = AMBER_PANE_POSITION;
+    amber.local.rotation = upright_plane_rotation(0);
+    amber.local.scale = AMBER_PANE_SCALE;
+    Node* absorbing_slab = scene.add_mesh(absorber_slab, absorber, name: "absorbing slab")!!;
+    absorbing_slab.local.position = ABSORBER_POSITION;
 
     float[2] cross_angles = { CROSS_QUAD_ANGLE, -CROSS_QUAD_ANGLE };
     MaterialId[2] cross_materials = { cross_first, cross_second };
@@ -257,20 +307,21 @@ fn int main() {
     panel_batch.local.position = BATCH_POSITION;
     Node* sweeper = scene.add_mesh(ball, sweep_material, name: "sweeper")!!;
 
-    Node* sun = scene.add_light(light::directional({ 1, 1, 1 }, 3, false), name: "sun")!!;
-    sun.local.rotation = maths::look_rotation((Vec3){ -0.4f, -0.6f, -1 }.normalize(), { 0, 1, 0 });
+    Node* sun = scene.add_light(light::directional({ 1, 1, 1 }, 3), name: "sun")!!;
+    sun.local.rotation = maths::look_rotation(SUN_TRAVEL.normalize(), { 0, 1, 0 });
 
     Node* camera_node = scene.add_camera(camera::perspective_deg(55, 0.1f), name: "camera")!!;
     Orbit orbit = { .target = { 0, 0.9f, -0.4f }, .distance = 5, .yaw = 0.1f, .pitch = 0.1f };
     usz roughness_step;
     ViewDesc view_desc = render::default_view_desc();
     view_desc.transmission_layers = 1;
+    bool colored_shadows;
     double last_print;
 
     renderer.prepare_scene(&scene)!!;
 
     io::printn("drag to orbit, wheel to zoom, R steps the glass roughness, L toggles the transmission layers, "
-        "T toggles sorted and weighted transparency, Escape release quits");
+        "T toggles sorted and weighted transparency, C toggles colored shadows, Escape release quits");
 
     while (window.poll()) {
         Input* input = &window.input;
@@ -295,6 +346,12 @@ fn int main() {
             io::printfn("transparency %s", view_desc.transparency == TransparencyMode.WEIGHTED ? "weighted" : "sorted");
         }
 
+        if (input.key_pressed(platform::Scancode.C) && !input.keyboard_captured_by_gui) {
+            colored_shadows = !colored_shadows;
+            renderer.set_colored_shadows(colored_shadows);
+            io::printfn("colored shadows %s", colored_shadows ? "on" : "off");
+        }
+
         float sweep = SWEEP_AMPLITUDE * math::sin((float)window.clock.total);
         sweeper.local.position = BATCH_POSITION + (Vec3){ sweep, 0, 0 };
         apply_orbit(&orbit, input, camera_node);
@@ -306,9 +363,10 @@ fn int main() {
 
         if (window.clock.total - last_print >= STATS_PERIOD_SECONDS) {
             last_print = window.clock.total;
-            io::printfn("layers %d, %s, draws %d, scene snapshots %d, frame %.2f ms at %dx%d",
+            io::printfn("layers %d, %s, colored shadows %s, draws %d, scene snapshots %d, frame %.2f ms at %dx%d",
                 view_desc.transmission_layers,
                 view_desc.transparency == TransparencyMode.WEIGHTED ? "weighted" : "sorted",
+                colored_shadows ? "on" : "off",
                 renderer.stats.draws, renderer.stats.scene_snapshots,
                 renderer.stats.frame_ms, renderer.output_width, renderer.output_height);
         }
