@@ -305,7 +305,9 @@ fn AnimatedLodDesc? project_animated_lod(LodGroupState* state, WriteContext* con
         AnimatedLodPartBinding* admitted = &binding.parts[index];
         context.assets.geometries.try_get(state.desc.parts[index].geometry)!;
         context.assets.materials.try_get(state.desc.parts[index].material)!;
-        if (admitted.skinned) context.assets.skeletons.try_get(admitted.skeleton)!;
+        // Admission binds the template skin even where the geometry carries no joints.
+        bool has_skin = admitted.skeleton.generation != 0;
+        if (has_skin) context.assets.skeletons.try_get(admitted.skeleton)!;
 
         float[] defaults = alloc::new_array_try(tmem, float, admitted.weight_count)
           ?? c3d::CAPACITY_EXCEEDED~!;
@@ -317,7 +319,7 @@ fn AnimatedLodDesc? project_animated_lod(LodGroupState* state, WriteContext* con
         *part = {
             .draw = state.desc.parts[index],
             .mesh_index = admitted.mesh_index,
-            .skin = admitted.skinned ? (ModelSkin){
+            .skin = has_skin ? (ModelSkin){
                 .mesh_node = admitted.template_node,
                 .skeleton = admitted.skeleton,
                 .joint_nodes = binding.joint_nodes,

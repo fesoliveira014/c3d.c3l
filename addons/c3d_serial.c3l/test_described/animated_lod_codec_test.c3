@@ -140,6 +140,43 @@ fn void test_animated_lod_codec_ordinary_rebuilds_binding_and_restarts_animation
     };
 }
 
+fn void test_animated_lod_codec_round_trips_skin_of_rigid_geometry() @test {
+    @pool() {
+        Fixture fixture;
+        create_fixture(&fixture, 32);
+        defer destroy_fixture(&fixture);
+        serial::register_core_codecs()!!;
+        ModelId model_id = gltf::load_model(&fixture.assets, skin_fixture_path())!!;
+        ModelMesh* mesh = &fixture.assets.model(model_id).data.meshes[0];
+        Geometry rigid = geometry::box(
+            allocator: tmem,
+            width: 1,
+            height: 1,
+            depth: 1,
+        );
+        mesh.geometry = fixture.assets.add_geometry(&rigid, "rigid_skin_mesh")!!;
+        alloc::free(fixture.assets.allocator, mesh.default_morph_weights.ptr);
+        mesh.default_morph_weights = {};
+        Node* source = model::instantiate(&fixture.assets, &fixture.source, model_id)!!;
+        model::attach_animated_lod(
+            assets: &fixture.assets,
+            scene: &fixture.source,
+            owner: source,
+            desc: codec_animated_lod_desc(&fixture.assets, model_id),
+        )!!;
+        LodGroupState* original = fixture.source.get(source, LodGroup).state;
+        assert(!original.animated.parts[0].skinned && original.animated.parts[0].skeleton.generation);
+        char[] bytes = serial::write_subtree(
+            allocator: tmem,
+            scene: &fixture.source,
+            assets: &fixture.assets,
+            root: source,
+        )!!;
+        Node* restored = serial::read_subtree(&fixture.destination, &fixture.assets, bytes)!!;
+        assert_codec_animated_lod_owned(original, fixture.destination.get(restored, LodGroup).state, restored);
+    };
+}
+
 fn void test_animated_lod_codec_crowd_preserves_pending_owner_and_prepares_later() @test {
     @pool() {
         Fixture fixture;
