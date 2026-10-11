@@ -658,5 +658,6 @@ fn void test_reports_exclude_earlier_decode_failure_and_cancellation() @test {
     assert(report.published == 1 && report.failed == 0 && report.items_used == bill.required_items);
     assert(!report.deferred && report.required_items == 0 && !report.required_exact);
     PublishReport empty = loader.publish_within({});
-    assert(empty.published == 0 && empty.failed == 0 && empty.items_used == 0 && !empty.deferred && empty.required_items == 0);
+    assert(empty.published == 0 && empty.failed == 0 && empty.items_used == 0);
+    assert(!empty.deferred && empty.required_items == 0);
 }

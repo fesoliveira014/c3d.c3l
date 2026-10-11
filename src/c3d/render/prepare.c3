@@ -304,7 +304,9 @@ fn usz prepare_byte_allowance(PrepareBudget* budget) @private {
 fn PrepareStopReason prepare_step_stop(PrepareBudget* budget, PrepareStepCost cost, ulong elapsed_ns) @private {
     if (budget.limits.time_ns && elapsed_ns >= budget.limits.time_ns) return PrepareStopReason.TIME;
     if (budget.limits.staged_bytes && (cost.staged_bytes > budget.limits.staged_bytes
-      || budget.report.staged_bytes > budget.limits.staged_bytes - cost.staged_bytes)) return PrepareStopReason.STAGED_BYTES;
+      || budget.report.staged_bytes > budget.limits.staged_bytes - cost.staged_bytes)) {
+        return PrepareStopReason.STAGED_BYTES;
+    }
     if (budget.limits.generated_texels && (cost.generated_texels > budget.limits.generated_texels
       || budget.report.generated_texels > budget.limits.generated_texels - cost.generated_texels)) return PrepareStopReason.GENERATED_TEXELS;
     if (budget.limits.pipelines && (cost.pipelines > budget.limits.pipelines

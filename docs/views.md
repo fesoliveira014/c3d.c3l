@@ -511,7 +511,7 @@ staged bytes, generated mip-zero-equivalent texels, pipeline creation calls and 
 cooperative nanosecond target. A zero configured axis is unbounded; all-zero limits
 drain pending work. Pause by omitting the call. Every call has a fresh allowance,
 shared across records in begin order. A depleted finite remainder never becomes
-unbounded. A strict blocked step reports its reason and required bytes, texels or
+unbounded. A blocked step reports its reason and required bytes, texels or
 pipeline calls; callers can raise that allowance for a later call.
 
 Uploads split into legal texture row/block bands and aligned geometry or payload

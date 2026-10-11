@@ -426,7 +426,11 @@ fn void test_prepare_end_submitted_and_ready_preserves_cached_mips() @test {
         defer destroy_fixture(&fixture);
         Renderer* renderer = &fixture.renderer;
         @pool() {
-            material::TextureDesc desc = material::texture_2d_desc(PREPARATION_TEST_WIDTH, PREPARATION_TEST_HEIGHT, RGBA8_UNORM);
+            material::TextureDesc desc = material::texture_2d_desc(
+                width: PREPARATION_TEST_WIDTH,
+                height: PREPARATION_TEST_HEIGHT,
+                format: RGBA8_UNORM,
+            );
             char[] pixels = loading_fixtures::preparation_texture_bytes(tmem, (usz)desc.width * desc.height * 4);
             TextureId texture = fixture.assets.add_texture(desc, pixels)!!;
             TextureId expected = fixture.assets.add_texture(desc, pixels)!!;

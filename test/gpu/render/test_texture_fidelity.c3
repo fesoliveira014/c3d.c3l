@@ -711,10 +711,16 @@ fn FidelityBakeTriangle fidelity_bake_triangle(uint selected_case, uint selected
     for (uint corner = 0; corner < 3; corner++) {
         usz source_corner = (usz)selected_face * 3 + corner;
         uint source = fidelity_u32(FIDELITY_TANGENT_INPUT, indices_start + source_corner * uint::size);
-        mem::copy(&result.normals[corner], FIDELITY_TANGENT_INPUT.ptr + vertex_start
-          + ((usz)source * 10 + 3) * float::size, Vec3::size);
-        mem::copy(&result.tangents[corner], FIDELITY_TANGENT_EXPECTED.ptr + expected_offset + 8
-          + source_corner * Vec4::size, Vec4::size);
+        mem::copy(
+            dst: &result.normals[corner],
+            src: FIDELITY_TANGENT_INPUT.ptr + vertex_start + ((usz)source * 10 + 3) * float::size,
+            len: Vec3::size,
+        );
+        mem::copy(
+            dst: &result.tangents[corner],
+            src: FIDELITY_TANGENT_EXPECTED.ptr + expected_offset + 8 + source_corner * Vec4::size,
+            len: Vec4::size,
+        );
     }
 
     return result;

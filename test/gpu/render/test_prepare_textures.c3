@@ -537,7 +537,8 @@ fn void test_prepare_initial_tail_and_full_reader_match_synchronous_residency() 
                         )!!;
                         uint width = material::texture_mip_extent(desc.width, mip);
                         uint height = material::texture_mip_extent(desc.height, mip);
-                        assert(actual == ((uint*)(reference.pixels.ptr + reference.offsets[mip]))[:(usz)width * height]);
+                        uint* expected = (uint*)(reference.pixels.ptr + reference.offsets[mip]);
+                        assert(actual == expected[:(usz)width * height]);
                     };
                 }
             }
