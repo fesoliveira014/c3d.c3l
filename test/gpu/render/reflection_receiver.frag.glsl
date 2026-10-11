@@ -41,6 +41,27 @@ void main() {
     FrameRoot frame = FrameRoot(draw.frame);
     GeometryRoot geometry = GeometryRoot(draw.geometry);
     ReceiverRoot root = ReceiverRoot(draw.instance_effects);
+    if (root.material_kind >= 2u) {
+#ifdef RECEIVER_DEFERRED_IDENTITY
+        out_base = vec4(0.0);
+        out_normal = vec4(0.0, 0.0, 1.0, 1.0);
+        out_emissive = vec4(root.original_radiance.rgb, 0.0);
+        out_layers = draw.layers;
+        out_flags = 0u;
+        out_key0 = 0u;
+        out_key1 = 0u;
+#else
+        bool color = root.phase == RECEIVER_COMPOSED_COLOR || root.phase == RECEIVER_FLOAT_COLOR;
+        out_word0 = color ? floatBitsToUint(root.original_radiance.r) : 0u;
+        out_word1 = color ? floatBitsToUint(root.original_radiance.g) : 0u;
+        out_word2 = color ? floatBitsToUint(root.original_radiance.b) : 0u;
+        out_word3 = 0u;
+        out_word4 = 0u;
+        out_word5 = 0u;
+        out_word6 = color ? floatBitsToUint(gl_FragCoord.z) : 0u;
+#endif
+        return;
+    }
     material_mip_bias = frame.mip_bias;
     float coverage;
     ReceiverInput receiver_value = receiver_mapped_input(

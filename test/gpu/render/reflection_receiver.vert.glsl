@@ -4,6 +4,12 @@ invariant gl_Position;
 #include "c3d_abi.glsl"
 #include "mesh_vertex.glsl"
 
+#ifdef INSTANCED
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer ReceiverIdentityRoot {
+    layout(offset = 0) uint64_t logical_indices;
+};
+#endif
+
 layout(location = 7) flat out uint v_receiver_instance;
 layout(location = 8) flat out uint v_receiver_primitive;
 
@@ -20,7 +26,9 @@ void main() {
     write_mesh_outputs(vertex, draw, frame, geometry);
     v_receiver_primitive = primitive;
 #ifdef INSTANCED
-    v_receiver_instance = instance_source(draw);
+    uint source = instance_source(draw);
+    uint64_t logical_indices = ReceiverIdentityRoot(draw.instance_effects).logical_indices;
+    v_receiver_instance = logical_indices != 0ul ? IndexStream(logical_indices).values[source] : source;
 #else
     v_receiver_instance = 0u;
 #endif

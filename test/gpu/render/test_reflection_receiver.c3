@@ -2,6 +2,10 @@ module c3d::render::acceptance;
 
 import c3d;
 import c3d::asset;
+import c3d::anim;
+import c3d::model;
+import c3d::scene;
+import c3d::test::animated_crowd_fixtures;
 import c3d::camera;
 import c3d::geometry;
 import c3d::light;
@@ -21,7 +25,7 @@ const uint RECEIVER_GROUP_SIZE @private = 8; // Mirrors reflection_receiver.comp
 const uint RECEIVER_SIZE @private = 128;
 const uint RECEIVER_ODD_WIDTH @private = 257;
 const uint RECEIVER_ODD_HEIGHT @private = 129;
-const uint RECEIVER_PRESSURE_CAPACITY @private = 128;
+const uint RECEIVER_PRESSURE_CAPACITY @private = 128; // Bounds the native table and heap exhaustion fixture.
 const double RECEIVER_ABSOLUTE_BOUND @private = 0.003;
 const double RECEIVER_RELATIVE_BOUND @private = 0.005;
 const char[*] RECEIVER_VERTEX @private = $embed("reflection_receiver.vert.glsl");
@@ -44,7 +48,7 @@ enum ReceiverPhase : uint @private {
 }
 
 struct ReceiverRoot @private {
-    gpu::GpuAddress draw;
+    gpu::GpuAddress logical_indices;
     uint[RECEIVER_WORD_COUNT] words;
     uint source_depth;
     uint[2] consumer_keys;
@@ -84,6 +88,7 @@ struct ReceiverImages @private {
     gpu::PipelineHandle graphics;
     gpu::PipelineHandle identities;
     gpu::PipelineHandle compute;
+    ShaderId shader;
     uint width;
     uint height;
 }
@@ -97,7 +102,12 @@ struct ReceiverDraw @private {
     uint vertices;
     uint instances;
     gpu::GpuSpan indices;
+    gpu::GpuSpan indirect_args;
+    gpu::PipelineHandle graphics;
+    gpu::PipelineHandle identities;
     bool eligible;
+    bool depth_test;
+    bool depth_write;
 }
 
 struct ReceiverPressure @private {
@@ -115,6 +125,9 @@ struct ReceiverQuantRow @private {
     float fade;
     bool mapped;
     bool swapped;
+    uint lod;
+    uint tangent_mode;
+    UvTransform transform;
 }
 
 fn gpu::GpuAddress? upload_receiver(Renderer* renderer, void* data, usz bytes) @private {
@@ -282,6 +295,7 @@ fn void? prepare_receiver_pipelines(Fixture* fixture, ReceiverImages* images, St
     defer free(identities.ptr);
     asset::ShaderDesc shader_desc = { .fragment = fragment, .vertex = { .shaded = vertex, .depth = vertex } };
     ShaderId shader_id = fixture.assets.add_shader(&shader_desc)!;
+    images.shader = shader_id;
     CustomStageSource source = { .vertex = vertex, .fragment = fragment };
     PipelineKey key = {
         .vertex = { .shader = MESH },
@@ -350,6 +364,9 @@ fn void? record_receiver_pass(
     gpu::cmd_set_graphics_state(&renderer.commands, &state)!;
     foreach (&draw : draws) {
         if (phase == CAPTURE && !draw.eligible) continue;
+        state.depth.test_enable = draw.depth_test;
+        state.depth.write_enable = draw.depth_write;
+        gpu::cmd_set_graphics_state(&renderer.commands, &state)!;
         ReceiverRoot receiver = draw.receiver;
         receiver.phase = phase;
         foreach (word, source : images.source) receiver.words[word] = (uint)source.view.index;
@@ -363,16 +380,34 @@ fn void? record_receiver_pass(
         }
         draw.draw.instance_effects = upload_receiver(renderer, &receiver, ReceiverRoot::size)!;
         gpu::GpuAddress root = upload_receiver(renderer, &draw.draw, DrawRoot::size)!;
-        gpu::cmd_draw(
-            commands: &renderer.commands,
-            vertex_root: root,
-            fragment_root: root,
-            vertex_count: draw.vertices,
-            instance_count: draw.instances,
-        )!;
+        gpu::PipelineHandle selected = deferred ? draw.identities : draw.graphics;
+        if (selected.is_valid()) gpu::cmd_bind_pipeline(&renderer.commands, selected)!;
+        if (draw.indirect_args.size) {
+            gpu::cmd_draw_indirect(
+                commands: &renderer.commands,
+                vertex_root: root,
+                fragment_root: root,
+                args: draw.indirect_args.checked_subspan(0, gpu::DrawIndirectCommand::size)!,
+                draw_count: 1,
+            )!;
+        } else {
+            gpu::cmd_draw(
+                commands: &renderer.commands,
+                vertex_root: root,
+                fragment_root: root,
+                vertex_count: draw.vertices,
+                instance_count: draw.instances,
+            )!;
+        }
     }
     gpu::cmd_end_render_pass(&renderer.commands)!;
     renderer.work_recorded = true;
+}
+
+fn bool receiver_material_eligible(AssetStore* assets, MaterialId material_id) @private {
+    Material* material = &assets.material(material_id).data;
+    return (material.kind == MaterialKind.STANDARD || material.kind == MaterialKind.PHYSICAL)
+      && material.common.alpha_mode != AlphaMode.BLEND && material.common.depth_test && material.common.depth_write;
 }
 
 fn ReceiverDraw? receiver_draw(
@@ -426,15 +461,19 @@ fn ReceiverDraw? receiver_draw(
             sheen: false,
         )!,
     };
+    bool eligible = receiver_material_eligible(&fixture.assets, material);
+    MaterialCommon common = fixture.assets.material(material).data.common;
     ReceiverDraw result = {
         .frame = frame,
         .geometry = geometry,
         .vertices = 6,
         .instances = 1,
-        .eligible = true,
+        .eligible = eligible,
+        .depth_test = common.depth_test,
+        .depth_write = common.depth_write,
         .receiver = {
             .ordinal_base = ordinal,
-            .material_kind = physical ? 1 : 0,
+            .material_kind = eligible ? (physical ? 1u : 0u) : 2u,
             .fade = 0.5f,
             .ambient_occlusion = 1,
             .other_lobes = { 0.25f, 0.5f, 0.75f, 1 },
@@ -774,16 +813,21 @@ fn void test_reflection_receiver_seven_integer_attachments_preserve_graphics_tra
 }
 
 fn TextureId? add_receiver_map(Fixture* fixture, bool swapped) @private {
-    Vec4[4] pixels = {
+    Vec4[5] pixels = {
         { 0.25f, 0.5f, 0.75f, 1 }, { 1, 0.75f, 0.5f, 0.25f },
         { 0.5f, 0.25f, 1, 0.75f }, { 0.75f, 1, 0.25f, 0.5f },
+        { 0.625f, 0.625f, 0.625f, 0.625f },
     };
     if (swapped) foreach (&pixel : pixels) *pixel = { pixel.y, pixel.x, pixel.w, pixel.z };
     material::TextureDesc desc = {
         .width = 2, .height = 2, .layers = 1, .format = PixelFormat.RGBA32_FLOAT,
-        .mip_levels = 1, .debug_name = "receiver_channels",
+        .mip_levels = 2, .debug_name = "receiver_channels",
     };
-    return fixture.assets.add_texture(desc, ((char*)&pixels)[:(usz)pixels.len * Vec4::size]);
+    TextureMipData[2] levels = {
+        { .mip = 0, .bytes = ((char*)&pixels)[:4 * Vec4::size] },
+        { .mip = 1, .bytes = ((char*)&pixels[4])[:Vec4::size] },
+    };
+    return fixture.assets.add_texture_mips(desc, levels[..]);
 }
 
 fn void check_receiver_mapped_scalars(
@@ -803,12 +847,18 @@ fn void check_receiver_mapped_scalars(
     if (row.mapped) {
         double u = ((2.0 * (x + 0.5) - images.width) / images.height + 0.75) / 1.5;
         double v = (1.0 - 2.0 * (y + 0.5) / images.height + 0.75) / 1.5;
+        double transformed_u = u * row.transform.scale.x;
+        double transformed_v = v * row.transform.scale.y;
+        double cosine = math::cos((double)row.transform.rotation);
+        double sine = math::sin((double)row.transform.rotation);
+        u = cosine * transformed_u - sine * transformed_v + row.transform.offset.x;
+        v = sine * transformed_u + cosine * transformed_v + row.transform.offset.y;
         uint texel = (u >= 0.5 ? 1u : 0u) + (v >= 0.5 ? 2u : 0u);
         Vec4[4] frozen = {
             { 0.25f, 0.5f, 0.75f, 1 }, { 1, 0.75f, 0.5f, 0.25f },
             { 0.5f, 0.25f, 1, 0.75f }, { 0.75f, 1, 0.25f, 0.5f },
         };
-        Vec4 sampled = frozen[texel];
+        Vec4 sampled = row.lod ? (Vec4){ 0.625f, 0.625f, 0.625f, 0.625f } : frozen[texel];
         if (row.swapped) sampled = { sampled.y, sampled.x, sampled.w, sampled.z };
         base *= sampled;
         metallic *= sampled.z;
@@ -860,6 +910,7 @@ fn void test_reflection_receiver_mapped_extremes_keep_packed_base_specular_withi
     SamplerId sampler = fixture.assets.add_sampler(sampler_desc)!!;
     ReceiverQuantRow baseline = {
         .params = material::PHYSICAL_PARAMS_DEFAULT, .normal = { 0, 0, 1 }, .occlusion = 1, .fade = 0.5f,
+        .transform = material::UV_TRANSFORM_IDENTITY,
     };
     baseline.params.standard.base_color = { 0.8f, 0.6f, 0.4f, 1 };
     baseline.params.standard.metallic = 0.25f;
@@ -921,13 +972,38 @@ fn void test_reflection_receiver_mapped_extremes_keep_packed_base_specular_withi
         rows[count].params.anisotropy = 0.5f;
         rows[count++].params.anisotropy_rotation = 0.7853981634f;
     }
-    assert(count == 34);
+    rows[count] = baseline;
+    rows[count].mapped = true;
+    rows[count++].lod = 1;
+    rows[count] = baseline;
+    rows[count].mapped = true;
+    rows[count++].transform = { .offset = { 0.75f, 0.25f }, .scale = { 0.5f, 0.5f }, .rotation = 1.5707963268f };
+    rows[count] = baseline;
+    rows[count].params.clearcoat = 1;
+    rows[count].params.sheen_color = { 0.3f, 0.2f, 0.1f };
+    rows[count].params.transmission = 1;
+    rows[count].params.thickness = 2;
+    rows[count].params.attenuation_distance = 2;
+    rows[count++].params.attenuation_color = { 0.5f, 0.25f, 0.125f };
+    for (uint mode = 1; mode <= 2; mode++) {
+        rows[count] = baseline;
+        rows[count].params.anisotropy = 0.5f;
+        rows[count].params.anisotropy_rotation = 0.7853981634f;
+        rows[count++].tangent_mode = mode;
+    }
+    rows[count] = baseline;
+    rows[count++].params.specular_color = { 1, 1, 1 };
+    assert(count == 40);
     double maximum_error;
     uint maximum_row;
     for (uint index = 0; index < count; index++) {
         ReceiverQuantRow row = rows[index];
         if (row.mapped) {
-            TextureSlot slot = material::texture_slot(maps[row.swapped ? 1 : 0], sampler);
+            TextureSlot slot = material::texture_slot(
+                texture: maps[row.swapped ? 1 : 0],
+                sampler: sampler,
+                transform: row.transform,
+            );
             row.params.standard.base_color_map = slot;
             row.params.standard.metallic_roughness_map = slot;
             row.params.standard.normal_map = slot;
@@ -936,7 +1012,14 @@ fn void test_reflection_receiver_mapped_extremes_keep_packed_base_specular_withi
             slot.uv_set = 1;
             row.params.anisotropy_map = slot;
         }
-        MaterialId material_id = fixture.assets.add_material(material::physical(row.params))!!;
+        Material authored = material::physical(row.params);
+        MaterialId? pending = fixture.assets.add_material(material: authored, key: "");
+        if (catch excuse = pending) {
+            io::printfn("receiver material row=%s fault=%s", index, excuse);
+            io::printfn("mapped=%s lod=%s", row.mapped, row.lod);
+            io::printfn("transmission=%s thickness=%s", row.params.transmission, row.params.thickness);
+        }
+        MaterialId material_id = pending!!;
         fixture.renderer.begin_frame()!!;
         defer catch render::abort_frame(&fixture.renderer);
         EnvironmentRes* environment = render::resolve_environment(
@@ -956,6 +1039,27 @@ fn void test_reflection_receiver_mapped_extremes_keep_packed_base_specular_withi
         )!! };
         draws[0].receiver.ambient_occlusion = row.occlusion;
         draws[0].receiver.fade = row.fade;
+        if (row.lod) {
+            draws[0].frame.mip_bias = 8;
+            draws[0].draw.frame = upload_receiver(&fixture.renderer, &draws[0].frame, FrameRoot::size)!!;
+        }
+        if (row.tangent_mode == 1) {
+            GeometryFlags flags = bitcast(draws[0].geometry.flags, GeometryFlags);
+            flags.has_tangents = false;
+            draws[0].geometry.flags = (uint)flags;
+            draws[0].geometry.tangents = (gpu::GpuAddress)0;
+        } else if (row.tangent_mode == 2) {
+            Vec4[6] tangents;
+            foreach (&tangent : tangents) *tangent = { 1, 0, 0, -1 };
+            draws[0].geometry.tangents = upload_receiver(
+                renderer: &fixture.renderer,
+                data: &tangents,
+                bytes: (usz)tangents.len * Vec4::size,
+            )!!;
+        }
+        if (row.tangent_mode) {
+            draws[0].draw.geometry = upload_receiver(&fixture.renderer, &draws[0].geometry, GeometryRoot::size)!!;
+        }
         uint[] values = run_receiver_draws(&fixture, &images, draws[..])!!;
         defer free(values.ptr);
         uint[2] xs = { 40, 88 };
@@ -1523,4 +1627,669 @@ fn void test_reflection_receiver_each_source_and_deferred_identity_acquisition_r
         check_validation(renderer);
     }
     assert(tracker.allocated() == 0);
+}
+
+fn void? attach_receiver_lod(
+    Fixture* fixture,
+    Scene* scene,
+    Node* owner,
+    PartsFixture parts,
+    MaterialId coarse,
+) @private {
+    @pool() {
+        ModelTemplate* template = &fixture.assets.model(parts.mixed).data;
+        uint count = (uint)template.meshes.len;
+        LodLevel[2] levels = {
+            { .first_part = 0, .part_count = count, .min_screen_size = 0.2f },
+            { .first_part = count, .part_count = count },
+        };
+        AnimatedLodPart[] alternatives = alloc::new_array(tmem, AnimatedLodPart, (usz)count * 2);
+        for (uint level = 0; level < levels.len; level++) {
+            foreach (uint part, mesh : template.meshes) {
+                ModelSkin skin;
+                foreach (candidate : template.skins) if (candidate.mesh_node == mesh.node) skin = candidate;
+                alternatives[(usz)level * count + part] = {
+                    .draw = {
+                        .geometry = mesh.geometry,
+                        .material = level ? coarse : mesh.material,
+                        .local = matrix::IDENTITY4,
+                    },
+                    .mesh_index = part,
+                    .skin = skin,
+                    .default_morph_weights = mesh.default_morph_weights,
+                };
+            }
+        }
+        model::attach_animated_lod(
+            assets: &fixture.assets,
+            scene: scene,
+            owner: owner,
+            desc: { .levels = levels[..], .parts = alternatives },
+        )!;
+    };
+}
+
+fn void? prepare_receiver_variant(Fixture* fixture, ReceiverImages* images, ShaderVariant variant) @private {
+    String[3] defines;
+    uint count;
+    if (variant.flags & shader::SHADER_FLAG_INSTANCED) defines[count++] = "INSTANCED";
+    if (variant.flags & shader::SHADER_FLAG_SKINNED_U16) {
+        defines[count++] = "SKINNED_U16";
+    } else if (variant.flags & shader::SHADER_FLAG_SKINNED) {
+        defines[count++] = "SKINNED";
+    }
+    if (variant.flags & shader::SHADER_FLAG_MORPH) defines[count++] = "MORPH";
+    assert(count <= defines.len);
+    prepare_receiver_pipelines(fixture, images, defines[:count])!;
+}
+
+fn uint[]? render_receiver_crowd(
+    Fixture* fixture,
+    ReceiverImages* images,
+    Scene* scene,
+    Node* owner,
+    Node* camera_node,
+    EnvironmentId environment_id,
+    bool lod,
+) @private {
+    Renderer* renderer = &fixture.renderer;
+    renderer.begin_frame()!;
+    defer catch render::abort_frame(renderer);
+    @pool() {
+        Camera camera = *scene.get(camera_node, Camera);
+        CameraMatrices matrices = camera::derive_matrices(
+            camera: camera,
+            camera_world: camera_node.world,
+            viewport: { (float)images.width, (float)images.height },
+        );
+        LodSelection[] selections;
+        if (lod) selections = render::prepare_lod_view(
+            renderer: renderer,
+            record: renderer.views.get(fixture.view),
+            scene: scene,
+            camera: camera,
+            matrices: &matrices,
+        )!;
+        ExtractCounts counts;
+        MeshCandidate[] candidates = render::extract_candidates(
+            allocator: tmem,
+            scene: scene,
+            assets: &fixture.assets,
+            camera: &matrices,
+            layers: camera.layers,
+            counts: &counts,
+            lod: selections,
+        );
+        assert(counts.dangling == 0 && candidates.len > 0);
+        CullRange[] ranges = alloc::new_array(tmem, CullRange, candidates.len);
+        CullItem[] items = alloc::new_array(tmem, CullItem, candidates.len);
+        ReceiverDraw[] draws = alloc::new_array(tmem, ReceiverDraw, candidates.len);
+        EnvironmentRes* environment = render::resolve_environment(
+            renderer: renderer,
+            environment: environment_id,
+            lighting: true,
+            sheen: false,
+        )!;
+        ReceiverDraw frame_template = receiver_draw(
+            fixture: fixture,
+            images: images,
+            material: candidates[0].material,
+            environment: environment,
+            ordinal: 0,
+            physical: false,
+        )!;
+        foreach (index, &candidate : candidates) {
+            assert(candidate.crowd == scene.get(owner, AnimatedCrowd));
+            assert((candidate.animated_lod != null) == lod);
+            GpuGeometry* geometry = render::resolve_geometry(renderer, candidate.geometry)!;
+            items[index] = {
+                .candidate = candidate,
+                .geometry = geometry,
+                .records = render::resolve_instances(renderer, candidate)!,
+                .frustum = &matrices.frustum,
+                .range = &ranges[index],
+                .main_view = true,
+                .depth_axis = render::view_depth_axis(matrices.view),
+            };
+        }
+        render::prepare_cull_stage(renderer, items, true)!;
+        foreach (index, &candidate : candidates) {
+            GpuGeometry* geometry = items[index].geometry;
+            ShaderVariant variant = render::candidate_vertex_variant(geometry.layout.flags, candidate);
+            prepare_receiver_variant(fixture, images, variant)!;
+            gpu::GpuAddress skin = render::resolve_candidate_skin(renderer, candidate)!;
+            gpu::GpuAddress morph = render::resolve_candidate_morph(renderer, candidate, variant)!;
+            BatchAddresses addresses = render::batch_addresses(
+                candidate: candidate,
+                range: &ranges[index],
+                skin: skin,
+                morph: morph,
+                records: items[index].records,
+            );
+            uint part = lod ? candidate.animated_lod.mesh_index : candidate.crowd_part;
+            draws[index] = {
+                .frame = frame_template.frame,
+                .receiver = frame_template.receiver,
+                .vertices = geometry.layout.index_count ? geometry.layout.index_count : geometry.layout.vertex_count,
+                .instances = candidate.instance_count,
+                .indirect_args = ranges[index].args,
+                .graphics = images.graphics,
+                .identities = images.identities,
+                .eligible = true,
+                .depth_test = true,
+                .depth_write = true,
+            };
+            draws[index].receiver.ordinal_base = 900 + part * 2 + (lod ? candidate.lod_level * 32 : 0);
+            uint[2] logical = { 0, 1 };
+            if (!lod) render::crowd_packed_order(
+                packed: logical[..],
+                placements: candidate.crowd.placements[:candidate.crowd.count],
+                crowd: candidate.crowd,
+                part: part,
+            );
+            uint offset = render::instance_offset(&ranges[index]);
+            draws[index].receiver.logical_indices = upload_receiver(
+                renderer: renderer,
+                data: &logical[offset],
+                bytes: (usz)(logical.len - offset) * uint::size,
+            )!;
+            Mat4 world = maths::rebase(candidate.node.world, renderer.frame_origin);
+            render::write_draw_root(
+                root: &draws[index].draw,
+                world: world,
+                prev_world: world,
+                frame: frame_template.draw.frame,
+                geometry: geometry.root,
+                material: render::resolve_material(renderer, candidate.material)!.address,
+                object_id: candidate.node.id.index,
+                layers: candidate.node.layers,
+                skin: addresses.skin,
+                morph: addresses.morph,
+                instance_data: addresses.instance_data,
+                skin_stride: render::candidate_skin_stride(candidate),
+                instance_indices: addresses.instance_indices,
+            );
+            draws[index].draw.lod_part = render::resolve_lod_part(renderer, candidate)!;
+        }
+        render::record_pending_copies(renderer, &renderer.commands)!;
+        if (lod) render::record_lod_selection(renderer, selections)!;
+        render::record_instance_cull(renderer, items)!;
+        render::record_instance_sort(renderer, items)!;
+        return run_receiver_draws(fixture, images, draws);
+    };
+}
+
+fn bool receiver_triangle_sample(
+    double[<2>] point,
+    Vec3[3] triangle,
+    double margin,
+    bool* boundary,
+) @private {
+    bool nonnegative = true;
+    bool nonpositive = true;
+    for (uint edge = 0; edge < 3; edge++) {
+        Vec3 first = triangle[edge];
+        Vec3 second = triangle[(edge + 1) % 3];
+        double dx = (double)second.x - first.x;
+        double dy = (double)second.y - first.y;
+        double side = dx * (point.y - first.y) - dy * (point.x - first.x);
+        double length = math::sqrt(dx * dx + dy * dy);
+        *boundary |= math::abs(side) <= margin * length;
+        nonnegative &= side >= 0;
+        nonpositive &= side <= 0;
+    }
+    return nonnegative || nonpositive;
+}
+
+fn void check_receiver_crowd_raster(
+    uint[] values,
+    ReceiverImages* images,
+    Transform[] placements,
+    uint level,
+    bool lod,
+) @private {
+    usz pixels = (usz)images.width * images.height;
+    uint[2] source_samples;
+    uint[animated_crowd_fixtures::PARTS_MESH_COUNT] part_samples;
+    double margin = 4.0 / images.height;
+    for (uint y = 2; y + 2 < images.height; y++) {
+        for (uint x = 2; x + 2 < images.width; x++) {
+            double[<2>] point = {
+                (2.0 * (x + 0.5) - images.width) / images.height,
+                1.0 - 2.0 * (y + 0.5) / images.height,
+            };
+            bool boundary;
+            bool covered;
+            float nearest;
+            uint chosen_source;
+            uint chosen_part;
+            for (uint part = 0; part < animated_crowd_fixtures::PARTS_MESH_COUNT; part++) {
+                for (uint source = 0; source < placements.len; source++) {
+                    Vec3[3] triangle;
+                    for (uint corner = 0; corner < 3; corner++) {
+                        uint vertex = part * 3 + corner;
+                        Vec3 literal = source ? animated_crowd_fixtures::PARTS_POSED_POINTS[vertex]
+                          : animated_crowd_fixtures::PARTS_REST_POINTS[vertex];
+                        Vec3 local = literal - animated_crowd_fixtures::PARTS_ROOT_POSITION;
+                        triangle[corner] = placements[source].position + placements[source].scale * local;
+                    }
+                    bool hit = receiver_triangle_sample(
+                        point: point,
+                        triangle: triangle,
+                        margin: margin,
+                        boundary: &boundary,
+                    );
+                    if (!hit) continue;
+                    assert(triangle[0].z == triangle[1].z && triangle[1].z == triangle[2].z);
+                    float depth = (9 + triangle[0].z) / 8;
+                    if (!covered || depth > nearest) {
+                        covered = true;
+                        nearest = depth;
+                        chosen_source = source;
+                        chosen_part = part;
+                    }
+                }
+            }
+            if (boundary) continue;
+            usz pixel = (usz)y * images.width + x;
+            if (!covered) {
+                assert(values[5 * pixels + pixel] == 0 && values[7 * pixels + pixel] == 0);
+                continue;
+            }
+            uint ordinal = 900 + chosen_part * 2 + chosen_source + (lod ? level * 32 : 0);
+            check_receiver_consumption(
+                values: values,
+                images: images,
+                x: x,
+                y: y,
+                ordinal: ordinal,
+                depth: nearest,
+            );
+            assert(values[6 * pixels + pixel] == 0);
+            source_samples[chosen_source]++;
+            part_samples[chosen_part]++;
+        }
+    }
+    foreach (samples : source_samples) assert(samples > 0);
+    foreach (samples : part_samples) assert(samples > 0);
+}
+
+fn void test_reflection_receiver_scene_crowd_and_animated_lod_keep_literal_pose_coverage_and_logical_keys() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    Fixture fixture;
+    create_fixture(&tracker, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    ReceiverImages images;
+    create_receiver_images(
+        fixture: &fixture,
+        images: &images,
+        width: RECEIVER_SIZE,
+        height: RECEIVER_SIZE,
+    )!!;
+    defer destroy_receiver_images(&fixture.renderer, &images);
+    PartsFixture parts = animated_crowd_fixtures::add_parts_fixture(&fixture.assets)!!;
+    MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
+    common.double_sided = true;
+    fixture.assets.material(parts.material).data = material::standard(material::STANDARD_PARAMS_DEFAULT, common);
+    fixture.assets.mark_material_dirty(parts.material);
+    StandardParams coarse_params = material::STANDARD_PARAMS_DEFAULT;
+    coarse_params.base_color = { 0.25f, 0.5f, 1, 1 };
+    MaterialId coarse = fixture.assets.add_material(material::standard(coarse_params, common))!!;
+    Scene scene = scene::create_scene(&tracker, { .max_nodes = 64 });
+    defer scene::destroy_scene(&scene);
+    Transform[2] placements = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
+    placements[0].position = { -0.625f, 0, -5 };
+    placements[0].scale = { 0.125f, 0.25f, 0.125f };
+    placements[1].position = { 0.625f, 0, -5 };
+    placements[1].scale = { -0.125f, 0.25f, 0.125f };
+    CrowdInstance[2] instances;
+    foreach (uint source, &instance : instances) *instance = {
+        .placement = placements[source],
+        .pose = { .clip = parts.posing, .time = (float)source, .speed = 0, .loop = false },
+        .color = source ? (Vec4){ 0.25f, 0.5f, 1, 1 } : (Vec4){ 1, 1, 1, 1 },
+    };
+    Node* owner = model::add_crowd(
+        assets: &fixture.assets,
+        scene: &scene,
+        model: parts.mixed,
+        capacity: 2,
+        pose_bounds: animated_crowd_fixtures::PARTS_POSE_BOUNDS,
+        instances: instances[..],
+    )!!;
+    Node* camera_node = scene.add_camera(camera::orthographic(2, 1, 9))!!;
+    anim::crowd_update(&fixture.assets, &scene, 0);
+    scene.update_world();
+    EnvironmentId environment_id = fixture.assets.add_environment(light::solid_environment({ 0.25f, 0.5f, 1 }))!!;
+    fixture.renderer.upload_environment(environment_id)!!;
+    for (uint row = 0; row < 3; row++) {
+        bool lod = row != 0;
+        uint level = row == 2 ? 1 : 0;
+        if (row == 1) attach_receiver_lod(
+            fixture: &fixture,
+            scene: &scene,
+            owner: owner,
+            parts: parts,
+            coarse: coarse,
+        )!!;
+        ViewDesc desc = fixture.renderer.views.get(fixture.view).desc;
+        desc.lod_bias = level ? -16 : 16;
+        render::configure_view(&fixture.renderer, fixture.view, desc)!!;
+        scene.update_world();
+        @pool() {
+            AnimatedCrowd* crowd = scene.get(owner, AnimatedCrowd);
+            Mat4[] palettes = alloc::clone_slice(tmem, crowd.palettes);
+            float[] weights = alloc::clone_slice(tmem, crowd.morph_weights);
+            uint[animated_crowd_fixtures::PARTS_MESH_COUNT] revisions;
+            foreach (part, entry : crowd.parts) revisions[part] = scene.world.get(entry.batch, InstancedMesh).revision;
+            uint lod_revision = lod ? scene.get(owner, LodGroup).state.revision : 0;
+            uint[] values = render_receiver_crowd(
+                fixture: &fixture,
+                images: &images,
+                scene: &scene,
+                owner: owner,
+                camera_node: camera_node,
+                environment_id: environment_id,
+                lod: lod,
+            )!!;
+            defer free(values.ptr);
+            check_receiver_crowd_raster(
+                values: values,
+                images: &images,
+                placements: placements[..],
+                level: level,
+                lod: lod,
+            );
+            assert(mem::equals(crowd.palettes.ptr, palettes.ptr, (sz)(palettes.len * Mat4::size)));
+            assert(mem::equals(crowd.morph_weights.ptr, weights.ptr, (sz)(weights.len * float::size)));
+            foreach (part, entry : crowd.parts) {
+                assert(scene.world.get(entry.batch, InstancedMesh).revision == revisions[part]);
+            }
+            if (lod) assert(scene.get(owner, LodGroup).state.revision == lod_revision);
+        };
+    }
+    check_validation(&fixture.renderer);
+}
+
+fn uint[]? read_receiver_capture(Fixture* fixture, ReceiverImages* images) @private {
+    Renderer* renderer = &fixture.renderer;
+    renderer.begin_frame()!;
+    defer catch render::abort_frame(renderer);
+    copy_receiver_section(
+        renderer: renderer,
+        images: images,
+        targets: images.source[..],
+        depth: &images.source_depth,
+        section: 0,
+    )!;
+    gpu::Barrier host = { .before = { .transfer }, .after = { .host } };
+    gpu::cmd_barrier(&renderer.commands, &host)!;
+    renderer.work_recorded = true;
+    renderer.end_frame()!;
+    render::wait_frames(renderer)!;
+    gpu::invalidate_mapped_span(&renderer.device, images.readback.span)!;
+    usz count = (usz)images.width * images.height * RECEIVER_PIXEL_WORDS;
+    return alloc::clone_slice(mem, ((uint*)images.readback.bytes.ptr)[:count]);
+}
+
+fn void test_reflection_receiver_two_extents_abort_retry_and_recreation_keep_committed_inputs_isolated() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    Fixture fixture;
+    create_fixture(&tracker, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    ReceiverImages[2] images;
+    defer foreach (&image : images) destroy_receiver_images(&fixture.renderer, image);
+    for (uint index = 0; index < images.len; index++) {
+        create_receiver_images(
+            fixture: &fixture,
+            images: &images[index],
+            width: index ? RECEIVER_ODD_WIDTH : RECEIVER_SIZE,
+            height: index ? RECEIVER_ODD_HEIGHT : RECEIVER_SIZE,
+        )!!;
+        prepare_receiver_pipelines(&fixture, &images[index])!!;
+    }
+    EnvironmentId environment_id = fixture.assets.add_environment(light::solid_environment({ 0.25f, 0.5f, 1 }))!!;
+    fixture.renderer.upload_environment(environment_id)!!;
+    StandardParams params = material::STANDARD_PARAMS_DEFAULT;
+    params.base_color = { 0.8f, 0.6f, 0.4f, 1 };
+    MaterialId[2] materials;
+    materials[0] = fixture.assets.add_material(material::standard(params))!!;
+    params.base_color = { 0.25f, 0.5f, 1, 1 };
+    materials[1] = fixture.assets.add_material(material::standard(params))!!;
+    uint[][2] committed;
+    defer foreach (bytes : committed) free(bytes.ptr);
+    for (uint index = 0; index < images.len; index++) committed[index] = render_receiver_sentinel(
+        fixture: &fixture,
+        images: &images[index],
+        environment_id: environment_id,
+        material_id: materials[index],
+    )!!;
+    for (uint word = 0; word < RECEIVER_WORD_COUNT; word++) {
+        assert(images[0].source[word].texture != images[1].source[word].texture);
+        assert(images[0].source[word].view.index != images[1].source[word].view.index);
+    }
+    ReceiverImages journal = images[0];
+    fixture.renderer.begin_frame()!!;
+    defer catch render::abort_frame(&fixture.renderer);
+    EnvironmentRes* environment = render::resolve_environment(
+        renderer: &fixture.renderer,
+        environment: environment_id,
+        lighting: true,
+        sheen: false,
+    )!!;
+    ReceiverDraw[1] changed = { receiver_draw(
+        fixture: &fixture,
+        images: &images[0],
+        material: materials[1],
+        environment: environment,
+        ordinal: 999,
+        physical: false,
+    )!! };
+    changed[0].draw.model[3][2] = 1;
+    render::record_pending_copies(&fixture.renderer, &fixture.renderer.commands)!!;
+    record_receiver_pass(
+        renderer: &fixture.renderer,
+        images: &images[0],
+        draws: changed[..],
+        phase: CAPTURE,
+    )!!;
+    render::abort_frame(&fixture.renderer);
+    foreach (index, &target : images[0].source) target.state = journal.source[index].state;
+    images[0].source_depth.state = journal.source_depth.state;
+    for (uint index = 0; index < images.len; index++) {
+        uint[] actual = read_receiver_capture(&fixture, &images[index])!!;
+        defer free(actual.ptr);
+        assert(mem::equals(actual.ptr, committed[index].ptr, (sz)(actual.len * uint::size)));
+        uint[] retry = render_receiver_sentinel(
+            fixture: &fixture,
+            images: &images[index],
+            environment_id: environment_id,
+            material_id: materials[index],
+        )!!;
+        defer free(retry.ptr);
+        assert(mem::equals(retry.ptr, committed[index].ptr, (sz)(retry.len * uint::size)));
+    }
+    destroy_receiver_images(&fixture.renderer, &images[1]);
+    assert(!images[1].source_depth.texture.is_valid() && images[1].readback.bytes.len == 0);
+    create_receiver_images(
+        fixture: &fixture,
+        images: &images[1],
+        width: RECEIVER_ODD_HEIGHT,
+        height: RECEIVER_ODD_WIDTH,
+    )!!;
+    prepare_receiver_pipelines(&fixture, &images[1])!!;
+    uint[] resized = render_receiver_sentinel(
+        fixture: &fixture,
+        images: &images[1],
+        environment_id: environment_id,
+        material_id: materials[1],
+    )!!;
+    defer free(resized.ptr);
+    check_receiver_sample(
+        values: resized,
+        images: &images[1],
+        x: images[1].width / 2 - 24,
+        y: images[1].height / 2 + 16,
+        ordinal: 700,
+    );
+    uint[] preserved = read_receiver_capture(&fixture, &images[0])!!;
+    defer free(preserved.ptr);
+    assert(mem::equals(preserved.ptr, committed[0].ptr, (sz)(preserved.len * uint::size)));
+    check_validation(&fixture.renderer);
+}
+
+fn void test_reflection_receiver_fade_replaces_only_base_specular_and_applies_occlusion_once() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    Fixture fixture;
+    create_fixture(&tracker, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    ReceiverImages images;
+    create_receiver_images(
+        fixture: &fixture,
+        images: &images,
+        width: RECEIVER_SIZE,
+        height: RECEIVER_SIZE,
+    )!!;
+    defer destroy_receiver_images(&fixture.renderer, &images);
+    prepare_receiver_pipelines(&fixture, &images)!!;
+    EnvironmentId environment_id = fixture.assets.add_environment(light::solid_environment({ 0.25f, 0.5f, 1 }))!!;
+    fixture.renderer.upload_environment(environment_id)!!;
+    MaterialId material_id = fixture.assets.add_material(material::standard())!!;
+    Vec3[7] colors;
+    Vec3 other = { 0.25f, 0.5f, 0.75f };
+    Vec3 delta = { 0.125f, 0.25f, 0.375f };
+    for (uint row = 0; row < colors.len; row++) {
+        fixture.renderer.begin_frame()!!;
+        defer catch render::abort_frame(&fixture.renderer);
+        EnvironmentRes* environment = render::resolve_environment(
+            renderer: &fixture.renderer,
+            environment: environment_id,
+            lighting: true,
+            sheen: false,
+        )!!;
+        ReceiverDraw[1] draws = { receiver_draw(
+            fixture: &fixture,
+            images: &images,
+            material: material_id,
+            environment: environment,
+            ordinal: 800,
+            physical: false,
+        )!! };
+        draws[0].receiver.fade = row == 0 ? 0 : row == 1 || row == 3 ? 0.5f : 1;
+        draws[0].receiver.other_lobes = { other.x, other.y, other.z, 1 };
+        if (row == 3) draws[0].receiver.other_lobes += (Vec4){ delta.x, delta.y, delta.z, 0 };
+        draws[0].receiver.reflected_radiance = row < 4 ? (Vec4){} : (Vec4){ 4, 4, 4, 1 };
+        draws[0].receiver.ambient_occlusion = row == 5 ? 0.5f : row == 6 ? 0 : 1;
+        uint[] values = run_receiver_draws(&fixture, &images, draws[..])!!;
+        defer free(values.ptr);
+        check_receiver_sample(
+            values: values,
+            images: &images,
+            x: 40,
+            y: 80,
+            ordinal: 800,
+        );
+        usz pixels = (usz)images.width * images.height;
+        usz pixel = (usz)80 * images.width + 40;
+        for (uint channel = 0; channel < 3; channel++) {
+            colors[row][channel] = bitcast(values[pixels * RECEIVER_PIXEL_WORDS * 2 + channel * pixels + pixel], float);
+        }
+    }
+    for (uint channel = 0; channel < 3; channel++) {
+        double bound = RECEIVER_ABSOLUTE_BOUND + RECEIVER_RELATIVE_BOUND * math::abs((double)colors[0][channel]);
+        assert(colors[2][channel] == other[channel]);
+        double half_fade = other[channel] + 0.5 * ((double)colors[0][channel] - other[channel]);
+        assert(math::abs((double)colors[1][channel] - half_fade) <= bound);
+        assert(math::abs((double)colors[3][channel] - colors[1][channel] - delta[channel]) <= bound);
+        assert(colors[6][channel] == other[channel]);
+        double full = (double)colors[4][channel] - other[channel];
+        double occlusion = math::pow(1.5, math::exp2(-17.0)) - 0.5;
+        double expected = other[channel] + full * occlusion;
+        bound = RECEIVER_ABSOLUTE_BOUND + RECEIVER_RELATIVE_BOUND * math::abs(expected);
+        assert(math::abs((double)colors[5][channel] - expected) <= bound);
+    }
+    check_validation(&fixture.renderer);
+}
+
+fn void test_reflection_receiver_excluded_material_families_and_depth_rules_keep_original_radiance() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    Fixture fixture;
+    create_fixture(&tracker, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    ReceiverImages images;
+    create_receiver_images(
+        fixture: &fixture,
+        images: &images,
+        width: RECEIVER_SIZE,
+        height: RECEIVER_SIZE,
+    )!!;
+    defer destroy_receiver_images(&fixture.renderer, &images);
+    prepare_receiver_pipelines(&fixture, &images)!!;
+    EnvironmentId environment_id = fixture.assets.add_environment(light::solid_environment({ 0.25f, 0.5f, 1 }))!!;
+    fixture.renderer.upload_environment(environment_id)!!;
+    MaterialId receiver = fixture.assets.add_material(material::standard())!!;
+    MaterialId[6] excluded;
+    excluded[0] = fixture.assets.add_material(material::basic())!!;
+    excluded[1] = fixture.assets.add_material(material::toon())!!;
+    excluded[2] = fixture.assets.add_material(material::custom(images.shader))!!;
+    MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
+    common.alpha_mode = AlphaMode.BLEND;
+    excluded[3] = fixture.assets.add_material(material::standard(material::STANDARD_PARAMS_DEFAULT, common))!!;
+    common = material::MATERIAL_COMMON_DEFAULT;
+    common.depth_write = false;
+    excluded[4] = fixture.assets.add_material(material::standard(material::STANDARD_PARAMS_DEFAULT, common))!!;
+    common = material::MATERIAL_COMMON_DEFAULT;
+    common.depth_test = false;
+    excluded[5] = fixture.assets.add_material(material::physical(material::PHYSICAL_PARAMS_DEFAULT, common))!!;
+    assert(receiver_material_eligible(&fixture.assets, receiver));
+    Vec4 original = { 0.125f, 0.375f, 0.625f, 1 };
+    for (uint row = 0; row < excluded.len; row++) {
+        assert(!receiver_material_eligible(&fixture.assets, excluded[row]));
+        fixture.renderer.begin_frame()!!;
+        defer catch render::abort_frame(&fixture.renderer);
+        EnvironmentRes* environment = render::resolve_environment(
+            renderer: &fixture.renderer,
+            environment: environment_id,
+            lighting: true,
+            sheen: false,
+        )!!;
+        ReceiverDraw[2] draws;
+        MaterialId[2] materials = { receiver, excluded[row] };
+        for (uint index = 0; index < draws.len; index++) draws[index] = receiver_draw(
+            fixture: &fixture,
+            images: &images,
+            material: materials[index],
+            environment: environment,
+            ordinal: 1000 + index,
+            physical: false,
+        )!!;
+        draws[1].draw.model[3][2] = 1;
+        draws[1].receiver.original_radiance = original;
+        uint[] values = run_receiver_draws(&fixture, &images, draws[..])!!;
+        defer free(values.ptr);
+        usz pixels = (usz)images.width * images.height;
+        usz pixel = (usz)80 * images.width + 40;
+        assert(values[5 * pixels + pixel] == 1001);
+        assert(values[7 * pixels + pixel] == bitcast(0.5f, uint));
+        float final_depth = row < 4 ? 0.625f : 0.5f;
+        assert(values[RECEIVER_PIXEL_WORDS * pixels + 7 * pixels + pixel] == bitcast(final_depth, uint));
+        for (uint channel = 0; channel < 3; channel++) {
+            uint expected = bitcast(original[channel], uint);
+            assert(values[((usz)2 * RECEIVER_PIXEL_WORDS + channel) * pixels + pixel] == expected);
+            assert(values[((usz)3 * RECEIVER_PIXEL_WORDS + channel) * pixels + pixel] == expected);
+        }
+        for (uint word = 0; word < RECEIVER_WORD_COUNT; word++) {
+            assert(values[(pixels * RECEIVER_PIXEL_WORDS + (usz)word * pixels) + pixel] == 0);
+            assert(values[pixels * RECEIVER_PIXEL_WORDS * 7 + (usz)word * pixels + pixel] == 0);
+            assert(values[pixels * RECEIVER_PIXEL_WORDS * 5 + pixel * RECEIVER_PIXEL_WORDS + word] == 0);
+        }
+    }
+    check_validation(&fixture.renderer);
 }

@@ -16,7 +16,7 @@ const uint RECEIVER_DEFERRED_CONSUMED_WORDS = 4u;
 const uint RECEIVER_DIRECTIONAL_ENVIRONMENT = 1u;
 
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer ReceiverRoot {
-    uint64_t draw;
+    uint64_t logical_indices;
     uint word0;
     uint word1;
     uint word2;
