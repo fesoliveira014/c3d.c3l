@@ -289,6 +289,13 @@ fn bool animator_inspector(void* component) @local {
     BlendSpace1D* stopped_space;
     BlendSpace2D* stopped_space_2d;
 
+    AnimationInertialStatus inertia = animator.inertial_status();
+    imgui::text("Inertia enabled: %s", inertia.enabled ? "yes" : "no");
+    if (inertia.enabled) {
+        imgui::text("Transition active: %s", inertia.active ? "yes" : "no");
+        imgui::text("Elapsed / duration: %.3f / %.3f s", inertia.elapsed, inertia.duration);
+    }
+
     Vec3 motion = animator.root_motion.translation;
     imgui::text("Root delta: %.3f, %.3f, %.3f", motion.x, motion.y, motion.z);
     imgui::text("Root turn: %.3f, %.3f, %.3f, %.3f",
@@ -365,7 +372,24 @@ fn bool animator_inspector(void* component) @local {
         imgui::text("Layer: %u (%s)", action.layer, action.additive ? "additive" : "regular");
         ZString mode = action.root_motion == RootMotion.KEEP ? "keep"
             : action.root_motion == RootMotion.STRIP_XZ ? "strip XZ" : "extract";
-        imgui::text("Root: %s, yaw %s", mode, action.root_yaw ? "yes" : "no");
+        if (action.extraction.generalized) {
+            imgui::text("Root: %s, generalized", mode);
+            imgui::text("Extract X: %s", action.extraction.translation_axes[0] ? "yes" : "no");
+            imgui::same_line();
+            imgui::text("Y: %s", action.extraction.translation_axes[1] ? "yes" : "no");
+            imgui::same_line();
+            imgui::text("Z: %s", action.extraction.translation_axes[2] ? "yes" : "no");
+            imgui::text("Up X: %.3f", action.extraction.up.x);
+            imgui::same_line();
+            imgui::text("Y: %.3f", action.extraction.up.y);
+            imgui::same_line();
+            imgui::text("Z: %.3f", action.extraction.up.z);
+            imgui::text("Twist: %s", action.extraction.twist ? "yes" : "no");
+        } else {
+            imgui::text("Root: %s, planar", mode);
+            imgui::text("Extract yaw: %s", action.root_yaw ? "yes" : "no");
+        }
+
         usz selected;
         if (action.weighted_mask.len) {
             foreach (weight : action.weighted_mask) if (weight > 0) selected++;

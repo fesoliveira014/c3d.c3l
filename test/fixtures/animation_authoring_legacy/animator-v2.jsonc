@@ -1,0 +1,456 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": 0,
+      "parent": null,
+      "name": "legacy_weighted_animator",
+      "local": {
+        "position": [
+          -4,
+          1,
+          6
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 5,
+      "visible": true,
+      "components": {
+        "c3d.Animator": {
+          "version": 2,
+          "value": {
+            "root_node": 2,
+            "actions": [
+              {
+                "clip": "animation_authoring_legacy/model#anim/0",
+                "speed": -0.5,
+                "weight": 0.600000024,
+                "layer": 0,
+                "additive": false,
+                "loop": false,
+                "playing": false,
+                "mask": [
+                  true,
+                  true,
+                  true,
+                  true
+                ],
+                "root_motion": "EXTRACT",
+                "root_yaw": true,
+                "weighted_mask": [],
+                "additive_scale": "DIFFERENCE"
+              },
+              {
+                "clip": "animation_authoring_legacy/model#anim/0",
+                "speed": 1,
+                "weight": 0,
+                "layer": 1,
+                "additive": true,
+                "loop": true,
+                "playing": false,
+                "mask": [],
+                "root_motion": "KEEP",
+                "root_yaw": false,
+                "weighted_mask": [
+                  0.25,
+                  0,
+                  0.5,
+                  0.75
+                ],
+                "additive_scale": "MULTIPLICATIVE"
+              },
+              {
+                "clip": "animation_authoring_legacy/model#anim/0",
+                "speed": 1,
+                "weight": 0,
+                "layer": 1,
+                "additive": true,
+                "loop": true,
+                "playing": false,
+                "mask": [],
+                "root_motion": "KEEP",
+                "root_yaw": false,
+                "weighted_mask": [
+                  0.25,
+                  0,
+                  0.5,
+                  0.75
+                ],
+                "additive_scale": "MULTIPLICATIVE"
+              },
+              {
+                "clip": "animation_authoring_legacy/model#anim/0",
+                "speed": 1,
+                "weight": 0,
+                "layer": 1,
+                "additive": true,
+                "loop": true,
+                "playing": false,
+                "mask": [],
+                "root_motion": "KEEP",
+                "root_yaw": false,
+                "weighted_mask": [
+                  0.25,
+                  0,
+                  0.5,
+                  0.75
+                ],
+                "additive_scale": "MULTIPLICATIVE"
+              }
+            ],
+            "spaces": [
+              {
+                "actions": [
+                  1,
+                  2,
+                  3
+                ],
+                "positions": [],
+                "parameter": 0,
+                "weight": 0.75,
+                "speed": -0.25,
+                "playing": false,
+                "kind": "TWO_DIMENSIONAL",
+                "points": [
+                  [
+                    -1,
+                    -1
+                  ],
+                  [
+                    2,
+                    -1
+                  ],
+                  [
+                    -1,
+                    2
+                  ]
+                ],
+                "triangles": [
+                  {
+                    "indices": [
+                      2,
+                      1,
+                      0
+                    ]
+                  }
+                ],
+                "parameter_2d": [
+                  0.5,
+                  0.25
+                ]
+              }
+            ]
+          }
+        },
+        "c3d.ModelInstance": {
+          "version": 1,
+          "value": {
+            "source": "animation_authoring_legacy/model",
+            "signature": [
+              {
+                "parent": -1,
+                "meshes": [],
+                "skins": [],
+                "lod": []
+              },
+              {
+                "parent": 0,
+                "meshes": [
+                  {
+                    "slot": 0,
+                    "geometry": "animation_authoring_legacy/model#mesh/0/0",
+                    "material": "animation_authoring_legacy/model#material/default",
+                    "morph_targets": 1
+                  }
+                ],
+                "skins": [
+                  {
+                    "slot": 0,
+                    "skeleton": "animation_authoring_legacy/model#skeleton/0",
+                    "skeleton_joints": 2,
+                    "joints": [
+                      2,
+                      3
+                    ]
+                  }
+                ],
+                "lod": []
+              },
+              {
+                "parent": -1,
+                "meshes": [],
+                "skins": [],
+                "lod": []
+              },
+              {
+                "parent": 2,
+                "meshes": [],
+                "skins": [],
+                "lod": []
+              }
+            ],
+            "nodes": [
+              1,
+              2,
+              3,
+              4
+            ],
+            "absent": [],
+            "base_pose": [
+              {
+                "position": [
+                  0,
+                  0,
+                  0
+                ],
+                "rotation": [
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "scale": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              {
+                "position": [
+                  0,
+                  0,
+                  0
+                ],
+                "rotation": [
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "scale": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              {
+                "position": [
+                  0,
+                  0,
+                  0
+                ],
+                "rotation": [
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "scale": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              {
+                "position": [
+                  0,
+                  1,
+                  0
+                ],
+                "rotation": [
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "scale": [
+                  1,
+                  1,
+                  1
+                ]
+              }
+            ],
+            "mesh_nodes": [
+              1
+            ],
+            "base_morph_weights": [
+              {
+                "weights": [
+                  0.5
+                ]
+              }
+            ],
+            "clips": [
+              "animation_authoring_legacy/model#anim/0"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 1,
+      "parent": 0,
+      "name": "mesh",
+      "local": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {}
+    },
+    {
+      "id": 2,
+      "parent": 1,
+      "name": "mesh/primitive/0",
+      "local": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "c3d.Mesh": {
+          "version": 1,
+          "value": {
+            "geometry": "animation_authoring_legacy/model#mesh/0/0",
+            "material": "animation_authoring_legacy/model#material/default",
+            "cast_shadow": true,
+            "receive_shadow": true,
+            "trace": true,
+            "morph_weights": [
+              0.5
+            ],
+            "has_bounds_override": false,
+            "local_bounds": {
+              "min": [
+                0,
+                0,
+                0
+              ],
+              "max": [
+                0,
+                0,
+                0
+              ]
+            },
+            "vertex_motion": false
+          }
+        },
+        "c3d.SkinBinding": {
+          "version": 1,
+          "value": {
+            "skeleton": "animation_authoring_legacy/model#skeleton/0",
+            "joints": [
+              {
+                "node": null,
+                "model": 0,
+                "template_index": 2
+              },
+              {
+                "node": null,
+                "model": 0,
+                "template_index": 3
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "parent": 0,
+      "name": "joint_root",
+      "local": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {}
+    },
+    {
+      "id": 4,
+      "parent": 3,
+      "name": "joint_tip",
+      "local": {
+        "position": [
+          0,
+          1,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {}
+    }
+  ]
+}

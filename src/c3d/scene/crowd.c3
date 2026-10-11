@@ -41,6 +41,7 @@ struct AnimatedCrowd {
     uint morph_stride;
     uint actions_per_instance;
     uint event_capacity;
+    bool inertia_enabled;
     Aabb pose_bounds;
     bool trace;
     anim::CrowdPlaybackState* playback;
