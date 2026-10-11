@@ -479,6 +479,7 @@ fn void test_animation_analytic_composition_layers_masks_speed_and_paused_rates(
         assets: &fixture.assets,
         destination: storage.destination,
         scratch: storage.scratch,
+        onset: true,
     );
     double[<3>] expected = { 3, 6, -1.5 };
     assert((storage.scratch.derivative.velocity[3].translation - expected).length() < 1e-12);
@@ -488,6 +489,7 @@ fn void test_animation_analytic_composition_layers_masks_speed_and_paused_rates(
         assets: &fixture.assets,
         destination: storage.destination,
         scratch: storage.scratch,
+        onset: true,
     );
     assert(storage.scratch.derivative.velocity[3].translation == (double[<3>]){});
 }
@@ -517,6 +519,7 @@ fn void test_animation_analytic_composition_rotation_rate_matches_independent_ax
         assets: &fixture.assets,
         destination: storage.destination,
         scratch: storage.scratch,
+        onset: true,
     );
     double[<3>] expected = { 0, -2 * math::PI, 0 };
     assert((storage.scratch.derivative.velocity[3].angular - expected).length() < 1e-7);
