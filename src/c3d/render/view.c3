@@ -477,9 +477,9 @@ fn void? record_raster_view(
             sort::quicksort(transparent_items, &by_transparent_depth);
             sort::quicksort(weighted_items, &by_sort_key);
         };
+
         uint transmission_layers = math::max(record.desc.transmission_layers, 1u);
-        SceneReadLayers scene_read_layers = { .count = 1 };
-        scene_read_layers.ends[0] = scene_read_items.len;
+        SceneReadLayers scene_read_layers = { .count = 1, .ends = { [0] = scene_read_items.len } };
         if (transmission_layers > 1 && scene_read_items.len > 1) {
             instrumentation::@scope("view.layers") {
                 scene_read_layers = split_scene_reads_by_layer(

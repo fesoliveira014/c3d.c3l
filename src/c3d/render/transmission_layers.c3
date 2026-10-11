@@ -19,6 +19,11 @@ struct ScreenRect {
     Vec2 max;
 }
 
+struct SceneReadLayers @private {
+    uint                         count;
+    usz[MAX_TRANSMISSION_LAYERS] ends; // exclusive end of each layer in the ordered draws
+}
+
 <*
  Whether the rectangles share area; touching edges do not count.
  @pure
@@ -72,17 +77,13 @@ fn void assign_transmission_layers(ScreenRect[] rects, uint layer_count, uint[] 
     }
 }
 
-struct SceneReadLayers @private {
-    uint                         count;
-    usz[MAX_TRANSMISSION_LAYERS] ends; // exclusive end of each layer in the ordered draws
-}
-
 fn SceneReadLayers split_scene_reads_by_layer(DrawItem[] items, Mat4 view_proj, uint layer_count) @private {
     @pool() {
         ScreenRect[] rects = alloc::new_array(tmem, ScreenRect, items.len);
         foreach (index, &item : items) {
             rects[index] = project_bounds_to_screen_rect(view_proj, item.candidate.world_bounds);
         }
+
         uint[] layers = alloc::new_array(tmem, uint, items.len);
         assign_transmission_layers(rects, layer_count, layers);
 
@@ -95,6 +96,7 @@ fn SceneReadLayers split_scene_reads_by_layer(DrawItem[] items, Mat4 view_proj, 
             }
             split.ends[layer] = filled;
         }
+
         items[..] = ordered[..];
         return split;
     };

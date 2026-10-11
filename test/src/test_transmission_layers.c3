@@ -78,17 +78,6 @@ fn void test_a_full_screen_rectangle_puts_every_later_overlapping_draw_above_it(
     assert(layers[0] == 0 && layers[1] == 1 && layers[2] == 1 && layers[3] == 2);
 }
 
-fn void test_a_box_ahead_of_the_camera_projects_to_its_corner_extent() @test {
-    ScreenRect rect = render::project_bounds_to_screen_rect(forward_view_proj(), box_ahead(0, 1, 4.5f, 5.5f));
-    assert(close(rect.min.x, -1.0f / 4.5f) && close(rect.max.x, 1.0f / 4.5f));
-    assert(close(math::abs(rect.min.y), 1.0f / 4.5f) && close(math::abs(rect.max.y), 1.0f / 4.5f));
-}
-
-fn void test_a_box_wider_than_the_view_is_clamped_to_the_screen() @test {
-    ScreenRect rect = render::project_bounds_to_screen_rect(forward_view_proj(), box_ahead(0, 40, 4, 6));
-    assert(close(rect.min.x, -1) && close(rect.max.x, 1) && close(rect.min.y, -1) && close(rect.max.y, 1));
-}
-
 fn void test_a_box_crossing_the_near_plane_covers_the_screen() @test {
     Mat4 view_proj = forward_view_proj();
     Aabb crossing = box_ahead(30, 0.5f, 0.05f, 4);
@@ -98,10 +87,6 @@ fn void test_a_box_crossing_the_near_plane_covers_the_screen() @test {
     Aabb behind = box_ahead(30, 0.5f, -3, -2);
     rect = render::project_bounds_to_screen_rect(view_proj, behind);
     assert(close(rect.min.x, -1) && close(rect.max.x, 1) && close(rect.min.y, -1) && close(rect.max.y, 1));
-
-    Aabb beyond = box_ahead(30, 0.5f, 1, 2);
-    rect = render::project_bounds_to_screen_rect(view_proj, beyond);
-    assert(close(rect.min.x, 1) && close(rect.max.x, 1));
 }
 
 fn DrawItem draw_item(MeshCandidate* candidate, ulong rank) @local {

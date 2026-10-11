@@ -320,12 +320,13 @@ blended reader stays in the transparent list, sorted with every other blend, and
 depth.
 
 Before each list that holds a reader the renderer copies the finished scene into the view's snapshot
-images, at most twice per view and frame and only the kinds the list's draws declare: before the
-scene-read list the snapshot holds opaque, masked and sky; before the transparent list, when it holds
-a reader, it also holds the scene-read draws. No reader sees ordinary blends or the other draws of its
-own list. With `ViewDesc.transmission_layers` above 1 the scene-read copy repeats before each non-empty
-layer, and custom readers are layered like glass ([transmission layers](materials.md#transmission-layers)).
-A view whose frame draws no reader copies nothing; each image is allocated at the view's
+images, only the kinds the list's draws declare, once before each non-empty layer of the scene-read list
+and once before the transparent list when it holds a reader. A layer's snapshot holds opaque, masked and
+sky plus the layers drawn before it, and the transparent list's also holds all the scene-read draws. At the
+default `ViewDesc.transmission_layers` of 1 the scene-read list is one layer, so a view copies at most twice
+per frame; above 1 it copies at most `transmission_layers + 1` times, and custom readers are layered like glass
+([transmission layers](materials.md#transmission-layers)). No reader sees ordinary blends or the other draws
+of its own layer. A view whose frame draws no reader copies nothing; each image is allocated at the view's
 working extent the first time a frame needs it and kept until the view's images are released.
 `scene_color` is `RGBA16_FLOAT`; `scene_depth` is `R32_FLOAT` holding the reverse-Z depth bit for bit,
 4 bytes per pixel (8.3 MB at 1920 × 1080, 33.2 MB at 3840 × 2160). `scene_color` also holds a mip chain
