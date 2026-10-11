@@ -45,6 +45,8 @@ const uint TRANSPARENCY_CONNECT = 4u;
 const uint TRANSPARENCY_INITIAL = 5u;
 const uint TRANSPARENCY_SEED = 6u;
 const uint TRANSPARENCY_COMPOSITE = 7u;
+const uint TRANSPARENCY_UNFOG = 8u;
+const uint TRANSPARENCY_ORDER_GROUP_SIZE = 64u;
 const uint INSTANCE_CULL_GROUP_SIZE = 64u;
 const uint INSTANCE_SORT_GROUP_SIZE = 128u;
 const uint INSTANCE_SORT_BLOCK = 1024u;
@@ -331,6 +333,37 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer ClusterGpu 
     mat4 view_proj;
     uint64_t decal_ranges;
     uint64_t decal_indices;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer TransparencyOrderRoot {
+    uint64_t source_args;
+    uint64_t source_indices;
+    uint64_t output_args;
+    uint first;
+    uint count;
+    uint stride;
+    uint _pad0;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer TransparencyMipRoot {
+    uint source;
+    uint destination;
+    uint width;
+    uint height;
+    uint source_width;
+    uint source_height;
+    uint source_mip;
+    uint source_storage;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer TransparencyOverflowRoot {
+    uint64_t counters;
+    uint depth;
+    uint width;
+    uint height;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer TransparencyGpu {

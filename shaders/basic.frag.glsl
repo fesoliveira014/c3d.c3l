@@ -5,6 +5,7 @@
 #include "material_alpha.glsl"
 #include "material_maps.glsl"
 #include "fog.glsl"
+#include "transparency.glsl"
 
 layout(location = 0) in vec3 v_world_pos;
 layout(location = 3) in vec2 v_uv0;
@@ -12,6 +13,9 @@ layout(location = 4) in vec2 v_uv1;
 layout(location = 5) in vec4 v_color;
 
 layout(location = 0) out vec4 out_color;
+#ifdef LAYERED
+layout(location = 1) out float out_transparency_depth;
+#endif
 
 layout(push_constant) uniform Push {
     uint64_t vertex_root_gpu;
@@ -30,7 +34,23 @@ void main() {
     color *= v_color;
 
     if ((material.flags & MATERIAL_ALPHA_MASK) != 0u && color.a < material.alpha_cutoff) discard;
+
+#ifdef LAYERED
+    if (!layered_transparency_accept(frame, gl_FragCoord.z)) discard;
+
+    if (layered_transparency_capture(frame)) {
+        out_color = layered_transparency_output(frame, vec4(0.0));
+        out_transparency_depth = gl_FragCoord.z;
+        return;
+    }
+
+    vec3 fogged = (material.flags & MATERIAL_ALPHA_BLEND) != 0u
+        ? layered_transparency_material_fog(frame, v_world_pos, color.rgb, material.flags) : color.rgb;
+    out_color = layered_transparency_output(frame, material_output(fogged, color.a, material.flags));
+    out_transparency_depth = gl_FragCoord.z;
+#else
     vec3 fogged = (material.flags & MATERIAL_ALPHA_BLEND) != 0u
         ? apply_material_fog(frame, v_world_pos, color.rgb, material.flags) : color.rgb;
     out_color = material_output(fogged, color.a, material.flags);
+#endif
 }

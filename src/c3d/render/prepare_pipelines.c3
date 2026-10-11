@@ -58,6 +58,9 @@ enum PrepareComputeSlot @private {
     EXPOSURE_HISTOGRAM,
     EXPOSURE_ADAPT,
     SHEEN_LUT,
+    TRANSPARENCY_ORDER,
+    TRANSPARENCY_MIP,
+    TRANSPARENCY_OVERFLOW,
 }
 
 struct PreparePipelineUnit @private {
@@ -163,6 +166,7 @@ fn bool? run_prepare_shader_step(Renderer* renderer, PrepareUnit* unit, PrepareR
     if (!job.initialized) {
         job.desc.param_block_size = source.desc.param_block_size;
         job.desc.scene_reads = source.desc.scene_reads;
+        job.desc.layered_transparency = source.desc.layered_transparency;
         job.initialized = true;
     }
     while (job.stage < PREPARE_SHADER_STAGE_COUNT) {
@@ -237,6 +241,9 @@ fn gpu::PipelineHandle* prepare_compute_slot(Renderer* renderer, PrepareComputeS
         case EXPOSURE_HISTOGRAM: return &renderer.post_pipelines.exposure_histogram;
         case EXPOSURE_ADAPT: return &renderer.post_pipelines.exposure_adapt;
         case SHEEN_LUT: return &renderer.environment_state.pipelines.sheen_lut;
+        case TRANSPARENCY_ORDER: return &renderer.transparency_order_pipeline;
+        case TRANSPARENCY_MIP: return &renderer.transparency_mip_pipeline;
+        case TRANSPARENCY_OVERFLOW: return &renderer.transparency_overflow_pipeline;
     }
 }
 
@@ -278,6 +285,8 @@ fn PipelineKey? prepare_cache_key(Renderer* renderer, PrepareUnit* unit) @privat
     ShaderRes* mirror = &renderer.shaders[key.shader.index];
     asset::ShaderDesc* desc = &mirror.desc;
     key.shader_revision = mirror.revision;
+    if (key.custom.layered) return published_transparency_pipeline_key(mirror, key);
+
     switch (unit.pipeline.pass) {
         case FORWARD:
             key.custom = { .vertex = desc.vertex.shaded.len > 0, .fragment = true };
@@ -503,6 +512,14 @@ fn void append_prepare_pipelines(
     listed.push({ .kind = PrepareUnitKind.PIPELINES, .geometry = geometry, .material = material,
         .pipeline = { .kind = PreparePipelineKind.VALIDATE } });
     ShaderVariant vertex = mesh_vertex_variant(flags, morphed, true);
+    append_prepare_transparency_pipelines(
+        renderer: renderer,
+        geometry: geometry,
+        material: material,
+        vertex: vertex,
+        listed: listed,
+    );
+
     PipelineKey forward = forward_pipeline_key(
         material: data,
         vertex: vertex,
@@ -561,6 +578,15 @@ fn void append_prepare_pipelines(
     foreach (&view : renderer.views.items) {
         if (!view.live) continue;
         ViewDesc* desc = &view.desc;
+        if (desc.transparency.mode == TransparencyMode.LAYERED && desc.shading != ShadingPath.PATH_TRACED) {
+            append_prepare_cache(listed, transparency_resolve_key(HDR_FORMAT));
+            append_prepare_cache(listed, transparency_resolve_key(gpu::Format.RGBA32_FLOAT));
+            append_prepare_cache(listed, composite_pipeline_key(gpu::Format.RGBA32_FLOAT));
+            append_prepare_compute(listed, PrepareComputeSlot.TRANSPARENCY_ORDER, TRANSPARENCY_ORDER);
+            append_prepare_compute(listed, PrepareComputeSlot.TRANSPARENCY_MIP, TRANSPARENCY_MIP);
+            append_prepare_compute(listed, PrepareComputeSlot.TRANSPARENCY_OVERFLOW, TRANSPARENCY_OVERFLOW);
+        }
+
         bool traces = desc.shading == ShadingPath.PATH_TRACED || desc.ray_tracing.shadows
           || desc.ray_tracing.reflections || desc.ambient_occlusion.kind == AoKind.RAY_TRACED;
         if ((flags.skinned || flags.has_morphs) && traces) {
@@ -613,6 +639,17 @@ fn void append_prepare_view_pipelines(Renderer* renderer, SceneReads reads, List
     foreach (&view : renderer.views.items) {
         if (!view.live) continue;
         ViewDesc* desc = &view.desc;
+        if (desc.transparency.mode == TransparencyMode.LAYERED && desc.shading != ShadingPath.PATH_TRACED) {
+            append_prepare_cache(listed, transparency_resolve_key(HDR_FORMAT));
+            append_prepare_cache(listed, transparency_resolve_key(gpu::Format.RGBA32_FLOAT));
+            append_prepare_cache(listed, composite_pipeline_key(gpu::Format.RGBA32_FLOAT));
+            append_prepare_compute(listed, PrepareComputeSlot.TRANSPARENCY_ORDER, TRANSPARENCY_ORDER);
+            append_prepare_compute(listed, PrepareComputeSlot.TRANSPARENCY_MIP, TRANSPARENCY_MIP);
+            append_prepare_compute(listed, PrepareComputeSlot.TRANSPARENCY_OVERFLOW, TRANSPARENCY_OVERFLOW);
+        } else if (reads.color && desc.shading != ShadingPath.PATH_TRACED) {
+            append_prepare_compute(listed, PrepareComputeSlot.TRANSPARENCY_MIP, TRANSPARENCY_MIP);
+        }
+
         if (desc.lights == LightSelection.CLUSTERED) {
             append_prepare_compute(listed, PrepareComputeSlot.CLUSTER, LIGHT_CULL);
         }

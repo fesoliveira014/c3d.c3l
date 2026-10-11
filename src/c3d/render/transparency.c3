@@ -3,6 +3,7 @@ module c3d::render;
 import c3d;
 import c3d::material;
 import gpu;
+import std::math::vector;
 
 <*
  Largest number of exact camera transparency depth groups.
@@ -215,12 +216,18 @@ fn void release_transparency_state(gpu::Device* device, TransparencyState* state
     *state = {};
 }
 
-fn void retire_transparency_state(RetireList* retire, TransparencyState* state) @private {
-    foreach (&pyramid : state.raw_pyramid) {
-        foreach (level : pyramid.levels[:pyramid.mip_count]) {
-            retire.push({ .kind = RetiredKind.TEXTURE_VIEW, .texture_view = level });
-        }
+fn void retire_transparency_pyramid(RetireList* retire, TransparencyPyramid* pyramid) @private {
+    foreach (level : pyramid.levels[:pyramid.mip_count]) {
+        if (level.is_valid()) retire.push({ .kind = RetiredKind.TEXTURE_VIEW, .texture_view = level });
     }
+
+    if (pyramid.image.texture.is_valid()) retire_storage_target(retire, &pyramid.image);
+
+    *pyramid = {};
+}
+
+fn void retire_transparency_state(RetireList* retire, TransparencyState* state) @private {
+    foreach (&pyramid : state.raw_pyramid) retire_transparency_pyramid(retire, pyramid);
 
     foreach (target : transparency_targets(state)) {
         if (!target.texture.is_valid()) continue;

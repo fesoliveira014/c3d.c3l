@@ -686,6 +686,7 @@ struct ViewStats {
     uint              cluster_overflows;
     uint              decal_overflows;
     uint              accumulated_samples;
+    TransparencyStats transparency;
     bool              shadow_set_shared; // the last raster rendering bound a set an earlier view recorded
     float             exposure; // applied multiplier, FRAMES_IN_FLIGHT frames late under auto; LINEAR_HDR applies none
     float[PASS_COUNT] gpu_pass_ms;
@@ -703,7 +704,11 @@ struct ViewRecord {
     Target                               depth;
     Target                               scene_color;
     Target                               scene_depth;
+    TransparencyPyramid                  scene_pyramid;
+    bool                                 scene_filtering;
+    gpu::TextureState                    scene_pyramid_frame_state;
     TransparencyState                    transparency;
+    TransparencyReadbacks                transparency_readbacks;
     gpu::TextureState[TRANSPARENCY_TARGET_COUNT] transparency_frame_states;
     Target                               post_a;
     Target                               post_b;
@@ -769,6 +774,8 @@ fn void ViewRecord.snapshot_states(&self) {
     foreach (index, target : transparency_targets(&self.transparency)) {
         self.transparency_frame_states[index] = target.state;
     }
+
+    self.scene_pyramid_frame_state = self.scene_pyramid.image.state;
 }
 
 <*
@@ -781,6 +788,8 @@ fn void ViewRecord.restore_states(&self) {
     foreach (index, target : transparency_targets(&self.transparency)) {
         target.state = self.transparency_frame_states[index];
     }
+
+    self.scene_pyramid.image.state = self.scene_pyramid_frame_state;
 }
 
 <*
@@ -842,6 +851,9 @@ fn uint live_view_images(ViewRecord* record) @private {
     foreach (target : transparency_targets(&record.transparency)) {
         if (target.texture.is_valid()) images++;
     }
+
+    if (record.scene_pyramid.image.texture.is_valid()) images++;
+
     return images;
 }
 
@@ -993,6 +1005,7 @@ fn ViewId? create_view(Renderer* renderer, ViewDesc desc) {
     defer catch post::release_view_exposure(&renderer.device, record);
     defer catch release_view_images(&renderer.device, record);
     acquire_view_images(renderer, record, view_output_extent(renderer, &desc))!;
+    refresh_transparency_payload(renderer);
     return view;
 }
 
@@ -1016,7 +1029,10 @@ fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
         StagedView[] staged = alloc::new_array(tmem, StagedView, 1);
         staged[0] = {
             .live          = record,
-            .images        = { .desc = desc },
+            .images        = {
+                .desc = desc,
+                .scene_filtering = record.scene_filtering && desc.shading != ShadingPath.PATH_TRACED,
+            },
             .output_extent = view_output_extent(renderer, &desc),
         };
         ViewRecord* images = &staged[0].images;
@@ -1042,7 +1058,10 @@ fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
         record.history.valid = false;
         record.history.pending = false;
         record.stats.accumulated_samples = 0;
+        retire_disabled_transparency_readbacks(renderer, record);
     };
+
+    refresh_transparency_payload(renderer);
 }
 
 <*
@@ -1060,6 +1079,7 @@ fn void? destroy_view(Renderer* renderer, ViewId view) {
     release_view(renderer, record);
     *record = {};
     renderer.views.remove(view);
+    refresh_transparency_payload(renderer);
 }
 
 <*
@@ -1192,6 +1212,8 @@ fn void? acquire_view_images(Renderer* renderer, ViewRecord* record, uint[<2>] o
         )!;
     }
 
+    acquire_transparency_snapshot(renderer, record, record.scene_filtering)!;
+
     if (record.desc.lights == LightSelection.CLUSTERED && !record.clusters.allocation.is_valid()) {
         ClusterLayout layout = cluster_layout(
             desc: record.desc.clusters,
@@ -1208,6 +1230,8 @@ fn void? acquire_view_images(Renderer* renderer, ViewRecord* record, uint[<2>] o
 
 fn void release_view_images(gpu::Device* device, ViewRecord* record) @private {
     release_transparency_state(device, &record.transparency);
+    release_transparency_pyramid(device, &record.scene_pyramid);
+    record.scene_filtering = false;
 
     foreach (image : view_targets(record)) {
         if (!image.texture.is_valid()) continue;
@@ -1221,6 +1245,8 @@ fn void release_view_images(gpu::Device* device, ViewRecord* record) @private {
 fn void retire_view_images(Renderer* renderer, ViewRecord* record) @private {
     RetireList* retire = last_submitted_retire(renderer);
     retire_transparency_state(retire, &record.transparency);
+    retire_transparency_pyramid(retire, &record.scene_pyramid);
+    record.scene_filtering = false;
 
     foreach (image : view_targets(record)) {
         if (!image.texture.is_valid()) continue;
@@ -1239,10 +1265,14 @@ fn void forget_view_history(Renderer* renderer, ViewRecord* record) @private {
 }
 
 fn void release_view(Renderer* renderer, ViewRecord* record) @private {
+    release_transparency_readbacks(&renderer.device, &record.transparency_readbacks);
+
     release_view_images(&renderer.device, record);
     release_cluster_readback(&renderer.device, record);
     forget_view_history(renderer, record);
     post::release_view_exposure(&renderer.device, record);
+    record.stats.transparency = {};
+    refresh_transparency_payload(renderer);
 }
 
 fn void copy_view_images(ViewRecord* staged, ViewRecord* live) @private {
@@ -1251,6 +1281,8 @@ fn void copy_view_images(ViewRecord* staged, ViewRecord* live) @private {
     staged.bloom_levels = live.bloom_levels;
     staged.clusters = live.clusters;
     staged.transparency = live.transparency;
+    staged.scene_pyramid = live.scene_pyramid;
+    staged.scene_filtering = live.scene_filtering;
 }
 
 fn void drop_unwanted_images(ViewRecord* staged, ViewDesc* previous) @private {
@@ -1291,6 +1323,8 @@ fn void drop_unwanted_images(ViewRecord* staged, ViewDesc* previous) @private {
     }
     if (desc.shading != ShadingPath.PATH_TRACED) staged.accumulation = {};
     if (desc.shading == ShadingPath.PATH_TRACED) {
+        staged.scene_pyramid = {};
+        staged.scene_filtering = false;
         staged.sky_view = {};
         staged.aerial_perspective = {};
     }
@@ -1322,6 +1356,10 @@ fn void release_staged_images(Renderer* renderer, StagedView* view) @private {
         view.images.transparency = {};
     }
 
+    if (view.images.scene_pyramid.image.texture == view.live.scene_pyramid.image.texture) {
+        view.images.scene_pyramid = {};
+    }
+
     release_view_images(&renderer.device, &view.images);
 }
 
@@ -1348,6 +1386,13 @@ fn void adopt_view_images(ViewRecord* live, ViewRecord* staged) @private {
     } else {
         @swap(live.transparency, staged.transparency);
     }
+
+    if (live.scene_pyramid.image.texture == staged.scene_pyramid.image.texture) {
+        staged.scene_pyramid = {};
+    } else {
+        @swap(live.scene_pyramid, staged.scene_pyramid);
+    }
+    live.scene_filtering = staged.scene_filtering;
 }
 
 fn void commit_resized_views(Renderer* renderer, StagedView[] views) @private {
@@ -1362,7 +1407,10 @@ fn void commit_resized_views(Renderer* renderer, StagedView[] views) @private {
         record.cluster_root = (gpu::GpuAddress)0;
         record.cluster_depth = {};
         record.stats.accumulated_samples = 0;
+        retire_disabled_transparency_readbacks(renderer, record);
     }
+
+    refresh_transparency_payload(renderer);
 }
 
 fn void? resize_views(
@@ -1380,7 +1428,11 @@ fn void? resize_views(
         uint next;
         foreach (&record : renderer.views.items) {
             if (!view_writes(record, output, target)) continue;
-            views[next] = { .live = record, .images = { .desc = record.desc }, .output_extent = extent };
+            views[next] = {
+                .live = record,
+                .images = { .desc = record.desc, .scene_filtering = record.scene_filtering },
+                .output_extent = extent,
+            };
             next++;
         }
         stage_views(renderer, views)!;
