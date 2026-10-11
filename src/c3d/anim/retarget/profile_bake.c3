@@ -28,7 +28,6 @@ struct ProfileOutputTracks @private {
  @param source_nodes : "Exact prepared source template."
  @param [&in] target : "Exact prepared target template."
  @param [&in] profile : "Immutable borrow; never retained by the clip."
- @param [inout] diagnostic : "Optional deterministic failure context."
  @return? c3d::INVALID_ARGUMENT, c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
 *>
 fn AnimationClip? retarget_with_profile(
@@ -38,19 +37,10 @@ fn AnimationClip? retarget_with_profile(
     ModelTemplate* target,
     RetargetProfile* profile,
     RetargetBakeOptions options = RETARGET_BAKE_OPTIONS_DEFAULT,
-    RetargetDiagnostic* diagnostic = null,
 ) {
-    clear_retarget_diagnostic(diagnostic);
-
-    defer catch {
-        if (diagnostic && diagnostic.reason == RetargetReason.NONE) {
-            diagnostic.reason = RetargetReason.CAPACITY_LIMIT;
-        }
-    }
-
-    profile.validate_templates(source_nodes, target, diagnostic)!;
+    profile.validate_templates(source_nodes, target)!;
     ProfileData* data = (ProfileData*)profile.data;
-    validate_profile_bake_options(data, options, diagnostic)!;
+    validate_profile_bake_options(data, options)!;
 
     AnimationClip clip;
     defer catch asset::free_clip(allocator, &clip);
@@ -65,10 +55,9 @@ fn AnimationClip? retarget_with_profile(
             target: target,
             channels: channels,
             allow_partial: options.allow_partial,
-            diagnostic: diagnostic,
         )!;
 
-        float[] times = profile_bake_times(source.duration, options.bake_rate, diagnostic)!;
+        float[] times = profile_bake_times(source.duration, options.bake_rate)!;
 
         usz track_count = profile_track_count(source, data, options.root_motion);
         if (track_count > uint::max) return c3d::CAPACITY_EXCEEDED~;
@@ -149,7 +138,6 @@ fn AnimationClip? retarget_with_profile(
                 channels: channels,
                 time: time,
                 worlds: source_world,
-                diagnostic: diagnostic,
             )!;
             compose_profile_target(
                 data: data,
@@ -158,7 +146,6 @@ fn AnimationClip? retarget_with_profile(
                 target_world: target_world,
                 time: time,
                 translation_scale: options.root_translation_scale,
-                diagnostic: diagnostic,
             )!;
 
             Vec3 horizontal;
@@ -168,15 +155,7 @@ fn AnimationClip? retarget_with_profile(
                 horizontal = { motion.x - initial_motion.x, 0, motion.z - initial_motion.z };
             }
 
-            if (options.root_motion != RootMotion.KEEP && !profile_finite_vec(horizontal)) {
-                return profile_failure(
-                    diagnostic: diagnostic,
-                    excuse: c3d::UNSUPPORTED,
-                    reason: RetargetReason.UNSUPPORTED_ANIMATED_TRANSFORM,
-                    source_node: data.source_motion_node,
-                    target_node: data.target_motion_node,
-                )~;
-            }
+            if (options.root_motion != RootMotion.KEEP && !profile_finite_vec(horizontal)) return c3d::UNSUPPORTED~;
 
             switch (options.root_motion) {
                 case KEEP: break;
@@ -196,28 +175,14 @@ fn AnimationClip? retarget_with_profile(
             foreach (uint index, &node : data.target_nodes) {
                 bool shifted = options.root_motion == RootMotion.STRIP_XZ ? node.controlled
                   : options.root_motion == RootMotion.EXTRACT && index == data.target_carrier;
-                if (shifted && !profile_finite_vec(target_world[index].position)) {
-                    return profile_failure(
-                        diagnostic: diagnostic,
-                        excuse: c3d::UNSUPPORTED,
-                        reason: RetargetReason.UNSUPPORTED_ANIMATED_TRANSFORM,
-                        source_node: data.source_motion_node,
-                        target_node: index,
-                    )~;
-                }
+                if (shifted && !profile_finite_vec(target_world[index].position)) return c3d::UNSUPPORTED~;
 
                 Transform parent = node.parent < 0 ? maths::TRANSFORM_IDENTITY : target_world[node.parent];
                 Transform local = profile_relative(parent, target_world[index]);
                 if (output[index].rotation) write_rotation_key(output[index].rotation, key, local.rotation);
                 if (output[index].translation) {
                     if (options.root_motion != RootMotion.KEEP && !profile_finite_vec(local.position)) {
-                        return profile_failure(
-                            diagnostic: diagnostic,
-                            excuse: c3d::UNSUPPORTED,
-                            reason: RetargetReason.UNSUPPORTED_ANIMATED_TRANSFORM,
-                            source_node: data.source_motion_node,
-                            target_node: index,
-                        )~;
+                        return c3d::UNSUPPORTED~;
                     }
 
                     write_translation_key(output[index].translation, key, local.position);
@@ -245,30 +210,17 @@ fn Quat profile_yaw_rotation(double angle) @private {
     return { .v = { 0, (float)math::sin(half), 0, (float)math::cos(half) } };
 }
 
-fn void? validate_profile_bake_options(
-    ProfileData* data,
-    RetargetBakeOptions options,
-    RetargetDiagnostic* diagnostic,
-) @private {
-    if (!math::is_finite(options.bake_rate) || options.bake_rate <= 0
-        || !math::is_finite(options.root_translation_scale) || options.root_translation_scale <= 0) {
-        return profile_failure(diagnostic, c3d::INVALID_ARGUMENT, RetargetReason.INVALID_BAKE_OPTIONS)~;
-    }
-
-    if (options.root_motion != RootMotion.KEEP && data.target_motion_node == RETARGET_NO_NODE) {
-        return profile_failure(diagnostic, c3d::INVALID_ARGUMENT, RetargetReason.INVALID_MOTION_PAIR)~;
-    }
-
-    if (options.root_motion == RootMotion.EXTRACT && data.target_carrier == RETARGET_NO_NODE) {
-        return profile_failure(diagnostic, c3d::INVALID_ARGUMENT, RetargetReason.INVALID_MOTION_CARRIER)~;
-    }
+fn void? validate_profile_bake_options(ProfileData* data, RetargetBakeOptions options) @private {
+    bool valid = math::is_finite(options.bake_rate) && options.bake_rate > 0
+        && math::is_finite(options.root_translation_scale) && options.root_translation_scale > 0
+        && (options.root_motion == RootMotion.KEEP || data.target_motion_node != RETARGET_NO_NODE)
+        && (options.root_motion != RootMotion.EXTRACT || data.target_carrier != RETARGET_NO_NODE);
+    if (!valid) return c3d::INVALID_ARGUMENT~;
 }
 
-fn float[]? profile_bake_times(float duration, float rate, RetargetDiagnostic* diagnostic) @private {
+fn float[]? profile_bake_times(float duration, float rate) @private {
     double intervals_float = duration == 0 ? 0 : math::max(1.0, math::ceil((double)duration * rate - PROFILE_KEY_SNAP));
-    if (intervals_float > PROFILE_MAX_INTERVALS) {
-        return profile_failure(diagnostic, c3d::CAPACITY_EXCEEDED, RetargetReason.CAPACITY_LIMIT)~;
-    }
+    if (intervals_float > PROFILE_MAX_INTERVALS) return c3d::CAPACITY_EXCEEDED~;
 
     uint intervals = (uint)intervals_float;
     float[] times = alloc::new_array_try(tmem, float, (sz)intervals + 1) ?? c3d::CAPACITY_EXCEEDED~!;
@@ -280,9 +232,7 @@ fn float[]? profile_bake_times(float duration, float rate, RetargetDiagnostic* d
             break;
         }
 
-        if (!math::is_finite(time) || (key > 0 && time <= times[key - 1])) {
-            return profile_failure(diagnostic, c3d::CAPACITY_EXCEEDED, RetargetReason.CAPACITY_LIMIT)~;
-        }
+        if (!math::is_finite(time) || (key > 0 && time <= times[key - 1])) return c3d::CAPACITY_EXCEEDED~;
 
         times[key] = time;
     }
@@ -400,40 +350,20 @@ fn void? sample_profile_source(
     ProfileChannels[] channels,
     float time,
     Transform[] worlds,
-    RetargetDiagnostic* diagnostic,
 ) @private {
     foreach (uint index, &node : data.source_nodes) {
         if (!node.consumed) continue;
         Transform local = profile_sample_local(node, channels[index], time);
         if (!profile_finite_vec(local.position) || !profile_unit_rotation(local.rotation)) {
-            return profile_failure(
-                diagnostic: diagnostic,
-                excuse: c3d::ASSET_FORMAT_ERROR,
-                reason: RetargetReason.INVALID_CLIP,
-                source_node: index,
-            )~;
+            return c3d::ASSET_FORMAT_ERROR~;
         }
 
-        if (node.requires_uniform_scale && !profile_uniform_scale(local.scale)) {
-            return profile_failure(
-                diagnostic: diagnostic,
-                excuse: c3d::UNSUPPORTED,
-                reason: RetargetReason.UNSUPPORTED_ANIMATED_TRANSFORM,
-                source_node: index,
-            )~;
-        }
+        if (node.requires_uniform_scale && !profile_uniform_scale(local.scale)) return c3d::UNSUPPORTED~;
 
         local.rotation = local.rotation.normalize();
         if (!node.requires_uniform_scale) local.scale = { 1, 1, 1 };
         worlds[index] = node.parent < 0 ? local : profile_compose(worlds[node.parent], local);
-        if (!profile_valid_transform(worlds[index])) {
-            return profile_failure(
-                diagnostic: diagnostic,
-                excuse: c3d::UNSUPPORTED,
-                reason: RetargetReason.UNSUPPORTED_ANIMATED_TRANSFORM,
-                source_node: index,
-            )~;
-        }
+        if (!profile_valid_transform(worlds[index])) return c3d::UNSUPPORTED~;
     }
 }
 
@@ -444,7 +374,6 @@ fn void? compose_profile_target(
     Transform[] target_world,
     float time,
     float translation_scale,
-    RetargetDiagnostic* diagnostic,
 ) @private {
     foreach (uint index, &node : data.target_nodes) {
         Transform local = node.authored;
@@ -473,13 +402,7 @@ fn void? compose_profile_target(
         target_world[index] = profile_compose(parent, local);
         if (!profile_finite_vec(target_world[index].position) || !profile_unit_rotation(target_world[index].rotation)
           || (node.requires_uniform_scale && !profile_uniform_scale(target_world[index].scale))) {
-            return profile_failure(
-                diagnostic: diagnostic,
-                excuse: c3d::UNSUPPORTED,
-                reason: RetargetReason.UNSUPPORTED_ANIMATED_TRANSFORM,
-                source_node: node.mapped,
-                target_node: index,
-            )~;
+            return c3d::UNSUPPORTED~;
         }
     }
 }
