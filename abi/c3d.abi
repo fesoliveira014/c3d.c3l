@@ -22,6 +22,13 @@ root CompositeRoot {
     uint         _pad1;
 }
 
+root WeightedCompositeRoot {
+    TextureIndex accum_texture;
+    TextureIndex revealage_texture;
+    uint         _pad0;
+    uint         _pad1;
+}
+
 root DispatchRoot {
     GpuAddress textures;
     GpuAddress parameters;

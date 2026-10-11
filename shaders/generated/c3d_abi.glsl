@@ -194,6 +194,13 @@ layout(buffer_reference, std430, buffer_reference_align = 4) buffer CompositeRoo
     uint _pad1;
 };
 
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer WeightedCompositeRoot {
+    uint accum_texture;
+    uint revealage_texture;
+    uint _pad0;
+    uint _pad1;
+};
+
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer DispatchRoot {
     uint64_t textures;
     uint64_t parameters;

@@ -3,7 +3,7 @@
 #include "c3d_abi.glsl"
 #include "descriptor_heap.glsl"
 #include "vertex_pull.glsl"
-#include "material_alpha.glsl"
+#include "blend_output.glsl"
 #include "fog.glsl"
 #include "standard_shading.glsl"
 #include "decals.glsl"
@@ -14,7 +14,6 @@ layout(location = 2) in vec4 v_tangent;
 layout(location = 3) in vec2 v_uv0;
 layout(location = 4) in vec2 v_uv1;
 layout(location = 5) in vec4 v_color;
-layout(location = 0) out vec4 out_color;
 
 layout(push_constant) uniform Push {
     uint64_t vertex_root_gpu;
@@ -60,5 +59,9 @@ void main() {
     if ((material.flags & MATERIAL_ALPHA_BLEND) != 0u) {
         color = apply_material_fog(frame, v_world_pos, color, material.flags);
     }
-    out_color = material_output(color, material_sample.base_color.a, material.flags);
+    write_blend_output(
+        frame,
+        material_output(color, material_sample.base_color.a, material.flags),
+        v_world_pos
+    );
 }

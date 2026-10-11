@@ -54,6 +54,7 @@ struct DrawItem @private {
     gpu::GpuAddress root;
     gpu::FrontFace  front_face;
     bool            moved;
+    bool            weighted;
     bool            custom_velocity;
     gpu::PipelineHandle velocity_pipeline;
 }
@@ -78,6 +79,7 @@ struct DrawPassState @private {
     gpu::ColorTargetState[] color_targets;
     gpu::CompareOp          depth_compare;
     bool                    depth_write;
+    bool                    fixed_blend; // the pass sets every target's blend; materials do not
 }
 
 // What a camera-value view renders: a camera and its absolute world matrix.
@@ -311,10 +313,12 @@ fn void? record_raster_view(
         usz gbuffer_count;
         usz scene_read_start;
         usz transparent_start;
+        usz weighted_start;
         usz gbuffer_filled;
         usz opaque_filled;
         usz scene_read_filled;
         usz transparent_filled;
+        usz weighted_filled;
         SceneReads scene_read_reads;
         SceneReads transparent_reads;
         bool scene_read_mips;
@@ -324,6 +328,7 @@ fn void? record_raster_view(
             items = alloc::new_array(tmem, DrawItem, candidates.len);
             usz scene_read_count;
             usz transparent_count;
+            usz weighted_count;
             foreach (&candidate : candidates) {
                 Material* material_data = candidate_material(renderer, candidate);
                 DrawList counted = view_draw_list(
@@ -336,11 +341,16 @@ fn void? record_raster_view(
                     case GBUFFER: gbuffer_count++;
                     case OPAQUE: break;
                     case SCENE_READ: scene_read_count++;
-                    case TRANSPARENT: transparent_count++;
+                    case TRANSPARENT:
+                        transparent_count++;
+                        bool weighted_draw = !candidate.impostor
+                          && joins_weighted_pass(material_data, record.desc.transparency);
+                        if (weighted_draw) weighted_count++;
                 }
             }
             scene_read_start = candidates.len - scene_read_count - transparent_count;
             transparent_start = candidates.len - transparent_count;
+            weighted_start = candidates.len - weighted_count;
             foreach (&candidate : candidates) {
                 GpuGeometry* geometry = candidate.impostor ? acquire_impostor_geometry(renderer) : candidate.billboards
                   ? acquire_billboard_geometry(renderer)! : resolve_geometry(renderer, candidate.geometry)!;
@@ -380,9 +390,17 @@ fn void? record_raster_view(
                     custom_gbuffer: custom_gbuffer_stage(renderer, material_description)!,
                     custom_reads:   custom_reads,
                 );
+                bool weighted = list == DrawList.TRANSPARENT && !candidate.impostor
+                  && joins_weighted_pass(material_description, record.desc.transparency);
                 gpu::PipelineHandle? pipeline = list == DrawList.GBUFFER
                   ? gbuffer_pipeline_for(renderer, material_description, vertex)
-                  : pipeline_for(renderer, material_description, vertex, record.desc.ray_tracing.shadows);
+                  : pipeline_for(
+                      renderer:   renderer,
+                      material:   material_description,
+                      vertex:     vertex,
+                      rt_shadows: record.desc.ray_tracing.shadows,
+                      weighted:   weighted,
+                  );
                 if (catch excuse = pipeline) {
                     if (!custom_pipeline_rejected(renderer, material_description, excuse)) return excuse~;
                     continue;
@@ -402,13 +420,21 @@ fn void? record_raster_view(
                         scene_read_reads |= material_scene_reads(material_description, custom_reads);
                         scene_read_mips |= material_blurs_scene_color(material_description);
                     case TRANSPARENT:
-                        index = transparent_start + transparent_filled++;
-                        transparent_reads |= material_scene_reads(material_description, custom_reads);
+                        if (weighted) {
+                            index = weighted_start + weighted_filled++;
+                        } else {
+                            index = transparent_start + transparent_filled++;
+                            transparent_reads |= material_scene_reads(material_description, custom_reads);
+                        }
                 }
                 bool model_reflected = (candidate_world(candidate).determinant() < 0) != candidate.mirrored;
                 ShaderVariant fragment = list == DrawList.GBUFFER
                   ? gbuffer_fragment(material_description)
-                  : material_fragment(material_description, rt_shadow_flags(renderer, record.desc.ray_tracing.shadows));
+                  : material_fragment(
+                      material:     material_description,
+                      shadow_flags: rt_shadow_flags(renderer, record.desc.ray_tracing.shadows),
+                      weighted:     weighted,
+                  );
                 items[index] = {
                     .sort_key  = draw_sort_key(
                         vertex:    vertex,
@@ -431,6 +457,7 @@ fn void? record_raster_view(
                     .effects   = effects,
                     .front_face = !candidate.billboards && model_reflected != view_reflected
                       ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,
+                    .weighted  = weighted,
                     .custom_velocity = custom_velocity_stage(renderer, material_description, candidate_instanced(candidate))!,
                 };
             }
@@ -440,11 +467,13 @@ fn void? record_raster_view(
         DrawItem[] depth_items = items[:gbuffer_count + opaque_filled];
         DrawItem[] scene_read_items = items[scene_read_start:scene_read_filled];
         DrawItem[] transparent_items = items[transparent_start:transparent_filled];
+        DrawItem[] weighted_items = items[weighted_start:weighted_filled];
         instrumentation::@scope("view.sort") {
             sort::quicksort(gbuffer_items, &by_sort_key);
             sort::quicksort(opaque_items, &by_sort_key);
             sort::quicksort(scene_read_items, &by_transparent_depth);
             sort::quicksort(transparent_items, &by_transparent_depth);
+            sort::quicksort(weighted_items, &by_sort_key);
         };
 
         uint transmission_layers = math::max(record.desc.transmission_layers, 1u);
@@ -503,7 +532,7 @@ fn void? record_raster_view(
         };
 
         record.frustum = matrices.frustum;
-        DrawItem[][3] cull_groups = { depth_items, scene_read_items, transparent_items };
+        DrawItem[][4] cull_groups = { depth_items, scene_read_items, transparent_items, weighted_items };
         CullItem[] view_culls = batch_cull_items(
             assets:     renderer.assets,
             groups:     cull_groups[..],
@@ -537,6 +566,7 @@ fn void? record_raster_view(
             }
             view_reads = scene_read_reads | transparent_reads;
             acquire_scene_snapshots(renderer, record, view_reads)!;
+            if (weighted_items.len) acquire_weighted_targets(renderer, record)!;
             if (record.desc.ray_tracing.reflections) acquire_environment_lut(renderer)!;
             prepare_cull_stage(renderer, view_culls, record.desc.instance_culling)!;
             gpu::GpuAddress probe_trace = prepare_probe_updates(renderer, scene)!;
@@ -686,7 +716,7 @@ fn void? record_raster_view(
             }
             PreviousInstanceCache previous_instances;
             previous_instances.init(tmem);
-            DrawItem[][3] draw_groups = { depth_items, scene_read_items, transparent_items };
+            DrawItem[][4] draw_groups = { depth_items, scene_read_items, transparent_items, weighted_items };
             foreach (group_index, group : draw_groups) foreach (&item : group) {
                 Node* node = item.candidate.node;
                 Mat4 prev_world = node.world;
@@ -801,7 +831,8 @@ fn void? record_raster_view(
             }
         };
 
-        bool transparent_after_split = scene_read_items.len > 0 || transparent_reads != (SceneReads){} || fog_pass;
+        bool transparent_after_split = scene_read_items.len > 0 || transparent_reads != (SceneReads){} || fog_pass
+          || weighted_items.len > 0;
         instrumentation::@scope("view.record") {
             if (environments.atmosphere) {
                 record_sky_view_tables(
@@ -922,9 +953,10 @@ fn void? record_raster_view(
                 if (transparent_reads != (SceneReads){}) record_scene_snapshots(renderer, record, transparent_reads)!;
                 if (screen_space_gi) record_ssgi_color_copy(renderer, record)!;
                 record_fog_pass(renderer, record, frame_span.address)!;
-            } else if (transparent_after_split && transparent_items.len && transparent_reads != (SceneReads){}) {
+            } else if (transparent_after_split && transparent_reads != (SceneReads){}) {
                 record_scene_snapshots(renderer, record, transparent_reads)!;
             }
+            if (weighted_items.len) record_weighted_transparency(renderer, record, weighted_items)!;
             if (transparent_after_split && transparent_items.len) {
                 @profile_pass(renderer, Pass.FORWARD_TRANSPARENT) {
                     record_loaded_pass(renderer, record, transparent_items)!;
@@ -2133,7 +2165,7 @@ fn void? record_draws(
             || wanted.topology != bound.topology || wanted.depth_test != bound.depth_test
             || wanted.depth_write != bound.depth_write || wanted.blend != bound.blend
             || wanted.blend_mode != bound.blend_mode) {
-            color_targets[0] = blend_target(wanted.blend, wanted.blend_mode);
+            if (!pass_state.fixed_blend) color_targets[0] = blend_target(wanted.blend, wanted.blend_mode);
             state.raster.cull_mode = wanted.cull;
             state.raster.front_face = wanted.front_face;
             state.raster.topology = wanted.topology;
@@ -2229,12 +2261,13 @@ fn Material* material_data(Renderer* renderer, MaterialRes* material) @private {
     return &renderer.assets.material(material.asset).data;
 }
 
-fn ShaderVariant material_fragment(Material* material, uint shadow_flags) @local {
+fn ShaderVariant material_fragment(Material* material, uint shadow_flags, bool weighted = false) @local {
+    uint weighted_flag = weighted ? shader::SHADER_FLAG_WEIGHTED_BLEND : 0;
     switch (material.kind) {
-        case BASIC: return { .shader = BASIC };
-        case STANDARD: return { .shader = STANDARD, .flags = shadow_flags };
-        case TOON: return { .shader = TOON, .flags = shadow_flags };
-        case PHYSICAL: return { .shader = PHYSICAL, .flags = shadow_flags };
+        case BASIC: return { .shader = BASIC, .flags = weighted_flag };
+        case STANDARD: return { .shader = STANDARD, .flags = shadow_flags | weighted_flag };
+        case TOON: return { .shader = TOON, .flags = shadow_flags | weighted_flag };
+        case PHYSICAL: return { .shader = PHYSICAL, .flags = shadow_flags | weighted_flag };
         case CUSTOM: return { .flags = shadow_flags };
     }
 }
@@ -2244,17 +2277,24 @@ fn PipelineKey forward_pipeline_key(
     ShaderVariant vertex,
     gpu::PolygonMode polygon,
     uint shadow_flags,
+    bool weighted = false,
 ) @private {
-    return {
+    PipelineKey key = {
         .vertex = vertex,
         .fragment = vertex.shader == IMPOSTOR_VERTEX
-            ? (ShaderVariant){ .shader = IMPOSTOR_FORWARD, .flags = shadow_flags } : material_fragment(material, shadow_flags),
+            ? (ShaderVariant){ .shader = IMPOSTOR_FORWARD, .flags = shadow_flags }
+            : material_fragment(material, shadow_flags, weighted),
         .color_formats = { [0] = HDR_FORMAT },
         .color_count = 1,
         .depth_format = DEPTH_FORMAT,
         .samples = gpu::SampleCount.ONE,
         .polygon = polygon,
     };
+    if (weighted) {
+        key.color_formats = { [0] = WEIGHTED_ACCUM_FORMAT, [1] = WEIGHTED_REVEALAGE_FORMAT };
+        key.color_count = 2;
+    }
+    return key;
 }
 
 fn gpu::PipelineHandle? pipeline_for(
@@ -2262,15 +2302,17 @@ fn gpu::PipelineHandle? pipeline_for(
     Material* material,
     ShaderVariant vertex,
     bool rt_shadows = false,
+    bool weighted = false,
 ) @private {
     renderer.stats.pipeline_lookups++;
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
     uint shadow_flags = rt_shadow_flags(renderer, rt_shadows);
     PipelineKey key = forward_pipeline_key(
-        material: material,
-        vertex: vertex,
-        polygon: wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
+        material:     material,
+        vertex:       vertex,
+        polygon:      wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
         shadow_flags: shadow_flags,
+        weighted:     weighted,
     );
     if (material.kind != MaterialKind.CUSTOM) return renderer.pipelines.get(&renderer.device, key);
 

@@ -79,6 +79,7 @@
         "test_material_references.c3",
         "test_asset_replace.c3",
         "test_material_blend.c3",
+        "test_weighted_blend.c3",
         "test_sky.c3",
         "test_capacities.c3",
         "test_resize_faults.c3",

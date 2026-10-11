@@ -78,6 +78,7 @@ struct LodSelection @private {
     bool impostor;
     Vec3 previous_view_origin;
     bool view_history_valid;
+    TransparencyMode transparency;
 }
 
 fn float lod_screen_size(
@@ -226,6 +227,7 @@ fn LodSelection[]? prepare_lod_view(
                         .camera_position = matrices.position,
                         .bias = record.desc.lod_bias,
                         .impostor = lod_impostor_live(renderer.assets, group.state),
+                        .transparency = record.desc.transparency,
                     };
                     prepare_lod_instances(renderer, selection)!;
                 } else {

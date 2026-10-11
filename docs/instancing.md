@@ -112,6 +112,7 @@ A batch whose material has `alpha_mode == BLEND` draws its instances back to fro
 - **Steps.** The plan is sized by the range's instance count, not its visible count: 1 step up to 1,024 instances, 10 at 8,192, 15 at 16,384, 36 at 131,072 and 78 at `MAX_SORTED_INSTANCES` (2,097,152). Each step is one dispatch; the view's sorted ranges step together, one barrier per step round.
 - **Memory.** A sorted range of `n` instances takes `32 + align8(4n) + 8 * pow2(n)` bytes of the arena: 1,448,608 B at 100,000, per view and frame slot.
 - **Overflow.** A range above `MAX_SORTED_INSTANCES`, or whose list and keys do not fit the arena, draws unsorted and unculled from CPU arguments and counts in `Stats.sort_overflows`; nothing faults.
+- **Weighted views.** In a view with `transparency = WEIGHTED`, a batch whose material joins the [weighted pass](materials.md#weighted-transparency) does not sort: its ranges list and cull like an opaque batch's, take no keys, run no sort steps, and have no instance limit. A batch with an `ADDITIVE` material keeps the sort in every view. The sorted order applies again when the view switches back to `SORTED`.
 - **Stats.** A blended range reports through the culling fields with culling on or off: it adds to `cull_dispatches`, `instances_tested` and `instances_visible`, and not to `Stats.instances` or `Stats.triangles`. With culling off, a blended batch still reserves the cull arena.
 - **Cost.** Measured on an RTX 4090 (driver 610.88) with `instancing`'s glass cloud, validation on, medians of three interleaved runs:
 

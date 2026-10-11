@@ -33,6 +33,17 @@ const Vec2 BACKDROP_TILES @local = { 8, 5 };
 const float PROP_RADIUS @local = 0.35f;
 const float PROP_SPACING @local = 1.6f;
 const float PROP_DEPTH @local = -1.1f;
+const Vec3 CROSS_POSITION @local = { -3, 0.9f, 0 };
+const Vec3 CROSS_QUAD_SCALE @local = { 1.8f, 1, 1.8f };
+const float CROSS_QUAD_ANGLE @local = 0.6f; // radians either side of facing the camera, so the quads intersect
+const Vec4 CROSS_FIRST_COLOR @local = { 0.95f, 0.2f, 0.15f, 0.55f };
+const Vec4 CROSS_SECOND_COLOR @local = { 0.15f, 0.4f, 0.95f, 0.55f };
+const Vec3 BATCH_POSITION @local = { 3, 0.9f, 0 };
+const Vec3 BATCH_PANEL_SCALE @local = { 1.2f, 1, 1.8f };
+const float BATCH_PANEL_OFFSET @local = 0.7f; // panels sit this far in front of and behind the sweeping sphere
+const Vec4 BATCH_COLOR @local = { 0.2f, 0.8f, 0.35f, 0.5f };
+const Vec4 SWEEP_COLOR @local = { 1, 0.6f, 0.1f, 0.6f };
+const float SWEEP_AMPLITUDE @local = 0.8f;
 
 struct Orbit @local {
     Vec3  target;
@@ -76,6 +87,18 @@ fn Material glass_material(float roughness, Vec4 tint = { 1, 1, 1, 1 }) @local {
     params.ior = GLASS_IOR;
     params.thickness = GLASS_THICKNESS;
     return material::physical(params);
+}
+
+fn Material blended_material(Vec4 color) @local {
+    MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
+    common.alpha_mode = AlphaMode.BLEND;
+    common.double_sided = true;
+    return material::basic({ .color = color }, common);
+}
+
+fn Quaternionf upright_plane_rotation(float yaw) @local {
+    Quaternionf upright = quaternion::from_axis_angle{float}({ 1, 0, 0 }, math::PI / 2);
+    return quaternion::from_axis_angle{float}({ 0, 1, 0 }, yaw) * upright;
 }
 
 fn int main() {
@@ -123,6 +146,10 @@ fn int main() {
             transform: { .scale = BACKDROP_TILES },
         ),
     }), "transparency/backdrop")!!;
+    MaterialId cross_first = assets.add_material(blended_material(CROSS_FIRST_COLOR), "transparency/cross_first")!!;
+    MaterialId cross_second = assets.add_material(blended_material(CROSS_SECOND_COLOR), "transparency/cross_second")!!;
+    MaterialId batch_material = assets.add_material(blended_material(BATCH_COLOR), "transparency/batch")!!;
+    MaterialId sweep_material = assets.add_material(blended_material(SWEEP_COLOR), "transparency/sweep")!!;
 
     Scene scene = scene::create_scene(mem, scene::default_scene_desc());
     defer scene::destroy_scene(&scene);
@@ -148,6 +175,37 @@ fn int main() {
     Node* rear_pane = scene.add_mesh(rear_slab, rear_glass, name: "rear glass")!!;
     rear_pane.local.position = REAR_SLAB_POSITION;
 
+    float[2] cross_angles = { CROSS_QUAD_ANGLE, -CROSS_QUAD_ANGLE };
+    MaterialId[2] cross_materials = { cross_first, cross_second };
+    foreach (index, angle : cross_angles) {
+        Node* quad = scene.add_mesh(plane, cross_materials[index], name: "cross quad")!!;
+        quad.local.position = CROSS_POSITION;
+        quad.local.rotation = upright_plane_rotation(angle);
+        quad.local.scale = CROSS_QUAD_SCALE;
+    }
+
+    Transform[2] panels = {
+        {
+            .position = { 0, 0, BATCH_PANEL_OFFSET },
+            .rotation = upright_plane_rotation(0),
+            .scale    = BATCH_PANEL_SCALE,
+        },
+        {
+            .position = { 0, 0, -BATCH_PANEL_OFFSET },
+            .rotation = upright_plane_rotation(0),
+            .scale    = BATCH_PANEL_SCALE,
+        },
+    };
+    Node* panel_batch = scene.add_instanced_mesh(
+        geometry:   plane,
+        material:   batch_material,
+        capacity:   panels.len,
+        transforms: panels[..],
+        name:       "panels",
+    )!!;
+    panel_batch.local.position = BATCH_POSITION;
+    Node* sweeper = scene.add_mesh(ball, sweep_material, name: "sweeper")!!;
+
     Node* sun = scene.add_light(light::directional({ 1, 1, 1 }, 3, false), name: "sun")!!;
     sun.local.rotation = maths::look_rotation((Vec3){ -0.4f, -0.6f, -1 }.normalize(), { 0, 1, 0 });
 
@@ -161,7 +219,7 @@ fn int main() {
     renderer.prepare_scene(&scene)!!;
 
     io::printn("drag to orbit, wheel to zoom, R steps the glass roughness, L toggles the transmission layers, "
-        "Escape release quits");
+        "T toggles sorted and weighted transparency, Escape release quits");
 
     while (window.poll()) {
         Input* input = &window.input;
@@ -173,23 +231,34 @@ fn int main() {
             io::printfn("glass roughness %.2f", ROUGHNESS_STEPS[roughness_step]);
         }
 
-        bool layers_changed = input.key_pressed(platform::Scancode.L) && !input.keyboard_captured_by_gui;
-        if (layers_changed) {
+        bool view_changed;
+        if (input.key_pressed(platform::Scancode.L) && !input.keyboard_captured_by_gui) {
             view_desc.transmission_layers = view_desc.transmission_layers == 1 ? 2 : 1;
+            view_changed = true;
             io::printfn("transmission layers %d", view_desc.transmission_layers);
         }
+        if (input.key_pressed(platform::Scancode.T) && !input.keyboard_captured_by_gui) {
+            view_desc.transparency = view_desc.transparency == TransparencyMode.SORTED
+              ? TransparencyMode.WEIGHTED : TransparencyMode.SORTED;
+            view_changed = true;
+            io::printfn("transparency %s", view_desc.transparency == TransparencyMode.WEIGHTED ? "weighted" : "sorted");
+        }
 
+        float sweep = SWEEP_AMPLITUDE * math::sin((float)window.clock.total);
+        sweeper.local.position = BATCH_POSITION + (Vec3){ sweep, 0, 0 };
         apply_orbit(&orbit, input, camera_node);
         scene.update_world();
 
         platform::sync_window(&window, &renderer);
-        if (layers_changed) render::configure_view(&renderer, renderer.default_view, view_desc)!!;
+        if (view_changed) render::configure_view(&renderer, renderer.default_view, view_desc)!!;
         renderer.render(&scene, camera_node, { .time = window.clock.total, .delta = window.clock.delta })!!;
 
         if (window.clock.total - last_print >= STATS_PERIOD_SECONDS) {
             last_print = window.clock.total;
-            io::printfn("layers %d, draws %d, scene snapshots %d, frame %.2f ms at %dx%d",
-                view_desc.transmission_layers, renderer.stats.draws, renderer.stats.scene_snapshots,
+            io::printfn("layers %d, %s, draws %d, scene snapshots %d, frame %.2f ms at %dx%d",
+                view_desc.transmission_layers,
+                view_desc.transparency == TransparencyMode.WEIGHTED ? "weighted" : "sorted",
+                renderer.stats.draws, renderer.stats.scene_snapshots,
                 renderer.stats.frame_ms, renderer.output_width, renderer.output_height);
         }
     }

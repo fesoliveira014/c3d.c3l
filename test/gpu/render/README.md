@@ -34,6 +34,13 @@ mip zero, and only the rough frames record them. Two overlapping panes render in
 default `transmission_layers` and one with two: the second records one more snapshot copy, and a mip chain only for a
 layer that holds rough glass.
 
+`test_weighted_blend.c3` renders one blended scene into a `SORTED` and a `WEIGHTED` view in one frame: only the
+`WEIGHTED` view allocates its accumulation and revealage images, and it records one more draw, the composite. A second
+case toggles one view between the modes several times with a mirrored blended mesh and a blended batch in the scene;
+the images keep their handles and no frame after the first cycle creates a pipeline. Both run under validation and
+compare no pixels. The accumulation and composite math is not checked here: lavapipe applies the first attachment's
+blend equation to every attachment, so the weighted pass renders wrongly there and needs a hardware run.
+
 Build the repository once so `shaders/spv/` exists, then invoke this project
 separately:
 

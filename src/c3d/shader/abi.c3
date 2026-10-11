@@ -196,6 +196,18 @@ $assert $reflect(CompositeRoot.source_sampler).offset == 4;
 $assert $reflect(CompositeRoot._pad0).offset == 8;
 $assert $reflect(CompositeRoot._pad1).offset == 12;
 
+struct WeightedCompositeRoot {
+    TextureIndex accum_texture;
+    TextureIndex revealage_texture;
+    uint         _pad0;
+    uint         _pad1;
+}
+$assert WeightedCompositeRoot::size == 16;
+$assert $reflect(WeightedCompositeRoot.accum_texture).offset == 0;
+$assert $reflect(WeightedCompositeRoot.revealage_texture).offset == 4;
+$assert $reflect(WeightedCompositeRoot._pad0).offset == 8;
+$assert $reflect(WeightedCompositeRoot._pad1).offset == 12;
+
 struct DispatchRoot {
     GpuAddress textures;
     GpuAddress parameters;

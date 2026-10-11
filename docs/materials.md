@@ -79,8 +79,9 @@ stable entity-id tie break. Instances of a blended batch order inside the batch
 by their own box centers ([Instancing](instancing.md#blended-batches)); the
 batch orders among blended objects by its bound center. It does not sort
 triangles or fragments, so intersecting transparent geometry and large objects
-whose centers do not match their visible depth can compose incorrectly. Record
-each view with its own camera; ordering is recalculated per view.
+whose centers do not match their visible depth can compose incorrectly;
+[weighted transparency](#weighted-transparency) removes that dependence on
+order. Record each view with its own camera; ordering is recalculated per view.
 
 `BLEND` honors `depth_test` but always disables effective depth writes. The
 authored `depth_write` value remains stored, so switching back to `OPAQUE` or
@@ -93,6 +94,100 @@ Physical and Toon meshes can cast, with masked coverage coming only from their
 base factor, base texture and cutoff. Standard, Physical and Toon blended meshes
 can still receive direct shadows when their mesh enables `receive_shadow`; Basic
 remains unlit.
+
+### Weighted transparency
+
+`ViewDesc.transparency` selects how a view composes blended surfaces. `SORTED`, the
+default, is the object order above. `WEIGHTED` composes the view's
+`PREMULTIPLIED_ALPHA` blended draws without ordering them, so intersecting surfaces,
+interleaved surfaces and a mesh passing between two instances of a blended batch
+compose without ordering errors. It is an approximation: coverage is exact, `1 - Π(1 - a)`,
+but colors are a weighted average, so a nearer surface dominates only through the
+depth weight below and two surfaces of similar weight blend evenly whichever is in front.
+
+Participants, in a `WEIGHTED` view:
+
+- Basic, Standard, Physical (without transmission) and Toon `BLEND` meshes with `PREMULTIPLIED_ALPHA`;
+- blended instanced batches, and the blended parts of a [LOD group](lod.md);
+- [billboard batches](billboards.md), which are always blended, with a built-in material.
+
+Not participants:
+
+- `ADDITIVE` draws record after the composite, in `hdr_color`, with the state and order of a
+  `SORTED` view. Their order does not matter, but weighted surfaces in front of them do not dim
+  them, because the composite is already in `hdr_color` when they draw.
+- Transmissive Physical draws and custom scene readers stay in the sorted scene-read list in both
+  modes, drawn before any weighted surface; a blended draw that reads the scene sees it
+  without any blended surface.
+- Every custom `BLEND` material, including billboard batches with custom fragments and the particle
+  effects, stays on the sorted path after the composite, whatever its stage writes. Only the
+  built-in stages have a weighted form; this is a current limit.
+
+A `WEIGHTED` view with no participating draw records exactly the commands of a `SORTED` one and
+allocates nothing.
+
+Passes of a `WEIGHTED` view with at least one participating draw, after the scene-read list and
+the fog pass:
+
+1. `Pass.FORWARD_TRANSPARENT` accumulates into two view-owned images. `weighted_accum`
+   (`RGBA16_FLOAT`) is cleared to 0 and sums weighted color and coverage with `ONE`/`ONE`.
+   `weighted_revealage` (`R16_FLOAT`) is cleared to 1 and multiplies the uncovered fraction with
+   `ZERO`/`ONE_MINUS_SRC_COLOR`. Depth is loaded and tested `GREATER` against the opaque
+   depth, with no depth write, so a surface behind opaque geometry is hidden and `depth_test` off
+   still draws over everything.
+2. `Pass.TRANSPARENT_COMPOSITE` is one fullscreen pass into `hdr_color` under the
+   premultiplied blend: with `r` the revealage and `average` the accumulated color divided by the accumulated
+   weighted coverage, it writes `(average * (1 - r), 1 - r)`.
+3. Sorted blended draws, `ADDITIVE` among them, then record into `hdr_color` as in a `SORTED` view.
+
+The weight of a fragment with coverage `a` and positive view-space depth `z` is equation (7) of
+McGuire and Bavoil, "Weighted Blended Order-Independent Transparency" (2013), scaled:
+
+```
+w = a * clamp(10 / (1e-5 + (z / 5)^2 + (z / 200)^6), 1e-2, 3e3) * WEIGHT_SCALE
+```
+
+`z` is `-(view * position).z`, never the reverse-Z depth. A fragment adds `w * premultiplied`
+to the accumulation. Three constants keep that inside `RGBA16_FLOAT`; they live in
+`shaders/common/weighted_blend.glsl`:
+
+| Constant | Value | Role |
+| --- | --- | --- |
+| `WEIGHTED_COLOR_MAX` | 64 | The straight color is clamped to it before weighting, so one fragment adds at most about 3,000 to a channel against the format's 65,504. |
+| `WEIGHT_SCALE` | 1/64 | Brings the weights into range. The least weight, `1e-2 * WEIGHT_SCALE`, is the floor of a layer's contribution; a smaller scale pushes faint far layers into the subnormal range sooner. |
+| `WEIGHTED_EPSILON` | 1e-8 | Guards the division where the alpha sum is zero. It is below the smallest nonzero `RGBA16_FLOAT` value, 5.96e-8, so it never changes a stored sum. |
+
+The composite also clamps the accumulation to 65,504 before dividing and the average to
+`WEIGHTED_COLOR_MAX`, so the output is always finite, never infinite or NaN.
+
+Limits of `WEIGHTED` that follow from the format:
+
+- **Color cap.** The straight HDR color of a weighted surface is clamped to 64 per channel before
+  tone mapping and bloom, so a glint or an emissive highlight brighter than that flattens at 64.
+  A `SORTED` view keeps the full range.
+- **Saturation.** About 21 layers of full weight (coverage 1, color at the cap, view depth under
+  about 0.3) fill the `RGBA16_FLOAT` sum. Past that the sum clamps, the weighted average is no
+  longer right and drifts toward the cap, and the result stays finite.
+- **Faint surfaces.** A surface whose coverage times weight is below about 3e-8, half the smallest
+  `RGBA16_FLOAT` value, rounds to zero in the alpha sum. That is a coverage under about 0.014 at a
+  view depth of 200 or more, and less nearer. It adds no reliable color, because the division then
+  falls back to the epsilon; it still dims what lies behind it by its coverage, which the revealage
+  image holds separately.
+- **Custom stages.** Every custom `BLEND` stage is sorted, after the composite, in a `WEIGHTED` view.
+
+Fog applies per fragment before accumulation, as in `SORTED`. Blended batches skip the
+per-instance sort in a `WEIGHTED` view, because order no longer matters; `ADDITIVE` batches
+keep it ([instancing](instancing.md#blended-batches)). `WEIGHTED` has no capacity, so it cannot
+overflow, and `Stats.sort_overflows` does not count its batches.
+
+Cost: the two images are 10 bytes per pixel at the view's working extent, allocated once, on the
+first frame with a participating draw. They are released with the view, dropped on a resize and
+re-created lazily, and kept by a reconfiguration at the same extent, as `scene_color` is. Nothing
+is allocated per frame. Each `WEIGHTED` frame with participating draws adds one render pass and one
+fullscreen draw, counted in `Stats.draws`. A participating draw uses the `WEIGHTED_BLEND` form of its
+built-in stage, one more compiled stage for each plain, `RT_SHADOWS` and `RT_SHADOWS` with
+`SCENE_TRACE_BVH` form, and a pipeline keyed by the two attachment formats, so the first `WEIGHTED` frame
+creates them. `SORTED` pipelines are unchanged.
 
 ## Toon factors
 
@@ -453,8 +548,11 @@ Limits:
   setting.
 
 `python3 scripts/build.py --example transparency` draws a glass slab over a checkered backdrop,
-with a tinted smooth pane behind it that partly overlaps it on screen. R steps the slab's
-roughness through 0, 0.25, 0.5 and 1; L switches the view between 1 and 2 transmission layers.
+with a tinted smooth pane behind it that partly overlaps it on screen, two intersecting colored
+quads to the left and, to the right, a blended batch of two panels with a blended sphere sweeping
+between them. R steps the slab's
+roughness through 0, 0.25, 0.5 and 1; L switches the view between 1 and 2 transmission layers; T switches
+its transparency between `SORTED` and `WEIGHTED` ([weighted transparency](#weighted-transparency)).
 
 ## Importing materials
 
