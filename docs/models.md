@@ -520,11 +520,10 @@ it before the store; shutdown and active abandonment can wait for a source/parse
 
 ### Counters
 
-`counters()` snapshots occupied phase counts (`queued`, `decoding`, `decoded`, `cancelling`, `published`, `failed`,
-`cancelled`) and cumulative `publications`, `decode_failures`, `commit_failures`, `cancellations`, `publication_items`,
-`decode_ns` and `publication_ns`. Each terminal transition counts once. Decode time includes independent preparation;
-publication time includes admission and cleanup. The counters retain nanoseconds. A publication report contains only
-its current call and has no cancellation field or event cursor.
+`counters()` snapshots pending phase counts (`queued`, `decoding`, `decoded`, `cancelling`) and cumulative
+`publications`, `decode_failures`, `commit_failures`, `cancellations`, `publication_items` and `decode_ns`. Each terminal
+transition counts once. Decode time includes independent preparation and is kept in nanoseconds. A publication report
+contains only its current call and has no cancellation field or event cursor.
 
 | Function | Fault | Meaning |
 | --- | --- | --- |

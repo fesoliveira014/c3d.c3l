@@ -78,23 +78,19 @@ struct PublishReport {
 }
 
 <*
- Occupied request phases and cumulative work since loader creation.
+ Pending request phases and cumulative work since loader creation.
 *>
 struct LoaderCounters {
     uint  queued;
     uint  decoding;
     uint  decoded;
     uint  cancelling;
-    uint  published;
-    uint  failed;
-    uint  cancelled;
     ulong publications;
     ulong decode_failures;
     ulong commit_failures;
     ulong cancellations;
     ulong publication_items;
     ulong decode_ns;
-    ulong publication_ns;
 }
 
 struct LoadSlot @private {
@@ -197,7 +193,6 @@ fn uint AsyncLoader.publish(&self) {
  @return "Current-call work and the deferred head's charge."
 *>
 fn PublishReport AsyncLoader.publish_within(&self, PublishLimits limits) {
-    std::time::Clock started = clock::now();
     LoaderState* state = self.state;
     state.lock.lock();
     defer state.lock.unlock();
@@ -219,15 +214,14 @@ fn PublishReport AsyncLoader.publish_within(&self, PublishLimits limits) {
         asset::destroy_prepared_model_document(&slot.prepared);
         if (slot.phase == LoadPhase.PUBLISHED) {
             report.published++;
-            state.counters.publications = add_saturated(state.counters.publications, 1);
+            state.counters.publications++;
         } else {
             report.failed++;
-            state.counters.commit_failures = add_saturated(state.counters.commit_failures, 1);
+            state.counters.commit_failures++;
         }
     }
 
-    state.counters.publication_items = add_saturated(state.counters.publication_items, report.items_used);
-    state.counters.publication_ns = add_saturated(state.counters.publication_ns, (ulong)started.to_now());
+    state.counters.publication_items += report.items_used;
     return report;
 }
 
@@ -259,12 +253,13 @@ fn void? AsyncLoader.cancel(&self, LoadId id) {
 }
 
 <*
- Snapshot occupied phases and cumulative decode/publication accounts.
+ Snapshot pending phases and cumulative decode/publication accounts.
 *>
 fn LoaderCounters AsyncLoader.counters(&self) {
     LoaderState* state = self.state;
     state.lock.lock();
     defer state.lock.unlock();
+
     LoaderCounters counters = state.counters;
     foreach (&slot : state.slots) {
         if (!slot.occupied) continue;
@@ -273,11 +268,13 @@ fn LoaderCounters AsyncLoader.counters(&self) {
             case DECODING: counters.decoding++;
             case DECODED: counters.decoded++;
             case CANCELLING: counters.cancelling++;
-            case PUBLISHED: counters.published++;
-            case FAILED: counters.failed++;
-            case CANCELLED: counters.cancelled++;
+            case PUBLISHED:
+            case FAILED:
+            case CANCELLED:
+                break;
         }
     }
+
     return counters;
 }
 
@@ -349,11 +346,9 @@ fn void destroy_async_loader(AsyncLoader* loader) {
     *loader = {};
 }
 
-fn ulong add_saturated(ulong first, ulong second) @private => second > ulong::max - first ? ulong::max : first + second;
-
 fn void finish_cancel(LoaderState* state, LoadSlot* slot) @private {
     slot.phase = LoadPhase.CANCELLED;
-    state.counters.cancellations = add_saturated(state.counters.cancellations, 1);
+    state.counters.cancellations++;
 }
 
 fn void append_decoded(LoaderState* state, uint index) @private {
@@ -467,7 +462,7 @@ fn void decode_slot(LoaderState* state, usz index) @private {
     ulong elapsed_ns = (ulong)started.to_now();
     state.lock.lock();
     defer state.lock.unlock();
-    state.counters.decode_ns = add_saturated(state.counters.decode_ns, elapsed_ns);
+    state.counters.decode_ns += elapsed_ns;
     LoadSlot* slot = &state.slots[index];
     if (slot.phase == LoadPhase.CANCELLING) {
         if (try result = prepared) asset::destroy_prepared_model_document(&result);
@@ -477,7 +472,7 @@ fn void decode_slot(LoaderState* state, usz index) @private {
     if (catch excuse = prepared) {
         slot.phase = LoadPhase.FAILED;
         slot.failure = excuse;
-        state.counters.decode_failures = add_saturated(state.counters.decode_failures, 1);
+        state.counters.decode_failures++;
         return;
     }
     slot.prepared = prepared;
