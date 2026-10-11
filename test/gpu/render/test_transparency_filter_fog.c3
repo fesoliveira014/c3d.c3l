@@ -23,6 +23,9 @@ const uint FILTER_IMAGE_GROUP_SIZE @private = 8; // mirrored as local_size_x/y i
 const uint FILTER_IMAGE_SAMPLE_COUNT @private = 20;
 const double FILTER_IMAGE_ABSOLUTE_TOLERANCE @private = 0.003;
 const double FILTER_IMAGE_RELATIVE_TOLERANCE @private = 0.005;
+const float FILTER_FOG_TABLE_DISTANCE @private = 8;
+const double FILTER_FOG_TABLE_HEIGHT_EXTINCTION @private = 0.02;
+const double FILTER_FOG_TABLE_AERIAL_EXTINCTION @private = 0.01;
 
 struct FilterFogInput @private {
     gpu::GpuAddress frame;
@@ -87,6 +90,13 @@ struct FilterImageResources @private {
     usz[FILTER_IMAGE_LEVEL_CAPACITY] readback_offsets;
     usz sample_offset;
     usz sample_bytes;
+}
+
+struct FilterFogTables @private {
+    Target volume;
+    Target aerial;
+    Target sky_view;
+    gpu::SamplerIndex sampler;
 }
 
 fn gpu::GpuAddress? upload_filter_fog(Renderer* renderer, char[] bytes) @private {
@@ -659,4 +669,233 @@ fn void test_transparency_filter_fog_area_box_and_representative_depth_match_the
     io::printfn("transparency fog depth_edge exact_sum=%s representative=%s characterization_only",
         exact_sum, representative);
     check_validation(&fixture.renderer);
+}
+
+fn Target? create_filter_fog_table(Renderer* renderer, uint depth) @private {
+    gpu::TextureDesc desc = {
+        .width = 1,
+        .height = 1,
+        .depth = depth,
+        .format = gpu::Format.RGBA32_FLOAT,
+        .usage = { .sampled, .transfer_dst },
+        .access = { .graphics },
+        .debug_name = "transparency_cumulative_fog_table",
+    };
+    Target table = { .format = desc.format, .width = 1, .height = 1, .depth = depth };
+    table.texture = gpu::create_texture(&renderer.device, &desc)!;
+    defer catch (void)gpu::destroy_texture(&renderer.device, table.texture);
+    table.view = gpu::create_texture_view(&renderer.device, table.texture, null)!;
+    return table;
+}
+
+fn void destroy_filter_fog_tables(Renderer* renderer, FilterFogTables* tables) @private {
+    render::wait_frames(renderer)!!;
+    Target*[3] targets = { &tables.volume, &tables.aerial, &tables.sky_view };
+    foreach (target : targets) {
+        if (!target.texture.is_valid()) continue;
+        gpu::destroy_texture_view(&renderer.device, target.view)!!;
+        gpu::destroy_texture(&renderer.device, target.texture)!!;
+    }
+}
+
+fn void? upload_filter_fog_table(Renderer* renderer, Target* target, Vec4[] pixels) @private {
+    Frame* frame = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan upload = frame.upload.take(&renderer.device, pixels.len * Vec4::size)!;
+    mem::copy(upload.bytes.ptr, pixels.ptr, (sz)(pixels.len * Vec4::size));
+    target.transition(&renderer.commands, {
+        .layout = gpu::TextureLayout.TRANSFER_DESTINATION,
+        .stages = { .transfer },
+        .access = { .write },
+    })!;
+    gpu::BufferTextureCopyDesc copy = { .src = upload.span, .texture = target.texture };
+    gpu::cmd_copy_buffer_to_texture(&renderer.commands, &copy)!;
+    target.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
+}
+
+fn FilterFogTerms filter_table_expected(double distance, bool aerial) @private {
+    uint count = aerial ? shader::AERIAL_PERSPECTIVE_SIZE : shader::FOG_VOLUME_SLICES;
+    double fractional_boundary = math::sqrt(distance / FILTER_FOG_TABLE_DISTANCE) * count;
+    double coordinate = aerial ? fractional_boundary - 0.5 : math::max(fractional_boundary, 1.0) - 1;
+    int low = (int)math::floor(coordinate);
+    double fraction = coordinate - low;
+    double attenuation;
+    for (int side = 0; side < 2; side++) {
+        int index = math::clamp(low + side, 0, (int)count - 1);
+        double share = ((double)index + (aerial ? 0.5 : 1)) / count;
+        double sample_distance = share * share * FILTER_FOG_TABLE_DISTANCE;
+        double sigma = aerial ? FILTER_FOG_TABLE_AERIAL_EXTINCTION : FILTER_FOG_TABLE_HEIGHT_EXTINCTION;
+        attenuation += math::exp(-sigma * sample_distance) * (side ? fraction : 1 - fraction);
+    }
+    double weight = aerial ? math::min(1.0, fractional_boundary * fractional_boundary * 4)
+      : math::min(1.0, fractional_boundary);
+    double[<3>] color = aerial ? (double[<3>]){ 0.7, 0.3, 0.05 } : (double[<3>]){ 0.1, 0.2, 0.4 };
+    attenuation = 1 - (1 - attenuation) * weight;
+    if (!aerial && distance > FILTER_FOG_TABLE_DISTANCE) {
+        attenuation *= math::exp(-FILTER_FOG_TABLE_HEIGHT_EXTINCTION * (distance - FILTER_FOG_TABLE_DISTANCE));
+    }
+    return { .attenuation = { attenuation, attenuation, attenuation }, .scattering = color * (1 - attenuation) };
+}
+
+fn FilterFogTerms filter_lookup_expected(double distance, uint mode, double clip_start = 0) @private {
+    FilterFogTerms height = { .attenuation = { 1, 1, 1 } };
+    FilterFogTerms aerial = { .attenuation = { 1, 1, 1 } };
+    if (mode == 0 || mode == 2) height = filter_table_expected(distance, false);
+    if (mode == 1 || mode == 2) aerial = filter_table_expected(distance, true);
+    if (clip_start > 0) {
+        if (mode == 0 || mode == 2) {
+            FilterFogTerms clipped = filter_table_expected(clip_start, false);
+            height.attenuation /= clipped.attenuation;
+            height.scattering = (height.scattering - clipped.scattering) / clipped.attenuation;
+        }
+        if (mode == 1 || mode == 2) {
+            FilterFogTerms clipped = filter_table_expected(clip_start, true);
+            aerial.attenuation /= clipped.attenuation;
+            aerial.scattering = (aerial.scattering - clipped.scattering) / clipped.attenuation;
+        }
+    }
+    return {
+        .attenuation = height.attenuation * aerial.attenuation,
+        .scattering = height.scattering + height.attenuation * aerial.scattering,
+    };
+}
+
+fn void test_transparency_filter_fog_real_froxel_and_aerial_tables_keep_cumulative_cuts() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    FilterFogTables tables;
+    defer destroy_filter_fog_tables(renderer, &tables);
+    tables.volume = create_filter_fog_table(renderer, shader::FOG_VOLUME_SLICES)!!;
+    tables.aerial = create_filter_fog_table(renderer, shader::AERIAL_PERSPECTIVE_SIZE)!!;
+    tables.sky_view = create_filter_fog_table(renderer, 0)!!;
+    gpu::SamplerDesc sampler = {
+        .min_filter = gpu::Filter.LINEAR,
+        .mag_filter = gpu::Filter.LINEAR,
+        .address_u = gpu::AddressMode.CLAMP_TO_EDGE,
+        .address_v = gpu::AddressMode.CLAMP_TO_EDGE,
+        .address_w = gpu::AddressMode.CLAMP_TO_EDGE,
+        .debug_name = "transparency_fog_table_sampler",
+    };
+    tables.sampler = gpu::intern_sampler(&renderer.device, &sampler)!!;
+    gpu::PipelineHandle pipeline = create_filter_fog_pipeline(
+        renderer: renderer,
+        source: (String)FILTER_FOG_SOURCE[..],
+        name: "transparency_fog_volume_connections",
+    )!!;
+    defer gpu::destroy_pipeline(&renderer.device, pipeline)!!;
+    const uint CASE_COUNT = 12;
+    gpu::AllocationDesc allocation = {
+        .size = CASE_COUNT * FILTER_FOG_OUTPUT_ROWS * Vec4::size,
+        .alignment = 16,
+        .memory_class = gpu::MemoryClass.CPU_READ,
+        .access = { .graphics },
+        .debug_name = "transparency_fog_table_readback",
+    };
+    gpu::MappedGpuSpan output = gpu::allocate_mapped_memory(&renderer.device, &allocation)!!;
+    defer {
+        gpu::GpuAllocation owned = output.span.allocation();
+        gpu::free_allocation(&renderer.device, &owned)!!;
+    }
+    Vec4[shader::FOG_VOLUME_SLICES] volume_pixels;
+    foreach (index, &pixel : volume_pixels) {
+        double share = (double)(index + 1) / volume_pixels.len;
+        double attenuation = math::exp(-FILTER_FOG_TABLE_HEIGHT_EXTINCTION
+            * share * share * FILTER_FOG_TABLE_DISTANCE);
+        *pixel = { (float)(0.1 * (1 - attenuation)), (float)(0.2 * (1 - attenuation)),
+            (float)(0.4 * (1 - attenuation)), (float)attenuation };
+    }
+    Vec4[shader::AERIAL_PERSPECTIVE_SIZE] aerial_pixels;
+    foreach (index, &pixel : aerial_pixels) {
+        double share = ((double)index + 0.5) / aerial_pixels.len;
+        double attenuation = math::exp(-FILTER_FOG_TABLE_AERIAL_EXTINCTION
+            * share * share * FILTER_FOG_TABLE_DISTANCE);
+        *pixel = { (float)(0.7 * (1 - attenuation)), (float)(0.3 * (1 - attenuation)),
+            (float)(0.05 * (1 - attenuation)), (float)(1 - attenuation) };
+    }
+    Vec4[1] sky_pixels = {{ 1, 1, 1, 1 }};
+    renderer.begin_frame()!!;
+    upload_filter_fog_table(renderer, &tables.volume, volume_pixels[..])!!;
+    upload_filter_fog_table(renderer, &tables.aerial, aerial_pixels[..])!!;
+    upload_filter_fog_table(renderer, &tables.sky_view, sky_pixels[..])!!;
+    FrameRoot frame_root = { .ambient = { 1, 1, 1, 0 } };
+    gpu::GpuAddress frame_address = upload_filter_fog(renderer, ((char*)&frame_root)[:FrameRoot::size])!!;
+    FilterFogInput[CASE_COUNT] inputs;
+    foreach (index, &input : inputs) {
+        uint mode = (uint)index % 3;
+        SkyFogGpu sky = {
+            .fog_albedo_density = { 0.1f, 0.2f, 0.4f, (float)FILTER_FOG_TABLE_HEIGHT_EXTINCTION },
+            .sun_illuminance = { 1, 1, 1, 0 },
+            .sun_direction_cos_radius = { 0, 1, 0, 0 },
+            .planet_radius = 6371,
+            .camera_altitude = 1,
+            .fog_max_distance = FILTER_FOG_TABLE_DISTANCE,
+            .aerial_perspective_distance = FILTER_FOG_TABLE_DISTANCE,
+            .lut_sampler = tables.sampler,
+            .sky_view_lut = tables.sky_view.view.index,
+        };
+        if (mode != 1) {
+            sky.flags |= shader::SKY_FOG_HEIGHT_FOG;
+            sky.fog_volume = tables.volume.view.index;
+        }
+        if (mode != 0) {
+            sky.flags |= shader::SKY_FOG_ATMOSPHERE;
+            sky.aerial_perspective_lut = tables.aerial.view.index;
+        }
+        *input = {
+            .frame = frame_address,
+            .sky = upload_filter_fog(renderer, ((char*)&sky)[:SkyFogGpu::size])!!,
+            .distances = { 0.5f, 1, 4, 0 },
+            .radiance_coverage = { 0.8f, 0.6f, 0.4f, 0.375f },
+            .emission = { 0.25f, 0.5f, 1, 0 },
+            .direction = { 0, 0, -1, 1 },
+        };
+        if (index >= 3 && index < 6) input.distances = { 1e-5f, 1e-4f, 0.5f, 0 };
+        if (index >= 6 && index < 9) input.distances = { 4, 8, 12, 0 };
+        if (index >= 9) input.distances = { 1, 2, 4, 0.5f };
+    }
+    FilterFogRoot root = {
+        .input_address = upload_filter_fog(renderer, ((char*)&inputs)[:FilterFogInput::size * inputs.len])!!,
+        .output_address = output.address,
+        .count = CASE_COUNT,
+    };
+    gpu::GpuAddress address = upload_filter_fog(renderer, ((char*)&root)[:FilterFogRoot::size])!!;
+    gpu::cmd_bind_pipeline(&renderer.commands, pipeline)!!;
+    gpu::cmd_dispatch(&renderer.commands, address, { CASE_COUNT, 1, 1 })!!;
+    gpu::Barrier host = { .before = { .compute }, .after = { .host } };
+    gpu::cmd_barrier(&renderer.commands, &host)!!;
+    renderer.work_recorded = true;
+    renderer.end_frame()!!;
+    render::wait_frames(renderer)!!;
+    gpu::invalidate_mapped_span(&renderer.device, output.span)!!;
+    Vec4* rows = (Vec4*)output.bytes.ptr;
+    foreach (index, input : inputs) {
+        uint mode = (uint)index % 3;
+        Vec4* actual = &rows[index * FILTER_FOG_OUTPUT_ROWS];
+        FilterFogTerms near_terms = filter_lookup_expected(input.distances.x, mode, input.distances.w);
+        FilterFogTerms far_terms = filter_lookup_expected(input.distances.z, mode, input.distances.w);
+        double[<3>] raw = { input.radiance_coverage.x, input.radiance_coverage.y, input.radiance_coverage.z };
+        double[<3>] expected = far_terms.attenuation * raw + far_terms.scattering;
+        check_filter_fog_color(actual[0], near_terms.attenuation);
+        check_filter_fog_color(actual[1], near_terms.scattering);
+        check_filter_fog_color(actual[2], far_terms.attenuation);
+        check_filter_fog_color(actual[3], far_terms.scattering);
+        check_filter_fog_color(actual[4], expected);
+        check_filter_fog_color(actual[5], expected);
+        check_filter_fog_color(actual[15], expected);
+        double coverage = input.radiance_coverage.w;
+        double[<3>] emission = { input.emission.x, input.emission.y, input.emission.z };
+        double[<3>] over = coverage * (near_terms.attenuation * emission + near_terms.scattering)
+          + (1 - coverage) * expected;
+        double[<3>] additive = expected + coverage * near_terms.attenuation * emission;
+        check_filter_fog_color(actual[6], over);
+        check_filter_fog_color(actual[7], over);
+        check_filter_fog_color(actual[8], additive);
+        check_filter_fog_color(actual[9], additive);
+        double[<3>] background = mode == 1 ? raw : (double[<3>]){ 0.1, 0.2, 0.4 };
+        check_filter_fog_color(actual[12], background);
+    }
+    io::printfn("transparency real_tables cases=%s froxel_slices=%s aerial_slices=%s neutral=cpu_equal",
+        CASE_COUNT, shader::FOG_VOLUME_SLICES, shader::AERIAL_PERSPECTIVE_SIZE);
+    check_validation(renderer);
 }

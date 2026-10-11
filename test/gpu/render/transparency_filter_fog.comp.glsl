@@ -38,6 +38,10 @@ FogTerms aerial_terms(FogInput input_value, float distance) {
 
 FogTerms cumulative_terms(FogInput input_value, float distance) {
     float clip_start = input_value.distances.w;
+    if (input_value.direction.w != 0.0) {
+        return fog_segment(FrameRoot(input_value.frame), SkyFogGpu(input_value.sky), vec2(0.5),
+            vec3(0.0), input_value.direction.xyz, clip_start, distance);
+    }
     FogTerms height = height_fog_segment(
         FrameRoot(input_value.frame), SkyFogGpu(input_value.sky), vec3(0.0),
         input_value.direction.xyz, clip_start, distance
@@ -87,6 +91,10 @@ void main() {
     FogTerms aerial_interval = fog_between(
         aerial_terms(input_value, near_distance), aerial_terms(input_value, far_distance));
     FogTerms sorted_interval = fog_compose(height_interval, aerial_interval);
+    if (input_value.direction.w != 0.0) {
+        sorted_interval = fog_segment(FrameRoot(input_value.frame), SkyFogGpu(input_value.sky), vec2(0.5),
+            vec3(0.0), input_value.direction.xyz, near_distance, far_distance);
+    }
     FogTerms background_terms = height_fog_beyond(
         FrameRoot(input_value.frame), SkyFogGpu(input_value.sky), vec2(0.5), vec3(0.0),
         input_value.direction.xyz, near_distance
