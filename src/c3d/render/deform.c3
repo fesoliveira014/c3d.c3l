@@ -115,7 +115,7 @@ fn void reset_deformation_cache(DeformationCache* cache) @private {
 
 fn gpu::GpuAddress? resolve_crowd_bounds(Renderer* renderer, MeshCandidate* candidate) @private {
     AnimatedCrowd* crowd = candidate.crowd;
-    if (!crowd || crowd.parts[candidate.crowd_part].skinned) return (gpu::GpuAddress)0;
+    if (!crowd || candidate.animated_lod || crowd.parts[candidate.crowd_part].skinned) return (gpu::GpuAddress)0;
 
     ulong key = (ulong)(uptr)candidate.node;
     if (try existing = renderer.deformation.crowd_bounds.get(key)) return existing;

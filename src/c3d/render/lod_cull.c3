@@ -103,9 +103,10 @@ fn void? prepare_lod_instances(Renderer* renderer, LodSelection* selection) @pri
             selection.part_mirrored[part] = mirrored;
 
             for (uint source = 0; source < selection.state.count; source++) {
-                Mat4 local = selection.state.transforms[source].to_mat4()
-                  .mul(animated_lod_part_local(&candidate, source));
-                mirrored[source] = local.determinant() < 0;
+                // Skinned parts must match the placement parity the cull stage reads from metadata.
+                Transform placement = selection.state.transforms[source];
+                mirrored[source] = candidate.animated_lod.skinned ? scene::transform_mirrored(placement)
+                  : placement.to_mat4().mul(animated_lod_part_local(&candidate, source)).determinant() < 0;
                 if (!mirrored[source]) (*split)++;
             }
         }

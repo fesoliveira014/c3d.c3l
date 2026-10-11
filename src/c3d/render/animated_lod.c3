@@ -242,6 +242,8 @@ fn gpu::GpuAddress? resolve_animated_lod_morph(Renderer* renderer, MeshCandidate
 }
 
 fn gpu::GpuAddress? resolve_animated_lod_parts(Renderer* renderer, MeshCandidate* candidate) @private {
+    if (candidate.animated_lod.skinned) return (gpu::GpuAddress)0;
+
     AnimatedLodKey key = animated_lod_key(candidate, PARTS, candidate.lod_part);
     if (try existing = renderer.deformation.animated.get(key)) return existing;
 
@@ -347,19 +349,21 @@ fn gpu::GpuAddress? upload_animated_lod_previous(
         previous.skin = selection.previous_palette;
     }
 
-    gpu::MappedGpuSpan local_span = frame.upload.take(
-        device: &renderer.device,
-        size: (usz)count * Mat4f::size,
-        alignment: STREAM_ALIGNMENT,
-    )!;
-    Mat4f[] locals = ((Mat4f*)local_span.bytes.ptr)[:count];
+    if (!candidate.animated_lod.skinned) {
+        gpu::MappedGpuSpan local_span = frame.upload.take(
+            device: &renderer.device,
+            size: (usz)count * Mat4f::size,
+            alignment: STREAM_ALIGNMENT,
+        )!;
+        Mat4f[] locals = ((Mat4f*)local_span.bytes.ptr)[:count];
 
-    for (uint source = 0; source < count; source++) {
-        locals[source] = animated_lod_previous_valid(pose, candidate, source) ? pose.instances[source]
-          : bitcast(animated_lod_part_local(candidate, source), Mat4f);
+        for (uint source = 0; source < count; source++) {
+            locals[source] = animated_lod_previous_valid(pose, candidate, source) ? pose.instances[source]
+              : bitcast(animated_lod_part_local(candidate, source), Mat4f);
+        }
+
+        previous.instances = local_span.address;
     }
-
-    previous.instances = local_span.address;
 
     if (item.morph != (gpu::GpuAddress)0) {
         gpu::MappedGpuSpan morph_span = frame.upload.take(
