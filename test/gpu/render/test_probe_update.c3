@@ -45,6 +45,8 @@ const float KIND_IRRADIANCE_SHARE @private = 0.02f;     // of the mean software 
 const float KIND_VISIBILITY_SHARE @private = 0.001f;   // measured below 1e-6 on the RTX 4090; margin for other devices
 const HeightFog ROOM_HAZE @private = { .density = 0.5f, .falloff = 0, .albedo = { 0, 0, 0 }, .max_distance = 100 };
 const float HAZE_SHARE_MAXIMUM @private = 0.7f;        // of the clear mean; the hits lie metres away in the haze
+const Vec3 ROOM_AIR_SCATTERING @private = { 0.5f, 0.5f, 0.5f }; // per metre; extinction alone, as the haze above
+const float ROOM_AIR_SCALE_HEIGHT @private = 8;         // metres; deeper air saturates the multiple-scattering table
 const float BOUNCE_GAIN @private = 2.5f;                // measured 3.07 on the RTX 4090; below it the bounce is lost
 
 struct ProbeRoom @private {
@@ -597,7 +599,7 @@ fn void test_bounce_brightens_and_tints_the_room() @test {
     }
 }
 
-fn float? read_room_irradiance(bool ray_queries, bool hazy) @private {
+fn float? read_room_irradiance(bool ray_queries, bool hazy, Atmosphere* air = null) @private {
     Fixture fixture;
     create_fixture(mem, &fixture, ray_queries: ray_queries)!;
     defer destroy_fixture(&fixture);
@@ -608,6 +610,11 @@ fn float? read_room_irradiance(bool ray_queries, bool hazy) @private {
     if (hazy) {
         Node* haze = room.scene.add_node(name: "haze")!;
         room.scene.add(haze, ROOM_HAZE);
+    }
+    if (air) {
+        // No sun light means no in-scatter and no sky lighting, so the air only dims what a probe ray reads.
+        room.scene.get(room.sun, Light).intensity = 0;
+        room.scene.add(room.sun, *air);
     }
 
     render_room_frames(&fixture, &room, probe_view.view, 1)!;
@@ -622,6 +629,25 @@ fn void test_fog_dims_the_light_a_probe_gathers_from_its_hits() @test {
         io::eprintfn("%s: first update irradiance clear %f, hazy %f", trace_name(ray_queries), clear, hazy);
         assert(clear > LIT_IRRADIANCE);
         assert(hazy < HAZE_SHARE_MAXIMUM * clear);
+    }
+}
+
+fn void test_atmosphere_dims_the_light_a_probe_gathers_from_its_hits() @test {
+    Atmosphere clear = light::ATMOSPHERE_EARTH;
+    Atmosphere dense = clear;
+    dense.rayleigh_scattering = ROOM_AIR_SCATTERING;
+    dense.rayleigh_scale_height = ROOM_AIR_SCALE_HEIGHT;
+    foreach (ray_queries : TRACE_KINDS) {
+        float open = read_room_irradiance(ray_queries, false, &clear)!!;
+        float dim = read_room_irradiance(ray_queries, false, &dense)!!;
+        io::eprintfn(
+            "%s: first update irradiance in clear air %f, in dense air %f",
+            trace_name(ray_queries),
+            open,
+            dim,
+        );
+        assert(open > LIT_IRRADIANCE);
+        assert(dim < HAZE_SHARE_MAXIMUM * open);
     }
 }
 
