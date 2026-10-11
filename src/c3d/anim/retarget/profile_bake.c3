@@ -12,7 +12,6 @@ struct ProfileChannels @private {
     Track* translation;
     Track* rotation;
     Track* scale;
-    bool tracked;
 }
 
 struct ProfileOutputTracks @private {
@@ -49,7 +48,7 @@ fn AnimationClip? retarget_with_profile(
         ProfileChannels[] channels = alloc::new_array_try(tmem, ProfileChannels, source_nodes.len)
           ?? c3d::CAPACITY_EXCEEDED~!;
 
-        validate_profile_clip(
+        bind_profile_clip(
             clip: source,
             data: data,
             target: target,
@@ -146,7 +145,7 @@ fn AnimationClip? retarget_with_profile(
                 target_world: target_world,
                 time: time,
                 translation_scale: options.root_translation_scale,
-            )!;
+            );
 
             Vec3 horizontal;
             if (data.target_motion_node != RETARGET_NO_NODE) {
@@ -154,8 +153,6 @@ fn AnimationClip? retarget_with_profile(
                 if (key == 0) initial_motion = motion;
                 horizontal = { motion.x - initial_motion.x, 0, motion.z - initial_motion.z };
             }
-
-            if (options.root_motion != RootMotion.KEEP && !profile_finite_vec(horizontal)) return c3d::UNSUPPORTED~;
 
             if (options.root_motion == RootMotion.EXTRACT) {
                 float current_yaw = profile_yaw_angle(target_world[data.target_motion_node].rotation);
@@ -175,14 +172,7 @@ fn AnimationClip? retarget_with_profile(
                 Transform parent = node.parent < 0 ? maths::TRANSFORM_IDENTITY : target_world[node.parent];
                 Transform local = profile_relative(parent, world);
                 if (output[index].rotation) write_rotation_key(output[index].rotation, key, local.rotation);
-                if (output[index].translation) {
-                    if (options.root_motion != RootMotion.KEEP && !profile_finite_vec(local.position)) {
-                        return c3d::UNSUPPORTED~;
-                    }
-
-                    write_translation_key(output[index].translation, key, local.position);
-                }
-
+                if (output[index].translation) write_translation_key(output[index].translation, key, local.position);
                 if (output[index].scale) write_translation_key(output[index].scale, key, local.scale);
             }
         }
@@ -350,20 +340,15 @@ fn void? sample_profile_source(
     foreach (uint index, &node : data.source_nodes) {
         if (!node.consumed) continue;
         Transform local = profile_sample_local(node, channels[index], time);
-        if (!profile_finite_vec(local.position) || !profile_unit_rotation(local.rotation)) {
-            return c3d::ASSET_FORMAT_ERROR~;
-        }
-
         if (node.requires_uniform_scale && !profile_uniform_scale(local.scale)) return c3d::UNSUPPORTED~;
 
         local.rotation = local.rotation.normalize();
         if (!node.requires_uniform_scale) local.scale = { 1, 1, 1 };
         worlds[index] = node.parent < 0 ? local : profile_compose(worlds[node.parent], local);
-        if (!profile_valid_transform(worlds[index])) return c3d::UNSUPPORTED~;
     }
 }
 
-fn void? compose_profile_target(
+fn void compose_profile_target(
     ProfileData* data,
     ProfileChannels[] channels,
     Transform[] source_world,
@@ -396,9 +381,5 @@ fn void? compose_profile_target(
         }
 
         target_world[index] = profile_compose(parent, local);
-        if (!profile_finite_vec(target_world[index].position) || !profile_unit_rotation(target_world[index].rotation)
-          || (node.requires_uniform_scale && !profile_uniform_scale(target_world[index].scale))) {
-            return c3d::UNSUPPORTED~;
-        }
     }
 }

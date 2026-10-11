@@ -180,6 +180,10 @@ fn RetargetProfile? create_retarget_profile(
             }
         }
 
+        foreach (&node : destination) {
+            if (node.mapped != RETARGET_NO_NODE) source[node.mapped].requires_uniform_scale |= node.requires_uniform_scale;
+        }
+
         compose_profile_references(source)!;
         compose_profile_references(destination)!;
 

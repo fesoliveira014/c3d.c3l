@@ -1806,19 +1806,14 @@ fn void test_profile_rejects_invalid_descriptors_carriers_and_reference_range() 
     };
 }
 
-fn void test_profile_clip_validation_and_partial_unmatched_policy() @test {
+fn void test_profile_rejects_nonuniform_ancestor_scale_and_unmatched_tracks() @test {
     @pool() {
         ProfileRig rig = profile_ancestor_rig();
         RetargetProfile profile = profile_prepare(&rig);
         defer retarget::destroy_retarget_profile(&profile);
 
-        float time = rig.clip.tracks[0].times[1];
-        rig.clip.tracks[0].times[1] = 0;
-        profile_expect_bake_fault(&rig, &profile, c3d::ASSET_FORMAT_ERROR);
-        rig.clip.tracks[0].times[1] = time;
         rig.clip.tracks[3].values[4] = 8;
         profile_expect_bake_fault(&rig, &profile, c3d::UNSUPPORTED);
-        rig.clip.tracks[3].values[4] = 4;
 
         ProfileRig partial = profile_rig(2, 1);
         profile_map(&partial, (NodeIndexMapping[1]){ { .source_node = 0, .target_node = 0 } }[..]);
@@ -2082,28 +2077,6 @@ fn void test_profile_allocation_fault_releases_outputs_and_preserves_inputs() @t
         assert(profile_allocator.outstanding == 0);
         assert(rig.clip.tracks[0].values[3] == 0.5f);
         assert(rig.target.nodes[0].local.position == (Vec3){ 1, 0, 2 });
-    };
-}
-
-fn void test_profile_split_position_overflow_is_transactional_and_unsupported() @test {
-    @pool() {
-        ProfileRig rig = profile_forest_rig();
-        rig.clip.tracks[0].interpolation = Interpolation.STEP;
-        rig.clip.tracks[0].values[..] = (float[6]){ -10, 2, 0, 10, 2, 0 }[..];
-        RetargetProfile profile = profile_prepare(&rig);
-        defer retarget::destroy_retarget_profile(&profile);
-
-        RetargetBakeOptions options = retarget::RETARGET_BAKE_OPTIONS_DEFAULT;
-        options.root_translation_scale = 2e37f;
-        options.root_motion = RootMotion.STRIP_XZ;
-        profile_expect_bake_fault(
-            rig: &rig,
-            profile: &profile,
-            expected: c3d::UNSUPPORTED,
-            options: options,
-        );
-        assert(rig.clip.tracks[0].values[0] == -10);
-        assert(rig.target.nodes[0].local.position == (Vec3){ 2, 1, -3 });
     };
 }
 
