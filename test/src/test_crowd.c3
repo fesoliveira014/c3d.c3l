@@ -63,7 +63,7 @@ fn Fixture make_fixture(bool with_rigid = false, bool second_skeleton = false, b
             .max_samplers   = asset::BUILTIN_SAMPLER_COUNT,
             .max_models     = 2,
             .max_skeletons  = 2,
-            .max_clips      = 2,
+            .max_clips      = 4,
         }),
         .scene = scene::create_scene(mem, { .max_nodes = NODE_CAPACITY }),
     };
@@ -796,6 +796,30 @@ fn ModelTemplate copy_template_with_clip(ModelTemplate* source, ClipId extra) @l
     return copy;
 }
 
+fn ClipId add_single_track_clip(
+    AssetStore* assets,
+    uint node,
+    TargetPath path,
+    uint width,
+) @local {
+    AnimationClip clip = {
+        .name     = "single_track".copy(mem),
+        .duration = 1,
+        .tracks   = alloc::new_array(mem, Track, 1),
+        .targets  = alloc::new_array(mem, uint, 1),
+    };
+    clip.targets[0] = node;
+    clip.tracks[0] = {
+        .target        = 0,
+        .path          = path,
+        .interpolation = Interpolation.LINEAR,
+        .times         = alloc::new_array(mem, float, 2),
+        .values        = alloc::new_array(mem, float, (sz)width * 2),
+    };
+    clip.tracks[0].times[1] = 1;
+    return assets.add_clip_owned(&clip)!!;
+}
+
 fn void test_crowd_accepts_compatible_clip_with_more_tracks() @test {
     Fixture fixture = make_fixture();
     defer destroy_fixture(&fixture);
@@ -835,14 +859,29 @@ fn void test_crowd_accepts_compatible_clip_with_more_tracks() @test {
         instances: instances[..],
     )!!;
 
-    assert(base_action(fixture.scene.get(node, AnimatedCrowd), 0).cursors.len == 2);
-    instances[0].pose.clip = fixture.swing;
-    model::set_crowd(
+    AnimatedCrowd* crowd = fixture.scene.get(node, AnimatedCrowd);
+    assert(base_action(crowd, 0).cursors.len == 2);
+
+    CrowdPlayer player = crowd.playback.player(crowd.playback.instance_id(0)!!)!!;
+    uint action_count = crowd.playback.slots[0].action_count;
+    float time = player.base_action()!!.time;
+    ClipId outside = add_single_track_clip(
         assets: &fixture.assets,
-        scene: &fixture.scene,
-        node: node,
-        instances: instances[..],
-    )!!;
+        node: (uint)crowd.playback.base_pose.len,
+        path: TargetPath.TRANSLATION,
+        width: 3,
+    );
+    ClipId wider_weights = add_single_track_clip(
+        assets: &fixture.assets,
+        node: 3,
+        path: TargetPath.MORPH_WEIGHTS,
+        width: 2,
+    );
+    assert(@catch(player.play(&fixture.assets, outside)) == c3d::INVALID_ARGUMENT);
+    assert(@catch(player.play(&fixture.assets, wider_weights)) == c3d::INVALID_ARGUMENT);
+    assert(crowd.playback.slots[0].action_count == action_count && player.base_action()!!.time == time);
+    fixture.assets.remove_clip(outside);
+    assert(@catch(player.play(&fixture.assets, outside)) == c3d::INVALID_ID);
 }
 
 fn void test_crowd_trace_bounds_follow_nonzero_render_origin() @test {
