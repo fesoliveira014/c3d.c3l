@@ -142,7 +142,6 @@ fn void? prepare_action_motion_capture(
     }
 
     captured.model = model;
-    captured.instance_scale = motion_basis.instance_scale;
 
     action.motion_chain = captured;
     action.motion_reference = capture_generalized_motion_reference(captured, clip);

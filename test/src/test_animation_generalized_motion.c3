@@ -698,7 +698,6 @@ fn void create_generalized_playback_fixture(
         extraction: extraction,
     )!!;
     fixture.chain.pose_scale_sums = alloc::new_array(mem, double[<3>], fixture.nodes.len);
-    fixture.chain.instance_scale = { 1, 1, 1 };
     fixture.assets.clips = pool::create_pool{ClipAsset, ClipId}(mem, 1);
     ClipId clip_id = fixture.assets.clips.add({ .data = clip })!!;
     fixture.actions = pool::create_pool{Action, AnimationActionId}(mem, 2);

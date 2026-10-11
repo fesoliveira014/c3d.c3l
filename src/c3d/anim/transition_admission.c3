@@ -31,7 +31,6 @@ fn TransitionMotionIdentity? validate_transition_motion_identity(
                 model: playback.model,
                 template: template,
                 root_node: playback.root_node,
-                motion_basis: motion_basis,
             )!;
         }
 
@@ -118,11 +117,11 @@ fn void? validate_transition_capture_layout(
     ModelId model,
     ModelTemplate* template,
     uint root_node,
-    MotionBasis motion_basis,
 ) @local {
     if (!c3d::same_id(captured.model, model) || captured.root_node != root_node
-      || captured.model_names.len != template.nodes.len || captured.model_parents.len != template.nodes.len
-      || captured.instance_scale != motion_basis.instance_scale) return c3d::INVALID_ARGUMENT~;
+      || captured.model_names.len != template.nodes.len || captured.model_parents.len != template.nodes.len) {
+        return c3d::INVALID_ARGUMENT~;
+    }
 
     foreach (index, node : template.nodes) {
         if (captured.model_names[index] != node.name || captured.model_parents[index] != node.parent) {

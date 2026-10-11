@@ -3129,7 +3129,7 @@ fn void test_animation_transition_admission_configuration_model_layout_and_frame
     Action* source = fixture.animator.action(id);
     CapturedMotionChain* captured = source.motion_chain;
     AnimationTargetDesc[1] targets;
-    for (uint mismatch = 0; mismatch < 8; mismatch++) {
+    for (uint mismatch = 0; mismatch < 7; mismatch++) {
         targets[0] = anim::ANIMATION_TARGET_DEFAULT;
         targets[0].clip = target_clip;
         targets[0].play = { .root_motion = EXTRACT, .extraction = transition_admission_extraction() };
@@ -3143,10 +3143,9 @@ fn void test_animation_transition_admission_configuration_model_layout_and_frame
             case 1: targets[0].play.extraction.translation_axes[1] = false;
             case 2: targets[0].play.extraction.twist = false;
             case 3: playback.root_node = 3;
-            case 4: basis.instance_scale = { 2, 2, 2 };
-            case 5: captured.model.index++;
-            case 6: captured.model_parents[3] = 0;
-            case 7: captured.model_names[3][0] = 'X';
+            case 4: captured.model.index++;
+            case 5: captured.model_parents[3] = 0;
+            case 6: captured.model_names[3][0] = 'X';
         }
         Action unchanged = *source;
         uint count = fixture.animator.action_count;
