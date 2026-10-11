@@ -603,6 +603,21 @@ root BasicMaterialGpu {
     TextureMapGpu map;
 }
 
+// Shadow-pass block of a caster that tints the light; kind, flags, alpha_cutoff and map_flags lead as in BasicMaterialGpu.
+root TranslucentCasterGpu {
+    uint kind;
+    uint flags;
+    float alpha_cutoff;
+    uint map_flags;
+    vec4 color;
+    vec4 attenuation_color_distance;
+    float transmission;
+    float thickness;
+    uint _pad0;
+    uint _pad1;
+    TextureMapGpu map;
+}
+
 struct GuiVertexGpu {
     float position_x;
     float position_y;
@@ -749,7 +764,11 @@ struct ShadowGpu {
     float texel_size;
     float max_distance;
     float blend_depth;
-    uint _pad2;
+    TextureIndex colored_transmittance;
+    TextureIndex colored_depth;
+    SamplerIndex colored_sampler;
+    uint _pad3;
+    uint _pad4;
 }
 
 struct StandardMaterialGpu {

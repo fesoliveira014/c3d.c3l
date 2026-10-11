@@ -48,6 +48,13 @@ published forms. It runs with no validation warning or error. The
 accumulation and composite math is not checked here: lavapipe applies the first attachment's
 blend equation to every attachment, so the weighted pass renders wrongly there and needs a hardware run.
 
+`test_colored_shadows.c3` renders a sun, a ground and a blended pane while `Renderer.set_colored_shadows` toggles off, on,
+off, on, on, off. The first on frame allocates the colored shadow images and the pane's two extra passes add draws; every
+off frame records exactly the draws of the first, the images keep their handles and no frame after the first on frame
+creates a pipeline. A second case renders a forward and a deferred view of one camera with colored shadows on and a
+transmissive Physical slab in the sun's path: the second view binds the first one's shadow set. Both run with no
+validation error or warning and compare no pixels.
+
 Build the repository once so `shaders/spv/` exists, then invoke this project
 separately:
 

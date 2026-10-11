@@ -1132,6 +1132,32 @@ $assert $reflect(BasicMaterialGpu.map_flags).offset == 12;
 $assert $reflect(BasicMaterialGpu.color).offset == 16;
 $assert $reflect(BasicMaterialGpu.map).offset == 32;
 
+struct TranslucentCasterGpu {
+    uint          kind;
+    uint          flags;
+    float         alpha_cutoff;
+    uint          map_flags;
+    Vec4f         color;
+    Vec4f         attenuation_color_distance;
+    float         transmission;
+    float         thickness;
+    uint          _pad0;
+    uint          _pad1;
+    TextureMapGpu map;
+}
+$assert TranslucentCasterGpu::size == 96;
+$assert $reflect(TranslucentCasterGpu.kind).offset == 0;
+$assert $reflect(TranslucentCasterGpu.flags).offset == 4;
+$assert $reflect(TranslucentCasterGpu.alpha_cutoff).offset == 8;
+$assert $reflect(TranslucentCasterGpu.map_flags).offset == 12;
+$assert $reflect(TranslucentCasterGpu.color).offset == 16;
+$assert $reflect(TranslucentCasterGpu.attenuation_color_distance).offset == 32;
+$assert $reflect(TranslucentCasterGpu.transmission).offset == 48;
+$assert $reflect(TranslucentCasterGpu.thickness).offset == 52;
+$assert $reflect(TranslucentCasterGpu._pad0).offset == 56;
+$assert $reflect(TranslucentCasterGpu._pad1).offset == 60;
+$assert $reflect(TranslucentCasterGpu.map).offset == 64;
+
 struct GuiVertexGpu {
     float position_x;
     float position_y;
@@ -1327,9 +1353,13 @@ struct ShadowGpu {
     float        texel_size;
     float        max_distance;
     float        blend_depth;
-    uint         _pad2;
+    TextureIndex colored_transmittance;
+    TextureIndex colored_depth;
+    SamplerIndex colored_sampler;
+    uint         _pad3;
+    uint         _pad4;
 }
-$assert ShadowGpu::size == 96;
+$assert ShadowGpu::size == 112;
 $assert $reflect(ShadowGpu.view_proj).offset == 0;
 $assert $reflect(ShadowGpu.texture_index).offset == 64;
 $assert $reflect(ShadowGpu.sampler_index).offset == 68;
@@ -1338,7 +1368,11 @@ $assert $reflect(ShadowGpu.split_depth).offset == 76;
 $assert $reflect(ShadowGpu.texel_size).offset == 80;
 $assert $reflect(ShadowGpu.max_distance).offset == 84;
 $assert $reflect(ShadowGpu.blend_depth).offset == 88;
-$assert $reflect(ShadowGpu._pad2).offset == 92;
+$assert $reflect(ShadowGpu.colored_transmittance).offset == 92;
+$assert $reflect(ShadowGpu.colored_depth).offset == 96;
+$assert $reflect(ShadowGpu.colored_sampler).offset == 100;
+$assert $reflect(ShadowGpu._pad3).offset == 104;
+$assert $reflect(ShadowGpu._pad4).offset == 108;
 
 struct StandardMaterialGpu {
     uint          kind;
