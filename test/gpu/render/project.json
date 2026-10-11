@@ -607,7 +607,8 @@
         "optical_throughput_pose.c3",
         "optical_throughput_matrix.c3",
         "optical_throughput_light.c3",
-        "test_optical_render_visibility.c3"
+        "test_optical_render_visibility.c3",
+        "test_optical_render_lifetime.c3"
       ]
     }
   }
