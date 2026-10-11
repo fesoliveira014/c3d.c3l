@@ -13,6 +13,7 @@ const FootPlantConfig FOOT_PLANT_DEFAULT = {
 };
 
 const float CONTACT_FRAME_TOLERANCE @private = 1e-5f; // bounds frame orthonormality and uniformity, allowing float decomposition roundoff
+const float CONTACT_POSITION_TOLERANCE @private = 1e-6f; // bounds identical capture points in metres, allowing transform roundoff
 
 <* Caller-selected stance transition. *>
 enum FootContactPhase {

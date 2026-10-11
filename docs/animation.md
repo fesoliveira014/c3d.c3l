@@ -1021,12 +1021,13 @@ remains in scene metres while the support-local sole point follows changing
 scale. The normal and heading follow the support's proper rotation.
 
 Call `end_contact(support)` to blend into the fresh incoming swing pose, or
-`reset_contact()` for an immediate caller-authorized reset. Each
-`begin_contact` restarts acquisition from the currently requested correction,
-so call it once per plant. Zero `dt` freezes transition clocks while external
-support movement still carries the contact. Start each update from the fresh
-animation pose; choose either retained contact or `place/release` for that
-update.
+`reset_contact()` for an immediate caller-authorized reset. Repeating
+`begin_contact` with the same support, hit, settings and height while acquiring
+or planted keeps the current acquisition; any other replant captures the
+currently requested correction. Zero `dt` freezes transition clocks while
+external support movement still carries the contact. Start each update from
+the fresh animation pose; choose either retained contact or `place/release`
+for that update.
 
 Order contact updates after animation and a world refresh, before optional
 `lower_pelvis`. Refresh worlds after pelvis movement, solve dependent IK and

@@ -771,7 +771,7 @@ fn void test_contact_release_carries_sole_without_scaling_height() @test {
     assert(contact.elapsed == 0);
 }
 
-fn void test_contact_paused_updates_are_idempotent() @test {
+fn void test_contact_identical_intent_and_paused_updates_are_idempotent() @test {
     ContactRig rig = contact_test_rig();
     defer scene::destroy_scene(&rig.scene);
     FootSupport support = contact_test_support();
@@ -782,6 +782,7 @@ fn void test_contact_paused_updates_are_idempotent() @test {
     FootContact before = rig.foot.contact;
     for (uint frame = 0; frame < 100; frame++) {
         contact_test_incoming(&rig);
+        rig.foot.begin_contact(hit, support)!!;
         rig.foot.update_contact(support, 0)!!;
         contact_test_solve(&rig);
         assert(contact_test_same_state(&before, &rig.foot.contact));
@@ -861,6 +862,7 @@ fn void test_contact_validation_preserves_state_for_invalid_capture() @test {
             case 1:
                 config.sole_forward = config.sole_up;
             case 2:
+                bad_hit.point.x = 0.1f;
                 pose.rotation = contact_test_rotation({ 1, 0, 0 }, 90);
         }
         fault excuse = @catch(contact.begin_contact(

@@ -46,14 +46,26 @@ fn void? FootContact.begin_contact(
         return c3d::INVALID_ARGUMENT~;
     }
     hit.normal = hit.normal.normalize();
+
+    FootContact next = *self;
+    bool same_support = next.phase != INACTIVE && support.identity == next.support_identity;
+    if (same_support) next.support_frame = frame;
+    evaluate_foot_contact(&next, incoming);
+
+    double[<3>] local_point = contact_local_point(frame, hit.point);
+    Vec3 local_normal = (frame.rotation.conjugate() * hit.normal).normalize();
+    bool same_intent = same_support && next.phase != RELEASING && next.foot_height == foot_height
+        && same_contact_config(next.config, config)
+        && (local_point - next.local_point).length() * frame.scale.x <= CONTACT_POSITION_TOLERANCE
+        && (local_normal - next.local_normal).length() <= CONTACT_POSITION_TOLERANCE;
+    if (same_intent) {
+        *self = next;
+        return;
+    }
+
     Vec3 forward = incoming.rotation * config.sole_forward;
     Vec3 heading = forward - hit.normal * forward.dot(hit.normal);
     if (heading.length() <= CONTACT_FRAME_TOLERANCE) return c3d::INVALID_ARGUMENT~;
-
-    // The old support's current frame is unknown after an identity change; its last frame stands in.
-    FootContact next = *self;
-    if (support.identity == next.support_identity) next.support_frame = frame;
-    evaluate_foot_contact(&next, incoming);
 
     next.acquire_correction_position = next.requested.position - incoming.position;
     next.acquire_correction_rotation = (next.requested.rotation * incoming.rotation.conjugate()).normalize();
@@ -61,8 +73,8 @@ fn void? FootContact.begin_contact(
     next.support_frame = frame;
     next.config = config;
     next.foot_height = foot_height;
-    next.local_point = contact_local_point(frame, hit.point);
-    next.local_normal = (frame.rotation.conjugate() * hit.normal).normalize();
+    next.local_point = local_point;
+    next.local_normal = local_normal;
     next.local_heading = (frame.rotation.conjugate() * heading.normalize()).normalize();
     next.phase = ACQUIRING;
     next.elapsed = 0;
@@ -146,6 +158,11 @@ fn void FootContact.shift_origin(&self, Vec3 offset) {
 
 fn void? validate_contact_identity(FootContact* contact, FootSupport support) @private {
     if (contact.phase != INACTIVE && contact.support_identity != support.identity) return c3d::INVALID_ARGUMENT~;
+}
+
+fn bool same_contact_config(FootPlantConfig first, FootPlantConfig second) @private {
+    return first.acquire_seconds == second.acquire_seconds && first.release_seconds == second.release_seconds
+        && first.sole_up == second.sole_up && first.sole_forward == second.sole_forward;
 }
 
 fn double[<3>] contact_local_point(Transform frame, Vec3 point) @private {
