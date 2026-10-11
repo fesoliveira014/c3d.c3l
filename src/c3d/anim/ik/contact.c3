@@ -1,5 +1,6 @@
 module c3d::anim::ik;
 
+import c3d;
 import c3d::maths;
 import std::math;
 
@@ -29,7 +30,6 @@ struct FootContact {
  Capture an explicit contact while preserving the current requested correction.
  @param incoming : "Fresh animated ankle world pose."
  @param foot_height : "Sole-to-ankle distance in scene metres."
- @param [out] diagnostic : "Optional invalid-input context."
  @return? c3d::INVALID_ARGUMENT
 *>
 fn void? FootContact.begin_contact(
@@ -39,17 +39,14 @@ fn void? FootContact.begin_contact(
     Transform incoming,
     FootPlantConfig config = FOOT_PLANT_DEFAULT,
     float foot_height = FOOT_HEIGHT_DEFAULT,
-    FootDiagnostic* diagnostic = null,
 ) {
-    clear_foot_diagnostic(diagnostic);
-    Transform frame = validate_foot_support(support, diagnostic)!;
-    incoming = validate_foot_incoming(incoming, diagnostic)!;
-    config = validate_foot_plant(config, diagnostic)!;
-    if (!math::is_finite(foot_height) || foot_height < 0) {
-        return invalid_foot_input(diagnostic, INVALID_FOOT_HEIGHT)~;
+    Transform frame = validate_foot_support(support)!;
+    incoming = validate_foot_incoming(incoming)!;
+    config = validate_foot_plant(config)!;
+    if (!math::is_finite(foot_height) || foot_height < 0 || !finite_contact_vec(hit.point)
+        || !unit_contact_vec(hit.normal)) {
+        return c3d::INVALID_ARGUMENT~;
     }
-    if (!finite_contact_vec(hit.point)) return invalid_foot_input(diagnostic, INVALID_HIT)~;
-    if (!unit_contact_vec(hit.normal)) return invalid_foot_input(diagnostic, INVALID_NORMAL)~;
     hit.normal = hit.normal.normalize();
 
     FootContact next = *self;
@@ -72,9 +69,8 @@ fn void? FootContact.begin_contact(
 
     Vec3 forward = incoming.rotation * config.sole_forward;
     Vec3 heading = forward - hit.normal * forward.dot(hit.normal);
-    if (heading.length() <= CONTACT_FRAME_TOLERANCE) {
-        return invalid_foot_input(diagnostic, DEGENERATE_HEADING)~;
-    }
+    if (heading.length() <= CONTACT_FRAME_TOLERANCE) return c3d::INVALID_ARGUMENT~;
+
     next.acquire_correction_position = next.requested.position - incoming.position;
     next.acquire_correction_rotation = (next.requested.rotation * incoming.rotation.conjugate()).normalize();
     next.support_identity = support.identity;
@@ -95,7 +91,6 @@ fn void? FootContact.begin_contact(
  Publish the retained target from fresh animation and current support.
  @param incoming : "Fresh animated ankle world pose."
  @param dt : "Finite nonnegative seconds."
- @param [out] diagnostic : "Optional invalid-input context."
  @return? c3d::INVALID_ARGUMENT
 *>
 fn void? FootContact.update_contact(
@@ -103,13 +98,11 @@ fn void? FootContact.update_contact(
     FootSupport support,
     Transform incoming,
     float dt,
-    FootDiagnostic* diagnostic = null,
 ) {
-    clear_foot_diagnostic(diagnostic);
-    Transform frame = validate_foot_support(support, diagnostic)!;
-    incoming = validate_foot_incoming(incoming, diagnostic)!;
-    if (!math::is_finite(dt) || dt < 0) return invalid_foot_input(diagnostic, INVALID_DELTA_TIME)~;
-    validate_contact_identity(self, support, diagnostic)!;
+    Transform frame = validate_foot_support(support)!;
+    incoming = validate_foot_incoming(incoming)!;
+    if (!math::is_finite(dt) || dt < 0) return c3d::INVALID_ARGUMENT~;
+    validate_contact_identity(self, support)!;
 
     FootContact next = *self;
     if (support.kind == WORLD_STATIC) frame.position = next.static_offset;
@@ -131,19 +124,12 @@ fn void? FootContact.update_contact(
 <*
  Release through the retained sole pivot without advancing its clock.
  @param incoming : "Fresh animated ankle world pose."
- @param [out] diagnostic : "Optional invalid-input context."
  @return? c3d::INVALID_ARGUMENT
 *>
-fn void? FootContact.end_contact(
-    &self,
-    FootSupport support,
-    Transform incoming,
-    FootDiagnostic* diagnostic = null,
-) {
-    clear_foot_diagnostic(diagnostic);
-    Transform frame = validate_foot_support(support, diagnostic)!;
-    incoming = validate_foot_incoming(incoming, diagnostic)!;
-    validate_contact_identity(self, support, diagnostic)!;
+fn void? FootContact.end_contact(&self, FootSupport support, Transform incoming) {
+    Transform frame = validate_foot_support(support)!;
+    incoming = validate_foot_incoming(incoming)!;
+    validate_contact_identity(self, support)!;
 
     FootContact next = *self;
     if (support.kind == WORLD_STATIC) frame.position = next.static_offset;
@@ -199,10 +185,10 @@ fn FootContactResult FootContact.contact_result(&self, Transform actual) {
     return result;
 }
 
-fn void? validate_contact_identity(FootContact* contact, FootSupport support, FootDiagnostic* diagnostic) @private {
+fn void? validate_contact_identity(FootContact* contact, FootSupport support) @private {
     if (contact.phase != INACTIVE
         && (contact.support_identity != support.identity || contact.support_kind != support.kind)) {
-        return invalid_foot_input(diagnostic, SUPPORT_CHANGED)~;
+        return c3d::INVALID_ARGUMENT~;
     }
 }
 
