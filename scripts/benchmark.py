@@ -85,7 +85,7 @@ def parse_arguments():
     render.add_argument("--ambient-occlusion", choices=["none", "half", "full", "ray-traced"], default="none",
                         help="ambient occlusion of the measured view: screen-space resolution or ray traced")
     render.add_argument("--reflections", choices=["on", "off"], default="off",
-                        help="ray-traced reflections of a deferred measured view")
+                        help="ray-traced reflections of a deferred or forward measured view")
     render.add_argument("--depth-prepass", choices=["on", "off"], default="on",
                         help="depth prepass of a forward measured view; deferred views always run it")
     render.add_argument("--auto-exposure", choices=["on", "off"], default="off",

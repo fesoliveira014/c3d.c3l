@@ -152,7 +152,7 @@ The default 16 × 9 × 24 grid has 3,456 cells. Its additional decal storage is:
 
 `DecalGpu` holds frame-relative inverse and forward affine rows, projection/fade
 data, tangent/handedness, weights and material/layer fields. Transform rebasing
-precedes inverse and bound construction. `FrameRoot` is 544 bytes with `decals`
+precedes inverse and bound construction. `FrameRoot` is 560 bytes with `decals`
 at offset 528 and `decal_count` at 536. `ClusterGpu` is 160 bytes;
 `ClusterCounterGpu` remains 16 bytes with separate light and decal overflow counts.
 These are storage costs; no decal timing delta is established by them.
@@ -312,7 +312,7 @@ Images a view allocates at creation, by setting:
 | `DEFERRED` G-buffer | +5 |
 | `ambient_occlusion` | +2 |
 | `screen_space_gi` | +7 |
-| `ray_tracing.reflections` | +2 |
+| `ray_tracing.reflections` | +2, and +1 on a `FORWARD` view |
 | `volumetric_fog` | +1 |
 | `PATH_TRACED`: accumulation, no sky images | 3 in all |
 
@@ -599,12 +599,17 @@ fullscreen lighting resolve; every other material keeps its forward pass on the 
 `DEPTH_PREPASS` over its opaque set, then [`AMBIENT_OCCLUSION`](ambient_occlusion.md) when enabled,
 then `FORWARD_OPAQUE` with depth `EQUAL` and no depth write, so every opaque pixel is shaded once.
 Without it, `FORWARD_OPAQUE` writes depth itself and shades every fragment that passes the depth
-test at the time it is drawn; ambient occlusion and screen-space GI force the prepass on. The prepass pays one more
+test at the time it is drawn; ambient occlusion, screen-space GI and ray-traced reflections force the prepass on. The prepass pays one more
 geometry pass with depth-only shaders and wins wherever opaque overdraw would be shaded more than
 once. Measured on an RTX 4090 at 1080p with flat lights: Sponza with 64 lights, forward opaque
 1.70 to 1.89 ms without it against 0.85 to 0.98 ms plus a 0.04 ms prepass with it; the
 `many_lights` hall with 1024 lights, 4.82 to 5.07 ms against 4.07 to 4.08 ms plus 0.007 ms.
 A `DEFERRED` view always runs it and ignores the flag.
+
+A `FORWARD` view accepts `ray_tracing.reflections`; `PATH_TRACED` views fault `UNSUPPORTED` as before. Its pass
+order is `DEPTH_PREPASS`, which also writes the thin reflection G-buffer, then [`RT_REFLECTIONS`](reflections.md#forward-views)
+(after ambient occlusion and screen-space GI when enabled), then `FORWARD_OPAQUE`, whose Standard and Physical
+fragments read the blurred reflection image. Transparent and scene-reading draws do not read it.
 
 ```bash
 python3 scripts/build.py --example deferred
