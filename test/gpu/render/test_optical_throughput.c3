@@ -19,6 +19,8 @@ const uint OPTICAL_MATRIX_CAPACITY @private = OPTICAL_TILE_COLUMNS * OPTICAL_TIL
 const double OPTICAL_ABSOLUTE_TOLERANCE @private = 0.002;
 const double OPTICAL_RELATIVE_TOLERANCE @private = 0.005;
 const double OPTICAL_INTERMEDIATE_ABSOLUTE_TOLERANCE @private = 0.00002;
+const double OPTICAL_INTERMEDIATE_RELATIVE_TOLERANCE @private = 0.0002;
+const double OPTICAL_BACKEND_DIFFERENCE_TOLERANCE @private = 0.005;
 const uint OPTICAL_ALPHA_BLEND @private = 1;
 const uint OPTICAL_ALPHA_MASK @private = 2;
 const uint OPTICAL_ADDITIVE @private = 4;
@@ -414,9 +416,10 @@ fn void test_optical_throughput_surface_factors_match_the_independent_light_faci
         for (uint channel = 0; channel < 3; channel++) {
             double error = math::abs((double)actual[channel] - expected[channel]);
             maximum_error = math::max(maximum_error, error);
-            assert(math::is_finite(actual[channel])
-              && error <= OPTICAL_ABSOLUTE_TOLERANCE + OPTICAL_RELATIVE_TOLERANCE * math::abs(expected[channel]),
-              "optical case=%s channel=%s actual=%s expected=%s", index, channel, actual[channel], expected[channel]);
+            double bound = OPTICAL_INTERMEDIATE_ABSOLUTE_TOLERANCE
+              + OPTICAL_INTERMEDIATE_RELATIVE_TOLERANCE * math::abs(expected[channel]);
+            assert(math::is_finite(actual[channel]) && error <= bound,
+                "optical case=%s channel=%s actual=%s expected=%s", index, channel, actual[channel], expected[channel]);
         }
     }
     io::printfn("optical surface rows=%s max_error=%s format=RGBA32_FLOAT", count, maximum_error);
@@ -1001,4 +1004,17 @@ fn void test_optical_throughput_full_segment_blockers_and_disabled_scalar_are_in
         enabled: false,
     );
     check_validation(&fixture.renderer);
+}
+
+fn void check_optical_trace_pair(Vec4[] software, Vec4[] hardware) @private {
+    for (uint row = 16; row < 48; row++) {
+        for (uint column = 16; column < 48; column++) {
+            uint pixel = row * OPTICAL_EXTENT + column;
+            assert(bitcast(software[pixel].w, uint) == bitcast(hardware[pixel].w, uint));
+            for (uint channel = 0; channel < 3; channel++) {
+                double error = math::abs((double)software[pixel][channel] - hardware[pixel][channel]);
+                assert(error <= OPTICAL_BACKEND_DIFFERENCE_TOLERANCE, "Hardware/software pairwise visibility differs.");
+            }
+        }
+    }
 }

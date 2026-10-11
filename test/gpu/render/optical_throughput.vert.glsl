@@ -11,6 +11,12 @@ void main() {
     surface_index = root.first;
     OpticalSurface surface = OpticalSurfaces(root.surfaces).values[surface_index];
     const vec2 corners[6] = vec2[6](vec2(0, 0), vec2(1, 0), vec2(1, 1), vec2(0, 0), vec2(1, 1), vec2(0, 1));
+    if (root.phase == OPTICAL_PHASE_STORE) {
+        surface_uv = corners[gl_VertexIndex];
+        gl_Position = vec4(corners[gl_VertexIndex] * 2.0 - 1.0, 0.5, 1.0);
+        return;
+    }
+
     uint vertex = (surface.flags & OPTICAL_REVERSED) != 0u ? 5u - uint(gl_VertexIndex) : uint(gl_VertexIndex);
     surface_uv = vec2(corners[vertex].x, 1.0 - corners[vertex].y);
     vec2 xy = mix(surface.bounds.xy, surface.bounds.zw, corners[vertex]);

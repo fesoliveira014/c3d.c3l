@@ -144,6 +144,8 @@ fn void test_optical_throughput_skin_morph_and_wide_joints_use_current_positions
                 capacity: 1,
             )!!;
             check_optical_stack(&stack, surfaces[..], 1);
+            Vec4[] software = mem::new_array(Vec4, OPTICAL_EXTENT * OPTICAL_EXTENT);
+            defer free(software.ptr);
             foreach (hardware : (bool[2]){ false, true }) {
                 run_optical_trace(
                     fixture: &fixture,
@@ -152,6 +154,11 @@ fn void test_optical_throughput_skin_morph_and_wide_joints_use_current_positions
                     capacity: 1,
                     hardware: hardware,
                 )!!;
+                if (!hardware) {
+                    mem::copy(software.ptr, trace.output.bytes.ptr, (sz)trace.output.bytes.len);
+                } else {
+                    check_optical_trace_pair(software, ((Vec4*)trace.output.bytes.ptr)[:software.len]);
+                }
                 check_optical_face_interiors(&stack, &trace, false);
             }
             io::printfn("optical pose mode=%s shift=%s positions=4 exact samples=1024 branches=atlas,hardware,software",

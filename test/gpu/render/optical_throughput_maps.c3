@@ -110,6 +110,12 @@ fn void test_optical_throughput_nearest_factor_maps_and_mask_holes_match_atlas_h
                 assert(error <= bound, "Mapped stored-group throughput differs.");
             }
         }
+        Vec4[4] atlas;
+        Vec4[4] software;
+        for (uint texel = 0; texel < 4; texel++) {
+            uint pixel = rows[texel] * OPTICAL_EXTENT + columns[texel];
+            atlas[texel] = ((Vec4*)stack.output.bytes.ptr)[pixel];
+        }
         foreach (hardware : (bool[2]){ false, true }) {
             run_optical_trace(
                 fixture: &fixture,
@@ -121,8 +127,18 @@ fn void test_optical_throughput_nearest_factor_maps_and_mask_holes_match_atlas_h
             )!!;
             for (uint texel = 0; texel < 4; texel++) {
                 uint pixel = rows[texel] * OPTICAL_EXTENT + columns[texel];
+                Vec4 actual = ((Vec4*)trace.output.bytes.ptr)[pixel];
+                for (uint channel = 0; channel < 3; channel++) {
+                    assert(math::abs((double)actual[channel] - atlas[texel][channel])
+                      <= OPTICAL_BACKEND_DIFFERENCE_TOLERANCE);
+                    if (hardware) {
+                        assert(math::abs((double)actual[channel] - software[texel][channel])
+                          <= OPTICAL_BACKEND_DIFFERENCE_TOLERANCE);
+                    }
+                }
+                if (!hardware) software[texel] = actual;
                 check_optical_map_pixel(
-                    actual: ((Vec4*)trace.output.bytes.ptr)[pixel],
+                    actual: actual,
                     surface: surfaces[0],
                     texel: texel,
                     branch: hardware ? "hardware" : "software",

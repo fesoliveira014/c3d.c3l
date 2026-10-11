@@ -21,7 +21,8 @@ fn void check_optical_face_interiors(
                 double reference = atlas[pixel][channel];
                 double error = math::abs((double)ray[pixel][channel] - reference);
                 double bound = OPTICAL_ABSOLUTE_TOLERANCE + OPTICAL_RELATIVE_TOLERANCE * math::abs(reference);
-                assert(math::is_finite(ray[pixel][channel]) && error <= bound,
+                assert(math::is_finite(ray[pixel][channel]) && error <= bound
+                  && error <= OPTICAL_BACKEND_DIFFERENCE_TOLERANCE,
                     "Face interior pixel=%s channel=%s ray=%s atlas=%s", pixel, channel, ray[pixel][channel], reference);
                 if (blocked) assert(ray[pixel][channel] == 0);
             }
@@ -57,6 +58,8 @@ fn void test_optical_throughput_single_reversed_and_mirrored_faces_preserve_auth
             capacity: 1,
         )!!;
         check_optical_stack(&stack, surfaces[..], 1);
+        Vec4[] software = mem::new_array(Vec4, OPTICAL_EXTENT * OPTICAL_EXTENT);
+        defer free(software.ptr);
         foreach (hardware : (bool[2]){ false, true }) {
             run_optical_trace(
                 fixture: &fixture,
@@ -65,6 +68,11 @@ fn void test_optical_throughput_single_reversed_and_mirrored_faces_preserve_auth
                 capacity: 1,
                 hardware: hardware,
             )!!;
+            if (!hardware) {
+                mem::copy(software.ptr, trace.output.bytes.ptr, (sz)trace.output.bytes.len);
+            } else {
+                check_optical_trace_pair(software, ((Vec4*)trace.output.bytes.ptr)[:software.len]);
+            }
             check_optical_face_interiors(&stack, &trace, false);
         }
         io::printfn("optical facing flags=%s visible=%s samples=1024 branches=atlas,hardware,software",
@@ -106,6 +114,8 @@ fn void test_optical_throughput_closed_double_sided_slab_counts_both_faces_and_k
                 capacity: capacity,
             )!!;
             check_optical_stack(&stack, surfaces[:count], capacity);
+            Vec4[] software = mem::new_array(Vec4, OPTICAL_EXTENT * OPTICAL_EXTENT);
+            defer free(software.ptr);
             foreach (hardware : (bool[2]){ false, true }) {
                 run_optical_trace(
                     fixture: &fixture,
@@ -114,6 +124,11 @@ fn void test_optical_throughput_closed_double_sided_slab_counts_both_faces_and_k
                     capacity: capacity,
                     hardware: hardware,
                 )!!;
+                if (!hardware) {
+                    mem::copy(software.ptr, trace.output.bytes.ptr, (sz)trace.output.bytes.len);
+                } else {
+                    check_optical_trace_pair(software, ((Vec4*)trace.output.bytes.ptr)[:software.len]);
+                }
                 check_optical_face_interiors(&stack, &trace, blocked || capacity < 2);
             }
             io::printfn("optical slab faces=2 cap=%s blocker=%s samples=1024 branches=atlas,hardware,software",
@@ -151,6 +166,8 @@ fn void test_optical_throughput_segment_limits_keep_late_blockers_and_reject_bey
                     capacity: capacity,
                 )!!;
                 check_optical_stack(&stack, surfaces[:count], capacity);
+                Vec4[] software = mem::new_array(Vec4, OPTICAL_EXTENT * OPTICAL_EXTENT);
+                defer free(software.ptr);
                 foreach (hardware : (bool[2]){ false, true }) {
                     run_optical_trace(
                         fixture: &fixture,
@@ -159,6 +176,11 @@ fn void test_optical_throughput_segment_limits_keep_late_blockers_and_reject_bey
                         capacity: capacity,
                         hardware: hardware,
                     )!!;
+                    if (!hardware) {
+                        mem::copy(software.ptr, trace.output.bytes.ptr, (sz)trace.output.bytes.len);
+                    } else {
+                        check_optical_trace_pair(software, ((Vec4*)trace.output.bytes.ptr)[:software.len]);
+                    }
                     check_optical_face_interiors(&stack, &trace, distance < 8.5f || groups > capacity);
                 }
                 io::printfn("optical finite segment groups=%s cap=%s blocker_distance=%s receiver=8.5",

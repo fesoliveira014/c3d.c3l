@@ -360,6 +360,8 @@ fn void test_optical_throughput_forced_hardware_and_software_share_the_atlas_int
             Vec4[] atlas = mem::new_array(Vec4, OPTICAL_EXTENT * OPTICAL_EXTENT);
             defer free(atlas.ptr);
             mem::copy(atlas.ptr, stack.output.bytes.ptr, (sz)stack.output.bytes.len);
+            Vec4[] software = mem::new_array(Vec4, OPTICAL_EXTENT * OPTICAL_EXTENT);
+            defer free(software.ptr);
             foreach (hardware : (bool[2]){ false, true }) {
                 run_optical_trace(
                     fixture: &fixture,
@@ -368,6 +370,11 @@ fn void test_optical_throughput_forced_hardware_and_software_share_the_atlas_int
                     capacity: capacity,
                     hardware: hardware,
                 )!!;
+                if (!hardware) {
+                    mem::copy(software.ptr, trace.output.bytes.ptr, (sz)trace.output.bytes.len);
+                } else {
+                    check_optical_trace_pair(software, ((Vec4*)trace.output.bytes.ptr)[:software.len]);
+                }
                 Vec4* actual = (Vec4*)trace.output.bytes.ptr;
                 for (uint row = 16; row < 48; row++) {
                     for (uint column = 16; column < 48; column++) {
@@ -379,7 +386,8 @@ fn void test_optical_throughput_forced_hardware_and_software_share_the_atlas_int
                             double error = math::abs((double)actual[pixel][channel] - reference);
                             double bound = OPTICAL_ABSOLUTE_TOLERANCE
                               + OPTICAL_RELATIVE_TOLERANCE * math::abs(reference);
-                            assert(math::is_finite(actual[pixel][channel]) && error <= bound,
+                            assert(math::is_finite(actual[pixel][channel]) && error <= bound
+                              && error <= OPTICAL_BACKEND_DIFFERENCE_TOLERANCE,
                               "trace hardware=%s cap=%s pixel=%s channel=%s actual=%s atlas=%s",
                               hardware, capacity, pixel, channel, actual[pixel][channel], reference);
                             if (blocked || capacity < 6) assert(actual[pixel][channel] == 0);
