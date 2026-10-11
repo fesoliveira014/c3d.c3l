@@ -56,14 +56,8 @@ fn GeometryId? convert_primitive(
             case NORMAL:
                 if (attribute.index == 0) geometry.normals = read_vec3(importer, attribute.data, vertex_count)!;
             case TANGENT:
-                if (attribute.index == 0) {
-                    if (attribute.data.type != gltf::Type.VEC4 || attribute.data.count != vertex_count) {
-                        return c3d::ASSET_FORMAT_ERROR~;
-                    }
-
-                    if (!importer.options.regenerate_tangents) {
-                        geometry.tangents = read_vec4(importer, attribute.data, vertex_count)!;
-                    }
+                if (attribute.index == 0 && !importer.options.regenerate_tangents) {
+                    geometry.tangents = read_vec4(importer, attribute.data, vertex_count)!;
                 }
             case TEXCOORD:
                 if (attribute.index == 0) geometry.uv0 = read_vec2(importer, attribute.data, vertex_count)!;

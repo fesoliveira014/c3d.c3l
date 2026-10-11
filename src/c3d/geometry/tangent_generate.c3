@@ -232,25 +232,6 @@ fn void mikk_inherit_degenerate_spaces(MikkSpace[] spaces, MikkTriangle[] triang
     }
 }
 
-fn bool mikk_full_mesh_valid(MikkFullMesh source) @private {
-    if (!source.indices.len || source.indices.len % CORNERS_PER_TRIANGLE != 0 || source.uv_set > 1) return false;
-    if (source.indices.len / CORNERS_PER_TRIANGLE > (usz)(int::max >> 2)) return false;
-
-    foreach (index : source.indices) if (index >= source.vertices.len) return false;
-
-    foreach (vertex : source.vertices) {
-        float[2] uv = mikk_selected_uv(vertex, source.uv_set);
-        if (!mikk_finite_vector(vertex.position) || !mikk_finite_vector(vertex.normal)
-          || !math::is_finite(uv[0]) || !math::is_finite(uv[1])) return false;
-    }
-
-    return true;
-}
-
-<*
- Generate per-corner reference tangent spaces.
- @require mikk_full_mesh_valid(source)
-*>
 fn MikkTangent[]? mikk_generate_full(Allocator allocator, MikkFullMesh source) @private {
     int corner_count = (int)source.indices.len;
     int triangle_count = corner_count / CORNERS_PER_TRIANGLE;

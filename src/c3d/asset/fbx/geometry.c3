@@ -46,8 +46,6 @@ fn GeometryId? convert_part(
     alloc::Allocator allocator = importer.allocator;
     usz corner_count = part.num_triangles * TRIANGLE_CORNERS;
 
-    preflight_tangent_streams(mesh)!;
-
     CornerStreams streams = corner_streams(
         mesh: mesh,
         part: part,
@@ -112,19 +110,6 @@ fn GeometryId? convert_part(
 
     String key = string::tformat("%s#mesh/%d/%d", importer.key, mesh.typed_id, part_index);
     return importer.document.push_geometry(&geometry, key);
-}
-
-fn void? preflight_tangent_streams(ufbx::Mesh* mesh) @private {
-    ufbx::VertexVec3*[2] attributes = { &mesh.vertex_tangent, &mesh.vertex_bitangent };
-
-    foreach (attribute : attributes) {
-        if (!attribute.exists) continue;
-        if (attribute.indices.len != mesh.num_indices || !attribute.values.len) return c3d::ASSET_FORMAT_ERROR~;
-
-        foreach (index : attribute.indices) {
-            if (index >= attribute.values.len) return c3d::ASSET_FORMAT_ERROR~;
-        }
-    }
 }
 
 fn CornerStreams? corner_streams(

@@ -146,10 +146,6 @@ fn bool mikk_equal_vectors(MikkVector left, MikkVector right) @private {
     return left.x == right.x && left.y == right.y && left.z == right.z;
 }
 
-fn bool mikk_finite_vector(MikkVector vector) @private {
-    return math::is_finite(vector.x) && math::is_finite(vector.y) && math::is_finite(vector.z);
-}
-
 fn float[2] mikk_selected_uv(MikkVertex vertex, uint uv_set) @private {
     return uv_set == 0 ? vertex.uv0 : vertex.uv1;
 }

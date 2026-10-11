@@ -213,8 +213,8 @@ fn bool finite_tangent_values(Vec4 values) @private {
       && math::is_finite(values.z) && math::is_finite(values.w);
 }
 
-macro @check_tangent_vertices(values, usz vertex_count) @private {
-    if (values.len && values.len != vertex_count) return c3d::INVALID_ARGUMENT~;
+macro @check_tangent_input(values, usz vertex_count) @private {
+    if (values.len != vertex_count) return c3d::INVALID_ARGUMENT~;
 
     foreach (value : values) {
         foreach (component : value) {
@@ -222,6 +222,8 @@ macro @check_tangent_vertices(values, usz vertex_count) @private {
         }
     }
 }
+
+fn bool copied_stream_fits(usz length, usz vertex_count) @private => !length || length == vertex_count;
 
 fn void? check_tangent_source(Geometry* source, uint uv_set) @private {
     if (source.topology != Topology.TRIANGLES || uv_set > 1) return c3d::UNSUPPORTED~;
@@ -238,33 +240,21 @@ fn void? check_tangent_source(Geometry* source, uint uv_set) @private {
       || corner_count / CORNERS_PER_TRIANGLE > (usz)(int::max >> 2)
       || vertex_count > (usz)sz::max - corner_count) return c3d::INVALID_ARGUMENT~;
 
-    @check_tangent_vertices(source.positions, vertex_count)!;
-    @check_tangent_vertices(source.normals, vertex_count)!;
-    @check_tangent_vertices(source.uv0, vertex_count)!;
-    @check_tangent_vertices(source.uv1, vertex_count)!;
-    @check_tangent_vertices(source.colors, vertex_count)!;
-    @check_tangent_vertices(source.weights, vertex_count)!;
-    if ((source.joints.len && source.joints.len != vertex_count)
-      || (source.joints.len > 0) != (source.weights.len > 0)) return c3d::INVALID_ARGUMENT~;
+    @check_tangent_input(source.positions, vertex_count)!;
+    @check_tangent_input(source.normals, vertex_count)!;
+    @check_tangent_input(selected, vertex_count)!;
 
-    foreach (weight : source.weights) {
-        foreach (component : weight) if (component < 0) return c3d::INVALID_ARGUMENT~;
+    if (!copied_stream_fits(source.uv0.len, vertex_count) || !copied_stream_fits(source.uv1.len, vertex_count)
+      || !copied_stream_fits(source.colors.len, vertex_count) || !copied_stream_fits(source.joints.len, vertex_count)
+      || !copied_stream_fits(source.weights.len, vertex_count)) return c3d::INVALID_ARGUMENT~;
+
+    foreach (target : source.targets) {
+        if (!copied_stream_fits(target.position_deltas.len, vertex_count)
+          || !copied_stream_fits(target.normal_deltas.len, vertex_count)) return c3d::INVALID_ARGUMENT~;
     }
 
     foreach (index : source.indices) if (index >= vertex_count) return c3d::INVALID_ARGUMENT~;
 
     if (source.custom_data.len && (!source.custom_stride || vertex_count > (usz)sz::max / source.custom_stride
       || source.custom_data.len != vertex_count * source.custom_stride)) return c3d::INVALID_ARGUMENT~;
-
-    foreach (target : source.targets) {
-        @check_tangent_vertices(target.position_deltas, vertex_count)!;
-        @check_tangent_vertices(target.normal_deltas, vertex_count)!;
-    }
-
-    foreach (channel : source.channels) {
-        if (channel.first_target > source.targets.len
-          || channel.full_weights.len > source.targets.len - channel.first_target) return c3d::INVALID_ARGUMENT~;
-
-        foreach (weight : channel.full_weights) if (!math::is_finite(weight)) return c3d::INVALID_ARGUMENT~;
-    }
 }

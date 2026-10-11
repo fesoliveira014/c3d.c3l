@@ -92,42 +92,7 @@ fn MikkTangent[] take_expected(char[] bytes, usz* offset) @local {
 }
 
 fn void compare_tangent(MikkTangent actual, MikkTangent expected) @local {
-    assert(actual.sign == expected.sign);
-    assert(geometry::mikk_finite_vector(actual.direction));
-
-    double[3] first = { actual.direction.x, actual.direction.y, actual.direction.z };
-    double[3] second = { expected.direction.x, expected.direction.y, expected.direction.z };
-    double first_squared = first[0] * first[0] + first[1] * first[1] + first[2] * first[2];
-    double second_squared = second[0] * second[0] + second[1] * second[1] + second[2] * second[2];
-
-    if (second_squared == 0) {
-        assert(first_squared == 0);
-
-        return;
-    }
-
-    assert(first_squared > 0);
-
-    double first_length = math::sqrt(first_squared);
-    double second_length = math::sqrt(second_squared);
-
-    for (int i = 0; i < 3; i++) {
-        first[i] /= first_length;
-        second[i] /= second_length;
-    }
-
-    double[3] cross = {
-        first[1] * second[2] - first[2] * second[1],
-        first[2] * second[0] - first[0] * second[2],
-        first[0] * second[1] - first[1] * second[0],
-    };
-
-    double cosine = first[0] * second[0] + first[1] * second[1] + first[2] * second[2];
-    double sine = math::sqrt(cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]);
-    double angle = math::atan2(sine, cosine);
-
-    assert(math::is_finite(angle) && angle <= 1e-4);
-    assert(geometry::mikk_equal_vectors(actual.direction, expected.direction));
+    assert(actual.sign == expected.sign && geometry::mikk_equal_vectors(actual.direction, expected.direction));
 }
 
 fn Geometry mesh_geometry(MikkFullMesh mesh) @local {
