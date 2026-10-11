@@ -445,3 +445,109 @@ fn void test_rough_transmission_records_mip_passes_only_for_rough_glass() @test 
         assert(!validation_error);
     }
 }
+
+struct ViewPassCounts @private {
+    uint snapshots;
+    uint draws;
+}
+
+fn Material layered_glass(float roughness) @private {
+    PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
+    params.transmission = 1;
+    params.standard.metallic = 0;
+    params.standard.roughness = roughness;
+    return material::physical(params);
+}
+
+fn ViewPassCounts? record_counted_view(Renderer* renderer, Scene* scene, Node* camera, ViewId view) @private {
+    uint snapshots_before = renderer.stats.scene_snapshots;
+    uint draws_before = renderer.stats.draws;
+    renderer.render_view(scene, camera, view)!;
+    renderer.finish_view(view)!;
+    return {
+        .snapshots = renderer.stats.scene_snapshots - snapshots_before,
+        .draws     = renderer.stats.draws - draws_before,
+    };
+}
+
+fn void test_each_transmission_layer_records_its_own_snapshot_and_mips() @test {
+    const uint VIEW_SIZE = 64;
+    const uint LAYERS = 2;
+
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    Scene scene = scene::create_scene(mem, scene::default_scene_desc());
+    defer scene::destroy_scene(&scene);
+    Renderer renderer = render::create_renderer(
+        allocator: mem,
+        assets:    &assets,
+        desc:      { .validation = true, .application_name = "render_acceptance" },
+    )!!;
+    defer render::destroy_renderer(&renderer);
+
+    GeometryId slab;
+    GeometryId backdrop;
+    @pool() {
+        Geometry slab_geometry = geometry::box(tmem, 1, 1, 0.2f);
+        slab = assets.add_geometry(&slab_geometry)!!;
+        Geometry backdrop_geometry = geometry::box(tmem, 8, 8, 0.1f);
+        backdrop = assets.add_geometry(&backdrop_geometry)!!;
+    };
+    MaterialId backdrop_material = assets.add_material(material::basic({ .color = SCENE_READ_BOX_COLOR }))!!;
+    MaterialId rear_glass = assets.add_material(layered_glass(0))!!;
+    MaterialId front_glass = assets.add_material(layered_glass(0))!!;
+    Node* backdrop_node = scene.add_mesh(backdrop, backdrop_material)!!;
+    backdrop_node.local.position = { 0, 0, -3 };
+    Node* rear_node = scene.add_mesh(slab, rear_glass)!!;
+    rear_node.local.position = { 0.3f, 0, -1 };
+    scene.add_mesh(slab, front_glass)!!;
+    Node* camera_node = scene.add_camera(camera::perspective_deg(SCENE_READ_FOV_DEGREES, SCENE_READ_NEAR))!!;
+    camera_node.local.position = { 0, 0, 3 };
+    scene.update_world();
+
+    RenderTargetId single_target = render::create_render_target(
+        renderer: &renderer,
+        desc:     render::render_target_desc(VIEW_SIZE, VIEW_SIZE),
+    )!!;
+    RenderTargetId layered_target = render::create_render_target(
+        renderer: &renderer,
+        desc:     render::render_target_desc(VIEW_SIZE, VIEW_SIZE),
+    )!!;
+    ViewId single_view = render::create_view(&renderer, render::texture_view_desc(single_target))!!;
+    ViewDesc layered_desc = render::texture_view_desc(layered_target);
+    layered_desc.transmission_layers = LAYERS;
+    ViewId layered_view = render::create_view(&renderer, layered_desc)!!;
+
+    uint mip_passes = material::texture_mip_count(VIEW_SIZE, VIEW_SIZE) - 1;
+    float[2][4] roughness = {
+        { 0, 0 },
+        { 0, 0.5f },
+        { 0.5f, 0 },
+        { 0.5f, 0.5f },
+    };
+    // The rear pane sits in the first layer and the front pane in the second; only a layer holding rough glass
+    // adds its own mip chain, on top of the one extra snapshot copy.
+    uint[4] extra_passes = { 1, 1, 1, 1 + mip_passes };
+
+    foreach (index, pair : roughness) {
+        assets.replace_material(rear_glass, layered_glass(pair[0]));
+        assets.replace_material(front_glass, layered_glass(pair[1]));
+        renderer.begin_frame()!!;
+        ViewPassCounts single = record_counted_view(&renderer, &scene, camera_node, single_view)!!;
+        ViewPassCounts layered = record_counted_view(&renderer, &scene, camera_node, layered_view)!!;
+        renderer.end_frame()!!;
+
+        assert(single.snapshots == 1);
+        assert(layered.snapshots == LAYERS);
+        assert(layered.draws - single.draws == extra_passes[index]);
+    }
+
+    render::wait_frames(&renderer)!!;
+    DebugEntry[render::DEBUG_LOG_ENTRIES] entries;
+    usz count = renderer.log.recent(entries[..]);
+    foreach (entry : entries[:count]) {
+        bool validation_error = entry.category.backend && entry.category.validation
+            && entry.severity == gpu::DebugMessageSeverity.ERROR;
+        assert(!validation_error);
+    }
+}

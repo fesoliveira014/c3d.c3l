@@ -447,6 +447,18 @@ fn void? record_raster_view(
             sort::quicksort(transparent_items, &by_transparent_depth);
         };
 
+        uint transmission_layers = math::max(record.desc.transmission_layers, 1u);
+        SceneReadLayers scene_read_layers = { .count = 1, .ends = { [0] = scene_read_items.len } };
+        if (transmission_layers > 1 && scene_read_items.len > 1) {
+            instrumentation::@scope("view.layers") {
+                scene_read_layers = split_scene_reads_by_layer(
+                    items:       scene_read_items,
+                    view_proj:   matrices.view_proj,
+                    layer_count: transmission_layers,
+                );
+            };
+        }
+
         DecalCounts decal_counts;
         DecalGpu[] decals;
         instrumentation::@scope("view.decals") {
@@ -897,13 +909,14 @@ fn void? record_raster_view(
                 case PATH_TRACED:
             }
 
-            if (scene_read_items.len) {
-                record_scene_snapshots(renderer, record, scene_read_reads)!;
-                if (scene_read_mips) record_scene_mips(renderer, record)!;
-                @profile_pass(renderer, Pass.SCENE_READ) {
-                    record_loaded_pass(renderer, record, scene_read_items)!;
-                }!;
-            }
+            record_scene_read_layers(
+                renderer: renderer,
+                record:   record,
+                items:    scene_read_items,
+                layers:   &scene_read_layers,
+                reads:    scene_read_reads,
+                mips:     scene_read_mips,
+            )!;
             if (fog_pass) {
                 // The fog split: snapshots and the bounce source stay unfogged; blended draws fog themselves.
                 if (transparent_reads != (SceneReads){}) record_scene_snapshots(renderer, record, transparent_reads)!;
@@ -1911,6 +1924,37 @@ fn void? record_scene_snapshots(Renderer* renderer, ViewRecord* record, SceneRea
         if (reads.color) record_snapshot_copy(renderer, &record.hdr_color, &record.scene_color)!;
         if (reads.depth) record_snapshot_copy(renderer, &record.depth, &record.scene_depth)!;
     }!;
+}
+
+fn void? record_scene_read_layers(
+    Renderer* renderer,
+    ViewRecord* record,
+    DrawItem[] items,
+    SceneReadLayers* layers,
+    SceneReads reads,
+    bool mips,
+) @private {
+    usz layer_start;
+    for (uint layer = 0; layer < layers.count; layer++) {
+        DrawItem[] layer_items = items[layer_start:layers.ends[layer] - layer_start];
+        layer_start = layers.ends[layer];
+        if (!layer_items.len) continue;
+
+        bool blurs = layers.count == 1 ? mips : layer_blurs_scene_color(renderer, layer_items);
+        // Snapshots copy every image the draws read, so a fogged view refreshes scene_depth with each color copy.
+        record_scene_snapshots(renderer, record, reads)!;
+        if (blurs) record_scene_mips(renderer, record)!;
+        @profile_pass(renderer, Pass.SCENE_READ) {
+            record_loaded_pass(renderer, record, layer_items)!;
+        }!;
+    }
+}
+
+fn bool layer_blurs_scene_color(Renderer* renderer, DrawItem[] items) @local {
+    foreach (&item : items) {
+        if (material_blurs_scene_color(candidate_material(renderer, item.candidate))) return true;
+    }
+    return false;
 }
 
 // Leaves the source readable; the loaded pass that follows moves it back to its attachment state.

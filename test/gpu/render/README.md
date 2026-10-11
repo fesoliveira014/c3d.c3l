@@ -30,7 +30,9 @@ before and after a change shows whether manual output moved.
 
 `test_scene_reads.c3` also renders rough and smooth Physical glass in one view, through a render-target resize and an
 in-place reconfiguration. The scene-color mip passes show as a `Stats.draws` difference of one pass per level below
-mip zero, and only the rough frames record them.
+mip zero, and only the rough frames record them. Two overlapping panes render in one frame into a view with the
+default `transmission_layers` and one with two: the second records one more snapshot copy, and a mip chain only for a
+layer that holds rough glass.
 
 Build the repository once so `shaders/spv/` exists, then invoke this project
 separately:
