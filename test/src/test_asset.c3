@@ -653,6 +653,31 @@ fn void test_shader_traced_fragment_forms_are_copied_and_replaceable() @test {
     assert(!store.shaders.is_live(id));
 }
 
+fn void test_copy_and_free_shader_desc_round_trip_the_weighted_forms() @test {
+    char[4] fragment = { 1, 2, 3, 4 };
+    char[3] shaded = { 5, 6, 7 };
+    char[2] software = { 8, 9 };
+    ShaderDesc desc = { .fragment = fragment[..] };
+    desc.weighted_fragment = { .shaded = shaded[..], .traced = { .software = software[..] } };
+
+    ShaderDesc copy = asset::copy_shader_desc(mem, &desc);
+    assert(copy.weighted_fragment.shaded.ptr != &shaded[0]);
+    assert(copy.weighted_fragment.traced.software.ptr != &software[0]);
+    assert(copy.weighted_fragment.shaded.len == 3 && copy.weighted_fragment.shaded[1] == 6);
+    assert(copy.weighted_fragment.traced.hardware.len == 0);
+    assert(copy.weighted_fragment.traced.software.len == 2 && copy.weighted_fragment.traced.software[1] == 9);
+    asset::free_shader_desc(mem, &copy);
+    assert(copy.fragment.len == 0 && copy.weighted_fragment.shaded.len == 0);
+    assert(copy.weighted_fragment.traced.software.len == 0);
+
+    ShaderDesc without = { .fragment = fragment[..] };
+    ShaderDesc plain_copy = asset::copy_shader_desc(mem, &without);
+    assert(plain_copy.fragment.len == 4 && plain_copy.fragment[2] == 3);
+    assert(plain_copy.weighted_fragment.shaded.len == 0 && plain_copy.weighted_fragment.traced.hardware.len == 0);
+    assert(plain_copy.weighted_fragment.traced.software.len == 0);
+    asset::free_shader_desc(mem, &plain_copy);
+}
+
 fn void test_remove_shader_makes_id_stale() @test {
     AssetStore store = make_store();
     defer asset::destroy_asset_store(&store);

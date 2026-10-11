@@ -2,3 +2,4 @@
 module c3d::particle;
 
 const char[*] PARTICLE_FRAGMENT_SPIRV @private = $embed("../shaders/spv/particle_fragment.spv");
+const char[*] PARTICLE_FRAGMENT_WEIGHTED_BLEND_SPIRV @private = $embed("../shaders/spv/particle_fragment_weighted_blend.spv");

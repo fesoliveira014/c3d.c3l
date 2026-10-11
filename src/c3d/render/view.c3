@@ -329,6 +329,7 @@ fn void? record_raster_view(
             usz scene_read_count;
             usz transparent_count;
             usz weighted_count;
+            uint shadow_flags = rt_shadow_flags(renderer, record.desc.ray_tracing.shadows);
             foreach (&candidate : candidates) {
                 Material* material_data = candidate_material(renderer, candidate);
                 DrawList counted = view_draw_list(
@@ -343,8 +344,12 @@ fn void? record_raster_view(
                     case SCENE_READ: scene_read_count++;
                     case TRANSPARENT:
                         transparent_count++;
-                        bool weighted_draw = !candidate.impostor
-                          && joins_weighted_pass(material_data, record.desc.transparency);
+                        bool weighted_draw = !candidate.impostor && joins_weighted_pass(
+                            renderer:     renderer,
+                            material:     material_data,
+                            mode:         record.desc.transparency,
+                            shadow_flags: shadow_flags,
+                        )!;
                         if (weighted_draw) weighted_count++;
                 }
             }
@@ -390,8 +395,12 @@ fn void? record_raster_view(
                     custom_gbuffer: custom_gbuffer_stage(renderer, material_description)!,
                     custom_reads:   custom_reads,
                 );
-                bool weighted = list == DrawList.TRANSPARENT && !candidate.impostor
-                  && joins_weighted_pass(material_description, record.desc.transparency);
+                bool weighted = list == DrawList.TRANSPARENT && !candidate.impostor && joins_weighted_pass(
+                    renderer:     renderer,
+                    material:     material_description,
+                    mode:         record.desc.transparency,
+                    shadow_flags: shadow_flags,
+                )!;
                 gpu::PipelineHandle? pipeline = list == DrawList.GBUFFER
                   ? gbuffer_pipeline_for(renderer, material_description, vertex)
                   : pipeline_for(
@@ -420,19 +429,17 @@ fn void? record_raster_view(
                         scene_read_reads |= material_scene_reads(material_description, custom_reads);
                         scene_read_mips |= material_blurs_scene_color(material_description);
                     case TRANSPARENT:
-                        if (weighted) {
-                            index = weighted_start + weighted_filled++;
-                        } else {
-                            index = transparent_start + transparent_filled++;
-                            transparent_reads |= material_scene_reads(material_description, custom_reads);
-                        }
+                        index = weighted
+                          ? weighted_start + weighted_filled++
+                          : transparent_start + transparent_filled++;
+                        transparent_reads |= material_scene_reads(material_description, custom_reads);
                 }
                 bool model_reflected = (candidate_world(candidate).determinant() < 0) != candidate.mirrored;
                 ShaderVariant fragment = list == DrawList.GBUFFER
                   ? gbuffer_fragment(material_description)
                   : material_fragment(
                       material:     material_description,
-                      shadow_flags: rt_shadow_flags(renderer, record.desc.ray_tracing.shadows),
+                      shadow_flags: shadow_flags,
                       weighted:     weighted,
                   );
                 items[index] = {
@@ -2319,7 +2326,8 @@ fn gpu::PipelineHandle? pipeline_for(
     ShaderRes* published = resolve_shader(renderer, material.custom.shader)!;
     if (vertex.shader == BILLBOARD_VERTEX && published.desc.vertex.shaded.len) return PIPELINE_REJECTED~;
     key.custom = { .vertex = published.desc.vertex.shaded.len > 0, .fragment = true };
-    key.fragment = custom_fragment_variant(&published.desc, shadow_flags);
+    uint weighted_flag = weighted ? shader::SHADER_FLAG_WEIGHTED_BLEND : 0;
+    key.fragment = custom_fragment_variant(&published.desc, shadow_flags | weighted_flag);
     if (key.custom.vertex) key.vertex = { .shader = MESH, .flags = vertex.flags & shader::SHADER_FLAG_INSTANCED };
     return custom_pipeline(renderer, published, key);
 }

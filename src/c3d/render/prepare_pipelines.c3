@@ -12,7 +12,7 @@ import std::hash::fnv32a;
 import std::math;
 import std::time::clock;
 
-const uint PREPARE_SHADER_STAGE_COUNT @private = 10; // every owned ShaderDesc byte array; spans check time between copies
+const uint PREPARE_SHADER_STAGE_COUNT @private = 13; // one per ShaderDesc byte array; spans check time between copies
 
 enum PreparePipelineKind @private {
     CACHE,
@@ -116,6 +116,9 @@ fn char[]* prepare_shader_stage(asset::ShaderDesc* desc, uint stage) @private {
         case 7: return &desc.vertex.instanced_depth;
         case 8: return &desc.vertex.velocity;
         case 9: return &desc.vertex.instanced_velocity;
+        case 10: return &desc.weighted_fragment.shaded;
+        case 11: return &desc.weighted_fragment.traced.hardware;
+        case 12: return &desc.weighted_fragment.traced.software;
         default: unreachable("invalid shader stage cursor");
     }
 }

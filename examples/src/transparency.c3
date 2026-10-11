@@ -12,7 +12,10 @@ import c3d::maths;
 import c3d::platform;
 import c3d::render;
 import c3d::scene;
+import c3d::shader;
+import c3d::shader::compile;
 
+const char[*] GLOW_FRAGMENT_SOURCE @local = $embed("../shaders/custom/glow.frag.glsl");
 const float ORBIT_RADIANS_PER_PIXEL @local = 0.005f;
 const float ORBIT_PITCH_LIMIT @local = 1.5f; // just short of the poles, where the up vector degenerates
 const float ORBIT_ZOOM_STEP @local = 0.9f;
@@ -44,6 +47,14 @@ const float BATCH_PANEL_OFFSET @local = 0.7f; // panels sit this far in front of
 const Vec4 BATCH_COLOR @local = { 0.2f, 0.8f, 0.35f, 0.5f };
 const Vec4 SWEEP_COLOR @local = { 1, 0.6f, 0.1f, 0.6f };
 const float SWEEP_AMPLITUDE @local = 0.8f;
+const Vec3 GLOW_OFFSET @local = { 0, 0.2f, 0.15f }; // off the quads' shared axis, so the planes meet apart
+const Vec3 GLOW_QUAD_SCALE @local = { 1.3f, 1, 1.3f };
+const Vec4 GLOW_COLOR @local = { 0.95f, 0.85f, 0.2f, 0.6f };
+
+struct GlowParams @local {
+    Vec4 color;
+}
+$assert GlowParams::size == 16;
 
 struct Orbit @local {
     Vec3  target;
@@ -94,6 +105,31 @@ fn Material blended_material(Vec4 color) @local {
     common.alpha_mode = AlphaMode.BLEND;
     common.double_sided = true;
     return material::basic({ .color = color }, common);
+}
+
+fn char[]? compile_glow_stage(String[] defines = {}) @local {
+    String log;
+    char[]? spirv = compile::compile_glsl(
+        allocator:  tmem,
+        source:     (String)GLOW_FRAGMENT_SOURCE[..],
+        stage:      ShaderStage.FRAGMENT,
+        defines:    defines,
+        debug_name: "glow",
+        log:        &log,
+    );
+    if (log.len) io::printfn("%s", log);
+    return spirv;
+}
+
+fn ShaderId? add_glow_shader(AssetStore* assets) @local {
+    @pool() {
+        ShaderDesc desc = {
+            .fragment          = compile_glow_stage()!,
+            .weighted_fragment = { .shaded = compile_glow_stage({ "WEIGHTED_BLEND" })! },
+            .param_block_size  = GlowParams::size,
+        };
+        return assets.add_shader(&desc, "shader/transparency/glow");
+    };
 }
 
 fn Quaternionf upright_plane_rotation(float yaw) @local {
@@ -150,6 +186,16 @@ fn int main() {
     MaterialId cross_second = assets.add_material(blended_material(CROSS_SECOND_COLOR), "transparency/cross_second")!!;
     MaterialId batch_material = assets.add_material(blended_material(BATCH_COLOR), "transparency/batch")!!;
     MaterialId sweep_material = assets.add_material(blended_material(SWEEP_COLOR), "transparency/sweep")!!;
+    ShaderId glow_shader = add_glow_shader(&assets)!!;
+    MaterialCommon glow_common = material::MATERIAL_COMMON_DEFAULT;
+    glow_common.alpha_mode = AlphaMode.BLEND;
+    glow_common.double_sided = true;
+    glow_common.depth_write = false;
+    GlowParams glow_params = { .color = GLOW_COLOR };
+    MaterialId glow_material = assets.add_material(
+        material::custom(glow_shader, material::@as_bytes(glow_params), common: glow_common),
+        "transparency/glow",
+    )!!;
 
     Scene scene = scene::create_scene(mem, scene::default_scene_desc());
     defer scene::destroy_scene(&scene);
@@ -183,6 +229,11 @@ fn int main() {
         quad.local.rotation = upright_plane_rotation(angle);
         quad.local.scale = CROSS_QUAD_SCALE;
     }
+
+    Node* glow_quad = scene.add_mesh(plane, glow_material, name: "glow quad")!!;
+    glow_quad.local.position = CROSS_POSITION + GLOW_OFFSET;
+    glow_quad.local.rotation = upright_plane_rotation(0);
+    glow_quad.local.scale = GLOW_QUAD_SCALE;
 
     Transform[2] panels = {
         {

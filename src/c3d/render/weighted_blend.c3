@@ -8,14 +8,23 @@ import gpu;
 const gpu::Format WEIGHTED_ACCUM_FORMAT @private = gpu::Format.RGBA16_FLOAT; // 8 B per pixel
 const gpu::Format WEIGHTED_REVEALAGE_FORMAT @private = gpu::Format.R16_FLOAT; // 2 B per pixel
 
-fn bool joins_weighted_pass(Material* material, TransparencyMode mode) @private {
+fn bool? joins_weighted_pass(
+    Renderer* renderer,
+    Material* material,
+    TransparencyMode mode,
+    uint shadow_flags,
+) @private {
     if (mode != TransparencyMode.WEIGHTED) return false;
     if (material.kind == MaterialKind.PHYSICAL && material.physical.transmission > 0) return false;
 
     MaterialCommon* common = &material.common;
-    return material.kind != MaterialKind.CUSTOM
-      && common.alpha_mode == AlphaMode.BLEND
-      && common.blend_mode == BlendMode.PREMULTIPLIED_ALPHA;
+    if (common.alpha_mode != AlphaMode.BLEND || common.blend_mode != BlendMode.PREMULTIPLIED_ALPHA) return false;
+    if (material.kind != MaterialKind.CUSTOM) return true;
+
+    ShaderId custom_shader = material.custom.shader;
+    if (!renderer.assets.shaders.is_live(custom_shader)) return false;
+    ShaderRes* published = resolve_shader(renderer, custom_shader)!;
+    return custom_fragment_form(&published.desc, shadow_flags | shader::SHADER_FLAG_WEIGHTED_BLEND).len > 0;
 }
 
 fn void? acquire_weighted_targets(Renderer* renderer, ViewRecord* record) @private {

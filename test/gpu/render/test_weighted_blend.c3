@@ -8,8 +8,35 @@ import c3d::material;
 import c3d::maths;
 import c3d::render @public;
 import c3d::scene;
+import c3d::shader;
+import c3d::shader::compile;
 import gpu;
 import std::math;
+
+const char[*] WEIGHTED_STAGE_FRAGMENT @private = $embed("weighted_stage.frag.glsl");
+
+struct WeightedStageParams @private {
+    Vec4 color;
+}
+$assert WeightedStageParams::size == 16;
+
+fn char[]? compile_weighted_stage(String[] defines = {}) @private {
+    return compile::compile_glsl(
+        allocator: tmem,
+        source:    (String)WEIGHTED_STAGE_FRAGMENT[..],
+        stage:     ShaderStage.FRAGMENT,
+        defines:   defines,
+    );
+}
+
+fn uint count_weighted_stage_keys(Renderer* renderer, ShaderId shader, uint color_count, uint fragment_flags) @private {
+    uint found;
+    renderer.pipelines.pipelines.@each(; PipelineKey key, gpu::PipelineHandle pipeline) {
+        bool same_shader = c3d::same_id(key.shader, shader);
+        if (same_shader && key.color_count == color_count && key.fragment.flags == fragment_flags) found++;
+    };
+    return found;
+}
 
 fn void test_weighted_view_allocates_its_targets_and_records_the_composite() @test {
     const uint VIEW_SIZE = 64;
@@ -197,5 +224,196 @@ fn void test_transparency_mode_toggle_reuses_targets_and_pipelines_with_mirrored
         bool validation_error = entry.category.backend && entry.category.validation
             && entry.severity == gpu::DebugMessageSeverity.ERROR;
         assert(!validation_error);
+    }
+}
+
+fn void test_custom_stages_join_the_weighted_pass_only_with_a_weighted_form() @test {
+    const uint VIEW_SIZE = 64;
+    const float QUAD_YAW = 0.6f;
+    const uint WEIGHTED_COLOR_TARGETS = 2;
+    const uint SORTED_COLOR_TARGETS = 1;
+
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    Scene scene = scene::create_scene(mem, scene::default_scene_desc());
+    defer scene::destroy_scene(&scene);
+    Renderer renderer = render::create_renderer(
+        allocator: mem,
+        assets:    &assets,
+        desc:      { .validation = true, .application_name = "render_acceptance" },
+    )!!;
+    defer render::destroy_renderer(&renderer);
+
+    uint weighted = shader::SHADER_FLAG_WEIGHTED_BLEND;
+    uint traced = shader::SHADER_FLAG_RT_SHADOWS;
+    if (!renderer.caps.ray_queries.enabled) traced |= shader::SHADER_FLAG_SCENE_TRACE_BVH;
+
+    ShaderId with_forms;
+    ShaderId shaded_only;
+    ShaderId without_forms;
+    @pool() {
+        String[4] walked_defines = { "DEPTH_READ", "WEIGHTED_BLEND", "RT_SHADOWS", "SCENE_TRACE_BVH" };
+        char[] plain = compile_weighted_stage({ "DEPTH_READ" })!!;
+        char[] shaded = compile_weighted_stage({ "DEPTH_READ", "WEIGHTED_BLEND" })!!;
+        asset::ShaderDesc complete = {
+            .fragment          = plain,
+            .weighted_fragment = {
+                .shaded = shaded,
+                .traced = {
+                    .hardware = compile_weighted_stage({ "DEPTH_READ", "WEIGHTED_BLEND", "RT_SHADOWS" })!!,
+                    .software = compile_weighted_stage(walked_defines[..])!!,
+                },
+            },
+            .param_block_size  = WeightedStageParams::size,
+            .scene_reads       = { .depth },
+        };
+        with_forms = assets.add_shader(&complete)!!;
+        asset::ShaderDesc plain_and_shaded = {
+            .fragment          = plain,
+            .weighted_fragment = { .shaded = shaded },
+            .param_block_size  = WeightedStageParams::size,
+            .scene_reads       = { .depth },
+        };
+        shaded_only = assets.add_shader(&plain_and_shaded)!!;
+        asset::ShaderDesc sorted_only = {
+            .fragment         = compile_weighted_stage()!!,
+            .param_block_size = WeightedStageParams::size,
+        };
+        without_forms = assets.add_shader(&sorted_only)!!;
+    };
+
+    GeometryId plane;
+    @pool() {
+        Geometry plane_geometry = geometry::plane(tmem, 1, 1);
+        plane = assets.add_geometry(&plane_geometry)!!;
+    };
+    MaterialCommon opaque_common = material::MATERIAL_COMMON_DEFAULT;
+    opaque_common.double_sided = true;
+    MaterialCommon blend_common = opaque_common;
+    blend_common.alpha_mode = AlphaMode.BLEND;
+    blend_common.depth_write = false;
+    MaterialId backdrop = assets.add_material(material::basic({ .color = { 0.1f, 0.2f, 0.3f, 1 } }, opaque_common))!!;
+    ShaderId[3] shaders = { with_forms, shaded_only, without_forms };
+    Vec4[3] colors = { { 0.9f, 0.2f, 0.1f, 0.5f }, { 0.2f, 0.8f, 0.3f, 0.5f }, { 0.1f, 0.3f, 0.9f, 0.5f } };
+    MaterialId[3] materials;
+    foreach (index, shader_id : shaders) {
+        WeightedStageParams params = { .color = colors[index] };
+        materials[index] = assets.add_material(material::custom(
+            shader:      shader_id,
+            param_block: material::@as_bytes(params),
+            common:      blend_common,
+        ))!!;
+    }
+
+    Quaternionf upright = maths::look_rotation({ 0, 1, 0 }, { 0, 0, 1 });
+    Node* backdrop_node = scene.add_mesh(plane, backdrop)!!;
+    backdrop_node.local.position = { 0, 0, -3 };
+    backdrop_node.local.rotation = upright;
+    backdrop_node.local.scale = { 4, 4, 4 };
+    foreach (index, material_id : materials) {
+        float yaw = index % 2 == 0 ? QUAD_YAW : -QUAD_YAW;
+        Node* quad = scene.add_mesh(plane, material_id)!!;
+        quad.local.position = { ((float)index - 1) * 0.5f, 0, 0 };
+        quad.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, yaw) * upright;
+    }
+    Node* camera_node = scene.add_camera(camera::orthographic(2, 0.1f, 100))!!;
+    camera_node.local.position = { 0, 0, 3 };
+    scene.update_world();
+
+    ViewId[3] views;
+    ViewDesc view_desc;
+    foreach (index, &view : views) {
+        RenderTargetId target = render::create_render_target(
+            renderer: &renderer,
+            desc:     render::render_target_desc(VIEW_SIZE, VIEW_SIZE),
+        )!!;
+        view_desc = render::texture_view_desc(target);
+        view_desc.transparency = index == 0 ? TransparencyMode.SORTED : TransparencyMode.WEIGHTED;
+        view_desc.ray_tracing.shadows = index == 2;
+        *view = render::create_view(&renderer, view_desc)!!;
+    }
+
+    uint[3] draws;
+    uint[3] snapshots;
+    for (uint frame = 0; frame < 2; frame++) {
+        renderer.begin_frame()!!;
+        foreach (index, view : views) {
+            uint draws_before = renderer.stats.draws;
+            uint snapshots_before = renderer.stats.scene_snapshots;
+            renderer.render_view(&scene, camera_node, view)!!;
+            renderer.finish_view(view)!!;
+            draws[index] = renderer.stats.draws - draws_before;
+            snapshots[index] = renderer.stats.scene_snapshots - snapshots_before;
+        }
+        renderer.end_frame()!!;
+    }
+
+    // Every view draws every stage; a weighted view with accumulated draws adds the composite.
+    assert(draws[1] == draws[0] + 1 && draws[2] == draws[0] + 1);
+    // The depth snapshot is taken ahead of the accumulation as ahead of the sorted draws.
+    assert(snapshots[0] > 0 && snapshots[1] == snapshots[0] && snapshots[2] == snapshots[0]);
+    assert(!renderer.views.get(views[0]).weighted_accum.texture.is_valid());
+    assert(renderer.views.get(views[1]).weighted_accum.texture.is_valid());
+    assert(renderer.views.get(views[2]).weighted_accum.texture.is_valid());
+
+    // A shader's weighted and sorted pipelines coexist; each stage owns the pipelines its forms allow.
+    assert(count_weighted_stage_keys(&renderer, with_forms, SORTED_COLOR_TARGETS, 0) == 1);
+    assert(count_weighted_stage_keys(&renderer, with_forms, WEIGHTED_COLOR_TARGETS, weighted) == 1);
+    assert(count_weighted_stage_keys(&renderer, with_forms, WEIGHTED_COLOR_TARGETS, weighted | traced) == 1);
+    assert(count_weighted_stage_keys(&renderer, shaded_only, SORTED_COLOR_TARGETS, 0) == 1);
+    assert(count_weighted_stage_keys(&renderer, shaded_only, WEIGHTED_COLOR_TARGETS, weighted) == 1);
+    assert(count_weighted_stage_keys(&renderer, shaded_only, WEIGHTED_COLOR_TARGETS, weighted | traced) == 0);
+    assert(count_weighted_stage_keys(&renderer, without_forms, SORTED_COLOR_TARGETS, 0) == 1);
+    assert(count_weighted_stage_keys(&renderer, without_forms, WEIGHTED_COLOR_TARGETS, weighted) == 0);
+
+    // A replacement without weighted forms retires the weighted pipelines; the draw falls back to sorted.
+    asset::ShaderDesc sorted_only = {
+        .fragment         = assets.shader(with_forms).desc.fragment,
+        .param_block_size = WeightedStageParams::size,
+        .scene_reads      = { .depth },
+    };
+    assets.replace_shader(with_forms, &sorted_only)!!;
+    ViewId[2] weighted_views = { views[1], views[2] };
+    uint[2] settled_draws;
+    renderer.begin_frame()!!;
+    foreach (index, view : weighted_views) {
+        uint draws_before = renderer.stats.draws;
+        renderer.render_view(&scene, camera_node, view)!!;
+        renderer.finish_view(view)!!;
+        settled_draws[index] = renderer.stats.draws - draws_before;
+    }
+    renderer.end_frame()!!;
+    assert(count_weighted_stage_keys(&renderer, with_forms, WEIGHTED_COLOR_TARGETS, weighted) == 0);
+    assert(count_weighted_stage_keys(&renderer, with_forms, WEIGHTED_COLOR_TARGETS, weighted | traced) == 0);
+    assert(count_weighted_stage_keys(&renderer, with_forms, SORTED_COLOR_TARGETS, 0) == 1);
+
+    // A rejected replacement keeps its published forms: the draw is routed by them, not by the store's newer forms.
+    @pool() {
+        asset::ShaderDesc rejected = {
+            .fragment          = compile_weighted_stage({ "BROKEN_PUSH" })!!,
+            .weighted_fragment = { .shaded = compile_weighted_stage({ "WEIGHTED_BLEND" })!! },
+            .param_block_size  = WeightedStageParams::size,
+        };
+        assets.replace_shader(without_forms, &rejected)!!;
+    };
+    renderer.begin_frame()!!;
+    foreach (index, view : weighted_views) {
+        uint draws_before = renderer.stats.draws;
+        renderer.render_view(&scene, camera_node, view)!!;
+        renderer.finish_view(view)!!;
+        assert(renderer.stats.draws - draws_before == settled_draws[index]);
+    }
+    renderer.end_frame()!!;
+    assert(renderer.stats.shader_rejections > 0);
+    assert(count_weighted_stage_keys(&renderer, without_forms, SORTED_COLOR_TARGETS, 0) == 1);
+    assert(count_weighted_stage_keys(&renderer, without_forms, WEIGHTED_COLOR_TARGETS, weighted) == 0);
+
+    render::wait_frames(&renderer)!!;
+    DebugEntry[render::DEBUG_LOG_ENTRIES] entries;
+    usz count = renderer.log.recent(entries[..]);
+    foreach (entry : entries[:count]) {
+        if (!entry.category.backend || !entry.category.validation) continue;
+        assert(entry.severity != gpu::DebugMessageSeverity.ERROR);
+        assert(entry.severity != gpu::DebugMessageSeverity.WARNING);
     }
 }

@@ -292,12 +292,14 @@ fn PipelineKey compute_pipeline_key(ComputeShaderId shader, uint revision) {
 <*
  Fragment variant a custom forward key takes on a view.
  @param [&in] stages : "Record whose traced forms decide the variant."
- @param shadow_flags : "Traced-shadow flags of the view; zero when it traces none."
+ @param fragment_flags : "Traced-shadow flags of the view, plus WEIGHTED_BLEND in a weighted draw."
  @pure
 *>
-fn ShaderVariant custom_fragment_variant(asset::ShaderDesc* stages, uint shadow_flags) {
-    if ((custom_fragment_form(stages, shadow_flags) @pure).len == 0) return {};
-    return { .flags = shadow_flags };
+fn ShaderVariant custom_fragment_variant(asset::ShaderDesc* stages, uint fragment_flags) {
+    // A weighted draw never falls back to the plain form: it writes two attachments.
+    bool weighted = (fragment_flags & shader::SHADER_FLAG_WEIGHTED_BLEND) != 0;
+    if (!weighted && (custom_fragment_form(stages, fragment_flags) @pure).len == 0) return {};
+    return { .flags = fragment_flags };
 }
 
 <*
@@ -313,9 +315,12 @@ fn CustomStageSource custom_stage_source(asset::ShaderDesc* stages, PipelineKey 
 }
 
 fn char[] custom_fragment_form(asset::ShaderDesc* stages, uint fragment_flags) @private {
-    if ((fragment_flags & shader::SHADER_FLAG_RT_SHADOWS) == 0) return stages.fragment;
-    if (fragment_flags & shader::SHADER_FLAG_SCENE_TRACE_BVH) return stages.traced_fragment.software;
-    return stages.traced_fragment.hardware;
+    bool weighted = (fragment_flags & shader::SHADER_FLAG_WEIGHTED_BLEND) != 0;
+    char[] plain = weighted ? stages.weighted_fragment.shaded : stages.fragment;
+    asset::TracedFragment* traced = weighted ? &stages.weighted_fragment.traced : &stages.traced_fragment;
+    if ((fragment_flags & shader::SHADER_FLAG_RT_SHADOWS) == 0) return plain;
+    if (fragment_flags & shader::SHADER_FLAG_SCENE_TRACE_BVH) return traced.software;
+    return traced.hardware;
 }
 
 fn char[] custom_vertex_form(asset::CustomVertex* vertex, uint flags) @private {

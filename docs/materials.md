@@ -109,7 +109,10 @@ Participants, in a `WEIGHTED` view:
 
 - Basic, Standard, Physical (without transmission) and Toon `BLEND` meshes with `PREMULTIPLIED_ALPHA`;
 - blended instanced batches, and the blended parts of a [LOD group](lod.md);
-- [billboard batches](billboards.md), which are always blended, with a built-in material.
+- [billboard batches](billboards.md), which are always blended, with a built-in material;
+- custom `BLEND` stages with `PREMULTIPLIED_ALPHA`, including billboard batches with a custom fragment and
+  the [particle](particles.md) effects, when their shader supplies the weighted form the view needs
+  ([custom shaders](custom_shaders.md#weighted-transparency)).
 
 Not participants:
 
@@ -119,9 +122,8 @@ Not participants:
 - Transmissive Physical draws and custom scene readers stay in the sorted scene-read list in both
   modes, drawn before any weighted surface; a blended draw that reads the scene sees it
   without any blended surface.
-- Every custom `BLEND` material, including billboard batches with custom fragments and the particle
-  effects, stays on the sorted path after the composite, whatever its stage writes. Only the
-  built-in stages have a weighted form; this is a current limit.
+- Custom `BLEND` materials whose shader lacks the weighted form the view needs stay on the sorted
+  path after the composite.
 
 A `WEIGHTED` view with no participating draw records exactly the commands of a `SORTED` one and
 allocates nothing.
@@ -173,7 +175,9 @@ Limits of `WEIGHTED` that follow from the format:
   view depth of 200 or more, and less nearer. It adds no reliable color, because the division then
   falls back to the epsilon; it still dims what lies behind it by its coverage, which the revealage
   image holds separately.
-- **Custom stages.** Every custom `BLEND` stage is sorted, after the composite, in a `WEIGHTED` view.
+- **Custom stages.** A custom stage composes correctly only if its weighted form writes through
+  `write_blend_output`; nothing checks it at runtime. One without a weighted form is sorted, after
+  the composite.
 
 Fog applies per fragment before accumulation, as in `SORTED`. Blended batches skip the
 per-instance sort in a `WEIGHTED` view, because order no longer matters; `ADDITIVE` batches
@@ -185,7 +189,7 @@ first frame with a participating draw. They are released with the view, dropped 
 re-created lazily, and kept by a reconfiguration at the same extent, as `scene_color` is. Nothing
 is allocated per frame. Each `WEIGHTED` frame with participating draws adds one render pass and one
 fullscreen draw, counted in `Stats.draws`. A participating draw uses the `WEIGHTED_BLEND` form of its
-built-in stage, one more compiled stage for each plain, `RT_SHADOWS` and `RT_SHADOWS` with
+stage, one more compiled stage for each plain, `RT_SHADOWS` and `RT_SHADOWS` with
 `SCENE_TRACE_BVH` form, and a pipeline keyed by the two attachment formats, so the first `WEIGHTED` frame
 creates them. `SORTED` pipelines are unchanged.
 

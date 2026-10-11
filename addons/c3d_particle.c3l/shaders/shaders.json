@@ -1,8 +1,9 @@
 {
   "module": "c3d::particle",
   "output": "src/shaders.c3",
-  "flags": [],
+  "flags": ["WEIGHTED_BLEND"],
   "entries": [
-    {"shader": "particle_fragment", "source": "particle.frag.glsl", "stage": "frag", "defines": []}
+    {"shader": "particle_fragment", "source": "particle.frag.glsl", "stage": "frag", "defines": []},
+    {"shader": "particle_fragment", "source": "particle.frag.glsl", "stage": "frag", "defines": ["WEIGHTED_BLEND"]}
   ]
 }

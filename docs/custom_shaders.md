@@ -17,7 +17,7 @@ ShaderDesc desc = {
 ShaderId shader = assets.add_shader(&desc, "pulse")!;
 ```
 
-Every byte array is copied. `fragment` is required. `vertex` is optional; when present both forms are required: `shaded` for the forward pass and `depth` for the shadow atlas, so a deformation is applied to the caster too. `instanced_shaded` and `instanced_depth` are the same pair compiled with `INSTANCED`, for [instanced batches](instancing.md); they are optional and need the plain pair. `velocity` is the source compiled with `VELOCITY` and `instanced_velocity` the source compiled with `VELOCITY` and `INSTANCED`, for the [velocity pass](#velocity-form); both are optional, `velocity` needs the plain pair, and `instanced_velocity` needs the instanced pair and `velocity`. `traced_fragment.hardware` and `traced_fragment.software` are the forward stage compiled for views that trace shadows ([traced shadows](#traced-shadows)); either may be empty or supplied alone, and neither is validated. `add_shader` and `replace_shader` fault `INVALID_ARGUMENT` on an empty fragment, a half pair, an instanced or velocity form without the forms it needs, or a `gbuffer` stage with nonzero [`scene_reads`](#scene-reads). `param_block_size` is the byte size of the payload the shader reads; zero means none, and a shader whose size is zero must not read `parameters` (the address is zero). `asset::copy_shader_desc` and `asset::free_shader_desc` deep-copy and free a desc with any allocator.
+Every byte array is copied. `fragment` is required. `vertex` is optional; when present both forms are required: `shaded` for the forward pass and `depth` for the shadow atlas, so a deformation is applied to the caster too. `instanced_shaded` and `instanced_depth` are the same pair compiled with `INSTANCED`, for [instanced batches](instancing.md); they are optional and need the plain pair. `velocity` is the source compiled with `VELOCITY` and `instanced_velocity` the source compiled with `VELOCITY` and `INSTANCED`, for the [velocity pass](#velocity-form); both are optional, `velocity` needs the plain pair, and `instanced_velocity` needs the instanced pair and `velocity`. `traced_fragment.hardware` and `traced_fragment.software` are the forward stage compiled for views that trace shadows ([traced shadows](#traced-shadows)); either may be empty or supplied alone, and neither is validated. `weighted_fragment.shaded`, `weighted_fragment.traced.hardware` and `weighted_fragment.traced.software` are the forward stage compiled with `WEIGHTED_BLEND` for views that compose blended surfaces by weight ([weighted transparency](#weighted-transparency)); each may be empty or supplied alone, and none is validated. `add_shader` and `replace_shader` fault `INVALID_ARGUMENT` on an empty fragment, a half pair, an instanced or velocity form without the forms it needs, or a `gbuffer` stage with nonzero [`scene_reads`](#scene-reads). `param_block_size` is the byte size of the payload the shader reads; zero means none, and a shader whose size is zero must not read `parameters` (the address is zero). `asset::copy_shader_desc` and `asset::free_shader_desc` deep-copy and free a desc with any allocator.
 
 The SPIR-V can come from anywhere: `$embed`ed `.spv` files, a build step, or the in-process compiler below.
 
@@ -200,6 +200,7 @@ A custom or package stage starts with the prelude, `generated/shader_abi.glsl` (
 | `constants.glsl` | `PI` |
 | `material_uv.glsl` | `custom_slot_present`, `custom_map_uv` |
 | `material_alpha.glsl` | `material_output` |
+| `blend_output.glsl` | `write_blend_output`, the `out_color` output and, under `WEIGHTED_BLEND`, the `out_revealage` output ([weighted transparency](#weighted-transparency)) |
 | `custom_material.glsl` | `sample_custom_map` (both overloads), `custom_reference` |
 | `normal_mapping.glsl` | `decode_normal`, `tangent_normal`, `derivative_normal`, `derivative_tangent`, `surface_tangent_frame` |
 | `noise.glsl` | `interleaved_gradient_noise`, `pcg_hash`, `hash_unit` |
@@ -225,7 +226,7 @@ A custom or package stage starts with the prelude, `generated/shader_abi.glsl` (
 | `mesh_vertex.glsl` | the push block, outputs 0 to 6, `gl_ClipDistance[1]` and `view_clip_distance` (through `view_clip.glsl`), `MeshVertexInput`, `pull_mesh_vertex`, `apply_mesh_deformation`, `write_mesh_outputs` (five arguments in `VELOCITY` forms), `previous_mesh_position` (`VELOCITY`; starts from the view's retained base positions of a [`vertex_motion`](post.md#edited-vertices) mesh), `instance_source`, `instance_bend_weight` and `apply_instance_effects` (`INSTANCED`), `apply_previous_instance_effects` (`VELOCITY` with `INSTANCED`) |
 | `scene_trace.glsl` | as in [Scene tracing](scene_trace.md) |
 
-`shadows.glsl` and `standard_shading.glsl` are probed plain, with `RT_SHADOWS`, and with `RT_SHADOWS` and `SCENE_TRACE_BVH`; `lights.glsl` in fragment and vertex stages; `mesh_vertex.glsl` plain, with `INSTANCED`, `DEPTH_ONLY`, both, `VELOCITY`, and `VELOCITY` with `INSTANCED`; `instance_effects.glsl` in vertex and compute stages; `scene_trace.glsl` in compute with each trace kind.
+`blend_output.glsl` is probed plain and with `WEIGHTED_BLEND`; `shadows.glsl` and `standard_shading.glsl` are probed plain, with `RT_SHADOWS`, and with `RT_SHADOWS` and `SCENE_TRACE_BVH`; `lights.glsl` in fragment and vertex stages; `mesh_vertex.glsl` plain, with `INSTANCED`, `DEPTH_ONLY`, both, `VELOCITY`, and `VELOCITY` with `INSTANCED`; `instance_effects.glsl` in vertex and compute stages; `scene_trace.glsl` in compute with each trace kind.
 
 ### Traced shadows
 
@@ -296,6 +297,40 @@ additive stage uses the material-aware helper to avoid another fog-colour
 contribution over the background. Both helpers use the current view's analytic
 or volumetric fog. Declaring scene reads is required only if the stage also
 samples a scene snapshot, such as depth for soft fading.
+
+## Weighted transparency
+
+A view with `ViewDesc.transparency = WEIGHTED` composes its `PREMULTIPLIED_ALPHA` blended draws without ordering them ([weighted transparency](materials.md#weighted-transparency)). A custom `BLEND` stage takes part when its shader supplies the weighted form the view needs. Without it the draw stays sorted, after the composite, exactly as in a `SORTED` view. `ADDITIVE` stages are never weighted: they draw after the composite with the state and order of a `SORTED` view, and weighted surfaces in front of them do not dim them.
+
+A weighted form is the forward source compiled with the `WEIGHTED_BLEND` define. The stage writes its color through `write_blend_output` from the public `blend_output.glsl` and declares no `out_color` of its own; the include declares the outputs:
+
+```glsl
+#include "custom_material.glsl"
+#include "blend_output.glsl"
+#include "fog.glsl"
+
+// ... inputs and parameters ...
+
+void main() {
+    // ... color, alpha ...
+    vec3 fogged = apply_material_fog(frame, v_world_pos, color.rgb, material.flags);
+    write_blend_output(frame, material_output(fogged, color.a, material.flags), v_world_pos);
+}
+```
+
+`write_blend_output(frame, premultiplied, world_position)` takes the premultiplied color `material_output` returns and the fragment's world position, which gives the view-space depth the weight uses. Without `WEIGHTED_BLEND` it writes `out_color` unchanged, so one source serves the plain and the weighted form. With it, the include also declares `out_revealage` at location 1 and writes the weighted color and the coverage. A stage composes correctly only if it writes through the helper; nothing checks at runtime what a weighted form writes, and a form that declares and writes its own `out_color` leaves the second attachment unwritten and composes wrongly.
+
+The forms, by what the view traces:
+
+| View | Form drawn | Compiled with |
+| --- | --- | --- |
+| traces no shadows | `weighted_fragment.shaded` | `WEIGHTED_BLEND` |
+| traces shadows, renderer with ray queries | `weighted_fragment.traced.hardware` | `WEIGHTED_BLEND`, `RT_SHADOWS` |
+| traces shadows, renderer without them | `weighted_fragment.traced.software` | `WEIGHTED_BLEND`, `RT_SHADOWS`, `SCENE_TRACE_BVH` |
+
+The traced forms follow [traced shadows](#traced-shadows), with one difference: a missing form does not fall back to another. A draw joins the accumulation only when the form its view needs exists, so a shader that supplies `shaded` alone is weighted in views that trace no shadows and sorted in views that do, where its `traced_fragment` form, or `fragment`, still draws. A stage that reads no shadows supplies the same source for the traced forms. The pipelines are keyed by the shader id, its revision, the form and the two accumulation formats, so a shader's weighted and sorted pipelines coexist and a view that switches mode creates nothing new once both have drawn. A replacement retires them together, and one that drops a form retires that form's pipelines; the next frame draws the draw sorted.
+
+Scene reads work as for a sorted blended stage. Their snapshots are taken before the accumulation, so the stage sees the opaque scene without any weighted surface, and a stage that reads depth for a soft fade measures the gap to opaque geometry.
 
 ## Scene reads
 
