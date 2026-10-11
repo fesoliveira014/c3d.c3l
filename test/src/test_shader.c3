@@ -145,7 +145,7 @@ fn void test_software_trace_variants_declare_no_ray_capability() @test {
         assert(!features.ray_capability && !features.ray_extension);
         software_count++;
     }
-    assert(software_count == 9);
+    assert(software_count == 12);
 }
 
 // glslang names a function by its signature, so the name up to the parenthesis is the function.
@@ -162,6 +162,33 @@ fn bool spirv_names_function(char[] spirv, String function) @local {
         word += length;
     }
     return false;
+}
+
+fn bool spirv_names(char[] spirv, String wanted) @local {
+    usz word_count = spirv.len / 4;
+    usz word = SPIRV_HEADER_WORDS;
+    while (word < word_count) {
+        uint instruction = spirv_word(spirv, word);
+        if ((instruction & 0xFFFF) == SPIRV_OP_NAME) {
+            String name = ((ZString)&spirv[(word + 2) * 4]).str_view();
+            if (name == wanted) return true;
+        }
+        word += (usz)(instruction >> 16);
+    }
+    return false;
+}
+
+fn void test_only_weighted_forms_write_the_revealage_output() @test {
+    usz weighted_count;
+    foreach (&entry : shader::SHADER_ENTRIES) {
+        ShaderName name = entry.variant.shader;
+        if (name != BASIC && name != STANDARD && name != PHYSICAL && name != TOON) continue;
+
+        bool weighted = (entry.variant.flags & shader::SHADER_FLAG_WEIGHTED_BLEND) != 0;
+        assert(spirv_names(entry.spirv, "out_revealage") == weighted);
+        if (weighted) weighted_count++;
+    }
+    assert(weighted_count == 10);
 }
 
 fn void test_builtin_standard_shades_through_the_public_include() @test {

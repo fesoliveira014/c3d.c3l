@@ -350,7 +350,6 @@ void main() {
     if (blended) color = apply_material_fog(frame, v_world_pos, color, material.standard.flags);
     write_blend_output(
         frame,
-        draw,
         material_output(color, material_sample.base_color.a, material.standard.flags),
         v_world_pos);
 }

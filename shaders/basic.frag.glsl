@@ -30,5 +30,5 @@ void main() {
     if ((material.flags & MATERIAL_ALPHA_MASK) != 0u && color.a < material.alpha_cutoff) discard;
     vec3 fogged = (material.flags & MATERIAL_ALPHA_BLEND) != 0u
         ? apply_material_fog(frame, v_world_pos, color.rgb, material.flags) : color.rgb;
-    write_blend_output(frame, draw, material_output(fogged, color.a, material.flags), v_world_pos);
+    write_blend_output(frame, material_output(fogged, color.a, material.flags), v_world_pos);
 }

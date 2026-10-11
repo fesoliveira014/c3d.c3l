@@ -61,7 +61,6 @@ const uint DRAW_SWAY = 8u;
 const uint DRAW_DISTANCE_FADE = 16u;
 const uint DRAW_SWAY_VERTEX_ALPHA = 32u;
 const uint DRAW_VERTEX_HISTORY_INVALID = 64u;
-const uint DRAW_WEIGHTED_BLEND = 128u;
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1u;
 const uint SSGI_FLAG_GBUFFER_NORMALS = 1u;
 const uint SSGI_FLAG_HISTORY_VALID = 2u;

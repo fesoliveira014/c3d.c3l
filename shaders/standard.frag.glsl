@@ -61,7 +61,6 @@ void main() {
     }
     write_blend_output(
         frame,
-        draw,
         material_output(color, material_sample.base_color.a, material.flags),
         v_world_pos);
 }

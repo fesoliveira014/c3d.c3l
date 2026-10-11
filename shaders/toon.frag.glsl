@@ -66,5 +66,5 @@ void main() {
     if ((material.flags & MATERIAL_ALPHA_BLEND) != 0u) {
         color = apply_material_fog(frame, v_world_pos, color, material.flags);
     }
-    write_blend_output(frame, draw, material_output(color, base_color.a, material.flags), v_world_pos);
+    write_blend_output(frame, material_output(color, base_color.a, material.flags), v_world_pos);
 }

@@ -430,7 +430,11 @@ fn void? record_raster_view(
                 bool model_reflected = (candidate_world(candidate).determinant() < 0) != candidate.mirrored;
                 ShaderVariant fragment = list == DrawList.GBUFFER
                   ? gbuffer_fragment(material_description)
-                  : material_fragment(material_description, rt_shadow_flags(renderer, record.desc.ray_tracing.shadows));
+                  : material_fragment(
+                      material:     material_description,
+                      shadow_flags: rt_shadow_flags(renderer, record.desc.ray_tracing.shadows),
+                      weighted:     weighted,
+                  );
                 items[index] = {
                     .sort_key  = draw_sort_key(
                         vertex:    vertex,
@@ -811,7 +815,6 @@ fn void? record_raster_view(
                       | ((ambient_occlusion || screen_space_gi) && group_index == 0
                         ? shader::DRAW_SCREEN_SPACE_TERMS : 0)
                       | batch_effect_flags(item.candidate)
-                      | (item.weighted ? shader::DRAW_WEIGHTED_BLEND : 0)
                       | (vertices == VertexHistory.INVALID || crowd_history_invalid
                         ? shader::DRAW_VERTEX_HISTORY_INVALID : 0),
                     sheen_lut:     sheen ? renderer.environment_state.sheen_lut.view.index : (gpu::TextureIndex)0,
@@ -2260,12 +2263,13 @@ fn Material* material_data(Renderer* renderer, MaterialRes* material) @private {
     return &renderer.assets.material(material.asset).data;
 }
 
-fn ShaderVariant material_fragment(Material* material, uint shadow_flags) @local {
+fn ShaderVariant material_fragment(Material* material, uint shadow_flags, bool weighted = false) @local {
+    uint weighted_flag = weighted ? shader::SHADER_FLAG_WEIGHTED_BLEND : 0;
     switch (material.kind) {
-        case BASIC: return { .shader = BASIC };
-        case STANDARD: return { .shader = STANDARD, .flags = shadow_flags };
-        case TOON: return { .shader = TOON, .flags = shadow_flags };
-        case PHYSICAL: return { .shader = PHYSICAL, .flags = shadow_flags };
+        case BASIC: return { .shader = BASIC, .flags = weighted_flag };
+        case STANDARD: return { .shader = STANDARD, .flags = shadow_flags | weighted_flag };
+        case TOON: return { .shader = TOON, .flags = shadow_flags | weighted_flag };
+        case PHYSICAL: return { .shader = PHYSICAL, .flags = shadow_flags | weighted_flag };
         case CUSTOM: return { .flags = shadow_flags };
     }
 }
@@ -2280,7 +2284,8 @@ fn PipelineKey forward_pipeline_key(
     PipelineKey key = {
         .vertex = vertex,
         .fragment = vertex.shader == IMPOSTOR_VERTEX
-            ? (ShaderVariant){ .shader = IMPOSTOR_FORWARD, .flags = shadow_flags } : material_fragment(material, shadow_flags),
+            ? (ShaderVariant){ .shader = IMPOSTOR_FORWARD, .flags = shadow_flags }
+            : material_fragment(material, shadow_flags, weighted),
         .color_formats = { [0] = HDR_FORMAT },
         .color_count = 1,
         .depth_format = DEPTH_FORMAT,

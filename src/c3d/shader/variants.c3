@@ -134,6 +134,11 @@ const uint SHADER_FLAG_RT_SHADOWS = 1 << 7;
 *>
 const uint SHADER_FLAG_SCENE_TRACE_BVH = 1 << 8;
 
+<*
+ Flag bit for WEIGHTED_BLEND.
+*>
+const uint SHADER_FLAG_WEIGHTED_BLEND = 1 << 9;
+
 const char[*] FULLSCREEN_SPIRV @private = $embed("../../../shaders/spv/fullscreen.spv");
 const char[*] GRADIENT_SPIRV @private = $embed("../../../shaders/spv/gradient.spv");
 const char[*] COMPOSITE_SPIRV @private = $embed("../../../shaders/spv/composite.spv");
@@ -148,6 +153,7 @@ const char[*] IMPOSTOR_GBUFFER_SPIRV @private = $embed("../../../shaders/spv/imp
 const char[*] IMPOSTOR_DEPTH_SPIRV @private = $embed("../../../shaders/spv/impostor_depth.spv");
 const char[*] IMPOSTOR_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/impostor_velocity.spv");
 const char[*] BASIC_SPIRV @private = $embed("../../../shaders/spv/basic.spv");
+const char[*] BASIC_WEIGHTED_BLEND_SPIRV @private = $embed("../../../shaders/spv/basic_weighted_blend.spv");
 const char[*] IMGUI_VERTEX_SPIRV @private = $embed("../../../shaders/spv/imgui_vertex.spv");
 const char[*] IMGUI_FRAGMENT_SPIRV @private = $embed("../../../shaders/spv/imgui_fragment.spv");
 const char[*] OVERLAY_VERTEX_SPIRV @private = $embed("../../../shaders/spv/overlay_vertex.spv");
@@ -162,12 +168,21 @@ const char[*] CUBE_PREVIEW_SPIRV @private = $embed("../../../shaders/spv/cube_pr
 const char[*] STANDARD_SPIRV @private = $embed("../../../shaders/spv/standard.spv");
 const char[*] STANDARD_RT_SHADOWS_SPIRV @private = $embed("../../../shaders/spv/standard_rt_shadows.spv");
 const char[*] STANDARD_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV @private = $embed("../../../shaders/spv/standard_rt_shadows_scene_trace_bvh.spv");
+const char[*] STANDARD_WEIGHTED_BLEND_SPIRV @private = $embed("../../../shaders/spv/standard_weighted_blend.spv");
+const char[*] STANDARD_RT_SHADOWS_WEIGHTED_BLEND_SPIRV @private = $embed("../../../shaders/spv/standard_rt_shadows_weighted_blend.spv");
+const char[*] STANDARD_RT_SHADOWS_SCENE_TRACE_BVH_WEIGHTED_BLEND_SPIRV @private = $embed("../../../shaders/spv/standard_rt_shadows_scene_trace_bvh_weighted_blend.spv");
 const char[*] PHYSICAL_SPIRV @private = $embed("../../../shaders/spv/physical.spv");
 const char[*] PHYSICAL_RT_SHADOWS_SPIRV @private = $embed("../../../shaders/spv/physical_rt_shadows.spv");
 const char[*] PHYSICAL_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV @private = $embed("../../../shaders/spv/physical_rt_shadows_scene_trace_bvh.spv");
+const char[*] PHYSICAL_WEIGHTED_BLEND_SPIRV @private = $embed("../../../shaders/spv/physical_weighted_blend.spv");
+const char[*] PHYSICAL_RT_SHADOWS_WEIGHTED_BLEND_SPIRV @private = $embed("../../../shaders/spv/physical_rt_shadows_weighted_blend.spv");
+const char[*] PHYSICAL_RT_SHADOWS_SCENE_TRACE_BVH_WEIGHTED_BLEND_SPIRV @private = $embed("../../../shaders/spv/physical_rt_shadows_scene_trace_bvh_weighted_blend.spv");
 const char[*] TOON_SPIRV @private = $embed("../../../shaders/spv/toon.spv");
 const char[*] TOON_RT_SHADOWS_SPIRV @private = $embed("../../../shaders/spv/toon_rt_shadows.spv");
 const char[*] TOON_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV @private = $embed("../../../shaders/spv/toon_rt_shadows_scene_trace_bvh.spv");
+const char[*] TOON_WEIGHTED_BLEND_SPIRV @private = $embed("../../../shaders/spv/toon_weighted_blend.spv");
+const char[*] TOON_RT_SHADOWS_WEIGHTED_BLEND_SPIRV @private = $embed("../../../shaders/spv/toon_rt_shadows_weighted_blend.spv");
+const char[*] TOON_RT_SHADOWS_SCENE_TRACE_BVH_WEIGHTED_BLEND_SPIRV @private = $embed("../../../shaders/spv/toon_rt_shadows_scene_trace_bvh_weighted_blend.spv");
 const char[*] ENVIRONMENT_SOURCE_SPIRV @private = $embed("../../../shaders/spv/environment_source.spv");
 const char[*] ENVIRONMENT_PREFILTER_SPIRV @private = $embed("../../../shaders/spv/environment_prefilter.spv");
 const char[*] SHEEN_PREFILTER_SPIRV @private = $embed("../../../shaders/spv/sheen_prefilter.spv");
@@ -272,7 +287,7 @@ const char[*] TRACE_REFIT_SPIRV @private = $embed("../../../shaders/spv/trace_re
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[134] SHADER_ENTRIES = {
+const ShaderEntry[144] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -287,6 +302,7 @@ const ShaderEntry[134] SHADER_ENTRIES = {
     { .variant = { .shader = IMPOSTOR_DEPTH }, .spirv = IMPOSTOR_DEPTH_SPIRV[..] },
     { .variant = { .shader = IMPOSTOR_VELOCITY }, .spirv = IMPOSTOR_VELOCITY_SPIRV[..] },
     { .variant = { .shader = BASIC }, .spirv = BASIC_SPIRV[..] },
+    { .variant = { .shader = BASIC, .flags = SHADER_FLAG_WEIGHTED_BLEND }, .spirv = BASIC_WEIGHTED_BLEND_SPIRV[..] },
     { .variant = { .shader = IMGUI_VERTEX }, .spirv = IMGUI_VERTEX_SPIRV[..] },
     { .variant = { .shader = IMGUI_FRAGMENT }, .spirv = IMGUI_FRAGMENT_SPIRV[..] },
     { .variant = { .shader = OVERLAY_VERTEX }, .spirv = OVERLAY_VERTEX_SPIRV[..] },
@@ -301,12 +317,21 @@ const ShaderEntry[134] SHADER_ENTRIES = {
     { .variant = { .shader = STANDARD }, .spirv = STANDARD_SPIRV[..] },
     { .variant = { .shader = STANDARD, .flags = SHADER_FLAG_RT_SHADOWS }, .spirv = STANDARD_RT_SHADOWS_SPIRV[..] },
     { .variant = { .shader = STANDARD, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH }, .spirv = STANDARD_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV[..] },
+    { .variant = { .shader = STANDARD, .flags = SHADER_FLAG_WEIGHTED_BLEND }, .spirv = STANDARD_WEIGHTED_BLEND_SPIRV[..] },
+    { .variant = { .shader = STANDARD, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_WEIGHTED_BLEND }, .spirv = STANDARD_RT_SHADOWS_WEIGHTED_BLEND_SPIRV[..] },
+    { .variant = { .shader = STANDARD, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH | SHADER_FLAG_WEIGHTED_BLEND }, .spirv = STANDARD_RT_SHADOWS_SCENE_TRACE_BVH_WEIGHTED_BLEND_SPIRV[..] },
     { .variant = { .shader = PHYSICAL }, .spirv = PHYSICAL_SPIRV[..] },
     { .variant = { .shader = PHYSICAL, .flags = SHADER_FLAG_RT_SHADOWS }, .spirv = PHYSICAL_RT_SHADOWS_SPIRV[..] },
     { .variant = { .shader = PHYSICAL, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH }, .spirv = PHYSICAL_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV[..] },
+    { .variant = { .shader = PHYSICAL, .flags = SHADER_FLAG_WEIGHTED_BLEND }, .spirv = PHYSICAL_WEIGHTED_BLEND_SPIRV[..] },
+    { .variant = { .shader = PHYSICAL, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_WEIGHTED_BLEND }, .spirv = PHYSICAL_RT_SHADOWS_WEIGHTED_BLEND_SPIRV[..] },
+    { .variant = { .shader = PHYSICAL, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH | SHADER_FLAG_WEIGHTED_BLEND }, .spirv = PHYSICAL_RT_SHADOWS_SCENE_TRACE_BVH_WEIGHTED_BLEND_SPIRV[..] },
     { .variant = { .shader = TOON }, .spirv = TOON_SPIRV[..] },
     { .variant = { .shader = TOON, .flags = SHADER_FLAG_RT_SHADOWS }, .spirv = TOON_RT_SHADOWS_SPIRV[..] },
     { .variant = { .shader = TOON, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH }, .spirv = TOON_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV[..] },
+    { .variant = { .shader = TOON, .flags = SHADER_FLAG_WEIGHTED_BLEND }, .spirv = TOON_WEIGHTED_BLEND_SPIRV[..] },
+    { .variant = { .shader = TOON, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_WEIGHTED_BLEND }, .spirv = TOON_RT_SHADOWS_WEIGHTED_BLEND_SPIRV[..] },
+    { .variant = { .shader = TOON, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH | SHADER_FLAG_WEIGHTED_BLEND }, .spirv = TOON_RT_SHADOWS_SCENE_TRACE_BVH_WEIGHTED_BLEND_SPIRV[..] },
     { .variant = { .shader = ENVIRONMENT_SOURCE }, .spirv = ENVIRONMENT_SOURCE_SPIRV[..] },
     { .variant = { .shader = ENVIRONMENT_PREFILTER }, .spirv = ENVIRONMENT_PREFILTER_SPIRV[..] },
     { .variant = { .shader = SHEEN_PREFILTER }, .spirv = SHEEN_PREFILTER_SPIRV[..] },
