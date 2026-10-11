@@ -475,7 +475,7 @@ than double precision, such as `1.0000000000000000001`, read as the nearest
 double. IDs range from 0 through 4294967295; repeated IDs and negative-zero
 spellings are valid. Fractional, negative nonzero or overflowing IDs fault
 `ASSET_FORMAT_ERROR`. A nonintegral version faults `ASSET_FORMAT_ERROR`; any
-other integral version faults `UNSUPPORTED`.
+other integral version the parser accepts faults `UNSUPPORTED`.
 
 `time` is finite decoded clip-local seconds in `[0,duration]`, read as double
 and stored as float. Events never extend the track-derived duration; a
@@ -485,13 +485,15 @@ clip times, including when the source stack starts before or after zero.
 Do not use the stack's absolute scene times.
 
 Missing required fields, wrong types, malformed metadata and invalid values
-fault `ASSET_FORMAT_ERROR`. A glTF importer parses the whole extras value, so
-extras the JSON parser rejects also fault: nesting beyond `json::max_depth`,
-numbers outside double range, integers outside the signed 64-bit range written
-without a fraction or exponent, and invalid escapes such as unpaired surrogates.
-Unknown fields, extras without `c3d_events`, non-object extras and unrelated
-properties are ignored. A repeated key keeps its last value. Import failure
-leaves shared assets unchanged and releases decoded event arrays.
+fault `ASSET_FORMAT_ERROR`. In both importers, metadata the JSON parser rejects
+also faults: `json::max_depth` (64) nested containers, numbers outside double
+range, integers outside the signed 64-bit range written without a fraction or
+exponent, and invalid escapes such as unpaired surrogates. glTF extras the
+parser rejects fault only when their text contains `"c3d_events"`; otherwise
+they import no events. Unknown fields, extras without `c3d_events`, non-object
+extras and unrelated properties are ignored. A repeated key keeps its last
+value. Import failure leaves shared assets unchanged and releases decoded event
+arrays.
 
 Imported events are stably sorted by time, retaining authored order at equal
 stored times. The table owns its explicit IDs and has no event names or payloads.
