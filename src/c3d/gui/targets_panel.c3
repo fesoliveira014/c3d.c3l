@@ -87,9 +87,18 @@ fn void? targets_panel(
         imgui::begin_disabled(desc.shading == PATH_TRACED);
         if (imgui::radio_button("Clustered", desc.lights == CLUSTERED)) desc.lights = CLUSTERED;
         imgui::end_disabled();
-        if (desc.shading != record.desc.shading || desc.lights != record.desc.lights) {
+
+        imgui::separator_text("Transparency");
+        imgui::begin_disabled(desc.shading == PATH_TRACED);
+        bool transparency_changed = edit_transparency(&desc);
+        imgui::end_disabled();
+
+        if (desc.shading != record.desc.shading || desc.lights != record.desc.lights || transparency_changed) {
             render::configure_view(renderer, view, desc)!;
         }
+
+        transparency_view_summary(&record.stats.transparency);
+
         if (record.desc.shading == PATH_TRACED) {
             imgui::text("Accumulated samples: %u", record.stats.accumulated_samples);
             if (imgui::button("Reset accumulation")) render::reset_view_history(renderer, view)!;

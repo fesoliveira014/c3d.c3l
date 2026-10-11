@@ -103,6 +103,22 @@ A slot may hold an `R16_UINT` texture (see [sixteen-bit single-channel data](tex
 
 A masked custom material (`alpha_mode == MASK`) discards in its own fragment stage; the shadow atlas reads the same header and uses slot 0's alpha against `alpha_cutoff` as the caster coverage. A custom caster's `DrawRoot.material` is always its `CustomMaterialGpu`, so a custom depth vertex form can read the payload.
 
+### Layered transparency
+
+For [LAYERED camera composition](transparency.md#custom-stages), set
+`ShaderDesc.layered_transparency = true`, compile the fragment with `LAYERED`,
+and include `transparency.glsl`. Use `layered_transparency_accept` with the actual
+fragment depth and `layered_transparency_output` for capture output. The same
+supplied fragment program serves capture and shading; coverage, discard decisions
+and stored depth must match. Participating vertex stages declare
+`invariant gl_Position` and produce identical positions in both phases.
+
+Rejected replacement retains the last-good declaration and routing. Undeclared
+or depth-disabled Custom draws use the sorted post-resolve fallback. A cooperating
+`scene_color_at` reads behind its retained group at mip zero; depth helpers keep
+opaque-depth semantics. See [camera transparency](transparency.md) for remainder,
+fog and participation limits.
+
 ### Standard shading
 
 `standard_shading.glsl` is the Standard model as functions. The built-in Standard forward stage and the lighting resolve call them, so a custom stage that passes the sample Standard builds, with the same weight, returns Standard's radiance on every view configuration:
@@ -215,6 +231,7 @@ A custom or package stage starts with the prelude, `generated/shader_abi.glsl` (
 | `screen_space_gi.glsl` | `draw_screen_space_indirect`, `frame_screen_space_indirect`, `screen_space_base_share` |
 | `fog.glsl` | `FogTerms`, `fog_terms`, `fog_background_terms`, `apply_fog`, `fog_behind`, `apply_fog_refracted`; the helpers include the view's [fog volume](sky.md#volumetric-fog) ([sky](sky.md#custom-stages)) |
 | `scene_snapshot.glsl` | `scene_uv`, `scene_color_at`, `scene_depth_at`, `scene_view_distance_at`, `scene_position_at`, `scene_depth_gap` ([scene reads](#scene-reads)) |
+| `transparency.glsl` | `layered_transparency_accept`, `layered_transparency_output` ([layered transparency](#layered-transparency)) |
 | `standard_surface.glsl` | `StandardMaterialSample` (fields frozen), `sample_standard_material` |
 | `decals.glsl` | `apply_decals` ([decals](materials.md#decals)) |
 | `standard_shading.glsl` | `standard_ambient_fill`, `evaluate_standard_lights`, `shade_standard_surface` |
@@ -349,8 +366,8 @@ matrices, so render scale and TAA need nothing from the shader. Like transparent
 no screen-space terms: `draw_ambient_occlusion` returns 1 and `draw_screen_space_indirect` returns
 zero.
 
-On a view with fog or an atmosphere ([sky](sky.md#where-fog-applies)) the snapshots are taken before the
-view's fog pass, so readers see unfogged radiance, and a colour read also takes a depth snapshot. The pass
+In SORTED composition and the Custom fallback path, a view with fog or an atmosphere
+([sky](sky.md#where-fog-applies)) takes snapshots before the view's fog pass, so readers see unfogged radiance, and a colour read also takes a depth snapshot. The pass
 fogs a depth-writing reader at its own depth; a refracting one returns `apply_fog_refracted(...)` so its
 refracted sample is fogged to its own depth. A blended reader draws after the pass and composes
 `apply_fog(frame, position, apply_fog_refracted(...))`; a blended stage that does not refract calls
