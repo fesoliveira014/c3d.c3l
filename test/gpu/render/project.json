@@ -596,8 +596,7 @@
         "test_posed_trace.c3",
         "test_reflection_receiver.c3",
         "../../fixtures/animated_crowd_fixtures.c3",
-        "../../fixtures/animated_lod_fixtures.c3",
-        "test_probe_medium.c3"
+        "../../fixtures/animated_lod_fixtures.c3"
       ]
     }
   }

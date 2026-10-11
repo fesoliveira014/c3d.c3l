@@ -21,12 +21,19 @@ const uint RECEIVER_GROUP_SIZE @private = 8; // Mirrors reflection_receiver.comp
 const uint RECEIVER_SIZE @private = 128;
 const uint RECEIVER_ODD_WIDTH @private = 257;
 const uint RECEIVER_ODD_HEIGHT @private = 129;
+const uint RECEIVER_PRESSURE_CAPACITY @private = 128;
 const double RECEIVER_ABSOLUTE_BOUND @private = 0.003;
 const double RECEIVER_RELATIVE_BOUND @private = 0.005;
 const char[*] RECEIVER_VERTEX @private = $embed("reflection_receiver.vert.glsl");
 const char[*] RECEIVER_FRAGMENT @private = $embed("reflection_receiver.frag.glsl");
 const char[*] RECEIVER_COMPUTE @private = $embed("reflection_receiver.comp.glsl");
 const char[*] RECEIVER_INPUT @private = $embed("reflection_receiver_input.glsl");
+
+enum ReceiverPressureKind @private {
+    TEXTURES,
+    SAMPLED_VIEWS,
+    ATTACHMENT_VIEWS,
+}
 
 enum ReceiverPhase : uint @private {
     CAPTURE,
@@ -91,6 +98,14 @@ struct ReceiverDraw @private {
     uint instances;
     gpu::GpuSpan indices;
     bool eligible;
+}
+
+struct ReceiverPressure @private {
+    gpu::TextureHandle[RECEIVER_PRESSURE_CAPACITY] textures;
+    gpu::TextureView[RECEIVER_PRESSURE_CAPACITY] views;
+    gpu::AttachmentViewHandle[gpu::DEFAULT_ATTACHMENT_VIEW_CAPACITY] attachments;
+    ReceiverPressureKind kind;
+    uint count;
 }
 
 struct ReceiverQuantRow @private {
@@ -1206,4 +1221,306 @@ fn void test_reflection_receiver_mask_holes_and_clip_planes_preserve_original_so
         }
     }
     check_validation(&fixture.renderer);
+}
+
+fn void test_reflection_receiver_u8_u16_skin_and_morph_remapping_keep_independent_pose_depths() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    Fixture fixture;
+    create_fixture(&tracker, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    ReceiverImages images;
+    create_receiver_images(
+        fixture: &fixture,
+        images: &images,
+        width: RECEIVER_SIZE,
+        height: RECEIVER_SIZE,
+    )!!;
+    defer destroy_receiver_images(&fixture.renderer, &images);
+    EnvironmentId environment_id = fixture.assets.add_environment(light::solid_environment({ 0.25f, 0.5f, 1 }))!!;
+    fixture.renderer.upload_environment(environment_id)!!;
+    MaterialId material_id = fixture.assets.add_material(material::standard())!!;
+    for (uint row = 0; row < 10; row++) {
+        bool skinned = row < 8;
+        bool u16 = row < 8 && (row & 2u) != 0;
+        bool instanced = (row & 1u) != 0;
+        bool morphed = row >= 4;
+        String[3] defines;
+        uint define_count;
+        if (skinned) defines[define_count++] = u16 ? "SKINNED_U16" : "SKINNED";
+        if (morphed) defines[define_count++] = "MORPH";
+        if (instanced) defines[define_count++] = "INSTANCED";
+        prepare_receiver_pipelines(&fixture, &images, defines[:define_count])!!;
+        fixture.renderer.begin_frame()!!;
+        defer catch render::abort_frame(&fixture.renderer);
+        EnvironmentRes* environment = render::resolve_environment(
+            renderer: &fixture.renderer,
+            environment: environment_id,
+            lighting: true,
+            sheen: false,
+        )!!;
+        ReceiverDraw[1] draws = { receiver_draw(
+            fixture: &fixture,
+            images: &images,
+            material: material_id,
+            environment: environment,
+            ordinal: 500 + row * 2,
+            physical: false,
+        )!! };
+        if (skinned) {
+            uint[12] joints;
+            Vec4[6] weights;
+            foreach (&weight : weights) *weight = { 0.5f, 0.5f, 0, 0 };
+            for (uint vertex = 0; vertex < 6; vertex++) joints[u16 ? vertex * 2 : vertex] = u16 ? 1u << 16 : 1u << 8;
+            Mat4f[4] palettes;
+            foreach (&palette : palettes) *palette = bitcast(matrix::IDENTITY4{float}, Mat4f);
+            palettes[1][3][2] = 0.5f;
+            palettes[3][3][2] = -0.5f;
+            draws[0].geometry.joints = upload_receiver(&fixture.renderer, &joints, (usz)joints.len * uint::size)!!;
+            draws[0].geometry.weights = upload_receiver(&fixture.renderer, &weights, (usz)weights.len * Vec4::size)!!;
+            draws[0].draw.skin = upload_receiver(&fixture.renderer, &palettes, (usz)palettes.len * Mat4f::size)!!;
+            draws[0].draw.skin_stride = 2;
+        }
+        if (morphed) {
+            Vec3[12] deltas;
+            for (uint vertex = 0; vertex < 6; vertex++) deltas[vertex] = { 0, 0, 0.25f };
+            MorphWeightsGpu[2] morphs = {
+                { .count = 1, .weights = { [0] = 0.5f } },
+                { .count = 1, .weights = { [0] = 0.75f } },
+            };
+            draws[0].geometry.morph_deltas = upload_receiver(
+                renderer: &fixture.renderer,
+                data: &deltas,
+                bytes: (usz)deltas.len * Vec3::size,
+            )!!;
+            draws[0].geometry.morph_target_count = 1;
+            draws[0].draw.morph = upload_receiver(
+                renderer: &fixture.renderer,
+                data: &morphs,
+                bytes: (usz)morphs.len * MorphWeightsGpu::size,
+            )!!;
+        }
+        draws[0].draw.geometry = upload_receiver(&fixture.renderer, &draws[0].geometry, GeometryRoot::size)!!;
+        if (instanced) {
+            InstanceGpu[2] instances;
+            foreach (&instance : instances) *instance = {
+                .model = bitcast(matrix::IDENTITY4{float}, Mat4f),
+                .normal_0 = { 2.5f, 0, 0, 0 }, .normal_1 = { 0, 1.25f, 0, 0 }, .normal_2 = { 0, 0, 1, 0 },
+                .color = { 1, 1, 1, 1 },
+            };
+            instances[0].model[0][0] = 0.4f;
+            instances[0].model[1][1] = 0.8f;
+            instances[0].model[3][0] = -0.4f;
+            instances[1].model[0][0] = -0.4f;
+            instances[1].model[1][1] = 0.8f;
+            instances[1].model[3][0] = 0.4f;
+            instances[1].normal_0.x = -2.5f;
+            uint[2] remap = { 1, 0 };
+            draws[0].draw.instance_data = upload_receiver(
+                renderer: &fixture.renderer,
+                data: &instances,
+                bytes: (usz)instances.len * InstanceGpu::size,
+            )!!;
+            draws[0].draw.instance_indices = upload_receiver(&fixture.renderer, &remap, (usz)remap.len * uint::size)!!;
+            draws[0].instances = 2;
+        }
+        uint[] values = run_receiver_draws(&fixture, &images, draws[..])!!;
+        defer free(values.ptr);
+        float first_shift = (skinned ? 0.25f : 0) + (morphed ? 0.125f : 0);
+        check_receiver_consumption(
+            values: values,
+            images: &images,
+            x: 40,
+            y: 80,
+            ordinal: 500 + row * 2,
+            depth: (4 + first_shift) / 8,
+        );
+        if (instanced) {
+            float second_shift = (skinned ? -0.25f : 0) + (morphed ? 0.1875f : 0);
+            check_receiver_consumption(
+                values: values,
+                images: &images,
+                x: 88,
+                y: 48,
+                ordinal: 501 + row * 2,
+                depth: (4 + second_shift) / 8,
+            );
+        }
+    }
+    io::printfn("receiver deformation rows=%s", 10);
+    check_validation(&fixture.renderer);
+}
+
+fn void fill_receiver_pressure(Renderer* renderer, ReceiverPressure* pressure, gpu::TextureHandle source) @private {
+    gpu::TextureDesc texture = {
+        .width = 1, .height = 1, .mip_levels = 1, .array_layers = 1, .format = gpu::Format.R32_UINT,
+        .usage = { .sampled, .color_attach }, .access = { .graphics }, .debug_name = "receiver_pressure",
+    };
+    gpu::AttachmentViewDesc attachment = { .texture = source };
+    while (true) {
+        switch (pressure.kind) {
+            case TEXTURES:
+                gpu::TextureHandle? handle = gpu::create_texture(&renderer.device, &texture);
+                if (catch excuse = handle) { assert(excuse == gpu::SLOT_TABLE_FULL); return; }
+                assert(pressure.count < pressure.textures.len);
+                pressure.textures[pressure.count++] = handle;
+            case SAMPLED_VIEWS:
+                gpu::TextureView? view = gpu::create_texture_view(&renderer.device, source, null);
+                if (catch excuse = view) { assert(excuse == gpu::DESCRIPTOR_HEAP_FULL); return; }
+                assert(pressure.count < pressure.views.len);
+                pressure.views[pressure.count++] = view;
+            case ATTACHMENT_VIEWS:
+                gpu::AttachmentViewHandle? attachment_view = gpu::create_attachment_view(&renderer.device, &attachment);
+                if (catch excuse = attachment_view) { assert(excuse == gpu::SLOT_TABLE_FULL); return; }
+                assert(pressure.count < pressure.attachments.len);
+                pressure.attachments[pressure.count++] = attachment_view;
+        }
+    }
+}
+
+fn void free_receiver_pressure_slot(Renderer* renderer, ReceiverPressure* pressure) @private {
+    assert(pressure.count > 0);
+    pressure.count--;
+    switch (pressure.kind) {
+        case TEXTURES: gpu::destroy_texture(&renderer.device, pressure.textures[pressure.count])!!;
+        case SAMPLED_VIEWS: gpu::destroy_texture_view(&renderer.device, pressure.views[pressure.count])!!;
+        case ATTACHMENT_VIEWS: gpu::destroy_attachment_view(&renderer.device, pressure.attachments[pressure.count])!!;
+    }
+}
+
+fn void release_receiver_pressure(Renderer* renderer, ReceiverPressure* pressure) @private {
+    while (pressure.count) free_receiver_pressure_slot(renderer, pressure);
+}
+
+fn void? create_receiver_key_images(Renderer* renderer, ReceiverImages* candidate) @private {
+    defer catch destroy_receiver_images(renderer, candidate);
+    foreach (&target : candidate.source) *target = create_receiver_target(
+        renderer: renderer,
+        width: RECEIVER_ODD_WIDTH,
+        height: RECEIVER_ODD_HEIGHT,
+        format: gpu::Format.R32_UINT,
+    )!;
+    candidate.source_depth = create_receiver_target(
+        renderer: renderer,
+        width: RECEIVER_ODD_WIDTH,
+        height: RECEIVER_ODD_HEIGHT,
+        format: gpu::Format.D32_FLOAT,
+    )!;
+    for (uint index = 5; index < 7; index++) candidate.deferred[index] = create_receiver_target(
+        renderer: renderer,
+        width: RECEIVER_ODD_WIDTH,
+        height: RECEIVER_ODD_HEIGHT,
+        format: gpu::Format.R32_UINT,
+    )!;
+}
+
+fn uint[]? render_receiver_sentinel(
+    Fixture* fixture,
+    ReceiverImages* images,
+    EnvironmentId environment_id,
+    MaterialId material_id,
+) @private {
+    fixture.renderer.begin_frame()!;
+    defer catch render::abort_frame(&fixture.renderer);
+    EnvironmentRes* environment = render::resolve_environment(
+        renderer: &fixture.renderer,
+        environment: environment_id,
+        lighting: true,
+        sheen: false,
+    )!;
+    ReceiverDraw[1] draws = { receiver_draw(
+        fixture: fixture,
+        images: images,
+        material: material_id,
+        environment: environment,
+        ordinal: 700,
+        physical: false,
+    )! };
+    return run_receiver_draws(fixture, images, draws[..]);
+}
+
+fn void test_reflection_receiver_each_source_and_deferred_identity_acquisition_rolls_back_without_leaks() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    foreach (kind : ReceiverPressureKind::values) {
+        Fixture fixture;
+        create_fixture(
+            allocator: &tracker,
+            fixture: &fixture,
+            texture_capacity: RECEIVER_PRESSURE_CAPACITY,
+            texture_heap_capacity: RECEIVER_PRESSURE_CAPACITY,
+        )!!;
+        defer destroy_fixture(&fixture);
+        ReceiverImages images;
+        create_receiver_images(
+            fixture: &fixture,
+            images: &images,
+            width: RECEIVER_SIZE,
+            height: RECEIVER_SIZE,
+        )!!;
+        defer destroy_receiver_images(&fixture.renderer, &images);
+        prepare_receiver_pipelines(&fixture, &images)!!;
+        EnvironmentId environment_id = fixture.assets.add_environment(light::solid_environment({ 0.25f, 0.5f, 1 }))!!;
+        fixture.renderer.upload_environment(environment_id)!!;
+        MaterialId material_id = fixture.assets.add_material(material::standard())!!;
+        uint[] original = render_receiver_sentinel(
+            fixture: &fixture,
+            images: &images,
+            environment_id: environment_id,
+            material_id: material_id,
+        )!!;
+        defer free(original.ptr);
+        ReceiverImages pinned = images;
+        Renderer* renderer = &fixture.renderer;
+        ReceiverPressure* pressure = mem::new(ReceiverPressure);
+        defer free(pressure);
+        pressure.kind = kind;
+        fill_receiver_pressure(renderer, pressure, images.source[0].texture);
+        defer release_receiver_pressure(renderer, pressure);
+        fault expected = kind == ReceiverPressureKind.SAMPLED_VIEWS ? gpu::DESCRIPTOR_HEAP_FULL : gpu::SLOT_TABLE_FULL;
+        for (uint failed = 0; failed < 10; failed++) {
+            CapacityCounts before = capacity_counts(renderer);
+            ulong allocations = gpu::get_memory_stats(&renderer.device)!!.live_allocation_count;
+            ReceiverImages candidate;
+            assert(@catch(create_receiver_key_images(renderer, &candidate)) == expected);
+            capacity_check_counts(capacity_counts(renderer), before);
+            assert(gpu::get_memory_stats(&renderer.device)!!.live_allocation_count == allocations);
+            foreach (index, target : images.source) {
+                assert(target.texture == pinned.source[index].texture);
+                assert(target.attachment == pinned.source[index].attachment);
+                assert(target.view.index == pinned.source[index].view.index);
+                assert(target.view.generation == pinned.source[index].view.generation);
+            }
+            assert(images.source_depth.texture == pinned.source_depth.texture);
+            assert(images.readback.span.allocation() == pinned.readback.span.allocation());
+            assert(!candidate.source_depth.texture.is_valid());
+            foreach (target : candidate.source) assert(!target.texture.is_valid());
+            foreach (target : candidate.deferred) assert(!target.texture.is_valid());
+            uint[] retained = render_receiver_sentinel(
+                fixture: &fixture,
+                images: &images,
+                environment_id: environment_id,
+                material_id: material_id,
+            )!!;
+            defer free(retained.ptr);
+            assert(mem::equals(retained.ptr, original.ptr, (sz)(original.len * uint::size)));
+            check_receiver_sample(
+                values: retained,
+                images: &images,
+                x: 40,
+                y: 80,
+                ordinal: 700,
+            );
+            free_receiver_pressure_slot(renderer, pressure);
+        }
+        release_receiver_pressure(renderer, pressure);
+        ReceiverImages completed;
+        create_receiver_key_images(renderer, &completed)!!;
+        destroy_receiver_images(renderer, &completed);
+        io::printfn("receiver acquisition kind=%s positions=%s", kind, 10);
+        check_validation(renderer);
+    }
+    assert(tracker.allocated() == 0);
 }
