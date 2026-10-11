@@ -10,7 +10,7 @@ import gpu;
 const uint TRANSPARENCY_LAYER_CAPACITY_MAX = 16; // At most seventeen depth images and geometry capture passes.
 
 const gpu::Format TRANSPARENCY_COMPOSITION_FORMAT @private
-  = gpu::Format.RGBA16_FLOAT; // Approved half precision; four composition images cost 32 bytes per pixel.
+  = gpu::Format.RGBA16_FLOAT; // Half precision bounds K16 memory; four composition images cost 32 bytes per pixel.
 
 // Extra depth plus four color pairs.
 const uint TRANSPARENCY_TARGET_COUNT @private = TRANSPARENCY_LAYER_CAPACITY_MAX + 9;
