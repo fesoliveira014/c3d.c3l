@@ -5,10 +5,6 @@ module c3d::shader;
  Stage families compiled into the registry.
 *>
 enum ShaderName : int {
-    TRANSPARENCY,
-    TRANSPARENCY_MIP,
-    TRANSPARENCY_OVERFLOW,
-    TRANSPARENCY_ORDER,
     FULLSCREEN,
     GRADIENT,
     COMPOSITE,
@@ -137,15 +133,6 @@ const uint SHADER_FLAG_RT_SHADOWS = 1 << 7;
 *>
 const uint SHADER_FLAG_SCENE_TRACE_BVH = 1 << 8;
 
-<*
- Flag bit for LAYERED.
-*>
-const uint SHADER_FLAG_LAYERED = 1 << 9;
-
-const char[*] TRANSPARENCY_SPIRV @private = $embed("../../../shaders/spv/transparency.spv");
-const char[*] TRANSPARENCY_MIP_SPIRV @private = $embed("../../../shaders/spv/transparency_mip.spv");
-const char[*] TRANSPARENCY_OVERFLOW_SPIRV @private = $embed("../../../shaders/spv/transparency_overflow.spv");
-const char[*] TRANSPARENCY_ORDER_SPIRV @private = $embed("../../../shaders/spv/transparency_order.spv");
 const char[*] FULLSCREEN_SPIRV @private = $embed("../../../shaders/spv/fullscreen.spv");
 const char[*] GRADIENT_SPIRV @private = $embed("../../../shaders/spv/gradient.spv");
 const char[*] COMPOSITE_SPIRV @private = $embed("../../../shaders/spv/composite.spv");
@@ -279,38 +266,11 @@ const char[*] LIGHTING_RESOLVE_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV @private = $embe
 const char[*] TRACE_POSE_SPIRV @private = $embed("../../../shaders/spv/trace_pose.spv");
 const char[*] TRACE_POSE_SKINNED_U16_SPIRV @private = $embed("../../../shaders/spv/trace_pose_skinned_u16.spv");
 const char[*] TRACE_REFIT_SPIRV @private = $embed("../../../shaders/spv/trace_refit.spv");
-const char[*] MESH_LAYERED_SPIRV @private = $embed("../../../shaders/spv/mesh_layered.spv");
-const char[*] BILLBOARD_VERTEX_LAYERED_SPIRV @private = $embed("../../../shaders/spv/billboard_vertex_layered.spv");
-const char[*] BASIC_LAYERED_SPIRV @private = $embed("../../../shaders/spv/basic_layered.spv");
-const char[*] STANDARD_LAYERED_SPIRV @private = $embed("../../../shaders/spv/standard_layered.spv");
-const char[*] STANDARD_RT_SHADOWS_LAYERED_SPIRV @private = $embed("../../../shaders/spv/standard_rt_shadows_layered.spv");
-const char[*] STANDARD_RT_SHADOWS_SCENE_TRACE_BVH_LAYERED_SPIRV @private = $embed("../../../shaders/spv/standard_rt_shadows_scene_trace_bvh_layered.spv");
-const char[*] PHYSICAL_LAYERED_SPIRV @private = $embed("../../../shaders/spv/physical_layered.spv");
-const char[*] PHYSICAL_RT_SHADOWS_LAYERED_SPIRV @private = $embed("../../../shaders/spv/physical_rt_shadows_layered.spv");
-const char[*] PHYSICAL_RT_SHADOWS_SCENE_TRACE_BVH_LAYERED_SPIRV @private = $embed("../../../shaders/spv/physical_rt_shadows_scene_trace_bvh_layered.spv");
-const char[*] TOON_LAYERED_SPIRV @private = $embed("../../../shaders/spv/toon_layered.spv");
-const char[*] TOON_RT_SHADOWS_LAYERED_SPIRV @private = $embed("../../../shaders/spv/toon_rt_shadows_layered.spv");
-const char[*] TOON_RT_SHADOWS_SCENE_TRACE_BVH_LAYERED_SPIRV @private = $embed("../../../shaders/spv/toon_rt_shadows_scene_trace_bvh_layered.spv");
-const char[*] MESH_SKINNED_LAYERED_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_layered.spv");
-const char[*] MESH_SKINNED_U16_LAYERED_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_u16_layered.spv");
-const char[*] MESH_MORPH_LAYERED_SPIRV @private = $embed("../../../shaders/spv/mesh_morph_layered.spv");
-const char[*] MESH_SKINNED_MORPH_LAYERED_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_morph_layered.spv");
-const char[*] MESH_SKINNED_U16_MORPH_LAYERED_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_u16_morph_layered.spv");
-const char[*] MESH_INSTANCED_LAYERED_SPIRV @private = $embed("../../../shaders/spv/mesh_instanced_layered.spv");
-const char[*] MESH_SKINNED_INSTANCED_LAYERED_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_instanced_layered.spv");
-const char[*] MESH_SKINNED_U16_INSTANCED_LAYERED_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_u16_instanced_layered.spv");
-const char[*] MESH_MORPH_INSTANCED_LAYERED_SPIRV @private = $embed("../../../shaders/spv/mesh_morph_instanced_layered.spv");
-const char[*] MESH_SKINNED_MORPH_INSTANCED_LAYERED_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_morph_instanced_layered.spv");
-const char[*] MESH_SKINNED_U16_MORPH_INSTANCED_LAYERED_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_u16_morph_instanced_layered.spv");
 
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[160] SHADER_ENTRIES = {
-    { .variant = { .shader = TRANSPARENCY }, .spirv = TRANSPARENCY_SPIRV[..] },
-    { .variant = { .shader = TRANSPARENCY_MIP }, .spirv = TRANSPARENCY_MIP_SPIRV[..] },
-    { .variant = { .shader = TRANSPARENCY_OVERFLOW }, .spirv = TRANSPARENCY_OVERFLOW_SPIRV[..] },
-    { .variant = { .shader = TRANSPARENCY_ORDER }, .spirv = TRANSPARENCY_ORDER_SPIRV[..] },
+const ShaderEntry[133] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -444,27 +404,4 @@ const ShaderEntry[160] SHADER_ENTRIES = {
     { .variant = { .shader = TRACE_POSE }, .spirv = TRACE_POSE_SPIRV[..] },
     { .variant = { .shader = TRACE_POSE, .flags = SHADER_FLAG_SKINNED_U16 }, .spirv = TRACE_POSE_SKINNED_U16_SPIRV[..] },
     { .variant = { .shader = TRACE_REFIT }, .spirv = TRACE_REFIT_SPIRV[..] },
-    { .variant = { .shader = MESH, .flags = SHADER_FLAG_LAYERED }, .spirv = MESH_LAYERED_SPIRV[..] },
-    { .variant = { .shader = BILLBOARD_VERTEX, .flags = SHADER_FLAG_LAYERED }, .spirv = BILLBOARD_VERTEX_LAYERED_SPIRV[..] },
-    { .variant = { .shader = BASIC, .flags = SHADER_FLAG_LAYERED }, .spirv = BASIC_LAYERED_SPIRV[..] },
-    { .variant = { .shader = STANDARD, .flags = SHADER_FLAG_LAYERED }, .spirv = STANDARD_LAYERED_SPIRV[..] },
-    { .variant = { .shader = STANDARD, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_LAYERED }, .spirv = STANDARD_RT_SHADOWS_LAYERED_SPIRV[..] },
-    { .variant = { .shader = STANDARD, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH | SHADER_FLAG_LAYERED }, .spirv = STANDARD_RT_SHADOWS_SCENE_TRACE_BVH_LAYERED_SPIRV[..] },
-    { .variant = { .shader = PHYSICAL, .flags = SHADER_FLAG_LAYERED }, .spirv = PHYSICAL_LAYERED_SPIRV[..] },
-    { .variant = { .shader = PHYSICAL, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_LAYERED }, .spirv = PHYSICAL_RT_SHADOWS_LAYERED_SPIRV[..] },
-    { .variant = { .shader = PHYSICAL, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH | SHADER_FLAG_LAYERED }, .spirv = PHYSICAL_RT_SHADOWS_SCENE_TRACE_BVH_LAYERED_SPIRV[..] },
-    { .variant = { .shader = TOON, .flags = SHADER_FLAG_LAYERED }, .spirv = TOON_LAYERED_SPIRV[..] },
-    { .variant = { .shader = TOON, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_LAYERED }, .spirv = TOON_RT_SHADOWS_LAYERED_SPIRV[..] },
-    { .variant = { .shader = TOON, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH | SHADER_FLAG_LAYERED }, .spirv = TOON_RT_SHADOWS_SCENE_TRACE_BVH_LAYERED_SPIRV[..] },
-    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED | SHADER_FLAG_LAYERED }, .spirv = MESH_SKINNED_LAYERED_SPIRV[..] },
-    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_LAYERED }, .spirv = MESH_SKINNED_U16_LAYERED_SPIRV[..] },
-    { .variant = { .shader = MESH, .flags = SHADER_FLAG_MORPH | SHADER_FLAG_LAYERED }, .spirv = MESH_MORPH_LAYERED_SPIRV[..] },
-    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED | SHADER_FLAG_MORPH | SHADER_FLAG_LAYERED }, .spirv = MESH_SKINNED_MORPH_LAYERED_SPIRV[..] },
-    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_MORPH | SHADER_FLAG_LAYERED }, .spirv = MESH_SKINNED_U16_MORPH_LAYERED_SPIRV[..] },
-    { .variant = { .shader = MESH, .flags = SHADER_FLAG_INSTANCED | SHADER_FLAG_LAYERED }, .spirv = MESH_INSTANCED_LAYERED_SPIRV[..] },
-    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED | SHADER_FLAG_INSTANCED | SHADER_FLAG_LAYERED }, .spirv = MESH_SKINNED_INSTANCED_LAYERED_SPIRV[..] },
-    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_INSTANCED | SHADER_FLAG_LAYERED }, .spirv = MESH_SKINNED_U16_INSTANCED_LAYERED_SPIRV[..] },
-    { .variant = { .shader = MESH, .flags = SHADER_FLAG_MORPH | SHADER_FLAG_INSTANCED | SHADER_FLAG_LAYERED }, .spirv = MESH_MORPH_INSTANCED_LAYERED_SPIRV[..] },
-    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED | SHADER_FLAG_MORPH | SHADER_FLAG_INSTANCED | SHADER_FLAG_LAYERED }, .spirv = MESH_SKINNED_MORPH_INSTANCED_LAYERED_SPIRV[..] },
-    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_MORPH | SHADER_FLAG_INSTANCED | SHADER_FLAG_LAYERED }, .spirv = MESH_SKINNED_U16_MORPH_INSTANCED_LAYERED_SPIRV[..] },
 };

@@ -43,7 +43,6 @@ struct ShaderDesc {
     CustomVertex   vertex;
     usz            param_block_size;
     SceneReads     scene_reads;
-    bool           layered_transparency;
 }
 
 <*
@@ -180,7 +179,6 @@ fn ShaderDesc copy_shader_desc(Allocator allocator, ShaderDesc* desc) {
         },
         .param_block_size = desc.param_block_size,
         .scene_reads = desc.scene_reads,
-        .layered_transparency = desc.layered_transparency,
     };
 }
 

@@ -138,10 +138,6 @@ struct Renderer {
     CullReadback[FRAMES_IN_FLIGHT] cull_readbacks;
     gpu::PipelineHandle     instance_cull_pipeline;
     gpu::PipelineHandle     instance_sort_pipeline;
-    gpu::PipelineHandle     transparency_order_pipeline;
-    gpu::PipelineHandle     transparency_mip_pipeline;
-    gpu::PipelineHandle     transparency_overflow_pipeline;
-    gpu::SamplerIndex       transparency_sampler;
     usz                     instance_cull_bytes;
     bool                    cull_counter_cleared;
     uint                    cull_tested;
@@ -403,7 +399,6 @@ fn void? Renderer.end_frame(&self) {
                 record.history.publish();
                 record.auto_exposure.history.publish();
                 publish_lod_history(&record.lod_history);
-                publish_transparency_readbacks(&record.transparency_readbacks, (uint)(frame % FRAMES_IN_FLIGHT));
             }
             submitted = true;
         };
@@ -491,7 +486,6 @@ fn void? begin_renderer_frame(Renderer* self, FrameInfo info, bool acquire_outpu
             read_cluster_stats(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
             post::read_exposure_stats(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
             read_cull_stats(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
-            read_transparency_stats(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
         };
         instrumentation::@scope("renderer.retire") {
             drain_retired(&self.device, &slot.retire);
@@ -539,7 +533,6 @@ fn void? begin_renderer_frame(Renderer* self, FrameInfo info, bool acquire_outpu
         snapshot_probe_states(self);
         foreach (&record : self.views.items) {
             record.snapshot_states();
-            reset_transparency_stats(&record.stats.transparency);
             record.stats.images = live_view_images(record);
             record.cluster_root = (gpu::GpuAddress)0;
             record.scene_input = &record.hdr_color;
@@ -1028,16 +1021,6 @@ fn void destroy_renderer(Renderer* renderer) {
     foreach (&record : renderer.views.items) release_view(renderer, record);
     pool::destroy_pool{ViewRecord, ViewId}(&renderer.views);
     post::destroy_post_pipelines(&renderer.device, &renderer.post_pipelines);
-    if (renderer.transparency_order_pipeline.is_valid()) {
-        (void)gpu::destroy_pipeline(&renderer.device, renderer.transparency_order_pipeline);
-    }
-    if (renderer.transparency_mip_pipeline.is_valid()) {
-        (void)gpu::destroy_pipeline(&renderer.device, renderer.transparency_mip_pipeline);
-    }
-    if (renderer.transparency_overflow_pipeline.is_valid()) {
-        (void)gpu::destroy_pipeline(&renderer.device, renderer.transparency_overflow_pipeline);
-    }
-
     destroy_ambient_occlusion_pipelines(&renderer.device, &renderer.ambient_occlusion_pipelines);
     destroy_screen_space_gi_pipelines(&renderer.device, &renderer.screen_space_gi_pipelines);
     destroy_reflection_pipelines(&renderer.device, &renderer.reflection_pipelines);
@@ -1169,7 +1152,6 @@ fn void abort_frame(Renderer* renderer) {
             record.history.discard();
             record.auto_exposure.history.discard();
             discard_lod_history(&record.lod_history);
-            discard_transparency_readbacks(&record.transparency_readbacks, renderer.recording_slot);
         }
     }
     foreach (&record : renderer.views.items) {

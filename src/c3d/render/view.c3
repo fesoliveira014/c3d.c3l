@@ -52,8 +52,6 @@ struct DrawItem @private {
     gpu::GpuAddress effects;
     CullRange       range;
     gpu::GpuAddress root;
-    DrawRoot*       draw;
-    bool            layered;
     gpu::FrontFace  front_face;
     bool            moved;
     bool            custom_velocity;
@@ -320,9 +318,7 @@ fn void? record_raster_view(
         SceneReads scene_read_reads;
         SceneReads transparent_reads;
         bool sheen;
-        bool rough_scene_reads;
         ShadingPath shading = record.desc.shading;
-        bool layered = record.desc.transparency.mode == TransparencyMode.LAYERED;
         instrumentation::@scope("view.resolve") {
             items = alloc::new_array(tmem, DrawItem, candidates.len);
             usz scene_read_count;
@@ -369,8 +365,6 @@ fn void? record_raster_view(
                     );
                 }
                 sheen |= material_uses_sheen(material_description);
-                rough_scene_reads |= material_description.kind == MaterialKind.PHYSICAL
-                  && material_description.physical.transmission > 0 && material_description.physical.standard.roughness > 0;
                 validate_normal_geometry(
                     geometry: geometry,
                     material: material_description,
@@ -437,15 +431,6 @@ fn void? record_raster_view(
                       ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,
                     .custom_velocity = custom_velocity_stage(renderer, material_description, candidate_instanced(candidate))!,
                 };
-                if (layered && (list == DrawList.SCENE_READ || list == DrawList.TRANSPARENT)) {
-                    bool declared = material_description.kind == MaterialKind.CUSTOM
-                      && resolve_shader(renderer, material_description.custom.shader)!.desc.layered_transparency;
-                    items[index].layered = transparency_material_participates(
-                        material: material_description,
-                        custom_declared: declared,
-                        custom_reads: custom_reads,
-                    );
-                }
             }
         };
         DrawItem[] gbuffer_items = items[:gbuffer_filled];
@@ -537,9 +522,7 @@ fn void? record_raster_view(
                 transparent_reads.depth |= transparent_reads.color;
             }
             view_reads = scene_read_reads | transparent_reads;
-            if (layered && (scene_read_items.len || transparent_items.len)) view_reads = { .color, .depth };
             acquire_scene_snapshots(renderer, record, view_reads)!;
-            acquire_transparency_snapshot(renderer, record, rough_scene_reads && view_reads.color)!;
             if (record.desc.ray_tracing.reflections) acquire_environment_lut(renderer)!;
             prepare_cull_stage(renderer, view_culls, record.desc.instance_culling)!;
             gpu::GpuAddress probe_trace = prepare_probe_updates(renderer, scene)!;
@@ -659,12 +642,8 @@ fn void? record_raster_view(
                 shadows:     shadow_set.shadows,
                 shadow_count: shadow_set.layer_count,
                 environment: environment_address,
-                scene_color: view_reads.color
-                  ? (record.scene_filtering ? record.scene_pyramid.image.view.index : record.scene_color.view.index)
-                  : (gpu::TextureIndex)0,
-                scene_sampler: view_reads.color
-                  ? (record.scene_filtering ? renderer.transparency_sampler : renderer.linear_clamp_sampler)
-                  : (gpu::SamplerIndex)0,
+                scene_color: view_reads.color ? record.scene_color.view.index : (gpu::TextureIndex)0,
+                scene_sampler: view_reads.color ? renderer.linear_clamp_sampler : (gpu::SamplerIndex)0,
                 scene_depth: view_reads.depth ? record.scene_depth.view.index : (gpu::TextureIndex)0,
                 prev_view_proj: temporal && record.history.valid ? &record.history.view_proj : &matrices.view_proj,
                 previous_time: temporal && record.history.valid ? &record.history.time : null,
@@ -681,15 +660,6 @@ fn void? record_raster_view(
                 decals: decal_address,
                 decal_count: decal_counts.packed,
             );
-            if (record.scene_filtering) {
-                TransparencyGpu snapshot = {
-                    .phase = shader::TRANSPARENCY_SORTED,
-                    .mip_count = record.scene_pyramid.mip_count,
-                };
-                FrameRoot* root = (FrameRoot*)frame_span.bytes.ptr;
-                root.transparency = upload_bytes(renderer, &snapshot, TransparencyGpu::size)!;
-            }
-
             if (record.desc.lights == LightSelection.CLUSTERED) {
                 record_clusters(
                     renderer: renderer,
@@ -813,12 +783,11 @@ fn void? record_raster_view(
                     instance_effects: item.effects,
                 );
                 ((DrawRoot*)draw_span.bytes.ptr).lod_part = resolve_lod_part(renderer, item.candidate)!;
-                item.draw = (DrawRoot*)draw_span.bytes.ptr;
                 item.root = draw_span.address;
             }
         };
 
-        bool transparent_after_split = layered || scene_read_items.len > 0 || transparent_reads != (SceneReads){} || fog_pass;
+        bool transparent_after_split = scene_read_items.len > 0 || transparent_reads != (SceneReads){} || fog_pass;
         instrumentation::@scope("view.record") {
             if (environments.atmosphere) {
                 record_sky_view_tables(
@@ -926,22 +895,13 @@ fn void? record_raster_view(
                 case PATH_TRACED:
             }
 
-            if (!layered && scene_read_items.len) {
+            if (scene_read_items.len) {
                 record_scene_snapshots(renderer, record, scene_read_reads)!;
                 @profile_pass(renderer, Pass.SCENE_READ) {
                     record_loaded_pass(renderer, record, scene_read_items)!;
                 }!;
             }
-            if (layered && (scene_read_items.len || transparent_items.len)) {
-                record_scene_snapshots(renderer, record, view_reads)!;
-                record_layered_transparency(
-                    renderer: renderer,
-                    record: record,
-                    frame: *(FrameRoot*)frame_span.bytes.ptr,
-                    scene_read: scene_read_items,
-                    transparent: transparent_items,
-                )!;
-            } else if (fog_pass) {
+            if (fog_pass) {
                 // The fog split: snapshots and the bounce source stay unfogged; blended draws fog themselves.
                 if (transparent_reads != (SceneReads){}) record_scene_snapshots(renderer, record, transparent_reads)!;
                 if (screen_space_gi) record_ssgi_color_copy(renderer, record)!;
@@ -949,7 +909,7 @@ fn void? record_raster_view(
             } else if (transparent_after_split && transparent_items.len && transparent_reads != (SceneReads){}) {
                 record_scene_snapshots(renderer, record, transparent_reads)!;
             }
-            if (!layered && transparent_after_split && transparent_items.len) {
+            if (transparent_after_split && transparent_items.len) {
                 @profile_pass(renderer, Pass.FORWARD_TRANSPARENT) {
                     record_loaded_pass(renderer, record, transparent_items)!;
                 }!;
@@ -1296,11 +1256,6 @@ fn MeshPreparation? prepare_mesh(
         if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
         return {};
     }
-    if (catch excuse = prepare_transparency_pipelines(renderer, data, vertex)) {
-        if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
-        return {};
-    }
-
     if (gbuffer && gbuffer_encodable(data, custom_gbuffer_stage(renderer, data)!)) {
         if (catch excuse = gbuffer_pipeline_for(renderer, data, vertex)) {
             if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
@@ -1378,11 +1333,6 @@ fn MeshPreparation? prepare_billboards(Renderer* renderer, BillboardBatch* batch
         if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
         return {};
     }
-    if (catch excuse = prepare_transparency_pipelines(renderer, data, { .shader = BILLBOARD_VERTEX })) {
-        if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
-        return {};
-    }
-
     return {
         .sheen = material_uses_sheen(data),
         .scene_reads = material_scene_reads(data, custom_scene_reads(renderer, data)!),
@@ -1399,10 +1349,6 @@ fn void? prepare_views(Renderer* renderer) @private {
     foreach (&record : renderer.views.items) {
         if (!record.live) continue;
         post::prepare_display(renderer, record)!;
-        if (record.desc.transparency.mode == TransparencyMode.LAYERED && record.desc.shading != ShadingPath.PATH_TRACED) {
-            prepare_transparency_view_pipelines(renderer)!;
-        }
-
         if (record.desc.lights == LightSelection.CLUSTERED) {
             acquire_environment_pipeline(renderer, &renderer.cluster_pipeline, LIGHT_CULL)!;
         }
@@ -1962,8 +1908,6 @@ fn void? record_scene_snapshots(Renderer* renderer, ViewRecord* record, SceneRea
         if (reads.color) record_snapshot_copy(renderer, &record.hdr_color, &record.scene_color)!;
         if (reads.depth) record_snapshot_copy(renderer, &record.depth, &record.scene_depth)!;
     }!;
-
-    if (reads.color) record_transparency_snapshot(renderer, record)!;
 }
 
 // Leaves the source readable; the loaded pass that follows moves it back to its attachment state.
@@ -2238,7 +2182,7 @@ fn Material* material_data(Renderer* renderer, MaterialRes* material) @private {
     return &renderer.assets.material(material.asset).data;
 }
 
-fn ShaderVariant material_fragment(Material* material, uint shadow_flags) @private {
+fn ShaderVariant material_fragment(Material* material, uint shadow_flags) @local {
     switch (material.kind) {
         case BASIC: return { .shader = BASIC };
         case STANDARD: return { .shader = STANDARD, .flags = shadow_flags };

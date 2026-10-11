@@ -105,23 +105,10 @@ Before the kept aggregate and the stamped history, the same runs took 0.786, 2.8
 
 ### Blended batches
 
-In SORTED camera composition, a batch whose material has `alpha_mode == BLEND` draws its instances back to front inside the batch, with no per-instance CPU work and with the records still shared across views. The cull pass writes a 64-bit key beside each visible index: the view depth of the instance's box center under its world matrix, then its storage index. The box is the cull bound (the geometry bound, or the crowd's `pose_bounds`), or the geometry bound under `has_bounds_override`. A fixed plan of bitonic compute steps then sorts the keys and rewrites the visible list far to near; equal depths keep storage order, which holds from frame to frame.
-
-[LAYERED camera composition](transparency.md#ordering-and-remainder) interleaves
-retained depth groups across batches and meshes. Exact-depth ties use the original
-logical instance slot, together with node, source part/range and primitive identity;
-visibility compaction, depth sorting and mirrored parity do not renumber that slot
-or reorder the scene's placement/color arrays. The farther remainder keeps SORTED
-batch ordering.
-
-Participation follows the material and supported vertex family: built-in BLEND
-surfaces and positive-transmission Physical mesh surfaces participate with depth
-testing enabled. Custom stages require the [layered declaration](custom_shaders.md#layered-transparency).
-Existing skin/morph/custom vertex restrictions remain; billboards still require
-BLEND and exclude positive Physical transmission and custom vertex stages.
+A batch whose material has `alpha_mode == BLEND` draws its instances back to front in every view, inside the batch, with no per-instance CPU work and with the records still shared across views. The cull pass writes a 64-bit key beside each visible index: the view depth of the instance's box center under its world matrix, then its storage index. The box is the cull bound (the geometry bound, or the crowd's `pose_bounds`), or the geometry bound under `has_bounds_override`. A fixed plan of bitonic compute steps then sorts the keys and rewrites the visible list far to near; equal depths keep storage order, which holds from frame to frame.
 
 - **Automatic.** Every blended range lists, in every draw list, with or without instance culling and with `has_bounds_override`: a range the view does not cull runs the cull pass with open planes, so every instance survives and gets a key, and a fading batch still drops its fully collapsed instances. Opaque and masked ranges never sort; the depth prepass, shadow layers and the velocity pass never draw a blended range.
-- **Order across draws in SORTED.** Each parity range sorts on its own, the unmirrored range first. The batch orders as one unit among other blended draws by its bound center ([Materials](materials.md)); its instances do not interleave with other blended objects. The key point ignores sway and custom vertex displacement.
+- **Order across draws.** Each parity range sorts on its own, the unmirrored range first. The batch orders as one unit among other blended draws by its bound center ([Materials](materials.md)); its instances do not interleave with other blended objects. The key point ignores sway and custom vertex displacement.
 - **Steps.** The plan is sized by the range's instance count, not its visible count: 1 step up to 1,024 instances, 10 at 8,192, 15 at 16,384, 36 at 131,072 and 78 at `MAX_SORTED_INSTANCES` (2,097,152). Each step is one dispatch; the view's sorted ranges step together, one barrier per step round.
 - **Memory.** A sorted range of `n` instances takes `32 + align8(4n) + 8 * pow2(n)` bytes of the arena: 1,448,608 B at 100,000, per view and frame slot.
 - **Overflow.** A range above `MAX_SORTED_INSTANCES`, or whose list and keys do not fit the arena, draws unsorted and unculled from CPU arguments and counts in `Stats.sort_overflows`; nothing faults.

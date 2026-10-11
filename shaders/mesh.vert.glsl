@@ -1,7 +1,4 @@
 #version 460
-#ifdef LAYERED
-invariant gl_Position;
-#endif
 #include "generated/shader_abi.glsl"
 #include "c3d_abi.glsl"
 #include "mesh_vertex.glsl"
