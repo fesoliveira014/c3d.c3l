@@ -69,13 +69,17 @@ which would keep one ray of every probe in its layer's plane.
 | `hysteresis` | Share of the previous texel kept per update, `[0, 1)`; default 0.97, 95 percent of a change after 99 updates of a probe |
 
 A hit adds its diffuse direct light, its emission and the bounce the probe atlases already hold
-(`albedo / PI` times the irradiance at the hit), so light bounces further with every update. Misses read the
+(`albedo / PI` times the irradiance at the hit), so light bounces further with every update. A hit follows
+the diffuse rules of reflection hits: `BASIC` is its unlit albedo, `STANDARD` and `PHYSICAL` use
+`albedo * (1 - metallic)` so metals bounce nothing, `TOON` uses its bands and `CUSTOM` is a grey Lambert
+surface. Misses read the
 lighting environment (or the flat ambient without one). Back faces return no light, count in the
 probe's irradiance with their weight and mark the probe's view of that direction as blocked. Every update
 rotates its ray set by a rotation drawn from the frame index.
 
-- **Lights.** Hits are lit by every light on a visible node with nonzero layers, whatever the camera sees
-  and whatever the light's layers say: a light hidden from one camera by a layer still lights the probes.
+- **Lights.** Hits are lit by every light on a visible node with nonzero layers, whatever the camera sees:
+  a light hidden from one camera by a layer still lights the probes. A light skips a hit whose node `layers`
+  do not intersect `Light.layers`, as in raster; emission and the bounce do not use the mask.
   Every light with shadows enabled traces one shadow ray per hit that it can reach (facing, in range and
   cone); the shadow atlas is not used. Up to `RendererDesc.max_lights` lights; drops count in
   `Stats.lights_dropped`.

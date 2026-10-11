@@ -86,7 +86,7 @@ struct TraceInstanceGpu {
     uint       flags;
     uint       material_kind;
     uint       mask;
-    uint       _pad1;
+    uint       layers;
     vec4       world_to_local_0;
     vec4       world_to_local_1;
     vec4       world_to_local_2;
@@ -535,6 +535,7 @@ root RtAoRoot {
 
 root RtReflectionRoot {
     GpuAddress   frame;
+    GpuAddress   lights;
     TextureIndex depth;
     TextureIndex normal_roughness;
     TextureIndex emissive_specular;
@@ -543,8 +544,8 @@ root RtReflectionRoot {
     uint         height;
     float        max_roughness;
     uint         noise_frame;
+    uint         light_count;
     uint         _pad0;
-    uint         _pad1;
 }
 
 root RtReflectionBlurRoot {

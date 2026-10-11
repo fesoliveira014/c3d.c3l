@@ -29,6 +29,13 @@ const float SPHERE_SPACING @local = 1.5f;
 const Vec3 PANEL_POSITION @local = { 0, 7, -6 }; // above the starting view's top edge; its image lands in the floor
 const Vec3 PANEL_COLOR @local = { 1, 0.35f, 0.1f };
 const float PANEL_STRENGTH @local = 4;
+const Vec3 PROP_POSITION @local = { 3.5f, 6, -5 }; // above the starting view's top edge; only the floor shows it
+const float PROP_SCALE @local = 1.5f;
+const uint PROP_LAYERS @local = 2; // a receiver layer the default node layer does not share
+const Vec3 LAMP_POSITION @local = { 3.5f, 7, -3.5f };
+const Vec3 EXCLUDED_LAMP_POSITION @local = { 2, 7, -3.5f };
+const float LAMP_RANGE @local = 2.4f; // reaches the prop, and stops short of the starting view's frustum
+const float LAMP_INTENSITY @local = 30;
 const float ROUGHNESS_STEP @local = 0.05f;
 const float ROUGHNESS_MIN @local = 0.05f;
 const Vec2 STATS_PANEL_POSITION @local = { 16, 16 };
@@ -140,6 +147,25 @@ fn void? populate_scene(AssetStore* assets, Scene* scene) @local {
     }), "material/rt_effects/panel")!;
     Node* panel = scene.add_mesh(panel_geometry, glow, name: "emissive_panel")!;
     panel.local.position = PANEL_POSITION;
+
+    MaterialId chalk = assets.add_material(material::standard({
+        .base_color = { 0.9f, 0.9f, 0.9f, 1 },
+        .roughness  = 0.9f,
+    }), "material/rt_effects/prop")!;
+    Node* prop = scene.add_mesh(sphere_geometry, chalk, name: "reflected_prop")!;
+    prop.local.position = PROP_POSITION;
+    prop.local.scale = { PROP_SCALE, PROP_SCALE, PROP_SCALE };
+    prop.layers = PROP_LAYERS;
+
+    Light warm = light::point({ 1, 0.5f, 0.15f }, LAMP_INTENSITY, LAMP_RANGE);
+    warm.layers = PROP_LAYERS;
+    Node* warm_node = scene.add_light(warm, name: "off_camera_lamp")!;
+    warm_node.local.position = LAMP_POSITION;
+
+    Light cold = light::point({ 0.1f, 0.3f, 1 }, LAMP_INTENSITY, LAMP_RANGE);
+    cold.layers = scene::DEFAULT_LAYERS;
+    Node* cold_node = scene.add_light(cold, name: "excluded_lamp")!;
+    cold_node.local.position = EXCLUDED_LAMP_POSITION;
 
     Light sun = light::directional({ 1, 0.95f, 0.85f }, 2);
     sun.shadow.enabled = true;

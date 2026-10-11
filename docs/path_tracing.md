@@ -124,7 +124,8 @@ button, and the post panel's "Path tracing" header edits bounces, samples per fr
 - Physical lobes beyond the Standard prefix (clearcoat, sheen, specular, anisotropy, transmission)
   are not sampled; `BLEND` surfaces and custom vertex stages are not traced, and skinned and morphed meshes trace at their raster pose; crowd placements trace only through
   `add_crowd(trace: true)`; custom shader code does not run at hits.
-- Light layers and camera layers are not applied.
+- Light nodes are gated by the camera's `layers`. A light skips a hit whose node `layers` do not intersect
+  `Light.layers`, as in raster; emission is unmasked. Camera layers do not hide geometry from the trace.
 - An [atmosphere](sky.md) lights the view through its cubes and shows its source cube as the background,
   without the sun's disc; path-traced views have no fog and no aerial perspective.
 - Camera and bounce rays pass the back of a single-sided surface, as raster culls it, and shadow

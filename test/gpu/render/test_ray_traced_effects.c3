@@ -28,6 +28,11 @@ const int DARK_MAXIMUM @private = 8;
 const int EMITTER_MINIMUM @private = 200;
 const int MIRROR_TOLERANCE @private = 2;
 const float EMITTER_SHEET_SIZE @private = 2; // wide enough to hold the emitter image point's reflection ray
+const Vec3 LAMP_POSITION @private = { 0, 4.45f, -3.674f }; // 1.5 from the hit point along the top frustum plane's normal
+const float LAMP_RANGE @private = 1.9f; // reaches the hit point and stops short of the view frustum
+const float LAMP_INTENSITY @private = 40;
+const int LAMP_LIT_MINIMUM @private = 40;
+const uint EXCLUDED_RECEIVER_LAYERS @private = 2; // the emitter carries the default layer only
 
 struct MirrorScene @private {
     Scene       scene;
@@ -370,6 +375,50 @@ fn void test_reflections_show_a_mirrored_emitter_like_its_twin() @test {
         assert(math::abs(red(mirrored) - red(twin)) <= MIRROR_TOLERANCE);
         assert(math::abs(green(mirrored) - green(twin)) <= MIRROR_TOLERANCE);
         assert(math::abs(blue(mirrored) - blue(twin)) <= MIRROR_TOLERANCE);
+        check_validation(&fixture.renderer);
+    }
+}
+
+fn void test_reflections_light_a_hit_from_an_off_camera_lamp_by_receiver_layers() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        MirrorScene mirror = create_mirror_scene(&fixture, false)!!;
+        defer scene::destroy_scene(&mirror.scene);
+        AoView mirror_view = create_ao_view(&fixture, ShadingPath.DEFERRED)!!;
+        defer destroy_ao_view(&fixture, &mirror_view);
+        set_reflections(&fixture, mirror_view.view, true)!!;
+
+        StandardParams plain = { .base_color = { 1, 1, 1, 1 }, .metallic = 0, .roughness = 1 };
+        mirror.scene.get(mirror.emitter, Mesh).material = fixture.assets.add_material(material::standard(plain))!!;
+        Camera* camera = mirror.scene.get(mirror.camera, Camera);
+        CameraMatrices matrices = camera::derive_matrices(
+            *camera,
+            mirror.camera.world,
+            { AO_TARGET_WIDTH, AO_TARGET_HEIGHT },
+        );
+        assert(!maths::frustum_intersects_sphere(&matrices.frustum, { .center = LAMP_POSITION, .radius = LAMP_RANGE }));
+
+        uint unlit = render_mirror(&fixture, &mirror, mirror_view.view, EMITTER_IMAGE_POINT)!!;
+        Node* excluded = mirror.scene.add_light(light::point({ 1, 0, 0 }, LAMP_INTENSITY, LAMP_RANGE))!!;
+        excluded.local.position = LAMP_POSITION;
+        mirror.scene.get(excluded, Light).layers = EXCLUDED_RECEIVER_LAYERS;
+        mirror.scene.update_world();
+        uint excluded_lit = render_mirror(&fixture, &mirror, mirror_view.view, EMITTER_IMAGE_POINT)!!;
+        Node* lamp = mirror.scene.add_light(light::point({ 1, 0, 0 }, LAMP_INTENSITY, LAMP_RANGE))!!;
+        lamp.local.position = LAMP_POSITION;
+        mirror.scene.update_world();
+        uint lit = render_mirror(&fixture, &mirror, mirror_view.view, EMITTER_IMAGE_POINT)!!;
+        io::eprintfn(
+            "%s, off-camera lamp: none %06x, excluded %06x, receiving %06x",
+            trace_name(ray_queries),
+            unlit,
+            excluded_lit,
+            lit,
+        );
+        assert(math::abs(red(excluded_lit) - red(unlit)) <= MIRROR_TOLERANCE);
+        assert(red(lit) > red(unlit) + LAMP_LIT_MINIMUM);
         check_validation(&fixture.renderer);
     }
 }

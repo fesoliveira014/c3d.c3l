@@ -932,6 +932,18 @@ fn void? record_raster_view(
                             jitter:    jitter,
                         )!;
                     }
+
+                    ReflectionLights reflection_lights;
+                    if (record.desc.ray_tracing.reflections) {
+                        reflection_lights = upload_reflection_lights(
+                            renderer:    renderer,
+                            scene:       scene,
+                            view_layers: camera.layers,
+                            atmosphere:  &environments.atmosphere_selection,
+                            altitude:    matrices.position.y + renderer.frame_origin.y,
+                        )!;
+                    }
+
                     record_deferred_shading(
                         renderer:           renderer,
                         record:             record,
@@ -943,6 +955,7 @@ fn void? record_raster_view(
                         atmosphere:         environments.atmosphere != null,
                         clear_color:        environments.clear_color,
                         ssgi_history_valid: ssgi_history_valid,
+                        reflection_lights:  reflection_lights,
                     )!;
                 case PATH_TRACED:
             }
