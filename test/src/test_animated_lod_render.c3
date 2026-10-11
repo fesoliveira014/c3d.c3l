@@ -292,7 +292,7 @@ fn AnimatedLodDesc shadow_lod_desc(AssetStore* assets, ModelId model_id) @local 
     return desc;
 }
 
-fn void test_animated_lod_shadow_ordinary_uses_selected_parts_without_imported_bases() @test {
+fn void test_animated_lod_shadow_ordinary_uses_selected_parts_and_their_parity() @test {
     @pool() {
         AssetStore assets = animated_lod_render_store();
         defer asset::destroy_asset_store(&assets);
@@ -300,11 +300,13 @@ fn void test_animated_lod_shadow_ordinary_uses_selected_parts_without_imported_b
         Scene scene = scene::create_scene(mem, { .max_nodes = 64 });
         defer scene::destroy_scene(&scene);
         Node* owner = model::instantiate(&assets, &scene, fixture.mixed)!!;
+        AnimatedLodDesc desc = shadow_lod_desc(&assets, fixture.mixed);
+        desc.parts[SHADOW_BASE_PARTS + 1].draw.local = matrix::IDENTITY4.scale({ -1, 1, 1 });
         model::attach_animated_lod(
             assets: &assets,
             scene: &scene,
             owner: owner,
-            desc: shadow_lod_desc(&assets, fixture.mixed),
+            desc: desc,
         )!!;
         Node* unrelated = scene.add_mesh(
             geometry: fixture.geometries[1],
@@ -357,7 +359,7 @@ fn void test_animated_lod_shadow_ordinary_uses_selected_parts_without_imported_b
                 assert(candidate.animated_lod.skinned == (part == 0));
                 assert(candidate.model_instance == instance && candidate.crowd == null);
                 assert(candidate.source_node == instance.present_node(part == 0 ? 2u : 5u));
-                assert(candidate.instance_count == 1);
+                assert(candidate.instance_count == 1 && candidate.mirrored == (part == 1));
                 assert(c3d::same_id(candidate.geometry, fixture.geometries[part == 0 ? 0u : 2u]));
             } else {
                 imported++;

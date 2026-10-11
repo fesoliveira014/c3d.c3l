@@ -522,7 +522,12 @@ fn void emit_lod_candidates(
                     .lod_part = level.first_part + index,
                     .impostor = impostor,
                 };
-                if (state.animated && !bind_animated_lod_candidate(selection, &candidate)) continue;
+                if (state.animated) {
+                    if (!bind_animated_lod_candidate(selection, &candidate)) continue;
+
+                    // The vertex stage composes the part-local affine on top of the owner world.
+                    if (!instanced) candidate.mirrored = animated_lod_part_local(&candidate).determinant() < 0;
+                }
 
                 candidates[counts.visible++] = candidate;
             }
