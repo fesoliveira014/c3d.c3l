@@ -207,6 +207,7 @@ struct Renderer {
     PathTracer                path_tracer;
     PipelineCache             pipelines;
     gpu::SamplerIndex         linear_clamp_sampler;
+    gpu::SamplerIndex         scene_color_sampler;
 
     DebugLog*                log;
     RendererGpuProfile       gpu_profile @if($feat(C3D_PROFILE_GPU));
@@ -857,6 +858,9 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .debug_name = "linear_clamp",
     };
     gpu::SamplerIndex linear_clamp_sampler = gpu::intern_sampler(&device, &sampler_desc)!;
+    sampler_desc.max_lod = (float)(SCENE_MIP_CAPACITY - 1);
+    sampler_desc.debug_name = "scene_color";
+    gpu::SamplerIndex scene_color_sampler = gpu::intern_sampler(&device, &sampler_desc)!;
 
     gpu::GpuAllocation material_heap = allocate_material_heap(&device, assets.materials.items.len)!;
     defer catch (void)gpu::free_allocation(&device, &material_heap);
@@ -922,6 +926,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .instance_cull_bytes  = desc.instance_cull_bytes ? desc.instance_cull_bytes : INSTANCE_CULL_ARENA_BYTES,
         .prepares             = pool::create_pool{PrepareRecord, PrepareId}(allocator, PREPARE_CAPACITY),
         .linear_clamp_sampler = linear_clamp_sampler,
+        .scene_color_sampler  = scene_color_sampler,
         .log                  = log,
         .timestamps_enabled   = timestamps_enabled,
         .output_width         = desc.output_width,

@@ -370,18 +370,42 @@ setting and casts opaque shadows; BLEND glass follows the ordinary blend rules
 and never casts.
 
 Before that list the renderer copies the finished opaque color into the
-view's own `scene_color` image, allocated on first use at the view size;
-`Pass.SCENE_SNAPSHOT` times the copy and `Pass.SCENE_READ` the list. Each
-transmissive fragment refracts the view direction by `1 / ior`, walks the
-thickness through the volume, projects the exit point and samples `scene_color`
-at mip zero, so rough transmission is not blurred. An exit point outside the
-screen falls back to the environment's specular cube along the refracted
-direction, or to black without an environment. The transmitted radiance replaces
+view's own `scene_color` image, allocated on first use at the view size with its
+full mip chain; `Pass.SCENE_SNAPSHOT` times the copy and `Pass.SCENE_READ` the
+list. Each transmissive fragment refracts the view direction by `1 / ior`, walks
+the thickness through the volume, projects the exit point and samples
+`scene_color` at
+
+```
+lod = log2(max(width, height)) * roughness * clamp(2 * ior - 2, 0, 1)
+```
+
+where `roughness` is the roughness factor times its map, before decals and
+before the roughness floor of the lighting model. Roughness 0, or an `ior` of 1,
+samples mip zero.
+
+The chain is written only when the list holds a draw that can sample above mip
+zero: a Physical material with `transmission` above zero, `roughness` above zero
+and `ior` above one. Then `Pass.SCENE_MIPS`, placed after `Pass.SCENE_SNAPSHOT`,
+times one fullscreen pass per level, each a 2x2 box filter of the level above
+that counts one `Stats.draws`. Other frames record nothing extra, and the
+levels stay unread. The box filter has no wider kernel, so strong blur steps
+visibly between levels on high-contrast content. The chain adds a third of
+`scene_color` to the view's memory (5.5 MB on top of 16.6 MB at 1920 × 1080),
+a sampled texture view per level and an attachment view per level below the
+first. Custom readers keep mip zero.
+
+An exit point outside the screen falls back to the environment's specular cube
+along the refracted direction, or to black without an environment. The
+transmitted radiance replaces
 the dielectric diffuse response by the transmission factor, is scaled by base
 color and the non-metallic fraction, and is weighted by the surface's own
 Fresnel; direct lights add a mirrored-light transmission lobe. Transmissive
 surfaces never see each other, the custom readers of the same list or ordinary
 blends: glass behind glass shows the opaque scene through both.
+
+`python3 scripts/build.py --example transparency` draws a glass slab over a checkered backdrop;
+R steps the slab's roughness through 0, 0.25, 0.5 and 1.
 
 ## Importing materials
 
@@ -726,9 +750,10 @@ Physical and Toon direct lighting. Standard and Physical support [environment
 lighting and independent skies](environments.md); Toon uses only its diffuse SH
 contribution, and Basic remains unlit. Toon does not provide PBR reflections,
 outlines or transmission. Physical transmission samples
-the opaque scene at mip zero and never sees other transmissive or blended
-surfaces. Shading writes scene-linear HDR into the view's working image; the view's
-output mode decides whether display processing tone maps it (see [views](views.md) and
+the opaque scene through a 2x2 box-filtered mip chain and never sees other
+transmissive or blended surfaces. Shading writes scene-linear HDR into the view's
+working image; the view's output mode decides whether display processing tone
+maps it (see [views](views.md) and
 [display processing](post.md)). A texture slot may reference a render target with
 `{ .kind = RENDER_TARGET, .target = id }`; a dead target resolves to white, and a
 resized target repacks the material on its own.

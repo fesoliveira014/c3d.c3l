@@ -701,6 +701,7 @@ struct ViewRecord {
     Target                               hdr_color;
     Target                               depth;
     Target                               scene_color;
+    SceneMips                            scene_mips;
     Target                               scene_depth;
     Target                               post_a;
     Target                               post_b;
@@ -1180,6 +1181,7 @@ fn void? acquire_view_images(Renderer* renderer, ViewRecord* record, uint[<2>] o
 }
 
 fn void release_view_images(gpu::Device* device, ViewRecord* record) @private {
+    release_scene_mips(device, &record.scene_mips);
     foreach (image : view_targets(record)) {
         if (!image.texture.is_valid()) continue;
         if (image.attachment.is_valid()) (void)gpu::destroy_attachment_view(device, image.attachment);
@@ -1191,6 +1193,7 @@ fn void release_view_images(gpu::Device* device, ViewRecord* record) @private {
 
 fn void retire_view_images(Renderer* renderer, ViewRecord* record) @private {
     RetireList* retire = last_submitted_retire(renderer);
+    retire_scene_mips(retire, &record.scene_mips);
     foreach (image : view_targets(record)) {
         if (!image.texture.is_valid()) continue;
         if (image.attachment.is_valid()) {
@@ -1217,6 +1220,7 @@ fn void release_view(Renderer* renderer, ViewRecord* record) @private {
 fn void copy_view_images(ViewRecord* staged, ViewRecord* live) @private {
     Target*[VIEW_TARGET_COUNT] staged_images = view_targets(staged);
     foreach (index, image : view_targets(live)) *staged_images[index] = *image;
+    staged.scene_mips = live.scene_mips;
     staged.bloom_levels = live.bloom_levels;
     staged.clusters = live.clusters;
 }
@@ -1276,6 +1280,7 @@ fn void? stage_views(Renderer* renderer, StagedView[] views) @private {
 }
 
 fn void release_staged_images(Renderer* renderer, StagedView* view) @private {
+    if (view.images.scene_color.texture == view.live.scene_color.texture) view.images.scene_mips = {};
     Target*[VIEW_TARGET_COUNT] live_images = view_targets(view.live);
     foreach (index, image : view_targets(&view.images)) {
         if (image.texture == live_images[index].texture) *image = {};
@@ -1286,6 +1291,7 @@ fn void release_staged_images(Renderer* renderer, StagedView* view) @private {
 
 // Afterwards staged holds exactly the images live gave up.
 fn void adopt_view_images(ViewRecord* live, ViewRecord* staged) @private {
+    bool shared_color = live.scene_color.texture == staged.scene_color.texture;
     Target*[VIEW_TARGET_COUNT] staged_images = view_targets(staged);
     foreach (index, image : view_targets(live)) {
         Target* replacement = staged_images[index];
@@ -1294,6 +1300,11 @@ fn void adopt_view_images(ViewRecord* live, ViewRecord* staged) @private {
         } else {
             @swap(*image, *replacement);
         }
+    }
+    if (shared_color) {
+        staged.scene_mips = {};
+    } else {
+        @swap(live.scene_mips, staged.scene_mips);
     }
     @swap(live.bloom_levels, staged.bloom_levels);
     if (live.clusters.allocation == staged.clusters.allocation) {

@@ -342,3 +342,106 @@ fn void test_rejected_replacement_keeps_its_scene_reads() @test {
     check_rgb(flat, SCENE_READ_FLAT_COLOR);
     check_validation(renderer);
 }
+
+struct RoughGlassScene @private {
+    Renderer*   renderer;
+    AssetStore* assets;
+    Scene*      scene;
+    Node*       camera;
+    MaterialId  glass;
+    ViewId      view;
+}
+
+fn uint? render_rough_glass(RoughGlassScene* glass_scene, float roughness) @private {
+    Renderer* renderer = glass_scene.renderer;
+    PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
+    params.transmission = 1;
+    params.standard.metallic = 0;
+    params.standard.roughness = roughness;
+    glass_scene.assets.replace_material(glass_scene.glass, material::physical(params));
+    renderer.begin_frame()!;
+    defer catch render::abort_frame(renderer);
+    renderer.render_view(glass_scene.scene, glass_scene.camera, glass_scene.view)!;
+    renderer.finish_view(glass_scene.view)!;
+    renderer.end_frame()!;
+    assert(renderer.stats.scene_snapshots == 1);
+    return renderer.stats.draws;
+}
+
+fn void test_rough_transmission_records_mip_passes_only_for_rough_glass() @test {
+    const uint VIEW_SIZE = 64;
+    const uint RESIZED_SIZE = 32;
+
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    Scene scene = scene::create_scene(mem, scene::default_scene_desc());
+    defer scene::destroy_scene(&scene);
+    Renderer renderer = render::create_renderer(
+        allocator: mem,
+        assets:    &assets,
+        desc:      { .validation = true, .application_name = "render_acceptance" },
+    )!!;
+    defer render::destroy_renderer(&renderer);
+
+    GeometryId slab;
+    GeometryId backdrop;
+    @pool() {
+        Geometry slab_geometry = geometry::box(tmem, 1, 1, 0.2f);
+        slab = assets.add_geometry(&slab_geometry)!!;
+        Geometry backdrop_geometry = geometry::box(tmem, 8, 8, 0.1f);
+        backdrop = assets.add_geometry(&backdrop_geometry)!!;
+    };
+    MaterialId backdrop_material = assets.add_material(material::basic({ .color = SCENE_READ_BOX_COLOR }))!!;
+    MaterialId glass = assets.add_material(material::physical())!!;
+    Node* backdrop_node = scene.add_mesh(backdrop, backdrop_material)!!;
+    backdrop_node.local.position = { 0, 0, -2 };
+    scene.add_mesh(slab, glass)!!;
+    Node* camera_node = scene.add_camera(camera::perspective_deg(SCENE_READ_FOV_DEGREES, SCENE_READ_NEAR))!!;
+    camera_node.local.position = { 0, 0, 3 };
+    scene.update_world();
+
+    RenderTargetId render_target = render::create_render_target(
+        renderer: &renderer,
+        desc:     render::render_target_desc(VIEW_SIZE, VIEW_SIZE),
+    )!!;
+    RoughGlassScene glass_scene = {
+        .renderer = &renderer,
+        .assets   = &assets,
+        .scene    = &scene,
+        .camera   = camera_node,
+        .glass    = glass,
+        .view     = render::create_view(&renderer, render::texture_view_desc(render_target))!!,
+    };
+
+    uint rough = render_rough_glass(&glass_scene, 0.5f)!!;
+    uint smooth = render_rough_glass(&glass_scene, 0)!!;
+    assert(rough == smooth + material::texture_mip_count(VIEW_SIZE, VIEW_SIZE) - 1);
+    assert(render_rough_glass(&glass_scene, 1)!! == rough);
+    assert(render_rough_glass(&glass_scene, 0.5f)!! == rough);
+
+    render::resize_render_target(
+        renderer: &renderer,
+        target:   render_target,
+        width:    RESIZED_SIZE,
+        height:   RESIZED_SIZE,
+    )!!;
+    rough = render_rough_glass(&glass_scene, 0.5f)!!;
+    smooth = render_rough_glass(&glass_scene, 0)!!;
+    assert(rough == smooth + material::texture_mip_count(RESIZED_SIZE, RESIZED_SIZE) - 1);
+
+    ViewDesc reconfigured = renderer.views.get(glass_scene.view).desc;
+    reconfigured.depth_prepass = !reconfigured.depth_prepass;
+    render::configure_view(&renderer, glass_scene.view, reconfigured)!!;
+    rough = render_rough_glass(&glass_scene, 0.5f)!!;
+    smooth = render_rough_glass(&glass_scene, 0)!!;
+    assert(rough == smooth + material::texture_mip_count(RESIZED_SIZE, RESIZED_SIZE) - 1);
+
+    render::wait_frames(&renderer)!!;
+    DebugEntry[render::DEBUG_LOG_ENTRIES] entries;
+    usz count = renderer.log.recent(entries[..]);
+    foreach (entry : entries[:count]) {
+        bool validation_error = entry.category.backend && entry.category.validation
+            && entry.severity == gpu::DebugMessageSeverity.ERROR;
+        assert(!validation_error);
+    }
+}
