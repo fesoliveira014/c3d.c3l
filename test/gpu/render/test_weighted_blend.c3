@@ -373,15 +373,40 @@ fn void test_custom_stages_join_the_weighted_pass_only_with_a_weighted_form() @t
         .scene_reads      = { .depth },
     };
     assets.replace_shader(with_forms, &sorted_only)!!;
+    ViewId[2] weighted_views = { views[1], views[2] };
+    uint[2] settled_draws;
     renderer.begin_frame()!!;
-    renderer.render_view(&scene, camera_node, views[1])!!;
-    renderer.finish_view(views[1])!!;
-    renderer.render_view(&scene, camera_node, views[2])!!;
-    renderer.finish_view(views[2])!!;
+    foreach (index, view : weighted_views) {
+        uint draws_before = renderer.stats.draws;
+        renderer.render_view(&scene, camera_node, view)!!;
+        renderer.finish_view(view)!!;
+        settled_draws[index] = renderer.stats.draws - draws_before;
+    }
     renderer.end_frame()!!;
     assert(count_weighted_stage_keys(&renderer, with_forms, WEIGHTED_COLOR_TARGETS, weighted) == 0);
     assert(count_weighted_stage_keys(&renderer, with_forms, WEIGHTED_COLOR_TARGETS, weighted | traced) == 0);
     assert(count_weighted_stage_keys(&renderer, with_forms, SORTED_COLOR_TARGETS, 0) == 1);
+
+    // A rejected replacement keeps its published forms: the draw is routed by them, not by the store's newer forms.
+    @pool() {
+        asset::ShaderDesc rejected = {
+            .fragment          = compile_weighted_stage({ "BROKEN_PUSH" })!!,
+            .weighted_fragment = { .shaded = compile_weighted_stage({ "WEIGHTED_BLEND" })!! },
+            .param_block_size  = WeightedStageParams::size,
+        };
+        assets.replace_shader(without_forms, &rejected)!!;
+    };
+    renderer.begin_frame()!!;
+    foreach (index, view : weighted_views) {
+        uint draws_before = renderer.stats.draws;
+        renderer.render_view(&scene, camera_node, view)!!;
+        renderer.finish_view(view)!!;
+        assert(renderer.stats.draws - draws_before == settled_draws[index]);
+    }
+    renderer.end_frame()!!;
+    assert(renderer.stats.shader_rejections > 0);
+    assert(count_weighted_stage_keys(&renderer, without_forms, SORTED_COLOR_TARGETS, 0) == 1);
+    assert(count_weighted_stage_keys(&renderer, without_forms, WEIGHTED_COLOR_TARGETS, weighted) == 0);
 
     render::wait_frames(&renderer)!!;
     DebugEntry[render::DEBUG_LOG_ENTRIES] entries;

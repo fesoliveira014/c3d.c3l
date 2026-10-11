@@ -345,11 +345,11 @@ fn void? record_raster_view(
                     case TRANSPARENT:
                         transparent_count++;
                         bool weighted_draw = !candidate.impostor && joins_weighted_pass(
-                            assets:       renderer.assets,
+                            renderer:     renderer,
                             material:     material_data,
                             mode:         record.desc.transparency,
                             shadow_flags: shadow_flags,
-                        );
+                        )!;
                         if (weighted_draw) weighted_count++;
                 }
             }
@@ -396,11 +396,11 @@ fn void? record_raster_view(
                     custom_reads:   custom_reads,
                 );
                 bool weighted = list == DrawList.TRANSPARENT && !candidate.impostor && joins_weighted_pass(
-                    assets:       renderer.assets,
+                    renderer:     renderer,
                     material:     material_description,
                     mode:         record.desc.transparency,
                     shadow_flags: shadow_flags,
-                );
+                )!;
                 gpu::PipelineHandle? pipeline = list == DrawList.GBUFFER
                   ? gbuffer_pipeline_for(renderer, material_description, vertex)
                   : pipeline_for(

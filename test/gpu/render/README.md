@@ -43,7 +43,8 @@ with none, into a `SORTED` view, a `WEIGHTED` view and a `WEIGHTED` view that tr
 draws every stage, that the composite is the only extra draw, that the depth snapshot count matches the sorted view's,
 which fails if a weighted stage's scene reads are dropped, and which pipelines exist for each shader: the weighted and
 sorted pipelines of one shader coexist, a stage without the form its view needs keeps its sorted pipeline, and
-replacing a shader without weighted forms retires the weighted ones. It runs with no validation warning or error. The
+replacing a shader without weighted forms retires the weighted ones, and a rejected replacement keeps its draw on the
+published forms. It runs with no validation warning or error. The
 accumulation and composite math is not checked here: lavapipe applies the first attachment's
 blend equation to every attachment, so the weighted pass renders wrongly there and needs a hardware run.
 
