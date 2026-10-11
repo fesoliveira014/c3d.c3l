@@ -1,6 +1,7 @@
 module c3d::render;
 
 import c3d;
+import c3d::material;
 import c3d::scene;
 import c3d::shader;
 import gpu;
@@ -13,6 +14,17 @@ $assert RtReflectionBlurRoot::size == 40;
  Roughness above which a pixel keeps the raster environment reflection.
 *>
 const float RT_REFLECTION_ROUGHNESS_DEFAULT = 0.5f; // above it one ray per pixel reads as grain
+
+<*
+ Format of the thin reflection G-buffer: octahedral normal, roughness, specular weight.
+*>
+const gpu::Format REFLECTION_SURFACE_FORMAT = gpu::Format.RGBA16_FLOAT; // 8 B per pixel of the view's working extent
+
+enum ReflectionPrepass @private {
+    OFF,     // the pass binds no thin target
+    MASKED,  // the thin target is bound with every channel write masked
+    WRITTEN, // the draw writes the thin target
+}
 
 struct ReflectionLights @private {
     gpu::GpuAddress address;
@@ -99,6 +111,16 @@ fn void destroy_reflection_pipelines(gpu::Device* device, ReflectionPipelines* p
     *pipelines = {};
 }
 
+fn bool forward_reflection_eligible(MeshCandidate* candidate, Material* material) @private {
+    return !candidate.impostor && !candidate.billboards && gbuffer_encodable(material);
+}
+
+fn ShaderVariant reflection_prepass_fragment(Material* material) @private {
+    ShaderVariant fragment = gbuffer_fragment(material);
+    fragment.flags = shader::SHADER_FLAG_REFLECTION_PREPASS;
+    return fragment;
+}
+
 fn void? acquire_reflection_images(Renderer* renderer, ViewRecord* record) @private {
     if (!record.desc.ray_tracing.reflections || record.reflection.texture.is_valid()) return;
     if (!record.hdr_color.texture.is_valid()) return;
@@ -120,13 +142,27 @@ fn void? acquire_reflection_images(Renderer* renderer, ViewRecord* record) @priv
     )!;
 }
 
+fn void? acquire_reflection_gbuffer(Renderer* renderer, ViewRecord* record) @private {
+    if (!record.desc.ray_tracing.reflections || record.desc.shading != ShadingPath.FORWARD) return;
+    if (record.reflection_gbuffer.texture.is_valid() || !record.hdr_color.texture.is_valid()) return;
+
+    record.reflection_gbuffer = allocate_target(
+        device:     &renderer.device,
+        width:      record.hdr_color.width,
+        height:     record.hdr_color.height,
+        format:     REFLECTION_SURFACE_FORMAT,
+        usage:      { .color_attach, .sampled },
+        debug_name: "reflection_gbuffer",
+    )!;
+}
+
 fn void release_reflection_images(gpu::Device* device, ViewRecord* record) @private {
     if (record.reflection.texture.is_valid()) release_storage_target(device, &record.reflection);
     if (record.reflection_blur.texture.is_valid()) release_storage_target(device, &record.reflection_blur);
 }
 
 <*
- @require record.desc.shading == ShadingPath.DEFERRED
+ @require record.desc.shading != ShadingPath.PATH_TRACED
  @require record.reflection.texture.is_valid()
 *>
 fn void? record_reflections(
@@ -136,11 +172,14 @@ fn void? record_reflections(
     ReflectionLights lights,
 ) @private {
     acquire_reflection_pipelines(renderer)!;
-    Target* normals = &record.gbuffer[GBufferChannel.NORMAL_ROUGHNESS.ordinal];
-    Target* specular = &record.gbuffer[GBufferChannel.EMISSIVE_SPECULAR.ordinal];
+    bool forward = record.desc.shading == ShadingPath.FORWARD;
+    Target* normals = forward
+      ? &record.reflection_gbuffer : &record.gbuffer[GBufferChannel.NORMAL_ROUGHNESS.ordinal];
+    Target* specular = forward
+      ? &record.reflection_gbuffer : &record.gbuffer[GBufferChannel.EMISSIVE_SPECULAR.ordinal];
     record.depth.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
     normals.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
-    specular.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
+    if (specular != normals) specular.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
     record.reflection.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;
 
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];

@@ -260,7 +260,8 @@ fn void? record_raster_view(
     bool screen_space_gi = record.desc.screen_space_gi.enabled;
     bool temporal = taa || record.desc.post.motion_blur || screen_space_gi;
     bool ambient_occlusion = record.desc.ambient_occlusion.kind != AoKind.NONE;
-    bool forward_prepass = record.desc.depth_prepass || ambient_occlusion || screen_space_gi;
+    bool forward_reflections = record.desc.ray_tracing.reflections && record.desc.shading == ShadingPath.FORWARD;
+    bool forward_prepass = record.desc.depth_prepass || ambient_occlusion || screen_space_gi || forward_reflections;
     bool early_velocity = velocity_before_lighting(&record.desc);
     bool late_velocity = temporal && !early_velocity;
     bool ssgi_history_valid = record.history.valid && record.history.scene == scene.identity;
@@ -714,6 +715,11 @@ fn void? record_raster_view(
                 decal_count: decal_counts.packed,
                 sheen_lut: sheen ? renderer.environment_state.sheen_lut.view.index : (gpu::TextureIndex)0,
                 sheen_sampler: sheen ? renderer.environment_state.sheen_sampler : (gpu::SamplerIndex)0,
+                reflection_texture: forward_reflections ? record.reflection_blur.view.index : (gpu::TextureIndex)0,
+                reflection_brdf_lut: forward_reflections
+                  ? renderer.environment_state.brdf_lut.view.index : (gpu::TextureIndex)0,
+                reflection_sampler: forward_reflections ? renderer.linear_clamp_sampler : (gpu::SamplerIndex)0,
+                max_reflection_roughness: forward_reflections ? record.desc.ray_tracing.max_reflection_roughness : 0,
             );
             if (record.desc.lights == LightSelection.CLUSTERED) {
                 record_clusters(
@@ -824,6 +830,9 @@ fn void? record_raster_view(
                     flags:         (item.candidate.receive_shadow ? shader::DRAW_RECEIVE_SHADOW : 0)
                       | ((ambient_occlusion || screen_space_gi) && group_index == 0
                         ? shader::DRAW_SCREEN_SPACE_TERMS : 0)
+                      | (forward_reflections && group_index == 0
+                        && forward_reflection_eligible(item.candidate, material_data(renderer, item.material))
+                        ? shader::DRAW_TRACED_REFLECTION : 0)
                       | batch_effect_flags(item.candidate)
                       | (vertices == VertexHistory.INVALID || crowd_history_invalid
                         ? shader::DRAW_VERTEX_HISTORY_INVALID : 0),
@@ -901,7 +910,22 @@ fn void? record_raster_view(
                     if (screen_space_gi) {
                         record_screen_space_gi(renderer, record, frame_span.address, ssgi_history_valid)!;
                     }
-                    if (ambient_occlusion || screen_space_gi) {
+                    if (forward_reflections) {
+                        ReflectionLights reflection_lights = upload_reflection_lights(
+                            renderer:    renderer,
+                            scene:       scene,
+                            view_layers: camera.layers,
+                            atmosphere:  &environments.atmosphere_selection,
+                            altitude:    matrices.position.y + renderer.frame_origin.y,
+                        )!;
+                        record_reflections(
+                            renderer: renderer,
+                            record:   record,
+                            frame:    frame_span.address,
+                            lights:   reflection_lights,
+                        )!;
+                    }
+                    if (ambient_occlusion || screen_space_gi || forward_reflections) {
                         record.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
                     }
                     record_forward_pass(
@@ -1464,6 +1488,10 @@ fn bool velocity_before_lighting(ViewDesc* desc) @private {
  @param decals : "Ordered decal records; zero when no decal applies."
  @param sheen_lut : "Sheen albedo table view; zero when the view carries no sheen material."
  @param sheen_sampler : "Filtered sampler of the sheen albedo table."
+ @param reflection_texture : "Blurred traced reflection view; zero when the view reads none."
+ @param reflection_brdf_lut : "Split-sum table view the traced reflection weighs by."
+ @param reflection_sampler : "Filtered sampler of the split-sum table."
+ @param max_reflection_roughness : "Roughness above which a pixel keeps the raster reflection."
 *>
 fn void write_frame_root(
     FrameRoot* root,
@@ -1498,6 +1526,10 @@ fn void write_frame_root(
     uint decal_count = 0,
     gpu::TextureIndex sheen_lut = (gpu::TextureIndex)0,
     gpu::SamplerIndex sheen_sampler = (gpu::SamplerIndex)0,
+    gpu::TextureIndex reflection_texture = (gpu::TextureIndex)0,
+    gpu::TextureIndex reflection_brdf_lut = (gpu::TextureIndex)0,
+    gpu::SamplerIndex reflection_sampler = (gpu::SamplerIndex)0,
+    float max_reflection_roughness = 0,
 ) {
     *root = {
         .view            = bitcast(matrices.view, Mat4f),
@@ -1523,7 +1555,8 @@ fn void write_frame_root(
           | (trace != (gpu::GpuAddress)0 ? shader::FRAME_TRACE_PRESENT : 0)
           | (ao_texture != (gpu::TextureIndex)0 ? shader::FRAME_AO_PRESENT : 0)
           | (ssgi_texture != (gpu::TextureIndex)0 ? shader::FRAME_SSGI_PRESENT : 0)
-          | (clip_plane.normal != (Vec3){} ? shader::FRAME_CLIP_PLANE : 0),
+          | (clip_plane.normal != (Vec3){} ? shader::FRAME_CLIP_PLANE : 0)
+          | (reflection_texture != (gpu::TextureIndex)0 ? shader::FRAME_REFLECTIONS_PRESENT : 0),
         .mip_bias        = mip_bias,
         .ao_texture      = ao_texture,
         .probe_volumes   = probe_volumes,
@@ -1538,6 +1571,10 @@ fn void write_frame_root(
         .decal_count     = decal_count,
         .sheen_lut       = sheen_lut,
         .sheen_sampler   = sheen_sampler,
+        .reflection_texture       = reflection_texture,
+        .reflection_brdf_lut      = reflection_brdf_lut,
+        .reflection_sampler       = reflection_sampler,
+        .max_reflection_roughness = max_reflection_roughness,
     };
 }
 
@@ -1942,7 +1979,13 @@ fn void? record_depth_prepass(
     usz count;
     foreach (&item : gbuffer) candidates[count++] = *item.candidate;
     foreach (&item : opaque) candidates[count++] = *item.candidate;
-    ShadowDraw[] draws = prepare_shadow_draws(renderer, candidates, effects_view)!;
+    bool thin = record.reflection_gbuffer.texture.is_valid();
+    ShadowDraw[] draws = prepare_shadow_draws(
+        renderer:     renderer,
+        candidates:   candidates,
+        effects_view: effects_view,
+        thin:         thin,
+    )!;
     CullRange[] ranges = alloc::new_array(tmem, CullRange, (sz)draws.len);
     CullItem[] culls = shadow_cull_items(draws, ranges, &record.frustum);
     prepare_cull_stage(renderer, culls, record.desc.instance_culling)!;
@@ -1961,8 +2004,25 @@ fn void? record_depth_prepass(
     gpu::GraphicsState state = gpu::render_geometry_state(width, height)!;
     state.viewport = flipped_viewport(width, height);
     state.depth = { .test_enable = true, .write_enable = true, .compare = gpu::CompareOp.GREATER };
+    // Cleared to zero, so a pixel no eligible draw covers keeps zero specular weight.
+    gpu::ColorTargetDesc[1] thin_color = {{
+        .view     = record.reflection_gbuffer.attachment,
+        .load_op  = gpu::LoadOp.CLEAR,
+        .store_op = gpu::StoreOp.STORE,
+    }};
+    gpu::ColorTargetState[1] thin_state = { gpu::color_blend_disabled() };
+    if (thin) {
+        pass.colors = thin_color[..];
+        state.color.targets = thin_state[..];
+        record.reflection_gbuffer.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
+    }
     gpu::PipelineHandle first = draws.len
-      ? draws[0].pipeline : shadow_pipeline_for(renderer, false, depth_only_vertex_variant({}))!;
+      ? draws[0].pipeline : shadow_pipeline_for(
+          renderer: renderer,
+          wireframe: false,
+          vertex: depth_only_vertex_variant({}),
+          reflection: thin ? ReflectionPrepass.MASKED : ReflectionPrepass.OFF,
+      )!;
 
     @profile_pass(renderer, Pass.DEPTH_PREPASS) {
         // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.

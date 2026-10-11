@@ -321,7 +321,7 @@ fn bool edit_ray_tracing(ViewDesc* desc) @local {
     RayTracingDesc* ray_tracing = &desc.ray_tracing;
     bool changed = imgui::checkbox("Shadows", &ray_tracing.shadows);
 
-    imgui::begin_disabled(desc.shading != ShadingPath.DEFERRED);
+    imgui::begin_disabled(desc.shading == ShadingPath.PATH_TRACED);
     if (imgui::checkbox("Reflections", &ray_tracing.reflections)) {
         if (ray_tracing.reflections && ray_tracing.max_reflection_roughness == 0) {
             ray_tracing.max_reflection_roughness = render::RT_REFLECTION_ROUGHNESS_DEFAULT;

@@ -72,10 +72,7 @@ fn void? targets_panel(
         ViewRecord* record = renderer.views.get(view);
         ViewDesc desc = record.desc;
         imgui::separator_text("Shading");
-        if (imgui::radio_button("Forward", desc.shading == FORWARD)) {
-            desc.shading = FORWARD;
-            desc.ray_tracing.reflections = false;
-        }
+        if (imgui::radio_button("Forward", desc.shading == FORWARD)) desc.shading = FORWARD;
         imgui::same_line();
         if (imgui::radio_button("Deferred", desc.shading == DEFERRED)) desc.shading = DEFERRED;
         imgui::same_line();
