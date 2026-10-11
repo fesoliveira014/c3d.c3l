@@ -251,13 +251,19 @@ fn void? record_probe_updates(Renderer* renderer, ProbeFillRecording* recording,
     renderer.stats.lights_dropped += light_counts.dropped;
     gpu::GpuAddress lights = upload_lights(renderer, extraction.lights)!;
 
+    bool sheen = prepare_hit_environment(renderer, scene, recording.environments)!;
+    if (sheen) {
+        recording.lighting = recording.environments.lighting;
+        recording.environment_ready = false;
+        record_environment_preparations(renderer, &renderer.commands)!;
+    }
     if (recording.lighting && !recording.environment_ready) {
         recording.environment = pack_lighting_environment(
             renderer:    renderer,
             environment: recording.lighting,
             intensity:   recording.environments.lighting_intensity,
             rotation:    recording.environments.lighting_rotation,
-            sheen:       false,
+            sheen:       sheen,
         )!;
         recording.environment_ready = true;
     }
@@ -281,6 +287,11 @@ fn void? record_probe_updates(Renderer* renderer, ProbeFillRecording* recording,
         origin:        renderer.frame_origin,
     );
 
+    if (sheen) {
+        FrameRoot* root = (FrameRoot*)frame_span.bytes.ptr;
+        root.sheen_lut = renderer.environment_state.sheen_lut.view.index;
+        root.sheen_sampler = renderer.environment_state.sheen_sampler;
+    }
     Quat rotation = maths::random_rotation({
         // Index 0 is the all-zero point, a half turn about y that leaves one ray in each probe layer's plane.
         maths::halton((uint)renderer.frame_index + 1, 2),

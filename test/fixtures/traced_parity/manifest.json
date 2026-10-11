@@ -1,0 +1,35 @@
+[
+  {
+    "name": "ClearCoatCarPaint",
+    "authored_changes": false,
+    "license": "CC0-1.0",
+    "bytes": 116948,
+    "upstream_readme": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/ClearCoatCarPaint/README.md",
+    "source": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/ClearCoatCarPaint/glTF-Binary/ClearCoatCarPaint.glb",
+    "writer": "Khronos glTF-Sample-Assets",
+    "sha256": "4d4b32f2ef6d341191f6b6d6834f2b192762c878cd25d44e6b4b14514cd4be93",
+    "source_commit": "edc7c9e67c639d230715049ee31f9a96a6babbbe"
+  },
+  {
+    "name": "SheenChair",
+    "authored_changes": false,
+    "license": "CC0-1.0",
+    "bytes": 4125648,
+    "upstream_readme": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/SheenChair/README.md",
+    "source": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/SheenChair/glTF-Binary/SheenChair.glb",
+    "writer": "Khronos glTF-Sample-Assets",
+    "sha256": "f0af2a2b102d28d540236306ae19f8fb36842df76bd38cf76f063f9bd2853399",
+    "source_commit": "edc7c9e67c639d230715049ee31f9a96a6babbbe"
+  },
+  {
+    "name": "AnisotropyDiscTest",
+    "authored_changes": false,
+    "license": "CC0-1.0",
+    "bytes": 242128,
+    "upstream_readme": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/AnisotropyDiscTest/README.md",
+    "source": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/AnisotropyDiscTest/glTF-Binary/AnisotropyDiscTest.glb",
+    "writer": "Khronos glTF-Sample-Assets",
+    "sha256": "649b47c896f078fa56070f0ddaf07c57d6a7d109324acdd7d9f2d6748d9842ec",
+    "source_commit": "edc7c9e67c639d230715049ee31f9a96a6babbbe"
+  }
+]

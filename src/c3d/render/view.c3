@@ -681,6 +681,18 @@ fn void? record_raster_view(
                 decals: decal_address,
                 decal_count: decal_counts.packed,
             );
+            record.reflection_frame = (gpu::GpuAddress)0;
+            if (record.desc.ray_tracing.reflections) {
+                record.reflection_frame = pack_reflection_frame(
+                    renderer: renderer,
+                    scene: scene,
+                    record: record,
+                    view_layers: camera.layers,
+                    altitude: matrices.position.y + renderer.frame_origin.y,
+                    environments: &environments,
+                    source: (FrameRoot*)frame_span.bytes.ptr,
+                )!;
+            }
             if (record.scene_filtering) {
                 TransparencyGpu snapshot = {
                     .phase = shader::TRANSPARENCY_SORTED,
@@ -820,6 +832,8 @@ fn void? record_raster_view(
 
         bool transparent_after_split = layered || scene_read_items.len > 0 || transparent_reads != (SceneReads){} || fog_pass;
         instrumentation::@scope("view.record") {
+            record_environment_preparations(renderer, &renderer.commands)!;
+
             if (environments.atmosphere) {
                 record_sky_view_tables(
                     renderer: renderer,

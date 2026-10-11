@@ -12,6 +12,7 @@
 #include "toon.glsl"
 #include "scene_trace.glsl"
 #include "shadows.glsl"
+#include "hit_material.glsl"
 
 // Raster atlas layers are fitted to the camera, so every shadowing light traces at a hit.
 float hit_light_visibility(FrameRoot frame, LightGpu light, TraceSurface surface) {
@@ -31,7 +32,7 @@ vec3 shade_standard_hit(FrameRoot frame, TraceSurface surface, vec3 view_directi
         surface.normal,
         view_direction
     );
-    vec3 color = surface.emissive + frame.ambient.rgb * surface.albedo * (1.0 - surface.metallic);
+    vec3 color = surface.emissive + frame.ambient.rgb * surface.albedo * (1.0 - surface.metallic) * surface.occlusion;
     for (uint index = 0u; index < frame.light_count; index++) {
         LightGpu light = LightArray(frame.lights).values[index];
         if ((surface.receiver_layers & light.layers) == 0u) continue;
@@ -41,8 +42,49 @@ vec3 shade_standard_hit(FrameRoot frame, TraceSurface surface, vec3 view_directi
             * hit_light_visibility(frame, light, surface);
     }
     if (frame_has_indirect(frame)) {
-        color += evaluate_environment(frame, surface.position, standard, surface.roughness, 1.0, 1.0);
+        color += evaluate_environment(frame, surface.position, standard, surface.roughness, surface.occlusion, 1.0);
     }
+    return color;
+}
+
+vec3 shade_physical_hit(FrameRoot frame, TraceSurface hit, vec3 view_direction) {
+    PhysicalSurface surface = prepare_physical_hit_surface(hit, view_direction, frame.sheen_lut, frame.sheen_sampler);
+    ReflectionSelection reflections = reflection_probe_select(frame, hit.position);
+    vec3 transmitted = physical_hit_transmitted_radiance(frame, reflections, hit, surface);
+    vec3 ambient = frame.ambient.rgb * hit.albedo * (1.0 - hit.metallic) * hit.occlusion;
+    vec3 base_fill = (1.0 - surface.transmission) * ambient + surface.transmission * transmitted;
+    vec3 color;
+    if (surface.coat_weight == 0.0 && surface.sheen_strength == 0.0) {
+        color = base_fill + hit.emissive;
+    } else {
+        color = (1.0 - surface.coat_weight) * (base_fill * physical_sheen_attenuation(surface) + hit.emissive);
+    }
+
+    if (frame_has_indirect(frame)) {
+        color += evaluate_physical_environment(
+            frame,
+            reflections,
+            hit.position,
+            surface,
+            hit.roughness,
+            hit.occlusion,
+            1.0
+        );
+    }
+
+    for (uint index = 0u; index < frame.light_count; index++) {
+        LightGpu light = LightArray(frame.lights).values[index];
+        if ((hit.receiver_layers & light.layers) == 0u) continue;
+
+        color += hit_light_visibility(frame, light, hit) * evaluate_physical_light(
+            light,
+            hit.position,
+            surface,
+            frame.sheen_lut,
+            frame.sheen_sampler
+        );
+    }
+
     return color;
 }
 
@@ -82,8 +124,9 @@ vec3 shade_hit(FrameRoot frame, TraceSurface surface, vec3 view_direction) {
         case MATERIAL_KIND_BASIC:
             return surface.albedo;
         case MATERIAL_KIND_STANDARD:
-        case MATERIAL_KIND_PHYSICAL:
             return shade_standard_hit(frame, surface, view_direction);
+        case MATERIAL_KIND_PHYSICAL:
+            return shade_physical_hit(frame, surface, view_direction);
         case MATERIAL_KIND_TOON:
             return shade_toon_hit(frame, surface, view_direction);
         default:

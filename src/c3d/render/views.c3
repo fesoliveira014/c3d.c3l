@@ -680,6 +680,8 @@ struct ViewStats {
     uint              images; // at frame start: live working images, scene snapshots included
     uint              lights;
     uint              lights_dropped;
+    uint              trace_lights;
+    uint              trace_lights_dropped;
     uint              decals;
     uint              decals_dropped;
     uint              cluster_count;
@@ -732,6 +734,7 @@ struct ViewRecord {
     Target                               ao;
     Target                               reflection;
     Target                               reflection_blur;
+    gpu::GpuAddress                      reflection_frame;
     Target                               accumulation;
     Target                               ssgi_raw;
     Target[SSGI_HISTORY_SLOTS]           ssgi_history;

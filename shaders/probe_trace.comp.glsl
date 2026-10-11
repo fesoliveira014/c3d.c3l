@@ -11,7 +11,7 @@
 #include "scene_trace.glsl"
 #include "lights.glsl"
 #include "shadows.glsl"
-#include "ibl.glsl"
+#include "hit_shading.glsl"
 #include "trace_medium.glsl"
 
 layout(local_size_x = 64) in;
@@ -21,23 +21,6 @@ layout(push_constant) uniform Push {
 } pc;
 
 GPU_DECLARE_WRITEONLY_ARRAY_REF(RayResultArray, RayResultGpu);
-
-// Diffuse direct light at a hit: a shadow ray only for a light that can reach the surface.
-vec3 direct_lambert(FrameRoot frame, TraceSurface surface) {
-    vec3 radiance = vec3(0.0);
-    for (uint index = 0u; index < frame.light_count; index++) {
-        LightGpu light = LightArray(frame.lights).values[index];
-        if ((surface.receiver_layers & light.layers) == 0u) continue;
-        LightSample light_sample = sample_light(light, surface.position);
-        float cosine = dot(surface.normal, light_sample.direction);
-        if (cosine <= 0.0 || light_sample.radiance == vec3(0.0)) continue;
-        float visibility = light_casts_shadow(light)
-            ? ray_shadow_visibility(frame, light, surface.position, surface.geometric_normal)
-            : 1.0;
-        radiance += light_sample.radiance * cosine * visibility;
-    }
-    return radiance * surface.albedo / PI;
-}
 
 void main() {
     ProbeTraceRoot root = ProbeTraceRoot(pc.root_gpu);
@@ -70,9 +53,8 @@ void main() {
         if (surface.back_face) {
             result = vec4(0.0, 0.0, 0.0, -hit.t);
         } else {
-            vec3 bounce = surface.albedo / PI
-                * indirect_diffuse_irradiance(frame, surface.position, surface.normal, -direction);
-            vec3 radiance = direct_lambert(frame, surface) + surface.emissive + bounce;
+            vec3 radiance = shade_hit(frame, surface, -direction);
+
             result = vec4(trace_segment_radiance(frame, origin, direction, hit.t, radiance), hit.t);
         }
     }

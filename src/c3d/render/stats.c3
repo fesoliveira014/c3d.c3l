@@ -131,6 +131,8 @@ struct Stats {
     uint  batches_faded;     // this frame: view batches inside the frustum and wholly past their fade band
     uint  lights;
     uint  lights_dropped;
+    uint  trace_lights;
+    uint  trace_lights_dropped;
     uint  decals;
     uint  decals_dropped;
     uint  probe_volumes_dropped; // this frame, per failed acquisition: two views of one scene count a volume twice

@@ -405,14 +405,14 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
     uint ssgi_texture;
     uint scene_depth;
     float previous_time;
-    uint _pad2;
+    uint sheen_sampler;
     vec4 clip_plane;
     uint64_t sky_fog;
     uint64_t reflection_probes;
     vec4 origin;
     uint64_t decals;
     uint decal_count;
-    uint _pad3;
+    uint sheen_lut;
     uint64_t transparency;
     uint _pad4;
     uint _pad5;

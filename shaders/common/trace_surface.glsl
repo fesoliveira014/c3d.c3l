@@ -22,6 +22,30 @@ struct SceneHit {
     float t;
 };
 
+// The footprint of a hit's triangle under a ray cone, as ray_cone_lod in scene_trace.c3.
+struct TraceFootprint {
+    float uv0_area;
+    float uv1_area;
+    float world_area;
+    float cone_width;
+    float cosine;
+};
+
+struct TraceMaterialContext {
+    uint64_t geometry;
+    uvec3 corners;
+    vec3 weights;
+    vec2 uv0;
+    vec2 uv1;
+    vec3 vertex_normal;
+    vec3 world_edge_1;
+    vec3 world_edge_2;
+    vec4 tangent;
+    vec3 model_scale;
+    TraceFootprint footprint;
+    bool facing_back;
+};
+
 struct TraceSurface {
     vec3 position;
     vec3 normal;
@@ -30,19 +54,12 @@ struct TraceSurface {
     vec3 emissive;
     float metallic;
     float roughness;
+    float occlusion;
     uint material_kind;
     uint receiver_layers;
     uint64_t material;
     bool back_face;
-};
-
-// The footprint of a hit's triangle under a ray cone, as ray_cone_lod in scene_trace.c3.
-struct TraceFootprint {
-    float uv0_area;
-    float uv1_area;
-    float world_area;
-    float cone_width;
-    float cosine;
+    TraceMaterialContext context;
 };
 
 TraceInstanceGpu trace_instance(SceneTraceRoot scene, uint row) {
@@ -179,6 +196,7 @@ TraceSurface surface_from_hit(SceneTraceRoot scene, SceneHit hit, vec3 ray_direc
     surface.material = instance.material;
     surface.metallic = 0.0;
     surface.roughness = 1.0;
+    surface.occlusion = 1.0;
     surface.emissive = vec3(0.0);
 
     vec3 corner_0 = pull_vec3(geometry.positions, corners.x);
@@ -223,6 +241,27 @@ TraceSurface surface_from_hit(SceneTraceRoot scene, SceneHit hit, vec3 ray_direc
     footprint.cone_width = cone_width;
     footprint.cosine = max(abs(dot(surface.geometric_normal, ray_direction)), TRACE_MIN_COSINE);
 
+    if (instance.material_kind == MATERIAL_KIND_PHYSICAL) {
+        mat3 model = transpose(mat3(
+            instance.local_to_world_0.xyz,
+            instance.local_to_world_1.xyz,
+            instance.local_to_world_2.xyz
+        ));
+        surface.context.geometry = instance.geometry;
+        surface.context.corners = corners;
+        surface.context.weights = weights;
+        surface.context.uv0 = uv0;
+        surface.context.uv1 = uv1;
+        surface.context.vertex_normal = interpolated_normal;
+        surface.context.world_edge_1 = world_1 - world_0;
+        surface.context.world_edge_2 = world_2 - world_0;
+        surface.context.tangent = (geometry.flags & GEOMETRY_HAS_TANGENTS) != 0u
+            ? hit_tangent(instance, geometry, corners, weights) : vec4(0.0);
+        surface.context.model_scale = vec3(length(model[0]), length(model[1]), length(model[2]));
+        surface.context.footprint = footprint;
+        surface.context.facing_back = facing_back;
+    }
+
     vec4 base = vec4(1.0);
     switch (instance.material_kind) {
         case MATERIAL_KIND_STANDARD:
@@ -253,6 +292,17 @@ TraceSurface surface_from_hit(SceneTraceRoot scene, SceneHit hit, vec3 ray_direc
                 );
                 surface.metallic = clamp(surface.metallic * factors.b, 0.0, 1.0);
                 surface.roughness = clamp(surface.roughness * factors.g, 0.0, 1.0);
+            }
+            if ((standard.map_flags & MATERIAL_MAP_OCCLUSION) != 0u) {
+                float sampled = sample_hit_map_lod(
+                    standard.occlusion_map,
+                    standard.map_flags,
+                    MATERIAL_MAP_OCCLUSION,
+                    uv0,
+                    uv1,
+                    footprint
+                ).r;
+                surface.occlusion = mix(1.0, clamp(sampled, 0.0, 1.0), standard.occlusion_strength);
             }
             if ((standard.map_flags & MATERIAL_MAP_EMISSIVE) != 0u) {
                 surface.emissive *= sample_hit_map_lod(
