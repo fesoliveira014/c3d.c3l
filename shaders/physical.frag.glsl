@@ -265,7 +265,8 @@ void main() {
     if (transmission > 0.0) {
         vec3 refracted = refract(-material_sample.view_direction, material_sample.normal, 1.0 / material.ior);
         surface.transmission_ray = transmission_ray(refracted, thickness, draw.model);
-        vec3 radiance = volume_attenuation(
+        transmitted = transmitted_light(
+            surface,
             transmitted_radiance(
                 frame,
                 reflections,
@@ -276,32 +277,15 @@ void main() {
                 material_roughness,
                 material.ior,
                 (material.standard.flags & MATERIAL_ALPHA_BLEND) == 0u
-            ),
-            length(surface.transmission_ray),
-            surface.attenuation_color,
-            surface.attenuation_distance
+            )
         );
-        vec3 fresnel = fresnel_schlick(
-            surface.standard.reflectance,
-            surface.standard.grazing_reflectance,
-            surface.standard.normal_view
-        );
-        transmitted = (1.0 - fresnel) * radiance * surface.transmission_color;
     }
 
     float ambient_occlusion = draw_ambient_occlusion(frame, draw.flags, ivec2(gl_FragCoord.xy));
     vec4 screen_indirect = draw_screen_space_indirect(frame, draw.flags, ivec2(gl_FragCoord.xy));
     vec3 base_ambient = frame.ambient.rgb * material_sample.base_color.rgb * (1.0 - material_sample.metallic)
         * screen_space_base_share(material_sample.occlusion, ambient_occlusion, screen_indirect);
-    vec3 base_fill = (1.0 - transmission) * base_ambient + transmission * transmitted;
-    vec3 color;
-    if (surface.coat_weight == 0.0 && surface.sheen_strength == 0.0) {
-        color = base_fill + material_sample.emissive;
-    } else {
-        color = (1.0 - surface.coat_weight)
-            * (base_fill * physical_sheen_attenuation(surface)
-                + material_sample.emissive);
-    }
+    vec3 color = physical_fill(surface, base_ambient, transmitted, material_sample.emissive);
     if (frame_has_indirect(frame)) {
         color += evaluate_physical_environment(
             frame,

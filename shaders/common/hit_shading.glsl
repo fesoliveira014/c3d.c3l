@@ -136,27 +136,20 @@ bool hit_physical_light_arrives(TraceSurface surface, PhysicalSurface physical, 
 vec3 shade_physical_hit(FrameRoot frame, HitLights lights, TraceSurface surface, vec3 view_direction) {
     PhysicalSurface physical = physical_surface_from_hit(frame, surface, view_direction);
     ReflectionSelection reflections = reflection_probe_select(frame, surface.position);
+
     vec3 transmitted = vec3(0.0);
     if (physical.transmission > 0.0) {
         vec3 refracted = refract(-view_direction, surface.normal, 1.0 / surface.ior);
         physical.transmission_ray = normalize(refracted) * surface.thickness_extent;
-        vec3 radiance = volume_attenuation(
-            transmitted_environment(frame, reflections, refracted, surface.roughness),
-            length(physical.transmission_ray),
-            physical.attenuation_color,
-            physical.attenuation_distance
+        transmitted = transmitted_light(
+            physical,
+            transmitted_environment(frame, reflections, refracted, surface.roughness)
         );
-        vec3 fresnel = fresnel_schlick(
-            physical.standard.reflectance,
-            physical.standard.grazing_reflectance,
-            physical.standard.normal_view
-        );
-        transmitted = (1.0 - fresnel) * radiance * physical.transmission_color;
     }
 
     vec3 base_ambient = frame.ambient.rgb * surface.albedo * (1.0 - surface.metallic);
-    vec3 base_fill = (1.0 - physical.transmission) * base_ambient + physical.transmission * transmitted;
-    vec3 color = (1.0 - physical.coat_weight) * (base_fill + surface.emissive);
+    vec3 color = physical_fill(physical, base_ambient, transmitted, surface.emissive);
+
     if (frame_has_indirect(frame)) {
         color += evaluate_physical_environment(
             frame,
@@ -168,6 +161,7 @@ vec3 shade_physical_hit(FrameRoot frame, HitLights lights, TraceSurface surface,
             1.0
         );
     }
+
     for (uint index = 0u; index < lights.count; index++) {
         LightGpu light = LightArray(lights.address).values[index];
         if ((light.layers & surface.layers) == 0u) continue;

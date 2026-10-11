@@ -35,6 +35,30 @@ float physical_sheen_attenuation(PhysicalSurface surface) {
     return 1.0 - surface.sheen_strength * surface.sheen_view_albedo;
 }
 
+// The radiance behind a transmissive surface, volume-attenuated along its transmission ray and weighted by what the
+// surface does not reflect.
+vec3 transmitted_light(PhysicalSurface surface, vec3 radiance_behind) {
+    vec3 radiance = volume_attenuation(
+        radiance_behind,
+        length(surface.transmission_ray),
+        surface.attenuation_color,
+        surface.attenuation_distance
+    );
+    vec3 fresnel = fresnel_schlick(
+        surface.standard.reflectance,
+        surface.standard.grazing_reflectance,
+        surface.standard.normal_view
+    );
+    return (1.0 - fresnel) * radiance * surface.transmission_color;
+}
+
+// The light no direction shapes: ambient and transmitted light under the sheen layer, plus emission, under the coat.
+vec3 physical_fill(PhysicalSurface surface, vec3 base_ambient, vec3 transmitted, vec3 emissive) {
+    vec3 base_fill = (1.0 - surface.transmission) * base_ambient + surface.transmission * transmitted;
+    if (surface.coat_weight == 0.0 && surface.sheen_strength == 0.0) return base_fill + emissive;
+    return (1.0 - surface.coat_weight) * (base_fill * physical_sheen_attenuation(surface) + emissive);
+}
+
 float clearcoat_view_weight(float clearcoat, vec3 normal, vec3 view_direction) {
     float normal_view = clamp(dot(normal, view_direction), 0.0, 1.0);
     float complement = 1.0 - normal_view;
