@@ -882,8 +882,8 @@ Correction transfers motion, not proportions or poses: both rigs must face the
 same model axis and rest in the same kind of pose (both T or both A). A
 T-pose source on an A-pose destination keeps the arms offset by the difference
 for the whole clip. Foot contact and sliding follow from the rigs' proportions.
-The optional `retarget --mixamo` mode plays a Mixamo walk on the Quaternius rig
-with both modes.
+The `retarget` example plays a Mixamo walk on the Quaternius rig with both
+modes.
 
 ### Calibrated profiles
 
@@ -928,12 +928,13 @@ translation and yaw from the mesh. With `root_yaw = false`, the turn stays in
 the mesh. Destroying the profile does not invalidate clips already baked or
 published.
 
-The default `retarget` example uses repository-authored T/A, facing, animated
-ancestor and carrier rigs, with expected and profiled poses shown side by side.
-It requires no external animation assets. `F` changes the fixture family,
-Space pauses, `A` toggles automatic family cycling and `I` toggles diagnostic
-lines. The carrier and turning families show `KEEP`, `STRIP_XZ` and `EXTRACT`,
-including both yaw settings, forward/reverse playback and loops.
+The `retarget` example calibrates the Mixamo walk file against the Quaternius
+rig with both rest poses, maps the body by name and loads the walk through
+`fbx::load_animations_with_profile` with the rig's top node as carrier. `T`
+cycles the right character through `COPY`, `CORRECT`, profiled `STRIP_XZ` and
+profiled `EXTRACT`, which walks the instance forward through
+`apply_root_motion`; `R` toggles the rest pose. It needs the Mixamo files listed
+in `examples/assets/mixamo/README.md`.
 
 ## Inverse kinematics
 
