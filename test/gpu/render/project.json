@@ -331,6 +331,7 @@
         "test_auto_exposure.c3",
         "test_posed_trace.c3",
         "test_transparency_peel_order.c3",
+        "test_transparency_filter_fog.c3",
         "../../fixtures/transparency/fixture.c3"
       ]
     },

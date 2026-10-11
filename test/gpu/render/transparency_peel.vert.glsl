@@ -31,9 +31,8 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Dr
     uint scene;
     uint mode;
     uint has_previous;
-    uint unused0;
-    uint unused1;
-    uint unused2;
+    uint opaque_depth;
+    uint64_t transport;
 };
 layout(push_constant) uniform Push { uint64_t vertex_root; uint64_t fragment_root; } pc;
 layout(location = 0) flat out uint surface_index;

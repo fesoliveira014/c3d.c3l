@@ -2,6 +2,9 @@
 #extension GL_EXT_buffer_reference : require
 #include "generated/shader_abi.glsl"
 #include "descriptor_heap.glsl"
+#include "c3d_abi.glsl"
+#include "scene_snapshot.glsl"
+#include "fog.glsl"
 
 struct Surface {
     vec4 bounds;
@@ -33,8 +36,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Dr
     uint mode;
     uint has_previous;
     uint opaque_depth;
-    uint unused1;
-    uint unused2;
+    uint64_t transport;
 };
 layout(push_constant) uniform Push { uint64_t vertex_root; uint64_t fragment_root; } pc;
 #ifdef MESH_VERTEX_PATH
@@ -57,9 +59,14 @@ float fetch_depth(uint image, ivec2 pixel) {
 }
 
 #include "transparency.glsl"
+#include "transparency_peel_fog.glsl"
 
 void main() {
     Draw root = Draw(pc.fragment_root);
+    if (root.transport != 0ul && root.mode >= 4u) {
+        transparency_fog_phase(root);
+        return;
+    }
     Surface surface = Surfaces(root.surfaces).values[surface_index];
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     float depth = gl_FragCoord.z;
@@ -69,14 +76,21 @@ void main() {
         || any(isnan(mesh_uv0)) || any(isnan(mesh_uv1)) || any(isnan(mesh_color)) || any(isnan(mesh_clip))) discard;
 #endif
     bool fallback = surface.kind >= 2u;
-    if (root.mode != 3u && fallback) discard;
-    if (root.mode == 3u && !fallback) discard;
+    bool all_sorted = root.transport != 0ul && root.mode == 3u && (PeelTransport(root.transport).flags & 1u) != 0u;
+    if (!all_sorted && root.mode != 3u && fallback) discard;
+    if (!all_sorted && root.mode == 3u && !fallback) discard;
     if (surface.kind != 3u && depth <= opaque_depth) discard;
     if (!layered_transparency_accept(depth)) discard;
     if (root.mode == 0u) {
         radiance = vec4(depth, 0, 0, 1);
     } else {
         vec3 color = surface.color.rgb;
+        if (root.transport != 0ul) {
+            color = transparency_fog_surface(root, surface, depth);
+            radiance = vec4(color * surface.coverage, surface.padding0 == 2u ? 0.0 : surface.coverage);
+            shade_depth = depth;
+            return;
+        }
         if (surface.kind == 1u || surface.kind == 2u) {
             vec3 behind = texelFetch(gpu_texture_heap[nonuniformEXT(GPU_HEAP_SLOT(root.scene))], pixel, 0).rgb;
             if (surface.reader == 2u) color *= opaque_depth;
