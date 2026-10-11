@@ -816,3 +816,136 @@ fn void test_layered_lifetime_moving_glass_keeps_two_view_current_pixels_and_qua
         LAYERED_LIFETIME_TEMPORAL_FRAMES, quality_changes, aborted);
     check_validation(renderer);
 }
+
+fn void check_sorted_scene_pyramid(TransparencyPyramid* actual, TransparencyPyramid* expected) @private {
+    check_layered_target(&actual.image, &expected.image);
+    assert(actual.mip_count == expected.mip_count && actual.texel_bytes == expected.texel_bytes);
+    foreach (mip, level : actual.levels) {
+        assert(level.index == expected.levels[mip].index && level.generation == expected.levels[mip].generation);
+    }
+}
+
+fn void sorted_scene_pyramid_faults(LayeredPressure kind, bool resize) @private {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    {
+        Fixture fixture;
+        create_fixture(
+            allocator: &tracker,
+            fixture: &fixture,
+            max_render_targets: LAYERED_LIFETIME_PRESSURE_CAPACITY,
+            texture_capacity: kind == LayeredPressure.TEXTURES ? LAYERED_LIFETIME_PRESSURE_CAPACITY : 0,
+            texture_heap_capacity: kind == LayeredPressure.SAMPLED_VIEWS ? LAYERED_LIFETIME_PRESSURE_CAPACITY : 0,
+        )!!;
+        defer destroy_fixture(&fixture);
+        LayeredScene target = create_layered_scene(&fixture)!!;
+        defer scene::destroy_scene(&target.scene);
+        LayeredView view = create_layered_view(&fixture, 1)!!;
+        defer destroy_layered_view(&fixture, &view);
+        Renderer* renderer = &fixture.renderer;
+        ViewRecord* record = renderer.views.get(view.view);
+        ViewDesc desc = record.desc;
+        desc.transparency = {};
+        render::configure_view(renderer, view.view, desc)!!;
+        PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
+        params.standard.base_color = { 1, 1, 1, 1 };
+        params.standard.metallic = 0;
+        params.standard.roughness = 0.5f;
+        params.ior = 1.5f;
+        params.specular = 0;
+        params.transmission = 1;
+        params.thickness = 0;
+        MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
+        common.double_sided = true;
+        common.depth_write = false;
+        MaterialId material = fixture.assets.add_material(material::physical(params, common))!!;
+        target.scene.add_mesh(add_layered_sheet_geometry(&fixture, 0.75f)!!, material)!!;
+        for (uint frame = 0; frame < render::FRAMES_IN_FLIGHT; frame++) {
+            Vec4[] warm = render_layered_pixels(&fixture, &target, &view)!!;
+            free(warm);
+        }
+        Vec4[] rough = render_layered_pixels(&fixture, &target, &view)!!;
+        defer free(rough);
+        assert(record.scene_filtering && record.scene_pyramid.image.texture.is_valid());
+        if (!resize) {
+            fixture.assets.material(material).data.physical.standard.roughness = 0;
+            fixture.assets.mark_material_dirty(material);
+        }
+        Vec4[] original = render_layered_pixels(&fixture, &target, &view)!!;
+        defer free(original);
+        render::wait_frames(renderer)!!;
+        assert(record.scene_filtering == resize);
+        assert(record.stats.transparency.payload_bytes == record.scene_pyramid.texel_bytes);
+        LayeredLifetimeSnapshot snapshot = layered_lifetime_snapshot(renderer, view.view);
+        TransparencyPyramid previous_pyramid = record.scene_pyramid;
+        Target previous_scene_color = record.scene_color;
+        ResizeTargetState output = resize_target_state(renderer, view.target);
+        LayeredPressureFill* pressure = mem::new(LayeredPressureFill);
+        defer free(pressure);
+        pressure.kind = kind;
+        fill_layered_pressure(renderer, pressure, renderer.targets.get(view.target).target.texture);
+        defer release_layered_pressure(renderer, pressure);
+        uint prefix = resize ? 3 : 0;
+        for (uint slot = 0; slot < prefix; slot++) free_layered_pressure_slot(renderer, pressure);
+        uint mips = transparency_fixtures::mip_level_count(resize ? 129 : 128, resize ? 65 : 128);
+        uint positions = kind == LayeredPressure.TEXTURES ? 1 : 1 + mips;
+        if (!resize) {
+            fixture.assets.material(material).data.physical.standard.roughness = 0.5f;
+            fixture.assets.mark_material_dirty(material);
+        }
+        for (uint failed = 0; failed < positions; failed++) {
+            CapacityCounts before = capacity_counts(renderer);
+            ulong allocations_before = gpu::get_memory_stats(&renderer.device)!!.live_allocation_count;
+            fault expected = kind == LayeredPressure.TEXTURES ? gpu::SLOT_TABLE_FULL : gpu::DESCRIPTOR_HEAP_FULL;
+            if (resize) {
+                assert(@catch(render::resize_render_target(
+                    renderer: renderer,
+                    target: view.target,
+                    width: 129,
+                    height: 65,
+                )) == expected);
+            } else {
+                assert(@catch(render_layered_pixels(&fixture, &target, &view)) == expected);
+            }
+            capacity_check_counts(capacity_counts(renderer), before);
+            assert(gpu::get_memory_stats(&renderer.device)!!.live_allocation_count == allocations_before);
+            if (record.stats.transparency.payload_bytes != snapshot.payload) {
+                io::printfn("sorted payload kind=%s resize=%s position=%s actual=%s expected=%s old_mips=%s live_mips=%s",
+                    kind,
+                    resize,
+                    failed,
+                    record.stats.transparency.payload_bytes,
+                    snapshot.payload,
+                    previous_pyramid.texel_bytes,
+                    record.scene_pyramid.texel_bytes,
+                );
+            }
+            check_layered_lifetime_snapshot(renderer, view.view, &snapshot);
+            check_sorted_scene_pyramid(&record.scene_pyramid, &previous_pyramid);
+            check_layered_target(&record.scene_color, &previous_scene_color);
+            assert(record.scene_filtering == resize);
+            resize_check_target(renderer, view.target, output);
+            Vec4[] untouched = read_layered_lifetime_output(&fixture, &view)!!;
+            defer free(untouched);
+            check_layered_pixel_bits(untouched, original);
+            free_layered_pressure_slot(renderer, pressure);
+        }
+        release_layered_pressure(renderer, pressure);
+        Vec4[] retry = render_layered_pixels(&fixture, &target, &view)!!;
+        defer free(retry);
+        check_layered_pixel_bits(retry, rough);
+        assert(record.scene_filtering && record.scene_pyramid.image.texture.is_valid());
+        assert(record.stats.transparency.payload_bytes == record.scene_pyramid.texel_bytes);
+        io::printfn("sorted rough pyramid kind=%s resize=%s fault_positions=%s", kind, resize, positions);
+        check_validation(renderer);
+    }
+    assert(tracker.allocated() == 0, "Faulted SORTED pyramid acquisition retained tracked allocations.");
+}
+
+fn void test_layered_lifetime_sorted_rough_pyramid_creation_and_resize_failures_are_atomic() @test {
+    foreach (kind : (LayeredPressure[2]){ TEXTURES, SAMPLED_VIEWS }) {
+        sorted_scene_pyramid_faults(kind, false);
+        sorted_scene_pyramid_faults(kind, true);
+    }
+}

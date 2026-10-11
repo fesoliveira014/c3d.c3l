@@ -31,14 +31,18 @@ fn void? acquire_transparency_snapshot(Renderer* renderer, ViewRecord* record, b
     record.scene_pyramid = replacement;
     record.scene_pyramid_frame_state = replacement.image.state;
     record.scene_filtering = true;
+    refresh_transparency_payload(renderer);
 }
 
 fn void retire_transparency_snapshot(Renderer* renderer, ViewRecord* record) @private {
     // Abort redirects pending retirements to the last submitted frame.
     RetireList* retire = renderer.frame_open ? &renderer.pending_upload_retire : last_submitted_retire(renderer);
+    bool had_pyramid = record.scene_pyramid.image.texture.is_valid();
     retire_transparency_pyramid(retire, &record.scene_pyramid);
     record.scene_pyramid_frame_state = {};
     record.scene_filtering = false;
+
+    if (had_pyramid) refresh_transparency_payload(renderer);
 }
 
 <*

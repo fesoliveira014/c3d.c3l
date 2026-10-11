@@ -138,6 +138,62 @@ fn void? transparency_bench_checker(
     };
 }
 
+fn void? transparency_bench_batches(TransparencyBenchScene* target) @private {
+    GeometryId geometry = transparency_bench_quad(
+        assets: &target.assets,
+        distance: transparency_fixtures::PLANAR_DISTANCES[2],
+        minimum_x: -0.75f,
+        maximum_x: 0.75f,
+    )!;
+    MaterialId white = transparency_bench_basic(&target.assets, { 1, 1, 1, 1 }, true)!;
+    Transform[2] first = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
+    first[0].position.z = transparency_fixtures::PLANAR_DISTANCES[2] - transparency_fixtures::PLANAR_DISTANCES[0];
+    first[1].position.z = transparency_fixtures::PLANAR_DISTANCES[2] - transparency_fixtures::PLANAR_DISTANCES[4];
+    Node* first_batch = target.scene.add_instanced_mesh(
+        geometry: geometry,
+        material: white,
+        capacity: first.len,
+        transforms: first[..],
+    )!;
+    InstancedMesh* first_instances = target.scene.get(first_batch, InstancedMesh);
+    for (uint instance = 0; instance < first.len; instance++) {
+        uint source = instance == 0 ? 0 : 4;
+        transparency_fixtures::Color color = transparency_fixtures::PLANAR_COLORS[source];
+        first_instances.colors[instance] = {
+            (float)color.x, (float)color.y, (float)color.z,
+            (float)transparency_fixtures::PLANAR_COVERAGES[source],
+        };
+    }
+    target.scene.mark_instances_dirty(first_batch);
+
+    transparency_fixtures::Color middle_color = transparency_fixtures::PLANAR_COLORS[2];
+    MaterialId middle = transparency_bench_basic(&target.assets, {
+        (float)middle_color.x, (float)middle_color.y, (float)middle_color.z,
+        (float)transparency_fixtures::PLANAR_COVERAGES[2],
+    }, true)!;
+    target.scene.add_mesh(geometry, middle)!;
+
+    Transform[2] second = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
+    second[0].position.z = transparency_fixtures::PLANAR_DISTANCES[2] - transparency_fixtures::PLANAR_DISTANCES[1];
+    second[1].position.z = transparency_fixtures::PLANAR_DISTANCES[2] - transparency_fixtures::PLANAR_DISTANCES[3];
+    Node* second_batch = target.scene.add_instanced_mesh(
+        geometry: geometry,
+        material: white,
+        capacity: second.len,
+        transforms: second[..],
+    )!;
+    InstancedMesh* second_instances = target.scene.get(second_batch, InstancedMesh);
+    for (uint instance = 0; instance < second.len; instance++) {
+        uint source = instance == 0 ? 1 : 3;
+        transparency_fixtures::Color color = transparency_fixtures::PLANAR_COLORS[source];
+        second_instances.colors[instance] = {
+            (float)color.x, (float)color.y, (float)color.z,
+            (float)transparency_fixtures::PLANAR_COVERAGES[source],
+        };
+    }
+    target.scene.mark_instances_dirty(second_batch);
+}
+
 fn TransparencyBenchScene? create_transparency_bench_scene(TransparencyBenchCase configuration) @private {
     TransparencyBenchScene target = {
         .assets = asset::create_asset_store(mem, asset::default_asset_store_desc()),
@@ -214,6 +270,12 @@ fn TransparencyBenchScene? create_transparency_bench_scene(TransparencyBenchCase
             )!;
             MaterialId material = transparency_bench_basic(&target.assets, { 0.125f, 0.25f, 0.5f, 1 })!;
             target.scene.add_mesh(backdrop, material)!;
+            if (configuration.corpus == "batch") {
+                transparency_bench_batches(&target)!;
+                target.scene.update_world();
+                return target;
+            }
+
             transparency_fixtures::DepthFragment[17] fragments;
             uint count = configuration.corpus == "six" ? 6 : 17;
             if (count == 6) {
@@ -459,7 +521,7 @@ fn void transparency_bench_spread(
 
 fn int main(String[] args) {
     if (args.len == 5 || args.len > 6) {
-        io::printn("usage: bench_transparency [all|six|dense|rough|cc0] [all|sorted|k1|k4|k16] "
+        io::printn("usage: bench_transparency [all|six|dense|rough|cc0|batch] [all|sorted|k1|k4|k16] "
             "[all|forward|deferred] [width height]");
         return 1;
     }
@@ -489,8 +551,14 @@ fn int main(String[] args) {
         "completed_overflow_pixels,completed_overflow,fallback_draws");
     io::printn("# spread_columns=record,corpus,capacity,path,width,height,metric,min_median_ms,max_median_ms,"
         "median_spread_ms,min_p95_ms,max_p95_ms,p95_spread_ms");
+    if (corpus_filter == "batch") {
+        io::printn("# batch_fixture=interleaved_planar groups=5 first_batch_distances=3/7 "
+            "middle_mesh_distance=5 second_batch_distances=4/6 colors_and_coverage=planar_fixture "
+            "default_extent=128x128 variants=ordinary_instanced_only default_all_excludes_batch=true");
+    }
     uint selected;
-    foreach (corpus : (String[4]){ "six", "dense", "rough", "cc0" }) {
+    foreach (corpus : (String[5]){ "six", "dense", "rough", "cc0", "batch" }) {
+        if (corpus == "batch" && corpus_filter == "all") continue;
         if (corpus_filter != "all" && corpus_filter != corpus) continue;
         foreach (mode_index, capacity : (uint[4]){ 0, 1, 4, 16 }) {
             String name = ((String[4]){ "sorted", "k1", "k4", "k16" })[mode_index];

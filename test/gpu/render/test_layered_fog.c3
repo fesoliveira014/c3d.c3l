@@ -469,6 +469,53 @@ fn void test_layered_fog_projected_offsets_and_offscreen_missing_environment_pre
     check_validation(&fixture.renderer);
 }
 
+fn void test_layered_offscreen_refraction_uses_the_local_probe_before_the_global_environment() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    Fixture fixture;
+    create_fixture(&tracker, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    EnvironmentId local_environment = reflection_solid(&fixture, { 1, 0, 0 })!!;
+    EnvironmentId global_environment = reflection_solid(&fixture, { 0, 0, 1 })!!;
+    foreach (shading : (ShadingPath[2]){ FORWARD, DEFERRED }) {
+        LayeredScene target = create_layered_scene(&fixture)!!;
+        defer scene::destroy_scene(&target.scene);
+        target.scene.ambient_intensity = 0;
+        target.scene.environment = global_environment;
+        Node* probe = target.scene.add_node()!!;
+        probe.local.position = { 0, 0, -LAYERED_FOG_FRONT_DISTANCE };
+        target.scene.add(probe, light::reflection_probe({ 2, 2, 2 }, local_environment));
+        MaterialId glass = add_layered_fog_glass(
+            fixture: &fixture,
+            tint: { 1, 1, 1 },
+            absorption: { 1, 1, 1 },
+            thickness: 8,
+            attenuation_distance: 0,
+        )!!;
+        fixture.assets.material(glass).data.physical.ior = 1.5f;
+        fixture.assets.mark_material_dirty(glass);
+        target.scene.add_mesh(add_layered_fog_tilted_sheet(&fixture)!!, glass)!!;
+        LayeredView view = create_layered_view(&fixture, 1, shading)!!;
+        defer destroy_layered_view(&fixture, &view);
+        foreach (mode : (TransparencyMode[2]){ SORTED, LAYERED }) {
+            ViewDesc desc = fixture.renderer.views.get(view.view).desc;
+            desc.transparency = mode == LAYERED ? render::TRANSPARENCY_LAYERED_DEFAULT : (TransparencyDesc){};
+            render::configure_view(&fixture.renderer, view.view, desc)!!;
+            target.scene.get(probe, ReflectionProbe).environment = local_environment;
+            Vec4[] local = render_layered_pixels(&fixture, &target, &view)!!;
+            defer free(local);
+            check_layered_interior(local, { 1, 0, 0 });
+            target.scene.get(probe, ReflectionProbe).environment = {};
+            Vec4[] global = render_layered_pixels(&fixture, &target, &view)!!;
+            defer free(global);
+            check_layered_interior(global, { 0, 0, 1 });
+            check_layered_pixel_bits(local[0:1], global[0:1]);
+        }
+    }
+    check_validation(&fixture.renderer);
+}
+
 fn void test_layered_fog_combined_media_over_and_additive_match_independent_opaque_transfers() @test {
     TrackingAllocator tracker;
     tracker.init(mem);

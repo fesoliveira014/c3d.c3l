@@ -12,6 +12,7 @@ import c3d::scene;
 import c3d::shader::compile;
 import c3d::test::transparency_fixtures;
 import gpu;
+import std::core::string;
 import std::math;
 
 const uint LAYERED_IMAGE_SIZE @private = transparency_fixtures::PLANAR_EXTENT;
@@ -510,8 +511,29 @@ fn void test_layered_capacity_one_keeps_the_complete_sorted_remainder() @test {
     check_validation(&fixture.renderer);
 }
 
-fn MaterialId? add_layered_reader(Fixture* fixture, bool declared) @private {
+fn MaterialId? add_layered_reader(
+    Fixture* fixture,
+    bool declared,
+    transparency_fixtures::ReaderMode reader = transparency_fixtures::ReaderMode.COLOR,
+) @private {
     @pool() {
+        String color_term = "0.5 * color.rgb + 0.5 * scene_color_at(frame, scene_uv(frame, gl_FragCoord.xy))";
+        String depth_term = "color.rgb * scene_depth_at(frame, scene_uv(frame, gl_FragCoord.xy))";
+        String reader_expression;
+        SceneReads reads;
+        switch (reader) {
+            case NONE:
+                reader_expression = "color.rgb = color.rgb;\n";
+            case COLOR:
+                reader_expression = string::tformat("color.rgb = %s;\n", color_term);
+                reads.color = true;
+            case DEPTH:
+                reader_expression = string::tformat("color.rgb = %s;\n", depth_term);
+                reads.depth = true;
+            case COLOR_DEPTH:
+                reader_expression = string::tformat("color.rgb = %s + %s;\n", color_term, depth_term);
+                reads = { .color = true, .depth = true };
+        }
         String source = (String)LAYERED_READER_SOURCE[..];
         source = source.treplace(
             needle: "#include \"fog.glsl\"",
@@ -519,7 +541,7 @@ fn MaterialId? add_layered_reader(Fixture* fixture, bool declared) @private {
         );
         source = source.treplace(
             needle: "out_color = material_output(",
-            new_str: "color.rgb = 0.5 * color.rgb + 0.5 * scene_color_at(frame, scene_uv(frame, gl_FragCoord.xy));\n",
+            new_str: reader_expression,
         );
         source = source.treplace(
             needle: "        apply_material_fog(frame, v_world_pos, color.rgb, material.flags),",
@@ -552,7 +574,7 @@ fn MaterialId? add_layered_reader(Fixture* fixture, bool declared) @private {
                 defines: declared ? defines[..] : (String[]){},
             )!,
             .param_block_size = LayeredReaderParams::size,
-            .scene_reads = { .color = true },
+            .scene_reads = reads,
             .layered_transparency = declared,
         };
         ShaderId shader = fixture.assets.add_shader(&desc)!;
@@ -977,6 +999,213 @@ fn void test_layered_and_sorted_rough_glass_use_the_authored_odd_extent_area_box
         for (uint channel = 0; channel < 4; channel++) {
             assert(bitcast(color[channel], uint) == bitcast(smooth[1][pixel][channel], uint),
                 "Roughness zero differs between SORTED and LAYERED.");
+        }
+    }
+    check_validation(&fixture.renderer);
+}
+
+fn void check_layered_capacity_row(
+    Fixture* fixture,
+    uint capacity,
+    uint source_count,
+    bool dense,
+) @private {
+    LayeredScene target = create_layered_scene(fixture)!!;
+    defer scene::destroy_scene(&target.scene);
+    LayeredView view = create_layered_view(fixture, capacity)!!;
+    defer destroy_layered_view(fixture, &view);
+    transparency_fixtures::DepthFragment[17] fragments;
+    transparency_fixtures::make_dense_fragments(fragments[..]);
+    if (source_count == transparency_fixtures::PLANAR_COLORS.len) {
+        transparency_fixtures::make_planar_fragments(fragments[:source_count]);
+    }
+    MaterialId[17] materials;
+    for (uint source = 0; source < source_count; source++) {
+        transparency_fixtures::DepthFragment* fragment = &fragments[source];
+        GeometryId geometry = add_layered_sheet_geometry(fixture, fragment.depth)!!;
+        materials[source] = add_layered_basic(fixture, {
+            (float)fragment.radiance.x,
+            (float)fragment.radiance.y,
+            (float)fragment.radiance.z,
+            (float)fragment.coverage,
+        })!!;
+        Node* node = target.scene.add_mesh(geometry, materials[source])!!;
+        if (dense) node.local.scale = { 1.0f / 6.0f, 1.0f / 6.0f, 1 };
+        fragment.node_index = node.id.index;
+        fragment.node_generation = node.id.generation;
+    }
+    transparency_fixtures::DepthFragment[17] sorted;
+    for (uint source = 0; source < source_count; source++) sorted[source] = fragments[source_count - 1 - source];
+    transparency_fixtures::DepthGroup[17] groups;
+    uint group_count = transparency_fixtures::classify_depth_groups(fragments[:source_count], groups[..]);
+    transparency_fixtures::Color expected = transparency_fixtures::compose_hybrid(
+        ordered: fragments[:source_count],
+        groups: groups[:group_count],
+        capacity: capacity,
+        sorted: sorted[:source_count],
+        background: transparency_fixtures::PLANAR_BACKGROUND,
+    );
+    Vec4[] pixels;
+    defer free(pixels);
+    ulong first_frame = fixture.renderer.frame_index;
+    for (uint frame = 0; frame <= render::FRAMES_IN_FLIGHT; frame++) {
+        free(pixels);
+        pixels = render_layered_pixels(fixture, &target, &view)!!;
+    }
+    for (uint row = LAYERED_INTERIOR_BEGIN; row < LAYERED_INTERIOR_END; row++) {
+        for (uint column = LAYERED_INTERIOR_BEGIN; column < LAYERED_INTERIOR_END; column++) {
+            bool inside = !dense || (row >= transparency_fixtures::DENSE_TILE_BEGIN
+              && row < transparency_fixtures::DENSE_TILE_END && column >= transparency_fixtures::DENSE_TILE_BEGIN
+              && column < transparency_fixtures::DENSE_TILE_END);
+            transparency_fixtures::Color pixel_expected = inside ? expected : transparency_fixtures::PLANAR_BACKGROUND;
+            check_layered_color(pixels[row * LAYERED_IMAGE_SIZE + column], pixel_expected);
+        }
+    }
+    TransparencyStats stats = fixture.renderer.view_stats(view.view)!!.transparency;
+    uint side = dense ? transparency_fixtures::DENSE_TILE_END - transparency_fixtures::DENSE_TILE_BEGIN
+      : LAYERED_IMAGE_SIZE * 3 / 4;
+    uint overflow_pixels = source_count > capacity ? side * side : 0;
+    assert(stats.overflow_valid && stats.overflow_frame_index == first_frame);
+    assert(stats.overflow_pixels == overflow_pixels && stats.overflow == (overflow_pixels > 0));
+    assert(stats.capture_passes == capacity + 1 && stats.fallback_draws == 0);
+    ViewRecord* record = fixture.renderer.views.get(view.view);
+    assert(record.transparency.layer_capacity == capacity);
+    for (uint group = 0; group <= capacity; group++) {
+        uint[] bits = read_layered_depth(fixture, &view, group)!!;
+        defer free(bits);
+        for (uint row = LAYERED_INTERIOR_BEGIN; row < LAYERED_INTERIOR_END; row++) {
+            for (uint column = LAYERED_INTERIOR_BEGIN; column < LAYERED_INTERIOR_END; column++) {
+                bool inside = !dense || (row >= transparency_fixtures::DENSE_TILE_BEGIN
+                  && row < transparency_fixtures::DENSE_TILE_END && column >= transparency_fixtures::DENSE_TILE_BEGIN
+                  && column < transparency_fixtures::DENSE_TILE_END);
+                uint expected_bits = inside && group < source_count ? bitcast(fragments[group].depth, uint) : 0;
+                assert(bits[row * LAYERED_IMAGE_SIZE + column] == expected_bits);
+            }
+        }
+    }
+    if (source_count == fragments.len && !dense) {
+        for (uint witness = 0; witness < source_count; witness++) {
+            for (uint source = 0; source < source_count; source++) {
+                Material* material = &fixture.assets.material(materials[source]).data;
+                material.basic.color.w = source == witness ? (float)fragments[source].coverage : 0;
+                fixture.assets.mark_material_dirty(materials[source]);
+            }
+            Vec4[] contribution = render_layered_pixels(fixture, &target, &view)!!;
+            defer free(contribution);
+            transparency_fixtures::Color witness_expected = transparency_fixtures::compose_over(
+                behind: transparency_fixtures::PLANAR_BACKGROUND,
+                radiance: fragments[witness].radiance,
+                coverage: fragments[witness].coverage,
+            );
+            check_layered_interior(contribution, witness_expected);
+        }
+    }
+}
+
+fn void test_layered_public_capacities_keep_exact_boundaries_seventeen_and_dense_overflow_without_drops() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    Fixture fixture;
+    create_fixture(&tracker, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    foreach (capacity : (uint[4]){ 1, 2, 4, 16 }) {
+        uint[4] counts = { capacity, capacity + 1, 6, 17 };
+        foreach (row, count : counts) {
+            bool duplicate;
+            for (sz previous = 0; previous < row; previous++) duplicate |= counts[previous] == count;
+            if (duplicate) continue;
+            check_layered_capacity_row(
+                fixture: &fixture,
+                capacity: capacity,
+                source_count: count,
+                dense: false,
+            );
+        }
+        check_layered_capacity_row(
+            fixture: &fixture,
+            capacity: capacity,
+            source_count: 17,
+            dense: true,
+        );
+    }
+    check_validation(&fixture.renderer);
+}
+
+fn void test_layered_custom_depth_and_combined_readers_use_opaque_depth_and_behind_group_color() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    Fixture fixture;
+    create_fixture(&tracker, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    foreach (shading : (ShadingPath[2]){ FORWARD, DEFERRED }) {
+        foreach (reader : (transparency_fixtures::ReaderMode[2]){ DEPTH, COLOR_DEPTH }) {
+            foreach (declared : (bool[2]){ true, false }) {
+                LayeredScene target = create_layered_scene(&fixture)!!;
+                defer scene::destroy_scene(&target.scene);
+                LayeredView view = create_layered_view(&fixture, 3, shading)!!;
+                defer destroy_layered_view(&fixture, &view);
+                transparency_fixtures::Color opaque_color = { 0.2, 0.6, 0.1 };
+                MaterialId opaque = add_layered_basic(&fixture, { 0.2f, 0.6f, 0.1f, 1 }, false)!!;
+                Node* occluder = target.scene.add_mesh(add_layered_sheet_geometry(&fixture, 0.375f)!!, opaque)!!;
+                occluder.local.scale.x = 0.5f;
+                occluder.local.position.x = 0.375f;
+                MaterialId red = add_layered_basic(&fixture, { 1, 0, 0, 0.5f })!!;
+                MaterialId blue = add_layered_basic(&fixture, { 0, 0, 1, 0.5f })!!;
+                target.scene.add_mesh(add_layered_sheet_geometry(&fixture, 0.75f)!!, red)!!;
+                target.scene.add_mesh(add_layered_sheet_geometry(&fixture, 0.25f)!!, blue)!!;
+                MaterialId custom = add_layered_reader(&fixture, declared, reader)!!;
+                target.scene.add_mesh(add_layered_sheet_geometry(&fixture, 0.5f)!!, custom)!!;
+                Vec4[] pixels = render_layered_pixels(&fixture, &target, &view)!!;
+                defer free(pixels);
+                for (uint row = LAYERED_INTERIOR_BEGIN; row < LAYERED_INTERIOR_END; row++) {
+                    for (uint column = LAYERED_INTERIOR_BEGIN; column < LAYERED_INTERIOR_END; column++) {
+                        bool right = column >= LAYERED_IMAGE_SIZE / 2;
+                        transparency_fixtures::Color background = right ? opaque_color
+                          : transparency_fixtures::PLANAR_BACKGROUND;
+                        transparency_fixtures::Color rear = right ? background
+                          : transparency_fixtures::compose_over(background, { 0, 0, 1 }, 0.5);
+                        transparency_fixtures::DepthFragment reader_fragment = {
+                            .radiance = { 0, 1, 0 },
+                            .reader = reader,
+                            .opaque_depth = right ? 0.375 : 0.0625,
+                        };
+                        transparency_fixtures::Color snapshot = declared ? rear : background;
+                        transparency_fixtures::Color radiance = transparency_fixtures::sample_fragment_radiance(
+                            reader_fragment,
+                            snapshot,
+                        );
+                        transparency_fixtures::Color expected;
+                        if (declared) {
+                            expected = transparency_fixtures::compose_over(rear, radiance, 0.5);
+                            expected = transparency_fixtures::compose_over(expected, { 1, 0, 0 }, 0.5);
+                        } else {
+                            expected = transparency_fixtures::compose_over(rear, { 1, 0, 0 }, 0.5);
+                            expected = transparency_fixtures::compose_over(expected, radiance, 0.5);
+                        }
+                        check_layered_color(pixels[row * LAYERED_IMAGE_SIZE + column], expected);
+                    }
+                }
+                TransparencyStats stats = fixture.renderer.view_stats(view.view)!!.transparency;
+                assert(stats.fallback_draws == (declared ? 0 : 1));
+                uint[] first = read_layered_depth(&fixture, &view, 0)!!;
+                defer free(first);
+                uint[] second = read_layered_depth(&fixture, &view, 1)!!;
+                defer free(second);
+                uint[] third = read_layered_depth(&fixture, &view, 2)!!;
+                defer free(third);
+                for (uint row = LAYERED_INTERIOR_BEGIN; row < LAYERED_INTERIOR_END; row++) {
+                    for (uint column = LAYERED_INTERIOR_BEGIN; column < LAYERED_INTERIOR_END; column++) {
+                        bool right = column >= LAYERED_IMAGE_SIZE / 2;
+                        uint pixel = row * LAYERED_IMAGE_SIZE + column;
+                        assert(first[pixel] == bitcast(0.75f, uint));
+                        uint middle = declared ? bitcast(0.5f, uint) : right ? 0 : bitcast(0.25f, uint);
+                        assert(second[pixel] == middle);
+                        assert(third[pixel] == (declared && !right ? bitcast(0.25f, uint) : 0));
+                    }
+                }
+            }
         }
     }
     check_validation(&fixture.renderer);
