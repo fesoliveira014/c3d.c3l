@@ -87,8 +87,8 @@ vec3 shade_standard_hit(FrameRoot frame, HitLights lights, TraceSurface surface,
     return color;
 }
 
-// Sheen and anisotropy stay off: a hit carries neither lobe.
-PhysicalSurface physical_surface_from_hit(TraceSurface surface, vec3 view_direction) {
+// The sheen tables travel with the frame of a view that carries a sheen material; without them the lobe is off.
+PhysicalSurface physical_surface_from_hit(FrameRoot frame, TraceSurface surface, vec3 view_direction) {
     PhysicalMaterialGpu material = PhysicalMaterialGpu(surface.material);
     vec3 dielectric_reflectance = min(
         dielectric_normal_reflectance(surface.ior) * surface.specular_color,
@@ -105,11 +105,16 @@ PhysicalSurface physical_surface_from_hit(TraceSurface surface, vec3 view_direct
         dielectric_reflectance,
         vec3(surface.specular_weight)
     );
+    if (surface.anisotropy > 0.0) {
+        apply_surface_anisotropy(physical.standard, surface.anisotropy_direction, surface.anisotropy);
+    }
     physical.coat_normal = surface.coat_normal;
-    physical.sheen_color = vec3(0.0);
-    physical.sheen_strength = 0.0;
-    physical.sheen_roughness = 0.0;
-    physical.sheen_view_albedo = 0.0;
+    physical.sheen_color = frame.sheen_lut == 0u ? vec3(0.0) : surface.sheen_color;
+    physical.sheen_strength = max(physical.sheen_color.r, max(physical.sheen_color.g, physical.sheen_color.b));
+    physical.sheen_roughness = surface.sheen_roughness;
+    physical.sheen_view_albedo = physical.sheen_strength == 0.0
+        ? 0.0
+        : sheen_albedo(frame.sheen_lut, frame.sheen_sampler, physical.standard.normal_view, surface.sheen_roughness);
     physical.coat_weight = clearcoat_view_weight(surface.clearcoat, surface.coat_normal, view_direction);
     physical.coat_roughness = surface.clearcoat_roughness;
     physical.transmission = surface.transmission;
@@ -129,7 +134,7 @@ bool hit_physical_light_arrives(TraceSurface surface, PhysicalSurface physical, 
 
 // A hit has no scene snapshot, so the transmitted part reads the environment along the refracted direction.
 vec3 shade_physical_hit(FrameRoot frame, HitLights lights, TraceSurface surface, vec3 view_direction) {
-    PhysicalSurface physical = physical_surface_from_hit(surface, view_direction);
+    PhysicalSurface physical = physical_surface_from_hit(frame, surface, view_direction);
     ReflectionSelection reflections = reflection_probe_select(frame, surface.position);
 
     vec3 transmitted = vec3(0.0);
@@ -165,7 +170,7 @@ vec3 shade_physical_hit(FrameRoot frame, HitLights lights, TraceSurface surface,
         if (light_sample.radiance == vec3(0.0)) continue;
         if (!hit_physical_light_arrives(surface, physical, light_sample.direction)) continue;
 
-        color += evaluate_physical_light(light, surface.position, physical, 0u, 0u)
+        color += evaluate_physical_light(light, surface.position, physical, frame.sheen_lut, frame.sheen_sampler)
             * hit_light_visibility(frame, light, surface);
     }
     return color;

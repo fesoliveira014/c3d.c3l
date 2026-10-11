@@ -37,7 +37,8 @@ const Vec3 EXCLUDED_LAMP_POSITION @local = { 2, 7, -3.5f };
 const float LAMP_RANGE @local = 2.4f; // reaches the prop, and stops short of the starting view's frustum
 const float LAMP_INTENSITY @local = 30;
 const float SHOWCASE_DEPTH @local = 2.5f; // in front of the sphere row, clear of its reflections from the starting view
-const float SHOWCASE_SPACING @local = 2.2f;
+const float SHOWCASE_SPACING @local = 1.9f;
+const uint SHOWCASE_COUNT @local = 5;
 const float COAT_BASE_ROUGHNESS @local = 0.5f;
 const float COAT_ROUGHNESS @local = 0.05f;
 const float TINTED_IOR @local = 2.2f;
@@ -45,6 +46,11 @@ const Vec3 TINTED_SPECULAR @local = { 1, 0.72f, 0.25f };
 const float GLASS_THICKNESS @local = 0.4f;
 const float GLASS_ATTENUATION_DISTANCE @local = 1;
 const Vec3 GLASS_ATTENUATION_COLOR @local = { 0.7f, 0.9f, 1 };
+const Vec3 FABRIC_BASE_COLOR @local = { 0.25f, 0.02f, 0.08f };
+const Vec3 FABRIC_SHEEN_COLOR @local = { 0.9f, 0.5f, 0.65f };
+const float FABRIC_SHEEN_ROUGHNESS @local = 0.8f;
+const float BRUSHED_ROUGHNESS @local = 0.35f;
+const float BRUSHED_ANISOTROPY @local = 0.9f;
 const float ROUGHNESS_STEP @local = 0.05f;
 const float ROUGHNESS_MIN @local = 0.05f;
 const Vec2 STATS_PANEL_POSITION @local = { 16, 16 };
@@ -128,11 +134,25 @@ fn void? add_physical_showcase(AssetStore* assets, Scene* scene, GeometryId sphe
     glass.attenuation_distance = GLASS_ATTENUATION_DISTANCE;
     glass.attenuation_color = GLASS_ATTENUATION_COLOR;
 
-    PhysicalParams[3] showcase = { coat, tinted, glass };
+    PhysicalParams fabric = material::PHYSICAL_PARAMS_DEFAULT;
+    fabric.standard.metallic = 0;
+    fabric.standard.roughness = 1;
+    fabric.standard.base_color = { FABRIC_BASE_COLOR.x, FABRIC_BASE_COLOR.y, FABRIC_BASE_COLOR.z, 1 };
+    fabric.sheen_color = FABRIC_SHEEN_COLOR;
+    fabric.sheen_roughness = FABRIC_SHEEN_ROUGHNESS;
+
+    PhysicalParams brushed = material::PHYSICAL_PARAMS_DEFAULT;
+    brushed.standard.metallic = 1;
+    brushed.standard.roughness = BRUSHED_ROUGHNESS;
+    brushed.standard.base_color = { 0.9f, 0.9f, 0.95f, 1 };
+    brushed.anisotropy = BRUSHED_ANISOTROPY;
+
+    PhysicalParams[SHOWCASE_COUNT] showcase = { fabric, coat, tinted, glass, brushed };
     foreach (index, &params : showcase) {
         MaterialId showcase_material = assets.add_material(material::physical(*params))!;
         Node* showcase_sphere = scene.add_mesh(sphere_geometry, showcase_material, name: "physical_showcase")!;
-        showcase_sphere.local.position = { ((float)index - 1) * SHOWCASE_SPACING, 0.5f, SHOWCASE_DEPTH };
+        float offset = (float)index - (float)(SHOWCASE_COUNT - 1) * 0.5f;
+        showcase_sphere.local.position = { offset * SHOWCASE_SPACING, 0.5f, SHOWCASE_DEPTH };
     }
 }
 

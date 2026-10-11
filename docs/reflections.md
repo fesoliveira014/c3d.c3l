@@ -56,12 +56,20 @@ grain on rougher surfaces.
   sample at a level of detail from the ray's cone footprint (ray cones, Akenine-Möller et al. 2019);
   normal maps are read at hits and occlusion maps are not.
 - **Physical hit.** A `PHYSICAL` hit reads the specular weight, specular colour and IOR, the
-  clearcoat factor, roughness and normal, and the transmission and thickness, through the same maps
-  as the forward stage, and calls the forward stage's direct and environment evaluation. Sheen and
-  anisotropy are not evaluated at hits. A hit has no scene snapshot, so the transmitted part reads
-  the lighting environment and the reflection probes along the refracted direction, the forward
-  stage's off-screen fallback, with the same `1 - F`, base colour and volume attenuation weights; the
-  scene behind a glass hit and its fog are not seen.
+  clearcoat factor, roughness and normal, the sheen colour and roughness, the anisotropy strength
+  and direction, and the transmission and thickness, through the same maps as the forward stage, and
+  calls the forward stage's direct and environment evaluation. The anisotropy frame comes from the
+  vertex tangent stream when the geometry has one, and from the hit triangle's positions and UVs
+  (the anisotropy map's set, UV0 when unmapped) otherwise; it never uses screen derivatives. A hit
+  has no scene snapshot, so the transmitted part reads the lighting environment and the reflection
+  probes along the refracted direction, the forward stage's off-screen fallback, with the same
+  `1 - F`, base colour and volume attenuation weights; the scene behind a glass hit and its fog are
+  not seen. A hit composes the transmitted light and the ambient fill under the sheen and clear coat
+  layers with the forward stage's own `transmitted_light` and `physical_fill`.
+- **Sheen tables.** Sheen at a hit reads the sheen albedo table and the sheen environment the view
+  carries. A reflection view carries them once the renderer has resolved a sheen material, which
+  `prepare_scene` does ahead of the first frame; a sheen surface that only a reflection shows, in a
+  scene nothing prepared, shades without its sheen lobe on the frame that first resolves it.
 - **Back face.** A reflection ray passes the back of a single-sided surface, as raster culls it,
   and reflects what lies behind; double-sided materials shade both sides
   ([facing](scene_trace.md#facing)).
@@ -111,9 +119,9 @@ threshold.
 `examples/rt_effects` shows a mirror floor reflecting an emissive panel above the view, a chalk
 sphere above the view lit by a warm lamp outside the camera frustum and not by a cold lamp whose
 `layers` exclude the sphere, a row of metal spheres from roughness 0 to 1, and in front of them a
-clearcoated red sphere, a high-IOR tinted-specular dielectric and a transmissive glass sphere, each seen
-beside its own reflection. `R` toggles reflections, `[` and `]` move the threshold,
-`A` cycles ambient occlusion; `--gpu-timings --benchmark N` prints the mean pass times. The
+clearcoated red sphere, a high-IOR tinted-specular dielectric, a transmissive glass sphere, a sheen
+fabric sphere and a brushed anisotropic metal sphere, each seen beside its own reflection. `R` toggles
+reflections, `[` and `]` move the threshold, `A` cycles ambient occlusion; `--gpu-timings --benchmark N` prints the mean pass times. The
 rendering benchmarks take `--reflections on|off` on a deferred view ([benchmarking](benchmarking.md))
 and report `gpu_rt_reflections_ms`.
 
@@ -128,4 +136,4 @@ python3 scripts/build.py --example rt_effects
 - Hits see the traced scene: skinned and morphed meshes appear at their raster pose; crowd placements appear only through `add_crowd(trace: true)`; custom vertex stages and `BLEND` meshes are absent.
 - Every hit loops the whole reflection light list (no clustering) with a shadow ray per shadowing
   light in reach, so hit cost grows with the light count.
-- Hit shading evaluates the Standard lobes and, for Physical, specular and IOR, clearcoat and the transmission fallback; sheen and anisotropy are not evaluated; normal maps apply at hits.
+- Hit shading evaluates the Standard lobes and, for Physical, specular and IOR, clearcoat, sheen, anisotropy and the transmission fallback; normal maps apply at hits.

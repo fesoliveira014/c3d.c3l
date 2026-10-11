@@ -322,7 +322,9 @@ fn void? record_raster_view(
         SceneReads scene_read_reads;
         SceneReads transparent_reads;
         bool scene_read_mips;
-        bool sheen;
+        // Reflection hits read the view's sheen tables, which a reflection view carries once a sheen material exists.
+        bool sheen = record.desc.ray_tracing.reflections
+          && renderer.environment_state.sheen_lut.state != EnvironmentLutState.NONE;
         ShadingPath shading = record.desc.shading;
         instrumentation::@scope("view.resolve") {
             items = alloc::new_array(tmem, DrawItem, candidates.len);
@@ -710,6 +712,8 @@ fn void? record_raster_view(
                 origin: renderer.frame_origin,
                 decals: decal_address,
                 decal_count: decal_counts.packed,
+                sheen_lut: sheen ? renderer.environment_state.sheen_lut.view.index : (gpu::TextureIndex)0,
+                sheen_sampler: sheen ? renderer.environment_state.sheen_sampler : (gpu::SamplerIndex)0,
             );
             if (record.desc.lights == LightSelection.CLUSTERED) {
                 record_clusters(
@@ -1458,6 +1462,8 @@ fn bool velocity_before_lighting(ViewDesc* desc) @private {
  @param clip_plane : "Relative plane whose positive side stays; zero clips nothing."
  @param origin : "Absolute origin of the supplied matrices and positions."
  @param decals : "Ordered decal records; zero when no decal applies."
+ @param sheen_lut : "Sheen albedo table view; zero when the view carries no sheen material."
+ @param sheen_sampler : "Filtered sampler of the sheen albedo table."
 *>
 fn void write_frame_root(
     FrameRoot* root,
@@ -1490,6 +1496,8 @@ fn void write_frame_root(
     Vec3 origin = {},
     gpu::GpuAddress decals = (gpu::GpuAddress)0,
     uint decal_count = 0,
+    gpu::TextureIndex sheen_lut = (gpu::TextureIndex)0,
+    gpu::SamplerIndex sheen_sampler = (gpu::SamplerIndex)0,
 ) {
     *root = {
         .view            = bitcast(matrices.view, Mat4f),
@@ -1528,6 +1536,8 @@ fn void write_frame_root(
         .origin          = { origin.x, origin.y, origin.z, 0 },
         .decals          = decals,
         .decal_count     = decal_count,
+        .sheen_lut       = sheen_lut,
+        .sheen_sampler   = sheen_sampler,
     };
 }
 

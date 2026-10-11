@@ -229,18 +229,11 @@ void main() {
         vec3 frame_tangent;
         vec3 frame_bitangent;
         if (surface_tangent_frame(normalize(v_normal), anisotropy_tangent, frame_tangent, frame_bitangent)) {
-            vec3 direction = frame_tangent * anisotropy_direction.x + frame_bitangent * anisotropy_direction.y;
-            direction -= surface.standard.normal * dot(surface.standard.normal, direction);
-            float length_squared = dot(direction, direction);
-            if (length_squared > 0.0) {
-                direction *= inversesqrt(length_squared);
-                apply_anisotropy(
-                    surface.standard,
-                    direction,
-                    cross(surface.standard.normal, direction),
-                    anisotropy
-                );
-            }
+            apply_surface_anisotropy(
+                surface.standard,
+                frame_tangent * anisotropy_direction.x + frame_bitangent * anisotropy_direction.y,
+                anisotropy
+            );
         }
     }
     surface.coat_normal = coat_normal;

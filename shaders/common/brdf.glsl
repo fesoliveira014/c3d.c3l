@@ -63,6 +63,20 @@ void apply_anisotropy(
     surface.alpha_bitangent = alpha;
 }
 
+// Stretch along a direction projected onto the shading normal; a degenerate projection stays isotropic.
+void apply_surface_anisotropy(
+    inout StandardSurface surface,
+    vec3 stretch_direction,
+    float strength
+) {
+    vec3 direction = stretch_direction - surface.normal * dot(surface.normal, stretch_direction);
+    float length_squared = dot(direction, direction);
+    if (length_squared > 0.0) {
+        direction *= inversesqrt(length_squared);
+        apply_anisotropy(surface, direction, cross(surface.normal, direction), strength);
+    }
+}
+
 StandardSurface prepare_standard_surface(
     vec3 base_color,
     float metallic,

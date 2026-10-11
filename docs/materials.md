@@ -354,8 +354,8 @@ ignored when every sheen-color component is zero.
 
 Clearcoat, sheen and the transmission fallback read the same [reflection probes](reflection_probes.md)
 as the base layer: each lobe aims its own direction through the selected probes and the global
-environment. Ray-traced reflection hits shade the specular, IOR, clearcoat and transmission lobes the
-same way and omit sheen and anisotropy ([reflections](reflections.md#what-traces)).
+environment. Ray-traced reflection hits shade the specular, IOR, clearcoat, sheen, anisotropy and
+transmission lobes the same way ([reflections](reflections.md#what-traces)).
 
 The Standard `normal_map` orients the base and sheen response. The clearcoat
 normal map creates a separate tangent-space normal and falls back to the geometry
