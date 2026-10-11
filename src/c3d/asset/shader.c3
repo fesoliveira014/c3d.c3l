@@ -33,16 +33,25 @@ struct TracedFragment {
 }
 
 <*
+ Fragment forms drawn on views with weighted transparency; each may be empty.
+*>
+struct WeightedFragment {
+    char[]         shaded; // the forward source compiled with WEIGHTED_BLEND
+    TracedFragment traced; // the same, with RT_SHADOWS (and SCENE_TRACE_BVH)
+}
+
+<*
  User SPIR-V stages, a fragment stage required, and their parameter payload size.
  An empty gbuffer stage routes the material forward on deferred views.
 *>
 struct ShaderDesc {
-    char[]         fragment;
-    char[]         gbuffer;
-    TracedFragment traced_fragment;
-    CustomVertex   vertex;
-    usz            param_block_size;
-    SceneReads     scene_reads;
+    char[]           fragment;
+    char[]           gbuffer;
+    TracedFragment   traced_fragment;
+    WeightedFragment weighted_fragment;
+    CustomVertex     vertex;
+    usz              param_block_size;
+    SceneReads       scene_reads;
 }
 
 <*
@@ -166,6 +175,16 @@ fn ShaderDesc copy_shader_desc(Allocator allocator, ShaderDesc* desc) {
             .software = desc.traced_fragment.software.len
               ? copy_slice(allocator, desc.traced_fragment.software) : (char[]){},
         },
+        .weighted_fragment = {
+            .shaded = desc.weighted_fragment.shaded.len
+              ? copy_slice(allocator, desc.weighted_fragment.shaded) : (char[]){},
+            .traced = {
+                .hardware = desc.weighted_fragment.traced.hardware.len
+                  ? copy_slice(allocator, desc.weighted_fragment.traced.hardware) : (char[]){},
+                .software = desc.weighted_fragment.traced.software.len
+                  ? copy_slice(allocator, desc.weighted_fragment.traced.software) : (char[]){},
+            },
+        },
         .vertex = {
             .shaded = desc.vertex.shaded.len ? copy_slice(allocator, desc.vertex.shaded) : (char[]){},
             .depth = desc.vertex.depth.len ? copy_slice(allocator, desc.vertex.depth) : (char[]){},
@@ -191,6 +210,9 @@ fn void free_shader_desc(Allocator allocator, ShaderDesc* desc) {
     alloc::free(allocator, desc.gbuffer.ptr);
     alloc::free(allocator, desc.traced_fragment.hardware.ptr);
     alloc::free(allocator, desc.traced_fragment.software.ptr);
+    alloc::free(allocator, desc.weighted_fragment.shaded.ptr);
+    alloc::free(allocator, desc.weighted_fragment.traced.hardware.ptr);
+    alloc::free(allocator, desc.weighted_fragment.traced.software.ptr);
     alloc::free(allocator, desc.vertex.shaded.ptr);
     alloc::free(allocator, desc.vertex.depth.ptr);
     alloc::free(allocator, desc.vertex.instanced_shaded.ptr);
