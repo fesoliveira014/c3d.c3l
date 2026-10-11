@@ -161,8 +161,20 @@ costs what it did before.
 - A view with a clip plane (a planar mirror) fogs only the part of each ray inside the kept
   half-space: the path from the plane to the surface. The main view fogs the path to the reflecting
   surface, so the reflection counts the reflected path's fog once.
-- TAA history holds the fogged image. SSR, traced reflections and probe hits do not fog the
-  surface-to-hit segment.
+- TAA history holds the fogged image.
+- Traced hits fog their own segment. A traced reflection takes the view's height fog from the reflecting
+  surface to the hit, and a probe ray takes the scene's height fog from the probe to the hit. A ray that
+  leaves the scene takes the fog to infinity, as a background pixel does. The result is `x·T + S` before
+  exposure, like everything the fog pass fogs. The pass still fogs the camera to the reflecting surface,
+  so no part of a path is fogged twice. The froxel volume and aerial perspective are not applied at hits:
+  both are indexed by the camera's screen, so a view with `volumetric_fog` fogs its hits with the
+  analytic fog and a reflection's haze can differ in colour from the haze around it (see
+  [Volumetric fog](#volumetric-fog)). The path tracer stays unfogged.
+- A reflection hit uses the view's own fog selection and in-scatter colour. A probe update has no
+  camera, so its frame carries the first valid `HeightFog` on a visible node of any layer, the way its
+  light list takes every layer, whatever a camera's `height_fog` switch says. Probes keep no atmosphere:
+  under one the fog's in-scatter is the environment's SH, else the ambient. A fog change reaches the
+  atlases at the blend rate of the updates.
 
 Pass order of a fogged raster view:
 
@@ -225,6 +237,8 @@ combination) records nothing extra.
 | `apply_fog(frame, world_position, color)` | a blended fragment's fog; returns `color` when `frame.sky_fog` is zero |
 | `fog_behind(frame, surface_position, behind, behind_depth)` | the fog between a surface and a depth sample behind it; depth 0 is the background |
 | `apply_fog_refracted(frame, surface_position, transmittance, refracted, refracted_depth, surface_radiance)` | a depth-writing refracting surface's output |
+| `apply_fog_segment(frame, origin, hit_position, radiance)` | the height fog over the segment from a ray's origin to its hit, for a ray cast from elsewhere than the camera; returns `radiance` when `frame.sky_fog` is zero |
+| `apply_fog_to_infinity(frame, origin, direction, radiance)` | the height fog from a point to infinity, for a ray that leaves the scene |
 
 - An opaque custom stage needs nothing: the pass fogs it at its depth. It cannot opt out.
 - A blended custom stage calls `apply_fog` on its output, unconditionally.
@@ -286,7 +300,8 @@ sky example does under `--path-traced`.
 - Readers that write no depth take the fog of what is behind them; blended Physical transmission is
   one.
 - Mirror views fog only behind their clip plane.
-- SSR, traced reflections and probe hits do not fog the surface-to-hit segment.
+- Traced reflection and probe hits take the analytic height fog over their segment, with no froxel volume and no
+  aerial perspective.
 - Opaque stages cannot opt out of the fog pass.
 - Path-traced views are unfogged; a sky change does not restart their accumulation.
 - Twilight bands below about intensity × 10⁻⁵; the example stops its exposure table at −4°.

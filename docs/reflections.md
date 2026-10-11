@@ -70,6 +70,8 @@ grain on rougher surfaces.
   carries. A reflection view carries them once the renderer has resolved a sheen material, which
   `prepare_scene` does ahead of the first frame; a sheen surface that only a reflection shows, in a
   scene nothing prepared, shades without its sheen lobe on the frame that first resolves it.
+- **Fog.** A hit takes the view's height fog over the path from the reflecting surface to the hit, and a miss
+  takes it to infinity; the camera's own fog pass fogs the rest ([fog at hits](sky.md#where-fog-applies)).
 - **Back face.** A reflection ray passes the back of a single-sided surface, as raster culls it,
   and reflects what lies behind; double-sided materials shade both sides
   ([facing](scene_trace.md#facing)).
@@ -121,7 +123,7 @@ sphere above the view lit by a warm lamp outside the camera frustum and not by a
 `layers` exclude the sphere, a row of metal spheres from roughness 0 to 1, and in front of them a
 clearcoated red sphere, a high-IOR tinted-specular dielectric, a transmissive glass sphere, a sheen
 fabric sphere and a brushed anisotropic metal sphere, each seen beside its own reflection. `R` toggles
-reflections, `[` and `]` move the threshold, `A` cycles ambient occlusion; `--gpu-timings --benchmark N` prints the mean pass times. The
+reflections, `F` toggles a height fog over the reflected paths, `[` and `]` move the threshold, `A` cycles ambient occlusion; `--gpu-timings --benchmark N` prints the mean pass times. The
 rendering benchmarks take `--reflections on|off` on a deferred view ([benchmarking](benchmarking.md))
 and report `gpu_rt_reflections_ms`.
 
