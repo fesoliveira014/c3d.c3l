@@ -202,6 +202,7 @@ void main() {
     }
 
     material_sample.base_color *= v_color;
+    float material_roughness = material_sample.roughness;
     apply_decals(
         frame,
         draw,
@@ -280,6 +281,8 @@ void main() {
                 surface.transmission_ray,
                 refracted,
                 material_sample.roughness,
+                material_roughness,
+                material.ior,
                 (material.standard.flags & MATERIAL_ALPHA_BLEND) == 0u
             ),
             length(surface.transmission_ray),

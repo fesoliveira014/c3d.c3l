@@ -31,6 +31,7 @@ enum Pass : int {
     FORWARD_OPAQUE,
     SKY,
     SCENE_SNAPSHOT,
+    SCENE_MIPS,
     SCENE_READ,
     FOG,
     FORWARD_TRANSPARENT,

@@ -217,6 +217,12 @@ fn SceneReads material_scene_reads(Material* material, SceneReads custom_reads =
     }
 }
 
+fn bool material_blurs_scene_color(Material* material) @private {
+    if (material.kind != MaterialKind.PHYSICAL) return false;
+    PhysicalParams* physical = &material.physical;
+    return physical.transmission > 0 && physical.standard.roughness > 0 && physical.ior > 1;
+}
+
 <*
  Whether the G-buffer encodes the material without loss.
  @param [&in] material : "Valid active arm."
