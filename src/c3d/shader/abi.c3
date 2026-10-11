@@ -290,7 +290,7 @@ struct TraceInstanceGpu {
     uint       flags;
     uint       material_kind;
     uint       mask;
-    uint       _pad1;
+    uint       layers;
     Vec4f      world_to_local_0;
     Vec4f      world_to_local_1;
     Vec4f      world_to_local_2;
@@ -306,7 +306,7 @@ $assert $reflect(TraceInstanceGpu.material).offset == 8;
 $assert $reflect(TraceInstanceGpu.flags).offset == 16;
 $assert $reflect(TraceInstanceGpu.material_kind).offset == 20;
 $assert $reflect(TraceInstanceGpu.mask).offset == 24;
-$assert $reflect(TraceInstanceGpu._pad1).offset == 28;
+$assert $reflect(TraceInstanceGpu.layers).offset == 28;
 $assert $reflect(TraceInstanceGpu.world_to_local_0).offset == 32;
 $assert $reflect(TraceInstanceGpu.world_to_local_1).offset == 48;
 $assert $reflect(TraceInstanceGpu.world_to_local_2).offset == 64;

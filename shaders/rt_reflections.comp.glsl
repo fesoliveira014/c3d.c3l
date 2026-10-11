@@ -68,7 +68,7 @@ void main() {
     vec3 radiance;
     if (trace_scene(scene, position + normal * TRACE_SURFACE_OFFSET, direction, RT_REFLECTION_FAR, TRACE_MASK_ALL, hit)) {
         TraceSurface surface = surface_from_hit(scene, hit, direction, cone_width + hit.t * cone_spread);
-        radiance = shade_hit(frame, surface, -direction);
+        radiance = shade_hit(frame, frame_hit_lights(frame), surface, -direction);
     } else {
         radiance = trace_miss_radiance(frame, direction);
     }

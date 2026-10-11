@@ -32,6 +32,7 @@ struct TraceSurface {
     float roughness;
     uint material_kind;
     uint64_t material;
+    uint layers;
     bool back_face;
 };
 
@@ -175,6 +176,7 @@ TraceSurface surface_from_hit(SceneTraceRoot scene, SceneHit hit, vec3 ray_direc
     TraceSurface surface;
     surface.material_kind = instance.material_kind;
     surface.material = instance.material;
+    surface.layers = instance.layers;
     surface.metallic = 0.0;
     surface.roughness = 1.0;
     surface.emissive = vec3(0.0);

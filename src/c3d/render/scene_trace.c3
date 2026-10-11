@@ -79,9 +79,11 @@ struct TraceInstance @private {
     gpu::GpuAddress material_address;
     gpu::GpuAddress nodes;
     gpu::GpuAddress primitives;
+    uint            layers;           // the node's receiver layers; outside the top-level prefix
+    uint            padding;          // explicit, so the bytewise comparison reads no implicit padding
 }
 // The dirty tests compare records bytewise, so the record carries no padding.
-$assert TraceInstance::size == 264;
+$assert TraceInstance::size == 272;
 
 struct TracePoseSource @private {
     TracePose      kind;
@@ -344,6 +346,7 @@ fn TraceCollection collect_trace_instances(
                     geometry:    mesh.geometry,
                     material:    mesh.material,
                     world:       node.world,
+                    layers:      node.layers,
                     cast_shadow: mesh.cast_shadow,
                     origin:      origin,
                 );
@@ -406,6 +409,7 @@ fn TraceCollection collect_trace_instances(
                         geometry:       batch.geometry,
                         material:       batch.material,
                         world:          node.world,
+                        layers:         node.layers,
                         cast_shadow:    batch.cast_shadow,
                         instance_index: index,
                         local:          source.crowd ? crowd.part_transform(index, source.part) : transform.to_mat4(),
@@ -477,6 +481,7 @@ fn TraceCollection collect_trace_instances(
                             geometry: draw.geometry,
                             material: draw.material,
                             world: node.world,
+                            layers: node.layers,
                             cast_shadow: state.effects.cast_shadow,
                             instance_index: instance,
                             local: local,
@@ -1097,6 +1102,7 @@ fn void write_trace_instance(TraceInstanceGpu* row, TraceInstance* record, Vec3 
         .flags            = record.flags,
         .material_kind    = record.material_kind,
         .mask             = record.mask,
+        .layers           = record.layers,
         .world_to_local_0 = { inverse.m00, inverse.m01, inverse.m02, inverse.m03 },
         .world_to_local_1 = { inverse.m10, inverse.m11, inverse.m12, inverse.m13 },
         .world_to_local_2 = { inverse.m20, inverse.m21, inverse.m22, inverse.m23 },
@@ -1155,6 +1161,7 @@ fn TraceInstance trace_record(
     GeometryId geometry,
     MaterialId material,
     Mat4 world,
+    uint layers,
     bool cast_shadow,
     uint instance_index = 0,
     Mat4 local = matrix::IDENTITY4,
@@ -1173,6 +1180,7 @@ fn TraceInstance trace_record(
         .world         = world,
         .local         = local,
         .mask           = shader::TRACE_MASK_ALL | (cast_shadow ? shader::TRACE_MASK_SHADOW_CASTER : 0),
+        .layers         = layers,
         .instance_index = instance_index,
     };
     record.bounds = maths::aabb_transform(assets.geometry(geometry).data.bounds, trace_instance_world(&record, origin));
