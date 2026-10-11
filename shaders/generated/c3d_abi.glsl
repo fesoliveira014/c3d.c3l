@@ -648,6 +648,7 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer RtAoRoot {
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer RtReflectionRoot {
     uint64_t frame;
+    uint64_t lights;
     uint depth;
     uint normal_roughness;
     uint emissive_specular;
@@ -656,8 +657,8 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer RtReflection
     uint height;
     float max_roughness;
     uint noise_frame;
+    uint light_count;
     uint _pad0;
-    uint _pad1;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer RtReflectionBlurRoot {

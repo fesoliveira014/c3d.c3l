@@ -1,10 +1,12 @@
 module c3d::render;
 
 import c3d;
+import c3d::scene;
 import c3d::shader;
 import gpu;
+import std::math;
 
-$assert RtReflectionRoot::size == 48;
+$assert RtReflectionRoot::size == 56;
 $assert RtReflectionBlurRoot::size == 40;
 
 <*
@@ -12,9 +14,71 @@ $assert RtReflectionBlurRoot::size == 40;
 *>
 const float RT_REFLECTION_ROUGHNESS_DEFAULT = 0.5f; // above it one ray per pixel reads as grain
 
+struct ReflectionLights @private {
+    gpu::GpuAddress address;
+    uint            count;
+}
+
 struct ReflectionPipelines @private {
     gpu::PipelineHandle trace;
     gpu::PipelineHandle blur;
+}
+
+<*
+ Pack the lights a reflection hit sees, with no frustum test.
+ @param allocator : "Owns the returned array."
+ @param [&in] scene : "Current world transforms and valid light descriptions."
+ @param view_layers : "Camera visibility mask."
+ @param [&inout] counts : "Overwritten with this list's counts."
+ @param [in] atmosphere : "Null or a zero entity attenuates no light."
+ @param altitude : "Metres above world y = 0 the sun is seen from."
+ @param origin : "Absolute origin the packed positions are relative to."
+ @require capacity > 0
+*>
+fn LightGpu[] extract_reflection_lights(
+    Allocator allocator,
+    Scene* scene,
+    uint view_layers,
+    uint capacity,
+    LightCounts* counts,
+    AtmosphereSelection* atmosphere,
+    float altitude,
+    Vec3 origin,
+) {
+    // Atlas layers are fitted to the camera, so every shadowing light traces at a hit.
+    return extract_lights(
+        allocator:     allocator,
+        scene:         scene,
+        frustum:       null,
+        view_layers:   view_layers,
+        capacity:      capacity,
+        counts:        counts,
+        atmosphere:    atmosphere,
+        altitude:      altitude,
+        trace_shadows: true,
+        origin:        origin,
+    ).lights;
+}
+
+fn ReflectionLights? upload_reflection_lights(
+    Renderer* renderer,
+    Scene* scene,
+    uint view_layers,
+    AtmosphereSelection* atmosphere,
+    float altitude,
+) @private {
+    LightCounts counts;
+    LightGpu[] lights = extract_reflection_lights(
+        allocator:   tmem,
+        scene:       scene,
+        view_layers: view_layers,
+        capacity:    renderer.max_lights,
+        counts:      &counts,
+        atmosphere:  atmosphere,
+        altitude:    altitude,
+        origin:      renderer.frame_origin,
+    );
+    return { .address = upload_lights(renderer, lights)!, .count = (uint)lights.len };
 }
 
 fn void? acquire_reflection_pipelines(Renderer* renderer) @private {
@@ -65,7 +129,12 @@ fn void release_reflection_images(gpu::Device* device, ViewRecord* record) @priv
  @require record.desc.shading == ShadingPath.DEFERRED
  @require record.reflection.texture.is_valid()
 *>
-fn void? record_reflections(Renderer* renderer, ViewRecord* record, gpu::GpuAddress frame) @private {
+fn void? record_reflections(
+    Renderer* renderer,
+    ViewRecord* record,
+    gpu::GpuAddress frame,
+    ReflectionLights lights,
+) @private {
     acquire_reflection_pipelines(renderer)!;
     Target* normals = &record.gbuffer[GBufferChannel.NORMAL_ROUGHNESS.ordinal];
     Target* specular = &record.gbuffer[GBufferChannel.EMISSIVE_SPECULAR.ordinal];
@@ -78,6 +147,7 @@ fn void? record_reflections(Renderer* renderer, ViewRecord* record, gpu::GpuAddr
     gpu::MappedGpuSpan trace_root = slot.upload.take(&renderer.device, RtReflectionRoot::size, STREAM_ALIGNMENT)!;
     *(RtReflectionRoot*)trace_root.bytes.ptr = {
         .frame             = frame,
+        .lights            = lights.address,
         .depth             = record.depth.view.index,
         .normal_roughness  = normals.view.index,
         .emissive_specular = specular.view.index,
@@ -86,6 +156,7 @@ fn void? record_reflections(Renderer* renderer, ViewRecord* record, gpu::GpuAddr
         .height            = record.reflection.height,
         .max_roughness     = record.desc.ray_tracing.max_reflection_roughness,
         .noise_frame       = temporal_noise_frame(record),
+        .light_count       = lights.count,
     };
 
     @profile_pass(renderer, Pass.RT_REFLECTIONS) {
