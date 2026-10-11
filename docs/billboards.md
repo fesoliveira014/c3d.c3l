@@ -66,7 +66,10 @@ UV0/UV1, world position, facing normal, tangent and per-record colour. Both UV
 sets cover the same quad. Custom fragments use normal scene-read declarations.
 
 `BlendMode` controls source-over or additive composition. Additive RGB preserves
-destination alpha. Depth testing follows the material; blended draws do not
+destination alpha. In a view with `transparency = WEIGHTED`, a source-over batch
+with a built-in material records in the
+[weighted pass](materials.md#weighted-transparency) and skips its sort; an additive batch
+keeps both. Depth testing follows the material; blended draws do not
 write depth. Fog and per-view clip planes use the existing material/view rules.
 Transparent camera velocity keeps its normal behaviour.
 

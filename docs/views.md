@@ -67,6 +67,7 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `clip_plane` | World-space `maths::Plane`; geometry on its negative side is not drawn (see [Clip plane](#clip-plane)); the zero plane clips nothing and both constructors produce it |
 | `volumetric_fog` | A froxel volume for the view's `HeightFog`, allocated with the view (see [volumetric fog](sky.md#volumetric-fog)); faults `INVALID_ARGUMENT` on a `PATH_TRACED` view |
 | `share_shadows` | Binds an earlier view's [shadow set](shadows.md#shadow-sets) when the keys match and publishes its own; on in both constructors |
+| `transparency` | How premultiplied-alpha blended surfaces compose: `SORTED` (default, both constructors) orders them by object, `WEIGHTED` accumulates them without ordering into two extra images, 10 bytes per pixel, allocated on the first frame with a participating draw (see [weighted transparency](materials.md#weighted-transparency)) |
 | `transmission_layers` | Snapshots the scene-read list samples, so glass can see glass behind it (see [transmission layers](materials.md#transmission-layers)); 1 to `MAX_TRANSMISSION_LAYERS` (4), zero reads as 1 and both constructors leave it zero |
 
 An installed [static impostor](lod.md#static-impostors) participates in the same
@@ -88,6 +89,7 @@ default; see [Capacities](#capacities)).
 `destroy_view` on the default view faults `INVALID_ARGUMENT`.
 
 The view owns its working images (`hdr_color`, `depth`, the scene color and depth snapshots, the
+[weighted transparency](materials.md#weighted-transparency) accumulation and revealage images, the
 [sky](sky.md)'s 192 × 108 sky-view table and 32³ aerial perspective volume (418 KiB) on raster views, its
 [fog volume](sky.md#volumetric-fog) when `volumetric_fog` is on (7.03 MiB at 2560 × 1440), post and
 effect images) at the working extent `working_extent(viewport, output, render_scale)`, at least one pixel
@@ -290,8 +292,8 @@ An editor with a game view, two viewports and live thumbnails drawn through `ren
 1 + 1 + 2 + 1.
 
 Every working image of a view and every render target holds one texture-table entry and one heap slot. A render target
-also holds one attachment view. So do a view's `hdr_color`, `depth`, scene snapshots, velocity, G-buffer and SSGI
-color, at most 11 per view. gpu.c3l's attachment table holds 4,096 views and cannot be configured: a renderer with
+also holds one attachment view. So do a view's `hdr_color`, `depth`, scene snapshots, weighted accumulation and revealage, velocity, G-buffer
+and SSGI color, at most 13 per view. gpu.c3l's attachment table holds 4,096 views and cannot be configured: a renderer with
 three plain views holds at most 4,090 render targets, whatever `texture_capacity` allows. Asset textures share the
 table and the heap with the renderer. `default_asset_store_desc()` holds 4,096 textures and the table 1,024 by
 default, so a store filled past about 1,000 uploaded textures faults on upload unless `texture_capacity` is raised.
@@ -663,7 +665,9 @@ occlusion, `LIGHTING` (a fullscreen fragment pass that clears
 `FORWARD_OPAQUE` (depth `EQUAL`, no write), sky, `SCENE_SNAPSHOT` and `SCENE_READ` when the view
 draws scene readers (`SCENE_MIPS` between them when the list holds rough glass; the three repeat for
 each non-empty [transmission layer](materials.md#transmission-layers)), `SCENE_SNAPSHOT`
-again when a blended draw reads the scene, transparency,
+again when a blended draw reads the scene, transparency (a `WEIGHTED` view with participating draws
+records `FORWARD_TRANSPARENT` into its accumulation images, then `TRANSPARENT_COMPOSITE` into
+`hdr_color`, then the sorted blended draws),
 velocity and the post chain. `Stats.gpu_pass_ms` carries the three new passes. A view with
 [fog or an atmosphere](sky.md#where-fog-applies) records `SKY_VIEW` and `AERIAL_PERSPECTIVE` before the
 depth prepass when its scene has an atmosphere, and splits before the transparent draws: the snapshot for

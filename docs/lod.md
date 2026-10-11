@@ -253,7 +253,9 @@ Separate indirect arguments preserve each part's geometry counts. The final
 rigid-group matrix is `owner.world * placement * part.local`; normal transforms include the
 part inverse transpose. Placement and part reflections both affect front faces.
 Blended parts share a far-to-near list by object center within each level/parity
-bin. Triangles across parts and separate parity ranges do not interleave.
+bin. Triangles across parts and separate parity ranges do not interleave. In a
+view with `transparency = WEIGHTED`, a level whose blended parts all join the
+[weighted pass](materials.md#weighted-transparency) takes no sorted list and no sort keys.
 
 Animated rigid and morph-only parts instead compose their sampled source mesh
 affine with the alternative's local transform, retaining shear. Skinned parts
