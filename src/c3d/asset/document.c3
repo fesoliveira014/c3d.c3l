@@ -4,9 +4,6 @@ import c3d;
 import c3d::anim;
 import c3d::geometry;
 import c3d::material;
-import c3d::maths;
-import c3d::scene;
-import std::math;
 
 <*
  Entry capacities of a model document, fixed before conversion.
@@ -298,56 +295,6 @@ fn void destroy_model_document(ModelDocument* document) {
     free_string(allocator, document.key);
 
     *document = { .allocator = allocator };
-}
-
-fn void? check_lod_groups(AssetStore* store, ModelTemplate* template, ModelDocument* document) @private {
-    foreach (index, &group : template.lod_groups) {
-        if (group.node >= template.nodes.len) return c3d::INVALID_ARGUMENT~;
-        scene::validate_lod_layout(group.desc)!;
-        foreach (previous : template.lod_groups[:index]) {
-            if (previous.node == group.node) return c3d::INVALID_ARGUMENT~;
-        }
-        foreach (mesh : template.meshes) {
-            if (mesh.node == group.node) return c3d::INVALID_ARGUMENT~;
-        }
-        foreach (skin : template.skins) {
-            if (skin.mesh_node == group.node) return c3d::INVALID_ARGUMENT~;
-        }
-        foreach (part : group.desc.parts) {
-            Aabb bounds;
-            if (part.geometry.generation) {
-                if (!store.geometries.is_live(part.geometry)) return c3d::INVALID_ARGUMENT~;
-                GeometryAsset* geometry = store.geometry(part.geometry);
-                if (geometry.target_count || geometry.skin_bounds.joints.len || geometry.data.joints.len) return c3d::INVALID_ARGUMENT~;
-                bounds = geometry.data.bounds;
-            } else {
-                if (!document || !part.geometry.index || part.geometry.index > document.geometries.len) {
-                    return c3d::INVALID_ARGUMENT~;
-                }
-                Geometry* geometry = &document.geometries[document_index(part.geometry)].data;
-                if (geometry.targets.len || geometry.joints.len) return c3d::INVALID_ARGUMENT~;
-                bounds = geometry.bounds;
-            }
-            bounds = maths::aabb_transform(bounds, part.local);
-            for (uint axis = 0; axis < 3; axis++) {
-                if (!math::is_finite(bounds.min[axis]) || !math::is_finite(bounds.max[axis])
-                  || bounds.min[axis] > bounds.max[axis]) return c3d::INVALID_ARGUMENT~;
-            }
-            if (part.material.generation) {
-                if (!store.materials.is_live(part.material)) return c3d::INVALID_ARGUMENT~;
-                Material* material = &store.material(part.material).data;
-                if (material.kind == MaterialKind.CUSTOM) {
-                    if (!store.shaders.is_live(material.custom.shader)) return c3d::INVALID_ARGUMENT~;
-                    if (store.shader(material.custom.shader).desc.vertex.shaded.len && !group.desc.has_bounds_override) {
-                        return c3d::INVALID_ARGUMENT~;
-                    }
-                }
-            } else if (!document || !part.material.index || part.material.index > document.materials.len) {
-                return c3d::INVALID_ARGUMENT~;
-            }
-        }
-    }
-    return;
 }
 
 fn String[] document_keys(ModelDocument* document) @private {

@@ -177,8 +177,7 @@ fn void? check_lod_part_bounds(Aabb bounds, Mat4 local) @local {
     }
 }
 
-fn void? check_independent_lods(ModelDocument* document) @local {
-    ModelTemplate* template = &document.template;
+fn void? check_lod_layouts(ModelTemplate* template) @local {
     foreach (index, &group : template.lod_groups) {
         if (group.node >= template.nodes.len) return c3d::INVALID_ARGUMENT~;
         scene::validate_lod_layout(group.desc)!;
@@ -191,10 +190,18 @@ fn void? check_independent_lods(ModelDocument* document) @local {
         foreach (skin : template.skins) {
             if (skin.mesh_node == group.node) return c3d::INVALID_ARGUMENT~;
         }
+    }
+}
+
+fn void? check_independent_lods(ModelDocument* document) @local {
+    check_lod_layouts(&document.template)!;
+
+    foreach (&group : document.template.lod_groups) {
         foreach (part : group.desc.parts) {
             if (!local_reference_valid(part.geometry, document.geometries.len)
               || !local_reference_valid(part.material, document.materials.len)) return c3d::INVALID_ARGUMENT~;
             if (part.geometry.generation) continue;
+
             Geometry* geometry = &document.geometries[document_index(part.geometry)].data;
             if (geometry.targets.len || geometry.joints.len) return c3d::INVALID_ARGUMENT~;
             check_lod_part_bounds(geometry.bounds, part.local)!;
@@ -202,21 +209,22 @@ fn void? check_independent_lods(ModelDocument* document) @local {
     }
 }
 
-fn void? check_prepared_references(AssetStore* store, PreparedModelDocument* prepared) @private {
-    ModelDocument* document = &prepared.document;
-    check_template_references(store, document)!;
-    foreach (&group : document.template.lod_groups) {
+fn void? check_store_lod_parts(AssetStore* store, ModelTemplate* template) @local {
+    foreach (&group : template.lod_groups) {
         foreach (part : group.desc.parts) {
             if (part.geometry.generation) {
                 if (!store.geometries.is_live(part.geometry)) return c3d::INVALID_ARGUMENT~;
+
                 GeometryAsset* geometry = store.geometry(part.geometry);
                 if (geometry.target_count || geometry.skin_bounds.joints.len || geometry.data.joints.len) {
                     return c3d::INVALID_ARGUMENT~;
                 }
                 check_lod_part_bounds(geometry.data.bounds, part.local)!;
             }
+
             if (part.material.generation) {
                 if (!store.materials.is_live(part.material)) return c3d::INVALID_ARGUMENT~;
+
                 Material* material = &store.material(part.material).data;
                 if (material.kind == MaterialKind.CUSTOM) {
                     if (!store.shaders.is_live(material.custom.shader)) return c3d::INVALID_ARGUMENT~;
@@ -227,6 +235,23 @@ fn void? check_prepared_references(AssetStore* store, PreparedModelDocument* pre
             }
         }
     }
+}
+
+fn void? check_lod_groups(AssetStore* store, ModelTemplate* template) @private {
+    check_lod_layouts(template)!;
+
+    foreach (&group : template.lod_groups) {
+        foreach (part : group.desc.parts) {
+            if (!part.geometry.generation || !part.material.generation) return c3d::INVALID_ARGUMENT~;
+        }
+    }
+
+    check_store_lod_parts(store, template)!;
+}
+
+fn void? check_prepared_references(AssetStore* store, PreparedModelDocument* prepared) @private {
+    check_template_references(store, &prepared.document)!;
+    check_store_lod_parts(store, &prepared.document.template)!;
 }
 
 fn ModelId? publish_prepared_model_document(AssetStore* store, PreparedModelDocument* prepared) @private {
