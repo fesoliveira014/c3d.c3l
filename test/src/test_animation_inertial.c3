@@ -2264,7 +2264,7 @@ fn void test_animation_generalized_play_and_groups_reject_atomically_before_acqu
                         interpolation: Interpolation.LINEAR,
                         times: times[..],
                         values: rotations[..],
-                        node: 3,
+                        node: 2,
                     );
                 case SPACE_2D:
                     rejected = request_cubic_scale_clip(&fixture);
