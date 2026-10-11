@@ -434,6 +434,7 @@ TraceSurface surface_from_hit(SceneTraceRoot scene, SceneHit hit, vec3 ray_direc
                     footprint
                 );
             }
+
             if (instance.material_kind == MATERIAL_KIND_PHYSICAL) {
                 hit_physical_layers(
                     instance,

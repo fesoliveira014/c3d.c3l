@@ -131,6 +131,7 @@ bool hit_physical_light_arrives(TraceSurface surface, PhysicalSurface physical, 
 vec3 shade_physical_hit(FrameRoot frame, HitLights lights, TraceSurface surface, vec3 view_direction) {
     PhysicalSurface physical = physical_surface_from_hit(surface, view_direction);
     ReflectionSelection reflections = reflection_probe_select(frame, surface.position);
+
     vec3 transmitted = vec3(0.0);
     if (physical.transmission > 0.0) {
         vec3 refracted = refract(-view_direction, surface.normal, 1.0 / surface.ior);
@@ -152,6 +153,7 @@ vec3 shade_physical_hit(FrameRoot frame, HitLights lights, TraceSurface surface,
     vec3 base_ambient = frame.ambient.rgb * surface.albedo * (1.0 - surface.metallic);
     vec3 base_fill = (1.0 - physical.transmission) * base_ambient + physical.transmission * transmitted;
     vec3 color = (1.0 - physical.coat_weight) * (base_fill + surface.emissive);
+
     if (frame_has_indirect(frame)) {
         color += evaluate_physical_environment(
             frame,
@@ -163,6 +165,7 @@ vec3 shade_physical_hit(FrameRoot frame, HitLights lights, TraceSurface surface,
             1.0
         );
     }
+
     for (uint index = 0u; index < lights.count; index++) {
         LightGpu light = LightArray(lights.address).values[index];
         if ((light.layers & surface.layers) == 0u) continue;
