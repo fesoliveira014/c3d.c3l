@@ -41,6 +41,11 @@ const float HIGH_INDEX @private = 2.4f;
 const Vec3 TINTED_SPECULAR @private = { 1, 0.5f, 0.2f };
 const float GLASS_THICKNESS @private = 0.5f;
 const int COAT_MINIMUM @private = 20;
+const Vec3 FABRIC_SHEEN_COLOR @private = { 1, 1, 1 };
+const float FABRIC_SHEEN_ROUGHNESS @private = 1;
+const int FABRIC_MINIMUM @private = 10;
+const float BRUSHED_ROUGHNESS @private = 0.6f;
+const int BRUSHED_MINIMUM @private = 20;
 
 struct PhysicalPanel @private {
     Fixture*     fixture;
@@ -440,6 +445,7 @@ fn void test_reflections_light_a_hit_from_an_off_camera_lamp_by_receiver_layers(
 fn uint? PhysicalPanel.render(&self, PhysicalParams params) @private {
     MaterialId physical = self.fixture.assets.add_material(material::physical(params))!;
     self.mirror.scene.get(self.mirror.emitter, Mesh).material = physical;
+    self.fixture.renderer.prepare_scene(&self.mirror.scene)!;
     return render_mirror(self.fixture, self.mirror, self.view, EMITTER_IMAGE_POINT);
 }
 
@@ -485,6 +491,52 @@ fn void test_reflections_shade_the_physical_layers_of_a_hit() @test {
             glass_pixel,
         );
         assert(red(coated_pixel) > red(plain_pixel) + COAT_MINIMUM);
+        check_validation(&fixture.renderer);
+    }
+}
+
+fn void test_reflections_shade_the_sheen_and_anisotropy_of_a_hit() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        MirrorScene mirror = create_mirror_scene(&fixture, false)!!;
+        defer scene::destroy_scene(&mirror.scene);
+        AoView mirror_view = create_ao_view(&fixture, ShadingPath.DEFERRED)!!;
+        defer destroy_ao_view(&fixture, &mirror_view);
+        set_reflections(&fixture, mirror_view.view, true)!!;
+        Node* lamp = mirror.scene.add_light(light::point({ 1, 0, 0 }, COAT_LAMP_INTENSITY, COAT_LAMP_RANGE))!!;
+        lamp.local.position = COAT_LAMP_POSITION;
+        mirror.scene.update_world();
+
+        PhysicalParams plain = material::PHYSICAL_PARAMS_DEFAULT;
+        plain.standard.base_color = { 1, 1, 1, 1 };
+        plain.standard.metallic = 0;
+        plain.standard.roughness = 1;
+        PhysicalParams sheen = plain;
+        sheen.sheen_color = FABRIC_SHEEN_COLOR;
+        sheen.sheen_roughness = FABRIC_SHEEN_ROUGHNESS;
+        PhysicalParams metal = plain;
+        metal.standard.metallic = 1;
+        metal.standard.roughness = BRUSHED_ROUGHNESS;
+        PhysicalParams brushed = metal;
+        brushed.anisotropy = 1;
+
+        PhysicalPanel panel = { .fixture = &fixture, .mirror = &mirror, .view = mirror_view.view };
+        uint plain_pixel = panel.render(plain)!!;
+        uint sheen_pixel = panel.render(sheen)!!;
+        uint metal_pixel = panel.render(metal)!!;
+        uint brushed_pixel = panel.render(brushed)!!;
+        io::eprintfn(
+            "%s, sheen and anisotropy hit: plain %06x, sheen %06x, metal %06x, brushed %06x",
+            trace_name(ray_queries),
+            plain_pixel,
+            sheen_pixel,
+            metal_pixel,
+            brushed_pixel,
+        );
+        assert(blue(sheen_pixel) + FABRIC_MINIMUM < blue(plain_pixel));
+        assert(math::abs(red(brushed_pixel) - red(metal_pixel)) > BRUSHED_MINIMUM);
         check_validation(&fixture.renderer);
     }
 }
