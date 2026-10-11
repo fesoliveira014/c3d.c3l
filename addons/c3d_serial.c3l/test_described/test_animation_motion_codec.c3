@@ -463,37 +463,35 @@ fn void test_animation_motion_codec_frozen_weighted_planar_versions_default_disa
             assert(animator.action(animator.order[0]).time == 0 && animator.event_count == 0);
             fixture.destination.remove(restored);
         }
-        char[][1] binaries = { MOTION_CODEC_CROWD_V3_PENDING };
-        String[1] texts = { (String)MOTION_CODEC_CROWD_V3_PENDING_TEXT };
+        char[] binary = MOTION_CODEC_CROWD_V3_PENDING;
+        String text = (String)MOTION_CODEC_CROWD_V3_PENDING_TEXT;
         uint[3] members = { 1, 2, 3 };
-        foreach (variant, bytes : binaries) {
-            for (uint encoding = 0; encoding < 2; encoding++) {
-                Node* restored = encoding == 0
-                  ? serial::read_subtree(&fixture.destination, &fixture.assets, bytes)!!
-                  : serial::read_subtree_text(&fixture.destination, &fixture.assets, texts[variant])!!;
-                AnimatedCrowd* crowd = fixture.destination.get(restored, AnimatedCrowd);
-                assert(!crowd.inertia_enabled && !crowd.is_prepared() && crowd.authoring);
-                assert(crowd.count == 2 && crowd.placements.len == 3 && crowd.actions_per_instance == 4);
-                assert(crowd.event_capacity == 17 && crowd.trace && restored.layers == 9);
-                assert(restored.local.position == (Vec3){ 4, 2, -8 });
-                assert(crowd.placements[0].scale == (Vec3){ 2, 2, 2 });
-                assert(crowd.placements[1].scale == (Vec3){ -1, 2, 0.5f });
-                assert(crowd.authoring.instances[0].base_action == 0);
-                assert(crowd.authoring.instances[1].configured && !crowd.authoring.instances[1].actions.len);
-                foreach (action : crowd.authoring.instances[0].actions) {
-                    assert_motion_codec_extraction(action.extraction, {});
-                }
-                CrowdSpaceAuthoring planar = crowd.authoring.instances[0].spaces[0];
-                assert(planar.kind == TWO_DIMENSIONAL && planar.actions == members[..]);
-                assert(planar.triangles[0].indices == (uint[3]){ 2, 1, 0 });
-                model::prepare_crowd(&fixture.assets, &fixture.destination, restored)!!;
-                assert(!crowd.playback.inertial_storage && crowd.playback.slots[1].action_count == 0);
-                PlaybackView playback = anim::crowd_playback_view(crowd.playback, &crowd.playback.slots[0]);
-                assert_motion_codec_legacy_planar(&playback, clip);
-                Action* base = crowd.playback.slots[0].actions.get(crowd.playback.slots[0].base_action);
-                assert(base.time == 0.125f && crowd.playback.event_count == 0);
-                fixture.destination.remove(restored);
+        for (uint encoding = 0; encoding < 2; encoding++) {
+            Node* restored = encoding == 0
+              ? serial::read_subtree(&fixture.destination, &fixture.assets, binary)!!
+              : serial::read_subtree_text(&fixture.destination, &fixture.assets, text)!!;
+            AnimatedCrowd* crowd = fixture.destination.get(restored, AnimatedCrowd);
+            assert(!crowd.inertia_enabled && !crowd.is_prepared() && crowd.authoring);
+            assert(crowd.count == 2 && crowd.placements.len == 3 && crowd.actions_per_instance == 4);
+            assert(crowd.event_capacity == 17 && crowd.trace && restored.layers == 9);
+            assert(restored.local.position == (Vec3){ 4, 2, -8 });
+            assert(crowd.placements[0].scale == (Vec3){ 2, 2, 2 });
+            assert(crowd.placements[1].scale == (Vec3){ -1, 2, 0.5f });
+            assert(crowd.authoring.instances[0].base_action == 0);
+            assert(crowd.authoring.instances[1].configured && !crowd.authoring.instances[1].actions.len);
+            foreach (action : crowd.authoring.instances[0].actions) {
+                assert_motion_codec_extraction(action.extraction, {});
             }
+            CrowdSpaceAuthoring planar = crowd.authoring.instances[0].spaces[0];
+            assert(planar.kind == TWO_DIMENSIONAL && planar.actions == members[..]);
+            assert(planar.triangles[0].indices == (uint[3]){ 2, 1, 0 });
+            model::prepare_crowd(&fixture.assets, &fixture.destination, restored)!!;
+            assert(!crowd.playback.inertial_storage && crowd.playback.slots[1].action_count == 0);
+            PlaybackView playback = anim::crowd_playback_view(crowd.playback, &crowd.playback.slots[0]);
+            assert_motion_codec_legacy_planar(&playback, clip);
+            Action* base = crowd.playback.slots[0].actions.get(crowd.playback.slots[0].base_action);
+            assert(base.time == 0.125f && crowd.playback.event_count == 0);
+            fixture.destination.remove(restored);
         }
     };
 }

@@ -169,6 +169,7 @@ fn ScaleEligibilityResult scale_eligibility(ScaleEligibilityInput* input) @priva
     }
 
     double lower_limit = math::min(SCALE_MIN_NORMAL, smallest);
+
     if ((input.offset == 0 && input.velocity == 0) || input.duration == 0) {
         return eligibility_closed_limits(target_minimum, target_maximum, lower_limit);
     }

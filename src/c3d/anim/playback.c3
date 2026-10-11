@@ -410,10 +410,6 @@ fn usz? validate_playback_action(
         return c3d::INVALID_ARGUMENT~;
     }
 
-    if (desc.additive && desc.additive_scale == AdditiveScaleMode.MULTIPLICATIVE) {
-        validate_multiplicative_scale(data)!;
-    }
-
     foreach (target : data.targets) {
         if (target >= destination.base_pose.len) return c3d::INVALID_ARGUMENT~;
     }
@@ -427,6 +423,10 @@ fn usz? validate_playback_action(
         if (mesh == uint::max) return c3d::INVALID_ARGUMENT~;
         if (!destination.present[target] || !destination.mesh_present[target]) continue;
         if (destination.mesh_widths[mesh] != track.stride()) return c3d::INVALID_ARGUMENT~;
+    }
+
+    if (desc.additive && desc.additive_scale == AdditiveScaleMode.MULTIPLICATIVE) {
+        validate_multiplicative_scale(data)!;
     }
 
     return reference_count;

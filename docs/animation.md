@@ -334,8 +334,8 @@ bounded polynomial certificate. Scale tracks are checked at their keys; a
 `CUBIC_SPLINE` scale track on the chain is unsupported. An unproved cubic
 rotation domain or a cubic scale track faults `UNSUPPORTED` before playback
 changes, after every `INVALID_ARGUMENT` check. No repeated domain scan runs at
-update. Under generalized extraction, a nonneutral scale track on an additive
-action's consumed chain is invalid in either additive scale mode, including
+update. Under generalized extraction, a scale track with nonneutral keys on an
+additive action's consumed chain is invalid in either additive scale mode, including
 zero-weight or fully masked actions.
 
 The final blended and inertia-corrected chain determines the consumed motion.

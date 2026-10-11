@@ -1773,6 +1773,10 @@ fn void test_profile_exact_fingerprint_rejects_template_changes() @test {
         profile_expect_bake_fault(&rig, &profile, c3d::INVALID_ARGUMENT);
         rig.target.nodes = original;
 
+        rig.target.nodes[1].local.position.x += 1;
+        profile_expect_bake_fault(&rig, &profile, c3d::INVALID_ARGUMENT);
+        rig.target.nodes[1].local.position.x -= 1;
+
         rig.target.meshes = (ModelMesh[1]){ { .node = 0, .material = { .index = 2 } } }[..];
         AnimationClip compatible = profile_bake(&rig, &profile);
         defer asset::free_clip(mem, &compatible);

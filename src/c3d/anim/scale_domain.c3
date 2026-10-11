@@ -4,14 +4,20 @@ import c3d;
 import std::math;
 
 fn void? validate_multiplicative_scale(AnimationClip* clip) @private {
+    bool unsupported;
     foreach (&track : clip.tracks) {
         if (track.path != TargetPath.SCALE) continue;
 
-        validate_multiplicative_scale_track(track)!;
+        if (catch excuse = validate_multiplicative_scale_track(track)) {
+            if (excuse != c3d::UNSUPPORTED) return excuse~;
+            unsupported = true;
+        }
 
         Vec3 reference = sample_multiplicative_scale_reference(track);
         if (!positive_scale_vector(reference)) return c3d::INVALID_ARGUMENT~;
     }
+
+    if (unsupported) return c3d::UNSUPPORTED~;
 }
 
 fn Vec3 sample_multiplicative_scale_reference(Track* track) @private {

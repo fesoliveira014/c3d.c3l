@@ -213,8 +213,8 @@ fn void destroy_crowd_native_probe(Renderer* renderer, CrowdNativeProbe* probe) 
 
 fn void? create_crowd_native_output(Fixture* fixture, CrowdNativeOutput* output) @private {
     output.target = render::create_render_target(
-        &fixture.renderer,
-        render::render_target_desc(CROWD_NATIVE_WIDTH, CROWD_NATIVE_HEIGHT, PixelFormat.RGBA32_FLOAT),
+        renderer: &fixture.renderer,
+        desc: render::render_target_desc(CROWD_NATIVE_WIDTH, CROWD_NATIVE_HEIGHT, PixelFormat.RGBA32_FLOAT),
     )!;
     output.view = render::create_view(&fixture.renderer, render::texture_view_desc(output.target))!;
     create_crowd_native_probe(fixture, &output.probe)!;

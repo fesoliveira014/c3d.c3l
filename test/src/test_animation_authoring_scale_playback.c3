@@ -122,6 +122,27 @@ fn void test_animation_scale_playback_ratio_and_default_difference_use_literal_o
             update_scale_playback(&fixture, { 2, 3, 4 });
         }
     }
+
+    float[2] straddling_times = { -1, 1 };
+    float[6] straddling_values = { 2, 4, 8, 4, 8, 16 };
+    LayerFixture fixture;
+    create_scale_playback_fixture(&fixture, { 3, 6, 12 });
+    defer destroy_layer_fixture(&fixture);
+    ClipId clip = scale_playback_clip(
+        fixture: &fixture,
+        interpolation: Interpolation.LINEAR,
+        times: straddling_times[..],
+        values: straddling_values[..],
+    );
+    AnimationActionId action = play_scale_playback(
+        fixture: &fixture,
+        clip: clip,
+        desc: { .additive = true, .additive_scale = AdditiveScaleMode.MULTIPLICATIVE },
+        weight: 1,
+        time: 1,
+    );
+    float[3] straddling_reference = { 3, 6, 12 };
+    assert(fixture.animator.action(action).reference == straddling_reference[..]);
 }
 
 fn void test_animation_scale_playback_weighted_and_boolean_masks_are_copied() @test {
@@ -274,13 +295,18 @@ fn void test_animation_scale_playback_invalid_domains_reject_before_pool_or_allo
             times: times[..],
             values: invalid == 5 ? cubic[..] : ordinary[..],
         );
-        expect_scale_play_fault(&fixture, &tracker, clip, c3d::INVALID_ARGUMENT);
+        expect_scale_play_fault(
+            fixture: &fixture,
+            tracker: &tracker,
+            clip: clip,
+            expected: c3d::INVALID_ARGUMENT,
+        );
         update_scale_playback(&fixture, { 3, 2.25f, 6 });
         fixture.assets.remove_clip(clip);
     }
 }
 
-fn void test_animation_scale_playback_cubic_multiplicative_scale_is_unsupported_before_mutation() @test {
+fn void test_animation_scale_playback_cubic_multiplicative_scale_is_unsupported_after_invalid_faults() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
     defer tracker.free();
@@ -295,6 +321,42 @@ fn void test_animation_scale_playback_cubic_multiplicative_scale_is_unsupported_
         times: times[..],
         values: values[..],
     );
-    expect_scale_play_fault(&fixture, &tracker, clip, c3d::UNSUPPORTED);
+    expect_scale_play_fault(
+        fixture: &fixture,
+        tracker: &tracker,
+        clip: clip,
+        expected: c3d::UNSUPPORTED,
+    );
+    update_scale_playback(&fixture, { 2, 3, 4 });
+
+    float[6] nonpositive = { 1, 1, 1, 0, 1, 1 };
+    Track[2] tracks = {
+        make_track(
+            path: TargetPath.SCALE,
+            interpolation: Interpolation.CUBIC_SPLINE,
+            times: times[..],
+            values: values[..],
+        ),
+        make_track(
+            path: TargetPath.SCALE,
+            interpolation: Interpolation.STEP,
+            times: times[..],
+            values: nonpositive[..],
+        ),
+    };
+    uint[2] targets = { 3, 2 };
+    ClipId mixed = add_clip(
+        assets: &fixture.assets,
+        key: "",
+        tracks: tracks[..],
+        targets: targets[..],
+        duration: 1,
+    );
+    expect_scale_play_fault(
+        fixture: &fixture,
+        tracker: &tracker,
+        clip: mixed,
+        expected: c3d::INVALID_ARGUMENT,
+    );
     update_scale_playback(&fixture, { 2, 3, 4 });
 }

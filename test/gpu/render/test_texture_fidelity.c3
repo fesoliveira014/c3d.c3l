@@ -145,7 +145,12 @@ fn Vec4[]? fidelity_collect(Fixture* fixture, FidelityHarness* harness, usz coun
     return result;
 }
 
-fn Vec4[]? fidelity_decode(Fixture* fixture, FidelityHarness* harness, Vec4[] encoded_scales, bool rg) @private {
+fn Vec4[]? fidelity_decode(
+    Fixture* fixture,
+    FidelityHarness* harness,
+    Vec4[] encoded_scales,
+    bool rg,
+) @private {
     Renderer* renderer = &fixture.renderer;
 
     FidelityRoot root = {

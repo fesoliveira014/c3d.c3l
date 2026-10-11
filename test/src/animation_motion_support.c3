@@ -98,7 +98,12 @@ fn ClipId inertial_owner_clip(
     );
 }
 
-fn ClipId inertial_owner_translation(LayerFixture* owner, Vec3 start, Vec3 end, uint node = 3) @private {
+fn ClipId inertial_owner_translation(
+    LayerFixture* owner,
+    Vec3 start,
+    Vec3 end,
+    uint node = 3,
+) @private {
     float[2] times = { 0, 1 };
     float[6] values = { start.x, start.y, start.z, end.x, end.y, end.z };
     return inertial_owner_clip(

@@ -239,7 +239,12 @@ fn void set_lod_native_pose(
     crowd_native_update(fixture, pair, 0);
 }
 
-fn void check_lod_native_counts(Stats* stats, uint level, bool crowd, bool all_visible = true) @private {
+fn void check_lod_native_counts(
+    Stats* stats,
+    uint level,
+    bool crowd,
+    bool all_visible = true,
+) @private {
     assert(stats.cull_overflows == 0 && stats.sort_overflows == 0 && stats.lod_fallbacks == 0);
     if (crowd) assert(stats.lod_counts_valid && stats.lod_instances_tested == CROWD_NATIVE_INSTANCES);
     for (uint choice = 0; choice < scene::MAX_LOD_CHOICES; choice++) {
