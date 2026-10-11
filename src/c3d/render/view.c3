@@ -317,6 +317,7 @@ fn void? record_raster_view(
         usz transparent_filled;
         SceneReads scene_read_reads;
         SceneReads transparent_reads;
+        bool scene_read_mips;
         bool sheen;
         ShadingPath shading = record.desc.shading;
         instrumentation::@scope("view.resolve") {
@@ -399,6 +400,7 @@ fn void? record_raster_view(
                     case SCENE_READ:
                         index = scene_read_start + scene_read_filled++;
                         scene_read_reads |= material_scene_reads(material_description, custom_reads);
+                        scene_read_mips |= material_blurs_scene_color(material_description);
                     case TRANSPARENT:
                         index = transparent_start + transparent_filled++;
                         transparent_reads |= material_scene_reads(material_description, custom_reads);
@@ -643,7 +645,7 @@ fn void? record_raster_view(
                 shadow_count: shadow_set.layer_count,
                 environment: environment_address,
                 scene_color: view_reads.color ? record.scene_color.view.index : (gpu::TextureIndex)0,
-                scene_sampler: view_reads.color ? renderer.linear_clamp_sampler : (gpu::SamplerIndex)0,
+                scene_sampler: view_reads.color ? renderer.scene_color_sampler : (gpu::SamplerIndex)0,
                 scene_depth: view_reads.depth ? record.scene_depth.view.index : (gpu::TextureIndex)0,
                 prev_view_proj: temporal && record.history.valid ? &record.history.view_proj : &matrices.view_proj,
                 previous_time: temporal && record.history.valid ? &record.history.time : null,
@@ -897,6 +899,7 @@ fn void? record_raster_view(
 
             if (scene_read_items.len) {
                 record_scene_snapshots(renderer, record, scene_read_reads)!;
+                if (scene_read_mips) record_scene_mips(renderer, record)!;
                 @profile_pass(renderer, Pass.SCENE_READ) {
                     record_loaded_pass(renderer, record, scene_read_items)!;
                 }!;
@@ -2325,14 +2328,19 @@ fn void release_view_targets(gpu::Device* device, ViewRecord* record) @private {
 
 fn void? acquire_scene_snapshots(Renderer* renderer, ViewRecord* record, SceneReads reads) @private {
     if (reads.color && !record.scene_color.texture.is_valid()) {
-        record.scene_color = allocate_target(
+        uint levels = scene_mip_levels(record.hdr_color.width, record.hdr_color.height);
+        Target color = allocate_target(
             device:     &renderer.device,
             width:      record.hdr_color.width,
             height:     record.hdr_color.height,
             format:     HDR_FORMAT,
             usage:      { .color_attach, .sampled },
             debug_name: "scene_color",
+            mip_levels: levels,
         )!;
+        defer catch release_target(&renderer.device, &color);
+        record.scene_mips = create_scene_mips(&renderer.device, color.texture, levels)!;
+        record.scene_color = color;
     }
     if (reads.depth && !record.scene_depth.texture.is_valid()) {
         record.scene_depth = allocate_target(

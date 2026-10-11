@@ -28,6 +28,10 @@ is allocated with the view, not on toggle, and freed with it.
 `test_manual_exposure.c3` prints the digest of a manual image with bloom; it compiles on any revision, so running it
 before and after a change shows whether manual output moved.
 
+`test_scene_reads.c3` also renders rough and smooth Physical glass in one view, through a render-target resize and an
+in-place reconfiguration. The scene-color mip passes show as a `Stats.draws` difference of one pass per level below
+mip zero, and only the rough frames record them.
+
 Build the repository once so `shaders/spv/` exists, then invoke this project
 separately:
 

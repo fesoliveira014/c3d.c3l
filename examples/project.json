@@ -278,6 +278,12 @@
         "src/materials.c3"
       ]
     },
+    "transparency": {
+      "type": "executable",
+      "sources": [
+        "src/transparency.c3"
+      ]
+    },
     "gltf_viewer": {
       "type": "executable",
       "sources": [

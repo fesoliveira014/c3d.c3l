@@ -9,6 +9,12 @@
 
 const float MIN_TRANSMISSION_ALPHA = MIN_PERCEPTUAL_ROUGHNESS * MIN_PERCEPTUAL_ROUGHNESS;
 
+// Zero outside the renderer's mip gate, so unwritten levels are never read.
+float transmission_lod(FrameRoot frame, float material_roughness, float ior) {
+    ivec2 size = texture_extent(frame.scene_color);
+    return log2(float(max(size.x, size.y))) * material_roughness * clamp(2.0 * ior - 2.0, 0.0, 1.0);
+}
+
 vec3 transmission_ray(vec3 refracted, float thickness, mat4 model) {
     vec3 model_scale = vec3(length(model[0].xyz), length(model[1].xyz), length(model[2].xyz));
     return normalize(refracted) * thickness * model_scale;
@@ -33,6 +39,8 @@ vec3 transmitted_radiance(
     vec3 ray,
     vec3 refracted,
     float roughness,
+    float material_roughness,
+    float ior,
     bool writes_depth
 ) {
     vec4 clip = frame.view_proj * vec4(position + ray, 1.0);
@@ -40,7 +48,8 @@ vec3 transmitted_radiance(
         vec2 ndc = clip.xy / clip.w;
         vec2 uv = vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
         if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)))) {
-            vec3 behind = sample_texture_2d(frame.scene_color, frame.scene_sampler, uv).rgb;
+            float lod = transmission_lod(frame, material_roughness, ior);
+            vec3 behind = sample_texture_2d_lod(frame.scene_color, frame.scene_sampler, uv, lod).rgb;
             // Only a fogged view takes a depth snapshot with every colour snapshot.
             if (frame.sky_fog == 0ul || !writes_depth) return behind;
             return fog_behind(frame, position, behind, scene_depth_at(frame, uv));

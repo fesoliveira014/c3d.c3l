@@ -294,10 +294,12 @@ fn Target? allocate_target(
     gpu::Format format,
     gpu::TextureUsage usage,
     ZString debug_name,
+    uint mip_levels = 1,
 ) @private {
     gpu::TextureDesc texture_desc = {
         .width      = width,
         .height     = height,
+        .mip_levels = mip_levels,
         .format     = format,
         .usage      = usage,
         .access     = { .graphics },

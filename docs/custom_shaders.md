@@ -326,7 +326,8 @@ a reader, it also holds the scene-read draws. No reader sees ordinary blends or 
 own list. A view whose frame draws no reader copies nothing; each image is allocated at the view's
 working extent the first time a frame needs it and kept until the view's images are released.
 `scene_color` is `RGBA16_FLOAT`; `scene_depth` is `R32_FLOAT` holding the reverse-Z depth bit for bit,
-4 bytes per pixel (8.3 MB at 1920 × 1080, 33.2 MB at 3840 × 2160).
+4 bytes per pixel (8.3 MB at 1920 × 1080, 33.2 MB at 3840 × 2160). `scene_color` also holds a mip chain
+that only [Physical transmission](materials.md#physical-transmission) fills; the helpers below read mip zero.
 
 `scene_snapshot.glsl` samples the snapshots through `FrameRoot.scene_color` and `FrameRoot.scene_depth`.
 Include it after `generated/shader_abi.glsl` and `c3d_abi.glsl`:
@@ -362,7 +363,8 @@ current desc: a replacement the backend rejects keeps the previous pipelines dra
 snapshots they sample.
 
 `Stats.scene_snapshots` counts the images copied in the frame (each copy also counts one
-`Stats.draws`); `Pass.SCENE_SNAPSHOT` times the copies and `Pass.SCENE_READ` the scene-read list.
+`Stats.draws`); `Pass.SCENE_SNAPSHOT` times the copies, `Pass.SCENE_MIPS` the transmission mip chain and
+`Pass.SCENE_READ` the scene-read list.
 `gui::targets_panel` lists `scene_color` and `scene_depth`; `PreviewKind.VIEW_SCENE_DEPTH` previews
 `scene_depth` as distance, like `VIEW_DEPTH`.
 

@@ -660,7 +660,8 @@ lists, `GBUFFER` (depth `EQUAL`, no write), `AMBIENT_OCCLUSION` when the view ha
 occlusion, `LIGHTING` (a fullscreen fragment pass that clears
 `hdr_color`, discards where no geometry was drawn and lights every G-buffer pixel from `FrameRoot`),
 `FORWARD_OPAQUE` (depth `EQUAL`, no write), sky, `SCENE_SNAPSHOT` and `SCENE_READ` when the view
-draws scene readers, `SCENE_SNAPSHOT` again when a blended draw reads the scene, transparency,
+draws scene readers (`SCENE_MIPS` between them when the list holds rough glass), `SCENE_SNAPSHOT`
+again when a blended draw reads the scene, transparency,
 velocity and the post chain. `Stats.gpu_pass_ms` carries the three new passes. A view with
 [fog or an atmosphere](sky.md#where-fog-applies) records `SKY_VIEW` and `AERIAL_PERSPECTIVE` before the
 depth prepass when its scene has an atmosphere, and splits before the transparent draws: the snapshot for
