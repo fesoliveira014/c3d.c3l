@@ -2,15 +2,12 @@ module ik_example;
 
 import std::io;
 import std::io::path;
-import std::io::file;
 import std::math;
-import std::core::string;
 import c3d;
 import c3d::anim;
 import c3d::anim::ik;
 import c3d::asset;
 import c3d::asset::gltf;
-import c3d::asset::image;
 import c3d::camera;
 import c3d::debug;
 import c3d::geometry;
@@ -76,9 +73,6 @@ const float CONTACT_SECOND_PLANT_START @local = 2;
 const float CONTACT_SECOND_RELEASE_START @local = 2.8f;
 const float CONTACT_REPLANT_START @local = 2.9f;
 const float CONTACT_INSTANCE_SPACING @local = 1;
-const float CONTACT_CAPTURE_INTERVAL @local = 2;
-const uint CONTACT_CAPTURE_WIDTH @local = 960;
-const uint CONTACT_CAPTURE_HEIGHT @local = 540;
 const float CONTACT_RESIDUAL_BOUND @local = 0.001f;
 const float CONTACT_ANGLE_BOUND @local = 1;
 const uint CONTACT_INSTANCES @local = 2;
@@ -133,10 +127,6 @@ struct Character @local {
     FootContactResult[2] results;
     float[2] reach_margins;
     float[2] inner_margins;
-    float[2] incoming_clearances;
-    float[2] actual_clearances;
-    uint[2] begins;
-    uint[2] ends;
 }
 
 struct ContactDemo @local {
@@ -597,8 +587,6 @@ fn void? pose_contact_swing(Scene* scene, Character[] characters, ContactDemo* d
             if ((posed.position - swing_position).length() > CONTACT_RESIDUAL_BOUND) {
                 return c3d::INVALID_ARGUMENT~;
             }
-            Vec3 sole = posed.position - posed.rotation * foot.plant.sole_up * character.contact_heights[side];
-            character.incoming_clearances[side] = (sole - demo.support.transform.position).dot(normal);
         }
     }
 }
@@ -632,11 +620,9 @@ fn void? solve_contacts(
                         .normal = normal,
                     };
                     foot.begin_contact(hit, demo.support, demo.support.transform.position.y)!;
-                    character.begins[side]++;
                 case RELEASE:
                 case SECOND_RELEASE:
                     foot.end_contact(demo.support, demo.support.transform.position.y)!;
-                    character.ends[side]++;
                 case SWING:
                     break;
             }
@@ -670,7 +656,6 @@ fn void? solve_contacts(
         Transform actual = maths::transform_from_mat4(foot.leg.joints[2].world);
         Vec3 sole = actual.position - actual.rotation * foot.plant.sole_up * character.contact_heights[side];
         float clearance = (sole - demo.support.transform.position).dot(normal);
-        character.actual_clearances[side] = clearance;
         if (result.phase == INACTIVE) {
             demo.swing_samples++;
             demo.min_swing_clearance = math::min(demo.min_swing_clearance, clearance);
@@ -720,36 +705,6 @@ fn void print_calibration(Scene* scene, Character[] characters) @local {
                 index, side, character.contact_heights[side],
                 foot.plant.sole_up.x, foot.plant.sole_up.y, foot.plant.sole_up.z,
                 foot.plant.sole_forward.x, foot.plant.sole_forward.y, foot.plant.sole_forward.z);
-        }
-    }
-}
-
-fn void? write_telemetry(
-    File* output,
-    Scene* scene,
-    Character[] characters,
-    ContactDemo* demo,
-    uint frame,
-    float wall_seconds,
-    float dt,
-    bool paused,
-    int capture_index,
-) @local {
-    foreach (index, &character : characters) {
-        foreach (side, thigh : character.thighs) {
-            FootIk* foot = scene.get(thigh, FootIk);
-            FootContactResult result = character.results[side];
-            Vec3 requested = foot.contact.requested.position;
-            Vec3 actual = foot.leg.joints[2].world_position();
-            io::fprintfn(output,
-                "%d,%.9f,%.9f,%.9f,%d,%d,%d,%d,%.9f,%.9f,%.9f,%.9f,%d,%.9f,%.9f,%.9f,%.9f,%.9f,%d,%d,%d,%d,%d,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f",
-                frame, wall_seconds, demo.elapsed, dt, index, side, result.phase.ordinal, result.status.ordinal,
-                result.residual, result.normal_error_degrees, result.heading_error_degrees, foot.leg.weight, foot.leg.limits[1].kind.ordinal,
-                character.reach_margins[side], character.inner_margins[side],
-                character.incoming_clearances[side], character.actual_clearances[side], demo.support.transform.scale.x,
-                paused ? 1 : 0, demo.rebase_count, capture_index, character.begins[side], character.ends[side],
-                foot.contact.local_point.x, foot.contact.local_point.y, foot.contact.local_point.z,
-                requested.x, requested.y, requested.z, actual.x, actual.y, actual.z)!;
         }
     }
 }
@@ -834,38 +789,29 @@ fn void? draw_panel(
     return gui::stats_panel(renderer);
 }
 
-fn bool? draw_frame(
+fn void? draw_frame(
     Renderer* renderer,
     Scene* scene,
     Node* camera_node,
     GuiRenderer* gui_renderer,
     debug::DebugDraw* debug,
     FrameInfo info,
-    ViewId capture_view,
-    bool capture,
 ) @local {
     renderer.begin_frame(info)!;
-    bool capture_rendered;
     defer catch render::abort_frame(renderer);
     if (renderer.has_output) {
-        renderer.render_view(scene, camera_node, renderer.default_view, debug)!;
+        renderer.render_view(
+            scene: scene,
+            camera_node: camera_node,
+            view: renderer.default_view,
+            debug: debug,
+        )!;
         renderer.finish_view(renderer.default_view)!;
-        if (capture) {
-            renderer.render_view(
-                scene: scene,
-                camera_node: camera_node,
-                view: capture_view,
-                debug: debug,
-            )!;
-            renderer.finish_view(capture_view)!;
-            capture_rendered = true;
-        }
         OverlayContext overlay = renderer.begin_overlay()!;
         gui_renderer.record(&overlay)!;
         renderer.end_overlay(&overlay)!;
     }
     renderer.end_frame()!;
-    return capture_rendered;
 }
 
 fn String example_path(String relative) @local {
@@ -882,8 +828,6 @@ fn void? run(
     bool acceptance,
     bool contact,
     bool limits,
-    String telemetry_path,
-    String capture_directory,
 ) @local {
     build_level(assets, scene)!;
     ModelId model_id = gltf::load_model(assets, example_path(MODEL_FILE))!;
@@ -926,41 +870,6 @@ fn void? run(
     print_calibration(scene, characters[..]);
     io::printfn("contact_knee_mode=%s", contact && !limits ? "unconstrained" : "authored_hinges");
 
-    File telemetry;
-    bool telemetry_enabled = telemetry_path.len != 0 || capture_directory.len != 0;
-    if (telemetry_enabled) {
-        @pool() {
-            String destination = telemetry_path.len ? telemetry_path
-                : string::tformat("%s/ik-contact.csv", capture_directory);
-            telemetry = file::open(destination, "w")!;
-            io::printfn("contact_telemetry=%s", destination);
-        };
-    }
-    defer { if (telemetry_enabled) (void)telemetry.close(); }
-    if (telemetry_enabled) {
-        io::fprintfn(&telemetry,
-            "frame,wall_seconds,script_seconds,animation_dt,instance,side,phase_id,status_id,residual_m,normal_degrees,heading_degrees,leg_weight,knee_limit_id,outer_margin_m,inner_margin_m,incoming_clearance_m,actual_clearance_m,support_scale,paused,rebase_count,capture_index,begin_count,end_count,anchor_local_x,anchor_local_y,anchor_local_z,requested_x,requested_y,requested_z,actual_x,actual_y,actual_z")!;
-    }
-
-    RenderTargetId capture_target;
-    if (capture_directory.len) {
-        capture_target = render::create_render_target(renderer,
-            render::render_target_desc(CONTACT_CAPTURE_WIDTH, CONTACT_CAPTURE_HEIGHT, material::PixelFormat.RGBA8_SRGB))!;
-    }
-    defer { if (capture_directory.len) (void)render::destroy_render_target(renderer, capture_target); }
-    ViewId capture_view;
-    if (capture_directory.len) {
-        ViewDesc desc = render::texture_view_desc(capture_target, OutputMode.DISPLAY_LDR);
-        desc.post.anti_aliasing = AntiAliasing.FXAA;
-        capture_view = render::create_view(renderer, desc)!;
-    }
-    defer { if (capture_directory.len) (void)render::destroy_view(renderer, capture_view); }
-    char[] capture_pixels;
-    if (capture_directory.len) {
-        capture_pixels = mem::new_array(char, CONTACT_CAPTURE_WIDTH * CONTACT_CAPTURE_HEIGHT * 4);
-    }
-    defer free(capture_pixels);
-
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
     debug::DebugDraw debug = debug::create_debug_draw(mem);
@@ -972,8 +881,6 @@ fn void? run(
 
     float drop;
     uint frame;
-    uint captures;
-    float next_capture_wall;
     double wall_start;
     float wall_seconds;
     while (window.poll()) {
@@ -1074,59 +981,25 @@ fn void? run(
             if (controls.contact) draw_contact_targets(&debug, scene, characters[..]);
         }
         gui_renderer.finish_frame();
-        bool capture_due = capture_directory.len != 0 && wall_seconds >= next_capture_wall;
         platform::sync_window(window, renderer);
-        bool capture_rendered = draw_frame(
+        draw_frame(
             renderer: renderer,
             scene: scene,
             camera_node: camera_node,
             gui_renderer: &gui_renderer,
             debug: &debug,
             info: { .time = window.clock.total, .delta = animation_dt },
-            capture_view: capture_view,
-            capture: capture_due,
-        )!;
-        int capture_index = -1;
-        if (capture_rendered) {
-            renderer.read_render_target(capture_target, capture_pixels)!;
-            @pool() {
-                String destination = string::tformat("%s/ik-contact-%06d.png", capture_directory, captures);
-                image::write_png(
-                    path: destination,
-                    width: CONTACT_CAPTURE_WIDTH,
-                    height: CONTACT_CAPTURE_HEIGHT,
-                    pixels: capture_pixels,
-                )!;
-                io::printfn("contact_capture=%s frame=%d wall=%.6f script=%.6f",
-                    destination, frame, wall_seconds, demo.elapsed);
-            };
-            capture_index = (int)captures;
-            captures++;
-            next_capture_wall += CONTACT_CAPTURE_INTERVAL;
-        }
-        if (telemetry_enabled) write_telemetry(
-            output: &telemetry,
-            scene: scene,
-            characters: characters[..],
-            demo: &demo,
-            frame: frame,
-            wall_seconds: wall_seconds,
-            dt: animation_dt,
-            paused: paused,
-            capture_index: capture_index,
         )!;
         if (frame % 60 == 0) {
             io::printfn("contact_progress frame=%d wall=%.3f script=%.3f planted=%d failed=%d pause=%d rebases=%d",
                 frame, wall_seconds, demo.elapsed, demo.planted_samples, demo.failed_samples,
                 paused ? 1 : 0, demo.rebase_count);
-            if (telemetry_enabled) telemetry.flush()!;
         }
         frame++;
         if (acceptance && demo.elapsed >= CONTACT_PLAYBACK_SECONDS && wall_seconds >= CONTACT_PLAYBACK_SECONDS) break;
     }
-    if (telemetry_enabled) telemetry.flush()!;
-    io::printfn("contact_summary frames=%d wall=%.6f script=%.6f planted=%d failed=%d captures=%d rebases=%d",
-        frame, wall_seconds, demo.elapsed, demo.planted_samples, demo.failed_samples, captures, demo.rebase_count);
+    io::printfn("contact_summary frames=%d wall=%.6f script=%.6f planted=%d failed=%d rebases=%d",
+        frame, wall_seconds, demo.elapsed, demo.planted_samples, demo.failed_samples, demo.rebase_count);
     io::printfn("contact_bounds residual=%.9f normal=%.9f heading=%.9f outer_margin=%.9f inner_margin=%.9f",
         demo.max_residual, demo.max_normal_error, demo.max_heading_error, demo.min_reach_margin, demo.min_inner_margin);
     io::printfn("contact_swing samples=%d failed=%d minimum_clearance=%.9f",
@@ -1144,8 +1017,6 @@ fn int main(String[] args) {
     bool acceptance;
     bool contact = true;
     bool limits;
-    String telemetry_path;
-    String capture_directory;
     foreach (argument : args[1..]) {
         if (argument.starts_with("--frames=")) {
             frame_limit = argument[9..].to_uint()!!;
@@ -1155,12 +1026,6 @@ fn int main(String[] args) {
             contact = false;
         } else if (argument == "--limits") {
             limits = true;
-        } else if (argument.starts_with("--telemetry=")) {
-            telemetry_path = argument[12..];
-            if (!telemetry_path.len) return 1;
-        } else if (argument.starts_with("--capture-dir=")) {
-            capture_directory = argument[14..];
-            if (!capture_directory.len) return 1;
         } else {
             io::eprintfn("Unknown option: %s", argument);
             return 1;
@@ -1193,8 +1058,6 @@ fn int main(String[] args) {
         acceptance: acceptance,
         contact: contact,
         limits: limits,
-        telemetry_path: telemetry_path,
-        capture_directory: capture_directory,
     )) {
         io::eprintfn("ik example failed: %s", excuse);
         return 1;
