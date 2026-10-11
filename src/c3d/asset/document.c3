@@ -216,7 +216,7 @@ fn DocumentGeometry* ModelDocument.geometry(&self, GeometryId reference) {
 <*
  Insert a decoded document into the store and return its model.
  Decides every fault before the first insertion; the store is unchanged on a fault.
- @param [&inout] document : "Emptied on success; intact on a fault."
+ @param [&inout] document : "Emptied on success; intact apart from unit tangent signs on a fault."
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
  @require document.allocator == self.allocator
  @require self.allocator != tmem

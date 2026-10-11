@@ -786,9 +786,9 @@ fn void test_document_capacity_failure_preserves_authored_tangent_arrays_and_met
         assert(document.geometries[0].data.positions.ptr == positions);
         assert(document.geometries[0].data.tangents.ptr == tangents);
         assert(document.geometries[0].data.tangents.len == 3);
-        assert(document.geometries[0].data.tangents[0] == (Vec4){ 2, 0, 0, 3 });
-        assert(document.geometries[0].data.tangents[1] == (Vec4){ 0, 2, 0, -4 });
-        assert(document.geometries[0].data.tangents[2] == (Vec4){ 1, 0, 0, 2 });
+        assert(document.geometries[0].data.tangents[0] == (Vec4){ 2, 0, 0, 1 });
+        assert(document.geometries[0].data.tangents[1] == (Vec4){ 0, 2, 0, -1 });
+        assert(document.geometries[0].data.tangents[2] == (Vec4){ 1, 0, 0, 1 });
         assert(document.textures[0].pixels.ptr == pixels);
         assert(c3d::same_id(document.template.meshes[0].geometry, refs.geometry));
     }

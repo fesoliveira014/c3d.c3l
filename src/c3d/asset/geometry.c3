@@ -423,11 +423,6 @@ fn GeometryId add_prepared_geometry(
     String key,
 ) @private {
     GeometryId id = store.geometries.add({})!!;
-    if (derived.normalized_tangents.len) {
-        alloc::free(store.allocator, geometry.tangents.ptr);
-        geometry.tangents = derived.normalized_tangents;
-    }
-
     *store.geometries.get(id) = {
         .header = { .key = copy_string(store.allocator, key), .revision = 1 },
         .data = *geometry,
@@ -454,12 +449,6 @@ fn void replace_prepared_geometry(
     PreparedGeometry* derived,
 ) @private {
     GeometryAsset* record = store.geometry(geometry);
-    if (derived.normalized_tangents.len) {
-        alloc::free(store.allocator, source.tangents.ptr);
-        source.tangents = derived.normalized_tangents;
-        derived.normalized_tangents = {};
-    }
-
     free_geometry(store.allocator, &record.data);
 
     geometry::free_skin_bounds(store.allocator, &record.skin_bounds);

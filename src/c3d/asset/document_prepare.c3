@@ -12,7 +12,6 @@ import std::math;
 
 struct PreparedGeometry @private {
     GeometryShape shape;
-    Vec4[] normalized_tangents;
     bool joints_u16;
     SkinBounds skin_bounds;
     Aabb[] morph_bounds;
@@ -103,21 +102,12 @@ fn PreparedModelDocument? prepare_model_document(ModelDocument* document) @priva
                 .skin_bounds = geometry::build_skin_bounds(document.allocator, &entry.data),
                 .morph_bounds = geometry::build_morph_bounds(document.allocator, &entry.data),
             };
-
-            foreach (tangent : entry.data.tangents) {
-                if (tangent.w == -1 || tangent.w == 1) continue;
-
-                Vec4[] normalized = copy_slice(document.allocator, entry.data.tangents);
-
-                foreach (&value : normalized) value.w = value.w < 0 ? -1 : 1;
-
-                prepared.geometries[index].normalized_tangents = normalized;
-                break;
-            }
         }
 
         prepared.items = publication_items(document);
     };
+
+    foreach (&entry : document.geometries) normalize_stored_tangent_signs(&entry.data);
 
     prepared.document = *document;
 
@@ -130,7 +120,6 @@ fn void destroy_prepared_model_document(PreparedModelDocument* prepared) @privat
     Allocator allocator = prepared.document.allocator;
 
     foreach (&derived : prepared.geometries) {
-        alloc::free(allocator, derived.normalized_tangents.ptr);
         alloc::free(allocator, derived.shape.target_streams.ptr);
         geometry::free_skin_bounds(allocator, &derived.skin_bounds);
         geometry::free_morph_bounds(allocator, &derived.morph_bounds);
