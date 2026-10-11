@@ -84,7 +84,8 @@ fn void? create_optical_trace(
         Geometry geometry = {
             .positions = positions[..],
             .uv0 = coordinates[..],
-            .indices = transparency_fixtures::QUAD_INDICES[..],
+            .indices = (surface.flags & OPTICAL_REVERSED) != 0
+              ? transparency_fixtures::REVERSED_QUAD_INDICES[..] : transparency_fixtures::QUAD_INDICES[..],
         };
         trace.geometries[index] = fixture.assets.add_geometry(&geometry)!;
         trace.scene.add_mesh(trace.geometries[index], trace.material)!;
@@ -215,16 +216,20 @@ fn gpu::GpuAddress? upload_optical_trace_scene(
         foreach (row, index : top.primitives) {
             GpuGeometry* geometry = &renderer.geometries[trace.geometries[index].index];
             MaterialRes* material = &renderer.materials[trace.material.index];
+            bool mirrored = (surfaces[index].flags & OPTICAL_MIRRORED) != 0;
+            float x_scale = mirrored ? -1.0f : 1.0f;
+            bool double_sided = (surfaces[index].flags & OPTICAL_FACE_POLICY) == 0
+              || (surfaces[index].flags & OPTICAL_DOUBLE_SIDED) != 0;
             rows[row] = {
                 .geometry = geometry.root,
                 .material = material.address,
-                .flags = shader::TRACE_INSTANCE_DOUBLE_SIDED,
+                .flags = double_sided ? shader::TRACE_INSTANCE_DOUBLE_SIDED : 0,
                 .material_kind = shader::MATERIAL_KIND_BASIC,
                 .mask = shader::TRACE_MASK_ALL,
-                .world_to_local_0 = { 1, 0, 0, 0 },
+                .world_to_local_0 = { x_scale, 0, 0, 0 },
                 .world_to_local_1 = { 0, 1, 0, 0 },
                 .world_to_local_2 = { 0, 0, 1, 0 },
-                .local_to_world_0 = { 1, 0, 0, 0 },
+                .local_to_world_0 = { x_scale, 0, 0, 0 },
                 .local_to_world_1 = { 0, 1, 0, 0 },
                 .local_to_world_2 = { 0, 0, 1, 0 },
                 .nodes = geometry.trace.nodes,
@@ -232,13 +237,13 @@ fn gpu::GpuAddress? upload_optical_trace_scene(
             };
             reordered[row] = surfaces[index];
             gpu::AccelerationStructureInstanceDesc desc = {
-                .transform_row_0 = { 1, 0, 0, 0 },
+                .transform_row_0 = { x_scale, 0, 0, 0 },
                 .transform_row_1 = { 0, 1, 0, 0 },
                 .transform_row_2 = { 0, 0, 1, 0 },
                 .bottom_level = trace.bottom_levels[index],
                 .custom_index = (uint)row,
                 .mask = shader::TRACE_MASK_ALL,
-                .flags = { .triangle_cull_disable = true, .force_non_opaque = true },
+                .flags = { .triangle_cull_disable = double_sided, .force_non_opaque = true },
             };
             packed[row] = gpu::make_acceleration_structure_instance(&renderer.device, &desc)!;
         }

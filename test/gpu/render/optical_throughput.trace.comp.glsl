@@ -57,6 +57,10 @@ void main() {
         SceneHit hit = SceneHit(row, rayQueryGetIntersectionPrimitiveIndexEXT(query, false),
             rayQueryGetIntersectionBarycentricsEXT(query, false), rayQueryGetIntersectionTEXT(query, false));
         TraceInstanceGpu instance = TraceInstanceArray(scene.instances).values[row];
+        OpticalSurface authored = OpticalSurfaces(root.surfaces).values[row];
+        bool double_sided = (authored.flags & OPTICAL_FACE_POLICY) == 0u
+            || (authored.flags & OPTICAL_DOUBLE_SIDED) != 0u;
+        if (!double_sided && !rayQueryGetIntersectionFrontFaceEXT(query, false)) continue;
         if (!trace_surface_passes(instance, hit)) continue;
         if (distances[row] != 0.0 && hit.t >= distances[row]) continue;
 
@@ -71,7 +75,7 @@ void main() {
         float limit = OPTICAL_TRACE_RECEIVER_DISTANCE;
         SceneHit hit = SceneHit(row, 0u, vec2(0.0), limit);
         TraceInstanceGpu instance = TraceInstanceArray(scene.instances).values[row];
-        if (!trace_instance(instance, row, TRACE_CULL_NONE, origin, direction, false, limit, hit)) continue;
+        if (!trace_instance(instance, row, TRACE_CULL_BACK_FACES, origin, direction, false, limit, hit)) continue;
 
         GeometryRoot geometry = GeometryRoot(instance.geometry);
         uvec3 corners = pull_triangle(geometry, hit.primitive);

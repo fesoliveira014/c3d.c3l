@@ -24,6 +24,10 @@ const uint OPTICAL_ALPHA_MASK @private = 2;
 const uint OPTICAL_ADDITIVE @private = 4;
 const uint OPTICAL_CAST_OFF @private = 8;
 const uint OPTICAL_OPAQUE @private = 16;
+const uint OPTICAL_FACE_POLICY @private = 32;
+const uint OPTICAL_DOUBLE_SIDED @private = 64;
+const uint OPTICAL_REVERSED @private = 128;
+const uint OPTICAL_MIRRORED @private = 256;
 const uint OPTICAL_GROUP_CAPACITY @private = 16;
 const uint OPTICAL_SURFACE_CAPACITY @private = 64;
 const uint OPTICAL_VERTEX_COUNT @private = 6;
@@ -587,6 +591,7 @@ fn void? record_optical_stack_pass(
         .max_depth = 1,
     };
     state.color.targets = outputs[..];
+    state.raster.front_face = gpu::FrontFace.COUNTER_CLOCKWISE;
     state.depth = { .test_enable = depth != null, .write_enable = depth != null, .compare = gpu::CompareOp.GREATER };
     gpu::cmd_bind_pipeline(&renderer.commands, pipeline)!;
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
@@ -600,7 +605,9 @@ fn void? record_optical_stack_pass(
 }
 
 fn bool optical_survives(OpticalSurface surface) @private {
-    return (surface.flags & OPTICAL_CAST_OFF) == 0
+    bool front = (surface.flags & OPTICAL_FACE_POLICY) == 0 || (surface.flags & OPTICAL_REVERSED) == 0
+      || (surface.flags & OPTICAL_DOUBLE_SIDED) != 0;
+    return front && (surface.flags & OPTICAL_CAST_OFF) == 0
       && ((surface.flags & OPTICAL_ALPHA_MASK) == 0 || surface.base_coverage.w >= surface.plane.z);
 }
 

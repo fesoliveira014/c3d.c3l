@@ -39,6 +39,8 @@ void main() {
         throughput = texelFetch(gpu_texture_heap[nonuniformEXT(GPU_HEAP_SLOT(root.source))], pixel, 0);
         return;
     }
+    bool front = gl_FrontFacing != ((surface.flags & OPTICAL_MIRRORED) != 0u);
+    if ((surface.flags & OPTICAL_FACE_POLICY) != 0u && (surface.flags & OPTICAL_DOUBLE_SIDED) == 0u && !front) discard;
     if (!optical_surface_survives(surface) || gl_FragCoord.z <= root.receiver_depth) discard;
     if (root.phase == OPTICAL_PHASE_OPAQUE) {
         if (!optical_surface_blocks(surface)) discard;
