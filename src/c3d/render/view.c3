@@ -440,7 +440,11 @@ fn void? record_raster_view(
                 if (layered && (list == DrawList.SCENE_READ || list == DrawList.TRANSPARENT)) {
                     bool declared = material_description.kind == MaterialKind.CUSTOM
                       && resolve_shader(renderer, material_description.custom.shader)!.desc.layered_transparency;
-                    items[index].layered = transparency_material_participates(material_description, declared, custom_reads);
+                    items[index].layered = transparency_material_participates(
+                        material: material_description,
+                        custom_declared: declared,
+                        custom_reads: custom_reads,
+                    );
                 }
             }
         };
@@ -682,7 +686,8 @@ fn void? record_raster_view(
                     .phase = shader::TRANSPARENCY_SORTED,
                     .mip_count = record.scene_pyramid.mip_count,
                 };
-                ((FrameRoot*)frame_span.bytes.ptr).transparency = upload_bytes(renderer, &snapshot, TransparencyGpu::size)!;
+                FrameRoot* root = (FrameRoot*)frame_span.bytes.ptr;
+                root.transparency = upload_bytes(renderer, &snapshot, TransparencyGpu::size)!;
             }
 
             if (record.desc.lights == LightSelection.CLUSTERED) {

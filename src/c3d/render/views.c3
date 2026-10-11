@@ -1009,6 +1009,28 @@ fn ViewId? create_view(Renderer* renderer, ViewDesc desc) {
     return view;
 }
 
+macro bool @view_field_values_equal(left, right) @private {
+    $if $Typeof(left)::kind == STRUCT:
+        bool equal = true;
+        $foreach $member : $Typeof(left)::members:
+            equal = equal && @view_field_values_equal(left.$member, right.$member);
+        $endforeach
+        return equal;
+    $else
+        $if $Typeof(left)::kind == TYPEDEF:
+            var $Inner = $Typefrom($Typeof(left)::inner);
+            return @view_field_values_equal(($Inner)left, ($Inner)right);
+        $else
+            return left == right;
+        $endif
+    $endif
+}
+
+fn bool transparency_only_view_change(ViewDesc previous, ViewDesc next) @private {
+    previous.transparency = next.transparency;
+    return @view_field_values_equal(previous, next);
+}
+
 <*
  Replace the view's configuration, resizing or retiring its working images.
  Needs room for every new image before an old one goes; a fault changes nothing.
@@ -1024,6 +1046,7 @@ fn ViewId? create_view(Renderer* renderer, ViewDesc desc) {
 fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
     ViewRecord* record = renderer.views.try_get(view)!;
     validate_view_desc(renderer, &desc)!;
+    bool preserve_history = transparency_only_view_change(record.desc, desc);
 
     @pool() {
         StagedView[] staged = alloc::new_array(tmem, StagedView, 1);
@@ -1055,9 +1078,11 @@ fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
         record.desc = desc;
         record.cluster_root = (gpu::GpuAddress)0;
         record.cluster_depth = {};
-        record.history.valid = false;
-        record.history.pending = false;
-        record.stats.accumulated_samples = 0;
+        if (!preserve_history) {
+            record.history.valid = false;
+            record.history.pending = false;
+            record.stats.accumulated_samples = 0;
+        }
         retire_disabled_transparency_readbacks(renderer, record);
     };
 

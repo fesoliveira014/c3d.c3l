@@ -49,6 +49,8 @@ fn void? acquire_transparency_sampler(Renderer* renderer) @private {
 fn void? prepare_transparency_view_pipelines(Renderer* renderer) @private {
     acquire_transparency_sampler(renderer)!;
 
+    renderer.pipelines.get(&renderer.device, composite_pipeline_key(HDR_FORMAT))!;
+    renderer.pipelines.get(&renderer.device, composite_pipeline_key(gpu::Format.R32_FLOAT))!;
     renderer.pipelines.get(&renderer.device, transparency_resolve_key(HDR_FORMAT))!;
     renderer.pipelines.get(&renderer.device, transparency_resolve_key(gpu::Format.RGBA32_FLOAT))!;
     renderer.pipelines.get(&renderer.device, composite_pipeline_key(gpu::Format.RGBA32_FLOAT))!;
@@ -140,6 +142,7 @@ fn void? copy_transparency_color(Renderer* renderer, Target* source, Target* tar
     CompositeRoot data = { .source_texture = source.view.index, .source_sampler = renderer.linear_clamp_sampler };
     gpu::GpuAddress root = upload_bytes(renderer, &data, CompositeRoot::size)!;
     gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, composite_pipeline_key(target.format))!;
+
     record_fullscreen_pass(
         renderer: renderer,
         target: target,
@@ -161,6 +164,7 @@ fn void? record_transparency_pyramid(
         shader: TRANSPARENCY_MIP,
         debug_name: "transparency_mip",
     )!;
+
     @profile_pass(renderer, Pass.TRANSPARENCY_FILTER) {
         source.transition(&renderer.commands, TRANSPARENCY_COMPUTE_READ)!;
         pyramid.image.transition(&renderer.commands, TRANSPARENCY_COMPUTE_STORAGE)!;
@@ -179,7 +183,9 @@ fn void? record_transparency_pyramid(
                 .source_storage = mip > 0 ? 1 : 0,
             };
             gpu::GpuAddress root = upload_bytes(renderer, &data, TransparencyMipRoot::size)!;
-            gpu::cmd_dispatch(&renderer.commands, root, { (width + 7) / 8, (height + 7) / 8, 1 })!;
+            uint dispatch_width = (width + shader::TRANSPARENCY_MIP_GROUP_SIZE - 1) / shader::TRANSPARENCY_MIP_GROUP_SIZE;
+            uint dispatch_height = (height + shader::TRANSPARENCY_MIP_GROUP_SIZE - 1) / shader::TRANSPARENCY_MIP_GROUP_SIZE;
+            gpu::cmd_dispatch(&renderer.commands, root, { dispatch_width, dispatch_height, 1 })!;
 
             gpu::Barrier next = { .before = { .compute }, .after = { .compute } };
             gpu::cmd_barrier(&renderer.commands, &next)!;
@@ -198,6 +204,7 @@ fn void? record_transparency_order(Renderer* renderer, TransparencyOrderRoot[] r
         shader: TRANSPARENCY_ORDER,
         debug_name: "transparency_order",
     )!;
+
     gpu::Barrier sources = { .before = { .host, .compute }, .after = { .compute } };
     gpu::cmd_barrier(&renderer.commands, &sources)!;
     gpu::cmd_bind_pipeline(&renderer.commands, renderer.transparency_order_pipeline)!;
@@ -243,6 +250,7 @@ fn void? record_transparency_own_depth(Renderer* renderer, ViewRecord* record, D
     gpu::GraphicsState state = gpu::render_geometry_state(record.depth.width, record.depth.height)!;
     state.viewport = flipped_viewport(record.depth.width, record.depth.height);
     state.depth = { .test_enable = true, .write_enable = true, .compare = gpu::CompareOp.GREATER };
+
     gpu::cmd_bind_pipeline(&renderer.commands, depth_items[0].pipeline)!;
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
 
@@ -275,6 +283,9 @@ fn void? record_transparency_fallback(
     DrawItem[] scene_read,
     DrawItem[] transparent,
 ) @private {
+    uint fallback_count = (uint)(scene_read.len + transparent.len);
+    count_transparency_fallback(renderer, &record.stats.transparency, fallback_count);
+
     if (scene_read.len) {
         if (frame.sky_fog != (gpu::GpuAddress)0) {
             TransparencyGpu data = {
@@ -481,6 +492,5 @@ fn void? record_layered_transparency(
         scene_read: fallback_scene_read,
         transparent: fallback_transparent,
     )!;
-    count_transparency_fallback(renderer, &record.stats.transparency, (uint)(fallback_scene_read.len + fallback_transparent.len));
     record_transparency_own_depth(renderer, record, admitted)!;
 }

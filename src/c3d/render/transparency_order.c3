@@ -144,10 +144,8 @@ fn TransparencyOrderPlan? prepare_transparency_order(Renderer* renderer, DrawIte
         gpu::GpuAddress source_address = (gpu::GpuAddress)((ulong)sources.address + (ulong)index * uint::size);
         TransparencyCommandRange commands = ranges[key.input];
         usz command_offset = (usz)(key.source - commands.first) * TRANSPARENCY_ORDER_COMMAND_STRIDE;
-        gpu::GpuSpan arguments = commands.commands.span.checked_subspan(
-            command_offset,
-            indirect_args_bytes(&item.geometry.layout),
-        )!;
+        usz command_bytes = indirect_args_bytes(&item.geometry.layout);
+        gpu::GpuSpan arguments = commands.commands.span.checked_subspan(command_offset, command_bytes)!;
         item.range = {
             .args = arguments,
             .count = 1,

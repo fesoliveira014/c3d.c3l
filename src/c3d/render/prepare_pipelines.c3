@@ -520,6 +520,29 @@ fn void append_prepare_pipelines(
         listed: listed,
     );
 
+    ShaderVariant instanced_vertex = vertex;
+    instanced_vertex.flags |= shader::SHADER_FLAG_INSTANCED;
+    append_prepare_transparency_pipelines(
+        renderer: renderer,
+        geometry: geometry,
+        material: material,
+        vertex: instanced_vertex,
+        listed: listed,
+    );
+
+    uint rigid_flags = instanced_vertex.flags
+      & ~(shader::SHADER_FLAG_SKINNED | shader::SHADER_FLAG_SKINNED_U16 | shader::SHADER_FLAG_MORPH);
+    if (rigid_flags != instanced_vertex.flags) {
+        instanced_vertex.flags = rigid_flags;
+        append_prepare_transparency_pipelines(
+            renderer: renderer,
+            geometry: geometry,
+            material: material,
+            vertex: instanced_vertex,
+            listed: listed,
+        );
+    }
+
     PipelineKey forward = forward_pipeline_key(
         material: data,
         vertex: vertex,
@@ -579,6 +602,8 @@ fn void append_prepare_pipelines(
         if (!view.live) continue;
         ViewDesc* desc = &view.desc;
         if (desc.transparency.mode == TransparencyMode.LAYERED && desc.shading != ShadingPath.PATH_TRACED) {
+            append_prepare_cache(listed, composite_pipeline_key(HDR_FORMAT));
+            append_prepare_cache(listed, composite_pipeline_key(gpu::Format.R32_FLOAT));
             append_prepare_cache(listed, transparency_resolve_key(HDR_FORMAT));
             append_prepare_cache(listed, transparency_resolve_key(gpu::Format.RGBA32_FLOAT));
             append_prepare_cache(listed, composite_pipeline_key(gpu::Format.RGBA32_FLOAT));
@@ -640,6 +665,8 @@ fn void append_prepare_view_pipelines(Renderer* renderer, SceneReads reads, List
         if (!view.live) continue;
         ViewDesc* desc = &view.desc;
         if (desc.transparency.mode == TransparencyMode.LAYERED && desc.shading != ShadingPath.PATH_TRACED) {
+            append_prepare_cache(listed, composite_pipeline_key(HDR_FORMAT));
+            append_prepare_cache(listed, composite_pipeline_key(gpu::Format.R32_FLOAT));
             append_prepare_cache(listed, transparency_resolve_key(HDR_FORMAT));
             append_prepare_cache(listed, transparency_resolve_key(gpu::Format.RGBA32_FLOAT));
             append_prepare_cache(listed, composite_pipeline_key(gpu::Format.RGBA32_FLOAT));

@@ -7,6 +7,8 @@
 #include "material_alpha.glsl"
 #include "fog.glsl"
 
+const float TRANSPARENCY_RAY_COSINE_FLOOR = 1e-4; // Keeps grazing projection division finite.
+
 bool layered_transparency_capture(FrameRoot frame) {
     return frame.transparency != 0ul
         && TransparencyGpu(frame.transparency).phase == TRANSPARENCY_CAPTURE;
@@ -31,7 +33,8 @@ FogTerms layered_transparency_connection(FrameRoot frame, vec3 position, float b
     }
 
     vec3 forward = -normalize(vec3(frame.view[0][2], frame.view[1][2], frame.view[2][2]));
-    float far_distance = max(view_distance(frame, behind_depth) / max(dot(direction, forward), 1e-4), near_distance);
+    float far_distance = max(view_distance(frame, behind_depth)
+        / max(dot(direction, forward), TRANSPARENCY_RAY_COSINE_FLOOR), near_distance);
     FogTerms near_terms = fog_terms(frame, uv, position);
     FogTerms far_terms = fog_segment(
         frame,

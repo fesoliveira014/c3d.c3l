@@ -190,6 +190,7 @@ fn void? record_transparency_overflow(
         shader: TRANSPARENCY_OVERFLOW,
         debug_name: "transparency_overflow",
     )!;
+
     Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan counters = frame.upload.take(&renderer.device, TRANSPARENCY_COUNTER_BYTES, uint::alignment)!;
     *(uint[2]*)counters.bytes.ptr = {};
@@ -201,17 +202,23 @@ fn void? record_transparency_overflow(
     };
     gpu::GpuAddress address = upload_bytes(renderer, &root, TransparencyOverflowRoot::size)!;
     gpu::TextureState previous = depth.state;
-    depth.transition(&renderer.commands, { .layout = gpu::TextureLayout.SAMPLED,
-        .stages = { .compute }, .access = { .read } })!;
+    gpu::TextureState compute_read = {
+        .layout = gpu::TextureLayout.SAMPLED,
+        .stages = { .compute },
+        .access = { .read },
+    };
+    depth.transition(&renderer.commands, compute_read)!;
 
     gpu::Barrier host_to_compute = { .before = { .host }, .after = { .compute } };
     gpu::cmd_barrier(&renderer.commands, &host_to_compute)!;
     gpu::cmd_bind_pipeline(&renderer.commands, renderer.transparency_overflow_pipeline)!;
-    gpu::cmd_dispatch(&renderer.commands, address, {
-        (depth.width + TRANSPARENCY_OVERFLOW_GROUP_SIZE - 1) / TRANSPARENCY_OVERFLOW_GROUP_SIZE,
-        (depth.height + TRANSPARENCY_OVERFLOW_GROUP_SIZE - 1) / TRANSPARENCY_OVERFLOW_GROUP_SIZE,
-        1,
-    })!;
+    gpu::Vec3u groups = {
+        .x = (depth.width + TRANSPARENCY_OVERFLOW_GROUP_SIZE - 1) / TRANSPARENCY_OVERFLOW_GROUP_SIZE,
+        .y = (depth.height + TRANSPARENCY_OVERFLOW_GROUP_SIZE - 1) / TRANSPARENCY_OVERFLOW_GROUP_SIZE,
+        .z = 1,
+    };
+    gpu::cmd_dispatch(&renderer.commands, address, groups)!;
+
     gpu::Barrier compute_to_copy = { .before = { .compute }, .after = { .transfer } };
     gpu::cmd_barrier(&renderer.commands, &compute_to_copy)!;
     TransparencyReadback* slot = &readbacks.slots[renderer.frame_index % FRAMES_IN_FLIGHT];

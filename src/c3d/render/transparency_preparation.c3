@@ -138,6 +138,7 @@ fn void append_prepare_transparency_pipelines(
         ShaderRes* published = &renderer.shaders[data.custom.shader.index];
         if (c3d::same_id(published.asset, data.custom.shader)) custom_reads |= published.desc.scene_reads;
     }
+
     if (!transparency_material_participates(data, declared, custom_reads)) return;
 
     bool wireframe = data.common.wireframe && renderer.caps.line_polygon_mode;
@@ -147,6 +148,20 @@ fn void append_prepare_transparency_pipelines(
           || view.desc.shading == ShadingPath.PATH_TRACED) continue;
 
         uint shadow_flags = rt_shadow_flags(renderer, view.desc.ray_tracing.shadows);
+        append_prepare_mesh_key(
+            renderer: renderer,
+            listed: listed,
+            key: forward_pipeline_key(
+                material: data,
+                vertex: vertex,
+                polygon: polygon,
+                shadow_flags: shadow_flags,
+            ),
+            pass: PreparePipelinePass.FORWARD,
+            geometry: geometry,
+            material: material,
+        );
+
         TransparencyPipelinePhase[3] phases = {
             TransparencyPipelinePhase.CAPTURE,
             TransparencyPipelinePhase.RETAINED,
@@ -190,6 +205,7 @@ fn void? prepare_transparency_pipelines(
         declared = published.desc.layered_transparency;
         custom_reads = published.desc.scene_reads;
     }
+
     if (!transparency_material_participates(material, declared, custom_reads)) return;
 
     foreach (&view : renderer.views.items) {

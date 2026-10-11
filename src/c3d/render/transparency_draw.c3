@@ -38,6 +38,7 @@ fn void? clear_transparency_geometry(
         .width = color.width,
         .height = color.height,
     };
+
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
     gpu::cmd_end_render_pass(&renderer.commands)!;
     renderer.work_recorded = true;
@@ -54,6 +55,7 @@ fn void? clear_transparency_anchor(Renderer* renderer, Target* anchor) @private 
         .width = anchor.width,
         .height = anchor.height,
     };
+
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
     gpu::cmd_end_render_pass(&renderer.commands)!;
 }
@@ -146,13 +148,21 @@ fn void? record_transparency_geometry(
     bool clear_depth,
 ) @private {
     if (!items.len) {
-        if (capture && clear_depth) return clear_transparency_geometry(renderer, color, anchor, depth);
+        if (capture && clear_depth) {
+            return clear_transparency_geometry(
+                renderer: renderer,
+                color: color,
+                anchor: anchor,
+                depth: depth,
+            );
+        }
         return;
     }
 
     @pool() {
         TransparencyDraw[] draws = alloc::new_array(tmem, TransparencyDraw, items.len);
         uint shadow_flags = rt_shadow_flags(renderer, record.desc.ray_tracing.shadows);
+
         foreach (index, &item : items) {
             Material* material = material_data(renderer, item.material);
             draws[index] = {
@@ -213,6 +223,7 @@ fn void? record_transparency_geometry(
                     clear_depth: capture && clear_depth && first,
                 )!;
             }!;
+
             count_transparency_work(renderer, &record.stats.transparency, work);
             if (color_count == 2) anchor_cleared = true;
 

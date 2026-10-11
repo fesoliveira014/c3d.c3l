@@ -206,6 +206,20 @@
         "bench_texture_fidelity.c3"
       ]
     },
+    "transparency_bench": {
+      "type": "executable",
+      "sources": [
+        "bench_transparency.c3",
+        "../../fixtures/transparency/fixture.c3"
+      ],
+      "dependencies": [
+        "c3d_profile"
+      ],
+      "features": [
+        "C3D_PROFILE_GPU",
+        "C3D_PROFILE_INTERNAL"
+      ]
+    },
     "transparency_baseline": {
       "type": "executable",
       "sources": [
@@ -392,7 +406,15 @@
         "test_auto_exposure.c3",
         "test_posed_trace.c3",
         "../../fixtures/transparency/fixture.c3",
-        "test_layered_transparency.c3"
+        "test_layered_transparency.c3",
+        "test_layered_fog.c3",
+        "test_layered_lifetime.c3",
+        "test_layered_materials.c3",
+        "test_layered_cc0.c3",
+        "test_layered_crowd.c3",
+        "../../fixtures/animated_crowd_fixtures.c3",
+        "../../fixtures/animated_lod_fixtures.c3",
+        "test_transparency_filter_fog.c3"
       ]
     },
     "transparency_filter_fog": {

@@ -10,7 +10,7 @@ import std::math::vector;
 *>
 const uint TRANSPARENCY_LAYER_CAPACITY_MAX = 16; // At most seventeen depth images and geometry capture passes.
 
-const uint TRANSPARENCY_TARGET_COUNT @private = TRANSPARENCY_LAYER_CAPACITY_MAX + 9;
+const uint TRANSPARENCY_TARGET_COUNT @private = TRANSPARENCY_LAYER_CAPACITY_MAX + 9; // Extra depth plus four color pairs.
 
 <*
  Four exact depth groups with a sorted remainder.

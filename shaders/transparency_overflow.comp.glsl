@@ -3,6 +3,7 @@
 #include "c3d_abi.glsl"
 #include "texture_fetch.glsl"
 
+// Matches TRANSPARENCY_OVERFLOW_GROUP_SIZE in render/transparency_stats.c3.
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(push_constant) uniform Push {

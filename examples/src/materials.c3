@@ -932,12 +932,14 @@ fn void? run_gui(
     ExampleNodes nodes,
     Orbit* orbit,
     Controls* controls,
+    uint frame_limit = 0,
 ) @local {
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
 
     ViewDesc view_desc = renderer.views.get(renderer.default_view).desc;
     bool escape_captured;
+    uint frames;
 
     while (window.poll()) {
         bool keyboard_was_captured = window.input.keyboard_captured_by_gui;
@@ -991,6 +993,9 @@ fn void? run_gui(
             gui_renderer: &gui_renderer,
             info: { .time = window.clock.total, .delta = window.clock.delta },
         )!;
+
+        frames++;
+        if (frame_limit && frames >= frame_limit) break;
     }
 }
 
@@ -1595,6 +1600,10 @@ fn ExampleNodes create_fixtures(
 
 fn int main(String[] args) {
     bool gpu_timings;
+    bool transmission;
+    bool layered;
+    uint layers = render::TRANSPARENCY_LAYERED_DEFAULT.layer_capacity;
+    uint frame_limit;
     foreach (argument : args[1..]) {
         if (argument == "--gpu-timings") {
             $if $feat(C3D_PROFILE_GPU):
@@ -1603,6 +1612,25 @@ fn int main(String[] args) {
                 io::eprintfn("--gpu-timings needs GPU profiling: c3c build <target> --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL");
                 return 1;
             $endif
+        } else if (argument == "--transmission") {
+            transmission = true;
+        } else if (argument == "--layered") {
+            layered = true;
+        } else if (argument.starts_with("--layers=")) {
+            uint? parsed = argument[9..].to_uint();
+            if (catch excuse = parsed) {
+                io::eprintfn("Invalid layer capacity: %s", excuse);
+                return 1;
+            }
+            layers = parsed;
+            if (!layers || layers > render::TRANSPARENCY_LAYER_CAPACITY_MAX) return 1;
+        } else if (argument.starts_with("--frames=")) {
+            uint? parsed = argument[9..].to_uint();
+            if (catch excuse = parsed) {
+                io::eprintfn("Invalid frame count: %s", excuse);
+                return 1;
+            }
+            frame_limit = parsed;
         } else {
             io::printfn("Unknown argument: %s", argument);
             return 1;
@@ -1626,6 +1654,13 @@ fn int main(String[] args) {
         },
     )!!;
     defer render::destroy_renderer(&renderer);
+
+    if (layered) {
+        ViewDesc desc = renderer.views.get(renderer.default_view).desc;
+        desc.transparency = render::TRANSPARENCY_LAYERED_DEFAULT;
+        desc.transparency.layer_capacity = layers;
+        render::configure_view(&renderer, renderer.default_view, desc)!!;
+    }
 
     ExampleTextures textures = create_example_textures(&assets)!!;
     TextureId studio_source;
@@ -1693,7 +1728,7 @@ fn int main(String[] args) {
         .point_light = true,
     };
     select_preset(
-        preset: MASKED_FOLIAGE,
+        preset: transmission ? PHYSICAL_TRANSMISSION : MASKED_FOLIAGE,
         materials: materials,
         nodes: nodes,
         controls: &controls,
@@ -1714,6 +1749,7 @@ fn int main(String[] args) {
         nodes: nodes,
         orbit: &orbit,
         controls: &controls,
+        frame_limit: frame_limit,
     )) {
         io::printfn("Materials example failed: %s", excuse);
         return 1;

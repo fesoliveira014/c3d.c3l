@@ -4,7 +4,7 @@
 #include "descriptor_heap.glsl"
 #include "texture_fetch.glsl"
 
-layout(local_size_x = 8, local_size_y = 8) in;
+layout(local_size_x = TRANSPARENCY_MIP_GROUP_SIZE, local_size_y = TRANSPARENCY_MIP_GROUP_SIZE) in;
 
 layout(push_constant) uniform Push {
     uint64_t root_gpu;

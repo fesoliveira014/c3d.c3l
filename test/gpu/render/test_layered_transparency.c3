@@ -21,6 +21,8 @@ const double LAYERED_COLOR_ABSOLUTE_TOLERANCE @private = 0.003;
 const double LAYERED_COLOR_RELATIVE_TOLERANCE @private = 0.005;
 const uint LAYERED_SAMPLE_ROW @private = 47;
 const uint LAYERED_SAMPLE_COLUMN @private = 69;
+const uint LAYERED_ROUGH_WIDTH @private = 129;
+const uint LAYERED_ROUGH_HEIGHT @private = 65;
 const char[*] LAYERED_READER_SOURCE @private = $embed("material_blend.frag.glsl");
 const char[*] LAYERED_OPAQUE_READER_SOURCE @private = $embed("fog_reader.frag.glsl");
 
@@ -566,6 +568,49 @@ fn MaterialId? add_layered_reader(Fixture* fixture, bool declared) @private {
     };
 }
 
+fn void test_layered_fallback_only_draws_preserve_over_color_and_report_no_capture_work() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    Fixture fixture;
+    create_fixture(&tracker, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    foreach (custom : (bool[2]){ false, true }) {
+        LayeredScene target = create_layered_scene(&fixture)!!;
+        defer scene::destroy_scene(&target.scene);
+        LayeredView view = create_layered_view(&fixture)!!;
+        defer destroy_layered_view(&fixture, &view);
+        MaterialId fallback;
+        transparency_fixtures::Color radiance;
+        if (custom) {
+            fallback = add_layered_reader(&fixture, false)!!;
+            radiance = 0.5 * (transparency_fixtures::Color){ 0, 1, 0 }
+              + 0.5 * transparency_fixtures::PLANAR_BACKGROUND;
+        } else {
+            MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
+            common.alpha_mode = AlphaMode.BLEND;
+            common.double_sided = true;
+            common.depth_test = false;
+            fallback = fixture.assets.add_material(material::basic({ .color = { 1, 0, 0, 0.5f } }, common))!!;
+            radiance = { 1, 0, 0 };
+        }
+        GeometryId geometry = add_layered_sheet_geometry(&fixture, 0.5f)!!;
+        target.scene.add_mesh(geometry, fallback)!!;
+        transparency_fixtures::Color expected = transparency_fixtures::compose_over(
+            behind: transparency_fixtures::PLANAR_BACKGROUND,
+            radiance: radiance,
+            coverage: 0.5,
+        );
+        Vec4[] pixels = render_layered_pixels(&fixture, &target, &view)!!;
+        defer free(pixels);
+        check_layered_interior(pixels, expected);
+        TransparencyStats stats = fixture.renderer.views.get(view.view).stats.transparency;
+        assert(stats.fallback_draws == 1);
+        assert(stats.capture_passes == 0);
+    }
+    check_validation(&fixture.renderer);
+}
+
 fn void test_layered_declared_custom_reader_reads_behind_its_group_and_undeclared_reads_opaque() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
@@ -684,5 +729,255 @@ fn void test_layered_opaque_custom_scene_reader_applies_fog_before_transparent_f
     defer free(second);
     uint sample = LAYERED_SAMPLE_ROW * LAYERED_IMAGE_SIZE + LAYERED_SAMPLE_COLUMN;
     assert(retained[sample] == bitcast(0.75f, uint) && second[sample] == 0);
+    check_validation(&fixture.renderer);
+}
+
+fn void test_layered_completed_overflow_counts_ignore_aborted_work_and_retire_when_disabled() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    Fixture fixture;
+    create_fixture(&tracker, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    LayeredScene target = create_layered_scene(&fixture)!!;
+    defer scene::destroy_scene(&target.scene);
+    LayeredView view = create_layered_view(&fixture, 1)!!;
+    defer destroy_layered_view(&fixture, &view);
+    GeometryId first_geometry = add_layered_sheet_geometry(&fixture, 0.75f)!!;
+    GeometryId second_geometry = add_layered_sheet_geometry(&fixture, 0.5f)!!;
+    MaterialId red = add_layered_basic(&fixture, { 1, 0, 0, 0.5f })!!;
+    MaterialId green = add_layered_basic(&fixture, { 0, 1, 0, 0.5f })!!;
+    Node* first = target.scene.add_mesh(first_geometry, red)!!;
+    Node* second = target.scene.add_mesh(second_geometry, green)!!;
+    first.local.scale = second.local.scale = { 4.0f / 3.0f, 4.0f / 3.0f, 1 };
+    ulong first_frame = fixture.renderer.frame_index;
+    for (uint frame = 0; frame <= render::FRAMES_IN_FLIGHT; frame++) {
+        Vec4[] pixels = render_layered_pixels(&fixture, &target, &view)!!;
+        free(pixels);
+    }
+    TransparencyStats stats = fixture.renderer.view_stats(view.view)!!.transparency;
+    assert(stats.overflow_valid && stats.overflow);
+    assert(stats.overflow_pixels == LAYERED_IMAGE_SIZE * LAYERED_IMAGE_SIZE);
+    assert(stats.overflow_frame_index == first_frame);
+    uint[] ledger = read_layered_depth(&fixture, &view, 1)!!;
+    defer free(ledger);
+    uint ledger_pixels;
+    foreach (depth : ledger) {
+        if (depth) ledger_pixels++;
+    }
+    assert(ledger_pixels == stats.overflow_pixels);
+
+    second.visible = false;
+    target.scene.update_world();
+    fixture.renderer.begin_frame()!!;
+    TransparencyStats before_abort = fixture.renderer.view_stats(view.view)!!.transparency;
+    ulong aborted_frame = fixture.renderer.frame_index;
+    fixture.renderer.render_view(&target.scene, target.camera, view.view)!!;
+    render::abort_frame(&fixture.renderer);
+    TransparencyStats after_abort = fixture.renderer.view_stats(view.view)!!.transparency;
+    assert(after_abort.overflow_valid == before_abort.overflow_valid);
+    assert(after_abort.overflow == before_abort.overflow);
+    assert(after_abort.overflow_pixels == before_abort.overflow_pixels);
+    assert(after_abort.overflow_frame_index == before_abort.overflow_frame_index);
+    for (uint frame = 0; frame <= render::FRAMES_IN_FLIGHT; frame++) {
+        fixture.renderer.begin_frame()!!;
+        fixture.renderer.end_frame()!!;
+    }
+    TransparencyStats drained = fixture.renderer.view_stats(view.view)!!.transparency;
+    assert(drained.overflow_valid && drained.overflow);
+    assert(drained.overflow_pixels == LAYERED_IMAGE_SIZE * LAYERED_IMAGE_SIZE);
+    assert(drained.overflow_frame_index < aborted_frame);
+
+    ViewDesc desc = fixture.renderer.views.get(view.view).desc;
+    desc.transparency = {};
+    render::configure_view(&fixture.renderer, view.view, desc)!!;
+    foreach (image : render::transparency_targets(&fixture.renderer.views.get(view.view).transparency)) {
+        assert(!image.texture.is_valid());
+    }
+    Vec4[] sorted = render_layered_pixels(&fixture, &target, &view)!!;
+    defer free(sorted);
+    assert(fixture.renderer.views.get(view.view).transparency.layer_capacity == 0);
+    check_validation(&fixture.renderer);
+}
+
+fn double layered_half_value(ushort bits) @private {
+    uint exponent = (bits >> 10) & 31;
+    double mantissa = (double)(bits & 1023);
+    if (exponent == 31) return mantissa ? double::nan : double::inf;
+    double value = exponent ? math::pow(2.0, (double)exponent - 15) * (1 + mantissa / 1024)
+      : math::pow(2.0, -24.0) * mantissa;
+    return bits & 32768 ? -value : value;
+}
+
+fn transparency_fixtures::Color[]? read_layered_pyramid_level(
+    Fixture* fixture,
+    TransparencyPyramid* pyramid,
+    uint mip,
+) @private {
+    uint width = math::max(1u, pyramid.image.width >> mip);
+    uint height = math::max(1u, pyramid.image.height >> mip);
+    Renderer* renderer = &fixture.renderer;
+    render::wait_frames(renderer)!;
+    gpu::AllocationDesc desc = {
+        .size = (usz)width * height * 4 * ushort::size,
+        .memory_class = gpu::MemoryClass.CPU_READ,
+        .access = { .graphics },
+        .debug_name = "layered_filter_readback",
+    };
+    gpu::MappedGpuSpan readback = gpu::allocate_mapped_memory(&renderer.device, &desc)!;
+    defer {
+        gpu::GpuAllocation allocation = readback.span.allocation();
+        (void)gpu::free_allocation(&renderer.device, &allocation);
+    }
+    renderer.begin_frame()!;
+    defer catch render::abort_frame(renderer);
+    gpu::TextureState previous = pyramid.image.state;
+    pyramid.image.transition(&renderer.commands, render::TRANSFER_SOURCE_STATE)!;
+    gpu::TextureBufferCopyDesc copy = {
+        .texture = pyramid.image.texture,
+        .dst = readback.span,
+        .mip = mip,
+        .width = width,
+        .height = height,
+    };
+    gpu::cmd_copy_texture_to_buffer(&renderer.commands, &copy)!;
+    gpu::Barrier host = { .before = { .transfer }, .after = { .host } };
+    gpu::cmd_barrier(&renderer.commands, &host)!;
+    pyramid.image.transition(&renderer.commands, previous)!;
+    renderer.work_recorded = true;
+    renderer.end_frame()!;
+    render::wait_frames(renderer)!;
+    gpu::invalidate_mapped_span(&renderer.device, readback.span)!;
+    ushort* encoded = (ushort*)readback.bytes.ptr;
+    transparency_fixtures::Color[] pixels = mem::new_array(transparency_fixtures::Color, (usz)width * height);
+    foreach (pixel, &color : pixels) {
+        for (uint channel = 0; channel < 3; channel++) (*color)[channel] = layered_half_value(encoded[4 * pixel + channel]);
+    }
+    return pixels;
+}
+
+fn GeometryId? add_layered_fullscreen_geometry(Fixture* fixture, float distance) @private {
+    Vec3[4] positions = {
+        { -(float)LAYERED_ROUGH_WIDTH / LAYERED_ROUGH_HEIGHT, -1, -distance },
+        { (float)LAYERED_ROUGH_WIDTH / LAYERED_ROUGH_HEIGHT, -1, -distance },
+        { (float)LAYERED_ROUGH_WIDTH / LAYERED_ROUGH_HEIGHT, 1, -distance },
+        { -(float)LAYERED_ROUGH_WIDTH / LAYERED_ROUGH_HEIGHT, 1, -distance },
+    };
+    Vec2[4] uv = { { 0, 1 }, { 1, 1 }, { 1, 0 }, { 0, 0 } };
+    Geometry geometry = { .positions = positions[..], .uv0 = uv[..], .indices = transparency_fixtures::QUAD_INDICES[..] };
+    geometry.finalize();
+    return fixture.assets.add_geometry(&geometry);
+}
+
+fn void test_layered_and_sorted_rough_glass_use_the_authored_odd_extent_area_box_pyramid() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    Fixture fixture;
+    create_fixture(&tracker, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    LayeredScene target = create_layered_scene(&fixture)!!;
+    defer scene::destroy_scene(&target.scene);
+    target.scene.@each(Mesh; Entity entity, Mesh* mesh) { target.scene.node(entity).visible = false; };
+    LayeredView view = create_layered_view(&fixture, 4)!!;
+    defer destroy_layered_view(&fixture, &view);
+    render::resize_render_target(
+        renderer: &fixture.renderer,
+        target: view.target,
+        width: LAYERED_ROUGH_WIDTH,
+        height: LAYERED_ROUGH_HEIGHT,
+    )!!;
+    transparency_fixtures::ColorImage[material::TEXTURE_MIP_CAPACITY] reference;
+    defer foreach (image : reference) free(image.pixels.ptr);
+    uint levels = transparency_fixtures::mip_level_count(LAYERED_ROUGH_WIDTH, LAYERED_ROUGH_HEIGHT);
+    uint width = LAYERED_ROUGH_WIDTH;
+    uint height = LAYERED_ROUGH_HEIGHT;
+    for (uint mip = 0; mip < levels; mip++) {
+        reference[mip] = {
+            .width = width,
+            .height = height,
+            .pixels = mem::new_array(transparency_fixtures::Color, (usz)width * height),
+        };
+        if (mip) {
+            transparency_fixtures::reduce_area_box(reference[mip - 1], reference[mip]);
+        } else {
+            transparency_fixtures::fill_backdrop(reference[mip], transparency_fixtures::BackdropPattern.CHECKER);
+        }
+        width = math::max(1u, width / 2);
+        height = math::max(1u, height / 2);
+    }
+    Vec4[] texels = mem::new_array(Vec4, (usz)LAYERED_ROUGH_WIDTH * LAYERED_ROUGH_HEIGHT);
+    defer free(texels);
+    foreach (pixel, color : reference[0].pixels) texels[pixel] = { (float)color.x, (float)color.y, (float)color.z, 1 };
+    material::TextureDesc texture_desc = {
+        .width = LAYERED_ROUGH_WIDTH,
+        .height = LAYERED_ROUGH_HEIGHT,
+        .layers = 1,
+        .format = PixelFormat.RGBA32_FLOAT,
+        .mip_levels = 1,
+        .debug_name = "rough_glass_checker",
+    };
+    TextureId texture = fixture.assets.add_texture(texture_desc, ((char*)texels.ptr)[:texels.len * Vec4::size])!!;
+    MaterialId background = fixture.assets.add_material(material::basic({
+        .color = { 1, 1, 1, 1 },
+        .map = material::texture_slot(texture, asset::SAMPLER_NEAREST),
+    }))!!;
+    target.scene.add_mesh(add_layered_fullscreen_geometry(&fixture, 8.5f)!!, background)!!;
+    PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
+    params.standard.base_color = { 1, 1, 1, 1 };
+    params.standard.metallic = 0;
+    params.standard.roughness = 0;
+    params.ior = 1.5f;
+    params.specular = 0;
+    params.transmission = 1;
+    params.thickness = 0;
+    MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
+    common.double_sided = true;
+    common.depth_write = false;
+    MaterialId glass = fixture.assets.add_material(material::physical(params, common))!!;
+    target.scene.add_mesh(add_layered_fullscreen_geometry(&fixture, 3)!!, glass)!!;
+    Vec4[][2] smooth;
+    defer foreach (image : smooth) free(image.ptr);
+    TransparencyMode[2] modes = { SORTED, LAYERED };
+    foreach (mode_index, mode : modes) {
+        ViewDesc desc = fixture.renderer.views.get(view.view).desc;
+        desc.transparency = mode == LAYERED ? render::TRANSPARENCY_LAYERED_DEFAULT : (TransparencyDesc){};
+        render::configure_view(&fixture.renderer, view.view, desc)!!;
+        fixture.assets.material(glass).data.physical.standard.roughness = 0;
+        fixture.assets.mark_material_dirty(glass);
+        smooth[mode_index] = render_layered_pixels(&fixture, &target, &view)!!;
+        fixture.assets.material(glass).data.physical.standard.roughness = 1;
+        fixture.assets.mark_material_dirty(glass);
+        Vec4[] rough = render_layered_pixels(&fixture, &target, &view)!!;
+        defer free(rough);
+        ViewRecord* record = fixture.renderer.views.get(view.view);
+        TransparencyPyramid* pyramid = mode == SORTED ? &record.scene_pyramid : &record.transparency.raw_pyramid[1];
+        assert(pyramid.mip_count == levels && pyramid.image.width == LAYERED_ROUGH_WIDTH);
+        for (uint mip = 0; mip < levels; mip++) {
+            transparency_fixtures::Color[] actual = read_layered_pyramid_level(&fixture, pyramid, mip)!!;
+            defer free(actual);
+            foreach (pixel, expected : reference[mip].pixels) {
+                for (uint channel = 0; channel < 3; channel++) {
+                    double bound = LAYERED_COLOR_ABSOLUTE_TOLERANCE
+                      + LAYERED_COLOR_RELATIVE_TOLERANCE * math::abs(expected[channel]);
+                    assert(math::is_finite(actual[pixel][channel]) && math::abs(actual[pixel][channel] - expected[channel]) <= bound);
+                }
+            }
+        }
+        for (uint row = 2; row + 2 < LAYERED_ROUGH_HEIGHT; row++) {
+            for (uint column = 2; column + 2 < LAYERED_ROUGH_WIDTH; column++) {
+                check_layered_color(rough[row * LAYERED_ROUGH_WIDTH + column], reference[levels - 1].pixels[0]);
+            }
+        }
+        uint center = (LAYERED_ROUGH_HEIGHT / 2) * LAYERED_ROUGH_WIDTH + LAYERED_ROUGH_WIDTH / 2;
+        assert(math::abs(rough[center].x - smooth[mode_index][center].x) > 0.2f,
+            "Rough transmission still samples mip zero.");
+    }
+    foreach (pixel, color : smooth[0]) {
+        for (uint channel = 0; channel < 4; channel++) {
+            assert(bitcast(color[channel], uint) == bitcast(smooth[1][pixel][channel], uint),
+                "Roughness zero differs between SORTED and LAYERED.");
+        }
+    }
     check_validation(&fixture.renderer);
 }
