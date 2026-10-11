@@ -471,14 +471,14 @@ struct FrameRoot {
     TextureIndex ssgi_texture;
     TextureIndex scene_depth;
     float        previous_time;
-    uint         _pad2;
+    TextureIndex sheen_lut;
     Vec4f        clip_plane;
     GpuAddress   sky_fog;
     GpuAddress   reflection_probes;
     Vec4f        origin;
     GpuAddress   decals;
     uint         decal_count;
-    uint         _pad3;
+    SamplerIndex sheen_sampler;
 }
 $assert FrameRoot::size == 544;
 $assert $reflect(FrameRoot.view).offset == 0;
@@ -507,14 +507,14 @@ $assert $reflect(FrameRoot.probe_volumes).offset == 456;
 $assert $reflect(FrameRoot.ssgi_texture).offset == 464;
 $assert $reflect(FrameRoot.scene_depth).offset == 468;
 $assert $reflect(FrameRoot.previous_time).offset == 472;
-$assert $reflect(FrameRoot._pad2).offset == 476;
+$assert $reflect(FrameRoot.sheen_lut).offset == 476;
 $assert $reflect(FrameRoot.clip_plane).offset == 480;
 $assert $reflect(FrameRoot.sky_fog).offset == 496;
 $assert $reflect(FrameRoot.reflection_probes).offset == 504;
 $assert $reflect(FrameRoot.origin).offset == 512;
 $assert $reflect(FrameRoot.decals).offset == 528;
 $assert $reflect(FrameRoot.decal_count).offset == 536;
-$assert $reflect(FrameRoot._pad3).offset == 540;
+$assert $reflect(FrameRoot.sheen_sampler).offset == 540;
 
 struct DrawRoot {
     Mat4f        model;

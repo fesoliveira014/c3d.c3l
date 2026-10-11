@@ -38,6 +38,10 @@ struct TraceSurface {
     float ior;
     float clearcoat;
     float clearcoat_roughness;
+    vec3 sheen_color;
+    float sheen_roughness;
+    float anisotropy;
+    vec3 anisotropy_direction;
     float transmission;
     uint material_kind;
     uint64_t material;
@@ -186,6 +190,45 @@ vec3 hit_mapped_normal(
     );
 }
 
+vec2 anisotropy_corner_uv(PhysicalMaterialGpu material, GeometryRoot geometry, uvec3 corners, vec3 corner) {
+    if ((material.extension_map_flags & PHYSICAL_EXTENSION_MAP_ANISOTROPY) == 0u) {
+        return hit_uv(geometry.uv0, corners, corner);
+    }
+    return corner_map_uv(
+        material.anisotropy_map,
+        material.extension_map_flags,
+        PHYSICAL_EXTENSION_MAP_ANISOTROPY,
+        geometry,
+        corners,
+        corner
+    );
+}
+
+// The tangent the forward stage reads; without a stream, the triangle's edges stand in for the screen derivatives.
+vec4 hit_anisotropy_tangent(
+    TraceInstanceGpu instance,
+    GeometryRoot geometry,
+    PhysicalMaterialGpu material,
+    uvec3 corners,
+    vec3 weights,
+    vec3 normal,
+    vec3 world_edge_1,
+    vec3 world_edge_2
+) {
+    if ((geometry.flags & GEOMETRY_HAS_TANGENTS) != 0u) return hit_tangent(instance, geometry, corners, weights);
+
+    vec2 corner_uv_0 = anisotropy_corner_uv(material, geometry, corners, vec3(1.0, 0.0, 0.0));
+    vec2 corner_uv_1 = anisotropy_corner_uv(material, geometry, corners, vec3(0.0, 1.0, 0.0));
+    vec2 corner_uv_2 = anisotropy_corner_uv(material, geometry, corners, vec3(0.0, 0.0, 1.0));
+    return derivative_tangent(
+        normalize(normal),
+        world_edge_1,
+        world_edge_2,
+        corner_uv_1 - corner_uv_0,
+        corner_uv_2 - corner_uv_0
+    );
+}
+
 // The lengths of the model matrix columns, as transmission_ray scales a thickness by them.
 vec3 instance_axis_scale(TraceInstanceGpu instance) {
     return vec3(
@@ -195,7 +238,7 @@ vec3 instance_axis_scale(TraceInstanceGpu instance) {
     );
 }
 
-// The layers over the Standard prefix, read as physical.frag.glsl reads them; sheen and anisotropy are not read.
+// The layers over the Standard prefix, read as physical.frag.glsl reads them.
 void hit_physical_layers(
     TraceInstanceGpu instance,
     GeometryRoot geometry,
@@ -256,6 +299,31 @@ void hit_physical_layers(
         }
     }
 
+    surface.sheen_color = material.sheen_color_roughness.rgb;
+    surface.sheen_roughness = material.sheen_color_roughness.a;
+    if (any(greaterThan(surface.sheen_color, vec3(0.0)))) {
+        if ((material.map_flags & PHYSICAL_MAP_SHEEN_COLOR) != 0u) {
+            surface.sheen_color = clamp(surface.sheen_color * sample_hit_map_lod(
+                material.sheen_color_map,
+                material.map_flags,
+                PHYSICAL_MAP_SHEEN_COLOR,
+                uv0,
+                uv1,
+                footprint
+            ).rgb, 0.0, 1.0);
+        }
+        if ((material.map_flags & PHYSICAL_MAP_SHEEN_ROUGHNESS) != 0u) {
+            surface.sheen_roughness = clamp(surface.sheen_roughness * sample_hit_map_lod(
+                material.sheen_roughness_map,
+                material.map_flags,
+                PHYSICAL_MAP_SHEEN_ROUGHNESS,
+                uv0,
+                uv1,
+                footprint
+            ).a, 0.0, 1.0);
+        }
+    }
+
     surface.specular_weight = material.specular_color_weight.w;
     surface.specular_color = material.specular_color_weight.rgb;
     if (surface.specular_weight > 0.0) {
@@ -278,6 +346,41 @@ void hit_physical_layers(
                 uv1,
                 footprint
             ).rgb;
+        }
+    }
+
+    surface.anisotropy = material.anisotropy;
+    if (surface.anisotropy > 0.0) {
+        vec2 direction = vec2(cos(material.anisotropy_rotation), sin(material.anisotropy_rotation));
+        if ((material.extension_map_flags & PHYSICAL_EXTENSION_MAP_ANISOTROPY) != 0u) {
+            vec3 sampled = sample_hit_map_lod(
+                material.anisotropy_map,
+                material.extension_map_flags,
+                PHYSICAL_EXTENSION_MAP_ANISOTROPY,
+                uv0,
+                uv1,
+                footprint
+            ).rgb;
+            mat2 rotation = mat2(direction.x, direction.y, -direction.y, direction.x);
+            direction = rotation * (sampled.rg * 2.0 - 1.0);
+            surface.anisotropy = clamp(surface.anisotropy * sampled.b, 0.0, 1.0);
+        }
+        vec3 frame_tangent;
+        vec3 frame_bitangent;
+        vec4 tangent = hit_anisotropy_tangent(
+            instance,
+            geometry,
+            material,
+            corners,
+            weights,
+            interpolated_normal,
+            world_edge_1,
+            world_edge_2
+        );
+        if (surface_tangent_frame(normalize(interpolated_normal), tangent, frame_tangent, frame_bitangent)) {
+            surface.anisotropy_direction = frame_tangent * direction.x + frame_bitangent * direction.y;
+        } else {
+            surface.anisotropy = 0.0;
         }
     }
 
@@ -328,6 +431,10 @@ TraceSurface surface_from_hit(SceneTraceRoot scene, SceneHit hit, vec3 ray_direc
     surface.ior = TRACE_DEFAULT_IOR;
     surface.clearcoat = 0.0;
     surface.clearcoat_roughness = 0.0;
+    surface.sheen_color = vec3(0.0);
+    surface.sheen_roughness = 0.0;
+    surface.anisotropy = 0.0;
+    surface.anisotropy_direction = vec3(0.0);
     surface.transmission = 0.0;
 
     vec3 corner_0 = pull_vec3(geometry.positions, corners.x);
