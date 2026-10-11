@@ -41,6 +41,15 @@ struct PixelRect {
 }
 
 <*
+ How a view composes premultiplied-alpha blended surfaces.
+ WEIGHTED is order independent and approximate.
+*>
+enum TransparencyMode : char {
+    SORTED,
+    WEIGHTED,
+}
+
+<*
  Ray-query effects of a view; zero disables all.
 *>
 struct RayTracingDesc {
@@ -73,13 +82,14 @@ struct ViewDesc {
     bool                 volumetric_fog; // a froxel volume for the view's HeightFog; allocated with the view
     bool                 share_shadows;  // binds an earlier view's matching shadow set and publishes its own
     uint                 transmission_layers; // up to MAX_TRANSMISSION_LAYERS; zero reads as 1
+    TransparencyMode     transparency; // how premultiplied-alpha blended surfaces compose
 }
 
 <*
  Working images one view owns, in view_targets order.
 *>
 const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8 + GBUFFER_CHANNEL_COUNT
-  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1 + 1 + 2 * SSGI_HISTORY_SLOTS + 2 + 1 + 3;
+  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1 + 1 + 2 * SSGI_HISTORY_SLOTS + 2 + 1 + 3 + 2;
 
 <*
  Reverse-Z projection terms that recover forward distance from stored depth.
@@ -735,6 +745,8 @@ struct ViewRecord {
     Target                               sky_view;
     Target                               aerial_perspective;
     Target                               fog_volume;
+    Target                               weighted_accum;
+    Target                               weighted_revealage;
     Target*                              scene_input;
     bool                                 post_chain_open;
     bool                                 rendered;
@@ -821,6 +833,8 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
     targets[next + 4 + 2 * SSGI_HISTORY_SLOTS] = &record.sky_view;
     targets[next + 5 + 2 * SSGI_HISTORY_SLOTS] = &record.aerial_perspective;
     targets[next + 6 + 2 * SSGI_HISTORY_SLOTS] = &record.fog_volume;
+    targets[next + 7 + 2 * SSGI_HISTORY_SLOTS] = &record.weighted_accum;
+    targets[next + 8 + 2 * SSGI_HISTORY_SLOTS] = &record.weighted_revealage;
     return targets;
 }
 

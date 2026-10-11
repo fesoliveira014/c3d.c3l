@@ -206,7 +206,8 @@ fn CullItem[] batch_cull_items(
             .records    = item.instance_data,
             .frustum    = frustum,
             .range      = &item.range,
-            .sorted     = !item.candidate.impostor && assets.material(item.material.asset).data.common.alpha_mode == AlphaMode.BLEND,
+            .sorted     = !item.candidate.impostor && !item.weighted
+              && assets.material(item.material.asset).data.common.alpha_mode == AlphaMode.BLEND,
             .depth_axis = depth_axis,
             .effects    = item.effects,
             .main_view = true,

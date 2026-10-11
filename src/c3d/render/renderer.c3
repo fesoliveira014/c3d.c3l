@@ -605,6 +605,7 @@ fn void? record_fullscreen_pass(
     PixelRect rect,
     gpu::LoadOp load,
     Vec4 clear_color = {},
+    gpu::ColorTargetState color_state = gpu::color_blend_disabled(),
 ) @private {
     gpu::ColorTargetDesc[1] colors = {{
         .view     = target.attachment,
@@ -617,7 +618,7 @@ fn void? record_fullscreen_pass(
         .width  = target.width,
         .height = target.height,
     };
-    gpu::ColorTargetState[1] color_targets = { gpu::color_blend_disabled() };
+    gpu::ColorTargetState[1] color_targets = { color_state };
     gpu::GraphicsState state = fullscreen_state(target.width, target.height, rect, color_targets[..])!;
 
     // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
