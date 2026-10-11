@@ -11,7 +11,6 @@ import c3d::anim::retarget;
 import c3d::asset;
 import c3d::asset::fbx;
 import c3d::asset::gltf;
-import c3d::asset::image;
 import c3d::camera;
 import c3d::debug;
 import c3d::geometry;
@@ -34,22 +33,10 @@ const uint FIXTURE_TRACKS @local = 8;
 const uint FIXTURE_FAMILIES @local = 6;
 const uint FIXTURE_ROWS @local = 8;
 const uint FIXTURE_SCENE_NODES @local = 2048;
-const float PLAYBACK_SECONDS @local = 20;
 const float FAMILY_SECONDS @local = 6;
 const float TURN_FAMILY_SECONDS @local = 8;
 const float PLAYBACK_CYCLE_SECONDS @local = FAMILY_SECONDS * 4 + TURN_FAMILY_SECONDS * 2;
 const float BAKE_RATE @local = 60;
-const float SAMPLE_STEP @local = 1.0f / 240;
-const double KEY_POSITION_BOUND @local = 0.00001;
-const double KEY_ROTATION_BOUND @local = 0.0001;
-const double KEY_SCALE_BOUND @local = 0.00001;
-const double SUBKEY_POSITION_BOUND @local = 0.0005;
-const double SUBKEY_ROTATION_BOUND @local = 0.25 * math::PI / 180;
-const double ACCUMULATED_POSITION_BOUND @local = 0.0005;
-const float KEY_RECOGNITION_TOLERANCE @local = 0.0005f;
-const float CAPTURE_INTERVAL @local = 2;
-const uint CAPTURE_WIDTH @local = 960;
-const uint CAPTURE_HEIGHT @local = 540;
 const uint REFERENCE_COLOR @local = 0xFF66DD44;
 const uint PROFILE_COLOR @local = 0xFF33BBFF;
 const Vec3 DISPLAY_SPACING @local = { 3, 0, 0 };
@@ -152,14 +139,6 @@ struct FixtureRow @local {
     RootMotion mode;
     RigView reference;
     RigView actual;
-    double position_error;
-    double rotation_error;
-    double scale_error;
-    double root_error;
-    double root_rotation_error;
-    double pivot_error;
-    double root_radius;
-    double pivot_radius;
     bool root_yaw;
     bool looping;
     float playback_speed;
@@ -178,36 +157,6 @@ struct Controls @local {
     bool automatic;
     bool paused;
     bool lines;
-}
-
-struct Metrics @local {
-    ulong key_samples;
-    ulong subkey_samples;
-    ulong failures;
-    double max_key_position;
-    double max_key_rotation;
-    double max_key_scale;
-    double max_subkey_position;
-    double max_subkey_rotation;
-    double max_root_error;
-    double max_root_rotation;
-    double max_pivot_error;
-    double max_root_radius;
-    double max_pivot_radius;
-    ulong carrier_key_samples;
-    ulong carrier_subkey_samples;
-    double max_carrier_key_position;
-    double max_carrier_key_rotation;
-    double max_carrier_key_scale;
-    double max_carrier_subkey_position;
-    double max_carrier_subkey_rotation;
-    double max_carrier_subkey_scale;
-    bool[FIXTURE_FAMILIES] families_seen;
-    bool[3] modes_seen;
-    bool[2][2] turn_yaw_seen;
-    bool[2] turn_reverse_seen;
-    bool[2] turn_loop_seen;
-    bool[2] turn_reverse_loop_seen;
 }
 
 struct Showcase @local {
@@ -536,16 +485,6 @@ fn ReferencePose reference_compose(ReferencePose parent, ReferencePose local) @l
         .position = parent.position + reference_rotate(parent.rotation, local.position * parent.scale),
         .rotation = reference_multiply(parent.rotation, local.rotation),
         .scale = parent.scale * local.scale,
-    };
-}
-
-fn ReferencePose reference_relative(ReferencePose world, ReferencePose parent) @local {
-    ReferenceQuat inverse = { -parent.rotation.x, -parent.rotation.y, -parent.rotation.z, parent.rotation.w };
-
-    return {
-        .position = reference_rotate(inverse, world.position - parent.position) / parent.scale,
-        .rotation = reference_multiply(inverse, world.rotation).normalize(),
-        .scale = world.scale / parent.scale,
     };
 }
 
@@ -958,222 +897,6 @@ fn void update_bone_glyphs(RigView* view, Fixture* fixture) @local {
     }
 }
 
-fn ReferenceVec3 relative_position(Node* node, RigView* view) @local {
-    Vec3 point = node.world_position() - view.display.world_position();
-
-    return { point.x, point.y, point.z };
-}
-
-fn double pose_rotation_error(Node* node, ReferenceQuat expected) @local {
-    Quat actual = maths::transform_from_mat4(node.world).rotation;
-    double dot;
-    double actual_length;
-    double expected_length;
-
-    foreach (index, value : actual.v) {
-        dot += (double)value * expected[index];
-        actual_length += (double)value * value;
-        expected_length += expected[index] * expected[index];
-    }
-
-    dot = math::abs(dot) / math::sqrt(actual_length * expected_length);
-
-    return 2 * math::acos(math::clamp(dot, 0.0, 1.0));
-}
-
-fn ReferencePose observed_pose(Node* node, RigView* view) @local {
-    Transform transform = maths::transform_from_mat4(node.world);
-    Vec3 position = node.world_position();
-    Vec3 display = view.display.world_position();
-    ReferenceQuat rotation = {
-        transform.rotation.v.x, transform.rotation.v.y, transform.rotation.v.z, transform.rotation.v.w,
-    };
-
-    return {
-        .position = {
-            (double)position.x - display.x,
-            (double)position.y - display.y,
-            (double)position.z - display.z,
-        },
-        .rotation = rotation.normalize(),
-        .scale = transform.scale.x,
-    };
-}
-
-fn double reference_rotation_error(ReferenceQuat actual, ReferenceQuat expected) @local {
-    double dot;
-    double actual_length;
-    double expected_length;
-
-    foreach (index, value : actual) {
-        dot += value * expected[index];
-        actual_length += value * value;
-        expected_length += expected[index] * expected[index];
-    }
-
-    dot = math::abs(dot) / math::sqrt(actual_length * expected_length);
-
-    return 2 * math::acos(math::clamp(dot, 0.0, 1.0));
-}
-
-fn bool accumulated_row(FixtureRow* row) @local {
-    return turning_fixture(&row.fixture) && row.mode == RootMotion.EXTRACT;
-}
-
-fn bool sample_is_key(float time) @local {
-    float frame = time * BAKE_RATE;
-
-    return math::abs(frame - math::round(frame)) <= KEY_RECOGNITION_TOLERANCE;
-}
-
-fn ReferenceVec3 reference_pivot(FixtureRow* row, float time) @local {
-    ReferencePose carrier = carrier_reference(&row.fixture);
-    if (row.mode != RootMotion.EXTRACT) return carrier.position;
-    double fraction = (double)time / row.fixture.source.duration;
-    ReferenceVec3 displacement = { 0.5 * fraction, 0, -0.25 * fraction };
-    if (turning_fixture(&row.fixture)) {
-        double degrees = row.fixture.kind == TURN90 ? 90 : 360;
-        ReferenceQuat cycle = row.root_yaw ? reference_turn({ 0, 1, 0 }, degrees * (double)row.cycles)
-            : (ReferenceQuat){ 0, 0, 0, 1 };
-        displacement = cycle_translation(&row.fixture, row.cycles, row.root_yaw)
-            + reference_rotate(cycle, walking_displacement(&row.fixture, fraction));
-    }
-
-    return carrier.position + displacement;
-}
-
-fn void measure_row(FixtureRow* row, float time, Metrics* metrics) @local {
-    ReferencePose[FIXTURE_NODES] poses;
-    ReferencePose root = reference_worlds(
-        fixture: &row.fixture,
-        mode: row.mode,
-        time: time,
-        poses: poses[:row.fixture.target_count],
-        root_yaw: row.root_yaw,
-        cycles: row.cycles,
-    );
-    bool key = sample_is_key(time);
-    bool accumulated = accumulated_row(row);
-    ReferenceVec3 actual_root = relative_position(row.actual.root, &row.actual);
-    ReferencePose expected_carrier;
-    ReferencePose actual_carrier;
-    Transform actual_carrier_transform;
-
-    row.position_error = 0;
-    row.rotation_error = 0;
-    row.scale_error = 0;
-    row.root_error = (actual_root - root.position).length();
-    row.root_rotation_error = pose_rotation_error(row.actual.root, root.rotation);
-    row.root_radius = math::max(actual_root.length(), root.position.length());
-    row.pivot_error = 0;
-    row.pivot_radius = 0;
-
-    if (row.fixture.carrier != retarget::RETARGET_NO_NODE) {
-        ReferenceVec3 pivot = reference_pivot(row, time);
-        ReferenceVec3 actual_pivot = relative_position(row.actual.nodes[row.fixture.carrier], &row.actual);
-        row.pivot_error = (actual_pivot - pivot).length();
-        row.pivot_radius = math::max(actual_pivot.length(), pivot.length());
-
-        if (accumulated) {
-            expected_carrier = reference_compose(root, poses[row.fixture.carrier]);
-            actual_carrier = observed_pose(row.actual.nodes[row.fixture.carrier], &row.actual);
-            actual_carrier_transform = maths::transform_from_mat4(row.actual.nodes[row.fixture.carrier].world);
-        }
-    }
-
-    metrics.max_root_error = math::max(metrics.max_root_error, row.root_error);
-    metrics.max_root_rotation = math::max(metrics.max_root_rotation, row.root_rotation_error);
-    metrics.max_pivot_error = math::max(metrics.max_pivot_error, row.pivot_error);
-    metrics.max_root_radius = math::max(metrics.max_root_radius, row.root_radius);
-    metrics.max_pivot_radius = math::max(metrics.max_pivot_radius, row.pivot_radius);
-
-    for (uint index = 0; index < row.fixture.target_count; index++) {
-        ReferencePose desired = poses[index];
-        Node* actual = row.actual.nodes[index];
-        double position_error = (relative_position(actual, &row.actual) - root.position - reference_rotate(root.rotation, desired.position)).length();
-        double rotation_error = pose_rotation_error(actual, reference_multiply(root.rotation, desired.rotation));
-        Transform actual_pose = maths::transform_from_mat4(actual.world);
-        double scale_error = math::abs((double)actual_pose.scale.x - desired.scale);
-        scale_error = math::max(scale_error, math::abs((double)actual_pose.scale.y - desired.scale));
-        scale_error = math::max(scale_error, math::abs((double)actual_pose.scale.z - desired.scale));
-        bool controlled = accumulated && index > row.fixture.carrier;
-
-        if (controlled) {
-            ReferencePose expected_relative = reference_relative(reference_compose(root, desired), expected_carrier);
-            ReferencePose actual_relative = reference_relative(observed_pose(actual, &row.actual), actual_carrier);
-            position_error = (actual_relative.position - expected_relative.position).length();
-            rotation_error = reference_rotation_error(actual_relative.rotation, expected_relative.rotation);
-            scale_error = math::abs(actual_relative.scale - expected_relative.scale);
-            scale_error = math::max(scale_error,
-                math::abs((double)actual_pose.scale.y / actual_carrier_transform.scale.y - expected_relative.scale));
-            scale_error = math::max(scale_error,
-                math::abs((double)actual_pose.scale.z / actual_carrier_transform.scale.z - expected_relative.scale));
-        }
-
-        row.position_error = math::max(row.position_error, position_error);
-        row.rotation_error = math::max(row.rotation_error, rotation_error);
-        row.scale_error = math::max(row.scale_error, scale_error);
-
-        bool failed = !math::is_finite(position_error) || !math::is_finite(rotation_error)
-            || !math::is_finite(scale_error) || !math::is_finite(row.root_error)
-            || !math::is_finite(row.root_rotation_error) || !math::is_finite(row.pivot_error)
-            || !math::is_finite(row.root_radius) || !math::is_finite(row.pivot_radius);
-
-        double position_bound = key ? KEY_POSITION_BOUND : SUBKEY_POSITION_BOUND;
-        double rotation_bound = key ? KEY_ROTATION_BOUND : SUBKEY_ROTATION_BOUND;
-        double path_bound = accumulated ? ACCUMULATED_POSITION_BOUND : position_bound;
-        double root_rotation_bound = accumulated ? KEY_ROTATION_BOUND : rotation_bound;
-        if (accumulated && !controlled) position_bound = ACCUMULATED_POSITION_BOUND;
-
-        failed |= position_error > position_bound || rotation_error > rotation_bound
-            || row.root_error > path_bound || row.root_rotation_error > root_rotation_bound
-            || row.pivot_error > path_bound;
-
-        if (key) {
-            metrics.key_samples++;
-            failed |= scale_error > KEY_SCALE_BOUND;
-
-            if (!accumulated) {
-                metrics.max_key_position = math::max(metrics.max_key_position, position_error);
-                metrics.max_key_rotation = math::max(metrics.max_key_rotation, rotation_error);
-                metrics.max_key_scale = math::max(metrics.max_key_scale, scale_error);
-            } else if (controlled) {
-                metrics.carrier_key_samples++;
-                metrics.max_carrier_key_position = math::max(metrics.max_carrier_key_position, position_error);
-                metrics.max_carrier_key_rotation = math::max(metrics.max_carrier_key_rotation, rotation_error);
-                metrics.max_carrier_key_scale = math::max(metrics.max_carrier_key_scale, scale_error);
-            }
-        } else {
-            metrics.subkey_samples++;
-
-            if (!accumulated) {
-                metrics.max_subkey_position = math::max(metrics.max_subkey_position, position_error);
-                metrics.max_subkey_rotation = math::max(metrics.max_subkey_rotation, rotation_error);
-            } else if (controlled) {
-                metrics.carrier_subkey_samples++;
-                metrics.max_carrier_subkey_position = math::max(metrics.max_carrier_subkey_position, position_error);
-                metrics.max_carrier_subkey_rotation = math::max(metrics.max_carrier_subkey_rotation, rotation_error);
-                metrics.max_carrier_subkey_scale = math::max(metrics.max_carrier_subkey_scale, scale_error);
-            }
-        }
-
-        if (failed) metrics.failures++;
-    }
-
-    metrics.families_seen[row.fixture.kind.ordinal] = true;
-    metrics.modes_seen[row.mode.ordinal] = true;
-
-    if (turning_fixture(&row.fixture)) {
-        uint turn = row.fixture.kind == TURN90 ? 0 : 1;
-        if (row.mode == RootMotion.EXTRACT) metrics.turn_yaw_seen[turn][row.root_yaw ? 1 : 0] = true;
-
-        if (row.looping && row.cycles != 0) {
-            metrics.turn_loop_seen[turn] = true;
-            if (row.playback_speed < 0) metrics.turn_reverse_loop_seen[turn] = true;
-        }
-    }
-}
-
 fn ZString root_mode_name(RootMotion mode) @local {
     switch (mode) {
         case KEEP: return "KEEP";
@@ -1318,7 +1041,6 @@ fn void? profile_panel(
     Scene* scene,
     FixtureFamily[] families,
     Controls* controls,
-    Metrics* metrics,
 ) @local {
     imgui::set_next_window_pos({ 16, 16 }, imgui::COND_FIRST_USE_EVER);
     imgui::set_next_window_size({ 440, 640 }, imgui::COND_FIRST_USE_EVER);
@@ -1340,16 +1062,7 @@ fn void? profile_panel(
                 row.root_yaw ? "on" : "off", row.looping ? (row.playback_speed < 0 ? "reverse loop" : "loop") : "forward/reverse",
                 row.cycles);
             if (family.kind == FACING) imgui::text("Facing %.0f degrees", row.fixture.facing_yaw);
-            imgui::text("Pose %.6f m, rotation %.6f deg", row.position_error, row.rotation_error * 180 / math::PI);
-            if (accumulated_row(row)) imgui::text("Controlled poses: carrier-relative; paths: 0.5 mm");
-            imgui::text("Root %.6f m / %.6f rad, pivot %.6f m", row.root_error, row.root_rotation_error, row.pivot_error);
         }
-
-        imgui::separator();
-        imgui::text("Key samples %llu, subkeys %llu, failed %llu", metrics.key_samples, metrics.subkey_samples, metrics.failures);
-        imgui::text("Key bounds: 10 um / 0.0001 rad / 0.00001 scale");
-        imgui::text("Between keys: 0.5 mm / 0.25 degrees");
-        imgui::text("EXTRACT turns: root rotation 0.0001 rad throughout");
     }
 
     imgui::end();
@@ -1359,19 +1072,16 @@ fn void? profile_panel(
     return gui::stats_panel(renderer);
 }
 
-fn bool? render_profile_frame(
+fn void? render_profile_frame(
     Renderer* renderer,
     Scene* scene,
     Node* camera,
     GuiRenderer* gui,
     debug::DebugDraw* debug,
     FrameInfo info,
-    ViewId capture_view,
-    bool capture,
 ) @local {
     renderer.begin_frame(info)!;
     defer catch render::abort_frame(renderer);
-    bool captured;
     if (renderer.has_output) {
         renderer.render_view(
             scene: scene,
@@ -1380,16 +1090,6 @@ fn bool? render_profile_frame(
             debug: debug,
         )!;
         renderer.finish_view(renderer.default_view)!;
-        if (capture) {
-            renderer.render_view(
-                scene: scene,
-                camera_node: camera,
-                view: capture_view,
-                debug: debug,
-            )!;
-            renderer.finish_view(capture_view)!;
-            captured = true;
-        }
 
         OverlayContext overlay = renderer.begin_overlay()!;
         gui.record(&overlay)!;
@@ -1397,109 +1097,6 @@ fn bool? render_profile_frame(
     }
 
     renderer.end_frame()!;
-
-    return captured;
-}
-
-fn void? profile_csv(
-    File* output,
-    Scene* scene,
-    FixtureFamily* family,
-    uint frame,
-    float wall,
-    float elapsed,
-    int capture_index,
-) @local {
-    for (uint row_index = 0; row_index < family.count; row_index++) {
-        FixtureRow* row = &family.rows[row_index];
-        float time = row_time(scene, row);
-        ReferencePose[FIXTURE_NODES] poses;
-        ReferencePose root = reference_worlds(
-            fixture: &row.fixture,
-            mode: row.mode,
-            time: time,
-            poses: poses[:row.fixture.target_count],
-            root_yaw: row.root_yaw,
-            cycles: row.cycles,
-        );
-        bool accumulated = accumulated_row(row);
-        bool key = sample_is_key(time);
-        ReferenceVec3 pivot;
-        ReferenceVec3 actual_pivot;
-        ReferencePose expected_carrier;
-        ReferencePose actual_carrier;
-        Transform actual_carrier_transform;
-
-        if (row.fixture.carrier != retarget::RETARGET_NO_NODE) {
-            pivot = reference_pivot(row, time);
-            actual_pivot = relative_position(row.actual.nodes[row.fixture.carrier], &row.actual);
-
-            if (accumulated) {
-                expected_carrier = reference_compose(root, poses[row.fixture.carrier]);
-                actual_carrier = observed_pose(row.actual.nodes[row.fixture.carrier], &row.actual);
-                actual_carrier_transform = maths::transform_from_mat4(row.actual.nodes[row.fixture.carrier].world);
-            }
-        }
-
-        Quat actual_root_rotation = row.actual.root.local.rotation;
-        float speed = scene.get(row.actual.root, Animator).action(row.actual.action).speed;
-
-        for (uint node = 0; node < row.fixture.target_count; node++) {
-            ReferenceVec3 actual = relative_position(row.actual.nodes[node], &row.actual);
-            ReferenceVec3 expected = root.position + reference_rotate(root.rotation, poses[node].position);
-            Transform actual_pose = maths::transform_from_mat4(row.actual.nodes[node].world);
-            double rotation_error = pose_rotation_error(row.actual.nodes[node], reference_multiply(root.rotation, poses[node].rotation));
-            double scale_error = math::abs((double)actual_pose.scale.x - poses[node].scale);
-            scale_error = math::max(scale_error, math::abs((double)actual_pose.scale.y - poses[node].scale));
-            scale_error = math::max(scale_error, math::abs((double)actual_pose.scale.z - poses[node].scale));
-            bool controlled = accumulated && node > row.fixture.carrier;
-            ReferencePose expected_relative;
-            ReferencePose actual_relative;
-            double carrier_position_error;
-            double carrier_rotation_error;
-            double carrier_scale_error;
-
-            if (controlled) {
-                expected_relative = reference_relative(reference_compose(root, poses[node]), expected_carrier);
-                actual_relative = reference_relative(observed_pose(row.actual.nodes[node], &row.actual), actual_carrier);
-                carrier_position_error = (actual_relative.position - expected_relative.position).length();
-                carrier_rotation_error = reference_rotation_error(actual_relative.rotation, expected_relative.rotation);
-                carrier_scale_error = math::abs(actual_relative.scale - expected_relative.scale);
-                carrier_scale_error = math::max(carrier_scale_error,
-                    math::abs((double)actual_pose.scale.y / actual_carrier_transform.scale.y - expected_relative.scale));
-                carrier_scale_error = math::max(carrier_scale_error,
-                    math::abs((double)actual_pose.scale.z / actual_carrier_transform.scale.z - expected_relative.scale));
-            }
-
-            double position_bound = key ? KEY_POSITION_BOUND : SUBKEY_POSITION_BOUND;
-            double rotation_bound = key ? KEY_ROTATION_BOUND : SUBKEY_ROTATION_BOUND;
-            double path_bound = accumulated ? ACCUMULATED_POSITION_BOUND : position_bound;
-            double root_rotation_bound = accumulated ? KEY_ROTATION_BOUND : rotation_bound;
-            if (accumulated && !controlled) position_bound = ACCUMULATED_POSITION_BOUND;
-
-            io::fprintfn(output,
-                "%d,%.9f,%.9f,%d,%d,%d,%d,%.9f,%d,%d,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%d,%d,%d,%.9f,%d,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%d,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f",
-                frame, wall, elapsed, FIXTURE_VERSION, family.kind.ordinal, row.fixture.variant, row.mode.ordinal,
-                time, key ? 1 : 0, node,
-                expected.x, expected.y, expected.z, actual.x, actual.y, actual.z,
-                (actual - expected).length(), rotation_error, poses[node].scale, actual_pose.scale.x,
-                root.position.x, root.position.z, row.actual.root.local.position.x, row.actual.root.local.position.z,
-                row.root_error, capture_index, row.root_yaw ? 1 : 0, row.looping ? 1 : 0, speed, row.cycles,
-                row.fixture.facing_yaw,
-                root.rotation.x, root.rotation.y, root.rotation.z, root.rotation.w,
-                actual_root_rotation.v.x, actual_root_rotation.v.y, actual_root_rotation.v.z, actual_root_rotation.v.w,
-                row.root_rotation_error, pivot.x, pivot.y, pivot.z,
-                actual_pivot.x, actual_pivot.y, actual_pivot.z, row.pivot_error,
-                controlled ? 1 : 0,
-                expected_relative.position.x, expected_relative.position.y, expected_relative.position.z,
-                actual_relative.position.x, actual_relative.position.y, actual_relative.position.z,
-                expected_relative.rotation.x, expected_relative.rotation.y, expected_relative.rotation.z, expected_relative.rotation.w,
-                actual_relative.rotation.x, actual_relative.rotation.y, actual_relative.rotation.z, actual_relative.rotation.w,
-                expected_relative.scale, actual_relative.scale,
-                carrier_position_error, carrier_rotation_error, carrier_scale_error, row.root_radius, row.pivot_radius,
-                position_bound, rotation_bound, path_bound, root_rotation_bound, scale_error)!;
-        }
-    }
 }
 
 fn String example_path(String relative) @local {
@@ -1658,9 +1255,6 @@ fn void? run_profile(
     AssetStore* assets,
     Scene* scene,
     uint frame_limit,
-    bool acceptance,
-    String capture_directory,
-    String telemetry_path,
 ) @local {
     GeometryId joint_geometry;
     GeometryId bone_geometry;
@@ -1754,54 +1348,13 @@ fn void? run_profile(
     debug::DebugDraw debug = debug::create_debug_draw(mem);
     defer debug::destroy_debug_draw(&debug);
 
-    bool telemetry_enabled = telemetry_path.len != 0 || capture_directory.len != 0;
-    File telemetry;
-    if (telemetry_enabled) {
-        @pool() {
-            String destination = telemetry_path.len ? telemetry_path
-                : string::tformat("%s/retarget-profile.csv", capture_directory);
-            telemetry = file::open(destination, "w")!;
-            io::printfn("retarget_telemetry=%s", destination);
-        };
-    }
-    defer { if (telemetry_enabled) (void)telemetry.close(); }
-
-    if (telemetry_enabled) io::fprintfn(&telemetry,
-        "frame,wall_seconds,simulation_seconds,fixture_version,case_id,variant_id,mode_id,clip_time,is_key,node,expected_x,expected_y,expected_z,actual_x,actual_y,actual_z,position_error_m,rotation_error_rad,expected_scale,actual_scale,expected_root_x,expected_root_z,actual_root_x,actual_root_z,root_error_m,capture_index,root_yaw,looping,speed,cycles,facing_degrees,expected_root_qx,expected_root_qy,expected_root_qz,expected_root_qw,actual_root_qx,actual_root_qy,actual_root_qz,actual_root_qw,root_rotation_error_rad,expected_pivot_x,expected_pivot_y,expected_pivot_z,actual_pivot_x,actual_pivot_y,actual_pivot_z,pivot_error_m,carrier_relative,expected_carrier_relative_x,expected_carrier_relative_y,expected_carrier_relative_z,actual_carrier_relative_x,actual_carrier_relative_y,actual_carrier_relative_z,expected_carrier_relative_qx,expected_carrier_relative_qy,expected_carrier_relative_qz,expected_carrier_relative_qw,actual_carrier_relative_qx,actual_carrier_relative_qy,actual_carrier_relative_qz,actual_carrier_relative_qw,expected_carrier_relative_scale,actual_carrier_relative_scale,carrier_relative_position_error_m,carrier_relative_rotation_error_rad,carrier_relative_scale_error,root_radius_m,pivot_radius_m,pose_position_bound_m,pose_rotation_bound_rad,path_position_bound_m,root_rotation_bound_rad,world_scale_error")!;
-    RenderTargetId capture_target;
-    if (capture_directory.len) capture_target = render::create_render_target(
-        renderer: renderer,
-        desc: render::render_target_desc(CAPTURE_WIDTH, CAPTURE_HEIGHT, material::PixelFormat.RGBA8_SRGB),
-    )!;
-    defer { if (capture_directory.len) (void)render::destroy_render_target(renderer, capture_target); }
-
-    ViewId capture_view;
-    if (capture_directory.len) {
-        ViewDesc desc = render::texture_view_desc(capture_target, OutputMode.DISPLAY_LDR);
-        desc.post.anti_aliasing = AntiAliasing.FXAA;
-        capture_view = render::create_view(renderer, desc)!;
-    }
-    defer { if (capture_directory.len) (void)render::destroy_view(renderer, capture_view); }
-
-    char[] pixels;
-    if (capture_directory.len) pixels = mem::new_array(char, CAPTURE_WIDTH * CAPTURE_HEIGHT * 4);
-    defer free(pixels);
-
     Controls controls = { .automatic = true, .lines = true };
-    Metrics metrics;
     float elapsed;
-    float wall;
-    double wall_start;
-    float next_capture;
-    uint captures;
     uint frame;
-    io::printfn("retarget_fixture_version=%d generated_bake_rate=%.0f sample_step=%.9f", FIXTURE_VERSION, BAKE_RATE, SAMPLE_STEP);
     io::printn("expected left / profiled right; F next case, Space pause, A automatic, I axes; Escape quits");
 
     while (window.poll()) {
-        if (frame == 0) wall_start = window.clock.total;
         if (frame_limit && frame >= frame_limit) break;
-        wall = (float)(window.clock.total - wall_start);
         Input* input = &window.input;
         if (!input.keyboard_captured_by_gui) {
             if (input.key_released(Scancode.ESCAPE)) break;
@@ -1814,7 +1367,7 @@ fn void? run_profile(
             }
         }
 
-        float delta = acceptance ? SAMPLE_STEP : math::min(window.clock.delta, 1.0f / 30);
+        float delta = math::min(window.clock.delta, 1.0f / 30);
         float animation_dt = controls.paused ? 0 : delta;
         if (controls.automatic) {
             float phase = elapsed - math::floor(elapsed / PLAYBACK_CYCLE_SECONDS) * PLAYBACK_CYCLE_SECONDS;
@@ -1847,12 +1400,6 @@ fn void? run_profile(
 
         for (uint row = 0; row < family.count; row++) {
             FixtureRow* current = &family.rows[row];
-            measure_row(current, row_time(scene, current), &metrics);
-            if (turning_fixture(&current.fixture) && !current.looping
-                && scene.get(current.actual.root, Animator).action(current.actual.action).speed < 0) {
-                metrics.turn_reverse_seen[current.fixture.kind == TURN90 ? 0 : 1] = true;
-            }
-
             update_bone_glyphs(&current.reference, &current.fixture);
             update_bone_glyphs(&current.actual, &current.fixture);
         }
@@ -1866,114 +1413,34 @@ fn void? run_profile(
             scene: scene,
             families: families[..],
             controls: &controls,
-            metrics: &metrics,
         )!;
         debug.clear();
         if (controls.lines) draw_fixture(&debug, family);
         gui.finish_frame();
-        bool capture_due = capture_directory.len != 0 && wall >= next_capture;
         platform::sync_window(window, renderer);
-        bool captured = render_profile_frame(
+        render_profile_frame(
             renderer: renderer,
             scene: scene,
             camera: camera,
             gui: &gui,
             debug: &debug,
             info: { .time = window.clock.total, .delta = delta },
-            capture_view: capture_view,
-            capture: capture_due,
         )!;
-        int capture_index = -1;
-        if (captured) {
-            renderer.read_render_target(capture_target, pixels)!;
-            @pool() {
-                String destination = string::tformat("%s/retarget-profile-%06d.png", capture_directory, captures);
-                image::write_png(
-                    path: destination,
-                    width: CAPTURE_WIDTH,
-                    height: CAPTURE_HEIGHT,
-                    pixels: pixels,
-                )!;
-                io::printfn("retarget_capture=%s frame=%d wall=%.6f simulation=%.6f case=%d",
-                    destination, frame, wall, elapsed, controls.family);
-            };
-            capture_index = (int)captures++;
-            next_capture += CAPTURE_INTERVAL;
-        }
-
-        if (telemetry_enabled) profile_csv(
-            output: &telemetry,
-            scene: scene,
-            family: family,
-            frame: frame,
-            wall: wall,
-            elapsed: elapsed,
-            capture_index: capture_index,
-        )!;
-        if (frame % 120 == 0) {
-            io::printfn("retarget_progress frame=%d wall=%.6f simulation=%.6f case=%d keys=%d subkeys=%d failed=%d",
-                frame, wall, elapsed, controls.family, metrics.key_samples, metrics.subkey_samples, metrics.failures);
-            if (telemetry_enabled) telemetry.flush()!;
-        }
-
         frame++;
-        if (acceptance && elapsed >= PLAYBACK_CYCLE_SECONDS && wall >= PLAYBACK_SECONDS) break;
     }
-
-    if (telemetry_enabled) telemetry.flush()!;
-    io::printfn("retarget_summary frames=%d wall=%.6f simulation=%.6f keys=%d subkeys=%d failures=%d captures=%d",
-        frame, wall, elapsed, metrics.key_samples, metrics.subkey_samples, metrics.failures, captures);
-    io::printfn("retarget_keys position=%.9f rotation_rad=%.9f scale=%.9f",
-        metrics.max_key_position, metrics.max_key_rotation, metrics.max_key_scale);
-    io::printfn("retarget_subkeys position=%.9f rotation_rad=%.9f root=%.9f root_rotation=%.9f pivot=%.9f",
-        metrics.max_subkey_position, metrics.max_subkey_rotation, metrics.max_root_error,
-        metrics.max_root_rotation, metrics.max_pivot_error);
-    io::printfn("retarget_carrier_keys samples=%d position=%.9f rotation_rad=%.9f scale=%.9f",
-        metrics.carrier_key_samples, metrics.max_carrier_key_position,
-        metrics.max_carrier_key_rotation, metrics.max_carrier_key_scale);
-    io::printfn("retarget_carrier_subkeys samples=%d position=%.9f rotation_rad=%.9f scale=%.9f",
-        metrics.carrier_subkey_samples, metrics.max_carrier_subkey_position,
-        metrics.max_carrier_subkey_rotation, metrics.max_carrier_subkey_scale);
-    io::printfn("retarget_accumulation root_drift=%.9f pivot_drift=%.9f root_rotation=%.9f root_radius=%.9f pivot_radius=%.9f position_bound=%.9f",
-        metrics.max_root_error, metrics.max_pivot_error, metrics.max_root_rotation,
-        metrics.max_root_radius, metrics.max_pivot_radius, ACCUMULATED_POSITION_BOUND);
 
     renderer.log.check_validation()!;
-    bool complete = metrics.key_samples != 0 && metrics.subkey_samples != 0 && metrics.failures == 0
-        && metrics.carrier_key_samples != 0 && metrics.carrier_subkey_samples != 0;
-
-    foreach (seen : metrics.families_seen) complete &= seen;
-    foreach (seen : metrics.modes_seen) complete &= seen;
-    foreach (flags : metrics.turn_yaw_seen) foreach (seen : flags) complete &= seen;
-    foreach (seen : metrics.turn_reverse_seen) complete &= seen;
-    foreach (seen : metrics.turn_loop_seen) complete &= seen;
-    foreach (seen : metrics.turn_reverse_loop_seen) complete &= seen;
-
-    if (acceptance && (!complete || elapsed < PLAYBACK_CYCLE_SECONDS || wall < PLAYBACK_SECONDS)) {
-        return c3d::INVALID_ARGUMENT~;
-    }
 }
 
 fn int main(String[] args) {
     uint frame_limit;
-    bool acceptance;
     bool mixamo;
-    String capture_directory;
-    String telemetry_path;
 
     foreach (argument : args[1..]) {
         if (argument == "--mixamo") {
             mixamo = true;
-        } else if (argument == "--acceptance") {
-            acceptance = true;
         } else if (argument.starts_with("--frames=")) {
             frame_limit = argument[9..].to_uint()!!;
-        } else if (argument.starts_with("--capture-dir=")) {
-            capture_directory = argument[14..];
-            if (!capture_directory.len) return 1;
-        } else if (argument.starts_with("--telemetry=")) {
-            telemetry_path = argument[12..];
-            if (!telemetry_path.len) return 1;
         } else {
             io::eprintfn("Unknown option: %s", argument);
 
@@ -1981,15 +1448,7 @@ fn int main(String[] args) {
         }
     }
 
-    if (mixamo) {
-        if (acceptance || capture_directory.len || telemetry_path.len) {
-            io::eprintn("Profile metrics and rendered exports use the default authored fixtures.");
-
-            return 1;
-        }
-
-        return run_mixamo(frame_limit);
-    }
+    if (mixamo) return run_mixamo(frame_limit);
 
     platform::Window window = platform::create_window(platform::default_window_desc("c3d calibrated retarget", 1280, 720))!!;
     defer platform::destroy_window(&window);
@@ -2010,9 +1469,6 @@ fn int main(String[] args) {
         assets: &assets,
         scene: &scene,
         frame_limit: frame_limit,
-        acceptance: acceptance,
-        capture_directory: capture_directory,
-        telemetry_path: telemetry_path,
     )) {
         io::eprintfn("retarget example failed: %s", excuse);
 

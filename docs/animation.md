@@ -893,7 +893,7 @@ The profile copies its inputs into one allocation; destroy it with
 `retarget_with_profile` borrows the current templates and profile and produces
 an independently owned `AnimationClip`. Node counts and per-index names,
 parents and authored locals must match the prepared pair. A mismatch returns
-`INVALID_ARGUMENT` with the first differing index in `RetargetDiagnostic`.
+`INVALID_ARGUMENT`.
 `RetargetProfile.validate_templates` checks that pair without baking a clip.
 Explicit mapping conflicts are format errors; ambiguous name matches are
 rejected rather than selecting an arbitrary node.
@@ -926,9 +926,6 @@ It requires no external animation assets. `F` changes the fixture family,
 Space pauses, `A` toggles automatic family cycling and `I` toggles diagnostic
 lines. The carrier and turning families show `KEEP`, `STRIP_XZ` and `EXTRACT`,
 including both yaw settings, forward/reverse playback and loops.
-`--acceptance` samples between bake keys and completes every family;
-`--capture-dir=PATH` writes scene PNGs and `retarget-profile.csv` into an
-existing directory, and `--telemetry=PATH` selects a separate CSV.
 
 ## Inverse kinematics
 
@@ -1011,10 +1008,9 @@ terrain height under it as the body moves.
 Use `begin_contact(hit, support)` to capture a stance anchor and
 `update_contact(support, dt)` to follow it. The application chooses the hit,
 support identity and timing. `FootSupport` carries an opaque caller identity
-and a proper rotation, translation and finite positive uniform scale.
-`foot_support_from_mat4` validates an affine frame; nonuniform scale,
-reflection, shear, zero or nonfinite input returns `INVALID_ARGUMENT` with
-optional `FootDiagnostic` context. Changing the identity requires an explicit
+and a proper rotation, translation and finite positive uniform scale. An
+invalid support, hit, plant setting or incoming pose returns `INVALID_ARGUMENT`
+and leaves the contact unchanged. Changing the identity requires an explicit
 new capture.
 
 `FootIk.plant` defaults to 0.12 seconds of acquisition, 0.20 seconds of release
@@ -1102,13 +1098,11 @@ while the support continues to move, and `R` shifts the origin explicitly.
 `W` switches walk/idle, `[`/`]` change IK weight, `I` toggles debug lines, and
 mouse drag/wheel orbit and zoom.
 
-`ik.exe --acceptance --capture-dir=PATH` runs for at least 20 wall and simulation
-seconds and exports completed rendered frames and `ik-contact.csv` to an
-existing directory. `--telemetry=PATH` selects a separate CSV. The CSV reports
-each final foot pose, phase/status, errors, reach margins, limit mode, support
-scale, incoming and final sole clearance, pause/rebase events and capture index.
-An early `--frames=N` limit does
-not satisfy the bounded run. Vulkan validation is enabled.
+`ik.exe --acceptance` runs at a fixed 60 Hz step for at least 20 wall and
+simulation seconds and fails unless every planted foot stays within the
+residual, sole-angle and reach bounds and every swinging foot clears the
+support. An early `--frames=N` limit does not satisfy the bounded run. Vulkan
+validation is enabled.
 
 
 Inertial requests return an `AnimationTransitionResult`. Its `actions[:count]`

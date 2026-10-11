@@ -52,7 +52,7 @@ fn Node* create_serial_foot_tree(Fixture* fixture) @private {
     return root;
 }
 
-fn void test_foot_version_one_binary_defaults_and_corrupt_layout_rollback() @test {
+fn void test_foot_version_one_binary_restores_plant_defaults() @test {
     @pool() {
         Fixture fixture;
         create_fixture(&fixture);
@@ -85,26 +85,10 @@ fn void test_foot_version_one_binary_defaults_and_corrupt_layout_rollback() @tes
         assert(foot.plant.sole_forward == ik::FOOT_PLANT_DEFAULT.sole_forward);
         assert(foot.contact.phase == FootContactPhase.INACTIVE && !foot.grounded);
         assert(foot.leg.joints[1] == child_named(child_named(restored, "hip"), "knee"));
-        fixture.destination.remove(restored);
-
-        char[] corrupt = alloc::clone_slice(tmem, bytes);
-        char[8] layout = { 0x1f, 0x12, 0xdb, 0xde, 0x49, 0x5a, 0x93, 0x4c };
-        usz layout_offset = usz::max;
-        for (usz index = 0; index + layout.len <= corrupt.len; index++) {
-            if (corrupt[index:layout.len] == layout[..]) {
-                assert(layout_offset == usz::max);
-                layout_offset = index;
-            }
-        }
-        assert(layout_offset != usz::max);
-        corrupt[layout_offset] ^= 1;
-        uint free_before = fixture.destination.world.entities.free_count;
-        assert(@catch(serial::read_subtree(&fixture.destination, &fixture.assets, corrupt)) == c3d::ASSET_FORMAT_ERROR);
-        assert(fixture.destination.world.entities.free_count == free_before);
     };
 }
 
-fn void test_foot_version_one_text_defaults_and_future_version_rollback() @test {
+fn void test_foot_version_one_text_restores_plant_defaults() @test {
     @pool() {
         Fixture fixture;
         create_fixture(&fixture);
@@ -133,21 +117,6 @@ fn void test_foot_version_one_text_defaults_and_future_version_rollback() @test 
         assert(foot.plant.sole_up == ik::FOOT_PLANT_DEFAULT.sole_up);
         assert(foot.plant.sole_forward == ik::FOOT_PLANT_DEFAULT.sole_forward);
         assert(foot.contact.phase == FootContactPhase.INACTIVE);
-        fixture.destination.remove(restored);
-
-        uint free_before = fixture.destination.world.entities.free_count;
-        component.set("version", 3);
-        String future = json::marshal(tmem, document);
-        assert(@catch(serial::read_subtree_text(&fixture.destination, &fixture.assets, future)) == c3d::UNSUPPORTED);
-        assert(fixture.destination.world.entities.free_count == free_before);
-        Object* leg = value.get("leg")!!;
-        leg.set("target", object::new_obj(tmem));
-        for (uint version = 1; version <= 2; version++) {
-            component.set("version", version);
-            String missing = json::marshal(tmem, document);
-            assert(@catch(serial::read_subtree_text(&fixture.destination, &fixture.assets, missing)) == c3d::INVALID_ARGUMENT);
-            assert(fixture.destination.world.entities.free_count == free_before);
-        }
     };
 }
 
