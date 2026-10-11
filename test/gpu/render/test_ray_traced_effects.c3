@@ -42,6 +42,12 @@ const Vec3 TINTED_SPECULAR @private = { 1, 0.5f, 0.2f };
 const float GLASS_THICKNESS @private = 0.5f;
 const int COAT_MINIMUM @private = 20;
 
+struct PhysicalPanel @private {
+    Fixture*     fixture;
+    MirrorScene* mirror;
+    ViewId       view;
+}
+
 struct MirrorScene @private {
     Scene       scene;
     Node*       camera;
@@ -431,10 +437,10 @@ fn void test_reflections_light_a_hit_from_an_off_camera_lamp_by_receiver_layers(
     }
 }
 
-fn uint? render_physical(Fixture* fixture, MirrorScene* mirror, ViewId view, PhysicalParams params) @private {
-    MaterialId physical = fixture.assets.add_material(material::physical(params))!;
-    mirror.scene.get(mirror.emitter, Mesh).material = physical;
-    return render_mirror(fixture, mirror, view, EMITTER_IMAGE_POINT);
+fn uint? PhysicalPanel.render(&self, PhysicalParams params) @private {
+    MaterialId physical = self.fixture.assets.add_material(material::physical(params))!;
+    self.mirror.scene.get(self.mirror.emitter, Mesh).material = physical;
+    return render_mirror(self.fixture, self.mirror, self.view, EMITTER_IMAGE_POINT);
 }
 
 fn void test_reflections_shade_the_physical_layers_of_a_hit() @test {
@@ -465,10 +471,11 @@ fn void test_reflections_shade_the_physical_layers_of_a_hit() @test {
         glass.transmission = 1;
         glass.thickness = GLASS_THICKNESS;
 
-        uint plain_pixel = render_physical(&fixture, &mirror, mirror_view.view, plain)!!;
-        uint coated_pixel = render_physical(&fixture, &mirror, mirror_view.view, coated)!!;
-        uint high_index_pixel = render_physical(&fixture, &mirror, mirror_view.view, high_index)!!;
-        uint glass_pixel = render_physical(&fixture, &mirror, mirror_view.view, glass)!!;
+        PhysicalPanel panel = { .fixture = &fixture, .mirror = &mirror, .view = mirror_view.view };
+        uint plain_pixel = panel.render(plain)!!;
+        uint coated_pixel = panel.render(coated)!!;
+        uint high_index_pixel = panel.render(high_index)!!;
+        uint glass_pixel = panel.render(glass)!!;
         io::eprintfn(
             "%s, physical hit: plain %06x, clearcoat %06x, high index %06x, transmission %06x",
             trace_name(ray_queries),
