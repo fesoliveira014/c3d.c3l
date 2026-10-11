@@ -8,12 +8,20 @@ Binary and JSONC forms preserve ordinary nodes, built-in authoring and applicati
 
 Node transform values pass through unchanged, matching direct `node.local` assignment. The container does not reject non-finite position/rotation/scale values or a zero quaternion; those values can propagate into the derived world matrix. Component codecs define and validate their own numeric constraints before invoking owner APIs. `ASSET_FORMAT_ERROR` covers invalid wire representations. Component codecs report invalid authored values through their declared owner faults; the container adds no universal float-validity rule.
 
-`register_core_codecs()` installs described version-1 policies for Mesh, Camera,
-Light, ProbeVolume, Atmosphere, HeightFog, ReflectionProbe and Decal, all in the
-VALUE phase. Mesh copies its morph-weight array into ordinary Scene ownership.
+`register_core_codecs()` installs described policies for Mesh, Camera, Light,
+ProbeVolume, Atmosphere, HeightFog, ReflectionProbe and Decal, all in the VALUE
+phase. Light and its nested ShadowSettings use version 2; the other listed
+components use version 1. Mesh copies its morph-weight array into Scene ownership.
 The other value components use fixed-size copying attachment. ProbeVolume,
 Atmosphere, HeightFog and ReflectionProbe use their existing owner validity
 predicates on both export and decoded authoring before attachment.
+
+Light version 2 preserves `ShadowSettings.colored_transmission` with the existing
+light and shadow fields. Version-1 binary and JSONC payloads remain readable and
+default that flag off. Missing text fields use the same semantic default;
+current-version binary truncation is a format fault. The codec preserves
+authoring only: renderer optical capacity, shadow images and view transparency
+quality are not serialized.
 
 InstancedMesh and BillboardBatch also restore in the VALUE phase through
 private authoring descriptions. They retain capacity and live entries in copied

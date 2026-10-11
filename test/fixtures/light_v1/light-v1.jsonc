@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": 0,
+      "parent": null,
+      "name": "light",
+      "local": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "c3d.Light": {
+          "version": 1,
+          "value": {
+            "kind": "SPOT",
+            "color": [
+              0.25,
+              0.5,
+              1
+            ],
+            "intensity": 2.5,
+            "range": 15,
+            "inner_cone": 0.125,
+            "outer_cone": 0.5,
+            "layers": 2147483649,
+            "shadow": {
+              "enabled": true,
+              "priority": -7,
+              "bias": 0.00300000003,
+              "directional_normal_bias_texels": 3.5,
+              "punctual_normal_bias": 0.0199999996,
+              "cascades": 3,
+              "cascade_lambda": 0.600000024,
+              "cascade_blend": 0.125,
+              "max_distance": 23.5,
+              "ray_traced": true
+            }
+          }
+        }
+      }
+    }
+  ]
+}

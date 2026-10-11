@@ -8,11 +8,9 @@ import c3d::light;
 import c3d::scene;
 import std::math;
 
-const ulong SHADOW_LAYOUT @local = 0x79ccc384defd9804;
 const ulong PROBE_UPDATE_LAYOUT @local = 0x92e32fe9bced397e;
 const ulong DECAL_WEIGHTS_LAYOUT @local = 0x985beb1deac562f9;
 const ulong CAMERA_LAYOUT @local = 0x5dd0d6ce96e600ac;
-const ulong LIGHT_LAYOUT @local = 0xa41c0d2284b8d046;
 const ulong PROBE_LAYOUT @local = 0xaed5ed822ebdf51a;
 const ulong ATMOSPHERE_LAYOUT @local = 0x0a0ac3087385a43b;
 const ulong FOG_LAYOUT @local = 0x1b730abab72fb88f;
@@ -27,11 +25,9 @@ const ulong DECAL_LAYOUT @local = 0xa4dd177052750847;
 fn void? register_core_codecs() {
     register_core_value_types()!;
     describe::register_core_components()!;
-    register_core_value(ShadowSettings, SHADOW_LAYOUT, &defaults_shadow)!;
     register_core_value(ProbeUpdateDesc, PROBE_UPDATE_LAYOUT, &defaults_probe_update)!;
     register_core_value(DecalWeights, DECAL_WEIGHTS_LAYOUT, &defaults_decal_weights)!;
     register_core_value(Camera, CAMERA_LAYOUT, &defaults_camera)!;
-    register_core_value(Light, LIGHT_LAYOUT, &defaults_light)!;
     register_core_value(ProbeVolume, PROBE_LAYOUT, &defaults_probe)!;
     register_core_value(Atmosphere, ATMOSPHERE_LAYOUT, &defaults_atmosphere)!;
     register_core_value(HeightFog, FOG_LAYOUT, &defaults_fog)!;
@@ -39,7 +35,7 @@ fn void? register_core_codecs() {
     register_core_value(Decal, DECAL_LAYOUT, &defaults_decal)!;
     register_described(Mesh, { .name = "c3d.Mesh", .project = &project_mesh, .attach = &attach_mesh })!;
     register_described(Camera, { .name = "c3d.Camera" })!;
-    register_described(Light, { .name = "c3d.Light" })!;
+    register_light_codec()!;
     register_described(ProbeVolume, {
         .name = "c3d.ProbeVolume", .project = &project_probe, .validate = &validate_probe,
     })!;
@@ -58,10 +54,6 @@ fn void? register_core_codecs() {
     register_crowd_codec()!;
 }
 
-fn void defaults_shadow(void* value) @local {
-    *(ShadowSettings*)value = light::SHADOW_SETTINGS_DEFAULT;
-}
-
 fn void defaults_probe_update(void* value) @local {
     *(ProbeUpdateDesc*)value = light::PROBE_UPDATE_DEFAULT;
 }
@@ -72,10 +64,6 @@ fn void defaults_decal_weights(void* value) @local {
 
 fn void defaults_camera(void* value) @local {
     *(Camera*)value = camera::perspective_deg(60, 0.1f);
-}
-
-fn void defaults_light(void* value) @local {
-    *(Light*)value = light::directional({ 1, 1, 1 }, 1);
 }
 
 fn void defaults_probe(void* value) @local {
