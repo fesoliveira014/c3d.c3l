@@ -158,6 +158,12 @@ float trace_box_entry(BvhNodeGpu node, TraceRay ray) {
     return max(max(near.x, near.y), max(near.z, 0.0));
 }
 
+// Separate sums preserve cancellation on a triangle's shared edge.
+float trace_triangle_dot(vec3 first, vec3 second) {
+    precise float value = first.x * second.x + first.y * second.y + first.z * second.z;
+    return value;
+}
+
 bool trace_triangle(
     TraceRay ray,
     vec3 a,
@@ -172,17 +178,17 @@ bool trace_triangle(
     vec3 edge_ab = b - a;
     vec3 edge_ac = c - a;
     vec3 perpendicular = cross(ray.direction, edge_ac);
-    determinant = dot(edge_ab, perpendicular);
+    determinant = trace_triangle_dot(edge_ab, perpendicular);
     if (abs(determinant) < TRIANGLE_PARALLEL_EPSILON) return false;
 
     float inverse_determinant = 1.0 / determinant;
     vec3 to_origin = ray.origin - a;
-    float weight_b = dot(to_origin, perpendicular) * inverse_determinant;
+    float weight_b = trace_triangle_dot(to_origin, perpendicular) * inverse_determinant;
     if (weight_b < 0.0 || weight_b > 1.0) return false;
     vec3 crossed = cross(to_origin, edge_ab);
-    float weight_c = dot(ray.direction, crossed) * inverse_determinant;
+    float weight_c = trace_triangle_dot(ray.direction, crossed) * inverse_determinant;
     if (weight_c < 0.0 || weight_b + weight_c > 1.0) return false;
-    t = dot(edge_ac, crossed) * inverse_determinant;
+    t = trace_triangle_dot(edge_ac, crossed) * inverse_determinant;
     weights = vec2(weight_b, weight_c);
     return t >= 0.0;
 }
