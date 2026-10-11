@@ -14,17 +14,12 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Pr
     uint mip;
     uint width;
     uint height;
-    uint depth;
-    uint dimension;
     uint layer;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer PreparationTypeOutput {
     uint pixels[];
 };
-
-const uint TEXTURE_SAMPLE_CUBE = 1u; // mirrored as CUBE in TextureSampleDimension
-const uint TEXTURE_SAMPLE_VOLUME = 2u; // mirrored as VOLUME in TextureSampleDimension
 
 vec3 cube_direction(uint face, vec2 coordinate) {
     switch (face) {
@@ -45,23 +40,12 @@ void main() {
 
     DispatchTextureGpu texture = DispatchTexturesGpu(dispatch.textures).slots[0];
     vec2 uv = (vec2(texel) + 0.5) / vec2(root.width, root.height);
-    vec4 color;
-    if (root.dimension == TEXTURE_SAMPLE_CUBE) {
-        color = sample_texture_cube_lod(
-            texture.texture_index,
-            texture.sampler_index,
-            cube_direction(root.layer, uv * 2.0 - 1.0),
-            float(root.mip)
-        );
-    } else if (root.dimension == TEXTURE_SAMPLE_VOLUME) {
-        color = sample_texture_3d(
-            texture.texture_index,
-            texture.sampler_index,
-            vec3(uv, (float(root.layer) + 0.5) / float(root.depth))
-        );
-    } else {
-        return;
-    }
+    vec4 color = sample_texture_cube_lod(
+        texture.texture_index,
+        texture.sampler_index,
+        cube_direction(root.layer, uv * 2.0 - 1.0),
+        float(root.mip)
+    );
     PreparationTypeOutput(root.output_address).pixels[texel.y * root.width + texel.x] =
         packUnorm4x8(clamp(color, 0.0, 1.0));
 }

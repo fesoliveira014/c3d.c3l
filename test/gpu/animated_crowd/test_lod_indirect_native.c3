@@ -9,15 +9,11 @@ import c3d::maths;
 import c3d::model;
 import c3d::render @public;
 import c3d::scene;
-import c3d::shader;
-import c3d::spatial;
 import c3d::test::animated_crowd_fixtures;
 import c3d::test::animated_lod_fixtures;
 import gpu;
-import std::io;
 import std::math;
 
-const uint INDIRECT_REPLAY_SOURCES @private = 3;
 const usz INDIRECT_REPLAY_COMMAND_STRIDE @private = 32;
 const uint[3][2] INDIRECT_REPLAY_QUATERNIUS_INDICES @private = {
     { 17196, 8598, 4299 },
@@ -25,10 +21,8 @@ const uint[3][2] INDIRECT_REPLAY_QUATERNIUS_INDICES @private = {
 };
 
 struct IndirectReplayCommand @private {
-    GeometryId geometry;
     uint level;
     uint representation;
-    uint logical_part;
     bool mirrored;
     bool indexed;
     uint elements;
@@ -36,16 +30,17 @@ struct IndirectReplayCommand @private {
     usz source_offset;
 }
 
-fn bool indirect_replay_matches(
+fn void check_indirect_replay(
     gpu::MappedGpuSpan readback,
     IndirectReplayCommand[] commands,
-    CrowdInstance[] instances,
+    LodSelection* selection,
+    uint sources,
     uint selected_level,
     uint parts,
     bool sorted,
     ulong expected_triangles,
 ) @private {
-    uint[] seen = alloc::new_array(tmem, uint, (sz)parts * instances.len);
+    uint[] seen = alloc::new_array(tmem, uint, (sz)selection.part_mirrored.len * sources);
     ulong triangles;
     uint visible_instances;
     foreach (command : commands) {
@@ -61,91 +56,50 @@ fn bool indirect_replay_matches(
             elements = args.vertex_count;
             count = args.instance_count;
         }
-        if (elements != command.elements || elements % 3 || count > instances.len) return false;
+        assert(elements == command.elements && elements % 3 == 0);
+        bool[] mirrored = selection.part_mirrored[command.representation];
         uint expected;
         if (command.level == selected_level) {
-            foreach (instance : instances) {
-                Vec3 scale = instance.placement.scale;
-                bool mirrored = scale.x * scale.y * scale.z < 0;
-                if (mirrored == command.mirrored) expected++;
-            }
+            foreach (source_mirrored : mirrored[:sources]) if (source_mirrored == command.mirrored) expected++;
         }
-        if (count != expected || command.logical_part >= parts) return false;
-        uint[] sources = ((uint*)(readback.bytes.ptr + command.source_offset))[:count];
+        assert(count == expected);
         uint previous = uint::max;
-        foreach (source : sources) {
-            if (source >= instances.len) return false;
-            Vec3 scale = instances[source].placement.scale;
-            if ((scale.x * scale.y * scale.z < 0) != command.mirrored) return false;
-            if (++seen[command.logical_part * instances.len + source] != 1) return false;
-            if (sorted && source >= previous) return false;
+        foreach (source : ((uint*)(readback.bytes.ptr + command.source_offset))[:count]) {
+            assert(source < sources && mirrored[source] == command.mirrored);
+            assert(++seen[command.representation * sources + source] == 1);
+            assert(!sorted || source < previous, "Blend sort lost the far-to-near source order");
             previous = source;
         }
         triangles += (ulong)(elements / 3) * count;
         visible_instances += count;
-        io::eprintfn(
-            "diagnostic_cull_replay geometry=%s/%s level=%s representation=%s logical_part=%s "
-            "mirrored=%s indexed=%s elements=%s instances=%s triangles=%s",
-            command.geometry.index,
-            command.geometry.generation,
-            command.level,
-            command.representation,
-            command.logical_part,
-            command.mirrored,
-            command.indexed,
-            elements,
-            count,
-            (ulong)(elements / 3) * count,
-        );
     }
-    foreach (count : seen) if (count != 1) return false;
-    if (triangles != expected_triangles || visible_instances != parts * instances.len) return false;
+
+    uint represented;
+    for (uint representation = 0; representation < selection.part_mirrored.len; representation++) {
+        uint listed;
+        foreach (count : seen[representation * sources:sources]) listed += count;
+        assert(listed == 0 || listed == sources);
+        if (listed) represented++;
+    }
+    assert(represented == parts && triangles == expected_triangles);
     uint* counters = (uint*)readback.bytes.ptr;
-    if (counters[0] != visible_instances) return false;
+    assert(counters[0] == visible_instances);
     for (uint level = 0; level < scene::MAX_LOD_CHOICES; level++) {
-        uint expected = level == selected_level ? (uint)instances.len : 0;
-        if (counters[1 + level] != expected
-          || counters[1 + scene::MAX_LOD_CHOICES + level] != expected) return false;
+        uint expected = level == selected_level ? sources : 0;
+        assert(counters[1 + level] == expected && counters[1 + scene::MAX_LOD_CHOICES + level] == expected);
     }
-    io::eprintfn("diagnostic_cull_replay total_indirect_triangles=%s selected_level=%s sources=%s parts=%s",
-        triangles, selected_level, instances.len, parts);
-    return true;
 }
 
-fn void? overwrite_indirect_replay_level(Renderer* renderer, LodSelection* selection) @private {
-    gpu::Barrier selected = { .before = { .compute }, .after = { .transfer } };
-    gpu::cmd_barrier(&renderer.commands, &selected)!;
-    Frame* frame = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
-    gpu::MappedGpuSpan wrong = frame.upload.take(&renderer.device, uint::size, render::STREAM_ALIGNMENT)!;
-    *(uint*)wrong.bytes.ptr = 0;
-    gpu::GpuSpan history = gpu::get_allocation_span(&renderer.device, selection.history.allocation)!;
-    usz current = (usz)(selection.history.committed_slot ^ 1)
-      * selection.history.capacity * shader::LodHistoryGpu::size;
-    for (uint source = 0; source < selection.state.count; source++) {
-        usz offset = current + (usz)source * shader::LodHistoryGpu::size
-          + $reflect(shader::LodHistoryGpu.level).offset;
-        gpu::BufferCopyDesc copy = {
-            .src = wrong.span,
-            .dst = history.checked_subspan(offset, uint::size)!,
-        };
-        gpu::cmd_copy_buffer(&renderer.commands, &copy)!;
-    }
-    gpu::Barrier overridden = { .before = { .transfer }, .after = { .compute } };
-    gpu::cmd_barrier(&renderer.commands, &overridden)!;
-}
-
-fn bool? capture_indirect_replay(
+fn void? capture_indirect_replay(
     Fixture* fixture,
     Scene* scene,
     Node* owner,
     Node* camera_node,
     ViewId view,
-    CrowdInstance[] instances,
     uint selected_level,
     uint parts,
     ulong expected_triangles,
     bool sorted = false,
-    bool wrong_selected_level = false,
 ) @private {
     Renderer* renderer = &fixture.renderer;
     renderer.begin_frame()!;
@@ -161,13 +115,7 @@ fn bool? capture_indirect_replay(
             matrices: &matrices,
         )!;
         assert(selections.len == 1 && selections[0].node == owner && !selections[0].fallback);
-        foreach (instance : instances) {
-            assert(render::instance_visible(
-                frustum: &matrices.frustum,
-                local_bounds: scene.get(owner, AnimatedCrowd).pose_bounds,
-                model: owner.world.mul(instance.placement.to_mat4()),
-            ));
-        }
+        uint sources = scene.get(owner, AnimatedCrowd).count;
         ExtractCounts counts;
         MeshCandidate[] candidates = render::extract_candidates(
             allocator: tmem,
@@ -183,7 +131,7 @@ fn bool? capture_indirect_replay(
         CullItem[] items = alloc::new_array(tmem, CullItem, candidates.len);
         IndirectReplayCommand[] commands = alloc::new_array(tmem, IndirectReplayCommand, candidates.len);
         foreach (index, &candidate : candidates) {
-            assert(candidate.node == owner && candidate.animated_lod && candidate.lod == &selections[0]);
+            assert(candidate.node == owner && candidate.lod == &selections[0]);
             GpuGeometry* geometry = render::resolve_geometry(renderer, candidate.geometry)!;
             items[index] = {
                 .candidate = candidate,
@@ -195,28 +143,25 @@ fn bool? capture_indirect_replay(
                 .depth_axis = render::view_depth_axis(matrices.view),
             };
             commands[index] = {
-                .geometry = candidate.geometry,
                 .level = candidate.lod_level,
                 .representation = candidate.lod_part,
-                .logical_part = candidate.animated_lod.mesh_index,
                 .mirrored = candidate.mirrored,
                 .indexed = geometry.layout.index_count > 0,
                 .elements = geometry.layout.index_count ? geometry.layout.index_count : geometry.layout.vertex_count,
                 .command_offset = render::CULL_COUNTER_BYTES + (usz)index * INDIRECT_REPLAY_COMMAND_STRIDE,
                 .source_offset = render::CULL_COUNTER_BYTES + candidates.len * INDIRECT_REPLAY_COMMAND_STRIDE
-                  + (usz)index * instances.len * uint::size,
+                  + (usz)index * sources * uint::size,
             };
         }
         render::prepare_cull_stage(renderer, items, true)!;
         render::record_pending_copies(renderer, &renderer.commands)!;
         render::record_lod_selection(renderer, selections)!;
-        if (wrong_selected_level) overwrite_indirect_replay_level(renderer, &selections[0])!;
         render::record_instance_cull(renderer, items)!;
         render::record_instance_sort(renderer, items)!;
         CullArena* arena = &renderer.cull_arenas[renderer.frame_index % render::FRAMES_IN_FLIGHT];
         gpu::AllocationDesc desc = {
             .size = render::CULL_COUNTER_BYTES + candidates.len
-              * (INDIRECT_REPLAY_COMMAND_STRIDE + instances.len * uint::size),
+              * (INDIRECT_REPLAY_COMMAND_STRIDE + sources * uint::size),
             .alignment = render::STREAM_ALIGNMENT,
             .memory_class = gpu::MemoryClass.CPU_READ,
             .access = { .graphics },
@@ -228,6 +173,7 @@ fn bool? capture_indirect_replay(
             gpu::GpuAllocation allocation = readback.span.allocation();
             gpu::free_allocation(&renderer.device, &allocation)!!;
         }
+
         gpu::Barrier produced = { .before = { .compute }, .after = { .transfer } };
         gpu::cmd_barrier(&renderer.commands, &produced)!;
         gpu::BufferCopyDesc counters = {
@@ -244,24 +190,22 @@ fn bool? capture_indirect_replay(
             };
             gpu::cmd_copy_buffer(&renderer.commands, &command)!;
             usz offset = (usz)((ulong)item.range.visible - (ulong)arena.address);
-            gpu::BufferCopyDesc sources = {
-                .src = arena.span.checked_subspan(offset, instances.len * uint::size)!,
-                .dst = readback.span.checked_subspan(commands[index].source_offset, instances.len * uint::size)!,
+            gpu::BufferCopyDesc listed = {
+                .src = arena.span.checked_subspan(offset, sources * uint::size)!,
+                .dst = readback.span.checked_subspan(commands[index].source_offset, sources * uint::size)!,
             };
-            gpu::cmd_copy_buffer(&renderer.commands, &sources)!;
+            gpu::cmd_copy_buffer(&renderer.commands, &listed)!;
         }
         gpu::Barrier copied = { .before = { .transfer }, .after = { .host } };
         gpu::cmd_barrier(&renderer.commands, &copied)!;
-        ulong submission = renderer.frame_index;
         renderer.end_frame()!;
         render::wait_frames(renderer)!;
         gpu::invalidate_mapped_span(&renderer.device, readback.span)!;
-        io::eprintfn("diagnostic_cull_replay submission=%s view=%s/%s wrong_level=%s sorted=%s",
-            submission, view.index, view.generation, wrong_selected_level, sorted);
-        return indirect_replay_matches(
+        check_indirect_replay(
             readback: readback,
             commands: commands,
-            instances: instances,
+            selection: &selections[0],
+            sources: sources,
             selected_level: selected_level,
             parts: parts,
             sorted: sorted,
@@ -270,27 +214,37 @@ fn bool? capture_indirect_replay(
     };
 }
 
+fn void configure_indirect_replay_bias(Fixture* fixture, ViewId view, float lod_bias) @private {
+    ViewDesc desc = fixture.renderer.views.get(view).desc;
+    desc.lod_bias = lod_bias;
+    render::configure_view(&fixture.renderer, view, desc)!!;
+}
+
 fn void test_animated_lod_native_indirect_quaternius_three_levels_match_literal_counts() @test {
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
     AnimatedLodFixtures corpus = animated_lod_fixtures::load_animated_lod_fixtures(&fixture.assets, "../../..")!!;
-    ModelTemplate* template = &fixture.assets.model(corpus.model).data;
-    for (uint part = 0; part < 2; part++) {
-        for (uint level = 0; level < 3; level++) {
+    for (uint part = 0; part < animated_lod_fixtures::LOD_PRIMITIVES; part++) {
+        for (uint level = 0; level < animated_lod_fixtures::LOD_LEVELS; level++) {
             assert(corpus.layouts[part][level].index_count == INDIRECT_REPLAY_QUATERNIUS_INDICES[part][level]);
         }
     }
     Scene scene = scene::create_scene(mem, { .max_nodes = 64 });
     defer scene::destroy_scene(&scene);
-    ClipId clip = crowd_native_clip_named(&fixture, corpus.model, "Walk_Loop")!!;
-    float duration = fixture.assets.clip(clip).data.duration;
-    Transform[3] placements = crowd_native_real_placements();
-    CrowdInstance[3] instances;
-    for (uint source = 0; source < 3; source++) {
+    LodNativeSubject subject = quaternius_lod_subject(&fixture, &corpus);
+    float duration = fixture.assets.clip(subject.clip).data.duration;
+    Transform[CROWD_NATIVE_INSTANCES] placements = crowd_native_real_placements();
+    CrowdInstance[CROWD_NATIVE_INSTANCES] instances;
+    for (uint source = 0; source < CROWD_NATIVE_INSTANCES; source++) {
         instances[source] = {
             .placement = placements[source],
-            .pose = { .clip = clip, .time = (0.125f + 0.25f * (float)source) * duration, .speed = 0, .loop = true },
+            .pose = {
+                .clip = subject.clip,
+                .time = (0.125f + 0.25f * (float)source) * duration,
+                .speed = 0,
+                .loop = true,
+            },
             .color = { 1, 1, 1, 1 },
         };
     }
@@ -298,61 +252,41 @@ fn void test_animated_lod_native_indirect_quaternius_three_levels_match_literal_
         assets: &fixture.assets,
         scene: &scene,
         model: corpus.model,
-        capacity: 3,
+        capacity: CROWD_NATIVE_INSTANCES,
         pose_bounds: CROWD_LOD_NATIVE_BOUNDS,
         instances: instances[..],
     )!!;
-    CrowdLodNativeDescriptor descriptor;
-    fill_crowd_lod_native_descriptor(
-        fixture: &fixture,
-        corpus: &corpus,
-        descriptor: &descriptor,
-        material: {},
-    );
-    AnimatedLodDesc animated_desc = crowd_lod_native_desc(&descriptor);
-    animated_desc.has_bounds_override = false;
+    LodNativeDescriptor descriptor;
     model::attach_animated_lod(
         assets: &fixture.assets,
         scene: &scene,
         owner: owner,
-        desc: animated_desc,
+        desc: lod_native_desc(
+            fixture: &fixture,
+            subject: &subject,
+            descriptor: &descriptor,
+            crowd: true,
+        ),
     )!!;
     Node* camera = scene.add_camera(camera::orthographic(6, 0.1f, 100))!!;
     camera.local.position = { 0, 1, 12 };
     scene.update_world();
-    for (uint level = 0; level < 3; level++) {
+    for (uint level = 0; level < animated_lod_fixtures::LOD_LEVELS; level++) {
         ViewId view = level == 1 ? fixture.second_view : fixture.view;
-        ViewDesc desc = fixture.renderer.views.get(view).desc;
-        desc.lod_bias = CROWD_LOD_NATIVE_FORCE_BIASES[level];
-        render::configure_view(&fixture.renderer, view, desc)!!;
+        configure_indirect_replay_bias(&fixture, view, lod_native_force_bias(&subject, level));
         ulong triangles = (ulong)(INDIRECT_REPLAY_QUATERNIUS_INDICES[0][level]
-          + INDIRECT_REPLAY_QUATERNIUS_INDICES[1][level]) / 3 * INDIRECT_REPLAY_SOURCES;
-        assert(capture_indirect_replay(
+          + INDIRECT_REPLAY_QUATERNIUS_INDICES[1][level]) / 3 * CROWD_NATIVE_INSTANCES;
+        capture_indirect_replay(
             fixture: &fixture,
             scene: &scene,
             owner: owner,
             camera_node: camera,
             view: view,
-            instances: instances[..],
             selected_level: level,
-            parts: (uint)template.meshes.len,
+            parts: animated_lod_fixtures::LOD_PRIMITIVES,
             expected_triangles: triangles,
-        )!!);
+        )!!;
     }
-    ulong triangles = (ulong)(INDIRECT_REPLAY_QUATERNIUS_INDICES[0][2]
-      + INDIRECT_REPLAY_QUATERNIUS_INDICES[1][2]) / 3 * INDIRECT_REPLAY_SOURCES;
-    assert(!capture_indirect_replay(
-        fixture: &fixture,
-        scene: &scene,
-        owner: owner,
-        camera_node: camera,
-        view: fixture.view,
-        instances: instances[..],
-        selected_level: 2,
-        parts: 2,
-        expected_triangles: triangles,
-        wrong_selected_level: true,
-    )!!);
     check_crowd_native_validation(&fixture.renderer);
 }
 
@@ -363,8 +297,8 @@ fn void test_animated_lod_native_indirect_mixed_equal_count_parity_and_blend_sor
     PartsFixture parts = animated_crowd_fixtures::add_parts_fixture(&fixture.assets)!!;
     Scene scene = scene::create_scene(mem, { .max_nodes = 64 });
     defer scene::destroy_scene(&scene);
-    CrowdInstance[3] instances;
-    for (uint source = 0; source < 3; source++) {
+    CrowdInstance[CROWD_NATIVE_INSTANCES] instances;
+    for (uint source = 0; source < CROWD_NATIVE_INSTANCES; source++) {
         instances[source] = {
             .placement = maths::TRANSFORM_IDENTITY,
             .pose = { .clip = parts.posing, .time = 0.25f * (float)(source + 1), .speed = 0, .loop = false },
@@ -378,7 +312,7 @@ fn void test_animated_lod_native_indirect_mixed_equal_count_parity_and_blend_sor
         assets: &fixture.assets,
         scene: &scene,
         model: parts.mixed,
-        capacity: 3,
+        capacity: CROWD_NATIVE_INSTANCES,
         pose_bounds: animated_crowd_fixtures::PARTS_POSE_BOUNDS,
         instances: instances[..],
     )!!;
@@ -387,52 +321,123 @@ fn void test_animated_lod_native_indirect_mixed_equal_count_parity_and_blend_sor
             assets: &fixture.assets,
             scene: &scene,
             owner: owner,
-            desc: lod_trace_desc(&fixture.assets, parts.mixed),
+            desc: animated_crowd_fixtures::parts_lod_desc(&fixture.assets, parts.mixed),
         )!!;
     };
     Node* camera = scene.add_camera(camera::orthographic(120, 0.1f, 1000))!!;
     camera.local.position = { 35, 2, 20 };
     scene.update_world();
-    LodGroupState* state = scene.get(owner, LodGroup).state;
-    ulong identity = state.identity;
-    uint generation = state.slot_generations[0];
-    ViewDesc desc = fixture.renderer.views.get(fixture.view).desc;
-    desc.lod_bias = 16;
-    render::configure_view(&fixture.renderer, fixture.view, desc)!!;
-    assert(capture_indirect_replay(
+    configure_indirect_replay_bias(&fixture, fixture.view, 16);
+    capture_indirect_replay(
         fixture: &fixture,
         scene: &scene,
         owner: owner,
         camera_node: camera,
         view: fixture.view,
-        instances: instances[..],
         selected_level: 0,
-        parts: 5,
+        parts: animated_crowd_fixtures::PARTS_MESH_COUNT,
         expected_triangles: 15,
-    )!!);
-    instances[0].placement.scale.x = -1;
-    instances[1].placement.scale.x = 1;
-    instances[2].placement.scale.x = -1.3f;
+    )!!;
+
     AnimatedCrowd* crowd = scene.get(owner, AnimatedCrowd);
-    for (uint source = 0; source < 3; source++) crowd.placements[source] = instances[source].placement;
+    crowd.placements[0].scale.x = -1;
+    crowd.placements[1].scale.x = 1;
+    crowd.placements[2].scale.x = -1.3f;
     scene.write_crowd_batches(crowd);
     fixture.assets.material(parts.material).data.common.alpha_mode = AlphaMode.BLEND;
     fixture.assets.mark_material_dirty(parts.material);
-    desc.lod_bias = -16;
-    render::configure_view(&fixture.renderer, fixture.view, desc)!!;
-    assert(capture_indirect_replay(
+    configure_indirect_replay_bias(&fixture, fixture.view, -16);
+    capture_indirect_replay(
         fixture: &fixture,
         scene: &scene,
         owner: owner,
         camera_node: camera,
         view: fixture.view,
-        instances: instances[..],
         selected_level: 1,
-        parts: 5,
+        parts: animated_crowd_fixtures::PARTS_MESH_COUNT,
         expected_triangles: 15,
         sorted: true,
-    )!!);
-    assert(state.identity == identity && state.count == 3 && state.slot_generations[0] == generation);
-    assert(c3d::same_id(state.desc.parts[2].geometry, state.desc.parts[3].geometry));
+    )!!;
+    check_crowd_native_validation(&fixture.renderer);
+}
+
+fn void test_animated_lod_native_sheared_near_singular_part_uses_shared_cpu_parity() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    PartsFixture parts = animated_crowd_fixtures::add_parts_fixture(&fixture.assets)!!;
+    ModelMesh mesh = fixture.assets.model(parts.mixed).data.meshes[1];
+    Scene scene = scene::create_scene(mem, { .max_nodes = 64 });
+    defer scene::destroy_scene(&scene);
+    CrowdInstance[CROWD_NATIVE_INSTANCES] instances;
+    for (uint source = 0; source < CROWD_NATIVE_INSTANCES; source++) {
+        instances[source] = {
+            .placement = {
+                .position = { (float)source - 1, 0, 0 },
+                .rotation = quaternion::from_euler(0.0f, 0.0f, 0.37f + 0.41f * (float)source),
+                .scale = { source == 2 ? -1 : 1, 3, 0.7f },
+            },
+            .pose = { .clip = parts.posing, .speed = 0 },
+            .color = { 1, 1, 1, 1 },
+        };
+    }
+    Node* owner = model::add_crowd(
+        assets: &fixture.assets,
+        scene: &scene,
+        model: parts.mixed,
+        capacity: CROWD_NATIVE_INSTANCES,
+        pose_bounds: animated_crowd_fixtures::PARTS_POSE_BOUNDS,
+        instances: instances[..],
+    )!!;
+    Mat4 near_singular = matrix::IDENTITY4;
+    near_singular.m10 = 1;
+    near_singular.m01 = 1;
+    near_singular.m11 = bitcast(0x3f800001u, float);
+    assert(near_singular.determinant() > 0 && near_singular.determinant() < 1e-6f);
+    @pool() {
+        AnimatedLodDesc desc = animated_crowd_fixtures::parts_lod_desc(&fixture.assets, parts.mixed);
+        LodLevel[2] levels = {
+            { .first_part = 0, .part_count = animated_crowd_fixtures::PARTS_MESH_COUNT, .min_screen_size = 0.5f },
+            { .first_part = animated_crowd_fixtures::PARTS_MESH_COUNT, .part_count = 1 },
+        };
+        desc.parts[animated_crowd_fixtures::PARTS_MESH_COUNT] = {
+            .draw = { .geometry = mesh.geometry, .material = mesh.material, .local = near_singular },
+            .mesh_index = 1,
+        };
+        model::attach_animated_lod(
+            assets: &fixture.assets,
+            scene: &scene,
+            owner: owner,
+            desc: {
+                .levels = levels[..],
+                .parts = desc.parts[:animated_crowd_fixtures::PARTS_MESH_COUNT + 1],
+            },
+        )!!;
+    };
+    Node* parent = scene.add_node()!!;
+    parent.local.scale = { 2, 3, 1 };
+    owner.local.rotation = quaternion::from_euler(0.0f, 0.0f, 0.4f);
+    scene.reparent(owner, parent);
+    Node* camera_node = scene.add_camera(camera::orthographic(100, 0.1f, 100))!!;
+    camera_node.local.position = { 0, 0, 30 };
+    anim::crowd_update(&fixture.assets, &scene, 0);
+    scene.update_world();
+    Vec3 axis_x = { owner.world.m00, owner.world.m10, owner.world.m20 };
+    Vec3 axis_y = { owner.world.m01, owner.world.m11, owner.world.m21 };
+    assert(math::abs(axis_x.dot(axis_y)) > 0.1f, "Placement hierarchy must contain affine shear");
+    for (uint level = 0; level < 2; level++) {
+        configure_indirect_replay_bias(&fixture, fixture.view, level == 0 ? 16 : -16);
+        uint level_parts = level == 0 ? animated_crowd_fixtures::PARTS_MESH_COUNT : 1;
+        capture_indirect_replay(
+            fixture: &fixture,
+            scene: &scene,
+            owner: owner,
+            camera_node: camera_node,
+            view: fixture.view,
+            selected_level: level,
+            parts: level_parts,
+            expected_triangles: (ulong)level_parts * CROWD_NATIVE_INSTANCES,
+        )!!;
+    }
     check_crowd_native_validation(&fixture.renderer);
 }

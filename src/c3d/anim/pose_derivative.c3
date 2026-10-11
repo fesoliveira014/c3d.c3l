@@ -345,16 +345,6 @@ fn void fold_additive_pose_derivative(
     }
 }
 
-fn usz pose_derivative_storage_bytes(PoseDerivativeScratch* scratch) @private {
-    return PoseDerivativeScratch::size + (usz)scratch.channels.len * ChannelDerivativeSums::size
-      + (usz)scratch.scale_values.len * double[<3>]::size
-      + (usz)scratch.velocity.len * PoseVelocity::size
-      + (usz)scratch.morph_values.len * float::size
-      + (usz)scratch.consumed_scale.len * bool::size
-      + (usz)(scratch.morph_sums.len + scratch.morph_rates.len + scratch.morph_weight_rates.len
-      + scratch.sample.len + scratch.sample_rate.len) * double::size;
-}
-
 fn void pin_analytic_rotation_derivative(Action* action, PoseDerivativeScratch* derivative) @local {
     double[] sample = derivative.sample[:4];
     double[] rate = derivative.sample_rate[:4];

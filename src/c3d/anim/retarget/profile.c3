@@ -6,7 +6,7 @@ import c3d::asset;
 import c3d::maths;
 import std::math;
 
-<* Absent node or mapping-row context, never an error result. *>
+<* Absent node in a profile description. *>
 const uint RETARGET_NO_NODE = uint::max;
 
 <* Generated keys per second in a calibrated clip. *>
@@ -38,44 +38,10 @@ enum ProfileMappingMode {
     BY_INDEX,
 }
 
-<* Precise context accompanying an existing root fault. *>
-enum RetargetReason {
-    NONE,
-    INVALID_PROFILE,
-    INVALID_TEMPLATE,
-    INVALID_CALIBRATION,
-    INVALID_FACING_BASIS,
-    INVALID_STATIC_TRANSFORM,
-    INVALID_MOTION_PAIR,
-    INVALID_MOTION_CARRIER,
-    INVALID_BAKE_OPTIONS,
-    MISSING_SOURCE,
-    MISSING_TARGET,
-    AMBIGUOUS_SOURCE,
-    AMBIGUOUS_TARGET,
-    CONFLICTING_MAPPING,
-    INVALID_MAPPING_INDEX,
-    TEMPLATE_LAYOUT_MISMATCH,
-    TEMPLATE_REFERENCE_MISMATCH,
-    INVALID_CLIP,
-    UNMATCHED_SOURCE,
-    INVALID_MORPH_STRIDE,
-    UNSUPPORTED_ANIMATED_TRANSFORM,
-    CAPACITY_LIMIT,
-}
-
 <* One source node corresponds to one target node. *>
 struct NodeIndexMapping {
     uint source_node;
     uint target_node;
-}
-
-<* Caller-owned context containing no borrowed data. *>
-struct RetargetDiagnostic {
-    RetargetReason reason;
-    uint source_node;
-    uint target_node;
-    uint mapping_row;
 }
 
 <* Immutable calibration and mapping inputs copied during preparation. *>
@@ -111,7 +77,6 @@ struct ProfileNode @private {
     Quat calibration;
     Transform reference;
     uint mapped;
-    uint mapping_row;
     bool consumed;
     bool requires_uniform_scale;
     bool motion;
@@ -134,46 +99,21 @@ struct ProfileData @private {
  Validate the exact template pair and reserved carrier.
  @param source_nodes : "Current imported source template."
  @param [&in] target : "Current destination template."
- @param [inout] diagnostic : "Optional deterministic failure context."
  @return? c3d::INVALID_ARGUMENT
 *>
-fn void? RetargetProfile.validate_templates(
-    &self,
-    NodeTemplate[] source_nodes,
-    ModelTemplate* target,
-    RetargetDiagnostic* diagnostic = null,
-) {
-    clear_retarget_diagnostic(diagnostic);
-    if (!self.data) {
-        return profile_failure(diagnostic, c3d::INVALID_ARGUMENT, RetargetReason.INVALID_PROFILE)~;
-    }
+fn void? RetargetProfile.validate_templates(&self, NodeTemplate[] source_nodes, ModelTemplate* target) {
+    if (!self.data) return c3d::INVALID_ARGUMENT~;
 
     ProfileData* data = (ProfileData*)self.data;
-    validate_profile_snapshot(
-        snapshot: data.source_nodes,
-        nodes: source_nodes,
-        source: true,
-        diagnostic: diagnostic,
-    )!;
-    validate_profile_snapshot(
-        snapshot: data.target_nodes,
-        nodes: target.nodes,
-        source: false,
-        diagnostic: diagnostic,
-    )!;
-    validate_profile_carrier(
-        nodes: data.target_nodes,
-        target: target,
-        carrier: data.target_carrier,
-        diagnostic: diagnostic,
-    )!;
+    validate_profile_snapshot(data.source_nodes, source_nodes)!;
+    validate_profile_snapshot(data.target_nodes, target.nodes)!;
+    validate_profile_carrier(data.target_nodes, target, data.target_carrier)!;
 }
 
 <*
  Prepare an owning immutable calibration for an exact template pair.
  @param source_nodes : "Borrowed only during preparation."
  @param [&in] target : "Authored transforms remain unchanged."
- @param [inout] diagnostic : "Optional deterministic failure context."
  @return? c3d::INVALID_ARGUMENT, c3d::ASSET_FORMAT_ERROR, c3d::CAPACITY_EXCEEDED
 *>
 fn RetargetProfile? create_retarget_profile(
@@ -181,25 +121,11 @@ fn RetargetProfile? create_retarget_profile(
     NodeTemplate[] source_nodes,
     ModelTemplate* target,
     RetargetProfileDesc desc,
-    RetargetDiagnostic* diagnostic = null,
 ) {
-    clear_retarget_diagnostic(diagnostic);
-
-    defer catch {
-        if (diagnostic && diagnostic.reason == RetargetReason.NONE) {
-            diagnostic.reason = RetargetReason.CAPACITY_LIMIT;
-        }
-    }
-
     @pool() {
-        validate_profile_templates(source_nodes, target.nodes, diagnostic)!;
-        validate_profile_calibration(
-            source: source_nodes,
-            target: target.nodes,
-            desc: &desc,
-            diagnostic: diagnostic,
-        )!;
-        Quat facing = profile_facing_rotation(desc.facing, diagnostic)!;
+        validate_profile_templates(source_nodes, target.nodes)!;
+        validate_profile_calibration(source_nodes, target.nodes, &desc)!;
+        Quat facing = profile_facing_rotation(desc.facing)!;
 
         ProfileNode[] source = alloc::new_array_try(tmem, ProfileNode, source_nodes.len)
           ?? c3d::CAPACITY_EXCEEDED~!;
@@ -213,7 +139,6 @@ fn RetargetProfile? create_retarget_profile(
                 .authored = node.local,
                 .calibration = desc.source_calibration[index].normalize(),
                 .mapped = RETARGET_NO_NODE,
-                .mapping_row = RETARGET_NO_NODE,
             };
         }
 
@@ -224,33 +149,17 @@ fn RetargetProfile? create_retarget_profile(
                 .authored = node.local,
                 .calibration = node.local.rotation.normalize(),
                 .mapped = RETARGET_NO_NODE,
-                .mapping_row = RETARGET_NO_NODE,
             };
         }
 
-        prepare_profile_bindings(
-            source: source,
-            target: destination,
-            desc: &desc,
-            diagnostic: diagnostic,
-        )!;
+        prepare_profile_bindings(source, destination, &desc)!;
 
         foreach (index, &node : destination) {
             if (node.mapped != RETARGET_NO_NODE) node.calibration = desc.target_calibration[index].normalize();
         }
 
-        prepare_profile_motion(
-            source: source,
-            target: destination,
-            desc: &desc,
-            diagnostic: diagnostic,
-        )!;
-        validate_profile_carrier(
-            nodes: destination,
-            target: target,
-            carrier: desc.target_carrier,
-            diagnostic: diagnostic,
-        )!;
+        prepare_profile_motion(source, destination, &desc)!;
+        validate_profile_carrier(destination, target, desc.target_carrier)!;
 
         foreach (index, &node : source) {
             if (node.mapped == RETARGET_NO_NODE) continue;
@@ -276,8 +185,8 @@ fn RetargetProfile? create_retarget_profile(
             }
         }
 
-        compose_profile_references(source, true, diagnostic)!;
-        compose_profile_references(destination, false, diagnostic)!;
+        compose_profile_references(source)!;
+        compose_profile_references(destination)!;
 
         usz header_bytes = profile_align(ProfileData::size, ProfileNode::alignment);
         usz node_count = source.len + destination.len;
@@ -330,33 +239,6 @@ fn void destroy_retarget_profile(RetargetProfile* profile) {
     *profile = {};
 }
 
-fn void clear_retarget_diagnostic(RetargetDiagnostic* diagnostic) @private {
-    if (diagnostic) *diagnostic = {
-        .reason = RetargetReason.NONE,
-        .source_node = RETARGET_NO_NODE,
-        .target_node = RETARGET_NO_NODE,
-        .mapping_row = RETARGET_NO_NODE,
-    };
-}
-
-fn fault profile_failure(
-    RetargetDiagnostic* diagnostic,
-    fault excuse,
-    RetargetReason reason,
-    uint source_node = RETARGET_NO_NODE,
-    uint target_node = RETARGET_NO_NODE,
-    uint mapping_row = RETARGET_NO_NODE,
-) @private {
-    if (diagnostic) *diagnostic = {
-        .reason = reason,
-        .source_node = source_node,
-        .target_node = target_node,
-        .mapping_row = mapping_row,
-    };
-
-    return excuse;
-}
-
 fn bool profile_finite_vec(Vec3 value) @private {
     return math::is_finite(value.x) && math::is_finite(value.y) && math::is_finite(value.z);
 }
@@ -397,24 +279,12 @@ fn Transform profile_relative(Transform parent, Transform world) @private {
     };
 }
 
-fn void? compose_profile_references(
-    ProfileNode[] nodes,
-    bool source,
-    RetargetDiagnostic* diagnostic,
-) @private {
-    foreach (uint index, &node : nodes) {
+fn void? compose_profile_references(ProfileNode[] nodes) @private {
+    foreach (&node : nodes) {
         Transform local = node.authored;
         local.rotation = node.calibration;
         node.reference = node.parent < 0 ? local : profile_compose(nodes[node.parent].reference, local);
-        if (!profile_valid_transform(node.reference)) {
-            return profile_failure(
-                diagnostic: diagnostic,
-                excuse: c3d::INVALID_ARGUMENT,
-                reason: RetargetReason.INVALID_STATIC_TRANSFORM,
-                source_node: source ? index : RETARGET_NO_NODE,
-                target_node: source ? RETARGET_NO_NODE : index,
-            )~;
-        }
+        if (!profile_valid_transform(node.reference)) return c3d::INVALID_ARGUMENT~;
     }
 }
 

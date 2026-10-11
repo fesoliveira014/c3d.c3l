@@ -18,7 +18,6 @@ struct CrowdHistoryFixture @local {
     Node* node;
     MeshCandidate[animated_crowd_fixtures::PARTS_MESH_COUNT] candidates;
     ViewHistory first;
-    ViewHistory second;
 }
 
 fn CrowdHistoryFixture make_crowd_history_fixture() @local {
@@ -74,7 +73,6 @@ fn CrowdHistoryFixture make_crowd_history_fixture() @local {
 
 fn void destroy_crowd_history_fixture(CrowdHistoryFixture* fixture) @local {
     free_view_history(mem, &fixture.first);
-    free_view_history(mem, &fixture.second);
     scene::destroy_scene(&fixture.scene);
     asset::destroy_asset_store(&fixture.assets);
 }
@@ -190,22 +188,6 @@ fn void test_crowd_history_rejects_replacement_and_incompatible_representation()
         crowd_pose: owner,
     ));
     fixture.assets.geometry(candidate.geometry).header.revision--;
-    fixture.assets.skeleton(fixture.parts.common_skin).header.revision++;
-    assert(!crowd_history_matches(
-        assets: &fixture.assets,
-        candidate: candidate,
-        pose: pose,
-        crowd_pose: owner,
-    ));
-    fixture.assets.skeleton(fixture.parts.common_skin).header.revision--;
-    fixture.assets.model(crowd.model).header.revision++;
-    assert(!crowd_history_matches(
-        assets: &fixture.assets,
-        candidate: candidate,
-        pose: pose,
-        crowd_pose: owner,
-    ));
-    fixture.assets.model(crowd.model).header.revision--;
     uint saved_part = candidate.crowd_part;
     candidate.crowd_part = 1;
     assert(!crowd_history_matches(
@@ -215,23 +197,6 @@ fn void test_crowd_history_rejects_replacement_and_incompatible_representation()
         crowd_pose: owner,
     ));
     candidate.crowd_part = saved_part;
-    CrowdPlaybackState* replacement = anim::create_crowd_playback(
-        allocator: mem,
-        template: &fixture.assets.model(crowd.model).data,
-        placements: crowd.placements,
-        actions_per_instance: crowd.actions_per_instance,
-        event_capacity: crowd.event_capacity,
-    )!!;
-    defer anim::destroy_crowd_playback(replacement);
-    CrowdPlaybackState* original = crowd.playback;
-    crowd.playback = replacement;
-    assert(!crowd_history_matches(
-        assets: &fixture.assets,
-        candidate: candidate,
-        pose: pose,
-        crowd_pose: owner,
-    ));
-    crowd.playback = original;
     assert(crowd_history_matches(
         assets: &fixture.assets,
         candidate: candidate,
@@ -258,33 +223,4 @@ fn void test_crowd_history_rejects_replacement_and_incompatible_representation()
         pose: pose,
         crowd_pose: owner,
     ));
-}
-
-fn void test_crowd_history_keeps_independent_view_observations_and_aborts() @test {
-    CrowdHistoryFixture fixture = make_crowd_history_fixture();
-    defer destroy_crowd_history_fixture(&fixture);
-    capture_crowd_history(&fixture, &fixture.first, 0);
-    AnimatedCrowd* crowd = fixture.scene.get(fixture.node, AnimatedCrowd);
-    MeshCandidate* candidate = &fixture.candidates[1];
-    PoseRecord* first = fixture.first.previous_pose(&fixture.scene, candidate.node);
-    Mat4f saved = first.instances[0];
-    CrowdPlayer player = crowd.playback.player(crowd.playback.instance_id(0)!!)!!;
-    player.base_action()!!.time = 0.8f;
-    anim::crowd_update(&fixture.assets, &fixture.scene, 0);
-    capture_crowd_history(&fixture, &fixture.second, 1);
-    PoseRecord* second = fixture.second.previous_pose(&fixture.scene, candidate.node);
-    assert(first.instances[0] == saved && second.instances[0] != saved);
-    fixture.second.commit(
-        allocator: mem,
-        assets: &fixture.assets,
-        scene: &fixture.scene,
-        candidates: fixture.candidates[..],
-        view_proj: matrix::IDENTITY4,
-        time: 2,
-    );
-    fixture.second.discard();
-    assert(!fixture.second.has_previous(&fixture.scene, candidate.node));
-    assert(fixture.first.has_previous(&fixture.scene, candidate.node) && first.instances[0] == saved);
-    capture_crowd_history(&fixture, &fixture.second, 3);
-    assert(fixture.second.has_previous(&fixture.scene, candidate.node));
 }

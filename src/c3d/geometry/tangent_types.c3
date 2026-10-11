@@ -1,4 +1,4 @@
-// Altered source: C3 triangle and quad paths derived from Morten S. Mikkelsen's MikkTSpace.
+// Altered source: C3 triangle path derived from Morten S. Mikkelsen's MikkTSpace.
 /** \file mikktspace/mikktspace.c
  *  \ingroup mikktspace
  */
@@ -27,7 +27,6 @@ import c3d;
 import std::core::mem::alloc, std::math;
 
 const int MARK_DEGENERATE @private = 1;
-const int QUAD_ONE_DEGENERATE @private = 2;
 const int GRID_CELLS @private = 2048;
 const uint INTERNAL_RND_SORT_SEED @private = 39871946;
 const int GROUP_WITH_ANY @private = 4;
@@ -66,8 +65,6 @@ struct MikkTriangle @private {
     float magnitude_t;
     int flags;
     int face;
-    int output_offset;
-    int[3] vertex_numbers;
 }
 
 struct MikkGroup @private {
@@ -80,8 +77,6 @@ struct MikkGroup @private {
 struct MikkFullMesh @private {
     MikkVertex[] vertices;
     uint[] indices;
-    int[] face_offsets;
-    int[] face_sizes;
     uint uv_set;
 }
 

@@ -151,12 +151,6 @@ fn void retire_prepare_pipeline(Renderer* renderer, gpu::PipelineHandle pipeline
 }
 
 fn void retire_prepare_texture(Renderer* renderer, PrepareUnit* unit, TextureRes* texture) @private {
-    if (texture.coverage_resource) retire_prepare_resource(
-        renderer: renderer,
-        unit: unit,
-        resource: { .kind = RetiredKind.TEXTURE_COVERAGE, .coverage_resource = texture.coverage_resource },
-    );
-
     foreach (view : texture.storage_views) {
         if (view.is_valid()) retire_prepare_resource(
             renderer: renderer,
@@ -231,7 +225,6 @@ fn void commit_prepare_jobs(Renderer* renderer, Frame* slot) @private {
 
         switch (install.kind) {
             case TEXTURE:
-                if (install.new_texture.coverage_resource) install.new_texture.coverage_resource.committed = true;
                 retire_prepare_texture(renderer, &retired_unit, &install.old_texture);
 
             case GEOMETRY: retire_prepare_geometry(renderer, &retired_unit, &install.old_geometry);
@@ -278,8 +271,6 @@ fn void commit_prepare_jobs(Renderer* renderer, Frame* slot) @private {
 fn bool retired_matches_texture(Retired retired, TextureRes* texture) @local {
     switch (retired.kind) {
         case TEXTURE: return retired.texture == texture.texture;
-
-        case TEXTURE_COVERAGE: return retired.coverage_resource == texture.coverage_resource;
 
         case TEXTURE_VIEW:
             if (retired.texture_view == texture.view) return true;
@@ -449,15 +440,6 @@ fn void rollback_prepare_cursors(Renderer* renderer, PrepareRecord* record) @pri
     record.pending_gpu = false;
     record.texels_done = 0;
     foreach (unit : record.units) record.texels_done = prepare_add(record.texels_done, unit.generated_done);
-    refresh_prepare_progress(record);
-}
-
-fn void commit_prepare_cursors(PrepareRecord* record) @private {
-    foreach (&unit : record.units) {
-        unit.checkpoint.active = false;
-        unit.referenced_this_frame = false;
-    }
-    record.pending_gpu = false;
     refresh_prepare_progress(record);
 }
 

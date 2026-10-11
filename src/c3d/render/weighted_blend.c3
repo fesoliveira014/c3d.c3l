@@ -16,6 +16,8 @@ fn bool joins_weighted_pass(
     uint shadow_flags,
 ) @private {
     if (mode != TransparencyMode.WEIGHTED) return false;
+    if (material.kind == MaterialKind.PHYSICAL && material.physical.transmission > 0) return false;
+
     MaterialCommon* common = &material.common;
     if (common.alpha_mode != AlphaMode.BLEND || common.blend_mode != BlendMode.PREMULTIPLIED_ALPHA) return false;
     if (material.kind != MaterialKind.CUSTOM) return true;

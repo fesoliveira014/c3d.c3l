@@ -4,167 +4,110 @@ import c3d;
 import c3d::anim;
 import c3d::asset;
 import c3d::camera;
-import c3d::light;
+import c3d::geometry;
 import c3d::maths;
 import c3d::model;
 import c3d::render @public;
 import c3d::scene;
-import c3d::shader;
 import c3d::test::animated_crowd_fixtures;
 import gpu;
-import std::io;
 import std::math;
 
-fn void? animated_lod_native_temporal_frame(
+const float CROWD_NATIVE_VELOCITY_TOLERANCE @private = 2e-3f;
+
+fn void? configure_crowd_native_temporal(Fixture* fixture, CrowdNativeOutput* output, float lod_bias = 0) @private {
+    ViewDesc desc = render::texture_view_desc(output.target);
+    desc.post.anti_aliasing = AntiAliasing.TAA;
+    desc.post.motion_blur = true;
+    desc.lod_bias = lod_bias;
+    return render::configure_view(&fixture.renderer, output.view, desc);
+}
+
+fn void? capture_crowd_native_temporal(
     Fixture* fixture,
     CrowdNativePair* pair,
-    CrowdNativeOutput* crowd,
-    CrowdNativeOutput* ordinary,
+    CrowdNativeOutput[] outputs,
+    uint views = uint::max,
+    bool aborted = false,
 ) @private {
     Renderer* renderer = &fixture.renderer;
     renderer.begin_frame({ .time = 0.37, .delta = 0 })!;
     defer catch render::abort_frame(renderer);
-    record_crowd_native_temporal_view(
-        fixture: fixture,
-        pair: pair,
-        output: crowd,
-        crowd_visible: true,
-    )!;
-    record_crowd_native_temporal_view(
-        fixture: fixture,
-        pair: pair,
-        output: ordinary,
-        crowd_visible: false,
-    )!;
-    uint expected_palettes = pair.scene.get(pair.crowd, AnimatedCrowd).joint_count ? 1 : 0;
-    assert(renderer.deformation.animated_palettes.len() == expected_palettes);
+    foreach (uint index, &output : outputs) {
+        if (!(views & (1u << (index / 2)))) continue;
+        record_crowd_native_view(
+            fixture: fixture,
+            pair: pair,
+            probe: &output.probe,
+            view: output.view,
+            crowd_visible: index % 2 == 0,
+            images: &output.actual,
+        )!;
+    }
+    if (aborted) {
+        render::abort_frame(renderer);
+        return;
+    }
+
     renderer.end_frame()!;
-    render::wait_frames(renderer)!;
-    read_crowd_native_temporal(fixture, crowd)!;
-    read_crowd_native_temporal(fixture, ordinary)!;
+    foreach (uint index, &output : outputs) {
+        if (views & (1u << (index / 2))) read_crowd_native_view(fixture, &output.probe, &output.actual)!;
+    }
 }
 
-fn void test_animated_lod_native_rgba_equal_count_parity_and_replacement() @test {
-    Fixture fixture;
-    create_fixture(mem, &fixture)!!;
-    defer destroy_fixture(&fixture);
-    PartsFixture parts = animated_crowd_fixtures::add_parts_fixture(&fixture.assets)!!;
-    CrowdNativePair pair;
-    create_crowd_native_pair(
-        allocator: mem,
-        fixture: &fixture,
-        pair: &pair,
-        model: parts.mixed,
-        clip: parts.posing,
-        bounds: animated_crowd_fixtures::PARTS_POSE_BOUNDS,
-    )!!;
-    defer scene::destroy_scene(&pair.scene);
-    *pair.scene.get(pair.camera, Camera) = camera::orthographic(24, 0.1f, 100);
-    for (uint source = 0; source < CROWD_NATIVE_INSTANCES; source++) {
-        CrowdPlayer player = crowd_native_player(&pair, source)!!;
-        Animator* animator = pair.scene.get(pair.ordinary[source], Animator);
-        float phase = 0.1f + 0.35f * (float)source;
-        crowd_native_action_controls(player.base_action()!!, phase);
-        crowd_native_action_controls(animator.action(pair.ordinary_base[source]), phase);
-    }
-    crowd_native_update(&fixture, &pair, 0);
-    @pool() {
-        model::attach_animated_lod(
-            assets: &fixture.assets,
-            scene: &pair.scene,
-            owner: pair.crowd,
-            desc: lod_trace_desc(&fixture.assets, parts.mixed),
-        )!!;
-    };
-    CrowdNativeOutput actual;
-    create_crowd_native_output(&fixture, &actual)!!;
-    defer destroy_crowd_native_output(&fixture, &actual);
-    CrowdNativeOutput expected;
-    create_crowd_native_output(&fixture, &expected)!!;
-    defer destroy_crowd_native_output(&fixture, &expected);
-    configure_crowd_native_temporal(&fixture, &actual)!!;
-    configure_crowd_native_temporal(&fixture, &expected)!!;
-    animated_lod_native_temporal_frame(
-        fixture: &fixture,
-        pair: &pair,
-        crowd: &actual,
-        ordinary: &expected,
-    )!!;
-    check_crowd_native_temporal_flags(&actual.actual, 1);
-    animated_lod_native_temporal_frame(
-        fixture: &fixture,
-        pair: &pair,
-        crowd: &actual,
-        ordinary: &expected,
-    )!!;
-    check_crowd_native_temporal_flags(&actual.actual, 0);
-    AnimatedCrowd* crowd = pair.scene.get(pair.crowd, AnimatedCrowd);
-    crowd.placements[0].scale.x = -crowd.placements[0].scale.x;
-    crowd.placements[2].scale.x = -crowd.placements[2].scale.x;
-    pair.ordinary[0].local.scale.x = -pair.ordinary[0].local.scale.x;
-    pair.ordinary[2].local.scale.x = -pair.ordinary[2].local.scale.x;
-    pair.scene.write_crowd_batches(crowd);
-    crowd_native_update(&fixture, &pair, 0);
-    assert(crowd.count == CROWD_NATIVE_INSTANCES && crowd.parts.len == animated_crowd_fixtures::PARTS_MESH_COUNT);
-    animated_lod_native_temporal_frame(
-        fixture: &fixture,
-        pair: &pair,
-        crowd: &actual,
-        ordinary: &expected,
-    )!!;
-    check_crowd_native_temporal_flags(&actual.actual, 0, false);
-    check_crowd_native_image(actual.actual.depth, expected.actual.depth, CROWD_NATIVE_DEPTH_TOLERANCE);
-    check_crowd_native_image(expected.actual.depth, actual.actual.depth, CROWD_NATIVE_DEPTH_TOLERANCE);
-    check_crowd_native_velocity(actual.actual.velocity, expected.actual.velocity);
-    check_crowd_native_velocity(expected.actual.velocity, actual.actual.velocity);
-    float largest_motion;
-    foreach (index, depth : expected.actual.depth) {
+fn void check_crowd_native_temporal_flags(CrowdNativeImages* images, float rejection, bool still = true) @private {
+    assert(images.velocity_format == gpu::Format.RGBA16_FLOAT);
+    uint covered;
+    foreach (index, depth : images.depth) {
         if (depth.x <= 0) continue;
-        Vec4 velocity = expected.actual.velocity[index];
-        largest_motion = math::max(largest_motion, math::max(math::abs(velocity.x), math::abs(velocity.y)));
+        covered++;
+        Vec4 velocity = images.velocity[index];
+        assert(velocity.w == rejection, "Crowd source correspondence rejection differs");
+        if (still) {
+            assert(math::abs(velocity.x) < CROWD_NATIVE_STILL_TOLERANCE);
+            assert(math::abs(velocity.y) < CROWD_NATIVE_STILL_TOLERANCE);
+        }
     }
-    assert(largest_motion > 10 * CROWD_NATIVE_VELOCITY_TOLERANCE);
-    io::printfn("RGBA equal-count swap instances=%s parts=%s", crowd.count, crowd.parts.len);
-    io::printfn("Largest expected UV motion=%s", largest_motion);
-    animated_lod_native_temporal_frame(
-        fixture: &fixture,
-        pair: &pair,
-        crowd: &actual,
-        ordinary: &expected,
-    )!!;
-    check_crowd_native_temporal_flags(&actual.actual, 0);
-    CrowdInstance[CROWD_NATIVE_INSTANCES] replacement;
-    for (uint source = 0; source < CROWD_NATIVE_INSTANCES; source++) {
-        CrowdPlayer player = crowd_native_player(&pair, source)!!;
-        replacement[source] = {
-            .placement = crowd.placements[source],
-            .pose = { .clip = parts.posing, .time = player.base_action()!!.time, .speed = 0, .loop = false },
-            .color = crowd.colors[source],
-        };
-    }
-    model::set_crowd(
-        assets: &fixture.assets,
-        scene: &pair.scene,
-        node: pair.crowd,
-        instances: replacement[..],
-    )!!;
-    animated_lod_native_temporal_frame(
-        fixture: &fixture,
-        pair: &pair,
-        crowd: &actual,
-        ordinary: &expected,
-    )!!;
-    check_crowd_native_temporal_flags(&actual.actual, 1);
-    animated_lod_native_temporal_frame(
-        fixture: &fixture,
-        pair: &pair,
-        crowd: &actual,
-        ordinary: &expected,
-    )!!;
-    check_crowd_native_temporal_flags(&actual.actual, 0);
-    check_crowd_native_validation(&fixture.renderer);
+    assert(covered > 0);
 }
 
+fn void check_crowd_native_velocity(Vec4[] actual, Vec4[] expected) @private {
+    for (int y = 1; y + 1 < (int)CROWD_NATIVE_HEIGHT; y++) {
+        for (int x = 1; x + 1 < (int)CROWD_NATIVE_WIDTH; x++) {
+            Vec4 pixel = actual[y * (int)CROWD_NATIVE_WIDTH + x];
+            bool matched;
+            for (int dy = -1; dy <= 1 && !matched; dy++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    Vec4 delta = math::abs(pixel - expected[(y + dy) * (int)CROWD_NATIVE_WIDTH + x + dx]);
+                    if (math::max(delta.x, delta.y) < CROWD_NATIVE_VELOCITY_TOLERANCE) matched = true;
+                }
+            }
+            assert(matched, "Crowd velocity read another logical source's previous pose");
+        }
+    }
+}
+
+fn float check_crowd_native_view_motion(
+    CrowdNativeOutput[] outputs,
+    uint view,
+    float rejection,
+    bool still = true,
+) @private {
+    CrowdNativeImages* actual = &outputs[2 * view].actual;
+    CrowdNativeImages* reference = &outputs[2 * view + 1].actual;
+    check_crowd_native_temporal_flags(actual, rejection, still);
+    check_crowd_native_image(actual.depth, reference.depth, CROWD_NATIVE_DEPTH_TOLERANCE);
+    check_crowd_native_image(reference.depth, actual.depth, CROWD_NATIVE_DEPTH_TOLERANCE);
+    check_crowd_native_velocity(actual.velocity, reference.velocity);
+    check_crowd_native_velocity(reference.velocity, actual.velocity);
+    float maximum;
+    foreach (pixel, depth : reference.depth) {
+        if (depth.x <= 0) continue;
+        maximum = math::max(maximum, math::max(math::abs(reference.velocity[pixel].x),
+            math::abs(reference.velocity[pixel].y)));
+    }
+    return maximum;
+}
 
 fn void set_animated_lod_native_motion(
     Fixture* fixture,
@@ -187,72 +130,107 @@ fn void set_animated_lod_native_motion(
     crowd_native_update(fixture, pair, 0);
 }
 
-fn void? capture_animated_lod_native_views(
-    Fixture* fixture,
-    CrowdNativePair* pair,
-    CrowdNativeOutput[] outputs,
-    uint views,
-    bool aborted = false,
-    gpu::MappedGpuSpan[] histories = {},
-) @private {
-    Renderer* renderer = &fixture.renderer;
-    renderer.begin_frame({ .time = 0.37, .delta = 0 })!;
-    defer catch render::abort_frame(renderer);
-    for (uint view = 0; view < 2; view++) {
-        if (!(views & (1u << view))) continue;
-        for (uint source = 0; source < 2; source++) {
-            record_crowd_native_temporal_view(
-                fixture: fixture,
-                pair: pair,
-                output: &outputs[2 * view + source],
-                crowd_visible: source == 0,
-            )!;
-            if (source == 0 && histories.len) {
-                record_crowd_lod_native_history(
-                    fixture: fixture,
-                    pair: pair,
-                    view: outputs[2 * view].view,
-                    readback: histories[view],
-                )!;
-            }
-        }
-    }
-    assert(renderer.deformation.animated_palettes.len() == 1);
-    if (aborted) {
-        render::abort_frame(renderer);
-        return;
-    }
-    renderer.end_frame()!;
-    render::wait_frames(renderer)!;
-    for (uint view = 0; view < 2; view++) {
-        if (!(views & (1u << view))) continue;
-        if (histories.len) gpu::invalidate_mapped_span(&renderer.device, histories[view].span)!;
-        for (uint source = 0; source < 2; source++) {
-            read_crowd_native_temporal(fixture, &outputs[2 * view + source])!;
-        }
-    }
+fn void? create_crowd_native_morph_pair(Fixture* fixture, CrowdNativePair* pair, ModelId model) @private {
+    Transform[CROWD_NATIVE_INSTANCES] placements = crowd_native_real_placements();
+    foreach (&placement : placements) placement.scale *= 0.6f;
+    create_crowd_native_pair(
+        allocator: mem,
+        fixture: fixture,
+        pair: pair,
+        model: model,
+        clip: fixture.assets.model(model).data.clips[0],
+        bounds: { .min = { -2, -2, -2 }, .max = { 2, 2, 2 } },
+        placements: placements[..],
+    )!;
+    *pair.scene.get(pair.camera, Camera) = camera::orthographic(5, 0.1f, 100);
+    pair.camera.local.position = { 0, 0, 12 };
 }
 
-fn float check_animated_lod_native_view_motion(
-    CrowdNativeOutput[] outputs,
-    uint view,
-    float rejection,
-    bool still,
-) @private {
-    CrowdNativeImages* actual = &outputs[2 * view].actual;
-    CrowdNativeImages* reference = &outputs[2 * view + 1].actual;
-    check_crowd_native_temporal_flags(actual, rejection, still);
-    check_crowd_native_image(actual.depth, reference.depth, CROWD_NATIVE_DEPTH_TOLERANCE);
-    check_crowd_native_image(reference.depth, actual.depth, CROWD_NATIVE_DEPTH_TOLERANCE);
-    check_crowd_native_velocity(actual.velocity, reference.velocity);
-    check_crowd_native_velocity(reference.velocity, actual.velocity);
-    float maximum;
-    foreach (pixel, depth : reference.depth) {
-        if (depth.x <= 0) continue;
-        maximum = math::max(maximum, math::max(math::abs(reference.velocity[pixel].x),
-            math::abs(reference.velocity[pixel].y)));
+fn void test_crowd_native_rgba_history_equal_count_parity_swap_and_replacement() @test {
+    foreach (bool lod : { false, true }) {
+        Fixture fixture;
+        create_fixture(mem, &fixture)!!;
+        defer destroy_fixture(&fixture);
+        PartsFixture parts = animated_crowd_fixtures::add_parts_fixture(&fixture.assets)!!;
+        CrowdNativePair pair;
+        create_crowd_native_pair(
+            allocator: mem,
+            fixture: &fixture,
+            pair: &pair,
+            model: parts.mixed,
+            clip: parts.posing,
+            bounds: animated_crowd_fixtures::PARTS_POSE_BOUNDS,
+        )!!;
+        defer scene::destroy_scene(&pair.scene);
+        *pair.scene.get(pair.camera, Camera) = camera::orthographic(24, 0.1f, 100);
+        for (uint source = 0; source < CROWD_NATIVE_INSTANCES; source++) {
+            CrowdPlayer player = crowd_native_player(&pair, source)!!;
+            Animator* animator = pair.scene.get(pair.ordinary[source], Animator);
+            float phase = 0.1f + 0.35f * (float)source;
+            crowd_native_action_controls(player.base_action()!!, phase);
+            crowd_native_action_controls(animator.action(pair.ordinary_base[source]), phase);
+        }
+        crowd_native_update(&fixture, &pair, 0);
+        if (lod) {
+            @pool() {
+                model::attach_animated_lod(
+                    assets: &fixture.assets,
+                    scene: &pair.scene,
+                    owner: pair.crowd,
+                    desc: animated_crowd_fixtures::parts_lod_desc(&fixture.assets, parts.mixed),
+                )!!;
+            };
+        }
+        CrowdNativeOutput[2] outputs;
+        foreach (&output : outputs) {
+            create_crowd_native_output(&fixture, output)!!;
+            configure_crowd_native_temporal(&fixture, output)!!;
+        }
+        defer foreach (&output : outputs) destroy_crowd_native_output(&fixture, output);
+        for (uint frame = 0; frame < 2; frame++) {
+            capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
+            check_crowd_native_temporal_flags(&outputs[0].actual, frame ? 0 : 1);
+        }
+
+        AnimatedCrowd* crowd = pair.scene.get(pair.crowd, AnimatedCrowd);
+        foreach (source : (uint[2]){ 0, 2 }) {
+            crowd.placements[source].scale.x = -crowd.placements[source].scale.x;
+            pair.ordinary[source].local.scale.x = -pair.ordinary[source].local.scale.x;
+        }
+        pair.scene.write_crowd_batches(crowd);
+        crowd_native_update(&fixture, &pair, 0);
+        capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
+        float largest_motion = check_crowd_native_view_motion(
+            outputs: outputs[..],
+            view: 0,
+            rejection: 0,
+            still: false,
+        );
+        assert(largest_motion > 10 * CROWD_NATIVE_VELOCITY_TOLERANCE);
+        capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
+        check_crowd_native_temporal_flags(&outputs[0].actual, 0);
+
+        CrowdInstance[CROWD_NATIVE_INSTANCES] replacement;
+        for (uint source = 0; source < CROWD_NATIVE_INSTANCES; source++) {
+            CrowdPlayer player = crowd_native_player(&pair, source)!!;
+            replacement[source] = {
+                .placement = crowd.placements[source],
+                .pose = { .clip = parts.posing, .time = player.base_action()!!.time, .speed = 0, .loop = false },
+                .color = crowd.colors[source],
+            };
+        }
+        model::set_crowd(
+            assets: &fixture.assets,
+            scene: &pair.scene,
+            node: pair.crowd,
+            instances: replacement[..],
+        )!!;
+        for (uint frame = 0; frame < 2; frame++) {
+            capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
+            check_crowd_native_temporal_flags(&outputs[0].actual, frame ? 0 : 1);
+        }
+        check_crowd_native_validation(&fixture.renderer);
     }
-    return maximum;
 }
 
 fn void test_animated_lod_native_independent_view_skip_cut_abort_and_compatible_level_history() @test {
@@ -287,61 +265,33 @@ fn void test_animated_lod_native_independent_view_skip_cut_abort_and_compatible_
             assets: &fixture.assets,
             scene: &pair.scene,
             owner: pair.crowd,
-            desc: lod_trace_desc(&fixture.assets, parts.mixed),
+            desc: animated_crowd_fixtures::parts_lod_desc(&fixture.assets, parts.mixed),
         )!!;
     };
-    gpu::MappedGpuSpan[2] histories;
-    for (uint view = 0; view < 2; view++) histories[view] = allocate_crowd_lod_native_history(&fixture.renderer)!!;
-    defer foreach (history : histories) free_crowd_lod_native_history(&fixture.renderer, history);
     CrowdNativeOutput[4] outputs;
-    for (uint index = 0; index < outputs.len; index++) {
-        create_crowd_native_output(&fixture, &outputs[index])!!;
-        configure_crowd_native_temporal(&fixture, &outputs[index])!!;
+    foreach (&output : outputs) {
+        create_crowd_native_output(&fixture, output)!!;
+        configure_crowd_native_temporal(&fixture, output)!!;
     }
     defer foreach (&output : outputs) destroy_crowd_native_output(&fixture, output);
-    capture_animated_lod_native_views(
-        fixture: &fixture,
-        pair: &pair,
-        outputs: outputs[..],
-        views: 3,
-        histories: histories[..],
-    )!!;
-    for (uint view = 0; view < 2; view++) (void)check_animated_lod_native_view_motion(
-        outputs: outputs[..],
-        view: (uint)view,
-        rejection: 1,
-        still: true,
-    );
-    capture_animated_lod_native_views(
-        fixture: &fixture,
-        pair: &pair,
-        outputs: outputs[..],
-        views: 3,
-        histories: histories[..],
-    )!!;
-    for (uint view = 0; view < 2; view++) (void)check_animated_lod_native_view_motion(
-        outputs: outputs[..],
-        view: (uint)view,
-        rejection: 0,
-        still: true,
-    );
-    ViewHistory* skipped = &fixture.renderer.views.get(outputs[2].view).history;
-    ulong skipped_serial = skipped.serial;
+    for (uint frame = 0; frame < 2; frame++) {
+        capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
+        for (uint view = 0; view < 2; view++) (void)check_crowd_native_view_motion(outputs[..], view, frame ? 0 : 1);
+    }
+
     set_animated_lod_native_motion(
         fixture: &fixture,
         pair: &pair,
         phase_offset: 0.04f,
         placement_offset: 0.2f,
     );
-    capture_animated_lod_native_views(
+    capture_crowd_native_temporal(
         fixture: &fixture,
         pair: &pair,
         outputs: outputs[..],
         views: 1,
-        histories: histories[..],
     )!!;
-    assert(skipped.valid && skipped.serial == skipped_serial);
-    float first_motion = check_animated_lod_native_view_motion(
+    float first_motion = check_crowd_native_view_motion(
         outputs: outputs[..],
         view: 0,
         rejection: 0,
@@ -354,156 +304,62 @@ fn void test_animated_lod_native_independent_view_skip_cut_abort_and_compatible_
         phase_offset: 0.08f,
         placement_offset: 0.4f,
     );
-    capture_animated_lod_native_views(
-        fixture: &fixture,
-        pair: &pair,
-        outputs: outputs[..],
-        views: 3,
-        histories: histories[..],
-    )!!;
-    float resumed_motion = check_animated_lod_native_view_motion(
+    capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
+    float resumed_motion = check_crowd_native_view_motion(
         outputs: outputs[..],
         view: 1,
         rejection: 0,
         still: false,
     );
-    (void)check_animated_lod_native_view_motion(
+    (void)check_crowd_native_view_motion(
         outputs: outputs[..],
         view: 0,
         rejection: 0,
         still: false,
     );
-    assert(resumed_motion > 10 * CROWD_NATIVE_VELOCITY_TOLERANCE);
     assert(resumed_motion > first_motion + CROWD_NATIVE_VELOCITY_TOLERANCE);
+
     render::reset_view_history(&fixture.renderer, outputs[0].view)!!;
     render::reset_view_history(&fixture.renderer, outputs[1].view)!!;
-    capture_animated_lod_native_views(
-        fixture: &fixture,
-        pair: &pair,
-        outputs: outputs[..],
-        views: 3,
-        histories: histories[..],
-    )!!;
-    (void)check_animated_lod_native_view_motion(
-        outputs: outputs[..],
-        view: 0,
-        rejection: 1,
-        still: true,
-    );
-    (void)check_animated_lod_native_view_motion(
-        outputs: outputs[..],
-        view: 1,
-        rejection: 0,
-        still: true,
-    );
-    uint[2] committed_slots;
-    for (uint view = 0; view < 2; view++) {
-        committed_slots[view] = fixture.renderer.views.get(outputs[2 * view].view)
-            .lod_history.entries[pair.crowd.id.index].committed_slot;
-    }
+    capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
+    (void)check_crowd_native_view_motion(outputs[..], 0, 1);
+    (void)check_crowd_native_view_motion(outputs[..], 1, 0);
+
     set_animated_lod_native_motion(
         fixture: &fixture,
         pair: &pair,
         phase_offset: 0.12f,
         placement_offset: 0.6f,
     );
-    capture_animated_lod_native_views(
+    capture_crowd_native_temporal(
         fixture: &fixture,
         pair: &pair,
         outputs: outputs[..],
-        views: 3,
         aborted: true,
-        histories: histories[..],
     )!!;
-    for (uint view = 0; view < 2; view++) {
-        ViewRecord* record = fixture.renderer.views.get(outputs[2 * view].view);
-        assert(!record.history.valid && !record.history.pending);
-        assert(record.lod_history.entries[pair.crowd.id.index].committed_slot == committed_slots[view]);
+    for (uint frame = 0; frame < 2; frame++) {
+        capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
+        for (uint view = 0; view < 2; view++) (void)check_crowd_native_view_motion(outputs[..], view, frame ? 0 : 1);
     }
-    capture_animated_lod_native_views(
-        fixture: &fixture,
-        pair: &pair,
-        outputs: outputs[..],
-        views: 3,
-        histories: histories[..],
-    )!!;
-    for (uint view = 0; view < 2; view++) (void)check_animated_lod_native_view_motion(
-        outputs: outputs[..],
-        view: (uint)view,
-        rejection: 1,
-        still: true,
-    );
-    capture_animated_lod_native_views(
-        fixture: &fixture,
-        pair: &pair,
-        outputs: outputs[..],
-        views: 3,
-        histories: histories[..],
-    )!!;
-    for (uint view = 0; view < 2; view++) (void)check_animated_lod_native_view_motion(
-        outputs: outputs[..],
-        view: (uint)view,
-        rejection: 0,
-        still: true,
-    );
-    foreach (history : histories) {
-        shader::LodHistoryGpu[] rows = ((shader::LodHistoryGpu*)history.bytes.ptr)[:CROWD_NATIVE_INSTANCES];
-        foreach (row : rows) assert(row.level == 0 && row.reject_history == 0);
-    }
+    assert(outputs[0].actual.stats.lod_selected[0] == 2 * CROWD_NATIVE_INSTANCES);
+
     pair.scene.get(pair.camera, Camera).ortho_height = 80;
-    capture_animated_lod_native_views(
-        fixture: &fixture,
-        pair: &pair,
-        outputs: outputs[..],
-        views: 3,
-        histories: histories[..],
-    )!!;
-    for (uint view = 0; view < 2; view++) (void)check_animated_lod_native_view_motion(
-        outputs: outputs[..],
-        view: (uint)view,
-        rejection: 0,
-        still: false,
-    );
-    AnimatedCrowd* crowd = pair.scene.get(pair.crowd, AnimatedCrowd);
-    foreach (history : histories) {
-        shader::LodHistoryGpu[] rows = ((shader::LodHistoryGpu*)history.bytes.ptr)[:CROWD_NATIVE_INSTANCES];
-        foreach (source, row : rows) {
-            assert(row.level == 1 && row.reject_history == 0);
-            assert(row.generation == crowd.playback.slots[source].generation);
-            assert(row.model == bitcast(crowd.placements[source].to_mat4(), Mat4f));
-        }
+    capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
+    for (uint view = 0; view < 2; view++) {
+        (void)check_crowd_native_view_motion(
+            outputs: outputs[..],
+            view: view,
+            rejection: 0,
+            still: false,
+        );
     }
-    io::printfn("Independent view motion: first=%s resumed=%s; skip/cut/abort and compatible-level correspondence pass",
-        first_motion, resumed_motion);
+    // LOD counters reach Stats only when their frame slot is reused.
+    for (uint frame = 0; frame < render::FRAMES_IN_FLIGHT; frame++) {
+        capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
+        for (uint view = 0; view < 2; view++) (void)check_crowd_native_view_motion(outputs[..], view, 0);
+    }
+    assert(outputs[0].actual.stats.lod_selected[1] == 2 * CROWD_NATIVE_INSTANCES);
     check_crowd_native_validation(&fixture.renderer);
-}
-
-fn GeometryId add_animated_lod_native_reduced_geometry(Fixture* fixture, GeometryId source) @private {
-    @pool() {
-        Geometry reduced = fixture.assets.geometry(source).data;
-        assert(reduced.indices.len >= 6 && reduced.indices.len % 3 == 0);
-        uint triangles = (uint)reduced.indices.len / 3;
-        uint kept = (triangles + 1) / 2;
-        uint[] indices = alloc::new_array(tmem, uint, (sz)kept * 3);
-        for (uint face = 0; face < kept; face++) {
-            indices[face * 3:3] = reduced.indices[face * 6:3];
-        }
-        reduced.indices = indices;
-        return fixture.assets.add_geometry(&reduced)!!;
-    };
-}
-
-fn void set_animated_lod_native_reference_geometry(
-    CrowdNativePair* pair,
-    ModelTemplate* template,
-    GeometryId geometry,
-) @private {
-    assert(template.meshes.len == 1);
-    foreach (root : pair.ordinary) {
-        ModelInstance* instance = pair.scene.get(root, ModelInstance);
-        Node* mesh_node = instance.present_node(template.meshes[0].node);
-        pair.scene.get(mesh_node, Mesh).geometry = geometry;
-    }
 }
 
 fn void test_animated_lod_native_real_morph_topology_replacement_shrink_and_regrowth_reject_history() @test {
@@ -516,82 +372,60 @@ fn void test_animated_lod_native_real_morph_topology_replacement_shrink_and_regr
         expected_hash: CROWD_NATIVE_MORPH_CUBE_SHA,
     )!!;
     crowd_native_flat_source_materials(&fixture, model_id);
-    ModelTemplate* template = &fixture.assets.model(model_id).data;
-    assert(template.meshes.len == 1 && !template.skins.len && template.clips.len > 0);
-    GeometryId base = template.meshes[0].geometry;
-    GeometryId reduced = add_animated_lod_native_reduced_geometry(&fixture, base);
-    assert(fixture.assets.geometry(reduced).data.indices.len < fixture.assets.geometry(base).data.indices.len);
-    ClipId clip = template.clips[0];
-    Transform[CROWD_NATIVE_INSTANCES] placements = crowd_native_real_placements();
-    foreach (&placement : placements) placement.scale *= 0.6f;
+    LodNativeSubject subject = morph_cube_lod_subject(&fixture, model_id);
+    GeometryId reduced = subject.geometries[0][1];
     CrowdNativePair pair;
-    create_crowd_native_pair(
-        allocator: mem,
-        fixture: &fixture,
-        pair: &pair,
-        model: model_id,
-        clip: clip,
-        bounds: { .min = { -2, -2, -2 }, .max = { 2, 2, 2 } },
-        placements: placements[..],
-    )!!;
+    create_crowd_native_morph_pair(&fixture, &pair, model_id)!!;
     defer scene::destroy_scene(&pair.scene);
-    *pair.scene.get(pair.camera, Camera) = camera::orthographic(5, 0.1f, 100);
-    pair.camera.local.position = { 0, 0, 12 };
+    float duration = fixture.assets.clip(subject.clip).data.duration;
     for (uint source = 0; source < CROWD_NATIVE_INSTANCES; source++) {
         CrowdPlayer player = crowd_native_player(&pair, source)!!;
         Animator* animator = pair.scene.get(pair.ordinary[source], Animator);
-        float time = (0.2f + 0.25f * (float)source) * fixture.assets.clip(clip).data.duration;
+        float time = (0.2f + 0.25f * (float)source) * duration;
         crowd_native_action_controls(player.base_action()!!, time);
         crowd_native_action_controls(animator.action(pair.ordinary_base[source]), time);
     }
     crowd_native_update(&fixture, &pair, 0);
-    @pool() {
-        AnimatedLodDesc desc = lod_trace_desc(&fixture.assets, model_id);
-        desc.parts[1].draw.geometry = reduced;
-        model::attach_animated_lod(
-            assets: &fixture.assets,
-            scene: &pair.scene,
-            owner: pair.crowd,
-            desc: desc,
-        )!!;
-    };
-    CrowdNativeOutput actual;
-    create_crowd_native_output(&fixture, &actual)!!;
-    defer destroy_crowd_native_output(&fixture, &actual);
-    CrowdNativeOutput reference;
-    create_crowd_native_output(&fixture, &reference)!!;
-    defer destroy_crowd_native_output(&fixture, &reference);
-    configure_crowd_native_temporal(&fixture, &actual)!!;
-    configure_crowd_native_temporal(&fixture, &reference)!!;
-    for (uint frame = 0; frame < 2; frame++) {
-        animated_lod_native_temporal_frame(
+    LodNativeDescriptor descriptor;
+    model::attach_animated_lod(
+        assets: &fixture.assets,
+        scene: &pair.scene,
+        owner: pair.crowd,
+        desc: lod_native_desc(
             fixture: &fixture,
-            pair: &pair,
-            crowd: &actual,
-            ordinary: &reference,
-        )!!;
-        check_crowd_native_temporal_flags(&actual.actual, frame ? 0 : 1);
+            subject: &subject,
+            descriptor: &descriptor,
+            crowd: true,
+        ),
+    )!!;
+    CrowdNativeOutput[2] outputs;
+    foreach (&output : outputs) {
+        create_crowd_native_output(&fixture, output)!!;
+        configure_crowd_native_temporal(&fixture, output)!!;
     }
+    defer foreach (&output : outputs) destroy_crowd_native_output(&fixture, output);
+    for (uint frame = 0; frame < 2; frame++) {
+        capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
+        check_crowd_native_temporal_flags(&outputs[0].actual, frame ? 0 : 1);
+    }
+
     pair.scene.get(pair.camera, Camera).ortho_height = 40;
-    set_animated_lod_native_reference_geometry(&pair, template, reduced);
-    animated_lod_native_temporal_frame(
+    set_lod_native_reference_level(
         fixture: &fixture,
         pair: &pair,
-        crowd: &actual,
-        ordinary: &reference,
-    )!!;
-    check_crowd_native_temporal_flags(&actual.actual, 1, false);
-    check_crowd_native_velocity(actual.actual.velocity, reference.actual.velocity);
-    check_crowd_native_velocity(reference.actual.velocity, actual.actual.velocity);
-    check_crowd_native_image(actual.actual.depth, reference.actual.depth, CROWD_NATIVE_DEPTH_TOLERANCE);
-    check_crowd_native_image(reference.actual.depth, actual.actual.depth, CROWD_NATIVE_DEPTH_TOLERANCE);
-    animated_lod_native_temporal_frame(
-        fixture: &fixture,
-        pair: &pair,
-        crowd: &actual,
-        ordinary: &reference,
-    )!!;
-    check_crowd_native_temporal_flags(&actual.actual, 0);
+        subject: &subject,
+        level: 1,
+    );
+    capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
+    (void)check_crowd_native_view_motion(
+        outputs: outputs[..],
+        view: 0,
+        rejection: 1,
+        still: false,
+    );
+    capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
+    check_crowd_native_temporal_flags(&outputs[0].actual, 0);
+
     @pool() {
         Geometry replacement = fixture.assets.geometry(reduced).data;
         uint[] indices = alloc::new_array(tmem, uint, replacement.indices.len);
@@ -603,101 +437,136 @@ fn void test_animated_lod_native_real_morph_topology_replacement_shrink_and_regr
         fixture.assets.replace_geometry(reduced, &replacement)!!;
     };
     model::sync_animated_lod(&fixture.assets, &pair.scene, pair.crowd)!!;
-    animated_lod_native_temporal_frame(
-        fixture: &fixture,
-        pair: &pair,
-        crowd: &actual,
-        ordinary: &reference,
-    )!!;
-    check_crowd_native_temporal_flags(&actual.actual, 1);
-    check_crowd_native_image(actual.actual.depth, reference.actual.depth, CROWD_NATIVE_DEPTH_TOLERANCE);
-    animated_lod_native_temporal_frame(
-        fixture: &fixture,
-        pair: &pair,
-        crowd: &actual,
-        ordinary: &reference,
-    )!!;
-    check_crowd_native_temporal_flags(&actual.actual, 0);
+    for (uint frame = 0; frame < 2; frame++) {
+        capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
+        (void)check_crowd_native_view_motion(outputs[..], 0, frame ? 0 : 1);
+    }
+
     AnimatedCrowd* crowd = pair.scene.get(pair.crowd, AnimatedCrowd);
     CrowdInstance[CROWD_NATIVE_INSTANCES] replacement;
-    uint[CROWD_NATIVE_INSTANCES] generations;
     for (uint source = 0; source < CROWD_NATIVE_INSTANCES; source++) {
         CrowdPlayer player = crowd_native_player(&pair, source)!!;
-        generations[source] = player.state.slots[source].generation;
         replacement[source] = {
             .placement = crowd.placements[source],
-            .pose = { .clip = clip, .time = player.base_action()!!.time, .speed = 0, .loop = false },
+            .pose = { .clip = subject.clip, .time = player.base_action()!!.time, .speed = 0, .loop = false },
             .color = crowd.colors[source],
         };
     }
-    model::set_crowd(
-        assets: &fixture.assets,
-        scene: &pair.scene,
-        node: pair.crowd,
-        instances: replacement[:2],
-    )!!;
-    pair.ordinary[2].visible = false;
-    animated_lod_native_temporal_frame(
-        fixture: &fixture,
-        pair: &pair,
-        crowd: &actual,
-        ordinary: &reference,
-    )!!;
-    assert(crowd.count == 2);
-    check_crowd_native_temporal_flags(&actual.actual, 1);
-    check_crowd_native_image(actual.actual.depth, reference.actual.depth, CROWD_NATIVE_DEPTH_TOLERANCE);
-    model::set_crowd(
-        assets: &fixture.assets,
-        scene: &pair.scene,
-        node: pair.crowd,
-        instances: replacement[..],
-    )!!;
-    pair.ordinary[2].visible = true;
-    animated_lod_native_temporal_frame(
-        fixture: &fixture,
-        pair: &pair,
-        crowd: &actual,
-        ordinary: &reference,
-    )!!;
-    assert(crowd.count == CROWD_NATIVE_INSTANCES);
-    for (uint source = 0; source < CROWD_NATIVE_INSTANCES; source++) {
-        assert(crowd.playback.slots[source].generation != generations[source]);
-    }
-    check_crowd_native_temporal_flags(&actual.actual, 1);
-    check_crowd_native_image(actual.actual.depth, reference.actual.depth, CROWD_NATIVE_DEPTH_TOLERANCE);
-    check_crowd_native_image(reference.actual.depth, actual.actual.depth, CROWD_NATIVE_DEPTH_TOLERANCE);
-    animated_lod_native_temporal_frame(
-        fixture: &fixture,
-        pair: &pair,
-        crowd: &actual,
-        ordinary: &reference,
-    )!!;
-    check_crowd_native_temporal_flags(&actual.actual, 0);
-    @pool() {
-        AnimatedLodDesc desc = lod_trace_desc(&fixture.assets, model_id);
-        desc.parts[1].draw.geometry = reduced;
-        model::replace_animated_lod(
+    for (uint count = 2; count <= CROWD_NATIVE_INSTANCES; count++) {
+        model::set_crowd(
             assets: &fixture.assets,
             scene: &pair.scene,
-            owner: pair.crowd,
-            desc: desc,
+            node: pair.crowd,
+            instances: replacement[:count],
         )!!;
+        pair.ordinary[2].visible = count == CROWD_NATIVE_INSTANCES;
+        capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
+        assert(crowd.count == count);
+        (void)check_crowd_native_view_motion(outputs[..], 0, 1);
+    }
+    capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
+    (void)check_crowd_native_view_motion(outputs[..], 0, 0);
+
+    model::replace_animated_lod(
+        assets: &fixture.assets,
+        scene: &pair.scene,
+        owner: pair.crowd,
+        desc: lod_native_desc(
+            fixture: &fixture,
+            subject: &subject,
+            descriptor: &descriptor,
+            crowd: true,
+        ),
+    )!!;
+    for (uint frame = 0; frame < 2; frame++) {
+        capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
+        check_crowd_native_temporal_flags(&outputs[0].actual, frame ? 0 : 1);
+    }
+    check_crowd_native_validation(&fixture.renderer);
+}
+
+fn void test_animated_lod_native_admitted_channel_metadata_edit_rejects_current_pose() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    ModelId model_id = load_crowd_native_cc0(
+        fixture: &fixture,
+        filename: CROWD_NATIVE_MORPH_CUBE,
+        expected_hash: CROWD_NATIVE_MORPH_CUBE_SHA,
+    )!!;
+    crowd_native_flat_source_materials(&fixture, model_id);
+    ModelTemplate* template = &fixture.assets.model(model_id).data;
+    LodNativeSubject subject = {
+        .model = model_id,
+        .clip = template.clips[0],
+        .level_count = 2,
+        .thresholds = { 0.2f, 0, 0 },
     };
-    animated_lod_native_temporal_frame(
+    identity_lod_native_order(&subject);
+    @pool() {
+        Geometry named = fixture.assets.geometry(template.meshes[0].geometry).data;
+        named.channels = alloc::new_array(tmem, MorphChannel, 2);
+        String[2] names = { "square", "cube" };
+        foreach (uint index, &channel : named.channels) {
+            *channel = {
+                .name = names[index],
+                .first_target = index,
+                .full_weights = alloc::new_array(tmem, float, 1),
+            };
+            channel.full_weights[0] = 1;
+        }
+        template.meshes[0].geometry = subject.geometries[0][0] = fixture.assets.add_geometry(&named)!!;
+        subject.geometries[0][1] = fixture.assets.add_geometry(&named)!!;
+    };
+    GeometryId selected = subject.geometries[0][1];
+    CrowdNativePair pair;
+    create_crowd_native_morph_pair(&fixture, &pair, model_id)!!;
+    defer scene::destroy_scene(&pair.scene);
+    crowd_native_phase(&pair, 0.5f)!!;
+    crowd_native_update(&fixture, &pair, 0);
+    LodNativeDescriptor descriptor;
+    model::attach_animated_lod(
+        assets: &fixture.assets,
+        scene: &pair.scene,
+        owner: pair.crowd,
+        desc: lod_native_desc(
+            fixture: &fixture,
+            subject: &subject,
+            descriptor: &descriptor,
+            crowd: true,
+        ),
+    )!!;
+    set_lod_native_reference_level(
         fixture: &fixture,
         pair: &pair,
-        crowd: &actual,
-        ordinary: &reference,
-    )!!;
-    check_crowd_native_temporal_flags(&actual.actual, 1);
-    animated_lod_native_temporal_frame(
-        fixture: &fixture,
-        pair: &pair,
-        crowd: &actual,
-        ordinary: &reference,
-    )!!;
-    check_crowd_native_temporal_flags(&actual.actual, 0);
-    io::printn("Real morph LOD: topology, binding incarnation, shrink/regrowth reject stale history");
+        subject: &subject,
+        level: 1,
+    );
+    CrowdNativeOutput[2] outputs;
+    foreach (&output : outputs) {
+        create_crowd_native_output(&fixture, output)!!;
+        configure_crowd_native_temporal(&fixture, output, -16)!!;
+    }
+    defer foreach (&output : outputs) destroy_crowd_native_output(&fixture, output);
+    for (uint frame = 0; frame < 2; frame++) {
+        capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
+        (void)check_crowd_native_view_motion(outputs[..], 0, frame ? 0 : 1);
+    }
+
+    @pool() {
+        Geometry changed = fixture.assets.geometry(selected).data;
+        changed.channels = alloc::clone_slice(tmem, changed.channels);
+        foreach (&channel : changed.channels) {
+            channel.full_weights = alloc::clone_slice(tmem, channel.full_weights);
+            channel.full_weights[0] = 0.75f;
+        }
+        fixture.assets.replace_geometry(selected, &changed)!!;
+    };
+    model::sync_animated_lod(&fixture.assets, &pair.scene, pair.crowd)!!;
+    for (uint frame = 0; frame < 2; frame++) {
+        capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
+        (void)check_crowd_native_view_motion(outputs[..], 0, frame ? 0 : 1);
+    }
     check_crowd_native_validation(&fixture.renderer);
 }
 
@@ -735,7 +604,7 @@ fn void test_animated_lod_native_cull_overflow_falls_back_whole_group_with_sourc
             assets: &fixture.assets,
             scene: &pair.scene,
             owner: pair.crowd,
-            desc: lod_trace_desc(&fixture.assets, parts.mixed),
+            desc: animated_crowd_fixtures::parts_lod_desc(&fixture.assets, parts.mixed),
         )!!;
     };
     LodLevel[2] fitting_levels = {
@@ -756,21 +625,14 @@ fn void test_animated_lod_native_cull_overflow_falls_back_whole_group_with_sourc
         parent: pair.crowd,
     )!!;
     pair.scene.set_lod_effects(fitting, { .receive_shadow = true });
-    Light sun = light::directional({ 1, 1, 1 }, 1);
-    sun.shadow.cascades = 1;
-    sun.shadow.max_distance = 30;
-    Node* light_node = pair.scene.add_light(sun)!!;
-    light_node.local.rotation = maths::look_rotation((Vec3){ -0.8f, -0.3f, -1 }.normalize(), { 0, 1, 0 });
-    pair.scene.update_world();
+    add_lod_native_sun(&pair, 30)!!;
     CrowdLodNativeSources sources = { .crowd = true };
-    match_crowd_lod_native_shadow_bounds(&fixture, &pair, &sources);
     CrowdNativeOutput actual;
     create_crowd_native_output(&fixture, &actual)!!;
     defer destroy_crowd_native_output(&fixture, &actual);
     CrowdNativeOutput reference;
     create_crowd_native_output(&fixture, &reference)!!;
     defer destroy_crowd_native_output(&fixture, &reference);
-    Renderer* renderer = &fixture.renderer;
     foreach (AntiAliasing anti_aliasing : { AntiAliasing.TAA, AntiAliasing.NONE }) {
         foreach (output : (CrowdNativeOutput*[2]){ &actual, &reference }) {
             ViewDesc desc = render::texture_view_desc(output.target);
@@ -781,43 +643,26 @@ fn void test_animated_lod_native_cull_overflow_falls_back_whole_group_with_sourc
             desc.share_shadows = false;
             render::configure_view(&fixture.renderer, output.view, desc)!!;
         }
-        for (uint frame = 0; frame < CROWD_NATIVE_WARMUP; frame++) {
-            renderer.begin_frame({ .time = 0.37, .delta = 0 })!!;
-            defer catch render::abort_frame(renderer);
-            record_crowd_lod_native_output(
-                fixture: &fixture,
-                pair: &pair,
-                output: &actual,
-                actual: true,
-            )!!;
-            assert(renderer.deformation.animated_palettes.len() == 1);
-            record_crowd_lod_native_output(
-                fixture: &fixture,
-                pair: &pair,
-                output: &reference,
-                actual: false,
-            )!!;
-            renderer.end_frame()!!;
-        }
-        render::wait_frames(renderer)!!;
-        read_crowd_lod_native_output(&fixture, &actual)!!;
-        read_crowd_lod_native_output(&fixture, &reference)!!;
+        capture_lod_native_shadowed(
+            fixture: &fixture,
+            pair: &pair,
+            sources: &sources,
+            actual: &actual,
+            reference: &reference,
+        )!!;
         Stats* stats = &actual.actual.stats;
         assert(stats.lod_counts_valid && stats.lod_fallbacks == 1);
         assert(stats.lod_instances_tested == CROWD_NATIVE_INSTANCES + 1);
         assert(stats.lod_selected[0] == CROWD_NATIVE_INSTANCES && stats.lod_selected[1] == 1);
         assert(stats.lod_visible[0] == CROWD_NATIVE_INSTANCES && stats.lod_visible[1] == 0);
-        assert(!renderer.views.get(actual.view).lod_history.entries[pair.crowd.id.index].committed.valid);
-        if (anti_aliasing == AntiAliasing.TAA) check_crowd_native_temporal_flags(&actual.actual, 1);
-        check_crowd_native_image(actual.actual.depth, reference.actual.depth, CROWD_NATIVE_DEPTH_TOLERANCE);
-        check_crowd_native_image(reference.actual.depth, actual.actual.depth, CROWD_NATIVE_DEPTH_TOLERANCE);
-        check_crowd_native_image(actual.actual.normal, reference.actual.normal, CROWD_NATIVE_COLOR_TOLERANCE);
-        check_crowd_native_image(reference.actual.normal, actual.actual.normal, CROWD_NATIVE_COLOR_TOLERANCE);
-        if (anti_aliasing == AntiAliasing.NONE) {
-            check_crowd_lod_native_view_parity(&actual.actual, &reference.actual);
+        if (anti_aliasing == AntiAliasing.TAA) {
+            check_crowd_native_temporal_flags(&actual.actual, 1);
+            check_crowd_native_image(actual.actual.depth, reference.actual.depth, CROWD_NATIVE_DEPTH_TOLERANCE);
+            check_crowd_native_image(reference.actual.depth, actual.actual.depth, CROWD_NATIVE_DEPTH_TOLERANCE);
+            check_crowd_native_normals(&actual.actual, &reference.actual);
+        } else {
+            check_lod_native_view_parity(&actual.actual, &reference.actual);
         }
     }
-    io::printn("Cull arena overflow: complete level-zero fallback, stable source parity, "
-      "parent shadows; another group fits");
-    check_crowd_native_validation(renderer);
+    check_crowd_native_validation(&fixture.renderer);
 }

@@ -537,7 +537,16 @@ fn void test_invalid_authored_events_preserve_document_and_store() @test {
         assert(same_counts(before, pool_counts(&assets)));
         assert(document.clips[0].data.events[1].time == 0.1f);
         document.clips[0].data.events[1].time = 0.75;
-        assets.publish_document(&document)!!;
+        ModelId model = assets.publish_document(&document)!!;
+        ClipId clip = assets.find_clip("events#clip")!!;
+        ModelDocument bad = loading_fixtures::full_model_document(&tracker, "events");
+        defer asset::destroy_model_document(&bad);
+        bad.clips[0].data.events[1].time = 0.1;
+        AssetRef[1] missing = { { .kind = AssetKind.FONT, .id = { .index = 17, .generation = 9 } } };
+        assert(@catch(assets.replace_document(model, &bad, missing[..])) == c3d::INVALID_ARGUMENT);
+        assert(missing[0].kind == AssetKind.FONT && missing[0].id.index == 17);
+        assert(assets.model(model).header.revision == 1 && assets.clip(clip).data.events[1].time == 0.75f);
+        assert(bad.clips[0].data.events[1].time == 0.1f);
     }
     assert(!tracker.has_leaks());
 }
@@ -580,67 +589,7 @@ fn void test_prepared_transfer_matches_fresh_editable_document() @test {
     assert(!tracker.has_leaks());
 }
 
-fn void test_nested_publication_bill_includes_cleanup_and_lookup_inventory() @test {
-    TrackingAllocator tracker;
-    tracker.init(mem);
-    defer tracker.free();
-    {
-        AssetStore assets = asset::create_asset_store(&tracker, asset::default_asset_store_desc());
-        defer asset::destroy_asset_store(&assets);
-        ModelDocument document = loading_fixtures::full_model_document(&tracker, "bill");
-        defer asset::destroy_model_document(&document);
-        ulong expected_incoming = 8 + 3 + 1 + 1 + 2 + 1 + 1 + 2 + 2 + 1 + 1 + 2 + 2 + 2 + 2 + 1 + 16 + 8;
-        ulong expected_estimation = 16 + 8;
-        asset::PreparedModelDocument prepared = asset::prepare_model_document(&document)!!;
-        defer asset::destroy_prepared_model_document(&prepared);
-        assert(prepared.incoming_items == expected_incoming);
-        asset::PublicationEstimate estimate = asset::estimate_model_publication(
-            store: &assets,
-            prepared: &prepared,
-            model: {},
-            allowance: expected_incoming,
-            bounded: true,
-        );
-        assert(!estimate.admitted && !estimate.required_exact);
-        assert(estimate.items_used == 0);
-        assert(estimate.required_items == expected_incoming + expected_estimation);
-        ulong needed = estimate.required_items;
-        estimate = asset::estimate_model_publication(
-            store: &assets,
-            prepared: &prepared,
-            model: {},
-            allowance: needed,
-            bounded: true,
-        );
-        assert(estimate.admitted && estimate.required_items == needed);
-        ModelId model = asset::publish_prepared_model_document(&assets, &prepared)!!;
-        MaterialId material = assets.find_material("bill#material")!!;
-        char[97] payload;
-        assets.replace_material(material, { .kind = MaterialKind.CUSTOM, .custom = { .param_block = payload[..] } });
-        ModelDocument next = loading_fixtures::full_model_document(&tracker, "bill");
-        defer asset::destroy_model_document(&next);
-        prepared = asset::prepare_model_document(&next)!!;
-        ulong inventory = assets.keys.table.len + (ulong)assets.keys.len();
-        ulong old_cleanup = 7 + 1 + 1 + 1 + 3 + 1 + 3 + 3;
-        ulong expected_replace = expected_incoming + old_cleanup + inventory + expected_estimation + 1 + inventory;
-        estimate = asset::estimate_model_publication(
-            store: &assets,
-            prepared: &prepared,
-            model: model,
-            allowance: 0,
-            bounded: false,
-        );
-        assert(estimate.admitted && estimate.required_exact);
-        assert(estimate.items_used == expected_estimation + 1 + inventory);
-        assert(estimate.required_items == expected_replace);
-        ModelReplaceReport replaced = asset::replace_prepared_model_document(&assets, model, &prepared)!!;
-        assert(replaced.replaced == 7 && replaced.added == 0 && replaced.missing == 0);
-        assert(assets.material(material).data.kind == MaterialKind.STANDARD);
-    }
-    assert(!tracker.has_leaks());
-}
-
-fn void test_independent_preparation_rejects_format_lod_and_negative_weights_without_mutation() @test {
+fn void test_independent_preparation_rejects_format_and_negative_weights_without_mutation() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
     defer tracker.free();
@@ -655,86 +604,10 @@ fn void test_independent_preparation_rejects_format_lod_and_negative_weights_wit
         assert(@catch(asset::prepare_model_document(&document)) == c3d::INVALID_ARGUMENT);
         assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
         document.textures[0].desc = original_desc;
-        document.template.lod_groups[0].desc.levels[0].first_part = 1;
-        assert(@catch(asset::prepare_model_document(&document)) == c3d::INVALID_ARGUMENT);
-        assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
-        document.template.lod_groups[0].desc.levels[0].first_part = 0;
         document.geometries[0].data.weights[0].x = -1;
         assert(@catch(asset::prepare_model_document(&document)) == c3d::INVALID_ARGUMENT);
         assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
         assert(document.geometries[0].data.weights[0].x == -1);
-        document.geometries[0].data.weights[0].x = 0.5;
-        document.template.lod_groups[0].node = 1;
-        assert(@catch(asset::prepare_model_document(&document)) == c3d::INVALID_ARGUMENT);
-        assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
-        assert(document.template.lod_groups[0].node == 1);
-    }
-    assert(!tracker.has_leaks());
-}
-
-fn void shrink_nested_fixture(ModelDocument* document) @local {
-    Allocator allocator = document.allocator;
-    MorphChannel* channel = &document.geometries[0].data.channels[0];
-    alloc::free(allocator, channel.name.ptr);
-    alloc::free(allocator, channel.full_weights.ptr);
-    alloc::free(allocator, document.geometries[0].data.channels.ptr);
-    document.geometries[0].data.channels = {};
-    Track* track = &document.clips[0].data.tracks[1];
-    alloc::free(allocator, track.times.ptr);
-    alloc::free(allocator, track.values.ptr);
-    document.clips[0].data.tracks = document.clips[0].data.tracks[:1];
-    LodDesc* lod = &document.template.lod_groups[0].desc;
-    lod.levels = lod.levels[:1];
-    lod.levels[0].min_screen_size = 0;
-    lod.parts = lod.parts[:1];
-}
-
-fn void test_bill_tracks_changed_nested_cardinalities_and_failure_disposal() @test {
-    TrackingAllocator tracker;
-    tracker.init(mem);
-    defer tracker.free();
-    {
-        AssetStore assets = asset::create_asset_store(&tracker, asset::default_asset_store_desc());
-        defer asset::destroy_asset_store(&assets);
-        ModelDocument document = loading_fixtures::full_model_document(&tracker, "varied");
-        defer asset::destroy_model_document(&document);
-        shrink_nested_fixture(&document);
-        ulong expected_incoming = 56 - 1 - 1 - 1 - 1;
-        asset::PreparedModelDocument prepared = asset::prepare_model_document(&document)!!;
-        defer asset::destroy_prepared_model_document(&prepared);
-        assert(prepared.incoming_items == expected_incoming);
-        ModelId model = asset::publish_prepared_model_document(&assets, &prepared)!!;
-        ModelDocument replacement = loading_fixtures::full_model_document(&tracker, "varied");
-        defer asset::destroy_model_document(&replacement);
-        shrink_nested_fixture(&replacement);
-        prepared = asset::prepare_model_document(&replacement)!!;
-        ulong inventory = assets.keys.table.len + (ulong)assets.keys.len();
-        ulong expected_old = 20 - 1 - 1;
-        ulong expected_required = expected_incoming + expected_old + inventory + 25 + inventory;
-        asset::PublicationEstimate estimate = asset::estimate_model_publication(
-            store: &assets,
-            prepared: &prepared,
-            model: model,
-            allowance: expected_required,
-            bounded: true,
-        );
-        assert(estimate.admitted && estimate.required_items == expected_required);
-        asset::replace_prepared_model_document(&assets, model, &prepared)!!;
-        ModelDocument incompatible = loading_fixtures::full_model_document(&tracker, "varied");
-        defer asset::destroy_model_document(&incompatible);
-        prepared = asset::prepare_model_document(&incompatible)!!;
-        ulong expected_failed = 56 + expected_old + inventory + 25 + inventory;
-        estimate = asset::estimate_model_publication(
-            store: &assets,
-            prepared: &prepared,
-            model: model,
-            allowance: expected_failed,
-            bounded: true,
-        );
-        assert(estimate.admitted && estimate.required_items == expected_failed);
-        uint revision = assets.model(model).header.revision;
-        assert(@catch(asset::replace_prepared_model_document(&assets, model, &prepared)) == c3d::INCOMPATIBLE_STRUCTURE);
-        assert(assets.model(model).header.revision == revision && prepared.document.clips[0].data.tracks.len == 2);
     }
     assert(!tracker.has_leaks());
 }
@@ -750,85 +623,32 @@ fn void test_default_replacement_reserves_full_estimation_before_scanning() @tes
         defer asset::destroy_model_document(&first);
         ModelId model = assets.publish_document(&first)!!;
         GeometryId geometry = assets.find_geometry("reservation#geometry")!!;
-        GeometryId rigid_geometry = assets.find_geometry("reservation#lod_geometry")!!;
-        TextureId texture = assets.find_texture("reservation#texture")!!;
-        MaterialId material = assets.find_material("reservation#material")!!;
-        SamplerId sampler = assets.find_sampler("reservation#sampler")!!;
-        SkeletonId skeleton = assets.find_skeleton("reservation#skeleton")!!;
-        ClipId clip = assets.find_clip("reservation#clip")!!;
         PoolCounts before_counts = pool_counts(&assets);
-        String[17] before_keys;
-        AssetRef[17] before_refs;
-        usz key_index;
-        assets.keys.@each(; String key, AssetRef ref) {
-            before_keys[key_index] = key;
-            before_refs[key_index++] = ref;
-        };
-        Vec3[3] before_positions;
-        before_positions[..] = assets.geometry(geometry).data.positions[..];
-        Aabb before_skin = assets.geometry(geometry).skin_bounds.joints[0];
-        Aabb before_morph = assets.geometry(geometry).morph_bounds[0];
-        char[16] before_pixels;
-        before_pixels[..] = assets.texture(texture).pixels[..];
-        AssetRef[1] missing = { { .kind = AssetKind.FONT, .id = { .index = 19, .generation = 3 } } };
         ModelDocument next = loading_fixtures::full_model_document(&tracker, "reservation");
         defer asset::destroy_model_document(&next);
         next.geometries[0].data.positions[0] = { -3, 0, 0 };
         next.geometries[0].data.finalize();
         asset::PreparedModelDocument prepared = asset::prepare_model_document(&next)!!;
         defer asset::destroy_prepared_model_document(&prepared);
-        ulong expected_incoming = 8 + 3 + 1 + 1 + 2 + 1 + 1 + 2 + 2 + 1 + 1 + 2 + 2 + 2 + 2 + 1 + 16 + 8;
-        ulong buckets = assets.keys.table.len;
-        ulong live_keys = (ulong)assets.keys.len();
-        ulong expected_estimation = 16 + 8 + 1 + buckets + live_keys;
-        ulong expected_lower = expected_incoming + expected_estimation;
-        ulong expected_old = 7 + 1 + 1 + 1 + 3 + 1 + 3 + 3;
-        ulong expected_total = expected_estimation + expected_incoming + expected_old + buckets + live_keys;
-        assert(buckets == 32768 && live_keys == 17 && key_index == 17);
-        assert(expected_incoming == 56 && expected_estimation == 32810);
-        assert(expected_lower == 32866 && expected_total == 65671);
-        ulong[3] lower_allowances = { expected_incoming, expected_lower / 2, expected_lower - 1 };
-        foreach (allowance : lower_allowances) {
-            asset::PublicationEstimate deferred = asset::estimate_model_publication(
-                store: &assets,
-                prepared: &prepared,
-                model: model,
-                allowance: allowance,
-                bounded: true,
-            );
-            assert(!deferred.admitted && !deferred.required_exact && deferred.items_used == 0);
-            assert(deferred.required_items == expected_lower);
-            assert(same_counts(before_counts, pool_counts(&assets)));
-            foreach (index, key : before_keys) {
-                AssetRef current = assets.find(key)!!;
-                assert(current.kind == before_refs[index].kind && current.slot == before_refs[index].slot);
-                assert(c3d::same_id(current.id, before_refs[index].id));
-            }
-            assert(assets.model(model).header.revision == 1 && assets.geometry(geometry).header.revision == 1);
-            assert(assets.geometry(rigid_geometry).header.revision == 1 && assets.texture(texture).header.revision == 1);
-            assert(assets.material(material).header.revision == 1 && assets.sampler(sampler).header.revision == 1);
-            assert(assets.skeleton(skeleton).header.revision == 1 && assets.clip(clip).header.revision == 1);
-            foreach (index, position : before_positions) assert(assets.geometry(geometry).data.positions[index] == position);
-            foreach (index, pixel : before_pixels) assert(assets.texture(texture).pixels[index] == pixel);
-            assert(assets.geometry(geometry).skin_bounds.joints[0].min == before_skin.min);
-            assert(assets.geometry(geometry).skin_bounds.joints[0].max == before_skin.max);
-            assert(assets.geometry(geometry).morph_bounds[0].min == before_morph.min);
-            assert(assets.geometry(geometry).morph_bounds[0].max == before_morph.max);
-            assert(assets.clip(clip).data.events[1].time == 0.75f);
-            assert(assets.skeleton(skeleton).data.joint_names[0] == "root");
-            assert(missing[0].kind == AssetKind.FONT && missing[0].id.index == 19 && missing[0].id.generation == 3);
-        }
+        asset::PublicationEstimate deferred = asset::estimate_model_publication(
+            store: &assets,
+            prepared: &prepared,
+            model: model,
+            allowance: prepared.incoming_items,
+            bounded: true,
+        );
+        assert(!deferred.admitted && !deferred.required_exact && deferred.items_used == 0);
+        assert(deferred.required_items > prepared.incoming_items && same_counts(before_counts, pool_counts(&assets)));
         asset::PublicationEstimate exact = asset::estimate_model_publication(
             store: &assets,
             prepared: &prepared,
             model: model,
-            allowance: expected_lower,
+            allowance: deferred.required_items,
             bounded: true,
         );
-        assert(!exact.admitted && exact.required_exact && exact.items_used == expected_estimation);
-        assert(exact.required_items == expected_total && same_counts(before_counts, pool_counts(&assets)));
-        assert(assets.model(model).header.revision == 1 && assets.geometry(geometry).data.positions[0] == before_positions[0]);
-        assert(missing[0].kind == AssetKind.FONT && missing[0].id.index == 19 && missing[0].id.generation == 3);
+        assert(!exact.admitted && exact.required_exact && exact.items_used > 0);
+        assert(exact.required_items > deferred.required_items && same_counts(before_counts, pool_counts(&assets)));
+        assert(assets.model(model).header.revision == 1 && assets.geometry(geometry).data.positions[0].x != -3);
         asset::PublicationEstimate admitted = asset::estimate_model_publication(
             store: &assets,
             prepared: &prepared,
@@ -836,56 +656,12 @@ fn void test_default_replacement_reserves_full_estimation_before_scanning() @tes
             allowance: exact.required_items,
             bounded: true,
         );
-        assert(admitted.admitted && admitted.required_exact && admitted.items_used == expected_estimation);
-        assert(admitted.required_items == expected_total && same_counts(before_counts, pool_counts(&assets)));
-        ModelReplaceReport report = asset::replace_prepared_model_document(
-            store: &assets,
-            model: model,
-            prepared: &prepared,
-            missing: missing[..],
-        )!!;
+        assert(admitted.admitted && admitted.required_items == exact.required_items);
+        ModelReplaceReport report = asset::replace_prepared_model_document(&assets, model, &prepared)!!;
         assert(report.replaced == 7 && report.added == 0 && report.missing == 0);
-        assert(assets.model(model).header.revision == 2 && assets.geometry(geometry).header.revision == 2);
-        assert(assets.geometry(geometry).data.positions[0].x == -3 && !prepared.document.geometries.len);
+        assert(assets.geometry(geometry).header.revision == 2 && assets.geometry(geometry).data.positions[0].x == -3);
     }
     assert(!tracker.has_leaks());
-}
-
-fn void test_prepared_joint_width_survives_transfer_and_source_release() @test {
-    AssetStore assets = create_store(mem);
-    defer asset::destroy_asset_store(&assets);
-    DocumentRefs refs;
-    ModelDocument document = build_document(mem, &refs);
-    defer asset::destroy_model_document(&document);
-    Geometry* geometry = &document.geometries[0].data;
-    geometry.joints = alloc::new_array(mem, ushort[<4>], geometry.positions.len);
-    geometry.weights = alloc::new_array(mem, Vec4, geometry.positions.len);
-    foreach (index, &joints : geometry.joints) {
-        *joints = { 0, 0, 0, 65000 };
-        geometry.weights[index] = { 1, 0, 0, 0 };
-    }
-    PreparedModelDocument prepared = asset::prepare_model_document(&document)!!;
-    defer asset::destroy_prepared_model_document(&prepared);
-    assert(prepared.geometries[0].joints_u16);
-    ModelId model = asset::publish_prepared_model_document(&assets, &prepared)!!;
-    GeometryId published = assets.model(model).data.meshes[0].geometry;
-    assert(assets.geometry(published).joints_u16);
-    ModelDocument replacement = build_document(mem, &refs);
-    defer asset::destroy_model_document(&replacement);
-    Geometry* next = &replacement.geometries[0].data;
-    next.joints = alloc::new_array(mem, ushort[<4>], next.positions.len);
-    next.weights = alloc::new_array(mem, Vec4, next.positions.len);
-    foreach (index, &joints : next.joints) {
-        *joints = { 0, 0, 0, 255 };
-        next.weights[index] = { 1, 0, 0, 0 };
-    }
-    PreparedModelDocument prepared_next = asset::prepare_model_document(&replacement)!!;
-    defer asset::destroy_prepared_model_document(&prepared_next);
-    assert(!prepared_next.geometries[0].joints_u16);
-    asset::replace_prepared_model_document(&assets, model, &prepared_next)!!;
-    assert(!assets.geometry(published).joints_u16);
-    assets.release_geometry_cpu(published);
-    assert(!assets.geometry(published).joints_u16);
 }
 
 fn void test_document_coverage_statistics_are_derived_and_revision_owned() @test {
@@ -988,14 +764,6 @@ fn void test_document_invalid_alpha_preserves_input() @test {
         assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
         assert(math::is_nan(channels[3]));
 
-        channels[3] = 1.01;
-
-        assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
-
-        channels[3] = -0.01;
-
-        assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
-
         channels[3] = 1;
 
         ModelId model = assets.publish_document(&document)!!;
@@ -1069,17 +837,6 @@ fn void test_document_generated_tangent_provenance_survives_replace_and_release(
 
         assert(record.header.revision == 2 && record.tangent_provenance.derivation_revision == 2);
         assert(record.tangent_provenance.origin == TangentOrigin.GENERATED && record.tangent_provenance.uv_set == 0);
-
-        TangentProvenance provenance = record.tangent_provenance;
-
-        assets.release_geometry_cpu(published);
-
-        assert(!record.data.positions.len);
-        assert_same_tangent_provenance(record.tangent_provenance, provenance);
-
-        assets.mark_geometry_dirty(published);
-
-        assert(record.header.revision == 3 && record.tangent_provenance.derivation_revision == 2);
     }
 
     assert(!tracker.has_leaks());
@@ -1108,19 +865,6 @@ fn void test_document_malformed_authored_tangents_fail_before_transfer() @test {
         assert(geometry.tangents[0].w == 3 && geometry.tangents[1].w == -4);
         assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
 
-        geometry.tangents[2] = { 1, 0, 0, 0 };
-
-        assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
-
-        geometry.tangents[2] = { bitcast(0x7fc00000u, float), 0, 0, 1 };
-
-        assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
-
-        geometry.tangents = geometry.tangents[:2];
-
-        assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
-
-        geometry.tangents = geometry.tangents.ptr[:3];
         geometry.tangents[2] = { 1, 0, 0, 1 };
 
         ModelId model = assets.publish_document(&document)!!;

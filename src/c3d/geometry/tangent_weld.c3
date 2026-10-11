@@ -30,7 +30,7 @@ fn MikkVertex mikk_indexed_vertex(MikkFullMesh source, int index) @private {
     int face = index >> 2;
     int corner = index & 3;
 
-    return source.vertices[source.indices[source.face_offsets[face] + corner]];
+    return source.vertices[source.indices[face * CORNERS_PER_TRIANGLE + corner]];
 }
 
 fn MikkVector mikk_indexed_position(MikkFullMesh source, int index) @private {

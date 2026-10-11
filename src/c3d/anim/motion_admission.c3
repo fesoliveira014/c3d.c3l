@@ -12,31 +12,6 @@ const uint MOTION_TRANSLATION_SLOT @local = 0;
 const uint MOTION_ROTATION_SLOT @local = 1;
 const uint MOTION_SCALE_SLOT @local = 2;
 
-enum MotionAdmissionReason @private {
-    NONE,
-    ROOT_NODE,
-    MODEL_HIERARCHY,
-    CLIP_LAYOUT,
-    UP_VECTOR,
-    PARENT_SPACE,
-    NONFINITE_POSITION,
-    BASELINE_ROTATION,
-    NONPOSITIVE_SCALE,
-    NONUNIFORM_SCALE,
-    SHEAR,
-    TRACK_LAYOUT,
-    EXACT_QUATERNION_ZERO,
-    NONNEUTRAL_ADDITIVE_SCALE,
-    SAMPLING_MARGIN,
-    QUATERNION_UNPROVEN,
-}
-
-struct MotionAdmissionDiagnostic @private {
-    MotionAdmissionReason reason;
-    uint model_node;
-    uint track;
-}
-
 struct CapturedMotionNode @private {
     uint model_node;
     uint translation_track;
@@ -69,136 +44,45 @@ fn void? validate_generalized_motion(
     MotionBasis motion_basis,
     bool additive,
     AdditiveScaleMode additive_scale,
-    MotionAdmissionDiagnostic* diagnostic,
 ) @private {
-    clear_motion_admission_diagnostic(diagnostic);
-    validate_motion_model_layout(
-        template: template,
-        clip: clip,
-        root: root,
-        diagnostic: diagnostic,
-    )!;
-    validate_motion_up(extraction, diagnostic)!;
+    validate_motion_model_layout(template, clip, root)!;
+    validate_motion_up(extraction)!;
 
     if (!motion_basis.root_present || !motion_basis.parent_space || !motion_basis.ancestors_parent_space) {
-        set_motion_admission_diagnostic(
-            diagnostic: diagnostic,
-            reason: MotionAdmissionReason.PARENT_SPACE,
-            model_node: root,
-            track: NO_MOTION_TRACK,
-        );
         return c3d::INVALID_ARGUMENT~;
     }
 
-    MotionAdmissionReason instance_reason = motion_baseline_scale_reason(motion_basis.instance_scale);
-    if (instance_reason != MotionAdmissionReason.NONE) {
-        set_motion_admission_diagnostic(
-            diagnostic: diagnostic,
-            reason: instance_reason,
-            model_node: root,
-            track: NO_MOTION_TRACK,
-        );
-        return c3d::INVALID_ARGUMENT~;
-    }
+    validate_motion_baseline_scale(motion_basis.instance_scale)!;
 
-    MotionAdmissionDiagnostic pending = { .model_node = NO_ROOT_NODE, .track = NO_MOTION_TRACK };
-
+    bool unsupported;
     for (int model_node = (int)root; model_node >= 0; model_node = template.nodes[model_node].parent) {
-        MotionAdmissionReason baseline_reason = motion_baseline_reason(template.nodes[model_node].local);
-        if (baseline_reason != MotionAdmissionReason.NONE) {
-            set_motion_admission_diagnostic(
-                diagnostic: diagnostic,
-                reason: baseline_reason,
-                model_node: (uint)model_node,
-                track: NO_MOTION_TRACK,
-            );
-            return c3d::INVALID_ARGUMENT~;
-        }
+        validate_motion_baseline(template.nodes[model_node].local)!;
 
         uint[3] track_indices = { NO_MOTION_TRACK, NO_MOTION_TRACK, NO_MOTION_TRACK };
 
         foreach (track_index, &track : clip.tracks) {
             if (clip.targets[track.target] != (uint)model_node || track.path == TargetPath.MORPH_WEIGHTS) continue;
             uint slot = motion_chain_track_slot(track.path);
-            if (track_indices[slot] != NO_MOTION_TRACK) {
-                set_motion_admission_diagnostic(
-                    diagnostic: diagnostic,
-                    reason: MotionAdmissionReason.TRACK_LAYOUT,
-                    model_node: (uint)model_node,
-                    track: (uint)track_index,
-                );
-                return c3d::INVALID_ARGUMENT~;
-            }
+            if (track_indices[slot] != NO_MOTION_TRACK) return c3d::INVALID_ARGUMENT~;
             track_indices[slot] = (uint)track_index;
 
-            MotionAdmissionReason reason = MotionAdmissionReason.NONE;
             switch (track.path) {
                 case TRANSLATION:
                 case MORPH_WEIGHTS:
                     continue;
                 case ROTATION:
-                    MotionRotationFailure failure;
-                    if (catch excuse = validate_motion_rotation_track(track, &failure)) {
-                        switch (failure) {
-                            case NONE:
-                            case STORAGE:
-                                reason = MotionAdmissionReason.TRACK_LAYOUT;
-                            case ZERO:
-                                reason = MotionAdmissionReason.EXACT_QUATERNION_ZERO;
-                            case CERTIFICATE_UNPROVEN:
-                                reason = MotionAdmissionReason.QUATERNION_UNPROVEN;
-                        }
-
-                        if (excuse != c3d::UNSUPPORTED) {
-                            set_motion_admission_diagnostic(
-                                diagnostic: diagnostic,
-                                reason: reason,
-                                model_node: (uint)model_node,
-                                track: (uint)track_index,
-                            );
-                            return excuse~;
-                        }
+                    if (catch excuse = validate_motion_rotation_track(track)) {
+                        if (excuse != c3d::UNSUPPORTED) return excuse~;
+                        unsupported = true;
                     }
                 case SCALE:
-                    MotionScaleFailure failure;
-                    ConsumedScaleDomain? result = classify_consumed_scale_track(track, additive, &failure);
-                    if (catch excuse = result) {
-                        switch (failure) {
-                            case NONE:
-                            case STORAGE:
-                                reason = MotionAdmissionReason.TRACK_LAYOUT;
-                            case NONPOSITIVE:
-                                reason = MotionAdmissionReason.NONPOSITIVE_SCALE;
-                            case NONUNIFORM:
-                                reason = MotionAdmissionReason.NONUNIFORM_SCALE;
-                            case NONNEUTRAL:
-                                reason = MotionAdmissionReason.NONNEUTRAL_ADDITIVE_SCALE;
-                        }
-
-                        set_motion_admission_diagnostic(
-                            diagnostic: diagnostic,
-                            reason: reason,
-                            model_node: (uint)model_node,
-                            track: (uint)track_index,
-                        );
-                        return excuse~;
-                    }
-
-                    if (result == ConsumedScaleDomain.SAMPLING_UNPROVEN) {
-                        reason = MotionAdmissionReason.SAMPLING_MARGIN;
-                    }
-            }
-
-            if (reason != MotionAdmissionReason.NONE && pending.reason == MotionAdmissionReason.NONE) {
-                pending = { .reason = reason, .model_node = (uint)model_node, .track = (uint)track_index };
+                    ConsumedScaleDomain domain = classify_consumed_scale_track(track, additive)!;
+                    unsupported |= domain == ConsumedScaleDomain.SAMPLING_UNPROVEN;
             }
         }
     }
 
-    if (pending.reason != MotionAdmissionReason.NONE) {
-        if (diagnostic) *diagnostic = pending;
-        return c3d::UNSUPPORTED~;
-    }
+    if (unsupported) return c3d::UNSUPPORTED~;
 }
 
 fn CapturedMotionChain? create_captured_motion_chain(
@@ -208,13 +92,8 @@ fn CapturedMotionChain? create_captured_motion_chain(
     uint root,
     RootExtractionDesc extraction,
 ) @private {
-    validate_motion_model_layout(
-        template: template,
-        clip: clip,
-        root: root,
-        diagnostic: null,
-    )!;
-    validate_motion_up(extraction, null)!;
+    validate_motion_model_layout(template, clip, root)!;
+    validate_motion_up(extraction)!;
 
     sz chain_count;
     for (int node = (int)root; node >= 0; node = template.nodes[node].parent) chain_count++;
@@ -295,83 +174,29 @@ fn void destroy_captured_motion_chain(CapturedMotionChain* captured) @private {
     *captured = {};
 }
 
-fn void clear_motion_admission_diagnostic(MotionAdmissionDiagnostic* diagnostic) @local {
-    if (diagnostic) *diagnostic = { .model_node = NO_ROOT_NODE, .track = NO_MOTION_TRACK };
-}
-
-fn void set_motion_admission_diagnostic(
-    MotionAdmissionDiagnostic* diagnostic,
-    MotionAdmissionReason reason,
-    uint model_node,
-    uint track,
-) @local {
-    if (diagnostic) *diagnostic = { .reason = reason, .model_node = model_node, .track = track };
-}
-
-fn void? validate_motion_model_layout(
-    ModelTemplate* template,
-    AnimationClip* clip,
-    uint root,
-    MotionAdmissionDiagnostic* diagnostic,
-) @local {
+fn void? validate_motion_model_layout(ModelTemplate* template, AnimationClip* clip, uint root) @local {
     if (root >= template.nodes.len || template.nodes.len > int::max || clip.tracks.len > uint::max) {
-        set_motion_admission_diagnostic(
-            diagnostic: diagnostic,
-            reason: MotionAdmissionReason.ROOT_NODE,
-            model_node: root,
-            track: NO_MOTION_TRACK,
-        );
         return c3d::INVALID_ARGUMENT~;
     }
 
     foreach (index, node : template.nodes) {
-        if (node.parent < -1 || node.parent >= index) {
-            set_motion_admission_diagnostic(
-                diagnostic: diagnostic,
-                reason: MotionAdmissionReason.MODEL_HIERARCHY,
-                model_node: (uint)index,
-                track: NO_MOTION_TRACK,
-            );
-            return c3d::INVALID_ARGUMENT~;
-        }
+        if (node.parent < -1 || node.parent >= index) return c3d::INVALID_ARGUMENT~;
     }
 
     foreach (target : clip.targets) {
-        if (target >= template.nodes.len) {
-            set_motion_admission_diagnostic(
-                diagnostic: diagnostic,
-                reason: MotionAdmissionReason.CLIP_LAYOUT,
-                model_node: target,
-                track: NO_MOTION_TRACK,
-            );
-            return c3d::INVALID_ARGUMENT~;
-        }
+        if (target >= template.nodes.len) return c3d::INVALID_ARGUMENT~;
     }
 
-    foreach (index, track : clip.tracks) {
-        if (track.target >= clip.targets.len) {
-            set_motion_admission_diagnostic(
-                diagnostic: diagnostic,
-                reason: MotionAdmissionReason.CLIP_LAYOUT,
-                model_node: NO_ROOT_NODE,
-                track: (uint)index,
-            );
-            return c3d::INVALID_ARGUMENT~;
-        }
+    foreach (track : clip.tracks) {
+        if (track.target >= clip.targets.len) return c3d::INVALID_ARGUMENT~;
     }
 }
 
-fn void? validate_motion_up(RootExtractionDesc extraction, MotionAdmissionDiagnostic* diagnostic) @local {
+fn void? validate_motion_up(RootExtractionDesc extraction) @local {
     Vec3 up = extraction.up;
     double squared = (double)up.x * (double)up.x + (double)up.y * (double)up.y + (double)up.z * (double)up.z;
     if (!extraction.generalized || !math::is_finite(up.x) || !math::is_finite(up.y)
         || !math::is_finite(up.z) || math::abs(squared - 1) > MOTION_UP_UNIT_TOLERANCE) {
-        set_motion_admission_diagnostic(
-            diagnostic: diagnostic,
-            reason: MotionAdmissionReason.UP_VECTOR,
-            model_node: NO_ROOT_NODE,
-            track: NO_MOTION_TRACK,
-        );
         return c3d::INVALID_ARGUMENT~;
     }
 }
@@ -389,29 +214,27 @@ fn uint motion_chain_track_slot(TargetPath path) @local {
     }
 }
 
-fn MotionAdmissionReason motion_baseline_scale_reason(Vec3 scale) @local {
+fn void? validate_motion_baseline_scale(Vec3 scale) @local {
     if (!math::is_finite(scale.x) || !math::is_finite(scale.y) || !math::is_finite(scale.z)
-        || !(scale.x > 0) || !(scale.y > 0) || !(scale.z > 0)) return MotionAdmissionReason.NONPOSITIVE_SCALE;
+        || !(scale.x > 0) || !(scale.y > 0) || !(scale.z > 0)) return c3d::INVALID_ARGUMENT~;
 
     double maximum = math::max((double)scale.x, math::max((double)scale.y, (double)scale.z));
     double minimum = math::min((double)scale.x, math::min((double)scale.y, (double)scale.z));
-    return minimum >= maximum * (1 - MOTION_FRAME_SCALE_TOLERANCE)
-      ? MotionAdmissionReason.NONE : MotionAdmissionReason.NONUNIFORM_SCALE;
+    if (minimum < maximum * (1 - MOTION_FRAME_SCALE_TOLERANCE)) return c3d::INVALID_ARGUMENT~;
 }
 
-fn MotionAdmissionReason motion_baseline_reason(Transform baseline) @local {
+fn void? validate_motion_baseline(Transform baseline) @local {
     if (!math::is_finite(baseline.position.x) || !math::is_finite(baseline.position.y)
-        || !math::is_finite(baseline.position.z)) return MotionAdmissionReason.NONFINITE_POSITION;
+        || !math::is_finite(baseline.position.z)) return c3d::INVALID_ARGUMENT~;
 
-    MotionAdmissionReason scale_reason = motion_baseline_scale_reason(baseline.scale);
-    if (scale_reason != MotionAdmissionReason.NONE) return scale_reason;
+    validate_motion_baseline_scale(baseline.scale)!;
 
     bool nonzero;
     foreach (component : baseline.rotation.v) {
-        if (!math::is_finite(component)) return MotionAdmissionReason.BASELINE_ROTATION;
+        if (!math::is_finite(component)) return c3d::INVALID_ARGUMENT~;
         nonzero |= component != 0;
     }
-    if (!nonzero) return MotionAdmissionReason.BASELINE_ROTATION;
+    if (!nonzero) return c3d::INVALID_ARGUMENT~;
 
     double quaternion_x = baseline.rotation.v.x;
     double quaternion_y = baseline.rotation.v.y;
@@ -437,12 +260,12 @@ fn MotionAdmissionReason motion_baseline_reason(Transform baseline) @local {
     foreach (&column : columns) {
         double squared;
         foreach (component : *column) {
-            if (!math::is_finite(component)) return MotionAdmissionReason.BASELINE_ROTATION;
+            if (!math::is_finite(component)) return c3d::INVALID_ARGUMENT~;
             squared += component * component;
         }
         double length = math::sqrt(squared);
         if (!(length > 0) || math::abs(length - 1) > MOTION_FRAME_ORTHONORMAL_TOLERANCE) {
-            return MotionAdmissionReason.SHEAR;
+            return c3d::INVALID_ARGUMENT~;
         }
         foreach (&component : *column) *component /= length;
     }
@@ -453,15 +276,14 @@ fn MotionAdmissionReason motion_baseline_reason(Transform baseline) @local {
             for (uint component = 0; component < 3; component++) {
                 product += columns[left][component] * columns[right][component];
             }
-            if (math::abs(product) > MOTION_FRAME_ORTHONORMAL_TOLERANCE) return MotionAdmissionReason.SHEAR;
+            if (math::abs(product) > MOTION_FRAME_ORTHONORMAL_TOLERANCE) return c3d::INVALID_ARGUMENT~;
         }
     }
 
     double determinant = columns[0][0] * (columns[1][1] * columns[2][2] - columns[1][2] * columns[2][1])
       - columns[0][1] * (columns[1][0] * columns[2][2] - columns[1][2] * columns[2][0])
       + columns[0][2] * (columns[1][0] * columns[2][1] - columns[1][1] * columns[2][0]);
-    return determinant >= 1 - MOTION_FRAME_ORTHONORMAL_TOLERANCE
-      ? MotionAdmissionReason.NONE : MotionAdmissionReason.SHEAR;
+    if (determinant < 1 - MOTION_FRAME_ORTHONORMAL_TOLERANCE) return c3d::INVALID_ARGUMENT~;
 }
 
 fn void capture_motion_reference(CapturedMotionNode* node, AnimationClip* clip) @local {

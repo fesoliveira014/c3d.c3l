@@ -249,15 +249,6 @@ fn bool? run_prepare_step(
                 .semantic = source.desc.semantic,
             };
 
-            if (source.desc.coverage == CoveragePolicy.THRESHOLD) {
-                unit.texture_candidate.coverage_resource = create_texture_coverage_resource(
-                    allocator: renderer.allocator,
-                    desc: source.desc,
-                    statistics: &source.coverage_statistics,
-                    revision: unit.revision,
-                );
-            }
-
             unit.staged.mip = unit.texture_base;
             uint chain_extent = math::max(source.desc.width, source.desc.height);
             uint tail_base = eligible ? texture_tail_base(chain_extent, chain_mips) : 0;
@@ -413,11 +404,6 @@ fn bool? run_prepare_step(
                 record.generation_row = 0;
 
                 if (completed) {
-                    if (coverage) store_texture_coverage_result(
-                        resource: unit.texture_candidate.coverage_resource,
-                        state: &record.coverage,
-                    );
-
                     if (++record.generation_layer == desc.layers) {
                         record.generation_layer = 0;
                         record.generation_mip++;

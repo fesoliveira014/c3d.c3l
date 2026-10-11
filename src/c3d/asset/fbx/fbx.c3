@@ -178,7 +178,6 @@ fn ClipId[]? load_animations(
  @param [&inout] assets : "Receives clips; unchanged on a fault."
  @param [&in] profile : "Immutable borrow; never retained by clips."
  @param variant : "Nonempty identity within the source and target namespace."
- @param [inout] diagnostic : "Optional retarget failure context."
  @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
  @require path.len > 0
@@ -191,14 +190,7 @@ fn ClipId[]? load_animations_with_profile(
     RetargetProfile* profile,
     String variant,
     RetargetBakeOptions options = retarget::RETARGET_BAKE_OPTIONS_DEFAULT,
-    RetargetDiagnostic* diagnostic = null,
 ) {
-    if (diagnostic) *diagnostic = {
-        .reason = RetargetReason.NONE,
-        .source_node = retarget::RETARGET_NO_NODE,
-        .target_node = retarget::RETARGET_NO_NODE,
-        .mapping_row = retarget::RETARGET_NO_NODE,
-    };
     if (!variant.len) return c3d::INVALID_ARGUMENT~;
     ModelAsset* record = assets.models.try_get(target)!;
     Importer importer = {
@@ -232,7 +224,7 @@ fn ClipId[]? load_animations_with_profile(
             ?? c3d::CAPACITY_EXCEEDED~!;
         importer.node_remap[..] = NOT_IMPORTED;
         build_template(&importer)!;
-        profile.validate_templates(importer.template.nodes, &record.data, diagnostic)!;
+        profile.validate_templates(importer.template.nodes, &record.data)!;
 
         foreach (index, stack : importer.scene.anim_stacks) {
             AnimationClip baked = convert_stack(&importer, stack, tmem)!;
@@ -243,7 +235,6 @@ fn ClipId[]? load_animations_with_profile(
                 target: &record.data,
                 profile: profile,
                 options: options,
-                diagnostic: diagnostic,
             )!;
             defer catch asset::free_clip(assets.allocator, &clip);
             String key = profiled_animation_key(

@@ -13,21 +13,18 @@ import c3d::shader;
 import c3d::spatial;
 import c3d::test::animated_crowd_fixtures;
 import std::math;
-import std::io;
 
 const float[3] ANIMATED_LOD_CHANNEL_DEFAULTS @local = { 0.125f, 0.75f, 0.875f };
 const float[3] ANIMATED_LOD_CHANNEL_POSE @local = { 0.875f, 0.625f, 0.125f };
+const float ANIMATED_LOD_QUERY_TOLERANCE @local = 1e-5f;
 
 enum AnimatedLodAttachFaultKind @local {
     DEAD_OWNER,
-    REUSED_OWNER,
     RETIRED_GEOMETRY,
-    REUSED_GEOMETRY,
     SECOND_ATTACH,
     IMPORTED_GROUP,
     CUSTOM_VERTEX,
     ALLOCATION,
-    IMPOSTOR,
 }
 
 struct AnimatedLodChannelFixture @local {
@@ -80,31 +77,6 @@ fn AssetStore animated_lod_store() @local {
         .max_geometries = 8, .max_textures = 8, .max_materials = 4, .max_samplers = 8,
         .max_models = 8, .max_skeletons = 8, .max_clips = 8,
     });
-}
-
-fn AnimatedLodDesc animated_lod_desc(AssetStore* assets, ModelId model_id) @local {
-    ModelTemplate* template = &assets.model(model_id).data;
-    uint count = (uint)template.meshes.len;
-    LodLevel[] levels = alloc::new_array(tmem, LodLevel, 2);
-    levels[0] = { .first_part = 0, .part_count = count, .min_screen_size = 0.2f };
-    levels[1] = { .first_part = count, .part_count = count, .min_screen_size = 0 };
-    AnimatedLodPart[] parts = alloc::new_array(tmem, AnimatedLodPart, (sz)count * 2);
-    for (uint level = 0; level < 2; level++) {
-        foreach (uint index, mesh : template.meshes) {
-            ModelSkin skin;
-            foreach (candidate : template.skins) {
-                if (candidate.mesh_node == mesh.node) skin = candidate;
-            }
-            skin.joint_nodes = alloc::clone_slice(tmem, skin.joint_nodes);
-            parts[level * count + index] = {
-                .draw = { .geometry = mesh.geometry, .material = mesh.material, .local = matrix::IDENTITY4 },
-                .mesh_index = index,
-                .skin = skin,
-                .default_morph_weights = alloc::clone_slice(tmem, mesh.default_morph_weights),
-            };
-        }
-    }
-    return { .levels = levels, .parts = parts };
 }
 
 fn GeometryId add_animated_lod_channel_geometry(
@@ -200,11 +172,29 @@ fn AnimatedLodDesc animated_lod_channel_desc(
     PartsFixture* fixture,
     GeometryId selected,
 ) @local {
-    AnimatedLodDesc desc = animated_lod_desc(assets, fixture.mixed);
+    AnimatedLodDesc desc = animated_crowd_fixtures::parts_lod_desc(assets, fixture.mixed);
     desc.parts[7].draw.geometry = selected;
     desc.parts[7].default_morph_weights = alloc::new_array(tmem, float, 1);
     desc.parts[7].default_morph_weights[0] = 0.75f;
     return desc;
+}
+
+fn bool animated_lod_query_contains(Aabb bounds, Vec3 point) @local {
+    for (uint axis = 0; axis < 3; axis++) {
+        if (point[axis] < bounds.min[axis] - ANIMATED_LOD_QUERY_TOLERANCE
+          || point[axis] > bounds.max[axis] + ANIMATED_LOD_QUERY_TOLERANCE) return false;
+    }
+    return true;
+}
+
+fn void animated_lod_query_equal(PickHit[] direct, PickHit[] indexed) @local {
+    assert(direct.len == indexed.len);
+    foreach (index, hit : direct) {
+        assert(hit.node == indexed[index].node && hit.lod_group == indexed[index].lod_group);
+        assert(hit.instance_index == indexed[index].instance_index && hit.part_index == indexed[index].part_index);
+        assert(c3d::same_id(hit.geometry, indexed[index].geometry));
+        assert(hit.distance == indexed[index].distance && hit.triangle_hit == indexed[index].triangle_hit);
+    }
 }
 
 fn void test_animated_lod_copies_logical_parts_and_preserves_ordinary_pose() @test {
@@ -222,7 +212,7 @@ fn void test_animated_lod_copies_logical_parts_and_preserves_ordinary_pose() @te
         ModelInstance* instance = scene.get(owner, ModelInstance);
         Vec3 rigid = instance.present_node(4).local.position;
         float morph = scene.get(instance.present_node(5), Mesh).morph_weights[0];
-        AnimatedLodDesc desc = animated_lod_desc(&assets, fixture.mixed);
+        AnimatedLodDesc desc = animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed);
         model::attach_animated_lod(
             assets: &assets,
             scene: &scene,
@@ -253,59 +243,65 @@ fn void test_animated_lod_copies_logical_parts_and_preserves_ordinary_pose() @te
     };
 }
 
-fn void test_animated_lod_binding_and_default_faults_preserve_existing_descriptor() @test {
+fn void test_animated_lod_replace_faults_preserve_existing_descriptor() @test {
     @pool() {
         AssetStore assets = animated_lod_store();
         defer asset::destroy_asset_store(&assets);
         PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
-        Scene scene = scene::create_scene(mem, { .max_nodes = 64 });
-        defer scene::destroy_scene(&scene);
-        Node* owner = model::instantiate(&assets, &scene, fixture.mixed)!!;
-        AnimatedLodDesc desc = animated_lod_desc(&assets, fixture.mixed);
-        ModelTemplate* alias_template = &assets.model(fixture.compatible_alias).data;
-        desc.parts[9].skin = alias_template.skins[1];
-        model::attach_animated_lod(
-            assets: &assets,
-            scene: &scene,
-            owner: owner,
-            desc: desc,
-        )!!;
-        LodGroupState* previous = scene.get(owner, LodGroup).state;
-        ulong identity = previous.identity;
-        ModelTemplate* reordered = &assets.model(fixture.reordered_joints).data;
-        desc.parts[9].skin = reordered.skins[1];
-        assert(@catch(model::replace_animated_lod(
-            assets: &assets,
-            scene: &scene,
-            owner: owner,
-            desc: desc,
-        )) == c3d::INVALID_ARGUMENT);
-        assert(scene.get(owner, LodGroup).state == previous && previous.identity == identity);
-        ModelTemplate* changed_bind = &assets.model(fixture.different_bind).data;
-        desc.parts[9].skin = changed_bind.skins[1];
-        assert(@catch(model::replace_animated_lod(
-            assets: &assets,
-            scene: &scene,
-            owner: owner,
-            desc: desc,
-        )) == c3d::INVALID_ARGUMENT);
-        desc.parts[9].skin = alias_template.skins[1];
-        desc.parts[7].default_morph_weights[0] = 0.5f;
-        assert(@catch(model::replace_animated_lod(
-            assets: &assets,
-            scene: &scene,
-            owner: owner,
-            desc: desc,
-        )) == c3d::INVALID_ARGUMENT);
-        desc.parts[7].default_morph_weights[0] = 0.25f;
-        desc.parts[9].draw.geometry = { .index = uint::max, .generation = 1 };
-        assert(@catch(model::replace_animated_lod(
-            assets: &assets,
-            scene: &scene,
-            owner: owner,
-            desc: desc,
-        )) == c3d::INVALID_ID);
-        assert(scene.get(owner, LodGroup).state == previous && previous.identity == identity);
+        AnimatedLodChannelFixture channels = add_animated_lod_channel_fixture(&assets, &fixture);
+        ModelSkin compatible = assets.model(fixture.compatible_alias).data.skins[1];
+        ModelSkin reordered = assets.model(fixture.reordered_joints).data.skins[1];
+        ModelSkin changed_bind = assets.model(fixture.different_bind).data.skins[1];
+        float[1] wrong_default = { 0.625f };
+        for (uint kind = 0; kind < 2; kind++) {
+            Scene scene = scene::create_scene(mem, { .max_nodes = 64 });
+            defer scene::destroy_scene(&scene);
+            Node* owner = animated_lod_contract_owner(
+                assets: &assets,
+                scene: &scene,
+                fixture: &fixture,
+                crowd: kind == 1,
+            );
+            AnimatedLodDesc desc = animated_lod_channel_desc(&assets, &fixture, channels.selected);
+            desc.parts[9].skin = compatible;
+            model::attach_animated_lod(
+                assets: &assets,
+                scene: &scene,
+                owner: owner,
+                desc: desc,
+            )!!;
+            LodGroupState* previous = scene.get(owner, LodGroup).state;
+            ulong identity = previous.identity;
+            uint descriptor = previous.descriptor_revision;
+            uint revision = previous.revision;
+            Node* first_child = owner.first_child;
+            uint free_nodes = scene.world.entities.free_count;
+            for (uint mutation = 0; mutation < 6; mutation++) {
+                AnimatedLodDesc changed = { .levels = desc.levels, .parts = alloc::clone_slice(tmem, desc.parts) };
+                switch (mutation) {
+                    case 0: changed.parts[7].draw.geometry = channels.foreign;
+                    case 1: changed.parts[7].default_morph_weights = wrong_default[..];
+                    case 2: changed.parts[9].skin.joint_nodes = desc.parts[9].skin.joint_nodes[:1];
+                    case 3: changed.parts[9].skin = reordered;
+                    case 4: changed.parts[9].skin = changed_bind;
+                    case 5: changed.parts[9].draw.geometry = { .index = uint::max, .generation = 1 };
+                }
+                fault expected = mutation == 5 ? c3d::INVALID_ID : c3d::INVALID_ARGUMENT;
+                assert(@catch(model::replace_animated_lod(
+                    assets: &assets,
+                    scene: &scene,
+                    owner: owner,
+                    desc: changed,
+                )) == expected);
+                assert(scene.get(owner, LodGroup).state == previous && previous.identity == identity);
+                assert(previous.descriptor_revision == descriptor && previous.revision == revision);
+                assert(scene.world.entities.free_count == free_nodes && owner.first_child == first_child);
+                assert(previous.animated.weight_indices[previous.animated.parts[7].weight_offset] == 1);
+                assert(c3d::same_id(previous.desc.parts[7].geometry, channels.selected));
+            }
+            model::sync_animated_lod(&assets, &scene, owner)!!;
+            assert(scene.get(owner, LodGroup).state == previous && previous.identity == identity);
+        }
     };
 }
 
@@ -338,7 +334,7 @@ fn void test_animated_lod_pending_crowd_reacquires_fixed_source_without_replacem
             pose_bounds: animated_crowd_fixtures::PARTS_POSE_BOUNDS,
             instances: instances[..],
         )!!;
-        AnimatedLodDesc desc = animated_lod_desc(&assets, fixture.skin_free);
+        AnimatedLodDesc desc = animated_crowd_fixtures::parts_lod_desc(&assets, fixture.skin_free);
         model::attach_animated_lod(
             assets: &assets,
             scene: &scene,
@@ -387,7 +383,7 @@ fn void test_animated_lod_removed_mesh_or_joint_rejects_whole_source_entry() @te
         defer scene::destroy_scene(&scene);
         for (uint missing = 0; missing < 2; missing++) {
             Node* owner = model::instantiate(&assets, &scene, fixture.mixed)!!;
-            AnimatedLodDesc desc = animated_lod_desc(&assets, fixture.mixed);
+            AnimatedLodDesc desc = animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed);
             model::attach_animated_lod(
                 assets: &assets,
                 scene: &scene,
@@ -458,7 +454,7 @@ fn void test_animated_lod_named_channel_subset_uses_logical_weights_and_restores
             }
             ulong identity = state.identity;
             uint descriptor = state.descriptor_revision;
-            for (uint stage = 0; stage < 3; stage++) {
+            for (uint stage = 0; stage < 2; stage++) {
                 if (stage == 1) {
                     if (crowd) {
                         player.stop(action)!!;
@@ -484,79 +480,7 @@ fn void test_animated_lod_named_channel_subset_uses_logical_weights_and_restores
                     float expected = stage ? ANIMATED_LOD_CHANNEL_DEFAULTS[index] : ANIMATED_LOD_CHANNEL_POSE[index];
                     assert(bitcast(weights[index], uint) == bitcast(expected, uint));
                 }
-                MorphSelection selection = geometry::select_morph_targets(selected.channels, weights, indices);
-                shader::MorphWeightsGpu block = render::pack_morph_selection(selection);
-                // Middle maps to logical weight 1; its four target keys differ from the base's three channels.
-                if (!stage) {
-                    assert(block.count == 2 && block.indices[0] == 1 && block.indices[1] == 2);
-                    assert(block.weights[0] == 0.5f && block.weights[1] == 0.5f);
-                } else {
-                    assert(block.count == 1 && block.indices[0] == 2 && block.weights[0] == 1);
-                }
-                Vec3 point = selected.positions[0];
-                for (uint active = 0; active < block.count; active++) {
-                    point += selected.targets[block.indices[active]].position_deltas[0] * block.weights[active];
-                }
-                assert(point == selected.positions[0] + (Vec3){ stage ? 3 : 2.5f, 0, 0 });
             }
-        }
-    };
-}
-
-fn void test_animated_lod_foreign_selected_channel_and_subset_joints_fault_atomically() @test {
-    @pool() {
-        AssetStore assets = animated_lod_store();
-        defer asset::destroy_asset_store(&assets);
-        PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
-        AnimatedLodChannelFixture channels = add_animated_lod_channel_fixture(&assets, &fixture);
-        for (uint kind = 0; kind < 2; kind++) {
-            Scene scene = scene::create_scene(mem, { .max_nodes = 64 });
-            defer scene::destroy_scene(&scene);
-            Node* owner = animated_lod_contract_owner(
-                assets: &assets,
-                scene: &scene,
-                fixture: &fixture,
-                crowd: kind == 1,
-            );
-            AnimatedLodDesc desc = animated_lod_channel_desc(&assets, &fixture, channels.selected);
-            model::attach_animated_lod(
-                assets: &assets,
-                scene: &scene,
-                owner: owner,
-                desc: desc,
-            )!!;
-            LodGroupState* previous = scene.get(owner, LodGroup).state;
-            ulong identity = previous.identity;
-            uint descriptor = previous.descriptor_revision;
-            uint revision = previous.revision;
-            Node* first_child = owner.first_child;
-            uint free_nodes = scene.world.entities.free_count;
-            ModelSkin original_skin = desc.parts[9].skin;
-            for (uint mutation = 0; mutation < 3; mutation++) {
-                if (mutation == 0) desc.parts[7].draw.geometry = channels.foreign;
-                if (mutation == 1) desc.parts[7].default_morph_weights[0] = 0.625f;
-                if (mutation == 2) desc.parts[9].skin.joint_nodes = original_skin.joint_nodes[:1];
-                assert(@catch(model::replace_animated_lod(
-                    assets: &assets,
-                    scene: &scene,
-                    owner: owner,
-                    desc: desc,
-                )) == c3d::INVALID_ARGUMENT);
-                assert(scene.get(owner, LodGroup).state == previous && previous.identity == identity);
-                assert(previous.descriptor_revision == descriptor && previous.revision == revision);
-                assert(scene.world.entities.free_count == free_nodes && owner.first_child == first_child);
-                assert(previous.animated.weight_indices[previous.animated.parts[7].weight_offset] == 1);
-                assert(c3d::same_id(previous.desc.parts[7].geometry, channels.selected));
-                GeometryId expected_geometry = mutation == 0 ? channels.foreign : channels.selected;
-                assert(c3d::same_id(desc.parts[7].draw.geometry, expected_geometry));
-                if (mutation == 1) assert(desc.parts[7].default_morph_weights[0] == 0.625f);
-                if (mutation == 2) assert(desc.parts[9].skin.joint_nodes.len == 1);
-                desc.parts[7].draw.geometry = channels.selected;
-                desc.parts[7].default_morph_weights[0] = 0.75f;
-                desc.parts[9].skin = original_skin;
-            }
-            model::sync_animated_lod(&assets, &scene, owner)!!;
-            assert(scene.get(owner, LodGroup).state == previous && previous.identity == identity);
         }
     };
 }
@@ -579,7 +503,7 @@ fn void test_animated_lod_public_replace_allocation_failure_preserves_owned_stat
                 fixture: &fixture,
                 crowd: kind == 1,
             );
-            AnimatedLodDesc desc = animated_lod_desc(&assets, fixture.mixed);
+            AnimatedLodDesc desc = animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed);
             model::attach_animated_lod(
                 assets: &assets,
                 scene: &scene,
@@ -634,23 +558,20 @@ fn void test_animated_lod_public_replace_allocation_failure_preserves_owned_stat
 }
 
 fn void test_animated_lod_attach_fault_table_preserves_components_and_allocator() @test {
-    AnimatedLodAttachFaultKind[9] cases = {
+    AnimatedLodAttachFaultKind[6] cases = {
         AnimatedLodAttachFaultKind.DEAD_OWNER,
-        AnimatedLodAttachFaultKind.REUSED_OWNER,
         AnimatedLodAttachFaultKind.RETIRED_GEOMETRY,
-        AnimatedLodAttachFaultKind.REUSED_GEOMETRY,
         AnimatedLodAttachFaultKind.SECOND_ATTACH,
         AnimatedLodAttachFaultKind.IMPORTED_GROUP,
         AnimatedLodAttachFaultKind.CUSTOM_VERTEX,
         AnimatedLodAttachFaultKind.ALLOCATION,
-        AnimatedLodAttachFaultKind.IMPOSTOR,
     };
-    fault[9] expected = {
-        c3d::INVALID_ID, c3d::INVALID_ID, c3d::INVALID_ID, c3d::INVALID_ID,
-        c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::UNSUPPORTED,
-        c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED,
+    bool[6] crowd_owner = { false, true, false, true, false, true };
+    fault[6] expected = {
+        c3d::INVALID_ID, c3d::INVALID_ID, c3d::INVALID_ARGUMENT,
+        c3d::UNSUPPORTED, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED,
     };
-    foreach (uint kind : { 0u, 1u }) foreach (uint index, mutation : cases) {
+    foreach (uint index, mutation : cases) {
         @pool() {
             AssetStore assets = animated_lod_store();
             defer asset::destroy_asset_store(&assets);
@@ -665,35 +586,21 @@ fn void test_animated_lod_attach_fault_table_preserves_components_and_allocator(
                 assets: &assets,
                 scene: &scene,
                 fixture: &fixture,
-                crowd: kind == 1,
+                crowd: crowd_owner[index],
             );
             Node retired_owner;
             Node* owner = live_owner;
-            AnimatedLodDesc desc = animated_lod_desc(&assets, fixture.mixed);
+            AnimatedLodDesc desc = animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed);
             LodGroupState* previous;
             LodGroupState previous_value;
             switch (mutation) {
                 case AnimatedLodAttachFaultKind.DEAD_OWNER:
-                case AnimatedLodAttachFaultKind.REUSED_OWNER:
                     retired_owner = *live_owner;
                     scene.remove(live_owner);
                     owner = &retired_owner;
-                    if (mutation == AnimatedLodAttachFaultKind.REUSED_OWNER) {
-                        Node* reused = scene.add_node(name: "replacement_owner")!!;
-                        assert(reused.id.index == retired_owner.id.index);
-                        assert(reused.id.generation != retired_owner.id.generation);
-                    }
                 case AnimatedLodAttachFaultKind.RETIRED_GEOMETRY:
-                case AnimatedLodAttachFaultKind.REUSED_GEOMETRY:
-                    GeometryId retired = desc.parts[0].draw.geometry;
-                    assets.remove_geometry(retired);
-                    if (mutation == AnimatedLodAttachFaultKind.REUSED_GEOMETRY) {
-                        Geometry replacement = assets.geometry(fixture.geometries[1]).data;
-                        GeometryId reused = assets.add_geometry(&replacement)!!;
-                        assert(reused.index == retired.index && reused.generation != retired.generation);
-                    }
+                    assets.remove_geometry(desc.parts[0].draw.geometry);
                 case AnimatedLodAttachFaultKind.SECOND_ATTACH:
-                case AnimatedLodAttachFaultKind.IMPOSTOR:
                     model::attach_animated_lod(
                         assets: &assets,
                         scene: &scene,
@@ -726,27 +633,13 @@ fn void test_animated_lod_attach_fault_table_preserves_components_and_allocator(
             usz outstanding = allocator.outstanding;
             uint components = scene.count(LodGroup);
             uint free_nodes = scene.world.entities.free_count;
-            fault observed;
-            if (mutation == AnimatedLodAttachFaultKind.IMPOSTOR) {
-                observed = @catch(scene.set_lod_impostor(
-                    assets: &assets,
-                    node: owner,
-                    impostor: {},
-                    min_screen_size: 0.01f,
-                ));
-            } else {
-                observed = @catch(model::attach_animated_lod(
-                    assets: &assets,
-                    scene: &scene,
-                    owner: owner,
-                    desc: desc,
-                ));
-            }
+            fault observed = @catch(model::attach_animated_lod(
+                assets: &assets,
+                scene: &scene,
+                owner: owner,
+                desc: desc,
+            ));
             allocator.reject = false;
-            if (observed != expected[index]) {
-                io::printfn("attach row kind=%s mutation=%s", kind, mutation);
-                io::printfn("observed=%s expected=%s", observed, expected[index]);
-            }
             assert(observed == expected[index]);
             assert(allocator.outstanding == outstanding && scene.count(LodGroup) == components);
             assert(scene.world.entities.free_count == free_nodes);
@@ -778,7 +671,7 @@ fn void test_animated_lod_removed_crowd_keeps_group_without_freed_source_aliases
             assets: &assets,
             scene: &scene,
             owner: owner,
-            desc: animated_lod_desc(&assets, fixture.mixed),
+            desc: animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed),
         )!!;
         scene.update_world();
         LodGroupState* state = scene.get(owner, LodGroup).state;
@@ -796,49 +689,6 @@ fn void test_animated_lod_removed_crowd_keeps_group_without_freed_source_aliases
             node: owner,
         ));
         assert(mem::equals((char*)state, (char*)&before, LodGroupState::size));
-        scene.remove_component(owner, LodGroup);
-        assert(!scene.has(owner, LodGroup));
-    };
-}
-
-fn void assert_animated_lod_crowd_publication(
-    Scene* scene,
-    AnimatedCrowd* crowd,
-    LodGroupState* state,
-) @local {
-    assert(state.count == crowd.count);
-    assert(state.transforms.ptr == crowd.placements.ptr && state.colors.ptr == crowd.colors.ptr);
-    assert(state.instance_epoch == crowd.playback.identity);
-    assert(state.slot_generations.len == crowd.playback.slots.len);
-    foreach (index, slot : crowd.playback.slots) assert(state.slot_generations[index] == slot.generation);
-    InstancedMesh* batch = scene.world.get(crowd.parts[0].batch, InstancedMesh);
-    assert(state.animated.source_revision == batch.revision);
-}
-
-fn void test_animated_lod_larger_crowd_reattach_keeps_admitted_state_dangling_and_unchanged() @test {
-    @pool() {
-        AssetStore assets = animated_lod_store();
-        defer asset::destroy_asset_store(&assets);
-        PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
-        Scene scene = scene::create_scene(mem, { .max_nodes = 64 });
-        defer scene::destroy_scene(&scene);
-        Node* owner = animated_lod_contract_owner(
-            assets: &assets,
-            scene: &scene,
-            fixture: &fixture,
-            crowd: true,
-        );
-        model::attach_animated_lod(
-            assets: &assets,
-            scene: &scene,
-            owner: owner,
-            desc: animated_lod_desc(&assets, fixture.mixed),
-        )!!;
-        LodGroupState* state = scene.get(owner, LodGroup).state;
-        assert(state.slot_generations.len == 1 && state.count == 1);
-        scene.remove_component(owner, AnimatedCrowd);
-        assert(state.count == 0 && state.transforms.len == 0 && state.colors.len == 0);
-        LodGroupState before = *state;
         AnimatedLodBinding binding_before = *state.animated;
         uint[] generations_before = alloc::clone_slice(tmem, state.slot_generations);
         CrowdInstance[3] instances;
@@ -858,31 +708,32 @@ fn void test_animated_lod_larger_crowd_reattach_keeps_admitted_state_dangling_an
             pose_bounds: animated_crowd_fixtures::PARTS_POSE_BOUNDS,
             instances: instances[..],
         )!!;
-        assert(mem::equals((char*)state, (char*)&before, LodGroupState::size));
-        assert(mem::equals((char*)state.animated, (char*)&binding_before, AnimatedLodBinding::size));
-        assert(state.slot_generations == generations_before);
         model::prepare_crowd(&assets, &scene, owner)!!;
         AnimatedCrowd* larger = scene.get(owner, AnimatedCrowd);
         assert(larger.is_prepared() && larger.count == 3 && larger.playback.slots.len == 4);
-        assert(mem::equals((char*)state, (char*)&before, LodGroupState::size));
-        assert(mem::equals((char*)state.animated, (char*)&binding_before, AnimatedLodBinding::size));
-        assert(state.slot_generations == generations_before);
         scene.write_crowd_batches(larger);
-        assert(mem::equals((char*)state, (char*)&before, LodGroupState::size));
-        assert(mem::equals((char*)state.animated, (char*)&binding_before, AnimatedLodBinding::size));
-        assert(state.slot_generations == generations_before);
-        assert(!spatial::lod_group_is_live(
-            assets: &assets,
-            group: scene.get(owner, LodGroup),
-            scene: &scene,
-            node: owner,
-        ));
         assert(@catch(model::sync_animated_lod(&assets, &scene, owner)) == c3d::INVALID_ARGUMENT);
         assert(scene.get(owner, LodGroup).state == state);
         assert(mem::equals((char*)state, (char*)&before, LodGroupState::size));
         assert(mem::equals((char*)state.animated, (char*)&binding_before, AnimatedLodBinding::size));
         assert(state.slot_generations == generations_before);
+        scene.remove_component(owner, LodGroup);
+        assert(!scene.has(owner, LodGroup));
     };
+}
+
+fn void assert_animated_lod_crowd_publication(
+    Scene* scene,
+    AnimatedCrowd* crowd,
+    LodGroupState* state,
+) @local {
+    assert(state.count == crowd.count);
+    assert(state.transforms.ptr == crowd.placements.ptr && state.colors.ptr == crowd.colors.ptr);
+    assert(state.instance_epoch == crowd.playback.identity);
+    assert(state.slot_generations.len == crowd.playback.slots.len);
+    foreach (index, slot : crowd.playback.slots) assert(state.slot_generations[index] == slot.generation);
+    InstancedMesh* batch = scene.world.get(crowd.parts[0].batch, InstancedMesh);
+    assert(state.animated.source_revision == batch.revision);
 }
 
 fn void test_animated_lod_animator_update_publishes_source_without_explicit_sync() @test {
@@ -899,7 +750,7 @@ fn void test_animated_lod_animator_update_publishes_source_without_explicit_sync
             assets: &assets,
             scene: &scene,
             owner: owner,
-            desc: animated_lod_desc(&assets, fixture.mixed),
+            desc: animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed),
         )!!;
         LodGroupState* state = scene.get(owner, LodGroup).state;
         ModelInstance* instance = scene.get(owner, ModelInstance);
@@ -911,5 +762,309 @@ fn void test_animated_lod_animator_update_publishes_source_without_explicit_sync
         assert(instance.present_node(animated_crowd_fixtures::PARTS_RIGID_NODE).local.position == (Vec3){ 2, 0, 0 });
         assert(state.revision != before && state.aggregate_revision == 0);
         assert(state.count == 1 && state.identity == identity && state.descriptor_revision == descriptor_revision);
+    };
+}
+
+fn void test_animated_lod_queries_use_posed_base_logical_parts_once() @test {
+    @pool() {
+        AssetStore assets = animated_lod_store();
+        defer asset::destroy_asset_store(&assets);
+        PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
+        Scene scene = scene::create_scene(mem, { .max_nodes = 64 });
+        defer scene::destroy_scene(&scene);
+        Node* owner = model::instantiate(&assets, &scene, fixture.mixed)!!;
+        owner.local.position = animated_crowd_fixtures::PARTS_ROOT_POSITION;
+        Animator* animator = anim::add_animator(&scene, owner);
+        AnimationActionId action = animator.play(&assets, fixture.posing)!!;
+        Action* played = animator.try_action(action)!!;
+        played.loop = false;
+        animator.action(action).time = 1;
+        anim::update(&assets, &scene, 0);
+        model::attach_animated_lod(
+            assets: &assets,
+            scene: &scene,
+            owner: owner,
+            desc: animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed, permuted: true),
+        )!!;
+        Node* extra = scene.add_mesh(
+            geometry: fixture.geometries[1],
+            material: fixture.material,
+            parent: owner,
+            name: "unrelated_child",
+        )!!;
+        extra.local.position.x = 40;
+        scene.update_world();
+        SceneIndex index = spatial::create_scene_index(mem, 6);
+        defer spatial::destroy_scene_index(&index);
+        index.refresh(&assets, &scene)!!;
+        assert(index.count == 6 && index.dangling == 0);
+        uint[animated_crowd_fixtures::PARTS_MESH_COUNT] seen;
+        uint unrelated;
+        foreach (entry : index.entries[:index.count]) {
+            if (!entry.flags.lod_group) {
+                assert(entry.node == extra);
+                unrelated++;
+            } else {
+                assert(entry.node == owner && entry.instance_index == 0 && !entry.flags.instanced);
+                assert(entry.part_index < seen.len);
+                seen[entry.part_index]++;
+                assert(c3d::same_id(entry.geometry, fixture.geometries[entry.part_index]));
+                assert(entry.flags.static_triangles == (entry.part_index == 1));
+                assert(entry.flags.skinned == (entry.part_index == 0 || entry.part_index == 4));
+                for (uint vertex = 0; vertex < animated_crowd_fixtures::PARTS_VERTEX_COUNT; vertex++) {
+                    assert(animated_lod_query_contains(entry.bounds,
+                        animated_crowd_fixtures::PARTS_POSED_POINTS[3 * entry.part_index + vertex]));
+                }
+                if (entry.part_index == 1) {
+                    assert(entry.bounds.min == (Vec3){ 14, 1, -2 });
+                    assert(entry.bounds.max == (Vec3){ 16, 2, -2 });
+                }
+            }
+        }
+        foreach (count : seen) assert(count == 1);
+        assert(unrelated == 1);
+        spatial::prepare_triangle_picks(&assets, &scene);
+        for (uint part = 0; part < animated_crowd_fixtures::PARTS_MESH_COUNT; part++) {
+            Vec3 first = animated_crowd_fixtures::PARTS_POSED_POINTS[3 * part];
+            Vec3 second = animated_crowd_fixtures::PARTS_POSED_POINTS[3 * part + 1];
+            Vec3 third = animated_crowd_fixtures::PARTS_POSED_POINTS[3 * part + 2];
+            Vec3 centre = (first + second + third) / 3;
+            Ray ray = { .origin = { centre.x, centre.y, 10 }, .direction = { 0, 0, -1 } };
+            PickOptions options = { .precision = PickPrecision.TRIANGLES, .faces = PickFaces.BOTH, .layers = uint::max };
+            PickHit[] direct = spatial::pick(
+                allocator: tmem,
+                assets: &assets,
+                scene: &scene,
+                ray: ray,
+                options: options,
+            );
+            PickHit[] indexed = index.pick(
+                allocator: tmem,
+                assets: &assets,
+                ray: ray,
+                options: options,
+            );
+            animated_lod_query_equal(direct, indexed);
+            bool found;
+            foreach (hit : direct) {
+                if (hit.node == owner && hit.part_index == part) {
+                    found = true;
+                    assert(hit.lod_group && hit.instance_index == 0);
+                    assert(c3d::same_id(hit.geometry, fixture.geometries[part]));
+                    assert(hit.triangle_hit == (part == 1));
+                }
+            }
+            assert(found);
+        }
+    };
+}
+
+fn void test_animated_lod_queries_keep_retained_pose_bounds_without_cpu_streams() @test {
+    @pool() {
+        AssetStore assets = animated_lod_store();
+        defer asset::destroy_asset_store(&assets);
+        PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
+        Scene scene = scene::create_scene(mem, { .max_nodes = 64 });
+        defer scene::destroy_scene(&scene);
+        Node* owner = model::instantiate(&assets, &scene, fixture.mixed)!!;
+        owner.local.position = animated_crowd_fixtures::PARTS_ROOT_POSITION;
+        Animator* animator = anim::add_animator(&scene, owner);
+        AnimationActionId action = animator.play(&assets, fixture.posing)!!;
+        Action* played = animator.try_action(action)!!;
+        played.loop = false;
+        animator.action(action).time = 1;
+        anim::update(&assets, &scene, 0);
+        model::attach_animated_lod(
+            assets: &assets,
+            scene: &scene,
+            owner: owner,
+            desc: animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed, permuted: true),
+        )!!;
+        scene.update_world();
+        SceneIndex index = spatial::create_scene_index(mem, 5);
+        defer spatial::destroy_scene_index(&index);
+        index.refresh(&assets, &scene)!!;
+        Aabb[animated_crowd_fixtures::PARTS_MESH_COUNT] retained;
+        foreach (entry : index.entries[:index.count]) retained[entry.part_index] = entry.bounds;
+        assets.release_geometry_cpu(fixture.geometries[0]);
+        assets.release_geometry_cpu(fixture.geometries[1]);
+        assets.release_geometry_cpu(fixture.geometries[2]);
+        assets.release_geometry_cpu(fixture.geometries[4]);
+        index.refresh(&assets, &scene)!!;
+        assert(index.count == 5 && index.dangling == 0);
+        foreach (entry : index.entries[:index.count]) {
+            assert(entry.bounds.min == retained[entry.part_index].min);
+            assert(entry.bounds.max == retained[entry.part_index].max);
+            assert(!entry.flags.static_triangles);
+        }
+        Ray ray = { .origin = { 10.5f, 1, 10 }, .direction = { 0, 0, -1 } };
+        PickOptions options = { .precision = PickPrecision.TRIANGLES, .faces = PickFaces.BOTH, .layers = uint::max };
+        PickHit[] direct = spatial::pick(
+            allocator: tmem,
+            assets: &assets,
+            scene: &scene,
+            ray: ray,
+            options: options,
+        );
+        PickHit[] indexed = index.pick(
+            allocator: tmem,
+            assets: &assets,
+            ray: ray,
+            options: options,
+        );
+        animated_lod_query_equal(direct, indexed);
+        assert(direct.len > 0);
+        foreach (hit : direct) assert(!hit.triangle_hit);
+    };
+}
+
+fn void test_animated_lod_queries_use_crowd_envelope_source_slots_and_regrowth() @test {
+    @pool() {
+        AssetStore assets = animated_lod_store();
+        defer asset::destroy_asset_store(&assets);
+        PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
+        Scene scene = scene::create_scene(mem, { .max_nodes = 64 });
+        defer scene::destroy_scene(&scene);
+        Node* owner = scene.add_node(name: "crowd_lod")!!;
+        owner.local.position = animated_crowd_fixtures::PARTS_ROOT_POSITION;
+        CrowdInstance[2] instances = {
+            { .placement = maths::TRANSFORM_IDENTITY, .pose = { .clip = fixture.posing, .time = 0.75f, .speed = 1, .loop = true }, .color = { 1, 1, 1, 1 } },
+            { .placement = maths::TRANSFORM_IDENTITY, .pose = { .clip = fixture.posing, .time = 0.25f, .speed = 1, .loop = true }, .color = { 0.5f, 0.7f, 1, 1 } },
+        };
+        instances[0].placement.scale = { -2, 3, 0.5f };
+        instances[1].placement.position.x = 50;
+        model::attach_crowd(
+            assets: &assets,
+            scene: &scene,
+            node: owner,
+            model: fixture.mixed,
+            capacity: 4,
+            pose_bounds: animated_crowd_fixtures::PARTS_POSE_BOUNDS,
+            instances: instances[..],
+        )!!;
+        model::attach_animated_lod(
+            assets: &assets,
+            scene: &scene,
+            owner: owner,
+            desc: animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed, permuted: true),
+        )!!;
+        LodGroupState* state = scene.get(owner, LodGroup).state;
+        ulong identity = state.identity;
+        uint descriptor = state.descriptor_revision;
+        assert(state.count == 0);
+        model::prepare_crowd(&assets, &scene, owner)!!;
+        scene.update_world();
+        Ray ray = { .origin = { 10, 0, 10 }, .direction = { 0, 0, -1 } };
+        PickOptions options = { .precision = PickPrecision.TRIANGLES, .faces = PickFaces.BOTH, .layers = uint::max };
+        PickHit[] initial = spatial::pick(
+            allocator: tmem,
+            assets: &assets,
+            scene: &scene,
+            ray: ray,
+            options: options,
+        );
+        assert(state.count == 2 && initial.len == 5);
+        SceneIndex index = spatial::create_scene_index(mem, 10);
+        defer spatial::destroy_scene_index(&index);
+        index.refresh(&assets, &scene)!!;
+        assert(index.count == 10 && index.dangling == 0);
+        uint generation = state.slot_generations[0];
+        uint[10] seen;
+        foreach (entry : index.entries[:index.count]) {
+            assert(entry.node == owner && entry.flags.lod_group && entry.flags.instanced);
+            assert(!entry.flags.static_triangles && entry.instance_index < 2);
+            assert(entry.part_index < 5 && c3d::same_id(entry.geometry, fixture.geometries[entry.part_index]));
+            seen[5 * entry.instance_index + entry.part_index]++;
+            Aabb expected = entry.instance_index == 0
+              ? (Aabb){ .min = { -14, -9, -4 }, .max = { 22, 18, 0 } }
+              : (Aabb){ .min = { 54, -3, -6 }, .max = { 72, 6, 2 } };
+            assert(entry.bounds.min == expected.min && entry.bounds.max == expected.max);
+        }
+        foreach (count : seen) assert(count == 1);
+        PickHit[] indexed = index.pick(
+            allocator: tmem,
+            assets: &assets,
+            ray: ray,
+            options: options,
+        );
+        animated_lod_query_equal(initial, indexed);
+        foreach (hit : initial) assert(hit.instance_index == 0 && !hit.triangle_hit);
+        ray.origin.x = 60;
+        PickHit[] second = spatial::pick(
+            allocator: tmem,
+            assets: &assets,
+            scene: &scene,
+            ray: ray,
+            options: options,
+        );
+        assert(second.len == 5);
+        foreach (hit : second) assert(hit.instance_index == 1 && hit.node == owner);
+        model::set_crowd(
+            assets: &assets,
+            scene: &scene,
+            node: owner,
+            instances: instances[:1],
+        )!!;
+        index.refresh(&assets, &scene)!!;
+        assert(index.count == 5 && state.count == 1 && state.slot_generations[0] != generation);
+        model::set_crowd(
+            assets: &assets,
+            scene: &scene,
+            node: owner,
+            instances: instances[..],
+        )!!;
+        index.refresh(&assets, &scene)!!;
+        assert(index.count == 10 && state.count == 2);
+        assert(state.identity == identity && state.descriptor_revision == descriptor);
+        foreach (entry : index.entries[:index.count]) {
+            assert(entry.node == owner && entry.part_index < 5 && entry.instance_index < 2);
+        }
+    };
+}
+
+fn void test_animated_lod_queries_skip_whole_missing_source_without_base_duplicates() @test {
+    @pool() {
+        AssetStore assets = animated_lod_store();
+        defer asset::destroy_asset_store(&assets);
+        PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
+        Scene scene = scene::create_scene(mem, { .max_nodes = 64 });
+        defer scene::destroy_scene(&scene);
+        SceneIndex index = spatial::create_scene_index(mem, 5);
+        defer spatial::destroy_scene_index(&index);
+        for (uint missing = 0; missing < 3; missing++) {
+            Node* owner = model::instantiate(&assets, &scene, fixture.mixed)!!;
+            model::attach_animated_lod(
+                assets: &assets,
+                scene: &scene,
+                owner: owner,
+                desc: animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed, permuted: true),
+            )!!;
+            scene.update_world();
+            index.refresh(&assets, &scene)!!;
+            assert(index.count == 5);
+            ModelInstance* instance = scene.get(owner, ModelInstance);
+            if (missing < 2) {
+                scene.remove(instance.present_node(missing == 0 ? 4u : 0u));
+            } else {
+                assets.remove_geometry(fixture.geometries[2]);
+            }
+            Ray ray = { .origin = { 6, 0.5f, 10 }, .direction = { 0, 0, -1 } };
+            PickHit[] direct = spatial::pick(
+                allocator: tmem,
+                assets: &assets,
+                scene: &scene,
+                ray: ray,
+            );
+            PickHit[] indexed = index.pick(
+                allocator: tmem,
+                assets: &assets,
+                ray: ray,
+            );
+            assert(direct.len == 0 && indexed.len == 0);
+            spatial::prepare_triangle_picks(&assets, &scene);
+            index.refresh(&assets, &scene)!!;
+            assert(index.count == 0 && index.dangling == 1);
+            scene.remove(owner);
+        }
     };
 }

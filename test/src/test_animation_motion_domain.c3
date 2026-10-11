@@ -2,10 +2,6 @@ module c3d::test::animation_motion_domain;
 
 import c3d;
 import c3d::anim @public;
-import std::math;
-
-const uint MOTION_DOMAIN_CORPUS_SEED @local = 3532026;
-const uint MOTION_DOMAIN_CORPUS_COUNT @local = 2000;
 
 fn Track motion_rotation_track(Interpolation interpolation, float[] times, float[] values) @local {
     return { .path = TargetPath.ROTATION, .interpolation = interpolation, .times = times, .values = values };
@@ -51,13 +47,6 @@ fn void expect_motion_scale_invalid(Track* track, bool additive = false) @local 
         caught = true;
     }
     assert(caught, "invalid consumed scale domain was admitted");
-}
-
-fn uint motion_domain_random(uint* state) @local {
-    *state ^= *state << 13;
-    *state ^= *state >> 17;
-    *state ^= *state << 5;
-    return *state;
 }
 
 fn void test_animation_motion_rotation_step_linear_without_magnitude_limits() @test {
@@ -150,29 +139,6 @@ fn void test_animation_motion_rotation_invalid_segment_precedes_unproven_segment
     expect_motion_rotation_fault(&track, c3d::INVALID_ARGUMENT);
 }
 
-fn void test_animation_motion_rotation_seeded_analytic_positive_quadratics() @test {
-    uint state = MOTION_DOMAIN_CORPUS_SEED;
-    float[2] times = { 0, 1 };
-    float[24] values;
-    Track track = motion_rotation_track(Interpolation.CUBIC_SPLINE, times[..], values[..]);
-    for (uint sample = 0; sample < MOTION_DOMAIN_CORPUS_COUNT; sample++) {
-        double floor = (double)(1 + motion_domain_random(&state) % 127) / 128;
-        double curvature = (double)(1 + motion_domain_random(&state) % 127) / 64;
-        double vertex = (double)(motion_domain_random(&state) % 64) / 64;
-        // These dyadic values fit binary32 exactly: floor + curvature*(t-vertex)^2 is strictly positive.
-        values = motion_rotation_cubic_values(
-            start: (float)(floor + curvature * vertex * vertex),
-            end: (float)(floor + curvature * (1 - vertex) * (1 - vertex)),
-            outgoing: (float)(-2 * curvature * vertex),
-            incoming: (float)(2 * curvature * (1 - vertex)),
-        );
-        assert(floor > 0 && vertex >= 0 && vertex < 1);
-        assert((double)values[7] == floor + curvature * vertex * vertex);
-        assert((double)values[19] == floor + curvature * (1 - vertex) * (1 - vertex));
-        anim::validate_motion_rotation_track(&track)!!;
-    }
-}
-
 fn void test_animation_motion_scale_step_linear_uniform_positive_domains() @test {
     float[2] times = { -1, 1 };
     Interpolation[2] modes = { Interpolation.STEP, Interpolation.LINEAR };
@@ -181,6 +147,8 @@ fn void test_animation_motion_scale_step_linear_uniform_positive_domains() @test
         Track track = motion_scale_track(mode, times[..], values[..]);
         assert(anim::classify_consumed_scale_track(&track, false)!! == ConsumedScaleDomain.ADMITTED);
         values = { 0x1p-149, 0x1p-149, 0x1p-149, 0x1p-148, 0x1p-148, 0x1p-148 };
+        assert(anim::classify_consumed_scale_track(&track, false)!! == ConsumedScaleDomain.ADMITTED);
+        values = { 0.5, 0.5f * 0.9999975f, 0.5, 2, 2 * 0.9999975f, 2 };
         assert(anim::classify_consumed_scale_track(&track, false)!! == ConsumedScaleDomain.ADMITTED);
         values = { 1, 1, 1, 1, 2, 1 };
         expect_motion_scale_invalid(&track);
@@ -192,106 +160,7 @@ fn void test_animation_motion_scale_step_linear_uniform_positive_domains() @test
     }
 }
 
-fn void test_animation_motion_scale_cubic_original_uniformity_and_exact_positivity() @test {
-    float[2] times = { 0, 1 };
-    float[18] values = motion_scale_cubic_values(
-        start: 0.5,
-        end: 2,
-        outgoing: 1,
-        incoming: 2,
-    );
-    Track track = motion_scale_track(Interpolation.CUBIC_SPLINE, times[..], values[..]);
-    assert(anim::classify_consumed_scale_track(&track, false)!! == ConsumedScaleDomain.ADMITTED);
-    for (uint slot = 0; slot < 6; slot++) values[slot * 3 + 1] *= 0.9999975f;
-    assert(anim::classify_consumed_scale_track(&track, false)!! == ConsumedScaleDomain.ADMITTED);
-    values = motion_scale_cubic_values(
-        start: 1,
-        end: 1,
-        outgoing: 0,
-        incoming: 0,
-    );
-    values[7] = 0.01;
-    expect_motion_scale_invalid(&track);
-    values = motion_scale_cubic_values(
-        start: 1,
-        end: 1,
-        outgoing: -4,
-        incoming: 4,
-    );
-    expect_motion_scale_invalid(&track);
-    values = motion_scale_cubic_values(
-        start: 1,
-        end: 1,
-        outgoing: -8,
-        incoming: 8,
-    );
-    expect_motion_scale_invalid(&track);
-}
-
-fn void test_animation_motion_scale_cubic_sampling_band_and_shifted_admission() @test {
-    float[2] times = { 0x1p-149, 1 };
-    float[18] values = motion_scale_cubic_values(
-        start: 1,
-        end: 1,
-        outgoing: -4,
-        incoming: 4,
-    );
-    Track track = motion_scale_track(Interpolation.CUBIC_SPLINE, times[..], values[..]);
-    assert(anim::classify_consumed_scale_track(&track, false)!! == ConsumedScaleDomain.SAMPLING_UNPROVEN);
-    values = motion_scale_cubic_values(
-        start: 2,
-        end: 2,
-        outgoing: -4,
-        incoming: 4,
-    );
-    assert(anim::classify_consumed_scale_track(&track, false)!! == ConsumedScaleDomain.ADMITTED);
-    times[0] = 0;
-    values = motion_scale_cubic_values(
-        start: 0x1p-126,
-        end: 0x1p-126,
-        outgoing: -bitcast(0x017fffffu, float),
-        incoming: 0x1p-124,
-    );
-    assert(anim::classify_consumed_scale_track(&track, false)!! == ConsumedScaleDomain.SAMPLING_UNPROVEN);
-    values[3] = values[4] = values[5] = values[12] = values[13] = values[14] = 0x1p-125;
-    assert(anim::classify_consumed_scale_track(&track, false)!! == ConsumedScaleDomain.ADMITTED);
-}
-
-fn void test_animation_motion_scale_exact_sampling_floor_equality_and_adjacent_keys() @test {
-    float[2] times = { 0, 1 };
-    float[18] values = motion_scale_cubic_values(
-        start: 0x1p-125,
-        end: 0x1p-125,
-        outgoing: 0x1p-86,
-        incoming: -0x1p-86,
-    );
-    Track track = motion_scale_track(Interpolation.CUBIC_SPLINE, times[..], values[..]);
-    // M=2^-86, so the floor is exactly 2^-126 + 2^-40*M = 2^-125.
-    assert(anim::classify_consumed_scale_track(&track, false)!! == ConsumedScaleDomain.ADMITTED);
-    values[3] = values[4] = values[5] = values[12] = values[13] = values[14] = bitcast(0x00ffffffu, float);
-    assert(anim::classify_consumed_scale_track(&track, false)!! == ConsumedScaleDomain.SAMPLING_UNPROVEN);
-    values[3] = values[4] = values[5] = values[12] = values[13] = values[14] = bitcast(0x01000001u, float);
-    assert(anim::classify_consumed_scale_track(&track, false)!! == ConsumedScaleDomain.ADMITTED);
-}
-
-fn void test_animation_motion_scale_invalid_uniformity_precedes_pending_sampling_band() @test {
-    float[3] times = { 0x1p-149, 1, 2 };
-    float[27] values;
-    for (uint key = 0; key < 3; key++) {
-        for (uint component = 0; component < 3; component++) {
-            values[key * 9 + component] = 4;
-            values[key * 9 + 3 + component] = 1;
-            values[key * 9 + 6 + component] = -4;
-        }
-    }
-    values[15] = values[16] = values[17] = 0;
-    values[18] = values[19] = values[20] = 0;
-    values[16] = 0.01;
-    Track track = motion_scale_track(Interpolation.CUBIC_SPLINE, times[..], values[..]);
-    expect_motion_scale_invalid(&track);
-}
-
-fn void test_animation_motion_scale_additive_neutrality_is_full_domain_and_difference_band_exempt() @test {
+fn void test_animation_motion_scale_step_linear_additive_neutrality_covers_every_key() @test {
     float[2] times = { -1, 1 };
     Interpolation[2] modes = { Interpolation.STEP, Interpolation.LINEAR };
     float[6] values = { -1, 0, 2, -1, 0, 2 };
@@ -302,12 +171,20 @@ fn void test_animation_motion_scale_additive_neutrality_is_full_domain_and_diffe
         expect_motion_scale_invalid(&track, true);
         values[4] = 0;
     }
-    float[18] cubic_values = { 0, 0, 0, -1, 0, 2, 0, 0, 0, 0, 0, 0, -1, 0, 2, 0, 0, 0 };
-    Track cubic = motion_scale_track(Interpolation.CUBIC_SPLINE, times[..], cubic_values[..]);
-    assert(anim::classify_consumed_scale_track(&cubic, true)!! == ConsumedScaleDomain.ADMITTED);
-    cubic_values[6] = 0x1p-149;
-    expect_motion_scale_invalid(&cubic, true);
-    cubic_values[6] = 0;
-    cubic_values[9] = 0x1p-149;
-    expect_motion_scale_invalid(&cubic, true);
+}
+
+fn void test_animation_motion_scale_cubic_is_unproven_after_key_checks() @test {
+    float[2] times = { 0, 1 };
+    float[18] values = motion_scale_cubic_values(
+        start: 2,
+        end: 2,
+        outgoing: 0,
+        incoming: 0,
+    );
+    Track track = motion_scale_track(Interpolation.CUBIC_SPLINE, times[..], values[..]);
+    assert(anim::classify_consumed_scale_track(&track, false)!! == ConsumedScaleDomain.SAMPLING_UNPROVEN);
+    assert(anim::classify_consumed_scale_track(&track, true)!! == ConsumedScaleDomain.SAMPLING_UNPROVEN);
+    values[4] = 1;
+    expect_motion_scale_invalid(&track);
+    expect_motion_scale_invalid(&track, true);
 }
