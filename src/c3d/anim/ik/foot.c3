@@ -1,5 +1,6 @@
 module c3d::anim::ik;
 
+import c3d;
 import c3d::maths;
 import c3d::scene;
 import std::math;
@@ -90,7 +91,6 @@ fn void FootIk.align(&self) {
 <*
  Capture caller-selected support from the incoming ankle world pose.
  @param floor_height : "World height the clip's feet stand on."
- @param [out] diagnostic : "Optional invalid-input context."
  @return? c3d::INVALID_ARGUMENT
  @require ik_chain_valid(&self.leg)
 *>
@@ -99,17 +99,14 @@ fn void? FootIk.begin_contact(
     GroundHit hit,
     FootSupport support,
     float floor_height = 0,
-    FootDiagnostic* diagnostic = null,
 ) {
-    clear_foot_diagnostic(diagnostic);
-    if (!math::is_finite(floor_height)) return invalid_foot_input(diagnostic, INVALID_FLOOR_HEIGHT)~;
+    if (!math::is_finite(floor_height)) return c3d::INVALID_ARGUMENT~;
     self.contact.begin_contact(
         hit: hit,
         support: support,
         incoming: maths::transform_from_mat4(self.leg.joints[2].world),
         config: self.plant,
         foot_height: self.foot_height,
-        diagnostic: diagnostic,
     )!;
     publish_foot_contact(self, floor_height);
 }
@@ -118,7 +115,6 @@ fn void? FootIk.begin_contact(
  Update the requested target before pelvis adjustment and leg solving.
  @param dt : "Finite nonnegative seconds."
  @param floor_height : "World height the clip's feet stand on."
- @param [out] diagnostic : "Optional invalid-input context."
  @return? c3d::INVALID_ARGUMENT
  @require ik_chain_valid(&self.leg)
 *>
@@ -127,15 +123,12 @@ fn void? FootIk.update_contact(
     FootSupport support,
     float dt,
     float floor_height = 0,
-    FootDiagnostic* diagnostic = null,
 ) {
-    clear_foot_diagnostic(diagnostic);
-    if (!math::is_finite(floor_height)) return invalid_foot_input(diagnostic, INVALID_FLOOR_HEIGHT)~;
+    if (!math::is_finite(floor_height)) return c3d::INVALID_ARGUMENT~;
     self.contact.update_contact(
         support: support,
         incoming: maths::transform_from_mat4(self.leg.joints[2].world),
         dt: dt,
-        diagnostic: diagnostic,
     )!;
     publish_foot_contact(self, floor_height);
 }
@@ -143,23 +136,12 @@ fn void? FootIk.update_contact(
 <*
  Begin controlled release using the fresh incoming ankle pose.
  @param floor_height : "World height the clip's feet stand on."
- @param [out] diagnostic : "Optional invalid-input context."
  @return? c3d::INVALID_ARGUMENT
  @require ik_chain_valid(&self.leg)
 *>
-fn void? FootIk.end_contact(
-    &self,
-    FootSupport support,
-    float floor_height = 0,
-    FootDiagnostic* diagnostic = null,
-) {
-    clear_foot_diagnostic(diagnostic);
-    if (!math::is_finite(floor_height)) return invalid_foot_input(diagnostic, INVALID_FLOOR_HEIGHT)~;
-    self.contact.end_contact(
-        support: support,
-        incoming: maths::transform_from_mat4(self.leg.joints[2].world),
-        diagnostic: diagnostic,
-    )!;
+fn void? FootIk.end_contact(&self, FootSupport support, float floor_height = 0) {
+    if (!math::is_finite(floor_height)) return c3d::INVALID_ARGUMENT~;
+    self.contact.end_contact(support, maths::transform_from_mat4(self.leg.joints[2].world))!;
     publish_foot_contact(self, floor_height);
 }
 

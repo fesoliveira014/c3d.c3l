@@ -149,9 +149,9 @@ fn void test_prepare_pipeline_creations_obey_each_call_and_warm_keys_are_hits() 
     Renderer* renderer = &fixture.renderer;
     ModelId model = pipeline_model(&fixture, fixture.plain)!!;
     PrepareId first = renderer.begin_prepare_model(model)!!;
-    ulong before = renderer.prepare_counters.pipelines;
+    ulong before = renderer.pipelines.creations.calls;
     complete_pipeline_model(renderer, first, 1)!!;
-    assert(renderer.prepare_counters.pipelines > before);
+    assert(renderer.pipelines.creations.calls > before);
     renderer.end_prepare(first)!!;
 
     PrepareId warm = renderer.begin_prepare_model(model)!!;
@@ -235,8 +235,29 @@ fn void test_prepare_shader_adoption_counts_eligible_keys_and_survives_abort() @
     };
     complete_pipeline_model(renderer, updated, 1)!!;
     renderer.end_prepare(updated)!!;
-    uint actual = render_published_frames(&fixture, &scene, fixture.view)!!;
-    check_near_pixel(actual, expected);
+    check_near_pixel(render_published_frames(&fixture, &scene, fixture.view)!!, expected);
+
+    @pool() {
+        asset::ShaderDesc replacement = fixture.assets.shader(shader_id).desc;
+        fixture.assets.replace_shader(shader_id, &replacement)!!;
+    };
+    PrepareId superseded = renderer.begin_prepare_model(model)!!;
+    renderer.begin_frame()!!;
+    blocked = renderer.advance_prepares_within({ .pipelines = 1 })!!;
+    assert(blocked.reason == PrepareStopReason.PIPELINES && blocked.copied_bytes > 0 && blocked.pipelines == 0);
+    renderer.end_frame()!!;
+    render::wait_frames(renderer)!!;
+    renderer.begin_frame()!!;
+    scene.scene.update_world();
+    renderer.render_view(&scene.scene, scene.camera, fixture.view)!!;
+    assert(renderer.shaders[shader_id.index].revision == 3);
+    render::abort_frame(renderer);
+    assert(renderer.shaders[shader_id.index].revision == 3);
+    ulong calls = renderer.pipelines.creations.calls;
+    complete_pipeline_model(renderer, superseded, 1)!!;
+    assert(renderer.pipelines.creations.calls == calls);
+    renderer.end_prepare(superseded)!!;
+    check_near_pixel(render_published_frames(&fixture, &scene, fixture.view)!!, expected);
     check_validation(renderer);
 }
 
@@ -336,149 +357,6 @@ fn void test_prepare_sbt_writes_split_and_abort_restores_private_candidate() @te
     assert(retried_bytes.bytes == expected);
     renderer.end_prepare(prepare)!!;
     check_validation(renderer);
-}
-
-fn void test_prepare_effect_rich_view_enumerates_each_pipeline_once() @test {
-    Fixture fixture;
-    create_fixture(allocator: mem, fixture: &fixture, ray_queries: true)!!;
-    defer destroy_fixture(&fixture);
-    Renderer* renderer = &fixture.renderer;
-    ViewDesc view = render::texture_view_desc(fixture.ldr_target);
-    view.color = OutputMode.DISPLAY_LDR;
-    view.shading = ShadingPath.DEFERRED;
-    view.lights = LightSelection.CLUSTERED;
-    view.ray_tracing.shadows = true;
-    view.ray_tracing.reflections = true;
-    view.ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
-    view.ambient_occlusion.kind = AoKind.RAY_TRACED;
-    view.screen_space_gi = render::SCREEN_SPACE_GI_DEFAULT;
-    view.screen_space_gi.enabled = true;
-    view.post.bloom = true;
-    view.post.depth_of_field = true;
-    view.post.motion_blur = true;
-    view.post.anti_aliasing = AntiAliasing.TAA;
-    view.post.auto_exposure = true;
-    render::configure_view(renderer, fixture.view, view)!!;
-    MaterialId material = fixture.assets.add_material(material::standard())!!;
-    ModelId model = pipeline_model(&fixture, material)!!;
-    PrepareId prepare = renderer.begin_prepare_model(model)!!;
-    complete_pipeline_model(renderer, prepare, 1)!!;
-    assert(renderer.cluster_pipeline.is_valid());
-    assert(renderer.ambient_occlusion_pipelines.ray_traced.is_valid());
-    assert(renderer.ambient_occlusion_pipelines.blur.is_valid());
-    assert(renderer.reflection_pipelines.trace.is_valid() && renderer.reflection_pipelines.blur.is_valid());
-    assert(renderer.screen_space_gi_pipelines.trace.is_valid());
-    assert(renderer.screen_space_gi_pipelines.temporal.is_valid());
-    assert(renderer.screen_space_gi_pipelines.filter.is_valid());
-    assert(renderer.post_pipelines.bloom_downsample.is_valid() && renderer.post_pipelines.bloom_upsample.is_valid());
-    assert(renderer.post_pipelines.dof_coc.is_valid() && renderer.post_pipelines.dof_gather.is_valid());
-    assert(renderer.post_pipelines.dof_composite.is_valid() && renderer.post_pipelines.motion_blur.is_valid());
-    assert(renderer.post_pipelines.tile_max.is_valid() && renderer.post_pipelines.tile_neighbor.is_valid());
-    assert(renderer.post_pipelines.taa_resolve.is_valid());
-    assert(renderer.post_pipelines.exposure_histogram.is_valid() && renderer.post_pipelines.exposure_adapt.is_valid());
-    renderer.end_prepare(prepare)!!;
-    PrepareId warm = renderer.begin_prepare_model(model)!!;
-    renderer.begin_frame()!!;
-    PrepareReport report = renderer.advance_prepares_within({ .pipelines = 1 })!!;
-    assert(report.pipelines == 0 && report.pipeline_hits > 0 && report.staged_bytes == 0);
-    renderer.end_frame()!!;
-    render::wait_frames(renderer)!!;
-    renderer.end_prepare(warm)!!;
-    check_validation(renderer);
-}
-
-fn void test_prepare_normal_draw_shader_adoption_supersedes_copied_job() @test {
-    Fixture fixture;
-    create_fixture(mem, &fixture)!!;
-    defer destroy_fixture(&fixture);
-    Renderer* renderer = &fixture.renderer;
-    c3d::ShaderId shader_id = add_pulse_shader(&fixture)!!;
-    PulseBlock still = { .color = { 1, 1, 1, 1 } };
-    MaterialId material = fixture.assets.add_material(material::custom(shader_id, material::@as_bytes(still)))!!;
-    ModelId model = pipeline_model(&fixture, material)!!;
-    PrepareId initial = renderer.begin_prepare_model(model)!!;
-    complete_pipeline_model(renderer, initial, 1)!!;
-    renderer.end_prepare(initial)!!;
-    DeformedScene scene = create_single_box_scene(
-        fixture: &fixture,
-        geometry: fixture.box,
-        material: material,
-        sunlit: false,
-    )!!;
-    defer c3d::scene::destroy_scene(&scene.scene);
-    uint expected = render_published_frames(&fixture, &scene, fixture.view)!!;
-    @pool() {
-        asset::ShaderDesc replacement = fixture.assets.shader(shader_id).desc;
-        fixture.assets.replace_shader(shader_id, &replacement)!!;
-    };
-    PrepareId prepare = renderer.begin_prepare_model(model)!!;
-    renderer.begin_frame()!!;
-    PrepareReport blocked = renderer.advance_prepares_within({ .pipelines = 1 })!!;
-    assert(blocked.reason == PrepareStopReason.PIPELINES && blocked.required.pipelines > 1);
-    assert(blocked.copied_bytes > 0 && blocked.pipelines == 0);
-    renderer.end_frame()!!;
-    render::wait_frames(renderer)!!;
-
-    renderer.begin_frame()!!;
-    scene.scene.update_world();
-    renderer.render_view(&scene.scene, scene.camera, fixture.view)!!;
-    assert(renderer.shaders[shader_id.index].revision == 2);
-    render::abort_frame(renderer);
-    assert(renderer.shaders[shader_id.index].revision == 2);
-    ulong calls = renderer.pipelines.creations.calls;
-    complete_pipeline_model(renderer, prepare, 1)!!;
-    assert(renderer.pipelines.creations.calls == calls);
-    renderer.end_prepare(prepare)!!;
-    uint actual = render_published_frames(&fixture, &scene, fixture.view)!!;
-    check_near_pixel(actual, expected);
-    check_validation(renderer);
-}
-
-fn void test_prepare_custom_traced_shadow_pipeline_is_current_before_draw() @test {
-    foreach (ray_queries : (bool[2]){ false, true }) {
-        Fixture fixture;
-        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
-        defer destroy_fixture(&fixture);
-        Renderer* renderer = &fixture.renderer;
-        ViewDesc view = render::texture_view_desc(fixture.hdr_target);
-        view.ray_tracing.shadows = true;
-        render::configure_view(renderer, fixture.view, view)!!;
-        c3d::ShaderId shader_id = add_twin_shader(&fixture, true)!!;
-        MaterialId material = twin_material(&fixture, shader_id, TWIN_SPHERE_PARAMS)!!;
-        ModelId model = pipeline_model(&fixture, material)!!;
-        PrepareId prepare = renderer.begin_prepare_model(model)!!;
-        uint untraced;
-        uint traced;
-        foreach (unit : renderer.prepares.get(prepare).units) {
-            if (unit.kind != PrepareUnitKind.PIPELINES || unit.pipeline.pass != PreparePipelinePass.FORWARD) continue;
-            if (unit.pipeline.key.fragment.flags & shader::SHADER_FLAG_RT_SHADOWS) {
-                traced++;
-            } else {
-                untraced++;
-            }
-        }
-        assert(untraced == 1 && traced == 1);
-        complete_pipeline_model(renderer, prepare, 1)!!;
-        renderer.end_prepare(prepare)!!;
-        DeformedScene scene = create_single_box_scene(
-            fixture: &fixture,
-            geometry: fixture.box,
-            material: material,
-            sunlit: false,
-        )!!;
-        defer c3d::scene::destroy_scene(&scene.scene);
-        scene.scene.update_world();
-        renderer.begin_frame()!!;
-        ulong calls = renderer.pipelines.creations.calls;
-        SparsePipelineSnapshot before = sparse_pipeline_snapshot(&renderer.device)!!;
-        renderer.render_view(&scene.scene, scene.camera, fixture.view)!!;
-        assert(renderer.pipelines.creations.calls == calls);
-        assert(sparse_pipeline_snapshot(&renderer.device)!!.available == before.available);
-        renderer.finish_view(fixture.view)!!;
-        renderer.end_frame()!!;
-        render::wait_frames(renderer)!!;
-        check_validation(renderer);
-    }
 }
 
 fn void test_prepare_trace_pose_variants_and_refit_are_current_before_deformed_draw() @test {
@@ -585,13 +463,12 @@ fn void test_prepare_shader_invalid_adoption_keeps_old_handles_and_finishes_reco
             stages: &fixture.assets.shader(published.shader).desc,
         )) == gpu::SHADER_INVALID);
         assert(renderer.shaders[published.shader.index].rejected_revision == 0);
-        ulong copies = renderer.prepare_counters.copied_bytes;
-        ulong calls = renderer.prepare_counters.pipelines;
+        ulong calls = renderer.pipelines.creations.calls;
         PrepareId updated = renderer.begin_prepare_model(model)!!;
         complete_pipeline_model(renderer, updated, 0)!!;
         assert(renderer.prepare_progress(updated).state == PrepareState.READY);
         assert(!renderer.prepare_progress(updated).failure);
-        assert(renderer.prepare_counters.copied_bytes > copies && renderer.prepare_counters.pipelines > calls);
+        assert(renderer.pipelines.creations.calls > calls);
         assert(renderer.shaders[published.shader.index].revision == 1);
         assert(renderer.shaders[published.shader.index].rejected_revision == 2);
         assert(renderer.pipelines.keys_of(tmem, published.shader, 1).len == old_keys.len);

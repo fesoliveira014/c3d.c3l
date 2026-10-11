@@ -6,9 +6,7 @@ import std::math;
 const uint MOTION_QUATERNION_NODE_BUDGET @local = 4095; // Bounds subdivisions without restricting curve magnitude.
 const uint MOTION_QUATERNION_MAX_DEPTH @local = 32; // Depth-first stack: 33 nodes, 136 bytes each; no heap allocation.
 const double MOTION_QUATERNION_WIDTH_BOUND @local = 0x1p-30; // Bounds accumulated normalized coefficient uncertainty.
-const uint MOTION_SCALE_EPSILON_DENOMINATOR_BITS @local = 69;
-const ulong MOTION_SCALE_EPSILON_NUMERATOR @local = 5902958103587057UL; // Exact binary64 relative tolerance 1e-5.
-const uint MOTION_SCALE_FLOAT_UNIT_BITS @local = 149;
+const double MOTION_SCALE_EPSILON @local = 1e-5; // Relative component tolerance of a uniform scale.
 
 enum MotionDomainResult @local {
     PROVEN,
@@ -19,21 +17,6 @@ enum MotionDomainResult @local {
 enum ConsumedScaleDomain @private {
     ADMITTED,
     SAMPLING_UNPROVEN,
-}
-
-enum MotionRotationFailure @private {
-    NONE,
-    STORAGE,
-    ZERO,
-    CERTIFICATE_UNPROVEN,
-}
-
-enum MotionScaleFailure @private {
-    NONE,
-    STORAGE,
-    NONPOSITIVE,
-    NONUNIFORM,
-    NONNEUTRAL,
 }
 
 struct MotionInterval @private {
@@ -56,22 +39,15 @@ struct MotionCertificateNode @local {
     double end;
 }
 
-fn void? validate_motion_rotation_track(Track* track, MotionRotationFailure* failure = null) @private {
-    if (failure) *failure = MotionRotationFailure.NONE;
-    if (catch excuse = validate_motion_track_storage(track, TargetPath.ROTATION)) {
-        if (failure) *failure = MotionRotationFailure.STORAGE;
-        return excuse~;
-    }
+fn void? validate_motion_rotation_track(Track* track) @private {
+    validate_motion_track_storage(track, TargetPath.ROTATION)!;
 
     uint key_count = (uint)track.times.len;
     for (uint key = 0; key < key_count; key++) {
         float[] value = motion_domain_key(track, (uint)key, CUBIC_SLOT_VALUE);
         bool nonzero;
         foreach (component : value) nonzero |= component != 0;
-        if (!nonzero) {
-            if (failure) *failure = MotionRotationFailure.ZERO;
-            return c3d::INVALID_ARGUMENT~;
-        }
+        if (!nonzero) return c3d::INVALID_ARGUMENT~;
     }
 
     switch (track.interpolation) {
@@ -95,31 +71,17 @@ fn void? validate_motion_rotation_track(Track* track, MotionRotationFailure* fai
                     start_time: track.times[key],
                     end_time: track.times[key + 1],
                 );
-                if (result == MotionDomainResult.INVALID) {
-                    if (failure) *failure = MotionRotationFailure.ZERO;
-                    return c3d::INVALID_ARGUMENT~;
-                }
+                if (result == MotionDomainResult.INVALID) return c3d::INVALID_ARGUMENT~;
                 unsupported |= result == MotionDomainResult.UNPROVEN;
             }
 
-            if (unsupported) {
-                if (failure) *failure = MotionRotationFailure.CERTIFICATE_UNPROVEN;
-                return c3d::UNSUPPORTED~;
-            }
+            if (unsupported) return c3d::UNSUPPORTED~;
     }
 }
 
-// A deferred band result lets the request inspect every exact constraint before reporting UNSUPPORTED.
-fn ConsumedScaleDomain? classify_consumed_scale_track(
-    Track* track,
-    bool additive,
-    MotionScaleFailure* failure = null,
-) @private {
-    if (failure) *failure = MotionScaleFailure.NONE;
-    if (catch excuse = validate_motion_track_storage(track, TargetPath.SCALE)) {
-        if (failure) *failure = MotionScaleFailure.STORAGE;
-        return excuse~;
-    }
+// A result rather than a fault lets the caller check every track for INVALID_ARGUMENT first.
+fn ConsumedScaleDomain? classify_consumed_scale_track(Track* track, bool additive) @private {
+    validate_motion_track_storage(track, TargetPath.SCALE)!;
 
     float[] reference = motion_domain_key(track, 0, CUBIC_SLOT_VALUE);
 
@@ -128,25 +90,14 @@ fn ConsumedScaleDomain? classify_consumed_scale_track(
         float[] value = motion_domain_key(track, (uint)key, CUBIC_SLOT_VALUE);
         if (additive) {
             for (uint component = 0; component < 3; component++) {
-                if (value[component] != reference[component]) {
-                    if (failure) *failure = MotionScaleFailure.NONNEUTRAL;
-                    return c3d::INVALID_ARGUMENT~;
-                }
+                if (value[component] != reference[component]) return c3d::INVALID_ARGUMENT~;
             }
         } else {
-            ScalePolynomial[3] constants;
             for (uint component = 0; component < 3; component++) {
-                if (!(value[component] > 0)) {
-                    if (failure) *failure = MotionScaleFailure.NONPOSITIVE;
-                    return c3d::INVALID_ARGUMENT~;
-                }
-                constants[component] = motion_constant_scale_polynomial(value[component]);
+                if (!(value[component] > 0)) return c3d::INVALID_ARGUMENT~;
             }
 
-            if (!motion_scale_uniform(constants)) {
-                if (failure) *failure = MotionScaleFailure.NONUNIFORM;
-                return c3d::INVALID_ARGUMENT~;
-            }
+            if (!motion_scale_uniform(value)) return c3d::INVALID_ARGUMENT~;
         }
     }
 
@@ -155,58 +106,7 @@ fn ConsumedScaleDomain? classify_consumed_scale_track(
         case LINEAR:
             return ConsumedScaleDomain.ADMITTED;
         case CUBIC_SPLINE:
-            bool unsupported;
-
-            for (uint key = 0; key + 1 < key_count; key++) {
-                float[] start = motion_domain_key(track, key, CUBIC_SLOT_VALUE);
-                float[] end = motion_domain_key(track, key + 1, CUBIC_SLOT_VALUE);
-                float[] start_tangent = motion_domain_key(track, key, CUBIC_SLOT_OUT_TANGENT);
-                float[] end_tangent = motion_domain_key(track, key + 1, CUBIC_SLOT_IN_TANGENT);
-                ScaleInteger duration = scale_integer_subtract(
-                    left: scale_float_integer(track.times[key + 1]),
-                    right: scale_float_integer(track.times[key]),
-                );
-                ScalePolynomial[3] polynomials;
-
-                for (uint component = 0; component < 3; component++) {
-                    polynomials[component] = exact_scale_hermite(
-                        start: start[component],
-                        end: end[component],
-                        start_tangent: start_tangent[component],
-                        end_tangent: end_tangent[component],
-                        duration: duration,
-                    );
-                    if (additive) {
-                        if (!motion_scale_neutral(polynomials[component], reference[component])) {
-                            if (failure) *failure = MotionScaleFailure.NONNEUTRAL;
-                            return c3d::INVALID_ARGUMENT~;
-                        }
-                    } else if (!exact_scale_strict_positive(polynomials[component])) {
-                        if (failure) *failure = MotionScaleFailure.NONPOSITIVE;
-                        return c3d::INVALID_ARGUMENT~;
-                    }
-                }
-
-                if (additive) continue;
-                if (!motion_scale_uniform(polynomials)) {
-                    if (failure) *failure = MotionScaleFailure.NONUNIFORM;
-                    return c3d::INVALID_ARGUMENT~;
-                }
-
-                for (uint component = 0; component < 3; component++) {
-                    ScaleInteger magnitude = exact_scale_segment_magnitude(
-                        start: start[component],
-                        end: end[component],
-                        start_tangent: start_tangent[component],
-                        end_tangent: end_tangent[component],
-                        duration: duration,
-                    );
-                    ScalePolynomial guarded = exact_scale_sample_margin(polynomials[component], magnitude);
-                    unsupported |= !exact_scale_nonnegative(guarded);
-                }
-            }
-
-            return unsupported ? ConsumedScaleDomain.SAMPLING_UNPROVEN : ConsumedScaleDomain.ADMITTED;
+            return ConsumedScaleDomain.SAMPLING_UNPROVEN;
     }
 }
 
@@ -234,56 +134,16 @@ fn float[] motion_domain_key(Track* track, uint key, uint slot) @local {
     return track.values[offset : stride];
 }
 
-fn ScalePolynomial motion_constant_scale_polynomial(float value) @local {
-    ScalePolynomial polynomial;
-    polynomial.coefficients[0] = scale_integer_shift_left(scale_float_integer(value), MOTION_SCALE_FLOAT_UNIT_BITS);
+fn bool motion_scale_uniform(float[] value) @local {
+    foreach (smaller : value) foreach (larger : value) {
+        if (smaller >= larger) continue;
+        if ((double)smaller < (double)larger * 0.5) return false;
 
-    return polynomial;
-}
-
-fn ScalePolynomial motion_scale_uniform_difference(ScalePolynomial left, ScalePolynomial right) @local {
-    ScaleInteger denominator = scale_integer_shift_left(scale_integer(1), MOTION_SCALE_EPSILON_DENOMINATOR_BITS);
-    ScaleInteger factor = scale_integer_subtract(denominator, scale_integer(MOTION_SCALE_EPSILON_NUMERATOR));
-    ScalePolynomial result;
-
-    for (uint index = 0; index < 4; index++) {
-        result.coefficients[index] = scale_integer_subtract(
-            left: scale_integer_multiply(left.coefficients[index], denominator),
-            right: scale_integer_multiply(right.coefficients[index], factor),
-        );
-    }
-
-    return scale_polynomial_normalize_degree(result);
-}
-
-fn bool motion_scale_polynomial_equal(ScalePolynomial left, ScalePolynomial right) @local {
-    for (uint index = 0; index < 4; index++) {
-        if (left.coefficients[index].negative != right.coefficients[index].negative
-            || scale_integer_compare_magnitude(left.coefficients[index], right.coefficients[index]) != 0) return false;
+        // Within a factor of two the difference is exact, and the single fma rounding keeps its sign.
+        if (math::fma((double)larger, MOTION_SCALE_EPSILON, (double)smaller - (double)larger) < 0) return false;
     }
 
     return true;
-}
-
-fn bool motion_scale_uniform(ScalePolynomial[3] polynomials) @local {
-    for (uint left = 0; left < 3; left++) {
-        for (uint right = 0; right < 3; right++) {
-            if (left == right || motion_scale_polynomial_equal(polynomials[left], polynomials[right])) continue;
-            if (!exact_scale_nonnegative(motion_scale_uniform_difference(polynomials[left], polynomials[right]))) {
-                return false;
-            }
-        }
-    }
-
-    return true;
-}
-
-fn bool motion_scale_neutral(ScalePolynomial polynomial, float reference) @local {
-    if (polynomial.degree != 0) return false;
-    ScaleInteger expected = scale_integer_shift_left(scale_float_integer(reference), MOTION_SCALE_FLOAT_UNIT_BITS);
-
-    return polynomial.coefficients[0].negative == expected.negative
-      && scale_integer_compare_magnitude(polynomial.coefficients[0], expected) == 0;
 }
 
 fn double motion_outward_lower(double value) @private {

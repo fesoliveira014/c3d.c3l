@@ -234,15 +234,11 @@ below *= 1 + effective_weight * (sample / reference - 1)
 
 For below `(2,3,4)`, reference `(2,4,8)`, sample `(4,2,16)` and weight 0.5,
 the result is `(3,2.25,6)`. The scale mode and time-zero reference are captured
-at play. Every scale track and its reference must stay finite and strictly
-positive across its full domain. Admission checks STEP/LINEAR keys and cubic
-interior extrema once. Nonpositive domains return `INVALID_ARGUMENT` before
-creating an action or group. CUBIC segments also need an exact minimum of at
-least `FLT_MIN + 2^-40 * M`, where `FLT_MIN = 2^-126` and `M` is the largest
-magnitude of a key or duration-scaled tangent. This directed margin covers the
-double sampler error and keeps its float result positive. Positive curves below
-the margin return `UNSUPPORTED` before mutation. STEP and LINEAR retain their
-key-only checks, including positive subnormals. Runtime applies no clamp or
+at play. Only STEP and LINEAR scale tracks are supported. Admission checks their
+keys once: every key and the reference must be finite and strictly positive,
+positive subnormals included, or play returns `INVALID_ARGUMENT` before creating
+an action or group. A `CUBIC_SPLINE` scale track with valid keys and finite
+tangents returns `UNSUPPORTED` before mutation. Runtime applies no clamp or
 repeated domain scan.
 
 An additive action keeps the reference pose it sampled at `play` until it is played again. After
@@ -334,10 +330,12 @@ positive uniform scales. Nonuniform scale, reflection, shear, invalid root
 layout, nonfinite values and zero quaternions fault `INVALID_ARGUMENT` at
 admission. Rotation tracks are checked over their full domain; STEP uses keys,
 LINEAR also requires a sign-corrected nonnegative endpoint dot, and CUBIC uses a
-bounded polynomial certificate. An unproved cubic domain or sampling margin
-faults `UNSUPPORTED` before playback changes. No repeated domain scan runs at
-update. Under generalized extraction, a nonneutral scale track on an additive
-action's consumed chain is invalid in either additive scale mode, including
+bounded polynomial certificate. Scale tracks are checked at their keys; a
+`CUBIC_SPLINE` scale track on the chain is unsupported. An unproved cubic
+rotation domain or a cubic scale track faults `UNSUPPORTED` before playback
+changes, after every `INVALID_ARGUMENT` check. No repeated domain scan runs at
+update. Under generalized extraction, a scale track with nonneutral keys on an
+additive action's consumed chain is invalid in either additive scale mode, including
 zero-weight or fully masked actions.
 
 The final blended and inertia-corrected chain determines the consumed motion.
@@ -407,8 +405,10 @@ convex, so admitted positive-uniform scales remain positive under runtime
 weights, masks, fades and group controls. Request-time bounds also require the
 whole corrected scale window to remain representable as float. A proven
 out-of-range result faults `INVALID_ARGUMENT`; a result within the directed
-rounding margin faults `UNSUPPORTED`. A shorter transition duration may succeed;
-the runtime does not clamp accepted scale.
+rounding margin faults `UNSUPPORTED`. Cubic scale on a consumed chain is
+unsupported: such a request faults `UNSUPPORTED` unless its keys alone are out
+of range. A shorter transition duration may succeed; the runtime does not clamp
+accepted scale.
 
 For a consumed root, source and target use the same motion node, selected axes,
 up, twist and frame. Different clip reference positions are allowed and rebase
@@ -893,7 +893,7 @@ The profile copies its inputs into one allocation; destroy it with
 `retarget_with_profile` borrows the current templates and profile and produces
 an independently owned `AnimationClip`. Node counts and per-index names,
 parents and authored locals must match the prepared pair. A mismatch returns
-`INVALID_ARGUMENT` with the first differing index in `RetargetDiagnostic`.
+`INVALID_ARGUMENT`.
 `RetargetProfile.validate_templates` checks that pair without baking a clip.
 Explicit mapping conflicts are format errors; ambiguous name matches are
 rejected rather than selecting an arbitrary node.
@@ -926,9 +926,6 @@ It requires no external animation assets. `F` changes the fixture family,
 Space pauses, `A` toggles automatic family cycling and `I` toggles diagnostic
 lines. The carrier and turning families show `KEEP`, `STRIP_XZ` and `EXTRACT`,
 including both yaw settings, forward/reverse playback and loops.
-`--acceptance` samples between bake keys and completes every family;
-`--capture-dir=PATH` writes scene PNGs and `retarget-profile.csv` into an
-existing directory, and `--telemetry=PATH` selects a separate CSV.
 
 ## Inverse kinematics
 
@@ -1011,10 +1008,9 @@ terrain height under it as the body moves.
 Use `begin_contact(hit, support)` to capture a stance anchor and
 `update_contact(support, dt)` to follow it. The application chooses the hit,
 support identity and timing. `FootSupport` carries an opaque caller identity
-and a proper rotation, translation and finite positive uniform scale.
-`foot_support_from_mat4` validates an affine frame; nonuniform scale,
-reflection, shear, zero or nonfinite input returns `INVALID_ARGUMENT` with
-optional `FootDiagnostic` context. Changing the identity requires an explicit
+and a proper rotation, translation and finite positive uniform scale. An
+invalid support, hit, plant setting or incoming pose returns `INVALID_ARGUMENT`
+and leaves the contact unchanged. Changing the identity requires an explicit
 new capture.
 
 `FootIk.plant` defaults to 0.12 seconds of acquisition, 0.20 seconds of release
@@ -1102,13 +1098,11 @@ while the support continues to move, and `R` shifts the origin explicitly.
 `W` switches walk/idle, `[`/`]` change IK weight, `I` toggles debug lines, and
 mouse drag/wheel orbit and zoom.
 
-`ik.exe --acceptance --capture-dir=PATH` runs for at least 20 wall and simulation
-seconds and exports completed rendered frames and `ik-contact.csv` to an
-existing directory. `--telemetry=PATH` selects a separate CSV. The CSV reports
-each final foot pose, phase/status, errors, reach margins, limit mode, support
-scale, incoming and final sole clearance, pause/rebase events and capture index.
-An early `--frames=N` limit does
-not satisfy the bounded run. Vulkan validation is enabled.
+`ik.exe --acceptance` runs at a fixed 60 Hz step for at least 20 wall and
+simulation seconds and fails unless every planted foot stays within the
+residual, sole-angle and reach bounds and every swinging foot clears the
+support. An early `--frames=N` limit does not satisfy the bounded run. Vulkan
+validation is enabled.
 
 
 Inertial requests return an `AnimationTransitionResult`. Its `actions[:count]`

@@ -7,7 +7,6 @@ import c3d::asset::gltf;
 import c3d::maths;
 import c3d::model;
 import c3d::scene;
-import std::io;
 import std::io::path;
 import std::math;
 
@@ -104,7 +103,6 @@ fn void advance_ancestor_turn(LayerFixture* fixture, float dt = 0.25f) @local {
 fn void test_animator_allocation_is_independent_of_scene_capacity() @test {
     sz small = animator_allocation_bytes(16);
     sz large = animator_allocation_bytes(16384);
-    io::printfn("Animator storage: %s bytes at capacity 16; %s bytes at capacity 16384.", small, large);
     assert(small == large);
 }
 
@@ -147,23 +145,7 @@ fn void test_animator_pivot_accepts_external_chain_deeper_than_model() @test {
     assert(!tracker.has_leaks());
 }
 
-fn void test_animator_pivot_uses_same_instance_evaluated_ancestor() @test {
-    LayerFixture fixture;
-    create_layer_fixture(&fixture);
-    defer destroy_layer_fixture(&fixture);
-
-    ModelInstance* instance = fixture.scene.get(fixture.root, ModelInstance);
-    instance.base_pose[3].position = { 2, 0, 3 };
-    fixture.animator.root_node = 3;
-    ClipId turn = ancestor_turn_clip(&fixture, 3);
-    fixture.animator.play(&fixture.assets, layer_translation(&fixture, { 7, 0, -4 }, 2))!!;
-    fixture.animator.play(&fixture.assets, turn, { .root_motion = RootMotion.EXTRACT, .root_yaw = true })!!;
-
-    advance_ancestor_turn(&fixture);
-    assert(instance.present_node(2).local.position == (Vec3){ 7, 0, -4 });
-}
-
-fn void test_animator_pivot_uses_previously_updated_foreign_animator() @test {
+fn void test_animator_pivot_uses_evaluated_same_instance_and_foreign_ancestors() @test {
     LayerFixture fixture;
     create_layer_fixture(&fixture);
     defer destroy_layer_fixture(&fixture);
@@ -181,12 +163,15 @@ fn void test_animator_pivot_uses_previously_updated_foreign_animator() @test {
 
     ModelInstance* instance = fixture.scene.get(fixture.root, ModelInstance);
     ModelInstance* other = fixture.scene.get(foreign_root, ModelInstance);
-    instance.base_pose[2].position = { 2, 0, 3 };
+    instance.base_pose[3].position = { 2, 0, 3 };
     fixture.scene.reparent(instance.present_node(2), other.present_node(3));
-    ClipId turn = ancestor_turn_clip(&fixture);
+    fixture.animator.root_node = 3;
+    ClipId turn = ancestor_turn_clip(&fixture, 3);
+    fixture.animator.play(&fixture.assets, layer_translation(&fixture, { 7, 0, -4 }, 2))!!;
     fixture.animator.play(&fixture.assets, turn, { .root_motion = RootMotion.EXTRACT, .root_yaw = true })!!;
 
     advance_ancestor_turn(&fixture);
+    assert(instance.present_node(2).local.position == (Vec3){ 7, 0, -4 });
     assert(other.present_node(3).local.position == (Vec3){ 8, 0, -4 });
 }
 

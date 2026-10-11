@@ -135,7 +135,6 @@ fn PreparedTransition? validate_animation_transition(
                 motion_basis: motion_basis,
                 additive: target.play.additive,
                 additive_scale: target.play.additive_scale,
-                diagnostic: null,
             )) {
                 if (excuse != c3d::UNSUPPORTED) return excuse~;
                 unsupported = true;

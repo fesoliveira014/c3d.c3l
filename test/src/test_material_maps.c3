@@ -232,23 +232,6 @@ fn void test_standard_packing_clears_absent_map_flags() @test {
     assert(packed.map_flags == 0);
 }
 
-fn void test_normal_bindings_track_semantics_and_content_at_a_stable_index() @test {
-    TextureBinding first = texture_binding(17, 4, true);
-    first.texture_binding_revision = 3;
-    first.texture_content_revision = 7;
-    first.semantic = TextureSemantic.NORMAL_RGB;
-    TextureBinding changed = first;
-    changed.semantic = TextureSemantic.NORMAL_RG;
-
-    assert(!render::texture_binding_matches(first, changed));
-
-    changed = first;
-    changed.texture_content_revision++;
-
-    assert(!render::texture_binding_matches(first, changed));
-    assert(render::texture_binding_matches(first, first));
-}
-
 fn void test_base_and_coat_normal_encoding_flags_are_independent() @test {
     char[render::MATERIAL_STRIDE] storage @align(16);
     PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;

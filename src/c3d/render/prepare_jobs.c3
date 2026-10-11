@@ -483,8 +483,8 @@ fn void restart_prepare_record(Renderer* renderer, PrepareRecord* record, Prepar
     report.restarts++;
 }
 
-fn PrepareReport? advance_prepare_engine(Renderer* renderer, PrepareLimits limits, bool legacy) @private {
-    PrepareBudget budget = { .limits = limits, .legacy = legacy, .started = clock::now() };
+fn PrepareReport? advance_prepare_engine(Renderer* renderer, PrepareLimits limits) @private {
+    PrepareBudget budget = { .limits = limits, .started = clock::now() };
     defer catch {
         finish_prepare_report(&budget);
         account_prepare_report(renderer, budget.report);
@@ -566,17 +566,11 @@ fn PrepareReport? advance_prepare_engine(Renderer* renderer, PrepareLimits limit
                     break;
                 }
                 done = result;
-                if (budget.legacy && (limits.staged_bytes == 0 || budget.report.staged_bytes > limits.staged_bytes)) budget.legacy_step = true;
             };
             if (record.state == PrepareState.FAILED) break;
             if (done) {
                 finish_prepare_unit(record, unit);
                 renderer.stats.prepare_units++;
-            }
-            if (budget.legacy_step) {
-                finish_prepare_report(&budget);
-                account_prepare_report(renderer, budget.report);
-                return budget.report;
             }
         }
         if (record.state != PrepareState.FAILED) promote_prepare_record(renderer, record);

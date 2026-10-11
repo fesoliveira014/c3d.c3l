@@ -11,9 +11,6 @@ struct PendingTextureUpload {
     TextureId asset;
     uint revision;
     material::TextureSemantic semantic;
-    TextureCoverageResource* coverage_resource;
-    TextureCoverageResource* previous_coverage_resource;
-    bool replaces_coverage;
     gpu::TextureHandle texture;
     gpu::TextureState before;
     uint mip_count;
@@ -123,18 +120,7 @@ fn void commit_uploads(Renderer* renderer, Frame* slot) @private {
         if (mirror.texture == pending.texture) {
             mirror.revision = pending.revision;
             mirror.semantic = pending.semantic;
-
-            if (pending.replaces_coverage) {
-                if (mirror.coverage_resource) slot.retire.push({ .kind = RetiredKind.TEXTURE_COVERAGE,
-                    .coverage_resource = mirror.coverage_resource });
-                mirror.coverage_resource = pending.coverage_resource;
-
-                if (mirror.coverage_resource) mirror.coverage_resource.committed = true;
-                pending.coverage_resource = null;
-            }
         }
-
-        destroy_texture_coverage_resource(pending.coverage_resource);
     }
 
     renderer.pending_texture_uploads.clear();
@@ -167,8 +153,6 @@ fn void discard_uploads(Renderer* renderer) @private {
         TextureRes* mirror = &renderer.textures[pending.asset.index];
 
         if (mirror.texture == pending.texture) mirror.revision = 0;
-        destroy_texture_coverage_resource(pending.coverage_resource);
-        pending.coverage_resource = null;
     }
 
     discard_font_uploads(renderer);
@@ -201,7 +185,6 @@ fn void discard_uploads(Renderer* renderer) @private {
 }
 
 fn void free_pending_uploads(Renderer* renderer) @private {
-    foreach (&pending : renderer.pending_texture_uploads) destroy_texture_coverage_resource(pending.coverage_resource);
     drain_retired(&renderer.device, &renderer.pending_upload_retire);
     renderer.pending_upload_retire.free();
     renderer.pending_texture_uploads.free();

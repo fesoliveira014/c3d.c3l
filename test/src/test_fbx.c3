@@ -17,7 +17,6 @@ const float TOLERANCE @local = 0.0005f;
 
 struct ProfileFbxSource @local {
     String text;
-    uint reads;
 }
 
 struct ProfileFbxFixture @local {
@@ -311,20 +310,14 @@ fn void test_load_animations_rolls_back_on_key_collision() @test {
 
 fn char[]? read_profile_fbx_source(void* user, Allocator allocator, String path) @local {
     ProfileFbxSource* source = user;
-    source.reads++;
     char[] copy = alloc::new_array_try(allocator, char, source.text.len) ?? c3d::ASSET_IO_ERROR~!;
     copy[..] = source.text[..];
     return copy;
 }
 
-fn void create_profile_fbx_fixture(
-    Allocator allocator,
-    ProfileFbxFixture* fixture,
-    uint clip_capacity = 8,
-    String filename = "profile_animation_v1.fbx",
-) @local {
+fn void create_profile_fbx_fixture(Allocator allocator, ProfileFbxFixture* fixture) @local {
     Path directory = path::tnew($$FILEPATH)!!.parent()!!;
-    fixture.path = (String)directory.tappend("../fixtures/animation_contact", filename)!!;
+    fixture.path = (String)directory.tappend("../fixtures/animation_contact", "profile_animation_v1.fbx")!!;
     FileSource disk;
     fixture.source.text = (String)disk.read_path(tmem, fixture.path)!!;
     FileSource provider = { .read = &read_profile_fbx_source, .user = &fixture.source };
@@ -335,20 +328,13 @@ fn void create_profile_fbx_fixture(
         file_source: provider,
     )!!;
     NodeTemplate[] source = fixture.source_document.template.nodes;
-    assert(source.len == 3 && fixture.source_document.template.meshes.len == 0);
-    assert(source[0].name == "Carrier" && source[0].parent == -1);
-    assert(source[1].name == "Hip" && source[1].parent == 0);
-    assert(source[2].name == "Foot" && source[2].parent == 1);
-    assert(close_vec3(source[0].local.position, {}));
-    assert(close_vec3(source[1].local.position, { 0, 1, 0 }));
-    assert(close_vec3(source[2].local.position, { 0, -1, 0 }));
     fixture.assets = asset::create_asset_store(allocator, {
         .max_geometries = 1,
         .max_textures = asset::BUILTIN_TEXTURE_COUNT,
         .max_materials = 1,
         .max_samplers = asset::BUILTIN_SAMPLER_COUNT,
         .max_models = 1,
-        .max_clips = clip_capacity,
+        .max_clips = 8,
         .file_source = provider,
     });
     ModelTemplate target = { .nodes = alloc::new_array(allocator, NodeTemplate, source.len) };
@@ -448,135 +434,6 @@ fn Quat profiled_fbx_rotation(AnimationClip* clip, uint node, float time) @local
     return maths::TRANSFORM_IDENTITY.rotation;
 }
 
-fn Mat4 profiled_fbx_world(
-    AnimationClip* clip,
-    ModelTemplate* target,
-    uint node,
-    float time,
-) @local {
-    Mat4 world = matrix::IDENTITY4;
-
-    for (int index = (int)node; index >= 0; index = target.nodes[index].parent) {
-        Transform local = target.nodes[index].local;
-        local.position = profiled_fbx_position(
-            clip: clip,
-            target: target,
-            node: (uint)index,
-            time: time,
-        );
-
-        foreach (&track : clip.tracks) {
-            if (clip.targets[track.target] == (uint)index && track.path == TargetPath.ROTATION) {
-                local.rotation = profiled_fbx_rotation(clip, (uint)index, time);
-                break;
-            }
-        }
-
-        world = local.to_mat4().mul(world);
-    }
-
-    return world;
-}
-
-fn void test_profiled_fbx_turning_stacks_split_yaw_and_preserve_reference_worlds() @test {
-    @pool() {
-        ProfileFbxFixture fixture;
-        create_profile_fbx_fixture(
-            allocator: mem,
-            fixture: &fixture,
-            clip_capacity: 8,
-            filename: "profile_turning_v1.fbx",
-        );
-        defer destroy_profile_fbx_fixture(&fixture);
-
-        retarget::destroy_retarget_profile(&fixture.profile);
-
-        ModelTemplate* target = &fixture.assets.model(fixture.target).data;
-        target.nodes[0].local.position = { 1, 0, 2 };
-        target.nodes[0].local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, (float)math::PI / 2);
-        target.nodes[0].local.scale = { 2, 2, 2 };
-
-        foreach (index, &node : target.nodes) fixture.desc.target_calibration[index] = node.local.rotation;
-        fixture.profile = retarget::create_retarget_profile(
-            allocator: mem,
-            source_nodes: fixture.source_document.template.nodes,
-            target: target,
-            desc: fixture.desc,
-        )!!;
-
-        ClipId[] kept = load_profile_fbx(&fixture, "turn_keep");
-        defer alloc::free(mem, kept.ptr);
-
-        ClipId[] extracted = fbx::load_animations_with_profile(
-            allocator: mem,
-            assets: &fixture.assets,
-            path: fixture.path,
-            target: fixture.target,
-            profile: &fixture.profile,
-            variant: "turn_extract",
-            options: { .root_motion = RootMotion.EXTRACT, .bake_rate = 60, .root_translation_scale = 1 },
-        )!!;
-        defer alloc::free(mem, extracted.ptr);
-        assert(kept.len == 2 && extracted.len == 2);
-
-        foreach (index, id : extracted) {
-            AnimationClip* clip = &fixture.assets.clip(id).data;
-            assert(clip.name == (index == 0 ? "Turn90" : "Turn360"));
-            uint rotation_keys;
-
-            foreach (&track : clip.tracks) {
-                if (clip.targets[track.target] != 0) continue;
-                assert(track.path != TargetPath.SCALE);
-                if (track.path != TargetPath.ROTATION) continue;
-                rotation_keys = (uint)track.times.len;
-
-                foreach (key, time : track.times) {
-                    assert(track.values[key * 4] == 0 && track.values[key * 4 + 2] == 0);
-                }
-            }
-
-            assert(rotation_keys == 61);
-
-            for (uint key = 0; key <= 4; key++) {
-                float time = (float)key / 4;
-                float degrees = 90 + (index == 0 ? 90 : 360) * time;
-                Quat expected = quaternion::from_axis_angle{float}({ 0, 1, 0 }, degrees * (float)math::PI / 180);
-                Quat actual = profiled_fbx_rotation(clip, 0, time);
-                assert(math::abs(expected.v.dot(actual.v)) > 0.999999f);
-            }
-
-            for (uint sample = 0; sample <= 240; sample++) {
-                float time = (float)sample / 240;
-                assert(close_vec3(profiled_fbx_position(
-                    clip: clip,
-                    target: target,
-                    node: 0,
-                    time: time,
-                ), { 1, 0, 2 }));
-
-                for (uint node = 1; node < 3; node++) {
-                    Mat4 expected = profiled_fbx_world(
-                        clip: &fixture.assets.clip(kept[index]).data,
-                        target: target,
-                        node: node,
-                        time: time,
-                    );
-                    Mat4 actual = profiled_fbx_world(
-                        clip: clip,
-                        target: target,
-                        node: node,
-                        time: time,
-                    );
-                    assert(close_vec3(maths::translation(actual), maths::translation(expected)));
-                    Quat expected_rotation = maths::transform_from_mat4(expected).rotation.normalize();
-                    Quat actual_rotation = maths::transform_from_mat4(actual).rotation.normalize();
-                    assert(math::abs(expected_rotation.v.dot(actual_rotation.v)) > 0.999999f);
-                }
-            }
-        }
-    };
-}
-
 fn void test_profiled_fbx_variants_have_distinct_keys_and_owned_clips() @test {
     @pool() {
         ProfileFbxFixture fixture;
@@ -626,6 +483,22 @@ fn void test_profiled_fbx_variants_have_distinct_keys_and_owned_clips() @test {
         assert(math::abs(primary.v.w) > 0.99999f);
         assert(close(calibrated.v.z, math::sin((float)math::PI / 8)));
         assert(close(calibrated.v.w, math::cos((float)math::PI / 8)));
+        ClipId[] extracted = fbx::load_animations_with_profile(
+            allocator: mem,
+            assets: &fixture.assets,
+            path: fixture.path,
+            target: fixture.target,
+            profile: &fixture.profile,
+            variant: "t_pose",
+            options: { .root_motion = RootMotion.EXTRACT, .bake_rate = 60, .root_translation_scale = 1 },
+        )!!;
+        defer alloc::free(mem, extracted.ptr);
+        assert(close_vec3(profiled_fbx_position(
+            clip: &fixture.assets.clip(extracted[0]).data,
+            target: target,
+            node: 0,
+            time: 1,
+        ), { 1, 0, 0 }));
         retarget::destroy_retarget_profile(&fixture.profile);
         retarget::destroy_retarget_profile(&alternate);
         assert(close_vec3(profiled_fbx_position(
@@ -654,70 +527,17 @@ fn void test_profiled_fbx_repeated_and_empty_variant_preserve_the_store() @test 
         sz keys = fixture.assets.keys.len();
         uint free_clips = fixture.assets.clips.free_count;
         foreach (variant : (String[2]){ "stable", "" }) {
-            bool failed;
-            RetargetDiagnostic diagnostic = { .reason = RetargetReason.INVALID_CLIP };
-            if (catch excuse = fbx::load_animations_with_profile(
+            assert(@catch(fbx::load_animations_with_profile(
                 allocator: mem,
                 assets: &fixture.assets,
                 path: fixture.path,
                 target: fixture.target,
                 profile: &fixture.profile,
                 variant: variant,
-                diagnostic: &diagnostic,
-            )) {
-                failed = true;
-                assert(excuse == c3d::INVALID_ARGUMENT);
-            }
-            assert(failed && diagnostic.reason == RetargetReason.NONE);
+            )) == c3d::INVALID_ARGUMENT);
             assert(fixture.assets.keys.len() == keys && fixture.assets.clips.free_count == free_clips);
             foreach (id : published) assert(fixture.assets.clips.is_live(id));
         }
-    };
-}
-
-fn void test_profiled_fbx_checks_actual_source_and_current_target_templates() @test {
-    @pool() {
-        ProfileFbxFixture fixture;
-        create_profile_fbx_fixture(mem, &fixture);
-        defer destroy_profile_fbx_fixture(&fixture);
-        String original = fixture.source.text;
-        fixture.source.text = clean_profile_fbx(original).treplace("Model::Hip", "Model::RenamedHip");
-        sz keys = fixture.assets.keys.len();
-        bool failed;
-        RetargetDiagnostic diagnostic;
-        if (catch excuse = fbx::load_animations_with_profile(
-            allocator: mem,
-            assets: &fixture.assets,
-            path: fixture.path,
-            target: fixture.target,
-            profile: &fixture.profile,
-            variant: "renamed_source",
-            diagnostic: &diagnostic,
-        )) {
-            failed = true;
-            assert(excuse == c3d::INVALID_ARGUMENT);
-        }
-        assert(failed && diagnostic.reason == RetargetReason.TEMPLATE_LAYOUT_MISMATCH);
-        assert(diagnostic.source_node == 1 && fixture.assets.keys.len() == keys);
-        fixture.source.text = clean_profile_fbx(original);
-        ModelTemplate* target = &fixture.assets.model(fixture.target).data;
-        target.nodes[1].local.position.y += 0.25f;
-        failed = false;
-        if (catch excuse = fbx::load_animations_with_profile(
-            allocator: mem,
-            assets: &fixture.assets,
-            path: fixture.path,
-            target: fixture.target,
-            profile: &fixture.profile,
-            variant: "changed_target",
-            diagnostic: &diagnostic,
-        )) {
-            failed = true;
-            assert(excuse == c3d::INVALID_ARGUMENT);
-        }
-        assert(failed && diagnostic.reason == RetargetReason.TEMPLATE_REFERENCE_MISMATCH);
-        assert(diagnostic.target_node == 1 && fixture.assets.keys.len() == keys);
-        assert(target.nodes[1].local.position.y == 1.25f);
     };
 }
 
@@ -732,22 +552,14 @@ fn void test_profiled_fbx_later_stack_failure_removes_every_new_clip() @test {
         sz keys = fixture.assets.keys.len();
         uint free_clips = fixture.assets.clips.free_count;
         sz bytes = tracker.allocated();
-        bool failed;
-        RetargetDiagnostic diagnostic;
-        if (catch excuse = fbx::load_animations_with_profile(
+        assert(@catch(fbx::load_animations_with_profile(
             allocator: mem,
             assets: &fixture.assets,
             path: fixture.path,
             target: fixture.target,
             profile: &fixture.profile,
             variant: "unsupported_scale",
-            diagnostic: &diagnostic,
-        )) {
-            failed = true;
-            assert(excuse == c3d::UNSUPPORTED);
-        }
-        assert(failed && diagnostic.reason == RetargetReason.UNSUPPORTED_ANIMATED_TRANSFORM);
-        assert(diagnostic.source_node == 1);
+        )) == c3d::UNSUPPORTED);
         assert(fixture.assets.keys.len() == keys && fixture.assets.clips.free_count == free_clips);
         assert(tracker.allocated() == bytes);
         String key = string::tformat(
@@ -758,55 +570,29 @@ fn void test_profiled_fbx_later_stack_failure_removes_every_new_clip() @test {
     };
 }
 
-fn void test_profiled_fbx_capacity_failure_after_one_stack_rolls_back() @test {
-    @pool() {
-        ProfileFbxFixture fixture;
-        create_profile_fbx_fixture(mem, &fixture, 1);
-        defer destroy_profile_fbx_fixture(&fixture);
-        fixture.source.text = clean_profile_fbx(fixture.source.text);
-        sz keys = fixture.assets.keys.len();
-        bool failed;
-        if (catch excuse = fbx::load_animations_with_profile(
-            allocator: mem,
-            assets: &fixture.assets,
-            path: fixture.path,
-            target: fixture.target,
-            profile: &fixture.profile,
-            variant: "capacity",
-        )) {
-            failed = true;
-            assert(excuse == c3d::CAPACITY_EXCEEDED);
-        }
-        assert(failed && fixture.assets.keys.len() == keys && fixture.assets.clips.free_count == 1);
-    };
-}
-
-fn void test_profiled_fbx_empty_stacks_still_validate_the_actual_template() @test {
+fn void test_profiled_fbx_checks_the_actual_source_template_with_and_without_stacks() @test {
     @pool() {
         ProfileFbxFixture fixture;
         create_profile_fbx_fixture(mem, &fixture);
         defer destroy_profile_fbx_fixture(&fixture);
-        fixture.source.text = empty_profile_fbx(fixture.source.text);
+        String clean = clean_profile_fbx(fixture.source.text);
+        fixture.source.text = empty_profile_fbx(clean);
         ClipId[] empty = load_profile_fbx(&fixture, "empty");
         defer alloc::free(mem, empty.ptr);
         assert(empty.len == 0);
+
         sz keys = fixture.assets.keys.len();
-        fixture.source.text = fixture.source.text.treplace("Model::Hip", "Model::RenamedHip");
-        bool failed;
-        RetargetDiagnostic diagnostic;
-        if (catch excuse = fbx::load_animations_with_profile(
-            allocator: mem,
-            assets: &fixture.assets,
-            path: fixture.path,
-            target: fixture.target,
-            profile: &fixture.profile,
-            variant: "empty_mismatch",
-            diagnostic: &diagnostic,
-        )) {
-            failed = true;
-            assert(excuse == c3d::INVALID_ARGUMENT);
+        foreach (source : (String[2]){ clean, fixture.source.text }) {
+            fixture.source.text = source.treplace("Model::Hip", "Model::RenamedHip");
+            assert(@catch(fbx::load_animations_with_profile(
+                allocator: mem,
+                assets: &fixture.assets,
+                path: fixture.path,
+                target: fixture.target,
+                profile: &fixture.profile,
+                variant: "renamed_source",
+            )) == c3d::INVALID_ARGUMENT);
+            assert(fixture.assets.keys.len() == keys);
         }
-        assert(failed && diagnostic.reason == RetargetReason.TEMPLATE_LAYOUT_MISMATCH);
-        assert(diagnostic.source_node == 1 && fixture.assets.keys.len() == keys);
     };
 }

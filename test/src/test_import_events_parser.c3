@@ -3,19 +3,6 @@ module c3d::test::import_events_parser;
 import c3d;
 import c3d::anim;
 import c3d::asset;
-import std::collections::object;
-import std::encoding::json;
-
-fn void test_import_events_parser_observes_standard_json_last_wins_and_signed_integer_limit() @test {
-    @pool() {
-        Object* parsed = json::tparse(`{"version":1,"version":2}`, JsonFlavor.JSON)!!;
-        Object* version = parsed.get("version")!!;
-        assert(version.is_int() && version.i == 2);
-        assert(@catch(json::tparse("9223372036854775808", JsonFlavor.JSON)) == json::INVALID_NUMBER);
-        Object* rounded = json::tparse("1.0000000000000000001", JsonFlavor.JSON)!!;
-        assert(rounded.is_float() && rounded.f == 1);
-    };
-}
 
 fn void test_import_events_parser_exact_integer_spellings_and_uint_boundary() @test {
     @pool() {

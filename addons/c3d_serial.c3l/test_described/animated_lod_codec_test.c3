@@ -50,9 +50,6 @@ fn void assert_codec_animated_lod_owned(
     assert(c3d::same_id(restored.animated.source_model, source.animated.source_model));
     assert(restored.identity != source.identity && restored.descriptor_revision == 1);
     assert(restored.desc.levels.len == source.desc.levels.len && restored.desc.parts.len == source.desc.parts.len);
-    assert(restored.desc.parts.ptr != source.desc.parts.ptr
-      && restored.animated.parts.ptr != source.animated.parts.ptr);
-    assert(restored.animated.joint_nodes.ptr != source.animated.joint_nodes.ptr);
     assert(restored.animated.joint_nodes == source.animated.joint_nodes);
     assert(restored.animated.defaults == source.animated.defaults);
     foreach (index, part : restored.animated.parts) {

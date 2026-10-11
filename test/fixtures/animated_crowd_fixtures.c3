@@ -143,6 +143,43 @@ fn PartsFixture? add_parts_fixture(AssetStore* assets) {
     return fixture;
 }
 
+<*
+ Build a two-level animated LOD descriptor that repeats every model mesh.
+ Allocates the descriptor, copied joints and copied defaults in tmem.
+ @param [&in] assets : "Owns the model and its skins."
+ @param permuted : "Swaps the first and last base parts to separate part and mesh order."
+*>
+fn AnimatedLodDesc parts_lod_desc(AssetStore* assets, ModelId model_id, bool permuted = false) {
+    ModelTemplate* template = &assets.model(model_id).data;
+    uint count = (uint)template.meshes.len;
+    LodLevel[] levels = alloc::new_array(tmem, LodLevel, 2);
+    levels[0] = { .first_part = 0, .part_count = count, .min_screen_size = 0.2f };
+    levels[1] = { .first_part = count, .part_count = count, .min_screen_size = 0 };
+    AnimatedLodPart[] parts = alloc::new_array(tmem, AnimatedLodPart, (sz)count * 2);
+    for (uint level = 0; level < 2; level++) {
+        foreach (uint index, mesh : template.meshes) {
+            ModelSkin skin;
+            foreach (candidate : template.skins) {
+                if (candidate.mesh_node == mesh.node) skin = candidate;
+            }
+            skin.joint_nodes = alloc::clone_slice(tmem, skin.joint_nodes);
+            parts[level * count + index] = {
+                .draw = { .geometry = mesh.geometry, .material = mesh.material, .local = matrix::IDENTITY4 },
+                .mesh_index = index,
+                .skin = skin,
+                .default_morph_weights = alloc::clone_slice(tmem, mesh.default_morph_weights),
+            };
+        }
+    }
+
+    if (permuted) {
+        AnimatedLodPart first = parts[0];
+        parts[0] = parts[count - 1];
+        parts[count - 1] = first;
+    }
+    return { .levels = levels, .parts = parts };
+}
+
 fn Geometry parts_triangle(
     uint joint,
     bool skinned,
