@@ -44,26 +44,6 @@ fn AnimatedLodKey animated_lod_key(MeshCandidate* candidate, uint part) @private
     };
 }
 
-fn bool animated_lod_owns_source(Scene* scene, Node* node) @private {
-    for (Node* ancestor = node.parent; ancestor; ancestor = ancestor.parent) {
-        LodGroup* group = scene.get(ancestor, LodGroup);
-        if (!group || !group.state.animated) continue;
-
-        if (ModelInstance* instance = scene.get(ancestor, ModelInstance)) {
-            LodLevel base = group.state.desc.levels[0];
-            foreach (part : group.state.animated.parts[base.first_part:base.part_count]) {
-                if (instance.present_node(part.template_node) == node) return true;
-            }
-        } else if (AnimatedCrowd* crowd = scene.get(ancestor, AnimatedCrowd)) {
-            foreach (part : crowd.parts) {
-                if (c3d::same_id(part.batch, node.id)) return true;
-            }
-        }
-    }
-
-    return false;
-}
-
 fn bool bind_animated_lod_candidate(LodSelection* selection, MeshCandidate* candidate) @private {
     AnimatedLodPartBinding* part = &selection.state.animated.parts[candidate.lod_part];
     candidate.animated_lod = part;
