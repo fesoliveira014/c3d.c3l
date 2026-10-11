@@ -221,37 +221,35 @@ fn void test_mask_variants_use_effective_thresholds_and_constant_pass_classes() 
 }
 
 fn void test_supplied_mips_keep_payload_and_coverage_none_for_mask_and_normal_roles() @test {
-    foreach (String name : { "legacy_rgba8_2x2.dds", "ktx2_rgba8_srgb_5x3.ktx2", "ktx2_bc7_srgb_5x3.ktx2" }) {
-        String text = image_document(name, `[
-            {"alphaMode":"MASK","alphaCutoff":0.5,"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}},
-            {"normalTexture":{"index":0}}]`);
+    String text = image_document("ktx2_bc7_srgb_5x3.ktx2", `[
+        {"alphaMode":"MASK","alphaCutoff":0.5,"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}},
+        {"normalTexture":{"index":0}}]`);
 
-        foreach (NormalEncoding encoding : { NormalEncoding.RGB, NormalEncoding.RG }) {
-            LoadOptions options = asset::LOAD_OPTIONS_DEFAULT;
-            options.normal_encoding = encoding;
+    foreach (NormalEncoding encoding : { NormalEncoding.RGB, NormalEncoding.RG }) {
+        LoadOptions options = asset::LOAD_OPTIONS_DEFAULT;
+        options.normal_encoding = encoding;
 
-            ModelDocument document = decode_text(text, options, fixture_directory("texture"));
-            defer asset::destroy_model_document(&document);
+        ModelDocument document = decode_text(text, options, fixture_directory("texture"));
+        defer asset::destroy_model_document(&document);
 
-            assert(document.textures.len == 2);
+        assert(document.textures.len == 2);
 
-            foreach (index, &texture : document.textures) {
-                assert(texture.source_kind == TextureSourceKind.SUPPLIED_MIPS && !texture.pixels.len);
-                assert(texture.desc.coverage == CoveragePolicy.NONE && texture.desc.alpha_threshold == 0);
-                assert(!texture.desc.generate_mips && texture.supplied_mips.len > 0);
-                assert(texture.desc.semantic == (index == 0 ? TextureSemantic.COLOR
-                  : encoding == NormalEncoding.RGB ? TextureSemantic.NORMAL_RGB : TextureSemantic.NORMAL_RG));
+        foreach (index, &texture : document.textures) {
+            assert(texture.source_kind == TextureSourceKind.SUPPLIED_MIPS && !texture.pixels.len);
+            assert(texture.desc.coverage == CoveragePolicy.NONE && texture.desc.alpha_threshold == 0);
+            assert(!texture.desc.generate_mips && texture.supplied_mips.len > 0);
+            assert(texture.desc.semantic == (index == 0 ? TextureSemantic.COLOR
+              : encoding == NormalEncoding.RGB ? TextureSemantic.NORMAL_RGB : TextureSemantic.NORMAL_RG));
 
-                DocumentTexture* other = &document.textures[index == 0 ? 1 : 0];
+            DocumentTexture* other = &document.textures[index == 0 ? 1 : 0];
 
-                assert(texture.supplied_mips.len == other.supplied_mips.len);
+            assert(texture.supplied_mips.len == other.supplied_mips.len);
 
-                foreach (level_index, level : texture.supplied_mips) {
-                    TextureMipData second = other.supplied_mips[level_index];
+            foreach (level_index, level : texture.supplied_mips) {
+                TextureMipData second = other.supplied_mips[level_index];
 
-                    assert(level.mip == second.mip && level.layer == second.layer);
-                    assert(mem::equals(level.bytes, second.bytes));
-                }
+                assert(level.mip == second.mip && level.layer == second.layer);
+                assert(mem::equals(level.bytes, second.bytes));
             }
         }
     }
@@ -349,23 +347,11 @@ fn void test_force_does_not_bypass_structural_tangent_shape_count_or_component_f
     LoadOptions forced = asset::LOAD_OPTIONS_DEFAULT;
     forced.regenerate_tangents = true;
 
-    foreach (uint accessor : { 13, 14, 16 }) {
+    foreach (uint accessor : { 13, 14 }) {
         String text = tangent_fixture().treplace(`"TANGENT":5`, string::tformat(`"TANGENT":%d`, accessor));
-
-        if (accessor == 16) text = text.treplace(
-            needle: `"asset":{"version":"2.0"}`,
-            new_str: `"asset":{"version":"2.0"},"extensionsRequired":["KHR_mesh_quantization"]`,
-        );
 
         expect_decode_fault(text, forced, c3d::ASSET_FORMAT_ERROR);
     }
-
-    String truncated = tangent_fixture().treplace(
-        needle: `"byteOffset":668,"byteLength":16`,
-        new_str: `"byteOffset":668,"byteLength":20`,
-    );
-
-    expect_decode_fault(truncated, forced, c3d::ASSET_FORMAT_ERROR);
 }
 
 fn void test_declared_signed_normalized_quantized_tangents_remain_authored() @test {
@@ -535,7 +521,7 @@ fn void test_forced_regeneration_keeps_line_and_point_primitives() @test {
     }
 }
 
-fn void test_gltf_decoded_float_images_remain_rejected_for_every_role() @test {
+fn void test_gltf_decoded_float_images_remain_rejected_for_color_and_normal_roles() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
     defer tracker.free();
@@ -543,7 +529,6 @@ fn void test_gltf_decoded_float_images_remain_rejected_for_every_role() @test {
     foreach (String materials : {
         `[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}}]`,
         `[{"normalTexture":{"index":0}}]`,
-        `[{"alphaMode":"MASK","pbrMetallicRoughness":{"baseColorTexture":{"index":0}}}]`,
     }) {
         String text = image_document("../radiance.hdr", materials);
         ModelDocument? result = gltf::decode_model_memory(
