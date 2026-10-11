@@ -1,7 +1,6 @@
 module c3d::render;
 
 import c3d;
-import c3d::asset;
 import c3d::material;
 import c3d::shader;
 import gpu;
@@ -9,8 +8,8 @@ import gpu;
 const gpu::Format WEIGHTED_ACCUM_FORMAT @private = gpu::Format.RGBA16_FLOAT; // 8 B per pixel
 const gpu::Format WEIGHTED_REVEALAGE_FORMAT @private = gpu::Format.R16_FLOAT; // 2 B per pixel
 
-fn bool joins_weighted_pass(
-    AssetStore* assets,
+fn bool? joins_weighted_pass(
+    Renderer* renderer,
     Material* material,
     TransparencyMode mode,
     uint shadow_flags,
@@ -23,9 +22,9 @@ fn bool joins_weighted_pass(
     if (material.kind != MaterialKind.CUSTOM) return true;
 
     ShaderId custom_shader = material.custom.shader;
-    if (!assets.shaders.is_live(custom_shader)) return false;
-    asset::ShaderDesc* stages = &assets.shader(custom_shader).desc;
-    return custom_fragment_form(stages, shadow_flags | shader::SHADER_FLAG_WEIGHTED_BLEND).len > 0;
+    if (!renderer.assets.shaders.is_live(custom_shader)) return false;
+    ShaderRes* published = resolve_shader(renderer, custom_shader)!;
+    return custom_fragment_form(&published.desc, shadow_flags | shader::SHADER_FLAG_WEIGHTED_BLEND).len > 0;
 }
 
 fn void? acquire_weighted_targets(Renderer* renderer, ViewRecord* record) @private {

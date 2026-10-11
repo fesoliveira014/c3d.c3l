@@ -7,8 +7,13 @@
 
 layout(location = 0) in vec3 v_world_pos;
 
+// gpu.c3l rejects a wrong-typed root header member, which makes a replacement fail.
 layout(push_constant) uniform Push {
+#ifdef BROKEN_PUSH
+    uint vertex_root_gpu;
+#else
     uint64_t vertex_root_gpu;
+#endif
     uint64_t fragment_root_gpu;
 } pc;
 
