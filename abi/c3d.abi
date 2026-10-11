@@ -22,6 +22,13 @@ root CompositeRoot {
     uint         _pad1;
 }
 
+root WeightedCompositeRoot {
+    TextureIndex accum_texture;
+    TextureIndex revealage_texture;
+    uint         _pad0;
+    uint         _pad1;
+}
+
 root DispatchRoot {
     GpuAddress textures;
     GpuAddress parameters;
@@ -410,6 +417,8 @@ const uint DRAW_DISTANCE_FADE = 16;
 const uint DRAW_SWAY_VERTEX_ALPHA = 32;
 // Vertex history of a tracked mesh does not correspond: zero object motion, rejected history.
 const uint DRAW_VERTEX_HISTORY_INVALID = 64;
+// The draw records into the weighted accumulation pass; blended fragments then also write revealage.
+const uint DRAW_WEIGHTED_BLEND = 128;
 
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1;
 

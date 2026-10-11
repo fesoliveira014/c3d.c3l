@@ -8,6 +8,7 @@ enum ShaderName : int {
     FULLSCREEN,
     GRADIENT,
     COMPOSITE,
+    WEIGHTED_COMPOSITE,
     MESH,
     BILLBOARD_VERTEX,
     IMPOSTOR_VERTEX,
@@ -136,6 +137,7 @@ const uint SHADER_FLAG_SCENE_TRACE_BVH = 1 << 8;
 const char[*] FULLSCREEN_SPIRV @private = $embed("../../../shaders/spv/fullscreen.spv");
 const char[*] GRADIENT_SPIRV @private = $embed("../../../shaders/spv/gradient.spv");
 const char[*] COMPOSITE_SPIRV @private = $embed("../../../shaders/spv/composite.spv");
+const char[*] WEIGHTED_COMPOSITE_SPIRV @private = $embed("../../../shaders/spv/weighted_composite.spv");
 const char[*] MESH_SPIRV @private = $embed("../../../shaders/spv/mesh.spv");
 const char[*] BILLBOARD_VERTEX_SPIRV @private = $embed("../../../shaders/spv/billboard_vertex.spv");
 const char[*] IMPOSTOR_VERTEX_SPIRV @private = $embed("../../../shaders/spv/impostor_vertex.spv");
@@ -270,10 +272,11 @@ const char[*] TRACE_REFIT_SPIRV @private = $embed("../../../shaders/spv/trace_re
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[133] SHADER_ENTRIES = {
+const ShaderEntry[134] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
+    { .variant = { .shader = WEIGHTED_COMPOSITE }, .spirv = WEIGHTED_COMPOSITE_SPIRV[..] },
     { .variant = { .shader = MESH }, .spirv = MESH_SPIRV[..] },
     { .variant = { .shader = BILLBOARD_VERTEX }, .spirv = BILLBOARD_VERTEX_SPIRV[..] },
     { .variant = { .shader = IMPOSTOR_VERTEX }, .spirv = IMPOSTOR_VERTEX_SPIRV[..] },

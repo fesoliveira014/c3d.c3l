@@ -61,6 +61,7 @@ const uint DRAW_SWAY = 8u;
 const uint DRAW_DISTANCE_FADE = 16u;
 const uint DRAW_SWAY_VERTEX_ALPHA = 32u;
 const uint DRAW_VERTEX_HISTORY_INVALID = 64u;
+const uint DRAW_WEIGHTED_BLEND = 128u;
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1u;
 const uint SSGI_FLAG_GBUFFER_NORMALS = 1u;
 const uint SSGI_FLAG_HISTORY_VALID = 2u;
@@ -190,6 +191,13 @@ const uint TAA_DEBUG_VELOCITY_RANGE = 16u;
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer CompositeRoot {
     uint source_texture;
     uint source_sampler;
+    uint _pad0;
+    uint _pad1;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer WeightedCompositeRoot {
+    uint accum_texture;
+    uint revealage_texture;
     uint _pad0;
     uint _pad1;
 };

@@ -7,6 +7,7 @@ const char[*] C3D_GENERATED_C3D_ABI_TEXT @private = $embed("../../../shaders/gen
 const char[*] C3D_COMMON_AMBIENT_OCCLUSION_TEXT @private = $embed("../../../shaders/common/ambient_occlusion.glsl");
 const char[*] C3D_COMMON_AO_ESTIMATE_TEXT @private = $embed("../../../shaders/common/ao_estimate.glsl");
 const char[*] C3D_COMMON_ATMOSPHERE_TEXT @private = $embed("../../../shaders/common/atmosphere.glsl");
+const char[*] C3D_COMMON_BLEND_OUTPUT_TEXT @private = $embed("../../../shaders/common/blend_output.glsl");
 const char[*] C3D_COMMON_BRDF_TEXT @private = $embed("../../../shaders/common/brdf.glsl");
 const char[*] C3D_COMMON_CLUSTERS_TEXT @private = $embed("../../../shaders/common/clusters.glsl");
 const char[*] C3D_COMMON_CONSTANTS_TEXT @private = $embed("../../../shaders/common/constants.glsl");
@@ -57,6 +58,7 @@ const char[*] C3D_COMMON_TRACE_SURFACE_TEXT @private = $embed("../../../shaders/
 const char[*] C3D_COMMON_TRANSMISSION_TEXT @private = $embed("../../../shaders/common/transmission.glsl");
 const char[*] C3D_COMMON_VERTEX_PULL_TEXT @private = $embed("../../../shaders/common/vertex_pull.glsl");
 const char[*] C3D_COMMON_VIEW_CLIP_TEXT @private = $embed("../../../shaders/common/view_clip.glsl");
+const char[*] C3D_COMMON_WEIGHTED_BLEND_TEXT @private = $embed("../../../shaders/common/weighted_blend.glsl");
 const char[*] GPU_BUFFER_REFERENCE_TEXT @private = $embed("../../../shaders/gpu/buffer_reference.glsl");
 const char[*] GPU_DESCRIPTOR_HEAP_TEXT @private = $embed("../../../shaders/gpu/descriptor_heap.glsl");
 const char[*] GPU_GENERATED_SHADER_ABI_TEXT @private = $embed("../../../shaders/gpu/generated/shader_abi.glsl");
@@ -67,11 +69,12 @@ const char[*] GPU_RAY_TRACING_TEXT @private = $embed("../../../shaders/gpu/ray_t
 <*
  Every include a custom stage may resolve, in table order.
 *>
-const asset::ShaderInclude[60] SHADER_INCLUDES = {
+const asset::ShaderInclude[62] SHADER_INCLUDES = {
     { .name = "c3d_abi.glsl", .text = (String)C3D_GENERATED_C3D_ABI_TEXT[..] },
     { .name = "ambient_occlusion.glsl", .text = (String)C3D_COMMON_AMBIENT_OCCLUSION_TEXT[..] },
     { .name = "ao_estimate.glsl", .text = (String)C3D_COMMON_AO_ESTIMATE_TEXT[..] },
     { .name = "atmosphere.glsl", .text = (String)C3D_COMMON_ATMOSPHERE_TEXT[..] },
+    { .name = "blend_output.glsl", .text = (String)C3D_COMMON_BLEND_OUTPUT_TEXT[..] },
     { .name = "brdf.glsl", .text = (String)C3D_COMMON_BRDF_TEXT[..] },
     { .name = "clusters.glsl", .text = (String)C3D_COMMON_CLUSTERS_TEXT[..] },
     { .name = "constants.glsl", .text = (String)C3D_COMMON_CONSTANTS_TEXT[..] },
@@ -122,6 +125,7 @@ const asset::ShaderInclude[60] SHADER_INCLUDES = {
     { .name = "transmission.glsl", .text = (String)C3D_COMMON_TRANSMISSION_TEXT[..] },
     { .name = "vertex_pull.glsl", .text = (String)C3D_COMMON_VERTEX_PULL_TEXT[..] },
     { .name = "view_clip.glsl", .text = (String)C3D_COMMON_VIEW_CLIP_TEXT[..] },
+    { .name = "weighted_blend.glsl", .text = (String)C3D_COMMON_WEIGHTED_BLEND_TEXT[..] },
     { .name = "buffer_reference.glsl", .text = (String)GPU_BUFFER_REFERENCE_TEXT[..] },
     { .name = "descriptor_heap.glsl", .text = (String)GPU_DESCRIPTOR_HEAP_TEXT[..] },
     { .name = "generated/shader_abi.glsl", .text = (String)GPU_GENERATED_SHADER_ABI_TEXT[..] },

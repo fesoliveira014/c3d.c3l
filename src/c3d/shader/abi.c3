@@ -58,6 +58,7 @@ const uint DRAW_SWAY = 8;
 const uint DRAW_DISTANCE_FADE = 16;
 const uint DRAW_SWAY_VERTEX_ALPHA = 32;
 const uint DRAW_VERTEX_HISTORY_INVALID = 64;
+const uint DRAW_WEIGHTED_BLEND = 128;
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1;
 const uint SSGI_FLAG_GBUFFER_NORMALS = 1;
 const uint SSGI_FLAG_HISTORY_VALID = 2;
@@ -195,6 +196,18 @@ $assert $reflect(CompositeRoot.source_texture).offset == 0;
 $assert $reflect(CompositeRoot.source_sampler).offset == 4;
 $assert $reflect(CompositeRoot._pad0).offset == 8;
 $assert $reflect(CompositeRoot._pad1).offset == 12;
+
+struct WeightedCompositeRoot {
+    TextureIndex accum_texture;
+    TextureIndex revealage_texture;
+    uint         _pad0;
+    uint         _pad1;
+}
+$assert WeightedCompositeRoot::size == 16;
+$assert $reflect(WeightedCompositeRoot.accum_texture).offset == 0;
+$assert $reflect(WeightedCompositeRoot.revealage_texture).offset == 4;
+$assert $reflect(WeightedCompositeRoot._pad0).offset == 8;
+$assert $reflect(WeightedCompositeRoot._pad1).offset == 12;
 
 struct DispatchRoot {
     GpuAddress textures;
