@@ -90,7 +90,6 @@ struct AnimatedLodBinding {
     AnimatedLodPartBinding[] parts;
     uint[] weight_indices;
     uint[] channel_offsets;
-    String[] channel_names;
     float[] defaults;
     uint[] joint_nodes;
     Mat4[] inverse_bind;
@@ -578,17 +577,9 @@ fn AnimatedLodBinding* carve_animated_lod(
     AnimatedLodPartBinding[] parts = carve_lod(cursor, AnimatedLodPartBinding, source.parts.len);
     uint[] indices = carve_lod(cursor, uint, source.weight_indices.len);
     uint[] offsets = carve_lod(cursor, uint, source.channel_offsets.len);
-    String[] names = carve_lod(cursor, String, source.channel_names.len);
     float[] defaults = carve_lod(cursor, float, source.defaults.len);
     uint[] joints = carve_lod(cursor, uint, source.joint_nodes.len);
     Mat4[] inverse_bind = carve_lod(cursor, Mat4, source.inverse_bind.len);
-    foreach (index, name : source.channel_names) {
-        char[] text = carve_lod(cursor, char, name.len);
-        if (cursor.base) {
-            text[..] = name[..];
-            names[index] = (String)text;
-        }
-    }
     if (!cursor.base) return null;
 
     parts[..] = source.parts[..];
@@ -605,7 +596,6 @@ fn AnimatedLodBinding* carve_animated_lod(
         .parts = parts,
         .weight_indices = indices,
         .channel_offsets = offsets,
-        .channel_names = names,
         .defaults = defaults,
         .joint_nodes = joints,
         .inverse_bind = inverse_bind,

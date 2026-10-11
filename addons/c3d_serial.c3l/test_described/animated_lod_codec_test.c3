@@ -122,7 +122,6 @@ fn void test_animated_lod_codec_ordinary_rebuilds_binding_and_restarts_animation
             assert(!loaded.effects.cast_shadow && loaded.effects.receive_shadow && loaded.effects.trace);
             Animator* playback = fixture.destination.get(restored, Animator);
             assert(playback.action_count == 1 && playback.actions.get(playback.order[0]).time == 0);
-            model::sync_animated_lod(&fixture.assets, &fixture.destination, restored)!!;
             assert(bytes == serial::write_subtree(
                 allocator: tmem,
                 scene: &fixture.destination,
@@ -219,7 +218,6 @@ fn void test_animated_lod_codec_crowd_preserves_pending_owner_and_prepares_later
             if (prepared) {
                 model::prepare_crowd(&fixture.assets, &fixture.source, source)!!;
                 anim::crowd_update(&fixture.assets, &fixture.source, 0.25f);
-                model::sync_animated_lod(&fixture.assets, &fixture.source, source)!!;
             }
             char[] bytes = serial::write_subtree(
                 allocator: tmem,
@@ -255,7 +253,6 @@ fn void test_animated_lod_codec_crowd_preserves_pending_owner_and_prepares_later
                     root: restored,
                 )!!);
                 model::prepare_crowd(&fixture.assets, &fixture.destination, restored)!!;
-                model::sync_animated_lod(&fixture.assets, &fixture.destination, restored)!!;
                 assert(loaded.count == 2 && loaded.transforms.ptr == crowd.placements.ptr);
                 assert(loaded.identity != original.identity && loaded.descriptor_revision == 1);
                 assert(crowd.playback.slots[0].actions.get(crowd.playback.slots[0].base_action).time == 0.125f);

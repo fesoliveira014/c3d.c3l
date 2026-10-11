@@ -565,19 +565,6 @@ fn void test_traced_animated_lod_respects_source_flags_and_base_signatures() @te
         PosedTraceKey second_morph = render::trace_pose_key(scene.identity, &first.poses[3], &first.records[3]);
         assert(!(first_morph == second_morph));
         assert(mem::equals(signatures[2].ptr, signatures[3].ptr, MorphWeightsGpu::size));
-        assets.geometry(coarse).data.bounds.max.x += 1;
-        assets.mark_geometry_dirty(coarse);
-        model::sync_animated_lod(&assets, &scene, owner)!!;
-        TraceCollection after_coarse = render::collect_trace_instances(tmem, &scene, &assets);
-        assert(after_coarse.records.len == first.records.len);
-        assert(mem::equals(first.records.ptr, after_coarse.records.ptr, first.records.len * TraceInstance::size));
-        foreach (index, &record : after_coarse.records) {
-            if (after_coarse.poses[index].kind == TracePose.ANIMATED_LOD) {
-                char[] inputs = render::pose_inputs(&renderer, &after_coarse.poses[index], record);
-                char[] before = signatures[record.part_index];
-                assert(inputs.len == before.len && mem::equals(inputs.ptr, before.ptr, inputs.len));
-            }
-        }
         ModelInstance* instance = scene.get(owner, ModelInstance);
         scene.get(instance.present_node(6), Mesh).trace = false;
         TraceCollection disabled_part = render::collect_trace_instances(tmem, &scene, &assets);
@@ -702,15 +689,5 @@ fn void test_traced_animated_lod_crowd_uses_logical_pose_order_and_fresh_keys() 
             assert(!(fresh == keys[logical]));
             assert(fresh.logical_part == keys[logical].logical_part && fresh.instance == keys[logical].instance);
         }
-        AnimatedLodDesc next = animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed, permuted: true);
-        model::replace_animated_lod(
-            assets: &assets,
-            scene: &scene,
-            owner: owner,
-            desc: next,
-        )!!;
-        TraceCollection replacement = render::collect_trace_instances(tmem, &scene, &assets);
-        assert(replacement.records.len == 15);
-        assert(replacement.records[0].lod_identity != identity);
     };
 }

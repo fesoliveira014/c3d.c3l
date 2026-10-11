@@ -128,10 +128,9 @@ morph-only alternatives may have an additional finite nonsingular affine local.
 Source `Mesh`/`InstancedMesh` geometry and material IDs must remain the template's
 base IDs. Source nodes, skin bindings and joint-node identities must remain live
 and compatible. Keep source geometry unchanged when selecting a coarse level;
-put alternatives in the descriptor. `model::replace_animated_lod` validates and
-copies a complete replacement before swapping it, preserving the old group on
-failure. Replacement creates a new group incarnation; direct edits to copied
-descriptor/binding data are unsupported.
+put alternatives in the descriptor. To change alternatives, remove the `LodGroup`
+with `scene.remove_component` and attach a new descriptor; the new group is a new
+incarnation. Direct edits to copied descriptor/binding data are unsupported.
 
 All source skins and skinned alternatives share identical ordered model-local
 joint-node lists and bitwise-identical inverse binds. Vertex/index counts and
@@ -146,13 +145,14 @@ name rather than target position. Unnamed weights retain their indexed identity
 and complete width. Unknown/duplicate mappings, nonfinite defaults and conflicting
 defaults are `INVALID_ARGUMENT` before publication.
 
-Attachment/replacement return `INVALID_ID` for dead sources/assets,
+Attachment returns `INVALID_ID` for dead sources/assets,
 `INVALID_ARGUMENT` for source, bind, channel or layout incompatibility,
 `CAPACITY_EXCEEDED` for allocation/capacity failure, and `UNSUPPORTED` for a source
 with imported LOD groups or incompatible custom stages. Animation and crowd
-publication update source state on the scene side. After asset edits, call
-`model::sync_animated_lod` before rendering or querying. Renderers and queries
-only read the published source; stale or invalid sources skip the whole group.
+publication update source state on the scene side. An edit that changes the
+revision of the source model or a referenced geometry or skeleton skips the
+whole group until it is attached again. Renderers and queries only read the
+published source; stale or invalid sources skip the whole group.
 Removing a crowd invalidates its group's borrowed placements and colors.
 
 An ordinary owner may provide `has_bounds_override` and `local_bounds` covering
@@ -191,7 +191,7 @@ placement/color arrays and live count from `AnimatedCrowd`; use its placement
 publication and `model::set_crowd` replacement operations. Ordinary animated
 groups use their source owner's transform. Pose/placement edits retain group
 identity and selection hysteresis; crowd replacement/regrowth changes source
-generations while descriptor replacement changes group incarnation.
+generations while attaching a new descriptor changes group incarnation.
 
 `set_lod_effects` copies sway, fade and shadow/trace flags without replacing
 placement identities or invalidating placement bounds and GPU records. Copy

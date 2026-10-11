@@ -226,7 +226,6 @@ fn void test_animated_lod_copies_logical_parts_and_preserves_ordinary_pose() @te
         assert(state.animated.parts[0].skinned && !state.animated.parts[1].skinned);
         assert(state.animated.joint_nodes.len == 2 && state.animated.inverse_bind.len == 2);
         assert(state.animated.defaults[0] == 0.25f && state.animated.defaults[1] == 0.75f);
-        assert(state.animated.channel_names[0] == "lift" && state.animated.channel_names[1] == "lift");
         assert(!state.effects.trace);
         ulong identity = state.identity;
         uint descriptor = state.descriptor_revision;
@@ -235,7 +234,6 @@ fn void test_animated_lod_copies_logical_parts_and_preserves_ordinary_pose() @te
         desc.levels[0].min_screen_size = 0.9f;
         assert(state.desc.levels[0].min_screen_size == 0.2f && state.desc.parts[0].local.m03 == 0);
         assert(state.animated.defaults[0] == 0.25f);
-        model::sync_animated_lod(&assets, &scene, owner)!!;
         assert(state.identity == identity && state.descriptor_revision == descriptor);
         assert(animator.action(action).time == 0.5f);
         assert(instance.present_node(4).local.position == rigid);
@@ -243,7 +241,7 @@ fn void test_animated_lod_copies_logical_parts_and_preserves_ordinary_pose() @te
     };
 }
 
-fn void test_animated_lod_replace_faults_preserve_existing_descriptor() @test {
+fn void test_animated_lod_attach_rejects_incompatible_channels_and_skins() @test {
     @pool() {
         AssetStore assets = animated_lod_store();
         defer asset::destroy_asset_store(&assets);
@@ -264,16 +262,6 @@ fn void test_animated_lod_replace_faults_preserve_existing_descriptor() @test {
             );
             AnimatedLodDesc desc = animated_lod_channel_desc(&assets, &fixture, channels.selected);
             desc.parts[9].skin = compatible;
-            model::attach_animated_lod(
-                assets: &assets,
-                scene: &scene,
-                owner: owner,
-                desc: desc,
-            )!!;
-            LodGroupState* previous = scene.get(owner, LodGroup).state;
-            ulong identity = previous.identity;
-            uint descriptor = previous.descriptor_revision;
-            uint revision = previous.revision;
             Node* first_child = owner.first_child;
             uint free_nodes = scene.world.entities.free_count;
             for (uint mutation = 0; mutation < 6; mutation++) {
@@ -287,20 +275,21 @@ fn void test_animated_lod_replace_faults_preserve_existing_descriptor() @test {
                     case 5: changed.parts[9].draw.geometry = { .index = uint::max, .generation = 1 };
                 }
                 fault expected = mutation == 5 ? c3d::INVALID_ID : c3d::INVALID_ARGUMENT;
-                assert(@catch(model::replace_animated_lod(
+                assert(@catch(model::attach_animated_lod(
                     assets: &assets,
                     scene: &scene,
                     owner: owner,
                     desc: changed,
                 )) == expected);
-                assert(scene.get(owner, LodGroup).state == previous && previous.identity == identity);
-                assert(previous.descriptor_revision == descriptor && previous.revision == revision);
+                assert(!scene.has(owner, LodGroup));
                 assert(scene.world.entities.free_count == free_nodes && owner.first_child == first_child);
-                assert(previous.animated.weight_indices[previous.animated.parts[7].weight_offset] == 1);
-                assert(c3d::same_id(previous.desc.parts[7].geometry, channels.selected));
             }
-            model::sync_animated_lod(&assets, &scene, owner)!!;
-            assert(scene.get(owner, LodGroup).state == previous && previous.identity == identity);
+            model::attach_animated_lod(
+                assets: &assets,
+                scene: &scene,
+                owner: owner,
+                desc: desc,
+            )!!;
         }
     };
 }
@@ -374,34 +363,6 @@ fn void test_animated_lod_pending_crowd_reacquires_fixed_source_without_replacem
     };
 }
 
-fn void test_animated_lod_removed_mesh_or_joint_rejects_whole_source_entry() @test {
-    @pool() {
-        AssetStore assets = animated_lod_store();
-        defer asset::destroy_asset_store(&assets);
-        PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
-        Scene scene = scene::create_scene(mem, { .max_nodes = 64 });
-        defer scene::destroy_scene(&scene);
-        for (uint missing = 0; missing < 2; missing++) {
-            Node* owner = model::instantiate(&assets, &scene, fixture.mixed)!!;
-            AnimatedLodDesc desc = animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed);
-            model::attach_animated_lod(
-                assets: &assets,
-                scene: &scene,
-                owner: owner,
-                desc: desc,
-            )!!;
-            LodGroupState* state = scene.get(owner, LodGroup).state;
-            ulong identity = state.identity;
-            ModelInstance* instance = scene.get(owner, ModelInstance);
-            Node* removed = instance.present_node(missing == 0 ? 4u : 0u);
-            scene.remove(removed);
-            assert(@catch(model::sync_animated_lod(&assets, &scene, owner)) == c3d::INVALID_ID);
-            assert(scene.get(owner, LodGroup).state == state && state.identity == identity);
-            scene.remove(owner);
-        }
-    };
-}
-
 fn void test_animated_lod_named_channel_subset_uses_logical_weights_and_restores_defaults() @test {
     @pool() {
         AssetStore assets = animated_lod_store();
@@ -445,9 +406,6 @@ fn void test_animated_lod_named_channel_subset_uses_logical_weights_and_restores
             uint logical_first = state.animated.channel_offsets[2];
             assert(part.mesh_index == 2 && part.weight_count == 1 && indices.len == 1 && indices[0] == 1);
             assert(state.animated.channel_offsets[3] - logical_first == 3);
-            assert(state.animated.channel_names[logical_first] == "left");
-            assert(state.animated.channel_names[logical_first + 1] == "middle");
-            assert(state.animated.channel_names[logical_first + 2] == "right");
             for (uint index = 0; index < 3; index++) {
                 assert(bitcast(state.animated.defaults[logical_first + index], uint)
                   == bitcast(ANIMATED_LOD_CHANNEL_DEFAULTS[index], uint));
@@ -464,7 +422,6 @@ fn void test_animated_lod_named_channel_subset_uses_logical_weights_and_restores
                 }
                 anim::update(&assets, &scene, 0);
                 anim::crowd_update(&assets, &scene, 0);
-                model::sync_animated_lod(&assets, &scene, owner)!!;
                 assert(state.identity == identity && state.descriptor_revision == descriptor);
                 float[] weights;
                 if (crowd) {
@@ -481,78 +438,6 @@ fn void test_animated_lod_named_channel_subset_uses_logical_weights_and_restores
                     assert(bitcast(weights[index], uint) == bitcast(expected, uint));
                 }
             }
-        }
-    };
-}
-
-fn void test_animated_lod_public_replace_allocation_failure_preserves_owned_state_and_caller_data() @test {
-    @pool() {
-        AssetStore assets = animated_lod_store();
-        defer asset::destroy_asset_store(&assets);
-        PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
-        for (uint kind = 0; kind < 2; kind++) {
-            AnimatedLodAllocationProbe allocator;
-            Scene scene = scene::create_scene(&allocator, { .max_nodes = 64 });
-            defer {
-                scene::destroy_scene(&scene);
-                assert(!allocator.outstanding);
-            }
-            Node* owner = animated_lod_contract_owner(
-                assets: &assets,
-                scene: &scene,
-                fixture: &fixture,
-                crowd: kind == 1,
-            );
-            AnimatedLodDesc desc = animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed);
-            model::attach_animated_lod(
-                assets: &assets,
-                scene: &scene,
-                owner: owner,
-                desc: desc,
-            )!!;
-            LodGroupState* previous = scene.get(owner, LodGroup).state;
-            ulong identity = previous.identity;
-            uint descriptor = previous.descriptor_revision;
-            uint revision = previous.revision;
-            usz outstanding = allocator.outstanding;
-            uint free_nodes = scene.world.entities.free_count;
-            Node* first_child = owner.first_child;
-            LodLevel* levels = desc.levels.ptr;
-            AnimatedLodPart* parts = desc.parts.ptr;
-            uint* joints = desc.parts[9].skin.joint_nodes.ptr;
-            float* defaults = desc.parts[7].default_morph_weights.ptr;
-            AnimatedCrowd* crowd = scene.get(owner, AnimatedCrowd);
-            ulong playback = crowd ? crowd.playback.identity : 0;
-            uint generation = crowd ? crowd.playback.slots[0].generation : 0;
-            desc.levels[0].min_screen_size = 0.3f;
-            allocator.reject = true;
-            assert(@catch(model::replace_animated_lod(
-                assets: &assets,
-                scene: &scene,
-                owner: owner,
-                desc: desc,
-            )) == c3d::CAPACITY_EXCEEDED);
-            allocator.reject = false;
-            assert(allocator.rejected == 1 && allocator.outstanding == outstanding);
-            assert(scene.get(owner, LodGroup).state == previous && previous.identity == identity);
-            assert(previous.descriptor_revision == descriptor && previous.revision == revision);
-            assert(previous.desc.levels[0].min_screen_size == 0.2f);
-            assert(scene.world.entities.free_count == free_nodes && owner.first_child == first_child);
-            assert(desc.levels.ptr == levels && desc.parts.ptr == parts && desc.levels[0].min_screen_size == 0.3f);
-            assert(desc.parts[9].skin.joint_nodes.ptr == joints
-              && desc.parts[7].default_morph_weights.ptr == defaults);
-            assert(joints[0] == 0 && joints[1] == 1 && defaults[0] == 0.25f);
-            if (crowd) assert(crowd.playback.identity == playback && crowd.playback.slots[0].generation == generation);
-            model::replace_animated_lod(
-                assets: &assets,
-                scene: &scene,
-                owner: owner,
-                desc: desc,
-            )!!;
-            LodGroupState* next = scene.get(owner, LodGroup).state;
-            assert(next != previous && next.identity != identity && next.desc.levels[0].min_screen_size == 0.3f);
-            assert(allocator.outstanding == outstanding && scene.world.entities.free_count == free_nodes);
-            if (crowd) assert(crowd.playback.identity == playback && crowd.playback.slots[0].generation == generation);
         }
     };
 }
@@ -712,7 +597,12 @@ fn void test_animated_lod_removed_crowd_keeps_group_without_freed_source_aliases
         AnimatedCrowd* larger = scene.get(owner, AnimatedCrowd);
         assert(larger.is_prepared() && larger.count == 3 && larger.playback.slots.len == 4);
         scene.write_crowd_batches(larger);
-        assert(@catch(model::sync_animated_lod(&assets, &scene, owner)) == c3d::INVALID_ARGUMENT);
+        assert(!spatial::lod_group_is_live(
+            assets: &assets,
+            group: scene.get(owner, LodGroup),
+            scene: &scene,
+            node: owner,
+        ));
         assert(scene.get(owner, LodGroup).state == state);
         assert(mem::equals((char*)state, (char*)&before, LodGroupState::size));
         assert(mem::equals((char*)state.animated, (char*)&binding_before, AnimatedLodBinding::size));
@@ -736,7 +626,7 @@ fn void assert_animated_lod_crowd_publication(
     assert(state.animated.source_revision == batch.revision);
 }
 
-fn void test_animated_lod_animator_update_publishes_source_without_explicit_sync() @test {
+fn void test_animated_lod_animator_update_publishes_source() @test {
     @pool() {
         AssetStore assets = animated_lod_store();
         defer asset::destroy_asset_store(&assets);

@@ -436,7 +436,18 @@ fn void test_animated_lod_native_real_morph_topology_replacement_shrink_and_regr
         replacement.indices = indices;
         fixture.assets.replace_geometry(reduced, &replacement)!!;
     };
-    model::sync_animated_lod(&fixture.assets, &pair.scene, pair.crowd)!!;
+    pair.scene.remove_component(pair.crowd, LodGroup);
+    model::attach_animated_lod(
+        assets: &fixture.assets,
+        scene: &pair.scene,
+        owner: pair.crowd,
+        desc: lod_native_desc(
+            fixture: &fixture,
+            subject: &subject,
+            descriptor: &descriptor,
+            crowd: true,
+        ),
+    )!!;
     for (uint frame = 0; frame < 2; frame++) {
         capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
         (void)check_crowd_native_view_motion(outputs[..], 0, frame ? 0 : 1);
@@ -467,106 +478,6 @@ fn void test_animated_lod_native_real_morph_topology_replacement_shrink_and_regr
     capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
     (void)check_crowd_native_view_motion(outputs[..], 0, 0);
 
-    model::replace_animated_lod(
-        assets: &fixture.assets,
-        scene: &pair.scene,
-        owner: pair.crowd,
-        desc: lod_native_desc(
-            fixture: &fixture,
-            subject: &subject,
-            descriptor: &descriptor,
-            crowd: true,
-        ),
-    )!!;
-    for (uint frame = 0; frame < 2; frame++) {
-        capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
-        check_crowd_native_temporal_flags(&outputs[0].actual, frame ? 0 : 1);
-    }
-    check_crowd_native_validation(&fixture.renderer);
-}
-
-fn void test_animated_lod_native_admitted_channel_metadata_edit_rejects_current_pose() @test {
-    Fixture fixture;
-    create_fixture(mem, &fixture)!!;
-    defer destroy_fixture(&fixture);
-    ModelId model_id = load_crowd_native_cc0(
-        fixture: &fixture,
-        filename: CROWD_NATIVE_MORPH_CUBE,
-        expected_hash: CROWD_NATIVE_MORPH_CUBE_SHA,
-    )!!;
-    crowd_native_flat_source_materials(&fixture, model_id);
-    ModelTemplate* template = &fixture.assets.model(model_id).data;
-    LodNativeSubject subject = {
-        .model = model_id,
-        .clip = template.clips[0],
-        .level_count = 2,
-        .thresholds = { 0.2f, 0, 0 },
-    };
-    identity_lod_native_order(&subject);
-    @pool() {
-        Geometry named = fixture.assets.geometry(template.meshes[0].geometry).data;
-        named.channels = alloc::new_array(tmem, MorphChannel, 2);
-        String[2] names = { "square", "cube" };
-        foreach (uint index, &channel : named.channels) {
-            *channel = {
-                .name = names[index],
-                .first_target = index,
-                .full_weights = alloc::new_array(tmem, float, 1),
-            };
-            channel.full_weights[0] = 1;
-        }
-        template.meshes[0].geometry = subject.geometries[0][0] = fixture.assets.add_geometry(&named)!!;
-        subject.geometries[0][1] = fixture.assets.add_geometry(&named)!!;
-    };
-    GeometryId selected = subject.geometries[0][1];
-    CrowdNativePair pair;
-    create_crowd_native_morph_pair(&fixture, &pair, model_id)!!;
-    defer scene::destroy_scene(&pair.scene);
-    crowd_native_phase(&pair, 0.5f)!!;
-    crowd_native_update(&fixture, &pair, 0);
-    LodNativeDescriptor descriptor;
-    model::attach_animated_lod(
-        assets: &fixture.assets,
-        scene: &pair.scene,
-        owner: pair.crowd,
-        desc: lod_native_desc(
-            fixture: &fixture,
-            subject: &subject,
-            descriptor: &descriptor,
-            crowd: true,
-        ),
-    )!!;
-    set_lod_native_reference_level(
-        fixture: &fixture,
-        pair: &pair,
-        subject: &subject,
-        level: 1,
-    );
-    CrowdNativeOutput[2] outputs;
-    foreach (&output : outputs) {
-        create_crowd_native_output(&fixture, output)!!;
-        configure_crowd_native_temporal(&fixture, output, -16)!!;
-    }
-    defer foreach (&output : outputs) destroy_crowd_native_output(&fixture, output);
-    for (uint frame = 0; frame < 2; frame++) {
-        capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
-        (void)check_crowd_native_view_motion(outputs[..], 0, frame ? 0 : 1);
-    }
-
-    @pool() {
-        Geometry changed = fixture.assets.geometry(selected).data;
-        changed.channels = alloc::clone_slice(tmem, changed.channels);
-        foreach (&channel : changed.channels) {
-            channel.full_weights = alloc::clone_slice(tmem, channel.full_weights);
-            channel.full_weights[0] = 0.75f;
-        }
-        fixture.assets.replace_geometry(selected, &changed)!!;
-    };
-    model::sync_animated_lod(&fixture.assets, &pair.scene, pair.crowd)!!;
-    for (uint frame = 0; frame < 2; frame++) {
-        capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
-        (void)check_crowd_native_view_motion(outputs[..], 0, frame ? 0 : 1);
-    }
     check_crowd_native_validation(&fixture.renderer);
 }
 
