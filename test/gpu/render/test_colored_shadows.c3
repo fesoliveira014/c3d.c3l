@@ -12,7 +12,7 @@ import c3d::scene;
 import gpu;
 import std::math;
 
-fn void test_colored_shadows_toggle_allocates_once_and_costs_nothing_while_off() @test {
+fn void test_colored_shadows_toggle_allocates_once_and_records_no_passes_while_off() @test {
     const uint VIEW_SIZE = 64;
     const uint SHADOW_RESOLUTION = 256;
 
