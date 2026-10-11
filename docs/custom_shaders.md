@@ -101,7 +101,7 @@ void main() {
 
 A slot may hold an `R16_UINT` texture (see [sixteen-bit single-channel data](textures.md#sixteen-bit-single-channel-data)). The stage reads it with `gpu_fetch_uint(material.slots[i].texture_index, texel, 0)`, never `sample_custom_map`; slot 0 of a masked material cannot hold one, and the material faults `UNSUPPORTED` when uploaded.
 
-A masked custom material (`alpha_mode == MASK`) discards in its own fragment stage; the shadow atlas reads the same header and uses slot 0's alpha against `alpha_cutoff` as the caster coverage. A custom caster's `DrawRoot.material` is always its `CustomMaterialGpu`, so a custom depth vertex form can read the payload. A blended custom material casts only under [colored shadows](shadows.md#colored-shadows), which tint by slot 0's alpha and by nothing without one. `shadow_transmittance` is the `vec3` form of `shadow_visibility` that carries that tint; a stage that calls `shadow_visibility` shows the opaque shadow only.
+A masked custom material (`alpha_mode == MASK`) discards in its own fragment stage; the shadow atlas reads the same header and uses slot 0's alpha against `alpha_cutoff` as the caster coverage. A custom caster's `DrawRoot.material` is always its `CustomMaterialGpu`, so a custom depth vertex form can read the payload. A blended custom material casts no shadow, with [colored shadows](shadows.md#colored-shadows) on or off. `shadow_transmittance` is the `vec3` form of `shadow_visibility` that carries the tint of the built-in translucent casters; a stage that calls `shadow_visibility` shows the opaque shadow only.
 
 ### Standard shading
 
