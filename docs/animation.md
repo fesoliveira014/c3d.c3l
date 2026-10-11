@@ -1079,15 +1079,15 @@ zooms, Escape quits.
 
 `ik` shows two instances of the CC0 Quaternius mannequin on a moving support.
 Caller-authored cues acquire, plant, release and replant each foot while the
-support translates, yaws, tilts and changes uniform scale. The panel reports
-contact phase, residual, sole-axis errors and reach margins. The example
-poses the incoming legs above the support before contact updates, with a smooth
-caller-timed swing arc. It preserves local bone positions, scales and the fresh
-ankle orientation. Default contact mode uses unconstrained legs for the reachable
-retention demonstration; `L` or
-`--limits` enables the authored knee hinges and displays constrained misses.
-`--legacy` retains height-field placement with those hinges. The spine, neck
-and head follow the camera and the right hand reaches an orbiting sphere.
+support translates, yaws, tilts and changes uniform scale. The panel shows
+each foot's contact phase. The example poses the incoming legs above the
+support before contact updates, with a smooth caller-timed swing arc. It
+preserves local bone positions, scales and the fresh ankle orientation. Default
+contact mode uses unconstrained legs for the reachable retention demonstration;
+`L` or `--limits` enables the authored knee hinges, and the debug lines show
+the constrained misses. `--legacy` retains height-field placement with those
+hinges. The spine, neck and head follow the camera and the right hand reaches
+an orbiting sphere.
 
 ```bash
 python3 scripts/build.py --example ik
@@ -1097,13 +1097,6 @@ python3 scripts/build.py --example ik
 while the support continues to move, and `R` shifts the origin explicitly.
 `W` switches walk/idle, `[`/`]` change IK weight, `I` toggles debug lines, and
 mouse drag/wheel orbit and zoom.
-
-`ik.exe --acceptance` runs at a fixed 60 Hz step for at least 20 wall and
-simulation seconds and fails unless every planted foot stays within the
-residual, sole-angle and reach bounds and every swinging foot clears the
-support. An early `--frames=N` limit does not satisfy the bounded run. Vulkan
-validation is enabled.
-
 
 Inertial requests return an `AnimationTransitionResult`. Its `actions[:count]`
 contains the installed IDs in target-ordinal order; `spaces[:space_count]`

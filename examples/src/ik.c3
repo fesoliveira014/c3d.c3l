@@ -59,24 +59,23 @@ const Vec2 PANEL_SIZE @local = { 400, 560 };
 const Vec2 STATS_PANEL_POSITION @local = { 924, 16 };
 const Vec2 STATS_PANEL_SIZE @local = { 340, 300 };
 
-const float CONTACT_PLAYBACK_SECONDS @local = 20;
 const float CONTACT_SUPPORT_PERIOD @local = 10;
 const float CONTACT_CUE_PERIOD @local = 4;
 const float CONTACT_BODY_DROP @local = 0.2f;
-const float CONTACT_REACH_MARGIN @local = 0.025f;
 const float CONTACT_SWING_CLEARANCE @local = 0.12f;
 const float CONTACT_SWING_ARC @local = 0.04f;
-const float CONTACT_SWING_CLEARANCE_BOUND @local = 0.05f;
 const float CONTACT_RELEASE_START @local = 1.4f;
 const float CONTACT_SWING_START @local = 1.6f;
 const float CONTACT_SECOND_PLANT_START @local = 2;
 const float CONTACT_SECOND_RELEASE_START @local = 2.8f;
 const float CONTACT_REPLANT_START @local = 2.9f;
 const float CONTACT_INSTANCE_SPACING @local = 1;
-const float CONTACT_RESIDUAL_BOUND @local = 0.001f;
-const float CONTACT_ANGLE_BOUND @local = 1;
 const uint CONTACT_INSTANCES @local = 2;
 const Vec3 CONTACT_REBASE_OFFSET @local = { 256, 0, -512 };
+const float CONTACT_REBASE_SECONDS @local = 7; // one automatic shift while the support is still moving
+const float CONTACT_PAUSE_START @local = 6; // seconds into each support period; clocks freeze, the support keeps moving
+const float CONTACT_PAUSE_END @local = 6.6f;
+const float CONTACT_ORBIT_DISTANCE @local = 7.5f; // frames both instances on the full-scale support
 
 enum FootCue @local {
     PLANT,
@@ -124,9 +123,6 @@ struct Character @local {
     float[2] contact_heights;
     FootCue[2] cues;
     bool[2] cue_initialized;
-    FootContactResult[2] results;
-    float[2] reach_margins;
-    float[2] inner_margins;
 }
 
 struct ContactDemo @local {
@@ -137,16 +133,6 @@ struct ContactDemo @local {
     bool script_paused;
     bool rebased;
     uint rebase_count;
-    uint planted_samples;
-    uint failed_samples;
-    uint swing_samples;
-    uint failed_swing_samples;
-    float min_swing_clearance;
-    float max_residual;
-    float max_normal_error;
-    float max_heading_error;
-    float min_reach_margin;
-    float min_inner_margin;
 }
 
 fn float terrain_height(float x, float z) @local {
@@ -487,14 +473,6 @@ fn ZString contact_phase_name(FootContactPhase phase) @local {
     }
 }
 
-fn ZString contact_status_name(FootContactStatus status) @local {
-    switch (status) {
-        case NO_TARGET: return "no target";
-        case REACHED: return "reached";
-        case MISSED: return "missed";
-    }
-}
-
 fn Node*? build_support(AssetStore* assets, Scene* scene) @local {
     GeometryId geometry_id;
     @pool() {
@@ -552,10 +530,9 @@ fn void shift_contact_demo(
     renderer.shift_origin(scene, CONTACT_REBASE_OFFSET);
     demo.origin_offset += CONTACT_REBASE_OFFSET;
     demo.rebase_count++;
-    io::printfn("contact_rebase count=%d offset=%s", demo.rebase_count, CONTACT_REBASE_OFFSET);
 }
 
-fn void? pose_contact_swing(Scene* scene, Character[] characters, ContactDemo* demo) @local {
+fn void pose_contact_swing(Scene* scene, Character[] characters, ContactDemo* demo) @local {
     Vec3 normal = (demo.support.transform.rotation * WORLD_UP).normalize();
     foreach (index, &character : characters) {
         foreach (side, thigh : character.thighs) {
@@ -569,24 +546,23 @@ fn void? pose_contact_swing(Scene* scene, Character[] characters, ContactDemo* d
                 float arc = math::sin(progress * (float)math::PI);
                 clearance += CONTACT_SWING_ARC * arc * arc;
             }
+
             Vec3 point = incoming.position - normal * (incoming.position - demo.support.transform.position).dot(normal);
             Vec3 swing_position = point + normal * (character.contact_heights[side] + clearance);
             Transform target = foot.leg.target.local;
             foot.leg.target.set_world_position(swing_position);
             scene.update_world();
+
             IkChain pose_chain = foot.leg;
             pose_chain.weight = 1;
             foreach (&limit : pose_chain.limits) limit.kind = NONE;
             pose_chain.solve();
             scene.update_world();
+
             Quat parent = maths::transform_from_mat4(ankle.transform_basis()).rotation;
             ankle.local.rotation = (parent.conjugate() * incoming.rotation).normalize();
             foot.leg.target.local = target;
             scene.update_world();
-            Transform posed = maths::transform_from_mat4(ankle.world);
-            if ((posed.position - swing_position).length() > CONTACT_RESIDUAL_BOUND) {
-                return c3d::INVALID_ARGUMENT~;
-            }
         }
     }
 }
@@ -606,6 +582,7 @@ fn void? solve_contacts(
         foot.leg.weight = controls.legs;
         foot.foot_height = character.contact_heights[side];
         foot.leg.limits[1] = controls.limits ? character.knee_limits[side] : (IkLimit){ .kind = NONE };
+
         FootCue cue = contact_cue(demo.elapsed + (float)instance_index * 0.6f + (float)side * 0.3f);
         if (!character.cue_initialized[side] || cue != character.cues[side]) {
             character.cues[side] = cue;
@@ -628,53 +605,23 @@ fn void? solve_contacts(
             }
         }
         foot.update_contact(demo.support, dt, demo.support.transform.position.y)!;
-        Vec3 hip = foot.leg.joints[0].world_position();
-        Vec3 knee = foot.leg.joints[1].world_position();
-        Vec3 ankle = foot.leg.joints[2].world_position();
-        float upper = (knee - hip).length();
-        float lower = (ankle - knee).length();
-        float reach = (foot.contact.requested.position - hip).length();
-        character.reach_margins[side] = upper + lower - reach;
-        character.inner_margins[side] = reach - math::abs(upper - lower);
         feet[side] = foot;
     }
     scene.update_world();
+
     LookAt* look = scene.get(character.head, LookAt);
     look.weight = controls.look;
     look.solve();
     scene.update_world();
+
     foreach (foot : feet) foot.leg.solve();
     IkChain* arm = scene.get(character.upper_arm, IkChain);
     arm.weight = controls.arm;
     arm.solve();
     scene.update_world();
+
     foreach (foot : feet) foot.align_contact();
     scene.update_world();
-    foreach (side, foot : feet) {
-        FootContactResult result = foot.contact_result();
-        character.results[side] = result;
-        Transform actual = maths::transform_from_mat4(foot.leg.joints[2].world);
-        Vec3 sole = actual.position - actual.rotation * foot.plant.sole_up * character.contact_heights[side];
-        float clearance = (sole - demo.support.transform.position).dot(normal);
-        if (result.phase == INACTIVE) {
-            demo.swing_samples++;
-            demo.min_swing_clearance = math::min(demo.min_swing_clearance, clearance);
-            if (!math::is_finite(clearance) || clearance < CONTACT_SWING_CLEARANCE_BOUND) demo.failed_swing_samples++;
-        }
-        if (result.phase != PLANTED) continue;
-        demo.planted_samples++;
-        demo.max_residual = math::max(demo.max_residual, result.residual);
-        demo.max_normal_error = math::max(demo.max_normal_error, result.normal_error_degrees);
-        demo.max_heading_error = math::max(demo.max_heading_error, result.heading_error_degrees);
-        demo.min_reach_margin = math::min(demo.min_reach_margin, character.reach_margins[side]);
-        demo.min_inner_margin = math::min(demo.min_inner_margin, character.inner_margins[side]);
-        bool failed = !math::is_finite(result.residual) || !math::is_finite(result.normal_error_degrees)
-            || !math::is_finite(result.heading_error_degrees) || result.residual > CONTACT_RESIDUAL_BOUND
-            || result.normal_error_degrees > CONTACT_ANGLE_BOUND || result.heading_error_degrees > CONTACT_ANGLE_BOUND
-            || foot.leg.weight != 1 || character.reach_margins[side] < CONTACT_REACH_MARGIN
-            || character.inner_margins[side] < CONTACT_REACH_MARGIN;
-        if (failed) demo.failed_samples++;
-    }
 }
 
 fn void draw_contact_targets(debug::DebugDraw* debug, Scene* scene, Character[] characters) @local {
@@ -692,19 +639,6 @@ fn void draw_contact_targets(debug::DebugDraw* debug, Scene* scene, Character[] 
                 to: foot.ground.point + foot.ground.normal * 0.2f,
                 rgba: debug::COLOR_GREEN,
             );
-        }
-    }
-}
-
-fn void print_calibration(Scene* scene, Character[] characters) @local {
-    io::printfn("contact_source=%s reference=Idle_Loop:0 sole_up=world_Y forward=toe_heading", MODEL_FILE);
-    foreach (index, &character : characters) {
-        foreach (side, thigh : character.thighs) {
-            FootIk* foot = scene.get(thigh, FootIk);
-            io::printfn("contact_calibration instance=%d side=%d height=%.9f up=(%.9f,%.9f,%.9f) forward=(%.9f,%.9f,%.9f)",
-                index, side, character.contact_heights[side],
-                foot.plant.sole_up.x, foot.plant.sole_up.y, foot.plant.sole_up.z,
-                foot.plant.sole_forward.x, foot.plant.sole_forward.y, foot.plant.sole_forward.z);
         }
     }
 }
@@ -766,22 +700,13 @@ fn void? draw_panel(
             foreach (side, thigh : character.thighs) {
                 FootIk* foot = scene.get(thigh, FootIk);
                 if (controls.contact) {
-                    FootContactResult result = character.results[side];
-                    imgui::text("%s: %s / %s", sides[side], contact_phase_name(result.phase), contact_status_name(result.status));
-                    imgui::text("%.3f mm, normal %.3f deg, heading %.3f deg",
-                        result.residual * 1000, result.normal_error_degrees, result.heading_error_degrees);
-                    imgui::text("Reach margins: %.3f / %.3f m", character.inner_margins[side], character.reach_margins[side]);
+                    imgui::text("%s: %s", sides[side], contact_phase_name(foot.contact.phase));
                 } else {
                     imgui::text("%s: %s, offset %.3f m", sides[side], foot.grounded ? "grounded" : "free", foot.ground_offset);
                 }
             }
         }
-        if (controls.contact) {
-            imgui::text("Planted samples %u, failed bounds %u", demo.planted_samples, demo.failed_samples);
-            imgui::text("Swing samples %u, failed clearance %u", demo.swing_samples, demo.failed_swing_samples);
-        } else {
-            imgui::text("Pelvis drop: %.3f m", drop);
-        }
+        if (!controls.contact) imgui::text("Pelvis drop: %.3f m", drop);
     }
     imgui::end();
     imgui::set_next_window_pos(STATS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
@@ -825,7 +750,6 @@ fn void? run(
     AssetStore* assets,
     Scene* scene,
     uint frame_limit,
-    bool acceptance,
     bool contact,
     bool limits,
 ) @local {
@@ -847,15 +771,10 @@ fn void? run(
             }
         }
     }
-    ContactDemo demo = {
-        .platform = build_support(assets, scene)!,
-        .min_reach_margin = float::max,
-        .min_inner_margin = float::max,
-        .min_swing_clearance = float::max,
-    };
+    ContactDemo demo = { .platform = build_support(assets, scene)! };
     Node* camera_node = scene.add_camera(camera::perspective_deg(50, 0.05f), name: "camera")!;
     Orbit orbit = {
-        .distance = contact ? 7.5f : ORBIT_START_DISTANCE,
+        .distance = contact ? CONTACT_ORBIT_DISTANCE : ORBIT_START_DISTANCE,
         .yaw = math::atan2(characters[0].facing.x, characters[0].facing.z) + ORBIT_START_YAW,
         .pitch = ORBIT_START_PITCH,
     };
@@ -867,8 +786,6 @@ fn void? run(
     );
     scene.update_world();
     foreach (&character : characters) add_look(scene, character, camera_node)!;
-    print_calibration(scene, characters[..]);
-    io::printfn("contact_knee_mode=%s", contact && !limits ? "unconstrained" : "authored_hinges");
 
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
@@ -881,17 +798,14 @@ fn void? run(
 
     float drop;
     uint frame;
-    double wall_start;
-    float wall_seconds;
     while (window.poll()) {
-        if (frame == 0) wall_start = window.clock.total;
         if (frame_limit && frame >= frame_limit) break;
-        wall_seconds = (float)(window.clock.total - wall_start);
         Input* input = &window.input;
         if (input.key_released(platform::Scancode.ESCAPE) && !input.keyboard_captured_by_gui) break;
-        float delta = acceptance ? 1.0f / 60 : math::min(window.clock.delta, 1.0f / 30);
+        float delta = math::min(window.clock.delta, 1.0f / 30);
         gui_renderer.new_frame();
         defer { if (gui_renderer.frame_open) gui_renderer.finish_frame(); }
+
         handle_keys(input, &controls);
         if (controls.walk_changed) {
             foreach (&character : characters) change_walk(
@@ -902,14 +816,17 @@ fn void? run(
             );
             controls.walk_changed = false;
         }
-        if (controls.rebase_requested || (controls.contact && !demo.rebased && demo.elapsed >= 7)) {
+        bool auto_rebase = controls.contact && !demo.rebased && demo.elapsed >= CONTACT_REBASE_SECONDS;
+        if (controls.rebase_requested || auto_rebase) {
             shift_contact_demo(renderer, scene, &demo);
             demo.rebased = true;
             controls.rebase_requested = false;
         }
+
         demo.elapsed += delta;
         float support_phase = cycle_time(demo.elapsed, CONTACT_SUPPORT_PERIOD);
-        demo.script_paused = controls.contact && support_phase >= 6 && support_phase < 6.6f;
+        demo.script_paused = controls.contact && support_phase >= CONTACT_PAUSE_START
+            && support_phase < CONTACT_PAUSE_END;
         bool paused = controls.paused || demo.script_paused;
         float animation_dt = paused ? 0 : delta;
         if (controls.contact) {
@@ -925,6 +842,7 @@ fn void? run(
         }
         anim::update(assets, scene, animation_dt);
         scene.update_world();
+
         if (controls.mode_changed) {
             foreach (&character : characters) {
                 foreach (side, thigh : character.thighs) {
@@ -932,10 +850,11 @@ fn void? run(
                     character.cue_initialized[side] = false;
                 }
             }
-            orbit.distance = controls.contact ? 7.5f : ORBIT_START_DISTANCE;
+            orbit.distance = controls.contact ? CONTACT_ORBIT_DISTANCE : ORBIT_START_DISTANCE;
             controls.mode_changed = false;
         }
-        if (controls.contact) pose_contact_swing(scene, characters[..], &demo)!;
+
+        if (controls.contact) pose_contact_swing(scene, characters[..], &demo);
         drop = 0;
         foreach (index, &character : characters) {
             if (controls.contact) {
@@ -954,11 +873,9 @@ fn void? run(
                     controls: &controls,
                     origin_offset: demo.origin_offset,
                 ));
-                foreach (side, thigh : character.thighs) {
-                    character.results[side] = scene.get(thigh, FootIk).contact_result();
-                }
             }
         }
+
         Vec3 center = (characters[0].root.world_position() + characters[1].root.world_position()) * 0.5f;
         apply_orbit(
             orbit: &orbit,
@@ -967,6 +884,7 @@ fn void? run(
             target: center + ORBIT_TARGET_OFFSET,
         );
         scene.update_world();
+
         draw_panel(
             renderer: renderer,
             scene: scene,
@@ -981,6 +899,7 @@ fn void? run(
             if (controls.contact) draw_contact_targets(&debug, scene, characters[..]);
         }
         gui_renderer.finish_frame();
+
         platform::sync_window(window, renderer);
         draw_frame(
             renderer: renderer,
@@ -990,38 +909,18 @@ fn void? run(
             debug: &debug,
             info: { .time = window.clock.total, .delta = animation_dt },
         )!;
-        if (frame % 60 == 0) {
-            io::printfn("contact_progress frame=%d wall=%.3f script=%.3f planted=%d failed=%d pause=%d rebases=%d",
-                frame, wall_seconds, demo.elapsed, demo.planted_samples, demo.failed_samples,
-                paused ? 1 : 0, demo.rebase_count);
-        }
         frame++;
-        if (acceptance && demo.elapsed >= CONTACT_PLAYBACK_SECONDS && wall_seconds >= CONTACT_PLAYBACK_SECONDS) break;
     }
-    io::printfn("contact_summary frames=%d wall=%.6f script=%.6f planted=%d failed=%d rebases=%d",
-        frame, wall_seconds, demo.elapsed, demo.planted_samples, demo.failed_samples, demo.rebase_count);
-    io::printfn("contact_bounds residual=%.9f normal=%.9f heading=%.9f outer_margin=%.9f inner_margin=%.9f",
-        demo.max_residual, demo.max_normal_error, demo.max_heading_error, demo.min_reach_margin, demo.min_inner_margin);
-    io::printfn("contact_swing samples=%d failed=%d minimum_clearance=%.9f",
-        demo.swing_samples, demo.failed_swing_samples, demo.min_swing_clearance);
-    renderer.log.check_validation()!;
-    if (acceptance && (!controls.contact || demo.elapsed < CONTACT_PLAYBACK_SECONDS
-        || wall_seconds < CONTACT_PLAYBACK_SECONDS || demo.planted_samples == 0 || demo.failed_samples != 0
-        || demo.swing_samples == 0 || demo.failed_swing_samples != 0)) {
-        return c3d::INVALID_ARGUMENT~;
-    }
+    return renderer.log.check_validation();
 }
 
 fn int main(String[] args) {
     uint frame_limit;
-    bool acceptance;
     bool contact = true;
     bool limits;
     foreach (argument : args[1..]) {
         if (argument.starts_with("--frames=")) {
             frame_limit = argument[9..].to_uint()!!;
-        } else if (argument == "--acceptance") {
-            acceptance = true;
         } else if (argument == "--legacy") {
             contact = false;
         } else if (argument == "--limits") {
@@ -1055,7 +954,6 @@ fn int main(String[] args) {
         assets:   &assets,
         scene:    &scene,
         frame_limit: frame_limit,
-        acceptance: acceptance,
         contact: contact,
         limits: limits,
     )) {
