@@ -528,10 +528,11 @@ fn void test_trace_segment_world_connections_match_converged_tables_and_height_l
         foreach (index, entry : cases[:count]) {
             SkyFogGpu sky = trace_segment_sky(atmosphere, entry, &textures);
             FrameRoot frame = { .ambient = { 1, 1, 1, 0 }, .camera_position = { 0, 20, 30, entry.exposure } };
+            frame.sky_fog = upload_trace_segment(renderer, ((char*)&sky)[:SkyFogGpu::size])!!;
             float radiance_scale = entry.radiance_scale > 0 ? entry.radiance_scale : 1;
             inputs[index] = {
                 .frame = upload_trace_segment(renderer, ((char*)&frame)[:FrameRoot::size])!!,
-                .sky = upload_trace_segment(renderer, ((char*)&sky)[:SkyFogGpu::size])!!,
+                .sky = frame.sky_fog,
                 .origin_length = { entry.origin.x, entry.origin.y, entry.origin.z, entry.distance },
                 .direction = { entry.direction.x, entry.direction.y, entry.direction.z, entry.quotient ? 2 : 0 },
                 .radiance = { 0.8f * radiance_scale, 0.6f * radiance_scale, 0.4f * radiance_scale, entry.exposure },
@@ -688,3 +689,4 @@ fn void test_trace_segment_world_connections_match_converged_tables_and_height_l
     assert(mismatches == 0, "The approved 64-step world-segment bounds failed.");
     check_validation(renderer);
 }
+

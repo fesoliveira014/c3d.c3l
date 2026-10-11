@@ -2,9 +2,8 @@
 #include "generated/shader_abi.glsl"
 #include "c3d_abi.glsl"
 #include "atmosphere.glsl"
-#include "fog.glsl"
+#include "trace_medium.glsl"
 
-const uint TRACE_SEGMENT_STEPS = 64u; // Approved finite world-connection midpoint count.
 const uint TRACE_SEGMENT_ROWS = 8u; // Mirrored as TRACE_SEGMENT_ROWS in test_trace_segment.c3.
 
 layout(local_size_x = 1) in;
@@ -58,24 +57,16 @@ void main() {
         height = height_fog_to_infinity(frame, sky, origin, direction);
     } else {
         height = height_fog_segment(frame, sky, origin, direction, 0.0, distance);
-        if ((sky.flags & SKY_FOG_ATMOSPHERE) != 0u && distance > 0.0) {
-            SkyScattering scattering = integrate_sky_scattering(
-                sky,
-                max(origin.y, 0.0),
-                direction,
-                sky.sun_direction_cos_radius.xyz,
-                distance,
-                TRACE_SEGMENT_STEPS,
-                false,
-                false
-            );
-            atmosphere.transmittance = scattering.transmittance;
-            atmosphere.inscatter = scattering.luminance * sky.sun_illuminance.rgb;
-        }
+        atmosphere = trace_atmosphere_segment(frame, sky, origin, direction, distance);
     }
 
     FogTerms combined = fog_compose(height, atmosphere);
     vec3 observed = combined.transmittance * input_value.radiance.rgb + combined.inscatter;
+    if (input_value.direction.w != 2.0) {
+        observed = distance < 0.0
+            ? trace_background_radiance(frame, origin, direction, input_value.radiance.rgb)
+            : trace_segment_radiance(frame, origin, direction, distance, input_value.radiance.rgb);
+    }
     vec3 additive = combined.transmittance * input_value.emission.rgb;
     SegmentOutputs output_value = SegmentOutputs(root.outputs);
     uint base = index * TRACE_SEGMENT_ROWS;

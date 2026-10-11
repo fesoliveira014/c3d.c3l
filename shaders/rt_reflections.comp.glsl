@@ -12,6 +12,7 @@
 #include "sampling.glsl"
 #include "texture_fetch.glsl"
 #include "hit_shading.glsl"
+#include "trace_medium.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -68,9 +69,15 @@ void main() {
     vec3 radiance;
     if (trace_scene(scene, position + normal * TRACE_SURFACE_OFFSET, direction, RT_REFLECTION_FAR, TRACE_MASK_ALL, hit)) {
         TraceSurface surface = surface_from_hit(scene, hit, direction, cone_width + hit.t * cone_spread);
-        radiance = shade_hit(frame, surface, -direction);
+        vec3 connection = surface.position - position;
+        float distance = length(connection);
+        vec3 segment_direction = distance > 0.0 ? connection / distance : direction;
+        radiance = trace_segment_radiance(
+            frame, position, segment_direction, distance, shade_hit(frame, surface, -direction)
+        );
     } else {
-        radiance = trace_miss_radiance(frame, direction);
+        radiance = trace_background_radiance(frame, position, direction, trace_miss_radiance(frame, direction));
     }
+
     store_storage_texture(root.output_texture, texel, vec4(radiance, 1.0));
 }

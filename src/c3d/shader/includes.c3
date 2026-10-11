@@ -53,6 +53,7 @@ const char[*] C3D_COMMON_STANDARD_SHADING_TEXT @private = $embed("../../../shade
 const char[*] C3D_COMMON_STANDARD_SURFACE_TEXT @private = $embed("../../../shaders/common/standard_surface.glsl");
 const char[*] C3D_COMMON_TEXTURE_FETCH_TEXT @private = $embed("../../../shaders/common/texture_fetch.glsl");
 const char[*] C3D_COMMON_TOON_TEXT @private = $embed("../../../shaders/common/toon.glsl");
+const char[*] C3D_COMMON_TRACE_MEDIUM_TEXT @private = $embed("../../../shaders/common/trace_medium.glsl");
 const char[*] C3D_COMMON_TRACE_SURFACE_TEXT @private = $embed("../../../shaders/common/trace_surface.glsl");
 const char[*] C3D_COMMON_TRANSMISSION_TEXT @private = $embed("../../../shaders/common/transmission.glsl");
 const char[*] C3D_COMMON_TRANSPARENCY_TEXT @private = $embed("../../../shaders/common/transparency.glsl");
@@ -68,7 +69,7 @@ const char[*] GPU_RAY_TRACING_TEXT @private = $embed("../../../shaders/gpu/ray_t
 <*
  Every include a custom stage may resolve, in table order.
 *>
-const asset::ShaderInclude[61] SHADER_INCLUDES = {
+const asset::ShaderInclude[62] SHADER_INCLUDES = {
     { .name = "c3d_abi.glsl", .text = (String)C3D_GENERATED_C3D_ABI_TEXT[..] },
     { .name = "ambient_occlusion.glsl", .text = (String)C3D_COMMON_AMBIENT_OCCLUSION_TEXT[..] },
     { .name = "ao_estimate.glsl", .text = (String)C3D_COMMON_AO_ESTIMATE_TEXT[..] },
@@ -119,6 +120,7 @@ const asset::ShaderInclude[61] SHADER_INCLUDES = {
     { .name = "standard_surface.glsl", .text = (String)C3D_COMMON_STANDARD_SURFACE_TEXT[..] },
     { .name = "texture_fetch.glsl", .text = (String)C3D_COMMON_TEXTURE_FETCH_TEXT[..] },
     { .name = "toon.glsl", .text = (String)C3D_COMMON_TOON_TEXT[..] },
+    { .name = "trace_medium.glsl", .text = (String)C3D_COMMON_TRACE_MEDIUM_TEXT[..] },
     { .name = "trace_surface.glsl", .text = (String)C3D_COMMON_TRACE_SURFACE_TEXT[..] },
     { .name = "transmission.glsl", .text = (String)C3D_COMMON_TRANSMISSION_TEXT[..] },
     { .name = "transparency.glsl", .text = (String)C3D_COMMON_TRANSPARENCY_TEXT[..] },

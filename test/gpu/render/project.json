@@ -593,7 +593,9 @@
         "test_manual_exposure.c3",
         "test_auto_exposure.c3",
         "test_posed_trace.c3",
-        "test_reflection_receiver.c3"
+        "test_reflection_receiver.c3",
+        "../../fixtures/animated_crowd_fixtures.c3",
+        "../../fixtures/animated_lod_fixtures.c3"
       ]
     }
   }

@@ -475,6 +475,8 @@ fn gpu::GpuAddress? pack_probe_set(
 }
 
 fn void snapshot_probe_states(Renderer* renderer) @private {
+    renderer.probe_update.frame_sky_view_state = renderer.probe_update.sky_view.state;
+
     foreach (&mirror : renderer.probe_volumes) {
         mirror.frame_irradiance_state = mirror.irradiance.state;
         mirror.frame_visibility_state = mirror.visibility.state;
@@ -484,6 +486,8 @@ fn void snapshot_probe_states(Renderer* renderer) @private {
 }
 
 fn void restore_probe_states(Renderer* renderer) @private {
+    renderer.probe_update.sky_view.state = renderer.probe_update.frame_sky_view_state;
+
     foreach (&mirror : renderer.probe_volumes) {
         mirror.irradiance.state = mirror.frame_irradiance_state;
         mirror.visibility.state = mirror.frame_visibility_state;

@@ -32,6 +32,8 @@ struct ProbeUpdateState @private {
     usz                 ray_capacity;
     gpu::PipelineHandle trace;
     gpu::PipelineHandle blend;
+    Target              sky_view;
+    gpu::TextureState   frame_sky_view_state;
 }
 
 <*
@@ -156,6 +158,74 @@ fn void? acquire_probe_rays(Renderer* renderer, usz rays) @private {
     state.ray_capacity = rays;
 }
 
+fn gpu::GpuAddress? pack_probe_sky_fog(
+    Renderer* renderer,
+    ProbeFillRecording* recording,
+    ProbeVolumeRes* mirror,
+) @private {
+    AtmosphereRes* atmosphere = recording.environments.atmosphere;
+    FogSelection fog = select_height_fog(recording.scene, recording.scene.node(mirror.entity).layers);
+    renderer.stats.fogs_ignored += fog.ignored;
+    if (!atmosphere && !fog.fog) return (gpu::GpuAddress)0;
+
+    ProbeUpdateState* state = &renderer.probe_update;
+    SkyFogTables tables = { .sampler = renderer.linear_clamp_sampler };
+    AtmosphereSelection* selected = &recording.environments.atmosphere_selection;
+    Vec3 to_sun;
+    Vec3 illuminance;
+    if (atmosphere) {
+        if (!state.sky_view.texture.is_valid()) {
+            state.sky_view = allocate_storage_target(
+                device: &renderer.device,
+                width: shader::SKY_VIEW_WIDTH,
+                height: shader::SKY_VIEW_HEIGHT,
+                format: HDR_FORMAT,
+                debug_name: "probe_sky_view",
+            )!;
+        }
+
+        tables.transmittance = atmosphere.transmittance_view.index;
+        tables.multi_scattering = atmosphere.multi_scattering_view.index;
+        tables.sky_view = state.sky_view.view.index;
+        to_sun = sun_direction(selected.node);
+        illuminance = selected.sun.color * selected.sun.intensity;
+    }
+
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, SkyFogGpu::size, STREAM_ALIGNMENT)!;
+    write_sky_fog(
+        root: (SkyFogGpu*)span.bytes.ptr,
+        atmosphere: atmosphere ? selected.atmosphere : null,
+        to_sun: to_sun,
+        sun_illuminance: illuminance,
+        altitude: recording.scene.node(mirror.entity).world_position().y,
+        fog: &fog,
+        tables: tables,
+    );
+    if (fog.fog) ((SkyFogGpu*)span.bytes.ptr).fog_base_height -= renderer.frame_origin.y;
+
+    return span.address;
+}
+
+fn void? record_probe_sky_view(Renderer* renderer, gpu::GpuAddress sky_fog) @private {
+    acquire_sky_pipeline(renderer, &renderer.sky_pipelines.sky_view, SKY_VIEW)!;
+    Target* target = &renderer.probe_update.sky_view;
+    target.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;
+
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, SkyTableRoot::size, STREAM_ALIGNMENT)!;
+    *(SkyTableRoot*)span.bytes.ptr = {
+        .sky_fog = sky_fog,
+        .output_texture = target.view.index,
+        .width = target.width,
+        .height = target.height,
+    };
+    gpu::cmd_bind_pipeline(&renderer.commands, renderer.sky_pipelines.sky_view)!;
+    dispatch_over(renderer, span.address, target)!;
+    target.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
+    renderer.stats.post_dispatches++;
+}
+
 <*
  @require recording.update_count > 0
 *>
@@ -220,14 +290,26 @@ fn void? record_probe_updates(Renderer* renderer, ProbeFillRecording* recording,
     foreach (&update : recording.updates[:recording.update_count]) {
         usz set_index;
         while (order[set_index] != update.slot) set_index++;
+
+        ProbeVolumeRes* mirror = &renderer.probe_volumes[update.slot];
+        gpu::GpuAddress sky_fog = pack_probe_sky_fog(renderer, recording, mirror)!;
+        gpu::GpuAddress probe_frame = frame_span.address;
+        if (sky_fog != (gpu::GpuAddress)0) {
+            gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, FrameRoot::size, STREAM_ALIGNMENT)!;
+            *(FrameRoot*)span.bytes.ptr = *(FrameRoot*)frame_span.bytes.ptr;
+            ((FrameRoot*)span.bytes.ptr).sky_fog = sky_fog;
+            probe_frame = span.address;
+        }
+
         record_probe_update(
             renderer:  renderer,
             mirror:    &renderer.probe_volumes[update.slot],
             volume:    scene.world.get(renderer.probe_volumes[update.slot].entity, ProbeVolume),
             plan:      &update.plan,
-            frame:     frame_span.address,
+            frame:     probe_frame,
             set_index: (uint)set_index,
             rotation:  rotation,
+            sky_view:  recording.environments.atmosphere ? sky_fog : (gpu::GpuAddress)0,
         )!;
     }
 }
@@ -240,6 +322,7 @@ fn void? record_probe_update(
     gpu::GpuAddress frame,
     uint set_index,
     Quat rotation,
+    gpu::GpuAddress sky_view,
 ) @private {
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     uint rays_per_probe = volume.update.rays_per_probe;
@@ -252,6 +335,8 @@ fn void? record_probe_update(
         // The ray buffer was read by the previous update's blend, and a clear wrote this volume's atlases.
         gpu::Barrier previous_work = { .before = { .compute }, .after = { .compute } };
         gpu::cmd_barrier(&renderer.commands, &previous_work)!;
+        if (sky_view != (gpu::GpuAddress)0) record_probe_sky_view(renderer, sky_view)!;
+
         gpu::MappedGpuSpan trace_root = slot.upload.take(&renderer.device, ProbeTraceRoot::size, STREAM_ALIGNMENT)!;
         *(ProbeTraceRoot*)trace_root.bytes.ptr = {
             .frame          = frame,
@@ -329,5 +414,7 @@ fn void free_probe_update(Renderer* renderer) @private {
     if (state.rays.is_valid()) (void)gpu::free_allocation(&renderer.device, &state.rays);
     if (state.trace.is_valid()) (void)gpu::destroy_pipeline(&renderer.device, state.trace);
     if (state.blend.is_valid()) (void)gpu::destroy_pipeline(&renderer.device, state.blend);
+    if (state.sky_view.texture.is_valid()) release_storage_target(&renderer.device, &state.sky_view);
+
     *state = {};
 }
