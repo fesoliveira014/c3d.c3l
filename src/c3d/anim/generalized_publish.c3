@@ -1,19 +1,12 @@
 module c3d::anim;
 
-import c3d::maths;
-import std::math;
-
 fn RootMotionDelta publish_generalized_owner_motion(
     PlaybackView* playback,
-    PoseDestination destination,
+    CapturedMotionChain* chain,
     GeneralizedMotion motion,
     double dt,
-    PoseScratch scratch,
-    CapturedMotionChain* chain = null,
 ) @private {
-    GeneralizedPlaybackState* state = playback.generalized;
-    double[<3>] up = { state.extraction.up.x, state.extraction.up.y, state.extraction.up.z };
-    up /= up.length();
+    double[<3>] up = generalized_chain_up(chain);
 
     if (playback.inertial && dt > 0) {
         InertialRow* row = playback.inertial;
@@ -42,26 +35,6 @@ fn RootMotionDelta publish_generalized_owner_motion(
         row.root.translation_rate = row.root.published_translation / dt;
         row.root.twist_rate = motion.twist / dt;
         if (!row.control.active) row.root.target_rate_pending = false;
-    }
-
-    finish_generalized_playback(
-        state: state,
-        playback: playback,
-        destination: destination,
-        final_motion: motion,
-        published: &published,
-        dt: dt,
-        velocity: scratch.derivative ? scratch.derivative.velocity : (PoseVelocity[]) {},
-        chain: chain,
-    );
-
-    if (playback.inertial) {
-        correct_inertial_pose(
-            playback: playback,
-            destination: destination,
-            scratch: scratch,
-            dt: 0,
-        );
     }
 
     return published;

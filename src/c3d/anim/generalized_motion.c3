@@ -22,6 +22,12 @@ struct GeneralizedMotion @private {
     double twist;
 }
 
+struct GeneralizedFrameRate @private {
+    double[<3>] position;
+    double[<3>] angular;
+    double scale;
+}
+
 struct GeneralizedMotionReference @private {
     GeneralizedMotionFrame frame;
     double[<3>] up;
@@ -152,20 +158,6 @@ fn GeneralizedMotion generalized_motion_delta(
     return compose_generalized_motion(inverse_generalized_motion(first, reference.up), last, reference.up);
 }
 
-fn GeneralizedMotionFrame generalized_reference_anchor(
-    GeneralizedMotionFrame consumed,
-    GeneralizedMotionFrame target_reference,
-) @private {
-    return compose_generalized_frames(consumed, inverse_generalized_frame(target_reference));
-}
-
-fn GeneralizedMotionFrame generalized_branch_correction(
-    GeneralizedMotionFrame consumed,
-    GeneralizedMotionFrame anchor = GENERALIZED_FRAME_IDENTITY,
-) @private {
-    return compose_generalized_frames(inverse_generalized_frame(consumed), anchor);
-}
-
 fn void compensate_generalized_branches(
     CapturedMotionChain* chain,
     Transform[] pose,
@@ -277,7 +269,7 @@ fn GeneralizedMotion generalized_endpoint_motion(
     CapturedMotionChain* chain,
     GeneralizedMotionReference* reference,
     GeneralizedMotionFrame endpoint,
-) @local {
+) @private {
     double[<3>] displacement = endpoint.position - reference.frame.position;
     for (uint axis = 0; axis < 3; axis++) {
         if (!chain.extraction.translation_axes[axis]) displacement[axis] = 0;
@@ -292,6 +284,41 @@ fn GeneralizedMotion generalized_endpoint_motion(
         .translation = displacement + generalized_pivot_displacement(reference.up, twist, reference.frame.position),
         .twist = twist,
     };
+}
+
+fn GeneralizedMotion generalized_endpoint_motion_rate(
+    CapturedMotionChain* chain,
+    GeneralizedMotionReference* reference,
+    GeneralizedMotionFrame endpoint,
+    GeneralizedFrameRate rate,
+) @private {
+    double[<3>] translation = rate.position;
+    for (uint axis = 0; axis < 3; axis++) {
+        if (!chain.extraction.translation_axes[axis]) translation[axis] = 0;
+    }
+
+    if (!chain.extraction.twist) return { .translation = translation };
+
+    double angle = generalized_twist_angle(endpoint.rotation, reference.up);
+    double twist = nearest_generalized_twist(angle - reference.twist);
+    double twist_rate = generalized_twist_rate(endpoint.rotation, rate.angular, reference.up);
+    double[<3>] pivot = reference.frame.position;
+    double[<3>] radial = pivot - reference.up * reference.up.dot(pivot);
+    double[<3>] pivot_rate = radial * math::sin(twist) - reference.up.cross(pivot) * math::cos(twist);
+
+    return { .translation = translation + pivot_rate * twist_rate, .twist = twist_rate };
+}
+
+fn double generalized_twist_rate(Quaternion rotation, double[<3>] angular, double[<3>] up) @local {
+    double[<3>] axis = { rotation.v.x, rotation.v.y, rotation.v.z };
+    double projected = axis.dot(up);
+    double denominator = projected * projected + rotation.v.w * rotation.v.w;
+    if (denominator == 0) return 0;
+
+    double projected_rate = 0.5 * (rotation.v.w * angular.dot(up) + angular.cross(axis).dot(up));
+    double scalar_rate = -0.5 * angular.dot(axis);
+
+    return 2 * (rotation.v.w * projected_rate - projected * scalar_rate) / denominator;
 }
 
 fn GeneralizedMotion generalized_cycle_power(
@@ -360,11 +387,4 @@ fn GeneralizedMotion generalized_motion_trajectory(
         second: partial,
         up: reference.up,
     );
-}
-
-fn GeneralizedMotionFrame generalized_cycle_anchor(GeneralizedMotionReference* reference, double time) @private {
-    double cycles = math::floor(time / (double)reference.duration);
-    GeneralizedMotion motion = generalized_cycle_power(reference.cycle, cycles, reference.up);
-
-    return generalized_frame_from_motion(motion, reference.up);
 }

@@ -153,11 +153,6 @@ fn AnimationTransitionResult? request_inertial_transition(
     )!;
     defer release_prepared_transition(&prepared);
 
-    if (!playback.inertial.control.history_valid && playback.generalized) {
-        playback.generalized.carrier_translation_rate = {};
-        playback.generalized.carrier_twist_rate = 0;
-    }
-
     return begin_prepared_inertial_transition(
         playback: playback,
         assets: assets,

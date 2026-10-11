@@ -338,14 +338,17 @@ update. Under generalized extraction, a scale track with nonneutral keys on an
 additive action's consumed chain is invalid in either additive scale mode, including
 zero-weight or fully masked actions.
 
-The final blended and inertia-corrected chain determines the consumed motion.
-One instance-root compensation applies to every top-level branch, including
-branches outside the motion node, so applying the published delta reproduces
-the corresponding KEEP pose. The root turns about its reference position in
-the instance-root frame. Consume the delta with `apply_root_motion` once after
-update; for crowds use `Scene.apply_crowd_root_motion`. The default planar path
-keeps its previous behavior. Float32 application still accumulates drift with
-distance; compare articulated poses in their carrier's frame.
+Each generalized action pins the selected translation and twist of the final
+blended chain at its own reference endpoint, weighted like its motion. One
+instance-root compensation applies to every top-level branch, including
+branches outside the motion node, so the articulated pose stays attached to the
+carrier through fades, weight changes and inertial residuals. For a single
+action, applying the published deltas reproduces the corresponding KEEP pose.
+The root turns about its reference position in the instance-root frame.
+Consume the delta with `apply_root_motion` once after update; for crowds use
+`Scene.apply_crowd_root_motion`. The default planar path keeps its previous
+behavior. Float32 application still accumulates drift with distance; compare
+articulated poses in their carrier's frame.
 
 ## Inertial transitions
 
@@ -411,9 +414,11 @@ of range. A shorter transition duration may succeed; the runtime does not clamp
 accepted scale.
 
 For a consumed root, source and target use the same motion node, selected axes,
-up, twist and frame. Different clip reference positions are allowed and rebase
-to the current consumed carrier anchor. Root output adds a decaying residual
-translation/twist velocity to the target delta, with one final pivot correction.
+up, twist and frame. Different clip reference positions are allowed; the pose
+residual carries the articulated pose from the source's pinned reference to the
+target's. Root output adds a decaying residual translation/twist velocity to the
+target delta, with one final pivot correction, and the compensated pose moves
+with the carrier.
 Events come from target actions only. The source's previous published delta
 divided by its positive update interval supplies velocity; invalid history
 starts with zero source velocity.

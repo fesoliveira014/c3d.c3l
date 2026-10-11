@@ -17,7 +17,6 @@ struct PlaybackView {
     BlendSpace2D[] blend_spaces_2d;
     uint root_node;
     InertialRow* inertial;
-    GeneralizedPlaybackState* generalized;
 }
 
 <* Destination baselines, presence and caller-owned evaluated output. *>
@@ -236,41 +235,29 @@ fn PoseReport evaluate_pose(
         consumed_chain: consumed_chain,
     );
 
-    bool generalized = playback.generalized != null && consumed_chain != null;
-    if (playback.inertial) {
-        if (generalized) {
-            advance_inertial_elapsed(playback.inertial, (double)dt);
-        } else {
-            correct_inertial_pose(
-                playback: playback,
-                destination: destination,
-                scratch: scratch,
-                dt: (double)dt,
-            );
-        }
-    }
-
     PlanarMotion motion;
     GeneralizedMotion generalized_motion;
-    if (generalized) {
-        if (!playback.generalized.initialized) initialize_generalized_playback(
-            state: playback.generalized,
-            playback: playback,
-            chain: consumed_chain,
-        );
+    if (consumed_chain) {
         generalized_motion = evaluate_generalized_playback_motion(
             playback: playback,
             assets: assets,
             destination: destination,
-            state: playback.generalized,
-            dt: (double)dt,
             chain: consumed_chain,
+            dt: (double)dt,
         );
     } else {
         motion = evaluate_root_motion(playback, assets, destination);
     }
 
-    if (playback.inertial && dt > 0) playback.inertial.control.onset_pending = false;
+    if (playback.inertial) {
+        correct_inertial_pose(
+            playback: playback,
+            destination: destination,
+            scratch: scratch,
+            dt: (double)dt,
+        );
+        if (dt > 0) playback.inertial.control.onset_pending = false;
+    }
 
     EventReport report = publish_events(
         playback: playback,
@@ -282,7 +269,7 @@ fn PoseReport evaluate_pose(
     return {
         .motion = motion,
         .generalized_motion = generalized_motion,
-        .generalized = generalized,
+        .generalized = consumed_chain != null,
         .consumed_chain = consumed_chain,
         .events = report,
     };

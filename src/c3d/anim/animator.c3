@@ -87,7 +87,6 @@ struct Animator {
     BlendSpace2D[] blend_spaces_2d;
     PoseStorage* pose_storage;
     InertialStorage* inertial_storage;
-    GeneralizedPlaybackState generalized_state;
 }
 
 <* Captured configuration of a newly played action. *>
@@ -254,19 +253,16 @@ fn void update(AssetStore* assets, Scene* scene, float dt) {
             animator.event_count = report.events.count;
             animator.events_dropped = report.events.dropped;
 
+            publish_animator_pose(animator, instance);
+
             if (report.generalized) {
                 animator.root_motion = publish_generalized_owner_motion(
                     playback: &playback,
-                    destination: animator.pose_storage.destination,
+                    chain: report.consumed_chain,
                     motion: report.generalized_motion,
                     dt: (double)dt,
-                    scratch: animator.pose_storage.scratch,
-                    chain: report.consumed_chain,
                 );
-                publish_animator_pose(animator, instance);
             } else {
-                publish_animator_pose(animator, instance);
-
                 Vec3 reference;
                 if (report.motion.yaw != 0) {
                     Node* root = instance.present_node(animator.root_node);

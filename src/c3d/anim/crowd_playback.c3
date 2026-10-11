@@ -31,7 +31,6 @@ struct CrowdPlaybackSlot {
     uint root_node;
     AnimationActionId base_action;
     RootMotionDelta root_motion;
-    GeneralizedPlaybackState generalized_state;
 }
 
 <* Owns crowd playback storage, baselines and one event buffer. *>
@@ -104,11 +103,9 @@ fn void CrowdPlaybackState.update(&self, AssetStore* assets, float dt) {
         if (report.generalized) {
             slot.root_motion = publish_generalized_owner_motion(
                 playback: &playback,
-                destination: destination,
+                chain: report.consumed_chain,
                 motion: report.generalized_motion,
                 dt: (double)dt,
-                scratch: self.pose_storage.scratch,
-                chain: report.consumed_chain,
             );
         } else {
             slot.root_motion = root_motion_delta(report.motion, reference);
@@ -391,7 +388,6 @@ fn void reset_crowd_playback_slot(CrowdPlaybackState* state, uint index) {
     if (!slot.generation) slot.generation = 1;
     if (state.inertial_storage) reset_inertial_row(state.inertial_storage, index);
 
-    slot.generalized_state = {};
     slot.root_node = state.default_root_node;
     slot.base_action = {};
     slot.root_motion = { .rotation = quaternion::IDENTITY };
@@ -596,7 +592,6 @@ fn PlaybackView crowd_playback_view(CrowdPlaybackState* state, CrowdPlaybackSlot
         .blend_spaces = slot.spaces,
         .blend_spaces_2d = slot.spaces_2d,
         .root_node = slot.root_node,
-        .generalized = &slot.generalized_state,
         .inertial = state.inertial_storage
           ? &state.inertial_storage.rows[(usz)(slot - state.slots.ptr)] : null,
     };
