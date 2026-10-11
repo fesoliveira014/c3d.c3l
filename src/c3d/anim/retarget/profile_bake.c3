@@ -79,7 +79,7 @@ fn AnimationClip? bake_profile_clip(
 
         sz track_count;
 
-        foreach (uint index, &node : data.target_nodes) {
+        for (uint index = 0; index < data.target_nodes.len; index++) {
             ProfilePaths paths = profile_paths(data, index, options.root_motion);
             track_count += (sz)paths.rotation + (sz)paths.translation + (sz)paths.scale;
         }
@@ -99,7 +99,7 @@ fn AnimationClip? bake_profile_clip(
         usz track_slot;
         usz target_count;
 
-        foreach (uint index, &node : data.target_nodes) {
+        for (uint index = 0; index < data.target_nodes.len; index++) {
             ProfilePaths paths = profile_paths(data, index, options.root_motion);
             if (paths.rotation) {
                 output[index].rotation = &clip.tracks[track_slot++];
