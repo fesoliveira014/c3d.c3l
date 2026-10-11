@@ -234,15 +234,11 @@ below *= 1 + effective_weight * (sample / reference - 1)
 
 For below `(2,3,4)`, reference `(2,4,8)`, sample `(4,2,16)` and weight 0.5,
 the result is `(3,2.25,6)`. The scale mode and time-zero reference are captured
-at play. Every scale track and its reference must stay finite and strictly
-positive across its full domain. Admission checks STEP/LINEAR keys and cubic
-interior extrema once. Nonpositive domains return `INVALID_ARGUMENT` before
-creating an action or group. CUBIC segments also need an exact minimum of at
-least `FLT_MIN + 2^-40 * M`, where `FLT_MIN = 2^-126` and `M` is the largest
-magnitude of a key or duration-scaled tangent. This directed margin covers the
-double sampler error and keeps its float result positive. Positive curves below
-the margin return `UNSUPPORTED` before mutation. STEP and LINEAR retain their
-key-only checks, including positive subnormals. Runtime applies no clamp or
+at play. Only STEP and LINEAR scale tracks are supported. Admission checks their
+keys once: every key and the reference must be finite and strictly positive,
+positive subnormals included, or play returns `INVALID_ARGUMENT` before creating
+an action or group. A `CUBIC_SPLINE` scale track with valid keys and finite
+tangents returns `UNSUPPORTED` before mutation. Runtime applies no clamp or
 repeated domain scan.
 
 An additive action keeps the reference pose it sampled at `play` until it is played again. After
@@ -334,8 +330,10 @@ positive uniform scales. Nonuniform scale, reflection, shear, invalid root
 layout, nonfinite values and zero quaternions fault `INVALID_ARGUMENT` at
 admission. Rotation tracks are checked over their full domain; STEP uses keys,
 LINEAR also requires a sign-corrected nonnegative endpoint dot, and CUBIC uses a
-bounded polynomial certificate. An unproved cubic domain or sampling margin
-faults `UNSUPPORTED` before playback changes. No repeated domain scan runs at
+bounded polynomial certificate. Scale tracks are checked at their keys; a
+`CUBIC_SPLINE` scale track on the chain is unsupported. An unproved cubic
+rotation domain or a cubic scale track faults `UNSUPPORTED` before playback
+changes, after every `INVALID_ARGUMENT` check. No repeated domain scan runs at
 update. Under generalized extraction, a nonneutral scale track on an additive
 action's consumed chain is invalid in either additive scale mode, including
 zero-weight or fully masked actions.
@@ -407,8 +405,10 @@ convex, so admitted positive-uniform scales remain positive under runtime
 weights, masks, fades and group controls. Request-time bounds also require the
 whole corrected scale window to remain representable as float. A proven
 out-of-range result faults `INVALID_ARGUMENT`; a result within the directed
-rounding margin faults `UNSUPPORTED`. A shorter transition duration may succeed;
-the runtime does not clamp accepted scale.
+rounding margin faults `UNSUPPORTED`. Cubic scale on a consumed chain is
+unsupported: such a request faults `UNSUPPORTED` unless its keys alone are out
+of range. A shorter transition duration may succeed; the runtime does not clamp
+accepted scale.
 
 For a consumed root, source and target use the same motion node, selected axes,
 up, twist and frame. Different clip reference positions are allowed and rebase
