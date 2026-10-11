@@ -323,7 +323,8 @@ terms retain their existing behavior.
 ## Colored shadows
 
 `Renderer.set_colored_shadows(true)` lets translucent casters tint the light behind them. The switch is
-renderer-wide, off by default, takes effect at the next `begin_frame` and costs nothing while off. It adds no field to
+renderer-wide, off by default and takes effect at the next `begin_frame`. While it is off the renderer allocates nothing
+for it and records no extra passes; receivers keep one branch per shadow lookup. It adds no field to
 `ShadowSettings`, so lights and their serialization are unchanged.
 
 ```c3
