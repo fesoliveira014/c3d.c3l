@@ -164,7 +164,7 @@ fn void test_normal_only_source_does_not_label_normal_ids_as_color() @test {
     assert(document.textures[0].desc.semantic == TextureSemantic.NORMAL_RGB);
 }
 
-fn void test_mask_variants_use_effective_thresholds_and_constant_pass_classes() @test {
+fn void test_mask_variants_use_effective_thresholds_and_constant_masks_share_the_unmasked_texture() @test {
     String text = png_document(`[
         {"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}},
         {"alphaMode":"MASK","alphaCutoff":0.5,"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}},
@@ -180,7 +180,7 @@ fn void test_mask_variants_use_effective_thresholds_and_constant_pass_classes() 
     ModelDocument document = decode_text(text);
     defer asset::destroy_model_document(&document);
 
-    assert(document.textures.len == 6);
+    assert(document.textures.len == 4);
 
     TextureId[9] references;
 
@@ -189,16 +189,13 @@ fn void test_mask_variants_use_effective_thresholds_and_constant_pass_classes() 
         *reference = params.base_color_map.texture.asset;
     }
 
-    assert(c3d::same_id(references[0], references[8]));
+    foreach (index : (usz[5]){ 4, 5, 6, 7, 8 }) assert(c3d::same_id(references[0], references[index]));
+
     assert(c3d::same_id(references[1], references[2]));
     assert(!c3d::same_id(references[1], references[3]));
-    assert(c3d::same_id(references[4], references[5]));
-    assert(c3d::same_id(references[6], references[7]));
     assert(texture_entry(&document, references[0]).desc.coverage == CoveragePolicy.NONE);
     assert(texture_entry(&document, references[1]).desc.alpha_threshold == 0.5);
     assert(texture_entry(&document, references[3]).desc.alpha_threshold == 0.25);
-    assert(texture_entry(&document, references[4]).desc.coverage == CoveragePolicy.ALL_PASS);
-    assert(texture_entry(&document, references[6]).desc.coverage == CoveragePolicy.ALL_FAIL);
 
     document.materials[2].data.common.alpha_cutoff = 0.1f;
 

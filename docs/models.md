@@ -30,8 +30,8 @@ transform.
 imported normal textures. Their generated mips filter decoded vectors; normal
 roles and color roles use distinct texture variants. glTF masked base textures
 also get a variant for their effective alpha threshold, including the material
-factor. A zero factor with zero cutoff passes every texel. Supplied container
-mips retain their authored bytes.
+factor. A mask that every texel passes or fails, such as a zero cutoff, shares
+the unmasked texture. Supplied container mips retain their authored bytes.
 
 With `generate_tangents`, a missing tangent stream for a normal-mapped triangle
 primitive is generated from the map's raw UV0 or UV1 using pinned MikkTSpace.

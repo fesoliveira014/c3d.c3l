@@ -225,8 +225,8 @@ fn TextureSemantic normal_semantic(NormalEncoding encoding) @private {
 
 fn CoveragePolicy mask_policy(material::AlphaMode mode, float cutoff, float factor) @private {
     if (mode != material::AlphaMode.MASK) return CoveragePolicy.NONE;
-    if (cutoff == 0) return CoveragePolicy.ALL_PASS;
-    if (factor == 0 || (double)cutoff / factor > 1) return CoveragePolicy.ALL_FAIL;
+    // Every texel passes or every texel fails, so the unmasked texture keeps the coverage.
+    if (cutoff == 0 || factor == 0 || (double)cutoff / factor > 1) return CoveragePolicy.NONE;
 
     return CoveragePolicy.THRESHOLD;
 }
