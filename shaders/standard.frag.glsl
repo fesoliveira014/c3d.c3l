@@ -5,6 +5,7 @@
 #include "vertex_pull.glsl"
 #include "material_alpha.glsl"
 #include "fog.glsl"
+#include "transparency.glsl"
 #include "standard_shading.glsl"
 #include "decals.glsl"
 
@@ -15,6 +16,9 @@ layout(location = 3) in vec2 v_uv0;
 layout(location = 4) in vec2 v_uv1;
 layout(location = 5) in vec4 v_color;
 layout(location = 0) out vec4 out_color;
+#ifdef LAYERED
+layout(location = 1) out float out_transparency_depth;
+#endif
 
 layout(push_constant) uniform Push {
     uint64_t vertex_root_gpu;
@@ -56,9 +60,27 @@ void main() {
     if ((material.flags & MATERIAL_ALPHA_MASK) != 0u
         && material_sample.base_color.a < material.alpha_cutoff) discard;
 
+#ifdef LAYERED
+    if (!layered_transparency_accept(frame, gl_FragCoord.z)) discard;
+
+    if (layered_transparency_capture(frame)) {
+        out_color = layered_transparency_output(frame, vec4(0.0));
+        out_transparency_depth = gl_FragCoord.z;
+        return;
+    }
+#endif
+
     vec3 color = shade_standard_surface(frame, draw, material_sample, 1.0, v_world_pos, ivec2(gl_FragCoord.xy));
     if ((material.flags & MATERIAL_ALPHA_BLEND) != 0u) {
+#ifdef LAYERED
+        color = layered_transparency_material_fog(frame, v_world_pos, color, material.flags);
+#else
         color = apply_material_fog(frame, v_world_pos, color, material.flags);
+#endif
     }
     out_color = material_output(color, material_sample.base_color.a, material.flags);
+#ifdef LAYERED
+    out_color = layered_transparency_output(frame, out_color);
+    out_transparency_depth = gl_FragCoord.z;
+#endif
 }

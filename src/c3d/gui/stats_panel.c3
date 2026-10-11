@@ -62,6 +62,30 @@ fn void? stats_panel(Renderer* renderer) {
     imgui::text("Reflection probes unavailable: %u", stats.reflection_probes_unavailable);
     imgui::text("Debug lines: %u (dropped %u)", stats.debug_lines, stats.debug_dropped);
 
+    if (imgui::collapsing_header("Transparency", {})) {
+        imgui::text("Layer capture passes: %u", stats.transparency_capture_passes);
+        imgui::text("Retained shade passes: %u", stats.transparency_retained_passes);
+        imgui::text("Sorted remainder passes: %u", stats.transparency_remainder_passes);
+        imgui::text("Layer resolve passes: %u", stats.transparency_resolve_passes);
+        imgui::text("Filter builds: %u", stats.transparency_filter_passes);
+        imgui::text("Filter dispatches: %u", stats.transparency_filter_dispatches);
+        imgui::text("Filtered mip levels: %u", stats.transparency_filtered_mips);
+        imgui::text("Fallback draws: %u", stats.transparency_fallback_draws);
+        imgui::text("Overflow dispatches: %u", stats.transparency_overflow_dispatches);
+        imgui::text("Transparency payload: %llu bytes", (ulong)stats.transparency_payload_bytes);
+
+        if (stats.transparency_overflow_results) {
+            imgui::text("Last completed overflow frame: %llu", stats.transparency_overflow_frame_index);
+            imgui::text("Completed overflow results: %u", stats.transparency_overflow_results);
+            imgui::text("Completed overflow pixels: %llu", stats.transparency_overflow_pixels);
+            imgui::text("Completed overflow: %s", stats.transparency_overflow ? "yes" : "no");
+        } else {
+            ZString readback = stats.transparency_overflow_dispatches
+              ? "Overflow readback: pending" : "Overflow readback: unavailable";
+            imgui::text_unformatted(readback);
+        }
+    }
+
     imgui::text("Uploads: %u", stats.uploads);
     imgui::text("Upload bytes: %u", stats.upload_bytes);
     imgui::text("Prepare units: %u", stats.prepare_units);

@@ -176,6 +176,60 @@ root ClusterGpu {
     GpuAddress decal_indices;
 }
 
+const uint TRANSPARENCY_SORTED = 0;
+const uint TRANSPARENCY_CAPTURE = 1;
+const uint TRANSPARENCY_RETAINED = 2;
+const uint TRANSPARENCY_TAIL = 3;
+const uint TRANSPARENCY_CONNECT = 4;
+const uint TRANSPARENCY_INITIAL = 5;
+const uint TRANSPARENCY_SEED = 6;
+const uint TRANSPARENCY_COMPOSITE = 7;
+const uint TRANSPARENCY_OVERLAY = 8;
+const uint TRANSPARENCY_ORDER_GROUP_SIZE = 64;
+const uint TRANSPARENCY_MIP_GROUP_SIZE = 8;
+
+root TransparencyOrderRoot {
+    GpuAddress source_args;
+    GpuAddress source_indices;
+    GpuAddress output_args;
+    uint first;
+    uint count;
+    uint stride;
+    uint _pad0;
+}
+
+root TransparencyMipRoot {
+    TextureIndex source;
+    TextureIndex destination;
+    uint width;
+    uint height;
+    uint source_width;
+    uint source_height;
+    uint source_mip;
+    uint source_storage;
+}
+
+root TransparencyOverflowRoot {
+    GpuAddress counters;
+    TextureIndex depth;
+    uint width;
+    uint height;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+}
+
+root TransparencyGpu {
+    TextureIndex previous_depth;
+    TextureIndex selected_depth;
+    TextureIndex opaque_depth;
+    TextureIndex continuation_depth;
+    TextureIndex opaque_color;
+    uint phase;
+    uint mip_count;
+    uint _pad0;
+}
+
 root FrameRoot {
     mat4       view;
     mat4       proj;
@@ -211,6 +265,9 @@ root FrameRoot {
     GpuAddress decals;
     uint       decal_count;
     uint       _pad3;
+    GpuAddress transparency;
+    uint       _pad4;
+    uint       _pad5;
 }
 
 root DrawRoot {

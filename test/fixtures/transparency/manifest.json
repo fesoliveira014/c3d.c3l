@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "fixture_id": "F07",
+  "name": "GlassVaseFlowers",
+  "writer": {
+    "role": "builder",
+    "responsibility": "acceptance and integration owner",
+    "delegated_task": "/root/pr398_performance"
+  },
+  "recorded_at": "2026-10-10T23:19:03.6451841Z",
+  "source": {
+    "repository": "https://github.com/KhronosGroup/glTF-Sample-Assets",
+    "commit": "edc7c9e67c639d230715049ee31f9a96a6babbbe",
+    "model_path": "Models/GlassVaseFlowers/glTF-Binary/GlassVaseFlowers.glb",
+    "glb_url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/GlassVaseFlowers/glTF-Binary/GlassVaseFlowers.glb",
+    "readme_url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/GlassVaseFlowers/README.md",
+    "git_blob": "6e093d3252b75f09c41247380969bb048342da90"
+  },
+  "license": {
+    "name": "CC0 1.0 Universal",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/legalcode",
+    "notice": "NOTICE.md",
+    "upstream_readme": "README.md",
+    "authors": [
+      {
+        "name": "Eric Chadwick",
+        "contribution": "Glass vase",
+        "year": 2023
+      },
+      {
+        "name": "Rico Cilliers",
+        "contribution": "Flowers",
+        "year": 2023
+      }
+    ]
+  },
+  "glb_unmodified": true,
+  "upstream_readme_unmodified": true,
+  "text_line_endings": "LF",
+  "files": [
+    {
+      "path": "GlassVaseFlowers.glb",
+      "bytes": 1819824,
+      "sha256": "430c9937664cfc74299205dcc388e4269bb688817f3d3866ef35aab71e93b852"
+    },
+    {
+      "path": "README.md",
+      "bytes": 3639,
+      "sha256": "fc5962a2796263c4ccf18beb515e1b49cf23f830fbd942e8fc172e2497874b81"
+    },
+    {
+      "path": "NOTICE.md",
+      "bytes": 1051,
+      "sha256": "581bb8a2c39ea0d9530a7a9907efc26488ca837c10ca6b8d783c4ea37e86e8e8"
+    },
+    {
+      "path": "fixture.c3",
+      "bytes": 15995,
+      "sha256": "cd14c195609d85c98dae849237c0b1ff16b105237aae8f18fae7680425bc9ca1"
+    },
+    {
+      "path": "oracle_test.c3",
+      "bytes": 6284,
+      "sha256": "38693678fef5460490559667407f1ad222abcbe39f3f4c715ae9a3e353f8e610"
+    },
+    {
+      "path": "baseline/manifest.json",
+      "bytes": 3033,
+      "sha256": "42e4063fac629452b07113f5e8989395d7f4938cf9febee73c13f5d39bbf1eef"
+    },
+    {
+      "path": "baseline/shadow_hardware.u32",
+      "bytes": 64,
+      "sha256": "49bda376bbe72dece92de2dc1bef98a895291b294e97fcdbb1a75d93d1b30e81"
+    },
+    {
+      "path": "baseline/shadow_software.u32",
+      "bytes": 64,
+      "sha256": "49bda376bbe72dece92de2dc1bef98a895291b294e97fcdbb1a75d93d1b30e81"
+    },
+    {
+      "path": "baseline/smooth_deferred.rgba32f",
+      "bytes": 16384,
+      "sha256": "e5bf995cc280b66da39df16da65ca5a74b8d0be4a04cb924c60710f2b36b08fa"
+    },
+    {
+      "path": "baseline/smooth_forward.rgba32f",
+      "bytes": 16384,
+      "sha256": "e5bf995cc280b66da39df16da65ca5a74b8d0be4a04cb924c60710f2b36b08fa"
+    },
+    {
+      "path": "baseline/sorted_deferred.rgba32f",
+      "bytes": 16384,
+      "sha256": "378b801b73ae1f6db89a336406abb3672a800adb9a806dd73f8ffa1a1437bade"
+    },
+    {
+      "path": "baseline/sorted_forward.rgba32f",
+      "bytes": 16384,
+      "sha256": "378b801b73ae1f6db89a336406abb3672a800adb9a806dd73f8ffa1a1437bade"
+    }
+  ],
+  "generated_fixture_version": 1,
+  "generated_corpus": [
+    "F01",
+    "F02",
+    "F03",
+    "F04",
+    "F05",
+    "F06"
+  ],
+  "baseline_receipt": "baseline/manifest.json"
+}

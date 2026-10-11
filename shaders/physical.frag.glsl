@@ -9,6 +9,7 @@
 #include "lights.glsl"
 #include "material_alpha.glsl"
 #include "fog.glsl"
+#include "transparency.glsl"
 #include "material_maps.glsl"
 #include "physical.glsl"
 #include "shadows.glsl"
@@ -21,6 +22,9 @@ layout(location = 3) in vec2 v_uv0;
 layout(location = 4) in vec2 v_uv1;
 layout(location = 5) in vec4 v_color;
 layout(location = 0) out vec4 out_color;
+#ifdef LAYERED
+layout(location = 1) out float out_transparency_depth;
+#endif
 
 layout(push_constant) uniform Push {
     uint64_t vertex_root_gpu;
@@ -215,6 +219,16 @@ void main() {
     if ((material.standard.flags & MATERIAL_ALPHA_MASK) != 0u
         && material_sample.base_color.a < material.standard.alpha_cutoff) discard;
 
+#ifdef LAYERED
+    if (!layered_transparency_accept(frame, gl_FragCoord.z)) discard;
+
+    if (layered_transparency_capture(frame)) {
+        out_color = layered_transparency_output(frame, vec4(0.0));
+        out_transparency_depth = gl_FragCoord.z;
+        return;
+    }
+#endif
+
     PhysicalSurface surface;
     surface.standard = prepare_surface(
         material_sample.base_color.rgb,
@@ -269,6 +283,12 @@ void main() {
     surface.transmission_ray = vec3(0.0);
     ReflectionSelection reflections = reflection_probe_select(frame, v_world_pos);
     vec3 transmitted = vec3(0.0);
+    bool transmission_fogs_behind = (material.standard.flags & MATERIAL_ALPHA_BLEND) == 0u;
+#ifdef LAYERED
+    bool tail = frame.transparency != 0ul && TransparencyGpu(frame.transparency).phase == TRANSPARENCY_TAIL;
+    transmission_fogs_behind = transmission_fogs_behind || tail;
+#endif
+
     if (transmission > 0.0) {
         vec3 refracted = refract(-material_sample.view_direction, material_sample.normal, 1.0 / material.ior);
         surface.transmission_ray = transmission_ray(refracted, thickness, draw.model);
@@ -280,7 +300,8 @@ void main() {
                 surface.transmission_ray,
                 refracted,
                 material_sample.roughness,
-                (material.standard.flags & MATERIAL_ALPHA_BLEND) == 0u
+                material.ior,
+                transmission_fogs_behind
             ),
             length(surface.transmission_ray),
             surface.attenuation_color,
@@ -343,12 +364,29 @@ void main() {
             draw.sheen_sampler
         );
     }
-    // A transmissive draw sits in the scene-read list, before the fog pass, which fogs it at what lies behind it.
     bool blended = (material.standard.flags & MATERIAL_ALPHA_BLEND) != 0u && material.transmission == 0.0;
+
+#ifdef LAYERED
+    if (!layered_transparency_retained(frame)) {
+        if (tail || blended) {
+            uint fog_flags = material.standard.flags;
+            if ((fog_flags & MATERIAL_ALPHA_BLEND) == 0u) fog_flags &= ~MATERIAL_BLEND_ADDITIVE;
+
+            color = apply_material_fog(frame, v_world_pos, color, fog_flags);
+        }
+    }
+#else
+    // Non-depth-writing transmission receives fog at its background depth in the later fog pass.
     if (blended) color = apply_material_fog(frame, v_world_pos, color, material.standard.flags);
+#endif
+
     out_color = material_output(
         color,
         material_sample.base_color.a,
         material.standard.flags
     );
+#ifdef LAYERED
+    out_color = layered_transparency_output(frame, out_color);
+    out_transparency_depth = gl_FragCoord.z;
+#endif
 }

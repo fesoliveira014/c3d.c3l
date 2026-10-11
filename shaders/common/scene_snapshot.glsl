@@ -5,12 +5,21 @@
 #include "texture_fetch.glsl"
 #include "gbuffer.glsl"
 
+#ifdef LAYERED
+vec3 layered_transparency_scene_color(FrameRoot frame, vec2 uv, vec3 radiance);
+#endif
+
 vec2 scene_uv(FrameRoot frame, vec2 frag_coord) {
     return frag_coord / frame.camera_params.zw;
 }
 
 vec3 scene_color_at(FrameRoot frame, vec2 uv) {
+#ifdef LAYERED
+    vec3 radiance = sample_texture_2d(frame.scene_color, frame.scene_sampler, uv).rgb;
+    return layered_transparency_scene_color(frame, uv, radiance);
+#else
     return sample_texture_2d(frame.scene_color, frame.scene_sampler, uv).rgb;
+#endif
 }
 
 // Nearest texel: depth is never filtered across a silhouette.
