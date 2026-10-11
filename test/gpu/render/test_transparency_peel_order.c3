@@ -132,6 +132,16 @@ struct PeelResources @private {
     bool transport_enabled;
     bool transport_sorted;
     gpu::GpuAddress fullscreen;
+    bool transport_depth_edge;
+}
+
+struct PeelImageReference @private {
+    transparency_fixtures::Color[] raw;
+    transparency_fixtures::Color[] snapshot;
+    transparency_fixtures::Color[] observed;
+    float[] anchors;
+    float[] snapshot_anchors;
+    transparency_fixtures::ColorImage[8] levels;
 }
 
 fn char[]? compile_peel_source(
@@ -692,6 +702,7 @@ fn void prepare_peel_transport_frame(Renderer* renderer, PeelResources* resource
         .ambient = { 1, 1, 1, 0 },
         .sky_fog = write_peel_bytes(renderer, ((char*)&sky)[:SkyFogGpu::size])!!,
     };
+    resources.transport_frame.view_proj = resources.transport_frame.proj;
     if (resources.transport_case.distances.w > 0) {
         resources.transport_frame.flags = shader::FRAME_CLIP_PLANE;
         resources.transport_frame.clip_plane = { 0, 0, -1, -resources.transport_case.distances.w };
@@ -717,7 +728,12 @@ fn void? run_peel_transport_fixture(
     resources.fullscreen = write_peel_bytes(renderer, ((char*)&fullscreen)[:PeelSurface::size])!;
     clear_peel_color(renderer, &resources.color, background)!;
     clear_peel_color(renderer, &resources.opaque, background)!;
-    upload_peel_depth_plane(renderer, &resources.opaque_depth, background_depth, background_depth)!;
+    upload_peel_depth_plane(
+        renderer: renderer,
+        target: &resources.opaque_depth,
+        left: background_depth,
+        right: resources.transport_depth_edge ? 0.125f : background_depth,
+    )!;
     copy_peel_depth(renderer, &resources.opaque_depth, &resources.anchor)!;
     record_peel_raster_reference(
         renderer: renderer,
@@ -1877,6 +1893,272 @@ fn FilterFogTerms peel_camera_reference(PeelResources* resources, double distanc
         : filter_fog_expected(resources.transport_case, distance);
 }
 
+fn void create_peel_image_reference(PeelImageReference* reference) @private {
+    reference.raw = alloc::new_array(mem, transparency_fixtures::Color, PEEL_PIXELS);
+    reference.snapshot = alloc::new_array(mem, transparency_fixtures::Color, PEEL_PIXELS);
+    reference.observed = alloc::new_array(mem, transparency_fixtures::Color, PEEL_PIXELS);
+    reference.anchors = alloc::new_array(mem, float, PEEL_PIXELS);
+    reference.snapshot_anchors = alloc::new_array(mem, float, PEEL_PIXELS);
+    uint extent = PEEL_SIZE;
+    foreach (uint level, &image : reference.levels) {
+        *image = {
+            .width = extent,
+            .height = extent,
+            .pixels = level
+                ? alloc::new_array(mem, transparency_fixtures::Color, (sz)((usz)extent * extent))
+                : reference.snapshot,
+        };
+        extent = math::max(1u, extent / 2);
+    }
+}
+
+fn void destroy_peel_image_reference(PeelImageReference* reference) @private {
+    free(reference.raw.ptr);
+    free(reference.snapshot.ptr);
+    free(reference.observed.ptr);
+    free(reference.anchors.ptr);
+    free(reference.snapshot_anchors.ptr);
+    foreach (image : reference.levels[1..]) free(image.pixels.ptr);
+}
+
+fn FilterFogTerms peel_background_reference(PeelResources* resources) @private {
+    bool height = resources.transport_medium ? resources.transport_medium != 2 : resources.transport_case.density > 0;
+    return height
+        ? (FilterFogTerms){ .scattering = { 0.1, 0.2, 0.4 } }
+        : (FilterFogTerms){ .attenuation = { 1, 1, 1 } };
+}
+
+fn FilterFogTerms peel_camera_depth_reference(PeelResources* resources, float depth) @private {
+    return depth == 0 ? peel_background_reference(resources) : peel_camera_reference(resources, 9 - 8 * (double)depth);
+}
+
+fn transparency_fixtures::Color peel_connect_reference(
+    PeelResources* resources,
+    float near_depth,
+    float far_depth,
+    transparency_fixtures::Color radiance,
+) @private {
+    if (far_depth == 0) {
+        FilterFogTerms background = peel_background_reference(resources);
+        return background.attenuation * radiance + background.scattering;
+    }
+    double near_distance = 9 - 8 * (double)near_depth;
+    double far_distance = math::max(near_distance, 9 - 8 * (double)far_depth);
+    return peel_fog_transfer(
+        peel_camera_reference(resources, near_distance),
+        peel_camera_reference(resources, far_distance),
+        radiance,
+    );
+}
+
+fn FilterFogTerms peel_legacy_interval_reference(PeelResources* resources, double near, double far) @private {
+    if (!resources.transport_medium) {
+        double attenuation = math::exp(-resources.transport_case.density * (far - near));
+        return {
+            .attenuation = { attenuation, attenuation, attenuation },
+            .scattering = (transparency_fixtures::Color){ 0.1, 0.2, 0.4 } * (1 - attenuation),
+        };
+    }
+    FilterFogTerms height = { .attenuation = { 1, 1, 1 } };
+    FilterFogTerms aerial = height;
+    for (uint medium = 0; medium < 2; medium++) {
+        if (resources.transport_medium == 1 && medium == 1) continue;
+        if (resources.transport_medium == 2 && medium == 0) continue;
+        FilterFogTerms before = filter_table_expected(near, medium == 1);
+        FilterFogTerms after = filter_table_expected(far, medium == 1);
+        double[<3>] denominator;
+        for (uint channel = 0; channel < 3; channel++) {
+            denominator[channel] = math::max(before.attenuation[channel], FILTER_FOG_DENOMINATOR_FLOOR);
+        }
+        FilterFogTerms interval = {
+            .attenuation = after.attenuation / denominator,
+            .scattering = (after.scattering - before.scattering) / denominator,
+        };
+        if (medium == 0) {
+            height = interval;
+        } else {
+            aerial = interval;
+        }
+    }
+    return {
+        .attenuation = height.attenuation * aerial.attenuation,
+        .scattering = height.scattering + height.attenuation * aerial.scattering,
+    };
+}
+
+fn transparency_fixtures::Color peel_legacy_connect_reference(
+    PeelResources* resources,
+    float near_depth,
+    float far_depth,
+    transparency_fixtures::Color radiance,
+) @private {
+    if (far_depth == 0) return peel_connect_reference(resources, near_depth, far_depth, radiance);
+    double near_distance = 9 - 8 * (double)near_depth;
+    double far_distance = math::max(near_distance, 9 - 8 * (double)far_depth);
+    FilterFogTerms interval = peel_legacy_interval_reference(resources, near_distance, far_distance);
+    return interval.attenuation * radiance + interval.scattering;
+}
+
+fn float peel_opaque_depth_reference(PeelResources* resources, uint x, float depth) @private {
+    return resources.transport_depth_edge && x >= PEEL_SIZE / 2 ? 0.125f : depth;
+}
+
+fn transparency_fixtures::Color peel_sample_image_reference(
+    PeelImageReference* reference,
+    PeelSurface surface,
+    FilterUv uv,
+) @private {
+    double roughness = bitcast(surface.padding[1], float);
+    if (roughness == 0) return filter_bilinear(reference.levels[0], uv);
+    double lod = transparency_fixtures::rough_transmission_lod(
+        width: PEEL_SIZE,
+        height: PEEL_SIZE,
+        roughness: roughness,
+        ior: (double)bitcast(surface.padding[2], float),
+    );
+    uint low = (uint)math::floor(lod);
+    uint high = math::min(low + 1, (uint)reference.levels.len - 1);
+    return filter_bilinear(reference.levels[low], uv) * (1 - (lod - low))
+      + filter_bilinear(reference.levels[high], uv) * (lod - low);
+}
+
+fn void evaluate_peel_two_sheet_reference(
+    PeelResources* resources,
+    PeelImageReference* reference,
+    PeelSurface[] surfaces,
+    uint cap,
+    transparency_fixtures::Color background,
+    float background_depth,
+) @private {
+    float* depths = (float*)resources.reference_readback.bytes.ptr;
+    for (uint pixel = 0; pixel < PEEL_PIXELS; pixel++) {
+        float opaque_depth = peel_opaque_depth_reference(resources, pixel % PEEL_SIZE, background_depth);
+        reference.raw[pixel] = background;
+        reference.anchors[pixel] = opaque_depth;
+        if (cap == 1 && surfaces[1].kind < 2) {
+            float tail_depth = depths[2 * PEEL_PIXELS + pixel];
+            if (tail_depth == 0 || tail_depth <= opaque_depth) continue;
+            FilterFogTerms opaque = peel_camera_depth_reference(resources, opaque_depth);
+            FilterFogTerms tail = peel_camera_depth_reference(resources, tail_depth);
+            transparency_fixtures::Color tail_surface = {
+                surfaces[1].color.x, surfaces[1].color.y, surfaces[1].color.z,
+            };
+            FilterUv uv = { ((double)(pixel % PEEL_SIZE) + 0.5) / PEEL_SIZE + surfaces[1].plane.z,
+                ((double)(pixel / PEEL_SIZE) + 0.5) / PEEL_SIZE + surfaces[1].plane.w };
+            bool outside = uv.x < 0 || uv.y < 0 || uv.x > 1 || uv.y > 1;
+            float sample_depth = outside ? 0 : peel_opaque_depth_reference(resources,
+                math::min((uint)(uv.x * PEEL_SIZE), PEEL_SIZE - 1), background_depth);
+            transparency_fixtures::Color sample = outside
+                ? (transparency_fixtures::Color){ resources.transport_environment.x,
+                    resources.transport_environment.y, resources.transport_environment.z }
+                : background;
+            tail_surface += surfaces[1].color.w
+              * peel_legacy_connect_reference(
+                    resources: resources,
+                    near_depth: tail_depth,
+                    far_depth: sample_depth,
+                    radiance: sample,
+                );
+            transparency_fixtures::Color observed = opaque.attenuation * background + opaque.scattering;
+            observed = surfaces[1].coverage * (tail.attenuation * tail_surface + tail.scattering)
+              + (1.0 - (double)surfaces[1].coverage) * observed;
+            for (uint channel = 0; channel < 3; channel++) {
+                reference.raw[pixel][channel] = (observed[channel] - tail.scattering[channel])
+                  / math::max(tail.attenuation[channel], FILTER_FOG_DENOMINATOR_FLOOR);
+            }
+            reference.anchors[pixel] = tail_depth;
+        }
+    }
+    uint retained = math::min(cap, (uint)surfaces.len);
+    for (uint remaining = retained; remaining > 0; remaining--) {
+        uint source = remaining - 1;
+        PeelSurface surface = surfaces[source];
+        if (surface.kind >= 2) continue;
+        mem::copy(reference.snapshot.ptr, reference.raw.ptr, (sz)(PEEL_PIXELS * transparency_fixtures::Color::size));
+        mem::copy(reference.snapshot_anchors.ptr, reference.anchors.ptr, (sz)(PEEL_PIXELS * float::size));
+        for (uint level = 1; level < reference.levels.len; level++) {
+            transparency_fixtures::reduce_area_box(reference.levels[level - 1], reference.levels[level]);
+        }
+        for (uint y = 0; y < PEEL_SIZE; y++) {
+            for (uint x = 0; x < PEEL_SIZE; x++) {
+                uint pixel = y * PEEL_SIZE + x;
+                float near_depth = depths[2 * source * PEEL_PIXELS + pixel];
+                float opaque_depth = peel_opaque_depth_reference(resources, x, background_depth);
+                if (near_depth == 0 || near_depth <= opaque_depth) continue;
+                transparency_fixtures::Color destination = peel_connect_reference(
+                    resources: resources,
+                    near_depth: near_depth,
+                    far_depth: reference.snapshot_anchors[pixel],
+                    radiance: reference.snapshot[pixel],
+                );
+                FilterUv uv = { ((double)x + 0.5) / PEEL_SIZE + surface.plane.z,
+                    ((double)y + 0.5) / PEEL_SIZE + surface.plane.w };
+                bool outside = uv.x < 0 || uv.y < 0 || uv.x > 1 || uv.y > 1;
+                transparency_fixtures::Color sample = { resources.transport_environment.x,
+                    resources.transport_environment.y, resources.transport_environment.z };
+                float anchor;
+                if (!outside) {
+                    sample = peel_sample_image_reference(reference, surface, uv);
+                    uint sample_x = math::min((uint)(uv.x * PEEL_SIZE), PEEL_SIZE - 1);
+                    uint sample_y = math::min((uint)(uv.y * PEEL_SIZE), PEEL_SIZE - 1);
+                    anchor = reference.snapshot_anchors[sample_y * PEEL_SIZE + sample_x];
+                }
+                transparency_fixtures::Color radiance = { surface.color.x, surface.color.y, surface.color.z };
+                radiance += surface.color.w * peel_connect_reference(
+                    resources: resources,
+                    near_depth: near_depth,
+                    far_depth: anchor,
+                    radiance: sample,
+                );
+                reference.raw[pixel] = surface.padding[0] == 2
+                    ? destination + surface.coverage * radiance
+                    : surface.coverage * radiance + (1.0 - (double)surface.coverage) * destination;
+                reference.anchors[pixel] = near_depth;
+            }
+        }
+    }
+    for (uint pixel = 0; pixel < PEEL_PIXELS; pixel++) {
+        FilterFogTerms camera = peel_camera_depth_reference(resources, reference.anchors[pixel]);
+        reference.observed[pixel] = camera.attenuation * reference.raw[pixel] + camera.scattering;
+    }
+    for (uint remaining = (uint)surfaces.len; remaining > 0; remaining--) {
+        uint source = remaining - 1;
+        PeelSurface surface = surfaces[source];
+        if (surface.kind < 2) continue;
+        for (uint pixel = 0; pixel < PEEL_PIXELS; pixel++) {
+            float near_depth = depths[2 * source * PEEL_PIXELS + pixel];
+            float opaque_depth = peel_opaque_depth_reference(resources, pixel % PEEL_SIZE, background_depth);
+            if (near_depth == 0 || (surface.kind != 3 && near_depth <= opaque_depth)) continue;
+            FilterFogTerms camera = peel_camera_depth_reference(resources, near_depth);
+            transparency_fixtures::Color radiance = { surface.color.x, surface.color.y, surface.color.z };
+            radiance += surface.color.w * peel_legacy_connect_reference(
+                resources: resources,
+                near_depth: near_depth,
+                far_depth: opaque_depth,
+                radiance: background,
+            );
+            reference.observed[pixel] = surface.padding[0] == 2
+                ? reference.observed[pixel] + surface.coverage * camera.attenuation * radiance
+                : surface.coverage * (camera.attenuation * radiance + camera.scattering)
+                    + (1.0 - (double)surface.coverage) * reference.observed[pixel];
+        }
+    }
+}
+
+fn double check_peel_image_reference(PeelResources* resources, PeelImageReference* reference) @private {
+    Vec4* observed = (Vec4*)resources.readback.bytes.ptr;
+    double maximum_error;
+    for (uint pixel = 0; pixel < PEEL_PIXELS; pixel++) {
+        check_filter_image_color(observed[pixel], reference.observed[pixel]);
+        for (uint channel = 0; channel < 3; channel++) {
+            assert(math::is_finite(observed[pixel][channel]));
+            maximum_error = math::max(maximum_error,
+                math::abs((double)observed[pixel][channel] - reference.observed[pixel][channel]));
+        }
+    }
+    return maximum_error;
+}
+
 fn void check_peel_uniform_observed(
     PeelResources* resources,
     PeelSurface surface,
@@ -2088,5 +2370,222 @@ fn void test_attachment_fog_two_refractive_sheets_preserve_the_homogeneous_tail_
         }
         io::printfn("transparent raster fog cap=%s max_error=%s raw/anchor/camera=recorded", cap, maximum_error);
     }
+    check_validation(&fixture.renderer);
+}
+
+fn void test_attachment_fog_rough_offset_sheets_use_raw_pyramids_and_center_depth_anchors() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    PeelResources resources;
+    create_peel_resources(&fixture.renderer, &resources)!!;
+    defer destroy_peel_resources(&fixture.renderer, &resources);
+    create_peel_transport_resources(&fixture.renderer, &resources)!!;
+    PeelImageReference reference;
+    create_peel_image_reference(&reference);
+    defer destroy_peel_image_reference(&reference);
+    resources.transport_depth_edge = true;
+    resources.transport_environment = { 0.25f, 0.5f, 1, 0 };
+    PeelSurface[2] surfaces = {
+        {
+            .bounds = { -0.75f, -0.75f, 0.75f, 0.75f },
+            .color = { 0.0625f, 0.125f, 0.25f, 0.75f },
+            .depth = 1,
+            .coverage = 1,
+            .node = 1,
+            .plane = { 0, 0, 0.125f, 0 },
+            .padding = { 3, bitcast(0.5f, uint), bitcast(1.5f, uint) },
+        },
+        {
+            .bounds = { -0.75f, -0.75f, 0.75f, 0.75f },
+            .color = { 0.25f, 0.5f, 1, 0.625f },
+            .depth = 0.875f,
+            .coverage = 1,
+            .node = 2,
+            .plane = { 0, 0, -0.0625f, 0 },
+            .padding = { 3, bitcast(0.5f, uint), bitcast(1.5f, uint) },
+        },
+    };
+    uint[2] sorted = { 1, 0 };
+    uint[2] canonical = { 0, 1 };
+    Vec4[] retained = alloc::new_array(mem, Vec4, PEEL_PIXELS);
+    defer free(retained.ptr);
+    double maximum_error;
+    double combined_handoff_shift;
+    uint[2] media = { 0, 3 };
+    for (uint fallback = 0; fallback < 2; fallback++) {
+        surfaces[1].kind = fallback ? 2 : 0;
+        surfaces[1].coverage = fallback ? 0.375f : 1;
+        surfaces[1].color.w = fallback ? 0.25f : 0.625f;
+        surfaces[1].plane.z = fallback ? 0 : -0.0625f;
+        foreach (medium : media) {
+            resources.transport_medium = medium;
+            resources.transport_case = { .density = 0.125, .distances = { 1, 2, 4, 0 } };
+            for (uint cap = 2; cap > 0; cap--) {
+                run_peel_transport_fixture(
+                    renderer: &fixture.renderer,
+                    resources: &resources,
+                    surfaces: surfaces[..],
+                    sorted_order: sorted[..],
+                    canonical_order: canonical[..],
+                    cap: cap,
+                    background: { 0.8f, 0.6f, 0.4f, 1 },
+                    background_depth: 0.625f,
+                )!!;
+                evaluate_peel_two_sheet_reference(
+                    resources: &resources,
+                    reference: &reference,
+                    surfaces: surfaces[..],
+                    cap: cap,
+                    background: { 0.8, 0.6, 0.4 },
+                    background_depth: 0.625f,
+                );
+                maximum_error = math::max(maximum_error, check_peel_image_reference(&resources, &reference));
+                Vec4* actual = (Vec4*)resources.readback.bytes.ptr;
+                if (cap == 2) {
+                    mem::copy(retained.ptr, actual, (sz)(PEEL_PIXELS * Vec4::size));
+                } else if (medium == 3 && fallback == 0) {
+                    for (uint pixel = 0; pixel < PEEL_PIXELS; pixel++) {
+                        for (uint channel = 0; channel < 3; channel++) {
+                            combined_handoff_shift = math::max(combined_handoff_shift,
+                                math::abs((double)actual[pixel][channel] - retained[pixel][channel]));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    io::printfn("transparent raster rough/offset/depth-edge max_error=%s combined_tail_shift=%s",
+        maximum_error, combined_handoff_shift);
+    check_validation(&fixture.renderer);
+}
+
+fn void test_attachment_fog_offscreen_background_and_missing_environment_keep_the_background_convention() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    PeelResources resources;
+    create_peel_resources(&fixture.renderer, &resources)!!;
+    defer destroy_peel_resources(&fixture.renderer, &resources);
+    create_peel_transport_resources(&fixture.renderer, &resources)!!;
+    PeelImageReference reference;
+    create_peel_image_reference(&reference);
+    defer destroy_peel_image_reference(&reference);
+    PeelSurface[2] surfaces = {
+        {
+            .bounds = { -0.75f, -0.75f, 0.75f, 0.75f },
+            .color = { 0.0625f, 0.125f, 0.25f, 0.75f },
+            .depth = 1,
+            .coverage = 1,
+            .node = 1,
+            .plane = { 0, 0, 0.5f, 0 },
+            .padding = { 3, 0, 0 },
+        },
+        {
+            .bounds = { -0.75f, -0.75f, 0.75f, 0.75f },
+            .depth = 0.875f,
+            .coverage = 0,
+            .node = 2,
+        },
+    };
+    uint[2] sorted = { 1, 0 };
+    uint[2] canonical = { 0, 1 };
+    double maximum_error;
+    for (uint fog = 0; fog < 2; fog++) {
+        resources.transport_case = { .density = fog ? 0.125 : 0, .distances = { 1, 2, 4, 0 } };
+        for (uint environment = 0; environment < 2; environment++) {
+            resources.transport_environment = environment ? (Vec4){ 0.25f, 0.5f, 1, 0 } : (Vec4){};
+            run_peel_transport_fixture(
+                renderer: &fixture.renderer,
+                resources: &resources,
+                surfaces: surfaces[..],
+                sorted_order: sorted[..],
+                canonical_order: canonical[..],
+                cap: 2,
+                background: { 0.8f, 0.6f, 0.4f, 1 },
+                background_depth: 0,
+            )!!;
+            evaluate_peel_two_sheet_reference(
+                resources: &resources,
+                reference: &reference,
+                surfaces: surfaces[..],
+                cap: 2,
+                background: { 0.8, 0.6, 0.4 },
+                background_depth: 0,
+            );
+            maximum_error = math::max(maximum_error, check_peel_image_reference(&resources, &reference));
+        }
+    }
+    io::printfn("transparent raster offscreen/background environment present/missing max_error=%s", maximum_error);
+    check_validation(&fixture.renderer);
+}
+
+fn void test_attachment_fog_below_floor_stays_finite_with_the_existing_denominator() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    PeelResources resources;
+    create_peel_resources(&fixture.renderer, &resources)!!;
+    defer destroy_peel_resources(&fixture.renderer, &resources);
+    create_peel_transport_resources(&fixture.renderer, &resources)!!;
+    PeelImageReference reference;
+    create_peel_image_reference(&reference);
+    defer destroy_peel_image_reference(&reference);
+    resources.transport_case = { .density = 16, .distances = { 1, 2, 4, 0 } };
+    PeelSurface[2] surfaces = {
+        {
+            .bounds = { -0.75f, -0.75f, 0.75f, 0.75f },
+            .color = { 0, 0, 0, 1 },
+            .depth = 1,
+            .coverage = 1,
+            .node = 1,
+            .padding = { 3, 0, 0 },
+        },
+        {
+            .bounds = { -0.75f, -0.75f, 0.75f, 0.75f },
+            .color = { 0, 0, 0, 1 },
+            .depth = 0.875f,
+            .coverage = 1,
+            .node = 2,
+            .padding = { 3, 0, 0 },
+        },
+    };
+    uint[2] sorted = { 1, 0 };
+    uint[2] canonical = { 0, 1 };
+    run_peel_transport_fixture(
+        renderer: &fixture.renderer,
+        resources: &resources,
+        surfaces: surfaces[..],
+        sorted_order: sorted[..],
+        canonical_order: canonical[..],
+        cap: 2,
+        background: { 0.8f, 0.6f, 0.4f, 1 },
+        background_depth: 0.625f,
+    )!!;
+    evaluate_peel_two_sheet_reference(
+        resources: &resources,
+        reference: &reference,
+        surfaces: surfaces[..],
+        cap: 2,
+        background: { 0.8, 0.6, 0.4 },
+        background_depth: 0.625f,
+    );
+    double error = check_peel_image_reference(&resources, &reference);
+    FilterFogTerms far = peel_camera_reference(&resources, 4);
+    transparency_fixtures::Color ideal = far.attenuation * (transparency_fixtures::Color){ 0.8, 0.6, 0.4 }
+      + far.scattering;
+    Vec4* observed = (Vec4*)resources.readback.bytes.ptr;
+    double deviation;
+    Vec4* raw = (Vec4*)(resources.readback.bytes.ptr + PEEL_PLANE_BYTES * 4);
+    float* anchors = (float*)(resources.readback.bytes.ptr + PEEL_PLANE_BYTES * 8);
+    for (uint pixel = 0; pixel < PEEL_PIXELS; pixel++) {
+        assert(math::is_finite(anchors[pixel]));
+        for (uint channel = 0; channel < 3; channel++) {
+            assert(math::is_finite(raw[pixel][channel]));
+            deviation = math::max(deviation, math::abs((double)observed[pixel][channel] - ideal[channel]));
+        }
+    }
+    io::printfn("transparent raster below_floor denominator=%s oracle_error=%s no_layer_deviation=%s",
+        FILTER_FOG_DENOMINATOR_FLOOR, error, deviation);
     check_validation(&fixture.renderer);
 }
