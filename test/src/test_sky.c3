@@ -162,6 +162,45 @@ fn void test_height_fog_limit_is_continuous_at_the_horizon() @test {
     assert(limit_from(&clear, { 1, 0, 0 }) == 1);
 }
 
+fn void test_height_fog_zero_density_keeps_exact_identity_before_overflowing_height_and_rise() @test {
+    HeightFog clear = {
+        .density = 0,
+        .falloff = 0.25f,
+        .albedo = { 0.1f, 0.2f, 0.4f },
+        .max_distance = 10000,
+    };
+    assert(light::height_fog_valid(&clear));
+    Vec3[3] directions = { { 0, -1, 0 }, ((Vec3){ 1, -0.5f, 0 }).normalize(), { 0, 1, 0 } };
+    Vec3[2] origins = { { 2, 3, -1 }, { 0, -1024, 6 } };
+    foreach (base : (float[2]){ 0, 1024 }) foreach (origin : origins) foreach (direction : directions) {
+        foreach (distance : (float[3]){ 0, 1000, 10000 }) {
+            float optical_depth = light::height_fog_optical_depth(
+                fog: &clear,
+                base_height: base,
+                origin: origin,
+                direction: direction,
+                distance: distance,
+            );
+            float transmittance = light::height_fog_transmittance(
+                fog: &clear,
+                base_height: base,
+                origin: origin,
+                direction: direction,
+                distance: distance,
+            );
+            assert(math::is_finite(optical_depth) && optical_depth == 0);
+            assert(math::is_finite(transmittance) && transmittance == 1);
+        }
+        float limit = light::height_fog_limit_transmittance(
+            fog: &clear,
+            base_height: base,
+            origin: origin,
+            direction: direction,
+        );
+        assert(math::is_finite(limit) && limit == 1);
+    }
+}
+
 fn void test_sky_regeneration_follows_sun_altitude_and_air() @test {
     Atmosphere atmosphere = light::ATMOSPHERE_EARTH;
     float start = 30 * DEGREE;

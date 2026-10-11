@@ -30,16 +30,22 @@ float fog_rise_factor(float rise) {
 }
 
 float height_fog_density(SkyFogGpu sky, vec3 position) {
+    if (sky.fog_albedo_density.w == 0.0) return 0.0;
+
     return sky.fog_albedo_density.w * exp(-sky.fog_falloff * (position.y - sky.fog_base_height));
 }
 
 // Mirrored as height_fog_optical_depth in height_fog.c3.
 float height_fog_optical_depth(SkyFogGpu sky, vec3 origin, vec3 direction, float distance) {
+    if (sky.fog_albedo_density.w == 0.0) return 0.0;
+
     return height_fog_density(sky, origin) * distance * fog_rise_factor(sky.fog_falloff * direction.y * distance);
 }
 
 // Mirrored as height_fog_limit_transmittance in height_fog.c3.
 float height_fog_limit_transmittance(SkyFogGpu sky, vec3 origin, vec3 direction) {
+    if (sky.fog_albedo_density.w == 0.0) return 1.0;
+
     float density = height_fog_density(sky, origin);
     float rise = sky.fog_falloff * direction.y;
     if (rise > 0.0) return exp(-density / rise);

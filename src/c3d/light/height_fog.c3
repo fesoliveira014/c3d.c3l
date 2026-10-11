@@ -71,6 +71,8 @@ fn float height_fog_optical_depth(
     Vec3 direction,
     float distance,
 ) {
+    if (fog.density == 0) return 0;
+
     float density = fog.density * math::exp(-fog.falloff * (origin.y - base_height));
     return density * distance * fog_rise_factor(fog.falloff * direction.y * distance);
 }
@@ -114,6 +116,8 @@ fn float height_fog_limit_transmittance(
     Vec3 origin,
     Vec3 direction,
 ) {
+    if (fog.density == 0) return 1;
+
     float density = fog.density * math::exp(-fog.falloff * (origin.y - base_height));
     float rise = fog.falloff * direction.y;
     if (rise > 0) return math::exp(-density / rise);

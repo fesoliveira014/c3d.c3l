@@ -12,11 +12,18 @@ const uint RECEIVER_CAPTURE = 0u;
 const uint RECEIVER_CONSUMED_WORDS = 1u;
 const uint RECEIVER_COMPOSED_COLOR = 2u;
 const uint RECEIVER_FLOAT_COLOR = 3u;
+const uint RECEIVER_DEFERRED_CONSUMED_WORDS = 4u;
 const uint RECEIVER_DIRECTIONAL_ENVIRONMENT = 1u;
 
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer ReceiverRoot {
     uint64_t draw;
-    uint words[7];
+    uint word0;
+    uint word1;
+    uint word2;
+    uint word3;
+    uint word4;
+    uint word5;
+    uint word6;
     uint source_depth;
     uint consumer_keys[2];
     uint consumer_depth;
@@ -39,62 +46,80 @@ struct ReceiverInput {
     float strength;
 };
 
-void receiver_pack(ReceiverInput input, uvec2 key, out uint words[7]) {
-    words[0] = packUnorm2x16(encode_octahedral(input.surface.normal) * 0.5 + 0.5);
-    words[1] = packUnorm2x16(encode_octahedral(input.tangent) * 0.5 + 0.5);
-    words[2] = packUnorm2x16(input.surface.reflectance.rg);
-    words[3] = packUnorm2x16(vec2(input.surface.reflectance.b, input.surface.grazing_reflectance.r));
-    words[4] = packUnorm2x16(vec2(input.roughness, input.strength));
+void receiver_pack(ReceiverInput receiver_value, uvec2 key, out uint words[7]) {
+    words[0] = packUnorm2x16(encode_octahedral(receiver_value.surface.normal) * 0.5 + 0.5);
+    words[1] = packUnorm2x16(encode_octahedral(receiver_value.tangent) * 0.5 + 0.5);
+    words[2] = packUnorm2x16(receiver_value.surface.reflectance.rg);
+    words[3] = packUnorm2x16(vec2(receiver_value.surface.reflectance.b, receiver_value.surface.grazing_reflectance.r));
+    words[4] = packUnorm2x16(vec2(receiver_value.roughness, receiver_value.strength));
     words[5] = key.x;
     words[6] = key.y;
 }
 
+uint receiver_texture(ReceiverRoot root, uint word) {
+    switch (word) {
+        case 0u: return root.word0;
+        case 1u: return root.word1;
+        case 2u: return root.word2;
+        case 3u: return root.word3;
+        case 4u: return root.word4;
+        case 5u: return root.word5;
+        default: return root.word6;
+    }
+}
+
 void receiver_load(ReceiverRoot root, ivec2 pixel, out uint words[7]) {
     for (uint word = 0u; word < RECEIVER_WORD_COUNT; word++) {
-        words[word] = gpu_fetch_uint(root.words[word], pixel, 0);
+        words[word] = gpu_fetch_uint(receiver_texture(root, word), pixel, 0);
     }
 }
 
 ReceiverInput receiver_decode(uint words[7], vec3 view_direction) {
-    ReceiverInput input;
+    ReceiverInput receiver_value;
     vec3 normal = decode_octahedral(unpackUnorm2x16(words[0]) * 2.0 - 1.0);
-    input.tangent = decode_octahedral(unpackUnorm2x16(words[1]) * 2.0 - 1.0);
+    receiver_value.tangent = decode_octahedral(unpackUnorm2x16(words[1]) * 2.0 - 1.0);
     vec2 reflectance = unpackUnorm2x16(words[2]);
     vec2 blue_grazing = unpackUnorm2x16(words[3]);
     vec2 roughness_strength = unpackUnorm2x16(words[4]);
-    input.roughness = roughness_strength.x;
-    input.strength = roughness_strength.y;
-    input.surface = prepare_surface(
-        vec3(0.0), 0.0, input.roughness, normal, view_direction,
+    receiver_value.roughness = roughness_strength.x;
+    receiver_value.strength = roughness_strength.y;
+    receiver_value.surface = prepare_surface(
+        vec3(0.0), 0.0, receiver_value.roughness, normal, view_direction,
         vec3(reflectance, blue_grazing.x), vec3(blue_grazing.y)
     );
-    if (input.strength > 0.0) {
-        apply_anisotropy(input.surface, input.tangent, cross(normal, input.tangent), input.strength);
+    if (receiver_value.strength > 0.0) {
+        apply_anisotropy(
+            receiver_value.surface,
+            receiver_value.tangent,
+            cross(normal, receiver_value.tangent),
+            receiver_value.strength
+        );
     }
-    return input;
+    return receiver_value;
 }
 
-vec3 receiver_base(FrameRoot frame, ReceiverRoot root, ReceiverInput input, vec3 position) {
+vec3 receiver_base(FrameRoot frame, ReceiverRoot root, ReceiverInput receiver_value, vec3 position) {
     vec3 diffuse;
     vec3 specular;
     ReflectionSelection selection;
     selection.count = 0u;
+    selection.global_weight = 1.0;
     evaluate_environment_lobes(
-        frame, selection, position, input.surface, input.roughness,
+        frame, selection, position, receiver_value.surface, receiver_value.roughness,
         1.0, root.ambient_occlusion, vec4(0.0), diffuse, specular
     );
     return specular;
 }
 
-vec3 receiver_compose(FrameRoot frame, ReceiverRoot root, ReceiverInput input, vec3 position, bool matches) {
-    vec3 base = receiver_base(frame, root, input, position);
+vec3 receiver_compose(FrameRoot frame, ReceiverRoot root, ReceiverInput receiver_value, vec3 position, bool matches) {
+    vec3 base = receiver_base(frame, root, receiver_value, position);
     uint lut;
     uint sampler_index;
     environment_tables(frame, lut, sampler_index);
-    float perceptual = max(input.roughness, MIN_PERCEPTUAL_ROUGHNESS);
+    float perceptual = max(receiver_value.roughness, MIN_PERCEPTUAL_ROUGHNESS);
     vec3 reflected = root.reflected_radiance.rgb
-        * environment_brdf_weight(lut, sampler_index, input.surface, perceptual)
-        * specular_occlusion(input.surface.normal_view, root.ambient_occlusion, perceptual);
+        * environment_brdf_weight(lut, sampler_index, receiver_value.surface, perceptual)
+        * specular_occlusion(receiver_value.surface.normal_view, root.ambient_occlusion, perceptual);
     return root.other_lobes.rgb + (matches ? mix(base, reflected, root.fade) : base);
 }
 
@@ -157,11 +182,11 @@ ReceiverInput receiver_mapped_input(
             strength *= mapped.b;
         }
     }
-    ReceiverInput input;
-    input.roughness = material_sample.roughness;
-    input.strength = strength;
-    input.surface = prepare_surface(
-        material_sample.base_color.rgb, material_sample.metallic, input.roughness,
+    ReceiverInput receiver_value;
+    receiver_value.roughness = material_sample.roughness;
+    receiver_value.strength = strength;
+    receiver_value.surface = prepare_surface(
+        material_sample.base_color.rgb, material_sample.metallic, receiver_value.roughness,
         material_sample.normal, material_sample.view_direction, dielectric, vec3(weight)
     );
     vec3 frame_tangent;
@@ -173,18 +198,24 @@ ReceiverInput receiver_mapped_input(
         );
     }
     if (!surface_tangent_frame(normalize(vertex_normal), authored_tangent, frame_tangent, frame_bitangent)) {
-        input.strength = 0.0;
+        receiver_value.strength = 0.0;
         strength = 0.0;
-        frame_tangent = normalize(cross(abs(input.surface.normal.z) < 0.9 ? vec3(0,0,1) : vec3(0,1,0), input.surface.normal));
-        frame_bitangent = cross(input.surface.normal, frame_tangent);
+        vec3 up = abs(receiver_value.surface.normal.z) < 0.9 ? vec3(0, 0, 1) : vec3(0, 1, 0);
+        frame_tangent = normalize(cross(up, receiver_value.surface.normal));
+        frame_bitangent = cross(receiver_value.surface.normal, frame_tangent);
     }
     vec3 direction = frame_tangent * rotation.x + frame_bitangent * rotation.y;
-    direction -= input.surface.normal * dot(input.surface.normal, direction);
-    input.tangent = normalize(direction);
+    direction -= receiver_value.surface.normal * dot(receiver_value.surface.normal, direction);
+    receiver_value.tangent = normalize(direction);
     if (strength > 0.0) {
-        apply_anisotropy(input.surface, input.tangent, cross(input.surface.normal, input.tangent), strength);
+        apply_anisotropy(
+            receiver_value.surface,
+            receiver_value.tangent,
+            cross(receiver_value.surface.normal, receiver_value.tangent),
+            strength
+        );
     }
-    return input;
+    return receiver_value;
 }
 #endif
 

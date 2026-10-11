@@ -19,6 +19,7 @@ const uint TRACE_SEGMENT_MULTIPLE_SIZE @private = shader::SKY_MULTI_SCATTERING_S
 const uint TRACE_SEGMENT_REFERENCE_LOW @private = 2048;
 const uint TRACE_SEGMENT_REFERENCE_HIGH @private = 4096;
 const uint TRACE_SEGMENT_CASE_CAPACITY @private = 1536;
+const uint TRACE_SEGMENT_CASE_COUNT @private = 2854;
 const double TRACE_SEGMENT_ATMOSPHERE_ABSOLUTE @private = 0.0005;
 const double TRACE_SEGMENT_ATMOSPHERE_RELATIVE @private = 0.01;
 const double TRACE_SEGMENT_HEIGHT_ABSOLUTE @private = 2e-5;
@@ -289,6 +290,8 @@ fn uint fill_trace_segment_cases(TraceSegmentCase[] cases, bool height_cases) @p
     uint count;
     foreach (origin : TRACE_SEGMENT_ORIGINS) foreach (direction : directions) {
         foreach (distance : TRACE_SEGMENT_LENGTHS) foreach (sun_y : (float[2]){ 1, -1 }) {
+            if (distance == 100000 && direction.y != 0) continue;
+
             cases[count++] = {
                 .origin = origin,
                 .direction = direction,
@@ -319,6 +322,8 @@ fn uint fill_trace_segment_cases(TraceSegmentCase[] cases, bool height_cases) @p
                 if (!height_cases) continue;
 
                 foreach (distance : TRACE_SEGMENT_LENGTHS) {
+                    if (distance == 100000 && direction.y != 0) continue;
+
                     cases[count++] = {
                         .origin = origin,
                         .direction = direction,
@@ -389,7 +394,6 @@ fn bool trace_segment_component_matches(
     double absolute,
     double relative,
     bool finite_only,
-    bool extra,
 ) @private {
     uint worst_channel;
     double worst_ratio = -1;
@@ -414,7 +418,7 @@ fn bool trace_segment_component_matches(
     }
     bool matches = actual_finite && (finite_only || (reference_finite && worst_ratio <= 1));
     if (!matches) {
-        io::printfn("segment_error,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s",
+        io::printfn("segment_error,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s",
             variant,
             row,
             quantity,
@@ -425,7 +429,6 @@ fn bool trace_segment_component_matches(
             worst_bound,
             actual_finite,
             reference_finite,
-            extra ? "extra" : "required",
         );
     }
     return matches;
@@ -471,16 +474,11 @@ fn void test_trace_segment_world_connections_match_converged_tables_and_height_l
     TraceSegmentInput[] inputs = mem::new_array(TraceSegmentInput, TRACE_SEGMENT_CASE_CAPACITY);
     defer free(inputs);
     uint mismatches;
-    uint extra_mismatches;
     uint unconverged;
-    uint extra_unconverged;
     usz checked;
-    usz extra_checked;
     double max_convergence;
     double max_atmosphere_error;
-    double max_extra_atmosphere_error;
-    io::printfn("segment_error,variant,row,quantity,channel,actual,ref,error,bound,finite,ref_finite,scope");
-    io::printfn("world segment scope: non-horizon 100 km rows are extra characterization; all rows remain.");
+    io::printfn("segment_error,variant,row,quantity,channel,actual,ref,error,bound,finite,ref_finite");
     for (uint variant = 0; variant < 5; variant++) {
         Atmosphere atmosphere = light::ATMOSPHERE_EARTH;
         switch (variant) {
@@ -560,7 +558,6 @@ fn void test_trace_segment_world_connections_match_converged_tables_and_height_l
         defer free(actual_color);
         Vec4* rows = (Vec4*)output.bytes.ptr;
         foreach (index, entry : cases[:count]) {
-            bool extra = entry.distance == 100000 && entry.direction.y != 0;
             TraceSegmentTerms low = trace_segment_atmosphere_reference(
                 entry: entry,
                 atmosphere: atmosphere,
@@ -593,20 +590,12 @@ fn void test_trace_segment_world_connections_match_converged_tables_and_height_l
                 double scattering_bound = TRACE_SEGMENT_ATMOSPHERE_ABSOLUTE
                   + TRACE_SEGMENT_ATMOSPHERE_RELATIVE * math::abs(high.scattering[channel]);
                 if (transmittance_change > attenuation_bound / 4 || scattering_change > scattering_bound / 4) {
-                    if (extra) {
-                        extra_unconverged++;
-                    } else {
-                        unconverged++;
-                    }
+                    unconverged++;
                 }
                 if (!entry.quotient) {
                     double error = math::max(math::abs((double)actual[0][channel] - high.transmittance[channel]),
                         math::abs((double)actual[1][channel] - high.scattering[channel]));
-                    if (extra) {
-                        max_extra_atmosphere_error = math::max(max_extra_atmosphere_error, error);
-                    } else {
-                        max_atmosphere_error = math::max(max_atmosphere_error, error);
-                    }
+                    max_atmosphere_error = math::max(max_atmosphere_error, error);
                 }
             }
             TraceSegmentVector[9] expected_values = {
@@ -640,7 +629,6 @@ fn void test_trace_segment_world_connections_match_converged_tables_and_height_l
                     absolute: absolute_bounds[quantity],
                     relative: relative_bounds[quantity],
                     finite_only: entry.quotient,
-                    extra: extra,
                 );
             }
             if (!matches) {
@@ -671,11 +659,7 @@ fn void test_trace_segment_world_connections_match_converged_tables_and_height_l
                     entry.atmosphere,
                     entry.height,
                 );
-                if (extra) {
-                    extra_mismatches++;
-                } else {
-                    mismatches++;
-                }
+                mismatches++;
             }
             if (entry.quotient) {
                 assert(actual[1].x < 0 && math::is_finite(actual[1].x),
@@ -684,7 +668,6 @@ fn void test_trace_segment_world_connections_match_converged_tables_and_height_l
                     actual[1].x, math::abs((double)actual[1].x + 250000));
             }
             checked++;
-            if (extra) extra_checked++;
         }
         for (uint control = count - 2; control < count; control++) {
             for (uint row = 0; row < TRACE_SEGMENT_ROWS; row++) {
@@ -698,10 +681,9 @@ fn void test_trace_segment_world_connections_match_converged_tables_and_height_l
         io::printfn("world segment variant=%s rows=%s converged_delta_max=%s required_native_error_max=%s",
             variant, count, max_convergence, max_atmosphere_error);
     }
-    io::printfn("world segments checked=%s mismatches=%s unconverged=%s reference_steps=%s/%s",
+    io::printfn("world segment required rows=%s mismatches=%s unconverged=%s reference_steps=%s/%s",
         checked, mismatches, unconverged, TRACE_SEGMENT_REFERENCE_LOW, TRACE_SEGMENT_REFERENCE_HIGH);
-    io::printfn("world segment extra rows=%s mismatches=%s unconverged=%s atmosphere_error_max=%s",
-        extra_checked, extra_mismatches, extra_unconverged, max_extra_atmosphere_error);
+    assert(checked == TRACE_SEGMENT_CASE_COUNT, "The world-segment case inventory changed.");
     assert(unconverged == 0, "The independently refined double segment reference did not converge.");
     assert(mismatches == 0, "The approved 64-step world-segment bounds failed.");
     check_validation(renderer);

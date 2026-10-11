@@ -719,6 +719,26 @@ fn void test_pipeline_key_hash_and_equality_include_shader() @test {
     assert(!first.equals(gradient_key()));
 }
 
+fn void test_pipeline_cache_distinguishes_each_of_seven_color_attachments() @test {
+    render::PipelineCache cache = render::create_pipeline_cache(mem, shader::BUILTIN_REGISTRY);
+    defer cache.pipelines.free();
+    defer cache.rejected.free();
+    render::PipelineKey original = gradient_key();
+    original.color_count = 7;
+    for (usz slot = 0; slot < render::KEY_COLOR_TARGETS; slot++) original.color_formats[slot] = gpu::Format.R32_UINT;
+    render::PipelineKey sixth = original;
+    sixth.color_formats[5] = gpu::Format.R32_FLOAT;
+    render::PipelineKey seventh = original;
+    seventh.color_formats[6] = gpu::Format.R32_FLOAT;
+    assert(!original.equals(sixth) && !original.equals(seventh) && !sixth.equals(seventh));
+    assert(original.hash() != sixth.hash() && original.hash() != seventh.hash());
+    cache.pipelines.set(original, {});
+    cache.pipelines.set(sixth, {});
+    cache.pipelines.set(seventh, {});
+    assert(cache.pipelines.len() == 3);
+    assert(cache.pipelines.has_key(original) && cache.pipelines.has_key(sixth) && cache.pipelines.has_key(seventh));
+}
+
 fn void test_pipeline_cache_keys_of_selects_id_and_revision() @test {
     render::PipelineCache cache = render::create_pipeline_cache(mem, shader::BUILTIN_REGISTRY);
     defer cache.pipelines.free();

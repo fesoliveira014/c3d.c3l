@@ -7,7 +7,7 @@ import gpu;
 import std::math;
 
 $assert LightingResolveRoot::size == 48;
-$assert GBUFFER_CHANNEL_COUNT == KEY_COLOR_TARGETS;
+$assert GBUFFER_CHANNEL_COUNT <= KEY_COLOR_TARGETS;
 
 fn ShaderVariant gbuffer_fragment(Material* material) @private {
     switch (material.kind) {
@@ -21,15 +21,16 @@ fn ShaderVariant gbuffer_fragment(Material* material) @private {
 }
 
 fn PipelineKey gbuffer_pipeline_key(ShaderVariant vertex, ShaderVariant fragment, gpu::PolygonMode polygon) @private {
-    return {
-        .vertex        = vertex,
-        .fragment      = fragment,
-        .color_formats = GBUFFER_FORMATS,
-        .color_count   = GBUFFER_CHANNEL_COUNT,
-        .depth_format  = DEPTH_FORMAT,
-        .samples       = gpu::SampleCount.ONE,
-        .polygon       = polygon,
+    PipelineKey key = {
+        .vertex = vertex,
+        .fragment = fragment,
+        .color_count = GBUFFER_CHANNEL_COUNT,
+        .depth_format = DEPTH_FORMAT,
+        .samples = gpu::SampleCount.ONE,
+        .polygon = polygon,
     };
+    key.color_formats[:GBUFFER_CHANNEL_COUNT] = GBUFFER_FORMATS[..];
+    return key;
 }
 
 fn gpu::PipelineHandle? gbuffer_pipeline_for(Renderer* renderer, Material* material, ShaderVariant vertex) @private {
