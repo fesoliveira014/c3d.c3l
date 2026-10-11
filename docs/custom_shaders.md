@@ -206,7 +206,7 @@ A custom or package stage starts with the prelude, `generated/shader_abi.glsl` (
 | `noise.glsl` | `interleaved_gradient_noise`, `pcg_hash`, `hash_unit` |
 | `texture_fetch.glsl` | `fetch_texture_2d`, `texture_extent`, `sample_texture_2d_lod` |
 | `gbuffer.glsl` | `reconstruct_world_position`, `view_distance`, `BACKGROUND_VIEW_DISTANCE`, `encode_octahedral`, `decode_octahedral` |
-| `brdf.glsl` | `StandardSurface`, `prepare_surface`, `prepare_standard_surface`, `apply_anisotropy`, `evaluate_standard_lobes`, `evaluate_standard_brdf`, `fresnel_schlick` |
+| `brdf.glsl` | `StandardSurface`, `prepare_surface`, `prepare_standard_surface`, `apply_anisotropy`, `apply_surface_anisotropy`, `evaluate_standard_lobes`, `evaluate_standard_brdf`, `fresnel_schlick` |
 | `lights.glsl` | `LightArray`, `LightList`, `LightSample`, `select_lights`, `flat_lights`, `selected_light_index`, `sample_light`, `light_casts_shadow`, `standard_view_direction`, `evaluate_standard_light` |
 | `shadows.glsl` | `shadow_visibility`, `shadow_transmittance` |
 | `ibl.glsl` | `frame_has_indirect`, `indirect_diffuse_irradiance`, `evaluate_environment` (both), `evaluate_environment_lobes` (both; one takes a `ReflectionSelection`), `environment_lobe_radiance`, `environment_tables` |
