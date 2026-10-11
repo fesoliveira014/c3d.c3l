@@ -856,7 +856,6 @@ fn TextureMipChain? create_fidelity_texture_mips(
             }
 
             if (collector) {
-                state.reserved += state.texels;
                 finish_texture_coverage_pass(&state);
 
                 usz layer_bytes = material::texture_mip_bytes(desc, mip)!;
@@ -871,7 +870,6 @@ fn TextureMipChain? create_fidelity_texture_mips(
                         state: &state,
                         row_count: rows,
                     );
-                    state.reserved += (ulong)state.width * rows;
                     state.row += rows;
 
                     if (state.row == height) finish_texture_coverage_pass(&state);

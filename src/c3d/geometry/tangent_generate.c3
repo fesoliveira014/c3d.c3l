@@ -317,9 +317,6 @@ fn MikkTangent[]? mikk_generate_full(Allocator allocator, MikkFullMesh source) @
             int member_count = 0;
 
             foreach (other : group.faces[:(usz)group.count]) {
-                int corner = mikk_vertex_corner(good[other], group.vertex);
-                if (good[other].groups[corner] != group_index) continue;
-
                 MikkVector other_tangent = mikk_project_normal(good[other].tangent, normal);
                 MikkVector other_bitangent = mikk_project_normal(good[other].bitangent, normal);
 

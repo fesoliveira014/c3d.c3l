@@ -22,17 +22,6 @@ fn void? check_tangent_stream(Geometry* geometry) {
 }
 
 <*
- Validate authored tangents and normalize only their handedness signs.
- @param [&inout] geometry : "XYZ values are preserved."
- @return? c3d::INVALID_ARGUMENT
-*>
-fn void? normalize_tangent_signs(Geometry* geometry) {
-    check_tangent_stream(geometry)!;
-
-    foreach (&tangent : geometry.tangents) tangent.w = tangent.w < 0 ? -1 : 1;
-}
-
-<*
  Derive tangents from raw UVs and split conflicting source vertices.
  @param [&in] source : "Unchanged; old tangents are discarded."
  @return "Complete geometry whose arrays the allocator owns."
@@ -55,14 +44,13 @@ fn Geometry? create_tangent_geometry(Allocator allocator, Geometry* source, uint
         vertices[index] = {
             .position = { .x = position.x, .y = position.y, .z = position.z },
             .normal = { .x = normal.x, .y = normal.y, .z = normal.z },
-            .uv0 = { uv.x, uv.y },
-            .uv1 = { uv.x, uv.y },
+            .uv = { uv.x, uv.y },
         };
     }
 
     foreach (corner, &index : input_indices) *index = source.indices.len ? source.indices[corner] : (uint)corner;
 
-    MikkFullMesh full = { .vertices = vertices, .indices = input_indices, .uv_set = uv_set };
+    MikkFullMesh full = { .vertices = vertices, .indices = input_indices };
 
     MikkTangent[] corners = mikk_generate_full(allocator, full)!;
     defer alloc::free(allocator, corners);

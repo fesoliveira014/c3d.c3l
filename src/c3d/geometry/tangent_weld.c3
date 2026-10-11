@@ -42,7 +42,7 @@ fn MikkVector mikk_indexed_normal(MikkFullMesh source, int index) @private {
 }
 
 fn MikkVector mikk_indexed_uv(MikkFullMesh source, int index) @private {
-    float[2] uv = mikk_selected_uv(mikk_indexed_vertex(source, index), source.uv_set);
+    float[2] uv = mikk_indexed_vertex(source, index).uv;
 
     return { .x = uv[0], .y = uv[1], .z = 1 };
 }
@@ -101,7 +101,7 @@ fn void mikk_merge_vertices_fast(
 
                 for (int earlier = left; earlier < i; earlier++) {
                     int candidate = temporary[earlier].index;
-                    if (mikk_equal_vertex(vertex, mikk_indexed_vertex(source, indices[candidate]), source.uv_set)) {
+                    if (mikk_equal_vertex(vertex, mikk_indexed_vertex(source, indices[candidate]))) {
                         indices[destination] = indices[candidate];
                         break;
                     }

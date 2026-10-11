@@ -12,6 +12,13 @@ import std::math;
 const char[] CURATED_INPUT @local = $embed("../fixtures/tangent_space/curated.input.bin");
 const char[] CURATED_EXPECTED @local = $embed("../fixtures/tangent_space/curated.expected.bin");
 
+struct CuratedVertex @local {
+    float[3] position;
+    float[3] normal;
+    float[2] uv0;
+    float[2] uv1;
+}
+
 struct TangentFaultAllocator (Allocator) @local {
     Allocator allocator;
     int attempt;
@@ -62,14 +69,14 @@ fn uint take_u32(char[] bytes, usz* offset) @local {
     return value;
 }
 
-fn MikkFullMesh take_mesh(char[] bytes, usz* offset) @local {
+fn Geometry take_mesh(char[] bytes, usz* offset, uint* uv_set) @local {
     uint vertex_count = take_u32(bytes, offset);
     uint face_count = take_u32(bytes, offset);
-    uint uv_set = take_u32(bytes, offset);
+    *uv_set = take_u32(bytes, offset);
 
-    MikkVertex[] vertices = alloc::new_array(tmem, MikkVertex, vertex_count);
-    mem::copy(vertices.ptr, &bytes[*offset], vertices.len * MikkVertex::size);
-    *offset += vertices.len * MikkVertex::size;
+    CuratedVertex[] vertices = alloc::new_array(tmem, CuratedVertex, vertex_count);
+    mem::copy(vertices.ptr, &bytes[*offset], vertices.len * CuratedVertex::size);
+    *offset += vertices.len * CuratedVertex::size;
 
     for (uint face = 0; face < face_count; face++) assert(take_u32(bytes, offset) == 3);
 
@@ -77,7 +84,40 @@ fn MikkFullMesh take_mesh(char[] bytes, usz* offset) @local {
     mem::copy(indices.ptr, &bytes[*offset], indices.len * uint::size);
     *offset += indices.len * uint::size;
 
-    return { .vertices = vertices, .indices = indices, .uv_set = uv_set };
+    Geometry source = {
+        .positions = alloc::new_array(tmem, Vec3, vertex_count),
+        .normals = alloc::new_array(tmem, Vec3, vertex_count),
+        .uv0 = alloc::new_array(tmem, Vec2, vertex_count),
+        .uv1 = alloc::new_array(tmem, Vec2, vertex_count),
+        .indices = indices,
+    };
+
+    foreach (index, vertex : vertices) {
+        source.positions[index] = { vertex.position[0], vertex.position[1], vertex.position[2] };
+        source.normals[index] = { vertex.normal[0], vertex.normal[1], vertex.normal[2] };
+        source.uv0[index] = { vertex.uv0[0], vertex.uv0[1] };
+        source.uv1[index] = { vertex.uv1[0], vertex.uv1[1] };
+    }
+
+    source.finalize();
+
+    return source;
+}
+
+fn MikkFullMesh mikk_mesh(Geometry* source, uint uv_set) @local {
+    MikkVertex[] vertices = alloc::new_array(tmem, MikkVertex, source.positions.len);
+    Vec2[] selected = uv_set == 0 ? source.uv0 : source.uv1;
+
+    foreach (index, position : source.positions) {
+        Vec3 normal = source.normals[index];
+        vertices[index] = {
+            .position = { .x = position.x, .y = position.y, .z = position.z },
+            .normal = { .x = normal.x, .y = normal.y, .z = normal.z },
+            .uv = { selected[index].x, selected[index].y },
+        };
+    }
+
+    return { .vertices = vertices, .indices = source.indices };
 }
 
 fn MikkTangent[] take_expected(char[] bytes, usz* offset) @local {
@@ -95,27 +135,6 @@ fn void compare_tangent(MikkTangent actual, MikkTangent expected) @local {
     assert(actual.sign == expected.sign && geometry::mikk_equal_vectors(actual.direction, expected.direction));
 }
 
-fn Geometry mesh_geometry(MikkFullMesh mesh) @local {
-    Geometry source = {
-        .positions = alloc::new_array(tmem, Vec3, mesh.vertices.len),
-        .normals = alloc::new_array(tmem, Vec3, mesh.vertices.len),
-        .uv0 = alloc::new_array(tmem, Vec2, mesh.vertices.len),
-        .uv1 = alloc::new_array(tmem, Vec2, mesh.vertices.len),
-        .indices = mesh.indices,
-    };
-
-    foreach (index, vertex : mesh.vertices) {
-        source.positions[index] = { vertex.position.x, vertex.position.y, vertex.position.z };
-        source.normals[index] = { vertex.normal.x, vertex.normal.y, vertex.normal.z };
-        source.uv0[index] = { vertex.uv0[0], vertex.uv0[1] };
-        source.uv1[index] = { vertex.uv1[0], vertex.uv1[1] };
-    }
-
-    source.finalize();
-
-    return source;
-}
-
 fn void test_pinned_tangents_match_curated_corpus() @test {
     @pool() {
         usz input_offset = 0;
@@ -130,17 +149,16 @@ fn void test_pinned_tangents_match_curated_corpus() @test {
         assert(take_u32(CURATED_EXPECTED, &expected_offset) == count);
 
         for (uint case_index = 0; case_index < count; case_index++) {
-            MikkFullMesh mesh = take_mesh(CURATED_INPUT, &input_offset);
+            uint uv_set;
+            Geometry source = take_mesh(CURATED_INPUT, &input_offset, &uv_set);
             MikkTangent[] expected = take_expected(CURATED_EXPECTED, &expected_offset);
-            MikkTangent[] actual = geometry::mikk_generate_full(tmem, mesh)!!;
+            MikkTangent[] actual = geometry::mikk_generate_full(tmem, mikk_mesh(&source, uv_set))!!;
 
             assert(actual.len == expected.len);
 
             foreach (corner, tangent : actual) compare_tangent(tangent, expected[corner]);
 
-            Geometry source = mesh_geometry(mesh);
-
-            Geometry generated = geometry::create_tangent_geometry(mem, &source, mesh.uv_set)!!;
+            Geometry generated = geometry::create_tangent_geometry(mem, &source, uv_set)!!;
             defer asset::free_geometry(mem, &generated);
 
             foreach (corner, index : generated.indices) {
@@ -437,16 +455,15 @@ fn void test_generated_geometry_transfers_to_the_store_and_regenerates_explicitl
 fn void test_generated_zero_directions_publish() @test {
     @pool() {
         usz input_offset = 8;
-        MikkFullMesh mesh;
+        uint uv_set;
+        Geometry source;
 
-        for (uint index = 0; index <= 6; index++) mesh = take_mesh(CURATED_INPUT, &input_offset);
-
-        Geometry source = mesh_geometry(mesh);
+        for (uint index = 0; index <= 6; index++) source = take_mesh(CURATED_INPUT, &input_offset, &uv_set);
 
         AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
         defer asset::destroy_asset_store(&assets);
 
-        Geometry generated = geometry::create_tangent_geometry(mem, &source, mesh.uv_set)!!;
+        Geometry generated = geometry::create_tangent_geometry(mem, &source, uv_set)!!;
         bool zero_found = false;
 
         foreach (tangent : generated.tangents) {

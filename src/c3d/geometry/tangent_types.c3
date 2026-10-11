@@ -43,8 +43,7 @@ struct MikkVector @private {
 struct MikkVertex @private {
     MikkVector position;
     MikkVector normal;
-    float[2] uv0;
-    float[2] uv1;
+    float[2] uv;
 }
 
 struct MikkTangent @private {
@@ -53,7 +52,7 @@ struct MikkTangent @private {
 }
 
 $assert MikkTangent::size == 16;
-$assert MikkVertex::size == 40;
+$assert MikkVertex::size == 32;
 
 struct MikkTriangle @private {
     int[3] vertices;
@@ -77,7 +76,6 @@ struct MikkGroup @private {
 struct MikkFullMesh @private {
     MikkVertex[] vertices;
     uint[] indices;
-    uint uv_set;
 }
 
 struct MikkSpace @private {
@@ -146,16 +144,9 @@ fn bool mikk_equal_vectors(MikkVector left, MikkVector right) @private {
     return left.x == right.x && left.y == right.y && left.z == right.z;
 }
 
-fn float[2] mikk_selected_uv(MikkVertex vertex, uint uv_set) @private {
-    return uv_set == 0 ? vertex.uv0 : vertex.uv1;
-}
-
-fn bool mikk_equal_vertex(MikkVertex left, MikkVertex right, uint uv_set) @private {
-    float[2] left_uv = mikk_selected_uv(left, uv_set);
-    float[2] right_uv = mikk_selected_uv(right, uv_set);
-
+fn bool mikk_equal_vertex(MikkVertex left, MikkVertex right) @private {
     return mikk_equal_vectors(left.position, right.position) && mikk_equal_vectors(left.normal, right.normal)
-      && left_uv[0] == right_uv[0] && left_uv[1] == right_uv[1];
+      && left.uv[0] == right.uv[0] && left.uv[1] == right.uv[1];
 }
 
 macro @tangent_array(Allocator allocator, $Type, usz count) @private {

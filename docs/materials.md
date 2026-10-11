@@ -288,9 +288,7 @@ arrays the allocator owns. Conflicting corner tangents split vertices and remap
 every vertex stream, including skin influences and morph deltas. Lookup
 transforms do not affect generation. `AssetStore.add_geometry_owned` transfers
 the result; `regenerate_geometry_tangents` explicitly regenerates a stored
-geometry.
-`Geometry.compute_tangents` remains available as a deprecated helper without a
-MikkTSpace guarantee. The renderer never generates tangents implicitly.
+geometry. The renderer never generates tangents implicitly.
 `Geometry.transform` updates tangent handedness when
 baking a reflection, while retaining its existing winding contract: call
 `flip_winding` explicitly when the reflected geometry needs its winding
