@@ -41,8 +41,7 @@ struct PixelRect {
 }
 
 <*
- How a view composes premultiplied-alpha blended surfaces.
- WEIGHTED is order independent and approximate.
+ How a view composes premultiplied-alpha blended surfaces; WEIGHTED is order independent and approximate.
 *>
 enum TransparencyMode : char {
     SORTED,

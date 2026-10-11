@@ -1,20 +1,10 @@
 #ifndef C3D_WEIGHTED_BLEND_GLSL
 #define C3D_WEIGHTED_BLEND_GLSL
 
-// Straight HDR color is clamped here before weighting; with WEIGHT_SCALE one fragment adds at most about 3000 to an
-// RGBA16F channel (maximum 65504), so about twenty full-weight fragments fit. Brighter surfaces lose the excess.
-const float WEIGHTED_COLOR_MAX = 64.0;
-
-// Keeps weight * color inside RGBA16F. Lower values underflow faint far layers into the subnormal range; higher values
-// leave less headroom for bright colors. The least weight, 1e-2 * WEIGHT_SCALE, stays well above WEIGHTED_EPSILON.
-const float WEIGHT_SCALE = 1.0 / 64.0;
-
-// Below the smallest nonzero RGBA16F value (5.96e-8), so it never changes a stored alpha sum; it only guards the
-// division where nothing was accumulated.
-const float WEIGHTED_EPSILON = 1e-8;
-
-// The RGBA16F maximum; an overflowed sum is brought back to it before the division.
-const float WEIGHTED_ACCUM_MAX = 65504.0;
+const float WEIGHTED_COLOR_MAX = 64.0; // straight HDR clamp; with WEIGHT_SCALE one fragment adds at most ~3000 of 65504
+const float WEIGHT_SCALE = 1.0 / 64.0; // lower sinks faint far layers into subnormals; least weight stays above epsilon
+const float WEIGHTED_EPSILON = 1e-8; // below the smallest RGBA16F value, so it only guards an empty sum
+const float WEIGHTED_ACCUM_MAX = 65504.0; // the RGBA16F maximum; an overflowed sum returns to it before the division
 
 // McGuire and Bavoil 2013, equation (7), on positive view-space depth.
 float weighted_blend_weight(FrameRoot frame, vec3 world_position, float coverage) {

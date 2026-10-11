@@ -344,7 +344,9 @@ fn void? record_raster_view(
                     case SCENE_READ: scene_read_count++;
                     case TRANSPARENT:
                         transparent_count++;
-                        if (joins_weighted_pass(material_data, record.desc.transparency)) weighted_count++;
+                        bool weighted_draw = !candidate.impostor
+                          && joins_weighted_pass(material_data, record.desc.transparency);
+                        if (weighted_draw) weighted_count++;
                 }
             }
             scene_read_start = candidates.len - scene_read_count - transparent_count;
@@ -389,7 +391,7 @@ fn void? record_raster_view(
                     custom_gbuffer: custom_gbuffer_stage(renderer, material_description)!,
                     custom_reads:   custom_reads,
                 );
-                bool weighted = list == DrawList.TRANSPARENT
+                bool weighted = list == DrawList.TRANSPARENT && !candidate.impostor
                   && joins_weighted_pass(material_description, record.desc.transparency);
                 gpu::PipelineHandle? pipeline = list == DrawList.GBUFFER
                   ? gbuffer_pipeline_for(renderer, material_description, vertex)
