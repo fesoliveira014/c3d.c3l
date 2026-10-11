@@ -2,7 +2,7 @@ module c3d::asset::fbx;
 
 import c3d;
 import c3d::anim;
-import c3d::anim::retarget;
+import c3d::anim::retarget @public;
 import c3d::asset;
 import std::io::path;
 import ufbx;
@@ -21,6 +21,13 @@ struct DerivedTexture @private {
     bool      metallic_roughness;
     bool      invert_roughness;
     TextureId texture;
+}
+
+struct StackBake @private {
+    String key_suffix;
+    RetargetProfile* profile;
+    RetargetOptions options;
+    RetargetBakeOptions profile_options;
 }
 
 struct Importer @private {
@@ -130,46 +137,21 @@ fn ClipId[]? load_animations(
     ModelId target,
     RetargetOptions options = retarget::RETARGET_OPTIONS_DEFAULT,
 ) {
-    ModelAsset* record = assets.models.try_get(target)!;
-    Importer importer = {
-        .allocator   = assets.allocator,
-        .key         = path,
-        .options     = { .animations = true },
-        .nodes_only  = true,
-        .file_source = assets.file_source,
-    };
-    defer free_tables(&importer);
-    importer.scene = parse_scene(path, &assets.file_source)!;
-    defer ufbx::free_scene(importer.scene);
-
-    ClipId[] clips = alloc::new_array(allocator, ClipId, importer.scene.anim_stacks.len);
-    defer catch alloc::free(allocator, clips.ptr);
-    defer catch remove_clips(assets, clips);
     @pool() {
-        String mode = mode_label(options.root_motion);
         String rest = options.rest_pose == RestPose.CORRECT ? "#rest" : "";
-        foreach (index, stack : importer.scene.anim_stacks) {
-            String key = string::tformat("%s#anim/%d#%s#%s%s", path, index, record.header.key, mode, rest);
-            if (assets.keys.has_key(key)) return c3d::INVALID_ARGUMENT~;
-        }
-        importer.node_remap = alloc::new_array(assets.allocator, uint, importer.scene.nodes.len);
-        importer.node_remap[..] = NOT_IMPORTED;
-        build_template(&importer)!;
-        foreach (index, stack : importer.scene.anim_stacks) {
-            AnimationClip baked = convert_stack(&importer, stack, tmem)!;
-            AnimationClip clip = retarget::retarget_by_name(
-                allocator:    assets.allocator,
-                source:       &baked,
-                source_nodes: importer.template.nodes,
-                target:       &record.data,
-                options:      options,
-            )!;
-            defer catch asset::free_clip(assets.allocator, &clip);
-            String key = string::tformat("%s#anim/%d#%s#%s%s", path, index, record.header.key, mode, rest);
-            clips[index] = assets.add_clip_owned(&clip, key)!;
-        }
+        StackBake bake = {
+            .key_suffix = string::tformat("#%s%s", mode_label(options.root_motion), rest),
+            .options = options,
+        };
+
+        return load_stacks(
+            allocator: allocator,
+            assets: assets,
+            path: path,
+            target: target,
+            bake: &bake,
+        );
     };
-    return clips;
 }
 
 <*
@@ -192,62 +174,22 @@ fn ClipId[]? load_animations_with_profile(
     RetargetBakeOptions options = retarget::RETARGET_BAKE_OPTIONS_DEFAULT,
 ) {
     if (!variant.len) return c3d::INVALID_ARGUMENT~;
-    ModelAsset* record = assets.models.try_get(target)!;
-    Importer importer = {
-        .allocator = assets.allocator,
-        .key = path,
-        .options = { .animations = true },
-        .nodes_only = true,
-        .file_source = assets.file_source,
-    };
-    defer free_tables(&importer);
-    importer.scene = parse_scene(path, &assets.file_source)!;
-    defer ufbx::free_scene(importer.scene);
 
-    ClipId[] clips = alloc::new_array_try(allocator, ClipId, importer.scene.anim_stacks.len)
-        ?? c3d::CAPACITY_EXCEEDED~!;
-    defer catch alloc::free(allocator, clips.ptr);
-    defer catch remove_clips(assets, clips);
     @pool() {
-        String mode = mode_label(options.root_motion);
-        foreach (index, stack : importer.scene.anim_stacks) {
-            String key = profiled_animation_key(
-                path: path,
-                stack: (usz)index,
-                target: record.header.key,
-                mode: mode,
-                variant: variant,
-            );
-            if (assets.keys.has_key(key)) return c3d::INVALID_ARGUMENT~;
-        }
-        importer.node_remap = alloc::new_array_try(assets.allocator, uint, importer.scene.nodes.len)
-            ?? c3d::CAPACITY_EXCEEDED~!;
-        importer.node_remap[..] = NOT_IMPORTED;
-        build_template(&importer)!;
-        profile.validate_templates(importer.template.nodes, &record.data)!;
+        StackBake bake = {
+            .key_suffix = string::tformat("#%s#profile/%d:%s", mode_label(options.root_motion), variant.len, variant),
+            .profile = profile,
+            .profile_options = options,
+        };
 
-        foreach (index, stack : importer.scene.anim_stacks) {
-            AnimationClip baked = convert_stack(&importer, stack, tmem)!;
-            AnimationClip clip = retarget::retarget_with_profile(
-                allocator: assets.allocator,
-                source: &baked,
-                source_nodes: importer.template.nodes,
-                target: &record.data,
-                profile: profile,
-                options: options,
-            )!;
-            defer catch asset::free_clip(assets.allocator, &clip);
-            String key = profiled_animation_key(
-                path: path,
-                stack: (usz)index,
-                target: record.header.key,
-                mode: mode,
-                variant: variant,
-            );
-            clips[index] = assets.add_clip_owned(&clip, key)!;
-        }
+        return load_stacks(
+            allocator: allocator,
+            assets: assets,
+            path: path,
+            target: target,
+            bake: &bake,
+        );
     };
-    return clips;
 }
 
 fn ufbx::Scene*? parse_scene(String path, FileSource* file_source) @private {
@@ -365,6 +307,69 @@ fn void free_tables(Importer* importer) @private {
     alloc::free(allocator, importer.node_remap.ptr);
 }
 
+fn ClipId[]? load_stacks(
+    alloc::Allocator allocator,
+    AssetStore* assets,
+    String path,
+    ModelId target,
+    StackBake* bake,
+) @private {
+    ModelAsset* record = assets.models.try_get(target)!;
+    Importer importer = {
+        .allocator   = assets.allocator,
+        .key         = path,
+        .options     = { .animations = true },
+        .nodes_only  = true,
+        .file_source = assets.file_source,
+    };
+    defer free_tables(&importer);
+    importer.scene = parse_scene(path, &assets.file_source)!;
+    defer ufbx::free_scene(importer.scene);
+
+    ClipId[] clips = alloc::new_array(allocator, ClipId, importer.scene.anim_stacks.len);
+    defer catch alloc::free(allocator, clips.ptr);
+    defer catch remove_clips(assets, clips);
+    @pool() {
+        String[] keys = alloc::new_array(tmem, String, importer.scene.anim_stacks.len);
+
+        foreach (index, &key : keys) {
+            *key = string::tformat("%s#anim/%d#%s%s", path, index, record.header.key, bake.key_suffix);
+            if (assets.keys.has_key(*key)) return c3d::INVALID_ARGUMENT~;
+        }
+
+        importer.node_remap = alloc::new_array(assets.allocator, uint, importer.scene.nodes.len);
+        importer.node_remap[..] = NOT_IMPORTED;
+        build_template(&importer)!;
+        if (bake.profile) bake.profile.validate_templates(importer.template.nodes, &record.data)!;
+
+        foreach (index, stack : importer.scene.anim_stacks) {
+            AnimationClip baked = convert_stack(&importer, stack, tmem)!;
+            AnimationClip clip;
+            if (bake.profile) {
+                clip = retarget::bake_profile_clip(
+                    allocator: assets.allocator,
+                    source: &baked,
+                    target: &record.data,
+                    profile: bake.profile,
+                    options: bake.profile_options,
+                )!;
+            } else {
+                clip = retarget::retarget_by_name(
+                    allocator: assets.allocator,
+                    source: &baked,
+                    source_nodes: importer.template.nodes,
+                    target: &record.data,
+                    options: bake.options,
+                )!;
+            }
+
+            defer catch asset::free_clip(assets.allocator, &clip);
+            clips[index] = assets.add_clip_owned(&clip, keys[index])!;
+        }
+    };
+    return clips;
+}
+
 fn void remove_clips(AssetStore* assets, ClipId[] clips) @private {
     foreach (id : clips) if (id.generation) assets.remove_clip(id);
 }
@@ -375,24 +380,6 @@ fn String mode_label(RootMotion mode) @private {
         case STRIP_XZ: return "strip_xz";
         case EXTRACT: return "extract";
     }
-}
-
-fn String profiled_animation_key(
-    String path,
-    usz stack,
-    String target,
-    String mode,
-    String variant,
-) @private {
-    return string::tformat(
-        "%s#anim/%d#%s#%s#profile/%d:%s",
-        path,
-        stack,
-        target,
-        mode,
-        variant.len,
-        variant,
-    );
 }
 
 fn fault load_fault(fault excuse) @private {

@@ -44,6 +44,23 @@ fn AnimationClip? retarget_with_profile(
     RetargetBakeOptions options = RETARGET_BAKE_OPTIONS_DEFAULT,
 ) {
     profile.validate_templates(source_nodes, target)!;
+
+    return bake_profile_clip(
+        allocator: allocator,
+        source: source,
+        target: target,
+        profile: profile,
+        options: options,
+    );
+}
+
+fn AnimationClip? bake_profile_clip(
+    Allocator allocator,
+    AnimationClip* source,
+    ModelTemplate* target,
+    RetargetProfile* profile,
+    RetargetBakeOptions options,
+) @private {
     ProfileData* data = (ProfileData*)profile.data;
     validate_profile_bake_options(data, options, source.duration)!;
 
@@ -51,7 +68,7 @@ fn AnimationClip? retarget_with_profile(
     defer catch asset::free_clip(allocator, &clip);
 
     @pool() {
-        ProfileChannels[] channels = alloc::new_array(tmem, ProfileChannels, source_nodes.len);
+        ProfileChannels[] channels = alloc::new_array(tmem, ProfileChannels, data.source_nodes.len);
         bind_profile_clip(
             clip: source,
             data: data,
@@ -123,7 +140,7 @@ fn AnimationClip? retarget_with_profile(
 
         clip.targets = clip.targets[:target_count];
 
-        Transform[] source_world = alloc::new_array(tmem, Transform, source_nodes.len);
+        Transform[] source_world = alloc::new_array(tmem, Transform, data.source_nodes.len);
         Transform[] target_world = alloc::new_array(tmem, Transform, target.nodes.len);
         Vec3 initial_motion;
         float previous_yaw;
