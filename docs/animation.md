@@ -663,7 +663,7 @@ the space weight and Space pauses. Authored footsteps from the dominant member
 print to the console. The Scene panel's animator inspector shows clip IDs, layer,
 mode, mask count and playback controls; stop is applied after traversal.
 
-The animation, IK and Mixamo examples accept `--frames=100 --acceptance` for a
+The animation and Mixamo examples accept `--frames=100 --acceptance` for a
 bounded validation run that exercises playback changes. Mixamo additionally
 accepts `--capture=path` for a 1440x900 RGBA8 scene capture.
 
