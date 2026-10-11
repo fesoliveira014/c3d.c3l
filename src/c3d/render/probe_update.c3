@@ -202,7 +202,12 @@ fn void? record_probe_updates(Renderer* renderer, ProbeFillRecording* recording,
     gpu::GpuAddress hit_set = pack_probe_set(renderer, scene, order[:count], unit_energy: true)!;
     // Probes feed every view of the scene, so the fog is the one any layer sees, as the light list is.
     FogSelection fog = select_height_fog(scene, uint::max);
-    gpu::GpuAddress sky_fog = pack_probe_sky_fog(renderer, &fog)!;
+    gpu::GpuAddress sky_fog = pack_probe_sky_fog(
+        renderer:   renderer,
+        atmosphere: recording.environments.atmosphere,
+        selection:  atmosphere,
+        fog:        &fog,
+    )!;
     gpu::MappedGpuSpan frame_span = slot.upload.take(&renderer.device, FrameRoot::size, STREAM_ALIGNMENT)!;
     write_probe_frame_root(
         root:          (FrameRoot*)frame_span.bytes.ptr,

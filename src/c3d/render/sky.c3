@@ -735,20 +735,36 @@ fn gpu::GpuAddress? pack_view_sky_fog(
     return span.address;
 }
 
-fn gpu::GpuAddress? pack_probe_sky_fog(Renderer* renderer, FogSelection* fog) @private {
-    if (!fog.fog) return (gpu::GpuAddress)0;
+fn gpu::GpuAddress? pack_probe_sky_fog(
+    Renderer* renderer,
+    AtmosphereRes* atmosphere,
+    AtmosphereSelection* selection,
+    FogSelection* fog,
+) @private {
+    if (!atmosphere && !fog.fog) return (gpu::GpuAddress)0;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, SkyFogGpu::size, STREAM_ALIGNMENT)!;
+    SkyFogTables tables = { .sampler = renderer.linear_clamp_sampler };
+    Vec3 to_sun;
+    Vec3 illuminance;
+    float altitude;
+    if (atmosphere) {
+        tables.transmittance = atmosphere.transmittance_view.index;
+        tables.multi_scattering = atmosphere.multi_scattering_view.index;
+        to_sun = sun_direction(selection.node);
+        illuminance = selection.sun.color * selection.sun.intensity;
+        altitude = selection.atmosphere.observer_altitude;
+    }
     write_sky_fog(
         root:            (SkyFogGpu*)span.bytes.ptr,
-        atmosphere:      null,
-        to_sun:          {},
-        sun_illuminance: {},
-        altitude:        0,
+        atmosphere:      atmosphere ? selection.atmosphere : null,
+        to_sun:          to_sun,
+        sun_illuminance: illuminance,
+        altitude:        altitude,
         fog:             fog,
-        tables:          { .sampler = renderer.linear_clamp_sampler },
+        tables:          tables,
     );
-    ((SkyFogGpu*)span.bytes.ptr).fog_base_height -= renderer.frame_origin.y;
+    if (fog.fog) ((SkyFogGpu*)span.bytes.ptr).fog_base_height -= renderer.frame_origin.y;
     return span.address;
 }
 
