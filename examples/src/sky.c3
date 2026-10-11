@@ -70,6 +70,7 @@ const float PITCH_LIMIT @local = 1.5f; // avoids the poles, where the up vector 
 const float GROUND_SIZE @local = 4_000;
 const Vec4 GROUND_COLOR @local = { 0.4f, 0.4f, 0.4f, 1 };
 const float GROUND_ROUGHNESS @local = 0.9f;
+const float GLOSSY_GROUND_ROUGHNESS @local = 0.05f; // under the reflection threshold, so the ground mirrors the boxes
 const float[7] OBJECT_DISTANCES @local = { 10, 25, 50, 100, 200, 400, 800 };
 const float[3] OBJECT_BEARINGS_DEGREES @local = { -30, 0, 30 };
 const float OBJECT_SIZE_PER_METRE @local = 0.04f; // every object spans about two degrees of view
@@ -171,6 +172,7 @@ struct Options @local {
     bool        traced_shadows;
     bool        ssgi;
     bool        path_traced;
+    bool        reflections;
     bool        fog;
     bool        atmosphere;
     bool        volumetric_fog;
@@ -453,7 +455,8 @@ fn void? build_demo(Demo* demo) @local {
         Geometry pad_geometry = geometry::plane(tmem, POND_SIZE, POND_SIZE);
         pad = assets.add_geometry(&pad_geometry)!;
     };
-    scene.add_mesh(ground, add_standard(assets, GROUND_COLOR, GROUND_ROUGHNESS)!, name: "ground")!;
+    float ground_roughness = demo.options.reflections ? GLOSSY_GROUND_ROUGHNESS : GROUND_ROUGHNESS;
+    scene.add_mesh(ground, add_standard(assets, GROUND_COLOR, ground_roughness)!, name: "ground")!;
     add_objects(
         scene:  scene,
         assets: assets,
@@ -498,7 +501,7 @@ fn RendererDesc renderer_desc(Options options, bool validation, ZString applicat
         .validation            = validation,
         .gpu_timings           = options.gpu_timings,
         .application_name      = application_name,
-        .ray_queries           = options.traced_shadows,
+        .ray_queries           = options.traced_shadows || options.reflections,
         .ray_tracing_pipelines = options.path_traced,
     };
 }
@@ -506,6 +509,7 @@ fn RendererDesc renderer_desc(Options options, bool validation, ZString applicat
 fn ViewDesc main_view_desc(ViewDesc desc, Options options) @local {
     desc.shading = options.shading;
     desc.ray_tracing.shadows = options.traced_shadows;
+    desc.ray_tracing.reflections = options.reflections;
     desc.volumetric_fog = options.volumetric_fog && !options.path_traced;
     if (options.taa && !options.path_traced) desc.post.anti_aliasing = AntiAliasing.TAA;
     desc.post.auto_exposure = options.auto_exposure;
@@ -663,6 +667,7 @@ fn Options? parse_options(String[] args) @local {
                 }
             case "--ssgi": options.ssgi = true;
             case "--path-traced": options.path_traced = true;
+            case "--reflections": options.reflections = on_off(option_value(args, &index)!)!;
             case "--volumetric-fog": options.volumetric_fog = true;
             case "--taa": options.taa = true;
             case "--auto-exposure": options.auto_exposure = true;
@@ -683,6 +688,9 @@ fn Options? parse_options(String[] args) @local {
         }
     }
     if (options.segment_frames < 2) return c3d::INVALID_ARGUMENT~;
+    if (options.reflections && (options.shading != ShadingPath.DEFERRED || options.path_traced)) {
+        return c3d::INVALID_ARGUMENT~;
+    }
     if (!options.width) options.width = options.benchmark ? BENCHMARK_WIDTH : WINDOW_WIDTH;
     if (!options.height) options.height = options.benchmark ? BENCHMARK_HEIGHT : WINDOW_HEIGHT;
     return options;
@@ -1222,12 +1230,13 @@ fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
 
 fn void print_header(Options options) @local {
     io::printfn(
-        "# sky shading=%s shadows=%s ssgi=%s path_traced=%s fog=%s atmosphere=%s "
+        "# sky shading=%s shadows=%s ssgi=%s path_traced=%s reflections=%s fog=%s atmosphere=%s "
           "volumetric_fog=%s taa=%s extent=%dx%d frames=%d",
         options.shading == ShadingPath.DEFERRED ? "deferred" : "forward",
         options.traced_shadows ? "traced" : "atlas",
         options.ssgi ? "on" : "off",
         options.path_traced ? "on" : "off",
+        options.reflections ? "on" : "off",
         options.fog ? "on" : "off",
         options.atmosphere ? "on" : "off",
         options.volumetric_fog ? "on" : "off",
@@ -1302,8 +1311,8 @@ fn int main(String[] args) {
         if (excuse != c3d::UNSUPPORTED) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
-              "[--shadows atlas|traced] [--ssgi] [--path-traced] [--volumetric-fog] [--taa] [--auto-exposure] "
-              "[--fog on|off] [--atmosphere on|off] "
+              "[--shadows atlas|traced] [--ssgi] [--path-traced] [--reflections on|off] [--volumetric-fog] [--taa] "
+              "[--auto-exposure] [--fog on|off] [--atmosphere on|off] "
               "[--preset noon|twilight|valley|pan|time-lapse] [--width W] [--height H].");
         }
         return 1;
