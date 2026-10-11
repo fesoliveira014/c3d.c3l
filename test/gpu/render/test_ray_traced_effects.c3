@@ -33,6 +33,20 @@ const float LAMP_RANGE @private = 1.9f; // reaches the hit point and stops short
 const float LAMP_INTENSITY @private = 40;
 const int LAMP_LIT_MINIMUM @private = 40;
 const uint EXCLUDED_RECEIVER_LAYERS @private = 2; // the emitter carries the default layer only
+const Vec3 COAT_LAMP_POSITION @private = { 0, 3.649f, -2.977f }; // along the floor ray mirrored about the panel face
+const float COAT_LAMP_RANGE @private = 1.4f; // reaches the hit point and stops short of the floor
+const float COAT_LAMP_INTENSITY @private = 6;
+const float COAT_ROUGHNESS @private = 0.3f;
+const float HIGH_INDEX @private = 2.4f;
+const Vec3 TINTED_SPECULAR @private = { 1, 0.5f, 0.2f };
+const float GLASS_THICKNESS @private = 0.5f;
+const int COAT_MINIMUM @private = 20;
+
+struct PhysicalPanel @private {
+    Fixture*     fixture;
+    MirrorScene* mirror;
+    ViewId       view;
+}
 
 struct MirrorScene @private {
     Scene       scene;
@@ -419,6 +433,58 @@ fn void test_reflections_light_a_hit_from_an_off_camera_lamp_by_receiver_layers(
         );
         assert(math::abs(red(excluded_lit) - red(unlit)) <= MIRROR_TOLERANCE);
         assert(red(lit) > red(unlit) + LAMP_LIT_MINIMUM);
+        check_validation(&fixture.renderer);
+    }
+}
+
+fn uint? PhysicalPanel.render(&self, PhysicalParams params) @private {
+    MaterialId physical = self.fixture.assets.add_material(material::physical(params))!;
+    self.mirror.scene.get(self.mirror.emitter, Mesh).material = physical;
+    return render_mirror(self.fixture, self.mirror, self.view, EMITTER_IMAGE_POINT);
+}
+
+fn void test_reflections_shade_the_physical_layers_of_a_hit() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        MirrorScene mirror = create_mirror_scene(&fixture, false)!!;
+        defer scene::destroy_scene(&mirror.scene);
+        AoView mirror_view = create_ao_view(&fixture, ShadingPath.DEFERRED)!!;
+        defer destroy_ao_view(&fixture, &mirror_view);
+        set_reflections(&fixture, mirror_view.view, true)!!;
+        Node* lamp = mirror.scene.add_light(light::point({ 1, 0, 0 }, COAT_LAMP_INTENSITY, COAT_LAMP_RANGE))!!;
+        lamp.local.position = COAT_LAMP_POSITION;
+        mirror.scene.update_world();
+
+        PhysicalParams plain = material::PHYSICAL_PARAMS_DEFAULT;
+        plain.standard.base_color = { 1, 1, 1, 1 };
+        plain.standard.metallic = 0;
+        plain.standard.roughness = 1;
+        PhysicalParams coated = plain;
+        coated.clearcoat = 1;
+        coated.clearcoat_roughness = COAT_ROUGHNESS;
+        PhysicalParams high_index = plain;
+        high_index.ior = HIGH_INDEX;
+        high_index.specular_color = TINTED_SPECULAR;
+        PhysicalParams glass = plain;
+        glass.transmission = 1;
+        glass.thickness = GLASS_THICKNESS;
+
+        PhysicalPanel panel = { .fixture = &fixture, .mirror = &mirror, .view = mirror_view.view };
+        uint plain_pixel = panel.render(plain)!!;
+        uint coated_pixel = panel.render(coated)!!;
+        uint high_index_pixel = panel.render(high_index)!!;
+        uint glass_pixel = panel.render(glass)!!;
+        io::eprintfn(
+            "%s, physical hit: plain %06x, clearcoat %06x, high index %06x, transmission %06x",
+            trace_name(ray_queries),
+            plain_pixel,
+            coated_pixel,
+            high_index_pixel,
+            glass_pixel,
+        );
+        assert(red(coated_pixel) > red(plain_pixel) + COAT_MINIMUM);
         check_validation(&fixture.renderer);
     }
 }

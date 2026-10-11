@@ -71,8 +71,8 @@ which would keep one ray of every probe in its layer's plane.
 A hit adds its diffuse direct light, its emission and the bounce the probe atlases already hold
 (`albedo / PI` times the irradiance at the hit), so light bounces further with every update. A hit follows
 the diffuse rules of reflection hits: `BASIC` is its unlit albedo, `STANDARD` and `PHYSICAL` use
-`albedo * (1 - metallic)` so metals bounce nothing, `TOON` uses its bands and `CUSTOM` is a grey Lambert
-surface. Misses read the
+`albedo * (1 - metallic)` so metals bounce nothing (a Physical hit adds no clearcoat, specular or
+transmission), `TOON` uses its bands and `CUSTOM` is a grey Lambert surface. Misses read the
 lighting environment (or the flat ambient without one). Back faces return no light, count in the
 probe's irradiance with their weight and mark the probe's view of that direction as blocked. Every update
 rotates its ray set by a rotation drawn from the frame index.

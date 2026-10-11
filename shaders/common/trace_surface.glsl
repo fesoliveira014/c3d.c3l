@@ -12,6 +12,7 @@ const float TRACE_SURFACE_OFFSET = 0.02; // world units along the normal; hides 
 const float TRACE_MIN_COSINE = 1e-3; // grazing hits keep a finite cone footprint
 const float TRACE_MIN_AREA = 1e-12; // degenerate triangles and UV sets keep the level of detail finite
 const vec3 TRACE_CUSTOM_ALBEDO = vec3(0.5); // custom shader code cannot run at a hit; a neutral grey stands in
+const float TRACE_DEFAULT_IOR = 1.5; // the index a non-Physical hit carries: 4% reflectance at normal incidence
 
 GPU_DECLARE_READONLY_ARRAY_REF(TraceInstanceArray, TraceInstanceGpu);
 
@@ -30,6 +31,14 @@ struct TraceSurface {
     vec3 emissive;
     float metallic;
     float roughness;
+    vec3 coat_normal;
+    vec3 specular_color;
+    vec3 thickness_extent;
+    float specular_weight;
+    float ior;
+    float clearcoat;
+    float clearcoat_roughness;
+    float transmission;
     uint material_kind;
     uint64_t material;
     uint layers;
@@ -121,11 +130,18 @@ vec4 hit_tangent(TraceInstanceGpu instance, GeometryRoot geometry, uvec3 corners
         + world_tangent(model, pull_vec4(geometry.tangents, corners.z)) * weights.z;
 }
 
-vec2 corner_map_uv(TextureMapGpu map, uint map_flags, GeometryRoot geometry, uvec3 corners, vec3 corner) {
+vec2 corner_map_uv(
+    TextureMapGpu map,
+    uint map_flags,
+    uint map_bit,
+    GeometryRoot geometry,
+    uvec3 corners,
+    vec3 corner
+) {
     return map_uv(
         map,
         map_flags,
-        MATERIAL_MAP_NORMAL,
+        map_bit,
         hit_uv(geometry.uv0, corners, corner),
         hit_uv(geometry.uv1, corners, corner)
     );
@@ -135,7 +151,11 @@ vec2 corner_map_uv(TextureMapGpu map, uint map_flags, GeometryRoot geometry, uve
 vec3 hit_mapped_normal(
     TraceInstanceGpu instance,
     GeometryRoot geometry,
-    StandardMaterialGpu standard,
+    TextureMapGpu map,
+    uint map_flags,
+    uint map_bit,
+    uint encoding_bit,
+    float scale,
     uvec3 corners,
     vec3 weights,
     vec3 normal,
@@ -146,16 +166,16 @@ vec3 hit_mapped_normal(
     TraceFootprint footprint
 ) {
     vec3 mapped = decode_normal(
-        sample_hit_map_lod(standard.normal_map, standard.map_flags, MATERIAL_MAP_NORMAL, uv0, uv1, footprint).rgb,
-        standard.normal_scale,
-        (standard.map_flags & MATERIAL_MAP_NORMAL_RG) != 0u
+        sample_hit_map_lod(map, map_flags, map_bit, uv0, uv1, footprint).rgb,
+        scale,
+        (map_flags & encoding_bit) != 0u
     );
     if ((geometry.flags & GEOMETRY_HAS_TANGENTS) != 0u) {
         return tangent_normal(normal, hit_tangent(instance, geometry, corners, weights), mapped);
     }
-    vec2 corner_uv_0 = corner_map_uv(standard.normal_map, standard.map_flags, geometry, corners, vec3(1.0, 0.0, 0.0));
-    vec2 corner_uv_1 = corner_map_uv(standard.normal_map, standard.map_flags, geometry, corners, vec3(0.0, 1.0, 0.0));
-    vec2 corner_uv_2 = corner_map_uv(standard.normal_map, standard.map_flags, geometry, corners, vec3(0.0, 0.0, 1.0));
+    vec2 corner_uv_0 = corner_map_uv(map, map_flags, map_bit, geometry, corners, vec3(1.0, 0.0, 0.0));
+    vec2 corner_uv_1 = corner_map_uv(map, map_flags, map_bit, geometry, corners, vec3(0.0, 1.0, 0.0));
+    vec2 corner_uv_2 = corner_map_uv(map, map_flags, map_bit, geometry, corners, vec3(0.0, 0.0, 1.0));
     return derivative_normal(
         normalize(normal),
         mapped,
@@ -164,6 +184,128 @@ vec3 hit_mapped_normal(
         corner_uv_1 - corner_uv_0,
         corner_uv_2 - corner_uv_0
     );
+}
+
+// The lengths of the model matrix columns, as transmission_ray scales a thickness by them.
+vec3 instance_axis_scale(TraceInstanceGpu instance) {
+    return vec3(
+        length(vec3(instance.local_to_world_0.x, instance.local_to_world_1.x, instance.local_to_world_2.x)),
+        length(vec3(instance.local_to_world_0.y, instance.local_to_world_1.y, instance.local_to_world_2.y)),
+        length(vec3(instance.local_to_world_0.z, instance.local_to_world_1.z, instance.local_to_world_2.z))
+    );
+}
+
+// The layers over the Standard prefix, read as physical.frag.glsl reads them; sheen and anisotropy are not read.
+void hit_physical_layers(
+    TraceInstanceGpu instance,
+    GeometryRoot geometry,
+    uvec3 corners,
+    vec3 weights,
+    vec3 interpolated_normal,
+    vec3 world_edge_1,
+    vec3 world_edge_2,
+    vec2 uv0,
+    vec2 uv1,
+    TraceFootprint footprint,
+    inout TraceSurface surface
+) {
+    PhysicalMaterialGpu material = PhysicalMaterialGpu(instance.material);
+    surface.ior = material.ior;
+    surface.clearcoat = material.clearcoat;
+    surface.clearcoat_roughness = material.clearcoat_roughness;
+    surface.coat_normal = normalize(interpolated_normal);
+    if (surface.clearcoat > 0.0) {
+        if ((material.map_flags & PHYSICAL_MAP_CLEARCOAT) != 0u) {
+            surface.clearcoat = clamp(surface.clearcoat * sample_hit_map_lod(
+                material.clearcoat_map,
+                material.map_flags,
+                PHYSICAL_MAP_CLEARCOAT,
+                uv0,
+                uv1,
+                footprint
+            ).r, 0.0, 1.0);
+        }
+        if ((material.map_flags & PHYSICAL_MAP_CLEARCOAT_ROUGHNESS) != 0u) {
+            surface.clearcoat_roughness = clamp(surface.clearcoat_roughness * sample_hit_map_lod(
+                material.clearcoat_roughness_map,
+                material.map_flags,
+                PHYSICAL_MAP_CLEARCOAT_ROUGHNESS,
+                uv0,
+                uv1,
+                footprint
+            ).g, 0.0, 1.0);
+        }
+        if ((material.map_flags & PHYSICAL_MAP_CLEARCOAT_NORMAL) != 0u && material.clearcoat_normal_scale != 0.0) {
+            surface.coat_normal = hit_mapped_normal(
+                instance,
+                geometry,
+                material.clearcoat_normal_map,
+                material.map_flags,
+                PHYSICAL_MAP_CLEARCOAT_NORMAL,
+                PHYSICAL_MAP_CLEARCOAT_NORMAL_RG,
+                material.clearcoat_normal_scale,
+                corners,
+                weights,
+                interpolated_normal,
+                world_edge_1,
+                world_edge_2,
+                uv0,
+                uv1,
+                footprint
+            );
+        }
+    }
+
+    surface.specular_weight = material.specular_color_weight.w;
+    surface.specular_color = material.specular_color_weight.rgb;
+    if (surface.specular_weight > 0.0) {
+        if ((material.extension_map_flags & PHYSICAL_EXTENSION_MAP_SPECULAR) != 0u) {
+            surface.specular_weight = clamp(surface.specular_weight * sample_hit_map_lod(
+                material.specular_map,
+                material.extension_map_flags,
+                PHYSICAL_EXTENSION_MAP_SPECULAR,
+                uv0,
+                uv1,
+                footprint
+            ).a, 0.0, 1.0);
+        }
+        if ((material.extension_map_flags & PHYSICAL_EXTENSION_MAP_SPECULAR_COLOR) != 0u) {
+            surface.specular_color *= sample_hit_map_lod(
+                material.specular_color_map,
+                material.extension_map_flags,
+                PHYSICAL_EXTENSION_MAP_SPECULAR_COLOR,
+                uv0,
+                uv1,
+                footprint
+            ).rgb;
+        }
+    }
+
+    surface.transmission = material.transmission;
+    if (surface.transmission > 0.0) {
+        float thickness = material.thickness;
+        if ((material.extension_map_flags & PHYSICAL_EXTENSION_MAP_TRANSMISSION) != 0u) {
+            surface.transmission = clamp(surface.transmission * sample_hit_map_lod(
+                material.transmission_map,
+                material.extension_map_flags,
+                PHYSICAL_EXTENSION_MAP_TRANSMISSION,
+                uv0,
+                uv1,
+                footprint
+            ).r, 0.0, 1.0);
+        }
+        if ((material.extension_map_flags & PHYSICAL_EXTENSION_MAP_THICKNESS) != 0u) {
+            thickness = max(thickness * sample_hit_map_lod(
+                material.thickness_map,
+                material.extension_map_flags,
+                PHYSICAL_EXTENSION_MAP_THICKNESS,
+                uv0,
+                uv1,
+                footprint
+            ).g, 0.0);
+        }
+        surface.thickness_extent = thickness * instance_axis_scale(instance);
+    }
 }
 
 // cone_width is the cone's width at the hit in world units; maps sample at its ray-cone level of detail.
@@ -180,6 +322,13 @@ TraceSurface surface_from_hit(SceneTraceRoot scene, SceneHit hit, vec3 ray_direc
     surface.metallic = 0.0;
     surface.roughness = 1.0;
     surface.emissive = vec3(0.0);
+    surface.specular_color = vec3(1.0);
+    surface.thickness_extent = vec3(0.0);
+    surface.specular_weight = 1.0;
+    surface.ior = TRACE_DEFAULT_IOR;
+    surface.clearcoat = 0.0;
+    surface.clearcoat_roughness = 0.0;
+    surface.transmission = 0.0;
 
     vec3 corner_0 = pull_vec3(geometry.positions, corners.x);
     vec3 corner_1 = pull_vec3(geometry.positions, corners.y);
@@ -198,6 +347,8 @@ TraceSurface surface_from_hit(SceneTraceRoot scene, SceneHit hit, vec3 ray_direc
             + transform_normal(instance, pull_vec3(geometry.normals, corners.z)) * weights.z;
         surface.normal = normalize(interpolated_normal);
     }
+
+    surface.coat_normal = surface.normal;
 
     bool facing_back = dot(surface.geometric_normal, ray_direction) > 0.0;
     surface.back_face = facing_back && (instance.flags & TRACE_INSTANCE_DOUBLE_SIDED) == 0u;
@@ -268,7 +419,11 @@ TraceSurface surface_from_hit(SceneTraceRoot scene, SceneHit hit, vec3 ray_direc
                 surface.normal = hit_mapped_normal(
                     instance,
                     geometry,
-                    standard,
+                    standard.normal_map,
+                    standard.map_flags,
+                    MATERIAL_MAP_NORMAL,
+                    MATERIAL_MAP_NORMAL_RG,
+                    standard.normal_scale,
                     corners,
                     weights,
                     interpolated_normal,
@@ -277,6 +432,22 @@ TraceSurface surface_from_hit(SceneTraceRoot scene, SceneHit hit, vec3 ray_direc
                     uv0,
                     uv1,
                     footprint
+                );
+            }
+
+            if (instance.material_kind == MATERIAL_KIND_PHYSICAL) {
+                hit_physical_layers(
+                    instance,
+                    geometry,
+                    corners,
+                    weights,
+                    interpolated_normal,
+                    world_1 - world_0,
+                    world_2 - world_0,
+                    uv0,
+                    uv1,
+                    footprint,
+                    surface
                 );
             }
             break;
@@ -308,6 +479,7 @@ TraceSurface surface_from_hit(SceneTraceRoot scene, SceneHit hit, vec3 ray_direc
     if (facing_back) {
         surface.geometric_normal = -surface.geometric_normal;
         surface.normal = -surface.normal;
+        surface.coat_normal = -surface.coat_normal;
     }
     return surface;
 }

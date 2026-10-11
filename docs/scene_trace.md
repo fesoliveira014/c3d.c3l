@@ -209,11 +209,15 @@ TraceSurface surface = surface_from_hit(scene, hit, direction, cone_width);
 `TraceSurface` holds the world position, the shading and geometric normals, albedo (base colour
 times its map and vertex colour), emission, metallic and roughness (Standard and Physical rows;
 0 and 1 otherwise), the material kind and block address, the row's receiver `layers`, and `back_face`, set when the ray hit
-the back of a single-sided surface (only `trace_scene_with_back_faces` reports such hits). Standard and Physical normal maps apply to the shading
-normal, through the tangent stream when the geometry has one and through the triangle's edges
+the back of a single-sided surface (only `trace_scene_with_back_faces` reports such hits). A Physical row also
+fills the IOR, specular colour and weight, clearcoat factor, roughness and normal, transmission, and the
+thickness scaled by the row's axis scales, from `PhysicalMaterialGpu` and its maps as the forward Physical stage
+reads them; other rows hold the neutral values. Standard and Physical normal maps apply to the shading
+normal, and the clearcoat normal map to the coat normal, through the tangent stream when the geometry has one and through the triangle's edges
 otherwise. A double-sided surface hit from behind reports flipped normals instead. Maps sample at the level of detail a ray cone of width `cone_width` (world
 units, at the hit) selects over the triangle; `ray_cone_lod` in `c3d::render` is its CPU twin.
-Offset ray origins by `TRACE_SURFACE_OFFSET` along the geometric normal. Ray-traced reflections,
+Hit shading (`shade_hit` in `hit_shading.glsl`) runs in compute and ray stages, so it takes no
+screen-space derivative and every texture it reads samples at an explicit level. Offset ray origins by `TRACE_SURFACE_OFFSET` along the geometric normal. Ray-traced reflections,
 ambient occlusion and the path tracer use these helpers ([reflections](reflections.md),
 [ambient occlusion](ambient_occlusion.md#ray-traced), [path tracing](path_tracing.md)).
 
