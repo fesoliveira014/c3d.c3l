@@ -46,6 +46,9 @@ const float FABRIC_SHEEN_ROUGHNESS @private = 1;
 const int FABRIC_MINIMUM @private = 10;
 const float BRUSHED_ROUGHNESS @private = 0.6f;
 const int BRUSHED_MINIMUM @private = 20;
+const HeightFog HAZE @private = { .density = 0.12f, .falloff = 0.05f, .albedo = { 0, 0, 1 }, .max_distance = 100 };
+const Vec3 FAR_EMITTER_POSITION @private = { 0, 5.667f, -8 }; // on the same reflected ray, twice as far
+const int FOG_MINIMUM @private = 10; // half the smallest separation measured between the fogged images
 
 struct PhysicalPanel @private {
     Fixture*     fixture;
@@ -538,6 +541,56 @@ fn void test_reflections_shade_the_sheen_and_anisotropy_of_a_hit() @test {
         assert(red(sheen_pixel) + FABRIC_MINIMUM < red(plain_pixel));
         assert(blue(sheen_pixel) + FABRIC_MINIMUM < blue(plain_pixel));
         assert(math::abs(red(brushed_pixel) - red(metal_pixel)) > BRUSHED_MINIMUM);
+        check_validation(&fixture.renderer);
+    }
+}
+
+fn uint? render_emitter_image(
+    Fixture* fixture,
+    MirrorScene* mirror,
+    ViewId view,
+    Node* haze,
+    Vec3 emitter_position,
+    bool fogged,
+) @private {
+    mirror.emitter.local.position = emitter_position;
+    haze.visible = fogged;
+    mirror.scene.update_world();
+    return render_mirror(fixture, mirror, view, EMITTER_IMAGE_POINT);
+}
+
+fn void test_reflections_fog_the_path_from_the_surface_to_the_hit() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        MirrorScene mirror = create_mirror_scene(&fixture, false)!!;
+        defer scene::destroy_scene(&mirror.scene);
+        AoView mirror_view = create_ao_view(&fixture, ShadingPath.DEFERRED)!!;
+        defer destroy_ao_view(&fixture, &mirror_view);
+        set_reflections(&fixture, mirror_view.view, true)!!;
+        Node* haze = mirror.scene.add_node(name: "haze")!!;
+        mirror.scene.add(haze, HAZE);
+
+        ViewId view = mirror_view.view;
+        uint near_clear = render_emitter_image(&fixture, &mirror, view, haze, EMITTER_POSITION, false)!!;
+        uint far_clear = render_emitter_image(&fixture, &mirror, view, haze, FAR_EMITTER_POSITION, false)!!;
+        uint near_fogged = render_emitter_image(&fixture, &mirror, view, haze, EMITTER_POSITION, true)!!;
+        uint far_fogged = render_emitter_image(&fixture, &mirror, view, haze, FAR_EMITTER_POSITION, true)!!;
+        io::eprintfn(
+            "%s, fogged emitter image: clear near %06x far %06x; fogged near %06x far %06x",
+            trace_name(ray_queries),
+            near_clear,
+            far_clear,
+            near_fogged,
+            far_fogged,
+        );
+
+        // The camera's own fog pass takes the same share of either image, so only the hit segment separates them.
+        assert(math::abs(red(far_clear) - red(near_clear)) <= MIRROR_TOLERANCE);
+        assert(red(near_fogged) + FOG_MINIMUM < red(near_clear));
+        assert(red(far_fogged) + FOG_MINIMUM < red(near_fogged));
+        assert(blue(far_fogged) > blue(near_fogged) + FOG_MINIMUM);
         check_validation(&fixture.renderer);
     }
 }
