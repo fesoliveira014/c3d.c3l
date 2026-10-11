@@ -277,6 +277,25 @@ fn void test_animated_lod_history_reuses_owned_storage_between_observations() @t
     assert(!tracker.has_leaks());
 }
 
+fn void test_animated_lod_addresses_grow_and_reset_without_stale_entries() @test {
+    AnimatedLodAddresses addresses = create_animated_lod_addresses(mem);
+    defer destroy_animated_lod_addresses(&addresses);
+    for (uint frame = 0; frame < 2; frame++) {
+        for (uint part = 0; part < 100; part++) {
+            AnimatedLodKey key = { .scene = 1, .identity = 2, .part = part, .stream = MORPHS };
+            assert(@catch(addresses.get(key)) == NOT_FOUND);
+            addresses.set(key, (gpu::GpuAddress)(part + 1));
+        }
+        for (uint part = 0; part < 100; part++) {
+            AnimatedLodKey key = { .scene = 1, .identity = 2, .part = part, .stream = MORPHS };
+            assert(addresses.get(key)!! == (gpu::GpuAddress)(part + 1));
+            key.stream = PARTS;
+            assert(@catch(addresses.get(key)) == NOT_FOUND);
+        }
+        addresses.reset();
+    }
+}
+
 fn AssetStore animated_lod_render_store() @local {
     return asset::create_asset_store(mem, {
         .max_geometries = 8, .max_textures = 8, .max_materials = 4, .max_samplers = 8,
