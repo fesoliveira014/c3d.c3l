@@ -9,8 +9,7 @@
 
 const float MIN_TRANSMISSION_ALPHA = MIN_PERCEPTUAL_ROUGHNESS * MIN_PERCEPTUAL_ROUGHNESS;
 
-// Zero outside the CPU gate (transmission, roughness factor and ior above their floors), so levels the renderer
-// skips are never read; material_roughness is the factor times its map, before decals and any clamp.
+// Zero outside the renderer's mip gate, so unwritten levels are never read.
 float transmission_lod(FrameRoot frame, float material_roughness, float ior) {
     ivec2 size = texture_extent(frame.scene_color);
     return log2(float(max(size.x, size.y))) * material_roughness * clamp(2.0 * ior - 2.0, 0.0, 1.0);

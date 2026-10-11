@@ -352,17 +352,17 @@ struct RoughGlassScene @private {
     ViewId      view;
 }
 
-fn uint? render_rough_glass(RoughGlassScene* target, float roughness) @private {
-    Renderer* renderer = target.renderer;
+fn uint? render_rough_glass(RoughGlassScene* glass_scene, float roughness) @private {
+    Renderer* renderer = glass_scene.renderer;
     PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
     params.transmission = 1;
     params.standard.metallic = 0;
     params.standard.roughness = roughness;
-    target.assets.replace_material(target.glass, material::physical(params));
+    glass_scene.assets.replace_material(glass_scene.glass, material::physical(params));
     renderer.begin_frame()!;
     defer catch render::abort_frame(renderer);
-    renderer.render_view(target.scene, target.camera, target.view)!;
-    renderer.finish_view(target.view)!;
+    renderer.render_view(glass_scene.scene, glass_scene.camera, glass_scene.view)!;
+    renderer.finish_view(glass_scene.view)!;
     renderer.end_frame()!;
     assert(renderer.stats.scene_snapshots == 1);
     return renderer.stats.draws;
@@ -404,7 +404,7 @@ fn void test_rough_transmission_records_mip_passes_only_for_rough_glass() @test 
         renderer: &renderer,
         desc:     render::render_target_desc(VIEW_SIZE, VIEW_SIZE),
     )!!;
-    RoughGlassScene target = {
+    RoughGlassScene glass_scene = {
         .renderer = &renderer,
         .assets   = &assets,
         .scene    = &scene,
@@ -413,11 +413,11 @@ fn void test_rough_transmission_records_mip_passes_only_for_rough_glass() @test 
         .view     = render::create_view(&renderer, render::texture_view_desc(render_target))!!,
     };
 
-    uint rough = render_rough_glass(&target, 0.5f)!!;
-    uint smooth = render_rough_glass(&target, 0)!!;
+    uint rough = render_rough_glass(&glass_scene, 0.5f)!!;
+    uint smooth = render_rough_glass(&glass_scene, 0)!!;
     assert(rough == smooth + material::texture_mip_count(VIEW_SIZE, VIEW_SIZE) - 1);
-    assert(render_rough_glass(&target, 1)!! == rough);
-    assert(render_rough_glass(&target, 0.5f)!! == rough);
+    assert(render_rough_glass(&glass_scene, 1)!! == rough);
+    assert(render_rough_glass(&glass_scene, 0.5f)!! == rough);
 
     render::resize_render_target(
         renderer: &renderer,
@@ -425,15 +425,15 @@ fn void test_rough_transmission_records_mip_passes_only_for_rough_glass() @test 
         width:    RESIZED_SIZE,
         height:   RESIZED_SIZE,
     )!!;
-    rough = render_rough_glass(&target, 0.5f)!!;
-    smooth = render_rough_glass(&target, 0)!!;
+    rough = render_rough_glass(&glass_scene, 0.5f)!!;
+    smooth = render_rough_glass(&glass_scene, 0)!!;
     assert(rough == smooth + material::texture_mip_count(RESIZED_SIZE, RESIZED_SIZE) - 1);
 
-    ViewDesc reconfigured = renderer.views.get(target.view).desc;
+    ViewDesc reconfigured = renderer.views.get(glass_scene.view).desc;
     reconfigured.depth_prepass = !reconfigured.depth_prepass;
-    render::configure_view(&renderer, target.view, reconfigured)!!;
-    rough = render_rough_glass(&target, 0.5f)!!;
-    smooth = render_rough_glass(&target, 0)!!;
+    render::configure_view(&renderer, glass_scene.view, reconfigured)!!;
+    rough = render_rough_glass(&glass_scene, 0.5f)!!;
+    smooth = render_rough_glass(&glass_scene, 0)!!;
     assert(rough == smooth + material::texture_mip_count(RESIZED_SIZE, RESIZED_SIZE) - 1);
 
     render::wait_frames(&renderer)!!;

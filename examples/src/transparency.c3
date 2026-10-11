@@ -28,6 +28,7 @@ const Vec3 BACKDROP_POSITION @local = { 0, 1, -1.5f };
 const Vec3 BACKDROP_SCALE @local = { 7, 1, 4.5f };
 const Vec2 BACKDROP_TILES @local = { 8, 5 };
 const float PROP_RADIUS @local = 0.35f;
+const float PROP_SPACING @local = 1.6f;
 const float PROP_DEPTH @local = -1.1f;
 
 struct Orbit @local {
@@ -129,7 +130,7 @@ fn int main() {
             .roughness  = 0.5f,
         }))!!;
         Node* prop = scene.add_mesh(ball, prop_material, name: "prop")!!;
-        prop.local.position = { ((float)index - 1) * 1.6f, SLAB_POSITION.y, PROP_DEPTH };
+        prop.local.position = { ((float)index - 1) * PROP_SPACING, SLAB_POSITION.y, PROP_DEPTH };
     }
     Node* pane = scene.add_mesh(slab, glass, name: "glass")!!;
     pane.local.position = SLAB_POSITION;

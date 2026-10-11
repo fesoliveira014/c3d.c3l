@@ -751,8 +751,9 @@ lighting and independent skies](environments.md); Toon uses only its diffuse SH
 contribution, and Basic remains unlit. Toon does not provide PBR reflections,
 outlines or transmission. Physical transmission samples
 the opaque scene through a 2x2 box-filtered mip chain and never sees other
-transmissive or blended surfaces. Shading writes scene-linear HDR into the view's working image; the view's
-output mode decides whether display processing tone maps it (see [views](views.md) and
+transmissive or blended surfaces. Shading writes scene-linear HDR into the view's
+working image; the view's output mode decides whether display processing tone
+maps it (see [views](views.md) and
 [display processing](post.md)). A texture slot may reference a render target with
 `{ .kind = RENDER_TARGET, .target = id }`; a dead target resolves to white, and a
 resized target repacks the material on its own.
