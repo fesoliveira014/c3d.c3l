@@ -3,10 +3,9 @@ module c3d::spatial;
 import c3d;
 import c3d::asset;
 import c3d::geometry;
-import c3d::material;
 import c3d::maths;
 import c3d::model;
-import c3d::scene;
+import c3d::scene @public;
 import std::math;
 
 <*
@@ -54,13 +53,12 @@ fn bool lod_group_is_live(
               && binding.source_skeleton_revision != assets.skeleton(binding.source_skeleton).header.revision) return false;
         }
 
-        Material* material = &assets.material(part.material).data;
-        if (material.kind == MaterialKind.CUSTOM) {
-            if (!assets.shaders.is_live(material.custom.shader)) return false;
-            CustomVertex* vertex = &assets.shader(material.custom.shader).desc.vertex;
-            if (vertex.shaded.len && (!state.desc.has_bounds_override
-              || (state.mode == LodMode.INSTANCED && !vertex.instanced_shaded.len))) return false;
-        }
+        if (!@ok(scene::validate_lod_material(
+            assets: assets,
+            material_id: part.material,
+            mode: state.mode,
+            bounds_override: state.desc.has_bounds_override,
+        ))) return false;
     }
 
     return true;

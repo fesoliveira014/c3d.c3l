@@ -3,7 +3,6 @@ module c3d::model;
 import c3d;
 import c3d::asset;
 import c3d::geometry;
-import c3d::material;
 import c3d::maths;
 import c3d::scene @public;
 import std::math;
@@ -178,49 +177,17 @@ fn void? validate_shared_skin(
 
 fn void? validate_source_shape(AssetStore* assets, AnimatedLodSource source) @local {
     ModelTemplate* template = &source.model.data;
-    foreach (index, node : template.nodes) {
-        if (node.parent < -1 || node.parent >= (int)index) return c3d::INVALID_ARGUMENT~;
-    }
+    check_crowd_template(assets, template)!;
 
     foreach (index, mesh : template.meshes) {
-        if (mesh.node >= template.nodes.len) return c3d::INVALID_ARGUMENT~;
-        foreach (previous : template.meshes[:index]) {
-            if (previous.node == mesh.node) return c3d::INVALID_ARGUMENT~;
-        }
-
-        GeometryAsset* geometry = assets.geometries.try_get(mesh.geometry)!;
-        assets.materials.try_get(mesh.material)!;
+        GeometryAsset* geometry = assets.geometry(mesh.geometry);
         float[] defaults = source_defaults(source, (uint)index);
         if (defaults.len != weight_width(geometry)) return c3d::INVALID_ARGUMENT~;
         foreach (weight : defaults) {
             if (!math::is_finite(weight)) return c3d::INVALID_ARGUMENT~;
         }
 
-        foreach (channel_index, channel : geometry.data.channels) {
-            if (!channel.name.len) continue;
-            foreach (previous : geometry.data.channels[:channel_index]) {
-                if (channel.name == previous.name) return c3d::INVALID_ARGUMENT~;
-            }
-        }
-
         if (geometry_is_skinned(geometry) && !skin_at(template, mesh.node)) return c3d::INVALID_ARGUMENT~;
-    }
-
-    if (!template.skins.len) return;
-
-    ModelSkin first = template.skins[0];
-    Skeleton* skeleton = &assets.skeletons.try_get(first.skeleton)!.data;
-    foreach (skin : template.skins) {
-        bool mesh_exists;
-        foreach (mesh : template.meshes) mesh_exists |= mesh.node == skin.mesh_node;
-        if (!mesh_exists) return c3d::INVALID_ARGUMENT~;
-        validate_shared_skin(
-            assets: assets,
-            template: template,
-            skin: skin,
-            expected_nodes: first.joint_nodes,
-            expected_bind: skeleton.inverse_bind,
-        )!;
     }
 }
 
@@ -241,20 +208,6 @@ fn uint? mapped_weight(
     if (weight_width(base) != weight_width(selected)) return c3d::INVALID_ARGUMENT~;
     if (base.data.channels.len && base.data.channels[weight].name.len) return c3d::INVALID_ARGUMENT~;
     return weight;
-}
-
-fn void? validate_material(
-    AssetStore* assets,
-    MaterialId material_id,
-    LodMode mode,
-    bool bounds_override,
-) @local {
-    Material* material = &assets.materials.try_get(material_id)!.data;
-    if (material.kind != MaterialKind.CUSTOM) return;
-
-    CustomVertex* vertex = &assets.shaders.try_get(material.custom.shader)!.desc.vertex;
-    if (vertex.shaded.len && (!bounds_override
-      || (mode == LodMode.INSTANCED && !vertex.instanced_shaded.len))) return c3d::UNSUPPORTED~;
 }
 
 fn LodGroup? build_animated_lod(
@@ -355,7 +308,7 @@ fn LodGroup? build_animated_lod(
                 if (level_index == 0 && (!c3d::same_id(part.draw.geometry, mesh.geometry)
                   || !c3d::same_id(part.draw.material, mesh.material))) return c3d::INVALID_ARGUMENT~;
 
-                validate_material(
+                scene::validate_lod_material(
                     assets: assets,
                     material_id: part.draw.material,
                     mode: source.crowd ? LodMode.INSTANCED : LodMode.SINGLE,

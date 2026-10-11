@@ -389,13 +389,27 @@ fn void? validate_lod_desc(AssetStore* assets, LodDesc desc, LodMode mode) {
         if (!valid_lod_bounds(maths::aabb_transform(geometry.data.bounds, part.local))) {
             return c3d::INVALID_ARGUMENT~;
         }
-        Material* material = &assets.material(part.material).data;
-        if (material.kind != MaterialKind.CUSTOM) continue;
-        if (!assets.shaders.is_live(material.custom.shader)) return c3d::INVALID_ID~;
-        CustomVertex* vertex = &assets.shader(material.custom.shader).desc.vertex;
-        if (vertex.shaded.len && (!desc.has_bounds_override || (mode == LodMode.INSTANCED && !vertex.instanced_shaded.len))) {
-            return c3d::UNSUPPORTED~;
-        }
+        validate_lod_material(
+            assets: assets,
+            material_id: part.material,
+            mode: mode,
+            bounds_override: desc.has_bounds_override,
+        )!;
+    }
+}
+
+fn void? validate_lod_material(
+    AssetStore* assets,
+    MaterialId material_id,
+    LodMode mode,
+    bool bounds_override,
+) @private {
+    Material* material = &assets.materials.try_get(material_id)!.data;
+    if (material.kind != MaterialKind.CUSTOM) return;
+
+    CustomVertex* vertex = &assets.shaders.try_get(material.custom.shader)!.desc.vertex;
+    if (vertex.shaded.len && (!bounds_override || (mode == LodMode.INSTANCED && !vertex.instanced_shaded.len))) {
+        return c3d::UNSUPPORTED~;
     }
 }
 
