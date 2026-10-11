@@ -455,7 +455,7 @@ fn void test_active_cancel_acknowledges_success_and_fault_without_failure() @tes
     }
 }
 
-fn void test_decoded_cancel_unlinks_middle_head_and_tail_without_reordering_publication() @test {
+fn void test_decoded_cancel_of_middle_head_and_tail_keeps_publication_order() @test {
     GatedSource source = create_gated_source(mem);
     defer destroy_gated_source(&source);
     TrackingAllocator tracker;

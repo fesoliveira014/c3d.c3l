@@ -100,8 +100,6 @@ struct LoadSlot @private {
     uint                  generation;
     ulong                 sequence;
     PreparedModelDocument prepared;
-    uint                  decoded_previous;
-    uint                  decoded_next;
     ModelId               model;
     fault                 failure;
     ModelReplaceReport    report;
@@ -116,8 +114,6 @@ struct LoaderState @private {
     ConditionVariable wake;
     Thread            worker; // Thread.create writes this while the worker runs; the worker never reads it
     LoadSlot[]        slots;
-    uint              decoded_head;
-    uint              decoded_tail;
     ulong             next_sequence;
     LoaderCounters    counters;
     bool              stopping;
@@ -198,8 +194,7 @@ fn PublishReport AsyncLoader.publish_within(&self, PublishLimits limits) {
     defer state.lock.unlock();
 
     PublishReport report;
-    while (state.decoded_head) {
-        uint index = state.decoded_head - 1;
+    while (try index = oldest_in_phase(state, LoadPhase.DECODED)) {
         LoadSlot* slot = &state.slots[index];
         ulong items = slot.prepared.items;
         if (limits.items && items > limits.items - report.items_used) {
@@ -209,7 +204,6 @@ fn PublishReport AsyncLoader.publish_within(&self, PublishLimits limits) {
         }
 
         report.items_used += items;
-        remove_decoded(state, index);
         publish_slot(state.assets, slot);
         asset::destroy_prepared_model_document(&slot.prepared);
         if (slot.phase == LoadPhase.PUBLISHED) {
@@ -241,7 +235,6 @@ fn void? AsyncLoader.cancel(&self, LoadId id) {
         case DECODING:
             slot.phase = LoadPhase.CANCELLING;
         case DECODED:
-            remove_decoded(state, id.index);
             asset::destroy_prepared_model_document(&slot.prepared);
             finish_cancel(state, slot);
         case CANCELLING:
@@ -351,33 +344,6 @@ fn void finish_cancel(LoaderState* state, LoadSlot* slot) @private {
     state.counters.cancellations++;
 }
 
-fn void append_decoded(LoaderState* state, uint index) @private {
-    LoadSlot* slot = &state.slots[index];
-    slot.decoded_previous = state.decoded_tail;
-    if (state.decoded_tail) {
-        state.slots[state.decoded_tail - 1].decoded_next = index + 1;
-    } else {
-        state.decoded_head = index + 1;
-    }
-    state.decoded_tail = index + 1;
-}
-
-fn void remove_decoded(LoaderState* state, uint index) @private {
-    LoadSlot* slot = &state.slots[index];
-    if (slot.decoded_previous) {
-        state.slots[slot.decoded_previous - 1].decoded_next = slot.decoded_next;
-    } else {
-        state.decoded_head = slot.decoded_next;
-    }
-    if (slot.decoded_next) {
-        state.slots[slot.decoded_next - 1].decoded_previous = slot.decoded_previous;
-    } else {
-        state.decoded_tail = slot.decoded_previous;
-    }
-    slot.decoded_previous = 0;
-    slot.decoded_next = 0;
-}
-
 fn void publish_slot(AssetStore* assets, LoadSlot* slot) @private {
     if (!slot.request.replace.generation) {
         ModelId? model = asset::publish_prepared_model_document(assets, &slot.prepared);
@@ -426,10 +392,11 @@ fn bool is_pending(LoadPhase phase) @private {
         || phase == LoadPhase.DECODED || phase == LoadPhase.CANCELLING;
 }
 
-fn usz? oldest_queued(LoaderState* state) @private {
+// One worker decodes in request order, so request order is also the decoded FIFO order.
+fn usz? oldest_in_phase(LoaderState* state, LoadPhase phase) @private {
     usz? oldest = NOT_FOUND~;
     foreach (usz index, &slot : state.slots) {
-        if (!slot.occupied || slot.phase != LoadPhase.QUEUED) continue;
+        if (!slot.occupied || slot.phase != phase) continue;
         if (try current = oldest) {
             if (state.slots[current].sequence < slot.sequence) continue;
         }
@@ -442,7 +409,7 @@ fn usz? next_decode(LoaderState* state) @private {
     state.lock.lock();
     defer state.lock.unlock();
     while (!state.stopping) {
-        if (try index = oldest_queued(state)) {
+        if (try index = oldest_in_phase(state, LoadPhase.QUEUED)) {
             state.slots[index].phase = LoadPhase.DECODING;
             return index;
         }
@@ -477,7 +444,6 @@ fn void decode_slot(LoaderState* state, usz index) @private {
     }
     slot.prepared = prepared;
     slot.phase = LoadPhase.DECODED;
-    append_decoded(state, (uint)index);
 }
 
 fn PreparedModelDocument? decode_prepared_request(
