@@ -475,6 +475,7 @@ fn void emit_lod_candidates(
     CameraMatrices* camera,
     ExtractCounts* counts,
     bool shadow,
+    bool optical = false,
 ) @local {
     LodGroupState* state = selection.state;
     bool instanced = state.mode == LodMode.INSTANCED;
@@ -485,7 +486,7 @@ fn void emit_lod_candidates(
         bool impostor = selected == state.desc.levels.len;
         for (uint index = 0; index < level.part_count; index++) {
             LodPart part = state.desc.parts[impostor ? 0 : level.first_part + index];
-            if (!impostor && shadow && assets.material(part.material).data.common.alpha_mode == AlphaMode.BLEND) continue;
+            if (!impostor && shadow && !shadow_caster_material(&assets.material(part.material).data, optical)) continue;
             uint parities = instanced ? 2 : 1;
             for (uint parity = 0; parity < parities; parity++) {
                 uint split = instanced && state.animated
@@ -569,6 +570,7 @@ fn MeshCandidate[] extract_shadow_candidates(
     ExtractCounts* counts,
     LodSelection[] lod = {},
     Vec3 origin = {},
+    bool optical = false,
 ) {
     *counts = {};
     MeshCandidate[] candidates = alloc::alloc_array(allocator, MeshCandidate, candidate_capacity(scene));
@@ -582,7 +584,7 @@ fn MeshCandidate[] extract_shadow_candidates(
                 counts.dangling++;
             } else {
                 Material* material = &assets.material(mesh.material).data;
-                if (material.common.alpha_mode != AlphaMode.BLEND) {
+                if (shadow_caster_material(material, optical)) {
                     candidates[counts.visible++] = {
                         .node           = node,
                         .geometry       = mesh.geometry,
@@ -610,7 +612,7 @@ fn MeshCandidate[] extract_shadow_candidates(
         if (!animated_lod_owns_source(scene, node) && batch.count && node.visible_effective && batch.cast_shadow) {
             if (!batch_is_drawable(assets, batch)) {
                 counts.dangling++;
-            } else if (assets.material(batch.material).data.common.alpha_mode != AlphaMode.BLEND) {
+            } else if (shadow_caster_material(&assets.material(batch.material).data, optical)) {
                 batch.validate_effects();
                 Aabb world = spatial::instanced_world_bounds(
                     assets: assets,
@@ -647,6 +649,7 @@ fn MeshCandidate[] extract_shadow_candidates(
             camera: null,
             counts: counts,
             shadow: true,
+            optical: optical,
         );
     }
     return candidates[:counts.visible];

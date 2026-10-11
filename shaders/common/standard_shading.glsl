@@ -31,9 +31,9 @@ vec3 standard_ambient_fill(
             LightGpu standard_light = LightArray((FRAME).lights).values[ \
                 selected_light_index(FRAME, standard_lights, standard_index)]; \
             if (((LAYERS) & standard_light.layers) == 0u) continue; \
-            float standard_visibility = 1.0; \
+            vec3 standard_visibility = vec3(1.0); \
             if ((RECEIVE_SHADOW) && light_casts_shadow(standard_light)) { \
-                standard_visibility = shadow_visibility( \
+                standard_visibility = shadow_visibility_rgb( \
                     FRAME, \
                     standard_light, \
                     POSITION, \

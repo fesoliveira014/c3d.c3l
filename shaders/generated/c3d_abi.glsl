@@ -25,6 +25,14 @@ const uint TRACE_INSTANCE_ALPHA_MASK = 1u;
 const uint TRACE_INSTANCE_DOUBLE_SIDED = 2u;
 const uint TRACE_MASK_ALL = 1u;
 const uint TRACE_MASK_SHADOW_CASTER = 2u;
+const uint LIGHT_COLORED_TRANSMISSION = 2u;
+const uint TRACE_MASK_OPTICAL = 4u;
+const uint OPTICAL_SHADOW_LAYER_CAPACITY = 16u;
+const uint OPTICAL_SHADOW_CAPTURE = 0u;
+const uint OPTICAL_SHADOW_PRODUCT = 1u;
+const uint OPTICAL_SHADOW_OPAQUE = 2u;
+const uint OPTICAL_SHADOW_STORE = 3u;
+const uint OPTICAL_TRACE_OVER_CAP = 1u;
 const uint TRACE_POSE_GROUP_SIZE = 64u;
 const uint TRACE_REFIT_GROUP_SIZE = 128u;
 const uint FRAME_LIGHTS_CLUSTERED = 1u;
@@ -265,6 +273,55 @@ struct TraceInstanceGpu {
     uint64_t primitives;
 };
 
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer OpticalShadowsGpu {
+    uint64_t layers;
+    uint64_t trace;
+    uint64_t pass;
+    uint capacity;
+    uint flags;
+};
+
+struct OpticalShadowLayerGpu {
+    uint opaque_depth;
+    uint overflow_depth;
+    uint depths[16];
+    uint products[16];
+    uint _pad0;
+    uint _pad1;
+    mat4 view_proj;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer OpticalShadowPassGpu {
+    vec4 light_position_kind;
+    vec4 light_direction;
+    uint previous_depth;
+    uint selected_depth;
+    uint source_product;
+    uint phase;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+    uint _pad3;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer OpticalTraceGpu {
+    uint64_t scene;
+    uint64_t generic_keys;
+    uint64_t blend_keys;
+    uint flags;
+    uint _pad0;
+};
+
+struct OpticalTraceKeyGpu {
+    uint node_index;
+    uint node_generation;
+    uint part_index;
+    uint range_index;
+    uint instance_index;
+    uint layers;
+    uint64_t instance_color;
+};
+
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer SceneTraceRoot {
     uint64_t top_nodes;
     uint64_t instances;
@@ -414,8 +471,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
     uint decal_count;
     uint _pad3;
     uint64_t transparency;
-    uint _pad4;
-    uint _pad5;
+    uint64_t optical_shadows;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
@@ -863,7 +919,7 @@ struct ShadowGpu {
     float texel_size;
     float max_distance;
     float blend_depth;
-    uint _pad2;
+    uint optical_index;
 };
 
 struct StandardMaterialGpu {

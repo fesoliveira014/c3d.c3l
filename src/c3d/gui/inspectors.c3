@@ -212,6 +212,7 @@ fn bool light_inspector(void* component) @local {
 
     imgui::separator_text("Shadow");
     changed = imgui::checkbox("Enabled", &light.shadow.enabled) || changed;
+    changed = imgui::checkbox("Colored transmission", &light.shadow.colored_transmission) || changed;
     changed = imgui::input_scalar("Priority", imgui::DATA_TYPE_S32, &light.shadow.priority) || changed;
     changed = nonnegative_drag("Bias", &light.shadow.bias) || changed;
     if (light.kind == LightKind.DIRECTIONAL) {

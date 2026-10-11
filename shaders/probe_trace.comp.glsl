@@ -29,9 +29,9 @@ vec3 direct_lambert(FrameRoot frame, TraceSurface surface) {
         LightSample light_sample = sample_light(light, surface.position);
         float cosine = dot(surface.normal, light_sample.direction);
         if (cosine <= 0.0 || light_sample.radiance == vec3(0.0)) continue;
-        float visibility = light_casts_shadow(light)
-            ? ray_shadow_visibility(frame, light, surface.position, surface.geometric_normal)
-            : 1.0;
+        vec3 visibility = light_casts_shadow(light)
+            ? ray_shadow_visibility_rgb(frame, light, surface.position, surface.geometric_normal)
+            : vec3(1.0);
         radiance += light_sample.radiance * cosine * visibility;
     }
     return radiance * surface.albedo / PI;

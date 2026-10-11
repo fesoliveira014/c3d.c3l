@@ -4,6 +4,7 @@ import c3d;
 import c3d::camera;
 import c3d::maths;
 import c3d::scene;
+import c3d::shader;
 import gpu;
 import std::math;
 
@@ -20,6 +21,7 @@ struct ShadowSetKey {
     Mat4  proj;
     uint  layers;
     bool  ray_traced_shadows;
+    uint  transmission_shadow_layers;
 }
 
 <* Atlas layers one light holds in a shadow set. *>
@@ -27,6 +29,7 @@ struct ShadowSetLight {
     Entity light;
     uint   first_layer;
     uint   layer_count;
+    bool   colored_transmission;
 }
 
 <*
@@ -36,6 +39,7 @@ struct ShadowSetLight {
 struct ShadowSet {
     ShadowSetKey     key;
     bool             published;   // a later view with an equal key binds it instead of recording
+    gpu::GpuAddress  optical_layers; // OpticalShadowLayerGpu array; zero for an ordinary set.
     gpu::GpuAddress  shadows;     // ShadowGpu array in the frame's upload ring
     uint             layer_count;
     ShadowSetLight[] lights;      // max_shadow_layers entries, allocated with the renderer
@@ -67,6 +71,7 @@ fn ShadowSetKey shadow_set_key(
     ulong frame,
     ShadowCamera* shadow_view,
     bool ray_traced_shadows,
+    uint transmission_shadow_layers = 0,
 ) @private {
     return {
         .scene_identity     = scene.identity,
@@ -75,6 +80,7 @@ fn ShadowSetKey shadow_set_key(
         .proj               = shadow_view.matrices.proj,
         .layers             = shadow_view.lens.layers,
         .ray_traced_shadows = ray_traced_shadows,
+        .transmission_shadow_layers = transmission_shadow_layers,
     };
 }
 
@@ -85,7 +91,8 @@ fn bool same_shadow_key(ShadowSetKey* first, ShadowSetKey* second) @private {
         && mem::equals(@as_char_view(first.view), @as_char_view(second.view))
         && mem::equals(@as_char_view(first.proj), @as_char_view(second.proj))
         && first.layers == second.layers
-        && first.ray_traced_shadows == second.ray_traced_shadows;
+        && first.ray_traced_shadows == second.ray_traced_shadows
+        && first.transmission_shadow_layers == second.transmission_shadow_layers;
 }
 
 fn bool claim_shadow_set(
@@ -101,12 +108,24 @@ fn bool claim_shadow_set(
     set.key = *key;
     set.published = share;
     set.shadows = (gpu::GpuAddress)0;
+    set.optical_layers = (gpu::GpuAddress)0;
     set.layer_count = 0;
     set.light_count = 0;
     stats.shadow_sets_recorded++;
     return false;
 }
 
+fn bool same_shadow_optical_lights(ShadowSet* set, LightExtraction* extraction) @private {
+    foreach (entry : set.lights[:set.light_count]) {
+        foreach (request : extraction.shadows) {
+            if (!c3d::same_id(entry.light, request.light)) continue;
+
+            bool colored = (extraction.lights[request.light_index].flags & shader::LIGHT_COLORED_TRANSMISSION) != 0;
+            if (entry.colored_transmission != colored) return false;
+        }
+    }
+    return true;
+}
 fn uint bind_shadow_set(ShadowSet* set, LightExtraction* extraction) @private {
     uint unmatched = (uint)extraction.shadows.len;
     foreach (request : extraction.shadows) {
@@ -141,19 +160,21 @@ fn void? resolve_shadow_set(
         frame:              renderer.frame_index,
         shadow_view:        shadow_view,
         ray_traced_shadows: ray_traced,
+        transmission_shadow_layers: renderer.transmission_shadow_layers,
     );
     ShadowSetKey own_key = shadow_set_key(
         scene:              scene,
         frame:              renderer.frame_index,
         shadow_view:        own_view,
         ray_traced_shadows: ray_traced,
+        transmission_shadow_layers: renderer.transmission_shadow_layers,
     );
     bool own_camera = same_shadow_key(&key, &own_key);
     ShadowSet* set = &renderer.shadow_set;
     bool shared = claim_shadow_set(
         set:   set,
         key:   &key,
-        share: record.desc.share_shadows,
+        share: record.desc.share_shadows && same_shadow_optical_lights(set, view_lights),
         stats: &renderer.stats,
     );
     record.stats.shadow_set_shared = shared;

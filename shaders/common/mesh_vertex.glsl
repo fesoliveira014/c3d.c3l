@@ -27,6 +27,9 @@ layout(location = 3) out vec2 v_uv0;
 layout(location = 4) out vec2 v_uv1;
 layout(location = 5) out vec4 v_color;
 layout(location = 6) out vec4 v_clip_pos;
+#ifdef OPTICAL_SHADOW
+layout(location = 7) flat out vec3 v_optical_model_scale;
+#endif
 #ifdef VELOCITY
 layout(location = 7) out vec4 v_prev_clip_pos;
 #endif
@@ -219,6 +222,10 @@ void write_mesh_outputs(
 
         effect_position = (local * vec4(vertex.position, 1.0)).xyz;
     }
+
+#ifdef OPTICAL_SHADOW
+    v_optical_model_scale = vec3(length(model[0].xyz), length(model[1].xyz), length(model[2].xyz));
+#endif
 
     vec4 world = model * vec4(vertex.position, 1.0);
     world.xyz = apply_instance_effects(draw, instance, world.xyz, instance_bend_weight(draw, effect_position, vertex.color));

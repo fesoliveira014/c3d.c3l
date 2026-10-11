@@ -211,6 +211,12 @@ fn void? record_probe_updates(Renderer* renderer, ProbeFillRecording* recording,
         origin:        renderer.frame_origin,
     );
 
+    ((FrameRoot*)frame_span.bytes.ptr).optical_shadows = pack_optical_shadows(
+        renderer: renderer,
+        scene: scene,
+        lights: extraction.lights,
+    )!;
+
     Quat rotation = maths::random_rotation({
         // Index 0 is the all-zero point, a half turn about y that leaves one ray in each probe layer's plane.
         maths::halton((uint)renderer.frame_index + 1, 2),

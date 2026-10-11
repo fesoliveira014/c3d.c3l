@@ -90,6 +90,8 @@ enum ShaderName : int {
     LIGHTING_RESOLVE,
     TRACE_POSE,
     TRACE_REFIT,
+    OPTICAL_SHADOW,
+    OPTICAL_STORE,
 }
 
 <*
@@ -141,6 +143,11 @@ const uint SHADER_FLAG_SCENE_TRACE_BVH = 1 << 8;
  Flag bit for LAYERED.
 *>
 const uint SHADER_FLAG_LAYERED = 1 << 9;
+
+<*
+ Flag bit for OPTICAL_SHADOW.
+*>
+const uint SHADER_FLAG_OPTICAL_SHADOW = 1 << 10;
 
 const char[*] TRANSPARENCY_SPIRV @private = $embed("../../../shaders/spv/transparency.spv");
 const char[*] TRANSPARENCY_MIP_SPIRV @private = $embed("../../../shaders/spv/transparency_mip.spv");
@@ -302,11 +309,25 @@ const char[*] MESH_SKINNED_U16_INSTANCED_LAYERED_SPIRV @private = $embed("../../
 const char[*] MESH_MORPH_INSTANCED_LAYERED_SPIRV @private = $embed("../../../shaders/spv/mesh_morph_instanced_layered.spv");
 const char[*] MESH_SKINNED_MORPH_INSTANCED_LAYERED_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_morph_instanced_layered.spv");
 const char[*] MESH_SKINNED_U16_MORPH_INSTANCED_LAYERED_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_u16_morph_instanced_layered.spv");
+const char[*] MESH_LAYERED_OPTICAL_SHADOW_SPIRV @private = $embed("../../../shaders/spv/mesh_layered_optical_shadow.spv");
+const char[*] MESH_SKINNED_LAYERED_OPTICAL_SHADOW_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_layered_optical_shadow.spv");
+const char[*] MESH_SKINNED_U16_LAYERED_OPTICAL_SHADOW_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_u16_layered_optical_shadow.spv");
+const char[*] MESH_MORPH_LAYERED_OPTICAL_SHADOW_SPIRV @private = $embed("../../../shaders/spv/mesh_morph_layered_optical_shadow.spv");
+const char[*] MESH_SKINNED_MORPH_LAYERED_OPTICAL_SHADOW_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_morph_layered_optical_shadow.spv");
+const char[*] MESH_SKINNED_U16_MORPH_LAYERED_OPTICAL_SHADOW_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_u16_morph_layered_optical_shadow.spv");
+const char[*] MESH_INSTANCED_LAYERED_OPTICAL_SHADOW_SPIRV @private = $embed("../../../shaders/spv/mesh_instanced_layered_optical_shadow.spv");
+const char[*] MESH_SKINNED_INSTANCED_LAYERED_OPTICAL_SHADOW_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_instanced_layered_optical_shadow.spv");
+const char[*] MESH_SKINNED_U16_INSTANCED_LAYERED_OPTICAL_SHADOW_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_u16_instanced_layered_optical_shadow.spv");
+const char[*] MESH_MORPH_INSTANCED_LAYERED_OPTICAL_SHADOW_SPIRV @private = $embed("../../../shaders/spv/mesh_morph_instanced_layered_optical_shadow.spv");
+const char[*] MESH_SKINNED_MORPH_INSTANCED_LAYERED_OPTICAL_SHADOW_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_morph_instanced_layered_optical_shadow.spv");
+const char[*] MESH_SKINNED_U16_MORPH_INSTANCED_LAYERED_OPTICAL_SHADOW_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_u16_morph_instanced_layered_optical_shadow.spv");
+const char[*] OPTICAL_SHADOW_SPIRV @private = $embed("../../../shaders/spv/optical_shadow.spv");
+const char[*] OPTICAL_STORE_SPIRV @private = $embed("../../../shaders/spv/optical_store.spv");
 
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[160] SHADER_ENTRIES = {
+const ShaderEntry[174] SHADER_ENTRIES = {
     { .variant = { .shader = TRANSPARENCY }, .spirv = TRANSPARENCY_SPIRV[..] },
     { .variant = { .shader = TRANSPARENCY_MIP }, .spirv = TRANSPARENCY_MIP_SPIRV[..] },
     { .variant = { .shader = TRANSPARENCY_OVERFLOW }, .spirv = TRANSPARENCY_OVERFLOW_SPIRV[..] },
@@ -467,4 +488,18 @@ const ShaderEntry[160] SHADER_ENTRIES = {
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_MORPH | SHADER_FLAG_INSTANCED | SHADER_FLAG_LAYERED }, .spirv = MESH_MORPH_INSTANCED_LAYERED_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED | SHADER_FLAG_MORPH | SHADER_FLAG_INSTANCED | SHADER_FLAG_LAYERED }, .spirv = MESH_SKINNED_MORPH_INSTANCED_LAYERED_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_MORPH | SHADER_FLAG_INSTANCED | SHADER_FLAG_LAYERED }, .spirv = MESH_SKINNED_U16_MORPH_INSTANCED_LAYERED_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_LAYERED | SHADER_FLAG_OPTICAL_SHADOW }, .spirv = MESH_LAYERED_OPTICAL_SHADOW_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED | SHADER_FLAG_LAYERED | SHADER_FLAG_OPTICAL_SHADOW }, .spirv = MESH_SKINNED_LAYERED_OPTICAL_SHADOW_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_LAYERED | SHADER_FLAG_OPTICAL_SHADOW }, .spirv = MESH_SKINNED_U16_LAYERED_OPTICAL_SHADOW_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_MORPH | SHADER_FLAG_LAYERED | SHADER_FLAG_OPTICAL_SHADOW }, .spirv = MESH_MORPH_LAYERED_OPTICAL_SHADOW_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED | SHADER_FLAG_MORPH | SHADER_FLAG_LAYERED | SHADER_FLAG_OPTICAL_SHADOW }, .spirv = MESH_SKINNED_MORPH_LAYERED_OPTICAL_SHADOW_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_MORPH | SHADER_FLAG_LAYERED | SHADER_FLAG_OPTICAL_SHADOW }, .spirv = MESH_SKINNED_U16_MORPH_LAYERED_OPTICAL_SHADOW_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_INSTANCED | SHADER_FLAG_LAYERED | SHADER_FLAG_OPTICAL_SHADOW }, .spirv = MESH_INSTANCED_LAYERED_OPTICAL_SHADOW_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED | SHADER_FLAG_INSTANCED | SHADER_FLAG_LAYERED | SHADER_FLAG_OPTICAL_SHADOW }, .spirv = MESH_SKINNED_INSTANCED_LAYERED_OPTICAL_SHADOW_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_INSTANCED | SHADER_FLAG_LAYERED | SHADER_FLAG_OPTICAL_SHADOW }, .spirv = MESH_SKINNED_U16_INSTANCED_LAYERED_OPTICAL_SHADOW_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_MORPH | SHADER_FLAG_INSTANCED | SHADER_FLAG_LAYERED | SHADER_FLAG_OPTICAL_SHADOW }, .spirv = MESH_MORPH_INSTANCED_LAYERED_OPTICAL_SHADOW_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED | SHADER_FLAG_MORPH | SHADER_FLAG_INSTANCED | SHADER_FLAG_LAYERED | SHADER_FLAG_OPTICAL_SHADOW }, .spirv = MESH_SKINNED_MORPH_INSTANCED_LAYERED_OPTICAL_SHADOW_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_MORPH | SHADER_FLAG_INSTANCED | SHADER_FLAG_LAYERED | SHADER_FLAG_OPTICAL_SHADOW }, .spirv = MESH_SKINNED_U16_MORPH_INSTANCED_LAYERED_OPTICAL_SHADOW_SPIRV[..] },
+    { .variant = { .shader = OPTICAL_SHADOW }, .spirv = OPTICAL_SHADOW_SPIRV[..] },
+    { .variant = { .shader = OPTICAL_STORE }, .spirv = OPTICAL_STORE_SPIRV[..] },
 };

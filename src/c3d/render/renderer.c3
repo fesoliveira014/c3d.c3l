@@ -79,6 +79,7 @@ struct RendererDesc {
     uint             max_lights;
     uint             shadow_resolution;
     uint             max_shadow_layers;
+    uint             transmission_shadow_layers;
     uint             max_trace_instances;
     uint             max_posed_trace_instances; // zero: DEFAULT_MAX_POSED_TRACE_INSTANCES
     uint             max_instance_batches;
@@ -148,6 +149,10 @@ struct Renderer {
     uint                    cull_lod_tested;
     uint                    cull_lod_fallbacks;
     SceneTrace              scene_trace;
+    SceneTrace              optical_scene_trace;
+    RtContext               optical_rt;
+    bool                    optical_trace_overflow;
+    bool                    optical_shadow_preparation;
     RtContext               rt;
     PosedTraceTable         posed_trace;
 
@@ -155,8 +160,11 @@ struct Renderer {
     uint                    max_lights;
     uint                    shadow_resolution;
     uint                    max_shadow_layers;
+    uint                    transmission_shadow_layers;
     uint                    max_trace_instances;
     ShadowAtlas             shadow_atlas;
+    OpticalShadowAtlas      optical_shadow_atlas;
+    OpticalShadowStates     frame_optical_shadow_states;
     ShadowSet               shadow_set;
     GpuGeometry[]           geometries;
     GpuGeometry             billboard_geometry;
@@ -529,6 +537,7 @@ fn void? begin_renderer_frame(Renderer* self, FrameInfo info, bool acquire_outpu
         }
 
         self.frame_shadow_state = self.shadow_atlas.state;
+        self.frame_optical_shadow_states = snapshot_optical_shadow_states(&self.optical_shadow_atlas);
         // An aborted frame keeps frame_index, so its set must not match a view of the retried frame.
         self.shadow_set.published = false;
         foreach (&record : self.targets.items) {
@@ -721,6 +730,10 @@ fn void? finish_pending_output(Renderer* renderer) @private {
     present_window_output(renderer, renderer.output_submission)!;
 }
 
+fn uint? resolve_transmission_shadow_layers(uint capacity) @private {
+    if (capacity > shader::OPTICAL_SHADOW_LAYER_CAPACITY) return c3d::INVALID_ARGUMENT~;
+    return capacity ? capacity : DEFAULT_TRANSMISSION_SHADOW_LAYERS;
+}
 <*
  Create the renderer; unexpected rollback completion failure exits without defers.
  @param [&in] assets : "Borrowed for the renderer's lifetime; never released by it."
@@ -736,6 +749,8 @@ fn void? finish_pending_output(Renderer* renderer) @private {
  @require desc.shadow_resolution == 0 || desc.shadow_resolution > 2 * SHADOW_GUARD_TEXELS
 *>
 fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDesc desc = {}) {
+    uint transmission_shadow_layers = resolve_transmission_shadow_layers(desc.transmission_shadow_layers)!;
+
     $if !$feat(C3D_PROFILE_GPU):
         if (desc.gpu_timings) return c3d::UNSUPPORTED~;
     $endif
@@ -752,7 +767,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     runtime_desc.texture_capacity = desc.texture_capacity;
     runtime_desc.texture_heap_capacity = desc.texture_heap_capacity;
     bool ray_queries = desc.ray_queries || desc.ray_tracing_pipelines;
-    if (ray_queries) runtime_desc.acceleration_structure_heap_capacity = FRAMES_IN_FLIGHT;
+    if (ray_queries) runtime_desc.acceleration_structure_heap_capacity = 2 * FRAMES_IN_FLIGHT;
 
     gpu::Runtime runtime = gpu::create_runtime(&runtime_desc)!;
     defer catch (void)gpu::destroy_runtime(&runtime);
@@ -887,6 +902,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .max_lights           = desc.max_lights ? desc.max_lights : DEFAULT_MAX_LIGHTS,
         .shadow_resolution    = desc.shadow_resolution ? desc.shadow_resolution : DEFAULT_SHADOW_RESOLUTION,
         .max_shadow_layers    = max_shadow_layers,
+        .transmission_shadow_layers = transmission_shadow_layers,
         .max_trace_instances  = max_trace_instances,
         .shadow_timing_results = shadow_timing_results,
         .shadow_frusta        = alloc::new_array(allocator, ShadowFrustum, max_shadow_layers),
@@ -916,6 +932,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .trace_stages         = trace_stages,
         .sampled_state        = sampled_state,
         .rt                   = { .current = FRAMES_IN_FLIGHT },
+        .optical_rt           = { .current = FRAMES_IN_FLIGHT },
         .graphics             = graphics,
         .swapchain            = swapchain,
         .swapchain_info       = swapchain_info,
@@ -1008,6 +1025,7 @@ fn void destroy_renderer(Renderer* renderer) {
     free_pending_uploads(renderer);
     free_textures(renderer);
     free_fonts(renderer);
+    free_rt(renderer, &renderer.optical_rt);
     free_rt(renderer);
     free_geometries(renderer);
     free_billboard_geometry(renderer);
@@ -1017,8 +1035,10 @@ fn void destroy_renderer(Renderer* renderer) {
     free_shaders(renderer);
     free_compute_shaders(renderer);
     free_buffers(renderer);
+    free_scene_trace(renderer, &renderer.optical_scene_trace);
     free_scene_trace(renderer);
     free_posed_trace(renderer);
+    destroy_optical_shadow_atlas(&renderer.device, &renderer.optical_shadow_atlas);
     destroy_shadow_atlas(&renderer.device, &renderer.shadow_atlas);
     if (renderer.shadow_timing_results.len) alloc::free(renderer.allocator, renderer.shadow_timing_results.ptr);
     alloc::free(renderer.allocator, renderer.shadow_frusta.ptr);
@@ -1161,6 +1181,8 @@ fn void abort_frame(Renderer* renderer) {
         post::clear_exposure_readback(renderer, renderer.recording_slot);
         renderer.cull_readbacks[renderer.recording_slot].pending = false;
         renderer.shadow_atlas.state = renderer.frame_shadow_state;
+        restore_optical_shadow_states(&renderer.optical_shadow_atlas, renderer.frame_optical_shadow_states);
+        discard_optical_scene_trace(renderer);
         foreach (&record : renderer.targets.items) record.target.state = record.frame_state;
         foreach (index, &preview : renderer.previews) preview.image.state = renderer.frame_preview_states[index];
         restore_probe_states(renderer);

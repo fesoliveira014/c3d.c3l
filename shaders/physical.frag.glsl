@@ -346,9 +346,9 @@ void main() {
     for (uint index = 0u; index < lights.count; index++) {
         LightGpu light = LightArray(frame.lights).values[selected_light_index(frame, lights, index)];
         if ((draw.layers & light.layers) == 0u) continue;
-        float visibility = 1.0;
+        vec3 visibility = vec3(1.0);
         if ((draw.flags & DRAW_RECEIVE_SHADOW) != 0u && light_casts_shadow(light)) {
-            visibility = shadow_visibility(
+            visibility = shadow_visibility_rgb(
                 frame,
                 light,
                 v_world_pos,

@@ -309,6 +309,7 @@ fn bool vertex_motion_held(
     GeometryId geometry,
     bool cpu_present,
     bool proven,
+    SceneTrace* trace = null,
 ) @private {
     PosedTraceTable* table = &renderer.posed_trace;
     if (!table.slots.len) return false;
@@ -330,7 +331,7 @@ fn bool vertex_motion_held(
         };
         if (!vertex_motion_slot_valid(slot.topology, current)) return false;
     }
-    SceneTrace* trace = &renderer.scene_trace;
+    if (!trace) trace = &renderer.scene_trace;
     if (trace.software_requested && (!mirror.trace.revision || !mirror.trace.depth_starts)) return false;
     return !trace.hardware_requested || slot.blas.is_valid();
 }
@@ -701,10 +702,12 @@ fn void? resolve_posed_instance(
     TraceInstance* record,
     TracePoseSource* source,
     GpuGeometry* mirror,
+    SceneTrace* trace = null,
 ) @private {
     PosedTraceTable* table = &renderer.posed_trace;
-    bool software = renderer.scene_trace.software_requested;
-    bool hardware = renderer.scene_trace.hardware_requested;
+    if (!trace) trace = &renderer.scene_trace;
+    bool software = trace.software_requested;
+    bool hardware = trace.hardware_requested;
     acquire_posed_streams(
         renderer:      renderer,
         index:         index,

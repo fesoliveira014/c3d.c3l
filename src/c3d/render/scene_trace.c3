@@ -307,6 +307,7 @@ fn TraceCollection collect_trace_instances(
     Scene* scene,
     AssetStore* assets,
     Vec3 origin = {},
+    bool optical = false,
 ) @private {
     bool[] group_live = alloc::new_array(allocator, bool, (sz)scene.nodes.len);
     defer alloc::free(allocator, group_live.ptr);
@@ -333,11 +334,16 @@ fn TraceCollection collect_trace_instances(
     usz count;
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         Node* node = scene.node(entity);
-        if (node.visible_effective && mesh.trace && !animated_lod_owns_source(scene, node)) {
+        if (node.visible_effective && (optical ? mesh.cast_shadow : mesh.trace) && !animated_lod_owns_source(scene, node)) {
             SkinBinding* skin = scene.get(node, SkinBinding);
             if (!spatial::mesh_is_live(assets, mesh, skin) || !material_dependencies_live(assets, mesh.material)) {
                 collection.dangling++;
-            } else if (traceable(assets, mesh.geometry, mesh.material)) {
+            } else if (trace_collection_eligible(
+                assets: assets,
+                geometry: mesh.geometry,
+                material: mesh.material,
+                optical: optical,
+            )) {
                 TraceInstance record = trace_record(
                     assets:      assets,
                     entity:      entity,
@@ -366,11 +372,16 @@ fn TraceCollection collect_trace_instances(
     };
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
         Node* node = scene.node(entity);
-        if (node.visible_effective && batch.trace && batch.count && !animated_lod_owns_source(scene, node)) {
+        if (node.visible_effective && (optical ? batch.cast_shadow : batch.trace) && batch.count && !animated_lod_owns_source(scene, node)) {
             if (!spatial::instanced_mesh_is_live(assets, batch)
                 || !material_dependencies_live(assets, batch.material)) {
                 collection.dangling++;
-            } else if (traceable(assets, batch.geometry, batch.material)) {
+            } else if (trace_collection_eligible(
+                assets: assets,
+                geometry: batch.geometry,
+                material: batch.material,
+                optical: optical,
+            )) {
                 if (batch.sway.amplitude != 0) collection.sway_at_rest++;
 
                 TracePoseSource source = { .node = node };
@@ -429,7 +440,7 @@ fn TraceCollection collect_trace_instances(
     scene.@each(LodGroup; Entity entity, LodGroup* group) {
         Node* node = scene.node(entity);
         LodGroupState* state = group.state;
-        if (node.visible_effective && state.effects.trace) {
+        if (node.visible_effective && (optical ? state.effects.cast_shadow : state.effects.trace)) {
             bool live = group_live[entity.index];
             LodLevel base = state.desc.levels[0];
             if (live) {
@@ -443,7 +454,12 @@ fn TraceCollection collect_trace_instances(
                 bool collected;
                 for (uint part = base.first_part; part < base.first_part + base.part_count; part++) {
                     LodPart draw = state.desc.parts[part];
-                    if (!traceable(assets, draw.geometry, draw.material)) continue;
+                    if (!trace_collection_eligible(
+                        assets: assets,
+                        geometry: draw.geometry,
+                        material: draw.material,
+                        optical: optical,
+                    )) continue;
 
                     TracePoseSource pose = { .node = node };
                     LodSelection selection;
@@ -455,7 +471,7 @@ fn TraceCollection collect_trace_instances(
                         pose.crowd = scene.get(node, AnimatedCrowd);
                         TraceInstance base_record = { .geometry = draw.geometry, .material = draw.material };
                         candidate = trace_animated_lod_candidate(&pose, &base_record, &selection);
-                        if (candidate.source_mesh && !candidate.source_mesh.trace) continue;
+                        if (candidate.source_mesh && !(optical ? candidate.source_mesh.cast_shadow : candidate.source_mesh.trace)) continue;
 
                         AnimatedLodPartBinding* binding = candidate.animated_lod;
                         bool morphed = assets.geometry(draw.geometry).target_count && binding.weight_count;
@@ -548,8 +564,8 @@ fn void discard_scene_trace(Renderer* renderer) @private {
     rt.current_holds_set = false;
 }
 
-fn void free_scene_trace(Renderer* renderer) @private {
-    SceneTrace* trace = &renderer.scene_trace;
+fn void free_scene_trace(Renderer* renderer, SceneTrace* trace = null) @private {
+    if (!trace) trace = &renderer.scene_trace;
     if (trace.allocation.is_valid()) (void)gpu::free_allocation(&renderer.device, &trace.allocation);
     if (trace.baseline.len) alloc::free(renderer.allocator, trace.baseline.ptr);
     if (trace.row_records.len) alloc::free(renderer.allocator, trace.row_records.ptr);
@@ -557,8 +573,8 @@ fn void free_scene_trace(Renderer* renderer) @private {
     *trace = {};
 }
 
-fn void free_rt(Renderer* renderer) @private {
-    RtContext* rt = &renderer.rt;
+fn void free_rt(Renderer* renderer, RtContext* rt = null) @private {
+    if (!rt) rt = &renderer.rt;
     foreach (&top_level : rt.top_levels) {
         if (top_level.view.is_valid()) (void)gpu::destroy_acceleration_structure_view(&renderer.device, top_level.view);
         if (top_level.tlas.is_valid()) (void)gpu::destroy_acceleration_structure(&renderer.device, top_level.tlas);
@@ -617,7 +633,12 @@ fn void? record_scene_trace(Renderer* renderer, Scene* scene) @local {
     }
 
     if (!rows_unchanged) {
-        write_top_level(renderer, scene, records, tlas_index)!;
+        write_top_level(
+            renderer: renderer,
+            scene: scene,
+            records: records,
+            tlas_index: tlas_index,
+        )!;
     } else if (tlas_index != trace.tlas_index) {
         write_trace_root(renderer, tlas_index)!;
     }
@@ -646,8 +667,8 @@ fn bool records_equal(TraceInstance[] baseline, TraceInstance[] records, usz pre
     return true;
 }
 
-fn void? acquire_scene_trace(Renderer* renderer) @local {
-    SceneTrace* trace = &renderer.scene_trace;
+fn void? acquire_scene_trace(Renderer* renderer, SceneTrace* trace = null) @local {
+    if (!trace) trace = &renderer.scene_trace;
     if (trace.allocation.is_valid()) return;
 
     usz capacity = renderer.max_trace_instances;
@@ -673,15 +694,22 @@ fn void? acquire_scene_trace(Renderer* renderer) @local {
     trace.row_records = alloc::alloc_array(renderer.allocator, uint, (sz)capacity);
 }
 
-fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection* collection, ulong scene) @local {
+fn TraceInstance[]? resolve_trace_instances(
+    Renderer* renderer,
+    TraceCollection* collection,
+    ulong scene,
+    SceneTrace* trace = null,
+) @local {
     begin_material_scope(renderer);
     defer end_material_scope(renderer);
-    bool software = renderer.scene_trace.software_requested;
-    bool hardware = renderer.scene_trace.hardware_requested;
+    if (!trace) trace = &renderer.scene_trace;
+    bool generic = trace == &renderer.scene_trace;
+    bool software = trace.software_requested;
+    bool hardware = trace.hardware_requested;
     TraceInstance[] records = collection.records;
     PosedTraceTable* posed = &renderer.posed_trace;
-    renderer.stats.trace_posed_instances = 0;
-    renderer.stats.trace_posed_overflow = 0;
+    if (generic) renderer.stats.trace_posed_instances = 0;
+    if (generic) renderer.stats.trace_posed_overflow = 0;
     usz kept;
     foreach (index, &record : records) {
         TracePoseSource* pose = &collection.poses[index];
@@ -709,6 +737,7 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
             geometry:    record.geometry,
             cpu_present: cpu_present,
             proven:      proven,
+            trace:       trace,
         );
         // A posed row builds its own bottom level from the posed streams; it needs the rest streams only.
         if (posed_row && hardware_source == TraceSource.REUSE) {
@@ -722,7 +751,7 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
         }
         bool unavailable = (software && source == TraceSource.SKIP) || (hardware && hardware_source == TraceSource.SKIP);
         if (unavailable) {
-            renderer.stats.trace_skipped++;
+            if (generic) renderer.stats.trace_skipped++;
             continue;
         }
 
@@ -734,7 +763,7 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
             uint? claimed = posed.claim(key, renderer.frame_index, &renderer.pending_upload_retire);
             if (catch claimed) {
                 if (!motion_row) {
-                    renderer.stats.trace_posed_overflow++;
+                    if (generic) renderer.stats.trace_posed_overflow++;
                     continue;
                 }
                 // No free slot: the mesh traces through the shared geometry, rebuilt per revision.
@@ -746,7 +775,7 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
                     streams:        cpu_present || geometry_current(renderer, record.geometry),
                 );
                 if (hardware && hardware_source == TraceSource.SKIP) {
-                    renderer.stats.trace_skipped++;
+                    if (generic) renderer.stats.trace_skipped++;
                     continue;
                 }
             } else {
@@ -779,8 +808,9 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
                 record:   record,
                 source:   pose,
                 mirror:   mirror,
+                trace:    trace,
             )!;
-            renderer.stats.trace_posed_instances++;
+            if (generic) renderer.stats.trace_posed_instances++;
         }
         records[kept++] = *record;
     }
@@ -816,8 +846,8 @@ fn void? resolve_blas(Renderer* renderer, GpuGeometry* mirror, GeometryAsset* as
     renderer.stats.blas_builds++;
 }
 
-fn void? acquire_rt_top_levels(Renderer* renderer) @local {
-    RtContext* rt = &renderer.rt;
+fn void? acquire_rt_top_levels(Renderer* renderer, RtContext* rt = null) @local {
+    if (!rt) rt = &renderer.rt;
     if (rt.top_levels[0].tlas.is_valid()) return;
 
     gpu::AccelerationStructureDesc desc = {
@@ -928,9 +958,15 @@ fn void? record_acceleration_builds(Renderer* renderer, gpu::CommandList* comman
     if (profiled) end_profile_pass(renderer, Pass.ACCELERATION_BUILD)!;
 }
 
-fn void? record_top_level_build(Renderer* renderer, gpu::CommandList* commands, gpu::GpuSpan scratch) @local {
-    SceneTrace* trace = &renderer.scene_trace;
-    RtContext* rt = &renderer.rt;
+fn void? record_top_level_build(
+    Renderer* renderer,
+    gpu::CommandList* commands,
+    gpu::GpuSpan scratch,
+    SceneTrace* trace = null,
+    RtContext* rt = null,
+) @local {
+    if (!trace) trace = &renderer.scene_trace;
+    if (!rt) rt = &renderer.rt;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     usz bytes = trace.baseline_count * gpu::AccelerationStructureInstance::size;
     gpu::MappedGpuSpan instances = slot.upload.take(&renderer.device, bytes, STREAM_ALIGNMENT)!;
@@ -1011,8 +1047,14 @@ fn void? upload_trace_geometry(
     renderer.stats.upload_bytes += (uint)total_bytes;
 }
 
-fn void? write_top_level(Renderer* renderer, Scene* scene, TraceInstance[] records, uint tlas_index) @local {
-    SceneTrace* trace = &renderer.scene_trace;
+fn void? write_top_level(
+    Renderer* renderer,
+    Scene* scene,
+    TraceInstance[] records,
+    uint tlas_index,
+    SceneTrace* trace = null,
+) @local {
+    if (!trace) trace = &renderer.scene_trace;
     Bvh top;
     if (records.len) {
         Aabb[] boxes = alloc::alloc_array(tmem, Aabb, (sz)records.len);
@@ -1068,8 +1110,8 @@ fn void? write_top_level(Renderer* renderer, Scene* scene, TraceInstance[] recor
     trace.revision++;
 }
 
-fn void? write_trace_root(Renderer* renderer, uint tlas_index) @local {
-    SceneTrace* trace = &renderer.scene_trace;
+fn void? write_trace_root(Renderer* renderer, uint tlas_index, SceneTrace* trace = null) @local {
+    if (!trace) trace = &renderer.scene_trace;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan staging = slot.upload.take(&renderer.device, SceneTraceRoot::size, STREAM_ALIGNMENT)!;
     *(SceneTraceRoot*)staging.bytes.ptr = {
@@ -1122,6 +1164,19 @@ fn bool material_dependencies_live(AssetStore* assets, MaterialId material) @loc
     return assets.shaders.is_live(data.custom.shader) && @ok(check_custom_references(assets, &data.custom));
 }
 
+fn bool trace_collection_eligible(
+    AssetStore* assets,
+    GeometryId geometry,
+    MaterialId material,
+    bool optical,
+) @local {
+    if (!optical) return traceable(assets, geometry, material);
+
+    Material* data = &assets.material(material).data;
+    return assets.geometry(geometry).data.topology == Topology.TRIANGLES
+      && data.kind == MaterialKind.PHYSICAL && data.physical.transmission > 0
+      && data.common.alpha_mode == AlphaMode.BLEND;
+}
 fn bool traceable(AssetStore* assets, GeometryId geometry, MaterialId material) @local {
     Material* data = &assets.material(material).data;
     return assets.geometry(geometry).data.topology == Topology.TRIANGLES
@@ -1177,4 +1232,150 @@ fn TraceInstance trace_record(
     };
     record.bounds = maths::aabb_transform(assets.geometry(geometry).data.bounds, trace_instance_world(&record, origin));
     return record;
+}
+
+fn gpu::GpuAddress? record_optical_scene_trace(Renderer* renderer, Scene* scene) @private {
+    SceneTrace* trace = &renderer.optical_scene_trace;
+    RtContext* rt = &renderer.optical_rt;
+    bool hardware = renderer.caps.ray_queries.enabled;
+    TraceCollection collection = collect_trace_instances(
+        allocator: tmem,
+        scene: scene,
+        assets: renderer.assets,
+        origin: renderer.frame_origin,
+        optical: true,
+    );
+    renderer.optical_trace_overflow = collection.records.len > renderer.max_trace_instances;
+    if (renderer.optical_trace_overflow) return write_optical_trace_metadata(renderer, scene);
+
+    // Generic rows claim posed slots first; optical-only rows reuse the same epoch and geometry mirrors.
+    trace.software_requested = true;
+    trace.hardware_requested = hardware;
+    TraceInstance[] records = resolve_trace_instances(
+        renderer: renderer,
+        collection: &collection,
+        scene: scene.identity,
+        trace: trace,
+    )!;
+    foreach (&record : records) record.mask = shader::TRACE_MASK_OPTICAL;
+
+    bool same_set = trace.scene == scene.identity && trace.baseline_count == records.len
+      && trace.origin == renderer.frame_origin;
+    bool rows_unchanged = same_set && records_equal(trace.baseline[:records.len], records, TraceInstance::size);
+    bool reusable = top_level_reusable(
+        trace: trace,
+        rt: rt,
+        records: records,
+        scene: scene.identity,
+        origin: renderer.frame_origin,
+    );
+    acquire_scene_trace(renderer, trace)!;
+    uint tlas_index;
+    if (hardware && records.len) {
+        if (!reusable) {
+            acquire_rt_top_levels(renderer, rt)!;
+            bool used_this_frame = rt.used_frame == renderer.frame_index + 1;
+            rt.build_target = used_this_frame ? rt.current : (rt.current + 1) % FRAMES_IN_FLIGHT;
+            rt.build_after_reads = used_this_frame;
+            rt.build_pending = true;
+        }
+
+        uint published = rt.build_pending ? rt.build_target : rt.current;
+        tlas_index = (uint)rt.top_levels[published].view.index;
+        rt.used_frame = renderer.frame_index + 1;
+    } else if (!reusable) {
+        rt.current_holds_set = false;
+    }
+
+    if (!rows_unchanged) {
+        write_top_level(
+            renderer: renderer,
+            scene: scene,
+            records: records,
+            tlas_index: tlas_index,
+            trace: trace,
+        )!;
+    } else if (tlas_index != trace.tlas_index) {
+        write_trace_root(renderer, tlas_index, trace)!;
+    }
+    record_pending_copies(renderer, &renderer.commands)!;
+    record_trace_poses(renderer, &renderer.commands)!;
+    if (hardware) record_acceleration_builds(renderer, &renderer.commands)!;
+
+    if (rt.build_pending) {
+        RtScratch* scratch = &rt.scratch[renderer.frame_index % FRAMES_IN_FLIGHT];
+        acquire_rt_scratch(renderer, scratch, rt.top_level_scratch_size)!;
+        if (rt.build_after_reads) {
+            gpu::Barrier reads_done = { .before = renderer.trace_stages, .after = { .acceleration_structure_build } };
+            gpu::cmd_barrier(&renderer.commands, &reads_done)!;
+        }
+        record_top_level_build(
+            renderer: renderer,
+            commands: &renderer.commands,
+            scratch: scratch.span,
+            trace: trace,
+            rt: rt,
+        )!;
+        gpu::Barrier built = { .before = { .acceleration_structure_build }, .after = renderer.trace_stages };
+        gpu::cmd_barrier(&renderer.commands, &built)!;
+        rt.current = rt.build_target;
+        rt.current_holds_set = true;
+        rt.build_pending = false;
+        renderer.work_recorded = true;
+    }
+    trace.prepared_frame = renderer.frame_index + 1;
+    return write_optical_trace_metadata(renderer, scene);
+}
+
+fn gpu::GpuAddress? write_optical_trace_keys(Renderer* renderer, Scene* scene, SceneTrace* trace) @local {
+    if (!trace.baseline_count) return (gpu::GpuAddress)0;
+
+    Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan keys = frame.upload.take(
+        &renderer.device,
+        trace.baseline_count * OpticalTraceKeyGpu::size,
+        STREAM_ALIGNMENT,
+    )!;
+    OpticalTraceKeyGpu* values = (OpticalTraceKeyGpu*)keys.bytes.ptr;
+    for (uint row = 0; row < trace.baseline_count; row++) {
+        TraceInstance* record = &trace.baseline[trace.row_records[row]];
+        Node* node = scene.node(record.entity);
+        Vec4 tint = { 1, 1, 1, 1 };
+        if (record.lod_identity) {
+            LodGroup* group = scene.get(node, LodGroup);
+            if (group.state.mode == LodMode.INSTANCED) tint = group.state.colors[record.instance_index];
+        } else {
+            InstancedMesh* batch = scene.get(node, InstancedMesh);
+            if (batch && batch.colors.len) tint = batch.colors[record.instance_index];
+        }
+        gpu::MappedGpuSpan color = frame.upload.take(&renderer.device, Vec4::size, STREAM_ALIGNMENT)!;
+        *(Vec4*)color.bytes.ptr = tint;
+        values[row] = {
+            .node_index = record.entity.index,
+            .node_generation = record.entity.generation,
+            .part_index = record.part_index,
+            .instance_index = record.instance_index,
+            .layers = node.layers,
+            .instance_color = color.address,
+        };
+    }
+
+    return keys.address;
+}
+
+fn gpu::GpuAddress? write_optical_trace_metadata(Renderer* renderer, Scene* scene) @local {
+    gpu::GpuAddress generic_keys = write_optical_trace_keys(renderer, scene, &renderer.scene_trace)!;
+    gpu::GpuAddress blend_keys;
+    if (!renderer.optical_trace_overflow) {
+        blend_keys = write_optical_trace_keys(renderer, scene, &renderer.optical_scene_trace)!;
+    }
+    Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan root = frame.upload.take(&renderer.device, OpticalTraceGpu::size, STREAM_ALIGNMENT)!;
+    *(OpticalTraceGpu*)root.bytes.ptr = {
+        .scene = renderer.optical_scene_trace.root,
+        .generic_keys = generic_keys,
+        .blend_keys = blend_keys,
+        .flags = renderer.optical_trace_overflow ? shader::OPTICAL_TRACE_OVER_CAP : 0,
+    };
+    return root.address;
 }

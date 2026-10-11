@@ -6,7 +6,7 @@ import c3d::geometry;
 import c3d::material;
 import c3d::maths;
 import c3d::pool;
-import c3d::render;
+import c3d::render @public;
 import c3d::shader;
 import gpu;
 import std::collections::list;
@@ -1142,4 +1142,12 @@ fn void test_frame_root_marks_ambient_occlusion() @test {
         sky_fog:     (gpu::GpuAddress)0,
     );
     assert(root.ao_texture == (gpu::TextureIndex)0 && (root.flags & shader::FRAME_AO_PRESENT) == 0);
+}
+
+fn void test_optical_shadow_capacity_resolves_zero_and_rejects_above_maximum() @test {
+    assert(render::resolve_transmission_shadow_layers(0)!! == render::DEFAULT_TRANSMISSION_SHADOW_LAYERS);
+    assert(render::resolve_transmission_shadow_layers(1)!! == 1);
+    assert(render::resolve_transmission_shadow_layers(16)!! == 16);
+    assert(@catch(render::resolve_transmission_shadow_layers(17)) == c3d::INVALID_ARGUMENT);
+    assert(light::SHADOW_SETTINGS_DEFAULT.colored_transmission == false);
 }

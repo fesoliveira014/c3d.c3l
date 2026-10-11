@@ -1,5 +1,5 @@
 {
-  "flags": ["DEPTH_ONLY", "SKINNED", "SKINNED_U16", "MORPH", "VELOCITY", "VERTEX_COLOR", "INSTANCED", "RT_SHADOWS", "SCENE_TRACE_BVH", "LAYERED"],
+  "flags": ["DEPTH_ONLY", "SKINNED", "SKINNED_U16", "MORPH", "VELOCITY", "VERTEX_COLOR", "INSTANCED", "RT_SHADOWS", "SCENE_TRACE_BVH", "LAYERED", "OPTICAL_SHADOW"],
   "entries": [
     { "shader": "transparency", "source": "transparency.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "transparency_mip", "source": "transparency_mip.comp.glsl", "stage": "comp", "defines": [] },
@@ -161,7 +161,21 @@
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["INSTANCED", "SKINNED_U16", "LAYERED"] },
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["INSTANCED", "MORPH", "LAYERED"] },
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["INSTANCED", "SKINNED", "MORPH", "LAYERED"] },
-    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["INSTANCED", "SKINNED_U16", "MORPH", "LAYERED"] }
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["INSTANCED", "SKINNED_U16", "MORPH", "LAYERED"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["LAYERED", "OPTICAL_SHADOW"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["SKINNED", "LAYERED", "OPTICAL_SHADOW"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["SKINNED_U16", "LAYERED", "OPTICAL_SHADOW"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["MORPH", "LAYERED", "OPTICAL_SHADOW"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["SKINNED", "MORPH", "LAYERED", "OPTICAL_SHADOW"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["SKINNED_U16", "MORPH", "LAYERED", "OPTICAL_SHADOW"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["INSTANCED", "LAYERED", "OPTICAL_SHADOW"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["INSTANCED", "SKINNED", "LAYERED", "OPTICAL_SHADOW"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["INSTANCED", "SKINNED_U16", "LAYERED", "OPTICAL_SHADOW"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["INSTANCED", "MORPH", "LAYERED", "OPTICAL_SHADOW"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["INSTANCED", "SKINNED", "MORPH", "LAYERED", "OPTICAL_SHADOW"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["INSTANCED", "SKINNED_U16", "MORPH", "LAYERED", "OPTICAL_SHADOW"] },
+    { "shader": "optical_shadow", "source": "optical_shadow.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "optical_store", "source": "optical_store.frag.glsl", "stage": "frag", "defines": [] }
   ],
   "public_includes": [
     { "include": "transparency.glsl", "stage": "frag", "defines": ["LAYERED"] },

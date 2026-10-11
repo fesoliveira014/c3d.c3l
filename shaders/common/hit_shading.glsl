@@ -14,9 +14,9 @@
 #include "shadows.glsl"
 
 // Raster atlas layers are fitted to the camera, so every shadowing light traces at a hit.
-float hit_light_visibility(FrameRoot frame, LightGpu light, TraceSurface surface) {
-    if (!light_casts_shadow(light)) return 1.0;
-    return ray_shadow_visibility(frame, light, surface.position, surface.geometric_normal);
+vec3 hit_light_visibility(FrameRoot frame, LightGpu light, TraceSurface surface) {
+    if (!light_casts_shadow(light)) return vec3(1.0);
+    return ray_shadow_visibility_rgb(frame, light, surface.position, surface.geometric_normal);
 }
 
 vec3 hit_environment_diffuse(FrameRoot frame, vec3 albedo, TraceSurface surface, vec3 view_direction) {

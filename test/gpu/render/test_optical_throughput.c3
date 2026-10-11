@@ -1018,3 +1018,39 @@ fn void check_optical_trace_pair(Vec4[] software, Vec4[] hardware) @private {
         }
     }
 }
+
+fn void test_optical_throughput_near_unity_ties_need_float32_accumulation_before_the_single_half_store() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    OpticalStack stack;
+    create_optical_stack(&fixture.renderer, &stack)!!;
+    defer destroy_optical_stack(&fixture.renderer, &stack);
+    OpticalSurface[OPTICAL_SURFACE_CAPACITY] surfaces;
+    foreach (index, &surface : surfaces) {
+        *surface = optical_default_surface();
+        surface.base_coverage = { 0.75f, 0.75f, 0.75f, 1.0f / 1024 };
+        surface.factors = { 1, 0, 1, 0 };
+        surface.normal_thickness.w = 0;
+        surface.node_index = (uint)index;
+    }
+    run_optical_stack(
+        renderer: &fixture.renderer,
+        stack: &stack,
+        surfaces: surfaces[..],
+        capacity: 1,
+    )!!;
+    check_optical_stack(&stack, surfaces[..], 1);
+    double expected = math::pow(1.0 - 1.0 / 4096, (double)OPTICAL_SURFACE_CAPACITY);
+    uint pixel = OPTICAL_EXTENT / 2 * OPTICAL_EXTENT + OPTICAL_EXTENT / 2;
+    ushort* stored = (ushort*)(stack.readback.bytes.ptr + OPTICAL_PRODUCT_OFFSET);
+    ushort* direct = (ushort*)(stack.readback.bytes.ptr + OPTICAL_DIRECT_OFFSET);
+    double once_error = math::abs(optical_half_value(stored[4 * pixel]) - expected);
+    double repeated_error = math::abs(optical_half_value(direct[4 * pixel]) - expected);
+    double bound = OPTICAL_ABSOLUTE_TOLERANCE + OPTICAL_RELATIVE_TOLERANCE * expected;
+    assert(once_error <= bound && repeated_error > bound,
+        "The control must distinguish single-store accuracy from repeated half-format rounding.");
+    io::printfn("optical near-unity ties=%s expected=%s once_store=%s repeated_half=%s bound=%s",
+        OPTICAL_SURFACE_CAPACITY, expected, once_error, repeated_error, bound);
+    check_validation(&fixture.renderer);
+}

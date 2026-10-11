@@ -22,6 +22,14 @@ const uint TRACE_INSTANCE_ALPHA_MASK = 1;
 const uint TRACE_INSTANCE_DOUBLE_SIDED = 2;
 const uint TRACE_MASK_ALL = 1;
 const uint TRACE_MASK_SHADOW_CASTER = 2;
+const uint LIGHT_COLORED_TRANSMISSION = 2;
+const uint TRACE_MASK_OPTICAL = 4;
+const uint OPTICAL_SHADOW_LAYER_CAPACITY = 16;
+const uint OPTICAL_SHADOW_CAPTURE = 0;
+const uint OPTICAL_SHADOW_PRODUCT = 1;
+const uint OPTICAL_SHADOW_OPAQUE = 2;
+const uint OPTICAL_SHADOW_STORE = 3;
+const uint OPTICAL_TRACE_OVER_CAP = 1;
 const uint TRACE_POSE_GROUP_SIZE = 64;
 const uint TRACE_REFIT_GROUP_SIZE = 128;
 const uint FRAME_LIGHTS_CLUSTERED = 1;
@@ -315,6 +323,94 @@ $assert $reflect(TraceInstanceGpu.local_to_world_2).offset == 112;
 $assert $reflect(TraceInstanceGpu.nodes).offset == 128;
 $assert $reflect(TraceInstanceGpu.primitives).offset == 136;
 
+struct OpticalShadowsGpu {
+    GpuAddress layers;
+    GpuAddress trace;
+    GpuAddress pass;
+    uint       capacity;
+    uint       flags;
+}
+$assert OpticalShadowsGpu::size == 32;
+$assert $reflect(OpticalShadowsGpu.layers).offset == 0;
+$assert $reflect(OpticalShadowsGpu.trace).offset == 8;
+$assert $reflect(OpticalShadowsGpu.pass).offset == 16;
+$assert $reflect(OpticalShadowsGpu.capacity).offset == 24;
+$assert $reflect(OpticalShadowsGpu.flags).offset == 28;
+
+struct OpticalShadowLayerGpu {
+    TextureIndex     opaque_depth;
+    TextureIndex     overflow_depth;
+    TextureIndex[16] depths;
+    TextureIndex[16] products;
+    uint             _pad0;
+    uint             _pad1;
+    Mat4f            view_proj;
+}
+$assert OpticalShadowLayerGpu::size == 208;
+$assert $reflect(OpticalShadowLayerGpu.opaque_depth).offset == 0;
+$assert $reflect(OpticalShadowLayerGpu.overflow_depth).offset == 4;
+$assert $reflect(OpticalShadowLayerGpu.depths).offset == 8;
+$assert $reflect(OpticalShadowLayerGpu.products).offset == 72;
+$assert $reflect(OpticalShadowLayerGpu._pad0).offset == 136;
+$assert $reflect(OpticalShadowLayerGpu._pad1).offset == 140;
+$assert $reflect(OpticalShadowLayerGpu.view_proj).offset == 144;
+
+struct OpticalShadowPassGpu {
+    Vec4f        light_position_kind;
+    Vec4f        light_direction;
+    TextureIndex previous_depth;
+    TextureIndex selected_depth;
+    TextureIndex source_product;
+    uint         phase;
+    uint         _pad0;
+    uint         _pad1;
+    uint         _pad2;
+    uint         _pad3;
+}
+$assert OpticalShadowPassGpu::size == 64;
+$assert $reflect(OpticalShadowPassGpu.light_position_kind).offset == 0;
+$assert $reflect(OpticalShadowPassGpu.light_direction).offset == 16;
+$assert $reflect(OpticalShadowPassGpu.previous_depth).offset == 32;
+$assert $reflect(OpticalShadowPassGpu.selected_depth).offset == 36;
+$assert $reflect(OpticalShadowPassGpu.source_product).offset == 40;
+$assert $reflect(OpticalShadowPassGpu.phase).offset == 44;
+$assert $reflect(OpticalShadowPassGpu._pad0).offset == 48;
+$assert $reflect(OpticalShadowPassGpu._pad1).offset == 52;
+$assert $reflect(OpticalShadowPassGpu._pad2).offset == 56;
+$assert $reflect(OpticalShadowPassGpu._pad3).offset == 60;
+
+struct OpticalTraceGpu {
+    GpuAddress scene;
+    GpuAddress generic_keys;
+    GpuAddress blend_keys;
+    uint       flags;
+    uint       _pad0;
+}
+$assert OpticalTraceGpu::size == 32;
+$assert $reflect(OpticalTraceGpu.scene).offset == 0;
+$assert $reflect(OpticalTraceGpu.generic_keys).offset == 8;
+$assert $reflect(OpticalTraceGpu.blend_keys).offset == 16;
+$assert $reflect(OpticalTraceGpu.flags).offset == 24;
+$assert $reflect(OpticalTraceGpu._pad0).offset == 28;
+
+struct OpticalTraceKeyGpu {
+    uint       node_index;
+    uint       node_generation;
+    uint       part_index;
+    uint       range_index;
+    uint       instance_index;
+    uint       layers;
+    GpuAddress instance_color;
+}
+$assert OpticalTraceKeyGpu::size == 32;
+$assert $reflect(OpticalTraceKeyGpu.node_index).offset == 0;
+$assert $reflect(OpticalTraceKeyGpu.node_generation).offset == 4;
+$assert $reflect(OpticalTraceKeyGpu.part_index).offset == 8;
+$assert $reflect(OpticalTraceKeyGpu.range_index).offset == 12;
+$assert $reflect(OpticalTraceKeyGpu.instance_index).offset == 16;
+$assert $reflect(OpticalTraceKeyGpu.layers).offset == 20;
+$assert $reflect(OpticalTraceKeyGpu.instance_color).offset == 24;
+
 struct SceneTraceRoot {
     GpuAddress top_nodes;
     GpuAddress instances;
@@ -555,8 +651,7 @@ struct FrameRoot {
     uint         decal_count;
     uint         _pad3;
     GpuAddress   transparency;
-    uint         _pad4;
-    uint         _pad5;
+    GpuAddress   optical_shadows;
 }
 $assert FrameRoot::size == 560;
 $assert $reflect(FrameRoot.view).offset == 0;
@@ -594,8 +689,7 @@ $assert $reflect(FrameRoot.decals).offset == 528;
 $assert $reflect(FrameRoot.decal_count).offset == 536;
 $assert $reflect(FrameRoot._pad3).offset == 540;
 $assert $reflect(FrameRoot.transparency).offset == 544;
-$assert $reflect(FrameRoot._pad4).offset == 552;
-$assert $reflect(FrameRoot._pad5).offset == 556;
+$assert $reflect(FrameRoot.optical_shadows).offset == 552;
 
 struct DrawRoot {
     Mat4f        model;
@@ -1408,7 +1502,7 @@ struct ShadowGpu {
     float        texel_size;
     float        max_distance;
     float        blend_depth;
-    uint         _pad2;
+    uint         optical_index;
 }
 $assert ShadowGpu::size == 96;
 $assert $reflect(ShadowGpu.view_proj).offset == 0;
@@ -1419,7 +1513,7 @@ $assert $reflect(ShadowGpu.split_depth).offset == 76;
 $assert $reflect(ShadowGpu.texel_size).offset == 80;
 $assert $reflect(ShadowGpu.max_distance).offset == 84;
 $assert $reflect(ShadowGpu.blend_depth).offset == 88;
-$assert $reflect(ShadowGpu._pad2).offset == 92;
+$assert $reflect(ShadowGpu.optical_index).offset == 92;
 
 struct StandardMaterialGpu {
     uint          kind;

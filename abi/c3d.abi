@@ -90,6 +90,63 @@ struct TraceInstanceGpu {
     GpuAddress primitives;
 }
 
+const uint LIGHT_COLORED_TRANSMISSION = 2;
+const uint TRACE_MASK_OPTICAL = 4;
+const uint OPTICAL_SHADOW_LAYER_CAPACITY = 16;
+const uint OPTICAL_SHADOW_CAPTURE = 0;
+const uint OPTICAL_SHADOW_PRODUCT = 1;
+const uint OPTICAL_SHADOW_OPAQUE = 2;
+const uint OPTICAL_SHADOW_STORE = 3;
+
+root OpticalShadowsGpu {
+    GpuAddress layers;
+    GpuAddress trace;
+    GpuAddress pass;
+    uint capacity;
+    uint flags;
+}
+
+struct OpticalShadowLayerGpu {
+    TextureIndex opaque_depth;
+    TextureIndex overflow_depth;
+    TextureIndex[16] depths;
+    TextureIndex[16] products;
+    uint _pad0;
+    uint _pad1;
+    mat4 view_proj;
+}
+
+root OpticalShadowPassGpu {
+    vec4 light_position_kind;
+    vec4 light_direction;
+    TextureIndex previous_depth;
+    TextureIndex selected_depth;
+    TextureIndex source_product;
+    uint phase;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+    uint _pad3;
+}
+
+const uint OPTICAL_TRACE_OVER_CAP = 1;
+
+root OpticalTraceGpu {
+    GpuAddress scene;
+    GpuAddress generic_keys;
+    GpuAddress blend_keys;
+    uint flags;
+    uint _pad0;
+}
+struct OpticalTraceKeyGpu {
+    uint node_index;
+    uint node_generation;
+    uint part_index;
+    uint range_index;
+    uint instance_index;
+    uint layers;
+    GpuAddress instance_color;
+}
 root SceneTraceRoot {
     GpuAddress top_nodes;
     GpuAddress instances;
@@ -266,8 +323,7 @@ root FrameRoot {
     uint       decal_count;
     uint       _pad3;
     GpuAddress transparency;
-    uint       _pad4;
-    uint       _pad5;
+    GpuAddress optical_shadows;
 }
 
 root DrawRoot {
@@ -799,7 +855,7 @@ struct ShadowGpu {
     float texel_size;
     float max_distance;
     float blend_depth;
-    uint _pad2;
+    uint optical_index;
 }
 
 struct StandardMaterialGpu {

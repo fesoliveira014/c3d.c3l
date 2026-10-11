@@ -11,6 +11,12 @@ import std::core::array;
 import std::math;
 import std::sort;
 
+<* Default distinct optical shadow groups per light. *>
+const uint DEFAULT_TRANSMISSION_SHADOW_LAYERS = 4; // Lazy payload: 896 MiB at a 2048-square, four-layer atlas.
+
+<* Largest supported distinct optical shadow group count. *>
+const uint TRANSMISSION_SHADOW_LAYERS_MAX = 16; // Full-atlas payload is 3,200 MiB at the default extent.
+
 const float LIGHT_BASIS_PARALLEL_THRESHOLD @private = 0.99f; // avoids an unstable cross product near the reference axis
 const uint SHADOW_GUARD_TEXELS @private = 2; // covers linear 3x3 comparisons and nearest-grid snapping
 const uint SLICE_FACE_CORNERS @local = 4;

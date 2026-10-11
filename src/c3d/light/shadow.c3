@@ -14,6 +14,7 @@ const float DEFAULT_PUNCTUAL_NORMAL_BIAS = 0.02f; // metres; two texels of a 204
 <* Default shadow coverage and bias for each light kind. *>
 const ShadowSettings SHADOW_SETTINGS_DEFAULT = {
     .enabled = true,
+    .colored_transmission = false,
     .priority = 0,
     .bias = 0.0005f,
     .directional_normal_bias_texels = DEFAULT_DIRECTIONAL_NORMAL_BIAS_TEXELS,
@@ -36,6 +37,7 @@ struct ShadowSettings {
     float cascade_blend;   // directional: blend band per cascade, a fraction of its depth span
     float max_distance;
     bool ray_traced;
+    bool colored_transmission; // Opt into RGB throughput; the scalar shadow helper remains binary.
 }
 
 <*

@@ -343,6 +343,7 @@ fn void? record_shadows(
             .light       = request.light,
             .first_layer = request.first_layer,
             .layer_count = request.layer_count,
+            .colored_transmission = light.shadow.colored_transmission,
         };
         CascadeSplits splits;
         float shadow_range = 0;
@@ -466,6 +467,17 @@ fn void? record_shadows(
         commands: &renderer.commands,
         next: gpu::sampled_at({ .fragment_shader }),
     )!;
+    set.optical_layers = record_optical_shadow_atlas(
+        renderer: renderer,
+        scene: scene,
+        shadow_view: shadow_view,
+        extraction: extraction,
+        effects_view: effects_view,
+        allocation: allocation,
+        legacy_matrices: shadow_matrices,
+        shadows: shadows,
+    )!;
+
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan shadow_span = slot.upload.take(
         device: &renderer.device,

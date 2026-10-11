@@ -565,6 +565,7 @@ fn void? record_raster_view(
         ShadowSet* shadow_set = &renderer.shadow_set;
         gpu::GpuAddress light_address;
         gpu::GpuAddress decal_address;
+        LightGpu[] packed_lights;
         ClusterFrame cluster_frame;
         instrumentation::@scope("view.lights") {
             LightExtraction extraction = extract_lights(
@@ -592,6 +593,7 @@ fn void? record_raster_view(
                 effects_view: &effects_view,
             )!;
             LightGpu[] lights = extraction.lights;
+            packed_lights = lights;
             reset_cluster_recording(renderer, record);
             if (record.desc.lights == LightSelection.CLUSTERED) {
                 cluster_frame = prepare_cluster_frame(
@@ -681,6 +683,12 @@ fn void? record_raster_view(
                 decals: decal_address,
                 decal_count: decal_counts.packed,
             );
+            ((FrameRoot*)frame_span.bytes.ptr).optical_shadows = pack_optical_shadows(
+                renderer: renderer,
+                scene: scene,
+                lights: packed_lights,
+                layers: shadow_set.optical_layers,
+            )!;
             if (record.scene_filtering) {
                 TransparencyGpu snapshot = {
                     .phase = shader::TRANSPARENCY_SORTED,
@@ -1085,6 +1093,8 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
         defer end_material_scope(self);
         open_closed_frame_slot(self)!;
         defer catch discard_uploads(self);
+        self.optical_shadow_preparation = scene_has_colored_shadows(scene);
+
         bool sheen;
         SceneReads scene_reads;
         bool shadows_enabled;
@@ -1300,6 +1310,8 @@ fn MeshPreparation? prepare_mesh(
         if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
         return {};
     }
+
+    if (renderer.optical_shadow_preparation) prepare_optical_shadow_pipelines(renderer, material_id, vertex)!;
 
     if (gbuffer && gbuffer_encodable(data, custom_gbuffer_stage(renderer, data)!)) {
         if (catch excuse = gbuffer_pipeline_for(renderer, data, vertex)) {

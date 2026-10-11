@@ -40,7 +40,7 @@ void main() {
         vec3 position = origin + direction * (0.5 * (start + far));
         float view_depth = -(frame.view * vec4(position, 1.0)).z;
         // A froxel has no surface: a zero normal keeps ShadowGpu.normal_bias out of the sample point.
-        float visibility = shadow_visibility(frame, sun, position, vec3(0.0), view_depth);
+        vec3 visibility = shadow_visibility_rgb(frame, sun, position, vec3(0.0), view_depth);
         float phase = fog_phase(-dot(direction, sun.direction_cos_outer.xyz), sky.fog_anisotropy);
         radiance += sky.fog_albedo_density.rgb * phase * sun.color_intensity.rgb * sun.color_intensity.w * visibility;
     }

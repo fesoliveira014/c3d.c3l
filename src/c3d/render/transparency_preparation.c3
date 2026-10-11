@@ -138,6 +138,16 @@ fn void append_prepare_transparency_pipelines(
     List{PrepareUnit}* listed,
 ) @private {
     Material* data = &renderer.assets.material(material).data;
+    if (renderer.optical_shadow_preparation) {
+        append_prepare_optical_shadow_pipelines(
+            renderer: renderer,
+            geometry: geometry,
+            material: material,
+            vertex: vertex,
+            listed: listed,
+        );
+    }
+
     bool declared = preparation_transparency_declared(renderer, data);
     SceneReads custom_reads;
     if (data.kind == MaterialKind.CUSTOM && declared) {

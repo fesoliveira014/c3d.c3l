@@ -3,6 +3,7 @@
 
 #include "buffer_reference.glsl"
 #include "descriptor_heap.glsl"
+#include "texture_fetch.glsl"
 #include "lights.glsl"
 #ifdef RT_SHADOWS
 #if !defined(SCENE_TRACE_BVH) && !defined(SCENE_TRACE_RAY_QUERY)
@@ -12,6 +13,7 @@
 #endif
 
 GPU_DECLARE_READONLY_ARRAY_REF(ShadowArray, ShadowGpu);
+GPU_DECLARE_READONLY_ARRAY_REF(OpticalShadowLayerArray, OpticalShadowLayerGpu);
 
 // Atlas UV and depth of the point; false where the layer's map or depth range does not hold it.
 bool shadow_layer_coordinates(ShadowGpu shadow, vec3 sample_position, out vec3 coordinates) {
@@ -76,6 +78,15 @@ float ray_shadow_visibility(FrameRoot frame, LightGpu light, vec3 world_position
     );
     return occluded ? 0.0 : 1.0;
 }
+#include "optical_trace.glsl"
+
+vec3 ray_shadow_visibility_rgb(FrameRoot frame, LightGpu light, vec3 world_position, vec3 normal) {
+    if ((light.flags & LIGHT_COLORED_TRANSMISSION) == 0u || frame.optical_shadows == 0ul) {
+        return vec3(ray_shadow_visibility(frame, light, world_position, normal));
+    }
+
+    return optical_ray_visibility(frame, light, world_position, normal);
+}
 #endif
 
 float shadow_visibility(FrameRoot frame, LightGpu light, vec3 world_position, vec3 normal, float view_depth) {
@@ -129,4 +140,102 @@ float shadow_visibility(FrameRoot frame, LightGpu light, vec3 world_position, ve
     return 1.0;
 }
 
+
+vec3 optical_shadow_texel(FrameRoot frame, ShadowGpu shadow, vec3 coordinates, ivec2 pixel) {
+    OpticalShadowsGpu optical = OpticalShadowsGpu(frame.optical_shadows);
+    OpticalShadowLayerGpu layer = OpticalShadowLayerArray(optical.layers).values[shadow.optical_index - 1u];
+    float opaque_depth = fetch_texture_2d(layer.opaque_depth, pixel).r;
+    float overflow_depth = fetch_texture_2d(layer.overflow_depth, pixel).r;
+    if (opaque_depth > coordinates.z || overflow_depth > coordinates.z) return vec3(0.0);
+
+    vec3 product = vec3(1.0);
+    for (uint group = 0u; group < optical.capacity; group++) {
+        float depth = fetch_texture_2d(layer.depths[group], pixel).r;
+        if (depth > coordinates.z) product *= fetch_texture_2d(layer.products[group], pixel).rgb;
+    }
+    return product;
+}
+
+vec3 filter_optical_shadow(FrameRoot frame, ShadowGpu shadow, vec3 coordinates) {
+    ivec2 extent = texture_extent(shadow.texture_index);
+    vec3 visibility = vec3(0.0);
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            vec2 uv = coordinates.xy + vec2(x, y) * shadow.texel_size;
+            ivec2 pixel = clamp(ivec2(uv * vec2(extent)), ivec2(0), extent - 1);
+            visibility += optical_shadow_texel(frame, shadow, coordinates, pixel);
+        }
+    }
+    return visibility / 9.0;
+}
+
+bool optical_shadow_coordinates(FrameRoot frame, ShadowGpu shadow, vec3 sample_position, out vec3 coordinates) {
+    OpticalShadowsGpu optical = OpticalShadowsGpu(frame.optical_shadows);
+    shadow.view_proj = OpticalShadowLayerArray(optical.layers).values[shadow.optical_index - 1u].view_proj;
+    return shadow_layer_coordinates(shadow, sample_position, coordinates);
+}
+
+vec3 sample_optical_shadow(FrameRoot frame, ShadowGpu shadow, vec3 sample_position) {
+    vec3 coordinates;
+    if (!optical_shadow_coordinates(frame, shadow, sample_position, coordinates)) return vec3(1.0);
+
+    return filter_optical_shadow(frame, shadow, coordinates);
+}
+
+// Disabled lights retain the scalar helper's exact admission and sampling path.
+vec3 shadow_visibility_rgb(FrameRoot frame, LightGpu light, vec3 world_position, vec3 normal, float view_depth) {
+    if ((light.flags & LIGHT_COLORED_TRANSMISSION) == 0u || frame.optical_shadows == 0ul) {
+        return vec3(shadow_visibility(frame, light, world_position, normal, view_depth));
+    }
+#ifdef RT_SHADOWS
+    if ((light.flags & LIGHT_RT_SHADOW) != 0u && (frame.flags & FRAME_TRACE_PRESENT) != 0u) {
+        return optical_ray_visibility(frame, light, world_position, normal);
+    }
+#endif
+    if (light.shadow_count == 0u) return vec3(1.0);
+
+    if (light.kind == LIGHT_DIRECTIONAL) {
+        bool fell_through = false;
+        for (uint cascade = 0u; cascade < light.shadow_count; cascade++) {
+            ShadowGpu shadow = ShadowArray(frame.shadows).values[light.shadow_first + cascade];
+            if (view_depth > shadow.split_depth) continue;
+            if (shadow.optical_index == 0u) {
+                return vec3(shadow_visibility(frame, light, world_position, normal, view_depth));
+            }
+
+            vec3 coordinates;
+            if (!optical_shadow_coordinates(frame, shadow, world_position + normal * shadow.normal_bias, coordinates)) {
+                fell_through = true;
+                continue;
+            }
+            vec3 visibility = filter_optical_shadow(frame, shadow, coordinates);
+            if (fell_through || view_depth <= shadow.blend_depth) return visibility;
+
+            ShadowGpu next = ShadowArray(frame.shadows).values[light.shadow_first + cascade + 1u];
+            vec3 next_coordinates;
+            if (!optical_shadow_coordinates(frame, next, world_position + normal * next.normal_bias, next_coordinates)) {
+                return visibility;
+            }
+            vec3 next_visibility = filter_optical_shadow(frame, next, next_coordinates);
+            float weight = (view_depth - shadow.blend_depth) / (shadow.split_depth - shadow.blend_depth);
+            return mix(visibility, next_visibility, weight);
+        }
+        return vec3(1.0);
+    }
+
+    ShadowGpu first = ShadowArray(frame.shadows).values[light.shadow_first];
+    if (first.optical_index == 0u) return vec3(shadow_visibility(frame, light, world_position, normal, view_depth));
+    if (length(world_position - light.position_range.xyz) > first.max_distance) return vec3(1.0);
+
+    vec3 sample_position = world_position + normal * first.normal_bias;
+    if (light.kind == LIGHT_SPOT) return sample_optical_shadow(frame, first, sample_position);
+    if (light.kind == LIGHT_POINT) {
+        vec3 sample_direction = sample_position - light.position_range.xyz;
+        if (dot(sample_direction, sample_direction) == 0.0) return vec3(1.0);
+
+        uint face = point_shadow_face(sample_direction);
+        return sample_optical_shadow(frame, ShadowArray(frame.shadows).values[light.shadow_first + face], sample_position);
+    }
+    return vec3(1.0);
+}
 #endif
