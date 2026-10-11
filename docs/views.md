@@ -521,8 +521,8 @@ filter and rounding. Generation charges each band's increase in
 chain costs its mip-zero texel count. CPU-only shader copies are reported separately
 as `copied_bytes`. Pipeline and finish work never upload a stale dependency outside
 the accounting. Normal pipeline misses create one pipeline per step. Atomic custom
-shader adoption can require several cached keys; strict calls defer until its true
-creation count fits, while legacy and unbounded calls admit the atomic operation.
+shader adoption can require several cached keys; a bounded call defers until its true
+creation count fits, while an unbounded call admits the atomic operation.
 
 The time target is checked between bounded spans and indivisible calls. A span,
 allocation or driver call can overrun it; elapsed time, overrun, generation time and
@@ -532,11 +532,9 @@ whether a native sampler was newly created. View targets and unrelated view
 resources are outside model preparation. Ordinary residency raises keep their
 separate pacing.
 
-`advance_prepares(budget_bytes = PREPARE_FRAME_BUDGET_BYTES)` uses the same step
-engine with the existing 1 MiB default. If its allowance is below the minimum legal
-byte step and nothing has staged, it admits one minimum step and stops. It does not
-admit an entire oversized resource. Legacy zero advances one minimum engine step;
-strict all-zero limits are unbounded.
+`PREPARE_FRAME_BUDGET_BYTES` is a 1 MiB staged-byte allowance suited to one call per
+frame. A byte allowance below the minimum legal step blocks that step until a later
+call raises it.
 
 `PrepareProgress` reports phase, state, fixed totals, completed bytes/texels/units,
 restarts and failure. CURRENT or removed dependencies advance their recorded byte progress without

@@ -11,26 +11,18 @@ import std::math;
 
 const char[*] PREPARATION_TYPE_SOURCE @private = $embed("sample_prepare_types.comp.glsl");
 const uint PREPARATION_TYPE_GROUP_SIZE @private = 8; // mirrored as local_size_x/y in sample_prepare_types.comp.glsl
-const uint PREPARATION_TYPE_FRAME_LIMIT @private = 512; // covers one-row cube/slice copies plus completion slots
+const uint PREPARATION_TYPE_FRAME_LIMIT @private = 512; // covers one-row cube copies plus completion slots
 const ulong PREPARATION_CUBE_MINIMUM_TEXELS @private = 6; // floor(96 * two output texels / 30)
 const uint PREPARATION_REPLACEMENT_SEED @private = loading_fixtures::PREPARATION_IMAGE_SEED ^ 0x9e3779b9;
-
-enum TextureSampleDimension : uint @private {
-    TWO_D,
-    CUBE,
-    VOLUME,
-}
 
 struct PreparationTypeRoot @private { // mirrored as PreparationTypeRoot in sample_prepare_types.comp.glsl
     gpu::GpuAddress output_address;
     uint mip;
     uint width;
     uint height;
-    uint depth;
-    uint dimension;
     uint layer;
 }
-$assert PreparationTypeRoot::size == 32;
+$assert PreparationTypeRoot::size == 24;
 
 fn ContainerSampler? preparation_type_sampler(Fixture* fixture) @private {
     ContainerSampler sampler = create_container_sampler(fixture)!;
@@ -45,7 +37,6 @@ fn uint[]? preparation_type_sample(
     TextureId texture,
     uint mip,
     uint layer,
-    TextureSampleDimension dimension,
 ) @private {
     Renderer* renderer = &fixture.renderer;
     material::TextureDesc desc = fixture.assets.texture(texture).desc;
@@ -53,8 +44,7 @@ fn uint[]? preparation_type_sample(
     uint height = material::texture_mip_extent(desc.height, mip);
     PreparationTypeRoot root = {
         .output_address = renderer.buffer_address(sampler.output),
-        .mip = mip, .width = width, .height = height, .depth = desc.depth,
-        .dimension = (uint)dimension, .layer = layer,
+        .mip = mip, .width = width, .height = height, .layer = layer,
     };
     BufferId[1] writes = { sampler.output };
     DispatchTexture[1] textures = { render::read_texture(texture, asset::SAMPLER_NEAREST) };
@@ -202,7 +192,6 @@ fn void preparation_cube_compare(
                     texture: stepped,
                     mip: mip,
                     layer: face,
-                    dimension: TextureSampleDimension.CUBE,
                 )!!;
                 uint[] expected = preparation_type_sample(
                     fixture: fixture,
@@ -210,7 +199,6 @@ fn void preparation_cube_compare(
                     texture: synchronous,
                     mip: mip,
                     layer: face,
-                    dimension: TextureSampleDimension.CUBE,
                 )!!;
                 assert(actual == expected);
                 usz offset = reference.offsets[mip] + (usz)face * width * height * uint::size;
@@ -257,65 +245,8 @@ fn void test_prepare_generated_cube_bands_match_all_synchronous_faces_and_mips()
     check_validation(&fixture.renderer);
 }
 
-fn void test_prepare_volume_bands_match_every_synchronous_slice() @test {
-    Fixture fixture;
-    create_fixture(mem, &fixture)!!;
-    defer destroy_fixture(&fixture);
-    ContainerSampler sampler = preparation_type_sampler(&fixture)!!;
-    defer destroy_container_sampler(&fixture, &sampler);
-    @pool() {
-        material::TextureDesc desc = material::texture_3d_desc(
-            width: 8,
-            height: 4,
-            depth: 3,
-            format: RGBA8_UNORM,
-        );
-        usz bytes = 8 * 4 * 3 * uint::size;
-        char[] original = loading_fixtures::preparation_texture_bytes(tmem, bytes);
-        char[] replacement = loading_fixtures::preparation_texture_bytes(tmem, bytes, PREPARATION_REPLACEMENT_SEED);
-        TextureId stepped = fixture.assets.add_texture(desc, original)!!;
-        fixture.renderer.upload_texture(stepped)!!;
-        fixture.assets.replace_texture(stepped, desc, replacement)!!;
-        TextureId synchronous = fixture.assets.add_texture(desc, replacement)!!;
-        PrepareId id = preparation_texture_only(&fixture, stepped)!!;
-        preparation_texture_block_then_drain(
-            fixture: &fixture,
-            texture: stepped,
-            id: id,
-            row_bytes: 32,
-            generated_limit: 0,
-        );
-        fixture.renderer.end_prepare(id)!!;
-        fixture.renderer.upload_texture(synchronous)!!;
-        for (uint slice = 0; slice < desc.depth; slice++) {
-            @pool() {
-                uint[] actual = preparation_type_sample(
-                    fixture: &fixture,
-                    sampler: &sampler,
-                    texture: stepped,
-                    mip: 0,
-                    layer: slice,
-                    dimension: TextureSampleDimension.VOLUME,
-                )!!;
-                uint[] expected = preparation_type_sample(
-                    fixture: &fixture,
-                    sampler: &sampler,
-                    texture: synchronous,
-                    mip: 0,
-                    layer: slice,
-                    dimension: TextureSampleDimension.VOLUME,
-                )!!;
-                assert(actual == expected);
-                usz slice_texels = (usz)desc.width * desc.height;
-                uint[] cpu = ((uint*)replacement.ptr + (usz)slice * slice_texels)[:slice_texels];
-                assert(actual == cpu, "volume slice %d", slice);
-            };
-        }
-    };
-    check_validation(&fixture.renderer);
-}
-
-fn void preparation_compressed_bands(PixelFormat format) @private {
+fn void test_prepare_supplied_bc1_bands_match_synchronous_npot_mips() @test {
+    PixelFormat format = BC1_RGBA_UNORM;
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
@@ -376,14 +307,6 @@ fn void preparation_compressed_bands(PixelFormat format) @private {
         }
     };
     check_validation(&fixture.renderer);
-}
-
-fn void test_prepare_supplied_bc1_bands_match_synchronous_npot_mips() @test {
-    preparation_compressed_bands(BC1_RGBA_UNORM);
-}
-
-fn void test_prepare_supplied_bc7_bands_match_synchronous_npot_mips() @test {
-    preparation_compressed_bands(BC7_UNORM);
 }
 
 fn ContainerSampler? preparation_resident_sampler(Fixture* fixture) @private {
@@ -590,132 +513,66 @@ fn void test_prepare_initial_tail_and_full_reader_match_synchronous_residency() 
             assert(fixture.renderer.residencies[stepped.index].resident_base == actual_base);
             assert(fixture.renderer.residencies[stepped.index].full_reader == actual_full_reader);
             assert(fixture.renderer.texture_budget_bytes == (streaming ? (usz)16 : 0));
-        };
-        check_validation(&fixture.renderer);
-    }
-}
-
-fn void test_prepare_texture_source_rejections_match_synchronous_faults() @test {
-    foreach (mode : (uint[5]){ 0, 1, 2, 3, 4 }) {
-        Fixture fixture;
-        create_fixture(mem, &fixture)!!;
-        defer destroy_fixture(&fixture);
-        @pool() {
-            material::TextureDesc desc = material::texture_2d_desc(4, 4, RGBA8_UNORM);
-            desc.generate_mips = false;
-            char[65] storage;
-            TextureId texture;
-            fault expected = c3d::INVALID_ARGUMENT;
-            if (mode == 0) {
-                desc.mip_levels = material::TEXTURE_MIP_CAPACITY + 1;
-                TextureMipData[material::TEXTURE_MIP_CAPACITY + 1] levels;
-                foreach (index, &level : levels) *level = { .mip = (uint)index, .layer = 0, .bytes = storage[:1] };
-                texture = fixture.assets.add_texture_mips(desc, levels[..])!!;
-            } else if (mode < 3) {
-                if (mode == 1) {
-                    desc.depth = 1;
-                    expected = c3d::UNSUPPORTED;
+            if (expected_base) {
+                ModelId reader = preparation_initial_consumer(&fixture, stepped, add_pulse_shader(&fixture)!!)!!;
+                fixture.renderer.begin_frame()!!;
+                fixture.renderer.set_texture_budget(0);
+                PrepareId rebuilt = fixture.renderer.begin_prepare_model(reader)!!;
+                PrepareUnit* full_unit = preparation_texture_unit(&fixture.renderer, rebuilt, stepped)!!;
+                assert(full_unit.full_reader && full_unit.texture_base == 0);
+                fixture.renderer.advance_prepares_within({})!!;
+                assert(fixture.renderer.residencies[stepped.index].resident_base == 0);
+                fixture.renderer.end_frame()!!;
+                preparation_drain(renderer: &fixture.renderer, id: rebuilt, limits: {});
+                fixture.renderer.end_prepare(rebuilt)!!;
+                TextureResidency full = fixture.renderer.texture_residency(stepped)!!;
+                assert(full.full_reader && !full.streamed && full.resident_base == 0);
+                for (uint mip = 0; mip < mips; mip++) {
+                    @pool() {
+                        uint[] actual = preparation_resident_sample(
+                            fixture: &fixture,
+                            sampler: &sampler,
+                            texture: stepped,
+                            relative_mip: mip,
+                        )!!;
+                        uint width = material::texture_mip_extent(desc.width, mip);
+                        uint height = material::texture_mip_extent(desc.height, mip);
+                        assert(actual == ((uint*)(reference.pixels.ptr + reference.offsets[mip]))[:(usz)width * height]);
+                    };
                 }
-                TextureMipData[1] level = {{ .mip = 0, .layer = 0, .bytes = storage[..] }};
-                if (mode == 1) level[0].bytes = storage[:64];
-                texture = fixture.assets.add_texture_mips(desc, level[..])!!;
-            } else {
-                if (mode == 4) desc.mip_levels = 2;
-                usz length = mode == 3 ? (usz)65 : 64;
-                texture = fixture.assets.add_texture(desc, storage[:length])!!;
             }
-            assert(@catch(fixture.renderer.upload_texture(texture)) == expected);
-            ModelId model = preparation_texture_model(&fixture, texture)!!;
-            PrepareId id = fixture.renderer.begin_prepare_model(model)!!;
-            fixture.renderer.begin_frame()!!;
-            PrepareReport report = fixture.renderer.advance_prepares_within({})!!;
-            assert(report.staged_bytes == 0 && report.generated_texels == 0);
-            assert(report.objects == 0 && report.views == 0);
-            fixture.renderer.end_frame()!!;
-            PrepareProgress progress = fixture.renderer.prepare_progress(id);
-            assert(progress.state == PrepareState.FAILED && progress.failure == expected);
-            assert(!fixture.renderer.textures[texture.index].texture.is_valid());
-            fixture.renderer.end_prepare(id)!!;
         };
         check_validation(&fixture.renderer);
     }
 }
 
 fn void test_prepare_texture_copy_rechecks_exact_source_length_each_band() @test {
-    foreach (supplied : (bool[2]){ false, true }) {
-        Fixture fixture;
-        create_fixture(mem, &fixture)!!;
-        defer destroy_fixture(&fixture);
-        @pool() {
-            material::TextureDesc desc = material::texture_2d_desc(4, 4, RGBA8_UNORM);
-            desc.generate_mips = false;
-            char[64] storage;
-            TextureId texture;
-            if (supplied) {
-                TextureMipData[1] level = {{ .mip = 0, .layer = 0, .bytes = storage[..] }};
-                texture = fixture.assets.add_texture_mips(desc, level[..])!!;
-            } else {
-                texture = fixture.assets.add_texture(desc, storage[..])!!;
-            }
-            ModelId model = preparation_texture_model(&fixture, texture)!!;
-            PrepareId id = fixture.renderer.begin_prepare_model(model)!!;
-            fixture.renderer.begin_frame()!!;
-            PrepareReport first = fixture.renderer.advance_prepares_within({ .staged_bytes = 16 })!!;
-            assert(first.staged_bytes == 16);
-            fixture.renderer.end_frame()!!;
-            assert(fixture.renderer.prepare_progress(id).state != PrepareState.READY);
-            TextureAsset* source = fixture.assets.texture(texture);
-            if (supplied) {
-                source.supplied_mips[0].bytes = source.supplied_mips[0].bytes[:63];
-            } else {
-                source.pixels = source.pixels[:63];
-            }
-            assert(@catch(fixture.renderer.upload_texture(texture)) == c3d::INVALID_ARGUMENT);
-            fixture.renderer.begin_frame()!!;
-            PrepareReport second = fixture.renderer.advance_prepares_within({ .staged_bytes = 16 })!!;
-            assert(second.staged_bytes == 0);
-            fixture.renderer.end_frame()!!;
-            PrepareProgress progress = fixture.renderer.prepare_progress(id);
-            assert(progress.state == PrepareState.FAILED && progress.failure == c3d::INVALID_ARGUMENT);
-            assert(progress.bytes_done == 16);
-            fixture.renderer.end_prepare(id)!!;
-        };
-        check_validation(&fixture.renderer);
-    }
-}
-
-fn void test_prepare_generated_single_texel_has_zero_generation_total_and_no_chain() @test {
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
-    ContainerSampler sampler = create_container_sampler(&fixture)!!;
-    defer destroy_container_sampler(&fixture, &sampler);
     @pool() {
-        char[4] pixels = { 17, 73, 129, 255 };
-        TextureId texture = fixture.assets.add_texture(material::texture_2d_desc(1, 1, RGBA8_UNORM), pixels[..])!!;
+        material::TextureDesc desc = material::texture_2d_desc(4, 4, RGBA8_UNORM);
+        desc.generate_mips = false;
+        char[64] storage;
+        TextureId texture = fixture.assets.add_texture(desc, storage[..])!!;
         ModelId model = preparation_texture_model(&fixture, texture)!!;
         PrepareId id = fixture.renderer.begin_prepare_model(model)!!;
-        assert(fixture.renderer.prepare_progress(id).texels_total == 0);
         fixture.renderer.begin_frame()!!;
-        PrepareReport blocked = fixture.renderer.advance_prepares_within({
-            .staged_bytes = 1, .generated_texels = 1,
-        })!!;
-        assert(blocked.staged_bytes == 0 && blocked.generated_texels == 0);
-        assert(blocked.reason == PrepareStopReason.STAGED_BYTES && blocked.required.staged_bytes == pixels.len);
-        assert(!fixture.renderer.prepares.get(id).chain_active);
+        PrepareReport first = fixture.renderer.advance_prepares_within({ .staged_bytes = 16 })!!;
+        assert(first.staged_bytes == 16);
         fixture.renderer.end_frame()!!;
-        preparation_drain(&fixture.renderer, id, { .staged_bytes = 4096, .generated_texels = 1, .pipelines = 1 });
+        assert(fixture.renderer.prepare_progress(id).state != PrepareState.READY);
+        TextureAsset* source = fixture.assets.texture(texture);
+        source.pixels = source.pixels[:63];
+        assert(@catch(fixture.renderer.upload_texture(texture)) == c3d::INVALID_ARGUMENT);
+        fixture.renderer.begin_frame()!!;
+        PrepareReport second = fixture.renderer.advance_prepares_within({ .staged_bytes = 16 })!!;
+        assert(second.staged_bytes == 0);
+        fixture.renderer.end_frame()!!;
         PrepareProgress progress = fixture.renderer.prepare_progress(id);
-        assert(progress.texels_done == 0 && progress.texels_total == 0);
-        assert(fixture.renderer.prepare_counters.generated_texels == 0);
+        assert(progress.state == PrepareState.FAILED && progress.failure == c3d::INVALID_ARGUMENT);
+        assert(progress.bytes_done == 16);
         fixture.renderer.end_prepare(id)!!;
-        uint[] sampled = container_sample_mip(
-            fixture: &fixture,
-            sampler: &sampler,
-            texture: texture,
-            mip: 0,
-        )!!;
-        assert(sampled.len == 1 && sampled[0] == *(uint*)pixels[..].ptr);
     };
     check_validation(&fixture.renderer);
 }

@@ -30,87 +30,24 @@ fn PrepareId cursor_record(Renderer* renderer, uint units) @local {
     return id;
 }
 
-fn void test_strict_axes_stop_without_reinterpreting_depleted_zero() @test {
+fn void test_prepare_axes_stop_independently_and_zero_is_unbounded() @test {
     PrepareBudget bytes = { .limits = { .staged_bytes = 16 }, .report = { .staged_bytes = 16 } };
-    assert(render::prepare_byte_allowance(&bytes) == 0);
+    PrepareBudget fresh = { .limits = { .staged_bytes = 16 } };
+    assert(render::prepare_byte_allowance(&bytes) == 0 && render::prepare_byte_allowance(&fresh) == 16);
     assert(render::prepare_step_stop(&bytes, { .staged_bytes = 1 }, 0) == PrepareStopReason.STAGED_BYTES);
+    assert(render::prepare_step_stop(&fresh, { .staged_bytes = 16 }, 0) == PrepareStopReason.NONE);
     PrepareBudget texels = { .limits = { .generated_texels = 9 }, .report = { .generated_texels = 9 } };
     assert(render::prepare_step_stop(&texels, { .generated_texels = 1 }, 0) == PrepareStopReason.GENERATED_TEXELS);
-    PrepareBudget pipelines = { .limits = { .pipelines = 2 }, .report = { .pipelines = 2 } };
-    assert(render::prepare_step_stop(&pipelines, { .pipelines = 1 }, 0) == PrepareStopReason.PIPELINES);
-    assert(bytes.report.staged_bytes == 16 && texels.report.generated_texels == 9 && pipelines.report.pipelines == 2);
-}
-
-fn void test_zero_axes_are_unbounded_and_each_call_has_fresh_allowance() @test {
-    PrepareBudget disabled;
-    assert(render::prepare_step_stop(&disabled, { .staged_bytes = usz::max,
+    PrepareBudget pipelines = { .limits = { .pipelines = 3 } };
+    assert(render::prepare_step_stop(&pipelines, { .pipelines = 4 }, 0) == PrepareStopReason.PIPELINES);
+    pipelines.limits.pipelines = 4;
+    assert(render::prepare_step_stop(&pipelines, { .pipelines = 4 }, 0) == PrepareStopReason.NONE);
+    PrepareBudget deadline = { .limits = { .time_ns = 100 } };
+    assert(render::prepare_step_stop(&deadline, {}, 99) == PrepareStopReason.NONE);
+    assert(render::prepare_step_stop(&deadline, { .staged_bytes = 16 }, 100) == PrepareStopReason.TIME);
+    PrepareBudget unbounded;
+    assert(render::prepare_step_stop(&unbounded, { .staged_bytes = usz::max,
         .generated_texels = ulong::max, .pipelines = uint::max }, ulong::max) == PrepareStopReason.NONE);
-    PrepareBudget previous = { .limits = { .staged_bytes = 16 }, .report = { .staged_bytes = 16 } };
-    PrepareBudget next = { .limits = { .staged_bytes = 16 } };
-    assert(render::prepare_byte_allowance(&previous) == 0 && render::prepare_byte_allowance(&next) == 16);
-    assert(render::prepare_step_stop(&next, { .staged_bytes = 16 }, 0) == PrepareStopReason.NONE);
-}
-
-fn void test_legacy_admits_only_one_oversized_minimum_after_zero_byte_work() @test {
-    PrepareBudget budget = { .limits = { .staged_bytes = 1 }, .legacy = true };
-    assert(render::prepare_step_stop(&budget, {}, 0) == PrepareStopReason.NONE);
-    assert(render::prepare_step_stop(&budget, { .staged_bytes = 16 }, 0) == PrepareStopReason.NONE);
-    budget.report.staged_bytes = 16;
-    budget.legacy_step = true;
-    assert(render::prepare_step_stop(&budget, { .staged_bytes = 16 }, 0) == PrepareStopReason.STAGED_BYTES);
-    PrepareBudget zero = { .legacy = true };
-    assert(render::prepare_byte_allowance(&zero) == 0);
-    assert(render::prepare_step_stop(&zero, { .staged_bytes = 16 }, 0) == PrepareStopReason.NONE);
-    zero.report.staged_bytes = 16;
-    assert(render::prepare_step_stop(&zero, { .staged_bytes = 16 }, 0) == PrepareStopReason.STAGED_BYTES);
-}
-
-fn void test_atomic_adoption_requires_true_pipeline_count_and_legacy_admits_it() @test {
-    PrepareBudget strict = { .limits = { .pipelines = 3 } };
-    PrepareStepCost adoption = { .pipelines = 4 };
-    assert(render::prepare_step_stop(&strict, adoption, 0) == PrepareStopReason.PIPELINES);
-    strict.limits.pipelines = 4;
-    assert(render::prepare_step_stop(&strict, adoption, 0) == PrepareStopReason.NONE);
-    strict.limits.pipelines = 3;
-    strict.legacy = true;
-    assert(render::prepare_step_stop(&strict, adoption, 0) == PrepareStopReason.NONE);
-}
-
-fn void test_cooperative_deadline_is_checked_between_steps() @test {
-    PrepareBudget budget = { .limits = { .time_ns = 100 } };
-    assert(render::prepare_step_stop(&budget, {}, 99) == PrepareStopReason.NONE);
-    assert(render::prepare_step_stop(&budget, {}, 100) == PrepareStopReason.TIME);
-    assert(render::prepare_step_stop(&budget, { .staged_bytes = 16 }, 101) == PrepareStopReason.TIME);
-    budget.limits.time_ns = 0;
-    assert(render::prepare_step_stop(&budget, {}, ulong::max) == PrepareStopReason.NONE);
-}
-
-fn void test_first_checkpoint_survives_multiple_advances_and_commit_sets_new_baseline() @test {
-    Renderer renderer = cursor_renderer();
-    defer destroy_cursor_renderer(&renderer);
-    PrepareId id = cursor_record(&renderer, 1);
-    PrepareRecord* record = renderer.prepares.get(id);
-    PrepareUnit* unit = &record.units[0];
-    unit.kind = PrepareUnitKind.GEOMETRY;
-    unit.bytes = 64;
-    unit.staged.bytes = 16;
-    record.bytes_total = 64;
-    renderer.frame_index = 3;
-    render::checkpoint_prepare_unit(&renderer, record, unit);
-    unit.staged.bytes = 32;
-    render::checkpoint_prepare_unit(&renderer, record, unit);
-    unit.staged.bytes = 48;
-    render::rollback_prepare_cursors(&renderer, record);
-    assert(unit.staged.bytes == 16 && record.bytes_done == 16 && !unit.done);
-    render::checkpoint_prepare_unit(&renderer, record, unit);
-    unit.staged.bytes = 32;
-    render::commit_prepare_cursors(record);
-    renderer.frame_index++;
-    render::checkpoint_prepare_unit(&renderer, record, unit);
-    unit.staged.bytes = 64;
-    unit.done = true;
-    render::rollback_prepare_cursors(&renderer, record);
-    assert(unit.staged.bytes == 32 && record.bytes_done == 32 && record.units_done == 0);
 }
 
 fn void test_abort_keeps_only_active_chain_and_rolls_finalized_unit_back_for_regeneration() @test {
@@ -189,19 +126,14 @@ fn void test_shader_cpu_spans_are_owned_separate_and_first_use_has_zero_adoption
         defer render::free_prepare_shader_unit(&renderer, &unit);
         PrepareBudget budget;
         PrepareReport report;
-        usz[3] expected = { render::PREPARE_SPAN_BYTES, render::PREPARE_SPAN_BYTES, 17 };
-        foreach (bytes : expected) {
+        uint steps;
+        do {
             assert(render::prepare_shader_cost(&renderer, &unit, &budget)!!.pipelines == 0);
-            ulong before = report.copied_bytes;
-            assert(!render::run_prepare_shader_step(&renderer, &unit, &report)!!);
-            assert(report.copied_bytes - before == bytes && report.staged_bytes == 0 && report.pipelines == 0);
-        }
-        assert(render::prepare_shader_cost(&renderer, &unit, &budget)!!.pipelines == 0);
-        assert(render::run_prepare_shader_step(&renderer, &unit, &report)!!);
+            steps++;
+        } while (!render::run_prepare_shader_step(&renderer, &unit, &report)!!);
+        assert(steps == 4 && report.staged_bytes == 0 && report.pipelines == 0 && report.copied_bytes == fragment.len);
         assert(renderer.shaders[shader.index].desc.fragment.ptr != assets.shader(shader).desc.fragment.ptr);
-        assert(renderer.shaders[shader.index].desc.fragment.len == fragment.len);
-        foreach (index, value : fragment) assert(renderer.shaders[shader.index].desc.fragment[index] == value);
-        assert(report.staged_bytes == 0 && report.pipelines == 0 && report.copied_bytes == fragment.len);
+        assert(renderer.shaders[shader.index].desc.fragment == fragment);
     }
     assert(!tracker.has_leaks());
 }

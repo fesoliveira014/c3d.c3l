@@ -149,7 +149,6 @@ struct Stats {
     uint prepare_allocations;
     uint prepare_pipeline_lookups;
     uint prepare_pipeline_hits;
-    uint prepare_pipeline_keys;
     uint prepare_restarts;
     ulong prepare_generation_ns;
     ulong prepare_pipeline_ns;

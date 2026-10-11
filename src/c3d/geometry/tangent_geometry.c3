@@ -111,16 +111,11 @@ fn TangentGeometry? create_tangent_geometry(Allocator allocator, Geometry* sourc
     check_tangent_source(source, uv_set)!;
 
     usz corner_count = source.indices.len ? source.indices.len : source.positions.len;
-    usz face_count = corner_count / CORNERS_PER_TRIANGLE;
 
     MikkVertex[] vertices = @tangent_array(allocator, MikkVertex, source.positions.len)!;
     defer alloc::free(allocator, vertices);
     uint[] input_indices = @tangent_array(allocator, uint, corner_count)!;
     defer alloc::free(allocator, input_indices);
-    int[] sizes = @tangent_array(allocator, int, face_count)!;
-    defer alloc::free(allocator, sizes);
-    int[] offsets = @tangent_array(allocator, int, face_count)!;
-    defer alloc::free(allocator, offsets);
     Vec2[] selected = uv_set == 0 ? source.uv0 : source.uv1;
 
     foreach (index, position : source.positions) {
@@ -136,18 +131,7 @@ fn TangentGeometry? create_tangent_geometry(Allocator allocator, Geometry* sourc
 
     foreach (corner, &index : input_indices) *index = source.indices.len ? source.indices[corner] : (uint)corner;
 
-    foreach (face, &size : sizes) {
-        *size = CORNERS_PER_TRIANGLE;
-        offsets[face] = (int)face * CORNERS_PER_TRIANGLE;
-    }
-
-    MikkFullMesh full = {
-        .vertices = vertices,
-        .indices = input_indices,
-        .face_offsets = offsets,
-        .face_sizes = sizes,
-        .uv_set = uv_set,
-    };
+    MikkFullMesh full = { .vertices = vertices, .indices = input_indices, .uv_set = uv_set };
 
     MikkTangent[] corners = mikk_generate_full(allocator, full)!;
     defer alloc::free(allocator, corners);

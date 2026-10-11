@@ -13,7 +13,7 @@ import std::time::clock;
 <* Pool of open model preparations. *>
 alias PreparePool = Pool{PrepareRecord, PrepareId};
 
-<* Default staged-byte allowance of the legacy preparation call. *>
+<* Staged-byte allowance suited to one preparation call per frame. *>
 const usz PREPARE_FRAME_BUDGET_BYTES = 1 << 20; // one MiB per call; divisible uploads stop at legal bands
 
 <* Open preparations admitted by one renderer. *>
@@ -83,25 +83,6 @@ struct PrepareReport {
     ulong overrun_ns;
     PrepareStopReason reason;
     PrepareStepCost required;
-}
-
-<* Per-renderer work accumulated across preparation calls and aborted frames. *>
-struct PrepareCounters {
-    ulong staged_bytes;
-    ulong generated_texels;
-    ulong copied_bytes;
-    ulong pipelines;
-    ulong objects;
-    ulong views;
-    ulong allocations;
-    ulong pipeline_lookups;
-    ulong pipeline_hits;
-    ulong pipeline_keys;
-    ulong restarts;
-    ulong generation_ns;
-    ulong pipeline_ns;
-    ulong elapsed_ns;
-    ulong overrun_ns;
 }
 
 <* Fixed totals and current progress of a preparation. *>
@@ -219,8 +200,6 @@ struct PrepareBudget @private {
     PrepareLimits limits;
     PrepareReport report;
     std::time::Clock started;
-    bool legacy;
-    bool legacy_step;
 }
 
 struct PrepareInstall @private {
@@ -274,21 +253,7 @@ fn PrepareId? Renderer.begin_prepare_model(&self, ModelId model) {
  @require self.frame_open
 *>
 fn PrepareReport? Renderer.advance_prepares_within(&self, PrepareLimits limits) {
-    return advance_prepare_engine(self, limits, false);
-}
-
-<*
- Advance preparation under the legacy staged-byte allowance.
- @param budget_bytes : "One oversized minimum step may progress before bytes stage."
- @return? c3d::INVALID_ARGUMENT, gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE
- @return? gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY, gpu::UNSUPPORTED_FEATURE
- @return? gpu::COMMAND_RECORDING_ERROR, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
- @return? gpu::INVALID_RESOURCE_STATE, gpu::RESOURCE_IN_USE, gpu::DEVICE_BUSY
- @return? gpu::SLOT_TABLE_FULL, gpu::DESCRIPTOR_HEAP_FULL, gpu::COMMAND_ALLOCATOR_CAPACITY_EXCEEDED, gpu::WAIT_TIMEOUT
- @require self.frame_open
-*>
-fn void? Renderer.advance_prepares(&self, usz budget_bytes = PREPARE_FRAME_BUDGET_BYTES) {
-    advance_prepare_engine(self, { .staged_bytes = budget_bytes }, true)!;
+    return advance_prepare_engine(self, limits);
 }
 
 <*
@@ -331,22 +296,18 @@ fn ulong prepare_add(ulong first, ulong second) @private {
 }
 
 fn usz prepare_byte_allowance(PrepareBudget* budget) @private {
-    bool bounded = budget.legacy || budget.limits.staged_bytes != 0;
-    if (!bounded) return PREPARE_SPAN_BYTES;
+    if (!budget.limits.staged_bytes) return PREPARE_SPAN_BYTES;
     if (budget.report.staged_bytes >= budget.limits.staged_bytes) return 0;
     return math::min(budget.limits.staged_bytes - budget.report.staged_bytes, PREPARE_SPAN_BYTES);
 }
 
 fn PrepareStopReason prepare_step_stop(PrepareBudget* budget, PrepareStepCost cost, ulong elapsed_ns) @private {
     if (budget.limits.time_ns && elapsed_ns >= budget.limits.time_ns) return PrepareStopReason.TIME;
-    bool bytes_bounded = budget.legacy || budget.limits.staged_bytes != 0;
-    if (bytes_bounded && (cost.staged_bytes > budget.limits.staged_bytes
-      || budget.report.staged_bytes > budget.limits.staged_bytes - cost.staged_bytes)) {
-        if (!budget.legacy || budget.report.staged_bytes || budget.legacy_step) return PrepareStopReason.STAGED_BYTES;
-    }
+    if (budget.limits.staged_bytes && (cost.staged_bytes > budget.limits.staged_bytes
+      || budget.report.staged_bytes > budget.limits.staged_bytes - cost.staged_bytes)) return PrepareStopReason.STAGED_BYTES;
     if (budget.limits.generated_texels && (cost.generated_texels > budget.limits.generated_texels
       || budget.report.generated_texels > budget.limits.generated_texels - cost.generated_texels)) return PrepareStopReason.GENERATED_TEXELS;
-    if (!budget.legacy && budget.limits.pipelines && (cost.pipelines > budget.limits.pipelines
+    if (budget.limits.pipelines && (cost.pipelines > budget.limits.pipelines
       || budget.report.pipelines > budget.limits.pipelines - cost.pipelines)) return PrepareStopReason.PIPELINES;
     return PrepareStopReason.NONE;
 }
@@ -361,26 +322,9 @@ fn void account_prepare_report(Renderer* renderer, PrepareReport report) @privat
     renderer.stats.prepare_allocations += report.allocations;
     renderer.stats.prepare_pipeline_lookups += report.pipeline_lookups;
     renderer.stats.prepare_pipeline_hits += report.pipeline_hits;
-    renderer.stats.prepare_pipeline_keys += report.pipeline_keys;
     renderer.stats.prepare_restarts += report.restarts;
     renderer.stats.prepare_generation_ns += report.generation_ns;
     renderer.stats.prepare_pipeline_ns += report.pipeline_ns;
     renderer.stats.prepare_elapsed_ns += report.elapsed_ns;
     renderer.stats.prepare_overrun_ns += report.overrun_ns;
-    PrepareCounters* totals = &renderer.prepare_counters;
-    totals.staged_bytes = prepare_add(totals.staged_bytes, report.staged_bytes);
-    totals.generated_texels = prepare_add(totals.generated_texels, report.generated_texels);
-    totals.copied_bytes = prepare_add(totals.copied_bytes, report.copied_bytes);
-    totals.pipelines = prepare_add(totals.pipelines, report.pipelines);
-    totals.objects = prepare_add(totals.objects, report.objects);
-    totals.views = prepare_add(totals.views, report.views);
-    totals.allocations = prepare_add(totals.allocations, report.allocations);
-    totals.pipeline_lookups = prepare_add(totals.pipeline_lookups, report.pipeline_lookups);
-    totals.pipeline_hits = prepare_add(totals.pipeline_hits, report.pipeline_hits);
-    totals.pipeline_keys = prepare_add(totals.pipeline_keys, report.pipeline_keys);
-    totals.restarts = prepare_add(totals.restarts, report.restarts);
-    totals.generation_ns = prepare_add(totals.generation_ns, report.generation_ns);
-    totals.pipeline_ns = prepare_add(totals.pipeline_ns, report.pipeline_ns);
-    totals.elapsed_ns = prepare_add(totals.elapsed_ns, report.elapsed_ns);
-    totals.overrun_ns = prepare_add(totals.overrun_ns, report.overrun_ns);
 }

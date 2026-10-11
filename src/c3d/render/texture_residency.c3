@@ -559,9 +559,7 @@ fn void? apply_texture_residency(Renderer* renderer, TextureResidencyChange chan
         )!;
     }
 
-    TextureCoverageResource* coverage_resource = mirror.coverage_resource;
     TextureSemantic semantic = mirror.semantic;
-    mirror.coverage_resource = null;
 
     retire_texture(renderer, mirror);
 
@@ -569,7 +567,6 @@ fn void? apply_texture_residency(Renderer* renderer, TextureResidencyChange chan
         .asset = pending.asset,
         .revision = pending.revision,
         .semantic = semantic,
-        .coverage_resource = coverage_resource,
         .binding_revision = mirror.binding_revision + 1,
         .texture = image,
         .view = view,

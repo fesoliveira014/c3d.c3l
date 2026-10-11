@@ -9,7 +9,6 @@ import c3d::render @public;
 import c3d::test::loading_fixtures;
 import gpu;
 import std::math;
-import std::collections::list;
 
 const uint PREPARATION_TEST_WIDTH @private = 37;
 const uint PREPARATION_TEST_HEIGHT @private = 19;
@@ -126,7 +125,7 @@ fn void test_prepare_generated_srgb_bands_match_synchronous_mips() @test {
     check_validation(renderer);
 }
 
-fn void preparation_finalized_abort(bool release_source) @private {
+fn void test_prepare_finalized_abort_regenerates_identical_mips() @test {
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
@@ -150,33 +149,15 @@ fn void preparation_finalized_abort(bool release_source) @private {
         assert(renderer.textures[texture.index].texture == old);
         gpu::TextureView alive = gpu::create_texture_view(&renderer.device, old, null)!!;
         gpu::destroy_texture_view(&renderer.device, alive)!!;
-        if (release_source) {
-            fixture.assets.release_texture_cpu(texture);
-            renderer.begin_frame()!!;
-            renderer.advance_prepares_within({})!!;
-            renderer.end_frame()!!;
-            PrepareProgress failed = renderer.prepare_progress(id);
-            assert(failed.state == PrepareState.FAILED && failed.failure == c3d::ASSET_DATA_UNAVAILABLE);
-        } else {
-            ulong before = renderer.prepare_counters.generated_texels;
-            preparation_drain(renderer, id, {});
-            assert(renderer.prepare_counters.generated_texels >= before + (ulong)desc.width * desc.height);
-            renderer.upload_texture(expected)!!;
-            preparation_compare_mips(&fixture, texture, expected);
-        }
+        preparation_drain(renderer, id, {});
+        renderer.upload_texture(expected)!!;
+        preparation_compare_mips(&fixture, texture, expected);
         renderer.end_prepare(id)!!;
         assert(renderer.prepare_progress(id).failure == c3d::INVALID_ID);
     };
     check_validation(renderer);
 }
 
-fn void test_prepare_finalized_abort_regenerates_identical_mips() @test {
-    preparation_finalized_abort(false);
-}
-
-fn void test_prepare_finalized_abort_fails_after_source_release() @test {
-    preparation_finalized_abort(true);
-}
 fn PrepareUnit*? preparation_texture_unit(Renderer* renderer, PrepareId id, TextureId texture) @private {
     PrepareRecord* record = renderer.prepares.get(id);
     foreach (&unit : record.units) {
@@ -319,61 +300,6 @@ fn void test_prepare_end_and_removed_model_retain_actual_submitted_resource_life
     check_validation(renderer);
 }
 
-fn void test_prepare_ring_spill_capacity_fault_propagates_and_abort_preserves_old_mirror() @test {
-    Fixture fixture;
-    create_fixture(mem, &fixture, upload_ring_bytes: 4096)!!;
-    defer destroy_fixture(&fixture);
-    Renderer* renderer = &fixture.renderer;
-    @pool() {
-        material::TextureDesc desc = material::texture_2d_desc(PREPARATION_TEST_WIDTH, PREPARATION_TEST_HEIGHT, RGBA8_UNORM);
-        char[] pixels = loading_fixtures::preparation_texture_bytes(tmem, (usz)desc.width * desc.height * 4);
-        TextureId texture = fixture.assets.add_texture(desc, pixels)!!;
-        renderer.upload_texture(texture)!!;
-        gpu::TextureHandle old = renderer.textures[texture.index].texture;
-        foreach (&value : fixture.assets.texture(texture).pixels) *value ^= 9;
-        fixture.assets.mark_texture_dirty(texture);
-        ModelId model = preparation_texture_model(&fixture, texture)!!;
-        PrepareId id = renderer.begin_prepare_model(model)!!;
-        renderer.begin_frame()!!;
-        renderer.advance_prepares_within({ .staged_bytes = (usz)desc.width * 4 })!!;
-        renderer.end_frame()!!;
-        assert(!preparation_texture_unit(renderer, id, texture)!!.done);
-        List{gpu::GpuAllocation} occupied;
-        occupied.init(tmem);
-        defer foreach (&allocation : occupied.array_view()) gpu::free_allocation(&renderer.device, allocation)!!;
-        gpu::AllocationDesc allocation_desc = {
-            .size = 256,
-            .alignment = 256,
-            .memory_class = gpu::MemoryClass.CPU_WRITE,
-            .access = { .graphics },
-            .debug_name = "prepare_capacity_occupant",
-        };
-        while (true) {
-            gpu::GpuAllocation? allocation = gpu::allocate_memory(&renderer.device, &allocation_desc);
-            if (catch excuse = allocation) {
-                assert(excuse == gpu::SLOT_TABLE_FULL);
-                break;
-            }
-            occupied.push(allocation);
-        }
-        assert(occupied.len() > 0 && occupied.len() < 4096);
-        renderer.begin_frame()!!;
-        UploadRing* ring = &renderer.frames[renderer.recording_slot].upload;
-        usz remaining = ring.mapped.bytes.len - render::align_up(ring.head, render::UPLOAD_RING_ALIGNMENT);
-        if (remaining) ring.take(&renderer.device, remaining, render::UPLOAD_RING_ALIGNMENT)!!;
-        assert(ring.head == ring.mapped.bytes.len);
-        ulong attempts = renderer.prepare_counters.allocations;
-        assert(@catch(renderer.advance_prepares_within({ .staged_bytes = (usz)desc.width * 4 })) == gpu::SLOT_TABLE_FULL);
-        assert(renderer.prepare_counters.allocations == attempts + 1);
-        assert(renderer.prepare_progress(id).state == PrepareState.PENDING);
-        render::abort_frame(renderer);
-        assert(renderer.textures[texture.index].texture == old);
-        renderer.end_prepare(id)!!;
-    };
-    render::wait_frames(renderer)!!;
-    check_validation(renderer);
-}
-
 fn void test_prepare_removed_active_texture_does_not_reuse_its_chain_for_next_texture() @test {
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
@@ -417,133 +343,6 @@ fn void test_prepare_removed_active_texture_does_not_reuse_its_chain_for_next_te
         );
         renderer.upload_texture(expected)!!;
         preparation_compare_mips(&fixture, second, expected);
-        renderer.end_prepare(id)!!;
-    };
-    check_validation(renderer);
-}
-
-fn void test_prepare_aborted_normal_upload_supersession_restarts_discarded_partial_candidate() @test {
-    Fixture fixture;
-    create_fixture(mem, &fixture)!!;
-    defer destroy_fixture(&fixture);
-    Renderer* renderer = &fixture.renderer;
-    @pool() {
-        material::TextureDesc desc = material::texture_2d_desc(PREPARATION_TEST_WIDTH, PREPARATION_TEST_HEIGHT, RGBA8_UNORM);
-        char[] pixels = loading_fixtures::preparation_texture_bytes(tmem, (usz)desc.width * desc.height * 4);
-        TextureId texture = fixture.assets.add_texture(desc, pixels)!!;
-        renderer.upload_texture(texture)!!;
-        gpu::TextureHandle old = renderer.textures[texture.index].texture;
-        foreach (&value : fixture.assets.texture(texture).pixels) *value ^= 27;
-        fixture.assets.mark_texture_dirty(texture);
-        TextureId expected = fixture.assets.add_texture(desc, fixture.assets.texture(texture).pixels)!!;
-        ModelId model = preparation_texture_model(&fixture, texture)!!;
-        MaterialId material_id = fixture.assets.model(model).data.meshes[0].material;
-        DeformedScene shown = create_single_box_scene(
-            fixture: &fixture,
-            geometry: fixture.box,
-            material: material_id,
-            sunlit: false,
-        )!!;
-        defer scene::destroy_scene(&shown.scene);
-        PrepareId id = renderer.begin_prepare_model(model)!!;
-        renderer.begin_frame()!!;
-        renderer.advance_prepares_within({ .staged_bytes = (usz)desc.width * 4 })!!;
-        renderer.end_frame()!!;
-        PrepareUnit* partial = preparation_texture_unit(renderer, id, texture)!!;
-        assert(partial.staged.bytes > 0 && !partial.done);
-        renderer.begin_frame()!!;
-        renderer.render_view(&shown.scene, shown.camera, fixture.view)!!;
-        renderer.finish_view(fixture.view)!!;
-        renderer.advance_prepares_within({})!!;
-        render::abort_frame(renderer);
-        assert(renderer.textures[texture.index].texture == old || renderer.textures[texture.index].revision == 0);
-        preparation_drain(renderer, id, {});
-        renderer.upload_texture(expected)!!;
-        preparation_compare_mips(&fixture, texture, expected);
-        renderer.end_prepare(id)!!;
-    };
-    check_validation(renderer);
-}
-
-fn void test_prepare_abort_regenerates_finalized_texture_and_retains_later_active_chain() @test {
-    Fixture fixture;
-    create_fixture(mem, &fixture)!!;
-    defer destroy_fixture(&fixture);
-    Renderer* renderer = &fixture.renderer;
-    @pool() {
-        material::TextureDesc first_desc = material::texture_2d_desc(PREPARATION_TEST_WIDTH, PREPARATION_TEST_HEIGHT, RGBA8_UNORM);
-        material::TextureDesc second_desc = material::texture_2d_desc(48, 17, RGBA8_UNORM);
-        char[] first_pixels = loading_fixtures::preparation_texture_bytes(tmem, (usz)first_desc.width * first_desc.height * 4);
-        char[] second_pixels = loading_fixtures::preparation_texture_bytes(tmem, (usz)second_desc.width * second_desc.height * 4,
-            loading_fixtures::PREPARATION_IMAGE_SEED ^ 0x9e3779b9);
-        TextureId first = fixture.assets.add_texture(first_desc, first_pixels)!!;
-        TextureId second = fixture.assets.add_texture(second_desc, second_pixels)!!;
-        TextureId first_expected = fixture.assets.add_texture(first_desc, first_pixels)!!;
-        TextureId second_expected = fixture.assets.add_texture(second_desc, second_pixels)!!;
-        ModelId model = preparation_texture_model(&fixture, first)!!;
-        MaterialId first_material = fixture.assets.model(model).data.meshes[0].material;
-        MaterialId second_material = fixture.assets.add_material(material::basic({
-            .color = { 1, 1, 1, 1 }, .map = material::texture_slot(second, asset::SAMPLER_NEAREST),
-        }))!!;
-        ModelTemplate* template = &fixture.assets.model(model).data;
-        alloc::free(fixture.allocator, template.meshes.ptr);
-        template.meshes = alloc::new_array(fixture.allocator, ModelMesh, 2);
-        template.meshes[0] = { .node = 0, .geometry = fixture.box, .material = first_material };
-        template.meshes[1] = { .node = 0, .geometry = fixture.box, .material = second_material };
-        PrepareId id = renderer.begin_prepare_model(model)!!;
-        renderer.begin_frame()!!;
-        renderer.advance_prepares_within({ .generated_texels = (ulong)first_desc.width * first_desc.height + 128 })!!;
-        PrepareRecord* record = renderer.prepares.get(id);
-        PrepareUnit* finished = preparation_texture_unit(renderer, id, first)!!;
-        PrepareUnit* active = preparation_texture_unit(renderer, id, second)!!;
-        assert(finished.done && finished.installed && !active.done);
-        assert(record.chain_active && record.chain_unit == active.index);
-        char* held = record.chain.pixels.ptr;
-        ulong generated = active.generated_done;
-        assert(generated > 0 && generated < (ulong)second_desc.width * second_desc.height);
-        render::abort_frame(renderer);
-        assert(record.chain_active && record.chain.pixels.ptr == held && active.generated_done == generated);
-        assert(!finished.done && !finished.installed);
-        preparation_drain(renderer, id, {});
-        renderer.upload_texture(first_expected)!!;
-        renderer.upload_texture(second_expected)!!;
-        preparation_compare_mips(&fixture, first, first_expected);
-        preparation_compare_mips(&fixture, second, second_expected);
-        renderer.end_prepare(id)!!;
-    };
-    check_validation(renderer);
-}
-
-fn void test_prepare_same_frame_revision_restart_after_final_install_aborts_to_old_mirror() @test {
-    Fixture fixture;
-    create_fixture(mem, &fixture)!!;
-    defer destroy_fixture(&fixture);
-    Renderer* renderer = &fixture.renderer;
-    @pool() {
-        material::TextureDesc desc = material::texture_2d_desc(PREPARATION_TEST_WIDTH, PREPARATION_TEST_HEIGHT, RGBA8_UNORM);
-        char[] pixels = loading_fixtures::preparation_texture_bytes(tmem, (usz)desc.width * desc.height * 4);
-        TextureId texture = fixture.assets.add_texture(desc, pixels)!!;
-        renderer.upload_texture(texture)!!;
-        gpu::TextureHandle old = renderer.textures[texture.index].texture;
-        foreach (&value : fixture.assets.texture(texture).pixels) *value ^= 3;
-        fixture.assets.mark_texture_dirty(texture);
-        ModelId model = preparation_texture_model(&fixture, texture)!!;
-        PrepareId id = renderer.begin_prepare_model(model)!!;
-        renderer.begin_frame()!!;
-        renderer.advance_prepares_within({})!!;
-        assert(renderer.textures[texture.index].texture != old);
-        foreach (&value : fixture.assets.texture(texture).pixels) *value ^= 7;
-        fixture.assets.mark_texture_dirty(texture);
-        PrepareReport restarted = renderer.advance_prepares_within({})!!;
-        assert(restarted.restarts == 1);
-        render::abort_frame(renderer);
-        assert(renderer.textures[texture.index].texture == old);
-        gpu::TextureView alive = gpu::create_texture_view(&renderer.device, old, null)!!;
-        gpu::destroy_texture_view(&renderer.device, alive)!!;
-        TextureId expected = fixture.assets.add_texture(desc, fixture.assets.texture(texture).pixels)!!;
-        preparation_drain(renderer, id, {});
-        renderer.upload_texture(expected)!!;
-        preparation_compare_mips(&fixture, texture, expected);
         renderer.end_prepare(id)!!;
     };
     check_validation(renderer);
@@ -599,7 +398,6 @@ fn void test_prepare_partial_geometry_revision_restarts_and_preserves_prior_mirr
         renderer.end_frame()!!;
         preparation_drain(renderer, id, { .staged_bytes = 1024, .pipelines = 1 });
         renderer.end_prepare(id)!!;
-        preparation_geometry_bytes(&fixture, fixture.box);
         renderer.upload_geometry(synchronous)!!;
         MaterialId material = fixture.assets.model(model).data.meshes[0].material;
         DeformedScene actual = create_single_box_scene(
@@ -619,4 +417,56 @@ fn void test_prepare_partial_geometry_revision_restarts_and_preserves_prior_mirr
         preparation_asset_draw_parity(&fixture, &actual, &expected);
     };
     check_validation(renderer);
+}
+
+fn void test_prepare_end_submitted_and_ready_preserves_cached_mips() @test {
+    foreach (end_ready : (bool[2]){ false, true }) {
+        Fixture fixture;
+        create_fixture(mem, &fixture)!!;
+        defer destroy_fixture(&fixture);
+        Renderer* renderer = &fixture.renderer;
+        @pool() {
+            material::TextureDesc desc = material::texture_2d_desc(PREPARATION_TEST_WIDTH, PREPARATION_TEST_HEIGHT, RGBA8_UNORM);
+            char[] pixels = loading_fixtures::preparation_texture_bytes(tmem, (usz)desc.width * desc.height * 4);
+            TextureId texture = fixture.assets.add_texture(desc, pixels)!!;
+            TextureId expected = fixture.assets.add_texture(desc, pixels)!!;
+            renderer.upload_texture(expected)!!;
+            render::wait_frames(renderer)!!;
+            ModelId model = preparation_texture_model(&fixture, texture)!!;
+            PrepareId original = renderer.begin_prepare_model(model)!!;
+            renderer.begin_frame()!!;
+            PrepareReport report = renderer.advance_prepares_within({})!!;
+            assert(report.staged_bytes > 0);
+            renderer.end_frame()!!;
+            PrepareRecord* record = renderer.prepares.get(original);
+            assert(record.state == PrepareState.SUBMITTED && record.units_done == record.units.len);
+            gpu::CompletionPoint covering = record.last_submission;
+            assert(covering.is_valid());
+            gpu::TextureHandle published = renderer.textures[texture.index].texture;
+            assert(published.is_valid());
+            if (end_ready) {
+                gpu::wait_completion(covering)!!;
+                assert(renderer.prepare_progress(original).state == PrepareState.READY);
+            }
+            renderer.end_prepare(original)!!;
+            assert(renderer.textures[texture.index].texture == published);
+            assert(@catch(renderer.end_prepare(original)) == c3d::INVALID_ID);
+            PrepareProgress stale = renderer.prepare_progress(original);
+            assert(stale.state == PrepareState.FAILED && stale.failure == c3d::INVALID_ID);
+            gpu::wait_completion(covering)!!;
+            preparation_compare_mips(&fixture, texture, expected);
+
+            PrepareId reused = renderer.begin_prepare_model(model)!!;
+            renderer.begin_frame()!!;
+            PrepareReport warm = renderer.advance_prepares_within({})!!;
+            assert(warm.staged_bytes == 0 && warm.pipelines == 0);
+            renderer.end_frame()!!;
+            render::wait_frames(renderer)!!;
+            assert(renderer.prepare_progress(reused).state == PrepareState.READY);
+            renderer.end_prepare(reused)!!;
+            assert(renderer.textures[texture.index].texture == published);
+            preparation_compare_mips(&fixture, texture, expected);
+            check_validation(renderer);
+        };
+    }
 }

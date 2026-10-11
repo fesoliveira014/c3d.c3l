@@ -169,7 +169,6 @@ struct Renderer {
     ulong                   next_prepare_sequence;
     List{PrepareInstall} pending_prepare_installs;
     List{PrepareRetirement} pending_prepare_retire;
-    PrepareCounters prepare_counters;
     PrepareUploadCheckpoint prepare_upload_checkpoint;
     uint last_submitted_slot;
     gpu::CompletionPoint last_submission;

@@ -69,14 +69,6 @@ texels passing `alpha_threshold` during mip generation; `ALL_PASS` and
 (0, 1]. Coverage filtering applies only to eligible uncompressed generated
 color mips. Supplied DDS/KTX levels remain unchanged.
 
-For a committed `THRESHOLD` texture, `renderer.texture_coverage(texture, mip,
-face)` returns the resource revision, original and resulting counts, exact
-error fraction and flags for a small level or plateau correction. Results
-remain available after CPU pixel release. A stale ID faults `INVALID_ID`, an
-invalid mip or face faults `INVALID_ARGUMENT`, and an unavailable committed
-result faults `ASSET_DATA_UNAVAILABLE`. Small levels make no coverage
-preservation claim.
-
 Restoring identical pixels preserves a texture's revision. For a threshold
 texture, restoration rescans alpha on the owner thread: equal passing counts
 retain the revision; changed counts or invalid alpha advance it and refresh or
