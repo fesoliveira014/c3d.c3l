@@ -114,7 +114,6 @@ fn int main() {
             transform: { .scale = BACKDROP_TILES },
         ),
     }), "transparency/backdrop")!!;
-    Vec4[3] prop_colors = { { 0.85f, 0.15f, 0.1f, 1 }, { 0.1f, 0.6f, 0.2f, 1 }, { 0.15f, 0.3f, 0.9f, 1 } };
 
     Scene scene = scene::create_scene(mem, scene::default_scene_desc());
     defer scene::destroy_scene(&scene);
@@ -123,6 +122,8 @@ fn int main() {
     backdrop.local.position = BACKDROP_POSITION;
     backdrop.local.rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, math::PI / 2);
     backdrop.local.scale = BACKDROP_SCALE;
+
+    Vec4[3] prop_colors = { { 0.85f, 0.15f, 0.1f, 1 }, { 0.1f, 0.6f, 0.2f, 1 }, { 0.15f, 0.3f, 0.9f, 1 } };
     foreach (index, color : prop_colors) {
         MaterialId prop_material = assets.add_material(material::standard({
             .base_color = color,
@@ -132,6 +133,7 @@ fn int main() {
         Node* prop = scene.add_mesh(ball, prop_material, name: "prop")!!;
         prop.local.position = { ((float)index - 1) * PROP_SPACING, SLAB_POSITION.y, PROP_DEPTH };
     }
+
     Node* pane = scene.add_mesh(slab, glass, name: "glass")!!;
     pane.local.position = SLAB_POSITION;
 

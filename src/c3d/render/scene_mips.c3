@@ -95,6 +95,7 @@ fn void? record_scene_mips(Renderer* renderer, ViewRecord* record) @private {
                 .source_texture = mips.views[level - 1].index,
                 .source_sampler = renderer.linear_clamp_sampler,
             };
+
             Target level_target = {
                 .texture    = color.texture,
                 .attachment = mips.attachments[level],
@@ -110,6 +111,7 @@ fn void? record_scene_mips(Renderer* renderer, ViewRecord* record) @private {
                 rect:          {},
                 load:          gpu::LoadOp.DONT_CARE,
             )!;
+
             transition_scene_levels(
                 renderer:    renderer,
                 color:       color,
