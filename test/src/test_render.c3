@@ -1054,7 +1054,7 @@ fn void test_custom_weighted_variant_keeps_its_flag_and_selects_the_weighted_for
         .shaded = shaded[..],
         .traced = { .hardware = hardware[..], .software = software[..] },
     };
-    render::PipelineKey key = custom_key(3, 1);
+    render::PipelineKey key = { .custom = { .fragment = true } };
     key.fragment = { .flags = weighted };
     assert(render::custom_stage_source(&stages, key).fragment.ptr == &shaded[0]);
     key.fragment = { .flags = traced };
