@@ -48,6 +48,7 @@ fn void? acquire_colored_shadows(Renderer* renderer) @private {
     defer catch destroy_colored_shadows(&renderer.device, atlas);
     ColoredShadows* colored = &atlas.colored;
     colored.layers = alloc::new_array(atlas.allocator, ColoredShadowLayer, atlas.layers.len);
+
     gpu::TextureDesc transmittance = {
         .width = atlas.resolution,
         .height = atlas.resolution,
@@ -59,6 +60,7 @@ fn void? acquire_colored_shadows(Renderer* renderer) @private {
         .debug_name = "shadow_transmittance",
     };
     colored.transmittance = gpu::create_texture(&renderer.device, &transmittance)!;
+
     gpu::TextureDesc depth = {
         .width = atlas.resolution,
         .height = atlas.resolution,
@@ -70,6 +72,7 @@ fn void? acquire_colored_shadows(Renderer* renderer) @private {
         .debug_name = "shadow_translucent_depth",
     };
     colored.depth = gpu::create_texture(&renderer.device, &depth)!;
+
     foreach (index, &layer : colored.layers) {
         gpu::AttachmentViewDesc tint_attachment = { .texture = colored.transmittance, .array_layer = (uint)index };
         layer.transmittance_attachment = gpu::create_attachment_view(&renderer.device, &tint_attachment)!;

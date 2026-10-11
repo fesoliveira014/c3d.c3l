@@ -513,6 +513,7 @@ fn void? record_shadows(
     prepare_cull_stage(renderer, atlas_culls, culling)!;
     record_pending_copies(renderer, &renderer.commands)!;
     record_instance_cull(renderer, atlas_culls)!;
+
     bool translucent_casters;
     foreach (layer, visible : layer_draws) translucent_casters |= visible.len > layer_opaque[layer];
     if (translucent_casters) {
@@ -526,6 +527,7 @@ fn void? record_shadows(
             shadows[layer].colored_sampler = renderer.linear_clamp_sampler;
         }
     }
+
     transition_shadow_atlas(&renderer.shadow_atlas, &renderer.commands, DEPTH_ATTACHMENT_STATE)!;
     if (translucent_casters) transition_colored_shadows(&renderer.shadow_atlas.colored, &renderer.commands, true)!;
     @profile_pass(renderer, Pass.SHADOW_ATLAS) {
