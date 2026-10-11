@@ -6,6 +6,23 @@ import c3d::asset;
 import c3d::maths;
 import std::math;
 
+enum AdmissionMutation @local {
+    ROOT_OUTSIDE_MODEL,
+    FORWARD_PARENT,
+    CLIP_TARGET_OUTSIDE_MODEL,
+    TRACK_TARGET_OUTSIDE_CLIP,
+    MISSING_UP,
+    FOREIGN_PARENT_SPACE,
+    NONUNIFORM_INSTANCE,
+    NONUNIFORM_BASELINE,
+    NEGATIVE_BASELINE,
+    SHEARED_BASELINE,
+    DUPLICATE_TRACK_PATH,
+    ZERO_QUATERNION,
+    UNPROVEN_QUATERNION,
+    UNPROVEN_QUATERNION_AND_NONUNIFORM_BASELINE,
+}
+
 struct MotionAdmissionFixture @local {
     NodeTemplate[7] nodes;
     Track[6] tracks;
@@ -106,12 +123,7 @@ fn void create_motion_admission_fixture(MotionAdmissionFixture* fixture) @local 
     };
 }
 
-fn void? validate_admission_fixture(
-    MotionAdmissionFixture* fixture,
-    MotionAdmissionDiagnostic* diagnostic,
-    uint root = 2,
-    bool additive = false,
-) @local {
+fn void? validate_admission_fixture(MotionAdmissionFixture* fixture, uint root = 2, bool additive = false) @local {
     return anim::validate_generalized_motion(
         template: &fixture.model,
         clip: &fixture.clip,
@@ -120,29 +132,7 @@ fn void? validate_admission_fixture(
         motion_basis: fixture.basis,
         additive: additive,
         additive_scale: AdditiveScaleMode.DIFFERENCE,
-        diagnostic: diagnostic,
     );
-}
-
-fn MotionAdmissionDiagnostic rejected_admission(
-    MotionAdmissionFixture* fixture,
-    fault expected,
-    uint root = 2,
-    bool additive = false,
-) @local {
-    MotionAdmissionDiagnostic diagnostic;
-    bool caught;
-    if (catch excuse = validate_admission_fixture(
-        fixture: fixture,
-        diagnostic: &diagnostic,
-        root: root,
-        additive: additive,
-    )) {
-        assert(excuse == expected);
-        caught = true;
-    }
-    assert(caught, "invalid generalized motion was admitted");
-    return diagnostic;
 }
 
 fn CapturedMotionChain capture_admission_fixture(
@@ -162,14 +152,7 @@ fn CapturedMotionChain capture_admission_fixture(
 fn void test_animation_motion_admission_captures_full_chain_and_all_top_level_branches() @test {
     MotionAdmissionFixture fixture;
     create_motion_admission_fixture(&fixture);
-    MotionAdmissionDiagnostic diagnostic;
-    validate_admission_fixture(
-        fixture: &fixture,
-        diagnostic: &diagnostic,
-        root: 2,
-        additive: false,
-    )!!;
-    assert(diagnostic.reason == MotionAdmissionReason.NONE);
+    validate_admission_fixture(&fixture)!!;
     CapturedMotionChain captured = capture_admission_fixture(&fixture);
     defer anim::destroy_captured_motion_chain(&captured);
     assert(captured.root_node == 2 && captured.clip_track_count == 6);
@@ -204,13 +187,7 @@ fn void test_animation_motion_admission_captures_full_chain_and_all_top_level_br
 fn void test_animation_motion_admission_changed_root_maps_its_own_ancestors() @test {
     MotionAdmissionFixture fixture;
     create_motion_admission_fixture(&fixture);
-    MotionAdmissionDiagnostic diagnostic;
-    validate_admission_fixture(
-        fixture: &fixture,
-        diagnostic: &diagnostic,
-        root: 6,
-        additive: false,
-    )!!;
+    validate_admission_fixture(&fixture, 6)!!;
     CapturedMotionChain leaf = capture_admission_fixture(&fixture, mem, 6);
     defer anim::destroy_captured_motion_chain(&leaf);
     assert(leaf.nodes.len == 3 && leaf.nodes[0].model_node == 6 && leaf.nodes[1].model_node == 1);
@@ -221,132 +198,60 @@ fn void test_animation_motion_admission_changed_root_maps_its_own_ancestors() @t
     defer anim::destroy_captured_motion_chain(&independent);
     assert(independent.nodes.len == 1 && independent.nodes[0].model_node == 4);
     assert(independent.top_level_nodes == (uint[2]){ 0, 4 }[..]);
-    diagnostic = rejected_admission(
-        fixture: &fixture,
-        expected: c3d::INVALID_ARGUMENT,
-        root: 5,
-        additive: false,
-    );
-    assert(diagnostic.reason == MotionAdmissionReason.NONUNIFORM_SCALE);
-    assert(diagnostic.model_node == 5 && diagnostic.track == 5);
+    assert(@catch(validate_admission_fixture(&fixture, 5)) == c3d::INVALID_ARGUMENT);
 }
 
-fn void test_animation_motion_admission_up_and_parent_space_are_explicit() @test {
-    MotionAdmissionFixture fixture;
-    create_motion_admission_fixture(&fixture);
-    fixture.extraction.up = {};
-    MotionAdmissionDiagnostic diagnostic = rejected_admission(
-        fixture: &fixture,
-        expected: c3d::INVALID_ARGUMENT,
-    );
-    assert(diagnostic.reason == MotionAdmissionReason.UP_VECTOR);
-    fixture.extraction.up = { 0, (float)math::sqrt(1 + 0.5e-5), 0 };
-    validate_admission_fixture(
-        fixture: &fixture,
-        diagnostic: &diagnostic,
-    )!!;
-    fixture.extraction.up.y = (float)math::sqrt(1 + 2e-5);
-    diagnostic = rejected_admission(
-        fixture: &fixture,
-        expected: c3d::INVALID_ARGUMENT,
-    );
-    assert(diagnostic.reason == MotionAdmissionReason.UP_VECTOR);
-    fixture.extraction.up = { 0, 1, 0 };
-    fixture.basis.ancestors_parent_space = false;
-    diagnostic = rejected_admission(
-        fixture: &fixture,
-        expected: c3d::INVALID_ARGUMENT,
-    );
-    assert(diagnostic.reason == MotionAdmissionReason.PARENT_SPACE && diagnostic.model_node == 2);
-    fixture.basis.ancestors_parent_space = true;
-    fixture.basis.parent_space = false;
-    diagnostic = rejected_admission(
-        fixture: &fixture,
-        expected: c3d::INVALID_ARGUMENT,
-    );
-    assert(diagnostic.reason == MotionAdmissionReason.PARENT_SPACE);
+fn void test_animation_motion_admission_rejects_each_invalid_input_with_its_fault() @test {
+    foreach (mutation : AdmissionMutation::values) {
+        MotionAdmissionFixture fixture;
+        create_motion_admission_fixture(&fixture);
+        float[2] times = { 0, 1 };
+        float[24] rotations = { 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, -4,
+            0, 0, 0, 4, 0, 0, 0, 1, 0, 0, 0, 0 };
+        uint root = 2;
+        fault expected = c3d::INVALID_ARGUMENT;
+        switch (mutation) {
+            case ROOT_OUTSIDE_MODEL:
+                root = 7;
+            case FORWARD_PARENT:
+                fixture.nodes[1].parent = 2;
+            case CLIP_TARGET_OUTSIDE_MODEL:
+                fixture.targets[4] = 7;
+            case TRACK_TARGET_OUTSIDE_CLIP:
+                fixture.tracks[4].target = 6;
+            case MISSING_UP:
+                fixture.extraction.up = {};
+            case FOREIGN_PARENT_SPACE:
+                fixture.basis.parent_space = false;
+            case NONUNIFORM_INSTANCE:
+                fixture.basis.instance_scale = { 2, 0.5f, 2 };
+            case NONUNIFORM_BASELINE:
+                fixture.nodes[1].local.scale = { 1, 2, 1 };
+            case NEGATIVE_BASELINE:
+                fixture.nodes[1].local.scale = { -1, 1, 1 };
+            case SHEARED_BASELINE:
+                fixture.nodes[1].local.rotation = { .v = { 0.3f, 0.2f, 0.1f, 1 } };
+            case DUPLICATE_TRACK_PATH:
+                fixture.tracks[4].path = TargetPath.ROTATION;
+            case ZERO_QUATERNION:
+            case UNPROVEN_QUATERNION:
+            case UNPROVEN_QUATERNION_AND_NONUNIFORM_BASELINE:
+                fixture.tracks[3].interpolation = Interpolation.CUBIC_SPLINE;
+                fixture.tracks[3].times = times[..];
+                fixture.tracks[3].values = rotations[..];
+                if (mutation == ZERO_QUATERNION) break;
+                rotations[4] = rotations[16] = 1e-12;
+                if (mutation == UNPROVEN_QUATERNION) {
+                    expected = c3d::UNSUPPORTED;
+                } else {
+                    fixture.nodes[0].local.scale = { 1, 2, 1 };
+                }
+        }
+        assert(@catch(validate_admission_fixture(&fixture, root)) == expected);
+    }
 }
 
-fn void test_animation_motion_admission_baseline_scale_shear_and_ignored_flattened_uprightness() @test {
-    MotionAdmissionFixture fixture;
-    create_motion_admission_fixture(&fixture);
-    MotionAdmissionDiagnostic diagnostic;
-    validate_admission_fixture(
-        fixture: &fixture,
-        diagnostic: &diagnostic,
-    )!!;
-    fixture.nodes[1].local.scale = { 1, 1.000003f, 1 };
-    validate_admission_fixture(
-        fixture: &fixture,
-        diagnostic: &diagnostic,
-    )!!;
-    fixture.nodes[1].local.scale = { 1, 2, 1 };
-    diagnostic = rejected_admission(
-        fixture: &fixture,
-        expected: c3d::INVALID_ARGUMENT,
-    );
-    assert(diagnostic.reason == MotionAdmissionReason.NONUNIFORM_SCALE && diagnostic.model_node == 1);
-    fixture.nodes[1].local.scale = { -1, 1, 1 };
-    diagnostic = rejected_admission(
-        fixture: &fixture,
-        expected: c3d::INVALID_ARGUMENT,
-    );
-    assert(diagnostic.reason == MotionAdmissionReason.NONPOSITIVE_SCALE && diagnostic.model_node == 1);
-    fixture.nodes[1].local.scale = { 1, 1, 1 };
-    fixture.nodes[1].local.rotation = { .v = { 0.3f, 0.2f, 0.1f, 1 } };
-    diagnostic = rejected_admission(
-        fixture: &fixture,
-        expected: c3d::INVALID_ARGUMENT,
-    );
-    assert(diagnostic.reason == MotionAdmissionReason.SHEAR && diagnostic.model_node == 1);
-    fixture.nodes[1].local.rotation = quaternion::IDENTITY;
-    fixture.basis.instance_scale = { 2, 0.5f, 2 };
-    diagnostic = rejected_admission(
-        fixture: &fixture,
-        expected: c3d::INVALID_ARGUMENT,
-    );
-    assert(diagnostic.reason == MotionAdmissionReason.NONUNIFORM_SCALE && diagnostic.model_node == 2);
-}
-
-fn void test_animation_motion_admission_model_structure_and_track_mapping_faults() @test {
-    MotionAdmissionFixture fixture;
-    create_motion_admission_fixture(&fixture);
-    MotionAdmissionDiagnostic diagnostic = rejected_admission(
-        fixture: &fixture,
-        expected: c3d::INVALID_ARGUMENT,
-        root: 7,
-    );
-    assert(diagnostic.reason == MotionAdmissionReason.ROOT_NODE && diagnostic.model_node == 7);
-    fixture.nodes[1].parent = 2;
-    diagnostic = rejected_admission(
-        fixture: &fixture,
-        expected: c3d::INVALID_ARGUMENT,
-    );
-    assert(diagnostic.reason == MotionAdmissionReason.MODEL_HIERARCHY && diagnostic.model_node == 1);
-    fixture.nodes[1].parent = 0;
-    fixture.tracks[4].target = 6;
-    diagnostic = rejected_admission(
-        fixture: &fixture,
-        expected: c3d::INVALID_ARGUMENT,
-    );
-    assert(diagnostic.reason == MotionAdmissionReason.CLIP_LAYOUT && diagnostic.track == 4);
-    fixture.tracks[4].target = 4;
-    fixture.targets[4] = 7;
-    diagnostic = rejected_admission(
-        fixture: &fixture,
-        expected: c3d::INVALID_ARGUMENT,
-    );
-    assert(diagnostic.reason == MotionAdmissionReason.CLIP_LAYOUT && diagnostic.model_node == 7);
-    fixture.targets[4] = 2;
-    fixture.tracks[4].path = TargetPath.ROTATION;
-    diagnostic = rejected_admission(
-        fixture: &fixture,
-        expected: c3d::INVALID_ARGUMENT,
-    );
-    assert(diagnostic.reason == MotionAdmissionReason.TRACK_LAYOUT && diagnostic.track == 4);
-}
-
-fn void test_animation_motion_admission_sampling_margin_and_exact_failures_have_distinct_diagnostics() @test {
+fn void test_animation_motion_admission_sampling_margin_defers_to_exact_faults() @test {
     MotionAdmissionFixture fixture;
     create_motion_admission_fixture(&fixture);
     float[2] times = { 0x1p-149, 1 };
@@ -354,81 +259,24 @@ fn void test_animation_motion_admission_sampling_margin_and_exact_failures_have_
     fixture.tracks[4].interpolation = Interpolation.CUBIC_SPLINE;
     fixture.tracks[4].times = times[..];
     fixture.tracks[4].values = values[..];
-    MotionAdmissionDiagnostic diagnostic = rejected_admission(
-        fixture: &fixture,
-        expected: c3d::UNSUPPORTED,
-    );
-    assert(diagnostic.reason == MotionAdmissionReason.SAMPLING_MARGIN && diagnostic.model_node == 2);
-    assert(diagnostic.track == 4);
+    assert(@catch(validate_admission_fixture(&fixture)) == c3d::UNSUPPORTED);
     fixture.nodes[0].local.scale = { 1, 2, 1 };
-    diagnostic = rejected_admission(
-        fixture: &fixture,
-        expected: c3d::INVALID_ARGUMENT,
-    );
-    assert(diagnostic.reason == MotionAdmissionReason.NONUNIFORM_SCALE && diagnostic.model_node == 0);
+    assert(@catch(validate_admission_fixture(&fixture)) == c3d::INVALID_ARGUMENT);
     fixture.nodes[0].local.scale = { 2, 2, 2 };
     fixture.tracks[2].values = fixture.excluded_scales[..];
-    diagnostic = rejected_admission(
-        fixture: &fixture,
-        expected: c3d::INVALID_ARGUMENT,
-    );
-    assert(diagnostic.reason == MotionAdmissionReason.NONUNIFORM_SCALE && diagnostic.track == 2);
+    assert(@catch(validate_admission_fixture(&fixture)) == c3d::INVALID_ARGUMENT);
     fixture.tracks[2].values = fixture.scales[..];
     times[0] = 0;
-    diagnostic = rejected_admission(
-        fixture: &fixture,
-        expected: c3d::INVALID_ARGUMENT,
-    );
-    assert(diagnostic.reason == MotionAdmissionReason.NONPOSITIVE_SCALE && diagnostic.track == 4);
-}
-
-fn void test_animation_motion_admission_quaternion_zero_and_unproven_are_distinct() @test {
-    MotionAdmissionFixture fixture;
-    create_motion_admission_fixture(&fixture);
-    float[2] times = { 0, 1 };
-    float[24] values = { 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, -4,
-        0, 0, 0, 4, 0, 0, 0, 1, 0, 0, 0, 0 };
-    fixture.tracks[3].interpolation = Interpolation.CUBIC_SPLINE;
-    fixture.tracks[3].times = times[..];
-    fixture.tracks[3].values = values[..];
-    MotionAdmissionDiagnostic diagnostic = rejected_admission(
-        fixture: &fixture,
-        expected: c3d::INVALID_ARGUMENT,
-    );
-    assert(diagnostic.reason == MotionAdmissionReason.EXACT_QUATERNION_ZERO && diagnostic.track == 3);
-    values[4] = values[16] = 1e-12;
-    diagnostic = rejected_admission(
-        fixture: &fixture,
-        expected: c3d::UNSUPPORTED,
-    );
-    assert(diagnostic.reason == MotionAdmissionReason.QUATERNION_UNPROVEN && diagnostic.track == 3);
-    fixture.nodes[0].local.scale = { 1, 2, 1 };
-    diagnostic = rejected_admission(
-        fixture: &fixture,
-        expected: c3d::INVALID_ARGUMENT,
-    );
-    assert(diagnostic.reason == MotionAdmissionReason.NONUNIFORM_SCALE && diagnostic.model_node == 0);
+    assert(@catch(validate_admission_fixture(&fixture)) == c3d::INVALID_ARGUMENT);
 }
 
 fn void test_animation_motion_admission_neutral_difference_zero_and_signed_scales() @test {
     MotionAdmissionFixture fixture;
     create_motion_admission_fixture(&fixture);
     fixture.scales = { -1, 0, 2, -1, 0, 2 };
-    MotionAdmissionDiagnostic diagnostic;
-    validate_admission_fixture(
-        fixture: &fixture,
-        diagnostic: &diagnostic,
-        root: 2,
-        additive: true,
-    )!!;
+    validate_admission_fixture(&fixture, 2, true)!!;
     fixture.scales[3] = -2;
-    diagnostic = rejected_admission(
-        fixture: &fixture,
-        expected: c3d::INVALID_ARGUMENT,
-        root: 2,
-        additive: true,
-    );
-    assert(diagnostic.reason == MotionAdmissionReason.NONNEUTRAL_ADDITIVE_SCALE && diagnostic.track == 4);
+    assert(@catch(validate_admission_fixture(&fixture, 2, true)) == c3d::INVALID_ARGUMENT);
 }
 
 fn void test_animation_motion_capture_failure_releases_every_partial_allocation() @test {

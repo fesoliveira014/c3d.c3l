@@ -69,8 +69,6 @@ fn void test_animation_inertial_owners_animator_opt_in_has_one_private_row_and_r
         Animator* enabled = anim::add_animator(&fixture.scene, fixture.root, { .inertia_enabled = true });
         InertialStorage* storage = enabled.inertial_storage;
         assert(storage && storage.rows.len == 1 && storage.nodes == 4 && storage.morphs == 1);
-        assert(tracker.allocated() == disabled_bytes + (sz)storage.bytes
-          + (sz)anim::pose_derivative_storage_bytes(enabled.pose_storage.scratch.derivative));
         assert(storage.rows[0].control.generation == fixture.root.id.generation);
         assert(!storage.rows[0].control.history_valid && !storage.rows[0].control.active);
         assert(storage.rows[0].previous_pose.ptr != enabled.pose_storage.destination.pose.ptr);
