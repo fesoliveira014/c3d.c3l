@@ -22,6 +22,7 @@ import std::math;
 
 const char[*] LAYERED_CC0_BYTES @private = $embed("../../fixtures/transparency/GlassVaseFlowers.glb");
 const String LAYERED_CC0_SHA256 @private = "430c9937664cfc74299205dcc388e4269bb688817f3d3866ef35aab71e93b852";
+const String LAYERED_CC0_DECODED_SHA256 @private = "b6811fbd796566fdade3045767093537b8d451dc8b664daecd4ee2dfa9884aa7";
 const String LAYERED_CC0_HEX @private = "0123456789abcdef";
 const uint LAYERED_CC0_WIDTH @private = 512;
 const uint LAYERED_CC0_HEIGHT @private = 288;
@@ -284,20 +285,36 @@ fn ModelId? load_layered_cc0_model(Fixture* fixture) @private {
         LAYERED_CC0_SHA256, document.template.nodes.len, document.template.meshes.len,
         document.geometries.len, document.materials.len, document.textures.len);
     char[64] decoded_sha = layered_cc0_decoded_hash(&document);
+    assert((String)decoded_sha[..] == LAYERED_CC0_DECODED_SHA256);
     io::printfn("cc0 decoded_schema=geometry_texture_nodes_materials_v1 decoded_sha256=%s",
         (String)decoded_sha[..]);
     foreach (name : source.extensions_required) {
         io::printfn("cc0 required_extension=%s", name);
     }
+    uint glass_materials;
     foreach (index, material : source.materials) {
+        bool transmission;
+        bool volume;
+        if (material.name == "GlassTransmission") {
+            glass_materials++;
+            assert(material.extensions.len == 2);
+        } else {
+            assert(material.extensions.len == 0);
+        }
         foreach (name : material.extensions) {
             bool supported;
             foreach (known : gltf::SUPPORTED_MATERIAL_EXTENSIONS) supported |= name == known;
+            assert(supported);
+            transmission |= name == "KHR_materials_transmission";
+            volume |= name == "KHR_materials_volume";
             io::printfn("cc0 source_material=%s name=%s extension=%s supported=%s",
                 index, material.name, name, supported);
         }
+        if (material.name == "GlassTransmission") assert(transmission && volume);
     }
+    assert(glass_materials == 1);
     foreach (index, texture : source.textures) {
+        assert(texture.extensions.len == 0);
         foreach (name : texture.extensions) {
             io::printfn("cc0 source_texture=%s extension=%s supported=false", index, name);
         }
@@ -307,23 +324,24 @@ fn ModelId? load_layered_cc0_model(Fixture* fixture) @private {
 
 fn void? add_layered_cc0_checker(Fixture* fixture, Scene* target) @private {
     @pool() {
+        sz checker_pixels = LAYERED_CC0_CHECKER_EXTENT * LAYERED_CC0_CHECKER_EXTENT;
         transparency_fixtures::ColorImage checker = {
             .width = LAYERED_CC0_CHECKER_EXTENT,
             .height = LAYERED_CC0_CHECKER_EXTENT,
-            .pixels = alloc::new_array(tmem, transparency_fixtures::Color,
-                LAYERED_CC0_CHECKER_EXTENT * LAYERED_CC0_CHECKER_EXTENT),
+            .pixels = alloc::new_array(tmem, transparency_fixtures::Color, checker_pixels),
         };
         transparency_fixtures::fill_backdrop(checker, transparency_fixtures::BackdropPattern.CHECKER);
         Vec4[] texels = alloc::new_array(tmem, Vec4, checker.pixels.len);
         foreach (index, color : checker.pixels) texels[index] = { (float)color.x, (float)color.y, (float)color.z, 1 };
-        TextureId texture = fixture.assets.add_texture({
+        material::TextureDesc desc = {
             .width = checker.width,
             .height = checker.height,
             .layers = 1,
             .mip_levels = 1,
             .format = PixelFormat.RGBA32_FLOAT,
             .debug_name = "glass_checker",
-        }, ((char*)texels.ptr)[:texels.len * Vec4::size])!;
+        };
+        TextureId texture = fixture.assets.add_texture(desc, ((char*)texels.ptr)[:texels.len * Vec4::size])!;
         Vec3[4] positions = {
             { -0.3f, -0.3f, -0.2f }, { 0.3f, -0.3f, -0.2f },
             { 0.3f, 0.3f, -0.2f }, { -0.3f, 0.3f, -0.2f },
@@ -416,8 +434,9 @@ fn uint[]? capture_layered_cc0_groups(
         String directory = env::tget_var("C3D_TRANSPARENCY_OUTPUT")!;
         file::save(string::tformat("%s/%s.groups.u32", directory, name),
             ((char*)count.ptr)[:count.len * uint::size])!;
-        file::save(string::tformat("%s/%s.overflow_depth.u32", directory, name),
-            ((char*)overflow.ptr)[:overflow.len * uint::size])!;
+        String overflow_path = string::tformat("%s/%s.overflow_depth.u32", directory, name);
+        char[] overflow_bytes = ((char*)overflow.ptr)[:overflow.len * uint::size];
+        file::save(overflow_path, overflow_bytes)!;
     };
     foreach (pixel, bits : overflow) if (bits) count[pixel] = capacity + 1;
     return count;
@@ -483,11 +502,12 @@ fn void test_layered_cc0_authored_glass_identity_captures_both_paths_and_environ
                         defer free(groups);
                         foreach (pixel, count : four_groups) {
                             if (count > 4 || groups[pixel] > 16) continue;
-                            check_layered_color(linear[pixel], {
+                            transparency_fixtures::Color reference = {
                                 (double)capacity_four[pixel].x,
                                 (double)capacity_four[pixel].y,
                                 (double)capacity_four[pixel].z,
-                            });
+                            };
+                            check_layered_color(linear[pixel], reference);
                         }
                     }
                 }

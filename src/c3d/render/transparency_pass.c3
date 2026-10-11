@@ -289,29 +289,11 @@ fn void? record_transparency_fallback(
     uint fallback_count = (uint)(scene_read.len + transparent.len);
     count_transparency_fallback(renderer, &record.stats.transparency, fallback_count);
 
-    if (scene_read.len) {
-        if (frame.sky_fog != (gpu::GpuAddress)0) {
-            TransparencyGpu data = {
-                .phase = shader::TRANSPARENCY_UNFOG,
-                .opaque_depth = record.scene_depth.view.index,
-            };
-            record_transparency_resolve(
-                renderer: renderer,
-                record: record,
-                frame: frame,
-                transparency: data,
-                source: &record.hdr_color,
-                color: &record.transparency.local_color[0],
-                anchor: &record.transparency.continuation_depth[0],
-            )!;
-            copy_transparency_color(renderer, &record.transparency.local_color[0], &record.hdr_color)!;
-        }
+    if (scene_read.len) record_loaded_pass(renderer, record, scene_read)!;
 
-        record_loaded_pass(renderer, record, scene_read)!;
-        if (frame.sky_fog != (gpu::GpuAddress)0) {
-            gpu::GpuAddress root = upload_bytes(renderer, &frame, FrameRoot::size)!;
-            record_fog_pass(renderer, record, root)!;
-        }
+    if (frame.sky_fog != (gpu::GpuAddress)0) {
+        gpu::GpuAddress root = upload_bytes(renderer, &frame, FrameRoot::size)!;
+        record_fog_pass(renderer, record, root)!;
     }
 
     if (transparent.len) record_loaded_pass(renderer, record, transparent)!;
@@ -343,11 +325,6 @@ fn void? record_layered_transparency(
     fallback_transparent = fallback_transparent[:fallback_counts[1]];
 
     if (!admitted.len) {
-        if (frame.sky_fog != (gpu::GpuAddress)0) {
-            gpu::GpuAddress root = upload_bytes(renderer, &frame, FrameRoot::size)!;
-            record_fog_pass(renderer, record, root)!;
-        }
-
         return record_transparency_fallback(
             renderer: renderer,
             record: record,
@@ -358,14 +335,50 @@ fn void? record_layered_transparency(
     }
 
     TransparencyState* state = &record.transparency;
+    DrawItem[] background_readers = alloc::new_array(tmem, DrawItem, (sz)fallback_scene_read.len);
+    DrawItem[] late_readers = alloc::new_array(tmem, DrawItem, (sz)fallback_scene_read.len);
+    usz background_count;
+    usz late_count;
+    foreach (item : fallback_scene_read) {
+        MaterialCommon* common = &material_data(renderer, item.material).common;
+
+        if (common.alpha_mode != AlphaMode.BLEND && common.depth_test) {
+            background_readers[background_count++] = item;
+        } else {
+            late_readers[late_count++] = item;
+        }
+    }
+    background_readers = background_readers[:background_count];
+    late_readers = late_readers[:late_count];
+
+    count_transparency_fallback(
+        renderer: renderer,
+        stats: &record.stats.transparency,
+        draws: (uint)(fallback_scene_read.len + fallback_transparent.len),
+    );
+
+    Target* background_color = &record.scene_color;
+    Target* background_depth = &record.scene_depth;
+
+    if (background_readers.len) {
+        @profile_pass(renderer, Pass.SCENE_READ) {
+            record_loaded_pass(renderer, record, background_readers)!;
+        }!;
+
+        background_color = &state.raw_color[0];
+        background_depth = &state.continuation_depth[0];
+        copy_transparency_color(renderer, &record.hdr_color, background_color)!;
+        copy_transparency_color(renderer, &record.depth, background_depth)!;
+    }
+
     acquire_transparency_sampler(renderer)!;
     TransparencyOrderPlan ordered = prepare_transparency_order(renderer, admitted)!;
     record_transparency_order(renderer, ordered.roots)!;
 
     TransparencyGpu data = {
-        .opaque_depth = record.scene_depth.view.index,
-        .opaque_color = record.scene_color.view.index,
-        .continuation_depth = record.scene_depth.view.index,
+        .opaque_depth = background_depth.view.index,
+        .opaque_color = background_color.view.index,
+        .continuation_depth = background_depth.view.index,
         .mip_count = state.raw_pyramid[0].mip_count,
         .phase = shader::TRANSPARENCY_CAPTURE,
     };
@@ -377,8 +390,8 @@ fn void? record_layered_transparency(
             frame: frame,
             transparency: data,
             items: admitted,
-            color: &state.continuation_depth[0],
-            anchor: &state.continuation_depth[1],
+            color: background_readers.len ? &state.local_color[0] : &state.continuation_depth[0],
+            anchor: background_readers.len ? &state.local_color[1] : &state.continuation_depth[1],
             depth: &state.depths[group],
             capture: true,
             clear_depth: true,
@@ -405,18 +418,41 @@ fn void? record_layered_transparency(
         record: record,
         frame: frame,
         transparency: data,
-        source: &record.scene_color,
+        source: background_color,
         color: &record.hdr_color,
-        anchor: &state.continuation_depth[0],
+        anchor: &state.continuation_depth[background_readers.len ? 1 : 0],
     )!;
 
     data.phase = shader::TRANSPARENCY_TAIL;
     data.selected_depth = state.depths[state.layer_capacity - 1].view.index;
+    FrameRoot tail_frame = frame;
+    TransparencyGpu tail = data;
+
+    if (background_readers.len) {
+        bool filtered;
+        foreach (item : admitted) {
+            Material* material = material_data(renderer, item.material);
+            filtered |= material.kind == MaterialKind.PHYSICAL && material.physical.transmission > 0
+              && material.physical.standard.roughness > 0;
+        }
+
+        tail_frame.scene_color = background_color.view.index;
+        tail_frame.scene_depth = background_depth.view.index;
+        tail.mip_count = 1;
+
+        if (filtered) {
+            record_transparency_pyramid(renderer, background_color, &state.raw_pyramid[0])!;
+            count_transparency_filter(renderer, &record.stats.transparency, state.raw_pyramid[0].mip_count);
+            tail_frame.scene_color = state.raw_pyramid[0].image.view.index;
+            tail.mip_count = state.raw_pyramid[0].mip_count;
+        }
+    }
+
     record_transparency_geometry(
         renderer: renderer,
         record: record,
-        frame: frame,
-        transparency: data,
+        frame: tail_frame,
+        transparency: tail,
         items: admitted,
         color: &record.hdr_color,
         anchor: &state.continuation_depth[1],
@@ -427,17 +463,20 @@ fn void? record_layered_transparency(
 
     data.phase = shader::TRANSPARENCY_SEED;
     data.selected_depth = state.depths[state.layer_capacity].view.index;
+    uint behind = background_readers.len ? 1 : 0;
     record_transparency_resolve(
         renderer: renderer,
         record: record,
         frame: frame,
         transparency: data,
         source: &record.hdr_color,
-        color: &state.raw_color[0],
-        anchor: &state.continuation_depth[0],
+        color: &state.raw_color[behind],
+        anchor: &state.continuation_depth[behind],
     )!;
 
-    uint behind;
+    // Capture keys and the primary depth test retain the updated background bound.
+    data.opaque_depth = record.scene_depth.view.index;
+
     for (uint group = state.layer_capacity; group > 0; group--) {
         uint front = behind ^ 1;
         state.continuation_depth[behind].transition(&renderer.commands, FRAGMENT_READ_STATE)!;
@@ -478,22 +517,44 @@ fn void? record_layered_transparency(
     state.continuation_depth[behind].transition(&renderer.commands, FRAGMENT_READ_STATE)!;
     data.phase = shader::TRANSPARENCY_COMPOSITE;
     data.continuation_depth = state.continuation_depth[behind].view.index;
+    Target* observed = late_readers.len ? &state.local_color[behind] : &record.hdr_color;
     record_transparency_resolve(
         renderer: renderer,
         record: record,
         frame: frame,
         transparency: data,
         source: &state.raw_color[behind],
-        color: &record.hdr_color,
+        color: observed,
         anchor: &state.continuation_depth[behind ^ 1],
     )!;
 
-    record_transparency_fallback(
-        renderer: renderer,
-        record: record,
-        frame: frame,
-        scene_read: fallback_scene_read,
-        transparent: fallback_transparent,
-    )!;
+    if (late_readers.len) {
+        Target* overlay = &state.local_color[behind ^ 1];
+        record_transparency_opaque_overlay(
+            renderer: renderer,
+            record: record,
+            items: late_readers,
+            target: overlay,
+        )!;
+
+        observed.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
+        record.depth.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
+
+        data.phase = shader::TRANSPARENCY_OVERLAY;
+        data.opaque_color = observed.view.index;
+        data.opaque_depth = record.depth.view.index;
+        record_transparency_resolve(
+            renderer: renderer,
+            record: record,
+            frame: frame,
+            transparency: data,
+            source: overlay,
+            color: &record.hdr_color,
+            anchor: &state.continuation_depth[behind ^ 1],
+        )!;
+    }
+
+    if (fallback_transparent.len) record_loaded_pass(renderer, record, fallback_transparent)!;
+
     record_transparency_own_depth(renderer, record, admitted)!;
 }

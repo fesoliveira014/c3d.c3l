@@ -1,4 +1,4 @@
-bool layered_transparency_accept(float depth) {
+bool peel_transparency_accept(float depth) {
     Draw root = Draw(pc.fragment_root);
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     if (root.mode == 0u) {

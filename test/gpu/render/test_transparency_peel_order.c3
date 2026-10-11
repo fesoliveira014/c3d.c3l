@@ -255,7 +255,7 @@ fn void? create_peel_resources(Renderer* renderer, PeelResources* resources) @pr
     char[] vertex = compile_peel_source((String)PEEL_VERTEX[..], ShaderStage.VERTEX, "transparency_peel_vertex")!;
     defer free(vertex.ptr);
     asset::ShaderInclude[2] includes = {
-        { .name = "transparency.glsl", .text = (String)PEEL_PARTICIPATION[..] },
+        { .name = "transparency_peel.participation.glsl", .text = (String)PEEL_PARTICIPATION[..] },
         { .name = "transparency_peel_fog.glsl", .text = (String)PEEL_FOG[..] },
     };
     char[] fragment = compile_peel_source(
@@ -595,7 +595,12 @@ fn void? clear_peel_color(Renderer* renderer, Target* target, Vec4 clear = { 0.1
 }
 
 fn void? upload_peel_opaque_depth(Renderer* renderer, Target* target) @private {
-    return upload_peel_depth_plane(renderer, target, 0, 0.3125f);
+    return upload_peel_depth_plane(
+        renderer: renderer,
+        target: target,
+        left: 0,
+        right: 0.3125f,
+    );
 }
 
 fn void? upload_peel_depth_plane(
@@ -961,7 +966,7 @@ fn void? configure_peel_mesh_pipelines(Renderer* renderer, PeelResources* resour
     asset::ShaderInclude[4] includes = {
         { .name = "transparency_mesh_body.glsl", .text = (String)PEEL_MESH_BODY[12..] },
         { .name = "transparency_billboard_body.glsl", .text = (String)PEEL_BILLBOARD_BODY[12..] },
-        { .name = "transparency.glsl", .text = (String)PEEL_PARTICIPATION[..] },
+        { .name = "transparency_peel.participation.glsl", .text = (String)PEEL_PARTICIPATION[..] },
         { .name = "transparency_peel_fog.glsl", .text = (String)PEEL_FOG[..] },
     };
     char[] vertex = compile_peel_source(
@@ -1384,7 +1389,9 @@ fn void check_peel_fixture(
                 background: transparency_fixtures::PLANAR_BACKGROUND,
             );
             expected = transparency_fixtures::compose_sorted(
-                fallback[:fallback_count], expected, transparency_fixtures::PLANAR_BACKGROUND,
+                sorted: fallback[:fallback_count],
+                background: expected,
+                reader_snapshot: transparency_fixtures::PLANAR_BACKGROUND,
             );
             for (uint channel = 0; channel < 3; channel++) {
                 assert(math::abs((double)readback[4 * pixel + channel] - expected[channel]) <= 2e-5,
@@ -1945,9 +1952,9 @@ fn transparency_fixtures::Color peel_connect_reference(
     double near_distance = 9 - 8 * (double)near_depth;
     double far_distance = math::max(near_distance, 9 - 8 * (double)far_depth);
     return peel_fog_transfer(
-        peel_camera_reference(resources, near_distance),
-        peel_camera_reference(resources, far_distance),
-        radiance,
+        near: peel_camera_reference(resources, near_distance),
+        far: peel_camera_reference(resources, far_distance),
+        radiance: radiance,
     );
 }
 
@@ -1992,7 +1999,12 @@ fn transparency_fixtures::Color peel_legacy_connect_reference(
     float far_depth,
     transparency_fixtures::Color radiance,
 ) @private {
-    if (far_depth == 0) return peel_connect_reference(resources, near_depth, far_depth, radiance);
+    if (far_depth == 0) return peel_connect_reference(
+        resources: resources,
+        near_depth: near_depth,
+        far_depth: far_depth,
+        radiance: radiance,
+    );
     double near_distance = 9 - 8 * (double)near_depth;
     double far_distance = math::max(near_distance, 9 - 8 * (double)far_depth);
     FilterFogTerms interval = peel_legacy_interval_reference(resources, near_distance, far_distance);
@@ -2046,8 +2058,8 @@ fn void evaluate_peel_two_sheet_reference(
             FilterUv uv = { ((double)(pixel % PEEL_SIZE) + 0.5) / PEEL_SIZE + surfaces[1].plane.z,
                 ((double)(pixel / PEEL_SIZE) + 0.5) / PEEL_SIZE + surfaces[1].plane.w };
             bool outside = uv.x < 0 || uv.y < 0 || uv.x > 1 || uv.y > 1;
-            float sample_depth = outside ? 0 : peel_opaque_depth_reference(resources,
-                math::min((uint)(uv.x * PEEL_SIZE), PEEL_SIZE - 1), background_depth);
+            uint sample_x = math::min((uint)(uv.x * PEEL_SIZE), PEEL_SIZE - 1);
+            float sample_depth = outside ? 0 : peel_opaque_depth_reference(resources, sample_x, background_depth);
             transparency_fixtures::Color sample = outside
                 ? (transparency_fixtures::Color){ resources.transport_environment.x,
                     resources.transport_environment.y, resources.transport_environment.z }

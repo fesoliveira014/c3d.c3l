@@ -27,7 +27,7 @@ void main() {
     vec4 color = fetch_texture_2d(frame.scene_color, pixel);
     float anchor = 0.0;
     if (transparency.phase != TRANSPARENCY_INITIAL && transparency.phase != TRANSPARENCY_SEED
-        && transparency.phase != TRANSPARENCY_UNFOG) {
+        && transparency.phase != TRANSPARENCY_OVERLAY) {
         anchor = fetch_texture_2d(transparency.continuation_depth, pixel).r;
     }
 
@@ -53,11 +53,14 @@ void main() {
             color.rgb = layered_transparency_transfer(frame, position, color.rgb, anchor);
             anchor = near_depth;
         }
-    } else if (transparency.phase == TRANSPARENCY_UNFOG) {
+    } else if (transparency.phase == TRANSPARENCY_OVERLAY) {
+        vec4 observed = fetch_texture_2d(transparency.opaque_color, pixel);
         anchor = fetch_texture_2d(transparency.opaque_depth, pixel).r;
         FogTerms camera = transparency_camera_terms(frame, v_uv, anchor);
-        color.rgb = (color.rgb - camera.inscatter)
-            / max(camera.transmittance, vec3(FOG_TRANSMITTANCE_FLOOR));
+
+        color.rgb = color.rgb * camera.transmittance + camera.inscatter * (1.0 - color.a)
+            + observed.rgb * color.a;
+        color.a = observed.a;
     } else if (transparency.phase == TRANSPARENCY_COMPOSITE) {
         FogTerms camera = transparency_camera_terms(frame, v_uv, anchor);
         color.rgb = color.rgb * camera.transmittance + camera.inscatter;

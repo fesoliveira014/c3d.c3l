@@ -80,8 +80,9 @@ fn void? stats_panel(Renderer* renderer) {
             imgui::text("Completed overflow pixels: %llu", stats.transparency_overflow_pixels);
             imgui::text("Completed overflow: %s", stats.transparency_overflow ? "yes" : "no");
         } else {
-            imgui::text_unformatted(stats.transparency_overflow_dispatches
-              ? "Overflow readback: pending" : "Overflow readback: unavailable");
+            ZString readback = stats.transparency_overflow_dispatches
+              ? "Overflow readback: pending" : "Overflow readback: unavailable";
+            imgui::text_unformatted(readback);
         }
     }
 

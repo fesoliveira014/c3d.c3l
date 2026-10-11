@@ -746,7 +746,9 @@ fn void append_prepare_view_pipelines(Renderer* renderer, SceneReads reads, List
         }
         if (!view.hdr_color.texture.is_valid()) continue;
         gpu::Format output_format = view_output_format(renderer, desc);
-        if (desc.post.anti_aliasing == AntiAliasing.FXAA) {
+        if (desc.color == OutputMode.LINEAR_HDR || post::taa_debug_enabled(&desc.post)) {
+            append_prepare_cache(listed, composite_pipeline_key(output_format));
+        } else if (desc.post.anti_aliasing == AntiAliasing.FXAA) {
             append_prepare_compute(listed, PrepareComputeSlot.GRADE, GRADE);
             append_prepare_compute(listed, PrepareComputeSlot.FXAA, FXAA);
             append_prepare_cache(listed, post::fxaa_fragment_pipeline_key(output_format));

@@ -113,8 +113,9 @@ supplied fragment program serves capture and shading; coverage, discard decision
 and stored depth must match. Participating vertex stages declare
 `invariant gl_Position` and produce identical positions in both phases.
 
-Rejected replacement retains the last-good declaration and routing. Undeclared
-or depth-disabled Custom draws use the sorted post-resolve fallback. A cooperating
+Rejected replacement retains the last-good declaration and routing. Depth-tested
+OPAQUE/MASK readers form the background before capture. Undeclared Custom BLEND
+and depth-disabled draws use the sorted post-resolve fallback. A cooperating
 `scene_color_at` reads behind its retained group at mip zero; depth helpers keep
 opaque-depth semantics. See [camera transparency](transparency.md) for remainder,
 fog and participation limits.

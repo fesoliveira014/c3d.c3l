@@ -58,7 +58,7 @@ float fetch_depth(uint image, ivec2 pixel) {
     return texelFetch(gpu_texture_heap[nonuniformEXT(GPU_HEAP_SLOT(image))], pixel, 0).x;
 }
 
-#include "transparency.glsl"
+#include "transparency_peel.participation.glsl"
 #include "transparency_peel_fog.glsl"
 
 void main() {
@@ -80,7 +80,7 @@ void main() {
     if (!all_sorted && root.mode != 3u && fallback) discard;
     if (!all_sorted && root.mode == 3u && !fallback) discard;
     if (surface.kind != 3u && depth <= opaque_depth) discard;
-    if (!layered_transparency_accept(depth)) discard;
+    if (!peel_transparency_accept(depth)) discard;
     if (root.mode == 0u) {
         radiance = vec4(depth, 0, 0, 1);
     } else {

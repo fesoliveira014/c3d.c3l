@@ -44,8 +44,9 @@ surfaces with positive transmission. Existing ordinary, instanced, mirrored,
 skinned, morphed and billboard support remains family-specific. Opaque/masked
 surfaces without transmission remain in the background path.
 
-Depth-disabled surfaces and undeclared Custom transparency draw afterward in
-their existing sorted order. They preserve their opaque-depth test and scene
+Depth-tested OPAQUE/MASK scene readers form the background before capture.
+Depth-disabled scene readers and undeclared Custom BLEND surfaces draw afterward
+in their existing sorted order. They preserve their opaque-depth test and scene
 snapshot behavior. This fallback does not reject or change the view's mode;
 its color can differ from a participating surface at the same depth.
 
@@ -114,9 +115,9 @@ velocity, TAA and render-scale behavior remain in use.
 ## Resource cost
 
 Dedicated LAYERED images are allocated only in LAYERED mode. Their pixel
-payload is `4*(K+1)*P + 72*P + 16*M` bytes, where `P` is the working pixel count
+payload is `4*(K+1)*P + 40*P + 16*M` bytes, where `P` is the working pixel count
 and `M` is the sum of a full mip chain, including level zero. This includes
-retained/overflow D32 depths, RGBA32F raw/local composition pairs, R32
+retained/overflow D32 depths, RGBA16F raw/local composition pairs, R32
 continuation pairs and two RGBA16F pyramids. Existing view images, device
 padding and descriptor storage add to this amount. Configuration changes can
 temporarily retain both old and replacement payloads.

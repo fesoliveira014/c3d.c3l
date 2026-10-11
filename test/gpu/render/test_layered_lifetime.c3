@@ -163,13 +163,32 @@ fn void test_layered_lifetime_strict_preparation_counts_instanced_keys_before_fi
         capture: true,
     );
     assert(renderer.pipelines.pipelines.has_key(instanced), "Instanced capture was not prepared.");
-    instanced.color_formats[0] = gpu::Format.RGBA32_FLOAT;
+    instanced.color_formats[0] = render::TRANSPARENCY_COMPOSITION_FORMAT;
     assert(renderer.pipelines.pipelines.has_key(instanced), "Instanced retained shading was not prepared.");
 
     ulong warm = renderer.pipelines.creations.calls;
     uint warm_compute = layered_prepared_compute_count(renderer);
+    PipelineKey[] warm_keys = mem::new_array(PipelineKey, renderer.pipelines.pipelines.len());
+    defer free(warm_keys);
+    usz key_count;
+    renderer.pipelines.pipelines.@each(; PipelineKey key, gpu::PipelineHandle handle) {
+        warm_keys[key_count++] = key;
+    };
     Vec4[] pixels = render_layered_pixels(&fixture, &target, &view)!!;
     defer free(pixels);
+    renderer.pipelines.pipelines.@each(; PipelineKey key, gpu::PipelineHandle handle) {
+        bool known;
+        foreach (previous : warm_keys) known |= key.equals(previous);
+        if (!known) {
+            io::printfn("cold key vertex=%s flags=%s fragment=%s flags=%s colors=%s/%s count=%s depth=%s",
+                key.vertex.shader, key.vertex.flags, key.fragment.shader, key.fragment.flags,
+                key.color_formats[0], key.color_formats[1], key.color_count, key.depth_format);
+        }
+    };
+    if (renderer.pipelines.creations.calls != warm || layered_prepared_compute_count(renderer) != warm_compute) {
+        io::printfn("warm cache=%s actual=%s warm_compute=%s actual_compute=%s", warm,
+            renderer.pipelines.creations.calls, warm_compute, layered_prepared_compute_count(renderer));
+    }
     assert(renderer.pipelines.creations.calls == warm && layered_prepared_compute_count(renderer) == warm_compute,
         "The first instanced layered draw created an unprepared pipeline.");
     check_validation(renderer);
@@ -689,17 +708,19 @@ fn void test_layered_lifetime_moving_glass_keeps_two_view_current_pixels_and_qua
     Renderer* renderer = &fixture.renderer;
     ViewRecord* first_record = renderer.views.get(first.view);
     ViewRecord* second_record = renderer.views.get(second.view);
-    RenderTargetId first_copy = render::create_render_target(renderer, render::render_target_desc(
+    RenderTargetDesc first_copy_desc = render::render_target_desc(
         width: 128,
         height: 128,
         format: PixelFormat.RGBA32_FLOAT,
-    ))!!;
+    );
+    RenderTargetId first_copy = render::create_render_target(renderer, first_copy_desc)!!;
     defer render::destroy_render_target(renderer, first_copy)!!;
-    RenderTargetId second_copy = render::create_render_target(renderer, render::render_target_desc(
+    RenderTargetDesc second_copy_desc = render::render_target_desc(
         width: 257,
         height: 129,
         format: PixelFormat.RGBA32_FLOAT,
-    ))!!;
+    );
+    RenderTargetId second_copy = render::create_render_target(renderer, second_copy_desc)!!;
     defer render::destroy_render_target(renderer, second_copy)!!;
     uint quality_changes;
     uint aborted;
@@ -948,4 +969,133 @@ fn void test_layered_lifetime_sorted_rough_pyramid_creation_and_resize_failures_
         sorted_scene_pyramid_faults(kind, false);
         sorted_scene_pyramid_faults(kind, true);
     }
+}
+
+fn void test_layered_lifetime_phase_counts_are_view_local_beside_an_empty_view() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    Fixture fixture;
+    create_fixture(&tracker, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    LayeredScene target = create_layered_scene(&fixture)!!;
+    defer scene::destroy_scene(&target.scene);
+    LayeredScene empty = create_layered_scene(&fixture)!!;
+    defer scene::destroy_scene(&empty.scene);
+    empty.scene.@each(Mesh; Entity entity, Mesh* mesh) { empty.scene.node(entity).visible = false; };
+    LayeredView working = create_layered_view(&fixture, 4)!!;
+    defer destroy_layered_view(&fixture, &working);
+    LayeredView idle = create_layered_view(&fixture, 4)!!;
+    defer destroy_layered_view(&fixture, &idle);
+    ViewDesc idle_desc = fixture.renderer.views.get(idle.view).desc;
+    idle_desc.transparency = {};
+    render::configure_view(&fixture.renderer, idle.view, idle_desc)!!;
+    for (uint source = 0; source < transparency_fixtures::PLANAR_DEPTHS.len; source++) {
+        transparency_fixtures::Color color = transparency_fixtures::PLANAR_COLORS[source];
+        Vec4 rgba = {
+            (float)color.x, (float)color.y, (float)color.z,
+            (float)transparency_fixtures::PLANAR_COVERAGES[source],
+        };
+        MaterialId material = add_layered_basic(&fixture, rgba)!!;
+        GeometryId geometry = add_layered_sheet_geometry(&fixture, transparency_fixtures::PLANAR_DEPTHS[source])!!;
+        target.scene.add_mesh(geometry, material)!!;
+    }
+    target.scene.update_world();
+    empty.scene.update_world();
+    Renderer* renderer = &fixture.renderer;
+    renderer.begin_frame()!!;
+    defer catch render::abort_frame(renderer);
+    assert(renderer.stats.scene_snapshots == 0);
+    renderer.render_view(&target.scene, target.camera, working.view)!!;
+    renderer.finish_view(working.view)!!;
+    TransparencyStats stats = renderer.view_stats(working.view)!!.transparency;
+    uint mips = renderer.views.get(working.view).transparency.raw_pyramid[0].mip_count;
+    assert(mips == transparency_fixtures::mip_level_count(LAYERED_IMAGE_SIZE, LAYERED_IMAGE_SIZE));
+    assert(stats.capture_passes == 5);
+    assert(stats.retained_passes == 4);
+    assert(stats.remainder_passes == 1);
+    assert(stats.resolve_passes == 7);
+    assert(stats.filter_passes == 4);
+    assert(stats.filter_dispatches == 4 * mips);
+    assert(stats.filtered_mips == 4 * (mips - 1));
+    assert(stats.fallback_draws == 0);
+    assert(stats.overflow_dispatches == 1);
+    assert(renderer.stats.scene_snapshots == 2);
+    renderer.render_view(&empty.scene, empty.camera, idle.view)!!;
+    renderer.finish_view(idle.view)!!;
+    TransparencyStats no_work = renderer.view_stats(idle.view)!!.transparency;
+    assert(no_work.capture_passes == 0 && no_work.retained_passes == 0 && no_work.remainder_passes == 0);
+    assert(no_work.resolve_passes == 0 && no_work.filter_passes == 0 && no_work.filter_dispatches == 0);
+    assert(no_work.filtered_mips == 0 && no_work.fallback_draws == 0 && no_work.overflow_dispatches == 0);
+    assert(no_work.overflow_pixels == 0 && !no_work.overflow && !no_work.overflow_valid);
+    assert(no_work.overflow_frame_index == 0 && no_work.payload_bytes == 0);
+    assert(renderer.stats.scene_snapshots == 2);
+    TransparencyStats preserved = renderer.view_stats(working.view)!!.transparency;
+    assert(preserved.capture_passes == stats.capture_passes && preserved.retained_passes == stats.retained_passes);
+    assert(preserved.resolve_passes == stats.resolve_passes && preserved.filter_dispatches == stats.filter_dispatches);
+    renderer.end_frame()!!;
+    check_validation(renderer);
+}
+
+fn void test_layered_lifetime_one_rough_physical_layer_matches_sorted_in_homogeneous_fog() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    Fixture fixture;
+    create_fixture(&tracker, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    foreach (shading : (ShadingPath[2]){ FORWARD, DEFERRED }) {
+        LayeredScene target = create_layered_scene(&fixture)!!;
+        defer scene::destroy_scene(&target.scene);
+        target.scene.@each(Mesh; Entity entity, Mesh* mesh) { target.scene.node(entity).visible = false; };
+        target.scene.ambient_color = { 1, 1, 1 };
+        target.scene.ambient_intensity = 1;
+        MaterialId background = add_layered_basic(&fixture, { 0.8f, 0.6f, 0.4f, 1 }, false)!!;
+        GeometryId background_geometry = add_layered_fullscreen_geometry(&fixture, 4)!!;
+        target.scene.add_mesh(background_geometry, background)!!;
+        Node* fog = target.scene.add_node()!!;
+        HeightFog medium = {
+            .density = 0.125f,
+            .falloff = 0,
+            .albedo = { 0.1f, 0.2f, 0.4f },
+            .max_distance = 9,
+        };
+        target.scene.add(fog, medium);
+        PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
+        params.standard.base_color = { 1, 1, 1, 1 };
+        params.standard.metallic = 0;
+        params.standard.emissive = { 0.0625f, 0.125f, 0.25f };
+        params.specular = 0;
+        params.ior = 1.5f;
+        params.transmission = 1;
+        params.thickness = 0;
+        MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
+        common.double_sided = true;
+        MaterialId glass = fixture.assets.add_material(material::physical(params, common))!!;
+        GeometryId glass_geometry = add_layered_sheet_geometry(&fixture, 1)!!;
+        target.scene.add_mesh(glass_geometry, glass)!!;
+        LayeredView view = create_layered_view(&fixture, 1, shading)!!;
+        defer destroy_layered_view(&fixture, &view);
+        foreach (roughness : (float[3]){ 0, 0.5f, 1 }) {
+            fixture.assets.material(glass).data.physical.standard.roughness = roughness;
+            fixture.assets.mark_material_dirty(glass);
+            ViewDesc desc = fixture.renderer.views.get(view.view).desc;
+            desc.transparency = render::TRANSPARENCY_LAYERED_DEFAULT;
+            render::configure_view(&fixture.renderer, view.view, desc)!!;
+            Vec4[] layered = render_layered_pixels(&fixture, &target, &view)!!;
+            defer free(layered);
+            desc.transparency = {};
+            render::configure_view(&fixture.renderer, view.view, desc)!!;
+            Vec4[] sorted = render_layered_pixels(&fixture, &target, &view)!!;
+            defer free(sorted);
+            for (uint row = LAYERED_INTERIOR_BEGIN; row < LAYERED_INTERIOR_END; row++) {
+                for (uint column = LAYERED_INTERIOR_BEGIN; column < LAYERED_INTERIOR_END; column++) {
+                    uint pixel = row * LAYERED_IMAGE_SIZE + column;
+                    transparency_fixtures::Color reference = { sorted[pixel].x, sorted[pixel].y, sorted[pixel].z };
+                    check_layered_color(layered[pixel], reference);
+                }
+            }
+        }
+    }
+    check_validation(&fixture.renderer);
 }

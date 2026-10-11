@@ -182,8 +182,9 @@ fn void transparency_view_summary(TransparencyStats* stats) @private {
         imgui::text("Completed overflow pixels: %u", stats.overflow_pixels);
         imgui::text("Completed overflow: %s", stats.overflow ? "yes" : "no");
     } else {
-        imgui::text_unformatted(stats.overflow_dispatches
-          ? "Overflow readback: pending" : "Overflow readback: unavailable");
+        ZString readback = stats.overflow_dispatches
+          ? "Overflow readback: pending" : "Overflow readback: unavailable";
+        imgui::text_unformatted(readback);
     }
 }
 

@@ -724,6 +724,8 @@ fn void test_layered_opaque_custom_scene_reader_applies_fog_before_transparent_f
         reader = fixture.assets.add_material(material::custom(shader: shader, common: common))!!;
     };
     target.scene.add_mesh(add_layered_sheet_geometry(&fixture, 0.5f)!!, reader)!!;
+    MaterialId hidden_green = add_layered_basic(&fixture, { 0, 1, 0, 0.5f })!!;
+    target.scene.add_mesh(add_layered_sheet_geometry(&fixture, 0.25f)!!, hidden_green)!!;
     MaterialCommon overlay_common = material::MATERIAL_COMMON_DEFAULT;
     overlay_common.alpha_mode = AlphaMode.BLEND;
     overlay_common.double_sided = true;
@@ -737,10 +739,13 @@ fn void test_layered_opaque_custom_scene_reader_applies_fog_before_transparent_f
       + (1 - reader_transmission) * transparency_fixtures::FOG_COLOR;
     transparency_fixtures::Color overlay_observed = overlay_transmission * (transparency_fixtures::Color){ 0, 0, 1 }
       + (1 - overlay_transmission) * transparency_fixtures::FOG_COLOR;
+    double red_transmission = math::exp(-transparency_fixtures::FOG_EXTINCTION * 3);
+    transparency_fixtures::Color red_observed = red_transmission * (transparency_fixtures::Color){ 1, 0, 0 }
+      + (1 - red_transmission) * transparency_fixtures::FOG_COLOR;
     transparency_fixtures::Color expected = transparency_fixtures::compose_over(
-        reader_observed,
-        overlay_observed,
-        0.25,
+        behind: transparency_fixtures::compose_over(reader_observed, red_observed, 0.5),
+        radiance: overlay_observed,
+        coverage: 0.25,
     );
     Vec4[] pixels = render_layered_pixels(&fixture, &target, &view)!!;
     defer free(pixels);
@@ -751,6 +756,102 @@ fn void test_layered_opaque_custom_scene_reader_applies_fog_before_transparent_f
     defer free(second);
     uint sample = LAYERED_SAMPLE_ROW * LAYERED_IMAGE_SIZE + LAYERED_SAMPLE_COLUMN;
     assert(retained[sample] == bitcast(0.75f, uint) && second[sample] == 0);
+
+    ViewDesc desc = fixture.renderer.views.get(view.view).desc;
+    desc.transparency = {};
+    render::configure_view(&fixture.renderer, view.view, desc)!!;
+    Vec4[] sorted = render_layered_pixels(&fixture, &target, &view)!!;
+    defer free(sorted);
+    check_layered_interior(sorted, expected);
+    for (uint row = LAYERED_INTERIOR_BEGIN; row < LAYERED_INTERIOR_END; row++) {
+        for (uint column = LAYERED_INTERIOR_BEGIN; column < LAYERED_INTERIOR_END; column++) {
+            Vec4 reference = sorted[row * LAYERED_IMAGE_SIZE + column];
+            check_layered_color(pixels[row * LAYERED_IMAGE_SIZE + column], {
+                (double)reference.x, (double)reference.y, (double)reference.z,
+            });
+        }
+    }
+    check_validation(&fixture.renderer);
+}
+
+fn void test_layered_fallback_reader_keeps_emissive_glass_finite_over_level_and_downward_fog_backgrounds() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    Fixture fixture;
+    create_fixture(&tracker, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    MaterialId reader;
+    @pool() {
+        asset::ShaderDesc desc = {
+            .fragment = compile::compile_glsl(
+                allocator: tmem,
+                source: (String)LAYERED_OPAQUE_READER_SOURCE[..],
+                stage: ShaderStage.FRAGMENT,
+            )!!,
+            .scene_reads = { .color = true, .depth = true },
+        };
+        ShaderId shader = fixture.assets.add_shader(&desc)!!;
+        MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
+        common.double_sided = true;
+        reader = fixture.assets.add_material(material::custom(shader: shader, common: common))!!;
+    };
+    PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
+    params.standard.base_color = { 1, 1, 1, 1 };
+    params.standard.metallic = 0;
+    params.standard.roughness = 0;
+    params.standard.emissive = { 16, 8, 4 };
+    params.ior = 1;
+    params.specular = 0;
+    params.transmission = 1;
+    MaterialCommon glass_common = material::MATERIAL_COMMON_DEFAULT;
+    glass_common.double_sided = true;
+    MaterialId glass = fixture.assets.add_material(material::physical(params, glass_common))!!;
+    Material disabled_reader = fixture.assets.material(reader).data;
+    disabled_reader.common.depth_test = false;
+    MaterialId overlay_reader = fixture.assets.add_material(disabled_reader)!!;
+    foreach (reader_id : (MaterialId[2]){ reader, overlay_reader }) {
+        foreach (density : (float[2]){ 0.125f, 4 }) foreach (downward : (bool[2]){ false, true }) {
+            LayeredScene target = create_layered_scene(&fixture)!!;
+            defer scene::destroy_scene(&target.scene);
+            target.scene.@each(Mesh; Entity entity, Mesh* mesh) { target.scene.node(entity).visible = false; };
+            target.scene.ambient_color = { 1, 1, 1 };
+            target.scene.ambient_intensity = 1;
+            Node* fog = target.scene.add_node()!!;
+            target.scene.add(fog, (HeightFog){
+                .density = density,
+                .falloff = 0,
+                .albedo = { 0.1f, 0.2f, 0.4f },
+                .max_distance = 9,
+            });
+            if (downward) {
+                Vec3 direction = ((Vec3){ 0, -0.125f, -1 }).normalize();
+                target.camera.local.rotation = maths::look_rotation(direction, { 0, 1, 0 });
+            }
+            target.scene.add_mesh(add_layered_sheet_geometry(&fixture, 0.96875f)!!, glass)!!;
+            Node* outside_reader = target.scene.add_mesh(add_layered_sheet_geometry(&fixture, 0.5f)!!, reader_id)!!;
+            outside_reader.local.position.x = 0.875f;
+            outside_reader.local.scale.x = 0.125f;
+            LayeredView view = create_layered_view(&fixture, 2)!!;
+            defer destroy_layered_view(&fixture, &view);
+            Vec4[] layered = render_layered_pixels(&fixture, &target, &view)!!;
+            defer free(layered);
+            ViewDesc desc = fixture.renderer.views.get(view.view).desc;
+            desc.transparency = {};
+            render::configure_view(&fixture.renderer, view.view, desc)!!;
+            Vec4[] sorted = render_layered_pixels(&fixture, &target, &view)!!;
+            defer free(sorted);
+            foreach (pixel, actual : layered) {
+                foreach (channel : actual) assert(math::is_finite(channel));
+                foreach (channel : sorted[pixel]) assert(math::is_finite(channel));
+                Vec4 reference = sorted[pixel];
+                check_layered_color(actual, { (double)reference.x, (double)reference.y, (double)reference.z });
+            }
+            uint center = (LAYERED_IMAGE_SIZE / 2) * LAYERED_IMAGE_SIZE + LAYERED_IMAGE_SIZE / 2;
+            assert(layered[center].x > transparency_fixtures::FOG_COLOR.x + 0.05,
+                "Height fog erased the emitting glass over the zero-transmittance background.");
+        }
+    }
     check_validation(&fixture.renderer);
 }
 
