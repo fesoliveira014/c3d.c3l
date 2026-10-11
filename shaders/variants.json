@@ -67,6 +67,8 @@
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY"] },
     { "shader": "depth_only", "source": "depth_only.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "depth_only", "source": "depth_only.frag.glsl", "stage": "frag", "defines": ["VERTEX_COLOR"] },
+    { "shader": "shadow_transmittance", "source": "shadow_transmittance.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "shadow_transmittance", "source": "shadow_transmittance.frag.glsl", "stage": "frag", "defines": ["VERTEX_COLOR"] },
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["SKINNED"] },
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["SKINNED_U16"] },
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["MORPH"] },

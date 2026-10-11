@@ -932,6 +932,7 @@ fn void? record_raster_view(
                             jitter:    jitter,
                         )!;
                     }
+
                     ReflectionLights reflection_lights;
                     if (record.desc.ray_tracing.reflections) {
                         reflection_lights = upload_reflection_lights(
@@ -942,6 +943,7 @@ fn void? record_raster_view(
                             altitude:    matrices.position.y + renderer.frame_origin.y,
                         )!;
                     }
+
                     record_deferred_shading(
                         renderer:           renderer,
                         record:             record,

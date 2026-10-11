@@ -267,3 +267,66 @@ fn void test_blended_materials_are_excluded_from_shadow_candidates() @test {
         assert(per_family[0] == 2 && per_family[1] == 2 && per_family[2] == 2);
     };
 }
+
+fn void test_colored_shadows_admit_blended_and_transmissive_casters_only_when_enabled() @test {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    Scene scene = scene::create_scene(mem, { .max_nodes = 12 });
+    defer scene::destroy_scene(&scene);
+
+    MaterialCommon blend_common = material::MATERIAL_COMMON_DEFAULT;
+    blend_common.alpha_mode = AlphaMode.BLEND;
+    MaterialCommon additive_common = blend_common;
+    additive_common.blend_mode = BlendMode.ADDITIVE;
+    PhysicalParams glass = material::PHYSICAL_PARAMS_DEFAULT;
+    glass.transmission = 1;
+    char[4] stage_bytes = { 1, 2, 3, 4 };
+    asset::ShaderDesc stage = { .fragment = stage_bytes[..] };
+    ShaderId custom_stage = assets.add_shader(&stage)!!;
+    Material[7] materials = {
+        material::basic({ .color = { 1, 1, 1, 0.5f } }, blend_common),
+        material::basic({ .color = { 1, 1, 1, 0.5f } }, additive_common),
+        material::standard(),
+        material::physical(material::PHYSICAL_PARAMS_DEFAULT, blend_common),
+        material::physical(glass, additive_common),
+        material::physical(glass),
+        material::custom(custom_stage, {}, common: blend_common),
+    };
+    @pool() {
+        Geometry geometry = geometry::box(
+            allocator: tmem,
+            width: 1,
+            height: 1,
+            depth: 1,
+        );
+        GeometryId geometry_id = assets.add_geometry(&geometry)!!;
+        foreach (material : materials) {
+            MaterialId material_id = assets.add_material(material)!!;
+            Node* node = scene.add_mesh(geometry_id, material_id)!!;
+            node.local.position = { 0, 0, 20 };
+        }
+        scene.update_world();
+
+        ExtractCounts counts;
+        MeshCandidate[] without = render::extract_shadow_candidates(
+            allocator: tmem,
+            scene: &scene,
+            assets: &assets,
+            fade_origin: {},
+            counts: &counts,
+        );
+        // The opaque Standard mesh and the opaque transmissive glass.
+        assert(without.len == 2);
+
+        MeshCandidate[] with = render::extract_shadow_candidates(
+            allocator: tmem,
+            scene: &scene,
+            assets: &assets,
+            fade_origin: {},
+            counts: &counts,
+            colored: true,
+        );
+        // Additive blending without transmission emits light and blocks none, and a custom stage's alpha is its own.
+        assert(with.len == 5);
+    };
+}

@@ -89,7 +89,8 @@ authored `depth_write` value remains stored, so switching back to `OPAQUE` or
 normal on back faces. Wireframe still falls back to filled triangles when the
 device lacks line polygon mode.
 
-Blended meshes never cast atlas shadows. Opaque and masked Basic, Standard,
+Blended meshes cast no atlas shadow unless [colored shadows](shadows.md#colored-shadows) are
+on, and then they cast a tinted one. Opaque and masked Basic, Standard,
 Physical and Toon meshes can cast, with masked coverage coming only from their
 base factor, base texture and cutoff. Standard, Physical and Toon blended meshes
 can still receive direct shadows when their mesh enables `receive_shadow`; Basic
@@ -466,8 +467,9 @@ draws join the scene-read list, which they share with opaque and masked
 [custom scene readers](custom_shaders.md#scene-reads): rendered after opaque
 geometry and the sky and before ordinary blends, sorted back to front by bounds
 center. Any alpha mode is allowed: OPAQUE and MASK glass keeps its depth write
-setting and casts opaque shadows; BLEND glass follows the ordinary blend rules
-and never casts.
+setting; with colored shadows off, OPAQUE and MASK glass casts opaque shadows and BLEND
+glass follows the ordinary blend rules and never casts; with them on, glass of every
+alpha mode casts a [tinted shadow](shadows.md#colored-shadows).
 
 Before that list the renderer copies the finished opaque color into the
 view's own `scene_color` image, allocated on first use at the view size with its
@@ -555,9 +557,10 @@ Limits:
 `python3 scripts/build.py --example transparency` draws a glass slab over a checkered backdrop,
 with a tinted smooth pane behind it that partly overlaps it on screen, two intersecting colored
 quads to the left and, to the right, a blended batch of two panels with a blended sphere sweeping
-between them. R steps the slab's
+between them, all lit by a shadowed sun, with a blended orange pane and a thick absorbing slab in front. R steps the slab's
 roughness through 0, 0.25, 0.5 and 1; L switches the view between 1 and 2 transmission layers; T switches
-its transparency between `SORTED` and `WEIGHTED` ([weighted transparency](#weighted-transparency)).
+its transparency between `SORTED` and `WEIGHTED` ([weighted transparency](#weighted-transparency)); C switches
+[colored shadows](shadows.md#colored-shadows).
 
 ## Importing materials
 

@@ -703,6 +703,20 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer BasicMateri
     TextureMapGpu map;
 };
 
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer TranslucentCasterGpu {
+    uint kind;
+    uint flags;
+    float alpha_cutoff;
+    uint map_flags;
+    vec4 color;
+    vec4 attenuation_color_distance;
+    float transmission;
+    float thickness;
+    uint _pad0;
+    uint _pad1;
+    TextureMapGpu map;
+};
+
 struct GuiVertexGpu {
     float position_x;
     float position_y;
@@ -815,7 +829,11 @@ struct ShadowGpu {
     float texel_size;
     float max_distance;
     float blend_depth;
-    uint _pad2;
+    uint colored_transmittance;
+    uint colored_depth;
+    uint colored_sampler;
+    uint _pad3;
+    uint _pad4;
 };
 
 struct StandardMaterialGpu {

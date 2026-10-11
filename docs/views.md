@@ -656,7 +656,8 @@ The deferred view owns five images at its working extent, allocated by `create_v
 | `gbuffer_layers` | `R32_UINT` | receiver layer mask |
 | `gbuffer_flags` | `R32_UINT` | receive-shadow bit |
 
-Pass order on a deferred view: uploads, shadow atlas, light culling, `DEPTH_PREPASS` over both opaque
+Pass order on a deferred view: uploads, shadow atlas (with [colored shadows](shadows.md#colored-shadows), a layer that holds
+translucent casters adds a translucent depth and a transmittance pass), light culling, `DEPTH_PREPASS` over both opaque
 lists, `GBUFFER` (depth `EQUAL`, no write), `AMBIENT_OCCLUSION` when the view has ambient
 occlusion, `LIGHTING` (a fullscreen fragment pass that clears
 `hdr_color`, discards where no geometry was drawn and lights every G-buffer pixel from `FrameRoot`),
