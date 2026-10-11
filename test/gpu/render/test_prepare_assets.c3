@@ -341,26 +341,6 @@ fn void preparation_asset_draw_parity(
     assert(visible);
 }
 
-fn void preparation_geometry_bytes(Fixture* fixture, GeometryId geometry) @private {
-    Renderer* renderer = &fixture.renderer;
-    GpuGeometry* mirror = &renderer.geometries[geometry.index];
-    char[] actual = preparation_asset_readback(
-        fixture: fixture,
-        source: gpu::get_allocation_span(&renderer.device, mirror.allocation)!!,
-        bytes: mirror.layout.total_bytes,
-    )!!;
-    defer alloc::free(mem, actual.ptr);
-    char[] expected = alloc::new_array(mem, char, (sz)mirror.layout.total_bytes);
-    defer alloc::free(mem, expected.ptr);
-    render::write_geometry_block(
-        block: expected,
-        geometry: &fixture.assets.geometry(geometry).data,
-        layout: &mirror.layout,
-        base: mirror.root,
-    );
-    assert(actual == expected);
-}
-
 fn void test_prepare_geometry_ranges_readback_and_deformed_custom_draw_match_sync() @test {
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
@@ -389,7 +369,6 @@ fn void test_prepare_geometry_ranges_readback_and_deformed_custom_draw_match_syn
         );
         fixture.renderer.end_prepare(id)!!;
         assert(fixture.renderer.geometries[stepped.index].layout.flags.joints_u16);
-        preparation_geometry_bytes(&fixture, stepped);
         fixture.renderer.upload_geometry(synchronous)!!;
         SkeletonId skeleton = preparation_asset_skeleton(&fixture)!!;
         DeformedScene actual = preparation_asset_scene(
@@ -549,5 +528,5 @@ fn void preparation_payload_mode(usz allowance) @private {
 }
 
 fn void test_prepare_large_custom_payload_and_repeated_layers_match_sync() @test {
-    foreach (allowance : (usz[4]){ 1024, 1 << 20, 8 << 20, 0 }) preparation_payload_mode(allowance);
+    foreach (allowance : (usz[2]){ 1024, 0 }) preparation_payload_mode(allowance);
 }

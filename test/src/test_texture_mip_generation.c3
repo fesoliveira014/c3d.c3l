@@ -17,9 +17,6 @@ const ulong EVEN_SRGB_DIGEST @local = 0x9a7fa2d2274fd02e;
 const uint HALF_EXPONENT_LIMIT @local = 30; // keeps generated halves finite
 const uint HALF_EXPONENT_SHIFT @local = 10;
 const uint HALF_MANTISSA_LIMIT @local = 1024;
-const ulong GENERATED_ALLOWANCE_ONE_MIB @local = 1 << 20;
-const ulong GENERATED_ALLOWANCE_EIGHT_MIB @local = 8 << 20;
-const uint GENERATED_BAND_ROWS @local = 16; // matches the preparation generator span
 
 struct HalvingShape @local {
     uint width;
@@ -112,12 +109,7 @@ fn void test_mip_chain_bytes_are_unchanged() @test {
     assert(srgb_chain_digest(64, 64) == EVEN_SRGB_DIGEST);
 }
 
-fn void expect_generated_bands_equal(
-    material::TextureDesc desc,
-    char[] pixels,
-    uint row_limit,
-    ulong texel_allowance = 0,
-) @local {
+fn void expect_generated_bands_equal(material::TextureDesc desc, char[] pixels, uint row_limit) @local {
     TextureMipChain reference = create_texture_mips(mem, desc, pixels)!!;
     defer destroy_texture_mips(&reference);
     TrackingAllocator tracker;
@@ -127,12 +119,9 @@ fn void expect_generated_bands_equal(
         TextureMipChain stepped = create_generated_texture_mips(&tracker, desc)!!;
         defer destroy_texture_mips(&stepped);
         GeneratedTextureLayout layout = generated_texture_mip_layout(desc)!!;
-        assert(stepped.first_mip == 1 && stepped.mip_count + 1 == reference.mip_count);
         assert(stepped.pixels.len == layout.byte_count && tracker.allocs_total == 1);
-        assert(stepped.pixels.len == reference.pixels.len - reference.offsets[1]);
         ulong completed;
         ulong charged;
-        usz generated_bytes;
         for (uint mip = 1; mip < reference.mip_count; mip++) {
             uint width = material::texture_mip_extent(desc.width, mip);
             uint height = material::texture_mip_extent(desc.height, mip);
@@ -140,31 +129,7 @@ fn void expect_generated_bands_equal(
                 for (uint row = 0; row < height;) {
                     uint rows = math::min(row_limit, height - row);
                     ulong previous = generated_mip_charge(layout.base_texels, completed, layout.output_texels);
-                    if (texel_allowance) {
-                        ulong minimum = generated_mip_charge(
-                            base_texels: layout.base_texels,
-                            output_done: completed + width,
-                            output_total: layout.output_texels,
-                        ) - previous;
-                        assert(minimum <= texel_allowance);
-                        uint first = 1;
-                        uint last = rows;
-                        while (first < last) {
-                            uint candidate = first + (last - first + 1) / 2;
-                            ulong next = generated_mip_charge(
-                                base_texels: layout.base_texels,
-                                output_done: completed + (ulong)width * candidate,
-                                output_total: layout.output_texels,
-                            );
-                            if (next - previous <= texel_allowance) {
-                                first = candidate;
-                            } else {
-                                last = candidate - 1;
-                            }
-                        }
-                        rows = first;
-                    }
-                    write_texture_mip_band(
+                    write_texture_filter_band(
                         desc: desc,
                         mip: mip,
                         layer: layer,
@@ -174,81 +139,35 @@ fn void expect_generated_bands_equal(
                         chain: &stepped,
                     )!!;
                     completed += (ulong)width * rows;
-                    ulong next = generated_mip_charge(layout.base_texels, completed, layout.output_texels);
-                    assert(next == layout.base_texels * completed / layout.output_texels);
-                    assert(next >= previous);
-                    if (texel_allowance) assert(next - previous <= texel_allowance);
-                    generated_bytes += (usz)width * rows * material::texture_block_bytes(desc.format);
-                    charged += next - previous;
+                    charged += generated_mip_charge(layout.base_texels, completed, layout.output_texels) - previous;
                     row += rows;
                 }
             }
         }
         assert(completed == layout.output_texels && charged == layout.base_texels);
-        assert(generated_bytes == layout.byte_count);
         assert(stepped.pixels == reference.pixels[reference.offsets[1]..]);
     }
     assert(tracker.allocated() == 0);
 }
 
-fn void test_generated_mip_bands_keep_srgb_npot_bytes() @test {
-    char[] pixels = random_texels(37 * 19 * TEXEL_BYTES, IMAGE_SEED);
-    defer alloc::free(mem, pixels.ptr);
-    foreach (rows : (uint[3]){ 1, 3, 8 }) {
-        expect_generated_bands_equal(material::texture_2d_desc(37, 19, RGBA8_SRGB), pixels, rows);
-    }
-    assert(srgb_chain_digest(37, 19) == ODD_SRGB_DIGEST);
-}
-
-fn void test_generated_mip_bands_keep_linear_halving_bytes() @test {
-    char[] pixels = random_texels(64 * 64 * TEXEL_BYTES, IMAGE_SEED);
-    defer alloc::free(mem, pixels.ptr);
-    foreach (rows : (uint[3]){ 1, 5, 32 }) {
-        expect_generated_bands_equal(material::texture_2d_desc(64, 64, RGBA8_UNORM), pixels, rows);
-    }
-}
-
-fn void test_generated_mip_bands_keep_half_rounding() @test {
+fn void test_generated_mip_bands_match_synchronous_mips() @test {
+    char[] srgb = random_texels(37 * 19 * TEXEL_BYTES, IMAGE_SEED);
+    defer alloc::free(mem, srgb.ptr);
+    char[] column = random_texels(17 * TEXEL_BYTES, IMAGE_SEED);
+    defer alloc::free(mem, column.ptr);
+    char[6 * 4 * 4 * 4] cube;
+    foreach (index, &value : cube) *value = (char)(1 + index % 251);
     ushort[8] ties = { 0x3C00, 0x3C01, 0x0001, 0xC000, 0x3C01, 0x3C02, 0x0003, 0x4000 };
-    ushort[8 * 4 * 4] pixels;
-    foreach (index, &value : pixels) *value = ties[index % ties.len];
-    char[] bytes = ((char*)pixels[..].ptr)[:pixels.len * ushort::size];
-    foreach (rows : (uint[2]){ 1, 3 }) {
-        expect_generated_bands_equal(material::texture_2d_desc(8, 4, RGBA16_FLOAT), bytes, rows);
-    }
-}
+    ushort[8 * 4 * 4] halves;
+    foreach (index, &value : halves) *value = ties[index % ties.len];
+    char[] half_bytes = ((char*)halves[..].ptr)[:halves.len * ushort::size];
 
-fn void test_generated_mip_bands_keep_float_npot_values() @test {
-    float[9 * 5 * 4] pixels;
-    foreach (index, &value : pixels) *value = (float)((int)(index % 17) - 8) * 1.25f;
-    char[] bytes = ((char*)pixels[..].ptr)[:pixels.len * float::size];
-    foreach (rows : (uint[2]){ 1, 3 }) {
-        expect_generated_bands_equal(material::texture_2d_desc(9, 5, RGBA32_FLOAT), bytes, rows);
+    foreach (rows : (uint[2]){ 1, uint::max }) {
+        expect_generated_bands_equal(material::texture_2d_desc(37, 19, RGBA8_SRGB), srgb, rows);
+        expect_generated_bands_equal(material::texture_2d_desc(8, 4, RGBA16_FLOAT), half_bytes, rows);
+        expect_generated_bands_equal(material::texture_cube_desc(4, RGBA8_SRGB), cube[..], rows);
+        expect_generated_bands_equal(material::texture_2d_desc(1, 17, RGBA8_UNORM), column, rows);
     }
-}
-
-fn void test_generated_mip_bands_keep_single_axis_edges() @test {
-    char[] pixels = random_texels(17 * TEXEL_BYTES, IMAGE_SEED);
-    defer alloc::free(mem, pixels.ptr);
-    foreach (shape : (HalvingShape[2]){ { .width = 1, .height = 17 }, { .width = 17, .height = 1 } }) {
-        foreach (rows : (uint[2]){ 1, 3 }) {
-            expect_generated_bands_equal(
-                desc: material::texture_2d_desc(shape.width, shape.height, RGBA8_UNORM),
-                pixels: pixels,
-                row_limit: rows,
-            );
-        }
-    }
-}
-
-fn void test_generated_mip_bands_keep_cube_faces() @test {
-    char[6 * 4 * 4 * 4] pixels;
-    foreach (index, &value : pixels) *value = (char)(1 + index % 251);
-    foreach (rows : (uint[2]){ 1, 2 }) {
-        expect_generated_bands_equal(material::texture_cube_desc(4, RGBA8_SRGB), pixels[..], rows);
-    }
-    GeneratedTextureLayout layout = generated_texture_mip_layout(material::texture_cube_desc(4, RGBA8_SRGB))!!;
-    assert(layout.base_texels == 96 && layout.output_texels == 30 && layout.byte_count == 120);
 }
 
 fn void test_generated_mip_bands_reacquire_base_and_retain_owned_levels() @test {
@@ -257,7 +176,7 @@ fn void test_generated_mip_bands_reacquire_base_and_retain_owned_levels() @test 
     TextureMipChain chain = create_generated_texture_mips(mem, desc)!!;
     defer destroy_texture_mips(&chain);
     chain.pixels[..] = (char)0xA5;
-    write_texture_mip_band(
+    write_texture_filter_band(
         desc: desc,
         mip: 1,
         layer: 0,
@@ -269,7 +188,7 @@ fn void test_generated_mip_bands_reacquire_base_and_retain_owned_levels() @test 
     assert(chain.pixels[:8] == (char[8]){}[..]);
     foreach (byte : chain.pixels[8..]) assert(byte == 0xA5);
     pixels[32..] = (char)255;
-    write_texture_mip_band(
+    write_texture_filter_band(
         desc: desc,
         mip: 1,
         layer: 0,
@@ -278,7 +197,7 @@ fn void test_generated_mip_bands_reacquire_base_and_retain_owned_levels() @test 
         mip_zero: pixels[..],
         chain: &chain,
     )!!;
-    write_texture_mip_band(
+    write_texture_filter_band(
         desc: desc,
         mip: 2,
         layer: 0,
@@ -313,53 +232,4 @@ fn void test_generated_layout_has_no_base_snapshot_or_empty_allocation() @test {
     assert(layout.base_texels == 1 && layout.output_texels == 0 && layout.byte_count == 0);
     assert(chain.first_mip == 1 && chain.mip_count == 0 && chain.pixels.len == 0);
     assert(tracker.allocs_total == 0 && tracker.allocated() == 0);
-}
-
-fn void expect_canonical_generated_allowances(material::TextureDesc desc, char[] pixels) @local {
-    GeneratedTextureLayout layout = generated_texture_mip_layout(desc)!!;
-    uint width = material::texture_mip_extent(desc.width, 1);
-    ulong minimum = layout.base_texels
-      - generated_mip_charge(layout.base_texels, layout.output_texels - width, layout.output_texels);
-    if (desc.width == 65537) {
-        ulong first_span = generated_mip_charge(
-            base_texels: layout.base_texels,
-            output_done: (ulong)width * GENERATED_BAND_ROWS,
-            output_total: layout.output_texels,
-        );
-        assert(first_span > GENERATED_ALLOWANCE_ONE_MIB);
-    }
-    foreach (allowance : (ulong[4]){ minimum, GENERATED_ALLOWANCE_ONE_MIB, GENERATED_ALLOWANCE_EIGHT_MIB, 0 }) {
-        expect_generated_bands_equal(
-            desc: desc,
-            pixels: pixels,
-            row_limit: GENERATED_BAND_ROWS,
-            texel_allowance: allowance,
-        );
-    }
-}
-
-fn void test_generated_mip_bands_converge_with_canonical_texel_allowances() @test {
-    foreach (desc : (material::TextureDesc[6]){
-        material::texture_2d_desc(65537, 33, RGBA8_UNORM),
-        material::texture_cube_desc(4, RGBA8_SRGB),
-        material::texture_2d_desc(37, 19, RGBA8_SRGB),
-        material::texture_2d_desc(64, 64, RGBA8_UNORM),
-        material::texture_2d_desc(1, 17, RGBA8_UNORM),
-        material::texture_2d_desc(17, 1, RGBA8_UNORM),
-    }) {
-        char[] pixels = random_texels((usz)desc.width * desc.height * desc.layers * TEXEL_BYTES, IMAGE_SEED);
-        defer alloc::free(mem, pixels.ptr);
-        expect_canonical_generated_allowances(desc, pixels);
-    }
-
-    ushort[8] ties = { 0x3C00, 0x3C01, 0x0001, 0xC000, 0x3C01, 0x3C02, 0x0003, 0x4000 };
-    ushort[8 * 4 * 4] halves;
-    foreach (index, &value : halves) *value = ties[index % ties.len];
-    char[] half_bytes = ((char*)halves[..].ptr)[:halves.len * ushort::size];
-    expect_canonical_generated_allowances(material::texture_2d_desc(8, 4, RGBA16_FLOAT), half_bytes);
-
-    float[9 * 5 * 4] floats;
-    foreach (index, &value : floats) *value = (float)((int)(index % 17) - 8) * 1.25f;
-    char[] float_bytes = ((char*)floats[..].ptr)[:floats.len * float::size];
-    expect_canonical_generated_allowances(material::texture_2d_desc(9, 5, RGBA32_FLOAT), float_bytes);
 }

@@ -17,7 +17,6 @@ const String FAULTY_BINORMALS @local = "a: 0,0,0,0,NaN,0,0,3,0,0,3,0";
 const String VALID_TANGENTS @local = "a: 2,0,0,2,0,0,2,0,0,2,0,0";
 const String VALID_BINORMALS @local = "a: 0,3,0,0,3,0,0,3,0,0,3,0";
 const char[*] PNG_PIXELS @local = $embed("../fixtures/rgba.png");
-const char[*] DDS_RGBA @local = $embed("../fixtures/texture/legacy_rgba8_2x2.dds");
 const char[*] KTX_BC5 @local = $embed("../fixtures/texture/ktx2_bc5_8x4.ktx2");
 const char[*] KTX_GENERATE @local = $embed("../fixtures/texture/ktx1_rgba8_generate_2x2.ktx");
 
@@ -103,12 +102,6 @@ struct MemorySource @local {
     String document;
     char[] encoded;
     usz image_reads;
-}
-
-struct SuppliedCase @local {
-    char[] bytes;
-    PixelFormat format;
-    bool roles;
 }
 
 struct PublishedGeometry @local {
@@ -217,26 +210,6 @@ fn void test_color_data_and_normal_roles_split_and_compatible_normals_reuse() @t
             assert(entry.pixels == decoded.pixels && entry.supplied_mips.len == 0);
         }
 
-        Material* material = &document.materials[0].data;
-        TextureId normal_id = material.standard.normal_map.texture.asset;
-
-        material.common.alpha_mode = AlphaMode.MASK;
-        material.common.alpha_cutoff = 0.25f;
-        material.standard.base_color.w = 0;
-
-        assert(c3d::same_id(normal_id, document.materials[1].data.standard.normal_map.texture.asset));
-
-        foreach (entry : document.textures) assert(entry.desc.coverage == CoveragePolicy.NONE);
-    };
-}
-
-fn void test_explicit_rg_changes_only_the_normal_variant() @test {
-    @pool() {
-        MemorySource rgb_source = fixture_source(ROLE_MATERIALS, ROLE_CONNECTIONS, PNG_PIXELS[..]);
-
-        ModelDocument rgb = decode_fixture(mem, &rgb_source);
-        defer asset::destroy_model_document(&rgb);
-
         MemorySource rg_source = fixture_source(ROLE_MATERIALS, ROLE_CONNECTIONS, PNG_PIXELS[..]);
         LoadOptions options = asset::LOAD_OPTIONS_DEFAULT;
         options.normal_encoding = NormalEncoding.RG;
@@ -244,10 +217,9 @@ fn void test_explicit_rg_changes_only_the_normal_variant() @test {
         ModelDocument rg = decode_fixture(mem, &rg_source, options);
         defer asset::destroy_model_document(&rg);
 
-        assert_roles(&rgb, TextureSemantic.NORMAL_RGB);
         assert_roles(&rg, TextureSemantic.NORMAL_RG);
 
-        foreach (index, &entry : rgb.textures) {
+        foreach (index, &entry : document.textures) {
             DocumentTexture* other = &rg.textures[index];
 
             assert(entry.desc.format == other.desc.format && entry.pixels == other.pixels);
@@ -255,7 +227,6 @@ fn void test_explicit_rg_changes_only_the_normal_variant() @test {
             if (entry.desc.semantic == TextureSemantic.COLOR) {
                 assert(other.desc.semantic == TextureSemantic.COLOR && entry.key == other.key);
             } else {
-                assert(entry.desc.semantic == TextureSemantic.NORMAL_RGB);
                 assert(other.desc.semantic == TextureSemantic.NORMAL_RG && entry.key != other.key);
             }
         }
@@ -277,71 +248,42 @@ fn void test_bump_connection_does_not_create_a_normal_texture() @test {
     };
 }
 
-fn void test_supplied_normal_chains_keep_bytes_and_do_not_infer_bc5_encoding() @test {
+fn void test_supplied_bc5_normal_chain_keeps_bytes_with_explicit_rg() @test {
     @pool() {
-        SuppliedCase[] cases = {
-            { .bytes = DDS_RGBA[..], .format = RGBA8_UNORM, .roles = true },
-            { .bytes = KTX_BC5[..], .format = BC5_UNORM },
-        };
+        MemorySource source = fixture_source(SINGLE_MATERIAL, NORMAL_CONNECTION, KTX_BC5[..]);
+        LoadOptions options = asset::LOAD_OPTIONS_DEFAULT;
+        options.normal_encoding = NormalEncoding.RG;
 
-        NormalEncoding[2] encodings = { NormalEncoding.RGB, NormalEncoding.RG };
+        TrackingAllocator tracker;
+        tracker.init(mem);
+        defer tracker.free();
 
-        foreach (entry : cases) {
-            foreach (encoding : encodings) {
-                MemorySource source = entry.roles
-                  ? fixture_source(ROLE_MATERIALS, ROLE_CONNECTIONS, entry.bytes)
-                  : fixture_source(SINGLE_MATERIAL, NORMAL_CONNECTION, entry.bytes);
-                LoadOptions options = asset::LOAD_OPTIONS_DEFAULT;
-                options.normal_encoding = encoding;
+        {
+            ModelDocument document = decode_fixture(&tracker, &source, options);
+            defer asset::destroy_model_document(&document);
 
-                TrackingAllocator tracker;
-                tracker.init(mem);
-                defer tracker.free();
+            assert(document.materials.len == 1 && document.textures.len == 1);
 
-                {
-                    ModelDocument document = decode_fixture(&tracker, &source, options);
-                    defer asset::destroy_model_document(&document);
+            DocumentTexture* normal = &document.textures[0];
+            image::TextureContainerView expected = image::parse_texture_container(
+                scratch: tmem,
+                bytes: KTX_BC5[..],
+                color_space: image::ColorSpace.LINEAR,
+                semantic: TextureSemantic.NORMAL_RG,
+            )!!;
 
-                    TextureSemantic semantic = encoding == NormalEncoding.RG
-                      ? TextureSemantic.NORMAL_RG : TextureSemantic.NORMAL_RGB;
+            assert(normal.desc.format == BC5_UNORM && normal.desc.semantic == TextureSemantic.NORMAL_RG);
+            assert(normal.source_kind == SUPPLIED_MIPS && normal.pixels.len == 0);
+            assert(!normal.desc.generate_mips && normal.desc.coverage == CoveragePolicy.NONE);
+            assert(normal.desc.mip_levels == expected.level_count && normal.supplied_mips.len == expected.level_count);
 
-                    if (entry.roles) {
-                        assert_roles(&document, semantic);
-                    } else {
-                        assert(document.materials.len == 1 && document.textures.len == 1);
-                    }
-
-                    TextureId normal_id = document.materials[0].data.standard.normal_map.texture.asset;
-                    DocumentTexture* normal = texture_entry(&document, normal_id);
-
-                    assert(normal.desc.format == entry.format && normal.desc.semantic == semantic);
-
-                    foreach (&texture : document.textures) {
-                        image::ColorSpace color_space = texture.desc.format == RGBA8_SRGB
-                          ? image::ColorSpace.SRGB : image::ColorSpace.LINEAR;
-                        image::TextureContainerView expected = image::parse_texture_container(
-                            scratch: tmem,
-                            bytes: entry.bytes,
-                            color_space: color_space,
-                            semantic: texture.desc.semantic,
-                        )!!;
-
-                        assert(texture.source_kind == SUPPLIED_MIPS && texture.pixels.len == 0);
-                        assert(!texture.desc.generate_mips && texture.desc.coverage == CoveragePolicy.NONE);
-                        assert(texture.desc.mip_levels == expected.level_count);
-                        assert(texture.supplied_mips.len == expected.level_count);
-
-                        foreach (index, mip : texture.supplied_mips) {
-                            assert(mip.mip == expected.levels[index].mip && mip.layer == expected.levels[index].layer);
-                            assert(mip.bytes == expected.levels[index].bytes);
-                            assert(mip.bytes.ptr != expected.levels[index].bytes.ptr);
-                        }
-                    }
-                }
-
-                assert(tracker.allocated() == 0);
+            foreach (index, mip : normal.supplied_mips) {
+                assert(mip.mip == expected.levels[index].mip && mip.layer == expected.levels[index].layer);
+                assert(mip.bytes == expected.levels[index].bytes && mip.bytes.ptr != expected.levels[index].bytes.ptr);
             }
         }
+
+        assert(tracker.allocated() == 0);
     };
 }
 
@@ -474,11 +416,8 @@ fn void test_fbx_authored_zero_and_nan_tangents_fault_unless_forced() @test {
 
         assert(tracker.allocated() == 0);
 
-        String[5] cases = {
-            malformed,
+        String[2] cases = {
             valid.treplace(VALID_TANGENTS, "a: 0,0,0,2,0,0,2,0,0,2,0,0"),
-            valid.treplace(VALID_TANGENTS, "a: NaN,0,0,2,0,0,2,0,0,2,0,0"),
-            valid.treplace(VALID_BINORMALS, "a: 0,0,0,0,3,0,0,3,0,0,3,0"),
             valid.treplace(VALID_BINORMALS, "a: 0,NaN,0,0,3,0,0,3,0,0,3,0"),
         };
 

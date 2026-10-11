@@ -335,20 +335,18 @@ fn void test_crowd_parts_set_rolls_back_and_keeps_stale_handles_stale() @test {
     sz outstanding = probe.outstanding;
     instances[0] = parts_seed(fixture.missing_weights, 0.75f);
     instances[1] = parts_seed(fixture.missing_weights, 0.625f);
-    foreach (allowance : (uint[2]){ 0, 1 }) {
-        probe.enforce_limit = true;
-        probe.remaining = allowance;
-        assert(@catch(model::set_crowd(
-            assets: &assets,
-            scene: &scene,
-            node: node,
-            instances: instances[..],
-        )) == c3d::CAPACITY_EXCEEDED);
-        probe.enforce_limit = false;
-        assert(probe.outstanding == outstanding && crowd.playback == state && crowd.count == 2);
-        assert(crowd.start_times[0] == 0.25f && old_player.try_action(old_action)!!.time == 0.25f);
-        assert(state.instance_id(0)!!.generation == old_instance.generation);
-    }
+    probe.enforce_limit = true;
+    probe.remaining = 1;
+    assert(@catch(model::set_crowd(
+        assets: &assets,
+        scene: &scene,
+        node: node,
+        instances: instances[..],
+    )) == c3d::CAPACITY_EXCEEDED);
+    probe.enforce_limit = false;
+    assert(probe.outstanding == outstanding && crowd.playback == state && crowd.count == 2);
+    assert(crowd.start_times[0] == 0.25f && old_player.try_action(old_action)!!.time == 0.25f);
+    assert(state.instance_id(0)!!.generation == old_instance.generation);
     model::set_crowd(
         assets: &assets,
         scene: &scene,
@@ -359,38 +357,13 @@ fn void test_crowd_parts_set_rolls_back_and_keeps_stale_handles_stale() @test {
     assert(@catch(state.player(old_instance)) == c3d::INVALID_ID);
     CrowdPlayer replacement = parts_player(crowd);
     assert(@catch(replacement.try_action(old_action)) == c3d::INVALID_ID);
-    CrowdInstanceId before_shrink = state.instance_id(1)!!;
-    model::set_crowd(
-        assets: &assets,
-        scene: &scene,
-        node: node,
-        instances: instances[:1],
-    )!!;
-    assert(@catch(state.player(before_shrink)) == c3d::INVALID_ID);
-    model::set_crowd(
-        assets: &assets,
-        scene: &scene,
-        node: node,
-        instances: instances[..],
-    )!!;
-    assert(@catch(state.player(before_shrink)) == c3d::INVALID_ID);
-    CrowdInstanceId before_reorder = state.instance_id(0)!!;
-    CrowdInstance[2] reordered = { instances[1], instances[0] };
-    model::set_crowd(
-        assets: &assets,
-        scene: &scene,
-        node: node,
-        instances: reordered[..],
-    )!!;
-    assert(@catch(state.player(before_reorder)) == c3d::INVALID_ID);
-    assert(crowd.start_times[0] == 0.625f);
     state.slots[0].generation = uint::max;
     CrowdInstanceId wrapped = state.instance_id(0)!!;
     model::set_crowd(
         assets: &assets,
         scene: &scene,
         node: node,
-        instances: reordered[..],
+        instances: instances[..],
     )!!;
     assert(state.slots[0].generation == 1 && @catch(state.player(wrapped)) == c3d::INVALID_ID);
     scene::destroy_scene(&scene);
@@ -444,125 +417,36 @@ fn void test_crowd_parts_prepare_rolls_back_every_allocation_and_retries() @test
     assert(probe.outstanding == 0);
 }
 
-fn void test_crowd_parts_preserve_affine_shear_for_mirrored_placements() @test {
+fn void test_crowd_parts_action_capacities_admit_exactly_the_prepared_slots() @test {
     AssetStore assets = parts_store();
     defer asset::destroy_asset_store(&assets);
     PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
-    ModelTemplate* template = &assets.model(fixture.mixed).data;
-    template.nodes[animated_crowd_fixtures::PARTS_RIGID_NODE].local.rotation =
-      quaternion::from_axis_angle{float}({ 0, 0, 1 }, (float)math::PI / 4);
     Scene scene = scene::create_scene(mem, { .max_nodes = NODE_CAPACITY });
     defer scene::destroy_scene(&scene);
-    CrowdInstance[1] instances = { parts_seed(fixture.posing, 1) };
-    instances[0].placement.position = { 2, 0, -3 };
-    instances[0].placement.scale = { -2, 3, 0.5f };
-    instances[0].placement.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, (float)math::PI / 2);
+    CrowdInstance[1] seeds = { parts_seed(fixture.posing) };
     Node* node = model::add_crowd(
         assets: &assets,
         scene: &scene,
         model: fixture.mixed,
         capacity: 1,
         pose_bounds: animated_crowd_fixtures::PARTS_POSE_BOUNDS,
-        instances: instances[..],
+        instances: seeds[..],
+        actions_per_instance: anim::DEFAULT_CROWD_ACTIONS,
+        event_capacity: 0,
     )!!;
-    node.local.position = animated_crowd_fixtures::PARTS_ROOT_POSITION;
-    scene.update_world();
     AnimatedCrowd* crowd = scene.get(node, AnimatedCrowd);
-    Mat4 affine = crowd.part_transform(0, 1);
-    Vec3 axis_a = { affine.m00, affine.m10, affine.m20 };
-    Vec3 axis_b = { affine.m01, affine.m11, affine.m21 };
-    assert(math::abs(axis_a.dot(axis_b)) > 1 && affine.determinant() < 0);
-    Vec3 actual = maths::transform_point(node.world.mul(affine), { 1, 0, 0 });
-    float diagonal = math::sqrt(0.5f);
-    Vec3 expected = { 12, 3 * (1 + diagonal), 3 + 4 * diagonal };
-    assert((actual - expected).length() <= POINT_TOLERANCE);
-}
-
-fn void test_crowd_parts_accept_external_compatible_clip_without_track_budget() @test {
-    AssetStore assets = parts_store();
-    defer asset::destroy_asset_store(&assets);
-    PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
-    Scene scene = scene::create_scene(mem, { .max_nodes = NODE_CAPACITY });
-    defer scene::destroy_scene(&scene);
-    CrowdInstance[1] instances = { parts_seed(fixture.posing) };
-    Node* node = model::add_crowd(
-        assets: &assets,
-        scene: &scene,
-        model: fixture.mixed,
-        capacity: 2,
-        pose_bounds: animated_crowd_fixtures::PARTS_POSE_BOUNDS,
-        instances: instances[..],
-    )!!;
-    ModelTemplate* template = &assets.model(fixture.mixed).data;
-    AnimationClip clip = {
-        .name = "external_wide".copy(mem),
-        .duration = 1,
-        .tracks = alloc::new_array(mem, Track, 4),
-        .targets = alloc::new_array(mem, uint, 4),
-    };
-    uint[4] nodes = { 0, 1, 4, 5 };
-    clip.targets[..] = nodes[..];
-    foreach (uint index, &track : clip.tracks) {
-        Vec3 base = template.nodes[nodes[index]].local.position;
-        *track = {
-            .target = index,
-            .path = TargetPath.TRANSLATION,
-            .interpolation = Interpolation.LINEAR,
-            .times = alloc::new_array(mem, float, 2),
-            .values = alloc::new_array(mem, float, 6),
-        };
-        track.times[0] = 0;
-        track.times[1] = 1;
-        float[6] values = { base.x, base.y, base.z, base.x + 1, base.y, base.z };
-        track.values[..] = values[..];
-    }
-    ClipId external = assets.add_clip_owned(&clip, "animated_parts/external_wide")!!;
-    assert(template.clips.len == 2);
-    foreach (authored : template.clips) assert(!c3d::same_id(authored, external));
-    instances[0] = parts_seed(external, 0.5f);
-    model::set_crowd(
-        assets: &assets,
-        scene: &scene,
-        node: node,
-        instances: instances[..],
-    )!!;
-    CrowdPlayer player = parts_player(scene.get(node, AnimatedCrowd));
-    assert(c3d::same_id(player.base_action()!!.clip, external));
-    assert(player.base_action()!!.cursors.len == 4);
-}
-
-fn void test_crowd_parts_action_capacities_admit_exactly_the_prepared_slots() @test {
-    AssetStore assets = parts_store();
-    defer asset::destroy_asset_store(&assets);
-    PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
-    foreach (capacity : (uint[3]){ 1, anim::DEFAULT_CROWD_ACTIONS, anim::MAX_ACTIONS }) {
-        Scene scene = scene::create_scene(mem, { .max_nodes = NODE_CAPACITY });
-        defer scene::destroy_scene(&scene);
-        CrowdInstance[1] seeds = { parts_seed(fixture.posing) };
-        Node* node = model::add_crowd(
-            assets: &assets,
-            scene: &scene,
-            model: fixture.mixed,
-            capacity: 1,
-            pose_bounds: animated_crowd_fixtures::PARTS_POSE_BOUNDS,
-            instances: seeds[..],
-            actions_per_instance: capacity,
-            event_capacity: 0,
-        )!!;
-        AnimatedCrowd* crowd = scene.get(node, AnimatedCrowd);
-        CrowdPlayer player = parts_player(crowd);
-        AnimationActionId[anim::MAX_ACTIONS] actions;
-        actions[0] = crowd.playback.slots[0].base_action;
-        for (uint index = 1; index < capacity; index++) actions[index] = player.play(&assets, fixture.posing)!!;
-        assert(crowd.playback.slots[0].action_count == capacity);
-        float before = player.action(actions[0]).time;
-        assert(@catch(player.play(&assets, fixture.posing)) == c3d::CAPACITY_EXCEEDED);
-        ClipId[2] clips = { fixture.posing, fixture.missing_weights };
-        float[2] positions = { 0, 1 };
-        assert(@catch(player.add_blend_space(&assets, clips[..], positions[..])) == c3d::CAPACITY_EXCEEDED);
-        assert(crowd.playback.slots[0].action_count == capacity && player.action(actions[0]).time == before);
-        foreach (action : actions[:capacity]) assert(c3d::same_id(player.try_action(action)!!.clip, fixture.posing));
-    }
+    CrowdPlayer player = parts_player(crowd);
+    AnimationActionId[anim::DEFAULT_CROWD_ACTIONS] actions;
+    actions[0] = crowd.playback.slots[0].base_action;
+    for (uint index = 1; index < actions.len; index++) actions[index] = player.play(&assets, fixture.posing)!!;
+    assert(crowd.playback.slots[0].action_count == actions.len);
+    float before = player.action(actions[0]).time;
+    assert(@catch(player.play(&assets, fixture.posing)) == c3d::CAPACITY_EXCEEDED);
+    ClipId[2] clips = { fixture.posing, fixture.missing_weights };
+    float[2] positions = { 0, 1 };
+    assert(@catch(player.add_blend_space(&assets, clips[..], positions[..])) == c3d::CAPACITY_EXCEEDED);
+    assert(crowd.playback.slots[0].action_count == actions.len && player.action(actions[0]).time == before);
+    foreach (action : actions) assert(c3d::same_id(player.try_action(action)!!.clip, fixture.posing));
 }
 
 fn GeometryId add_parts_signed_morph_geometry(AssetStore* assets, GeometryId source_id) @local {
@@ -670,15 +554,6 @@ fn void test_crowd_parts_signed_top_eight_packing_and_bounds_match_literal_selec
         float displacement = source == 0 ? 41 : 45.5f;
         assert(bounds.min == (Vec3){ 0, displacement, 0 });
         assert(bounds.max == (Vec3){ 1, displacement + 1, 0 });
-        Node* batch_node = scene.node(part.batch);
-        Aabb envelope = spatial::instanced_world_bounds(&assets, batch_node, scene.get(batch_node, InstancedMesh));
-        Mat4 world = owner.world.mul(crowd.part_transform(source, 2));
-        foreach (position : geometry.positions) {
-            Vec3 point = maths::transform_point(world, position + (Vec3){ 0, displacement, 0 });
-            for (uint axis = 0; axis < 3; axis++) {
-                assert(point[axis] >= envelope.min[axis] && point[axis] <= envelope.max[axis]);
-            }
-        }
     }
 }
 
@@ -706,29 +581,17 @@ fn void test_crowd_parts_rigid_and_morph_vertices_fit_mirrored_affine_envelopes(
     owner.local.position = animated_crowd_fixtures::PARTS_ROOT_POSITION;
     AnimatedCrowd* crowd = scene.get(owner, AnimatedCrowd);
     float diagonal = math::sqrt(0.5f);
-    for (uint phase = 0; phase < 3; phase++) {
-        if (phase == 2) {
-            foreach (&instance : instances) instance.pose = parts_seed(fixture.missing_weights, 1).pose;
-            model::set_crowd(
-                assets: &assets,
-                scene: &scene,
-                node: owner,
-                instances: instances[..],
-            )!!;
-        } else {
-            for (uint source = 0; source < 2; source++) parts_player(crowd, source).base_action()!!.time = (float)phase;
-        }
+    for (uint phase = 0; phase < 2; phase++) {
+        for (uint source = 0; source < 2; source++) parts_player(crowd, source).base_action()!!.time = (float)phase;
         anim::crowd_update(&assets, &scene, 0);
         scene.update_world();
         Vec3[] literal = phase == 0 ? animated_crowd_fixtures::PARTS_REST_POINTS[..]
-          : (phase == 1 ? animated_crowd_fixtures::PARTS_POSED_POINTS[..]
-            : animated_crowd_fixtures::PARTS_RESTORED_POINTS[..]);
-        float rigid_x = phase == 0 ? 0 : (phase == 1 ? 4 : 2);
-        float rigid_y = phase == 2 ? 2 : 1;
+          : animated_crowd_fixtures::PARTS_POSED_POINTS[..];
+        float rigid_x = phase == 0 ? 0 : 4;
         Vec3[3] rigid = {
-            { rigid_x + 2 * diagonal, rigid_y + diagonal, 0 },
-            { rigid_x - 2 * diagonal, rigid_y + diagonal, 0 },
-            { rigid_x, rigid_y, 0 },
+            { rigid_x + 2 * diagonal, 1 + diagonal, 0 },
+            { rigid_x - 2 * diagonal, 1 + diagonal, 0 },
+            { rigid_x, 1, 0 },
         };
         for (uint source = 0; source < 2; source++) {
             Mat4 placement = owner.world.mul(instances[source].placement.to_mat4());

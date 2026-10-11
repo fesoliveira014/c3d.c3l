@@ -15,7 +15,6 @@ struct TextureRes {
     uint revision;
     uint binding_revision;
     TextureSemantic semantic;
-    TextureCoverageResource* coverage_resource;
     gpu::TextureHandle texture;
     gpu::TextureView view;
     gpu::TextureState state;
@@ -122,33 +121,21 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture, bool full
             );
         }
 
-        TextureCoverageResource* coverage_resource;
-        TextureCoverageResource* previous_coverage_resource = same_asset ? mirror.coverage_resource : null;
-
         if (desc.coverage == CoveragePolicy.THRESHOLD) {
             asset::check_coverage_statistics(desc, &record.coverage_statistics, record.header.revision)!;
-
-            coverage_resource = create_texture_coverage_resource(
-                allocator: renderer.allocator,
-                desc: desc,
-                statistics: &record.coverage_statistics,
-                revision: record.header.revision,
-            );
         }
 
-        defer catch destroy_texture_coverage_resource(coverage_resource);
         TextureMipChain chain;
         TextureMipLayout layout;
 
         switch (record.source_kind) {
             case MIP_ZERO:
-                chain = create_resource_texture_mips(
+                chain = create_texture_mips(
                     allocator: tmem,
                     desc: desc,
                     pixels: record.pixels,
                     first_mip: base,
                     statistics: &record.coverage_statistics,
-                    coverage_resource: coverage_resource,
                 )!;
                 layout = {
                     .total_bytes = chain.pixels.len,
@@ -220,9 +207,6 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture, bool full
             .asset = texture,
             .revision = record.header.revision,
             .semantic = desc.semantic,
-            .coverage_resource = coverage_resource,
-            .previous_coverage_resource = previous_coverage_resource,
-            .replaces_coverage = true,
             .texture = mirror.texture,
             .before = mirror.state,
         };
@@ -253,7 +237,6 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture, bool full
         }
 
         renderer.pending_texture_uploads.push(pending);
-        coverage_resource = null;
         renderer.stats.uploads++;
 
         *residency = {
@@ -344,12 +327,6 @@ fn bool texture_source_present(TextureAsset* record) @private {
 }
 
 fn void retire_texture(Renderer* renderer, TextureRes* mirror) @private {
-    if (mirror.coverage_resource) {
-        renderer.pending_upload_retire.push({ .kind = RetiredKind.TEXTURE_COVERAGE,
-            .coverage_resource = mirror.coverage_resource });
-        mirror.coverage_resource = null;
-    }
-
     if (!mirror.texture.is_valid()) return;
 
     foreach (view : mirror.storage_views) {
@@ -405,9 +382,6 @@ fn void sweep_textures(Renderer* renderer) @private {
 
 fn void free_textures(Renderer* renderer) @private {
     foreach (&mirror : renderer.textures) {
-        destroy_texture_coverage_resource(mirror.coverage_resource);
-        mirror.coverage_resource = null;
-
         if (!mirror.texture.is_valid()) continue;
 
         foreach (view : mirror.storage_views) (void)gpu::destroy_texture_view(&renderer.device, view);

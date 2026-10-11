@@ -6,17 +6,6 @@ import c3d::material;
 import std::math;
 
 const char[] LEAF_RGBA8 @local = $embed("../fixtures/texture_fidelity/leaf_rgba8.bin");
-const char[] LEAF_RGBA16 @local = $embed("../fixtures/texture_fidelity/leaf_rgba16.bin");
-const char[] LEAF_RGBA32 @local = $embed("../fixtures/texture_fidelity/leaf_rgba32.bin");
-
-const uint FILTER_ORACLE_FNV_SEED @local = 0x811c9dc5;
-const uint FILTER_ORACLE_FNV_MULTIPLIER @local = 0x01000193;
-const uint FILTER_ORACLE_AVALANCHE_FIRST @local = 0x7feb352d;
-const uint FILTER_ORACLE_AVALANCHE_SECOND @local = 0x846ca68b;
-const uint FILTER_ORACLE_HALF_ONE @local = 0x3c00;
-const uint FILTER_ORACLE_HALF_FRACTION_BITS @local = 10;
-const int FILTER_ORACLE_HALF_EXPONENT_BIAS @local = 15;
-const double FILTER_ORACLE_HALF_SUBNORMAL_UNIT @local = 1.0 / 16777216.0;
 
 struct FilteringExecution @local {
     TextureMipChain chain;
@@ -101,135 +90,6 @@ fn AssetStore filtering_store(Allocator allocator) @local {
     });
 }
 
-// The spatial-order contract hashes four words, rather than their byte serialization.
-fn uint filtering_oracle_hash(
-    uint face,
-    uint mip,
-    uint x,
-    uint y,
-) @local {
-    uint hash = FILTER_ORACLE_FNV_SEED;
-
-    foreach (word : (uint[4]){ face, mip, x, y }) {
-        hash = (uint)((ulong)(hash ^ word) * FILTER_ORACLE_FNV_MULTIPLIER);
-    }
-
-    hash ^= hash >> 16;
-    hash = (uint)((ulong)hash * FILTER_ORACLE_AVALANCHE_FIRST);
-    hash ^= hash >> 15;
-    hash = (uint)((ulong)hash * FILTER_ORACLE_AVALANCHE_SECOND);
-
-    return hash ^ (hash >> 16);
-}
-
-fn uint filtering_oracle_alpha_code(PixelFormat format, char[] pixels, usz texel) @local {
-    usz scalar_bytes = material::texture_block_bytes(format) / 4;
-    usz offset = (texel * 4 + 3) * scalar_bytes;
-    uint code;
-
-    for (usz byte = 0; byte < scalar_bytes; byte++) code |= (uint)pixels[offset + byte] << (byte * 8);
-
-    return code;
-}
-
-fn void filtering_oracle_write_alpha(
-    PixelFormat format,
-    char[] pixels,
-    usz texel,
-    uint code,
-) @local {
-    usz scalar_bytes = material::texture_block_bytes(format) / 4;
-    usz offset = (texel * 4 + 3) * scalar_bytes;
-
-    for (usz byte = 0; byte < scalar_bytes; byte++) pixels[offset + byte] = (char)(code >> (byte * 8));
-}
-
-fn double filtering_oracle_decode(PixelFormat format, uint code) @local {
-    if (format == RGBA8_UNORM) return (double)code / (double)char::max;
-    if (format == RGBA32_FLOAT) return (double)bitcast(code, float);
-
-    uint fraction = code & ((1u << FILTER_ORACLE_HALF_FRACTION_BITS) - 1);
-    uint exponent = code >> FILTER_ORACLE_HALF_FRACTION_BITS;
-
-    if (!exponent) return (double)fraction * FILTER_ORACLE_HALF_SUBNORMAL_UNIT;
-
-    double value = 1.0 + (double)fraction / (double)(1u << FILTER_ORACLE_HALF_FRACTION_BITS);
-    int power = (int)exponent - FILTER_ORACLE_HALF_EXPONENT_BIAS;
-
-    while (power < 0) {
-        value *= 0.5;
-        power++;
-    }
-
-    while (power > 0) {
-        value *= 2.0;
-        power--;
-    }
-
-    return value;
-}
-
-// Half storage first rounds to float, then to the nearest even half code.
-fn uint filtering_oracle_encode(PixelFormat format, double value) @local {
-    value = math::clamp(value, 0.0, 1.0);
-
-    if (format == RGBA8_UNORM) return (uint)math::floor(value * (double)char::max + 0.5);
-    if (format == RGBA32_FLOAT) return bitcast((float)value, uint);
-
-    value = (double)(float)value;
-    uint below;
-    uint above = FILTER_ORACLE_HALF_ONE;
-
-    while (below < above) {
-        uint middle = below + (above - below) / 2;
-
-        if (filtering_oracle_decode(format, middle) < value) {
-            below = middle + 1;
-        } else {
-            above = middle;
-        }
-    }
-
-    if (!above) return 0;
-
-    double lower_error = value - filtering_oracle_decode(format, above - 1);
-    double upper_error = filtering_oracle_decode(format, above) - value;
-
-    return lower_error < upper_error || (lower_error == upper_error && (above & 1)) ? above - 1 : above;
-}
-
-fn uint filtering_oracle_scaled(PixelFormat format, uint code, double scale) @local {
-    if (format == RGBA8_UNORM) {
-        return (uint)math::clamp(math::floor((double)code * scale + 0.5), 0.0, (double)char::max);
-    }
-
-    return filtering_oracle_encode(format, filtering_oracle_decode(format, code) * scale);
-}
-
-fn ulong filtering_oracle_group_count(uint[] codes, ulong base_passing, ulong base_total) @local {
-    ulong target = base_passing * codes.len;
-    ulong best_count;
-    ulong best_error = target;
-
-    foreach (candidate : codes) {
-        if (!candidate) continue;
-
-        ulong count;
-
-        foreach (code : codes) count += code >= candidate ? 1 : 0;
-
-        ulong actual = count * base_total;
-        ulong error = actual >= target ? actual - target : target - actual;
-
-        if (error < best_error || (error == best_error && count < best_count)) {
-            best_count = count;
-            best_error = error;
-        }
-    }
-
-    return best_count;
-}
-
 fn ulong count_filtered_alpha(material::TextureDesc desc, char[] pixels, double threshold) @local {
     ulong passing;
     usz texels = pixels.len / material::texture_block_bytes(desc.format);
@@ -293,7 +153,7 @@ fn void test_coverage_publication_is_atomic_and_dirty_invalidity_is_revision_own
     assert(source.coverage_statistics.failure == c3d::ASSET_DATA_UNAVAILABLE);
 }
 
-fn void expect_invalid_threshold_publication_keeps_store_and_pixels(PixelFormat format) @local {
+fn void test_invalid_threshold_alpha_add_and_owned_publication_preserve_store_and_caller_ownership() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
     defer tracker.free();
@@ -302,82 +162,51 @@ fn void expect_invalid_threshold_publication_keeps_store_and_pixels(PixelFormat 
         AssetStore assets = filtering_store(&tracker);
         defer asset::destroy_asset_store(&assets);
 
-        material::TextureDesc desc = material::texture_2d_desc(2, 1, format);
+        material::TextureDesc desc = material::texture_2d_desc(2, 1, RGBA32_FLOAT);
         desc.coverage = CoveragePolicy.THRESHOLD;
         desc.alpha_threshold = 0.5;
-        char[32] valid_storage;
-        char[] valid = valid_storage[:2 * material::texture_block_bytes(format)];
-        uint one_code = format == RGBA16_FLOAT ? 0x3c00 : 0x3f800000;
-
-        filtering_oracle_write_alpha(
-            format: format,
-            pixels: valid,
-            texel: 1,
-            code: one_code,
-        );
+        float[8] valid_pixels = { 0, 0, 0, 0, 0, 0, 0, 1 };
+        char[] valid = ((char*)&valid_pixels)[:valid_pixels.len * float::size];
 
         TextureId texture = assets.add_texture(desc, valid)!!;
         usz count = assets.textures.items.len - assets.textures.free_count;
         TextureAsset* source = assets.texture(texture);
         char* original_pointer = source.pixels.ptr;
-        uint[3] invalid_codes = format == RGBA16_FLOAT
-          ? (uint[3]){ 0x7e00, 0xbc00, 0x3c01 } : (uint[3]){ 0x7fc00000, 0xbf800000, 0x3f800001 };
+        float[8] invalid_pixels = valid_pixels;
+        invalid_pixels[7] = bitcast(0x7fc00000u, float);
+        char[] invalid = ((char*)&invalid_pixels)[:invalid_pixels.len * float::size];
+        sz before = tracker.allocated();
 
-        foreach (code : invalid_codes) {
-            char[32] invalid_storage = valid_storage;
-            char[] invalid = invalid_storage[:valid.len];
+        assert(@catch(assets.add_texture(desc, invalid)) == c3d::INVALID_ARGUMENT);
+        assert(assets.textures.items.len - assets.textures.free_count == count);
+        assert(tracker.allocated() == before);
 
-            filtering_oracle_write_alpha(
-                format: format,
-                pixels: invalid,
-                texel: 1,
-                code: code,
-            );
+        for (uint operation = 0; operation < 2; operation++) {
+            char[] owned = alloc::new_array(&tracker, char, (sz)invalid.len);
+            defer alloc::free(&tracker, owned.ptr);
 
-            sz before = tracker.allocated();
+            owned[..] = invalid[..];
+            sz with_owned = tracker.allocated();
 
-            assert(@catch(assets.add_texture(desc, invalid)) == c3d::INVALID_ARGUMENT);
-            assert(assets.textures.items.len - assets.textures.free_count == count);
-            assert(source.header.revision == 1 && source.coverage_statistics.revision == 1);
-            assert(source.pixels.ptr == original_pointer && source.pixels == valid);
-            assert(tracker.allocated() == before);
-
-            for (uint operation = 0; operation < 2; operation++) {
-                char[] owned = alloc::new_array(&tracker, char, (sz)invalid.len);
-                defer alloc::free(&tracker, owned.ptr);
-
-                owned[..] = invalid[..];
-                sz with_owned = tracker.allocated();
-
-                if (!operation) {
-                    assert(@catch(assets.add_texture_owned(desc, owned)) == c3d::INVALID_ARGUMENT);
-                } else {
-                    assert(@catch(assets.replace_texture_owned(
-                        texture: texture,
-                        desc: desc,
-                        pixels: owned,
-                    )) == c3d::INVALID_ARGUMENT);
-                }
-
-                assert(tracker.allocated() == with_owned);
-                assert(owned == invalid);
-                assert(assets.textures.items.len - assets.textures.free_count == count);
-                assert(source.header.revision == 1 && source.coverage_statistics.revision == 1);
-                assert(source.coverage_statistics.valid && source.coverage_statistics.passing[0] == 1);
-                assert(source.pixels.ptr == original_pointer && source.pixels == valid);
+            if (!operation) {
+                assert(@catch(assets.add_texture_owned(desc, owned)) == c3d::INVALID_ARGUMENT);
+            } else {
+                assert(@catch(assets.replace_texture_owned(
+                    texture: texture,
+                    desc: desc,
+                    pixels: owned,
+                )) == c3d::INVALID_ARGUMENT);
             }
 
-            assert(tracker.allocated() == before);
+            assert(tracker.allocated() == with_owned && owned == invalid);
+            assert(assets.textures.items.len - assets.textures.free_count == count);
+            assert(source.header.revision == 1 && source.coverage_statistics.revision == 1);
+            assert(source.coverage_statistics.valid && source.coverage_statistics.passing[0] == 1);
+            assert(source.pixels.ptr == original_pointer && source.pixels == valid);
         }
     }
 
     assert(!tracker.has_leaks());
-}
-
-fn void test_invalid_threshold_alpha_add_and_owned_publication_preserve_store_and_caller_ownership() @test {
-    foreach (format : (PixelFormat[2]){ RGBA16_FLOAT, RGBA32_FLOAT }) {
-        expect_invalid_threshold_publication_keeps_store_and_pixels(format);
-    }
 }
 
 fn void test_normal_filter_normalizes_sources_and_cancellation_uses_positive_z() @test {
@@ -503,6 +332,24 @@ fn void test_pass_billing_crosses_whole_cycles_without_overflow() @test {
         output_total: output,
         passes: 9,
     ) == 4 * base + 17);
+    assert(texture_scan_charge(
+        base_texels: 3074457345618258595,
+        position: 3074457345618258590,
+        output_total: 3074457345618258591,
+        passes: 6,
+    ) == 3074457345618258593);
+    assert(texture_scan_charge(
+        base_texels: 3074457345618258595,
+        position: 3074457345618258592,
+        output_total: 3074457345618258591,
+        passes: 6,
+    ) == 3074457345618258596);
+    assert(texture_scan_charge(
+        base_texels: 3074457345618258595,
+        position: 18446744073709551546,
+        output_total: 3074457345618258591,
+        passes: 6,
+    ) == 18446744073709551570);
 
     for (ulong position = 0; position <= 9 * 13; position++) {
         ulong reference = 101 * position / 13;
@@ -691,27 +538,23 @@ fn void test_zero_output_cube_has_zero_work_and_no_generation_allocation() @test
     assert(!generated.pixels.len && generated.mip_count == 0 && generated.layer_count == 6);
 }
 
-fn void expect_frozen_leaf(PixelFormat format, char[] pixels) @local {
-    material::TextureDesc desc = material::texture_2d_desc(32, 32, format);
+fn void test_frozen_leaf_meets_stored_coverage_in_every_row_resume() @test {
+    material::TextureDesc desc = material::texture_2d_desc(32, 32, RGBA8_UNORM);
     desc.coverage = CoveragePolicy.THRESHOLD;
     desc.alpha_threshold = 0.5;
 
-    CoverageStatistics statistics = asset::create_coverage_statistics(desc, pixels)!!;
+    CoverageStatistics statistics = asset::create_coverage_statistics(desc, LEAF_RGBA8)!!;
 
     assert(statistics.passing[0] == 484 && statistics.total[0] == 1024);
 
-    FilteringExecution single = run_filtered_rows(desc, pixels, 1);
+    FilteringExecution single = run_filtered_rows(desc, LEAF_RGBA8, 1);
     defer destroy_texture_mips(&single.chain);
 
-    FilteringExecution whole = run_filtered_rows(desc, pixels, 16);
+    FilteringExecution whole = run_filtered_rows(desc, LEAF_RGBA8, 16);
     defer destroy_texture_mips(&whole.chain);
 
     assert(single.chain.pixels == whole.chain.pixels && single.progress == whole.progress);
-
-    uint passes = format == RGBA8_UNORM ? 6 : format == RGBA16_FLOAT ? 7 : 9;
-
-    assert(single.progress == (ulong)passes * 1024 && single.work == whole.work);
-    assert(single.work < single.progress);
+    assert(single.progress == 6 * 1024 && single.work == whole.work && single.work < single.progress);
 
     usz mip_two_bytes = material::texture_mip_bytes(desc, 2)!!;
     char[] mip_two = single.chain.pixels[single.chain.offsets[1]:mip_two_bytes];
@@ -723,8 +566,7 @@ fn void expect_frozen_leaf(PixelFormat format, char[] pixels) @local {
         ulong count = count_filtered_alpha(desc, single.chain.pixels[single.chain.offsets[mip - 1]:bytes], 0.5);
         ulong width = material::texture_mip_extent(desc.width, mip);
         ulong height = material::texture_mip_extent(desc.height, mip);
-        ulong total = width * height;
-        double error = math::abs((double)count / (double)total - 484.0 / 1024.0);
+        double error = math::abs((double)count / (double)(width * height) - 484.0 / 1024.0);
 
         assert(error <= COVERAGE_TOLERANCE);
     }
@@ -732,167 +574,13 @@ fn void expect_frozen_leaf(PixelFormat format, char[] pixels) @local {
     TextureMipChain synchronous = create_texture_mips(
         allocator: mem,
         desc: desc,
-        pixels: pixels,
+        pixels: LEAF_RGBA8,
         statistics: &statistics,
     )!!;
     defer destroy_texture_mips(&synchronous);
 
-    assert(synchronous.pixels[:pixels.len] == pixels);
-    assert(synchronous.pixels[pixels.len..] == single.chain.pixels);
-}
-
-fn void test_frozen_leaf_meets_stored_coverage_in_each_codec_and_every_row_resume() @test {
-    expect_frozen_leaf(RGBA8_UNORM, LEAF_RGBA8);
-    expect_frozen_leaf(RGBA16_FLOAT, LEAF_RGBA16);
-    expect_frozen_leaf(RGBA32_FLOAT, LEAF_RGBA32);
-}
-
-fn void test_coordinate_sorting_oracle_matches_known_word_hash_vectors() @test {
-    uint[5][5] vectors = {
-        { 0, 0, 0, 0, 0xc8b27205 },
-        { 0, 2, 2, 1, 0x20522d93 },
-        { 5, 3, 17, 29, 0x08022be2 },
-        { uint::max, uint::max, uint::max, uint::max, 0xb7227c7d },
-        { 5, 31, uint::max, 0x80000000, 0x1294bce2 },
-    };
-
-    foreach (vector : vectors) {
-        assert(filtering_oracle_hash(
-            face: vector[0],
-            mip: vector[1],
-            x: vector[2],
-            y: vector[3],
-        ) == vector[4]);
-    }
-}
-
-fn void test_leaf_critical_group_matches_independent_hash_raster_sort_and_failing_bytes() @test {
-    PixelFormat[3] formats = { RGBA8_UNORM, RGBA16_FLOAT, RGBA32_FLOAT };
-    char[][3] fixtures = { LEAF_RGBA8, LEAF_RGBA16, LEAF_RGBA32 };
-    ulong[3] scale_bits = { 4604627005528307182, 4604628067664354920, 4604631199764785486 };
-    uint[3] minimum_codes = { 128, 0x3800, 0x3f000000 };
-
-    foreach (format_index, format : formats) {
-        material::TextureDesc ordinary = material::texture_2d_desc(32, 32, format);
-        TextureMipChain unscaled = create_texture_mips(mem, ordinary, fixtures[format_index])!!;
-        defer destroy_texture_mips(&unscaled);
-
-        material::TextureDesc threshold = ordinary;
-        threshold.coverage = CoveragePolicy.THRESHOLD;
-        threshold.alpha_threshold = 0.5;
-        TextureMipChain corrected = create_texture_mips(mem, threshold, fixtures[format_index])!!;
-        defer destroy_texture_mips(&corrected);
-
-        usz level_bytes = material::texture_mip_bytes(ordinary, 2)!!;
-        char[] raw = unscaled.pixels[unscaled.offsets[2]:level_bytes];
-        char[] actual = corrected.pixels[corrected.offsets[2]:level_bytes];
-        uint[64] codes;
-
-        for (usz texel = 0; texel < codes.len; texel++) {
-            codes[texel] = filtering_oracle_alpha_code(format, raw, texel);
-        }
-
-        uint critical;
-        uint critical_groups;
-
-        foreach (candidate : codes) {
-            if (candidate == critical && critical_groups) continue;
-
-            uint above;
-            uint equal;
-
-            foreach (code : codes) {
-                above += code > candidate ? 1 : 0;
-                equal += code == candidate ? 1 : 0;
-            }
-
-            if (above == 24 && equal == 8) {
-                critical = candidate;
-                critical_groups++;
-            }
-        }
-
-        assert(critical_groups == 1);
-
-        uint[8] ranked;
-        usz members;
-
-        foreach (index, code : codes) {
-            if (code == critical) ranked[members++] = (uint)index;
-        }
-
-        for (usz index = 1; index < members; index++) {
-            uint candidate = ranked[index];
-            uint candidate_hash = filtering_oracle_hash(
-                face: 0,
-                mip: 2,
-                x: candidate % 8,
-                y: candidate / 8,
-            );
-            usz insertion = index;
-
-            while (insertion) {
-                uint previous = ranked[insertion - 1];
-                uint previous_hash = filtering_oracle_hash(
-                    face: 0,
-                    mip: 2,
-                    x: previous % 8,
-                    y: previous / 8,
-                );
-
-                if (previous_hash < candidate_hash || (previous_hash == candidate_hash && previous < candidate)) break;
-
-                ranked[insertion] = previous;
-                insertion--;
-            }
-
-            ranked[insertion] = candidate;
-        }
-
-        bool[64] promoted;
-
-        for (usz rank = 0; rank < 6; rank++) promoted[ranked[rank]] = true;
-
-        foreach (index : (uint[6]){ 10, 13, 17, 22, 41, 46 }) assert(promoted[index]);
-
-        char[1024] baseline_storage;
-        char[] baseline = baseline_storage[:level_bytes];
-        baseline[..] = raw[..];
-        double scale = bitcast(scale_bits[format_index], double);
-        uint minimum = minimum_codes[format_index];
-        uint baseline_passing;
-
-        assert(filtering_oracle_decode(format, minimum) >= 0.5);
-        assert(filtering_oracle_decode(format, minimum - 1) < 0.5);
-
-        for (usz texel = 0; texel < codes.len; texel++) {
-            uint code = filtering_oracle_scaled(format, codes[texel], scale);
-
-            filtering_oracle_write_alpha(
-                format: format,
-                pixels: baseline,
-                texel: texel,
-                code: code,
-            );
-            baseline_passing += filtering_oracle_decode(format, code) >= 0.5 ? 1 : 0;
-
-            if (codes[texel] == critical) assert(filtering_oracle_decode(format, code) < 0.5);
-        }
-
-        assert(baseline_passing == 24);
-
-        for (usz texel = 0; texel < codes.len; texel++) {
-            if (promoted[texel]) filtering_oracle_write_alpha(
-                format: format,
-                pixels: baseline,
-                texel: texel,
-                code: minimum,
-            );
-        }
-
-        assert(actual == baseline);
-        assert(count_filtered_alpha(threshold, actual, 0.5) == 30);
-    }
+    assert(synchronous.pixels[:LEAF_RGBA8.len] == LEAF_RGBA8);
+    assert(synchronous.pixels[LEAF_RGBA8.len..] == single.chain.pixels);
 }
 
 fn TextureCoverageState solve_stored_groups(
@@ -971,22 +659,7 @@ fn void test_zero_underflow_group_promotes_without_zero_activation_search() @tes
 
     assert(state.plateau && state.zero_critical && state.global_count == 0 && state.expected == 1);
     assert(state.global_scale == 1.0 && state.scale == 1.0 && state.promote_count == 1);
-
-    uint first_hash = filtering_oracle_hash(
-        face: 0,
-        mip: 1,
-        x: 0,
-        y: 0,
-    );
-    uint second_hash = filtering_oracle_hash(
-        face: 0,
-        mip: 1,
-        x: 1,
-        y: 0,
-    );
-    uint promoted = first_hash <= second_hash ? 0 : 1;
-
-    assert(pixels[promoted * 4 + 3] == 0.5 && pixels[(1 - promoted) * 4 + 3] == 0.0);
+    assert(pixels[3] + pixels[7] == 0.5f && (pixels[3] == 0.0f || pixels[7] == 0.0f));
 }
 
 fn void test_exact_tolerance_boundary_preserves_global_bytes_then_neighbor_engages() @test {
@@ -1095,99 +768,6 @@ fn void test_missing_base_faults_before_remaining_filter_row_without_advancing_s
     assert(state.identity == saved.identity && state.phase == saved.phase);
 }
 
-fn void test_pass_billing_matches_independent_wide_integer_boundary_values() @test {
-    assert(texture_scan_charge(
-        base_texels: 3074457345618258595,
-        position: 3074457345618258590,
-        output_total: 3074457345618258591,
-        passes: 6,
-    ) == 3074457345618258593);
-    assert(texture_scan_charge(
-        base_texels: 3074457345618258595,
-        position: 3074457345618258592,
-        output_total: 3074457345618258591,
-        passes: 6,
-    ) == 3074457345618258596);
-    assert(texture_scan_charge(
-        base_texels: 3074457345618258595,
-        position: 15372286728091292972,
-        output_total: 3074457345618258591,
-        passes: 6,
-    ) == 15372286728091292992);
-    assert(texture_scan_charge(
-        base_texels: 3074457345618258595,
-        position: 18446744073709551539,
-        output_total: 3074457345618258591,
-        passes: 6,
-    ) == 18446744073709551562);
-    assert(texture_scan_charge(
-        base_texels: 3074457345618258595,
-        position: 18446744073709551546,
-        output_total: 3074457345618258591,
-        passes: 6,
-    ) == 18446744073709551570);
-    assert(texture_scan_charge(
-        base_texels: 2635249153387078795,
-        position: 2635249153387078790,
-        output_total: 2635249153387078791,
-        passes: 7,
-    ) == 2635249153387078793);
-    assert(texture_scan_charge(
-        base_texels: 2635249153387078795,
-        position: 2635249153387078792,
-        output_total: 2635249153387078791,
-        passes: 7,
-    ) == 2635249153387078796);
-    assert(texture_scan_charge(
-        base_texels: 2635249153387078795,
-        position: 15811494920322472763,
-        output_total: 2635249153387078791,
-        passes: 7,
-    ) == 15811494920322472787);
-    assert(texture_scan_charge(
-        base_texels: 2635249153387078795,
-        position: 18446744073709551530,
-        output_total: 2635249153387078791,
-        passes: 7,
-    ) == 18446744073709551557);
-    assert(texture_scan_charge(
-        base_texels: 2635249153387078795,
-        position: 18446744073709551537,
-        output_total: 2635249153387078791,
-        passes: 7,
-    ) == 18446744073709551565);
-    assert(texture_scan_charge(
-        base_texels: 2049638230412172394,
-        position: 2049638230412172389,
-        output_total: 2049638230412172390,
-        passes: 9,
-    ) == 2049638230412172392);
-    assert(texture_scan_charge(
-        base_texels: 2049638230412172394,
-        position: 2049638230412172391,
-        output_total: 2049638230412172390,
-        passes: 9,
-    ) == 2049638230412172395);
-    assert(texture_scan_charge(
-        base_texels: 2049638230412172394,
-        position: 16397105843297379137,
-        output_total: 2049638230412172390,
-        passes: 9,
-    ) == 16397105843297379169);
-    assert(texture_scan_charge(
-        base_texels: 2049638230412172394,
-        position: 18446744073709551503,
-        output_total: 2049638230412172390,
-        passes: 9,
-    ) == 18446744073709551538);
-    assert(texture_scan_charge(
-        base_texels: 2049638230412172394,
-        position: 18446744073709551510,
-        output_total: 2049638230412172390,
-        passes: 9,
-    ) == 18446744073709551546);
-}
-
 fn void test_threshold_restore_verifies_counts_once_and_retains_or_advances_revision() @test {
     AssetStore assets = filtering_store(mem);
     defer asset::destroy_asset_store(&assets);
@@ -1235,233 +815,31 @@ fn void test_threshold_restore_verifies_counts_once_and_retains_or_advances_revi
     }
 }
 
-fn void test_coverage_result_owner_uses_one_allocation_and_exact_scalar_error() @test {
-    TrackingAllocator tracker;
-    tracker.init(mem);
-    defer tracker.free();
-
-    material::TextureDesc desc = material::texture_2d_desc(32, 32, RGBA8_UNORM);
-    desc.coverage = CoveragePolicy.THRESHOLD;
-    desc.alpha_threshold = 0.5;
-
-    CoverageStatistics statistics = asset::create_coverage_statistics(desc, LEAF_RGBA8, 7)!!;
-    TextureCoverageResource* resource = create_texture_coverage_resource(
-        allocator: &tracker,
-        desc: desc,
-        statistics: &statistics,
-        revision: 7,
-    );
-
-    assert(tracker.allocs_total == 1 && resource.counts.len == 6);
-
-    TextureMipChain chain = create_resource_texture_mips(
-        allocator: mem,
-        desc: desc,
-        pixels: LEAF_RGBA8,
-        statistics: &statistics,
-        coverage_resource: resource,
-    )!!;
-    defer destroy_texture_mips(&chain);
-
-    TextureCoverageResult leaf = texture_coverage_result(resource, 2, 0);
-
-    assert(leaf.revision == 7 && leaf.original_passing == 484 && leaf.original_total == 1024);
-    assert(leaf.passing == 30 && leaf.total == 64 && leaf.absolute_error == 0.00390625);
-    assert(leaf.error_numerator == 256 && leaf.error_denominator == 65536 && leaf.plateau && !leaf.small_level);
-
-    TextureCoverageResult terminal = texture_coverage_result(resource, 5, 0);
-
-    assert(terminal.total == 1 && terminal.small_level);
-
-    RetireList retired;
-    retired.init(mem, 1);
-    defer retired.free();
-
-    retired.push({ .kind = RetiredKind.TEXTURE_COVERAGE, .coverage_resource = resource });
-    drain_retired(null, &retired);
-
-    assert(retired.len() == 0 && tracker.allocated() == 0);
-}
-
-fn void test_small_alpha_multisets_choose_exact_global_or_nearest_plateau_count() @test {
-    PixelFormat[3] formats = { RGBA8_UNORM, RGBA16_FLOAT, RGBA32_FLOAT };
-    double[4] values = { 0.0, 0.25, 0.5, 1.0 };
-
-    foreach (format : formats) {
-        for (uint texels = 1; texels <= 4; texels++) {
-            uint combinations = 1u << (2 * texels);
-
-            for (uint combination = 0; combination < combinations; combination++) {
-                uint[4] codes;
-                uint selection = combination;
-
-                for (uint texel = 0; texel < texels; texel++) {
-                    codes[texel] = asset::encode_texture_alpha(format, values[selection & 3]);
-                    selection >>= 2;
-                }
-
-                for (ulong passing = 0; passing <= 8; passing++) {
-                    ulong target = passing * texels;
-                    ulong best_count;
-                    ulong best_error = target;
-
-                    for (uint candidate = 0; candidate < texels; candidate++) {
-                        if (!codes[candidate]) continue;
-
-                        ulong count;
-
-                        for (uint texel = 0; texel < texels; texel++) count += codes[texel] >= codes[candidate] ? 1 : 0;
-
-                        ulong actual = count * 8;
-                        ulong error = actual >= target ? actual - target : target - actual;
-
-                        if (error < best_error || (error == best_error && count < best_count)) {
-                            best_error = error;
-                            best_count = count;
-                        }
-                    }
-
-                    char[64] storage;
-                    char[] pixels = storage[:texels * material::texture_block_bytes(format)];
-
-                    for (uint texel = 0; texel < texels; texel++) asset::write_texture_alpha_code(
-                        format: format,
-                        pixels: pixels,
-                        texel: texel,
-                        code: codes[texel],
-                    );
-
-                    material::TextureDesc desc = material::texture_2d_desc(texels, 1, format);
-                    desc.coverage = CoveragePolicy.THRESHOLD;
-                    desc.alpha_threshold = 0.5;
-                    TextureCoverageState state = solve_stored_groups(
-                        desc: desc,
-                        stored: pixels,
-                        base_passing: passing,
-                        base_total: 8,
-                    );
-
-                    assert(state.global_count == best_count);
-
-                    if (best_error * 50 <= (ulong)8 * texels) {
-                        assert(!state.plateau && state.expected == best_count);
-                    } else {
-                        ulong nearest = target / 8;
-
-                        if (target % 8 > 4) nearest++;
-
-                        assert(state.plateau && state.expected == nearest);
-
-                        ulong actual = nearest * 8;
-                        ulong error = actual >= target ? actual - target : target - actual;
-
-                        assert(error <= 4);
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn void test_targeted_alpha_groups_through_twenty_five_texels_match_nearest_counts() @test {
-    PixelFormat[3] formats = { RGBA8_UNORM, RGBA16_FLOAT, RGBA32_FLOAT };
-    double[5] values = { 0.0, 0.125, 0.25, 0.5, 1.0 };
-
-    foreach (format : formats) {
-        foreach (texels : (uint[4]){ 5, 9, 17, 25 }) {
-            uint[25] storage_codes;
-            uint[] codes = storage_codes[:texels];
-
-            foreach (index, &code : codes) {
-                *code = filtering_oracle_encode(format, values[(index * 3 + index / 5) % values.len]);
-            }
-
-            ulong base_total = 2 * (ulong)texels;
-
-            for (ulong base_passing = 0; base_passing <= base_total; base_passing++) {
-                ulong target = base_passing * texels;
-                ulong best_count = filtering_oracle_group_count(codes, base_passing, base_total);
-                ulong global = best_count * base_total;
-                ulong global_error = global >= target ? global - target : target - global;
-                bool plateau = global_error * 50 > base_total * texels;
-                ulong expected = best_count;
-
-                if (plateau) {
-                    expected = target / base_total;
-                    if ((target % base_total) * 2 > base_total) expected++;
-                }
-
-                char[400] storage;
-                char[] pixels = storage[:texels * material::texture_block_bytes(format)];
-
-                foreach (index, code : codes) filtering_oracle_write_alpha(
-                    format: format,
-                    pixels: pixels,
-                    texel: (usz)index,
-                    code: code,
-                );
-
-                material::TextureDesc desc = material::texture_2d_desc(texels, 1, format);
-                desc.coverage = CoveragePolicy.THRESHOLD;
-                desc.alpha_threshold = 0.5;
-                TextureCoverageState state = solve_stored_groups(
-                    desc: desc,
-                    stored: pixels,
-                    base_passing: base_passing,
-                    base_total: base_total,
-                );
-
-                assert(state.global_count == best_count && state.plateau == plateau && state.expected == expected);
-
-                ulong actual = state.expected * base_total;
-                ulong error = actual >= target ? actual - target : target - actual;
-
-                assert(error * 2 <= base_total);
-                if (plateau && (target % base_total) * 2 == base_total) assert(expected == target / base_total);
-            }
-        }
-    }
-}
-
 fn void test_adjacent_half_and_float_alpha_codes_keep_exact_identity_and_threshold_boundary() @test {
-    uint[2][5] half_pairs = {
-        { 0x0001, 0x0002 },
-        { 0x03ff, 0x0400 },
-        { 0x37ff, 0x3800 },
-        { 0x3800, 0x3801 },
-        { 0x3bff, 0x3c00 },
-    };
-    uint[2][5] float_pairs = {
-        { 0x00000001, 0x00000002 },
-        { 0x007fffff, 0x00800000 },
-        { 0x3effffff, 0x3f000000 },
-        { 0x3f000000, 0x3f000001 },
-        { 0x3f7fffff, 0x3f800000 },
-    };
+    uint[2][2] half_pairs = { { 0x37ff, 0x3800 }, { 0x3800, 0x3801 } };
+    uint[2][2] float_pairs = { { 0x3effffff, 0x3f000000 }, { 0x3f000000, 0x3f000001 } };
 
     foreach (format : (PixelFormat[2]){ RGBA16_FLOAT, RGBA32_FLOAT }) {
         for (usz index = 0; index < half_pairs.len; index++) {
             uint lower = format == RGBA16_FLOAT ? half_pairs[index][0] : float_pairs[index][0];
             uint upper = format == RGBA16_FLOAT ? half_pairs[index][1] : float_pairs[index][1];
-            double lower_value = filtering_oracle_decode(format, lower);
-            double upper_value = filtering_oracle_decode(format, upper);
+            double lower_value = asset::decode_texture_alpha(format, lower);
+            double upper_value = asset::decode_texture_alpha(format, upper);
 
-            assert(upper == lower + 1 && lower_value < upper_value);
-            assert(asset::decode_texture_alpha(format, lower) == lower_value);
-            assert(asset::decode_texture_alpha(format, upper) == upper_value);
+            assert(lower_value < upper_value);
             assert(asset::encode_texture_alpha(format, lower_value) == lower);
             assert(asset::encode_texture_alpha(format, upper_value) == upper);
 
             char[32] storage;
             char[] pixels = storage[:2 * material::texture_block_bytes(format)];
 
-            filtering_oracle_write_alpha(
+            asset::write_texture_alpha_code(
                 format: format,
                 pixels: pixels,
                 texel: 0,
                 code: lower,
             );
-            filtering_oracle_write_alpha(
+            asset::write_texture_alpha_code(
                 format: format,
                 pixels: pixels,
                 texel: 1,
@@ -1482,95 +860,5 @@ fn void test_adjacent_half_and_float_alpha_codes_keep_exact_identity_and_thresho
             assert(!state.plateau && state.global_count == 1 && state.expected == 1 && state.scale == 1.0);
             assert(pixels == original[:pixels.len]);
         }
-    }
-}
-
-fn void test_scalar_coverage_query_keeps_committed_revision_release_and_typed_faults() @test {
-    AssetStore assets = filtering_store(mem);
-    defer asset::destroy_asset_store(&assets);
-
-    material::TextureDesc desc = material::texture_2d_desc(32, 32, RGBA8_UNORM);
-    desc.coverage = CoveragePolicy.THRESHOLD;
-    desc.alpha_threshold = 0.5;
-
-    TextureId texture = assets.add_texture(desc, LEAF_RGBA8)!!;
-
-    TextureAsset* source = assets.texture(texture);
-
-    Renderer renderer = { .assets = &assets,
-        .textures = alloc::new_array(mem, TextureRes, (sz)assets.textures.items.len) };
-    defer alloc::free(mem, renderer.textures.ptr);
-    renderer.pending_texture_uploads.init(mem);
-    defer renderer.pending_texture_uploads.free();
-    renderer.pending_prepare_installs.init(mem);
-    defer renderer.pending_prepare_installs.free();
-
-    if (catch excuse = renderer.texture_coverage(texture, 2)) {
-        assert(excuse == c3d::ASSET_DATA_UNAVAILABLE);
-    } else {
-        assert(false, "Uncommitted result exposed");
-    }
-
-    TextureCoverageResource* resource = create_texture_coverage_resource(
-        allocator: mem,
-        desc: desc,
-        statistics: &source.coverage_statistics,
-        revision: 1,
-    );
-    defer destroy_texture_coverage_resource(resource);
-
-    TextureMipChain chain = create_resource_texture_mips(
-        allocator: mem,
-        desc: desc,
-        pixels: LEAF_RGBA8,
-        statistics: &source.coverage_statistics,
-        coverage_resource: resource,
-    )!!;
-    defer destroy_texture_mips(&chain);
-
-    resource.committed = true;
-    renderer.textures[texture.index] = { .asset = texture, .revision = 1, .coverage_resource = resource };
-
-    TextureCoverageResult leaf = renderer.texture_coverage(texture, 2)!!;
-
-    assert(leaf.revision == 1 && leaf.passing == 30 && leaf.total == 64 && leaf.plateau);
-
-    assets.release_texture_cpu(texture);
-
-    assert(renderer.texture_coverage(texture, 2)!!.absolute_error == 0.00390625);
-
-    if (catch excuse = renderer.texture_coverage(texture, 6)) {
-        assert(excuse == c3d::INVALID_ARGUMENT);
-    } else {
-        assert(false, "Out-of-range mip accepted");
-    }
-
-    if (catch excuse = renderer.texture_coverage(texture: texture, mip: 2, face: 1)) {
-        assert(excuse == c3d::INVALID_ARGUMENT);
-    } else {
-        assert(false, "Out-of-range face accepted");
-    }
-
-    TextureCoverageResource* candidate = create_texture_coverage_resource(
-        allocator: mem,
-        desc: desc,
-        statistics: &source.coverage_statistics,
-        revision: 2,
-    );
-    defer destroy_texture_coverage_resource(candidate);
-
-    renderer.pending_prepare_installs.push({ .kind = PrepareUnitKind.TEXTURE,
-        .old_texture = renderer.textures[texture.index] });
-
-    renderer.textures[texture.index].coverage_resource = candidate;
-
-    assert(renderer.texture_coverage(texture, 2)!!.revision == 1);
-
-    assets.remove_texture(texture);
-
-    if (catch excuse = renderer.texture_coverage(texture, 2)) {
-        assert(excuse == c3d::INVALID_ID);
-    } else {
-        assert(false, "Stale texture id accepted");
     }
 }

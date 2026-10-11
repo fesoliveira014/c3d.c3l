@@ -97,7 +97,6 @@ fn void? validate_action_motion_capture(
         motion_basis: motion_basis,
         additive: desc.additive,
         additive_scale: desc.additive_scale,
-        diagnostic: null,
     )!;
 }
 
@@ -122,7 +121,6 @@ fn void? prepare_action_motion_capture(
         motion_basis: motion_basis,
         additive: action.additive,
         additive_scale: action.additive_scale,
-        diagnostic: null,
     )!;
 
     CapturedMotionChain* captured = alloc::new_try(allocator, CapturedMotionChain)
@@ -196,7 +194,6 @@ fn void? validate_live_motion_addition(
         motion_basis: basis,
         additive: desc.additive,
         additive_scale: desc.additive_scale,
-        diagnostic: null,
     )) {
         if (excuse != c3d::UNSUPPORTED) return excuse~;
         unsupported = true;
@@ -213,7 +210,6 @@ fn void? validate_live_motion_addition(
                 motion_basis: basis,
                 additive: action.additive,
                 additive_scale: action.additive_scale,
-                diagnostic: null,
             )) {
                 if (excuse != c3d::UNSUPPORTED) return excuse~;
                 unsupported = true;

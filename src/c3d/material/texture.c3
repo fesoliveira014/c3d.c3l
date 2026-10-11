@@ -57,20 +57,6 @@ enum CoveragePolicy {
     ALL_FAIL,
 }
 
-<* Committed coverage counts and exact error; absolute_error is rounded. *>
-struct TextureCoverageResult {
-    uint revision;
-    ulong original_passing;
-    ulong original_total;
-    ulong passing;
-    ulong total;
-    uint128 error_numerator;
-    uint128 error_denominator;
-    double absolute_error;
-    bool small_level;
-    bool plateau;
-}
-
 <*
  Dimensions and format of a texture; owns no pixels.
 *>

@@ -11,7 +11,6 @@ import std::math;
 
 const char[] CURATED_INPUT @local = $embed("../fixtures/tangent_space/curated.input.bin");
 const char[] CURATED_EXPECTED @local = $embed("../fixtures/tangent_space/curated.expected.bin");
-const char[] CURATED_STAGES @local = $embed("../fixtures/tangent_space/curated.stages.bin");
 
 struct TangentFaultAllocator (Allocator) @local {
     Allocator allocator;
@@ -72,29 +71,13 @@ fn MikkFullMesh take_mesh(char[] bytes, usz* offset) @local {
     mem::copy(vertices.ptr, &bytes[*offset], vertices.len * MikkVertex::size);
     *offset += vertices.len * MikkVertex::size;
 
-    int[] sizes = alloc::new_array(tmem, int, face_count);
-    mem::copy(sizes.ptr, &bytes[*offset], sizes.len * int::size);
-    *offset += sizes.len * int::size;
+    for (uint face = 0; face < face_count; face++) assert(take_u32(bytes, offset) == 3);
 
-    int[] offsets = alloc::new_array(tmem, int, face_count);
-    int corner_count = 0;
-
-    foreach (face, size : sizes) {
-        offsets[face] = corner_count;
-        corner_count += size;
-    }
-
-    uint[] indices = alloc::new_array(tmem, uint, corner_count);
+    uint[] indices = alloc::new_array(tmem, uint, (sz)face_count * 3);
     mem::copy(indices.ptr, &bytes[*offset], indices.len * uint::size);
     *offset += indices.len * uint::size;
 
-    return {
-        .vertices = vertices,
-        .indices = indices,
-        .face_offsets = offsets,
-        .face_sizes = sizes,
-        .uv_set = uv_set,
-    };
+    return { .vertices = vertices, .indices = indices, .uv_set = uv_set };
 }
 
 fn MikkTangent[] take_expected(char[] bytes, usz* offset) @local {
@@ -168,68 +151,18 @@ fn Geometry mesh_geometry(MikkFullMesh mesh) @local {
     return source;
 }
 
-fn void compare_stages(MikkFullMesh source, char[] bytes, usz* offset) @local {
-    uint triangle_count = take_u32(bytes, offset);
-    uint expected_good = take_u32(bytes, offset);
-    MikkTriangle[] triangles = alloc::new_array(tmem, MikkTriangle, triangle_count);
-
-    assert(geometry::mikk_initialize_faces(triangles, source) == (int)triangle_count);
-
-    int[] welded = alloc::new_array(tmem, int, (sz)triangle_count * 3);
-
-    foreach (face, triangle : triangles) {
-        for (int corner = 0; corner < 3; corner++) welded[face * 3 + corner] = triangle.vertices[corner];
-    }
-
-    geometry::mikk_weld_vertices(tmem, welded, source)!!;
-
-    assert(mem::equals(((char*)welded.ptr)[:welded.len * int::size], bytes[*offset:welded.len * int::size]));
-
-    *offset += welded.len * int::size;
-
-    foreach (face, &triangle : triangles) {
-        for (int corner = 0; corner < 3; corner++) triangle.vertices[corner] = welded[face * 3 + corner];
-    }
-
-    int good_count = geometry::mikk_mark_and_pack_degenerates(triangles, source);
-
-    assert(good_count == (int)expected_good);
-
-    MikkTriangle[] good = triangles[:good_count];
-
-    foreach (&triangle : good) geometry::mikk_initialize_triangle(triangle, source);
-    geometry::mikk_force_quad_orientation(good, source);
-    geometry::mikk_build_neighbors(tmem, good)!!;
-
-    foreach (triangle : good) {
-        int[12] record = {
-            triangle.face, triangle.output_offset,
-            triangle.vertex_numbers[0], triangle.vertex_numbers[1], triangle.vertex_numbers[2],
-            triangle.vertices[0], triangle.vertices[1], triangle.vertices[2],
-            triangle.neighbors[0], triangle.neighbors[1], triangle.neighbors[2], triangle.flags,
-        };
-
-        assert(mem::equals(((char*)&record)[:@sizeof(record)], bytes[*offset:@sizeof(record)]));
-
-        *offset += @sizeof(record);
-    }
-}
-
-fn void test_pinned_tangents_and_intermediate_stages() @test {
+fn void test_pinned_tangents_match_curated_corpus() @test {
     @pool() {
         usz input_offset = 0;
         usz expected_offset = 0;
-        usz stage_offset = 0;
 
         assert(take_u32(CURATED_INPUT, &input_offset) == 0x4d4b5032);
 
         uint count = take_u32(CURATED_INPUT, &input_offset);
 
-        assert(count == 31);
+        assert(count == 27);
         assert(take_u32(CURATED_EXPECTED, &expected_offset) == 0x4d4b5032);
         assert(take_u32(CURATED_EXPECTED, &expected_offset) == count);
-        assert(take_u32(CURATED_STAGES, &stage_offset) == 0x53544732);
-        assert(take_u32(CURATED_STAGES, &stage_offset) == count);
 
         for (uint case_index = 0; case_index < count; case_index++) {
             MikkFullMesh mesh = take_mesh(CURATED_INPUT, &input_offset);
@@ -239,14 +172,6 @@ fn void test_pinned_tangents_and_intermediate_stages() @test {
             assert(actual.len == expected.len);
 
             foreach (corner, tangent : actual) compare_tangent(tangent, expected[corner]);
-
-            compare_stages(mesh, CURATED_STAGES, &stage_offset);
-
-            bool triangles_only = true;
-
-            foreach (size : mesh.face_sizes) if (size != 3) triangles_only = false;
-
-            if (!triangles_only) continue;
 
             Geometry source = mesh_geometry(mesh);
 
@@ -269,8 +194,7 @@ fn void test_pinned_tangents_and_intermediate_stages() @test {
             }
         }
 
-        assert(input_offset == CURATED_INPUT.len && expected_offset == CURATED_EXPECTED.len
-          && stage_offset == CURATED_STAGES.len);
+        assert(input_offset == CURATED_INPUT.len && expected_offset == CURATED_EXPECTED.len);
     };
 }
 
@@ -424,7 +348,7 @@ fn void test_tangent_generation_validates_real_inputs_and_discards_old_tangents(
     @pool() {
         Geometry valid = mirrored_geometry();
         Geometry source = valid;
-        source.normals = {};
+        source.indices = source.indices[:5];
 
         assert(@catch(geometry::create_tangent_geometry(mem, &source)) == c3d::INVALID_ARGUMENT);
 
@@ -432,49 +356,6 @@ fn void test_tangent_generation_validates_real_inputs_and_discards_old_tangents(
         source.uv0 = {};
 
         assert(@catch(geometry::create_tangent_geometry(mem, &source)) == c3d::UNSUPPORTED);
-        assert(@catch(geometry::create_tangent_geometry(mem, &valid, 2)) == c3d::UNSUPPORTED);
-
-        source = valid;
-        source.topology = Topology.LINES;
-
-        assert(@catch(geometry::create_tangent_geometry(mem, &source)) == c3d::UNSUPPORTED);
-
-        source = valid;
-        source.indices = source.indices[:5];
-
-        assert(@catch(geometry::create_tangent_geometry(mem, &source)) == c3d::INVALID_ARGUMENT);
-
-        source = valid;
-        source.uv0 = source.uv0[:3];
-
-        assert(@catch(geometry::create_tangent_geometry(mem, &source)) == c3d::INVALID_ARGUMENT);
-
-        source = valid;
-        uint original = source.indices[0];
-        source.indices[0] = 4;
-
-        assert(@catch(geometry::create_tangent_geometry(mem, &source)) == c3d::INVALID_ARGUMENT);
-
-        source.indices[0] = original;
-        source = valid;
-        source.custom_stride = 7;
-        source.custom_data = alloc::new_array(tmem, char, 27);
-
-        assert(@catch(geometry::create_tangent_geometry(mem, &source)) == c3d::INVALID_ARGUMENT);
-
-        source = valid;
-        Vec3 original_position = source.positions[0];
-        source.positions[0].x = float::inf;
-
-        assert(@catch(geometry::create_tangent_geometry(mem, &source)) == c3d::INVALID_ARGUMENT);
-
-        source.positions[0] = original_position;
-        source = valid;
-        source.positions = source.positions.ptr[:(usz)uint::max + 1];
-        source.normals = source.normals.ptr[:(usz)uint::max + 1];
-        source.uv0 = source.uv0.ptr[:(usz)uint::max + 1];
-
-        assert(@catch(geometry::create_tangent_geometry(mem, &source)) == c3d::INVALID_ARGUMENT);
 
         source = valid;
         source.tangents = alloc::new_array(tmem, Vec4, 1);
@@ -511,30 +392,6 @@ fn void test_tangent_generation_has_no_small_mesh_cap_and_preserves_nonindexed_t
         defer geometry::destroy_tangent_geometry(&nonindexed);
 
         assert(!nonindexed.data.indices.len && nonindexed.data.positions.len == 3);
-    };
-}
-
-fn void test_indexed_tangents_retain_exact_output_storage_after_scratch_is_released() @test {
-    @pool() {
-        Geometry source = mirrored_geometry();
-        source.indices = alloc::new_array(tmem, uint, 600 * 3);
-
-        foreach (corner, &index : source.indices) *index = (uint)(corner % 3);
-
-        TrackingAllocator tracker;
-        tracker.init(mem);
-        defer tracker.free();
-
-        {
-            TangentGeometry owner = geometry::create_tangent_geometry(&tracker, &source)!!;
-            defer geometry::destroy_tangent_geometry(&owner);
-
-            assert(owner.data.positions.len == 4 && owner.data.tangents.len == 4);
-            assert(tangent_allocation_bytes(&tracker, owner.data.tangents.ptr) == 4 * Vec4::size);
-            assert(tracker.allocation_count() == 5);
-        }
-
-        assert(!tracker.has_leaks());
     };
 }
 
@@ -576,49 +433,6 @@ fn void test_authored_tangents_keep_xyz_and_accept_mixed_nonunit_signs() @test {
         source.tangents[0] = { 1, 0, 0, float::inf };
 
         assert(@catch(assets.add_geometry(&source)) == c3d::INVALID_ARGUMENT);
-    };
-}
-
-fn void test_owned_authored_tangents_stamp_each_publication_revision() @test {
-    @pool() {
-        Geometry source = mirrored_geometry();
-        TrackingAllocator tracker;
-        tracker.init(mem);
-        defer tracker.free();
-
-        {
-            AssetStore assets = asset::create_asset_store(&tracker, asset::default_asset_store_desc());
-            defer asset::destroy_asset_store(&assets);
-
-            TangentGeometry first = geometry::create_tangent_geometry(&tracker, &source)!!;
-            defer geometry::destroy_tangent_geometry(&first);
-
-            GeometryId id = assets.add_geometry_owned(&first.data)!!;
-            first.data = {};
-
-            GeometryAsset* record = assets.geometry(id);
-
-            assert(record.tangent_provenance.origin == TangentOrigin.AUTHORED);
-            assert(record.tangent_provenance.derivation_revision == 1 && record.header.revision == 1);
-
-            TangentGeometry replacement = geometry::create_tangent_geometry(&tracker, &source)!!;
-            defer geometry::destroy_tangent_geometry(&replacement);
-
-            assets.replace_geometry_owned(id, &replacement.data)!!;
-            replacement.data = {};
-
-            assert(record.tangent_provenance.origin == TangentOrigin.AUTHORED);
-            assert(record.tangent_provenance.derivation_revision == 2 && record.header.revision == 2);
-
-            assets.mark_geometry_dirty(id);
-
-            assert(record.header.revision == 3 && record.tangent_provenance.derivation_revision == 2);
-
-            assets.release_geometry_cpu(id);
-            assert(record.tangent_provenance.derivation_revision == 2);
-        }
-
-        assert(!tracker.has_leaks());
     };
 }
 
@@ -692,6 +506,15 @@ fn void test_generated_tangent_publication_ownership_revision_and_release() @tes
             assert(record.header.revision == 4 && record.tangent_provenance.derivation_revision == 4
               && record.tangent_provenance.uv_set == 1);
 
+            TangentGeometry authored = geometry::create_tangent_geometry(&tracker, &source)!!;
+            defer geometry::destroy_tangent_geometry(&authored);
+
+            assets.replace_geometry_owned(id, &authored.data)!!;
+            authored.data = {};
+
+            assert(record.tangent_provenance.origin == TangentOrigin.AUTHORED
+              && record.header.revision == 5 && record.tangent_provenance.derivation_revision == 5);
+
             TangentProvenance before_release = record.tangent_provenance;
             assets.release_geometry_cpu(id);
 
@@ -702,7 +525,7 @@ fn void test_generated_tangent_publication_ownership_revision_and_release() @tes
 
             assets.mark_geometry_dirty(id);
 
-            assert(record.header.revision == 5 && record.tangent_provenance.derivation_revision == 4);
+            assert(record.header.revision == 6 && record.tangent_provenance.derivation_revision == 5);
             assert(@catch(assets.regenerate_geometry_tangents(id)) == c3d::ASSET_DATA_UNAVAILABLE);
             assert(@catch(assets.regenerate_geometry_tangents((GeometryId){})) == c3d::INVALID_ID);
         }

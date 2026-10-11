@@ -1177,7 +1177,7 @@ fn void test_budgeted_prepare_matches_synchronous_prepare() @test {
     PrepareProgress progress = renderer.prepare_progress(prepare);
     for (uint frame = 0; frame < PREPARE_FRAME_LIMIT && progress.state != PrepareState.READY; frame++) {
         renderer.begin_frame()!!;
-        renderer.advance_prepares(PREPARE_TEST_BYTES)!!;
+        renderer.advance_prepares_within({ .staged_bytes = PREPARE_TEST_BYTES })!!;
         renderer.end_frame()!!;
         progress = renderer.prepare_progress(prepare);
     }

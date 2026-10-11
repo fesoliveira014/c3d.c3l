@@ -11,9 +11,6 @@ import std::core::dstring;
 import std::core::string;
 import std::math;
 
-<* Version of the deterministic loading corpus. *>
-const uint FIXTURE_VERSION = 1;
-
 <* Seed of the generated texture corpus shared by CPU and Vulkan preparation checks. *>
 const uint PREPARATION_IMAGE_SEED = 0x2545f491;
 const uint PREPARATION_RANDOM_MULTIPLIER @local = 1664525; // reproduces the existing texture corpus

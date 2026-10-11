@@ -1,48 +1,10 @@
-module c3d::test::animation_authoring_masks;
+module c3d::test::anim;
 
 import c3d;
 import c3d::anim @public;
 import c3d::asset;
 import c3d::maths;
 import std::math;
-
-struct MaskAllocationProbe (Allocator) @local {
-    Allocator backing;
-    sz remaining;
-    sz outstanding;
-    sz attempts;
-}
-
-fn void*? MaskAllocationProbe.acquire(
-    &self,
-    sz size,
-    AllocInitType init_type,
-    sz alignment,
-) @dynamic {
-    self.attempts++;
-    if (self.remaining <= 0) return mem::OUT_OF_MEMORY~;
-    self.remaining--;
-    void* pointer = self.backing.acquire(size, init_type, alignment)!;
-    self.outstanding++;
-    return pointer;
-}
-
-fn void*? MaskAllocationProbe.resize(
-    &self,
-    void* pointer,
-    sz size,
-    sz alignment,
-) @dynamic {
-    self.attempts++;
-    if (self.remaining <= 0) return mem::OUT_OF_MEMORY~;
-    self.remaining--;
-    return self.backing.resize(pointer, size, alignment);
-}
-
-fn void MaskAllocationProbe.release(&self, void* pointer, bool aligned) @dynamic {
-    self.backing.release(pointer, aligned);
-    self.outstanding--;
-}
 
 fn AssetStore mask_store() @local {
     return asset::create_asset_store(mem, {
@@ -215,51 +177,58 @@ fn void test_animation_authoring_feathered_maximum_depth_does_not_wrap() @test {
     assert(mask.nodes[6] == mask.nodes[1]);
 }
 
-fn void test_animation_authoring_weighted_mask_faults_precede_allocation() @test {
+fn void test_animation_authoring_mask_faults_precede_allocation() @test {
     AssetStore assets = mask_store();
     defer asset::destroy_asset_store(&assets);
     ModelId model = mask_model(&assets);
-    MaskAllocationProbe allocator = { .backing = mem };
+    AuthoringAllocationProbe allocator = { .backing = mem };
     String[1] names = { "arm" };
-    float[1] weights;
-    foreach (invalid : (float[5]){ -0.01f, 1.01f, float::nan, float::inf, -float::inf }) {
-        weights[0] = invalid;
-        if (catch excuse = anim::create_weighted_joint_mask(
+    uint[1] depths = { 3 };
+    foreach (invalid : (float[2]){ 1.01f, float::nan }) {
+        float[1] weights = { invalid };
+        assert(@catch(anim::create_weighted_joint_mask(
             allocator: &allocator,
             assets: &assets,
             model: model,
             names: names[..],
             weights: weights[..],
-        )) {
-            assert(excuse == c3d::INVALID_ARGUMENT);
-        } else {
-            assert(false);
-        }
+        )) == c3d::INVALID_ARGUMENT);
     }
-    if (catch excuse = anim::create_weighted_joint_mask(
+
+    float[1] weights = { 0.5f };
+    assert(@catch(anim::create_weighted_joint_mask(
         allocator: &allocator,
         assets: &assets,
         model: model,
         names: names[..],
         weights: {},
-    )) {
-        assert(excuse == c3d::INVALID_ARGUMENT);
-    } else {
-        assert(false);
-    }
-    weights[0] = 0.5f;
-    names[0] = "missing";
-    if (catch excuse = anim::create_weighted_joint_mask(
+    )) == c3d::INVALID_ARGUMENT);
+    assert(@catch(anim::create_feathered_joint_mask(
         allocator: &allocator,
         assets: &assets,
         model: model,
         names: names[..],
         weights: weights[..],
-    )) {
-        assert(excuse == NOT_FOUND);
-    } else {
-        assert(false);
-    }
+        depths: {},
+    )) == c3d::INVALID_ARGUMENT);
+    String[1] missing = { "missing" };
+    assert(@catch(anim::create_weighted_joint_mask(
+        allocator: &allocator,
+        assets: &assets,
+        model: model,
+        names: missing[..],
+        weights: weights[..],
+    )) == NOT_FOUND);
+
+    assets.remove_model(model);
+    assert(@catch(anim::create_feathered_joint_mask(
+        allocator: &allocator,
+        assets: &assets,
+        model: model,
+        names: names[..],
+        weights: weights[..],
+        depths: depths[..],
+    )) == c3d::INVALID_ID);
     assert(allocator.attempts == 0 && allocator.outstanding == 0);
 }
 
@@ -325,42 +294,6 @@ fn void test_animation_authoring_weighted_mask_identity_layout_and_value_admissi
     assert(mask.model_names[1] == "arm" && mask.model_parents[3] == 2);
 }
 
-fn void test_animation_authoring_feathered_mask_shape_and_stale_id_faults() @test {
-    AssetStore assets = mask_store();
-    defer asset::destroy_asset_store(&assets);
-    ModelId model = mask_model(&assets);
-    MaskAllocationProbe allocator = { .backing = mem };
-    String[1] names = { "arm" };
-    float[1] weights = { 0.5f };
-    uint[1] depths = { 3 };
-    if (catch excuse = anim::create_feathered_joint_mask(
-        allocator: &allocator,
-        assets: &assets,
-        model: model,
-        names: names[..],
-        weights: weights[..],
-        depths: {},
-    )) {
-        assert(excuse == c3d::INVALID_ARGUMENT);
-    } else {
-        assert(false);
-    }
-    assets.remove_model(model);
-    if (catch excuse = anim::create_feathered_joint_mask(
-        allocator: &allocator,
-        assets: &assets,
-        model: model,
-        names: names[..],
-        weights: weights[..],
-        depths: depths[..],
-    )) {
-        assert(excuse == c3d::INVALID_ID);
-    } else {
-        assert(false);
-    }
-    assert(allocator.attempts == 0 && allocator.outstanding == 0);
-}
-
 fn void test_animation_authoring_weighted_mask_allocation_failures_release_every_owner() @test {
     AssetStore assets = mask_store();
     defer asset::destroy_asset_store(&assets);
@@ -371,7 +304,7 @@ fn void test_animation_authoring_weighted_mask_allocation_failures_release_every
     for (uint feathered = 0; feathered < 2; feathered++) {
         bool succeeded;
         for (sz allowance = 0; allowance < 16; allowance++) {
-            MaskAllocationProbe allocator = { .backing = mem, .remaining = allowance };
+            AuthoringAllocationProbe allocator = { .backing = mem, .remaining = allowance };
             WeightedJointMask? attempt;
             if (feathered) {
                 attempt = anim::create_feathered_joint_mask(

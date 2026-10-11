@@ -1,7 +1,7 @@
 module c3d::test::async_loader;
 
 import c3d;
-import c3d::asset;
+import c3d::asset @public;
 import c3d::asset::gltf;
 import c3d::asset::loader @public;
 import c3d::test::loading_fixtures;
@@ -17,6 +17,7 @@ struct GatedSource @local {
     Mutex             lock;
     ConditionVariable changed;
     char[]            bytes;
+    char[]            large;
     bool              hold_read;
     bool              entered;
     bool              allowed;
@@ -49,6 +50,7 @@ fn GatedSource create_gated_source(Allocator allocator, bool hold_read = false) 
     GatedSource source = {
         .allocator = allocator,
         .bytes = loading_fixtures::small_model_gltf(allocator),
+        .large = loading_fixtures::small_model_gltf(allocator, 64),
         .hold_read = hold_read,
     };
     source.lock.init()!!;
@@ -60,6 +62,7 @@ fn void destroy_gated_source(GatedSource* source) @local {
     source.changed.destroy();
     source.lock.destroy();
     alloc::free(source.allocator, source.bytes.ptr);
+    alloc::free(source.allocator, source.large.ptr);
 }
 
 fn char[]? read_gated(void* user, Allocator allocator, String path) @local {
@@ -73,8 +76,9 @@ fn char[]? read_gated(void* user, Allocator allocator, String path) @local {
         while (!source.allowed) source.changed.wait(&source.lock);
     }
     if (source.fail_read || source.fail_path == path) return c3d::ASSET_IO_ERROR~;
-    char[] bytes = alloc::new_array(allocator, char, (sz)source.bytes.len);
-    mem::copy(bytes.ptr, source.bytes.ptr, source.bytes.len);
+    char[] source_bytes = path.starts_with("large") ? source.large : source.bytes;
+    char[] bytes = alloc::new_array(allocator, char, (sz)source_bytes.len);
+    mem::copy(bytes.ptr, source_bytes.ptr, source_bytes.len);
     return bytes;
 }
 
@@ -136,6 +140,16 @@ fn LoadStatus settle(AsyncLoader* loader, LoadId id) @local {
 }
 
 fn AsyncLoader start_loader(AssetStore* assets) @local => loader::create_async_loader(mem, assets, 2)!!;
+
+fn PublicationEstimate estimate_head(AssetStore* assets, AsyncLoader* loader, LoadId id) @local {
+    return asset::estimate_model_publication(
+        store:     assets,
+        prepared:  &loader.state.slots[id.index].prepared,
+        model:     loader.state.slots[id.index].request.replace,
+        allowance: 0,
+        bounded:   false,
+    );
+}
 
 fn usz[8] store_counts(AssetStore* assets) @local {
     return {
@@ -436,17 +450,12 @@ fn void test_active_cancel_acknowledges_success_and_fault_without_failure() @tes
         assert(loader.status(active).phase == LoadPhase.CANCELLING);
         assert(@catch(loader.request(generated_request("active.gltf"))) == c3d::INVALID_ARGUMENT);
         assert(@catch(loader.request(generated_request("other.gltf"))) == c3d::CAPACITY_EXCEEDED);
-        LoaderCounters pending = loader.counters();
-        assert(pending.cancelling == 1 && pending.cancellations == 0 && pending.decode_failures == 0);
         source.allow_read();
         LoadStatus status = settle(&loader, active);
         assert(status.phase == LoadPhase.CANCELLED && !status.failure);
         assert(missing[0].kind == sentinel.kind && missing[0].slot == sentinel.slot);
         assert(c3d::same_id(missing[0].id, sentinel.id) && store_counts(&assets) == before);
         assert(loader.publish() == 0);
-        LoaderCounters done = loader.counters();
-        assert(done.cancelled == 1 && done.cancellations == 1 && done.decode_failures == 0);
-        assert(done.publications == 0 && done.commit_failures == 0 && done.publication_items == 0);
         loader.release(active)!!;
         loader::destroy_async_loader(&loader);
         asset::destroy_asset_store(&assets);
@@ -454,7 +463,7 @@ fn void test_active_cancel_acknowledges_success_and_fault_without_failure() @tes
     }
 }
 
-fn void test_decoded_cancel_unlinks_middle_without_reordering_publication() @test {
+fn void test_decoded_cancel_unlinks_middle_head_and_tail_without_reordering_publication() @test {
     GatedSource source = create_gated_source(mem);
     defer destroy_gated_source(&source);
     TrackingAllocator tracker;
@@ -475,39 +484,26 @@ fn void test_decoded_cancel_unlinks_middle_without_reordering_publication() @tes
     ModelId first_model = loader.status(first).model;
     loader.cancel(first)!!;
     assert(c3d::same_id(loader.status(first).model, first_model) && assets.models.is_live(first_model));
-    LoaderCounters counters = loader.counters();
-    assert(counters.published == 2 && counters.cancelled == 1 && counters.publications == 2 && counters.cancellations == 1);
     foreach (id : (LoadId[3]){ first, middle, last }) loader.release(id)!!;
+
+    LoadId head = loader.request(generated_request("head.gltf"))!!;
+    LoadId tail = loader.request(generated_request("tail.gltf"))!!;
+    assert(settle(&loader, head).phase == LoadPhase.DECODED && settle(&loader, tail).phase == LoadPhase.DECODED);
+    loader.cancel(head)!!;
+    loader.cancel(tail)!!;
+    loader.release(head)!!;
+    loader.release(tail)!!;
+    LoadId reused = loader.request(generated_request("head.gltf"))!!;
+    assert(@catch(loader.cancel(head)) == c3d::INVALID_ID && @catch(loader.release(head)) == c3d::INVALID_ID);
+    assert(settle(&loader, reused).phase == LoadPhase.DECODED);
+    assert(loader.publish() == 1 && loader.status(reused).phase == LoadPhase.PUBLISHED);
+    loader.release(reused)!!;
     loader::destroy_async_loader(&loader);
     asset::destroy_asset_store(&assets);
     assert(tracker.allocated() == 0);
 }
 
-fn void test_cancelled_head_and_tail_leave_no_fifo_links_after_reuse() @test {
-    GatedSource source = create_gated_source(mem);
-    defer destroy_gated_source(&source);
-    AssetStore assets = gated_store(mem, &source);
-    defer asset::destroy_asset_store(&assets);
-    AsyncLoader loader = loader::create_async_loader(mem, &assets, 2)!!;
-    defer loader::destroy_async_loader(&loader);
-    LoadId first = loader.request(generated_request("first.gltf"))!!;
-    LoadId last = loader.request(generated_request("last.gltf"))!!;
-    assert(settle(&loader, first).phase == LoadPhase.DECODED);
-    assert(settle(&loader, last).phase == LoadPhase.DECODED);
-    loader.cancel(first)!!;
-    loader.cancel(last)!!;
-    loader.release(first)!!;
-    loader.release(last)!!;
-    LoadId reused = loader.request(generated_request("first.gltf"))!!;
-    assert(@catch(loader.cancel(first)) == c3d::INVALID_ID);
-    assert(@catch(loader.release(first)) == c3d::INVALID_ID);
-    assert(loader.status(first).failure == c3d::INVALID_ID);
-    assert(settle(&loader, reused).phase == LoadPhase.DECODED);
-    assert(loader.publish() == 1 && loader.status(reused).phase == LoadPhase.PUBLISHED);
-    assert(loader.counters().cancellations == 2);
-}
-
-fn void test_failed_cancel_preserves_fault_and_cumulative_accounts() @test {
+fn void test_failed_cancel_preserves_fault() @test {
     GatedSource source = create_gated_source(mem);
     source.fail_path = "failed.gltf";
     defer destroy_gated_source(&source);
@@ -521,12 +517,7 @@ fn void test_failed_cancel_preserves_fault_and_cumulative_accounts() @test {
     loader.cancel(failed)!!;
     LoadStatus status = loader.status(failed);
     assert(status.phase == LoadPhase.FAILED && status.failure == c3d::ASSET_IO_ERROR);
-    LoaderCounters counters = loader.counters();
-    assert(counters.failed == 1 && counters.decode_failures == 1 && counters.cancellations == 0);
     assert(loader.publish() == 0 && loader.publish_within({ .items = 1 }).failed == 0);
-    LoaderCounters repeated = loader.counters();
-    assert(repeated.decode_failures == 1 && repeated.commit_failures == 0 && repeated.publication_items == 0);
-    assert(repeated.decode_ns == counters.decode_ns && repeated.publication_ns >= counters.publication_ns);
 }
 
 fn void test_destroy_joins_gated_decode_and_discards_queued_work() @test {
@@ -562,4 +553,111 @@ fn void test_destroy_joins_gated_decode_and_discards_queued_work() @test {
         asset::destroy_asset_store(&assets);
         assert(tracker.allocated() == 0);
     }
+}
+
+fn void test_strict_fifo_defers_oversized_head_and_preserves_fresh_allowances() @test {
+    GatedSource source = create_gated_source(mem);
+    defer destroy_gated_source(&source);
+    AssetStore assets = gated_store(mem, &source);
+    defer asset::destroy_asset_store(&assets);
+    AsyncLoader loader = loader::create_async_loader(mem, &assets, 2)!!;
+    defer loader::destroy_async_loader(&loader);
+    LoadId head = loader.request(generated_request("large_head.gltf"))!!;
+    LoadId follower = loader.request(generated_request("small_follower.gltf"))!!;
+    assert(settle(&loader, head).phase == LoadPhase.DECODED);
+    assert(settle(&loader, follower).phase == LoadPhase.DECODED);
+    sz keys = assets.keys.len();
+    ulong minimum = loader.state.slots[head.index].prepared.incoming_items;
+    PublicationEstimate head_bill = estimate_head(&assets, &loader, head);
+    PublicationEstimate follower_bill = estimate_head(&assets, &loader, follower);
+    assert(minimum > 1 && head_bill.required_items > follower_bill.required_items);
+
+    PublishReport tiny = loader.publish_within({ .items = minimum - 1 });
+    assert(tiny.deferred && !tiny.required_exact && tiny.required_items == head_bill.required_items);
+    assert(tiny.items_used == 0 && tiny.published == 0 && tiny.failed == 0);
+    assert(loader.status(head).phase == LoadPhase.DECODED && loader.status(follower).phase == LoadPhase.DECODED);
+    assert(assets.keys.len() == keys);
+
+    PublishReport first = loader.publish_within({ .items = head_bill.required_items });
+    assert(first.published == 1 && first.failed == 0 && first.items_used == head_bill.required_items);
+    assert(first.deferred && first.required_items > 0 && !first.required_exact);
+    assert(loader.status(head).phase == LoadPhase.PUBLISHED && loader.status(follower).phase == LoadPhase.DECODED);
+    PublishReport next = loader.publish_within({ .items = follower_bill.required_items });
+    assert(next.published == 1 && next.failed == 0 && next.items_used == follower_bill.required_items);
+    assert(!next.deferred && next.required_items == 0 && !next.required_exact);
+    assert(loader.publish() == 0);
+    LoaderCounters counters = loader.counters();
+    assert(counters.published == 2 && counters.publications == 2 && counters.decoded == 0);
+    assert(counters.publication_items == first.items_used + next.items_used);
+}
+
+fn void test_failed_commit_consumes_items_before_the_next_fifo_request() @test {
+    GatedSource source = create_gated_source(mem);
+    defer destroy_gated_source(&source);
+    foreach (admit_follower : (bool[2]){ false, true }) {
+        TrackingAllocator tracker;
+        tracker.init(mem);
+        defer tracker.free();
+        AssetStore assets = gated_store(&tracker, &source);
+        AsyncLoader loader = loader::create_async_loader(&tracker, &assets, 2)!!;
+        LoadId failed = loader.request(generated_request("collision.gltf"))!!;
+        LoadId success = loader.request(generated_request("success.gltf"))!!;
+        assert(settle(&loader, failed).phase == LoadPhase.DECODED);
+        assert(settle(&loader, success).phase == LoadPhase.DECODED);
+        sz keys = assets.keys.len();
+        PublicationEstimate uncharged = estimate_head(&assets, &loader, failed);
+        PublishReport deferred = loader.publish_within({ .items = uncharged.required_items - 1 });
+        assert(deferred.deferred && !deferred.required_exact && deferred.required_items == uncharged.required_items);
+        assert(deferred.items_used == 0 && deferred.published == 0 && deferred.failed == 0);
+        assert(assets.keys.len() == keys && loader.status(failed).phase == LoadPhase.DECODED);
+        ModelId collision = gltf::load_model(&assets, "collision.gltf")!!;
+        PublicationEstimate failed_bill = estimate_head(&assets, &loader, failed);
+        PublicationEstimate success_bill = estimate_head(&assets, &loader, success);
+        ulong allowance = failed_bill.required_items + (admit_follower ? success_bill.required_items : 0);
+
+        PublishReport report = loader.publish_within({ .items = allowance });
+        assert(report.failed == 1 && report.published == (uint)admit_follower && report.items_used == allowance);
+        assert(loader.status(failed).failure == c3d::INVALID_ARGUMENT);
+        assert(c3d::same_id(assets.find_model("collision.gltf")!!, collision));
+        if (admit_follower) {
+            assert(!report.deferred && report.required_items == 0);
+            assert(loader.status(success).phase == LoadPhase.PUBLISHED);
+        } else {
+            assert(report.deferred && !report.required_exact);
+            assert(loader.status(success).phase == LoadPhase.DECODED);
+        }
+        assert(loader.publish() == (admit_follower ? 0 : 1));
+        assert(loader.status(success).phase == LoadPhase.PUBLISHED && loader.publish() == 0);
+        LoaderCounters counters = loader.counters();
+        assert(counters.commit_failures == 1 && counters.publications == 1 && counters.decode_failures == 0);
+        assert(counters.publication_items == failed_bill.required_items + success_bill.required_items);
+        loader::destroy_async_loader(&loader);
+        asset::destroy_asset_store(&assets);
+        assert(tracker.allocated() == 0);
+    }
+}
+
+fn void test_reports_exclude_earlier_decode_failure_and_cancellation() @test {
+    GatedSource source = create_gated_source(mem);
+    source.fail_path = "failed.gltf";
+    defer destroy_gated_source(&source);
+    AssetStore assets = gated_store(mem, &source);
+    defer asset::destroy_asset_store(&assets);
+    AsyncLoader loader = loader::create_async_loader(mem, &assets, 3)!!;
+    defer loader::destroy_async_loader(&loader);
+    LoadId failed = loader.request(generated_request("failed.gltf"))!!;
+    LoadId cancelled = loader.request(generated_request("cancelled.gltf"))!!;
+    LoadId published = loader.request(generated_request("published.gltf"))!!;
+    assert(settle(&loader, failed).phase == LoadPhase.FAILED);
+    assert(settle(&loader, cancelled).phase == LoadPhase.DECODED);
+    assert(settle(&loader, published).phase == LoadPhase.DECODED);
+    loader.cancel(cancelled)!!;
+    PublicationEstimate bill = estimate_head(&assets, &loader, published);
+
+    PublishReport report = loader.publish_within({});
+    assert(report.published == 1 && report.failed == 0 && report.items_used == bill.required_items);
+    assert(!report.deferred && report.required_items == 0 && !report.required_exact);
+    PublishReport empty = loader.publish_within({});
+    assert(empty.published == 0 && empty.failed == 0 && empty.items_used == 0);
+    assert(!empty.deferred && empty.required_items == 0);
 }

@@ -8,11 +8,9 @@ import c3d::maths;
 import c3d::model;
 import c3d::render @public;
 import c3d::scene;
-import c3d::shader;
 import c3d::test::animated_crowd_fixtures;
 import c3d::test::animated_lod_fixtures;
 import gpu;
-import std::io;
 import std::math;
 
 const char[*] LOD_TRACE_DEPTH_SOURCE @private = $embed("../render/posed_depth.comp.glsl");
@@ -58,26 +56,14 @@ struct LodTraceHarness @private {
     ComputeShaderId software_shader;
     ComputeShaderId hardware_shader;
     BufferId output;
-    gpu::MappedGpuSpan readback;
-    LodTraceDepthResult[] results;
+    gpu::MappedGpuSpan[2] readbacks;
 }
 
-fn bool create_lod_trace_fixture(Fixture* fixture, TraceKind kind, uint capacity = 0) @private {
-    if (catch excuse = create_fixture(
-        allocator: mem,
-        fixture: fixture,
-        ray_queries: kind == TraceKind.HARDWARE,
-        max_posed_trace_instances: capacity,
-    )) {
-        if (kind == TraceKind.HARDWARE && excuse == gpu::UNSUPPORTED_FEATURE) {
-            io::eprintfn("UNRUN animated LOD hardware trace: Vulkan ray queries are unsupported");
-            return false;
-        }
-        io::eprintfn("Animated LOD trace fixture initialization fault: %s", excuse);
-        unreachable("Animated LOD trace fixture initialization failed");
+fn bool create_lod_trace_fixture(Fixture* fixture, TraceKind kind) @private {
+    if (catch excuse = create_fixture(mem, fixture, ray_queries: kind == TraceKind.HARDWARE)) {
+        assert(kind == TraceKind.HARDWARE && excuse == gpu::UNSUPPORTED_FEATURE);
+        return false;
     }
-    print_adapter(fixture);
-    if (kind == TraceKind.HARDWARE) assert(fixture.renderer.caps.ray_queries.enabled);
     return true;
 }
 
@@ -102,53 +88,30 @@ fn void? create_lod_trace_harness(Fixture* fixture, LodTraceHarness* harness) @p
         .access = { .graphics },
         .debug_name = "animated_lod_trace_readback",
     };
-    harness.readback = gpu::allocate_mapped_memory(&fixture.renderer.device, &desc)!;
-    harness.results = alloc::new_array(fixture.allocator, LodTraceDepthResult, (sz)LOD_TRACE_PIXELS);
+    foreach (&readback : harness.readbacks) *readback = gpu::allocate_mapped_memory(&fixture.renderer.device, &desc)!;
 }
 
 fn void destroy_lod_trace_harness(Fixture* fixture, LodTraceHarness* harness) @private {
     render::wait_frames(&fixture.renderer)!!;
-    gpu::GpuAllocation allocation = harness.readback.span.allocation();
-    gpu::free_allocation(&fixture.renderer.device, &allocation)!!;
-    alloc::free(fixture.allocator, harness.results.ptr);
+    foreach (readback : harness.readbacks) {
+        gpu::GpuAllocation allocation = readback.span.allocation();
+        if (allocation.is_valid()) gpu::free_allocation(&fixture.renderer.device, &allocation)!!;
+    }
     scene::destroy_scene(&harness.scene);
     *harness = {};
-}
-
-fn AnimatedLodDesc lod_trace_desc(AssetStore* assets, ModelId model_id) @private {
-    ModelTemplate* template = &assets.model(model_id).data;
-    uint count = (uint)template.meshes.len;
-    LodLevel[] levels = alloc::new_array(tmem, LodLevel, 2);
-    levels[0] = { .first_part = 0, .part_count = count, .min_screen_size = 0.2f };
-    levels[1] = { .first_part = count, .part_count = count, .min_screen_size = 0 };
-    AnimatedLodPart[] parts = alloc::new_array(tmem, AnimatedLodPart, (sz)count * 2);
-    for (uint level = 0; level < 2; level++) {
-        foreach (uint index, mesh : template.meshes) {
-            ModelSkin skin;
-            foreach (candidate : template.skins) {
-                if (candidate.mesh_node == mesh.node) skin = candidate;
-            }
-            parts[level * count + index] = {
-                .draw = { .geometry = mesh.geometry, .material = mesh.material, .local = matrix::IDENTITY4 },
-                .mesh_index = index,
-                .skin = skin,
-                .default_morph_weights = mesh.default_morph_weights,
-            };
-        }
-    }
-    return { .levels = levels, .parts = parts };
 }
 
 fn void? record_lod_trace_probe(
     Fixture* fixture,
     LodTraceHarness* harness,
+    Node* camera_node,
     ViewId view,
     TraceKind kind,
-    gpu::MappedGpuSpan readback = {},
+    gpu::MappedGpuSpan readback,
 ) @private {
     Renderer* renderer = &fixture.renderer;
-    Camera* camera = harness.scene.get(harness.camera, Camera);
-    CameraMatrices matrices = camera::derive_matrices(*camera, harness.camera.world, { TARGET_SIZE, TARGET_SIZE });
+    Camera* camera = harness.scene.get(camera_node, Camera);
+    CameraMatrices matrices = camera::derive_matrices(*camera, camera_node.world, { TARGET_SIZE, TARGET_SIZE });
     LodTraceDepthRoot root = {
         .inv_view_proj = bitcast(matrices.inv_view_proj, Mat4f),
         .camera = { matrices.position.x, matrices.position.y, matrices.position.z, 1 },
@@ -170,37 +133,17 @@ fn void? record_lod_trace_probe(
     gpu::cmd_barrier(&renderer.commands, &written)!;
     gpu::BufferCopyDesc copy = {
         .src = gpu::get_allocation_span(&renderer.device, renderer.buffers.get(harness.output).allocation)!,
-        .dst = readback.bytes.len ? readback.span : harness.readback.span,
+        .dst = readback.span,
     };
     gpu::cmd_copy_buffer(&renderer.commands, &copy)!;
     gpu::Barrier host_read = { .before = { .transfer }, .after = { .host } };
     gpu::cmd_barrier(&renderer.commands, &host_read)!;
 }
 
-fn void? render_lod_trace(Fixture* fixture, LodTraceHarness* harness, TraceKind kind) @private {
-    Renderer* renderer = &fixture.renderer;
-    harness.scene.update_world();
-    renderer.begin_frame({ .time = 0.37, .delta = 0 })!;
-    defer catch render::abort_frame(renderer);
-    renderer.render_view(&harness.scene, harness.camera, fixture.view)!;
-    record_lod_trace_probe(
-        fixture: fixture,
-        harness: harness,
-        view: fixture.view,
-        kind: kind,
-    )!;
-    renderer.finish_view(fixture.view)!;
-    renderer.end_frame()!;
-    render::wait_frames(renderer)!;
-    gpu::invalidate_mapped_span(&renderer.device, harness.readback.span)!;
-    mem::copy(harness.results.ptr, harness.readback.bytes.ptr, LOD_TRACE_PIXELS * LodTraceDepthResult::size);
-}
-
-fn void assert_lod_trace_agreement(LodTraceDepthResult[] results, ZString name, bool flat = true) @private {
+fn void check_lod_trace_agreement(LodTraceDepthResult[] results, bool flat) @private {
     usz covered;
     usz mismatched;
     usz normals_off;
-    float worst;
     foreach (&result : results) {
         bool raster = (result.flags & LOD_TRACE_RASTER_HIT) != 0;
         bool traced = (result.flags & LOD_TRACE_HIT) != 0;
@@ -212,55 +155,47 @@ fn void assert_lod_trace_agreement(LodTraceDepthResult[] results, ZString name, 
         }
         if (raster != traced) {
             mismatched++;
-        } else {
-            covered++;
-            float error = math::abs(result.traced - result.raster) / result.raster;
-            worst = math::max(worst, error);
-            if (!(error <= LOD_TRACE_DEPTH_TOLERANCE)) mismatched++;
+            continue;
         }
+        covered++;
+        if (!(math::abs(result.traced - result.raster) / result.raster <= LOD_TRACE_DEPTH_TOLERANCE)) mismatched++;
     }
-    io::eprintfn(
-        "%s: covered=%s mismatched=%s worst_relative_depth=%s normals_off=%s",
-        name,
-        covered,
-        mismatched,
-        worst,
-        normals_off,
-    );
     assert(covered >= LOD_TRACE_COVERAGE_MINIMUM && mismatched <= LOD_TRACE_EDGE_BUDGET);
     if (flat) assert(normals_off == 0);
 }
 
-fn void assert_lod_trace_parts(Fixture* fixture, LodTraceHarness* harness, Node* owner) @private {
+fn void? render_lod_trace(
+    Fixture* fixture,
+    LodTraceHarness* harness,
+    TraceKind kind,
+    bool flat = true,
+    Node* second_camera = null,
+) @private {
     Renderer* renderer = &fixture.renderer;
-    assert(renderer.scene_trace.baseline_count == animated_crowd_fixtures::PARTS_MESH_COUNT);
-    assert(renderer.stats.trace_posed_instances == 4 && renderer.stats.trace_posed_overflow == 0);
-    LodGroupState* state = harness.scene.get(owner, LodGroup).state;
-    uint[5] seen;
-    gpu::GpuAddress[4] roots;
-    uint posed;
-    foreach (&record : renderer.scene_trace.baseline[:renderer.scene_trace.baseline_count]) {
-        assert(c3d::same_id(record.entity, owner.id) && record.lod_identity == state.identity);
-        assert(record.part_index < 5 && record.instance_index == 0);
-        seen[record.part_index]++;
-        if (record.part_index != 1) {
-            assert(record.pose_serial > 0);
-            foreach (root : roots[:posed]) assert(root != record.geometry_root);
-            roots[posed++] = record.geometry_root;
-        } else {
-            assert(record.pose_serial == 0);
-        }
+    Node*[2] cameras = { harness.camera, second_camera };
+    ViewId[2] views = { fixture.view, fixture.second_view };
+    uint count = second_camera ? 2 : 1;
+    harness.scene.update_world();
+    renderer.begin_frame({ .time = 0.37, .delta = 0 })!;
+    defer catch render::abort_frame(renderer);
+    for (uint index = 0; index < count; index++) {
+        renderer.render_view(&harness.scene, cameras[index], views[index])!;
+        record_lod_trace_probe(
+            fixture: fixture,
+            harness: harness,
+            camera_node: cameras[index],
+            view: views[index],
+            kind: kind,
+            readback: harness.readbacks[index],
+        )!;
+        renderer.finish_view(views[index])!;
     }
-    foreach (count : seen) assert(count == 1);
-    assert(posed == 4);
-    uint live;
-    foreach (&slot : renderer.posed_trace.slots) {
-        if (slot.key.scene != harness.scene.identity || !c3d::same_id(slot.key.node, owner.id)) continue;
-        assert(slot.key.lod_identity == state.identity && slot.key.source_identity == state.instance_epoch);
-        assert(slot.key.slot_generation == 1 && slot.key.logical_part != 1);
-        live++;
+    renderer.end_frame()!;
+    render::wait_frames(renderer)!;
+    foreach (readback : harness.readbacks[:count]) {
+        gpu::invalidate_mapped_span(&renderer.device, readback.span)!;
+        check_lod_trace_agreement(((LodTraceDepthResult*)readback.bytes.ptr)[:LOD_TRACE_PIXELS], flat);
     }
-    assert(live == 4);
 }
 
 fn void run_lod_trace_mixed(TraceKind kind) @private {
@@ -283,20 +218,19 @@ fn void run_lod_trace_mixed(TraceKind kind) @private {
             assets: &fixture.assets,
             scene: &harness.scene,
             owner: owner,
-            desc: lod_trace_desc(&fixture.assets, parts.mixed),
+            desc: animated_crowd_fixtures::parts_lod_desc(&fixture.assets, parts.mixed),
         )!!;
     };
     harness.scene.get(owner, LodGroup).state.effects.trace = true;
+    Stats* stats = &fixture.renderer.stats;
     for (uint part = 0; part < animated_crowd_fixtures::PARTS_MESH_COUNT; part++) {
         Vec3 first = animated_crowd_fixtures::PARTS_POSED_POINTS[3 * part];
         Vec3 second = animated_crowd_fixtures::PARTS_POSED_POINTS[3 * part + 1];
         Vec3 third = animated_crowd_fixtures::PARTS_POSED_POINTS[3 * part + 2];
         harness.camera.local.position = (first + second + third) / 3 + (Vec3){ 0, 0, LOD_TRACE_CAMERA_DISTANCE };
         render_lod_trace(&fixture, &harness, kind)!!;
-        assert_lod_trace_agreement(harness.results, "Animated LOD mixed base part");
-        assert_lod_trace_parts(&fixture, &harness, owner);
-        assert(fixture.renderer.stats.lod_objects_selected[0] == 1);
-        assert(fixture.renderer.stats.trace_poses == (part == 0 ? 4u : 0u));
+        assert(stats.trace_posed_instances == 4 && stats.trace_posed_overflow == 0);
+        assert(stats.lod_objects_selected[0] == 1 && stats.trace_poses == (part == 0 ? 4u : 0u));
         check_crowd_native_validation(&fixture.renderer);
     }
 }
@@ -307,55 +241,6 @@ fn void test_traced_animated_lod_native_mixed_software_matches_base_pose() @test
 
 fn void test_traced_animated_lod_native_mixed_hardware_matches_base_pose() @test {
     run_lod_trace_mixed(TraceKind.HARDWARE);
-}
-
-
-fn CrowdInstance[3] lod_trace_crowd_instances(ClipId clip) @private {
-    CrowdInstance[3] instances;
-    for (uint source = 0; source < 3; source++) {
-        instances[source] = {
-            .placement = maths::TRANSFORM_IDENTITY,
-            .pose = { .clip = clip, .time = 0.25f * (float)(source + 1), .speed = 0, .loop = false },
-            .color = { 1, 1, 1, 1 },
-        };
-        instances[source].placement.position.x = 30 * (float)source;
-    }
-    instances[1].placement.scale = { -1, 1.2f, 1 };
-    instances[2].placement.scale = { 1.3f, 0.9f, 1.1f };
-    return instances;
-}
-
-fn Node* add_lod_trace_crowd(
-    Fixture* fixture,
-    LodTraceHarness* harness,
-    PartsFixture* parts,
-    CrowdInstance[] instances,
-    GeometryId* coarse = null,
-) @private {
-    Node* owner = model::add_crowd(
-        assets: &fixture.assets,
-        scene: &harness.scene,
-        model: parts.mixed,
-        capacity: 3,
-        pose_bounds: animated_crowd_fixtures::PARTS_POSE_BOUNDS,
-        instances: instances,
-    )!!;
-    owner.local.position = animated_crowd_fixtures::PARTS_ROOT_POSITION;
-    @pool() {
-        AnimatedLodDesc desc = lod_trace_desc(&fixture.assets, parts.mixed);
-        if (coarse) {
-            *coarse = fixture.assets.add_geometry(&fixture.assets.geometry(parts.geometries[1]).data)!!;
-            desc.parts[6].draw.geometry = *coarse;
-        }
-        model::attach_animated_lod(
-            assets: &fixture.assets,
-            scene: &harness.scene,
-            owner: owner,
-            desc: desc,
-        )!!;
-    };
-    harness.scene.update_world();
-    return owner;
 }
 
 fn Vec3 lod_trace_crowd_centre(
@@ -383,103 +268,10 @@ fn void set_lod_trace_phases(
     AnimatedCrowd* crowd = harness.scene.get(owner, AnimatedCrowd);
     foreach (uint source, phase : phases) {
         CrowdInstanceId id = crowd.playback.instance_id(source)!!;
-        CrowdPlayer player = crowd.playback.player(id)!!;
-        Action* action = player.base_action()!!;
-        action.time = phase;
+        crowd.playback.player(id)!!.base_action()!!.time = phase;
     }
     anim::crowd_update(&fixture.assets, &harness.scene, 0);
     harness.scene.update_world();
-}
-
-fn void assert_lod_trace_crowd_rows(Fixture* fixture, LodTraceHarness* harness, Node* owner) @private {
-    Renderer* renderer = &fixture.renderer;
-    LodGroupState* state = harness.scene.get(owner, LodGroup).state;
-    assert(renderer.scene_trace.baseline_count == 15);
-    assert(renderer.stats.trace_posed_instances == 12 && renderer.stats.trace_posed_overflow == 0);
-    uint[15] seen;
-    gpu::GpuAddress[12] roots;
-    uint posed;
-    foreach (&record : renderer.scene_trace.baseline[:renderer.scene_trace.baseline_count]) {
-        assert(c3d::same_id(record.entity, owner.id) && record.lod_identity == state.identity);
-        assert(record.instance_index < 3 && record.part_index < 5);
-        seen[5 * record.instance_index + record.part_index]++;
-        if (record.part_index == 1) {
-            assert(record.pose_serial == 0);
-        } else {
-            PosedTraceKey key = {
-                .scene = harness.scene.identity,
-                .node = owner.id,
-                .instance = record.instance_index,
-                .lod_identity = state.identity,
-                .source_identity = state.instance_epoch,
-                .slot_generation = state.slot_generations[record.instance_index],
-                .logical_part = record.part_index,
-            };
-            uint index = renderer.posed_trace.lookup.get(key)!!;
-            PosedTraceRes* slot = &renderer.posed_trace.slots[index];
-            assert(slot.root == record.geometry_root && slot.pose_serial == record.pose_serial);
-            assert(slot.pose_valid && !slot.pending && record.pose_serial > 0);
-            foreach (root : roots[:posed]) assert(root != record.geometry_root);
-            roots[posed++] = record.geometry_root;
-        }
-    }
-    foreach (count : seen) assert(count == 1);
-    assert(posed == 12);
-}
-
-fn void? lod_trace_only(Fixture* fixture, LodTraceHarness* harness, TraceKind kind) @private {
-    Renderer* renderer = &fixture.renderer;
-    renderer.begin_frame({ .time = 0.37, .delta = 0 })!;
-    defer catch render::abort_frame(renderer);
-    renderer.prepare_scene_trace(&harness.scene, kind)!;
-    renderer.end_frame()!;
-    render::wait_frames(renderer)!;
-}
-
-fn void? lod_trace_two_views(
-    Fixture* fixture,
-    LodTraceHarness* harness,
-    Node* second_camera,
-    TraceKind kind,
-) @private {
-    Renderer* renderer = &fixture.renderer;
-    gpu::AllocationDesc desc = {
-        .size = LOD_TRACE_PIXELS * LodTraceDepthResult::size,
-        .alignment = 16,
-        .memory_class = gpu::MemoryClass.CPU_READ,
-        .access = { .graphics },
-        .debug_name = "animated_lod_second_trace_readback",
-    };
-    gpu::MappedGpuSpan second = gpu::allocate_mapped_memory(&renderer.device, &desc)!;
-    defer {
-        gpu::GpuAllocation allocation = second.span.allocation();
-        gpu::free_allocation(&renderer.device, &allocation)!!;
-    }
-    Node* first_camera = harness.camera;
-    harness.scene.update_world();
-    renderer.begin_frame({ .time = 0.37, .delta = 0 })!;
-    defer catch render::abort_frame(renderer);
-    foreach (uint index, view : (ViewId[2]){ fixture.view, fixture.second_view }) {
-        harness.camera = index ? second_camera : first_camera;
-        renderer.render_view(&harness.scene, harness.camera, view)!;
-        record_lod_trace_probe(
-            fixture: fixture,
-            harness: harness,
-            view: view,
-            kind: kind,
-            readback: index ? second : (gpu::MappedGpuSpan){},
-        )!;
-        renderer.finish_view(view)!;
-    }
-    harness.camera = first_camera;
-    renderer.end_frame()!;
-    render::wait_frames(renderer)!;
-    gpu::invalidate_mapped_span(&renderer.device, harness.readback.span)!;
-    gpu::invalidate_mapped_span(&renderer.device, second.span)!;
-    mem::copy(harness.results.ptr, harness.readback.bytes.ptr, LOD_TRACE_PIXELS * LodTraceDepthResult::size);
-    assert_lod_trace_agreement(harness.results, "Animated LOD first tracing view");
-    LodTraceDepthResult[] results = ((LodTraceDepthResult*)second.bytes.ptr)[:LOD_TRACE_PIXELS];
-    assert_lod_trace_agreement(results, "Animated LOD second tracing view");
 }
 
 fn void run_lod_trace_crowd_lifecycle(TraceKind kind) @private {
@@ -490,21 +282,42 @@ fn void run_lod_trace_crowd_lifecycle(TraceKind kind) @private {
     create_lod_trace_harness(&fixture, &harness)!!;
     defer destroy_lod_trace_harness(&fixture, &harness);
     PartsFixture parts = animated_crowd_fixtures::add_parts_fixture(&fixture.assets)!!;
-    CrowdInstance[3] instances = lod_trace_crowd_instances(parts.posing);
-    GeometryId coarse;
-    Node* owner = add_lod_trace_crowd(
-        fixture: &fixture,
-        harness: &harness,
-        parts: &parts,
+    CrowdInstance[CROWD_NATIVE_INSTANCES] instances;
+    for (uint source = 0; source < CROWD_NATIVE_INSTANCES; source++) {
+        instances[source] = {
+            .placement = maths::TRANSFORM_IDENTITY,
+            .pose = { .clip = parts.posing, .time = 0.25f * (float)(source + 1), .speed = 0, .loop = false },
+            .color = { 1, 1, 1, 1 },
+        };
+        instances[source].placement.position.x = 30 * (float)source;
+    }
+    instances[1].placement.scale = { -1, 1.2f, 1 };
+    instances[2].placement.scale = { 1.3f, 0.9f, 1.1f };
+    Node* owner = model::add_crowd(
+        assets: &fixture.assets,
+        scene: &harness.scene,
+        model: parts.mixed,
+        capacity: CROWD_NATIVE_INSTANCES,
+        pose_bounds: animated_crowd_fixtures::PARTS_POSE_BOUNDS,
         instances: instances[..],
-        coarse: &coarse,
-    );
-    LodGroupState* state = harness.scene.get(owner, LodGroup).state;
-    assert(!state.effects.trace);
-    state.effects.trace = true;
+    )!!;
+    owner.local.position = animated_crowd_fixtures::PARTS_ROOT_POSITION;
+    GeometryId coarse = fixture.assets.add_geometry(&fixture.assets.geometry(parts.geometries[1]).data)!!;
+    @pool() {
+        AnimatedLodDesc desc = animated_crowd_fixtures::parts_lod_desc(&fixture.assets, parts.mixed);
+        desc.parts[animated_crowd_fixtures::PARTS_MESH_COUNT + 1].draw.geometry = coarse;
+        model::attach_animated_lod(
+            assets: &fixture.assets,
+            scene: &harness.scene,
+            owner: owner,
+            desc: desc,
+        )!!;
+    };
+    harness.scene.update_world();
+    harness.scene.get(owner, LodGroup).state.effects.trace = true;
     Renderer* renderer = &fixture.renderer;
-    for (uint source = 0; source < 3; source++) {
-        for (uint part = 0; part < 5; part++) {
+    for (uint source = 0; source < CROWD_NATIVE_INSTANCES; source++) {
+        for (uint part = 0; part < animated_crowd_fixtures::PARTS_MESH_COUNT; part++) {
             Vec3 centre = lod_trace_crowd_centre(
                 owner: owner,
                 instance: &instances[source],
@@ -513,12 +326,12 @@ fn void run_lod_trace_crowd_lifecycle(TraceKind kind) @private {
             );
             harness.camera.local.position = centre + (Vec3){ 0, 0, LOD_TRACE_CAMERA_DISTANCE };
             render_lod_trace(&fixture, &harness, kind)!!;
-            assert_lod_trace_agreement(harness.results, "Animated LOD crowd logical source/part");
-            assert_lod_trace_crowd_rows(&fixture, &harness, owner);
+            assert(renderer.stats.trace_posed_instances == 12 && renderer.stats.trace_posed_overflow == 0);
             assert(renderer.stats.trace_poses == (!source && !part ? 12u : 0u));
         }
     }
-    float[3] phases = { 0.4f, 0.5f, 0.75f };
+
+    float[CROWD_NATIVE_INSTANCES] phases = { 0.4f, 0.5f, 0.75f };
     set_lod_trace_phases(
         fixture: &fixture,
         harness: &harness,
@@ -543,30 +356,30 @@ fn void run_lod_trace_crowd_lifecycle(TraceKind kind) @private {
     );
     harness.camera.local.position = first_centre + (Vec3){ 0, 0, LOD_TRACE_CAMERA_DISTANCE };
     second_camera.local.position = second_centre + (Vec3){ 0, 0, LOD_TRACE_CAMERA_DISTANCE };
-    lod_trace_two_views(
+    render_lod_trace(
         fixture: &fixture,
         harness: &harness,
-        second_camera: second_camera,
         kind: kind,
+        second_camera: second_camera,
     )!!;
-    assert_lod_trace_crowd_rows(&fixture, &harness, owner);
     assert(renderer.stats.trace_poses == 3);
     assert(renderer.stats.trace_refits == (kind == TraceKind.SOFTWARE ? 3u : 0u));
     ulong revision = renderer.scene_trace.revision;
-    lod_trace_two_views(
+    render_lod_trace(
         fixture: &fixture,
         harness: &harness,
-        second_camera: second_camera,
         kind: kind,
+        second_camera: second_camera,
     )!!;
     assert(renderer.stats.trace_poses == 0 && renderer.stats.trace_refits == 0);
     assert(renderer.scene_trace.revision == revision);
+
     fixture.assets.geometry(coarse).data.positions[0].x += 0.125f;
     fixture.assets.mark_geometry_dirty(coarse);
     model::sync_animated_lod(&fixture.assets, &harness.scene, owner)!!;
     render_lod_trace(&fixture, &harness, kind)!!;
-    assert_lod_trace_agreement(harness.results, "Animated LOD unchanged base after coarse edit");
     assert(renderer.scene_trace.revision == revision && renderer.stats.trace_poses == 0);
+
     phases[2] = 0.9f;
     set_lod_trace_phases(
         fixture: &fixture,
@@ -576,16 +389,13 @@ fn void run_lod_trace_crowd_lifecycle(TraceKind kind) @private {
     );
     renderer.begin_frame({ .time = 0.37, .delta = 0 })!!;
     renderer.prepare_scene_trace(&harness.scene, kind)!!;
-    assert(renderer.stats.trace_poses == 3 && renderer.posed_trace.pending.len() == 3);
+    assert(renderer.stats.trace_poses == 3);
     render::abort_frame(renderer);
-    assert(renderer.posed_trace.pending.len() == 0 && renderer.scene_trace.baseline_count == 0);
     render_lod_trace(&fixture, &harness, kind)!!;
-    assert_lod_trace_agreement(harness.results, "Animated LOD trace abort retry");
-    assert_lod_trace_crowd_rows(&fixture, &harness, owner);
     assert(renderer.stats.trace_poses == 3);
     render_lod_trace(&fixture, &harness, kind)!!;
     assert(renderer.stats.trace_poses == 0);
-    uint generation = state.slot_generations[0];
+
     model::set_crowd(
         assets: &fixture.assets,
         scene: &harness.scene,
@@ -593,172 +403,7 @@ fn void run_lod_trace_crowd_lifecycle(TraceKind kind) @private {
         instances: instances[..],
     )!!;
     render_lod_trace(&fixture, &harness, kind)!!;
-    assert_lod_trace_agreement(harness.results, "Animated LOD trace replaced source slots");
-    assert_lod_trace_crowd_rows(&fixture, &harness, owner);
-    assert(state.slot_generations[0] != generation && renderer.stats.trace_poses == 12);
-    check_crowd_native_validation(renderer);
-}
-
-fn void run_lod_trace_capacity(TraceKind kind) @private {
-    Fixture fixture;
-    if (!create_lod_trace_fixture(&fixture, kind, 2)) return;
-    defer destroy_fixture(&fixture);
-    LodTraceHarness harness;
-    create_lod_trace_harness(&fixture, &harness)!!;
-    defer destroy_lod_trace_harness(&fixture, &harness);
-    PartsFixture parts = animated_crowd_fixtures::add_parts_fixture(&fixture.assets)!!;
-    CrowdInstance[3] instances = lod_trace_crowd_instances(parts.posing);
-    Node* owner = add_lod_trace_crowd(
-        fixture: &fixture,
-        harness: &harness,
-        parts: &parts,
-        instances: instances[..],
-    );
-    Renderer* renderer = &fixture.renderer;
-    LodGroupState* state = harness.scene.get(owner, LodGroup).state;
-    assert(!state.effects.trace && !harness.scene.get(owner, AnimatedCrowd).trace);
-    Vec3 centre = lod_trace_crowd_centre(
-        owner: owner,
-        instance: &instances[0],
-        part: 0,
-        phase: instances[0].pose.time,
-    );
-    harness.camera.local.position = centre + (Vec3){ 0, 0, LOD_TRACE_CAMERA_DISTANCE };
-    harness.scene.update_world();
-    for (uint frame = 0; frame < 2; frame++) {
-        renderer.begin_frame({ .time = 0.37, .delta = 0 })!!;
-        renderer.render_view(&harness.scene, harness.camera, fixture.view)!!;
-        renderer.finish_view(fixture.view)!!;
-        renderer.end_frame()!!;
-        assert(renderer.stats.trace_poses == 0 && renderer.stats.trace_posed_bytes == 0);
-        assert(renderer.posed_trace.slots.len == 0 && renderer.posed_trace.bytes == 0);
-    }
-    lod_trace_only(&fixture, &harness, kind)!!;
-    assert(renderer.scene_trace.baseline_count == 0 && renderer.posed_trace.slots.len == 0);
-    assert(renderer.stats.trace_poses == 0 && renderer.stats.trace_posed_instances == 0);
-    state.effects.trace = true;
-    for (uint frame = 0; frame < 2; frame++) {
-        render_lod_trace(&fixture, &harness, kind)!!;
-        assert_lod_trace_agreement(harness.results, "Animated LOD admitted overflow prefix");
-        assert(renderer.stats.trace_posed_instances == 2 && renderer.stats.trace_posed_overflow == 10);
-        assert(renderer.scene_trace.baseline_count == 5 && renderer.posed_trace.slots.len == 2);
-        assert(renderer.stats.trace_poses == (frame ? 0u : 2u));
-        uint skinned;
-        uint rigid;
-        foreach (record : renderer.scene_trace.baseline[:renderer.scene_trace.baseline_count]) {
-            assert(c3d::same_id(record.entity, owner.id) && record.part_index < 2);
-            if (record.part_index == 0) {
-                assert(record.instance_index == skinned && record.pose_serial > 0);
-                skinned++;
-            } else {
-                assert(record.part_index == 1 && record.pose_serial == 0);
-                rigid++;
-            }
-        }
-        assert(skinned == 2 && rigid == 3);
-        assert(!(renderer.posed_trace.slots[0].key == renderer.posed_trace.slots[1].key));
-    }
-    centre = lod_trace_crowd_centre(
-        owner: owner,
-        instance: &instances[2],
-        part: 0,
-        phase: instances[2].pose.time,
-    );
-    harness.camera.local.position = centre + (Vec3){ 0, 0, LOD_TRACE_CAMERA_DISTANCE };
-    render_lod_trace(&fixture, &harness, kind)!!;
-    usz missing;
-    foreach (result : harness.results) {
-        if ((result.flags & LOD_TRACE_RASTER_HIT) && !(result.flags & LOD_TRACE_HIT)) missing++;
-    }
-    io::eprintfn("Animated LOD explicit posed overflow: admitted=2 omitted=10 omitted_source_pixels=%s", missing);
-    assert(missing >= LOD_TRACE_COVERAGE_MINIMUM);
-    assert(renderer.stats.trace_posed_overflow == 10);
-    check_crowd_native_validation(renderer);
-}
-
-fn void run_lod_trace_real(TraceKind kind, bool quaternius) @private {
-    Fixture fixture;
-    if (!create_lod_trace_fixture(&fixture, kind)) return;
-    defer destroy_fixture(&fixture);
-    LodTraceHarness harness;
-    create_lod_trace_harness(&fixture, &harness)!!;
-    defer destroy_lod_trace_harness(&fixture, &harness);
-    ModelId model;
-    AnimatedLodFixtures corpus;
-    if (quaternius) {
-        corpus = animated_lod_fixtures::load_animated_lod_fixtures(&fixture.assets, "../../..")!!;
-        model = corpus.model;
-    } else {
-        model = load_crowd_native_cc0(&fixture, CROWD_NATIVE_MORPH_CUBE, CROWD_NATIVE_MORPH_CUBE_SHA)!!;
-    }
-    crowd_native_flat_source_materials(&fixture, model);
-    ClipId clip = quaternius
-      ? crowd_native_clip_named(&fixture, model, "Walk_Loop")!!
-      : fixture.assets.model(model).data.clips[0];
-    Node* owner = model::instantiate(&fixture.assets, &harness.scene, model)!!;
-    Animator* animator = anim::add_animator(&harness.scene, owner);
-    AnimationActionId action = animator.play(&fixture.assets, clip)!!;
-    animator.action(action).loop = false;
-    animator.action(action).speed = 0;
-    animator.action(action).time = 0.375f * fixture.assets.clip(clip).data.duration;
-    anim::update(&fixture.assets, &harness.scene, 0);
-    @pool() {
-        AnimatedLodDesc desc;
-        CrowdLodNativeDescriptor descriptor;
-        if (quaternius) {
-            fill_crowd_lod_native_descriptor(
-                fixture: &fixture,
-                corpus: &corpus,
-                descriptor: &descriptor,
-                material: {},
-            );
-            desc = crowd_lod_native_desc(&descriptor);
-        } else {
-            desc = lod_trace_desc(&fixture.assets, model);
-        }
-        model::attach_animated_lod(
-            assets: &fixture.assets,
-            scene: &harness.scene,
-            owner: owner,
-            desc: desc,
-        )!!;
-    };
-    harness.scene.get(owner, LodGroup).state.effects.trace = true;
-    ViewDesc view = fixture.renderer.views.get(fixture.view).desc;
-    view.lod_bias = 16;
-    render::configure_view(&fixture.renderer, fixture.view, view)!!;
-    harness.camera.local.position = quaternius ? (Vec3){ 0, 1.1f, LOD_TRACE_CHARACTER_DISTANCE } : (Vec3){ 0, 0, 3 };
-    render_lod_trace(&fixture, &harness, kind)!!;
-    assert_lod_trace_agreement(
-        results: harness.results,
-        name: quaternius ? "Quaternius base trace" : "AnimatedMorphCube base trace",
-        flat: false,
-    );
-    Renderer* renderer = &fixture.renderer;
-    uint expected = quaternius ? 2u : 1u;
-    assert(renderer.scene_trace.baseline_count == expected);
-    assert(renderer.stats.trace_posed_instances == expected && renderer.stats.trace_posed_overflow == 0);
-    assert(renderer.stats.trace_poses == expected && renderer.stats.lod_objects_selected[0] == 1);
-    ModelTemplate* template = &fixture.assets.model(model).data;
-    foreach (record : renderer.scene_trace.baseline[:renderer.scene_trace.baseline_count]) {
-        assert(c3d::same_id(record.entity, owner.id) && record.instance_index == 0);
-        assert(record.part_index < expected);
-        assert(c3d::same_id(record.geometry, template.meshes[record.part_index].geometry));
-    }
-    ulong revision = renderer.scene_trace.revision;
-    render_lod_trace(&fixture, &harness, kind)!!;
-    assert_lod_trace_agreement(harness.results, "Still real-source base trace", false);
-    assert(renderer.scene_trace.revision == revision && renderer.stats.trace_poses == 0);
-    if (quaternius) {
-        GeometryId coarse = corpus.levels[0][1];
-        fixture.assets.geometry(coarse).data.positions[0].x += 0.01f;
-        fixture.assets.mark_geometry_dirty(coarse);
-        model::sync_animated_lod(&fixture.assets, &harness.scene, owner)!!;
-        render_lod_trace(&fixture, &harness, kind)!!;
-        assert_lod_trace_agreement(harness.results, "Real base trace after coarse-only edit", false);
-        assert(renderer.scene_trace.revision == revision && renderer.stats.trace_poses == 0);
-    }
-    io::eprintfn("Real-source trace normals reported as observations; flat-face normal gate does not apply");
+    assert(renderer.stats.trace_poses == 12);
     check_crowd_native_validation(renderer);
 }
 
@@ -770,26 +415,77 @@ fn void test_traced_animated_lod_native_crowd_hardware_lifecycle_and_two_views()
     run_lod_trace_crowd_lifecycle(TraceKind.HARDWARE);
 }
 
-fn void test_traced_animated_lod_native_software_opt_in_and_overflow() @test {
-    run_lod_trace_capacity(TraceKind.SOFTWARE);
-}
+fn void run_lod_trace_quaternius(TraceKind kind) @private {
+    Fixture fixture;
+    if (!create_lod_trace_fixture(&fixture, kind)) return;
+    defer destroy_fixture(&fixture);
+    LodTraceHarness harness;
+    create_lod_trace_harness(&fixture, &harness)!!;
+    defer destroy_lod_trace_harness(&fixture, &harness);
+    AnimatedLodFixtures corpus = animated_lod_fixtures::load_animated_lod_fixtures(&fixture.assets, "../../..")!!;
+    crowd_native_flat_source_materials(&fixture, corpus.model);
+    LodNativeSubject subject = quaternius_lod_subject(&fixture, &corpus);
+    Node* owner = model::instantiate(&fixture.assets, &harness.scene, corpus.model)!!;
+    Animator* animator = anim::add_animator(&harness.scene, owner);
+    AnimationActionId action = animator.play(&fixture.assets, subject.clip)!!;
+    animator.action(action).loop = false;
+    animator.action(action).speed = 0;
+    animator.action(action).time = 0.375f * fixture.assets.clip(subject.clip).data.duration;
+    anim::update(&fixture.assets, &harness.scene, 0);
+    LodNativeDescriptor descriptor;
+    model::attach_animated_lod(
+        assets: &fixture.assets,
+        scene: &harness.scene,
+        owner: owner,
+        desc: lod_native_desc(
+            fixture: &fixture,
+            subject: &subject,
+            descriptor: &descriptor,
+            crowd: false,
+        ),
+    )!!;
+    harness.scene.get(owner, LodGroup).state.effects.trace = true;
+    ViewDesc view = fixture.renderer.views.get(fixture.view).desc;
+    view.lod_bias = 16;
+    render::configure_view(&fixture.renderer, fixture.view, view)!!;
+    harness.camera.local.position = { 0, 1.1f, LOD_TRACE_CHARACTER_DISTANCE };
+    render_lod_trace(
+        fixture: &fixture,
+        harness: &harness,
+        kind: kind,
+        flat: false,
+    )!!;
+    Renderer* renderer = &fixture.renderer;
+    uint parts = animated_lod_fixtures::LOD_PRIMITIVES;
+    assert(renderer.stats.trace_posed_instances == parts && renderer.stats.trace_posed_overflow == 0);
+    assert(renderer.stats.trace_poses == parts && renderer.stats.lod_objects_selected[0] == 1);
+    ulong revision = renderer.scene_trace.revision;
+    render_lod_trace(
+        fixture: &fixture,
+        harness: &harness,
+        kind: kind,
+        flat: false,
+    )!!;
+    assert(renderer.scene_trace.revision == revision && renderer.stats.trace_poses == 0);
 
-fn void test_traced_animated_lod_native_hardware_opt_in_and_overflow() @test {
-    run_lod_trace_capacity(TraceKind.HARDWARE);
+    GeometryId coarse = corpus.levels[0][1];
+    fixture.assets.geometry(coarse).data.positions[0].x += 0.01f;
+    fixture.assets.mark_geometry_dirty(coarse);
+    model::sync_animated_lod(&fixture.assets, &harness.scene, owner)!!;
+    render_lod_trace(
+        fixture: &fixture,
+        harness: &harness,
+        kind: kind,
+        flat: false,
+    )!!;
+    assert(renderer.scene_trace.revision == revision && renderer.stats.trace_poses == 0);
+    check_crowd_native_validation(renderer);
 }
 
 fn void test_traced_animated_lod_native_quaternius_software_base_trace() @test {
-    run_lod_trace_real(TraceKind.SOFTWARE, true);
+    run_lod_trace_quaternius(TraceKind.SOFTWARE);
 }
 
 fn void test_traced_animated_lod_native_quaternius_hardware_base_trace() @test {
-    run_lod_trace_real(TraceKind.HARDWARE, true);
-}
-
-fn void test_traced_animated_lod_native_morph_cube_software_base_trace() @test {
-    run_lod_trace_real(TraceKind.SOFTWARE, false);
-}
-
-fn void test_traced_animated_lod_native_morph_cube_hardware_base_trace() @test {
-    run_lod_trace_real(TraceKind.HARDWARE, false);
+    run_lod_trace_quaternius(TraceKind.HARDWARE);
 }

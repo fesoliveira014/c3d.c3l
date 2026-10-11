@@ -47,29 +47,11 @@ fn TextureMipChain? create_texture_mips(
     uint first_mip = 0,
     CoverageStatistics* statistics = null,
 ) {
-    return create_resource_texture_mips(
-        allocator: allocator,
-        desc: desc,
-        pixels: pixels,
-        first_mip: first_mip,
-        statistics: statistics,
-    );
-}
-
-fn TextureMipChain? create_resource_texture_mips(
-    Allocator allocator,
-    material::TextureDesc desc,
-    char[] pixels,
-    uint first_mip = 0,
-    CoverageStatistics* statistics = null,
-    TextureCoverageResource* coverage_resource = null,
-) @private {
     if (first_mip == 0) return create_full_texture_mips(
         allocator: allocator,
         desc: desc,
         pixels: pixels,
         statistics: statistics,
-        coverage_resource: coverage_resource,
     );
 
     TextureMipChain full = create_full_texture_mips(
@@ -77,7 +59,6 @@ fn TextureMipChain? create_resource_texture_mips(
         desc: desc,
         pixels: pixels,
         statistics: statistics,
-        coverage_resource: coverage_resource,
     )!;
     defer destroy_texture_mips(&full);
 
@@ -113,33 +94,6 @@ fn TextureMipChain? create_generated_texture_mips(Allocator allocator, material:
     if (layout.byte_count) chain.pixels = alloc::alloc_array(allocator, char, (sz)layout.byte_count);
 
     return chain;
-}
-
-<*
- Generate destination rows from freshly borrowed source or owned levels.
- @param mip_zero : "Read only for mip one; never retained."
- @param [&inout] chain : "Generated levels; earlier levels are complete."
- @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
- @require chain.first_mip == 1, chain.layer_count == desc.layers
-*>
-fn void? write_texture_mip_band(
-    material::TextureDesc desc,
-    uint mip,
-    uint layer,
-    uint first_row,
-    uint row_count,
-    char[] mip_zero,
-    TextureMipChain* chain,
-) {
-    write_texture_filter_band(
-        desc: desc,
-        mip: mip,
-        layer: layer,
-        first_row: first_row,
-        row_count: row_count,
-        mip_zero: mip_zero,
-        chain: chain,
-    )!;
 }
 
 fn void? write_texture_filter_band(
@@ -296,7 +250,6 @@ fn TextureMipChain? create_full_texture_mips(
     material::TextureDesc desc,
     char[] pixels,
     CoverageStatistics* statistics,
-    TextureCoverageResource* coverage_resource,
 ) @local {
     check_texture_mip_zero(desc, pixels)!;
 
@@ -308,7 +261,6 @@ fn TextureMipChain? create_full_texture_mips(
             desc: desc,
             pixels: pixels,
             statistics: statistics,
-            coverage_resource: coverage_resource,
         );
     }
 
@@ -863,7 +815,6 @@ fn TextureMipChain? create_fidelity_texture_mips(
     material::TextureDesc desc,
     char[] pixels,
     CoverageStatistics* statistics,
-    TextureCoverageResource* coverage_resource,
 ) @local {
     GeneratedTextureLayout layout = generated_texture_mip_layout(desc)!;
 
@@ -946,8 +897,6 @@ fn TextureMipChain? create_fidelity_texture_mips(
 
                     if (state.row == height) finish_texture_coverage_pass(&state);
                 }
-
-                store_texture_coverage_result(coverage_resource, &state);
             }
         }
     }

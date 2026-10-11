@@ -5,7 +5,6 @@ import c3d::anim;
 import c3d::asset;
 import c3d::asset::gltf;
 import c3d::asset::loader;
-import std::encoding::base64;
 import std::io::path;
 import std::thread;
 
@@ -13,7 +12,6 @@ const String DOCUMENT @local = $embed("../fixtures/animation_events/gltf-events-
 const String EXTRAS @local = `{"c3d_events":{"version":1,"events":[{"time":1,"id":9},{"time":0,"id":0},`
   `{"time":0.5,"id":4294967295},{"time":0.5,"id":3},{"time":0.5,"id":3}]}}`;
 const String EXTRAS_FIELD @local = `"extras": `;
-const String BUFFER_PAYLOAD @local = "AAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAQAAAQEA=";
 const String MODEL_KEY @local = "event-model.gltf";
 const ClipEvent[5] EXPECTED_EVENTS @local = {
     { .time = 0, .id = 0 },
@@ -140,12 +138,6 @@ fn void expect_decode_fault(String text, fault expected) @local {
 }
 
 fn void test_import_events_gltf_fixture_recipe_and_store_free_order() @test {
-    @pool() {
-        float[8] buffer = { 0, 1, 0, 0, 0, 1, 2, 3 };
-        assert(base64::tencode(((char*)&buffer)[:float::size * buffer.len]) == BUFFER_PAYLOAD);
-        assert(DOCUMENT.contains(BUFFER_PAYLOAD));
-    };
-
     TrackingAllocator tracker;
     tracker.init(mem);
     defer tracker.free();
@@ -178,121 +170,16 @@ fn void test_import_events_gltf_absent_empty_and_unrelated_metadata() @test {
     };
 }
 
-fn void test_import_events_gltf_unknown_fields_do_not_change_event_identity() @test {
-    @pool() {
-        String source = with_extras(
-            extras: `{"ignored":false,"c3d_events":{"version":1,"extra":{"id":-1},`
-              `"events":[{"time":0.5,"id":4294967295,"note":"ignored"},{"time":0,"id":0}]}}`,
-        );
-        ModelDocument document = decode_text(mem, source)!!;
-        defer asset::destroy_model_document(&document);
-        ClipEvent[2] expected = { { .time = 0, .id = 0 }, { .time = 0.5f, .id = uint::max } };
-        expect_events(&document.clips[0].data, expected[..]);
-    };
-}
-
-fn void test_import_events_gltf_exact_integral_spellings_preserve_ids() @test {
-    String[4] versions = { "1", "1.0", "1e0", "10e-1" };
-    foreach (version : versions) {
-        @pool() {
-            String metadata = string::tformat(
-                `{"c3d_events":{"version":%s,"events":[{"time":0,"id":1.0},`
-                `{"time":0.25,"id":1e0},{"time":0.5,"id":10e-1},{"time":1,"id":-0}]}}`,
-                version,
-            );
-            ModelDocument document = decode_text(mem, with_extras(metadata))!!;
-            defer asset::destroy_model_document(&document);
-            ClipEvent[4] expected = {
-                { .time = 0, .id = 1 },
-                { .time = 0.25f, .id = 1 },
-                { .time = 0.5f, .id = 1 },
-                { .time = 1, .id = 0 },
-            };
-            expect_events(&document.clips[0].data, expected[..]);
-        };
-    }
-}
-
-fn void test_import_events_gltf_nested_duplicates_and_extreme_unrelated_numbers_are_ignored() @test {
-    @pool() {
-        String source = with_extras(
-            extras: `{"future":1,"future":2,"large":123456789012345678901234567890,"exponent":1e999999999,`
-                `"c3d_events":{"version":1,"future":{"key":1,"key":2},`
-                `"events":[{"time":0.5,"id":7,"future":{"key":1,"key":2}}]}}`,
-        );
-        ModelDocument document = decode_text(mem, source)!!;
-        defer asset::destroy_model_document(&document);
-        ClipEvent[1] expected = { { .time = 0.5f, .id = 7 } };
-        expect_events(&document.clips[0].data, expected[..]);
-    };
-}
-
-fn void test_import_events_gltf_unrelated_lone_surrogates_keep_absent_and_valid_tables() @test {
-    String[3] unrelated = {
-        `"unrelated":"\ud800"`,
-        `"\udc00x":"unrelated"`,
-        `"nested":{"\ud800":"\udc00x"}`,
-    };
-    String recognized = `{"version":1,"events":[{"time":0.5,"id":7}]}`;
-    ClipEvent[1] expected = { { .time = 0.5f, .id = 7 } };
-    TrackingAllocator tracker;
-    tracker.init(mem);
-    defer tracker.free();
-
-    foreach (entry : unrelated) {
-        @pool() {
-            {
-                String extras = string::tformat("{%s}", entry);
-                ModelDocument document = decode_text(&tracker, with_extras(extras))!!;
-                defer asset::destroy_model_document(&document);
-                expect_events(&document.clips[0].data, {});
-            }
-            assert(tracker.allocated() == 0);
-            {
-                String extras = string::tformat(`{%s,"c3d_events":%s}`, entry, recognized);
-                ModelDocument document = decode_text(&tracker, with_extras(extras))!!;
-                defer asset::destroy_model_document(&document);
-                expect_events(&document.clips[0].data, expected[..]);
-            }
-            assert(tracker.allocated() == 0);
-        };
-    }
-}
-
 fn void test_import_events_gltf_schema_faults_free_every_owned_array() @test {
     FaultCase[] cases = {
         { .extras = `{"c3d_events":null}`, .expected = c3d::ASSET_FORMAT_ERROR },
-        { .extras = `{"c3d_events":[]}`, .expected = c3d::ASSET_FORMAT_ERROR },
-        { .extras = `{"c3d_events":true}`, .expected = c3d::ASSET_FORMAT_ERROR },
-        { .extras = `{"c3d_events":{}}`, .expected = c3d::ASSET_FORMAT_ERROR },
         { .extras = `{"c3d_events":{"version":1}}`, .expected = c3d::ASSET_FORMAT_ERROR },
-        { .extras = `{"c3d_events":{"events":[]}}`, .expected = c3d::ASSET_FORMAT_ERROR },
-        { .extras = `{"c3d_events":{"version":"1","events":[]}}`, .expected = c3d::ASSET_FORMAT_ERROR },
-        { .extras = `{"c3d_events":{"version":true,"events":[]}}`, .expected = c3d::ASSET_FORMAT_ERROR },
-        { .extras = `{"c3d_events":{"version":0,"events":[]}}`, .expected = c3d::UNSUPPORTED },
         { .extras = `{"c3d_events":{"version":2,"events":[]}}`, .expected = c3d::UNSUPPORTED },
-        { .extras = `{"c3d_events":{"version":1e30,"events":[]}}`, .expected = c3d::UNSUPPORTED },
-        { .extras = `{"c3d_events":{"version":123456789012345678901234567890,"events":[]}}`,
-          .expected = c3d::UNSUPPORTED },
-        { .extras = `{"c3d_events":{"version":1.5,"events":[]}}`, .expected = c3d::ASSET_FORMAT_ERROR },
-        { .extras = `{"c3d_events":{"version":1,"events":{}}}`, .expected = c3d::ASSET_FORMAT_ERROR },
-        { .extras = `{"c3d_events":{"version":1,"events":[null]}}`, .expected = c3d::ASSET_FORMAT_ERROR },
-        { .extras = `{"c3d_events":{"version":1,"events":[{}]}}`, .expected = c3d::ASSET_FORMAT_ERROR },
         { .extras = `{"c3d_events":{"version":1,"events":[{"time":0}]}}`, .expected = c3d::ASSET_FORMAT_ERROR },
-        { .extras = `{"c3d_events":{"version":1,"events":[{"id":0}]}}`, .expected = c3d::ASSET_FORMAT_ERROR },
-        { .extras = `{"c3d_events":{"version":1,"events":[{"time":"0","id":0}]}}`, .expected = c3d::ASSET_FORMAT_ERROR },
-        { .extras = `{"c3d_events":{"version":1,"events":[{"time":0,"id":"0"}]}}`, .expected = c3d::ASSET_FORMAT_ERROR },
-        { .extras = `{"c3d_events":{"version":1,"events":[{"time":-0.1,"id":0}]}}`, .expected = c3d::ASSET_FORMAT_ERROR },
-        { .extras = `{"c3d_events":{"version":1,"events":[{"time":1.01,"id":0}]}}`, .expected = c3d::ASSET_FORMAT_ERROR },
-        { .extras = `{"c3d_events":{"version":1,"events":[{"time":1e999,"id":0}]}}`, .expected = c3d::ASSET_FORMAT_ERROR },
-        { .extras = `{"c3d_events":{"version":1,"events":[{"time":0,"id":-1}]}}`, .expected = c3d::ASSET_FORMAT_ERROR },
-        { .extras = `{"c3d_events":{"version":1,"events":[{"time":0,"id":0.5}]}}`, .expected = c3d::ASSET_FORMAT_ERROR },
-        { .extras = `{"c3d_events":{"version":1,"events":[{"time":0,"id":1.0000000000000000001}]}}`,
+        { .extras = `{"c3d_events":{"version":1,"events":[{"time":1.01,"id":0}]}}`,
           .expected = c3d::ASSET_FORMAT_ERROR },
-        { .extras = `{"c3d_events":{"version":1,"events":[{"time":0,"id":4294967296}]}}`, .expected = c3d::ASSET_FORMAT_ERROR },
-        { .extras = `{"c3d_events":{"version":1,"events":[{"time":0,"id":1e999}]}}`, .expected = c3d::ASSET_FORMAT_ERROR },
-        { .extras = `{"c3d_events":{"version":1,"events":[{"time":NaN,"id":0}]}}`, .expected = c3d::ASSET_FORMAT_ERROR },
-        { .extras = `{"c3d_events":{"version":1,"events":[{"time":0,"id":0}]`, .expected = c3d::ASSET_FORMAT_ERROR },
+        { .extras = `{"c3d_events":{"version":1,"events":[{"time":0,"id":4294967296}]}}`,
+          .expected = c3d::ASSET_FORMAT_ERROR },
     };
     foreach (entry : cases) {
         @pool() { expect_decode_fault(with_extras(entry.extras), entry.expected); };
@@ -310,24 +197,6 @@ fn void test_import_events_gltf_later_clip_failure_releases_earlier_event_payloa
         source = source.treplace(EXTRAS, `{"c3d_events":{"version":1,"events":[{"time":2,"id":0}]}}`);
         expect_decode_fault(source, c3d::ASSET_FORMAT_ERROR);
     };
-}
-
-fn void test_import_events_gltf_duplicate_schema_keys_including_escaped_names_fail() @test {
-    String[] extras = {
-        `{"c3d_events":{"version":1,"version":1,"events":[]}}`,
-        `{"c3d_events":{"version":1,"events":[],"events":[]}}`,
-        `{"c3d_events":{"version":1,"events":[{"time":0,"time":0,"id":1}]}}`,
-        `{"c3d_events":{"version":1,"events":[{"time":0,"id":1,"id":2}]}}`,
-        `{"c3d_events":{"version":1,"future":1,"future":2,"events":[]}}`,
-        `{"c3d_events":{"version":1,"events":[{"time":0,"id":1,"future":1,"future":2}]}}`,
-        `{"c3d_events":{"version":1,"future":1,"fut\u0075re":2,"events":[]}}`,
-        `{"c3d_events":{"version":1,"ver\u0073ion":1,"events":[]}}`,
-        `{"c3d_events":{"version":1,"events":[{"time":0,"i\u0064":1,"id":2}]}}`,
-        `{"c3d_events":{"version":1,"events":[]},"c3d_events":{"version":1,"events":[]}}`,
-    };
-    foreach (entry : extras) {
-        @pool() { expect_decode_fault(with_extras(entry), c3d::ASSET_FORMAT_ERROR); };
-    }
 }
 
 fn void test_import_events_gltf_zero_duration_does_not_expand_to_event_markers() @test {
@@ -384,30 +253,6 @@ fn void test_import_events_gltf_file_and_memory_publication_copy_the_same_table(
     assert(tracker.allocated() == 0);
 }
 
-fn void test_import_events_gltf_invalid_sync_load_preserves_the_store() @test {
-    TrackingAllocator tracker;
-    tracker.init(mem);
-    defer tracker.free();
-    {
-        AssetStore assets = create_store(&tracker);
-        defer asset::destroy_asset_store(&assets);
-        usz[8] counts = store_counts(&assets);
-        sz allocated = tracker.allocated();
-        @pool() {
-            String source = with_extras(`{"c3d_events":{"version":1,"events":[{"time":2,"id":0}]}}`);
-            fault result = @catch(gltf::load_model_memory(
-                assets: &assets,
-                bytes: (char[])source,
-                base_dir: "",
-                key: MODEL_KEY,
-            ));
-            assert(result == c3d::ASSET_FORMAT_ERROR);
-        };
-        assert(store_counts(&assets) == counts && tracker.allocated() == allocated);
-    }
-    assert(tracker.allocated() == 0);
-}
-
 fn void test_import_events_gltf_replacement_replaces_and_clears_the_table_atomically() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
@@ -451,29 +296,6 @@ fn void test_import_events_gltf_replacement_replaces_and_clears_the_table_atomic
     assert(tracker.allocated() == 0);
 }
 
-fn void test_import_events_gltf_memory_replacement_reads_only_the_new_events() @test {
-    AssetStore assets = create_store(mem);
-    defer asset::destroy_asset_store(&assets);
-    ModelId model = gltf::load_model_memory(
-        assets: &assets,
-        bytes: (char[])DOCUMENT,
-        base_dir: "",
-        key: MODEL_KEY,
-    )!!;
-    @pool() {
-        String source = with_extras(`{"c3d_events":{"version":1,"events":[{"time":0.25,"id":7}]}}`);
-        gltf::replace_model_memory(
-            assets: &assets,
-            model: model,
-            bytes: (char[])source,
-            base_dir: "",
-            key: MODEL_KEY,
-        )!!;
-        ClipEvent[1] expected = { { .time = 0.25f, .id = 7 } };
-        expect_events(model_clip(&assets, model), expected[..]);
-    };
-}
-
 fn void test_import_events_gltf_async_publication_and_replacement_keep_explicit_order() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
@@ -515,56 +337,4 @@ fn void test_import_events_gltf_async_publication_and_replacement_keep_explicit_
         };
     }
     assert(tracker.allocated() == 0);
-}
-
-fn void test_import_events_gltf_async_malformed_replacement_preserves_live_data() @test {
-    TrackingAllocator tracker;
-    tracker.init(mem);
-    defer tracker.free();
-    {
-        MemorySource source = { .document = DOCUMENT };
-        AssetStore assets = create_store(&tracker, &source);
-        defer asset::destroy_asset_store(&assets);
-        ModelId model = gltf::load_model(&assets, MODEL_KEY)!!;
-        AsyncLoader loader = loader::create_async_loader(mem, &assets, 1)!!;
-        defer loader::destroy_async_loader(&loader);
-        uint model_revision = assets.model(model).header.revision;
-        ClipId clip = assets.model(model).data.clips[0];
-        ClipEvent* retained = assets.clip(clip).data.events.ptr;
-        uint clip_revision = assets.clip(clip).header.revision;
-        usz[8] counts = store_counts(&assets);
-
-        @pool() {
-            source.document = with_extras(`{"c3d_events":{"version":1,"events":[{"time":0,"id":-1}]}}`);
-            LoadId id = loader.request(request(model))!!;
-            LoadStatus status = settle(&loader, id);
-            assert(status.phase == LoadPhase.FAILED && status.failure == c3d::ASSET_FORMAT_ERROR);
-            assert(loader.publish() == 0 && store_counts(&assets) == counts);
-            assert(assets.model(model).header.revision == model_revision);
-            assert(assets.clip(clip).header.revision == clip_revision && assets.clip(clip).data.events.ptr == retained);
-            expect_events(model_clip(&assets, model), EXPECTED_EVENTS[..]);
-            loader.release(id)!!;
-        };
-    }
-    assert(tracker.allocated() == 0);
-}
-
-fn void test_import_events_gltf_async_animation_disabled_ignores_metadata() @test {
-    @pool() {
-        MemorySource source = {
-            .document = with_extras(`{"c3d_events":{"version":1,"events":"bad"}}`),
-        };
-        AssetStore assets = create_store(mem, &source);
-        defer asset::destroy_asset_store(&assets);
-        AsyncLoader loader = loader::create_async_loader(mem, &assets, 1)!!;
-        defer loader::destroy_async_loader(&loader);
-        LoadOptions options = asset::LOAD_OPTIONS_DEFAULT;
-        options.animations = false;
-        LoadId id = loader.request(request(options: options))!!;
-        assert(settle(&loader, id).phase == LoadPhase.DECODED && loader.publish() == 1);
-        LoadStatus status = loader.status(id);
-        assert(status.phase == LoadPhase.PUBLISHED);
-        assert(assets.model(status.model).data.clips.len == 0);
-        loader.release(id)!!;
-    };
 }

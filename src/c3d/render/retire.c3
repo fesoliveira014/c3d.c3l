@@ -10,7 +10,6 @@ enum RetiredKind : int {
     ALLOCATION,
     TEXTURE,
     TEXTURE_VIEW,
-    TEXTURE_COVERAGE,
     ATTACHMENT_VIEW,
     PIPELINE,
     ACCELERATION_STRUCTURE,
@@ -26,7 +25,6 @@ struct Retired {
         gpu::GpuAllocation               allocation;
         gpu::TextureHandle               texture;
         gpu::TextureView                 texture_view;
-        TextureCoverageResource*         coverage_resource;
         gpu::AttachmentViewHandle        attachment_view;
         gpu::PipelineHandle              pipeline;
         gpu::AccelerationStructureHandle acceleration_structure;
@@ -55,9 +53,6 @@ fn void drain_retired(gpu::Device* device, RetireList* retire) {
 
             case TEXTURE_VIEW:
                 (void)gpu::destroy_texture_view(device, record.texture_view);
-
-            case TEXTURE_COVERAGE:
-                destroy_texture_coverage_resource(record.coverage_resource);
 
             case ATTACHMENT_VIEW:
                 (void)gpu::destroy_attachment_view(device, record.attachment_view);
