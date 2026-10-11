@@ -214,7 +214,7 @@ fn int main() {
     MaterialId glass = assets.add_material(glass_material(ROUGHNESS_STEPS[0]), "transparency/glass")!!;
     MaterialId rear_glass = assets.add_material(glass_material(0, REAR_GLASS_TINT), "transparency/rear_glass")!!;
     MaterialId amber_pane = assets.add_material(amber_pane_material(), "transparency/amber_pane")!!;
-    MaterialId absorber = assets.add_material(absorber_material(), "transparency/absorber")!!;
+    MaterialId absorber = assets.add_material(absorber_material(), "transparency/absorber_material")!!;
     MaterialId backdrop_material = assets.add_material(material::standard({
         .base_color     = { 1, 1, 1, 1 },
         .base_color_map = material::texture_slot(
