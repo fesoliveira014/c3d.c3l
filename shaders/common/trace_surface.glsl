@@ -12,7 +12,7 @@ const float TRACE_SURFACE_OFFSET = 0.02; // world units along the normal; hides 
 const float TRACE_MIN_COSINE = 1e-3; // grazing hits keep a finite cone footprint
 const float TRACE_MIN_AREA = 1e-12; // degenerate triangles and UV sets keep the level of detail finite
 const vec3 TRACE_CUSTOM_ALBEDO = vec3(0.5); // custom shader code cannot run at a hit; a neutral grey stands in
-const float DEFAULT_IOR = 1.5; // the index of a non-Physical hit, which reflects 4% at normal incidence
+const float TRACE_DEFAULT_IOR = 1.5; // the index a non-Physical hit carries: 4% reflectance at normal incidence
 
 GPU_DECLARE_READONLY_ARRAY_REF(TraceInstanceArray, TraceInstanceGpu);
 
@@ -325,7 +325,7 @@ TraceSurface surface_from_hit(SceneTraceRoot scene, SceneHit hit, vec3 ray_direc
     surface.specular_color = vec3(1.0);
     surface.thickness_extent = vec3(0.0);
     surface.specular_weight = 1.0;
-    surface.ior = DEFAULT_IOR;
+    surface.ior = TRACE_DEFAULT_IOR;
     surface.clearcoat = 0.0;
     surface.clearcoat_roughness = 0.0;
     surface.transmission = 0.0;
