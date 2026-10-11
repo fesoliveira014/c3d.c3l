@@ -10,8 +10,6 @@ const uint ELIGIBILITY_EXP_TERMS @local = 20; // Fixed Taylor work after reducti
 const double ELIGIBILITY_EXP_REMAINDER @local = 0x1p-120; // Exceeds the absolute 21st-term tail bound 2^-127.
 const double ELIGIBILITY_EXP_REDUCTION_LIMIT @local = 0.125;
 const double ELIGIBILITY_EXP_OUTER_LIMIT @local = 1024; // Beyond this exp lies outside the binary64 finite range.
-const uint SCALE_EXTREMA_NODE_BUDGET @local = 4095; // Same fixed subdivision budget as quaternion admission.
-const uint SCALE_EXTREMA_MAX_DEPTH @local = 32; // 33 fixed 72-byte Bernstein nodes; no heap allocation.
 
 enum ScaleEligibilityResult @private {
     ADMITTED,
@@ -23,7 +21,6 @@ struct AdmittedScaleExtrema @private {
     MotionInterval minimum;
     MotionInterval maximum;
     float smallest_input;
-    bool exhausted;
 }
 
 struct ScaleEligibilityInput @private {
@@ -32,24 +29,6 @@ struct ScaleEligibilityInput @private {
     double offset;
     double velocity;
     double duration;
-}
-
-struct ScaleEligibilityProof @private {
-    ScaleEligibilityResult result;
-    MotionInterval target_minimum;
-    MotionInterval target_maximum;
-    MotionInterval residual_minimum;
-    MotionInterval residual_maximum;
-    MotionInterval published_minimum;
-    MotionInterval published_maximum;
-    double lower_limit;
-    bool exact_correction;
-    bool extrema_exhausted;
-}
-
-struct ScaleExtremaNode @local {
-    MotionInterval[4] coefficients;
-    uint depth;
 }
 
 fn MotionInterval eligibility_product(MotionInterval left, MotionInterval right) @private {
@@ -157,31 +136,21 @@ fn ScaleEligibilityResult eligibility_margined_limits(
     return ScaleEligibilityResult.UNSUPPORTED;
 }
 
-fn ScaleEligibilityProof scale_eligibility(ScaleEligibilityInput* input) @private {
-    ScaleEligibilityProof proof = { .result = ScaleEligibilityResult.UNSUPPORTED };
-
+fn ScaleEligibilityResult scale_eligibility(ScaleEligibilityInput* input) @private {
     if (!math::is_finite(input.offset) || !math::is_finite(input.velocity)
-      || !math::is_finite(input.duration) || input.duration < 0) {
-        proof.result = ScaleEligibilityResult.INVALID_ARGUMENT;
-        return proof;
-    }
+      || !math::is_finite(input.duration) || input.duration < 0) return ScaleEligibilityResult.INVALID_ARGUMENT;
 
     double smallest = double::max;
-    proof.target_minimum = motion_interval_exact(double::max);
-    proof.target_maximum = motion_interval_exact(0);
 
     foreach (component : input.base) {
-        if (!math::is_finite(component) || component <= 0) {
-            proof.result = ScaleEligibilityResult.INVALID_ARGUMENT;
-            return proof;
-        }
+        if (!math::is_finite(component) || component <= 0) return ScaleEligibilityResult.INVALID_ARGUMENT;
 
         smallest = math::min(smallest, (double)component);
     }
 
     // The published uniform scalar is the mean; component maxima are not attainable scalar witnesses.
-    MotionInterval base_mean = scale_mean_components(input.base[..]);
-    proof.target_minimum = proof.target_maximum = base_mean;
+    MotionInterval target_minimum = scale_mean_components(input.base[..]);
+    MotionInterval target_maximum = target_minimum;
 
     foreach (extrema : input.regular) {
         if (!math::is_finite(extrema.minimum.lower) || !math::is_finite(extrema.minimum.upper)
@@ -189,29 +158,19 @@ fn ScaleEligibilityProof scale_eligibility(ScaleEligibilityInput* input) @privat
           || extrema.minimum.lower > extrema.minimum.upper || extrema.maximum.lower > extrema.maximum.upper
           || extrema.minimum.upper <= 0 || extrema.maximum.upper < extrema.minimum.lower
           || !math::is_finite(extrema.smallest_input) || extrema.smallest_input <= 0) {
-            proof.result = ScaleEligibilityResult.INVALID_ARGUMENT;
-            return proof;
+            return ScaleEligibilityResult.INVALID_ARGUMENT;
         }
 
-        proof.extrema_exhausted |= extrema.exhausted;
         smallest = math::min(smallest, (double)extrema.smallest_input);
-        proof.target_minimum.lower = math::min(proof.target_minimum.lower, extrema.minimum.lower);
-        proof.target_minimum.upper = math::min(proof.target_minimum.upper, extrema.minimum.upper);
-        proof.target_maximum.lower = math::max(proof.target_maximum.lower, extrema.maximum.lower);
-        proof.target_maximum.upper = math::max(proof.target_maximum.upper, extrema.maximum.upper);
+        target_minimum.lower = math::min(target_minimum.lower, extrema.minimum.lower);
+        target_minimum.upper = math::min(target_minimum.upper, extrema.minimum.upper);
+        target_maximum.lower = math::max(target_maximum.lower, extrema.maximum.lower);
+        target_maximum.upper = math::max(target_maximum.upper, extrema.maximum.upper);
     }
 
-    proof.lower_limit = math::min(SCALE_MIN_NORMAL, smallest);
-    proof.exact_correction = (input.offset == 0 && input.velocity == 0) || input.duration == 0;
-
-    if (proof.exact_correction) {
-        proof.residual_minimum = motion_interval_exact(0);
-        proof.residual_maximum = motion_interval_exact(0);
-        proof.published_minimum = proof.target_minimum;
-        proof.published_maximum = proof.target_maximum;
-
-        proof.result = eligibility_closed_limits(proof.published_minimum, proof.published_maximum, proof.lower_limit);
-        return proof;
+    double lower_limit = math::min(SCALE_MIN_NORMAL, smallest);
+    if ((input.offset == 0 && input.velocity == 0) || input.duration == 0) {
+        return eligibility_closed_limits(target_minimum, target_maximum, lower_limit);
     }
 
     MotionInterval duration = motion_interval_exact(input.duration);
@@ -223,30 +182,26 @@ fn ScaleEligibilityProof scale_eligibility(ScaleEligibilityInput* input) @privat
     MotionInterval maximum_offset = motion_interval_exact(math::max(0.0, input.offset));
     MotionInterval minimum_velocity = motion_interval_exact(velocity_range.lower);
     MotionInterval maximum_velocity = motion_interval_exact(velocity_range.upper);
-    proof.residual_minimum = motion_interval_add(minimum_offset, minimum_velocity);
-    proof.residual_maximum = motion_interval_add(maximum_offset, maximum_velocity);
+    MotionInterval residual_minimum = motion_interval_add(minimum_offset, minimum_velocity);
+    MotionInterval residual_maximum = motion_interval_add(maximum_offset, maximum_velocity);
 
     MotionInterval lower_exp = {
-        .lower = eligibility_exp(proof.residual_minimum.lower).lower,
-        .upper = eligibility_exp(proof.residual_minimum.upper).upper,
+        .lower = eligibility_exp(residual_minimum.lower).lower,
+        .upper = eligibility_exp(residual_minimum.upper).upper,
     };
     MotionInterval upper_exp = {
-        .lower = eligibility_exp(proof.residual_maximum.lower).lower,
-        .upper = eligibility_exp(proof.residual_maximum.upper).upper,
+        .lower = eligibility_exp(residual_maximum.lower).lower,
+        .upper = eligibility_exp(residual_maximum.upper).upper,
     };
 
-    proof.published_minimum = eligibility_product(proof.target_minimum, lower_exp);
-    proof.published_maximum = eligibility_product(proof.target_maximum, upper_exp);
+    MotionInterval published_minimum = eligibility_product(target_minimum, lower_exp);
+    MotionInterval published_maximum = eligibility_product(target_maximum, upper_exp);
 
-    proof.result = eligibility_margined_limits(proof.published_minimum, proof.published_maximum, proof.lower_limit);
-    return proof;
+    return eligibility_margined_limits(published_minimum, published_maximum, lower_limit);
 }
 
-fn void? validate_scale_eligibility(ScaleEligibilityInput* input, ScaleEligibilityProof* out_proof = null) @private {
-    ScaleEligibilityProof proof = scale_eligibility(input);
-    if (out_proof) *out_proof = proof;
-
-    switch (proof.result) {
+fn void? validate_scale_eligibility(ScaleEligibilityInput* input) @private {
+    switch (scale_eligibility(input)) {
         case ADMITTED:
             return;
         case INVALID_ARGUMENT:
@@ -277,37 +232,9 @@ fn AdmittedScaleExtrema collect_admitted_scale_extrema(Track* track) @private {
         case LINEAR:
             return extrema;
         case CUBIC_SPLINE:
-            for (uint key = 0; key + 1 < key_count; key++) {
-                MotionInterval start = scale_mean_key(track, key, CUBIC_SLOT_VALUE);
-                MotionInterval end = scale_mean_key(track, key + 1, CUBIC_SLOT_VALUE);
-                if (scale_componentwise_constant_segment(track, key)) {
-                    include_scale_extrema(&extrema, start, start);
-                    continue;
-                }
-
-                MotionInterval duration = motion_interval_add(
-                    left: motion_interval_exact((double)track.times[key + 1]),
-                    right: motion_interval_exact(-(double)track.times[key]),
-                );
-                MotionInterval start_tangent = eligibility_divide_positive(
-                    value: eligibility_product(duration, scale_mean_key(track, key, CUBIC_SLOT_OUT_TANGENT)),
-                    divisor: 3,
-                );
-                MotionInterval end_tangent = eligibility_divide_positive(
-                    value: eligibility_product(duration, scale_mean_key(track, key + 1, CUBIC_SLOT_IN_TANGENT)),
-                    divisor: 3,
-                );
-                MotionInterval negative_end_tangent = { .lower = -end_tangent.upper, .upper = -end_tangent.lower };
-                ScaleExtremaNode initial = { .coefficients = {
-                    start,
-                    motion_interval_add(start, start_tangent),
-                    motion_interval_add(end, negative_end_tangent),
-                    end,
-                } };
-
-                enclose_scale_cubic_extrema(&extrema, initial);
-            }
-
+            // Cubic interiors are not enclosed, so eligibility can reject on the keys but never admit.
+            extrema.minimum.lower = -double::max;
+            extrema.maximum.upper = double::max;
             return extrema;
     }
 }
@@ -326,19 +253,6 @@ fn MotionInterval scale_mean_components(float[] value) @local {
     return eligibility_divide_positive(sum, 3);
 }
 
-fn bool scale_componentwise_constant_segment(Track* track, uint key) @local {
-    float[] start = analytic_key_values(track, key, CUBIC_SLOT_VALUE);
-    float[] end = analytic_key_values(track, key + 1, CUBIC_SLOT_VALUE);
-    float[] outgoing = analytic_key_values(track, key, CUBIC_SLOT_OUT_TANGENT);
-    float[] incoming = analytic_key_values(track, key + 1, CUBIC_SLOT_IN_TANGENT);
-
-    for (uint component = 0; component < 3; component++) {
-        if (start[component] != end[component] || outgoing[component] != 0 || incoming[component] != 0) return false;
-    }
-
-    return true;
-}
-
 fn void include_scale_extrema(
     AdmittedScaleExtrema* extrema,
     MotionInterval minimum,
@@ -349,91 +263,3 @@ fn void include_scale_extrema(
     extrema.maximum.lower = math::max(extrema.maximum.lower, maximum.lower);
     extrema.maximum.upper = math::max(extrema.maximum.upper, maximum.upper);
 }
-
-fn void include_scale_bernstein_hull(AdmittedScaleExtrema* extrema, ScaleExtremaNode node) @local {
-    double lower = double::max;
-    double upper = -double::max;
-
-    foreach (coefficient : node.coefficients) {
-        lower = math::min(lower, coefficient.lower);
-        upper = math::max(upper, coefficient.upper);
-    }
-
-    MotionInterval minimum = {
-        .lower = lower,
-        .upper = math::min(node.coefficients[0].upper, node.coefficients[3].upper),
-    };
-    MotionInterval maximum = {
-        .lower = math::max(node.coefficients[0].lower, node.coefficients[3].lower),
-        .upper = upper,
-    };
-    include_scale_extrema(extrema, minimum, maximum);
-}
-
-fn void split_scale_extrema_node(ScaleExtremaNode node, ScaleExtremaNode* left, ScaleExtremaNode* right) @local {
-    MotionInterval[4] temporary = node.coefficients;
-    left.depth = right.depth = node.depth + 1;
-    left.coefficients[0] = temporary[0];
-    right.coefficients[3] = temporary[3];
-
-    for (uint row = 1; row <= 3; row++) {
-        for (uint index = 0; index <= 3 - row; index++) {
-            temporary[index] = motion_interval_half(motion_interval_add(temporary[index], temporary[index + 1]));
-        }
-        left.coefficients[row] = temporary[0];
-        right.coefficients[3 - row] = temporary[3 - row];
-    }
-}
-
-fn void enclose_scale_cubic_extrema(AdmittedScaleExtrema* extrema, ScaleExtremaNode initial) @local {
-    ScaleExtremaNode[SCALE_EXTREMA_MAX_DEPTH + 1] pending;
-    uint pending_count = 1;
-    uint visits;
-    pending[0] = initial;
-
-    while (pending_count) {
-        if (visits == SCALE_EXTREMA_NODE_BUDGET) {
-            for (uint index = 0; index < pending_count; index++) include_scale_bernstein_hull(extrema, pending[index]);
-            extrema.exhausted = true;
-            return;
-        }
-
-        ScaleExtremaNode node = pending[--pending_count];
-        visits++;
-        bool increasing = true;
-        bool decreasing = true;
-
-        for (uint index = 0; index < 3; index++) {
-            MotionInterval negative = {
-                .lower = -node.coefficients[index].upper,
-                .upper = -node.coefficients[index].lower,
-            };
-            MotionInterval difference = motion_interval_add(node.coefficients[index + 1], negative);
-            increasing &= difference.lower >= 0;
-            decreasing &= difference.upper <= 0;
-        }
-
-        if (increasing) {
-            include_scale_extrema(extrema, node.coefficients[0], node.coefficients[3]);
-            continue;
-        }
-
-        if (decreasing) {
-            include_scale_extrema(extrema, node.coefficients[3], node.coefficients[0]);
-            continue;
-        }
-
-        if (node.depth == SCALE_EXTREMA_MAX_DEPTH) {
-            include_scale_bernstein_hull(extrema, node);
-            extrema.exhausted = true;
-            continue;
-        }
-
-        ScaleExtremaNode left;
-        ScaleExtremaNode right;
-        split_scale_extrema_node(node, &left, &right);
-        pending[pending_count++] = right;
-        pending[pending_count++] = left;
-    }
-}
-

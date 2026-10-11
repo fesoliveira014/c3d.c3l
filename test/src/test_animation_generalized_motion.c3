@@ -265,11 +265,11 @@ fn void test_animation_motion_admission_rejects_each_invalid_input_with_its_faul
     }
 }
 
-fn void test_animation_motion_admission_sampling_margin_defers_to_exact_faults() @test {
+fn void test_animation_motion_admission_cubic_scale_defers_to_invalid_faults() @test {
     MotionAdmissionFixture fixture;
     create_motion_admission_fixture(&fixture);
-    float[2] times = { 0x1p-149, 1 };
-    float[18] values = { 0, 0, 0, 1, 1, 1, -4, -4, -4, 4, 4, 4, 1, 1, 1, 0, 0, 0 };
+    float[2] times = { 0, 1 };
+    float[18] values = { 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0 };
     fixture.tracks[4].interpolation = Interpolation.CUBIC_SPLINE;
     fixture.tracks[4].times = times[..];
     fixture.tracks[4].values = values[..];
@@ -278,9 +278,6 @@ fn void test_animation_motion_admission_sampling_margin_defers_to_exact_faults()
     assert(@catch(validate_admission_fixture(&fixture)) == c3d::INVALID_ARGUMENT);
     fixture.nodes[0].local.scale = { 2, 2, 2 };
     fixture.tracks[2].values = fixture.excluded_scales[..];
-    assert(@catch(validate_admission_fixture(&fixture)) == c3d::INVALID_ARGUMENT);
-    fixture.tracks[2].values = fixture.scales[..];
-    times[0] = 0;
     assert(@catch(validate_admission_fixture(&fixture)) == c3d::INVALID_ARGUMENT);
 }
 

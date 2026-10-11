@@ -2064,13 +2064,9 @@ fn void? request_try_addition(
     }
 }
 
-fn ClipId request_sampling_band_clip(LayerFixture* fixture, bool subnormal) @local {
-    float[2] times = { subnormal ? 0 : 0x1p-149, 1 };
-    float key = subnormal ? 0x1p-126 : 1;
-    float outgoing = subnormal ? -bitcast(0x017fffffu, float) : -4;
-    float incoming = subnormal ? 0x1p-124 : 4;
-    float[18] values = { 0, 0, 0, key, key, key, outgoing, outgoing, outgoing,
-        incoming, incoming, incoming, key, key, key, 0, 0, 0 };
+fn ClipId request_cubic_scale_clip(LayerFixture* fixture) @local {
+    float[2] times = { 0, 1 };
+    float[18] values = { 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0 };
     return inertial_owner_clip(
         owner: fixture,
         path: TargetPath.SCALE,
@@ -2383,7 +2379,7 @@ fn void test_animation_inertial_request_real_scale_histories_reject_long_and_acc
     }
 }
 
-fn void test_animation_inertial_request_exact_invalid_precedes_sampling_unsupported_without_allocating() @test {
+fn void test_animation_inertial_request_invalid_scale_precedes_cubic_unsupported_without_allocating() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
     defer tracker.free();
@@ -2402,16 +2398,7 @@ fn void test_animation_inertial_request_exact_invalid_precedes_sampling_unsuppor
             values: ordinary[..],
             node: 2,
         );
-        float[2] band_times = { 0x1p-149, 1 };
-        float[18] band_values = { 0, 0, 0, 1, 1, 1, -4, -4, -4, 4, 4, 4, 1, 1, 1, 0, 0, 0 };
-        ClipId band = inertial_owner_clip(
-            owner: &fixture,
-            path: TargetPath.SCALE,
-            interpolation: Interpolation.CUBIC_SPLINE,
-            times: band_times[..],
-            values: band_values[..],
-            node: 2,
-        );
+        ClipId cubic = request_cubic_scale_clip(&fixture);
         float[6] invalid_values = { 1, 2, 1, 1, 2, 1 };
         ClipId invalid = inertial_owner_clip(
             owner: &fixture,
@@ -2429,7 +2416,7 @@ fn void test_animation_inertial_request_exact_invalid_precedes_sampling_unsuppor
         assert(template.nodes[0].parent == -1 && template.nodes[2].parent == -1);
         anim::update(&fixture.assets, &fixture.scene, 0.25f);
         AnimationTargetDesc[2] targets = { anim::ANIMATION_TARGET_DEFAULT, anim::ANIMATION_TARGET_DEFAULT };
-        targets[0].clip = band;
+        targets[0].clip = cubic;
         targets[1].clip = invalid;
         targets[0].play = targets[1].play = generalized;
         for (uint count = 2; count > 0; count--) @pool() {
@@ -2487,7 +2474,7 @@ fn void test_animation_generalized_play_and_groups_reject_atomically_before_acqu
                         node: 3,
                     );
                 case SPACE_2D:
-                    rejected = request_sampling_band_clip(&fixture, false);
+                    rejected = request_cubic_scale_clip(&fixture);
                     expected = c3d::UNSUPPORTED;
             }
             ClipId[3] clips = { rejected, rejected, rejected };
@@ -2508,77 +2495,6 @@ fn void test_animation_generalized_play_and_groups_reject_atomically_before_acqu
     }
 }
 
-fn void test_animation_generalized_play_and_groups_exact_faults_precede_other_track_and_member_bands() @test {
-    TrackingAllocator tracker;
-    tracker.init(mem);
-    defer tracker.free();
-    {
-        MotionTestAllocator allocator = { .backing = &tracker };
-        LayerFixture fixture;
-        create_inertial_owner(&fixture, &allocator);
-        defer destroy_layer_fixture(&fixture);
-        PlayDesc desc = request_generalized_desc();
-        ClipId source = request_translation_clip(
-            fixture: &fixture,
-            start: { 1, 0, 0 },
-            end: { 1, 0, 0 },
-        );
-        fixture.animator.play(&fixture.assets, source, desc)!!;
-        anim::update(&fixture.assets, &fixture.scene, 0.25f);
-        ClipId band = request_sampling_band_clip(&fixture, true);
-        float[2] times = { 0, 1 };
-        float[6] scales = { 1, 2, 1, 1, 2, 1 };
-        ClipId nonuniform = inertial_owner_clip(
-            owner: &fixture,
-            path: TargetPath.SCALE,
-            interpolation: Interpolation.LINEAR,
-            times: times[..],
-            values: scales[..],
-            node: 2,
-        );
-        float[8] rotations;
-        AnimationClip* band_data = &fixture.assets.clip(band).data;
-        Track[2] tracks = {
-            make_track(
-                path: TargetPath.SCALE,
-                interpolation: Interpolation.CUBIC_SPLINE,
-                times: band_data.tracks[0].times,
-                values: band_data.tracks[0].values,
-            ),
-            make_track(
-                path: TargetPath.ROTATION,
-                interpolation: Interpolation.LINEAR,
-                times: times[..],
-                values: rotations[..],
-                target: 1,
-            ),
-        };
-        uint[2] targets = { 2, 3 };
-        ClipId combined = add_clip(
-            assets: &fixture.assets,
-            key: "",
-            tracks: tracks[..],
-            targets: targets[..],
-            duration: 1,
-        );
-        foreach (kind : RequestAdditionKind::values) @pool() {
-            ClipId[3] clips = { band, nonuniform, source };
-            if (kind == RequestAdditionKind.SINGLE) clips[0] = combined;
-            RequestBlockSnapshot[] snapshot = request_snapshot_blocks(&tracker);
-            uint calls = allocator.attempts;
-            assert(@catch(request_try_addition(
-                fixture: &fixture,
-                clips: clips[..],
-                desc: desc,
-                kind: kind,
-            )) == c3d::INVALID_ARGUMENT);
-            assert(allocator.attempts == calls);
-            request_assert_blocks_unchanged(&tracker, snapshot);
-        };
-    }
-    assert(!tracker.has_leaks());
-}
-
 fn void test_animation_generalized_and_planar_extract_play_and_groups_reject_both_orders_atomically() @test {
     foreach (generalized_source : (bool[2]){ false, true }) {
         TrackingAllocator tracker;
@@ -2594,7 +2510,7 @@ fn void test_animation_generalized_and_planar_extract_play_and_groups_reject_bot
             ClipId source = request_translation_clip(&fixture, { 1, 0, 0 }, { 1, 0, 0 });
             fixture.animator.play(&fixture.assets, source, generalized_source ? generalized : planar)!!;
             anim::update(&fixture.assets, &fixture.scene, 0.25f);
-            ClipId incoming = generalized_source ? source : request_sampling_band_clip(&fixture, true);
+            ClipId incoming = generalized_source ? source : request_cubic_scale_clip(&fixture);
             ClipId[3] clips = { incoming, incoming, incoming };
             @pool() {
                 RequestBlockSnapshot[] snapshot = request_snapshot_blocks(&tracker);
@@ -2611,71 +2527,6 @@ fn void test_animation_generalized_and_planar_extract_play_and_groups_reject_bot
         }
         assert(!tracker.has_leaks());
     }
-}
-
-fn void test_animation_generalized_shifted_cubic_controls_publish_literal_positive_owner_scales() @test {
-    foreach (subnormal : (bool[2]){ false, true }) {
-        LayerFixture fixture;
-        create_inertial_owner(&fixture, mem, !subnormal);
-        defer destroy_layer_fixture(&fixture);
-        float[2] times = { subnormal ? 0 : 0x1p-149, 1 };
-        float key = subnormal ? 0x1p-125 : 2;
-        float outgoing = subnormal ? -bitcast(0x017fffffu, float) : -4;
-        float incoming = subnormal ? 0x1p-124 : 4;
-        float[18] values = { 0, 0, 0, key, key, key, outgoing, outgoing, outgoing,
-            incoming, incoming, incoming, key, key, key, 0, 0, 0 };
-        ClipId clip = inertial_owner_clip(
-            owner: &fixture,
-            path: TargetPath.SCALE,
-            interpolation: Interpolation.CUBIC_SPLINE,
-            times: times[..],
-            values: values[..],
-            node: 2,
-        );
-        fixture.animator.play(&fixture.assets, clip, request_generalized_desc())!!;
-        anim::update(&fixture.assets, &fixture.scene, 0.5f);
-        Vec3 published = inertial_owner_pose(&fixture, 2).scale;
-        float expected = subnormal ? 0x1p-126 : 1;
-        assert(published.x == expected && published.y == expected && published.z == expected);
-    }
-}
-
-fn void test_animation_inertial_request_both_cubic_sampling_bands_preserve_owner_blocks() @test {
-    TrackingAllocator tracker;
-    tracker.init(mem);
-    defer tracker.free();
-    {
-        MotionTestAllocator allocator = { .backing = &tracker };
-        LayerFixture fixture;
-        create_inertial_owner(&fixture, &allocator);
-        defer destroy_layer_fixture(&fixture);
-        PlayDesc generalized = request_generalized_desc();
-        ClipId source = request_translation_clip(
-            fixture: &fixture,
-            start: { 1, 0, 0 },
-            end: { 1, 0, 0 },
-        );
-        fixture.animator.play(&fixture.assets, source, generalized)!!;
-        anim::update(&fixture.assets, &fixture.scene, 0.25f);
-        foreach (subnormal : (bool[2]){ false, true }) {
-            ClipId band = request_sampling_band_clip(&fixture, subnormal);
-            AnimationTargetDesc[1] targets = { anim::ANIMATION_TARGET_DEFAULT };
-            targets[0].clip = band;
-            targets[0].play = generalized;
-            @pool() {
-                RequestBlockSnapshot[] snapshot = request_snapshot_blocks(&tracker);
-                uint calls = allocator.attempts;
-                fault expected = subnormal ? c3d::INVALID_ARGUMENT : c3d::UNSUPPORTED;
-                assert(@catch(fixture.animator.inertialize(
-                    assets: &fixture.assets,
-                    desc: { .duration = 0.5f, .actions = targets[..] },
-                )) == expected);
-                assert(allocator.attempts == calls);
-                request_assert_blocks_unchanged(&tracker, snapshot);
-            };
-        }
-    }
-    assert(!tracker.has_leaks());
 }
 
 fn void test_animation_inertial_request_stale_crowd_player_preserves_all_owner_blocks() @test {
