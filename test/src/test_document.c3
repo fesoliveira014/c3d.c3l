@@ -807,7 +807,7 @@ fn void test_document_malformed_authored_tangents_fail_before_transfer() @test {
         geometry.tangents = alloc::new_array(&tracker, Vec4, 3);
         geometry.tangents[0] = { 2, 0, 0, 3 };
         geometry.tangents[1] = { 0, 2, 0, -4 };
-        geometry.tangents[2] = { 0, 0, 0, 1 };
+        geometry.tangents[2] = { 1, 0, 0, 0 };
 
         assert(@catch(asset::prepare_model_document(&document)) == c3d::INVALID_ARGUMENT);
         assert(geometry.tangents[0].w == 3 && geometry.tangents[1].w == -4);

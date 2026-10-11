@@ -205,9 +205,7 @@ fn void? write_corner(
         vector::Vec3 tangent = narrow_vec3(mesh.vertex_tangent.values[mesh.vertex_tangent.indices[index]]);
         vector::Vec3 bitangent = narrow_vec3(mesh.vertex_bitangent.values[mesh.vertex_bitangent.indices[index]]);
 
-        foreach (value : tangent) if (!math::is_finite(value)) return c3d::ASSET_FORMAT_ERROR~;
         foreach (value : bitangent) if (!math::is_finite(value)) return c3d::ASSET_FORMAT_ERROR~;
-        if (tangent == (vector::Vec3){} || bitangent == (vector::Vec3){}) return c3d::ASSET_FORMAT_ERROR~;
 
         // The v flip mirrors the tangent frame, so the handedness sign is inverted.
         float handedness = normal.cross(tangent).dot(bitangent) < 0 ? 1.0f : -1.0f;

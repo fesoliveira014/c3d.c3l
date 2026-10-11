@@ -64,7 +64,7 @@ fn void destroy_tangent_geometry(TangentGeometry* owner) {
 
 <*
  Validate tangent values against their origin without changing them.
- @param [&in] geometry : "Generated zero directions remain valid."
+ @param [&in] geometry : "Zero directions remain valid."
  @return? c3d::INVALID_ARGUMENT
 *>
 fn void? check_tangent_stream(Geometry* geometry, TangentProvenance provenance = {}) {
@@ -83,9 +83,7 @@ fn void? check_tangent_stream(Geometry* geometry, TangentProvenance provenance =
 
     foreach (tangent : geometry.tangents) {
         if (!finite_tangent_values(tangent) || tangent.w == 0) return c3d::INVALID_ARGUMENT~;
-        if (provenance.origin == TangentOrigin.GENERATED) {
-            if (tangent.w != -1 && tangent.w != 1) return c3d::INVALID_ARGUMENT~;
-        } else if (tangent.x == 0 && tangent.y == 0 && tangent.z == 0) {
+        if (provenance.origin == TangentOrigin.GENERATED && tangent.w != -1 && tangent.w != 1) {
             return c3d::INVALID_ARGUMENT~;
         }
     }

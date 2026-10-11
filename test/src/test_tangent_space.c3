@@ -421,7 +421,7 @@ fn void test_authored_tangents_keep_xyz_and_accept_mixed_nonunit_signs() @test {
         assert(record.data.tangents[0] == (Vec4){ 7, 3, 4, -1 });
 
         uint revision = record.header.revision;
-        source.tangents[0] = { 0, 0, 0, 1 };
+        source.tangents[0] = { float::nan, 0, 0, 1 };
 
         assert(@catch(assets.replace_geometry(id, &source)) == c3d::INVALID_ARGUMENT);
         assert(record.header.revision == revision && record.data.tangents[0] == (Vec4){ 7, 3, 4, -1 });
@@ -556,7 +556,8 @@ fn void test_generated_reference_zero_directions_publish_with_their_origin() @te
         }
 
         assert(zero_found);
-        assert(@catch(assets.add_geometry(&owner.data)) == c3d::INVALID_ARGUMENT);
+
+        (void)assets.add_geometry(&owner.data)!!;
 
         GeometryId id = assets.add_tangent_geometry_owned(&owner)!!;
 

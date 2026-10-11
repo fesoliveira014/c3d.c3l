@@ -394,7 +394,7 @@ fn void test_forced_fbx_tangents_use_converted_uv0_and_transfer_without_regenera
     };
 }
 
-fn void test_fbx_authored_zero_and_nan_tangents_fault_unless_forced() @test {
+fn void test_fbx_authored_zero_tangents_import_and_nan_binormals_fault_unless_forced() @test {
     @pool() {
         String malformed = (String)AUTHORED_TANGENT_FAULTS[..];
         String valid = malformed.treplace(FAULTY_TANGENTS, VALID_TANGENTS).treplace(FAULTY_BINORMALS, VALID_BINORMALS);
@@ -414,59 +414,66 @@ fn void test_fbx_authored_zero_and_nan_tangents_fault_unless_forced() @test {
             foreach (tangent : document.geometries[0].data.tangents) assert(tangent == (Vec4){ 2, 0, 0, -1 });
         }
 
+        {
+            MemorySource source = { .document = valid.treplace(VALID_TANGENTS, "a: 0,0,0,2,0,0,2,0,0,2,0,0") };
+            ModelDocument document = decode_fixture(&tracker, &source);
+            defer asset::destroy_model_document(&document);
+
+            usz zero_directions;
+
+            foreach (tangent : document.geometries[0].data.tangents) {
+                if (tangent == (Vec4){ 0, 0, 0, -1 }) zero_directions++;
+            }
+
+            assert(zero_directions == 1);
+        }
+
         assert(tracker.allocated() == 0);
 
-        String[2] cases = {
-            valid.treplace(VALID_TANGENTS, "a: 0,0,0,2,0,0,2,0,0,2,0,0"),
-            valid.treplace(VALID_BINORMALS, "a: 0,NaN,0,0,3,0,0,3,0,0,3,0"),
-        };
+        MemorySource source = { .document = valid.treplace(VALID_BINORMALS, "a: 0,NaN,0,0,3,0,0,3,0,0,3,0") };
+        ModelDocument? result = fbx::decode_model(
+            allocator: &tracker,
+            path: MODEL_PATH,
+            file_source: { .read = &read_memory, .user = &source },
+        );
+        bool rejected;
 
-        foreach (text : cases) {
-            MemorySource source = { .document = text };
-            ModelDocument? result = fbx::decode_model(
-                allocator: &tracker,
-                path: MODEL_PATH,
-                file_source: { .read = &read_memory, .user = &source },
-            );
-            bool rejected;
-
-            if (catch excuse = result) {
-                rejected = true;
-                assert(excuse == c3d::ASSET_FORMAT_ERROR);
-            } else {
-                ModelDocument document = result;
-                asset::destroy_model_document(&document);
-            }
-
-            assert(rejected && tracker.allocated() == 0);
-
-            {
-                LoadOptions forced = asset::LOAD_OPTIONS_DEFAULT;
-                forced.generate_tangents = false;
-                forced.regenerate_tangents = true;
-
-                ModelDocument document = decode_fixture(&tracker, &source, forced);
-                defer asset::destroy_model_document(&document);
-
-                assert(document.geometries.len == 1);
-
-                DocumentGeometry* entry = &document.geometries[0];
-
-                assert(entry.tangent_provenance.origin == TangentOrigin.GENERATED);
-                assert(entry.tangent_provenance.uv_set == 0);
-                assert(entry.data.positions.len == 4 && entry.data.indices.len == 6);
-                assert(entry.data.tangents.len == entry.data.positions.len);
-
-                foreach (index, tangent : entry.data.tangents) {
-                    Vec3 position = entry.data.positions[index];
-
-                    assert(tangent == (Vec4){ 1, 0, 0, -1 });
-                    assert(entry.data.normals[index] == (Vec3){ 0, 0, 1 });
-                    assert(entry.data.uv0[index] == (Vec2){ position.x, 1 - position.y });
-                }
-            }
-
-            assert(tracker.allocated() == 0);
+        if (catch excuse = result) {
+            rejected = true;
+            assert(excuse == c3d::ASSET_FORMAT_ERROR);
+        } else {
+            ModelDocument document = result;
+            asset::destroy_model_document(&document);
         }
+
+        assert(rejected && tracker.allocated() == 0);
+
+        {
+            LoadOptions forced = asset::LOAD_OPTIONS_DEFAULT;
+            forced.generate_tangents = false;
+            forced.regenerate_tangents = true;
+
+            ModelDocument document = decode_fixture(&tracker, &source, forced);
+            defer asset::destroy_model_document(&document);
+
+            assert(document.geometries.len == 1);
+
+            DocumentGeometry* entry = &document.geometries[0];
+
+            assert(entry.tangent_provenance.origin == TangentOrigin.GENERATED);
+            assert(entry.tangent_provenance.uv_set == 0);
+            assert(entry.data.positions.len == 4 && entry.data.indices.len == 6);
+            assert(entry.data.tangents.len == entry.data.positions.len);
+
+            foreach (index, tangent : entry.data.tangents) {
+                Vec3 position = entry.data.positions[index];
+
+                assert(tangent == (Vec4){ 1, 0, 0, -1 });
+                assert(entry.data.normals[index] == (Vec3){ 0, 0, 1 });
+                assert(entry.data.uv0[index] == (Vec2){ position.x, 1 - position.y });
+            }
+        }
+
+        assert(tracker.allocated() == 0);
     };
 }

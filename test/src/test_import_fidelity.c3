@@ -329,7 +329,7 @@ fn void test_force_recovers_only_decodable_invalid_tangent_values() @test {
     forced.generate_tangents = false;
     forced.regenerate_tangents = true;
 
-    foreach (uint accessor : { 10, 11, 12 }) {
+    foreach (uint accessor : { 10, 12 }) {
         String text = tangent_fixture().treplace(`"TANGENT":5`, string::tformat(`"TANGENT":%d`, accessor));
 
         expect_decode_fault(text, asset::LOAD_OPTIONS_DEFAULT, c3d::ASSET_FORMAT_ERROR);
@@ -341,6 +341,23 @@ fn void test_force_recovers_only_decodable_invalid_tangent_values() @test {
 
         foreach (tangent : document.geometries[0].data.tangents) expect_direction(tangent, { 1, 0, 0 });
     }
+}
+
+fn void test_authored_zero_tangent_directions_import_and_publish() @test {
+    String text = tangent_fixture().treplace(`"TANGENT":5`, `"TANGENT":11`);
+
+    ModelDocument document = decode_text(text);
+    defer asset::destroy_model_document(&document);
+
+    foreach (tangent : document.geometries[0].data.tangents) assert(tangent == (Vec4){ 0, 0, 0, 1 });
+
+    AssetStore assets = create_store();
+    defer asset::destroy_asset_store(&assets);
+
+    ModelId model = assets.publish_document(&document)!!;
+    GeometryAsset* geometry = assets.geometry(assets.model(model).data.meshes[0].geometry);
+
+    foreach (tangent : geometry.data.tangents) assert(tangent == (Vec4){ 0, 0, 0, 1 });
 }
 
 fn void test_force_does_not_bypass_structural_tangent_shape_count_or_component_faults() @test {
