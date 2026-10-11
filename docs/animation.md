@@ -468,12 +468,14 @@ same property. Disabled animation imports do not read event metadata.
 Absent metadata or an empty array produces an empty table. Replacing a clip
 replaces its table, so absent metadata clears previously imported events.
 
-`version` and `id` use the exact value of each JSON number token. Integral
-spellings such as `1`, `1.0`, `1e0` and `10e-1` are equivalent. IDs range from
-0 through 4294967295; repeated IDs and negative-zero spellings are valid.
-Fractional, negative nonzero or overflowing IDs fault `ASSET_FORMAT_ERROR`.
-A nonintegral version faults `ASSET_FORMAT_ERROR`; any integer version other
-than 1 faults `UNSUPPORTED`, including integers beyond 64 bits.
+Metadata is strict JSON, without comments or trailing commas. `version` and
+`id` are JSON numbers read as doubles, which hold every ID exactly. Integral
+spellings such as `1`, `1.0`, `1e0` and `10e-1` are equivalent; spellings finer
+than double precision, such as `1.0000000000000000001`, read as the nearest
+double. IDs range from 0 through 4294967295; repeated IDs and negative-zero
+spellings are valid. Fractional, negative nonzero or overflowing IDs fault
+`ASSET_FORMAT_ERROR`. A nonintegral version faults `ASSET_FORMAT_ERROR`; any
+other integral version faults `UNSUPPORTED`.
 
 `time` is finite decoded clip-local seconds in `[0,duration]`, read as double
 and stored as float. Events never extend the track-derived duration; a
@@ -482,16 +484,17 @@ after baking with `trim_start_time = true`. Author markers against the resulting
 clip times, including when the source stack starts before or after zero.
 Do not use the stack's absolute scene times.
 
-Missing required fields, wrong types, malformed recognized metadata and invalid
-values fault `ASSET_FORMAT_ERROR`. Repeated decoded keys within the table object
-or any direct event entry also fault, including unknown keys and escaped spellings
-of the same key. Single unknown fields, duplicates inside nested unknown values,
-and unrelated extras or properties are ignored. Unrelated glTF numeric values
-do not inherit the event ID or version limits. Import failure leaves shared
-assets unchanged and releases decoded event arrays.
+Missing required fields, wrong types, malformed metadata and invalid values
+fault `ASSET_FORMAT_ERROR`. A glTF importer parses the whole extras value, so
+extras the JSON parser rejects also fault: nesting beyond `json::max_depth`,
+numbers outside double range, integers outside the signed 64-bit range written
+without a fraction or exponent, and invalid escapes such as unpaired surrogates.
+Unknown fields, extras without `c3d_events`, non-object extras and unrelated
+properties are ignored. A repeated key keeps its last value. Import failure
+leaves shared assets unchanged and releases decoded event arrays.
 
 Imported events are stably sorted by time, retaining authored order at equal
-times. The table owns its explicit IDs and has no event names or payloads.
+stored times. The table owns its explicit IDs and has no event names or payloads.
 [Serialization](serialization.md) saves keyed clip references rather than clip
 payloads or event tables; preload the imported assets before restoring playback.
 
