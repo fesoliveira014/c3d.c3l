@@ -12,7 +12,12 @@ struct Surface {
     uint part;
     uint instance;
     uint primitive;
-    uint padding;
+    uint reader;
+    vec4 plane;
+    uint range;
+    uint padding0;
+    uint padding1;
+    uint padding2;
 };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Surfaces {
     Surface values[];
@@ -40,5 +45,6 @@ void main() {
     Surface surface = Surfaces(root.surfaces).values[surface_index];
     const vec2 corners[6] = vec2[6](vec2(0, 0), vec2(1, 0), vec2(1, 1), vec2(0, 0), vec2(1, 1), vec2(0, 1));
     vec2 xy = mix(surface.bounds.xy, surface.bounds.zw, corners[gl_VertexIndex % 6]);
-    gl_Position = vec4(xy, surface.depth, 1.0);
+    float depth = surface.depth + surface.plane.x * xy.x + surface.plane.y * xy.y;
+    gl_Position = vec4(xy, depth, 1.0);
 }

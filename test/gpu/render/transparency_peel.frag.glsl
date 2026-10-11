@@ -13,7 +13,12 @@ struct Surface {
     uint part;
     uint instance;
     uint primitive;
-    uint padding;
+    uint reader;
+    vec4 plane;
+    uint range;
+    uint padding0;
+    uint padding1;
+    uint padding2;
 };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Surfaces {
     Surface values[];
@@ -27,12 +32,19 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Dr
     uint scene;
     uint mode;
     uint has_previous;
-    uint unused0;
+    uint opaque_depth;
     uint unused1;
     uint unused2;
 };
 layout(push_constant) uniform Push { uint64_t vertex_root; uint64_t fragment_root; } pc;
 #ifdef MESH_VERTEX_PATH
+layout(location = 0) in vec3 mesh_world;
+layout(location = 1) in vec3 mesh_normal;
+layout(location = 2) in vec4 mesh_tangent;
+layout(location = 3) in vec2 mesh_uv0;
+layout(location = 4) in vec2 mesh_uv1;
+layout(location = 5) in vec4 mesh_color;
+layout(location = 6) in vec4 mesh_clip;
 layout(location = 8) flat in uint surface_index;
 #else
 layout(location = 0) flat in uint surface_index;
@@ -44,26 +56,32 @@ float fetch_depth(uint image, ivec2 pixel) {
     return texelFetch(gpu_texture_heap[nonuniformEXT(GPU_HEAP_SLOT(image))], pixel, 0).x;
 }
 
+#include "transparency.glsl"
+
 void main() {
     Draw root = Draw(pc.fragment_root);
     Surface surface = Surfaces(root.surfaces).values[surface_index];
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     float depth = gl_FragCoord.z;
-    float opaque_depth = pixel.x >= 64 ? 0.3125 : 0.0;
+    float opaque_depth = fetch_depth(root.opaque_depth, pixel);
+#ifdef MESH_VERTEX_PATH
+    if (any(isnan(mesh_world)) || any(isnan(mesh_normal)) || any(isnan(mesh_tangent))
+        || any(isnan(mesh_uv0)) || any(isnan(mesh_uv1)) || any(isnan(mesh_color)) || any(isnan(mesh_clip))) discard;
+#endif
     bool fallback = surface.kind >= 2u;
     if (root.mode != 3u && fallback) discard;
     if (root.mode == 3u && !fallback) discard;
     if (surface.kind != 3u && depth <= opaque_depth) discard;
+    if (!layered_transparency_accept(depth)) discard;
     if (root.mode == 0u) {
-        if (root.has_previous != 0u && depth >= fetch_depth(root.previous, pixel)) discard;
         radiance = vec4(depth, 0, 0, 1);
     } else {
-        if (root.mode == 1u && depth != fetch_depth(root.selected, pixel)) discard;
-        if (root.mode == 2u && depth >= fetch_depth(root.selected, pixel)) discard;
         vec3 color = surface.color.rgb;
         if (surface.kind == 1u || surface.kind == 2u) {
             vec3 behind = texelFetch(gpu_texture_heap[nonuniformEXT(GPU_HEAP_SLOT(root.scene))], pixel, 0).rgb;
-            color = 0.5 * color + 0.5 * behind;
+            if (surface.reader == 2u) color *= opaque_depth;
+            else if (surface.reader == 3u) color = 0.5 * color + 0.5 * behind + color * opaque_depth;
+            else color = 0.5 * color + 0.5 * behind;
         }
         radiance = vec4(color * surface.coverage, surface.coverage);
     }

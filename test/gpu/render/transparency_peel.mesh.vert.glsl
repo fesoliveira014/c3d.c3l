@@ -1,10 +1,10 @@
 #version 460
+invariant gl_Position;
 #define main source_vertex_main
 #include "transparency_mesh_body.glsl"
 #undef main
 
 layout(location = 8) flat out uint surface_index;
-invariant gl_Position;
 
 void main() {
     source_vertex_main();

@@ -265,7 +265,16 @@
         "transparency_baseline.c3"
       ]
     },
-    "transparency_prototype": {
+    "transparency_oracle": {
+      "type": "test",
+      "sources": [
+        "../../fixtures/transparency/fixture.c3",
+        "../../fixtures/transparency/oracle_test.c3"
+      ],
+      "dependencies": [],
+      "features": []
+    },
+    "transparency_peel_order": {
       "type": "test",
       "sources": [
         "test_submission.c3",
@@ -321,18 +330,9 @@
         "test_manual_exposure.c3",
         "test_auto_exposure.c3",
         "test_posed_trace.c3",
-        "test_transparency_prototype.c3",
+        "test_transparency_peel_order.c3",
         "../../fixtures/transparency/fixture.c3"
       ]
-    },
-    "transparency_oracle": {
-      "type": "test",
-      "sources": [
-        "../../fixtures/transparency/fixture.c3",
-        "../../fixtures/transparency/oracle_test.c3"
-      ],
-      "dependencies": [],
-      "features": []
     }
   }
 }
