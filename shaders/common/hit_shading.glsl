@@ -156,7 +156,7 @@ vec3 shade_physical_hit(FrameRoot frame, HitLights lights, TraceSurface surface,
 
     vec3 base_ambient = frame.ambient.rgb * surface.albedo * (1.0 - surface.metallic);
     vec3 base_fill = (1.0 - physical.transmission) * base_ambient + physical.transmission * transmitted;
-    vec3 color = (1.0 - physical.coat_weight) * (base_fill * physical_sheen_attenuation(physical) + surface.emissive);
+    vec3 color = (1.0 - physical.coat_weight) * (base_fill + surface.emissive);
     if (frame_has_indirect(frame)) {
         color += evaluate_physical_environment(
             frame,
