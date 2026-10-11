@@ -30,6 +30,14 @@ vec3 volume_attenuation(
     return pow(attenuation_color, vec3(distance / attenuation_distance)) * radiance;
 }
 
+// Radiance along the refracted direction when nothing behind the surface is on screen.
+vec3 transmitted_environment(FrameRoot frame, ReflectionSelection selection, vec3 refracted, float roughness) {
+    if (frame.environment == 0ul && selection.count == 0u) return vec3(0.0);
+
+    float lod = max(roughness, MIN_PERCEPTUAL_ROUGHNESS) * float(ENVIRONMENT_SPECULAR_MIPS - 1u);
+    return environment_lobe_radiance(frame, selection, normalize(refracted), lod, ENVIRONMENT_GGX_CUBE);
+}
+
 // writes_depth: the fog pass fogs a draw without depth at what lies behind it, so only a depth-writing one fogs its own
 // segment behind the surface.
 vec3 transmitted_radiance(
@@ -55,12 +63,7 @@ vec3 transmitted_radiance(
             return fog_behind(frame, position, behind, scene_depth_at(frame, uv));
         }
     }
-    if (frame.environment == 0ul && selection.count == 0u) {
-        return writes_depth ? fog_behind(frame, position, vec3(0.0), 0.0) : vec3(0.0);
-    }
-
-    float lod = max(roughness, MIN_PERCEPTUAL_ROUGHNESS) * float(ENVIRONMENT_SPECULAR_MIPS - 1u);
-    vec3 surroundings = environment_lobe_radiance(frame, selection, normalize(refracted), lod, ENVIRONMENT_GGX_CUBE);
+    vec3 surroundings = transmitted_environment(frame, selection, refracted, roughness);
     return writes_depth ? fog_behind(frame, position, surroundings, 0.0) : surroundings;
 }
 
