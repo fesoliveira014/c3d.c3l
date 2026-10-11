@@ -24,6 +24,9 @@ const float GLASS_IOR @local = 1.5f;
 const float GLASS_THICKNESS @local = 0.2f;
 const Vec3 SLAB_SIZE @local = { 2.4f, 1.6f, 0.2f };
 const Vec3 SLAB_POSITION @local = { 0, 0.9f, 0 };
+const Vec3 REAR_SLAB_SIZE @local = { 1.8f, 1.2f, 0.2f };
+const Vec3 REAR_SLAB_POSITION @local = { 0.8f, 1.1f, -0.7f }; // offset so the panes overlap partly on screen
+const Vec4 REAR_GLASS_TINT @local = { 0.45f, 0.75f, 1, 1 };
 const Vec3 BACKDROP_POSITION @local = { 0, 1, -1.5f };
 const Vec3 BACKDROP_SCALE @local = { 7, 1, 4.5f };
 const Vec2 BACKDROP_TILES @local = { 8, 5 };
@@ -64,8 +67,9 @@ fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
     camera_node.local.rotation = maths::look_rotation(-offset, { 0, 1, 0 });
 }
 
-fn Material glass_material(float roughness) @local {
+fn Material glass_material(float roughness, Vec4 tint = { 1, 1, 1, 1 }) @local {
     PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
+    params.standard.base_color = tint;
     params.standard.metallic = 0;
     params.standard.roughness = roughness;
     params.transmission = 1;
@@ -92,6 +96,7 @@ fn int main() {
 
     GeometryId plane;
     GeometryId slab;
+    GeometryId rear_slab;
     GeometryId ball;
     @pool() {
         Geometry plane_geometry = geometry::plane(tmem, 1, 1);
@@ -100,11 +105,15 @@ fn int main() {
         Geometry slab_geometry = geometry::box(tmem, SLAB_SIZE.x, SLAB_SIZE.y, SLAB_SIZE.z);
         slab = assets.add_geometry(&slab_geometry, "transparency/slab")!!;
 
+        Geometry rear_slab_geometry = geometry::box(tmem, REAR_SLAB_SIZE.x, REAR_SLAB_SIZE.y, REAR_SLAB_SIZE.z);
+        rear_slab = assets.add_geometry(&rear_slab_geometry, "transparency/rear_slab")!!;
+
         Geometry ball_geometry = geometry::sphere(tmem, PROP_RADIUS);
         ball = assets.add_geometry(&ball_geometry, "transparency/ball")!!;
     };
 
     MaterialId glass = assets.add_material(glass_material(ROUGHNESS_STEPS[0]), "transparency/glass")!!;
+    MaterialId rear_glass = assets.add_material(glass_material(0, REAR_GLASS_TINT), "transparency/rear_glass")!!;
     MaterialId backdrop_material = assets.add_material(material::basic({
         .color = { 1, 1, 1, 1 },
         .map   = material::texture_slot(
@@ -136,6 +145,8 @@ fn int main() {
 
     Node* pane = scene.add_mesh(slab, glass, name: "glass")!!;
     pane.local.position = SLAB_POSITION;
+    Node* rear_pane = scene.add_mesh(rear_slab, rear_glass, name: "rear glass")!!;
+    rear_pane.local.position = REAR_SLAB_POSITION;
 
     Node* sun = scene.add_light(light::directional({ 1, 1, 1 }, 3, false), name: "sun")!!;
     sun.local.rotation = maths::look_rotation((Vec3){ -0.4f, -0.6f, -1 }.normalize(), { 0, 1, 0 });
@@ -143,11 +154,14 @@ fn int main() {
     Node* camera_node = scene.add_camera(camera::perspective_deg(55, 0.1f), name: "camera")!!;
     Orbit orbit = { .target = { 0, 0.9f, -0.4f }, .distance = 5, .yaw = 0.1f, .pitch = 0.1f };
     usz roughness_step;
+    ViewDesc view_desc = render::default_view_desc();
+    view_desc.transmission_layers = 1;
     double last_print;
 
     renderer.prepare_scene(&scene)!!;
 
-    io::printn("drag to orbit, wheel to zoom, R steps the glass roughness, Escape release quits");
+    io::printn("drag to orbit, wheel to zoom, R steps the glass roughness, L toggles the transmission layers, "
+        "Escape release quits");
 
     while (window.poll()) {
         Input* input = &window.input;
@@ -159,17 +173,24 @@ fn int main() {
             io::printfn("glass roughness %.2f", ROUGHNESS_STEPS[roughness_step]);
         }
 
+        bool layers_changed = input.key_pressed(platform::Scancode.L) && !input.keyboard_captured_by_gui;
+        if (layers_changed) {
+            view_desc.transmission_layers = view_desc.transmission_layers == 1 ? 2 : 1;
+            io::printfn("transmission layers %d", view_desc.transmission_layers);
+        }
+
         apply_orbit(&orbit, input, camera_node);
         scene.update_world();
 
         platform::sync_window(&window, &renderer);
+        if (layers_changed) render::configure_view(&renderer, renderer.default_view, view_desc)!!;
         renderer.render(&scene, camera_node, { .time = window.clock.total, .delta = window.clock.delta })!!;
 
         if (window.clock.total - last_print >= STATS_PERIOD_SECONDS) {
             last_print = window.clock.total;
-            io::printfn("draws %d, scene snapshots %d, frame %.2f ms at %dx%d",
-                renderer.stats.draws, renderer.stats.scene_snapshots, renderer.stats.frame_ms,
-                renderer.output_width, renderer.output_height);
+            io::printfn("layers %d, draws %d, scene snapshots %d, frame %.2f ms at %dx%d",
+                view_desc.transmission_layers, renderer.stats.draws, renderer.stats.scene_snapshots,
+                renderer.stats.frame_ms, renderer.output_width, renderer.output_height);
         }
     }
 
