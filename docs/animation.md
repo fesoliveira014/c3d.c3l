@@ -1008,10 +1008,11 @@ terrain height under it as the body moves.
 Use `begin_contact(hit, support)` to capture a stance anchor and
 `update_contact(support, dt)` to follow it. The application chooses the hit,
 support identity and timing. `FootSupport` carries an opaque caller identity
-and a proper rotation, translation and finite positive uniform scale. An
-invalid support, hit, plant setting or incoming pose returns `INVALID_ARGUMENT`
-and leaves the contact unchanged. Changing the identity requires an explicit
-new capture.
+and a proper rotation, translation and finite positive uniform scale. Static
+ground is a support whose frame does not move; like any support, its owner
+passes the current frame, shifted after an origin rebase. An invalid support,
+hit, plant setting or incoming pose returns `INVALID_ARGUMENT` and leaves the
+contact unchanged. Changing the identity requires an explicit new capture.
 
 `FootIk.plant` defaults to 0.12 seconds of acquisition, 0.20 seconds of release
 and ankle-local sole axes +Y/-Z. Set the axes for the rig's authored ankle
@@ -1020,18 +1021,18 @@ remains in scene metres while the support-local sole point follows changing
 scale. The normal and heading follow the support's proper rotation.
 
 Call `end_contact(support)` to blend into the fresh incoming swing pose, or
-`reset_contact()` for an immediate caller-authorized reset. Replanting captures
-the currently requested correction. Zero `dt` freezes transition clocks while
-external support movement still carries the contact. Start each update from
-the fresh animation pose; choose either retained contact or `place/release`
-for that update.
+`reset_contact()` for an immediate caller-authorized reset. Each
+`begin_contact` restarts acquisition from the currently requested correction,
+so call it once per plant. Zero `dt` freezes transition clocks while external
+support movement still carries the contact. Start each update from the fresh
+animation pose; choose either retained contact or `place/release` for that
+update.
 
 Order contact updates after animation and a world refresh, before optional
 `lower_pelvis`. Refresh worlds after pelvis movement, solve dependent IK and
-the legs, refresh, call `align_contact`, then refresh before `contact_result`.
-The result reports phase, actual target residual and normal/heading errors as
-`NO_TARGET`, `REACHED` or `MISSED`. Reach clamps, limits and partial leg weight
-may leave a miss; the anchor is retained without stretching or automatic release.
+the legs, refresh, call `align_contact`, then refresh again. Reach clamps,
+limits and partial leg weight may leave the ankle short of the requested
+target; the anchor is retained without stretching or automatic release.
 
 Standalone `FootContact` uses the same lifecycle with an explicit incoming
 `Transform`. During rebasing, call `Scene.shift_foot_contacts` after the scene

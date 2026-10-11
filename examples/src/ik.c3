@@ -498,7 +498,6 @@ fn void move_support(ContactDemo* demo, Character[] characters) @local {
     Quat tilt = quaternion::from_axis_angle{float}(tilt_axis, 20 * math::sin(angle) * (float)math::PI / 180);
     demo.support = {
         .identity = 17,
-        .kind = SUPPORT,
         .transform = {
             .position = (Vec3){ 0.5f * excursion, 2, 0 } - demo.origin_offset,
             .rotation = (yaw * tilt).normalize(),

@@ -13,15 +13,6 @@ const FootPlantConfig FOOT_PLANT_DEFAULT = {
 };
 
 const float CONTACT_FRAME_TOLERANCE @private = 1e-5f; // bounds frame orthonormality and uniformity, allowing float decomposition roundoff
-const float CONTACT_POSITION_TOLERANCE @private = 1e-6f; // bounds identical capture points in metres, allowing transform roundoff
-const float CONTACT_RESIDUAL_TOLERANCE @private = 0.001f; // bounds reached ankle distance in metres, allowing finite-precision IK error
-const float CONTACT_ANGLE_TOLERANCE @private = 1.0f; // bounds reached sole-axis angles in degrees, allowing finite-precision alignment error
-
-<* Frame owner of a retained contact. *>
-enum FootSupportKind {
-    WORLD_STATIC,
-    SUPPORT,
-}
 
 <* Caller-selected stance transition. *>
 enum FootContactPhase {
@@ -29,13 +20,6 @@ enum FootContactPhase {
     ACQUIRING,
     PLANTED,
     RELEASING,
-}
-
-<* Final pose agreement with the requested contact. *>
-enum FootContactStatus {
-    NO_TARGET,
-    REACHED,
-    MISSED,
 }
 
 <* Timing and ankle-local orthonormal sole directions. *>
@@ -49,17 +33,7 @@ struct FootPlantConfig {
 <* Opaque identity and current positive-uniform support frame. *>
 struct FootSupport {
     ulong identity;
-    FootSupportKind kind;
     Transform transform;
-}
-
-<* Residual and sole-axis errors measured after final world updates. *>
-struct FootContactResult {
-    FootContactPhase phase;
-    FootContactStatus status;
-    float residual;
-    float normal_error_degrees;
-    float heading_error_degrees;
 }
 
 <*
@@ -68,11 +42,6 @@ struct FootContactResult {
 *>
 fn void? FootPlantConfig.validate(&self) {
     (void)validate_foot_plant(*self)!;
-}
-
-<* Identity frame for caller-selected static ground. *>
-fn FootSupport world_static_support(ulong identity = 0) {
-    return { .identity = identity, .kind = WORLD_STATIC, .transform = maths::TRANSFORM_IDENTITY };
 }
 
 fn bool finite_contact_vec(Vec3 value) @private {
@@ -106,14 +75,6 @@ fn Transform? validate_foot_support(FootSupport support) @private {
 
     frame.rotation = frame.rotation.normalize();
     frame.scale = { frame.scale.x, frame.scale.x, frame.scale.x };
-    switch (support.kind) {
-        case WORLD_STATIC:
-            if (frame.position != (Vec3){ 0, 0, 0 } || frame.scale != (Vec3){ 1, 1, 1 }
-                || math::abs(frame.rotation.v.w) != 1) {
-                return c3d::INVALID_ARGUMENT~;
-            }
-        case SUPPORT:
-    }
     return frame;
 }
 
