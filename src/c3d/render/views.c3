@@ -72,6 +72,7 @@ struct ViewDesc {
     Plane                clip_plane; // world space; the zero plane clips nothing
     bool                 volumetric_fog; // a froxel volume for the view's HeightFog; allocated with the view
     bool                 share_shadows;  // binds an earlier view's matching shadow set and publishes its own
+    uint                 transmission_layers; // up to MAX_TRANSMISSION_LAYERS; zero reads as 1
 }
 
 <*
@@ -1064,6 +1065,7 @@ fn void? reset_view_history(Renderer* renderer, ViewId view) {
 
 fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
     if (!math::is_finite(desc.lod_bias)) return c3d::INVALID_ARGUMENT~;
+    if (desc.transmission_layers > MAX_TRANSMISSION_LAYERS) return c3d::INVALID_ARGUMENT~;
     if (!clip_plane_valid(desc.clip_plane)) return c3d::INVALID_ARGUMENT~;
     if (!ambient_occlusion_desc_valid(&desc.ambient_occlusion)) return c3d::INVALID_ARGUMENT~;
     if (!screen_space_gi_desc_valid(&desc.screen_space_gi)) return c3d::INVALID_ARGUMENT~;
