@@ -170,6 +170,7 @@ fn gpu::GpuAddress? upload_optical_trace_scene(
     gpu::GpuAddress* order_address,
 ) @private {
     Renderer* renderer = &fixture.renderer;
+    renderer.prepare_scene_trace(&trace.scene, TraceKind.SOFTWARE)!;
     gpu::GpuSpan scratch = gpu::get_allocation_span(&renderer.device, trace.scratch)!;
     gpu::Barrier uploads = { .before = { .transfer, .host }, .after = { .acceleration_structure_build } };
     gpu::cmd_barrier(&renderer.commands, &uploads)!;
@@ -179,10 +180,17 @@ fn gpu::GpuAddress? upload_optical_trace_scene(
     };
     for (uint index = 0; index < trace.count; index++) {
         GpuGeometry* geometry = &renderer.geometries[trace.geometries[index].index];
+        gpu::GpuSpan positions = geometry.positions;
+        foreach (source : renderer.scene_trace.baseline[:renderer.scene_trace.baseline_count]) {
+            if (!c3d::same_id(source.geometry, trace.geometries[index]) || source.pose_serial == 0) continue;
+            foreach (slot : renderer.posed_trace.slots) {
+                if (slot.root == source.geometry_root) positions = slot.positions;
+            }
+        }
         gpu::AccelerationStructureGeometryBuildDesc[1] geometries = {{
             .kind = gpu::AccelerationStructureGeometryKind.TRIANGLES,
             .triangles = {
-                .vertices = geometry.positions,
+                .vertices = positions,
                 .vertex_stride = render::PACKED_VEC3_BYTES,
                 .vertex_count = geometry.layout.vertex_count,
                 .indices = geometry.indices,
@@ -235,6 +243,12 @@ fn gpu::GpuAddress? upload_optical_trace_scene(
                 .nodes = geometry.trace.nodes,
                 .primitives = geometry.trace.primitives,
             };
+            foreach (source : renderer.scene_trace.baseline[:renderer.scene_trace.baseline_count]) {
+                if (!c3d::same_id(source.geometry, trace.geometries[index]) || source.pose_serial == 0) continue;
+                rows[row].geometry = source.geometry_root;
+                rows[row].nodes = source.nodes;
+                rows[row].primitives = source.primitives;
+            }
             reordered[row] = surfaces[index];
             gpu::AccelerationStructureInstanceDesc desc = {
                 .transform_row_0 = { x_scale, 0, 0, 0 },

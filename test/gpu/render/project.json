@@ -537,7 +537,8 @@
         "../../fixtures/transparency/fixture.c3",
         "optical_throughput_trace.c3",
         "optical_throughput_maps.c3",
-        "optical_throughput_faces.c3"
+        "optical_throughput_faces.c3",
+        "optical_throughput_pose.c3"
       ]
     }
   }
