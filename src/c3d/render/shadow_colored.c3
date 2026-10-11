@@ -35,6 +35,7 @@ fn void Renderer.set_colored_shadows(&self, bool enabled) {
 }
 
 fn bool casts_translucent_shadow(Material* material) @private {
+    if (material.kind == MaterialKind.CUSTOM) return false;
     if (material.kind == MaterialKind.PHYSICAL && material.physical.transmission > 0) return true;
 
     return material.common.alpha_mode == AlphaMode.BLEND && material.common.blend_mode == BlendMode.PREMULTIPLIED_ALPHA;
@@ -127,9 +128,6 @@ fn gpu::ColorTargetState shadow_transmittance_blend() @private {
     };
 }
 
-<*
- @require material.kind != MaterialKind.CUSTOM
-*>
 fn void write_translucent_caster_block(
     TranslucentCasterGpu* root,
     Material* material,

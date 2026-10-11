@@ -280,13 +280,17 @@ fn void test_colored_shadows_admit_blended_and_transmissive_casters_only_when_en
     additive_common.blend_mode = BlendMode.ADDITIVE;
     PhysicalParams glass = material::PHYSICAL_PARAMS_DEFAULT;
     glass.transmission = 1;
-    Material[6] materials = {
+    char[4] stage_bytes = { 1, 2, 3, 4 };
+    asset::ShaderDesc stage = { .fragment = stage_bytes[..] };
+    ShaderId custom_stage = assets.add_shader(&stage)!!;
+    Material[7] materials = {
         material::basic({ .color = { 1, 1, 1, 0.5f } }, blend_common),
         material::basic({ .color = { 1, 1, 1, 0.5f } }, additive_common),
         material::standard(),
         material::physical(material::PHYSICAL_PARAMS_DEFAULT, blend_common),
         material::physical(glass, additive_common),
         material::physical(glass),
+        material::custom(custom_stage, {}, common: blend_common),
     };
     @pool() {
         Geometry geometry = geometry::box(
@@ -322,7 +326,7 @@ fn void test_colored_shadows_admit_blended_and_transmissive_casters_only_when_en
             counts: &counts,
             colored: true,
         );
-        // Additive blending without transmission emits light and blocks none, so only that mesh stays out.
+        // Additive blending without transmission emits light and blocks none, and a custom stage's alpha is its own.
         assert(with.len == 5);
     };
 }

@@ -3,7 +3,6 @@
 #include "c3d_abi.glsl"
 #include "descriptor_heap.glsl"
 #include "material_maps.glsl"
-#include "custom_material.glsl"
 #include "transmission.glsl"
 
 layout(location = 3) in vec2 v_uv0;
@@ -23,16 +22,6 @@ layout(push_constant) uniform Push {
 void main() {
     DrawRoot draw = DrawRoot(pc.fragment_root_gpu);
     TranslucentCasterGpu caster = TranslucentCasterGpu(draw.material);
-    if (caster.kind == MATERIAL_KIND_CUSTOM) {
-        CustomMaterialGpu custom = CustomMaterialGpu(draw.material);
-        // A stage's own alpha is unknown here, so a custom material without a map tints nothing.
-        float passed_light = custom_slot_present(custom, 0u)
-            ? 1.0 - clamp(sample_custom_map(custom, 0u, v_uv0, v_uv1).a, 0.0, 1.0)
-            : 1.0;
-        out_transmittance = vec4(vec3(passed_light), 1.0);
-        return;
-    }
-
     material_mip_bias = FrameRoot(draw.frame).mip_bias;
     vec4 base = caster.color;
     if ((caster.map_flags & MATERIAL_MAP_BASE_COLOR) != 0u) {
