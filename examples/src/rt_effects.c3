@@ -276,6 +276,11 @@ fn bool edit_from_keys(Input* input, ViewDesc* desc) @local {
         desc.ambient_occlusion.kind = kind;
         changed = true;
     }
+    if (input.key_pressed(platform::Scancode.S)) {
+        desc.shading = desc.shading == ShadingPath.DEFERRED ? ShadingPath.FORWARD : ShadingPath.DEFERRED;
+        io::printfn("shading %s", desc.shading);
+        changed = true;
+    }
     RayTracingDesc* ray_tracing = &desc.ray_tracing;
     if (input.key_pressed(platform::Scancode.R)) {
         ray_tracing.reflections = !ray_tracing.reflections;
@@ -402,7 +407,8 @@ fn int main(String[] args) {
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
     TargetsPanelState targets = gui::default_targets_panel_state();
 
-    io::printn("A cycles AO: none, SSAO, ray traced; R toggles reflections; [ and ] move the roughness threshold");
+    io::printn("A cycles AO: none, SSAO, ray traced; R toggles reflections; S switches deferred and forward shading");
+    io::printn("[ and ] move the roughness threshold");
     io::printn("F toggles a haze over the reflected paths");
     io::printn("Drag to orbit, wheel to zoom; Escape release quits");
     uint frame;
