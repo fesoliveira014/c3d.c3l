@@ -368,9 +368,11 @@ fn int main(String[] args) {
     Scene scene = scene::create_scene(mem, scene::default_scene_desc());
     defer scene::destroy_scene(&scene);
     populate_scene(&assets, &scene)!!;
+
     Node* haze = scene.add_node(name: "haze")!!;
     haze.visible = false;
     scene.add(haze, HAZE);
+
     TextureId studio = image::load_hdr(&assets, example_path(ENVIRONMENT_FILE), "rt_effects/environment_source")!!;
     EnvironmentId environment = assets.add_environment(light::texture_environment(studio), "rt_effects/environment")!!;
     renderer.upload_environment(environment)!!;
