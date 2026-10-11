@@ -10,15 +10,22 @@ import std::sort;
 const double EVENT_SCHEMA_VERSION @local = 1;
 
 <*
- Import event metadata from animation extras, ignoring unrelated fields.
- @param extras : "Raw animation extras JSON."
+ Import the event table from glTF animation extras when present.
+ @param extras : "Extras text as cgltf stores it."
  @param duration : "Track-derived clip duration in seconds."
  @return? c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
 *>
 fn ClipEvent[]? parse_gltf_clip_events(Allocator allocator, String extras, float duration) {
+    // cgltf stores string extras without their quotes, so only object text can hold the table.
+    if (!extras.trim().starts_with("{")) return {};
+
     @pool() {
-        Object* root = json::tparse(extras, JsonFlavor.JSON) ?? c3d::ASSET_FORMAT_ERROR~!;
-        if (!root.is_map()) return {};
+        Object*? root = json::tparse(extras, JsonFlavor.JSON);
+        if (catch root) {
+            // Extras without the table keep loading when they exceed the parser's limits.
+            if (extras.contains(`"c3d_events"`)) return c3d::ASSET_FORMAT_ERROR~;
+            return {};
+        }
 
         Object*? table = root.get("c3d_events");
         if (catch table) return {};

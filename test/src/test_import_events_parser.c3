@@ -9,7 +9,8 @@ fn void test_import_events_parser_integral_spellings_and_uint_boundary() @test {
         String[*] supported = { "1", "1.0", "1e0", "10e-1" };
         foreach (version : supported) {
             String source = string::tformat(
-                `{"version":%s,"events":[{"time":0,"id":1.0},{"time":0,"id":1e0},{"time":0,"id":-0},{"time":0,"id":4294967295}]}`,
+                `{"version":%s,"events":[{"time":0,"id":1.0},{"time":0,"id":1e0},`
+                  `{"time":0,"id":-0},{"time":0,"id":4294967295}]}`,
                 version,
             );
             ClipEvent[] events = asset::parse_clip_events(tmem, source, 0)!!;
@@ -59,13 +60,15 @@ fn void test_import_events_parser_requires_strict_json() @test {
     };
 }
 
-fn void test_import_events_parser_ignores_extras_without_event_table() @test {
+fn void test_import_events_parser_ignores_gltf_extras_without_event_table() @test {
     @pool() {
         String[*] extras = {
-            `[{"c3d_events":{"version":1,"events":[{"time":0,"id":1}]}}]`,
-            `"c3d_events"`,
+            "", "c3d_events note", `[{"c3d_events":{"version":1,"events":[]}}]`,
             `{"unrelated":{"c3d_events":{"version":2}}}`,
+            `{"hash":18446744073709551615}`, `{"name":"\ud800"}`,
         };
         foreach (source : extras) assert(asset::parse_gltf_clip_events(tmem, source, 0)!!.len == 0);
+        String rejected = `{"c3d_events":{"version":1,"events":[]},"hash":18446744073709551615}`;
+        assert(@catch(asset::parse_gltf_clip_events(tmem, rejected, 0)) == c3d::ASSET_FORMAT_ERROR);
     };
 }
