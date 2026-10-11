@@ -2,6 +2,7 @@
 #include "generated/shader_abi.glsl"
 #include "c3d_abi.glsl"
 #include "custom_material.glsl"
+#include "blend_output.glsl"
 #include "scene_snapshot.glsl"
 #include "ibl.glsl"
 #include "fog.glsl"
@@ -14,7 +15,6 @@ layout(location = 1) in vec3 v_normal;
 layout(location = 3) in vec2 v_uv0;
 layout(location = 4) in vec2 v_uv1;
 layout(location = 5) in vec4 v_color;
-layout(location = 0) out vec4 out_color;
 
 layout(push_constant) uniform Push {
     uint64_t vertex_root_gpu;
@@ -46,5 +46,5 @@ void main() {
             + indirect_diffuse_irradiance(frame, v_world_pos, normalize(v_normal), view_direction);
     }
     color.rgb = apply_material_fog(frame, v_world_pos, color.rgb, material.flags);
-    out_color = material_output(color.rgb, color.a, material.flags);
+    write_blend_output(frame, material_output(color.rgb, color.a, material.flags), v_world_pos);
 }

@@ -39,6 +39,13 @@ $assert ParticleLighting.AMBIENT.ordinal == 1; // mirrored as PARTICLE_AMBIENT i
 fn ShaderId? add_particle_shader(AssetStore* assets, String key = "") {
     ShaderDesc desc = {
         .fragment = PARTICLE_FRAGMENT_SPIRV[..],
+        .weighted_fragment = { // the stage reads no shadows, so one source serves every weighted form
+            .shaded = PARTICLE_FRAGMENT_WEIGHTED_BLEND_SPIRV[..],
+            .traced = {
+                .hardware = PARTICLE_FRAGMENT_WEIGHTED_BLEND_SPIRV[..],
+                .software = PARTICLE_FRAGMENT_WEIGHTED_BLEND_SPIRV[..],
+            },
+        },
         .param_block_size = ParticleMaterialParams::size,
         .scene_reads = { .depth },
     };
