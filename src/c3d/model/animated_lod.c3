@@ -275,6 +275,7 @@ fn LodGroup? build_animated_lod(
             foreach (usz local_index, part : desc.parts[level.first_part:level.part_count]) {
                 uint representation = level.first_part + (uint)local_index;
                 if (part.mesh_index >= template.meshes.len || seen[part.mesh_index]) return c3d::INVALID_ARGUMENT~;
+                if (level_index == 0 && part.mesh_index != local_index) return c3d::INVALID_ARGUMENT~;
                 seen[part.mesh_index] = true;
 
                 ModelMesh mesh = template.meshes[part.mesh_index];

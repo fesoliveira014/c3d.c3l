@@ -513,7 +513,7 @@ fn Node* trace_lod_crowd(
         assets: assets,
         scene: scene,
         owner: owner,
-        desc: animated_crowd_fixtures::parts_lod_desc(assets, fixture.mixed, permuted: true),
+        desc: animated_crowd_fixtures::parts_lod_desc(assets, fixture.mixed),
     )!!;
     scene.update_world();
     return owner;
@@ -535,7 +535,7 @@ fn void test_traced_animated_lod_respects_source_flags_and_base_signatures() @te
         animator.action(action).time = 1;
         anim::update(&assets, &scene, 0);
         GeometryId coarse = assets.add_geometry(&assets.geometry(fixture.geometries[1]).data)!!;
-        AnimatedLodDesc desc = animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed, permuted: true);
+        AnimatedLodDesc desc = animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed);
         desc.parts[6].draw.geometry = coarse;
         model::attach_animated_lod(
             assets: &assets,

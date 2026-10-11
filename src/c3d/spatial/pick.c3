@@ -244,16 +244,15 @@ fn bool hit_entry(
         LodGroup* group = scene.get(node, LodGroup);
         if (entry.instance_index >= group.state.count) return false;
         LodGroupState* state = group.state;
-        uint part = lod_base_representation(state, entry.part_index);
         world = lod_part_world(
             node: node,
             state: state,
             instance: entry.instance_index,
-            part: part,
+            part: entry.part_index,
             scene: scene,
         );
-        geometry = state.desc.parts[part].geometry;
-        material = state.desc.parts[part].material;
+        geometry = state.desc.parts[entry.part_index].geometry;
+        material = state.desc.parts[entry.part_index].material;
     } else if (entry.flags.instanced) {
         InstancedMesh* batch = scene.get(node, InstancedMesh);
         float batch_distance;

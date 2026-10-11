@@ -119,8 +119,8 @@ model::attach_animated_lod(
 The same descriptor can attach to an ordinary model instance or an animated
 crowd using that model. Attachment to a pending crowd is allowed; it emits no
 LOD draws until crowd preparation succeeds. `mesh_index` identifies the logical mesh in
-`ModelTemplate.meshes`, independent of flat part order. Each level may contain a
-logical mesh at most once; level zero contains every template mesh exactly once.
+`ModelTemplate.meshes`. Level zero lists every template mesh once, in template
+order; other levels may contain a logical mesh at most once, in any order.
 Its geometry and material IDs must equal the template mesh's IDs. Every base
 part and every skinned part uses an identity `draw.local`; other rigid or
 morph-only alternatives may have an additional finite nonsingular affine local.

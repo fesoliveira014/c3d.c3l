@@ -241,7 +241,7 @@ fn void test_animated_lod_copies_logical_parts_and_preserves_ordinary_pose() @te
     };
 }
 
-fn void test_animated_lod_attach_rejects_incompatible_channels_and_skins() @test {
+fn void test_animated_lod_attach_rejects_incompatible_parts() @test {
     @pool() {
         AssetStore assets = animated_lod_store();
         defer asset::destroy_asset_store(&assets);
@@ -264,7 +264,7 @@ fn void test_animated_lod_attach_rejects_incompatible_channels_and_skins() @test
             desc.parts[9].skin = compatible;
             Node* first_child = owner.first_child;
             uint free_nodes = scene.world.entities.free_count;
-            for (uint mutation = 0; mutation < 6; mutation++) {
+            for (uint mutation = 0; mutation < 7; mutation++) {
                 AnimatedLodDesc changed = { .levels = desc.levels, .parts = alloc::clone_slice(tmem, desc.parts) };
                 switch (mutation) {
                     case 0: changed.parts[7].draw.geometry = channels.foreign;
@@ -273,6 +273,9 @@ fn void test_animated_lod_attach_rejects_incompatible_channels_and_skins() @test
                     case 3: changed.parts[9].skin = reordered;
                     case 4: changed.parts[9].skin = changed_bind;
                     case 5: changed.parts[9].draw.geometry = { .index = uint::max, .generation = 1 };
+                    case 6:
+                        changed.parts[0] = desc.parts[4];
+                        changed.parts[4] = desc.parts[0];
                 }
                 fault expected = mutation == 5 ? c3d::INVALID_ID : c3d::INVALID_ARGUMENT;
                 assert(@catch(model::attach_animated_lod(
@@ -674,7 +677,7 @@ fn void test_animated_lod_queries_use_posed_base_logical_parts_once() @test {
             assets: &assets,
             scene: &scene,
             owner: owner,
-            desc: animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed, permuted: true),
+            desc: animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed),
         )!!;
         Node* extra = scene.add_mesh(
             geometry: fixture.geometries[1],
@@ -768,7 +771,7 @@ fn void test_animated_lod_queries_keep_retained_pose_bounds_without_cpu_streams(
             assets: &assets,
             scene: &scene,
             owner: owner,
-            desc: animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed, permuted: true),
+            desc: animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed),
         )!!;
         scene.update_world();
         SceneIndex index = spatial::create_scene_index(mem, 5);
@@ -836,7 +839,7 @@ fn void test_animated_lod_queries_use_crowd_envelope_source_slots_and_regrowth()
             assets: &assets,
             scene: &scene,
             owner: owner,
-            desc: animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed, permuted: true),
+            desc: animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed),
         )!!;
         LodGroupState* state = scene.get(owner, LodGroup).state;
         ulong identity = state.identity;
@@ -927,7 +930,7 @@ fn void test_animated_lod_queries_skip_whole_missing_source_without_base_duplica
                 assets: &assets,
                 scene: &scene,
                 owner: owner,
-                desc: animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed, permuted: true),
+                desc: animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed),
             )!!;
             scene.update_world();
             index.refresh(&assets, &scene)!!;

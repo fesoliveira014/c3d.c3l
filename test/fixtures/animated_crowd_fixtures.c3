@@ -147,9 +147,8 @@ fn PartsFixture? add_parts_fixture(AssetStore* assets) {
  Build a two-level animated LOD descriptor that repeats every model mesh.
  Allocates the descriptor, copied joints and copied defaults in tmem.
  @param [&in] assets : "Owns the model and its skins."
- @param permuted : "Swaps the first and last base parts to separate part and mesh order."
 *>
-fn AnimatedLodDesc parts_lod_desc(AssetStore* assets, ModelId model_id, bool permuted = false) {
+fn AnimatedLodDesc parts_lod_desc(AssetStore* assets, ModelId model_id) {
     ModelTemplate* template = &assets.model(model_id).data;
     uint count = (uint)template.meshes.len;
     LodLevel[] levels = alloc::new_array(tmem, LodLevel, 2);
@@ -172,11 +171,6 @@ fn AnimatedLodDesc parts_lod_desc(AssetStore* assets, ModelId model_id, bool per
         }
     }
 
-    if (permuted) {
-        AnimatedLodPart first = parts[0];
-        parts[0] = parts[count - 1];
-        parts[count - 1] = first;
-    }
     return { .levels = levels, .parts = parts };
 }
 

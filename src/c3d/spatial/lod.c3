@@ -169,24 +169,6 @@ fn bool animated_lod_owns_node(Scene* scene, Node* node) @private {
     return false;
 }
 
-<*
- Read a logical part's guaranteed level-zero representation.
- @param [&in] state : "Admitted level zero covers every logical mesh."
- @require !state.animated || logical_part < state.animated.channel_offsets.len - 1
- @ensure return < state.desc.parts.len
-*>
-fn uint lod_base_representation(LodGroupState* state, uint logical_part) @private {
-    if (!state.animated) return logical_part;
-
-    LodLevel level = state.desc.levels[0];
-
-    for (uint part = level.first_part; part < level.first_part + level.part_count; part++) {
-        if (state.animated.parts[part].mesh_index == logical_part) return part;
-    }
-
-    unreachable();
-}
-
 <* Current bounds of one admitted animated LOD representation.
  @param [&in] assets : "Retained geometry and skin metadata."
  @param [&in] scene : "Current synchronized source components."
