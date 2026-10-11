@@ -9,6 +9,7 @@
 #include "constants.glsl"
 #include "sampling.glsl"
 #include "hit_shading.glsl"
+#include "fog.glsl"
 
 layout(local_size_x = 64) in;
 
@@ -42,13 +43,15 @@ void main() {
     vec4 result;
     // A probe inside geometry must read dark, so its own ray keeps the back faces the effects cull.
     if (!trace_scene_with_back_faces(scene, origin, direction, root.ray_far, TRACE_MASK_ALL, hit)) {
-        result = vec4(trace_miss_radiance(frame, direction), root.ray_far);
+        vec3 radiance = apply_fog_to_infinity(frame, origin, direction, trace_miss_radiance(frame, direction));
+        result = vec4(radiance, root.ray_far);
     } else {
         TraceSurface surface = surface_from_hit(scene, hit, direction, hit.t * root.cone_spread);
         if (surface.back_face) {
             result = vec4(0.0, 0.0, 0.0, -hit.t);
         } else {
-            result = vec4(shade_hit_diffuse(frame, frame_hit_lights(frame), surface, -direction), hit.t);
+            vec3 radiance = shade_hit_diffuse(frame, frame_hit_lights(frame), surface, -direction);
+            result = vec4(apply_fog_segment(frame, origin, surface.position, radiance), hit.t);
         }
     }
     RayResultArray(root.rays).values[thread] = RayResultGpu(result);

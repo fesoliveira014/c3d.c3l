@@ -287,4 +287,22 @@ vec3 apply_fog_refracted(
     return transmittance * fog_behind(frame, surface_position, refracted, refracted_depth) + surface_radiance;
 }
 
+// Radiance at the end of a segment seen from its start through the height fog. The volume and aerial perspective are
+// indexed by the camera's screen, so a ray cast from elsewhere takes the analytic fog alone.
+vec3 apply_fog_segment(FrameRoot frame, vec3 origin, vec3 hit_position, vec3 radiance) {
+    if (frame.sky_fog == 0ul) return radiance;
+    vec3 offset = hit_position - origin;
+    float distance = length(offset);
+    vec3 direction = distance > 0.0 ? offset / distance : vec3(0.0, 0.0, -1.0);
+    FogTerms fog = height_fog_segment(frame, SkyFogGpu(frame.sky_fog), origin, direction, 0.0, distance);
+    return radiance * fog.transmittance + fog.inscatter;
+}
+
+// Radiance of a ray that leaves the scene from a point: the fog a background pixel takes, without the volume.
+vec3 apply_fog_to_infinity(FrameRoot frame, vec3 origin, vec3 direction, vec3 radiance) {
+    if (frame.sky_fog == 0ul) return radiance;
+    FogTerms fog = height_fog_to_infinity(frame, SkyFogGpu(frame.sky_fog), origin, direction);
+    return radiance * fog.transmittance + fog.inscatter;
+}
+
 #endif

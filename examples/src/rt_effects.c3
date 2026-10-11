@@ -51,6 +51,7 @@ const Vec3 FABRIC_SHEEN_COLOR @local = { 0.9f, 0.5f, 0.65f };
 const float FABRIC_SHEEN_ROUGHNESS @local = 0.8f;
 const float BRUSHED_ROUGHNESS @local = 0.35f;
 const float BRUSHED_ANISOTROPY @local = 0.9f;
+const HeightFog HAZE @local = { .density = 0.05f, .falloff = 0.06f, .albedo = { 0.7f, 0.8f, 1 }, .max_distance = 100 };
 const float ROUGHNESS_STEP @local = 0.05f;
 const float ROUGHNESS_MIN @local = 0.05f;
 const Vec2 STATS_PANEL_POSITION @local = { 16, 16 };
@@ -367,6 +368,11 @@ fn int main(String[] args) {
     Scene scene = scene::create_scene(mem, scene::default_scene_desc());
     defer scene::destroy_scene(&scene);
     populate_scene(&assets, &scene)!!;
+
+    Node* haze = scene.add_node(name: "haze")!!;
+    haze.visible = false;
+    scene.add(haze, HAZE);
+
     TextureId studio = image::load_hdr(&assets, example_path(ENVIRONMENT_FILE), "rt_effects/environment_source")!!;
     EnvironmentId environment = assets.add_environment(light::texture_environment(studio), "rt_effects/environment")!!;
     renderer.upload_environment(environment)!!;
@@ -399,6 +405,7 @@ fn int main(String[] args) {
     TargetsPanelState targets = gui::default_targets_panel_state();
 
     io::printn("A cycles AO: none, SSAO, ray traced; R toggles reflections; [ and ] move the roughness threshold");
+    io::printn("F toggles a haze over the reflected paths");
     io::printn("Drag to orbit, wheel to zoom; Escape release quits");
     uint frame;
     PassTimings timings;
@@ -418,6 +425,7 @@ fn int main(String[] args) {
         view_desc = renderer.views.get(renderer.default_view).desc;
 
         bool view_changed = edit_from_keys(input, &view_desc);
+        if (input.key_pressed(platform::Scancode.F) && !input.keyboard_captured_by_gui) haze.visible = !haze.visible;
         imgui::set_next_window_pos(STATS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         gui::stats_panel(&renderer)!!;

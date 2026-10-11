@@ -12,6 +12,7 @@
 #include "sampling.glsl"
 #include "texture_fetch.glsl"
 #include "hit_shading.glsl"
+#include "fog.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -69,8 +70,10 @@ void main() {
     if (trace_scene(scene, position + normal * TRACE_SURFACE_OFFSET, direction, RT_REFLECTION_FAR, TRACE_MASK_ALL, hit)) {
         TraceSurface surface = surface_from_hit(scene, hit, direction, cone_width + hit.t * cone_spread);
         radiance = shade_hit(frame, HitLights(root.lights, root.light_count), surface, -direction);
+        radiance = apply_fog_segment(frame, position, surface.position, radiance);
     } else {
         radiance = trace_miss_radiance(frame, direction);
+        radiance = apply_fog_to_infinity(frame, position, direction, radiance);
     }
     store_storage_texture(root.output_texture, texel, vec4(radiance, 1.0));
 }

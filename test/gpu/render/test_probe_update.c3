@@ -43,6 +43,8 @@ const uint BOUNCE_UPDATES @private = 60;                 // 60 half-lives at the
 const bool[2] TRACE_KINDS @private = { false, true };  // ray_queries of each fixture: software walk, then ray queries
 const float KIND_IRRADIANCE_SHARE @private = 0.02f;     // of the mean software texel; the milestone's bound
 const float KIND_VISIBILITY_SHARE @private = 0.001f;   // measured below 1e-6 on the RTX 4090; margin for other devices
+const HeightFog ROOM_HAZE @private = { .density = 0.5f, .falloff = 0, .albedo = { 0, 0, 0 }, .max_distance = 100 };
+const float HAZE_SHARE_MAXIMUM @private = 0.7f;        // of the clear mean; the hits lie metres away in the haze
 const float BOUNCE_GAIN @private = 2.5f;                // measured 3.07 on the RTX 4090; below it the bounce is lost
 
 struct ProbeRoom @private {
@@ -592,6 +594,34 @@ fn void test_bounce_brightens_and_tints_the_room() @test {
         assert(bounced_mean > BOUNCE_GAIN * direct_mean);
         assert(bounced.x / bounced.y > direct.x / direct.y);
         check_validation(&fixture.renderer);
+    }
+}
+
+fn float? read_room_irradiance(bool ray_queries, bool hazy) @private {
+    Fixture fixture;
+    create_fixture(mem, &fixture, ray_queries: ray_queries)!;
+    defer destroy_fixture(&fixture);
+    ProbeRoom room = create_probe_room(&fixture, lamp: true)!;
+    defer scene::destroy_scene(&room.scene);
+    ProbeView probe_view = create_probe_view(&fixture, ShadingPath.FORWARD)!;
+    defer destroy_probe_view(&fixture, &probe_view);
+    if (hazy) {
+        Node* haze = room.scene.add_node(name: "haze")!;
+        room.scene.add(haze, ROOM_HAZE);
+    }
+
+    render_room_frames(&fixture, &room, probe_view.view, 1)!;
+    check_validation(&fixture.renderer);
+    return interior_irradiance(&fixture, &room);
+}
+
+fn void test_fog_dims_the_light_a_probe_gathers_from_its_hits() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        float clear = read_room_irradiance(ray_queries, false)!!;
+        float hazy = read_room_irradiance(ray_queries, true)!!;
+        io::eprintfn("%s: first update irradiance clear %f, hazy %f", trace_name(ray_queries), clear, hazy);
+        assert(clear > LIT_IRRADIANCE);
+        assert(hazy < HAZE_SHARE_MAXIMUM * clear);
     }
 }
 
