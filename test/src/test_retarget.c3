@@ -27,45 +27,6 @@ struct ProfileRig @local {
     AnimationClip clip;
 }
 
-struct ProfileFaultAllocator (Allocator) @local {
-    Allocator backing;
-    sz remaining;
-    sz outstanding;
-}
-
-fn void*? ProfileFaultAllocator.acquire(
-    &self,
-    sz size,
-    AllocInitType init_type,
-    sz alignment,
-) @dynamic {
-    if (self.remaining <= 0) return mem::OUT_OF_MEMORY~;
-
-    self.remaining--;
-    void* allocation = self.backing.acquire(size, init_type, alignment)!;
-    self.outstanding++;
-
-    return allocation;
-}
-
-fn void*? ProfileFaultAllocator.resize(
-    &self,
-    void* pointer,
-    sz new_size,
-    sz alignment,
-) @dynamic {
-    if (self.remaining <= 0) return mem::OUT_OF_MEMORY~;
-
-    self.remaining--;
-
-    return self.backing.resize(pointer, new_size, alignment);
-}
-
-fn void ProfileFaultAllocator.release(&self, void* pointer, bool aligned) @dynamic {
-    self.backing.release(pointer, aligned);
-    self.outstanding--;
-}
-
 fn bool close(float first, float second) @local {
     return math::abs(first - second) <= TOLERANCE;
 }
@@ -2045,38 +2006,6 @@ fn void test_profile_failed_sample_frees_every_partial_clip_allocation() @test {
         )) == c3d::UNSUPPORTED);
         assert(tracker.allocation_count() == 0 && tracker.allocated() == 0);
         assert(rig.clip.tracks[0].values[6] == -10 && rig.source[0].local.scale == (Vec3){ 1, 1, 1 });
-    };
-}
-
-fn void test_profile_allocation_fault_releases_outputs_and_preserves_inputs() @test {
-    @pool() {
-        ProfileRig rig = profile_carrier_rig();
-        RetargetProfile profile = profile_prepare(&rig);
-        defer retarget::destroy_retarget_profile(&profile);
-
-        RetargetBakeOptions options = retarget::RETARGET_BAKE_OPTIONS_DEFAULT;
-        options.root_motion = RootMotion.EXTRACT;
-        ProfileFaultAllocator bake_allocator = { .backing = mem, .remaining = 6 };
-        assert(@catch(retarget::retarget_with_profile(
-            allocator: &bake_allocator,
-            source: &rig.clip,
-            source_nodes: rig.source,
-            target: &rig.target,
-            profile: &profile,
-            options: options,
-        )) == c3d::CAPACITY_EXCEEDED);
-        assert(bake_allocator.outstanding == 0);
-
-        ProfileFaultAllocator profile_allocator = { .backing = mem };
-        assert(@catch(retarget::create_retarget_profile(
-            allocator: &profile_allocator,
-            source_nodes: rig.source,
-            target: &rig.target,
-            desc: rig.desc,
-        )) == c3d::CAPACITY_EXCEEDED);
-        assert(profile_allocator.outstanding == 0);
-        assert(rig.clip.tracks[0].values[3] == 0.5f);
-        assert(rig.target.nodes[0].local.position == (Vec3){ 1, 0, 2 });
     };
 }
 

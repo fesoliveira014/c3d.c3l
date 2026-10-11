@@ -11,11 +11,20 @@ const usz QUAT_COMPONENTS @private = 4;
 const Quat IDENTITY_ROTATION @private = { .v = { 0, 0, 0, 1 } };
 
 fn float[] bake_times(Allocator allocator, float duration, float bake_rate) @private {
-    uint intervals = (uint)math::max(0.0f, math::ceil(duration * bake_rate - KEY_SNAP));
+    uint intervals = duration == 0 ? 0 : (uint)math::max(1.0, math::ceil((double)duration * bake_rate - KEY_SNAP));
     float[] times = alloc::new_array(allocator, float, (sz)intervals + 1);
-    for (uint key = 0; key < intervals; key++) times[key] = key / bake_rate;
+
+    for (uint key = 0; key < intervals; key++) {
+        times[key] = key / bake_rate;
+        // A grid time rounded up to the duration would repeat the endpoint key.
+        if (times[key] >= duration) {
+            intervals = key;
+            break;
+        }
+    }
+
     times[intervals] = duration;
-    return times;
+    return times[:(usz)intervals + 1];
 }
 
 fn AnimationClip? bake_corrected(
