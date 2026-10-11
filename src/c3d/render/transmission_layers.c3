@@ -77,10 +77,6 @@ struct SceneReadLayers @private {
     usz[MAX_TRANSMISSION_LAYERS] ends; // exclusive end of each layer in the ordered draws
 }
 
-<*
- Order back-to-front draws by layer, keeping their order within each layer.
- @require layer_count >= 2, layer_count <= MAX_TRANSMISSION_LAYERS
-*>
 fn SceneReadLayers split_scene_reads_by_layer(DrawItem[] items, Mat4 view_proj, uint layer_count) @private {
     @pool() {
         ScreenRect[] rects = alloc::new_array(tmem, ScreenRect, items.len);
