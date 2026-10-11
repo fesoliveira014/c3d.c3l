@@ -82,24 +82,21 @@ fn Aabb lod_world_bounds(
     Scene* scene = null,
 ) {
     LodGroupState* state = group.state;
-    if (state.animated) {
-        Aabb bounds;
-        bool first = true;
 
-        for (uint instance = 0; instance < state.count; instance++) {
-            foreach (uint part, draw : state.desc.parts) {
-                Aabb current = animated_lod_part_bounds(
-                    assets: assets,
-                    scene: scene,
-                    node: node,
-                    state: state,
-                    instance: instance,
-                    part: part,
-                    origin: origin,
-                );
-                bounds = first ? current : maths::aabb_merge(bounds, current);
-                first = false;
-            }
+    // Crowd and override bounds already cover every representation, so they take the cached rigid path.
+    if (state.animated && !state.desc.has_bounds_override) {
+        Aabb bounds;
+        foreach (uint part, draw : state.desc.parts) {
+            Aabb current = animated_lod_part_bounds(
+                assets: assets,
+                scene: scene,
+                node: node,
+                state: state,
+                instance: 0,
+                part: part,
+                origin: origin,
+            );
+            bounds = part ? maths::aabb_merge(bounds, current) : current;
         }
 
         return bounds;
