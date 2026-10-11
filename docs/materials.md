@@ -400,12 +400,61 @@ along the refracted direction, or to black without an environment. The
 transmitted radiance replaces
 the dielectric diffuse response by the transmission factor, is scaled by base
 color and the non-metallic fraction, and is weighted by the surface's own
-Fresnel; direct lights add a mirrored-light transmission lobe. Transmissive
-surfaces never see each other, the custom readers of the same list or ordinary
-blends: glass behind glass shows the opaque scene through both.
+Fresnel; direct lights add a mirrored-light transmission lobe. Draws of one
+layer, by default all of them, never see each other, the custom readers of the
+same list or ordinary blends: glass behind glass shows the opaque scene through
+both. [Transmission layers](#transmission-layers) lets a front pane see the
+glass behind it.
 
-`python3 scripts/build.py --example transparency` draws a glass slab over a checkered backdrop;
-R steps the slab's roughness through 0, 0.25, 0.5 and 1.
+### Transmission layers
+
+`ViewDesc.transmission_layers` sets how many snapshots the scene-read list
+samples, from 1 to `MAX_TRANSMISSION_LAYERS` (4). Zero reads as 1, so a
+zero-initialized desc keeps the default output; a value above 4 faults
+`INVALID_ARGUMENT` in `create_view` and `configure_view`.
+
+Above 1, the renderer walks the scene-read list back to front and gives each
+draw a layer from the screen rectangle of its world bounds:
+
+```
+layer(d) = min(layers - 1, 1 + max(layer(e)))   over earlier draws e whose rectangle overlaps d's
+layer(d) = 0                                    when none overlaps
+```
+
+Rectangles that only touch do not overlap. A bound with any corner at or behind
+the near plane covers the whole screen, so every later draw overlaps it. The
+rule compares bounding rectangles, not silhouettes, and may place two panes in
+separate layers where their shapes do not touch.
+
+Layers record in order, back to front inside each. Before every non-empty layer
+the renderer copies `hdr_color` into `scene_color` again, and regenerates its
+mips when that layer holds a draw that can sample above mip zero, so a draw in
+layer n sees the opaque scene and the glass of layers below n. Custom color
+readers in the list are layered the same way. At the default of 1 no
+rectangle is projected, no draw is reordered and the commands are those of a
+single snapshot.
+
+Cost, per non-empty layer past the first: one `scene_color` copy, counted in
+`Stats.scene_snapshots` and `Stats.draws`; one mip chain when the layer needs it;
+and, on a view with fog or an atmosphere, one `scene_depth` copy, because a color
+snapshot always brings its depth. Assignment is O(n²) in the scene-read draws and
+runs only above 1; the default view pays none of it.
+
+Limits:
+
+- Deeper overlaps than the setting share the last layer and do not see each
+  other; no draw is dropped.
+- On a view with fog or an atmosphere, a front pane fogs only the gap to the
+  depth-writing pane behind it, because `scene_depth` is re-copied with each
+  color snapshot. BLEND glass in an earlier layer writes no depth, so a pane
+  in front of it fogs its refracted sample to the opaque depth behind the
+  BLEND glass.
+- Ordinary blends are not in the scene-read list and draw over glass in every
+  setting.
+
+`python3 scripts/build.py --example transparency` draws a glass slab over a checkered backdrop,
+with a tinted smooth pane behind it that partly overlaps it on screen. R steps the slab's
+roughness through 0, 0.25, 0.5 and 1; L switches the view between 1 and 2 transmission layers.
 
 ## Importing materials
 

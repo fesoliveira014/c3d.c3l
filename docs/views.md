@@ -67,6 +67,7 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `clip_plane` | World-space `maths::Plane`; geometry on its negative side is not drawn (see [Clip plane](#clip-plane)); the zero plane clips nothing and both constructors produce it |
 | `volumetric_fog` | A froxel volume for the view's `HeightFog`, allocated with the view (see [volumetric fog](sky.md#volumetric-fog)); faults `INVALID_ARGUMENT` on a `PATH_TRACED` view |
 | `share_shadows` | Binds an earlier view's [shadow set](shadows.md#shadow-sets) when the keys match and publishes its own; on in both constructors |
+| `transmission_layers` | Snapshots the scene-read list samples, so glass can see glass behind it (see [transmission layers](materials.md#transmission-layers)); 1 to `MAX_TRANSMISSION_LAYERS` (4), zero reads as 1 and both constructors leave it zero |
 
 An installed [static impostor](lod.md#static-impostors) participates in the same
 per-view LOD selection and hysteresis. Forward and deferred views share its
@@ -81,7 +82,7 @@ validate between frames: a dead target faults `INVALID_ID`; `LINEAR_HDR` on a wi
 RGBA8 target, a viewport outside the output, a render scale outside its range and an invalid post
 stack fault `INVALID_ARGUMENT`; a `clip_plane` other than the zero plane with a normal that is not
 unit length or a `d` that is not finite, and any non-zero `clip_plane` on a `PATH_TRACED` view, fault
-`INVALID_ARGUMENT`; `volumetric_fog` on a `PATH_TRACED` view faults `INVALID_ARGUMENT`; invalid ambient occlusion settings fault `INVALID_ARGUMENT` and
+`INVALID_ARGUMENT`; `volumetric_fog` on a `PATH_TRACED` view and a `transmission_layers` above `MAX_TRANSMISSION_LAYERS` fault `INVALID_ARGUMENT`; invalid ambient occlusion settings fault `INVALID_ARGUMENT` and
 `AoKind.RAY_TRACED` faults `UNSUPPORTED`; a full pool faults `CAPACITY_EXCEEDED` (`RendererDesc.max_views`, 8 by
 default; see [Capacities](#capacities)).
 `destroy_view` on the default view faults `INVALID_ARGUMENT`.
@@ -660,7 +661,8 @@ lists, `GBUFFER` (depth `EQUAL`, no write), `AMBIENT_OCCLUSION` when the view ha
 occlusion, `LIGHTING` (a fullscreen fragment pass that clears
 `hdr_color`, discards where no geometry was drawn and lights every G-buffer pixel from `FrameRoot`),
 `FORWARD_OPAQUE` (depth `EQUAL`, no write), sky, `SCENE_SNAPSHOT` and `SCENE_READ` when the view
-draws scene readers (`SCENE_MIPS` between them when the list holds rough glass), `SCENE_SNAPSHOT`
+draws scene readers (`SCENE_MIPS` between them when the list holds rough glass; the three repeat for
+each non-empty [transmission layer](materials.md#transmission-layers)), `SCENE_SNAPSHOT`
 again when a blended draw reads the scene, transparency,
 velocity and the post chain. `Stats.gpu_pass_ms` carries the three new passes. A view with
 [fog or an atmosphere](sky.md#where-fog-applies) records `SKY_VIEW` and `AERIAL_PERSPECTIVE` before the
