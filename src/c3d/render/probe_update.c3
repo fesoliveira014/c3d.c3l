@@ -102,6 +102,7 @@ fn void write_probe_frame_root(
     uint light_count,
     gpu::GpuAddress trace,
     gpu::GpuAddress environment,
+    gpu::GpuAddress sky_fog,
     Vec4 ambient,
     gpu::GpuAddress probe_volumes,
     ulong frame_index,
@@ -119,6 +120,7 @@ fn void write_probe_frame_root(
         .light_count     = light_count,
         .trace           = trace,
         .environment     = environment,
+        .sky_fog         = sky_fog,
         .ambient         = ambient,
         .probe_volumes   = probe_volumes,
         .frame_index     = (uint)frame_index,
@@ -198,6 +200,9 @@ fn void? record_probe_updates(Renderer* renderer, ProbeFillRecording* recording,
     usz count = order_hit_probe_volumes(&renderer.probe_volumes, scene, &order);
     // Views see energy; the feedback of the bounce stays at unit gain per albedo, or it can diverge.
     gpu::GpuAddress hit_set = pack_probe_set(renderer, scene, order[:count], unit_energy: true)!;
+    // Probes feed every view of the scene, so the fog is the one any layer sees, as the light list is.
+    FogSelection fog = select_height_fog(scene, uint::max);
+    gpu::GpuAddress sky_fog = pack_probe_sky_fog(renderer, &fog)!;
     gpu::MappedGpuSpan frame_span = slot.upload.take(&renderer.device, FrameRoot::size, STREAM_ALIGNMENT)!;
     write_probe_frame_root(
         root:          (FrameRoot*)frame_span.bytes.ptr,
@@ -205,6 +210,7 @@ fn void? record_probe_updates(Renderer* renderer, ProbeFillRecording* recording,
         light_count:   (uint)extraction.lights.len,
         trace:         trace,
         environment:   recording.environment,
+        sky_fog:       sky_fog,
         ambient:       { ambient.r, ambient.g, ambient.b, 0 },
         probe_volumes: hit_set,
         frame_index:   renderer.frame_index,
