@@ -80,8 +80,6 @@ struct ProfileNode @private {
     bool consumed;
     bool requires_uniform_scale;
     bool motion;
-    bool controlled;
-    bool boundary;
 }
 
 struct ProfileData @private {
@@ -92,6 +90,7 @@ struct ProfileData @private {
     uint source_motion_node;
     uint target_motion_node;
     uint target_carrier;
+    uint target_boundary;
     usz bytes;
 }
 
@@ -172,13 +171,9 @@ fn RetargetProfile? create_retarget_profile(
 
         foreach (&node : source) node.requires_uniform_scale |= node.motion;
 
-        foreach (index, &node : destination) {
-            node.controlled = desc.target_carrier == RETARGET_NO_NODE
-              || profile_descendant(destination, (uint)index, desc.target_carrier);
-            node.boundary = desc.target_carrier == RETARGET_NO_NODE
-              ? node.parent < 0 : node.parent == (int)desc.target_carrier;
+        foreach (&node : destination) {
             node.requires_uniform_scale |= node.motion;
-            if (node.mapped == RETARGET_NO_NODE && !node.motion && !node.boundary) continue;
+            if (node.mapped == RETARGET_NO_NODE && !node.motion) continue;
 
             for (int ancestor = node.parent; ancestor >= 0; ancestor = destination[ancestor].parent) {
                 destination[ancestor].requires_uniform_scale = true;
@@ -210,6 +205,7 @@ fn RetargetProfile? create_retarget_profile(
             .source_motion_node = desc.source_motion_node,
             .target_motion_node = desc.target_motion_node,
             .target_carrier = desc.target_carrier,
+            .target_boundary = profile_motion_boundary(destination, desc.target_motion_node, desc.target_carrier),
             .bytes = bytes,
         };
 
@@ -294,6 +290,16 @@ fn bool profile_descendant(ProfileNode[] nodes, uint node, uint ancestor) @priva
     }
 
     return false;
+}
+
+fn uint profile_motion_boundary(ProfileNode[] nodes, uint motion, uint carrier) @private {
+    if (motion == RETARGET_NO_NODE) return RETARGET_NO_NODE;
+
+    int stop = carrier == RETARGET_NO_NODE ? -1 : (int)carrier;
+    uint boundary = motion;
+    while (nodes[boundary].parent != stop) boundary = (uint)nodes[boundary].parent;
+
+    return boundary;
 }
 
 fn usz profile_align(usz value, usz alignment) @private => (value + alignment - 1) & ~(alignment - 1);

@@ -76,9 +76,9 @@ fn AnimationClip? retarget_with_profile(
 
         foreach (uint index, &node : data.target_nodes) {
             bool carrier = options.root_motion == RootMotion.EXTRACT && index == data.target_carrier;
-            bool boundary = options.root_motion != RootMotion.KEEP && node.boundary;
+            bool boundary = options.root_motion != RootMotion.KEEP && index == data.target_boundary;
             if (node.mapped != RETARGET_NO_NODE
-              || (options.root_motion == RootMotion.EXTRACT && (carrier || node.boundary))) {
+              || (options.root_motion == RootMotion.EXTRACT && (carrier || boundary))) {
                 output[index].rotation = &clip.tracks[track_slot++];
                 *output[index].rotation = profile_generated_track(
                     allocator: allocator,
@@ -157,28 +157,23 @@ fn AnimationClip? retarget_with_profile(
 
             if (options.root_motion != RootMotion.KEEP && !profile_finite_vec(horizontal)) return c3d::UNSUPPORTED~;
 
-            switch (options.root_motion) {
-                case KEEP: break;
-                case STRIP_XZ:
-                    foreach (index, &node : data.target_nodes) {
-                        if (node.controlled) target_world[index].position -= horizontal;
-                    }
-                case EXTRACT:
-                    float current_yaw = profile_yaw_angle(target_world[data.target_motion_node].rotation);
-                    if (key > 0) unwrapped_yaw += profile_wrap_yaw(current_yaw - previous_yaw);
-                    previous_yaw = current_yaw;
-                    target_world[data.target_carrier].position += horizontal;
-                    target_world[data.target_carrier].rotation = profile_yaw_rotation(unwrapped_yaw)
-                      .mul(target_world[data.target_carrier].rotation).normalize();
+            if (options.root_motion == RootMotion.EXTRACT) {
+                float current_yaw = profile_yaw_angle(target_world[data.target_motion_node].rotation);
+                if (key > 0) unwrapped_yaw += profile_wrap_yaw(current_yaw - previous_yaw);
+                previous_yaw = current_yaw;
+                target_world[data.target_carrier].position += horizontal;
+                target_world[data.target_carrier].rotation = profile_yaw_rotation(unwrapped_yaw)
+                  .mul(target_world[data.target_carrier].rotation).normalize();
             }
 
             foreach (uint index, &node : data.target_nodes) {
-                bool shifted = options.root_motion == RootMotion.STRIP_XZ ? node.controlled
-                  : options.root_motion == RootMotion.EXTRACT && index == data.target_carrier;
-                if (shifted && !profile_finite_vec(target_world[index].position)) return c3d::UNSUPPORTED~;
+                Transform world = target_world[index];
+                if (options.root_motion == RootMotion.STRIP_XZ && index == data.target_boundary) {
+                    world.position -= horizontal;
+                }
 
                 Transform parent = node.parent < 0 ? maths::TRANSFORM_IDENTITY : target_world[node.parent];
-                Transform local = profile_relative(parent, target_world[index]);
+                Transform local = profile_relative(parent, world);
                 if (output[index].rotation) write_rotation_key(output[index].rotation, key, local.rotation);
                 if (output[index].translation) {
                     if (options.root_motion != RootMotion.KEEP && !profile_finite_vec(local.position)) {
@@ -246,9 +241,10 @@ fn usz profile_track_count(AnimationClip* source, ProfileData* data, RootMotion 
     usz count;
 
     foreach (uint index, &node : data.target_nodes) {
+        bool boundary = index == data.target_boundary;
         if (node.mapped != RETARGET_NO_NODE
-          || (root_motion == RootMotion.EXTRACT && (index == data.target_carrier || node.boundary))) count++;
-        if (node.motion || (root_motion != RootMotion.KEEP && node.boundary)
+          || (root_motion == RootMotion.EXTRACT && (index == data.target_carrier || boundary))) count++;
+        if (node.motion || (root_motion != RootMotion.KEEP && boundary)
             || (root_motion == RootMotion.EXTRACT && index == data.target_carrier)) count++;
         if (node.motion) count++;
     }
