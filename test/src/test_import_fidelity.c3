@@ -464,34 +464,26 @@ fn void test_missing_selected_uv_keeps_derivative_fallback_even_when_forced() @t
     assert(document.geometries[0].tangent_provenance.origin == TangentOrigin.NONE);
 }
 
-fn void test_base_and_coat_uv_conflict_faults_only_when_generation_is_requested() @test {
+fn void test_base_normal_map_uv_set_wins_over_a_different_coat_uv_set() @test {
     String coating = `"normalTexture":{"index":0,"texCoord":0},"extensions":{"KHR_materials_clearcoat":{"clearcoatNormalTexture":{"index":0,"texCoord":1}}}`;
     String text = tangent_fixture().treplace(
         needle: `"normalTexture":{"index":0,"texCoord":0}`,
         new_str: coating,
-    );
+    ).treplace(`"TANGENT":5,`, "");
 
-    ModelDocument authored = decode_text(text);
-    defer asset::destroy_model_document(&authored);
+    ModelDocument generated = decode_text(text);
+    defer asset::destroy_model_document(&generated);
 
-    assert(authored.geometries[0].tangent_provenance.origin == TangentOrigin.AUTHORED);
+    assert(generated.geometries[0].data.tangents.len == 4);
 
-    LoadOptions forced = asset::LOAD_OPTIONS_DEFAULT;
-    forced.regenerate_tangents = true;
+    foreach (tangent : generated.geometries[0].data.tangents) expect_direction(tangent, { 1, 0, 0 });
 
-    expect_decode_fault(text, forced, c3d::UNSUPPORTED);
+    String coat_only = text.treplace(`"normalTexture":{"index":0,"texCoord":0},`, "");
 
-    String missing = text.treplace(`"TANGENT":5,`, "");
+    ModelDocument coat = decode_text(coat_only);
+    defer asset::destroy_model_document(&coat);
 
-    expect_decode_fault(missing, asset::LOAD_OPTIONS_DEFAULT, c3d::UNSUPPORTED);
-
-    LoadOptions disabled = asset::LOAD_OPTIONS_DEFAULT;
-    disabled.generate_tangents = false;
-
-    ModelDocument fallback = decode_text(missing, disabled);
-    defer asset::destroy_model_document(&fallback);
-
-    assert(!fallback.geometries[0].data.tangents.len);
+    foreach (tangent : coat.geometries[0].data.tangents) expect_direction(tangent, { 0, -1, 0 });
 }
 
 fn void test_forced_regeneration_keeps_line_and_point_primitives() @test {

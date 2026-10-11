@@ -96,11 +96,12 @@ fn GeometryId? convert_primitive(
         provenance.origin = TangentOrigin.AUTHORED;
     }
 
+    TextureSlot normal_map = tangent_normal_map(importer, primitive);
     bool wants_tangents = geometry.topology == Topology.TRIANGLES
       && (importer.options.regenerate_tangents
-          || (importer.options.generate_tangents && !geometry.tangents.len && has_normal_map(importer, primitive)));
+          || (importer.options.generate_tangents && !geometry.tangents.len && has_texture(&normal_map)));
     if (wants_tangents) {
-        uint uv_set = tangent_uv_set(importer, primitive)!;
+        uint uv_set = normal_map.uv_set;
         Vec2[] selected = uv_set == 0 ? geometry.uv0 : geometry.uv1;
         if (selected.len) {
             TangentGeometry? derived = geometry::create_tangent_geometry(allocator, &geometry, uv_set);
@@ -130,49 +131,23 @@ fn bool compressed(gltf::Accessor* accessor) @private {
     return accessor.buffer_view && accessor.buffer_view.has_meshopt_compression;
 }
 
-fn bool has_normal_map(Importer* importer, gltf::Primitive* primitive) @private {
-    if (!primitive.material) return false;
-    MaterialId material_id = importer.materials[gltf::material_index(importer.data, primitive.material)];
-    material::Material* material = &importer.document.material(material_id).data;
-    switch (material.kind) {
-        case STANDARD:
-            return has_texture(&material.standard.normal_map);
-        case PHYSICAL:
-            return has_texture(&material.physical.standard.normal_map)
-                || has_texture(&material.physical.clearcoat_normal_map);
-        case CUSTOM:
-            return false;
-        case BASIC:
-        case TOON:
-            return false;
-    }
-}
-
-fn uint? tangent_uv_set(Importer* importer, gltf::Primitive* primitive) @private {
-    if (!primitive.material) return 0;
+fn TextureSlot tangent_normal_map(Importer* importer, gltf::Primitive* primitive) @private {
+    if (!primitive.material) return material::texture_slot();
 
     MaterialId id = importer.materials[gltf::material_index(importer.data, primitive.material)];
     material::Material* material = &importer.document.material(id).data;
-    TextureSlot* base;
-    TextureSlot* coat;
 
     switch (material.kind) {
-        case STANDARD: base = &material.standard.normal_map;
+        case STANDARD:
+            return material.standard.normal_map;
         case PHYSICAL:
-            base = &material.physical.standard.normal_map;
-            coat = &material.physical.clearcoat_normal_map;
+            TextureSlot base = material.physical.standard.normal_map;
+            return has_texture(&base) ? base : material.physical.clearcoat_normal_map;
         case BASIC:
         case TOON:
-        case CUSTOM: return 0;
+        case CUSTOM:
+            return material::texture_slot();
     }
-
-    bool base_present = base && has_texture(base);
-    bool coat_present = coat && has_texture(coat);
-    if (base_present && coat_present && base.uv_set != coat.uv_set) return c3d::UNSUPPORTED~;
-    if (base_present) return base.uv_set;
-    if (coat_present) return coat.uv_set;
-
-    return 0;
 }
 
 fn bool has_texture(TextureSlot* slot) @private {
