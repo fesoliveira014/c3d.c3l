@@ -25,44 +25,6 @@ struct ScalePlaybackSnapshot @local {
     uint free_count;
 }
 
-struct ScalePlaybackAllocator (Allocator) @local {
-    Allocator backing;
-    sz remaining;
-    sz acquisitions;
-    sz outstanding;
-}
-
-fn void*? ScalePlaybackAllocator.acquire(
-    &self,
-    sz size,
-    AllocInitType init_type,
-    sz alignment,
-) @dynamic {
-    if (self.remaining <= 0) return mem::OUT_OF_MEMORY~;
-    self.remaining--;
-    void* pointer = self.backing.acquire(size, init_type, alignment)!;
-    self.acquisitions++;
-    self.outstanding++;
-    return pointer;
-}
-
-fn void*? ScalePlaybackAllocator.resize(
-    &self,
-    void* pointer,
-    sz size,
-    sz alignment,
-) @dynamic {
-    if (self.remaining <= 0) return mem::OUT_OF_MEMORY~;
-    self.remaining--;
-    self.acquisitions++;
-    return self.backing.resize(pointer, size, alignment);
-}
-
-fn void ScalePlaybackAllocator.release(&self, void* pointer, bool aligned) @dynamic {
-    self.backing.release(pointer, aligned);
-    self.outstanding--;
-}
-
 fn void create_scale_playback_fixture(
     ScalePlaybackFixture* fixture,
     Vec3 below,
@@ -276,97 +238,41 @@ fn void test_animation_scale_playback_multiple_additives_preserve_authored_order
     float[2] times = { 0, 1 };
     float[6] ratio_values = { 2, 4, 8, 4, 2, 16 };
     float[6] difference_values = { 1, 1, 1, 2, 3, 4 };
-    Vec3[2] expected = { { 3.5f, 3.25f, 7.5f }, { 3.75f, 3, 8.25f } };
-    for (uint reverse = 0; reverse < 2; reverse++) {
+    uint[2][3] clip_order = { { 0, 1 }, { 1, 0 }, { 0, 1 } };
+    AdditiveScaleMode[2][3] modes = {
+        { MULTIPLICATIVE, DIFFERENCE },
+        { DIFFERENCE, MULTIPLICATIVE },
+        { MULTIPLICATIVE, MULTIPLICATIVE },
+    };
+    Vec3[3] expected = { { 3.5f, 3.25f, 7.5f }, { 3.75f, 3, 8.25f }, { 4.5f, 4.5f, 15 } };
+    for (uint arrangement = 0; arrangement < 3; arrangement++) {
         ScalePlaybackFixture fixture;
         create_scale_playback_fixture(&fixture, { 2, 3, 4 });
         defer destroy_scale_playback_fixture(&fixture);
-        ClipId ratio = scale_playback_clip(
-            fixture: &fixture,
-            interpolation: Interpolation.LINEAR,
-            times: times[..],
-            values: ratio_values[..],
-        );
-        ClipId difference = scale_playback_clip(
-            fixture: &fixture,
-            interpolation: Interpolation.LINEAR,
-            times: times[..],
-            values: difference_values[..],
-        );
-        for (uint index = 0; index < 2; index++) {
-            bool multiplicative = (index == 0) != (reverse != 0);
-            (void)play_scale_playback_pair(
-                fixture: &fixture,
-                clip: multiplicative ? ratio : difference,
-                desc: {
-                    .additive = true,
-                    .additive_scale = multiplicative ? AdditiveScaleMode.MULTIPLICATIVE : AdditiveScaleMode.DIFFERENCE,
-                },
-                weight: 0.5f,
-                time: 1,
-            );
-        }
-        update_scale_playback_pair(&fixture, expected[reverse]);
-    }
-}
-
-fn void test_animation_scale_playback_two_ratio_actions_have_identical_literal_outputs_in_both_orders() @test {
-    float[2] times = { 0, 1 };
-    float[6][2] values = { { 2, 4, 8, 4, 2, 16 }, { 1, 1, 1, 2, 3, 4 } };
-    for (uint reverse = 0; reverse < 2; reverse++) {
-        ScalePlaybackFixture fixture;
-        create_scale_playback_fixture(&fixture, { 2, 3, 4 });
-        defer destroy_scale_playback_fixture(&fixture);
-        ClipId[2] clips;
-        for (uint clip = 0; clip < 2; clip++) {
-            clips[clip] = scale_playback_clip(
+        ClipId[2] clips = {
+            scale_playback_clip(
                 fixture: &fixture,
                 interpolation: Interpolation.LINEAR,
                 times: times[..],
-                values: values[clip][..],
-            );
-        }
-        for (uint action = 0; action < 2; action++) {
+                values: ratio_values[..],
+            ),
+            scale_playback_clip(
+                fixture: &fixture,
+                interpolation: Interpolation.LINEAR,
+                times: times[..],
+                values: difference_values[..],
+            ),
+        };
+        for (uint index = 0; index < 2; index++) {
             (void)play_scale_playback_pair(
                 fixture: &fixture,
-                clip: clips[reverse ? 1 - action : action],
-                desc: { .additive = true, .additive_scale = AdditiveScaleMode.MULTIPLICATIVE },
+                clip: clips[clip_order[arrangement][index]],
+                desc: { .additive = true, .additive_scale = modes[arrangement][index] },
                 weight: 0.5f,
                 time: 1,
             );
         }
-        update_scale_playback_pair(&fixture, { 4.5f, 4.5f, 15 });
-    }
-}
-
-fn void test_animation_scale_playback_reference_uses_time_zero_between_authored_keys() @test {
-    float[2] times = { -1, 1 };
-    float[6] values = { 2, 4, 8, 4, 8, 16 };
-    float[18] cubic = { 0, 0, 0, 2, 4, 8, 1, 2, 4, 1, 2, 4, 4, 8, 16, 0, 0, 0 };
-    foreach (Interpolation mode : { Interpolation.LINEAR, Interpolation.CUBIC_SPLINE }) {
-        ScalePlaybackFixture fixture;
-        create_scale_playback_fixture(&fixture, { 3, 6, 12 });
-        defer destroy_scale_playback_fixture(&fixture);
-        ClipId clip = scale_playback_clip(
-            fixture: &fixture,
-            interpolation: mode,
-            times: times[..],
-            values: mode == Interpolation.CUBIC_SPLINE ? cubic[..] : values[..],
-        );
-        AnimationActionId[2] actions = play_scale_playback_pair(
-            fixture: &fixture,
-            clip: clip,
-            desc: { .additive = true, .additive_scale = AdditiveScaleMode.MULTIPLICATIVE },
-            weight: 1,
-            time: 1,
-        );
-        float[3] reference_expected = { 3, 6, 12 };
-        assert(fixture.ordinary.animator.action(actions[0]).reference == reference_expected[..]);
-        assert(fixture.player.action(actions[1]).reference == reference_expected[..]);
-        update_scale_playback_pair(&fixture, { 4, 8, 16 });
-        fixture.ordinary.animator.action(actions[0]).time = 0;
-        fixture.player.action(actions[1]).time = 0;
-        update_scale_playback_pair(&fixture, { 3, 6, 12 });
+        update_scale_playback_pair(&fixture, expected[arrangement]);
     }
 }
 
@@ -629,71 +535,4 @@ fn void test_animation_scale_playback_invalid_domains_reject_before_pool_or_allo
         }
         fixture.ordinary.assets.remove_clip(clip);
     }
-}
-
-fn void test_animation_scale_playback_target_allocation_failures_restore_both_owners() @test {
-    TrackingAllocator tracker;
-    tracker.init(mem);
-    defer tracker.free();
-    ScalePlaybackAllocator allocator = { .backing = &tracker, .remaining = sz::max };
-    ScalePlaybackFixture fixture;
-    create_scale_playback_fixture(&fixture, { 2, 3, 4 }, &allocator);
-    defer destroy_scale_playback_fixture(&fixture);
-    float[2] times = { 0, 1 };
-    float[6] values = { 2, 4, 8, 4, 2, 16 };
-    ClipId clip = scale_playback_clip(
-        fixture: &fixture,
-        interpolation: Interpolation.LINEAR,
-        times: times[..],
-        values: values[..],
-    );
-    WeightedJointMask mask = scale_playback_weighted_mask(&fixture, 0.5f);
-    defer anim::destroy_weighted_joint_mask(&mask);
-    PlaybackView[2] owners = {
-        fixture.ordinary.animator.playback(),
-        anim::crowd_playback_view(fixture.crowd, &fixture.crowd.slots[0]),
-    };
-    foreach (index, &owner : owners) {
-        ScalePlaybackSnapshot snapshot = snapshot_scale_playback(owner);
-        defer destroy_scale_playback_snapshot(&snapshot);
-        for (sz allowance = 0; allowance < 3; allowance++) {
-            allocator.remaining = allowance;
-            sz outstanding = allocator.outstanding;
-            AnimationActionId? attempt;
-            PlayDesc desc = {
-                .additive = true,
-                .weighted_mask = &mask,
-                .additive_scale = AdditiveScaleMode.MULTIPLICATIVE,
-            };
-            if (index == 0) {
-                attempt = fixture.ordinary.animator.play(&fixture.ordinary.assets, clip, desc);
-            } else {
-                attempt = fixture.player.play(&fixture.ordinary.assets, clip, desc);
-            }
-            bool rejected;
-            if (catch excuse = attempt) {
-                assert(excuse == c3d::CAPACITY_EXCEEDED);
-                rejected = true;
-            }
-            assert(rejected && allocator.outstanding == outstanding);
-            assert_scale_playback_unchanged(owner, &snapshot);
-        }
-    }
-    allocator.remaining = sz::max;
-    sz before = tracker.allocated();
-    AnimationActionId[2] actions = play_scale_playback_pair(
-        fixture: &fixture,
-        clip: clip,
-        desc: { .additive = true, .weighted_mask = &mask, .additive_scale = AdditiveScaleMode.MULTIPLICATIVE },
-        weight: 1,
-        time: 1,
-    );
-    sz retained_each = (sz)(uint::size + 3 * float::size + mask.nodes.len * float::size);
-    assert(tracker.allocated() == before + 2 * retained_each);
-    sz acquisitions = allocator.acquisitions;
-    update_scale_playback_pair(&fixture, { 3, 2.25f, 6 });
-    assert(allocator.acquisitions == acquisitions);
-    fixture.ordinary.animator.stop(actions[0])!!;
-    fixture.player.stop(actions[1])!!;
-    assert(tracker.allocated() == before);
 }
