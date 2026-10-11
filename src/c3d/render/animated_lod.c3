@@ -57,7 +57,7 @@ fn bool AnimatedLodKey.equals(self, AnimatedLodKey other) @operator(==) {
 
 $assert AnimatedLodKey::size == 32;
 
-fn gpu::GpuAddress? AnimatedLodAddresses.get(&self, AnimatedLodKey key) @private {
+fn gpu::GpuAddress? AnimatedLodAddresses.get(&self, AnimatedLodKey key) {
     usz mask = self.slots.len - 1;
     for (usz index = key.hash() & mask; self.slots[index].epoch == self.epoch; index = (index + 1) & mask) {
         if (self.slots[index].key == key) return self.slots[index].address;
@@ -67,7 +67,7 @@ fn gpu::GpuAddress? AnimatedLodAddresses.get(&self, AnimatedLodKey key) @private
 }
 
 <* @require !@ok(self.get(key)) *>
-fn void AnimatedLodAddresses.set(&self, AnimatedLodKey key, gpu::GpuAddress address) @private {
+fn void AnimatedLodAddresses.set(&self, AnimatedLodKey key, gpu::GpuAddress address) {
     if (2 * (self.count + 1) > self.slots.len) {
         AnimatedLodAddress[] previous = self.slots;
         self.slots = alloc::new_array(self.allocator, AnimatedLodAddress, previous.len * 2);
@@ -85,7 +85,7 @@ fn void AnimatedLodAddresses.set(&self, AnimatedLodKey key, gpu::GpuAddress addr
     self.count++;
 }
 
-fn void AnimatedLodAddresses.reset(&self) @private {
+fn void AnimatedLodAddresses.reset(&self) {
     self.epoch++;
     self.count = 0;
 }
