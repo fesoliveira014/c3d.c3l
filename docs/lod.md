@@ -151,8 +151,8 @@ Attachment returns `INVALID_ID` for dead sources/assets,
 with imported LOD groups or incompatible custom stages. Animation and crowd
 publication update source state on the scene side. An edit that changes the
 revision of the source model or a referenced geometry or skeleton skips the
-whole group until it is attached again. Renderers and queries only read the
-published source; stale or invalid sources skip the whole group.
+whole group until it is removed and attached again. Renderers and queries only
+read the published source; stale or invalid sources skip the whole group.
 Removing a crowd invalidates its group's borrowed placements and colors.
 
 An ordinary owner may provide `has_bounds_override` and `local_bounds` covering
