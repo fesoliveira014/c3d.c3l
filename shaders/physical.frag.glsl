@@ -283,6 +283,12 @@ void main() {
     surface.transmission_ray = vec3(0.0);
     ReflectionSelection reflections = reflection_probe_select(frame, v_world_pos);
     vec3 transmitted = vec3(0.0);
+    bool transmission_fogs_behind = (material.standard.flags & MATERIAL_ALPHA_BLEND) == 0u;
+#ifdef LAYERED
+    bool tail = frame.transparency != 0ul && TransparencyGpu(frame.transparency).phase == TRANSPARENCY_TAIL;
+    transmission_fogs_behind = transmission_fogs_behind || tail;
+#endif
+
     if (transmission > 0.0) {
         vec3 refracted = refract(-material_sample.view_direction, material_sample.normal, 1.0 / material.ior);
         surface.transmission_ray = transmission_ray(refracted, thickness, draw.model);
@@ -295,7 +301,7 @@ void main() {
                 refracted,
                 material_sample.roughness,
                 material.ior,
-                (material.standard.flags & MATERIAL_ALPHA_BLEND) == 0u
+                transmission_fogs_behind
             ),
             length(surface.transmission_ray),
             surface.attenuation_color,
@@ -362,7 +368,6 @@ void main() {
 
 #ifdef LAYERED
     if (!layered_transparency_retained(frame)) {
-        bool tail = frame.transparency != 0ul && TransparencyGpu(frame.transparency).phase == TRANSPARENCY_TAIL;
         if (tail || blended) {
             uint fog_flags = material.standard.flags;
             if ((fog_flags & MATERIAL_ALPHA_BLEND) == 0u) fog_flags &= ~MATERIAL_BLEND_ADDITIVE;
@@ -371,6 +376,7 @@ void main() {
         }
     }
 #else
+    // Non-depth-writing transmission receives fog at its background depth in the later fog pass.
     if (blended) color = apply_material_fog(frame, v_world_pos, color, material.standard.flags);
 #endif
 

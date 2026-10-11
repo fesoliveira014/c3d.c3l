@@ -3,12 +3,14 @@ module c3d::render;
 import c3d;
 import c3d::material;
 import gpu;
-import std::math::vector;
 
 <*
  Largest number of exact camera transparency depth groups.
 *>
 const uint TRANSPARENCY_LAYER_CAPACITY_MAX = 16; // At most seventeen depth images and geometry capture passes.
+
+const gpu::Format TRANSPARENCY_COMPOSITION_FORMAT @private
+  = gpu::Format.RGBA16_FLOAT; // Approved half precision; four composition images cost 32 bytes per pixel.
 
 // Extra depth plus four color pairs.
 const uint TRANSPARENCY_TARGET_COUNT @private = TRANSPARENCY_LAYER_CAPACITY_MAX + 9;
@@ -94,14 +96,14 @@ fn TransparencyState? allocate_transparency_state(
             renderer: renderer,
             width: width,
             height: height,
-            format: gpu::Format.RGBA32_FLOAT,
+            format: TRANSPARENCY_COMPOSITION_FORMAT,
             debug_name: "transparency_raw_color",
         )!;
         state.local_color[side] = allocate_transparency_color(
             renderer: renderer,
             width: width,
             height: height,
-            format: gpu::Format.RGBA32_FLOAT,
+            format: TRANSPARENCY_COMPOSITION_FORMAT,
             debug_name: "transparency_local_color",
         )!;
         state.continuation_depth[side] = allocate_transparency_color(
@@ -111,7 +113,7 @@ fn TransparencyState? allocate_transparency_state(
             format: gpu::Format.R32_FLOAT,
             debug_name: "transparency_continuation_depth",
         )!;
-        state.texel_bytes += (usz)width * height * (2 * Vec4::size + float::size);
+        state.texel_bytes += (usz)width * height * (2 * 4 * ushort::size + float::size);
 
         state.raw_pyramid[side] = allocate_transparency_pyramid(
             renderer: renderer,

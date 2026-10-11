@@ -52,8 +52,8 @@ fn void? prepare_transparency_view_pipelines(Renderer* renderer) @private {
     renderer.pipelines.get(&renderer.device, composite_pipeline_key(HDR_FORMAT))!;
     renderer.pipelines.get(&renderer.device, composite_pipeline_key(gpu::Format.R32_FLOAT))!;
     renderer.pipelines.get(&renderer.device, transparency_resolve_key(HDR_FORMAT))!;
-    renderer.pipelines.get(&renderer.device, transparency_resolve_key(gpu::Format.RGBA32_FLOAT))!;
-    renderer.pipelines.get(&renderer.device, composite_pipeline_key(gpu::Format.RGBA32_FLOAT))!;
+    renderer.pipelines.get(&renderer.device, transparency_resolve_key(TRANSPARENCY_COMPOSITION_FORMAT))!;
+    renderer.pipelines.get(&renderer.device, composite_pipeline_key(TRANSPARENCY_COMPOSITION_FORMAT))!;
     acquire_compute_pipeline(
         renderer: renderer,
         pipeline: &renderer.transparency_order_pipeline,

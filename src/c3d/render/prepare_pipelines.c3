@@ -605,8 +605,8 @@ fn void append_prepare_pipelines(
             append_prepare_cache(listed, composite_pipeline_key(HDR_FORMAT));
             append_prepare_cache(listed, composite_pipeline_key(gpu::Format.R32_FLOAT));
             append_prepare_cache(listed, transparency_resolve_key(HDR_FORMAT));
-            append_prepare_cache(listed, transparency_resolve_key(gpu::Format.RGBA32_FLOAT));
-            append_prepare_cache(listed, composite_pipeline_key(gpu::Format.RGBA32_FLOAT));
+            append_prepare_cache(listed, transparency_resolve_key(TRANSPARENCY_COMPOSITION_FORMAT));
+            append_prepare_cache(listed, composite_pipeline_key(TRANSPARENCY_COMPOSITION_FORMAT));
             append_prepare_compute(listed, PrepareComputeSlot.TRANSPARENCY_ORDER, TRANSPARENCY_ORDER);
             append_prepare_compute(listed, PrepareComputeSlot.TRANSPARENCY_MIP, TRANSPARENCY_MIP);
             append_prepare_compute(listed, PrepareComputeSlot.TRANSPARENCY_OVERFLOW, TRANSPARENCY_OVERFLOW);
@@ -668,8 +668,8 @@ fn void append_prepare_view_pipelines(Renderer* renderer, SceneReads reads, List
             append_prepare_cache(listed, composite_pipeline_key(HDR_FORMAT));
             append_prepare_cache(listed, composite_pipeline_key(gpu::Format.R32_FLOAT));
             append_prepare_cache(listed, transparency_resolve_key(HDR_FORMAT));
-            append_prepare_cache(listed, transparency_resolve_key(gpu::Format.RGBA32_FLOAT));
-            append_prepare_cache(listed, composite_pipeline_key(gpu::Format.RGBA32_FLOAT));
+            append_prepare_cache(listed, transparency_resolve_key(TRANSPARENCY_COMPOSITION_FORMAT));
+            append_prepare_cache(listed, composite_pipeline_key(TRANSPARENCY_COMPOSITION_FORMAT));
             append_prepare_compute(listed, PrepareComputeSlot.TRANSPARENCY_ORDER, TRANSPARENCY_ORDER);
             append_prepare_compute(listed, PrepareComputeSlot.TRANSPARENCY_MIP, TRANSPARENCY_MIP);
             append_prepare_compute(listed, PrepareComputeSlot.TRANSPARENCY_OVERFLOW, TRANSPARENCY_OVERFLOW);

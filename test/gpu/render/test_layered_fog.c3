@@ -112,58 +112,66 @@ fn GeometryId? add_layered_fog_sheet(Fixture* fixture, float distance) @private 
     return add_layered_sheet_geometry(fixture, (9 - distance) / 8);
 }
 
-fn void test_layered_fog_one_and_two_physical_sheets_apply_authored_absorption_once() @test {
+fn void test_layered_fog_physical_sheets_and_sorted_remainder_apply_authored_absorption_once() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
     defer tracker.free();
     Fixture fixture;
     create_fixture(&tracker, &fixture)!!;
     defer destroy_fixture(&fixture);
-    foreach (sheet_count : (uint[2]){ 1, 2 }) {
-        LayeredScene target = create_layered_scene(&fixture)!!;
-        defer scene::destroy_scene(&target.scene);
-        add_layered_height_fog(&target, transparency_fixtures::FOG_EXTINCTION)!!;
-        LayeredView view = create_layered_view(&fixture, 2)!!;
-        defer destroy_layered_view(&fixture, &view);
-        MaterialId front = add_layered_fog_glass(
-            fixture: &fixture,
-            tint: LAYERED_FOG_FRONT_TINT,
-            absorption: LAYERED_FOG_FRONT_ABSORPTION,
-            thickness: 0.5f,
-            attenuation_distance: 2,
-        )!!;
-        target.scene.add_mesh(add_layered_fog_sheet(&fixture, LAYERED_FOG_FRONT_DISTANCE)!!, front)!!;
-        transparency_fixtures::Color expected = transparency_fixtures::PLANAR_BACKGROUND;
-        double continuation = LAYERED_FOG_BACKDROP_DISTANCE;
-        if (sheet_count == 2) {
-            MaterialId rear = add_layered_fog_glass(
+    foreach (capacity : (uint[2]){ 1, 2 }) {
+        foreach (sheet_count : (uint[2]){ 1, 2 }) {
+            LayeredScene target = create_layered_scene(&fixture)!!;
+            defer scene::destroy_scene(&target.scene);
+            add_layered_height_fog(&target, transparency_fixtures::FOG_EXTINCTION)!!;
+            LayeredView view = create_layered_view(&fixture, capacity)!!;
+            defer destroy_layered_view(&fixture, &view);
+            MaterialId front = add_layered_fog_glass(
                 fixture: &fixture,
-                tint: LAYERED_FOG_REAR_TINT,
-                absorption: LAYERED_FOG_REAR_ABSORPTION,
-                thickness: 1,
+                tint: LAYERED_FOG_FRONT_TINT,
+                absorption: LAYERED_FOG_FRONT_ABSORPTION,
+                thickness: 0.5f,
                 attenuation_distance: 2,
             )!!;
-            target.scene.add_mesh(add_layered_fog_sheet(&fixture, LAYERED_FOG_REAR_DISTANCE)!!, rear)!!;
-            expected = layered_fog_connect(expected, LAYERED_FOG_REAR_DISTANCE, continuation);
+            target.scene.add_mesh(add_layered_fog_sheet(&fixture, LAYERED_FOG_FRONT_DISTANCE)!!, front)!!;
+            transparency_fixtures::Color expected = transparency_fixtures::PLANAR_BACKGROUND;
+            double continuation = LAYERED_FOG_BACKDROP_DISTANCE;
+            if (sheet_count == 2) {
+                MaterialId rear = add_layered_fog_glass(
+                    fixture: &fixture,
+                    tint: LAYERED_FOG_REAR_TINT,
+                    absorption: LAYERED_FOG_REAR_ABSORPTION,
+                    thickness: 1,
+                    attenuation_distance: 2,
+                )!!;
+                target.scene.add_mesh(add_layered_fog_sheet(&fixture, LAYERED_FOG_REAR_DISTANCE)!!, rear)!!;
+                expected = layered_fog_connect(expected, LAYERED_FOG_REAR_DISTANCE, continuation);
+                expected *= layered_fog_optical_factor(
+                    tint: LAYERED_FOG_REAR_TINT,
+                    absorption: LAYERED_FOG_REAR_ABSORPTION,
+                    thickness: 1,
+                    attenuation_distance: 2,
+                );
+                continuation = LAYERED_FOG_REAR_DISTANCE;
+            }
+            expected = layered_fog_connect(expected, LAYERED_FOG_FRONT_DISTANCE, continuation);
             expected *= layered_fog_optical_factor(
-                tint: LAYERED_FOG_REAR_TINT,
-                absorption: LAYERED_FOG_REAR_ABSORPTION,
-                thickness: 1,
+                tint: LAYERED_FOG_FRONT_TINT,
+                absorption: LAYERED_FOG_FRONT_ABSORPTION,
+                thickness: 0.5f,
                 attenuation_distance: 2,
             );
-            continuation = LAYERED_FOG_REAR_DISTANCE;
+            expected = layered_fog_observe(expected, LAYERED_FOG_FRONT_DISTANCE);
+            Vec4[] pixels = render_layered_pixels(&fixture, &target, &view)!!;
+            defer free(pixels);
+            check_layered_interior(pixels, expected);
+            if (sheet_count == 2 && capacity == 1) {
+                uint[] overflow = read_layered_depth(&fixture, &view, 1)!!;
+                defer free(overflow);
+                uint sample = LAYERED_SAMPLE_ROW * LAYERED_IMAGE_SIZE + LAYERED_SAMPLE_COLUMN;
+                assert(overflow[sample] == bitcast(0.5f, uint), "The rear Physical sheet must enter the remainder.");
+            }
         }
-        expected = layered_fog_connect(expected, LAYERED_FOG_FRONT_DISTANCE, continuation);
-        expected *= layered_fog_optical_factor(
-            tint: LAYERED_FOG_FRONT_TINT,
-            absorption: LAYERED_FOG_FRONT_ABSORPTION,
-            thickness: 0.5f,
-            attenuation_distance: 2,
-        );
-        expected = layered_fog_observe(expected, LAYERED_FOG_FRONT_DISTANCE);
-        Vec4[] pixels = render_layered_pixels(&fixture, &target, &view)!!;
-        defer free(pixels);
-        check_layered_interior(pixels, expected);
     }
     check_validation(&fixture.renderer);
 }
@@ -192,15 +200,15 @@ fn void test_layered_fog_front_glass_preserves_the_sorted_remainder_handoff_at_e
         )!!;
         target.scene.add_mesh(add_layered_fog_sheet(&fixture, LAYERED_FOG_FRONT_DISTANCE)!!, front)!!;
         transparency_fixtures::Color rear_local = layered_fog_connect(
-            transparency_fixtures::PLANAR_BACKGROUND,
-            LAYERED_FOG_REAR_DISTANCE,
-            LAYERED_FOG_BACKDROP_DISTANCE,
+            radiance: transparency_fixtures::PLANAR_BACKGROUND,
+            near_distance: LAYERED_FOG_REAR_DISTANCE,
+            far_distance: LAYERED_FOG_BACKDROP_DISTANCE,
         );
         rear_local = transparency_fixtures::compose_over(rear_local, { 0.25, 0.5, 1 }, 0.375);
         transparency_fixtures::Color expected = layered_fog_connect(
-            rear_local,
-            LAYERED_FOG_FRONT_DISTANCE,
-            LAYERED_FOG_REAR_DISTANCE,
+            radiance: rear_local,
+            near_distance: LAYERED_FOG_FRONT_DISTANCE,
+            far_distance: LAYERED_FOG_REAR_DISTANCE,
         );
         expected *= layered_fog_optical_factor(
             tint: LAYERED_FOG_FRONT_TINT,
@@ -237,8 +245,8 @@ fn void test_layered_fog_over_and_additive_match_sorted_without_duplicate_inscat
         MaterialId surface = fixture.assets.add_material(material::basic(params, common))!!;
         target.scene.add_mesh(add_layered_fog_sheet(&fixture, LAYERED_FOG_FRONT_DISTANCE)!!, surface)!!;
         transparency_fixtures::Color expected = layered_fog_observe(
-            transparency_fixtures::PLANAR_BACKGROUND,
-            LAYERED_FOG_BACKDROP_DISTANCE,
+            radiance: transparency_fixtures::PLANAR_BACKGROUND,
+            distance: LAYERED_FOG_BACKDROP_DISTANCE,
         );
         FilterFogTerms near = layered_fog_terms(LAYERED_FOG_FRONT_DISTANCE);
         transparency_fixtures::Color radiance = near.attenuation * (transparency_fixtures::Color){ 0.25, 0.5, 1 };
@@ -687,13 +695,11 @@ fn void test_layered_fog_two_physical_sheets_filter_raw_radiance_across_a_contin
         fixture.assets.mark_material_dirty(front);
         target.scene.add_mesh(add_layered_fullscreen_geometry(&fixture, LAYERED_FOG_FRONT_DISTANCE)!!, front)!!;
         transparency_fixtures::Color left_raw = transparency_fixtures::PLANAR_BACKGROUND;
-        if (capacity == 2) {
-            left_raw = layered_fog_connect(
-                radiance: left_raw,
-                near_distance: LAYERED_FOG_EDGE_REAR_DISTANCE,
-                far_distance: LAYERED_FOG_EDGE_LEFT_DISTANCE,
-            );
-        }
+        left_raw = layered_fog_connect(
+            radiance: left_raw,
+            near_distance: LAYERED_FOG_EDGE_REAR_DISTANCE,
+            far_distance: LAYERED_FOG_EDGE_LEFT_DISTANCE,
+        );
         left_raw *= layered_fog_optical_factor(
             tint: LAYERED_FOG_REAR_TINT,
             absorption: LAYERED_FOG_REAR_ABSORPTION,
@@ -732,9 +738,9 @@ fn void test_layered_fog_two_physical_sheets_filter_raw_radiance_across_a_contin
                 double anchor = column < LAYERED_FOG_EDGE_LEFT_COLUMNS
                   ? LAYERED_FOG_EDGE_REAR_DISTANCE : LAYERED_FOG_BACKDROP_DISTANCE;
                 transparency_fixtures::Color expected = layered_fog_connect(
-                    filtered,
-                    LAYERED_FOG_FRONT_DISTANCE,
-                    anchor,
+                    radiance: filtered,
+                    near_distance: LAYERED_FOG_FRONT_DISTANCE,
+                    far_distance: anchor,
                 );
                 expected = layered_fog_observe(expected, LAYERED_FOG_FRONT_DISTANCE);
                 check_layered_color(pixels[row * LAYERED_ROUGH_WIDTH + column], expected);

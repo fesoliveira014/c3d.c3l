@@ -487,10 +487,10 @@ fn void? run_filter_images(
             .stages = { .transfer },
             .access = { .read },
         })!;
+        usz image_bytes = (usz)image.width * image.height * 4 * ushort::size;
         gpu::TextureBufferCopyDesc copy = {
             .texture = image.texture,
-            .dst = images.output.span.checked_subspan(images.readback_offsets[level],
-                (usz)image.width * image.height * 4 * ushort::size)!,
+            .dst = images.output.span.checked_subspan(images.readback_offsets[level], image_bytes)!,
         };
         gpu::cmd_copy_texture_to_buffer(&renderer.commands, &copy)!;
     }

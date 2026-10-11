@@ -9,6 +9,7 @@ import std::collections::list;
 
 enum TransparencyPipelinePhase @private {
     CAPTURE,
+    BACKGROUND_CAPTURE,
     RETAINED,
     TAIL,
 }
@@ -38,22 +39,26 @@ fn PipelineKey transparency_pipeline_key(
     gpu::PolygonMode polygon,
     uint shadow_flags,
     bool capture,
-    gpu::Format color_format = gpu::Format.RGBA32_FLOAT,
+    gpu::Format color_format = gpu::Format.UNDEFINED,
+    gpu::Format anchor_format = gpu::Format.R32_FLOAT,
 ) @private {
     vertex.flags |= shader::SHADER_FLAG_LAYERED;
     ShaderVariant fragment = material_fragment(material, shadow_flags);
     fragment.flags |= shader::SHADER_FLAG_LAYERED;
 
+    if (color_format == gpu::Format.UNDEFINED) {
+        color_format = capture ? gpu::Format.R32_FLOAT : TRANSPARENCY_COMPOSITION_FORMAT;
+    }
+
     PipelineKey key = {
         .vertex = vertex,
         .fragment = fragment,
-        .color_formats = { [0] = color_format, [1] = gpu::Format.R32_FLOAT },
+        .color_formats = { [0] = color_format, [1] = anchor_format },
         .color_count = 2,
         .depth_format = DEPTH_FORMAT,
         .samples = gpu::SampleCount.ONE,
         .polygon = polygon,
     };
-    if (capture) key.color_formats[0] = gpu::Format.R32_FLOAT;
     if (material.kind == MaterialKind.CUSTOM) {
         key.color_count = 1;
         key.color_formats[1] = gpu::Format.UNDEFINED;
@@ -90,7 +95,8 @@ fn gpu::PipelineHandle? transparency_pipeline_for(
     ShaderVariant vertex,
     uint shadow_flags,
     bool capture,
-    gpu::Format color_format = gpu::Format.RGBA32_FLOAT,
+    gpu::Format color_format = gpu::Format.UNDEFINED,
+    gpu::Format anchor_format = gpu::Format.R32_FLOAT,
 ) @private {
     renderer.stats.pipeline_lookups++;
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
@@ -101,6 +107,7 @@ fn gpu::PipelineHandle? transparency_pipeline_for(
         shadow_flags: shadow_flags,
         capture: capture,
         color_format: color_format,
+        anchor_format: anchor_format,
     );
     if (material.kind != MaterialKind.CUSTOM) {
         return renderer.pipelines.get(&renderer.device, key);
@@ -162,19 +169,29 @@ fn void append_prepare_transparency_pipelines(
             material: material,
         );
 
-        TransparencyPipelinePhase[3] phases = {
+        TransparencyPipelinePhase[4] phases = {
             TransparencyPipelinePhase.CAPTURE,
+            TransparencyPipelinePhase.BACKGROUND_CAPTURE,
             TransparencyPipelinePhase.RETAINED,
             TransparencyPipelinePhase.TAIL,
         };
         foreach (phase : phases) {
+            bool capture = phase == TransparencyPipelinePhase.CAPTURE
+              || phase == TransparencyPipelinePhase.BACKGROUND_CAPTURE;
+            gpu::Format color_format = phase == TransparencyPipelinePhase.CAPTURE
+              ? gpu::Format.R32_FLOAT
+              : phase == TransparencyPipelinePhase.TAIL ? HDR_FORMAT : TRANSPARENCY_COMPOSITION_FORMAT;
+            gpu::Format anchor_format = phase == TransparencyPipelinePhase.BACKGROUND_CAPTURE
+              ? TRANSPARENCY_COMPOSITION_FORMAT : gpu::Format.R32_FLOAT;
+
             PipelineKey key = transparency_pipeline_key(
                 material: data,
                 vertex: vertex,
                 polygon: polygon,
                 shadow_flags: shadow_flags,
-                capture: phase == TransparencyPipelinePhase.CAPTURE,
-                color_format: phase == TransparencyPipelinePhase.TAIL ? HDR_FORMAT : gpu::Format.RGBA32_FLOAT,
+                capture: capture,
+                color_format: color_format,
+                anchor_format: anchor_format,
             );
             if (data.kind == MaterialKind.CUSTOM) {
                 key.shader = data.custom.shader;
@@ -212,19 +229,29 @@ fn void? prepare_transparency_pipelines(
         if (!view.live || view.desc.transparency.mode != TransparencyMode.LAYERED
           || view.desc.shading == ShadingPath.PATH_TRACED) continue;
 
-        TransparencyPipelinePhase[3] phases = {
+        TransparencyPipelinePhase[4] phases = {
             TransparencyPipelinePhase.CAPTURE,
+            TransparencyPipelinePhase.BACKGROUND_CAPTURE,
             TransparencyPipelinePhase.RETAINED,
             TransparencyPipelinePhase.TAIL,
         };
         foreach (phase : phases) {
+            bool capture = phase == TransparencyPipelinePhase.CAPTURE
+              || phase == TransparencyPipelinePhase.BACKGROUND_CAPTURE;
+            gpu::Format color_format = phase == TransparencyPipelinePhase.CAPTURE
+              ? gpu::Format.R32_FLOAT
+              : phase == TransparencyPipelinePhase.TAIL ? HDR_FORMAT : TRANSPARENCY_COMPOSITION_FORMAT;
+            gpu::Format anchor_format = phase == TransparencyPipelinePhase.BACKGROUND_CAPTURE
+              ? TRANSPARENCY_COMPOSITION_FORMAT : gpu::Format.R32_FLOAT;
+
             transparency_pipeline_for(
                 renderer: renderer,
                 material: material,
                 vertex: vertex,
                 shadow_flags: rt_shadow_flags(renderer, view.desc.ray_tracing.shadows),
-                capture: phase == TransparencyPipelinePhase.CAPTURE,
-                color_format: phase == TransparencyPipelinePhase.TAIL ? HDR_FORMAT : gpu::Format.RGBA32_FLOAT,
+                capture: capture,
+                color_format: color_format,
+                anchor_format: anchor_format,
             )!;
         }
     }

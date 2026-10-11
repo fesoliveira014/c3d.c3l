@@ -174,6 +174,7 @@ fn void? record_transparency_geometry(
                     shadow_flags: shadow_flags,
                     capture: capture,
                     color_format: color.format,
+                    anchor_format: anchor.format,
                 )!,
                 .color_count = material.kind == MaterialKind.CUSTOM ? 1 : 2,
             };

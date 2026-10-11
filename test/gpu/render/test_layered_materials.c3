@@ -19,7 +19,8 @@ const float LAYERED_JOINT_TRANSLATION @private = 0.5f;
 const float LAYERED_MORPH_TRANSLATION @private = 0.25f;
 const float LAYERED_MORPH_WEIGHT @private = 0.5f;
 const uint LAYERED_WIDE_JOINT @private = 256;
-const double LAYERED_VERTEX_DEPTH_TOLERANCE @private = 4 * math::FLOAT_EPSILON; // CPU/raster rounding; exact keys.
+const double LAYERED_SKINNED_DEPTH_TOLERANCE @private
+  = 4 * math::FLOAT_EPSILON; // Interpolated skinning rounds between CPU and raster; flat rows stay exact.
 
 enum LayeredMaterialPath @private {
     MESH,
@@ -289,8 +290,13 @@ fn void test_layered_material_families_and_vertex_paths_match_known_radiance_and
             for (uint x = LAYERED_INTERIOR_BEGIN; x < LAYERED_INTERIOR_END; x++) {
                 uint pixel = y * LAYERED_IMAGE_SIZE + x;
                 assert(captured[pixel] == shaded[pixel], "Capture and shade depth bits diverge.");
-                double actual = bitcast(captured[pixel], float);
-                assert(math::abs(actual - layered_row_depth(row.path, y, x)) <= LAYERED_VERTEX_DEPTH_TOLERANCE);
+                double expected_depth = layered_row_depth(row.path, y, x);
+                if (layered_path_skinned(row.path)) {
+                    double actual = bitcast(captured[pixel], float);
+                    assert(math::abs(actual - expected_depth) <= LAYERED_SKINNED_DEPTH_TOLERANCE);
+                } else {
+                    assert(captured[pixel] == bitcast((float)expected_depth, uint));
+                }
             }
         }
         if (layers == 2) {
@@ -360,9 +366,13 @@ fn void test_layered_positive_physical_transmission_applies_authored_tint_once_o
                 for (uint x = LAYERED_INTERIOR_BEGIN; x < LAYERED_INTERIOR_END; x++) {
                     uint pixel = y * LAYERED_IMAGE_SIZE + x;
                     assert(captured[pixel] == shaded[pixel]);
-                    double actual = bitcast(captured[pixel], float);
                     double expected_depth = layered_row_depth(path, y, x) + 0.25;
-                    assert(math::abs(actual - expected_depth) <= LAYERED_VERTEX_DEPTH_TOLERANCE);
+                    if (layered_path_skinned(path)) {
+                        double actual = bitcast(captured[pixel], float);
+                        assert(math::abs(actual - expected_depth) <= LAYERED_SKINNED_DEPTH_TOLERANCE);
+                    } else {
+                        assert(captured[pixel] == bitcast((float)expected_depth, uint));
+                    }
                 }
             }
         }
@@ -422,8 +432,10 @@ fn void test_layered_mapped_coverage_and_masked_holes_preserve_each_material_fam
         MaterialId blue = add_layered_basic(&fixture, { 0, 0, 1, 0.5f })!!;
         target.scene.add_mesh(add_layered_row_geometry(&fixture, LayeredMaterialPath.MESH, 0.5f)!!, blue)!!;
         MaterialId front = add_layered_row_material(&fixture, { .kind = kind, .path = MESH })!!;
-        set_layered_base_map(&fixture.assets.material(front).data,
-            material::texture_slot(coverage, asset::SAMPLER_NEAREST));
+        set_layered_base_map(
+            material: &fixture.assets.material(front).data,
+            slot: material::texture_slot(coverage, asset::SAMPLER_NEAREST),
+        );
         fixture.assets.mark_material_dirty(front);
         target.scene.add_mesh(add_layered_row_geometry(&fixture, LayeredMaterialPath.MESH, 0.875f)!!, front)!!;
         Vec4[] pixels = render_layered_pixels(&fixture, &target, &view)!!;
