@@ -295,8 +295,8 @@ Opaque casters do not sample material textures. Basic and Standard MASK casters
 use their base alpha factor, base map, selected UV0/UV1, UV transform, sampler and
 alpha cutoff. Alpha cutouts therefore follow the same material semantics as the
 visible surface. Double-sided and reflected-model face handling are preserved.
-Basic BLEND materials cast opaque shadows, matching their current opaque forward
-rendering. Standard BLEND remains unsupported.
+A BLEND mesh, batch or LOD part casts no shadow, whatever its family, unless
+[colored shadows](#colored-shadows) are on.
 
 A shadow-only draw resolves the geometry and, for MASK, its base map. It does not
 require Standard normal, metallic/roughness, occlusion or emissive sources.
@@ -319,6 +319,81 @@ references use the existing absent-map behavior. Backend faults propagate unchan
 
 Shadows attenuate each selected direct-light contribution. Ambient and emissive
 terms retain their existing behavior.
+
+## Colored shadows
+
+`Renderer.set_colored_shadows(true)` lets translucent casters tint the light behind them. The switch is
+renderer-wide, off by default, takes effect at the next `begin_frame` and costs nothing while off. It adds no field to
+`ShadowSettings`, so lights and their serialization are unchanged.
+
+```c3
+renderer.set_colored_shadows(true);
+```
+
+**Casters.** With the switch on:
+
+- A Physical material with `transmission > 0`, in any alpha mode, casts into the translucent maps instead of the
+  opaque atlas.
+- A `BLEND` mesh, batch or LOD part with `cast_shadow` casts into them too. `ADDITIVE` materials emit light rather than
+  block it, so they stay out unless they are transmissive.
+- Every other OPAQUE and MASK caster is unchanged.
+
+With the switch off, a transmissive OPAQUE or MASK Physical caster still casts an opaque shadow and a BLEND one casts
+nothing.
+
+**Tint.** A caster passes `T = (1 - a) + a * t * base * attenuation ^ (thickness / distance)` of the light, per channel:
+
+| Term | Value |
+| --- | --- |
+| `a` | Coverage. `BLEND`: the base color factor's alpha times the base map's alpha and the vertex or instance color's alpha. OPAQUE and MASK: 1, and MASK discards below its cutoff |
+| `t` | The Physical `transmission` factor; 0 for Basic, Standard and Toon, which pass `1 - a` of the light with no color |
+| `base` | The base color factor times the base map and the vertex or instance color |
+| `thickness` | The `thickness` factor times the model scale along the light's axis, as the surface's own refraction measures it |
+| `attenuation`, `distance` | `attenuation_color` and `attenuation_distance`; a zero distance, or a zero thickness, applies no attenuation |
+
+`transmission_map`, `thickness_map` and metallic are ignored. A custom material tints by the alpha of its texture slot
+zero (`1 - alpha`) and tints nothing without one; set `cast_shadow` off on a stage whose transparency is procedural.
+
+**Receivers.** `shadows.glsl` adds `vec3 shadow_transmittance(frame, light, position, normal, view_depth)`: the opaque
+visibility times `mix(vec3(1), T, behind)`, where `behind` is the 3x3 compare-filtered share of the receiver behind the
+translucent depth and `T` is read at the receiver's atlas texel. It follows the cascade blend and the point faces of
+`shadow_visibility`, and a light whose layer holds no translucent caster returns the opaque visibility. Standard,
+Physical and Toon forward shading, `shade_standard_surface`, `evaluate_standard_lights` and the deferred lighting resolve
+all use it, so forward and deferred views agree and a view that shares a [shadow set](#shadow-sets) reads the same
+tint. `shadow_visibility` keeps its float form and ignores the tint, as do volumetric fog, probe updates and the stages
+that call it.
+
+**Passes.** Each layer that holds a visible translucent caster records two passes after its opaque depth, inside the
+`SHADOW_ATLAS` timing:
+
+1. Translucent depth: depth only into `shadow_translucent_depth`, cleared, with the atlas's reverse-Z compare and bias.
+2. Transmittance: color only into `shadow_transmittance`, cleared to 1 and blended `src * dst`, with no depth
+   attachment. Each caster multiplies its `T` into the texel.
+
+Their draws count in `Stats.draws`; `Stats.shadow_layers` counts opaque layer passes as before. A layer without a
+translucent caster records neither pass, and its `ShadowGpu.colored_transmittance` and `colored_depth` stay 0. Single-sided
+casters cull back faces as the light sees them. A double-sided caster draws both faces, so a closed double-sided mesh
+tints twice, once per surface.
+
+**Memory.** `shadow_transmittance` is `RGBA8_UNORM` and `shadow_translucent_depth` is `D32_FLOAT`, both atlas-shaped:
+8 B per texel and atlas layer, which is `shadow_resolution² × 8` bytes each layer. The default 2048² × 4 layers takes
+128 MiB and 4096² × 4 layers takes 512 MiB, on top of the atlas's own depth. They are allocated on the first frame the
+switch is on and a translucent caster shadows a light, never per frame, and are kept until the renderer is destroyed:
+turning the switch off does not free them, so toggling never reallocates. The atlas keeps its size for the renderer's
+life, so the images are never recreated. The two passes' pipelines are built at first use and `prepare_scene` does not
+build them.
+
+**Limits.**
+
+- Each texel holds one translucent depth, so a receiver between two panes takes both tints.
+- The transmittance is 8 bits per channel and is read without filtering.
+- Traced shadows keep their rule: the switch does not affect them, OPAQUE and MASK glass cast opaque shadows and BLEND
+  casts nothing.
+- Volumetric fog and probe updates see the opaque shadow only.
+- Transmission and thickness maps are ignored.
+
+`examples/transparency` has a sun, a tinted blended Physical pane and a thick absorbing slab in its path. `C` toggles the
+switch.
 
 ## Ray-traced shadows
 
