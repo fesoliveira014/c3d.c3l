@@ -189,6 +189,11 @@ fn PixelFormat linear_twin(PixelFormat format) @private {
     }
 }
 
+fn bool is_texture_container(char[] bytes) @private {
+    return starts_with(bytes, DDS_MAGIC[..]) || starts_with(bytes, KTX1_IDENTIFIER[..])
+      || starts_with(bytes, KTX2_IDENTIFIER[..]);
+}
+
 fn ContainerLayout? read_container_layout(char[] bytes) @local {
     if (starts_with(bytes, DDS_MAGIC[..])) return parse_dds_layout(bytes);
     if (starts_with(bytes, KTX1_IDENTIFIER[..])) return parse_ktx1_layout(bytes);

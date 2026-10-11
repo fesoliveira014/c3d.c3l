@@ -1,7 +1,7 @@
 module c3d::asset::gltf;
 
 import c3d;
-import c3d::asset;
+import c3d::asset @public;
 import c3d::geometry;
 import c3d::material;
 import c3d::maths;
@@ -89,25 +89,14 @@ fn GeometryId? convert_primitive(
 
     if (geometry.topology == Topology.TRIANGLES && !geometry.normals.len) geometry.compute_normals(allocator);
 
-    if (catch excuse = geometry::check_tangent_stream(&geometry)) return c3d::ASSET_FORMAT_ERROR~;
-
     TextureSlot normal_map = tangent_normal_map(importer, primitive);
-    bool wants_tangents = geometry.topology == Topology.TRIANGLES
-      && (importer.options.regenerate_tangents
-          || (importer.options.generate_tangents && !geometry.tangents.len && has_texture(&normal_map)));
-    if (wants_tangents) {
-        uint uv_set = normal_map.uv_set;
-        Vec2[] selected = uv_set == 0 ? geometry.uv0 : geometry.uv1;
-        if (selected.len) {
-            Geometry? generated = geometry::create_tangent_geometry(allocator, &geometry, uv_set);
-            if (catch excuse = generated) {
-                return excuse == c3d::INVALID_ARGUMENT ? c3d::ASSET_FORMAT_ERROR~ : excuse~;
-            }
-
-            asset::free_geometry(allocator, &geometry);
-            geometry = generated;
-        }
-    }
+    asset::import_tangents(
+        allocator: allocator,
+        geometry: &geometry,
+        options: importer.options,
+        normal_mapped: has_texture(&normal_map),
+        uv_set: normal_map.uv_set,
+    )!;
 
     geometry.finalize();
 

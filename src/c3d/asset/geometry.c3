@@ -471,6 +471,27 @@ fn void replace_prepared_geometry(
     mark_replaced(&record.header);
 }
 
+fn void? import_tangents(
+    Allocator allocator,
+    Geometry* geometry,
+    LoadOptions options,
+    bool normal_mapped,
+    uint uv_set,
+) @private {
+    if (catch excuse = geometry::check_tangent_stream(geometry)) return c3d::ASSET_FORMAT_ERROR~;
+
+    bool wanted = options.regenerate_tangents
+      || (options.generate_tangents && !geometry.tangents.len && normal_mapped);
+    Vec2[] selected = uv_set == 0 ? geometry.uv0 : geometry.uv1;
+    if (geometry.topology != Topology.TRIANGLES || !wanted || !selected.len) return;
+
+    Geometry? generated = geometry::create_tangent_geometry(allocator, geometry, uv_set);
+    if (catch excuse = generated) return excuse == c3d::INVALID_ARGUMENT ? c3d::ASSET_FORMAT_ERROR~ : excuse~;
+
+    free_geometry(allocator, geometry);
+    *geometry = generated;
+}
+
 fn void normalize_stored_tangent_signs(Geometry* geometry) @private {
     foreach (&tangent : geometry.tangents) tangent.w = tangent.w < 0 ? -1 : 1;
 }

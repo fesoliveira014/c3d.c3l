@@ -1,7 +1,7 @@
 module c3d::asset::fbx;
 
 import c3d;
-import c3d::asset;
+import c3d::asset @public;
 import c3d::geometry;
 import std::math;
 import ufbx;
@@ -100,19 +100,13 @@ fn GeometryId? convert_part(
 
     if (!geometry.normals.len) geometry.compute_normals(allocator);
 
-    if (catch excuse = geometry::check_tangent_stream(&geometry)) return c3d::ASSET_FORMAT_ERROR~;
-
-    bool wants_tangents = importer.options.regenerate_tangents
-      || (importer.options.generate_tangents && !geometry.tangents.len && part_has_normal_map(mesh, part));
-    if (wants_tangents && geometry.uv0.len) {
-        Geometry? generated = geometry::create_tangent_geometry(allocator, &geometry, 0);
-        if (catch excuse = generated) {
-            return excuse == c3d::INVALID_ARGUMENT ? c3d::ASSET_FORMAT_ERROR~ : excuse~;
-        }
-
-        asset::free_geometry(allocator, &geometry);
-        geometry = generated;
-    }
+    asset::import_tangents(
+        allocator: allocator,
+        geometry: &geometry,
+        options: importer.options,
+        normal_mapped: part_has_normal_map(mesh, part),
+        uv_set: 0,
+    )!;
 
     geometry.finalize();
 
