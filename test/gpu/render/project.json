@@ -534,7 +534,8 @@
         "test_auto_exposure.c3",
         "test_posed_trace.c3",
         "test_trace_segment.c3",
-        "trace_segment_oracle.c3"
+        "trace_segment_oracle.c3",
+        "test_probe_medium.c3"
       ]
     },
     "reflection_receiver": {
@@ -595,7 +596,8 @@
         "test_posed_trace.c3",
         "test_reflection_receiver.c3",
         "../../fixtures/animated_crowd_fixtures.c3",
-        "../../fixtures/animated_lod_fixtures.c3"
+        "../../fixtures/animated_lod_fixtures.c3",
+        "test_probe_medium.c3"
       ]
     }
   }

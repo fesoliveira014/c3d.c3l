@@ -74,6 +74,9 @@ lighting environment (or the flat ambient without one). Back faces return no lig
 probe's irradiance with their weight and mark the probe's view of that direction as blocked. Every update
 rotates its ray set by a rotation drawn from the frame index.
 
+Finite probe-to-hit radiance transfers atmosphere and analytic height fog before entering the atlases. Misses take height fog to infinity without aerial perspective. Probe media contain no camera exposure or camera fog prefix. The global selected atmosphere ignores layers, as it does for views; the probe owner's layers select height fog.
+
+Height-fog in-scatter tint uses one renderer-owned 192 × 108 RGBA16F sky-view image, generated at the volume centre for each update. It costs 165,888 bytes and one extra dispatch while an atmosphere is selected. Probe tracing, the two blends and the two borders stay batched. Only tint uses the centre altitude; atmosphere integration and fog transmittance remain per ray. Volumes taller than 1 km exceed the existing 500 m observer-altitude regeneration bound. Secondary transfer uses analytic height in-scatter instead of the primary camera's shadowed froxel lookup.
 - **Lights.** Hits are lit by every light on a visible node with nonzero layers, whatever the camera sees
   and whatever the light's layers say: a light hidden from one camera by a layer still lights the probes.
   Every light with shadows enabled traces one shadow ray per hit that it can reach (facing, in range and

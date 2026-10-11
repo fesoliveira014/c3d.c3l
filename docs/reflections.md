@@ -62,6 +62,7 @@ grain on rougher surfaces.
   never reads a reflection probe: indoor misses happen only through openings or excluded geometry
   (`RT_REFLECTION_FAR` is 1e4), and a ray through excluded geometry reads the global environment.
 
+Finite receiver-to-hit radiance passes through the view's selected atmosphere and height fog once before reflection weighting. Atmosphere uses 64 midpoint steps over the actual world connection; height fog uses its analytic segment. Misses take height fog to infinity and no aerial perspective. Secondary segments use analytic height in-scatter rather than the primary camera's shadowed froxel lookup; camera-to-receiver fog stays in the primary pass.
 A spatial blur then averages each traced pixel with neighbours of similar depth, normal and
 roughness over a 5x5 footprint that widens with roughness; mirror-like pixels are not blurred.
 
