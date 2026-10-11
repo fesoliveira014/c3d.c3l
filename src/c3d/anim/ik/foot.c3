@@ -171,14 +171,6 @@ fn void FootIk.align_contact(&self) {
 }
 
 <*
- Measure final ankle residual after alignment and world refresh.
- @require ik_chain_valid(&self.leg)
-*>
-fn FootContactResult FootIk.contact_result(&self) {
-    return self.contact.contact_result(maths::transform_from_mat4(self.leg.joints[2].world));
-}
-
-<*
  Shift every component-owned contact once after the scene world refresh.
  @param offset : "Same horizontal metres passed to Scene.shift_origin."
  @require offset.y == 0, finite_contact_vec(offset)
