@@ -534,7 +534,9 @@
         "test_auto_exposure.c3",
         "test_posed_trace.c3",
         "test_optical_throughput.c3",
-        "../../fixtures/transparency/fixture.c3"
+        "../../fixtures/transparency/fixture.c3",
+        "optical_throughput_trace.c3",
+        "optical_throughput_maps.c3"
       ]
     }
   }
