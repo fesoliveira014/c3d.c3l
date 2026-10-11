@@ -888,7 +888,7 @@ fn bool? run_prepare_sheen_step(Renderer* renderer, PrepareUnit* unit, PrepareRe
     gpu::TextureBarrier ready = gpu::texture_transition(
         texture: lut.texture,
         before: write.after,
-        after: gpu::sampled_at({ .fragment_shader }),
+        after: renderer.sampled_state,
     )!;
     gpu::cmd_texture_barrier(&renderer.commands, &ready)!;
     lut.state = EnvironmentLutState.RECORDED;
