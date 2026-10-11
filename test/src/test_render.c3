@@ -1037,6 +1037,40 @@ fn void test_custom_stage_source_selects_the_traced_fragment_form() @test {
     assert(render::custom_stage_source(&stages, key).fragment.ptr == &gbuffer[0]);
 }
 
+fn void test_custom_weighted_variant_keeps_its_flag_and_selects_the_weighted_forms() @test {
+    char[4] fragment = { 1, 1, 1, 1 };
+    char[4] traced_plain = { 2, 2, 2, 2 };
+    char[4] shaded = { 3, 3, 3, 3 };
+    char[4] hardware = { 4, 4, 4, 4 };
+    char[4] software = { 5, 5, 5, 5 };
+    uint weighted = shader::SHADER_FLAG_WEIGHTED_BLEND;
+    uint traced = weighted | shader::SHADER_FLAG_RT_SHADOWS;
+    uint walked = traced | shader::SHADER_FLAG_SCENE_TRACE_BVH;
+    asset::ShaderDesc stages = { .fragment = fragment[..], .traced_fragment = { .hardware = traced_plain[..] } };
+    assert(render::custom_fragment_variant(&stages, weighted) == (ShaderVariant){ .flags = weighted });
+    assert(render::custom_fragment_variant(&stages, traced) == (ShaderVariant){ .flags = traced });
+
+    stages.weighted_fragment = {
+        .shaded = shaded[..],
+        .traced = { .hardware = hardware[..], .software = software[..] },
+    };
+    render::PipelineKey key = custom_key(3, 1);
+    key.fragment = { .flags = weighted };
+    assert(render::custom_stage_source(&stages, key).fragment.ptr == &shaded[0]);
+    key.fragment = { .flags = traced };
+    assert(render::custom_stage_source(&stages, key).fragment.ptr == &hardware[0]);
+    key.fragment = { .flags = walked };
+    assert(render::custom_stage_source(&stages, key).fragment.ptr == &software[0]);
+    key.fragment = { .flags = shader::SHADER_FLAG_RT_SHADOWS };
+    assert(render::custom_stage_source(&stages, key).fragment.ptr == &traced_plain[0]);
+
+    stages.weighted_fragment.traced.hardware = {};
+    key.fragment = { .flags = traced };
+    assert(render::custom_stage_source(&stages, key).fragment.len == 0);
+    key.fragment = { .flags = walked };
+    assert(render::custom_stage_source(&stages, key).fragment.ptr == &software[0]);
+}
+
 fn ulong custom_key_of(ShaderId shader, uint slot, float depth) @local {
     return render::draw_sort_key(
         vertex:    { .shader = MESH },

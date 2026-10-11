@@ -79,6 +79,7 @@ struct LodSelection @private {
     Vec3 previous_view_origin;
     bool view_history_valid;
     TransparencyMode transparency;
+    uint shadow_flags;
 }
 
 fn float lod_screen_size(
@@ -228,6 +229,7 @@ fn LodSelection[]? prepare_lod_view(
                         .bias = record.desc.lod_bias,
                         .impostor = lod_impostor_live(renderer.assets, group.state),
                         .transparency = record.desc.transparency,
+                        .shadow_flags = rt_shadow_flags(renderer, record.desc.ray_tracing.shadows),
                     };
                     prepare_lod_instances(renderer, selection)!;
                 } else {

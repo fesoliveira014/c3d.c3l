@@ -38,7 +38,13 @@ layer that holds rough glass.
 `WEIGHTED` view allocates its accumulation and revealage images, and it records one more draw, the composite. A second
 case toggles one view between the modes several times with a mirrored blended mesh and a blended batch in the scene;
 the images keep their handles and no frame after the first cycle creates a pipeline. Both run under validation and
-compare no pixels. The accumulation and composite math is not checked here: lavapipe applies the first attachment's
+compare no pixels. A third case renders three custom blended stages, with all weighted forms, with `shaded` only and
+with none, into a `SORTED` view, a `WEIGHTED` view and a `WEIGHTED` view that traces shadows. It checks that each view
+draws every stage, that the composite is the only extra draw, that the depth snapshot count matches the sorted view's,
+which fails if a weighted stage's scene reads are dropped, and which pipelines exist for each shader: the weighted and
+sorted pipelines of one shader coexist, a stage without the form its view needs keeps its sorted pipeline, and
+replacing a shader without weighted forms retires the weighted ones. It runs with no validation warning or error. The
+accumulation and composite math is not checked here: lavapipe applies the first attachment's
 blend equation to every attachment, so the weighted pass renders wrongly there and needs a hardware run.
 
 Build the repository once so `shaders/spv/` exists, then invoke this project

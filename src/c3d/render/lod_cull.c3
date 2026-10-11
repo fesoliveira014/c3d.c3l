@@ -25,13 +25,14 @@ fn bool lod_level_sorted(
     LodGroupState* state,
     uint index,
     TransparencyMode transparency,
+    uint shadow_flags,
 ) @private {
     if (index == state.desc.levels.len) return false;
     LodLevel level = state.desc.levels[index];
     foreach (part : state.desc.parts[level.first_part:level.part_count]) {
         Material* material = &assets.material(part.material).data;
         bool blended = material.common.alpha_mode == AlphaMode.BLEND;
-        if (blended && !joins_weighted_pass(material, transparency)) return true;
+        if (blended && !joins_weighted_pass(assets, material, transparency, shadow_flags)) return true;
     }
     return false;
 }
@@ -45,6 +46,13 @@ fn void? reserve_lod_bins(Renderer* renderer, LodSelection* selection) @private 
     uint choices = (uint)state.desc.levels.len + (selection.impostor ? 1 : 0);
     for (uint index = 0; index < choices; index++) {
         LodLevel level = selected_lod_level(selection, index);
+        bool level_sorted = lod_level_sorted(
+            assets:       renderer.assets,
+            state:        state,
+            index:        index,
+            transparency: selection.transparency,
+            shadow_flags: selection.shadow_flags,
+        );
         uint representations = state.animated ? level.part_count : 1;
         for (uint part = 0; part < representations; part++) {
             uint split = state.animated ? selection.part_unmirrored[level.first_part + part]
@@ -55,7 +63,7 @@ fn void? reserve_lod_bins(Renderer* renderer, LodSelection* selection) @private 
                     if (!count) continue;
 
                     arena_place(&reserved, (usz)(state.animated ? 1 : level.part_count) * CULL_ARGS_STRIDE)!;
-                    if (pass == 0 && lod_level_sorted(renderer.assets, state, index, selection.transparency)) {
+                    if (pass == 0 && level_sorted) {
                         if (count > MAX_SORTED_INSTANCES) return c3d::CAPACITY_EXCEEDED~;
 
                         arena_place(&reserved, align_up(
@@ -235,8 +243,13 @@ fn void? prepare_lod_cull(Renderer* renderer, CullItem* item, bool culling) @pri
     }
     item.bounded = culling;
     item.bound = selection.state.object_bounds;
-    item.sorted = item.main_view
-      && lod_level_sorted(renderer.assets, selection.state, candidate.lod_level, selection.transparency);
+    item.sorted = item.main_view && lod_level_sorted(
+        assets:       renderer.assets,
+        state:        selection.state,
+        index:        candidate.lod_level,
+        transparency: selection.transparency,
+        shadow_flags: selection.shadow_flags,
+    );
     LodCullBin* bin;
     foreach (&existing : selection.bins[:selection.bin_count]) {
         if (existing.frustum == item.frustum && existing.level == candidate.lod_level
