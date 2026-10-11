@@ -917,10 +917,10 @@ holds the motion node: the carrier's child on the motion node's path, or the
 motion node's root when there is no carrier. Other branches keep their
 placement. `EXTRACT` writes that displacement and the motion node's world Y
 twist on the reserved carrier and compensates that branch alone; the carrier's
-other children move and turn with it. The carrier turns in place about its authored
-reference position, stays upright and retains its authored scale. Its yaw is
-relative to time zero and unwrapped through the clip. Static parent transforms
-are removed when writing its local tracks.
+other children move and turn with it. The carrier turns in place about its
+authored reference position, stays upright and retains its authored scale. Its
+yaw is relative to time zero and unwrapped through the clip. Static parent
+transforms are removed when writing its local tracks.
 
 Select that carrier as `Animator.root_node` and consume its root motion once
 through `apply_root_motion`. With `root_yaw = true`, extraction removes both
