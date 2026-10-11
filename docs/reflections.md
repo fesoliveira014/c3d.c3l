@@ -64,8 +64,8 @@ grain on rougher surfaces.
   has no scene snapshot, so the transmitted part reads the lighting environment and the reflection
   probes along the refracted direction, the forward stage's off-screen fallback, with the same
   `1 - F`, base colour and volume attenuation weights; the scene behind a glass hit and its fog are
-  not seen. The sheen layer attenuates the direct and environment base lobes of a hit, but not its
-  constant ambient fill, which the forward stage also scales.
+  not seen. A hit composes the transmitted light and the ambient fill under the sheen and clear coat
+  layers with the forward stage's own `transmitted_light` and `physical_fill`.
 - **Sheen tables.** Sheen at a hit reads the sheen albedo table and the sheen environment the view
   carries. A reflection view carries them once the renderer has resolved a sheen material, which
   `prepare_scene` does ahead of the first frame; a sheen surface that only a reflection shows, in a

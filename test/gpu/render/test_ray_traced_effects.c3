@@ -536,6 +536,7 @@ fn void test_reflections_shade_the_sheen_and_anisotropy_of_a_hit() @test {
             brushed_pixel,
         );
         assert(red(sheen_pixel) + FABRIC_MINIMUM < red(plain_pixel));
+        assert(blue(sheen_pixel) + FABRIC_MINIMUM < blue(plain_pixel));
         assert(math::abs(red(brushed_pixel) - red(metal_pixel)) > BRUSHED_MINIMUM);
         check_validation(&fixture.renderer);
     }
