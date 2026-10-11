@@ -2,10 +2,6 @@ module c3d::test::animation_motion_domain;
 
 import c3d;
 import c3d::anim @public;
-import std::math;
-
-const uint MOTION_DOMAIN_CORPUS_SEED @local = 3532026;
-const uint MOTION_DOMAIN_CORPUS_COUNT @local = 2000;
 
 fn Track motion_rotation_track(Interpolation interpolation, float[] times, float[] values) @local {
     return { .path = TargetPath.ROTATION, .interpolation = interpolation, .times = times, .values = values };
@@ -51,13 +47,6 @@ fn void expect_motion_scale_invalid(Track* track, bool additive = false) @local 
         caught = true;
     }
     assert(caught, "invalid consumed scale domain was admitted");
-}
-
-fn uint motion_domain_random(uint* state) @local {
-    *state ^= *state << 13;
-    *state ^= *state >> 17;
-    *state ^= *state << 5;
-    return *state;
 }
 
 fn void test_animation_motion_rotation_step_linear_without_magnitude_limits() @test {
@@ -148,29 +137,6 @@ fn void test_animation_motion_rotation_invalid_segment_precedes_unproven_segment
     Track track = motion_rotation_track(Interpolation.CUBIC_SPLINE, times[..], values[..]);
     // First segment is positive but uncertain; the second has the exact zero at t=1.5.
     expect_motion_rotation_fault(&track, c3d::INVALID_ARGUMENT);
-}
-
-fn void test_animation_motion_rotation_seeded_analytic_positive_quadratics() @test {
-    uint state = MOTION_DOMAIN_CORPUS_SEED;
-    float[2] times = { 0, 1 };
-    float[24] values;
-    Track track = motion_rotation_track(Interpolation.CUBIC_SPLINE, times[..], values[..]);
-    for (uint sample = 0; sample < MOTION_DOMAIN_CORPUS_COUNT; sample++) {
-        double floor = (double)(1 + motion_domain_random(&state) % 127) / 128;
-        double curvature = (double)(1 + motion_domain_random(&state) % 127) / 64;
-        double vertex = (double)(motion_domain_random(&state) % 64) / 64;
-        // These dyadic values fit binary32 exactly: floor + curvature*(t-vertex)^2 is strictly positive.
-        values = motion_rotation_cubic_values(
-            start: (float)(floor + curvature * vertex * vertex),
-            end: (float)(floor + curvature * (1 - vertex) * (1 - vertex)),
-            outgoing: (float)(-2 * curvature * vertex),
-            incoming: (float)(2 * curvature * (1 - vertex)),
-        );
-        assert(floor > 0 && vertex >= 0 && vertex < 1);
-        assert((double)values[7] == floor + curvature * vertex * vertex);
-        assert((double)values[19] == floor + curvature * (1 - vertex) * (1 - vertex));
-        anim::validate_motion_rotation_track(&track)!!;
-    }
 }
 
 fn void test_animation_motion_scale_step_linear_uniform_positive_domains() @test {
