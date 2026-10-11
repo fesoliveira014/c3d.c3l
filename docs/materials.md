@@ -119,8 +119,9 @@ Not participants:
 - Transmissive Physical draws and custom scene readers stay in the sorted scene-read list in both
   modes, drawn before any weighted surface; a blended draw that reads the scene sees it
   without any blended surface.
-- Custom `BLEND` materials, billboard batches with custom fragments and particle effects record
-  sorted, after the composite.
+- Every custom `BLEND` material, including billboard batches with custom fragments and the particle
+  effects, stays on the sorted path after the composite, whatever its stage writes. Only the
+  built-in stages have a weighted form; this is a current limit.
 
 A `WEIGHTED` view with no participating draw records exactly the commands of a `SORTED` one and
 allocates nothing.
@@ -152,12 +153,27 @@ to the accumulation. Three constants keep that inside `RGBA16_FLOAT`; they live 
 
 | Constant | Value | Role |
 | --- | --- | --- |
-| `WEIGHTED_COLOR_MAX` | 64 | The straight color is clamped to it before weighting, so one fragment adds at most about 3,000 to a channel against the format's 65,504, and about twenty full-weight fragments fit. Blended surfaces brighter than 64 lose the excess. |
-| `WEIGHT_SCALE` | 1/64 | Brings the weights into range. The least weight, `1e-2 * WEIGHT_SCALE`, is the floor of a layer's contribution; a smaller scale pushes faint far layers into the subnormal range, where a coverage under about 0.01 at distance can vanish. |
-| `WEIGHTED_EPSILON` | 1e-8 | Guards the division where nothing accumulated. It is below the smallest nonzero `RGBA16_FLOAT` value, 5.96e-8, so it never changes a stored sum. |
+| `WEIGHTED_COLOR_MAX` | 64 | The straight color is clamped to it before weighting, so one fragment adds at most about 3,000 to a channel against the format's 65,504. |
+| `WEIGHT_SCALE` | 1/64 | Brings the weights into range. The least weight, `1e-2 * WEIGHT_SCALE`, is the floor of a layer's contribution; a smaller scale pushes faint far layers into the subnormal range sooner. |
+| `WEIGHTED_EPSILON` | 1e-8 | Guards the division where the alpha sum is zero. It is below the smallest nonzero `RGBA16_FLOAT` value, 5.96e-8, so it never changes a stored sum. |
 
-The composite also clamps the accumulation to 65,504 before dividing, so an overflowed sum cannot
-reach the division, and clamps the average to `WEIGHTED_COLOR_MAX`.
+The composite also clamps the accumulation to 65,504 before dividing and the average to
+`WEIGHTED_COLOR_MAX`, so the output is always finite, never infinite or NaN.
+
+Limits of `WEIGHTED` that follow from the format:
+
+- **Color cap.** The straight HDR color of a weighted surface is clamped to 64 per channel before
+  tone mapping and bloom, so a glint or an emissive highlight brighter than that flattens at 64.
+  A `SORTED` view keeps the full range.
+- **Saturation.** About 21 layers of full weight (coverage 1, color at the cap, view depth under
+  about 0.3) fill the `RGBA16_FLOAT` sum. Past that the sum clamps, the weighted average is no
+  longer right and drifts toward the cap, and the result stays finite.
+- **Faint surfaces.** A surface whose coverage times weight is below about 3e-8, half the smallest
+  `RGBA16_FLOAT` value, rounds to zero in the alpha sum. That is a coverage under about 0.014 at a
+  view depth of 200 or more, and less nearer. It adds no reliable color, because the division then
+  falls back to the epsilon; it still dims what lies behind it by its coverage, which the revealage
+  image holds separately.
+- **Custom stages.** Every custom `BLEND` stage is sorted, after the composite, in a `WEIGHTED` view.
 
 Fog applies per fragment before accumulation, as in `SORTED`. Blended batches skip the
 per-instance sort in a `WEIGHTED` view, because order no longer matters; `ADDITIVE` batches
@@ -168,12 +184,10 @@ Cost: the two images are 10 bytes per pixel at the view's working extent, alloca
 first frame with a participating draw. They are released with the view, dropped on a resize and
 re-created lazily, and kept by a reconfiguration at the same extent, as `scene_color` is. Nothing
 is allocated per frame. Each `WEIGHTED` frame with participating draws adds one render pass and one
-fullscreen draw, counted in `Stats.draws`. The pipelines of participating draws differ from the
-sorted ones, so the first `WEIGHTED` frame creates them.
-
-The built-in stages write a second output, `out_revealage`, which a `SORTED` pass has no attachment
-for; the Vulkan validation layer reports that discarded write as a warning, capped by its
-duplicate-message limit.
+fullscreen draw, counted in `Stats.draws`. A participating draw uses the `WEIGHTED_BLEND` form of its
+built-in stage, one more compiled stage for each plain, `RT_SHADOWS` and `RT_SHADOWS` with
+`SCENE_TRACE_BVH` form, and a pipeline keyed by the two attachment formats, so the first `WEIGHTED` frame
+creates them. `SORTED` pipelines are unchanged.
 
 ## Toon factors
 

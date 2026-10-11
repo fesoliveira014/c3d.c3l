@@ -67,7 +67,7 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `clip_plane` | World-space `maths::Plane`; geometry on its negative side is not drawn (see [Clip plane](#clip-plane)); the zero plane clips nothing and both constructors produce it |
 | `volumetric_fog` | A froxel volume for the view's `HeightFog`, allocated with the view (see [volumetric fog](sky.md#volumetric-fog)); faults `INVALID_ARGUMENT` on a `PATH_TRACED` view |
 | `share_shadows` | Binds an earlier view's [shadow set](shadows.md#shadow-sets) when the keys match and publishes its own; on in both constructors |
-| `transparency` | How premultiplied-alpha blended surfaces compose: `SORTED` (default, both constructors) orders them by object, `WEIGHTED` accumulates them without ordering into two extra images, 10 bytes per pixel, allocated on the first frame with a participating draw (see [weighted transparency](materials.md#weighted-transparency)) |
+| `transparency` | How premultiplied-alpha blended surfaces compose: `SORTED` (default, both constructors) orders them by object, `WEIGHTED` accumulates them without ordering into two extra images, 10 bytes per pixel, allocated on the first frame with a participating draw (see [weighted transparency](materials.md#weighted-transparency)); custom `BLEND` materials stay sorted in a `WEIGHTED` view, a current limit |
 | `transmission_layers` | Snapshots the scene-read list samples, so glass can see glass behind it (see [transmission layers](materials.md#transmission-layers)); 1 to `MAX_TRANSMISSION_LAYERS` (4), zero reads as 1 and both constructors leave it zero |
 
 An installed [static impostor](lod.md#static-impostors) participates in the same
@@ -667,7 +667,7 @@ draws scene readers (`SCENE_MIPS` between them when the list holds rough glass; 
 each non-empty [transmission layer](materials.md#transmission-layers)), `SCENE_SNAPSHOT`
 again when a blended draw reads the scene, transparency (a `WEIGHTED` view with participating draws
 records `FORWARD_TRANSPARENT` into its accumulation images, then `TRANSPARENT_COMPOSITE` into
-`hdr_color`, then the sorted blended draws),
+`hdr_color`, then the sorted blended draws: additive and every custom blended material),
 velocity and the post chain. `Stats.gpu_pass_ms` carries the three new passes. A view with
 [fog or an atmosphere](sky.md#where-fog-applies) records `SKY_VIEW` and `AERIAL_PERSPECTIVE` before the
 depth prepass when its scene has an atmosphere, and splits before the transparent draws: the snapshot for
