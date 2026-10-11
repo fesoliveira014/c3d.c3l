@@ -691,9 +691,6 @@ fn bool? run_prepare_texture_copy(
         case EMPTY: return c3d::INVALID_ARGUMENT~;
     }
 
-    bool filtered_source = source.source_kind == TextureSourceKind.MIP_ZERO && source.desc.generate_mips
-      && (source.desc.width > 1 || source.desc.height > 1);
-    if (!filtered_source) check_texture_normal_pixels(source.desc, bytes)!;
     gpu::MappedGpuSpan staging = take_prepare_staging(
         renderer: renderer,
         bytes: band.byte_count,

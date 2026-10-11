@@ -791,25 +791,6 @@ macro double[RGBA_CHANNELS]? load_texture_vector(
     return values;
 }
 
-fn void? check_texture_normal_pixels(material::TextureDesc desc, char[] pixels) @private {
-    if (desc.semantic == TextureSemantic.COLOR || material::texture_is_compressed(desc.format)) return;
-
-    uint scalar_bytes = (uint)material::texture_block_bytes(desc.format) / RGBA_CHANNELS;
-    uint relevant = desc.semantic == TextureSemantic.NORMAL_RGB ? RGB_CHANNELS : 2;
-
-    for (usz offset = 0; offset < pixels.len; offset += (usz)scalar_bytes * RGBA_CHANNELS) {
-        for (uint channel = 0; channel < relevant; channel++) {
-            uint code;
-
-            for (uint byte = 0; byte < scalar_bytes; byte++) {
-                code |= (uint)pixels[offset + (usz)channel * (usz)scalar_bytes + (usz)byte] << (byte * 8);
-            }
-
-            if (!math::is_finite(asset::decode_texture_alpha(desc.format, code))) return c3d::INVALID_ARGUMENT~;
-        }
-    }
-}
-
 fn TextureMipChain? create_fidelity_texture_mips(
     Allocator allocator,
     material::TextureDesc desc,
@@ -817,8 +798,6 @@ fn TextureMipChain? create_fidelity_texture_mips(
     CoverageStatistics* statistics,
 ) @local {
     GeneratedTextureLayout layout = generated_texture_mip_layout(desc)!;
-
-    if (!layout.output_texels) check_texture_normal_pixels(desc, pixels)!;
 
     CoverageStatistics local_statistics;
 
