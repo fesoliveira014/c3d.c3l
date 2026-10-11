@@ -283,11 +283,12 @@ degenerate position or UV derivatives likewise keep the geometry normal. A decod
 zero-length map normal uses neutral tangent-space `(0, 0, 1)`.
 
 `geometry::create_tangent_geometry(allocator, source, uv_set)` generates pinned
-MikkTSpace tangents from raw UV0 or UV1 and returns an owned complete geometry.
-Conflicting corner tangents split vertices and remap every vertex stream,
-including skin influences and morph deltas. Lookup transforms do not affect
-generation. `AssetStore.add_tangent_geometry_owned` transfers that owner;
-`regenerate_geometry_tangents` explicitly regenerates a stored geometry.
+MikkTSpace tangents from raw UV0 or UV1 and returns a complete geometry whose
+arrays the allocator owns. Conflicting corner tangents split vertices and remap
+every vertex stream, including skin influences and morph deltas. Lookup
+transforms do not affect generation. `AssetStore.add_geometry_owned` transfers
+the result; `regenerate_geometry_tangents` explicitly regenerates a stored
+geometry.
 `Geometry.compute_tangents` remains available as a deprecated helper without a
 MikkTSpace guarantee. The renderer never generates tangents implicitly.
 `Geometry.transform` updates tangent handedness when
@@ -300,8 +301,7 @@ normalizes vectors before encoding them again.
 The compatibility claim covers generated constant-sign triangles. Derivative
 fallback, mixed-sign authored interpolation and morphed base tangents have no
 MikkTSpace guarantee. Changing a slot's selected UV or editing geometry does
-not regenerate tangents; dirty edits retain provenance with an older derivation
-revision until explicit regeneration.
+not regenerate tangents; only explicit regeneration does.
 
 An active normal map without supplied tangents requires filled triangle
 rasterization. Lines, points and effective wireframe triangles return

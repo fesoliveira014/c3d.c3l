@@ -42,8 +42,7 @@ its handedness is normalized to a sign.
 `regenerate_tangents` explicitly replaces authored tangents and splits geometry
 where needed. It can recover decoded non-finite or zero-W tangent values, but
 a structural TANGENT count or type mismatch still returns
-`ASSET_FORMAT_ERROR`. Geometry records expose `tangent_provenance`, including
-origin, raw UV set and derivation revision.
+`ASSET_FORMAT_ERROR`.
 
 Instantiation creates one synthetic root under the parent and one live node per
 template node, parents before children. `ModelInstance.present_node(i)` resolves

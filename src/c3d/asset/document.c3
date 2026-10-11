@@ -49,7 +49,6 @@ struct DocumentMaterial {
 *>
 struct DocumentGeometry {
     Geometry data;
-    TangentProvenance tangent_provenance;
     String   key;
 }
 

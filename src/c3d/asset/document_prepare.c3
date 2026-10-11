@@ -12,7 +12,6 @@ import std::math;
 
 struct PreparedGeometry @private {
     GeometryShape shape;
-    TangentProvenance tangent_provenance;
     Vec4[] normalized_tangents;
     bool joints_u16;
     SkinBounds skin_bounds;
@@ -96,34 +95,24 @@ fn PreparedModelDocument? prepare_model_document(ModelDocument* document) @priva
 
         foreach (index, &entry : document.geometries) {
             check_influences(&entry.data)!;
+            geometry::check_tangent_stream(&entry.data)!;
 
-            TangentProvenance provenance = entry.tangent_provenance;
-            if (provenance.origin != TangentOrigin.GENERATED) {
-                provenance = authored_tangent_provenance(&entry.data);
-            }
-
-            geometry::check_tangent_stream(&entry.data, provenance)!;
-
-            provenance.derivation_revision = 0;
             prepared.geometries[index] = {
                 .shape = build_geometry_shape(document.allocator, &entry.data),
-                .tangent_provenance = provenance,
                 .joints_u16 = entry.data.joints_exceed_byte(),
                 .skin_bounds = geometry::build_skin_bounds(document.allocator, &entry.data),
                 .morph_bounds = geometry::build_morph_bounds(document.allocator, &entry.data),
             };
 
-            if (provenance.origin == TangentOrigin.AUTHORED) {
-                foreach (tangent : entry.data.tangents) {
-                    if (tangent.w == -1 || tangent.w == 1) continue;
+            foreach (tangent : entry.data.tangents) {
+                if (tangent.w == -1 || tangent.w == 1) continue;
 
-                    Vec4[] normalized = copy_slice(document.allocator, entry.data.tangents);
+                Vec4[] normalized = copy_slice(document.allocator, entry.data.tangents);
 
-                    foreach (&value : normalized) value.w = value.w < 0 ? -1 : 1;
+                foreach (&value : normalized) value.w = value.w < 0 ? -1 : 1;
 
-                    prepared.geometries[index].normalized_tangents = normalized;
-                    break;
-                }
+                prepared.geometries[index].normalized_tangents = normalized;
+                break;
             }
         }
 

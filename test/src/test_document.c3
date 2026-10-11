@@ -159,11 +159,6 @@ fn void assert_same_coverage_statistics(CoverageStatistics first, CoverageStatis
     }
 }
 
-fn void assert_same_tangent_provenance(TangentProvenance first, TangentProvenance second) @local {
-    assert(first.origin == second.origin && first.uv_set == second.uv_set);
-    assert(first.derivation_revision == second.derivation_revision);
-}
-
 fn void assert_publish_faults(AssetStore* assets, ModelDocument* document, fault expected) @local {
     PoolCounts before = pool_counts(assets);
     assert(@catch(assets.publish_document(document)) == expected);
@@ -723,73 +718,6 @@ fn void test_document_invalid_alpha_preserves_input() @test {
     assert(!tracker.has_leaks());
 }
 
-fn void test_document_generated_tangent_provenance_survives_replace_and_release() @test {
-    TrackingAllocator tracker;
-    tracker.init(mem);
-    defer tracker.free();
-
-    {
-        AssetStore assets = create_store(&tracker);
-        defer asset::destroy_asset_store(&assets);
-
-        DocumentRefs refs;
-        ModelDocument document = build_document(&tracker, &refs);
-        defer asset::destroy_model_document(&document);
-
-        DocumentGeometry* geometry = &document.geometries[0];
-        geometry.data.normals = alloc::new_array(&tracker, Vec3, 3);
-        geometry.data.uv1 = alloc::new_array(&tracker, Vec2, 3);
-        geometry.data.tangents = alloc::new_array(&tracker, Vec4, 3);
-
-        foreach (index, &tangent : geometry.data.tangents) {
-            *tangent = { 0, 0, 0, -1 };
-            geometry.data.normals[index] = { 0, 0, 1 };
-        }
-
-        geometry.tangent_provenance = { .origin = TangentOrigin.GENERATED, .uv_set = 1, .derivation_revision = 99 };
-
-        PreparedModelDocument prepared = asset::prepare_model_document(&document)!!;
-        defer asset::destroy_prepared_model_document(&prepared);
-
-        assert(prepared.geometries[0].tangent_provenance.origin == TangentOrigin.GENERATED);
-        assert(prepared.geometries[0].tangent_provenance.uv_set == 1);
-        assert(prepared.geometries[0].tangent_provenance.derivation_revision == 0);
-
-        ModelId model = asset::publish_prepared_model_document(&assets, &prepared)!!;
-
-        GeometryId published = assets.find_geometry("doc#mesh")!!;
-        GeometryAsset* record = assets.geometry(published);
-
-        assert(record.tangent_provenance.origin == TangentOrigin.GENERATED);
-        assert(record.tangent_provenance.uv_set == 1 && record.tangent_provenance.derivation_revision == 1);
-
-        ModelDocument replacement = build_document(&tracker, &refs);
-        defer asset::destroy_model_document(&replacement);
-
-        DocumentGeometry* next = &replacement.geometries[0];
-        next.data.normals = alloc::new_array(&tracker, Vec3, 3);
-        next.data.uv0 = alloc::new_array(&tracker, Vec2, 3);
-        next.data.tangents = alloc::new_array(&tracker, Vec4, 3);
-
-        foreach (index, &tangent : next.data.tangents) {
-            *tangent = { 0, 0, 0, 1 };
-            next.data.normals[index] = { 0, 0, 1 };
-        }
-
-        next.tangent_provenance = { .origin = TangentOrigin.GENERATED };
-
-        PreparedModelDocument prepared_next = asset::prepare_model_document(&replacement)!!;
-        defer asset::destroy_prepared_model_document(&prepared_next);
-
-        asset::replace_prepared_model_document(&assets, model, &prepared_next)!!;
-
-        assert(record.header.revision == 2 && record.tangent_provenance.derivation_revision == 2);
-        assert(record.tangent_provenance.origin == TangentOrigin.GENERATED && record.tangent_provenance.uv_set == 0);
-    }
-
-    assert(!tracker.has_leaks());
-}
-
 fn void test_document_malformed_authored_tangents_fail_before_transfer() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
@@ -821,8 +749,6 @@ fn void test_document_malformed_authored_tangents_fail_before_transfer() @test {
 
         assert(record.data.tangents[0] == (Vec4){ 2, 0, 0, 1 });
         assert(record.data.tangents[1] == (Vec4){ 0, 2, 0, -1 });
-        assert(record.tangent_provenance.origin == TangentOrigin.AUTHORED);
-        assert(record.tangent_provenance.derivation_revision == 1);
     }
 
     assert(!tracker.has_leaks());
@@ -852,7 +778,6 @@ fn void test_document_capacity_failure_preserves_authored_tangent_arrays_and_met
         entry.data.tangents[2] = { 1, 0, 0, 2 };
         Vec4* tangents = entry.data.tangents.ptr;
         Vec3* positions = entry.data.positions.ptr;
-        TangentProvenance provenance = entry.tangent_provenance;
         document.textures[0].desc.coverage = CoveragePolicy.THRESHOLD;
         document.textures[0].desc.alpha_threshold = 0.5;
         char* pixels = document.textures[0].pixels.ptr;
@@ -864,7 +789,6 @@ fn void test_document_capacity_failure_preserves_authored_tangent_arrays_and_met
         assert(document.geometries[0].data.tangents[0] == (Vec4){ 2, 0, 0, 3 });
         assert(document.geometries[0].data.tangents[1] == (Vec4){ 0, 2, 0, -4 });
         assert(document.geometries[0].data.tangents[2] == (Vec4){ 1, 0, 0, 2 });
-        assert_same_tangent_provenance(document.geometries[0].tangent_provenance, provenance);
         assert(document.textures[0].pixels.ptr == pixels);
         assert(c3d::same_id(document.template.meshes[0].geometry, refs.geometry));
     }

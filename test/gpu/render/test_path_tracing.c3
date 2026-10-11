@@ -126,9 +126,9 @@ fn GeometryId? add_plane(Fixture* fixture, float size, bool tangents = false) @p
     @pool() {
         Geometry plane = geometry::plane(tmem, size, size);
         if (tangents) {
-            TangentGeometry owner = geometry::create_tangent_geometry(fixture.assets.allocator, &plane)!;
-            defer geometry::destroy_tangent_geometry(&owner);
-            return fixture.assets.add_tangent_geometry_owned(&owner);
+            Geometry generated = geometry::create_tangent_geometry(fixture.assets.allocator, &plane)!;
+            defer catch asset::free_geometry(fixture.assets.allocator, &generated);
+            return fixture.assets.add_geometry_owned(&generated)!;
         }
         return fixture.assets.add_geometry(&plane);
     };

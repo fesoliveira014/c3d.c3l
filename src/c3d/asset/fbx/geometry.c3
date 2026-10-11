@@ -100,36 +100,24 @@ fn GeometryId? convert_part(
 
     if (!geometry.normals.len) geometry.compute_normals(allocator);
 
-    TangentProvenance provenance;
-    if (geometry.tangents.len) {
-        if (catch excuse = geometry::check_tangent_stream(&geometry)) return c3d::ASSET_FORMAT_ERROR~;
-
-        provenance.origin = TangentOrigin.AUTHORED;
-    }
+    if (catch excuse = geometry::check_tangent_stream(&geometry)) return c3d::ASSET_FORMAT_ERROR~;
 
     bool wants_tangents = importer.options.regenerate_tangents
       || (importer.options.generate_tangents && !geometry.tangents.len && part_has_normal_map(mesh, part));
     if (wants_tangents && geometry.uv0.len) {
-        TangentGeometry? derived = geometry::create_tangent_geometry(allocator, &geometry, 0);
-        if (catch excuse = derived) {
+        Geometry? generated = geometry::create_tangent_geometry(allocator, &geometry, 0);
+        if (catch excuse = generated) {
             return excuse == c3d::INVALID_ARGUMENT ? c3d::ASSET_FORMAT_ERROR~ : excuse~;
         }
 
-        TangentGeometry generated = derived;
         asset::free_geometry(allocator, &geometry);
-        geometry = generated.data;
-        provenance = generated.tangent_provenance;
-        generated = {};
+        geometry = generated;
     }
 
     geometry.finalize();
 
     String key = string::tformat("%s#mesh/%d/%d", importer.key, mesh.typed_id, part_index);
-    GeometryId id = importer.document.push_geometry(&geometry, key);
-
-    importer.document.geometry(id).tangent_provenance = provenance;
-
-    return id;
+    return importer.document.push_geometry(&geometry, key);
 }
 
 fn void? preflight_tangent_streams(ufbx::Mesh* mesh) @private {

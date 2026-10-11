@@ -299,8 +299,6 @@ fn void test_authored_xyz_and_mixed_handedness_are_retained_then_signs_normalize
     ModelDocument document = decode_text(tangent_fixture());
     defer asset::destroy_model_document(&document);
 
-    assert(document.geometries[0].tangent_provenance.origin == TangentOrigin.AUTHORED);
-
     foreach (index, tangent : document.geometries[0].data.tangents) {
         assert(tangent.x == 2 && tangent.y == 0 && tangent.z == 0);
         assert(tangent.w == (index % 2 ? -3 : 2));
@@ -313,8 +311,6 @@ fn void test_authored_xyz_and_mixed_handedness_are_retained_then_signs_normalize
 
     GeometryId id = assets.model(model).data.meshes[0].geometry;
     GeometryAsset* geometry = assets.geometry(id);
-
-    assert(geometry.tangent_provenance.origin == TangentOrigin.AUTHORED);
 
     foreach (index, tangent : geometry.data.tangents) {
         assert(tangent.x == 2 && tangent.w == (index % 2 ? -1 : 1));
@@ -333,8 +329,6 @@ fn void test_force_recovers_only_decodable_invalid_tangent_values() @test {
 
         ModelDocument document = decode_text(text, forced);
         defer asset::destroy_model_document(&document);
-
-        assert(document.geometries[0].tangent_provenance.origin == TangentOrigin.GENERATED);
 
         foreach (tangent : document.geometries[0].data.tangents) expect_direction(tangent, { 1, 0, 0 });
     }
@@ -381,8 +375,6 @@ fn void test_declared_signed_normalized_quantized_tangents_remain_authored() @te
     ModelDocument document = decode_text(text);
     defer asset::destroy_model_document(&document);
 
-    assert(document.geometries[0].tangent_provenance.origin == TangentOrigin.AUTHORED);
-
     foreach (tangent : document.geometries[0].data.tangents) assert(tangent == (Vec4){ 1, 0, 0, 1 });
 }
 
@@ -405,7 +397,6 @@ fn void test_selected_raw_uv1_and_generated_normals_preserve_all_owned_streams()
     DocumentGeometry* entry = &document.geometries[0];
     Geometry* geometry = &entry.data;
 
-    assert(entry.tangent_provenance.origin == TangentOrigin.GENERATED && entry.tangent_provenance.uv_set == 1);
     assert(geometry.positions.len == 4 && geometry.normals.len == 4 && geometry.uv0.len == 4 && geometry.uv1.len == 4);
     assert(geometry.colors.len == 4 && geometry.joints.len == 4
       && geometry.weights.len == 4 && geometry.indices.len == 6);
@@ -432,12 +423,9 @@ fn void test_selected_raw_uv1_and_generated_normals_preserve_all_owned_streams()
     GeometryId id = assets.model(model).data.meshes[0].geometry;
     GeometryAsset* published = assets.geometry(id);
 
-    assert(published.tangent_provenance.origin == TangentOrigin.GENERATED && published.tangent_provenance.uv_set == 1);
-    assert(published.tangent_provenance.derivation_revision == published.header.revision);
-
     assets.release_geometry_cpu(id);
 
-    assert(!published.data.positions.ptr && published.tangent_provenance.origin == TangentOrigin.GENERATED);
+    assert(!published.data.positions.ptr);
 
     asset::destroy_model_document(&document);
     asset::destroy_asset_store(&assets);
@@ -458,7 +446,6 @@ fn void test_lookup_transform_changes_sampling_but_generation_uses_raw_selected_
 
     assert(document.materials[0].data.standard.normal_map.uv_set == 1);
     assert(document.materials[0].data.standard.normal_map.transform.rotation == 1.2f);
-    assert(document.geometries[0].tangent_provenance.uv_set == 1);
 
     foreach (tangent : document.geometries[0].data.tangents) expect_direction(tangent, { 0, -1, 0 });
 }
@@ -475,7 +462,6 @@ fn void test_missing_selected_uv_keeps_derivative_fallback_even_when_forced() @t
 
     assert(!document.geometries[0].data.tangents.len);
     assert(document.geometries[0].data.uv0.len == 4 && !document.geometries[0].data.uv1.len);
-    assert(document.geometries[0].tangent_provenance.origin == TangentOrigin.NONE);
 }
 
 fn void test_base_normal_map_uv_set_wins_over_a_different_coat_uv_set() @test {
@@ -519,9 +505,8 @@ fn void test_forced_regeneration_keeps_line_and_point_primitives() @test {
 
         assert(nontriangle.data.topology == (mode == 1 ? Topology.LINES : Topology.POINTS));
         assert(nontriangle.data.uv0.len == 4 && nontriangle.data.indices.len == 6);
-        assert(!nontriangle.data.tangents.len && nontriangle.tangent_provenance.origin == TangentOrigin.NONE);
+        assert(!nontriangle.data.tangents.len);
         assert(document.geometries[1].data.topology == Topology.TRIANGLES);
-        assert(document.geometries[1].tangent_provenance.origin == TangentOrigin.GENERATED);
 
         foreach (tangent : document.geometries[1].data.tangents) expect_direction(tangent, { 1, 0, 0 });
     }

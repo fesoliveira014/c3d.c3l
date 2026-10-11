@@ -79,9 +79,9 @@ fn void? create_bias_fixture(BiasFixture* fixture) @private {
     GeometryId box_geometry;
     @pool() {
         Geometry ground = geometry::plane(tmem, BIAS_GROUND_SIZE, BIAS_GROUND_SIZE);
-        TangentGeometry tangent_ground = geometry::create_tangent_geometry(fixture.assets.allocator, &ground)!;
-        defer geometry::destroy_tangent_geometry(&tangent_ground);
-        ground_geometry = fixture.assets.add_tangent_geometry_owned(&tangent_ground)!;
+        Geometry tangent_ground = geometry::create_tangent_geometry(fixture.assets.allocator, &ground)!;
+        defer catch asset::free_geometry(fixture.assets.allocator, &tangent_ground);
+        ground_geometry = fixture.assets.add_geometry_owned(&tangent_ground)!;
 
         Geometry box = geometry::box(
             allocator: tmem,

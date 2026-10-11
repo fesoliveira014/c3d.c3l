@@ -89,12 +89,7 @@ fn GeometryId? convert_primitive(
 
     if (geometry.topology == Topology.TRIANGLES && !geometry.normals.len) geometry.compute_normals(allocator);
 
-    TangentProvenance provenance;
-    if (geometry.tangents.len) {
-        if (catch excuse = geometry::check_tangent_stream(&geometry)) return c3d::ASSET_FORMAT_ERROR~;
-
-        provenance.origin = TangentOrigin.AUTHORED;
-    }
+    if (catch excuse = geometry::check_tangent_stream(&geometry)) return c3d::ASSET_FORMAT_ERROR~;
 
     TextureSlot normal_map = tangent_normal_map(importer, primitive);
     bool wants_tangents = geometry.topology == Topology.TRIANGLES
@@ -104,27 +99,20 @@ fn GeometryId? convert_primitive(
         uint uv_set = normal_map.uv_set;
         Vec2[] selected = uv_set == 0 ? geometry.uv0 : geometry.uv1;
         if (selected.len) {
-            TangentGeometry? derived = geometry::create_tangent_geometry(allocator, &geometry, uv_set);
-            if (catch excuse = derived) {
+            Geometry? generated = geometry::create_tangent_geometry(allocator, &geometry, uv_set);
+            if (catch excuse = generated) {
                 return excuse == c3d::INVALID_ARGUMENT ? c3d::ASSET_FORMAT_ERROR~ : excuse~;
             }
 
-            TangentGeometry generated = derived;
             asset::free_geometry(allocator, &geometry);
-            geometry = generated.data;
-            provenance = generated.tangent_provenance;
-            generated = {};
+            geometry = generated;
         }
     }
 
     geometry.finalize();
 
     String key = string::tformat("%s#mesh/%d/%d", importer.key, mesh_index, primitive_index);
-    GeometryId id = importer.document.push_geometry(&geometry, key);
-
-    importer.document.geometry(id).tangent_provenance = provenance;
-
-    return id;
+    return importer.document.push_geometry(&geometry, key);
 }
 
 fn bool compressed(gltf::Accessor* accessor) @private {

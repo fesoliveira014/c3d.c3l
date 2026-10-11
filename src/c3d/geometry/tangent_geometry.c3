@@ -7,85 +7,17 @@ import std::math;
 
 const uint NO_TANGENT_VERTEX @private = uint::max;
 
-<* Origin of the tangent stream. *>
-enum TangentOrigin {
-    NONE,
-    AUTHORED,
-    GENERATED,
-}
-
-<* Tangent origin, raw source UV and published derivation revision. *>
-struct TangentProvenance {
-    TangentOrigin origin;
-    uint uv_set;
-    uint derivation_revision;
-}
-
-<* Owned complete geometry with generated tangent provenance. *>
-struct TangentGeometry {
-    Allocator allocator;
-    Geometry data;
-    TangentProvenance tangent_provenance;
-}
-
 <*
- Release every owned geometry stream and leave the owner empty.
- @param [&inout] owner : "All arrays and metadata are owned."
-*>
-fn void destroy_tangent_geometry(TangentGeometry* owner) {
-    Geometry* geometry = &owner.data;
-
-    foreach (&target : geometry.targets) {
-        alloc::free(owner.allocator, target.position_deltas.ptr);
-        alloc::free(owner.allocator, target.normal_deltas.ptr);
-        alloc::free(owner.allocator, target.name.ptr);
-    }
-
-    foreach (&channel : geometry.channels) {
-        alloc::free(owner.allocator, channel.name.ptr);
-        alloc::free(owner.allocator, channel.full_weights.ptr);
-    }
-
-    alloc::free(owner.allocator, geometry.positions.ptr);
-    alloc::free(owner.allocator, geometry.normals.ptr);
-    alloc::free(owner.allocator, geometry.tangents.ptr);
-    alloc::free(owner.allocator, geometry.uv0.ptr);
-    alloc::free(owner.allocator, geometry.uv1.ptr);
-    alloc::free(owner.allocator, geometry.colors.ptr);
-    alloc::free(owner.allocator, geometry.joints.ptr);
-    alloc::free(owner.allocator, geometry.weights.ptr);
-    alloc::free(owner.allocator, geometry.indices.ptr);
-    alloc::free(owner.allocator, geometry.targets.ptr);
-    alloc::free(owner.allocator, geometry.channels.ptr);
-    alloc::free(owner.allocator, geometry.custom_data.ptr);
-
-    *owner = {};
-}
-
-<*
- Validate tangent values against their origin without changing them.
+ Validate tangent values without changing them.
  @param [&in] geometry : "Zero directions remain valid."
  @return? c3d::INVALID_ARGUMENT
 *>
-fn void? check_tangent_stream(Geometry* geometry, TangentProvenance provenance = {}) {
-    if (!geometry.tangents.len) {
-        if (provenance.origin != TangentOrigin.NONE) return c3d::INVALID_ARGUMENT~;
-        return;
-    }
+fn void? check_tangent_stream(Geometry* geometry) {
+    if (!geometry.tangents.len) return;
     if (geometry.tangents.len != geometry.positions.len) return c3d::INVALID_ARGUMENT~;
-
-    if (provenance.origin == TangentOrigin.GENERATED) {
-        if (provenance.uv_set > 1 || geometry.normals.len != geometry.positions.len) return c3d::INVALID_ARGUMENT~;
-
-        Vec2[] selected = provenance.uv_set == 0 ? geometry.uv0 : geometry.uv1;
-        if (selected.len != geometry.positions.len) return c3d::INVALID_ARGUMENT~;
-    }
 
     foreach (tangent : geometry.tangents) {
         if (!finite_tangent_values(tangent) || tangent.w == 0) return c3d::INVALID_ARGUMENT~;
-        if (provenance.origin == TangentOrigin.GENERATED && tangent.w != -1 && tangent.w != 1) {
-            return c3d::INVALID_ARGUMENT~;
-        }
     }
 }
 
@@ -103,9 +35,10 @@ fn void? normalize_tangent_signs(Geometry* geometry) {
 <*
  Derive tangents from raw UVs and split conflicting source vertices.
  @param [&in] source : "Unchanged; old tangents are discarded."
+ @return "Complete geometry whose arrays the allocator owns."
  @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
 *>
-fn TangentGeometry? create_tangent_geometry(Allocator allocator, Geometry* source, uint uv_set = 0) {
+fn Geometry? create_tangent_geometry(Allocator allocator, Geometry* source, uint uv_set = 0) {
     check_tangent_source(source, uv_set)!;
 
     usz corner_count = source.indices.len ? source.indices.len : source.positions.len;
@@ -144,14 +77,10 @@ fn TangentGeometry? create_tangent_geometry(Allocator allocator, Geometry* sourc
     Vec4[] split_tangents = @tangent_array(allocator, Vec4, capacity)!;
     defer alloc::free(allocator, split_tangents);
 
-    TangentGeometry owner = {
-        .allocator = allocator,
-        .tangent_provenance = { .origin = TangentOrigin.GENERATED, .uv_set = uv_set },
-        .data = { .topology = source.topology, .custom_stride = source.custom_stride, .bounds = source.bounds },
-    };
-    defer catch destroy_tangent_geometry(&owner);
+    Geometry result = { .topology = source.topology, .custom_stride = source.custom_stride, .bounds = source.bounds };
+    defer catch free_tangent_geometry(allocator, &result);
 
-    if (source.indices.len) owner.data.indices = @tangent_array(allocator, uint, corner_count)!;
+    if (source.indices.len) result.indices = @tangent_array(allocator, uint, corner_count)!;
 
     foreach (vertex, &index : source_vertices[:source.positions.len]) {
         *index = (uint)vertex;
@@ -187,34 +116,34 @@ fn TangentGeometry? create_tangent_geometry(Allocator allocator, Geometry* sourc
             }
         }
 
-        if (source.indices.len) owner.data.indices[corner] = destination;
+        if (source.indices.len) result.indices[corner] = destination;
     }
 
-    owner.data.tangents = @tangent_array(allocator, Vec4, vertex_count)!;
-    owner.data.tangents[..] = split_tangents[:vertex_count];
+    result.tangents = @tangent_array(allocator, Vec4, vertex_count)!;
+    result.tangents[..] = split_tangents[:vertex_count];
 
     uint[] remap = source_vertices[:vertex_count];
-    owner.data.positions = @remap_tangent_stream(allocator, source.positions, remap)!;
-    owner.data.normals = @remap_tangent_stream(allocator, source.normals, remap)!;
-    owner.data.uv0 = @remap_tangent_stream(allocator, source.uv0, remap)!;
-    owner.data.uv1 = @remap_tangent_stream(allocator, source.uv1, remap)!;
-    owner.data.colors = @remap_tangent_stream(allocator, source.colors, remap)!;
-    owner.data.joints = @remap_tangent_stream(allocator, source.joints, remap)!;
-    owner.data.weights = @remap_tangent_stream(allocator, source.weights, remap)!;
+    result.positions = @remap_tangent_stream(allocator, source.positions, remap)!;
+    result.normals = @remap_tangent_stream(allocator, source.normals, remap)!;
+    result.uv0 = @remap_tangent_stream(allocator, source.uv0, remap)!;
+    result.uv1 = @remap_tangent_stream(allocator, source.uv1, remap)!;
+    result.colors = @remap_tangent_stream(allocator, source.colors, remap)!;
+    result.joints = @remap_tangent_stream(allocator, source.joints, remap)!;
+    result.weights = @remap_tangent_stream(allocator, source.weights, remap)!;
 
-    owner.data.targets = @tangent_array(allocator, MorphTarget, source.targets.len)!;
+    result.targets = @tangent_array(allocator, MorphTarget, source.targets.len)!;
 
     foreach (index, target : source.targets) {
-        MorphTarget* output = &owner.data.targets[index];
+        MorphTarget* output = &result.targets[index];
         output.position_deltas = @remap_tangent_stream(allocator, target.position_deltas, remap)!;
         output.normal_deltas = @remap_tangent_stream(allocator, target.normal_deltas, remap)!;
         output.name = copy_tangent_name(allocator, target.name)!;
     }
 
-    owner.data.channels = @tangent_array(allocator, MorphChannel, source.channels.len)!;
+    result.channels = @tangent_array(allocator, MorphChannel, source.channels.len)!;
 
     foreach (index, channel : source.channels) {
-        MorphChannel* output = &owner.data.channels[index];
+        MorphChannel* output = &result.channels[index];
         output.name = copy_tangent_name(allocator, channel.name)!;
         output.first_target = channel.first_target;
         output.full_weights = @tangent_array(allocator, float, channel.full_weights.len)!;
@@ -224,17 +153,41 @@ fn TangentGeometry? create_tangent_geometry(Allocator allocator, Geometry* sourc
     if (source.custom_data.len) {
         if (vertex_count > (usz)sz::max / source.custom_stride) return c3d::INVALID_ARGUMENT~;
 
-        owner.data.custom_data = @tangent_array(allocator, char, vertex_count * source.custom_stride)!;
+        result.custom_data = @tangent_array(allocator, char, vertex_count * source.custom_stride)!;
 
         foreach (destination, source_index : remap) {
-            owner.data.custom_data[destination * source.custom_stride:source.custom_stride]
+            result.custom_data[destination * source.custom_stride:source.custom_stride]
               = source.custom_data[(usz)source_index * source.custom_stride:source.custom_stride];
         }
     }
 
-    check_tangent_stream(&owner.data, owner.tangent_provenance)!;
+    return result;
+}
 
-    return owner;
+fn void free_tangent_geometry(Allocator allocator, Geometry* geometry) @private {
+    foreach (&target : geometry.targets) {
+        alloc::free(allocator, target.position_deltas.ptr);
+        alloc::free(allocator, target.normal_deltas.ptr);
+        alloc::free(allocator, target.name.ptr);
+    }
+
+    foreach (&channel : geometry.channels) {
+        alloc::free(allocator, channel.name.ptr);
+        alloc::free(allocator, channel.full_weights.ptr);
+    }
+
+    alloc::free(allocator, geometry.positions.ptr);
+    alloc::free(allocator, geometry.normals.ptr);
+    alloc::free(allocator, geometry.tangents.ptr);
+    alloc::free(allocator, geometry.uv0.ptr);
+    alloc::free(allocator, geometry.uv1.ptr);
+    alloc::free(allocator, geometry.colors.ptr);
+    alloc::free(allocator, geometry.joints.ptr);
+    alloc::free(allocator, geometry.weights.ptr);
+    alloc::free(allocator, geometry.indices.ptr);
+    alloc::free(allocator, geometry.targets.ptr);
+    alloc::free(allocator, geometry.channels.ptr);
+    alloc::free(allocator, geometry.custom_data.ptr);
 }
 
 macro @remap_tangent_stream(Allocator allocator, source, uint[] remap) @private {

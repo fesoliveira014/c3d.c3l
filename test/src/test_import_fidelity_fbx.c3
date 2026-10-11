@@ -341,8 +341,6 @@ fn void test_forced_fbx_tangents_use_converted_uv0_and_transfer_without_regenera
             assert(generated.normals.len == generated.positions.len && generated.uv0.len == generated.positions.len);
             assert(generated.tangents.len == generated.positions.len && generated.indices.len == original.indices.len);
             assert(generated.topology == original.topology);
-            assert(entry.tangent_provenance.origin == TangentOrigin.GENERATED);
-            assert(entry.tangent_provenance.uv_set == 0 && entry.tangent_provenance.derivation_revision == 0);
 
             foreach (corner, vertex : generated.indices) {
                 uint original_vertex = original.indices[corner];
@@ -384,9 +382,6 @@ fn void test_forced_fbx_tangents_use_converted_uv0_and_transfer_without_regenera
         foreach (expected : transferred) {
             GeometryAsset* record = assets.geometry(assets.find_geometry(expected.key)!!);
 
-            assert(record.tangent_provenance.origin == TangentOrigin.GENERATED);
-            assert(record.tangent_provenance.uv_set == 0);
-            assert(record.tangent_provenance.derivation_revision == record.header.revision);
             assert(record.data.positions.ptr == expected.positions && record.data.normals.ptr == expected.normals);
             assert(record.data.uv0.ptr == expected.uv0 && record.data.indices.ptr == expected.indices);
             assert(record.data.tangents.ptr == expected.tangents);
@@ -409,7 +404,6 @@ fn void test_fbx_authored_zero_tangents_import_and_nan_binormals_fault_unless_fo
             defer asset::destroy_model_document(&document);
 
             assert(document.geometries.len == 1);
-            assert(document.geometries[0].tangent_provenance.origin == TangentOrigin.AUTHORED);
 
             foreach (tangent : document.geometries[0].data.tangents) assert(tangent == (Vec4){ 2, 0, 0, -1 });
         }
@@ -460,8 +454,6 @@ fn void test_fbx_authored_zero_tangents_import_and_nan_binormals_fault_unless_fo
 
             DocumentGeometry* entry = &document.geometries[0];
 
-            assert(entry.tangent_provenance.origin == TangentOrigin.GENERATED);
-            assert(entry.tangent_provenance.uv_set == 0);
             assert(entry.data.positions.len == 4 && entry.data.indices.len == 6);
             assert(entry.data.tangents.len == entry.data.positions.len);
 

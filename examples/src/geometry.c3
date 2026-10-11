@@ -44,9 +44,9 @@ fn int main() {
     print_geometry("icosphere", &rock);
 
     io::printn("tangents on the box");
-    TangentGeometry tangent_box = geometry::create_tangent_geometry(mem, &box)!!;
-    defer geometry::destroy_tangent_geometry(&tangent_box);
-    Vec4 tangent = tangent_box.data.tangents[0];
+    Geometry tangent_box = geometry::create_tangent_geometry(mem, &box)!!;
+    defer free_geometry(&tangent_box);
+    Vec4 tangent = tangent_box.tangents[0];
     io::printfn("  first tangent (%.1f, %.1f, %.1f) handedness %.0f", tangent.x, tangent.y, tangent.z, tangent.w);
 
     io::printn("merge of box and plane");
