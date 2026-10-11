@@ -4,6 +4,18 @@
 #include "gbuffer.glsl"
 #include "standard_surface.glsl"
 
+#ifdef REFLECTION_PREPASS
+// The thin target the reflection pass reads: octahedral normal, roughness and specular weight.
+layout(location = 0) out vec4 out_reflection_surface;
+
+void write_gbuffer(StandardMaterialSample material_sample, float specular_weight, DrawRoot draw) {
+    out_reflection_surface = vec4(
+        encode_octahedral(material_sample.normal),
+        material_sample.roughness,
+        specular_weight
+    );
+}
+#else
 layout(location = 0) out vec4 out_base_color_metallic;
 layout(location = 1) out vec4 out_normal_roughness;
 layout(location = 2) out vec4 out_emissive_specular;
@@ -21,5 +33,6 @@ void write_gbuffer(StandardMaterialSample material_sample, float specular_weight
     out_layers = draw.layers;
     out_flags = (draw.flags & DRAW_RECEIVE_SHADOW) != 0u ? GBUFFER_FLAG_RECEIVE_SHADOW : 0u;
 }
+#endif
 
 #endif

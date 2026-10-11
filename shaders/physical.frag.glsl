@@ -286,7 +286,8 @@ void main() {
     vec3 base_ambient = frame.ambient.rgb * material_sample.base_color.rgb * (1.0 - material_sample.metallic)
         * screen_space_base_share(material_sample.occlusion, ambient_occlusion, screen_indirect);
     vec3 color = physical_fill(surface, base_ambient, transmitted, material_sample.emissive);
-    if (frame_has_indirect(frame)) {
+    vec4 traced = draw_traced_reflection(frame, draw.flags, ivec2(gl_FragCoord.xy));
+    if (frame_has_indirect(frame) || traced.a > 0.0) {
         color += evaluate_physical_environment(
             frame,
             reflections,
@@ -295,7 +296,8 @@ void main() {
             material_sample.roughness,
             material_sample.occlusion,
             ambient_occlusion,
-            screen_indirect
+            screen_indirect,
+            traced
         );
     }
     LightList lights = surface.transmission > 0.0
