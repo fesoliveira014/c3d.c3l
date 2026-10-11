@@ -56,13 +56,12 @@ const ZString[Tonemap::len] TONEMAP_LABELS @local = { "None", "ACES", "AgX", "Re
 const ZString[AntiAliasing::len] ANTI_ALIASING_LABELS @local = { "None", "FXAA", "TAA" };
 const ZString[TaaDebug::len] TAA_DEBUG_LABELS @local = { "None", "Velocity", "Rejection", "History weight" };
 const ZString[AoKind::len] AO_KIND_LABELS @local = { "None", "SSAO", "Ray traced" };
-const ZString[TransparencyMode::len] TRANSPARENCY_LABELS @local = { "Sorted", "Layered" };
 
 <*
- Edit post processing and camera transparency settings with configure_view.
+ Edit the view's post settings; the caller applies them with configure_view.
  @param [&inout] desc : "Edited in place."
  @param lut : "Offered by a checkbox when live; zero hides it."
- @param [in] stats : "Delayed exposure and transparency; null hides diagnostics."
+ @param [in] stats : "The view's stats; shows its delayed exposure, null hides it."
  @return "Whether any setting changed."
 *>
 fn bool post_panel(ViewDesc* desc, TextureId lut, ViewStats* stats = null) {
@@ -173,11 +172,6 @@ fn bool post_panel(ViewDesc* desc, TextureId lut, ViewStats* stats = null) {
         }
     }
     imgui::begin_disabled(path_traced);
-    if (imgui::collapsing_header("Transparency", {})) {
-        changed |= edit_transparency(desc);
-        if (stats) transparency_view_summary(&stats.transparency);
-    }
-
     if (imgui::collapsing_header("Ambient occlusion", {})) {
         changed |= edit_ambient_occlusion(&desc.ambient_occlusion);
     }
@@ -343,34 +337,6 @@ fn bool edit_ray_tracing(ViewDesc* desc) @local {
             maximum: REFLECTION_ROUGHNESS_MAX,
         );
     }
-    return changed;
-}
-
-fn bool edit_transparency(ViewDesc* desc) @private {
-    int selected = (int)desc.transparency.mode.ordinal;
-    bool changed = imgui::combo_char(
-        label: "Composition",
-        current_item: &selected,
-        items: &TRANSPARENCY_LABELS[0],
-        items_count: TransparencyMode::len,
-    );
-
-    if (changed) {
-        desc.transparency = (TransparencyMode)selected == TransparencyMode.LAYERED
-          ? render::TRANSPARENCY_LAYERED_DEFAULT : (TransparencyDesc){};
-    }
-
-    if (desc.transparency.mode == TransparencyMode.LAYERED) {
-        changed |= edit_level_count(
-            label: "Retained depth groups",
-            value: &desc.transparency.layer_capacity,
-            minimum: 1,
-            maximum: render::TRANSPARENCY_LAYER_CAPACITY_MAX,
-        );
-        imgui::text_unformatted("Farther groups use sorted composition.");
-        imgui::text_unformatted("More groups use more memory and passes.");
-    }
-
     return changed;
 }
 

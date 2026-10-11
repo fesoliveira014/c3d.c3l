@@ -71,24 +71,16 @@ Material sparks = material::basic({ .color = { 1, 0.5f, 0.2f, 0.25f } }, common)
 Additive surfaces receive fog attenuation without another fog in-scatter
 contribution. Custom stages use `apply_material_fog` from `fog.glsl` with their
 packed material flags ([Custom shaders](custom_shaders.md)). Physical transmission
-uses the selected view's [transparency composition](transparency.md).
+retains its existing scene-read routing and fog composition.
 
-In the default SORTED mode, blended objects draw back to front after
-opaque/masked objects and the sky. The order uses each object's world-bounds
-center in the current camera view, with a
+Blended objects draw back to front after opaque/masked objects and the sky. The
+order uses each object's world-bounds center in the current camera view, with a
 stable entity-id tie break. Instances of a blended batch order inside the batch
 by their own box centers ([Instancing](instancing.md#blended-batches)); the
 batch orders among blended objects by its bound center. It does not sort
 triangles or fragments, so intersecting transparent geometry and large objects
 whose centers do not match their visible depth can compose incorrectly. Record
 each view with its own camera; ordering is recalculated per view.
-
-`ViewDesc.transparency` can instead select LAYERED depth groups with a sorted
-farther remainder. It includes built-in blends and Physical transmission, so
-retained glass can see the composition behind its group. Depth-disabled and
-undeclared Custom surfaces use the post-resolve sorted fallback. Capacity,
-Custom participation and resource costs are described in
-[Camera transparency](transparency.md).
 
 `BLEND` honors `depth_test` but always disables effective depth writes. The
 authored `depth_write` value remains stored, so switching back to `OPAQUE` or
@@ -344,7 +336,7 @@ as a documented approximation. Clearcoat and sheen stay isotropic.
 
 ## Physical transmission
 
-Transmission shows the selected scene composition through a Physical surface:
+Transmission shows the opaque scene through a Physical surface:
 
 ```c3
 PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
@@ -369,9 +361,8 @@ volume attenuation; `attenuation_color` components lie in [0, 1]. With
 | `transmission_map` | R | Linear | Multiplies `transmission` |
 | `thickness_map` | G | Linear | Multiplies `thickness` |
 
-Both slots are ignored when `transmission` is zero. In SORTED mode, a
-transmissive material's draws join the scene-read list, which they share with
-opaque and masked
+Both slots are ignored when `transmission` is zero. A transmissive material's
+draws join the scene-read list, which they share with opaque and masked
 [custom scene readers](custom_shaders.md#scene-reads): rendered after opaque
 geometry and the sky and before ordinary blends, sorted back to front by bounds
 center. Any alpha mode is allowed: OPAQUE and MASK glass keeps its depth write
@@ -379,31 +370,18 @@ setting and casts opaque shadows; BLEND glass follows the ordinary blend rules
 and never casts.
 
 Before that list the renderer copies the finished opaque color into the
-view's own color snapshot, allocated on first use at the view size;
+view's own `scene_color` image, allocated on first use at the view size;
 `Pass.SCENE_SNAPSHOT` times the copy and `Pass.SCENE_READ` the list. Each
 transmissive fragment refracts the view direction by `1 / ior`, walks the
-thickness through the volume, projects the exit point and samples the snapshot.
-Physical roughness selects a scene-linear mip footprint in both SORTED and
-LAYERED modes; roughness zero retains the existing mip-zero branch exactly.
-An exit point outside the screen falls back to the environment's specular cube
-along the refracted
+thickness through the volume, projects the exit point and samples `scene_color`
+at mip zero, so rough transmission is not blurred. An exit point outside the
+screen falls back to the environment's specular cube along the refracted
 direction, or to black without an environment. The transmitted radiance replaces
 the dielectric diffuse response by the transmission factor, is scaled by base
 color and the non-metallic fraction, and is weighted by the surface's own
 Fresnel; direct lights add a mirrored-light transmission lobe. Transmissive
-surfaces in SORTED mode do not see each other, the custom readers of the same
-list or ordinary blends: glass behind glass shows the opaque scene through both.
-
-LAYERED retains exact camera depth groups and samples the composition behind
-each whole group. Farther surfaces beyond its capacity keep SORTED ordering;
-none are dropped. Refraction remains a screen-space, authored-thickness
-approximation without paired interfaces. In fog, a rough sample uses the
-continuation depth at the projected sample center, rather than transporting
-every footprint texel. Depth gaps and denser fog increase that approximation's
-error. Combined height and aerial fog also produce a density-dependent shift
-at the retained-to-sorted-remainder handoff, which can be substantial in dense
-media. See [Camera transparency](transparency.md) for the filter, fog convention
-and cost.
+surfaces never see each other, the custom readers of the same list or ordinary
+blends: glass behind glass shows the opaque scene through both.
 
 ## Importing materials
 
@@ -685,11 +663,9 @@ sphere, factor-only coated paint and fabric, and a combined mapped surface.
 The Physical specular view compares an IOR row of 1.0, 1.5 and 2.4 with a
 specular-weight row of 0, 0.5 and a tinted unit weight. The Physical anisotropy
 view compares an isotropic brushed metal with three stretch rotations and a
-mapped direction. The Physical transmission view places thin, rough tinted and
+mapped direction. The Physical transmission view places thin, thick tinted and
 blended glass in front of a checker backdrop and three opaque spheres, with one
-glass cube behind the thin sphere. Its view controls switch SORTED/LAYERED and
-the retained depth capacity; the rough tinted sphere shows the scene-linear
-filter, while the overlapping glass shows the modes' different composition.
+glass cube behind the thin sphere to show that glass never sees other glass.
 
 The controls switch presets, editable surfaces, material families, base textures
 and Toon ramps. The Physical controls independently toggle the base normal, all
@@ -749,12 +725,9 @@ images](textures.md). [Sun, spot and point shadows](shadows.md) attenuate Standa
 Physical and Toon direct lighting. Standard and Physical support [environment
 lighting and independent skies](environments.md); Toon uses only its diffuse SH
 contribution, and Basic remains unlit. Toon does not provide PBR reflections,
-outlines or transmission. Physical transmission uses the view's
-[camera transparency mode](transparency.md): SORTED reads opaque snapshots,
-while LAYERED reads behind retained groups with a sorted farther remainder.
-Rough transmission uses a bounded screen-space filter and a representative
-fog depth; it does not trace paired interfaces. Shading writes scene-linear
-HDR into the view's working image; the view's
+outlines or transmission. Physical transmission samples
+the opaque scene at mip zero and never sees other transmissive or blended
+surfaces. Shading writes scene-linear HDR into the view's working image; the view's
 output mode decides whether display processing tone maps it (see [views](views.md) and
 [display processing](post.md)). A texture slot may reference a render target with
 `{ .kind = RENDER_TARGET, .target = id }`; a dead target resolves to white, and a

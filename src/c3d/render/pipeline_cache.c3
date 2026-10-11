@@ -23,7 +23,6 @@ bitstruct CustomStages : uint {
     bool fragment : 1;
     bool compute  : 2;
     bool gbuffer  : 3;
-    bool layered  : 4;
 }
 
 <*
@@ -327,8 +326,6 @@ fn char[] custom_vertex_form(asset::CustomVertex* vertex, uint flags) @private {
 }
 
 fn bool key_stages_present(PipelineKey key, asset::ShaderDesc* stages) @private {
-    if (key.custom.layered && !stages.layered_transparency) return false;
-
     if (key.custom.vertex && custom_stage_source(stages, key).vertex.len == 0) return false;
     if (key.custom.fragment && custom_fragment_form(stages, key.fragment.flags).len == 0) return false;
     return !key.custom.gbuffer || stages.gbuffer.len > 0;

@@ -6,27 +6,8 @@
 #include "ibl.glsl"
 #include "scene_snapshot.glsl"
 #include "fog.glsl"
-#include "transparency.glsl"
 
 const float MIN_TRANSMISSION_ALPHA = MIN_PERCEPTUAL_ROUGHNESS * MIN_PERCEPTUAL_ROUGHNESS;
-
-vec3 transmission_snapshot_radiance(FrameRoot frame, vec2 uv, float roughness, float ior) {
-    if (roughness == 0.0 || frame.transparency == 0ul) {
-        return sample_texture_2d(frame.scene_color, frame.scene_sampler, uv).rgb;
-    }
-
-    TransparencyGpu transparency = TransparencyGpu(frame.transparency);
-    if (transparency.mip_count <= 1u) {
-        return sample_texture_2d(frame.scene_color, frame.scene_sampler, uv).rgb;
-    }
-
-    float lod = min(
-        float(transparency.mip_count - 1u),
-        log2(max(frame.camera_params.z, frame.camera_params.w))
-            * roughness * clamp(2.0 * ior - 2.0, 0.0, 1.0)
-    );
-    return sample_texture_2d_lod(frame.scene_color, frame.scene_sampler, uv, lod).rgb;
-}
 
 vec3 transmission_ray(vec3 refracted, float thickness, mat4 model) {
     vec3 model_scale = vec3(length(model[0].xyz), length(model[1].xyz), length(model[2].xyz));
@@ -52,7 +33,6 @@ vec3 transmitted_radiance(
     vec3 ray,
     vec3 refracted,
     float roughness,
-    float ior,
     bool writes_depth
 ) {
     vec4 clip = frame.view_proj * vec4(position + ray, 1.0);
@@ -60,38 +40,18 @@ vec3 transmitted_radiance(
         vec2 ndc = clip.xy / clip.w;
         vec2 uv = vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
         if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)))) {
-            vec3 behind = transmission_snapshot_radiance(frame, uv, roughness, ior);
-#ifdef LAYERED
-            if (layered_transparency_retained(frame)) {
-                return layered_transparency_transfer(
-                    frame,
-                    position,
-                    behind,
-                    layered_transparency_continuation_depth(frame, uv)
-                );
-            }
-#endif
+            vec3 behind = sample_texture_2d(frame.scene_color, frame.scene_sampler, uv).rgb;
             // Only a fogged view takes a depth snapshot with every colour snapshot.
             if (frame.sky_fog == 0ul || !writes_depth) return behind;
             return fog_behind(frame, position, behind, scene_depth_at(frame, uv));
         }
     }
     if (frame.environment == 0ul && selection.count == 0u) {
-#ifdef LAYERED
-        if (layered_transparency_retained(frame)) {
-            return layered_transparency_transfer(frame, position, vec3(0.0), 0.0);
-        }
-#endif
         return writes_depth ? fog_behind(frame, position, vec3(0.0), 0.0) : vec3(0.0);
     }
 
     float lod = max(roughness, MIN_PERCEPTUAL_ROUGHNESS) * float(ENVIRONMENT_SPECULAR_MIPS - 1u);
     vec3 surroundings = environment_lobe_radiance(frame, selection, normalize(refracted), lod, ENVIRONMENT_GGX_CUBE);
-#ifdef LAYERED
-    if (layered_transparency_retained(frame)) {
-        return layered_transparency_transfer(frame, position, surroundings, 0.0);
-    }
-#endif
     return writes_depth ? fog_behind(frame, position, surroundings, 0.0) : surroundings;
 }
 

@@ -43,11 +43,6 @@ enum Pass : int {
     COMPOSITE,
     CUSTOM_COMPUTE_POST,
     OVERLAY,
-    TRANSPARENCY_CAPTURE,
-    TRANSPARENCY_RETAINED,
-    TRANSPARENCY_REMAINDER,
-    TRANSPARENCY_RESOLVE,
-    TRANSPARENCY_FILTER,
 }
 
 <*
@@ -95,20 +90,6 @@ struct Stats {
     uint  indirect_draws;
     uint  post_dispatches;
     uint  scene_snapshots;   // this frame: one per snapshot image copied
-    uint  transparency_capture_passes;
-    uint  transparency_retained_passes;
-    uint  transparency_remainder_passes;
-    uint  transparency_resolve_passes;
-    uint  transparency_filter_passes;
-    uint  transparency_filter_dispatches;
-    uint  transparency_filtered_mips;
-    uint  transparency_fallback_draws;
-    uint  transparency_overflow_dispatches;
-    ulong transparency_overflow_pixels;
-    uint  transparency_overflow_results;
-    bool  transparency_overflow;
-    ulong transparency_overflow_frame_index;
-    usz   transparency_payload_bytes;
     uint  dispatches;
     uint  triangles;
     uint  instances;

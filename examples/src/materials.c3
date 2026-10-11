@@ -43,7 +43,6 @@ const ZString[ANISOTROPY_SPHERES] ANISOTROPY_SURFACE_LABELS @local = {
 };
 const usz TRANSMISSION_SURFACES @local = 4; // Thin, thick tinted, blended and one behind another.
 const usz TRANSMISSION_PROPS @local = 4; // Checker backdrop and three opaque spheres seen through glass.
-const float ROUGH_GLASS_ROUGHNESS @local = 0.55f; // Makes the screen-space filter visible beside smooth glass.
 const String[TRANSMISSION_SURFACES] TRANSMISSION_MATERIAL_KEYS @local = {
     "material/materials/transmission_thin", "material/materials/transmission_thick",
     "material/materials/transmission_blend", "material/materials/transmission_behind",
@@ -52,7 +51,7 @@ const String[TRANSMISSION_SURFACES] TRANSMISSION_NODE_NAMES @local = {
     "transmission_thin", "transmission_thick", "transmission_blend", "transmission_behind",
 };
 const ZString[TRANSMISSION_SURFACES] TRANSMISSION_SURFACE_LABELS @local = {
-    "Thin glass##surface", "Rough tinted glass##surface", "Blended glass##surface",
+    "Thin glass##surface", "Thick tinted glass##surface", "Blended glass##surface",
     "Glass behind glass##surface",
 };
 const String[SPECULAR_SPHERES] SPECULAR_MATERIAL_KEYS @local = {
@@ -668,7 +667,7 @@ fn void preset_controls(
                 }
             }
         case PHYSICAL_TRANSMISSION:
-            imgui::text_unformatted("Smooth and rough glass; Layered lets glass see glass.");
+            imgui::text_unformatted("Glass sees only the opaque scene behind it");
             foreach (index, material_id : materials.transmission) {
                 if (imgui::radio_button(
                     TRANSMISSION_SURFACE_LABELS[index],
@@ -847,37 +846,7 @@ fn void lighting_controls(
     );
 }
 
-fn bool transparency_controls(ViewDesc* view_desc) @local {
-    imgui::separator_text("Transparency");
-    bool layered = view_desc.transparency.mode == TransparencyMode.LAYERED;
-    bool changed = imgui::checkbox("Layered transparency", &layered);
-    if (changed) {
-        view_desc.transparency = layered ? render::TRANSPARENCY_LAYERED_DEFAULT : (TransparencyDesc){};
-    }
-
-    if (layered) {
-        int capacity = (int)view_desc.transparency.layer_capacity;
-        if (imgui::drag_int_ex(
-            label: "Retained depth groups",
-            v: &capacity,
-            v_speed: 1,
-            v_min: 1,
-            v_max: (int)render::TRANSPARENCY_LAYER_CAPACITY_MAX,
-            format: "%d",
-            flags: imgui::SLIDER_FLAGS_ALWAYS_CLAMP,
-        )) {
-            view_desc.transparency.layer_capacity = (uint)capacity;
-            changed = true;
-        }
-
-        imgui::text_unformatted("Farther groups use sorted composition.");
-        imgui::text_unformatted("More retained groups cost memory and passes.");
-    }
-
-    return changed;
-}
-
-fn bool controls_panel(
+fn void controls_panel(
     AssetStore* assets,
     Scene* scene,
     ExampleMaterials materials,
@@ -887,23 +856,18 @@ fn bool controls_panel(
     Node* point_node,
     ExampleEnvironments environments,
     Controls* controls,
-    ViewDesc* view_desc,
 ) @local {
     imgui::set_next_window_pos(CONTROLS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
     imgui::set_next_window_size(CONTROLS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
     bool visible = imgui::begin("Materials example", null, {});
     defer imgui::end();
-
-    if (!visible) return false;
+    if (!visible) return;
 
     imgui::push_item_width(EDITOR_WIDTH);
     defer imgui::pop_item_width();
 
     imgui::text_unformatted("Drag outside panels to orbit; wheel to zoom.");
     imgui::text_unformatted("Release Escape outside text controls to close.");
-
-    bool view_changed = transparency_controls(view_desc);
-
     preset_controls(materials, nodes, controls);
     family_controls(assets, controls.selected_material);
     texture_controls(assets, controls.selected_material, textures);
@@ -915,8 +879,6 @@ fn bool controls_panel(
         environments: environments,
         controls: controls,
     );
-
-    return view_changed;
 }
 
 fn void? run_gui(
@@ -932,14 +894,11 @@ fn void? run_gui(
     ExampleNodes nodes,
     Orbit* orbit,
     Controls* controls,
-    uint frame_limit = 0,
 ) @local {
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
 
-    ViewDesc view_desc = renderer.views.get(renderer.default_view).desc;
     bool escape_captured;
-    uint frames;
 
     while (window.poll()) {
         bool keyboard_was_captured = window.input.keyboard_captured_by_gui;
@@ -959,7 +918,7 @@ fn void? run_gui(
             if (quit) break;
         }
 
-        bool view_changed = controls_panel(
+        controls_panel(
             assets: renderer.assets,
             scene: scene,
             materials: materials,
@@ -969,10 +928,7 @@ fn void? run_gui(
             point_node: point_node,
             environments: environments,
             controls: controls,
-            view_desc: &view_desc,
         );
-
-        if (view_changed) render::configure_view(renderer, renderer.default_view, view_desc)!;
 
         imgui::set_next_window_pos(MATERIAL_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(MATERIAL_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
@@ -993,9 +949,6 @@ fn void? run_gui(
             gui_renderer: &gui_renderer,
             info: { .time = window.clock.total, .delta = window.clock.delta },
         )!;
-
-        frames++;
-        if (frame_limit && frames >= frame_limit) break;
     }
 }
 
@@ -1398,12 +1351,9 @@ fn Material transmission_material(usz index) @local {
     params.standard.metallic = 0;
     params.standard.roughness = 0.05f;
     params.transmission = 1;
-
     MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
-
     switch (index) {
         case 1:
-            params.standard.roughness = ROUGH_GLASS_ROUGHNESS;
             params.thickness = 1;
             params.attenuation_distance = 1;
             params.attenuation_color = { 0.9f, 0.5f, 0.3f };
@@ -1415,7 +1365,6 @@ fn Material transmission_material(usz index) @local {
             params.standard.base_color = { 0.6f, 1, 0.7f, 1 };
             params.thickness = 0.5f;
     }
-
     return material::physical(params, common);
 }
 
@@ -1600,10 +1549,6 @@ fn ExampleNodes create_fixtures(
 
 fn int main(String[] args) {
     bool gpu_timings;
-    bool transmission;
-    bool layered;
-    uint layers = render::TRANSPARENCY_LAYERED_DEFAULT.layer_capacity;
-    uint frame_limit;
     foreach (argument : args[1..]) {
         if (argument == "--gpu-timings") {
             $if $feat(C3D_PROFILE_GPU):
@@ -1612,25 +1557,6 @@ fn int main(String[] args) {
                 io::eprintfn("--gpu-timings needs GPU profiling: c3c build <target> --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL");
                 return 1;
             $endif
-        } else if (argument == "--transmission") {
-            transmission = true;
-        } else if (argument == "--layered") {
-            layered = true;
-        } else if (argument.starts_with("--layers=")) {
-            uint? parsed = argument[9..].to_uint();
-            if (catch excuse = parsed) {
-                io::eprintfn("Invalid layer capacity: %s", excuse);
-                return 1;
-            }
-            layers = parsed;
-            if (!layers || layers > render::TRANSPARENCY_LAYER_CAPACITY_MAX) return 1;
-        } else if (argument.starts_with("--frames=")) {
-            uint? parsed = argument[9..].to_uint();
-            if (catch excuse = parsed) {
-                io::eprintfn("Invalid frame count: %s", excuse);
-                return 1;
-            }
-            frame_limit = parsed;
         } else {
             io::printfn("Unknown argument: %s", argument);
             return 1;
@@ -1654,13 +1580,6 @@ fn int main(String[] args) {
         },
     )!!;
     defer render::destroy_renderer(&renderer);
-
-    if (layered) {
-        ViewDesc desc = renderer.views.get(renderer.default_view).desc;
-        desc.transparency = render::TRANSPARENCY_LAYERED_DEFAULT;
-        desc.transparency.layer_capacity = layers;
-        render::configure_view(&renderer, renderer.default_view, desc)!!;
-    }
 
     ExampleTextures textures = create_example_textures(&assets)!!;
     TextureId studio_source;
@@ -1728,7 +1647,7 @@ fn int main(String[] args) {
         .point_light = true,
     };
     select_preset(
-        preset: transmission ? PHYSICAL_TRANSMISSION : MASKED_FOLIAGE,
+        preset: MASKED_FOLIAGE,
         materials: materials,
         nodes: nodes,
         controls: &controls,
@@ -1749,7 +1668,6 @@ fn int main(String[] args) {
         nodes: nodes,
         orbit: &orbit,
         controls: &controls,
-        frame_limit: frame_limit,
     )) {
         io::printfn("Materials example failed: %s", excuse);
         return 1;
