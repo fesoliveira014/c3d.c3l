@@ -34,6 +34,14 @@ const uint MAX_DECALS = 256;
 const uint MAX_CLUSTER_DECALS = 8;
 const float DECAL_FADE_BAND = 0.1;
 const float DECAL_HALF_EXTENT = 0.5;
+const uint TRANSPARENCY_SORTED = 0;
+const uint TRANSPARENCY_CAPTURE = 1;
+const uint TRANSPARENCY_RETAINED = 2;
+const uint TRANSPARENCY_TAIL = 3;
+const uint TRANSPARENCY_CONNECT = 4;
+const uint TRANSPARENCY_INITIAL = 5;
+const uint TRANSPARENCY_SEED = 6;
+const uint TRANSPARENCY_COMPOSITE = 7;
 const uint INSTANCE_CULL_GROUP_SIZE = 64;
 const uint INSTANCE_SORT_GROUP_SIZE = 128;
 const uint INSTANCE_SORT_BLOCK = 1024;
@@ -432,6 +440,26 @@ $assert $reflect(ClusterGpu.view_proj).offset == 80;
 $assert $reflect(ClusterGpu.decal_ranges).offset == 144;
 $assert $reflect(ClusterGpu.decal_indices).offset == 152;
 
+struct TransparencyGpu {
+    TextureIndex previous_depth;
+    TextureIndex selected_depth;
+    TextureIndex opaque_depth;
+    TextureIndex continuation_depth;
+    TextureIndex opaque_color;
+    uint         phase;
+    uint         mip_count;
+    uint         _pad0;
+}
+$assert TransparencyGpu::size == 32;
+$assert $reflect(TransparencyGpu.previous_depth).offset == 0;
+$assert $reflect(TransparencyGpu.selected_depth).offset == 4;
+$assert $reflect(TransparencyGpu.opaque_depth).offset == 8;
+$assert $reflect(TransparencyGpu.continuation_depth).offset == 12;
+$assert $reflect(TransparencyGpu.opaque_color).offset == 16;
+$assert $reflect(TransparencyGpu.phase).offset == 20;
+$assert $reflect(TransparencyGpu.mip_count).offset == 24;
+$assert $reflect(TransparencyGpu._pad0).offset == 28;
+
 struct FrameRoot {
     Mat4f        view;
     Mat4f        proj;
@@ -467,8 +495,11 @@ struct FrameRoot {
     GpuAddress   decals;
     uint         decal_count;
     uint         _pad3;
+    GpuAddress   transparency;
+    uint         _pad4;
+    uint         _pad5;
 }
-$assert FrameRoot::size == 544;
+$assert FrameRoot::size == 560;
 $assert $reflect(FrameRoot.view).offset == 0;
 $assert $reflect(FrameRoot.proj).offset == 64;
 $assert $reflect(FrameRoot.view_proj).offset == 128;
@@ -503,6 +534,9 @@ $assert $reflect(FrameRoot.origin).offset == 512;
 $assert $reflect(FrameRoot.decals).offset == 528;
 $assert $reflect(FrameRoot.decal_count).offset == 536;
 $assert $reflect(FrameRoot._pad3).offset == 540;
+$assert $reflect(FrameRoot.transparency).offset == 544;
+$assert $reflect(FrameRoot._pad4).offset == 552;
+$assert $reflect(FrameRoot._pad5).offset == 556;
 
 struct DrawRoot {
     Mat4f        model;

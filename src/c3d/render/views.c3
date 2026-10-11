@@ -65,6 +65,7 @@ struct ViewDesc {
     LightSelection       lights;
     ClusterDesc          clusters;
     RayTracingDesc       ray_tracing;
+    TransparencyDesc     transparency;
     AmbientOcclusionDesc ambient_occlusion;
     ScreenSpaceGiDesc    screen_space_gi;
     PathTraceDesc        path_trace;
@@ -702,6 +703,8 @@ struct ViewRecord {
     Target                               depth;
     Target                               scene_color;
     Target                               scene_depth;
+    TransparencyState                    transparency;
+    gpu::TextureState[TRANSPARENCY_TARGET_COUNT] transparency_frame_states;
     Target                               post_a;
     Target                               post_b;
     Target[post::BLOOM_MAX_LEVELS]       bloom;
@@ -762,6 +765,10 @@ struct StagedView @private {
 fn void ViewRecord.snapshot_states(&self) {
     Target*[VIEW_TARGET_COUNT] targets = view_targets(self);
     foreach (index, target : targets) self.frame_states[index] = target.state;
+
+    foreach (index, target : transparency_targets(&self.transparency)) {
+        self.transparency_frame_states[index] = target.state;
+    }
 }
 
 <*
@@ -770,6 +777,10 @@ fn void ViewRecord.snapshot_states(&self) {
 fn void ViewRecord.restore_states(&self) {
     Target*[VIEW_TARGET_COUNT] targets = view_targets(self);
     foreach (index, target : targets) target.state = self.frame_states[index];
+
+    foreach (index, target : transparency_targets(&self.transparency)) {
+        target.state = self.transparency_frame_states[index];
+    }
 }
 
 <*
@@ -825,6 +836,10 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
 fn uint live_view_images(ViewRecord* record) @private {
     uint images;
     foreach (target : view_targets(record)) {
+        if (target.texture.is_valid()) images++;
+    }
+
+    foreach (target : transparency_targets(&record.transparency)) {
         if (target.texture.is_valid()) images++;
     }
     return images;
@@ -1062,6 +1077,8 @@ fn void? reset_view_history(Renderer* renderer, ViewId view) {
 }
 
 fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
+    if (!transparency_desc_valid(desc.transparency)) return c3d::INVALID_ARGUMENT~;
+
     if (!math::is_finite(desc.lod_bias)) return c3d::INVALID_ARGUMENT~;
     if (!clip_plane_valid(desc.clip_plane)) return c3d::INVALID_ARGUMENT~;
     if (!ambient_occlusion_desc_valid(&desc.ambient_occlusion)) return c3d::INVALID_ARGUMENT~;
@@ -1165,6 +1182,16 @@ fn void? acquire_view_images(Renderer* renderer, ViewRecord* record, uint[<2>] o
     acquire_accumulation(renderer, record)!;
     acquire_sky_view_images(renderer, record)!;
     acquire_fog_volume(renderer, record)!;
+    if (record.desc.transparency.mode == TransparencyMode.LAYERED
+      && record.desc.shading != ShadingPath.PATH_TRACED && !record.transparency.layer_capacity) {
+        record.transparency = allocate_transparency_state(
+            renderer: renderer,
+            width: record.hdr_color.width,
+            height: record.hdr_color.height,
+            layer_capacity: record.desc.transparency.layer_capacity,
+        )!;
+    }
+
     if (record.desc.lights == LightSelection.CLUSTERED && !record.clusters.allocation.is_valid()) {
         ClusterLayout layout = cluster_layout(
             desc: record.desc.clusters,
@@ -1180,6 +1207,8 @@ fn void? acquire_view_images(Renderer* renderer, ViewRecord* record, uint[<2>] o
 }
 
 fn void release_view_images(gpu::Device* device, ViewRecord* record) @private {
+    release_transparency_state(device, &record.transparency);
+
     foreach (image : view_targets(record)) {
         if (!image.texture.is_valid()) continue;
         if (image.attachment.is_valid()) (void)gpu::destroy_attachment_view(device, image.attachment);
@@ -1191,6 +1220,8 @@ fn void release_view_images(gpu::Device* device, ViewRecord* record) @private {
 
 fn void retire_view_images(Renderer* renderer, ViewRecord* record) @private {
     RetireList* retire = last_submitted_retire(renderer);
+    retire_transparency_state(retire, &record.transparency);
+
     foreach (image : view_targets(record)) {
         if (!image.texture.is_valid()) continue;
         if (image.attachment.is_valid()) {
@@ -1219,10 +1250,16 @@ fn void copy_view_images(ViewRecord* staged, ViewRecord* live) @private {
     foreach (index, image : view_targets(live)) *staged_images[index] = *image;
     staged.bloom_levels = live.bloom_levels;
     staged.clusters = live.clusters;
+    staged.transparency = live.transparency;
 }
 
 fn void drop_unwanted_images(ViewRecord* staged, ViewDesc* previous) @private {
     ViewDesc* desc = &staged.desc;
+    if (desc.transparency.mode != TransparencyMode.LAYERED || desc.shading == ShadingPath.PATH_TRACED
+      || desc.transparency.layer_capacity != previous.transparency.layer_capacity) {
+        staged.transparency = {};
+    }
+
     if (desc.post.anti_aliasing != AntiAliasing.FXAA) {
         staged.post_a = {};
         staged.post_b = {};
@@ -1281,6 +1318,10 @@ fn void release_staged_images(Renderer* renderer, StagedView* view) @private {
         if (image.texture == live_images[index].texture) *image = {};
     }
     if (view.images.clusters.allocation == view.live.clusters.allocation) view.images.clusters = {};
+    if (view.images.transparency.depths[0].texture == view.live.transparency.depths[0].texture) {
+        view.images.transparency = {};
+    }
+
     release_view_images(&renderer.device, &view.images);
 }
 
@@ -1300,6 +1341,12 @@ fn void adopt_view_images(ViewRecord* live, ViewRecord* staged) @private {
         staged.clusters = {};
     } else {
         @swap(live.clusters, staged.clusters);
+    }
+
+    if (live.transparency.depths[0].texture == staged.transparency.depths[0].texture) {
+        staged.transparency = {};
+    } else {
+        @swap(live.transparency, staged.transparency);
     }
 }
 
