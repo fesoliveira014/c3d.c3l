@@ -830,7 +830,7 @@ struct ShadowGpu {
     float blend_depth;
     uint colored_transmittance;
     uint colored_depth;
-    uint _pad2;
+    uint colored_sampler;
     uint _pad3;
     uint _pad4;
 };

@@ -1355,7 +1355,7 @@ struct ShadowGpu {
     float        blend_depth;
     TextureIndex colored_transmittance;
     TextureIndex colored_depth;
-    uint         _pad2;
+    SamplerIndex colored_sampler;
     uint         _pad3;
     uint         _pad4;
 }
@@ -1370,7 +1370,7 @@ $assert $reflect(ShadowGpu.max_distance).offset == 84;
 $assert $reflect(ShadowGpu.blend_depth).offset == 88;
 $assert $reflect(ShadowGpu.colored_transmittance).offset == 92;
 $assert $reflect(ShadowGpu.colored_depth).offset == 96;
-$assert $reflect(ShadowGpu._pad2).offset == 100;
+$assert $reflect(ShadowGpu.colored_sampler).offset == 100;
 $assert $reflect(ShadowGpu._pad3).offset == 104;
 $assert $reflect(ShadowGpu._pad4).offset == 108;
 

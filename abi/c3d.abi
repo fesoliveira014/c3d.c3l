@@ -766,7 +766,7 @@ struct ShadowGpu {
     float blend_depth;
     TextureIndex colored_transmittance;
     TextureIndex colored_depth;
-    uint _pad2;
+    SamplerIndex colored_sampler;
     uint _pad3;
     uint _pad4;
 }

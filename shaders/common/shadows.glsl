@@ -48,9 +48,8 @@ vec3 filter_shadow_tint(ShadowGpu shadow, vec3 coordinates) {
     if (shadow.colored_depth == 0u) return vec3(1.0);
 
     float behind = 1.0 - filter_shadow_compare(shadow.colored_depth, shadow, coordinates);
-    ivec2 extent = texture_extent(shadow.colored_transmittance);
-    ivec2 texel = min(ivec2(coordinates.xy * vec2(extent)), extent - 1);
-    return mix(vec3(1.0), fetch_texture_2d(shadow.colored_transmittance, texel).rgb, behind);
+    vec3 tint = sample_texture_2d_lod(shadow.colored_transmittance, shadow.colored_sampler, coordinates.xy, 0.0).rgb;
+    return mix(vec3(1.0), tint, behind);
 }
 
 vec3 filter_shadow_transmittance(ShadowGpu shadow, vec3 coordinates, bool colored) {

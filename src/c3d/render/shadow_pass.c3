@@ -523,6 +523,7 @@ fn void? record_shadows(
             ColoredShadowLayer* images = &renderer.shadow_atlas.colored.layers[layer];
             shadows[layer].colored_transmittance = images.transmittance_view.index;
             shadows[layer].colored_depth = images.depth_view.index;
+            shadows[layer].colored_sampler = renderer.linear_clamp_sampler;
         }
     }
     transition_shadow_atlas(&renderer.shadow_atlas, &renderer.commands, DEPTH_ATTACHMENT_STATE)!;
