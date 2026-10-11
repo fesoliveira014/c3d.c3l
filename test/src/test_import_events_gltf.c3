@@ -156,9 +156,10 @@ fn void test_import_events_gltf_fixture_recipe_and_store_free_order() @test {
 
 fn void test_import_events_gltf_absent_empty_and_unrelated_metadata() @test {
     @pool() {
-        String[4] sources = {
+        String[5] sources = {
             without_extras(),
             with_extras("{}"),
+            with_extras(`"designer note"`),
             with_extras(`{"other":{"version":"unrelated","events":"ignored"}}`),
             with_extras(`{"c3d_events":{"version":1,"events":[]}}`),
         };
