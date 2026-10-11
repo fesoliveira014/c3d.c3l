@@ -254,7 +254,7 @@ struct TraceInstanceGpu {
     uint flags;
     uint material_kind;
     uint mask;
-    uint _pad1;
+    uint receiver_layers;
     vec4 world_to_local_0;
     vec4 world_to_local_1;
     vec4 world_to_local_2;

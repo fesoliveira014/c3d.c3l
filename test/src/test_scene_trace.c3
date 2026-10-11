@@ -607,3 +607,35 @@ fn void test_trace_collection_counts_invalid_material_references_as_dangling() @
         assert(collection.records.len == 0 && collection.dangling == 1);
     };
 }
+
+fn void test_trace_receiver_layers_keep_full_width_and_refresh_rows_without_rebuilding_geometry() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Scene* scene = &fixture.scene;
+    Node* first = scene.add_mesh(fixture.box, fixture.opaque)!!;
+    first.layers = 0x80000000;
+    Node* excluded = scene.add_mesh(fixture.box, fixture.opaque)!!;
+    excluded.layers = 0;
+    Transform[2] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
+    Node* batch = scene.add_instanced_mesh(
+        geometry: fixture.box,
+        material: fixture.opaque,
+        capacity: 2,
+        transforms: transforms[..],
+    )!!;
+    batch.layers = 0x00ff00ff;
+    scene.update_world();
+    @pool() {
+        render::TraceInstance[] records = collect(&fixture);
+        assert(records.len == 4);
+        foreach (&record : records) {
+            assert(record.receiver_layers == scene.node(record.entity).layers);
+        }
+        first.layers = 1;
+        render::TraceInstance[] changed = collect(&fixture);
+        assert(changed.len == records.len);
+        assert(changed[0].receiver_layers == 1 && records[0].receiver_layers == 0x80000000);
+        assert(!mem::equals(records.ptr, changed.ptr, (sz)(records.len * render::TraceInstance::size)));
+        assert(mem::equals(&records[0], &changed[0], (sz)render::TOP_LEVEL_PREFIX_BYTES));
+    };
+}

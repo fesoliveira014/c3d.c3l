@@ -74,6 +74,7 @@ vec3 direct_light(FrameRoot frame, TraceSurface surface, StandardSurface standar
     vec3 radiance = vec3(0.0);
     for (uint index = 0u; index < frame.light_count; index++) {
         LightGpu light = LightArray(frame.lights).values[index];
+        if ((surface.receiver_layers & light.layers) == 0u) continue;
         LightSample light_sample = sample_light(light, surface.position);
         if (light_sample.radiance == vec3(0.0) || dot(surface.geometric_normal, light_sample.direction) <= 0.0) {
             continue;

@@ -79,9 +79,11 @@ struct TraceInstance @private {
     gpu::GpuAddress material_address;
     gpu::GpuAddress nodes;
     gpu::GpuAddress primitives;
+    uint            receiver_layers;
+    uint            padding;
 }
-// The dirty tests compare records bytewise, so the record carries no padding.
-$assert TraceInstance::size == 264;
+// Bytewise comparisons require the explicit tail word to stay zero.
+$assert TraceInstance::size == 272;
 
 struct TracePoseSource @private {
     TracePose      kind;
@@ -346,6 +348,7 @@ fn TraceCollection collect_trace_instances(
                     world:       node.world,
                     cast_shadow: mesh.cast_shadow,
                     origin:      origin,
+                    receiver_layers: node.layers,
                 );
                 // Raster skins only a geometry with joints; a binding over another draws morphs alone.
                 SkinBinding* posed_skin = skin && geometry_has_joints(assets.geometry(mesh.geometry)) ? skin : null;
@@ -410,6 +413,7 @@ fn TraceCollection collect_trace_instances(
                         instance_index: index,
                         local:          source.crowd ? crowd.part_transform(index, source.part) : transform.to_mat4(),
                         origin:         origin,
+                        receiver_layers: node.layers,
                     );
                     TracePoseSource instance = source;
                     if (source.crowd) {
@@ -481,6 +485,7 @@ fn TraceCollection collect_trace_instances(
                             instance_index: instance,
                             local: local,
                             origin: origin,
+                            receiver_layers: node.layers,
                         );
                         record.lod_identity = state.identity;
                         record.part_index = state.animated ? state.animated.parts[part].mesh_index : part;
@@ -1097,6 +1102,7 @@ fn void write_trace_instance(TraceInstanceGpu* row, TraceInstance* record, Vec3 
         .flags            = record.flags,
         .material_kind    = record.material_kind,
         .mask             = record.mask,
+        .receiver_layers  = record.receiver_layers,
         .world_to_local_0 = { inverse.m00, inverse.m01, inverse.m02, inverse.m03 },
         .world_to_local_1 = { inverse.m10, inverse.m11, inverse.m12, inverse.m13 },
         .world_to_local_2 = { inverse.m20, inverse.m21, inverse.m22, inverse.m23 },
@@ -1159,6 +1165,7 @@ fn TraceInstance trace_record(
     uint instance_index = 0,
     Mat4 local = matrix::IDENTITY4,
     Vec3 origin = {},
+    uint receiver_layers = uint::max,
 ) @local {
     Material* data = &assets.material(material).data;
     uint flags = data.common.alpha_mode == AlphaMode.MASK ? shader::TRACE_INSTANCE_ALPHA_MASK : 0;
@@ -1174,6 +1181,7 @@ fn TraceInstance trace_record(
         .local         = local,
         .mask           = shader::TRACE_MASK_ALL | (cast_shadow ? shader::TRACE_MASK_SHADOW_CASTER : 0),
         .instance_index = instance_index,
+        .receiver_layers = receiver_layers,
     };
     record.bounds = maths::aabb_transform(assets.geometry(geometry).data.bounds, trace_instance_world(&record, origin));
     return record;

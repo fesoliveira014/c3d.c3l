@@ -34,6 +34,7 @@ vec3 shade_standard_hit(FrameRoot frame, TraceSurface surface, vec3 view_directi
     vec3 color = surface.emissive + frame.ambient.rgb * surface.albedo * (1.0 - surface.metallic);
     for (uint index = 0u; index < frame.light_count; index++) {
         LightGpu light = LightArray(frame.lights).values[index];
+        if ((surface.receiver_layers & light.layers) == 0u) continue;
         LightSample light_sample = sample_light(light, surface.position);
         if (dot(surface.normal, light_sample.direction) <= 0.0 || light_sample.radiance == vec3(0.0)) continue;
         color += evaluate_standard_brdf(standard, light_sample.direction) * light_sample.radiance
@@ -51,6 +52,7 @@ vec3 shade_toon_hit(FrameRoot frame, TraceSurface surface, vec3 view_direction) 
         + hit_environment_diffuse(frame, surface.albedo, surface, view_direction);
     for (uint index = 0u; index < frame.light_count; index++) {
         LightGpu light = LightArray(frame.lights).values[index];
+        if ((surface.receiver_layers & light.layers) == 0u) continue;
         LightSample light_sample = sample_light(light, surface.position);
         float normal_light = dot(surface.normal, light_sample.direction);
         if (normal_light <= 0.0 || light_sample.radiance == vec3(0.0)) continue;
@@ -65,6 +67,7 @@ vec3 shade_lambert_hit(FrameRoot frame, TraceSurface surface, vec3 view_directio
         + hit_environment_diffuse(frame, surface.albedo, surface, view_direction);
     for (uint index = 0u; index < frame.light_count; index++) {
         LightGpu light = LightArray(frame.lights).values[index];
+        if ((surface.receiver_layers & light.layers) == 0u) continue;
         LightSample light_sample = sample_light(light, surface.position);
         float normal_light = dot(surface.normal, light_sample.direction);
         if (normal_light <= 0.0 || light_sample.radiance == vec3(0.0)) continue;
@@ -74,7 +77,6 @@ vec3 shade_lambert_hit(FrameRoot frame, TraceSurface surface, vec3 view_directio
     return color;
 }
 
-// Light layers are not applied: trace rows carry none.
 vec3 shade_hit(FrameRoot frame, TraceSurface surface, vec3 view_direction) {
     switch (surface.material_kind) {
         case MATERIAL_KIND_BASIC:
