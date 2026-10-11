@@ -24,7 +24,7 @@ Derived inputs are constructed in memory from this exact file:
 
 The clean first stack has analytic Hip/Foot model positions (t,1,0)/(t,0,0), for t in [0,1] seconds, under identity calibration and facing. A separate target calibration rotates Hip 45 degrees about +Z while preserving authored target locals.
 
-profile_animation_v1.sha256 records the committed base file hash. profile_animation_LICENSE.txt contains the applicable license.
+The fixture is repository-authored under the repository's MIT licence.
 
 ## Turning fixture
 
@@ -36,4 +36,3 @@ scale or translation curve is present. Tests prepare an offset, yawed and
 uniformly scaled target carrier and compare the profiled EXTRACT branches with
 the independently loaded KEEP branches at keys and subkeys.
 
-profile_turning_v1.sha256 records its file hash. The same MIT license applies.

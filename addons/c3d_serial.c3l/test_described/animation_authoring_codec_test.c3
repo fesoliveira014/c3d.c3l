@@ -18,10 +18,6 @@ const char[] LEGACY_CROWD_PENDING_BINARY @local
   = $embed("../../../test/fixtures/animation_legacy/crowd-v2-pending.bin");
 const char[] LEGACY_CROWD_PENDING_TEXT @local
   = $embed("../../../test/fixtures/animation_legacy/crowd-v2-pending.jsonc");
-const char[] LEGACY_CROWD_PREPARED_BINARY @local
-  = $embed("../../../test/fixtures/animation_legacy/crowd-v2-prepared.bin");
-const char[] LEGACY_CROWD_PREPARED_TEXT @local
-  = $embed("../../../test/fixtures/animation_legacy/crowd-v2-prepared.jsonc");
 const char[] LEGACY_SKIN_MODEL @local = $embed("../../../test/fixtures/gltf/skin.gltf");
 
 struct CodecBlendGrid @local {
@@ -141,7 +137,7 @@ fn void test_animation_authoring_codec_frozen_animator_v1_restores_masks_differe
     };
 }
 
-fn void test_animation_authoring_codec_frozen_crowd_v2_pending_and_prepared_restart_authoring() @test {
+fn void test_animation_authoring_codec_frozen_crowd_v2_restarts_authoring() @test {
     @pool() {
         Fixture fixture;
         create_fixture(&fixture, 32);
@@ -153,9 +149,8 @@ fn void test_animation_authoring_codec_frozen_crowd_v2_pending_and_prepared_rest
             base_dir: "",
             key: "animation_legacy/model",
         )!!;
-        char[][2] binaries = { LEGACY_CROWD_PENDING_BINARY, LEGACY_CROWD_PREPARED_BINARY };
-        String[2] texts = { (String)LEGACY_CROWD_PENDING_TEXT, (String)LEGACY_CROWD_PREPARED_TEXT };
-        assert(binaries[0] == binaries[1] && texts[0] == texts[1]);
+        char[][1] binaries = { LEGACY_CROWD_PENDING_BINARY };
+        String[1] texts = { (String)LEGACY_CROWD_PENDING_TEXT };
         bool[4] all = { true, true, true, true };
         bool[4] upper = { false, true, true, false };
         foreach (variant, bytes : binaries) {

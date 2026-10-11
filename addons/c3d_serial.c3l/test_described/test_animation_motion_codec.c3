@@ -18,9 +18,9 @@ const char[] MOTION_CODEC_ANIMATOR_V1 @local
 const char[] MOTION_CODEC_ANIMATOR_V1_TEXT @local
   = $embed("../../../test/fixtures/animation_legacy/animator-v1.jsonc");
 const char[] MOTION_CODEC_CROWD_V2 @local
-  = $embed("../../../test/fixtures/animation_legacy/crowd-v2-prepared.bin");
+  = $embed("../../../test/fixtures/animation_legacy/crowd-v2-pending.bin");
 const char[] MOTION_CODEC_CROWD_V2_TEXT @local
-  = $embed("../../../test/fixtures/animation_legacy/crowd-v2-prepared.jsonc");
+  = $embed("../../../test/fixtures/animation_legacy/crowd-v2-pending.jsonc");
 
 const char[] MOTION_CODEC_ANIMATOR_V2 @local
   = $embed("../../../test/fixtures/animation_authoring_legacy/animator-v2.bin");
@@ -30,10 +30,6 @@ const char[] MOTION_CODEC_CROWD_V3_PENDING @local
   = $embed("../../../test/fixtures/animation_authoring_legacy/crowd-v3-pending.bin");
 const char[] MOTION_CODEC_CROWD_V3_PENDING_TEXT @local
   = $embed("../../../test/fixtures/animation_authoring_legacy/crowd-v3-pending.jsonc");
-const char[] MOTION_CODEC_CROWD_V3_PREPARED @local
-  = $embed("../../../test/fixtures/animation_authoring_legacy/crowd-v3-prepared.bin");
-const char[] MOTION_CODEC_CROWD_V3_PREPARED_TEXT @local
-  = $embed("../../../test/fixtures/animation_authoring_legacy/crowd-v3-prepared.jsonc");
 
 fn RootExtractionDesc motion_codec_extraction() @local {
     return {
@@ -564,12 +560,9 @@ fn void test_animation_motion_codec_frozen_weighted_planar_versions_default_disa
             assert(animator.action(animator.order[0]).time == 0 && animator.event_count == 0);
             fixture.destination.remove(restored);
         }
-        char[][2] binaries = { MOTION_CODEC_CROWD_V3_PENDING, MOTION_CODEC_CROWD_V3_PREPARED };
-        String[2] texts = {
-            (String)MOTION_CODEC_CROWD_V3_PENDING_TEXT, (String)MOTION_CODEC_CROWD_V3_PREPARED_TEXT,
-        };
+        char[][1] binaries = { MOTION_CODEC_CROWD_V3_PENDING };
+        String[1] texts = { (String)MOTION_CODEC_CROWD_V3_PENDING_TEXT };
         uint[3] members = { 1, 2, 3 };
-        assert(binaries[0] == binaries[1] && texts[0] == texts[1]);
         foreach (variant, bytes : binaries) {
             for (uint encoding = 0; encoding < 2; encoding++) {
                 Node* restored = encoding == 0
