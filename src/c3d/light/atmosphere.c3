@@ -47,6 +47,12 @@ struct Atmosphere {
     float observer_altitude;     // metres; the image-based lighting is seen from here
 }
 
+struct AtmosphereEntry @local {
+    bool  enters;
+    float distance;   // metres along the ray to the top of the atmosphere
+    float cos_zenith; // cosine against the local up where the ray enters
+}
+
 <*
  Whether the atmosphere can draw and light a sky.
  @param [&in] atmosphere : "Component to check."
@@ -86,21 +92,24 @@ fn bool atmosphere_valid(Atmosphere* atmosphere) {
 <*
  Transmittance from an altitude to the top of the atmosphere along a direction.
  @param [&in] atmosphere : "Valid."
- @param altitude : "Metres above the surface; clamped into the atmosphere."
+ @param altitude : "Metres above the surface; unbounded above, and zero below zero."
  @param cos_zenith : "Cosine between the direction and the local up."
- @return "Zero where the direction meets the ground."
+ @return "Zero where the direction meets the ground; one where it misses the atmosphere."
  @require cos_zenith >= -1 && cos_zenith <= 1
  @pure
 *>
 fn Vec3 atmosphere_transmittance(Atmosphere* atmosphere, float altitude, float cos_zenith) {
+    AtmosphereEntry entry = atmosphere_entry(atmosphere, altitude, cos_zenith);
+    if (!entry.enters) return { 1, 1, 1 };
+
     float ground = atmosphere.planet_radius;
     float height = math::clamp(altitude, 0.0f, atmosphere.atmosphere_height);
     float radius = ground + height;
     // r² - R² and top² - r² in altitude form: squares of radii near 6.4e6 m lose metres in float.
     float lift = height * (2 * ground + height);
     float headroom = (atmosphere.atmosphere_height - height) * (2 * ground + atmosphere.atmosphere_height + height);
-    float along_up = radius * cos_zenith;
-    if (cos_zenith < 0 && along_up * along_up - lift >= 0) return {};
+    float along_up = radius * entry.cos_zenith;
+    if (entry.cos_zenith < 0 && along_up * along_up - lift >= 0) return {};
 
     float step = (math::sqrt(along_up * along_up + headroom) - along_up) / ATMOSPHERE_TRANSMITTANCE_STEPS;
     Vec3 optical_depth;
@@ -118,7 +127,7 @@ fn Vec3 atmosphere_transmittance(Atmosphere* atmosphere, float altitude, float c
  @param [&in] atmosphere : "Valid."
  @param [&in] sun : "Directional light on the atmosphere's node."
  @param to_sun : "Unit vector toward the sun."
- @param altitude : "Metres above the surface; clamped into the atmosphere."
+ @param altitude : "Metres above the surface; unbounded above, and zero below zero."
  @return "Colour times intensity times transmittance; exactly zero below the horizon."
  @pure
 *>
@@ -130,6 +139,23 @@ fn Vec3 sun_radiance(
 ) {
     Vec3 transmittance = atmosphere_transmittance(atmosphere, altitude, math::clamp(to_sun.y, -1.0f, 1.0f));
     return sun.color * sun.intensity * transmittance;
+}
+
+// Mirrored as atmosphere_entry in atmosphere.glsl.
+<*
+ @pure
+*>
+fn AtmosphereEntry atmosphere_entry(Atmosphere* atmosphere, float altitude, float cos_zenith) @local {
+    if (altitude <= atmosphere.atmosphere_height) return { .enters = true, .cos_zenith = cos_zenith };
+
+    float radius = atmosphere.planet_radius + altitude;
+    float top = atmosphere.planet_radius + atmosphere.atmosphere_height;
+    float discriminant = radius * radius * cos_zenith * cos_zenith
+        + (atmosphere.atmosphere_height - altitude) * (top + radius);
+    if (cos_zenith >= 0 || discriminant < 0) return { .cos_zenith = cos_zenith };
+
+    float root = math::sqrt(discriminant);
+    return { .enters = true, .distance = -radius * cos_zenith - root, .cos_zenith = -root / top };
 }
 
 <*
