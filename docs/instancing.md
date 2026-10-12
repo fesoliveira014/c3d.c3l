@@ -273,17 +273,18 @@ while (window.poll()) {
   references and `node_count * float::size` per weighted action allocate at play. Retarget clips
   at load time. See [2D groups](animation.md#two-dimensional-blend-spaces) and
   [weighted masks](animation.md#weighted-and-feathered-masks) for topology, ownership and fades.
-- `crowd_update` evaluates every live instance once, restores authored defaults for missing tracks,
+- `crowd_update` advances and samples every live instance once, restores authored defaults for missing tracks,
   and publishes palettes, complete logical morph weights and affine part matrices. Mesh and bind
   transforms apply once. Part parity can differ for animated rigid meshes; sorted/visible lists
-  and previous pose data retain logical source/part correspondence.
+  and previous pose data retain logical source/part correspondence. Sampling can run on workers over
+  disjoint instance ranges ([crowd playback](animation.md#crowd-playback-on-workers)).
 - Root motion is published in `crowd.playback.slots[index].root_motion`. Call
   `scene.apply_crowd_root_motion(crowd)` once after an update to consume each live delta; movement
   remains application-controlled. Root mode/yaw and offset-turn pivot match `Animator`.
 - One crowd-wide `events` buffer retains `event_count` entries; each entry identifies instance
   slot/generation and its shared fired event. Order is source slot, action order, crossing order.
   `event_capacity` defaults to 1024 and is fixed at preparation. Zero is drop-only; other sizes
-  keep the fitting prefix. `events_dropped` saturates and both counters reset every update.
+  keep the fitting prefix. `events_dropped` saturates and both counters reset every advance.
 - Fixed per-instance playback payload is
   `N*Transform::size + W*float::size + M*float[]::size`
   `+ A*(Action::size + AnimationActionId::size + 2*uint::size + N*bool::size)`
@@ -293,7 +294,8 @@ while (window.poll()) {
   action capacity 4, 624 bytes at 8 and 1008 bytes at 16, even with no active groups. At crowd
   capacity 4096 that is 1,769,472 bytes or 4,128,768 bytes for action capacities 4 or 16.
   The [complete 2D table](animation.md#prepared-storage) includes smaller capacities.
-  The owner also retains copied model baselines and one shared pose scratch block. Crowd-wide
+  The owner also retains copied model baselines and one pose scratch block; each concurrent
+  `sample_range` caller adds one from `create_crowd_pose_scratch`. Crowd-wide
   output and crossing scratch cost `event_capacity*(CrowdEvent::size + EventBookmark::size)`.
   Crowd placements, tints, seeds, parts and `capacity*joints*Mat4::size`
   palettes are separate retained arrays. Active cursors/additive references add their actual
