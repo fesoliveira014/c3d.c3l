@@ -146,7 +146,7 @@ const uint FOG_VOLUME_MAX_SLICES = 128u;
 const uint FOG_VOLUME_JITTER = 1u;
 const uint FOG_VOLUME_HISTORY = 2u;
 const float FOG_HISTORY_WEIGHT = 0.9;
-const float FOG_HISTORY_TOLERANCE = 0.5;
+const uint FOG_SCATTERING_CHUNK = 8u;
 const uint PHYSICAL_MAP_CLEARCOAT = 1u;
 const uint PHYSICAL_MAP_CLEARCOAT_ROUGHNESS = 2u;
 const uint PHYSICAL_MAP_CLEARCOAT_NORMAL = 4u;
@@ -1116,7 +1116,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer FogVolumeRo
     uint slices;
     uint flags;
     float jitter;
-    uint _pad0;
+    uint slice_chunk;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer StandardMaterialRoot {

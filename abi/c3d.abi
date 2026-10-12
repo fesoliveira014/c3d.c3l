@@ -1087,7 +1087,7 @@ const uint FOG_VOLUME_MAX_SLICES = 128;
 const uint FOG_VOLUME_JITTER = 1;
 const uint FOG_VOLUME_HISTORY = 2;
 const float FOG_HISTORY_WEIGHT = 0.9; // Memory of about ten frames; higher smooths longer and trails longer.
-const float FOG_HISTORY_TOLERANCE = 0.5; // Change that drops a froxel's history; lower trails less, flickers more.
+const uint FOG_SCATTERING_CHUNK = 8; // Slices one temporal thread injects; the clamp reads one past each end, so 1.25x the samples, fewer threads if raised.
 
 root FogVolumeRoot {
     mat4         previous_view_proj;
@@ -1102,7 +1102,7 @@ root FogVolumeRoot {
     uint         slices;
     uint         flags;
     float        jitter;
-    uint         _pad0;
+    uint         slice_chunk;
 }
 
 const uint PHYSICAL_MAP_CLEARCOAT = 1;

@@ -10,8 +10,6 @@ layout(push_constant) uniform Push {
     uint64_t root_gpu;
 } pc;
 
-const float FOG_CHANGE_FLOOR = 1e-6; // keeps the relative change finite where both values are zero
-
 // Henyey-Greenstein: the share of the sun's light scattered through an angle, per steradian.
 float fog_phase(float cos_angle, float anisotropy) {
     float squared = anisotropy * anisotropy;
@@ -64,24 +62,21 @@ vec4 fog_history(FogVolumeRoot root, FrameRoot frame, SkyFogGpu sky, vec3 positi
     return vec4(history * frame.pre_exposure_ratio, 1.0);
 }
 
-// One froxel: the fog's optical depth over its slice and the light it scatters toward the camera per unit of it.
-void main() {
-    FogVolumeRoot root = FogVolumeRoot(pc.root_gpu);
-    uvec3 froxel = gl_GlobalInvocationID;
-    if (froxel.x >= root.width || froxel.y >= root.height) return;
-
-    FrameRoot frame = FrameRoot(root.frame);
-    SkyFogGpu sky = SkyFogGpu(frame.sky_fog);
-    // An orthographic view has no camera position to measure the previous distance from.
-    bool temporal = (root.flags & FOG_VOLUME_JITTER) != 0u && frame.proj[3][3] == 0.0;
-    vec2 uv = (vec2(froxel.xy) + 0.5) / vec2(root.width, root.height);
-    vec3 origin;
-    vec3 direction;
-    fog_pixel_ray(frame, uv, origin, direction);
-    float near = fog_slice_distance(sky, froxel.z);
-    float far = fog_slice_distance(sky, froxel.z + 1u);
+// The light a froxel scatters toward the camera at its sample depth, and the fog's optical depth over its slice.
+vec3 slice_inscatter(
+    FogVolumeRoot root,
+    FrameRoot frame,
+    SkyFogGpu sky,
+    bool temporal,
+    vec3 origin,
+    vec3 direction,
+    uint slice,
+    out float optical_depth
+) {
+    float near = fog_slice_distance(sky, slice);
+    float far = fog_slice_distance(sky, slice + 1u);
     float start = clamp(fog_clip_start(frame, origin, direction), near, far);
-    float optical_depth = height_fog_optical_depth(sky, origin + direction * start, direction, far - start);
+    optical_depth = height_fog_optical_depth(sky, origin + direction * start, direction, far - start);
 
     float sample_distance = temporal ? mix(start, far, root.jitter) : 0.5 * (start + far);
     vec3 position = origin + direction * sample_distance;
@@ -94,16 +89,54 @@ void main() {
         float phase = fog_phase(-dot(direction, sun.direction_cos_outer.xyz), sky.fog_anisotropy);
         radiance += sky.fog_albedo_density.rgb * phase * sun.color_intensity.rgb * sun.color_intensity.w * visibility;
     }
-    radiance += additional_light_scattering(frame, sky, root.sun_light, position, direction, view_depth);
-    if (temporal && (root.flags & FOG_VOLUME_HISTORY) != 0u) {
-        // The grid centre, not the jittered sample, so a still camera reads the texel it wrote.
-        float share = (float(froxel.z) + 0.5) / float(root.slices);
-        vec4 history = fog_history(root, frame, sky, origin + direction * (share * share * sky.fog_max_distance));
-        float current_mean = dot(radiance, vec3(1.0 / 3.0));
-        float history_mean = dot(history.rgb, vec3(1.0 / 3.0));
-        float change = abs(current_mean - history_mean) / max(max(current_mean, history_mean), FOG_CHANGE_FLOOR);
-        float response = 1.0 - clamp(change / FOG_HISTORY_TOLERANCE, 0.0, 1.0);
-        radiance = mix(radiance, history.rgb, FOG_HISTORY_WEIGHT * history.a * response);
+    return radiance + additional_light_scattering(frame, sky, root.sun_light, position, direction, view_depth);
+}
+
+// One column over a chunk of slices. With history, each froxel's reprojected history is clamped to the range of
+// its own in-scatter and its depth neighbours', then blended; the slices just outside the chunk are read, not written.
+void main() {
+    FogVolumeRoot root = FogVolumeRoot(pc.root_gpu);
+    uvec2 column = gl_GlobalInvocationID.xy;
+    if (column.x >= root.width || column.y >= root.height) return;
+
+    FrameRoot frame = FrameRoot(root.frame);
+    SkyFogGpu sky = SkyFogGpu(frame.sky_fog);
+    // An orthographic view has no camera position to measure the previous distance from.
+    bool temporal = (root.flags & FOG_VOLUME_JITTER) != 0u && frame.proj[3][3] == 0.0;
+    bool reproject = temporal && (root.flags & FOG_VOLUME_HISTORY) != 0u;
+    vec2 uv = (vec2(column) + 0.5) / vec2(root.width, root.height);
+    vec3 origin;
+    vec3 direction;
+    fog_pixel_ray(frame, uv, origin, direction);
+
+    uint first = gl_GlobalInvocationID.z * root.slice_chunk;
+    uint end = first + root.slice_chunk;
+    float optical_depth;
+    vec3 radiance = slice_inscatter(root, frame, sky, temporal, origin, direction, first, optical_depth);
+    vec3 below = radiance;
+    if (reproject && first > 0u) {
+        float unused;
+        below = slice_inscatter(root, frame, sky, temporal, origin, direction, first - 1u, unused);
     }
-    store_storage_texture_3d(root.scattering, ivec3(froxel), vec4(radiance, optical_depth));
+    for (uint slice = first; slice < end; slice++) {
+        vec3 above = radiance;
+        float above_depth = optical_depth;
+        if (slice + 1u < end || (reproject && slice + 1u < root.slices)) {
+            above = slice_inscatter(root, frame, sky, temporal, origin, direction, slice + 1u, above_depth);
+        }
+
+        vec3 scattered = radiance;
+        if (reproject) {
+            // The grid centre, not the jittered sample, so a still camera reads the texel it wrote.
+            float share = (float(slice) + 0.5) / float(root.slices);
+            vec4 history = fog_history(root, frame, sky, origin + direction * (share * share * sky.fog_max_distance));
+            vec3 clamped = clamp(history.rgb, min(below, min(radiance, above)), max(below, max(radiance, above)));
+            scattered = mix(radiance, clamped, FOG_HISTORY_WEIGHT * history.a);
+        }
+        store_storage_texture_3d(root.scattering, ivec3(column, slice), vec4(scattered, optical_depth));
+
+        below = radiance;
+        radiance = above;
+        optical_depth = above_depth;
+    }
 }

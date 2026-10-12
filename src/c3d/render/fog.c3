@@ -35,6 +35,17 @@ macro bool @fog_presets_fit_volume() @private {
 
 $assert @fog_presets_fit_volume();
 
+macro bool @fog_slices_fill_chunks() @private {
+    $foreach $quality : FogQuality::values:
+        $if $quality.slices % shader::FOG_SCATTERING_CHUNK != 0:
+            return false;
+        $endif
+    $endforeach
+    return true;
+}
+
+$assert @fog_slices_fill_chunks();
+
 // What a volume pair was injected under; the sun's direction is compared by angle, everything else exactly.
 struct FogFrame @private {
     ulong     scene;
@@ -240,6 +251,7 @@ fn void? record_fog_volume(
         )!;
     }
     bool temporal = record.desc.fog_temporal;
+    uint slice_chunk = temporal ? shader::FOG_SCATTERING_CHUNK : 1;
     FogHistory* history = &record.fog_history;
     Target* integrated = fog_integrated_volume(record);
     Target* scattering = temporal ? &record.fog_volumes[history.slot ^ 1] : integrated;
@@ -261,6 +273,7 @@ fn void? record_fog_volume(
         .flags                    = (temporal ? shader::FOG_VOLUME_JITTER : 0)
           | (reproject ? shader::FOG_VOLUME_HISTORY : 0),
         .jitter                   = temporal ? maths::halton(history.sample + 1, 2) : 0,
+        .slice_chunk              = slice_chunk,
     };
     if (temporal) history.record(current);
 
@@ -270,7 +283,7 @@ fn void? record_fog_volume(
         uint columns = (scattering.width + shader::POST_GROUP_SIZE - 1) / shader::POST_GROUP_SIZE;
         uint rows = (scattering.height + shader::POST_GROUP_SIZE - 1) / shader::POST_GROUP_SIZE;
         gpu::cmd_bind_pipeline(&renderer.commands, *scattering_pipeline)!;
-        gpu::cmd_dispatch(&renderer.commands, root.address, { columns, rows, scattering.depth })!;
+        gpu::cmd_dispatch(&renderer.commands, root.address, { columns, rows, scattering.depth / slice_chunk })!;
     }!;
     @profile_pass(renderer, Pass.FOG_INTEGRATION) {
         scattering.transition(&renderer.commands, gpu::storage_at({ .compute }, { .read, .write }))!;
