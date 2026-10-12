@@ -4,12 +4,6 @@ import c3d;
 import c3d::asset;
 import std::math;
 
-struct BlendSpaceFade @private {
-    float* weight;
-    float* target;
-    float* rate;
-}
-
 struct BlendPhaseStep @private {
     double start;
     double travel;
@@ -17,37 +11,20 @@ struct BlendPhaseStep @private {
     double clock_rate;
 }
 
-fn bool? stop_blend_space_weight(BlendSpaceFade fade, float duration) @private {
-    if (!math::is_finite(duration) || duration < 0) return c3d::INVALID_ARGUMENT~;
-    if (duration == 0) return true;
+fn bool advance_blend_space_weight(BlendSpaceControl* space, float dt) @private {
+    float step = space.fade_rate * dt;
+    float remaining = space.fade_target - space.weight;
 
-    *fade.target = 0;
-    *fade.rate = *fade.weight / duration;
-    return false;
-}
-
-fn void? fade_blend_space_weight(BlendSpaceFade fade, float target, float duration) @private {
-    if (!math::is_finite(target) || target < 0 || target > 1
-      || !math::is_finite(duration) || duration <= 0) return c3d::INVALID_ARGUMENT~;
-
-    *fade.target = target;
-    *fade.rate = math::abs(target - *fade.weight) / duration;
-}
-
-fn bool advance_blend_space_weight(BlendSpaceFade fade, float dt) @private {
-    float step = *fade.rate * dt;
-    float remaining = *fade.target - *fade.weight;
-
-    if (*fade.rate > 0) {
+    if (space.fade_rate > 0) {
         if (math::abs(remaining) <= step) {
-            *fade.weight = *fade.target;
-            *fade.rate = 0;
+            space.weight = space.fade_target;
+            space.fade_rate = 0;
         } else {
-            *fade.weight += remaining < 0 ? -step : step;
+            space.weight += remaining < 0 ? -step : step;
         }
     }
 
-    return *fade.weight == 0 && *fade.target == 0;
+    return space.weight == 0 && space.fade_target == 0;
 }
 
 fn BlendPhaseStep advance_blend_phase(

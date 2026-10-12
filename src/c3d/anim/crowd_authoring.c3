@@ -437,10 +437,9 @@ fn CrowdInstanceAuthoring? capture_playback_authoring(
 
     bool[MAX_BLEND_SPACES] retained_spaces;
     uint space_count;
-    foreach (index, space : playback.blend_spaces) {
-        BlendSpace2D* planar = &playback.blend_spaces_2d[index];
-        retained_spaces[index] = (space.count != 0 && !(space.fade_rate > 0 && space.fade_target == 0))
-          || (planar.count != 0 && !(planar.fade_rate > 0 && planar.fade_target == 0));
+    foreach (index, &space : playback.blend_spaces) {
+        BlendSpaceControl* control = space.count ? &space.control : &playback.blend_spaces_2d[index].control;
+        retained_spaces[index] = control.count != 0 && !(control.fade_rate > 0 && control.fade_target == 0);
         if (retained_spaces[index]) space_count++;
     }
 
@@ -491,19 +490,18 @@ fn CrowdInstanceAuthoring? capture_playback_authoring(
     }
 
     uint space_index;
-    foreach (index, space : playback.blend_spaces) {
+    foreach (index, &space : playback.blend_spaces) {
         if (!retained_spaces[index]) continue;
 
         CrowdSpaceAuthoring* captured = &destination.spaces[space_index++];
         BlendSpace2D* planar = &playback.blend_spaces_2d[index];
-        uint count = planar.count ? planar.count : space.count;
+        BlendSpaceControl* control = planar.count ? &planar.control : &space.control;
+        uint count = control.count;
         *captured = {
             .parameter = planar.count ? 0 : space.parameter,
-            .weight = planar.count
-              ? (planar.fade_rate > 0 ? planar.fade_target : planar.weight)
-              : (space.fade_rate > 0 ? space.fade_target : space.weight),
-            .speed = planar.count ? planar.speed : space.speed,
-            .playing = planar.count ? planar.playing : space.playing,
+            .weight = control.fade_rate > 0 ? control.fade_target : control.weight,
+            .speed = control.speed,
+            .playing = control.playing,
             .kind = planar.count ? TWO_DIMENSIONAL : ONE_DIMENSIONAL,
             .parameter_2d = planar.count ? planar.parameter : (Vec2){},
         };

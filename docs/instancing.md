@@ -285,9 +285,9 @@ while (window.poll()) {
   `+ A*(Action::size + AnimationActionId::size + 2*uint::size + N*bool::size)`
   `+ MAX_BLEND_SPACES*BlendSpace1D::size + CrowdPlaybackSlot::size`, multiplied by capacity,
   where N is node count, M mesh count, W complete logical morph width and A action capacity.
-  A prepared two-row 2D block adds storage per capacity slot: 432 bytes at default
-  action capacity 4, 624 bytes at 8 and 1008 bytes at 16, even with no active groups. At crowd
-  capacity 4096 that is 1,769,472 bytes or 4,128,768 bytes for action capacities 4 or 16.
+  A prepared two-row 2D block adds storage per capacity slot: 416 bytes at default
+  action capacity 4, 608 bytes at 8 and 992 bytes at 16, even with no active groups. At crowd
+  capacity 4096 that is 1,703,936 bytes or 4,063,232 bytes for action capacities 4 or 16.
   The [complete 2D table](animation.md#prepared-storage) includes smaller capacities.
   The owner also retains copied model baselines and one shared pose scratch block. Crowd-wide
   output and crossing scratch cost `event_capacity*(CrowdEvent::size + EventBookmark::size)`.

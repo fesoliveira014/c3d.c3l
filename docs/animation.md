@@ -622,8 +622,9 @@ semantics, including unselected and zero-weight members. Pausing the phase still
 allows parameter edits to change the pose. Keep parameter, speed and phase
 finite, phase in `[0,1)`, and weight in `[0,1]`.
 
-Use `stop_blend_space_2d(space, fade_out)` and
-`fade_blend_space_2d(space, target_weight, duration)` for group removal and fades.
+Both group kinds embed one `BlendSpaceControl` (member count, weight,
+fade, phase, speed and playing), so `stop_blend_space(space, fade_out)` and
+`fade_blend_space(space, target_weight, duration)` serve 2D groups too.
 Independent member stop/cross-fade returns `INVALID_ARGUMENT`. Creation copies
 coordinates, triangles and captured masks; caller arrays may be changed or freed
 afterwards. Group arrays and member configuration stay library-owned and
@@ -635,21 +636,21 @@ owner's 2D slot storage after structural changes and discard it after removal.
 Every playback owner prepares two 2D rows even when neither is active. For action
 capacity `A`, each row holds `A` action IDs, `A` coordinates, up to
 `max(0, 2*A - 5)` three-byte triangles and `A` two-byte hull edges. On x64 the
-control is 128 bytes, aligned to eight bytes. Both rows share one allocation;
+control is 120 bytes, aligned to eight bytes. Both rows share one allocation;
 these totals include controls and alignment padding:
 
 | Action capacity | Retained 2D bytes per playback owner |
 | ---: | ---: |
-| 1 | 304 |
-| 2 | 336 |
-| 3 | 384 |
-| 4 | 432 |
-| 8 | 624 |
-| 9 | 672 |
-| 15 | 960 |
-| 16 | 1008 |
+| 1 | 288 |
+| 2 | 320 |
+| 3 | 368 |
+| 4 | 416 |
+| 8 | 608 |
+| 9 | 656 |
+| 15 | 944 |
+| 16 | 992 |
 
-An Animator pays 1008 bytes. A crowd pays the table value for every slot of its
+An Animator pays 992 bytes. A crowd pays the table value for every slot of its
 fixed capacity, including inactive slots. These bytes exclude existing 1D rows,
 actions, cursors, additive references and weighted mask rows. Group updates
 allocate nothing; creation allocates only the members' captured action data.

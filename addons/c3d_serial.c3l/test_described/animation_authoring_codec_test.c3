@@ -660,9 +660,9 @@ fn void test_animation_authoring_codec_both_owners_omit_outgoing_and_settle_inco
                     desc: { .weighted_mask = &mask, .additive = true, .additive_scale = MULTIPLICATIVE },
                 )!!;
                 if (outgoing) {
-                    player.stop_blend_space_2d(space, 2)!!;
+                    player.stop_blend_space(space, 2)!!;
                 } else {
-                    player.fade_blend_space_2d(space, 0.4f, 2)!!;
+                    player.fade_blend_space(space, 0.4f, 2)!!;
                 }
             } else {
                 source = model::instantiate(&fixture.assets, &fixture.source, model_id)!!;
@@ -675,9 +675,9 @@ fn void test_animation_authoring_codec_both_owners_omit_outgoing_and_settle_inco
                     desc: { .weighted_mask = &mask, .additive = true, .additive_scale = MULTIPLICATIVE },
                 )!!;
                 if (outgoing) {
-                    animator.stop_blend_space_2d(space, 2)!!;
+                    animator.stop_blend_space(space, 2)!!;
                 } else {
-                    animator.fade_blend_space_2d(space, 0.4f, 2)!!;
+                    animator.fade_blend_space(space, 0.4f, 2)!!;
                 }
             }
             space.parameter = { 0.25f, 0.5f };
