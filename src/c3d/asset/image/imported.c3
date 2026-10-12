@@ -60,7 +60,12 @@ fn ImportedTexture? decode_imported_texture(
     return { .desc = desc, .pixels = decoded.pixels };
 }
 
-fn String imported_texture_key(String model_key, usz image_index, bool srgb, TextureDesc desc) @private {
+fn String imported_texture_key(
+    String model_key,
+    usz image_index,
+    bool srgb,
+    TextureDesc desc,
+) @private {
     String role = srgb ? "srgb" : "linear";
 
     switch (desc.semantic) {

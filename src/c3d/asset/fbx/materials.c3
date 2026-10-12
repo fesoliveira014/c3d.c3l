@@ -194,7 +194,12 @@ fn TextureId? plain_texture(
         debug_name: "fbx_image",
     )!;
 
-    String key = image::imported_texture_key(importer.key, texture.typed_id, srgb, decoded.desc);
+    String key = image::imported_texture_key(
+        model_key: importer.key,
+        image_index: texture.typed_id,
+        srgb: srgb,
+        desc: decoded.desc,
+    );
     TextureId id = image::push_imported_texture(&importer.document, &decoded, key)!;
 
     table[texture.typed_id] = id;

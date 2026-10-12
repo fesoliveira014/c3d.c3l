@@ -35,10 +35,11 @@ the unmasked texture. Supplied container mips retain their authored bytes.
 
 With `generate_tangents`, a missing tangent stream for a normal-mapped triangle
 primitive is generated from the map's raw UV0 or UV1 using pinned MikkTSpace.
-Lookup transforms are excluded. The base normal map's UV set takes precedence
-over the clearcoat normal map's; a missing UV stream retains derivative
-fallback. Existing finite authored tangent XYZ, zero included, is preserved and
-its handedness is normalized to a sign.
+Lookup transforms are excluded. When the base and clearcoat normal maps use
+different UV sets, generated tangents follow the base map's set and the coat is
+shaded with that frame; a missing UV stream retains derivative fallback.
+Existing finite authored tangent XYZ, zero included, is preserved and its
+handedness is normalized to a sign.
 `regenerate_tangents` explicitly replaces authored tangents and splits geometry
 where needed. It can recover decoded non-finite or zero-W tangent values, but
 a structural TANGENT count or type mismatch still returns

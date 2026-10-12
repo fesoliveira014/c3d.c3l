@@ -100,7 +100,12 @@ fn TextureId? texture_for(
         return variant.texture;
     }
 
-    String key = texture_variant_key(importer, image_index, srgb, *desc);
+    String key = texture_variant_key(
+        importer: importer,
+        image_index: image_index,
+        srgb: srgb,
+        desc: *desc,
+    );
     TextureId id = image::push_imported_texture(&importer.document, &decoded, key)!;
 
     importer.texture_variants[importer.texture_variant_count++] = {
@@ -156,7 +161,12 @@ fn String texture_variant_key(
         );
     }
 
-    return image::imported_texture_key(importer.key, image_index, srgb, desc);
+    return image::imported_texture_key(
+        model_key: importer.key,
+        image_index: image_index,
+        srgb: srgb,
+        desc: desc,
+    );
 }
 
 fn CoveragePolicy mask_policy(material::AlphaMode mode, float cutoff, float factor) @private {
