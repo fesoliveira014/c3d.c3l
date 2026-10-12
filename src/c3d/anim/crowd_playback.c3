@@ -147,7 +147,7 @@ fn void CrowdPlaybackState.sample_range(
     PoseScratch* scratch,
 ) {
     float dt = self.advanced_dt;
-    if (scratch.cache) scratch.cache.begin_generation(self.sample_generation);
+    if (scratch.cache) begin_pose_cache_generation(scratch.cache, self.sample_generation);
 
     for (uint index = first; index < first + count; index++) {
         CrowdPlaybackSlot* slot = &self.slots[index];
@@ -535,8 +535,8 @@ fn CrowdPlaybackState*? create_crowd_playback(
         event_capacity: event_capacity,
         inertia_enabled: inertia_enabled,
         owns_output: false,
-        pose_cache: true,
     )!;
+    state.pose_storage.scratch.cache = create_pose_cache(allocator, state.base_pose.len, state.base_morph_weights)!;
 
     if (inertia_enabled) {
         state.inertial_storage = create_inertial_storage(
@@ -639,14 +639,17 @@ fn void destroy_crowd_playback(CrowdPlaybackState* state) {
  @return? c3d::CAPACITY_EXCEEDED
 *>
 fn PoseScratch? create_crowd_pose_scratch(CrowdPlaybackState* state) {
-    return create_pose_scratch_try(
+    PoseScratch scratch = create_pose_scratch_try(
         allocator: state.allocator,
         node_count: state.base_pose.len,
         base_morph_weights: state.base_morph_weights,
         event_capacity: 0,
         inertia_enabled: state.inertial_storage != null,
-        pose_cache: true,
-    );
+    )!;
+    defer catch destroy_pose_scratch(state.allocator, &scratch);
+
+    scratch.cache = create_pose_cache(state.allocator, state.base_pose.len, state.base_morph_weights)!;
+    return scratch;
 }
 
 <*

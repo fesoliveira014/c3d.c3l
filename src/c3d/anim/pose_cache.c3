@@ -78,15 +78,22 @@ fn void destroy_pose_cache(Allocator allocator, PoseCache* cache) @private {
     alloc::free(allocator, cache);
 }
 
-<*
- Empty the table when the crowd has advanced since the scratch last sampled.
- @param generation : "The crowd's sample generation."
-*>
-fn void PoseCache.begin_generation(&self, uint generation) {
-    if (self.generation == generation) return;
+fn void begin_pose_cache_generation(PoseCache* cache, uint generation) @private {
+    if (cache.generation == generation) return;
 
-    self.entries[..] = (PoseCacheEntry){};
-    self.generation = generation;
+    cache.entries[..] = (PoseCacheEntry){};
+    cache.generation = generation;
+}
+
+// The murmur3 finalizer over the key words.
+fn uint pose_key_hash(ClipId clip, uint revision, uint time_bits) @private @inline {
+    uint hash = time_bits ^ (clip.index * 0x9E3779B1) ^ (clip.generation * 0xC2B2AE35) ^ (revision * 0x85EBCA6B);
+    hash ^= hash >> 16;
+    hash *= 0x85EBCA6B;
+    hash ^= hash >> 13;
+    hash *= 0xC2B2AE35;
+    hash ^= hash >> 16;
+    return hash;
 }
 
 // The first sighting of a key only claims its slot, so a frame without repeats records nothing.
@@ -102,15 +109,10 @@ fn PoseCacheWalk begin_pose_cache_walk(
 
     cache.lookups++;
     uint time_bits = bitcast(time, uint);
-    uint mixed = time_bits ^ (clip.index * 0x9E3779B1) ^ (clip.generation * 0xC2B2AE35) ^ (revision * 0x85EBCA6B);
-    mixed ^= mixed >> 16;
-    mixed *= 0x85EBCA6B;
-    mixed ^= mixed >> 13;
-    mixed *= 0xC2B2AE35;
-    mixed ^= mixed >> 16;
+    uint hash = pose_key_hash(clip, revision, time_bits);
 
     for (uint probe = 0; probe < POSE_CACHE_PROBES; probe++) {
-        uint index = (mixed + probe) % POSE_CACHE_CAPACITY;
+        uint index = (hash + probe) % POSE_CACHE_CAPACITY;
         PoseCacheEntry* entry = &cache.entries[index];
         if (!entry.live) {
             // Recording on the first sighting cost about 2.8% of an unshared update at 512 instances.

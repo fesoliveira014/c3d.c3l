@@ -34,7 +34,6 @@ fn PlaybackView Animator.playback(&self) {
  Allocate fixed pose/scratch arrays; baselines remain borrowed until destruction.
  @param event_capacity : "Maximum retained events in one evaluation."
  @param owns_output : "False when the caller supplies the evaluated pose and weights."
- @param pose_cache : "Gives the scratch a table of shared raw samples, for crowd sampling."
  @return? c3d::CAPACITY_EXCEEDED
  @require mesh_nodes.len == base_morph_weights.len
 *>
@@ -46,7 +45,6 @@ fn PoseStorage*? create_pose_storage_try(
     usz event_capacity,
     bool inertia_enabled = false,
     bool owns_output = true,
-    bool pose_cache = false,
 ) {
     PoseStorage* storage = alloc::new_try(allocator, PoseStorage) ?? c3d::CAPACITY_EXCEEDED~!;
     defer catch destroy_pose_storage(allocator, storage);
@@ -75,7 +73,6 @@ fn PoseStorage*? create_pose_storage_try(
         base_morph_weights: base_morph_weights,
         event_capacity: event_capacity,
         inertia_enabled: inertia_enabled,
-        pose_cache: pose_cache,
     )!;
 
     if (owns_output) {
@@ -100,7 +97,6 @@ fn PoseScratch? create_pose_scratch_try(
     float[][] base_morph_weights,
     usz event_capacity,
     bool inertia_enabled,
-    bool pose_cache,
 ) @private {
     PoseScratch scratch;
     defer catch destroy_pose_scratch(allocator, &scratch);
@@ -123,7 +119,6 @@ fn PoseScratch? create_pose_scratch_try(
     scratch.sample = alloc::new_array_try(allocator, float, (sz)sample_width) ?? c3d::CAPACITY_EXCEEDED~!;
 
     if (inertia_enabled) scratch.inertial = create_inertial_scratch(allocator, node_count, morphs)!;
-    if (pose_cache) scratch.cache = create_pose_cache(allocator, node_count, base_morph_weights)!;
 
     return scratch;
 }
