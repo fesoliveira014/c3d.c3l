@@ -203,7 +203,8 @@ fn Track pack_track(Track* source) @local {
             foreach (uint component, entry : value) {
                 float* range = &ranges[((usz)slot * stride + component) * 2];
                 usz code = ((usz)key * slots + slot) * stride + component;
-                codes[code] = range[1] > 0 ? (ushort)math::round((entry - range[0]) / range[1]) : 0;
+                float scaled = range[1] > 0 ? math::round((entry - range[0]) / range[1]) : 0;
+                codes[code] = (ushort)math::min(scaled, anim::QUANTIZED_CODE_MAX);
             }
         }
     }
