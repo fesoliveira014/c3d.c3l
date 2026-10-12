@@ -187,7 +187,8 @@ fn gpu::GpuAddress? Renderer.prepare_scene_trace(&self, Scene* scene, TraceKind 
             record_scene_trace(self, scene)!;
         };
         trace.prepared_frame = self.frame_index + 1;
-        if (trace.hardware_requested || self.posed_trace.dispatches.len()) {
+        // The trace claims posed bindings, whose dispatches must precede every reader of the slots' streams.
+        if (trace.hardware_requested || self.posed_trace.dispatches.len() || self.compute_skin.dispatches.len()) {
             record_pending_copies(self, &self.commands)!;
             record_trace_poses(self, &self.commands)!;
         }
