@@ -2022,6 +2022,26 @@ fn void test_animation_inertial_request_survives_unrelated_play_and_stop() @test
     assert(status.active && status.elapsed == 0.375);
 }
 
+fn void test_animation_inertial_instant_play_and_stop_invalidate_history() @test {
+    LayerFixture fixture;
+    create_inertial_owner(&fixture);
+    defer destroy_layer_fixture(&fixture);
+    ClipId idle = request_translation_clip(&fixture, { 0, 0, 0 }, { 0, 0, 0 });
+    ClipId lifted = request_translation_clip(&fixture, { 0, 0, 0.5f }, { 0, 0, 0.5f });
+    fixture.animator.play(&fixture.assets, idle)!!;
+    anim::update(&fixture.assets, &fixture.scene, 0.125f);
+
+    AnimationActionId lift = fixture.animator.play(&fixture.assets, lifted, { .layer = 1 })!!;
+    anim::update(&fixture.assets, &fixture.scene, 0.125f);
+    assert(inertial_owner_pose(&fixture).position.z == 0.5f);
+    assert(inertial_owner_row(&fixture).velocity[3].translation.z == 0);
+
+    fixture.animator.stop(lift)!!;
+    anim::update(&fixture.assets, &fixture.scene, 0.125f);
+    assert(inertial_owner_pose(&fixture).position.z == 0);
+    assert(inertial_owner_row(&fixture).velocity[3].translation.z == 0);
+}
+
 fn void test_animation_inertial_request_rotation_uses_shortest_twenty_degree_transition() @test {
     LayerFixture fixture;
     create_inertial_owner(&fixture);

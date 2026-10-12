@@ -143,6 +143,8 @@ fn AnimationActionId? PlaybackView.play(
         derivatives_enabled: self.inertial != null,
     )!;
 
+    if (desc.fade_in == 0) invalidate_inertial_history(self);
+
     return install_playback_action(self, state, desc.mask);
 }
 
@@ -164,6 +166,7 @@ fn void? PlaybackView.stop(&self, AnimationActionId action, float fade_out = 0) 
         uint index;
         while (!c3d::same_id(self.order[index], action)) index++;
         remove_action(self, index);
+        invalidate_inertial_history(self);
         return;
     }
 
@@ -534,7 +537,7 @@ fn void advance(PlaybackView* playback, AssetStore* assets, float dt) @local {
             sought = true;
         }
 
-        if (playback.inertial && (revised || sought)) playback.inertial.control.history_valid = false;
+        if (revised || sought) invalidate_inertial_history(playback);
         if (action.blend_space) continue;
 
         if (action.playing) advance_clock(action, clip.data.duration, (double)dt * action.speed);

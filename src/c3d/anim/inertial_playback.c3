@@ -149,3 +149,7 @@ fn void advance_inertial_elapsed(InertialRow* row, double dt) @private {
     row.control.elapsed = math::min(row.control.duration, row.control.elapsed + dt);
     row.control.active = row.control.elapsed < row.control.duration;
 }
+
+fn void invalidate_inertial_history(PlaybackView* playback) @private {
+    if (playback.inertial) playback.inertial.control.history_valid = false;
+}

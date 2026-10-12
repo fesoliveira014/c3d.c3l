@@ -182,6 +182,8 @@ fn BlendSpace1D*? PlaybackView.add_blend_space(
 
     self.blend_spaces[slot] = created;
     self.actions.get(created.actions[0]).weight = created.weight;
+    if (desc.fade_in == 0) invalidate_inertial_history(self);
+
     return &self.blend_spaces[slot];
 }
 
@@ -195,7 +197,10 @@ fn void? PlaybackView.stop_blend_space(&self, BlendSpace1D* space, float fade_ou
     if (!space.count) return c3d::INVALID_ARGUMENT~;
 
     BlendSpaceFade fade = { .weight = &space.weight, .target = &space.fade_target, .rate = &space.fade_rate };
-    if (stop_blend_space_weight(fade, fade_out)!) remove_blend_space(self, space);
+    if (!stop_blend_space_weight(fade, fade_out)!) return;
+
+    remove_blend_space(self, space);
+    invalidate_inertial_history(self);
 }
 
 <*
