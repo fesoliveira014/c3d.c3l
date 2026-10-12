@@ -128,6 +128,8 @@
     },
     "skinned_crowd": {
       "type": "executable",
+      "dependencies": ["c3d_profile"],
+      "features": ["C3D_PROFILE_GPU", "C3D_PROFILE_INTERNAL"],
       "sources": [
         "src/skinned_crowd.c3"
       ]
