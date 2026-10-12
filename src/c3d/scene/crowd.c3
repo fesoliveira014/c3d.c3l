@@ -32,6 +32,7 @@ struct CrowdPart {
 <*
  Scene-owned instances sharing immutable model data and bounded playback.
  Only placement and color elements are directly writable.
+ pose_revisions, published_weights and palette_scratch are kept by the library; applications do not write them.
 *>
 struct AnimatedCrowd {
     ModelId model;
@@ -52,6 +53,9 @@ struct AnimatedCrowd {
     Mat4[] scratch_worlds;
     Mat4[] palettes;
     float[] morph_weights;
+    uint[] pose_revisions;      // per instance; advances when its pose changes, never 0 once published
+    float[] published_weights;  // morph_weights as of the last revision advance
+    Mat4[] palette_scratch;     // joint_count entries the publish evaluates into before comparing
 }
 
 <* Whether the crowd owns its complete runtime and part batches. *>
@@ -125,6 +129,9 @@ fn void free_crowd(Entity entity, void* component, void* user) @private {
     alloc::free(allocator, crowd.parts.ptr);
     alloc::free(allocator, crowd.scratch_worlds.ptr);
     alloc::free(allocator, crowd.palettes.ptr);
+    alloc::free(allocator, crowd.pose_revisions.ptr);
+    alloc::free(allocator, crowd.published_weights.ptr);
+    alloc::free(allocator, crowd.palette_scratch.ptr);
     alloc::free(allocator, crowd.placements.ptr);
     alloc::free(allocator, crowd.seeds.ptr);
     alloc::free(allocator, crowd.colors.ptr);
