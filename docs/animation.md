@@ -238,9 +238,9 @@ the plain ratio at weight 1. For below `(2,3,4)`, reference `(2,4,8)`, sample
 at play. Only STEP and LINEAR scale tracks are supported. Admission checks their
 keys once: every key and the reference must be finite and strictly positive,
 positive subnormals included, or play returns `INVALID_ARGUMENT` before creating
-an action or group. A `CUBIC_SPLINE` scale track with valid keys and finite
-tangents returns `UNSUPPORTED` before mutation. Runtime applies no clamp or
-repeated domain scan.
+an action or group. A `CUBIC_SPLINE` scale track with valid keys returns
+`UNSUPPORTED` before mutation. Playback samples these tracks like any other
+and applies no clamp or repeated domain scan.
 
 An additive action keeps the reference pose it sampled at `play` until it is played again. After
 `replace_clip_owned`, running actions re-seek on the new tracks, but an additive action's reference pose and

@@ -474,13 +474,6 @@ fn Action? prepare_validated_playback_action(
                 );
             }
 
-            if (track.path == TargetPath.SCALE && desc.additive_scale == AdditiveScaleMode.MULTIPLICATIVE) {
-                Vec3 scale = sample_multiplicative_scale_reference(track);
-                reference[offset] = scale.x;
-                reference[offset + 1] = scale.y;
-                reference[offset + 2] = scale.z;
-            }
-
             offset += track.stride();
         }
     }

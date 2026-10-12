@@ -157,13 +157,7 @@ fn void blend_pose(
                 if (weight <= 0) continue;
 
                 float[] sample = samples[:stride];
-                if (!onset && track.path == TargetPath.SCALE
-                  && action.additive_scale == AdditiveScaleMode.MULTIPLICATIVE) {
-                    Vec3 scale = sample_multiplicative_scale(track, action.time, &action.cursors[track_index]);
-                    sample[0] = scale.x;
-                    sample[1] = scale.y;
-                    sample[2] = scale.z;
-                } else if (!onset && !consumed_chain) {
+                if (!onset && !consumed_chain) {
                     sample_track(
                         track: track,
                         time: action.time,
