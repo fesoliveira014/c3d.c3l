@@ -240,11 +240,12 @@ void write_mesh_outputs(
     } else {
         // An instance without a previous matrix did not change, so prev_model carries only the batch node's motion.
         PreviousPoseGpu previous_pose = PreviousPoseGpu(draw.previous_pose);
-        previous_instance = draw.prev_model * model;
         if (previous_pose.instances != 0ul
             && source >= previous_pose.instances_first && source < previous_pose.instances_end) {
             previous_instance = PreviousInstanceArray(previous_pose.instances)
                 .values[source - previous_pose.instances_first];
+        } else {
+            previous_instance = draw.prev_model * model;
         }
     }
 #endif
