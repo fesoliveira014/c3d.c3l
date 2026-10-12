@@ -31,6 +31,7 @@ enum Pass : int {
     LIGHTING,
     FORWARD_OPAQUE,
     SKY,
+    CLOUDS,
     SCENE_SNAPSHOT,
     SCENE_MIPS,
     SCENE_READ,
@@ -65,6 +66,7 @@ enum EnvironmentStage : int (String label) {
     SKY_TRANSMITTANCE { "environment.sky_transmittance" },
     SKY_MULTI_SCATTERING { "environment.sky_multi_scattering" },
     SKY { "environment.sky" },
+    CLOUD_NOISE { "environment.cloud_noise" },
 }
 
 <*
@@ -125,6 +127,7 @@ struct Stats {
     uint  atmospheres_ignored;   // per resolution: extra, invalid or sunless atmospheres of a scene
     uint  atmospheres_dropped;   // per resolution: atmospheres drawn as absent for want of a mirror slot
     uint  fogs_ignored;          // per view: extra or invalid height fogs the view's layers see
+    uint  clouds_ignored;        // per view: extra or invalid cloud layers the view's layers see
     uint  sky_regenerations;     // this frame: atmosphere lighting marked for regeneration
     ViewId cluster_view;
     uint  cluster_count;
