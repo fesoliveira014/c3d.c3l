@@ -11,7 +11,7 @@ import std::atomic::types;
 import c3d::job;
 
 const uint OVERHEAD_RANGES @local = 1024; // the gate's workload: one run of 1024 empty ranges
-const uint[3] FIXED_WORKER_COUNTS @local = { 0, 1, 3 }; // inline, one worker and the CI runners' three
+const uint[3] FIXED_WORKER_COUNTS @private = { 0, 1, 3 }; // inline, one worker and the CI runners' three
 const uint KERNEL_MULTIPLIES @local = 16; // 64 multiply-adds each; 262 144 items cost 268M multiply-adds a pass
 const uint[3] ITEM_COUNTS @local = { 16384, 65536, 262144 };
 const uint[2] FIXED_BATCHES @local = { 64, 1024 };
@@ -20,7 +20,7 @@ const float CHAIN_STEP @local = 0.001f; // keeps the chained translations small
 const uint WARMUP_SAMPLES @local = 2; // wakes the workers and fills the temp pages before timing
 const uint SAMPLES @local = 11; // the median of eleven timed passes
 const uint PASSES @local = WARMUP_SAMPLES + SAMPLES;
-const double NANOSECONDS_PER_MICROSECOND @local = 1000;
+const double NANOSECONDS_PER_MICROSECOND @private = 1000;
 const uint LOADED_ITEMS @local = 65536; // the frame kernel timed beside background work
 const uint LOADED_BATCH @local = 1024; // about 64 ranges: scheduling stays a small share of the timed kernel
 const uint BACKGROUND_RANGES @local = 16384; // about 0.25 s of serial work, so it outlasts the timed frame passes
@@ -65,7 +65,7 @@ fn void load_range(void* data, uint first, uint count) @local {
     load.products[first / BACKGROUND_RANGE_ITEMS] = product;
 }
 
-fn double median(double[] samples) @local {
+fn double median(double[] samples) @private {
     sort::quicksort(samples);
     return samples[samples.len / 2];
 }
@@ -137,7 +137,7 @@ fn double time_recorded_run(JobPool* pool, JobRangeRecord[] records) @local @fea
     return median(&samples);
 }
 
-fn JobPool create_bench_pool(uint workers) @local {
+fn JobPool create_bench_pool(uint workers) @private {
     JobPoolDesc desc = job::default_job_pool_desc();
     desc.worker_count = workers;
     desc.background_workers = job::default_background_workers(workers);
@@ -300,8 +300,13 @@ fn bool report_kernel(
     return equal;
 }
 
-<* Measure the job pool's per-range overhead and a parallel kernel's speedup. *>
-fn int main() {
+<*
+ Measure the job pool's per-range overhead and a parallel kernel's speedup.
+ With --crowd COUNT it instead times animated crowd sampling over the pool.
+*>
+fn int main(String[] args) {
+    if (args.len > 1) return run_crowd_bench(args);
+
     JobPoolDesc defaults = job::default_job_pool_desc();
     io::printfn(
         "# job_bench logical_cpus=%d available_cpus=%d default_workers=%d background_workers=%d runs=%d "
