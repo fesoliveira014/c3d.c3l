@@ -431,7 +431,8 @@ height fog. A view with a cloud layer splits its blended draws after the pass, a
 
 **Memory.** Per view, `12 · ceil(w / 2) · ceil(h / 2)` bytes: a half-resolution `RGBA16F` target (8 B,
 scattered radiance and transmittance) and an `R32F` target (4 B, the distance), allocated the first
-frame the view draws a layer and kept until the view is destroyed or its working size changes. The renderer adds one 128³ `RGBA8`
+frame the view draws a layer and kept until the view is destroyed or its working size changes; twice that with
+[`cloud_temporal`](#cloud-temporal-accumulation). The renderer adds one 128³ `RGBA8`
 volume, 8 MiB. The [cloud shadow map](#cloud-shadows) adds `CLOUD_SHADOW_SIZE² × 2 B` per view.
 
 ### Cloud shadows
@@ -475,6 +476,51 @@ records no pass and allocates no map.
   map, as they do not see the clouds. Reflection captures render without clouds and so without their shadow. Mirror and
   clip-plane views have a map of their own.
 
+### Cloud temporal accumulation
+
+`ViewDesc.cloud_temporal` accumulates the layer over frames, so the jitter of one frame's march averages out. The switch is
+per view, as `fog_temporal` is: the history lives in the view's own images, a mirror and the main view differ in size and
+camera, and the layer is a scene component the views share. A view without it runs the plain march, a separate shader variant
+with none of what follows.
+
+- **Jitter.** The view's frame counter selects one of `CLOUD_TEMPORAL_SAMPLES` (16) Halton points a frame. Base 2 moves each
+  pixel's march start within its first step, added to the pixel's interleaved gradient value and wrapped, so neighbouring pixels
+  sample different depths in the same frame. Bases 3 and 5 move the ray within its half-resolution pixel, by up to half a pixel
+  each way. The first averages the sampling along the ray and the second the pixel's footprint across it. The history belongs to
+  the pixel's centre, from which the reprojection starts. An orthographic view takes neither offset nor history.
+- **Reprojection.** A pixel is traced back from the cloud's opacity-weighted distance: the point at that distance on its ray,
+  moved back by the wind the layer drifted since the previous frame, is projected through the view's previous view-projection and
+  read there from the previous frame's images with the five-tap Catmull-Rom filter TAA uses. A pixel with no cloud, whose distance is 0, goes back as
+  its direction, a point at infinity. A pixel whose previous position lies outside the previous frustum takes no history.
+  Camera motion and wind reproject and do not reject.
+- **Clamp.** The history's radiance and transmittance are clamped, per channel, to the range of this frame's values over the
+  pixel's 3 × 3 neighbours, then blended with `CLOUD_HISTORY_WEIGHT` (0.9), a memory of about ten frames. History the neighbours
+  no longer support, such as a cloud the wind moved on or a weather map that was edited, goes to their range at once. A group
+  of 16 × 16 pixels also marches a border of one pixel around it, so every pixel has its neighbours: 1.27 times the marches,
+  and the border is skipped on frames that take no history. The distance blends with the same weight where the frame and its history both have a
+  cloud, and takes whichever has one otherwise.
+- **Pre-exposure.** The history's radiance is multiplied by the ratio of the view's current pre-exposure to the one it was
+  marched under, so an exposure change rescales it instead of rejecting it; transmittance is not scaled. The images keep the
+  factor themselves, so the ratio holds without TAA, motion blur or screen-space GI on the view.
+- **Rejection.** The history of a view is dropped, and the next frame marches without it, when:
+  - `reset_view_history` ran, the view was created or configured (a resize reallocates the images), the switch was turned on, or
+    the scene changed;
+  - any `CloudLayer` field except `wind_offset` changed, the atmosphere's planet radius changed, or the frame origin changed;
+  - the sun's direction moved more than `CLOUD_HISTORY_SUN_DEGREES` (0.1°) since the previous frame.
+  The sun's colour and intensity, the ambient light and the contents of the weather map are not triggers; they converge through
+  the blend. A layer that changes every frame, or a sun turning faster than the threshold, gets no convergence.
+- **Ownership.** The view keeps two pairs of images. The march reads one pair as history and writes the other, which the composite
+  reads, and they swap only when the frame is submitted; an aborted frame neither swaps nor commits, so the next frame continues
+  from the last submitted one. The history is valid only if the view's own last submitted frame wrote it: a view that was not
+  rendered, or drew no layer, in a submitted frame starts again without history, and a second recording in one frame takes none.
+  A mirror or clip-plane view keeps its own pairs and history.
+- **Cost.** The memory is twice the layer's (see [Clouds](#clouds)). The march adds the reprojection, the filtered read of the
+  history and a fetch of its distance per pixel, and the border pixels' marches.
+- **Orbit.** From orbit a pixel spans kilometres of the deck, more than the size of its features, so one ray per pixel point-samples
+  them and the whole disc shows the aliasing as speckle that is the same every frame. The offset along the ray cannot average it;
+  the offset within the pixel does, so a still camera's disc settles within about ten frames to the footprint's average. A camera
+  or a sun that moves faster than the history converges shows the plain march's speckle.
+
 **Not drawn.**
 
 - The path tracer, traced reflection and probe hits and misses, and the atmosphere's lighting cubes do not
@@ -485,9 +531,9 @@ records no pass and allocates no map.
   depth alone. At cloud altitudes the case is rare.
 - The height fog covers the composite as it covers any pixel: over the sky it takes the fog to infinity, so
   a camera above the fog layer looking down sees the fog in front of the clouds below it.
-- There is no temporal accumulation: the jitter shows as grain, most where a pixel's footprint spans many
+- Without `cloud_temporal` one ray per pixel point-samples the deck and shows as grain, most where a pixel's footprint spans many
   features. From orbit that is the whole disc, not only the limb, because each pixel covers many repeats of
-  the coverage map and the noise.
+  the coverage map and the noise. [Temporal accumulation](#cloud-temporal-accumulation) averages it over frames.
 
 ## Custom stages
 
@@ -679,7 +725,9 @@ exposure; at noon the sun outshines them.
 `--clouds` adds a `CloudLayer` over a procedural coverage map the example builds on the CPU as the application's
 weather, lifts the noon and twilight presets 15° so the deck fills the view and advances `wind_offset` along +x every
 frame. Its panel section edits the coverage, which rebuilds the map, the density, the two altitudes and the wind speed, and
-switches the layer's shadows with a "Cloud shadows" checkbox; the wind moves them. It is rejected under `--path-traced`.
+switches the layer's shadows with a "Cloud shadows" checkbox; the wind moves them. `--cloud-temporal` turns on the views'
+[temporal accumulation](#cloud-temporal-accumulation) of the layer, and the panel has a "Cloud temporal accumulation" checkbox for it.
+It is rejected under `--path-traced`.
 
 The landscape examples `terrain`, `vegetation` and `water` take `--sky`: an `ATMOSPHERE_EARTH` on
 their sun and a haze pooling in the valleys, and `--volumetric-fog` with it.
