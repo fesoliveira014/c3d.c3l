@@ -36,7 +36,6 @@ struct TextureMipChain {
  Prepare uncompressed 2D or cube mips from complete base layers.
  @param pixels : "Borrowed mip-zero texels of the format, in layer order."
  @param first_mip : "Levels above it are computed in the allocator and discarded."
- @param [in] statistics : "Optional previously scanned source identity and counts."
  @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
  @require first_mip == 0 || (desc.generate_mips && first_mip < material::texture_mip_count(desc.width, desc.height))
 *>
@@ -45,21 +44,10 @@ fn TextureMipChain? create_texture_mips(
     material::TextureDesc desc,
     char[] pixels,
     uint first_mip = 0,
-    CoverageStatistics* statistics = null,
 ) {
-    if (first_mip == 0) return create_full_texture_mips(
-        allocator: allocator,
-        desc: desc,
-        pixels: pixels,
-        statistics: statistics,
-    );
+    if (first_mip == 0) return create_full_texture_mips(allocator, desc, pixels);
 
-    TextureMipChain full = create_full_texture_mips(
-        allocator: allocator,
-        desc: desc,
-        pixels: pixels,
-        statistics: statistics,
-    )!;
+    TextureMipChain full = create_full_texture_mips(allocator, desc, pixels)!;
     defer destroy_texture_mips(&full);
 
     usz kept_offset = full.offsets[first_mip];
@@ -120,8 +108,9 @@ fn void? write_texture_filter_band(
     usz texel_bytes = material::texture_block_bytes(desc.format);
     uint width = material::texture_mip_extent(desc.width, mip - 1);
     uint height = material::texture_mip_extent(desc.height, mip - 1);
+    uint output_height = material::texture_mip_extent(desc.height, mip);
     usz source_layer_bytes = (usz)width * height * texel_bytes;
-    usz destination_layer_bytes = (usz)band.width * material::texture_mip_extent(desc.height, mip) * texel_bytes;
+    usz destination_layer_bytes = (usz)band.width * output_height * texel_bytes;
     char[] source_bytes;
 
     if (mip == 1) {
@@ -136,6 +125,16 @@ fn void? write_texture_filter_band(
 
     usz destination_offset = chain.offsets[mip - 1] + (usz)layer * destination_layer_bytes;
     char[] destination_bytes = chain.pixels[destination_offset:destination_layer_bytes];
+
+    // Each mip-zero row is validated and counted by the first band whose filter reads it.
+    if (coverage && mip == 1) {
+        usz row_bytes = (usz)width * texel_bytes;
+        usz first_source = ((usz)first_row * height + output_height - 1) / output_height;
+        usz last_source = ((usz)(first_row + row_count) * height + output_height - 1) / output_height;
+        char[] counted = source_bytes[first_source * row_bytes:(last_source - first_source) * row_bytes];
+
+        coverage.base_passing[layer] += asset::count_passing_alpha(desc.format, desc.alpha_threshold, counted)!;
+    }
 
     switch (desc.format) {
         case RGBA8_UNORM:
@@ -245,19 +244,10 @@ fn TextureMipChain? create_full_texture_mips(
     Allocator allocator,
     material::TextureDesc desc,
     char[] pixels,
-    CoverageStatistics* statistics,
 ) @local {
     check_texture_mip_zero(desc, pixels)!;
 
     GeneratedTextureLayout layout = generated_texture_mip_layout(desc)!;
-    CoverageStatistics local_statistics;
-
-    if (desc.coverage != CoveragePolicy.NONE && !statistics) {
-        local_statistics = asset::create_coverage_statistics(desc, pixels)!;
-        statistics = &local_statistics;
-    }
-
-    if (statistics) asset::check_coverage_statistics(desc, statistics, statistics.revision)!;
 
     if (pixels.len > (usz)sz::max - layout.byte_count) return c3d::INVALID_ARGUMENT~;
 
@@ -281,7 +271,6 @@ fn TextureMipChain? create_full_texture_mips(
 
     if (desc.coverage == CoveragePolicy.THRESHOLD) {
         coverage = begin_texture_coverage(desc);
-        coverage.base_passing = statistics.passing;
         collector = &coverage;
     }
 

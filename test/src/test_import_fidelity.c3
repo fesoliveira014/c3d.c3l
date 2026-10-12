@@ -213,8 +213,19 @@ fn void test_mask_variants_use_effective_thresholds_and_constant_masks_share_the
     TextureId threshold = threshold_material.standard.base_color_map.texture.asset;
     TextureId quarter = quarter_material.standard.base_color_map.texture.asset;
 
-    assert(assets.texture(threshold).coverage_statistics.passing[0] == 2);
-    assert(assets.texture(quarter).coverage_statistics.passing[0] == 3);
+    TextureAsset* threshold_texture = assets.texture(threshold);
+    TextureAsset* quarter_texture = assets.texture(quarter);
+
+    assert(asset::count_passing_alpha(
+        format: threshold_texture.desc.format,
+        threshold: threshold_texture.desc.alpha_threshold,
+        texels: threshold_texture.pixels,
+    )!! == 2);
+    assert(asset::count_passing_alpha(
+        format: quarter_texture.desc.format,
+        threshold: quarter_texture.desc.alpha_threshold,
+        texels: quarter_texture.pixels,
+    )!! == 3);
 }
 
 fn void test_supplied_mips_keep_payload_and_coverage_none_for_mask_and_normal_roles() @test {

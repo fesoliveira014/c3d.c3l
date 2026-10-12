@@ -601,7 +601,6 @@ fn void? stage_texture_levels(
                 desc: record.desc,
                 pixels: record.pixels,
                 first_mip: first_level,
-                statistics: &record.coverage_statistics,
             )!;
             layout = { .total_bytes = chain.pixels.len, .mip_count = chain.mip_count, .offsets = chain.offsets };
 

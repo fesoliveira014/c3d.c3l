@@ -146,19 +146,6 @@ fn bool same_counts(PoolCounts first, PoolCounts second) @local {
         && first.models == second.models && first.keys == second.keys;
 }
 
-fn void assert_same_coverage_statistics(CoverageStatistics first, CoverageStatistics second) @local {
-    assert(first.revision == second.revision && first.valid == second.valid && first.failure == second.failure);
-    assert(first.source_kind == second.source_kind && first.semantic == second.semantic);
-    assert(first.coverage == second.coverage && first.alpha_threshold == second.alpha_threshold);
-    assert(first.format == second.format && first.width == second.width && first.height == second.height);
-    assert(first.layers == second.layers && first.is_cube == second.is_cube);
-
-    foreach (face, passing : first.passing) {
-        assert(passing == second.passing[face]);
-        assert(first.total[face] == second.total[face]);
-    }
-}
-
 fn void assert_publish_faults(AssetStore* assets, ModelDocument* document, fault expected) @local {
     PoolCounts before = pool_counts(assets);
     assert(@catch(assets.publish_document(document)) == expected);
@@ -607,75 +594,6 @@ fn void test_independent_preparation_rejects_format_and_negative_weights_without
     assert(!tracker.has_leaks());
 }
 
-fn void test_document_coverage_statistics_are_derived_and_revision_owned() @test {
-    TrackingAllocator tracker;
-    tracker.init(mem);
-    defer tracker.free();
-
-    {
-        AssetStore assets = create_store(&tracker);
-        defer asset::destroy_asset_store(&assets);
-
-        DocumentRefs refs;
-        ModelDocument document = build_document(&tracker, &refs);
-        defer asset::destroy_model_document(&document);
-
-        DocumentTexture* texture = &document.textures[0];
-        texture.desc.coverage = CoveragePolicy.THRESHOLD;
-        texture.desc.alpha_threshold = 0.5;
-        texture.pixels[3] = 0;
-        texture.pixels[7] = 128;
-        texture.pixels[11] = 255;
-        texture.pixels[15] = 64;
-
-        PreparedModelDocument prepared = asset::prepare_model_document(&document)!!;
-        defer asset::destroy_prepared_model_document(&prepared);
-
-        TextureDesc coverage_desc = texture.desc;
-        CoverageStatistics statistics = prepared.textures[0];
-
-        assert(statistics.valid && statistics.revision == 0);
-        assert(statistics.passing[0] == 2 && statistics.total[0] == 4);
-        assert(statistics.source_kind == TextureSourceKind.MIP_ZERO);
-
-        ModelId model = asset::publish_prepared_model_document(&assets, &prepared)!!;
-
-        TextureId published = assets.find_texture("doc#tex/0")!!;
-
-        assert(assets.texture(published).coverage_statistics.revision == 1);
-        assert(assets.texture(published).coverage_statistics.passing[0] == 2);
-
-        ModelDocument replacement = build_document(&tracker, &refs);
-        defer asset::destroy_model_document(&replacement);
-
-        DocumentTexture* next = &replacement.textures[0];
-        next.desc = coverage_desc;
-        next.pixels[3] = 0;
-        next.pixels[7] = 0;
-        next.pixels[11] = 255;
-        next.pixels[15] = 0;
-
-        PreparedModelDocument prepared_next = asset::prepare_model_document(&replacement)!!;
-        defer asset::destroy_prepared_model_document(&prepared_next);
-
-        asset::replace_prepared_model_document(&assets, model, &prepared_next)!!;
-
-        TextureAsset* record = assets.texture(published);
-
-        assert(record.header.revision == 2 && record.coverage_statistics.revision == 2);
-        assert(record.coverage_statistics.passing[0] == 1 && record.coverage_statistics.total[0] == 4);
-
-        statistics = record.coverage_statistics;
-
-        assets.release_texture_cpu(published);
-
-        assert(!record.pixels.len);
-        assert_same_coverage_statistics(record.coverage_statistics, statistics);
-    }
-
-    assert(!tracker.has_leaks());
-}
-
 fn void test_document_invalid_alpha_preserves_input() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
@@ -712,7 +630,7 @@ fn void test_document_invalid_alpha_preserves_input() @test {
         ModelId model = assets.publish_document(&document)!!;
 
         assert(assets.model(model).header.revision == 1);
-        assert(assets.texture(assets.find_texture("doc#tex/1")!!).coverage_statistics.passing[0] == 1);
+        assert(assets.textures.is_live(assets.find_texture("doc#tex/1")!!));
     }
 
     assert(!tracker.has_leaks());

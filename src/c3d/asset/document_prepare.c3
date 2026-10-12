@@ -19,7 +19,6 @@ struct PreparedGeometry @private {
 
 struct PreparedModelDocument @private {
     ModelDocument document;
-    CoverageStatistics[] textures;
     PreparedGeometry[] geometries;
     HashMap{String, bool} named;
     ulong items;
@@ -54,22 +53,18 @@ fn PreparedModelDocument? prepare_model_document(ModelDocument* document) @priva
             if (entry.data.kind == MaterialKind.CUSTOM) return c3d::INVALID_ARGUMENT~;
         }
 
-        prepared.textures = alloc::new_array(document.allocator, CoverageStatistics, document.textures.len);
-
-        foreach (index, &entry : document.textures) {
+        foreach (&entry : document.textures) {
             check_format_use(entry.desc)!;
 
             switch (entry.source_kind) {
                 case MIP_ZERO:
                     if (entry.supplied_mips.len) return c3d::INVALID_ARGUMENT~;
 
-                    prepared.textures[index] = create_coverage_statistics(entry.desc, entry.pixels)!;
+                    check_coverage_alpha(entry.desc, entry.pixels)!;
 
                 case SUPPLIED_MIPS:
                     if (entry.pixels.len) return c3d::INVALID_ARGUMENT~;
                     (void)check_texture_mips(entry.desc, entry.supplied_mips)!;
-
-                    prepared.textures[index] = texture_statistics_identity(entry.desc, SUPPLIED_MIPS, 0);
 
                 case EMPTY:
                     return c3d::UNSUPPORTED~;
@@ -126,7 +121,6 @@ fn void destroy_prepared_model_document(PreparedModelDocument* prepared) @privat
     }
 
     alloc::free(allocator, prepared.geometries.ptr);
-    alloc::free(allocator, prepared.textures.ptr);
     prepared.named.free();
     destroy_model_document(&prepared.document);
 
@@ -267,7 +261,7 @@ fn ModelId? publish_prepared_model_document(AssetStore* store, PreparedModelDocu
         foreach (index, &entry : document.samplers) ids.samplers[index] = store.add_sampler(entry.desc, entry.key)!!;
 
         foreach (index, &entry : document.textures) {
-            ids.textures[index] = add_prepared_texture(store, entry, prepared.textures[index]);
+            ids.textures[index] = add_prepared_texture(store, entry);
             entry.pixels = {};
             entry.supplied_mips = {};
         }
@@ -366,9 +360,7 @@ fn ulong publication_charge(AssetStore* store, PreparedModelDocument* prepared, 
     return prepared.items + (ulong)members.len();
 }
 
-fn TextureId add_prepared_texture(AssetStore* store, DocumentTexture* entry, CoverageStatistics statistics) @private {
-    statistics.revision = 1;
-
+fn TextureId add_prepared_texture(AssetStore* store, DocumentTexture* entry) @private {
     TextureId id = store.textures.add({})!!;
     *store.textures.get(id) = {
         .header = { .key = copy_string(store.allocator, entry.key), .revision = 1 },
@@ -376,7 +368,6 @@ fn TextureId add_prepared_texture(AssetStore* store, DocumentTexture* entry, Cov
         .source_kind = entry.source_kind,
         .pixels = entry.pixels,
         .supplied_mips = entry.supplied_mips,
-        .coverage_statistics = statistics,
     };
 
     register_key(store, entry.key, typed_ref(AssetKind.TEXTURE, id));
@@ -384,22 +375,13 @@ fn TextureId add_prepared_texture(AssetStore* store, DocumentTexture* entry, Cov
     return id;
 }
 
-fn void replace_prepared_texture(
-    AssetStore* store,
-    TextureId texture,
-    DocumentTexture* entry,
-    CoverageStatistics statistics,
-) @private {
-    TextureAsset* record = store.texture(texture);
-    statistics.revision = record.header.revision + 1;
-
+fn void replace_prepared_texture(AssetStore* store, TextureId texture, DocumentTexture* entry) @private {
     apply_texture(
         allocator: store.allocator,
-        record: record,
+        record: store.texture(texture),
         desc: entry.desc,
         source_kind: entry.source_kind,
         pixels: entry.pixels,
         supplied_mips: entry.supplied_mips,
-        statistics: statistics,
     );
 }

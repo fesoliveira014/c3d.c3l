@@ -175,7 +175,6 @@ struct PrepareRecord @private {
     TextureCoverageState coverage;
     bool correcting_coverage;
     material::TextureDesc generation_desc;
-    CoverageStatistics generation_statistics;
     bool chain_active;
     gpu::CompletionPoint last_submission;
     bool pending_gpu;

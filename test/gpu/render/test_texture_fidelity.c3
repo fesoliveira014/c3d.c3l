@@ -345,9 +345,9 @@ fn void test_fidelity_leaf_gpu_counts_and_one_row_progress_meet_stored_coverage(
 
     @pool() {
         TextureId texture = fixture.assets.add_texture(fidelity_leaf_desc(), FIDELITY_LEAF)!!;
-        CoverageStatistics* stored = &fixture.assets.texture(texture).coverage_statistics;
+        ulong base_passing = asset::count_passing_alpha(RGBA8_UNORM, 0.5, FIDELITY_LEAF)!!;
 
-        assert(stored.passing[0] == 484 && stored.total[0] == 1024);
+        assert(base_passing == 484);
 
         PrepareId id = preparation_texture_only(&fixture, texture)!!;
         fixture.renderer.begin_frame()!!;
@@ -380,7 +380,7 @@ fn void test_fidelity_leaf_gpu_counts_and_one_row_progress_meet_stored_coverage(
 
             foreach (pixel : pixels) passing += pixel.w >= 0.5 ? 1 : 0;
 
-            if (mip == 0) assert(passing == stored.passing[0]);
+            if (mip == 0) assert(passing == base_passing);
             if (mip == 2) assert(passing == 30 && pixels.len == 64);
         }
     };
@@ -640,7 +640,7 @@ fn void test_fidelity_coverage_chain_regenerates_after_finalized_abort_and_survi
     check_validation(renderer);
 }
 
-fn void test_fidelity_single_texel_cube_has_zero_generation_and_exact_face_statistics() @test {
+fn void test_fidelity_single_texel_cube_has_zero_generation() @test {
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
@@ -668,10 +668,6 @@ fn void test_fidelity_single_texel_cube_has_zero_generation_and_exact_face_stati
         assert(!fixture.renderer.prepares.get(id).chain_active);
 
         fixture.renderer.end_prepare(id)!!;
-
-        CoverageStatistics* stored = &fixture.assets.texture(texture).coverage_statistics;
-
-        for (uint face = 0; face < 6; face++) assert(stored.total[face] == 1 && stored.passing[face] == face % 2);
     };
 
     check_validation(&fixture.renderer);

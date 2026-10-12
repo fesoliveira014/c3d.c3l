@@ -3,6 +3,7 @@ module c3d::render;
 import c3d;
 import c3d::asset;
 import c3d::material;
+import c3d::test::loading_fixtures;
 import std::math;
 
 const char[] LEAF_RGBA8 @local = $embed("../fixtures/texture_fidelity/leaf_rgba8.bin");
@@ -11,6 +12,7 @@ struct FilteringExecution @local {
     TextureMipChain chain;
     ulong work;
     ulong progress;
+    ulong base_passing;
 }
 
 fn void test_mip_scalar_bands_accept_byte_aligned_half_and_float_storage() @test {
@@ -102,7 +104,7 @@ fn ulong count_filtered_alpha(material::TextureDesc desc, char[] pixels, double 
     return passing;
 }
 
-fn void test_coverage_publication_is_atomic_and_dirty_invalidity_is_revision_owned() @test {
+fn void test_invalid_coverage_alpha_faults_at_replacement_and_at_generation_after_an_edit() @test {
     AssetStore assets = filtering_store(mem);
     defer asset::destroy_asset_store(&assets);
 
@@ -110,45 +112,27 @@ fn void test_coverage_publication_is_atomic_and_dirty_invalidity_is_revision_own
     desc.coverage = CoveragePolicy.THRESHOLD;
     desc.alpha_threshold = 0.5;
     float[8] pixels = { 0.2, 0.3, 0.4, 0.0, 0.4, 0.5, 0.6, 1.0 };
+    float[8] original = pixels;
 
     TextureId texture = assets.add_texture(desc, ((char*)&pixels)[:pixels.len * float::size])!!;
 
     TextureAsset* source = assets.texture(texture);
 
-    assert(source.coverage_statistics.valid && source.coverage_statistics.revision == 1);
-    assert(source.coverage_statistics.passing[0] == 1 && source.coverage_statistics.total[0] == 2);
-
     pixels[7] = 1.01;
+    char[] edited = ((char*)&pixels)[:pixels.len * float::size];
 
-    if (catch excuse = assets.replace_texture(texture, desc, ((char*)&pixels)[:pixels.len * float::size])) {
-        assert(excuse == c3d::INVALID_ARGUMENT);
-    } else {
-        assert(false, "Invalid alpha published");
-    }
-
-    assert(source.header.revision == 1 && source.coverage_statistics.passing[0] == 1);
+    assert(@catch(assets.replace_texture(texture, desc, edited)) == c3d::INVALID_ARGUMENT);
+    assert(source.header.revision == 1 && source.pixels == ((char*)&original)[:original.len * float::size]);
 
     ((float*)source.pixels.ptr)[7] = bitcast(0x7fc00000u, float);
-
     assets.mark_texture_dirty(texture);
 
-    assert(source.header.revision == 2 && !source.coverage_statistics.valid);
-    assert(source.coverage_statistics.revision == 2 && source.coverage_statistics.failure == c3d::INVALID_ARGUMENT);
-
-    if (catch excuse = check_prepare_texture_source(source)) {
-        assert(excuse == c3d::INVALID_ARGUMENT);
-    } else {
-        assert(false, "Invalid dirty revision prepared");
-    }
+    assert(source.header.revision == 2);
+    assert(@catch(create_texture_mips(mem, desc, source.pixels)) == c3d::INVALID_ARGUMENT);
 
     assets.release_texture_cpu(texture);
 
-    assert(source.coverage_statistics.revision == 2 && source.coverage_statistics.failure == c3d::INVALID_ARGUMENT);
-
-    assets.mark_texture_dirty(texture);
-
-    assert(source.coverage_statistics.revision == 3);
-    assert(source.coverage_statistics.failure == c3d::ASSET_DATA_UNAVAILABLE);
+    assert(@catch(create_texture_mips(mem, desc, source.pixels)) == c3d::ASSET_DATA_UNAVAILABLE);
 }
 
 fn void test_invalid_threshold_alpha_add_and_owned_publication_preserve_store_and_caller_ownership() @test {
@@ -198,8 +182,7 @@ fn void test_invalid_threshold_alpha_add_and_owned_publication_preserve_store_an
 
             assert(tracker.allocated() == with_owned && owned == invalid);
             assert(assets.textures.items.len - assets.textures.free_count == count);
-            assert(source.header.revision == 1 && source.coverage_statistics.revision == 1);
-            assert(source.coverage_statistics.valid && source.coverage_statistics.passing[0] == 1);
+            assert(source.header.revision == 1);
             assert(source.pixels.ptr == original_pointer && source.pixels == valid);
         }
     }
@@ -341,11 +324,29 @@ fn FilteringExecution run_filtered_rows(
     execution.chain = record.chain;
     execution.work = report.generated_texels;
     execution.progress = record.texels_done;
+    execution.base_passing = record.coverage.base_passing[0];
 
     assert(unit.generated_done == record.texels_done);
     assert(record.texels_done == layout.output_texels * layout.passes);
 
     return execution;
+}
+
+fn void test_odd_threshold_bands_count_every_base_row_once() @test {
+    material::TextureDesc desc = material::texture_2d_desc(37, 19, RGBA8_UNORM);
+    desc.coverage = CoveragePolicy.THRESHOLD;
+    desc.alpha_threshold = 0.5;
+    char[] pixels = loading_fixtures::preparation_texture_bytes(mem, 37 * 19 * 4);
+    defer alloc::free(mem, pixels.ptr);
+
+    FilteringExecution single = run_filtered_rows(desc, pixels, 1);
+    defer destroy_texture_mips(&single.chain);
+
+    TextureMipChain synchronous = create_texture_mips(mem, desc, pixels)!!;
+    defer destroy_texture_mips(&synchronous);
+
+    assert(single.base_passing == count_filtered_alpha(desc, pixels, 0.5));
+    assert(synchronous.pixels[pixels.len..] == single.chain.pixels);
 }
 
 fn bool meets_base_coverage(
@@ -597,51 +598,4 @@ fn void test_missing_base_faults_before_remaining_filter_row_without_advancing_s
 
     assert(state.level.histogram[..] == saved.level.histogram[..] && state.level.passing == saved.level.passing);
     assert(state.base_passing[..] == saved.base_passing[..]);
-}
-
-fn void test_threshold_restore_verifies_counts_once_and_retains_or_advances_revision() @test {
-    AssetStore assets = filtering_store(mem);
-    defer asset::destroy_asset_store(&assets);
-
-    material::TextureDesc desc = material::texture_2d_desc(2, 1, RGBA32_FLOAT);
-    desc.coverage = CoveragePolicy.THRESHOLD;
-    desc.alpha_threshold = 0.5;
-    float[8] original = { 0.2, 0.3, 0.4, 0.0, 0.4, 0.5, 0.6, 1.0 };
-    char[] bytes = ((char*)&original)[:original.len * float::size];
-
-    TextureId texture = assets.add_texture(desc, bytes)!!;
-
-    TextureAsset* source = assets.texture(texture);
-
-    assets.release_texture_cpu(texture);
-    char[] restored = alloc::new_array(mem, char, (sz)bytes.len);
-    restored[..] = bytes[..];
-    assets.restore_texture_cpu(texture, restored);
-
-    assert(source.header.revision == 1 && source.coverage_statistics.revision == 1);
-    assert(source.coverage_statistics.valid && source.coverage_statistics.passing[0] == 1);
-
-    assets.release_texture_cpu(texture);
-    restored = alloc::new_array(mem, char, (sz)bytes.len);
-    restored[..] = bytes[..];
-    ((float*)restored.ptr)[3] = 0.75;
-    assets.restore_texture_cpu(texture, restored);
-
-    assert(source.header.revision == 2 && source.coverage_statistics.revision == 2);
-    assert(source.coverage_statistics.valid && source.coverage_statistics.passing[0] == 2);
-
-    assets.release_texture_cpu(texture);
-    restored = alloc::new_array(mem, char, (sz)bytes.len);
-    restored[..] = bytes[..];
-    ((float*)restored.ptr)[3] = bitcast(0x7fc00000u, float);
-    assets.restore_texture_cpu(texture, restored);
-
-    assert(source.header.revision == 3 && source.coverage_statistics.revision == 3);
-    assert(!source.coverage_statistics.valid && source.coverage_statistics.failure == c3d::INVALID_ARGUMENT);
-
-    if (catch excuse = check_prepare_texture_source(source)) {
-        assert(excuse == c3d::INVALID_ARGUMENT);
-    } else {
-        assert(false, "Invalid restored alpha prepared");
-    }
 }

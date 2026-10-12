@@ -77,10 +77,11 @@ texels at the cutoff pass in raster order. Eight-bit alpha selects the cutoff by
 code; float alpha selects it in 1/256 steps. The result is deterministic and
 independent of banding, and color channels are unchanged.
 
-Restoring identical pixels preserves a texture's revision. For a threshold
-texture, restoration rescans alpha on the owner thread: equal passing counts
-retain the revision; changed counts or invalid alpha advance it and refresh or
-invalidate the statistic, as `mark_texture_dirty` does.
+Adding or replacing a coverage texture rejects alpha outside [0, 1] with
+`INVALID_ARGUMENT`. Threshold generation counts mip zero's passing texels while it
+filters the first level, so `mark_texture_dirty` only advances the revision and
+`restore_texture_cpu` keeps it; alpha edited in place outside [0, 1] fails that
+generation with `INVALID_ARGUMENT`.
 
 ## Decode memory and retain ownership
 

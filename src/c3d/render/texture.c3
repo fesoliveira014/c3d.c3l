@@ -121,10 +121,6 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture, bool full
             );
         }
 
-        if (desc.coverage == CoveragePolicy.THRESHOLD) {
-            asset::check_coverage_statistics(desc, &record.coverage_statistics, record.header.revision)!;
-        }
-
         TextureMipChain chain;
         TextureMipLayout layout;
 
@@ -135,7 +131,6 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture, bool full
                     desc: desc,
                     pixels: record.pixels,
                     first_mip: base,
-                    statistics: &record.coverage_statistics,
                 )!;
                 layout = {
                     .total_bytes = chain.pixels.len,

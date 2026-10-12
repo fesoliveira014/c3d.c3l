@@ -268,15 +268,10 @@ fn void apply_replacement(
 
     foreach (index, &entry : document.textures) {
         if (is_added(ids.textures[index])) {
-            ids.textures[index] = add_prepared_texture(store, entry, prepared.textures[index]);
+            ids.textures[index] = add_prepared_texture(store, entry);
             report.added++;
         } else {
-            replace_prepared_texture(
-                store: store,
-                texture: ids.textures[index],
-                entry: entry,
-                statistics: prepared.textures[index],
-            );
+            replace_prepared_texture(store, ids.textures[index], entry);
             report.replaced++;
         }
 

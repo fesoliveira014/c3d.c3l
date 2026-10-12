@@ -106,7 +106,6 @@ fn void? check_prepare_texture_source(TextureAsset* source) @private {
     switch (source.source_kind) {
         case MIP_ZERO:
             check_texture_mip_zero(source.desc, source.pixels)!;
-            asset::check_coverage_statistics(source.desc, &source.coverage_statistics, source.header.revision)!;
 
         case SUPPLIED_MIPS: supplied_texture_mip_layout(source.desc, source.supplied_mips)!;
 
@@ -220,13 +219,9 @@ fn bool? run_prepare_step(
             record.generation_layer = 0;
             record.generation_row = 0;
             record.generation_desc = source.desc;
-            record.generation_statistics = source.coverage_statistics;
             record.correcting_coverage = false;
 
-            if (source.desc.coverage == CoveragePolicy.THRESHOLD) {
-                record.coverage = begin_texture_coverage(source.desc);
-                record.coverage.base_passing = source.coverage_statistics.passing;
-            }
+            if (source.desc.coverage == CoveragePolicy.THRESHOLD) record.coverage = begin_texture_coverage(source.desc);
 
             unit.generated_done = 0;
 
@@ -646,5 +641,4 @@ fn void clear_prepare_chain(PrepareRecord* record) @private {
     record.coverage = {};
     record.correcting_coverage = false;
     record.generation_desc = {};
-    record.generation_statistics = {};
 }
