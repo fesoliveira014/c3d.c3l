@@ -231,7 +231,7 @@ fn void test_view_targets_list_every_image_once() @test {
         if (target == &record.reflection_gbuffer) reflection_gbuffer_listed = true;
         if (target == &record.accumulation) accumulation_listed = true;
         if (target == &record.scene_depth) scene_depth_listed = true;
-        if (target == &record.fog_volume) fog_volume_listed = true;
+        if (target == &record.fog_volumes[0]) fog_volume_listed = true;
     }
     assert(raw_listed && ao_listed && reflection_listed && reflection_blur_listed && accumulation_listed);
     assert(reflection_gbuffer_listed && scene_depth_listed && fog_volume_listed);

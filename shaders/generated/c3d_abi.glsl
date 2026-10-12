@@ -143,6 +143,9 @@ const uint AERIAL_PERSPECTIVE_SIZE = 32u;
 const uint SKY_TABLE_GROUP_SIZE = 8u;
 const uint AERIAL_PERSPECTIVE_GROUP_DEPTH = 4u;
 const uint FOG_VOLUME_MAX_SLICES = 128u;
+const uint FOG_VOLUME_HISTORY = 1u;
+const float FOG_HISTORY_WEIGHT = 0.9;
+const uint FOG_SCATTERING_CHUNK = 8u;
 const uint CLOUD_NOISE_SIZE = 128u;
 const uint CLOUD_NOISE_GROUP_SIZE = 4u;
 const uint CLOUD_STEPS = 64u;
@@ -1107,14 +1110,20 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer FogPassRoot 
     uint _pad1;
 };
 
-layout(buffer_reference, std430, buffer_reference_align = 8) buffer FogVolumeRoot {
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer FogVolumeRoot {
+    mat4 previous_view_proj;
+    vec4 previous_camera_position;
     uint64_t frame;
-    uint volume;
+    uint scattering;
+    uint history;
+    uint integrated;
     uint width;
     uint height;
     uint sun_light;
     uint slices;
-    uint _pad1;
+    uint flags;
+    float jitter;
+    float pre_exposure_ratio;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer CloudNoiseRoot {

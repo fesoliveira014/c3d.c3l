@@ -153,6 +153,11 @@ const uint SHADER_FLAG_REFLECTION_PREPASS = 1 << 10;
 *>
 const uint SHADER_FLAG_POSED_INSTANCED = 1 << 11;
 
+<*
+ Flag bit for TEMPORAL.
+*>
+const uint SHADER_FLAG_TEMPORAL = 1 << 12;
+
 const char[*] FULLSCREEN_SPIRV @private = $embed("../../../shaders/spv/fullscreen.spv");
 const char[*] GRADIENT_SPIRV @private = $embed("../../../shaders/spv/gradient.spv");
 const char[*] COMPOSITE_SPIRV @private = $embed("../../../shaders/spv/composite.spv");
@@ -215,6 +220,9 @@ const char[*] FOG_SPIRV @private = $embed("../../../shaders/spv/fog.spv");
 const char[*] FOG_SCATTERING_SPIRV @private = $embed("../../../shaders/spv/fog_scattering.spv");
 const char[*] FOG_SCATTERING_RT_SHADOWS_SPIRV @private = $embed("../../../shaders/spv/fog_scattering_rt_shadows.spv");
 const char[*] FOG_SCATTERING_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV @private = $embed("../../../shaders/spv/fog_scattering_rt_shadows_scene_trace_bvh.spv");
+const char[*] FOG_SCATTERING_TEMPORAL_SPIRV @private = $embed("../../../shaders/spv/fog_scattering_temporal.spv");
+const char[*] FOG_SCATTERING_RT_SHADOWS_TEMPORAL_SPIRV @private = $embed("../../../shaders/spv/fog_scattering_rt_shadows_temporal.spv");
+const char[*] FOG_SCATTERING_RT_SHADOWS_SCENE_TRACE_BVH_TEMPORAL_SPIRV @private = $embed("../../../shaders/spv/fog_scattering_rt_shadows_scene_trace_bvh_temporal.spv");
 const char[*] FOG_INTEGRATION_SPIRV @private = $embed("../../../shaders/spv/fog_integration.spv");
 const char[*] CLOUD_NOISE_SPIRV @private = $embed("../../../shaders/spv/cloud_noise.spv");
 const char[*] CLOUDS_SPIRV @private = $embed("../../../shaders/spv/clouds.spv");
@@ -313,7 +321,7 @@ const char[*] TRACE_REFIT_SPIRV @private = $embed("../../../shaders/spv/trace_re
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[156] SHADER_ENTRIES = {
+const ShaderEntry[159] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -376,6 +384,9 @@ const ShaderEntry[156] SHADER_ENTRIES = {
     { .variant = { .shader = FOG_SCATTERING }, .spirv = FOG_SCATTERING_SPIRV[..] },
     { .variant = { .shader = FOG_SCATTERING, .flags = SHADER_FLAG_RT_SHADOWS }, .spirv = FOG_SCATTERING_RT_SHADOWS_SPIRV[..] },
     { .variant = { .shader = FOG_SCATTERING, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH }, .spirv = FOG_SCATTERING_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV[..] },
+    { .variant = { .shader = FOG_SCATTERING, .flags = SHADER_FLAG_TEMPORAL }, .spirv = FOG_SCATTERING_TEMPORAL_SPIRV[..] },
+    { .variant = { .shader = FOG_SCATTERING, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_TEMPORAL }, .spirv = FOG_SCATTERING_RT_SHADOWS_TEMPORAL_SPIRV[..] },
+    { .variant = { .shader = FOG_SCATTERING, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH | SHADER_FLAG_TEMPORAL }, .spirv = FOG_SCATTERING_RT_SHADOWS_SCENE_TRACE_BVH_TEMPORAL_SPIRV[..] },
     { .variant = { .shader = FOG_INTEGRATION }, .spirv = FOG_INTEGRATION_SPIRV[..] },
     { .variant = { .shader = CLOUD_NOISE }, .spirv = CLOUD_NOISE_SPIRV[..] },
     { .variant = { .shader = CLOUDS }, .spirv = CLOUDS_SPIRV[..] },

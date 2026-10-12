@@ -140,6 +140,9 @@ const uint AERIAL_PERSPECTIVE_SIZE = 32;
 const uint SKY_TABLE_GROUP_SIZE = 8;
 const uint AERIAL_PERSPECTIVE_GROUP_DEPTH = 4;
 const uint FOG_VOLUME_MAX_SLICES = 128;
+const uint FOG_VOLUME_HISTORY = 1;
+const float FOG_HISTORY_WEIGHT = 0.9;
+const uint FOG_SCATTERING_CHUNK = 8;
 const uint CLOUD_NOISE_SIZE = 128;
 const uint CLOUD_NOISE_GROUP_SIZE = 4;
 const uint CLOUD_STEPS = 64;
@@ -1866,22 +1869,34 @@ $assert $reflect(FogPassRoot._pad0).offset == 24;
 $assert $reflect(FogPassRoot._pad1).offset == 28;
 
 struct FogVolumeRoot {
+    Mat4f        previous_view_proj;
+    Vec4f        previous_camera_position;
     GpuAddress   frame;
-    TextureIndex volume;
+    TextureIndex scattering;
+    TextureIndex history;
+    TextureIndex integrated;
     uint         width;
     uint         height;
     uint         sun_light;
     uint         slices;
-    uint         _pad1;
+    uint         flags;
+    float        jitter;
+    float        pre_exposure_ratio;
 }
-$assert FogVolumeRoot::size == 32;
-$assert $reflect(FogVolumeRoot.frame).offset == 0;
-$assert $reflect(FogVolumeRoot.volume).offset == 8;
-$assert $reflect(FogVolumeRoot.width).offset == 12;
-$assert $reflect(FogVolumeRoot.height).offset == 16;
-$assert $reflect(FogVolumeRoot.sun_light).offset == 20;
-$assert $reflect(FogVolumeRoot.slices).offset == 24;
-$assert $reflect(FogVolumeRoot._pad1).offset == 28;
+$assert FogVolumeRoot::size == 128;
+$assert $reflect(FogVolumeRoot.previous_view_proj).offset == 0;
+$assert $reflect(FogVolumeRoot.previous_camera_position).offset == 64;
+$assert $reflect(FogVolumeRoot.frame).offset == 80;
+$assert $reflect(FogVolumeRoot.scattering).offset == 88;
+$assert $reflect(FogVolumeRoot.history).offset == 92;
+$assert $reflect(FogVolumeRoot.integrated).offset == 96;
+$assert $reflect(FogVolumeRoot.width).offset == 100;
+$assert $reflect(FogVolumeRoot.height).offset == 104;
+$assert $reflect(FogVolumeRoot.sun_light).offset == 108;
+$assert $reflect(FogVolumeRoot.slices).offset == 112;
+$assert $reflect(FogVolumeRoot.flags).offset == 116;
+$assert $reflect(FogVolumeRoot.jitter).offset == 120;
+$assert $reflect(FogVolumeRoot.pre_exposure_ratio).offset == 124;
 
 struct CloudNoiseRoot {
     TextureIndex output_texture;

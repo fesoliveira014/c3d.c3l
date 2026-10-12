@@ -1088,14 +1088,24 @@ root FogPassRoot {
 // Most slices a view's fog volume holds; the view's quality chooses its own count up to it.
 const uint FOG_VOLUME_MAX_SLICES = 128;
 
+const uint FOG_VOLUME_HISTORY = 1;
+const float FOG_HISTORY_WEIGHT = 0.9; // Memory of about ten frames; higher smooths longer and trails longer.
+const uint FOG_SCATTERING_CHUNK = 8; // Slices one temporal thread injects; the clamp reads one past each end, so 1.25x the samples, fewer threads if raised.
+
 root FogVolumeRoot {
+    mat4         previous_view_proj;
+    vec4         previous_camera_position;
     GpuAddress   frame;
-    TextureIndex volume;
+    TextureIndex scattering;
+    TextureIndex history;
+    TextureIndex integrated;
     uint         width;
     uint         height;
     uint         sun_light;
     uint         slices;
-    uint         _pad1;
+    uint         flags;
+    float        jitter;
+    float        pre_exposure_ratio;
 }
 
 const uint CLOUD_NOISE_SIZE = 128; // 8 MiB of RGBA8 shared by every deck; 64 repeats visibly, 256 costs 64 MiB

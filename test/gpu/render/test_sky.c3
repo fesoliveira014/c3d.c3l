@@ -904,8 +904,8 @@ fn void test_volumetric_fog_follows_the_view_switch() @test {
     FogView volume = create_fog_view(&fixture, ShadingPath.FORWARD, volumetric_fog: true)!!;
     defer destroy_fog_view(&fixture, &volume);
     ViewRecord* record = renderer.views.get(volume.view);
-    assert(record.fog_volume.texture.is_valid() && record.fog_volume.width == 3);
-    assert(record.fog_volume.depth == FogQuality.MEDIUM.slices);
+    assert(record.fog_volumes[0].texture.is_valid() && record.fog_volumes[0].width == 3);
+    assert(record.fog_volumes[0].depth == FogQuality.MEDIUM.slices);
 
     render_fog_frames(&fixture, &target, &plain)!!;
     uint unfogged = renderer.stats.post_dispatches;
@@ -921,7 +921,7 @@ fn void test_volumetric_fog_follows_the_view_switch() @test {
     ViewDesc desc = record.desc;
     desc.volumetric_fog = false;
     render::configure_view(renderer, volume.view, desc)!!;
-    assert(!record.fog_volume.texture.is_valid());
+    assert(!record.fog_volumes[0].texture.is_valid());
     render_fog_frames(&fixture, &target, &volume)!!;
     assert(renderer.stats.post_dispatches == fogged_plain);
     check_validation(renderer);

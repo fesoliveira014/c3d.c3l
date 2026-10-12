@@ -623,6 +623,7 @@ fn void? record_raster_view(
 
         LightCounts light_counts;
         uint fog_sun;
+        FogLighting fog_lighting;
         ShadowSet* shadow_set = &renderer.shadow_set;
         gpu::GpuAddress light_address;
         gpu::GpuAddress decal_address;
@@ -663,6 +664,9 @@ fn void? record_raster_view(
                 effects_view: &effects_view,
             )!;
             LightGpu[] lights = extraction.lights;
+            if (fog_volume && record.desc.fog_temporal) {
+                fog_lighting = fog_lighting_of(lights, fog_sun, environments.atmosphere != null, pre_exposure);
+            }
             reset_cluster_recording(renderer, record);
             if (record.desc.lights == LightSelection.CLUSTERED) {
                 cluster_frame = prepare_cluster_frame(
@@ -705,7 +709,7 @@ fn void? record_raster_view(
                 selection:       &environments.atmosphere_selection,
                 fog:             &fog,
                 camera_position: matrices.position,
-                fog_volume:      fog_volume ? record.fog_volume.view.index : (gpu::TextureIndex)0,
+                fog_volume:      fog_volume ? fog_integrated_volume(record).view.index : (gpu::TextureIndex)0,
                 pre_exposure:    pre_exposure,
             )!;
             Vec3 ambient = environments.lighting && !scene.ambient_add
@@ -910,12 +914,24 @@ fn void? record_raster_view(
                 )!;
             }
             if (fog_volume) {
+                FogFrame fog_frame = {
+                    .scene           = scene.identity,
+                    .medium          = *fog.fog,
+                    .base_height     = fog.base_height,
+                    .to_sun          = fog_lighting.to_sun,
+                    .lights          = fog_lighting.hash,
+                    .origin          = renderer.frame_origin,
+                    .view_proj       = raster.view_proj,
+                    .camera_position = matrices.position,
+                    .pre_exposure    = pre_exposure,
+                };
                 record_fog_volume(
                     renderer:      renderer,
                     record:        record,
                     frame:         frame_span.address,
                     sun_light:     fog_sun,
                     atlas_shadows: shadow_set.layer_count > 0,
+                    current:       &fog_frame,
                 )!;
             }
             record.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;

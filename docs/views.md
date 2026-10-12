@@ -67,6 +67,7 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `clip_plane` | World-space `maths::Plane`; geometry on its negative side is not drawn (see [Clip plane](#clip-plane)); the zero plane clips nothing and both constructors produce it |
 | `volumetric_fog` | A froxel volume for the view's `HeightFog`, allocated with the view (see [volumetric fog](sky.md#volumetric-fog)); faults `INVALID_ARGUMENT` on a `PATH_TRACED` view |
 | `fog_quality` | `FogQuality`, the froxel size and slice count of the fog volume: `LOW`, `MEDIUM` or `HIGH` (see [volumetric fog](sky.md#volumetric-fog)); `MEDIUM` is the zero value, so an unset desc keeps its grid; a change reallocates the volume |
+| `fog_temporal` | Accumulates the fog volume over frames with a jittered sample and the previous frame's reprojected value (see [temporal accumulation](sky.md#temporal-accumulation)); off in both constructors; needs `volumetric_fog` and keeps a second volume |
 | `share_shadows` | Binds an earlier view's [shadow set](shadows.md#shadow-sets) when the keys match and publishes its own; on in both constructors |
 | `transparency` | How premultiplied-alpha blended surfaces compose: `SORTED` (default, both constructors) orders them by object, `WEIGHTED` accumulates them without ordering into two extra images, 10 bytes per pixel, allocated on the first frame with a participating draw (see [weighted transparency](materials.md#weighted-transparency)); custom `BLEND` materials stay sorted in a `WEIGHTED` view, a current limit |
 | `pre_exposure_override` | Forces the view's [pre-exposure](post.md#pre-exposure) factor, a power of two from 2^-16 to 2^16; zero, the default, follows the camera exposure. Any other value faults `INVALID_ARGUMENT` |
@@ -93,7 +94,7 @@ default; see [Capacities](#capacities)).
 The view owns its working images (`hdr_color`, `depth`, the scene color and depth snapshots, the
 [weighted transparency](materials.md#weighted-transparency) accumulation and revealage images, the
 [sky](sky.md)'s 192 × 108 sky-view table and 32³ aerial perspective volume (418 KiB) on raster views, its
-[fog volume](sky.md#volumetric-fog) when `volumetric_fog` is on (`ceil(w / px) × ceil(h / px) × slices × 8` bytes, set by `fog_quality`), post and
+[fog volume](sky.md#volumetric-fog) when `volumetric_fog` is on (`ceil(w / px) × ceil(h / px) × slices × 8` bytes, set by `fog_quality`, twice that with `fog_temporal`), post and
 effect images) at the working extent `working_extent(viewport, output, render_scale)`, at least one pixel
 per dimension. Reconfiguring with a different extent or output waits for outstanding frames and
 reallocates them; every configuration resets the view's history except its
