@@ -135,7 +135,7 @@ fn gpu::MappedGpuSpan? OverlayContext.alloc(&self, usz bytes, usz alignment = 16
 
 <*
  Resolve the list's textures and fonts, ready its render targets and upload its instances.
- Render targets it samples must not be rendered again this frame.
+ Prepare after every view that renders its output or a target it samples.
  @param [&inout] self : "Frame open; overlay not yet open; window output when target is zero."
  @param [&inout] list : "Items must stay unchanged until draw_list records them."
  @param target : "Render target the list is drawn into; zero for the window."
