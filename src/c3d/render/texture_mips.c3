@@ -142,7 +142,6 @@ fn void? write_texture_filter_band(
             write_typed_mip_band(
                 $Scalar: char,
                 $srgb: false,
-                $halving: true,
                 width: width,
                 height: height,
                 first_row: first_row,
@@ -157,7 +156,6 @@ fn void? write_texture_filter_band(
             write_typed_mip_band(
                 $Scalar: char,
                 $srgb: true,
-                $halving: true,
                 width: width,
                 height: height,
                 first_row: first_row,
@@ -172,7 +170,6 @@ fn void? write_texture_filter_band(
             write_typed_mip_band(
                 $Scalar: float16,
                 $srgb: false,
-                $halving: true,
                 width: width,
                 height: height,
                 first_row: first_row,
@@ -187,7 +184,6 @@ fn void? write_texture_filter_band(
             write_typed_mip_band(
                 $Scalar: float,
                 $srgb: false,
-                $halving: true,
                 width: width,
                 height: height,
                 first_row: first_row,
@@ -253,136 +249,85 @@ fn TextureMipChain? create_full_texture_mips(
 ) @local {
     check_texture_mip_zero(desc, pixels)!;
 
-    if (desc.depth) return create_volume_texture_mips(allocator, desc, pixels);
+    GeneratedTextureLayout layout = generated_texture_mip_layout(desc)!;
+    CoverageStatistics local_statistics;
 
-    if (desc.semantic != TextureSemantic.COLOR || desc.coverage != CoveragePolicy.NONE) {
-        return create_fidelity_texture_mips(
-            allocator: allocator,
-            desc: desc,
-            pixels: pixels,
-            statistics: statistics,
-        );
+    if (desc.coverage != CoveragePolicy.NONE && !statistics) {
+        local_statistics = asset::create_coverage_statistics(desc, pixels)!;
+        statistics = &local_statistics;
     }
 
-    switch (desc.format) {
-        case RGBA8_UNORM:
-            return create_typed_texture_mips(
-                $Scalar: char,
-                $srgb: false,
-                $halving: true,
-                allocator: allocator,
+    if (statistics) asset::check_coverage_statistics(desc, statistics, statistics.revision)!;
+
+    if (pixels.len > (usz)sz::max - layout.byte_count) return c3d::INVALID_ARGUMENT~;
+
+    TextureMipChain chain = {
+        .allocator = allocator, .mip_count = layout.mip_count + 1, .layer_count = desc.layers,
+        .pixels = alloc::new_array(allocator, char, (sz)(pixels.len + layout.byte_count)),
+    };
+    defer catch destroy_texture_mips(&chain);
+
+    mem::copy(chain.pixels.ptr, pixels.ptr, pixels.len);
+
+    for (uint mip = 0; mip < layout.mip_count; mip++) chain.offsets[mip + 1] = pixels.len + layout.offsets[mip];
+
+    TextureMipChain generated = {
+        .first_mip = 1, .mip_count = layout.mip_count, .layer_count = desc.layers,
+        .offsets = layout.offsets, .pixels = chain.pixels[pixels.len..],
+    };
+
+    for (uint mip = 1; mip <= layout.mip_count; mip++) {
+        for (uint layer = 0; layer < desc.layers; layer++) {
+            TextureCoverageState state;
+            TextureCoverageState* collector;
+
+            if (desc.coverage == CoveragePolicy.THRESHOLD) {
+                state = begin_texture_coverage(
+                    desc: desc,
+                    mip: mip,
+                    face: layer,
+                    statistics: statistics,
+                );
+                collector = &state;
+            }
+
+            uint height = material::texture_mip_extent(desc.height, mip);
+
+            write_texture_filter_band(
                 desc: desc,
-                pixels: pixels,
-            );
+                mip: mip,
+                layer: layer,
+                first_row: 0,
+                row_count: height,
+                mip_zero: pixels,
+                chain: &generated,
+                coverage: collector,
+            )!;
 
-        case RGBA8_SRGB:
-            return create_typed_texture_mips(
-                $Scalar: char,
-                $srgb: true,
-                $halving: true,
-                allocator: allocator,
-                desc: desc,
-                pixels: pixels,
-            );
+            if (collector) {
+                finish_texture_coverage_pass(&state);
 
-        case RGBA16_FLOAT:
-            return create_typed_texture_mips(
-                $Scalar: float16,
-                $srgb: false,
-                $halving: true,
-                allocator: allocator,
-                desc: desc,
-                pixels: pixels,
-            );
+                usz layer_bytes = material::texture_mip_bytes(desc, mip)!;
+                usz offset = generated.offsets[mip - 1] + (usz)layer * layer_bytes;
+                char[] destination = generated.pixels[offset:layer_bytes];
 
-        case RGBA32_FLOAT:
-            return create_typed_texture_mips(
-                $Scalar: float,
-                $srgb: false,
-                $halving: true,
-                allocator: allocator,
-                desc: desc,
-                pixels: pixels,
-            );
+                while (state.phase < texture_generation_passes(desc)) {
+                    uint rows = math::min(PREPARE_GENERATION_ROWS, height - state.row);
+                    write_texture_coverage_band(
+                        desc: desc,
+                        destination: destination,
+                        state: &state,
+                        row_count: rows,
+                    );
+                    state.row += rows;
 
-        case R16_UINT:
-            return create_single_texture_mip(
-                allocator: allocator,
-                desc: desc,
-                pixels: pixels,
-                texel_bytes: ushort::size,
-            );
-
-        case BC1_RGBA_UNORM:
-        case BC1_RGBA_SRGB:
-        case BC3_UNORM:
-        case BC3_SRGB:
-        case BC4_UNORM:
-        case BC5_UNORM:
-        case BC6H_UFLOAT:
-        case BC7_UNORM:
-        case BC7_SRGB:
-            return c3d::UNSUPPORTED~;
-    }
-}
-
-fn TextureMipChain? create_volume_texture_mips(
-    Allocator allocator,
-    material::TextureDesc desc,
-    char[] pixels,
-) @local {
-    if (desc.generate_mips || desc.layers != 1 || desc.is_cube) return c3d::UNSUPPORTED~;
-
-    switch (desc.format) {
-        case RGBA8_UNORM:
-        case RGBA8_SRGB:
-            break;
-
-        case RGBA16_FLOAT:
-        case RGBA32_FLOAT:
-        case R16_UINT:
-        case BC1_RGBA_UNORM:
-        case BC1_RGBA_SRGB:
-        case BC3_UNORM:
-        case BC3_SRGB:
-        case BC4_UNORM:
-        case BC5_UNORM:
-        case BC6H_UFLOAT:
-        case BC7_UNORM:
-        case BC7_SRGB:
-            return c3d::UNSUPPORTED~;
+                    if (state.row == height) finish_texture_coverage_pass(&state);
+                }
+            }
+        }
     }
 
-    ulong texels = (ulong)desc.width * desc.height * desc.depth;
-
-    if (texels > (ulong)sz::max / RGBA_CHANNELS) return c3d::INVALID_ARGUMENT~;
-    if (!pixels.len) return c3d::ASSET_DATA_UNAVAILABLE~;
-    if (pixels.len != (usz)texels * RGBA_CHANNELS) return c3d::INVALID_ARGUMENT~;
-
-    char[] copy = alloc::new_array(allocator, char, (sz)pixels.len);
-    mem::copy(copy.ptr, pixels.ptr, pixels.len);
-
-    return { .allocator = allocator, .mip_count = 1, .layer_count = 1, .pixels = copy };
-}
-
-fn TextureMipChain? create_single_texture_mip(
-    Allocator allocator,
-    material::TextureDesc desc,
-    char[] pixels,
-    usz texel_bytes,
-) @local {
-    if (desc.generate_mips) return c3d::UNSUPPORTED~;
-
-    ulong texels = (ulong)desc.width * desc.height;
-
-    if (texels > (ulong)sz::max / texel_bytes / desc.layers) return c3d::INVALID_ARGUMENT~;
-    if (!pixels.len) return c3d::ASSET_DATA_UNAVAILABLE~;
-    if (pixels.len != (usz)texels * texel_bytes * desc.layers) return c3d::INVALID_ARGUMENT~;
-
-    char[] copy = alloc::new_array(allocator, char, (sz)pixels.len);
-    mem::copy(copy.ptr, pixels.ptr, pixels.len);
-
-    return { .allocator = allocator, .mip_count = 1, .layer_count = desc.layers, .pixels = copy };
+    return chain;
 }
 
 <*
@@ -395,139 +340,23 @@ fn void destroy_texture_mips(TextureMipChain* chain) {
     *chain = {};
 }
 
-fn TextureMipChain? create_area_filter_texture_mips(
-    Allocator allocator,
-    material::TextureDesc desc,
-    char[] pixels,
-) @private {
-    switch (desc.format) {
-        case RGBA8_UNORM:
-            return create_typed_texture_mips(
-                $Scalar: char,
-                $srgb: false,
-                $halving: false,
-                allocator: allocator,
-                desc: desc,
-                pixels: pixels,
-            );
-
-        case RGBA8_SRGB:
-            return create_typed_texture_mips(
-                $Scalar: char,
-                $srgb: true,
-                $halving: false,
-                allocator: allocator,
-                desc: desc,
-                pixels: pixels,
-            );
-
-        case RGBA16_FLOAT:
-            return create_typed_texture_mips(
-                $Scalar: float16,
-                $srgb: false,
-                $halving: false,
-                allocator: allocator,
-                desc: desc,
-                pixels: pixels,
-            );
-        case RGBA32_FLOAT:
-        case R16_UINT:
-        case BC1_RGBA_UNORM:
-        case BC1_RGBA_SRGB:
-        case BC3_UNORM:
-        case BC3_SRGB:
-        case BC4_UNORM:
-        case BC5_UNORM:
-        case BC6H_UFLOAT:
-        case BC7_UNORM:
-        case BC7_SRGB:
-            return c3d::UNSUPPORTED~;
-    }
-}
-
-macro TextureMipChain? create_typed_texture_mips(
-    $Scalar,
-    $srgb,
-    $halving,
-    Allocator allocator,
-    material::TextureDesc desc,
-    char[] pixels,
-) @local {
-    const usz TEXEL_BYTES = RGBA_CHANNELS * $Scalar::size;
-    ulong texels = (ulong)desc.width * desc.height;
-
-    if (texels > (ulong)sz::max / TEXEL_BYTES / desc.layers) return c3d::INVALID_ARGUMENT~;
-    if (!pixels.len) return c3d::ASSET_DATA_UNAVAILABLE~;
-    if (pixels.len != (usz)texels * TEXEL_BYTES * desc.layers) return c3d::INVALID_ARGUMENT~;
-
-    TextureMipChain chain = {
-        .allocator = allocator,
-        .mip_count = desc.generate_mips ? material::texture_mip_count(desc.width, desc.height) : 1,
-        .layer_count = desc.layers,
-    };
-    usz total_bytes;
-
-    for (uint mip = 0; mip < chain.mip_count; mip++) {
-        usz width = math::max(1u, desc.width >> mip);
-        usz height = math::max(1u, desc.height >> mip);
-        usz level_bytes = width * height * TEXEL_BYTES * desc.layers;
-
-        if (level_bytes > (usz)sz::max - total_bytes) return c3d::INVALID_ARGUMENT~;
-
-        chain.offsets[mip] = total_bytes;
-        total_bytes += level_bytes;
-    }
-
-    chain.pixels = alloc::new_array(allocator, char, (sz)total_bytes);
-    mem::copy(chain.pixels.ptr, pixels.ptr, pixels.len);
-
-    for (uint mip = 1; mip < chain.mip_count; mip++) {
-        uint width = math::max(1u, desc.width >> (mip - 1));
-        uint height = math::max(1u, desc.height >> (mip - 1));
-        uint next_width = math::max(1u, width >> 1);
-        uint next_height = math::max(1u, height >> 1);
-
-        for (uint layer = 0; layer < desc.layers; layer++) {
-            usz source_offset = chain.offsets[mip - 1] + (usz)layer * width * height * TEXEL_BYTES;
-            usz destination_offset = chain.offsets[mip] + (usz)layer * next_width * next_height * TEXEL_BYTES;
-            write_typed_mip_band(
-                $Scalar: $Scalar,
-                $srgb: $srgb,
-                $halving: $halving,
-                width: width,
-                height: height,
-                first_row: 0,
-                row_count: next_height,
-                source_bytes: chain.pixels[source_offset:(usz)width * height * TEXEL_BYTES],
-                destination_bytes: chain.pixels[destination_offset:(usz)next_width * next_height * TEXEL_BYTES],
-            )!;
-        }
-    }
-
-    return chain;
-}
-
 macro void? write_typed_mip_band(
     $Scalar,
     $srgb,
-    $halving,
     uint width,
     uint height,
     uint first_row,
     uint row_count,
     char[] source_bytes,
     char[] destination_bytes,
-    TextureSemantic semantic = TextureSemantic.COLOR,
-    TextureCoverageState* collector = null,
+    TextureSemantic semantic,
+    TextureCoverageState* collector,
 ) @local {
     uint next_width = math::max(1u, width >> 1);
     uint next_height = math::max(1u, height >> 1);
     $Scalar* source = ($Scalar*)source_bytes.ptr;
     $Scalar* destination = ($Scalar*)destination_bytes.ptr;
-    bool halves;
-    $if $halving:
-        halves = (width == 2 * next_width || width == 1) && (height == 2 * next_height || height == 1);
-    $endif
+    bool halves = (width == 2 * next_width || width == 1) && (height == 2 * next_height || height == 1);
     uint step_x = width / next_width;
     uint step_y = height / next_height;
 
@@ -789,94 +618,4 @@ macro double[RGBA_CHANNELS]? load_texture_vector(
     );
 
     return values;
-}
-
-fn TextureMipChain? create_fidelity_texture_mips(
-    Allocator allocator,
-    material::TextureDesc desc,
-    char[] pixels,
-    CoverageStatistics* statistics,
-) @local {
-    GeneratedTextureLayout layout = generated_texture_mip_layout(desc)!;
-
-    CoverageStatistics local_statistics;
-
-    if (desc.coverage != CoveragePolicy.NONE && !statistics) {
-        local_statistics = asset::create_coverage_statistics(desc, pixels)!;
-        statistics = &local_statistics;
-    }
-
-    if (statistics) asset::check_coverage_statistics(desc, statistics, statistics.revision)!;
-
-    if (pixels.len > (usz)sz::max - layout.byte_count) return c3d::INVALID_ARGUMENT~;
-
-    TextureMipChain chain = {
-        .allocator = allocator, .mip_count = layout.mip_count + 1, .layer_count = desc.layers,
-        .pixels = alloc::new_array(allocator, char, (sz)(pixels.len + layout.byte_count)),
-    };
-    defer catch destroy_texture_mips(&chain);
-
-    mem::copy(chain.pixels.ptr, pixels.ptr, pixels.len);
-
-    for (uint mip = 0; mip < layout.mip_count; mip++) chain.offsets[mip + 1] = pixels.len + layout.offsets[mip];
-
-    TextureMipChain generated = {
-        .first_mip = 1, .mip_count = layout.mip_count, .layer_count = desc.layers,
-        .offsets = layout.offsets, .pixels = chain.pixels[pixels.len..],
-    };
-
-    for (uint mip = 1; mip <= layout.mip_count; mip++) {
-        for (uint layer = 0; layer < desc.layers; layer++) {
-            TextureCoverageState state;
-            TextureCoverageState* collector;
-
-            if (desc.coverage == CoveragePolicy.THRESHOLD) {
-                state = begin_texture_coverage(
-                    desc: desc,
-                    mip: mip,
-                    face: layer,
-                    statistics: statistics,
-                );
-                collector = &state;
-            }
-
-            uint height = material::texture_mip_extent(desc.height, mip);
-
-            for (uint row = 0; row < height; row += math::min(PREPARE_GENERATION_ROWS, height - row)) {
-                write_texture_filter_band(
-                    desc: desc,
-                    mip: mip,
-                    layer: layer,
-                    first_row: row,
-                    row_count: math::min(PREPARE_GENERATION_ROWS, height - row),
-                    mip_zero: pixels,
-                    chain: &generated,
-                    coverage: collector,
-                )!;
-            }
-
-            if (collector) {
-                finish_texture_coverage_pass(&state);
-
-                usz layer_bytes = material::texture_mip_bytes(desc, mip)!;
-                usz offset = generated.offsets[mip - 1] + (usz)layer * layer_bytes;
-                char[] destination = generated.pixels[offset:layer_bytes];
-
-                while (state.phase < texture_generation_passes(desc)) {
-                    uint rows = math::min(PREPARE_GENERATION_ROWS, height - state.row);
-                    write_texture_coverage_band(
-                        desc: desc,
-                        destination: destination,
-                        state: &state,
-                        row_count: rows,
-                    );
-                    state.row += rows;
-
-                    if (state.row == height) finish_texture_coverage_pass(&state);
-                }
-            }
-        }
-    }
-
-    return chain;
 }

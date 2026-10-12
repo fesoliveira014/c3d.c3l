@@ -93,8 +93,9 @@ fn TextureBand? texture_band(
 fn GeneratedTextureLayout? generated_texture_mip_layout(material::TextureDesc desc) {
     check_texture_band_description(desc)!;
 
-    if (desc.depth || material::texture_is_compressed(desc.format)
-      || (desc.format == R16_UINT && desc.generate_mips)) return c3d::UNSUPPORTED~;
+    if (material::texture_is_compressed(desc.format) || (desc.format == R16_UINT && desc.generate_mips)) {
+        return c3d::UNSUPPORTED~;
+    }
 
     if (desc.mip_levels != 1) return c3d::INVALID_ARGUMENT~;
 
