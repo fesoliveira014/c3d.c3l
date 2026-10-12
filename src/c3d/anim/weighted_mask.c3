@@ -4,12 +4,9 @@ import c3d;
 import c3d::asset;
 import std::math;
 
-<* Owned node weights and their model identity/layout snapshot. *>
+<* Owned per-node weights in model-node order. *>
 struct WeightedJointMask {
     Allocator allocator;
-    ModelId model;
-    String[] model_names;
-    int[] model_parents;
     float[] nodes;
 }
 
@@ -29,7 +26,7 @@ fn WeightedJointMask? create_weighted_joint_mask(
     ModelAsset* record = assets.models.try_get(model)!;
     validate_weighted_mask_names(&record.data, names, weights)!;
 
-    WeightedJointMask mask = copy_weighted_mask_layout(allocator, model, &record.data)!;
+    WeightedJointMask mask = create_weighted_mask_row(allocator, record.data.nodes.len)!;
 
     foreach (index, node : record.data.nodes) {
         foreach (requested, name : names) {
@@ -59,7 +56,7 @@ fn WeightedJointMask? create_feathered_joint_mask(
     if (depths.len != names.len) return c3d::INVALID_ARGUMENT~;
     validate_weighted_mask_names(&record.data, names, weights)!;
 
-    WeightedJointMask mask = copy_weighted_mask_layout(allocator, model, &record.data)!;
+    WeightedJointMask mask = create_weighted_mask_row(allocator, record.data.nodes.len)!;
 
     for (sz index = 0; index < record.data.nodes.len; index++) {
         foreach (requested, name : names) {
@@ -80,35 +77,12 @@ fn WeightedJointMask? create_feathered_joint_mask(
 }
 
 <*
- Release every mask-owned array and clear its value.
+ Release the weight row and clear the mask.
  @param [&inout] mask : "Sole owner; left zeroed."
 *>
 fn void destroy_weighted_joint_mask(WeightedJointMask* mask) {
-    foreach (name : mask.model_names) alloc::free(mask.allocator, name.ptr);
-
-    alloc::free(mask.allocator, mask.model_names.ptr);
-    alloc::free(mask.allocator, mask.model_parents.ptr);
     alloc::free(mask.allocator, mask.nodes.ptr);
     *mask = {};
-}
-
-fn void? validate_weighted_joint_mask(
-    AssetStore* assets,
-    ModelId model,
-    WeightedJointMask* mask,
-) @private {
-    ModelAsset* record = assets.models.try_get(model)!;
-    if (!c3d::same_id(model, mask.model) || mask.nodes.len != record.data.nodes.len
-      || mask.model_names.len != record.data.nodes.len || mask.model_parents.len != record.data.nodes.len) {
-        return c3d::INVALID_ARGUMENT~;
-    }
-
-    foreach (index, node : record.data.nodes) {
-        if (mask.model_names[index] != node.name || mask.model_parents[index] != node.parent
-          || !math::is_finite(mask.nodes[index]) || mask.nodes[index] < 0 || mask.nodes[index] > 1) {
-            return c3d::INVALID_ARGUMENT~;
-        }
-    }
 }
 
 fn void? validate_weighted_mask_names(ModelTemplate* template, String[] names, float[] weights) @private {
@@ -125,24 +99,8 @@ fn void? validate_weighted_mask_names(ModelTemplate* template, String[] names, f
     }
 }
 
-fn WeightedJointMask? copy_weighted_mask_layout(
-    Allocator allocator,
-    ModelId model,
-    ModelTemplate* template,
-) @private {
-    WeightedJointMask mask = { .allocator = allocator, .model = model };
-    defer catch destroy_weighted_joint_mask(&mask);
+fn WeightedJointMask? create_weighted_mask_row(Allocator allocator, sz node_count) @private {
+    float[] nodes = alloc::new_array_try(allocator, float, node_count) ?? c3d::CAPACITY_EXCEEDED~!;
 
-    mask.nodes = alloc::new_array_try(allocator, float, template.nodes.len) ?? c3d::CAPACITY_EXCEEDED~!;
-    mask.model_names = alloc::new_array_try(allocator, String, template.nodes.len) ?? c3d::CAPACITY_EXCEEDED~!;
-    mask.model_parents = alloc::new_array_try(allocator, int, template.nodes.len) ?? c3d::CAPACITY_EXCEEDED~!;
-
-    foreach (index, node : template.nodes) {
-        char[] name = alloc::new_array_try(allocator, char, node.name.len) ?? c3d::CAPACITY_EXCEEDED~!;
-        name[..] = node.name[..];
-        mask.model_names[index] = (String)name;
-        mask.model_parents[index] = node.parent;
-    }
-
-    return mask;
+    return { .allocator = allocator, .nodes = nodes };
 }

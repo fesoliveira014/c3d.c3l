@@ -323,7 +323,7 @@ fn void test_animation_authoring_mask_rows_release_on_stop_fade_reset_and_owner_
     assert(!tracker.has_leaks());
 }
 
-fn void test_animation_authoring_mask_mutually_exclusive_masks_fail_atomically() @test {
+fn void test_animation_authoring_mask_invalid_masks_fail_atomically() @test {
     LayerFixture fixture;
     create_layer_fixture(&fixture);
     defer destroy_layer_fixture(&fixture);
@@ -337,7 +337,17 @@ fn void test_animation_authoring_mask_mutually_exclusive_masks_fail_atomically()
     AuthoringPoolSnapshot snapshot = snapshot_authoring_pool(&playback);
     defer destroy_authoring_pool_snapshot(&snapshot);
 
-    PlayDesc desc = { .mask = &boolean, .weighted_mask = &mask };
-    assert(@catch(fixture.animator.play(&fixture.assets, clip, desc)) == c3d::INVALID_ARGUMENT);
+    PlayDesc both = { .mask = &boolean, .weighted_mask = &mask };
+    assert(@catch(fixture.animator.play(&fixture.assets, clip, both)) == c3d::INVALID_ARGUMENT);
+
+    WeightedJointMask short_row = { .nodes = mask.nodes[:3] };
+    PlayDesc narrow = { .weighted_mask = &short_row };
+    assert(@catch(fixture.animator.play(&fixture.assets, clip, narrow)) == c3d::INVALID_ARGUMENT);
+
+    PlayDesc weighted = { .weighted_mask = &mask };
+    foreach (invalid : (float[2]){ float::nan, 1.5f }) {
+        mask.nodes[1] = invalid;
+        assert(@catch(fixture.animator.play(&fixture.assets, clip, weighted)) == c3d::INVALID_ARGUMENT);
+    }
     assert_authoring_pool_unchanged(&playback, &snapshot);
 }

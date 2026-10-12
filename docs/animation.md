@@ -181,12 +181,12 @@ defer anim::destroy_weighted_joint_mask(&upper);
 animator.play(&assets, overlay_clip, { .layer = 1, .weighted_mask = &upper })!;
 ```
 
-Use the model's actual names. A weighted mask captures the model identity and
-ordered node names/parents. A different model or changed layout, wrong row
-width, invalid weight, or supplying both mask types faults `INVALID_ARGUMENT`
-before playback changes. Play copies the float row; editing or destroying the
-caller mask afterwards does not change existing actions. Each masked action
-owns `node_count * float::size` extra bytes until removal.
+Use the model's actual names. As with `JointMask`, reuse a weighted mask only
+with instances of the model whose node indices it describes. A wrong row
+width, a weight outside `[0,1]` or supplying both mask types faults
+`INVALID_ARGUMENT` before playback changes. Play copies the float row; editing
+or destroying the caller mask afterwards does not change existing actions.
+Each masked action owns `node_count * float::size` extra bytes until removal.
 
 The effective contribution is `action.weight * mask.nodes[node]` for every
 translation, rotation, scale and logical morph channel, including root motion.

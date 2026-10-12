@@ -386,8 +386,12 @@ fn usz? validate_playback_action(
 
     if (desc.mask && desc.mask.nodes.len != destination.base_pose.len) return c3d::INVALID_ARGUMENT~;
     if (desc.mask && desc.weighted_mask) return c3d::INVALID_ARGUMENT~;
-    if (desc.weighted_mask && desc.weighted_mask.nodes.len != destination.base_pose.len) {
-        return c3d::INVALID_ARGUMENT~;
+    if (desc.weighted_mask) {
+        if (desc.weighted_mask.nodes.len != destination.base_pose.len) return c3d::INVALID_ARGUMENT~;
+
+        foreach (weight : desc.weighted_mask.nodes) {
+            if (!math::is_finite(weight) || weight < 0 || weight > 1) return c3d::INVALID_ARGUMENT~;
+        }
     }
 
     foreach (target : data.targets) {
