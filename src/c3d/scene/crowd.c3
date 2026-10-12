@@ -74,9 +74,10 @@ fn void Scene.write_crowd_batches(&self, AnimatedCrowd* crowd) {
 
     foreach (&part : crowd.parts) {
         InstancedMesh* batch = self.world.get(part.batch, InstancedMesh);
-        bool whole = !part.skinned || batch.count != crowd.count
-            || batch.local_bounds.min != bounds.min || batch.local_bounds.max != bounds.max;
-        InstanceSpan changed = whole ? (InstanceSpan){} : changed_instances(batch, crowd);
+        bool resized = batch.count != crowd.count;
+        bool bounds_moved = batch.local_bounds.min != bounds.min || batch.local_bounds.max != bounds.max;
+        InstanceSpan changed = part.skinned && !resized ? changed_instances(batch, crowd) : (InstanceSpan){};
+        bool whole = !part.skinned || resized || (bounds_moved && changed.end == changed.first);
 
         batch.transforms[:crowd.count] = crowd.placements[:crowd.count];
         batch.colors[:crowd.count] = crowd.colors[:crowd.count];
