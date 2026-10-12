@@ -8,8 +8,10 @@ fn bool? validate_multiplicative_scale(AnimationClip* clip) @private {
     foreach (&track : clip.tracks) {
         if (track.path != TargetPath.SCALE) continue;
 
-        for (uint key = 0; key < track.times.len; key++) {
-            if (!positive_scale(key_values(track, key, CUBIC_SLOT_VALUE))) return c3d::INVALID_ARGUMENT~;
+        for (uint key = 0; key < track.key_count(); key++) {
+            float[3] scale;
+            track.read_key(key, track.value_slot(), scale[..]);
+            if (!positive_scale(scale[..])) return c3d::INVALID_ARGUMENT~;
         }
 
         float[3] reference;

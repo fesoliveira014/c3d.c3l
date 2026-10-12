@@ -30,7 +30,7 @@ struct ClipTime @private {
  @param [&in] track : "Ascending times."
  @param [&inout] cursor : "Normal key cursor; independent of boundary side."
  @param value : "One complete track stride."
- @require track.times.len > 0
+ @require track.key_count() > 0
  @require value.len == track.stride() && value.len <= 4
  @require math::is_finite(time)
 *>
@@ -41,24 +41,24 @@ fn void sample_track_double(
     double[] value,
     StepSampleSide side = StepSampleSide.EXACT,
 ) @private {
-    uint last = (uint)track.times.len - 1;
-    if (!last || time < track.times[0] || time > track.times[last]) {
-        *cursor = time < track.times[0] ? 0 : last;
+    uint last = track.key_count() - 1;
+    if (!last || time < track.key_time(0) || time > track.key_time(last)) {
+        *cursor = time < track.key_time(0) ? 0 : last;
         copy_key_double(track, *cursor, value);
         if (track.path == TargetPath.ROTATION) normalize_rotation_double(value);
         return;
     }
 
-    if (time == track.times[0]) {
+    if (time == track.key_time(0)) {
         *cursor = 0;
-    } else if (time == track.times[last]) {
+    } else if (time == track.key_time(last)) {
         *cursor = last;
-    } else if (*cursor >= last || time < track.times[*cursor]) {
+    } else if (*cursor >= last || time < track.key_time(*cursor)) {
         uint low;
         uint high = last;
         while (high - low > 1) {
             uint middle = (low + high) / 2;
-            if (track.times[middle] <= time) {
+            if (track.key_time(middle) <= time) {
                 low = middle;
             } else {
                 high = middle;
@@ -66,13 +66,13 @@ fn void sample_track_double(
         }
         *cursor = low;
     } else {
-        while (track.times[*cursor + 1] <= time) (*cursor)++;
+        while (track.key_time(*cursor + 1) <= time) (*cursor)++;
     }
 
     uint key = *cursor;
     if (track.interpolation == Interpolation.STEP) {
         uint sampled = key;
-        if (side == StepSampleSide.LEFT && sampled && time == track.times[sampled]) sampled--;
+        if (side == StepSampleSide.LEFT && sampled && time == track.key_time(sampled)) sampled--;
 
         copy_key_double(track, sampled, value);
         if (track.path == TargetPath.ROTATION) normalize_rotation_double(value);
@@ -80,8 +80,8 @@ fn void sample_track_double(
     }
 
     if (key == last) key--;
-    double duration = (double)track.times[key + 1] - (double)track.times[key];
-    double fraction = ((double)time - (double)track.times[key]) / duration;
+    double duration = (double)track.key_time(key + 1) - (double)track.key_time(key);
+    double fraction = ((double)time - (double)track.key_time(key)) / duration;
 
     switch (track.interpolation) {
         case STEP: unreachable();
@@ -105,7 +105,7 @@ fn void sample_track_double(
     if (track.path == TargetPath.ROTATION) normalize_rotation_double(value);
 }
 
-<* @require track.times.len > 0 && out.len == track.stride() *>
+<* @require track.key_count() > 0 && out.len == track.stride() *>
 fn void sample_track_on_side(
     Track* track,
     float time,
@@ -120,9 +120,9 @@ fn void sample_track_on_side(
         out: out,
     );
     if (side != StepSampleSide.LEFT || track.interpolation != Interpolation.STEP) return;
-    if (!*cursor || time != track.times[*cursor]) return;
+    if (!*cursor || time != track.key_time(*cursor)) return;
 
-    out[..] = key_values(track, *cursor - 1, CUBIC_SLOT_VALUE)[..];
+    track.read_key(*cursor - 1, track.value_slot(), out);
 }
 
 fn double action_clock_rate(Action* action) @private {
@@ -166,8 +166,9 @@ fn float track_clip_time(Track* track, ClipTime time) @private {
 }
 
 fn void copy_key_double(Track* track, uint key, double[] value) @private {
-    float[] stored = key_values(track, key, CUBIC_SLOT_VALUE);
-    foreach (index, component : stored) value[index] = component;
+    float[4] stored;
+    track.read_key(key, track.value_slot(), stored[..]);
+    foreach (index, component : stored[:track.stride()]) value[index] = component;
 }
 
 fn void interpolate_linear_double(
@@ -176,8 +177,13 @@ fn void interpolate_linear_double(
     double fraction,
     double[] value,
 ) @private {
-    float[] first = key_values(track, key, CUBIC_SLOT_VALUE);
-    float[] second = key_values(track, key + 1, CUBIC_SLOT_VALUE);
+    usz stride = track.stride();
+    float[4] first_key;
+    float[4] second_key;
+    track.read_key(key, track.value_slot(), first_key[..]);
+    track.read_key(key + 1, track.value_slot(), second_key[..]);
+    float[] first = first_key[:stride];
+    float[] second = second_key[:stride];
     if (track.path == TargetPath.ROTATION) {
         interpolate_rotation_double(
             first: first,
@@ -200,10 +206,17 @@ fn void interpolate_cubic_double(
     double duration,
     double[] value,
 ) @private {
-    float[] first = key_values(track, key, CUBIC_SLOT_VALUE);
-    float[] first_tangent = key_values(track, key, CUBIC_SLOT_OUT_TANGENT);
-    float[] second = key_values(track, key + 1, CUBIC_SLOT_VALUE);
-    float[] second_tangent = key_values(track, key + 1, CUBIC_SLOT_IN_TANGENT);
+    usz stride = track.stride();
+    float[4] first_key;
+    float[4] first_tangent;
+    float[4] second_key;
+    float[4] second_tangent;
+    track.read_key(key, CUBIC_SLOT_VALUE, first_key[..]);
+    track.read_key(key, CUBIC_SLOT_OUT_TANGENT, first_tangent[..]);
+    track.read_key(key + 1, CUBIC_SLOT_VALUE, second_key[..]);
+    track.read_key(key + 1, CUBIC_SLOT_IN_TANGENT, second_tangent[..]);
+    float[] first = first_key[:stride];
+    float[] second = second_key[:stride];
 
     double complement = 1 - fraction;
     double square = fraction * fraction;
