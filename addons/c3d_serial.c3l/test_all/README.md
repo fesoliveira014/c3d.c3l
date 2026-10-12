@@ -2,7 +2,7 @@
 
 `serial_all_test` selects all serialization adapters and character navigation. It creates no GPU device and adds no test-only component types.
 
-The explicit inventory checks all 53 policies: 39 described authoring adapters and 14 transient components. It uses already assigned slots and checks the exact registered-type count, distinct slots, exclusive policies, complete registered scene-store coverage, and repeated registration. The separate core and package inventories also remain enabled.
+The explicit inventory checks all 54 policies: 40 described authoring adapters and 14 transient components. It uses already assigned slots and checks the exact registered-type count, distinct slots, exclusive policies, complete registered scene-store coverage, and repeated registration. The separate core and package inventories also remain enabled.
 
 One scene contains every authored type together: core values and batches, an animated skinned ragdoll, an animated crowd, IK constraints, ordinary physics and cloth, fracture pieces, navigation with a driven character, terrain and foliage, water, particles, and an audio emitter with a listener. The source prepares all owners and synchronizes physics/navigation so all 14 transient types are actually present before export.
 

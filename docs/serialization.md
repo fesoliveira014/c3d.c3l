@@ -9,12 +9,13 @@ Binary and JSONC forms preserve ordinary nodes, built-in authoring and applicati
 Node transform values pass through unchanged, matching direct `node.local` assignment. The container does not reject non-finite position/rotation/scale values or a zero quaternion; those values can propagate into the derived world matrix. Component codecs define and validate their own numeric constraints before invoking owner APIs. `ASSET_FORMAT_ERROR` covers invalid wire representations. Component codecs report invalid authored values through their declared owner faults; the container adds no universal float-validity rule.
 
 `register_core_codecs()` installs described policies for Mesh, Camera,
-Light, ProbeVolume, Atmosphere, HeightFog, ReflectionProbe and Decal, all in the
+Light, ProbeVolume, Atmosphere, HeightFog, ReflectionProbe, Decal and CloudLayer, all in the
 VALUE phase. Light is version 2, with `volumetric`; version-1 binary and JSONC
 payloads, which lack it, read it as true. Mesh copies its morph-weight array into ordinary Scene ownership.
 The other value components use fixed-size copying attachment. ProbeVolume,
-Atmosphere, HeightFog and ReflectionProbe use their existing owner validity
-predicates on both export and decoded authoring before attachment.
+Atmosphere, HeightFog, ReflectionProbe and CloudLayer use their existing owner validity
+predicates on both export and decoded authoring before attachment. CloudLayer's
+`coverage` is an asset reference like Decal's material.
 
 InstancedMesh and BillboardBatch also restore in the VALUE phase through
 private authoring descriptions. They retain capacity and live entries in copied
@@ -41,14 +42,14 @@ and restart contracts are detailed in the built-in policy inventory below.
 Animator export projects owned transforms and Mesh morph weights to captured
 baselines; ordinary Mesh values preserve their explicit weights.
 
-There are 39 authored and 14 transient production component policies. The
+There are 40 authored and 14 transient production component policies. The
 registration calls install their description/default prerequisites idempotently.
 Consumers select each package and its normal dependencies, including `c3d_serial`
 for any adapter below; core has no reverse dependency on an add-on.
 
 | Owner | Serialization feature | Registration | Authored / transient |
 | --- | --- | --- | --- |
-| Core | None | `serial::register_core_codecs()` | 18 / 0 |
+| Core | None | `serial::register_core_codecs()` | 19 / 0 |
 | Physics | `C3D_PHYSICS_SERIAL` | `physics::register_serial_codecs()` | 8 / 2 |
 | Navigation | `C3D_NAV_SERIAL` | `nav::register_serial_codecs()` | 5 / 5 |
 | Character | `C3D_CHARACTER_SERIAL`, `C3D_PHYSICS_SERIAL` | `character::register_serial_codecs()` | 1 / 0 |
@@ -222,7 +223,7 @@ with `destroy_serial_diagnostic` after use.
 ## Built-in policy inventory
 
 `serial_core_policy_test` runs separately from application fixture tests and is
-included in `scripts/build.py --test`. It registers all 18 core policies without
+included in `scripts/build.py --test`. It registers all 19 core policies without
 constructing a Scene and verifies automatic prerequisites and repeated registration.
 It then creates a Scene and walks every assigned ECS slot. Every slot must have
 exactly one described, custom-codec or transient policy matching the expected table.

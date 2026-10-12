@@ -48,6 +48,9 @@ enum ShaderName : int {
     FOG,
     FOG_SCATTERING,
     FOG_INTEGRATION,
+    CLOUD_NOISE,
+    CLOUDS,
+    CLOUDS_COMPOSITE,
     DEPTH_ONLY,
     SHADOW_TRANSMITTANCE,
     GRADE,
@@ -213,6 +216,9 @@ const char[*] FOG_SCATTERING_SPIRV @private = $embed("../../../shaders/spv/fog_s
 const char[*] FOG_SCATTERING_RT_SHADOWS_SPIRV @private = $embed("../../../shaders/spv/fog_scattering_rt_shadows.spv");
 const char[*] FOG_SCATTERING_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV @private = $embed("../../../shaders/spv/fog_scattering_rt_shadows_scene_trace_bvh.spv");
 const char[*] FOG_INTEGRATION_SPIRV @private = $embed("../../../shaders/spv/fog_integration.spv");
+const char[*] CLOUD_NOISE_SPIRV @private = $embed("../../../shaders/spv/cloud_noise.spv");
+const char[*] CLOUDS_SPIRV @private = $embed("../../../shaders/spv/clouds.spv");
+const char[*] CLOUDS_COMPOSITE_SPIRV @private = $embed("../../../shaders/spv/clouds_composite.spv");
 const char[*] MESH_DEPTH_ONLY_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only.spv");
 const char[*] DEPTH_ONLY_SPIRV @private = $embed("../../../shaders/spv/depth_only.spv");
 const char[*] DEPTH_ONLY_VERTEX_COLOR_SPIRV @private = $embed("../../../shaders/spv/depth_only_vertex_color.spv");
@@ -307,7 +313,7 @@ const char[*] TRACE_REFIT_SPIRV @private = $embed("../../../shaders/spv/trace_re
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[153] SHADER_ENTRIES = {
+const ShaderEntry[156] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -371,6 +377,9 @@ const ShaderEntry[153] SHADER_ENTRIES = {
     { .variant = { .shader = FOG_SCATTERING, .flags = SHADER_FLAG_RT_SHADOWS }, .spirv = FOG_SCATTERING_RT_SHADOWS_SPIRV[..] },
     { .variant = { .shader = FOG_SCATTERING, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH }, .spirv = FOG_SCATTERING_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV[..] },
     { .variant = { .shader = FOG_INTEGRATION }, .spirv = FOG_INTEGRATION_SPIRV[..] },
+    { .variant = { .shader = CLOUD_NOISE }, .spirv = CLOUD_NOISE_SPIRV[..] },
+    { .variant = { .shader = CLOUDS }, .spirv = CLOUDS_SPIRV[..] },
+    { .variant = { .shader = CLOUDS_COMPOSITE }, .spirv = CLOUDS_COMPOSITE_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY }, .spirv = MESH_DEPTH_ONLY_SPIRV[..] },
     { .variant = { .shader = DEPTH_ONLY }, .spirv = DEPTH_ONLY_SPIRV[..] },
     { .variant = { .shader = DEPTH_ONLY, .flags = SHADER_FLAG_VERTEX_COLOR }, .spirv = DEPTH_ONLY_VERTEX_COLOR_SPIRV[..] },
