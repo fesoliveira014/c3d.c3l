@@ -72,7 +72,7 @@ struct Showcase @local {
     AnimationActionId[CROWD_SIZE] base_actions;
     bool     baseline;
     bool     compute_skinning;
-    bool     lod_baseline; // animated LOD parts keep vertex skinning; the baseline then draws ordinary meshes
+    bool     animated_lod; // compute skinning leaves animated LOD parts out; the flag starts without them
     bool     compare;
     bool     shared_phases;
     float[CROWD_SIZE] seed_times;
@@ -181,6 +181,8 @@ fn void? attach_showcase_lod(
     ModelTemplate* template,
     Showcase* showcase,
 ) @local {
+    if (!showcase.animated_lod) return;
+
     @pool() {
         uint mesh_count = (uint)template.meshes.len;
         LodLevel[LOD_LEVELS] levels;
@@ -215,15 +217,13 @@ fn void? attach_showcase_lod(
             desc: desc,
         )!;
 
-        if (showcase.lod_baseline) {
-            foreach (node : showcase.animated) {
-                model::attach_animated_lod(
-                    assets: assets,
-                    scene: scene,
-                    owner: node,
-                    desc: desc,
-                )!;
-            }
+        foreach (node : showcase.animated) {
+            model::attach_animated_lod(
+                assets: assets,
+                scene: scene,
+                owner: node,
+                desc: desc,
+            )!;
         }
     };
 }
@@ -368,7 +368,7 @@ fn void? panel(
         if (imgui::checkbox("Compute skinning (K)", &showcase.compute_skinning)) {
             renderer.set_compute_skinning(showcase.compute_skinning);
         }
-        imgui::text("Posed: %u meshes, fallbacks: %u", stats.compute_skinned, stats.compute_skinning_fallbacks);
+        imgui::text("Posed bindings: %u, fallback draws: %u", stats.compute_skinned, stats.compute_skinning_fallbacks);
         imgui::text("Resident posed: %u bytes", (uint)stats.compute_skinning_bytes);
         foreach (pass : REPORTED_PASSES) {
             imgui::text(
@@ -394,7 +394,9 @@ fn void? panel(
         changed |= imgui::checkbox("Force full-detail meshes", &showcase.full_detail);
         imgui::text_unformatted("Triangle subsets; preview has holes.");
 
-        if (showcase.baseline ? showcase.lod_baseline : renderer.stats.lod_counts_valid) {
+        if (!showcase.animated_lod) {
+            imgui::text_unformatted("Animated LOD is off.");
+        } else if (showcase.baseline || renderer.stats.lod_counts_valid) {
             foreach (uint level, triangles : showcase.lod_triangles) {
                 uint selected = showcase.baseline
                   ? renderer.stats.lod_objects_selected[level] : renderer.stats.lod_selected[level];
@@ -462,7 +464,7 @@ fn void? draw_frame(
 fn void report_compute_skinning(render::Renderer* renderer, Showcase* showcase) @local {
     Stats* stats = &renderer.stats;
     io::printf(
-        "  compute skinning %s: posed %d, fallbacks %d",
+        "  compute skinning %s: posed bindings %d, fallback draws %d",
         showcase.compute_skinning ? "on" : "off",
         stats.compute_skinned,
         stats.compute_skinning_fallbacks,
@@ -674,7 +676,7 @@ fn int main(String[] args) {
     Showcase showcase = {
         .compare          = compare,
         .compute_skinning = compute_skinning,
-        .lod_baseline     = !compute_skinning,
+        .animated_lod     = !compute_skinning,
         .shared_phases    = shared_phases,
         .frozen_share     = frozen_share,
     };
