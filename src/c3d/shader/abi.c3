@@ -102,6 +102,7 @@ const uint PREVIEW_MODE_GRAY = 10;
 const uint PREVIEW_MODE_DISTANCE = 11;
 const uint LIGHT_RT_SHADOW = 1;
 const uint LIGHT_VOLUMETRIC = 2;
+const uint LIGHT_CLOUD_SHADOW = 4;
 const uint ENVIRONMENT_FACE_POSITIVE_X = 0;
 const uint ENVIRONMENT_FACE_NEGATIVE_X = 1;
 const uint ENVIRONMENT_FACE_POSITIVE_Y = 2;
@@ -147,6 +148,11 @@ const uint CLOUD_NOISE_SIZE = 128;
 const uint CLOUD_NOISE_GROUP_SIZE = 4;
 const uint CLOUD_STEPS = 64;
 const uint CLOUD_LIGHT_STEPS = 6;
+const float CLOUD_SUN_FLOOR = 0.1;
+const uint CLOUD_SHADOW_SIZE = 512;
+const float CLOUD_SHADOW_EXTENT = 16384.0;
+const uint CLOUD_SHADOW_STEPS = 16;
+const float CLOUD_SHADOW_EDGE_BAND = 0.1;
 const uint PHYSICAL_MAP_CLEARCOAT = 1;
 const uint PHYSICAL_MAP_CLEARCOAT_ROUGHNESS = 2;
 const uint PHYSICAL_MAP_CLEARCOAT_NORMAL = 4;
@@ -499,8 +505,7 @@ struct FrameRoot {
     float        max_reflection_roughness;
     float        pre_exposure;
     float        pre_exposure_ratio;
-    float        _pad0;
-    float        _pad1;
+    GpuAddress   cloud_shadow;
 }
 $assert FrameRoot::size == 576;
 $assert $reflect(FrameRoot.view).offset == 0;
@@ -543,8 +548,7 @@ $assert $reflect(FrameRoot.reflection_sampler).offset == 552;
 $assert $reflect(FrameRoot.max_reflection_roughness).offset == 556;
 $assert $reflect(FrameRoot.pre_exposure).offset == 560;
 $assert $reflect(FrameRoot.pre_exposure_ratio).offset == 564;
-$assert $reflect(FrameRoot._pad0).offset == 568;
-$assert $reflect(FrameRoot._pad1).offset == 572;
+$assert $reflect(FrameRoot.cloud_shadow).offset == 568;
 
 struct DrawRoot {
     Mat4f        model;
@@ -1957,6 +1961,28 @@ $assert $reflect(CloudsRoot.anisotropy).offset == 112;
 $assert $reflect(CloudsRoot.coverage_extent).offset == 116;
 $assert $reflect(CloudsRoot.noise_scale).offset == 120;
 $assert $reflect(CloudsRoot.erosion).offset == 124;
+
+struct CloudShadowRoot {
+    Vec4f        to_sun;
+    Vec4f        map;
+    GpuAddress   clouds;
+    TextureIndex texture;
+    SamplerIndex sampler_index;
+    float        bottom;
+    float        top;
+    uint         _pad0;
+    uint         _pad1;
+}
+$assert CloudShadowRoot::size == 64;
+$assert $reflect(CloudShadowRoot.to_sun).offset == 0;
+$assert $reflect(CloudShadowRoot.map).offset == 16;
+$assert $reflect(CloudShadowRoot.clouds).offset == 32;
+$assert $reflect(CloudShadowRoot.texture).offset == 40;
+$assert $reflect(CloudShadowRoot.sampler_index).offset == 44;
+$assert $reflect(CloudShadowRoot.bottom).offset == 48;
+$assert $reflect(CloudShadowRoot.top).offset == 52;
+$assert $reflect(CloudShadowRoot._pad0).offset == 56;
+$assert $reflect(CloudShadowRoot._pad1).offset == 60;
 
 struct CloudsCompositeRoot {
     GpuAddress   frame;

@@ -9,6 +9,7 @@ const char[*] C3D_COMMON_AO_ESTIMATE_TEXT @private = $embed("../../../shaders/co
 const char[*] C3D_COMMON_ATMOSPHERE_TEXT @private = $embed("../../../shaders/common/atmosphere.glsl");
 const char[*] C3D_COMMON_BLEND_OUTPUT_TEXT @private = $embed("../../../shaders/common/blend_output.glsl");
 const char[*] C3D_COMMON_BRDF_TEXT @private = $embed("../../../shaders/common/brdf.glsl");
+const char[*] C3D_COMMON_CLOUD_DENSITY_TEXT @private = $embed("../../../shaders/common/cloud_density.glsl");
 const char[*] C3D_COMMON_CLUSTERS_TEXT @private = $embed("../../../shaders/common/clusters.glsl");
 const char[*] C3D_COMMON_CONSTANTS_TEXT @private = $embed("../../../shaders/common/constants.glsl");
 const char[*] C3D_COMMON_CUBE_DIRECTION_TEXT @private = $embed("../../../shaders/common/cube_direction.glsl");
@@ -70,13 +71,14 @@ const char[*] GPU_RAY_TRACING_TEXT @private = $embed("../../../shaders/gpu/ray_t
 <*
  Every include a custom stage may resolve, in table order.
 *>
-const asset::ShaderInclude[63] SHADER_INCLUDES = {
+const asset::ShaderInclude[64] SHADER_INCLUDES = {
     { .name = "c3d_abi.glsl", .text = (String)C3D_GENERATED_C3D_ABI_TEXT[..] },
     { .name = "ambient_occlusion.glsl", .text = (String)C3D_COMMON_AMBIENT_OCCLUSION_TEXT[..] },
     { .name = "ao_estimate.glsl", .text = (String)C3D_COMMON_AO_ESTIMATE_TEXT[..] },
     { .name = "atmosphere.glsl", .text = (String)C3D_COMMON_ATMOSPHERE_TEXT[..] },
     { .name = "blend_output.glsl", .text = (String)C3D_COMMON_BLEND_OUTPUT_TEXT[..] },
     { .name = "brdf.glsl", .text = (String)C3D_COMMON_BRDF_TEXT[..] },
+    { .name = "cloud_density.glsl", .text = (String)C3D_COMMON_CLOUD_DENSITY_TEXT[..] },
     { .name = "clusters.glsl", .text = (String)C3D_COMMON_CLUSTERS_TEXT[..] },
     { .name = "constants.glsl", .text = (String)C3D_COMMON_CONSTANTS_TEXT[..] },
     { .name = "cube_direction.glsl", .text = (String)C3D_COMMON_CUBE_DIRECTION_TEXT[..] },

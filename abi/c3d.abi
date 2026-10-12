@@ -227,8 +227,7 @@ root FrameRoot {
     float      max_reflection_roughness;
     float      pre_exposure; // scale the view's radiance carries while it is rendered; post divides it out
     float      pre_exposure_ratio; // this rendering's pre_exposure over the previous rendering's
-    float      _pad0;
-    float      _pad1;
+    GpuAddress cloud_shadow; // CloudShadowRoot; zero when the view casts no cloud shadows
 }
 
 root DrawRoot {
@@ -757,6 +756,7 @@ root CubePreviewRoot {
 
 const uint LIGHT_RT_SHADOW = 1;
 const uint LIGHT_VOLUMETRIC = 2;
+const uint LIGHT_CLOUD_SHADOW = 4; // the cloud layer's shadow multiplies this light's visibility
 
 struct LightGpu {
     vec4 position_range;
@@ -1112,6 +1112,11 @@ const uint CLOUD_NOISE_SIZE = 128; // 8 MiB of RGBA8 shared by every deck; 64 re
 const uint CLOUD_NOISE_GROUP_SIZE = 4;
 const uint CLOUD_STEPS = 64; // samples along a half-resolution ray; fewer band the deck: the cloud pass's cost lever
 const uint CLOUD_LIGHT_STEPS = 6; // samples toward the sun per ray sample; fewer lose the self-shadowing of depth
+const float CLOUD_SUN_FLOOR = 0.1; // lowest sun cosine a march or a shadow projection divides by
+const uint CLOUD_SHADOW_SIZE = 512; // texels per side of the cloud shadow map: 512 KiB of R16F per view
+const float CLOUD_SHADOW_EXTENT = 16384.0; // metres the map covers: 32 m a texel, finer than a shadow edge; more reach blurs it
+const uint CLOUD_SHADOW_STEPS = 16; // samples through the deck per texel; fewer band the shadow of a thick deck
+const float CLOUD_SHADOW_EDGE_BAND = 0.1; // share of the half extent that fades to light; narrower shows the border
 
 root CloudNoiseRoot {
     TextureIndex output_texture;
@@ -1143,6 +1148,18 @@ root CloudsRoot {
     float        coverage_extent;
     float        noise_scale;
     float        erosion;
+}
+
+root CloudShadowRoot {
+    vec4         to_sun;         // xyz: unit vector toward the sun, above the horizon
+    vec4         map;            // xy: minimum corner of the map on the bottom plane, in the view's rebased frame
+    GpuAddress   clouds;         // the CloudsRoot the writer marches
+    TextureIndex texture;        // R16F: transmittance along the sun through the layer, per texel of the plane
+    SamplerIndex sampler_index;
+    float        bottom;
+    float        top;
+    uint         _pad0;
+    uint         _pad1;
 }
 
 root CloudsCompositeRoot {

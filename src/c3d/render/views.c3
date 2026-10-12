@@ -91,7 +91,7 @@ struct ViewDesc {
  Working images one view owns, in view_targets order.
 *>
 const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8 + GBUFFER_CHANNEL_COUNT
-  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1 + 1 + 2 * SSGI_HISTORY_SLOTS + 2 + 1 + 3 + 2 + 1 + 2 + 1;
+  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1 + 1 + 2 * SSGI_HISTORY_SLOTS + 2 + 1 + 3 + 2 + 1 + 2 + 1 + 1;
 
 <*
  Reverse-Z projection terms that recover forward distance from stored depth.
@@ -634,6 +634,7 @@ struct ViewRecord {
     FogHistory                           fog_history;
     Target                               clouds;
     Target                               cloud_distance;
+    Target                               cloud_shadow;
     Target                               weighted_accum;
     Target                               weighted_revealage;
     Target*                              scene_input;
@@ -729,6 +730,7 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
     targets[next + 10 + 2 * SSGI_HISTORY_SLOTS] = &record.clouds;
     targets[next + 11 + 2 * SSGI_HISTORY_SLOTS] = &record.cloud_distance;
     targets[next + 12 + 2 * SSGI_HISTORY_SLOTS] = &record.fog_volumes[1];
+    targets[next + 13 + 2 * SSGI_HISTORY_SLOTS] = &record.cloud_shadow;
     return targets;
 }
 

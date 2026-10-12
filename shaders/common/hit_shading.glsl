@@ -26,7 +26,7 @@ HitLights frame_hit_lights(FrameRoot frame) {
 
 // Raster atlas layers are fitted to the camera, so every shadowing light traces at a hit.
 float hit_light_visibility(FrameRoot frame, LightGpu light, TraceSurface surface) {
-    if (!light_casts_shadow(light)) return 1.0;
+    if (light.shadow_count == 0u && (light.flags & LIGHT_RT_SHADOW) == 0u) return 1.0;
     return ray_shadow_visibility(frame, light, surface.position, surface.geometric_normal);
 }
 
