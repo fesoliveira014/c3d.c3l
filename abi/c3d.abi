@@ -371,7 +371,7 @@ struct InstanceGpu {
     mat4 model;
     vec4 normal_0;
     vec4 normal_1;
-    vec4 normal_2;
+    vec4 normal_2; // w: logical source index of a crowd record, the row of its resident palette and morph block
     vec4 color;
 }
 

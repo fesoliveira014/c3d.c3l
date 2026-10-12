@@ -92,7 +92,6 @@ struct TracePoseSource @private {
     SkinBinding*   skin;          // MESH; null for a morph-only mesh
     AnimatedCrowd* crowd;         // CROWD
     uint           part;          // CROWD: index into crowd.parts
-    uint           palette_index; // CROWD: the placement's slot in the parity-packed palettes
     Scene*         scene;         // ANIMATED_LOD: source scene, borrowed for this collection
     LodGroupState* lod;           // animated level-zero descriptor, borrowed for this collection
 }
@@ -391,12 +390,6 @@ fn TraceCollection collect_trace_instances(
                     }
                 }
 
-                uint[] palette_order;
-                if (source.kind == TracePose.CROWD) {
-                    palette_order = alloc::new_array(tmem, uint, batch.count);
-                    crowd_packed_order(palette_order, crowd, source.part);
-                }
-
                 foreach (uint index, transform : batch.transforms[:batch.count]) {
                     TraceInstance record = trace_record(
                         assets:         assets,
@@ -414,10 +407,6 @@ fn TraceCollection collect_trace_instances(
                     if (source.crowd) {
                         Mat4 placement = maths::rebase(node.world, origin).mul(crowd.placements[index].to_mat4());
                         record.bounds = maths::aabb_transform(crowd.pose_bounds, placement);
-                    }
-
-                    if (source.kind == TracePose.CROWD) {
-                        instance.palette_index = palette_order[index];
                     }
                     collection.records[count] = record;
                     collection.poses[count++] = instance;
@@ -779,6 +768,7 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
                 record:   record,
                 source:   pose,
                 mirror:   mirror,
+                scene:    scene,
             )!;
             renderer.stats.trace_posed_instances++;
         }

@@ -118,7 +118,6 @@ struct PoseRecord {
     uint              crowd_geometry_revision;
     uint              crowd_part;
     MorphWeightsGpu   morph;
-    MorphWeightsGpu[] morphs;
     bool              morphed;
     InstanceSway      sway;
     Vec3[]            vertices;        // base positions of a vertex_motion mesh; capacity outlives tracking
@@ -157,6 +156,7 @@ struct ViewHistory {
     uint         accumulated_samples;
     uint         pending_samples;
     ulong        trace_revision;
+    ulong        submitted; // marker of the submitted frame last published, set by the renderer; 0 before the first
 }
 
 <*
@@ -273,14 +273,6 @@ fn void ViewHistory.commit(
             candidate: candidate,
             origin:    origin,
         );
-        if (!candidate.crowd) continue;
-        Node* crowd_node = candidate.node.parent;
-        usz crowd_index = crowd_node.id.index;
-        if (c3d::same_id(self.owners[crowd_index], crowd_node.id) && self.seen[crowd_index] == self.serial) continue;
-        self.models[crowd_index] = crowd_node.world;
-        self.owners[crowd_index] = crowd_node.id;
-        self.seen[crowd_index] = self.serial;
-        commit_crowd_pose(allocator, &self.poses[crowd_index], candidate.crowd);
     }
     self.view_proj = view_proj;
     self.origin = origin;
@@ -341,7 +333,6 @@ fn void free_view_history(Allocator allocator, ViewHistory* history) {
             free_animated_lod_pose(allocator, pose.animated_lod);
             alloc::free(allocator, pose.palette.ptr);
             alloc::free(allocator, pose.instances.ptr);
-            alloc::free(allocator, pose.morphs.ptr);
             alloc::free(allocator, pose.vertices.ptr);
         }
         alloc::free(allocator, history.models.ptr);
@@ -415,13 +406,14 @@ fn void capture_animated_lod_pose(
     owner.instance_count = count;
     owner.crowd_identity = candidate.crowd ? candidate.crowd.playback.identity : 0;
 
-    reserve_pose_storage(allocator, &owner.palette, capacity * joints);
+    usz poses = candidate.crowd ? 0 : 1; // crowd palettes and morph weights stay in the renderer's resident buffers
+    reserve_pose_storage(allocator, &owner.palette, poses * joints);
     reserve_pose_storage(allocator, &history.locals, capacity * animated_lod_rigid_index(binding, meshes));
-    reserve_pose_storage(allocator, &history.weights, capacity * width);
+    reserve_pose_storage(allocator, &history.weights, poses * width);
 
-    if (joints) {
+    if (joints && poses) {
         write_animated_lod_palette(
-            palette: owner.palette[:count * joints],
+            palette: owner.palette,
             assets: assets,
             candidate: candidate,
             origin: origin,
@@ -434,7 +426,7 @@ fn void capture_animated_lod_pose(
         bool weighted = binding.channel_offsets[mesh + 1] > first_weight;
 
         for (uint source = 0; source < count; source++) {
-            if (weighted) {
+            if (weighted && poses) {
                 float[] weights = animated_lod_weights(candidate, mesh, source);
                 history.weights[source * width + first_weight:weights.len] = weights[..];
             }
@@ -502,23 +494,6 @@ fn void commit_pose(
         pose.crowd_geometry = candidate.geometry;
         pose.crowd_geometry_revision = assets.geometry(candidate.geometry).header.revision;
         pose.crowd_part = candidate.crowd_part;
-
-        CrowdPart* part = &crowd.parts[candidate.crowd_part];
-        if (part.weight_count) {
-            if (pose.morphs.len != crowd.placements.len) {
-                alloc::free(allocator, pose.morphs.ptr);
-                pose.morphs = alloc::new_array(allocator, MorphWeightsGpu, crowd.placements.len);
-            }
-
-            for (uint instance = 0; instance < crowd.count; instance++) {
-                usz first = (usz)instance * crowd.morph_stride + part.weight_offset;
-                float[] weights = crowd.morph_weights[first:part.weight_count];
-                pose.morphs[instance] = pack_morph_selection(geometry::select_morph_targets(
-                    assets.geometry(candidate.geometry).data.channels,
-                    weights,
-                ));
-            }
-        }
     }
 
     if (candidate.batch) {
@@ -1274,20 +1249,6 @@ fn bool lut_desc_valid(material::TextureDesc* desc) @private {
     return desc.depth > 0 && desc.layers == 1 && desc.mip_levels == 1 && !desc.generate_mips && !desc.is_cube && rgba8;
 }
 
-fn void commit_crowd_pose(Allocator allocator, PoseRecord* pose, AnimatedCrowd* crowd) @local {
-    usz capacity = (usz)crowd.joint_count * crowd.placements.len;
-    if (pose.palette.len != capacity) {
-        alloc::free(allocator, pose.palette.ptr);
-        pose.palette = alloc::new_array(allocator, Mat4f, (sz)capacity);
-    }
-    foreach (usz index, palette : crowd.palettes[:(usz)crowd.joint_count * crowd.count]) {
-        pose.palette[index] = bitcast(palette, Mat4f);
-    }
-
-    pose.instance_count = crowd.count;
-    pose.crowd_identity = crowd.playback.identity;
-}
-
 fn void capture_crowd_sources(AssetStore* assets, PoseRecord* pose, AnimatedCrowd* crowd) @private {
     pose.crowd_identity = crowd.playback.identity;
     pose.crowd_model = crowd.model;
@@ -1303,12 +1264,10 @@ fn bool crowd_history_matches(
     AssetStore* assets,
     MeshCandidate* candidate,
     PoseRecord* pose,
-    PoseRecord* crowd_pose,
 ) @private {
     AnimatedCrowd* crowd = candidate.crowd;
     // The playback identity renews with every replacement, so it also pins the instance count.
-    if (!pose || !crowd_pose || pose.crowd_identity != crowd.playback.identity
-      || crowd_pose.crowd_identity != crowd.playback.identity || pose.crowd_part != candidate.crowd_part
+    if (!pose || pose.crowd_identity != crowd.playback.identity || pose.crowd_part != candidate.crowd_part
       || !c3d::same_id(pose.crowd_model, crowd.model)
       || pose.crowd_model_revision != assets.model(crowd.model).header.revision
       || !c3d::same_id(pose.crowd_geometry, candidate.geometry)

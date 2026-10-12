@@ -26,6 +26,7 @@ fn uint pack_lod_records(
             color: state.colors[index],
             seed: instance_seed(transform.position),
         );
+        records[index].normal_2.w = (float)index;
         bool reflected = scene::transform_mirrored(transform);
         metadata[index] = { .generation = state.slot_generations[index], .parity = reflected ? 1 : 0 };
         if (reflected) {

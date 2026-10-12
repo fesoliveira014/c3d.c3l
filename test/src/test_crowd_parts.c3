@@ -529,12 +529,9 @@ fn void test_crowd_parts_signed_top_eight_packing_and_bounds_match_literal_selec
     Geometry* geometry = &assets.geometry(geometry_id).data;
     assert(geometry.targets.len == SIGNED_TARGET_COUNT && part.weight_count == SIGNED_CHANNEL_COUNT);
     shader::MorphWeightsGpu[2] packed;
-    render::pack_crowd_morphs(
-        blocks: packed[..],
-        crowd: crowd,
-        part: 2,
-        channels: geometry.channels,
-    );
+    foreach (uint source, &block : packed) {
+        *block = render::crowd_part_morph(crowd, 2, source, geometry.channels);
+    }
     Node* reference = scene.add_mesh(geometry_id, fixture.material)!!;
     Mesh* reference_mesh = scene.get(reference, Mesh);
     reference_mesh.morph_weights = alloc::new_array(scene.allocator, float, SIGNED_CHANNEL_COUNT);

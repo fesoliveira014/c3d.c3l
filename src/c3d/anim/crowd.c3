@@ -23,6 +23,7 @@ fn void crowd_update(AssetStore* assets, Scene* scene, float dt) {
 
 <*
  Publish evaluated crowd outputs without advancing playback.
+ An instance whose palette or morph weights differ bytewise from the last publish advances its pose revision.
  @param [&in] assets : "Resolves the model and its shared skin binding."
  @param [&inout] scene : "Publishes the owner's generated part batches."
  @param [&inout] crowd : "Contains the current evaluated node and morph outputs."
@@ -30,13 +31,19 @@ fn void crowd_update(AssetStore* assets, Scene* scene, float dt) {
 *>
 fn void publish_crowd_pose(AssetStore* assets, Scene* scene, AnimatedCrowd* crowd) {
     CrowdPlaybackState* playback = crowd.playback;
-
+    ModelSkin* skin;
+    Skeleton* skeleton;
     if (crowd.joint_count) {
-        ModelTemplate* template = &assets.model(crowd.model).data;
-        ModelSkin* skin = &template.skins[0];
-        Skeleton* skeleton = &assets.skeleton(skin.skeleton).data;
+        skin = &assets.model(crowd.model).data.skins[0];
+        skeleton = &assets.skeleton(skin.skeleton).data;
+    }
 
-        for (uint instance = 0; instance < crowd.count; instance++) {
+    sz palette_bytes = (sz)crowd.joint_count * Mat4::size;
+    sz weight_bytes = (sz)crowd.morph_stride * float::size;
+    for (uint instance = 0; instance < crowd.count; instance++) {
+        bool changed = crowd.pose_revisions[instance] == 0;
+
+        if (crowd.joint_count) {
             Transform[] locals = playback.poses[(usz)instance * playback.base_pose.len:playback.base_pose.len];
             foreach (usz index, local : locals) {
                 Mat4 matrix = local.to_mat4();
@@ -44,10 +51,27 @@ fn void publish_crowd_pose(AssetStore* assets, Scene* scene, AnimatedCrowd* crow
                 crowd.scratch_worlds[index] = parent < 0 ? matrix : crowd.scratch_worlds[parent].mul(matrix);
             }
 
-            Mat4[] palette = crowd.palettes[(usz)instance * crowd.joint_count:crowd.joint_count];
             foreach (usz joint, node : skin.joint_nodes) {
-                palette[joint] = crowd.scratch_worlds[node].mul(skeleton.inverse_bind[joint]);
+                crowd.palette_scratch[joint] = crowd.scratch_worlds[node].mul(skeleton.inverse_bind[joint]);
             }
+
+            Mat4[] palette = crowd.palettes[(usz)instance * crowd.joint_count:crowd.joint_count];
+            if (!mem::equals(palette.ptr, crowd.palette_scratch.ptr, palette_bytes)) {
+                mem::copy(palette.ptr, crowd.palette_scratch.ptr, palette_bytes);
+                changed = true;
+            }
+        }
+
+        float[] weights = crowd.morph_weights[(usz)instance * crowd.morph_stride:crowd.morph_stride];
+        float[] published = crowd.published_weights[(usz)instance * crowd.morph_stride:crowd.morph_stride];
+        if (!mem::equals(published.ptr, weights.ptr, weight_bytes)) {
+            mem::copy(published.ptr, weights.ptr, weight_bytes);
+            changed = true;
+        }
+
+        if (changed) {
+            crowd.pose_revisions[instance]++;
+            if (!crowd.pose_revisions[instance]) crowd.pose_revisions[instance] = 1;
         }
     }
 

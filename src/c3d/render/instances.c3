@@ -182,6 +182,7 @@ fn uint pack_instance_records(
             local:      instance_local(batch, crowd, part, index),
             batch:      batch,
             index:      index,
+            crowd:      crowd,
         );
     }
 
@@ -203,6 +204,7 @@ fn void pack_instance_span(
             local:      instance_local(batch, crowd, part, index),
             batch:      batch,
             index:      index,
+            crowd:      crowd,
         );
     }
 }
@@ -221,6 +223,7 @@ fn void write_batch_instance(
     Mat4 local,
     InstancedMesh* batch,
     uint index,
+    AnimatedCrowd* crowd,
 ) @local {
     write_instance(
         record: record,
@@ -228,6 +231,7 @@ fn void write_batch_instance(
         color:  batch.colors[index],
         seed:   instance_seed(batch.transforms[index].position),
     );
+    if (crowd) record.normal_2.w = (float)index;
 }
 
 <*

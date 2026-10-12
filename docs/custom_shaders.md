@@ -457,7 +457,7 @@ In `INSTANCED` forms `write_mesh_outputs` applies the batch's [sway and fade](in
 Limits of a custom vertex stage:
 
 - It has one compiled form per pass. The renderer does not select `SKINNED`, `SKINNED_U16` or `MORPH` forms of user SPIR-V; compile with the defines that match the geometry when `apply_mesh_deformation` should skin or morph, or leave them out for rigid meshes. `DrawRoot.skin` and `DrawRoot.morph` are written either way.
-- A crowd part (see [Instancing](instancing.md)) draws through the instanced pair. Compiled with `INSTANCED` and the deformation defines, `apply_mesh_deformation` reads each instance's palette at `DrawRoot.skin_stride` joints per instance and its own morph block; compiled without them, the crowd draws at the bind pose.
+- A crowd part (see [Instancing](instancing.md)) draws through the instanced pair. Compiled with `INSTANCED` and the deformation defines, `apply_mesh_deformation` reads the palette row and morph block of the instance's logical source, `InstanceGpu.normal_2.w`, at `DrawRoot.skin_stride` joints per row; compiled without them, the crowd draws at the bind pose.
 - The velocity pass draws the velocity form when the shader supplies one for the draw; those items are redrawn on every rendering with history. Without it, velocity uses the built-in `mesh` variant and sees the undisplaced mesh. The built-in instanced velocity variant, and velocity forms that end in `write_mesh_outputs`, include the batch's sway.
 - Built-in materials sample with `FrameRoot.mip_bias` on TAA views; a custom fragment opts in with
   `sample_custom_map(material, slot, uv0, uv1, frame.mip_bias)`. The depth prepass cuts custom

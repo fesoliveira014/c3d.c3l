@@ -141,10 +141,6 @@ fn BatchAddresses batch_addresses(
     };
     if (candidate.batch || candidate.lod) addresses.instance_data = offset_by_instances(records, offset, InstanceGpu::size);
     if (candidate.billboards) addresses.instance_data = offset_by_instances(records, offset, BillboardGpu::size);
-    if (candidate.crowd) {
-        addresses.skin = offset_by_instances(skin, offset, (usz)candidate.crowd.joint_count * Mat4f::size);
-        addresses.morph = offset_by_instances(morph, offset, MorphWeightsGpu::size);
-    }
     return addresses;
 }
 

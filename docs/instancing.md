@@ -312,9 +312,33 @@ while (window.poll()) {
   `mark_instances_range_dirty`, or nothing when no placement or color changed. A change of the live count
   marks every part whole. The view's instance history follows the batch revision, so an unmarked skinned
   part also writes none.
-- The renderer uploads one palette array per crowd per frame (`joints * 64` bytes per instance) and
-  reuses it for every part, view and shadow layer. Above `OVERSIZED_UPLOAD_BYTES` (8 MiB, about 2470
-  instances of a 53-joint character) the upload takes dedicated overflow memory every frame.
+- **Resident pose.** The renderer keeps each crowd's palettes and morph blocks in its own GPU memory,
+  in logical source order, and every part, view, shadow layer, animated LOD part and trace pose reads
+  them. `publish_crowd_pose` (so `crowd_update`) advances `AnimatedCrowd.pose_revisions[i]`, which the
+  library keeps and the application does not write, when instance `i`'s palette or morph weights differ
+  bytewise from its last publish. The comparison evaluates each palette into one `joint_count` scratch
+  and compares it with `palettes[i]`; morph weights, written in place by playback, are compared with a
+  published copy (`capacity * morph_stride` floats). A frame uploads only the instances whose revision
+  differs from the one last staged into the buffer it writes, one copy per run of neighbours, so a
+  paused, frozen or culled instance uploads nothing. Each buffer pair swaps after a submitted frame, so a
+  changed instance uploads once into each buffer and then stops; an aborted frame keeps the pair and
+  stages its rows again. `Stats.upload_bytes` counts the staged bytes. A replaced slot or a count change
+  advances the revisions of the instances whose pose differs.
+- **Resident bytes.** A crowd takes `2 * capacity * (joints * 64 + morph_parts * 80)` bytes of device
+  memory, where `morph_parts` counts the crowd parts and animated LOD parts that draw with morph weights
+  (512 instances of 53 joints: 3.47 MB; 10,000: 67.8 MB). Buffers allocate on first use and again when the
+  capacity, joint count or a morph layout changes. `RendererDesc.max_resident_crowds` (default 64)
+  bounds the crowds holding buffers; past it `render_view` faults `CAPACITY_EXCEEDED`. A crowd not drawn
+  by any view, shadow layer or trace for more than `INSTANCE_ABSENCE_FRAMES` frames releases its buffers.
+- **Velocity.** The velocity pass reads the previous buffers of the pair, so a temporal view keeps no copy
+  of the palettes or morph weights. A crowd part has no deformation history when the view did not render in
+  the previous submitted frame, or when the crowd is new or was released. Its previous pose then binds the
+  current buffers: the frame shows no deformation motion, while node motion and the view's per-instance
+  transform history are unchanged. A view rendered less often than every frame therefore shows no crowd
+  deformation motion. A part whose source, geometry or model checks fail draws with zero motion. An animated
+  LOD part rejects its history instead ([lod](lod.md#animated-models-and-crowds)).
+- `InstanceGpu.normal_2.w` of a crowd record holds the logical source index, the row of the draw's
+  palette and morph block, so a parity change reorders records without moving any pose.
 - Crowds enter the ray tracing paths (shadows, ambient occlusion, reflections, probes, path tracing) only through
   `add_crowd(trace: true)`, which sets `trace` on every part batch; a part batch's `trace` can be edited afterwards
   like any other. Each traced skinned or morphed placement takes one posed trace slot; rigid-only parts retain the
@@ -335,7 +359,9 @@ character through six of its clips; `B` switches to 512 `Animator` instances of 
 comparison, `--baseline` starts there. `--compare` advances both representations on every update and
 shows maximum local position, rotation, scale and morph differences. This mode includes both
 playback costs and the comparison loop; use the single-representation modes for measurements.
-`Space` pauses/resumes the first source through its base-action controls. The panel displays published
-root displacement and event/drop counts; `R` applies each update's published root delta once. The
+`F` freezes every other instance by pausing its base action, `--frozen-percent=P` starts with `P` percent
+of the instances frozen, and the panel slider sets the share. Frozen instances stop changing, so the panel's
+per-frame upload bytes fall in proportion; it also shows the resident crowd bytes. `Space` pauses/resumes
+the first source through its base-action controls. The panel displays published root displacement and event/drop counts; `R` applies each update's published root delta once. The
 example's default KEEP clips publish no extracted displacement; extraction configuration belongs to
 the captured play description.

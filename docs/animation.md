@@ -800,9 +800,11 @@ source meshes' base geometry/material IDs. Skinned alternatives use the
 template skin, while named morph channels map to level-zero logical
 weights/defaults. The renderer uses one model-space palette
 per owner/source across its parts, selected levels, views and shadows, rather
-than the ordinary mesh-local palette above. Animated rigid/morph-only parts use
-their sampled mesh affine. Complete animation and world updates before the
-frame's view/shadow/velocity/trace preparation.
+than the ordinary mesh-local palette above. A crowd's palettes and morph blocks
+stay resident on the GPU, and a frame uploads only the instances whose pose
+revision advanced ([crowds](instancing.md#crowds)). Animated rigid/morph-only
+parts use their sampled mesh affine. Complete animation and world updates before
+the frame's view/shadow/velocity/trace preparation.
 
 Ordinary animated LOD bounds use retained posed skin/morph metadata or an authored
 override; crowds inherit their authored pose envelope. Pose changes retain LOD
@@ -816,7 +818,9 @@ Compute skinning for drawing and generic skinned `InstancedMesh` bindings are no
 Animated crowds provide the supported shared-pose instanced path
 ([crowds](instancing.md#crowds)). Traced effects see the raster
 pose of a skinned or morphed mesh through a posing pass ([scene trace](scene_trace.md#posed-instances)); the
-velocity pass reads the view's previous palettes.
+velocity pass reads the view's previous palettes, and a crowd's previous resident buffers. A view that skipped a
+submitted frame has none: a crowd part binds the current buffers and gets no deformation motion for that frame,
+while node and instance motion are unchanged, and an animated LOD part rejects the history instead.
 
 ## Retargeting
 
