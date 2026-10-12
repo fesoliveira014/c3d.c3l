@@ -98,7 +98,14 @@ fn GeneralizedMotionFrame sample_generalized_endpoint(
             local_rate.scale = (value_rate[0] + value_rate[1] + value_rate[2]) / 3;
         }
 
-        if (rate) world_rate = compose_generalized_frame_rates(world, world_rate, local, local_rate);
+        if (rate) {
+            world_rate = compose_generalized_frame_rates(
+                parent: world,
+                parent_rate: world_rate,
+                local: local,
+                local_rate: local_rate,
+            );
+        }
         world = compose_generalized_frames(world, local);
     }
 
