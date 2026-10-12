@@ -227,6 +227,7 @@ fn void? add_portrait(OverlayList* list, RenderTargetId portrait) @local {
 
 fn void? fill_target_list(OverlayList* list, float time) @local {
     list.clear();
+
     OverlayRect panel = solid_rect(
         min:    TARGET_PANEL_MIN,
         max:    TARGET_PANEL_MAX,
@@ -243,6 +244,7 @@ fn void? fill_target_list(OverlayList* list, float time) @local {
         fill:   TARGET_BAR_TRACK,
         radius: TARGET_BAR_RADIUS,
     ))!;
+
     float level = 0.5f + 0.5f * math::sin(time * TARGET_BAR_SPEED);
     float fill_right = TARGET_BAR_MIN.x + (TARGET_BAR_MAX.x - TARGET_BAR_MIN.x) * level;
     list.add_rect(solid_rect(
@@ -368,6 +370,7 @@ fn void? draw_frame(Demo* demo, GuiRenderer* gui_renderer, FrameInfo info) @loca
         if (demo.with_portrait) {
             renderer.render_view(demo.scene, demo.portrait_camera, demo.portrait_view)!;
             renderer.finish_view(demo.portrait_view)!;
+
             if (demo.target_overlay) {
                 renderer.prepare_overlay_list(demo.target_list, demo.portrait)!;
                 OverlayContext portrait_overlay = renderer.begin_overlay_target(demo.portrait)!;
