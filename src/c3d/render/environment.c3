@@ -88,6 +88,7 @@ struct EnvironmentPipelines {
     gpu::PipelineHandle brdf;
     gpu::PipelineHandle sheen_prefilter;
     gpu::PipelineHandle sheen_lut;
+    gpu::PipelineHandle cloud_noise;
 }
 
 <* Renderer-owned environment resources and their pending preparation. *>
@@ -100,6 +101,7 @@ struct EnvironmentState {
     bool samplers_ready;
     EnvironmentLut brdf_lut;
     EnvironmentLut sheen_lut;
+    EnvironmentLut cloud_noise;
     gpu::SamplerIndex sheen_sampler;
     uint lighting_serial;
 }
@@ -402,6 +404,7 @@ fn void release_lut(gpu::Device* device, EnvironmentLut* lut) @private {
 fn bool has_environment_preparations(Renderer* renderer) @private {
     if (lut_unsubmitted(renderer.environment_state.sheen_lut)) return true;
     if (lut_unsubmitted(renderer.environment_state.brdf_lut)) return true;
+    if (lut_unsubmitted(renderer.environment_state.cloud_noise)) return true;
     foreach (pending : renderer.environment_state.pending) if (pending.active) return true;
     return has_atmosphere_preparations(renderer);
 }
@@ -422,6 +425,9 @@ fn void commit_environment_preparations(Renderer* renderer, Frame* slot) @privat
     if (renderer.environment_state.sheen_lut.state == EnvironmentLutState.RECORDED) {
         renderer.environment_state.sheen_lut.state = EnvironmentLutState.READY;
     }
+    if (renderer.environment_state.cloud_noise.state == EnvironmentLutState.RECORDED) {
+        renderer.environment_state.cloud_noise.state = EnvironmentLutState.READY;
+    }
     commit_atmosphere_preparations(renderer);
 }
 
@@ -438,6 +444,9 @@ fn void discard_environment_preparations(Renderer* renderer) @private {
     }
     if (lut_unsubmitted(renderer.environment_state.brdf_lut)) {
         release_lut(&renderer.device, &renderer.environment_state.brdf_lut);
+    }
+    if (lut_unsubmitted(renderer.environment_state.cloud_noise)) {
+        release_lut(&renderer.device, &renderer.environment_state.cloud_noise);
     }
     discard_atmosphere_preparations(renderer);
 }
@@ -465,11 +474,14 @@ fn void free_environments(Renderer* renderer) @private {
     if (renderer.environment_state.sheen_lut.state == EnvironmentLutState.READY) {
         release_lut(&renderer.device, &renderer.environment_state.sheen_lut);
     }
-    gpu::PipelineHandle[7] pipelines = {
+    if (renderer.environment_state.cloud_noise.state == EnvironmentLutState.READY) {
+        release_lut(&renderer.device, &renderer.environment_state.cloud_noise);
+    }
+    gpu::PipelineHandle[8] pipelines = {
         renderer.environment_state.pipelines.source, renderer.environment_state.pipelines.prefilter,
         renderer.environment_state.pipelines.project, renderer.environment_state.pipelines.reduce,
         renderer.environment_state.pipelines.brdf, renderer.environment_state.pipelines.sheen_prefilter,
-        renderer.environment_state.pipelines.sheen_lut,
+        renderer.environment_state.pipelines.sheen_lut, renderer.environment_state.pipelines.cloud_noise,
     };
     foreach (pipeline : pipelines) if (pipeline.is_valid()) (void)gpu::destroy_pipeline(&renderer.device, pipeline);
     alloc::free(renderer.allocator, renderer.environment_state.pending.ptr);

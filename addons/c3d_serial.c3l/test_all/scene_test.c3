@@ -36,6 +36,7 @@ fn void assert_authoring(Fixture* fixture, Node* root) @private {
     assert(scene.get(values, ProbeVolume).counts == (uint[<3>]){ 3, 4, 5 });
     assert(scene.get(values, Atmosphere).planet_radius == light::ATMOSPHERE_EARTH.planet_radius);
     assert(scene.get(values, HeightFog).falloff == light::HEIGHT_FOG_DEFAULT.falloff);
+    assert(scene.get(values, CloudLayer).top == light::CLOUD_LAYER_DEFAULT.top);
     assert(scene.get(values, ReflectionProbe).half_extents == (Vec3){ 2, 3, 4 });
     assert(c3d::same_id(scene.get(values, Decal).material, fixture.material));
     InstancedMesh* batch = scene.get(child_named(root, "instances"), InstancedMesh);

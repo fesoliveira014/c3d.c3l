@@ -90,6 +90,7 @@ struct ViewCamera @private {
     Mat4   world;          // absolute; rebased on the frame origin when the view records
     Entity excluded_probe; // the reflection probe being captured; never selected
     bool   height_fog;     // captures render without height fog
+    bool   clouds;         // captures render without the cloud layer
 }
 
 <*
@@ -156,7 +157,7 @@ fn void? Renderer.render_view(
     defer catch abort_frame(self);
     Camera* camera = scene.get(camera_node, Camera);
     if (!camera) return c3d::INVALID_ARGUMENT~;
-    ViewCamera view_camera = { .camera = *camera, .world = camera_node.world, .height_fog = true };
+    ViewCamera view_camera = { .camera = *camera, .world = camera_node.world, .height_fog = true, .clouds = true };
     ShadowCamera shadow_view;
     if (shadow_camera) {
         shadow_view = shadow_camera_of(
@@ -562,6 +563,7 @@ fn void? record_raster_view(
         FogSelection fog;
         bool fog_pass;
         bool fog_volume;
+        CloudPass cloud_pass;
         SceneReads view_reads;
         instrumentation::@scope("view.uploads") {
             environments = resolve_view_environments(renderer, scene, sheen)!;
@@ -576,6 +578,21 @@ fn void? record_raster_view(
             renderer.stats.fogs_ignored += fog.ignored;
             fog_pass = environments.atmosphere || fog.fog;
             fog_volume = fog.fog && record.desc.volumetric_fog;
+            CloudSelection clouds = view_camera.clouds && shading != ShadingPath.PATH_TRACED
+              ? select_cloud_layer(scene, camera.layers) : (CloudSelection){};
+            renderer.stats.clouds_ignored += clouds.ignored;
+            if (clouds.layer) {
+                CloudCoverage coverage = resolve_cloud_coverage(renderer, clouds.layer)!;
+                if (coverage.drawn) {
+                    acquire_cloud_noise(renderer)!;
+                    acquire_cloud_pipelines(renderer)!;
+                    acquire_cloud_targets(renderer, record)!;
+                    cloud_pass = { .layer = clouds.layer, .coverage = coverage.texture };
+                    if (environments.atmosphere) {
+                        cloud_pass.planet_radius = environments.atmosphere_selection.atmosphere.planet_radius;
+                    }
+                }
+            }
             if (fog_pass) {
                 // Refracted samples are fogged to their own depth.
                 scene_read_reads.depth |= scene_read_reads.color;
@@ -625,6 +642,15 @@ fn void? record_raster_view(
                 pre_exposure: pre_exposure,
             );
             fog_sun = fog_sun_light(&extraction, environments.atmosphere != null);
+            if (cloud_pass.layer) {
+                cloud_pass.sun = cloud_sun(
+                    extraction:   &extraction,
+                    sun_light:    fog_sun,
+                    atmosphere:   &environments.atmosphere_selection,
+                    atmospheric:  environments.atmosphere != null,
+                    pre_exposure: pre_exposure,
+                );
+            }
             ShadowCamera own_view = { .lens = *camera, .matrices = *matrices };
             resolve_shadow_set(
                 renderer:     renderer,
@@ -873,7 +899,7 @@ fn void? record_raster_view(
         };
 
         bool transparent_after_split = scene_read_items.len > 0 || transparent_reads != (SceneReads){} || fog_pass
-          || weighted_items.len > 0;
+          || weighted_items.len > 0 || cloud_pass.layer != null;
         instrumentation::@scope("view.record") {
             if (environments.atmosphere) {
                 record_sky_view_tables(
@@ -1013,6 +1039,14 @@ fn void? record_raster_view(
                 case PATH_TRACED:
             }
 
+            if (cloud_pass.layer) {
+                record_clouds(
+                    renderer: renderer,
+                    record:   record,
+                    cloud:    &cloud_pass,
+                    frame:    frame_span.address,
+                )!;
+            }
             record_scene_read_layers(
                 renderer: renderer,
                 record:   record,
@@ -1270,6 +1304,12 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
                 resolve_material(self, decal.material)!;
             } else {
                 self.stats.dangling_refs++;
+            }
+        };
+        scene.@each(CloudLayer; Entity entity, CloudLayer* layer) {
+            if (light::cloud_layer_valid(layer) && resolve_cloud_coverage(self, layer)!.drawn) {
+                acquire_cloud_noise(self)!;
+                acquire_cloud_pipelines(self)!;
             }
         };
         prepare_finish(self, scene_reads)!;

@@ -27,16 +27,17 @@ import c3d::serial @public;
 import std::io::path;
 import std::math;
 
-const uint AUTHORED_TYPES @private = 39;
+const uint AUTHORED_TYPES @private = 40;
 const uint TRANSIENT_TYPES @private = 14;
 
 fn uint[] policy_slots() @private {
     uint[] slots = alloc::new_array(tmem, uint, AUTHORED_TYPES + TRANSIENT_TYPES);
-    slots[..] = ((uint[53]){
+    slots[..] = ((uint[54]){
         ecs::assigned_slot(Mesh)!!, ecs::assigned_slot(Camera)!!, ecs::assigned_slot(Light)!!,
         ecs::assigned_slot(ProbeVolume)!!, ecs::assigned_slot(Atmosphere)!!, ecs::assigned_slot(HeightFog)!!,
-        ecs::assigned_slot(ReflectionProbe)!!, ecs::assigned_slot(Decal)!!, ecs::assigned_slot(InstancedMesh)!!,
-        ecs::assigned_slot(BillboardBatch)!!, ecs::assigned_slot(LodGroup)!!, ecs::assigned_slot(ModelInstance)!!,
+        ecs::assigned_slot(ReflectionProbe)!!, ecs::assigned_slot(Decal)!!, ecs::assigned_slot(CloudLayer)!!,
+        ecs::assigned_slot(InstancedMesh)!!, ecs::assigned_slot(BillboardBatch)!!, ecs::assigned_slot(LodGroup)!!,
+        ecs::assigned_slot(ModelInstance)!!,
         ecs::assigned_slot(Animator)!!, ecs::assigned_slot(AnimatedCrowd)!!, ecs::assigned_slot(SkinBinding)!!,
         ecs::assigned_slot(IkChain)!!, ecs::assigned_slot(FootIk)!!, ecs::assigned_slot(LookAt)!!,
         ecs::assigned_slot(PhysicsBody)!!, ecs::assigned_slot(PhysicsJoint)!!, ecs::assigned_slot(Wind)!!,
