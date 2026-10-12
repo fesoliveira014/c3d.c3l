@@ -788,6 +788,42 @@ live instance.
 Each instance's output depends only on its own state, so range splits, order and
 thread count change no pose, morph weight, root motion or event, bit for bit.
 
+### Shared samples within a frame
+
+Crowd instances that play the same clip at the same time repeat the same track
+sampling. A scratch from `create_crowd_pose_scratch`, and the state's own, holds a
+`PoseCache` of `POSE_CACHE_CAPACITY` (64) entries that lets them share it.
+
+- **Entry.** An entry is keyed on the clip id, the clip revision and the exact bits of
+  the action's time. It lists, in ascending track order, the raw values `sample_track`
+  returns for the tracks the plain blend branch sampled, before the root pin copies and
+  edits them. A later action at the same key reads the tracks it needs from the list,
+  samples the ones the list lacks and appends them. A masked, weighted or differently
+  present action therefore never samples a track it would not sample alone, and every
+  value equals an uncached sample. A hit leaves the action's seek cursors unchanged;
+  they are hints.
+- **Uncached.** The first sighting of a key only claims its slot, so a frame without
+  repeats records nothing. An action also samples uncached when the probe window of its
+  key is full (four slots), on the onset and generalized-motion paths, and for additive
+  actions. A scratch from a single model's animator has no cache.
+- **Lifetime.** `advance` increments the crowd's sample generation and `sample_range`
+  empties a scratch whose stored generation differs. A scratch keeps its entries across
+  the ranges it serves between two advances, and the owner never touches worker scratches.
+  A cache is private to its scratch and takes no locks.
+- **Exactness.** Poses, morph weights, root motion and events equal an uncached
+  `update` bit for bit, for any range split, order and thread count. Time is assumed
+  finite, as crowd seeds require.
+- **Cost.** An entry is 28 B + 8 B * (3 * nodes + meshes) + 4 B * (10 * nodes + morph
+  weights); a scratch holds 64 of them, 236,288 B for the 57-node Quaternius character.
+  A lookup costs one hash and at most four key compares. `PoseCache.lookups` counts the
+  actions that consulted the cache and `PoseCache.hits` those that found samples an
+  earlier action recorded.
+
+`skinned_crowd --shared-phases` (key `G`, or the panel checkbox) puts instances into
+twelve groups that share a clip and a time, interleaved by instance index, and shows the
+sample time and hit rate. `job_bench --crowd COUNT --shared-phases` times the same crowd
+on 0, 1 and 3 workers beside the unshared one.
+
 ## What deforms
 
 The animation update writes node transforms and morph weights; the renderer
