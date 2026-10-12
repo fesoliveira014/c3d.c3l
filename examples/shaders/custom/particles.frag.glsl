@@ -3,6 +3,7 @@
 #include "c3d_abi.glsl"
 #include "material_alpha.glsl"
 #include "scene_snapshot.glsl"
+#include "pre_exposure.glsl"
 
 layout(location = 3) in vec2 v_uv0;
 layout(location = 5) in vec4 v_color;
@@ -37,5 +38,5 @@ void main() {
     float glow = 1.0 - radius_squared;
     float fade = params.softness > 0.0
         ? clamp(scene_depth_gap(frame, gl_FragCoord) / params.softness, 0.0, 1.0) : 1.0;
-    out_color = material_output(v_color.rgb * (0.4 + 0.6 * glow), fade, material.flags);
+    out_color = material_output(pre_exposed(frame, v_color.rgb * (0.4 + 0.6 * glow)), fade, material.flags);
 }

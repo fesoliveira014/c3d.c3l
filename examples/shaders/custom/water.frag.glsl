@@ -3,6 +3,7 @@
 #include "c3d_abi.glsl"
 #include "material_alpha.glsl"
 #include "scene_snapshot.glsl"
+#include "pre_exposure.glsl"
 
 const float RIPPLE_UV = 0.012;          // largest refraction offset in screen uv
 const float RIPPLE_WAVENUMBER = 9.0;    // radians per metre
@@ -40,5 +41,5 @@ void main() {
         ? distance(v_world_pos, scene_position_at(frame, refracted_uv)) : BACKGROUND_PATH;
     vec3 color = scene_color_at(frame, refracted_uv) * exp(-ABSORPTION * path);
     float foam = 1.0 - clamp(scene_depth_gap(frame, gl_FragCoord) / FOAM_DISTANCE, 0.0, 1.0);
-    out_color = material_output(mix(color, FOAM_COLOR, foam), 1.0, material.flags);
+    out_color = material_output(mix(color, pre_exposed(frame, FOAM_COLOR), foam), 1.0, material.flags);
 }

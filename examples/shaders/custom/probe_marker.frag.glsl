@@ -2,6 +2,7 @@
 #include "generated/shader_abi.glsl"
 #include "c3d_abi.glsl"
 #include "probe_classification.glsl"
+#include "pre_exposure.glsl"
 
 layout(location = 3) in vec2 v_uv0;
 layout(location = 5) in vec4 v_color;
@@ -25,5 +26,5 @@ void main() {
     }
     vec3 color = state == PROBE_CLASS_EXCLUDED ? vec3(1.0, 0.12, 0.08)
         : state == PROBE_CLASS_ELIGIBLE ? vec3(0.12, 1.0, 0.25) : vec3(0.6);
-    out_color = vec4(color, 1.0);
+    out_color = vec4(pre_exposed(frame, color), 1.0);
 }

@@ -42,6 +42,9 @@ void main() {
     // The mirror view projects a point on the plane to the pixel this view draws it at.
     vec2 screen_uv = gl_FragCoord.xy / frame.camera_params.zw;
     TextureMapGpu mirror = material.slots[0];
-    vec3 reflected = sample_texture_2d_implicit(mirror.texture_index, mirror.sampler_index, screen_uv).rgb;
+    vec3 reflected = pre_exposed(
+        frame,
+        sample_texture_2d_implicit(mirror.texture_index, mirror.sampler_index, screen_uv).rgb
+    );
     out_color = material_output(mix(shaded, reflected, params.reflectance), 1.0, material.flags);
 }

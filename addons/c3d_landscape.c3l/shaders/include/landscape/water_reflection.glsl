@@ -5,6 +5,7 @@
 #include "texture_fetch.glsl"
 #include "gbuffer.glsl"
 #include "material_uv.glsl"
+#include "pre_exposure.glsl"
 #include "scene_snapshot.glsl"
 #include "landscape/water_waves.glsl"
 
@@ -33,12 +34,20 @@ bool water_inside_frame(vec2 uv) {
 }
 
 // Per pixel: the offset sample must stay inside the mirror's frame. Explicit lod: the branch is not uniform.
-bool water_planar(CustomMaterialGpu material, vec2 screen_uv, vec2 screen_tilt, float distortion, out vec3 radiance) {
+// The mirror's target holds physical radiance, so it takes this view's pre-exposure here.
+bool water_planar(
+    FrameRoot frame,
+    CustomMaterialGpu material,
+    vec2 screen_uv,
+    vec2 screen_tilt,
+    float distortion,
+    out vec3 radiance
+) {
     vec2 offset = clamp(screen_tilt * distortion, vec2(-WATER_PLANAR_OFFSET_LIMIT), vec2(WATER_PLANAR_OFFSET_LIMIT));
     vec2 uv = screen_uv + offset;
     if (!water_inside_frame(uv)) return false;
     TextureMapGpu map = material.slots[WATER_REFLECTION_SLOT];
-    radiance = sample_texture_2d_lod(map.texture_index, map.sampler_index, uv, 0.0).rgb;
+    radiance = pre_exposed(frame, sample_texture_2d_lod(map.texture_index, map.sampler_index, uv, 0.0).rgb);
     return true;
 }
 
@@ -78,7 +87,7 @@ vec3 water_reflection(
 ) {
     vec3 radiance;
     if (custom_slot_present(material, WATER_REFLECTION_SLOT)
-        && water_planar(material, screen_uv, screen_tilt, params.reflection_distortion, radiance)) {
+        && water_planar(frame, material, screen_uv, screen_tilt, params.reflection_distortion, radiance)) {
         return radiance;
     }
     if ((params.flags & WATER_MARCH) != 0u && water_march(frame, position, reflected, radiance)) return radiance;
