@@ -79,6 +79,7 @@ const String[Scenario::len] SCENARIO_NAMES @local = { "flag", "cape", "both" };
 struct Options @local {
     bool      benchmark;
     bool      still;
+    bool      whole_publication;
     bool      ragdoll;
     bool      traced;
     bool      validation;
@@ -120,6 +121,7 @@ struct Demo @local {
     float        wind_speed;
     float        wind_heading;
     bool         gusts;
+    bool         whole_publication;
 }
 
 struct Controls @local {
@@ -441,6 +443,18 @@ fn void set_ragdoll(Demo* demo, bool enabled) @local {
     character.ragdoll = enabled;
 }
 
+fn uint cloth_revision(Demo* demo, Node* node) @local {
+    if (!node || !demo.simulated) return 0;
+    return demo.assets.geometry(demo.scene.get(node, scene::Mesh).geometry).header.revision;
+}
+
+// Comparison mode: a whole mark makes the renderer upload every stream of the geometry.
+fn void publish_whole(Demo* demo, Node* node, uint revision_before) @local {
+    if (!node || !demo.simulated) return;
+    GeometryId geometry = demo.scene.get(node, scene::Mesh).geometry;
+    if (demo.assets.geometry(geometry).header.revision != revision_before) demo.assets.mark_geometry_dirty(geometry);
+}
+
 // Animation, physics and final ragdoll poses precede the cloth, so pins and contacts see this frame's pose.
 fn void step_demo(Demo* demo, float delta, double time) @local {
     apply_wind(demo, time);
@@ -453,7 +467,13 @@ fn void step_demo(Demo* demo, float delta, double time) @local {
     }
     demo.physics.update_ragdolls();
     demo.scene.update_world();
+    uint flag_revision = cloth_revision(demo, demo.flag);
+    uint cape_revision = cloth_revision(demo, demo.character.cape);
     demo.physics.update_cloths();
+    if (demo.whole_publication) {
+        publish_whole(demo, demo.flag, flag_revision);
+        publish_whole(demo, demo.character.cape, cape_revision);
+    }
 }
 
 fn void? configure_temporal(Renderer* renderer, ViewId view, Controls controls) @local {
@@ -477,6 +497,7 @@ fn void panel(
         imgui::text("Solve %.3f ms, publish %.3f ms", stats.solve_seconds * 1000, stats.publish_seconds * 1000);
         imgui::text("Particles %u, constraints %u", stats.particles, stats.constraints);
         imgui::text("Geometry upload %u bytes, history %u bytes", upload_bytes, history_bytes);
+        imgui::checkbox("Whole geometry upload (U)", &demo.whole_publication);
         imgui::text("Frame %.2f ms", frame_ms);
         imgui::slider_float(
             label: "Wind speed",
@@ -512,6 +533,7 @@ fn void? run_interactive(Options options) @local {
         simulated:    !options.still,
     )!;
     defer destroy_demo(&demo);
+    demo.whole_publication = options.whole_publication;
     Renderer renderer = platform::create_window_renderer(
         allocator: mem,
         window: &window,
@@ -531,6 +553,9 @@ fn void? run_interactive(Options options) @local {
     while (window.poll()) {
         if (options.frames && frame++ >= options.frames) break;
         if (window.input.key_released(platform::Scancode.ESCAPE) && !window.input.keyboard_captured_by_gui) break;
+        if (window.input.key_pressed(platform::Scancode.U) && !window.input.keyboard_captured_by_gui) {
+            demo.whole_publication = !demo.whole_publication;
+        }
         time::Clock started = clock::now();
         @pool() {
             gui_renderer.new_frame();
@@ -626,6 +651,7 @@ fn void? run_benchmark(Options options) @local {
     )!;
     defer destroy_demo(&demo);
     demo.gusts = false;
+    demo.whole_publication = options.whole_publication;
     bool hardware = options.traced && options.trace_kind == TraceKind.HARDWARE;
     Renderer? created = render::create_renderer(
         allocator: mem,
@@ -711,6 +737,7 @@ fn void? run_benchmark(Options options) @local {
     ClothStats stats = demo.physics.cloth_stats;
     io::printfn("adapter,%s", renderer.adapter_name);
     io::printfn("scene,%s,simulated,%s", SCENARIO_NAMES[options.scenario.ordinal], demo.simulated);
+    io::printfn("publication,%s", demo.whole_publication ? "whole" : "streams");
     io::printfn("resolution,%dx%d,particles,%d,constraints,%d", WIDTH, HEIGHT, stats.particles, stats.constraints);
     io::printfn("frames,%d,warmup,%d,substeps,%d,iterations,%d", MEASURED_FRAMES, WARMUP_FRAMES,
         cloth::DEFAULT_CLOTH_SUBSTEPS, cloth::DEFAULT_CLOTH_ITERATIONS);
@@ -753,6 +780,10 @@ fn Options? parse_options(String[] args) @local {
             options.benchmark = true;
         } else if (args[index] == "--still") {
             options.still = true;
+        } else if (args[index] == "--publish" && index + 1 < args.len) {
+            String mode = args[++index];
+            if (mode != "whole" && mode != "streams") return c3d::INVALID_ARGUMENT~;
+            options.whole_publication = mode == "whole";
         } else if (args[index] == "--ragdoll") {
             options.ragdoll = true;
         } else if (args[index] == "--validation") {
@@ -786,6 +817,7 @@ fn int main(String[] args) {
     Options? options = parse_options(args);
     if (catch excuse = options) {
         io::eprintn("Use cloth [--scene flag|cape|both] [--still] [--frames count]");
+        io::eprintn("  [--publish whole|streams]");
         io::eprintn("  [--benchmark [--ragdoll] [--capture path.rgba] [--trace software|hardware] [--validation]]");
         io::eprintn("Run timings without --validation; the validation layers inflate them.");
         return 1;
