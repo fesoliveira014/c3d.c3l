@@ -14,6 +14,8 @@ alias CustomFreeFn = fn void (Allocator allocator, void* data, void* user);
 
 alias ErasedKey @local = fn String? (void* erased, Id id);
 
+alias KeyNamespaces @private = HashMap{String, List{String}};
+
 alias ErasedDestroy @local = fn void (void* erased, Allocator allocator, CustomFreeFn on_destroy, void* user);
 
 <*
@@ -89,7 +91,7 @@ struct AssetStore {
     ComputeShaderPool         compute_shaders;
     FontPool                  fonts;
     HashMap{String, AssetRef} keys;
-    HashMap{String, List{String}} key_namespaces; // text before a key's last '#' to the owned keys under it
+    KeyNamespaces             key_namespaces; // text before a key's last '#' to the owned keys under it
     CustomSlot[MAX_CUSTOM_ASSET_TYPES] custom;
     FileSource                file_source; // fixed at creation
     ulong                     key_capacity;
@@ -450,7 +452,6 @@ macro copy_slice(Allocator allocator, slice) @private {
     return copy;
 }
 
-// The prefix of `<prefix>#<suffix>` with a nonempty suffix free of '#', the form of a model's parts.
 fn String? key_namespace(String key) @local {
     sz separator = key.rindex_of_char('#')!;
     if (separator + 1 == key.len) return NOT_FOUND~;
@@ -469,7 +470,7 @@ fn void extend_key_capacity(AssetStore* store, uint added) @private {
     store.keys.free();
     store.keys = expanded;
 
-    $Typeof(store.key_namespaces) namespaces;
+    KeyNamespaces namespaces;
     namespaces.init(store.allocator, key_map_buckets(store.key_capacity), KEY_MAP_LOAD_FACTOR);
     store.key_namespaces.@each(; String prefix, List{String} members) { namespaces.set(prefix, members); };
     store.key_namespaces.free();
