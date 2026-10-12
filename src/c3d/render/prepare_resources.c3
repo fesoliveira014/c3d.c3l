@@ -10,9 +10,7 @@ import std::time;
 import std::time::clock;
 
 enum PrepareResourceStep @private {
-    TEXTURE_IMAGE,
-    TEXTURE_VIEW,
-    TEXTURE_STORAGE_VIEW,
+    TEXTURE_CREATE,
     GENERATION_STORAGE,
     GENERATE,
     TEXTURE_COPY,
@@ -128,7 +126,7 @@ fn PrepareStepPlan? plan_prepare_texture(
     if (!unit.texture_candidate.texture.is_valid()) {
         check_prepare_texture_source(source)!;
 
-        return { .kind = PrepareResourceStep.TEXTURE_IMAGE };
+        return { .kind = PrepareResourceStep.TEXTURE_CREATE };
     }
 
     if (source.source_kind != EMPTY) {
@@ -142,10 +140,6 @@ fn PrepareStepPlan? plan_prepare_texture(
         )!;
     }
 
-    if (!unit.texture_candidate.view.is_valid()) return { .kind = PrepareResourceStep.TEXTURE_VIEW };
-
-    usz storage_count = desc.storage ? (usz)unit.texture_candidate.mip_count * desc.layers : 0;
-    if (unit.creation_next < storage_count) return { .kind = PrepareResourceStep.TEXTURE_STORAGE_VIEW };
     if (source.source_kind == EMPTY) return { .kind = PrepareResourceStep.EMPTY_TEXTURE };
     if (source.source_kind == MIP_ZERO && desc.generate_mips) {
         GeneratedTextureLayout layout = generated_texture_mip_layout(desc)!;
@@ -227,75 +221,8 @@ fn bool? run_prepare_step(
     PrepareReport* report,
 ) @private {
     switch (plan.kind) {
-        case TEXTURE_IMAGE:
-            TextureAsset* source = renderer.assets.texture(unit.texture);
-            uint chain_mips = texture_chain_mips(source);
-            bool eligible = texture_eligible(source.desc, source.source_kind, chain_mips);
-            gpu::TextureDesc desc = texture_gpu_description(
-                desc: source.desc,
-                format: texture_format(source.desc.format),
-                chain_mips: chain_mips,
-                base: unit.texture_base,
-                copy_source: eligible,
-            );
-            report.objects++;
-            unit.texture_candidate = {
-                .asset = unit.texture, .revision = unit.revision,
-                .texture = gpu::create_texture(&renderer.device, &desc)!,
-                .width = desc.width, .height = desc.height, .depth = desc.depth,
-                .mip_count = desc.mip_levels, .layers = desc.array_layers,
-                .is_cube = source.desc.is_cube, .copy_source = eligible, .format = desc.format,
-                .semantic = source.desc.semantic,
-            };
-
-            unit.staged.mip = unit.texture_base;
-            uint chain_extent = math::max(source.desc.width, source.desc.height);
-            uint tail_base = eligible ? texture_tail_base(chain_extent, chain_mips) : 0;
-            unit.residency_candidate = {
-                .chain_mips = chain_mips, .chain_width = source.desc.width, .chain_height = source.desc.height,
-                .format = source.desc.format, .level_bytes = texture_level_bytes(source.desc, chain_mips)!,
-                .tail_base = tail_base,
-                .resident_base = unit.texture_base, .required_base = chain_mips,
-                .last_used_frame = renderer.frame_index, .eligible = eligible,
-                .full_reader = unit.full_reader || renderer.residencies[unit.texture.index].full_reader,
-                .streamed = eligible && !(unit.full_reader || renderer.residencies[unit.texture.index].full_reader),
-                .raisable = texture_source_present(source), .regenerates = source.source_kind == MIP_ZERO,
-            };
-
-            return false;
-
-        case TEXTURE_VIEW:
-            gpu::TextureViewDesc desc = { .cube = unit.texture_candidate.is_cube };
-            report.views++;
-            unit.texture_candidate.view = gpu::create_texture_view(
-                device: &renderer.device,
-                texture: unit.texture_candidate.texture,
-                desc: &desc,
-            )!;
-            TextureAsset* source = renderer.assets.texture(unit.texture);
-            if (source.desc.storage) {
-                unit.texture_candidate.storage_views = alloc::new_array(
-                    allocator: renderer.allocator,
-                    $Type: gpu::TextureView,
-                    elements: (sz)unit.texture_candidate.mip_count * unit.texture_candidate.layers,
-                );
-            }
-
-            return false;
-
-        case TEXTURE_STORAGE_VIEW:
-            uint mip_count = unit.texture_candidate.mip_count;
-            uint mip = unit.creation_next % mip_count;
-            uint layer = unit.creation_next / mip_count;
-            gpu::TextureViewDesc desc = { .base_mip = mip, .mip_count = 1, .base_layer = layer, .layer_count = 1 };
-            report.views++;
-            unit.texture_candidate.storage_views[unit.creation_next] =
-                gpu::create_texture_view(
-                    device: &renderer.device,
-                    texture: unit.texture_candidate.texture,
-                    desc: &desc,
-                )!;
-            unit.creation_next++;
+        case TEXTURE_CREATE:
+            create_prepare_texture(renderer, unit, report)!;
 
             return false;
 
@@ -593,6 +520,72 @@ fn bool? run_prepare_step(
 
         case FINISH: return true;
     }
+}
+
+fn void? create_prepare_texture(Renderer* renderer, PrepareUnit* unit, PrepareReport* report) @local {
+    defer catch retire_prepare_texture(renderer, unit, &unit.texture_candidate);
+
+    TextureAsset* source = renderer.assets.texture(unit.texture);
+    uint chain_mips = texture_chain_mips(source);
+    bool eligible = texture_eligible(source.desc, source.source_kind, chain_mips);
+    gpu::TextureDesc desc = texture_gpu_description(
+        desc: source.desc,
+        format: texture_format(source.desc.format),
+        chain_mips: chain_mips,
+        base: unit.texture_base,
+        copy_source: eligible,
+    );
+    report.objects++;
+    unit.texture_candidate = {
+        .asset = unit.texture, .revision = unit.revision,
+        .texture = gpu::create_texture(&renderer.device, &desc)!,
+        .width = desc.width, .height = desc.height, .depth = desc.depth,
+        .mip_count = desc.mip_levels, .layers = desc.array_layers,
+        .is_cube = source.desc.is_cube, .copy_source = eligible, .format = desc.format,
+        .semantic = source.desc.semantic,
+    };
+
+    gpu::TextureViewDesc sampled = { .cube = unit.texture_candidate.is_cube };
+    report.views++;
+    unit.texture_candidate.view = gpu::create_texture_view(
+        device: &renderer.device,
+        texture: unit.texture_candidate.texture,
+        desc: &sampled,
+    )!;
+
+    if (source.desc.storage) {
+        uint mip_count = unit.texture_candidate.mip_count;
+        unit.texture_candidate.storage_views = alloc::new_array(
+            allocator: renderer.allocator,
+            $Type: gpu::TextureView,
+            elements: (sz)mip_count * unit.texture_candidate.layers,
+        );
+        foreach (uint index, &storage_view : unit.texture_candidate.storage_views) {
+            gpu::TextureViewDesc single = {
+                .base_mip = index % mip_count, .mip_count = 1, .base_layer = index / mip_count, .layer_count = 1,
+            };
+            report.views++;
+            *storage_view = gpu::create_texture_view(
+                device: &renderer.device,
+                texture: unit.texture_candidate.texture,
+                desc: &single,
+            )!;
+        }
+    }
+
+    unit.staged.mip = unit.texture_base;
+    uint chain_extent = math::max(source.desc.width, source.desc.height);
+    uint tail_base = eligible ? texture_tail_base(chain_extent, chain_mips) : 0;
+    unit.residency_candidate = {
+        .chain_mips = chain_mips, .chain_width = source.desc.width, .chain_height = source.desc.height,
+        .format = source.desc.format, .level_bytes = texture_level_bytes(source.desc, chain_mips)!,
+        .tail_base = tail_base,
+        .resident_base = unit.texture_base, .required_base = chain_mips,
+        .last_used_frame = renderer.frame_index, .eligible = eligible,
+        .full_reader = unit.full_reader || renderer.residencies[unit.texture.index].full_reader,
+        .streamed = eligible && !(unit.full_reader || renderer.residencies[unit.texture.index].full_reader),
+        .raisable = texture_source_present(source), .regenerates = source.source_kind == MIP_ZERO,
+    };
 }
 
 fn gpu::MappedGpuSpan? take_prepare_staging(

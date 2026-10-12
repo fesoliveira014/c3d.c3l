@@ -130,7 +130,6 @@ struct PrepareUnit @private {
     PrepareUnitKind kind;
     PrepareId owner;
     uint index;
-    uint creation_next;
     ulong generated_done;
     TextureId texture;
     GeometryId geometry;

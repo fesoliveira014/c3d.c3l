@@ -527,8 +527,9 @@ the accounting. Normal pipeline misses create one pipeline per step. Atomic cust
 shader adoption can require several cached keys; a bounded call defers until its true
 creation count fits, while an unbounded call admits the atomic operation.
 
-The time target is checked between bounded spans and indivisible calls. A span,
-allocation or driver call can overrun it; elapsed time, overrun, generation time and
+The time target is checked between bounded spans and indivisible steps. A span, an
+allocation or a texture's creation (its image and every view, in one step) can
+overrun it; elapsed time, overrun, generation time and
 pipeline driver time are reported separately. Creation calls, cache lookups/hits,
 texture views and allocations are counted. Sampler interning does not expose
 whether a native sampler was newly created. View targets and unrelated view
