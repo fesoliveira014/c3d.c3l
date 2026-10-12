@@ -27,47 +27,17 @@ enum PreparePipelinePass @private {
     VELOCITY,
 }
 
-enum PrepareComputeSlot @private {
-    CLUSTER,
-    TRACE_POSE,
-    TRACE_POSE_U16,
-    TRACE_REFIT,
-    SSAO,
-    RT_AO,
-    AO_BLUR,
-    REFLECTION,
-    REFLECTION_BLUR,
-    SSGI_TRACE,
-    SSGI_TEMPORAL,
-    SSGI_FILTER,
-    GRADE,
-    FXAA,
-    BLOOM_DOWN,
-    BLOOM_UP,
-    TILE_MAX,
-    TILE_NEIGHBOR,
-    DOF_COC,
-    DOF_GATHER,
-    DOF_COMPOSITE,
-    MOTION_BLUR,
-    TAA,
-    EXPOSURE_HISTOGRAM,
-    EXPOSURE_ADAPT,
-}
-
 struct PreparePipelineUnit @private {
     PreparePipelineKind kind;
     PreparePipelinePass pass;
-    PrepareComputeSlot slot;
-    ShaderVariant compute;
+    ComputeSlot slot;
     PipelineKey key;
 }
 
 struct PreparePipelineIdentity @private {
     PreparePipelineKind kind;
     PreparePipelinePass pass;
-    PrepareComputeSlot slot;
-    ShaderVariant compute;
+    ComputeSlot slot;
     PipelineKey key;
     GeometryId geometry;
     MaterialId material;
@@ -79,7 +49,6 @@ fn uint PreparePipelineIdentity.hash(&self) {
 
 fn bool PreparePipelineIdentity.equals(&self, PreparePipelineIdentity other) {
     return self.kind == other.kind && self.pass == other.pass && self.slot == other.slot
-        && self.compute.shader == other.compute.shader && self.compute.flags == other.compute.flags
         && self.key.equals(other.key)
         && c3d::same_id(self.geometry, other.geometry) && c3d::same_id(self.material, other.material);
 }
@@ -122,36 +91,6 @@ fn bool? run_prepare_shader_step(Renderer* renderer, PrepareUnit* unit, PrepareR
     ShaderRes* published = resolve_shader(renderer, unit.shader)!;
     if (published.revision == unit.revision) report.copied_bytes += shader_desc_bytes(&published.desc);
     return true;
-}
-
-fn gpu::PipelineHandle* prepare_compute_slot(Renderer* renderer, PrepareComputeSlot slot) @private {
-    switch (slot) {
-        case CLUSTER: return &renderer.cluster_pipeline;
-        case TRACE_POSE: return &renderer.posed_trace.pose_pipeline;
-        case TRACE_POSE_U16: return &renderer.posed_trace.pose_u16_pipeline;
-        case TRACE_REFIT: return &renderer.posed_trace.refit_pipeline;
-        case SSAO: return &renderer.ambient_occlusion_pipelines.ssao;
-        case RT_AO: return &renderer.ambient_occlusion_pipelines.ray_traced;
-        case AO_BLUR: return &renderer.ambient_occlusion_pipelines.blur;
-        case REFLECTION: return &renderer.reflection_pipelines.trace;
-        case REFLECTION_BLUR: return &renderer.reflection_pipelines.blur;
-        case SSGI_TRACE: return &renderer.screen_space_gi_pipelines.trace;
-        case SSGI_TEMPORAL: return &renderer.screen_space_gi_pipelines.temporal;
-        case SSGI_FILTER: return &renderer.screen_space_gi_pipelines.filter;
-        case GRADE: return &renderer.post_pipelines.grade;
-        case FXAA: return &renderer.post_pipelines.fxaa;
-        case BLOOM_DOWN: return &renderer.post_pipelines.bloom_downsample;
-        case BLOOM_UP: return &renderer.post_pipelines.bloom_upsample;
-        case TILE_MAX: return &renderer.post_pipelines.tile_max;
-        case TILE_NEIGHBOR: return &renderer.post_pipelines.tile_neighbor;
-        case DOF_COC: return &renderer.post_pipelines.dof_coc;
-        case DOF_GATHER: return &renderer.post_pipelines.dof_gather;
-        case DOF_COMPOSITE: return &renderer.post_pipelines.dof_composite;
-        case MOTION_BLUR: return &renderer.post_pipelines.motion_blur;
-        case TAA: return &renderer.post_pipelines.taa_resolve;
-        case EXPOSURE_HISTOGRAM: return &renderer.post_pipelines.exposure_histogram;
-        case EXPOSURE_ADAPT: return &renderer.post_pipelines.exposure_adapt;
-    }
 }
 
 fn bool prepare_pipeline_dead(Renderer* renderer, PrepareUnit* unit) @private {
@@ -238,7 +177,7 @@ fn PrepareStepCost? prepare_pipeline_cost(Renderer* renderer, PrepareUnit* unit)
             bool cached = renderer.pipelines.pipelines.has_key(key) || renderer.pipelines.rejected.has_key(key);
             return { .pipelines = cached ? 0 : 1 };
         case COMPUTE:
-            return { .pipelines = prepare_compute_slot(renderer, unit.pipeline.slot).is_valid() ? 0 : 1 };
+            return { .pipelines = compute_slot_target(renderer, unit.pipeline.slot).pipeline.is_valid() ? 0 : 1 };
         case PATH_TRACER:
             return { .pipelines = renderer.path_tracer.pipeline.is_valid() ? 0 : 1 };
         case SHEEN_LUT:
@@ -287,21 +226,14 @@ fn void? acquire_prepare_pipeline(Renderer* renderer, PreparePipelineUnit* reque
             }
 
         case COMPUTE:
-            gpu::PipelineHandle* slot = prepare_compute_slot(renderer, request.slot);
-            if (slot.is_valid()) {
+            if (compute_slot_target(renderer, request.slot).pipeline.is_valid()) {
                 report.pipeline_hits++;
                 return;
             }
             std::time::Clock started = clock::now();
             report.pipelines++;
             defer report.pipeline_ns += (ulong)started.to_now();
-            acquire_compute_pipeline(
-                renderer: renderer,
-                pipeline: slot,
-                shader: request.compute.shader,
-                debug_name: "prepared_compute",
-                flags: request.compute.flags,
-            )!;
+            acquire_compute_slot(renderer, request.slot)!;
 
         case PATH_TRACER:
             if (renderer.path_tracer.pipeline.is_valid()) report.pipeline_hits++;
@@ -318,17 +250,8 @@ fn void? acquire_prepare_pipelines(Renderer* renderer, PreparePipelineUnit[] req
     foreach (&request : requests) acquire_prepare_pipeline(renderer, request, &report)!;
 }
 
-fn void list_prepare_compute(
-    List{PreparePipelineUnit}* requests,
-    PrepareComputeSlot slot,
-    ShaderName shader_name,
-    uint flags = 0,
-) @local {
-    requests.push({
-        .kind = PreparePipelineKind.COMPUTE,
-        .slot = slot,
-        .compute = { .shader = shader_name, .flags = flags },
-    });
+fn void list_prepare_compute(List{PreparePipelineUnit}* requests, ComputeSlot slot) @local {
+    requests.push({ .kind = PreparePipelineKind.COMPUTE, .slot = slot });
 }
 
 fn void list_prepare_key(
@@ -411,14 +334,9 @@ fn void list_mesh_pipelines(
           || desc.ray_tracing.reflections || desc.ambient_occlusion.kind == AoKind.RAY_TRACED;
 
         if ((flags.skinned || flags.has_morphs) && traces) {
-            list_prepare_compute(requests, PrepareComputeSlot.TRACE_POSE, TRACE_POSE);
-            list_prepare_compute(
-                requests: requests,
-                slot: PrepareComputeSlot.TRACE_POSE_U16,
-                shader_name: TRACE_POSE,
-                flags: shader::SHADER_FLAG_SKINNED_U16,
-            );
-            list_prepare_compute(requests, PrepareComputeSlot.TRACE_REFIT, TRACE_REFIT);
+            list_prepare_compute(requests, ComputeSlot.TRACE_POSE);
+            list_prepare_compute(requests, ComputeSlot.TRACE_POSE_U16);
+            list_prepare_compute(requests, ComputeSlot.TRACE_REFIT);
         }
 
         if (desc.ray_tracing.shadows) {
@@ -482,7 +400,7 @@ fn void list_view_pipelines(Renderer* renderer, SceneReads reads, List{PreparePi
         if (!view.live) continue;
         ViewDesc* desc = &view.desc;
         if (desc.lights == LightSelection.CLUSTERED) {
-            list_prepare_compute(requests, PrepareComputeSlot.CLUSTER, LIGHT_CULL);
+            list_prepare_compute(requests, ComputeSlot.CLUSTER);
         }
         if (desc.shading == ShadingPath.DEFERRED) {
             uint shadow_flags = rt_shadow_flags(renderer, desc.ray_tracing.shadows);
@@ -491,67 +409,56 @@ fn void list_view_pipelines(Renderer* renderer, SceneReads reads, List{PreparePi
 
         switch (desc.ambient_occlusion.kind) {
             case NONE: break;
-            case SSAO: list_prepare_compute(requests, PrepareComputeSlot.SSAO, SSAO);
-            case RAY_TRACED:
-                list_prepare_compute(
-                    requests: requests,
-                    slot: PrepareComputeSlot.RT_AO,
-                    shader_name: RT_AO,
-                    flags: trace_shader_flags(renderer),
-                );
+            case SSAO: list_prepare_compute(requests, ComputeSlot.SSAO);
+            case RAY_TRACED: list_prepare_compute(requests, ComputeSlot.RT_AO);
         }
         if (desc.ambient_occlusion.kind != AoKind.NONE) {
-            list_prepare_compute(requests, PrepareComputeSlot.AO_BLUR, AO_BLUR);
+            list_prepare_compute(requests, ComputeSlot.AO_BLUR);
         }
 
         if (desc.ray_tracing.reflections) {
-            list_prepare_compute(
-                requests: requests,
-                slot: PrepareComputeSlot.REFLECTION,
-                shader_name: RT_REFLECTIONS,
-                flags: trace_shader_flags(renderer),
-            );
-            list_prepare_compute(requests, PrepareComputeSlot.REFLECTION_BLUR, RT_REFLECTION_BLUR);
+            list_prepare_compute(requests, ComputeSlot.REFLECTION);
+            list_prepare_compute(requests, ComputeSlot.REFLECTION_BLUR);
         }
 
         if (desc.screen_space_gi.enabled) {
-            list_prepare_compute(requests, PrepareComputeSlot.SSGI_TRACE, SSGI_TRACE);
-            list_prepare_compute(requests, PrepareComputeSlot.SSGI_TEMPORAL, SSGI_TEMPORAL);
-            list_prepare_compute(requests, PrepareComputeSlot.SSGI_FILTER, SSGI_FILTER);
+            list_prepare_compute(requests, ComputeSlot.SSGI_TRACE);
+            list_prepare_compute(requests, ComputeSlot.SSGI_TEMPORAL);
+            list_prepare_compute(requests, ComputeSlot.SSGI_FILTER);
         }
 
         if (desc.shading == ShadingPath.PATH_TRACED) requests.push({ .kind = PreparePipelineKind.PATH_TRACER });
 
         if (desc.post.bloom) {
-            list_prepare_compute(requests, PrepareComputeSlot.BLOOM_DOWN, BLOOM_DOWNSAMPLE);
-            list_prepare_compute(requests, PrepareComputeSlot.BLOOM_UP, BLOOM_UPSAMPLE);
+            list_prepare_compute(requests, ComputeSlot.BLOOM_DOWN);
+            list_prepare_compute(requests, ComputeSlot.BLOOM_UP);
         }
         if (desc.post.depth_of_field) {
-            list_prepare_compute(requests, PrepareComputeSlot.DOF_COC, DOF_COC);
-            list_prepare_compute(requests, PrepareComputeSlot.DOF_GATHER, DOF_GATHER);
-            list_prepare_compute(requests, PrepareComputeSlot.DOF_COMPOSITE, DOF_COMPOSITE);
+            list_prepare_compute(requests, ComputeSlot.DOF_COC);
+            list_prepare_compute(requests, ComputeSlot.DOF_GATHER);
+            list_prepare_compute(requests, ComputeSlot.DOF_COMPOSITE);
         }
         if (desc.post.motion_blur || desc.post.depth_of_field) {
-            list_prepare_compute(requests, PrepareComputeSlot.TILE_MAX, TILE_MAX);
-            list_prepare_compute(requests, PrepareComputeSlot.TILE_NEIGHBOR, TILE_NEIGHBOR);
+            list_prepare_compute(requests, ComputeSlot.TILE_MAX);
+            list_prepare_compute(requests, ComputeSlot.TILE_NEIGHBOR);
         }
-        if (desc.post.motion_blur) list_prepare_compute(requests, PrepareComputeSlot.MOTION_BLUR, MOTION_BLUR);
+        if (desc.post.motion_blur) list_prepare_compute(requests, ComputeSlot.MOTION_BLUR);
         if (post::uses_velocity(desc)) {
             list_prepare_key(requests, post::camera_velocity_pipeline_key(post::velocity_format(desc)));
         }
         if (desc.post.anti_aliasing == AntiAliasing.TAA) {
-            list_prepare_compute(requests, PrepareComputeSlot.TAA, TAA_RESOLVE);
+            list_prepare_compute(requests, ComputeSlot.TAA);
         }
         if (post::auto_exposure_active(desc)) {
-            list_prepare_compute(requests, PrepareComputeSlot.EXPOSURE_HISTOGRAM, EXPOSURE_HISTOGRAM);
-            list_prepare_compute(requests, PrepareComputeSlot.EXPOSURE_ADAPT, EXPOSURE_ADAPT);
+            list_prepare_compute(requests, ComputeSlot.EXPOSURE_HISTOGRAM);
+            list_prepare_compute(requests, ComputeSlot.EXPOSURE_ADAPT);
         }
 
         if (!view.hdr_color.texture.is_valid()) continue;
         gpu::Format output_format = view_output_format(renderer, desc);
         if (desc.post.anti_aliasing == AntiAliasing.FXAA) {
-            list_prepare_compute(requests, PrepareComputeSlot.GRADE, GRADE);
-            list_prepare_compute(requests, PrepareComputeSlot.FXAA, FXAA);
+            list_prepare_compute(requests, ComputeSlot.GRADE);
+            list_prepare_compute(requests, ComputeSlot.FXAA);
             list_prepare_key(requests, post::fxaa_fragment_pipeline_key(output_format));
         } else {
             list_prepare_key(requests, post::display_pipeline_key(output_format));
@@ -606,8 +513,7 @@ fn void deduplicate_prepare_pipeline_units(List{PrepareUnit}* listed) @private {
         if (unit.kind == PrepareUnitKind.PIPELINES) {
             PreparePipelineUnit pipeline = unit.pipeline;
             PreparePipelineIdentity identity = {
-                .kind = pipeline.kind, .pass = pipeline.pass, .slot = pipeline.slot,
-                .compute = pipeline.compute, .key = pipeline.key,
+                .kind = pipeline.kind, .pass = pipeline.pass, .slot = pipeline.slot, .key = pipeline.key,
                 .geometry = pipeline.kind == PreparePipelineKind.VALIDATE ? unit.geometry : (GeometryId){},
                 .material = pipeline.kind == PreparePipelineKind.VALIDATE ? unit.material : (MaterialId){},
             };

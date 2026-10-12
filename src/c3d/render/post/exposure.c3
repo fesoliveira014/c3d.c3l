@@ -387,18 +387,8 @@ fn gpu::GpuAddress adapted_exposure(ViewRecord* record) @private {
 }
 
 fn void? acquire_exposure_pipelines(Renderer* renderer) @private {
-    render::acquire_compute_pipeline(
-        renderer:   renderer,
-        pipeline:   &renderer.post_pipelines.exposure_histogram,
-        shader:     ShaderName.EXPOSURE_HISTOGRAM,
-        debug_name: "post_exposure_histogram",
-    )!;
-    render::acquire_compute_pipeline(
-        renderer:   renderer,
-        pipeline:   &renderer.post_pipelines.exposure_adapt,
-        shader:     ShaderName.EXPOSURE_ADAPT,
-        debug_name: "post_exposure_adapt",
-    )!;
+    render::acquire_compute_slot(renderer, ComputeSlot.EXPOSURE_HISTOGRAM)!;
+    render::acquire_compute_slot(renderer, ComputeSlot.EXPOSURE_ADAPT)!;
 }
 
 fn gpu::Vec3u exposure_meter_groups(Target* image) @private {

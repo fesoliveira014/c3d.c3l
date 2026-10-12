@@ -86,20 +86,12 @@ fn uint[<2>] ambient_occlusion_extent(uint width, uint height, bool full_resolut
  @require kind != AoKind.NONE
 *>
 fn void? acquire_ambient_occlusion_pipelines(Renderer* renderer, AoKind kind) @private {
-    AmbientOcclusionPipelines* pipelines = &renderer.ambient_occlusion_pipelines;
     switch (kind) {
-        case SSAO: acquire_compute_pipeline(renderer, &pipelines.ssao, SSAO, "ssao")!;
-        case RAY_TRACED:
-            acquire_compute_pipeline(
-                renderer:   renderer,
-                pipeline:   &pipelines.ray_traced,
-                shader:     RT_AO,
-                debug_name: "rt_ao",
-                flags:      trace_shader_flags(renderer),
-            )!;
+        case SSAO: acquire_compute_slot(renderer, ComputeSlot.SSAO)!;
+        case RAY_TRACED: acquire_compute_slot(renderer, ComputeSlot.RT_AO)!;
         case NONE:
     }
-    acquire_compute_pipeline(renderer, &pipelines.blur, AO_BLUR, "ao_blur")!;
+    acquire_compute_slot(renderer, ComputeSlot.AO_BLUR)!;
 }
 
 fn void destroy_ambient_occlusion_pipelines(gpu::Device* device, AmbientOcclusionPipelines* pipelines) @private {

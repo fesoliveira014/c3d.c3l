@@ -302,8 +302,8 @@ fn PipelineKey display_pipeline_key(gpu::Format output_format) @private {
 }
 
 fn void? acquire_post_pipelines(Renderer* renderer) @private {
-    render::acquire_compute_pipeline(renderer, &renderer.post_pipelines.grade, ShaderName.GRADE, "post_grade")!;
-    render::acquire_compute_pipeline(renderer, &renderer.post_pipelines.fxaa, ShaderName.FXAA, "post_fxaa")!;
+    render::acquire_compute_slot(renderer, ComputeSlot.GRADE)!;
+    render::acquire_compute_slot(renderer, ComputeSlot.FXAA)!;
 }
 
 fn void? open_post_chain(Renderer* renderer, ViewRecord* record) @private {

@@ -147,7 +147,7 @@ fn void? record_clusters(
 ) @private {
     FrameRoot* root = (FrameRoot*)frame.bytes.ptr;
     if (root.clusters != (gpu::GpuAddress)0) {
-        acquire_environment_pipeline(renderer, &renderer.cluster_pipeline, LIGHT_CULL)!;
+        acquire_compute_slot(renderer, ComputeSlot.CLUSTER)!;
         ClusterReadback* readback = &record.cluster_readback[renderer.frame_index % FRAMES_IN_FLIGHT];
         if (!readback.mapped.span.allocation().is_valid()) {
             gpu::AllocationDesc desc = {

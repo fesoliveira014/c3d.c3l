@@ -70,18 +70,8 @@ fn BloomBinding? record_bloom(Renderer* renderer, ViewRecord* record) {
 }
 
 fn void? acquire_bloom_pipelines(Renderer* renderer) @private {
-    render::acquire_compute_pipeline(
-        renderer:   renderer,
-        pipeline:   &renderer.post_pipelines.bloom_downsample,
-        shader:     ShaderName.BLOOM_DOWNSAMPLE,
-        debug_name: "post_bloom_downsample",
-    )!;
-    render::acquire_compute_pipeline(
-        renderer:   renderer,
-        pipeline:   &renderer.post_pipelines.bloom_upsample,
-        shader:     ShaderName.BLOOM_UPSAMPLE,
-        debug_name: "post_bloom_upsample",
-    )!;
+    render::acquire_compute_slot(renderer, ComputeSlot.BLOOM_DOWN)!;
+    render::acquire_compute_slot(renderer, ComputeSlot.BLOOM_UP)!;
 }
 
 fn void? record_bloom_dispatch(
