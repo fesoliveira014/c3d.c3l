@@ -392,6 +392,13 @@ ground a roughness under their threshold, so the boxes and spheres show in it; e
 from −20° with the sun 15° up. The fog panel edits density, falloff, anisotropy and `max_distance`, and with
 `--volumetric-fog` a volume quality combo. Under `--path-traced` the switch is ignored.
 
+`--local-lights N` (at most 128) lines the path ahead of the camera with `N` point and spot lamps, alternating and
+placed in pairs either side of it. The first eight cast shadows; the main and mirror views select clustered lights.
+`--lamp-range METRES` sets their range (14 by default, so about three overlap at any point; a range of 400 puts
+every lamp in every cluster cell), and `--lamps-in-fog off` sets their `Light.volumetric` to false. With
+`--volumetric-fog` the fog panel has a "Lamps in fog" checkbox for it. The lamps are tuned to the twilight
+exposure; at noon the sun outshines them.
+
 The landscape examples `terrain`, `vegetation` and `water` take `--sky`: an `ATMOSPHERE_EARTH` on
 their sun and a haze pooling in the valleys, and `--volumetric-fog` with it.
 
