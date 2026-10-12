@@ -163,9 +163,7 @@ fn void? PlaybackView.stop(&self, AnimationActionId action, float fade_out = 0) 
     if (!math::is_finite(fade_out) || fade_out < 0) return c3d::INVALID_ARGUMENT~;
 
     if (fade_out == 0) {
-        uint index;
-        while (!c3d::same_id(self.order[index], action)) index++;
-        remove_action(self, index);
+        remove_playback_action(self, action);
         invalidate_inertial_history(self);
         return;
     }
@@ -507,6 +505,14 @@ fn Action? prepare_validated_playback_action(
     state.playing = true;
 
     return state;
+}
+
+<* @require playback.actions.is_live(action) *>
+fn void remove_playback_action(PlaybackView* playback, AnimationActionId action) @private {
+    uint index;
+    while (!c3d::same_id(playback.order[index], action)) index++;
+
+    remove_action(playback, index);
 }
 
 fn void remove_action(PlaybackView* playback, uint index) @local {
