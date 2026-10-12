@@ -356,12 +356,11 @@ fn uint animated_lod_history_levels(MeshCandidate* candidate) @private {
     return mask;
 }
 
-fn Mat4 animated_lod_previous_local(PoseRecord* owner, MeshCandidate* candidate, uint source = 0) @private {
+fn Mat4f[] animated_lod_previous_mesh_locals(PoseRecord* owner, MeshCandidate* candidate) @private {
     AnimatedLodBinding* binding = candidate.lod.state.animated;
     usz first = animated_lod_rigid_index(binding, candidate.animated_lod.mesh_index)
       * animated_lod_source_capacity(candidate);
-    Mat4 mesh_local = bitcast(owner.animated_lod.locals[first + source], Mat4);
-    return mesh_local.mul(candidate.lod.state.desc.parts[candidate.lod_part].local);
+    return owner.animated_lod.locals[first:owner.instance_count];
 }
 
 fn float[] animated_lod_previous_weights(PoseRecord* owner, MeshCandidate* candidate, uint source = 0) @private {
@@ -395,9 +394,10 @@ fn gpu::GpuAddress? upload_animated_lod_previous(Renderer* renderer, DrawItem* i
             alignment: STREAM_ALIGNMENT,
         )!;
         Mat4f[] locals = ((Mat4f*)local_span.bytes.ptr)[:count];
+        Mat4 authored = selection.state.desc.parts[candidate.lod_part].local;
 
-        for (uint source = 0; source < count; source++) {
-            locals[source] = bitcast(animated_lod_previous_local(owner, candidate, source), Mat4f);
+        foreach (source, mesh_local : animated_lod_previous_mesh_locals(owner, candidate)) {
+            locals[source] = bitcast(bitcast(mesh_local, Mat4).mul(authored), Mat4f);
         }
 
         previous.instances = local_span.address;

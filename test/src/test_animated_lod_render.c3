@@ -151,7 +151,7 @@ fn void test_animated_lod_history_reconstructs_switched_representation_from_prev
             defer destroy_animated_history_fixture(&fixture);
             MeshCandidate* coarse = &fixture.candidates[ANIMATED_HISTORY_PARTS + 2];
             uint source = instanced ? 1 : 0;
-            Mat4 local = animated_lod_part_local(coarse, source);
+            Mat4f local = bitcast(animated_lod_mesh_local(coarse, 2, source), Mat4f);
             float[] weights = alloc::clone_slice(tmem, animated_lod_weights(coarse, 2, source));
             capture_animated_history(&fixture, &fixture.first, fixture.candidates[:ANIMATED_HISTORY_PARTS]);
             PoseRecord* owner = fixture.first.previous_pose(&fixture.scene, fixture.node);
@@ -166,10 +166,10 @@ fn void test_animated_lod_history_reconstructs_switched_representation_from_prev
                 coarse.source_node.local.position.x += 1;
                 coarse.source_mesh.morph_weights[0] = weights[0] + 0.5f;
                 fixture.scene.update_world();
-                assert(!(animated_lod_part_local(coarse) == local));
+                assert(bitcast(animated_lod_mesh_local(coarse, 2), Mat4f) != local);
             }
 
-            assert(animated_lod_previous_local(owner, coarse, source) == local);
+            assert(animated_lod_previous_mesh_locals(owner, coarse)[source] == local);
             assert(animated_lod_previous_weights(owner, coarse, source) == weights);
         };
     }
