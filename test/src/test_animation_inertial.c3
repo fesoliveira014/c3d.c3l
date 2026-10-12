@@ -2849,7 +2849,7 @@ fn void test_animation_transition_prepare_full_animator_copies_inputs_and_boolea
         defer anim::release_prepared_transition(&prepared);
         assert_transition_owner_unchanged(&playback, &snapshot);
         assert(prepared.action_count == 16 && prepared.space_count == 1 && prepared.duration == 0.5f);
-        assert(prepared.spaces[0].layout.reversed == 1 && prepared.spaces[0].count == 3);
+        assert(prepared.spaces[0].count == 3);
         foreach (index, action : prepared.actions[:prepared.action_count]) {
             assert(action.time == (float)index / 32 && action.clock_time == (double)action.time);
             assert(action.previous_time == action.clock_time && action.published_time == action.time);
@@ -2881,10 +2881,10 @@ fn void test_animation_transition_prepare_full_animator_copies_inputs_and_boolea
             if (index >= 3) assert(action.time == (float)index / 32 && action.weight == 0.25f);
         }
         BlendSpace2D* installed_space = &playback.blend_spaces_2d[0];
-        assert(installed_space.count == 3 && installed_space.reversed == 1);
+        assert(installed_space.count == 3);
         assert(installed_space.points[0] == (Vec2){} && installed_space.parameter == (Vec2){ 0.25f, 0.5f });
-        assert(installed_space.triangles[0].indices[0] == 2 && installed_space.triangles[0].indices[1] == 0);
-        assert(installed_space.triangles[0].indices[2] == 1);
+        assert(installed_space.triangles[0].indices[0] == 2 && installed_space.triangles[0].indices[1] == 1);
+        assert(installed_space.triangles[0].indices[2] == 0);
         assert(playback.action(installed.actions[0]).weight == 0.1875f);
         assert(playback.action(installed.actions[1]).weight == 0.1875f);
         assert(playback.action(installed.actions[2]).weight == 0.375f);

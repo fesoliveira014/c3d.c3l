@@ -223,13 +223,12 @@ fn void test_animation_authoring_codec_animator_planar_groups_masks_modes_restar
             BlendSpace2D* planar = &loaded.blend_spaces_2d[0];
             assert(planar.count == grid.count && planar.parameter == control.parameter);
             assert(planar.speed == -0.5f && planar.phase == 0 && planar.fade_rate == 0);
-            assert(planar.reversed == control.reversed && planar.triangle_count == grid.triangle_count);
+            assert(planar.triangle_count == grid.triangle_count);
             assert(planar.points[:grid.count] == grid.points[:grid.count]);
             foreach (index, triangle : grid.triangles[:grid.triangle_count]) {
-                bool reversed = (planar.reversed & (1u << index)) != 0;
                 assert(planar.triangles[index].indices[0] == triangle.indices[0]);
-                assert(planar.triangles[index].indices[reversed ? 2 : 1] == triangle.indices[1]);
-                assert(planar.triangles[index].indices[reversed ? 1 : 2] == triangle.indices[2]);
+                assert(planar.triangles[index].indices[1] == triangle.indices[1]);
+                assert(planar.triangles[index].indices[2] == triangle.indices[2]);
             }
             foreach (id : planar.actions[:planar.count]) {
                 Action* action = loaded.action(id);
@@ -604,7 +603,6 @@ fn void test_animation_authoring_codec_prepared_crowd_exports_planar_masks_and_s
             BlendSpace2D* planar = &restarted.spaces_2d[0];
             assert(planar.count == 9 && planar.phase == 0 && planar.fade_rate == 0);
             assert(planar.weight == 0.6f && planar.parameter == control_before.parameter);
-            assert(planar.reversed == control_before.reversed);
             foreach (member, id : planar.actions[:planar.count]) {
                 assert(c3d::same_id(id, restarted.order[member + 1]));
                 Action* action = restarted.actions.get(id);

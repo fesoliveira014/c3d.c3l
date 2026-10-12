@@ -56,7 +56,6 @@ fn AnimationTransitionResult install_animation_transition(
                 space.count = source.count;
                 space.triangle_count = source.layout.triangle_count;
                 space.hull_count = source.layout.hull_count;
-                space.reversed = source.layout.reversed;
                 space.extent = source.layout.extent;
                 space.points[:space.count] = source.points[:space.count];
                 space.triangles[:space.triangle_count] = source.triangles[:space.triangle_count];

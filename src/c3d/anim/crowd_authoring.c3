@@ -262,7 +262,6 @@ fn void? restore_authored_space_2d(PlaybackView* playback, uint ordinal, CrowdSp
     destination.count = (uint)source.actions.len;
     destination.triangle_count = layout.triangle_count;
     destination.hull_count = layout.hull_count;
-    destination.reversed = layout.reversed;
     destination.extent = layout.extent;
     destination.points[:source.points.len] = source.points[..];
     destination.parameter = source.parameter_2d;
@@ -518,13 +517,8 @@ fn CrowdInstanceAuthoring? capture_playback_authoring(
               ?? c3d::CAPACITY_EXCEEDED~!;
 
             foreach (triangle, &authored : captured.triangles) {
-                BlendTriangleIndices stored = planar.triangles[triangle];
-                bool reversed = (planar.reversed & (1u << triangle)) != 0;
-                authored.indices = {
-                    stored.indices[0],
-                    stored.indices[reversed ? 2 : 1],
-                    stored.indices[reversed ? 1 : 2],
-                };
+                char[3] stored = planar.triangles[triangle].indices;
+                authored.indices = { stored[0], stored[1], stored[2] };
             }
         } else {
             captured.positions = alloc::new_array_try(allocator, float, count) ?? c3d::CAPACITY_EXCEEDED~!;

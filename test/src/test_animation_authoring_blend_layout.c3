@@ -19,8 +19,7 @@ struct LayoutFixture @local {
 }
 
 struct LayoutExpectation @local {
-    BlendLayoutLocation kind;
-    uint authored_index;
+    uint count;
     double[] weights;
 }
 
@@ -39,14 +38,13 @@ fn BlendLayoutView layout_view(LayoutFixture* layout) @local {
         .points = layout.points[:layout.count],
         .triangles = layout.prepared_triangles[:layout.info.triangle_count],
         .hull = layout.prepared_hull[:layout.info.hull_count],
-        .reversed = layout.info.reversed,
         .extent = layout.info.extent,
     };
 }
 
 fn void layout_expect(LayoutFixture* layout, Vec2 parameter, LayoutExpectation expected) @local {
     BlendLayoutSelection selected = anim::select_blend_layout(layout_view(layout), parameter);
-    assert(selected.kind == expected.kind && selected.authored_index == expected.authored_index);
+    assert(selected.count == expected.count);
     double[LAYOUT_MAX_SAMPLES] weights;
     for (uint index = 0; index < selected.count; index++) {
         weights[selected.indices[index]] += selected.weights[index];
@@ -61,7 +59,6 @@ fn void layout_expect(LayoutFixture* layout, Vec2 parameter, LayoutExpectation e
 fn void layout_expect_samples(LayoutFixture* layout) @local {
     for (uint sample = 0; sample < layout.count; sample++) {
         BlendLayoutSelection selected = anim::select_blend_layout(layout_view(layout), layout.points[sample]);
-        assert(selected.kind == BlendLayoutLocation.SAMPLE && selected.authored_index == sample);
         assert(selected.count == 1 && selected.indices[0] == sample && selected.weights[0] == 1);
     }
 }
@@ -134,9 +131,9 @@ fn void test_animation_authoring_blend_layout_exact_samples_interior_and_duratio
     LayoutFixture layout = layout_triangle();
     layout_prepare(&layout);
     layout_expect_samples(&layout);
-    layout_expect(&layout, { 1, 0 }, { .kind = TRIANGLE, .weights = { 0.5, 0.5, 0 } });
-    layout_expect(&layout, { 0, 1 }, { .kind = TRIANGLE, .weights = { 0.5, 0, 0.5 } });
-    layout_expect(&layout, { 1, 1 }, { .kind = TRIANGLE, .weights = { 0, 0.5, 0.5 } });
+    layout_expect(&layout, { 1, 0 }, { .count = 3, .weights = { 0.5, 0.5, 0 } });
+    layout_expect(&layout, { 0, 1 }, { .count = 3, .weights = { 0.5, 0, 0.5 } });
+    layout_expect(&layout, { 1, 1 }, { .count = 3, .weights = { 0, 0.5, 0.5 } });
     BlendLayoutSelection selected = anim::select_blend_layout(layout_view(&layout), { 0.5f, 0.5f });
     assert(selected.weights[0] == 0.5f && selected.weights[1] == 0.25f && selected.weights[2] == 0.25f);
     double duration = selected.weights[0] + 2.0 * selected.weights[1] + 4.0 * selected.weights[2];
@@ -154,30 +151,27 @@ fn void test_animation_authoring_blend_layout_exact_samples_interior_and_duratio
 fn void test_animation_authoring_blend_layout_authored_ties_and_history_independence() @test {
     LayoutFixture square = layout_grid(2, 2);
     layout_prepare(&square);
-    Vec2[11] probes = {
+    Vec2[9] probes = {
         { 0.5f, 0.5f }, { 0.5f, 0.50000006f }, { 0.5f, 0.5000002f },
         { -1, 0.5f }, { 2, 0.5f }, { 0.5f, -1 }, { 0.5f, 2 }, { -1, -1 }, { 2, 2 },
-        { -1, 0.70710678e-6f }, { -1, 1.41421356e-6f },
     };
-    LayoutExpectation[11] expected = {
-        { .kind = TRIANGLE, .authored_index = 0, .weights = { 0.5, 0, 0, 0.5 } },
-        { .kind = TRIANGLE, .authored_index = 1, .weights = { 0.5, 0, 0, 0.5 } },
-        { .kind = TRIANGLE, .authored_index = 1, .weights = { 0.5, 0, 0, 0.5 } },
-        { .kind = HULL, .authored_index = 5, .weights = { 0.5, 0, 0.5, 0 } },
-        { .kind = HULL, .authored_index = 1, .weights = { 0, 0.5, 0, 0.5 } },
-        { .kind = HULL, .authored_index = 0, .weights = { 0.5, 0.5, 0, 0 } },
-        { .kind = HULL, .authored_index = 4, .weights = { 0, 0, 0.5, 0.5 } },
-        { .kind = HULL, .authored_index = 0, .weights = { 1, 0, 0, 0 } },
-        { .kind = HULL, .authored_index = 1, .weights = { 0, 0, 0, 1 } },
-        { .kind = HULL, .authored_index = 0, .weights = { 1, 0, 0, 0 } },
-        { .kind = HULL, .authored_index = 5, .weights = { 1, 0, 0, 0 } },
+    LayoutExpectation[9] expected = {
+        { .count = 3, .weights = { 0.5, 0, 0, 0.5 } },
+        { .count = 3, .weights = { 0.5, 0, 0, 0.5 } },
+        { .count = 3, .weights = { 0.5, 0, 0, 0.5 } },
+        { .count = 2, .weights = { 0.5, 0, 0.5, 0 } },
+        { .count = 2, .weights = { 0, 0.5, 0, 0.5 } },
+        { .count = 2, .weights = { 0.5, 0.5, 0, 0 } },
+        { .count = 2, .weights = { 0, 0, 0.5, 0.5 } },
+        { .count = 2, .weights = { 1, 0, 0, 0 } },
+        { .count = 2, .weights = { 0, 0, 0, 1 } },
     };
     foreach (index, parameter : probes) layout_expect(&square, parameter, expected[index]);
     BlendLayoutSelection first = anim::select_blend_layout(layout_view(&square), probes[0]);
     (void)anim::select_blend_layout(layout_view(&square), probes[7]);
     BlendLayoutSelection after = anim::select_blend_layout(layout_view(&square), probes[0]);
     assert(first.indices == after.indices && first.weights == after.weights);
-    assert(first.kind == after.kind && first.authored_index == after.authored_index);
+    assert(first.count == after.count);
     @swap(square.triangles[0], square.triangles[1]);
     @swap(square.triangles[0].indices[1], square.triangles[0].indices[2]);
     layout_prepare(&square);
@@ -191,19 +185,19 @@ fn void test_animation_authoring_blend_layout_relative_tolerances_and_extents() 
     layout_expect_fault(&triangle);
     triangle.points[2].y = 2e-10f;
     layout_prepare(&triangle);
-    layout_expect(&triangle, { 0.25f, 0.5e-10f }, { .kind = TRIANGLE, .weights = { 0.5, 0.25, 0.25 } });
+    layout_expect(&triangle, { 0.25f, 0.5e-10f }, { .count = 3, .weights = { 0.5, 0.25, 0.25 } });
     triangle = layout_triangle();
     layout_prepare(&triangle);
-    assert(anim::select_blend_layout(layout_view(&triangle), { -1e-7f, 0.5f }).kind == BlendLayoutLocation.TRIANGLE);
-    assert(anim::select_blend_layout(layout_view(&triangle), { -4e-7f, 0.5f }).kind == BlendLayoutLocation.HULL);
+    assert(anim::select_blend_layout(layout_view(&triangle), { -1e-7f, 0.5f }).count == 3);
+    assert(anim::select_blend_layout(layout_view(&triangle), { -4e-7f, 0.5f }).count == 2);
     foreach (float scale : { 0.0009765625f, 1048576.0f }) {
         LayoutFixture scaled = layout_grid(2, 2);
         for (uint sample = 0; sample < scaled.count; sample++) {
             scaled.points[sample] = scaled.points[sample] * scale - (Vec2){ 2 * scale, 3 * scale };
         }
         layout_prepare(&scaled);
-        layout_expect(&scaled, { -1.5f * scale, -2.5f * scale }, { .kind = TRIANGLE, .weights = { 0.5, 0, 0, 0.5 } });
-        layout_expect(&scaled, { -3 * scale, -4 * scale }, { .kind = HULL, .weights = { 1, 0, 0, 0 } });
+        layout_expect(&scaled, { -1.5f * scale, -2.5f * scale }, { .count = 3, .weights = { 0.5, 0, 0, 0.5 } });
+        layout_expect(&scaled, { -3 * scale, -4 * scale }, { .count = 2, .weights = { 1, 0, 0, 0 } });
     }
 }
 
@@ -216,19 +210,18 @@ fn void test_animation_authoring_blend_layout_sliver_contains_its_points_before_
     layout.triangles[0] = { .indices = { 0, 1, 2 } };
     layout.triangles[1] = { .indices = { 0, 3, 1 } };
     layout_prepare(&layout);
-    LayoutExpectation inside = { .kind = TRIANGLE, .authored_index = 1, .weights = { 0.25, 0.25, 0, 0.5 } };
-    layout_expect(&layout, { 0.5f, -0.5e-9f }, inside);
+    layout_expect(&layout, { 0.5f, -0.5e-9f }, { .count = 3, .weights = { 0.25, 0.25, 0, 0.5 } });
 }
 
 fn void test_animation_authoring_blend_layout_capacity_and_compact_storage() @test {
     uint[6] counts = { 3, 4, 8, 9, 15, 16 };
     LayoutExpectation[6] centers = {
-        { .kind = TRIANGLE, .authored_index = 0, .weights = { 0.75, 0.125, 0.125 } },
-        { .kind = TRIANGLE, .authored_index = 0, .weights = { 0.625, 0, 0, 0.375 } },
-        { .kind = TRIANGLE, .authored_index = 2, .weights = { 0.625, 0, 0, 0.375 } },
-        { .kind = TRIANGLE, .authored_index = 0, .weights = { 0.5, 0, 0, 0, 0.5 } },
-        { .kind = TRIANGLE, .authored_index = 0, .weights = { 0.5, 0, 0, 0, 0, 0, 0.5 } },
-        { .kind = TRIANGLE, .authored_index = 2, .weights = { 0.625, 0, 0, 0.375 } },
+        { .count = 3, .weights = { 0.75, 0.125, 0.125 } },
+        { .count = 3, .weights = { 0.625, 0, 0, 0.375 } },
+        { .count = 3, .weights = { 0.625, 0, 0, 0.375 } },
+        { .count = 3, .weights = { 0.5, 0, 0, 0, 0.5 } },
+        { .count = 3, .weights = { 0.5, 0, 0, 0, 0, 0, 0.5 } },
+        { .count = 3, .weights = { 0.625, 0, 0, 0.375 } },
     };
     foreach (index, count : counts) {
         LayoutFixture layout = count == 9 ? layout_grid(3, 3)

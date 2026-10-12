@@ -17,7 +17,6 @@ struct BlendSpace2D {
     uint count;
     uint triangle_count;
     uint hull_count;
-    uint reversed;
     double extent;
     Vec2 parameter;
     float weight;
@@ -191,7 +190,6 @@ fn BlendSpace2D*? PlaybackView.add_blend_space_2d(
     space.count = (uint)clips.len;
     space.triangle_count = layout.triangle_count;
     space.hull_count = layout.hull_count;
-    space.reversed = layout.reversed;
     space.extent = layout.extent;
     space.points[:space.count] = coordinates[..];
     space.triangles[:space.triangle_count] = admitted_triangles[:space.triangle_count];
@@ -281,7 +279,6 @@ fn void advance_blend_spaces_2d(PlaybackView* playback, AssetStore* assets, floa
             .points = space.points[:space.count],
             .triangles = space.triangles[:space.triangle_count],
             .hull = space.hull[:space.hull_count],
-            .reversed = space.reversed,
             .extent = space.extent,
         };
         BlendLayoutSelection selected = select_blend_layout(layout, space.parameter);

@@ -9,12 +9,6 @@ const double BLEND_SPACE_AREA_RELATIVE_TOLERANCE @private = 1e-10; // bounds uns
 const double BLEND_SPACE_BOUNDARY_TOLERANCE @private = 1e-7; // bounds admitted barycentric roundoff
 const double BLEND_SPACE_DISTANCE_RELATIVE_TOLERANCE @private = 1e-12; // bounds distance ties in squared-extent units
 
-enum BlendLayoutLocation @private {
-    SAMPLE,
-    TRIANGLE,
-    HULL,
-}
-
 <* One authored triangle referencing the group's sample coordinates. *>
 struct BlendTriangle {
     uint[3] indices;
@@ -31,7 +25,6 @@ struct BlendHullIndices @private {
 struct BlendLayoutInfo @private {
     uint triangle_count;
     uint hull_count;
-    uint reversed;
     double extent;
 }
 
@@ -39,7 +32,6 @@ struct BlendLayoutView @private {
     Vec2[] points;
     BlendTriangleIndices[] triangles;
     BlendHullIndices[] hull;
-    uint reversed;
     double extent;
 }
 
@@ -47,8 +39,6 @@ struct BlendLayoutSelection @private {
     char[3] indices;
     float[3] weights;
     uint count;
-    BlendLayoutLocation kind;
-    uint authored_index;
 }
 
 struct BlendLayoutPrepared @private {
@@ -62,7 +52,7 @@ $assert BlendHullIndices::size == 2;
 $assert BLEND_LAYOUT_MAX_TRIANGLES <= uint::size * 8;
 
 <*
- Validate the topology and copy prepared indices only on success.
+ Validate the topology and copy the authored triangles and hull only on success.
  @param prepared_triangles : "Owner-prepared destination; unchanged on faults."
  @param prepared_hull : "Owner-prepared destination; unchanged on faults."
  @return? c3d::INVALID_ARGUMENT
@@ -95,19 +85,13 @@ fn BlendLayoutInfo? prepare_blend_layout(
 fn BlendLayoutSelection select_blend_layout(BlendLayoutView layout, Vec2 parameter) @private {
     foreach (uint sample, point : layout.points) {
         if (point.x == parameter.x && point.y == parameter.y) {
-            return {
-                .indices = { (char)sample, 0, 0 },
-                .weights = { 1, 0, 0 },
-                .count = 1,
-                .kind = BlendLayoutLocation.SAMPLE,
-                .authored_index = sample,
-            };
+            return { .indices = { (char)sample, 0, 0 }, .weights = { 1, 0, 0 }, .count = 1 };
         }
     }
 
     // A sliver's points lie within the tolerance of its neighbor, so exact containment is searched first.
     foreach (double tolerance : { 0.0, BLEND_SPACE_BOUNDARY_TOLERANCE }) {
-        foreach (uint index, triangle : layout.triangles) {
+        foreach (triangle : layout.triangles) {
             Vec2 a = layout.points[triangle.indices[0]];
             Vec2 b = layout.points[triangle.indices[1]];
             Vec2 c = layout.points[triangle.indices[2]];
@@ -126,8 +110,6 @@ fn BlendLayoutSelection select_blend_layout(BlendLayoutView layout, Vec2 paramet
                 .indices = triangle.indices,
                 .weights = { (float)(first / sum), (float)(second / sum), (float)(third / sum) },
                 .count = 3,
-                .kind = BlendLayoutLocation.TRIANGLE,
-                .authored_index = index,
             };
         }
     }
@@ -159,8 +141,6 @@ fn BlendLayoutSelection select_blend_layout(BlendLayoutView layout, Vec2 paramet
             .indices = { edge.indices[0], edge.indices[1], 0 },
             .weights = { (float)(1 - fractions[index]), (float)fractions[index], 0 },
             .count = 2,
-            .kind = BlendLayoutLocation.HULL,
-            .authored_index = blend_hull_authored_index(layout, edge),
         };
     }
 
@@ -216,6 +196,8 @@ fn BlendLayoutPrepared? validate_blend_layout(Vec2[] points, BlendTriangle[] tri
 
     double area_limit = BLEND_SPACE_AREA_RELATIVE_TOLERANCE * extent * extent;
     BlendLayoutPrepared prepared = { .info = { .triangle_count = triangle_count, .extent = extent } };
+    BlendTriangleIndices[BLEND_LAYOUT_MAX_TRIANGLES] oriented;
+    uint reversed;
     bool[BLEND_LAYOUT_MAX_SAMPLES] used;
     bool[BLEND_LAYOUT_MAX_SAMPLES][BLEND_LAYOUT_MAX_SAMPLES] directed;
     bool[BLEND_LAYOUT_MAX_TRIANGLES][BLEND_LAYOUT_MAX_TRIANGLES] adjacency;
@@ -232,12 +214,13 @@ fn BlendLayoutPrepared? validate_blend_layout(Vec2[] points, BlendTriangle[] tri
         if (math::abs(area) <= area_limit) return c3d::INVALID_ARGUMENT~;
 
         BlendTriangleIndices triangle = { .indices = { (char)a, (char)b, (char)c } };
+        prepared.triangles[index] = triangle;
         if (area < 0) {
             @swap(triangle.indices[1], triangle.indices[2]);
-            prepared.info.reversed |= 1u << index;
+            reversed |= 1u << index;
         }
 
-        prepared.triangles[index] = triangle;
+        oriented[index] = triangle;
 
         for (uint edge = 0; edge < 3; edge++) {
             uint from = triangle.indices[edge];
@@ -255,7 +238,7 @@ fn BlendLayoutPrepared? validate_blend_layout(Vec2[] points, BlendTriangle[] tri
         }
 
         for (uint prior = 0; prior < index; prior++) {
-            BlendTriangleIndices other = prepared.triangles[prior];
+            BlendTriangleIndices other = oriented[prior];
             uint shared;
             for (uint corner = 0; corner < 3; corner++) {
                 uint sample = triangle.indices[corner];
@@ -322,7 +305,7 @@ fn BlendLayoutPrepared? validate_blend_layout(Vec2[] points, BlendTriangle[] tri
             if (directed[a][b] && directed[b][a]) continue;
 
             if (prepared.info.hull_count == count) return c3d::INVALID_ARGUMENT~;
-            if (prepared.info.reversed & (1u << triangle)) @swap(a, b);
+            if (reversed & (1u << triangle)) @swap(a, b);
             if (next[a] != uint::max || incoming[b] != 0) return c3d::INVALID_ARGUMENT~;
 
             next[a] = b;
@@ -363,16 +346,4 @@ fn BlendLayoutPrepared? validate_blend_layout(Vec2[] points, BlendTriangle[] tri
     }
 
     return prepared;
-}
-
-fn uint blend_hull_authored_index(BlendLayoutView layout, BlendHullIndices hull) @private {
-    foreach (uint index, triangle : layout.triangles) {
-        for (uint edge = 0; edge < 3; edge++) {
-            if (triangle.indices[edge] == hull.indices[0] && triangle.indices[(edge + 1) % 3] == hull.indices[1]) {
-                return 3 * index + ((layout.reversed & (1u << index)) ? 2 - edge : edge);
-            }
-        }
-    }
-
-    unreachable();
 }

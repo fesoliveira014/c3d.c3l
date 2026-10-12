@@ -598,7 +598,8 @@ admit a 2D group.
 
 Coordinates must be distinct and finite. Triangles must form a connected,
 non-overlapping triangulation of the convex hull, include every sample and have
-valid distinct indices. Winding is normalized at admission; gaps, crossings,
+valid distinct indices. Either winding is accepted and the authored triangles
+are kept as given; gaps, crossings,
 duplicate triangles, unused samples and non-convex boundaries fault
 `INVALID_ARGUMENT`. For maximum coordinate extent `S`, triangle double-area
 must exceed `1e-10 * S*S`. No automatic triangulation or degenerate fallback is
