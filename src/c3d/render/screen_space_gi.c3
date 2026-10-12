@@ -117,10 +117,9 @@ fn float screen_space_base_share(float occlusion, float ambient_occlusion, Vec4 
 }
 
 fn void? acquire_screen_space_gi_pipelines(Renderer* renderer) @private {
-    ScreenSpaceGiPipelines* pipelines = &renderer.screen_space_gi_pipelines;
-    acquire_compute_pipeline(renderer, &pipelines.trace, SSGI_TRACE, "ssgi_trace")!;
-    acquire_compute_pipeline(renderer, &pipelines.temporal, SSGI_TEMPORAL, "ssgi_temporal")!;
-    acquire_compute_pipeline(renderer, &pipelines.filter, SSGI_FILTER, "ssgi_filter")!;
+    acquire_compute_slot(renderer, ComputeSlot.SSGI_TRACE)!;
+    acquire_compute_slot(renderer, ComputeSlot.SSGI_TEMPORAL)!;
+    acquire_compute_slot(renderer, ComputeSlot.SSGI_FILTER)!;
 }
 
 fn void destroy_screen_space_gi_pipelines(gpu::Device* device, ScreenSpaceGiPipelines* pipelines) @private {

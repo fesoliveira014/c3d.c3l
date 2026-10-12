@@ -109,6 +109,50 @@ fn void test_prepare_dependency_order_and_deduplication() @test {
     assert(fixture.renderer.prepare_progress(id).bytes_total > render::MATERIAL_STRIDE);
 }
 
+fn PrepareUnit[] standard_model_units(PrepareFixture* fixture) @local {
+    MaterialId standard = fixture.assets.add_material(material::standard())!!;
+    ModelTemplate template = {
+        .nodes = alloc::new_array(mem, NodeTemplate, 1),
+        .meshes = alloc::new_array(mem, ModelMesh, 1),
+    };
+    template.nodes[0].parent = -1;
+    template.meshes[0] = { .node = 0, .geometry = fixture.first, .material = standard };
+    ModelId model = fixture.assets.add_model_owned(&template)!!;
+    PrepareId id = fixture.renderer.begin_prepare_model(model)!!;
+    return fixture.renderer.prepares.get(id).units;
+}
+
+fn void test_forward_only_preparation_lists_no_gbuffer_pipeline() @test {
+    PrepareFixture fixture;
+    create_prepare_fixture(&fixture);
+    defer destroy_prepare_fixture(&fixture);
+    bool forward;
+    foreach (unit : standard_model_units(&fixture)) {
+        if (unit.kind != PrepareUnitKind.PIPELINES) continue;
+        assert(unit.pipeline.pass != PreparePipelinePass.GBUFFER);
+        forward |= unit.pipeline.pass == PreparePipelinePass.FORWARD;
+    }
+    assert(forward);
+}
+
+fn void test_deferred_preparation_lists_no_traced_forward_pipeline_for_gbuffer_draws() @test {
+    PrepareFixture fixture;
+    create_prepare_fixture(&fixture);
+    defer destroy_prepare_fixture(&fixture);
+    fixture.renderer.views = pool::create_pool{ViewRecord, ViewId}(mem, 1);
+    defer pool::destroy_pool{ViewRecord, ViewId}(&fixture.renderer.views);
+    ViewDesc deferred = { .shading = ShadingPath.DEFERRED, .ray_tracing = { .shadows = true } };
+    fixture.renderer.views.add({ .live = true, .desc = deferred })!!;
+    bool gbuffer;
+    foreach (unit : standard_model_units(&fixture)) {
+        if (unit.kind != PrepareUnitKind.PIPELINES) continue;
+        bool traced = (unit.pipeline.key.fragment.flags & shader::SHADER_FLAG_RT_SHADOWS) != 0;
+        assert(unit.pipeline.pass != PreparePipelinePass.FORWARD || !traced);
+        gbuffer |= unit.pipeline.pass == PreparePipelinePass.GBUFFER;
+    }
+    assert(gbuffer);
+}
+
 fn void test_prepare_totals_include_current_geometry_with_released_source() @test {
     PrepareFixture fixture;
     create_prepare_fixture(&fixture);

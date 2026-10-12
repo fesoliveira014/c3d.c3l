@@ -137,31 +137,11 @@ fn void free_shaders(Renderer* renderer) @private {
     alloc::free(renderer.allocator, renderer.shaders.ptr);
 }
 
-fn void? adopt_prepared_shader(
-    Renderer* renderer,
-    ShaderId shader,
-    uint revision,
-    asset::ShaderDesc* owned,
-) @private {
-    ShaderRes* mirror = &renderer.shaders[shader.index];
-    bool same_asset = c3d::same_id(mirror.asset, shader);
-    @pool() {
-        if (!same_asset && mirror.asset.generation) {
-            foreach (handle : renderer.pipelines.remove_shader(tmem, mirror.asset)) {
-                retire_prepare_pipeline(renderer, handle);
-            }
-        }
-        gpu::PipelineHandle[] superseded = renderer.pipelines.replace_shader(
-            allocator: tmem,
-            device: &renderer.device,
-            shader: shader,
-            old_revision: same_asset ? mirror.revision : 0,
-            new_revision: revision,
-            stages: owned,
-        )!;
-        foreach (handle : superseded) retire_prepare_pipeline(renderer, handle);
-    };
-    asset::free_shader_desc(renderer.allocator, &mirror.desc);
-    *mirror = { .asset = shader, .revision = revision, .desc = *owned };
-    *owned = {};
+fn usz shader_desc_bytes(asset::ShaderDesc* desc) @private {
+    asset::CustomVertex* vertex = &desc.vertex;
+    return desc.fragment.len + desc.gbuffer.len + desc.traced_fragment.hardware.len + desc.traced_fragment.software.len
+        + desc.weighted_fragment.shaded.len + desc.weighted_fragment.traced.hardware.len
+        + desc.weighted_fragment.traced.software.len + vertex.shaded.len + vertex.depth.len
+        + vertex.instanced_shaded.len + vertex.instanced_depth.len
+        + vertex.velocity.len + vertex.instanced_velocity.len;
 }

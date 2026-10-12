@@ -94,15 +94,8 @@ fn ReflectionLights? upload_reflection_lights(
 }
 
 fn void? acquire_reflection_pipelines(Renderer* renderer) @private {
-    ReflectionPipelines* pipelines = &renderer.reflection_pipelines;
-    acquire_compute_pipeline(
-        renderer:   renderer,
-        pipeline:   &pipelines.trace,
-        shader:     RT_REFLECTIONS,
-        debug_name: "rt_reflections",
-        flags:      trace_shader_flags(renderer),
-    )!;
-    acquire_compute_pipeline(renderer, &pipelines.blur, RT_REFLECTION_BLUR, "rt_reflection_blur")!;
+    acquire_compute_slot(renderer, ComputeSlot.REFLECTION)!;
+    acquire_compute_slot(renderer, ComputeSlot.REFLECTION_BLUR)!;
 }
 
 fn void destroy_reflection_pipelines(gpu::Device* device, ReflectionPipelines* pipelines) @private {

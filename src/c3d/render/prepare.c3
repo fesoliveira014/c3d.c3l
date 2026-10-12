@@ -75,7 +75,6 @@ struct PrepareReport {
     uint allocations;
     uint pipeline_lookups;
     uint pipeline_hits;
-    uint pipeline_keys;
     uint restarts;
     ulong generation_ns;
     ulong pipeline_ns;
@@ -157,7 +156,6 @@ struct PrepareUnit @private {
     GpuGeometry geometry_candidate;
     MaterialRes material_candidate;
     PreparePipelineUnit pipeline;
-    PrepareShaderUnit shader_job;
     gpu::CompletionPoint last_submission;
     uint last_submission_slot;
     bool referenced_this_frame;
@@ -215,8 +213,6 @@ struct PrepareInstall @private {
     GpuGeometry new_geometry;
     MaterialRes old_material;
     MaterialRes new_material;
-    PathTracer old_path_tracer;
-    PathTracer new_path_tracer;
     gpu::CompletionPoint last_submission;
     uint last_submission_slot;
 }

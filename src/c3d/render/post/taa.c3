@@ -155,12 +155,7 @@ fn void? record_taa(
 }
 
 fn void? acquire_taa_pipeline(Renderer* renderer) @private {
-    render::acquire_compute_pipeline(
-        renderer:   renderer,
-        pipeline:   &renderer.post_pipelines.taa_resolve,
-        shader:     ShaderName.TAA_RESOLVE,
-        debug_name: "post_taa_resolve",
-    )!;
+    render::acquire_compute_slot(renderer, ComputeSlot.TAA)!;
 }
 
 <*

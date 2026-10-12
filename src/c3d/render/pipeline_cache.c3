@@ -25,6 +25,34 @@ bitstruct CustomStages : uint {
     bool gbuffer  : 3;
 }
 
+enum ComputeSlot @private {
+    CLUSTER,
+    TRACE_POSE,
+    TRACE_POSE_U16,
+    TRACE_REFIT,
+    SSAO,
+    RT_AO,
+    AO_BLUR,
+    REFLECTION,
+    REFLECTION_BLUR,
+    SSGI_TRACE,
+    SSGI_TEMPORAL,
+    SSGI_FILTER,
+    GRADE,
+    FXAA,
+    BLOOM_DOWN,
+    BLOOM_UP,
+    TILE_MAX,
+    TILE_NEIGHBOR,
+    DOF_COC,
+    DOF_GATHER,
+    DOF_COMPOSITE,
+    MOTION_BLUR,
+    TAA,
+    EXPOSURE_HISTOGRAM,
+    EXPOSURE_ADAPT,
+}
+
 <*
  Immutable pipeline inputs: stages, attachment formats, and the store shader when one is used.
 *>
@@ -54,7 +82,6 @@ struct CustomStageSource {
 struct PipelineCreationCounters @private {
     ulong calls;
     ulong elapsed_ns;
-    ulong keys;
 }
 
 <*
@@ -65,6 +92,13 @@ struct PipelineCache {
     HashMap{PipelineKey, bool}                rejected;
     ShaderRegistry                            registry;
     PipelineCreationCounters                  creations;
+}
+
+struct ComputeSlotTarget @private {
+    gpu::PipelineHandle* pipeline;
+    ShaderName shader;
+    uint flags;
+    ZString debug_name;
 }
 
 <*
@@ -112,6 +146,70 @@ fn void? acquire_compute_pipeline(
         .debug_name = debug_name,
     };
     *pipeline = gpu::create_compute_pipeline(&renderer.device, &description)!;
+}
+
+fn ComputeSlotTarget compute_slot_target(Renderer* renderer, ComputeSlot slot) @private {
+    switch (slot) {
+        case CLUSTER: return { .pipeline = &renderer.cluster_pipeline,
+            .shader = LIGHT_CULL, .debug_name = "environment_processing" };
+        case TRACE_POSE: return { .pipeline = &renderer.posed_trace.pose_pipeline,
+            .shader = TRACE_POSE, .debug_name = "trace_pose" };
+        case TRACE_POSE_U16: return { .pipeline = &renderer.posed_trace.pose_u16_pipeline,
+            .shader = TRACE_POSE, .flags = shader::SHADER_FLAG_SKINNED_U16, .debug_name = "trace_pose_u16" };
+        case TRACE_REFIT: return { .pipeline = &renderer.posed_trace.refit_pipeline,
+            .shader = TRACE_REFIT, .debug_name = "trace_refit" };
+        case SSAO: return { .pipeline = &renderer.ambient_occlusion_pipelines.ssao,
+            .shader = SSAO, .debug_name = "ssao" };
+        case RT_AO: return { .pipeline = &renderer.ambient_occlusion_pipelines.ray_traced,
+            .shader = RT_AO, .flags = trace_shader_flags(renderer), .debug_name = "rt_ao" };
+        case AO_BLUR: return { .pipeline = &renderer.ambient_occlusion_pipelines.blur,
+            .shader = AO_BLUR, .debug_name = "ao_blur" };
+        case REFLECTION: return { .pipeline = &renderer.reflection_pipelines.trace,
+            .shader = RT_REFLECTIONS, .flags = trace_shader_flags(renderer), .debug_name = "rt_reflections" };
+        case REFLECTION_BLUR: return { .pipeline = &renderer.reflection_pipelines.blur,
+            .shader = RT_REFLECTION_BLUR, .debug_name = "rt_reflection_blur" };
+        case SSGI_TRACE: return { .pipeline = &renderer.screen_space_gi_pipelines.trace,
+            .shader = SSGI_TRACE, .debug_name = "ssgi_trace" };
+        case SSGI_TEMPORAL: return { .pipeline = &renderer.screen_space_gi_pipelines.temporal,
+            .shader = SSGI_TEMPORAL, .debug_name = "ssgi_temporal" };
+        case SSGI_FILTER: return { .pipeline = &renderer.screen_space_gi_pipelines.filter,
+            .shader = SSGI_FILTER, .debug_name = "ssgi_filter" };
+        case GRADE: return { .pipeline = &renderer.post_pipelines.grade, .shader = GRADE, .debug_name = "post_grade" };
+        case FXAA: return { .pipeline = &renderer.post_pipelines.fxaa, .shader = FXAA, .debug_name = "post_fxaa" };
+        case BLOOM_DOWN: return { .pipeline = &renderer.post_pipelines.bloom_downsample,
+            .shader = BLOOM_DOWNSAMPLE, .debug_name = "post_bloom_downsample" };
+        case BLOOM_UP: return { .pipeline = &renderer.post_pipelines.bloom_upsample,
+            .shader = BLOOM_UPSAMPLE, .debug_name = "post_bloom_upsample" };
+        case TILE_MAX: return { .pipeline = &renderer.post_pipelines.tile_max,
+            .shader = TILE_MAX, .debug_name = "post_tile_max" };
+        case TILE_NEIGHBOR: return { .pipeline = &renderer.post_pipelines.tile_neighbor,
+            .shader = TILE_NEIGHBOR, .debug_name = "post_tile_neighbor" };
+        case DOF_COC: return { .pipeline = &renderer.post_pipelines.dof_coc,
+            .shader = DOF_COC, .debug_name = "post_dof_coc" };
+        case DOF_GATHER: return { .pipeline = &renderer.post_pipelines.dof_gather,
+            .shader = DOF_GATHER, .debug_name = "post_dof_gather" };
+        case DOF_COMPOSITE: return { .pipeline = &renderer.post_pipelines.dof_composite,
+            .shader = DOF_COMPOSITE, .debug_name = "post_dof_composite" };
+        case MOTION_BLUR: return { .pipeline = &renderer.post_pipelines.motion_blur,
+            .shader = MOTION_BLUR, .debug_name = "post_motion_blur" };
+        case TAA: return { .pipeline = &renderer.post_pipelines.taa_resolve,
+            .shader = TAA_RESOLVE, .debug_name = "post_taa_resolve" };
+        case EXPOSURE_HISTOGRAM: return { .pipeline = &renderer.post_pipelines.exposure_histogram,
+            .shader = EXPOSURE_HISTOGRAM, .debug_name = "post_exposure_histogram" };
+        case EXPOSURE_ADAPT: return { .pipeline = &renderer.post_pipelines.exposure_adapt,
+            .shader = EXPOSURE_ADAPT, .debug_name = "post_exposure_adapt" };
+    }
+}
+
+fn void? acquire_compute_slot(Renderer* renderer, ComputeSlot slot) @private {
+    ComputeSlotTarget target = compute_slot_target(renderer, slot);
+    return acquire_compute_pipeline(
+        renderer: renderer,
+        pipeline: target.pipeline,
+        shader: target.shader,
+        debug_name: target.debug_name,
+        flags: target.flags,
+    );
 }
 
 <*
@@ -187,7 +285,6 @@ fn gpu::PipelineHandle[]? PipelineCache.replace_shader(
     asset::ShaderDesc* stages,
 ) {
     PipelineKey[] keys = self.keys_of(tmem, shader, old_revision);
-    self.creations.keys += keys.len;
     gpu::PipelineHandle[] fresh = alloc::new_array(tmem, gpu::PipelineHandle, keys.len);
     defer catch foreach (handle : fresh) {
         if (handle.is_valid()) (void)gpu::destroy_pipeline(device, handle);

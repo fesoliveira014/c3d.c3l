@@ -104,12 +104,7 @@ fn void? record_motion_blur(Renderer* renderer, ViewRecord* record) {
 }
 
 fn void? acquire_motion_blur_pipelines(Renderer* renderer) @private {
-    render::acquire_compute_pipeline(
-        renderer:   renderer,
-        pipeline:   &renderer.post_pipelines.motion_blur,
-        shader:     ShaderName.MOTION_BLUR,
-        debug_name: "post_motion_blur",
-    )!;
+    render::acquire_compute_slot(renderer, ComputeSlot.MOTION_BLUR)!;
 }
 
 fn void? acquire_velocity_pipelines(Renderer* renderer, gpu::Format format) @private {

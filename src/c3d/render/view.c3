@@ -13,6 +13,7 @@ import c3d::scene;
 import c3d::shader;
 import c3d::render::post @public;
 import gpu;
+import std::collections::list;
 import std::collections::map;
 import std::math;
 import std::sort;
@@ -1171,7 +1172,6 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
                 material_id: mesh.material,
                 morphed:     mesh.morph_weights.len > 0,
                 depth:       casts || prepass,
-                gbuffer:     deferred,
             )!;
             sheen |= prepared.sheen;
             scene_reads |= prepared.scene_reads;
@@ -1186,7 +1186,6 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
                 material_id: batch.material,
                 morphed:     part.crowd != null && part.crowd.parts[part.crowd_part].weight_count > 0,
                 depth:       casts || prepass,
-                gbuffer:     deferred,
                 instanced:   true,
                 crowd:       part.crowd != null && part.crowd.parts[part.crowd_part].skinned,
             )!;
@@ -1212,7 +1211,6 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
                         material_id: part.material,
                         morphed: binding.weight_count > 0,
                         depth: casts || prepass,
-                        gbuffer: deferred,
                         instanced: group.state.mode == LodMode.INSTANCED,
                         crowd: group.state.animated != null && binding.skinned,
                         skinned: group.state.animated == null || binding.skinned,
@@ -1278,7 +1276,6 @@ fn void? Renderer.prepare_model(&self, ModelId model) {
         open_closed_frame_slot(self)!;
         defer catch discard_uploads(self);
         SceneReads scene_reads;
-        bool deferred = self.has_deferred_view();
         foreach (&mesh : record.data.meshes) {
             MeshPreparation prepared = prepare_mesh(
                 renderer:    self,
@@ -1286,7 +1283,6 @@ fn void? Renderer.prepare_model(&self, ModelId model) {
                 material_id: mesh.material,
                 morphed:     mesh.default_morph_weights.len > 0,
                 depth:       true,
-                gbuffer:     deferred,
             )!;
             scene_reads |= prepared.scene_reads;
         }
@@ -1298,7 +1294,6 @@ fn void? Renderer.prepare_model(&self, ModelId model) {
                     material_id: part.material,
                     morphed: false,
                     depth: true,
-                    gbuffer: deferred,
                 )!;
                 scene_reads |= prepared.scene_reads;
             }
@@ -1317,7 +1312,6 @@ fn MeshPreparation? prepare_mesh(
     MaterialId material_id,
     bool morphed,
     bool depth,
-    bool gbuffer,
     bool instanced = false,
     bool crowd = false,
     bool skinned = true,
@@ -1341,63 +1335,23 @@ fn MeshPreparation? prepare_mesh(
         bindings:          &material.bindings,
         line_polygon_mode: renderer.caps.line_polygon_mode,
     )!;
-    uint instanced_flag = instanced ? shader::SHADER_FLAG_INSTANCED : 0;
-    ShaderVariant vertex = mesh_vertex_variant(
-        flags:      geometry.layout.flags,
-        morphed:    morphed,
-        skinned:    skinned && (!instanced || crowd),
-        base_flags: instanced_flag,
-    );
-    if (catch excuse = pipeline_for(renderer, data, vertex)) {
-        if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
-        return {};
-    }
-    if (gbuffer && gbuffer_encodable(data, custom_gbuffer_stage(renderer, data)!)) {
-        if (catch excuse = gbuffer_pipeline_for(renderer, data, vertex)) {
-            if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
-            return {};
-        }
-    }
-    if (depth && data.common.alpha_mode != AlphaMode.BLEND) {
-        if (catch excuse = shadow_pipeline_for(
-            renderer:     renderer,
-            wireframe:    data.common.wireframe && renderer.caps.line_polygon_mode,
-            vertex:       mesh_vertex_variant(
-                flags:      geometry.layout.flags,
-                morphed:    morphed,
-                skinned:    skinned && (!instanced || crowd),
-                base_flags: shader::SHADER_FLAG_DEPTH_ONLY | instanced_flag,
-            ),
-            material:     data,
-            vertex_color: data.common.alpha_mode == AlphaMode.MASK && (geometry.layout.flags.has_colors || instanced),
-        )) {
-            if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
-            return {};
-        }
-    }
 
-    if (writes_own_depth(data)) {
-        MeshCandidate candidate;
-        DrawItem velocity_item = {
-            .candidate = &candidate,
-            .material = material,
-            .vertex = vertex,
-            .custom_velocity = custom_velocity_stage(renderer, data, instanced)!,
-        };
-
-        foreach (&view : renderer.views.items) {
-            if (!view.live || !post::uses_velocity(&view.desc)) continue;
-
-            if (catch excuse = post::velocity_pipeline_for(
-                renderer,
-                &velocity_item,
-                post::velocity_format(&view.desc),
-            )) {
-                if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
-                return {};
-            }
-        }
-    }
+    @pool() {
+        List{PreparePipelineUnit} requests;
+        requests.init(tmem);
+        list_mesh_pipelines(
+            renderer: renderer,
+            requests: &requests,
+            flags: geometry.layout.flags,
+            material: data,
+            morphed: morphed,
+            depth: depth,
+            instanced: instanced,
+            crowd: crowd,
+            skinned: skinned,
+        );
+        acquire_prepare_pipelines(renderer, requests.array_view())!;
+    };
 
     return {
         .sheen       = material_uses_sheen(data),
@@ -1436,28 +1390,12 @@ fn MeshPreparation? prepare_billboards(Renderer* renderer, BillboardBatch* batch
 }
 
 fn void? prepare_finish(Renderer* renderer, SceneReads reads) @private {
-    if (reads.color) renderer.pipelines.get(&renderer.device, composite_pipeline_key(HDR_FORMAT))!;
-    if (reads.depth) renderer.pipelines.get(&renderer.device, composite_pipeline_key(SCENE_DEPTH_FORMAT))!;
-    return prepare_views(renderer);
-}
-
-fn void? prepare_views(Renderer* renderer) @private {
-    foreach (&record : renderer.views.items) {
-        if (!record.live) continue;
-        post::prepare_display(renderer, record)!;
-        if (record.desc.lights == LightSelection.CLUSTERED) {
-            acquire_environment_pipeline(renderer, &renderer.cluster_pipeline, LIGHT_CULL)!;
-        }
-        if (record.desc.shading == ShadingPath.DEFERRED) {
-            uint shadow_flags = rt_shadow_flags(renderer, record.desc.ray_tracing.shadows);
-            renderer.pipelines.get(&renderer.device, lighting_resolve_pipeline_key(shadow_flags))!;
-        }
-        if (record.desc.ambient_occlusion.kind != AoKind.NONE) {
-            acquire_ambient_occlusion_pipelines(renderer, record.desc.ambient_occlusion.kind)!;
-        }
-        if (record.desc.ray_tracing.reflections) acquire_reflection_pipelines(renderer)!;
-        if (record.desc.shading == ShadingPath.PATH_TRACED) acquire_path_tracer(renderer)!;
-    }
+    @pool() {
+        List{PreparePipelineUnit} requests;
+        requests.init(tmem);
+        list_view_pipelines(renderer, reads, &requests);
+        acquire_prepare_pipelines(renderer, requests.array_view())!;
+    };
 }
 
 // On a screen-space GI view the velocity feeds the effect before lighting; elsewhere it records after the scene.

@@ -447,26 +447,9 @@ fn char[] pose_inputs(Renderer* renderer, TracePoseSource* source, TraceInstance
 }
 
 fn void? acquire_trace_pose_pipelines(Renderer* renderer) @private {
-    PosedTraceTable* table = &renderer.posed_trace;
-    acquire_compute_pipeline(
-        renderer:   renderer,
-        pipeline:   &table.pose_pipeline,
-        shader:     TRACE_POSE,
-        debug_name: "trace_pose",
-    )!;
-    acquire_compute_pipeline(
-        renderer:   renderer,
-        pipeline:   &table.pose_u16_pipeline,
-        shader:     TRACE_POSE,
-        debug_name: "trace_pose_u16",
-        flags:      shader::SHADER_FLAG_SKINNED_U16,
-    )!;
-    acquire_compute_pipeline(
-        renderer:   renderer,
-        pipeline:   &table.refit_pipeline,
-        shader:     TRACE_REFIT,
-        debug_name: "trace_refit",
-    )!;
+    acquire_compute_slot(renderer, ComputeSlot.TRACE_POSE)!;
+    acquire_compute_slot(renderer, ComputeSlot.TRACE_POSE_U16)!;
+    acquire_compute_slot(renderer, ComputeSlot.TRACE_REFIT)!;
 }
 
 // Every stream a vertex-motion slot exposes is refilled from the geometry mirror the revision just uploaded.

@@ -59,24 +59,9 @@ fn void? record_dof(Renderer* renderer, ViewRecord* record) {
 }
 
 fn void? acquire_dof_pipelines(Renderer* renderer) @private {
-    render::acquire_compute_pipeline(
-        renderer:   renderer,
-        pipeline:   &renderer.post_pipelines.dof_coc,
-        shader:     ShaderName.DOF_COC,
-        debug_name: "post_dof_coc",
-    )!;
-    render::acquire_compute_pipeline(
-        renderer:   renderer,
-        pipeline:   &renderer.post_pipelines.dof_gather,
-        shader:     ShaderName.DOF_GATHER,
-        debug_name: "post_dof_gather",
-    )!;
-    render::acquire_compute_pipeline(
-        renderer:   renderer,
-        pipeline:   &renderer.post_pipelines.dof_composite,
-        shader:     ShaderName.DOF_COMPOSITE,
-        debug_name: "post_dof_composite",
-    )!;
+    render::acquire_compute_slot(renderer, ComputeSlot.DOF_COC)!;
+    render::acquire_compute_slot(renderer, ComputeSlot.DOF_GATHER)!;
+    render::acquire_compute_slot(renderer, ComputeSlot.DOF_COMPOSITE)!;
 }
 
 fn void? record_dof_dispatch(
