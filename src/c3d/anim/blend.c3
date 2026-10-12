@@ -197,7 +197,7 @@ fn void blend_pose(
                     case SCALE:
                         if (action.additive_scale == AdditiveScaleMode.MULTIPLICATIVE) {
                             for (uint axis = 0; axis < 3; axis++) {
-                                double factor = 1 + (double)weight * ((double)sample[axis] / reference[axis] - 1);
+                                double factor = math::pow((double)sample[axis] / reference[axis], (double)weight);
                                 result[node].scale[axis] = (float)((double)result[node].scale[axis] * factor);
                             }
                         } else {

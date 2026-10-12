@@ -229,11 +229,12 @@ Opt in to componentwise scale ratios with
 action. After regular blending, each additive action applies:
 
 ```plain text
-below *= 1 + effective_weight * (sample / reference - 1)
+below *= (sample / reference) ^ effective_weight
 ```
 
-For below `(2,3,4)`, reference `(2,4,8)`, sample `(4,2,16)` and weight 0.5,
-the result is `(3,2.25,6)`. The scale mode and time-zero reference are captured
+The factor stays positive at every weight, including weights above 1, and is
+the plain ratio at weight 1. For below `(2,3,4)`, reference `(2,4,8)`, sample
+`(8,1,32)` and weight 0.5, the result is `(4,1.5,8)`. The scale mode and time-zero reference are captured
 at play. Only STEP and LINEAR scale tracks are supported. Admission checks their
 keys once: every key and the reference must be finite and strictly positive,
 positive subnormals included, or play returns `INVALID_ARGUMENT` before creating
