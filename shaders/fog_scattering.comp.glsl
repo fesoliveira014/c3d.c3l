@@ -90,7 +90,15 @@ vec3 slice_inscatter(
         float phase = fog_phase(-dot(direction, sun.direction_cos_outer.xyz), sky.fog_anisotropy);
         radiance += sky.fog_albedo_density.rgb * phase * sun.color_intensity.rgb * sun.color_intensity.w * visibility;
     }
-    return radiance + additional_light_scattering(frame, sky, root.sun_light, position, direction, view_depth);
+    vec3 lights = additional_light_scattering(frame, sky, root.sun_light, position, direction, view_depth);
+    if (jittered) {
+        // A lamp's falloff is narrow along depth: a second sample half a slice on keeps its glow in the clamp's range.
+        vec3 second_position = origin + direction * mix(start, far, fract(root.jitter + 0.5));
+        float second_depth = -(frame.view * vec4(second_position, 1.0)).z;
+        lights += additional_light_scattering(frame, sky, root.sun_light, second_position, direction, second_depth);
+        lights *= 0.5;
+    }
+    return radiance + lights;
 }
 
 // One column over a chunk of slices. With history, each froxel's reprojected history is clamped to the range of
