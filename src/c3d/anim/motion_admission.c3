@@ -21,14 +21,10 @@ struct CapturedMotionNode @private {
 
 struct CapturedMotionChain @private {
     Allocator allocator;
-    ModelId model;
-    uint root_node;
     RootExtractionDesc extraction;
     CapturedMotionNode[] nodes;
     double[<3>][] pose_scale_sums;
     uint[] top_level_nodes;
-    String[] model_names;
-    int[] model_parents;
 }
 
 fn void? validate_generalized_motion(
@@ -91,7 +87,6 @@ fn CapturedMotionChain? create_captured_motion_chain(
 
     CapturedMotionChain captured = {
         .allocator = allocator,
-        .root_node = root,
         .extraction = extraction,
     };
     defer catch destroy_captured_motion_chain(&captured);
@@ -100,48 +95,37 @@ fn CapturedMotionChain? create_captured_motion_chain(
       ?? c3d::CAPACITY_EXCEEDED~!;
     captured.top_level_nodes = alloc::new_array_try(allocator, uint, top_level_count)
       ?? c3d::CAPACITY_EXCEEDED~!;
-    captured.model_names = alloc::new_array_try(allocator, String, template.nodes.len)
-      ?? c3d::CAPACITY_EXCEEDED~!;
-    captured.model_parents = alloc::new_array_try(allocator, int, template.nodes.len)
-      ?? c3d::CAPACITY_EXCEEDED~!;
 
-    // This temporary node-to-chain map shares the final parent array during capture.
-    captured.model_parents[..] = -1;
     uint chain_index;
     for (int node = (int)root; node >= 0; node = template.nodes[node].parent) {
-        captured.nodes[chain_index] = {
+        captured.nodes[chain_index++] = {
             .model_node = (uint)node,
             .translation_track = NO_MOTION_TRACK,
             .rotation_track = NO_MOTION_TRACK,
             .scale_track = NO_MOTION_TRACK,
             .baseline = template.nodes[node].local,
         };
-        captured.model_parents[node] = (int)chain_index++;
     }
 
     foreach (track_index, track : clip.tracks) {
-        int index = captured.model_parents[clip.targets[track.target]];
-        if (index < 0) continue;
-        CapturedMotionNode* node = &captured.nodes[index];
+        foreach (&node : captured.nodes) {
+            if (node.model_node != clip.targets[track.target]) continue;
 
-        switch (track.path) {
-            case TRANSLATION:
-                node.translation_track = (uint)track_index;
-            case ROTATION:
-                node.rotation_track = (uint)track_index;
-            case SCALE:
-                node.scale_track = (uint)track_index;
-            case MORPH_WEIGHTS:
-                continue;
+            switch (track.path) {
+                case TRANSLATION:
+                    node.translation_track = (uint)track_index;
+                case ROTATION:
+                    node.rotation_track = (uint)track_index;
+                case SCALE:
+                    node.scale_track = (uint)track_index;
+                case MORPH_WEIGHTS:
+                    break;
+            }
         }
     }
 
     uint top_level_index;
     foreach (index, node : template.nodes) {
-        char[] name = alloc::new_array_try(allocator, char, node.name.len) ?? c3d::CAPACITY_EXCEEDED~!;
-        name[..] = node.name[..];
-        captured.model_names[index] = (String)name;
-        captured.model_parents[index] = node.parent;
         if (node.parent < 0) captured.top_level_nodes[top_level_index++] = (uint)index;
     }
 
@@ -149,12 +133,9 @@ fn CapturedMotionChain? create_captured_motion_chain(
 }
 
 fn void destroy_captured_motion_chain(CapturedMotionChain* captured) @private {
-    foreach (name : captured.model_names) alloc::free(captured.allocator, name.ptr);
     alloc::free(captured.allocator, captured.nodes.ptr);
     alloc::free(captured.allocator, captured.pose_scale_sums.ptr);
     alloc::free(captured.allocator, captured.top_level_nodes.ptr);
-    alloc::free(captured.allocator, captured.model_names.ptr);
-    alloc::free(captured.allocator, captured.model_parents.ptr);
 
     *captured = {};
 }

@@ -164,8 +164,7 @@ fn void test_animation_motion_admission_captures_full_chain_and_all_top_level_br
     validate_admission_fixture(&fixture)!!;
     CapturedMotionChain captured = capture_admission_fixture(&fixture);
     defer anim::destroy_captured_motion_chain(&captured);
-    assert(captured.root_node == 2);
-    assert(captured.nodes.len == 3 && captured.model_names.len == 7 && captured.model_parents.len == 7);
+    assert(captured.nodes.len == 3);
     assert(captured.nodes[0].model_node == 2 && captured.nodes[1].model_node == 1 && captured.nodes[2].model_node == 0);
     assert(captured.top_level_nodes == (uint[2]){ 0, 4 }[..]);
     assert(captured.nodes[0].translation_track == 0 && captured.nodes[0].rotation_track == 3);
@@ -173,16 +172,10 @@ fn void test_animation_motion_admission_captures_full_chain_and_all_top_level_br
     assert(captured.nodes[1].translation_track == anim::NO_MOTION_TRACK);
     assert(captured.nodes[1].scale_track == anim::NO_MOTION_TRACK);
     assert(captured.nodes[2].scale_track == 2 && captured.nodes[2].rotation_track == anim::NO_MOTION_TRACK);
-    foreach (index, node : fixture.nodes) {
-        assert(captured.model_names[index] == node.name && captured.model_parents[index] == node.parent);
-    }
     assert(captured.extraction.translation_axes == (bool[3]){ true, false, true });
     assert(captured.extraction.up == (Vec3){ 0, 1, 0 } && captured.extraction.twist);
-    fixture.nodes[0].name = "changed";
-    fixture.nodes[1].parent = -1;
     fixture.nodes[2].local.position = {};
     fixture.extraction.translation_axes[..] = false;
-    assert(captured.model_names[0] == "base" && captured.model_parents[1] == 0);
     assert(captured.nodes[0].baseline.position == (Vec3){ 2, 1, -2 });
     assert(captured.extraction.translation_axes[0] && captured.extraction.translation_axes[2]);
 }

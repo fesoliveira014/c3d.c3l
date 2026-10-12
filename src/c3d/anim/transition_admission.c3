@@ -24,15 +24,6 @@ fn TransitionMotionIdentity? validate_transition_motion_identity(
 
     foreach (id : playback.order[:*playback.action_count]) {
         Action* source = playback.actions.get(id);
-        if (source.motion_chain) {
-            validate_transition_capture_layout(
-                captured: source.motion_chain,
-                model: playback.model,
-                template: template,
-                root_node: playback.root_node,
-            )!;
-        }
-
         if (!source.extraction.generalized || source.root_motion != RootMotion.EXTRACT) continue;
         if (identity.consumes_chain) {
             if (!transition_extraction_equal(identity.extraction, source.extraction)) return c3d::INVALID_ARGUMENT~;
@@ -94,24 +85,6 @@ fn TransitionMotionIdentity? validate_transition_motion_identity(
     if (identity.unsupported && !defer_unsupported) return c3d::UNSUPPORTED~;
 
     return identity;
-}
-
-fn void? validate_transition_capture_layout(
-    CapturedMotionChain* captured,
-    ModelId model,
-    ModelTemplate* template,
-    uint root_node,
-) @local {
-    if (!c3d::same_id(captured.model, model) || captured.root_node != root_node
-      || captured.model_names.len != template.nodes.len || captured.model_parents.len != template.nodes.len) {
-        return c3d::INVALID_ARGUMENT~;
-    }
-
-    foreach (index, node : template.nodes) {
-        if (captured.model_names[index] != node.name || captured.model_parents[index] != node.parent) {
-            return c3d::INVALID_ARGUMENT~;
-        }
-    }
 }
 
 fn bool transition_extraction_equal(RootExtractionDesc first, RootExtractionDesc second) @local {

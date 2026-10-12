@@ -130,8 +130,6 @@ fn void? prepare_action_motion_capture(
     captured.pose_scale_sums = alloc::new_array_try(allocator, double[<3>], template.nodes.len)
       ?? c3d::CAPACITY_EXCEEDED~!;
 
-    captured.model = model;
-
     action.motion_chain = captured;
     action.motion_reference = capture_generalized_motion_reference(captured, clip);
 }

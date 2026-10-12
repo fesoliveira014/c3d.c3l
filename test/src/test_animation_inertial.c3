@@ -2981,7 +2981,7 @@ fn void test_animation_transition_admission_reference_offsets_and_animated_basis
     assert(tracker.total_allocation_count() == acquisitions);
 }
 
-fn void test_animation_transition_admission_configuration_model_layout_and_frame_mismatches_are_atomic() @test {
+fn void test_animation_transition_admission_extraction_mismatches_are_atomic() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
     defer tracker.free();
@@ -2990,25 +2990,17 @@ fn void test_animation_transition_admission_configuration_model_layout_and_frame
     defer destroy_layer_fixture(&fixture);
     ClipId target_clip = transition_admission_translation(&fixture, { 5, 7, -3 });
     Action* source = fixture.animator.action(id);
-    CapturedMotionChain* captured = source.motion_chain;
     AnimationTargetDesc[1] targets;
-    for (uint mismatch = 0; mismatch < 7; mismatch++) {
+    for (uint mismatch = 0; mismatch < 3; mismatch++) {
         targets[0] = anim::ANIMATION_TARGET_DEFAULT;
         targets[0].clip = target_clip;
         targets[0].play = { .root_motion = EXTRACT, .extraction = transition_admission_extraction() };
         PlaybackView playback = fixture.animator.playback();
         MotionBasis basis = anim::animator_motion_basis(fixture.animator);
-        ModelId model = captured.model;
-        int parent = captured.model_parents[3];
-        char name_start = captured.model_names[3][0];
         switch (mismatch) {
             case 0: targets[0].play.extraction.up = { 1, 0, 0 };
             case 1: targets[0].play.extraction.translation_axes[1] = false;
             case 2: targets[0].play.extraction.twist = false;
-            case 3: playback.root_node = 3;
-            case 4: captured.model.index++;
-            case 5: captured.model_parents[3] = 0;
-            case 6: captured.model_names[3][0] = 'X';
         }
         Action unchanged = *source;
         uint count = fixture.animator.action_count;
@@ -3024,9 +3016,6 @@ fn void test_animation_transition_admission_configuration_model_layout_and_frame
         assert(tracker.total_allocation_count() == acquisitions);
         assert(fixture.animator.action_count == count && fixture.animator.actions.generations[id.index] == generation);
         assert(mem::equals(&unchanged, source, Action::size));
-        captured.model = model;
-        captured.model_parents[3] = parent;
-        captured.model_names[3][0] = name_start;
     }
 }
 
