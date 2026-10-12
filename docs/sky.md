@@ -429,8 +429,8 @@ sky example does under `--path-traced`.
 - Screen-space GI gathers unfogged radiance without blended draws on fogged views.
 - Memory: 418 KiB and two heap slots per raster view; about 0.6 MiB and 46 heap slots per atmosphere
   (0.85 MiB and 83 with sheen); four atmospheres at once.
-- Volumetric fog without `fog_temporal` has no reprojection or jitter; it scatters only the sun, is unshadowed past
-  the shadow atlas, changes its in-scatter slope at `max_distance` and does not exist on path-traced views.
+- Volumetric fog without `fog_temporal` has no reprojection or jitter. It is unshadowed past the shadow atlas,
+  changes its in-scatter slope at `max_distance` and does not exist on path-traced views.
 - The analytic fog has no direct-sun phase term, so a view with volumetric fog and a view without it show
   different haze colours.
 - No clouds.
