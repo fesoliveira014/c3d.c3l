@@ -115,6 +115,8 @@ root TracePoseRoot {
     GpuAddress posed;
     GpuAddress palette;
     GpuAddress morph;
+    uint       palette_joints; // joints per source row of a crowd palette; 0 for a single mesh
+    uint       _pad0;
 }
 
 root TraceRefitRoot {

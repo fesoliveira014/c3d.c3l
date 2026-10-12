@@ -63,9 +63,10 @@ fn ShaderVariant candidate_vertex_variant(
         AnimatedCrowd* crowd = candidate.crowd;
         return mesh_vertex_variant(
             flags:      flags,
-            morphed:    crowd != null && crowd.parts[candidate.crowd_part].weight_count > 0,
-            skinned:    crowd != null && crowd.parts[candidate.crowd_part].skinned,
-            base_flags: base_flags | shader::SHADER_FLAG_INSTANCED,
+            morphed:    !posed && crowd != null && crowd.parts[candidate.crowd_part].weight_count > 0,
+            skinned:    !posed && crowd != null && crowd.parts[candidate.crowd_part].skinned,
+            base_flags: base_flags | shader::SHADER_FLAG_INSTANCED
+              | (posed ? shader::SHADER_FLAG_POSED_INSTANCED : 0),
         );
     }
     return mesh_vertex_variant(

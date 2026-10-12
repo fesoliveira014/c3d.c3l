@@ -277,6 +277,8 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer TracePoseRoo
     uint64_t posed;
     uint64_t palette;
     uint64_t morph;
+    uint palette_joints;
+    uint _pad0;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer TraceRefitRoot {

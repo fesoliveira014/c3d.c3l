@@ -339,8 +339,17 @@ while (window.poll()) {
   transform history are unchanged. A view rendered less often than every frame therefore shows no crowd
   deformation motion. A part whose source, geometry or model checks fail draws with zero motion. An animated
   LOD part rejects its history instead ([lod](lod.md#animated-models-and-crowds)).
+- **Compute skinning.** With [compute skinning](animation.md#compute-skinning) on, a skinned or morphed
+  crowd part poses all its live sources in one compute dispatch per frame, into one posed binding sized by
+  the crowd's capacity: `capacity * vertex_count * 52 B`, 157.5 MB for the 512 sources of the example, with
+  about 1,740 fitting the 512 MiB cap before the part falls back to vertex skinning. Every draw of the
+  part, in every view, shadow layer, prepass and velocity pass, reads the posed streams of its source. Its
+  frozen and culled instances are posed too, so the dispatch costs the same whatever the draws show. A
+  replacement of the crowd's instances drops the binding's history for one frame, and a view that skipped a
+  frame gets no deformation motion, as above. Animated LOD parts keep vertex skinning.
 - `InstanceGpu.normal_2.w` of a crowd record holds the logical source index, the row of the draw's
-  palette and morph block, so a parity change reorders records without moving any pose.
+  palette and morph block, and, under compute skinning, its posed slot, so a parity change reorders records
+  without moving any pose.
 - Crowds enter the ray tracing paths (shadows, ambient occlusion, reflections, probes, path tracing) only through
   `add_crowd(trace: true)`, which sets `trace` on every part batch; a part batch's `trace` can be edited afterwards
   like any other. Each traced skinned or morphed placement takes one posed trace slot; rigid-only parts retain the
@@ -354,14 +363,15 @@ while (window.poll()) {
   software kind, or few traced placements, for animated crowds ([measured cost](scene_trace.md#measured-cost)).
 - Custom materials: a fragment-only custom material draws with the built-in skinned instanced stage. A
   custom instanced vertex pair skins a crowd when compiled with the deformation defines
-  ([Custom shaders](custom_shaders.md)).
+  ([Custom shaders](custom_shaders.md)); under compute skinning such a crowd part keeps that vertex skinning.
 
 Example: `python3 scripts/build.py --example skinned_crowd` walks 512 instances of the committed Quaternius
 character through six of its clips; `B` switches to 512 `Animator` instances of the same model for
 comparison, `--baseline` starts there. `K` (or the panel checkbox, or `--compute-skinning`) turns on
-[compute skinning](animation.md#compute-skinning) for those instances; the flag also leaves them without
-animated LOD, whose parts keep vertex skinning, and the panel shows the posed meshes, fallbacks, resident
-posed bytes and the GPU time of `Pass.COMPUTE_SKIN`, shadows, prepass, forward and velocity. `--compare` advances both representations on every update and
+[compute skinning](animation.md#compute-skinning) for the crowd and for those instances; the flag also starts
+the example without animated LOD, whose parts keep vertex skinning and leave the switch no crowd draw to pose,
+and the panel shows the posed bindings, fallback draws, resident posed bytes and the GPU time of
+`Pass.COMPUTE_SKIN`, shadows, prepass, forward and velocity. `--compare` advances both representations on every update and
 shows maximum local position, rotation, scale and morph differences. This mode includes both
 playback costs and the comparison loop; use the single-representation modes for measurements.
 `F` freezes every other instance by pausing its base action, `--frozen-percent=P` starts with `P` percent

@@ -9,7 +9,7 @@ void main() {
     FrameRoot frame = FrameRoot(draw.frame);
     uint index = uint(gl_VertexIndex);
 
-    MeshVertexInput vertex = pull_mesh_vertex(geometry, index);
+    MeshVertexInput vertex = pull_mesh_vertex(geometry, index, stream_vertex_index(draw, geometry, index));
     apply_mesh_deformation(vertex, draw, geometry, index);
     write_mesh_outputs(vertex, draw, frame, geometry);
 }

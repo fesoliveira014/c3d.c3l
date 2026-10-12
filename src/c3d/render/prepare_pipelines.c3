@@ -292,12 +292,14 @@ fn void list_mesh_pipelines(
     bool instanced = false,
     bool crowd = false,
     bool skinned = true,
+    bool crowd_part = false,
+    bool posed = false,
 ) @private {
-    bool pose = renderer.compute_skinning && !instanced && (flags.skinned || flags.has_morphs);
-    if (pose && (morphed || skinned)) {
+    bool deforms = instanced ? crowd_part && (morphed || crowd) : morphed || skinned;
+    if (renderer.compute_skinning && deforms && (flags.skinned || flags.has_morphs)) {
         // Compute skinning draws the plain forms; the deformed ones remain for meshes it leaves out.
-        list_prepare_compute(requests, ComputeSlot.TRACE_POSE);
-        list_prepare_compute(requests, ComputeSlot.TRACE_POSE_U16);
+        list_prepare_compute(requests, instanced ? ComputeSlot.TRACE_POSE_INSTANCED : ComputeSlot.TRACE_POSE);
+        list_prepare_compute(requests, instanced ? ComputeSlot.TRACE_POSE_INSTANCED_U16 : ComputeSlot.TRACE_POSE_U16);
         list_mesh_pipelines(
             renderer: renderer,
             requests: requests,
@@ -305,18 +307,21 @@ fn void list_mesh_pipelines(
             material: material,
             morphed: false,
             depth: depth,
+            instanced: instanced,
             skinned: false,
+            posed: instanced,
         );
     }
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
     gpu::PolygonMode polygon = wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL;
-    uint instanced_flag = instanced ? shader::SHADER_FLAG_INSTANCED : 0;
+    uint instanced_flags = instanced ? shader::SHADER_FLAG_INSTANCED : 0;
+    if (posed) instanced_flags |= shader::SHADER_FLAG_POSED_INSTANCED;
     bool deformed = skinned && (!instanced || crowd);
     ShaderVariant vertex = mesh_vertex_variant(
         flags: flags,
         morphed: morphed,
         skinned: deformed,
-        base_flags: instanced_flag,
+        base_flags: instanced_flags,
     );
     ShaderId custom = material.kind == MaterialKind.CUSTOM ? material.custom.shader : (ShaderId){};
     bool custom_gbuffer = prepare_custom_gbuffer(renderer, material);
@@ -352,7 +357,7 @@ fn void list_mesh_pipelines(
                 flags: flags,
                 morphed: morphed,
                 skinned: deformed,
-                base_flags: shader::SHADER_FLAG_DEPTH_ONLY | instanced_flag,
+                base_flags: shader::SHADER_FLAG_DEPTH_ONLY | instanced_flags,
             ),
             .fragment = { .shader = DEPTH_ONLY, .flags = vertex_color ? shader::SHADER_FLAG_VERTEX_COLOR : 0 },
             .depth_format = DEPTH_FORMAT,

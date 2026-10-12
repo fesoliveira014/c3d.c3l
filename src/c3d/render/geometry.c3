@@ -267,12 +267,14 @@ fn GeometryRoot geometry_root(GeometryLayout* layout, gpu::GpuAddress base) {
 <*
  Layout of a geometry's posed copy: positions, normals and tangents at the source strides.
  @param [&in] source : "Layout of the rest geometry."
+ @param sources : "Copies of the streams, one after another; a crowd part poses one per instance."
 *>
-fn PosedLayout posed_layout(GeometryLayout* source) {
+fn PosedLayout posed_layout(GeometryLayout* source, uint sources = 1) {
+    usz vertices = (usz)source.vertex_count * sources;
     usz cursor = align_up(GeometryRoot::size, STREAM_ALIGNMENT);
-    PosedLayout layout = { .positions = place(&cursor, PACKED_VEC3_BYTES * source.vertex_count) };
-    if (source.flags.has_normals) layout.normals = place(&cursor, PACKED_VEC3_BYTES * source.vertex_count);
-    if (source.flags.has_tangents) layout.tangents = place(&cursor, Vec4::size * source.vertex_count);
+    PosedLayout layout = { .positions = place(&cursor, PACKED_VEC3_BYTES * vertices) };
+    if (source.flags.has_normals) layout.normals = place(&cursor, PACKED_VEC3_BYTES * vertices);
+    if (source.flags.has_tangents) layout.tangents = place(&cursor, Vec4::size * vertices);
     layout.total_bytes = cursor;
     return layout;
 }
@@ -282,9 +284,15 @@ fn PosedLayout posed_layout(GeometryLayout* source) {
  @param [&in] source : "Layout of the rest geometry."
  @param base : "GPU address of the rest block."
  @param posed : "GPU address of the posed block."
+ @param sources : "Copies the posed block holds."
 *>
-fn GeometryRoot posed_geometry_root(GeometryLayout* source, gpu::GpuAddress base, gpu::GpuAddress posed) {
-    PosedLayout layout = posed_layout(source);
+fn GeometryRoot posed_geometry_root(
+    GeometryLayout* source,
+    gpu::GpuAddress base,
+    gpu::GpuAddress posed,
+    uint sources = 1,
+) {
+    PosedLayout layout = posed_layout(source, sources);
     GeometryRoot root = geometry_root(source, base);
     root.positions = address_of(posed, layout.positions);
     root.normals = address_of(posed, layout.normals);

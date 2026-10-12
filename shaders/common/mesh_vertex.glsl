@@ -43,6 +43,11 @@ uint instance_source(DrawRoot draw) {
         ? VisibleArray(draw.instance_indices).values[gl_InstanceIndex]
         : uint(gl_InstanceIndex);
 }
+
+// The source of a crowd record: its palette and morph row, and its posed slot.
+uint logical_source(DrawRoot draw) {
+    return uint(InstanceArray(draw.instance_data).values[instance_source(draw)].normal_2.w);
+}
 #endif
 
 struct MeshVertexInput {
@@ -54,14 +59,23 @@ struct MeshVertexInput {
     vec4 color;
 };
 
-MeshVertexInput pull_mesh_vertex(GeometryRoot geometry, uint index) {
+// A posed crowd draw keeps one copy of the deformed streams per source, source after source.
+uint stream_vertex_index(DrawRoot draw, GeometryRoot geometry, uint index) {
+#ifdef POSED_INSTANCED
+    return logical_source(draw) * geometry.vertex_count + index;
+#else
+    return index;
+#endif
+}
+
+MeshVertexInput pull_mesh_vertex(GeometryRoot geometry, uint index, uint stream_index) {
     MeshVertexInput vertex;
-    vertex.position = pull_vec3(geometry.positions, index);
+    vertex.position = pull_vec3(geometry.positions, stream_index);
     vertex.normal = (geometry.flags & GEOMETRY_HAS_NORMALS) != 0u
-        ? pull_vec3(geometry.normals, index)
+        ? pull_vec3(geometry.normals, stream_index)
         : vec3(0.0, 0.0, 1.0);
     vertex.tangent = (geometry.flags & GEOMETRY_HAS_TANGENTS) != 0u
-        ? pull_vec4(geometry.tangents, index)
+        ? pull_vec4(geometry.tangents, stream_index)
         : vec4(0.0);
     vertex.uv0 = (geometry.flags & GEOMETRY_HAS_UV0) != 0u ? pull_vec2(geometry.uv0, index) : vec2(0.0);
     vertex.uv1 = (geometry.flags & GEOMETRY_HAS_UV1) != 0u ? pull_vec2(geometry.uv1, index) : vec2(0.0);
@@ -69,18 +83,13 @@ MeshVertexInput pull_mesh_vertex(GeometryRoot geometry, uint index) {
     return vertex;
 }
 
-#if defined(SKINNED) || defined(SKINNED_U16) || defined(MORPH)
-#define PALETTE_MATRIX_BYTES 64ul // mirrors Mat4f::size of a palette entry
-#define MORPH_BLOCK_BYTES 80ul // mirrors MorphWeightsGpu::size
+MeshVertexInput pull_mesh_vertex(GeometryRoot geometry, uint index) {
+    return pull_mesh_vertex(geometry, index, index);
+}
 
+#if defined(SKINNED) || defined(SKINNED_U16) || defined(MORPH)
 // A crowd instance reads the row of its logical source in the resident palette and morph block.
 // A single mesh reads the base address.
-#ifdef INSTANCED
-uint logical_source(DrawRoot draw) {
-    return uint(InstanceArray(draw.instance_data).values[instance_source(draw)].normal_2.w);
-}
-#endif
-
 uint64_t instance_palette(DrawRoot draw, uint64_t palette_base) {
 #ifdef INSTANCED
     return palette_base + uint64_t(logical_source(draw)) * uint64_t(draw.skin_stride) * PALETTE_MATRIX_BYTES;
@@ -115,11 +124,12 @@ void apply_mesh_deformation(inout MeshVertexInput vertex, DrawRoot draw, Geometr
 #ifdef VELOCITY
 // Object-space position under the base positions, skin and morph the view drew last time.
 vec3 previous_mesh_position(DrawRoot draw, GeometryRoot geometry, uint index) {
-    vec3 position = pull_vec3(geometry.positions, index);
+    uint stream_index = stream_vertex_index(draw, geometry, index);
+    vec3 position = pull_vec3(geometry.positions, stream_index);
     if ((draw.flags & DRAW_VERTEX_HISTORY_INVALID) != 0u) return position;
     if (draw.previous_pose != 0ul) {
         uint64_t positions = PreviousPoseGpu(draw.previous_pose).positions;
-        if (positions != 0ul) position = pull_vec3(positions, index);
+        if (positions != 0ul) position = pull_vec3(positions, stream_index);
     }
 #ifdef MORPH
     MorphWeightsGpu morph = MorphWeightsGpu(instance_morph(draw, PreviousPoseGpu(draw.previous_pose).morph));

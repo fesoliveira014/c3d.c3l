@@ -1121,7 +1121,7 @@ fn bool traceable(AssetStore* assets, GeometryId geometry, MaterialId material) 
 }
 
 // The renderer sees a custom stage, not what it displaces, so any custom vertex stage keeps the mesh out.
-fn bool custom_vertex_stage(AssetStore* assets, Material* material) @local {
+fn bool custom_vertex_stage(AssetStore* assets, Material* material) @private {
     if (material.kind != MaterialKind.CUSTOM) return false;
     return assets.shader(material.custom.shader).desc.vertex.shaded.len > 0;
 }

@@ -339,12 +339,16 @@ struct TracePoseRoot {
     GpuAddress posed;
     GpuAddress palette;
     GpuAddress morph;
+    uint       palette_joints;
+    uint       _pad0;
 }
-$assert TracePoseRoot::size == 32;
+$assert TracePoseRoot::size == 40;
 $assert $reflect(TracePoseRoot.source).offset == 0;
 $assert $reflect(TracePoseRoot.posed).offset == 8;
 $assert $reflect(TracePoseRoot.palette).offset == 16;
 $assert $reflect(TracePoseRoot.morph).offset == 24;
+$assert $reflect(TracePoseRoot.palette_joints).offset == 32;
+$assert $reflect(TracePoseRoot._pad0).offset == 36;
 
 struct TraceRefitRoot {
     GpuAddress geometry;

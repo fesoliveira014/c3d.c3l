@@ -933,45 +933,65 @@ while node and instance motion are unchanged, and an animated LOD part rejects t
 
 ### Compute skinning
 
-`Renderer.set_compute_skinning(true)` poses skinned and morphed meshes once a frame in a compute pass
-instead of in the vertex stage of every draw. It is off by default and latched per frame, so it applies from
-the next frame. With it on, every view, depth prepass, shadow layer and velocity pass of the frame draws the
-posed positions, normals and tangents through the plain vertex form. Images match vertex skinning visually,
-not bit for bit. The pass runs the `trace_pose` shader, so the posed streams hold unnormalized normals that
-the vertex stage normalizes as before, and a tangent keeps its handedness. It replaces the vertex-stage
-skinning of every pass with one dispatch and one root upload per mesh per frame, so it pays when a mesh is
-drawn by many passes, such as velocity, more views or cascades, or is heavy per vertex; with few passes it
-can cost more GPU and CPU time than vertex skinning.
+`Renderer.set_compute_skinning(true)` poses skinned and morphed meshes and crowd parts once a frame in a
+compute pass instead of in the vertex stage of every draw. It is off by default and latched per frame, so it
+applies from the next frame. With it on, every view, depth prepass, shadow layer and velocity pass of the
+frame draws the posed positions, normals and tangents through the plain vertex form; a crowd part draws them
+through the posed instanced form, which reads the slot of the instance's source. Images match vertex
+skinning visually, not bit for bit. The pass runs the `trace_pose` shader, so the posed streams hold
+unnormalized normals that the vertex stage normalizes as before, and a tangent keeps its handedness. It
+replaces the vertex-stage skinning of every pass with one dispatch and one root upload per mesh or crowd part
+per frame, so it pays when a mesh is drawn by many passes, such as velocity, more views or cascades, or is
+heavy per vertex; with few passes it can cost more GPU and CPU time than vertex skinning.
 
-- **Scope.** Ordinary meshes that are skinned, morphed or both. Crowds, animated LOD parts and instanced
-  groups keep vertex skinning, as do meshes with `Mesh.vertex_motion`, whose previous positions the
-  application supplies. A mesh no view or shadow layer draws is not posed.
-- **Buffers.** Each drawn mesh node owns a pair of posed blocks, allocated on first use, reallocated when
-  its geometry's layout changes and released after `INSTANCE_ABSENCE_FRAMES` frames without a draw. Positions
-  are double buffered, current and previous; normals and tangents are written in place each frame behind a
-  barrier, since nothing reads their history. A mesh costs 52 B per vertex plus two root blocks in one device
-  allocation: the example character, two meshes of about 5,900 vertices together, holds 0.31 MB.
+- **Scope.** Ordinary meshes and crowd parts that are skinned, morphed or both. Animated LOD parts, of a
+  crowd or of a single model, plain and LOD instanced groups and meshes with `Mesh.vertex_motion`, whose
+  previous positions the application supplies, keep vertex skinning. They are outside the scope, not
+  fallbacks, and `Stats.compute_skinning_fallbacks` does not count them. One binding that posed every source
+  at every level would undo the savings of the levels; limiting the dispatch to the instances drawn at each
+  level is not done. A mesh or crowd part drawn by a material with a custom vertex stage stays out too, since
+  that stage applies its own deformation from the draw's palette and morph block, which a posed draw leaves
+  empty, and a crowd part's stage reads its streams without the source's slot. A mesh or crowd part no view
+  or shadow layer draws is not posed.
+- **Buffers.** Each drawn mesh node, and each drawn crowd part, owns a pair of posed blocks, allocated on
+  first use, reallocated when its geometry's layout or the crowd's capacity changes and released after
+  `INSTANCE_ABSENCE_FRAMES` frames without a draw. Positions are double buffered, current and previous;
+  normals and tangents are written in place each frame behind a barrier, since nothing reads their history.
+  A mesh costs 52 B per vertex plus two root blocks in one device allocation: the example character, two
+  meshes of about 5,900 vertices together, holds 0.31 MB. A crowd part is sized by the crowd's capacity,
+  whatever the live count, in the same single allocation: `capacity * vertex_count * 52 B`. Source `s` has
+  its copy of every stream at `s * vertex_count` vertices, and a draw reads the copy of the source in its
+  instance record (`InstanceGpu.normal_2.w`), so mirrored and culled draws, which reorder the records, move no
+  pose. The example crowd, 512 sources of the character, holds 157.5 MB in its two parts, and the 512 MiB
+  cap fits about 1,740 sources of it.
 - **Caps.** `MAX_COMPUTE_SKINNING_BYTES` (512 MiB) caps the resident posed bytes, and
-  `MAX_COMPUTE_SKINNING_MESHES` (2,048) caps the posed meshes, since each takes one of the device's 4,096
-  allocation slots, which the rest of the renderer shares. A mesh past either keeps vertex skinning. Each
-  pass that draws it counts once in `Stats.compute_skinning_fallbacks`; this is never a fault, while a failed
-  device allocation still is one. `Stats.compute_skinned` counts the meshes posed this frame and
-  `Stats.compute_skinning_bytes` the resident bytes.
-- **Recording.** One `trace_pose` dispatch per mesh per frame under `Pass.COMPUTE_SKIN`, recorded before the
-  first raster pass of the view, depth prepass or shadow layer that draws the mesh. Later passes and views of
-  the frame reuse the pose. A dispatch waits for the shaders of earlier frames that read the block it
-  overwrites (`consumer_stages` to compute), and its writes become visible to the vertex stage of every
-  raster pass (compute to vertex shader).
+  `MAX_COMPUTE_SKINNING_MESHES` (2,048) caps the posed meshes and crowd parts, since each takes one of the
+  device's 4,096 allocation slots, which the rest of the renderer shares. A mesh or crowd part past either,
+  or a crowd with more sources than one dispatch can address, keeps vertex skinning as a whole. Every pass
+  claim of such a draw counts in `Stats.compute_skinning_fallbacks`, so a part drawn by three passes counts
+  three; this is never a fault, while a failed device allocation still is one. `Stats.compute_skinned`
+  counts the meshes and crowd parts posed this frame and `Stats.compute_skinning_bytes` the resident bytes.
+- **Recording.** One `trace_pose` dispatch per mesh or crowd part per frame under `Pass.COMPUTE_SKIN`,
+  recorded before the first raster pass of the view, depth prepass or shadow layer that draws it. A crowd
+  part's dispatch has one row per live source and poses all of them, the frozen, culled and off-screen
+  ones included, so a part costs the same whatever its draws show. Later passes and views of the frame reuse
+  the pose. A dispatch waits for the shaders of earlier frames that read the block it overwrites
+  (`consumer_stages` to compute), and its writes become visible to the vertex stage of every raster pass
+  (compute to vertex shader).
 - **History.** The previous positions are the pose of the last submitted frame that drew the mesh. The pair
   swaps when a frame is submitted; an aborted frame neither swaps nor commits. A view gets deformation motion
   only if its own previous submitted frame is the one that produced that pose. Turning the switch on, a new
-  mesh, a reallocated block and a view that missed the previous submitted frame bind the current pose as the
-  previous one: node and instance motion remain and only deformation motion drops for that frame. A
-  view that renders every other frame therefore has no deformation motion, where vertex skinning reuses
-  the view's own older palette.
-- **Pipelines.** With the switch on, `prepare_scene` creates the plain forms of deformed meshes and the
-  `trace_pose` pipelines. Turning it on afterwards compiles them on first use, in the first frame that
-  draws a deformed mesh.
+  mesh or crowd part, a reallocated block and a view that missed the previous submitted frame bind the
+  current pose as the previous one: node and instance motion remain and only deformation motion drops for that
+  frame. A view that renders every other frame therefore has no deformation motion, where vertex skinning
+  reuses the view's own older palette. A crowd binding also remembers the playback identity its previous
+  pose belongs to. Every `set_crowd` renews it, so a source spawned, replaced or regrown into a slot never
+  reads the pose of the slot's previous occupant: the crowd binds the current pose as the previous one for
+  that frame, as a crowd's resident palettes do.
+- **Pipelines.** With the switch on, `prepare_scene` creates the plain forms of deformed meshes, the posed
+  instanced forms (main, depth only and velocity, shared by the shadow and prepass draws) of crowd parts and
+  the `trace_pose` pipelines, plain and instanced. Turning it on afterwards compiles them on first use, in
+  the first frame that draws a deformed mesh or crowd part.
 - **Tracing.** Traced effects still pose their own copy; a traced, skinned mesh is posed by both passes
   until the trace reuses the draw pose.
 
