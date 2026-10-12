@@ -12,7 +12,6 @@ struct TextureBinding {
     RenderTargetId target;
     SamplerId sampler;
     uint texture_binding_revision;
-    uint texture_content_revision;
     TextureSemantic semantic;
     uint sampler_revision;
     gpu::TextureIndex texture_index;
@@ -50,7 +49,6 @@ fn bool texture_binding_matches(TextureBinding first, TextureBinding second) {
         && c3d::same_id(first.target, second.target)
         && c3d::same_id(first.sampler, second.sampler)
         && first.texture_binding_revision == second.texture_binding_revision
-        && first.texture_content_revision == second.texture_content_revision
         && first.semantic == second.semantic
         && first.sampler_revision == second.sampler_revision
         && first.texture_index == second.texture_index
@@ -101,14 +99,12 @@ fn TextureBinding? resolve_texture_slot(
     TextureRes* texture_mirror = resolve
         ? resolve_texture(renderer, texture, full_reader: custom_read)!
         : &renderer.textures[texture.index];
-    TextureBinding content = texture_binding_content(renderer, texture, texture_mirror);
 
     return {
         .texture = texture,
         .sampler = sampler,
         .texture_binding_revision = texture_mirror.binding_revision,
-        .texture_content_revision = content.texture_content_revision,
-        .semantic = content.semantic,
+        .semantic = texture_binding_semantic(renderer, texture, texture_mirror),
         .sampler_revision = sampler_mirror.revision,
         .texture_index = texture_mirror.view.index,
         .sampler_index = sampler_mirror.index,
@@ -128,15 +124,13 @@ fn TextureBinding? resolve_gradient_map(Renderer* renderer, TextureId texture, b
     TextureRes* texture_mirror = resolve
         ? resolve_texture(renderer, texture, full_reader: true)!
         : &renderer.textures[texture.index];
-    TextureBinding content = texture_binding_content(renderer, texture, texture_mirror);
 
     if (resolve) acquire_toon_gradient_sampler(renderer)!;
 
     return {
         .texture = texture,
         .texture_binding_revision = texture_mirror.binding_revision,
-        .texture_content_revision = content.texture_content_revision,
-        .semantic = content.semantic,
+        .semantic = texture_binding_semantic(renderer, texture, texture_mirror),
         .texture_index = texture_mirror.view.index,
         .sampler_index = renderer.toon_gradient_sampler,
         .present = true,
@@ -158,16 +152,15 @@ fn void? acquire_toon_gradient_sampler(Renderer* renderer) @private {
     renderer.toon_gradient_sampler = gpu::intern_sampler(&renderer.device, &sampler)!;
 }
 
-fn TextureBinding texture_binding_content(Renderer* renderer, TextureId texture, TextureRes* mirror) @private {
-    TextureBinding content = { .texture_content_revision = mirror.revision, .semantic = mirror.semantic };
+fn TextureSemantic texture_binding_semantic(Renderer* renderer, TextureId texture, TextureRes* mirror) @private {
+    TextureSemantic semantic = mirror.semantic;
 
     // CPU descriptors can advance again before captured uploads commit.
     foreach (pending : renderer.pending_texture_uploads) {
-        if (!c3d::same_id(pending.asset, texture) || pending.texture != mirror.texture) continue;
-        content = { .texture_content_revision = pending.revision, .semantic = pending.semantic };
+        if (c3d::same_id(pending.asset, texture) && pending.texture == mirror.texture) semantic = pending.semantic;
     }
 
-    return content;
+    return semantic;
 }
 
 <*
