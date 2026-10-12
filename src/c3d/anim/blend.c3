@@ -48,13 +48,32 @@ fn void blend_pose(
             float action_weight = action_lead_weight(action, lead);
             if (action_weight <= 0) continue;
 
-            AnimationClip* clip = &assets.clip(action.clip).data;
+            ClipAsset* clip_asset = assets.clip(action.clip);
+            AnimationClip* clip = &clip_asset.data;
             ClipTime time = action_clip_time(
                 action: action,
                 clip: clip,
                 onset: onset,
                 lead: lead,
             );
+            PoseCacheWalk walk = begin_pose_cache_walk(
+                cache: !onset && !consumed_chain ? scratch.cache : null,
+                clip: action.clip,
+                revision: clip_asset.header.revision,
+                time: action.time,
+            );
+            if (walk.entry) {
+                blend_shared_action(
+                    action: action,
+                    clip: clip,
+                    destination: destination,
+                    scratch: scratch,
+                    walk: &walk,
+                    action_weight: action_weight,
+                );
+                continue;
+            }
+
             foreach (track_index, &track : clip.tracks) {
                 uint node = clip.targets[track.target];
                 if (!destination.present[node] || !action.mask[node]) continue;
@@ -206,6 +225,55 @@ fn void blend_pose(
                         }
                 }
             }
+        }
+    }
+}
+
+// Duplicates blend_pose's plain branch for actions with an entry: a cache branch inside that loop
+// stopped pin_root_sample inlining and cost 4% more instructions.
+fn void blend_shared_action(
+    Action* action,
+    AnimationClip* clip,
+    PoseDestination destination,
+    PoseScratch scratch,
+    PoseCacheWalk* walk,
+    float action_weight,
+) @local @noinline {
+    foreach (track_index, &track : clip.tracks) {
+        uint node = clip.targets[track.target];
+        if (!destination.present[node] || !action.mask[node]) continue;
+        if (track.path == TargetPath.MORPH_WEIGHTS && !destination.mesh_present[node]) continue;
+
+        float weight = masked_weight(action, node, action_weight);
+        if (weight <= 0) continue;
+
+        float[] sample = scratch.sample[:track.stride()];
+        walk.sample(
+            track: track,
+            track_index: (uint)track_index,
+            time: action.time,
+            cursor: &action.cursors[track_index],
+            out: sample,
+        );
+        pin_root_sample(action, (uint)track_index, sample);
+
+        ChannelSums* sum = &scratch.channels[node];
+        switch (track.path) {
+            case TRANSLATION:
+                sum.translation += (Vec3){ sample[0], sample[1], sample[2] } * weight;
+                sum.translation_weight += weight;
+            case ROTATION:
+                Vec4 rotation = { sample[0], sample[1], sample[2], sample[3] };
+                if (rotation.dot(destination.pose[node].rotation.v) < 0) rotation = -rotation;
+                sum.rotation += rotation * weight;
+                sum.rotation_weight += weight;
+            case SCALE:
+                sum.scale += (Vec3){ sample[0], sample[1], sample[2] } * weight;
+                sum.scale_weight += weight;
+            case MORPH_WEIGHTS:
+                usz mesh = destination.mesh_indices[node];
+                foreach (index, value : sample) scratch.morph_sums[mesh][index] += value * weight;
+                scratch.morph_weights[mesh] += weight;
         }
     }
 }

@@ -125,6 +125,7 @@ fn PoseScratch? create_pose_scratch_try(
 
 fn void destroy_pose_scratch(Allocator allocator, PoseScratch* scratch) @private {
     if (scratch.inertial) destroy_inertial_scratch(allocator, scratch.inertial);
+    if (scratch.cache) destroy_pose_cache(allocator, scratch.cache);
 
     foreach (values : scratch.morph_sums) alloc::free(allocator, values.ptr);
 
