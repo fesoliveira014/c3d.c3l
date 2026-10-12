@@ -167,14 +167,16 @@ Particles have unit mass, so the wind's effect falls as a mesh gets finer; scale
 vertex density (the example uses `2.5 * vertices / area`) to keep a response.
 
 Publication converts world positions through the inverse current node matrix into the private
-geometry, recomputes normals and bounds, and calls `mark_geometry_dirty` once when any local
-position changed; unchanged output keeps the revision. Solve and publication allocate nothing
+geometry, recomputes normals and bounds, and marks the position and normal streams dirty once when
+any local position changed; unchanged output keeps the revision. Solve and publication allocate nothing
 after attachment (the CPU triangle tree rebuilds only when a query asks for it).
 `PhysicsWorld.cloth_stats` holds the last update's solve and publication seconds, particle count
 and constraint count, plus the number of pending owners skipped.
 
-Geometry uploads whole on each revision: 47,264 bytes for the 33×33 benchmark flag (positions,
-normals, UV and 16-bit indices, counted in `Stats.upload_bytes`). Each temporal view additionally
+Each revision uploads the position and normal streams only, 24 bytes per vertex: 26,136 bytes for the
+33×33 benchmark flag (counted in `Stats.upload_bytes`; see [Publishing geometry
+edits](post.md#publishing-geometry-edits)). A whole-block upload of the same flag is 47,264 bytes
+(positions, normals, UV and 16-bit indices). Each temporal view additionally
 writes 12 bytes per vertex of previous positions through the frame ring, 13,068 bytes for that
 flag, counted in `Stats.vertex_history_bytes`.
 
@@ -184,7 +186,7 @@ flag, counted in `Stats.vertex_history_bytes`.
 python scripts/build.py --example cloth
 addons/c3d_physics.c3l/build/cloth.exe [--scene flag|cape|both] [--still] [--frames 300]
 c3c build cloth --path addons/c3d_physics.c3l -O3
-addons/c3d_physics.c3l/build/cloth.exe --benchmark --scene flag|cape|both [--still] [--ragdoll]
+addons/c3d_physics.c3l/build/cloth.exe --benchmark --scene flag|cape|both [--still] [--ragdoll] [--publish whole|streams]
 addons/c3d_physics.c3l/build/cloth.exe --benchmark --trace software|hardware [--validation]
 ```
 
@@ -196,7 +198,9 @@ ragdoll bone capsules listed as colliders and the ground on, or both. The panel 
 ragdoll (bones go limp; turning it off freezes the pose and blends back to the walk over 0.8 s),
 collider guides drawn at the published body poses, TAA and motion blur. The cape uses
 `thickness` 0.02 m so the skin outside the bone capsules stays under it. `--still` keeps the same
-meshes without attaching cloth.
+meshes without attaching cloth. The panel shows `Stats.upload_bytes`; its whole-upload switch and the
+`U` key (`--publish whole` at start) mark each published cloth with `mark_geometry_dirty` on top of the
+library's stream mark, so the renderer uploads the whole block. The picture is identical in both modes.
 
 The benchmark renders one scene (the flag at 32×32 cells) at the default 4×8 settings to a
 1280×720 TAA and motion-blur view with 120 warm-up and 600 measured 60 Hz frames; `--ragdoll`
@@ -204,12 +208,15 @@ drops the character at the end of the warm-up. Vulkan validation is off unless `
 given; it inflates timings, so measure without it. The table below ran with validation on.
 Windows, RTX 4090, C3 0.8.3 `-O3`, three runs each:
 
-| Scene | Particles / constraints | Solve mean (p95), ms | Publication mean, ms | Geometry + history bytes per frame |
+| Scene | Particles / constraints | Solve mean (p95), ms | Publication mean, ms | Whole-upload geometry + history bytes per frame |
 | --- | --- | --- | --- | --- |
 | Flag 33×33 | 1,089 / 6,144 | 1.27-1.43 (1.47-2.17) | 0.012-0.013 | 47,264 + 13,068 |
 | Cape 13×23, 12 capsules | 299 / 1,584 | 0.58-0.59 (0.76-0.82) | 0.011-0.012 | 12,880 + 3,588 |
 | Both | 1,388 / 7,728 | 1.81-1.82 (2.05-2.15) | 0.022-0.023 | 60,144 + 16,656 |
 | Cape during ragdoll, one run | 299 / 1,584 | 0.57 (0.76) | 0.011 | 12,880 + 3,588 |
+
+The byte column is the whole-block upload (`--publish whole`); the default stream publication uploads
+26,136, 7,176 and 33,312 geometry bytes for the three scenes and leaves the history bytes unchanged.
 
 The p95 frames took two physics steps. GPU frame medians, cloth on and `--still` interleaved per
 scene, fall into two clusters set by the adapter's clock state, not by the cloth: 0.16-0.19 ms and
