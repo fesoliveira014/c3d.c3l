@@ -10,14 +10,19 @@ enum StepSampleSide @private {
     RIGHT,
 }
 
+// STEP tracks keep `time` while the other tracks of the action sample at `ahead`.
+struct ClipTime @private {
+    float time;
+    float ahead;
+    StepSampleSide side;
+}
+
 <*
- Sample admitted track values and clip-time derivatives into prepared arrays.
- @param [&in] track : "Ascending times and admitted rotation domain."
+ @param [&in] track : "Ascending times."
  @param [&inout] cursor : "Normal key cursor; independent of boundary side."
  @param value : "One complete track stride."
- @param rate : "Derivative per clip second; caller applies clock rate."
  @require track.times.len > 0
- @require value.len == track.stride() && rate.len == value.len
+ @require value.len == track.stride() && value.len <= 4
  @require math::is_finite(time)
 *>
 fn void sample_track_analytic(
@@ -25,15 +30,13 @@ fn void sample_track_analytic(
     float time,
     uint* cursor,
     double[] value,
-    double[] rate,
     StepSampleSide side = StepSampleSide.EXACT,
 ) @private {
     uint last = (uint)track.times.len - 1;
-    rate[..] = 0;
     if (!last || time < track.times[0] || time > track.times[last]) {
         *cursor = time < track.times[0] ? 0 : last;
         analytic_copy_key(track, *cursor, value);
-        if (track.path == TargetPath.ROTATION) analytic_normalize_rotation(value, rate);
+        if (track.path == TargetPath.ROTATION) analytic_normalize_rotation(value);
         return;
     }
 
@@ -63,26 +66,17 @@ fn void sample_track_analytic(
         if (side == StepSampleSide.LEFT && sampled && time == track.times[sampled]) sampled--;
 
         analytic_copy_key(track, sampled, value);
-        if (track.path == TargetPath.ROTATION) analytic_normalize_rotation(value, rate);
+        if (track.path == TargetPath.ROTATION) analytic_normalize_rotation(value);
         return;
     }
 
     if (key == last) key--;
-    if (side == StepSampleSide.LEFT && *cursor && time == track.times[*cursor]) key = *cursor - 1;
     double duration = (double)track.times[key + 1] - (double)track.times[key];
     double fraction = ((double)time - (double)track.times[key]) / duration;
 
     switch (track.interpolation) {
         case STEP: unreachable();
-        case LINEAR:
-            analytic_linear(
-                track: track,
-                key: key,
-                fraction: fraction,
-                duration: duration,
-                value: value,
-                rate: rate,
-            );
+        case LINEAR: analytic_linear(track, key, fraction, value);
         case CUBIC_SPLINE:
             analytic_cubic(
                 track: track,
@@ -90,11 +84,58 @@ fn void sample_track_analytic(
                 fraction: fraction,
                 duration: duration,
                 value: value,
-                rate: rate,
             );
     }
 
-    if (track.path == TargetPath.ROTATION) analytic_normalize_rotation(value, rate);
+    if (track.path == TargetPath.ROTATION) analytic_normalize_rotation(value);
+}
+
+<* @require track.times.len > 0 && out.len == track.stride() *>
+fn void sample_track_on_side(
+    Track* track,
+    float time,
+    uint* cursor,
+    float[] out,
+    StepSampleSide side,
+) @private {
+    sample_track(
+        track: track,
+        time: time,
+        cursor: cursor,
+        out: out,
+    );
+    if (side != StepSampleSide.LEFT || track.interpolation != Interpolation.STEP) return;
+    if (!*cursor || time != track.times[*cursor]) return;
+
+    out[..] = analytic_key_values(track, *cursor - 1, CUBIC_SLOT_VALUE)[..];
+}
+
+fn double action_clock_rate(Action* action) @private {
+    if (action.blend_space) return action.clock_rate;
+
+    return action.playing ? (double)action.speed : 0;
+}
+
+fn StepSampleSide action_sample_side(Action* action, bool onset) @private {
+    double rate = action_clock_rate(action);
+    if (!onset || rate == 0) return StepSampleSide.EXACT;
+
+    return rate < 0 ? StepSampleSide.LEFT : StepSampleSide.RIGHT;
+}
+
+<* @param lead : "Update seconds ahead of the clock; zero samples the current time." *>
+fn ClipTime action_clip_time(Action* action, AnimationClip* clip, bool onset, float lead = 0) @private {
+    ClipTime sampled = { .time = action.time, .ahead = action.time, .side = action_sample_side(action, onset) };
+    double rate = action_clock_rate(action);
+    if (lead == 0 || rate == 0) return sampled;
+
+    // Clamping rather than wrapping keeps a loop seam out of the difference.
+    sampled.ahead = (float)math::clamp((double)action.time + rate * lead, 0.0, (double)clip.duration);
+    return sampled;
+}
+
+fn float track_clip_time(Track* track, ClipTime time) @private {
+    return track.interpolation == Interpolation.STEP ? time.time : time.ahead;
 }
 
 fn float[] analytic_key_values(Track* track, uint key, uint slot) @private {
@@ -110,32 +151,16 @@ fn void analytic_copy_key(Track* track, uint key, double[] value) @private {
     foreach (index, component : stored) value[index] = component;
 }
 
-fn void analytic_linear(
-    Track* track,
-    uint key,
-    double fraction,
-    double duration,
-    double[] value,
-    double[] rate,
-) @private {
+fn void analytic_linear(Track* track, uint key, double fraction, double[] value) @private {
     float[] first = analytic_key_values(track, key, CUBIC_SLOT_VALUE);
     float[] second = analytic_key_values(track, key + 1, CUBIC_SLOT_VALUE);
     if (track.path == TargetPath.ROTATION) {
-        analytic_linear_rotation(
-            first: first,
-            second: second,
-            fraction: fraction,
-            duration: duration,
-            value: value,
-            rate: rate,
-        );
+        analytic_linear_rotation(first, second, fraction, value);
         return;
     }
 
     foreach (index, component : first) {
-        double difference = (double)second[index] - (double)component;
-        value[index] = (double)component + difference * fraction;
-        rate[index] = difference / duration;
+        value[index] = (double)component + ((double)second[index] - (double)component) * fraction;
     }
 }
 
@@ -145,7 +170,6 @@ fn void analytic_cubic(
     double fraction,
     double duration,
     double[] value,
-    double[] rate,
 ) @private {
     float[] first = analytic_key_values(track, key, CUBIC_SLOT_VALUE);
     float[] first_tangent = analytic_key_values(track, key, CUBIC_SLOT_OUT_TANGENT);
@@ -158,31 +182,16 @@ fn void analytic_cubic(
     double h10 = fraction * complement * complement;
     double h01 = square * (3 - 2 * fraction);
     double h11 = -square * complement;
-    double h00_rate = -6 * fraction * complement / duration;
-    double h10_rate = 3 * square - 4 * fraction + 1;
-    double h01_rate = 6 * fraction * complement / duration;
-    double h11_rate = 3 * square - 2 * fraction;
 
     foreach (index, component : first) {
         value[index] = h00 * component + h10 * duration * first_tangent[index]
           + h01 * second[index] + h11 * duration * second_tangent[index];
-        rate[index] = h00_rate * component + h10_rate * first_tangent[index]
-          + h01_rate * second[index] + h11_rate * second_tangent[index];
     }
 }
 
-fn void analytic_linear_rotation(
-    float[] first,
-    float[] second,
-    double fraction,
-    double duration,
-    double[] value,
-    double[] rate,
-) @private {
-    double[<4>] from = { first[0], first[1], first[2], first[3] };
-    double[<4>] to = { second[0], second[1], second[2], second[3] };
-    from = analytic_unit_rotation(from);
-    to = analytic_unit_rotation(to);
+fn void analytic_linear_rotation(float[] first, float[] second, double fraction, double[] value) @private {
+    double[<4>] from = analytic_unit_rotation({ first[0], first[1], first[2], first[3] });
+    double[<4>] to = analytic_unit_rotation({ second[0], second[1], second[2], second[3] });
     double dot = from.dot(to);
     if (dot < 0) {
         to = -to;
@@ -190,25 +199,15 @@ fn void analytic_linear_rotation(
     }
 
     double[<4>] sampled;
-    double[<4>] derivative;
     if (dot > ANALYTIC_NLERP_DOT_THRESHOLD) {
         sampled = from + (to - from) * fraction;
-        derivative = (to - from) / duration;
     } else {
         double angle = math::acos(dot);
         double sine = math::sqrt(1 - dot * dot);
-        double first_weight = math::sin((1 - fraction) * angle) / sine;
-        double second_weight = math::sin(fraction * angle) / sine;
-        double first_rate = -angle * math::cos((1 - fraction) * angle) / (sine * duration);
-        double second_rate = angle * math::cos(fraction * angle) / (sine * duration);
-        sampled = from * first_weight + to * second_weight;
-        derivative = from * first_rate + to * second_rate;
+        sampled = from * (math::sin((1 - fraction) * angle) / sine) + to * (math::sin(fraction * angle) / sine);
     }
 
-    for (uint component = 0; component < 4; component++) {
-        value[component] = sampled[component];
-        rate[component] = derivative[component];
-    }
+    for (uint component = 0; component < 4; component++) value[component] = sampled[component];
 }
 
 <* Normalize admitted quaternion components without magnitude thresholds.
@@ -221,19 +220,7 @@ fn double[<4>] analytic_unit_rotation(double[<4>] rotation) @private {
     return scaled / scaled.length();
 }
 
-fn void analytic_normalize_rotation(double[] value, double[] rate) @private {
-    double[<4>] rotation = { value[0], value[1], value[2], value[3] };
-    double[<4>] derivative = { rate[0], rate[1], rate[2], rate[3] };
-    double maximum = math::max(math::max(math::abs(rotation.x), math::abs(rotation.y)),
-      math::max(math::abs(rotation.z), math::abs(rotation.w)));
-    double[<4>] scaled = rotation / maximum;
-    double length = scaled.length();
-    double[<4>] unit = scaled / length;
-    double[<4>] scaled_rate = derivative / maximum;
-    double[<4>] unit_rate = (scaled_rate - unit * unit.dot(scaled_rate)) / length;
-
-    for (uint component = 0; component < 4; component++) {
-        value[component] = unit[component];
-        rate[component] = unit_rate[component];
-    }
+fn void analytic_normalize_rotation(double[] value) @private {
+    double[<4>] unit = analytic_unit_rotation({ value[0], value[1], value[2], value[3] });
+    for (uint component = 0; component < 4; component++) value[component] = unit[component];
 }

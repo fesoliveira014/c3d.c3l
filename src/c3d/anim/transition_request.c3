@@ -101,7 +101,7 @@ fn void cancel_inertial_row(InertialRow* row) @local {
     row.root.target_rate_pending = false;
 }
 
-<* @require playback.inertial != null && scratch.derivative != null *>
+<* @require playback.inertial != null && scratch.inertial != null *>
 fn AnimationTransitionResult? request_inertial_transition(
     PlaybackView* playback,
     AssetStore* assets,

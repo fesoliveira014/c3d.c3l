@@ -72,19 +72,16 @@ fn void capture_inertial_pose_residuals(
     }
 }
 
-<* Correct the moving target and analytic rates without advancing control state.
+<* Correct the moving target without advancing control state.
    @param [&in] row : "Captured residual rows."
-   @require target_pose.len == row.previous_pose.len && target_velocity.len == target_pose.len
-   @require consumed_scale.len == target_pose.len
-   @require target_morph.len == row.previous_morph.len && target_morph_rate.len == target_morph.len
+   @require target_pose.len == row.previous_pose.len && consumed_scale.len == target_pose.len
+   @require target_morph.len == row.previous_morph.len
    @require math::is_finite(duration) && duration >= 0
    @require math::is_finite(elapsed) && elapsed >= 0 *>
 fn void apply_inertial_pose(
     InertialRow* row,
     Transform[] target_pose,
-    PoseVelocity[] target_velocity,
     float[] target_morph,
-    double[] target_morph_rate,
     bool[] consumed_scale,
     double duration,
     double elapsed,
@@ -92,69 +89,58 @@ fn void apply_inertial_pose(
     if (duration == 0 || elapsed >= duration) return;
 
     foreach (index, &target : target_pose) {
-        PoseVelocity* velocity = &target_velocity[index];
-        InertialVectorState translation = inertial_vector_residual(
+        double[<3>] translation = inertial_vector_residual(
             offset: row.offset[index].translation,
             velocity: row.offset_velocity[index].translation,
             duration: duration,
             elapsed: elapsed,
         );
-        target.position = inertial_publish_vector(inertial_pose_vector(target.position) + translation.value);
-        velocity.translation += translation.rate;
+        target.position = inertial_publish_vector(inertial_pose_vector(target.position) + translation);
 
         Quaternion target_rotation = inertial_pose_rotation(target.rotation);
         if (inertial_rotation_valid(target_rotation)) {
-            InertialRotationState rotation = inertial_correct_rotation(
+            Quaternion rotation = inertial_correct_rotation(
                 initial: row.offset[index].angular,
                 initial_rate: row.offset_velocity[index].angular,
                 duration: duration,
                 elapsed: elapsed,
                 target: inertial_normalize_rotation(target_rotation),
-                target_rate: velocity.angular,
             );
-            target.rotation = inertial_publish_rotation(rotation.orientation);
-            velocity.angular = rotation.angular_velocity;
+            target.rotation = inertial_publish_rotation(rotation);
         }
 
         if (!consumed_scale[index]) {
-            InertialVectorState scale = inertial_vector_residual(
+            double[<3>] scale = inertial_vector_residual(
                 offset: row.offset[index].scale,
                 velocity: row.offset_velocity[index].scale,
                 duration: duration,
                 elapsed: elapsed,
             );
-            target.scale = inertial_publish_vector(inertial_pose_vector(target.scale) + scale.value);
-            velocity.scale += scale.rate;
+            target.scale = inertial_publish_vector(inertial_pose_vector(target.scale) + scale);
             continue;
         }
 
-        InertialScalarState target_scale = {
-            .value = inertial_uniform_scale_mean(inertial_pose_vector(target.scale)),
-            .rate = inertial_uniform_scale_mean(velocity.scale),
-        };
-        if (!(target_scale.value > 0)) continue;
+        double target_scale = inertial_uniform_scale_mean(inertial_pose_vector(target.scale));
+        if (!(target_scale > 0)) continue;
 
-        InertialScalarState residual = inertial_scalar_residual(
+        double residual = inertial_scalar_residual(
             offset: row.offset[index].scale.x,
             velocity: row.offset_velocity[index].scale.x,
             duration: duration,
             elapsed: elapsed,
         );
-        InertialScalarState result = inertial_correct_log_scale(residual, target_scale);
-        float value = (float)math::clamp(result.value, INERTIAL_MIN_SCALE, (double)float::max);
+        float value = (float)math::clamp(target_scale * math::exp(residual), INERTIAL_MIN_SCALE, (double)float::max);
         target.scale = { value, value, value };
-        velocity.scale = { result.rate, result.rate, result.rate };
     }
 
     foreach (index, &target : target_morph) {
-        InertialScalarState residual = inertial_scalar_residual(
+        double residual = inertial_scalar_residual(
             offset: row.morph_offset[index],
             velocity: row.morph_offset_velocity[index],
             duration: duration,
             elapsed: elapsed,
         );
-        *target = (float)((double)*target + residual.value);
-        target_morph_rate[index] += residual.rate;
+        *target = (float)((double)*target + residual);
     }
 }
 
@@ -173,25 +159,7 @@ fn void record_inertial_pose_history(
 
     bool valid = row.control.history_valid;
     foreach (index, pose : published_pose) {
-        if (valid) {
-            Transform previous = row.previous_pose[index];
-            row.velocity[index].translation =
-              (inertial_pose_vector(pose.position) - inertial_pose_vector(previous.position)) / dt;
-            row.velocity[index].scale =
-              (inertial_pose_vector(pose.scale) - inertial_pose_vector(previous.scale)) / dt;
-
-            Quaternion current_rotation = inertial_pose_rotation(pose.rotation);
-            Quaternion previous_rotation = inertial_pose_rotation(previous.rotation);
-            row.velocity[index].angular = {};
-            if (inertial_rotation_valid(current_rotation) && inertial_rotation_valid(previous_rotation)) {
-                Quaternion change = inertial_normalize_rotation(current_rotation)
-                  .mul(inertial_normalize_rotation(previous_rotation).conjugate());
-                row.velocity[index].angular = inertial_rotation_log(change) / dt;
-            }
-        } else {
-            row.velocity[index] = {};
-        }
-
+        row.velocity[index] = valid ? inertial_pose_rate(row.previous_pose[index], pose, dt) : (PoseVelocity){};
         row.previous_pose[index] = pose;
     }
 
@@ -202,6 +170,25 @@ fn void record_inertial_pose_history(
 
     row.control.previous_dt = dt;
     row.control.history_valid = true;
+}
+
+<* @require dt > 0 *>
+fn PoseVelocity inertial_pose_rate(Transform previous, Transform current, double dt) @private {
+    PoseVelocity rate = {
+        .translation = (inertial_pose_vector(current.position) - inertial_pose_vector(previous.position)) / dt,
+        .scale = (inertial_pose_vector(current.scale) - inertial_pose_vector(previous.scale)) / dt,
+    };
+
+    // A rotation that cannot be normalized contributes no angular rate.
+    Quaternion current_rotation = inertial_pose_rotation(current.rotation);
+    Quaternion previous_rotation = inertial_pose_rotation(previous.rotation);
+    if (inertial_rotation_valid(current_rotation) && inertial_rotation_valid(previous_rotation)) {
+        Quaternion change = inertial_normalize_rotation(current_rotation)
+          .mul(inertial_normalize_rotation(previous_rotation).conjugate());
+        rate.angular = inertial_rotation_log(change) / dt;
+    }
+
+    return rate;
 }
 
 fn double inertial_uniform_scale_mean(double[<3>] value) @private {

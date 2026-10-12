@@ -405,7 +405,11 @@ become stale after a successful request. Reacquire action and group pointers.
 
 A replacement while active captures the current corrected output and its
 published velocity. Pose translation, rotation and ordinary scale/morph
-residuals preserve value and velocity at onset and decay to the target. Scale
+residuals preserve value and velocity at onset and decay to the target. The
+target's onset velocity is a one-sided difference over 1/256 s of its playback:
+clocks advance by their speed or group rate and fades by their rate, while STEP
+tracks keep their onset key and clocks clamp to the clip rather than wrapping,
+so neither adds a jump to the difference. Scale
 on a consumed motion chain uses `s_target * exp(residual)` in log space, keeping
 positive uniform scale positive and velocity-matched. Regular blending is
 convex, so admitted positive-uniform scales remain positive under runtime
@@ -426,8 +430,8 @@ Events come from target actions only. The source's previous published delta
 divided by its positive update interval supplies velocity; invalid history
 starts with zero source velocity.
 
-At a STEP boundary, request onset takes the one-sided value and derivative in
-the target playback direction, including reverse starts at duration. It does
+At a STEP boundary, request onset takes the one-sided value in the target
+playback direction, including reverse starts at duration. It does
 not epsilon-seek the clock or emit events. A zero update freezes transition
 time. `cancel_inertial_transition` discards the residual while retaining target
 actions and clocks; the next pose is the target output. Inertial requests and

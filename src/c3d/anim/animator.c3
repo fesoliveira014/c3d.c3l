@@ -61,8 +61,7 @@ struct Action {
     float published_time;
     uint clip_revision;
     uint blend_space;
-    double analytic_speed;
-    double analytic_weight_rate;
+    double clock_rate;
 }
 
 <* Fixed playback slots and masks owned by one model instance. *>

@@ -66,7 +66,7 @@ struct PoseScratch {
     float[] morph_weights;
     float[] sample;
     EventBookmark[] event_bookmarks;
-    PoseDerivativeScratch* derivative;
+    InertialScratch* inertial;
 }
 
 <* Counts from this evaluation; dropped crossings saturate at uint::max. *>
@@ -140,7 +140,6 @@ fn AnimationActionId? PlaybackView.play(
         action: &state,
         root_node: self.root_node,
         motion_basis: motion_basis,
-        derivatives_enabled: self.inertial != null,
     )!;
 
     if (desc.fade_in == 0) invalidate_inertial_history(self);
@@ -460,13 +459,11 @@ fn Action? prepare_validated_playback_action(
             uint cursor;
             if (precise_rotation && track.path == TargetPath.ROTATION) {
                 double[4] value;
-                double[4] rate;
                 sample_track_analytic(
                     track: track,
                     time: 0,
                     cursor: &cursor,
                     value: value[..],
-                    rate: rate[..],
                 );
                 foreach (index, component : value) reference[offset + (usz)index] = (float)component;
             } else {

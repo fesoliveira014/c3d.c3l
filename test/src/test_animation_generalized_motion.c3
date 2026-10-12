@@ -392,14 +392,12 @@ fn void generalized_test_pose(GeneralizedTestFixture* fixture, float time, Trans
     foreach (index, node : fixture.nodes) pose[index] = node.local;
     foreach (&track : fixture.tracks) {
         double[4] value;
-        double[4] rate;
         uint cursor;
         anim::sample_track_analytic(
             track: track,
             time: time,
             cursor: &cursor,
             value: value[:track.stride()],
-            rate: rate[:track.stride()],
         );
         Transform* local = &pose[fixture.targets[track.target]];
         switch (track.path) {
@@ -426,7 +424,11 @@ fn void test_animation_generalized_motion_composes_animated_ancestors_and_compen
         generalized_test_pose(&fixture, time, pose[..]);
         MotionTestMatrix[7] keep;
         motion_test_worlds(fixture.nodes[..], pose[..], keep[..]);
-        GeneralizedMotionFrame endpoint = anim::sample_generalized_endpoint(&fixture.chain, &fixture.clip, time);
+        GeneralizedMotionFrame endpoint = anim::sample_generalized_endpoint(
+            chain: &fixture.chain,
+            clip: &fixture.clip,
+            time: anim::fixed_clip_time(time),
+        );
         assert((endpoint.position - motion_test_point(keep[2], {})).length() <= GENERALIZED_POINT_EPSILON);
         assert(math::abs(endpoint.scale - 1.25 * (0.5 + 1.5 * (double)time)) < 1e-7);
         GeneralizedMotion motion = anim::generalized_motion_delta(
@@ -872,7 +874,7 @@ fn void test_animation_generalized_playback_animator_consumption_matches_keep_wi
         extracted.action(extracted_id).loop = mode != 0;
         kept.action(kept_id).speed = mode == 2 ? -1 : 1;
         extracted.action(extracted_id).speed = mode == 2 ? -1 : 1;
-        assert(extracted.inertial_storage == null && extracted.pose_storage.scratch.derivative == null);
+        assert(extracted.inertial_storage == null && extracted.pose_storage.scratch.inertial == null);
         Transform[5] endpoint;
         playback_test_raw_pose(&fixture, 1, endpoint[..]);
         MotionTestMatrix cycle = motion_test_motion(
@@ -909,7 +911,7 @@ fn void test_animation_generalized_playback_animator_consumption_matches_keep_wi
                     assert((observed - motion_test_point(expected, corner)).length() <= GENERALIZED_POINT_EPSILON);
                 }
             }
-            assert(extracted.inertial_storage == null && extracted.pose_storage.scratch.derivative == null);
+            assert(extracted.inertial_storage == null && extracted.pose_storage.scratch.inertial == null);
             assert(allocator.acquisitions == acquisitions && allocator.resizes == resizes);
         }
         RootMotionDelta previous = extracted.root_motion;

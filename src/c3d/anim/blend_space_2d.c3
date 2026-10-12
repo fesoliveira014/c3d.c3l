@@ -233,7 +233,6 @@ fn BlendSpace2D*? PlaybackView.add_blend_space_2d(
             action: &prepared[prepared_count - 1],
             root_node: self.root_node,
             motion_basis: motion_basis,
-            derivatives_enabled: self.inertial != null,
         )!;
     }
 
@@ -349,7 +348,6 @@ fn void advance_blend_spaces_2d(PlaybackView* playback, AssetStore* assets, floa
             speed: space.speed,
             playing: space.playing,
             duration: duration,
-            derivatives_enabled: playback.inertial != null,
         );
         space.phase = phase.phase;
 
@@ -368,8 +366,6 @@ fn void advance_blend_spaces_2d(PlaybackView* playback, AssetStore* assets, floa
                 duration: clip_duration,
                 normalized: normalized,
                 weight: space.weight,
-                weight_rate: playback.inertial ? blend_space_weight_rate(fade) : 0,
-                derivatives_enabled: playback.inertial != null,
             );
         }
     }

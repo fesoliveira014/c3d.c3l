@@ -100,7 +100,6 @@ fn void? prepare_action_motion_capture(
     Action* action,
     uint root_node,
     MotionBasis motion_basis,
-    bool derivatives_enabled = false,
 ) @private {
     if (!action.extraction.generalized) return;
 
@@ -129,10 +128,8 @@ fn void? prepare_action_motion_capture(
     )!;
     defer catch destroy_captured_motion_chain(captured);
 
-    if (!derivatives_enabled) {
-        captured.pose_scale_sums = alloc::new_array_try(allocator, double[<3>], template.nodes.len)
-          ?? c3d::CAPACITY_EXCEEDED~!;
-    }
+    captured.pose_scale_sums = alloc::new_array_try(allocator, double[<3>], template.nodes.len)
+      ?? c3d::CAPACITY_EXCEEDED~!;
 
     captured.model = model;
 

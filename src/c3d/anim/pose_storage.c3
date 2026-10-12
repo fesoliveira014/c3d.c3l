@@ -94,12 +94,9 @@ fn PoseStorage*? create_pose_storage_try(
     }
 
     if (inertia_enabled) {
-        scratch.derivative = create_pose_derivative_scratch(
-            allocator: allocator,
-            nodes: (usz)base_pose.len,
-            base_morph_weights: base_morph_weights,
-            sample_width: sample_width,
-        )!;
+        usz morphs;
+        foreach (weights : base_morph_weights) morphs += weights.len;
+        scratch.inertial = create_inertial_scratch(allocator, (usz)base_pose.len, morphs)!;
     }
 
     return storage;
@@ -110,7 +107,7 @@ fn PoseStorage*? create_pose_storage_try(
  @param [&inout] storage : "Released; borrowed baselines remain untouched."
 *>
 fn void destroy_pose_storage(Allocator allocator, PoseStorage* storage) {
-    if (storage.scratch.derivative) destroy_pose_derivative_scratch(allocator, storage.scratch.derivative);
+    if (storage.scratch.inertial) destroy_inertial_scratch(allocator, storage.scratch.inertial);
 
     foreach (values : storage.destination.morph_weights) alloc::free(allocator, values.ptr);
     foreach (values : storage.scratch.morph_sums) alloc::free(allocator, values.ptr);

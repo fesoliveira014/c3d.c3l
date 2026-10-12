@@ -184,7 +184,6 @@ fn PreparedTransition? prepare_animation_transition(
             action: &prepared.actions[index],
             root_node: playback.root_node,
             motion_basis: motion_basis,
-            derivatives_enabled: playback.inertial != null,
         )!;
 
         if (target.play.mask) {

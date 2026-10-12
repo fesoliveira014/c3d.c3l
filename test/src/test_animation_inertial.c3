@@ -78,22 +78,21 @@ struct TransitionPrepareSnapshot @local {
     uint free_count;
 }
 
-fn InertialScalarState sample_test_log_scale(
+fn double sample_test_log_scale(
     InertialScalarState source,
     InertialScalarState target,
     double duration,
     double elapsed,
 ) @local {
     InertialScalarState onset = anim::inertial_onset_scale_residual(source, target);
-    InertialScalarState residual = anim::inertial_scalar_residual(
+    double residual = anim::inertial_scalar_residual(
         offset: onset.value,
         velocity: onset.rate,
         duration: duration,
         elapsed: elapsed,
     );
-    return anim::inertial_correct_log_scale(residual, target);
+    return target.value * math::exp(residual);
 }
-
 fn Matrix3 inertial_oracle_identity() @local {
     return { .m = { 1, 0, 0, 0, 1, 0, 0, 0, 1 } };
 }
@@ -254,100 +253,60 @@ fn Quaternion inertial_input_rotation(double[<3>] rotation) @local {
 fn void test_animation_inertial_math_quintic_basis_residuals_and_endpoints_are_literal() @test {
     InertialQuinticBasis middle = anim::inertial_quintic_basis(0.5);
     assert(middle.value == 0.5 && middle.velocity == 0.15625);
-    assert(middle.value_rate == -1.875 && middle.velocity_rate == -0.4375);
-    InertialScalarState scalar = anim::inertial_scalar_residual(
+    double scalar = anim::inertial_scalar_residual(
         offset: 3,
         velocity: -2,
         duration: 2,
         elapsed: 1,
     );
-    assert(scalar.value == 0.875 && scalar.rate == -1.9375);
-    InertialVectorState vector = anim::inertial_vector_residual(
+    assert(scalar == 0.875);
+    double[<3>] vector = anim::inertial_vector_residual(
         offset: { 3, -4, 0.5 },
         velocity: { -2, 1.5, 5 },
         duration: 2,
         elapsed: 1,
     );
-    assert(vector.value == (double[<3>]){ 0.875, -1.53125, 1.8125 });
-    assert(vector.rate == (double[<3>]){ -1.9375, 3.09375, -2.65625 });
-    InertialScalarState onset = anim::inertial_scalar_residual(
-        offset: 3,
-        velocity: -2,
-        duration: 2,
-        elapsed: 0,
-    );
-    assert(onset.value == 3 && onset.rate == -2);
-    InertialScalarState finished = anim::inertial_scalar_residual(
-        offset: 3,
-        velocity: -2,
-        duration: 2,
-        elapsed: 3,
-    );
-    assert(finished.value == 0 && finished.rate == 0);
-    InertialScalarState zero = anim::inertial_scalar_residual(
-        offset: 3,
-        velocity: -2,
-        duration: 0,
-        elapsed: 0,
-    );
-    assert(zero.value == 0 && zero.rate == 0);
+    assert(vector == (double[<3>]){ 0.875, -1.53125, 1.8125 });
+    double[3][3] controls = { { 2, 0, 3 }, { 2, 3, 0 }, { 0, 0, 0 } };
+    foreach (control : controls) {
+        double value = anim::inertial_scalar_residual(
+            offset: 3,
+            velocity: -2,
+            duration: control[0],
+            elapsed: control[1],
+        );
+        assert(value == control[2]);
+    }
 }
-
-fn void test_animation_inertial_math_log_scale_preserves_positive_physical_velocity() @test {
+fn void test_animation_inertial_math_log_scale_stays_positive_and_reaches_the_target() @test {
     InertialScalarState source = { .value = 1, .rate = -10 };
     InertialScalarState target = { .value = 1 };
-    InertialScalarState onset = sample_test_log_scale(
-        source: source,
-        target: target,
-        duration: 1,
-        elapsed: 0,
-    );
-    assert(onset.value == 1 && onset.rate == -10);
-    InertialScalarState quarter = sample_test_log_scale(
-        source: source,
-        target: target,
-        duration: 1,
-        elapsed: 0.25,
-    );
-    double expected = math::exp(-1.845703125);
-    assert(math::abs(quarter.value - expected) < 1e-12 && quarter.value > 0);
-    assert(math::abs(quarter.rate - expected * -3.1640625) < 1e-12);
-    InertialScalarState finished = sample_test_log_scale(
-        source: source,
-        target: target,
-        duration: 1,
-        elapsed: 1,
-    );
-    assert(finished.value == target.value && finished.rate == target.rate);
-    InertialScalarState tiny = sample_test_log_scale(
+    double[3] elapsed = { 0, 0.25, 1 };
+    double[3] expected = { 1, math::exp(-1.845703125), 1 };
+    foreach (index, time : elapsed) {
+        double value = sample_test_log_scale(
+            source: source,
+            target: target,
+            duration: 1,
+            elapsed: time,
+        );
+        assert(value > 0 && math::abs(value - expected[index]) < 1e-12);
+    }
+    double tiny = sample_test_log_scale(
         source: { .value = 1e-30, .rate = -1e-29 },
         target: { .value = 2e-30, .rate = 1e-30 },
         duration: 0.1,
         elapsed: 0,
     );
-    assert(tiny.value > 0 && math::abs(tiny.value / 1e-30 - 1) < 1e-12);
-    assert(math::abs(tiny.rate / 1e-30 + 10) < 1e-12);
-    InertialScalarState captured = anim::inertial_onset_scale_residual(
-        source: { .value = 1.5, .rate = -0.2 },
-        target: { .value = 0.8, .rate = 0.1 },
-    );
-    InertialScalarState residual = anim::inertial_scalar_residual(
-        offset: captured.value,
-        velocity: captured.rate,
-        duration: 1,
-        elapsed: 0.5,
-    );
-    InertialScalarState moving = anim::inertial_correct_log_scale(residual, { .value = 0.85, .rate = 0.1 });
-    inertial_assert_scalar(moving, { .value = 1.1178652244448, .rate = -1.0597064352490 });
-    InertialScalarState unrelated = anim::inertial_scalar_residual(
+    assert(tiny > 0 && math::abs(tiny / 1e-30 - 1) < 1e-12);
+    double unrelated = anim::inertial_scalar_residual(
         offset: -2,
         velocity: -10,
         duration: 1,
         elapsed: 0.25,
     );
-    assert(-1 + unrelated.value < 0);
+    assert(-1 + unrelated < 0);
 }
-
 fn void test_animation_inertial_math_half_turn_ties_and_transported_onset_rate() @test {
     Quaternion[3] half_turns = {
         { .v = { -1, 0, 0, 0 } }, { .v = { 0, -1, 0, 0 } }, { .v = { 0, 0, -1, 0 } },
@@ -407,16 +366,14 @@ fn void test_animation_inertial_math_fixed_angles_signs_and_series_boundary() @t
             Quaternion signed_target = (signs & 2) != 0 ? -target : target;
             double[<3>] initial = anim::inertial_rotation_log(signed_source.mul(signed_target.conjugate()));
             double[<3>] initial_rate = anim::inertial_onset_rotation_rate(initial, source_rate, target_rate);
-            InertialRotationState actual = anim::inertial_correct_rotation(
+            Quaternion actual = anim::inertial_correct_rotation(
                 initial: initial,
                 initial_rate: initial_rate,
                 duration: 0.7,
                 elapsed: 0,
                 target: signed_target,
-                target_rate: target_rate,
             );
-            inertial_assert_matrix(actual.orientation, inertial_oracle_quaternion_matrix(signed_source));
-            inertial_assert_rate(actual.angular_velocity, source_rate);
+            inertial_assert_matrix(actual, inertial_oracle_quaternion_matrix(signed_source));
             inertial_assert_rate(
                 actual: inertial_oracle_spatial_rate(
                     rotation: initial,
@@ -429,66 +386,44 @@ fn void test_animation_inertial_math_fixed_angles_signs_and_series_boundary() @t
         }
     }
 }
-
 fn void test_animation_inertial_math_zero_completion_and_repeated_corrected_interruptions() @test {
     double[<3>] initial = { 0.4, -0.8, 0.2 };
     Quaternion target = inertial_input_rotation({ 0.2, 0.1, -0.5 });
-    double[<3>] source_rate = { -0.4, 0.7, 1.1 };
-    double[<3>] target_rate = { 0.2, -0.6, 0.3 };
-    double[<3>] initial_rate = anim::inertial_onset_rotation_rate(initial, source_rate, target_rate);
-    foreach (double elapsed : { 0.0, 1.0, 2.0 }) {
-        InertialRotationState completed = anim::inertial_correct_rotation(
-            initial: initial,
-            initial_rate: initial_rate,
-            duration: 0,
-            elapsed: elapsed,
-            target: target,
-            target_rate: target_rate,
-        );
-        inertial_assert_matrix(completed.orientation, inertial_oracle_quaternion_matrix(target));
-        inertial_assert_rate(completed.angular_velocity, target_rate);
-    }
-    foreach (double elapsed : { 1.0, 2.0 }) {
-        InertialRotationState completed = anim::inertial_correct_rotation(
-            initial: initial,
-            initial_rate: initial_rate,
-            duration: 1,
-            elapsed: elapsed,
-            target: target,
-            target_rate: target_rate,
-        );
-        inertial_assert_matrix(completed.orientation, inertial_oracle_quaternion_matrix(target));
-        inertial_assert_rate(completed.angular_velocity, target_rate);
+    double[<3>] initial_rate = anim::inertial_onset_rotation_rate(initial, { -0.4, 0.7, 1.1 }, { 0.2, -0.6, 0.3 });
+    foreach (double duration : { 0.0, 1.0 }) {
+        foreach (double elapsed : { 1.0, 2.0 }) {
+            Quaternion completed = anim::inertial_correct_rotation(
+                initial: initial,
+                initial_rate: initial_rate,
+                duration: duration,
+                elapsed: elapsed,
+                target: target,
+            );
+            inertial_assert_matrix(completed, inertial_oracle_quaternion_matrix(target));
+        }
     }
     foreach (double elapsed : { 1e-4, 0.5, 1 - 1e-6, 0.25 }) {
-        Quaternion advanced = inertial_input_rotation(target_rate * elapsed).mul(target);
-        InertialRotationState current = anim::inertial_correct_rotation(
+        Quaternion current = anim::inertial_correct_rotation(
             initial: initial,
             initial_rate: initial_rate,
             duration: 1,
             elapsed: elapsed,
-            target: advanced,
-            target_rate: target_rate,
+            target: target,
         );
         Quaternion replacement = inertial_input_rotation({ -0.3, 0.2, 0.7 });
-        double[<3>] replacement_rate = { -0.1, 0.5, -0.4 };
-        initial = anim::inertial_rotation_log(current.orientation.mul(replacement.conjugate()));
-        initial_rate = anim::inertial_onset_rotation_rate(initial, current.angular_velocity, replacement_rate);
-        InertialRotationState onset = anim::inertial_correct_rotation(
+        initial = anim::inertial_rotation_log(current.mul(replacement.conjugate()));
+        initial_rate = anim::inertial_onset_rotation_rate(initial, { 0.3, 0.1, -0.2 }, { -0.1, 0.5, -0.4 });
+        Quaternion onset = anim::inertial_correct_rotation(
             initial: initial,
             initial_rate: initial_rate,
             duration: 0.8,
             elapsed: 0,
             target: replacement,
-            target_rate: replacement_rate,
         );
-        inertial_assert_matrix(onset.orientation, inertial_oracle_quaternion_matrix(current.orientation));
-        inertial_assert_rate(onset.angular_velocity, current.angular_velocity);
+        inertial_assert_matrix(onset, inertial_oracle_quaternion_matrix(current));
         target = replacement;
-        target_rate = replacement_rate;
     }
 }
-
 fn usz check_inertial_region(
     void* block,
     usz bytes,
@@ -874,9 +809,7 @@ fn void apply_pose_test_case(PoseTestCase* sample, double elapsed, double durati
     anim::apply_inertial_pose(
         row: &sample.storage.rows[0],
         target_pose: sample.target[..],
-        target_velocity: sample.velocity[..],
         target_morph: sample.target_morph[..],
-        target_morph_rate: sample.morph_rate[..],
         consumed_scale: sample.consumed[..],
         duration: duration,
         elapsed: elapsed,
@@ -966,24 +899,17 @@ fn void test_animation_inertial_pose_no_history_display_onset_and_extreme_morph_
     for (uint node = 0; node < 2; node++) for (uint axis = 0; axis < 3; axis++) {
         assert(sample.target[node].position[axis] == sample.source[node].position[axis]);
         assert(sample.target[node].scale[axis] == sample.source[node].scale[axis]);
-        pose_test_near(sample.velocity[node].translation[axis], 0);
-        pose_test_near(sample.velocity[node].scale[axis], 0);
     }
-    for (uint index = 0; index < 3; index++) {
-        assert(sample.target_morph[index] == sample.source_morph[index]);
-        pose_test_near(sample.morph_rate[index], 0);
-    }
+    for (uint index = 0; index < 3; index++) assert(sample.target_morph[index] == sample.source_morph[index]);
     assert(!row.control.history_valid && row.control.active);
     assert(row.control.duration == 4 && row.control.elapsed == 0.5 && row.control.previous_dt == 0);
     assert(row.previous_pose[0].position.x == 0 && row.previous_morph[0] == 0);
     sample.target[0].position = { 9, 8, 7 };
     sample.target[0].scale = { 1, 2, 3 };
     sample.target_morph = { 0.75f, -float::max, float::max };
-    sample.morph_rate = { 0.2, 0, 0 };
     apply_pose_test_case(&sample, 1);
     assert(sample.target[0].position.x == 9 && sample.target[0].scale == (Vec3){ 1, 2, 3 });
     assert(sample.target_morph[1] == -float::max && sample.target_morph[2] == float::max);
-    assert(sample.morph_rate[0] == 0.2);
 }
 
 fn void test_animation_inertial_pose_moving_target_literal_residuals_and_interruption() @test {
@@ -1012,35 +938,26 @@ fn void test_animation_inertial_pose_moving_target_literal_residuals_and_interru
         .values = translations[..],
     };
     double[3] value;
-    double[3] rate;
     uint cursor;
     anim::sample_track_analytic(
         track: &translation,
         time: 0.25f,
         cursor: &cursor,
         value: value[..],
-        rate: rate[..],
     );
     sample.target[0].position = { (float)value[0], (float)value[1], (float)value[2] };
-    sample.velocity[0].translation = { rate[0], rate[1], rate[2] };
     sample.target[0].scale = { -1.875f, 0.9375f, -0.95f };
     sample.target[0].rotation = pose_test_turn(0.1);
     sample.target_morph[0] = -0.75f;
     double[3] expected_position = { 3.6513671875, -1.662109375, 0.8310546875 };
-    double[3] expected_velocity = { -3.53515625, 3.4765625, -1.73828125 };
     double[3] expected_scale = { -1.07080078125, 1.880126953125, -2.7798828005791 };
-    double[3] expected_scale_rate = { -0.712890625, -1.2255859375, 2.24609375 };
     apply_pose_test_case(&sample, 0.25);
     for (uint axis = 0; axis < 3; axis++) {
         pose_test_near(sample.target[0].position[axis], expected_position[axis], POSE_TEST_FLOAT_EPSILON);
-        pose_test_near(sample.velocity[0].translation[axis], expected_velocity[axis]);
         pose_test_near(sample.target[0].scale[axis], expected_scale[axis], POSE_TEST_FLOAT_EPSILON);
-        pose_test_near(sample.velocity[0].scale[axis], expected_scale_rate[axis]);
     }
     pose_test_near(pose_test_turn_angle(sample.target[0].rotation), 0.026171875, POSE_TEST_FLOAT_EPSILON);
-    pose_test_near(sample.velocity[0].angular.z, 0.2734375);
     pose_test_near(sample.target_morph[0], -0.486328125, POSE_TEST_FLOAT_EPSILON);
-    pose_test_near(sample.morph_rate[0], 0.15625);
     record_pose_test_case(&sample, false, 0.25);
     for (uint axis = 0; axis < 3; axis++) {
         pose_test_near(
@@ -1060,8 +977,6 @@ fn void test_animation_inertial_pose_moving_target_literal_residuals_and_interru
     );
     sample.source = sample.target;
     sample.source_morph = sample.target_morph;
-    PoseVelocity source_rate = row.velocity[0];
-    double source_morph_rate = row.morph_velocity[0];
     sample.target[0] = {
         .position = { -5, 1, 2 },
         .rotation = pose_test_turn(0.7),
@@ -1080,16 +995,12 @@ fn void test_animation_inertial_pose_moving_target_literal_residuals_and_interru
         assert(sample.target[0].position[axis] == sample.source[0].position[axis]);
         assert(sample.target[0].scale[axis] == sample.source[0].scale[axis]);
     }
-    pose_test_vector(sample.velocity[0].translation, source_rate.translation);
-    pose_test_vector(sample.velocity[0].scale, source_rate.scale);
-    pose_test_vector(sample.velocity[0].angular, source_rate.angular);
     pose_test_near(
         actual: pose_test_turn_angle(sample.target[0].rotation),
         expected: pose_test_turn_angle(sample.source[0].rotation),
         epsilon: POSE_TEST_FLOAT_EPSILON,
     );
     assert(sample.target_morph[0] == sample.source_morph[0]);
-    pose_test_near(sample.morph_rate[0], source_morph_rate);
 }
 
 fn void test_animation_inertial_pose_consumed_log_scale_and_unrelated_linear_scale() @test {
@@ -1112,9 +1023,7 @@ fn void test_animation_inertial_pose_consumed_log_scale_and_unrelated_linear_sca
     for (uint axis = 0; axis < 3; axis++) {
         assert(sample.target[0].scale[axis] > 0 && sample.target[1].scale[axis] < 0);
         pose_test_near(sample.target[0].scale[axis], expected_log, POSE_TEST_FLOAT_EPSILON);
-        pose_test_near(sample.velocity[0].scale[axis], expected_log * -3.1640625);
         pose_test_near(sample.target[1].scale[axis], -1 - 1.845703125, POSE_TEST_FLOAT_EPSILON);
-        pose_test_near(sample.velocity[1].scale[axis], -3.1640625);
     }
     sample.source[0].scale = { 2, 2, 2 };
     sample.target = sample.source;
@@ -1128,7 +1037,6 @@ fn void test_animation_inertial_pose_consumed_log_scale_and_unrelated_linear_sca
       && sample.target[0].scale.y == sample.target[0].scale.z);
     for (uint axis = 0; axis < 3; axis++) {
         pose_test_near(sample.target[0].scale[axis], 0.7485780154827066, POSE_TEST_FLOAT_EPSILON);
-        pose_test_near(sample.velocity[0].scale[axis], -1.6363091796081373);
     }
 }
 
@@ -1182,20 +1090,14 @@ fn void test_animation_inertial_pose_zero_step_and_tiny_dt_use_finite_double_his
     apply_pose_test_case(&sample, 0);
     for (uint axis = 0; axis < 3; axis++) {
         assert(sample.target[0].position[axis] == float::max && sample.target[0].scale[axis] == float::max);
-        pose_test_near(sample.velocity[0].translation[axis], expected_rate);
-        pose_test_near(sample.velocity[0].scale[axis], expected_rate);
     }
-    assert(sample.target_morph[0] == float::max && math::is_finite(sample.morph_rate[0]));
-    pose_test_near(sample.morph_rate[0], expected_rate);
+    assert(sample.target_morph[0] == float::max);
     sample.target[0].position = { -float::max, -float::max, -float::max };
     sample.target[0].scale = { -float::max, -float::max, -float::max };
     sample.target_morph[0] = -float::max;
-    sample.velocity = {};
-    sample.morph_rate = {};
     apply_pose_test_case(&sample, 1);
     assert(sample.target[0].position.x == -float::max && sample.target[0].scale.x == -float::max);
-    assert(sample.target_morph[0] == -float::max && sample.morph_rate[0] == 0);
-    pose_test_vector(sample.velocity[0].translation, {});
+    assert(sample.target_morph[0] == -float::max);
 }
 
 fn void test_animation_inertial_pose_reserved_rows_do_not_acquire_or_resize() @test {

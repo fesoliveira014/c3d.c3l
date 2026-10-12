@@ -6,6 +6,7 @@ import c3d::maths;
 import c3d::scene;
 import std::math;
 
+<* @param lead : "Update seconds ahead of every clock and fade; STEP tracks keep their current key." *>
 fn void blend_pose(
     PlaybackView* playback,
     AssetStore* assets,
@@ -13,22 +14,14 @@ fn void blend_pose(
     PoseScratch scratch,
     bool onset = false,
     CapturedMotionChain* consumed_chain = null,
+    float lead = 0,
 ) @private {
     Transform[] result = destination.pose;
     ChannelSums[] sums = scratch.channels;
     float[][] morph_result = destination.morph_weights;
     float[][] morph_sums = scratch.morph_sums;
     float[] morph_weights = scratch.morph_weights;
-
-    // Rates are read only when a transition captures its onset.
-    PoseDerivativeScratch* derivative = onset ? scratch.derivative : null;
-    bool precise_scale = derivative != null || consumed_chain != null;
-    double[<3>][] scale_values = scratch.derivative ? scratch.derivative.scale_values
-      : consumed_chain ? consumed_chain.pose_scale_sums : (double[<3>][]){};
-    if (scratch.derivative) {
-        scratch.derivative.velocity[..] = (PoseVelocity){};
-        scratch.derivative.morph_rates[..] = 0;
-    }
+    double[<3>][] scale_values = consumed_chain ? consumed_chain.pose_scale_sums : (double[<3>][]){};
 
     result[..] = destination.base_pose[..];
     foreach (index, base : destination.base_morph_weights) morph_result[index][..] = base[..];
@@ -36,8 +29,7 @@ fn void blend_pose(
     bool[MAX_ANIMATION_LAYERS] active;
     foreach (id : playback.order[:*playback.action_count]) {
         Action* action = playback.actions.get(id);
-        if (action.weight <= 0 && (!derivative || action_weight_rate(action) == 0)) continue;
-        active[action.layer] = true;
+        if (action_lead_weight(action, lead) > 0) active[action.layer] = true;
     }
 
     float[] samples = scratch.sample;
@@ -45,66 +37,38 @@ fn void blend_pose(
     foreach (layer, used : active) {
         if (!used) continue;
         sums[..] = (ChannelSums){};
-        if (precise_scale) scale_values[..] = (double[<3>]){};
+        if (consumed_chain) scale_values[..] = (double[<3>]){};
         morph_weights[..] = 0;
         foreach (values : morph_sums) values[..] = 0;
-        if (derivative) {
-            derivative.channels[..] = (ChannelDerivativeSums){};
-            derivative.morph_sums[..] = 0;
-            derivative.morph_weight_rates[..] = 0;
-        }
 
         foreach (id : playback.order[:*playback.action_count]) {
             Action* action = playback.actions.get(id);
             if (action.layer != layer || action.additive) continue;
-            if (action.weight <= 0 && (!derivative || action_weight_rate(action) == 0)) continue;
+
+            float action_weight = action_lead_weight(action, lead);
+            if (action_weight <= 0) continue;
 
             AnimationClip* clip = &assets.clip(action.clip).data;
+            ClipTime time = action_clip_time(action, clip, onset, lead);
             foreach (track_index, &track : clip.tracks) {
                 uint node = clip.targets[track.target];
                 if (!destination.present[node] || !action.mask[node]) continue;
                 if (track.path == TargetPath.MORPH_WEIGHTS && !destination.mesh_present[node]) continue;
 
-                float weight = action_node_weight(action, node);
-                double weight_rate = derivative ? action_node_weight_rate(action, node) : 0;
-                if (weight <= 0 && weight_rate == 0) continue;
+                float weight = masked_weight(action, node, action_weight);
+                if (weight <= 0) continue;
 
                 float[] sample = samples[:track.stride()];
-                if (!precise_scale) {
-                    sample_track(
-                        track: track,
-                        time: action.time,
-                        cursor: &action.cursors[track_index],
-                        out: sample,
-                    );
-                } else {
-                    sample_pose_channel(
-                        action: action,
-                        track: track,
-                        track_index: (uint)track_index,
-                        sample: sample,
-                        derivative: derivative,
-                        onset: onset,
-                        consumed: consumed_chain && captured_motion_node(consumed_chain, node),
-                    );
-                }
-                pin_root_sample(action, (uint)track_index, sample);
-
-                if (derivative) accumulate_pose_derivative(
-                    derivative: derivative,
+                sample_pose_channel(
                     action: action,
                     track: track,
                     track_index: (uint)track_index,
                     node: node,
-                    mesh: destination.mesh_indices[node],
-                    mesh_widths: destination.mesh_widths,
+                    time: time,
+                    consumed_chain: consumed_chain,
                     sample: sample,
-                    below: result[node],
-                    weight: weight,
-                    weight_rate: weight_rate,
                 );
-
-                if (weight <= 0) continue;
+                pin_root_sample(action, (uint)track_index, sample);
 
                 switch (track.path) {
                     case TRANSLATION:
@@ -116,7 +80,7 @@ fn void blend_pose(
                         sums[node].rotation += rotation * weight;
                         sums[node].rotation_weight += weight;
                     case SCALE:
-                        if (precise_scale) {
+                        if (consumed_chain) {
                             scale_values[node] +=
                               (double[<3>]){ sample[0], sample[1], sample[2] } * (double)weight;
                         } else {
@@ -133,16 +97,9 @@ fn void blend_pose(
 
         foreach (index, &pose : result) {
             ChannelSums* sum = &sums[index];
-            if (derivative) fold_pose_derivative(
-                derivative: derivative,
-                node: (uint)index,
-                sums: sum,
-                below: *pose,
-            );
-
             pose.position = blend_vec3(sum.translation, sum.translation_weight, pose.position);
             pose.rotation = { .v = (sum.rotation + pose.rotation.v * residual(sum.rotation_weight)).normalize() };
-            if (precise_scale) {
+            if (consumed_chain) {
                 double[<3>] scale = { pose.scale.x, pose.scale.y, pose.scale.z };
                 scale = (scale_values[index] + scale * (double)residual(sum.scale_weight))
                   / (double)math::max(1.0f, sum.scale_weight);
@@ -152,23 +109,8 @@ fn void blend_pose(
             }
         }
 
-        usz morph_offset;
         foreach (index, values : morph_result) {
             float total = morph_weights[index];
-            if (derivative) {
-                foreach (usz weight_index, &rate : derivative.morph_rates[morph_offset:values.len]) {
-                    *rate = fold_morph_rate(
-                        sum: morph_sums[index][weight_index],
-                        sum_rate: derivative.morph_sums[morph_offset + weight_index],
-                        total: total,
-                        total_rate: derivative.morph_weight_rates[index],
-                        below: values[weight_index],
-                        below_rate: *rate,
-                    );
-                }
-            }
-
-            morph_offset += values.len;
             foreach (weight_index, &value : values) {
                 *value = (morph_sums[index][weight_index] + *value * residual(total)) / math::max(1.0f, total);
             }
@@ -177,9 +119,12 @@ fn void blend_pose(
         foreach (id : playback.order[:*playback.action_count]) {
             Action* action = playback.actions.get(id);
             if (action.layer != layer || !action.additive) continue;
-            if (action.weight <= 0 && (!derivative || action_weight_rate(action) == 0)) continue;
+
+            float action_weight = action_lead_weight(action, lead);
+            if (action_weight <= 0) continue;
 
             AnimationClip* clip = &assets.clip(action.clip).data;
+            ClipTime time = action_clip_time(action, clip, onset, lead);
             usz reference_offset;
             foreach (track_index, &track : clip.tracks) {
                 uint stride = track.stride();
@@ -189,51 +134,31 @@ fn void blend_pose(
                 if (!destination.present[node] || !action.mask[node]) continue;
                 if (track.path == TargetPath.MORPH_WEIGHTS && !destination.mesh_present[node]) continue;
 
-                float weight = action_node_weight(action, node);
-                double weight_rate = derivative ? action_node_weight_rate(action, node) : 0;
-                if (weight <= 0 && weight_rate == 0) continue;
+                float weight = masked_weight(action, node, action_weight);
+                if (weight <= 0) continue;
 
                 float[] sample = samples[:stride];
-                if (!derivative && track.path == TargetPath.SCALE
+                if (!onset && track.path == TargetPath.SCALE
                   && action.additive_scale == AdditiveScaleMode.MULTIPLICATIVE) {
-                    Vec3 scale = sample_multiplicative_scale(track, action.time, &action.cursors[track_index]);
+                    Vec3 scale = sample_multiplicative_scale(
+                        track: track,
+                        time: track_clip_time(track, time),
+                        cursor: &action.cursors[track_index],
+                    );
                     sample[0] = scale.x;
                     sample[1] = scale.y;
                     sample[2] = scale.z;
-                } else if (!precise_scale) {
-                    sample_track(
-                        track: track,
-                        time: action.time,
-                        cursor: &action.cursors[track_index],
-                        out: sample,
-                    );
                 } else {
                     sample_pose_channel(
                         action: action,
                         track: track,
                         track_index: (uint)track_index,
+                        node: node,
+                        time: time,
+                        consumed_chain: consumed_chain,
                         sample: sample,
-                        derivative: derivative,
-                        onset: onset,
-                        consumed: consumed_chain && captured_motion_node(consumed_chain, node),
                     );
                 }
-
-                if (derivative) fold_additive_pose_derivative(
-                    derivative: derivative,
-                    action: action,
-                    track: track,
-                    node: node,
-                    mesh: destination.mesh_indices[node],
-                    mesh_widths: destination.mesh_widths,
-                    sample: sample,
-                    reference: reference,
-                    below: result[node],
-                    weight: weight,
-                    weight_rate: weight_rate,
-                );
-
-                if (weight <= 0) continue;
 
                 switch (track.path) {
                     case TRANSLATION:
@@ -275,9 +200,90 @@ fn Vec3 blend_vec3(Vec3 sum, float total, Vec3 below) @private {
     return (sum + below * residual(total)) / math::max(1.0f, total);
 }
 
-fn float action_node_weight(Action* action, uint node) @private {
-    if (!action.mask[node]) return 0;
-    if (!action.weighted_mask.len) return action.weight;
+fn float action_node_weight(Action* action, uint node) @private => masked_weight(action, node, action.weight);
 
-    return action.weight * action.weighted_mask[node];
+fn float masked_weight(Action* action, uint node, float weight) @private {
+    if (!action.mask[node]) return 0;
+    if (!action.weighted_mask.len) return weight;
+
+    return weight * action.weighted_mask[node];
+}
+
+fn float action_lead_weight(Action* action, float lead) @private {
+    // A group member's weight follows its group, whose fade is fixed while a transition captures its onset.
+    if (lead == 0 || action.blend_space || action.fade_rate <= 0) return action.weight;
+
+    float step = action.fade_rate * lead;
+    float remaining = action.fade_target - action.weight;
+    if (math::abs(remaining) <= step) return action.fade_target;
+
+    return action.weight + (remaining < 0 ? -step : step);
+}
+
+fn void sample_pose_channel(
+    Action* action,
+    Track* track,
+    uint track_index,
+    uint node,
+    ClipTime time,
+    CapturedMotionChain* consumed_chain,
+    float[] sample,
+) @local {
+    uint* cursor = &action.cursors[track_index];
+    bool precise = precise_pose_channel(
+        consumed_chain: consumed_chain,
+        action: action,
+        track: track,
+        track_index: track_index,
+        node: node,
+    );
+    if (!precise) {
+        sample_track_on_side(
+            track: track,
+            time: track_clip_time(track, time),
+            cursor: cursor,
+            out: sample,
+            side: time.side,
+        );
+        return;
+    }
+
+    double[4] value;
+    sample_track_analytic(
+        track: track,
+        time: track_clip_time(track, time),
+        cursor: cursor,
+        value: value[:sample.len],
+        side: time.side,
+    );
+    foreach (index, component : value[:sample.len]) sample[index] = (float)component;
+}
+
+// Consumed chain rotations and scales sample in double precision, as their extraction does.
+fn bool precise_pose_channel(
+    CapturedMotionChain* consumed_chain,
+    Action* action,
+    Track* track,
+    uint track_index,
+    uint node,
+) @local {
+    if (!consumed_chain || track.path == TargetPath.MORPH_WEIGHTS) return false;
+    if (action.motion_chain && captured_motion_track(action.motion_chain, track_index)) return true;
+
+    return (track.path == TargetPath.ROTATION || track.path == TargetPath.SCALE)
+      && captured_motion_node(consumed_chain, node);
+}
+
+fn bool captured_motion_track(CapturedMotionChain* chain, uint track) @local {
+    foreach (node : chain.nodes) {
+        if (node.translation_track == track || node.rotation_track == track || node.scale_track == track) return true;
+    }
+
+    return false;
+}
+
+fn bool captured_motion_node(CapturedMotionChain* chain, uint model_node) @local {
+    foreach (node : chain.nodes) if (node.model_node == model_node) return true;
+
+    return false;
 }
