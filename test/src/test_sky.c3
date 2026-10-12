@@ -30,11 +30,14 @@ fn double[3] reference_transmittance(Atmosphere* atmosphere, double altitude, do
     double radius = ground + altitude;
     double[3] zero;
     if (cos_zenith < 0 && radius * radius * (cos_zenith * cos_zenith - 1) + ground * ground >= 0) return zero;
-    double length = -radius * cos_zenith + math::sqrt(radius * radius * (cos_zenith * cos_zenith - 1) + top * top);
+    double chord = radius * radius * (cos_zenith * cos_zenith - 1) + top * top;
+    double entry;
+    if (radius > top) entry = -radius * cos_zenith - math::sqrt(chord);
+    double length = -radius * cos_zenith + math::sqrt(chord) - entry;
     double step = length / REFERENCE_STEPS;
     double[3] depth;
     for (uint index = 0; index < REFERENCE_STEPS; index++) {
-        double along = ((double)index + 0.5) * step;
+        double along = entry + ((double)index + 0.5) * step;
         double height = math::sqrt(radius * radius + along * along + 2 * radius * cos_zenith * along) - ground;
         double rayleigh = math::exp(-height / atmosphere.rayleigh_scale_height);
         double mie = math::exp(-height / atmosphere.mie_scale_height);
@@ -106,13 +109,14 @@ fn LightExtraction extract_all(Scene* scene, AtmosphereSelection* atmosphere, Li
 fn void test_sun_radiance_matches_the_double_reference() @test {
     Atmosphere atmosphere = light::ATMOSPHERE_EARTH;
     Light sun = light::directional(SUN_COLOR, SUN_INTENSITY);
-    TransmittanceCase[6] cases = {
+    TransmittanceCase[7] cases = {
         { .altitude = 0, .cos_zenith = 1 },
         { .altitude = 0, .cos_zenith = 0.5f },
         { .altitude = 0, .cos_zenith = 0.0871557f },
         { .altitude = 1_000, .cos_zenith = -0.01f },
         { .altitude = 10_000, .cos_zenith = 0.1f },
         { .altitude = 0, .cos_zenith = 0.02f },
+        { .altitude = 400_000, .cos_zenith = -0.33f },
     };
     foreach (test_case : cases) {
         Vec3 to_sun = { math::sqrt(1 - test_case.cos_zenith * test_case.cos_zenith), test_case.cos_zenith, 0 };
@@ -131,6 +135,7 @@ fn void test_sun_radiance_matches_the_double_reference() @test {
         }
     }
     assert(light::atmosphere_transmittance(&atmosphere, 0, math::sin(-5 * DEGREE)) == (Vec3){});
+    assert(light::atmosphere_transmittance(&atmosphere, 400_000, -0.5f) == (Vec3){});
     assert(light::atmosphere_transmittance(&atmosphere, -50, 1) == light::atmosphere_transmittance(&atmosphere, 0, 1));
 }
 

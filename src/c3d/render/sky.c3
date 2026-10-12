@@ -242,7 +242,7 @@ fn void write_sky_fog(
         };
         root.planet_radius = atmosphere.planet_radius;
         root.top_radius = top;
-        root.camera_altitude = math::clamp(altitude, 0.0f, atmosphere.atmosphere_height);
+        root.camera_altitude = math::max(altitude, 0.0f);
         root.aerial_perspective_distance = AERIAL_PERSPECTIVE_DISTANCE;
     }
     if (fog.fog) {

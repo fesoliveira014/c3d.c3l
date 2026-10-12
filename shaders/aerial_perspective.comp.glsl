@@ -9,7 +9,7 @@ layout(push_constant) uniform Push {
     uint64_t root_gpu;
 } pc;
 
-// One froxel: in-scattering and opacity from the camera to its slice, slices squared toward the camera.
+// One froxel: in-scattering and opacity from the atmosphere's entry to its slice, slices squared toward the camera.
 void main() {
     SkyTableRoot root = SkyTableRoot(pc.root_gpu);
     uvec3 texel = gl_GlobalInvocationID;
@@ -22,7 +22,8 @@ void main() {
     vec3 direction;
     fog_pixel_ray(frame, uv, origin, direction);
     float slice = (float(texel.z) + 0.5) / float(AERIAL_PERSPECTIVE_SIZE);
-    float distance = slice * slice * sky.aerial_perspective_distance;
+    AtmosphereEntry entry = atmosphere_entry(sky, sky.camera_altitude, direction.y);
+    float distance = entry.distance + slice * slice * sky.aerial_perspective_distance;
     SkyScattering scattering = integrate_sky_scattering(
         sky,
         sky.camera_altitude,
