@@ -447,14 +447,14 @@ records no pass and allocates no map.
   the detail octave. The layer is taken as flat over the map, also under an atmosphere, where the shell drops about 5 m over the
   map's half extent. The path leans along the sun by `1 / max(sun_up, CLOUD_SUN_FLOOR)`, with `CLOUD_SUN_FLOOR` (0.1) the floor the
   cloud march's own light march uses, so a low sun shortens the path and shifts the shadow instead of dividing by zero.
-- **Placement.** The map is centred on the camera's footprint along the sun. Below the layer's bottom that is the point of the
-  bottom plane the camera's own position reaches, so surfaces at the camera's altitude sit at the centre, and the ground under a
-  camera at altitude `a` sits `a · |sun.xz| / max(sun_up, CLOUD_SUN_FLOOR)` off it: about 6.9 km for `a` = 1,400 m at 11.5°,
-  and beyond the half extent for a low enough sun. At or above the bottom it is the point the datum under the camera reaches,
-  so the ground under the camera sits at the centre at any sun. The centre is snapped to the world's 32 m grid, so the content
-  stays where it is in the world while the camera moves and only the corner steps, by whole texels. When the camera crosses
-  the bottom the window steps from one centre to the other: a receiver inside both windows reads the same value, and only the
-  region the map covers moves.
+- **Placement.** The map is centred on the camera's footprint along the sun. Between the datum and the layer's bottom that is the
+  point of the bottom plane the camera's own position reaches, so surfaces at the camera's altitude sit at the centre, and the
+  ground under a camera at altitude `a` sits `a · |sun.xz| / max(sun_up, CLOUD_SUN_FLOOR)` off it: about 6.9 km for `a` = 1,400 m
+  at 11.5°, and beyond the half extent for a low enough sun. At or above the bottom, and below the datum (a reflected mirror
+  camera counts as on it), it is the point the datum under the camera reaches, so the ground under the camera sits at the centre
+  at any sun. The centre is snapped to the world's 32 m grid, so the content stays where it is in the world while the camera
+  moves and only the corner steps, by whole texels. When the camera crosses the bottom or the datum the window steps from one
+  centre to the other: a receiver inside both windows reads the same value, and only the region the map covers moves.
 - **Light.** The sun is the one the cloud march uses: the atmosphere's sun, otherwise the scene's first directional light. Its
   packed light carries `LIGHT_CLOUD_SHADOW`, and `FrameRoot.cloud_shadow` addresses the `CloudShadowRoot`; it is zero without a map.
   No map exists while the sun is at or below the horizon, and the sun's visibility is then unchanged.
