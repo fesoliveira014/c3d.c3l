@@ -9,7 +9,10 @@
 #include "cloud_density.glsl"
 
 #ifdef TEMPORAL
-layout(local_size_x = CLOUD_TEMPORAL_GROUP, local_size_y = CLOUD_TEMPORAL_GROUP) in;
+const uint CLOUD_TILE = CLOUD_TEMPORAL_GROUP + 2u;
+const uint CLOUD_TILE_CELLS = CLOUD_TILE * CLOUD_TILE;
+
+layout(local_size_x = CLOUD_TILE, local_size_y = CLOUD_TILE) in;
 #else
 layout(local_size_x = 8, local_size_y = 8) in;
 #endif
@@ -219,10 +222,6 @@ vec4 march_clouds(CloudsRoot root, ivec2 pixel, float frame_jitter, vec2 pixel_o
 }
 
 #ifdef TEMPORAL
-const uint CLOUD_TILE = CLOUD_TEMPORAL_GROUP + 2u;
-const uint CLOUD_TILE_CELLS = CLOUD_TILE * CLOUD_TILE;
-const uint CLOUD_GROUP_CELLS = CLOUD_TEMPORAL_GROUP * CLOUD_TEMPORAL_GROUP;
-
 shared vec4 tile_cloud[CLOUD_TILE_CELLS];
 shared float tile_distance[CLOUD_TILE_CELLS];
 
@@ -269,9 +268,9 @@ vec3 cloud_history_uv(CloudsTemporalRoot temporal, vec3 origin, vec3 direction, 
     return vec3(uv, inside ? 1.0 : 0.0);
 }
 
-// A group marches its pixels and a border of one around them, so every pixel can clamp its reprojected history to the
-// range of its 3 x 3 neighbours' current radiance before the blend. The history belongs to the pixel's centre, which
-// the reprojection starts from, while the march takes the frame's offset ray.
+// A group has a thread for each of its pixels and for the border of one around them, so every pixel can clamp its
+// reprojected history to the range of its 3 x 3 neighbours' current radiance before the blend. The history belongs to the
+// pixel's centre, which the reprojection starts from, while the march takes the frame's offset ray.
 void main() {
     CloudsTemporalRoot temporal = CloudsTemporalRoot(pc.root_gpu);
     CloudsRoot root = CloudsRoot(temporal.clouds);
@@ -283,23 +282,19 @@ void main() {
     float jitter = perspective ? temporal.jitter : 0.0;
     vec2 pixel_offset = perspective ? vec2(temporal.pixel_jitter_x, temporal.pixel_jitter_y) : vec2(0.0);
 
-    ivec2 tile_origin = ivec2(gl_WorkGroupID.xy) * int(CLOUD_TEMPORAL_GROUP) - 1;
-    for (uint cell = gl_LocalInvocationIndex; cell < CLOUD_TILE_CELLS; cell += CLOUD_GROUP_CELLS) {
-        ivec2 offset = ivec2(cell % CLOUD_TILE, cell / CLOUD_TILE);
-        bool border = any(equal(offset, ivec2(0))) || any(equal(offset, ivec2(int(CLOUD_TILE) - 1)));
-        if (border && !reproject) continue;
-
+    ivec2 local = ivec2(gl_LocalInvocationID.xy);
+    bool border = any(equal(local, ivec2(0))) || any(equal(local, ivec2(int(CLOUD_TILE) - 1)));
+    ivec2 pixel = ivec2(gl_WorkGroupID.xy) * int(CLOUD_TEMPORAL_GROUP) - 1 + local;
+    if (!border || reproject) {
         float cell_distance;
-        ivec2 cell_pixel = clamp(tile_origin + offset, ivec2(0), extent - 1);
-        tile_cloud[cell] = march_clouds(root, cell_pixel, jitter, pixel_offset, cell_distance);
-        tile_distance[cell] = cell_distance;
+        ivec2 cell_pixel = clamp(pixel, ivec2(0), extent - 1);
+        tile_cloud[gl_LocalInvocationIndex] = march_clouds(root, cell_pixel, jitter, pixel_offset, cell_distance);
+        tile_distance[gl_LocalInvocationIndex] = cell_distance;
     }
     barrier();
+    if (border || pixel.x >= extent.x || pixel.y >= extent.y) return;
 
-    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
-    if (pixel.x >= extent.x || pixel.y >= extent.y) return;
-
-    uint own = (gl_LocalInvocationID.y + 1u) * CLOUD_TILE + gl_LocalInvocationID.x + 1u;
+    uint own = gl_LocalInvocationIndex;
     vec4 cloud = tile_cloud[own];
     float cloud_distance = tile_distance[own];
     if (reproject) {

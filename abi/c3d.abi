@@ -1118,7 +1118,7 @@ const float CLOUD_SHADOW_EXTENT = 16384.0; // metres the map covers: 32 m a texe
 const uint CLOUD_SHADOW_STEPS = 16; // samples through the deck per texel; fewer band the shadow of a thick deck
 const float CLOUD_SHADOW_EDGE_BAND = 0.1; // share of the half extent that fades to light; narrower shows the border
 const float CLOUD_HISTORY_WEIGHT = 0.9; // memory of about ten frames; higher smooths longer and trails longer
-const uint CLOUD_TEMPORAL_GROUP = 16; // texels per side of a temporal march group, which also marches a 1-texel border for the clamp: 1.27x the marches, 1.56x at 8
+const uint CLOUD_TEMPORAL_GROUP = 16; // texels per side a temporal march group covers; its threads also march a 1-texel border for the clamp: 1.27x the marches, 1.56x at 8
 
 root CloudNoiseRoot {
     TextureIndex output_texture;
