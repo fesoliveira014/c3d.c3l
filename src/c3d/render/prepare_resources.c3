@@ -106,7 +106,6 @@ fn void? check_prepare_texture_source(TextureAsset* source) @private {
     switch (source.source_kind) {
         case MIP_ZERO:
             check_texture_mip_zero(source.desc, source.pixels)!;
-            asset::check_coverage_statistics(source.desc, &source.coverage_statistics, source.header.revision)!;
 
         case SUPPLIED_MIPS: supplied_texture_mip_layout(source.desc, source.supplied_mips)!;
 
@@ -146,30 +145,14 @@ fn PrepareStepPlan? plan_prepare_texture(
         if (layout.output_texels && !record.chain_active) return { .kind = PrepareResourceStep.GENERATION_STORAGE };
         if (layout.output_texels && record.generation_mip <= layout.mip_count) {
             record.phase = PreparePhase.GENERATION;
+            uint width = material::texture_mip_extent(desc.width, record.generation_mip);
             uint height = material::texture_mip_extent(desc.height, record.generation_mip);
             uint rows = math::min(PREPARE_GENERATION_ROWS, height - record.generation_row);
-            uint width = material::texture_mip_extent(desc.width, record.generation_mip);
 
-            ulong before = texture_scan_charge(
-                base_texels: layout.base_texels,
-                position: record.generation_outputs,
-                output_total: layout.output_texels,
-                passes: layout.passes,
-            );
-            ulong charge;
-
-            while (true) {
-                ulong after = texture_scan_charge(
-                    base_texels: layout.base_texels,
-                    position: record.generation_outputs + (ulong)width * rows,
-                    output_total: layout.output_texels,
-                    passes: layout.passes,
-                );
-                charge = after - before;
+            if (budget.limits.generated_texels) {
                 ulong remaining = budget.limits.generated_texels > budget.report.generated_texels
                     ? budget.limits.generated_texels - budget.report.generated_texels : 0;
-                if (!budget.limits.generated_texels || charge <= remaining || rows == 1) break;
-                rows = math::max(1u, rows / 2);
+                rows = (uint)math::clamp(remaining / width, 1ul, (ulong)rows);
             }
 
             TextureBand band = texture_band(
@@ -181,7 +164,8 @@ fn PrepareStepPlan? plan_prepare_texture(
                 block_rows: rows,
             )!;
 
-            return { .kind = PrepareResourceStep.GENERATE, .band = band, .cost = { .generated_texels = charge } };
+            return { .kind = PrepareResourceStep.GENERATE, .band = band,
+                .cost = { .generated_texels = (ulong)width * rows } };
         }
     }
 
@@ -234,18 +218,10 @@ fn bool? run_prepare_step(
             record.generation_mip = 1;
             record.generation_layer = 0;
             record.generation_row = 0;
-            record.generation_outputs = 0;
             record.generation_desc = source.desc;
-            record.generation_statistics = source.coverage_statistics;
+            record.correcting_coverage = false;
 
-            if (source.desc.coverage == CoveragePolicy.THRESHOLD) {
-                record.coverage = begin_texture_coverage(
-                    desc: source.desc,
-                    mip: 1,
-                    face: 0,
-                    statistics: &record.generation_statistics,
-                );
-            }
+            if (source.desc.coverage == CoveragePolicy.THRESHOLD) record.coverage = begin_texture_coverage(source.desc);
 
             unit.generated_done = 0;
 
@@ -254,11 +230,21 @@ fn bool? run_prepare_step(
         case GENERATE:
             TextureAsset* source = renderer.assets.texture(unit.texture);
             material::TextureDesc desc = record.generation_desc;
-            bool coverage = desc.coverage == CoveragePolicy.THRESHOLD;
+            TextureCoverageState* coverage = desc.coverage == CoveragePolicy.THRESHOLD ? &record.coverage : null;
             std::time::Clock started = clock::now();
             defer report.generation_ns = prepare_add(report.generation_ns, (ulong)started.to_now());
 
-            if (!coverage || record.coverage.phase == 0) {
+            if (record.correcting_coverage) {
+                write_texture_coverage_band(
+                    state: coverage,
+                    desc: desc,
+                    chain: &record.chain,
+                    mip: plan.band.mip,
+                    layer: plan.band.layer,
+                    first_row: plan.band.y,
+                    row_count: plan.band.height,
+                );
+            } else {
                 write_texture_filter_band(
                     desc: desc,
                     mip: plan.band.mip,
@@ -267,83 +253,43 @@ fn bool? run_prepare_step(
                     row_count: plan.band.height,
                     mip_zero: source.pixels,
                     chain: &record.chain,
-                    coverage: coverage ? &record.coverage : null,
+                    coverage: coverage,
                 )!;
-            } else {
-                usz layer_bytes = material::texture_mip_bytes(desc, plan.band.mip)!;
-                char[] destination = record.chain.pixels[
-                    record.chain.offsets[plan.band.mip - 1] + (usz)plan.band.layer * layer_bytes:layer_bytes];
-                write_texture_coverage_band(
-                    desc: desc,
-                    destination: destination,
-                    state: &record.coverage,
-                    row_count: plan.band.height,
-                );
             }
 
-            ulong actual_outputs = (ulong)plan.band.width * plan.band.height;
-            record.generation_outputs += actual_outputs;
             record.generation_row += plan.band.height;
             unit.generated_done = prepare_add(unit.generated_done, plan.cost.generated_texels);
             record.texels_done = prepare_add(record.texels_done, plan.cost.generated_texels);
             report.generated_texels = prepare_add(report.generated_texels, plan.cost.generated_texels);
-            if (coverage) {
-                record.coverage.reserved += actual_outputs;
-                record.coverage.row = record.generation_row;
+
+            uint height = material::texture_mip_extent(desc.height, plan.band.mip);
+
+            if (record.generation_row < height) return false;
+
+            record.generation_row = 0;
+
+            if (coverage && !record.correcting_coverage) {
+                record.correcting_coverage = choose_texture_coverage(
+                    state: coverage,
+                    desc: desc,
+                    mip: plan.band.mip,
+                    layer: plan.band.layer,
+                );
+
+                if (record.correcting_coverage) return false;
+
+                ulong skipped = (ulong)plan.band.width * height;
+                unit.generated_done = prepare_add(unit.generated_done, skipped);
+                record.texels_done = prepare_add(record.texels_done, skipped);
             }
 
-            if (record.generation_row == material::texture_mip_extent(desc.height, record.generation_mip)) {
-                bool completed = true;
+            record.correcting_coverage = false;
 
-                if (coverage) {
-                    ulong reserved_before = record.coverage.reserved;
-                    finish_texture_coverage_pass(&record.coverage);
+            if (coverage) coverage.level = {};
 
-                    ulong skipped = record.coverage.reserved - reserved_before;
-
-                    if (skipped) {
-                        GeneratedTextureLayout layout = generated_texture_mip_layout(desc)!;
-                        ulong before = texture_scan_charge(
-                            base_texels: layout.base_texels,
-                            position: record.generation_outputs,
-                            output_total: layout.output_texels,
-                            passes: layout.passes,
-                        );
-
-                        record.generation_outputs += skipped;
-
-                        ulong after = texture_scan_charge(
-                            base_texels: layout.base_texels,
-                            position: record.generation_outputs,
-                            output_total: layout.output_texels,
-                            passes: layout.passes,
-                        );
-
-                        ulong credit = after - before;
-                        unit.generated_done = prepare_add(unit.generated_done, credit);
-                        record.texels_done = prepare_add(record.texels_done, credit);
-                    }
-
-                    completed = record.coverage.phase == texture_generation_passes(desc);
-                }
-
-                record.generation_row = 0;
-
-                if (completed) {
-                    if (++record.generation_layer == desc.layers) {
-                        record.generation_layer = 0;
-                        record.generation_mip++;
-                    }
-
-                    if (coverage && record.generation_mip <= record.chain.mip_count) {
-                        record.coverage = begin_texture_coverage(
-                            desc: desc,
-                            mip: record.generation_mip,
-                            face: record.generation_layer,
-                            statistics: &record.generation_statistics,
-                        );
-                    }
-                }
+            if (++record.generation_layer == desc.layers) {
+                record.generation_layer = 0;
+                record.generation_mip++;
             }
 
             return false;
@@ -689,11 +635,10 @@ fn bool? run_prepare_texture_copy(
 fn void clear_prepare_chain(PrepareRecord* record) @private {
     if (record.chain_active) destroy_texture_mips(&record.chain);
     record.chain_active = false;
-    record.generation_outputs = 0;
     record.generation_mip = 0;
     record.generation_layer = 0;
     record.generation_row = 0;
     record.coverage = {};
+    record.correcting_coverage = false;
     record.generation_desc = {};
-    record.generation_statistics = {};
 }

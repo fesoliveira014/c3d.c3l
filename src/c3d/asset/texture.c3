@@ -35,7 +35,6 @@ struct TextureAsset {
     TextureSourceKind source_kind;
     char[] pixels;
     TextureMipData[] supplied_mips;
-    CoverageStatistics coverage_statistics;
 }
 
 <*
@@ -52,8 +51,7 @@ fn TextureId? AssetStore.add_texture(
 ) {
     check_key(self, key)!;
     check_format_use(desc)!;
-
-    CoverageStatistics statistics = create_coverage_statistics(desc, pixels, 1)!;
+    check_coverage_alpha(desc, pixels)!;
 
     TextureId id = self.textures.add({})!;
 
@@ -61,7 +59,6 @@ fn TextureId? AssetStore.add_texture(
         .header = { .key = copy_string(self.allocator, key), .revision = 1 },
         .desc = desc,
         .source_kind = MIP_ZERO,
-        .coverage_statistics = statistics,
         .pixels = copy_slice(self.allocator, pixels),
     };
     register_key(self, key, typed_ref(AssetKind.TEXTURE, id));
@@ -83,8 +80,7 @@ fn TextureId? AssetStore.add_texture_owned(
 ) {
     check_key(self, key)!;
     check_format_use(desc)!;
-
-    CoverageStatistics statistics = create_coverage_statistics(desc, pixels, 1)!;
+    check_coverage_alpha(desc, pixels)!;
 
     TextureId id = self.textures.add({})!;
 
@@ -92,7 +88,6 @@ fn TextureId? AssetStore.add_texture_owned(
         .header = { .key = copy_string(self.allocator, key), .revision = 1 },
         .desc = desc,
         .source_kind = MIP_ZERO,
-        .coverage_statistics = statistics,
         .pixels = pixels,
     };
     register_key(self, key, typed_ref(AssetKind.TEXTURE, id));
@@ -123,7 +118,6 @@ fn TextureId? AssetStore.add_texture_mips(
         .desc = desc,
         .source_kind = SUPPLIED_MIPS,
         .supplied_mips = copied,
-        .coverage_statistics = texture_statistics_identity(desc, SUPPLIED_MIPS, 1),
     };
     register_key(self, key, typed_ref(AssetKind.TEXTURE, texture));
 
@@ -145,7 +139,6 @@ fn TextureId? AssetStore.add_texture_empty(&self, TextureDesc desc, String key =
         .header = { .key = copy_string(self.allocator, key), .revision = 1 },
         .desc = desc,
         .source_kind = EMPTY,
-        .coverage_statistics = texture_statistics_identity(desc, EMPTY, 1),
     };
     register_key(self, key, typed_ref(AssetKind.TEXTURE, id));
 
@@ -167,8 +160,7 @@ fn void? AssetStore.replace_texture(
     TextureAsset* record = self.textures.get(texture);
     check_format_use(desc)!;
     check_texture_structure(record.desc, desc)!;
-
-    CoverageStatistics statistics = create_coverage_statistics(desc, pixels, record.header.revision + 1)!;
+    check_coverage_alpha(desc, pixels)!;
 
     apply_texture(
         allocator:     self.allocator,
@@ -177,7 +169,6 @@ fn void? AssetStore.replace_texture(
         source_kind:   MIP_ZERO,
         pixels:        copy_slice(self.allocator, pixels),
         supplied_mips: {},
-        statistics: statistics,
     );
 }
 
@@ -196,8 +187,7 @@ fn void? AssetStore.replace_texture_owned(
     TextureAsset* record = self.textures.get(texture);
     check_format_use(desc)!;
     check_texture_structure(record.desc, desc)!;
-
-    CoverageStatistics statistics = create_coverage_statistics(desc, pixels, record.header.revision + 1)!;
+    check_coverage_alpha(desc, pixels)!;
 
     apply_texture(
         allocator:     self.allocator,
@@ -206,7 +196,6 @@ fn void? AssetStore.replace_texture_owned(
         source_kind:   MIP_ZERO,
         pixels:        pixels,
         supplied_mips: {},
-        statistics: statistics,
     );
 }
 
@@ -233,7 +222,6 @@ fn void? AssetStore.replace_texture_mips(
         source_kind:   SUPPLIED_MIPS,
         pixels:        {},
         supplied_mips: copy_texture_mips(self.allocator, levels, total_bytes),
-        statistics: texture_statistics_identity(desc, SUPPLIED_MIPS, record.header.revision + 1),
     );
 }
 
@@ -255,7 +243,6 @@ fn void? AssetStore.replace_texture_empty(&self, TextureId texture, TextureDesc 
         source_kind:   EMPTY,
         pixels:        {},
         supplied_mips: {},
-        statistics: texture_statistics_identity(desc, EMPTY, record.header.revision + 1),
     );
 }
 
@@ -269,37 +256,12 @@ fn TextureAsset* AssetStore.texture(&self, TextureId texture) {
 }
 
 <*
- Advance revision and eagerly refresh present-source coverage.
- Invalid alpha defers INVALID_ARGUMENT to required preparation.
+ Advance the revision after an in-place edit of the CPU source.
  @param [&inout] self : "Store whose texture revision advances."
  @require self.textures.is_live(texture)
 *>
 fn void AssetStore.mark_texture_dirty(&self, TextureId texture) {
-    TextureAsset* record = self.textures.get(texture);
-    record.header.revision++;
-
-    if (record.desc.coverage == CoveragePolicy.NONE) {
-        record.coverage_statistics = texture_statistics_identity(
-            desc: record.desc,
-            source_kind: record.source_kind,
-            revision: record.header.revision,
-        );
-        return;
-    }
-
-    CoverageStatistics? statistics = create_coverage_statistics(record.desc, record.pixels, record.header.revision);
-
-    if (catch excuse = statistics) {
-        record.coverage_statistics = texture_statistics_identity(
-            desc: record.desc,
-            source_kind: record.source_kind,
-            revision: record.header.revision,
-        );
-        record.coverage_statistics.valid = false;
-        record.coverage_statistics.failure = excuse;
-    } else {
-        record.coverage_statistics = statistics;
-    }
+    self.textures.get(texture).header.revision++;
 }
 
 <*
@@ -315,7 +277,6 @@ fn void AssetStore.release_texture_cpu(&self, TextureId texture) {
 
 <*
  Give a texture whose CPU source was released its mip-zero pixels again; takes ownership.
- Threshold restoration scans alpha and may advance the revision.
  @param [&inout] self : "Owns the pixels afterwards."
  @param pixels : "Every mip-zero layer, allocated with the store allocator."
  @require self.textures.is_live(texture)
@@ -324,39 +285,7 @@ fn void AssetStore.release_texture_cpu(&self, TextureId texture) {
  @require pixels.len % ((usz)self.texture(texture).desc.width * self.texture(texture).desc.height) == 0
 *>
 fn void AssetStore.restore_texture_cpu(&self, TextureId texture, char[] pixels) {
-    TextureAsset* record = self.textures.get(texture);
-    record.pixels = pixels;
-
-    if (record.desc.coverage != CoveragePolicy.THRESHOLD) return;
-
-    CoverageStatistics? fresh = create_coverage_statistics(record.desc, pixels, record.header.revision);
-
-    if (catch excuse = fresh) {
-        record.header.revision++;
-        record.coverage_statistics = texture_statistics_identity(
-            desc: record.desc,
-            source_kind: record.source_kind,
-            revision: record.header.revision,
-        );
-        record.coverage_statistics.valid = false;
-        record.coverage_statistics.failure = excuse;
-        return;
-    }
-
-    bool unchanged = record.coverage_statistics.valid
-      && record.coverage_statistics.revision == record.header.revision
-      && texture_statistics_match(record.desc, &record.coverage_statistics);
-
-    for (uint face = 0; face < record.desc.layers; face++) {
-        unchanged &= fresh.passing[face] == record.coverage_statistics.passing[face]
-          && fresh.total[face] == record.coverage_statistics.total[face];
-    }
-
-    if (unchanged) return;
-
-    record.header.revision++;
-    fresh.revision = record.header.revision;
-    record.coverage_statistics = fresh;
+    self.textures.get(texture).pixels = pixels;
 }
 
 <*
@@ -481,13 +410,11 @@ fn void apply_texture(
     TextureSourceKind source_kind,
     char[] pixels,
     TextureMipData[] supplied_mips,
-    CoverageStatistics statistics,
 ) @private {
     free_texture_source(allocator, record);
     record.desc = desc;
     record.source_kind = source_kind;
     record.pixels = pixels;
     record.supplied_mips = supplied_mips;
-    record.coverage_statistics = statistics;
     mark_replaced(&record.header);
 }

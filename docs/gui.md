@@ -165,7 +165,7 @@ are not registered. Callbacks borrow their list/command and must not submit or p
 Draw totals include composition and GUI. Indirect draws count batch draws issued through
 indirect commands, every pass included. Triangle totals include mesh and GUI geometry.
 Upload bytes count the frame's asset and instance record uploads; they are not GPU resident memory.
-Preparation reports GPU-bound staged bytes, mip-zero-equivalent generation, CPU-only copied bytes,
+Preparation reports GPU-bound staged bytes, generated mip texels, CPU-only copied bytes,
 pipeline creation calls and their driver nanoseconds. Cache lookups and hits are separate. Object,
 view and allocation creation calls count actual API work; sampler interning does not expose native
 creation. The frame's preparation work and the renderer's cumulative counters retain work spent

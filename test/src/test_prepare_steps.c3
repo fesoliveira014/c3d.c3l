@@ -79,13 +79,13 @@ fn void test_abort_keeps_only_active_chain_and_rolls_finalized_unit_back_for_reg
     record.chain.pixels[..] = (char)99;
     record.chain_active = true;
     record.chain_unit = 1;
-    record.generation_outputs = 3;
+    record.generation_row = 3;
     char* retained = record.chain.pixels.ptr;
     render::rollback_prepare_cursors(&renderer, record);
     assert(!finalized.done && finalized.staged.bytes == 16 && finalized.generated_done == 0);
     assert(!active.done && active.staged.bytes == 0 && active.generated_done == 8);
     assert(record.chain_active && record.chain.pixels.ptr == retained && record.chain.pixels[0] == 99);
-    assert(record.generation_outputs == 3 && record.texels_done == 8);
+    assert(record.generation_row == 3 && record.texels_done == 8);
     assert(record.units[2].done && record.units_done == 1 && record.bytes_done == 16);
 }
 

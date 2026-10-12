@@ -143,7 +143,8 @@ fn void test_prepare_finalized_abort_regenerates_identical_mips() @test {
         PrepareId id = renderer.begin_prepare_model(model)!!;
         renderer.begin_frame()!!;
         PrepareReport recorded = renderer.advance_prepares_within({})!!;
-        assert(recorded.staged_bytes > 0 && recorded.generated_texels == (ulong)desc.width * desc.height);
+        ulong output_texels = render::generated_texture_mip_layout(desc)!!.output_texels;
+        assert(recorded.staged_bytes > 0 && recorded.generated_texels == output_texels);
         assert(renderer.textures[texture.index].texture != old);
         render::abort_frame(renderer);
         assert(renderer.textures[texture.index].texture == old);
@@ -329,7 +330,8 @@ fn void test_prepare_removed_active_texture_does_not_reuse_its_chain_for_next_te
         PrepareId id = renderer.begin_prepare_model(model)!!;
         renderer.begin_frame()!!;
         PrepareReport prefix = renderer.advance_prepares_within({ .generated_texels = 128 })!!;
-        assert(prefix.generated_texels > 0 && prefix.generated_texels < (ulong)first_desc.width * first_desc.height);
+        ulong output_texels = render::generated_texture_mip_layout(first_desc)!!.output_texels;
+        assert(prefix.generated_texels > 0 && prefix.generated_texels < output_texels);
         PrepareRecord* record = renderer.prepares.get(id);
         PrepareUnit* active = preparation_texture_unit(renderer, id, first)!!;
         assert(record.chain_active && record.chain_unit == active.index && !active.done);

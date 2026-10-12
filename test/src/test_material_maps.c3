@@ -278,9 +278,7 @@ fn void test_normal_binding_uses_pending_resource_metadata_before_a_newer_cpu_re
     renderer.pending_texture_uploads.init(mem);
     defer renderer.pending_texture_uploads.free();
 
-    TextureBinding content = render::texture_binding_content(&renderer, texture, &mirror);
-
-    assert(content.texture_content_revision == 1 && content.semantic == TextureSemantic.NORMAL_RGB);
+    assert(render::texture_binding_semantic(&renderer, texture, &mirror) == TextureSemantic.NORMAL_RGB);
 
     desc.semantic = TextureSemantic.NORMAL_RG;
 
@@ -295,19 +293,13 @@ fn void test_normal_binding_uses_pending_resource_metadata_before_a_newer_cpu_re
 
     assert(assets.texture(texture).header.revision == 3);
 
-    content = render::texture_binding_content(&renderer, texture, &mirror);
-
-    assert(content.texture_content_revision == 2 && content.semantic == TextureSemantic.NORMAL_RG);
+    assert(render::texture_binding_semantic(&renderer, texture, &mirror) == TextureSemantic.NORMAL_RG);
     renderer.pending_texture_uploads.push({
         .asset = texture, .revision = 3, .semantic = TextureSemantic.NORMAL_RGB,
     });
-    content = render::texture_binding_content(&renderer, texture, &mirror);
-
-    assert(content.texture_content_revision == 3 && content.semantic == TextureSemantic.NORMAL_RGB);
+    assert(render::texture_binding_semantic(&renderer, texture, &mirror) == TextureSemantic.NORMAL_RGB);
     renderer.pending_texture_uploads.clear();
-    content = render::texture_binding_content(&renderer, texture, &mirror);
-
-    assert(content.texture_content_revision == 1 && content.semantic == TextureSemantic.NORMAL_RGB);
+    assert(render::texture_binding_semantic(&renderer, texture, &mirror) == TextureSemantic.NORMAL_RGB);
 }
 
 fn void test_target_base_and_coat_normal_bindings_pack_rgb() @test {

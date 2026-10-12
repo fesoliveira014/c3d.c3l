@@ -12,7 +12,7 @@ import std::math;
 const char[*] PREPARATION_TYPE_SOURCE @private = $embed("sample_prepare_types.comp.glsl");
 const uint PREPARATION_TYPE_GROUP_SIZE @private = 8; // mirrored as local_size_x/y in sample_prepare_types.comp.glsl
 const uint PREPARATION_TYPE_FRAME_LIMIT @private = 512; // covers one-row cube copies plus completion slots
-const ulong PREPARATION_CUBE_MINIMUM_TEXELS @private = 6; // floor(96 * two output texels / 30)
+const ulong PREPARATION_CUBE_MINIMUM_TEXELS @private = 2; // one row of a face's first generated level
 const uint PREPARATION_REPLACEMENT_SEED @private = loading_fixtures::PREPARATION_IMAGE_SEED ^ 0x9e3779b9;
 
 struct PreparationTypeRoot @private { // mirrored as PreparationTypeRoot in sample_prepare_types.comp.glsl
@@ -85,7 +85,7 @@ fn PrepareId? preparation_texture_only(Fixture* fixture, TextureId texture) @pri
     ulong texels;
     if (source.source_kind == TextureSourceKind.MIP_ZERO && source.desc.generate_mips) {
         GeneratedTextureLayout layout = render::generated_texture_mip_layout(source.desc)!;
-        texels = layout.output_texels ? layout.base_texels : 0;
+        texels = layout.output_texels * layout.passes;
     }
     record.units[0] = {
         .kind = PrepareUnitKind.TEXTURE, .texture = texture, .revision = source.header.revision,

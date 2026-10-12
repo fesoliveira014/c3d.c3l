@@ -9,39 +9,12 @@ const double CODE_MAX @local = 255;
 const ulong FNV_OFFSET @local = 0xcbf29ce484222325;
 const ulong FNV_PRIME @local = 0x100000001b3;
 const uint IMAGE_SEED @local = 0x2545f491;
-const uint LCG_MULTIPLIER @local = 1664525;
-const uint LCG_INCREMENT @local = 1013904223;
 const uint SWEEP_STEPS @local = 1_000_000;
 const ulong ODD_SRGB_DIGEST @local = 0x1061d393becd4e46;
 const ulong EVEN_SRGB_DIGEST @local = 0x9a7fa2d2274fd02e;
-const uint HALF_EXPONENT_LIMIT @local = 30; // keeps generated halves finite
-const uint HALF_EXPONENT_SHIFT @local = 10;
-const uint HALF_MANTISSA_LIMIT @local = 1024;
-
-struct HalvingShape @local {
-    uint width;
-    uint height;
-}
-
-fn uint next_random(uint* state) @local {
-    *state = *state * LCG_MULTIPLIER + LCG_INCREMENT;
-    return *state >> 8;
-}
 
 fn char[] random_texels(usz bytes, uint seed) @local {
     return loading_fixtures::preparation_texture_bytes(mem, bytes, seed);
-}
-
-fn char[] random_half_texels(usz texels, uint seed) @local {
-    char[] pixels = alloc::new_array(mem, char, (sz)texels * ushort::size);
-    ushort* halves = (ushort*)pixels.ptr;
-    uint state = seed;
-    for (usz index = 0; index < texels; index++) {
-        uint exponent = 1 + next_random(&state) % HALF_EXPONENT_LIMIT;
-        uint mantissa = next_random(&state) % HALF_MANTISSA_LIMIT;
-        halves[index] = (ushort)((exponent << HALF_EXPONENT_SHIFT) | mantissa);
-    }
-    return pixels;
 }
 
 fn ulong chain_digest(char[] bytes) @local {
@@ -56,33 +29,6 @@ fn ulong srgb_chain_digest(uint width, uint height) @local {
     TextureMipChain chain = create_texture_mips(mem, material::texture_2d_desc(width, height, RGBA8_SRGB), pixels)!!;
     defer destroy_texture_mips(&chain);
     return chain_digest(chain.pixels);
-}
-
-fn void expect_halving_matches(material::PixelFormat format, HalvingShape shape) @local {
-    char[] pixels = format == RGBA16_FLOAT
-      ? random_half_texels((usz)shape.width * shape.height * TEXEL_BYTES, IMAGE_SEED)
-      : random_texels((usz)shape.width * shape.height * TEXEL_BYTES, IMAGE_SEED);
-    defer alloc::free(mem, pixels.ptr);
-    material::TextureDesc desc = material::texture_2d_desc(shape.width, shape.height, format);
-    TextureMipChain halved = create_texture_mips(mem, desc, pixels)!!;
-    defer destroy_texture_mips(&halved);
-    TextureMipChain filtered = create_area_filter_texture_mips(mem, desc, pixels)!!;
-    defer destroy_texture_mips(&filtered);
-
-    assert(halved.mip_count == filtered.mip_count);
-    assert(halved.pixels == filtered.pixels);
-}
-
-fn void test_halving_path_matches_the_area_filter() @test {
-    HalvingShape[3] shapes = {
-        { .width = 64, .height = 64 },
-        { .width = 64, .height = 1 },
-        { .width = 1, .height = 64 },
-    };
-    material::PixelFormat[3] formats = { RGBA8_UNORM, RGBA8_SRGB, RGBA16_FLOAT };
-    foreach (format : formats) {
-        foreach (shape : shapes) expect_halving_matches(format, shape);
-    }
 }
 
 fn void test_srgb_tables_match_the_reference() @test {
@@ -121,14 +67,12 @@ fn void expect_generated_bands_equal(material::TextureDesc desc, char[] pixels, 
         GeneratedTextureLayout layout = generated_texture_mip_layout(desc)!!;
         assert(stepped.pixels.len == layout.byte_count && tracker.allocs_total == 1);
         ulong completed;
-        ulong charged;
         for (uint mip = 1; mip < reference.mip_count; mip++) {
             uint width = material::texture_mip_extent(desc.width, mip);
             uint height = material::texture_mip_extent(desc.height, mip);
             for (uint layer = 0; layer < desc.layers; layer++) {
                 for (uint row = 0; row < height;) {
                     uint rows = math::min(row_limit, height - row);
-                    ulong previous = generated_mip_charge(layout.base_texels, completed, layout.output_texels);
                     write_texture_filter_band(
                         desc: desc,
                         mip: mip,
@@ -139,12 +83,11 @@ fn void expect_generated_bands_equal(material::TextureDesc desc, char[] pixels, 
                         chain: &stepped,
                     )!!;
                     completed += (ulong)width * rows;
-                    charged += generated_mip_charge(layout.base_texels, completed, layout.output_texels) - previous;
                     row += rows;
                 }
             }
         }
-        assert(completed == layout.output_texels && charged == layout.base_texels);
+        assert(completed == layout.output_texels);
         assert(stepped.pixels == reference.pixels[reference.offsets[1]..]);
     }
     assert(tracker.allocated() == 0);
@@ -211,16 +154,6 @@ fn void test_generated_mip_bands_reacquire_base_and_retain_owned_levels() @test 
     assert(chain.pixels == reference.pixels[reference.offsets[1]..]);
 }
 
-fn void test_generated_texel_charge_avoids_large_products() @test {
-    assert(generated_mip_charge(1000, 100, 333) == 300);
-    assert(generated_mip_charge(ulong::max, ulong::max - 1, ulong::max) == ulong::max - 1);
-    assert(generated_mip_charge(ulong::max, ulong::max - 2, ulong::max - 1) == ulong::max - 2);
-    assert(generated_mip_charge(ulong::max - 7, ulong::max - 12, ulong::max - 11) == ulong::max - 9);
-    assert(generated_mip_charge(ulong::max / 2, ulong::max - 2, ulong::max - 1) == ulong::max / 2 - 1);
-    assert(generated_mip_charge(ulong::max, 0, ulong::max - 1) == 0);
-    assert(generated_mip_charge(ulong::max, ulong::max - 1, ulong::max - 1) == ulong::max);
-}
-
 fn void test_generated_layout_has_no_base_snapshot_or_empty_allocation() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
@@ -229,7 +162,7 @@ fn void test_generated_layout_has_no_base_snapshot_or_empty_allocation() @test {
     TextureMipChain chain = create_generated_texture_mips(&tracker, desc)!!;
     defer destroy_texture_mips(&chain);
     GeneratedTextureLayout layout = generated_texture_mip_layout(desc)!!;
-    assert(layout.base_texels == 1 && layout.output_texels == 0 && layout.byte_count == 0);
+    assert(layout.output_texels == 0 && layout.byte_count == 0);
     assert(chain.first_mip == 1 && chain.mip_count == 0 && chain.pixels.len == 0);
     assert(tracker.allocs_total == 0 && tracker.allocated() == 0);
 }

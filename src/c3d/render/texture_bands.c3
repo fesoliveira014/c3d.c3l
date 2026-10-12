@@ -5,7 +5,6 @@ import c3d::material;
 import std::math;
 
 const uint TEXEL_BLOCK_EXTENT @private = 4;
-const uint CHARGE_BITS @local = ulong::size * 8;
 
 <* Packed nonzero generated levels without a mip-zero snapshot. *>
 struct GeneratedTextureLayout {
@@ -13,7 +12,6 @@ struct GeneratedTextureLayout {
     uint mip_count;
     uint layer_count;
     usz[material::TEXTURE_MIP_CAPACITY] offsets;
-    ulong base_texels;
     ulong output_texels;
     uint passes;
 }
@@ -93,8 +91,9 @@ fn TextureBand? texture_band(
 fn GeneratedTextureLayout? generated_texture_mip_layout(material::TextureDesc desc) {
     check_texture_band_description(desc)!;
 
-    if (desc.depth || material::texture_is_compressed(desc.format)
-      || (desc.format == R16_UINT && desc.generate_mips)) return c3d::UNSUPPORTED~;
+    if (material::texture_is_compressed(desc.format) || (desc.format == R16_UINT && desc.generate_mips)) {
+        return c3d::UNSUPPORTED~;
+    }
 
     if (desc.mip_levels != 1) return c3d::INVALID_ARGUMENT~;
 
@@ -106,8 +105,7 @@ fn GeneratedTextureLayout? generated_texture_mip_layout(material::TextureDesc de
     GeneratedTextureLayout layout = {
         .mip_count = desc.generate_mips ? material::texture_mip_count(desc.width, desc.height) - 1 : 0,
         .layer_count = desc.layers,
-        .base_texels = layer_texels * desc.layers,
-        .passes = texture_generation_passes(desc),
+        .passes = desc.coverage == CoveragePolicy.THRESHOLD ? COVERAGE_PASSES : 1,
     };
 
     for (uint index = 0; index < layout.mip_count; index++) {
@@ -122,46 +120,7 @@ fn GeneratedTextureLayout? generated_texture_mip_layout(material::TextureDesc de
         layout.output_texels += texels;
     }
 
-    if (layout.output_texels > ulong::max / layout.passes || layout.base_texels > ulong::max / layout.passes) {
-        return c3d::INVALID_ARGUMENT~;
-    }
-
     return layout;
-}
-
-<*
- Charge completed output in mip-zero-equivalent texels.
- @require output_total > 0, output_done <= output_total
- @pure
-*>
-fn ulong generated_mip_charge(ulong base_texels, ulong output_done, ulong output_total) {
-    ulong quotient = base_texels / output_total;
-    ulong remainder = base_texels % output_total;
-    ulong whole = quotient * output_done;
-    ulong fractional;
-    ulong accumulated;
-
-    for (uint bit = CHARGE_BITS; bit > 0; bit--) {
-        fractional *= 2;
-
-        if (accumulated >= output_total - accumulated) {
-            accumulated -= output_total - accumulated;
-            fractional++;
-        } else {
-            accumulated *= 2;
-        }
-
-        if (output_done & ((ulong)1 << (bit - 1))) {
-            if (accumulated >= output_total - remainder) {
-                accumulated -= output_total - remainder;
-                fractional++;
-            } else {
-                accumulated += remainder;
-            }
-        }
-    }
-
-    return whole + fractional;
 }
 
 fn void? check_texture_band_description(material::TextureDesc desc) @local {
