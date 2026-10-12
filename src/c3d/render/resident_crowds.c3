@@ -336,13 +336,6 @@ fn ResidentRef? resolve_resident_stream(
     };
 }
 
-<*
- Resident palette of the candidate's crowd; rows follow logical source order.
- @param [&in] candidate : "A crowd part or animated LOD part of a skinned crowd."
- @return? c3d::CAPACITY_EXCEEDED
- @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
- @return? gpu::UNSUPPORTED_FEATURE, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
-*>
 fn ResidentRef? resolve_crowd_palette(Renderer* renderer, MeshCandidate* candidate) @private {
     return resolve_resident_stream(
         renderer: renderer,
@@ -353,13 +346,6 @@ fn ResidentRef? resolve_crowd_palette(Renderer* renderer, MeshCandidate* candida
     );
 }
 
-<*
- Resident morph blocks of the candidate's part; rows follow logical source order.
- @param [&in] candidate : "A crowd part or animated LOD part with morph weights."
- @return? c3d::CAPACITY_EXCEEDED
- @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
- @return? gpu::UNSUPPORTED_FEATURE, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
-*>
 fn ResidentRef? resolve_crowd_morph(Renderer* renderer, MeshCandidate* candidate) @private {
     return resolve_resident_stream(
         renderer: renderer,
@@ -374,13 +360,6 @@ fn Node* crowd_owner(MeshCandidate* candidate) @local {
     return candidate.animated_lod ? candidate.node : candidate.node.parent;
 }
 
-<*
- Whether the candidate's resident streams hold the pose of the submitted frame the view last rendered.
- @param frame : "ViewHistory.submitted of the view."
- @return? c3d::CAPACITY_EXCEEDED
- @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
- @return? gpu::UNSUPPORTED_FEATURE, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
-*>
 fn bool? crowd_deformation_history(
     Renderer* renderer,
     MeshCandidate* candidate,
@@ -394,10 +373,6 @@ fn bool? crowd_deformation_history(
     return true;
 }
 
-<*
- Make the frame's staged crowd rows permanent and swap the buffers of every stream resolved.
- @param frame : "Marker of the submitted frame; zero commits without swapping."
-*>
 fn void commit_resident_crowds(Renderer* renderer, ulong frame) @private {
     ResidentCrowdTable* table = &renderer.crowds;
     foreach (index : table.listed) {
@@ -415,9 +390,6 @@ fn void commit_resident_crowds(Renderer* renderer, ulong frame) @private {
     table.listed.clear();
 }
 
-<*
- Forget the frame's staged crowd rows so the next frame stages them again.
-*>
 fn void discard_resident_crowds(Renderer* renderer) @private {
     ResidentCrowdTable* table = &renderer.crowds;
     foreach (index : table.listed) {
