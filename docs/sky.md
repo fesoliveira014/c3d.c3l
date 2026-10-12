@@ -218,9 +218,21 @@ combination) records nothing extra.
 - The sun's light is shadowed by the shadow atlas, or by rays under `RayTracingDesc.shadows`. A froxel has no
   surface, so its shadow lookup passes a zero normal and `ShadowGpu.normal_bias` does not move it. Fog past the
   atlas's cascades is unshadowed. Local lights are not scattered.
-- The grid is one froxel per 16 × 16 pixels of the view's working image by 64 slices, squared toward the camera
-  and ending at `max_distance`: 160 × 90 × 64 at 2560 × 1440. It is RGBA16F, 7.03 MiB at 2560 × 1440 and
-  3.98 MiB at 1920 × 1080, one heap slot, allocated with the view and freed with it.
+- The grid is chosen by `ViewDesc.fog_quality`, one froxel per `px` × `px` pixels of the view's working image by
+  `slices` slices, squared toward the camera and ending at `max_distance`:
+
+  | `FogQuality` | `px` | `slices` |
+  | --- | --- | --- |
+  | `LOW` | 16 | 32 |
+  | `MEDIUM` | 16 | 64 |
+  | `HIGH` | 8 | 128 |
+
+  `MEDIUM` is the zero value, so an unset desc has it. The volume is RGBA16F, one heap slot, allocated with the
+  view and freed with it; its size is `ceil(w / px) × ceil(h / px) × slices × 8` bytes per view for a working
+  image of `w` × `h` pixels. `HIGH` has eight times the froxels of `MEDIUM`, so it is opt-in. A view, including a
+  mirror view with a clip plane, takes its own `fog_quality`. `configure_view` with another `fog_quality`
+  reallocates the volume as a resize does, and `FOG_SCATTERING` and `FOG_INTEGRATION` read the view's slice count
+  from `SkyFogGpu.fog_slices` and `FogVolumeRoot.slices`; no more than `FOG_VOLUME_MAX_SLICES` (128) fit.
 - Two compute passes record after the sky tables and before the fog pass: `FOG_SCATTERING` (one thread per froxel)
   and `FOG_INTEGRATION` (one thread per column, accumulating in-scatter and transmittance along the slices).
 - Volume then analytic: inside `max_distance` a pixel takes the volume's in-scatter and transmittance; past it the
@@ -358,9 +370,10 @@ configuration. See [benchmarking](benchmarking.md#sky-benchmark).
 ground a roughness under their threshold, so the boxes and spheres show in it; each reflected path takes the
 [atmosphere and the fog](#where-fog-applies) between the ground and the hit, as the direct view takes them.
 
-`--volumetric-fog` gives the main and mirror views a fog volume, `--taa` turns on TAA, and the `pan` preset and
-segment sweep the camera's yaw 8° a second from −20° with the sun 15° up. The fog panel edits density, falloff,
-anisotropy and `max_distance`. Under `--path-traced` the switch is ignored.
+`--volumetric-fog` gives the main and mirror views a fog volume, `--fog-quality low|medium|high` picks its grid
+(`medium` by default), `--taa` turns on TAA, and the `pan` preset and segment sweep the camera's yaw 8° a second
+from −20° with the sun 15° up. The fog panel edits density, falloff, anisotropy and `max_distance`, and with
+`--volumetric-fog` a volume quality combo. Under `--path-traced` the switch is ignored.
 
 The landscape examples `terrain`, `vegetation` and `water` take `--sky`: an `ATMOSPHERE_EARTH` on
 their sun and a haze pooling in the valleys, and `--volumetric-fog` with it.
