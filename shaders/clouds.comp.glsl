@@ -305,6 +305,7 @@ void main() {
         if (history_uv.z > 0.0) {
             vec4 history = cloud_history_sample(temporal, history_uv.xy, vec2(extent));
             history.rgb *= temporal.pre_exposure_ratio;
+
             vec4 lowest = cloud;
             vec4 highest = cloud;
             for (int y = -1; y <= 1; y++) {

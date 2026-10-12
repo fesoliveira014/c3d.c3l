@@ -399,6 +399,7 @@ fn void? record_cloud_march(
         debug_name: "sky",
         flags:      shader::SHADER_FLAG_TEMPORAL,
     )!;
+
     CloudHistory* history = &record.cloud_history;
     Target* history_clouds = &record.clouds[history.slot];
     Target* history_distances = &record.cloud_distances[history.slot];
