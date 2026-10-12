@@ -302,7 +302,7 @@ fn bool report_kernel(
 
 <*
  Measure the job pool's per-range overhead and a parallel kernel's speedup.
- With --crowd COUNT it instead times animated crowd sampling over the pool.
+ With --crowd COUNT it instead times animated crowd sampling over the pool; --compress quantizes the clips first.
 *>
 fn int main(String[] args) {
     if (args.len > 1) return run_crowd_bench(args);

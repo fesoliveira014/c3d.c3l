@@ -33,6 +33,12 @@ const float REPORT_SECONDS @local = 2;
 const float FROZEN_SHARE_DEFAULT @local = 0.5f; // every other instance
 const uint  PALETTE_ENTRY_BYTES @local = 64; // one 4x4 float matrix per joint
 const String FROZEN_PERCENT_FLAG @local = "--frozen-percent=";
+const ClipTolerance CLIP_TOLERANCE @local = {
+    .translation = 1e-3f,
+    .rotation = 1e-3f,
+    .scale = 1e-3f,
+    .weight = 1e-3f,
+}; // 1 mm, 1 mrad, 0.1% scale and weight: the crowd looks identical; a tighter value keeps more bytes
 const Vec3  CAMERA_POSITION @local = { 0, 14, 30 };
 const Vec3  CAMERA_TARGET @local = { 0, 0, 0 };
 const Vec2  PANEL_POSITION @local = { 16, 16 };
@@ -86,6 +92,32 @@ fn ClipId? clip_named(AssetStore* assets, ModelTemplate* template, String name) 
         if (assets.clip(clip).data.name == name) return clip;
     }
     return NOT_FOUND~;
+}
+
+fn void? compress_clips(AssetStore* assets, ModelTemplate* template) @local {
+    CompressionReport total;
+    foreach (clip : template.clips) {
+        CompressionReport report = assets.compress_clip(clip, CLIP_TOLERANCE)!;
+        total.bytes_before += report.bytes_before;
+        total.bytes_after += report.bytes_after;
+        total.error.translation = math::max(total.error.translation, report.error.translation);
+        total.error.rotation = math::max(total.error.rotation, report.error.rotation);
+        total.error.scale = math::max(total.error.scale, report.error.scale);
+        total.error.weight = math::max(total.error.weight, report.error.weight);
+    }
+    io::printfn(
+        "clips: %d compressed, %d bytes before, %d bytes after",
+        template.clips.len,
+        total.bytes_before,
+        total.bytes_after,
+    );
+    io::printfn(
+        "max error: translation %g m, rotation %g rad, scale %g, weight %g",
+        total.error.translation,
+        total.error.rotation,
+        total.error.scale,
+        total.error.weight,
+    );
 }
 
 fn Aabb rest_bounds(AssetStore* assets, ModelTemplate* template) @local {
@@ -425,10 +457,13 @@ fn void? run(
 fn int main(String[] args) {
     bool baseline;
     bool compare;
+    bool compress;
     float frozen_share;
     foreach (argument : args[1..]) {
         if (argument == "--baseline") {
             baseline = true;
+        } else if (argument == "--compress") {
+            compress = true;
         } else if (argument == "--compare") {
             compare = true;
         } else if (argument.starts_with(FROZEN_PERCENT_FLAG)) {
@@ -462,6 +497,7 @@ fn int main(String[] args) {
 
     ModelId model = gltf::load_model(&assets, example_path(CHARACTER))!!;
     ModelTemplate* template = &assets.model(model).data;
+    if (compress) compress_clips(&assets, template)!!;
     ClipId[CLIP_NAMES.len] clips;
     foreach (index, name : CLIP_NAMES) clips[index] = clip_named(&assets, template, name)!!;
 
