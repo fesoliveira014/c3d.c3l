@@ -70,6 +70,7 @@ fn void remove_blend_space_members(PlaybackView* playback, AnimationActionId[] m
 
 <*
  Validate group members and prepare their owned actions for a free space slot.
+ @param [&in] playback : "Unchanged; supplies slots, allocator and motion state."
  @param [&in] assets : "Clips remain live throughout playback."
  @param prepared : "Receives one action per clip; released again on faults."
  @return "Free space slot shared by both group kinds."
