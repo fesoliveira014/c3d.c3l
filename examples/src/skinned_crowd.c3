@@ -32,6 +32,7 @@ const uint  SCENE_NODES @local = 40000; // the Animator baseline instantiates ev
 const float REPORT_SECONDS @local = 2;
 const float FROZEN_SHARE_DEFAULT @local = 0.5f; // every other instance
 const uint  PALETTE_ENTRY_BYTES @local = 64; // one 4x4 float matrix per joint
+const String FROZEN_PERCENT_FLAG @local = "--frozen-percent=";
 const Vec3  CAMERA_POSITION @local = { 0, 14, 30 };
 const Vec3  CAMERA_TARGET @local = { 0, 0, 0 };
 const Vec2  PANEL_POSITION @local = { 16, 16 };
@@ -430,8 +431,12 @@ fn int main(String[] args) {
             baseline = true;
         } else if (argument == "--compare") {
             compare = true;
-        } else if (argument.starts_with("--frozen-percent=")) {
-            uint percent = argument[17..].to_uint() ?? 101;
+        } else if (argument.starts_with(FROZEN_PERCENT_FLAG)) {
+            uint? percent = argument[FROZEN_PERCENT_FLAG.len..].to_uint();
+            if (catch excuse = percent) {
+                io::eprintfn("Frozen percent must be 0 to 100: %s", argument);
+                return 1;
+            }
             if (percent > 100) {
                 io::eprintfn("Frozen percent must be 0 to 100: %s", argument);
                 return 1;

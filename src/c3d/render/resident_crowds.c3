@@ -173,6 +173,7 @@ fn void? allocate_resident_stream(
     stream.uploaded = {};
     stream.committed = 0;
     stream.stride = 0;
+
     defer catch {
         foreach (&allocation : stream.allocations) {
             if (allocation.is_valid()) (void)gpu::free_allocation(&renderer.device, allocation);
