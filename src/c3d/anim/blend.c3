@@ -17,14 +17,9 @@ fn void blend_pose(
     LeadStep lead = LeadStep.NONE,
 ) @private {
     Transform[] result = destination.pose;
-    ChannelSums[] sums = scratch.channels;
     float[][] morph_result = destination.morph_weights;
-    float[][] morph_sums = scratch.morph_sums;
-    float[] morph_weights = scratch.morph_weights;
-    double[<3>][] scale_values = consumed_chain ? consumed_chain.pose_scale_sums : (double[<3>][]){};
 
-    result[..] = destination.base_pose[..];
-    foreach (index, base : destination.base_morph_weights) morph_result[index][..] = base[..];
+    load_base_pose(destination);
 
     bool[MAX_ANIMATION_LAYERS] active;
     foreach (id : playback.order[:*playback.action_count]) {
@@ -36,10 +31,7 @@ fn void blend_pose(
 
     foreach (layer, used : active) {
         if (!used) continue;
-        sums[..] = (ChannelSums){};
-        if (consumed_chain) scale_values[..] = (double[<3>]){};
-        morph_weights[..] = 0;
-        foreach (values : morph_sums) values[..] = 0;
+        begin_layer(scratch, consumed_chain);
 
         foreach (id : playback.order[:*playback.action_count]) {
             Action* action = playback.actions.get(id);
@@ -84,51 +76,19 @@ fn void blend_pose(
                 }
                 pin_root_sample(action, (uint)track_index, sample);
 
-                switch (track.path) {
-                    case TRANSLATION:
-                        sums[node].translation += (Vec3){ sample[0], sample[1], sample[2] } * weight;
-                        sums[node].translation_weight += weight;
-                    case ROTATION:
-                        Vec4 rotation = { sample[0], sample[1], sample[2], sample[3] };
-                        if (rotation.dot(result[node].rotation.v) < 0) rotation = -rotation;
-                        sums[node].rotation += rotation * weight;
-                        sums[node].rotation_weight += weight;
-                    case SCALE:
-                        if (consumed_chain) {
-                            scale_values[node] +=
-                              (double[<3>]){ sample[0], sample[1], sample[2] } * (double)weight;
-                        } else {
-                            sums[node].scale += (Vec3){ sample[0], sample[1], sample[2] } * weight;
-                        }
-                        sums[node].scale_weight += weight;
-                    case MORPH_WEIGHTS:
-                        usz mesh = destination.mesh_indices[node];
-                        foreach (index, value : sample) morph_sums[mesh][index] += value * weight;
-                        morph_weights[mesh] += weight;
-                }
+                accumulate_sample(
+                    track: track,
+                    node: node,
+                    sample: sample,
+                    weight: weight,
+                    destination: destination,
+                    scratch: scratch,
+                    consumed_chain: consumed_chain,
+                );
             }
         }
 
-        foreach (index, &pose : result) {
-            ChannelSums* sum = &sums[index];
-            pose.position = blend_vec3(sum.translation, sum.translation_weight, pose.position);
-            pose.rotation = { .v = (sum.rotation + pose.rotation.v * residual(sum.rotation_weight)).normalize() };
-            if (consumed_chain) {
-                double[<3>] scale = { pose.scale.x, pose.scale.y, pose.scale.z };
-                scale = (scale_values[index] + scale * (double)residual(sum.scale_weight))
-                  / (double)math::max(1.0f, sum.scale_weight);
-                pose.scale = inertial_publish_vector(scale);
-            } else {
-                pose.scale = blend_vec3(sum.scale, sum.scale_weight, pose.scale);
-            }
-        }
-
-        foreach (index, values : morph_result) {
-            float total = morph_weights[index];
-            foreach (weight_index, &value : values) {
-                *value = (morph_sums[index][weight_index] + *value * residual(total)) / math::max(1.0f, total);
-            }
-        }
+        resolve_layer(destination, scratch, consumed_chain);
 
         foreach (id : playback.order[:*playback.action_count]) {
             Action* action = playback.actions.get(id);
@@ -212,6 +172,135 @@ fn void blend_pose(
                         }
                 }
             }
+        }
+    }
+}
+
+<*
+ Sample one clip at a time into the destination pose and morph weights.
+ Never advances playback; reads the store and writes only the cursors, scratch and destination.
+ @param [&in] assets : "Owns the clip."
+ @param time : "Seconds; clamped to each track's key range."
+ @param [inout] cursors : "Seek hints, one per track; any value is valid."
+ @param [&inout] scratch : "Reused accumulators sized for the destination."
+ @require assets.clips.is_live(clip), cursors.len >= assets.clip(clip).data.tracks.len
+ @require destination.pose.len == destination.base_pose.len
+ @require destination.present.len == destination.base_pose.len
+ @require destination.mesh_present.len == destination.base_pose.len
+ @require destination.mesh_indices.len == destination.base_pose.len
+ @require destination.morph_weights.len == destination.base_morph_weights.len
+ @require scratch.channels.len == destination.pose.len
+ @require scratch.morph_sums.len == destination.base_morph_weights.len
+ @require scratch.morph_weights.len == destination.base_morph_weights.len
+*>
+fn void sample_pose(
+    AssetStore* assets,
+    ClipId clip,
+    float time,
+    uint[] cursors,
+    PoseScratch* scratch,
+    PoseDestination destination,
+) {
+    AnimationClip* data = &assets.clip(clip).data;
+
+    load_base_pose(destination);
+    begin_layer(*scratch, null);
+
+    foreach (track_index, &track : data.tracks) {
+        uint node = data.targets[track.target];
+        if (!destination.present[node]) continue;
+        if (track.path == TargetPath.MORPH_WEIGHTS && !destination.mesh_present[node]) continue;
+
+        float[] sample = scratch.sample[:track.stride()];
+        sample_track(
+            track: track,
+            time: time,
+            cursor: &cursors[track_index],
+            out: sample,
+        );
+        accumulate_sample(
+            track: track,
+            node: node,
+            sample: sample,
+            weight: 1,
+            destination: destination,
+            scratch: *scratch,
+            consumed_chain: null,
+        );
+    }
+
+    resolve_layer(destination, *scratch, null);
+}
+
+fn void load_base_pose(PoseDestination destination) @local {
+    destination.pose[..] = destination.base_pose[..];
+    foreach (index, base : destination.base_morph_weights) destination.morph_weights[index][..] = base[..];
+}
+
+fn void begin_layer(PoseScratch scratch, CapturedMotionChain* consumed_chain) @local {
+    scratch.channels[..] = (ChannelSums){};
+    if (consumed_chain) consumed_chain.pose_scale_sums[..] = (double[<3>]){};
+    scratch.morph_weights[..] = 0;
+    foreach (values : scratch.morph_sums) values[..] = 0;
+}
+
+fn void accumulate_sample(
+    Track* track,
+    uint node,
+    float[] sample,
+    float weight,
+    PoseDestination destination,
+    PoseScratch scratch,
+    CapturedMotionChain* consumed_chain,
+) @local {
+    ChannelSums[] sums = scratch.channels;
+
+    switch (track.path) {
+        case TRANSLATION:
+            sums[node].translation += (Vec3){ sample[0], sample[1], sample[2] } * weight;
+            sums[node].translation_weight += weight;
+        case ROTATION:
+            Vec4 rotation = { sample[0], sample[1], sample[2], sample[3] };
+            if (rotation.dot(destination.pose[node].rotation.v) < 0) rotation = -rotation;
+            sums[node].rotation += rotation * weight;
+            sums[node].rotation_weight += weight;
+        case SCALE:
+            if (consumed_chain) {
+                consumed_chain.pose_scale_sums[node] +=
+                  (double[<3>]){ sample[0], sample[1], sample[2] } * (double)weight;
+            } else {
+                sums[node].scale += (Vec3){ sample[0], sample[1], sample[2] } * weight;
+            }
+            sums[node].scale_weight += weight;
+        case MORPH_WEIGHTS:
+            usz mesh = destination.mesh_indices[node];
+            foreach (index, value : sample) scratch.morph_sums[mesh][index] += value * weight;
+            scratch.morph_weights[mesh] += weight;
+    }
+}
+
+fn void resolve_layer(PoseDestination destination, PoseScratch scratch, CapturedMotionChain* consumed_chain) @local {
+    ChannelSums[] sums = scratch.channels;
+    double[<3>][] scale_values = consumed_chain ? consumed_chain.pose_scale_sums : (double[<3>][]){};
+
+    foreach (index, &pose : destination.pose) {
+        ChannelSums* sum = &sums[index];
+        pose.position = blend_vec3(sum.translation, sum.translation_weight, pose.position);
+        pose.rotation = { .v = (sum.rotation + pose.rotation.v * residual(sum.rotation_weight)).normalize() };
+        if (consumed_chain) {
+            double[<3>] scale = { pose.scale.x, pose.scale.y, pose.scale.z };
+            scale = (scale_values[index] + scale * (double)residual(sum.scale_weight))
+              / (double)math::max(1.0f, sum.scale_weight);
+            pose.scale = inertial_publish_vector(scale);
+        } else {
+            pose.scale = blend_vec3(sum.scale, sum.scale_weight, pose.scale);
+        }
+    }
+
+    foreach (index, values : destination.morph_weights) {
+        float total = scratch.morph_weights[index];
+        foreach (weight_index, &value : values) {
+            *value = (scratch.morph_sums[index][weight_index] + *value * residual(total)) / math::max(1.0f, total);
         }
     }
 }

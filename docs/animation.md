@@ -747,6 +747,15 @@ short path and using slerp when the keys are more than 0.1 rad apart;
 `CUBIC_SPLINE` evaluates the glTF Hermite form with tangents scaled by the
 segment duration.
 
+`sample_pose(&assets, clip, time, cursors, &scratch, destination)` samples one clip
+at one time with no playback. The pose starts from the destination's base pose,
+every present track contributes at full weight, and `time` clamps to each
+track's key range. It reads the store and writes only the caller's cursors,
+scratch and destination, through the same track sampling and blending as an
+action of weight 1, so its pose equals that of a single unmasked regular action
+that keeps its root motion in the pose, at that time, bit for bit. Cursors are hints: any value is valid, and keeping the
+array between calls only speeds forward sweeps.
+
 ## What deforms
 
 The animation update writes node transforms and morph weights; the renderer
