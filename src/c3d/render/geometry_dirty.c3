@@ -2,7 +2,6 @@ module c3d::render;
 
 import c3d::asset;
 import c3d::geometry;
-import c3d::maths;
 import gpu;
 import std::math;
 
