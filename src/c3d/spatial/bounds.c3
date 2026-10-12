@@ -94,6 +94,7 @@ fn Aabb kept_instance_bounds(AssetStore* assets, InstancedMesh* batch) @local {
     InstanceSpan span = same_geometry ? batch.ranges.span_since(aggregate.bounds_revision) : (InstanceSpan){};
     uint edited = aggregate.bounds_edited + span.end - span.first;
     bool grow = span.end > span.first && edited < batch.count;
+
     Aabb local = record.data.bounds;
     if (!grow) {
         aggregate.bounds = maths::aabb_transform(local, batch.transforms[0].to_mat4());
@@ -102,6 +103,7 @@ fn Aabb kept_instance_bounds(AssetStore* assets, InstancedMesh* batch) @local {
     foreach (transform : batch.transforms[span.first:span.end - span.first]) {
         aggregate.bounds = maths::aabb_merge(aggregate.bounds, maths::aabb_transform(local, transform.to_mat4()));
     }
+
     aggregate.bounds_edited = grow ? edited : 0;
     aggregate.geometry = batch.geometry;
     aggregate.geometry_revision = record.header.revision;
