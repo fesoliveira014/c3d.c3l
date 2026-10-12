@@ -232,17 +232,22 @@ view preparation beyond the renderer's instance absence grace period lose their
 history. Per-frame selection and history processing visit active groups, while
 the persistent CPU history array remains indexed by entity slot.
 
-Animated deformation history is kept per source owner: the submitted palette,
-the source affine of each rigid logical mesh and the logical morph weights of
-every live source. Each representation rebuilds its previous pose from that
-state with its own local transform and channel mapping. A representation whose
-geometry, local transform, binding and channel mapping match one the view
-submitted last frame, including identical aliases in different levels, keeps
-correspondence. An incompatible level, topology, channel, binding, incarnation
-or crowd replacement uses current-pose fallback and rejection; ordinary pose
-changes alone do not reject correspondence. Skipped/aborted views do not publish
-new observations. Update animation, morphs and world transforms
-before preparing any view, depth, shadow, velocity or trace pass of the frame.
+Animated deformation history is kept per source owner. An ordinary group keeps
+its submitted palette and the logical morph weights of its source; a crowd
+group's previous palettes and morph blocks are the previous resident buffers
+([crowds](instancing.md#crowds)). Every group keeps the source affine of each
+rigid logical mesh for every live source. Each representation rebuilds its
+previous pose from that state with its own local transform and channel mapping.
+A representation whose geometry, local transform, binding and channel mapping
+match one the view submitted last frame, including identical aliases in
+different levels, keeps correspondence. An incompatible level, topology,
+channel, binding, incarnation or crowd replacement uses current-pose fallback
+and rejection; ordinary pose changes alone do not reject correspondence.
+Skipped/aborted views do not publish new observations. A crowd group's
+deformation history exists only for a view that rendered in the previous
+submitted frame: after a skipped frame the group draws with rejected history for
+that view. Update animation, morphs and world transforms before preparing any
+view, depth, shadow, velocity or trace pass of the frame.
 
 ## GPU drawing
 
@@ -275,16 +280,20 @@ retirement protects submissions. Previous matrices are written by classification
 without separate per-view uploads.
 
 Animated binding metadata adds copied part records, channel maps/defaults and
-one ordered joint list per group. Current palette upload is
-`live_sources * joints * 64` bytes once per group per renderer frame, reused across
-parts, levels, views and traced preparation in that frame. Ordinary groups have
-one source; crowd groups have one per live placement. This is shared palette data,
-not a palette per skin or selected level. Morph blocks and rigid affine data are
-per representation/source as needed. Temporal views additionally retain, per
-owner, `capacity * (joints + rigid_meshes) * 64` bytes of palette and rigid
-affines plus four bytes per logical morph weight and placement, independent of
-the level count; the 160-byte placement and paired 80-byte selection rows above
-exclude that storage.
+one ordered joint list per group. An ordinary group uploads its palette,
+`joints * 64` bytes, once per renderer frame, reused across parts, levels, views
+and traced preparation in that frame. A crowd group reads its owner's resident
+palettes and morph blocks ([crowds](instancing.md#crowds)): nothing uploads for an
+instance whose pose is unchanged, and no second copy exists for the selected
+levels. This is shared palette data, not a palette per skin or selected level.
+Rigid affine data is per representation/source as needed, and each animated
+part that draws with morph weights holds its own resident morph blocks.
+Temporal views additionally retain, per owner, `capacity * rigid_meshes * 64`
+bytes of rigid affines, independent of the level count. An ordinary group also
+retains `joints * 64` bytes of palette and four bytes per logical morph weight; a
+crowd group's previous palettes and morph blocks are the previous resident
+buffers. The 160-byte placement and paired 80-byte selection rows above exclude
+that storage.
 Crowd playback storage follows the [crowd byte formula](instancing.md#crowds).
 
 The existing cull arena preflights nonempty parities for every level across the
