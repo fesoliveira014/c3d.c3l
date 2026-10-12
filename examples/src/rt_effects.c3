@@ -320,6 +320,7 @@ fn int main(String[] args) {
     bool software;
     bool forward;
     bool reflections = true;
+    float pre_exposure;
     uint benchmark_frames;
     for (usz index = 1; index < args.len; index++) {
         if (args[index] == "--software") {
@@ -328,6 +329,9 @@ fn int main(String[] args) {
             forward = true;
         } else if (args[index] == "--no-reflections") {
             reflections = false;
+        } else if (args[index] == "--pre-exposure" && index + 1 < args.len) {
+            index++;
+            pre_exposure = args[index] == "off" ? 1 : args[index].to_float() ?? -1;
         } else if (args[index] == "--gpu-timings") {
             $if $feat(C3D_PROFILE_GPU):
                 gpu_timings = true;
@@ -401,6 +405,7 @@ fn int main(String[] args) {
     ViewDesc view_desc = renderer.views.get(renderer.default_view).desc;
     view_desc.shading = forward ? ShadingPath.FORWARD : ShadingPath.DEFERRED;
     view_desc.post.anti_aliasing = AntiAliasing.TAA;
+    view_desc.pre_exposure_override = pre_exposure;
     view_desc.ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
     view_desc.ambient_occlusion.kind = AoKind.RAY_TRACED;
     view_desc.ray_tracing = {
@@ -408,7 +413,10 @@ fn int main(String[] args) {
         .reflections              = reflections,
         .max_reflection_roughness = render::RT_REFLECTION_ROUGHNESS_DEFAULT,
     };
-    render::configure_view(&renderer, renderer.default_view, view_desc)!!;
+    if (catch excuse = render::configure_view(&renderer, renderer.default_view, view_desc)) {
+        io::eprintfn("View configuration rejected (%s); --pre-exposure takes off or a factor from 2^-16 to 2^16", excuse);
+        return 1;
+    }
     renderer.prepare_scene(&scene)!!;
 
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, &renderer, &window)!!;

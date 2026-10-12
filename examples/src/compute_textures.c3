@@ -177,8 +177,9 @@ fn void? draw_frame(
             uint[<2>] extent = renderer.view_extent(view)!;
             Camera* camera = scene.get(camera_node, Camera);
             CameraMatrices matrices = camera::derive_matrices(*camera, camera_node.world, { (float)extent.x, (float)extent.y });
+            float pre_exposure = renderer.view_stats(view)!.pre_exposure;
             FogRoot fog_root = {
-                .color        = FOG_COLOR,
+                .color        = FOG_COLOR * (Vec4){ pre_exposure, pre_exposure, pre_exposure, 1 },
                 .proj_22      = matrices.proj.m22,
                 .proj_23      = matrices.proj.m23,
                 .orthographic = camera.projection == Projection.ORTHOGRAPHIC ? 1 : 0,
