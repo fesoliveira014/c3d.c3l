@@ -7,7 +7,7 @@ import gpu;
 import std::math;
 
 $assert FogPassRoot::size == 32;
-$assert FogVolumeRoot::size == 144;
+$assert FogVolumeRoot::size == 128;
 
 const uint FOG_VOLUME_SLOTS @private = 2; // a temporal view ping-pongs the pair; any other view uses slot 0
 const uint FOG_TEMPORAL_SAMPLES @private = 16; // jitter cycle; the history spans about ten frames, so more only repeats
@@ -177,6 +177,12 @@ fn void? acquire_fog_volume(Renderer* renderer, ViewRecord* record) @private {
     }
 }
 
+fn gpu::PipelineHandle* fog_scattering_pipeline(Renderer* renderer, bool traced, bool temporal) @local {
+    SkyPipelines* pipelines = &renderer.sky_pipelines;
+    if (temporal) return traced ? &pipelines.fog_scattering_temporal_traced : &pipelines.fog_scattering_temporal;
+    return traced ? &pipelines.fog_scattering_traced : &pipelines.fog_scattering;
+}
+
 fn Target* fog_integrated_volume(ViewRecord* record) @private {
     return &record.fog_volumes[record.desc.fog_temporal ? record.fog_history.slot : 0];
 }
@@ -233,14 +239,14 @@ fn void? record_fog_volume(
     FogFrame* current,
 ) @private {
     bool traced = record.desc.ray_tracing.shadows;
-    gpu::PipelineHandle* scattering_pipeline = traced
-      ? &renderer.sky_pipelines.fog_scattering_traced : &renderer.sky_pipelines.fog_scattering;
+    bool temporal = record.desc.fog_temporal;
+    gpu::PipelineHandle* scattering_pipeline = fog_scattering_pipeline(renderer, traced, temporal);
     acquire_compute_pipeline(
         renderer:   renderer,
         pipeline:   scattering_pipeline,
         shader:     FOG_SCATTERING,
         debug_name: "sky",
-        flags:      rt_shadow_flags(renderer, traced),
+        flags:      rt_shadow_flags(renderer, traced) | (temporal ? shader::SHADER_FLAG_TEMPORAL : 0),
     )!;
     acquire_sky_pipeline(renderer, &renderer.sky_pipelines.fog_integration, FOG_INTEGRATION)!;
     if (atlas_shadows) {
@@ -251,8 +257,6 @@ fn void? record_fog_volume(
             next:     gpu::sampled_at({ .compute, .fragment_shader }),
         )!;
     }
-    bool temporal = record.desc.fog_temporal;
-    uint slice_chunk = temporal ? shader::FOG_SCATTERING_CHUNK : 1;
     FogHistory* history = &record.fog_history;
     Target* integrated = fog_integrated_volume(record);
     Target* scattering = temporal ? &record.fog_volumes[history.slot ^ 1] : integrated;
@@ -272,10 +276,8 @@ fn void? record_fog_volume(
         .height                   = scattering.height,
         .sun_light                = sun_light,
         .slices                   = scattering.depth,
-        .flags                    = (temporal ? shader::FOG_VOLUME_JITTER : 0)
-          | (reproject ? shader::FOG_VOLUME_HISTORY : 0),
+        .flags                    = reproject ? shader::FOG_VOLUME_HISTORY : 0,
         .jitter                   = temporal ? maths::halton(history.sample + 1, 2) : 0,
-        .slice_chunk              = slice_chunk,
         .pre_exposure_ratio       = pre_exposure_ratio,
     };
     if (temporal) history.record(current);
@@ -286,7 +288,8 @@ fn void? record_fog_volume(
         uint columns = (scattering.width + shader::POST_GROUP_SIZE - 1) / shader::POST_GROUP_SIZE;
         uint rows = (scattering.height + shader::POST_GROUP_SIZE - 1) / shader::POST_GROUP_SIZE;
         gpu::cmd_bind_pipeline(&renderer.commands, *scattering_pipeline)!;
-        gpu::cmd_dispatch(&renderer.commands, root.address, { columns, rows, scattering.depth / slice_chunk })!;
+        uint slice_groups = temporal ? scattering.depth / shader::FOG_SCATTERING_CHUNK : scattering.depth;
+        gpu::cmd_dispatch(&renderer.commands, root.address, { columns, rows, slice_groups })!;
     }!;
     @profile_pass(renderer, Pass.FOG_INTEGRATION) {
         scattering.transition(&renderer.commands, gpu::storage_at({ .compute }, { .read, .write }))!;

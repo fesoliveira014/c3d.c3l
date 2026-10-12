@@ -1084,8 +1084,7 @@ root FogPassRoot {
 // Most slices a view's fog volume holds; the view's quality chooses its own count up to it.
 const uint FOG_VOLUME_MAX_SLICES = 128;
 
-const uint FOG_VOLUME_JITTER = 1;
-const uint FOG_VOLUME_HISTORY = 2;
+const uint FOG_VOLUME_HISTORY = 1;
 const float FOG_HISTORY_WEIGHT = 0.9; // Memory of about ten frames; higher smooths longer and trails longer.
 const uint FOG_SCATTERING_CHUNK = 8; // Slices one temporal thread injects; the clamp reads one past each end, so 1.25x the samples, fewer threads if raised.
 
@@ -1102,11 +1101,7 @@ root FogVolumeRoot {
     uint         slices;
     uint         flags;
     float        jitter;
-    uint         slice_chunk;
     float        pre_exposure_ratio;
-    uint         _pad0;
-    uint         _pad1;
-    uint         _pad2;
 }
 
 const uint CLOUD_NOISE_SIZE = 128; // 8 MiB of RGBA8 shared by every deck; 64 repeats visibly, 256 costs 64 MiB

@@ -1,5 +1,5 @@
 {
-  "flags": ["DEPTH_ONLY", "SKINNED", "SKINNED_U16", "MORPH", "VELOCITY", "VERTEX_COLOR", "INSTANCED", "RT_SHADOWS", "SCENE_TRACE_BVH", "WEIGHTED_BLEND", "REFLECTION_PREPASS", "POSED_INSTANCED"],
+  "flags": ["DEPTH_ONLY", "SKINNED", "SKINNED_U16", "MORPH", "VELOCITY", "VERTEX_COLOR", "INSTANCED", "RT_SHADOWS", "SCENE_TRACE_BVH", "WEIGHTED_BLEND", "REFLECTION_PREPASS", "POSED_INSTANCED", "TEMPORAL"],
   "entries": [
     { "shader": "fullscreen", "source": "fullscreen.vert.glsl", "stage": "vert", "defines": [] },
     { "shader": "gradient", "source": "gradient.frag.glsl", "stage": "frag", "defines": [] },
@@ -63,6 +63,9 @@
     { "shader": "fog_scattering", "source": "fog_scattering.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "fog_scattering", "source": "fog_scattering.comp.glsl", "stage": "comp", "defines": ["RT_SHADOWS"] },
     { "shader": "fog_scattering", "source": "fog_scattering.comp.glsl", "stage": "comp", "defines": ["RT_SHADOWS", "SCENE_TRACE_BVH"] },
+    { "shader": "fog_scattering", "source": "fog_scattering.comp.glsl", "stage": "comp", "defines": ["TEMPORAL"] },
+    { "shader": "fog_scattering", "source": "fog_scattering.comp.glsl", "stage": "comp", "defines": ["TEMPORAL", "RT_SHADOWS"] },
+    { "shader": "fog_scattering", "source": "fog_scattering.comp.glsl", "stage": "comp", "defines": ["TEMPORAL", "RT_SHADOWS", "SCENE_TRACE_BVH"] },
     { "shader": "fog_integration", "source": "fog_integration.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "cloud_noise", "source": "cloud_noise.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "clouds", "source": "clouds.comp.glsl", "stage": "comp", "defines": [] },

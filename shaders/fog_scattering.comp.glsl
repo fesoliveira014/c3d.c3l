@@ -47,6 +47,7 @@ vec3 additional_light_scattering(
     return sky.fog_albedo_density.rgb * scattered;
 }
 
+#ifdef TEMPORAL
 // The previous frame's in-scatter at a world position, in this frame's exposure; w is 0 outside the previous volume.
 vec4 fog_history(FogVolumeRoot root, SkyFogGpu sky, vec3 position) {
     vec4 clip = root.previous_view_proj * vec4(position, 1.0);
@@ -67,7 +68,7 @@ vec3 slice_inscatter(
     FogVolumeRoot root,
     FrameRoot frame,
     SkyFogGpu sky,
-    bool temporal,
+    bool jittered,
     vec3 origin,
     vec3 direction,
     uint slice,
@@ -78,7 +79,7 @@ vec3 slice_inscatter(
     float start = clamp(fog_clip_start(frame, origin, direction), near, far);
     optical_depth = height_fog_optical_depth(sky, origin + direction * start, direction, far - start);
 
-    float sample_distance = temporal ? mix(start, far, root.jitter) : 0.5 * (start + far);
+    float sample_distance = jittered ? mix(start, far, root.jitter) : 0.5 * (start + far);
     vec3 position = origin + direction * sample_distance;
     float view_depth = -(frame.view * vec4(position, 1.0)).z;
     vec3 radiance = fog_ambient_color(frame, sky, direction);
@@ -102,27 +103,27 @@ void main() {
     FrameRoot frame = FrameRoot(root.frame);
     SkyFogGpu sky = SkyFogGpu(frame.sky_fog);
     // An orthographic view has no camera position to measure the previous distance from.
-    bool temporal = (root.flags & FOG_VOLUME_JITTER) != 0u && frame.proj[3][3] == 0.0;
-    bool reproject = temporal && (root.flags & FOG_VOLUME_HISTORY) != 0u;
+    bool jittered = frame.proj[3][3] == 0.0;
+    bool reproject = jittered && (root.flags & FOG_VOLUME_HISTORY) != 0u;
     vec2 uv = (vec2(column) + 0.5) / vec2(root.width, root.height);
     vec3 origin;
     vec3 direction;
     fog_pixel_ray(frame, uv, origin, direction);
 
-    uint first = gl_GlobalInvocationID.z * root.slice_chunk;
-    uint end = first + root.slice_chunk;
+    uint first = gl_GlobalInvocationID.z * FOG_SCATTERING_CHUNK;
+    uint end = first + FOG_SCATTERING_CHUNK;
     float optical_depth;
-    vec3 radiance = slice_inscatter(root, frame, sky, temporal, origin, direction, first, optical_depth);
+    vec3 radiance = slice_inscatter(root, frame, sky, jittered, origin, direction, first, optical_depth);
     vec3 below = radiance;
     if (reproject && first > 0u) {
         float unused;
-        below = slice_inscatter(root, frame, sky, temporal, origin, direction, first - 1u, unused);
+        below = slice_inscatter(root, frame, sky, jittered, origin, direction, first - 1u, unused);
     }
     for (uint slice = first; slice < end; slice++) {
         vec3 above = radiance;
         float above_depth = optical_depth;
         if (slice + 1u < end || (reproject && slice + 1u < root.slices)) {
-            above = slice_inscatter(root, frame, sky, temporal, origin, direction, slice + 1u, above_depth);
+            above = slice_inscatter(root, frame, sky, jittered, origin, direction, slice + 1u, above_depth);
         }
 
         vec3 scattered = radiance;
@@ -140,3 +141,35 @@ void main() {
         optical_depth = above_depth;
     }
 }
+#else
+// One froxel: the fog's optical depth over its slice and the light it scatters toward the camera per unit of it.
+void main() {
+    FogVolumeRoot root = FogVolumeRoot(pc.root_gpu);
+    uvec3 froxel = gl_GlobalInvocationID;
+    if (froxel.x >= root.width || froxel.y >= root.height) return;
+
+    FrameRoot frame = FrameRoot(root.frame);
+    SkyFogGpu sky = SkyFogGpu(frame.sky_fog);
+    vec2 uv = (vec2(froxel.xy) + 0.5) / vec2(root.width, root.height);
+    vec3 origin;
+    vec3 direction;
+    fog_pixel_ray(frame, uv, origin, direction);
+    float near = fog_slice_distance(sky, froxel.z);
+    float far = fog_slice_distance(sky, froxel.z + 1u);
+    float start = clamp(fog_clip_start(frame, origin, direction), near, far);
+    float optical_depth = height_fog_optical_depth(sky, origin + direction * start, direction, far - start);
+
+    vec3 position = origin + direction * (0.5 * (start + far));
+    float view_depth = -(frame.view * vec4(position, 1.0)).z;
+    vec3 radiance = fog_ambient_color(frame, sky, direction);
+    if (root.sun_light != 0u) {
+        LightGpu sun = LightArray(frame.lights).values[root.sun_light - 1u];
+        // A froxel has no surface: a zero normal keeps ShadowGpu.normal_bias out of the sample point.
+        float visibility = shadow_visibility(frame, sun, position, vec3(0.0), view_depth);
+        float phase = fog_phase(-dot(direction, sun.direction_cos_outer.xyz), sky.fog_anisotropy);
+        radiance += sky.fog_albedo_density.rgb * phase * sun.color_intensity.rgb * sun.color_intensity.w * visibility;
+    }
+    radiance += additional_light_scattering(frame, sky, root.sun_light, position, direction, view_depth);
+    store_storage_texture_3d(root.scattering, ivec3(froxel), vec4(radiance, optical_depth));
+}
+#endif
