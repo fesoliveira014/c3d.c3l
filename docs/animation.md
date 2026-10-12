@@ -838,10 +838,12 @@ on 0, 1 and 3 workers beside the unshared one.
 
 ### Compressed clips
 
-`assets.compress_clip(clip, tolerance)` quantizes a clip's key data once, at load or import time. `ClipTolerance`
+`assets.compress_clip(clip, tolerance)` drops keys and quantizes a clip's key data once, at load or import time. `ClipTolerance`
 holds the largest accepted deviation per path: `translation` in metres, `rotation` in radians, `scale` as a ratio
 and `weight` in weight units. Translation, scale and morph weight tracks store 16-bit codes per component over the
-track's own range; rotation tracks store smallest-three codes in 48 bits. Cubic spline tracks quantize their values
+track's own range; rotation tracks store smallest-three codes in 48 bits. Before that, linear and step tracks drop
+every key that the kept keys reproduce within half of the tolerance, which leaves the other half for quantization and
+makes the reported error sit near half the tolerance. Cubic spline tracks keep every key and quantize their values
 and tangents the same way and report an analytic per-segment bound; cubic rotations and empty tracks stay raw.
 Times are never quantized, and tracks of one clip whose time arrays are identical share one.
 
