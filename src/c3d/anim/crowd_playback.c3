@@ -370,12 +370,8 @@ fn Action? prepare_crowd_seed(
     return action;
 }
 
-<*
- Reset a slot while retaining its fixed pools and advancing identities.
- @param [&inout] state : "Every previous slot and action handle becomes stale."
- @require index < state.slots.len
-*>
-fn void reset_crowd_playback_slot(CrowdPlaybackState* state, uint index) {
+// Keeps the playback identity, so only reset_crowd_playback also expires render history.
+fn void reset_crowd_playback_slot(CrowdPlaybackState* state, uint index) @private {
     CrowdPlaybackSlot* slot = &state.slots[index];
     PlaybackView playback = crowd_playback_view(state, slot);
 
