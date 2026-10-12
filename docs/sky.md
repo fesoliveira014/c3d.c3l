@@ -279,8 +279,9 @@ combination) records nothing extra.
   `configure_view` with another `fog_quality` reallocates the volume as a resize does, and `FOG_SCATTERING` and
   `FOG_INTEGRATION` read the view's slice count
   from `SkyFogGpu.fog_slices` and `FogVolumeRoot.slices`; no more than `FOG_VOLUME_MAX_SLICES` (128) fit.
-- Two compute passes record after the sky tables and before the fog pass: `FOG_SCATTERING` (one thread per froxel)
-  and `FOG_INTEGRATION` (one thread per column, accumulating in-scatter and transmittance along the slices).
+- Two compute passes record after the sky tables and before the fog pass: `FOG_SCATTERING` (one thread per froxel,
+  or per chunk of a column's slices with `fog_temporal`) and `FOG_INTEGRATION` (one thread per column, accumulating
+  in-scatter and transmittance along the slices).
 - Volume then analytic: inside `max_distance` a pixel takes the volume's in-scatter and transmittance; past it the
   analytic fog continues from the volume's end, so the fog is continuous there. The in-scatter's slope changes at
   `max_distance`, where the sun's shadowing stops.
@@ -309,11 +310,11 @@ the slice's depth and over time. Optical depth is analytic and carries no histor
 - **Blend.** A froxel's in-scatter is mixed with `FOG_HISTORY_WEIGHT` (0.9) of its history, so the history
   remembers about ten frames. The history's colour is multiplied by `FrameRoot.pre_exposure_ratio` first, so an
   exposure change rescales it instead of rejecting it; optical depth is not radiance and is not scaled.
-- **Response.** The weight falls linearly with the relative difference between the mean of the current in-scatter
-  and the mean of the history, to zero at `FOG_HISTORY_TOLERANCE` (0.5). A shadow caster moving through a shaft
-  takes no history in the froxels where the light changes by more than that and fades over about ten frames where
-  it changes by less. A froxel across a hard shadow edge, whose jittered samples differ by more than the tolerance,
-  takes no history and flickers from frame to frame instead of settling.
+- **Clamp.** Before the blend, each channel of the history is clamped to the range of this frame's in-scatter at
+  the froxel and at the froxels just in front of and behind it in the same column. History that the current
+  depth neighbours no longer support, such as the shadow a moving caster left in a shaft, goes to their range at
+  once instead of fading, and a moving shadow edge lags by about the depth of a slice. The jitter spreads the
+  samples along depth, so a still shaft keeps its history inside the range and settles.
 - **Rejection.** The history of a view is dropped, and the next frame injects without it, when:
   - `reset_view_history` ran, the view was created or configured (a resize and a `fog_quality` change reallocate
     the volumes), the switch was turned on, or the scene changed;
@@ -333,7 +334,9 @@ the slice's depth and over time. Optical depth is analytic and carries no histor
   was not rendered, or rendered no fog, in a submitted frame starts again without history, and a second recording
   of the volume in one frame takes none. A mirror or clip-plane view keeps its own pair and history.
 - **Cost.** The memory is twice the volume's (see the grid above). `FOG_SCATTERING` adds a reprojection and one
-  trilinear read of the history volume per froxel, and the CPU hashes the volumetric lights once per frame.
+  trilinear read of the history volume per froxel. One thread injects a chunk of `FOG_SCATTERING_CHUNK` slices of
+  a column, so it also evaluates the slice just outside each end of the chunk for the clamp, and every quality's
+  slice count is a multiple of the chunk. The CPU hashes the volumetric lights once per frame.
   `FOG_INTEGRATION` is unchanged but for writing the other volume.
 
 ## Custom stages
@@ -426,8 +429,8 @@ sky example does under `--path-traced`.
 - Screen-space GI gathers unfogged radiance without blended draws on fogged views.
 - Memory: 418 KiB and two heap slots per raster view; about 0.6 MiB and 46 heap slots per atmosphere
   (0.85 MiB and 83 with sheen); four atmospheres at once.
-- Volumetric fog has no temporal reprojection or jitter, scatters only the sun, is unshadowed past the shadow
-  atlas, changes its in-scatter slope at `max_distance` and does not exist on path-traced views.
+- Volumetric fog without `fog_temporal` has no reprojection or jitter; it scatters only the sun, is unshadowed past
+  the shadow atlas, changes its in-scatter slope at `max_distance` and does not exist on path-traced views.
 - The analytic fog has no direct-sun phase term, so a view with volumetric fog and a view without it show
   different haze colours.
 - No clouds.
