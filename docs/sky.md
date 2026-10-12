@@ -343,8 +343,9 @@ the slice's depth and over time. Optical depth is analytic and carries no histor
 - **Cost.** The memory is twice the volume's (see the grid above). `FOG_SCATTERING` adds a reprojection and one
   trilinear read of the history volume per froxel. One thread injects a chunk of `FOG_SCATTERING_CHUNK` slices of
   a column, so it also evaluates the slice just outside each end of the chunk for the clamp, and every quality's
-  slice count is a multiple of the chunk. The lamps' term is evaluated twice per froxel. The CPU hashes the volumetric lights once per frame.
-  `FOG_INTEGRATION` is unchanged but for writing the other volume.
+  slice count is a multiple of the chunk. The lamps' term is evaluated twice per froxel. The CPU hashes the
+  volumetric lights once per frame. `FOG_INTEGRATION` is unchanged but for writing the other volume. A view without
+  the switch runs the plain inject, a separate shader variant with none of this.
 
 ## Clouds
 
