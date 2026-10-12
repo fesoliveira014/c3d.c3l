@@ -1060,6 +1060,10 @@ root SkyFogGpu {
     TextureIndex fog_volume;
     float        fog_anisotropy;
     uint         fog_slices;
+    float        sky_table_scale;
+    uint         _pad0;
+    uint         _pad1;
+    uint         _pad2;
 }
 
 root SkyTableRoot {
