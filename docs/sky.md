@@ -355,8 +355,12 @@ per-view passes, frame times, the refresh cost per stage, refreshes per minute a
 `sun_radiance`. Its gates: the time-lapse regenerates exactly `floor(sweep / period)` times, with
 `period = (floor(0.5° / step) + 1) · step`, and the noon segment regenerates nothing after its first
 frame. `--shading forward|deferred`, `--shadows atlas|traced`, `--ssgi`, `--path-traced`, `--reflections on|off`,
-`--fog on|off`, `--atmosphere on|off`, `--preset`, `--gpu-timings` and `--validation` select the
+`--fog on|off`, `--atmosphere on|off|dense|empty`, `--preset`, `--gpu-timings` and `--validation` select the
 configuration. See [benchmarking](benchmarking.md#sky-benchmark).
+
+`--atmosphere` takes `on` (`ATMOSPHERE_EARTH`), `off`, `dense` (Earth's air with a Rayleigh scattering of 0.5 per
+metre on every channel, opaque to the sun) and `empty` (Earth's air with no Rayleigh or Mie scattering). They are
+the limits of the [multiple-scattering table](#lighting-and-regeneration): a series ratio of 1 and no scattering.
 
 `--reflections on` needs `--shading deferred`. It gives the main view [traced reflections](reflections.md) and the
 ground a roughness under their threshold, so the boxes and spheres show in it; each reflected path takes the
