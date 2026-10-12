@@ -88,29 +88,25 @@ fn BlendLayoutSelection select_blend_layout(BlendLayoutView layout, Vec2 paramet
         }
     }
 
-    // A sliver's points lie within the tolerance of its neighbor, so exact containment is searched first.
-    foreach (double tolerance : { 0.0, BLEND_SPACE_BOUNDARY_TOLERANCE }) {
-        foreach (triangle : layout.triangles) {
-            Vec2 a = layout.points[triangle.indices[0]];
-            Vec2 b = layout.points[triangle.indices[1]];
-            Vec2 c = layout.points[triangle.indices[2]];
-            double denominator = blend_orientation(a, b, c);
-            double first = blend_orientation(b, c, parameter) / denominator;
-            double second = blend_orientation(c, a, parameter) / denominator;
-            double third = blend_orientation(a, b, parameter) / denominator;
-            if (first < -tolerance || second < -tolerance || third < -tolerance) continue;
+    // A sliver's points lie within the barycentric tolerance of its neighbor, so containment is exact first
+    // and roundoff outside every triangle only goes to the nearest one.
+    BlendTriangleIndices nearest = layout.triangles[0];
+    double nearest_distance = -double::max;
 
-            first = math::max(first, 0.0);
-            second = math::max(second, 0.0);
-            third = math::max(third, 0.0);
-            double sum = first + second + third;
+    foreach (triangle : layout.triangles) {
+        double distance = blend_edge_distance(layout.points, triangle, parameter);
+        if (distance >= 0) return blend_triangle_selection(layout.points, triangle, parameter);
 
-            return {
-                .indices = triangle.indices,
-                .weights = { (float)(first / sum), (float)(second / sum), (float)(third / sum) },
-                .count = 3,
-            };
+        if (distance > nearest_distance) {
+            nearest = triangle;
+            nearest_distance = distance;
         }
+    }
+
+    double[3] barycentric = blend_barycentric(layout.points, nearest, parameter);
+    if (barycentric[0] >= -BLEND_SPACE_BOUNDARY_TOLERANCE && barycentric[1] >= -BLEND_SPACE_BOUNDARY_TOLERANCE
+      && barycentric[2] >= -BLEND_SPACE_BOUNDARY_TOLERANCE) {
+        return blend_triangle_selection(layout.points, nearest, parameter);
     }
 
     double[MAX_ACTIONS] distances;
@@ -144,6 +140,52 @@ fn BlendLayoutSelection select_blend_layout(BlendLayoutView layout, Vec2 paramet
     }
 
     unreachable();
+}
+
+fn double[3] blend_barycentric(Vec2[] points, BlendTriangleIndices triangle, Vec2 parameter) @private {
+    Vec2 a = points[triangle.indices[0]];
+    Vec2 b = points[triangle.indices[1]];
+    Vec2 c = points[triangle.indices[2]];
+    double denominator = blend_orientation(a, b, c);
+
+    return {
+        blend_orientation(b, c, parameter) / denominator,
+        blend_orientation(c, a, parameter) / denominator,
+        blend_orientation(a, b, parameter) / denominator,
+    };
+}
+
+fn BlendLayoutSelection blend_triangle_selection(
+    Vec2[] points,
+    BlendTriangleIndices triangle,
+    Vec2 parameter,
+) @private {
+    double[3] barycentric = blend_barycentric(points, triangle, parameter);
+    foreach (&weight : barycentric) *weight = math::max(*weight, 0.0);
+    double sum = barycentric[0] + barycentric[1] + barycentric[2];
+
+    return {
+        .indices = triangle.indices,
+        .weights = { (float)(barycentric[0] / sum), (float)(barycentric[1] / sum), (float)(barycentric[2] / sum) },
+        .count = 3,
+    };
+}
+
+// Signed distance to the nearest edge line of the triangle; positive inside.
+fn double blend_edge_distance(Vec2[] points, BlendTriangleIndices triangle, Vec2 parameter) @private {
+    Vec2 a = points[triangle.indices[0]];
+    double winding = blend_orientation(a, points[triangle.indices[1]], points[triangle.indices[2]]) > 0 ? 1 : -1;
+    double distance = double::max;
+
+    for (uint edge = 0; edge < 3; edge++) {
+        Vec2 from = points[triangle.indices[edge]];
+        Vec2 to = points[triangle.indices[(edge + 1) % 3]];
+        double dx = (double)to.x - from.x;
+        double dy = (double)to.y - from.y;
+        distance = math::min(distance, winding * blend_orientation(from, to, parameter) / math::sqrt(dx * dx + dy * dy));
+    }
+
+    return distance;
 }
 
 fn double blend_orientation(Vec2 a, Vec2 b, Vec2 c) @private {

@@ -211,6 +211,7 @@ fn void test_animation_authoring_blend_layout_sliver_contains_its_points_before_
     layout.triangles[1] = { .indices = { 0, 3, 1 } };
     layout_prepare(&layout);
     layout_expect(&layout, { 0.5f, -0.5e-9f }, { .count = 3, .weights = { 0.25, 0.25, 0, 0.5 } });
+    layout_expect(&layout, { 0.5f, -1.01e-9f }, { .count = 2, .weights = { 0, 0, 0, 1 } });
 }
 
 fn void test_animation_authoring_blend_layout_capacity_and_compact_storage() @test {

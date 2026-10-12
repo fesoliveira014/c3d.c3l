@@ -609,12 +609,11 @@ slots/actions or failed allocation return `CAPACITY_EXCEEDED`; dead IDs return
 
 An exact coordinate selects that authored sample. Otherwise the first authored
 triangle that contains the parameter supplies up to three nonnegative
-barycentric weights. When no triangle contains it, the first triangle whose
-barycentric roundoff stays within `1e-7` supplies its weights, clamped to zero
-and normalized. Outside the
-hull, the parameter projects onto the nearest boundary segment. Distance ties
-within `1e-12 * S*S` choose the earliest authored triangle-edge occurrence.
-Selection does not depend on the previous parameter.
+barycentric weights. When no triangle contains it, the nearest triangle by
+edge distance supplies its weights, clamped to zero and normalized, if its
+barycentric roundoff stays within `1e-7`. Otherwise the parameter projects onto
+the nearest boundary segment of the hull. Selection does not depend on the
+previous parameter.
 
 Selected weights sum to `space.weight`; the selected durations advance the same
 normalized phase law as 1D. All members retain their shared clocks and event
