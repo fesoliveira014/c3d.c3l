@@ -386,8 +386,9 @@ sky example does under `--path-traced`.
   froxel volume and no aerial perspective table; a miss takes the height fog alone.
 - Opaque stages cannot opt out of the fog pass.
 - Path-traced views are unfogged; a sky change does not restart their accumulation.
-- The sky-view and aerial-perspective tables are not pre-exposed: below about intensity × 10⁻⁵ their `RGBA16F`
-  subnormal steps bound the sky's precision.
+- Twilight bands below about intensity × 10⁻⁵, near −4° of sun elevation: a view's sky-view and aerial-perspective
+  tables hold physical `RGBA16F` luminance per unit sun illuminance, which bounds the precision of the twilight sky.
+  Pre-exposure does not lift it.
 - The sun's disc saturates at 60,000 physical radiance.
 - Aerial perspective keeps one mean transmittance, covers 128 km (from the shell above it) and composes behind
   the height fog;
