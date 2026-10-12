@@ -441,8 +441,10 @@ replacing a crowd placement resets that slot's generation and history. Seeks,
 instant play, stop and group additions or removals without a fade, removed
 target nodes and clip/model revisions invalidate the owner's velocity history;
 an active residual keeps decaying. Fades and weight changes keep history, and no
-playback change cancels a residual. Captured references are not silently
-rebuilt. Saving keeps authored settings and target playback,
+playback change cancels a residual. A rotation that cannot be normalized (zero or
+nonfinite) records no angular velocity and receives no rotation residual, so
+inertia admits the same clips as an owner without it. Captured references are
+not silently rebuilt. Saving keeps authored settings and target playback,
 while sampled clocks, source velocities, history and active/interrupted
 residuals restart empty on restore.
 

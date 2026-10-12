@@ -2042,6 +2042,36 @@ fn void test_animation_inertial_instant_play_and_stop_invalidate_history() @test
     assert(inertial_owner_row(&fixture).velocity[3].translation.z == 0);
 }
 
+fn void test_animation_inertial_owner_plays_degenerate_rotations_without_faulting() @test {
+    LayerFixture fixture;
+    create_inertial_owner(&fixture);
+    defer destroy_layer_fixture(&fixture);
+    ClipId source = request_translation_clip(&fixture, { 0, 0, 0 }, { 1, 0, 0 });
+    ClipId target = request_translation_clip(&fixture, { 10, 0, 0 }, { 10, 0, 0 });
+    float[2] times = { 0, 1 };
+    float[8] rotations;
+    ClipId degenerate = inertial_owner_clip(
+        owner: &fixture,
+        path: TargetPath.ROTATION,
+        interpolation: Interpolation.LINEAR,
+        times: times[..],
+        values: rotations[..],
+        node: 3,
+    );
+    fixture.animator.play(&fixture.assets, source)!!;
+    anim::update(&fixture.assets, &fixture.scene, 0.125f);
+    anim::update(&fixture.assets, &fixture.scene, 0.125f);
+    AnimationTargetDesc[1] description = { anim::ANIMATION_TARGET_DEFAULT };
+    description[0].clip = target;
+    fixture.animator.inertialize(&fixture.assets, { .duration = 0.5f, .actions = description[..] })!!;
+
+    fixture.animator.play(&fixture.assets, degenerate, { .layer = 1 })!!;
+    anim::update(&fixture.assets, &fixture.scene, 0.125f);
+    anim::update(&fixture.assets, &fixture.scene, 0.125f);
+    assert(fixture.animator.inertial_status().active);
+    assert(inertial_owner_row(&fixture).velocity[3].angular == (double[<3>]){});
+}
+
 fn void test_animation_inertial_request_rotation_uses_shortest_twenty_degree_transition() @test {
     LayerFixture fixture;
     create_inertial_owner(&fixture);

@@ -28,15 +28,21 @@ fn void capture_inertial_pose_residuals(
         row.offset[index].translation = inertial_pose_vector(source.position) - inertial_pose_vector(target.position);
         row.offset_velocity[index].translation = source_rate.translation - target_rate.translation;
 
-        Quaternion source_rotation = inertial_normalize_rotation(inertial_pose_rotation(source.rotation));
-        Quaternion target_rotation = inertial_normalize_rotation(inertial_pose_rotation(target.rotation));
-        double[<3>] angular_offset = inertial_rotation_log(source_rotation.mul(target_rotation.conjugate()));
-        row.offset[index].angular = angular_offset;
-        row.offset_velocity[index].angular = inertial_onset_rotation_rate(
-            residual: angular_offset,
-            source_rate: source_rate.angular,
-            target_rate: target_rate.angular,
-        );
+        Quaternion source_rotation = inertial_pose_rotation(source.rotation);
+        Quaternion target_rotation = inertial_pose_rotation(target.rotation);
+        row.offset[index].angular = {};
+        row.offset_velocity[index].angular = {};
+        if (inertial_rotation_valid(source_rotation) && inertial_rotation_valid(target_rotation)) {
+            Quaternion difference = inertial_normalize_rotation(source_rotation)
+              .mul(inertial_normalize_rotation(target_rotation).conjugate());
+            double[<3>] angular_offset = inertial_rotation_log(difference);
+            row.offset[index].angular = angular_offset;
+            row.offset_velocity[index].angular = inertial_onset_rotation_rate(
+                residual: angular_offset,
+                source_rate: source_rate.angular,
+                target_rate: target_rate.angular,
+            );
+        }
 
         if (consumed_scale[index]) {
             InertialScalarState residual = inertial_onset_scale_residual(
@@ -94,16 +100,19 @@ fn void apply_inertial_pose(
             target.position = inertial_publish_vector(inertial_pose_vector(target.position) + translation.value);
             velocity.translation += translation.rate;
 
-            InertialRotationState rotation = inertial_correct_rotation(
-                initial: row.offset[index].angular,
-                initial_rate: row.offset_velocity[index].angular,
-                duration: duration,
-                elapsed: elapsed,
-                target: inertial_normalize_rotation(inertial_pose_rotation(target.rotation)),
-                target_rate: velocity.angular,
-            );
-            target.rotation = inertial_publish_rotation(rotation.orientation);
-            velocity.angular = rotation.angular_velocity;
+            Quaternion target_rotation = inertial_pose_rotation(target.rotation);
+            if (inertial_rotation_valid(target_rotation)) {
+                InertialRotationState rotation = inertial_correct_rotation(
+                    initial: row.offset[index].angular,
+                    initial_rate: row.offset_velocity[index].angular,
+                    duration: duration,
+                    elapsed: elapsed,
+                    target: inertial_normalize_rotation(target_rotation),
+                    target_rate: velocity.angular,
+                );
+                target.rotation = inertial_publish_rotation(rotation.orientation);
+                velocity.angular = rotation.angular_velocity;
+            }
         }
 
         if (consumed_scale[index]) {
@@ -173,10 +182,14 @@ fn void record_inertial_pose_history(
             row.velocity[index].scale =
               (inertial_pose_vector(pose.scale) - inertial_pose_vector(previous.scale)) / dt;
 
-            Quaternion current_rotation = inertial_normalize_rotation(inertial_pose_rotation(pose.rotation));
-            Quaternion previous_rotation = inertial_normalize_rotation(inertial_pose_rotation(previous.rotation));
-            row.velocity[index].angular =
-              inertial_rotation_log(current_rotation.mul(previous_rotation.conjugate())) / dt;
+            Quaternion current_rotation = inertial_pose_rotation(pose.rotation);
+            Quaternion previous_rotation = inertial_pose_rotation(previous.rotation);
+            row.velocity[index].angular = {};
+            if (inertial_rotation_valid(current_rotation) && inertial_rotation_valid(previous_rotation)) {
+                Quaternion change = inertial_normalize_rotation(current_rotation)
+                  .mul(inertial_normalize_rotation(previous_rotation).conjugate());
+                row.velocity[index].angular = inertial_rotation_log(change) / dt;
+            }
         } else {
             row.velocity[index] = {};
         }

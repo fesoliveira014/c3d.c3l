@@ -182,13 +182,14 @@ fn void compensate_generalized_branches(
             local.rotation.v.x, local.rotation.v.y, local.rotation.v.z, local.rotation.v.w,
         } };
         position = correction.position + correction.rotation.rotate_vec3(position * correction.scale);
-        rotation = inertial_normalize_rotation(correction.rotation.mul(rotation));
-
         local.position = { (float)position.x, (float)position.y, (float)position.z };
+        local.scale *= (float)correction.scale;
+        if (!inertial_rotation_valid(rotation)) continue;
+
+        rotation = inertial_normalize_rotation(correction.rotation.mul(rotation));
         local.rotation = { .v = {
             (float)rotation.v.x, (float)rotation.v.y, (float)rotation.v.z, (float)rotation.v.w,
         } };
-        local.scale *= (float)correction.scale;
     }
 }
 
