@@ -1121,6 +1121,10 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer FogVolumeRo
     uint flags;
     float jitter;
     uint slice_chunk;
+    float pre_exposure_ratio;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer CloudNoiseRoot {

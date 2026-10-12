@@ -310,8 +310,10 @@ the slice's depth and over time. Optical depth is analytic and carries no histor
   position lies outside the previous frustum or beyond `max_distance` takes no history. Camera motion reprojects
   and does not reject. An orthographic view takes neither jitter nor history.
 - **Blend.** A froxel's in-scatter is mixed with `FOG_HISTORY_WEIGHT` (0.9) of its history, so the history
-  remembers about ten frames. The history's colour is multiplied by `FrameRoot.pre_exposure_ratio` first, so an
-  exposure change rescales it instead of rejecting it; optical depth is not radiance and is not scaled.
+  remembers about ten frames. The history's colour is first multiplied by the ratio of the view's current
+  pre-exposure to the one it was injected under, so an exposure change rescales it instead of rejecting it. The
+  volume keeps that factor itself, so the ratio holds without TAA, motion blur or screen-space GI on the view.
+  Optical depth is not radiance and is not scaled.
 - **Clamp.** Before the blend, each channel of the history is clamped to the range of this frame's in-scatter at
   the froxel and at the froxels just in front of and behind it in the same column. History that the current
   depth neighbours no longer support, such as the shadow a moving caster left in a shaft, goes to their range at

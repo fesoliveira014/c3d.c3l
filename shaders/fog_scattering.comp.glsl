@@ -48,7 +48,7 @@ vec3 additional_light_scattering(
 }
 
 // The previous frame's in-scatter at a world position, in this frame's exposure; w is 0 outside the previous volume.
-vec4 fog_history(FogVolumeRoot root, FrameRoot frame, SkyFogGpu sky, vec3 position) {
+vec4 fog_history(FogVolumeRoot root, SkyFogGpu sky, vec3 position) {
     vec4 clip = root.previous_view_proj * vec4(position, 1.0);
     if (clip.w <= 0.0) return vec4(0.0);
 
@@ -59,7 +59,7 @@ vec4 fog_history(FogVolumeRoot root, FrameRoot frame, SkyFogGpu sky, vec3 positi
     if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || slice >= slices) return vec4(0.0);
 
     vec3 history = sample_texture_3d(root.history, sky.lut_sampler, vec3(uv, slice / slices)).rgb;
-    return vec4(history * frame.pre_exposure_ratio, 1.0);
+    return vec4(history * root.pre_exposure_ratio, 1.0);
 }
 
 // The light a froxel scatters toward the camera at its sample depth, and the fog's optical depth over its slice.
@@ -129,7 +129,7 @@ void main() {
         if (reproject) {
             // The grid centre, not the jittered sample, so a still camera reads the texel it wrote.
             float share = (float(slice) + 0.5) / float(root.slices);
-            vec4 history = fog_history(root, frame, sky, origin + direction * (share * share * sky.fog_max_distance));
+            vec4 history = fog_history(root, sky, origin + direction * (share * share * sky.fog_max_distance));
             vec3 clamped = clamp(history.rgb, min(below, min(radiance, above)), max(below, max(radiance, above)));
             scattered = mix(radiance, clamped, FOG_HISTORY_WEIGHT * history.a);
         }

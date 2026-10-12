@@ -923,6 +923,7 @@ fn void? record_raster_view(
                     .origin          = renderer.frame_origin,
                     .view_proj       = raster.view_proj,
                     .camera_position = matrices.position,
+                    .pre_exposure    = pre_exposure,
                 };
                 record_fog_volume(
                     renderer:      renderer,

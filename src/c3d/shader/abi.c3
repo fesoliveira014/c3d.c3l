@@ -1875,8 +1875,12 @@ struct FogVolumeRoot {
     uint         flags;
     float        jitter;
     uint         slice_chunk;
+    float        pre_exposure_ratio;
+    uint         _pad0;
+    uint         _pad1;
+    uint         _pad2;
 }
-$assert FogVolumeRoot::size == 128;
+$assert FogVolumeRoot::size == 144;
 $assert $reflect(FogVolumeRoot.previous_view_proj).offset == 0;
 $assert $reflect(FogVolumeRoot.previous_camera_position).offset == 64;
 $assert $reflect(FogVolumeRoot.frame).offset == 80;
@@ -1890,6 +1894,10 @@ $assert $reflect(FogVolumeRoot.slices).offset == 112;
 $assert $reflect(FogVolumeRoot.flags).offset == 116;
 $assert $reflect(FogVolumeRoot.jitter).offset == 120;
 $assert $reflect(FogVolumeRoot.slice_chunk).offset == 124;
+$assert $reflect(FogVolumeRoot.pre_exposure_ratio).offset == 128;
+$assert $reflect(FogVolumeRoot._pad0).offset == 132;
+$assert $reflect(FogVolumeRoot._pad1).offset == 136;
+$assert $reflect(FogVolumeRoot._pad2).offset == 140;
 
 struct CloudNoiseRoot {
     TextureIndex output_texture;

@@ -1103,6 +1103,10 @@ root FogVolumeRoot {
     uint         flags;
     float        jitter;
     uint         slice_chunk;
+    float        pre_exposure_ratio;
+    uint         _pad0;
+    uint         _pad1;
+    uint         _pad2;
 }
 
 const uint CLOUD_NOISE_SIZE = 128; // 8 MiB of RGBA8 shared by every deck; 64 repeats visibly, 256 costs 64 MiB

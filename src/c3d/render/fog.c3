@@ -7,7 +7,7 @@ import gpu;
 import std::math;
 
 $assert FogPassRoot::size == 32;
-$assert FogVolumeRoot::size == 128;
+$assert FogVolumeRoot::size == 144;
 
 const uint FOG_VOLUME_SLOTS @private = 2; // a temporal view ping-pongs the pair; any other view uses slot 0
 const uint FOG_TEMPORAL_SAMPLES @private = 16; // jitter cycle; the history spans about ten frames, so more only repeats
@@ -56,6 +56,7 @@ struct FogFrame @private {
     Vec3      origin;
     Mat4      view_proj;
     Vec3      camera_position;
+    float     pre_exposure;
 }
 
 struct FogLighting @private {
@@ -257,6 +258,7 @@ fn void? record_fog_volume(
     Target* scattering = temporal ? &record.fog_volumes[history.slot ^ 1] : integrated;
     bool reproject = temporal && history.accepts(current);
     Vec3 previous_camera = history.committed.camera_position;
+    float pre_exposure_ratio = reproject ? current.pre_exposure / history.committed.pre_exposure : 1;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, FogVolumeRoot::size, STREAM_ALIGNMENT)!;
     *(FogVolumeRoot*)root.bytes.ptr = {
@@ -274,6 +276,7 @@ fn void? record_fog_volume(
           | (reproject ? shader::FOG_VOLUME_HISTORY : 0),
         .jitter                   = temporal ? maths::halton(history.sample + 1, 2) : 0,
         .slice_chunk              = slice_chunk,
+        .pre_exposure_ratio       = pre_exposure_ratio,
     };
     if (temporal) history.record(current);
 
