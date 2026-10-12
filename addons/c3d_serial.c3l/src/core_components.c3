@@ -12,12 +12,29 @@ const ulong SHADOW_LAYOUT @local = 0x79ccc384defd9804;
 const ulong PROBE_UPDATE_LAYOUT @local = 0x92e32fe9bced397e;
 const ulong DECAL_WEIGHTS_LAYOUT @local = 0x985beb1deac562f9;
 const ulong CAMERA_LAYOUT @local = 0x5dd0d6ce96e600ac;
-const ulong LIGHT_LAYOUT @local = 0xa41c0d2284b8d046;
+const ulong LIGHT_LAYOUT @local = 0x4fe02031be92ca17;
+const ulong LIGHT_V1_LAYOUT @local = 0xa41c0d2284b8d046;
 const ulong PROBE_LAYOUT @local = 0xaed5ed822ebdf51a;
 const ulong ATMOSPHERE_LAYOUT @local = 0x0a0ac3087385a43b;
 const ulong FOG_LAYOUT @local = 0x1b730abab72fb88f;
 const ulong REFLECTION_LAYOUT @local = 0x7654f53807d7357a;
 const ulong DECAL_LAYOUT @local = 0xa4dd177052750847;
+
+struct LightV1 @private {
+    LightKind kind;
+    Vec3 color;
+    float intensity;
+    float range;
+    float inner_cone;
+    float outer_cone;
+    uint layers;
+    ShadowSettings shadow;
+}
+
+BinaryCompatibility[1] light_binary_compatibility @local = {
+    { .version = 1, .read = &read_light_v1 },
+};
+uint[1] light_text_default_versions @local = { 1 };
 
 <*
  Register portable core components and their semantic defaults.
@@ -31,7 +48,14 @@ fn void? register_core_codecs() {
     register_core_value(ProbeUpdateDesc, PROBE_UPDATE_LAYOUT, &defaults_probe_update)!;
     register_core_value(DecalWeights, DECAL_WEIGHTS_LAYOUT, &defaults_decal_weights)!;
     register_core_value(Camera, CAMERA_LAYOUT, &defaults_camera)!;
-    register_core_value(Light, LIGHT_LAYOUT, &defaults_light)!;
+    describe::register_reflected(LightV1)!;
+    register_core_value(LightV1, LIGHT_V1_LAYOUT, &defaults_light_v1)!;
+    register_described_type(
+        $Type: Light,
+        version: 2,
+        layout: LIGHT_LAYOUT,
+        defaults: &defaults_light,
+    )!;
     register_core_value(ProbeVolume, PROBE_LAYOUT, &defaults_probe)!;
     register_core_value(Atmosphere, ATMOSPHERE_LAYOUT, &defaults_atmosphere)!;
     register_core_value(HeightFog, FOG_LAYOUT, &defaults_fog)!;
@@ -39,7 +63,11 @@ fn void? register_core_codecs() {
     register_core_value(Decal, DECAL_LAYOUT, &defaults_decal)!;
     register_described(Mesh, { .name = "c3d.Mesh", .project = &project_mesh, .attach = &attach_mesh })!;
     register_described(Camera, { .name = "c3d.Camera" })!;
-    register_described(Light, { .name = "c3d.Light" })!;
+    register_described(Light, {
+        .name = "c3d.Light",
+        .binary_compatibility = light_binary_compatibility[..],
+        .text_default_versions = light_text_default_versions[..],
+    })!;
     register_described(ProbeVolume, {
         .name = "c3d.ProbeVolume", .project = &project_probe, .validate = &validate_probe,
     })!;
@@ -78,6 +106,21 @@ fn void defaults_light(void* value) @local {
     *(Light*)value = light::directional({ 1, 1, 1 }, 1);
 }
 
+fn void defaults_light_v1(void* value) @local {
+    Light defaults;
+    defaults_light(&defaults);
+    *(LightV1*)value = {
+        .kind = defaults.kind,
+        .color = defaults.color,
+        .intensity = defaults.intensity,
+        .range = defaults.range,
+        .inner_cone = defaults.inner_cone,
+        .outer_cone = defaults.outer_cone,
+        .layers = defaults.layers,
+        .shadow = defaults.shadow,
+    };
+}
+
 fn void defaults_probe(void* value) @local {
     *(ProbeVolume*)value = light::probe_volume({ 1, 1, 1 }, { 2, 2, 2 });
 }
@@ -96,6 +139,30 @@ fn void defaults_reflection(void* value) @local {
 
 fn void defaults_decal(void* value) @local {
     *(Decal*)value = scene::default_decal_desc({}).decal;
+}
+
+fn void? read_light_v1(Reader* reader, ReadContext* context) @local {
+    LightV1 legacy;
+    Acquisitions owned = { .allocator = context.allocator };
+    defer owned.release();
+    read_described_value(
+        type: described_type(LightV1)!,
+        reader: reader,
+        context: context,
+        owned: &owned,
+        value: &legacy,
+    )!;
+    context.scene.add(context.node, (Light){
+        .kind = legacy.kind,
+        .color = legacy.color,
+        .intensity = legacy.intensity,
+        .range = legacy.range,
+        .inner_cone = legacy.inner_cone,
+        .outer_cone = legacy.outer_cone,
+        .layers = legacy.layers,
+        .volumetric = true,
+        .shadow = legacy.shadow,
+    });
 }
 
 fn void? attach_mesh(void* value, ReadContext* context) @local {

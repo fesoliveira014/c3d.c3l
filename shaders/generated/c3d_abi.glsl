@@ -104,6 +104,7 @@ const uint PREVIEW_MODE_BITS = 9u;
 const uint PREVIEW_MODE_GRAY = 10u;
 const uint PREVIEW_MODE_DISTANCE = 11u;
 const uint LIGHT_RT_SHADOW = 1u;
+const uint LIGHT_VOLUMETRIC = 2u;
 const uint ENVIRONMENT_FACE_POSITIVE_X = 0u;
 const uint ENVIRONMENT_FACE_NEGATIVE_X = 1u;
 const uint ENVIRONMENT_FACE_POSITIVE_Y = 2u;

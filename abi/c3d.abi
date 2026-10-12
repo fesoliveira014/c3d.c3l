@@ -752,6 +752,7 @@ root CubePreviewRoot {
 }
 
 const uint LIGHT_RT_SHADOW = 1;
+const uint LIGHT_VOLUMETRIC = 2;
 
 struct LightGpu {
     vec4 position_range;
