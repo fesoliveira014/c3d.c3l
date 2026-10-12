@@ -106,8 +106,8 @@ fn void? validate_crowd_authoring(
     ModelTemplate* template,
     CrowdInstanceAuthoring source,
     uint actions_per_instance,
+    ModelId model,
     Transform placement = maths::TRANSFORM_IDENTITY,
-    ModelId model = {},
 ) {
     check_crowd_instance(source, template.nodes.len, actions_per_instance)!;
     if (!source.configured) return;

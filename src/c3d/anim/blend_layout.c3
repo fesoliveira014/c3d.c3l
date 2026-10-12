@@ -3,8 +3,7 @@ module c3d::anim;
 import c3d;
 import std::math;
 
-const uint BLEND_LAYOUT_MAX_SAMPLES @private = 16; // action bound; three-byte prepared triangles
-const uint BLEND_LAYOUT_MAX_TRIANGLES @private = 2 * BLEND_LAYOUT_MAX_SAMPLES - 5;
+const uint BLEND_LAYOUT_MAX_TRIANGLES @private = 2 * MAX_ACTIONS - 5;
 const double BLEND_SPACE_AREA_RELATIVE_TOLERANCE @private = 1e-10; // bounds unstable area relative to extent squared
 const double BLEND_SPACE_BOUNDARY_TOLERANCE @private = 1e-7; // bounds admitted barycentric roundoff
 const double BLEND_SPACE_DISTANCE_RELATIVE_TOLERANCE @private = 1e-12; // bounds distance ties in squared-extent units
@@ -43,7 +42,7 @@ struct BlendLayoutSelection @private {
 
 struct BlendLayoutPrepared @private {
     BlendTriangleIndices[BLEND_LAYOUT_MAX_TRIANGLES] triangles;
-    BlendHullIndices[BLEND_LAYOUT_MAX_SAMPLES] hull;
+    BlendHullIndices[MAX_ACTIONS] hull;
     BlendLayoutInfo info;
 }
 
@@ -56,7 +55,7 @@ $assert BLEND_LAYOUT_MAX_TRIANGLES <= uint::size * 8;
  @param prepared_triangles : "Owner-prepared destination; unchanged on faults."
  @param prepared_hull : "Owner-prepared destination; unchanged on faults."
  @return? c3d::INVALID_ARGUMENT
- @require capacity >= 1 && capacity <= BLEND_LAYOUT_MAX_SAMPLES
+ @require capacity >= 1 && capacity <= MAX_ACTIONS
  @require prepared_triangles.len >= (sz)(capacity >= 3 ? 2 * capacity - 5 : 0)
  @require prepared_hull.len >= capacity
 *>
@@ -114,8 +113,8 @@ fn BlendLayoutSelection select_blend_layout(BlendLayoutView layout, Vec2 paramet
         }
     }
 
-    double[BLEND_LAYOUT_MAX_SAMPLES] distances;
-    double[BLEND_LAYOUT_MAX_SAMPLES] fractions;
+    double[MAX_ACTIONS] distances;
+    double[MAX_ACTIONS] fractions;
     double closest = double::max;
 
     foreach (uint index, edge : layout.hull) {
@@ -198,8 +197,8 @@ fn BlendLayoutPrepared? validate_blend_layout(Vec2[] points, BlendTriangle[] tri
     BlendLayoutPrepared prepared = { .info = { .triangle_count = triangle_count, .extent = extent } };
     BlendTriangleIndices[BLEND_LAYOUT_MAX_TRIANGLES] oriented;
     uint reversed;
-    bool[BLEND_LAYOUT_MAX_SAMPLES] used;
-    bool[BLEND_LAYOUT_MAX_SAMPLES][BLEND_LAYOUT_MAX_SAMPLES] directed;
+    bool[MAX_ACTIONS] used;
+    bool[MAX_ACTIONS][MAX_ACTIONS] directed;
 
     foreach (uint index, input : triangles) {
         uint a = input.indices[0];
@@ -274,9 +273,9 @@ fn BlendLayoutPrepared? validate_blend_layout(Vec2[] points, BlendTriangle[] tri
         if (!used[sample]) return c3d::INVALID_ARGUMENT~;
     }
 
-    uint[BLEND_LAYOUT_MAX_SAMPLES] next;
+    uint[MAX_ACTIONS] next;
     next[..] = uint::max;
-    uint[BLEND_LAYOUT_MAX_SAMPLES] incoming;
+    uint[MAX_ACTIONS] incoming;
     foreach (uint triangle, input : triangles) {
         for (uint edge = 0; edge < 3; edge++) {
             uint a = input.indices[edge];
@@ -298,7 +297,7 @@ fn BlendLayoutPrepared? validate_blend_layout(Vec2[] points, BlendTriangle[] tri
 
     uint start = prepared.hull[0].indices[0];
     uint current = start;
-    bool[BLEND_LAYOUT_MAX_SAMPLES] boundary_seen;
+    bool[MAX_ACTIONS] boundary_seen;
     for (uint step = 0; step < hull_count; step++) {
         if (current >= count || boundary_seen[current] || next[current] == uint::max || incoming[current] != 1) {
             return c3d::INVALID_ARGUMENT~;
