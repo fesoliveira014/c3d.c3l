@@ -271,8 +271,8 @@ LookAt/IK retargeting after slot reuse. Skin joints alone retain captured templa
 identity: deleting a required template joint rejects export even if its address
 was reused, rather than silently rebinding the original skin.
 AnimatedCrowd authoring version 3 restores in OWNER with its model, capacity,
-live placements/colors, action and event capacities, seed settings, captured
-start times, bounds and trace flag. It also retains configured per-instance
+live placements/colors, action and event capacities, seed settings, bounds and
+trace flag. It also retains configured per-instance
 actions, copied boolean/weighted masks, layers, additive scale/root settings and
 1D/2D spaces. Version-1 and version-2 binary and JSONC streams remain readable;
 new fields receive the original boolean-mask, 1D and DIFFERENCE defaults. Loads remain
@@ -306,7 +306,7 @@ their existing contracts. Existing shared runtime validators also govern seriali
 | Animator | Action `speed`; 1D/2D blend-space coordinates, parameter and `speed` | Finite; negative speeds allowed |
 | Animator | Action and blend-space `weight` | Finite and nonnegative; no upper cap |
 | Animator / AnimatedCrowd | Weighted mask node values | Finite and in `[0,1]`; full captured node width |
-| AnimatedCrowd | Pose `speed`, captured start time | Finite; negative values allowed |
+| AnimatedCrowd | Pose `speed` and `time` | Finite; negative values allowed |
 | Ragdoll | Aggregate `weight`, each `bone_weights` value, `drive_strength` | Finite and nonnegative; no upper cap |
 | NavVolume | BOX `box`; CONVEX `verts[:vert_count]`, `min_y`, `max_y`; CYLINDER `base`, `radius`, `height` | Finite active fields; `min_y <= max_y`; cylinder radius and height positive |
 | NavLink | `start`, `end`, `radius` | Finite; positive radius and distinct endpoints |

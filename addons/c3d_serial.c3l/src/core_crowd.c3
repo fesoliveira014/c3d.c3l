@@ -273,7 +273,6 @@ fn void? project_crowd(void* component, void* value, WriteContext* context) @loc
             .pose = crowd.seeds[index],
             .color = crowd.colors[index],
         };
-        instance.pose.time = crowd.start_times[index];
     }
 
     CrowdInstanceAuthoring[] playback;

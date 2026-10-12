@@ -118,7 +118,6 @@ fn void? attach_crowd(
     defer catch {
         alloc::free(allocator, crowd.placements.ptr);
         alloc::free(allocator, crowd.seeds.ptr);
-        alloc::free(allocator, crowd.start_times.ptr);
         alloc::free(allocator, crowd.colors.ptr);
         if (crowd.authoring) anim::destroy_crowd_authoring(crowd.authoring);
     }
@@ -126,8 +125,6 @@ fn void? attach_crowd(
     crowd.placements = alloc::new_array_try(allocator, Transform, (sz)capacity)
       ?? c3d::CAPACITY_EXCEEDED~!;
     crowd.seeds = alloc::new_array_try(allocator, CrowdPose, (sz)capacity)
-      ?? c3d::CAPACITY_EXCEEDED~!;
-    crowd.start_times = alloc::new_array_try(allocator, float, (sz)capacity)
       ?? c3d::CAPACITY_EXCEEDED~!;
     crowd.colors = alloc::new_array_try(allocator, Vec4, (sz)capacity)
       ?? c3d::CAPACITY_EXCEEDED~!;
@@ -212,7 +209,7 @@ fn void? prepare_crowd(AssetStore* assets, Scene* scene, Node* node) {
                 index: index,
                 assets: assets,
                 source: crowd.authoring.instances[index],
-                base_start: crowd.start_times[index],
+                base_start: seed.time,
             )!;
             continue;
         }
@@ -459,7 +456,6 @@ fn void fill_crowd_authoring(AnimatedCrowd* crowd, CrowdInstance[] instances) @l
     foreach (usz index, instance : instances) {
         crowd.placements[index] = instance.placement;
         crowd.seeds[index] = instance.pose;
-        crowd.start_times[index] = instance.pose.time;
         crowd.colors[index] = instance.color;
     }
 

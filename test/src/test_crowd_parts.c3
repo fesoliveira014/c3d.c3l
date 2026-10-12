@@ -203,7 +203,7 @@ fn void test_crowd_parts_match_literal_mixed_and_skin_free_worlds() @test {
             expected: animated_crowd_fixtures::PARTS_RESTORED_POINTS[..],
             skin_free: skin_free,
         );
-        assert(crowd.start_times[0] == 1 && crowd.seeds[0].time == 1);
+        assert(crowd.seeds[0].time == 1);
         assert(scene.count(InstancedMesh) == crowd.parts.len);
     }
 }
@@ -345,7 +345,7 @@ fn void test_crowd_parts_set_rolls_back_and_keeps_stale_handles_stale() @test {
     )) == c3d::CAPACITY_EXCEEDED);
     probe.enforce_limit = false;
     assert(probe.outstanding == outstanding && crowd.playback == state && crowd.count == 2);
-    assert(crowd.start_times[0] == 0.25f && old_player.try_action(old_action)!!.time == 0.25f);
+    assert(crowd.seeds[0].time == 0.25f && old_player.try_action(old_action)!!.time == 0.25f);
     assert(state.instance_id(0)!!.generation == old_instance.generation);
     model::set_crowd(
         assets: &assets,
@@ -401,7 +401,7 @@ fn void test_crowd_parts_prepare_rolls_back_every_allocation_and_retries() @test
             assert(excuse == c3d::CAPACITY_EXCEEDED);
             assert(probe.outstanding == outstanding && scene.world.entities.free_count == free_nodes);
             assert(!crowd.is_prepared() && !crowd.parts.len && !node.first_child);
-            assert(crowd.seeds[0].time == 0.5f && crowd.start_times[0] == 0.5f);
+            assert(crowd.seeds[0].time == 0.5f);
         } else {
             probe.enforce_limit = false;
             assert(crowd.is_prepared() && crowd.parts.len == 5);

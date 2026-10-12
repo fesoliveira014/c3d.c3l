@@ -36,7 +36,6 @@ fn void test_crowd_read_rejects_nonfinite_seed_scalars() @test {
             pose_bounds: { .min = { -1, -1, -1 }, .max = { 1, 1, 1 } },
             instances: instances[..],
         )!!;
-        AnimatedCrowd* crowd = fixture.source.get(source, AnimatedCrowd);
         char[] bytes = encode_crowd_scalars(&fixture, source, false)!!;
         String text = (String)encode_crowd_scalars(&fixture, source, true)!!;
         for (uint encoding = 0; encoding < 2; encoding++) {
@@ -46,7 +45,6 @@ fn void test_crowd_read_rejects_nonfinite_seed_scalars() @test {
             AnimatedCrowd* loaded = fixture.destination.get(restored, AnimatedCrowd);
             assert(!loaded.is_prepared() && loaded.count == 1);
             assert(bitcast(loaded.seeds[0].speed, uint) == finite_bits[0]);
-            assert(bitcast(loaded.start_times[0], uint) == finite_bits[1]);
             assert(bitcast(loaded.seeds[0].time, uint) == finite_bits[1]);
             fixture.destination.remove(restored);
         }
@@ -114,14 +112,6 @@ fn void test_crowd_read_rejects_nonfinite_seed_scalars() @test {
                       && fixture.destination.count(AnimatedCrowd) == 0);
                 }
             }
-        }
-        crowd.seeds[1].speed = bitcast(rejected_bits[0], float);
-        crowd.start_times[1] = bitcast(rejected_bits[1], float);
-        foreach (bits : rejected_bits) {
-            crowd.seeds[0].time = bitcast(bits, float);
-            assert(bytes == encode_crowd_scalars(&fixture, source, false)!!);
-            assert(text == (String)encode_crowd_scalars(&fixture, source, true)!!);
-            assert(bitcast(crowd.seeds[0].time, uint) == bits);
         }
     };
 }

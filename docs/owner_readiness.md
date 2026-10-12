@@ -6,7 +6,7 @@ steps and remove their attempted attachment if preparation fails.
 
 | Owner | State after attachment | Drawing while pending | Completion call | Required order |
 | --- | --- | --- | --- | --- |
-| Animated crowd | Pending; copied placements, seed poses, start times, colors and optional actions/spaces | No generated part batches | `model::prepare_crowd(assets, scene, node)` or `model::prepare_crowd_subtree(assets, scene, root)` | Source model, skeleton, clips, geometry and materials must be live; a dead source returns `INVALID_ID` and leaves the crowd pending |
+| Animated crowd | Pending; copied placements, seed poses, colors and optional actions/spaces | No generated part batches | `model::prepare_crowd(assets, scene, node)` or `model::prepare_crowd_subtree(assets, scene, root)` | Source model, skeleton, clips, geometry and materials must be live; a dead source returns `INVALID_ID` and leaves the crowd pending |
 | Particle system | Pending; validated descriptor and application emission control | No generated draw child | `particle::prepare(scene, node)` or `particle::prepare_subtree(scene, root)` | Register particles before attachment; restore authored `emitting` after attachment |
 | Cloth | Pending; source geometry, original vertex-motion flag, copied pins and collider identities | Existing authored source Mesh remains visible | `cloth::prepare(scene, assets, node)` or `cloth::prepare_subtree(scene, assets, root)` | Publish node world matrices; synchronize listed physics bodies first or receive `physics::NO_BODY`. No contact bodies means no physics-world dependency |
 | Terrain | Pending; validated height map and layer authoring | No generated chunk batch | `terrain::prepare(scene, assets, node)` or `terrain::prepare_subtree(scene, assets, root)` | Prepare before dependent foliage |
@@ -24,5 +24,5 @@ the first fault in component iteration order after attempting the other owners.
 System updates skip pending owners. Removing a pending owner releases its copied
 authoring. Per-owner runtime operations require preparation first.
 
-Crowd animation changes current pose clocks. Its retained `start_times` change only
+Crowd animation changes current pose clocks. Its retained seed times change only
 through authored placement updates such as `model::set_crowd`.

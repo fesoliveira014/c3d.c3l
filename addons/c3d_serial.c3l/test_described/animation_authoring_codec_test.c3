@@ -133,7 +133,7 @@ fn void test_animation_authoring_codec_frozen_crowd_v2_restarts_authoring() @tes
             assert(restored.local.position == (Vec3){ 4, 2, -8 } && restored.layers == 9);
             assert(crowd.placements[0].scale == (Vec3){ 2, 2, 2 });
             assert(crowd.placements[1].scale == (Vec3){ -1, 2, 0.5f });
-            assert(crowd.start_times[0] == 0.125f && crowd.start_times[1] == 0.25f);
+            assert(crowd.seeds[0].time == 0.125f && crowd.seeds[1].time == 0.25f);
             CrowdInstanceAuthoring source = crowd.authoring.instances[0];
             assert(source.configured && source.root_node == 2 && source.base_action == 0);
             assert(source.actions.len == 4 && source.spaces.len == 1);

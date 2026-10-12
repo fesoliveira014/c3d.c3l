@@ -49,7 +49,6 @@ struct AnimatedCrowd {
     CrowdPart[] parts;
     Transform[] placements;
     CrowdPose[] seeds;
-    float[] start_times;
     Vec4[] colors;
     Mat4[] scratch_worlds;
     Mat4[] palettes;
@@ -104,7 +103,6 @@ fn void free_crowd(Entity entity, void* component, void* user) @private {
     alloc::free(allocator, crowd.palettes.ptr);
     alloc::free(allocator, crowd.placements.ptr);
     alloc::free(allocator, crowd.seeds.ptr);
-    alloc::free(allocator, crowd.start_times.ptr);
     alloc::free(allocator, crowd.colors.ptr);
 }
 

@@ -47,7 +47,7 @@ fn void test_crowd_v1_frozen_binary_and_jsonc_restore_actual_seed_starts() @test
             float[3] speeds = { -0.5f, 0, 1 };
             bool[3] loops = { true, false, true };
             foreach (index, seed : crowd.seeds[:crowd.count]) {
-                assert(seed.time == starts[index] && crowd.start_times[index] == starts[index]);
+                assert(seed.time == starts[index]);
                 assert(seed.speed == speeds[index] && seed.loop == loops[index]);
             }
 
@@ -62,7 +62,7 @@ fn void test_crowd_v1_frozen_binary_and_jsonc_restore_actual_seed_starts() @test
             anim::crowd_update(&fixture.assets, &fixture.destination, 0.25f);
             assert(crowd.playback.slots[0].actions.get(crowd.playback.slots[0].base_action).time == 0.625f);
             assert(crowd.playback.slots[1].actions.get(crowd.playback.slots[1].base_action).time == 0.25f);
-            foreach (index, start : starts) assert(crowd.start_times[index] == start);
+            foreach (index, start : starts) assert(crowd.seeds[index].time == start);
             fixture.destination.remove(root);
         }
 
@@ -262,7 +262,7 @@ fn void test_crowd_v2_prepared_fades_restart_from_projected_state() @test {
                 CrowdPlaybackSlot* restarted = &loaded.playback.slots[0];
                 uint expected_count = kind == SPACE_FADE ? 2 : 1;
                 assert(restarted.action_count == expected_count);
-                assert(loaded.start_times[0] == 0.125f);
+                assert(loaded.seeds[0].time == 0.125f);
                 assert(loaded.playback.event_count == 0 && loaded.playback.events_dropped == 0);
                 assert(restarted.root_motion.translation == (Vec3){ 0, 0, 0 });
                 foreach (id : restarted.order[:expected_count]) {
