@@ -160,29 +160,26 @@ fn uint pack_instance_records(
     AnimatedCrowd* crowd = null,
     uint part = 0,
 ) {
-    uint written;
-    for (uint index = 0; index < batch.count; index++) {
-        Mat4 local = instance_local(batch, crowd, part, index);
-        if (instance_mirrored(batch, crowd, local, index)) continue;
+    // The first half collects unmirrored sources, the second half mirrored ones.
+    uint[] order = alloc::new_array(tmem, uint, 2 * (usz)batch.count);
+    uint split;
+    uint mirrored;
 
-        write_batch_instance(
-            record:     &records[written++],
-            node_world: node_world,
-            local:      local,
-            batch:      batch,
-            index:      index,
-        );
+    for (uint index = 0; index < batch.count; index++) {
+        if (instance_mirrored(batch, crowd, part, index)) {
+            order[batch.count + mirrored++] = index;
+        } else {
+            order[split++] = index;
+        }
     }
 
-    uint split = written;
-    for (uint index = 0; index < batch.count; index++) {
-        Mat4 local = instance_local(batch, crowd, part, index);
-        if (!instance_mirrored(batch, crowd, local, index)) continue;
+    order[split:mirrored] = order[batch.count:mirrored];
 
+    foreach (slot, index : order[:batch.count]) {
         write_batch_instance(
-            record:     &records[written++],
+            record:     &records[slot],
             node_world: node_world,
-            local:      local,
+            local:      instance_local(batch, crowd, part, index),
             batch:      batch,
             index:      index,
         );
@@ -214,8 +211,8 @@ fn Mat4 instance_local(InstancedMesh* batch, AnimatedCrowd* crowd, uint part, ui
     return crowd ? crowd.part_transform(index, part) : batch.transforms[index].to_mat4();
 }
 
-fn bool instance_mirrored(InstancedMesh* batch, AnimatedCrowd* crowd, Mat4 local, uint index) @local {
-    return crowd ? local.determinant() < 0 : scene::transform_mirrored(batch.transforms[index]);
+fn bool instance_mirrored(InstancedMesh* batch, AnimatedCrowd* crowd, uint part, uint index) @local {
+    return crowd ? crowd.part_mirrored(index, part) : scene::transform_mirrored(batch.transforms[index]);
 }
 
 fn void write_batch_instance(
@@ -302,7 +299,7 @@ fn InstanceSpan patchable_span(
 
     InstanceSpan span = batch.ranges.span_since(slot.revision);
     for (uint index = span.first; index < span.end; index++) {
-        if (instance_mirrored(batch, crowd, instance_local(batch, crowd, part, index), index)) return {};
+        if (instance_mirrored(batch, crowd, part, index)) return {};
     }
 
     return span;
