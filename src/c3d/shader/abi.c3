@@ -1972,10 +1972,14 @@ struct CloudsTemporalRoot {
     TextureIndex history_distance;
     SamplerIndex history_sampler;
     float        jitter;
+    float        pixel_jitter_x;
+    float        pixel_jitter_y;
     float        pre_exposure_ratio;
     uint         _pad0;
+    uint         _pad1;
+    uint         _pad2;
 }
-$assert CloudsTemporalRoot::size == 112;
+$assert CloudsTemporalRoot::size == 128;
 $assert $reflect(CloudsTemporalRoot.previous_view_proj).offset == 0;
 $assert $reflect(CloudsTemporalRoot.wind_delta).offset == 64;
 $assert $reflect(CloudsTemporalRoot.clouds).offset == 80;
@@ -1983,8 +1987,12 @@ $assert $reflect(CloudsTemporalRoot.history).offset == 88;
 $assert $reflect(CloudsTemporalRoot.history_distance).offset == 92;
 $assert $reflect(CloudsTemporalRoot.history_sampler).offset == 96;
 $assert $reflect(CloudsTemporalRoot.jitter).offset == 100;
-$assert $reflect(CloudsTemporalRoot.pre_exposure_ratio).offset == 104;
-$assert $reflect(CloudsTemporalRoot._pad0).offset == 108;
+$assert $reflect(CloudsTemporalRoot.pixel_jitter_x).offset == 104;
+$assert $reflect(CloudsTemporalRoot.pixel_jitter_y).offset == 108;
+$assert $reflect(CloudsTemporalRoot.pre_exposure_ratio).offset == 112;
+$assert $reflect(CloudsTemporalRoot._pad0).offset == 116;
+$assert $reflect(CloudsTemporalRoot._pad1).offset == 120;
+$assert $reflect(CloudsTemporalRoot._pad2).offset == 124;
 
 struct CloudShadowRoot {
     Vec4f        to_sun;

@@ -1173,8 +1173,12 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer CloudsTempo
     uint history_distance;
     uint history_sampler;
     float jitter;
+    float pixel_jitter_x;
+    float pixel_jitter_y;
     float pre_exposure_ratio;
     uint _pad0;
+    uint _pad1;
+    uint _pad2;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer CloudShadowRoot {

@@ -141,11 +141,12 @@ void store_clouds(CloudsRoot root, ivec2 pixel, vec3 scattered, float transmitta
 }
 
 // One half-resolution pixel: the radiance the layer scatters toward the camera and what it lets through, up to the
-// scene depth the pixel samples, and the distance of the cloud along the ray.
-vec4 march_clouds(CloudsRoot root, ivec2 pixel, float frame_jitter, out float cloud_distance) {
+// scene depth the pixel samples, and the distance of the cloud along the ray. The ray leaves the pixel's centre by
+// pixel_offset, in pixels.
+vec4 march_clouds(CloudsRoot root, ivec2 pixel, float frame_jitter, vec2 pixel_offset, out float cloud_distance) {
     FrameRoot frame = FrameRoot(root.frame);
     ivec2 extent = ivec2(root.width, root.height);
-    vec2 uv = (vec2(pixel) + 0.5) / vec2(extent);
+    vec2 uv = (vec2(pixel) + 0.5 + pixel_offset) / vec2(extent);
     vec3 origin;
     vec3 direction;
     fog_pixel_ray(frame, uv, origin, direction);
@@ -269,7 +270,8 @@ vec3 cloud_history_uv(CloudsTemporalRoot temporal, vec3 origin, vec3 direction, 
 }
 
 // A group marches its pixels and a border of one around them, so every pixel can clamp its reprojected history to the
-// range of its 3 x 3 neighbours' current radiance before the blend.
+// range of its 3 x 3 neighbours' current radiance before the blend. The history belongs to the pixel's centre, which
+// the reprojection starts from, while the march takes the frame's offset ray.
 void main() {
     CloudsTemporalRoot temporal = CloudsTemporalRoot(pc.root_gpu);
     CloudsRoot root = CloudsRoot(temporal.clouds);
@@ -279,6 +281,7 @@ void main() {
     bool perspective = frame.proj[3][3] == 0.0;
     bool reproject = temporal.history != 0u && perspective;
     float jitter = perspective ? temporal.jitter : 0.0;
+    vec2 pixel_offset = perspective ? vec2(temporal.pixel_jitter_x, temporal.pixel_jitter_y) : vec2(0.0);
 
     ivec2 tile_origin = ivec2(gl_WorkGroupID.xy) * int(CLOUD_TEMPORAL_GROUP) - 1;
     for (uint cell = gl_LocalInvocationIndex; cell < CLOUD_TILE_CELLS; cell += CLOUD_GROUP_CELLS) {
@@ -288,7 +291,7 @@ void main() {
 
         float cell_distance;
         ivec2 cell_pixel = clamp(tile_origin + offset, ivec2(0), extent - 1);
-        tile_cloud[cell] = march_clouds(root, cell_pixel, jitter, cell_distance);
+        tile_cloud[cell] = march_clouds(root, cell_pixel, jitter, pixel_offset, cell_distance);
         tile_distance[cell] = cell_distance;
     }
     barrier();
@@ -336,7 +339,7 @@ void main() {
     if (pixel.x >= int(root.width) || pixel.y >= int(root.height)) return;
 
     float cloud_distance;
-    vec4 cloud = march_clouds(root, pixel, 0.0, cloud_distance);
+    vec4 cloud = march_clouds(root, pixel, 0.0, vec2(0.0), cloud_distance);
     store_clouds(root, pixel, cloud.rgb, cloud.a, cloud_distance);
 }
 #endif

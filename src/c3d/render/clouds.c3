@@ -14,7 +14,7 @@ $assert CloudNoiseRoot::size == 16;
 $assert CloudsRoot::size == 128;
 $assert CloudShadowRoot::size == 64;
 $assert CloudsCompositeRoot::size == 48;
-$assert CloudsTemporalRoot::size == 112;
+$assert CloudsTemporalRoot::size == 128;
 
 const uint CLOUD_SLOTS @private = 2; // a temporal view ping-pongs the images; any other view uses slot 0
 const uint CLOUD_TEMPORAL_SAMPLES @private = 16; // jitter cycle; the history spans about ten frames, more repeats
@@ -421,6 +421,8 @@ fn void? record_cloud_march(
         .history_distance   = reproject ? history_distances.view.index : (gpu::TextureIndex)0,
         .history_sampler    = renderer.linear_clamp_sampler,
         .jitter             = maths::halton(history.sample + 1, 2),
+        .pixel_jitter_x     = maths::halton(history.sample + 1, 3) - 0.5f,
+        .pixel_jitter_y     = maths::halton(history.sample + 1, 5) - 0.5f,
         .pre_exposure_ratio = pre_exposure_ratio,
     };
     history.record(current);

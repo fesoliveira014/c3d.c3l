@@ -1159,9 +1159,13 @@ root CloudsTemporalRoot {
     TextureIndex history;          // RGBA16F: the previous frame's radiance and transmittance; zero: no history
     TextureIndex history_distance; // R32F: the previous frame's distance
     SamplerIndex history_sampler;
-    float        jitter;           // Halton offset of the frame's march start
+    float        jitter;           // Halton offset of the frame's march start, in steps
+    float        pixel_jitter_x;   // Halton offsets of the frame's rays within their pixels, in pixels from -0.5 to 0.5
+    float        pixel_jitter_y;
     float        pre_exposure_ratio;
     uint         _pad0;
+    uint         _pad1;
+    uint         _pad2;
 }
 
 root CloudShadowRoot {
