@@ -53,7 +53,7 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `viewport` | `PixelRect` in output pixels; a zero extent covers the whole output |
 | `render_scale` | Working resolution relative to the viewport, in `(0, MAX_RENDER_SCALE]` |
 | `lod_bias` | Finite log2 bias for [whole-object LOD](lod.md); zero by default, positive adds detail |
-| `color` | `DISPLAY_LDR` runs the display route; `LINEAR_HDR` keeps scene-linear color |
+| `color` | `DISPLAY_LDR` runs the display route; `LINEAR_HDR` keeps scene-linear color, in physical units whatever the view's [pre-exposure](post.md#pre-exposure) |
 | `post` | The view's `PostStack` (see [display processing](post.md)) |
 | `shading` | `FORWARD`, `DEFERRED` (see [Shading path](#shading-path)) or `PATH_TRACED` (see [path tracing](path_tracing.md)) |
 | `depth_prepass` | A `FORWARD` view draws its opaque set into depth first and shades it once; on in both constructors |
@@ -70,6 +70,7 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `fog_temporal` | Accumulates the fog volume over frames with a jittered sample and the previous frame's reprojected value (see [temporal accumulation](sky.md#temporal-accumulation)); off in both constructors; needs `volumetric_fog` and keeps a second volume |
 | `share_shadows` | Binds an earlier view's [shadow set](shadows.md#shadow-sets) when the keys match and publishes its own; on in both constructors |
 | `transparency` | How premultiplied-alpha blended surfaces compose: `SORTED` (default, both constructors) orders them by object, `WEIGHTED` accumulates them without ordering into two extra images, 10 bytes per pixel, allocated on the first frame with a participating draw (see [weighted transparency](materials.md#weighted-transparency)); custom `BLEND` materials stay sorted in a `WEIGHTED` view, a current limit |
+| `pre_exposure_override` | Forces the view's [pre-exposure](post.md#pre-exposure) factor, a power of two from 2^-16 to 2^16; zero, the default, follows the camera exposure. Any other value faults `INVALID_ARGUMENT` |
 | `transmission_layers` | Snapshots the scene-read list samples, so glass can see glass behind it (see [transmission layers](materials.md#transmission-layers)); 1 to `MAX_TRANSMISSION_LAYERS` (4), zero reads as 1 and both constructors leave it zero |
 
 An installed [static impostor](lod.md#static-impostors) participates in the same
@@ -201,7 +202,7 @@ renderer.end_frame()!;
 `render_view` extracts, uploads and records the scene passes, debug lines, velocity and motion
 blur; `finish_view` records depth of field and writes the view's output: `DISPLAY_LDR` grades, tone
 maps and optionally anti-aliases into the output rectangle; `LINEAR_HDR` copies the scene-linear
-image into the target. Between the two calls a compute dispatch may read the view's depth and read
+image into the target, divided by the view's [pre-exposure](post.md#pre-exposure). Between the two calls a compute dispatch may read the view's depth and read
 or write its scene image (see [custom shaders](custom_shaders.md#views)); `end_frame` faults
 `INVALID_ARGUMENT` when a rendered view was not finished. A window view records nothing while
 the window is dormant (`has_output` false); a texture view always records. When the window output
@@ -444,7 +445,8 @@ renderer.render_view(&scene, camera_node, main_view)!;
 - Render the mirror view first and the view that shows the surface right after it. The renderer holds one shadow
   set at a time: a view with another camera between them records over the mirror's set.
 - A mirror view stays `LINEAR_HDR`, so it ignores auto exposure; the view that shows the surface meters the
-  composited reflection as part of its image.
+  composited reflection as part of its image. The target holds physical radiance: the surface's stage multiplies
+  the sample by `pre_exposed` ([pre-exposure](custom_shaders.md#pre-exposure)).
 - Water from the landscape add-on places its mirror camera and clip plane for you; see [water](water.md#the-mirror).
 - Under [fog or an atmosphere](sky.md#where-fog-applies) a mirror view fogs only the path behind its plane,
   from the plane to the reflected surface; the view that shows the surface fogs the path to it, so the
@@ -710,7 +712,8 @@ like `STANDARD` on a deferred view, one without stays forward; see
 Per-view numbers live on the view: `Renderer.view_stats(view)` returns `ViewStats` with the view's live working images
 at frame start (`images`), its selected and dropped light and decal counts, whether it bound another view's shadow set
 (`shadow_set_shared`, the table's "Shadow set" row), its cluster count and light/decal overflow counts, its completed GPU pass
-timings (`C3D_PROFILE_GPU`) and its applied exposure (`exposure`, delayed under auto exposure), while `Stats` keeps
+timings (`C3D_PROFILE_GPU`), its applied exposure (`exposure`, delayed under auto exposure) and the radiance scale of its
+last rendering (`pre_exposure`, 1 is physical), while `Stats` keeps
 renderer-wide selection sums and the last completed cluster result described above.
 `gui::view_stats_table(renderer, views, labels)` prints several views side by side.
 

@@ -144,6 +144,10 @@ const uint FOG_VOLUME_JITTER = 1;
 const uint FOG_VOLUME_HISTORY = 2;
 const float FOG_HISTORY_WEIGHT = 0.9;
 const uint FOG_SCATTERING_CHUNK = 8;
+const uint CLOUD_NOISE_SIZE = 128;
+const uint CLOUD_NOISE_GROUP_SIZE = 4;
+const uint CLOUD_STEPS = 64;
+const uint CLOUD_LIGHT_STEPS = 6;
 const uint PHYSICAL_MAP_CLEARCOAT = 1;
 const uint PHYSICAL_MAP_CLEARCOAT_ROUGHNESS = 2;
 const uint PHYSICAL_MAP_CLEARCOAT_NORMAL = 4;
@@ -1886,6 +1890,92 @@ $assert $reflect(FogVolumeRoot.slices).offset == 112;
 $assert $reflect(FogVolumeRoot.flags).offset == 116;
 $assert $reflect(FogVolumeRoot.jitter).offset == 120;
 $assert $reflect(FogVolumeRoot.slice_chunk).offset == 124;
+
+struct CloudNoiseRoot {
+    TextureIndex output_texture;
+    uint         size;
+    uint         _pad0;
+    uint         _pad1;
+}
+$assert CloudNoiseRoot::size == 16;
+$assert $reflect(CloudNoiseRoot.output_texture).offset == 0;
+$assert $reflect(CloudNoiseRoot.size).offset == 4;
+$assert $reflect(CloudNoiseRoot._pad0).offset == 8;
+$assert $reflect(CloudNoiseRoot._pad1).offset == 12;
+
+struct CloudsRoot {
+    Vec4f        sun_direction;
+    Vec4f        sun_illuminance;
+    Vec4f        wind_offset;
+    GpuAddress   frame;
+    TextureIndex output_texture;
+    TextureIndex distance_texture;
+    TextureIndex depth;
+    TextureIndex noise;
+    TextureIndex coverage;
+    SamplerIndex noise_sampler;
+    SamplerIndex coverage_sampler;
+    uint         width;
+    uint         height;
+    float        planet_radius;
+    float        bottom;
+    float        top;
+    float        density;
+    float        albedo;
+    float        anisotropy;
+    float        coverage_extent;
+    float        noise_scale;
+    float        erosion;
+}
+$assert CloudsRoot::size == 128;
+$assert $reflect(CloudsRoot.sun_direction).offset == 0;
+$assert $reflect(CloudsRoot.sun_illuminance).offset == 16;
+$assert $reflect(CloudsRoot.wind_offset).offset == 32;
+$assert $reflect(CloudsRoot.frame).offset == 48;
+$assert $reflect(CloudsRoot.output_texture).offset == 56;
+$assert $reflect(CloudsRoot.distance_texture).offset == 60;
+$assert $reflect(CloudsRoot.depth).offset == 64;
+$assert $reflect(CloudsRoot.noise).offset == 68;
+$assert $reflect(CloudsRoot.coverage).offset == 72;
+$assert $reflect(CloudsRoot.noise_sampler).offset == 76;
+$assert $reflect(CloudsRoot.coverage_sampler).offset == 80;
+$assert $reflect(CloudsRoot.width).offset == 84;
+$assert $reflect(CloudsRoot.height).offset == 88;
+$assert $reflect(CloudsRoot.planet_radius).offset == 92;
+$assert $reflect(CloudsRoot.bottom).offset == 96;
+$assert $reflect(CloudsRoot.top).offset == 100;
+$assert $reflect(CloudsRoot.density).offset == 104;
+$assert $reflect(CloudsRoot.albedo).offset == 108;
+$assert $reflect(CloudsRoot.anisotropy).offset == 112;
+$assert $reflect(CloudsRoot.coverage_extent).offset == 116;
+$assert $reflect(CloudsRoot.noise_scale).offset == 120;
+$assert $reflect(CloudsRoot.erosion).offset == 124;
+
+struct CloudsCompositeRoot {
+    GpuAddress   frame;
+    TextureIndex color;
+    TextureIndex depth;
+    TextureIndex clouds;
+    TextureIndex distance_texture;
+    uint         width;
+    uint         height;
+    uint         cloud_width;
+    uint         cloud_height;
+    uint         _pad0;
+    uint         _pad1;
+}
+$assert CloudsCompositeRoot::size == 48;
+$assert $reflect(CloudsCompositeRoot.frame).offset == 0;
+$assert $reflect(CloudsCompositeRoot.color).offset == 8;
+$assert $reflect(CloudsCompositeRoot.depth).offset == 12;
+$assert $reflect(CloudsCompositeRoot.clouds).offset == 16;
+$assert $reflect(CloudsCompositeRoot.distance_texture).offset == 20;
+$assert $reflect(CloudsCompositeRoot.width).offset == 24;
+$assert $reflect(CloudsCompositeRoot.height).offset == 28;
+$assert $reflect(CloudsCompositeRoot.cloud_width).offset == 32;
+$assert $reflect(CloudsCompositeRoot.cloud_height).offset == 36;
+$assert $reflect(CloudsCompositeRoot._pad0).offset == 40;
+$assert $reflect(CloudsCompositeRoot._pad1).offset == 44;
 
 struct StandardMaterialRoot {
     StandardMaterialGpu material;

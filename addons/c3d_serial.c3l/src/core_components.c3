@@ -19,6 +19,7 @@ const ulong ATMOSPHERE_LAYOUT @local = 0x0a0ac3087385a43b;
 const ulong FOG_LAYOUT @local = 0x1b730abab72fb88f;
 const ulong REFLECTION_LAYOUT @local = 0x7654f53807d7357a;
 const ulong DECAL_LAYOUT @local = 0xa4dd177052750847;
+const ulong CLOUD_LAYOUT @local = 0x88503a573f335ca9;
 
 struct LightV1 @private {
     LightKind kind;
@@ -61,6 +62,7 @@ fn void? register_core_codecs() {
     register_core_value(HeightFog, FOG_LAYOUT, &defaults_fog)!;
     register_core_value(ReflectionProbe, REFLECTION_LAYOUT, &defaults_reflection)!;
     register_core_value(Decal, DECAL_LAYOUT, &defaults_decal)!;
+    register_core_value(CloudLayer, CLOUD_LAYOUT, &defaults_cloud)!;
     register_described(Mesh, { .name = "c3d.Mesh", .project = &project_mesh, .attach = &attach_mesh })!;
     register_described(Camera, { .name = "c3d.Camera" })!;
     register_described(Light, {
@@ -79,6 +81,9 @@ fn void? register_core_codecs() {
         .name = "c3d.ReflectionProbe", .project = &project_reflection, .validate = &validate_reflection,
     })!;
     register_described(Decal, { .name = "c3d.Decal" })!;
+    register_described(CloudLayer, {
+        .name = "c3d.CloudLayer", .project = &project_cloud, .validate = &validate_cloud,
+    })!;
     register_core_batch_codecs()!;
     register_model_codec()!;
     register_rig_codecs()!;
@@ -131,6 +136,10 @@ fn void defaults_atmosphere(void* value) @local {
 
 fn void defaults_fog(void* value) @local {
     *(HeightFog*)value = light::HEIGHT_FOG_DEFAULT;
+}
+
+fn void defaults_cloud(void* value) @local {
+    *(CloudLayer*)value = light::CLOUD_LAYER_DEFAULT;
 }
 
 fn void defaults_reflection(void* value) @local {
@@ -212,6 +221,15 @@ fn void? validate_fog(void* value, ReadContext* context) @local {
 fn void? project_fog(void* component, void* value, WriteContext* context) @local {
     if (!light::height_fog_valid((HeightFog*)component)) return c3d::INVALID_ARGUMENT~;
     *(HeightFog*)value = *(HeightFog*)component;
+}
+
+fn void? validate_cloud(void* value, ReadContext* context) @local {
+    if (!light::cloud_layer_valid((CloudLayer*)value)) return c3d::INVALID_ARGUMENT~;
+}
+
+fn void? project_cloud(void* component, void* value, WriteContext* context) @local {
+    if (!light::cloud_layer_valid((CloudLayer*)component)) return c3d::INVALID_ARGUMENT~;
+    *(CloudLayer*)value = *(CloudLayer*)component;
 }
 
 fn void? validate_reflection(void* value, ReadContext* context) @local {

@@ -79,11 +79,17 @@ fn void? record_environment_preparations(Renderer* renderer, gpu::CommandList* c
                 record_environment_luts(renderer, commands)!;
             }!;
         }
+        if (renderer.environment_state.cloud_noise.state == EnvironmentLutState.PENDING) {
+            @profile_stage(renderer, EnvironmentStage.CLOUD_NOISE) {
+                record_cloud_noise(renderer, commands)!;
+            }!;
+        }
     }!;
 }
 
 fn bool environment_work_unrecorded(Renderer* renderer) @local {
     if (environment_luts_unrecorded(renderer)) return true;
+    if (renderer.environment_state.cloud_noise.state == EnvironmentLutState.PENDING) return true;
     foreach (&pending : renderer.environment_state.pending) {
         if (pending.write_source && !pending.source_recorded) return true;
         if (pending.write_lighting && !pending.lighting_recorded) return true;

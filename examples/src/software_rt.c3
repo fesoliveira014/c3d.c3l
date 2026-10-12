@@ -56,6 +56,7 @@ struct TracePrimaryRoot @local {
     uint  width;
     uint  height;
     uint  split_x;
+    float pre_exposure;
 }
 
 struct Orbit @local {
@@ -162,6 +163,7 @@ fn void? draw_frame(
             .width                   = extent.x,
             .height                  = extent.y,
             .split_x                 = extent.x / 2,
+            .pre_exposure            = renderer.view_stats(view)!.pre_exposure,
         };
         DispatchTexture[1] textures = { render::write_view_color(view, DispatchAccess.READ_WRITE) };
         renderer.dispatch({

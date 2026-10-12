@@ -16,6 +16,17 @@ const float MID_GRAY = 0.18f; // mirrored as MID_GRAY in grade.glsl
 *>
 const uint EXPOSURE_SLOTS = 2;
 
+<*
+ Darkest stop of a pre-exposure factor.
+*>
+const int PRE_EXPOSURE_MIN_STOP = -16; // 2^-16 stores radiance up to 2^32 in RGBA16F; scenes needing less exposure clip at its maximum
+
+<*
+ Brightest stop of a pre-exposure factor.
+*>
+const int PRE_EXPOSURE_MAX_STOP = 16; // 2^16 lifts radiance of 2^-16 to 1; scenes needing more exposure stay in RGBA16F's subnormal range
+
+const uint FLOAT_MANTISSA_MASK @private = 0x007FFFFF;
 const usz EXPOSURE_SLOT_OFFSET @private = ExposureHistogramGpu::size;
 const usz EXPOSURE_STATE_BYTES @private = EXPOSURE_SLOT_OFFSET + EXPOSURE_SLOTS * ExposureGpu::size;
 const uint EXPOSURE_DISPATCHES @private = 2;
@@ -68,6 +79,7 @@ struct ViewExposure {
     gpu::GpuAddress                 address;
     gpu::MappedGpuSpan              readback;
     ExposureHistory                 history;
+    float                           adapted_scale; // auto multiplier of the last readback; 0 before the first
     float[render::FRAMES_IN_FLIGHT] readback_camera_exposure;
     bool[render::FRAMES_IN_FLIGHT]  readback_pending;
 }
@@ -149,11 +161,36 @@ fn bool auto_exposure_active(ViewDesc* desc) {
 }
 
 <*
- Pre-exposure of the view's next rendering.
+ Radiance scale of the view's next rendering and its change since the stored history.
  @param [&in] record : "Read only."
+ @param scene : "Identity of the scene the rendering draws."
 *>
-fn PreExposure view_pre_exposure(ViewRecord* record) {
-    return { .factor = 1, .ratio = 1 };
+fn PreExposure view_pre_exposure(ViewRecord* record, ulong scene) {
+    float forced = record.desc.pre_exposure_override;
+    float factor = forced > 0 ? forced : pre_exposure_factor(record.exposure * adapted_scale(record, scene));
+    float ratio = record.history.valid ? factor / record.history.pre_exposure : 1;
+    return { .factor = factor, .ratio = ratio };
+}
+
+<*
+ Power of two nearest an exposure, inside the pre-exposure bounds.
+ @pure
+*>
+fn float pre_exposure_factor(float exposure) {
+    if (!(exposure > 0)) return 1;
+    float stop = math::round(math::log2(exposure));
+    return math::exp2(math::clamp(stop, (float)PRE_EXPOSURE_MIN_STOP, (float)PRE_EXPOSURE_MAX_STOP));
+}
+
+<*
+ Whether a forced pre-exposure is automatic or a power of two inside the bounds.
+ @pure
+*>
+fn bool pre_exposure_override_valid(float factor) {
+    if (factor == 0) return true;
+    bool inside_bounds = factor >= math::exp2((float)PRE_EXPOSURE_MIN_STOP)
+      && factor <= math::exp2((float)PRE_EXPOSURE_MAX_STOP);
+    return inside_bounds && (bitcast(factor, uint) & FLOAT_MANTISSA_MASK) == 0;
 }
 
 <*
@@ -383,6 +420,7 @@ fn void? read_exposure_stats(Renderer* renderer, uint slot_index) {
         gpu::invalidate_mapped_span(&renderer.device, exposure.readback.span)!;
         ExposureGpu* adapted = &((ExposureGpu*)exposure.readback.bytes.ptr)[slot_index];
         record.stats.exposure = exposure.readback_camera_exposure[slot_index] * adapted.scale;
+        exposure.adapted_scale = adapted.scale;
         exposure.readback_pending[slot_index] = false;
     }
 }
@@ -395,6 +433,13 @@ fn void clear_exposure_readback(Renderer* renderer, uint slot_index) {
     foreach (&record : renderer.views.items) {
         if (record.live) record.auto_exposure.readback_pending[slot_index] = false;
     }
+}
+
+fn float adapted_scale(ViewRecord* record, ulong scene) @private {
+    ViewExposure* exposure = &record.auto_exposure;
+    ExposureHistory* history = &exposure.history;
+    bool settled = history.valid && history.scene == scene && !history.snapped;
+    return auto_exposure_active(&record.desc) && settled && exposure.adapted_scale > 0 ? exposure.adapted_scale : 1;
 }
 
 fn gpu::GpuAddress adapted_exposure(ViewRecord* record) @private {

@@ -147,6 +147,10 @@ const uint FOG_VOLUME_JITTER = 1u;
 const uint FOG_VOLUME_HISTORY = 2u;
 const float FOG_HISTORY_WEIGHT = 0.9;
 const uint FOG_SCATTERING_CHUNK = 8u;
+const uint CLOUD_NOISE_SIZE = 128u;
+const uint CLOUD_NOISE_GROUP_SIZE = 4u;
+const uint CLOUD_STEPS = 64u;
+const uint CLOUD_LIGHT_STEPS = 6u;
 const uint PHYSICAL_MAP_CLEARCOAT = 1u;
 const uint PHYSICAL_MAP_CLEARCOAT_ROUGHNESS = 2u;
 const uint PHYSICAL_MAP_CLEARCOAT_NORMAL = 4u;
@@ -1117,6 +1121,52 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer FogVolumeRo
     uint flags;
     float jitter;
     uint slice_chunk;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer CloudNoiseRoot {
+    uint output_texture;
+    uint size;
+    uint _pad0;
+    uint _pad1;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer CloudsRoot {
+    vec4 sun_direction;
+    vec4 sun_illuminance;
+    vec4 wind_offset;
+    uint64_t frame;
+    uint output_texture;
+    uint distance_texture;
+    uint depth;
+    uint noise;
+    uint coverage;
+    uint noise_sampler;
+    uint coverage_sampler;
+    uint width;
+    uint height;
+    float planet_radius;
+    float bottom;
+    float top;
+    float density;
+    float albedo;
+    float anisotropy;
+    float coverage_extent;
+    float noise_scale;
+    float erosion;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer CloudsCompositeRoot {
+    uint64_t frame;
+    uint color;
+    uint depth;
+    uint clouds;
+    uint distance_texture;
+    uint width;
+    uint height;
+    uint cloud_width;
+    uint cloud_height;
+    uint _pad0;
+    uint _pad1;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer StandardMaterialRoot {
