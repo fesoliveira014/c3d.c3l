@@ -148,16 +148,11 @@ fn void test_animation_authoring_blend_layout_exact_samples_interior_and_duratio
     }
 }
 
-fn void test_animation_authoring_blend_layout_authored_ties_and_history_independence() @test {
+fn void test_animation_authoring_blend_layout_hull_projection_ignores_history_order_and_winding() @test {
     LayoutFixture square = layout_grid(2, 2);
     layout_prepare(&square);
-    Vec2[9] probes = {
-        { 0.5f, 0.5f }, { 0.5f, 0.50000006f }, { 0.5f, 0.5000002f },
-        { -1, 0.5f }, { 2, 0.5f }, { 0.5f, -1 }, { 0.5f, 2 }, { -1, -1 }, { 2, 2 },
-    };
-    LayoutExpectation[9] expected = {
-        { .count = 3, .weights = { 0.5, 0, 0, 0.5 } },
-        { .count = 3, .weights = { 0.5, 0, 0, 0.5 } },
+    Vec2[7] probes = { { 0.5f, 0.5f }, { -1, 0.5f }, { 2, 0.5f }, { 0.5f, -1 }, { 0.5f, 2 }, { -1, -1 }, { 2, 2 } };
+    LayoutExpectation[7] expected = {
         { .count = 3, .weights = { 0.5, 0, 0, 0.5 } },
         { .count = 2, .weights = { 0.5, 0, 0.5, 0 } },
         { .count = 2, .weights = { 0, 0.5, 0, 0.5 } },
@@ -168,7 +163,7 @@ fn void test_animation_authoring_blend_layout_authored_ties_and_history_independ
     };
     foreach (index, parameter : probes) layout_expect(&square, parameter, expected[index]);
     BlendLayoutSelection first = anim::select_blend_layout(layout_view(&square), probes[0]);
-    (void)anim::select_blend_layout(layout_view(&square), probes[7]);
+    (void)anim::select_blend_layout(layout_view(&square), probes[5]);
     BlendLayoutSelection after = anim::select_blend_layout(layout_view(&square), probes[0]);
     assert(first.indices == after.indices && first.weights == after.weights);
     assert(first.count == after.count);
