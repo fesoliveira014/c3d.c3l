@@ -105,25 +105,6 @@ fn PoseStorage*? create_pose_storage_try(
     return storage;
 }
 
-<* Allocate fixed pose/scratch arrays using an infallible owner allocator. *>
-fn PoseStorage* create_pose_storage(
-    Allocator allocator,
-    Transform[] base_pose,
-    uint[] mesh_nodes,
-    float[][] base_morph_weights,
-    usz event_capacity,
-    bool inertia_enabled = false,
-) {
-    return create_pose_storage_try(
-        allocator: allocator,
-        base_pose: base_pose,
-        mesh_nodes: mesh_nodes,
-        base_morph_weights: base_morph_weights,
-        event_capacity: event_capacity,
-        inertia_enabled: inertia_enabled,
-    )!!;
-}
-
 <*
  Free owned pose and scratch arrays.
  @param [&inout] storage : "Released; borrowed baselines remain untouched."
