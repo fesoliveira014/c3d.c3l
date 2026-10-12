@@ -528,7 +528,7 @@ fn void? record_prepare_buffer_copy(
     gpu::cmd_barrier(&renderer.commands, &before)!;
     gpu::BufferCopyDesc copy = { .src = source, .dst = target };
     gpu::cmd_copy_buffer(&renderer.commands, &copy)!;
-    gpu::Barrier after = { .before = { .transfer }, .after = renderer.consumer_stages };
+    gpu::Barrier after = { .before = { .transfer }, .after = geometry_read_stages(renderer) };
     gpu::cmd_barrier(&renderer.commands, &after)!;
     renderer.work_recorded = true;
     unit.referenced_this_frame = true;
