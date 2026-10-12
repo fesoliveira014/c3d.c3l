@@ -500,6 +500,7 @@ fn CrowdPlaybackState*? create_crowd_playback(
         base_morph_weights: state.base_morph_weights,
         event_capacity: event_capacity,
         inertia_enabled: inertia_enabled,
+        owns_output: false,
     )!;
 
     if (inertia_enabled) {
