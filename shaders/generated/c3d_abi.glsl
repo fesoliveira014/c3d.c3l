@@ -143,6 +143,10 @@ const uint AERIAL_PERSPECTIVE_SIZE = 32u;
 const uint SKY_TABLE_GROUP_SIZE = 8u;
 const uint AERIAL_PERSPECTIVE_GROUP_DEPTH = 4u;
 const uint FOG_VOLUME_MAX_SLICES = 128u;
+const uint FOG_VOLUME_JITTER = 1u;
+const uint FOG_VOLUME_HISTORY = 2u;
+const float FOG_HISTORY_WEIGHT = 0.9;
+const float FOG_HISTORY_TOLERANCE = 0.5;
 const uint PHYSICAL_MAP_CLEARCOAT = 1u;
 const uint PHYSICAL_MAP_CLEARCOAT_ROUGHNESS = 2u;
 const uint PHYSICAL_MAP_CLEARCOAT_NORMAL = 4u;
@@ -1099,14 +1103,20 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer FogPassRoot 
     uint _pad1;
 };
 
-layout(buffer_reference, std430, buffer_reference_align = 8) buffer FogVolumeRoot {
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer FogVolumeRoot {
+    mat4 previous_view_proj;
+    vec4 previous_camera_position;
     uint64_t frame;
-    uint volume;
+    uint scattering;
+    uint history;
+    uint integrated;
     uint width;
     uint height;
     uint sun_light;
     uint slices;
-    uint _pad1;
+    uint flags;
+    float jitter;
+    uint _pad0;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer StandardMaterialRoot {

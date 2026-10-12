@@ -9,7 +9,8 @@ layout(push_constant) uniform Push {
     uint64_t root_gpu;
 } pc;
 
-// One column front to back, in place: in-scatter and transmittance from the camera to each slice's far boundary.
+// One column front to back: in-scatter and transmittance from the camera to each slice's far boundary; in place when
+// the integrated volume is the scattering one.
 void main() {
     FogVolumeRoot root = FogVolumeRoot(pc.root_gpu);
     ivec2 column = ivec2(gl_GlobalInvocationID.xy);
@@ -19,10 +20,10 @@ void main() {
     float transmittance = 1.0;
     for (int slice = 0; slice < int(root.slices); slice++) {
         ivec3 froxel = ivec3(column, slice);
-        vec4 medium = load_storage_texture_3d(root.volume, froxel);
+        vec4 medium = load_storage_texture_3d(root.scattering, froxel);
         float slice_transmittance = exp(-medium.a);
         inscatter += transmittance * medium.rgb * (1.0 - slice_transmittance);
         transmittance *= slice_transmittance;
-        store_storage_texture_3d(root.volume, froxel, vec4(inscatter, transmittance));
+        store_storage_texture_3d(root.integrated, froxel, vec4(inscatter, transmittance));
     }
 }

@@ -1084,14 +1084,25 @@ root FogPassRoot {
 // Most slices a view's fog volume holds; the view's quality chooses its own count up to it.
 const uint FOG_VOLUME_MAX_SLICES = 128;
 
+const uint FOG_VOLUME_JITTER = 1;
+const uint FOG_VOLUME_HISTORY = 2;
+const float FOG_HISTORY_WEIGHT = 0.9; // Memory of about ten frames; higher smooths longer and trails longer.
+const float FOG_HISTORY_TOLERANCE = 0.5; // Change that drops a froxel's history; lower trails less, flickers more.
+
 root FogVolumeRoot {
+    mat4         previous_view_proj;
+    vec4         previous_camera_position;
     GpuAddress   frame;
-    TextureIndex volume;
+    TextureIndex scattering;
+    TextureIndex history;
+    TextureIndex integrated;
     uint         width;
     uint         height;
     uint         sun_light;
     uint         slices;
-    uint         _pad1;
+    uint         flags;
+    float        jitter;
+    uint         _pad0;
 }
 
 const uint PHYSICAL_MAP_CLEARCOAT = 1;

@@ -412,6 +412,7 @@ fn void? Renderer.end_frame(&self) {
                 if (record.history.pending) record.history.submitted = self.frame_index;
                 record.history.publish();
                 record.auto_exposure.history.publish();
+                record.fog_history.publish();
                 publish_lod_history(&record.lod_history);
             }
             submitted = true;
@@ -1187,6 +1188,7 @@ fn void abort_frame(Renderer* renderer) {
             record.restore_states();
             record.history.discard();
             record.auto_exposure.history.discard();
+            record.fog_history.discard();
             discard_lod_history(&record.lod_history);
         }
     }

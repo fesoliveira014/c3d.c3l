@@ -80,6 +80,7 @@ struct ViewDesc {
     Plane                clip_plane; // world space; the zero plane clips nothing
     bool                 volumetric_fog; // a froxel volume for the view's HeightFog; allocated with the view
     FogQuality           fog_quality; // grid of that volume; reallocated when it changes
+    bool                 fog_temporal; // jitters the volume and blends the previous frame's; a second volume per view
     bool                 share_shadows;  // binds an earlier view's matching shadow set and publishes its own
     uint                 transmission_layers; // up to MAX_TRANSMISSION_LAYERS; zero reads as 1
     TransparencyMode     transparency; // how premultiplied-alpha blended surfaces compose
@@ -89,7 +90,7 @@ struct ViewDesc {
  Working images one view owns, in view_targets order.
 *>
 const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8 + GBUFFER_CHANNEL_COUNT
-  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1 + 1 + 2 * SSGI_HISTORY_SLOTS + 2 + 1 + 3 + 2 + 1;
+  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1 + 1 + 2 * SSGI_HISTORY_SLOTS + 2 + 1 + 3 + 2 + 1 + 1;
 
 <*
  Reverse-Z projection terms that recover forward distance from stored depth.
@@ -618,7 +619,8 @@ struct ViewRecord {
     Target                               ssgi;
     Target                               sky_view;
     Target                               aerial_perspective;
-    Target                               fog_volume;
+    Target[FOG_VOLUME_SLOTS]             fog_volumes;
+    FogHistory                           fog_history;
     Target                               weighted_accum;
     Target                               weighted_revealage;
     Target*                              scene_input;
@@ -707,10 +709,11 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
     targets[next + 3 + 2 * SSGI_HISTORY_SLOTS] = &record.scene_depth;
     targets[next + 4 + 2 * SSGI_HISTORY_SLOTS] = &record.sky_view;
     targets[next + 5 + 2 * SSGI_HISTORY_SLOTS] = &record.aerial_perspective;
-    targets[next + 6 + 2 * SSGI_HISTORY_SLOTS] = &record.fog_volume;
+    targets[next + 6 + 2 * SSGI_HISTORY_SLOTS] = &record.fog_volumes[0];
     targets[next + 7 + 2 * SSGI_HISTORY_SLOTS] = &record.weighted_accum;
     targets[next + 8 + 2 * SSGI_HISTORY_SLOTS] = &record.weighted_revealage;
     targets[next + 9 + 2 * SSGI_HISTORY_SLOTS] = &record.reflection_gbuffer;
+    targets[next + 10 + 2 * SSGI_HISTORY_SLOTS] = &record.fog_volumes[1];
     return targets;
 }
 
@@ -918,6 +921,7 @@ fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
         record.cluster_depth = {};
         record.history.valid = false;
         record.history.pending = false;
+        record.fog_history = {};
         record.stats.accumulated_samples = 0;
     };
 }
@@ -940,7 +944,7 @@ fn void? destroy_view(Renderer* renderer, ViewId view) {
 }
 
 <*
- Forget the view's previous pose and adapted exposure; a camera cut.
+ Forget the view's previous pose, adapted exposure and fog history; a camera cut.
  @param [&inout] renderer : "No open frame."
  @return? c3d::INVALID_ID
  @require !renderer.frame_open
@@ -949,6 +953,7 @@ fn void? reset_view_history(Renderer* renderer, ViewId view) {
     ViewRecord* record = renderer.views.try_get(view)!;
     record.history.valid = false;
     record.history.pending = false;
+    record.fog_history = {};
     record.auto_exposure.history.invalidate();
     reset_lod_history(&record.lod_history);
 }
@@ -1100,6 +1105,7 @@ fn void retire_view_images(Renderer* renderer, ViewRecord* record) @private {
 
 fn void forget_view_history(Renderer* renderer, ViewRecord* record) @private {
     free_view_history(renderer.allocator, &record.history);
+    record.fog_history = {};
     free_lod_history(renderer, &record.lod_history);
 }
 
@@ -1156,8 +1162,9 @@ fn void drop_unwanted_images(ViewRecord* staged, ViewDesc* previous) @private {
         staged.aerial_perspective = {};
     }
     if (!desc.volumetric_fog || desc.shading == ShadingPath.PATH_TRACED || desc.fog_quality != previous.fog_quality) {
-        staged.fog_volume = {};
+        staged.fog_volumes = {};
     }
+    if (!desc.fog_temporal) staged.fog_volumes[1] = {};
     post::drop_stale_effect_targets(staged);
 }
 

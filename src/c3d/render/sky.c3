@@ -716,7 +716,7 @@ fn gpu::GpuAddress? pack_view_sky_fog(
     SkyFogTables tables = { .sampler = renderer.linear_clamp_sampler };
     if (fog.fog) {
         tables.fog_volume = fog_volume;
-        tables.fog_slices = record.fog_volume.depth;
+        tables.fog_slices = record.fog_volumes[0].depth;
     }
     Vec3 to_sun;
     Vec3 illuminance;
