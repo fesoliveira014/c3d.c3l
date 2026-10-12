@@ -12,6 +12,11 @@ import std::collections::map;
 *>
 const usz MAX_COMPUTE_SKINNING_BYTES = 512 * 1024 * 1024; // vertex_count * 52 B a mesh; the example character 0.31 MB
 
+<*
+ Meshes compute skinning poses at once; one past it keeps vertex skinning.
+*>
+const uint MAX_COMPUTE_SKINNING_MESHES = 2048; // one device allocation slot per mesh, of the 4,096 the renderer shares
+
 const uint POSED_BLOCKS @private = 2; // current and previous pose of one mesh
 
 struct PosedDraw @private {
@@ -44,7 +49,8 @@ struct ComputeSkinBinding @private {
 
 struct ComputeSkinTable @private {
     Allocator                      allocator;
-    List{ComputeSkinBinding}       bindings;
+    ComputeSkinBinding[]           bindings;   // MAX_COMPUTE_SKINNING_MESHES, allocated on the first claim
+    uint                           used;       // bindings ever claimed
     HashMap{PosedTraceKey, uint}   lookup;
     List{uint}                     vacant;
     List{uint}                     resolved;   // bindings claimed by the open frame
@@ -61,8 +67,6 @@ fn void Renderer.set_compute_skinning(&self, bool enabled) {
 
 fn ComputeSkinTable create_compute_skin_table(Allocator allocator) @private {
     ComputeSkinTable table = { .allocator = allocator };
-    table.bindings.init(allocator);
-    table.lookup.init(allocator);
     table.vacant.init(allocator);
     table.resolved.init(allocator);
     table.dispatches.init(allocator);
@@ -74,7 +78,7 @@ fn void free_compute_skin(Renderer* renderer) @private {
     foreach (&binding : table.bindings) {
         if (binding.allocation.is_valid()) (void)gpu::free_allocation(&renderer.device, &binding.allocation);
     }
-    table.bindings.free();
+    if (table.bindings.len) alloc::free(table.allocator, table.bindings.ptr);
     table.lookup.free();
     table.vacant.free();
     table.resolved.free();
@@ -86,7 +90,7 @@ fn void free_compute_skin(Renderer* renderer) @private {
  Release every binding unclaimed for more than INSTANCE_ABSENCE_FRAMES frames.
  @param [&inout] retire : "Receives each released block."
 *>
-fn void ComputeSkinTable.sweep(&self, ulong frame_index, RetireList* retire) @private {
+fn void ComputeSkinTable.sweep(&self, ulong frame_index, RetireList* retire) {
     foreach (index, &binding : self.bindings) {
         if (!binding.key.scene || frame_index - binding.last_seen <= INSTANCE_ABSENCE_FRAMES) continue;
         retire_skin_blocks(self, binding, retire);
@@ -105,20 +109,31 @@ fn void retire_skin_blocks(ComputeSkinTable* table, ComputeSkinBinding* binding,
     binding.bytes = 0;
 }
 
-fn uint ComputeSkinTable.bind(&self, PosedTraceKey key) @private {
+<*
+ Binding index of a new key, reusing a released one first.
+ @return? c3d::CAPACITY_EXCEEDED
+*>
+fn uint? ComputeSkinTable.bind(&self, PosedTraceKey key) {
+    if (!self.bindings.len) {
+        self.bindings = alloc::new_array(self.allocator, ComputeSkinBinding, MAX_COMPUTE_SKINNING_MESHES);
+        self.lookup.init(self.allocator, (sz)MAX_COMPUTE_SKINNING_MESHES * 2);
+    }
+
     uint index;
     if (try reused = self.vacant.pop()) {
         index = reused;
+    } else if (self.used < MAX_COMPUTE_SKINNING_MESHES) {
+        index = self.used++;
     } else {
-        index = (uint)self.bindings.len();
-        self.bindings.push({});
+        return c3d::CAPACITY_EXCEEDED~;
     }
+
     self.bindings[index].key = key;
     self.lookup.set(key, index);
     return index;
 }
 
-// A mesh outside compute skinning, or past MAX_COMPUTE_SKINNING_BYTES, answers its rest root.
+// A mesh outside compute skinning, or past either cap, answers its rest root; each such claim counts a fallback.
 fn PosedDraw? claim_posed_draw(Renderer* renderer, MeshCandidate* candidate, GpuGeometry* geometry) @private {
     PosedDraw rest = { .root = geometry.root };
     if (!renderer.frame_compute_skinning || candidate_instanced(candidate) || candidate.animated_lod
@@ -130,7 +145,12 @@ fn PosedDraw? claim_posed_draw(Renderer* renderer, MeshCandidate* candidate, Gpu
 
     ComputeSkinTable* table = &renderer.compute_skin;
     PosedTraceKey key = { .scene = candidate.scene_identity, .node = candidate.node.id };
-    uint index = table.lookup.get(key) ?? table.bind(key);
+    uint? index = table.lookup.get(key) ?? table.bind(key);
+    if (catch index) {
+        renderer.stats.compute_skinning_fallbacks++;
+        return rest;
+    }
+
     ComputeSkinBinding* binding = &table.bindings[index];
     if (!binding.resolved) {
         binding.resolved = true;
@@ -138,6 +158,7 @@ fn PosedDraw? claim_posed_draw(Renderer* renderer, MeshCandidate* candidate, Gpu
         table.resolved.push(index);
         binding.draw = stage_posed_draw(renderer, binding, candidate, geometry, deformed)!;
     }
+    if (!binding.draw.active) renderer.stats.compute_skinning_fallbacks++;
     return binding.draw;
 }
 
@@ -154,10 +175,8 @@ fn PosedDraw? stage_posed_draw(
     usz needed = second_block + layout.positions + PACKED_VEC3_BYTES * geometry.layout.vertex_count;
     if (binding.bytes != needed) {
         retire_skin_blocks(table, binding, &renderer.pending_upload_retire);
-        if (table.bytes + needed > MAX_COMPUTE_SKINNING_BYTES) {
-            renderer.stats.compute_skinning_fallbacks++;
-            return { .root = geometry.root };
-        }
+        if (table.bytes + needed > MAX_COMPUTE_SKINNING_BYTES) return { .root = geometry.root };
+
         gpu::AllocationDesc desc = {
             .size         = needed,
             .alignment    = STREAM_ALIGNMENT,
@@ -169,12 +188,14 @@ fn PosedDraw? stage_posed_draw(
         gpu::GpuSpan span = gpu::get_allocation_span(&renderer.device, binding.allocation)!;
         binding.roots[0] = gpu::get_span_address(&renderer.device, span)!;
         binding.roots[1] = binding.roots[0] + (gpu::GpuAddress)second_block;
+
         table.bytes += needed;
         binding.bytes = needed;
         binding.roots_staged = false;
         binding.committed = 0;
         binding.current = 0;
     }
+
     bool rest_moved = binding.source_root != geometry.root || !c3d::same_id(binding.geometry, geometry.asset);
     if (!binding.roots_staged || rest_moved) stage_posed_roots(renderer, binding, geometry, layout)!;
 
@@ -188,6 +209,7 @@ fn PosedDraw? stage_posed_draw(
         .palette = palette,
         .morph   = resolve_candidate_morph(renderer, candidate, deformed)!,
     };
+
     table.dispatches.push({
         .root         = pose.address,
         .vertex_count = geometry.layout.vertex_count,
@@ -217,10 +239,12 @@ fn void? stage_posed_roots(
         POSED_BLOCKS * GeometryRoot::size,
         STREAM_ALIGNMENT,
     )!;
+
     GeometryRoot* roots = (GeometryRoot*)staging.bytes.ptr;
     roots[0] = posed_geometry_root(&geometry.layout, geometry.root, binding.roots[0]);
     roots[1] = roots[0];
     roots[1].positions = binding.roots[1] + (gpu::GpuAddress)layout.positions;
+
     gpu::GpuSpan destination = gpu::get_allocation_span(&renderer.device, binding.allocation)!;
     foreach (block, root : binding.roots) {
         renderer.pending_copies.push({
@@ -228,6 +252,7 @@ fn void? stage_posed_roots(
             .dst = destination.checked_subspan((usz)(root - binding.roots[0]), GeometryRoot::size)!,
         });
     }
+
     renderer.pending_overwrite = true;
     binding.geometry = geometry.asset;
     binding.source_root = geometry.root;
@@ -243,16 +268,20 @@ fn void? record_compute_skin(Renderer* renderer, gpu::CommandList* commands) @pr
     acquire_compute_slot(renderer, ComputeSlot.TRACE_POSE_U16)!;
     bool profiled = renderer.frame_open;
     if (profiled) begin_profile_pass(renderer, Pass.COMPUTE_SKIN)!;
+
     gpu::Barrier readers_done = { .before = renderer.consumer_stages, .after = { .compute } };
     gpu::cmd_barrier(commands, &readers_done)!;
+
     foreach (&dispatch : table.dispatches) {
         PosedTraceTable* pipelines = &renderer.posed_trace;
         gpu::cmd_bind_pipeline(commands, dispatch.joints_u16 ? pipelines.pose_u16_pipeline : pipelines.pose_pipeline)!;
         uint groups = (dispatch.vertex_count + shader::TRACE_POSE_GROUP_SIZE - 1) / shader::TRACE_POSE_GROUP_SIZE;
         gpu::cmd_dispatch(commands, dispatch.root, { groups, 1, 1 })!;
     }
+
     gpu::Barrier posed = { .before = { .compute }, .after = { .vertex_shader } };
     gpu::cmd_barrier(commands, &posed)!;
+
     table.dispatches.clear();
     renderer.work_recorded = true;
     if (profiled) end_profile_pass(renderer, Pass.COMPUTE_SKIN)!;

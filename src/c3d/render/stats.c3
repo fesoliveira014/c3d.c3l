@@ -158,7 +158,7 @@ struct Stats {
     uint  trace_skipped;
     uint  trace_sway_at_rest;    // this frame: swaying batches and LOD groups traced at rest
     uint  compute_skinned;       // this frame: meshes posed by a compute dispatch
-    uint  compute_skinning_fallbacks; // this frame: deformed meshes kept on vertex skinning by the byte cap
+    uint  compute_skinning_fallbacks; // this frame: pass claims of deformed meshes a cap left on vertex skinning
     usz   compute_skinning_bytes; // GPU bytes the posed buffers hold after the frame
     uint  trace_posed_instances; // this frame: posed rows
     uint  trace_posed_overflow;  // this frame: posed candidates left out past the slot capacity
