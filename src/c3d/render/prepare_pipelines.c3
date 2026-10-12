@@ -279,6 +279,15 @@ fn bool prepare_custom_gbuffer(Renderer* renderer, Material* material) @local {
     return renderer.assets.shader(shader).desc.gbuffer.len > 0;
 }
 
+fn SceneReads prepare_custom_reads(Renderer* renderer, Material* material) @local {
+    if (material.kind != MaterialKind.CUSTOM || !renderer.assets.shaders.is_live(material.custom.shader)) return {};
+    ShaderId shader = material.custom.shader;
+    SceneReads reads = renderer.assets.shader(shader).desc.scene_reads;
+    ShaderRes* mirror = &renderer.shaders[shader.index];
+    if (c3d::same_id(mirror.asset, shader)) reads |= mirror.desc.scene_reads;
+    return reads;
+}
+
 fn void list_mesh_pipelines(
     Renderer* renderer,
     List{PreparePipelineUnit}* requests,
@@ -294,8 +303,15 @@ fn void list_mesh_pipelines(
     gpu::PolygonMode polygon = wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL;
     uint instanced_flag = instanced ? shader::SHADER_FLAG_INSTANCED : 0;
     bool deformed = skinned && (!instanced || crowd);
-    ShaderVariant vertex = mesh_vertex_variant(flags, morphed, deformed, instanced_flag);
+    ShaderVariant vertex = mesh_vertex_variant(
+        flags: flags,
+        morphed: morphed,
+        skinned: deformed,
+        base_flags: instanced_flag,
+    );
     ShaderId custom = material.kind == MaterialKind.CUSTOM ? material.custom.shader : (ShaderId){};
+    bool custom_gbuffer = prepare_custom_gbuffer(renderer, material);
+    SceneReads custom_reads = prepare_custom_reads(renderer, material);
 
     PipelineKey forward = forward_pipeline_key(
         material: material,
@@ -303,11 +319,21 @@ fn void list_mesh_pipelines(
         polygon: polygon,
         shadow_flags: 0,
     );
-    list_prepare_key(requests, forward, PreparePipelinePass.FORWARD, custom);
+    list_prepare_key(
+        requests: requests,
+        key: forward,
+        pass: PreparePipelinePass.FORWARD,
+        shader: custom,
+    );
 
-    if (renderer.has_deferred_view() && gbuffer_encodable(material, prepare_custom_gbuffer(renderer, material))) {
+    if (renderer.has_deferred_view() && gbuffer_encodable(material, custom_gbuffer)) {
         PipelineKey gbuffer = gbuffer_pipeline_key(vertex, gbuffer_fragment(material), polygon);
-        list_prepare_key(requests, gbuffer, PreparePipelinePass.GBUFFER, custom);
+        list_prepare_key(
+            requests: requests,
+            key: gbuffer,
+            pass: PreparePipelinePass.GBUFFER,
+            shader: custom,
+        );
     }
 
     if (depth && material.common.alpha_mode != AlphaMode.BLEND) {
@@ -324,7 +350,12 @@ fn void list_mesh_pipelines(
             .samples = gpu::SampleCount.ONE,
             .polygon = polygon,
         };
-        list_prepare_key(requests, caster, PreparePipelinePass.DEPTH, custom);
+        list_prepare_key(
+            requests: requests,
+            key: caster,
+            pass: PreparePipelinePass.DEPTH,
+            shader: custom,
+        );
     }
 
     foreach (&view : renderer.views.items) {
@@ -339,14 +370,25 @@ fn void list_mesh_pipelines(
             list_prepare_compute(requests, ComputeSlot.TRACE_REFIT);
         }
 
-        if (desc.ray_tracing.shadows) {
+        DrawList list = view_draw_list(
+            material: material,
+            shading: desc.shading,
+            custom_gbuffer: custom_gbuffer,
+            custom_reads: custom_reads,
+        );
+        if (desc.ray_tracing.shadows && list != DrawList.GBUFFER) {
             PipelineKey traced = forward_pipeline_key(
                 material: material,
                 vertex: vertex,
                 polygon: polygon,
                 shadow_flags: rt_shadow_flags(renderer, true),
             );
-            list_prepare_key(requests, traced, PreparePipelinePass.FORWARD, custom);
+            list_prepare_key(
+                requests: requests,
+                key: traced,
+                pass: PreparePipelinePass.FORWARD,
+                shader: custom,
+            );
         }
 
         if (post::uses_velocity(desc) && writes_own_depth(material)) {
@@ -355,7 +397,12 @@ fn void list_mesh_pipelines(
                 polygon: polygon,
                 format: post::velocity_format(desc),
             );
-            list_prepare_key(requests, velocity, PreparePipelinePass.VELOCITY, custom);
+            list_prepare_key(
+                requests: requests,
+                key: velocity,
+                pass: PreparePipelinePass.VELOCITY,
+                shader: custom,
+            );
         }
     }
 }
@@ -488,13 +535,7 @@ fn void append_prepare_finish(Renderer* renderer, List{PrepareUnit}* listed) @pr
     foreach (unit : *listed) {
         if (unit.kind != PrepareUnitKind.MATERIAL || !renderer.assets.materials.is_live(unit.material)) continue;
         Material* data = &renderer.assets.material(unit.material).data;
-        SceneReads custom_reads;
-        if (data.kind == MaterialKind.CUSTOM && renderer.assets.shaders.is_live(data.custom.shader)) {
-            custom_reads = renderer.assets.shader(data.custom.shader).desc.scene_reads;
-            ShaderRes* mirror = &renderer.shaders[data.custom.shader.index];
-            if (c3d::same_id(mirror.asset, data.custom.shader)) custom_reads |= mirror.desc.scene_reads;
-        }
-        reads |= material_scene_reads(data, custom_reads);
+        reads |= material_scene_reads(data, prepare_custom_reads(renderer, data));
     }
 
     List{PreparePipelineUnit} requests;
@@ -547,7 +588,10 @@ fn void? run_prepare_sheen_step(Renderer* renderer, PrepareUnit* unit, PrepareRe
         report.views++;
     }
 
+    UploadRing* upload = &renderer.frames[renderer.recording_slot].upload;
+    sz overflow = upload.overflow.len();
     record_sheen_lut(renderer, &renderer.commands)!;
+    if (upload.overflow.len() > overflow) report.allocations++;
     report.staged_bytes += BrdfLutRoot::size;
     unit.staged.bytes = unit.bytes;
     unit.referenced_this_frame = true;
