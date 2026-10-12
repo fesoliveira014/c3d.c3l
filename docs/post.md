@@ -33,9 +33,10 @@ multiplier. `GradeParams` carries no exposure of its own.
 The scene image is stored multiplied by the view's pre-exposure, and the grade applies
 `exposure / pre_exposure`. The factor is `Camera.exposure` times the adapted multiplier, rounded to a power of two
 and clamped to 2^-16 to 2^16, so multiplying and dividing are exact. The adapted multiplier is the one last read
-back (`FRAMES_IN_FLIGHT` frames old); the factor is 1 in manual mode, before the first readback and after a cut or
-a scene change until the next readback. Stored values then sit near display scale at every exposure, with about 16
-stops of half-float headroom above display white, so a dim scene is not stored in the subnormal range.
+back (`FRAMES_IN_FLIGHT` frames old); the adapted multiplier is 1 in manual mode, before the first readback and
+after a cut or a scene change until the next readback, so the factor then follows `Camera.exposure` alone. Stored
+values sit near display scale at every exposure, with about 16 stops of half-float headroom above display white, so
+a dim scene is not stored in the subnormal range.
 `ViewDesc.pre_exposure_override` forces the factor, which must be a power of two inside those bounds, and
 `ViewStats.pre_exposure` reports it.
 

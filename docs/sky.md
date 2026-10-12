@@ -462,7 +462,7 @@ sun illuminance in physical units, so their own steps still bound the precision 
   disc under a high factor is cut at 65,504 divided by the factor), the weighted blend's accumulation, and the path
   tracer's copy into the view's image.
 - The brightest sun disc the half-float target can hold shrinks as the pre-exposure factor grows, so a disc dimmed by
-  fog can clip at high factors.
+  fog can clip at high factors, and a disc clipped by the storage guard also weakens its bloom.
 - The weighted blend's colour limit of 64 is in stored units, about 64 times display white at every exposure.
 - TAA's `1 / (1 + luma)` weights and its variance clip work in stored units, so they follow the exposed image
   rather than absolute radiance.
@@ -617,7 +617,7 @@ transmission pane shows no double fog; the water's reflections of far peaks are 
 peaks seen directly.
 
 A refresh (0.84 ms) is far under the 4.2 ms at which refreshes would be time-sliced; a second view's
-tables (0.035 ms) do not call for a per-view switch.
+tables do not call for a per-view switch.
 
 ### Volumetric fog, RTX 4090, 2560 × 1440
 
