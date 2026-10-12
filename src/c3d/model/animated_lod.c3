@@ -309,6 +309,11 @@ fn LodGroup? build_animated_lod(
 
         // Crowd template validation gives every skin the first skin's joints and inverse binds.
         ModelSkin skin = template.skins.len ? template.skins[0] : (ModelSkin){};
+        uint[] skeleton_revisions = alloc::new_array_try(tmem, uint, template.skins.len)
+          ?? c3d::CAPACITY_EXCEEDED~!;
+        foreach (index, &revision : skeleton_revisions) {
+            *revision = assets.skeleton(template.skins[index].skeleton).header.revision;
+        }
 
         AnimatedLodBinding binding = {
             .source_owner = source.owner.id,
@@ -320,7 +325,7 @@ fn LodGroup? build_animated_lod(
             .defaults = defaults,
             .joint_nodes = skin.joint_nodes,
             .skeleton = skin.skeleton,
-            .skeleton_revision = skin.skeleton.generation ? assets.skeleton(skin.skeleton).header.revision : 0,
+            .skeleton_revisions = skeleton_revisions,
         };
 
         LodGroup group = scene::create_animated_lod_group(

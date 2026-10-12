@@ -33,8 +33,12 @@ fn bool lod_group_is_live(
         )) return false;
         if (!assets.models.is_live(binding.source_model)) return false;
         if (assets.model(binding.source_model).header.revision != binding.model_revision) return false;
-        if (binding.skeleton.generation && (!assets.skeletons.is_live(binding.skeleton)
-          || assets.skeleton(binding.skeleton).header.revision != binding.skeleton_revision)) return false;
+
+        // An unchanged model revision keeps the template skins in the admitted order.
+        foreach (index, skin : assets.model(binding.source_model).data.skins) {
+            if (!assets.skeletons.is_live(skin.skeleton)
+              || assets.skeleton(skin.skeleton).header.revision != binding.skeleton_revisions[index]) return false;
+        }
     }
 
     foreach (index, part : state.desc.parts) {

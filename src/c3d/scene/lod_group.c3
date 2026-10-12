@@ -87,8 +87,8 @@ struct AnimatedLodBinding {
     uint[] channel_offsets;
     float[] defaults;
     uint[] joint_nodes;
-    SkeletonId skeleton; // template skin whose inverse binds are read live; zero without skins
-    uint skeleton_revision;
+    SkeletonId skeleton;       // first template skin, whose inverse binds are read live; zero without skins
+    uint[] skeleton_revisions; // one per template skin, in template order
 }
 
 <* Scene-owned group data; only placement elements are directly writable. *>
@@ -589,6 +589,7 @@ fn AnimatedLodBinding* carve_animated_lod(
     uint[] offsets = carve_lod(cursor, uint, source.channel_offsets.len);
     float[] defaults = carve_lod(cursor, float, source.defaults.len);
     uint[] joints = carve_lod(cursor, uint, source.joint_nodes.len);
+    uint[] skeleton_revisions = carve_lod(cursor, uint, source.skeleton_revisions.len);
     if (!cursor.base) return null;
 
     parts[..] = source.parts[..];
@@ -596,6 +597,7 @@ fn AnimatedLodBinding* carve_animated_lod(
     offsets[..] = source.channel_offsets[..];
     defaults[..] = source.defaults[..];
     joints[..] = source.joint_nodes[..];
+    skeleton_revisions[..] = source.skeleton_revisions[..];
     bindings[0] = {
         .source_owner = source.source_owner,
         .source_model = source.source_model,
@@ -607,7 +609,7 @@ fn AnimatedLodBinding* carve_animated_lod(
         .defaults = defaults,
         .joint_nodes = joints,
         .skeleton = source.skeleton,
-        .skeleton_revision = source.skeleton_revision,
+        .skeleton_revisions = skeleton_revisions,
     };
     return bindings.ptr;
 }

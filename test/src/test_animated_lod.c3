@@ -545,6 +545,30 @@ fn void test_animated_lod_attach_fault_table_preserves_components_and_allocator(
     }
 }
 
+fn void test_animated_lod_skeleton_edits_skip_the_group_for_every_template_skin() @test {
+    @pool() {
+        AssetStore assets = animated_lod_store();
+        defer asset::destroy_asset_store(&assets);
+        PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
+        Scene scene = scene::create_scene(mem, { .max_nodes = 64 });
+        defer scene::destroy_scene(&scene);
+        Node* owner = model::instantiate(&assets, &scene, fixture.compatible_alias)!!;
+        model::attach_animated_lod(
+            assets: &assets,
+            scene: &scene,
+            owner: owner,
+            desc: animated_crowd_fixtures::parts_lod_desc(&assets, fixture.compatible_alias),
+        )!!;
+        LodGroup* group = scene.get(owner, LodGroup);
+        foreach (skeleton : (SkeletonId[2]){ fixture.common_skin, fixture.identical_skin }) {
+            assert(spatial::lod_group_is_live(&assets, group));
+            assets.skeleton(skeleton).header.revision++;
+            assert(!spatial::lod_group_is_live(&assets, group));
+            assets.skeleton(skeleton).header.revision--;
+        }
+    };
+}
+
 fn void test_animated_lod_removed_crowd_keeps_group_without_freed_source_aliases() @test {
     @pool() {
         AssetStore assets = animated_lod_store();
