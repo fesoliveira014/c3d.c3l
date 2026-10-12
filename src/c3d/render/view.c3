@@ -49,6 +49,7 @@ struct DrawItem @private {
     gpu::PipelineHandle pipeline;
     gpu::GpuAddress skin;
     gpu::GpuAddress morph;
+    PosedDraw       posed;
     gpu::GpuAddress instance_data;
     gpu::GpuAddress effects;
     CullRange       range;
@@ -391,7 +392,8 @@ fn void? record_raster_view(
                     bindings: &material.bindings,
                     line_polygon_mode: renderer.caps.line_polygon_mode,
                 )!;
-                ShaderVariant vertex = candidate_vertex_variant(geometry.layout.flags, candidate);
+                PosedDraw posed = claim_posed_draw(renderer, candidate, geometry)!;
+                ShaderVariant vertex = candidate_vertex_variant(geometry.layout.flags, candidate, posed: posed.active);
                 SceneReads custom_reads = custom_scene_reads(renderer, material_description)!;
                 DrawList list = view_draw_list(
                     material:       material_description,
@@ -461,8 +463,9 @@ fn void? record_raster_view(
                     .material  = material,
                     .vertex    = vertex,
                     .pipeline  = pipeline,
-                    .skin      = resolve_candidate_skin(renderer, candidate)!,
+                    .skin      = posed.active ? (gpu::GpuAddress)0 : resolve_candidate_skin(renderer, candidate)!,
                     .morph     = resolve_candidate_morph(renderer, candidate, vertex)!,
+                    .posed     = posed,
                     .instance_data  = candidate_instanced(candidate)
                       ? resolve_instances(renderer, candidate)! : (gpu::GpuAddress)0,
                     .effects   = effects,
@@ -782,8 +785,11 @@ fn void? record_raster_view(
                     );
                 }
 
+                // A pose from before the view's previous frame is no history for this view.
+                if (item.posed.committed != record.history.submitted) item.posed.previous = (gpu::GpuAddress)0;
                 bool posed = item.skin != (gpu::GpuAddress)0 || item.morph != (gpu::GpuAddress)0
-                  || item.candidate.batch || item.candidate.animated_lod || vertices == VertexHistory.CHANGED;
+                  || item.candidate.batch || item.candidate.animated_lod || vertices == VertexHistory.CHANGED
+                  || item.posed.active;
                 item.moved = (temporal && item.candidate.lod) || vertices == VertexHistory.INVALID
                   || crowd_history_invalid
                   || (has_previous && (posed || item.custom_velocity || !(prev_world == node.world)));
@@ -830,7 +836,7 @@ fn void? record_raster_view(
                       : maths::rebase(item.candidate.node.world, renderer.frame_origin),
                     prev_world:    prev_world,
                     frame:         frame_span.address,
-                    geometry:      item.geometry.root,
+                    geometry:      item.posed.root,
                     material:      item.material.address,
                     object_id:     item.candidate.node.id.index,
                     layers:        item.candidate.node.layers,
@@ -1617,7 +1623,7 @@ fn gpu::GpuAddress? upload_previous_pose(
     if (candidate.animated_lod) return upload_animated_lod_previous(renderer, item, pose);
 
     uint offset = instance_offset(&item.range);
-    PreviousPoseGpu previous = { .skin = item.skin, .morph = item.morph };
+    PreviousPoseGpu previous = { .skin = item.skin, .morph = item.morph, .positions = item.posed.previous };
     uint[] crowd_order;
     if (AnimatedCrowd* crowd = candidate.crowd) {
         crowd_order = alloc::new_array(tmem, uint, crowd.count);

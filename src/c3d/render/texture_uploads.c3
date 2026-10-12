@@ -159,6 +159,7 @@ fn void discard_uploads(Renderer* renderer) @private {
 
     discard_font_uploads(renderer);
     discard_posed_trace(&renderer.posed_trace);
+    discard_compute_skin(renderer);
 
     if (!renderer.uploads_recorded && !renderer.pending_copies.len()
         && !renderer.pending_texture_uploads.len() && !renderer.pending_geometry_uploads.len()

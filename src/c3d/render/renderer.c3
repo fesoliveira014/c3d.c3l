@@ -148,6 +148,7 @@ struct Renderer {
     SceneTrace              scene_trace;
     RtContext               rt;
     PosedTraceTable         posed_trace;
+    ComputeSkinTable        compute_skin;
 
     AssetStore*             assets;
     uint                    max_lights;
@@ -235,6 +236,8 @@ struct Renderer {
     ColoredShadowStates     frame_colored_states;
     bool                    colored_shadows;
     bool                    frame_colored_shadows; // colored_shadows as the frame began
+    bool                    compute_skinning;
+    bool                    frame_compute_skinning; // compute_skinning as the frame began
     bool                    frame_submitted;
     uint                    recording_slot;
     Target                  window_target;
@@ -399,6 +402,7 @@ fn void? Renderer.end_frame(&self) {
             if (present) self.output_submission = slot.done;
             self.frame_submitted = true;
             commit_resident_crowds(self, self.frame_index);
+            commit_compute_skin(self, self.frame_index);
             commit_uploads(self, slot);
             foreach (&record : self.views.items) {
                 if (record.history.pending) record.history.submitted = self.frame_index;
@@ -499,6 +503,7 @@ fn void? begin_renderer_frame(Renderer* self, FrameInfo info, bool acquire_outpu
             self.instances.sweep(self.frame_index, &self.pending_upload_retire);
             self.crowds.sweep(self.frame_index, &self.pending_upload_retire);
             self.posed_trace.sweep(self.frame_index, &self.pending_upload_retire);
+            self.compute_skin.sweep(self.frame_index, &self.pending_upload_retire);
             sweep_environments(self);
             sweep_textures(self);
             sweep_fonts(self);
@@ -532,6 +537,7 @@ fn void? begin_renderer_frame(Renderer* self, FrameInfo info, bool acquire_outpu
         self.frame_shadow_state = self.shadow_atlas.state;
         self.frame_colored_states = self.shadow_atlas.colored.states;
         self.frame_colored_shadows = self.colored_shadows;
+        self.frame_compute_skinning = self.compute_skinning;
         // An aborted frame keeps frame_index, so its set must not match a view of the retried frame.
         self.shadow_set.published = false;
         foreach (&record : self.targets.items) {
@@ -935,6 +941,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .instances            = create_instance_table(allocator, max_instance_batches),
         .crowds               = create_resident_crowd_table(allocator, max_resident_crowds),
         .posed_trace          = create_posed_trace_table(allocator, max_posed_trace_instances),
+        .compute_skin         = create_compute_skin_table(allocator),
         .instance_cull_bytes  = desc.instance_cull_bytes ? desc.instance_cull_bytes : INSTANCE_CULL_ARENA_BYTES,
         .prepares             = pool::create_pool{PrepareRecord, PrepareId}(allocator, PREPARE_CAPACITY),
         .linear_clamp_sampler = linear_clamp_sampler,
@@ -982,6 +989,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         free_buffers(&renderer);
         free_scene_trace(&renderer);
         free_posed_trace(&renderer);
+        free_compute_skin(&renderer);
         destroy_pipeline_cache(&renderer.device, &renderer.pipelines);
         destroy_deformation_cache(&renderer.deformation);
         pool::destroy_pool{TargetRecord, RenderTargetId}(&renderer.targets);
@@ -1030,6 +1038,7 @@ fn void destroy_renderer(Renderer* renderer) {
     free_buffers(renderer);
     free_scene_trace(renderer);
     free_posed_trace(renderer);
+    free_compute_skin(renderer);
     destroy_shadow_atlas(&renderer.device, &renderer.shadow_atlas);
     if (renderer.shadow_timing_results.len) alloc::free(renderer.allocator, renderer.shadow_timing_results.ptr);
     alloc::free(renderer.allocator, renderer.shadow_frusta.ptr);

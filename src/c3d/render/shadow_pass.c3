@@ -21,6 +21,7 @@ struct ShadowDraw @private {
     gpu::PipelineHandle tint_pipeline;
     gpu::GpuAddress skin;
     gpu::GpuAddress morph;
+    gpu::GpuAddress geometry_root;
     gpu::GpuAddress alpha;
     gpu::GpuAddress instance_data;
     gpu::GpuAddress effects;
@@ -131,17 +132,20 @@ fn ShadowDraw[]? prepare_shadow_draws(
             reflection = forward_reflection_eligible(candidate, material)
               ? ReflectionPrepass.WRITTEN : ReflectionPrepass.MASKED;
         }
+        PosedDraw posed = claim_posed_draw(renderer, candidate, geometry)!;
         ShaderVariant vertex = candidate_vertex_variant(
             flags:      geometry.layout.flags,
             candidate:  candidate,
             base_flags: reflection == ReflectionPrepass.WRITTEN ? 0 : shader::SHADER_FLAG_DEPTH_ONLY,
+            posed:      posed.active,
         );
         *draw = {
             .candidate = candidate,
             .geometry = geometry,
             .vertex = vertex,
-            .skin = resolve_candidate_skin(renderer, candidate)!,
+            .skin = posed.active ? (gpu::GpuAddress)0 : resolve_candidate_skin(renderer, candidate)!,
             .morph = resolve_candidate_morph(renderer, candidate, vertex)!,
+            .geometry_root = posed.root,
             .alpha = custom_header,
             .instance_data = candidate_instanced(candidate) ? resolve_instances(renderer, candidate)! : (gpu::GpuAddress)0,
             .masked = !translucent && material.common.alpha_mode == AlphaMode.MASK,
@@ -345,7 +349,7 @@ fn void? record_depth_draws(
                 world: maths::rebase(draw.candidate.node.world, renderer.frame_origin),
                 prev_world: maths::rebase(draw.candidate.node.world, renderer.frame_origin),
                 frame: frame,
-                geometry: draw.geometry.root,
+                geometry: draw.geometry_root,
                 material: draw.alpha,
                 object_id: draw.candidate.node.id.index,
                 layers: draw.reflection == ReflectionPrepass.WRITTEN
@@ -363,7 +367,7 @@ fn void? record_depth_draws(
                 root: (DrawRoot*)root.bytes.ptr,
                 world: maths::rebase(draw.candidate.node.world, renderer.frame_origin),
                 frame: frame,
-                geometry: draw.geometry.root,
+                geometry: draw.geometry_root,
                 material: draw.alpha,
                 object_id: draw.candidate.node.id.index,
                 flags: (draw.masked ? shader::DRAW_ALPHA_MASK : 0) | batch_effect_flags(draw.candidate),
