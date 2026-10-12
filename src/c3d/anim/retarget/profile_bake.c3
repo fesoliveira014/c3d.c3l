@@ -29,7 +29,7 @@ struct ProfilePaths @private {
 <*
  Bake an independent clip through immutable calibrated model frames.
  @param allocator : "Owns every array of the returned clip."
- @param [&in] source : "Borrowed only until return."
+ @param [&in] source : "Targets index source_nodes; borrowed only until return."
  @param source_nodes : "Exact prepared source template."
  @param [&in] target : "Exact prepared target template."
  @param [&in] profile : "Immutable borrow; never retained by the clip."
@@ -169,22 +169,30 @@ fn AnimationClip? bake_profile_clip(
                 horizontal = { motion.x - initial_motion.x, 0, motion.z - initial_motion.z };
             }
 
+            Transform extracted;
             if (options.root_motion == RootMotion.EXTRACT) {
                 float current_yaw = profile_yaw_angle(target_world[data.target_motion_node].rotation);
                 if (key > 0) unwrapped_yaw += profile_wrap_yaw(current_yaw - previous_yaw);
                 previous_yaw = current_yaw;
-                target_world[data.target_carrier].position += horizontal;
-                target_world[data.target_carrier].rotation = profile_yaw_rotation(unwrapped_yaw)
-                  .mul(target_world[data.target_carrier].rotation).normalize();
+                extracted = target_world[data.target_carrier];
+                extracted.position += horizontal;
+                extracted.rotation = profile_yaw_rotation(unwrapped_yaw).mul(extracted.rotation).normalize();
             }
 
             foreach (uint index, &node : data.target_nodes) {
                 Transform world = target_world[index];
-                if (options.root_motion == RootMotion.STRIP_XZ && index == data.target_boundary) {
-                    world.position -= horizontal;
+                Transform parent = node.parent < 0 ? maths::TRANSFORM_IDENTITY : target_world[node.parent];
+
+                switch (options.root_motion) {
+                    case KEEP:
+                        break;
+                    case STRIP_XZ:
+                        if (index == data.target_boundary) world.position -= horizontal;
+                    case EXTRACT:
+                        if (index == data.target_carrier) world = extracted;
+                        if (index == data.target_boundary) parent = extracted;
                 }
 
-                Transform parent = node.parent < 0 ? maths::TRANSFORM_IDENTITY : target_world[node.parent];
                 Transform local = profile_relative(parent, world);
                 if (output[index].rotation) write_rotation_key(output[index].rotation, key, local.rotation);
                 if (output[index].translation) write_translation_key(output[index].translation, key, local.position);

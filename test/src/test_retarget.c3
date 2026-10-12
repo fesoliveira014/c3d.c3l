@@ -1042,13 +1042,14 @@ fn ProfileRig profile_forest_rig() @local {
 }
 
 fn ProfileRig profile_turning_carrier_rig(float degrees, float facing) @local {
-    ProfileRig rig = profile_rig(2, 6);
+    ProfileRig rig = profile_rig(3, 7);
     rig.source[0].name = "source_hips";
     rig.source[0].local.rotation = profile_turn({ 0, 1, 0 }, 20);
     rig.desc.source_calibration[0] = rig.source[0].local.rotation;
     rig.source[1].parent = 0;
     rig.source[1].name = "source_leaf";
     rig.source[1].local.position = { 1, 0, 0 };
+    rig.source[2].name = "source_prop";
 
     rig.target.nodes[0].name = "static_ancestor";
     rig.target.nodes[0].local = profile_transform({}, profile_turn({ 0, 1, 0 }, 30), 3);
@@ -1073,10 +1074,15 @@ fn ProfileRig profile_turning_carrier_rig(float degrees, float facing) @local {
     rig.target.nodes[5].name = "mapped_leaf";
     rig.target.nodes[5].local.position = { 0, 1, 0 };
 
+    rig.target.nodes[6].parent = 1;
+    rig.target.nodes[6].name = "mapped_sibling";
+    rig.target.nodes[6].local.position = { 0.25f, 0, 0 };
+
     foreach (index, &node : rig.target.nodes) rig.desc.target_calibration[index] = node.local.rotation;
 
-    profile_map(&rig, (NodeIndexMapping[2]){
+    profile_map(&rig, (NodeIndexMapping[3]){
         { .source_node = 0, .target_node = 2 }, { .source_node = 1, .target_node = 5 },
+        { .source_node = 2, .target_node = 6 },
     }[..]);
 
     rig.desc.source_motion_node = 0;
@@ -1148,16 +1154,19 @@ fn void profile_expect_turning_pose(
     bool extract = mode == RootMotion.EXTRACT;
     Vec3 carrier_position = extract ? reference + horizontal : reference;
     Quat carrier_facing = extract ? profile_turn({ 0, 1, 0 }, degrees).mul(carrier_rotation) : carrier_rotation;
-    Vec3[4] positions = {
+    double carried_yaw = extract ? 120 + (double)degrees : 120;
+    Vec3[5] positions = {
         motion_reference + horizontal,
-        carrier_position + profile_yaw_vector({ -1.5f, 0, 1.5f }, extract ? 120 + (double)degrees : 120),
+        carrier_position + profile_yaw_vector({ -1.5f, 0, 1.5f }, carried_yaw),
         motion_reference + horizontal + profile_yaw_vector({ -1.5f, 0, 0 }, 120 + (double)degrees),
         motion_reference + horizontal + profile_yaw_vector({ -3, 0, 0 }, 120 + (double)degrees),
+        carrier_position + profile_yaw_vector({ 1.5f, 0, 0 }, carried_yaw),
     };
 
     foreach (uint offset, position : positions) {
         uint node = offset + 2;
-        if (mode == RootMotion.STRIP_XZ && node != 3) position -= horizontal;
+        bool carried = node == 3 || node == 6;
+        if (mode == RootMotion.STRIP_XZ && !carried) position -= horizontal;
         Mat4 world = profile_sample_world(
             clip: clip,
             target: &rig.target,
@@ -1165,8 +1174,8 @@ fn void profile_expect_turning_pose(
             time: time,
         );
         profile_expect_position(world, position);
-        profile_expect_rotation(world, node == 3 ? carrier_facing : motion_rotation);
-        profile_expect_scale(world, node == 3 ? 6 : 3);
+        profile_expect_rotation(world, carried ? carrier_facing : motion_rotation);
+        profile_expect_scale(world, carried ? 6 : 3);
     }
 
     Mat4 carrier = profile_sample_world(
