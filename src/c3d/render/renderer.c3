@@ -82,7 +82,7 @@ struct RendererDesc {
     uint             max_trace_instances;
     uint             max_posed_trace_instances; // zero: DEFAULT_MAX_POSED_TRACE_INSTANCES
     uint             max_instance_batches;
-    uint             max_resident_crowds; // zero: DEFAULT_MAX_RESIDENT_CROWDS; 2 * capacity * (joints * 64 + morph_parts * 80) B each
+    uint             max_resident_crowds; // zero: DEFAULT_MAX_RESIDENT_CROWDS
     usz              instance_cull_bytes;
     uint             max_views;             // default view, render_to, impostor bakes and reflection captures included
     uint             max_render_targets;    // at most texture_capacity; each bake or capture takes one

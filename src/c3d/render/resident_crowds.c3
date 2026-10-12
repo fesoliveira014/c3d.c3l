@@ -11,7 +11,7 @@ import std::hash::fnv32a;
 <*
  Crowd slots when RendererDesc.max_resident_crowds is 0.
 *>
-const uint DEFAULT_MAX_RESIDENT_CROWDS = 64; // 3.5 MB of device memory per 512 instances of 53 joints
+const uint DEFAULT_MAX_RESIDENT_CROWDS = 64; // 2 * capacity * (joints * 64 + morph_parts * 80) B of device memory each
 
 const uint MAX_RESIDENT_STREAMS @private = 16; // palette plus morph streams per part; 2 KiB of CPU state per crowd
 const uint RESIDENT_PALETTE @private = uint::max; // stream identity of the palette
