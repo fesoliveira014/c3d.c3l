@@ -32,6 +32,7 @@ const uint FRAME_TRACE_PRESENT = 2u;
 const uint FRAME_AO_PRESENT = 4u;
 const uint FRAME_SSGI_PRESENT = 8u;
 const uint FRAME_CLIP_PLANE = 16u;
+const uint FRAME_REFLECTIONS_PRESENT = 32u;
 const uint CLUSTER_GROUP_SIZE = 64u;
 const uint MAX_DECALS = 256u;
 const uint MAX_CLUSTER_DECALS = 8u;
@@ -61,6 +62,7 @@ const uint DRAW_SWAY = 8u;
 const uint DRAW_DISTANCE_FADE = 16u;
 const uint DRAW_SWAY_VERTEX_ALPHA = 32u;
 const uint DRAW_VERTEX_HISTORY_INVALID = 64u;
+const uint DRAW_TRACED_REFLECTION = 128u;
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1u;
 const uint SSGI_FLAG_GBUFFER_NORMALS = 1u;
 const uint SSGI_FLAG_HISTORY_VALID = 2u;
@@ -367,6 +369,10 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
     uint64_t decals;
     uint decal_count;
     uint sheen_sampler;
+    uint reflection_texture;
+    uint reflection_brdf_lut;
+    uint reflection_sampler;
+    float max_reflection_roughness;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {

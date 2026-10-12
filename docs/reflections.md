@@ -1,6 +1,6 @@
 # Ray-traced reflections
 
-A deferred view can replace the environment reflection of smooth surfaces with reflections traced
+A deferred or forward view can replace the environment reflection of smooth surfaces with reflections traced
 against the scene, so a mirror floor shows the objects around it, including ones outside the view.
 
 ```c3
@@ -24,7 +24,7 @@ render::configure_view(&renderer, renderer.default_view, desc)!;
 `default_view_desc` and `texture_view_desc` set `max_reflection_roughness` to
 `RT_REFLECTION_ROUGHNESS_DEFAULT` (0.5). `create_view` and `configure_view` fault:
 
-- `UNSUPPORTED` when `reflections` is set on a `FORWARD` view. On a renderer created without
+- `UNSUPPORTED` when `reflections` is set on a `PATH_TRACED` view. On a renderer created without
   `RendererDesc.ray_queries` the reflection rays run on the software walk
   ([scene tracing](scene_trace.md)). On an RTX 4090 (Sponza, 2160p) they cost about 12 times the
   ray-query rays: 5.4 ms against 0.45 ms.
@@ -32,7 +32,8 @@ render::configure_view(&renderer, renderer.default_view, desc)!;
   lies outside `(0, 1]`.
 
 The view allocates two `RGBA16_FLOAT` images at its working extent, `reflection` and
-`reflection_blur`, while `reflections` is set, and retires them when it is cleared.
+`reflection_blur`, while `reflections` is set, and retires them when it is cleared. A `FORWARD` view also
+allocates `reflection_gbuffer` ([forward views](#forward-views)).
 
 ## What traces
 
@@ -87,6 +88,38 @@ roughness over a 5x5 footprint that widens with roughness; mirror-like pixels ar
 Traced reflections ignore a view's clip plane: they trace the whole scene. A planar mirror is a
 clipped view of its own (see [clip plane](views.md#clip-plane)).
 
+## Forward views
+
+A forward view has no G-buffer, so its depth prepass writes a thin one, `reflection_gbuffer`: one
+`RGBA16_FLOAT` image at the working extent, 8 bytes per pixel (16.6 MB at 1080p), allocated with the view
+while `reflections` is set on a `FORWARD` view and resized and retired with the reflection images. It
+holds the octahedral normal in `rg` (the deferred packing), the roughness in `b` and the specular weight in
+`a`, and is cleared to zero each frame, so an unwritten pixel has zero specular weight and the trace skips
+it. The trace and blur are the deferred ones, with the thin image bound as both the normal-and-roughness
+and the specular-weight input. `reflections` forces the depth prepass on whatever `depth_prepass` says.
+
+- **Eligible draws** are the opaque Standard draws and the opaque Physical draws that the deferred
+  G-buffer encodes (no clearcoat, sheen, anisotropy, transmission or specular overrides), `OPAQUE` or
+  `MASK`. They draw in the prepass with the full vertex stage and a fragment form that samples what the
+  forward stage does for the normal (normal map and decals), the roughness and the specular weight, and
+  discards `MASK` coverage as it does. The Physical form takes the specular weight the Physical G-buffer
+  stage writes.
+- **Other draws** are `Basic`, `Toon`, `Custom`, Physical outside the encodable set, impostors and
+  billboards. Every prepass pipeline carries the thin image's format, and these draws bind it with
+  the colour write mask zero, so they write depth and nothing else. A pixel they cover keeps zero
+  specular weight, is never traced, and its fragment does not read the reflection image.
+- **Hidden surfaces.** An eligible surface behind a nearer ineligible one leaves its normal and
+  roughness in the thin image, so the trace spends one ray on a pixel nothing reads.
+- **Shading.** Eligible Standard and Physical draws fetch the blurred image at their pixel under
+  `FRAME_REFLECTIONS_PRESENT` and the draw's `DRAW_TRACED_REFLECTION` bit, and blend it into their
+  specular with the deferred resolve's weight and fade, from one shared function. Transparent
+  and scene-reading draws, and draws of the other kinds, read nothing and shade as on a view without
+  reflections, so `Custom` stays probe-only. The traced term replaces the prefiltered specular
+  even in a scene with no lighting environment or probes, as in the deferred resolve.
+- **Order.** `DEPTH_PREPASS`, then `AMBIENT_OCCLUSION` and screen-space GI when enabled, then
+  `RT_REFLECTIONS`, then `FORWARD_OPAQUE`. The thin image's pipelines are created on first use,
+  not by `prepare_scene`.
+
 ## Reflection lights
 
 The pass packs its own light list each frame, apart from the view's. It holds every light eligible for
@@ -100,7 +133,7 @@ a hit, whether it uses a shadow atlas or ray-traced shadows in raster; the atlas
 
 ## Lighting
 
-The lighting resolve uses the traced radiance in place of the prefiltered environment
+The lighting resolve (and, on a forward view, the Standard and Physical fragment stages) uses the traced radiance in place of the prefiltered environment
 reflection, which includes the specular of [reflection probes](reflection_probes.md), and weights it with the same split-sum term, so a surface's reflection is counted
 once. Near the threshold the two blend over the top fifth of `max_reflection_roughness`
 (`RT_REFLECTION_FADE`), which hides the seam between traced and environment reflections. The
@@ -112,8 +145,8 @@ the only reflection of indirect light; the renderer builds the split-sum table f
 
 ## Passes and inspection
 
-`Pass.RT_REFLECTIONS` runs after `AMBIENT_OCCLUSION` and before `LIGHTING`: the trace and the blur,
-two compute dispatches. `render_view` prepares the scene trace and the split-sum table itself.
+`Pass.RT_REFLECTIONS` runs after `AMBIENT_OCCLUSION` and before `LIGHTING` (before `FORWARD_OPAQUE` on a
+forward view): the trace and the blur, two compute dispatches. `render_view` prepares the scene trace and the split-sum table itself.
 `gui::targets_panel` lists `reflection_blur` and `reflection`; programmatically
 `PreviewKind.VIEW_REFLECTION` previews `reflection_blur` at level 0 and `reflection` at level 1.
 The post panel's "Ray tracing" header toggles reflections on a deferred view and sets the
@@ -124,7 +157,7 @@ sphere above the view lit by a warm lamp outside the camera frustum and not by a
 `layers` exclude the sphere, a row of metal spheres from roughness 0 to 1, and in front of them a
 clearcoated red sphere, a high-IOR tinted-specular dielectric, a transmissive glass sphere, a sheen
 fabric sphere and a brushed anisotropic metal sphere, each seen beside its own reflection. `R` toggles
-reflections, `F` toggles a height fog over the reflected paths, `[` and `]` move the threshold, `A` cycles ambient occlusion; `--gpu-timings --benchmark N` prints the mean pass times. The
+reflections, `S` switches the view between deferred and forward shading, `F` toggles a height fog over the reflected paths, `[` and `]` move the threshold, `A` cycles ambient occlusion; `--gpu-timings --benchmark N` prints the mean pass times. The
 rendering benchmarks take `--reflections on|off` on a deferred view ([benchmarking](benchmarking.md))
 and report `gpu_rt_reflections_ms`.
 
@@ -134,7 +167,8 @@ python3 scripts/build.py --example rt_effects
 
 ## Limits
 
-- Deferred views only; forward views always apply reflection probes.
+- Forward views trace Standard and plain Physical draws only; other draws keep the environment reflection and
+  the reflection probes.
 - One ray per pixel and a spatial blur; no temporal accumulation beyond what TAA provides.
 - Hits see the traced scene: skinned and morphed meshes appear at their raster pose; crowd placements appear only through `add_crowd(trace: true)`; custom vertex stages and `BLEND` meshes are absent.
 - Every hit loops the whole reflection light list (no clustering) with a shadow ray per shadowing

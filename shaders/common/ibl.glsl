@@ -48,6 +48,53 @@ vec3 environment_brdf_weight(
     return surface.reflectance * response.x + surface.grazing_reflectance * response.y;
 }
 
+const float RT_REFLECTION_FADE = 0.2; // share of the threshold over which traced and prefiltered radiance blend; hides the seam
+
+// Mixes the traced radiance into the prefiltered specular, fading out toward max_roughness; zero alpha is untraced.
+vec3 blend_traced_specular(
+    vec3 specular,
+    vec4 traced,
+    uint brdf_lut,
+    uint sampler_index,
+    StandardSurface surface,
+    float roughness,
+    float max_roughness
+) {
+    if (traced.a <= 0.0) return specular;
+
+    float perceptual = max(roughness, MIN_PERCEPTUAL_ROUGHNESS);
+    vec3 traced_specular = traced.rgb * environment_brdf_weight(brdf_lut, sampler_index, surface, perceptual);
+    float share = clamp((max_roughness - roughness) / (RT_REFLECTION_FADE * max_roughness), 0.0, 1.0);
+    return mix(specular, traced_specular, share);
+}
+
+// The pixel's traced reflection for a draw that wrote the reflection G-buffer; untraced for any other.
+vec4 draw_traced_reflection(FrameRoot frame, uint draw_flags, ivec2 pixel) {
+    if ((draw_flags & DRAW_TRACED_REFLECTION) == 0u || (frame.flags & FRAME_REFLECTIONS_PRESENT) == 0u) {
+        return vec4(0.0);
+    }
+    // Texel fetch: a filtered read would blend traced and untraced texels at the region's edge.
+    return fetch_texture_2d(frame.reflection_texture, pixel);
+}
+
+vec3 frame_blend_traced_specular(
+    FrameRoot frame,
+    vec3 specular,
+    vec4 traced,
+    StandardSurface surface,
+    float roughness
+) {
+    return blend_traced_specular(
+        specular,
+        traced,
+        frame.reflection_brdf_lut,
+        frame.reflection_sampler,
+        surface,
+        roughness,
+        frame.max_reflection_roughness
+    );
+}
+
 // Radiance along a ray that leaves the scene: the lighting environment, not the background cube.
 vec3 trace_miss_radiance(FrameRoot frame, vec3 direction) {
     if (frame.environment == 0ul) return frame.ambient.rgb;

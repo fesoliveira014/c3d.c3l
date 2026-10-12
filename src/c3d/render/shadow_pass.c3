@@ -28,6 +28,7 @@ struct ShadowDraw @private {
     bool translucent;
     bool wireframe;
     bool reflected;
+    ReflectionPrepass reflection;
     gpu::CullMode cull;
 }
 
@@ -36,6 +37,7 @@ struct ShadowDrawState @private {
     gpu::CullMode cull;
     gpu::FrontFace front_face;
     gpu::PrimitiveTopology topology;
+    bool writes_color;
 }
 
 fn gpu::PipelineHandle? shadow_pipeline_for(
@@ -45,6 +47,7 @@ fn gpu::PipelineHandle? shadow_pipeline_for(
     Material* material = null,
     bool vertex_color = false,
     bool tint = false,
+    ReflectionPrepass reflection = ReflectionPrepass.OFF,
 ) @private {
     renderer.stats.pipeline_lookups++;
     PipelineKey key = {
@@ -54,6 +57,11 @@ fn gpu::PipelineHandle? shadow_pipeline_for(
         .samples = gpu::SampleCount.ONE,
         .polygon = wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
     };
+    if (reflection != ReflectionPrepass.OFF) {
+        key.color_formats[0] = REFLECTION_SURFACE_FORMAT;
+        key.color_count = 1;
+    }
+    if (reflection == ReflectionPrepass.WRITTEN) key.fragment = reflection_prepass_fragment(material);
     if (tint) {
         key.fragment.shader = SHADOW_TRANSMITTANCE;
         key.color_formats[0] = COLORED_TRANSMITTANCE_FORMAT;
@@ -97,6 +105,7 @@ fn ShadowDraw[]? prepare_shadow_draws(
     MeshCandidate[] candidates,
     InstanceEffectsView* effects_view,
     bool colored = false,
+    bool thin = false,
 ) @private {
     ShadowDraw[] draws = alloc::new_array(tmem, ShadowDraw, candidates.len);
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
@@ -117,10 +126,15 @@ fn ShadowDraw[]? prepare_shadow_draws(
         ShadowDraw* draw = &draws[count];
         GpuGeometry* geometry = candidate.impostor ? acquire_impostor_geometry(renderer) : resolve_geometry(renderer, candidate.geometry)!;
         if (candidate.impostor) resolve_lod_part(renderer, candidate)!;
+        ReflectionPrepass reflection = ReflectionPrepass.OFF;
+        if (thin) {
+            reflection = forward_reflection_eligible(candidate, material)
+              ? ReflectionPrepass.WRITTEN : ReflectionPrepass.MASKED;
+        }
         ShaderVariant vertex = candidate_vertex_variant(
             flags:      geometry.layout.flags,
             candidate:  candidate,
-            base_flags: shader::SHADER_FLAG_DEPTH_ONLY,
+            base_flags: reflection == ReflectionPrepass.WRITTEN ? 0 : shader::SHADER_FLAG_DEPTH_ONLY,
         );
         *draw = {
             .candidate = candidate,
@@ -134,6 +148,7 @@ fn ShadowDraw[]? prepare_shadow_draws(
             .translucent = translucent,
             .wireframe = material.common.wireframe && renderer.caps.line_polygon_mode,
             .reflected = (candidate_world(candidate).determinant() < 0) != candidate.mirrored,
+            .reflection = reflection,
             .cull = material.common.double_sided ? gpu::CullMode.NONE : gpu::CullMode.BACK,
         };
         bool colored_vertices = geometry.layout.flags.has_colors || candidate_instanced(candidate);
@@ -143,6 +158,7 @@ fn ShadowDraw[]? prepare_shadow_draws(
             vertex:       vertex,
             material:     material,
             vertex_color: draw.masked && colored_vertices,
+            reflection:   reflection,
         );
         if (catch excuse = pipeline) {
             if (!shadow_pipeline_skippable(renderer, material, excuse)) return excuse~;
@@ -174,6 +190,10 @@ fn ShadowDraw[]? prepare_shadow_draws(
             geometry:     geometry,
         )!;
         count++;
+        if (reflection == ReflectionPrepass.WRITTEN) {
+            draw.alpha = resolve_material(renderer, candidate.material)!.address;
+            continue;
+        }
         if ((!draw.masked && !translucent) || material.kind == MaterialKind.CUSTOM) continue;
         TextureSlot base_map;
         switch (material.kind) {
@@ -291,15 +311,21 @@ fn void? record_depth_draws(
             .front_face = draw.reflected != view_reflected
               ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,
             .topology = primitive_topology(draw.geometry.topology),
+            .writes_color = draw.reflection == ReflectionPrepass.WRITTEN,
         };
         if (wanted.pipeline.index != bound.pipeline.index) {
             gpu::cmd_bind_pipeline(&renderer.commands, wanted.pipeline)!;
         }
         if (!state_set || wanted.cull != bound.cull || wanted.front_face != bound.front_face
-            || wanted.topology != bound.topology) {
+            || wanted.topology != bound.topology || wanted.writes_color != bound.writes_color) {
             state.raster.cull_mode = wanted.cull;
             state.raster.front_face = wanted.front_face;
             state.raster.topology = wanted.topology;
+            if (state.color.targets.len) {
+                state.color.targets[0] = gpu::color_blend_disabled(
+                    wanted.writes_color ? gpu::COLOR_WRITE_ALL : (gpu::ColorWriteMask){},
+                );
+            }
             gpu::cmd_set_graphics_state(&renderer.commands, state)!;
             state_set = true;
         }
@@ -313,7 +339,7 @@ fn void? record_depth_draws(
             records:   draw.instance_data,
         );
         gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, DrawRoot::size, STREAM_ALIGNMENT)!;
-        if (draw.material.kind == MaterialKind.CUSTOM) {
+        if (draw.material.kind == MaterialKind.CUSTOM || draw.reflection == ReflectionPrepass.WRITTEN) {
             write_draw_root(
                 root: (DrawRoot*)root.bytes.ptr,
                 world: maths::rebase(draw.candidate.node.world, renderer.frame_origin),
@@ -322,6 +348,8 @@ fn void? record_depth_draws(
                 geometry: draw.geometry.root,
                 material: draw.alpha,
                 object_id: draw.candidate.node.id.index,
+                layers: draw.reflection == ReflectionPrepass.WRITTEN
+                  ? draw.candidate.node.layers : scene::DEFAULT_LAYERS,
                 flags: (draw.masked ? shader::DRAW_ALPHA_MASK : 0) | batch_effect_flags(draw.candidate),
                 skin: addresses.skin,
                 morph: addresses.morph,

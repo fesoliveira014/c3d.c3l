@@ -98,7 +98,7 @@ fn void test_view_desc_accepts_traced_effects_without_ray_queries() @test {
     render::validate_view_desc(renderer, &desc)!!;
 
     desc.shading = ShadingPath.FORWARD;
-    expect_view_desc_fault(renderer, &desc, c3d::UNSUPPORTED);
+    render::validate_view_desc(renderer, &desc)!!;
     desc.shading = ShadingPath.DEFERRED;
     desc.ambient_occlusion.ray_count = 0;
     expect_view_desc_fault(renderer, &desc, c3d::INVALID_ARGUMENT);
@@ -138,18 +138,17 @@ fn void expect_view_desc_fault(Renderer* renderer, ViewDesc* desc, fault expecte
     assert(excuse == expected);
 }
 
-fn void test_view_desc_gates_reflections_on_deferred() @test {
+fn void test_view_desc_checks_reflection_settings() @test {
     Renderer* renderer = mem::new(Renderer);
     defer free(renderer);
     ViewDesc desc = render::default_view_desc();
     assert(desc.ray_tracing.max_reflection_roughness == render::RT_REFLECTION_ROUGHNESS_DEFAULT);
 
     desc.ray_tracing.reflections = true;
+    desc.shading = ShadingPath.PATH_TRACED;
     expect_view_desc_fault(renderer, &desc, c3d::UNSUPPORTED);
     desc.shading = ShadingPath.DEFERRED;
     render::validate_view_desc(renderer, &desc)!!;
-    desc.shading = ShadingPath.FORWARD;
-    expect_view_desc_fault(renderer, &desc, c3d::UNSUPPORTED);
 
     desc.shading = ShadingPath.DEFERRED;
     float[5] bad_roughness = { 0, -0.1f, 1.5f, float::nan, float::inf };
@@ -163,6 +162,21 @@ fn void test_view_desc_gates_reflections_on_deferred() @test {
     desc = render::default_view_desc();
     desc.ray_tracing.max_reflection_roughness = 0;
     render::validate_view_desc(renderer, &desc)!!;
+}
+
+fn void test_view_desc_accepts_forward_reflections() @test {
+    Renderer* renderer = mem::new(Renderer);
+    defer free(renderer);
+    ViewDesc desc = render::default_view_desc();
+    assert(desc.shading == ShadingPath.FORWARD);
+
+    desc.ray_tracing.reflections = true;
+    render::validate_view_desc(renderer, &desc)!!;
+    desc.depth_prepass = false;
+    render::validate_view_desc(renderer, &desc)!!;
+
+    desc.ray_tracing.max_reflection_roughness = 0;
+    expect_view_desc_fault(renderer, &desc, c3d::INVALID_ARGUMENT);
 }
 
 fn void test_view_desc_checks_clip_plane() @test {
@@ -203,6 +217,7 @@ fn void test_view_targets_list_every_image_once() @test {
     bool ao_listed;
     bool reflection_listed;
     bool reflection_blur_listed;
+    bool reflection_gbuffer_listed;
     bool accumulation_listed;
     bool scene_depth_listed;
     bool fog_volume_listed;
@@ -213,12 +228,13 @@ fn void test_view_targets_list_every_image_once() @test {
         if (target == &record.ao) ao_listed = true;
         if (target == &record.reflection) reflection_listed = true;
         if (target == &record.reflection_blur) reflection_blur_listed = true;
+        if (target == &record.reflection_gbuffer) reflection_gbuffer_listed = true;
         if (target == &record.accumulation) accumulation_listed = true;
         if (target == &record.scene_depth) scene_depth_listed = true;
         if (target == &record.fog_volume) fog_volume_listed = true;
     }
     assert(raw_listed && ao_listed && reflection_listed && reflection_blur_listed && accumulation_listed);
-    assert(scene_depth_listed && fog_volume_listed);
+    assert(reflection_gbuffer_listed && scene_depth_listed && fog_volume_listed);
 }
 
 fn void test_view_desc_gates_path_tracing() @test {

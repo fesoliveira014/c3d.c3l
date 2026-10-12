@@ -19,8 +19,6 @@ layout(push_constant) uniform Push {
     uint64_t fragment_root_gpu;
 } pc;
 
-const float RT_REFLECTION_FADE = 0.2; // share of the threshold over which traced and prefiltered radiance blend; hides the seam
-
 void main() {
     LightingResolveRoot root = LightingResolveRoot(pc.fragment_root_gpu);
     float depth = sample_texture_2d(root.depth, root.sampler_index, v_uv).r;
@@ -74,14 +72,15 @@ void main() {
     }
     if (root.reflection_texture != 0u) {
         // Texel fetch: a filtered read would blend traced and untraced texels at the region's edge.
-        vec4 traced = fetch_texture_2d(root.reflection_texture, texel);
-        if (traced.a > 0.0) {
-            float perceptual = max(roughness, MIN_PERCEPTUAL_ROUGHNESS);
-            vec3 traced_specular = traced.rgb
-                * environment_brdf_weight(root.brdf_lut, root.sampler_index, surface, perceptual);
-            float threshold = root.max_reflection_roughness;
-            specular = mix(specular, traced_specular, clamp((threshold - roughness) / (RT_REFLECTION_FADE * threshold), 0.0, 1.0));
-        }
+        specular = blend_traced_specular(
+            specular,
+            fetch_texture_2d(root.reflection_texture, texel),
+            root.brdf_lut,
+            root.sampler_index,
+            surface,
+            roughness,
+            root.max_reflection_roughness
+        );
     }
     color += diffuse + specular;
     color += evaluate_standard_lights(

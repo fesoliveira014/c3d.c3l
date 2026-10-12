@@ -27,6 +27,8 @@ const float MISS_WEIGHT_MINIMUM @private = 0.85f;           // split-sum weight 
 const int DARK_MAXIMUM @private = 8;
 const int EMITTER_MINIMUM @private = 200;
 const int MIRROR_TOLERANCE @private = 2;
+const Vec3 BLOCKER_POSITION @private = { 0, 0.5f, 1.25f }; // on the camera ray to the emitter image point
+const int FORWARD_DEFERRED_TOLERANCE @private = 12; // loose: the two stages evaluate one surface through different code
 const float EMITTER_SHEET_SIZE @private = 2; // wide enough to hold the emitter image point's reflection ray
 const Vec3 LAMP_POSITION @private = { 0, 4.45f, -3.674f }; // 1.5 from the hit point along the top frustum plane's normal
 const float LAMP_RANGE @private = 1.9f; // reaches the hit point and stops short of the view frustum
@@ -67,6 +69,12 @@ const Atmosphere DENSE_AIR @private = {
 };
 const float AIR_SUN_INTENSITY @private = 10;
 const int AIR_MINIMUM @private = 10; // about half the smaller change measured between the near and far images
+
+struct FloorKinds @private {
+    Fixture*     fixture;
+    MirrorScene* mirror;
+    ViewId       view;
+}
 
 struct PhysicalPanel @private {
     Fixture*     fixture;
@@ -290,6 +298,172 @@ fn void test_reflection_images_follow_the_settings() @test {
         assert(!record.reflection.texture.is_valid() && !record.reflection_blur.texture.is_valid());
         set_reflections(&fixture, mirror_view.view, true)!!;
         (void)render_mirror(&fixture, &mirror, mirror_view.view, MISS_POINT)!!;
+        check_validation(&fixture.renderer);
+    }
+}
+
+fn uint? render_view_pair(
+    Fixture* fixture,
+    MirrorScene* mirror,
+    ViewId[2] views,
+    uint sampled,
+    Vec3 point,
+) @private {
+    Renderer* renderer = &fixture.renderer;
+    renderer.begin_frame()!;
+    defer catch render::abort_frame(renderer);
+    foreach (view : views) renderer.render_view(&mirror.scene, mirror.camera, view)!;
+    sample(fixture, render::read_view_color(views[sampled]), mirror_uv(mirror, point))!;
+    record_readback(fixture)!;
+    foreach (view : views) renderer.finish_view(view)!;
+    renderer.end_frame()!;
+    return read_pixel(fixture);
+}
+
+fn uint? post_dispatches_of_frame(Fixture* fixture, MirrorScene* mirror, ViewId view) @private {
+    Renderer* renderer = &fixture.renderer;
+    renderer.begin_frame()!;
+    defer catch render::abort_frame(renderer);
+    renderer.render_view(&mirror.scene, mirror.camera, view)!;
+    renderer.finish_view(view)!;
+    renderer.end_frame()!;
+    return renderer.stats.post_dispatches;
+}
+
+fn void test_forward_view_reflects_the_emitter_like_a_deferred_view() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        print_adapter(&fixture);
+        MirrorScene mirror = create_mirror_scene(&fixture, false)!!;
+        defer scene::destroy_scene(&mirror.scene);
+        AoView forward = create_ao_view(&fixture, ShadingPath.FORWARD)!!;
+        defer destroy_ao_view(&fixture, &forward);
+        AoView deferred = create_ao_view(&fixture, ShadingPath.DEFERRED)!!;
+        defer destroy_ao_view(&fixture, &deferred);
+        ViewId[2] views = { forward.view, deferred.view };
+        ViewRecord* record = fixture.renderer.views.get(forward.view);
+
+        assert(!record.reflection_gbuffer.texture.is_valid());
+        uint off_dispatches = post_dispatches_of_frame(&fixture, &mirror, forward.view)!!;
+        uint image_off = render_view_pair(&fixture, &mirror, views, 0, EMITTER_IMAGE_POINT)!!;
+
+        set_reflections(&fixture, forward.view, true)!!;
+        set_reflections(&fixture, deferred.view, true)!!;
+        assert(record.reflection_gbuffer.texture.is_valid());
+        assert(record.reflection_gbuffer.format == gpu::Format.RGBA16_FLOAT);
+        assert(record.reflection_gbuffer.width == AO_TARGET_WIDTH);
+        assert(record.reflection_gbuffer.height == AO_TARGET_HEIGHT);
+        assert(!fixture.renderer.views.get(deferred.view).reflection_gbuffer.texture.is_valid());
+        uint on_dispatches = post_dispatches_of_frame(&fixture, &mirror, forward.view)!!;
+        assert(on_dispatches == off_dispatches + 2);
+
+        uint forward_image = render_view_pair(&fixture, &mirror, views, 0, EMITTER_IMAGE_POINT)!!;
+        uint deferred_image = render_view_pair(&fixture, &mirror, views, 1, EMITTER_IMAGE_POINT)!!;
+        uint forward_miss = render_view_pair(&fixture, &mirror, views, 0, MISS_POINT)!!;
+        uint deferred_miss = render_view_pair(&fixture, &mirror, views, 1, MISS_POINT)!!;
+        io::eprintfn(
+            "%s, forward vs deferred: emitter off %06x forward %06x deferred %06x; miss forward %06x deferred %06x",
+            trace_name(ray_queries),
+            image_off,
+            forward_image,
+            deferred_image,
+            forward_miss,
+            deferred_miss,
+        );
+
+        assert(red(image_off) < DARK_MAXIMUM);
+        assert(red(forward_image) > EMITTER_MINIMUM && green(forward_image) < DARK_MAXIMUM);
+        assert(red(deferred_image) > EMITTER_MINIMUM);
+        assert(math::abs(red(forward_image) - red(deferred_image)) <= FORWARD_DEFERRED_TOLERANCE);
+        assert(math::abs(blue(forward_miss) - blue(deferred_miss)) <= FORWARD_DEFERRED_TOLERANCE);
+
+        ViewDesc desc = record.desc;
+        desc.shading = ShadingPath.DEFERRED;
+        render::configure_view(&fixture.renderer, forward.view, desc)!!;
+        assert(!record.reflection_gbuffer.texture.is_valid() && record.reflection.texture.is_valid());
+        desc.shading = ShadingPath.FORWARD;
+        render::configure_view(&fixture.renderer, forward.view, desc)!!;
+        assert(record.reflection_gbuffer.texture.is_valid());
+        render::resize_render_target(&fixture.renderer, forward.target, AO_TARGET_WIDTH + 16, AO_TARGET_HEIGHT + 8)!!;
+        assert(record.reflection_gbuffer.width == AO_TARGET_WIDTH + 16);
+        assert(record.reflection_gbuffer.height == AO_TARGET_HEIGHT + 8);
+        assert(post_dispatches_of_frame(&fixture, &mirror, forward.view)!! == on_dispatches);
+
+        set_reflections(&fixture, forward.view, false)!!;
+        assert(!record.reflection_gbuffer.texture.is_valid() && !record.reflection.texture.is_valid());
+        assert(post_dispatches_of_frame(&fixture, &mirror, forward.view)!! == off_dispatches);
+        check_validation(&fixture.renderer);
+    }
+}
+
+fn uint? FloorKinds.render(&self, MaterialId material) @private {
+    self.mirror.scene.get(self.mirror.floor, Mesh).material = material;
+    self.fixture.renderer.prepare_scene(&self.mirror.scene)!;
+    return render_mirror(self.fixture, self.mirror, self.view, EMITTER_IMAGE_POINT);
+}
+
+fn void test_forward_reflections_trace_standard_and_plain_physical_surfaces_only() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        MirrorScene mirror = create_mirror_scene(&fixture, false)!!;
+        defer scene::destroy_scene(&mirror.scene);
+        AoView forward = create_ao_view(&fixture, ShadingPath.FORWARD)!!;
+        defer destroy_ao_view(&fixture, &forward);
+        set_reflections(&fixture, forward.view, true)!!;
+        FloorKinds floors = { .fixture = &fixture, .mirror = &mirror, .view = forward.view };
+
+        StandardParams metal = { .base_color = { 1, 1, 1, 1 }, .metallic = 1, .roughness = MIRROR_ROUGHNESS };
+        MaterialCommon cutout = material::MATERIAL_COMMON_DEFAULT;
+        cutout.alpha_mode = AlphaMode.MASK;
+        cutout.alpha_cutoff = 0.5f;
+        PhysicalParams plain = material::PHYSICAL_PARAMS_DEFAULT;
+        plain.standard = metal;
+        PhysicalParams coated = plain;
+        coated.clearcoat = 1;
+        ToonParams toon = material::TOON_PARAMS_DEFAULT;
+        toon.color = { 1, 1, 1, 1 };
+
+        uint standard = floors.render(mirror.mirror)!!;
+        uint masked = floors.render(fixture.assets.add_material(material::standard(params: metal, common: cutout))!!)!!;
+        uint plain_physical = floors.render(fixture.assets.add_material(material::physical(plain))!!)!!;
+        uint coated_physical = floors.render(fixture.assets.add_material(material::physical(coated))!!)!!;
+        uint toon_floor = floors.render(fixture.assets.add_material(material::toon(toon))!!)!!;
+
+        mirror.scene.get(mirror.floor, Mesh).material = mirror.mirror;
+        GeometryId blocker_geometry;
+        @pool() {
+            Geometry blocker_shape = geometry::box(tmem, 0.2f, 0.2f, 0.2f);
+            blocker_geometry = fixture.assets.add_geometry(&blocker_shape)!!;
+        };
+        Node* blocker = mirror.scene.add_mesh(
+            blocker_geometry,
+            fixture.assets.add_material(material::toon(toon))!!,
+            name: "blocker",
+        )!!;
+        blocker.local.position = BLOCKER_POSITION;
+        mirror.scene.update_world();
+        uint covered = floors.render(mirror.mirror)!!;
+        io::eprintfn(
+            "%s, forward floors: standard %06x, mask %06x, physical %06x, clearcoat %06x, toon %06x, covered %06x",
+            trace_name(ray_queries),
+            standard,
+            masked,
+            plain_physical,
+            coated_physical,
+            toon_floor,
+            covered,
+        );
+
+        assert(red(standard) > EMITTER_MINIMUM);
+        assert(math::abs(red(masked) - red(standard)) <= MIRROR_TOLERANCE);
+        assert(math::abs(red(plain_physical) - red(standard)) <= FORWARD_DEFERRED_TOLERANCE);
+        assert(red(coated_physical) < DARK_MAXIMUM);
+        assert(red(toon_floor) < DARK_MAXIMUM);
+        assert(red(covered) < DARK_MAXIMUM);
         check_validation(&fixture.renderer);
     }
 }

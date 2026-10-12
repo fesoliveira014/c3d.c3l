@@ -267,7 +267,7 @@ example calls `configure_view` before its next frame when it did. The post examp
 1/16" box) scales the sun, the ambient term, the lamp's emission and the textured material by 1/16, a four-stop
 step that auto exposure undoes. The ray-traced controls are enabled on
 every renderer, since traced effects run without ray queries too; reflections stay disabled on a
-`FORWARD` view. `gui::anti_aliasing_combo`
+`PATH_TRACED` view. `gui::anti_aliasing_combo`
 selects one view's filter on its own. `gui::stats_panel` reports post
 dispatches and the completed velocity and post-chain timings.
 

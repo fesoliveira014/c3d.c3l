@@ -131,6 +131,7 @@ const uint FRAME_TRACE_PRESENT = 2;
 const uint FRAME_AO_PRESENT = 4;
 const uint FRAME_SSGI_PRESENT = 8;
 const uint FRAME_CLIP_PLANE = 16;
+const uint FRAME_REFLECTIONS_PRESENT = 32;
 const uint CLUSTER_GROUP_SIZE = 64;
 const uint MAX_DECALS = 256; // 40 KiB of 160-byte records per view per frame-slot upload; bounds the flat loop.
 const uint MAX_CLUSTER_DECALS = 8; // 32 bytes of indices per cell; overflow selects the complete flat loop.
@@ -218,6 +219,10 @@ root FrameRoot {
     GpuAddress decals;
     uint       decal_count;
     SamplerIndex sheen_sampler;
+    TextureIndex reflection_texture;
+    TextureIndex reflection_brdf_lut;
+    SamplerIndex reflection_sampler;
+    float      max_reflection_roughness;
 }
 
 root DrawRoot {
@@ -417,6 +422,8 @@ const uint DRAW_DISTANCE_FADE = 16;
 const uint DRAW_SWAY_VERTEX_ALPHA = 32;
 // Vertex history of a tracked mesh does not correspond: zero object motion, rejected history.
 const uint DRAW_VERTEX_HISTORY_INVALID = 64;
+// The draw wrote the reflection G-buffer, so the traced reflection image at its pixel describes it.
+const uint DRAW_TRACED_REFLECTION = 128;
 
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1;
 

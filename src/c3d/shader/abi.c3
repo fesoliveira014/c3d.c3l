@@ -29,6 +29,7 @@ const uint FRAME_TRACE_PRESENT = 2;
 const uint FRAME_AO_PRESENT = 4;
 const uint FRAME_SSGI_PRESENT = 8;
 const uint FRAME_CLIP_PLANE = 16;
+const uint FRAME_REFLECTIONS_PRESENT = 32;
 const uint CLUSTER_GROUP_SIZE = 64;
 const uint MAX_DECALS = 256;
 const uint MAX_CLUSTER_DECALS = 8;
@@ -58,6 +59,7 @@ const uint DRAW_SWAY = 8;
 const uint DRAW_DISTANCE_FADE = 16;
 const uint DRAW_SWAY_VERTEX_ALPHA = 32;
 const uint DRAW_VERTEX_HISTORY_INVALID = 64;
+const uint DRAW_TRACED_REFLECTION = 128;
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1;
 const uint SSGI_FLAG_GBUFFER_NORMALS = 1;
 const uint SSGI_FLAG_HISTORY_VALID = 2;
@@ -479,8 +481,12 @@ struct FrameRoot {
     GpuAddress   decals;
     uint         decal_count;
     SamplerIndex sheen_sampler;
+    TextureIndex reflection_texture;
+    TextureIndex reflection_brdf_lut;
+    SamplerIndex reflection_sampler;
+    float        max_reflection_roughness;
 }
-$assert FrameRoot::size == 544;
+$assert FrameRoot::size == 560;
 $assert $reflect(FrameRoot.view).offset == 0;
 $assert $reflect(FrameRoot.proj).offset == 64;
 $assert $reflect(FrameRoot.view_proj).offset == 128;
@@ -515,6 +521,10 @@ $assert $reflect(FrameRoot.origin).offset == 512;
 $assert $reflect(FrameRoot.decals).offset == 528;
 $assert $reflect(FrameRoot.decal_count).offset == 536;
 $assert $reflect(FrameRoot.sheen_sampler).offset == 540;
+$assert $reflect(FrameRoot.reflection_texture).offset == 544;
+$assert $reflect(FrameRoot.reflection_brdf_lut).offset == 548;
+$assert $reflect(FrameRoot.reflection_sampler).offset == 552;
+$assert $reflect(FrameRoot.max_reflection_roughness).offset == 556;
 
 struct DrawRoot {
     Mat4f        model;

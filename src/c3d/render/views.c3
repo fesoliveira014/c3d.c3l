@@ -88,7 +88,7 @@ struct ViewDesc {
  Working images one view owns, in view_targets order.
 *>
 const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8 + GBUFFER_CHANNEL_COUNT
-  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1 + 1 + 2 * SSGI_HISTORY_SLOTS + 2 + 1 + 3 + 2;
+  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1 + 1 + 2 * SSGI_HISTORY_SLOTS + 2 + 1 + 3 + 2 + 1;
 
 <*
  Reverse-Z projection terms that recover forward distance from stored depth.
@@ -735,6 +735,7 @@ struct ViewRecord {
     Target                               ao;
     Target                               reflection;
     Target                               reflection_blur;
+    Target                               reflection_gbuffer;
     Target                               accumulation;
     Target                               ssgi_raw;
     Target[SSGI_HISTORY_SLOTS]           ssgi_history;
@@ -834,6 +835,7 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
     targets[next + 6 + 2 * SSGI_HISTORY_SLOTS] = &record.fog_volume;
     targets[next + 7 + 2 * SSGI_HISTORY_SLOTS] = &record.weighted_accum;
     targets[next + 8 + 2 * SSGI_HISTORY_SLOTS] = &record.weighted_revealage;
+    targets[next + 9 + 2 * SSGI_HISTORY_SLOTS] = &record.reflection_gbuffer;
     return targets;
 }
 
@@ -1084,7 +1086,7 @@ fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
     if (!screen_space_gi_desc_valid(&desc.screen_space_gi)) return c3d::INVALID_ARGUMENT~;
     RayTracingDesc* ray_tracing = &desc.ray_tracing;
     if (ray_tracing.reflections) {
-        if (desc.shading != ShadingPath.DEFERRED) return c3d::UNSUPPORTED~;
+        if (desc.shading == ShadingPath.PATH_TRACED) return c3d::UNSUPPORTED~;
         float roughness = ray_tracing.max_reflection_roughness;
         if (!math::is_finite(roughness) || roughness <= 0 || roughness > 1) return c3d::INVALID_ARGUMENT~;
     }
@@ -1178,6 +1180,7 @@ fn void? acquire_view_images(Renderer* renderer, ViewRecord* record, uint[<2>] o
     acquire_ao_images(renderer, record)!;
     acquire_ssgi_images(renderer, record)!;
     acquire_reflection_images(renderer, record)!;
+    acquire_reflection_gbuffer(renderer, record)!;
     acquire_accumulation(renderer, record)!;
     acquire_sky_view_images(renderer, record)!;
     acquire_fog_volume(renderer, record)!;
@@ -1271,6 +1274,7 @@ fn void drop_unwanted_images(ViewRecord* staged, ViewDesc* previous) @private {
         staged.reflection = {};
         staged.reflection_blur = {};
     }
+    if (!desc.ray_tracing.reflections || desc.shading != ShadingPath.FORWARD) staged.reflection_gbuffer = {};
     if (desc.shading != ShadingPath.PATH_TRACED) staged.accumulation = {};
     if (desc.shading == ShadingPath.PATH_TRACED) {
         staged.sky_view = {};

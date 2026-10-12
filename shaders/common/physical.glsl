@@ -173,6 +173,7 @@ vec3 evaluate_physical_light(
         + surface.coat_weight * coat;
 }
 
+// traced: the pixel's traced reflection, blended into the base specular lobe; zero alpha for none.
 vec3 evaluate_physical_environment(
     FrameRoot frame,
     ReflectionSelection selection,
@@ -181,7 +182,8 @@ vec3 evaluate_physical_environment(
     float base_roughness,
     float occlusion,
     float ambient_occlusion,
-    vec4 screen_indirect
+    vec4 screen_indirect,
+    vec4 traced
 ) {
     vec3 diffuse;
     vec3 specular;
@@ -197,6 +199,7 @@ vec3 evaluate_physical_environment(
         diffuse,
         specular
     );
+    specular = frame_blend_traced_specular(frame, specular, traced, surface.standard, base_roughness);
     vec3 standard = (1.0 - surface.transmission) * diffuse + specular;
     if (surface.coat_weight == 0.0 && surface.sheen_strength == 0.0) return standard;
 
@@ -233,6 +236,29 @@ vec3 evaluate_physical_environment(
     }
     return (1.0 - surface.coat_weight) * (standard + sheen)
         + surface.coat_weight * coat;
+}
+
+vec3 evaluate_physical_environment(
+    FrameRoot frame,
+    ReflectionSelection selection,
+    vec3 world_position,
+    PhysicalSurface surface,
+    float base_roughness,
+    float occlusion,
+    float ambient_occlusion,
+    vec4 screen_indirect
+) {
+    return evaluate_physical_environment(
+        frame,
+        selection,
+        world_position,
+        surface,
+        base_roughness,
+        occlusion,
+        ambient_occlusion,
+        screen_indirect,
+        vec4(0.0)
+    );
 }
 
 vec3 evaluate_physical_environment(

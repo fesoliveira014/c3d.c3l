@@ -86,16 +86,22 @@ vec3 shade_standard_surface(
         ambient_occlusion,
         screen_indirect
     ) + surface_sample.emissive;
-    if (frame_has_indirect(frame)) {
-        color += evaluate_environment(
+    vec4 traced = draw_traced_reflection(frame, draw.flags, pixel);
+    if (frame_has_indirect(frame) || traced.a > 0.0) {
+        vec3 diffuse;
+        vec3 specular;
+        evaluate_environment_lobes(
             frame,
             world_position,
             surface,
             surface_sample.roughness,
             surface_sample.occlusion,
             ambient_occlusion,
-            screen_indirect
+            screen_indirect,
+            diffuse,
+            specular
         );
+        color += diffuse + frame_blend_traced_specular(frame, specular, traced, surface, surface_sample.roughness);
     }
     STANDARD_LIGHT_LOOP(
         color,
