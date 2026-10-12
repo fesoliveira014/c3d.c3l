@@ -121,6 +121,17 @@ const float FOG_DISTANCE_MAX @local = 1000;
 const FogQuality[3] FOG_QUALITY_CHOICES @local = { FogQuality.LOW, FogQuality.MEDIUM, FogQuality.HIGH };
 const ZString[3] FOG_QUALITY_LABELS @local = { "Low", "Medium", "High" };
 
+const uint CLOUD_COVERAGE_SIZE @local = 128; // texels per side of the stand-in weather map; 156 m a texel
+const uint CLOUD_COVERAGE_BYTES @local = CLOUD_COVERAGE_SIZE * CLOUD_COVERAGE_SIZE * 4;
+const uint CLOUD_SHAPE_PERIOD @local = 8; // lattice cells per side of the coarsest octave; the map repeats seamlessly
+const float CLOUD_COVERAGE_DEFAULT @local = 0.5f;
+const float CLOUD_WIND_SPEED @local = 15; // metres per second along +x
+const float CLOUD_WIND_SPEED_MAX @local = 60;
+const float CLOUD_DENSITY_MAX @local = 0.1f;
+const float CLOUD_ALTITUDE_MAX @local = 12_000;
+const float CLOUD_THICKNESS_MIN @local = 200;
+const float CLOUD_VIEW_PITCH_DEGREES @local = 15; // lifts the ground-level presets so the deck fills the upper view
+
 const uint MAX_LAMPS @local = 128; // half the renderer's default light capacity
 const uint LAMP_SHADOWED_MAX @local = 8; // 4 points of 6 layers and 4 spots; later lamps are unshadowed
 const uint LAMP_SHADOW_RESOLUTION @local = 1024; // texels; the 32-layer atlas is 128 MiB, not 512 MiB at 2048
@@ -142,7 +153,7 @@ const String[Air::len] AIR_NAMES @local = { "off", "on", "dense", "empty" };
 const String[Segment::len] SEGMENT_NAMES @local = {
     "noon", "twilight", "valley", "pan", "orbit", "ascent", "time-lapse",
 };
-const Pass[18] REPORTED_PASSES @local = {
+const Pass[19] REPORTED_PASSES @local = {
     Pass.SKY_VIEW,
     Pass.AERIAL_PERSPECTIVE,
     Pass.FOG_SCATTERING,
@@ -153,6 +164,7 @@ const Pass[18] REPORTED_PASSES @local = {
     Pass.LIGHTING,
     Pass.FORWARD_OPAQUE,
     Pass.SKY,
+    Pass.CLOUDS,
     Pass.SCENE_SNAPSHOT,
     Pass.SCENE_READ,
     Pass.SSGI_COLOR_COPY,
@@ -216,6 +228,7 @@ struct Options @local {
     Air         air;
     bool        volumetric_fog;
     FogQuality  fog_quality;
+    bool        clouds;
     uint        local_lights;
     float       lamp_range;
     bool        lamps_in_fog;
@@ -232,8 +245,16 @@ struct Mirror @local {
     Node*          camera_node;
 }
 
+struct CloudWeather @local {
+    Node*     node;       // null: the clouds are off
+    TextureId coverage;
+    float     amount;
+    float     wind_speed; // metres per second
+}
+
 struct Demo @local {
-    Options     options;
+    Options      options;
+    CloudWeather weather;
     AssetStore* assets;
     Scene*      scene;
     Node*       camera_node;
@@ -551,6 +572,7 @@ fn void? build_demo(Demo* demo) @local {
         demo.fog = scene.add_node(name: "fog")!;
         scene.add(demo.fog, light::HEIGHT_FOG_DEFAULT);
     }
+    if (demo.options.clouds) add_clouds(demo)!;
     add_lamps(scene, demo.options)!;
     scene.background.kind = BackgroundKind.COLOR;
     scene.background.color = CLEAR_SKY_COLOR;
@@ -566,6 +588,80 @@ fn void? build_demo(Demo* demo) @local {
         name: "mirror",
     )!;
     scene.get(demo.mirror.camera_node, Camera).layers = camera::ALL_LAYERS & ~MIRROR_LAYER;
+}
+
+fn float lattice_value(uint x, uint y, uint seed) @local {
+    uint hash = x * 374761393u + y * 668265263u + seed * 2246822519u;
+    hash = (hash ^ (hash >> 13)) * 1274126177u;
+    return (float)((hash ^ (hash >> 16)) & 0xFFFF) / 65535.0f;
+}
+
+fn float tiled_noise(float u, float v, uint period, uint seed) @local {
+    float x = u * (float)period;
+    float y = v * (float)period;
+    float share_x = x - math::floor(x);
+    float share_y = y - math::floor(y);
+    share_x = share_x * share_x * (3 - 2 * share_x);
+    share_y = share_y * share_y * (3 - 2 * share_y);
+    uint x0 = (uint)math::floor(x) % period;
+    uint y0 = (uint)math::floor(y) % period;
+    uint x1 = (x0 + 1) % period;
+    uint y1 = (y0 + 1) % period;
+    float top = lattice_value(x0, y0, seed) + (lattice_value(x1, y0, seed) - lattice_value(x0, y0, seed)) * share_x;
+    float bottom = lattice_value(x0, y1, seed) + (lattice_value(x1, y1, seed) - lattice_value(x0, y1, seed)) * share_x;
+    return top + (bottom - top) * share_y;
+}
+
+// The stand-in for an application's weather input: R is coverage, G the share of the layer a cloud fills.
+fn void fill_cloud_coverage(char[] pixels, float amount) @local {
+    for (uint y = 0; y < CLOUD_COVERAGE_SIZE; y++) {
+        for (uint x = 0; x < CLOUD_COVERAGE_SIZE; x++) {
+            float u = ((float)x + 0.5f) / (float)CLOUD_COVERAGE_SIZE;
+            float v = ((float)y + 0.5f) / (float)CLOUD_COVERAGE_SIZE;
+            float shape = tiled_noise(u: u, v: v, period: CLOUD_SHAPE_PERIOD, seed: 1) * 0.5f
+              + tiled_noise(u: u, v: v, period: CLOUD_SHAPE_PERIOD * 2, seed: 2) * 0.3f
+              + tiled_noise(u: u, v: v, period: CLOUD_SHAPE_PERIOD * 4, seed: 3) * 0.2f;
+            float height = 0.55f + 0.45f * tiled_noise(u: u, v: v, period: CLOUD_SHAPE_PERIOD / 2, seed: 4);
+            usz offset = (usz)(y * CLOUD_COVERAGE_SIZE + x) * 4;
+            pixels[offset] = (char)(math::clamp((shape - 0.5f) * 2 + amount, 0.0f, 1.0f) * 255 + 0.5f);
+            pixels[offset + 1] = (char)(height * 255 + 0.5f);
+            pixels[offset + 2] = 0;
+            pixels[offset + 3] = 255;
+        }
+    }
+}
+
+fn TextureDesc coverage_desc() @local {
+    return material::texture_2d_desc(
+        width:      CLOUD_COVERAGE_SIZE,
+        height:     CLOUD_COVERAGE_SIZE,
+        format:     RGBA8_UNORM,
+        debug_name: "sky_cloud_coverage",
+    );
+}
+
+fn void? add_clouds(Demo* demo) @local {
+    char[CLOUD_COVERAGE_BYTES] pixels;
+    demo.weather.amount = CLOUD_COVERAGE_DEFAULT;
+    demo.weather.wind_speed = CLOUD_WIND_SPEED;
+    fill_cloud_coverage(pixels[..], demo.weather.amount);
+    demo.weather.coverage = demo.assets.add_texture(coverage_desc(), pixels[..])!;
+    CloudLayer layer = light::CLOUD_LAYER_DEFAULT;
+    layer.coverage = demo.weather.coverage;
+    demo.weather.node = demo.scene.add_node(name: "clouds")!;
+    demo.scene.add(demo.weather.node, layer);
+}
+
+fn void? set_cloud_coverage(Demo* demo) @local {
+    char[CLOUD_COVERAGE_BYTES] pixels;
+    fill_cloud_coverage(pixels[..], demo.weather.amount);
+    demo.assets.replace_texture(demo.weather.coverage, coverage_desc(), pixels[..])!;
+}
+
+// The application owns the weather: it slides the layer along the wind.
+fn void advance_clouds(Demo* demo, float delta) @local {
+    if (!demo.weather.node) return;
+    demo.scene.get(demo.weather.node, CloudLayer).wind_offset.x += demo.weather.wind_speed * delta;
 }
 
 fn Atmosphere atmosphere_of(Air air) @local {
@@ -701,11 +797,15 @@ fn void? render_views(Demo* demo, Renderer* renderer, ViewId main_view) @local {
     return renderer.finish_view(main_view);
 }
 
-fn SkyPose preset_pose(Preset preset) @local {
+fn SkyPose preset_pose(Preset preset, bool clouds = false) @local {
     SkyPose pose = { .camera_position = { 0, EYE_HEIGHT, 0 }, .elevation_degrees = NOON_ELEVATION_DEGREES };
     switch (preset) {
-        case NOON: pose.elevation_degrees = NOON_ELEVATION_DEGREES;
-        case TWILIGHT: pose.elevation_degrees = EXPOSURE_ELEVATIONS[EXPOSURE_ELEVATIONS.len - 1];
+        case NOON:
+            pose.elevation_degrees = NOON_ELEVATION_DEGREES;
+            if (clouds) pose.pitch = CLOUD_VIEW_PITCH_DEGREES * DEGREE;
+        case TWILIGHT:
+            pose.elevation_degrees = EXPOSURE_ELEVATIONS[EXPOSURE_ELEVATIONS.len - 1];
+            if (clouds) pose.pitch = CLOUD_VIEW_PITCH_DEGREES * DEGREE;
         case VALLEY:
             pose.camera_position.y = VALLEY_HEIGHT;
             pose.pitch = VALLEY_PITCH_DEGREES * DEGREE;
@@ -783,6 +883,7 @@ fn Options? parse_options(String[] args) @local {
             case "--path-traced": options.path_traced = true;
             case "--reflections": options.reflections = on_off(option_value(args, &index)!)!;
             case "--volumetric-fog": options.volumetric_fog = true;
+            case "--clouds": options.clouds = true;
             case "--fog-quality":
                 switch (option_value(args, &index)!) {
                     case "low": options.fog_quality = FogQuality.LOW;
@@ -827,6 +928,7 @@ fn Options? parse_options(String[] args) @local {
     if (options.reflections && (options.shading != ShadingPath.DEFERRED || options.path_traced)) {
         return c3d::INVALID_ARGUMENT~;
     }
+    if (options.clouds && options.path_traced) return c3d::INVALID_ARGUMENT~;
     if (!options.width) options.width = options.benchmark ? BENCHMARK_WIDTH : WINDOW_WIDTH;
     if (!options.height) options.height = options.benchmark ? BENCHMARK_HEIGHT : WINDOW_HEIGHT;
     return options;
@@ -834,8 +936,8 @@ fn Options? parse_options(String[] args) @local {
 
 // ----------------------------------------------------------------------------- interactive
 
-fn void apply_preset(Controls* controls, FlyCamera* fly_camera, Preset preset) @local {
-    SkyPose pose = preset_pose(preset);
+fn void apply_preset(Controls* controls, FlyCamera* fly_camera, Preset preset, bool clouds) @local {
+    SkyPose pose = preset_pose(preset, clouds);
     fly_camera.position = pose.camera_position;
     fly_camera.yaw = pose.yaw;
     fly_camera.pitch = pose.pitch;
@@ -877,6 +979,42 @@ fn void? apply_fog_quality(Demo* demo, Renderer* renderer) @local {
     render::configure_view(renderer, demo.mirror.view, mirror_view_desc(demo))!;
 }
 
+fn void? clouds_panel(Demo* demo) @local {
+    imgui::separator_text("Clouds");
+    CloudLayer* layer = demo.scene.get(demo.weather.node, CloudLayer);
+    bool changed = imgui::slider_float(
+        label: "Coverage",
+        v:     &demo.weather.amount,
+        v_min: 0,
+        v_max: 1,
+    );
+    if (changed) set_cloud_coverage(demo)!;
+    imgui::slider_float(
+        label: "Cloud density",
+        v:     &layer.density,
+        v_min: 0,
+        v_max: CLOUD_DENSITY_MAX,
+    );
+    imgui::slider_float(
+        label: "Bottom",
+        v:     &layer.bottom,
+        v_min: 0,
+        v_max: layer.top - CLOUD_THICKNESS_MIN,
+    );
+    imgui::slider_float(
+        label: "Top",
+        v:     &layer.top,
+        v_min: layer.bottom + CLOUD_THICKNESS_MIN,
+        v_max: CLOUD_ALTITUDE_MAX,
+    );
+    imgui::slider_float(
+        label: "Wind speed",
+        v:     &demo.weather.wind_speed,
+        v_min: 0,
+        v_max: CLOUD_WIND_SPEED_MAX,
+    );
+}
+
 fn void? sky_panel(
     Demo* demo,
     Renderer* renderer,
@@ -902,17 +1040,17 @@ fn void? sky_panel(
         );
         imgui::checkbox("Play the time-lapse", &controls.playing);
         imgui::checkbox("Exposure table", &controls.exposure_table);
-        if (imgui::button("Noon")) apply_preset(controls, fly_camera, Preset.NOON);
+        if (imgui::button("Noon")) apply_preset(controls, fly_camera, Preset.NOON, demo.options.clouds);
         imgui::same_line();
-        if (imgui::button("Twilight")) apply_preset(controls, fly_camera, Preset.TWILIGHT);
+        if (imgui::button("Twilight")) apply_preset(controls, fly_camera, Preset.TWILIGHT, demo.options.clouds);
         imgui::same_line();
-        if (imgui::button("Valley")) apply_preset(controls, fly_camera, Preset.VALLEY);
+        if (imgui::button("Valley")) apply_preset(controls, fly_camera, Preset.VALLEY, demo.options.clouds);
         imgui::same_line();
-        if (imgui::button("Pan")) apply_preset(controls, fly_camera, Preset.PAN);
+        if (imgui::button("Pan")) apply_preset(controls, fly_camera, Preset.PAN, demo.options.clouds);
         imgui::same_line();
-        if (imgui::button("Orbit")) apply_preset(controls, fly_camera, Preset.ORBIT);
+        if (imgui::button("Orbit")) apply_preset(controls, fly_camera, Preset.ORBIT, demo.options.clouds);
         imgui::same_line();
-        if (imgui::button("Time-lapse")) apply_preset(controls, fly_camera, Preset.TIME_LAPSE);
+        if (imgui::button("Time-lapse")) apply_preset(controls, fly_camera, Preset.TIME_LAPSE, demo.options.clouds);
         if (demo.fog) {
             imgui::separator_text("Height fog");
             HeightFog* fog = demo.scene.get(demo.fog, HeightFog);
@@ -961,6 +1099,7 @@ fn void? sky_panel(
                 }
             }
         }
+        if (demo.weather.node) clouds_panel(demo)!;
         imgui::separator_text("Frame");
         float exposure = demo.scene.get(demo.camera_node, Camera).exposure;
         imgui::text("Sun elevation %.2f, exposure %.2f", controls.elevation_degrees, exposure);
@@ -974,9 +1113,10 @@ fn void? sky_panel(
         }
         imgui::text("Sky regenerations %u", controls.regenerations);
         imgui::text(
-            "Ignored: atmospheres %u, fogs %u; dropped atmospheres %u",
+            "Ignored: atmospheres %u, fogs %u, clouds %u; dropped atmospheres %u",
             renderer.stats.atmospheres_ignored,
             renderer.stats.fogs_ignored,
+            renderer.stats.clouds_ignored,
             renderer.stats.atmospheres_dropped,
         );
         if (renderer.timestamps_enabled) {
@@ -1042,7 +1182,7 @@ fn void? run_interactive(Options options) @local {
 
     Controls controls = { .azimuth_degrees = SUN_AZIMUTH_DEGREES, .exposure_table = !options.auto_exposure };
     FlyCamera fly_camera;
-    apply_preset(&controls, &fly_camera, options.preset);
+    apply_preset(&controls, &fly_camera, options.preset, options.clouds);
     renderer.prepare_scene(&scene)!;
     SkyPose last_pose;
     while (window.poll()) {
@@ -1072,6 +1212,7 @@ fn void? run_interactive(Options options) @local {
             if (controls.elevation_degrees > MAX_ELEVATION_DEGREES) controls.elevation_degrees = MIN_ELEVATION_DEGREES;
         }
         apply_fly_camera(&fly_camera, input, delta);
+        advance_clouds(&demo, delta);
         SkyPose pose = {
             .camera_position   = fly_camera.position,
             .yaw               = fly_camera.yaw,
@@ -1136,10 +1277,10 @@ fn Segment segment_of(Options options, uint step) @local {
 
 fn float time_lapse_step_degrees() @local => TIME_LAPSE_DEGREES_PER_SECOND * TIME_STEP;
 
-fn SkyPose segment_pose(Segment segment, uint step) @local {
+fn SkyPose segment_pose(Segment segment, uint step, bool clouds = false) @local {
     switch (segment) {
-        case NOON: return preset_pose(Preset.NOON);
-        case TWILIGHT: return preset_pose(Preset.TWILIGHT);
+        case NOON: return preset_pose(Preset.NOON, clouds);
+        case TWILIGHT: return preset_pose(Preset.TWILIGHT, clouds);
         case VALLEY: return preset_pose(Preset.VALLEY);
         case PAN:
             SkyPose pose = preset_pose(Preset.PAN);
@@ -1215,7 +1356,8 @@ fn void? run_segments(
             segment_step = segment_frames(options, segment) - 1;
         }
         time::Clock frame_started = clock::now();
-        SkyPose pose = segment_pose(segment, segment_step);
+        SkyPose pose = segment_pose(segment, segment_step, options.clouds);
+        advance_clouds(demo, TIME_STEP);
         apply_pose(
             demo:            demo,
             pose:            pose,
@@ -1422,8 +1564,8 @@ fn String fog_quality_name(FogQuality quality) @local {
 fn void print_header(Options options) @local {
     io::printfn(
         "# sky shading=%s shadows=%s ssgi=%s path_traced=%s reflections=%s fog=%s atmosphere=%s "
-          "volumetric_fog=%s fog_quality=%s local_lights=%d lamp_range=%g lamps_in_fog=%s taa=%s extent=%dx%d "
-          "frames=%d",
+          "volumetric_fog=%s fog_quality=%s clouds=%s local_lights=%d lamp_range=%g lamps_in_fog=%s taa=%s "
+          "extent=%dx%d frames=%d",
         options.shading == ShadingPath.DEFERRED ? "deferred" : "forward",
         options.traced_shadows ? "traced" : "atlas",
         options.ssgi ? "on" : "off",
@@ -1433,6 +1575,7 @@ fn void print_header(Options options) @local {
         AIR_NAMES[options.air.ordinal],
         options.volumetric_fog ? "on" : "off",
         fog_quality_name(options.fog_quality),
+        options.clouds ? "on" : "off",
         options.local_lights,
         options.lamp_range,
         options.lamps_in_fog ? "on" : "off",
@@ -1483,7 +1626,7 @@ fn bool? run_benchmark(Options options) @local {
     result.sun_extract_us = time_sun_extraction(&demo)!;
     apply_pose(
         demo:            &demo,
-        pose:            segment_pose(Segment.NOON, 0),
+        pose:            segment_pose(Segment.NOON, 0, options.clouds),
         azimuth_degrees: SUN_AZIMUTH_DEGREES,
         aspect:          (float)options.width / (float)options.height,
         exposure_table:  !options.auto_exposure,
@@ -1509,7 +1652,7 @@ fn int main(String[] args) {
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--shadows atlas|traced] [--ssgi] [--path-traced] [--reflections on|off] [--volumetric-fog] "
               "[--fog-quality low|medium|high] [--local-lights N] [--lamp-range METRES] [--lamps-in-fog on|off] "
-              "[--taa] [--auto-exposure] [--fog on|off] [--atmosphere on|off|dense|empty] "
+              "[--taa] [--auto-exposure] [--clouds] [--fog on|off] [--atmosphere on|off|dense|empty] "
               "[--preset noon|twilight|valley|pan|orbit|time-lapse] [--width W] [--height H].");
         }
         return 1;
