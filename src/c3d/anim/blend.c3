@@ -222,14 +222,13 @@ fn void blend_pose(
  @param [&in] assets : "Owns the clip."
  @param time : "Seconds; clamped to each track's key range."
  @param [inout] cursors : "Seek hints, one per track; any value is valid."
- @param [&inout] scratch : "Supplies the sample buffer."
+ @param [&inout] scratch : "Sample buffer at least as wide as the clip's widest track; scratch from the destination's pose storage qualifies."
  @require assets.clips.is_live(clip), cursors.len >= assets.clip(clip).data.tracks.len
  @require destination.pose.len == destination.base_pose.len
  @require destination.present.len == destination.base_pose.len
  @require destination.mesh_present.len == destination.base_pose.len
  @require destination.mesh_indices.len == destination.base_pose.len
  @require destination.morph_weights.len == destination.base_morph_weights.len
- @require scratch.sample.len >= 4
 *>
 fn void sample_pose(
     AssetStore* assets,
