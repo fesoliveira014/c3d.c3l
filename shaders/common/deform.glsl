@@ -8,6 +8,9 @@
 #define MORPH_STREAM_POSITION 0u
 #define MORPH_STREAM_NORMAL 1u
 
+#define PALETTE_MATRIX_BYTES 64ul // mirrors Mat4f::size of a palette entry
+#define MORPH_BLOCK_BYTES 80ul // mirrors MorphWeightsGpu::size
+
 GPU_DECLARE_READONLY_ARRAY_REF(JointPalette, mat4);
 GPU_DECLARE_READONLY_ARRAY_REF(UintStream, uint);
 
