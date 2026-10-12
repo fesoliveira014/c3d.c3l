@@ -92,6 +92,12 @@ fn void? prepare_lod_instances(Renderer* renderer, LodSelection* selection) @pri
         selection.part_mirrored = alloc::new_array(tmem, bool[], selection.state.desc.parts.len);
 
         foreach (uint part, &split : selection.part_unmirrored) {
+            // Skinned parts reuse the placement parity uploaded with the records the cull stage reads.
+            if (selection.state.animated.parts[part].skinned) {
+                *split = selection.instances.lod_unmirrored_count;
+                continue;
+            }
+
             MeshCandidate candidate = {
                 .node = selection.node,
                 .lod = selection,
@@ -103,10 +109,9 @@ fn void? prepare_lod_instances(Renderer* renderer, LodSelection* selection) @pri
             selection.part_mirrored[part] = mirrored;
 
             for (uint source = 0; source < selection.state.count; source++) {
-                // Skinned parts must match the placement parity the cull stage reads from metadata.
-                Transform placement = selection.state.transforms[source];
-                mirrored[source] = candidate.animated_lod.skinned ? scene::transform_mirrored(placement)
-                  : placement.to_mat4().mul(animated_lod_part_local(&candidate, source)).determinant() < 0;
+                Mat4 local = selection.state.transforms[source].to_mat4()
+                  .mul(animated_lod_part_local(&candidate, source));
+                mirrored[source] = local.determinant() < 0;
                 if (!mirrored[source]) (*split)++;
             }
         }
@@ -237,7 +242,8 @@ fn void? prepare_lod_cull(Renderer* renderer, CullItem* item, bool culling) @pri
     selection.main_visible |= item.main_view;
     if (selection.fallback) {
         *item.range = prepare_cull_range(renderer, candidate, item.geometry)!;
-        item.range.visible = candidate.animated_lod ? resolve_animated_lod_indices(renderer, candidate)!
+        item.range.visible = candidate.animated_lod && !candidate.animated_lod.skinned
+          ? resolve_animated_lod_indices(renderer, candidate)!
           : (candidate.mirrored ? selection.instances.lod_mirrored_indices : selection.instances.lod_unmirrored_indices);
         item.range.indexed = true;
         return;

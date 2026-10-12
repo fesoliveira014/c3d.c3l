@@ -30,6 +30,13 @@ struct IndirectReplayCommand @private {
     usz source_offset;
 }
 
+fn bool indirect_replay_mirrored(LodSelection* selection, uint representation, uint source) @private {
+    if (selection.state.animated.parts[representation].skinned) {
+        return scene::transform_mirrored(selection.state.transforms[source]);
+    }
+    return selection.part_mirrored[representation][source];
+}
+
 fn void check_indirect_replay(
     gpu::MappedGpuSpan readback,
     IndirectReplayCommand[] commands,
@@ -57,15 +64,17 @@ fn void check_indirect_replay(
             count = args.instance_count;
         }
         assert(elements == command.elements && elements % 3 == 0);
-        bool[] mirrored = selection.part_mirrored[command.representation];
         uint expected;
         if (command.level == selected_level) {
-            foreach (source_mirrored : mirrored[:sources]) if (source_mirrored == command.mirrored) expected++;
+            for (uint source = 0; source < sources; source++) {
+                if (indirect_replay_mirrored(selection, command.representation, source) == command.mirrored) expected++;
+            }
         }
         assert(count == expected);
         uint previous = uint::max;
         foreach (source : ((uint*)(readback.bytes.ptr + command.source_offset))[:count]) {
-            assert(source < sources && mirrored[source] == command.mirrored);
+            assert(source < sources);
+            assert(indirect_replay_mirrored(selection, command.representation, source) == command.mirrored);
             assert(++seen[command.representation * sources + source] == 1);
             assert(!sorted || source < previous, "Blend sort lost the far-to-near source order");
             previous = source;

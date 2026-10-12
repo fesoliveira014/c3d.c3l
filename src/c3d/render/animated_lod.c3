@@ -72,9 +72,11 @@ fn void AnimatedLodAddresses.set(&self, AnimatedLodKey key, gpu::GpuAddress addr
         AnimatedLodAddress[] previous = self.slots;
         self.slots = alloc::new_array(self.allocator, AnimatedLodAddress, previous.len * 2);
         self.count = 0;
+
         foreach (slot : previous) {
             if (slot.epoch == self.epoch) self.set(slot.key, slot.address);
         }
+
         alloc::free(self.allocator, previous.ptr);
     }
 
