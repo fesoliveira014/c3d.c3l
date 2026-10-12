@@ -357,7 +357,7 @@ warm-up frames: noon, twilight (the sun at −4°), valley (the camera 300 m up,
 pan (the sun 15° up, the camera's yaw sweeping 8° a second from −20°) and a time-lapse four segments long (the sun rising 0.0045° a frame from 10°). Lines:
 
 ```
-# sky shading=forward shadows=atlas ssgi=off path_traced=off fog=on atmosphere=on volumetric_fog=off taa=off extent=2560x1440 frames=300
+# sky shading=forward shadows=atlas ssgi=off path_traced=off reflections=off fog=on atmosphere=on volumetric_fog=off taa=off extent=2560x1440 frames=300
 sun_extract_us median=<>
 gpu_ms view=<main|mirror> segment=<s> pass=<pass> median=<> p99=<>
 frame_ms segment=<s> median=<> p99=<>

@@ -49,6 +49,24 @@ const int BRUSHED_MINIMUM @private = 20;
 const HeightFog HAZE @private = { .density = 0.12f, .falloff = 0.05f, .albedo = { 0, 0, 1 }, .max_distance = 100 };
 const Vec3 FAR_EMITTER_POSITION @private = { 0, 5.667f, -8 }; // on the same reflected ray, twice as far
 const int FOG_MINIMUM @private = 10; // half the smallest separation measured between the fogged images
+const Atmosphere DENSE_AIR @private = {
+    .planet_radius         = 6_360_000,
+    .atmosphere_height     = 2_000,
+    .rayleigh_scattering   = { 0.02f, 0.06f, 0.16f },
+    .rayleigh_scale_height = 10,
+    .mie_scattering        = 0,
+    .mie_absorption        = 0,
+    .mie_scale_height      = 1_200,
+    .mie_anisotropy        = 0,
+    .ozone_absorption      = { 0, 0, 0 },
+    .ozone_center_altitude = 1_000,
+    .ozone_half_width      = 500,
+    .ground_albedo         = { 0.3f, 0.3f, 0.3f },
+    .sun_angular_radius    = 0.004675f,
+    .observer_altitude     = 0,
+};
+const float AIR_SUN_INTENSITY @private = 10;
+const int AIR_MINIMUM @private = 10; // about half the smaller change measured between the near and far images
 
 struct PhysicalPanel @private {
     Fixture*     fixture;
@@ -545,6 +563,12 @@ fn void test_reflections_shade_the_sheen_and_anisotropy_of_a_hit() @test {
     }
 }
 
+fn uint? render_emitter_at(Fixture* fixture, MirrorScene* mirror, ViewId view, Vec3 emitter_position) @private {
+    mirror.emitter.local.position = emitter_position;
+    mirror.scene.update_world();
+    return render_mirror(fixture, mirror, view, EMITTER_IMAGE_POINT);
+}
+
 fn uint? render_emitter_image(
     Fixture* fixture,
     MirrorScene* mirror,
@@ -553,10 +577,8 @@ fn uint? render_emitter_image(
     Vec3 emitter_position,
     bool fogged,
 ) @private {
-    mirror.emitter.local.position = emitter_position;
     haze.visible = fogged;
-    mirror.scene.update_world();
-    return render_mirror(fixture, mirror, view, EMITTER_IMAGE_POINT);
+    return render_emitter_at(fixture, mirror, view, emitter_position);
 }
 
 fn void test_reflections_fog_the_path_from_the_surface_to_the_hit() @test {
@@ -591,6 +613,33 @@ fn void test_reflections_fog_the_path_from_the_surface_to_the_hit() @test {
         assert(red(near_fogged) + FOG_MINIMUM < red(near_clear));
         assert(red(far_fogged) + FOG_MINIMUM < red(near_fogged));
         assert(blue(far_fogged) > blue(near_fogged) + FOG_MINIMUM);
+        check_validation(&fixture.renderer);
+    }
+}
+
+fn void test_reflections_take_the_atmosphere_over_the_path_to_the_hit() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        MirrorScene mirror = create_mirror_scene(&fixture, false)!!;
+        defer scene::destroy_scene(&mirror.scene);
+        AoView mirror_view = create_ao_view(&fixture, ShadingPath.DEFERRED)!!;
+        defer destroy_ao_view(&fixture, &mirror_view);
+        set_reflections(&fixture, mirror_view.view, true)!!;
+        Light sunlight = light::directional({ 1, 1, 1 }, AIR_SUN_INTENSITY, shadow: false);
+        Node* sun = mirror.scene.add_light(sunlight, name: "sun")!!;
+        sun.local.rotation = maths::look_rotation((Vec3){ 0.3f, -1, -0.4f }.normalize(), { 0, 0, -1 });
+        mirror.scene.add(sun, DENSE_AIR);
+
+        ViewId view = mirror_view.view;
+        uint near = render_emitter_at(&fixture, &mirror, view, EMITTER_POSITION)!!;
+        uint far = render_emitter_at(&fixture, &mirror, view, FAR_EMITTER_POSITION)!!;
+        io::eprintfn("%s, emitter image in dense air: near %06x far %06x", trace_name(ray_queries), near, far);
+
+        // The camera's own fog pass takes the same share of either image, so only the hit segment separates them.
+        assert(red(far) + AIR_MINIMUM < red(near));
+        assert(blue(far) > blue(near) + AIR_MINIMUM);
         check_validation(&fixture.renderer);
     }
 }

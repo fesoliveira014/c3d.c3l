@@ -9,6 +9,7 @@ const uint SKY_SCATTERING_STEPS = 32u;           // per sky-view and cube texel;
 const uint SKY_MULTI_SCATTERING_DIRECTIONS = 64u; // 8 x 8 stratified; a lower count shows as noise in the table
 const uint SKY_MULTI_SCATTERING_STEPS = 20u;
 const uint AERIAL_PERSPECTIVE_STEPS_PER_SLICE = 2u; // the last slice marches 64 steps over 128 km
+const uint ATMOSPHERE_SEGMENT_STEPS = 8u;       // per reflection or probe hit; two table reads a step, the cost lever
 const float SKY_SUN_DISC_LIMIT = 60000.0;        // below RGBA16F's 65504; a brighter sun saturates its disc
 
 struct AtmosphereMedium {

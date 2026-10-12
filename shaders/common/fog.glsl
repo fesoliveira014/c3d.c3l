@@ -62,8 +62,9 @@ vec3 fog_ambient_color(FrameRoot frame, SkyFogGpu sky, vec3 direction) {
 }
 
 // Light the fog scatters toward the viewer: the sky at the view direction, else the environment, else ambient.
+// A probe frame carries the air without a sky-view table, so its fog takes the environment.
 vec3 fog_inscatter_color(FrameRoot frame, SkyFogGpu sky, vec3 direction) {
-    if ((sky.flags & SKY_FOG_ATMOSPHERE) != 0u) {
+    if ((sky.flags & SKY_FOG_ATMOSPHERE) != 0u && sky.sky_view_lut != 0u) {
         return sky.fog_albedo_density.rgb * sky_view_radiance(sky, direction, true) * sky.sun_illuminance.rgb;
     }
     return fog_ambient_color(frame, sky, direction);
@@ -137,6 +138,26 @@ FogTerms aerial_perspective_terms(SkyFogGpu sky, vec2 uv, float distance) {
     vec4 table = sky_aerial_perspective(sky, uv, distance);
     terms.transmittance = vec3(table.a);
     terms.inscatter = table.rgb * sky.sun_illuminance.rgb;
+    return terms;
+}
+
+// The air over [0, distance] of a ray from an altitude, marched for the sun's illuminance: what the aerial perspective
+// table holds for a camera ray, with its mean transmittance, for a ray the table does not cover.
+FogTerms atmosphere_segment(SkyFogGpu sky, float altitude, vec3 direction, float distance) {
+    FogTerms terms = fog_none();
+    if ((sky.flags & SKY_FOG_ATMOSPHERE) == 0u) return terms;
+    SkyScattering scattering = integrate_sky_scattering(
+        sky,
+        clamp(altitude, 0.0, sky.top_radius - sky.planet_radius),
+        direction,
+        sky.sun_direction_cos_radius.xyz,
+        distance,
+        ATMOSPHERE_SEGMENT_STEPS,
+        false,
+        false
+    );
+    terms.transmittance = vec3(dot(scattering.transmittance, vec3(1.0 / 3.0)));
+    terms.inscatter = scattering.luminance * sky.sun_illuminance.rgb;
     return terms;
 }
 
@@ -287,18 +308,24 @@ vec3 apply_fog_refracted(
     return transmittance * fog_behind(frame, surface_position, refracted, refracted_depth) + surface_radiance;
 }
 
-// Radiance at the end of a segment seen from its start through the height fog. The volume and aerial perspective are
-// indexed by the camera's screen, so a ray cast from elsewhere takes the analytic fog alone.
+// Radiance at the end of a segment seen from its start through the height fog, with the atmosphere behind it as on a
+// camera ray. The volume and aerial perspective table are indexed by the camera's screen, so a ray cast from elsewhere
+// takes the analytic fog and a marched atmosphere.
 vec3 apply_fog_segment(FrameRoot frame, vec3 origin, vec3 hit_position, vec3 radiance) {
     if (frame.sky_fog == 0ul) return radiance;
+    SkyFogGpu sky = SkyFogGpu(frame.sky_fog);
     vec3 offset = hit_position - origin;
     float distance = length(offset);
     vec3 direction = distance > 0.0 ? offset / distance : vec3(0.0, 0.0, -1.0);
-    FogTerms fog = height_fog_segment(frame, SkyFogGpu(frame.sky_fog), origin, direction, 0.0, distance);
+    FogTerms fog = fog_compose(
+        height_fog_segment(frame, sky, origin, direction, 0.0, distance),
+        atmosphere_segment(sky, origin.y + frame.origin.y, direction, distance)
+    );
     return radiance * fog.transmittance + fog.inscatter;
 }
 
-// Radiance of a ray that leaves the scene from a point: the fog a background pixel takes, without the volume.
+// Radiance of a ray that leaves the scene from a point: the fog a background pixel takes, without the volume. The sky
+// the ray reads already holds the atmosphere, so none is added.
 vec3 apply_fog_to_infinity(FrameRoot frame, vec3 origin, vec3 direction, vec3 radiance) {
     if (frame.sky_fog == 0ul) return radiance;
     FogTerms fog = height_fog_to_infinity(frame, SkyFogGpu(frame.sky_fog), origin, direction);

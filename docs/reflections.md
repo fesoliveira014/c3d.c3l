@@ -70,8 +70,9 @@ grain on rougher surfaces.
   carries. A reflection view carries them once the renderer has resolved a sheen material, which
   `prepare_scene` does ahead of the first frame; a sheen surface that only a reflection shows, in a
   scene nothing prepared, shades without its sheen lobe on the frame that first resolves it.
-- **Fog.** A hit takes the view's height fog over the path from the reflecting surface to the hit, and a miss
-  takes it to infinity; the camera's own fog pass fogs the rest ([fog at hits](sky.md#where-fog-applies)).
+- **Fog.** A hit takes the view's height fog and, behind it, the scene's atmosphere over the path from the
+  reflecting surface to the hit, and a miss takes the height fog to infinity; the camera's own fog pass fogs the
+  rest ([fog at hits](sky.md#where-fog-applies)).
 - **Back face.** A reflection ray passes the back of a single-sided surface, as raster culls it,
   and reflects what lies behind; double-sided materials shade both sides
   ([facing](scene_trace.md#facing)).
