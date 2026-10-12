@@ -257,12 +257,14 @@ fn void? record_fog_volume(
             next:     gpu::sampled_at({ .compute, .fragment_shader }),
         )!;
     }
+
     FogHistory* history = &record.fog_history;
     Target* integrated = fog_integrated_volume(record);
     Target* scattering = temporal ? &record.fog_volumes[history.slot ^ 1] : integrated;
     bool reproject = temporal && history.accepts(current);
     Vec3 previous_camera = history.committed.camera_position;
     float pre_exposure_ratio = reproject ? current.pre_exposure / history.committed.pre_exposure : 1;
+
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, FogVolumeRoot::size, STREAM_ALIGNMENT)!;
     *(FogVolumeRoot*)root.bytes.ptr = {
@@ -280,6 +282,7 @@ fn void? record_fog_volume(
         .jitter                   = temporal ? maths::halton(history.sample + 1, 2) : 0,
         .pre_exposure_ratio       = pre_exposure_ratio,
     };
+
     if (temporal) history.record(current);
 
     @profile_pass(renderer, Pass.FOG_SCATTERING) {
