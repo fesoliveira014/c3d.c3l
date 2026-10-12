@@ -11,7 +11,7 @@ const uint SLOT_CAPACITY @local = 2;
 const ulong SCENE_IDENTITY @local = 7;
 const usz POSE_BYTES @local = 2 * Mat4f::size;
 
-fn PosedTraceKey key_of(uint node, ulong instance = 0) @local {
+fn PosedTraceKey key_of(uint node, uint instance = 0) @local {
     return { .scene = SCENE_IDENTITY, .node = { .index = node, .generation = 1 }, .instance = instance };
 }
 

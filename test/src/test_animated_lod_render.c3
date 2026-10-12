@@ -18,7 +18,7 @@ const uint SHADOW_BASE_PARTS @local = 5;
 const uint SHADOW_REDUCED_PARTS @local = 2;
 const uint SHADOW_REPRESENTATIONS @local = SHADOW_BASE_PARTS + SHADOW_REDUCED_PARTS;
 
-$assert PosedTraceKey::size == 48;
+$assert PosedTraceKey::size == 40;
 
 struct AnimatedLodHistoryFixture @local {
     AssetStore assets;
@@ -232,7 +232,7 @@ fn void test_animated_lod_history_rejects_aliases_with_different_local_transform
     assert(!previous_animated_history(&fixture, &fixture.first, ANIMATED_HISTORY_PARTS + 2));
 }
 
-fn void test_animated_lod_history_preserves_unchanged_logical_sources_after_reuse_growth_and_parity() @test {
+fn void test_animated_lod_crowd_history_survives_parity_and_expires_on_replacement() @test {
     AnimatedLodHistoryFixture fixture;
     create_animated_history_fixture(&fixture, true);
     defer destroy_animated_history_fixture(&fixture);
@@ -240,21 +240,24 @@ fn void test_animated_lod_history_preserves_unchanged_logical_sources_after_reus
     PoseRecord* pose = previous_animated_history(&fixture, &fixture.first, 2);
     MeshCandidate* candidate = &fixture.candidates[2];
     AnimatedCrowd* crowd = candidate.crowd;
-    assert(animated_lod_previous_valid(pose, candidate, 0));
-    assert(animated_lod_previous_valid(pose, candidate, 1));
-    Mat4f first = pose.instances[0];
     crowd.placements[0].scale.x = -1;
     crowd.placements[1].scale.x = 1;
-    assert(animated_lod_previous_valid(pose, candidate, 0));
-    assert(animated_lod_previous_valid(pose, candidate, 1));
-    assert(pose.instances[0] == first);
-    anim::reset_crowd_playback_slot(crowd.playback, 1);
-    assert(animated_lod_previous_valid(pose, candidate, 0));
-    assert(!animated_lod_previous_valid(pose, candidate, 1));
-    crowd.count = 3;
-    assert(animated_lod_previous_valid(pose, candidate, 0));
-    assert(!animated_lod_previous_valid(pose, candidate, 2));
-    crowd.count = 2;
+    assert(animated_lod_previous_valid(pose, candidate, 0) && animated_lod_previous_valid(pose, candidate, 1));
+    CrowdInstance[2] seeds;
+    foreach (uint instance, &seed : seeds) {
+        *seed = {
+            .placement = crowd.placements[instance],
+            .pose = crowd.seeds[instance],
+            .color = crowd.colors[instance],
+        };
+    }
+    model::set_crowd(
+        assets: &fixture.assets,
+        scene: &fixture.scene,
+        node: fixture.node,
+        instances: seeds[..],
+    )!!;
+    assert(!animated_lod_previous_valid(pose, candidate, 0) && !animated_lod_previous_valid(pose, candidate, 1));
 }
 
 fn void test_animated_lod_history_reuses_owned_storage_between_observations() @test {
@@ -561,7 +564,7 @@ fn void test_traced_animated_lod_respects_source_flags_and_base_signatures() @te
             assert(record.lod_identity == scene.get(owner, LodGroup).state.identity);
             PosedTraceKey key = render::trace_pose_key(scene.identity, source, record);
             assert(key.logical_part == record.part_index && key.lod_identity == record.lod_identity);
-            assert(key.source_identity == 1 && key.slot_generation == 1);
+            assert(key.source_identity == 1);
             if (record.part_index == 1) {
                 assert(source.kind == TracePose.REST && render::pose_input_bytes(source, &assets) == 0);
                 Vec3 first_vertex = maths::transform_point(render::trace_instance_world(record), { 1, 0, 0 });
@@ -606,7 +609,6 @@ fn void test_traced_animated_lod_key_fields_are_complete() @test {
         .instance = 1,
         .lod_identity = 11,
         .source_identity = 13,
-        .slot_generation = 5,
         .logical_part = 2,
     };
     RetireList retire;
@@ -616,7 +618,7 @@ fn void test_traced_animated_lod_key_fields_are_complete() @test {
     defer render::free_posed_trace_storage(&table);
     table.begin_epoch(1);
     assert(table.claim(base, 0, &retire)!! == 0);
-    for (uint field = 0; field < 8; field++) {
+    for (uint field = 0; field < 7; field++) {
         PosedTraceKey changed = base;
         switch (field) {
             case 0: changed.scene++;
@@ -625,8 +627,7 @@ fn void test_traced_animated_lod_key_fields_are_complete() @test {
             case 3: changed.instance++;
             case 4: changed.lod_identity++;
             case 5: changed.source_identity++;
-            case 6: changed.slot_generation++;
-            case 7: changed.logical_part++;
+            case 6: changed.logical_part++;
         }
         assert(!(base == changed));
         assert(table.claim(changed, 0, &retire)!! == field + 1);
@@ -667,7 +668,6 @@ fn void test_traced_animated_lod_crowd_uses_logical_pose_order_and_fresh_keys() 
             keys[logical] = render::trace_pose_key(scene.identity, source, record);
             assert(c3d::same_id(record.entity, owner.id) && record.lod_identity == state.identity);
             assert(keys[logical].source_identity == crowd.playback.identity);
-            assert(keys[logical].slot_generation == crowd.playback.slots[record.instance_index].generation);
             if (record.part_index == 1) {
                 assert(source.kind == TracePose.REST);
             } else {

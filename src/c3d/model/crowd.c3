@@ -325,9 +325,7 @@ fn void? set_crowd(
             )!;
         }
 
-        for (uint index = 0; index < crowd.playback.slots.len; index++) {
-            anim::reset_crowd_playback_slot(crowd.playback, index);
-        }
+        anim::reset_crowd_playback(crowd.playback);
 
         foreach (uint index, &action : staged) {
             anim::install_crowd_seed(crowd.playback, index, *action);

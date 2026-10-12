@@ -113,7 +113,6 @@ struct PoseRecord {
     uint              crowd_model_revision;
     SkeletonId        crowd_skeleton;
     uint              crowd_skeleton_revision;
-    uint[]            crowd_generations;
     GeometryId        crowd_geometry;
     uint              crowd_geometry_revision;
     uint              crowd_part;
@@ -377,7 +376,6 @@ fn void free_view_history(Allocator allocator, ViewHistory* history) {
             alloc::free(allocator, pose.instances.ptr);
             alloc::free(allocator, pose.morphs.ptr);
             alloc::free(allocator, pose.vertices.ptr);
-            alloc::free(allocator, pose.crowd_generations.ptr);
         }
         alloc::free(allocator, history.models.ptr);
         alloc::free(allocator, history.owners.ptr);
@@ -393,7 +391,6 @@ fn void free_animated_lod_pose(Allocator allocator, AnimatedLodPoseHistory* hist
     foreach (&part : history.parts) {
         alloc::free(allocator, part.pose.instances.ptr);
         alloc::free(allocator, part.pose.morphs.ptr);
-        alloc::free(allocator, part.pose.crowd_generations.ptr);
     }
 
     alloc::free(allocator, history.parts.ptr);
@@ -451,12 +448,7 @@ fn void commit_animated_lod_pose(
         owner.instance_count = count;
         owner.crowd_identity = 0;
         if (candidate.crowd) {
-            capture_crowd_sources(
-                allocator: allocator,
-                assets: assets,
-                pose: owner,
-                crowd: candidate.crowd,
-            );
+            capture_crowd_sources(assets, owner, candidate.crowd);
         }
 
         history.seen = serial;
@@ -490,12 +482,7 @@ fn void commit_animated_lod_pose(
     pose.sway = state.effects.sway;
     pose.crowd_identity = 0;
     if (candidate.crowd) {
-        capture_crowd_sources(
-            allocator: allocator,
-            assets: assets,
-            pose: pose,
-            crowd: candidate.crowd,
-        );
+        capture_crowd_sources(assets, pose, candidate.crowd);
     }
 
     pose.morphed = selected.weight_count > 0;
@@ -557,9 +544,7 @@ fn bool animated_lod_previous_valid(PoseRecord* pose, MeshCandidate* candidate, 
     if (!candidate.crowd) return source == 0;
 
     AnimatedCrowd* crowd = candidate.crowd;
-    return source < crowd.count && pose.crowd_identity == crowd.playback.identity
-      && source < pose.crowd_generations.len
-      && pose.crowd_generations[source] == crowd.playback.slots[source].generation;
+    return source < crowd.count && pose.crowd_identity == crowd.playback.identity;
 }
 
 fn void commit_pose(
@@ -609,12 +594,7 @@ fn void commit_pose(
     if (candidate.crowd) {
         AnimatedCrowd* crowd = candidate.crowd;
 
-        capture_crowd_sources(
-            allocator: allocator,
-            assets: assets,
-            pose: pose,
-            crowd: crowd,
-        );
+        capture_crowd_sources(assets, pose, crowd);
         pose.crowd_geometry = candidate.geometry;
         pose.crowd_geometry_revision = assets.geometry(candidate.geometry).header.revision;
         pose.crowd_part = candidate.crowd_part;
@@ -1390,21 +1370,7 @@ fn void commit_crowd_pose(Allocator allocator, PoseRecord* pose, AnimatedCrowd* 
     pose.crowd_identity = crowd.playback.identity;
 }
 
-fn void capture_crowd_sources(
-    Allocator allocator,
-    AssetStore* assets,
-    PoseRecord* pose,
-    AnimatedCrowd* crowd,
-) @private {
-    if (pose.crowd_generations.len != crowd.placements.len) {
-        alloc::free(allocator, pose.crowd_generations.ptr);
-        pose.crowd_generations = alloc::new_array(allocator, uint, crowd.placements.len);
-    }
-
-    for (uint instance = 0; instance < crowd.count; instance++) {
-        pose.crowd_generations[instance] = crowd.playback.slots[instance].generation;
-    }
-
+fn void capture_crowd_sources(AssetStore* assets, PoseRecord* pose, AnimatedCrowd* crowd) @private {
     pose.crowd_identity = crowd.playback.identity;
     pose.crowd_model = crowd.model;
     pose.crowd_model_revision = assets.model(crowd.model).header.revision;
@@ -1422,17 +1388,13 @@ fn bool crowd_history_matches(
     PoseRecord* crowd_pose,
 ) @private {
     AnimatedCrowd* crowd = candidate.crowd;
+    // The playback identity renews with every replacement, so it also pins the instance count.
     if (!pose || !crowd_pose || pose.crowd_identity != crowd.playback.identity
-      || crowd_pose.crowd_identity != crowd.playback.identity || pose.instance_count != crowd.count
-      || crowd_pose.instance_count != crowd.count || pose.crowd_part != candidate.crowd_part
+      || crowd_pose.crowd_identity != crowd.playback.identity || pose.crowd_part != candidate.crowd_part
       || !c3d::same_id(pose.crowd_model, crowd.model)
       || pose.crowd_model_revision != assets.model(crowd.model).header.revision
       || !c3d::same_id(pose.crowd_geometry, candidate.geometry)
       || pose.crowd_geometry_revision != assets.geometry(candidate.geometry).header.revision) return false;
-
-    for (uint instance = 0; instance < crowd.count; instance++) {
-        if (pose.crowd_generations[instance] != crowd.playback.slots[instance].generation) return false;
-    }
 
     ModelTemplate* template = &assets.model(crowd.model).data;
     if (template.skins.len && (!c3d::same_id(pose.crowd_skeleton, template.skins[0].skeleton)

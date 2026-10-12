@@ -401,6 +401,15 @@ fn void reset_crowd_playback_slot(CrowdPlaybackState* state, uint index) {
 }
 
 <*
+ Reset every slot and renew the playback identity.
+ @param [&inout] state : "Every previous slot, action handle and pose history becomes stale."
+*>
+fn void reset_crowd_playback(CrowdPlaybackState* state) {
+    for (uint index = 0; index < state.slots.len; index++) reset_crowd_playback_slot(state, index);
+    state.identity = ++crowd_playback_identity_counter;
+}
+
+<*
  Install a prepared seed into an empty fixed slot.
  @param [&inout] state : "Takes the prepared cursor and reference arrays."
  @require index < state.slots.len, state.slots[index].action_count == 0

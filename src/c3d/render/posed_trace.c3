@@ -24,13 +24,12 @@ const uint DEFAULT_MAX_POSED_TRACE_INSTANCES = 64; // 32 two-part characters; a 
 struct PosedTraceKey {
     ulong  scene;
     Entity node;            // mesh/batch node, or animated LOD owner
-    ulong  instance;        // logical source slot; 0 for an ordinary mesh
-    ulong  lod_identity;    // descriptor incarnation; 0 without animated LOD
-    ulong  source_identity; // crowd playback identity or animated source epoch
-    uint   slot_generation;
+    uint   instance;        // logical source slot; 0 for an ordinary mesh
     uint   logical_part;    // base mesh index; 0 for an ordinary mesh
+    ulong  lod_identity;    // descriptor incarnation; 0 without animated LOD
+    ulong  source_identity; // crowd playback identity or animated source epoch; renewed by crowd replacement
 }
-$assert PosedTraceKey::size == 4 * ulong::size + Entity::size + 2 * uint::size;
+$assert PosedTraceKey::size == 3 * ulong::size + Entity::size + 2 * uint::size;
 
 <*
  Rest topology a vertex-motion slot was built for.
@@ -118,7 +117,7 @@ fn uint PosedTraceKey.hash(self) => fnv32a::hash(@as_char_view(self));
 fn bool PosedTraceKey.equals(self, PosedTraceKey other) @operator(==) {
     return self.scene == other.scene && c3d::same_id(self.node, other.node) && self.instance == other.instance
       && self.lod_identity == other.lod_identity && self.source_identity == other.source_identity
-      && self.slot_generation == other.slot_generation && self.logical_part == other.logical_part;
+      && self.logical_part == other.logical_part;
 }
 
 <*
@@ -340,12 +339,9 @@ fn PosedTraceKey trace_pose_key(ulong scene, TracePoseSource* source, TraceInsta
     if (source.lod) {
         key.lod_identity = source.lod.identity;
         key.source_identity = source.lod.instance_epoch;
-        key.slot_generation = source.lod.mode == LodMode.INSTANCED
-          ? source.lod.slot_generations[record.instance_index] : 1;
         key.logical_part = source.lod.animated.parts[source.part].mesh_index;
     } else if (source.kind == TracePose.CROWD) {
         key.source_identity = source.crowd.playback.identity;
-        key.slot_generation = source.crowd.playback.slots[record.instance_index].generation;
         key.logical_part = source.part;
     }
     return key;
