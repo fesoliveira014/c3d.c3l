@@ -339,12 +339,14 @@ fn int main(String[] args) {
             report(&showcase);
         }
 
-        anim::update(&assets, &scene, window.clock.delta);
+        // The first poll's delta spans asset loading.
+        float delta = frame ? window.clock.delta : 0;
+        anim::update(&assets, &scene, delta);
         anim::apply_root_motion(showcase.target, scene.get(showcase.target, Animator).root_motion);
         if (showcase.target.local.position.z > WALK_RANGE) showcase.target.local.position.z = 0;
         scene.update_world();
         platform::sync_window(&window, &renderer);
-        renderer.render(&scene, camera_node, { .time = window.clock.total, .delta = window.clock.delta })!!;
+        renderer.render(&scene, camera_node, { .time = window.clock.total, .delta = delta })!!;
         frame++;
     }
 

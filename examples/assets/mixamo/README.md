@@ -12,7 +12,7 @@ Git ignores every `.fbx` file in this directory: Mixamo assets are governed by A
 are not redistributed with this repository.
 
 `examples/retarget` needs `character.fbx` and `walk.fbx` here: a Mixamo character with skin and a
-Walking animation without skin, both FBX Binary at 30 frames per second. Download the walk without In
-Place so its profiled root-motion mode travels. Public copies exist in the
-`Alex-DG/threejs-character-controls` repository under `static/models/girl/`. The target rig,
+Walking animation without skin and without In Place, both FBX Binary at 30 frames per second. A public
+character exists as `eve_j_gonzales.fbx` in the `Alex-DG/threejs-character-controls` repository under
+`static/models/girl/`; save it here as `character.fbx`. The target rig,
 `examples/assets/quaternius/AnimationLibrary_Godot.glb`, ships with the repository.
