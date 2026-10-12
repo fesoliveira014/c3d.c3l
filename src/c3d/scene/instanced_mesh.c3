@@ -6,6 +6,11 @@ import c3d::maths;
 import std::math;
 
 <*
+ Range marks a batch remembers.
+*>
+const uint INSTANCE_RANGE_MARKS = 4; // 56 B per batch; a renderer slot more marks behind uploads the whole batch
+
+<*
  Source of a swaying vertex's bend weight.
 *>
 enum SwayWeight {
@@ -47,9 +52,35 @@ struct InstanceAggregate {
 }
 
 <*
+ Instances [first, end) of a batch.
+*>
+struct InstanceSpan {
+    uint first;
+    uint end;
+}
+
+<*
+ Span a range mark edited and the batch revision the mark produced.
+*>
+struct InstanceRangeMark {
+    uint         revision;
+    InstanceSpan span;
+}
+
+<*
+ Recent range marks of a batch, oldest first; any other revision advance empties it.
+*>
+struct InstanceRangeLog {
+    uint                                    base_revision; // revision before the first mark; read only while count > 0
+    uint                                    count;
+    InstanceRangeMark[INSTANCE_RANGE_MARKS] marks;
+}
+
+<*
  Batch of one geometry and material; instances live in [0, count) of capacity-sized arrays.
- In-place edits of transforms or colors reach the renderer, bounds and history only through mark_instances_dirty.
- aggregate is kept by the library from the arrays under revision; applications do not write it.
+ In-place edits of transforms or colors reach the renderer, bounds and history only through
+ mark_instances_dirty or mark_instances_range_dirty.
+ aggregate and ranges are kept by the library from the arrays under revision; applications do not write them.
 *>
 struct InstancedMesh {
     GeometryId        geometry;
@@ -66,6 +97,46 @@ struct InstancedMesh {
     InstanceFade      fade;
     uint              revision; // compared for equality only; never 0, so a renderer slot at 0 always uploads
     InstanceAggregate aggregate;
+    InstanceRangeLog  ranges;
+}
+
+<*
+ Span covering both.
+ @pure
+*>
+fn InstanceSpan InstanceSpan.merge(self, InstanceSpan other) {
+    return { .first = math::min(self.first, other.first), .end = math::max(self.end, other.end) };
+}
+
+<*
+ Record a mark, merging the two oldest marks when the log is full.
+ @param base_revision : "Batch revision before the mark; kept only when the log was empty."
+*>
+fn void InstanceRangeLog.append(&self, uint base_revision, InstanceRangeMark mark) {
+    if (!self.count) self.base_revision = base_revision;
+    if (self.count == INSTANCE_RANGE_MARKS) {
+        self.marks[1].span = self.marks[0].span.merge(self.marks[1].span);
+        for (uint index = 1; index < self.count; index++) self.marks[index - 1] = self.marks[index];
+        self.count--;
+    }
+    self.marks[self.count++] = mark;
+}
+
+<*
+ Union of the marks made after the revision.
+ @return "Empty when the log does not reach back to the revision."
+*>
+fn InstanceSpan InstanceRangeLog.span_since(&self, uint revision) {
+    uint first_after = self.count;
+    if (self.count && revision == self.base_revision) first_after = 0;
+    foreach (index, mark : self.marks[:self.count]) {
+        if (mark.revision == revision) first_after = (uint)index + 1;
+    }
+    if (first_after >= self.count) return {};
+
+    InstanceSpan span = self.marks[first_after].span;
+    foreach (mark : self.marks[first_after + 1:self.count - first_after - 1]) span = span.merge(mark.span);
+    return span;
 }
 
 <*

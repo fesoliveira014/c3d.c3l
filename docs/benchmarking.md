@@ -252,7 +252,7 @@ windowed rows only with other windowed rows.
 | CSV field | Interval or result |
 | --- | --- |
 | `wall_ms` | Scene update through submission, including frame-slot waiting |
-| `update_ms` | `Scene.update_world` |
+| `update_ms` | `Scene.update_world`, after the benchmark's own per-frame scene edits |
 | `begin_ms` | `begin_frame`, including prior-slot completion, readbacks and cache sweeps |
 | `render_ms` | `render_view`, including CPU extraction and command recording |
 | `finish_ms` | `finish_view` |
@@ -262,6 +262,7 @@ windowed rows only with other windowed rows.
 | `gpu_*_ms` | Completed per-pass timestamps for shadow atlas, light culling, depth prepass, G-buffer, ambient occlusion, ray-traced reflections, path tracing, lighting resolve, forward opaque, post chain, composite, velocity, temporal resolve, probe update, acceleration builds, screen-space GI, its colour copy, instance culling (`gpu_instance_cull_ms`), environment preparation (`gpu_environment_ms`) and its stages (`gpu_environment_source_ms`, `gpu_environment_irradiance_ms`, `gpu_environment_prefilter_ms`, `gpu_environment_sheen_ms`, `gpu_environment_luts_ms`, and an atmosphere's `gpu_environment_sky_transmittance_ms`, `gpu_environment_sky_multi_scattering_ms`, `gpu_environment_sky_ms`, last; parts of `gpu_environment_ms`, not added to it); `-1` when unavailable, zero for an omitted pass |
 | `draws`, `lights`, `dropped` | Current-frame renderer counters |
 | `batches_faded` | Current-frame `Stats.batches_faded`: view batches inside the frustum wholly past their fade band |
+| `upload_bytes` | Current-frame `Stats.upload_bytes`: bytes staged for upload this frame |
 | `overflows` | Completed cluster overflow count attributed to its submitted frame |
 | `material_resolutions` | Fresh material dependency resolutions in the frame; one per material per view traversal |
 | `pipeline_lookups` | Draw pipeline cache lookups in the frame; one per prepared draw item and shadow draw |
@@ -389,6 +390,10 @@ frame time. `--fade-field` adds a 64 × 64 grid of 32 m cell batches, 64 swaying
 262,144 props), with a 60 to 90 m fade band: the shape of one foliage layer, most of whose cells lie wholly past
 the band. `RendererDesc.max_instance_batches` is raised to hold every cell. The common options behave as in
 `many_lights --benchmark`, and the CSV columns are the same; `batches_faded` counts the skipped cells.
+`--instance-edit range|whole` bobs one 316-prop row of the big batch every frame, on the loop's fixed frame
+time, and animates the trio; `range` publishes the row with `Scene.mark_instances_range_dirty` and `whole` with
+`Scene.mark_instances_dirty`. The pictures are identical, and `upload_bytes` shows 40,832 and 12,781,952 bytes per
+frame. Without the flag the scene is still, as above.
 `benchmark.py instancing` runs `fade-field-off` and `fade-field-on` jobs (`--fade-fields` selects them).
 
 ## Profiling configurations and overhead

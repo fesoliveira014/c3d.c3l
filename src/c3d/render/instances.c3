@@ -37,6 +37,8 @@ struct GpuInstances {
     InstanceKey        key;
     uint               revision; // 0 forces an upload: InstancedMesh.revision is never 0
     uint               capacity;
+    uint               count;    // live instances the records hold
+    uint               mirrored; // mirrored records among them
     ulong              last_seen;
     Mat4               world; // records bake the node world, so a moved node re-uploads
     Vec3               origin;
@@ -159,34 +161,76 @@ fn uint pack_instance_records(
     uint part = 0,
 ) {
     uint written;
-    foreach (index, transform : batch.transforms[:batch.count]) {
-        Mat4 local = crowd ? crowd.part_transform((uint)index, part) : transform.to_mat4();
-        bool mirrored = crowd ? local.determinant() < 0 : scene::transform_mirrored(transform);
-        if (mirrored) continue;
+    for (uint index = 0; index < batch.count; index++) {
+        Mat4 local = instance_local(batch, crowd, part, index);
+        if (instance_mirrored(batch, crowd, local, index)) continue;
 
-        write_instance(
-            record: &records[written++],
-            world:  node_world.mul(local),
-            color:  batch.colors[index],
-            seed:   instance_seed(transform.position),
+        write_batch_instance(
+            record:     &records[written++],
+            node_world: node_world,
+            local:      local,
+            batch:      batch,
+            index:      index,
         );
     }
 
     uint split = written;
-    foreach (index, transform : batch.transforms[:batch.count]) {
-        Mat4 local = crowd ? crowd.part_transform((uint)index, part) : transform.to_mat4();
-        bool mirrored = crowd ? local.determinant() < 0 : scene::transform_mirrored(transform);
-        if (!mirrored) continue;
+    for (uint index = 0; index < batch.count; index++) {
+        Mat4 local = instance_local(batch, crowd, part, index);
+        if (!instance_mirrored(batch, crowd, local, index)) continue;
 
-        write_instance(
-            record: &records[written++],
-            world:  node_world.mul(local),
-            color:  batch.colors[index],
-            seed:   instance_seed(transform.position),
+        write_batch_instance(
+            record:     &records[written++],
+            node_world: node_world,
+            local:      local,
+            batch:      batch,
+            index:      index,
         );
     }
 
     return split;
+}
+
+fn void pack_instance_span(
+    InstanceGpu[] records,
+    Mat4 node_world,
+    InstancedMesh* batch,
+    InstanceSpan span,
+    AnimatedCrowd* crowd = null,
+    uint part = 0,
+) @private {
+    for (uint index = span.first; index < span.end; index++) {
+        write_batch_instance(
+            record:     &records[index - span.first],
+            node_world: node_world,
+            local:      instance_local(batch, crowd, part, index),
+            batch:      batch,
+            index:      index,
+        );
+    }
+}
+
+fn Mat4 instance_local(InstancedMesh* batch, AnimatedCrowd* crowd, uint part, uint index) @local {
+    return crowd ? crowd.part_transform(index, part) : batch.transforms[index].to_mat4();
+}
+
+fn bool instance_mirrored(InstancedMesh* batch, AnimatedCrowd* crowd, Mat4 local, uint index) @local {
+    return crowd ? local.determinant() < 0 : scene::transform_mirrored(batch.transforms[index]);
+}
+
+fn void write_batch_instance(
+    InstanceGpu* record,
+    Mat4 node_world,
+    Mat4 local,
+    InstancedMesh* batch,
+    uint index,
+) @local {
+    write_instance(
+        record: record,
+        world:  node_world.mul(local),
+        color:  batch.colors[index],
+        seed:   instance_seed(batch.transforms[index].position),
+    );
 }
 
 <*
@@ -243,6 +287,25 @@ fn bool needs_upload(
 ) {
     return slot.key != key || slot.capacity < batch.transforms.len || slot.revision != batch.revision
         || slot.world != world || slot.origin != origin;
+}
+
+fn InstanceSpan patchable_span(
+    GpuInstances* slot,
+    InstancedMesh* batch,
+    Mat4 world,
+    Vec3 origin,
+    AnimatedCrowd* crowd,
+    uint part,
+) @private {
+    if (slot.capacity < batch.transforms.len || slot.world != world || slot.origin != origin) return {};
+    if (slot.count != batch.count || slot.mirrored) return {};
+
+    InstanceSpan span = batch.ranges.span_since(slot.revision);
+    for (uint index = span.first; index < span.end; index++) {
+        if (instance_mirrored(batch, crowd, instance_local(batch, crowd, part, index), index)) return {};
+    }
+
+    return span;
 }
 
 <*
@@ -400,6 +463,10 @@ fn void? upload_instance_records(
 ) @private {
     GpuInstances* slot = &renderer.instances.slots[index];
     uint capacity = (uint)batch.transforms.len;
+    InstanceSpan patch = patchable_span(slot, batch, world, renderer.frame_origin, crowd, part);
+    bool patched = patch.end > patch.first;
+    if (!patched) patch = { .end = batch.count };
+
     acquire_instance_records(
         renderer: renderer,
         slot: slot,
@@ -407,24 +474,42 @@ fn void? upload_instance_records(
         record_size: InstanceGpu::size,
     )!;
 
-    usz bytes = (usz)batch.count * InstanceGpu::size;
+    uint patch_count = patch.end - patch.first;
+    usz bytes = (usz)patch_count * InstanceGpu::size;
     Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan staging = frame.upload.take(&renderer.device, bytes, STREAM_ALIGNMENT)!;
-    InstanceGpu[] records = ((InstanceGpu*)staging.bytes.ptr)[:batch.count];
+    InstanceGpu[] records = ((InstanceGpu*)staging.bytes.ptr)[:patch_count];
 
-    pack_instance_records(
-        records: records,
-        node_world: maths::rebase(world, renderer.frame_origin),
-        batch: batch,
-        crowd: crowd,
-        part: part,
-    );
+    Mat4 node_world = maths::rebase(world, renderer.frame_origin);
+    if (patched) {
+        pack_instance_span(
+            records: records,
+            node_world: node_world,
+            batch: batch,
+            span: patch,
+            crowd: crowd,
+            part: part,
+        );
+    } else {
+        uint split = pack_instance_records(
+            records: records,
+            node_world: node_world,
+            batch: batch,
+            crowd: crowd,
+            part: part,
+        );
+        slot.mirrored = batch.count - split;
+    }
 
     gpu::GpuSpan destination = gpu::get_allocation_span(&renderer.device, slot.allocation)!;
-    renderer.pending_copies.push({ .src = staging.span, .dst = destination.checked_subspan(0, bytes)! });
+    renderer.pending_copies.push({
+        .src = staging.span,
+        .dst = destination.checked_subspan((usz)patch.first * InstanceGpu::size, bytes)!,
+    });
 
     renderer.pending_instance_uploads.push(index);
     slot.revision = batch.revision;
+    slot.count = batch.count;
     slot.world = world;
     slot.origin = renderer.frame_origin;
 

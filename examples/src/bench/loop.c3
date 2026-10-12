@@ -11,6 +11,11 @@ import std::io;
 import std::time;
 import std::time::clock;
 
+<*
+ Application work a benchmark runs at the start of each frame.
+*>
+alias FrameCallback = fn void(void* user, uint frame);
+
 const uint FRAMES_MAX = 100000; // bounds sample storage requested from the command line
 const uint EXTENT_MAX = 8192; // bounds the offscreen target requested from the command line
 
@@ -60,6 +65,7 @@ struct FrameSample {
     uint material_resolutions;
     uint pipeline_lookups;
     uint batches_faded;
+    uint upload_bytes;
 }
 
 <*
@@ -72,6 +78,8 @@ struct BenchmarkRun {
     ViewId view;
     platform::Window* window;
     TextureId refreshed_texture; // marked dirty before every frame, so its environments regenerate
+    FrameCallback before_frame; // timed as part of the frame's update
+    void* before_frame_user;
     BenchmarkRecorder* recorder @if($feat(C3D_PROFILE_CPU) || $feat(C3D_PROFILE_GPU));
     GuiRenderer* gui_renderer @if($feat(C3D_PROFILE_GUI));
     gui::ProfilerPanel* panel @if($feat(C3D_PROFILE_GUI));
@@ -341,10 +349,10 @@ fn usz? run_frames(BenchmarkRun* run, BenchmarkFlags flags, FrameSample[] sample
  @param timestamps_enabled : "False prints -1 in every GPU column."
 *>
 fn void write_samples(FrameSample[] samples, bool timestamps_enabled) {
-    io::printn("frame,wall_ms,update_ms,begin_ms,render_ms,finish_ms,end_ms,gui_ms,cpu_record_ms,draws,lights,dropped,overflows,material_resolutions,pipeline_lookups,gpu_shadow_ms,gpu_cull_ms,gpu_prepass_ms,gpu_gbuffer_ms,gpu_ambient_occlusion_ms,gpu_rt_reflections_ms,gpu_path_trace_ms,gpu_lighting_ms,gpu_opaque_ms,gpu_post_ms,gpu_composite_ms,gpu_velocity_ms,gpu_taa_ms,gpu_probe_update_ms,gpu_acceleration_build_ms,gpu_screen_space_gi_ms,gpu_ssgi_copy_ms,gpu_instance_cull_ms,gpu_environment_ms,gpu_environment_source_ms,gpu_environment_irradiance_ms,gpu_environment_prefilter_ms,gpu_environment_sheen_ms,gpu_environment_luts_ms,gpu_environment_sky_transmittance_ms,gpu_environment_sky_multi_scattering_ms,gpu_environment_sky_ms,gpu_exposure_ms,batches_faded");
+    io::printn("frame,wall_ms,update_ms,begin_ms,render_ms,finish_ms,end_ms,gui_ms,cpu_record_ms,draws,lights,dropped,overflows,material_resolutions,pipeline_lookups,gpu_shadow_ms,gpu_cull_ms,gpu_prepass_ms,gpu_gbuffer_ms,gpu_ambient_occlusion_ms,gpu_rt_reflections_ms,gpu_path_trace_ms,gpu_lighting_ms,gpu_opaque_ms,gpu_post_ms,gpu_composite_ms,gpu_velocity_ms,gpu_taa_ms,gpu_probe_update_ms,gpu_acceleration_build_ms,gpu_screen_space_gi_ms,gpu_ssgi_copy_ms,gpu_instance_cull_ms,gpu_environment_ms,gpu_environment_source_ms,gpu_environment_irradiance_ms,gpu_environment_prefilter_ms,gpu_environment_sheen_ms,gpu_environment_luts_ms,gpu_environment_sky_transmittance_ms,gpu_environment_sky_multi_scattering_ms,gpu_environment_sky_ms,gpu_exposure_ms,batches_faded,upload_bytes");
     foreach (index, sample : samples) {
         float unavailable = -1;
-        io::printfn("%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d",
+        io::printfn("%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d",
             index, sample.wall_ms, sample.update_ms, sample.begin_ms, sample.render_ms,
             sample.finish_ms, sample.end_ms, sample.gui_ms, sample.cpu_record_ms, sample.draws, sample.lights,
             sample.dropped, sample.overflows, sample.material_resolutions, sample.pipeline_lookups,
@@ -378,7 +386,7 @@ fn void write_samples(FrameSample[] samples, bool timestamps_enabled) {
               ? sample.gpu_environment_stage_ms[EnvironmentStage.SKY_MULTI_SCATTERING.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_environment_stage_ms[EnvironmentStage.SKY.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_ms[Pass.EXPOSURE.ordinal] : unavailable,
-            sample.batches_faded);
+            sample.batches_faded, sample.upload_bytes);
     }
 }
 
@@ -386,6 +394,7 @@ fn void? record_frame(BenchmarkRun* run, uint frame, FrameSample* sample) @priva
     Renderer* renderer = run.renderer;
     time::Clock started = clock::now();
     time::Clock phase = started;
+    if (run.before_frame) run.before_frame(run.before_frame_user, frame);
     run.scene.update_world();
     sample.update_ms = milliseconds(phase);
     phase = clock::now();
@@ -421,6 +430,7 @@ fn void? record_frame(BenchmarkRun* run, uint frame, FrameSample* sample) @priva
     sample.material_resolutions = renderer.stats.material_resolutions;
     sample.pipeline_lookups = renderer.stats.pipeline_lookups;
     sample.batches_faded = renderer.stats.batches_faded;
+    sample.upload_bytes = renderer.stats.upload_bytes;
 }
 
 module bench_loop @feat(C3D_PROFILE_CPU | C3D_PROFILE_GPU);

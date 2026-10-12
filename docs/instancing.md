@@ -44,7 +44,21 @@ batch.colors[2] = { 0.2f, 0.4f, 1, 1 };
 scene.mark_instances_dirty(trio);
 ```
 
-The drawn records change only through `mark_instances_dirty`, `set_instances` or `resize_instances`; each advances `InstancedMesh.revision`, which is never 0 and is compared for equality only. An unmarked edit is not drawn, with no fault and no message. The batch bound that extraction, shadows and picking use, the mirrored count and view history also follow the revision, so an unmarked edit moves none of them. Tracing and picking's per-instance tests read the arrays at once, so an unmarked edit does move traces and per-instance picks. A mark after `render_view` takes effect in the next frame.
+The drawn records change only through `mark_instances_dirty`, `mark_instances_range_dirty`, `set_instances` or `resize_instances`; each advances `InstancedMesh.revision`, which is never 0 and is compared for equality only. An unmarked edit is not drawn, with no fault and no message. The batch bound that extraction, shadows and picking use, the mirrored count and view history also follow the revision, so an unmarked edit moves none of them. Tracing and picking's per-instance tests read the arrays at once, so an unmarked edit does move traces and per-instance picks. A mark after `render_view` takes effect in the next frame.
+
+When an edit touches a span of a large batch, name the span:
+
+```c3
+scene.mark_instances_range_dirty(props, first, count);
+```
+
+It declares the instances `[first, first + count)` and has the same effect as `mark_instances_dirty` on the revision, so bounds, picking, tracing and view history see no difference. The renderer then packs and copies only the marked span into the batch's resident records. The edit must stay inside the span; an instance outside it must not have changed, because the renderer does not read it again.
+
+The batch keeps a log of its last `INSTANCE_RANGE_MARKS` (4) range marks, one entry per revision, in `InstancedMesh.ranges`, which the library writes. A renderer slot whose uploaded revision appears in the log takes the union of the marks after it. When the log is full, the two oldest marks merge into one that carries the later revision, so a slot older than the oldest entry uploads the whole batch. `mark_instances_dirty`, `set_instances` and `resize_instances` empty the log. The span upload also falls back to the whole batch, for that frame, when:
+
+- the slot holds a mirrored record, or an instance in the span is mirrored now, because mirrored records pack after the unmirrored ones and an edit that changes an instance's parity moves every record after it;
+- the live count, the node's world matrix or the renderer's origin changed since the slot was uploaded, or the capacity grew;
+- the slot has no uploaded revision: the batch is new, its records were released, or the frame that uploaded it was aborted.
 
 Change the count with `resize_instances(node, count)`, which fills new slots with the identity transform and white, or replace the live instances with `set_instances(node, transforms, colors)`. Neither allocates; past the capacity both fault `CAPACITY_EXCEEDED`. A color slice longer than the transform slice is `INVALID_ARGUMENT`. Removing the node frees both arrays and never the assets.
 
@@ -56,13 +70,13 @@ The instance index is the array position. It is not a generational identity: it 
 - **Indirect draws.** Every batch draws through one indirect command per parity range and pass, `draw_count` 1 and first instance 0; plain meshes draw directly. An unculled range's arguments are written by the CPU into the frame upload ring (20 bytes indexed, 16 non-indexed, 32 with alignment); a culled range's are written by the cull pass. `Stats.indirect_draws` counts these draws across every pass, the velocity pass included.
 - **Mirrored instances.** A transform whose scale product is negative mirrors space. The renderer packs non-mirrored instances first and draws each group with its own front face, so a batch holding both makes two draws per pass.
 - **Color.** The instance color multiplies the vertex color, alpha included, in every built-in material. A masked material cuts per instance, and its shadow matches.
-- **Motion blur and TAA.** Each instance moves by its own previous matrix, kept per view while the batch's live count stays the same; after a count change the batch node's motion applies for one rendering. The view keeps node-local matrices and rewrites them only when the batch's revision changes. A batch at rest, or one whose node moves without an edit, draws through the node's motion, with no per-instance work and no upload; at rest its velocity is exactly zero when its sway is off, or has frequency 0 and unchanged parameters. A swaying batch's velocity comes from the sway the view last drew it with, at the view's previous time. In the frame of an edit the renderer uploads 64 bytes per instance. A batch marked every frame (an animated batch, a crowd part) pays that every frame, so a large batch that must stay cheap is edited rarely.
+- **Motion blur and TAA.** Each instance moves by its own previous matrix, kept per view while the batch's live count stays the same; after a count change the batch node's motion applies for one rendering. The view keeps node-local matrices and rewrites them only when the batch's revision changes. A batch at rest, or one whose node moves without an edit, draws through the node's motion, with no per-instance work and no upload; at rest its velocity is exactly zero when its sway is off, or has frequency 0 and unchanged parameters. A swaying batch's velocity comes from the sway the view last drew it with, at the view's previous time. In the frame of an edit the renderer uploads 64 bytes per instance. A batch marked every frame (an animated batch, a crowd part) pays that every frame, range marks included, so a large batch that must stay cheap is edited rarely.
 - **Materials.** Opaque, masked and blended materials draw. A blended batch draws its instances back to front in each view ([Blended batches](#blended-batches)) and casts a shadow only under [colored shadows](shadows.md#colored-shadows).
 - **Deformation.** Instances draw the rest pose of the geometry, apart from the built-in [sway and fade](#sway-and-distance-fade); skinning and morph targets are not applied.
 
-The renderer keeps each batch's instance records in its own GPU memory, 128 bytes per instance of capacity, and shares them across every view and shadow layer. It uploads them when the batch's revision or its node's world matrix changes, or its capacity grows; a batch at rest uploads nothing. `Stats.uploads` and `Stats.upload_bytes` count these uploads. `Stats.instances` counts the instances of unlisted ranges across passes; `Stats.triangles` counts each of those instances' triangles. Listed ranges, culled or blended, report through the culling fields below.
+The renderer keeps each batch's instance records in its own GPU memory, 128 bytes per instance of capacity, and shares them across every view and shadow layer. It uploads them when the batch's revision or its node's world matrix changes, or its capacity grows; a batch at rest uploads nothing. After `mark_instances_range_dirty` it uploads only the marked span in one copy, except in the cases listed under [Batches](#batches); otherwise it uploads every record. `Stats.uploads` counts one per upload, and `Stats.upload_bytes` counts the bytes staged: 128 per instance of the span, or of the batch for a whole upload. `Stats.instances` counts the instances of unlisted ranges across passes; `Stats.triangles` counts each of those instances' triangles. Listed ranges, culled or blended, report through the culling fields below.
 
-Records are world-space, so a batch whose node moves re-uploads every record in that frame: a batch of 100,000 instances under a moving node uploads 12.8 MB per frame. For a large batch that must stay resident, move the instances and keep the node at rest.
+Records are world-space, so a batch whose node moves re-uploads every record in that frame: a batch of 100,000 instances under a moving node uploads 12.8 MB per frame, whatever it marks. For a large batch that must stay resident, move the instances and keep the node at rest.
 
 `RendererDesc.max_instance_batches` (default 1024) bounds the batch nodes holding records: live ones plus those unresolved within the last `INSTANCE_ABSENCE_FRAMES` frames. Past it, `render_view` faults `CAPACITY_EXCEEDED`. A batch not drawn by any view or shadow layer for more than `INSTANCE_ABSENCE_FRAMES` frames (hidden, culled, wholly past its [fade band](#sway-and-distance-fade), removed) releases its records and uploads them again on its next draw. Shadow layers draw a shadow-casting batch whether or not a view sees it, so such a batch keeps its records while a shadow-casting light is on, unless it lies wholly past its fade band.
 
@@ -195,7 +209,7 @@ A custom material whose shader has a vertex stage draws a batch only when the sh
 
 `spatial::pick` tests a batch's aggregate bound, then each live instance. A hit carries the batch node, `instanced = true` and `instance_index`.
 
-Example: `python3 scripts/build.py --example instancing`. `--fade-field` adds 4,096 fading cell batches around the scene and the stats panel shows `Faded batches`; `--gpu-timings` needs the profile add-on; `--benchmark` runs the headless benchmark ([Benchmarking](benchmarking.md#instancing-benchmark)).
+Example: `python3 scripts/build.py --example instancing`. `--fade-field` adds 4,096 fading cell batches around the scene and the stats panel shows `Faded batches`; `--gpu-timings` needs the profile add-on; `--benchmark` runs the headless benchmark ([Benchmarking](benchmarking.md#instancing-benchmark)). `B` bobs one row of 316 props and `U` switches how the row is published, between `mark_instances_range_dirty` and `mark_instances_dirty`; the stats panel shows `Upload bytes`, and `--instance-edit range|whole` starts either mode, in the benchmark too, where the CSV column `upload_bytes` reads 40,832 against 12,781,952 per frame, the three-instance trio included.
 
 ## Crowds
 
@@ -288,8 +302,12 @@ while (window.poll()) {
 - Skinned parts share one logical palette per source. Rigid and morph-only parts use their own
   animated mesh transform, retaining shear under composed nonuniform scale. Morph weights are
   per instance and part; no per-skin palette or joint remapping is allocated.
-- `crowd_update` marks every part batch, so part records upload every frame (128 bytes per instance
-  per part).
+- `crowd_update` marks every part batch whose records can change, so rigid and morph-only part records
+  upload every frame (128 bytes per instance per part): they follow the pose. A skinned part's records hold
+  the placement and color alone, so it compares them with its batch and marks only the changed span with
+  `mark_instances_range_dirty`, or nothing when no placement or color changed. A change of the live count
+  marks every part whole. The view's instance history follows the batch revision, so an unmarked skinned
+  part also writes none.
 - The renderer uploads one palette array per crowd per frame (`joints * 64` bytes per instance) and
   reuses it for every part, view and shadow layer. Above `OVERSIZED_UPLOAD_BYTES` (8 MiB, about 2470
   instances of a 53-joint character) the upload takes dedicated overflow memory every frame.
