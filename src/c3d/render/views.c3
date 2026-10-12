@@ -123,30 +123,17 @@ struct PoseRecord {
     Vec3[]            vertices;        // base positions of a vertex_motion mesh; capacity outlives tracking
     GeometryId        vertex_geometry; // source of vertices; zero when the last rendering did not track
     uint              vertex_revision; // geometry revision vertices were copied at
-    AnimatedLodPoseHistory* animated_lod;
+    AnimatedLodPose*  animated_lod;
 }
 
-struct AnimatedLodPartPose @private {
-    ulong seen;
-    uint part;
-    uint mesh_index;
-    Entity source_node;
-    GeometryId geometry;
-    uint geometry_revision;
-    SkeletonId skeleton;
-    uint skeleton_revision;
-    SkeletonId source_skeleton;
-    uint source_skeleton_revision;
-    PoseRecord pose;
-}
-
-struct AnimatedLodPoseHistory @private {
-    ulong identity;
-    uint descriptor_revision;
-    ModelId model;
-    uint model_revision;
-    ulong seen;
-    AnimatedLodPartPose[] parts;
+// The owner's PoseRecord keeps the palette, source count and crowd identity beside it.
+struct AnimatedLodPose @private {
+    ulong   identity;
+    uint    descriptor_revision;
+    ulong   seen;
+    uint    levels;  // levels whose representations the observation submitted
+    Mat4f[] locals;  // source affines of the rigid logical meshes, mesh-major by source capacity
+    float[] weights; // logical morph weights, source-major by the binding's channel offsets
 }
 
 <*
@@ -203,42 +190,21 @@ fn PoseRecord* ViewHistory.previous_pose(&self, Scene* scene, Node* node) {
 }
 
 <*
- Borrow compatible deformation from this view's previous submitted representation.
+ Whether this view last submitted a representation compatible with the candidate.
  @param [&in] scene : "Scene containing the live candidate."
- @param [&in] assets : "Owns the admitted representation's assets."
- @param [&in] candidate : "Current selected draw representation."
- @return "Null when compatible submitted history is unavailable."
+ @param [&in] candidate : "Current selected animated LOD representation."
 *>
-fn PoseRecord* ViewHistory.previous_candidate_pose(
-    &self,
-    Scene* scene,
-    AssetStore* assets,
-    MeshCandidate* candidate,
-) {
-    if (!self.has_previous(scene, candidate.node)) return null;
+fn bool ViewHistory.has_previous_representation(&self, Scene* scene, MeshCandidate* candidate) {
+    if (!self.has_previous(scene, candidate.node)) return false;
+
     PoseRecord* owner = &self.poses[candidate.node.id.index];
-    if (!candidate.animated_lod) return owner;
-
-    AnimatedLodPoseHistory* history = owner.animated_lod;
+    AnimatedLodPose* history = owner.animated_lod;
     LodGroupState* state = candidate.lod.state;
-    AnimatedLodBinding* binding = state.animated;
-    if (!history || history.identity != state.identity
-      || history.descriptor_revision != state.descriptor_revision
-      || !c3d::same_id(history.model, binding.source_model)
-      || history.model_revision != assets.model(binding.source_model).header.revision) return null;
+    if (!history || history.seen != self.serial || history.identity != state.identity
+      || history.descriptor_revision != state.descriptor_revision) return false;
+    if (candidate.crowd && owner.crowd_identity != candidate.crowd.playback.identity) return false;
 
-    AnimatedLodPartPose* exact = &history.parts[candidate.lod_part];
-    if (exact.seen == self.serial && animated_lod_representation_matches(assets, exact, candidate)) {
-        return &exact.pose;
-    }
-
-    foreach (&part : history.parts) {
-        if (part.seen == self.serial && animated_lod_representation_matches(assets, part, candidate)) {
-            return &part.pose;
-        }
-    }
-
-    return null;
+    return (history.levels & animated_lod_history_levels(candidate)) != 0;
 }
 
 <*
@@ -290,7 +256,6 @@ fn void ViewHistory.commit(
         if (candidate.animated_lod) {
             commit_animated_lod_pose(
                 allocator: allocator,
-                assets: assets,
                 owner: &self.poses[index],
                 candidate: candidate,
                 serial: self.serial,
@@ -385,166 +350,88 @@ fn void free_view_history(Allocator allocator, ViewHistory* history) {
     *history = {};
 }
 
-fn void free_animated_lod_pose(Allocator allocator, AnimatedLodPoseHistory* history) @local {
+fn void free_animated_lod_pose(Allocator allocator, AnimatedLodPose* history) @local {
     if (!history) return;
 
-    foreach (&part : history.parts) {
-        alloc::free(allocator, part.pose.instances.ptr);
-        alloc::free(allocator, part.pose.morphs.ptr);
-    }
-
-    alloc::free(allocator, history.parts.ptr);
+    alloc::free(allocator, history.locals.ptr);
+    alloc::free(allocator, history.weights.ptr);
     alloc::free(allocator, history);
+}
+
+macro void reserve_pose_storage(Allocator allocator, storage, usz len) @local {
+    if (storage.len == len) return;
+
+    alloc::free(allocator, storage.ptr);
+    *storage = alloc::new_array(allocator, $Typeof((*storage)[0]), (sz)len);
 }
 
 fn void commit_animated_lod_pose(
     Allocator allocator,
-    AssetStore* assets,
     PoseRecord* owner,
     MeshCandidate* candidate,
     ulong serial,
     Vec3 origin,
 ) @local {
+    if (!owner.animated_lod) owner.animated_lod = alloc::new(allocator, AnimatedLodPose);
+
+    AnimatedLodPose* history = owner.animated_lod;
+    if (history.seen != serial) {
+        capture_animated_lod_pose(allocator, owner, candidate, origin);
+        history.seen = serial;
+        history.levels = 0;
+    }
+
+    history.levels |= 1u << candidate.lod_level;
+}
+
+// Captures every logical mesh, so a representation drawn next frame finds its previous pose.
+fn void capture_animated_lod_pose(
+    Allocator allocator,
+    PoseRecord* owner,
+    MeshCandidate* candidate,
+    Vec3 origin,
+) @local {
+    AnimatedLodPose* history = owner.animated_lod;
     LodGroupState* state = candidate.lod.state;
     AnimatedLodBinding* binding = state.animated;
-    AnimatedLodPoseHistory* history = owner.animated_lod;
+    usz capacity = animated_lod_source_capacity(candidate);
+    uint count = animated_lod_source_count(candidate);
+    uint meshes = (uint)binding.channel_offsets.len - 1;
+    usz width = binding.channel_offsets[meshes];
+    usz joints = binding.joint_nodes.len;
 
-    if (!history || history.parts.len != binding.parts.len) {
-        free_animated_lod_pose(allocator, history);
-        history = alloc::new(allocator, AnimatedLodPoseHistory);
-        history.parts = alloc::new_array(allocator, AnimatedLodPartPose, binding.parts.len);
-        owner.animated_lod = history;
-    }
+    history.identity = state.identity;
+    history.descriptor_revision = state.descriptor_revision;
+    owner.instance_count = count;
+    owner.crowd_identity = candidate.crowd ? candidate.crowd.playback.identity : 0;
 
-    uint model_revision = assets.model(binding.source_model).header.revision;
-    if (history.identity != state.identity || history.descriptor_revision != state.descriptor_revision
-      || !c3d::same_id(history.model, binding.source_model) || history.model_revision != model_revision) {
-        foreach (&part : history.parts) part.seen = 0;
-        history.seen = 0;
-        history.identity = state.identity;
-        history.descriptor_revision = state.descriptor_revision;
-        history.model = binding.source_model;
-        history.model_revision = model_revision;
-    }
+    reserve_pose_storage(allocator, &owner.palette, capacity * joints);
+    reserve_pose_storage(allocator, &history.locals, capacity * animated_lod_rigid_index(binding, meshes));
+    reserve_pose_storage(allocator, &history.weights, capacity * width);
 
-    usz capacity = candidate.crowd ? candidate.crowd.placements.len : 1;
-    uint count = candidate.crowd ? candidate.crowd.count : 1;
+    if (joints) write_animated_lod_palette(owner.palette[:count * joints], candidate, origin);
 
-    if (history.seen != serial) {
-        usz palette_size = capacity * binding.joint_nodes.len;
-        if (owner.palette.len != palette_size) {
-            alloc::free(allocator, owner.palette.ptr);
-            owner.palette = alloc::new_array(allocator, Mat4f, (sz)palette_size);
+    uint rigid;
+    foreach (uint mesh, part : binding.parts[:meshes]) {
+        uint first_weight = binding.channel_offsets[mesh];
+        bool weighted = binding.channel_offsets[mesh + 1] > first_weight;
+
+        for (uint source = 0; source < count; source++) {
+            if (weighted) {
+                float[] weights = animated_lod_weights(candidate, mesh, source);
+                history.weights[source * width + first_weight:weights.len] = weights[..];
+            }
+
+            if (!part.skinned) {
+                history.locals[rigid * capacity + source] = bitcast(
+                    animated_lod_mesh_local(candidate, mesh, source),
+                    Mat4f,
+                );
+            }
         }
 
-        if (palette_size) {
-            write_animated_lod_palette(
-                palette: owner.palette[:(usz)count * binding.joint_nodes.len],
-                candidate: candidate,
-                origin: origin,
-            );
-        }
-
-        owner.instance_count = count;
-        owner.crowd_identity = 0;
-        if (candidate.crowd) {
-            capture_crowd_sources(assets, owner, candidate.crowd);
-        }
-
-        history.seen = serial;
+        if (!part.skinned) rigid++;
     }
-
-    AnimatedLodPartPose* part = &history.parts[candidate.lod_part];
-    if (part.seen == serial) return;
-
-    AnimatedLodPartBinding* selected = candidate.animated_lod;
-    part.seen = serial;
-    part.part = candidate.lod_part;
-    part.mesh_index = selected.mesh_index;
-    part.source_node = candidate.source_node ? candidate.source_node.id : (Entity){};
-    part.geometry = candidate.geometry;
-    part.geometry_revision = assets.geometry(candidate.geometry).header.revision;
-    part.skeleton = selected.skeleton;
-    part.skeleton_revision = selected.skeleton.generation
-      ? assets.skeleton(selected.skeleton).header.revision : 0;
-    part.source_skeleton = selected.source_skeleton;
-    part.source_skeleton_revision = selected.source_skeleton.generation
-      ? assets.skeleton(selected.source_skeleton).header.revision : 0;
-
-    PoseRecord* pose = &part.pose;
-    if (pose.instances.len != capacity) {
-        alloc::free(allocator, pose.instances.ptr);
-        pose.instances = alloc::new_array(allocator, Mat4f, (sz)capacity);
-    }
-
-    pose.instance_count = count;
-    pose.instance_revision = binding.source_revision;
-    pose.sway = state.effects.sway;
-    pose.crowd_identity = 0;
-    if (candidate.crowd) {
-        capture_crowd_sources(assets, pose, candidate.crowd);
-    }
-
-    pose.morphed = selected.weight_count > 0;
-    if (pose.morphed && pose.morphs.len != capacity) {
-        alloc::free(allocator, pose.morphs.ptr);
-        pose.morphs = alloc::new_array(allocator, MorphWeightsGpu, (sz)capacity);
-    }
-
-    for (uint source = 0; source < count; source++) {
-        pose.instances[source] = bitcast(animated_lod_part_local(candidate, source), Mat4f);
-        if (pose.morphed) pose.morphs[source] = animated_lod_morph(assets, candidate, source);
-    }
-
-    if (pose.morphed && count) pose.morph = pose.morphs[0];
-}
-
-fn bool animated_lod_representation_matches(
-    AssetStore* assets,
-    AnimatedLodPartPose* previous,
-    MeshCandidate* candidate,
-) @local {
-    AnimatedLodPartBinding* selected = candidate.animated_lod;
-    if (previous.mesh_index != selected.mesh_index
-      || !c3d::same_id(previous.geometry, candidate.geometry)
-      || previous.geometry_revision != assets.geometry(candidate.geometry).header.revision) return false;
-
-    if (candidate.source_node && !c3d::same_id(previous.source_node, candidate.source_node.id)) return false;
-    if (previous.skeleton.generation && (!assets.skeletons.is_live(previous.skeleton)
-      || previous.skeleton_revision != assets.skeleton(previous.skeleton).header.revision)) return false;
-    if (previous.source_skeleton.generation && (!assets.skeletons.is_live(previous.source_skeleton)
-      || previous.source_skeleton_revision != assets.skeleton(previous.source_skeleton).header.revision)) return false;
-
-    return animated_lod_representations_match(candidate.lod.state, previous.part, candidate.lod_part);
-}
-
-fn bool animated_lod_representations_match(LodGroupState* state, uint first, uint second) @private {
-    AnimatedLodBinding* binding = state.animated;
-    AnimatedLodPartBinding* previous = &binding.parts[first];
-    AnimatedLodPartBinding* current = &binding.parts[second];
-    LodPart* previous_draw = &state.desc.parts[first];
-    LodPart* current_draw = &state.desc.parts[second];
-    if (previous.mesh_index != current.mesh_index || previous.template_node != current.template_node
-      || previous.skinned != current.skinned || previous.weight_count != current.weight_count
-      || !c3d::same_id(previous_draw.geometry, current_draw.geometry)
-      || previous.geometry_revision != current.geometry_revision
-      || !mem::equals(&previous_draw.local, &current_draw.local, Mat4::size)) return false;
-
-    uint[] previous_weights = binding.weight_indices[previous.weight_offset:previous.weight_count];
-    uint[] current_weights = binding.weight_indices[current.weight_offset:current.weight_count];
-    foreach (index, weight : previous_weights) {
-        if (weight != current_weights[index]) return false;
-    }
-
-    return true;
-}
-
-fn bool animated_lod_previous_valid(PoseRecord* pose, MeshCandidate* candidate, uint source) @private {
-    if (!pose || source >= pose.instance_count) return false;
-    if (!candidate.crowd) return source == 0;
-
-    AnimatedCrowd* crowd = candidate.crowd;
-    return source < crowd.count && pose.crowd_identity == crowd.playback.identity;
 }
 
 fn void commit_pose(

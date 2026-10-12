@@ -436,7 +436,10 @@ fn char[] pose_inputs(Renderer* renderer, TracePoseSource* source, TraceInstance
             }
 
             morphs = renderer.assets.geometry(record.geometry).target_count && part.weight_count;
-            if (morphs) block = animated_lod_morph(renderer.assets, &candidate, record.instance_index);
+            if (morphs) {
+                float[] weights = animated_lod_weights(&candidate, part.mesh_index, record.instance_index);
+                block = animated_lod_morph(renderer.assets, &candidate, weights);
+            }
     }
     if (morphs) *(MorphWeightsGpu*)(inputs.ptr + palette_bytes) = block;
     return inputs;

@@ -136,37 +136,54 @@ fn uint animated_lod_source_count(MeshCandidate* candidate) @private {
     return candidate.crowd ? candidate.crowd.count : 1;
 }
 
+fn usz animated_lod_source_capacity(MeshCandidate* candidate) @private {
+    return candidate.crowd ? candidate.crowd.placements.len : 1;
+}
+
+// Level-zero parts list the logical meshes in template order.
+fn uint animated_lod_rigid_index(AnimatedLodBinding* binding, uint mesh) @private {
+    uint rigid;
+    foreach (part : binding.parts[:mesh]) {
+        if (!part.skinned) rigid++;
+    }
+
+    return rigid;
+}
+
+fn Node* animated_lod_source_node(MeshCandidate* candidate, uint mesh) @private {
+    return candidate.model_instance.present_node(candidate.lod.state.animated.parts[mesh].template_node);
+}
+
+fn Mat4 animated_lod_mesh_local(MeshCandidate* candidate, uint mesh, uint source = 0) @private {
+    if (candidate.crowd) return candidate.crowd.part_local_transform(source, mesh);
+
+    Vec4 position = candidate.node.world.apply({ 0, 0, 0, 1 });
+    Vec3 origin = { position.x, position.y, position.z };
+    Mat4 inverse_owner = maths::inverse_affine(maths::rebase(candidate.node.world, origin));
+    return inverse_owner.mul(maths::rebase(animated_lod_source_node(candidate, mesh).world, origin));
+}
+
 fn Mat4 animated_lod_part_local(MeshCandidate* candidate, uint source = 0) @private {
     AnimatedLodPartBinding* part = candidate.animated_lod;
     if (part.skinned) return matrix::IDENTITY4;
 
     Mat4 authored = candidate.lod.state.desc.parts[candidate.lod_part].local;
-    if (candidate.crowd) {
-        AnimatedCrowd* crowd = candidate.crowd;
-        return crowd.part_local_transform(source, part.mesh_index).mul(authored);
-    }
-
-    Vec4 position = candidate.node.world.apply({ 0, 0, 0, 1 });
-    Vec3 origin = { position.x, position.y, position.z };
-    Mat4 inverse_owner = maths::inverse_affine(maths::rebase(candidate.node.world, origin));
-    return inverse_owner.mul(maths::rebase(candidate.source_node.world, origin)).mul(authored);
+    return animated_lod_mesh_local(candidate, part.mesh_index, source).mul(authored);
 }
 
-fn MorphWeightsGpu animated_lod_morph(
-    AssetStore* assets,
-    MeshCandidate* candidate,
-    uint source = 0,
-) @private {
+fn float[] animated_lod_weights(MeshCandidate* candidate, uint mesh, uint source = 0) @private {
+    if (candidate.crowd) {
+        CrowdPart* part = &candidate.crowd.parts[mesh];
+        usz first = (usz)source * candidate.crowd.morph_stride + part.weight_offset;
+        return candidate.crowd.morph_weights[first:part.weight_count];
+    }
+
+    return candidate.lod.scene.get(animated_lod_source_node(candidate, mesh), Mesh).morph_weights;
+}
+
+fn MorphWeightsGpu animated_lod_morph(AssetStore* assets, MeshCandidate* candidate, float[] weights) @private {
     AnimatedLodPartBinding* part = candidate.animated_lod;
     AnimatedLodBinding* binding = candidate.lod.state.animated;
-    float[] weights;
-    if (candidate.crowd) {
-        CrowdPart* base = &candidate.crowd.parts[part.mesh_index];
-        usz first = (usz)source * candidate.crowd.morph_stride + base.weight_offset;
-        weights = candidate.crowd.morph_weights[first:base.weight_count];
-    } else {
-        weights = candidate.source_mesh.morph_weights;
-    }
 
     return pack_morph_selection(geometry::select_morph_targets(
         channels: assets.geometry(candidate.geometry).data.channels,
@@ -235,7 +252,8 @@ fn gpu::GpuAddress? resolve_animated_lod_morph(Renderer* renderer, MeshCandidate
     MorphWeightsGpu[] blocks = ((MorphWeightsGpu*)span.bytes.ptr)[:count];
 
     for (uint source = 0; source < count; source++) {
-        blocks[source] = animated_lod_morph(renderer.assets, candidate, source);
+        float[] weights = animated_lod_weights(candidate, candidate.animated_lod.mesh_index, source);
+        blocks[source] = animated_lod_morph(renderer.assets, candidate, weights);
     }
 
     renderer.deformation.animated.set(key, span.address);
@@ -298,6 +316,27 @@ fn gpu::GpuAddress? resolve_animated_lod_indices(Renderer* renderer, MeshCandida
     return span.address;
 }
 
+fn bool animated_lod_representations_match(LodGroupState* state, uint first, uint second) @private {
+    AnimatedLodBinding* binding = state.animated;
+    AnimatedLodPartBinding* previous = &binding.parts[first];
+    AnimatedLodPartBinding* current = &binding.parts[second];
+    LodPart* previous_draw = &state.desc.parts[first];
+    LodPart* current_draw = &state.desc.parts[second];
+    if (previous.mesh_index != current.mesh_index || previous.template_node != current.template_node
+      || previous.skinned != current.skinned || previous.weight_count != current.weight_count
+      || !c3d::same_id(previous_draw.geometry, current_draw.geometry)
+      || previous.geometry_revision != current.geometry_revision
+      || !mem::equals(&previous_draw.local, &current_draw.local, Mat4::size)) return false;
+
+    uint[] previous_weights = binding.weight_indices[previous.weight_offset:previous.weight_count];
+    uint[] current_weights = binding.weight_indices[current.weight_offset:current.weight_count];
+    foreach (index, weight : previous_weights) {
+        if (weight != current_weights[index]) return false;
+    }
+
+    return true;
+}
+
 fn uint animated_lod_history_levels(MeshCandidate* candidate) @private {
     LodGroupState* state = candidate.lod.state;
     uint mask;
@@ -314,38 +353,33 @@ fn uint animated_lod_history_levels(MeshCandidate* candidate) @private {
     return mask;
 }
 
-fn gpu::GpuAddress? upload_animated_lod_previous(
-    Renderer* renderer,
-    DrawItem* item,
-    PoseRecord* pose,
-    PoseRecord* owner,
-) @private {
+fn Mat4 animated_lod_previous_local(PoseRecord* owner, MeshCandidate* candidate, uint source = 0) @private {
+    AnimatedLodBinding* binding = candidate.lod.state.animated;
+    usz first = animated_lod_rigid_index(binding, candidate.animated_lod.mesh_index)
+      * animated_lod_source_capacity(candidate);
+    Mat4 mesh_local = bitcast(owner.animated_lod.locals[first + source], Mat4);
+    return mesh_local.mul(candidate.lod.state.desc.parts[candidate.lod_part].local);
+}
+
+fn float[] animated_lod_previous_weights(PoseRecord* owner, MeshCandidate* candidate, uint source = 0) @private {
+    uint[] offsets = candidate.lod.state.animated.channel_offsets;
+    uint mesh = candidate.animated_lod.mesh_index;
+    usz first = (usz)source * offsets[^1] + offsets[mesh];
+    return owner.animated_lod.weights[first:offsets[mesh + 1] - offsets[mesh]];
+}
+
+// Callers check has_previous_representation, which also pins the source count of the history.
+fn gpu::GpuAddress? upload_animated_lod_previous(Renderer* renderer, DrawItem* item, PoseRecord* owner) @private {
     MeshCandidate* candidate = item.candidate;
     LodSelection* selection = candidate.lod;
     Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     uint count = animated_lod_source_count(candidate);
-    usz joints = selection.state.animated.joint_nodes.len;
     PreviousPoseGpu previous = { .skin = item.skin, .morph = item.morph };
 
     if (item.skin != (gpu::GpuAddress)0) {
         if (selection.previous_palette == (gpu::GpuAddress)0) {
-            usz matrices = (usz)count * joints;
-            gpu::MappedGpuSpan palette_span = frame.upload.take(
-                device: &renderer.device,
-                size: matrices * Mat4f::size,
-                alignment: STREAM_ALIGNMENT,
-            )!;
-            Mat4f[] palette = ((Mat4f*)palette_span.bytes.ptr)[:matrices];
-            write_animated_lod_palette(palette, candidate, renderer.frame_origin);
-
-            for (uint source = 0; source < count; source++) {
-                if (!animated_lod_previous_valid(owner, candidate, source)) continue;
-
-                usz first = (usz)source * joints;
-                palette[first:joints] = owner.palette[first:joints];
-            }
-
-            selection.previous_palette = palette_span.address;
+            usz matrices = (usz)count * selection.state.animated.joint_nodes.len;
+            selection.previous_palette = upload_bytes(renderer, owner.palette.ptr, matrices * Mat4f::size)!;
         }
 
         previous.skin = selection.previous_palette;
@@ -360,8 +394,7 @@ fn gpu::GpuAddress? upload_animated_lod_previous(
         Mat4f[] locals = ((Mat4f*)local_span.bytes.ptr)[:count];
 
         for (uint source = 0; source < count; source++) {
-            locals[source] = animated_lod_previous_valid(pose, candidate, source) ? pose.instances[source]
-              : bitcast(animated_lod_part_local(candidate, source), Mat4f);
+            locals[source] = bitcast(animated_lod_previous_local(owner, candidate, source), Mat4f);
         }
 
         previous.instances = local_span.address;
@@ -376,8 +409,8 @@ fn gpu::GpuAddress? upload_animated_lod_previous(
         MorphWeightsGpu[] blocks = ((MorphWeightsGpu*)morph_span.bytes.ptr)[:count];
 
         for (uint source = 0; source < count; source++) {
-            blocks[source] = animated_lod_previous_valid(pose, candidate, source) ? pose.morphs[source]
-              : animated_lod_morph(renderer.assets, candidate, source);
+            float[] weights = animated_lod_previous_weights(owner, candidate, source);
+            blocks[source] = animated_lod_morph(renderer.assets, candidate, weights);
         }
 
         previous.morph = morph_span.address;

@@ -743,13 +743,7 @@ fn void? record_raster_view(
                 PoseRecord* crowd_pose;
                 bool crowd_history_invalid;
                 if (temporal && item.candidate.animated_lod) {
-                    crowd_pose = pose;
-                    pose = record.history.previous_candidate_pose(
-                        scene: scene,
-                        assets: renderer.assets,
-                        candidate: item.candidate,
-                    );
-                    crowd_history_invalid = !pose;
+                    crowd_history_invalid = !record.history.has_previous_representation(scene, item.candidate);
                     has_previous &= !crowd_history_invalid;
                 } else if (temporal && item.candidate.crowd) {
                     if (record.history.has_previous(scene, node.parent)) {
@@ -1608,14 +1602,7 @@ fn gpu::GpuAddress? upload_previous_pose(
     bool positions,
 ) @private {
     MeshCandidate* candidate = item.candidate;
-    if (candidate.animated_lod) {
-        return upload_animated_lod_previous(
-            renderer: renderer,
-            item: item,
-            pose: pose,
-            owner: crowd_pose,
-        );
-    }
+    if (candidate.animated_lod) return upload_animated_lod_previous(renderer, item, pose);
 
     uint offset = instance_offset(&item.range);
     BatchAddresses current = batch_addresses(

@@ -142,50 +142,39 @@ fn void capture_animated_history(
     history.publish();
 }
 
-fn PoseRecord* previous_animated_history(
-    AnimatedLodHistoryFixture* fixture,
-    ViewHistory* history,
-    uint part,
-) @local {
-    return history.previous_candidate_pose(
-        scene: &fixture.scene,
-        assets: &fixture.assets,
-        candidate: &fixture.candidates[part],
-    );
+fn bool has_previous_animated(AnimatedLodHistoryFixture* fixture, uint part) @local {
+    return fixture.first.has_previous_representation(&fixture.scene, &fixture.candidates[part]);
 }
 
-fn void test_animated_lod_history_preserves_same_owner_parts_and_simultaneous_representations() @test {
+fn void test_animated_lod_history_reconstructs_switched_representation_from_previous_pose() @test {
     foreach (bool instanced : { false, true }) {
-        AnimatedLodHistoryFixture fixture;
-        create_animated_history_fixture(&fixture, instanced);
-        defer destroy_animated_history_fixture(&fixture);
-        uint count = instanced ? (uint)fixture.candidates.len : ANIMATED_HISTORY_PARTS;
-        capture_animated_history(&fixture, &fixture.first, fixture.candidates[:count]);
-        PoseRecord* rigid = previous_animated_history(&fixture, &fixture.first, 1);
-        PoseRecord* first_morph = previous_animated_history(&fixture, &fixture.first, 2);
-        PoseRecord* second_morph = previous_animated_history(&fixture, &fixture.first, 3);
-        assert(rigid && first_morph && second_morph);
-        assert(rigid != first_morph && first_morph != second_morph);
-        for (uint part = 0; part < count; part++) {
-            assert(!previous_animated_history(&fixture, &fixture.first, part).palette.len);
-        }
-        assert(rigid.instances[0] == bitcast(animated_lod_part_local(&fixture.candidates[1]), Mat4f));
-        assert(first_morph.morphs[0].weights != second_morph.morphs[0].weights);
-        PoseRecord* owner = fixture.first.previous_pose(&fixture.scene, fixture.node);
-        uint sources = instanced ? 2 : 1;
-        assert(owner.palette.len == fixture.selection.state.animated.joint_nodes.len * (instanced ? 3 : 1));
-        if (instanced) {
-            AnimatedCrowd* crowd = fixture.candidates[0].crowd;
-            foreach (index, palette : crowd.palettes[:sources * crowd.joint_count]) {
-                assert(owner.palette[index] == bitcast(palette, Mat4f));
+        @pool() {
+            AnimatedLodHistoryFixture fixture;
+            create_animated_history_fixture(&fixture, instanced);
+            defer destroy_animated_history_fixture(&fixture);
+            MeshCandidate* coarse = &fixture.candidates[ANIMATED_HISTORY_PARTS + 2];
+            uint source = instanced ? 1 : 0;
+            Mat4 local = animated_lod_part_local(coarse, source);
+            float[] weights = alloc::clone_slice(tmem, animated_lod_weights(coarse, 2, source));
+            capture_animated_history(&fixture, &fixture.first, fixture.candidates[:ANIMATED_HISTORY_PARTS]);
+            PoseRecord* owner = fixture.first.previous_pose(&fixture.scene, fixture.node);
+            assert(has_previous_animated(&fixture, ANIMATED_HISTORY_PARTS + 2));
+
+            if (instanced) {
+                AnimatedCrowd* crowd = coarse.crowd;
+                foreach (index, palette : crowd.palettes[:2 * crowd.joint_count]) {
+                    assert(owner.palette[index] == bitcast(palette, Mat4f));
+                }
+            } else {
+                coarse.source_node.local.position.x += 1;
+                coarse.source_mesh.morph_weights[0] = weights[0] + 0.5f;
+                fixture.scene.update_world();
+                assert(!(animated_lod_part_local(coarse) == local));
             }
-            PoseRecord* alternative = previous_animated_history(&fixture, &fixture.first, ANIMATED_HISTORY_PARTS + 1);
-            PoseRecord* lower_morph = previous_animated_history(&fixture, &fixture.first, ANIMATED_HISTORY_PARTS + 2);
-            assert(lower_morph && lower_morph != first_morph);
-            assert(alternative && alternative != rigid && alternative.instance_count == sources);
-            assert(alternative.instances[1]
-              == bitcast(animated_lod_part_local(&fixture.candidates[ANIMATED_HISTORY_PARTS + 1], 1), Mat4f));
-        }
+
+            assert(animated_lod_previous_local(owner, coarse, source) == local);
+            assert(animated_lod_previous_weights(owner, coarse, source) == weights);
+        };
     }
 }
 
@@ -194,33 +183,20 @@ fn void test_animated_lod_history_accepts_compatible_levels_and_rejects_topology
     create_animated_history_fixture(&fixture);
     defer destroy_animated_history_fixture(&fixture);
     capture_animated_history(&fixture, &fixture.first, fixture.candidates[:ANIMATED_HISTORY_PARTS]);
-    assert(previous_animated_history(&fixture, &fixture.first, ANIMATED_HISTORY_PARTS));
-    assert(previous_animated_history(&fixture, &fixture.first, ANIMATED_HISTORY_PARTS + 2));
-    assert(!previous_animated_history(&fixture, &fixture.first, ANIMATED_HISTORY_PARTS + 1));
-    fixture.assets.geometry(fixture.candidates[2].geometry).header.revision++;
-    assert(!previous_animated_history(&fixture, &fixture.first, 2));
-    fixture.assets.geometry(fixture.candidates[2].geometry).header.revision--;
-    fixture.assets.skeleton(fixture.source.common_skin).header.revision++;
-    assert(!previous_animated_history(&fixture, &fixture.first, 0));
-    fixture.assets.skeleton(fixture.source.common_skin).header.revision--;
-    fixture.assets.model(fixture.source.mixed).header.revision++;
-    assert(!previous_animated_history(&fixture, &fixture.first, 1));
-    fixture.assets.model(fixture.source.mixed).header.revision--;
+    assert(has_previous_animated(&fixture, ANIMATED_HISTORY_PARTS));
+    assert(has_previous_animated(&fixture, ANIMATED_HISTORY_PARTS + 2));
+    assert(!has_previous_animated(&fixture, ANIMATED_HISTORY_PARTS + 1));
     fixture.selection.state.descriptor_revision++;
-    assert(!previous_animated_history(&fixture, &fixture.first, 1));
+    assert(!has_previous_animated(&fixture, 1));
     fixture.selection.state.descriptor_revision--;
     fixture.selection.state.identity++;
-    assert(!previous_animated_history(&fixture, &fixture.first, 1));
+    assert(!has_previous_animated(&fixture, 1));
     fixture.selection.state.identity--;
-    Node* source = fixture.candidates[1].source_node;
-    Entity identity = source.id;
-    source.id.generation++;
-    assert(!previous_animated_history(&fixture, &fixture.first, 1));
-    source.id = identity;
     ulong scene_identity = fixture.scene.identity;
     fixture.scene.identity++;
-    assert(!previous_animated_history(&fixture, &fixture.first, 1));
+    assert(!has_previous_animated(&fixture, 1));
     fixture.scene.identity = scene_identity;
+    assert(has_previous_animated(&fixture, 1));
 }
 
 fn void test_animated_lod_history_rejects_aliases_with_different_local_transforms() @test {
@@ -228,8 +204,8 @@ fn void test_animated_lod_history_rejects_aliases_with_different_local_transform
     create_animated_history_fixture(&fixture, false, true);
     defer destroy_animated_history_fixture(&fixture);
     capture_animated_history(&fixture, &fixture.first, fixture.candidates[:ANIMATED_HISTORY_PARTS]);
-    assert(previous_animated_history(&fixture, &fixture.first, 2));
-    assert(!previous_animated_history(&fixture, &fixture.first, ANIMATED_HISTORY_PARTS + 2));
+    assert(has_previous_animated(&fixture, 2));
+    assert(!has_previous_animated(&fixture, ANIMATED_HISTORY_PARTS + 2));
 }
 
 fn void test_animated_lod_crowd_history_survives_parity_and_expires_on_replacement() @test {
@@ -237,12 +213,10 @@ fn void test_animated_lod_crowd_history_survives_parity_and_expires_on_replaceme
     create_animated_history_fixture(&fixture, true);
     defer destroy_animated_history_fixture(&fixture);
     capture_animated_history(&fixture, &fixture.first, fixture.candidates[..]);
-    PoseRecord* pose = previous_animated_history(&fixture, &fixture.first, 2);
-    MeshCandidate* candidate = &fixture.candidates[2];
-    AnimatedCrowd* crowd = candidate.crowd;
+    AnimatedCrowd* crowd = fixture.candidates[2].crowd;
     crowd.placements[0].scale.x = -1;
     crowd.placements[1].scale.x = 1;
-    assert(animated_lod_previous_valid(pose, candidate, 0) && animated_lod_previous_valid(pose, candidate, 1));
+    assert(has_previous_animated(&fixture, 2));
     CrowdInstance[2] seeds;
     foreach (uint instance, &seed : seeds) {
         *seed = {
@@ -257,7 +231,7 @@ fn void test_animated_lod_crowd_history_survives_parity_and_expires_on_replaceme
         node: fixture.node,
         instances: seeds[..],
     )!!;
-    assert(!animated_lod_previous_valid(pose, candidate, 0) && !animated_lod_previous_valid(pose, candidate, 1));
+    assert(!has_previous_animated(&fixture, 2));
 }
 
 fn void test_animated_lod_history_reuses_owned_storage_between_observations() @test {

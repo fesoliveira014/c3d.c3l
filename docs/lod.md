@@ -232,13 +232,16 @@ view preparation beyond the renderer's instance absence grace period lose their
 history. Per-frame selection and history processing visit active groups, while
 the persistent CPU history array remains indexed by entity slot.
 
-Animated deformation history also distinguishes logical mesh/part, source slot
-generation and selected representation. Compatible unchanged geometry, local
-transform, binding and channel mapping can reuse the view's previous submitted
-pose, including identical aliases in different levels. An incompatible level,
-topology, channel, binding or incarnation uses current-pose fallback and rejection;
-ordinary pose changes alone do not reject correspondence. Skipped/aborted views
-do not publish new observations. Update animation, morphs and world transforms
+Animated deformation history is kept per source owner: the submitted palette,
+the source affine of each rigid logical mesh and the logical morph weights of
+every live source. Each representation rebuilds its previous pose from that
+state with its own local transform and channel mapping. A representation whose
+geometry, local transform, binding and channel mapping match one the view
+submitted last frame, including identical aliases in different levels, keeps
+correspondence. An incompatible level, topology, channel, binding, incarnation
+or crowd replacement uses current-pose fallback and rejection; ordinary pose
+changes alone do not reject correspondence. Skipped/aborted views do not publish
+new observations. Update animation, morphs and world transforms
 before preparing any view, depth, shadow, velocity or trace pass of the frame.
 
 ## GPU drawing
@@ -277,9 +280,11 @@ one ordered joint/bind array per group. Current palette upload is
 parts, levels, views and traced preparation in that frame. Ordinary groups have
 one source; crowd groups have one per live placement. This is shared palette data,
 not a palette per skin or selected level. Morph blocks and rigid affine data are
-per representation/source as needed. Temporal views additionally retain submitted
-palette, morph and instance data for compatible logical representations; the
-160-byte placement and paired 80-byte selection rows above exclude that storage.
+per representation/source as needed. Temporal views additionally retain, per
+owner, `capacity * (joints + rigid_meshes) * 64` bytes of palette and rigid
+affines plus four bytes per logical morph weight and placement, independent of
+the level count; the 160-byte placement and paired 80-byte selection rows above
+exclude that storage.
 Crowd playback storage follows the [crowd byte formula](instancing.md#crowds).
 
 The existing cull arena preflights nonempty parities for every level across the
