@@ -249,6 +249,7 @@ fn Track copy_track(Allocator allocator, Track* source, uint target) @private {
         .times         = alloc::new_array(allocator, float, key_count),
         .values        = alloc::new_array(allocator, float, (sz)(key_count * slots * stride)),
     };
+
     for (uint key = 0; key < key_count; key++) {
         copy.times[key] = source.key_time(key);
         for (uint slot = 0; slot < slots; slot++) {
