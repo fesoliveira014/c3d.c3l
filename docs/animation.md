@@ -749,12 +749,15 @@ segment duration.
 
 `sample_pose(&assets, clip, time, cursors, &scratch, destination)` samples one clip
 at one time with no playback. The pose starts from the destination's base pose,
-every present track contributes at full weight, and `time` clamps to each
+every present track writes its channel at full weight, and `time` clamps to each
 track's key range. It reads the store and writes only the caller's cursors,
-scratch and destination, through the same track sampling and blending as an
-action of weight 1, so its pose equals that of a single unmasked regular action
-that keeps its root motion in the pose, at that time, bit for bit. Cursors are hints: any value is valid, and keeping the
-array between calls only speeds forward sweeps.
+scratch and destination, through the same track sampling as an action of
+weight 1 and the same rotation hemisphere and normalization, so its pose equals
+that of a single unmasked regular action that keeps its root motion in the pose,
+at that time, bit for bit. A clip with two tracks on one node and path is the
+exception: an action averages them, `sample_pose` keeps the later one. Cursors
+are hints: any value is valid, and keeping the array between calls only speeds
+forward sweeps.
 
 ### Crowd playback on workers
 
