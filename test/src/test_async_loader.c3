@@ -622,26 +622,34 @@ fn void test_failed_commit_consumes_items_before_the_next_fifo_request() @test {
     }
 }
 
-fn void test_replacement_publishes_within_a_frame_allowance() @test {
+fn void test_replacement_is_charged_its_namespace_within_a_frame_allowance() @test {
     GatedSource source = create_gated_source(mem);
     defer destroy_gated_source(&source);
     AssetStore assets = gated_store(mem, &source);
     defer asset::destroy_asset_store(&assets);
     AsyncLoader loader = loader::create_async_loader(mem, &assets)!!;
     defer loader::destroy_async_loader(&loader);
+    sz keys = assets.keys.len();
     LoadId added = loader.request(generated_request("model.gltf"))!!;
     assert(settle(&loader, added).phase == LoadPhase.DECODED && loader.publish() == 1);
     ModelId model = loader.status(added).model;
     loader.release(added)!!;
+    ulong parts = (ulong)(assets.keys.len() - keys - 1);
+    assets.add_sampler({}, "model.gltf#leftover")!!;
 
     LoadRequest request = generated_request("model.gltf");
     request.replace = model;
     LoadId replacement = loader.request(request)!!;
     assert(settle(&loader, replacement).phase == LoadPhase.DECODED);
+    ulong charge = decoded_items(&loader, replacement) + parts + 1;
 
+    PublishReport deferred = loader.publish_within({ .items = charge - 1 });
+    assert(deferred.deferred && deferred.required_items == charge && deferred.items_used == 0);
     PublishReport report = loader.publish_within({ .items = 1024 });
-    assert(report.published == 1 && !report.deferred);
-    assert(loader.status(replacement).phase == LoadPhase.PUBLISHED && assets.model(model).header.revision == 2);
+    assert(report.published == 1 && !report.deferred && report.items_used == charge);
+    LoadStatus status = loader.status(replacement);
+    assert(status.phase == LoadPhase.PUBLISHED && status.report.missing == 1);
+    assert(assets.model(model).header.revision == 2);
 }
 
 fn void test_reports_exclude_earlier_decode_failure_and_cancellation() @test {

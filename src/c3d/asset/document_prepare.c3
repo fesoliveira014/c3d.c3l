@@ -6,6 +6,7 @@ import c3d::geometry;
 import c3d::material;
 import c3d::maths;
 import c3d::scene;
+import std::collections::list;
 import std::collections::map;
 import std::math;
 
@@ -372,6 +373,16 @@ fn ulong publication_items(ModelDocument* document) @private {
     foreach (&entry : document.clips) items += entry.data.tracks.len;
 
     return items;
+}
+
+// Collecting a replacement's missing parts visits every key in the model's namespace.
+fn ulong publication_charge(AssetStore* store, PreparedModelDocument* prepared, ModelId replaced) @private {
+    if (!replaced.generation) return prepared.items;
+
+    List{String}*? members = store.key_namespaces.get_ref(prepared.document.key);
+    if (catch members) return prepared.items;
+
+    return prepared.items + (ulong)members.len();
 }
 
 fn TextureId add_prepared_texture(AssetStore* store, DocumentTexture* entry, CoverageStatistics statistics) @private {

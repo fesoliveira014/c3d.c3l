@@ -466,14 +466,15 @@ atomically in FIFO order; a head that cannot fit stops the call, and later small
 admitted commit failure consumes its charge and leaves existing assets unchanged.
 
 A document's charge is one item for the model and one per entry, template node, template mesh, skin joint node, LOD
-part, morph target, morph channel, skeleton joint and clip track. A replacement is charged like an addition: a matched entry keeps its structure, so the incoming document also
-measures the payload the replacement frees. The worker computes the charge while decoding; admission on the owner
-thread reads it without traversing anything. Items do not count key or name bytes and promise no CPU instruction or
-wall-clock limit.
+part, morph target, morph channel, skeleton joint and clip track. The worker computes it while decoding. A matched entry
+keeps its structure, so the incoming document also measures the payload a replacement frees. A replacement adds one
+item per store key in its model's part namespace (`<model key>#<suffix>`, as for missing parts), which it visits to
+collect missing parts; admission reads that count with one lookup. Items do not count key or name bytes and promise no
+CPU instruction or wall-clock limit.
 
-One replacement step is outside the charge: collecting missing parts scans the store's key map once, a cost set by the
-store's key capacity rather than by the document. The key map is sized for built-in pools at store creation and
-extended when a custom pool is first registered; publication does not trigger a table rehash.
+The store indexes keys by part namespace as they are registered, so collecting missing parts never scans the key map.
+The key map and the namespace index are sized for built-in pools at store creation and extended when a custom pool is
+first registered; publication does not trigger a table rehash.
 
 | `PublishReport` field | Meaning |
 | --- | --- |

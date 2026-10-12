@@ -196,7 +196,7 @@ fn PublishReport AsyncLoader.publish_within(&self, PublishLimits limits) {
     PublishReport report;
     while (try index = oldest_in_phase(state, LoadPhase.DECODED)) {
         LoadSlot* slot = &state.slots[index];
-        ulong items = slot.prepared.items;
+        ulong items = asset::publication_charge(state.assets, &slot.prepared, slot.request.replace);
         if (limits.items && items > limits.items - report.items_used) {
             report.required_items = items;
             report.deferred = true;
