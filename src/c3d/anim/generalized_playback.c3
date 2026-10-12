@@ -10,6 +10,7 @@ import std::math;
    @param destination : "Raw evaluated locals; top-level branches are compensated in place."
    @param [&in] chain : "Captured chain shared by every generalized action."
    @param dt : "Zero reports no motion."
+   @param onset : "Pins sample STEP keys on the playback side, as the pose does."
    @param velocity : "Optional raw physical local rates, transformed with their branches."
    @require math::is_finite(dt) && dt >= 0
    @require velocity.len == 0 || velocity.len == destination.pose.len *>
@@ -19,13 +20,10 @@ fn GeneralizedMotion evaluate_generalized_playback_motion(
     PoseDestination destination,
     CapturedMotionChain* chain,
     double dt,
+    bool onset = false,
     PoseVelocity[] velocity = {},
 ) @private {
     if (playback.root_node >= destination.pose.len || !destination.present[playback.root_node]) return {};
-
-    GeneralizedMotionFrame endpoint = generalized_playback_pose_endpoint(chain, destination.pose);
-    GeneralizedFrameRate endpoint_rate;
-    if (velocity.len) endpoint_rate = generalized_playback_pose_endpoint_rate(chain, destination.pose, velocity);
 
     GeneralizedMotion delta;
     GeneralizedMotion offset;
@@ -66,7 +64,16 @@ fn GeneralizedMotion evaluate_generalized_playback_motion(
                     );
                 }
 
+                GeneralizedFrameRate endpoint_rate;
+                GeneralizedMotionFrame endpoint = sample_generalized_endpoint(
+                    chain: action.motion_chain,
+                    clip: clip,
+                    time: action.time,
+                    side: action_sample_side(action, onset),
+                    rate: velocity.len ? &endpoint_rate : null,
+                );
                 action_offset = generalized_endpoint_motion(action.motion_chain, &action.motion_reference, endpoint);
+
                 if (velocity.len) {
                     action_offset_rate = generalized_endpoint_motion_rate(
                         chain: action.motion_chain,
@@ -74,6 +81,9 @@ fn GeneralizedMotion evaluate_generalized_playback_motion(
                         endpoint: endpoint,
                         rate: endpoint_rate,
                     );
+                    double speed = action_analytic_speed(action);
+                    action_offset_rate.translation *= speed;
+                    action_offset_rate.twist *= speed;
                 }
             }
 
@@ -101,9 +111,24 @@ fn GeneralizedMotion evaluate_generalized_playback_motion(
             }
         }
 
-        fold_generalized_layer(&delta, delta_sum, translation_weight, twist_weight);
-        fold_generalized_layer(&offset, offset_sum, translation_weight, twist_weight);
-        fold_generalized_layer(&offset_rate, offset_rate_sum, translation_weight, twist_weight);
+        fold_generalized_layer(
+            below: &delta,
+            sum: delta_sum,
+            translation_weight: translation_weight,
+            twist_weight: twist_weight,
+        );
+        fold_generalized_layer(
+            below: &offset,
+            sum: offset_sum,
+            translation_weight: translation_weight,
+            twist_weight: twist_weight,
+        );
+        fold_generalized_layer(
+            below: &offset_rate,
+            sum: offset_rate_sum,
+            translation_weight: translation_weight,
+            twist_weight: twist_weight,
+        );
     }
 
     pin_generalized_branches(
@@ -115,20 +140,6 @@ fn GeneralizedMotion evaluate_generalized_playback_motion(
     );
 
     return delta;
-}
-
-<* Compose the admitted motion-node frame from existing local pose storage. *>
-fn GeneralizedMotionFrame generalized_playback_pose_endpoint(CapturedMotionChain* chain, Transform[] pose) @private {
-    GeneralizedMotionFrame result = GENERALIZED_FRAME_IDENTITY;
-
-    for (sz index = chain.nodes.len; index > 0; index--) {
-        result = compose_generalized_frames(
-            parent: result,
-            local: generalized_frame_from_transform(pose[chain.nodes[index - 1].model_node]),
-        );
-    }
-
-    return result;
 }
 
 fn CapturedMotionChain* generalized_playback_chain(PlaybackView* playback) @private {
@@ -144,32 +155,6 @@ fn double[<3>] generalized_chain_up(CapturedMotionChain* chain) @private {
     double[<3>] up = { chain.extraction.up.x, chain.extraction.up.y, chain.extraction.up.z };
 
     return up / up.length();
-}
-
-fn GeneralizedFrameRate generalized_playback_pose_endpoint_rate(
-    CapturedMotionChain* chain,
-    Transform[] pose,
-    PoseVelocity[] velocity,
-) @local {
-    GeneralizedMotionFrame frame = GENERALIZED_FRAME_IDENTITY;
-    GeneralizedFrameRate rate;
-
-    for (sz index = chain.nodes.len; index > 0; index--) {
-        uint node = chain.nodes[index - 1].model_node;
-        GeneralizedMotionFrame local = generalized_frame_from_transform(pose[node]);
-        PoseVelocity local_rate = velocity[node];
-        double local_scale_rate = (local_rate.scale.x + local_rate.scale.y + local_rate.scale.z) / 3;
-
-        double[<3>] lever = frame.rotation.rotate_vec3(local.position * frame.scale);
-        rate.position += rate.angular.cross(lever)
-          + frame.rotation.rotate_vec3(local.position * rate.scale + local_rate.translation * frame.scale);
-        rate.angular += frame.rotation.rotate_vec3(local_rate.angular);
-        rate.scale = rate.scale * local.scale + frame.scale * local_scale_rate;
-
-        frame = compose_generalized_frames(frame, local);
-    }
-
-    return rate;
 }
 
 fn void fold_generalized_layer(

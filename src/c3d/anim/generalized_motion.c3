@@ -36,19 +36,24 @@ struct GeneralizedMotionReference @private {
     float duration;
 }
 
+<* Sample the composed motion-node frame and, optionally, its rate in clip time.
+   @param [out] rate : "Optional position, spatial angular and scale rates." *>
 fn GeneralizedMotionFrame sample_generalized_endpoint(
     CapturedMotionChain* chain,
     AnimationClip* clip,
     float time,
     StepSampleSide side = StepSampleSide.EXACT,
+    GeneralizedFrameRate* rate = null,
 ) @private {
     GeneralizedMotionFrame world = GENERALIZED_FRAME_IDENTITY;
+    GeneralizedFrameRate world_rate;
 
     for (sz index = chain.nodes.len; index > 0; index--) {
         CapturedMotionNode* node = &chain.nodes[index - 1];
         GeneralizedMotionFrame local = generalized_frame_from_transform(node.baseline);
+        GeneralizedFrameRate local_rate;
         double[4] value;
-        double[4] rate;
+        double[4] value_rate;
         uint cursor;
 
         if (node.translation_track != NO_MOTION_TRACK) {
@@ -57,10 +62,11 @@ fn GeneralizedMotionFrame sample_generalized_endpoint(
                 time: time,
                 cursor: &cursor,
                 value: value[:3],
-                rate: rate[:3],
+                rate: value_rate[:3],
                 side: side,
             );
             local.position = { value[0], value[1], value[2] };
+            local_rate.position = { value_rate[0], value_rate[1], value_rate[2] };
         }
 
         if (node.rotation_track != NO_MOTION_TRACK) {
@@ -70,10 +76,12 @@ fn GeneralizedMotionFrame sample_generalized_endpoint(
                 time: time,
                 cursor: &cursor,
                 value: value[..],
-                rate: rate[..],
+                rate: value_rate[..],
                 side: side,
             );
             local.rotation = { .v = { value[0], value[1], value[2], value[3] } };
+            double[<4>] rotation_rate = { value_rate[0], value_rate[1], value_rate[2], value_rate[3] };
+            local_rate.angular = spatial_rotation_rate(local.rotation.v, rotation_rate);
         }
 
         if (node.scale_track != NO_MOTION_TRACK) {
@@ -83,14 +91,18 @@ fn GeneralizedMotionFrame sample_generalized_endpoint(
                 time: time,
                 cursor: &cursor,
                 value: value[:3],
-                rate: rate[:3],
+                rate: value_rate[:3],
                 side: side,
             );
             local.scale = (value[0] + value[1] + value[2]) / 3;
+            local_rate.scale = (value_rate[0] + value_rate[1] + value_rate[2]) / 3;
         }
 
+        if (rate) world_rate = compose_generalized_frame_rates(world, world_rate, local, local_rate);
         world = compose_generalized_frames(world, local);
     }
+
+    if (rate) *rate = world_rate;
 
     return world;
 }
@@ -188,6 +200,22 @@ fn GeneralizedMotionFrame compose_generalized_frames(
         .position = parent.position + parent.rotation.rotate_vec3(local.position * parent.scale),
         .rotation = inertial_normalize_rotation(parent.rotation.mul(local.rotation)),
         .scale = parent.scale * local.scale,
+    };
+}
+
+fn GeneralizedFrameRate compose_generalized_frame_rates(
+    GeneralizedMotionFrame parent,
+    GeneralizedFrameRate parent_rate,
+    GeneralizedMotionFrame local,
+    GeneralizedFrameRate local_rate,
+) @local {
+    double[<3>] lever = parent.rotation.rotate_vec3(local.position * parent.scale);
+
+    return {
+        .position = parent_rate.position + parent_rate.angular.cross(lever)
+          + parent.rotation.rotate_vec3(local.position * parent_rate.scale + local_rate.position * parent.scale),
+        .angular = parent_rate.angular + parent.rotation.rotate_vec3(local_rate.angular),
+        .scale = parent_rate.scale * local.scale + parent.scale * local_rate.scale,
     };
 }
 

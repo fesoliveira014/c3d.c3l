@@ -1032,6 +1032,15 @@ fn PlayDesc carrier_test_desc() @local {
     };
 }
 
+fn ClipId carrier_test_clip(LayerFixture* fixture, float stride) @local {
+    return inertial_owner_translation(
+        owner: fixture,
+        start: { 0, 0, 0 },
+        end: { 0, 0, stride },
+        node: 2,
+    );
+}
+
 fn Vec3 carrier_test_skeleton_offset(LayerFixture* fixture) @local {
     fixture.scene.update_world();
     ModelInstance* instance = fixture.scene.get(fixture.root, ModelInstance);
@@ -1051,8 +1060,8 @@ fn void test_animation_generalized_playback_fade_keeps_skeleton_on_carrier() @te
     create_inertial_owner(&fixture, inertia_enabled: false);
     defer destroy_layer_fixture(&fixture);
     fixture.animator.root_node = 2;
-    ClipId walk = inertial_owner_translation(&fixture, { 0, 0, 0 }, { 0, 0, 2 }, 2);
-    ClipId run = inertial_owner_translation(&fixture, { 0, 0, 0 }, { 0, 0, 4 }, 2);
+    ClipId walk = carrier_test_clip(&fixture, 2);
+    ClipId run = carrier_test_clip(&fixture, 4);
     AnimationActionId walking = fixture.animator.play(&fixture.assets, walk, carrier_test_desc())!!;
     carrier_test_advance(&fixture, 4);
     Vec3 pinned = carrier_test_skeleton_offset(&fixture);
@@ -1068,13 +1077,32 @@ fn void test_animation_generalized_playback_fade_keeps_skeleton_on_carrier() @te
     assert((carrier_test_skeleton_offset(&fixture) - pinned).length() < 1e-3f);
 }
 
+fn void test_animation_generalized_playback_partial_weight_keeps_skeleton_across_loops() @test {
+    LayerFixture fixture;
+    create_inertial_owner(&fixture, inertia_enabled: false);
+    defer destroy_layer_fixture(&fixture);
+    fixture.animator.root_node = 2;
+    ClipId walk = carrier_test_clip(&fixture, 2);
+    AnimationActionId id = fixture.animator.play(&fixture.assets, walk, carrier_test_desc())!!;
+    Action* action = fixture.animator.action(id);
+    action.weight = 0.5f;
+    action.fade_target = 0.5f;
+    carrier_test_advance(&fixture, 1);
+    Vec3 pinned = carrier_test_skeleton_offset(&fixture);
+
+    for (uint frame = 0; frame < 12; frame++) {
+        carrier_test_advance(&fixture, 1);
+        assert((carrier_test_skeleton_offset(&fixture) - pinned).length() < 1e-4f);
+    }
+}
+
 fn void test_animation_generalized_inertial_request_keeps_skeleton_on_carrier() @test {
     LayerFixture fixture;
     create_inertial_owner(&fixture);
     defer destroy_layer_fixture(&fixture);
     fixture.animator.root_node = 2;
-    ClipId walk = inertial_owner_translation(&fixture, { 0, 0, 0 }, { 0, 0, 2 }, 2);
-    ClipId run = inertial_owner_translation(&fixture, { 0, 0, 0 }, { 0, 0, 4 }, 2);
+    ClipId walk = carrier_test_clip(&fixture, 2);
+    ClipId run = carrier_test_clip(&fixture, 4);
     fixture.animator.play(&fixture.assets, walk, carrier_test_desc())!!;
     carrier_test_advance(&fixture, 8);
     Vec3 pinned = carrier_test_skeleton_offset(&fixture);

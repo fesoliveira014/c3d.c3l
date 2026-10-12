@@ -226,12 +226,13 @@ fn PoseReport evaluate_pose(
     advance_blend_spaces_2d(playback, assets, dt);
 
     CapturedMotionChain* consumed_chain = generalized_playback_chain(playback);
+    bool onset = playback.inertial != null && playback.inertial.control.onset_pending && dt == 0;
     blend_pose(
         playback: playback,
         assets: assets,
         destination: destination,
         scratch: scratch,
-        onset: playback.inertial != null && playback.inertial.control.onset_pending && dt == 0,
+        onset: onset,
         consumed_chain: consumed_chain,
     );
 
@@ -244,6 +245,7 @@ fn PoseReport evaluate_pose(
             destination: destination,
             chain: consumed_chain,
             dt: (double)dt,
+            onset: onset,
         );
     } else {
         motion = evaluate_root_motion(playback, assets, destination);

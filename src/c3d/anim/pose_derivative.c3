@@ -78,8 +78,12 @@ fn void destroy_pose_derivative_scratch(Allocator allocator, PoseDerivativeScrat
     alloc::free(allocator, scratch);
 }
 
+fn double action_analytic_speed(Action* action) @private {
+    return action.blend_space ? action.analytic_speed : action.playing ? (double)action.speed : 0;
+}
+
 fn StepSampleSide action_sample_side(Action* action, bool onset) @private {
-    double speed = action.blend_space ? action.analytic_speed : action.playing ? (double)action.speed : 0;
+    double speed = action_analytic_speed(action);
     if (!onset || speed == 0) return StepSampleSide.EXACT;
 
     return speed < 0 ? StepSampleSide.LEFT : StepSampleSide.RIGHT;
@@ -132,7 +136,7 @@ fn void sample_pose_channel(
         side: action_sample_side(action, onset),
     );
 
-    double speed = action.blend_space ? action.analytic_speed : action.playing ? (double)action.speed : 0;
+    double speed = action_analytic_speed(action);
     foreach (index, component : value) {
         sample[index] = (float)component;
         rate[index] *= speed;

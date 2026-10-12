@@ -61,6 +61,7 @@ fn AnimationTransitionResult begin_prepared_inertial_transition(
             destination: destination,
             chain: chain,
             dt: 0,
+            onset: true,
             velocity: scratch.derivative.velocity,
         );
     }

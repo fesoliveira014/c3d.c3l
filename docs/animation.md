@@ -338,12 +338,15 @@ update. Under generalized extraction, a scale track with nonneutral keys on an
 additive action's consumed chain is invalid in either additive scale mode, including
 zero-weight or fully masked actions.
 
-Each generalized action pins the selected translation and twist of the final
-blended chain at its own reference endpoint, weighted like its motion. One
-instance-root compensation applies to every top-level branch, including
-branches outside the motion node, so the articulated pose stays attached to the
-carrier through fades, weight changes and inertial residuals. For a single
-action, applying the published deltas reproduces the corresponding KEEP pose.
+Each generalized action samples its own chain endpoint at its current time and
+removes the selected translation and twist relative to its reference. These
+offsets blend with the same weights as the motion, so KEEP actions, additive
+layers and the authored pose under partial weights stay in the pose. Twist
+offsets use each action's shortest turn from its reference. One instance-root
+compensation applies to every top-level branch, including branches outside the
+motion node, so the articulated pose stays attached to the carrier through
+fades, weight changes and inertial residuals. For a single action, applying the
+published deltas reproduces the corresponding KEEP pose.
 The root turns about its reference position in the instance-root frame.
 Consume the delta with `apply_root_motion` once after update; for crowds use
 `Scene.apply_crowd_root_motion`. The default planar path keeps its previous
