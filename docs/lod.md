@@ -69,9 +69,11 @@ to a live owner carrying exactly one of `ModelInstance` or `AnimatedCrowd`.
 The source model must have no imported LOD groups, and the owner must have no
 existing `LodGroup`. Playback and source mesh/skin components stay owned by the
 model or crowd; the renderer suppresses their separate base draws. The group
-copies levels, parts, joint/bind data, logical channel mappings, names and
-defaults into scene-owned storage. Caller arrays may be released after attachment;
-referenced model, geometry, material and skeleton assets remain borrowed.
+copies levels, parts, the template joint list, logical channel mappings, names
+and defaults into scene-owned storage; inverse binds are read from the template
+skin's skeleton, like a `SkinBinding`. Caller arrays may be released after
+attachment; referenced model, geometry, material and skeleton assets remain
+borrowed.
 
 For a model with one skinned mesh, no morph channels and a compatible coarse
 geometry, an explicit two-level descriptor is:
@@ -79,7 +81,6 @@ geometry, an explicit two-level descriptor is:
 ```c3
 ModelTemplate* template = &assets.model(model_id).data;
 ModelMesh mesh = template.meshes[0];
-ModelSkin skin = template.skins[0];
 LodLevel[2] levels = {
     { .first_part = 0, .part_count = 1, .min_screen_size = 0.2f },
     { .first_part = 1, .part_count = 1, .min_screen_size = 0 },
@@ -92,7 +93,6 @@ AnimatedLodPart[2] parts = {
             .local = maths::TRANSFORM_IDENTITY.to_mat4(),
         },
         .mesh_index = 0,
-        .skin = skin,
         .default_morph_weights = mesh.default_morph_weights,
     },
     {
@@ -102,7 +102,6 @@ AnimatedLodPart[2] parts = {
             .local = maths::TRANSFORM_IDENTITY.to_mat4(),
         },
         .mesh_index = 0,
-        .skin = skin,
         .default_morph_weights = mesh.default_morph_weights,
     },
 };
@@ -132,7 +131,8 @@ put alternatives in the descriptor. To change alternatives, remove the `LodGroup
 with `scene.remove_component` and attach a new descriptor; the new group is a new
 incarnation. Direct edits to copied descriptor/binding data are unsupported.
 
-All source skins and skinned alternatives share identical ordered model-local
+A part is skinned exactly when its geometry is skinned, and skinned parts use
+the template skin. All source skins share identical ordered model-local
 joint-node lists and bitwise-identical inverse binds. Vertex/index counts and
 stored joint-index width may differ; joint subsets, remapping and per-level
 palettes are unsupported. A skinned logical mesh stays skinned at every
@@ -232,13 +232,16 @@ view preparation beyond the renderer's instance absence grace period lose their
 history. Per-frame selection and history processing visit active groups, while
 the persistent CPU history array remains indexed by entity slot.
 
-Animated deformation history also distinguishes logical mesh/part, source slot
-generation and selected representation. Compatible unchanged geometry, local
-transform, binding and channel mapping can reuse the view's previous submitted
-pose, including identical aliases in different levels. An incompatible level,
-topology, channel, binding or incarnation uses current-pose fallback and rejection;
-ordinary pose changes alone do not reject correspondence. Skipped/aborted views
-do not publish new observations. Update animation, morphs and world transforms
+Animated deformation history is kept per source owner: the submitted palette,
+the source affine of each rigid logical mesh and the logical morph weights of
+every live source. Each representation rebuilds its previous pose from that
+state with its own local transform and channel mapping. A representation whose
+geometry, local transform, binding and channel mapping match one the view
+submitted last frame, including identical aliases in different levels, keeps
+correspondence. An incompatible level, topology, channel, binding, incarnation
+or crowd replacement uses current-pose fallback and rejection; ordinary pose
+changes alone do not reject correspondence. Skipped/aborted views do not publish
+new observations. Update animation, morphs and world transforms
 before preparing any view, depth, shadow, velocity or trace pass of the frame.
 
 ## GPU drawing
@@ -272,14 +275,16 @@ retirement protects submissions. Previous matrices are written by classification
 without separate per-view uploads.
 
 Animated binding metadata adds copied part records, channel maps/defaults and
-one ordered joint/bind array per group. Current palette upload is
+one ordered joint list per group. Current palette upload is
 `live_sources * joints * 64` bytes once per group per renderer frame, reused across
 parts, levels, views and traced preparation in that frame. Ordinary groups have
 one source; crowd groups have one per live placement. This is shared palette data,
 not a palette per skin or selected level. Morph blocks and rigid affine data are
-per representation/source as needed. Temporal views additionally retain submitted
-palette, morph and instance data for compatible logical representations; the
-160-byte placement and paired 80-byte selection rows above exclude that storage.
+per representation/source as needed. Temporal views additionally retain, per
+owner, `capacity * (joints + rigid_meshes) * 64` bytes of palette and rigid
+affines plus four bytes per logical morph weight and placement, independent of
+the level count; the 160-byte placement and paired 80-byte selection rows above
+exclude that storage.
 Crowd playback storage follows the [crowd byte formula](instancing.md#crowds).
 
 The existing cull arena preflights nonempty parities for every level across the

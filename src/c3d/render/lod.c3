@@ -351,11 +351,8 @@ fn gpu::GpuAddress? resolve_lod_part(Renderer* renderer, MeshCandidate* candidat
         .current = selection.current,
         .previous = selection.previous,
         .reject_history = selection.reject_history || !selection.view_history_valid
-          || (candidate.animated_lod && !selection.pose_history.previous_candidate_pose(
-              scene: selection.scene,
-              assets: renderer.assets,
-              candidate: candidate,
-          )) ? 1 : 0,
+          || (candidate.animated_lod && !selection.pose_history.has_previous_representation(selection.scene, candidate))
+          ? 1 : 0,
         .seed = instance_seed({}),
         .impostor = candidate.impostor ? resolve_impostor(renderer, selection)! : (gpu::GpuAddress)0,
         .history_origin_delta = { history_delta.x, history_delta.y, history_delta.z, 0 },

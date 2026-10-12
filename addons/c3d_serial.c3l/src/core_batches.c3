@@ -50,6 +50,21 @@ struct LodAuthoringV1 @private {
     float impostor_min_screen_size;
 }
 
+// The wire keeps each part's template skin; reading ignores it.
+struct AnimatedLodPartAuthoring @private {
+    LodPart draw;
+    uint mesh_index;
+    ModelSkin skin;
+    float[] default_morph_weights;
+}
+
+struct AnimatedLodDescAuthoring @private {
+    LodLevel[] levels;
+    AnimatedLodPartAuthoring[] parts;
+    bool has_bounds_override;
+    Aabb local_bounds;
+}
+
 struct LodAuthoring @private {
     LodDesc desc;
     LodMode mode;
@@ -61,7 +76,7 @@ struct LodAuthoring @private {
     Impostor impostor;
     float impostor_min_screen_size;
     bool animated;
-    AnimatedLodDesc animated_desc;
+    AnimatedLodDescAuthoring animated_desc;
 }
 
 BinaryCompatibility[1] lod_binary_compatibility @local = {
@@ -74,16 +89,16 @@ fn void? register_core_batch_codecs() @private {
     describe::register_reflected(BillboardAuthoring)!;
     describe::register_reflected(LodAuthoringV1)!;
     describe::register_reflected(ModelSkin)!;
-    describe::register_reflected(AnimatedLodPart)!;
-    describe::register_reflected(AnimatedLodDesc)!;
+    describe::register_reflected(AnimatedLodPartAuthoring)!;
+    describe::register_reflected(AnimatedLodDescAuthoring)!;
     describe::register_reflected(LodAuthoring)!;
 
     register_core_value(InstanceAuthoring, INSTANCES_LAYOUT, &defaults_instances)!;
     register_core_value(BillboardAuthoring, BILLBOARDS_LAYOUT, &defaults_billboards)!;
     register_core_value(LodAuthoringV1, LOD_V1_LAYOUT, &defaults_lod_v1)!;
     register_core_value(ModelSkin, ANIMATED_LOD_SKIN_LAYOUT, &defaults_animated_lod_skin)!;
-    register_core_value(AnimatedLodPart, ANIMATED_LOD_PART_LAYOUT, &defaults_animated_lod_part)!;
-    register_core_value(AnimatedLodDesc, ANIMATED_LOD_DESC_LAYOUT, &defaults_animated_lod_desc)!;
+    register_core_value(AnimatedLodPartAuthoring, ANIMATED_LOD_PART_LAYOUT, &defaults_animated_lod_part)!;
+    register_core_value(AnimatedLodDescAuthoring, ANIMATED_LOD_DESC_LAYOUT, &defaults_animated_lod_desc)!;
     register_described_type(
         $Type: LodAuthoring,
         version: 2,
@@ -124,11 +139,11 @@ fn void defaults_animated_lod_skin(void* value) @local {
 }
 
 fn void defaults_animated_lod_part(void* value) @local {
-    *(AnimatedLodPart*)value = { .draw = { .local = matrix::IDENTITY4 } };
+    *(AnimatedLodPartAuthoring*)value = { .draw = { .local = matrix::IDENTITY4 } };
 }
 
 fn void defaults_animated_lod_desc(void* value) @local {
-    *(AnimatedLodDesc*)value = {};
+    *(AnimatedLodDescAuthoring*)value = {};
 }
 
 fn void defaults_lod(void* value) @local {
@@ -249,11 +264,26 @@ fn void? attach_lod(void* value, ReadContext* context) @local {
           || source.desc.parts.len) return c3d::INVALID_ARGUMENT~;
         if (!scene::instance_effects_valid(source.effects.sway, source.effects.fade)) return c3d::INVALID_ARGUMENT~;
 
+        AnimatedLodPart[] parts = alloc::new_array_try(tmem, AnimatedLodPart, source.animated_desc.parts.len)
+          ?? c3d::CAPACITY_EXCEEDED~!;
+        foreach (index, part : source.animated_desc.parts) {
+            parts[index] = {
+                .draw = part.draw,
+                .mesh_index = part.mesh_index,
+                .default_morph_weights = part.default_morph_weights,
+            };
+        }
+
         model::attach_animated_lod(
             assets: context.assets,
             scene: context.scene,
             owner: context.node,
-            desc: source.animated_desc,
+            desc: {
+                .levels = source.animated_desc.levels,
+                .parts = parts,
+                .has_bounds_override = source.animated_desc.has_bounds_override,
+                .local_bounds = source.animated_desc.local_bounds,
+            },
         )!;
         context.scene.set_lod_effects(context.node, source.effects);
         return;
@@ -291,23 +321,25 @@ fn void? attach_lod(void* value, ReadContext* context) @local {
     }
 }
 
-fn AnimatedLodDesc? project_animated_lod(LodGroupState* state, WriteContext* context) @local {
+fn AnimatedLodDescAuthoring? project_animated_lod(LodGroupState* state, WriteContext* context) @local {
     AnimatedLodBinding* binding = state.animated;
     if (state.has_impostor) {
         return c3d::INVALID_ARGUMENT~;
     }
-    context.assets.models.try_get(binding.source_model)!;
+    ModelTemplate* template = &context.assets.models.try_get(binding.source_model)!.data;
 
-    AnimatedLodPart[] parts = alloc::new_array_try(tmem, AnimatedLodPart, state.desc.parts.len)
+    AnimatedLodPartAuthoring[] parts = alloc::new_array_try(tmem, AnimatedLodPartAuthoring, state.desc.parts.len)
       ?? c3d::CAPACITY_EXCEEDED~!;
 
     foreach (index, &part : parts) {
         AnimatedLodPartBinding* admitted = &binding.parts[index];
         context.assets.geometries.try_get(state.desc.parts[index].geometry)!;
         context.assets.materials.try_get(state.desc.parts[index].material)!;
-        // Admission binds the template skin even where the geometry carries no joints.
-        bool has_skin = admitted.skeleton.generation != 0;
-        if (has_skin) context.assets.skeletons.try_get(admitted.skeleton)!;
+
+        ModelSkin skin;
+        foreach (candidate : template.skins) {
+            if (candidate.mesh_node == admitted.template_node) skin = candidate;
+        }
 
         float[] defaults = alloc::new_array_try(tmem, float, admitted.weight_count)
           ?? c3d::CAPACITY_EXCEEDED~!;
@@ -319,11 +351,7 @@ fn AnimatedLodDesc? project_animated_lod(LodGroupState* state, WriteContext* con
         *part = {
             .draw = state.desc.parts[index],
             .mesh_index = admitted.mesh_index,
-            .skin = has_skin ? (ModelSkin){
-                .mesh_node = admitted.template_node,
-                .skeleton = admitted.skeleton,
-                .joint_nodes = binding.joint_nodes,
-            } : (ModelSkin){},
+            .skin = skin,
             .default_morph_weights = defaults,
         };
     }

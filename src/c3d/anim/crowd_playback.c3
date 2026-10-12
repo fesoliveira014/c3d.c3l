@@ -370,12 +370,8 @@ fn Action? prepare_crowd_seed(
     return action;
 }
 
-<*
- Reset a slot while retaining its fixed pools and advancing identities.
- @param [&inout] state : "Every previous slot and action handle becomes stale."
- @require index < state.slots.len
-*>
-fn void reset_crowd_playback_slot(CrowdPlaybackState* state, uint index) {
+// Keeps the playback identity, so only reset_crowd_playback also expires render history.
+fn void reset_crowd_playback_slot(CrowdPlaybackState* state, uint index) @private {
     CrowdPlaybackSlot* slot = &state.slots[index];
     PlaybackView playback = crowd_playback_view(state, slot);
 
@@ -398,6 +394,15 @@ fn void reset_crowd_playback_slot(CrowdPlaybackState* state, uint index) {
     foreach (usz mesh, base : state.base_morph_weights) {
         state.logical_weights[(usz)index * state.mesh_nodes.len + mesh][..] = base[..];
     }
+}
+
+<*
+ Reset every slot and renew the playback identity.
+ @param [&inout] state : "Every previous slot, action handle and pose history becomes stale."
+*>
+fn void reset_crowd_playback(CrowdPlaybackState* state) {
+    for (uint index = 0; index < state.slots.len; index++) reset_crowd_playback_slot(state, index);
+    state.identity = ++crowd_playback_identity_counter;
 }
 
 <*

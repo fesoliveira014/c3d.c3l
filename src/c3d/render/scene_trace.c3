@@ -394,12 +394,7 @@ fn TraceCollection collect_trace_instances(
                 uint[] palette_order;
                 if (source.kind == TracePose.CROWD) {
                     palette_order = alloc::new_array(tmem, uint, batch.count);
-                    crowd_packed_order(
-                        packed: palette_order,
-                        placements: batch.transforms[:batch.count],
-                        crowd: crowd,
-                        part: source.part,
-                    );
+                    crowd_packed_order(palette_order, crowd, source.part);
                 }
 
                 foreach (uint index, transform : batch.transforms[:batch.count]) {
