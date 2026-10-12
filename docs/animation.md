@@ -826,6 +826,13 @@ sampling. A scratch from `create_crowd_pose_scratch`, and the state's own, holds
   A lookup costs one hash and at most four key compares. `PoseCache.lookups` counts the
   actions that consulted the cache and `PoseCache.hits` those that found samples an
   earlier action recorded.
+- **Small ranges.** A scratch empties its table after each advance, and each key's first two
+  sightings sample uncached, so a scratch saves from its third action on a key. With no
+  repeated times, 512 instances over three workers (ranges of 32) cost 5.4% more at the
+  median than without the cache, measured natively; the other all-miss rows measured
+  within 1%. With twelve shared groups, ranges of 32 hit 25% of actions and save nothing,
+  ranges of 64 hit 62% and save 7%, of 128 hit 81% and save 13%, and of 625 or more hit
+  96% or more and save 15 to 19%. Give each scratch a few hundred instances.
 
 `skinned_crowd --shared-phases` (key `G`, or the panel checkbox) puts instances into
 twelve groups that share a clip and a time, interleaved by instance index, and shows the
