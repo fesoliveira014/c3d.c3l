@@ -83,6 +83,7 @@ struct ViewDesc {
     bool                 share_shadows;  // binds an earlier view's matching shadow set and publishes its own
     uint                 transmission_layers; // up to MAX_TRANSMISSION_LAYERS; zero reads as 1
     TransparencyMode     transparency; // how premultiplied-alpha blended surfaces compose
+    float                pre_exposure_override; // 0 follows the camera exposure; else the radiance scale stored images carry
 }
 
 <*
@@ -156,6 +157,8 @@ struct ViewHistory {
     uint         slot;
     uint         accumulated_samples;
     uint         pending_samples;
+    float        pre_exposure; // radiance scale the stored images carry
+    float        pending_pre_exposure;
     ulong        trace_revision;
     ulong        submitted; // marker of the submitted frame last published, set by the renderer; 0 before the first
 }
@@ -216,6 +219,7 @@ fn bool ViewHistory.has_previous_representation(&self, Scene* scene, MeshCandida
  @param candidates : "Every mesh this rendering drew."
  @param time : "FrameInfo.time of this rendering."
  @param origin : "Absolute origin of the supplied view projection."
+ @param pre_exposure : "Radiance scale the rendering's stored images carry."
 *>
 fn void ViewHistory.commit(
     &self,
@@ -226,6 +230,7 @@ fn void ViewHistory.commit(
     Mat4 view_proj,
     double time,
     Vec3 origin = {},
+    float pre_exposure = 1,
 ) {
     if (self.models.len != scene.nodes.len) {
         uint sample_index = self.sample_index;
@@ -278,6 +283,7 @@ fn void ViewHistory.commit(
     self.view_proj = view_proj;
     self.origin = origin;
     self.time = time;
+    self.pending_pre_exposure = pre_exposure;
     self.pending = true;
 }
 
@@ -286,6 +292,7 @@ fn void ViewHistory.commit(
  @param scene : "Identity of the traced scene."
  @param samples : "Samples the image holds after this rendering."
  @param origin : "Absolute origin of the supplied view projection."
+ @param pre_exposure : "Radiance scale the rendering's stored images carry."
 *>
 fn void ViewHistory.commit_accumulation(
     &self,
@@ -294,12 +301,14 @@ fn void ViewHistory.commit_accumulation(
     Mat4 view_proj,
     uint samples,
     Vec3 origin = {},
+    float pre_exposure = 1,
 ) {
     self.scene = scene;
     self.trace_revision = trace_revision;
     self.view_proj = view_proj;
     self.origin = origin;
     self.pending_samples = samples;
+    self.pending_pre_exposure = pre_exposure;
     self.pending = true;
 }
 
@@ -311,6 +320,7 @@ fn void ViewHistory.publish(&self) {
     self.valid = true;
     self.pending = false;
     self.accumulated_samples = self.pending_samples;
+    self.pre_exposure = self.pending_pre_exposure;
     self.sample_index = (self.sample_index + 1) % post::TAA_SAMPLE_COUNT;
     self.slot = (self.slot + 1) % post::TAA_HISTORY_SLOTS;
 }
@@ -571,6 +581,7 @@ struct ViewStats {
     uint              accumulated_samples;
     bool              shadow_set_shared; // the last raster rendering bound a set an earlier view recorded
     float             exposure; // applied multiplier, FRAMES_IN_FLIGHT frames late under auto; LINEAR_HDR applies none
+    float             pre_exposure; // radiance scale of the last rendering's stored images; 1 is physical
     float[PASS_COUNT] gpu_pass_ms;
     bool[PASS_COUNT]  gpu_pass_valid @if($feat(C3D_PROFILE_GPU));
 }
@@ -957,6 +968,7 @@ fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
     if (!math::is_finite(desc.lod_bias)) return c3d::INVALID_ARGUMENT~;
     if (desc.transmission_layers > MAX_TRANSMISSION_LAYERS) return c3d::INVALID_ARGUMENT~;
     if (!clip_plane_valid(desc.clip_plane)) return c3d::INVALID_ARGUMENT~;
+    if (!post::pre_exposure_override_valid(desc.pre_exposure_override)) return c3d::INVALID_ARGUMENT~;
     if (!ambient_occlusion_desc_valid(&desc.ambient_occlusion)) return c3d::INVALID_ARGUMENT~;
     if (!screen_space_gi_desc_valid(&desc.screen_space_gi)) return c3d::INVALID_ARGUMENT~;
     RayTracingDesc* ray_tracing = &desc.ray_tracing;

@@ -553,3 +553,40 @@ fn void test_views_of_one_camera_keep_separate_exposure_history() @test {
     assert(!history_of(&views, views.window).valid);
     assert(kept(history_of(&views, views.texture)));
 }
+
+fn void test_pre_exposure_is_a_clamped_power_of_two_of_the_exposure_applied() @test {
+    assert(post::pre_exposure_factor(1) == 1);
+    assert(post::pre_exposure_factor(200) == 256);
+    assert(post::pre_exposure_factor(1.0f / 200) == 1.0f / 256);
+    assert(post::pre_exposure_factor(1e9f) == 65536);
+    assert(post::pre_exposure_factor(1e-9f) == 1.0f / 65536);
+    assert(post::pre_exposure_factor(0) == 1);
+
+    ViewRecord record = { .desc = render::default_view_desc(), .exposure = 4 };
+    record.desc.post.auto_exposure = true;
+    record.auto_exposure.history = COMMITTED;
+    record.auto_exposure.adapted_scale = 8;
+    PreExposure applied = post::view_pre_exposure(&record, SCENE);
+    assert(applied.factor == 32 && applied.ratio == 1);
+
+    record.history = { .valid = true, .pre_exposure = 8 };
+    applied = post::view_pre_exposure(&record, SCENE);
+    assert(applied.factor == 32 && applied.ratio == 4);
+
+    record.history.valid = false;
+    record.auto_exposure.adapted_scale = 0;
+    assert(post::view_pre_exposure(&record, SCENE).factor == 4);
+
+    record.auto_exposure.adapted_scale = 8;
+    assert(post::view_pre_exposure(&record, OTHER_SCENE).factor == 4);
+    record.auto_exposure.history.snapped = true;
+    assert(post::view_pre_exposure(&record, SCENE).factor == 4);
+    record.auto_exposure.history.snapped = false;
+    record.desc.post.auto_exposure = false;
+    assert(post::view_pre_exposure(&record, SCENE).factor == 4);
+
+    record.desc.pre_exposure_override = 256;
+    assert(post::view_pre_exposure(&record, SCENE).factor == 256);
+    assert(post::pre_exposure_override_valid(0) && post::pre_exposure_override_valid(256));
+    assert(!post::pre_exposure_override_valid(1e9f) && !post::pre_exposure_override_valid(-1));
+}

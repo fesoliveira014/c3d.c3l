@@ -336,6 +336,7 @@ fn void? record_path_traced_view(
                 view_proj:      matrices.view_proj,
                 samples:        held + count,
                 origin:         renderer.frame_origin,
+                pre_exposure:   record.pre_exposure.factor,
             );
             renderer.stats.path_trace_samples += count;
             record.stats.accumulated_samples = held + count;
