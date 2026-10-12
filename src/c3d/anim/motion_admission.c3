@@ -18,15 +18,12 @@ struct CapturedMotionNode @private {
     uint rotation_track;
     uint scale_track;
     Transform baseline;
-    Transform reference;
-    double reference_scale;
 }
 
 struct CapturedMotionChain @private {
     Allocator allocator;
     ModelId model;
     uint root_node;
-    uint clip_track_count;
     RootExtractionDesc extraction;
     CapturedMotionNode[] nodes;
     double[<3>][] pose_scale_sums;
@@ -99,7 +96,6 @@ fn CapturedMotionChain? create_captured_motion_chain(
     CapturedMotionChain captured = {
         .allocator = allocator,
         .root_node = root,
-        .clip_track_count = (uint)clip.tracks.len,
         .extraction = extraction,
     };
     defer catch destroy_captured_motion_chain(&captured);
@@ -123,7 +119,6 @@ fn CapturedMotionChain? create_captured_motion_chain(
             .rotation_track = NO_MOTION_TRACK,
             .scale_track = NO_MOTION_TRACK,
             .baseline = template.nodes[node].local,
-            .reference = template.nodes[node].local,
         };
         captured.model_parents[node] = (int)chain_index++;
     }
@@ -153,8 +148,6 @@ fn CapturedMotionChain? create_captured_motion_chain(
         captured.model_parents[index] = node.parent;
         if (node.parent < 0) captured.top_level_nodes[top_level_index++] = (uint)index;
     }
-
-    foreach (&node : captured.nodes) capture_motion_reference(node, clip);
 
     return captured;
 }
@@ -280,45 +273,4 @@ fn void? validate_motion_baseline(Transform baseline) @local {
       - columns[0][1] * (columns[1][0] * columns[2][2] - columns[1][2] * columns[2][0])
       + columns[0][2] * (columns[1][0] * columns[2][1] - columns[1][1] * columns[2][0]);
     if (determinant < 1 - MOTION_FRAME_ORTHONORMAL_TOLERANCE) return c3d::INVALID_ARGUMENT~;
-}
-
-fn void capture_motion_reference(CapturedMotionNode* node, AnimationClip* clip) @local {
-    double[4] values;
-    uint cursor;
-
-    if (node.translation_track != NO_MOTION_TRACK) {
-        sample_track_analytic(
-            track: &clip.tracks[node.translation_track],
-            time: 0,
-            cursor: &cursor,
-            value: values[:3],
-        );
-        node.reference.position = { (float)values[0], (float)values[1], (float)values[2] };
-    }
-
-    if (node.rotation_track != NO_MOTION_TRACK) {
-        cursor = 0;
-        sample_track_analytic(
-            track: &clip.tracks[node.rotation_track],
-            time: 0,
-            cursor: &cursor,
-            value: values[..],
-        );
-        node.reference.rotation = { .v = { (float)values[0], (float)values[1], (float)values[2], (float)values[3] } };
-    }
-
-    if (node.scale_track != NO_MOTION_TRACK) {
-        cursor = 0;
-        sample_track_analytic(
-            track: &clip.tracks[node.scale_track],
-            time: 0,
-            cursor: &cursor,
-            value: values[:3],
-        );
-        node.reference.scale = { (float)values[0], (float)values[1], (float)values[2] };
-        node.reference_scale = (values[0] + values[1] + values[2]) / 3;
-    } else {
-        Vec3 scale = node.reference.scale;
-        node.reference_scale = ((double)scale.x + (double)scale.y + (double)scale.z) / 3;
-    }
 }

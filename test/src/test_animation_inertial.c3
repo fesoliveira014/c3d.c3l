@@ -486,7 +486,7 @@ fn void test_animation_inertial_storage_reset_clears_one_incarnation_without_tou
         row.morph_offset_velocity[..] = 0x1p-140;
         row.control = {
             .history_valid = true, .active = true,
-            .previous_dt = 0.125, .duration = 3, .elapsed = 1,
+            .duration = 3, .elapsed = 1,
         };
         row.root = {
             .published_translation = { 1, 2, 3 },
@@ -508,7 +508,7 @@ fn void test_animation_inertial_storage_reset_clears_one_incarnation_without_tou
     for (uint reset = 0; reset < 100; reset++) anim::reset_inertial_row(storage, 1);
     InertialRow* cleared = &storage.rows[1];
     assert(!cleared.control.history_valid && !cleared.control.active);
-    assert(cleared.control.previous_dt == 0 && cleared.control.duration == 0 && cleared.control.elapsed == 0);
+    assert(cleared.control.duration == 0 && cleared.control.elapsed == 0);
     foreach (pose : cleared.previous_pose) {
         assert(pose.position == (Vec3){} && pose.scale == (Vec3){ 1, 1, 1 });
         assert(pose.rotation.l == 1);
@@ -855,7 +855,7 @@ fn void test_animation_inertial_pose_no_history_display_onset_and_extreme_morph_
     }
     for (uint index = 0; index < 3; index++) assert(sample.target_morph[index] == sample.source_morph[index]);
     assert(!row.control.history_valid && row.control.active);
-    assert(row.control.duration == 4 && row.control.elapsed == 0.5 && row.control.previous_dt == 0);
+    assert(row.control.duration == 4 && row.control.elapsed == 0.5);
     assert(row.previous_pose[0].position.x == 0 && row.previous_morph[0] == 0);
     sample.target[0].position = { 9, 8, 7 };
     sample.target[0].scale = { 1, 2, 3 };
@@ -1017,7 +1017,6 @@ fn void test_animation_inertial_pose_zero_step_and_tiny_dt_use_finite_double_his
     pose_test_near(row.morph_velocity[0], expected_rate);
     Transform previous = row.previous_pose[0];
     PoseVelocity previous_velocity = row.velocity[0];
-    InertialControl previous_control = row.control;
     double previous_morph_rate = row.morph_velocity[0];
     sample.target[0].position = { 9, 8, 7 };
     record_pose_test_case(&sample, false, 0);
@@ -1029,7 +1028,7 @@ fn void test_animation_inertial_pose_zero_step_and_tiny_dt_use_finite_double_his
     pose_test_vector(row.velocity[0].scale, previous_velocity.scale);
     pose_test_vector(row.velocity[0].angular, previous_velocity.angular);
     assert(row.previous_morph[0] == float::max && row.morph_velocity[0] == previous_morph_rate);
-    assert(row.control.previous_dt == previous_control.previous_dt && row.control.history_valid);
+    assert(row.control.history_valid);
     assert(row.control.active && row.control.duration == 2 && row.control.elapsed == 0.75);
     sample.target[0].position = { -float::max, -float::max, -float::max };
     sample.target[0].scale = { -float::max, -float::max, -float::max };
@@ -1277,7 +1276,6 @@ fn void test_animation_inertial_onset_step_side_survives_zero_updates_and_first_
         assert(pose[1].position.x == expected);
         assert(pose[2].position.y == (duration == 0 ? 1 : 0));
         assert(row.control.onset_pending);
-        double previous_dt = row.control.previous_dt;
         foreach (id : playback.order[:count]) {
             Action* action = playback.actions.get(id);
             assert(action.time == 0.5f && action.published_time == 0.5f);
@@ -1288,7 +1286,6 @@ fn void test_animation_inertial_onset_step_side_survives_zero_updates_and_first_
             assert(pose[2].position.y == (duration == 0 ? 1 : 0));
             assert(row.control.onset_pending);
             assert(row.control.elapsed == 0);
-            assert(row.control.previous_dt == previous_dt);
             assert(owner.animator.event_count == 0);
             onset_assert_zero_motion(&owner);
             foreach (id : playback.order[:count]) {
@@ -1392,7 +1389,7 @@ fn void test_animation_inertial_onset_immediate_request_captures_authored_pose_w
         defer destroy_layer_fixture(&owner);
         Transform[] pose = owner.animator.pose_storage.destination.pose;
         InertialRow* row = inertial_owner_row(&owner);
-        assert(!row.control.history_valid && row.control.previous_dt == 0);
+        assert(!row.control.history_valid);
         assert(pose[1].position == (Vec3){ 7, 0, 0 });
         assert(pose[1].scale == (Vec3){ 1, 1, 1 });
         assert(pose[1].rotation.v == (Vec4){ 0, 0, 0, 1 });
@@ -1407,7 +1404,7 @@ fn void test_animation_inertial_onset_immediate_request_captures_authored_pose_w
         targets[0].play = onset_play(generalized);
         owner.animator.inertialize(&owner.assets, { .duration = 0.5f, .actions = targets[..] })!!;
         assert(pose[1].position == (Vec3){ 7, 0, 0 });
-        assert(!row.control.history_valid && row.control.previous_dt == 0);
+        assert(!row.control.history_valid);
         assert(row.previous_pose[1].position == (Vec3){ 7, 0, 0 });
         assert(row.offset[1].translation == (double[<3>]){ -3, 0, 0 });
         assert(row.offset_velocity[1].translation == (double[<3>]){});
@@ -1419,7 +1416,7 @@ fn void test_animation_inertial_onset_immediate_request_captures_authored_pose_w
         assert(row.root.source_translation_rate == (double[<3>]){} && row.root.source_twist_rate == 0);
         anim::update(&owner.assets, &owner.scene, 0);
         assert(pose[1].position == (Vec3){ 7, 0, 0 });
-        assert(!row.control.history_valid && row.control.previous_dt == 0);
+        assert(!row.control.history_valid);
         onset_assert_zero_motion(&owner);
     }
 }
@@ -2862,7 +2859,7 @@ fn void test_animation_transition_prepare_full_animator_copies_inputs_and_boolea
         triangles[0].indices[0] = 99;
         targets[0].start_time = 0.9f;
         assert(prepared.spaces[0].points[0] == (Vec2){} && prepared.spaces[0].members[0] == 0);
-        assert(prepared.starts[0] == 0 && prepared.spaces[0].triangles[0].indices[0] == 2);
+        assert(prepared.spaces[0].triangles[0].indices[0] == 2);
         playback.mask_storage[..] = false;
         foreach (row : prepared.boolean_masks[:prepared.action_count]) assert(row == source_membership[..]);
         sz acquisitions = tracker.total_allocation_count();

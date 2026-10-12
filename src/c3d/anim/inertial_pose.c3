@@ -168,7 +168,6 @@ fn void record_inertial_pose_history(
         row.previous_morph[index] = weight;
     }
 
-    row.control.previous_dt = dt;
     row.control.history_valid = true;
 }
 

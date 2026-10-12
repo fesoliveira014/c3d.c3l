@@ -26,10 +26,8 @@ struct PreparedTransition @private {
     Action[MAX_ACTIONS] actions;
     bool[][MAX_ACTIONS] boolean_masks;
     bool[MAX_ACTIONS] has_boolean_mask;
-    float[MAX_ACTIONS] starts;
     PreparedTransitionSpace[MAX_BLEND_SPACES] spaces;
     uint action_count;
-    uint target_count;
     uint space_count;
     float duration;
     bool unsupported;
@@ -56,7 +54,6 @@ fn PreparedTransition? validate_animation_transition(
 
     PreparedTransition prepared = {
         .allocator = playback.allocator,
-        .target_count = (uint)desc.actions.len,
         .duration = desc.duration,
     };
 
@@ -198,7 +195,6 @@ fn PreparedTransition? prepare_animation_transition(
         action.weight = target.weight;
         action.loop = target.loop;
         action.playing = target.playing;
-        prepared.starts[index] = target.start_time;
     }
 
     return prepared;

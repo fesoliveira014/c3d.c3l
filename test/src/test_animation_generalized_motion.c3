@@ -167,7 +167,7 @@ fn void test_animation_motion_admission_captures_full_chain_and_all_top_level_br
     validate_admission_fixture(&fixture)!!;
     CapturedMotionChain captured = capture_admission_fixture(&fixture);
     defer anim::destroy_captured_motion_chain(&captured);
-    assert(captured.root_node == 2 && captured.clip_track_count == 6);
+    assert(captured.root_node == 2);
     assert(captured.nodes.len == 3 && captured.model_names.len == 7 && captured.model_parents.len == 7);
     assert(captured.nodes[0].model_node == 2 && captured.nodes[1].model_node == 1 && captured.nodes[2].model_node == 0);
     assert(captured.top_level_nodes == (uint[2]){ 0, 4 }[..]);
@@ -176,11 +176,6 @@ fn void test_animation_motion_admission_captures_full_chain_and_all_top_level_br
     assert(captured.nodes[1].translation_track == anim::NO_MOTION_TRACK);
     assert(captured.nodes[1].scale_track == anim::NO_MOTION_TRACK);
     assert(captured.nodes[2].scale_track == 2 && captured.nodes[2].rotation_track == anim::NO_MOTION_TRACK);
-    assert(captured.nodes[0].reference.position == (Vec3){ 2, 3, 5 });
-    assert(captured.nodes[0].reference.scale == (Vec3){ 1.25f, 1.25f, 1.25f });
-    assert(captured.nodes[0].reference_scale == 1.25 && captured.nodes[2].reference_scale == 1.25);
-    assert(math::abs((double)captured.nodes[0].reference.rotation.v.y - math::sin(math::PI * 0.125)) < 1e-6);
-    assert(math::abs((double)captured.nodes[0].reference.rotation.v.w - math::cos(math::PI * 0.125)) < 1e-6);
     foreach (index, node : fixture.nodes) {
         assert(captured.model_names[index] == node.name && captured.model_parents[index] == node.parent);
     }
@@ -192,7 +187,6 @@ fn void test_animation_motion_admission_captures_full_chain_and_all_top_level_br
     fixture.extraction.translation_axes[..] = false;
     assert(captured.model_names[0] == "base" && captured.model_parents[1] == 0);
     assert(captured.nodes[0].baseline.position == (Vec3){ 2, 1, -2 });
-    assert(captured.nodes[0].reference.position == (Vec3){ 2, 3, 5 });
     assert(captured.extraction.translation_axes[0] && captured.extraction.translation_axes[2]);
 }
 
@@ -984,7 +978,6 @@ fn void test_animation_generalized_playback_request_onset_after_consumption_pres
     assert(owner.local.position.length() > 0.1f);
     Mat4[5] source_worlds;
     playback_test_owner_world_snapshot(&scene, owner, source_worlds[..]);
-    double previous_dt = animator.inertial_storage.rows[0].control.previous_dt;
     AnimationTargetDesc[1] targets = { {
         .clip = target_id,
         .play = { .root_motion = RootMotion.EXTRACT, .extraction = fixture.extraction },
@@ -1001,7 +994,6 @@ fn void test_animation_generalized_playback_request_onset_after_consumption_pres
         assert(animator.root_motion.translation == (Vec3){});
         assert(animator.root_motion.rotation.v == (Vec4){ 0, 0, 0, 1 });
         playback_test_owner_world_unchanged(&scene, owner, source_worlds[..]);
-        assert(animator.inertial_storage.rows[0].control.previous_dt == previous_dt);
         assert(animator.inertial_storage.rows[0].control.elapsed == 0);
     }
     for (uint frame = 0; frame < 3; frame++) {

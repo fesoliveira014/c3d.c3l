@@ -15,7 +15,6 @@ struct InertialControl @private {
     bool history_valid;
     bool active;
     bool onset_pending;
-    double previous_dt;
     double duration;
     double elapsed;
 }

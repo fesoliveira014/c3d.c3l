@@ -219,7 +219,6 @@ fn Animator* add_animator(Scene* scene, Node* instance_root, AnimatorDesc desc =
             morphs: morphs,
             capacity: 1,
         )!!;
-        reset_inertial_row(animator.inertial_storage, 0);
     }
 
     return scene.add(instance_root, animator);

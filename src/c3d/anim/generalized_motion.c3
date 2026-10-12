@@ -113,7 +113,6 @@ fn GeneralizedMotion generalized_motion_delta(
     double end,
     bool loop,
     StepSampleSide begin_side = StepSampleSide.EXACT,
-    StepSampleSide end_side = StepSampleSide.EXACT,
 ) @private {
     if (begin == end) return {};
 
@@ -131,7 +130,7 @@ fn GeneralizedMotion generalized_motion_delta(
         reference: reference,
         time: end,
         loop: loop,
-        side: end_side,
+        side: StepSampleSide.EXACT,
     );
 
     return compose_generalized_motion(inverse_generalized_motion(first, reference.up), last, reference.up);
