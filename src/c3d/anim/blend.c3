@@ -6,7 +6,7 @@ import c3d::maths;
 import c3d::scene;
 import std::math;
 
-<* @param lead : "Update seconds ahead of every clock and fade; STEP tracks keep their current key." *>
+<* @param lead : "Signed update seconds ahead of every clock and fade; STEP tracks keep their current key." *>
 fn void blend_pose(
     PlaybackView* playback,
     AssetStore* assets,
@@ -49,7 +49,12 @@ fn void blend_pose(
             if (action_weight <= 0) continue;
 
             AnimationClip* clip = &assets.clip(action.clip).data;
-            ClipTime time = action_clip_time(action, clip, onset, lead);
+            ClipTime time = action_clip_time(
+                action: action,
+                clip: clip,
+                onset: onset,
+                lead: lead,
+            );
             foreach (track_index, &track : clip.tracks) {
                 uint node = clip.targets[track.target];
                 if (!destination.present[node] || !action.mask[node]) continue;
@@ -59,15 +64,24 @@ fn void blend_pose(
                 if (weight <= 0) continue;
 
                 float[] sample = samples[:track.stride()];
-                sample_pose_channel(
-                    action: action,
-                    track: track,
-                    track_index: (uint)track_index,
-                    node: node,
-                    time: time,
-                    consumed_chain: consumed_chain,
-                    sample: sample,
-                );
+                if (!onset && !consumed_chain) {
+                    sample_track(
+                        track: track,
+                        time: action.time,
+                        cursor: &action.cursors[track_index],
+                        out: sample,
+                    );
+                } else {
+                    sample_pose_channel(
+                        action: action,
+                        track: track,
+                        track_index: (uint)track_index,
+                        node: node,
+                        time: time,
+                        consumed_chain: consumed_chain,
+                        sample: sample,
+                    );
+                }
                 pin_root_sample(action, (uint)track_index, sample);
 
                 switch (track.path) {
@@ -124,7 +138,12 @@ fn void blend_pose(
             if (action_weight <= 0) continue;
 
             AnimationClip* clip = &assets.clip(action.clip).data;
-            ClipTime time = action_clip_time(action, clip, onset, lead);
+            ClipTime time = action_clip_time(
+                action: action,
+                clip: clip,
+                onset: onset,
+                lead: lead,
+            );
             usz reference_offset;
             foreach (track_index, &track : clip.tracks) {
                 uint stride = track.stride();
@@ -140,14 +159,17 @@ fn void blend_pose(
                 float[] sample = samples[:stride];
                 if (!onset && track.path == TargetPath.SCALE
                   && action.additive_scale == AdditiveScaleMode.MULTIPLICATIVE) {
-                    Vec3 scale = sample_multiplicative_scale(
-                        track: track,
-                        time: track_clip_time(track, time),
-                        cursor: &action.cursors[track_index],
-                    );
+                    Vec3 scale = sample_multiplicative_scale(track, action.time, &action.cursors[track_index]);
                     sample[0] = scale.x;
                     sample[1] = scale.y;
                     sample[2] = scale.z;
+                } else if (!onset && !consumed_chain) {
+                    sample_track(
+                        track: track,
+                        time: action.time,
+                        cursor: &action.cursors[track_index],
+                        out: sample,
+                    );
                 } else {
                     sample_pose_channel(
                         action: action,

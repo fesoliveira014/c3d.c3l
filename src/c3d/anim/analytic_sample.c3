@@ -76,7 +76,13 @@ fn void sample_track_analytic(
 
     switch (track.interpolation) {
         case STEP: unreachable();
-        case LINEAR: analytic_linear(track, key, fraction, value);
+        case LINEAR:
+            analytic_linear(
+                track: track,
+                key: key,
+                fraction: fraction,
+                value: value,
+            );
         case CUBIC_SPLINE:
             analytic_cubic(
                 track: track,
@@ -123,13 +129,18 @@ fn StepSampleSide action_sample_side(Action* action, bool onset) @private {
     return rate < 0 ? StepSampleSide.LEFT : StepSampleSide.RIGHT;
 }
 
-<* @param lead : "Update seconds ahead of the clock; zero samples the current time." *>
-fn ClipTime action_clip_time(Action* action, AnimationClip* clip, bool onset, float lead = 0) @private {
+<* @param lead : "Signed update seconds ahead of the clock; zero samples the current time." *>
+fn ClipTime action_clip_time(
+    Action* action,
+    AnimationClip* clip,
+    bool onset,
+    float lead = 0,
+) @private {
     ClipTime sampled = { .time = action.time, .ahead = action.time, .side = action_sample_side(action, onset) };
     double rate = action_clock_rate(action);
     if (lead == 0 || rate == 0) return sampled;
 
-    // Clamping rather than wrapping keeps a loop seam out of the difference.
+    // Clamping rather than wrapping keeps a loop seam out of the difference; the caller steps backward near one.
     sampled.ahead = (float)math::clamp((double)action.time + rate * lead, 0.0, (double)clip.duration);
     return sampled;
 }
@@ -151,11 +162,21 @@ fn void analytic_copy_key(Track* track, uint key, double[] value) @private {
     foreach (index, component : stored) value[index] = component;
 }
 
-fn void analytic_linear(Track* track, uint key, double fraction, double[] value) @private {
+fn void analytic_linear(
+    Track* track,
+    uint key,
+    double fraction,
+    double[] value,
+) @private {
     float[] first = analytic_key_values(track, key, CUBIC_SLOT_VALUE);
     float[] second = analytic_key_values(track, key + 1, CUBIC_SLOT_VALUE);
     if (track.path == TargetPath.ROTATION) {
-        analytic_linear_rotation(first, second, fraction, value);
+        analytic_linear_rotation(
+            first: first,
+            second: second,
+            fraction: fraction,
+            value: value,
+        );
         return;
     }
 
@@ -189,7 +210,12 @@ fn void analytic_cubic(
     }
 }
 
-fn void analytic_linear_rotation(float[] first, float[] second, double fraction, double[] value) @private {
+fn void analytic_linear_rotation(
+    float[] first,
+    float[] second,
+    double fraction,
+    double[] value,
+) @private {
     double[<4>] from = analytic_unit_rotation({ first[0], first[1], first[2], first[3] });
     double[<4>] to = analytic_unit_rotation({ second[0], second[1], second[2], second[3] });
     double dot = from.dot(to);
