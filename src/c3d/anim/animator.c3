@@ -75,6 +75,7 @@ struct Animator {
     bool[] mask_storage;
 
     Node* instance_root;
+    <* Model node whose motion is extracted; keep it fixed while actions live. *>
     uint root_node;
     RootMotionDelta root_motion;
 

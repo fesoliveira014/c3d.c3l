@@ -277,6 +277,7 @@ fn void? CrowdPlayer.fade_blend_space(
 <*
  Choose the template node used for root-motion extraction.
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT
+ @require !@crowd_player_has_actions(self)
 *>
 fn void? CrowdPlayer.set_root_node(&self, uint node) {
     CrowdPlaybackSlot* slot = crowd_slot(self.state, self.instance)!;
@@ -580,6 +581,13 @@ fn void destroy_crowd_playback(CrowdPlaybackState* state) {
 
 fn PlaybackView? crowd_player_view(CrowdPlayer* player) @private {
     return crowd_playback_view(player.state, crowd_slot(player.state, player.instance)!);
+}
+
+macro bool @crowd_player_has_actions(CrowdPlayer* player) @private {
+    if (player.instance.index >= player.state.count) return false;
+
+    CrowdPlaybackSlot* slot = &player.state.slots[player.instance.index];
+    return slot.generation == player.instance.generation && slot.action_count > 0;
 }
 
 fn CrowdPlaybackSlot*? crowd_slot(CrowdPlaybackState* state, CrowdInstanceId instance) @private {
