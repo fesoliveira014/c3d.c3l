@@ -47,6 +47,7 @@ struct InstanceAggregate {
     GeometryId geometry;          // identity bounds were computed for, with geometry_revision and bounds_revision
     uint       geometry_revision;
     uint       bounds_revision;   // batch revision of bounds; 0 = not computed, since a revision is never 0
+    uint       bounds_edited;     // instances range-marked since the bound was last computed tight
     uint       mirrored;
     uint       mirrored_revision; // batch revision of mirrored; 0 = not computed
 }
@@ -144,13 +145,23 @@ fn InstanceSpan InstanceRangeLog.span_since(&self, uint revision) {
  Writes aggregate when stale.
 *>
 fn uint InstancedMesh.mirrored_count(&self) {
-    if (self.aggregate.mirrored_revision == self.revision) return self.aggregate.mirrored;
+    InstanceAggregate* aggregate = &self.aggregate;
+    if (aggregate.mirrored_revision == self.revision) return aggregate.mirrored;
+
+    InstanceSpan span = self.ranges.span_since(aggregate.mirrored_revision);
+    bool still_none = span.end > span.first && !aggregate.mirrored
+      && !span_mirrored(self.transforms[span.first:span.end - span.first]);
+    if (still_none) {
+        aggregate.mirrored_revision = self.revision;
+        return 0;
+    }
+
     uint mirrored;
     foreach (transform : self.transforms[:self.count]) {
         if (transform_mirrored(transform)) mirrored++;
     }
-    self.aggregate.mirrored = mirrored;
-    self.aggregate.mirrored_revision = self.revision;
+    aggregate.mirrored = mirrored;
+    aggregate.mirrored_revision = self.revision;
     return mirrored;
 }
 
@@ -175,6 +186,13 @@ fn void InstancedMesh.validate_effects(&self) {}
 *>
 fn bool transform_mirrored(Transform transform) {
     return transform.scale.x * transform.scale.y * transform.scale.z < 0;
+}
+
+fn bool span_mirrored(Transform[] transforms) @local {
+    foreach (transform : transforms) {
+        if (transform_mirrored(transform)) return true;
+    }
+    return false;
 }
 
 <*
