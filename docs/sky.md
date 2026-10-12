@@ -115,6 +115,10 @@ intensity scales them as the environment intensity. They light the scene through
 environment path: image-based lighting, reflections that miss, probe volumes filled from the
 environment and the path tracer.
 
+The multiple-scattering table sums the orders after the second as a geometric series truncated at 32 terms.
+However thick and scattering the air, a texel is finite, non-negative and at most 33 times its second-order
+light; where the series ratio is within 1e-4 of 1 the sum takes its limit of 33 terms.
+
 The lighting regenerates, in place, when compared with the last generation the sun has turned by
 more than `render::SKY_REGENERATION_SUN_ANGLE` (0.5°), `observer_altitude` has moved by more than
 `render::SKY_REGENERATION_ALTITUDE` (500 m), the sun's colour changed or any air field changed (the
