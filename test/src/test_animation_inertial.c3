@@ -377,7 +377,13 @@ fn void test_animation_inertial_math_zero_completion_and_repeated_corrected_inte
     }
 }
 
-fn void check_inertial_region(void* block, usz bytes, void* pointer, usz region_bytes, usz alignment) @local {
+fn void check_inertial_region(
+    void* block,
+    usz bytes,
+    void* pointer,
+    usz region_bytes,
+    usz alignment,
+) @local {
     usz start = (usz)pointer;
     assert(start % alignment == 0 && start >= (usz)block);
     assert(start - (usz)block + region_bytes <= bytes);

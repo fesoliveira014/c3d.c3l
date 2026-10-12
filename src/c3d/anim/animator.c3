@@ -263,7 +263,12 @@ fn void update(AssetStore* assets, Scene* scene, float dt) {
                 }
             }
 
-            animator.root_motion = publish_root_motion(&playback, &report, reference, (double)dt);
+            animator.root_motion = publish_root_motion(
+                playback: &playback,
+                report: &report,
+                reference: reference,
+                dt: (double)dt,
+            );
 
             record_playback_inertial_history(
                 playback: &playback,

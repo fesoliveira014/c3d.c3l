@@ -111,7 +111,12 @@ fn void CrowdPlaybackState.update(&self, AssetStore* assets, float dt) {
             }
         }
 
-        slot.root_motion = publish_root_motion(&playback, &report, reference, (double)dt);
+        slot.root_motion = publish_root_motion(
+            playback: &playback,
+            report: &report,
+            reference: reference,
+            dt: (double)dt,
+        );
 
         record_playback_inertial_history(
             playback: &playback,
