@@ -56,7 +56,7 @@ fn void blend_pose(
                 onset: onset,
                 lead: lead,
             );
-            TrackSampler sampler = clip_sampler(clip);
+            bool compressed = clip.is_compressed();
             PoseCacheWalk walk = begin_pose_cache_walk(
                 cache: !onset && !consumed_chain ? scratch.cache : null,
                 clip: action.clip,
@@ -85,12 +85,21 @@ fn void blend_pose(
 
                 float[] sample = samples[:track.stride()];
                 if (!onset && !consumed_chain) {
-                    sampler(
-                        track: track,
-                        time: action.time,
-                        cursor: &action.cursors[track_index],
-                        out: sample,
-                    );
+                    if (compressed) {
+                        sample_track(
+                            track: track,
+                            time: action.time,
+                            cursor: &action.cursors[track_index],
+                            out: sample,
+                        );
+                    } else {
+                        sample_raw(
+                            track: track,
+                            time: action.time,
+                            cursor: &action.cursors[track_index],
+                            out: sample,
+                        );
+                    }
                 } else {
                     sample_pose_channel(
                         action: action,
@@ -165,7 +174,7 @@ fn void blend_pose(
                 lead: lead,
             );
             usz reference_offset;
-            TrackSampler sampler = clip_sampler(clip);
+            bool compressed = clip.is_compressed();
             foreach (track_index, &track : clip.tracks) {
                 uint stride = track.stride();
                 float[] reference = action.reference[reference_offset:stride];
@@ -179,12 +188,21 @@ fn void blend_pose(
 
                 float[] sample = samples[:stride];
                 if (!onset && !consumed_chain) {
-                    sampler(
-                        track: track,
-                        time: action.time,
-                        cursor: &action.cursors[track_index],
-                        out: sample,
-                    );
+                    if (compressed) {
+                        sample_track(
+                            track: track,
+                            time: action.time,
+                            cursor: &action.cursors[track_index],
+                            out: sample,
+                        );
+                    } else {
+                        sample_raw(
+                            track: track,
+                            time: action.time,
+                            cursor: &action.cursors[track_index],
+                            out: sample,
+                        );
+                    }
                 } else {
                     sample_pose_channel(
                         action: action,
@@ -312,19 +330,28 @@ fn void sample_pose(
     }
     foreach (index, base : destination.base_morph_weights) destination.morph_weights[index][..] = base[..];
 
-    TrackSampler sampler = clip_sampler(data);
+    bool compressed = data.is_compressed();
     foreach (track_index, &track : data.tracks) {
         uint node = data.targets[track.target];
         if (!destination.present[node]) continue;
         if (track.path == TargetPath.MORPH_WEIGHTS && !destination.mesh_present[node]) continue;
 
         float[] sample = scratch.sample[:track.stride()];
-        sampler(
-            track: track,
-            time: time,
-            cursor: &cursors[track_index],
-            out: sample,
-        );
+        if (compressed) {
+            sample_track(
+                track: track,
+                time: time,
+                cursor: &cursors[track_index],
+                out: sample,
+            );
+        } else {
+            sample_raw(
+                track: track,
+                time: time,
+                cursor: &cursors[track_index],
+                out: sample,
+            );
+        }
 
         switch (track.path) {
             case TRANSLATION:
