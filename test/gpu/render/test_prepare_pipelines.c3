@@ -278,18 +278,19 @@ fn void test_prepare_sheen_root_is_billed_and_pipeline_survives_abort() @test {
         .staged_bytes = BrdfLutRoot::size - 1,
         .pipelines = 1,
     })!!;
-    assert(blocked.reason == PrepareStopReason.STAGED_BYTES && blocked.required.staged_bytes == BrdfLutRoot::size);
-    assert(blocked.staged_bytes == 0 && blocked.pipelines == 1);
+    assert(blocked.reason == PrepareStopReason.STAGED_BYTES);
+    assert(blocked.required.staged_bytes == BrdfLutRoot::size && blocked.required.pipelines == 1);
+    assert(blocked.staged_bytes == 0 && blocked.pipelines == 0);
     assert(renderer.environment_state.sheen_lut.state == EnvironmentLutState.NONE);
-    gpu::PipelineHandle pipeline = renderer.environment_state.pipelines.sheen_lut;
-    assert(pipeline.is_valid());
     renderer.end_frame()!!;
     render::wait_frames(renderer)!!;
 
     renderer.begin_frame()!!;
     PrepareReport lut = renderer.advance_prepares_within({ .staged_bytes = BrdfLutRoot::size, .pipelines = 1 })!!;
-    assert(lut.staged_bytes == BrdfLutRoot::size && lut.pipelines == 0);
+    assert(lut.staged_bytes == BrdfLutRoot::size && lut.pipelines == 1);
     assert(renderer.environment_state.sheen_lut.state == EnvironmentLutState.RECORDED);
+    gpu::PipelineHandle pipeline = renderer.environment_state.pipelines.sheen_lut;
+    assert(pipeline.is_valid());
     render::abort_frame(renderer);
     assert(renderer.environment_state.sheen_lut.state == EnvironmentLutState.NONE);
     assert(renderer.environment_state.pipelines.sheen_lut == pipeline);
@@ -300,7 +301,7 @@ fn void test_prepare_sheen_root_is_billed_and_pipeline_survives_abort() @test {
     check_validation(renderer);
 }
 
-fn void test_prepare_sbt_writes_split_and_abort_restores_private_candidate() @test {
+fn void test_prepare_path_tracer_writes_its_table_without_staging() @test {
     Fixture fixture;
     create_fixture(
         allocator: mem,
@@ -318,43 +319,18 @@ fn void test_prepare_sbt_writes_split_and_abort_restores_private_candidate() @te
     render::configure_view(renderer, fixture.view, view)!!;
     ModelId model = pipeline_model(&fixture, fixture.plain)!!;
     PrepareId prepare = renderer.begin_prepare_model(model)!!;
-    uint calls = renderer.prepare_progress(prepare).units_total + 1;
-    bool partial;
-    while (calls-- && !partial) {
+    PrepareProgress progress = renderer.prepare_progress(prepare);
+    uint calls = progress.units_total + render::FRAMES_IN_FLIGHT + 1;
+    while (calls-- && progress.state != PrepareState.READY) {
         renderer.begin_frame()!!;
         PrepareReport report = renderer.advance_prepares_within({ .staged_bytes = 1, .pipelines = 1 })!!;
-        assert(report.staged_bytes <= 1 && report.pipelines <= 1);
-        partial = renderer.path_tracer.pipeline.is_valid() && !renderer.path_tracer.sbt.is_valid() && report.staged_bytes == 1;
+        assert(report.staged_bytes == 0 && report.pipelines <= 1);
         renderer.end_frame()!!;
         render::wait_frames(renderer)!!;
+        progress = renderer.prepare_progress(prepare);
     }
-    assert(partial);
-    gpu::PipelineHandle pipeline = renderer.path_tracer.pipeline;
-    PrepareRecord* record = renderer.prepares.get(prepare);
-    PrepareBudget setup;
-    uint expected_creations;
-    foreach (index, &unit : record.units) {
-        if (index <= record.next || unit.kind != PrepareUnitKind.PIPELINES) continue;
-        if (unit.pipeline.kind != PreparePipelineKind.CACHE && unit.pipeline.kind != PreparePipelineKind.COMPUTE) continue;
-        PrepareStepCost cost = render::prepare_pipeline_cost(renderer, unit, &setup)!!;
-        expected_creations += cost.pipelines;
-        assert(render::run_prepare_pipeline_step(renderer, unit, &setup.report)!!);
-    }
-    assert(expected_creations > 0 && setup.report.pipelines == expected_creations);
-    renderer.begin_frame()!!;
-    PrepareReport final = renderer.advance_prepares_within({ .pipelines = 1 })!!;
-    assert(final.staged_bytes > 0 && final.pipelines == 0 && renderer.path_tracer.sbt.is_valid());
-    gpu::GpuSpan prepared = gpu::get_allocation_span(&renderer.device, renderer.path_tracer.sbt)!!;
-    gpu::MappedGpuSpan prepared_bytes = gpu::mapped_gpu_span(&renderer.device, prepared)!!;
-    char[] expected = (char[])((String)prepared_bytes.bytes).copy(mem);
-    defer free(expected.ptr);
-    render::abort_frame(renderer);
-    assert(!renderer.path_tracer.sbt.is_valid() && renderer.path_tracer.pipeline == pipeline);
-    complete_pipeline_model(renderer, prepare, 1)!!;
-    assert(renderer.path_tracer.sbt.is_valid() && renderer.path_tracer.pipeline == pipeline);
-    gpu::GpuSpan retried = gpu::get_allocation_span(&renderer.device, renderer.path_tracer.sbt)!!;
-    gpu::MappedGpuSpan retried_bytes = gpu::mapped_gpu_span(&renderer.device, retried)!!;
-    assert(retried_bytes.bytes == expected);
+    assert(progress.state == PrepareState.READY);
+    assert(renderer.path_tracer.pipeline.is_valid() && renderer.path_tracer.sbt.is_valid());
     renderer.end_prepare(prepare)!!;
     check_validation(renderer);
 }

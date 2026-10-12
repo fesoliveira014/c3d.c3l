@@ -92,7 +92,7 @@ fn PrepareStepPlan? plan_prepare_step(
             return { .kind = PrepareResourceStep.SHADER, .cost = prepare_shader_cost(renderer, unit) };
         case PIPELINES:
             record.phase = PreparePhase.PIPELINES;
-            return { .kind = PrepareResourceStep.PIPELINE, .cost = prepare_pipeline_cost(renderer, unit, budget)! };
+            return { .kind = PrepareResourceStep.PIPELINE, .cost = prepare_pipeline_cost(renderer, unit)! };
         case FINISH:
             record.phase = PreparePhase.FINISH;
             return { .kind = PrepareResourceStep.FINISH };
@@ -595,17 +595,7 @@ fn bool? run_prepare_step(
 
         case SHADER: return run_prepare_shader_step(renderer, unit, report);
 
-        case PIPELINE:
-            usz staged_before = report.staged_bytes;
-            bool? done = run_prepare_pipeline_step(renderer, unit, report);
-            if (prepare_pipeline_has_gpu_data(unit) && report.staged_bytes != staged_before) {
-                unit.referenced_this_frame = true;
-                record.pending_gpu = true;
-                renderer.work_recorded = true;
-                refresh_prepare_progress(record);
-            }
-
-            return done;
+        case PIPELINE: return run_prepare_pipeline_step(renderer, unit, report);
 
         case FINISH: return true;
     }

@@ -213,8 +213,6 @@ struct PrepareInstall @private {
     GpuGeometry new_geometry;
     MaterialRes old_material;
     MaterialRes new_material;
-    PathTracer old_path_tracer;
-    PathTracer new_path_tracer;
     gpu::CompletionPoint last_submission;
     uint last_submission_slot;
 }

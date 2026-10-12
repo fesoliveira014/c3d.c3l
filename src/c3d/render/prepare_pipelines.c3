@@ -9,14 +9,12 @@ import gpu;
 import std::collections::list;
 import std::collections::map;
 import std::hash::fnv32a;
-import std::math;
 import std::time::clock;
 
 enum PreparePipelineKind @private {
     CACHE,
     COMPUTE,
-    RAY,
-    SBT,
+    PATH_TRACER,
     SHEEN_LUT,
     VALIDATE,
 }
@@ -55,7 +53,6 @@ enum PrepareComputeSlot @private {
     TAA,
     EXPOSURE_HISTOGRAM,
     EXPOSURE_ADAPT,
-    SHEEN_LUT,
 }
 
 struct PreparePipelineUnit @private {
@@ -64,13 +61,6 @@ struct PreparePipelineUnit @private {
     PrepareComputeSlot slot;
     ShaderVariant compute;
     PipelineKey key;
-    gpu::GpuAllocation candidate;
-    char[] handles;
-    usz step_bytes;
-    EnvironmentLutState sheen_checkpoint;
-    EnvironmentLut lut_candidate;
-    gpu::SamplerIndex lut_sampler;
-    bool lut_sampler_ready;
 }
 
 struct PreparePipelineIdentity @private {
@@ -161,7 +151,6 @@ fn gpu::PipelineHandle* prepare_compute_slot(Renderer* renderer, PrepareComputeS
         case TAA: return &renderer.post_pipelines.taa_resolve;
         case EXPOSURE_HISTOGRAM: return &renderer.post_pipelines.exposure_histogram;
         case EXPOSURE_ADAPT: return &renderer.post_pipelines.exposure_adapt;
-        case SHEEN_LUT: return &renderer.environment_state.pipelines.sheen_lut;
     }
 }
 
@@ -234,7 +223,7 @@ fn PipelineKey? prepare_cache_key(Renderer* renderer, PrepareUnit* unit) @privat
     return key;
 }
 
-fn PrepareStepCost? prepare_pipeline_cost(Renderer* renderer, PrepareUnit* unit, PrepareBudget* budget) @private {
+fn PrepareStepCost? prepare_pipeline_cost(Renderer* renderer, PrepareUnit* unit) @private {
     if (prepare_pipeline_dead(renderer, unit)) return {};
     switch (unit.pipeline.kind) {
         case VALIDATE:
@@ -252,20 +241,14 @@ fn PrepareStepCost? prepare_pipeline_cost(Renderer* renderer, PrepareUnit* unit,
             return { .pipelines = cached ? 0 : 1 };
         case COMPUTE:
             return { .pipelines = prepare_compute_slot(renderer, unit.pipeline.slot).is_valid() ? 0 : 1 };
-        case RAY:
+        case PATH_TRACER:
             return { .pipelines = renderer.path_tracer.pipeline.is_valid() ? 0 : 1 };
-        case SBT:
-            if (renderer.path_tracer.sbt.is_valid()) return {};
-            if (!unit.pipeline.handles.len || !unit.pipeline.candidate.is_valid()) return {};
-            usz available = prepare_byte_allowance(budget);
-            unit.pipeline.step_bytes = available ? math::min(unit.bytes - unit.staged.bytes, available) : (usz)1;
-            return { .staged_bytes = unit.pipeline.step_bytes };
         case SHEEN_LUT:
-            EnvironmentLutState state = renderer.environment_state.sheen_lut.state;
-            if (state == EnvironmentLutState.RECORDED || state == EnvironmentLutState.READY) return {};
-            if (state == EnvironmentLutState.NONE && (!unit.pipeline.lut_candidate.texture.is_valid()
-              || !unit.pipeline.lut_candidate.view.is_valid() || !unit.pipeline.lut_sampler_ready)) return {};
-            return { .staged_bytes = BrdfLutRoot::size };
+            if (prepare_sheen_recorded(renderer)) return {};
+            return {
+                .staged_bytes = BrdfLutRoot::size,
+                .pipelines = renderer.environment_state.pipelines.sheen_lut.is_valid() ? 0 : 1,
+            };
     }
 }
 
@@ -309,50 +292,15 @@ fn bool? run_prepare_pipeline_step(Renderer* renderer, PrepareUnit* unit, Prepar
             defer report.pipeline_ns += (ulong)started.to_now();
             *slot = gpu::create_compute_pipeline(&renderer.device, &description)!;
             return true;
-        case RAY:
+        case PATH_TRACER:
             report.pipeline_lookups++;
-            if (renderer.path_tracer.pipeline.is_valid()) {
-                report.pipeline_hits++;
-                return true;
-            }
-            acquire_path_tracer_pipeline(renderer, report)!;
+            if (renderer.path_tracer.pipeline.is_valid()) report.pipeline_hits++;
+            acquire_path_tracer(renderer, report)!;
             return true;
-        case SBT:
-            return run_prepare_sbt_step(renderer, unit, report);
         case SHEEN_LUT:
-            return run_prepare_sheen_step(renderer, unit, report);
+            run_prepare_sheen_step(renderer, unit, report)!;
+            return true;
     }
-}
-
-fn bool prepare_pipeline_has_gpu_data(PrepareUnit* unit) @private {
-    return unit.pipeline.kind == PreparePipelineKind.SBT || unit.pipeline.kind == PreparePipelineKind.SHEEN_LUT;
-}
-
-fn void checkpoint_prepare_pipeline_unit(Renderer* renderer, PrepareUnit* unit) @private {
-    if (unit.pipeline.kind == PreparePipelineKind.SHEEN_LUT) {
-        unit.pipeline.sheen_checkpoint = renderer.environment_state.sheen_lut.state;
-    }
-}
-
-fn void rollback_prepare_pipeline_unit(Renderer* renderer, PrepareUnit* unit) @private {
-    if (unit.pipeline.kind == PreparePipelineKind.SHEEN_LUT
-      && unit.pipeline.sheen_checkpoint != EnvironmentLutState.READY
-      && renderer.environment_state.sheen_lut.state == EnvironmentLutState.NONE) {
-        unit.staged.bytes = 0;
-        unit.done = false;
-    }
-}
-
-fn void free_prepare_pipeline_unit(Renderer* renderer, PrepareUnit* unit) @private {
-    if (unit.pipeline.candidate.is_valid()) retire_prepare_allocation(renderer, unit, unit.pipeline.candidate);
-    alloc::free(renderer.allocator, unit.pipeline.handles.ptr);
-    unit.pipeline.candidate = {};
-    unit.pipeline.handles = {};
-    TextureRes lut = { .texture = unit.pipeline.lut_candidate.texture, .view = unit.pipeline.lut_candidate.view };
-    if (lut.texture.is_valid() || lut.view.is_valid()) retire_prepare_texture(renderer, unit, &lut);
-    unit.pipeline.lut_candidate = {};
-    unit.pipeline.lut_sampler = {};
-    unit.pipeline.lut_sampler_ready = false;
 }
 
 fn void append_prepare_compute(
@@ -385,7 +333,6 @@ fn void append_prepare_cache(
 fn void append_prepare_material_pipelines(Renderer* renderer, MaterialId material, List{PrepareUnit}* listed) @private {
     if (!renderer.assets.materials.is_live(material)) return;
     if (!material_uses_sheen(&renderer.assets.material(material).data)) return;
-    append_prepare_compute(listed, PrepareComputeSlot.SHEEN_LUT, ShaderName.SHEEN_LUT);
     listed.push({ .kind = PrepareUnitKind.PIPELINES, .bytes = BrdfLutRoot::size,
         .pipeline = { .kind = PreparePipelineKind.SHEEN_LUT } });
 }
@@ -576,10 +523,7 @@ fn void append_prepare_view_pipelines(Renderer* renderer, SceneReads reads, List
             append_prepare_compute(listed, PrepareComputeSlot.SSGI_FILTER, SSGI_FILTER);
         }
         if (desc.shading == ShadingPath.PATH_TRACED) {
-            listed.push({ .kind = PrepareUnitKind.PIPELINES, .pipeline = { .kind = PreparePipelineKind.RAY } });
-            listed.push({ .kind = PrepareUnitKind.PIPELINES,
-                .bytes = (usz)renderer.caps.ray_tracing_pipelines.shader_group_handle_size * 3,
-                .pipeline = { .kind = PreparePipelineKind.SBT } });
+            listed.push({ .kind = PrepareUnitKind.PIPELINES, .pipeline = { .kind = PreparePipelineKind.PATH_TRACER } });
         }
         if (desc.post.bloom) {
             append_prepare_compute(listed, PrepareComputeSlot.BLOOM_DOWN, BLOOM_DOWNSAMPLE);
@@ -656,168 +600,32 @@ fn void deduplicate_prepare_pipeline_units(List{PrepareUnit}* listed) @private {
     *listed = unique;
 }
 
-fn bool? run_prepare_sbt_step(Renderer* renderer, PrepareUnit* unit, PrepareReport* report) @private {
-    if (renderer.path_tracer.sbt.is_valid()) {
-        free_prepare_pipeline_unit(renderer, unit);
-        return true;
-    }
-    PreparePipelineUnit* job = &unit.pipeline;
-    gpu::RayTracingPipelineCaps* caps = &renderer.caps.ray_tracing_pipelines;
-    SbtLayout layout = sbt_layout(
-        handle_size: caps.shader_group_handle_size,
-        handle_alignment: caps.shader_group_handle_alignment,
-        base_alignment: caps.shader_group_base_alignment,
-    );
-    gpu::RayTracingPipelineInfo info = gpu::get_ray_tracing_pipeline_info(
-        device: &renderer.device,
-        pipeline: renderer.path_tracer.pipeline,
-    )!;
-    usz handle_size = caps.shader_group_handle_size;
-    if (!job.handles.len) {
-        char[] handles = alloc::alloc_array(renderer.allocator, char, (sz)(info.total_group_count * handle_size));
-        defer catch alloc::free(renderer.allocator, handles.ptr);
-        gpu::get_ray_tracing_shader_group_handles(
-            device: &renderer.device,
-            pipeline: renderer.path_tracer.pipeline,
-            first_group: 0,
-            group_count: info.total_group_count,
-            out: handles,
-        )!;
-        job.handles = handles;
-        report.copied_bytes += handles.len;
-        return false;
-    }
-    if (!job.candidate.is_valid()) {
-        gpu::AllocationDesc desc = {
-            .size = layout.total_bytes,
-            .alignment = caps.shader_group_base_alignment,
-            .memory_class = gpu::MemoryClass.CPU_WRITE,
-            .access = { .graphics },
-            .debug_name = "path_tracer_sbt",
-        };
-        report.allocations++;
-        job.candidate = gpu::allocate_memory(&renderer.device, &desc)!;
-        return false;
-    }
-    gpu::GpuSpan span = gpu::get_allocation_span(&renderer.device, job.candidate)!;
-    gpu::MappedGpuSpan mapped = gpu::mapped_gpu_span(&renderer.device, span)!;
-    usz[3] groups = { info.ray_generation.first_group, info.miss.first_group, info.hit.first_group };
-    usz[3] offsets = { 0, layout.miss_offset, layout.hit_offset };
-    usz remaining = job.step_bytes;
-    while (remaining) {
-        usz group = unit.staged.bytes / handle_size;
-        usz offset = unit.staged.bytes % handle_size;
-        usz bytes = math::min(remaining, handle_size - offset);
-        mem::copy(
-            dst: mapped.bytes.ptr + offsets[group] + offset,
-            src: job.handles.ptr + groups[group] * handle_size + offset,
-            len: (sz)bytes,
-        );
-        unit.staged.bytes += bytes;
-        report.staged_bytes += bytes;
-        remaining -= bytes;
-    }
-    gpu::flush_mapped_span(&renderer.device, span)!;
-    if (unit.staged.bytes < unit.bytes) return false;
-    usz stride = layout.record_stride;
-    gpu::RayTracingShaderBindingTable regions = {
-        .ray_generation = { .span = span.checked_subspan(0, stride)!, .stride = stride },
-        .miss = { .span = span.checked_subspan(layout.miss_offset, stride)!, .stride = stride },
-        .hit = { .span = span.checked_subspan(layout.hit_offset, stride)!, .stride = stride },
-    };
-    install_prepare_sbt(
-        renderer: renderer,
-        unit: unit,
-        allocation: job.candidate,
-        regions: regions,
-    );
-    job.candidate = {};
-    alloc::free(renderer.allocator, job.handles.ptr);
-    job.handles = {};
-    return true;
+fn bool prepare_sheen_recorded(Renderer* renderer) @local {
+    EnvironmentLutState state = renderer.environment_state.sheen_lut.state;
+    return state == EnvironmentLutState.RECORDED || state == EnvironmentLutState.READY;
 }
 
-fn bool? run_prepare_sheen_step(Renderer* renderer, PrepareUnit* unit, PrepareReport* report) @private {
-    EnvironmentLut* published = &renderer.environment_state.sheen_lut;
-    PreparePipelineUnit* job = &unit.pipeline;
-    if (published.state == EnvironmentLutState.RECORDED || published.state == EnvironmentLutState.READY) {
-        free_prepare_pipeline_unit(renderer, unit);
-        return true;
+fn void? run_prepare_sheen_step(Renderer* renderer, PrepareUnit* unit, PrepareReport* report) @local {
+    if (prepare_sheen_recorded(renderer)) return;
+    gpu::PipelineHandle* pipeline = &renderer.environment_state.pipelines.sheen_lut;
+    if (!pipeline.is_valid()) {
+        std::time::Clock started = clock::now();
+        report.pipelines++;
+        defer report.pipeline_ns += (ulong)started.to_now();
+        acquire_environment_pipeline(renderer, pipeline, SHEEN_LUT)!;
     }
-    bool private_lut = published.state == EnvironmentLutState.NONE;
-    if (private_lut) {
-        if (!job.lut_candidate.texture.is_valid()) {
-            gpu::TextureDesc description = {
-                .width = shader::SHEEN_LUT_SIZE,
-                .height = shader::SHEEN_LUT_SIZE,
-                .mip_levels = 1,
-                .array_layers = 1,
-                .format = gpu::Format.RGBA16_FLOAT,
-                .usage = { .sampled, .storage },
-                .access = { .graphics },
-                .debug_name = "sheen_albedo",
-            };
-            report.objects++;
-            job.lut_candidate.texture = gpu::create_texture(&renderer.device, &description)!;
-            return false;
-        }
-        if (!job.lut_candidate.view.is_valid()) {
-            report.views++;
-            job.lut_candidate.view = gpu::create_texture_view(&renderer.device, job.lut_candidate.texture, null)!;
-            return false;
-        }
-        if (!job.lut_sampler_ready) {
-            gpu::SamplerDesc sampler = {
-                .min_filter = gpu::Filter.LINEAR,
-                .mag_filter = gpu::Filter.LINEAR,
-                .mip_filter = gpu::Filter.NEAREST,
-                .address_u = gpu::AddressMode.CLAMP_TO_EDGE,
-                .address_v = gpu::AddressMode.CLAMP_TO_EDGE,
-                .address_w = gpu::AddressMode.CLAMP_TO_EDGE,
-                .min_lod = 0,
-                .max_lod = 0,
-                .debug_name = "sheen_albedo",
-            };
-            job.lut_sampler = gpu::intern_sampler(&renderer.device, &sampler)!;
-            job.lut_sampler_ready = true;
-            return false;
-        }
-    } else if (job.lut_candidate.texture.is_valid()) {
-        free_prepare_pipeline_unit(renderer, unit);
+
+    bool fresh = renderer.environment_state.sheen_lut.state == EnvironmentLutState.NONE;
+    acquire_sheen_lut(renderer)!;
+    if (fresh) {
+        report.objects++;
+        report.views++;
     }
-    EnvironmentLut* lut = private_lut ? &job.lut_candidate : published;
-    gpu::TextureBarrier write = gpu::texture_transition(
-        texture: lut.texture,
-        before: {},
-        after: gpu::storage_at({ .compute }, { .write }),
-    )!;
-    gpu::cmd_texture_barrier(&renderer.commands, &write)!;
-    gpu::MappedGpuSpan root = take_prepare_staging(
-        renderer: renderer,
-        bytes: BrdfLutRoot::size,
-        alignment: STREAM_ALIGNMENT,
-        report: report,
-    )!;
-    *(BrdfLutRoot*)root.bytes.ptr = { .output_texture = lut.view.index, .size = shader::SHEEN_LUT_SIZE };
+
+    record_sheen_lut(renderer, &renderer.commands)!;
     report.staged_bytes += BrdfLutRoot::size;
     unit.staged.bytes = unit.bytes;
-    gpu::cmd_bind_pipeline(&renderer.commands, renderer.environment_state.pipelines.sheen_lut)!;
-    gpu::cmd_dispatch(&renderer.commands, root.address, {
-        shader::SHEEN_LUT_SIZE / ENVIRONMENT_IMAGE_GROUP_SIZE,
-        shader::SHEEN_LUT_SIZE / ENVIRONMENT_IMAGE_GROUP_SIZE,
-        1,
-    })!;
-    gpu::TextureBarrier ready = gpu::texture_transition(
-        texture: lut.texture,
-        before: write.after,
-        after: renderer.sampled_state,
-    )!;
-    gpu::cmd_texture_barrier(&renderer.commands, &ready)!;
-    lut.state = EnvironmentLutState.RECORDED;
-    if (private_lut) {
-        *published = *lut;
-        renderer.environment_state.sheen_sampler = job.lut_sampler;
-        job.lut_candidate = {};
-    }
-    return true;
+    unit.referenced_this_frame = true;
+    renderer.prepares.get(unit.owner).pending_gpu = true;
+    renderer.work_recorded = true;
 }

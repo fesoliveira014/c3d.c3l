@@ -35,7 +35,7 @@ fn bool prepare_unit_gpu_data(PrepareUnit* unit) @private {
         case TEXTURE:
         case GEOMETRY:
         case MATERIAL: return true;
-        case PIPELINES: return prepare_pipeline_has_gpu_data(unit);
+        case PIPELINES: return unit.pipeline.kind == PreparePipelineKind.SHEEN_LUT;
         case SAMPLER:
         case TOON_SAMPLER:
         case SHADER:
@@ -52,7 +52,6 @@ fn void checkpoint_prepare_unit(Renderer* renderer, PrepareRecord* record, Prepa
         .texture_state = unit.texture_candidate.state,
         .epoch = record.epoch, .frame = renderer.frame_index, .active = true,
     };
-    if (unit.kind == PrepareUnitKind.PIPELINES) checkpoint_prepare_pipeline_unit(renderer, unit);
 }
 
 fn void install_prepare_texture(Renderer* renderer, PrepareRecord* record, PrepareUnit* unit) @private {
@@ -92,28 +91,6 @@ fn void install_prepare_material(Renderer* renderer, PrepareRecord* record, Prep
     *mirror = unit.material_candidate;
     unit.material_candidate = {};
     unit.installed = true;
-}
-
-fn void install_prepare_sbt(
-    Renderer* renderer,
-    PrepareUnit* unit,
-    gpu::GpuAllocation allocation,
-    gpu::RayTracingShaderBindingTable regions,
-) @private {
-    PrepareRecord* record = renderer.prepares.get(unit.owner);
-    PathTracer candidate = renderer.path_tracer;
-    candidate.sbt = allocation;
-    candidate.regions = regions;
-    renderer.pending_prepare_installs.push({
-        .record = record.id, .unit = unit.index, .epoch = record.epoch, .kind = PrepareUnitKind.PIPELINES,
-        .old_path_tracer = renderer.path_tracer, .new_path_tracer = candidate,
-        .last_submission = unit.last_submission, .last_submission_slot = unit.last_submission_slot,
-    });
-    renderer.path_tracer = candidate;
-    unit.installed = true;
-    unit.referenced_this_frame = true;
-    record.pending_gpu = true;
-    renderer.work_recorded = true;
 }
 
 fn void retire_prepare_resource(Renderer* renderer, PrepareUnit* unit, Retired resource) @private {
@@ -191,7 +168,7 @@ fn void retire_prepare_candidate(Renderer* renderer, PrepareUnit* unit) @private
         case MATERIAL:
             retire_prepare_allocation(renderer, unit, unit.material_candidate.payload);
             unit.material_candidate = {};
-        case PIPELINES: free_prepare_pipeline_unit(renderer, unit);
+        case PIPELINES:
         case SHADER:
         case SAMPLER:
         case TOON_SAMPLER:
@@ -231,8 +208,7 @@ fn void commit_prepare_jobs(Renderer* renderer, Frame* slot) @private {
 
             case MATERIAL: retire_prepare_allocation(renderer, &retired_unit, install.old_material.payload);
 
-            case PIPELINES: retire_prepare_allocation(renderer, &retired_unit, install.old_path_tracer.sbt);
-
+            case PIPELINES:
             case SAMPLER:
             case TOON_SAMPLER:
             case SHADER:
@@ -300,7 +276,7 @@ fn void protect_prepare_restored(Renderer* renderer, PrepareInstall* install) @l
                     || retired.allocation == install.old_geometry.trace.allocation))
                     || (retired.kind == RetiredKind.ACCELERATION_STRUCTURE && retired.acceleration_structure == install.old_geometry.blas.handle);
             case MATERIAL: remove = retired.kind == RetiredKind.ALLOCATION && retired.allocation == install.old_material.payload;
-            case PIPELINES: remove = retired.kind == RetiredKind.ALLOCATION && retired.allocation == install.old_path_tracer.sbt;
+            case PIPELINES:
             case SAMPLER:
             case TOON_SAMPLER:
             case SHADER:
@@ -363,13 +339,6 @@ fn void rollback_prepare_jobs(Renderer* renderer) @private {
                     retire_prepare_allocation(renderer, &retired_unit, install.new_material.payload);
                 }
             case PIPELINES:
-                renderer.path_tracer.sbt = install.old_path_tracer.sbt;
-                renderer.path_tracer.regions = install.old_path_tracer.regions;
-                if (unit) {
-                    unit.pipeline.candidate = install.new_path_tracer.sbt;
-                } else {
-                    retire_prepare_allocation(renderer, &retired_unit, install.new_path_tracer.sbt);
-                }
             case SAMPLER:
             case TOON_SAMPLER:
             case SHADER:
@@ -433,7 +402,6 @@ fn void rollback_prepare_cursors(Renderer* renderer, PrepareRecord* record) @pri
         unit.staged = unit.checkpoint.staged;
         unit.done = unit.checkpoint.done;
         unit.texture_candidate.state = unit.checkpoint.texture_state;
-        if (unit.kind == PrepareUnitKind.PIPELINES) rollback_prepare_pipeline_unit(renderer, unit);
         unit.checkpoint.active = false;
         unit.referenced_this_frame = false;
     }
@@ -448,7 +416,7 @@ fn bool prepare_unit_has_candidate(PrepareUnit* unit) @private {
         case TEXTURE: return unit.texture_candidate.texture.is_valid();
         case GEOMETRY: return unit.geometry_candidate.allocation.is_valid();
         case MATERIAL: return unit.material_candidate.payload.is_valid();
-        case PIPELINES: return unit.pipeline.candidate.is_valid();
+        case PIPELINES:
         case SAMPLER:
         case TOON_SAMPLER:
         case SHADER:
