@@ -155,26 +155,6 @@ fn bool identity_matrix(Mat4 value) @local {
     return true;
 }
 
-fn void? validate_shared_skin(
-    AssetStore* assets,
-    ModelTemplate* template,
-    ModelSkin skin,
-    uint[] expected_nodes,
-    Mat4[] expected_bind,
-) @local {
-    Skeleton* skeleton = &assets.skeletons.try_get(skin.skeleton)!.data;
-    if (!skin.joint_nodes.len || skin.joint_nodes.len != skeleton.inverse_bind.len
-      || skin.joint_nodes.len != expected_nodes.len) return c3d::INVALID_ARGUMENT~;
-
-    foreach (index, node : skin.joint_nodes) {
-        if (node >= template.nodes.len || node != expected_nodes[index]) return c3d::INVALID_ARGUMENT~;
-    }
-
-    if (!mem::equals(skeleton.inverse_bind.ptr, expected_bind.ptr, (sz)(expected_bind.len * Mat4::size))) {
-        return c3d::INVALID_ARGUMENT~;
-    }
-}
-
 fn void? validate_source_shape(AssetStore* assets, AnimatedLodSource source) @local {
     ModelTemplate* template = &source.model.data;
     check_crowd_template(assets, template)!;
@@ -285,20 +265,7 @@ fn LodGroup? build_animated_lod(
                 if (geometry_is_skinned(selected) != skinned) return c3d::INVALID_ARGUMENT~;
 
                 ModelSkin* skin = skin_at(template, mesh.node);
-                if (skin) {
-                    Skeleton* skeleton = &assets.skeleton(skin.skeleton).data;
-                    if (part.skin.mesh_node != mesh.node) return c3d::INVALID_ARGUMENT~;
-                    validate_shared_skin(
-                        assets: assets,
-                        template: template,
-                        skin: part.skin,
-                        expected_nodes: skin.joint_nodes,
-                        expected_bind: skeleton.inverse_bind,
-                    )!;
-                    if (selected.skin_bounds.joints.len > skin.joint_nodes.len) return c3d::INVALID_ARGUMENT~;
-                } else if (part.skin.skeleton.generation || part.skin.joint_nodes.len) {
-                    return c3d::INVALID_ARGUMENT~;
-                }
+                if (skin && selected.skin_bounds.joints.len > skin.joint_nodes.len) return c3d::INVALID_ARGUMENT~;
 
                 if ((level_index == 0 || skinned) && !identity_matrix(part.draw.local)) {
                     return c3d::INVALID_ARGUMENT~;
@@ -333,24 +300,15 @@ fn LodGroup? build_animated_lod(
                     .mesh_index = part.mesh_index,
                     .template_node = mesh.node,
                     .skinned = skinned,
-                    .skeleton = part.skin.skeleton,
-                    .source_skeleton = skin ? skin.skeleton : (SkeletonId){},
-                    .source_skeleton_revision = skin ? assets.skeleton(skin.skeleton).header.revision : 0,
                     .geometry_revision = selected.header.revision,
-                    .skeleton_revision = skin ? assets.skeleton(part.skin.skeleton).header.revision : 0,
                     .weight_offset = first_weight,
                     .weight_count = (uint)part.default_morph_weights.len,
                 };
             }
         }
 
-        uint[] joints;
-        Mat4[] inverse_bind;
-
-        if (template.skins.len) {
-            joints = template.skins[0].joint_nodes;
-            inverse_bind = assets.skeleton(template.skins[0].skeleton).data.inverse_bind;
-        }
+        // Crowd template validation gives every skin the first skin's joints and inverse binds.
+        ModelSkin skin = template.skins.len ? template.skins[0] : (ModelSkin){};
 
         AnimatedLodBinding binding = {
             .source_owner = source.owner.id,
@@ -360,8 +318,9 @@ fn LodGroup? build_animated_lod(
             .weight_indices = indices,
             .channel_offsets = offsets,
             .defaults = defaults,
-            .joint_nodes = joints,
-            .inverse_bind = inverse_bind,
+            .joint_nodes = skin.joint_nodes,
+            .skeleton = skin.skeleton,
+            .skeleton_revision = skin.skeleton.generation ? assets.skeleton(skin.skeleton).header.revision : 0,
         };
 
         LodGroup group = scene::create_animated_lod_group(

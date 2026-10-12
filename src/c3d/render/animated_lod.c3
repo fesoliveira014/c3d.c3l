@@ -194,6 +194,7 @@ fn MorphWeightsGpu animated_lod_morph(AssetStore* assets, MeshCandidate* candida
 
 fn void write_animated_lod_palette(
     Mat4f[] palette,
+    AssetStore* assets,
     MeshCandidate* candidate,
     Vec3 origin = {},
 ) @private {
@@ -203,12 +204,13 @@ fn void write_animated_lod_palette(
     }
 
     AnimatedLodBinding* binding = candidate.lod.state.animated;
+    Mat4[] inverse_bind = assets.skeleton(binding.skeleton).data.inverse_bind;
     Mat4 inverse_owner = maths::inverse_affine(maths::rebase(candidate.node.world, origin));
 
     foreach (index, joint : binding.joint_nodes) {
         Node* joint_node = candidate.model_instance.present_node(joint);
         palette[index] = bitcast(
-            inverse_owner.mul(maths::rebase(joint_node.world, origin)).mul(binding.inverse_bind[index]),
+            inverse_owner.mul(maths::rebase(joint_node.world, origin)).mul(inverse_bind[index]),
             Mat4f,
         );
     }
@@ -227,6 +229,7 @@ fn gpu::GpuAddress? resolve_animated_lod_palette(Renderer* renderer, MeshCandida
 
     write_animated_lod_palette(
         palette: ((Mat4f*)span.bytes.ptr)[:matrices],
+        assets: renderer.assets,
         candidate: candidate,
         origin: renderer.frame_origin,
     );

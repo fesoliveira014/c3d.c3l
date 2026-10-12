@@ -140,17 +140,11 @@ fn void? attach_showcase_lod(
             };
 
             foreach (uint mesh_index, mesh : template.meshes) {
-                ModelSkin skin;
-                foreach (candidate : template.skins) {
-                    if (candidate.mesh_node == mesh.node) skin = candidate;
-                }
-
                 GeometryId geometry_id = level == 0
                   ? mesh.geometry : triangle_subset(assets, mesh.geometry, 1 << level)!;
                 parts[level * mesh_count + mesh_index] = {
                     .draw = { .geometry = geometry_id, .material = mesh.material, .local = matrix::IDENTITY4 },
                     .mesh_index = mesh_index,
-                    .skin = skin,
                     .default_morph_weights = mesh.default_morph_weights,
                 };
                 showcase.lod_triangles[level] += assets.geometry(geometry_id).index_count / TRIANGLE_CORNERS;

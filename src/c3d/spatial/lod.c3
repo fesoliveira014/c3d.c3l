@@ -22,36 +22,30 @@ fn bool lod_group_is_live(
     Node* node = null,
 ) {
     LodGroupState* state = group.state;
+    AnimatedLodBinding* binding = state.animated;
 
-    if (state.animated) {
+    if (binding) {
         if (scene && node && !model::animated_lod_source_is_live(
             assets: assets,
             scene: scene,
             owner: node,
             state: state,
         )) return false;
-        if (!assets.models.is_live(state.animated.source_model)) return false;
-        if (assets.model(state.animated.source_model).header.revision != state.animated.model_revision) return false;
+        if (!assets.models.is_live(binding.source_model)) return false;
+        if (assets.model(binding.source_model).header.revision != binding.model_revision) return false;
+        if (binding.skeleton.generation && (!assets.skeletons.is_live(binding.skeleton)
+          || assets.skeleton(binding.skeleton).header.revision != binding.skeleton_revision)) return false;
     }
 
     foreach (index, part : state.desc.parts) {
         if (!assets.geometries.is_live(part.geometry) || !assets.materials.is_live(part.material)) return false;
 
         GeometryAsset* geometry = assets.geometry(part.geometry);
-        if (!state.animated && (geometry.target_count || geometry.skin_bounds.joints.len || geometry.data.joints.len)) {
+        if (!binding && (geometry.target_count || geometry.skin_bounds.joints.len || geometry.data.joints.len)) {
             return false;
         }
 
-        if (state.animated) {
-            AnimatedLodPartBinding binding = state.animated.parts[index];
-            if (binding.geometry_revision != geometry.header.revision) return false;
-            if ((binding.skeleton.generation && !assets.skeletons.is_live(binding.skeleton))
-              || (binding.source_skeleton.generation && !assets.skeletons.is_live(binding.source_skeleton))) return false;
-            if (binding.skeleton.generation
-              && binding.skeleton_revision != assets.skeleton(binding.skeleton).header.revision) return false;
-            if (binding.source_skeleton.generation
-              && binding.source_skeleton_revision != assets.skeleton(binding.source_skeleton).header.revision) return false;
-        }
+        if (binding && binding.parts[index].geometry_revision != geometry.header.revision) return false;
 
         if (!@ok(scene::validate_lod_material(
             assets: assets,
@@ -218,7 +212,7 @@ fn Aabb animated_lod_part_bounds(
             bounds = skinned_world_bounds(
                 bounds: &record.skin_bounds,
                 binding: skin,
-                inverse_bind: state.animated.inverse_bind,
+                inverse_bind: assets.skeleton(state.animated.skeleton).data.inverse_bind,
                 selection: &selection,
                 rest: maths::aabb_transform(record.data.bounds, world),
                 origin: origin,

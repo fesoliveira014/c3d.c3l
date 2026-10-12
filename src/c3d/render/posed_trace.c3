@@ -429,6 +429,7 @@ fn char[] pose_inputs(Renderer* renderer, TracePoseSource* source, TraceInstance
                 } else {
                     write_animated_lod_palette(
                         palette: ((Mat4f*)inputs.ptr)[:joints],
+                        assets: renderer.assets,
                         candidate: &candidate,
                         origin: renderer.frame_origin,
                     );

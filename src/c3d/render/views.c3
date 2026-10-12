@@ -256,6 +256,7 @@ fn void ViewHistory.commit(
         if (candidate.animated_lod) {
             commit_animated_lod_pose(
                 allocator: allocator,
+                assets: assets,
                 owner: &self.poses[index],
                 candidate: candidate,
                 serial: self.serial,
@@ -367,6 +368,7 @@ macro void reserve_pose_storage(Allocator allocator, storage, usz len) @local {
 
 fn void commit_animated_lod_pose(
     Allocator allocator,
+    AssetStore* assets,
     PoseRecord* owner,
     MeshCandidate* candidate,
     ulong serial,
@@ -376,7 +378,13 @@ fn void commit_animated_lod_pose(
 
     AnimatedLodPose* history = owner.animated_lod;
     if (history.seen != serial) {
-        capture_animated_lod_pose(allocator, owner, candidate, origin);
+        capture_animated_lod_pose(
+            allocator: allocator,
+            assets: assets,
+            owner: owner,
+            candidate: candidate,
+            origin: origin,
+        );
         history.seen = serial;
         history.levels = 0;
     }
@@ -387,6 +395,7 @@ fn void commit_animated_lod_pose(
 // Captures every logical mesh, so a representation drawn next frame finds its previous pose.
 fn void capture_animated_lod_pose(
     Allocator allocator,
+    AssetStore* assets,
     PoseRecord* owner,
     MeshCandidate* candidate,
     Vec3 origin,
@@ -409,7 +418,14 @@ fn void capture_animated_lod_pose(
     reserve_pose_storage(allocator, &history.locals, capacity * animated_lod_rigid_index(binding, meshes));
     reserve_pose_storage(allocator, &history.weights, capacity * width);
 
-    if (joints) write_animated_lod_palette(owner.palette[:count * joints], candidate, origin);
+    if (joints) {
+        write_animated_lod_palette(
+            palette: owner.palette[:count * joints],
+            assets: assets,
+            candidate: candidate,
+            origin: origin,
+        );
+    }
 
     uint rigid;
     foreach (uint mesh, part : binding.parts[:meshes]) {

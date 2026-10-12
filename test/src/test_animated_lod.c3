@@ -224,7 +224,7 @@ fn void test_animated_lod_copies_logical_parts_and_preserves_ordinary_pose() @te
         assert(state.desc.levels.len == 2 && state.desc.parts.len == 10);
         assert(state.animated.parts[2].mesh_index == 2 && state.animated.parts[2].template_node == 5);
         assert(state.animated.parts[0].skinned && !state.animated.parts[1].skinned);
-        assert(state.animated.joint_nodes.len == 2 && state.animated.inverse_bind.len == 2);
+        assert(state.animated.joint_nodes.len == 2 && c3d::same_id(state.animated.skeleton, fixture.common_skin));
         assert(state.animated.defaults[0] == 0.25f && state.animated.defaults[1] == 0.75f);
         assert(!state.effects.trace);
         ulong identity = state.identity;
@@ -247,9 +247,6 @@ fn void test_animated_lod_attach_rejects_incompatible_parts() @test {
         defer asset::destroy_asset_store(&assets);
         PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
         AnimatedLodChannelFixture channels = add_animated_lod_channel_fixture(&assets, &fixture);
-        ModelSkin compatible = assets.model(fixture.compatible_alias).data.skins[1];
-        ModelSkin reordered = assets.model(fixture.reordered_joints).data.skins[1];
-        ModelSkin changed_bind = assets.model(fixture.different_bind).data.skins[1];
         float[1] wrong_default = { 0.625f };
         for (uint kind = 0; kind < 2; kind++) {
             Scene scene = scene::create_scene(mem, { .max_nodes = 64 });
@@ -261,23 +258,19 @@ fn void test_animated_lod_attach_rejects_incompatible_parts() @test {
                 crowd: kind == 1,
             );
             AnimatedLodDesc desc = animated_lod_channel_desc(&assets, &fixture, channels.selected);
-            desc.parts[9].skin = compatible;
             Node* first_child = owner.first_child;
             uint free_nodes = scene.world.entities.free_count;
-            for (uint mutation = 0; mutation < 7; mutation++) {
+            for (uint mutation = 0; mutation < 4; mutation++) {
                 AnimatedLodDesc changed = { .levels = desc.levels, .parts = alloc::clone_slice(tmem, desc.parts) };
                 switch (mutation) {
                     case 0: changed.parts[7].draw.geometry = channels.foreign;
                     case 1: changed.parts[7].default_morph_weights = wrong_default[..];
-                    case 2: changed.parts[9].skin.joint_nodes = desc.parts[9].skin.joint_nodes[:1];
-                    case 3: changed.parts[9].skin = reordered;
-                    case 4: changed.parts[9].skin = changed_bind;
-                    case 5: changed.parts[9].draw.geometry = { .index = uint::max, .generation = 1 };
-                    case 6:
+                    case 2: changed.parts[9].draw.geometry = { .index = uint::max, .generation = 1 };
+                    case 3:
                         changed.parts[0] = desc.parts[4];
                         changed.parts[4] = desc.parts[0];
                 }
-                fault expected = mutation == 5 ? c3d::INVALID_ID : c3d::INVALID_ARGUMENT;
+                fault expected = mutation == 2 ? c3d::INVALID_ID : c3d::INVALID_ARGUMENT;
                 assert(@catch(model::attach_animated_lod(
                     assets: &assets,
                     scene: &scene,

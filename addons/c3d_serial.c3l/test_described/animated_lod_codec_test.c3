@@ -28,17 +28,26 @@ fn AnimatedLodDesc codec_animated_lod_desc(AssetStore* assets, ModelId model_id)
     AnimatedLodPart[] parts = alloc::new_array(tmem, AnimatedLodPart, (sz)count * 2);
     for (uint level = 0; level < 2; level++) {
         foreach (uint index, mesh : template.meshes) {
-            ModelSkin skin;
-            foreach (candidate : template.skins) if (candidate.mesh_node == mesh.node) skin = candidate;
             parts[level * count + index] = {
                 .draw = { .geometry = mesh.geometry, .material = mesh.material, .local = matrix::IDENTITY4 },
                 .mesh_index = index,
-                .skin = skin,
                 .default_morph_weights = mesh.default_morph_weights,
             };
         }
     }
     return { .levels = levels, .parts = parts };
+}
+
+fn AnimatedLodDescAuthoring codec_animated_lod_authoring(AnimatedLodDesc desc) @local {
+    AnimatedLodPartAuthoring[] parts = alloc::new_array(tmem, AnimatedLodPartAuthoring, desc.parts.len);
+    foreach (index, part : desc.parts) {
+        parts[index] = {
+            .draw = part.draw,
+            .mesh_index = part.mesh_index,
+            .default_morph_weights = part.default_morph_weights,
+        };
+    }
+    return { .levels = desc.levels, .parts = parts };
 }
 
 fn void assert_codec_animated_lod_owned(
@@ -51,11 +60,12 @@ fn void assert_codec_animated_lod_owned(
     assert(restored.identity != source.identity && restored.descriptor_revision == 1);
     assert(restored.desc.levels.len == source.desc.levels.len && restored.desc.parts.len == source.desc.parts.len);
     assert(restored.animated.joint_nodes == source.animated.joint_nodes);
+    assert(c3d::same_id(restored.animated.skeleton, source.animated.skeleton));
     assert(restored.animated.defaults == source.animated.defaults);
     foreach (index, part : restored.animated.parts) {
         AnimatedLodPartBinding expected = source.animated.parts[index];
         assert(part.mesh_index == expected.mesh_index && part.template_node == expected.template_node);
-        assert(part.skinned == expected.skinned && c3d::same_id(part.skeleton, expected.skeleton));
+        assert(part.skinned == expected.skinned);
         assert(part.weight_count == expected.weight_count && part.weight_offset == expected.weight_offset);
         assert(c3d::same_id(restored.desc.parts[index].geometry, source.desc.parts[index].geometry));
         assert(c3d::same_id(restored.desc.parts[index].material, source.desc.parts[index].material));
@@ -136,43 +146,6 @@ fn void test_animated_lod_codec_ordinary_rebuilds_binding_and_restarts_animation
             )!!);
             fixture.destination.remove(restored);
         }
-    };
-}
-
-fn void test_animated_lod_codec_round_trips_skin_of_rigid_geometry() @test {
-    @pool() {
-        Fixture fixture;
-        create_fixture(&fixture, 32);
-        defer destroy_fixture(&fixture);
-        serial::register_core_codecs()!!;
-        ModelId model_id = gltf::load_model(&fixture.assets, skin_fixture_path())!!;
-        ModelMesh* mesh = &fixture.assets.model(model_id).data.meshes[0];
-        Geometry rigid = geometry::box(
-            allocator: tmem,
-            width: 1,
-            height: 1,
-            depth: 1,
-        );
-        mesh.geometry = fixture.assets.add_geometry(&rigid, "rigid_skin_mesh")!!;
-        alloc::free(fixture.assets.allocator, mesh.default_morph_weights.ptr);
-        mesh.default_morph_weights = {};
-        Node* source = model::instantiate(&fixture.assets, &fixture.source, model_id)!!;
-        model::attach_animated_lod(
-            assets: &fixture.assets,
-            scene: &fixture.source,
-            owner: source,
-            desc: codec_animated_lod_desc(&fixture.assets, model_id),
-        )!!;
-        LodGroupState* original = fixture.source.get(source, LodGroup).state;
-        assert(!original.animated.parts[0].skinned && original.animated.parts[0].skeleton.generation);
-        char[] bytes = serial::write_subtree(
-            allocator: tmem,
-            scene: &fixture.source,
-            assets: &fixture.assets,
-            root: source,
-        )!!;
-        Node* restored = serial::read_subtree(&fixture.destination, &fixture.assets, bytes)!!;
-        assert_codec_animated_lod_owned(original, fixture.destination.get(restored, LodGroup).state, restored);
     };
 }
 
@@ -283,7 +256,7 @@ fn void test_animated_lod_codec_attachment_fault_keeps_pending_crowd_and_retries
         Transform* placements = crowd.placements.ptr;
         LodAuthoring source = {
             .animated = true,
-            .animated_desc = codec_animated_lod_desc(&fixture.assets, model_id),
+            .animated_desc = codec_animated_lod_authoring(codec_animated_lod_desc(&fixture.assets, model_id)),
             .effects = { .cast_shadow = true, .receive_shadow = true },
         };
         ReadContext context = { .scene = &fixture.destination, .assets = &fixture.assets, .node = owner };
@@ -375,12 +348,12 @@ fn void test_animated_lod_codec_layout_fingerprints() @test {
     describe::register_core_values()!!;
     describe::register_reflected(LodAuthoringV1)!!;
     describe::register_reflected(ModelSkin)!!;
-    describe::register_reflected(AnimatedLodPart)!!;
-    describe::register_reflected(AnimatedLodDesc)!!;
+    describe::register_reflected(AnimatedLodPartAuthoring)!!;
+    describe::register_reflected(AnimatedLodDescAuthoring)!!;
     describe::register_reflected(LodAuthoring)!!;
     assert(serial::description_layout(describe::get(LodAuthoringV1)!!)!! == 0xdb17924ea7b43e3f);
     assert(serial::description_layout(describe::get(ModelSkin)!!)!! == 0x03ef0a55ec3ccd1c);
-    assert(serial::description_layout(describe::get(AnimatedLodPart)!!)!! == 0x67066c59b87af8fe);
-    assert(serial::description_layout(describe::get(AnimatedLodDesc)!!)!! == 0xa65aa93a04287bbc);
+    assert(serial::description_layout(describe::get(AnimatedLodPartAuthoring)!!)!! == 0x67066c59b87af8fe);
+    assert(serial::description_layout(describe::get(AnimatedLodDescAuthoring)!!)!! == 0xa65aa93a04287bbc);
     assert(serial::description_layout(describe::get(LodAuthoring)!!)!! == 0x8ed85fe0b352d50f);
 }

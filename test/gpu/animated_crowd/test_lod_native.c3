@@ -119,8 +119,6 @@ fn AnimatedLodDesc lod_native_desc(
         for (uint index = 0; index < count; index++) {
             uint mesh_index = subject.order[level][index];
             ModelMesh mesh = template.meshes[mesh_index];
-            ModelSkin skin;
-            foreach (candidate : template.skins) if (candidate.mesh_node == mesh.node) skin = candidate;
             descriptor.parts[level * count + index] = {
                 .draw = {
                     .geometry = subject.geometries[mesh_index][level],
@@ -128,7 +126,6 @@ fn AnimatedLodDesc lod_native_desc(
                     .local = matrix::IDENTITY4,
                 },
                 .mesh_index = mesh_index,
-                .skin = skin,
                 .default_morph_weights = mesh.default_morph_weights,
             };
         }

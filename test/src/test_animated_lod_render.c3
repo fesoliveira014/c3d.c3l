@@ -100,9 +100,6 @@ fn void create_animated_history_fixture(
     }
     @pool() {
         AnimatedLodDesc desc = animated_crowd_fixtures::parts_lod_desc(&fixture.assets, fixture.source.mixed);
-        foreach (&part : desc.parts[ANIMATED_HISTORY_PARTS..]) {
-            if (part.skin.skeleton.generation) part.skin.skeleton = fixture.source.identical_skin;
-        }
         desc.parts[ANIMATED_HISTORY_PARTS + 1].draw.geometry = fixture.alternative;
         if (different_local) {
             desc.parts[ANIMATED_HISTORY_PARTS + 2].draw.local = matrix::IDENTITY4.translate({ 1, 0, 0 });

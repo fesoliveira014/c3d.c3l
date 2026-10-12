@@ -145,7 +145,7 @@ fn PartsFixture? add_parts_fixture(AssetStore* assets) {
 
 <*
  Build a two-level animated LOD descriptor that repeats every model mesh.
- Allocates the descriptor, copied joints and copied defaults in tmem.
+ Allocates the descriptor and copied defaults in tmem.
  @param [&in] assets : "Owns the model and its skins."
 *>
 fn AnimatedLodDesc parts_lod_desc(AssetStore* assets, ModelId model_id) {
@@ -157,15 +157,9 @@ fn AnimatedLodDesc parts_lod_desc(AssetStore* assets, ModelId model_id) {
     AnimatedLodPart[] parts = alloc::new_array(tmem, AnimatedLodPart, (sz)count * 2);
     for (uint level = 0; level < 2; level++) {
         foreach (uint index, mesh : template.meshes) {
-            ModelSkin skin;
-            foreach (candidate : template.skins) {
-                if (candidate.mesh_node == mesh.node) skin = candidate;
-            }
-            skin.joint_nodes = alloc::clone_slice(tmem, skin.joint_nodes);
             parts[level * count + index] = {
                 .draw = { .geometry = mesh.geometry, .material = mesh.material, .local = matrix::IDENTITY4 },
                 .mesh_index = index,
-                .skin = skin,
                 .default_morph_weights = alloc::clone_slice(tmem, mesh.default_morph_weights),
             };
         }

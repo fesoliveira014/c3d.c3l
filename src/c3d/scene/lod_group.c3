@@ -55,7 +55,6 @@ struct LodEffects {
 struct AnimatedLodPart {
     LodPart draw;
     uint mesh_index;
-    ModelSkin skin;
     float[] default_morph_weights;
 }
 
@@ -67,16 +66,12 @@ struct AnimatedLodDesc {
     Aabb local_bounds;
 }
 
-<* Admitted source mesh, skin and selected logical-weight correspondence. *>
+<* Admitted source mesh and selected logical-weight correspondence. *>
 struct AnimatedLodPartBinding {
     uint mesh_index;
     uint template_node;
     bool skinned;
-    SkeletonId skeleton;
-    SkeletonId source_skeleton;
-    uint source_skeleton_revision;
     uint geometry_revision;
-    uint skeleton_revision;
     uint weight_offset;
     uint weight_count;
 }
@@ -92,7 +87,8 @@ struct AnimatedLodBinding {
     uint[] channel_offsets;
     float[] defaults;
     uint[] joint_nodes;
-    Mat4[] inverse_bind;
+    SkeletonId skeleton; // template skin whose inverse binds are read live; zero without skins
+    uint skeleton_revision;
 }
 
 <* Scene-owned group data; only placement elements are directly writable. *>
@@ -593,7 +589,6 @@ fn AnimatedLodBinding* carve_animated_lod(
     uint[] offsets = carve_lod(cursor, uint, source.channel_offsets.len);
     float[] defaults = carve_lod(cursor, float, source.defaults.len);
     uint[] joints = carve_lod(cursor, uint, source.joint_nodes.len);
-    Mat4[] inverse_bind = carve_lod(cursor, Mat4, source.inverse_bind.len);
     if (!cursor.base) return null;
 
     parts[..] = source.parts[..];
@@ -601,7 +596,6 @@ fn AnimatedLodBinding* carve_animated_lod(
     offsets[..] = source.channel_offsets[..];
     defaults[..] = source.defaults[..];
     joints[..] = source.joint_nodes[..];
-    inverse_bind[..] = source.inverse_bind[..];
     bindings[0] = {
         .source_owner = source.source_owner,
         .source_model = source.source_model,
@@ -612,7 +606,8 @@ fn AnimatedLodBinding* carve_animated_lod(
         .channel_offsets = offsets,
         .defaults = defaults,
         .joint_nodes = joints,
-        .inverse_bind = inverse_bind,
+        .skeleton = source.skeleton,
+        .skeleton_revision = source.skeleton_revision,
     };
     return bindings.ptr;
 }
