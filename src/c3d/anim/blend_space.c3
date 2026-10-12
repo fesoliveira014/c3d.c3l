@@ -99,34 +99,22 @@ fn BlendSpace1D*? PlaybackView.add_blend_space(
 
     foreach (index, position : positions) {
         if (!math::is_finite(position) || (index && position <= positions[index - 1])) return c3d::INVALID_ARGUMENT~;
-        float duration = assets.clips.try_get(clips[index])!.data.duration;
-        if (!math::is_finite(duration) || duration <= 0) return c3d::INVALID_ARGUMENT~;
     }
 
-    bool unsupported;
-    foreach (clip : clips) {
-        AnimationClip* data = &assets.clip(clip).data;
-        if (catch excuse = validate_playback_addition(
-            playback: self,
-            assets: assets,
-            clip: data,
-            desc: desc,
-            destination: destination,
-            basis: motion_basis,
-        )) {
-            if (excuse != c3d::UNSUPPORTED) return excuse~;
-            unsupported = true;
-        }
-    }
+    Action[MAX_BLEND_SPACE_ACTIONS] prepared;
+    uint slot = prepare_group_members(
+        playback: self,
+        assets: assets,
+        clips: clips,
+        desc: desc,
+        destination: destination,
+        motion_basis: motion_basis,
+        prepared: prepared[:clips.len],
+    )!;
 
-    if (unsupported) return c3d::UNSUPPORTED~;
-
-    uint slot;
-    while (slot < MAX_BLEND_SPACES
-      && (self.blend_spaces[slot].count || self.blend_spaces_2d[slot].count)) slot++;
-    if (slot == MAX_BLEND_SPACES || self.actions.free_count < clips.len) return c3d::CAPACITY_EXCEEDED~;
-
-    BlendSpace1D created = {
+    BlendSpace1D* space = &self.blend_spaces[slot];
+    *space = {
+        .count = (uint)clips.len,
         .parameter = positions[0],
         .weight = desc.fade_in > 0 ? 0 : 1,
         .fade_target = 1,
@@ -134,55 +122,18 @@ fn BlendSpace1D*? PlaybackView.add_blend_space(
         .speed = 1,
         .playing = true,
     };
+    space.positions[:space.count] = positions[..];
 
-    Action[MAX_BLEND_SPACE_ACTIONS] prepared;
-    uint prepared_count;
-    defer catch {
-        foreach (&action : prepared[:prepared_count]) release_prepared_action(self.allocator, action);
-    }
+    install_group_members(
+        playback: self,
+        prepared: prepared[:space.count],
+        slot: slot,
+        desc: desc,
+        weight: space.weight,
+        members: space.actions[:space.count],
+    );
 
-    PlayDesc member_desc = desc;
-    member_desc.fade_in = 0;
-    foreach (clip : clips) {
-        prepared[prepared_count] = prepare_playback_action(
-            allocator: self.allocator,
-            assets: assets,
-            clip: clip,
-            desc: member_desc,
-            destination: destination,
-            motion_basis: motion_basis,
-            root_node: self.root_node,
-            precise_rotation: desc.extraction.generalized || generalized_playback_chain(self) != null,
-        )!;
-        prepared_count++;
-        prepare_action_motion_capture(
-            allocator: self.allocator,
-            assets: assets,
-            model: self.model,
-            action: &prepared[prepared_count - 1],
-            root_node: self.root_node,
-            motion_basis: motion_basis,
-        )!;
-    }
-
-    foreach (uint index, action : prepared[:prepared_count]) {
-        created.actions[index] = install_playback_action(self, action, desc.mask);
-        created.positions[index] = positions[index];
-        created.count++;
-    }
-
-    foreach (id : created.actions[:created.count]) {
-        Action* action = self.actions.get(id);
-        action.blend_space = slot + 1;
-        action.playing = false;
-        action.weight = 0;
-    }
-
-    self.blend_spaces[slot] = created;
-    self.actions.get(created.actions[0]).weight = created.weight;
-    if (desc.fade_in == 0) invalidate_inertial_history(self);
-
-    return &self.blend_spaces[slot];
+    return space;
 }
 
 <*
