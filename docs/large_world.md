@@ -104,8 +104,11 @@ against the lattice and therefore the sampled shadow edge.
 Sway compensates for the origin in its packed phase, including previous-frame
 sway. Distance fade compares relative anchors and cameras. Height fog converts
 its base height with the camera; atmosphere cache identity retains absolute
-physical altitude. Probe movement tracking remains absolute, so reference
-changes preserve atlas storage and partial sweep progress.
+physical altitude. A camera's altitude in the atmosphere is its packed y plus
+the origin's y, unbounded above: above the atmosphere's top its rays start at the
+shell's entry ([sky](sky.md#above-the-atmosphere)). Probe movement tracking
+remains absolute, so reference changes preserve atlas storage and partial sweep
+progress.
 
 Terrain, water, foliage and particle rendering use the same core contract.
 Their CPU simulation, authoring coordinates, seeds and local wave functions

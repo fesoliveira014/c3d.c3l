@@ -44,7 +44,7 @@ const float PAN_ELEVATION_DEGREES @local = 15;
 const float PAN_START_DEGREES @local = -20;
 const float PAN_DEGREES_PER_SECOND @local = 8; // 40 degrees across the default segment; shafts sweep through the view
 const float SUN_AZIMUTH_DEGREES @local = 30; // from the view axis toward +x: the sun ahead, its glow in view
-const float MIN_ELEVATION_DEGREES @local = -8;
+const float MIN_ELEVATION_DEGREES @local = -25; // the sun passes behind the planet's limb near -20 from orbit
 const float MAX_ELEVATION_DEGREES @local = 90;
 const Vec3 SUN_COLOR @local = { 1, 1, 1 }; // the atmosphere colours the sun; a white source keeps it neutral
 const float SUN_INTENSITY @local = 3;
@@ -64,6 +64,15 @@ const float CAMERA_FAR @local = 20_000; // the far objects at 800 m and the grou
 const float EYE_HEIGHT @local = 1.8f;
 const float VALLEY_HEIGHT @local = 300;
 const float VALLEY_PITCH_DEGREES @local = -30;
+const float HIGH_ALTITUDE @local = 50_000; // metres; above it the far plane spans the planet, the frame origin follows
+const float HIGH_ALTITUDE_FAR @local = 1_000_000;
+const float ORBIT_HEIGHT @local = 400_000;
+const float ORBIT_PITCH_DEGREES @local = -10; // the planet's limb lies 19.8 degrees below the horizontal at 400 km
+const float ORBIT_SUN_ELEVATION_DEGREES @local = 12; // clear of the limb: the disc is seen against space
+const float ASCENT_START_HEIGHT @local = 90_000;
+const float ASCENT_METRES_PER_SECOND @local = 4_000; // 20 km across the default segment: 90 km to 110 km
+const float ASCENT_PITCH_DEGREES @local = -8;
+const float ASCENT_SUN_ELEVATION_DEGREES @local = -9; // through the limb: the horizon lies 9.6 to 10.6 degrees down
 const float FLY_SPEED @local = 20;
 const float FAST_MULTIPLIER @local = 10;
 const float LOOK_RADIANS_PER_PIXEL @local = 0.003f;
@@ -132,7 +141,9 @@ const Vec2 STATS_PANEL_POSITION @local = { 472, 16 };
 const Vec2 STATS_PANEL_SIZE @local = { 420, 260 };
 
 const String[Air::len] AIR_NAMES @local = { "off", "on", "dense", "empty" };
-const String[Segment::len] SEGMENT_NAMES @local = { "noon", "twilight", "valley", "pan", "time-lapse" };
+const String[Segment::len] SEGMENT_NAMES @local = {
+    "noon", "twilight", "valley", "pan", "orbit", "ascent", "time-lapse",
+};
 const Pass[18] REPORTED_PASSES @local = {
     Pass.SKY_VIEW,
     Pass.AERIAL_PERSPECTIVE,
@@ -171,6 +182,8 @@ enum Segment @local {
     TWILIGHT,
     VALLEY,
     PAN,
+    ORBIT,
+    ASCENT,
     TIME_LAPSE,
 }
 
@@ -181,6 +194,7 @@ enum Preset @local {
     NAUTICAL,
     VALLEY,
     PAN,
+    ORBIT,
     TIME_LAPSE,
 }
 
@@ -666,10 +680,20 @@ fn void? apply_pose(
     );
     place_mirror_camera(demo, aspect)!;
     aim_sun(demo.sun, sun_to(pose.elevation_degrees, azimuth_degrees));
-    float exposure = exposure_table ? exposure_for(pose.elevation_degrees) : 1;
-    demo.scene.get(demo.camera_node, Camera).exposure = exposure;
-    demo.scene.get(demo.mirror.camera_node, Camera).exposure = exposure;
+    bool high = pose.camera_position.y > HIGH_ALTITUDE;
+    float exposure = exposure_table && !high ? exposure_for(pose.elevation_degrees) : 1;
+    float far = high ? HIGH_ALTITUDE_FAR : CAMERA_FAR;
+    Camera* camera = demo.scene.get(demo.camera_node, Camera);
+    Camera* mirror_camera = demo.scene.get(demo.mirror.camera_node, Camera);
+    camera.exposure = exposure;
+    camera.far = far;
+    mirror_camera.exposure = exposure;
+    mirror_camera.far = far;
     demo.scene.update_world();
+}
+
+fn Vec3 frame_reference(SkyPose pose) @local {
+    return pose.camera_position.y > HIGH_ALTITUDE ? pose.camera_position : (Vec3){};
 }
 
 fn void? render_views(Demo* demo, Renderer* renderer, ViewId main_view) @local {
@@ -698,6 +722,10 @@ fn SkyPose preset_pose(Preset preset) @local {
         case PAN:
             pose.yaw = PAN_START_DEGREES * DEGREE;
             pose.elevation_degrees = PAN_ELEVATION_DEGREES;
+        case ORBIT:
+            pose.camera_position.y = ORBIT_HEIGHT;
+            pose.pitch = ORBIT_PITCH_DEGREES * DEGREE;
+            pose.elevation_degrees = ORBIT_SUN_ELEVATION_DEGREES;
         case TIME_LAPSE: pose.elevation_degrees = TIME_LAPSE_START_DEGREES;
     }
     return pose;
@@ -800,6 +828,7 @@ fn Options? parse_options(String[] args) @local {
                     case "nautical": options.preset = Preset.NAUTICAL;
                     case "valley": options.preset = Preset.VALLEY;
                     case "pan": options.preset = Preset.PAN;
+                    case "orbit": options.preset = Preset.ORBIT;
                     case "time-lapse": options.preset = Preset.TIME_LAPSE;
                     default: return c3d::INVALID_ARGUMENT~;
                 }
@@ -898,6 +927,8 @@ fn void? sky_panel(
         if (imgui::button("Valley")) apply_preset(controls, fly_camera, Preset.VALLEY);
         imgui::same_line();
         if (imgui::button("Pan")) apply_preset(controls, fly_camera, Preset.PAN);
+        imgui::same_line();
+        if (imgui::button("Orbit")) apply_preset(controls, fly_camera, Preset.ORBIT);
         imgui::same_line();
         if (imgui::button("Time-lapse")) apply_preset(controls, fly_camera, Preset.TIME_LAPSE);
         if (demo.fog) {
@@ -1084,7 +1115,11 @@ fn void? run_interactive(Options options) @local {
             demo:         &demo,
             renderer:     &renderer,
             gui_renderer: &gui_renderer,
-            info:         { .time = window.clock.total, .delta = delta },
+            info:         {
+                .time               = window.clock.total,
+                .delta              = delta,
+                .reference_position = frame_reference(pose),
+            },
         )!;
         controls.regenerations += renderer.stats.sky_regenerations;
     }
@@ -1128,6 +1163,13 @@ fn SkyPose segment_pose(Segment segment, uint step) @local {
             SkyPose pose = preset_pose(Preset.PAN);
             pose.yaw += PAN_DEGREES_PER_SECOND * DEGREE * (float)step * TIME_STEP;
             return pose;
+        case ORBIT: return preset_pose(Preset.ORBIT);
+        case ASCENT:
+            return {
+                .camera_position   = { 0, ASCENT_START_HEIGHT + ASCENT_METRES_PER_SECOND * (float)step * TIME_STEP, 0 },
+                .pitch             = ASCENT_PITCH_DEGREES * DEGREE,
+                .elevation_degrees = ASCENT_SUN_ELEVATION_DEGREES,
+            };
         case TIME_LAPSE:
             SkyPose pose = preset_pose(Preset.TIME_LAPSE);
             pose.elevation_degrees += (float)step * time_lapse_step_degrees();
@@ -1140,8 +1182,9 @@ fn void? render_offscreen(
     Renderer* renderer,
     ViewId main_view,
     uint frame,
+    Vec3 reference_position,
 ) @local {
-    renderer.begin_frame({ .time = frame_time(frame), .delta = TIME_STEP })!;
+    renderer.begin_frame({ .time = frame_time(frame), .delta = TIME_STEP, .reference_position = reference_position })!;
     defer catch render::abort_frame(renderer);
     render_views(demo, renderer, main_view)!;
     return renderer.end_frame();
@@ -1203,10 +1246,11 @@ fn void? run_segments(
         }
         last_pose = pose;
         render_offscreen(
-            demo:      demo,
-            renderer:  renderer,
-            main_view: main_view,
-            frame:     frame,
+            demo:               demo,
+            renderer:           renderer,
+            main_view:          main_view,
+            frame:              frame,
+            reference_position: frame_reference(pose),
         )!;
         if (timed) {
             result.records[step].frame_ms = elapsed_ms(frame_started);
@@ -1335,6 +1379,7 @@ fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
     Options options = demo.options;
     io::printfn("sun_extract_us median=%.4f", result.sun_extract_us);
     bool steady_gate = true;
+    bool ascent_gate = true;
     bool time_lapse_gate = true;
     foreach (ordinal, name : SEGMENT_NAMES) {
         Segment segment = Segment::from_ordinal(ordinal);
@@ -1369,6 +1414,7 @@ fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
         );
         uint regenerations = regenerations_after_first(records);
         if (segment == Segment.NOON) steady_gate = regenerations == 0;
+        if (segment == Segment.ASCENT) ascent_gate = regenerations == 0;
         if (segment == Segment.TIME_LAPSE) {
             time_lapse_gate = print_time_lapse(
                 options:       options,
@@ -1379,7 +1425,8 @@ fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
         }
     }
     io::printfn("gate steady_sky %s", steady_gate ? "pass" : "fail");
-    return steady_gate && time_lapse_gate;
+    io::printfn("gate ascent_regenerations %s", ascent_gate ? "pass" : "fail");
+    return steady_gate && ascent_gate && time_lapse_gate;
 }
 
 fn String fog_quality_name(FogQuality quality) @local {
@@ -1481,7 +1528,7 @@ fn int main(String[] args) {
               "[--shadows atlas|traced] [--ssgi] [--path-traced] [--reflections on|off] [--volumetric-fog] "
               "[--fog-quality low|medium|high] [--local-lights N] [--lamp-range METRES] [--lamps-in-fog on|off] "
               "[--taa] [--auto-exposure] [--pre-exposure off|FACTOR] [--fog on|off] [--atmosphere on|off|dense|empty] "
-              "[--preset noon|twilight|dusk|nautical|valley|pan|time-lapse] [--width W] [--height H].");
+              "[--preset noon|twilight|dusk|nautical|valley|pan|orbit|time-lapse] [--width W] [--height H].");
         }
         return 1;
     }

@@ -25,6 +25,12 @@ struct SkyScattering {
     vec3 multi_scattering;
 };
 
+struct AtmosphereEntry {
+    bool enters;
+    float distance;
+    float cos_zenith;
+};
+
 AtmosphereMedium atmosphere_medium(SkyFogGpu sky, float altitude) {
     float rayleigh_density = exp(-altitude / sky.rayleigh_scattering_height.w);
     float mie_density = exp(-altitude / sky.mie.z);
@@ -71,6 +77,28 @@ float atmosphere_distance_to_top(SkyFogGpu sky, float altitude, float cos_zenith
     float discriminant = radius * radius * cos_zenith * cos_zenith
         + (height - altitude) * (sky.top_radius + radius);
     return -radius * cos_zenith + sqrt(max(discriminant, 0.0));
+}
+
+// Where a ray from an altitude first meets the atmosphere's top, with its cosine there; the identity at or below it.
+// Mirrored as atmosphere_entry in atmosphere.c3.
+AtmosphereEntry atmosphere_entry(SkyFogGpu sky, float altitude, float cos_zenith) {
+    AtmosphereEntry entry;
+    entry.enters = true;
+    entry.distance = 0.0;
+    entry.cos_zenith = cos_zenith;
+    float height = sky.top_radius - sky.planet_radius;
+    if (altitude <= height) return entry;
+    float radius = sky.planet_radius + altitude;
+    float discriminant = radius * radius * cos_zenith * cos_zenith
+        + (height - altitude) * (sky.top_radius + radius);
+    if (cos_zenith >= 0.0 || discriminant < 0.0) {
+        entry.enters = false;
+        return entry;
+    }
+    float root = sqrt(discriminant);
+    entry.distance = -radius * cos_zenith - root;
+    entry.cos_zenith = -root / sky.top_radius;
+    return entry;
 }
 
 // Altitude after travelling a distance from a start altitude along a direction of the cosine.
@@ -137,6 +165,7 @@ vec3 sky_multi_scattering(SkyFogGpu sky, float altitude, float cos_sun) {
 }
 
 // Luminance for unit sun illuminance along a ray from an altitude, the local up being +y.
+// Above the atmosphere the march starts where the ray enters it, and max_distance counts from the ray's origin.
 // multi_scattering_table: the second-order pass of the table, with isotropic phase and no table lookup.
 SkyScattering integrate_sky_scattering(
     SkyFogGpu sky,
@@ -153,13 +182,23 @@ SkyScattering integrate_sky_scattering(
     result.transmittance = vec3(1.0);
     result.multi_scattering = vec3(0.0);
 
-    float cos_zenith = direction.y;
-    bool ground = atmosphere_ray_meets_ground(sky, altitude, cos_zenith);
+    AtmosphereEntry entry = atmosphere_entry(sky, altitude, direction.y);
+    if (!entry.enters) return result;
+    float limit = max_distance;
+    float start_altitude = altitude;
+    if (entry.distance > 0.0) {
+        if (max_distance >= 0.0 && max_distance <= entry.distance) return result;
+        if (max_distance >= 0.0) limit = max_distance - entry.distance;
+        start_altitude = sky.top_radius - sky.planet_radius;
+    }
+
+    float cos_zenith = entry.cos_zenith;
+    bool ground = atmosphere_ray_meets_ground(sky, start_altitude, cos_zenith);
     float ray_length = ground
-        ? atmosphere_distance_to_ground(sky, altitude, cos_zenith)
-        : atmosphere_distance_to_top(sky, altitude, cos_zenith);
-    bool reaches_end = max_distance < 0.0 || max_distance >= ray_length;
-    if (!reaches_end) ray_length = max_distance;
+        ? atmosphere_distance_to_ground(sky, start_altitude, cos_zenith)
+        : atmosphere_distance_to_top(sky, start_altitude, cos_zenith);
+    bool reaches_end = limit < 0.0 || limit >= ray_length;
+    if (!reaches_end) ray_length = limit;
     ray_length = max(ray_length, 0.0);
 
     float cos_angle = dot(direction, sun_direction);
@@ -167,11 +206,11 @@ SkyScattering integrate_sky_scattering(
     float rayleigh = multi_scattering_table ? isotropic : rayleigh_phase(cos_angle);
     float mie = multi_scattering_table ? isotropic : mie_phase(sky.mie.w, cos_angle);
     float step = ray_length / float(steps);
-    vec3 start = vec3(0.0, sky.planet_radius + altitude, 0.0);
+    vec3 start = vec3(0.0, sky.planet_radius + altitude, 0.0) + direction * entry.distance;
     for (uint index = 0u; index < steps; index++) {
         float along = (float(index) + 0.5) * step;
         vec3 position = start + direction * along;
-        float sample_altitude = atmosphere_altitude_along(sky, altitude, cos_zenith, along);
+        float sample_altitude = atmosphere_altitude_along(sky, start_altitude, cos_zenith, along);
         vec3 up = normalize(position);
         float cos_sun = dot(up, sun_direction);
         AtmosphereMedium medium = atmosphere_medium(sky, sample_altitude);
@@ -262,19 +301,25 @@ vec3 sky_view_radiance(SkyFogGpu sky, vec3 direction, bool horizon_clamped) {
     return sample_texture_2d(sky.sky_view_lut, sky.lut_sampler, uv).rgb;
 }
 
-// The sun disc above the horizon, through the atmosphere, for unit illuminance.
+// The sun disc above the horizon, through the atmosphere, for unit illuminance; whole where the ray misses it.
 vec3 sky_sun_disc(SkyFogGpu sky, vec3 direction) {
     float cos_radius = sky.sun_direction_cos_radius.w;
     if (dot(direction, sky.sun_direction_cos_radius.xyz) < cos_radius) return vec3(0.0);
     float solid_angle = 2.0 * PI * (1.0 - cos_radius);
-    return sky_transmittance(sky, sky.camera_altitude, direction.y) / solid_angle;
+    AtmosphereEntry entry = atmosphere_entry(sky, sky.camera_altitude, direction.y);
+    if (!entry.enters) return vec3(1.0 / solid_angle);
+    float start_altitude = min(sky.camera_altitude, sky.top_radius - sky.planet_radius);
+    return sky_transmittance(sky, start_altitude, entry.cos_zenith) / solid_angle;
 }
 
 // Aerial perspective at a distance along a pixel's ray: in-scattering for unit illuminance and mean transmittance.
-// Slices are squared toward the camera; nearer than the first slice's centre the value fades linearly to zero.
-vec4 sky_aerial_perspective(SkyFogGpu sky, vec2 uv, float distance) {
+// Slices are squared toward the camera and counted from where the ray enters the atmosphere; nearer than the first
+// slice's centre the value fades linearly to zero, and a ray that misses the atmosphere holds none.
+vec4 sky_aerial_perspective(SkyFogGpu sky, vec2 uv, float cos_zenith, float distance) {
+    AtmosphereEntry entry = atmosphere_entry(sky, sky.camera_altitude, cos_zenith);
+    if (!entry.enters) return vec4(0.0, 0.0, 0.0, 1.0);
     float first = 0.5 / float(AERIAL_PERSPECTIVE_SIZE);
-    float w = sqrt(max(distance, 0.0) / sky.aerial_perspective_distance);
+    float w = sqrt(max(distance - entry.distance, 0.0) / sky.aerial_perspective_distance);
     float weight = 1.0;
     if (w < first) {
         weight = (w / first) * (w / first);

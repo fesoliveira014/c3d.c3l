@@ -132,10 +132,10 @@ FogTerms height_fog_to_infinity(FrameRoot frame, SkyFogGpu sky, vec3 origin, vec
 }
 
 // Aerial perspective over a pixel's ray up to a distance, for the sun's illuminance.
-FogTerms aerial_perspective_terms(SkyFogGpu sky, vec2 uv, float distance) {
+FogTerms aerial_perspective_terms(SkyFogGpu sky, vec2 uv, float cos_zenith, float distance) {
     FogTerms terms = fog_none();
     if ((sky.flags & SKY_FOG_ATMOSPHERE) == 0u) return terms;
-    vec4 table = sky_aerial_perspective(sky, uv, distance);
+    vec4 table = sky_aerial_perspective(sky, uv, cos_zenith, distance);
     terms.transmittance = vec3(table.a);
     terms.inscatter = table.rgb * sky.sun_illuminance.rgb;
     return terms;
@@ -148,7 +148,7 @@ FogTerms atmosphere_segment(SkyFogGpu sky, float altitude, vec3 direction, float
     if ((sky.flags & SKY_FOG_ATMOSPHERE) == 0u) return terms;
     SkyScattering scattering = integrate_sky_scattering(
         sky,
-        clamp(altitude, 0.0, sky.top_radius - sky.planet_radius),
+        max(altitude, 0.0),
         direction,
         sky.sun_direction_cos_radius.xyz,
         distance,
@@ -179,10 +179,10 @@ FogTerms fog_between(FogTerms to_near, FogTerms to_far) {
 }
 
 // Aerial perspective over [near, far] of a pixel's ray: the camera's table divided by its value at near.
-FogTerms aerial_perspective_segment(SkyFogGpu sky, vec2 uv, float near, float far) {
-    FogTerms to_far = aerial_perspective_terms(sky, uv, far);
+FogTerms aerial_perspective_segment(SkyFogGpu sky, vec2 uv, float cos_zenith, float near, float far) {
+    FogTerms to_far = aerial_perspective_terms(sky, uv, cos_zenith, far);
     if (near <= 0.0) return to_far;
-    return fog_between(aerial_perspective_terms(sky, uv, near), to_far);
+    return fog_between(aerial_perspective_terms(sky, uv, cos_zenith, near), to_far);
 }
 
 // Distance along a froxel ray to slice boundary k; slices are squared toward the camera.
@@ -232,7 +232,7 @@ FogTerms fog_segment(FrameRoot frame, SkyFogGpu sky, vec2 uv, vec3 origin, vec3 
     if (near >= far) return fog_none();
     return fog_compose(
         height_fog_range(frame, sky, uv, origin, direction, near, far),
-        aerial_perspective_segment(sky, uv, near, far)
+        aerial_perspective_segment(sky, uv, direction.y, near, far)
     );
 }
 
