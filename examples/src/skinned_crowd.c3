@@ -461,8 +461,12 @@ fn void? draw_frame(
 
 fn void report_compute_skinning(render::Renderer* renderer, Showcase* showcase) @local {
     Stats* stats = &renderer.stats;
-    io::printf("  compute skinning %s: posed %d, fallbacks %d", showcase.compute_skinning ? "on" : "off",
-        stats.compute_skinned, stats.compute_skinning_fallbacks);
+    io::printf(
+        "  compute skinning %s: posed %d, fallbacks %d",
+        showcase.compute_skinning ? "on" : "off",
+        stats.compute_skinned,
+        stats.compute_skinning_fallbacks,
+    );
     io::printf(", resident posed %d bytes", (uint)stats.compute_skinning_bytes);
     if (stats.gpu_timing_state != GpuTimingState.READY) {
         io::printfn(", gpu timings pending");
