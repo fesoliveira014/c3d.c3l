@@ -141,7 +141,7 @@ const uint SKY_VIEW_HEIGHT = 108u;
 const uint AERIAL_PERSPECTIVE_SIZE = 32u;
 const uint SKY_TABLE_GROUP_SIZE = 8u;
 const uint AERIAL_PERSPECTIVE_GROUP_DEPTH = 4u;
-const uint FOG_VOLUME_SLICES = 64u;
+const uint FOG_VOLUME_MAX_SLICES = 128u;
 const uint PHYSICAL_MAP_CLEARCOAT = 1u;
 const uint PHYSICAL_MAP_CLEARCOAT_ROUGHNESS = 2u;
 const uint PHYSICAL_MAP_CLEARCOAT_NORMAL = 4u;
@@ -1072,7 +1072,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer SkyFogGpu {
     uint lut_sampler;
     uint fog_volume;
     float fog_anisotropy;
-    uint _pad1;
+    uint fog_slices;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer SkyTableRoot {
@@ -1100,7 +1100,7 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer FogVolumeRoo
     uint width;
     uint height;
     uint sun_light;
-    uint _pad0;
+    uint slices;
     uint _pad1;
 };
 

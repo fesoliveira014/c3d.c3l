@@ -17,7 +17,7 @@ void main() {
 
     vec3 inscatter = vec3(0.0);
     float transmittance = 1.0;
-    for (int slice = 0; slice < int(FOG_VOLUME_SLICES); slice++) {
+    for (int slice = 0; slice < int(root.slices); slice++) {
         ivec3 froxel = ivec3(column, slice);
         vec4 medium = load_storage_texture_3d(root.volume, froxel);
         float slice_transmittance = exp(-medium.a);

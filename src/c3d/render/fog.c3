@@ -8,9 +8,13 @@ $assert FogPassRoot::size == 32;
 $assert FogVolumeRoot::size == 32;
 
 <*
- Screen pixels one froxel of a volumetric fog spans on each axis.
+ Grid of a view's fog volume; MEDIUM is the zero value.
 *>
-const uint FOG_FROXEL_PIXELS = 16; // 160 x 90 x 64 at 2560 x 1440: 7.03 MiB of RGBA16F per view; 8 quadruples it
+enum FogQuality : int (uint froxel_pixels, uint slices) {
+    MEDIUM { 16, 64 }, // 7.03 MiB of RGBA16F per view at 2560 x 1440
+    LOW { 16, 32 },    // 3.52 MiB: half of MEDIUM, with slices twice as deep
+    HIGH { 8, 128 },   // 56.25 MiB: 8x MEDIUM, so opt-in
+}
 
 <*
  @require record.hdr_color.texture.is_valid()
@@ -35,24 +39,25 @@ fn void? record_fog_pass(Renderer* renderer, ViewRecord* record, gpu::GpuAddress
     renderer.stats.post_dispatches++;
 }
 
-fn uint[<2>] fog_volume_extent(uint width, uint height) @private {
+fn uint[<2>] fog_volume_extent(uint width, uint height, uint froxel_pixels) @private {
     return {
-        (width + FOG_FROXEL_PIXELS - 1) / FOG_FROXEL_PIXELS,
-        (height + FOG_FROXEL_PIXELS - 1) / FOG_FROXEL_PIXELS,
+        (width + froxel_pixels - 1) / froxel_pixels,
+        (height + froxel_pixels - 1) / froxel_pixels,
     };
 }
 
 fn void? acquire_fog_volume(Renderer* renderer, ViewRecord* record) @private {
     bool wanted = record.desc.volumetric_fog && record.desc.shading != ShadingPath.PATH_TRACED;
     if (!wanted || record.fog_volume.texture.is_valid() || !record.hdr_color.texture.is_valid()) return;
-    uint[<2>] extent = fog_volume_extent(record.hdr_color.width, record.hdr_color.height);
+    FogQuality quality = record.desc.fog_quality;
+    uint[<2>] extent = fog_volume_extent(record.hdr_color.width, record.hdr_color.height, quality.froxel_pixels);
     record.fog_volume = allocate_storage_target(
         device:     &renderer.device,
         width:      extent.x,
         height:     extent.y,
         format:     gpu::Format.RGBA16_FLOAT,
         debug_name: "fog_volume",
-        depth:      shader::FOG_VOLUME_SLICES,
+        depth:      quality.slices,
     )!;
 }
 
@@ -70,6 +75,7 @@ fn uint fog_sun_light(LightExtraction* extraction, bool atmosphere) {
 
 <*
  @require record.fog_volume.texture.is_valid()
+ @require record.fog_volume.depth <= shader::FOG_VOLUME_MAX_SLICES
 *>
 fn void? record_fog_volume(
     Renderer* renderer,
@@ -105,6 +111,7 @@ fn void? record_fog_volume(
         .width     = record.fog_volume.width,
         .height    = record.fog_volume.height,
         .sun_light = sun_light,
+        .slices    = record.fog_volume.depth,
     };
 
     @profile_pass(renderer, Pass.FOG_SCATTERING) {
@@ -112,7 +119,7 @@ fn void? record_fog_volume(
         uint columns = (record.fog_volume.width + shader::POST_GROUP_SIZE - 1) / shader::POST_GROUP_SIZE;
         uint rows = (record.fog_volume.height + shader::POST_GROUP_SIZE - 1) / shader::POST_GROUP_SIZE;
         gpu::cmd_bind_pipeline(&renderer.commands, *scattering)!;
-        gpu::cmd_dispatch(&renderer.commands, root.address, { columns, rows, shader::FOG_VOLUME_SLICES })!;
+        gpu::cmd_dispatch(&renderer.commands, root.address, { columns, rows, record.fog_volume.depth })!;
     }!;
     @profile_pass(renderer, Pass.FOG_INTEGRATION) {
         record.fog_volume.transition(&renderer.commands, gpu::storage_at({ .compute }, { .read, .write }))!;
