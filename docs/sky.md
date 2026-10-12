@@ -217,7 +217,24 @@ combination) records nothing extra.
   light exists; the volume then scatters the ambient only.
 - The sun's light is shadowed by the shadow atlas, or by rays under `RayTracingDesc.shadows`. A froxel has no
   surface, so its shadow lookup passes a zero normal and `ShadowGpu.normal_bias` does not move it. Fog past the
-  atlas's cascades is unshadowed. Local lights are not scattered.
+  atlas's cascades is unshadowed.
+- Every other light with `Light.volumetric` scatters too, directional lights included. A froxel takes the light list of
+  its cluster cell at its midpoint, the lookup a surface uses, and for each light but the sun adds
+  `albedo × phase × radiance × visibility`: the Henyey-Greenstein phase at `anisotropy` between the ray and the
+  direction to the light, the light's radiance at the midpoint (`range` and the spot cone apply) and one shadow sample
+  with a zero normal when the light casts a shadow, else 1. A light with no radiance at the froxel adds nothing and
+  takes no shadow sample. `light::directional`, `light::point` and `light::spot` set `volumetric`, so a fogged scene
+  with lights scatters them by default; set it to false to opt a light out. A zero-initialized `Light` has it false
+  and does not scatter. A scene with no light besides the sun, or none with `volumetric`, renders as it did before.
+- The cost is the froxels times the lights in their cluster cell: the lookup, then for each light its radiance and,
+  for a shadowed one, a 3 × 3 shadow filter. A view with `LightSelection.FLAT`, a froxel outside the cluster grid
+  and a cell with more than `ClusterDesc.lights_per_cluster` lights take every light of the view instead. The grid
+  spans view depths from the camera's near plane to `ClusterDesc.far_distance` (100 by default) while the volume
+  reaches `max_distance`, so a froxel whose midpoint is that deep falls outside it: at 16:9 with a 60° vertical field
+  of view, 22.6% of the froxels at a `max_distance` of 200 and 65.4% at 1000, whatever the quality or view size, and
+  none once `far_distance` reaches `max_distance`. Raise `far_distance` with `max_distance` and keep few lights in a
+  cell. A light with `volumetric` false still sits in its cell's list: it saves the radiance and the shadow sample,
+  not the read of the list.
 - The grid is chosen by `ViewDesc.fog_quality`, one froxel per `px` × `px` pixels of the view's working image by
   `slices` slices, squared toward the camera and ending at `max_distance`:
 
@@ -241,7 +258,7 @@ combination) records nothing extra.
 - A view with a clip plane (a planar mirror) needs the switch of its own; its volume starts at the plane.
 - Custom stages need no change: `fog_terms`, `fog_background_terms`, `apply_fog`, `fog_behind` and
   `apply_fog_refracted` include the volume when the view has one.
-- The volume is recomputed every frame from one shadow sample per froxel and is not reprojected or jittered.
+- The volume is recomputed every frame from one shadow sample per froxel and light and is not reprojected or jittered.
 - The volume changes the haze's colour, not only its shadows. Inside `max_distance` the in-scatter is lit by the
   sun and the ambient, while the analytic fog takes the sky's colour, so the same fog looks brighter and warmer
   with the switch: the upper sky at noon at the default density goes from (31, 60, 100) to (76, 91, 117). Views of
