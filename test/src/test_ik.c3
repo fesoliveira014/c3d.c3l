@@ -551,7 +551,6 @@ fn void test_legacy_foot_mode_leaves_contact_inactive() @test {
     foot.align();
     rig.scene.update_world();
     assert(foot.contact.phase == INACTIVE);
-    assert(foot.contact_result().status == NO_TARGET);
     foot.release();
     rig.scene.update_world();
     assert(foot.contact.phase == INACTIVE && !foot.grounded);
@@ -571,7 +570,6 @@ fn Transform contact_test_pose(Vec3 position = { 0, 0.08f, 0 }) @local {
 fn FootSupport contact_test_support(float scale = 1) @local {
     return {
         .identity = 17,
-        .kind = SUPPORT,
         .transform = {
             .rotation = quaternion::IDENTITY,
             .scale = { scale, scale, scale },
@@ -632,7 +630,7 @@ fn void contact_test_incoming(ContactRig* rig, Vec3 offset = {}) @local {
     rig.scene.update_world();
 }
 
-fn FootContactResult contact_test_solve(ContactRig* rig) @local {
+fn void contact_test_solve(ContactRig* rig) @local {
     rig.scene.update_world();
     rig.foot.leg.solve();
     rig.scene.update_world();
@@ -643,7 +641,6 @@ fn FootContactResult contact_test_solve(ContactRig* rig) @local {
         <= CONTACT_TEST_LENGTH_EPSILON);
     assert(math::abs((rig.ankle.world_position() - rig.knee.world_position()).length() - length)
         <= CONTACT_TEST_LENGTH_EPSILON);
-    return rig.foot.contact_result();
 }
 
 fn void test_contact_extreme_support_scales_retain_finite_world_poses() @test {
@@ -736,7 +733,6 @@ fn void test_contact_phase_commands_preserve_requested_pose_at_zero_step() @test
     assert(contact.phase == INACTIVE);
     assert(contact_test_vec(contact.requested.position, incoming.position));
     assert(contact_test_quat(contact.requested.rotation, incoming.rotation));
-    assert(contact.contact_result(incoming).status == NO_TARGET);
 }
 
 fn void test_contact_release_carries_sole_without_scaling_height() @test {
@@ -788,8 +784,7 @@ fn void test_contact_identical_intent_and_paused_updates_are_idempotent() @test 
         contact_test_incoming(&rig);
         rig.foot.begin_contact(hit, support)!!;
         rig.foot.update_contact(support, 0)!!;
-        FootContactResult result = contact_test_solve(&rig);
-        assert(result.residual <= 0.001f);
+        contact_test_solve(&rig);
         assert(contact_test_same_state(&before, &rig.foot.contact));
     }
 
@@ -909,15 +904,14 @@ fn void test_contact_full_pipeline_retains_slopes_and_moving_scaled_supports() @
             float upper = (rig.knee.world_position() - rig.hip.world_position()).length();
             float lower = (rig.ankle.world_position() - rig.knee.world_position()).length();
             assert(reach <= upper + lower - 0.05f && reach >= math::abs(upper - lower) + 0.05f);
-            FootContactResult result = contact_test_solve(&rig);
+            contact_test_solve(&rig);
             assert(contact_test_vec(rig.foot.contact.local_point, anchor, 0));
             assert(contact_test_vec(rig.foot.contact.local_normal, local_normal, 0));
             assert(contact_test_vec(rig.foot.contact.local_heading, local_heading, 0));
-            if (result.phase == PLANTED) {
-                assert(result.status == REACHED);
-                assert(result.residual <= 0.001f);
-                assert(result.normal_error_degrees <= 1 && result.heading_error_degrees <= 1);
+            if (rig.foot.contact.phase == PLANTED) {
                 Transform ankle = maths::transform_from_mat4(rig.ankle.world);
+                assert(close_vec3(ankle.position, rig.foot.contact.requested.position, 0.001f));
+                assert(close_quat(ankle.rotation, rig.foot.contact.requested.rotation));
                 Vec3 actual_sole = ankle.position - ankle.rotation * rig.foot.contact.config.sole_up * 0.08f;
                 Vec3 expected_sole = maths::transform_point(support.transform.to_mat4(), (Vec3)anchor);
                 assert(contact_test_vec(actual_sole, expected_sole, 0.001f));
@@ -926,7 +920,7 @@ fn void test_contact_full_pipeline_retains_slopes_and_moving_scaled_supports() @
     }
 }
 
-fn void test_contact_full_pipeline_reports_constrained_residual_without_releasing() @test {
+fn void test_contact_constrained_miss_keeps_the_anchor_planted() @test {
     Vec3[3] points = { { 4, 0, 0 }, { 0.4f, 0.2f, 0 }, { 0.5f, 0.1f, 0 } };
     float[3] weights = { 1, 0.5f, 1 };
     foreach (index, point : points) {
@@ -942,16 +936,15 @@ fn void test_contact_full_pipeline_reports_constrained_residual_without_releasin
                 twist_axis: { 0, 1, 0 },
             );
         }
-        FootSupport support = ik::world_static_support();
+        FootSupport support = contact_test_support();
         rig.foot.begin_contact({ .point = point, .normal = { 0, 1, 0 } }, support)!!;
         rig.foot.update_contact(support, 0.12f)!!;
         double[<3>] retained = rig.foot.contact.local_point;
-        FootContactResult result = contact_test_solve(&rig);
-        assert(result.status == MISSED && result.phase == PLANTED);
-        assert(math::is_finite(result.normal_error_degrees) && math::is_finite(result.heading_error_degrees));
+        contact_test_solve(&rig);
+        assert(rig.foot.contact.phase == PLANTED);
         assert(contact_test_vec(rig.foot.contact.local_point, retained, 0));
-        float actual_residual = (rig.ankle.world_position() - rig.target.world_position()).length();
-        assert(math::abs(result.residual - actual_residual) <= 1e-6f);
+        assert(close_vec3(rig.target.world_position(), rig.foot.contact.requested.position));
+        assert((rig.ankle.world_position() - rig.target.world_position()).length() > 0.001f);
     }
 }
 
@@ -961,16 +954,15 @@ fn void test_contact_pelvis_adjustment_preserves_the_requested_anchor() @test {
     Node* pelvis = rig.scene.add_node(name: "pelvis")!!;
     rig.scene.reparent(rig.hip, pelvis);
     rig.scene.update_world();
-    FootSupport support = ik::world_static_support();
+    FootSupport support = contact_test_support();
     rig.foot.begin_contact({ .point = { 0.1f, -0.2f, 0 }, .normal = { 0, 1, 0 } }, support)!!;
     rig.foot.update_contact(support, 0.12f)!!;
     FootContact before = rig.foot.contact;
     FootIk*[1] feet = { &rig.foot };
     float drop = ik::lower_pelvis(pelvis, feet[..]);
     assert(math::abs(drop - 0.2f) <= 1e-6f);
-    rig.scene.update_world();
-    FootContactResult result = contact_test_solve(&rig);
-    assert(result.status == REACHED);
+    contact_test_solve(&rig);
+    assert(close_vec3(rig.ankle.world_position(), rig.foot.contact.requested.position, 0.001f));
     assert(contact_test_same_state(&before, &rig.foot.contact));
 }
 
@@ -996,55 +988,47 @@ fn void test_contact_invalid_adapter_call_preserves_target_and_authoring() @test
 fn void test_contact_standalone_rebase_preserves_local_state_in_every_phase() @test {
     Vec3[2] offsets = { { 256, 0, -512 }, { 65536, 0, -65536 } };
     foreach (offset : offsets) {
-        for (uint kind = 0; kind < 2; kind++) {
-            for (uint phase = 0; phase < 3; phase++) {
-                FootSupport support = kind == 0 ? ik::world_static_support() : contact_test_support();
-                Transform incoming = contact_test_pose({ 0.25f, 0.25f, 0.125f });
-                GroundHit hit = { .point = { 0.125f, 0, 0.25f }, .normal = { 0, 1, 0 } };
-                FootContact control;
-                control.begin_contact(hit, support, incoming)!!;
-                FootContact shifted;
-                Transform distant_incoming = incoming;
-                distant_incoming.position += offset;
-                GroundHit distant_hit = hit;
-                distant_hit.point += offset;
-                FootSupport distant_support = support;
-                if (kind == 1) distant_support.transform.position += offset;
-                shifted.begin_contact(distant_hit, distant_support, distant_incoming)!!;
-                float dt = phase == 0 ? 0.06f : 0.12f;
-                control.update_contact(support, incoming, dt)!!;
-                shifted.update_contact(distant_support, distant_incoming, dt)!!;
-                if (phase == 2) {
-                    control.end_contact(support, incoming)!!;
-                    shifted.end_contact(distant_support, distant_incoming)!!;
-                    control.update_contact(support, incoming, 0.1f)!!;
-                    shifted.update_contact(distant_support, distant_incoming, 0.1f)!!;
-                }
-                double[<3>] local = shifted.local_point;
-                double[<3>] release = shifted.release_local_sole;
-                Vec3 local_normal = shifted.local_normal;
-                Vec3 local_heading = shifted.local_heading;
-                shifted.shift_origin(offset);
-                if (kind == 1) distant_support.transform.position -= offset;
-                shifted.update_contact(distant_support, incoming, 0)!!;
-                control.update_contact(support, incoming, 0)!!;
-                assert(contact_test_vec(
-                    first: shifted.requested.position,
-                    second: control.requested.position,
-                    epsilon: CONTACT_TEST_REBASE_EPSILON,
-                ));
-                assert(contact_test_quat(shifted.requested.rotation, control.requested.rotation));
-                assert(contact_test_vec(shifted.local_point, local, 0));
-                assert(contact_test_vec(shifted.release_local_sole, release, 0));
-                assert(contact_test_vec(shifted.local_normal, local_normal, 0));
-                assert(contact_test_vec(shifted.local_heading, local_heading, 0));
-                shifted.update_contact(distant_support, incoming, 0)!!;
-                assert(contact_test_vec(
-                    first: shifted.requested.position,
-                    second: control.requested.position,
-                    epsilon: CONTACT_TEST_REBASE_EPSILON,
-                ));
+        for (uint phase = 0; phase < 3; phase++) {
+            FootSupport support = contact_test_support();
+            Transform incoming = contact_test_pose({ 0.25f, 0.25f, 0.125f });
+            GroundHit hit = { .point = { 0.125f, 0, 0.25f }, .normal = { 0, 1, 0 } };
+            FootContact control;
+            control.begin_contact(hit, support, incoming)!!;
+            FootContact shifted;
+            Transform distant_incoming = incoming;
+            distant_incoming.position += offset;
+            GroundHit distant_hit = hit;
+            distant_hit.point += offset;
+            FootSupport distant_support = support;
+            distant_support.transform.position += offset;
+            shifted.begin_contact(distant_hit, distant_support, distant_incoming)!!;
+            float dt = phase == 0 ? 0.06f : 0.12f;
+            control.update_contact(support, incoming, dt)!!;
+            shifted.update_contact(distant_support, distant_incoming, dt)!!;
+            if (phase == 2) {
+                control.end_contact(support, incoming)!!;
+                shifted.end_contact(distant_support, distant_incoming)!!;
+                control.update_contact(support, incoming, 0.1f)!!;
+                shifted.update_contact(distant_support, distant_incoming, 0.1f)!!;
             }
+            double[<3>] local = shifted.local_point;
+            double[<3>] release = shifted.release_local_sole;
+            Vec3 local_normal = shifted.local_normal;
+            Vec3 local_heading = shifted.local_heading;
+            shifted.shift_origin(offset);
+            distant_support.transform.position -= offset;
+            shifted.update_contact(distant_support, incoming, 0)!!;
+            control.update_contact(support, incoming, 0)!!;
+            assert(contact_test_vec(
+                first: shifted.requested.position,
+                second: control.requested.position,
+                epsilon: CONTACT_TEST_REBASE_EPSILON,
+            ));
+            assert(contact_test_quat(shifted.requested.rotation, control.requested.rotation));
+            assert(contact_test_vec(shifted.local_point, local, 0));
+            assert(contact_test_vec(shifted.release_local_sole, release, 0));
+            assert(contact_test_vec(shifted.local_normal, local_normal, 0));
+            assert(contact_test_vec(shifted.local_heading, local_heading, 0));
         }
     }
 }
@@ -1052,7 +1036,7 @@ fn void test_contact_standalone_rebase_preserves_local_state_in_every_phase() @t
 fn void test_contact_scene_rebase_visits_component_owners_once() @test {
     ContactRig rig = contact_test_rig();
     defer scene::destroy_scene(&rig.scene);
-    FootSupport support = ik::world_static_support();
+    FootSupport support = contact_test_support();
     Vec3 offset = { 256, 0, -512 };
     contact_test_incoming(&rig, offset);
     rig.foot.begin_contact({ .point = offset, .normal = { 0, 1, 0 } }, support)!!;
@@ -1069,6 +1053,7 @@ fn void test_contact_scene_rebase_visits_component_owners_once() @test {
     assert(contact_test_vec(component.contact.local_point, local, 0));
     assert(contact_test_vec(standalone.requested.position, requested.position, 0));
     standalone.shift_origin(offset);
+    support.transform.position -= offset;
     component.update_contact(support, 0)!!;
     assert(contact_test_vec(component.contact.requested.position, standalone.requested.position));
 }

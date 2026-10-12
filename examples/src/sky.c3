@@ -114,13 +114,14 @@ const Vec2 STATS_PANEL_POSITION @local = { 472, 16 };
 const Vec2 STATS_PANEL_SIZE @local = { 420, 260 };
 
 const String[Segment::len] SEGMENT_NAMES @local = { "noon", "twilight", "valley", "pan", "time-lapse" };
-const Pass[17] REPORTED_PASSES @local = {
+const Pass[18] REPORTED_PASSES @local = {
     Pass.SKY_VIEW,
     Pass.AERIAL_PERSPECTIVE,
     Pass.FOG_SCATTERING,
     Pass.FOG_INTEGRATION,
     Pass.DEPTH_PREPASS,
     Pass.GBUFFER,
+    Pass.RT_REFLECTIONS,
     Pass.LIGHTING,
     Pass.FORWARD_OPAQUE,
     Pass.SKY,

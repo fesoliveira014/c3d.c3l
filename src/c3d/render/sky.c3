@@ -744,6 +744,7 @@ fn gpu::GpuAddress? pack_probe_sky_fog(
     if (!atmosphere && !fog.fog) return (gpu::GpuAddress)0;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, SkyFogGpu::size, STREAM_ALIGNMENT)!;
+
     SkyFogTables tables = { .sampler = renderer.linear_clamp_sampler };
     Vec3 to_sun;
     Vec3 illuminance;
@@ -755,6 +756,7 @@ fn gpu::GpuAddress? pack_probe_sky_fog(
         illuminance = selection.sun.color * selection.sun.intensity;
         altitude = selection.atmosphere.observer_altitude;
     }
+
     write_sky_fog(
         root:            (SkyFogGpu*)span.bytes.ptr,
         atmosphere:      atmosphere ? selection.atmosphere : null,

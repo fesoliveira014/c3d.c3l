@@ -468,12 +468,14 @@ same property. Disabled animation imports do not read event metadata.
 Absent metadata or an empty array produces an empty table. Replacing a clip
 replaces its table, so absent metadata clears previously imported events.
 
-`version` and `id` use the exact value of each JSON number token. Integral
-spellings such as `1`, `1.0`, `1e0` and `10e-1` are equivalent. IDs range from
-0 through 4294967295; repeated IDs and negative-zero spellings are valid.
-Fractional, negative nonzero or overflowing IDs fault `ASSET_FORMAT_ERROR`.
-A nonintegral version faults `ASSET_FORMAT_ERROR`; any integer version other
-than 1 faults `UNSUPPORTED`, including integers beyond 64 bits.
+Metadata is strict JSON, without comments or trailing commas. `version` and
+`id` are JSON numbers read as doubles, which hold every ID exactly. Integral
+spellings such as `1`, `1.0`, `1e0` and `10e-1` are equivalent; spellings finer
+than double precision, such as `1.0000000000000000001`, read as the nearest
+double. IDs range from 0 through 4294967295; repeated IDs and negative-zero
+spellings are valid. Fractional, negative nonzero or overflowing IDs fault
+`ASSET_FORMAT_ERROR`. A nonintegral version faults `ASSET_FORMAT_ERROR`; any
+other integral version the parser accepts faults `UNSUPPORTED`.
 
 `time` is finite decoded clip-local seconds in `[0,duration]`, read as double
 and stored as float. Events never extend the track-derived duration; a
@@ -482,16 +484,19 @@ after baking with `trim_start_time = true`. Author markers against the resulting
 clip times, including when the source stack starts before or after zero.
 Do not use the stack's absolute scene times.
 
-Missing required fields, wrong types, malformed recognized metadata and invalid
-values fault `ASSET_FORMAT_ERROR`. Repeated decoded keys within the table object
-or any direct event entry also fault, including unknown keys and escaped spellings
-of the same key. Single unknown fields, duplicates inside nested unknown values,
-and unrelated extras or properties are ignored. Unrelated glTF numeric values
-do not inherit the event ID or version limits. Import failure leaves shared
-assets unchanged and releases decoded event arrays.
+Missing required fields, wrong types, malformed metadata and invalid values
+fault `ASSET_FORMAT_ERROR`. In both importers, metadata the JSON parser rejects
+also faults: `json::max_depth` (64) nested containers, numbers outside double
+range, integers outside the signed 64-bit range written without a fraction or
+exponent, and invalid escapes such as unpaired surrogates. glTF extras the
+parser rejects fault only when their text contains `"c3d_events"`; otherwise
+they import no events. Unknown fields, extras without `c3d_events`, non-object
+extras and unrelated properties are ignored. A repeated key keeps its last
+value. Import failure leaves shared assets unchanged and releases decoded event
+arrays.
 
 Imported events are stably sorted by time, retaining authored order at equal
-times. The table owns its explicit IDs and has no event names or payloads.
+stored times. The table owns its explicit IDs and has no event names or payloads.
 [Serialization](serialization.md) saves keyed clip references rather than clip
 payloads or event tables; preload the imported assets before restoring playback.
 
@@ -663,7 +668,7 @@ the space weight and Space pauses. Authored footsteps from the dominant member
 print to the console. The Scene panel's animator inspector shows clip IDs, layer,
 mode, mask count and playback controls; stop is applied after traversal.
 
-The animation, IK and Mixamo examples accept `--frames=100 --acceptance` for a
+The animation and Mixamo examples accept `--frames=100 --acceptance` for a
 bounded validation run that exercises playback changes. Mixamo additionally
 accepts `--capture=path` for a 1440x900 RGBA8 scene capture.
 
@@ -1008,10 +1013,11 @@ terrain height under it as the body moves.
 Use `begin_contact(hit, support)` to capture a stance anchor and
 `update_contact(support, dt)` to follow it. The application chooses the hit,
 support identity and timing. `FootSupport` carries an opaque caller identity
-and a proper rotation, translation and finite positive uniform scale. An
-invalid support, hit, plant setting or incoming pose returns `INVALID_ARGUMENT`
-and leaves the contact unchanged. Changing the identity requires an explicit
-new capture.
+and a proper rotation, translation and finite positive uniform scale. Static
+ground is a support whose frame does not move; like any support, its owner
+passes the current frame, shifted after an origin rebase. An invalid support,
+hit, plant setting or incoming pose returns `INVALID_ARGUMENT` and leaves the
+contact unchanged. Changing the identity requires an explicit new capture.
 
 `FootIk.plant` defaults to 0.12 seconds of acquisition, 0.20 seconds of release
 and ankle-local sole axes +Y/-Z. Set the axes for the rig's authored ankle
@@ -1020,18 +1026,19 @@ remains in scene metres while the support-local sole point follows changing
 scale. The normal and heading follow the support's proper rotation.
 
 Call `end_contact(support)` to blend into the fresh incoming swing pose, or
-`reset_contact()` for an immediate caller-authorized reset. Replanting captures
-the currently requested correction. Zero `dt` freezes transition clocks while
+`reset_contact()` for an immediate caller-authorized reset. Repeating
+`begin_contact` with the same support, hit, settings and height while acquiring
+or planted keeps the current acquisition; any other replant captures the
+currently requested correction. Zero `dt` freezes transition clocks while
 external support movement still carries the contact. Start each update from
 the fresh animation pose; choose either retained contact or `place/release`
 for that update.
 
 Order contact updates after animation and a world refresh, before optional
 `lower_pelvis`. Refresh worlds after pelvis movement, solve dependent IK and
-the legs, refresh, call `align_contact`, then refresh before `contact_result`.
-The result reports phase, actual target residual and normal/heading errors as
-`NO_TARGET`, `REACHED` or `MISSED`. Reach clamps, limits and partial leg weight
-may leave a miss; the anchor is retained without stretching or automatic release.
+the legs, refresh, call `align_contact`, then refresh again. Reach clamps,
+limits and partial leg weight may leave the ankle short of the requested
+target; the anchor is retained without stretching or automatic release.
 
 Standalone `FootContact` uses the same lifecycle with an explicit incoming
 `Transform`. During rebasing, call `Scene.shift_foot_contacts` after the scene
@@ -1079,15 +1086,15 @@ zooms, Escape quits.
 
 `ik` shows two instances of the CC0 Quaternius mannequin on a moving support.
 Caller-authored cues acquire, plant, release and replant each foot while the
-support translates, yaws, tilts and changes uniform scale. The panel reports
-contact phase, residual, sole-axis errors and reach margins. The example
-poses the incoming legs above the support before contact updates, with a smooth
-caller-timed swing arc. It preserves local bone positions, scales and the fresh
-ankle orientation. Default contact mode uses unconstrained legs for the reachable
-retention demonstration; `L` or
-`--limits` enables the authored knee hinges and displays constrained misses.
-`--legacy` retains height-field placement with those hinges. The spine, neck
-and head follow the camera and the right hand reaches an orbiting sphere.
+support translates, yaws, tilts and changes uniform scale. The panel shows
+each foot's contact phase. The example poses the incoming legs above the
+support before contact updates, with a smooth caller-timed swing arc. It
+preserves local bone positions, scales and the fresh ankle orientation. Default
+contact mode uses unconstrained legs for the reachable retention demonstration;
+`L` or `--limits` enables the authored knee hinges, and the debug lines show
+the constrained misses. `--legacy` retains height-field placement with those
+hinges. The spine, neck and head follow the camera and the right hand reaches
+an orbiting sphere.
 
 ```bash
 python3 scripts/build.py --example ik
@@ -1097,13 +1104,6 @@ python3 scripts/build.py --example ik
 while the support continues to move, and `R` shifts the origin explicitly.
 `W` switches walk/idle, `[`/`]` change IK weight, `I` toggles debug lines, and
 mouse drag/wheel orbit and zoom.
-
-`ik.exe --acceptance` runs at a fixed 60 Hz step for at least 20 wall and
-simulation seconds and fails unless every planted foot stays within the
-residual, sole-angle and reach bounds and every swinging foot clears the
-support. An early `--frames=N` limit does not satisfy the bounded run. Vulkan
-validation is enabled.
-
 
 Inertial requests return an `AnimationTransitionResult`. Its `actions[:count]`
 contains the installed IDs in target-ordinal order; `spaces[:space_count]`
