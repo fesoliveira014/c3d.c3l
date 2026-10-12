@@ -274,9 +274,10 @@ combination) records nothing extra.
 
   `MEDIUM` is the zero value, so an unset desc has it. The volume is RGBA16F, one heap slot, allocated with the
   view and freed with it; its size is `ceil(w / px) × ceil(h / px) × slices × 8` bytes per view for a working
-  image of `w` × `h` pixels. `HIGH` has eight times the froxels of `MEDIUM`, so it is opt-in. A view, including a
-  mirror view with a clip plane, takes its own `fog_quality`. `configure_view` with another `fog_quality`
-  reallocates the volume as a resize does, and `FOG_SCATTERING` and `FOG_INTEGRATION` read the view's slice count
+  image of `w` × `h` pixels, times 2 when `fog_temporal` is on. `HIGH` has eight times the froxels of `MEDIUM`,
+  so it is opt-in. A view, including a mirror view with a clip plane, takes its own `fog_quality`.
+  `configure_view` with another `fog_quality` reallocates the volume as a resize does, and `FOG_SCATTERING` and
+  `FOG_INTEGRATION` read the view's slice count
   from `SkyFogGpu.fog_slices` and `FogVolumeRoot.slices`; no more than `FOG_VOLUME_MAX_SLICES` (128) fit.
 - Two compute passes record after the sky tables and before the fog pass: `FOG_SCATTERING` (one thread per froxel)
   and `FOG_INTEGRATION` (one thread per column, accumulating in-scatter and transmittance along the slices).
@@ -286,11 +287,54 @@ combination) records nothing extra.
 - A view with a clip plane (a planar mirror) needs the switch of its own; its volume starts at the plane.
 - Custom stages need no change: `fog_terms`, `fog_background_terms`, `apply_fog`, `fog_behind` and
   `apply_fog_refracted` include the volume when the view has one.
-- The volume is recomputed every frame from one shadow sample per froxel and light and is not reprojected or jittered.
+- Without `ViewDesc.fog_temporal` the volume is recomputed every frame from one shadow sample per froxel and light,
+  taken at the slice midpoint, and is not reprojected or jittered. The switch is off by default and does nothing
+  without `volumetric_fog`.
 - The volume changes the haze's colour, not only its shadows. Inside `max_distance` the in-scatter is lit by the
   sun and the ambient, while the analytic fog takes the sky's colour, so the same fog looks brighter and warmer
   with the switch: the upper sky at noon at the default density goes from (31, 60, 100) to (76, 91, 117). Views of
   one scene with and without the switch show two haze colours.
+
+### Temporal accumulation
+
+`ViewDesc.fog_temporal` accumulates the in-scatter over frames, so the shadow sample of one frame is spread over
+the slice's depth and over time. Optical depth is analytic and carries no history.
+
+- **Jitter.** `FOG_SCATTERING` takes each froxel's light and shadow samples at a depth within its slice, the
+  Halton base-2 point of the view's frame counter over `FOG_TEMPORAL_SAMPLES` (16) positions.
+- **Reprojection.** The froxel's centre is projected through the view's previous view-projection and read at its
+  previous slice, from the previous frame's scattering volume, with trilinear filtering. A froxel whose previous
+  position lies outside the previous frustum or beyond `max_distance` takes no history. Camera motion reprojects
+  and does not reject. An orthographic view takes neither jitter nor history.
+- **Blend.** A froxel's in-scatter is mixed with `FOG_HISTORY_WEIGHT` (0.9) of its history, so the history
+  remembers about ten frames. The history's colour is multiplied by `FrameRoot.pre_exposure_ratio` first, so an
+  exposure change rescales it instead of rejecting it; optical depth is not radiance and is not scaled.
+- **Response.** The weight falls linearly with the relative difference between the mean of the current in-scatter
+  and the mean of the history, to zero at `FOG_HISTORY_TOLERANCE` (0.5). A shadow caster moving through a shaft
+  takes no history in the froxels where the light changes by more than that and fades over about ten frames where
+  it changes by less. A froxel across a hard shadow edge, whose jittered samples differ by more than the tolerance,
+  takes no history and flickers from frame to frame instead of settling.
+- **Rejection.** The history of a view is dropped, and the next frame injects without it, when:
+  - `reset_view_history` ran, the view was created or configured (a resize and a `fog_quality` change reallocate
+    the volumes), the switch was turned on, or the scene changed;
+  - any `HeightFog` field, the fog node's height or the frame origin changed;
+  - the sun's direction moved more than `FOG_HISTORY_SUN_DEGREES` (0.1°) since the previous frame;
+  - the hash of the light set changed. It covers every light with `Light.volumetric` and the sun: position,
+    direction, range, cone, layers, colour and intensity, and its shadow state, which is whether it has atlas
+    layers or traces rays. The sun's direction, and its colour under an atmosphere, are left out of the hash: the
+    angle test above covers them. The pre-exposure is divided out of each intensity.
+  A light that moves every frame therefore gets no temporal convergence, as does a sun turning faster than the
+  threshold: correctness wins over convergence. A change of ambient light or of the lighting environment is not a
+  trigger; it converges through the blend.
+- **Ownership.** The view keeps two volumes. `FOG_SCATTERING` reads one as history and writes the other, and
+  `FOG_INTEGRATION` reads the written one and integrates into the first, which the fog pass samples. They swap
+  only when the frame is submitted; an aborted frame neither swaps nor commits, so the next frame continues from
+  the last submitted one. The history is valid only if the view's own last submitted frame wrote it: a view that
+  was not rendered, or rendered no fog, in a submitted frame starts again without history, and a second recording
+  of the volume in one frame takes none. A mirror or clip-plane view keeps its own pair and history.
+- **Cost.** The memory is twice the volume's (see the grid above). `FOG_SCATTERING` adds a reprojection and one
+  trilinear read of the history volume per froxel, and the CPU hashes the volumetric lights once per frame.
+  `FOG_INTEGRATION` is unchanged but for writing the other volume.
 
 ## Custom stages
 
@@ -429,9 +473,10 @@ ground a roughness under their threshold, so the boxes and spheres show in it; e
 [atmosphere and the fog](#where-fog-applies) between the ground and the hit, as the direct view takes them.
 
 `--volumetric-fog` gives the main and mirror views a fog volume, `--fog-quality low|medium|high` picks its grid
-(`medium` by default), `--taa` turns on TAA, and the `pan` preset and segment sweep the camera's yaw 8° a second
-from −20° with the sun 15° up. The fog panel edits density, falloff, anisotropy and `max_distance`, and with
-`--volumetric-fog` a volume quality combo. Under `--path-traced` the switch is ignored.
+(`medium` by default), `--fog-temporal` turns on its [temporal accumulation](#temporal-accumulation), `--taa` turns
+on TAA, and the `pan` preset and segment sweep the camera's yaw 8° a second from −20° with the sun 15° up. The fog
+panel edits density, falloff, anisotropy and `max_distance`, and with `--volumetric-fog` a volume quality combo and
+a "Temporal accumulation" checkbox. Under `--path-traced` the switch is ignored.
 
 `--local-lights N` (at most 128) lines the path ahead of the camera with `N` point and spot lamps, alternating and
 placed in pairs either side of it. The first eight cast shadows; the main and mirror views select clustered lights.
