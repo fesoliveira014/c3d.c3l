@@ -370,8 +370,9 @@ For a crowd, set `AnimatedCrowd.inertia_enabled = true` after `attach_crowd`
 and before `prepare_crowd`. Preparation fixes this option; changing it on a
 prepared owner is invalid. A crowd reserves separate history/residual rows for
 its full capacity, including inactive placements, and shares evaluation scratch.
-Each row owns a previous node pose, double velocity/offset/offset-rate rows and
-28 bytes per logical morph component, plus controls and root-motion state.
+Each row owns a previous node pose, double velocity/offset/offset-rate rows, one
+byte per node of consumed-scale membership and 28 bytes per logical morph
+component, plus controls and root-motion state.
 Disabled owners reserve none of this storage. Enabled updates allocate nothing.
 
 `Animator.inertialize` and `CrowdPlayer.inertialize` replace the owner's current
@@ -443,8 +444,9 @@ target nodes and clip/model revisions invalidate the owner's velocity history;
 an active residual keeps decaying. Fades and weight changes keep history, and no
 playback change cancels a residual. A rotation that cannot be normalized (zero or
 nonfinite) records no angular velocity and receives no rotation residual, so
-inertia admits the same clips as an owner without it. Captured references are
-not silently rebuilt. Saving keeps authored settings and target playback,
+inertia admits the same clips as an owner without it. Consumed-scale membership
+is fixed when a transition starts. Captured references are not silently
+rebuilt. Saving keeps authored settings and target playback,
 while sampled clocks, source velocities, history and active/interrupted
 residuals restart empty on restore.
 

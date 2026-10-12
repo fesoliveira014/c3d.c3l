@@ -42,6 +42,7 @@ struct InertialRow @private {
     double[] morph_velocity;
     double[] morph_offset;
     double[] morph_offset_velocity;
+    bool[] consumed_scale;
     InertialControl control;
     RootInertialState root;
 }
@@ -110,6 +111,7 @@ fn InertialStorage*? create_inertial_storage(
         row.morph_velocity = carve_inertial_array(&cursor, double, morphs);
         row.morph_offset = carve_inertial_array(&cursor, double, morphs);
         row.morph_offset_velocity = carve_inertial_array(&cursor, double, morphs);
+        row.consumed_scale = carve_inertial_array(&cursor, bool, nodes);
 
         reset_inertial_row(storage, (uint)index);
     }
@@ -133,6 +135,7 @@ fn void reset_inertial_row(InertialStorage* storage, uint index) @private {
     row.morph_velocity[..] = 0;
     row.morph_offset[..] = 0;
     row.morph_offset_velocity[..] = 0;
+    row.consumed_scale[..] = false;
 
     row.control = {};
     row.root = {
@@ -173,6 +176,13 @@ fn usz? inertial_row_storage_bytes(uint nodes, uint morphs) @local {
             alignment: double::alignment,
         )!;
     }
+
+    offset = inertial_region_end(
+        offset: offset,
+        count: nodes,
+        element_size: bool::size,
+        alignment: bool::alignment,
+    )!;
 
     return inertial_aligned_offset(offset, InertialRow::alignment);
 }

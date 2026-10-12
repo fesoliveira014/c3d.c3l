@@ -22,7 +22,6 @@ struct PoseDerivativeScratch @private {
     double[] morph_rates;
     double[] morph_weight_rates;
     float[] morph_values;
-    bool[] consumed_scale;
     double[] sample;
     double[] sample_rate;
 }
@@ -54,8 +53,6 @@ fn PoseDerivativeScratch*? create_pose_derivative_scratch(
       ?? c3d::CAPACITY_EXCEEDED~!;
     scratch.morph_values = alloc::new_array_try(allocator, float, (sz)morphs)
       ?? c3d::CAPACITY_EXCEEDED~!;
-    scratch.consumed_scale = alloc::new_array_try(allocator, bool, (sz)nodes)
-      ?? c3d::CAPACITY_EXCEEDED~!;
     scratch.sample = alloc::new_array_try(allocator, double, (sz)sample_width)
       ?? c3d::CAPACITY_EXCEEDED~!;
     scratch.sample_rate = alloc::new_array_try(allocator, double, (sz)sample_width)
@@ -72,7 +69,6 @@ fn void destroy_pose_derivative_scratch(Allocator allocator, PoseDerivativeScrat
     alloc::free(allocator, scratch.morph_rates.ptr);
     alloc::free(allocator, scratch.morph_weight_rates.ptr);
     alloc::free(allocator, scratch.morph_values.ptr);
-    alloc::free(allocator, scratch.consumed_scale.ptr);
     alloc::free(allocator, scratch.sample.ptr);
     alloc::free(allocator, scratch.sample_rate.ptr);
     alloc::free(allocator, scratch);

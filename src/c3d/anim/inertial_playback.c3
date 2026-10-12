@@ -42,7 +42,7 @@ fn AnimationTransitionResult begin_prepared_inertial_transition(
     read_inertial_morphs(destination.morph_weights, row.previous_morph);
 
     AnimationTransitionResult installed = install_animation_transition(playback, assets, prepared);
-    capture_consumed_scale_nodes(playback, scratch.derivative.consumed_scale);
+    capture_consumed_scale_nodes(playback, row.consumed_scale);
 
     CapturedMotionChain* chain = generalized_playback_chain(playback);
     blend_pose(
@@ -76,7 +76,7 @@ fn AnimationTransitionResult begin_prepared_inertial_transition(
         target_velocity: scratch.derivative.velocity,
         target_morph: scratch.derivative.morph_values,
         target_morph_rate: scratch.derivative.morph_rates,
-        consumed_scale: scratch.derivative.consumed_scale,
+        consumed_scale: row.consumed_scale,
     );
 
     row.control.onset_pending = true;
@@ -106,7 +106,6 @@ fn void correct_inertial_pose(
 ) @private {
     InertialRow* row = playback.inertial;
     PoseDerivativeScratch* derivative = scratch.derivative;
-    capture_consumed_scale_nodes(playback, derivative.consumed_scale);
     read_inertial_morphs(destination.morph_weights, derivative.morph_values);
 
     advance_inertial_elapsed(row, dt);
@@ -117,7 +116,7 @@ fn void correct_inertial_pose(
         target_velocity: derivative.velocity,
         target_morph: derivative.morph_values,
         target_morph_rate: derivative.morph_rates,
-        consumed_scale: derivative.consumed_scale,
+        consumed_scale: row.consumed_scale,
         duration: row.control.duration,
         elapsed: row.control.elapsed,
     );

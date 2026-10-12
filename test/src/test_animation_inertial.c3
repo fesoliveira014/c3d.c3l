@@ -981,7 +981,7 @@ fn void test_animation_inertial_pose_no_history_display_onset_and_extreme_morph_
     sample.target_morph = { 0.75f, -float::max, float::max };
     sample.morph_rate = { 0.2, 0, 0 };
     apply_pose_test_case(&sample, 1);
-    assert(sample.target[0].position.x == 9 && sample.target[0].scale.x == 2 && sample.target[0].scale.y == 2);
+    assert(sample.target[0].position.x == 9 && sample.target[0].scale == (Vec3){ 1, 2, 3 });
     assert(sample.target_morph[1] == -float::max && sample.target_morph[2] == float::max);
     assert(sample.morph_rate[0] == 0.2);
 }
@@ -2070,6 +2070,54 @@ fn void test_animation_inertial_owner_plays_degenerate_rotations_without_faultin
     anim::update(&fixture.assets, &fixture.scene, 0.125f);
     assert(fixture.animator.inertial_status().active);
     assert(inertial_owner_row(&fixture).velocity[3].angular == (double[<3>]){});
+}
+
+fn void test_animation_inertial_scale_residual_survives_a_chain_becoming_consumed() @test {
+    LayerFixture fixture;
+    create_inertial_owner(&fixture);
+    defer destroy_layer_fixture(&fixture);
+    float[2] times = { 0, 1 };
+    float[6] doubled = { 2, 2, 2, 2, 2, 2 };
+    float[6] unit = { 1, 1, 1, 1, 1, 1 };
+    ClipId large = inertial_owner_clip(
+        owner: &fixture,
+        path: TargetPath.SCALE,
+        interpolation: Interpolation.LINEAR,
+        times: times[..],
+        values: doubled[..],
+        node: 2,
+    );
+    ClipId small = inertial_owner_clip(
+        owner: &fixture,
+        path: TargetPath.SCALE,
+        interpolation: Interpolation.LINEAR,
+        times: times[..],
+        values: unit[..],
+        node: 2,
+    );
+    ClipId walk = inertial_owner_translation(
+        owner: &fixture,
+        start: { 0, 0, 0 },
+        end: { 0, 0, 2 },
+        node: 2,
+    );
+    fixture.animator.play(&fixture.assets, large)!!;
+    anim::update(&fixture.assets, &fixture.scene, 0.0625f);
+    AnimationTargetDesc[1] description = { anim::ANIMATION_TARGET_DEFAULT };
+    description[0].clip = small;
+    fixture.animator.inertialize(&fixture.assets, { .duration = 1, .actions = description[..] })!!;
+    anim::update(&fixture.assets, &fixture.scene, 0.0625f);
+
+    PlayDesc fade = request_generalized_desc();
+    fade.fade_in = 1;
+    fixture.animator.play(&fixture.assets, walk, fade)!!;
+    float previous = inertial_owner_pose(&fixture, 2).scale.x;
+    for (uint frame = 0; frame < 8; frame++) {
+        anim::update(&fixture.assets, &fixture.scene, 0.0625f);
+        float scale = inertial_owner_pose(&fixture, 2).scale.x;
+        assert(scale < previous && previous - scale < 0.2f);
+        previous = scale;
+    }
 }
 
 fn void test_animation_inertial_request_rotation_uses_shortest_twenty_degree_transition() @test {
