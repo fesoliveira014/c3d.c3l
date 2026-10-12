@@ -36,7 +36,6 @@ fn bool? validate_generalized_motion(
     RootExtractionDesc extraction,
     MotionBasis motion_basis,
     bool additive,
-    AdditiveScaleMode additive_scale,
 ) @private {
     if (root >= template.nodes.len) return c3d::INVALID_ARGUMENT~;
     validate_motion_up(extraction.up)!;
@@ -216,7 +215,6 @@ fn bool? validate_playback_addition(
             extraction: desc.extraction,
             motion_basis: basis,
             additive: action.additive,
-            additive_scale: action.additive_scale,
         )!;
     }
 
@@ -259,7 +257,6 @@ fn bool? validate_action_desc(
         extraction: *extraction,
         motion_basis: motion_basis,
         additive: desc.additive,
-        additive_scale: desc.additive_scale,
     )!;
 
     return unsupported;

@@ -140,7 +140,6 @@ fn bool? validate_admission_fixture(MotionAdmissionFixture* fixture, uint root =
         extraction: fixture.extraction,
         motion_basis: fixture.basis,
         additive: additive,
-        additive_scale: AdditiveScaleMode.DIFFERENCE,
     );
 }
 
