@@ -3,13 +3,13 @@ module c3d::anim;
 import c3d;
 import std::math;
 
-fn void? validate_multiplicative_scale(AnimationClip* clip) @private {
+fn bool? validate_multiplicative_scale(AnimationClip* clip) @private {
     bool unsupported;
     foreach (&track : clip.tracks) {
         if (track.path != TargetPath.SCALE) continue;
 
         for (uint key = 0; key < track.times.len; key++) {
-            if (!positive_scale(analytic_key_values(track, key, CUBIC_SLOT_VALUE))) return c3d::INVALID_ARGUMENT~;
+            if (!positive_scale(key_values(track, key, CUBIC_SLOT_VALUE))) return c3d::INVALID_ARGUMENT~;
         }
 
         float[3] reference;
@@ -25,7 +25,7 @@ fn void? validate_multiplicative_scale(AnimationClip* clip) @private {
         unsupported |= track.interpolation == Interpolation.CUBIC_SPLINE;
     }
 
-    if (unsupported) return c3d::UNSUPPORTED~;
+    return unsupported;
 }
 
 fn bool positive_scale(float[] scale) @local {

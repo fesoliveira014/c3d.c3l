@@ -329,9 +329,9 @@ animator.play(&assets, walk, {
 ```
 
 The chain may contain animated proper rotations, translations and finite
-positive uniform scales. Nonuniform scale, reflection, shear, invalid root
-layout, nonfinite values and zero quaternion keys fault `INVALID_ARGUMENT` at
-admission. Rotation and scale tracks are checked at their keys. A cubic
+positive uniform scales. Nonuniform scale, reflection, a baseline rotation that
+is not unit length, a root outside the model, nonfinite values and zero
+quaternion keys fault `INVALID_ARGUMENT` at admission. Rotation and scale tracks are checked at their keys. A cubic
 rotation segment is not checked between its keys; where it crosses zero it
 samples as the identity rotation. A `CUBIC_SPLINE` scale track on the chain
 faults `UNSUPPORTED` before playback changes, after every `INVALID_ARGUMENT`
@@ -425,9 +425,10 @@ chain is unsupported: such a request faults `UNSUPPORTED` unless its keys alone
 are out of range.
 
 For a consumed root, source and target use the same motion node, selected axes,
-up, twist and frame. Different clip reference positions are allowed; the pose
-residual carries the articulated pose from the source's pinned reference to the
-target's. Root output adds a decaying residual translation/twist velocity to the
+up, twist and frame. Targets that do not extract are admitted against the
+consumed chain as actions played beside a generalized extractor are. Different
+clip reference positions are allowed; the pose residual carries the articulated
+pose from the source's pinned reference to the target's. Root output adds a decaying residual translation/twist velocity to the
 target delta, with one final pivot correction, and the compensated pose moves
 with the carrier.
 Events come from target actions only. The source's previous published delta
