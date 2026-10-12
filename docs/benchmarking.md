@@ -171,7 +171,7 @@ A seven-run repeat put `ecs_each` at 2,097,152 within noise: 181.2 before, 182.9
 ```bash
 ./examples/build/rt_shadows --gpu-timings --benchmark 300 --atlas-shadows
 ./examples/build/rt_shadows --gpu-timings --benchmark 300 [--software] [--twin-ground]
-./examples/build/rt_effects --gpu-timings --benchmark 300 [--software]
+./examples/build/rt_effects --gpu-timings --benchmark 300 [--software] [--forward] [--no-reflections]
 ./examples/build/gltf_viewer --benchmark --gpu-timings --frames 300 --warmup 60 --shading deferred \
     --ambient-occlusion ray-traced --reflections on --trace software|hardware --width 3840 --height 2160
 ./examples/build/gltf_viewer --benchmark --gpu-timings --frames 300 --warmup 60 --shading deferred \
@@ -183,7 +183,9 @@ c3d_profile`. `rt_shadows` and `rt_effects` benchmark at 1920x1080 and print pas
 (the sum of the pass timestamps); `rt_shadows` reports the forward pass, where traced shadows cost, and
 `--atlas-shadows` gives the base to subtract; `--twin-ground` draws the ground with the custom twin of its
 Standard material, which shades through `standard_shading.glsl` and its traced forms, and the line names the
-ground. `gltf_viewer` prints `first frame:` with the trace
+ground. `rt_effects` runs deferred with traced reflections unless `--forward` or `--no-reflections` say otherwise,
+configures the view before `prepare_scene` and prints `first frame:` with the pipelines the first frame created and its
+recording time. `gltf_viewer` prints `first frame:` with the trace
 preparation's CPU time and the acceleration builds' GPU time; `--shadows traced` traces the sun's shadow
 (an `AUTO` run then creates the renderer with ray queries), and `--shadows on` keeps the atlas as its base.
 
@@ -375,7 +377,8 @@ the noon segment's first frame. `--volumetric-fog` adds a froxel volume to the m
 `FOG_SCATTERING` and `FOG_INTEGRATION` pass lines report it (0 without the switch), with `--fog-quality low|medium|high`
 choosing its grid; `--local-lights N`, `--lamp-range METRES` and `--lamps-in-fog on|off` place and configure
 [lamps](sky.md#example) that `FOG_SCATTERING` scatters; `--taa` turns on TAA, so
-`--volumetric-fog --taa` on the pan segment shows whether sun shafts crawl. A failed gate exits 1. `--fog off --atmosphere off` is the fog-off baseline.
+`--volumetric-fog --taa` on the pan segment shows whether sun shafts crawl. A failed gate exits 1. `--fog off --atmosphere off` is the fog-off baseline. `--atmosphere dense|empty` selects the
+dense and the non-scattering atmospheres of [the sky example](sky.md#example); the header prints the value.
 
 ## Instancing benchmark
 

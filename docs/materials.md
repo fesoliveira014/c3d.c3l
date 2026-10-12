@@ -191,8 +191,8 @@ re-created lazily, and kept by a reconfiguration at the same extent, as `scene_c
 is allocated per frame. Each `WEIGHTED` frame with participating draws adds one render pass and one
 fullscreen draw, counted in `Stats.draws`. A participating draw uses the `WEIGHTED_BLEND` form of its
 stage, one more compiled stage for each plain, `RT_SHADOWS` and `RT_SHADOWS` with
-`SCENE_TRACE_BVH` form, and a pipeline keyed by the two attachment formats, so the first `WEIGHTED` frame
-creates them. `SORTED` pipelines are unchanged.
+`SCENE_TRACE_BVH` form, and a pipeline keyed by the two attachment formats. `prepare_scene` and model
+preparation create them for each live `WEIGHTED` view. `SORTED` pipelines are unchanged.
 
 ## Toon factors
 

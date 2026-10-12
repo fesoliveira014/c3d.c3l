@@ -102,6 +102,7 @@ const char[*] POND_FRAGMENT_SOURCE @local = $embed("../shaders/custom/water.frag
 const char[*] MIRROR_FRAGMENT_SOURCE @local = $embed("../shaders/custom/mirror.frag.glsl");
 const Vec4 CLEAR_SKY_COLOR @local = { 0.45f, 0.6f, 0.85f, 1 }; // the background without an atmosphere
 const float AMBIENT_INTENSITY @local = 0.3f;
+const Vec3 DENSE_AIR_SCATTERING @local = { 0.5f, 0.5f, 0.5f }; // per metre; the multiple-scattering transfer reaches 1
 
 const float FOG_DENSITY_MAX @local = 0.02f;
 const float FOG_FALLOFF_MAX @local = 0.1f;
@@ -128,6 +129,7 @@ const Vec2 PANEL_SIZE @local = { 440, 520 };
 const Vec2 STATS_PANEL_POSITION @local = { 472, 16 };
 const Vec2 STATS_PANEL_SIZE @local = { 420, 260 };
 
+const String[Air::len] AIR_NAMES @local = { "off", "on", "dense", "empty" };
 const String[Segment::len] SEGMENT_NAMES @local = { "noon", "twilight", "valley", "pan", "time-lapse" };
 const Pass[18] REPORTED_PASSES @local = {
     Pass.SKY_VIEW,
@@ -154,6 +156,13 @@ const EnvironmentStage[3] REFRESH_STAGES @local = {
     EnvironmentStage.PREFILTER,
     EnvironmentStage.IRRADIANCE,
 };
+
+enum Air @local {
+    NONE,
+    EARTH,
+    DENSE,
+    EMPTY,
+}
 
 enum Segment @local {
     NOON,
@@ -190,7 +199,7 @@ struct Options @local {
     bool        path_traced;
     bool        reflections;
     bool        fog;
-    bool        atmosphere;
+    Air         air;
     bool        volumetric_fog;
     FogQuality  fog_quality;
     uint        local_lights;
@@ -523,7 +532,7 @@ fn void? build_demo(Demo* demo) @local {
     sun.shadow.max_distance = SHADOW_DISTANCE;
     sun.shadow.ray_traced = demo.options.traced_shadows;
     demo.sun = scene.add_light(sun, name: "sun")!;
-    if (demo.options.atmosphere) scene.add(demo.sun, light::ATMOSPHERE_EARTH);
+    if (demo.options.air != Air.NONE) scene.add(demo.sun, atmosphere_of(demo.options.air));
     if (demo.options.fog) {
         demo.fog = scene.add_node(name: "fog")!;
         scene.add(demo.fog, light::HEIGHT_FOG_DEFAULT);
@@ -543,6 +552,19 @@ fn void? build_demo(Demo* demo) @local {
         name: "mirror",
     )!;
     scene.get(demo.mirror.camera_node, Camera).layers = camera::ALL_LAYERS & ~MIRROR_LAYER;
+}
+
+fn Atmosphere atmosphere_of(Air air) @local {
+    Atmosphere atmosphere = light::ATMOSPHERE_EARTH;
+    switch (air) {
+        case NONE:
+        case EARTH: return atmosphere;
+        case DENSE: atmosphere.rayleigh_scattering = DENSE_AIR_SCATTERING;
+        case EMPTY:
+            atmosphere.rayleigh_scattering = {};
+            atmosphere.mie_scattering = 0;
+    }
+    return atmosphere;
 }
 
 fn RendererDesc renderer_desc(Options options, bool validation, ZString application_name) @local {
@@ -693,7 +715,7 @@ fn Options? parse_options(String[] args) @local {
         .segment_frames = DEFAULT_SEGMENT_FRAMES,
         .shading        = ShadingPath.FORWARD,
         .fog            = true,
-        .atmosphere     = true,
+        .air            = Air.EARTH,
         .lamp_range     = LAMP_RANGE,
         .lamps_in_fog   = true,
         .preset         = Preset.NOON,
@@ -750,7 +772,14 @@ fn Options? parse_options(String[] args) @local {
             case "--taa": options.taa = true;
             case "--auto-exposure": options.auto_exposure = true;
             case "--fog": options.fog = on_off(option_value(args, &index)!)!;
-            case "--atmosphere": options.atmosphere = on_off(option_value(args, &index)!)!;
+            case "--atmosphere":
+                switch (option_value(args, &index)!) {
+                    case "off": options.air = Air.NONE;
+                    case "on": options.air = Air.EARTH;
+                    case "dense": options.air = Air.DENSE;
+                    case "empty": options.air = Air.EMPTY;
+                    default: return c3d::INVALID_ARGUMENT~;
+                }
             case "--preset":
                 switch (option_value(args, &index)!) {
                     case "noon": options.preset = Preset.NOON;
@@ -1273,7 +1302,7 @@ fn bool print_time_lapse(
     double threshold_degrees = render::SKY_REGENERATION_SUN_ANGLE / DEGREE;
     double period = (math::floor(threshold_degrees / step_degrees) + 1) * step_degrees;
     double sweep = (double)(records.len - 1) * step_degrees;
-    uint expected = options.atmosphere ? (uint)math::floor(sweep / period) : 0;
+    uint expected = options.air != Air.NONE ? (uint)math::floor(sweep / period) : 0;
     bool gate = regenerations == expected;
     io::printfn(
         "gate time_lapse_regenerations expected=%d found=%d %s",
@@ -1354,7 +1383,7 @@ fn void print_header(Options options) @local {
         options.path_traced ? "on" : "off",
         options.reflections ? "on" : "off",
         options.fog ? "on" : "off",
-        options.atmosphere ? "on" : "off",
+        AIR_NAMES[options.air.ordinal],
         options.volumetric_fog ? "on" : "off",
         fog_quality_name(options.fog_quality),
         options.local_lights,
@@ -1433,7 +1462,7 @@ fn int main(String[] args) {
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--shadows atlas|traced] [--ssgi] [--path-traced] [--reflections on|off] [--volumetric-fog] "
               "[--fog-quality low|medium|high] [--local-lights N] [--lamp-range METRES] [--lamps-in-fog on|off] "
-              "[--taa] [--auto-exposure] [--fog on|off] [--atmosphere on|off] "
+              "[--taa] [--auto-exposure] [--fog on|off] [--atmosphere on|off|dense|empty] "
               "[--preset noon|twilight|valley|pan|time-lapse] [--width W] [--height H].");
         }
         return 1;

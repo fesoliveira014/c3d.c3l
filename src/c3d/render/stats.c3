@@ -152,6 +152,7 @@ struct Stats {
     ulong prepare_overrun_ns;
     uint  material_resolutions;
     uint  pipeline_lookups;
+    uint  pipelines_created;     // this frame: lookups the cache missed and built, prepared ones included
     uint  dangling_refs;
     uint  trace_instances;
     uint  trace_nodes;

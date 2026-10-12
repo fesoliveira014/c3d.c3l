@@ -392,6 +392,13 @@ fn GpuGeometry*? resolve_geometry(Renderer* renderer, GeometryId geometry) @priv
     return mirror;
 }
 
+// index_input is destination-only in gpu.c3l; a vertex_shader source already orders after index fetch.
+fn gpu::StageMask geometry_read_stages(Renderer* renderer) @private {
+    gpu::StageMask stages = renderer.consumer_stages;
+    stages.index_input = true;
+    return stages;
+}
+
 fn void? record_pending_copies(Renderer* renderer, gpu::CommandList* commands) @private {
     if (renderer.pending_copies.len() || renderer.pending_texture_uploads.len()
         || renderer.pending_font_uploads.len()) {
@@ -407,7 +414,7 @@ fn void? record_pending_copies(Renderer* renderer, gpu::CommandList* commands) @
             renderer.pending_overwrite = false;
         }
         foreach (&copy : renderer.pending_copies) gpu::cmd_copy_buffer(commands, copy)!;
-        gpu::Barrier to_consumers = { .before = { .transfer }, .after = renderer.consumer_stages };
+        gpu::Barrier to_consumers = { .before = { .transfer }, .after = geometry_read_stages(renderer) };
         gpu::cmd_barrier(commands, &to_consumers)!;
         renderer.pending_copies.clear();
     }

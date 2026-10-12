@@ -350,20 +350,19 @@ fn void list_mesh_pipelines(
         );
     }
 
+    ShaderVariant depth_vertex = mesh_vertex_variant(
+        flags: flags,
+        morphed: morphed,
+        skinned: deformed,
+        base_flags: shader::SHADER_FLAG_DEPTH_ONLY | instanced_flags,
+    );
+    bool vertex_color = material.common.alpha_mode == AlphaMode.MASK && (flags.has_colors || instanced);
     if (depth && material.common.alpha_mode != AlphaMode.BLEND) {
-        bool vertex_color = material.common.alpha_mode == AlphaMode.MASK && (flags.has_colors || instanced);
-        PipelineKey caster = {
-            .vertex = mesh_vertex_variant(
-                flags: flags,
-                morphed: morphed,
-                skinned: deformed,
-                base_flags: shader::SHADER_FLAG_DEPTH_ONLY | instanced_flags,
-            ),
-            .fragment = { .shader = DEPTH_ONLY, .flags = vertex_color ? shader::SHADER_FLAG_VERTEX_COLOR : 0 },
-            .depth_format = DEPTH_FORMAT,
-            .samples = gpu::SampleCount.ONE,
-            .polygon = polygon,
-        };
+        PipelineKey caster = shadow_pipeline_key(
+            vertex: depth_vertex,
+            wireframe: wireframe,
+            vertex_color: vertex_color,
+        );
         list_prepare_key(
             requests: requests,
             key: caster,
@@ -390,17 +389,52 @@ fn void list_mesh_pipelines(
             custom_gbuffer: custom_gbuffer,
             custom_reads: custom_reads,
         );
+        uint shadow_flags = rt_shadow_flags(renderer, desc.ray_tracing.shadows);
         if (desc.ray_tracing.shadows && list != DrawList.GBUFFER) {
             PipelineKey traced = forward_pipeline_key(
                 material: material,
                 vertex: vertex,
                 polygon: polygon,
-                shadow_flags: rt_shadow_flags(renderer, true),
+                shadow_flags: shadow_flags,
             );
             list_prepare_key(
                 requests: requests,
                 key: traced,
                 pass: PreparePipelinePass.FORWARD,
+                shader: custom,
+            );
+        }
+
+        if (list == DrawList.TRANSPARENT && weighted_blend_eligible(material, desc.transparency)) {
+            PipelineKey weighted = forward_pipeline_key(
+                material: material,
+                vertex: vertex,
+                polygon: polygon,
+                shadow_flags: shadow_flags,
+                weighted: true,
+            );
+            list_prepare_key(
+                requests: requests,
+                key: weighted,
+                pass: PreparePipelinePass.FORWARD,
+                shader: custom,
+            );
+        }
+
+        if (desc.ray_tracing.reflections && desc.shading == ShadingPath.FORWARD && list == DrawList.OPAQUE) {
+            ReflectionPrepass reflection = gbuffer_encodable(material)
+              ? ReflectionPrepass.WRITTEN : ReflectionPrepass.MASKED;
+            PipelineKey thin = shadow_pipeline_key(
+                vertex: reflection == ReflectionPrepass.WRITTEN ? vertex : depth_vertex,
+                wireframe: wireframe,
+                material: material,
+                vertex_color: vertex_color,
+                reflection: reflection,
+            );
+            list_prepare_key(
+                requests: requests,
+                key: thin,
+                pass: PreparePipelinePass.DEPTH,
                 shader: custom,
             );
         }
@@ -466,6 +500,9 @@ fn void list_view_pipelines(Renderer* renderer, SceneReads reads, List{PreparePi
         if (desc.shading == ShadingPath.DEFERRED) {
             uint shadow_flags = rt_shadow_flags(renderer, desc.ray_tracing.shadows);
             list_prepare_key(requests, lighting_resolve_pipeline_key(shadow_flags));
+        }
+        if (desc.transparency == TransparencyMode.WEIGHTED) {
+            list_prepare_key(requests, weighted_composite_pipeline_key());
         }
 
         switch (desc.ambient_occlusion.kind) {
