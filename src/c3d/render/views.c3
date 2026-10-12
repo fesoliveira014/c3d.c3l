@@ -79,6 +79,7 @@ struct ViewDesc {
     bool                 instance_culling;
     Plane                clip_plane; // world space; the zero plane clips nothing
     bool                 volumetric_fog; // a froxel volume for the view's HeightFog; allocated with the view
+    FogQuality           fog_quality; // grid of that volume; reallocated when it changes
     bool                 share_shadows;  // binds an earlier view's matching shadow set and publishes its own
     uint                 transmission_layers; // up to MAX_TRANSMISSION_LAYERS; zero reads as 1
     TransparencyMode     transparency; // how premultiplied-alpha blended surfaces compose
@@ -1153,7 +1154,9 @@ fn void drop_unwanted_images(ViewRecord* staged, ViewDesc* previous) @private {
         staged.sky_view = {};
         staged.aerial_perspective = {};
     }
-    if (!desc.volumetric_fog || desc.shading == ShadingPath.PATH_TRACED) staged.fog_volume = {};
+    if (!desc.volumetric_fog || desc.shading == ShadingPath.PATH_TRACED || desc.fog_quality != previous.fog_quality) {
+        staged.fog_volume = {};
+    }
     post::drop_stale_effect_targets(staged);
 }
 

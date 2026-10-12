@@ -98,6 +98,7 @@ struct SkyFogTables @private {
     gpu::TextureIndex aerial_perspective;
     gpu::SamplerIndex sampler;
     gpu::TextureIndex fog_volume;
+    uint              fog_slices;
 }
 
 struct SkyPipelines @private {
@@ -208,6 +209,7 @@ fn void write_sky_fog(
         .aerial_perspective_lut = tables.aerial_perspective,
         .lut_sampler            = tables.sampler,
         .fog_volume             = tables.fog_volume,
+        .fog_slices             = tables.fog_slices,
     };
     if (atmosphere) {
         float top = atmosphere.planet_radius + atmosphere.atmosphere_height;
@@ -711,7 +713,10 @@ fn gpu::GpuAddress? pack_view_sky_fog(
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, SkyFogGpu::size, STREAM_ALIGNMENT)!;
     SkyFogTables tables = { .sampler = renderer.linear_clamp_sampler };
-    if (fog.fog) tables.fog_volume = fog_volume;
+    if (fog.fog) {
+        tables.fog_volume = fog_volume;
+        tables.fog_slices = record.fog_volume.depth;
+    }
     Vec3 to_sun;
     Vec3 illuminance;
     if (atmosphere) {

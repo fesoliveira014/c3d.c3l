@@ -187,14 +187,15 @@ FogTerms aerial_perspective_segment(SkyFogGpu sky, vec2 uv, float near, float fa
 
 // Distance along a froxel ray to slice boundary k; slices are squared toward the camera.
 float fog_slice_distance(SkyFogGpu sky, uint boundary) {
-    float share = float(boundary) / float(FOG_VOLUME_SLICES);
+    float share = float(boundary) / float(sky.fog_slices);
     return share * share * sky.fog_max_distance;
 }
 
 // The volume from the camera to a distance along a pixel's ray; texel k holds the integral to boundary k + 1.
 FogTerms fog_volume_terms(SkyFogGpu sky, vec2 uv, float distance) {
-    float slice = sqrt(clamp(distance / sky.fog_max_distance, 0.0, 1.0)) * float(FOG_VOLUME_SLICES);
-    float depth = (max(slice, 1.0) - 0.5) / float(FOG_VOLUME_SLICES);
+    float slices = float(sky.fog_slices);
+    float slice = sqrt(clamp(distance / sky.fog_max_distance, 0.0, 1.0)) * slices;
+    float depth = (max(slice, 1.0) - 0.5) / slices;
     vec4 volume = sample_texture_3d(sky.fog_volume, sky.lut_sampler, vec3(uv, depth));
     float weight = min(slice, 1.0); // below the first boundary the volume grows linearly from the camera
     FogTerms terms;

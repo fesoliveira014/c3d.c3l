@@ -905,7 +905,7 @@ fn void test_volumetric_fog_follows_the_view_switch() @test {
     defer destroy_fog_view(&fixture, &volume);
     ViewRecord* record = renderer.views.get(volume.view);
     assert(record.fog_volume.texture.is_valid() && record.fog_volume.width == 3);
-    assert(record.fog_volume.depth == shader::FOG_VOLUME_SLICES);
+    assert(record.fog_volume.depth == FogQuality.MEDIUM.slices);
 
     render_fog_frames(&fixture, &target, &plain)!!;
     uint unfogged = renderer.stats.post_dispatches;
