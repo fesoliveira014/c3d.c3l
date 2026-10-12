@@ -388,8 +388,9 @@ volume, 8 MiB.
   depth alone. At cloud altitudes the case is rare.
 - The height fog covers the composite as it covers any pixel: over the sky it takes the fog to infinity, so
   a camera above the fog layer looking down sees the fog in front of the clouds below it.
-- There is no temporal accumulation: the jitter shows as grain, most where the march covers far more distance
-  than a feature spans (the limb seen from orbit).
+- There is no temporal accumulation: the jitter shows as grain, most where a pixel's footprint spans many
+  features. From orbit that is the whole disc, not only the limb, because each pixel covers many repeats of
+  the coverage map and the noise.
 
 ## Custom stages
 

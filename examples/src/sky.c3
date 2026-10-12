@@ -253,7 +253,7 @@ struct CloudWeather @local {
 }
 
 struct Demo @local {
-    Options      options;
+    Options     options;
     CloudWeather weather;
     AssetStore* assets;
     Scene*      scene;
@@ -646,6 +646,7 @@ fn void? add_clouds(Demo* demo) @local {
     demo.weather.wind_speed = CLOUD_WIND_SPEED;
     fill_cloud_coverage(pixels[..], demo.weather.amount);
     demo.weather.coverage = demo.assets.add_texture(coverage_desc(), pixels[..])!;
+
     CloudLayer layer = light::CLOUD_LAYER_DEFAULT;
     layer.coverage = demo.weather.coverage;
     demo.weather.node = demo.scene.add_node(name: "clouds")!;

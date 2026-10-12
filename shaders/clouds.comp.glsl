@@ -86,12 +86,14 @@ bool cloud_interval(CloudsRoot root, float altitude, float cos_zenith, out float
         end = min(max(to_bottom, to_top), start + CLOUD_MAX_MARCH);
         return end > start;
     }
+
     float top_near;
     float top_far;
     if (!cloud_sphere_roots(root.planet_radius, altitude, cos_zenith, root.top, top_near, top_far)) return false;
     if (top_far <= 0.0) return false;
     start = max(top_near, 0.0);
     end = top_far;
+
     float bottom_near;
     float bottom_far;
     if (cloud_sphere_roots(root.planet_radius, altitude, cos_zenith, root.bottom, bottom_near, bottom_far)
@@ -99,12 +101,14 @@ bool cloud_interval(CloudsRoot root, float altitude, float cos_zenith, out float
         if (bottom_near <= start) start = max(start, bottom_far);
         else end = min(end, bottom_near);
     }
+
     float ground_near;
     float ground_far;
     if (cloud_sphere_roots(root.planet_radius, altitude, cos_zenith, 0.0, ground_near, ground_far)
         && ground_near > 0.0 && ground_near < start) {
         return false;
     }
+
     end = min(end, start + CLOUD_MAX_MARCH);
     return end > start;
 }
