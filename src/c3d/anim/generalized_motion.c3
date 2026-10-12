@@ -41,43 +41,19 @@ fn GeneralizedMotionFrame sample_generalized_endpoint(
         CapturedMotionNode* node = &chain.nodes[index - 1];
         GeneralizedMotionFrame local = generalized_frame_from_transform(node.baseline);
         double[4] value;
-        uint cursor;
 
         if (node.translation_track != NO_MOTION_TRACK) {
-            Track* track = &clip.tracks[node.translation_track];
-            sample_track_analytic(
-                track: track,
-                time: track_clip_time(track, time),
-                cursor: &cursor,
-                value: value[:3],
-                side: time.side,
-            );
+            sample_endpoint_track(&clip.tracks[node.translation_track], time, value[:3]);
             local.position = { value[0], value[1], value[2] };
         }
 
         if (node.rotation_track != NO_MOTION_TRACK) {
-            Track* track = &clip.tracks[node.rotation_track];
-            cursor = 0;
-            sample_track_analytic(
-                track: track,
-                time: track_clip_time(track, time),
-                cursor: &cursor,
-                value: value[..],
-                side: time.side,
-            );
+            sample_endpoint_track(&clip.tracks[node.rotation_track], time, value[..]);
             local.rotation = { .v = { value[0], value[1], value[2], value[3] } };
         }
 
         if (node.scale_track != NO_MOTION_TRACK) {
-            Track* track = &clip.tracks[node.scale_track];
-            cursor = 0;
-            sample_track_analytic(
-                track: track,
-                time: track_clip_time(track, time),
-                cursor: &cursor,
-                value: value[:3],
-                side: time.side,
-            );
+            sample_endpoint_track(&clip.tracks[node.scale_track], time, value[:3]);
             local.scale = (value[0] + value[1] + value[2]) / 3;
         }
 
@@ -85,6 +61,18 @@ fn GeneralizedMotionFrame sample_generalized_endpoint(
     }
 
     return world;
+}
+
+fn void sample_endpoint_track(Track* track, ClipTime time, double[] value) @local {
+    // A cursor past the last key bisects the keys rather than walking from the first.
+    uint cursor = uint::max;
+    sample_track_analytic(
+        track: track,
+        time: track_clip_time(track, time),
+        cursor: &cursor,
+        value: value,
+        side: time.side,
+    );
 }
 
 fn ClipTime fixed_clip_time(float time, StepSampleSide side = StepSampleSide.EXACT) @private {
