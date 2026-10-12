@@ -129,6 +129,7 @@ fn TextureBinding? resolve_gradient_map(Renderer* renderer, TextureId texture, b
         ? resolve_texture(renderer, texture, full_reader: true)!
         : &renderer.textures[texture.index];
     TextureBinding content = texture_binding_content(renderer, texture, texture_mirror);
+
     if (resolve) acquire_toon_gradient_sampler(renderer)!;
 
     return {

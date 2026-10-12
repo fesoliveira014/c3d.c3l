@@ -612,10 +612,12 @@ fn void refresh_prepare_progress(PrepareRecord* record) @private {
 
 fn void settle_prepare_state(PrepareRecord* record) @private {
     if (record.state == PrepareState.FAILED) return;
+
     if (record.units_done < record.units.len) {
         record.state = PrepareState.PENDING;
         return;
     }
+
     record.state = record.pending_gpu ? PrepareState.PENDING
         : (record.last_submission.is_valid() ? PrepareState.SUBMITTED : PrepareState.READY);
     record.phase = PreparePhase.COMPLETE;
