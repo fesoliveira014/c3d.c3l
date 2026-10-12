@@ -80,8 +80,10 @@ independent of banding, and color channels are unchanged.
 Adding or replacing a coverage texture rejects alpha outside [0, 1] with
 `INVALID_ARGUMENT`. Threshold generation counts mip zero's passing texels while it
 filters the first level, so `mark_texture_dirty` only advances the revision and
-`restore_texture_cpu` keeps it; alpha edited in place outside [0, 1] fails that
-generation with `INVALID_ARGUMENT`.
+`restore_texture_cpu` keeps it. Restoring expects the released bytes; call
+`mark_texture_dirty` after restoring different pixels. Alpha edited in place outside
+[0, 1] fails that generation with `INVALID_ARGUMENT`; on the budgeted path the fault
+comes from a generation step and fails the preparation record.
 
 ## Decode memory and retain ownership
 
