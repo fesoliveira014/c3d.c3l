@@ -79,8 +79,8 @@ fn CompressionReport? AssetStore.compress_clip(&self, ClipId clip, ClipTolerance
 
         foreach (index, &candidate : staged) {
             if (!candidate.is_packed()) continue;
-            double error = candidate.interpolation == Interpolation.CUBIC_SPLINE
-              ? cubic_error(candidate) : measure_error(&data.tracks[index], candidate);
+            double error = measure_error(&data.tracks[index], candidate);
+            if (candidate.interpolation == Interpolation.CUBIC_SPLINE) error = math::max(error, cubic_error(candidate));
             float* worst = path_value(&report.error, candidate.path);
             *worst = math::max(*worst, (float)error);
         }
@@ -236,12 +236,11 @@ fn double measure_error(Track* source, Track* candidate) @local {
         .reference = scratch[:stride],
         .value = scratch[stride:stride],
     };
+    bool midpoints = source.path == TargetPath.ROTATION || source.interpolation == Interpolation.CUBIC_SPLINE;
     double worst;
     for (uint key = 0; key < keys; key++) {
         worst = math::max(worst, error_at(&probe, source.key_time(key)));
-        if (source.path == TargetPath.ROTATION && key + 1 < keys) {
-            worst = math::max(worst, error_at(&probe, midpoint(source, key)));
-        }
+        if (midpoints && key + 1 < keys) worst = math::max(worst, error_at(&probe, midpoint(source, key)));
     }
     return worst;
 }
