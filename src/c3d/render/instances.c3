@@ -191,14 +191,6 @@ fn uint pack_instance_records(
     return split;
 }
 
-<*
- Pack the instances of a span at their array positions.
- @param [out] records : "At least span.end - span.first long; record zero is instance span.first."
- @param [&in] batch : "No mirrored instance in the span."
- @param [in] crowd : "Null selects ordinary batch transforms."
- @param part : "Logical crowd mesh; ignored for ordinary batches."
- @require span.first < span.end, span.end <= batch.count
-*>
 fn void pack_instance_span(
     InstanceGpu[] records,
     Mat4 node_world,
@@ -206,7 +198,7 @@ fn void pack_instance_span(
     InstanceSpan span,
     AnimatedCrowd* crowd = null,
     uint part = 0,
-) {
+) @private {
     for (uint index = span.first; index < span.end; index++) {
         write_batch_instance(
             record:     &records[index - span.first],
@@ -297,15 +289,6 @@ fn bool needs_upload(
         || slot.world != world || slot.origin != origin;
 }
 
-<*
- Instances whose records the slot can overwrite in place, in array order.
- @param [&in] slot
- @param [&in] batch
- @param world : "Batch node world matrix."
- @param origin : "Absolute origin used to pack the records."
- @param [in] crowd : "Null selects ordinary batch transforms."
- @return "Empty when the whole batch must upload, including when the slot holds a mirrored record or the span now does."
-*>
 fn InstanceSpan patchable_span(
     GpuInstances* slot,
     InstancedMesh* batch,
@@ -313,7 +296,7 @@ fn InstanceSpan patchable_span(
     Vec3 origin,
     AnimatedCrowd* crowd,
     uint part,
-) {
+) @private {
     if (slot.capacity < batch.transforms.len || slot.world != world || slot.origin != origin) return {};
     if (slot.count != batch.count || slot.mirrored) return {};
 
@@ -483,6 +466,7 @@ fn void? upload_instance_records(
     InstanceSpan patch = patchable_span(slot, batch, world, renderer.frame_origin, crowd, part);
     bool patched = patch.end > patch.first;
     if (!patched) patch = { .end = batch.count };
+
     acquire_instance_records(
         renderer: renderer,
         slot: slot,
