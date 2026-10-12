@@ -2,6 +2,7 @@
 #define C3D_BLEND_OUTPUT_GLSL
 
 #include "material_alpha.glsl"
+#include "pre_exposure.glsl"
 #ifdef WEIGHTED_BLEND
 #include "weighted_blend.glsl"
 #endif

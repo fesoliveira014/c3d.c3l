@@ -12,5 +12,5 @@ layout(location = 0) out vec4 out_color;
 
 void main() {
     DebugLinesRoot root = DebugLinesRoot(pc.fragment_root_gpu);
-    out_color = vec4(v_color.rgb, v_color.a * root.alpha);
+    out_color = vec4(v_color.rgb * root.pre_exposure, v_color.a * root.alpha);
 }

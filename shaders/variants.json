@@ -161,6 +161,8 @@
     { "include": "material_alpha.glsl", "stage": "frag", "defines": [] },
     { "include": "blend_output.glsl", "stage": "frag", "defines": [] },
     { "include": "blend_output.glsl", "stage": "frag", "defines": ["WEIGHTED_BLEND"] },
+    { "include": "pre_exposure.glsl", "stage": "frag", "defines": [] },
+    { "include": "pre_exposure.glsl", "stage": "comp", "defines": [] },
     { "include": "custom_material.glsl", "stage": "frag", "defines": [] },
     { "include": "normal_mapping.glsl", "stage": "frag", "defines": [] },
     { "include": "noise.glsl", "stage": "frag", "defines": [] },

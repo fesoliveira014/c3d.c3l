@@ -40,6 +40,7 @@ const char[*] C3D_COMMON_NORMAL_MAPPING_TEXT @private = $embed("../../../shaders
 const char[*] C3D_COMMON_OVERLAY_GLYPH_TEXT @private = $embed("../../../shaders/common/overlay_glyph.glsl");
 const char[*] C3D_COMMON_PATH_TRACE_TEXT @private = $embed("../../../shaders/common/path_trace.glsl");
 const char[*] C3D_COMMON_PHYSICAL_TEXT @private = $embed("../../../shaders/common/physical.glsl");
+const char[*] C3D_COMMON_PRE_EXPOSURE_TEXT @private = $embed("../../../shaders/common/pre_exposure.glsl");
 const char[*] C3D_COMMON_PROBE_ATLAS_TEXT @private = $embed("../../../shaders/common/probe_atlas.glsl");
 const char[*] C3D_COMMON_PROBE_CLASSIFICATION_TEXT @private = $embed("../../../shaders/common/probe_classification.glsl");
 const char[*] C3D_COMMON_PROBE_VOLUME_TEXT @private = $embed("../../../shaders/common/probe_volume.glsl");
@@ -69,7 +70,7 @@ const char[*] GPU_RAY_TRACING_TEXT @private = $embed("../../../shaders/gpu/ray_t
 <*
  Every include a custom stage may resolve, in table order.
 *>
-const asset::ShaderInclude[62] SHADER_INCLUDES = {
+const asset::ShaderInclude[63] SHADER_INCLUDES = {
     { .name = "c3d_abi.glsl", .text = (String)C3D_GENERATED_C3D_ABI_TEXT[..] },
     { .name = "ambient_occlusion.glsl", .text = (String)C3D_COMMON_AMBIENT_OCCLUSION_TEXT[..] },
     { .name = "ao_estimate.glsl", .text = (String)C3D_COMMON_AO_ESTIMATE_TEXT[..] },
@@ -107,6 +108,7 @@ const asset::ShaderInclude[62] SHADER_INCLUDES = {
     { .name = "overlay_glyph.glsl", .text = (String)C3D_COMMON_OVERLAY_GLYPH_TEXT[..] },
     { .name = "path_trace.glsl", .text = (String)C3D_COMMON_PATH_TRACE_TEXT[..] },
     { .name = "physical.glsl", .text = (String)C3D_COMMON_PHYSICAL_TEXT[..] },
+    { .name = "pre_exposure.glsl", .text = (String)C3D_COMMON_PRE_EXPOSURE_TEXT[..] },
     { .name = "probe_atlas.glsl", .text = (String)C3D_COMMON_PROBE_ATLAS_TEXT[..] },
     { .name = "probe_classification.glsl", .text = (String)C3D_COMMON_PROBE_CLASSIFICATION_TEXT[..] },
     { .name = "probe_volume.glsl", .text = (String)C3D_COMMON_PROBE_VOLUME_TEXT[..] },

@@ -285,7 +285,7 @@ void main() {
     vec4 screen_indirect = draw_screen_space_indirect(frame, draw.flags, ivec2(gl_FragCoord.xy));
     vec3 base_ambient = frame.ambient.rgb * material_sample.base_color.rgb * (1.0 - material_sample.metallic)
         * screen_space_base_share(material_sample.occlusion, ambient_occlusion, screen_indirect);
-    vec3 color = physical_fill(surface, base_ambient, transmitted, material_sample.emissive);
+    vec3 color = physical_fill(surface, base_ambient, transmitted, pre_exposed(frame, material_sample.emissive));
     vec4 traced = draw_traced_reflection(frame, draw.flags, ivec2(gl_FragCoord.xy));
     if (frame_has_indirect(frame) || traced.a > 0.0) {
         color += evaluate_physical_environment(

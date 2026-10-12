@@ -8,6 +8,7 @@
 #include "ambient_occlusion.glsl"
 #include "screen_space_gi.glsl"
 #include "standard_surface.glsl"
+#include "pre_exposure.glsl"
 
 vec3 standard_ambient_fill(
     FrameRoot frame,
@@ -85,7 +86,7 @@ vec3 shade_standard_surface(
         surface_sample.occlusion,
         ambient_occlusion,
         screen_indirect
-    ) + surface_sample.emissive;
+    ) + pre_exposed(frame, surface_sample.emissive);
     vec4 traced = draw_traced_reflection(frame, draw.flags, pixel);
     if (frame_has_indirect(frame) || traced.a > 0.0) {
         vec3 diffuse;

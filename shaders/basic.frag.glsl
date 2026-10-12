@@ -28,7 +28,8 @@ void main() {
     color *= v_color;
 
     if ((material.flags & MATERIAL_ALPHA_MASK) != 0u && color.a < material.alpha_cutoff) discard;
+    vec3 radiance = pre_exposed(frame, color.rgb);
     vec3 fogged = (material.flags & MATERIAL_ALPHA_BLEND) != 0u
-        ? apply_material_fog(frame, v_world_pos, color.rgb, material.flags) : color.rgb;
+        ? apply_material_fog(frame, v_world_pos, radiance, material.flags) : radiance;
     write_blend_output(frame, material_output(fogged, color.a, material.flags), v_world_pos);
 }

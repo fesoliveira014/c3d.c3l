@@ -11,6 +11,7 @@
 #include "ibl.glsl"
 #include "physical.glsl"
 #include "toon.glsl"
+#include "pre_exposure.glsl"
 #include "scene_trace.glsl"
 #include "shadows.glsl"
 
@@ -71,7 +72,7 @@ vec3 shade_standard_hit(FrameRoot frame, HitLights lights, TraceSurface surface,
         surface.normal,
         view_direction
     );
-    vec3 color = surface.emissive + frame.ambient.rgb * surface.albedo * (1.0 - surface.metallic);
+    vec3 color = pre_exposed(frame, surface.emissive) + frame.ambient.rgb * surface.albedo * (1.0 - surface.metallic);
     for (uint index = 0u; index < lights.count; index++) {
         LightGpu light = LightArray(lights.address).values[index];
         if ((light.layers & surface.layers) == 0u) continue;
@@ -148,7 +149,7 @@ vec3 shade_physical_hit(FrameRoot frame, HitLights lights, TraceSurface surface,
     }
 
     vec3 base_ambient = frame.ambient.rgb * surface.albedo * (1.0 - surface.metallic);
-    vec3 color = physical_fill(physical, base_ambient, transmitted, surface.emissive);
+    vec3 color = physical_fill(physical, base_ambient, transmitted, pre_exposed(frame, surface.emissive));
 
     if (frame_has_indirect(frame)) {
         color += evaluate_physical_environment(
@@ -181,7 +182,7 @@ vec3 shade_toon_hit(FrameRoot frame, HitLights lights, TraceSurface surface, vec
     return frame.ambient.rgb * surface.albedo
         + hit_environment_diffuse(frame, surface.albedo, surface, view_direction)
         + hit_toon_direct(frame, lights, surface)
-        + toon_rim(material, surface.normal, view_direction);
+        + toon_rim(frame, material, surface.normal, view_direction);
 }
 
 vec3 shade_lambert_hit(FrameRoot frame, HitLights lights, TraceSurface surface, vec3 view_direction) {
@@ -194,7 +195,7 @@ vec3 shade_lambert_hit(FrameRoot frame, HitLights lights, TraceSurface surface, 
 vec3 shade_hit(FrameRoot frame, HitLights lights, TraceSurface surface, vec3 view_direction) {
     switch (surface.material_kind) {
         case MATERIAL_KIND_BASIC:
-            return surface.albedo;
+            return pre_exposed(frame, surface.albedo);
         case MATERIAL_KIND_STANDARD:
             return shade_standard_hit(frame, lights, surface, view_direction);
         case MATERIAL_KIND_PHYSICAL:
@@ -210,11 +211,11 @@ vec3 shade_hit(FrameRoot frame, HitLights lights, TraceSurface surface, vec3 vie
 vec3 shade_hit_diffuse(FrameRoot frame, HitLights lights, TraceSurface surface, vec3 view_direction) {
     switch (surface.material_kind) {
         case MATERIAL_KIND_BASIC:
-            return surface.albedo;
+            return pre_exposed(frame, surface.albedo);
         case MATERIAL_KIND_STANDARD:
         case MATERIAL_KIND_PHYSICAL:
             vec3 diffuse_albedo = surface.albedo * (1.0 - surface.metallic);
-            return surface.emissive
+            return pre_exposed(frame, surface.emissive)
                 + hit_environment_diffuse(frame, diffuse_albedo, surface, view_direction)
                 + hit_lambert_direct(frame, lights, surface, diffuse_albedo);
         case MATERIAL_KIND_TOON:
