@@ -25,8 +25,9 @@ LodGroup authoring version 2 restores in BINDINGS, after its source owners.
 Rigid groups preserve ordered affine parts, levels, capacities, live placements,
 common effects and terminal impostors. Version-1 binary and JSONC authoring still
 reads as rigid. Animated groups preserve their source-owner reference, levels,
-logical part indices, geometry/material/skeleton keys, ordered template joint
-indices, selected morph defaults, optional ordinary bounds and common effects.
+logical part indices, geometry/material keys, each part's template skin,
+selected morph defaults, optional ordinary bounds and common effects. Reading
+ignores the stored skin; skinned parts use the template skin.
 Crowd capacity, placement, colors and its pose envelope belong to AnimatedCrowd.
 The LOD binding is rebuilt through ordinary atomic admission after ModelInstance
 or pending AnimatedCrowd has attached. Reading does not prepare a crowd, sample

@@ -784,9 +784,9 @@ Explicit [animated LOD groups](lod.md#animated-models-and-crowds) consume the sa
 evaluated source pose and complete logical morph weights. Attach copied
 alternatives to a `ModelInstance` or `AnimatedCrowd` owner with
 `model::attach_animated_lod`; selection never replaces playback or changes the
-source meshes' base geometry/material IDs. Compatible alternatives preserve
-ordered joint nodes and inverse-bind bits, while named morph channels map to
-level-zero logical weights/defaults. The renderer uses one model-space palette
+source meshes' base geometry/material IDs. Skinned alternatives use the
+template skin, while named morph channels map to level-zero logical
+weights/defaults. The renderer uses one model-space palette
 per owner/source across its parts, selected levels, views and shadows, rather
 than the ordinary mesh-local palette above. Animated rigid/morph-only parts use
 their sampled mesh affine. Complete animation and world updates before the
