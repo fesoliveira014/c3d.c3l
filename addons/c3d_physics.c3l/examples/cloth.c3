@@ -467,6 +467,7 @@ fn void step_demo(Demo* demo, float delta, double time) @local {
     }
     demo.physics.update_ragdolls();
     demo.scene.update_world();
+
     uint flag_revision = cloth_revision(demo, demo.flag);
     uint cape_revision = cloth_revision(demo, demo.character.cape);
     demo.physics.update_cloths();

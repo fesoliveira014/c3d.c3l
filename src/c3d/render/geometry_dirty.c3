@@ -27,6 +27,7 @@ fn usz? stage_dirty_geometry(
         usz count = (usz)(range.end - range.first);
         usz bytes = count * source.stride;
         gpu::MappedGpuSpan staging = slot.upload.take(&renderer.device, bytes, STREAM_ALIGNMENT)!;
+
         if (stream == GeometryStream.JOINTS) {
             pack_joints(
                 packed: (uint*)staging.bytes.ptr,
@@ -36,6 +37,7 @@ fn usz? stage_dirty_geometry(
         } else {
             mem::copy(staging.bytes.ptr, &source.bytes[range.first * source.stride], (sz)bytes);
         }
+
         renderer.pending_copies.push({
             .src = staging.span,
             .dst = block.checked_subspan(source.offset + range.first * source.stride, bytes)!,
