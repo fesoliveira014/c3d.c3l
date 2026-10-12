@@ -65,6 +65,7 @@ struct CrowdPlaybackState {
     uint events_dropped;
     uint count;
     uint default_root_node;
+    float advanced_dt;
 }
 
 <* Borrowed controls for one generational crowd instance. *>
@@ -76,30 +77,85 @@ struct CrowdPlayer {
 ulong crowd_playback_identity_counter @private;
 
 <*
- Evaluate live instances and retain their crowd-wide event prefix.
+ Advance and sample every live instance, retaining the crowd-wide event prefix.
  @param [&in] assets : "Owns every retained action's clip."
  @param dt : "Finite nonnegative seconds."
  @require math::is_finite(dt) && dt >= 0
 *>
 fn void CrowdPlaybackState.update(&self, AssetStore* assets, float dt) {
+    self.advance(assets, dt);
+    self.sample_range(
+        assets: assets,
+        first: 0,
+        count: self.count,
+        scratch: &self.pose_storage.scratch,
+    );
+}
+
+<*
+ Advance live instances' clocks and fades and retain the crowd-wide event prefix.
+ Owner thread only; sample every live instance once afterwards.
+ @param [&in] assets : "Owns every retained action's clip."
+ @param dt : "Finite nonnegative seconds."
+ @require math::is_finite(dt) && dt >= 0
+*>
+fn void CrowdPlaybackState.advance(&self, AssetStore* assets, float dt) {
     self.event_count = 0;
     self.events_dropped = 0;
+    self.advanced_dt = dt;
 
     for (uint index = 0; index < self.count; index++) {
         CrowdPlaybackSlot* slot = &self.slots[index];
         PlaybackView playback = crowd_playback_view(self, slot);
-        PoseDestination destination = crowd_destination(self, index);
 
         EventOutput output = { .stride = CrowdEvent::size, .capacity = self.events.len - self.event_count };
         if (output.capacity) output.first = &self.events[self.event_count].event;
 
-        PoseReport report = evaluate_pose(
+        EventReport report = advance_playback(
+            playback: &playback,
+            assets: assets,
+            dt: dt,
+            events: output,
+            bookmarks: self.pose_storage.scratch.event_bookmarks,
+        );
+
+        foreach (&event : self.events[self.event_count:report.count]) {
+            event.instance = { .index = index, .generation = slot.generation };
+        }
+
+        self.event_count += report.count;
+        self.events_dropped += math::min(report.dropped, uint::max - self.events_dropped);
+    }
+}
+
+<*
+ Sample advanced instances into their own pose, morph weights and root motion.
+ Concurrent calls on disjoint ranges are safe, each with its own scratch, while the store is unchanged.
+ @param [&in] assets : "Owns every retained action's clip; read only."
+ @param [&inout] scratch : "From create_crowd_pose_scratch; one per concurrent caller."
+ @require first <= self.count && count <= self.count - first
+ @require scratch.channels.len == self.base_pose.len
+*>
+fn void CrowdPlaybackState.sample_range(
+    &self,
+    AssetStore* assets,
+    uint first,
+    uint count,
+    PoseScratch* scratch,
+) {
+    float dt = self.advanced_dt;
+
+    for (uint index = first; index < first + count; index++) {
+        CrowdPlaybackSlot* slot = &self.slots[index];
+        PlaybackView playback = crowd_playback_view(self, slot);
+        PoseDestination destination = crowd_destination(self, index);
+
+        PoseReport report = sample_playback(
             playback: &playback,
             assets: assets,
             destination: destination,
-            scratch: self.pose_storage.scratch,
+            scratch: *scratch,
             dt: dt,
-            events: output,
         );
 
         Vec3 reference;
@@ -121,16 +177,9 @@ fn void CrowdPlaybackState.update(&self, AssetStore* assets, float dt) {
         record_playback_inertial_history(
             playback: &playback,
             destination: destination,
-            scratch: self.pose_storage.scratch,
+            scratch: *scratch,
             dt: (double)dt,
         );
-
-        foreach (&event : self.events[self.event_count:report.events.count]) {
-            event.instance = { .index = index, .generation = slot.generation };
-        }
-
-        self.event_count += report.events.count;
-        self.events_dropped += math::min(report.events.dropped, uint::max - self.events_dropped);
     }
 }
 
@@ -577,6 +626,30 @@ fn void destroy_crowd_playback(CrowdPlaybackState* state) {
     alloc::free(allocator, state.logical_weights.ptr);
     alloc::free(allocator, state.events.ptr);
     alloc::free(allocator, state);
+}
+
+<*
+ Allocate scratch for one concurrent sample_range caller.
+ @param [&in] state : "Supplies the model's node and morph layout."
+ @return? c3d::CAPACITY_EXCEEDED
+*>
+fn PoseScratch? create_crowd_pose_scratch(CrowdPlaybackState* state) {
+    return create_pose_scratch_try(
+        allocator: state.allocator,
+        node_count: state.base_pose.len,
+        base_morph_weights: state.base_morph_weights,
+        event_capacity: 0,
+        inertia_enabled: state.inertial_storage != null,
+    );
+}
+
+<*
+ Free scratch from create_crowd_pose_scratch.
+ @param [&in] state : "The crowd the scratch was created for."
+ @param [&inout] scratch : "Released; no call may be using it."
+*>
+fn void destroy_crowd_pose_scratch(CrowdPlaybackState* state, PoseScratch* scratch) {
+    destroy_pose_scratch(state.allocator, scratch);
 }
 
 fn PlaybackView? crowd_player_view(CrowdPlayer* player) @private {

@@ -210,6 +210,67 @@ fn void blend_pose(
     }
 }
 
+<*
+ Sample one clip at full weight into the destination pose and morph weights.
+ Never advances playback; reads the store and writes only the cursors, scratch and destination.
+ @param [&in] assets : "Owns the clip."
+ @param time : "Seconds; clamped to each track's key range."
+ @param [inout] cursors : "Seek hints, one per track; any value is valid."
+ @param [&inout] scratch : "Sample buffer at least as wide as the clip's widest track; scratch from the destination's pose storage qualifies."
+ @require assets.clips.is_live(clip), cursors.len >= assets.clip(clip).data.tracks.len
+ @require destination.pose.len == destination.base_pose.len
+ @require destination.present.len == destination.base_pose.len
+ @require destination.mesh_present.len == destination.base_pose.len
+ @require destination.mesh_indices.len == destination.base_pose.len
+ @require destination.morph_weights.len == destination.base_morph_weights.len
+*>
+fn void sample_pose(
+    AssetStore* assets,
+    ClipId clip,
+    float time,
+    uint[] cursors,
+    PoseScratch* scratch,
+    PoseDestination destination,
+) {
+    AnimationClip* data = &assets.clip(clip).data;
+    Transform[] result = destination.pose;
+
+    // Blending renormalizes every rotation, tracked or not.
+    foreach (index, &pose : result) {
+        *pose = destination.base_pose[index];
+        pose.rotation = { .v = pose.rotation.v.normalize() };
+    }
+    foreach (index, base : destination.base_morph_weights) destination.morph_weights[index][..] = base[..];
+
+    foreach (track_index, &track : data.tracks) {
+        uint node = data.targets[track.target];
+        if (!destination.present[node]) continue;
+        if (track.path == TargetPath.MORPH_WEIGHTS && !destination.mesh_present[node]) continue;
+
+        float[] sample = scratch.sample[:track.stride()];
+        sample_track(
+            track: track,
+            time: time,
+            cursor: &cursors[track_index],
+            out: sample,
+        );
+
+        switch (track.path) {
+            case TRANSLATION:
+                result[node].position = (Vec3){ sample[0], sample[1], sample[2] };
+            case ROTATION:
+                Vec4 rotation = { sample[0], sample[1], sample[2], sample[3] };
+                // Blending takes the hemisphere of the pose below it, which is the base pose here.
+                if (rotation.dot(destination.base_pose[node].rotation.v) < 0) rotation = -rotation;
+                result[node].rotation = { .v = rotation.normalize() };
+            case SCALE:
+                result[node].scale = (Vec3){ sample[0], sample[1], sample[2] };
+            case MORPH_WEIGHTS:
+                destination.morph_weights[destination.mesh_indices[node]][:sample.len] = sample[..];
+        }
+    }
+}
+
 fn float residual(float total) @private => math::max(0.0f, 1 - total);
 
 fn Vec3 blend_vec3(Vec3 sum, float total, Vec3 below) @private {

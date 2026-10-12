@@ -44,7 +44,7 @@
     },
     "job_bench": {
       "type": "executable",
-      "sources": [ "examples/job_bench.c3" ]
+      "sources": [ "examples/job_bench.c3", "examples/job_bench_crowd.c3" ]
     }
   }
 }

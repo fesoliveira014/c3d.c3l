@@ -217,12 +217,82 @@ fn PoseReport evaluate_pose(
     float dt,
     EventOutput events,
 ) {
+    EventReport published = advance_playback(
+        playback: playback,
+        assets: assets,
+        dt: dt,
+        events: events,
+        bookmarks: scratch.event_bookmarks,
+    );
+    PoseReport report = sample_playback(
+        playback: playback,
+        assets: assets,
+        destination: destination,
+        scratch: scratch,
+        dt: dt,
+    );
+    report.events = published;
+
+    return report;
+}
+
+<*
+ Advance playback clocks, fades and groups, and publish the events they cross.
+ Run on the owner thread; sample_playback consumes the advanced times.
+ @param [&inout] playback : "Clocks, fades and groups advance; finished fades are removed."
+ @param [&in] assets : "Clips remain live throughout playback."
+ @param dt : "Finite nonnegative seconds."
+ @param [inout] bookmarks : "Event stream scratch."
+ @require math::is_finite(dt) && dt >= 0
+ @require bookmarks.len >= events.capacity
+ @require events.capacity == 0 || events.first != null
+ @require events.capacity == 0 || events.stride >= FiredEvent::size
+*>
+fn EventReport advance_playback(
+    PlaybackView* playback,
+    AssetStore* assets,
+    float dt,
+    EventOutput events,
+    EventBookmark[] bookmarks,
+) {
     if (playback.inertial) refresh_inertial_model_revision(playback, assets);
 
     advance(playback, assets, dt);
     advance_blend_spaces(playback, assets, dt);
     advance_blend_spaces_2d(playback, assets, dt);
 
+    return publish_events(
+        playback: playback,
+        assets: assets,
+        events: events,
+        bookmarks: bookmarks,
+    );
+}
+
+<*
+ Sample the playback's current action times into the destination pose and morph weights.
+ Reads advanced clocks; concurrent calls on disjoint playbacks, destinations and scratch are safe.
+ @param [&inout] playback : "Cursors and the inertial row are written; clocks are read only."
+ @param [&in] assets : "Clips remain live throughout playback."
+ @param dt : "Seconds given to advance_playback; zero samples a transition onset."
+ @return "Extracted root motion; the event counts stay zero."
+ @require math::is_finite(dt) && dt >= 0
+ @require destination.pose.len == destination.base_pose.len
+ @require destination.present.len == destination.base_pose.len
+ @require destination.mesh_present.len == destination.base_pose.len
+ @require destination.mesh_indices.len == destination.base_pose.len
+ @require scratch.channels.len == destination.pose.len
+ @require destination.morph_weights.len == destination.base_morph_weights.len
+ @require scratch.morph_sums.len == destination.base_morph_weights.len
+ @require scratch.morph_weights.len == destination.base_morph_weights.len
+*>
+fn PoseReport sample_playback(
+    PlaybackView* playback,
+    AssetStore* assets,
+    PoseDestination destination,
+    PoseScratch scratch,
+    float dt,
+) {
     CapturedMotionChain* consumed_chain = generalized_playback_chain(playback);
     bool onset = playback.inertial != null && playback.inertial.control.onset_pending && dt == 0;
     blend_pose(
@@ -259,19 +329,11 @@ fn PoseReport evaluate_pose(
         if (dt > 0) playback.inertial.control.onset_pending = false;
     }
 
-    EventReport report = publish_events(
-        playback: playback,
-        assets: assets,
-        events: events,
-        bookmarks: scratch.event_bookmarks,
-    );
-
     return {
         .motion = motion,
         .generalized_motion = generalized_motion,
         .generalized = consumed_chain != null,
         .consumed_chain = consumed_chain,
-        .events = report,
     };
 }
 

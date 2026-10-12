@@ -61,24 +61,19 @@ fn PoseStorage*? create_pose_storage_try(
     destination.mesh_indices[..] = uint::max;
     destination.mesh_widths = alloc::new_array_try(allocator, uint, mesh_nodes.len) ?? c3d::CAPACITY_EXCEEDED~!;
 
-    PoseScratch* scratch = &storage.scratch;
-    scratch.channels = alloc::new_array_try(allocator, ChannelSums, base_pose.len) ?? c3d::CAPACITY_EXCEEDED~!;
-    scratch.morph_sums = alloc::new_array_try(allocator, float[], base_morph_weights.len) ?? c3d::CAPACITY_EXCEEDED~!;
-    scratch.morph_weights = alloc::new_array_try(allocator, float, base_morph_weights.len) ?? c3d::CAPACITY_EXCEEDED~!;
-    scratch.event_bookmarks = alloc::new_array_try(allocator, EventBookmark, (sz)event_capacity)
-      ?? c3d::CAPACITY_EXCEEDED~!;
-
-    usz sample_width = 4;
-
     foreach (usz index, base : base_morph_weights) {
-        scratch.morph_sums[index] = alloc::new_array_try(allocator, float, base.len) ?? c3d::CAPACITY_EXCEEDED~!;
         destination.mesh_indices[mesh_nodes[index]] = (uint)index;
         destination.mesh_present[mesh_nodes[index]] = true;
         destination.mesh_widths[index] = (uint)base.len;
-        sample_width = math::max(sample_width, (usz)base.len);
     }
 
-    scratch.sample = alloc::new_array_try(allocator, float, (sz)sample_width) ?? c3d::CAPACITY_EXCEEDED~!;
+    storage.scratch = create_pose_scratch_try(
+        allocator: allocator,
+        node_count: base_pose.len,
+        base_morph_weights: base_morph_weights,
+        event_capacity: event_capacity,
+        inertia_enabled: inertia_enabled,
+    )!;
 
     if (owns_output) {
         destination.pose = alloc::new_array_try(allocator, Transform, base_pose.len) ?? c3d::CAPACITY_EXCEEDED~!;
@@ -93,13 +88,51 @@ fn PoseStorage*? create_pose_storage_try(
         }
     }
 
-    if (inertia_enabled) {
-        usz morphs;
-        foreach (weights : base_morph_weights) morphs += weights.len;
-        scratch.inertial = create_inertial_scratch(allocator, (usz)base_pose.len, morphs)!;
+    return storage;
+}
+
+fn PoseScratch? create_pose_scratch_try(
+    Allocator allocator,
+    usz node_count,
+    float[][] base_morph_weights,
+    usz event_capacity,
+    bool inertia_enabled,
+) @private {
+    PoseScratch scratch;
+    defer catch destroy_pose_scratch(allocator, &scratch);
+
+    scratch.channels = alloc::new_array_try(allocator, ChannelSums, (sz)node_count) ?? c3d::CAPACITY_EXCEEDED~!;
+    scratch.morph_sums = alloc::new_array_try(allocator, float[], base_morph_weights.len) ?? c3d::CAPACITY_EXCEEDED~!;
+    scratch.morph_weights = alloc::new_array_try(allocator, float, base_morph_weights.len) ?? c3d::CAPACITY_EXCEEDED~!;
+    scratch.event_bookmarks = alloc::new_array_try(allocator, EventBookmark, (sz)event_capacity)
+      ?? c3d::CAPACITY_EXCEEDED~!;
+
+    usz sample_width = 4;
+    usz morphs;
+
+    foreach (usz index, base : base_morph_weights) {
+        scratch.morph_sums[index] = alloc::new_array_try(allocator, float, base.len) ?? c3d::CAPACITY_EXCEEDED~!;
+        sample_width = math::max(sample_width, (usz)base.len);
+        morphs += base.len;
     }
 
-    return storage;
+    scratch.sample = alloc::new_array_try(allocator, float, (sz)sample_width) ?? c3d::CAPACITY_EXCEEDED~!;
+
+    if (inertia_enabled) scratch.inertial = create_inertial_scratch(allocator, node_count, morphs)!;
+
+    return scratch;
+}
+
+fn void destroy_pose_scratch(Allocator allocator, PoseScratch* scratch) @private {
+    if (scratch.inertial) destroy_inertial_scratch(allocator, scratch.inertial);
+
+    foreach (values : scratch.morph_sums) alloc::free(allocator, values.ptr);
+
+    alloc::free(allocator, scratch.channels.ptr);
+    alloc::free(allocator, scratch.morph_sums.ptr);
+    alloc::free(allocator, scratch.morph_weights.ptr);
+    alloc::free(allocator, scratch.sample.ptr);
+    alloc::free(allocator, scratch.event_bookmarks.ptr);
 }
 
 <*
@@ -107,10 +140,9 @@ fn PoseStorage*? create_pose_storage_try(
  @param [&inout] storage : "Released; borrowed baselines remain untouched."
 *>
 fn void destroy_pose_storage(Allocator allocator, PoseStorage* storage) {
-    if (storage.scratch.inertial) destroy_inertial_scratch(allocator, storage.scratch.inertial);
+    destroy_pose_scratch(allocator, &storage.scratch);
 
     foreach (values : storage.destination.morph_weights) alloc::free(allocator, values.ptr);
-    foreach (values : storage.scratch.morph_sums) alloc::free(allocator, values.ptr);
 
     alloc::free(allocator, storage.destination.present.ptr);
     alloc::free(allocator, storage.destination.mesh_present.ptr);
@@ -118,11 +150,6 @@ fn void destroy_pose_storage(Allocator allocator, PoseStorage* storage) {
     alloc::free(allocator, storage.destination.mesh_widths.ptr);
     alloc::free(allocator, storage.destination.pose.ptr);
     alloc::free(allocator, storage.destination.morph_weights.ptr);
-    alloc::free(allocator, storage.scratch.channels.ptr);
-    alloc::free(allocator, storage.scratch.morph_sums.ptr);
-    alloc::free(allocator, storage.scratch.morph_weights.ptr);
-    alloc::free(allocator, storage.scratch.sample.ptr);
-    alloc::free(allocator, storage.scratch.event_bookmarks.ptr);
     alloc::free(allocator, storage);
 }
 

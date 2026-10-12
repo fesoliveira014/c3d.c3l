@@ -324,6 +324,13 @@ serial is the same run on a zero-worker pool (the same split, on the caller), an
 `ranges * us_per_range / serial_us` with the overhead line of the same worker count. Every pooled output
 equals its serial output bit for bit. The tables hold the median of three process runs per line.
 
+`job_bench --crowd COUNT` times an animated crowd instead of the kernels. It loads the Quaternius character,
+creates a crowd of COUNT instances with six looping clips at random phases and speeds, and per frame runs
+`advance` on the caller, `sample_range` over the pool in ranges of 16 instances with one scratch per range, then
+`publish_crowd_pose` on the caller. One line per path prints the median stage times over fifteen frames; the
+`update` line is the serial `CrowdPlaybackState.update`. Every line's per-frame digest of poses, morph weights,
+root motion and events must equal the `update` line's, and the exit status is 1 when one does not.
+
 Background lines time one background run of 1024 empty ranges at batch 1, from `try_run` until its last range
 has run, on the capped workers alone; the caller only polls. Loaded lines time the 65 536-item kernel at batch
 1024 once idle and once while a background run of 16 384 ranges of about 15 µs keeps the default cap of

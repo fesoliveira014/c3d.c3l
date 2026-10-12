@@ -755,6 +755,47 @@ short path and using slerp when the keys are more than 0.1 rad apart;
 `CUBIC_SPLINE` evaluates the glTF Hermite form with tangents scaled by the
 segment duration.
 
+`sample_pose(&assets, clip, time, cursors, &scratch, destination)` samples one clip
+at one time with no playback. The pose starts from the destination's base pose,
+every present track writes its channel at full weight, and `time` clamps to each
+track's key range. It reads the store and writes only the caller's cursors,
+scratch and destination, through the same track sampling as an action of
+weight 1 and the same rotation hemisphere and normalization, so its pose equals
+that of a single unmasked regular action that keeps its root motion in the pose,
+at that time, bit for bit. A clip with two tracks on one node and path is the
+exception: an action averages them, `sample_pose` keeps the later one. Cursors
+are hints: any value is valid, and keeping the array between calls only speeds
+forward sweeps.
+
+### Crowd playback on workers
+
+`CrowdPlaybackState.update` is `advance` followed by `sample_range` over every
+live instance.
+
+- `advance(&assets, dt)` runs on the owner thread. It steps each instance's
+  clocks, fades and groups and writes the crowd-wide event prefix in instance
+  order, so events keep their order, offsets and drop counts.
+- `sample_range(&assets, first, count, &scratch)` blends the poses and morph
+  weights of instances `[first, first + count)` into their own slices and
+  extracts their root motion, inertial correction and history, writing
+  `slot.root_motion`. Root motion is part of this step because the yaw pivot and
+  generalized extraction read or edit the sampled pose. Call it once per
+  instance after each `advance`: a repeat would step inertial history and root
+  motion again.
+- Calls on disjoint ranges may run concurrently on any threads, in any order,
+  each with its own scratch from `create_crowd_pose_scratch` (free it with
+  `destroy_crowd_pose_scratch`). Nothing structural may change in the store, the
+  crowd or its players until every call returns. A call allocates nothing and
+  writes nothing shared. The state's own scratch serves `update` and one serial
+  caller; a worker scratch holds no event bookmarks.
+- `crowd_update` stays serial and calls `publish_crowd_pose` on the owner thread
+  after sampling. An application that wants workers calls `advance`, runs
+  `sample_range` over its own pool, then `publish_crowd_pose`. Core never
+  imports `c3d::job`; `job_bench --crowd COUNT` runs that sequence.
+
+Each instance's output depends only on its own state, so range splits, order and
+thread count change no pose, morph weight, root motion or event, bit for bit.
+
 ## What deforms
 
 The animation update writes node transforms and morph weights; the renderer
