@@ -209,6 +209,7 @@ fn bool light_inspector(void* component) @local {
         }
     }
     changed = imgui::input_scalar("Layers", imgui::DATA_TYPE_U32, &light.layers) || changed;
+    changed = imgui::checkbox("Scatters in volumetric fog", &light.volumetric) || changed;
 
     imgui::separator_text("Shadow");
     changed = imgui::checkbox("Enabled", &light.shadow.enabled) || changed;

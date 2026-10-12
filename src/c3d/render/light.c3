@@ -177,7 +177,7 @@ fn void include_light(
         .kind = (uint)light.kind.ordinal,
         .layers = light.layers,
         .cos_inner = light.kind == SPOT ? math::cos(light.inner_cone) : 0,
-        .flags = ray_traced ? shader::LIGHT_RT_SHADOW : 0,
+        .flags = (ray_traced ? shader::LIGHT_RT_SHADOW : 0) | (light.volumetric ? shader::LIGHT_VOLUMETRIC : 0),
     };
 }
 

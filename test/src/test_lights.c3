@@ -379,7 +379,8 @@ fn void test_include_light_packs_the_flag_and_skips_the_atlas() @test {
             ray_tracing: { .shadows = true },
         );
         assert(extraction.lights.len == 2);
-        assert(extraction.lights[0].flags == shader::LIGHT_RT_SHADOW && extraction.lights[1].flags == 0);
+        assert((extraction.lights[0].flags & shader::LIGHT_RT_SHADOW) != 0);
+        assert((extraction.lights[1].flags & shader::LIGHT_RT_SHADOW) == 0);
         assert(extraction.shadows.len == 1 && extraction.shadows[0].light_index == 1);
 
         extraction = render::extract_lights(
@@ -393,6 +394,7 @@ fn void test_include_light_packs_the_flag_and_skips_the_atlas() @test {
             altitude:    0,
         );
         assert(extraction.shadows.len == 2);
-        assert(extraction.lights[0].flags == 0 && extraction.lights[1].flags == 0);
+        assert((extraction.lights[0].flags & shader::LIGHT_RT_SHADOW) == 0);
+        assert((extraction.lights[1].flags & shader::LIGHT_RT_SHADOW) == 0);
     };
 }

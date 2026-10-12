@@ -111,6 +111,19 @@ const float FOG_DISTANCE_MIN @local = 50;
 const float FOG_DISTANCE_MAX @local = 1000;
 const FogQuality[3] FOG_QUALITY_CHOICES @local = { FogQuality.LOW, FogQuality.MEDIUM, FogQuality.HIGH };
 const ZString[3] FOG_QUALITY_LABELS @local = { "Low", "Medium", "High" };
+
+const uint MAX_LAMPS @local = 128; // half the renderer's default light capacity
+const uint LAMP_SHADOWED_MAX @local = 8; // 4 points of 6 layers and 4 spots; later lamps are unshadowed
+const uint LAMP_SHADOW_RESOLUTION @local = 1024; // texels; the 32-layer atlas is 128 MiB, not 512 MiB at 2048
+const float LAMP_FIRST_DISTANCE @local = 6; // metres ahead of the start along the path, past the first object
+const float LAMP_SPACING @local = 5;
+const float LAMP_SIDE_OFFSET @local = 2.5f; // metres either side of the path; the objects on it stay clear
+const float LAMP_HEIGHT @local = 3;
+const float LAMP_RANGE @local = 14; // metres; about three lamps overlap at any point of the path
+const float LAMP_INTENSITY @local = 1.5f; // tuned to the twilight exposure; daylight washes the lamps out
+const float LAMP_SPOT_INNER_DEGREES @local = 20;
+const float LAMP_SPOT_OUTER_DEGREES @local = 40;
+const Vec3[3] LAMP_COLORS @local = { { 1, 0.75f, 0.45f }, { 0.5f, 0.75f, 1 }, { 1, 0.45f, 0.55f } };
 const Vec2 PANEL_POSITION @local = { 16, 16 };
 const Vec2 PANEL_SIZE @local = { 440, 520 };
 const Vec2 STATS_PANEL_POSITION @local = { 472, 16 };
@@ -189,6 +202,9 @@ struct Options @local {
     Air         air;
     bool        volumetric_fog;
     FogQuality  fog_quality;
+    uint        local_lights;
+    float       lamp_range;
+    bool        lamps_in_fog;
     bool        taa;
     bool        auto_exposure;
     Preset      preset;
@@ -448,6 +464,34 @@ fn void? add_readers(
     scene.get(mirror, Mesh).cast_shadow = false;
 }
 
+fn void? add_lamps(Scene* scene, Options options) @local {
+    for (uint index = 0; index < options.local_lights; index++) {
+        bool point = index % 2 == 0;
+        Vec3 color = LAMP_COLORS[index % LAMP_COLORS.len];
+        Light lamp = point
+          ? light::point(color, LAMP_INTENSITY, options.lamp_range)
+          : light::spot(
+              color:     color,
+              intensity: LAMP_INTENSITY,
+              inner:     LAMP_SPOT_INNER_DEGREES * DEGREE,
+              outer:     LAMP_SPOT_OUTER_DEGREES * DEGREE,
+              range:     options.lamp_range,
+          );
+        lamp.shadow.enabled = index < LAMP_SHADOWED_MAX;
+        lamp.volumetric = options.lamps_in_fog;
+        Node* node = scene.add_light(lamp, name: "lamp")!;
+        float side = index / 2 % 2 == 0 ? -LAMP_SIDE_OFFSET : LAMP_SIDE_OFFSET;
+        node.local.position = { side, LAMP_HEIGHT, -(LAMP_FIRST_DISTANCE + LAMP_SPACING * (float)index) };
+        if (!point) node.local.rotation = maths::look_rotation({ 0, -1, 0 }, { 0, 0, -1 });
+    }
+}
+
+fn void set_lamps_in_fog(Scene* scene, bool in_fog) @local {
+    scene.@each(Light; Entity entity, Light* light) {
+        if (light.kind != LightKind.DIRECTIONAL) light.volumetric = in_fog;
+    };
+}
+
 fn void? build_demo(Demo* demo) @local {
     Scene* scene = demo.scene;
     AssetStore* assets = demo.assets;
@@ -493,6 +537,7 @@ fn void? build_demo(Demo* demo) @local {
         demo.fog = scene.add_node(name: "fog")!;
         scene.add(demo.fog, light::HEIGHT_FOG_DEFAULT);
     }
+    add_lamps(scene, demo.options)!;
     scene.background.kind = BackgroundKind.COLOR;
     scene.background.color = CLEAR_SKY_COLOR;
     scene.ambient_color = CLEAR_SKY_COLOR.xyz;
@@ -523,13 +568,18 @@ fn Atmosphere atmosphere_of(Air air) @local {
 }
 
 fn RendererDesc renderer_desc(Options options, bool validation, ZString application_name) @local {
-    return {
+    RendererDesc desc = {
         .validation            = validation,
         .gpu_timings           = options.gpu_timings,
         .application_name      = application_name,
         .ray_queries           = options.traced_shadows || options.reflections,
         .ray_tracing_pipelines = options.path_traced,
     };
+    if (options.local_lights > 0) {
+        desc.shadow_resolution = LAMP_SHADOW_RESOLUTION;
+        desc.max_shadow_layers = SHADOW_CASCADES + LAMP_SHADOWED_MAX / 2 * (shader::SHADOW_POINT_FACE_COUNT + 1);
+    }
+    return desc;
 }
 
 fn ViewDesc main_view_desc(ViewDesc desc, Options options) @local {
@@ -538,6 +588,7 @@ fn ViewDesc main_view_desc(ViewDesc desc, Options options) @local {
     desc.ray_tracing.reflections = options.reflections;
     desc.volumetric_fog = options.volumetric_fog && !options.path_traced;
     desc.fog_quality = options.fog_quality;
+    if (options.local_lights > 0) desc.lights = LightSelection.CLUSTERED;
     if (options.taa && !options.path_traced) desc.post.anti_aliasing = AntiAliasing.TAA;
     desc.post.auto_exposure = options.auto_exposure;
     if (options.ssgi) {
@@ -561,6 +612,7 @@ fn ViewDesc mirror_view_desc(Demo* demo) @local {
     desc.ray_tracing.shadows = demo.options.traced_shadows;
     desc.volumetric_fog = demo.options.volumetric_fog;
     desc.fog_quality = demo.options.fog_quality;
+    if (demo.options.local_lights > 0) desc.lights = LightSelection.CLUSTERED;
     return desc;
 }
 
@@ -664,6 +716,8 @@ fn Options? parse_options(String[] args) @local {
         .shading        = ShadingPath.FORWARD,
         .fog            = true,
         .air            = Air.EARTH,
+        .lamp_range     = LAMP_RANGE,
+        .lamps_in_fog   = true,
         .preset         = Preset.NOON,
     };
     for (usz index = 1; index < args.len; index++) {
@@ -708,6 +762,13 @@ fn Options? parse_options(String[] args) @local {
                     case "high": options.fog_quality = FogQuality.HIGH;
                     default: return c3d::INVALID_ARGUMENT~;
                 }
+            case "--local-lights":
+                options.local_lights = option_value(args, &index)!.to_uint()!;
+                if (options.local_lights > MAX_LAMPS) return c3d::INVALID_ARGUMENT~;
+            case "--lamp-range":
+                options.lamp_range = option_value(args, &index)!.to_float()!;
+                if (!(options.lamp_range > 0)) return c3d::INVALID_ARGUMENT~;
+            case "--lamps-in-fog": options.lamps_in_fog = on_off(option_value(args, &index)!)!;
             case "--taa": options.taa = true;
             case "--auto-exposure": options.auto_exposure = true;
             case "--fog": options.fog = on_off(option_value(args, &index)!)!;
@@ -863,6 +924,9 @@ fn void? sky_panel(
                 if (changed) {
                     demo.options.fog_quality = FOG_QUALITY_CHOICES[choice];
                     apply_fog_quality(demo, renderer)!;
+                }
+                if (demo.options.local_lights > 0 && imgui::checkbox("Lamps in fog", &demo.options.lamps_in_fog)) {
+                    set_lamps_in_fog(demo.scene, demo.options.lamps_in_fog);
                 }
             }
         }
@@ -1311,7 +1375,8 @@ fn String fog_quality_name(FogQuality quality) @local {
 fn void print_header(Options options) @local {
     io::printfn(
         "# sky shading=%s shadows=%s ssgi=%s path_traced=%s reflections=%s fog=%s atmosphere=%s "
-          "volumetric_fog=%s fog_quality=%s taa=%s extent=%dx%d frames=%d",
+          "volumetric_fog=%s fog_quality=%s local_lights=%d lamp_range=%g lamps_in_fog=%s taa=%s extent=%dx%d "
+          "frames=%d",
         options.shading == ShadingPath.DEFERRED ? "deferred" : "forward",
         options.traced_shadows ? "traced" : "atlas",
         options.ssgi ? "on" : "off",
@@ -1321,6 +1386,9 @@ fn void print_header(Options options) @local {
         AIR_NAMES[options.air.ordinal],
         options.volumetric_fog ? "on" : "off",
         fog_quality_name(options.fog_quality),
+        options.local_lights,
+        options.lamp_range,
+        options.lamps_in_fog ? "on" : "off",
         options.taa ? "on" : "off",
         options.width,
         options.height,
@@ -1393,7 +1461,8 @@ fn int main(String[] args) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--shadows atlas|traced] [--ssgi] [--path-traced] [--reflections on|off] [--volumetric-fog] "
-              "[--fog-quality low|medium|high] [--taa] [--auto-exposure] [--fog on|off] [--atmosphere on|off|dense|empty] "
+              "[--fog-quality low|medium|high] [--local-lights N] [--lamp-range METRES] [--lamps-in-fog on|off] "
+              "[--taa] [--auto-exposure] [--fog on|off] [--atmosphere on|off|dense|empty] "
               "[--preset noon|twilight|valley|pan|time-lapse] [--width W] [--height H].");
         }
         return 1;

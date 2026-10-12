@@ -17,6 +17,36 @@ float fog_phase(float cos_angle, float anisotropy) {
     return (1.0 - squared) / (4.0 * PI * denominator * sqrt(denominator));
 }
 
+// In-scatter of the froxel's volumetric lights other than the sun, by the sun's phase.
+vec3 additional_light_scattering(
+    FrameRoot frame,
+    SkyFogGpu sky,
+    uint sun_light,
+    vec3 position,
+    vec3 direction,
+    float view_depth
+) {
+    LightList lights = select_lights(frame, position, view_depth);
+    vec3 scattered = vec3(0.0);
+    for (uint slot = 0u; slot < lights.count; slot++) {
+        uint index = selected_light_index(frame, lights, slot);
+        if (index + 1u == sun_light) continue;
+
+        LightGpu light = LightArray(frame.lights).values[index];
+        if ((light.flags & LIGHT_VOLUMETRIC) == 0u) continue;
+
+        LightSample light_sample = sample_light(light, position);
+        if (light_sample.radiance == vec3(0.0)) continue;
+
+        float visibility = 1.0;
+        // A froxel has no surface: a zero normal keeps ShadowGpu normal biases out of the sample point.
+        if (light_casts_shadow(light)) visibility = shadow_visibility(frame, light, position, vec3(0.0), view_depth);
+        float phase = fog_phase(dot(direction, light_sample.direction), sky.fog_anisotropy);
+        scattered += phase * light_sample.radiance * visibility;
+    }
+    return sky.fog_albedo_density.rgb * scattered;
+}
+
 // One froxel: the fog's optical depth over its slice and the light it scatters toward the camera per unit of it.
 void main() {
     FogVolumeRoot root = FogVolumeRoot(pc.root_gpu);
@@ -34,15 +64,16 @@ void main() {
     float start = clamp(fog_clip_start(frame, origin, direction), near, far);
     float optical_depth = height_fog_optical_depth(sky, origin + direction * start, direction, far - start);
 
+    vec3 position = origin + direction * (0.5 * (start + far));
+    float view_depth = -(frame.view * vec4(position, 1.0)).z;
     vec3 radiance = fog_ambient_color(frame, sky, direction);
     if (root.sun_light != 0u) {
         LightGpu sun = LightArray(frame.lights).values[root.sun_light - 1u];
-        vec3 position = origin + direction * (0.5 * (start + far));
-        float view_depth = -(frame.view * vec4(position, 1.0)).z;
         // A froxel has no surface: a zero normal keeps ShadowGpu.normal_bias out of the sample point.
         float visibility = shadow_visibility(frame, sun, position, vec3(0.0), view_depth);
         float phase = fog_phase(-dot(direction, sun.direction_cos_outer.xyz), sky.fog_anisotropy);
         radiance += sky.fog_albedo_density.rgb * phase * sun.color_intensity.rgb * sun.color_intensity.w * visibility;
     }
+    radiance += additional_light_scattering(frame, sky, root.sun_light, position, direction, view_depth);
     store_storage_texture_3d(root.volume, ivec3(froxel), vec4(radiance, optical_depth));
 }

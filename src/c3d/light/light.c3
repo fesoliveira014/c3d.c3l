@@ -9,7 +9,10 @@ enum LightKind {
     SPOT, // mirrored as LIGHT_SPOT in shaders/common/lights.glsl
 }
 
-<* Punctual emission attached to a scene node. *>
+<*
+ Punctual emission attached to a scene node.
+ A zero-initialized Light does not scatter in volumetric fog; the constructors set `volumetric`.
+*>
 struct Light {
     LightKind kind;
     Vec3 color;
@@ -18,6 +21,7 @@ struct Light {
     float inner_cone;
     float outer_cone;
     uint layers;
+    bool volumetric;
     ShadowSettings shadow;
 }
 
@@ -33,7 +37,7 @@ struct Light {
 *>
 fn Light directional(Vec3 color, float intensity, bool shadow = true) {
     return { .kind = DIRECTIONAL, .color = color, .intensity = intensity,
-        .layers = uint::max, .shadow = @shadow_settings(shadow) };
+        .layers = uint::max, .volumetric = true, .shadow = @shadow_settings(shadow) };
 }
 
 <*
@@ -48,7 +52,7 @@ fn Light directional(Vec3 color, float intensity, bool shadow = true) {
 *>
 fn Light point(Vec3 color, float intensity, float range = 0) {
     return { .kind = POINT, .color = color, .intensity = intensity, .range = range,
-        .layers = uint::max, .shadow = @shadow_settings(false) };
+        .layers = uint::max, .volumetric = true, .shadow = @shadow_settings(false) };
 }
 
 <*
@@ -79,6 +83,7 @@ fn Light spot(
         .inner_cone = inner,
         .outer_cone = outer,
         .layers = uint::max,
+        .volumetric = true,
         .shadow = @shadow_settings(false),
     };
 }
