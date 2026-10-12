@@ -83,7 +83,7 @@ struct ViewDesc {
     bool                 share_shadows;  // binds an earlier view's matching shadow set and publishes its own
     uint                 transmission_layers; // up to MAX_TRANSMISSION_LAYERS; zero reads as 1
     TransparencyMode     transparency; // how premultiplied-alpha blended surfaces compose
-    float                pre_exposure_override; // 0 follows the camera exposure; else the radiance scale stored images carry
+    float                pre_exposure_override; // 0 follows the camera exposure; else the power-of-two radiance scale stored images carry
 }
 
 <*

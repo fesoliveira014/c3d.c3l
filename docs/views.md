@@ -69,7 +69,7 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `fog_quality` | `FogQuality`, the froxel size and slice count of the fog volume: `LOW`, `MEDIUM` or `HIGH` (see [volumetric fog](sky.md#volumetric-fog)); `MEDIUM` is the zero value, so an unset desc keeps its grid; a change reallocates the volume |
 | `share_shadows` | Binds an earlier view's [shadow set](shadows.md#shadow-sets) when the keys match and publishes its own; on in both constructors |
 | `transparency` | How premultiplied-alpha blended surfaces compose: `SORTED` (default, both constructors) orders them by object, `WEIGHTED` accumulates them without ordering into two extra images, 10 bytes per pixel, allocated on the first frame with a participating draw (see [weighted transparency](materials.md#weighted-transparency)); custom `BLEND` materials stay sorted in a `WEIGHTED` view, a current limit |
-| `pre_exposure_override` | Forces the view's [pre-exposure](post.md#pre-exposure) factor, a value from 2^-16 to 2^16; zero, the default, follows the camera exposure. Any other value outside that range faults `INVALID_ARGUMENT` |
+| `pre_exposure_override` | Forces the view's [pre-exposure](post.md#pre-exposure) factor, a power of two from 2^-16 to 2^16; zero, the default, follows the camera exposure. Any other value faults `INVALID_ARGUMENT` |
 | `transmission_layers` | Snapshots the scene-read list samples, so glass can see glass behind it (see [transmission layers](materials.md#transmission-layers)); 1 to `MAX_TRANSMISSION_LAYERS` (4), zero reads as 1 and both constructors leave it zero |
 
 An installed [static impostor](lod.md#static-impostors) participates in the same

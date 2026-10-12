@@ -417,7 +417,7 @@ time-lapse pose the camera and the sun. The mirror pad renders with the main cam
 frame records one shadow atlas, the mirror's, and the main view binds it ([shadow sets](shadows.md#shadow-sets)).
 
 `--auto-exposure` replaces the exposure table with auto exposure on the main view. `--pre-exposure off|FACTOR`
-forces the main and mirror views' [pre-exposure](#pre-exposure) to 1 or to a factor from 2⁻¹⁶ to 2¹⁶. The presets
+forces the main and mirror views' [pre-exposure](#pre-exposure) to 1 or to a power of two from 2⁻¹⁶ to 2¹⁶. The presets
 `dusk` and `nautical` set the sun to −6° and −8°.
 
 The `orbit` preset puts the camera 400 km up, pitched 10° down, with the sun 12° up: the limb curves 9.8° below the

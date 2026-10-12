@@ -414,7 +414,7 @@ fn int main(String[] args) {
         .max_reflection_roughness = render::RT_REFLECTION_ROUGHNESS_DEFAULT,
     };
     if (catch excuse = render::configure_view(&renderer, renderer.default_view, view_desc)) {
-        io::eprintfn("View configuration rejected (%s); --pre-exposure takes off or a factor from 2^-16 to 2^16", excuse);
+        io::eprintfn("View configuration rejected (%s); --pre-exposure takes off or a power of two from 2^-16 to 2^16", excuse);
         return 1;
     }
     renderer.prepare_scene(&scene)!!;

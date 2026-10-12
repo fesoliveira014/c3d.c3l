@@ -26,6 +26,7 @@ const int PRE_EXPOSURE_MIN_STOP = -16; // 2^-16 stores radiance up to 2^32 in RG
 *>
 const int PRE_EXPOSURE_MAX_STOP = 16; // 2^16 lifts radiance of 2^-16 to 1; scenes needing more exposure stay in RGBA16F's subnormal range
 
+const uint FLOAT_MANTISSA_MASK @private = 0x007FFFFF;
 const usz EXPOSURE_SLOT_OFFSET @private = ExposureHistogramGpu::size;
 const usz EXPOSURE_STATE_BYTES @private = EXPOSURE_SLOT_OFFSET + EXPOSURE_SLOTS * ExposureGpu::size;
 const uint EXPOSURE_DISPATCHES @private = 2;
@@ -182,12 +183,14 @@ fn float pre_exposure_factor(float exposure) {
 }
 
 <*
- Whether a forced pre-exposure is automatic or inside the bounds.
+ Whether a forced pre-exposure is automatic or a power of two inside the bounds.
  @pure
 *>
 fn bool pre_exposure_override_valid(float factor) {
-    return factor == 0
-      || (factor >= math::exp2((float)PRE_EXPOSURE_MIN_STOP) && factor <= math::exp2((float)PRE_EXPOSURE_MAX_STOP));
+    if (factor == 0) return true;
+    bool inside_bounds = factor >= math::exp2((float)PRE_EXPOSURE_MIN_STOP)
+      && factor <= math::exp2((float)PRE_EXPOSURE_MAX_STOP);
+    return inside_bounds && (bitcast(factor, uint) & FLOAT_MANTISSA_MASK) == 0;
 }
 
 <*

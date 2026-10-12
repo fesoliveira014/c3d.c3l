@@ -356,8 +356,8 @@ CPU. A stage that emits unscaled radiance appears `pre_exposure` times too dark.
   half-float finite applies to the scaled value, after it.
 - A compute dispatch that reads or writes `read_view_color` or `write_view_color` sees scaled values. It
   multiplies the constants it mixes in by `ViewStats.pre_exposure`, read after `render_view`.
-- `ViewDesc.pre_exposure_override` forces the factor; 0 keeps it automatic. A stage not yet migrated
-  renders unchanged under an override of 1.
+- `ViewDesc.pre_exposure_override` forces the factor, a power of two from 2^-16 to 2^16; 0 keeps it automatic.
+  A stage not yet migrated renders unchanged under an override of 1.
 
 ## Scene reads
 

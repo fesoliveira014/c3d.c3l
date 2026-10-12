@@ -589,4 +589,8 @@ fn void test_pre_exposure_is_a_clamped_power_of_two_of_the_exposure_applied() @t
     assert(post::view_pre_exposure(&record, SCENE).factor == 256);
     assert(post::pre_exposure_override_valid(0) && post::pre_exposure_override_valid(256));
     assert(!post::pre_exposure_override_valid(1e9f) && !post::pre_exposure_override_valid(-1));
+    assert(post::pre_exposure_override_valid(1.0f / 65536) && post::pre_exposure_override_valid(65536));
+    assert(!post::pre_exposure_override_valid(3) && !post::pre_exposure_override_valid(0.3f));
+    assert(!post::pre_exposure_override_valid(1.0f / 131072) && !post::pre_exposure_override_valid(131072));
+    assert(!post::pre_exposure_override_valid(float::nan) && !post::pre_exposure_override_valid(float::inf));
 }
