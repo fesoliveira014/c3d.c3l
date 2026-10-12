@@ -346,7 +346,8 @@ while (window.poll()) {
   part, in every view, shadow layer, prepass and velocity pass, reads the posed streams of its source. Its
   frozen and culled instances are posed too, so the dispatch costs the same whatever the draws show. A
   replacement of the crowd's instances drops the binding's history for one frame, and a view that skipped a
-  frame gets no deformation motion, as above. Animated LOD parts keep vertex skinning.
+  frame gets no deformation motion, as above. Animated LOD parts keep vertex skinning. A traced part's slots
+  take these poses instead of posing again ([tracing](animation.md#compute-skinning)).
 - `InstanceGpu.normal_2.w` of a crowd record holds the logical source index, the row of the draw's
   palette and morph block, and, under compute skinning, its posed slot, so a parity change reorders records
   without moving any pose.

@@ -91,6 +91,7 @@ struct TracePoseSource @private {
     Mesh*          mesh;          // MESH
     SkinBinding*   skin;          // MESH; null for a morph-only mesh
     AnimatedCrowd* crowd;         // CROWD
+    InstancedMesh* batch;         // CROWD: the part's batch
     uint           part;          // CROWD: index into crowd.parts
     Scene*         scene;         // ANIMATED_LOD: source scene, borrowed for this collection
     LodGroupState* lod;           // animated level-zero descriptor, borrowed for this collection
@@ -385,6 +386,7 @@ fn TraceCollection collect_trace_instances(
                             .kind = crowd_part.skinned || crowd_part.weight_count ? TracePose.CROWD : TracePose.REST,
                             .node = node,
                             .crowd = crowd,
+                            .batch = batch,
                             .part = part,
                         };
                     }

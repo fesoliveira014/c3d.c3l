@@ -951,8 +951,8 @@ heavy per vertex; with few passes it can cost more GPU and CPU time than vertex 
   at every level would undo the savings of the levels; limiting the dispatch to the instances drawn at each
   level is not done. A mesh or crowd part drawn by a material with a custom vertex stage stays out too, since
   that stage applies its own deformation from the draw's palette and morph block, which a posed draw leaves
-  empty, and a crowd part's stage reads its streams without the source's slot. A mesh or crowd part no view
-  or shadow layer draws is not posed.
+  empty, and a crowd part's stage reads its streams without the source's slot. A mesh or crowd part no view,
+  shadow layer or trace claims is not posed.
 - **Buffers.** Each drawn mesh node, and each drawn crowd part, owns a pair of posed blocks, allocated on
   first use, reallocated when its geometry's layout or the crowd's capacity changes and released after
   `INSTANCE_ABSENCE_FRAMES` frames without a draw. Positions are double buffered, current and previous;
@@ -976,8 +976,9 @@ heavy per vertex; with few passes it can cost more GPU and CPU time than vertex 
   part's dispatch has one row per live source and poses all of them, the frozen, culled and off-screen
   ones included, so a part costs the same whatever its draws show. Later passes and views of the frame reuse
   the pose. A dispatch waits for the shaders of earlier frames that read the block it overwrites
-  (`consumer_stages` to compute), and its writes become visible to the vertex stage of every raster pass
-  (compute to vertex shader).
+  (`consumer_stages` to compute), and its writes become visible to every reader of the posed streams
+  (compute to `consumer_stages`): the vertex stage of each raster pass, the compute and ray-tracing shaders and
+  refits of the trace, and the bottom-level builds that take the positions as input.
 - **History.** The previous positions are the pose of the last submitted frame that drew the mesh. The pair
   swaps when a frame is submitted; an aborted frame neither swaps nor commits. A view gets deformation motion
   only if its own previous submitted frame is the one that produced that pose. Turning the switch on, a new
@@ -992,8 +993,18 @@ heavy per vertex; with few passes it can cost more GPU and CPU time than vertex 
   instanced forms (main, depth only and velocity, shared by the shadow and prepass draws) of crowd parts and
   the `trace_pose` pipelines, plain and instanced. Turning it on afterwards compiles them on first use, in
   the first frame that draws a deformed mesh or crowd part.
-- **Tracing.** Traced effects still pose their own copy; a traced, skinned mesh is posed by both passes
-  until the trace reuses the draw pose.
+- **Tracing.** A traced skinned or morphed mesh or crowd part claims its binding as a pass does, so a traced
+  mesh no view draws is posed once too, and its trace slot takes that pose instead of dispatching its own.
+  The slot's root is rewritten every frame to address the binding's current block, or for a crowd part the
+  source's copy of each stream, so it follows the swap and keeps no pointer into the binding; the tree refit
+  and the bottom-level build read the same streams. The slot's pose compare still decides whether to refit or
+  update: an unchanged pose does neither, and its root still follows the swap, because the block it addressed
+  is rewritten two frames later. `Stats.trace_poses` counts the dispatches the trace recorded and
+  `Stats.trace_poses_reused` the poses it took from a binding instead. The slot's own streams stay allocated
+  while it aliases and count in `Stats.trace_posed_bytes`. The trace keeps its own dispatch with the switch
+  off, for a mesh with `Mesh.vertex_motion`, for animated LOD parts, for a mesh or crowd part past a cap
+  (counted per claim, so a crowd part traced by instance counts once per row) and in a preparation outside a
+  frame; a slot that changes between the two re-poses once.
 
 ## Retargeting
 

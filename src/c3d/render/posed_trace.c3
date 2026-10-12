@@ -68,6 +68,7 @@ struct PosedTraceRes {
     char[]                           pose;                // inputs of the last recorded posing
     bool                             pose_valid;
     bool                             pending;             // touched by the current recording
+    bool                             aliased;             // the root addresses a compute skinning binding's pose
     ulong                            pose_serial;         // advances with every recorded posing
     ulong                            refit_serial;        // pose_serial the node copy holds; 0 when stale
     ulong                            blas_serial;         // pose_serial the BLAS holds; 0 builds it in full
@@ -538,6 +539,7 @@ fn void? acquire_posed_streams(
     GpuGeometry* mirror,
     usz pose_bytes,
     bool vertex_motion,
+    bool aliased,
 ) @private {
     PosedTraceTable* table = &renderer.posed_trace;
     PosedTraceRes* slot = &table.slots[index];
@@ -589,12 +591,9 @@ fn void? acquire_posed_streams(
         slot.pose = pose_bytes ? alloc::new_array(table.allocator, char, (sz)pose_bytes) : (char[]){};
     }
 
-    Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
-    gpu::MappedGpuSpan staging = frame.upload.take(&renderer.device, GeometryRoot::size, STREAM_ALIGNMENT)!;
-    *(GeometryRoot*)staging.bytes.ptr = posed_geometry_root(&mirror.layout, mirror.root, slot.root);
     gpu::GpuSpan destination = gpu::get_allocation_span(&renderer.device, slot.allocation)!;
     slot.positions = destination.checked_subspan(layout.positions, PACKED_VEC3_BYTES * mirror.layout.vertex_count)!;
-    renderer.pending_copies.push({ .src = staging.span, .dst = destination.checked_subspan(0, GeometryRoot::size)! });
+    if (!aliased) write_posed_root(renderer, slot, posed_geometry_root(&mirror.layout, mirror.root, slot.root))!;
 
     slot.geometry = mirror.asset;
     slot.topology = topology;
@@ -689,16 +688,21 @@ fn void? resolve_posed_instance(
     PosedTraceTable* table = &renderer.posed_trace;
     bool software = renderer.scene_trace.software_requested;
     bool hardware = renderer.scene_trace.hardware_requested;
+    PosedDraw posed = claim_trace_pose(renderer, source, record, mirror, scene)!;
+    PosedTraceRes* slot = &table.slots[index];
+    // The slot's own streams went stale while it followed the compute pass.
+    if (slot.aliased && !posed.active) slot.built_revision = 0;
     acquire_posed_streams(
         renderer:      renderer,
         index:         index,
         mirror:        mirror,
         pose_bytes:    pose_input_bytes(source, renderer.assets),
         vertex_motion: source.kind == TracePose.VERTEX_MOTION,
+        aliased:       posed.active,
     )!;
     if (software) acquire_posed_nodes(renderer, index, mirror)!;
     if (hardware) acquire_posed_blas(renderer, index, mirror)!;
-    PosedTraceRes* slot = &table.slots[index];
+    slot.aliased = posed.active;
 
     PosedDispatch dispatch = {
         .vertex_count = mirror.layout.vertex_count,
@@ -711,7 +715,11 @@ fn void? resolve_posed_instance(
         }
     } else if (slot.compared_epoch != table.epoch) {
         slot.compared_epoch = table.epoch;
-        if (slot.update_pose(pose_inputs(renderer, source, record))) {
+        bool changed = slot.update_pose(pose_inputs(renderer, source, record));
+        if (posed.active) {
+            alias_posed_pose(renderer, slot, &posed, mirror, source, record)!;
+            if (changed) renderer.stats.trace_poses_reused++;
+        } else if (changed) {
             dispatch.pose_root = write_pose_root(
                 renderer: renderer,
                 source:   source,
@@ -742,6 +750,71 @@ fn void? resolve_posed_instance(
     record.nodes = slot.nodes;
     record.primitives = mirror.trace.primitives;
     record.pose_serial = slot.pose_serial;
+}
+
+// A mesh or crowd part compute skinning poses this frame answers its posed binding, which the slot then follows.
+// Closed preparations record no frame, so they pose on their own.
+fn PosedDraw? claim_trace_pose(
+    Renderer* renderer,
+    TracePoseSource* source,
+    TraceInstance* record,
+    GpuGeometry* mirror,
+    ulong scene,
+) @local {
+    PosedDraw rest = { .root = mirror.root };
+    if (!renderer.frame_open) return rest;
+
+    MeshCandidate candidate = {
+        .node           = source.node,
+        .geometry       = record.geometry,
+        .material       = record.material,
+        .scene_identity = scene,
+    };
+    switch (source.kind) {
+        case MESH:
+            candidate.skin = source.skin;
+            if (mesh_morphs(renderer.assets, source.mesh)) candidate.morph_weights = source.mesh.morph_weights;
+            candidate.morph_channels = renderer.assets.geometry(record.geometry).data.channels;
+            candidate.vertex_motion = source.mesh.vertex_motion;
+        case CROWD:
+            candidate.batch = source.batch;
+            candidate.crowd = source.crowd;
+            candidate.crowd_part = source.part;
+        default:
+            return rest;
+    }
+    return claim_posed_draw(renderer, &candidate, mirror);
+}
+
+// The slot's root is rewritten each frame to address the binding's current block, which swaps with every
+// submitted frame, so the slot keeps no pointer into the binding.
+fn void? alias_posed_pose(
+    Renderer* renderer,
+    PosedTraceRes* slot,
+    PosedDraw* posed,
+    GpuGeometry* mirror,
+    TracePoseSource* source,
+    TraceInstance* record,
+) @local {
+    bool crowd = source.kind == TracePose.CROWD;
+    PosedSource pose = posed_source(
+        renderer: renderer,
+        posed:    posed,
+        geometry: mirror,
+        sources:  crowd ? (uint)source.crowd.placements.len : 1,
+        source:   crowd ? record.instance_index : 0,
+    )!;
+    write_posed_root(renderer, slot, pose.root)!;
+    renderer.pending_overwrite = true;
+    slot.positions = pose.positions;
+}
+
+fn void? write_posed_root(Renderer* renderer, PosedTraceRes* slot, GeometryRoot root) @local {
+    Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan staging = frame.upload.take(&renderer.device, GeometryRoot::size, STREAM_ALIGNMENT)!;
+    *(GeometryRoot*)staging.bytes.ptr = root;
+    gpu::GpuSpan destination = gpu::get_allocation_span(&renderer.device, slot.allocation)!;
+    renderer.pending_copies.push({ .src = staging.span, .dst = destination.checked_subspan(0, GeometryRoot::size)! });
 }
 
 fn gpu::GpuAddress? write_pose_root(
