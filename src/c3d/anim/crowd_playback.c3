@@ -335,7 +335,7 @@ fn void? validate_crowd_seed(AssetStore* assets, ModelTemplate* template, CrowdP
             destination.mesh_widths[index] = (uint)mesh.default_morph_weights.len;
         }
 
-        (void)validate_playback_action(clip, PLAY_DESC_DEFAULT, destination)!;
+        validate_playback_action(clip, PLAY_DESC_DEFAULT, destination)!;
     };
 }
 

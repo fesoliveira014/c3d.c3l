@@ -93,17 +93,14 @@ fn uint? prepare_group_members(
 
     bool unsupported;
     foreach (clip : clips) {
-        if (catch excuse = validate_playback_addition(
+        unsupported |= validate_playback_addition(
             playback: playback,
             assets: assets,
             clip: &assets.clip(clip).data,
             desc: desc,
             destination: destination,
             basis: motion_basis,
-        )) {
-            if (excuse != c3d::UNSUPPORTED) return excuse~;
-            unsupported = true;
-        }
+        )!;
     }
 
     if (unsupported) return c3d::UNSUPPORTED~;
@@ -122,10 +119,10 @@ fn uint? prepare_group_members(
     member_desc.fade_in = 0;
 
     foreach (index, clip : clips) {
-        prepared[index] = prepare_playback_action(
+        prepared[index] = prepare_validated_playback_action(
             allocator: playback.allocator,
-            assets: assets,
             clip: clip,
+            data: &assets.clip(clip).data,
             desc: member_desc,
             destination: destination,
             motion_basis: motion_basis,
@@ -139,7 +136,6 @@ fn uint? prepare_group_members(
             model: playback.model,
             action: &prepared[index],
             root_node: playback.root_node,
-            motion_basis: motion_basis,
         )!;
     }
 

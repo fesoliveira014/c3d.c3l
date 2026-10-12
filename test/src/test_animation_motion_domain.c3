@@ -42,7 +42,7 @@ fn void expect_motion_rotation_fault(Track* track, fault expected) @local {
 
 fn void expect_motion_scale_invalid(Track* track, bool additive = false) @local {
     bool caught;
-    if (catch excuse = anim::classify_consumed_scale_track(track, additive)) {
+    if (catch excuse = anim::validate_consumed_scale_track(track, additive)) {
         assert(excuse == c3d::INVALID_ARGUMENT);
         caught = true;
     }
@@ -101,11 +101,11 @@ fn void test_animation_motion_scale_step_linear_uniform_positive_domains() @test
     float[6] values = { 0.5, 0.5, 0.5, 2, 2, 2 };
     foreach (mode : modes) {
         Track track = motion_scale_track(mode, times[..], values[..]);
-        assert(anim::classify_consumed_scale_track(&track, false)!! == ConsumedScaleDomain.ADMITTED);
+        assert(!anim::validate_consumed_scale_track(&track, false)!!);
         values = { 0x1p-149, 0x1p-149, 0x1p-149, 0x1p-148, 0x1p-148, 0x1p-148 };
-        assert(anim::classify_consumed_scale_track(&track, false)!! == ConsumedScaleDomain.ADMITTED);
+        assert(!anim::validate_consumed_scale_track(&track, false)!!);
         values = { 0.5, 0.5f * 0.9999975f, 0.5, 2, 2 * 0.9999975f, 2 };
-        assert(anim::classify_consumed_scale_track(&track, false)!! == ConsumedScaleDomain.ADMITTED);
+        assert(!anim::validate_consumed_scale_track(&track, false)!!);
         values = { 1, 1, 1, 1, 2, 1 };
         expect_motion_scale_invalid(&track);
         values = { 1, 1, 1, 0, 0, 0 };
@@ -122,14 +122,14 @@ fn void test_animation_motion_scale_step_linear_additive_neutrality_covers_every
     float[6] values = { -1, 0, 2, -1, 0, 2 };
     foreach (mode : modes) {
         Track track = motion_scale_track(mode, times[..], values[..]);
-        assert(anim::classify_consumed_scale_track(&track, true)!! == ConsumedScaleDomain.ADMITTED);
+        assert(!anim::validate_consumed_scale_track(&track, true)!!);
         values[4] = 0x1p-149;
         expect_motion_scale_invalid(&track, true);
         values[4] = 0;
     }
 }
 
-fn void test_animation_motion_scale_cubic_is_unproven_after_key_checks() @test {
+fn void test_animation_motion_scale_cubic_is_unsupported_after_key_checks() @test {
     float[2] times = { 0, 1 };
     float[18] values = motion_scale_cubic_values(
         start: 2,
@@ -138,8 +138,8 @@ fn void test_animation_motion_scale_cubic_is_unproven_after_key_checks() @test {
         incoming: 0,
     );
     Track track = motion_scale_track(Interpolation.CUBIC_SPLINE, times[..], values[..]);
-    assert(anim::classify_consumed_scale_track(&track, false)!! == ConsumedScaleDomain.SAMPLING_UNPROVEN);
-    assert(anim::classify_consumed_scale_track(&track, true)!! == ConsumedScaleDomain.SAMPLING_UNPROVEN);
+    assert(anim::validate_consumed_scale_track(&track, false)!!);
+    assert(anim::validate_consumed_scale_track(&track, true)!!);
     values[4] = 1;
     expect_motion_scale_invalid(&track);
     expect_motion_scale_invalid(&track, true);

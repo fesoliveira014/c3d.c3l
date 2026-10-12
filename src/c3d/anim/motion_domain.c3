@@ -5,11 +5,6 @@ import std::math;
 
 const double MOTION_SCALE_EPSILON @local = 1e-5; // Relative component tolerance of a uniform scale.
 
-enum ConsumedScaleDomain @private {
-    ADMITTED,
-    SAMPLING_UNPROVEN,
-}
-
 fn void? validate_motion_rotation_track(Track* track) @private {
     validate_motion_track_storage(track, TargetPath.ROTATION)!;
 
@@ -22,8 +17,7 @@ fn void? validate_motion_rotation_track(Track* track) @private {
     }
 }
 
-// A result rather than a fault lets the caller check every track for INVALID_ARGUMENT first.
-fn ConsumedScaleDomain? classify_consumed_scale_track(Track* track, bool additive) @private {
+fn bool? validate_consumed_scale_track(Track* track, bool additive) @private {
     validate_motion_track_storage(track, TargetPath.SCALE)!;
 
     float[] reference = motion_domain_key(track, 0, CUBIC_SLOT_VALUE);
@@ -44,13 +38,7 @@ fn ConsumedScaleDomain? classify_consumed_scale_track(Track* track, bool additiv
         }
     }
 
-    switch (track.interpolation) {
-        case STEP:
-        case LINEAR:
-            return ConsumedScaleDomain.ADMITTED;
-        case CUBIC_SPLINE:
-            return ConsumedScaleDomain.SAMPLING_UNPROVEN;
-    }
+    return track.interpolation == Interpolation.CUBIC_SPLINE;
 }
 
 fn void? validate_motion_track_storage(Track* track, TargetPath path) @local {

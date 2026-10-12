@@ -132,7 +132,7 @@ fn void create_motion_admission_fixture(MotionAdmissionFixture* fixture) @local 
     };
 }
 
-fn void? validate_admission_fixture(MotionAdmissionFixture* fixture, uint root = 2, bool additive = false) @local {
+fn bool? validate_admission_fixture(MotionAdmissionFixture* fixture, uint root = 2, bool additive = false) @local {
     return anim::validate_generalized_motion(
         template: &fixture.model,
         clip: &fixture.clip,
@@ -161,7 +161,7 @@ fn CapturedMotionChain capture_admission_fixture(
 fn void test_animation_motion_admission_captures_full_chain_and_all_top_level_branches() @test {
     MotionAdmissionFixture fixture;
     create_motion_admission_fixture(&fixture);
-    validate_admission_fixture(&fixture)!!;
+    assert(!validate_admission_fixture(&fixture)!!);
     CapturedMotionChain captured = capture_admission_fixture(&fixture);
     defer anim::destroy_captured_motion_chain(&captured);
     assert(captured.nodes.len == 3);
@@ -183,7 +183,7 @@ fn void test_animation_motion_admission_captures_full_chain_and_all_top_level_br
 fn void test_animation_motion_admission_changed_root_maps_its_own_ancestors() @test {
     MotionAdmissionFixture fixture;
     create_motion_admission_fixture(&fixture);
-    validate_admission_fixture(&fixture, 6)!!;
+    assert(!validate_admission_fixture(&fixture, 6)!!);
     CapturedMotionChain leaf = capture_admission_fixture(&fixture, mem, 6);
     defer anim::destroy_captured_motion_chain(&leaf);
     assert(leaf.nodes.len == 3 && leaf.nodes[0].model_node == 6 && leaf.nodes[1].model_node == 1);
@@ -241,7 +241,7 @@ fn void test_animation_motion_admission_cubic_scale_defers_to_invalid_faults() @
     fixture.tracks[4].interpolation = Interpolation.CUBIC_SPLINE;
     fixture.tracks[4].times = times[..];
     fixture.tracks[4].values = values[..];
-    assert(@catch(validate_admission_fixture(&fixture)) == c3d::UNSUPPORTED);
+    assert(validate_admission_fixture(&fixture)!!);
     fixture.nodes[0].local.scale = { 1, 2, 1 };
     assert(@catch(validate_admission_fixture(&fixture)) == c3d::INVALID_ARGUMENT);
     fixture.nodes[0].local.scale = { 2, 2, 2 };
@@ -253,7 +253,7 @@ fn void test_animation_motion_admission_neutral_difference_zero_and_signed_scale
     MotionAdmissionFixture fixture;
     create_motion_admission_fixture(&fixture);
     fixture.scales = { -1, 0, 2, -1, 0, 2 };
-    validate_admission_fixture(&fixture, 2, true)!!;
+    assert(!validate_admission_fixture(&fixture, 2, true)!!);
     fixture.scales[3] = -2;
     assert(@catch(validate_admission_fixture(&fixture, 2, true)) == c3d::INVALID_ARGUMENT);
 }

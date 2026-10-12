@@ -27,7 +27,7 @@ struct CapturedMotionChain @private {
     uint[] top_level_nodes;
 }
 
-fn void? validate_generalized_motion(
+fn bool? validate_generalized_motion(
     ModelTemplate* template,
     AnimationClip* clip,
     uint root,
@@ -64,13 +64,12 @@ fn void? validate_generalized_motion(
                 case ROTATION:
                     validate_motion_rotation_track(track)!;
                 case SCALE:
-                    ConsumedScaleDomain domain = classify_consumed_scale_track(track, additive)!;
-                    unsupported |= domain == ConsumedScaleDomain.SAMPLING_UNPROVEN;
+                    unsupported |= validate_consumed_scale_track(track, additive)!;
             }
         }
     }
 
-    if (unsupported) return c3d::UNSUPPORTED~;
+    return unsupported;
 }
 
 fn CapturedMotionChain? create_captured_motion_chain(

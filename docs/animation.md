@@ -425,9 +425,10 @@ chain is unsupported: such a request faults `UNSUPPORTED` unless its keys alone
 are out of range.
 
 For a consumed root, source and target use the same motion node, selected axes,
-up, twist and frame. Different clip reference positions are allowed; the pose
-residual carries the articulated pose from the source's pinned reference to the
-target's. Root output adds a decaying residual translation/twist velocity to the
+up, twist and frame. Targets that do not extract are admitted against the
+consumed chain as actions played beside a generalized extractor are. Different
+clip reference positions are allowed; the pose residual carries the articulated
+pose from the source's pinned reference to the target's. Root output adds a decaying residual translation/twist velocity to the
 target delta, with one final pivot correction, and the compensated pose moves
 with the carrier.
 Events come from target actions only. The source's previous published delta

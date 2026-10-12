@@ -30,7 +30,6 @@ struct PreparedTransition @private {
     uint action_count;
     uint space_count;
     float duration;
-    bool unsupported;
 }
 
 <*
@@ -45,7 +44,6 @@ fn PreparedTransition? validate_animation_transition(
     AnimationTransitionDesc desc,
     PoseDestination destination,
     MotionBasis motion_basis,
-    bool defer_unsupported = false,
 ) @private {
     if (!math::is_finite(desc.duration) || desc.duration < 0) return c3d::INVALID_ARGUMENT~;
     if (desc.actions.len > playback.actions.items.len || desc.spaces.len > MAX_BLEND_SPACES) {
@@ -76,6 +74,13 @@ fn PreparedTransition? validate_animation_transition(
         }
     }
 
+    RootExtractionDesc* consumed_extraction;
+    foreach (&target : desc.actions) {
+        if (!target.play.extraction.generalized) continue;
+        consumed_extraction = &target.play.extraction;
+        break;
+    }
+
     bool unsupported;
     foreach (index, target : desc.actions) {
         if (!math::is_finite(target.start_time) || !math::is_finite(target.speed)
@@ -86,50 +91,31 @@ fn PreparedTransition? validate_animation_transition(
             return c3d::INVALID_ARGUMENT~;
         }
 
-        foreach (track : clip.tracks) {
-            if (track.target >= clip.targets.len) return c3d::INVALID_ARGUMENT~;
-        }
-
-        PlayDesc structural = target.play;
-        structural.additive_scale = AdditiveScaleMode.DIFFERENCE;
-        (void)validate_playback_action(clip, structural, destination)!;
-
-        Action motion;
-        configure_motion(
+        unsupported |= validate_action_desc(
             playback: playback,
-            action: &motion,
+            assets: assets,
             clip: clip,
             desc: target.play,
+            destination: destination,
             motion_basis: motion_basis,
-            node_count: (usz)destination.base_pose.len,
+            consumed_extraction: consumed_extraction,
         )!;
 
-        if (target.play.additive && target.play.additive_scale == AdditiveScaleMode.MULTIPLICATIVE) {
-            if (catch excuse = validate_multiplicative_scale(clip)) {
-                if (excuse != c3d::UNSUPPORTED) return excuse~;
-                unsupported = true;
-            }
-        }
-
-        if (target.play.extraction.generalized) {
-            ModelTemplate* template = &assets.models.try_get(playback.model)!.data;
-            if (catch excuse = validate_generalized_motion(
-                template: template,
-                clip: clip,
-                root: playback.root_node,
-                extraction: target.play.extraction,
-                motion_basis: motion_basis,
-                additive: target.play.additive,
-                additive_scale: target.play.additive_scale,
-            )) {
-                if (excuse != c3d::UNSUPPORTED) return excuse~;
-                unsupported = true;
-            }
-        }
+        // Targets share the source's extraction so the root residual stays in one frame.
+        validate_live_extraction(playback, target.play)!;
+        if (consumed_extraction && target.play.root_motion == RootMotion.EXTRACT
+          && !same_extraction(*consumed_extraction, target.play.extraction)) return c3d::INVALID_ARGUMENT~;
     }
 
-    prepared.unsupported = unsupported;
-    if (unsupported && !defer_unsupported) return c3d::UNSUPPORTED~;
+    if (consumed_extraction) {
+        validate_consumed_scales(
+            template: &assets.models.try_get(playback.model)!.data,
+            root_node: playback.root_node,
+            destination: destination,
+        )!;
+    }
+
+    if (unsupported) return c3d::UNSUPPORTED~;
 
     return prepared;
 }
@@ -154,10 +140,10 @@ fn PreparedTransition? prepare_animation_transition(
     foreach (target : desc.actions) generalized |= target.play.extraction.generalized;
 
     foreach (index, target : desc.actions) {
-        prepared.actions[index] = prepare_playback_action(
+        prepared.actions[index] = prepare_validated_playback_action(
             allocator: playback.allocator,
-            assets: assets,
             clip: target.clip,
+            data: &assets.clip(target.clip).data,
             desc: target.play,
             destination: destination,
             motion_basis: motion_basis,
@@ -172,7 +158,6 @@ fn PreparedTransition? prepare_animation_transition(
             model: playback.model,
             action: &prepared.actions[index],
             root_node: playback.root_node,
-            motion_basis: motion_basis,
         )!;
 
         if (target.play.mask) {
@@ -267,4 +252,18 @@ fn void? prepare_transition_space(
     destination.weight = source.weight;
     destination.playing = source.playing;
     destination.phase = (double)phase;
+}
+
+// Positive source and baseline scales keep every blended consumed scale positive for the log residual.
+fn void? validate_consumed_scales(ModelTemplate* template, uint root_node, PoseDestination destination) @local {
+    for (int node = (int)root_node; node >= 0; node = template.nodes[node].parent) {
+        if (!destination.present[node]) return c3d::INVALID_ARGUMENT~;
+
+        foreach (component : destination.pose[node].scale) {
+            if (!(component > 0)) return c3d::INVALID_ARGUMENT~;
+        }
+        foreach (component : destination.base_pose[node].scale) {
+            if (!(component > 0) || !math::is_finite(component)) return c3d::INVALID_ARGUMENT~;
+        }
+    }
 }

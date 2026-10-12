@@ -3,7 +3,7 @@ module c3d::anim;
 import c3d;
 import std::math;
 
-fn void? validate_multiplicative_scale(AnimationClip* clip) @private {
+fn bool? validate_multiplicative_scale(AnimationClip* clip) @private {
     bool unsupported;
     foreach (&track : clip.tracks) {
         if (track.path != TargetPath.SCALE) continue;
@@ -25,7 +25,7 @@ fn void? validate_multiplicative_scale(AnimationClip* clip) @private {
         unsupported |= track.interpolation == Interpolation.CUBIC_SPLINE;
     }
 
-    if (unsupported) return c3d::UNSUPPORTED~;
+    return unsupported;
 }
 
 fn bool positive_scale(float[] scale) @local {

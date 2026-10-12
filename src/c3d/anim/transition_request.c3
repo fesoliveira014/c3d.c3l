@@ -110,28 +110,6 @@ fn AnimationTransitionResult? request_inertial_transition(
     PoseScratch scratch,
     MotionBasis motion_basis,
 ) @private {
-    PreparedTransition validation = validate_animation_transition(
-        playback: playback,
-        assets: assets,
-        desc: desc,
-        destination: destination,
-        motion_basis: motion_basis,
-        defer_unsupported: true,
-    )!;
-
-    validate_transition_extraction_modes(playback, desc)!;
-
-    TransitionMotionIdentity identity = validate_transition_motion_identity(
-        playback: playback,
-        assets: assets,
-        desc: desc,
-        destination: destination,
-        motion_basis: motion_basis,
-        defer_unsupported: true,
-    )!;
-
-    if (validation.unsupported || identity.unsupported) return c3d::UNSUPPORTED~;
-
     PreparedTransition prepared = prepare_animation_transition(
         playback: playback,
         assets: assets,
@@ -148,50 +126,6 @@ fn AnimationTransitionResult? request_inertial_transition(
         destination: destination,
         scratch: scratch,
     );
-}
-
-fn RootExtractionDesc transition_action_extraction(PlayDesc desc) @local {
-    if (desc.extraction.generalized) return desc.extraction;
-
-    return {
-        .translation_axes = { true, false, true },
-        .up = { 0, 1, 0 },
-        .twist = desc.root_yaw,
-    };
-}
-
-fn void? validate_transition_extraction_modes(PlaybackView* playback, AnimationTransitionDesc desc) @local {
-    RootExtractionDesc source_config;
-    bool has_config;
-    foreach (id : playback.order[:*playback.action_count]) {
-        Action* action = playback.actions.get(id);
-        if (action.root_motion != RootMotion.EXTRACT) continue;
-        RootExtractionDesc config = transition_action_extraction({
-            .root_yaw = action.root_yaw,
-            .extraction = action.extraction,
-        });
-        if (has_config && !same_transition_extraction(source_config, config)) return c3d::INVALID_ARGUMENT~;
-        source_config = config;
-        has_config = true;
-    }
-
-    foreach (target : desc.actions) {
-        if (target.play.root_motion != RootMotion.EXTRACT) continue;
-        RootExtractionDesc config = transition_action_extraction(target.play);
-        if (has_config && !same_transition_extraction(source_config, config)) return c3d::INVALID_ARGUMENT~;
-        source_config = config;
-        has_config = true;
-    }
-}
-
-fn bool same_transition_extraction(RootExtractionDesc first, RootExtractionDesc second) @local {
-    if (!first.generalized && !second.generalized) return true;
-
-    if (first.generalized != second.generalized || first.up != second.up || first.twist != second.twist) return false;
-
-    foreach (index, axis : first.translation_axes) if (axis != second.translation_axes[index]) return false;
-
-    return true;
 }
 
 macro bool @transition_result_matches_order(AnimationTransitionResult result, AnimationActionId[] order) @private {

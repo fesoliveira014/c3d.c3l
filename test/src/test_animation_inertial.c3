@@ -2270,6 +2270,18 @@ fn void test_animation_generalized_and_planar_extract_play_and_groups_reject_bot
     }
 }
 
+fn void test_animation_play_invalid_configuration_precedes_multiplicative_unsupported() @test {
+    LayerFixture fixture;
+    create_layer_fixture(&fixture);
+    defer destroy_layer_fixture(&fixture);
+    ClipId cubic = request_cubic_scale_clip(&fixture);
+    PlayDesc desc = { .additive = true, .additive_scale = AdditiveScaleMode.MULTIPLICATIVE };
+    assert(@catch(fixture.animator.play(&fixture.assets, cubic, desc)) == c3d::UNSUPPORTED);
+    desc.root_motion = RootMotion.EXTRACT;
+    assert(@catch(fixture.animator.play(&fixture.assets, cubic, desc)) == c3d::INVALID_ARGUMENT);
+    assert(fixture.animator.action_count == 0);
+}
+
 fn void test_animation_inertial_request_stale_crowd_player_preserves_all_owner_blocks() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
@@ -2969,15 +2981,13 @@ fn void test_animation_transition_admission_reference_offsets_and_animated_basis
     MotionBasis basis = anim::animator_motion_basis(fixture.animator);
     basis.basis.m03 += 9;
     sz acquisitions = tracker.total_allocation_count();
-    TransitionMotionIdentity identity = anim::validate_transition_motion_identity(
+    anim::validate_animation_transition(
         playback: &playback,
         assets: &fixture.assets,
         desc: { .duration = 0.5f, .actions = targets[..] },
         destination: fixture.animator.pose_storage.destination,
         motion_basis: basis,
     )!!;
-    assert(identity.consumes_chain && !identity.unsupported && identity.root_node == 2);
-    assert(identity.extraction.up == (Vec3){ 0, 1, 0 });
     assert(tracker.total_allocation_count() == acquisitions);
 }
 
@@ -3006,7 +3016,7 @@ fn void test_animation_transition_admission_extraction_mismatches_are_atomic() @
         uint count = fixture.animator.action_count;
         uint generation = fixture.animator.actions.generations[id.index];
         sz acquisitions = tracker.total_allocation_count();
-        assert(@catch(anim::validate_transition_motion_identity(
+        assert(@catch(anim::validate_animation_transition(
             playback: &playback,
             assets: &fixture.assets,
             desc: { .duration = 0.5f, .actions = targets[..] },
@@ -3039,7 +3049,7 @@ fn void test_animation_transition_admission_additive_scale_neutrality_ignores_ze
         targets[1].weight = 0;
         targets[1].play = { .additive = true, .mask = &mask, .additive_scale = mode };
         sz acquisitions = tracker.total_allocation_count();
-        assert(@catch(anim::validate_transition_motion_identity(
+        assert(@catch(anim::validate_animation_transition(
             playback: &playback,
             assets: &fixture.assets,
             desc: { .duration = 0.5f, .actions = targets[..] },
@@ -3047,14 +3057,13 @@ fn void test_animation_transition_admission_additive_scale_neutrality_ignores_ze
             motion_basis: anim::animator_motion_basis(fixture.animator),
         )) == c3d::INVALID_ARGUMENT);
         targets[1].clip = neutral;
-        TransitionMotionIdentity accepted = anim::validate_transition_motion_identity(
+        anim::validate_animation_transition(
             playback: &playback,
             assets: &fixture.assets,
             desc: { .duration = 0.5f, .actions = targets[..] },
             destination: fixture.animator.pose_storage.destination,
             motion_basis: anim::animator_motion_basis(fixture.animator),
         )!!;
-        assert(accepted.consumes_chain && !accepted.unsupported);
         assert(tracker.total_allocation_count() == acquisitions);
     }
 }
