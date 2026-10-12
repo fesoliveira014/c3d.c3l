@@ -468,7 +468,7 @@ fn bool? prepare_unit_current(Renderer* renderer, PrepareUnit* unit) @private {
     }
 }
 
-fn void restart_prepare_record(Renderer* renderer, PrepareRecord* record, PrepareReport* report) @private {
+fn void restart_prepare_record(Renderer* renderer, PrepareRecord* record) @private {
     PrepareId id = record.id;
     ModelId model = record.model;
     ulong sequence = record.sequence;
@@ -480,7 +480,6 @@ fn void restart_prepare_record(Renderer* renderer, PrepareRecord* record, Prepar
         .open = true, .state = PrepareState.PENDING };
     enumerate_prepare_record(renderer, record);
     bind_prepare_record(renderer, id);
-    report.restarts++;
 }
 
 fn PrepareReport? advance_prepare_engine(Renderer* renderer, PrepareLimits limits) @private {
@@ -497,7 +496,7 @@ fn PrepareReport? advance_prepare_engine(Renderer* renderer, PrepareLimits limit
         PrepareRecord* record = renderer.prepares.get(id);
         check_prepare_model(renderer, record);
         if (record.state == PrepareState.FAILED) continue;
-        if (prepare_dependencies_changed(renderer, record)) restart_prepare_record(renderer, record, &budget.report);
+        if (prepare_dependencies_changed(renderer, record)) restart_prepare_record(renderer, record);
         while (record.units_done < record.units.len) {
             uint unit_index = record.next;
             if (record.chain_active && !record.units[record.chain_unit].done) unit_index = record.chain_unit;
@@ -535,7 +534,7 @@ fn PrepareReport? advance_prepare_engine(Renderer* renderer, PrepareLimits limit
                 continue;
             }
             if (unit.kind == PrepareUnitKind.PIPELINES && !prepare_pipeline_dependencies_current(renderer, unit)) {
-                restart_prepare_record(renderer, record, &budget.report);
+                restart_prepare_record(renderer, record);
                 continue;
             }
             bool done;

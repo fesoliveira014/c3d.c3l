@@ -157,7 +157,7 @@ fn void test_prepare_pipeline_creations_obey_each_call_and_warm_keys_are_hits() 
     PrepareId warm = renderer.begin_prepare_model(model)!!;
     renderer.begin_frame()!!;
     PrepareReport report = renderer.advance_prepares_within({ .pipelines = 1 })!!;
-    assert(report.pipelines == 0 && report.pipeline_hits > 0);
+    assert(report.pipelines == 0);
     assert(report.staged_bytes == 0 && report.pipeline_ns == 0 && report.reason == PrepareStopReason.NONE);
     renderer.end_frame()!!;
     render::wait_frames(renderer)!!;

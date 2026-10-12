@@ -70,12 +70,6 @@ struct PrepareReport {
     ulong generated_texels;
     ulong copied_bytes;
     uint pipelines;
-    uint objects;
-    uint views;
-    uint allocations;
-    uint pipeline_lookups;
-    uint pipeline_hits;
-    uint restarts;
     ulong generation_ns;
     ulong pipeline_ns;
     ulong elapsed_ns;
@@ -306,14 +300,7 @@ fn PrepareStopReason prepare_step_stop(PrepareBudget* budget, PrepareStepCost co
 fn void account_prepare_report(Renderer* renderer, PrepareReport report) @private {
     renderer.stats.prepare_bytes += report.staged_bytes;
     renderer.stats.prepare_generated_texels += report.generated_texels;
-    renderer.stats.prepare_copied_bytes += report.copied_bytes;
     renderer.stats.prepare_pipelines += report.pipelines;
-    renderer.stats.prepare_objects += report.objects;
-    renderer.stats.prepare_views += report.views;
-    renderer.stats.prepare_allocations += report.allocations;
-    renderer.stats.prepare_pipeline_lookups += report.pipeline_lookups;
-    renderer.stats.prepare_pipeline_hits += report.pipeline_hits;
-    renderer.stats.prepare_restarts += report.restarts;
     renderer.stats.prepare_generation_ns += report.generation_ns;
     renderer.stats.prepare_pipeline_ns += report.pipeline_ns;
     renderer.stats.prepare_elapsed_ns += report.elapsed_ns;

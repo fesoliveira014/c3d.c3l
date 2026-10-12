@@ -383,7 +383,7 @@ fn void test_prepare_partial_geometry_revision_restarts_and_preserves_prior_mirr
         GeometryId synchronous = fixture.assets.add_geometry(source)!!;
         renderer.begin_frame()!!;
         PrepareReport restarted = renderer.advance_prepares_within({ .staged_bytes = 16 })!!;
-        assert(restarted.restarts == 1 && restarted.staged_bytes == 16);
+        assert(renderer.prepare_progress(id).restarts == 1 && restarted.staged_bytes == 16);
         assert(renderer.geometries[fixture.box.index].allocation == old);
         gpu::get_allocation_span(&renderer.device, old)!!;
         partial = preparation_asset_unit(

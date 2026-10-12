@@ -67,15 +67,10 @@ fn void? stats_panel(Renderer* renderer) {
     imgui::text("Prepare units: %u", stats.prepare_units);
     imgui::text("Prepare bytes: %llu", (ulong)stats.prepare_bytes);
     imgui::text("Prepare generated texels: %llu", stats.prepare_generated_texels);
-    imgui::text("Prepare CPU copied bytes: %llu", stats.prepare_copied_bytes);
     imgui::text("Prepare pipeline calls: %u", stats.prepare_pipelines);
-    imgui::text("Prepare cache lookups / hits: %u / %u", stats.prepare_pipeline_lookups, stats.prepare_pipeline_hits);
-    imgui::text("Prepare objects: %u", stats.prepare_objects);
-    imgui::text("Prepare views / allocations: %u / %u", stats.prepare_views, stats.prepare_allocations);
     imgui::text("Prepare generation ns: %llu", stats.prepare_generation_ns);
     imgui::text("Prepare pipeline driver ns: %llu", stats.prepare_pipeline_ns);
     imgui::text("Prepare elapsed / overrun ns: %llu / %llu", stats.prepare_elapsed_ns, stats.prepare_overrun_ns);
-    imgui::text("Prepare restarts: %u", stats.prepare_restarts);
     imgui::text("Dangling references: %u", stats.dangling_refs);
     imgui::text("Trace instances: %u", stats.trace_instances);
     imgui::text("Trace nodes: %u", stats.trace_nodes);

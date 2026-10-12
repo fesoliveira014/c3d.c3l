@@ -222,7 +222,7 @@ fn bool? run_prepare_step(
 ) @private {
     switch (plan.kind) {
         case TEXTURE_CREATE:
-            create_prepare_texture(renderer, unit, report)!;
+            create_prepare_texture(renderer, unit)!;
 
             return false;
 
@@ -374,7 +374,6 @@ fn bool? run_prepare_step(
                 .access = { .graphics },
                 .debug_name = "prepared_geometry"
             };
-            report.allocations++;
             gpu::GpuAllocation allocation = gpu::allocate_memory(&renderer.device, &desc)!;
             unit.geometry_candidate.allocation = allocation;
             gpu::GpuSpan span = gpu::get_allocation_span(&renderer.device, allocation)!;
@@ -394,12 +393,7 @@ fn bool? run_prepare_step(
 
         case GEOMETRY_COPY:
             GeometryAsset* source = renderer.assets.geometry(unit.geometry);
-            gpu::MappedGpuSpan staging = take_prepare_staging(
-                renderer: renderer,
-                bytes: plan.bytes,
-                alignment: STREAM_ALIGNMENT,
-                report: report,
-            )!;
+            gpu::MappedGpuSpan staging = take_prepare_staging(renderer, plan.bytes, STREAM_ALIGNMENT)!;
             write_geometry_range(
                 destination: staging.bytes,
                 geometry: &source.data,
@@ -437,7 +431,6 @@ fn bool? run_prepare_step(
                 .access = { .graphics },
                 .debug_name = "prepared_material_payload"
             };
-            report.allocations++;
             unit.material_candidate.payload = gpu::allocate_memory(&renderer.device, &desc)!;
             unit.material_candidate.payload_size = source.custom.param_block.len;
             unit.material_candidate.payload_address = gpu::get_span_address(
@@ -449,12 +442,7 @@ fn bool? run_prepare_step(
 
         case MATERIAL_PAYLOAD:
             Material* source = &renderer.assets.material(unit.material).data;
-            gpu::MappedGpuSpan staging = take_prepare_staging(
-                renderer: renderer,
-                bytes: plan.bytes,
-                alignment: STREAM_ALIGNMENT,
-                report: report,
-            )!;
+            gpu::MappedGpuSpan staging = take_prepare_staging(renderer, plan.bytes, STREAM_ALIGNMENT)!;
             staging.bytes[..] = source.custom.param_block[plan.offset:plan.bytes];
             report.staged_bytes += plan.bytes;
             renderer.stats.upload_bytes += (uint)plan.bytes;
@@ -472,12 +460,7 @@ fn bool? run_prepare_step(
             return false;
 
         case MATERIAL_BLOCK:
-            gpu::MappedGpuSpan staging = take_prepare_staging(
-                renderer: renderer,
-                bytes: MATERIAL_STRIDE,
-                alignment: STREAM_ALIGNMENT,
-                report: report,
-            )!;
+            gpu::MappedGpuSpan staging = take_prepare_staging(renderer, MATERIAL_STRIDE, STREAM_ALIGNMENT)!;
             material_prepare_block(
                 renderer: renderer,
                 material: unit.material,
@@ -522,7 +505,7 @@ fn bool? run_prepare_step(
     }
 }
 
-fn void? create_prepare_texture(Renderer* renderer, PrepareUnit* unit, PrepareReport* report) @local {
+fn void? create_prepare_texture(Renderer* renderer, PrepareUnit* unit) @local {
     defer catch retire_prepare_texture(renderer, unit, &unit.texture_candidate);
 
     TextureAsset* source = renderer.assets.texture(unit.texture);
@@ -535,7 +518,6 @@ fn void? create_prepare_texture(Renderer* renderer, PrepareUnit* unit, PrepareRe
         base: unit.texture_base,
         copy_source: eligible,
     );
-    report.objects++;
     unit.texture_candidate = {
         .asset = unit.texture, .revision = unit.revision,
         .texture = gpu::create_texture(&renderer.device, &desc)!,
@@ -546,7 +528,6 @@ fn void? create_prepare_texture(Renderer* renderer, PrepareUnit* unit, PrepareRe
     };
 
     gpu::TextureViewDesc sampled = { .cube = unit.texture_candidate.is_cube };
-    report.views++;
     unit.texture_candidate.view = gpu::create_texture_view(
         device: &renderer.device,
         texture: unit.texture_candidate.texture,
@@ -564,7 +545,6 @@ fn void? create_prepare_texture(Renderer* renderer, PrepareUnit* unit, PrepareRe
             gpu::TextureViewDesc single = {
                 .base_mip = index % mip_count, .mip_count = 1, .base_layer = index / mip_count, .layer_count = 1,
             };
-            report.views++;
             *storage_view = gpu::create_texture_view(
                 device: &renderer.device,
                 texture: unit.texture_candidate.texture,
@@ -588,16 +568,8 @@ fn void? create_prepare_texture(Renderer* renderer, PrepareUnit* unit, PrepareRe
     };
 }
 
-fn gpu::MappedGpuSpan? take_prepare_staging(
-    Renderer* renderer,
-    usz bytes,
-    usz alignment,
-    PrepareReport* report,
-) @private {
-    UploadRing* upload = &renderer.frames[renderer.recording_slot].upload;
-    if (align_up(upload.head, alignment) + bytes > upload.mapped.bytes.len) report.allocations++;
-    gpu::MappedGpuSpan? result = upload.take(&renderer.device, bytes, alignment);
-    return result;
+fn gpu::MappedGpuSpan? take_prepare_staging(Renderer* renderer, usz bytes, usz alignment) @local {
+    return renderer.frames[renderer.recording_slot].upload.take(&renderer.device, bytes, alignment);
 }
 
 fn void? record_prepare_buffer_copy(
@@ -668,12 +640,7 @@ fn bool? run_prepare_texture_copy(
         case EMPTY: return c3d::INVALID_ARGUMENT~;
     }
 
-    gpu::MappedGpuSpan staging = take_prepare_staging(
-        renderer: renderer,
-        bytes: band.byte_count,
-        alignment: band.alignment,
-        report: report,
-    )!;
+    gpu::MappedGpuSpan staging = take_prepare_staging(renderer, band.byte_count, band.alignment)!;
     staging.bytes[..] = bytes[..];
     report.staged_bytes += band.byte_count;
     renderer.stats.upload_bytes += (uint)band.byte_count;

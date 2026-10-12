@@ -205,7 +205,6 @@ fn bool? run_prepare_pipeline_step(Renderer* renderer, PrepareUnit* unit, Prepar
  @require request.kind != PreparePipelineKind.SHEEN_LUT && request.kind != PreparePipelineKind.VALIDATE
 *>
 fn void? acquire_prepare_pipeline(Renderer* renderer, PreparePipelineUnit* request, PrepareReport* report) @private {
-    report.pipeline_lookups++;
     switch (request.kind) {
         case CACHE:
             renderer.stats.pipeline_lookups++;
@@ -215,7 +214,6 @@ fn void? acquire_prepare_pipeline(Renderer* renderer, PreparePipelineUnit* reque
                 return excuse~;
             }
             PipelineKey key = selected;
-            if (renderer.pipelines.pipelines.has_key(key)) report.pipeline_hits++;
             PipelineCreationCounters before = renderer.pipelines.creations;
             defer account_prepare_cache_creation(renderer, report, before);
             CustomStageSource source;
@@ -226,17 +224,13 @@ fn void? acquire_prepare_pipeline(Renderer* renderer, PreparePipelineUnit* reque
             }
 
         case COMPUTE:
-            if (compute_slot_target(renderer, request.slot).pipeline.is_valid()) {
-                report.pipeline_hits++;
-                return;
-            }
+            if (compute_slot_target(renderer, request.slot).pipeline.is_valid()) return;
             std::time::Clock started = clock::now();
             report.pipelines++;
             defer report.pipeline_ns += (ulong)started.to_now();
             acquire_compute_slot(renderer, request.slot)!;
 
         case PATH_TRACER:
-            if (renderer.path_tracer.pipeline.is_valid()) report.pipeline_hits++;
             acquire_path_tracer(renderer, report)!;
 
         case SHEEN_LUT:
@@ -581,17 +575,8 @@ fn void? run_prepare_sheen_step(Renderer* renderer, PrepareUnit* unit, PrepareRe
         acquire_environment_pipeline(renderer, pipeline, SHEEN_LUT)!;
     }
 
-    bool fresh = renderer.environment_state.sheen_lut.state == EnvironmentLutState.NONE;
     acquire_sheen_lut(renderer)!;
-    if (fresh) {
-        report.objects++;
-        report.views++;
-    }
-
-    UploadRing* upload = &renderer.frames[renderer.recording_slot].upload;
-    sz overflow = upload.overflow.len();
     record_sheen_lut(renderer, &renderer.commands)!;
-    if (upload.overflow.len() > overflow) report.allocations++;
     report.staged_bytes += BrdfLutRoot::size;
     unit.staged.bytes = unit.bytes;
     unit.referenced_this_frame = true;
