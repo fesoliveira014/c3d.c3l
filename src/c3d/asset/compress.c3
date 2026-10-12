@@ -84,6 +84,7 @@ fn CompressionReport? AssetStore.compress_clip(&self, ClipId clip, ClipTolerance
             float* worst = path_value(&report.error, candidate.path);
             *worst = math::max(*worst, (float)error);
         }
+
         foreach (path : TargetPath::values) {
             if (!(*path_value(&report.error, path) <= *path_value(&tolerance, path))) return c3d::TOLERANCE_EXCEEDED~;
         }
@@ -180,6 +181,7 @@ fn Track pack_track(Track* source) @local {
         ranges[range] = float::max;
         ranges[range + 1] = -float::max;
     }
+
     for (uint key = 0; key < keys; key++) {
         for (uint slot = 0; slot < slots; slot++) {
             source.read_key(key, slot, value);
@@ -190,9 +192,11 @@ fn Track pack_track(Track* source) @local {
             }
         }
     }
+
     for (usz range = 0; range < ranges.len; range += 2) {
         ranges[range + 1] = (ranges[range + 1] - ranges[range]) / anim::QUANTIZED_CODE_MAX;
     }
+
     for (uint key = 0; key < keys; key++) {
         for (uint slot = 0; slot < slots; slot++) {
             source.read_key(key, slot, value);
@@ -251,6 +255,7 @@ fn double cubic_error(Track* track) @local {
     for (uint key = 1; key < track.key_count(); key++) {
         longest = math::max(longest, (double)track.key_time(key) - (double)track.key_time(key - 1));
     }
+
     double[anim::CUBIC_SLOTS_PER_KEY] widest_step;
     for (uint slot = 0; slot < anim::CUBIC_SLOTS_PER_KEY; slot++) {
         for (uint component = 0; component < stride; component++) {
