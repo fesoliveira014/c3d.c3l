@@ -19,7 +19,7 @@ $assert Vec3::size == PACKED_VEC3_BYTES;
 <*
  Stages that read geometry blocks without ray queries.
 *>
-const gpu::StageMask CONSUMER_STAGES = { .vertex_shader, .fragment_shader, .compute };
+const gpu::StageMask CONSUMER_STAGES = { .index_input, .vertex_shader, .fragment_shader, .compute };
 
 <*
  Which streams a packed geometry carries; written to GeometryRoot.flags.
