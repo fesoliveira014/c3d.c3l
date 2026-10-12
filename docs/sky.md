@@ -1,10 +1,10 @@
-# Sky, atmosphere and height fog
+# Sky, atmosphere, height fog and clouds
 
-Two components in `c3d::light` describe the outdoors. An `Atmosphere` on the node of a directional
+Three components in `c3d::light` describe the outdoors. An `Atmosphere` on the node of a directional
 `Light` turns that light into a sun seen through air: the renderer draws a physically based sky with
 the sun's disc, attenuates the sun's light by the air it crosses, lights the scene from the sky and
-adds aerial perspective to distant surfaces. A `HeightFog` on any node adds exponential height fog.
-Either works without the other.
+adds aerial perspective to distant surfaces. A `HeightFog` on any node adds exponential height fog. A `CloudLayer` on any node adds a raymarched
+layer of [clouds](#clouds). Each works without the others.
 
 [Frame origins](large_world.md) change packed coordinates, not physical altitude.
 Height fog's base and view camera move together. Atmosphere lighting cache keys
@@ -22,7 +22,7 @@ scene.add(haze, light::HEIGHT_FOG_DEFAULT);
 scene.update_world();
 ```
 
-`create_scene` registers both components. Nothing else is needed: the renderer resolves them every
+`create_scene` registers all three components. Nothing else is needed: the renderer resolves them every
 frame, allocates what they need once and draws them in every raster view.
 
 ## Components
@@ -73,6 +73,8 @@ and callable from any thread.
   view's camera wins; later and invalid ones the view sees count in `Stats.fogs_ignored`. A fog
   outside the camera's layers is skipped without counting, so a minimap camera can leave the fog out
   or see its own.
+- **One cloud layer per view.** The first valid `CloudLayer` whose node is visible and shares a layer with
+  the view's camera wins; later and invalid ones the view sees count in `Stats.clouds_ignored`.
 - Invalid components are data, not programming errors: they are ignored, never faulted.
 - While an atmosphere resolves it replaces the scene's lighting and background:
   `scene.environment`, `scene.background` (its kind, intensity and rotation) and
@@ -218,7 +220,7 @@ Pass order of a fogged raster view:
 
 ```
 forward:   uploads, shadows, sky view, aerial perspective, [depth prepass], [ambient occlusion],
-           [screen-space GI], forward opaque and sky, [scene snapshot, scene reads],
+           [screen-space GI], forward opaque and sky, [clouds], [scene snapshot, scene reads],
            [snapshot for blended readers], [SSGI colour copy], fog, [transparent], debug lines, post
 deferred:  uploads, shadows, sky view, aerial perspective, depth prepass, G-buffer, [ambient occlusion],
            [screen-space GI], [reflections], lighting, forward opaque and sky, then as forward
@@ -292,6 +294,103 @@ combination) records nothing extra.
   with the switch: the upper sky at noon at the default density goes from (31, 60, 100) to (76, 91, 117). Views of
   one scene with and without the switch show two haze colours.
 
+## Clouds
+
+A `CloudLayer` holds one deck of clouds between two altitudes. The application owns the weather: it
+supplies the coverage map, places the layer and advances its wind. The renderer owns the noise and
+the lighting.
+
+| Field | `CLOUD_LAYER_DEFAULT` | Meaning |
+| --- | --- | --- |
+| `bottom`, `top` | 1,500, 3,000 | altitudes in metres above the y = 0 datum; `top` is above `bottom` |
+| `density` | 0.04 | extinction per metre where the weather is full |
+| `coverage` | unset | a 2D `TextureId`: R is coverage, G the share of the layer a cloud fills; unset is full cover |
+| `coverage_extent` | 20,000 | metres one repeat of the map spans |
+| `noise_scale` | 8,000 | metres one repeat of the noise spans |
+| `erosion` | 0.3 | detail noise strength, 0 to 1 |
+| `wind_offset` | 0 | metres the clouds have drifted along each axis; the application advances it |
+| `albedo` | 1 | single-scattering albedo, 0 to 1 |
+| `anisotropy` | 0.6 | Henyey-Greenstein `g` of the forward lobe; the back lobe takes −g / 2 |
+
+`light::cloud_layer_valid` states what the renderer accepts. A dangling `coverage` counts in
+`Stats.dangling_refs` and the view draws no clouds; a cube, array, 3D or integer map faults
+`UNSUPPORTED`. The layer is drawn in every raster view whose camera sees its node; mirror and clip-plane views
+include it, and the plane does not clip it.
+
+**Noise.** The renderer owns one 128³ `RGBA8` volume that repeats on every axis: R holds Perlin noise
+lifted by Worley noise, G, B and A hold Worley noise at 4, 8 and 16 cells per repeat. A compute pass
+generates it once, the first time `prepare_scene` or a frame sees a valid `CloudLayer`, so an
+application without clouds pays nothing and the first frame of one that prepares its scene does not
+hitch. It is never rebuilt; the device lives as long as the renderer.
+
+**Density.** At a point of the layer, with `h` the height over the layer's thickness, `(c, g)` the map's
+R and G channels and `w` the noise volume at the point over `noise_scale`:
+
+```
+profile = clamp(h / 0.1) · clamp((g − h) / (0.4 g))
+low     = 0.625 w.g + 0.25 w.b + 0.125 w.a
+base    = clamp((w.r − (low − 1)) / (2 − low))
+body    = clamp((base · profile − (1 − c)) / c) · c
+```
+
+and the detail pass takes the same noise at 8 times the frequency, `t = erosion · 0.5 · (0.625 d.g + 0.25 d.b + 0.125 d.a)`,
+`body = clamp((body − t) / (1 − t))`. The extinction is `σ = density · body`. The map and the noise slide with
+`wind_offset`: a feature at `p` sits at `p + wind_offset`.
+
+**Geometry.** With an atmosphere the layer is the shell between `bottom` and `top` above the planet, around
+the centre below the camera, as the atmosphere's own tables are; without one it is the slab between two
+planes. A ray marches from where it enters the layer, at most 60 km of it, and stops at the scene depth;
+a ray that meets the planet before the layer sees none. The march takes `CLOUD_STEPS` (64) steps
+at half resolution, each jittered by interleaved gradient noise, and stops early once its transmittance
+is under 2 %.
+
+**Lighting.** The sun is the atmosphere's sun or, without one, the scene's first directional light; the
+ambient is the sky-view table at the zenith times the sun's illuminance, or the scene's ambient. Both come
+from the view, so [pre-exposure](#exposure) applies. Each step adds, with `T` the transmittance so far,
+`Δ` the step and `h` the height over the layer's thickness:
+
+```
+S += T · (1 − e^(−σΔ)) · albedo · (E · T_air · W + L_amb · mix(0.4, 1, h))
+W  = (1 − 0.5 e^(−400 σ)) · Σ_i 2^−i · e^(−2^−i τ) · phase(cos θ, g 2^−i),   i < 3
+phase(cos θ, g) = mix(HG(cos θ, g), HG(cos θ, −g / 2), 0.3)
+```
+
+`E` is the sun's `color × intensity`, `T_air` the atmosphere's transmittance from the sample's altitude along
+the sun, and `τ` the optical depth toward the sun: `CLOUD_LIGHT_STEPS` (6) samples without detail over the
+sun's path out of the layer, at most 4 km. The sum is Wrenninge's octaves of multiple scattering, the
+factor before it a Beer-powder darkening of the thin fringe. Cloud shadows on the scene are not computed.
+
+**Composition.** `Pass.CLOUDS` follows the forward or deferred pass and its sky, so the scene readers'
+snapshots hold the clouds. It marches the half-resolution target, then a second dispatch composites it into
+`hdr_color` in place with a depth-aware 4 × 4 upsample that weights taps as the AO blur does. A pixel becomes
+`x · T + S'`, with the aerial perspective carried to the cloud's opacity-weighted distance `d_c`, and the
+pixel's own distance `d` (infinite over the sky, where the table adds nothing):
+
+```
+S' = (A_T(d_c) · S + (1 − T) · (A_S(d_c) − A_S(d))) / A_T(d)
+```
+
+The fog pass then applies the height fog to the composite, so the order is cloud, aerial perspective,
+height fog. A view with a cloud layer splits its blended draws after the pass, as a fogged view does.
+
+**Memory.** Per view, `12 · ceil(w / 2) · ceil(h / 2)` bytes: a half-resolution `RGBA16F` target (8 B,
+scattered radiance and transmittance) and an `R32F` target (4 B, the distance), allocated the first
+frame the view draws a layer and kept until the view is destroyed or its working size changes. The renderer adds one 128³ `RGBA8`
+volume, 8 MiB.
+
+**Not drawn.**
+
+- The path tracer, traced reflection and probe hits and misses, and the atmosphere's lighting cubes do not
+  see clouds: an overcast sky still lights the scene, its reflections and its probes as a clear one.
+  Reflection captures render without clouds (`ViewCamera.clouds`, the way `height_fog` is switched).
+- Clouds write no depth and the transparent pass draws after them. A blended surface farther than a cloud
+  draws over it, and so does a scene reader, which draws after the composite and tests against the scene's
+  depth alone. At cloud altitudes the case is rare.
+- The height fog covers the composite as it covers any pixel: over the sky it takes the fog to infinity, so
+  a camera above the fog layer looking down sees the fog in front of the clouds below it.
+- There is no temporal accumulation: the jitter shows as grain, most where the march covers far more distance
+  than a feature spans (the limb seen from orbit).
+
 ## Custom stages
 
 `fog.glsl` is a public include:
@@ -356,7 +455,7 @@ The table stays the manual default.
 
 A path-traced view lights with the atmosphere's cubes and shows its source cube as the background
 (seen from `observer_altitude`, without the disc); the sun is attenuated at the path tracer's camera.
-It has no fog and no aerial perspective. A sky or sun change does not restart accumulation, as no
+It has no fog, no aerial perspective and no clouds. A sky or sun change does not restart accumulation, as no
 light edit does: call `render::reset_view_history(&renderer, view)` when the time of day moves; the
 sky example does under `--path-traced`.
 
@@ -386,7 +485,7 @@ sky example does under `--path-traced`.
   atlas, changes its in-scatter slope at `max_distance` and does not exist on path-traced views.
 - The analytic fog has no direct-sun phase term, so a view with volumetric fog and a view without it show
   different haze colours.
-- No clouds.
+- Clouds: see [Clouds](#clouds) for what they leave out; the layer is one deck, with no shadows on the scene.
 
 ## Example
 
@@ -417,8 +516,8 @@ per-view passes, frame times, the refresh cost per stage, refreshes per minute a
 `sun_radiance`. Its gates: the time-lapse regenerates exactly `floor(sweep / period)` times, with
 `period = (floor(0.5° / step) + 1) · step`, and the noon and ascent segments regenerate nothing after their
 first frames. `--shading forward|deferred`, `--shadows atlas|traced`, `--ssgi`, `--path-traced`, `--reflections on|off`,
-`--fog on|off`, `--atmosphere on|off|dense|empty`, `--preset`, `--gpu-timings` and `--validation` select the
-configuration. See [benchmarking](benchmarking.md#sky-benchmark).
+`--fog on|off`, `--atmosphere on|off|dense|empty`, `--clouds`, `--preset`, `--gpu-timings` and `--validation` select
+the configuration. See [benchmarking](benchmarking.md#sky-benchmark).
 
 `--atmosphere` takes `on` (`ATMOSPHERE_EARTH`), `off`, `dense` (Earth's air with a Rayleigh scattering of 0.5 per
 metre on every channel, opaque to the sun) and `empty` (Earth's air with no Rayleigh or Mie scattering). They are
@@ -439,6 +538,11 @@ placed in pairs either side of it. The first eight cast shadows; the main and mi
 every lamp in every cluster cell), and `--lamps-in-fog off` sets their `Light.volumetric` to false. With
 `--volumetric-fog` the fog panel has a "Lamps in fog" checkbox for it. The lamps are tuned to the twilight
 exposure; at noon the sun outshines them.
+
+`--clouds` adds a `CloudLayer` over a procedural coverage map the example builds on the CPU as the application's
+weather, lifts the noon and twilight presets 15° so the deck fills the view and advances `wind_offset` along +x every
+frame. Its panel section edits the coverage, which rebuilds the map, the density, the two altitudes and the wind speed.
+It is rejected under `--path-traced`.
 
 The landscape examples `terrain`, `vegetation` and `water` take `--sky`: an `ATMOSPHERE_EARTH` on
 their sun and a haze pooling in the valleys, and `--volumetric-fog` with it.
