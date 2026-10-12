@@ -13,8 +13,7 @@ const uint FLOAT_ALPHA_ONE_CODE @private = 0x3f800000;
 const ulong ALPHA_SCALE_BOUND @private = 0x4950000000000000; // 2^150 activates the smallest positive float alpha
 const uint HASH_BYTES @private = 4;
 const ulong COVERAGE_TOLERANCE_DENOMINATOR @private = 50;
-<* Absolute coverage error allowed before plateau correction. *>
-const double COVERAGE_TOLERANCE = 1.0 / (double)COVERAGE_TOLERANCE_DENOMINATOR;
+const double COVERAGE_TOLERANCE @private = 1.0 / (double)COVERAGE_TOLERANCE_DENOMINATOR;
 $assert(COVERAGE_TOLERANCE == 0.02);
 const uint HASH_INITIAL @private = 0x811c9dc5; // fixed word-FNV seed; spatial selection must reproduce across retries
 const uint HASH_WORD_MULTIPLIER @private = 0x01000193;
