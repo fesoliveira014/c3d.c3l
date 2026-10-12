@@ -312,11 +312,14 @@ fn void? write_cloud_march_root(
     };
 }
 
-// Centred on the camera's footprint along the sun, from the lower of its altitude and the layer's bottom, so the ground
-// under a camera above the layer stays inside; snapped to the world's texel grid so the content does not swim.
+// Centred on the camera's footprint along the sun: from its own altitude between the datum and the layer's bottom, from
+// the datum at or above the bottom or below the datum itself (a reflected camera), which keeps the ground under the camera
+// at the centre. The window steps at those altitudes; the content is anchored to the world and snapped to its texel grid,
+// so a receiver inside both windows reads the same.
 fn Vec2 cloud_shadow_corner(CloudPass* cloud, Vec3 camera_position, Vec3 frame_origin) @local {
     Vec3 to_sun = cloud.sun.to_sun;
-    float altitude = math::min(camera_position.y + frame_origin.y, cloud.layer.bottom);
+    float camera_altitude = camera_position.y + frame_origin.y;
+    float altitude = camera_altitude > 0 && camera_altitude < cloud.layer.bottom ? camera_altitude : 0;
     float lean = (cloud.layer.bottom - altitude) / math::max(to_sun.y, shader::CLOUD_SUN_FLOOR);
     float texel = shader::CLOUD_SHADOW_EXTENT / (float)shader::CLOUD_SHADOW_SIZE;
     Vec2 footprint = {
