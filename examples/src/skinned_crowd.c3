@@ -44,7 +44,7 @@ const uint TRIANGLE_CORNERS @local = 3;
 const float[LOD_LEVELS] LOD_THRESHOLDS @local
   = { 0.06f, 0.025f, 0 }; // View-height fractions; lower retains more triangles farther away.
 const float FULL_DETAIL_BIAS @local = 16; // Log2 size scale; retains full detail across this field.
-const uint SHARED_GROUPS @local = 12; // Six clips at two phases; fewer than 16, so every range of 16 repeats a group.
+const uint SHARED_GROUPS @local = 12; // Six clips at two phases; a range of 24 or more instances repeats every group.
 const float SHARED_PHASE @local = 0.5f; // Fraction of a clip between the two phases of a clip.
 const double NANOSECONDS_PER_MILLISECOND @local = 1000000;
 const double STATS_SMOOTHING @local = 0.1; // Weight of the newest frame in the shown sample time and hit rate.
@@ -195,7 +195,12 @@ fn void set_baseline(Scene* scene, Showcase* showcase, bool baseline) @local {
     foreach (node : showcase.animated) node.visible = baseline;
 }
 
-fn void set_shared_phases(AssetStore* assets, Scene* scene, Showcase* showcase, bool shared) @local {
+fn void set_shared_phases(
+    AssetStore* assets,
+    Scene* scene,
+    Showcase* showcase,
+    bool shared,
+) @local {
     showcase.shared_phases = shared;
     AnimatedCrowd* crowd = scene.get(showcase.crowd, AnimatedCrowd);
     CrowdPlaybackState* playback = crowd.playback;
@@ -220,7 +225,12 @@ fn void set_shared_phases(AssetStore* assets, Scene* scene, Showcase* showcase, 
     }
 }
 
-fn void update_crowd(AssetStore* assets, Scene* scene, Showcase* showcase, float delta) @local {
+fn void update_crowd(
+    AssetStore* assets,
+    Scene* scene,
+    Showcase* showcase,
+    float delta,
+) @local {
     AnimatedCrowd* crowd = scene.get(showcase.crowd, AnimatedCrowd);
     PoseCache* cache = crowd.playback.pose_storage.scratch.cache;
     ulong lookups_before = cache.lookups;
@@ -363,7 +373,14 @@ fn void? panel(
     }
     imgui::end();
 
-    if (phases_changed) set_shared_phases(assets, scene, showcase, showcase.shared_phases);
+    if (phases_changed) {
+        set_shared_phases(
+            assets:   assets,
+            scene:    scene,
+            showcase: showcase,
+            shared:   showcase.shared_phases,
+        );
+    }
     if (changed) {
         ViewDesc desc = renderer.views.get(renderer.default_view).desc;
         desc.lod_bias = showcase.full_detail ? FULL_DETAIL_BIAS : showcase.lod_bias;
@@ -409,7 +426,14 @@ fn void? run(
     renderer.prepare_scene(scene)!;
 
     double last_report;
-    if (showcase.shared_phases) set_shared_phases(assets, scene, showcase, true);
+    if (showcase.shared_phases) {
+        set_shared_phases(
+            assets:   assets,
+            scene:    scene,
+            showcase: showcase,
+            shared:   true,
+        );
+    }
     while (window.poll()) {
         Input* input = &window.input;
         if (input.key_released(Scancode.ESCAPE) && !input.keyboard_captured_by_gui) break;
@@ -418,7 +442,12 @@ fn void? run(
         }
 
         if (input.key_pressed(Scancode.G) && !input.keyboard_captured_by_gui) {
-            set_shared_phases(assets, scene, showcase, !showcase.shared_phases);
+            set_shared_phases(
+                assets:   assets,
+                scene:    scene,
+                showcase: showcase,
+                shared:   !showcase.shared_phases,
+            );
         }
 
         if (input.key_pressed(Scancode.SPACE) && !input.keyboard_captured_by_gui) {
@@ -444,7 +473,14 @@ fn void? run(
             if (gui_renderer.frame_open) gui_renderer.finish_frame();
         }
         if (showcase.baseline || showcase.compare) anim::update(assets, scene, window.clock.delta);
-        if (!showcase.baseline || showcase.compare) update_crowd(assets, scene, showcase, window.clock.delta);
+        if (!showcase.baseline || showcase.compare) {
+            update_crowd(
+                assets:   assets,
+                scene:    scene,
+                showcase: showcase,
+                delta:    window.clock.delta,
+            );
+        }
 
         AnimatedCrowd* crowd = scene.get(showcase.crowd, AnimatedCrowd);
         Animator* reference = scene.get(showcase.animated[0], Animator);

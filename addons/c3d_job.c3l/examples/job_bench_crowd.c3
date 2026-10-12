@@ -25,7 +25,7 @@ const float CROWD_SPEED_MIN @local = 0.8f;
 const float CROWD_SPEED_MAX @local = 1.2f;
 const uint CROWD_SEED @local = 20261011;
 const uint CROWD_RANGES_PER_EXECUTOR @local = 4; // ranges per sampling thread, the caller included; bounds the scratches
-const uint CROWD_SHARED_GROUPS @local = 12; // six clips at two phases; under 16, so a range of 16 repeats a group
+const uint CROWD_SHARED_GROUPS @local = 12; // six clips at two phases; a range of 24 or more instances repeats every group
 const float CROWD_SHARED_PHASE @local = 0.5f; // fraction of the clip between the two phases of a clip
 const uint CROWD_WARMUP_FRAMES @local = 3; // wakes the workers and faults the crowd's pages before timing
 const uint CROWD_TIMED_FRAMES @local = 15; // the median of fifteen timed frames
@@ -304,7 +304,14 @@ fn void? time_crowd(
         double frame_ms = crowd_milliseconds(frame_started);
 
         digests[frame] = crowd_digest(state);
-        if (frame + 1 == CROWD_WARMUP_FRAMES) crowd_cache_totals(state, scratches, &warm_lookups, &warm_hits);
+        if (frame + 1 == CROWD_WARMUP_FRAMES) {
+            crowd_cache_totals(
+                state:     state,
+                scratches: scratches,
+                lookups:   &warm_lookups,
+                hits:      &warm_hits,
+            );
+        }
         if (frame < CROWD_WARMUP_FRAMES) continue;
 
         uint slot = frame - CROWD_WARMUP_FRAMES;
@@ -317,7 +324,12 @@ fn void? time_crowd(
 
     ulong lookups;
     ulong hits;
-    crowd_cache_totals(state, scratches, &lookups, &hits);
+    crowd_cache_totals(
+        state:     state,
+        scratches: scratches,
+        lookups:   &lookups,
+        hits:      &hits,
+    );
     *times = {
         .advance_ms = median(&advance_samples),
         .sample_ms = median(&sample_samples),
