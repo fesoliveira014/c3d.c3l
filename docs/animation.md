@@ -607,8 +607,10 @@ slots/actions or failed allocation return `CAPACITY_EXCEEDED`; dead IDs return
 `INVALID_ID`. Failure preserves existing actions, groups and output.
 
 An exact coordinate selects that authored sample. Otherwise the first authored
-containing triangle supplies up to three nonnegative barycentric weights.
-Boundary roundoff within `1e-7` is clamped to zero and normalized. Outside the
+triangle that contains the parameter supplies up to three nonnegative
+barycentric weights. When no triangle contains it, the first triangle whose
+barycentric roundoff stays within `1e-7` supplies its weights, clamped to zero
+and normalized. Outside the
 hull, the parameter projects onto the nearest boundary segment. Distance ties
 within `1e-12 * S*S` choose the earliest authored triangle-edge occurrence.
 Selection does not depend on the previous parameter.

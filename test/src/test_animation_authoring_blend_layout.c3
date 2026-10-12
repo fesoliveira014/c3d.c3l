@@ -161,7 +161,7 @@ fn void test_animation_authoring_blend_layout_authored_ties_and_history_independ
     };
     LayoutExpectation[11] expected = {
         { .kind = TRIANGLE, .authored_index = 0, .weights = { 0.5, 0, 0, 0.5 } },
-        { .kind = TRIANGLE, .authored_index = 0, .weights = { 0.5, 0, 0, 0.5 } },
+        { .kind = TRIANGLE, .authored_index = 1, .weights = { 0.5, 0, 0, 0.5 } },
         { .kind = TRIANGLE, .authored_index = 1, .weights = { 0.5, 0, 0, 0.5 } },
         { .kind = HULL, .authored_index = 5, .weights = { 0.5, 0, 0.5, 0 } },
         { .kind = HULL, .authored_index = 1, .weights = { 0, 0.5, 0, 0.5 } },
@@ -205,6 +205,19 @@ fn void test_animation_authoring_blend_layout_relative_tolerances_and_extents() 
         layout_expect(&scaled, { -1.5f * scale, -2.5f * scale }, { .kind = TRIANGLE, .weights = { 0.5, 0, 0, 0.5 } });
         layout_expect(&scaled, { -3 * scale, -4 * scale }, { .kind = HULL, .weights = { 1, 0, 0, 0 } });
     }
+}
+
+fn void test_animation_authoring_blend_layout_sliver_contains_its_points_before_a_tolerant_neighbor() @test {
+    LayoutFixture layout = { .count = 4, .triangle_count = 2 };
+    layout.points[0] = { 0, 0 };
+    layout.points[1] = { 1, 0 };
+    layout.points[2] = { 0.5f, 1 };
+    layout.points[3] = { 0.5f, -1e-9f };
+    layout.triangles[0] = { .indices = { 0, 1, 2 } };
+    layout.triangles[1] = { .indices = { 0, 3, 1 } };
+    layout_prepare(&layout);
+    LayoutExpectation inside = { .kind = TRIANGLE, .authored_index = 1, .weights = { 0.25, 0.25, 0, 0.5 } };
+    layout_expect(&layout, { 0.5f, -0.5e-9f }, inside);
 }
 
 fn void test_animation_authoring_blend_layout_capacity_and_compact_storage() @test {

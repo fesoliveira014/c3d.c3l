@@ -105,29 +105,31 @@ fn BlendLayoutSelection select_blend_layout(BlendLayoutView layout, Vec2 paramet
         }
     }
 
-    foreach (uint index, triangle : layout.triangles) {
-        Vec2 a = layout.points[triangle.indices[0]];
-        Vec2 b = layout.points[triangle.indices[1]];
-        Vec2 c = layout.points[triangle.indices[2]];
-        double denominator = blend_orientation(a, b, c);
-        double first = blend_orientation(b, c, parameter) / denominator;
-        double second = blend_orientation(c, a, parameter) / denominator;
-        double third = blend_orientation(a, b, parameter) / denominator;
-        if (first < -BLEND_SPACE_BOUNDARY_TOLERANCE || second < -BLEND_SPACE_BOUNDARY_TOLERANCE
-          || third < -BLEND_SPACE_BOUNDARY_TOLERANCE) continue;
+    // A sliver's points lie within the tolerance of its neighbor, so exact containment is searched first.
+    foreach (double tolerance : { 0.0, BLEND_SPACE_BOUNDARY_TOLERANCE }) {
+        foreach (uint index, triangle : layout.triangles) {
+            Vec2 a = layout.points[triangle.indices[0]];
+            Vec2 b = layout.points[triangle.indices[1]];
+            Vec2 c = layout.points[triangle.indices[2]];
+            double denominator = blend_orientation(a, b, c);
+            double first = blend_orientation(b, c, parameter) / denominator;
+            double second = blend_orientation(c, a, parameter) / denominator;
+            double third = blend_orientation(a, b, parameter) / denominator;
+            if (first < -tolerance || second < -tolerance || third < -tolerance) continue;
 
-        first = math::max(first, 0.0);
-        second = math::max(second, 0.0);
-        third = math::max(third, 0.0);
-        double sum = first + second + third;
+            first = math::max(first, 0.0);
+            second = math::max(second, 0.0);
+            third = math::max(third, 0.0);
+            double sum = first + second + third;
 
-        return {
-            .indices = triangle.indices,
-            .weights = { (float)(first / sum), (float)(second / sum), (float)(third / sum) },
-            .count = 3,
-            .kind = BlendLayoutLocation.TRIANGLE,
-            .authored_index = index,
-        };
+            return {
+                .indices = triangle.indices,
+                .weights = { (float)(first / sum), (float)(second / sum), (float)(third / sum) },
+                .count = 3,
+                .kind = BlendLayoutLocation.TRIANGLE,
+                .authored_index = index,
+            };
+        }
     }
 
     double[BLEND_LAYOUT_MAX_SAMPLES] distances;
