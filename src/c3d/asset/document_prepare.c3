@@ -182,12 +182,15 @@ fn void? check_lod_layouts(ModelTemplate* template) @local {
     foreach (index, &group : template.lod_groups) {
         if (group.node >= template.nodes.len) return c3d::INVALID_ARGUMENT~;
         scene::validate_lod_layout(group.desc)!;
+
         foreach (previous : template.lod_groups[:index]) {
             if (previous.node == group.node) return c3d::INVALID_ARGUMENT~;
         }
+
         foreach (mesh : template.meshes) {
             if (mesh.node == group.node) return c3d::INVALID_ARGUMENT~;
         }
+
         foreach (skin : template.skins) {
             if (skin.mesh_node == group.node) return c3d::INVALID_ARGUMENT~;
         }
