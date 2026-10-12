@@ -89,7 +89,7 @@ fn CompressionReport? AssetStore.compress_clip(&self, ClipId clip, ClipTolerance
             if (!(*path_value(&report.error, path) <= *path_value(&tolerance, path))) return c3d::TOLERANCE_EXCEEDED~;
         }
 
-        float[] block = alloc::new_array_try(self.allocator, float, (sz)words) ?? c3d::CAPACITY_EXCEEDED~!;
+        uint[] block = alloc::new_array_try(self.allocator, uint, (sz)words) ?? c3d::CAPACITY_EXCEEDED~!;
         usz used;
         foreach (index, &candidate : staged) {
             if (!candidate.is_packed()) continue;
@@ -104,7 +104,7 @@ fn CompressionReport? AssetStore.compress_clip(&self, ClipId clip, ClipTolerance
             free_track_keys(self.allocator, &data.tracks[index]);
             data.tracks[index] = *candidate;
         }
-        data.packed_keys = block;
+        data.packed_block = block;
         record.header.revision++;
     };
     report.bytes_after = key_bytes(data);
@@ -117,11 +117,11 @@ fn bool is_packable(Track* track) @local {
 }
 
 fn usz key_bytes(AnimationClip* clip) @local {
-    usz floats = clip.packed_keys.len;
+    usz words = clip.packed_block.len;
     foreach (&track : clip.tracks) {
-        if (!track.is_packed()) floats += track.times.len + track.values.len;
+        if (!track.is_packed()) words += track.times.len + track.values.len;
     }
-    return floats * float::size;
+    return words * uint::size;
 }
 
 fn void? validate_track(Track* track) @local {
@@ -307,21 +307,21 @@ fn usz code_count(Track* track) @local {
     return track.key_count() * per_key;
 }
 
-fn void place_track(float[] block, usz* used, Track* track, bool owns_times) @local {
+fn void place_track(uint[] block, usz* used, Track* track, bool owns_times) @local {
     usz ranges = range_count(track);
     usz codes = code_count(track);
-    float[] range_slot = block[*used:ranges];
+    float[] range_slot = ((float*)(block.ptr + *used))[:ranges];
     range_slot[..] = track.packed.ranges[:ranges];
     track.packed.ranges = range_slot.ptr;
     *used += ranges;
 
-    float[] code_slot = block[*used:(codes + 1) / 2];
-    ((ushort*)code_slot.ptr)[:codes] = track.packed.codes[:codes];
-    track.packed.codes = (ushort*)code_slot.ptr;
-    *used += code_slot.len;
+    ushort* code_slot = (ushort*)(block.ptr + *used);
+    code_slot[:codes] = track.packed.codes[:codes];
+    track.packed.codes = code_slot;
+    *used += (codes + 1) / 2;
 
     if (!owns_times) return;
-    float[] time_slot = block[*used:track.times.len];
+    float[] time_slot = ((float*)(block.ptr + *used))[:track.times.len];
     time_slot[..] = track.times[..];
     track.times = time_slot;
     *used += time_slot.len;
