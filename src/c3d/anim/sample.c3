@@ -3,6 +3,8 @@ module c3d::anim;
 import c3d::maths;
 import std::math;
 
+alias TrackSampler @private = fn void(Track* track, float time, uint* cursor, float[] out);
+
 const float SLERP_DOT_THRESHOLD = 0.99875f; // cos(0.05 rad): keys further apart than 0.1 rad slerp, nearer ones nlerp
 
 <*
@@ -34,6 +36,17 @@ fn void sample_track(Track* track, float time, uint* cursor, float[] out) {
         sample_packed(track, time, cursor, out);
         return;
     }
+    sample_raw(track, time, cursor, out);
+}
+
+<*
+ Sampler that suits the encodings of a clip's tracks, picked once per clip.
+*>
+fn TrackSampler clip_sampler(AnimationClip* clip) @private {
+    return clip.is_compressed() ? &sample_track : &sample_raw;
+}
+
+fn void sample_raw(Track* track, float time, uint* cursor, float[] out) @private {
     uint last = (uint)track.times.len - 1;
     if (time <= track.times[0]) {
         *cursor = 0;
@@ -91,18 +104,7 @@ fn void interpolate_linear(Track* track, uint key, float fraction, float[] out) 
     float[] first = key_values(track, key, CUBIC_SLOT_VALUE);
     float[] second = key_values(track, key + 1, CUBIC_SLOT_VALUE);
     if (track.path == TargetPath.ROTATION) {
-        Quat from = { .v = { first[0], first[1], first[2], first[3] } };
-        Quat to = { .v = { second[0], second[1], second[2], second[3] } };
-        float dot = from.v.dot(to.v);
-        if (dot < 0) {
-            to = -to;
-            dot = -dot;
-        }
-        Quat result = dot > SLERP_DOT_THRESHOLD ? from.nlerp(to, fraction) : from.slerp(to, fraction);
-        out[0] = result.v.x;
-        out[1] = result.v.y;
-        out[2] = result.v.z;
-        out[3] = result.v.w;
+        blend_rotation(first, second, fraction, out);
         return;
     }
     foreach (index, &value : out) *value = first[index] + (second[index] - first[index]) * fraction;
@@ -148,8 +150,7 @@ fn void interpolate_cubic(Track* track, uint key, float fraction, float duration
     }
 }
 
-// Out of line: inlined into sample_track it slowed the raw crowd update by 1 to 3%.
-fn void sample_packed(Track* track, float time, uint* cursor, float[] out) @local @noinline {
+fn void sample_packed(Track* track, float time, uint* cursor, float[] out) @local {
     uint last = track.key_count() - 1;
     if (time <= track.times[0] || time >= track.times[last]) {
         *cursor = time <= track.times[0] ? 0 : last;

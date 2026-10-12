@@ -55,6 +55,7 @@ fn void blend_pose(
                 onset: onset,
                 lead: lead,
             );
+            TrackSampler sampler = clip_sampler(clip);
             foreach (track_index, &track : clip.tracks) {
                 uint node = clip.targets[track.target];
                 if (!destination.present[node] || !action.mask[node]) continue;
@@ -65,7 +66,7 @@ fn void blend_pose(
 
                 float[] sample = samples[:track.stride()];
                 if (!onset && !consumed_chain) {
-                    sample_track(
+                    sampler(
                         track: track,
                         time: action.time,
                         cursor: &action.cursors[track_index],
@@ -145,6 +146,7 @@ fn void blend_pose(
                 lead: lead,
             );
             usz reference_offset;
+            TrackSampler sampler = clip_sampler(clip);
             foreach (track_index, &track : clip.tracks) {
                 uint stride = track.stride();
                 float[] reference = action.reference[reference_offset:stride];
@@ -158,7 +160,7 @@ fn void blend_pose(
 
                 float[] sample = samples[:stride];
                 if (!onset && !consumed_chain) {
-                    sample_track(
+                    sampler(
                         track: track,
                         time: action.time,
                         cursor: &action.cursors[track_index],
@@ -242,13 +244,14 @@ fn void sample_pose(
     }
     foreach (index, base : destination.base_morph_weights) destination.morph_weights[index][..] = base[..];
 
+    TrackSampler sampler = clip_sampler(data);
     foreach (track_index, &track : data.tracks) {
         uint node = data.targets[track.target];
         if (!destination.present[node]) continue;
         if (track.path == TargetPath.MORPH_WEIGHTS && !destination.mesh_present[node]) continue;
 
         float[] sample = scratch.sample[:track.stride()];
-        sample_track(
+        sampler(
             track: track,
             time: time,
             cursor: &cursors[track_index],
