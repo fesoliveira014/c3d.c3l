@@ -78,7 +78,7 @@ fn void Digest.add(&self, uint bits) {
 }
 
 fn void Digest.add_float(&self, float value) {
-    self.add(*(uint*)&value);
+    self.add(bitcast(value, uint));
 }
 
 fn void sample_crowd_range(void* data, uint first, uint count) @local {
@@ -265,7 +265,7 @@ fn void? time_crowd(
     };
 }
 
-fn void? crowd_bench(uint count) @local {
+fn bool? crowd_bench(uint count) @local {
     AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
     defer asset::destroy_asset_store(&assets);
 
@@ -332,7 +332,8 @@ fn void? crowd_bench(uint count) @local {
             digests == reference ? 1 : 0,
         );
     }
-    if (!all_equal) return c3d::INVALID_ARGUMENT~;
+
+    return all_equal;
 }
 
 fn int run_crowd_bench(String[] args) @private {
@@ -351,9 +352,11 @@ fn int run_crowd_bench(String[] args) @private {
         return 1;
     }
 
-    if (catch excuse = crowd_bench(count)) {
+    bool? all_equal = crowd_bench(count);
+    if (catch excuse = all_equal) {
         io::eprintfn("crowd bench failed: %s", excuse);
         return 1;
     }
-    return 0;
+
+    return all_equal ? 0 : 1;
 }
