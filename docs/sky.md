@@ -93,7 +93,8 @@ frame origin's y: unbounded above, and zero below zero. `observer_altitude` stay
 There is no datum field: a world whose ground sits elsewhere moves its content, not the atmosphere. The
 fog's density follows its own node instead, so moving the fog node moves the fog.
 
-The sky's tables are computed for a sun of unit illuminance. The drawn sky, the lighting, the fog's
+The sky's tables are computed for a sun of unit illuminance and stored times a power-of-two scale that the lookups
+divide out ([Sky table scale](#sky-table-scale)). The drawn sky, the lighting, the fog's
 in-scatter and aerial perspective all scale with the sun's `color × intensity`, so doubling the
 intensity doubles every sky pixel. Exposure is the application's `Camera.exposure`; see
 [Exposure](#exposure).
@@ -421,6 +422,9 @@ volume, 8 MiB.
   drawn with `AlphaMode.BLEND` is such a reader and does not fog behind its surface.
 - A custom twin of Standard keeps matching it: opaque twins are fogged by the pass, a blended twin
   calls `apply_fog` as Standard does.
+- The lookups `fog.glsl` brings in, `sky_view_radiance`, `sky_aerial_perspective` and `sky_multi_scattering`, return
+  luminance for unit sun illuminance. The tables' storage scale is divided out inside them, so a stage that multiplies
+  their result by `sun_illuminance` needs no change.
 
 ## Exposure
 
@@ -453,19 +457,35 @@ Every view stores its sky and its lighting multiplied by a power of two near its
 out ([pre-exposure](post.md#pre-exposure)). The sky pixel, the fog and the lights then sit near display scale in
 `RGBA16F` at every elevation, where unscaled radiance below about intensity × 10⁻⁵ would sit in the subnormal
 range, whose steps are 6 × 10⁻⁸. The shared environment and sky cubes stay physical and reach a view through its
-per-view intensity. The view's sky-view and aerial-perspective tables are the exception: they hold luminance per unit
-sun illuminance in physical units, so their own steps still bound the precision of a twilight sky.
+per-view intensity. The atmosphere's tables follow the same rule through their own scales, described in
+[Sky table scale](#sky-table-scale).
 
 - A clamp that shapes the image acts on physical radiance: the sun's disc is limited to 60,000 first, and then
   scaled.
 - A clamp that keeps half-float finite acts on the stored value after the scale: the sky pixel at 65,504 (a bright
-  disc under a high factor is cut at 65,504 divided by the factor), the weighted blend's accumulation, and the path
-  tracer's copy into the view's image.
+  disc under a high factor is cut at 65,504 divided by the factor), the sky tables' texels, the weighted blend's
+  accumulation, and the path tracer's copy into the view's image.
 - The brightest sun disc the half-float target can hold shrinks as the pre-exposure factor grows, so a disc dimmed by
   fog can clip at high factors, and a disc clipped by the storage guard also weakens its bloom.
 - The weighted blend's colour limit of 64 is in stored units, about 64 times display white at every exposure.
 - TAA's `1 / (1 + luma)` weights and its variance clip work in stored units, so they follow the exposed image
   rather than absolute radiance.
+
+### Sky table scale
+
+The atmosphere's tables are `RGBA16F`, and twilight luminance per unit sun illuminance sits in that format's
+subnormal range, so three of them hold scaled values:
+
+- The view's sky-view table and the in-scatter of its aerial-perspective table hold the luminance times
+  `SkyFogGpu.sky_table_scale`: a power of two, `2^round(log2(m))` for the largest channel `m` of the view's sun
+  illuminance (`color × intensity × pre-exposure`), clamped to 2^0 to 2^16, and 1 for an illuminance that is zero or
+  not finite. The aerial-perspective opacity is not scaled. Both tables are rewritten every frame the view renders the
+  atmosphere, with that frame's scale, so a change of sun or exposure regenerates nothing extra.
+- The multi-scattering table holds its luminance times 2^10, whatever the sun. It is shared per atmosphere and
+  rewritten only when the atmosphere changes.
+- The transmittance table is unscaled.
+- A table texel saturates at 65,504 instead of becoming infinite, as a stored sky pixel does.
+- The lookups divide the scale out, so a texel that was normal in the unscaled table reads back unchanged.
 
 ## Path tracing
 
@@ -488,9 +508,8 @@ sky example does under `--path-traced`.
   froxel volume and no aerial perspective table; a miss takes the height fog alone.
 - Opaque stages cannot opt out of the fog pass.
 - Path-traced views are unfogged; a sky change does not restart their accumulation.
-- Twilight bands below about intensity × 10⁻⁵, near −4° of sun elevation: a view's sky-view and aerial-perspective
-  tables hold physical `RGBA16F` luminance per unit sun illuminance, which bounds the precision of the twilight sky.
-  Pre-exposure does not lift it.
+- Twilight precision is bounded by `RGBA16F`: the tables keep a half float's 11-bit significand, and the
+  transmittance table holds physical values, some of which are subnormal on the grazing paths of deep twilight.
 - The sun's disc saturates at 60,000 physical radiance.
 - Aerial perspective keeps one mean transmittance, covers 128 km (from the shell above it) and composes behind
   the height fog;
