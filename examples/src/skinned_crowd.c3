@@ -14,6 +14,7 @@ import c3d::camera;
 import c3d::gui;
 import c3d::geometry;
 import c3d::light;
+import c3d::material;
 import c3d::maths;
 import c3d::model;
 import c3d::platform;
@@ -54,9 +55,13 @@ const uint SHARED_GROUPS @local = 12; // Six clips at two phases; a range of 24 
 const float SHARED_PHASE @local = 0.5f; // Fraction of a clip between the two phases of a clip.
 const double NANOSECONDS_PER_MILLISECOND @local = 1000000;
 const double STATS_SMOOTHING @local = 0.1; // Weight of the newest frame in the shown sample time and hit rate.
-const Pass[5] REPORTED_PASSES @local = {
-    Pass.COMPUTE_SKIN, Pass.SHADOW_ATLAS, Pass.DEPTH_PREPASS, Pass.FORWARD_OPAQUE, Pass.VELOCITY,
+const Pass[7] REPORTED_PASSES @local = {
+    Pass.COMPUTE_SKIN, Pass.TRACE_POSE, Pass.ACCELERATION_BUILD, Pass.SHADOW_ATLAS, Pass.DEPTH_PREPASS,
+    Pass.FORWARD_OPAQUE, Pass.VELOCITY,
 };
+const float GROUND_WIDTH @local = 60; // covers the crowd's 48 m by 24 m field and the shadows it casts
+const float GROUND_DEPTH @local = 40;
+const uint POSED_TRACE_SLOTS @local = 2 * CROWD_SIZE; // a slot per instance of each of the character's two meshes
 const String CHARACTER @local = "../assets/quaternius/AnimationLibrary_Godot.glb";
 const String[] CLIP_NAMES @local = {
     "Walk_Loop", "Jog_Fwd_Loop", "Idle_Loop", "Sprint_Loop", "Walk_Formal_Loop", "Dance_Loop",
@@ -72,6 +77,7 @@ struct Showcase @local {
     AnimationActionId[CROWD_SIZE] base_actions;
     bool     baseline;
     bool     compute_skinning;
+    bool     traced_shadows;
     bool     animated_lod; // compute skinning leaves animated LOD parts out; the flag starts without them
     bool     compare;
     bool     shared_phases;
@@ -286,6 +292,19 @@ fn void update_crowd(
     showcase.cache_hit_rate += (hit_rate - showcase.cache_hit_rate) * STATS_SMOOTHING;
 }
 
+fn void? add_ground(AssetStore* assets, Scene* scene) @local {
+    GeometryId ground_geometry;
+    @pool() {
+        Geometry plane = geometry::plane(tmem, GROUND_WIDTH, GROUND_DEPTH);
+        ground_geometry = assets.add_geometry(&plane, "geometry/crowd/ground")!;
+    };
+    MaterialId ground_material = assets.add_material(
+        material::standard({ .base_color = { 0.72f, 0.72f, 0.7f, 1 }, .roughness = 0.8f }),
+        "material/crowd/ground",
+    )!;
+    scene.add_mesh(geometry: ground_geometry, material: ground_material, name: "ground")!;
+}
+
 fn void compare_playback(Scene* scene, Showcase* showcase) @local {
     AnimatedCrowd* crowd = scene.get(showcase.crowd, AnimatedCrowd);
     CrowdPlaybackState* playback = crowd.playback;
@@ -370,6 +389,9 @@ fn void? panel(
         }
         imgui::text("Posed bindings: %u, fallback draws: %u", stats.compute_skinned, stats.compute_skinning_fallbacks);
         imgui::text("Resident posed: %u bytes", (uint)stats.compute_skinning_bytes);
+        if (showcase.traced_shadows) {
+            imgui::text("Trace poses: %u dispatched, %u reused", stats.trace_poses, stats.trace_poses_reused);
+        }
         foreach (pass : REPORTED_PASSES) {
             imgui::text(
                 "%s: %.3f ms",
@@ -470,6 +492,7 @@ fn void report_compute_skinning(render::Renderer* renderer, Showcase* showcase) 
         stats.compute_skinning_fallbacks,
     );
     io::printf(", resident posed %d bytes", (uint)stats.compute_skinning_bytes);
+    if (showcase.traced_shadows) io::printf(", trace poses %d reused %d", stats.trace_poses, stats.trace_poses_reused);
     if (stats.gpu_timing_state != GpuTimingState.READY) {
         io::printfn(", gpu timings pending");
         return;
@@ -495,6 +518,12 @@ fn void? run(
     anim::update(assets, scene, 0);
     scene.update_world();
     renderer.prepare_scene(scene)!;
+
+    if (showcase.traced_shadows) {
+        ViewDesc desc = renderer.views.get(renderer.default_view).desc;
+        desc.ray_tracing.shadows = true;
+        render::configure_view(renderer, renderer.default_view, desc)!;
+    }
 
     double last_report;
     if (showcase.shared_phases) {
@@ -617,7 +646,9 @@ fn int main(String[] args) {
     bool compare;
     bool compute_skinning;
     bool compress;
+    bool ray_queries;
     bool shared_phases;
+    bool traced_shadows;
     float frozen_share;
     foreach (argument : args[1..]) {
         if (argument == "--baseline") {
@@ -626,6 +657,10 @@ fn int main(String[] args) {
             compute_skinning = true;
         } else if (argument == "--compress") {
             compress = true;
+        } else if (argument == "--traced-shadows") {
+            traced_shadows = true;
+        } else if (argument == "--ray-queries") {
+            ray_queries = true;
         } else if (argument == "--compare") {
             compare = true;
         } else if (argument == "--shared-phases") {
@@ -655,7 +690,13 @@ fn int main(String[] args) {
         allocator: mem,
         window:    &window,
         assets:    &assets,
-        desc:      { .validation = true, .gpu_timings = true, .application_name = "c3d_crowd" },
+        desc:      {
+            .validation                = true,
+            .gpu_timings               = true,
+            .application_name          = "c3d_crowd",
+            .ray_queries               = ray_queries,
+            .max_posed_trace_instances = traced_shadows ? POSED_TRACE_SLOTS : 0,
+        },
     )!!;
     defer render::destroy_renderer(&renderer);
     renderer.set_compute_skinning(compute_skinning);
@@ -668,14 +709,20 @@ fn int main(String[] args) {
 
     Scene scene = scene::create_scene(mem, { .max_nodes = SCENE_NODES });
     defer scene::destroy_scene(&scene);
-    Node* sun = scene.add_light(light::directional({ 1, 0.95f, 0.85f }, 3), name: "sun")!!;
+    Light sun_light = light::directional({ 1, 0.95f, 0.85f }, 3);
+    sun_light.shadow.enabled = traced_shadows;
+    sun_light.shadow.ray_traced = traced_shadows;
+    Node* sun = scene.add_light(sun_light, name: "sun")!!;
     sun.local.rotation = maths::look_rotation((Vec3){ -0.4f, -1, -0.5f }.normalize(), { 0, 1, 0 });
+
+    if (traced_shadows) add_ground(&assets, &scene)!!;
 
     Random random = { .state = RANDOM_SEED };
     CrowdInstance[CROWD_SIZE] instances;
     Showcase showcase = {
         .compare          = compare,
         .compute_skinning = compute_skinning,
+        .traced_shadows   = traced_shadows,
         .animated_lod     = !compute_skinning,
         .shared_phases    = shared_phases,
         .frozen_share     = frozen_share,
@@ -714,6 +761,7 @@ fn int main(String[] args) {
         pose_bounds: rest_bounds(&assets, template),
         instances:   instances[..],
         name:        "crowd",
+        trace:       traced_shadows,
     )!!;
     attach_showcase_lod(&assets, &scene, template, &showcase)!!;
     set_baseline(&scene, &showcase, baseline);

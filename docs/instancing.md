@@ -346,7 +346,8 @@ while (window.poll()) {
   part, in every view, shadow layer, prepass and velocity pass, reads the posed streams of its source. Its
   frozen and culled instances are posed too, so the dispatch costs the same whatever the draws show. A
   replacement of the crowd's instances drops the binding's history for one frame, and a view that skipped a
-  frame gets no deformation motion, as above. Animated LOD parts keep vertex skinning.
+  frame gets no deformation motion, as above. Animated LOD parts keep vertex skinning. A traced part's slots
+  take these poses instead of posing again ([tracing](animation.md#compute-skinning)).
 - `InstanceGpu.normal_2.w` of a crowd record holds the logical source index, the row of the draw's
   palette and morph block, and, under compute skinning, its posed slot, so a parity change reorders records
   without moving any pose.
@@ -371,7 +372,10 @@ comparison, `--baseline` starts there. `K` (or the panel checkbox, or `--compute
 [compute skinning](animation.md#compute-skinning) for the crowd and for those instances; the flag also starts
 the example without animated LOD, whose parts keep vertex skinning and leave the switch no crowd draw to pose,
 and the panel shows the posed bindings, fallback draws, resident posed bytes and the GPU time of
-`Pass.COMPUTE_SKIN`, shadows, prepass, forward and velocity. `--compare` advances both representations on every update and
+`Pass.COMPUTE_SKIN`, `Pass.TRACE_POSE`, `Pass.ACCELERATION_BUILD`, shadows, prepass, forward and velocity.
+`--traced-shadows` adds a ground plane, ray-traced sun shadows and traced crowd parts, through the software
+kind or, with `--ray-queries`, the hardware kind, and the panel then shows the trace poses dispatched and
+reused. `--compare` advances both representations on every update and
 shows maximum local position, rotation, scale and morph differences. This mode includes both
 playback costs and the comparison loop; use the single-representation modes for measurements.
 `F` freezes every other instance by pausing its base action, `--frozen-percent=P` starts with `P` percent

@@ -109,6 +109,8 @@ const float FOG_FALLOFF_MAX @local = 0.1f;
 const float FOG_ANISOTROPY_LIMIT @local = 0.9f;
 const float FOG_DISTANCE_MIN @local = 50;
 const float FOG_DISTANCE_MAX @local = 1000;
+const FogQuality[3] FOG_QUALITY_CHOICES @local = { FogQuality.LOW, FogQuality.MEDIUM, FogQuality.HIGH };
+const ZString[3] FOG_QUALITY_LABELS @local = { "Low", "Medium", "High" };
 const Vec2 PANEL_POSITION @local = { 16, 16 };
 const Vec2 PANEL_SIZE @local = { 440, 520 };
 const Vec2 STATS_PANEL_POSITION @local = { 472, 16 };
@@ -186,6 +188,7 @@ struct Options @local {
     bool        fog;
     Air         air;
     bool        volumetric_fog;
+    FogQuality  fog_quality;
     bool        taa;
     bool        auto_exposure;
     Preset      preset;
@@ -534,6 +537,7 @@ fn ViewDesc main_view_desc(ViewDesc desc, Options options) @local {
     desc.ray_tracing.shadows = options.traced_shadows;
     desc.ray_tracing.reflections = options.reflections;
     desc.volumetric_fog = options.volumetric_fog && !options.path_traced;
+    desc.fog_quality = options.fog_quality;
     if (options.taa && !options.path_traced) desc.post.anti_aliasing = AntiAliasing.TAA;
     desc.post.auto_exposure = options.auto_exposure;
     if (options.ssgi) {
@@ -549,6 +553,17 @@ fn ViewDesc main_view_desc(ViewDesc desc, Options options) @local {
     return desc;
 }
 
+fn ViewDesc mirror_view_desc(Demo* demo) @local {
+    ViewDesc desc = render::texture_view_desc(demo.mirror.target);
+    desc.shading = demo.options.shading;
+    desc.post.anti_aliasing = AntiAliasing.NONE;
+    desc.clip_plane = MIRROR_PLANE;
+    desc.ray_tracing.shadows = demo.options.traced_shadows;
+    desc.volumetric_fog = demo.options.volumetric_fog;
+    desc.fog_quality = demo.options.fog_quality;
+    return desc;
+}
+
 // docs/views.md's planar reflection: a half-size target clipped to the pond's plane, rendered first.
 fn void? create_mirror(
     Demo* demo,
@@ -560,13 +575,7 @@ fn void? create_mirror(
         renderer,
         render::render_target_desc(math::max(width / 2, 1u), math::max(height / 2, 1u)),
     )!;
-    ViewDesc desc = render::texture_view_desc(demo.mirror.target);
-    desc.shading = demo.options.shading;
-    desc.post.anti_aliasing = AntiAliasing.NONE;
-    desc.clip_plane = MIRROR_PLANE;
-    desc.ray_tracing.shadows = demo.options.traced_shadows;
-    desc.volumetric_fog = demo.options.volumetric_fog;
-    demo.mirror.view = render::create_view(renderer, desc)!;
+    demo.mirror.view = render::create_view(renderer, mirror_view_desc(demo))!;
     AssetStore* assets = demo.assets;
     assets.material(demo.mirror_material).data.custom.slots[0].texture = {
         .kind   = RENDER_TARGET,
@@ -692,6 +701,13 @@ fn Options? parse_options(String[] args) @local {
             case "--path-traced": options.path_traced = true;
             case "--reflections": options.reflections = on_off(option_value(args, &index)!)!;
             case "--volumetric-fog": options.volumetric_fog = true;
+            case "--fog-quality":
+                switch (option_value(args, &index)!) {
+                    case "low": options.fog_quality = FogQuality.LOW;
+                    case "medium": options.fog_quality = FogQuality.MEDIUM;
+                    case "high": options.fog_quality = FogQuality.HIGH;
+                    default: return c3d::INVALID_ARGUMENT~;
+                }
             case "--taa": options.taa = true;
             case "--auto-exposure": options.auto_exposure = true;
             case "--fog": options.fog = on_off(option_value(args, &index)!)!;
@@ -762,7 +778,16 @@ fn void apply_fly_camera(FlyCamera* fly_camera, Input* input, float delta) @loca
     fly_camera.position.y = math::max(fly_camera.position.y, CAMERA_NEAR);
 }
 
-fn void sky_panel(
+fn void? apply_fog_quality(Demo* demo, Renderer* renderer) @local {
+    render::configure_view(
+        renderer,
+        renderer.default_view,
+        main_view_desc(render::default_view_desc(), demo.options),
+    )!;
+    render::configure_view(renderer, demo.mirror.view, mirror_view_desc(demo))!;
+}
+
+fn void? sky_panel(
     Demo* demo,
     Renderer* renderer,
     Controls* controls,
@@ -823,6 +848,23 @@ fn void sky_panel(
                 v_min: FOG_DISTANCE_MIN,
                 v_max: FOG_DISTANCE_MAX,
             );
+            if (demo.options.volumetric_fog && !demo.options.path_traced) {
+                int choice;
+                foreach (index, quality : FOG_QUALITY_CHOICES) {
+                    if (quality == demo.options.fog_quality) choice = (int)index;
+                }
+
+                bool changed = imgui::combo_char(
+                    label:        "Volume quality",
+                    current_item: &choice,
+                    items:        &FOG_QUALITY_LABELS[0],
+                    items_count:  FOG_QUALITY_LABELS.len,
+                );
+                if (changed) {
+                    demo.options.fog_quality = FOG_QUALITY_CHOICES[choice];
+                    apply_fog_quality(demo, renderer)!;
+                }
+            }
         }
         imgui::separator_text("Frame");
         float exposure = demo.scene.get(demo.camera_node, Camera).exposure;
@@ -921,7 +963,7 @@ fn void? run_interactive(Options options) @local {
             renderer:   &renderer,
             controls:   &controls,
             fly_camera: &fly_camera,
-        );
+        )!;
         ViewId[2] views = { renderer.default_view, demo.mirror.view };
         ZString[2] labels = { "main", "mirror" };
         imgui::set_next_window_pos(STATS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
@@ -1258,10 +1300,18 @@ fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
     return steady_gate && time_lapse_gate;
 }
 
+fn String fog_quality_name(FogQuality quality) @local {
+    switch (quality) {
+        case LOW: return "low";
+        case MEDIUM: return "medium";
+        case HIGH: return "high";
+    }
+}
+
 fn void print_header(Options options) @local {
     io::printfn(
         "# sky shading=%s shadows=%s ssgi=%s path_traced=%s reflections=%s fog=%s atmosphere=%s "
-          "volumetric_fog=%s taa=%s extent=%dx%d frames=%d",
+          "volumetric_fog=%s fog_quality=%s taa=%s extent=%dx%d frames=%d",
         options.shading == ShadingPath.DEFERRED ? "deferred" : "forward",
         options.traced_shadows ? "traced" : "atlas",
         options.ssgi ? "on" : "off",
@@ -1270,6 +1320,7 @@ fn void print_header(Options options) @local {
         options.fog ? "on" : "off",
         AIR_NAMES[options.air.ordinal],
         options.volumetric_fog ? "on" : "off",
+        fog_quality_name(options.fog_quality),
         options.taa ? "on" : "off",
         options.width,
         options.height,
@@ -1341,8 +1392,8 @@ fn int main(String[] args) {
         if (excuse != c3d::UNSUPPORTED) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
-              "[--shadows atlas|traced] [--ssgi] [--path-traced] [--reflections on|off] [--volumetric-fog] [--taa] "
-              "[--auto-exposure] [--fog on|off] [--atmosphere on|off|dense|empty] "
+              "[--shadows atlas|traced] [--ssgi] [--path-traced] [--reflections on|off] [--volumetric-fog] "
+              "[--fog-quality low|medium|high] [--taa] [--auto-exposure] [--fog on|off] [--atmosphere on|off|dense|empty] "
               "[--preset noon|twilight|valley|pan|time-lapse] [--width W] [--height H].");
         }
         return 1;

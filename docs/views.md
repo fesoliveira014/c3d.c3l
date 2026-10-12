@@ -66,6 +66,7 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `path_trace` | `PathTraceDesc`: bounces, samples per frame and sample cap of a `PATH_TRACED` view (see [path tracing](path_tracing.md)) |
 | `clip_plane` | World-space `maths::Plane`; geometry on its negative side is not drawn (see [Clip plane](#clip-plane)); the zero plane clips nothing and both constructors produce it |
 | `volumetric_fog` | A froxel volume for the view's `HeightFog`, allocated with the view (see [volumetric fog](sky.md#volumetric-fog)); faults `INVALID_ARGUMENT` on a `PATH_TRACED` view |
+| `fog_quality` | `FogQuality`, the froxel size and slice count of the fog volume: `LOW`, `MEDIUM` or `HIGH` (see [volumetric fog](sky.md#volumetric-fog)); `MEDIUM` is the zero value, so an unset desc keeps its grid; a change reallocates the volume |
 | `share_shadows` | Binds an earlier view's [shadow set](shadows.md#shadow-sets) when the keys match and publishes its own; on in both constructors |
 | `transparency` | How premultiplied-alpha blended surfaces compose: `SORTED` (default, both constructors) orders them by object, `WEIGHTED` accumulates them without ordering into two extra images, 10 bytes per pixel, allocated on the first frame with a participating draw (see [weighted transparency](materials.md#weighted-transparency)); custom `BLEND` materials stay sorted in a `WEIGHTED` view, a current limit |
 | `transmission_layers` | Snapshots the scene-read list samples, so glass can see glass behind it (see [transmission layers](materials.md#transmission-layers)); 1 to `MAX_TRANSMISSION_LAYERS` (4), zero reads as 1 and both constructors leave it zero |
@@ -91,7 +92,7 @@ default; see [Capacities](#capacities)).
 The view owns its working images (`hdr_color`, `depth`, the scene color and depth snapshots, the
 [weighted transparency](materials.md#weighted-transparency) accumulation and revealage images, the
 [sky](sky.md)'s 192 × 108 sky-view table and 32³ aerial perspective volume (418 KiB) on raster views, its
-[fog volume](sky.md#volumetric-fog) when `volumetric_fog` is on (7.03 MiB at 2560 × 1440), post and
+[fog volume](sky.md#volumetric-fog) when `volumetric_fog` is on (`ceil(w / px) × ceil(h / px) × slices × 8` bytes, set by `fog_quality`), post and
 effect images) at the working extent `working_extent(viewport, output, render_scale)`, at least one pixel
 per dimension. Reconfiguring with a different extent or output waits for outstanding frames and
 reallocates them; every configuration resets the view's history except its

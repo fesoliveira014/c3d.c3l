@@ -1054,7 +1054,7 @@ root SkyFogGpu {
     SamplerIndex lut_sampler;
     TextureIndex fog_volume;
     float        fog_anisotropy;
-    uint         _pad1;
+    uint         fog_slices;
 }
 
 root SkyTableRoot {
@@ -1076,8 +1076,8 @@ root FogPassRoot {
     uint         _pad1;
 }
 
-// Slices of a view's fog volume, squared toward the camera; 128 halves the slice depth and doubles the memory.
-const uint FOG_VOLUME_SLICES = 64;
+// Most slices a view's fog volume holds; the view's quality chooses its own count up to it.
+const uint FOG_VOLUME_MAX_SLICES = 128;
 
 root FogVolumeRoot {
     GpuAddress   frame;
@@ -1085,7 +1085,7 @@ root FogVolumeRoot {
     uint         width;
     uint         height;
     uint         sun_light;
-    uint         _pad0;
+    uint         slices;
     uint         _pad1;
 }
 
