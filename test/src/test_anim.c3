@@ -1262,3 +1262,47 @@ fn void test_absent_morph_target_keeps_other_mesh_animation() @test {
     assert(instance.present_node(1) == null && scene.count(Mesh) == 1);
     assert(approx(scene.get(survivor, Mesh).morph_weights[0], 0.5f));
 }
+
+fn void test_compressed_clip_reports_error_within_tolerance_and_faults_beyond() @test {
+    AssetStore assets = create_store();
+    defer asset::destroy_asset_store(&assets);
+    float[6] times = { 0, 0.5f, 1, 1.5f, 2, 2.5f };
+    float[18] positions = { 0, 0, 0, 0.4f, 0.1f, 0, 0.9f, 0.3f, 0.1f, 1.2f, 0.2f, 0.4f, 1.9f, 0.1f, 0.5f, 2, 0, 0.5f };
+    float[2] spline_times = { 0, 1 };
+    float[18] spline_values = {
+        0, 0, 0, 0.5f, 0, 0, 1, 0, 0,
+        0, 0, 0, 2, 1, 0, 0, 0, 0,
+    };
+    Track[2] tracks = {
+        make_track(
+            path: TargetPath.TRANSLATION,
+            interpolation: Interpolation.LINEAR,
+            times: times[..],
+            values: positions[..],
+        ),
+        make_track(
+            path: TargetPath.TRANSLATION,
+            interpolation: Interpolation.CUBIC_SPLINE,
+            times: spline_times[..],
+            values: spline_values[..],
+            target: 1,
+        ),
+    };
+    uint[2] targets = { 0, 1 };
+    ClipId clip = add_clip(
+        assets: &assets,
+        key: "",
+        tracks: tracks[..],
+        targets: targets[..],
+        duration: 2.5f,
+    );
+    uint revision = assets.clip(clip).header.revision;
+
+    assert(@catch(assets.compress_clip(clip, { .translation = 1e-9f })) == c3d::TOLERANCE_EXCEEDED);
+    assert(assets.clip(clip).header.revision == revision && !assets.clip(clip).data.is_compressed());
+
+    ClipTolerance tolerance = { .translation = 0.01f, .rotation = 0.01f, .scale = 0.01f, .weight = 0.01f };
+    CompressionReport report = assets.compress_clip(clip, tolerance)!!;
+    assert(report.error.translation <= tolerance.translation && report.error.rotation <= tolerance.rotation);
+    assert(report.error.scale <= tolerance.scale && report.error.weight <= tolerance.weight);
+}

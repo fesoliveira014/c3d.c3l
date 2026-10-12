@@ -365,7 +365,8 @@ posed bytes and the GPU time of `Pass.COMPUTE_SKIN`, shadows, prepass, forward a
 shows maximum local position, rotation, scale and morph differences. This mode includes both
 playback costs and the comparison loop; use the single-representation modes for measurements.
 `F` freezes every other instance by pausing its base action, `--frozen-percent=P` starts with `P` percent
-of the instances frozen, and the panel slider sets the share. Frozen instances stop changing, so the panel's
+of the instances frozen, and the panel slider sets the share. `--compress` quantizes the model's clips before the
+crowd is built and prints their bytes and largest errors (see [Compressed clips](animation.md#compressed-clips)). Frozen instances stop changing, so the panel's
 per-frame upload bytes fall in proportion; it also shows the resident crowd bytes. `Space` pauses/resumes
 the first source through its base-action controls. The panel displays published root displacement and event/drop counts; `R` applies each update's published root delta once. The
 example's default KEEP clips publish no extracted displacement; extraction configuration belongs to

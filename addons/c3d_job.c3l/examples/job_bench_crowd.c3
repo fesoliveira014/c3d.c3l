@@ -33,6 +33,12 @@ const uint CROWD_FRAMES @local = CROWD_WARMUP_FRAMES + CROWD_TIMED_FRAMES;
 const float CROWD_STEP_SECONDS @local = 1.0f / 60;
 const uint CROWD_SCENE_NODES @local = 64; // the crowd node and one batch per template mesh
 const double NANOSECONDS_PER_MILLISECOND @local = 1000000;
+const ClipTolerance CROWD_CLIP_TOLERANCE @local = {
+    .translation = 1e-3f,
+    .rotation = 1e-3f,
+    .scale = 1e-3f,
+    .weight = 1e-3f,
+}; // 1 mm, 1 mrad, 0.1% scale and weight: compressed crowds stay visually identical
 const ulong DIGEST_OFFSET @local = 0xcbf29ce484222325;
 const ulong DIGEST_PRIME @local = 0x100000001b3;
 
@@ -342,19 +348,45 @@ fn void? time_crowd(
     };
 }
 
-fn bool? crowd_bench(uint count, bool shared_phases) @local {
+fn void? compress_crowd_clips(AssetStore* assets, ModelTemplate* template) @local {
+    usz bytes_before;
+    usz bytes_after;
+    ClipTolerance worst;
+    foreach (clip : template.clips) {
+        CompressionReport report = assets.compress_clip(clip, CROWD_CLIP_TOLERANCE)!;
+        bytes_before += report.bytes_before;
+        bytes_after += report.bytes_after;
+        worst.translation = math::max(worst.translation, report.error.translation);
+        worst.rotation = math::max(worst.rotation, report.error.rotation);
+        worst.scale = math::max(worst.scale, report.error.scale);
+        worst.weight = math::max(worst.weight, report.error.weight);
+    }
+    io::printfn(
+        "# compressed clips=%d bytes_before=%d bytes_after=%d max_error translation=%g rotation=%g scale=%g weight=%g",
+        template.clips.len,
+        bytes_before,
+        bytes_after,
+        worst.translation,
+        worst.rotation,
+        worst.scale,
+        worst.weight,
+    );
+}
+
+fn bool? crowd_bench(uint count, bool shared_phases, bool compress) @local {
     AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
     defer asset::destroy_asset_store(&assets);
 
     CrowdSetup setup = { .assets = &assets, .count = count };
     setup.model = gltf::load_model(&assets, crowd_asset_path())!;
     ModelTemplate* template = &assets.model(setup.model).data;
+    if (compress) compress_crowd_clips(&assets, template)!;
     foreach (index, name : CROWD_CLIP_NAMES) setup.clips[index] = crowd_clip_named(&assets, template, name)!;
     setup.pose_bounds = crowd_rest_bounds(&assets, template);
 
     io::printfn(
         "# crowd_bench count=%d clips=%d shared_groups=%d ranges_per_executor=%d warmup_frames=%d timed_frames=%d "
-        "step_s=%.5f",
+        "step_s=%.5f compressed=%d",
         count,
         CROWD_CLIP_NAMES.len,
         CROWD_SHARED_GROUPS,
@@ -362,6 +394,7 @@ fn bool? crowd_bench(uint count, bool shared_phases) @local {
         CROWD_WARMUP_FRAMES,
         CROWD_TIMED_FRAMES,
         CROWD_STEP_SECONDS,
+        compress ? 1 : 0,
     );
     io::printn(
         "# crowd,count,phases,path,batch,ranges,advance_ms,sample_ms,cpu_ms,publish_ms,frame_ms,sample_speedup,"
@@ -443,9 +476,22 @@ fn bool? crowd_bench(uint count, bool shared_phases) @local {
 }
 
 fn int run_crowd_bench(String[] args) @private {
-    bool shared_phases = args.len == 4 && args[3] == "--shared-phases";
-    if ((args.len != 3 && !shared_phases) || args[1] != "--crowd") {
-        io::eprintfn("usage: job_bench [--crowd COUNT [--shared-phases]]");
+    bool shared_phases;
+    bool compress;
+    bool valid = args.len >= 3 && args[1] == "--crowd";
+    if (valid) {
+        foreach (flag : args[3..]) {
+            if (flag == "--shared-phases") {
+                shared_phases = true;
+            } else if (flag == "--compress") {
+                compress = true;
+            } else {
+                valid = false;
+            }
+        }
+    }
+    if (!valid) {
+        io::eprintfn("usage: job_bench [--crowd COUNT [--shared-phases] [--compress]]");
         return 1;
     }
     uint? parsed = args[2].to_uint();
@@ -459,7 +505,7 @@ fn int run_crowd_bench(String[] args) @private {
         return 1;
     }
 
-    bool? all_equal = crowd_bench(count, shared_phases);
+    bool? all_equal = crowd_bench(count, shared_phases, compress);
     if (catch excuse = all_equal) {
         io::eprintfn("crowd bench failed: %s", excuse);
         return 1;

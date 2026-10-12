@@ -333,7 +333,9 @@ stage times over fifteen frames; the `update` line is the serial `CrowdPlaybackS
 time of the sampled ranges. Every line's per-frame digest of poses, morph weights, root motion and events must
 equal the `update` line's, and the exit status is 1 when one does not. `--shared-phases` also runs the crowd with
 instances in twelve groups that share a clip and a time, interleaved by instance index, and adds the hit rate and
-the sample and CPU time saved against the unshared line of the same worker count.
+the sample and CPU time saved against the unshared line of the same worker count. With `--compress` the clips are
+quantized first (see [Compressed clips](animation.md#compressed-clips)) and the header line prints their bytes before
+and after and the largest error per path.
 
 Background lines time one background run of 1024 empty ranges at batch 1, from `try_run` until its last range
 has run, on the capped workers alone; the caller only polls. Loaded lines time the 65 536-item kernel at batch

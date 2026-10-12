@@ -30,6 +30,14 @@ const uint CUBIC_SLOTS_PER_KEY = 3;
  @require track.times.len > 0, out.len == track.stride()
 *>
 fn void sample_track(Track* track, float time, uint* cursor, float[] out) {
+    if (track.encoding == TrackEncoding.PACKED) {
+        sample_packed(track, time, cursor, out);
+        return;
+    }
+    sample_raw(track, time, cursor, out);
+}
+
+fn void sample_raw(Track* track, float time, uint* cursor, float[] out) @private {
     uint last = (uint)track.times.len - 1;
     if (time <= track.times[0]) {
         *cursor = 0;
@@ -87,21 +95,25 @@ fn void interpolate_linear(Track* track, uint key, float fraction, float[] out) 
     float[] first = key_values(track, key, CUBIC_SLOT_VALUE);
     float[] second = key_values(track, key + 1, CUBIC_SLOT_VALUE);
     if (track.path == TargetPath.ROTATION) {
-        Quat from = { .v = { first[0], first[1], first[2], first[3] } };
-        Quat to = { .v = { second[0], second[1], second[2], second[3] } };
-        float dot = from.v.dot(to.v);
-        if (dot < 0) {
-            to = -to;
-            dot = -dot;
-        }
-        Quat result = dot > SLERP_DOT_THRESHOLD ? from.nlerp(to, fraction) : from.slerp(to, fraction);
-        out[0] = result.v.x;
-        out[1] = result.v.y;
-        out[2] = result.v.z;
-        out[3] = result.v.w;
+        blend_rotation(first, second, fraction, out);
         return;
     }
     foreach (index, &value : out) *value = first[index] + (second[index] - first[index]) * fraction;
+}
+
+fn void blend_rotation(float[] first, float[] second, float fraction, float[] out) @local @inline {
+    Quat from = { .v = { first[0], first[1], first[2], first[3] } };
+    Quat to = { .v = { second[0], second[1], second[2], second[3] } };
+    float dot = from.v.dot(to.v);
+    if (dot < 0) {
+        to = -to;
+        dot = -dot;
+    }
+    Quat result = dot > SLERP_DOT_THRESHOLD ? from.nlerp(to, fraction) : from.slerp(to, fraction);
+    out[0] = result.v.x;
+    out[1] = result.v.y;
+    out[2] = result.v.z;
+    out[3] = result.v.w;
 }
 
 fn void interpolate_cubic(Track* track, uint key, float fraction, float duration, float[] out) @local {
@@ -126,5 +138,59 @@ fn void interpolate_cubic(Track* track, uint key, float fraction, float duration
         out[1] = rotation.y;
         out[2] = rotation.z;
         out[3] = rotation.w;
+    }
+}
+
+fn void sample_packed(Track* track, float time, uint* cursor, float[] out) @local {
+    uint last = track.key_count() - 1;
+    if (time <= track.times[0] || time >= track.times[last]) {
+        *cursor = time <= track.times[0] ? 0 : last;
+        track.read_key(*cursor, track.value_slot(), out);
+        return;
+    }
+    if (*cursor >= last || time < track.times[*cursor]) {
+        *cursor = seek(track.times, time);
+    } else {
+        while (track.times[*cursor + 1] <= time) (*cursor)++;
+    }
+    uint key = *cursor;
+    float start = track.times[key];
+    float duration = track.times[key + 1] - start;
+    float fraction = (time - start) / duration;
+    switch (track.interpolation) {
+        case STEP: track.read_key(key, 0, out);
+        case LINEAR: interpolate_linear_packed(track, key, fraction, out);
+        case CUBIC_SPLINE: interpolate_cubic_packed(track, key, fraction, duration, out);
+    }
+}
+
+fn void interpolate_linear_packed(Track* track, uint key, float fraction, float[] out) @local {
+    if (track.path == TargetPath.ROTATION) {
+        float[4] first;
+        float[4] second;
+        track.read_key(key, 0, first[..]);
+        track.read_key(key + 1, 0, second[..]);
+        blend_rotation(first[..], second[..], fraction, out);
+        return;
+    }
+    foreach (component, &value : out) {
+        float first = track.packed_value(key, 0, (uint)component);
+        *value = first + (track.packed_value(key + 1, 0, (uint)component) - first) * fraction;
+    }
+}
+
+fn void interpolate_cubic_packed(Track* track, uint key, float fraction, float duration, float[] out) @local {
+    float squared = fraction * fraction;
+    float cubed = squared * fraction;
+    float h00 = 2 * cubed - 3 * squared + 1;
+    float h10 = cubed - 2 * squared + fraction;
+    float h01 = -2 * cubed + 3 * squared;
+    float h11 = cubed - squared;
+    foreach (component, &value : out) {
+        uint index = (uint)component;
+        *value = h00 * track.packed_value(key, CUBIC_SLOT_VALUE, index)
+          + h10 * duration * track.packed_value(key, CUBIC_SLOT_OUT_TANGENT, index)
+          + h01 * track.packed_value(key + 1, CUBIC_SLOT_VALUE, index)
+          + h11 * duration * track.packed_value(key + 1, CUBIC_SLOT_IN_TANGENT, index);
     }
 }
