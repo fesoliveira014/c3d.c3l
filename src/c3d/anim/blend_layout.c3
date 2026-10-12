@@ -200,7 +200,6 @@ fn BlendLayoutPrepared? validate_blend_layout(Vec2[] points, BlendTriangle[] tri
     uint reversed;
     bool[BLEND_LAYOUT_MAX_SAMPLES] used;
     bool[BLEND_LAYOUT_MAX_SAMPLES][BLEND_LAYOUT_MAX_SAMPLES] directed;
-    bool[BLEND_LAYOUT_MAX_TRIANGLES][BLEND_LAYOUT_MAX_TRIANGLES] adjacency;
 
     foreach (uint index, input : triangles) {
         uint a = input.indices[0];
@@ -252,9 +251,6 @@ fn BlendLayoutPrepared? validate_blend_layout(Vec2[] points, BlendTriangle[] tri
 
             if (shared == 3) return c3d::INVALID_ARGUMENT~;
 
-            adjacency[index][prior] = shared == 2;
-            adjacency[prior][index] = shared == 2;
-
             for (uint first = 0; first < 3; first++) {
                 Vec2 first_a = points[triangle.indices[first]];
                 Vec2 first_b = points[triangle.indices[(first + 1) % 3]];
@@ -277,23 +273,6 @@ fn BlendLayoutPrepared? validate_blend_layout(Vec2[] points, BlendTriangle[] tri
     for (uint sample = 0; sample < count; sample++) {
         if (!used[sample]) return c3d::INVALID_ARGUMENT~;
     }
-
-    bool[BLEND_LAYOUT_MAX_TRIANGLES] visited;
-    uint[BLEND_LAYOUT_MAX_TRIANGLES] queue;
-    uint head;
-    uint tail = 1;
-    visited[0] = true;
-    while (head < tail) {
-        uint triangle = queue[head++];
-        for (uint neighbor = 0; neighbor < triangle_count; neighbor++) {
-            if (!adjacency[triangle][neighbor] || visited[neighbor]) continue;
-
-            visited[neighbor] = true;
-            queue[tail++] = neighbor;
-        }
-    }
-
-    if (tail != triangle_count) return c3d::INVALID_ARGUMENT~;
 
     uint[BLEND_LAYOUT_MAX_SAMPLES] next;
     next[..] = uint::max;

@@ -281,6 +281,14 @@ fn void test_animation_authoring_blend_layout_malformed_topology_is_atomic() @te
     invalid.triangles[0] = { .indices = { 0, 1, 2 } };
     invalid.triangles[1] = { .indices = { 3, 4, 5 } };
     layout_expect_fault(&invalid);
+    LayoutFixture bow_tie = { .count = 5, .triangle_count = 2 };
+    bow_tie.points[1] = { 1, -1 };
+    bow_tie.points[2] = { 1, 1 };
+    bow_tie.points[3] = { -1, 1 };
+    bow_tie.points[4] = { -1, -1 };
+    bow_tie.triangles[0] = { .indices = { 0, 1, 2 } };
+    bow_tie.triangles[1] = { .indices = { 0, 3, 4 } };
+    layout_expect_fault(&bow_tie);
     LayoutFixture crossing = { .count = 6, .triangle_count = 2 };
     crossing.points[0] = { -1, 0 };
     crossing.points[1] = { 1, 0 };
