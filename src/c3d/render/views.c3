@@ -627,6 +627,7 @@ struct ViewRecord {
     ulong                                last_scene; // identity of the scene this view last rendered
     ProjectionTerms                      projection_terms;
     float                                exposure;
+    post::PreExposure                    pre_exposure; // of the rendering in progress; post divides its factor out
     ViewHistory                          history;
     post::ViewExposure                   auto_exposure;
     LodHistory                          lod_history;

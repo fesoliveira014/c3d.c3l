@@ -433,11 +433,16 @@ fn void? record_probe_atlas_fill(
     renderer.work_recorded = true;
 }
 
-fn gpu::GpuAddress? pack_probe_volumes(Renderer* renderer, Scene* scene, uint view_layers) @private {
+fn gpu::GpuAddress? pack_probe_volumes(
+    Renderer* renderer,
+    Scene* scene,
+    uint view_layers,
+    float pre_exposure,
+) @private {
     usz[shader::PROBE_VOLUME_CAPACITY] order;
     usz count = order_view_probe_volumes(&renderer.probe_volumes, scene, view_layers, &order);
     if (!count) return (gpu::GpuAddress)0;
-    return pack_probe_set(renderer, scene, order[:count]);
+    return pack_probe_set(renderer, scene, order[:count], pre_exposure: pre_exposure);
 }
 
 fn gpu::GpuAddress? pack_probe_set(
@@ -445,6 +450,7 @@ fn gpu::GpuAddress? pack_probe_set(
     Scene* scene,
     usz[] order,
     bool unit_energy = false,
+    float pre_exposure = 1,
 ) @private {
     usz count = order.len;
 
@@ -458,7 +464,7 @@ fn gpu::GpuAddress? pack_probe_set(
         Vec3 origin = (scene.node(mirror.entity).world_position() - renderer.frame_origin) - volume.half_extents;
         Vec3 spacing = volume.spacing();
         set.volumes[index] = {
-            .origin_energy        = { origin.x, origin.y, origin.z, unit_energy ? 1 : volume.energy },
+            .origin_energy        = { origin.x, origin.y, origin.z, unit_energy ? 1 : volume.energy * pre_exposure },
             .spacing_max_distance = { spacing.x, spacing.y, spacing.z, volume.max_distance },
             .biases               = { volume.normal_bias, volume.view_bias, 0, 0 },
             .count_x              = mirror.counts.x,

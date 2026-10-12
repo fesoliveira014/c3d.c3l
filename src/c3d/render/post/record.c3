@@ -221,6 +221,7 @@ fn void? record_fused_display(
         bloom_sampler:   renderer.linear_clamp_sampler,
         bloom_intensity: bloom.intensity,
         auto_exposure:   adapted_exposure(record),
+        pre_exposure:    record.pre_exposure.factor,
     );
     gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, display_pipeline_key(output.format))!;
 
@@ -267,6 +268,7 @@ fn void? record_grade(
         bloom_sampler:   renderer.linear_clamp_sampler,
         bloom_intensity: bloom.intensity,
         auto_exposure:   adapted_exposure(record),
+        pre_exposure:    record.pre_exposure.factor,
     );
     gpu::cmd_bind_pipeline(&renderer.commands, renderer.post_pipelines.grade)!;
     render::dispatch_over(renderer, root.address, &record.post_a)!;

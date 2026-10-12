@@ -259,6 +259,7 @@ fn void? record_path_traced_view(
             Vec3 ambient = environments.lighting && !scene.ambient_add
               ? (Vec3){} : scene.ambient_color * scene.ambient_intensity;
             frame_span = slot.upload.take(&renderer.device, FrameRoot::size, STREAM_ALIGNMENT)!;
+            // The accumulation stays physical: this root keeps pre_exposure at 1 and only the copy to hdr_color scales.
             write_frame_root(
                 root:        (FrameRoot*)frame_span.bytes.ptr,
                 matrices:    matrices,
@@ -316,6 +317,7 @@ fn void? record_path_traced_view(
                 .sample_index     = held,
                 .sample_count     = count,
                 .max_bounces      = settings.max_bounces,
+                .pre_exposure     = record.pre_exposure.factor,
             };
 
             @profile_pass(renderer, Pass.PATH_TRACE) {

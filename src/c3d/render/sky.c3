@@ -708,6 +708,7 @@ fn gpu::GpuAddress? pack_view_sky_fog(
     FogSelection* fog,
     Vec3 camera_position,
     gpu::TextureIndex fog_volume,
+    float pre_exposure,
 ) @private {
     if (!atmosphere && !fog.fog) return (gpu::GpuAddress)0;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
@@ -725,7 +726,7 @@ fn gpu::GpuAddress? pack_view_sky_fog(
         tables.sky_view = record.sky_view.view.index;
         tables.aerial_perspective = record.aerial_perspective.view.index;
         to_sun = sun_direction(selection.node);
-        illuminance = selection.sun.color * selection.sun.intensity;
+        illuminance = selection.sun.color * selection.sun.intensity * pre_exposure;
     }
     write_sky_fog(
         root:            (SkyFogGpu*)span.bytes.ptr,

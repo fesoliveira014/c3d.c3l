@@ -73,6 +73,14 @@ struct ViewExposure {
 }
 
 <*
+ Radiance scale of a view's rendering and its change since the previous one.
+*>
+struct PreExposure {
+    float factor;
+    float ratio;
+}
+
+<*
  Remember the rendering's time and scene, pending publication, and return its step.
  @param time : "FrameInfo.time of the rendering, in seconds."
  @param scene : "Identity of the metered scene."
@@ -138,6 +146,14 @@ fn void ViewExposure.reconfigure(&self, ViewDesc* current, ViewDesc* next) {
 *>
 fn bool auto_exposure_active(ViewDesc* desc) {
     return desc.post.auto_exposure && desc.color == OutputMode.DISPLAY_LDR && !taa_debug_enabled(&desc.post);
+}
+
+<*
+ Pre-exposure of the view's next rendering.
+ @param [&in] record : "Read only."
+*>
+fn PreExposure view_pre_exposure(ViewRecord* record) {
+    return { .factor = 1, .ratio = 1 };
 }
 
 <*
@@ -315,6 +331,7 @@ fn void? record_exposure(Renderer* renderer, ViewRecord* record, ulong scene) {
             .input_texture = record.hdr_color.view.index,
             .width         = record.hdr_color.width,
             .height        = record.hdr_color.height,
+            .pre_exposure  = record.pre_exposure.factor,
         };
         gpu::cmd_bind_pipeline(&renderer.commands, renderer.post_pipelines.exposure_histogram)!;
         gpu::cmd_dispatch(&renderer.commands, meter.address, exposure_meter_groups(&record.hdr_color))!;

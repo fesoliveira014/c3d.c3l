@@ -126,6 +126,8 @@ fn void write_probe_frame_root(
         .frame_index     = (uint)frame_index,
         .flags           = shader::FRAME_TRACE_PRESENT,
         .origin          = { origin.x, origin.y, origin.z, 0 },
+        .pre_exposure       = 1,
+        .pre_exposure_ratio = 1,
     };
 }
 

@@ -94,6 +94,7 @@ fn void? record_scene_mips(Renderer* renderer, ViewRecord* record) @private {
             *(CompositeRoot*)root.bytes.ptr = {
                 .source_texture = mips.views[level - 1].index,
                 .source_sampler = renderer.linear_clamp_sampler,
+                .pre_exposure   = 1,
             };
 
             Target level_target = {

@@ -18,8 +18,8 @@ const float IMPOSTOR_POLE_LIMIT = 0.99;
 root CompositeRoot {
     TextureIndex source_texture;
     SamplerIndex source_sampler;
+    float        pre_exposure; // divided out of the source; 1 copies the stored units unchanged
     uint         _pad0;
-    uint         _pad1;
 }
 
 root WeightedCompositeRoot {
@@ -225,6 +225,10 @@ root FrameRoot {
     TextureIndex reflection_brdf_lut;
     SamplerIndex reflection_sampler;
     float      max_reflection_roughness;
+    float      pre_exposure; // scale the view's radiance carries while it is rendered; post divides it out
+    float      pre_exposure_ratio; // this rendering's pre_exposure over the previous rendering's
+    float      _pad0;
+    float      _pad1;
 }
 
 root DrawRoot {
@@ -582,7 +586,7 @@ root PathTraceRoot {
     uint         sample_index;
     uint         sample_count;
     uint         max_bounces;
-    uint         _pad0;
+    float        pre_exposure; // multiplies the physical accumulation into the stored copy
 }
 
 const uint MATERIAL_MAP_BASE_COLOR = 1;
@@ -705,7 +709,7 @@ struct DebugVertexGpu {
 root DebugLinesRoot {
     GpuAddress vertices;
     float alpha;
-    uint _pad0;
+    float pre_exposure; // multiplies the vertex colors
     mat4 view_proj;
 }
 
@@ -1184,8 +1188,8 @@ struct GradeGpu {
     float bloom_intensity;
     uint _pad_bloom;
     GpuAddress auto_exposure; // ExposureGpu the view's rendering wrote; zero in manual mode
-    uint _pad_exposure0;
-    uint _pad_exposure1;
+    float pre_exposure; // divided out of the scene color with the exposure applied
+    uint _pad_exposure;
 }
 
 root GradeRoot {
@@ -1230,6 +1234,10 @@ root BloomRoot {
     float knee;
     vec2 input_texel;
     GpuAddress auto_exposure; // read by the prefilter dispatch only; zero in manual mode
+    float pre_exposure; // read by the prefilter dispatch only; divided out before the auto scale and threshold
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
 }
 
 // 1 KiB per view; 1/8 stop per bin, so a 16x light step shifts the histogram by exactly 32 bins.
@@ -1263,7 +1271,7 @@ root ExposureMeterRoot {
     TextureIndex input_texture;
     uint         width;
     uint         height;
-    uint         _pad0;
+    float        pre_exposure; // divided out of the metered luminance
 }
 
 root ExposureAdaptRoot {
@@ -1364,7 +1372,8 @@ root TaaRoot {
     float velocity_threshold;
     float proj_22;
     float proj_23;
-    vec2 _pad0;
+    float pre_exposure_ratio; // multiplies the history color to this rendering's units
+    float _pad0;
 }
 
 root MotionBlurRoot {

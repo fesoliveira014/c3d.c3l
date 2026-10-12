@@ -196,6 +196,7 @@ fn void? record_camera_view(
         begin_profile_view(renderer, view, "view.render")!;
         Camera* camera = &view_camera.camera;
         record.exposure = camera.exposure;
+        record.pre_exposure = post::view_pre_exposure(record);
         if (!post::auto_exposure_active(&record.desc)) record.stats.exposure = camera.exposure;
 
         Vec2 viewport = { (float)record.hdr_color.width, (float)record.hdr_color.height };
@@ -257,6 +258,7 @@ fn void? record_raster_view(
     DebugDraw* debug,
 ) @private {
     Camera* camera = &view_camera.camera;
+    float pre_exposure = record.pre_exposure.factor;
     Vec2 viewport = { (float)record.hdr_color.width, (float)record.hdr_color.height };
     bool taa = record.desc.post.anti_aliasing == AntiAliasing.TAA;
     bool screen_space_gi = record.desc.screen_space_gi.enabled;
@@ -619,6 +621,7 @@ fn void? record_raster_view(
                 altitude: matrices.position.y + renderer.frame_origin.y,
                 ray_tracing: record.desc.ray_tracing,
                 origin: renderer.frame_origin,
+                pre_exposure: pre_exposure,
             );
             fog_sun = fog_sun_light(&extraction, environments.atmosphere != null);
             ShadowCamera own_view = { .lens = *camera, .matrices = *matrices };
@@ -663,7 +666,7 @@ fn void? record_raster_view(
                 environment_address = pack_lighting_environment(
                     renderer: renderer,
                     environment: environments.lighting,
-                    intensity: environments.lighting_intensity,
+                    intensity: environments.lighting_intensity * pre_exposure,
                     rotation: environments.lighting_rotation,
                     sheen: sheen,
                 )!;
@@ -676,14 +679,16 @@ fn void? record_raster_view(
                 fog:             &fog,
                 camera_position: matrices.position,
                 fog_volume:      fog_volume ? record.fog_volume.view.index : (gpu::TextureIndex)0,
+                pre_exposure:    pre_exposure,
             )!;
             Vec3 ambient = environments.lighting && !scene.ambient_add
-              ? (Vec3){} : scene.ambient_color * scene.ambient_intensity;
-            gpu::GpuAddress probe_volumes = pack_probe_volumes(renderer, scene, camera.layers)!;
+              ? (Vec3){} : scene.ambient_color * scene.ambient_intensity * pre_exposure;
+            gpu::GpuAddress probe_volumes = pack_probe_volumes(renderer, scene, camera.layers, pre_exposure)!;
             gpu::GpuAddress reflection_probes = pack_reflection_probes(
                 renderer,
                 reflection_picks[:reflection_count],
                 sheen,
+                pre_exposure,
             )!;
             frame_span = slot.upload.take(&renderer.device, FrameRoot::size, STREAM_ALIGNMENT)!;
             write_frame_root(
@@ -724,6 +729,8 @@ fn void? record_raster_view(
                   ? renderer.environment_state.brdf_lut.view.index : (gpu::TextureIndex)0,
                 reflection_sampler: forward_reflections ? renderer.linear_clamp_sampler : (gpu::SamplerIndex)0,
                 max_reflection_roughness: forward_reflections ? record.desc.ray_tracing.max_reflection_roughness : 0,
+                pre_exposure: pre_exposure,
+                pre_exposure_ratio: record.pre_exposure.ratio,
             );
             if (record.desc.lights == LightSelection.CLUSTERED) {
                 record_clusters(
@@ -892,10 +899,12 @@ fn void? record_raster_view(
                     renderer: renderer,
                     environment: environments.sky,
                     frame: frame_span.address,
-                    intensity: environments.sky_intensity,
+                    intensity: environments.sky_intensity * pre_exposure,
                     rotation: environments.sky_rotation,
                 )!;
             }
+            Vec4 clear_color = environments.clear_color;
+            clear_color.rgb *= pre_exposure;
             switch (shading) {
                 case FORWARD:
                     if (forward_prepass) {
@@ -930,6 +939,7 @@ fn void? record_raster_view(
                             view_layers: camera.layers,
                             atmosphere:  &environments.atmosphere_selection,
                             altitude:    matrices.position.y + renderer.frame_origin.y,
+                            pre_exposure: pre_exposure,
                         )!;
                         record_reflections(
                             renderer: renderer,
@@ -949,7 +959,7 @@ fn void? record_raster_view(
                         sky_root:      sky_root,
                         sky:           environments.sky != null,
                         atmosphere:    environments.atmosphere != null,
-                        clear_color:   environments.clear_color,
+                        clear_color:   clear_color,
                         color_loaded:  false,
                         depth_matched: forward_prepass,
                     )!;
@@ -982,6 +992,7 @@ fn void? record_raster_view(
                             view_layers: camera.layers,
                             atmosphere:  &environments.atmosphere_selection,
                             altitude:    matrices.position.y + renderer.frame_origin.y,
+                            pre_exposure: pre_exposure,
                         )!;
                     }
 
@@ -994,7 +1005,7 @@ fn void? record_raster_view(
                         sky_root:           sky_root,
                         sky:                environments.sky != null,
                         atmosphere:         environments.atmosphere != null,
-                        clear_color:        environments.clear_color,
+                        clear_color:        clear_color,
                         ssgi_history_valid: ssgi_history_valid,
                         reflection_lights:  reflection_lights,
                     )!;
@@ -1445,6 +1456,8 @@ fn bool velocity_before_lighting(ViewDesc* desc) @private {
  @param reflection_brdf_lut : "Split-sum table view the traced reflection weighs by."
  @param reflection_sampler : "Filtered sampler of the split-sum table."
  @param max_reflection_roughness : "Roughness above which a pixel keeps the raster reflection."
+ @param pre_exposure : "Scale of the radiance uploaded for this root; 1 is physical."
+ @param pre_exposure_ratio : "Factor over the previous rendering's; 1 without history."
 *>
 fn void write_frame_root(
     FrameRoot* root,
@@ -1483,6 +1496,8 @@ fn void write_frame_root(
     gpu::TextureIndex reflection_brdf_lut = (gpu::TextureIndex)0,
     gpu::SamplerIndex reflection_sampler = (gpu::SamplerIndex)0,
     float max_reflection_roughness = 0,
+    float pre_exposure = 1,
+    float pre_exposure_ratio = 1,
 ) {
     *root = {
         .view            = bitcast(matrices.view, Mat4f),
@@ -1528,6 +1543,8 @@ fn void write_frame_root(
         .reflection_brdf_lut      = reflection_brdf_lut,
         .reflection_sampler       = reflection_sampler,
         .max_reflection_roughness = max_reflection_roughness,
+        .pre_exposure             = pre_exposure,
+        .pre_exposure_ratio       = pre_exposure_ratio,
     };
 }
 
@@ -1994,6 +2011,7 @@ fn void? record_snapshot_copy(Renderer* renderer, Target* source, Target* snapsh
     *(CompositeRoot*)root.bytes.ptr = {
         .source_texture = source.view.index,
         .source_sampler = renderer.linear_clamp_sampler,
+        .pre_exposure   = 1,
     };
     gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, composite_pipeline_key(snapshot.format))!;
     record_fullscreen_pass(
@@ -2040,10 +2058,11 @@ fn void? record_view_output(Renderer* renderer, ViewRecord* record) @private {
         case LINEAR_HDR:
             post::close_post_chain(renderer, record)!;
             return composite_target(
-                renderer: renderer,
-                source:   record.scene_input,
-                output:   output,
-                rect:     rect,
+                renderer:     renderer,
+                source:       record.scene_input,
+                output:       output,
+                rect:         rect,
+                pre_exposure: record.pre_exposure.factor,
             );
     }
 }

@@ -45,6 +45,7 @@ struct ReflectionPipelines @private {
  @param [in] atmosphere : "Null or a zero entity attenuates no light."
  @param altitude : "Metres above world y = 0 the sun is seen from."
  @param origin : "Absolute origin the packed positions are relative to."
+ @param pre_exposure : "Multiplies every packed intensity."
  @require capacity > 0
 *>
 fn LightGpu[] extract_reflection_lights(
@@ -56,6 +57,7 @@ fn LightGpu[] extract_reflection_lights(
     AtmosphereSelection* atmosphere,
     float altitude,
     Vec3 origin,
+    float pre_exposure = 1,
 ) {
     // Atlas layers are fitted to the camera, so every shadowing light traces at a hit.
     return extract_lights(
@@ -69,6 +71,7 @@ fn LightGpu[] extract_reflection_lights(
         altitude:      altitude,
         trace_shadows: true,
         origin:        origin,
+        pre_exposure:  pre_exposure,
     ).lights;
 }
 
@@ -78,17 +81,19 @@ fn ReflectionLights? upload_reflection_lights(
     uint view_layers,
     AtmosphereSelection* atmosphere,
     float altitude,
+    float pre_exposure,
 ) @private {
     LightCounts counts;
     LightGpu[] lights = extract_reflection_lights(
-        allocator:   tmem,
-        scene:       scene,
-        view_layers: view_layers,
-        capacity:    renderer.max_lights,
-        counts:      &counts,
-        atmosphere:  atmosphere,
-        altitude:    altitude,
-        origin:      renderer.frame_origin,
+        allocator:    tmem,
+        scene:        scene,
+        view_layers:  view_layers,
+        capacity:     renderer.max_lights,
+        counts:       &counts,
+        atmosphere:   atmosphere,
+        altitude:     altitude,
+        origin:       renderer.frame_origin,
+        pre_exposure: pre_exposure,
     );
     return { .address = upload_lights(renderer, lights)!, .count = (uint)lights.len };
 }

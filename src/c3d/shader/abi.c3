@@ -190,14 +190,14 @@ const uint TAA_DEBUG_VELOCITY_RANGE = 16;
 struct CompositeRoot {
     TextureIndex source_texture;
     SamplerIndex source_sampler;
+    float        pre_exposure;
     uint         _pad0;
-    uint         _pad1;
 }
 $assert CompositeRoot::size == 16;
 $assert $reflect(CompositeRoot.source_texture).offset == 0;
 $assert $reflect(CompositeRoot.source_sampler).offset == 4;
-$assert $reflect(CompositeRoot._pad0).offset == 8;
-$assert $reflect(CompositeRoot._pad1).offset == 12;
+$assert $reflect(CompositeRoot.pre_exposure).offset == 8;
+$assert $reflect(CompositeRoot._pad0).offset == 12;
 
 struct WeightedCompositeRoot {
     TextureIndex accum_texture;
@@ -490,8 +490,12 @@ struct FrameRoot {
     TextureIndex reflection_brdf_lut;
     SamplerIndex reflection_sampler;
     float        max_reflection_roughness;
+    float        pre_exposure;
+    float        pre_exposure_ratio;
+    float        _pad0;
+    float        _pad1;
 }
-$assert FrameRoot::size == 560;
+$assert FrameRoot::size == 576;
 $assert $reflect(FrameRoot.view).offset == 0;
 $assert $reflect(FrameRoot.proj).offset == 64;
 $assert $reflect(FrameRoot.view_proj).offset == 128;
@@ -530,6 +534,10 @@ $assert $reflect(FrameRoot.reflection_texture).offset == 544;
 $assert $reflect(FrameRoot.reflection_brdf_lut).offset == 548;
 $assert $reflect(FrameRoot.reflection_sampler).offset == 552;
 $assert $reflect(FrameRoot.max_reflection_roughness).offset == 556;
+$assert $reflect(FrameRoot.pre_exposure).offset == 560;
+$assert $reflect(FrameRoot.pre_exposure_ratio).offset == 564;
+$assert $reflect(FrameRoot._pad0).offset == 568;
+$assert $reflect(FrameRoot._pad1).offset == 572;
 
 struct DrawRoot {
     Mat4f        model;
@@ -1110,7 +1118,7 @@ struct PathTraceRoot {
     uint         sample_index;
     uint         sample_count;
     uint         max_bounces;
-    uint         _pad0;
+    float        pre_exposure;
 }
 $assert PathTraceRoot::size == 64;
 $assert $reflect(PathTraceRoot.frame).offset == 0;
@@ -1123,7 +1131,7 @@ $assert $reflect(PathTraceRoot.height).offset == 44;
 $assert $reflect(PathTraceRoot.sample_index).offset == 48;
 $assert $reflect(PathTraceRoot.sample_count).offset == 52;
 $assert $reflect(PathTraceRoot.max_bounces).offset == 56;
-$assert $reflect(PathTraceRoot._pad0).offset == 60;
+$assert $reflect(PathTraceRoot.pre_exposure).offset == 60;
 
 struct TextureMapGpu {
     TextureIndex texture_index;
@@ -1276,13 +1284,13 @@ $assert $reflect(DebugVertexGpu.rgba).offset == 12;
 struct DebugLinesRoot {
     GpuAddress vertices;
     float      alpha;
-    uint       _pad0;
+    float      pre_exposure;
     Mat4f      view_proj;
 }
 $assert DebugLinesRoot::size == 80;
 $assert $reflect(DebugLinesRoot.vertices).offset == 0;
 $assert $reflect(DebugLinesRoot.alpha).offset == 8;
-$assert $reflect(DebugLinesRoot._pad0).offset == 12;
+$assert $reflect(DebugLinesRoot.pre_exposure).offset == 12;
 $assert $reflect(DebugLinesRoot.view_proj).offset == 16;
 
 struct PreviewRoot {
@@ -1965,8 +1973,8 @@ struct GradeGpu {
     float        bloom_intensity;
     uint         _pad_bloom;
     GpuAddress   auto_exposure;
-    uint         _pad_exposure0;
-    uint         _pad_exposure1;
+    float        pre_exposure;
+    uint         _pad_exposure;
 }
 $assert GradeGpu::size == 128;
 $assert $reflect(GradeGpu.exposure).offset == 0;
@@ -1986,8 +1994,8 @@ $assert $reflect(GradeGpu.bloom_sampler).offset == 100;
 $assert $reflect(GradeGpu.bloom_intensity).offset == 104;
 $assert $reflect(GradeGpu._pad_bloom).offset == 108;
 $assert $reflect(GradeGpu.auto_exposure).offset == 112;
-$assert $reflect(GradeGpu._pad_exposure0).offset == 120;
-$assert $reflect(GradeGpu._pad_exposure1).offset == 124;
+$assert $reflect(GradeGpu.pre_exposure).offset == 120;
+$assert $reflect(GradeGpu._pad_exposure).offset == 124;
 
 struct GradeRoot {
     TextureIndex input_texture;
@@ -2056,8 +2064,12 @@ struct BloomRoot {
     float        knee;
     Vec2f        input_texel;
     GpuAddress   auto_exposure;
+    float        pre_exposure;
+    uint         _pad0;
+    uint         _pad1;
+    uint         _pad2;
 }
-$assert BloomRoot::size == 48;
+$assert BloomRoot::size == 64;
 $assert $reflect(BloomRoot.input_texture).offset == 0;
 $assert $reflect(BloomRoot.sampler_index).offset == 4;
 $assert $reflect(BloomRoot.output_texture).offset == 8;
@@ -2068,6 +2080,10 @@ $assert $reflect(BloomRoot.threshold).offset == 24;
 $assert $reflect(BloomRoot.knee).offset == 28;
 $assert $reflect(BloomRoot.input_texel).offset == 32;
 $assert $reflect(BloomRoot.auto_exposure).offset == 40;
+$assert $reflect(BloomRoot.pre_exposure).offset == 48;
+$assert $reflect(BloomRoot._pad0).offset == 52;
+$assert $reflect(BloomRoot._pad1).offset == 56;
+$assert $reflect(BloomRoot._pad2).offset == 60;
 
 struct ExposureGpu {
     float ev;
@@ -2092,14 +2108,14 @@ struct ExposureMeterRoot {
     TextureIndex input_texture;
     uint         width;
     uint         height;
-    uint         _pad0;
+    float        pre_exposure;
 }
 $assert ExposureMeterRoot::size == 24;
 $assert $reflect(ExposureMeterRoot.histogram).offset == 0;
 $assert $reflect(ExposureMeterRoot.input_texture).offset == 8;
 $assert $reflect(ExposureMeterRoot.width).offset == 12;
 $assert $reflect(ExposureMeterRoot.height).offset == 16;
-$assert $reflect(ExposureMeterRoot._pad0).offset == 20;
+$assert $reflect(ExposureMeterRoot.pre_exposure).offset == 20;
 
 struct ExposureAdaptRoot {
     GpuAddress histogram;
@@ -2238,7 +2254,8 @@ struct TaaRoot {
     float        velocity_threshold;
     float        proj_22;
     float        proj_23;
-    Vec2f        _pad0;
+    float        pre_exposure_ratio;
+    float        _pad0;
 }
 $assert TaaRoot::size == 112;
 $assert $reflect(TaaRoot.color_texture).offset == 0;
@@ -2265,7 +2282,8 @@ $assert $reflect(TaaRoot.depth_tolerance).offset == 88;
 $assert $reflect(TaaRoot.velocity_threshold).offset == 92;
 $assert $reflect(TaaRoot.proj_22).offset == 96;
 $assert $reflect(TaaRoot.proj_23).offset == 100;
-$assert $reflect(TaaRoot._pad0).offset == 104;
+$assert $reflect(TaaRoot.pre_exposure_ratio).offset == 104;
+$assert $reflect(TaaRoot._pad0).offset == 108;
 
 struct MotionBlurRoot {
     TextureIndex color_texture;

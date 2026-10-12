@@ -146,6 +146,7 @@ fn void? record_taa(
             .velocity_threshold = params.velocity_threshold,
             .proj_22            = record.projection_terms.m22,
             .proj_23            = record.projection_terms.m23,
+            .pre_exposure_ratio = record.pre_exposure.ratio,
         };
         gpu::cmd_bind_pipeline(&renderer.commands, renderer.post_pipelines.taa_resolve)!;
         render::dispatch_over(renderer, root.address, &record.taa_color[next])!;

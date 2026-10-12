@@ -57,15 +57,17 @@ fn void? record_debug_lines(
 
     gpu::MappedGpuSpan solid_root = slot.upload.take(&renderer.device, DebugLinesRoot::size)!;
     *(DebugLinesRoot*)solid_root.bytes.ptr = {
-        .vertices  = vertex_span.address,
-        .alpha     = 1,
-        .view_proj = bitcast(view_proj, Mat4f),
+        .vertices     = vertex_span.address,
+        .alpha        = 1,
+        .pre_exposure = record.pre_exposure.factor,
+        .view_proj    = bitcast(view_proj, Mat4f),
     };
     gpu::MappedGpuSpan overlay_root = slot.upload.take(&renderer.device, DebugLinesRoot::size)!;
     *(DebugLinesRoot*)overlay_root.bytes.ptr = {
-        .vertices  = vertex_span.address,
-        .alpha     = DEBUG_OVERLAY_ALPHA,
-        .view_proj = bitcast(view_proj, Mat4f),
+        .vertices     = vertex_span.address,
+        .alpha        = DEBUG_OVERLAY_ALPHA,
+        .pre_exposure = record.pre_exposure.factor,
+        .view_proj    = bitcast(view_proj, Mat4f),
     };
 
     PipelineKey key = {
