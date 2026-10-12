@@ -16,6 +16,17 @@ enum FogQuality : int (uint froxel_pixels, uint slices) {
     HIGH { 8, 128 },   // 56.25 MiB: 8x MEDIUM, so opt-in
 }
 
+macro bool @fog_presets_fit_volume() @private {
+    $foreach $quality : FogQuality::values:
+        $if $quality.slices > shader::FOG_VOLUME_MAX_SLICES:
+            return false;
+        $endif
+    $endforeach
+    return true;
+}
+
+$assert @fog_presets_fit_volume();
+
 <*
  @require record.hdr_color.texture.is_valid()
 *>
@@ -75,7 +86,6 @@ fn uint fog_sun_light(LightExtraction* extraction, bool atmosphere) {
 
 <*
  @require record.fog_volume.texture.is_valid()
- @require record.fog_volume.depth <= shader::FOG_VOLUME_MAX_SLICES
 *>
 fn void? record_fog_volume(
     Renderer* renderer,
