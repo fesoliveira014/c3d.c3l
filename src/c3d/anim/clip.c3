@@ -87,6 +87,43 @@ fn uint Track.stride(&self) {
 }
 
 <*
+ Number of keys the track holds.
+ @pure
+*>
+fn uint Track.key_count(&self) {
+    return (uint)self.times.len;
+}
+
+<*
+ Time of the key in seconds.
+ @require key < self.key_count()
+ @pure
+*>
+fn float Track.key_time(&self, uint key) {
+    return self.times[key];
+}
+
+<*
+ Slot of a key that holds its value.
+ @pure
+*>
+fn uint Track.value_slot(&self) {
+    return self.interpolation == Interpolation.CUBIC_SPLINE ? CUBIC_SLOT_VALUE : 0;
+}
+
+<*
+ Copy one slot of a key into out.
+ @param [out] out : "Receives one stride of values at its start."
+ @require key < self.key_count()
+ @require slot == 0 || (self.interpolation == Interpolation.CUBIC_SPLINE && slot < CUBIC_SLOTS_PER_KEY)
+ @require out.len >= self.stride()
+*>
+fn void Track.read_key(&self, uint key, uint slot, float[] out) {
+    float[] stored = key_values(self, key, slot);
+    out[:stored.len] = stored[..];
+}
+
+<*
  Skeleton joint index of the name.
  @return? NOT_FOUND
  @pure

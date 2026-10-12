@@ -161,7 +161,7 @@ fn void? check_clip_structure(AnimationClip* current, AnimationClip* next) @priv
 
 // Track.stride divides a morph track's values by its key count.
 fn uint track_stride(Track* track) @local {
-    return track.times.len ? track.stride() : 0;
+    return track.key_count() ? track.stride() : 0;
 }
 
 fn ClipId add_prepared_clip(AssetStore* store, AnimationClip* clip, String key) @private {

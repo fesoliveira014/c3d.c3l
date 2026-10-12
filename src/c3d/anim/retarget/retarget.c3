@@ -239,24 +239,34 @@ fn uint target_slot(AnimationClip* clip, usz* target_count, uint template_index)
 }
 
 fn Track copy_track(Allocator allocator, Track* source, uint target) @private {
+    uint key_count = source.key_count();
+    usz stride = key_count ? source.stride() : 0;
+    usz slots = source.interpolation == anim::Interpolation.CUBIC_SPLINE ? anim::CUBIC_SLOTS_PER_KEY : 1;
     Track copy = {
         .target        = target,
         .path          = source.path,
         .interpolation = source.interpolation,
-        .times         = alloc::new_array(allocator, float, source.times.len),
-        .values        = alloc::new_array(allocator, float, source.values.len),
+        .times         = alloc::new_array(allocator, float, key_count),
+        .values        = alloc::new_array(allocator, float, (sz)(key_count * slots * stride)),
     };
-    copy.times[..] = source.times[..];
-    copy.values[..] = source.values[..];
+
+    for (uint key = 0; key < key_count; key++) {
+        copy.times[key] = source.key_time(key);
+        for (uint slot = 0; slot < slots; slot++) {
+            usz offset = ((usz)key * slots + slot) * stride;
+            source.read_key(key, slot, copy.values[offset:stride]);
+        }
+    }
     return copy;
 }
 
 fn void strip_xz(Track* track) @private {
     bool cubic = track.interpolation == anim::Interpolation.CUBIC_SPLINE;
-    float[] first = translation_key(track, 0, anim::CUBIC_SLOT_VALUE);
+    float[VEC3_COMPONENTS] first;
+    track.read_key(0, track.value_slot(), first[..]);
     float first_x = first[0];
     float first_z = first[2];
-    foreach (usz key, time : track.times) {
+    for (uint key = 0; key < track.key_count(); key++) {
         float[] value = translation_key(track, key, anim::CUBIC_SLOT_VALUE);
         value[0] = first_x;
         value[2] = first_z;
@@ -278,11 +288,13 @@ fn Track root_track_of(
 ) @private {
     Track track = copy_track(allocator, hips, target);
     bool cubic = track.interpolation == anim::Interpolation.CUBIC_SPLINE;
-    float[] first = translation_key(hips, 0, anim::CUBIC_SLOT_VALUE);
+    float[VEC3_COMPONENTS] first;
+    hips.read_key(0, hips.value_slot(), first[..]);
     float first_x = first[0];
     float first_z = first[2];
-    foreach (usz key, time : track.times) {
-        float[] source = translation_key(hips, key, anim::CUBIC_SLOT_VALUE);
+    for (uint key = 0; key < track.key_count(); key++) {
+        float[VEC3_COMPONENTS] source;
+        hips.read_key(key, hips.value_slot(), source[..]);
         float[] value = translation_key(&track, key, anim::CUBIC_SLOT_VALUE);
         value[0] = rest_position.x + source[0] - first_x;
         value[1] = rest_position.y;
