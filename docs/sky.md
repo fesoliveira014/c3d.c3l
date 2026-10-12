@@ -321,8 +321,8 @@ the slice's depth and over time. Optical depth is analytic and carries no histor
   once instead of fading, and a moving shadow edge lags by about the depth of a slice. The jitter spreads the
   samples along depth, so a still shaft keeps its history inside the range and settles. The volumetric lights other
   than the sun are sampled at a second depth, half a slice on and wrapped into the slice, and averaged, because a
-  lamp's falloff is narrow along depth and a single sample would leave its glow outside the range; the sun and the
-  ambient take one sample.
+  lamp's falloff is narrow along depth and a single sample would leave its glow outside the range. The second
+  sample shares the first one's light list and shadow visibility; the sun and the ambient take one sample.
 - **Rejection.** The history of a view is dropped, and the next frame injects without it, when:
   - `reset_view_history` ran, the view was created or configured (a resize and a `fog_quality` change reallocate
     the volumes), the switch was turned on, or the scene changed;
@@ -344,9 +344,9 @@ the slice's depth and over time. Optical depth is analytic and carries no histor
 - **Cost.** The memory is twice the volume's (see the grid above). `FOG_SCATTERING` adds a reprojection and one
   trilinear read of the history volume per froxel. One thread injects a chunk of `FOG_SCATTERING_CHUNK` slices of
   a column, so it also evaluates the slice just outside each end of the chunk for the clamp, and every quality's
-  slice count is a multiple of the chunk. The lamps' term is evaluated twice per froxel. The CPU hashes the
-  volumetric lights once per frame. `FOG_INTEGRATION` is unchanged but for writing the other volume. A view without
-  the switch runs the plain inject, a separate shader variant with none of this.
+  slice count is a multiple of the chunk. The lamps' falloff is evaluated twice per froxel in one loop over the
+  lights. The CPU hashes the volumetric lights once per frame. `FOG_INTEGRATION` is unchanged but for writing the
+  other volume. A view without the switch runs the plain inject, a separate shader variant with none of this.
 
 ## Clouds
 

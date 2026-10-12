@@ -17,12 +17,20 @@ float fog_phase(float cos_angle, float anisotropy) {
     return (1.0 - squared) / (4.0 * PI * denominator * sqrt(denominator));
 }
 
+// A light's in-scatter toward the camera from one sample point, before shadowing.
+vec3 light_in_scatter(LightSample light_sample, vec3 direction, float anisotropy) {
+    return fog_phase(dot(direction, light_sample.direction), anisotropy) * light_sample.radiance;
+}
+
 // In-scatter of the froxel's volumetric lights other than the sun, by the sun's phase.
 vec3 additional_light_scattering(
     FrameRoot frame,
     SkyFogGpu sky,
     uint sun_light,
     vec3 position,
+#ifdef TEMPORAL
+    vec3 second_position,
+#endif
     vec3 direction,
     float view_depth
 ) {
@@ -36,13 +44,23 @@ vec3 additional_light_scattering(
         if ((light.flags & LIGHT_VOLUMETRIC) == 0u) continue;
 
         LightSample light_sample = sample_light(light, position);
+#ifdef TEMPORAL
+        // A lamp's falloff is narrow along depth: a second sample half a slice on keeps its glow in the clamp's range.
+        // It uses the first sample's cell list and shadow visibility; the narrowness is the falloff, not the shadow.
+        LightSample second_sample = sample_light(light, second_position);
+        if (light_sample.radiance == vec3(0.0) && second_sample.radiance == vec3(0.0)) continue;
+#else
         if (light_sample.radiance == vec3(0.0)) continue;
+#endif
 
         float visibility = 1.0;
         // A froxel has no surface: a zero normal keeps ShadowGpu normal biases out of the sample point.
         if (light_casts_shadow(light)) visibility = shadow_visibility(frame, light, position, vec3(0.0), view_depth);
-        float phase = fog_phase(dot(direction, light_sample.direction), sky.fog_anisotropy);
-        scattered += phase * light_sample.radiance * visibility;
+        vec3 in_scatter = light_in_scatter(light_sample, direction, sky.fog_anisotropy);
+#ifdef TEMPORAL
+        in_scatter = 0.5 * (in_scatter + light_in_scatter(second_sample, direction, sky.fog_anisotropy));
+#endif
+        scattered += in_scatter * visibility;
     }
     return sky.fog_albedo_density.rgb * scattered;
 }
@@ -90,15 +108,17 @@ vec3 slice_inscatter(
         float phase = fog_phase(-dot(direction, sun.direction_cos_outer.xyz), sky.fog_anisotropy);
         radiance += sky.fog_albedo_density.rgb * phase * sun.color_intensity.rgb * sun.color_intensity.w * visibility;
     }
-    vec3 lights = additional_light_scattering(frame, sky, root.sun_light, position, direction, view_depth);
-    if (jittered) {
-        // A lamp's falloff is narrow along depth: a second sample half a slice on keeps its glow in the clamp's range.
-        vec3 second_position = origin + direction * mix(start, far, fract(root.jitter + 0.5));
-        float second_depth = -(frame.view * vec4(second_position, 1.0)).z;
-        lights += additional_light_scattering(frame, sky, root.sun_light, second_position, direction, second_depth);
-        lights *= 0.5;
-    }
-    return radiance + lights;
+    vec3 second_position = origin + direction * mix(start, far, fract(root.jitter + 0.5));
+    if (!jittered) second_position = position;
+    return radiance + additional_light_scattering(
+        frame,
+        sky,
+        root.sun_light,
+        position,
+        second_position,
+        direction,
+        view_depth
+    );
 }
 
 // One column over a chunk of slices. With history, each froxel's reprojected history is clamped to the range of
