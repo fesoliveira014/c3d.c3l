@@ -38,6 +38,11 @@ const float TRIO_SPACING @local = 1.8f;
 const float TRIO_SPIN_RADIANS_PER_SECOND @local = 0.8f;
 const float BOB_HEIGHT @local = 0.8f;
 const float BOB_RADIANS_PER_SECOND @local = 2;
+const uint BAND_ROW @local = GRID_SIDE / 2; // the prop row that bobs: GRID_SIDE of the 99,856 props, contiguous in the batch
+const float BAND_BOB_HEIGHT @local = 0.4f;
+const float BAND_BOB_RADIANS_PER_SECOND @local = 3;
+const float BAND_PHASE_PER_COLUMN @local = 0.1f; // radians
+const double BENCHMARK_FRAMES_PER_SECOND @local = 60; // the benchmark loop's fixed frame time
 const uint GLASS_SIDE @local = 22; // 10,648 blended cubes, the sorted-instance lever; 47 gives 103,823
 const float GLASS_SPACING @local = 0.4f;
 const float GLASS_ALPHA @local = 0.35f;
@@ -48,9 +53,9 @@ const float ORBIT_ZOOM_STEP @local = 0.9f;
 const float ORBIT_DISTANCE_MIN @local = 3;
 const float ORBIT_DISTANCE_MAX @local = 60;
 const Vec2 CONTROLS_PANEL_POSITION @local = { 10, 10 };
-const Vec2 CONTROLS_PANEL_SIZE @local = { 340, 275 };
-const Vec2 STATS_PANEL_POSITION @local = { 10, 285 };
-const Vec2 STATS_PANEL_SIZE @local = { 340, 500 };
+const Vec2 CONTROLS_PANEL_SIZE @local = { 340, 325 };
+const Vec2 STATS_PANEL_POSITION @local = { 10, 335 };
+const Vec2 STATS_PANEL_SIZE @local = { 340, 450 };
 // Tops move at most 0.12, the batch bounds grow by that and per-instance culling stays on.
 const InstanceSway PROP_WIND @local = {
     .direction  = { 1, 0, 0.3f },
@@ -92,6 +97,14 @@ struct Batches @local {
 struct BenchmarkOptions @local {
     BenchmarkFlags flags;
     bool           fade_field;
+    bool           edit_band;
+    bool           whole_publication;
+}
+
+struct BandEdit @local {
+    Scene*   scene;
+    Batches* batches;
+    bool     whole_publication;
 }
 
 struct Controls @local {
@@ -103,6 +116,8 @@ struct Controls @local {
     bool fade;
     bool glass;
     bool taa;
+    bool band;
+    bool whole_publication;
     bool picked;
     String pick_name;
     uint pick_instance;
@@ -378,6 +393,38 @@ fn void animate(Scene* scene, Batches* batches, double time) @local {
     scene.mark_instances_dirty(batches.trio);
 }
 
+fn void animate_band(
+    Scene* scene,
+    Node* props,
+    double time,
+    bool whole_publication,
+) @local {
+    InstancedMesh* batch = scene.get(props, InstancedMesh);
+    uint first = BAND_ROW * GRID_SIDE;
+    for (uint column = 0; column < GRID_SIDE; column++) {
+        float phase = (float)time * BAND_BOB_RADIANS_PER_SECOND + column * BAND_PHASE_PER_COLUMN;
+        batch.transforms[first + column].position.y = BAND_BOB_HEIGHT * (0.5f + 0.5f * math::sin(phase));
+    }
+
+    if (whole_publication) {
+        scene.mark_instances_dirty(props);
+    } else {
+        scene.mark_instances_range_dirty(props, first, GRID_SIDE);
+    }
+}
+
+fn void edit_each_frame(void* user, uint frame) @local {
+    BandEdit* edit = user;
+    double time = (double)frame / BENCHMARK_FRAMES_PER_SECOND;
+    animate(edit.scene, edit.batches, time);
+    animate_band(
+        scene:             edit.scene,
+        props:             edit.batches.props,
+        time:              time,
+        whole_publication: edit.whole_publication,
+    );
+}
+
 fn void pick_under_cursor(
     AssetStore* assets,
     Scene* scene,
@@ -425,6 +472,8 @@ fn bool draw_controls(Controls* controls, Scene* scene, Batches* batches) @local
     if (imgui::begin("Instancing", null, {})) {
         imgui::text("Right drag orbits, wheel zooms, left click picks");
         imgui::checkbox("Animate", &controls.animate);
+        imgui::checkbox("Bob a prop row (B)", &controls.band);
+        imgui::checkbox("Publish the whole batch (U)", &controls.whole_publication);
         changed |= imgui::checkbox("Motion blur", &controls.motion_blur);
         changed |= imgui::checkbox("TAA", &controls.taa);
         changed |= imgui::checkbox("Deferred shading", &controls.deferred);
@@ -478,13 +527,13 @@ fn void? run(
     AssetStore* assets,
     Scene* scene,
     ShaderId pulse_shader,
-    bool fade_field,
+    BenchmarkOptions options,
 ) @local {
     Batches batches = build_scene(
         assets:       assets,
         scene:        scene,
         pulse_shader: pulse_shader,
-        fade_field:   fade_field,
+        fade_field:   options.fade_field,
     )!;
     Orbit orbit = ORBIT_START;
     Node* camera_node = add_orbit_camera(scene, &orbit)!;
@@ -492,7 +541,13 @@ fn void? run(
 
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
-    Controls controls = { .animate = true, .culling = true, .glass = true };
+    Controls controls = {
+        .animate           = true,
+        .culling           = true,
+        .glass             = true,
+        .band              = options.edit_band,
+        .whole_publication = options.whole_publication,
+    };
     render::configure_view(renderer, renderer.default_view, view_desc_of(&controls))!;
     renderer.prepare_scene(scene)!;
 
@@ -509,7 +564,19 @@ fn void? run(
         imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         gui::stats_panel(renderer)!;
 
+        if (input.key_pressed(platform::Scancode.B) && !input.keyboard_captured_by_gui) controls.band = !controls.band;
+        if (input.key_pressed(platform::Scancode.U) && !input.keyboard_captured_by_gui) {
+            controls.whole_publication = !controls.whole_publication;
+        }
         if (controls.animate) animate(scene, &batches, window.clock.total);
+        if (controls.band) {
+            animate_band(
+                scene:             scene,
+                props:             batches.props,
+                time:              window.clock.total,
+                whole_publication: controls.whole_publication,
+            );
+        }
         apply_orbit(&orbit, input, camera_node);
         batches.glass.visible = controls.glass;
         scene.update_world();
@@ -547,6 +614,13 @@ fn BenchmarkOptions? parse_options(String[] args) @local {
             target: "instancing",
         )!;
         if (common_option) continue;
+        if (args[index] == "--instance-edit") {
+            if (++index == args.len) return c3d::INVALID_ARGUMENT~;
+            if (args[index] != "range" && args[index] != "whole") return c3d::INVALID_ARGUMENT~;
+            options.edit_band = true;
+            options.whole_publication = args[index] == "whole";
+            continue;
+        }
         if (args[index] != "--fade-field") return c3d::INVALID_ARGUMENT~;
         options.fade_field = true;
     }
@@ -568,7 +642,8 @@ fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkFlags flags) @local {
 
 fn void print_banner(BenchmarkOptions options, bool timestamps_active) @local {
     BenchmarkFlags flags = options.flags;
-    io::eprintfn("fade_field=%s cells=%d props=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s",
+    io::eprintfn("instance_edit=%s fade_field=%s cells=%d props=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s",
+        options.edit_band ? (options.whole_publication ? "whole" : "range") : "none",
         options.fade_field, options.fade_field ? FIELD_SIDE * FIELD_SIDE : 0, GRID_SIDE * GRID_SIDE,
         flags.width, flags.height, flags.warmup, flags.frames, flags.validation, flags.gpu_timings, timestamps_active,
         flags.capture, flags.window ? "window" : "none", flags.panel, flags.depth_prepass,
@@ -582,7 +657,7 @@ fn void? run_benchmark(BenchmarkOptions options) @local {
     ShaderId pulse_shader = add_pulse_shader(&assets)!;
     Scene scene = scene::create_scene(mem, scene::default_scene_desc());
     defer scene::destroy_scene(&scene);
-    build_scene(
+    Batches batches = build_scene(
         assets:       &assets,
         scene:        &scene,
         pulse_shader: pulse_shader,
@@ -590,6 +665,11 @@ fn void? run_benchmark(BenchmarkOptions options) @local {
     )!;
     Orbit orbit = ORBIT_START;
     BenchmarkRun run = { .scene = &scene, .camera_node = add_orbit_camera(&scene, &orbit)! };
+    BandEdit edit = { .scene = &scene, .batches = &batches, .whole_publication = options.whole_publication };
+    if (options.edit_band) {
+        run.before_frame = &edit_each_frame;
+        run.before_frame_user = &edit;
+    }
     scene.update_world();
     FrameSample[] samples = alloc::new_array(mem, FrameSample, flags.frames);
     defer alloc::free(mem, samples.ptr);
@@ -695,7 +775,7 @@ fn void? run_example(BenchmarkOptions options) @local {
         assets:       &assets,
         scene:        &scene,
         pulse_shader: pulse_shader,
-        fade_field:   options.fade_field,
+        options:      options,
     );
 }
 
@@ -705,7 +785,7 @@ fn int main(String[] args) {
     if (catch excuse = parsed) {
         if (excuse != c3d::UNSUPPORTED) {
             io::eprintfn("Invalid options: %s", excuse);
-            io::eprintn("Use [--fade-field] [--gpu-timings] or --benchmark [--fade-field] --frames N --warmup N --width N --height N [--anti-aliasing none|fxaa|taa] [--ambient-occlusion none|half|full] [--depth-prepass on|off] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
+            io::eprintn("Use [--fade-field] [--instance-edit range|whole] [--gpu-timings] or --benchmark [--fade-field] [--instance-edit range|whole] --frames N --warmup N --width N --height N [--anti-aliasing none|fxaa|taa] [--ambient-occlusion none|half|full] [--depth-prepass on|off] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
         }
         return 1;
     }
