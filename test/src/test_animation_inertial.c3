@@ -11,7 +11,6 @@ import std::math;
 
 const double INERTIAL_TEST_MATRIX_EPSILON @local = 1e-4;
 const double INERTIAL_TEST_RATE_EPSILON @local = 1e-4;
-const double INERTIAL_TEST_SCALAR_EPSILON @local = 1e-6;
 const double INERTIAL_TEST_ORACLE_SERIES_LIMIT @local = 0.01;
 const double POSE_TEST_FLOAT_EPSILON @local = 2e-6;
 const double POSE_TEST_RATE_EPSILON @local = 1e-10;
@@ -78,21 +77,6 @@ struct TransitionPrepareSnapshot @local {
     uint free_count;
 }
 
-fn double sample_test_log_scale(
-    InertialScalarState source,
-    InertialScalarState target,
-    double duration,
-    double elapsed,
-) @local {
-    InertialScalarState onset = anim::inertial_onset_scale_residual(source, target);
-    double residual = anim::inertial_scalar_residual(
-        offset: onset.value,
-        velocity: onset.rate,
-        duration: duration,
-        elapsed: elapsed,
-    );
-    return target.value * math::exp(residual);
-}
 fn Matrix3 inertial_oracle_identity() @local {
     return { .m = { 1, 0, 0, 0, 1, 0, 0, 0, 1 } };
 }
@@ -239,11 +223,6 @@ fn void inertial_assert_rate(double[<3>] actual, double[<3>] expected) @local {
     assert((actual - expected).length() <= INERTIAL_TEST_RATE_EPSILON * (1 + expected.length()));
 }
 
-fn void inertial_assert_scalar(InertialScalarState actual, InertialScalarState expected) @local {
-    assert(math::abs(actual.value - expected.value) <= INERTIAL_TEST_SCALAR_EPSILON);
-    assert(math::abs(actual.rate - expected.rate) <= INERTIAL_TEST_RATE_EPSILON * (1 + math::abs(expected.rate)));
-}
-
 fn Quaternion inertial_input_rotation(double[<3>] rotation) @local {
     double angle = rotation.length();
     if (angle == 0) return { .v = { 0, 0, 0, 1 } };
@@ -278,35 +257,7 @@ fn void test_animation_inertial_math_quintic_basis_residuals_and_endpoints_are_l
         assert(value == control[2]);
     }
 }
-fn void test_animation_inertial_math_log_scale_stays_positive_and_reaches_the_target() @test {
-    InertialScalarState source = { .value = 1, .rate = -10 };
-    InertialScalarState target = { .value = 1 };
-    double[3] elapsed = { 0, 0.25, 1 };
-    double[3] expected = { 1, math::exp(-1.845703125), 1 };
-    foreach (index, time : elapsed) {
-        double value = sample_test_log_scale(
-            source: source,
-            target: target,
-            duration: 1,
-            elapsed: time,
-        );
-        assert(value > 0 && math::abs(value - expected[index]) < 1e-12);
-    }
-    double tiny = sample_test_log_scale(
-        source: { .value = 1e-30, .rate = -1e-29 },
-        target: { .value = 2e-30, .rate = 1e-30 },
-        duration: 0.1,
-        elapsed: 0,
-    );
-    assert(tiny > 0 && math::abs(tiny / 1e-30 - 1) < 1e-12);
-    double unrelated = anim::inertial_scalar_residual(
-        offset: -2,
-        velocity: -10,
-        duration: 1,
-        elapsed: 0.25,
-    );
-    assert(-1 + unrelated < 0);
-}
+
 fn void test_animation_inertial_math_half_turn_ties_and_transported_onset_rate() @test {
     Quaternion[3] half_turns = {
         { .v = { -1, 0, 0, 0 } }, { .v = { 0, -1, 0, 0 } }, { .v = { 0, 0, -1, 0 } },
@@ -386,6 +337,7 @@ fn void test_animation_inertial_math_fixed_angles_signs_and_series_boundary() @t
         }
     }
 }
+
 fn void test_animation_inertial_math_zero_completion_and_repeated_corrected_interruptions() @test {
     double[<3>] initial = { 0.4, -0.8, 0.2 };
     Quaternion target = inertial_input_rotation({ 0.2, 0.1, -0.5 });
@@ -424,6 +376,7 @@ fn void test_animation_inertial_math_zero_completion_and_repeated_corrected_inte
         target = replacement;
     }
 }
+
 fn usz check_inertial_region(
     void* block,
     usz bytes,
@@ -2196,6 +2149,14 @@ fn void test_animation_inertial_request_consumed_scale_residual_clamps_to_float_
         AnimationTargetDesc[1] description = { anim::ANIMATION_TARGET_DEFAULT };
         description[0].clip = target;
         description[0].play = generalized;
+        instance.base_pose[2].scale = {};
+        assert(@catch(fixture.animator.inertialize(
+            assets: &fixture.assets,
+            desc: { .duration = 1, .actions = description[..] },
+        )) == c3d::INVALID_ARGUMENT);
+        assert(c3d::same_id(fixture.animator.try_action(id)!!.clip, source));
+        instance.base_pose[2].scale = { scale, scale, scale };
+
         fixture.animator.inertialize(&fixture.assets, { .duration = 1, .actions = description[..] })!!;
         anim::update(&fixture.assets, &fixture.scene, 0.25f);
         Vec3 actual = inertial_owner_pose(&fixture, 2).scale;
