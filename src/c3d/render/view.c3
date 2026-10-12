@@ -1200,6 +1200,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
                 depth:       casts || prepass,
                 instanced:   true,
                 crowd:       part.crowd != null && part.crowd.parts[part.crowd_part].skinned,
+                crowd_part:  part.crowd != null,
             )!;
             sheen |= prepared.sheen;
             scene_reads |= prepared.scene_reads;
@@ -1327,6 +1328,7 @@ fn MeshPreparation? prepare_mesh(
     bool instanced = false,
     bool crowd = false,
     bool skinned = true,
+    bool crowd_part = false,
 ) @private {
     if (!renderer.assets.geometries.is_live(geometry_id) || !renderer.assets.materials.is_live(material_id)) {
         renderer.stats.dangling_refs++;
@@ -1361,6 +1363,7 @@ fn MeshPreparation? prepare_mesh(
             instanced: instanced,
             crowd: crowd,
             skinned: skinned,
+            crowd_part: crowd_part,
         );
         acquire_prepare_pipelines(renderer, requests.array_view())!;
     };

@@ -6,18 +6,19 @@ import c3d::shader;
 import gpu;
 import std::collections::list;
 import std::collections::map;
+import std::math;
 
 <*
- Resident bytes of posed buffers above which a deformed mesh keeps vertex skinning.
+ Resident bytes of posed buffers above which a deformed mesh or crowd part keeps vertex skinning.
 *>
-const usz MAX_COMPUTE_SKINNING_BYTES = 512 * 1024 * 1024; // vertex_count * 52 B a mesh; the example character 0.31 MB
+const usz MAX_COMPUTE_SKINNING_BYTES = 512 * 1024 * 1024; // vertex_count * 52 B a mesh, times capacity a crowd part; the example character 0.31 MB, 1,740 instances
 
 <*
- Meshes compute skinning poses at once; one past it keeps vertex skinning.
+ Meshes and crowd parts compute skinning poses at once; one past it keeps vertex skinning.
 *>
-const uint MAX_COMPUTE_SKINNING_MESHES = 2048; // one device allocation slot per mesh, of the 4,096 the renderer shares
+const uint MAX_COMPUTE_SKINNING_MESHES = 2048; // one device allocation slot per binding, of the 4,096 the renderer shares
 
-const uint POSED_BLOCKS @private = 2; // current and previous pose of one mesh
+const uint POSED_BLOCKS @private = 2; // current and previous pose of one binding
 
 struct PosedDraw @private {
     gpu::GpuAddress root;      // posed block when active, else the rest block
@@ -29,6 +30,7 @@ struct PosedDraw @private {
 struct SkinDispatch @private {
     gpu::GpuAddress root;
     uint            vertex_count;
+    uint            sources;    // live instances a crowd part poses; 0 for a single mesh
     bool            joints_u16;
 }
 
@@ -39,10 +41,11 @@ struct ComputeSkinBinding @private {
     gpu::GpuAddress               source_root;  // rest block the posed roots point into
     usz                           bytes;
     ulong                         committed;
+    ulong                         identity;     // crowd playback identity the previous pose belongs to; 0 for a mesh
     uint                          current;      // block this frame's pose is written to
     bool                          roots_staged; // false re-copies the roots into the blocks
     bool                          resolved;
-    gpu::GpuAllocation            allocation;   // both blocks: a device allocation slot per mesh
+    gpu::GpuAllocation            allocation;   // both blocks: a device allocation slot per binding
     gpu::GpuAddress[POSED_BLOCKS] roots;
     PosedDraw                     draw;         // this frame's answer
 }
@@ -55,11 +58,13 @@ struct ComputeSkinTable @private {
     List{uint}                     vacant;
     List{uint}                     resolved;   // bindings claimed by the open frame
     List{SkinDispatch}             dispatches; // poses staged and not yet recorded
+    gpu::PipelineHandle            crowd_pipeline;
+    gpu::PipelineHandle            crowd_u16_pipeline;
     usz                            bytes;
 }
 
 <*
- Choose whether deformed meshes pose in a compute pass; applies from the next frame.
+ Choose whether deformed meshes and crowd parts pose in a compute pass; applies from the next frame.
 *>
 fn void Renderer.set_compute_skinning(&self, bool enabled) {
     self.compute_skinning = enabled;
@@ -79,6 +84,8 @@ fn void free_compute_skin(Renderer* renderer) @private {
         if (binding.allocation.is_valid()) (void)gpu::free_allocation(&renderer.device, &binding.allocation);
     }
     if (table.bindings.len) alloc::free(table.allocator, table.bindings.ptr);
+    if (table.crowd_pipeline.is_valid()) (void)gpu::destroy_pipeline(&renderer.device, table.crowd_pipeline);
+    if (table.crowd_u16_pipeline.is_valid()) (void)gpu::destroy_pipeline(&renderer.device, table.crowd_u16_pipeline);
     table.lookup.free();
     table.vacant.free();
     table.resolved.free();
@@ -133,11 +140,14 @@ fn uint? ComputeSkinTable.bind(&self, PosedTraceKey key) {
     return index;
 }
 
-// A mesh outside compute skinning, or past either cap, answers its rest root; each such claim counts a fallback.
+// A mesh past either cap answers its rest root and counts a fallback; one outside compute skinning counts none.
+// Animated LOD parts stay out because one binding posing every source at every level would undo the savings of
+// the levels, and a crowd part with a custom vertex stage because that stage reads the root without a source slot.
 fn PosedDraw? claim_posed_draw(Renderer* renderer, MeshCandidate* candidate, GpuGeometry* geometry) @private {
     PosedDraw rest = { .root = geometry.root };
-    if (!renderer.frame_compute_skinning || candidate_instanced(candidate) || candidate.animated_lod
-      || candidate.crowd || candidate.impostor || candidate.vertex_motion) return rest;
+    if (!renderer.frame_compute_skinning || candidate.animated_lod || candidate.impostor || candidate.vertex_motion
+      || (candidate_instanced(candidate) && !candidate.crowd)) return rest;
+    if (candidate.crowd && custom_vertex_stage(renderer.assets, candidate_material(renderer, candidate))) return rest;
 
     ShaderVariant deformed = candidate_vertex_variant(geometry.layout.flags, candidate);
     uint deformation = shader::SHADER_FLAG_SKINNED | shader::SHADER_FLAG_SKINNED_U16 | shader::SHADER_FLAG_MORPH;
@@ -170,12 +180,16 @@ fn PosedDraw? stage_posed_draw(
     ShaderVariant deformed,
 ) @local {
     ComputeSkinTable* table = &renderer.compute_skin;
-    PosedLayout layout = posed_layout(&geometry.layout);
+    AnimatedCrowd* crowd = candidate.crowd;
+    uint sources = crowd ? (uint)crowd.placements.len : 1;
+    PosedLayout layout = posed_layout(&geometry.layout, sources);
     usz second_block = align_up(layout.total_bytes, STREAM_ALIGNMENT);
-    usz needed = second_block + layout.positions + PACKED_VEC3_BYTES * geometry.layout.vertex_count;
+    usz needed = second_block + layout.positions + PACKED_VEC3_BYTES * geometry.layout.vertex_count * sources;
     if (binding.bytes != needed) {
         retire_skin_blocks(table, binding, &renderer.pending_upload_retire);
-        if (table.bytes + needed > MAX_COMPUTE_SKINNING_BYTES) return { .root = geometry.root };
+        // A crowd part poses its sources in one dispatch row each.
+        if (table.bytes + needed > MAX_COMPUTE_SKINNING_BYTES
+          || sources > renderer.caps.max_compute_work_group_count.y) return { .root = geometry.root };
 
         gpu::AllocationDesc desc = {
             .size         = needed,
@@ -196,23 +210,40 @@ fn PosedDraw? stage_posed_draw(
         binding.current = 0;
     }
 
+    // Every replacement of a crowd's instances renews the identity; the previous block then holds other sources' poses.
+    ulong identity = crowd ? crowd.playback.identity : 0;
+    if (binding.identity != identity) {
+        binding.identity = identity;
+        binding.committed = 0;
+    }
+
     bool rest_moved = binding.source_root != geometry.root || !c3d::same_id(binding.geometry, geometry.asset);
-    if (!binding.roots_staged || rest_moved) stage_posed_roots(renderer, binding, geometry, layout)!;
+    if (!binding.roots_staged || rest_moved) {
+        stage_posed_roots(
+            renderer: renderer,
+            binding:  binding,
+            geometry: geometry,
+            layout:   layout,
+            sources:  sources,
+        )!;
+    }
 
     gpu::GpuAddress palette = deformed.flags & (shader::SHADER_FLAG_SKINNED | shader::SHADER_FLAG_SKINNED_U16)
       ? resolve_candidate_skin(renderer, candidate)! : (gpu::GpuAddress)0;
     Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan pose = frame.upload.take(&renderer.device, TracePoseRoot::size, STREAM_ALIGNMENT)!;
     *(TracePoseRoot*)pose.bytes.ptr = {
-        .source  = geometry.root,
-        .posed   = binding.roots[binding.current],
-        .palette = palette,
-        .morph   = resolve_candidate_morph(renderer, candidate, deformed)!,
+        .source         = geometry.root,
+        .posed          = binding.roots[binding.current],
+        .palette        = palette,
+        .morph          = resolve_candidate_morph(renderer, candidate, deformed)!,
+        .palette_joints = crowd ? crowd.joint_count : 0,
     };
 
     table.dispatches.push({
         .root         = pose.address,
         .vertex_count = geometry.layout.vertex_count,
+        .sources      = crowd ? crowd.count : 0,
         .joints_u16   = geometry.layout.flags.joints_u16,
     });
     renderer.stats.compute_skinned++;
@@ -232,6 +263,7 @@ fn void? stage_posed_roots(
     ComputeSkinBinding* binding,
     GpuGeometry* geometry,
     PosedLayout layout,
+    uint sources,
 ) @local {
     Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan staging = frame.upload.take(
@@ -241,7 +273,12 @@ fn void? stage_posed_roots(
     )!;
 
     GeometryRoot* roots = (GeometryRoot*)staging.bytes.ptr;
-    roots[0] = posed_geometry_root(&geometry.layout, geometry.root, binding.roots[0]);
+    roots[0] = posed_geometry_root(
+        source:  &geometry.layout,
+        base:    geometry.root,
+        posed:   binding.roots[0],
+        sources: sources,
+    );
     roots[1] = roots[0];
     roots[1].positions = binding.roots[1] + (gpu::GpuAddress)layout.positions;
 
@@ -264,8 +301,23 @@ fn void? record_compute_skin(Renderer* renderer, gpu::CommandList* commands) @pr
     ComputeSkinTable* table = &renderer.compute_skin;
     if (!table.dispatches.len()) return;
 
-    acquire_compute_slot(renderer, ComputeSlot.TRACE_POSE)!;
-    acquire_compute_slot(renderer, ComputeSlot.TRACE_POSE_U16)!;
+    bool meshes;
+    bool crowds;
+    foreach (&dispatch : table.dispatches) {
+        if (dispatch.sources) {
+            crowds = true;
+        } else {
+            meshes = true;
+        }
+    }
+    if (meshes) {
+        acquire_compute_slot(renderer, ComputeSlot.TRACE_POSE)!;
+        acquire_compute_slot(renderer, ComputeSlot.TRACE_POSE_U16)!;
+    }
+    if (crowds) {
+        acquire_compute_slot(renderer, ComputeSlot.TRACE_POSE_INSTANCED)!;
+        acquire_compute_slot(renderer, ComputeSlot.TRACE_POSE_INSTANCED_U16)!;
+    }
     bool profiled = renderer.frame_open;
     if (profiled) begin_profile_pass(renderer, Pass.COMPUTE_SKIN)!;
 
@@ -273,10 +325,9 @@ fn void? record_compute_skin(Renderer* renderer, gpu::CommandList* commands) @pr
     gpu::cmd_barrier(commands, &readers_done)!;
 
     foreach (&dispatch : table.dispatches) {
-        PosedTraceTable* pipelines = &renderer.posed_trace;
-        gpu::cmd_bind_pipeline(commands, dispatch.joints_u16 ? pipelines.pose_u16_pipeline : pipelines.pose_pipeline)!;
+        gpu::cmd_bind_pipeline(commands, skin_pipeline(renderer, dispatch))!;
         uint groups = (dispatch.vertex_count + shader::TRACE_POSE_GROUP_SIZE - 1) / shader::TRACE_POSE_GROUP_SIZE;
-        gpu::cmd_dispatch(commands, dispatch.root, { groups, 1, 1 })!;
+        gpu::cmd_dispatch(commands, dispatch.root, { groups, math::max(dispatch.sources, 1u), 1 })!;
     }
 
     gpu::Barrier posed = { .before = { .compute }, .after = { .vertex_shader } };
@@ -285,6 +336,16 @@ fn void? record_compute_skin(Renderer* renderer, gpu::CommandList* commands) @pr
     table.dispatches.clear();
     renderer.work_recorded = true;
     if (profiled) end_profile_pass(renderer, Pass.COMPUTE_SKIN)!;
+}
+
+fn gpu::PipelineHandle skin_pipeline(Renderer* renderer, SkinDispatch* dispatch) @local {
+    if (dispatch.sources) {
+        ComputeSkinTable* crowds = &renderer.compute_skin;
+        return dispatch.joints_u16 ? crowds.crowd_u16_pipeline : crowds.crowd_pipeline;
+    }
+
+    PosedTraceTable* meshes = &renderer.posed_trace;
+    return dispatch.joints_u16 ? meshes.pose_u16_pipeline : meshes.pose_pipeline;
 }
 
 fn void commit_compute_skin(Renderer* renderer, ulong frame) @private {

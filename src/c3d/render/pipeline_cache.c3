@@ -29,6 +29,8 @@ enum ComputeSlot @private {
     CLUSTER,
     TRACE_POSE,
     TRACE_POSE_U16,
+    TRACE_POSE_INSTANCED,
+    TRACE_POSE_INSTANCED_U16,
     TRACE_REFIT,
     SSAO,
     RT_AO,
@@ -156,6 +158,12 @@ fn ComputeSlotTarget compute_slot_target(Renderer* renderer, ComputeSlot slot) @
             .shader = TRACE_POSE, .debug_name = "trace_pose" };
         case TRACE_POSE_U16: return { .pipeline = &renderer.posed_trace.pose_u16_pipeline,
             .shader = TRACE_POSE, .flags = shader::SHADER_FLAG_SKINNED_U16, .debug_name = "trace_pose_u16" };
+        case TRACE_POSE_INSTANCED: return { .pipeline = &renderer.compute_skin.crowd_pipeline,
+            .shader = TRACE_POSE, .flags = shader::SHADER_FLAG_INSTANCED, .debug_name = "trace_pose_instanced" };
+        case TRACE_POSE_INSTANCED_U16: return { .pipeline = &renderer.compute_skin.crowd_u16_pipeline,
+            .shader = TRACE_POSE,
+            .flags = shader::SHADER_FLAG_INSTANCED | shader::SHADER_FLAG_SKINNED_U16,
+            .debug_name = "trace_pose_instanced_u16" };
         case TRACE_REFIT: return { .pipeline = &renderer.posed_trace.refit_pipeline,
             .shader = TRACE_REFIT, .debug_name = "trace_refit" };
         case SSAO: return { .pipeline = &renderer.ambient_occlusion_pipelines.ssao,
