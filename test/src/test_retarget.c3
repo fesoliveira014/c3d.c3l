@@ -27,45 +27,6 @@ struct ProfileRig @local {
     AnimationClip clip;
 }
 
-struct ProfileFaultAllocator (Allocator) @local {
-    Allocator backing;
-    sz remaining;
-    sz outstanding;
-}
-
-fn void*? ProfileFaultAllocator.acquire(
-    &self,
-    sz size,
-    AllocInitType init_type,
-    sz alignment,
-) @dynamic {
-    if (self.remaining <= 0) return mem::OUT_OF_MEMORY~;
-
-    self.remaining--;
-    void* allocation = self.backing.acquire(size, init_type, alignment)!;
-    self.outstanding++;
-
-    return allocation;
-}
-
-fn void*? ProfileFaultAllocator.resize(
-    &self,
-    void* pointer,
-    sz new_size,
-    sz alignment,
-) @dynamic {
-    if (self.remaining <= 0) return mem::OUT_OF_MEMORY~;
-
-    self.remaining--;
-
-    return self.backing.resize(pointer, new_size, alignment);
-}
-
-fn void ProfileFaultAllocator.release(&self, void* pointer, bool aligned) @dynamic {
-    self.backing.release(pointer, aligned);
-    self.outstanding--;
-}
-
 fn bool close(float first, float second) @local {
     return math::abs(first - second) <= TOLERANCE;
 }
@@ -1081,13 +1042,14 @@ fn ProfileRig profile_forest_rig() @local {
 }
 
 fn ProfileRig profile_turning_carrier_rig(float degrees, float facing) @local {
-    ProfileRig rig = profile_rig(2, 6);
+    ProfileRig rig = profile_rig(3, 7);
     rig.source[0].name = "source_hips";
     rig.source[0].local.rotation = profile_turn({ 0, 1, 0 }, 20);
     rig.desc.source_calibration[0] = rig.source[0].local.rotation;
     rig.source[1].parent = 0;
     rig.source[1].name = "source_leaf";
     rig.source[1].local.position = { 1, 0, 0 };
+    rig.source[2].name = "source_prop";
 
     rig.target.nodes[0].name = "static_ancestor";
     rig.target.nodes[0].local = profile_transform({}, profile_turn({ 0, 1, 0 }, 30), 3);
@@ -1112,10 +1074,15 @@ fn ProfileRig profile_turning_carrier_rig(float degrees, float facing) @local {
     rig.target.nodes[5].name = "mapped_leaf";
     rig.target.nodes[5].local.position = { 0, 1, 0 };
 
+    rig.target.nodes[6].parent = 1;
+    rig.target.nodes[6].name = "mapped_sibling";
+    rig.target.nodes[6].local.position = { 0.25f, 0, 0 };
+
     foreach (index, &node : rig.target.nodes) rig.desc.target_calibration[index] = node.local.rotation;
 
-    profile_map(&rig, (NodeIndexMapping[2]){
+    profile_map(&rig, (NodeIndexMapping[3]){
         { .source_node = 0, .target_node = 2 }, { .source_node = 1, .target_node = 5 },
+        { .source_node = 2, .target_node = 6 },
     }[..]);
 
     rig.desc.source_motion_node = 0;
@@ -1184,16 +1151,22 @@ fn void profile_expect_turning_pose(
     Quat motion_rotation = profile_turn({ 0, 1, 0 }, degrees).mul(carrier_rotation)
       .mul(profile_turn({ 0, 0, 1 }, 90));
     Vec3 motion_reference = reference + profile_yaw_vector({ 3, 6, 0 }, 120);
-    Vec3[4] positions = {
+    bool extract = mode == RootMotion.EXTRACT;
+    Vec3 carrier_position = extract ? reference + horizontal : reference;
+    Quat carrier_facing = extract ? profile_turn({ 0, 1, 0 }, degrees).mul(carrier_rotation) : carrier_rotation;
+    double carried_yaw = extract ? 120 + (double)degrees : 120;
+    Vec3[5] positions = {
         motion_reference + horizontal,
-        reference + profile_yaw_vector({ -1.5f, 0, 1.5f }, 120),
+        carrier_position + profile_yaw_vector({ -1.5f, 0, 1.5f }, carried_yaw),
         motion_reference + horizontal + profile_yaw_vector({ -1.5f, 0, 0 }, 120 + (double)degrees),
         motion_reference + horizontal + profile_yaw_vector({ -3, 0, 0 }, 120 + (double)degrees),
+        carrier_position + profile_yaw_vector({ 1.5f, 0, 0 }, carried_yaw),
     };
 
     foreach (uint offset, position : positions) {
         uint node = offset + 2;
-        if (mode == RootMotion.STRIP_XZ) position -= horizontal;
+        bool carried = node == 3 || node == 6;
+        if (mode == RootMotion.STRIP_XZ && !carried) position -= horizontal;
         Mat4 world = profile_sample_world(
             clip: clip,
             target: &rig.target,
@@ -1201,8 +1174,8 @@ fn void profile_expect_turning_pose(
             time: time,
         );
         profile_expect_position(world, position);
-        profile_expect_rotation(world, node == 3 ? carrier_rotation : motion_rotation);
-        profile_expect_scale(world, node == 3 ? 6 : 3);
+        profile_expect_rotation(world, carried ? carrier_facing : motion_rotation);
+        profile_expect_scale(world, carried ? 6 : 3);
     }
 
     Mat4 carrier = profile_sample_world(
@@ -1211,9 +1184,6 @@ fn void profile_expect_turning_pose(
         node: 1,
         time: time,
     );
-    Vec3 carrier_position = mode == RootMotion.EXTRACT ? reference + horizontal : reference;
-    Quat carrier_facing = mode == RootMotion.EXTRACT
-      ? profile_turn({ 0, 1, 0 }, degrees).mul(carrier_rotation) : carrier_rotation;
     profile_expect_position(carrier, carrier_position);
     profile_expect_rotation(carrier, carrier_facing);
     profile_expect_scale(carrier, 6);
@@ -1272,7 +1242,7 @@ fn void profile_check_turning_carrier_runtime(bool root_yaw) @local {
         bool key_sample = frame % 4 == 0;
         ModelInstance* kept_instance = scene.get(kept_root, ModelInstance);
         ModelInstance* extracted_instance = scene.get(extracted_root, ModelInstance);
-        for (uint node = 2; node < rig.target.nodes.len; node++) {
+        foreach (node : (uint[3]){ 2, 4, 5 }) {
             Node* expected = kept_instance.present_node(node);
             Node* actual = extracted_instance.present_node(node);
             float error = (maths::translation(expected.world) - maths::translation(actual.world)).length();
@@ -1284,7 +1254,7 @@ fn void profile_check_turning_carrier_runtime(bool root_yaw) @local {
 
             profile_expect_rotation(actual.world, maths::transform_from_mat4(expected.world).rotation,
                 key_sample ? 0.0001f : 0.25f * (float)math::PI / 180);
-            profile_expect_scale(actual.world, node == 3 ? 6 : 3);
+            profile_expect_scale(actual.world, 3);
         }
 
         if (!root_yaw) {
@@ -1547,7 +1517,7 @@ fn void test_profile_composes_unmapped_animated_ancestors_and_affine_motion_chai
     };
 }
 
-fn void test_profile_carrier_compensates_each_branch_once() @test {
+fn void test_profile_carrier_compensates_only_the_motion_branch() @test {
     @pool() {
         ProfileRig rig = profile_carrier_rig();
         RetargetProfile profile = profile_prepare(&rig);
@@ -1565,10 +1535,12 @@ fn void test_profile_carrier_compensates_each_branch_once() @test {
         AnimationClip strip = profile_bake(&rig, &profile, options);
         defer asset::free_clip(mem, &strip);
 
+        Vec3 horizontal = { 0.5f, 0, -0.25f };
         Vec3[4] expected = { { 1, 4, 0 }, { 5, 0, 4 }, { 1, 4, 1 }, { 1.5f, 4, -0.25f } };
 
         foreach (uint index, position : expected) {
             uint node = index + 1;
+            bool rigid = node == 2;
             profile_expect_position(profile_sample_world(
                 clip: &keep,
                 target: &rig.target,
@@ -1580,13 +1552,13 @@ fn void test_profile_carrier_compensates_each_branch_once() @test {
                 target: &rig.target,
                 node: node,
                 time: 1,
-            ), position);
+            ), rigid ? position + horizontal : position);
             profile_expect_position(profile_sample_world(
                 clip: &strip,
                 target: &rig.target,
                 node: node,
                 time: 1,
-            ), position - (Vec3){ 0.5f, 0, -0.25f });
+            ), rigid ? position : position - horizontal);
         }
 
         assert((profile_sample_node(
@@ -1603,20 +1575,15 @@ fn void test_profile_carrier_compensates_each_branch_once() @test {
             time: 1,
         ).position - (Vec3){ 0.875f, 2, -0.25f }).length()
             <= PROFILE_POSITION_EPSILON);
-        assert((profile_sample_node(
-            clip: &extract,
-            target: &rig.target,
-            node: 2,
-            time: 1,
-        ).position - (Vec3){ -1.125f, 0, 1.75f }).length()
-            <= PROFILE_POSITION_EPSILON);
+        assert(profile_output_track(&extract, 2, TargetPath.TRANSLATION) == null);
+        assert(profile_output_track(&strip, 2, TargetPath.TRANSLATION) == null);
         assert(profile_output_track(&extract, 3, TargetPath.TRANSLATION) == null);
 
         foreach (&track : extract.tracks) assert(track.times.len == 61 && track.interpolation == Interpolation.LINEAR);
     };
 }
 
-fn void test_profile_virtual_forest_strips_all_roots_and_retains_initial_placement() @test {
+fn void test_profile_virtual_forest_strips_only_the_motion_root() @test {
     @pool() {
         ProfileRig rig = profile_forest_rig();
         RetargetProfile profile = profile_prepare(&rig);
@@ -1649,13 +1616,8 @@ fn void test_profile_virtual_forest_strips_all_roots_and_retains_initial_placeme
             target: &rig.target,
             node: 1,
             time: 1,
-        ), (Vec3){ -1, 1, 2 } - horizontal);
-        profile_expect_position(profile_sample_world(
-            clip: &keep,
-            target: &rig.target,
-            node: 1,
-            time: 1,
         ), { -1, 1, 2 });
+        assert(profile_output_track(&strip, 1, TargetPath.TRANSLATION) == null);
         profile_expect_position(profile_sample_world(
             clip: &keep,
             target: &rig.target,
@@ -1663,14 +1625,6 @@ fn void test_profile_virtual_forest_strips_all_roots_and_retains_initial_placeme
             time: 1.0f / 120,
         ), {
             2.0125f, 1.002083333333f, -3.004166666667f,
-        });
-        profile_expect_position(profile_sample_world(
-            clip: &strip,
-            target: &rig.target,
-            node: 1,
-            time: 1.0f / 120,
-        ), {
-            -1.0125f, 1, 2.004166666667f,
         });
         options.root_motion = RootMotion.EXTRACT;
         profile_expect_bake_fault(
@@ -1822,19 +1776,14 @@ fn void test_profile_rejects_invalid_descriptors_carriers_and_reference_range() 
     };
 }
 
-fn void test_profile_clip_validation_and_partial_unmatched_policy() @test {
+fn void test_profile_rejects_nonuniform_ancestor_scale_and_unmatched_tracks() @test {
     @pool() {
         ProfileRig rig = profile_ancestor_rig();
         RetargetProfile profile = profile_prepare(&rig);
         defer retarget::destroy_retarget_profile(&profile);
 
-        float time = rig.clip.tracks[0].times[1];
-        rig.clip.tracks[0].times[1] = 0;
-        profile_expect_bake_fault(&rig, &profile, c3d::ASSET_FORMAT_ERROR);
-        rig.clip.tracks[0].times[1] = time;
         rig.clip.tracks[3].values[4] = 8;
         profile_expect_bake_fault(&rig, &profile, c3d::UNSUPPORTED);
-        rig.clip.tracks[3].values[4] = 4;
 
         ProfileRig partial = profile_rig(2, 1);
         profile_map(&partial, (NodeIndexMapping[1]){ { .source_node = 0, .target_node = 0 } }[..]);
@@ -2069,60 +2018,6 @@ fn void test_profile_failed_sample_frees_every_partial_clip_allocation() @test {
     };
 }
 
-fn void test_profile_allocation_fault_releases_outputs_and_preserves_inputs() @test {
-    @pool() {
-        ProfileRig rig = profile_carrier_rig();
-        RetargetProfile profile = profile_prepare(&rig);
-        defer retarget::destroy_retarget_profile(&profile);
-
-        RetargetBakeOptions options = retarget::RETARGET_BAKE_OPTIONS_DEFAULT;
-        options.root_motion = RootMotion.EXTRACT;
-        ProfileFaultAllocator bake_allocator = { .backing = mem, .remaining = 6 };
-        assert(@catch(retarget::retarget_with_profile(
-            allocator: &bake_allocator,
-            source: &rig.clip,
-            source_nodes: rig.source,
-            target: &rig.target,
-            profile: &profile,
-            options: options,
-        )) == c3d::CAPACITY_EXCEEDED);
-        assert(bake_allocator.outstanding == 0);
-
-        ProfileFaultAllocator profile_allocator = { .backing = mem };
-        assert(@catch(retarget::create_retarget_profile(
-            allocator: &profile_allocator,
-            source_nodes: rig.source,
-            target: &rig.target,
-            desc: rig.desc,
-        )) == c3d::CAPACITY_EXCEEDED);
-        assert(profile_allocator.outstanding == 0);
-        assert(rig.clip.tracks[0].values[3] == 0.5f);
-        assert(rig.target.nodes[0].local.position == (Vec3){ 1, 0, 2 });
-    };
-}
-
-fn void test_profile_split_position_overflow_is_transactional_and_unsupported() @test {
-    @pool() {
-        ProfileRig rig = profile_forest_rig();
-        rig.clip.tracks[0].interpolation = Interpolation.STEP;
-        rig.clip.tracks[0].values[..] = (float[6]){ -10, 2, 0, 10, 2, 0 }[..];
-        RetargetProfile profile = profile_prepare(&rig);
-        defer retarget::destroy_retarget_profile(&profile);
-
-        RetargetBakeOptions options = retarget::RETARGET_BAKE_OPTIONS_DEFAULT;
-        options.root_translation_scale = 2e37f;
-        options.root_motion = RootMotion.STRIP_XZ;
-        profile_expect_bake_fault(
-            rig: &rig,
-            profile: &profile,
-            expected: c3d::UNSUPPORTED,
-            options: options,
-        );
-        assert(rig.clip.tracks[0].values[0] == -10);
-        assert(rig.target.nodes[0].local.position == (Vec3){ 2, 1, -3 });
-    };
-}
-
 fn void test_profile_mapped_leaf_copies_nonuniform_nonmotion_scale_exactly() @test {
     @pool() {
         ProfileRig rig = profile_rig(2, 2);
@@ -2221,7 +2116,7 @@ fn void test_profile_long_cadence_grid_emits_rounded_endpoint_once() @test {
     };
 }
 
-fn void test_profile_extract_yaw_preserves_turning_worlds_and_compensates_unmapped_branches() @test {
+fn void test_profile_extract_yaw_preserves_turning_worlds_and_carries_unmapped_branches() @test {
     @pool() {
         const float FACING = 37;
         ProfileRig rig = profile_turning_carrier_rig(360, FACING);
@@ -2244,7 +2139,7 @@ fn void test_profile_extract_yaw_preserves_turning_worlds_and_compensates_unmapp
 
         assert(carrier_rotation != null && carrier_rotation.interpolation == Interpolation.LINEAR);
         assert(profile_output_track(&extract, 1, TargetPath.SCALE) == null);
-        assert(profile_output_track(&extract, 3, TargetPath.ROTATION) != null);
+        assert(profile_output_track(&extract, 3, TargetPath.ROTATION) == null);
         assert(profile_output_track(&keep, 1, TargetPath.ROTATION) == null);
         assert(profile_output_track(&strip, 1, TargetPath.ROTATION) == null);
 

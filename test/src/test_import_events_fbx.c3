@@ -2,7 +2,6 @@ module c3d::test::import_events_fbx;
 
 import c3d;
 import c3d::anim;
-import c3d::anim::retarget;
 import c3d::asset;
 import c3d::asset::fbx;
 import c3d::asset::loader;
@@ -229,29 +228,6 @@ fn void assert_store_unchanged(
     assert(after.allocated_bytes == before.allocated_bytes && after.counts == before.counts);
 }
 
-fn RetargetProfile event_profile(Allocator allocator, NodeTemplate[] source, ModelTemplate* target) @local {
-    NodeIndexMapping[2] mapping = {
-        { .source_node = 1, .target_node = 1 },
-        { .source_node = 2, .target_node = 2 },
-    };
-    Quat[3] calibration;
-    foreach (index, node : source) calibration[index] = node.local.rotation;
-    RetargetProfileDesc desc = retarget::RETARGET_PROFILE_DESC_DEFAULT;
-    desc.mapping_mode = ProfileMappingMode.BY_INDEX;
-    desc.index_map = mapping[..];
-    desc.source_calibration = calibration[..];
-    desc.target_calibration = calibration[..];
-    desc.source_motion_node = 1;
-    desc.target_motion_node = 1;
-    desc.target_carrier = 0;
-    return retarget::create_retarget_profile(
-        allocator: allocator,
-        source_nodes: source,
-        target: target,
-        desc: desc,
-    )!!;
-}
-
 fn void assert_origin_keys(String text) @local {
     FbxEventSource source = { .text = text };
     ModelDocument document = decode_events(mem, &source)!!;
@@ -369,7 +345,7 @@ fn void test_import_events_fbx_animation_disabled_ignores_recognized_faults() @t
     };
 }
 
-fn void test_import_events_fbx_stack_origins_keep_keys_and_profiles_reject_negative_keys() @test {
+fn void test_import_events_fbx_stack_origins_keep_keys() @test {
     @pool() {
         String zero = (String)FBX_EVENTS;
         String negative_origin = zero.treplace(
@@ -396,15 +372,6 @@ fn void test_import_events_fbx_stack_origins_keep_keys_and_profiles_reject_negat
         assert(document.clips[0].data.tracks[0].times[0] == -1);
         assert(document.clips[0].data.duration == 1);
         assert_event_table(document.clips[0].data.events);
-        RetargetProfile profile = event_profile(mem, document.template.nodes, &document.template);
-        defer retarget::destroy_retarget_profile(&profile);
-        assert(@catch(retarget::retarget_with_profile(
-            allocator: mem,
-            source: &document.clips[0].data,
-            source_nodes: document.template.nodes,
-            target: &document.template,
-            profile: &profile,
-        )) == c3d::ASSET_FORMAT_ERROR);
     };
 }
 

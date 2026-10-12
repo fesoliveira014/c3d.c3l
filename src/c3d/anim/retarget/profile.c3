@@ -29,7 +29,6 @@ const RetargetBakeOptions RETARGET_BAKE_OPTIONS_DEFAULT = {
 };
 
 const float PROFILE_FRAME_TOLERANCE @private = 1e-5f; // bounds accepted frame roundoff in rotations, facing and uniform scale
-const float PROFILE_KEY_SNAP @private = 0.001f; // avoids an extra interval from roundoff at intended grid endpoints
 const uint PROFILE_MAX_INTERVALS @private = 1u << 24; // float key indices cease representing every integer above this bound
 
 <* Authoritative indices or unique names select node correspondences. *>
@@ -80,8 +79,6 @@ struct ProfileNode @private {
     bool consumed;
     bool requires_uniform_scale;
     bool motion;
-    bool controlled;
-    bool boundary;
 }
 
 struct ProfileData @private {
@@ -92,7 +89,7 @@ struct ProfileData @private {
     uint source_motion_node;
     uint target_motion_node;
     uint target_carrier;
-    usz bytes;
+    uint target_boundary;
 }
 
 <*
@@ -127,10 +124,8 @@ fn RetargetProfile? create_retarget_profile(
         validate_profile_calibration(source_nodes, target.nodes, &desc)!;
         Quat facing = profile_facing_rotation(desc.facing)!;
 
-        ProfileNode[] source = alloc::new_array_try(tmem, ProfileNode, source_nodes.len)
-          ?? c3d::CAPACITY_EXCEEDED~!;
-        ProfileNode[] destination = alloc::new_array_try(tmem, ProfileNode, target.nodes.len)
-          ?? c3d::CAPACITY_EXCEEDED~!;
+        ProfileNode[] source = alloc::new_array(tmem, ProfileNode, source_nodes.len);
+        ProfileNode[] destination = alloc::new_array(tmem, ProfileNode, target.nodes.len);
 
         foreach (index, &node : source_nodes) {
             source[index] = {
@@ -172,45 +167,42 @@ fn RetargetProfile? create_retarget_profile(
 
         foreach (&node : source) node.requires_uniform_scale |= node.motion;
 
-        foreach (index, &node : destination) {
-            node.controlled = desc.target_carrier == RETARGET_NO_NODE
-              || profile_descendant(destination, (uint)index, desc.target_carrier);
-            node.boundary = desc.target_carrier == RETARGET_NO_NODE
-              ? node.parent < 0 : node.parent == (int)desc.target_carrier;
+        foreach (&node : destination) {
             node.requires_uniform_scale |= node.motion;
-            if (node.mapped == RETARGET_NO_NODE && !node.motion && !node.boundary) continue;
+            if (node.mapped == RETARGET_NO_NODE && !node.motion) continue;
 
             for (int ancestor = node.parent; ancestor >= 0; ancestor = destination[ancestor].parent) {
                 destination[ancestor].requires_uniform_scale = true;
             }
         }
 
+        foreach (&node : destination) {
+            if (node.mapped == RETARGET_NO_NODE) continue;
+            source[node.mapped].requires_uniform_scale |= node.requires_uniform_scale;
+        }
+
         compose_profile_references(source)!;
         compose_profile_references(destination)!;
 
-        usz header_bytes = profile_align(ProfileData::size, ProfileNode::alignment);
-        usz node_count = source.len + destination.len;
-        if (node_count > (usz)sz::max / ProfileNode::size) return c3d::CAPACITY_EXCEEDED~;
+        sz header_bytes = mem::aligned_offset(ProfileData::size, ProfileNode::alignment);
+        sz node_bytes = (source.len + destination.len) * ProfileNode::size;
+        sz bytes = header_bytes + node_bytes;
 
-        usz node_bytes = node_count * ProfileNode::size;
-        usz bytes = header_bytes + node_bytes;
+        foreach (&node : source) bytes += node.name.len;
+        foreach (&node : destination) bytes += node.name.len;
 
-        foreach (&node : source) bytes = profile_add_bytes(bytes, node.name.len)!;
-        foreach (&node : destination) bytes = profile_add_bytes(bytes, node.name.len)!;
-
-        void* storage = alloc::calloc_aligned(allocator, (sz)bytes, ProfileNode::alignment)
-          ?? c3d::CAPACITY_EXCEEDED~!;
+        void* storage = alloc::calloc_aligned(allocator, bytes, ProfileNode::alignment) ?? c3d::CAPACITY_EXCEEDED~!;
+        ProfileNode* nodes = (ProfileNode*)((char*)storage + header_bytes);
         ProfileData* data = (ProfileData*)storage;
         *data = {
             .allocator = allocator,
-            .source_nodes = ((ProfileNode*)((char*)storage + header_bytes))[:source.len],
-            .target_nodes = ((ProfileNode*)((char*)storage + header_bytes
-              + source.len * ProfileNode::size))[:destination.len],
+            .source_nodes = nodes[:source.len],
+            .target_nodes = nodes[source.len:destination.len],
             .facing = facing,
             .source_motion_node = desc.source_motion_node,
             .target_motion_node = desc.target_motion_node,
             .target_carrier = desc.target_carrier,
-            .bytes = bytes,
+            .target_boundary = profile_motion_boundary(destination, desc.target_motion_node, desc.target_carrier),
         };
 
         data.source_nodes[..] = source[..];
@@ -296,12 +288,14 @@ fn bool profile_descendant(ProfileNode[] nodes, uint node, uint ancestor) @priva
     return false;
 }
 
-fn usz profile_align(usz value, usz alignment) @private => (value + alignment - 1) & ~(alignment - 1);
+fn uint profile_motion_boundary(ProfileNode[] nodes, uint motion, uint carrier) @private {
+    if (motion == RETARGET_NO_NODE) return RETARGET_NO_NODE;
 
-fn usz? profile_add_bytes(usz current, usz added) @private {
-    if (current > (usz)sz::max || added > (usz)sz::max - current) return c3d::CAPACITY_EXCEEDED~;
+    int stop = carrier == RETARGET_NO_NODE ? -1 : (int)carrier;
+    uint boundary = motion;
+    while (nodes[boundary].parent != stop) boundary = (uint)nodes[boundary].parent;
 
-    return current + added;
+    return boundary;
 }
 
 fn void copy_profile_name(ProfileNode* node, char** cursor) @private {

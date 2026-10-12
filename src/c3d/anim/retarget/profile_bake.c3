@@ -12,7 +12,6 @@ struct ProfileChannels @private {
     Track* translation;
     Track* rotation;
     Track* scale;
-    bool tracked;
 }
 
 struct ProfileOutputTracks @private {
@@ -21,10 +20,16 @@ struct ProfileOutputTracks @private {
     Track* scale;
 }
 
+struct ProfilePaths @private {
+    bool rotation;
+    bool translation;
+    bool scale;
+}
+
 <*
  Bake an independent clip through immutable calibrated model frames.
  @param allocator : "Owns every array of the returned clip."
- @param [&in] source : "Borrowed only until return."
+ @param [&in] source : "Targets index source_nodes; borrowed only until return."
  @param source_nodes : "Exact prepared source template."
  @param [&in] target : "Exact prepared target template."
  @param [&in] profile : "Immutable borrow; never retained by the clip."
@@ -39,17 +44,32 @@ fn AnimationClip? retarget_with_profile(
     RetargetBakeOptions options = RETARGET_BAKE_OPTIONS_DEFAULT,
 ) {
     profile.validate_templates(source_nodes, target)!;
+
+    return bake_profile_clip(
+        allocator: allocator,
+        source: source,
+        target: target,
+        profile: profile,
+        options: options,
+    );
+}
+
+fn AnimationClip? bake_profile_clip(
+    Allocator allocator,
+    AnimationClip* source,
+    ModelTemplate* target,
+    RetargetProfile* profile,
+    RetargetBakeOptions options,
+) @private {
     ProfileData* data = (ProfileData*)profile.data;
-    validate_profile_bake_options(data, options)!;
+    validate_profile_bake_options(data, options, source.duration)!;
 
     AnimationClip clip;
     defer catch asset::free_clip(allocator, &clip);
 
     @pool() {
-        ProfileChannels[] channels = alloc::new_array_try(tmem, ProfileChannels, source_nodes.len)
-          ?? c3d::CAPACITY_EXCEEDED~!;
-
-        validate_profile_clip(
+        ProfileChannels[] channels = alloc::new_array(tmem, ProfileChannels, data.source_nodes.len);
+        bind_profile_clip(
             clip: source,
             data: data,
             target: target,
@@ -57,77 +77,71 @@ fn AnimationClip? retarget_with_profile(
             allow_partial: options.allow_partial,
         )!;
 
-        float[] times = profile_bake_times(source.duration, options.bake_rate)!;
+        sz track_count;
 
-        usz track_count = profile_track_count(source, data, options.root_motion);
-        if (track_count > uint::max) return c3d::CAPACITY_EXCEEDED~;
+        for (uint index = 0; index < data.target_nodes.len; index++) {
+            ProfilePaths paths = profile_paths(data, index, options.root_motion);
+            track_count += (sz)paths.rotation + (sz)paths.translation + (sz)paths.scale;
+        }
 
-        clip.duration = source.duration;
-        clip.name = profile_copy_name(allocator, source.name)!;
-        clip.tracks = alloc::new_array_try(allocator, Track, (sz)track_count) ?? c3d::CAPACITY_EXCEEDED~!;
-        clip.targets = alloc::new_array_try(allocator, uint, (sz)track_count) ?? c3d::CAPACITY_EXCEEDED~!;
-        clip.events = alloc::new_array_try(allocator, ClipEvent, source.events.len) ?? c3d::CAPACITY_EXCEEDED~!;
-        clip.events[..] = source.events[..];
+        foreach (&track : source.tracks) if (profile_copies(data, source, track)) track_count++;
 
-        ProfileOutputTracks[] output = alloc::new_array_try(tmem, ProfileOutputTracks, target.nodes.len)
-          ?? c3d::CAPACITY_EXCEEDED~!;
+        float[] times = bake_times(tmem, source.duration, options.bake_rate);
+        clip = {
+            .name = source.name.copy(allocator),
+            .duration = source.duration,
+            .tracks = alloc::new_array(allocator, Track, track_count),
+            .targets = alloc::new_array(allocator, uint, track_count),
+            .events = copy_events(allocator, source.events),
+        };
+
+        ProfileOutputTracks[] output = alloc::new_array(tmem, ProfileOutputTracks, target.nodes.len);
         usz track_slot;
         usz target_count;
 
-        foreach (uint index, &node : data.target_nodes) {
-            bool carrier = options.root_motion == RootMotion.EXTRACT && index == data.target_carrier;
-            bool boundary = options.root_motion != RootMotion.KEEP && node.boundary;
-            if (node.mapped != RETARGET_NO_NODE
-              || (options.root_motion == RootMotion.EXTRACT && (carrier || node.boundary))) {
+        for (uint index = 0; index < data.target_nodes.len; index++) {
+            ProfilePaths paths = profile_paths(data, index, options.root_motion);
+            if (paths.rotation) {
                 output[index].rotation = &clip.tracks[track_slot++];
-                *output[index].rotation = profile_generated_track(
+                *output[index].rotation = baked_track(
                     allocator: allocator,
                     times: times,
                     path: TargetPath.ROTATION,
                     target: target_slot(&clip, &target_count, index),
-                )!;
+                );
             }
 
-            if (node.motion || boundary || carrier) {
+            if (paths.translation) {
                 output[index].translation = &clip.tracks[track_slot++];
-                *output[index].translation = profile_generated_track(
+                *output[index].translation = baked_track(
                     allocator: allocator,
                     times: times,
                     path: TargetPath.TRANSLATION,
                     target: target_slot(&clip, &target_count, index),
-                )!;
+                );
             }
 
-            if (node.motion) {
+            if (paths.scale) {
                 output[index].scale = &clip.tracks[track_slot++];
-                *output[index].scale = profile_generated_track(
+                *output[index].scale = baked_track(
                     allocator: allocator,
                     times: times,
                     path: TargetPath.SCALE,
                     target: target_slot(&clip, &target_count, index),
-                )!;
+                );
             }
         }
 
         foreach (&track : source.tracks) {
-            uint source_node = source.targets[track.target];
-            uint destination = data.source_nodes[source_node].mapped;
-            if (destination == RETARGET_NO_NODE) continue;
-            if (track.path != TargetPath.MORPH_WEIGHTS
-                && (track.path != TargetPath.SCALE || data.target_nodes[destination].motion)) continue;
-            clip.tracks[track_slot++] = profile_copy_track(
-                allocator,
-                track,
-                target_slot(&clip, &target_count, destination),
-            )!;
+            if (!profile_copies(data, source, track)) continue;
+            uint destination = data.source_nodes[source.targets[track.target]].mapped;
+            clip.tracks[track_slot++] = copy_track(allocator, track, target_slot(&clip, &target_count, destination));
         }
 
         clip.targets = clip.targets[:target_count];
 
-        Transform[] source_world = alloc::new_array_try(tmem, Transform, source_nodes.len)
-          ?? c3d::CAPACITY_EXCEEDED~!;
-        Transform[] target_world = alloc::new_array_try(tmem, Transform, target.nodes.len)
-          ?? c3d::CAPACITY_EXCEEDED~!;
+        Transform[] source_world = alloc::new_array(tmem, Transform, data.source_nodes.len);
+        Transform[] target_world = alloc::new_array(tmem, Transform, target.nodes.len);
         Vec3 initial_motion;
         float previous_yaw;
         double unwrapped_yaw;
@@ -146,7 +160,7 @@ fn AnimationClip? retarget_with_profile(
                 target_world: target_world,
                 time: time,
                 translation_scale: options.root_translation_scale,
-            )!;
+            );
 
             Vec3 horizontal;
             if (data.target_motion_node != RETARGET_NO_NODE) {
@@ -155,39 +169,33 @@ fn AnimationClip? retarget_with_profile(
                 horizontal = { motion.x - initial_motion.x, 0, motion.z - initial_motion.z };
             }
 
-            if (options.root_motion != RootMotion.KEEP && !profile_finite_vec(horizontal)) return c3d::UNSUPPORTED~;
-
-            switch (options.root_motion) {
-                case KEEP: break;
-                case STRIP_XZ:
-                    foreach (index, &node : data.target_nodes) {
-                        if (node.controlled) target_world[index].position -= horizontal;
-                    }
-                case EXTRACT:
-                    float current_yaw = profile_yaw_angle(target_world[data.target_motion_node].rotation);
-                    if (key > 0) unwrapped_yaw += profile_wrap_yaw(current_yaw - previous_yaw);
-                    previous_yaw = current_yaw;
-                    target_world[data.target_carrier].position += horizontal;
-                    target_world[data.target_carrier].rotation = profile_yaw_rotation(unwrapped_yaw)
-                      .mul(target_world[data.target_carrier].rotation).normalize();
+            Transform extracted;
+            if (options.root_motion == RootMotion.EXTRACT) {
+                float current_yaw = profile_yaw_angle(target_world[data.target_motion_node].rotation);
+                if (key > 0) unwrapped_yaw += profile_wrap_yaw(current_yaw - previous_yaw);
+                previous_yaw = current_yaw;
+                extracted = target_world[data.target_carrier];
+                extracted.position += horizontal;
+                extracted.rotation = profile_yaw_rotation(unwrapped_yaw).mul(extracted.rotation).normalize();
             }
 
             foreach (uint index, &node : data.target_nodes) {
-                bool shifted = options.root_motion == RootMotion.STRIP_XZ ? node.controlled
-                  : options.root_motion == RootMotion.EXTRACT && index == data.target_carrier;
-                if (shifted && !profile_finite_vec(target_world[index].position)) return c3d::UNSUPPORTED~;
-
+                Transform world = target_world[index];
                 Transform parent = node.parent < 0 ? maths::TRANSFORM_IDENTITY : target_world[node.parent];
-                Transform local = profile_relative(parent, target_world[index]);
-                if (output[index].rotation) write_rotation_key(output[index].rotation, key, local.rotation);
-                if (output[index].translation) {
-                    if (options.root_motion != RootMotion.KEEP && !profile_finite_vec(local.position)) {
-                        return c3d::UNSUPPORTED~;
-                    }
 
-                    write_translation_key(output[index].translation, key, local.position);
+                switch (options.root_motion) {
+                    case KEEP:
+                        break;
+                    case STRIP_XZ:
+                        if (index == data.target_boundary) world.position -= horizontal;
+                    case EXTRACT:
+                        if (index == data.target_carrier) world = extracted;
+                        if (index == data.target_boundary) parent = extracted;
                 }
 
+                Transform local = profile_relative(parent, world);
+                if (output[index].rotation) write_rotation_key(output[index].rotation, key, local.rotation);
+                if (output[index].translation) write_translation_key(output[index].translation, key, local.position);
                 if (output[index].scale) write_translation_key(output[index].scale, key, local.scale);
             }
         }
@@ -210,102 +218,34 @@ fn Quat profile_yaw_rotation(double angle) @private {
     return { .v = { 0, (float)math::sin(half), 0, (float)math::cos(half) } };
 }
 
-fn void? validate_profile_bake_options(ProfileData* data, RetargetBakeOptions options) @private {
+fn void? validate_profile_bake_options(ProfileData* data, RetargetBakeOptions options, float duration) @private {
     bool valid = math::is_finite(options.bake_rate) && options.bake_rate > 0
         && math::is_finite(options.root_translation_scale) && options.root_translation_scale > 0
         && (options.root_motion == RootMotion.KEEP || data.target_motion_node != RETARGET_NO_NODE)
         && (options.root_motion != RootMotion.EXTRACT || data.target_carrier != RETARGET_NO_NODE);
     if (!valid) return c3d::INVALID_ARGUMENT~;
+    if ((double)duration * options.bake_rate > PROFILE_MAX_INTERVALS) return c3d::CAPACITY_EXCEEDED~;
 }
 
-fn float[]? profile_bake_times(float duration, float rate) @private {
-    double intervals_float = duration == 0 ? 0 : math::max(1.0, math::ceil((double)duration * rate - PROFILE_KEY_SNAP));
-    if (intervals_float > PROFILE_MAX_INTERVALS) return c3d::CAPACITY_EXCEEDED~;
+fn ProfilePaths profile_paths(ProfileData* data, uint index, RootMotion root_motion) @private {
+    ProfileNode* node = &data.target_nodes[index];
+    bool extract = root_motion == RootMotion.EXTRACT;
+    bool carrier = extract && index == data.target_carrier;
+    bool boundary = root_motion != RootMotion.KEEP && index == data.target_boundary;
 
-    uint intervals = (uint)intervals_float;
-    float[] times = alloc::new_array_try(tmem, float, (sz)intervals + 1) ?? c3d::CAPACITY_EXCEEDED~!;
-
-    for (uint key = 0; key < intervals; key++) {
-        float time = key / rate;
-        if (time >= duration) {
-            intervals = key;
-            break;
-        }
-
-        if (!math::is_finite(time) || (key > 0 && time <= times[key - 1])) return c3d::CAPACITY_EXCEEDED~;
-
-        times[key] = time;
-    }
-
-    times[intervals] = duration;
-
-    return times[:(usz)intervals + 1];
+    return {
+        .rotation = node.mapped != RETARGET_NO_NODE || carrier || (extract && boundary),
+        .translation = node.motion || boundary || carrier,
+        .scale = node.motion,
+    };
 }
 
-fn usz profile_track_count(AnimationClip* source, ProfileData* data, RootMotion root_motion) @private {
-    usz count;
+fn bool profile_copies(ProfileData* data, AnimationClip* source, Track* track) @private {
+    uint destination = data.source_nodes[source.targets[track.target]].mapped;
+    if (destination == RETARGET_NO_NODE) return false;
 
-    foreach (uint index, &node : data.target_nodes) {
-        if (node.mapped != RETARGET_NO_NODE
-          || (root_motion == RootMotion.EXTRACT && (index == data.target_carrier || node.boundary))) count++;
-        if (node.motion || (root_motion != RootMotion.KEEP && node.boundary)
-            || (root_motion == RootMotion.EXTRACT && index == data.target_carrier)) count++;
-        if (node.motion) count++;
-    }
-
-    foreach (&track : source.tracks) {
-        uint destination = data.source_nodes[source.targets[track.target]].mapped;
-        if (destination == RETARGET_NO_NODE) continue;
-        if (track.path == TargetPath.MORPH_WEIGHTS
-            || (track.path == TargetPath.SCALE && !data.target_nodes[destination].motion)) count++;
-    }
-
-    return count;
-}
-
-fn String? profile_copy_name(Allocator allocator, String name) @private {
-    char[] copy = alloc::new_array_try(allocator, char, name.len) ?? c3d::CAPACITY_EXCEEDED~!;
-    copy[..] = name[..];
-
-    return (String)copy;
-}
-
-fn Track? profile_generated_track(
-    Allocator allocator,
-    float[] times,
-    TargetPath path,
-    uint target,
-) @private {
-    Track track = { .target = target, .path = path, .interpolation = Interpolation.LINEAR };
-    defer catch {
-        alloc::free(allocator, track.times.ptr);
-        alloc::free(allocator, track.values.ptr);
-    }
-
-    usz stride = path == TargetPath.ROTATION ? 4 : 3;
-    if (times.len > (usz)sz::max / (stride * float::size)) return c3d::CAPACITY_EXCEEDED~;
-
-    track.times = alloc::new_array_try(allocator, float, times.len) ?? c3d::CAPACITY_EXCEEDED~!;
-    track.values = alloc::new_array_try(allocator, float, (sz)(times.len * stride))
-      ?? c3d::CAPACITY_EXCEEDED~!;
-    track.times[..] = times[..];
-
-    return track;
-}
-
-fn Track? profile_copy_track(Allocator allocator, Track* source, uint target) @private {
-    Track track = { .target = target, .path = source.path, .interpolation = source.interpolation };
-    defer catch {
-        alloc::free(allocator, track.times.ptr);
-        alloc::free(allocator, track.values.ptr);
-    }
-
-    track.times = alloc::new_array_try(allocator, float, source.times.len) ?? c3d::CAPACITY_EXCEEDED~!;
-    track.values = alloc::new_array_try(allocator, float, source.values.len) ?? c3d::CAPACITY_EXCEEDED~!;
-    track.times[..] = source.times[..];
-    track.values[..] = source.values[..];
-
-    return track;
+    return track.path == TargetPath.MORPH_WEIGHTS
+        || (track.path == TargetPath.SCALE && !data.target_nodes[destination].motion);
 }
 
 fn Transform profile_sample_local(ProfileNode* node, ProfileChannels channels, float time) @private {
@@ -354,20 +294,15 @@ fn void? sample_profile_source(
     foreach (uint index, &node : data.source_nodes) {
         if (!node.consumed) continue;
         Transform local = profile_sample_local(node, channels[index], time);
-        if (!profile_finite_vec(local.position) || !profile_unit_rotation(local.rotation)) {
-            return c3d::ASSET_FORMAT_ERROR~;
-        }
-
         if (node.requires_uniform_scale && !profile_uniform_scale(local.scale)) return c3d::UNSUPPORTED~;
 
         local.rotation = local.rotation.normalize();
         if (!node.requires_uniform_scale) local.scale = { 1, 1, 1 };
         worlds[index] = node.parent < 0 ? local : profile_compose(worlds[node.parent], local);
-        if (!profile_valid_transform(worlds[index])) return c3d::UNSUPPORTED~;
     }
 }
 
-fn void? compose_profile_target(
+fn void compose_profile_target(
     ProfileData* data,
     ProfileChannels[] channels,
     Transform[] source_world,
@@ -400,9 +335,5 @@ fn void? compose_profile_target(
         }
 
         target_world[index] = profile_compose(parent, local);
-        if (!profile_finite_vec(target_world[index].position) || !profile_unit_rotation(target_world[index].rotation)
-          || (node.requires_uniform_scale && !profile_uniform_scale(target_world[index].scale))) {
-            return c3d::UNSUPPORTED~;
-        }
     }
 }

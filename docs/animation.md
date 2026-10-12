@@ -882,8 +882,8 @@ Correction transfers motion, not proportions or poses: both rigs must face the
 same model axis and rest in the same kind of pose (both T or both A). A
 T-pose source on an A-pose destination keeps the arms offset by the difference
 for the whole clip. Foot contact and sliding follow from the rigs' proportions.
-The optional `retarget --mixamo` mode plays a Mixamo walk on the Quaternius rig
-with both modes.
+The `retarget` example plays a Mixamo walk on the Quaternius rig with both
+modes.
 
 ### Calibrated profiles
 
@@ -912,12 +912,15 @@ cadence and root translation scale 1. Zero duration has one key; positive
 duration includes both endpoints. Copied non-motion scale, morph and event
 data retain independent ownership.
 
-`STRIP_XZ` removes the selected horizontal displacement. `EXTRACT` writes that
-displacement and the motion node's world Y twist on the reserved carrier, and
-compensates every child branch. The carrier turns in place about its authored
-reference position, stays upright and retains its authored scale. Its yaw is
-relative to time zero and unwrapped through the clip. Static parent transforms
-are removed when writing its local tracks.
+`STRIP_XZ` removes the selected horizontal displacement from the branch that
+holds the motion node: the carrier's child on the motion node's path, or the
+motion node's root when there is no carrier. Other branches keep their
+placement. `EXTRACT` writes that displacement and the motion node's world Y
+twist on the reserved carrier and compensates that branch alone; the carrier's
+other children move and turn with it. The carrier turns in place about its
+authored reference position, stays upright and retains its authored scale. Its
+yaw is relative to time zero and unwrapped through the clip. Static parent
+transforms are removed when writing its local tracks.
 
 Select that carrier as `Animator.root_node` and consume its root motion once
 through `apply_root_motion`. With `root_yaw = true`, extraction removes both
@@ -925,12 +928,13 @@ translation and yaw from the mesh. With `root_yaw = false`, the turn stays in
 the mesh. Destroying the profile does not invalidate clips already baked or
 published.
 
-The default `retarget` example uses repository-authored T/A, facing, animated
-ancestor and carrier rigs, with expected and profiled poses shown side by side.
-It requires no external animation assets. `F` changes the fixture family,
-Space pauses, `A` toggles automatic family cycling and `I` toggles diagnostic
-lines. The carrier and turning families show `KEEP`, `STRIP_XZ` and `EXTRACT`,
-including both yaw settings, forward/reverse playback and loops.
+The `retarget` example calibrates the Mixamo walk file against the Quaternius
+rig with both rest poses, maps the body by name and loads the walk through
+`fbx::load_animations_with_profile` with the rig's top node as carrier. `T`
+cycles the right character through `COPY`, `CORRECT`, profiled `STRIP_XZ` and
+profiled `EXTRACT`, which walks the instance forward through
+`apply_root_motion`; `R` toggles the rest pose. It needs the Mixamo files listed
+in `examples/assets/mixamo/README.md`.
 
 ## Inverse kinematics
 
