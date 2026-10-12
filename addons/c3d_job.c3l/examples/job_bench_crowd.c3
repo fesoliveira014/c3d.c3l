@@ -5,6 +5,7 @@ import std::io::path;
 import std::math;
 import std::time;
 import std::time::clock;
+import std::atomic::types;
 import c3d;
 import c3d::anim;
 import c3d::asset;
@@ -23,7 +24,9 @@ const float CROWD_POSE_MARGIN @local = 1; // metres around the rest bounds; limb
 const float CROWD_SPEED_MIN @local = 0.8f;
 const float CROWD_SPEED_MAX @local = 1.2f;
 const uint CROWD_SEED @local = 20261011;
-const uint CROWD_BATCH @local = 16; // about 30 us of sampling a range, so scheduling stays a small share
+const uint CROWD_RANGES_PER_EXECUTOR @local = 4; // ranges per sampling thread, the caller included; bounds the scratches
+const uint CROWD_SHARED_GROUPS @local = 12; // six clips at two phases; a range of 24 or more instances repeats every group
+const float CROWD_SHARED_PHASE @local = 0.5f; // fraction of the clip between the two phases of a clip
 const uint CROWD_WARMUP_FRAMES @local = 3; // wakes the workers and faults the crowd's pages before timing
 const uint CROWD_TIMED_FRAMES @local = 15; // the median of fifteen timed frames
 const uint CROWD_FRAMES @local = CROWD_WARMUP_FRAMES + CROWD_TIMED_FRAMES;
@@ -54,13 +57,17 @@ struct CrowdSetup @local {
     ClipId[CROWD_CLIP_NAMES.len] clips;
     Aabb pose_bounds;
     uint count;
+    bool shared;
 }
 
 struct CrowdTimes @local {
     double advance_ms;
     double sample_ms;
+    double cpu_ms;
     double publish_ms;
     double frame_ms;
+    double hit_rate;
+    uint batch;
     uint ranges;
 }
 
@@ -68,6 +75,8 @@ struct SampleRun @local {
     CrowdPlaybackState* state;
     AssetStore* assets;
     PoseScratch[] scratches;
+    uint batch;
+    Atomic{ulong} sampling_ns;
 }
 
 struct Digest @local {
@@ -89,12 +98,35 @@ fn void Digest.add_float(&self, float value) {
 
 fn void sample_crowd_range(void* data, uint first, uint count) @local {
     SampleRun* run = data;
+    time::Clock started = clock::now();
     run.state.sample_range(
         assets: run.assets,
         first: first,
         count: count,
-        scratch: &run.scratches[first / CROWD_BATCH],
+        scratch: &run.scratches[first / run.batch],
     );
+    run.sampling_ns.add((ulong)(clock::now() - started));
+}
+
+fn void crowd_cache_totals(
+    CrowdPlaybackState* state,
+    PoseScratch[] scratches,
+    ulong* lookups,
+    ulong* hits,
+) @local {
+    *lookups = 0;
+    *hits = 0;
+    if (!scratches.len) {
+        PoseCache* cache = state.pose_storage.scratch.cache;
+        *lookups = cache.lookups;
+        *hits = cache.hits;
+        return;
+    }
+
+    foreach (&scratch : scratches) {
+        *lookups += scratch.cache.lookups;
+        *hits += scratch.cache.hits;
+    }
 }
 
 fn ulong crowd_digest(CrowdPlaybackState* state) @local {
@@ -161,16 +193,27 @@ fn Node*? add_bench_crowd(CrowdSetup* setup, Scene* scene) @local {
     foreach (uint index, &instance : instances) {
         ClipId clip = setup.clips[index % CROWD_CLIP_NAMES.len];
         float duration = setup.assets.clip(clip).data.duration;
+        float rotation = random.next() * (float)math::PI * 2;
+        float time = random.next() * duration;
+        float speed = CROWD_SPEED_MIN + (CROWD_SPEED_MAX - CROWD_SPEED_MIN) * random.next();
+        if (setup.shared) {
+            uint group = index % CROWD_SHARED_GROUPS;
+            clip = setup.clips[group % CROWD_CLIP_NAMES.len];
+            duration = setup.assets.clip(clip).data.duration;
+            time = (float)(group / CROWD_CLIP_NAMES.len) * CROWD_SHARED_PHASE * duration;
+            float group_share = (float)group / (float)(CROWD_SHARED_GROUPS - 1);
+            speed = CROWD_SPEED_MIN + (CROWD_SPEED_MAX - CROWD_SPEED_MIN) * group_share;
+        }
         *instance = {
             .placement = {
                 .position = { (float)(index % columns) * CROWD_SPACING, 0, (float)(index / columns) * CROWD_SPACING },
-                .rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, random.next() * (float)math::PI * 2),
+                .rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, rotation),
                 .scale = { 1, 1, 1 },
             },
             .pose = {
                 .clip = clip,
-                .time = random.next() * duration,
-                .speed = CROWD_SPEED_MIN + (CROWD_SPEED_MAX - CROWD_SPEED_MIN) * random.next(),
+                .time = time,
+                .speed = speed,
                 .loop = true,
             },
             .color = { 1, 1, 1, 1 },
@@ -208,7 +251,14 @@ fn void? time_crowd(
     JobPool pool = create_bench_pool(workers);
     defer job::destroy_job_pool(&pool);
 
-    uint ranges = (setup.count + CROWD_BATCH - 1) / CROWD_BATCH;
+    uint batch = setup.count;
+    uint ranges;
+    if (mode == CrowdPath.POOL) {
+        uint wanted = CROWD_RANGES_PER_EXECUTOR * (workers + 1);
+        batch = (setup.count + wanted - 1) / wanted;
+        ranges = (setup.count + batch - 1) / batch;
+    }
+
     PoseScratch[] scratches = alloc::new_array(mem, PoseScratch, ranges);
     defer free(scratches);
     foreach (&scratch : scratches) *scratch = anim::create_crowd_pose_scratch(state)!!;
@@ -216,35 +266,42 @@ fn void? time_crowd(
         foreach (&scratch : scratches) anim::destroy_crowd_pose_scratch(state, scratch);
     }
 
-    SampleRun run = { .state = state, .assets = setup.assets, .scratches = scratches };
+    SampleRun run = { .state = state, .assets = setup.assets, .scratches = scratches, .batch = batch };
 
     double[CROWD_TIMED_FRAMES] advance_samples;
     double[CROWD_TIMED_FRAMES] sample_samples;
+    double[CROWD_TIMED_FRAMES] cpu_samples;
     double[CROWD_TIMED_FRAMES] publish_samples;
     double[CROWD_TIMED_FRAMES] frame_samples;
+    ulong warm_lookups;
+    ulong warm_hits;
 
     for (uint frame = 0; frame < CROWD_FRAMES; frame++) {
         double advance_ms;
         double sample_ms;
+        double cpu_ms;
         time::Clock frame_started = clock::now();
 
         if (mode == CrowdPath.UPDATE) {
             time::Clock started = clock::now();
             state.update(setup.assets, CROWD_STEP_SECONDS);
             sample_ms = crowd_milliseconds(started);
+            cpu_ms = sample_ms;
         } else {
             time::Clock started = clock::now();
             state.advance(setup.assets, CROWD_STEP_SECONDS);
             advance_ms = crowd_milliseconds(started);
 
+            run.sampling_ns.store(0);
             started = clock::now();
             pool.wait(pool.run(
                 range: &sample_crowd_range,
                 data:  &run,
                 count: setup.count,
-                batch: CROWD_BATCH,
+                batch: batch,
             ));
             sample_ms = crowd_milliseconds(started);
+            cpu_ms = (double)run.sampling_ns.load() / NANOSECONDS_PER_MILLISECOND;
         }
 
         time::Clock publish_started = clock::now();
@@ -253,20 +310,40 @@ fn void? time_crowd(
         double frame_ms = crowd_milliseconds(frame_started);
 
         digests[frame] = crowd_digest(state);
+        if (frame + 1 == CROWD_WARMUP_FRAMES) {
+            crowd_cache_totals(
+                state:     state,
+                scratches: scratches,
+                lookups:   &warm_lookups,
+                hits:      &warm_hits,
+            );
+        }
         if (frame < CROWD_WARMUP_FRAMES) continue;
 
         uint slot = frame - CROWD_WARMUP_FRAMES;
         advance_samples[slot] = advance_ms;
         sample_samples[slot] = sample_ms;
+        cpu_samples[slot] = cpu_ms;
         publish_samples[slot] = publish_ms;
         frame_samples[slot] = frame_ms;
     }
 
+    ulong lookups;
+    ulong hits;
+    crowd_cache_totals(
+        state:     state,
+        scratches: scratches,
+        lookups:   &lookups,
+        hits:      &hits,
+    );
     *times = {
         .advance_ms = median(&advance_samples),
         .sample_ms = median(&sample_samples),
+        .cpu_ms = median(&cpu_samples),
         .publish_ms = median(&publish_samples),
         .frame_ms = median(&frame_samples),
+        .hit_rate = lookups > warm_lookups ? (double)(hits - warm_hits) / (double)(lookups - warm_lookups) : 0,
+        .batch = batch,
         .ranges = ranges,
     };
 }
@@ -296,7 +373,7 @@ fn void? compress_crowd_clips(AssetStore* assets, ModelTemplate* template) @loca
     );
 }
 
-fn bool? crowd_bench(uint count, bool compress) @local {
+fn bool? crowd_bench(uint count, bool shared_phases, bool compress) @local {
     AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
     defer asset::destroy_asset_store(&assets);
 
@@ -308,71 +385,113 @@ fn bool? crowd_bench(uint count, bool compress) @local {
     setup.pose_bounds = crowd_rest_bounds(&assets, template);
 
     io::printfn(
-        "# crowd_bench count=%d clips=%d batch=%d warmup_frames=%d timed_frames=%d step_s=%.5f compressed=%d",
+        "# crowd_bench count=%d clips=%d shared_groups=%d ranges_per_executor=%d warmup_frames=%d timed_frames=%d "
+        "step_s=%.5f compressed=%d",
         count,
         CROWD_CLIP_NAMES.len,
-        CROWD_BATCH,
+        CROWD_SHARED_GROUPS,
+        CROWD_RANGES_PER_EXECUTOR,
         CROWD_WARMUP_FRAMES,
         CROWD_TIMED_FRAMES,
         CROWD_STEP_SECONDS,
         compress ? 1 : 0,
     );
-    io::printn("# crowd,count,path,ranges,advance_ms,sample_ms,publish_ms,frame_ms,sample_speedup,frame_speedup,equal");
-
-    ulong[CROWD_FRAMES] reference;
-    CrowdTimes update_times;
-    time_crowd(
-        setup: &setup,
-        mode: CrowdPath.UPDATE,
-        workers: 0,
-        digests: reference[..],
-        times: &update_times,
-    )!;
-    io::printfn(
-        "crowd,%d,update,0,-,%.3f,%.3f,%.3f,-,-,1",
-        count,
-        update_times.sample_ms,
-        update_times.publish_ms,
-        update_times.frame_ms,
+    io::printn(
+        "# crowd,count,phases,path,batch,ranges,advance_ms,sample_ms,cpu_ms,publish_ms,frame_ms,sample_speedup,"
+        "frame_speedup,hit_rate,sample_saved_pct,cpu_saved_pct,equal"
     );
 
-    CrowdTimes serial_times;
+    CrowdTimes[FIXED_WORKER_COUNTS.len] unshared_times;
     bool all_equal = true;
-    foreach (workers : FIXED_WORKER_COUNTS) {
-        ulong[CROWD_FRAMES] digests;
-        CrowdTimes times;
+    for (uint pass = 0; pass < (shared_phases ? 2 : 1); pass++) {
+        setup.shared = pass == 1;
+        String phases = setup.shared ? "shared" : "unshared";
+
+        ulong[CROWD_FRAMES] reference;
+        CrowdTimes update_times;
         time_crowd(
             setup: &setup,
-            mode: CrowdPath.POOL,
-            workers: workers,
-            digests: digests[..],
-            times: &times,
+            mode: CrowdPath.UPDATE,
+            workers: 0,
+            digests: reference[..],
+            times: &update_times,
         )!;
-        if (!workers) serial_times = times;
-        all_equal = all_equal && digests == reference;
-
         io::printfn(
-            "crowd,%d,workers=%d,%d,%.3f,%.3f,%.3f,%.3f,%.2f,%.2f,%d",
+            "crowd,%d,%s,update,%d,0,-,%.3f,%.3f,%.3f,%.3f,-,-,%.4f,-,-,1",
             count,
-            workers,
-            times.ranges,
-            times.advance_ms,
-            times.sample_ms,
-            times.publish_ms,
-            times.frame_ms,
-            serial_times.sample_ms / times.sample_ms,
-            serial_times.frame_ms / times.frame_ms,
-            digests == reference ? 1 : 0,
+            phases,
+            update_times.batch,
+            update_times.sample_ms,
+            update_times.cpu_ms,
+            update_times.publish_ms,
+            update_times.frame_ms,
+            update_times.hit_rate,
         );
+
+        CrowdTimes serial_times;
+        foreach (index, workers : FIXED_WORKER_COUNTS) {
+            ulong[CROWD_FRAMES] digests;
+            CrowdTimes times;
+            time_crowd(
+                setup: &setup,
+                mode: CrowdPath.POOL,
+                workers: workers,
+                digests: digests[..],
+                times: &times,
+            )!;
+            if (!workers) serial_times = times;
+            all_equal = all_equal && digests == reference;
+            if (!setup.shared) unshared_times[index] = times;
+
+            String sample_saved = "-";
+            String cpu_saved = "-";
+            if (setup.shared) {
+                sample_saved = string::tformat("%.1f", 100 * (1 - times.sample_ms / unshared_times[index].sample_ms));
+                cpu_saved = string::tformat("%.1f", 100 * (1 - times.cpu_ms / unshared_times[index].cpu_ms));
+            }
+
+            io::printfn(
+                "crowd,%d,%s,workers=%d,%d,%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.2f,%.2f,%.4f,%s,%s,%d",
+                count,
+                phases,
+                workers,
+                times.batch,
+                times.ranges,
+                times.advance_ms,
+                times.sample_ms,
+                times.cpu_ms,
+                times.publish_ms,
+                times.frame_ms,
+                serial_times.sample_ms / times.sample_ms,
+                serial_times.frame_ms / times.frame_ms,
+                times.hit_rate,
+                sample_saved,
+                cpu_saved,
+                digests == reference ? 1 : 0,
+            );
+        }
     }
 
     return all_equal;
 }
 
 fn int run_crowd_bench(String[] args) @private {
-    bool compress = args.len == 4 && args[3] == "--compress";
-    if ((args.len != 3 && !compress) || args[1] != "--crowd") {
-        io::eprintfn("usage: job_bench [--crowd COUNT [--compress]]");
+    bool shared_phases;
+    bool compress;
+    bool valid = args.len >= 3 && args[1] == "--crowd";
+    if (valid) {
+        foreach (flag : args[3..]) {
+            if (flag == "--shared-phases") {
+                shared_phases = true;
+            } else if (flag == "--compress") {
+                compress = true;
+            } else {
+                valid = false;
+            }
+        }
+    }
+    if (!valid) {
+        io::eprintfn("usage: job_bench [--crowd COUNT [--shared-phases] [--compress]]");
         return 1;
     }
     uint? parsed = args[2].to_uint();
@@ -386,7 +505,7 @@ fn int run_crowd_bench(String[] args) @private {
         return 1;
     }
 
-    bool? all_equal = crowd_bench(count, compress);
+    bool? all_equal = crowd_bench(count, shared_phases, compress);
     if (catch excuse = all_equal) {
         io::eprintfn("crowd bench failed: %s", excuse);
         return 1;

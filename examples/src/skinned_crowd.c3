@@ -4,6 +4,8 @@ import std::io;
 import std::io::path;
 import std::math;
 import std::math::quaternion;
+import std::time;
+import std::time::clock;
 import c3d;
 import c3d::anim;
 import c3d::asset;
@@ -48,6 +50,10 @@ const uint TRIANGLE_CORNERS @local = 3;
 const float[LOD_LEVELS] LOD_THRESHOLDS @local
   = { 0.06f, 0.025f, 0 }; // View-height fractions; lower retains more triangles farther away.
 const float FULL_DETAIL_BIAS @local = 16; // Log2 size scale; retains full detail across this field.
+const uint SHARED_GROUPS @local = 12; // Six clips at two phases; a range of 24 or more instances repeats every group.
+const float SHARED_PHASE @local = 0.5f; // Fraction of a clip between the two phases of a clip.
+const double NANOSECONDS_PER_MILLISECOND @local = 1000000;
+const double STATS_SMOOTHING @local = 0.1; // Weight of the newest frame in the shown sample time and hit rate.
 const String CHARACTER @local = "../assets/quaternius/AnimationLibrary_Godot.glb";
 const String[] CLIP_NAMES @local = {
     "Walk_Loop", "Jog_Fwd_Loop", "Idle_Loop", "Sprint_Loop", "Walk_Formal_Loop", "Dance_Loop",
@@ -63,6 +69,13 @@ struct Showcase @local {
     AnimationActionId[CROWD_SIZE] base_actions;
     bool     baseline;
     bool     compare;
+    bool     shared_phases;
+    float[CROWD_SIZE] seed_times;
+    float[CROWD_SIZE] seed_speeds;
+    double   sample_ms;
+    double   cache_hit_rate;
+    ulong    cache_lookups;
+    ulong    cache_hits;
     float    frozen_share;
     bool     consume_motion;
     RootMotionDelta motion;
@@ -214,6 +227,58 @@ fn void set_baseline(Scene* scene, Showcase* showcase, bool baseline) @local {
     foreach (node : showcase.animated) node.visible = baseline;
 }
 
+fn void set_shared_phases(
+    AssetStore* assets,
+    Scene* scene,
+    Showcase* showcase,
+    bool shared,
+) @local {
+    showcase.shared_phases = shared;
+    AnimatedCrowd* crowd = scene.get(showcase.crowd, AnimatedCrowd);
+    CrowdPlaybackState* playback = crowd.playback;
+
+    foreach (uint index, node : showcase.animated) {
+        CrowdPlayer player = playback.player(playback.instance_id(index)!!)!!;
+        Action* base = player.base_action()!!;
+        float duration = assets.clip(base.clip).data.duration;
+        uint group = index % SHARED_GROUPS;
+        float time = showcase.seed_times[index];
+        float speed = showcase.seed_speeds[index];
+        if (shared) {
+            time = (float)(group / CLIP_NAMES.len) * SHARED_PHASE * duration;
+            speed = SPEED_MIN + (SPEED_MAX - SPEED_MIN) * (float)group / (float)(SHARED_GROUPS - 1);
+        }
+
+        base.time = time;
+        base.speed = speed;
+        Action* reference = scene.get(node, Animator).action(showcase.base_actions[index]);
+        reference.time = time;
+        reference.speed = speed;
+    }
+}
+
+fn void update_crowd(
+    AssetStore* assets,
+    Scene* scene,
+    Showcase* showcase,
+    float delta,
+) @local {
+    AnimatedCrowd* crowd = scene.get(showcase.crowd, AnimatedCrowd);
+    PoseCache* cache = crowd.playback.pose_storage.scratch.cache;
+    ulong lookups_before = cache.lookups;
+    ulong hits_before = cache.hits;
+
+    time::Clock started = clock::now();
+    crowd.playback.update(assets, delta);
+    double sample_ms = (double)(clock::now() - started) / NANOSECONDS_PER_MILLISECOND;
+    anim::publish_crowd_pose(assets, scene, crowd);
+
+    ulong lookups = cache.lookups - lookups_before;
+    double hit_rate = lookups ? (double)(cache.hits - hits_before) / (double)lookups : 0;
+    showcase.sample_ms += (sample_ms - showcase.sample_ms) * STATS_SMOOTHING;
+    showcase.cache_hit_rate += (hit_rate - showcase.cache_hit_rate) * STATS_SMOOTHING;
+}
+
 fn void compare_playback(Scene* scene, Showcase* showcase) @local {
     AnimatedCrowd* crowd = scene.get(showcase.crowd, AnimatedCrowd);
     CrowdPlaybackState* playback = crowd.playback;
@@ -272,10 +337,12 @@ fn uint resident_crowd_bytes(AnimatedCrowd* crowd) @local {
 
 fn void? panel(
     render::Renderer* renderer,
+    AssetStore* assets,
     Scene* scene,
     Showcase* showcase,
 ) @local {
     bool changed;
+    bool phases_changed;
 
     imgui::set_next_window_pos(PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
     imgui::set_next_window_size(PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
@@ -285,6 +352,9 @@ fn void? panel(
         imgui::text("Frame: %.3f ms", (double)renderer.stats.frame_ms);
         imgui::text("Draws: %u", renderer.stats.draws);
         imgui::text("Instances: %u", renderer.stats.instances);
+        imgui::text("Crowd sample: %.3f ms", showcase.sample_ms);
+        imgui::text("Pose cache: %.1f%% of actions share samples", showcase.cache_hit_rate * 100);
+        phases_changed = imgui::checkbox("Shared-phase groups (G)", &showcase.shared_phases);
         imgui::text("Upload: %u bytes per frame", renderer.stats.upload_bytes);
         imgui::text("Resident crowd: %u bytes", resident_crowd_bytes(scene.get(showcase.crowd, AnimatedCrowd)));
         bool frozen_changed = imgui::slider_float(
@@ -335,6 +405,14 @@ fn void? panel(
     }
     imgui::end();
 
+    if (phases_changed) {
+        set_shared_phases(
+            assets:   assets,
+            scene:    scene,
+            showcase: showcase,
+            shared:   showcase.shared_phases,
+        );
+    }
     if (changed) {
         ViewDesc desc = renderer.views.get(renderer.default_view).desc;
         desc.lod_bias = showcase.full_detail ? FULL_DETAIL_BIAS : showcase.lod_bias;
@@ -380,11 +458,28 @@ fn void? run(
     renderer.prepare_scene(scene)!;
 
     double last_report;
+    if (showcase.shared_phases) {
+        set_shared_phases(
+            assets:   assets,
+            scene:    scene,
+            showcase: showcase,
+            shared:   true,
+        );
+    }
     while (window.poll()) {
         Input* input = &window.input;
         if (input.key_released(Scancode.ESCAPE) && !input.keyboard_captured_by_gui) break;
         if (input.key_pressed(Scancode.B) && !input.keyboard_captured_by_gui) {
             set_baseline(scene, showcase, !showcase.baseline);
+        }
+
+        if (input.key_pressed(Scancode.G) && !input.keyboard_captured_by_gui) {
+            set_shared_phases(
+                assets:   assets,
+                scene:    scene,
+                showcase: showcase,
+                shared:   !showcase.shared_phases,
+            );
         }
 
         if (input.key_pressed(Scancode.SPACE) && !input.keyboard_captured_by_gui) {
@@ -410,7 +505,14 @@ fn void? run(
             if (gui_renderer.frame_open) gui_renderer.finish_frame();
         }
         if (showcase.baseline || showcase.compare) anim::update(assets, scene, window.clock.delta);
-        if (!showcase.baseline || showcase.compare) anim::crowd_update(assets, scene, window.clock.delta);
+        if (!showcase.baseline || showcase.compare) {
+            update_crowd(
+                assets:   assets,
+                scene:    scene,
+                showcase: showcase,
+                delta:    window.clock.delta,
+            );
+        }
 
         AnimatedCrowd* crowd = scene.get(showcase.crowd, AnimatedCrowd);
         Animator* reference = scene.get(showcase.animated[0], Animator);
@@ -433,7 +535,12 @@ fn void? run(
         scene.update_world();
         if (showcase.compare) compare_playback(scene, showcase);
 
-        panel(renderer, scene, showcase)!;
+        panel(
+            renderer: renderer,
+            assets:   assets,
+            scene:    scene,
+            showcase: showcase,
+        )!;
         gui_renderer.finish_frame();
         platform::sync_window(window, renderer);
         draw_frame(
@@ -449,7 +556,13 @@ fn void? run(
             io::printf("%s: cpu_record %.3f ms", mode, renderer.stats.cpu_record_ms);
             io::printf(", frame %.3f ms, draws %d", renderer.stats.frame_ms, renderer.stats.draws);
             io::printf(", instances %d", renderer.stats.instances);
-            io::printfn(", upload %d bytes, frozen %.0f%%", renderer.stats.upload_bytes, showcase.frozen_share * 100);
+            io::printf(", upload %d bytes, frozen %.0f%%", renderer.stats.upload_bytes, showcase.frozen_share * 100);
+            io::printfn(
+                ", sample %.3f ms, shared phases %s, cache hits %.1f%%",
+                showcase.sample_ms,
+                showcase.shared_phases ? "on" : "off",
+                showcase.cache_hit_rate * 100,
+            );
         }
     }
 }
@@ -458,6 +571,7 @@ fn int main(String[] args) {
     bool baseline;
     bool compare;
     bool compress;
+    bool shared_phases;
     float frozen_share;
     foreach (argument : args[1..]) {
         if (argument == "--baseline") {
@@ -466,6 +580,8 @@ fn int main(String[] args) {
             compress = true;
         } else if (argument == "--compare") {
             compare = true;
+        } else if (argument == "--shared-phases") {
+            shared_phases = true;
         } else if (argument.starts_with(FROZEN_PERCENT_FLAG)) {
             uint? percent = argument[FROZEN_PERCENT_FLAG.len..].to_uint();
             if (catch excuse = percent) {
@@ -508,16 +624,19 @@ fn int main(String[] args) {
 
     Random random = { .state = RANDOM_SEED };
     CrowdInstance[CROWD_SIZE] instances;
-    Showcase showcase = { .compare = compare, .frozen_share = frozen_share };
+    Showcase showcase = { .compare = compare, .shared_phases = shared_phases, .frozen_share = frozen_share };
     foreach (uint index, &instance : instances) {
         ClipId clip = clips[index % clips.len];
         float duration = assets.clip(clip).data.duration;
+        Transform placement = slot_placement(index, &random);
+        showcase.seed_times[index] = random.next() * duration;
+        showcase.seed_speeds[index] = SPEED_MIN + (SPEED_MAX - SPEED_MIN) * random.next();
         *instance = {
-            .placement = slot_placement(index, &random),
+            .placement = placement,
             .pose      = {
                 .clip  = clip,
-                .time  = random.next() * duration,
-                .speed = SPEED_MIN + (SPEED_MAX - SPEED_MIN) * random.next(),
+                .time  = showcase.seed_times[index],
+                .speed = showcase.seed_speeds[index],
                 .loop  = true,
             },
             .color     = { 1, 1, 1, 1 },

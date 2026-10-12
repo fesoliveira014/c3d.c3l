@@ -257,7 +257,7 @@ fn PlanarMotion action_motion(
     return compose_motion(inverse_motion(first), last);
 }
 
-fn void pin_root_sample(Action* action, uint track, float[] sample) @private {
+fn void pin_root_sample(Action* action, uint track, float[] sample) @private @inline {
     if (action.root_motion == RootMotion.KEEP) return;
     if (track == action.translation_track) {
         sample[0] = action.root_position.x;
