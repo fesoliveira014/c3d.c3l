@@ -55,5 +55,6 @@ void main() {
     vec3 gap = vec3(1.0) - reach;
     vec3 closed = (vec3(1.0) - pow(reach, vec3(terms))) / max(gap, vec3(MULTI_SCATTERING_EPSILON));
     vec3 series = mix(closed, vec3(terms), lessThan(gap, vec3(MULTI_SCATTERING_EPSILON)));
-    store_storage_texture(root.output_texture, ivec2(texel), vec4(max(second_order * series, vec3(0.0)), 1.0));
+    vec3 stored = sky_table_store(max(second_order * series, vec3(0.0)), SKY_MULTI_SCATTERING_SCALE);
+    store_storage_texture(root.output_texture, ivec2(texel), vec4(stored, 1.0));
 }

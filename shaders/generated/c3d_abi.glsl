@@ -1085,6 +1085,10 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer SkyFogGpu {
     uint fog_volume;
     float fog_anisotropy;
     uint fog_slices;
+    float sky_table_scale;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer SkyTableRoot {

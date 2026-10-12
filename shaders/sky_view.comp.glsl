@@ -37,5 +37,6 @@ void main() {
         true,
         false
     );
-    store_storage_texture(root.output_texture, ivec2(texel), vec4(scattering.luminance, 1.0));
+    vec3 stored = sky_table_store(scattering.luminance, sky.sky_table_scale);
+    store_storage_texture(root.output_texture, ivec2(texel), vec4(stored, 1.0));
 }

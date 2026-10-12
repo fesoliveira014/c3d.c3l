@@ -1800,8 +1800,12 @@ struct SkyFogGpu {
     TextureIndex fog_volume;
     float        fog_anisotropy;
     uint         fog_slices;
+    float        sky_table_scale;
+    uint         _pad0;
+    uint         _pad1;
+    uint         _pad2;
 }
-$assert SkyFogGpu::size == 176;
+$assert SkyFogGpu::size == 192;
 $assert $reflect(SkyFogGpu.sun_direction_cos_radius).offset == 0;
 $assert $reflect(SkyFogGpu.sun_illuminance).offset == 16;
 $assert $reflect(SkyFogGpu.rayleigh_scattering_height).offset == 32;
@@ -1825,6 +1829,10 @@ $assert $reflect(SkyFogGpu.lut_sampler).offset == 160;
 $assert $reflect(SkyFogGpu.fog_volume).offset == 164;
 $assert $reflect(SkyFogGpu.fog_anisotropy).offset == 168;
 $assert $reflect(SkyFogGpu.fog_slices).offset == 172;
+$assert $reflect(SkyFogGpu.sky_table_scale).offset == 176;
+$assert $reflect(SkyFogGpu._pad0).offset == 180;
+$assert $reflect(SkyFogGpu._pad1).offset == 184;
+$assert $reflect(SkyFogGpu._pad2).offset == 188;
 
 struct SkyTableRoot {
     GpuAddress   sky_fog;

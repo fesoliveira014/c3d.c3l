@@ -8,7 +8,7 @@ import c3d::shader;
 import gpu;
 import std::math;
 
-$assert SkyFogGpu::size == 176;
+$assert SkyFogGpu::size == 192;
 $assert SkyTableRoot::size == 32;
 
 <*
@@ -37,6 +37,8 @@ const float SKY_REGENERATION_ALTITUDE = 500; // metres; below it the sky seen fr
 const float AERIAL_PERSPECTIVE_DISTANCE = 128_000; // metres; 4 km a slice, squared toward the camera: the first at 31 m
 
 const ulong ATMOSPHERE_ABSENCE_FRAMES @local = FRAMES_IN_FLIGHT + 1; // longer holds an idle mirror longer
+const int SKY_TABLE_SCALE_MIN_STOP @local = 0; // a table never holds less than its luminance per unit sun illuminance
+const int SKY_TABLE_SCALE_MAX_STOP @local = 16; // the pre-exposure bound; a texel past half's maximum saturates
 
 <*
  The scene's atmosphere and the directional light that is its sun.
@@ -197,6 +199,19 @@ fn bool same_air(Atmosphere* first, Atmosphere* second) @local {
         && first.sun_angular_radius == second.sun_angular_radius;
 }
 
+<*
+ @pure
+*>
+fn float sky_table_scale(Vec3 sun_illuminance) @private {
+    bool finite = math::is_finite(sun_illuminance.x)
+      && math::is_finite(sun_illuminance.y)
+      && math::is_finite(sun_illuminance.z);
+    float peak = math::max(sun_illuminance.x, sun_illuminance.y, sun_illuminance.z);
+    if (!finite || !(peak > 0)) return 1;
+    float stop = math::round(math::log2(peak));
+    return math::exp2(math::clamp(stop, (float)SKY_TABLE_SCALE_MIN_STOP, (float)SKY_TABLE_SCALE_MAX_STOP));
+}
+
 fn void write_sky_fog(
     SkyFogGpu* root,
     Atmosphere* atmosphere,
@@ -214,6 +229,7 @@ fn void write_sky_fog(
         .lut_sampler            = tables.sampler,
         .fog_volume             = tables.fog_volume,
         .fog_slices             = tables.fog_slices,
+        .sky_table_scale        = atmosphere ? sky_table_scale(sun_illuminance) : 1,
     };
     if (atmosphere) {
         float top = atmosphere.planet_radius + atmosphere.atmosphere_height;
