@@ -95,11 +95,12 @@ fn CrowdPlayer parts_player(AnimatedCrowd* crowd, uint index = 0) @local {
 fn Vec3 parts_morphed_vertex(
     AssetStore* assets,
     AnimatedCrowd* crowd,
-    CrowdPart* part,
+    uint part_index,
     uint instance,
     uint vertex,
 ) @local {
-    GeometryId geometry_id = assets.model(crowd.model).data.meshes[part.mesh_index].geometry;
+    CrowdPart* part = &crowd.parts[part_index];
+    GeometryId geometry_id = assets.model(crowd.model).data.meshes[part_index].geometry;
     Geometry* geometry = &assets.geometry(geometry_id).data;
     Vec3 position = geometry.positions[vertex];
     if (!part.weight_count) return position;
@@ -129,7 +130,7 @@ fn void assert_parts_vertices(
         InstancedMesh* batch = scene.get(child, InstancedMesh);
         assert(batch.count == 1 && batch.transforms[0].position == crowd.placements[0].position);
         assert(child.local.position == (Vec3){} && child.local.scale == (Vec3){ 1, 1, 1 });
-        assert(part.template_node == crowd.playback.mesh_nodes[part.mesh_index]);
+        assert(part.template_node == crowd.playback.mesh_nodes[index]);
         uint expected_part = skin_free ? index + 1 : index;
         Mat4 world = node.world.mul(crowd.part_transform(0, index));
         Geometry* geometry = &assets.geometry(batch.geometry).data;
@@ -141,7 +142,7 @@ fn void assert_parts_vertices(
             Vec3 actual = maths::transform_point(vertex_world, parts_morphed_vertex(
                 assets: assets,
                 crowd: crowd,
-                part: part,
+                part_index: index,
                 instance: 0,
                 vertex: vertex,
             ));
@@ -612,7 +613,7 @@ fn void test_crowd_parts_rigid_and_morph_vertices_fit_mirrored_affine_envelopes(
                     Vec3 actual = maths::transform_point(world, parts_morphed_vertex(
                         assets: &assets,
                         crowd: crowd,
-                        part: part,
+                        part_index: part_index,
                         instance: source,
                         vertex: vertex,
                     ));

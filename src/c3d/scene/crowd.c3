@@ -20,11 +20,10 @@ struct CrowdPose {
     bool loop;
 }
 
-<* One logical model mesh drawn by an owned child batch. *>
+<* One template mesh, at the same index, drawn by an owned child batch. *>
 struct CrowdPart {
     Entity batch;
     uint template_node;
-    uint mesh_index;
     bool skinned;
     uint weight_count;
     uint weight_offset;

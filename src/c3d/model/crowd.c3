@@ -192,7 +192,6 @@ fn void? prepare_crowd(AssetStore* assets, Scene* scene, Node* node) {
         uint weight_count = (uint)mesh.default_morph_weights.len;
         crowd.parts[index] = {
             .template_node = mesh.node,
-            .mesh_index = index,
             .skinned = mesh_is_skinned(assets, template, mesh),
             .weight_count = weight_count,
             .weight_offset = crowd.morph_stride,
