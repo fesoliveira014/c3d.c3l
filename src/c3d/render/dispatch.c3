@@ -433,8 +433,9 @@ fn void? dispatch_extent(
     gpu::GpuAddress root,
     uint width,
     uint height,
+    uint group_size = shader::POST_GROUP_SIZE,
 ) @private {
-    uint groups_x = (width + shader::POST_GROUP_SIZE - 1) / shader::POST_GROUP_SIZE;
-    uint groups_y = (height + shader::POST_GROUP_SIZE - 1) / shader::POST_GROUP_SIZE;
+    uint groups_x = (width + group_size - 1) / group_size;
+    uint groups_y = (height + group_size - 1) / group_size;
     return gpu::cmd_dispatch(&renderer.commands, root, { groups_x, groups_y, 1 });
 }

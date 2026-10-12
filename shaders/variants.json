@@ -69,6 +69,7 @@
     { "shader": "fog_integration", "source": "fog_integration.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "cloud_noise", "source": "cloud_noise.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "clouds", "source": "clouds.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "clouds", "source": "clouds.comp.glsl", "stage": "comp", "defines": ["TEMPORAL"] },
     { "shader": "cloud_shadows", "source": "cloud_shadows.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "clouds_composite", "source": "clouds_composite.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY"] },

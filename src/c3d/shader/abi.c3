@@ -153,6 +153,8 @@ const uint CLOUD_SHADOW_SIZE = 512;
 const float CLOUD_SHADOW_EXTENT = 16384.0;
 const uint CLOUD_SHADOW_STEPS = 16;
 const float CLOUD_SHADOW_EDGE_BAND = 0.1;
+const float CLOUD_HISTORY_WEIGHT = 0.9;
+const uint CLOUD_TEMPORAL_GROUP = 16;
 const uint PHYSICAL_MAP_CLEARCOAT = 1;
 const uint PHYSICAL_MAP_CLEARCOAT_ROUGHNESS = 2;
 const uint PHYSICAL_MAP_CLEARCOAT_NORMAL = 4;
@@ -1961,6 +1963,28 @@ $assert $reflect(CloudsRoot.anisotropy).offset == 112;
 $assert $reflect(CloudsRoot.coverage_extent).offset == 116;
 $assert $reflect(CloudsRoot.noise_scale).offset == 120;
 $assert $reflect(CloudsRoot.erosion).offset == 124;
+
+struct CloudsTemporalRoot {
+    Mat4f        previous_view_proj;
+    Vec4f        wind_delta;
+    GpuAddress   clouds;
+    TextureIndex history;
+    TextureIndex history_distance;
+    SamplerIndex history_sampler;
+    float        jitter;
+    float        pre_exposure_ratio;
+    uint         _pad0;
+}
+$assert CloudsTemporalRoot::size == 112;
+$assert $reflect(CloudsTemporalRoot.previous_view_proj).offset == 0;
+$assert $reflect(CloudsTemporalRoot.wind_delta).offset == 64;
+$assert $reflect(CloudsTemporalRoot.clouds).offset == 80;
+$assert $reflect(CloudsTemporalRoot.history).offset == 88;
+$assert $reflect(CloudsTemporalRoot.history_distance).offset == 92;
+$assert $reflect(CloudsTemporalRoot.history_sampler).offset == 96;
+$assert $reflect(CloudsTemporalRoot.jitter).offset == 100;
+$assert $reflect(CloudsTemporalRoot.pre_exposure_ratio).offset == 104;
+$assert $reflect(CloudsTemporalRoot._pad0).offset == 108;
 
 struct CloudShadowRoot {
     Vec4f        to_sun;
