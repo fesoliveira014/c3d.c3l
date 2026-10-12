@@ -11,6 +11,8 @@ const uint MOTION_TRANSLATION_SLOT @local = 0;
 const uint MOTION_ROTATION_SLOT @local = 1;
 const uint MOTION_SCALE_SLOT @local = 2;
 
+const double MOTION_SCALE_EPSILON @local = 1e-5; // Relative component tolerance of a uniform scale.
+
 struct CapturedMotionNode @private {
     uint model_node;
     uint translation_track;
@@ -180,3 +182,207 @@ fn void? validate_motion_baseline(Transform baseline) @local {
 }
 
 fn bool motion_unit_length(double squared) @local => math::abs(squared - 1) <= MOTION_UNIT_TOLERANCE;
+
+// Admission returns UNSUPPORTED as true, so a request reports every other fault of its actions first.
+fn bool? validate_playback_addition(
+    PlaybackView* playback,
+    AssetStore* assets,
+    AnimationClip* clip,
+    PlayDesc desc,
+    PoseDestination destination,
+    MotionBasis basis,
+) @private {
+    CapturedMotionChain* chain = generalized_playback_chain(playback);
+    bool unsupported = validate_action_desc(
+        playback: playback,
+        assets: assets,
+        clip: clip,
+        desc: desc,
+        destination: destination,
+        motion_basis: basis,
+        consumed_extraction: chain ? &chain.extraction : null,
+    )!;
+
+    validate_live_extraction(playback, desc)!;
+    if (chain || !desc.extraction.generalized) return unsupported;
+
+    ModelTemplate* template = &assets.models.try_get(playback.model)!.data;
+    foreach (id : playback.order[:*playback.action_count]) {
+        Action* action = playback.actions.get(id);
+        unsupported |= validate_generalized_motion(
+            template: template,
+            clip: &assets.clips.try_get(action.clip)!.data,
+            root: playback.root_node,
+            extraction: desc.extraction,
+            motion_basis: basis,
+            additive: action.additive,
+            additive_scale: action.additive_scale,
+        )!;
+    }
+
+    return unsupported;
+}
+
+fn bool? validate_action_desc(
+    PlaybackView* playback,
+    AssetStore* assets,
+    AnimationClip* clip,
+    PlayDesc desc,
+    PoseDestination destination,
+    MotionBasis motion_basis,
+    RootExtractionDesc* consumed_extraction,
+) @private {
+    validate_playback_action(clip, desc, destination)!;
+
+    Action motion;
+    configure_motion(
+        playback: playback,
+        action: &motion,
+        clip: clip,
+        desc: desc,
+        motion_basis: motion_basis,
+        node_count: destination.base_pose.len,
+    )!;
+
+    bool unsupported;
+    if (desc.additive && desc.additive_scale == AdditiveScaleMode.MULTIPLICATIVE) {
+        unsupported = validate_multiplicative_scale(clip)!;
+    }
+
+    RootExtractionDesc* extraction = desc.extraction.generalized ? &desc.extraction : consumed_extraction;
+    if (!extraction) return unsupported;
+
+    unsupported |= validate_generalized_motion(
+        template: &assets.models.try_get(playback.model)!.data,
+        clip: clip,
+        root: playback.root_node,
+        extraction: *extraction,
+        motion_basis: motion_basis,
+        additive: desc.additive,
+        additive_scale: desc.additive_scale,
+    )!;
+
+    return unsupported;
+}
+
+fn void? validate_live_extraction(PlaybackView* playback, PlayDesc desc) @private {
+    if (desc.root_motion != RootMotion.EXTRACT) return;
+
+    foreach (id : playback.order[:*playback.action_count]) {
+        Action* action = playback.actions.get(id);
+        if (action.root_motion == RootMotion.EXTRACT && !same_extraction(action.extraction, desc.extraction)) {
+            return c3d::INVALID_ARGUMENT~;
+        }
+    }
+}
+
+// Planar extraction has one fixed frame; generalized frames must match exactly.
+fn bool same_extraction(RootExtractionDesc first, RootExtractionDesc second) @private {
+    if (!first.generalized && !second.generalized) return true;
+
+    return first.generalized == second.generalized && first.up == second.up && first.twist == second.twist
+      && first.translation_axes == second.translation_axes;
+}
+
+fn void? prepare_action_motion_capture(
+    Allocator allocator,
+    AssetStore* assets,
+    ModelId model,
+    Action* action,
+    uint root_node,
+) @private {
+    if (!action.extraction.generalized) return;
+
+    ModelTemplate* template = &assets.model(model).data;
+    AnimationClip* clip = &assets.clip(action.clip).data;
+    CapturedMotionChain* captured = alloc::new_try(allocator, CapturedMotionChain)
+      ?? c3d::CAPACITY_EXCEEDED~!;
+    defer catch alloc::free(allocator, captured);
+
+    *captured = create_captured_motion_chain(
+        allocator: allocator,
+        template: template,
+        clip: clip,
+        root: root_node,
+        extraction: action.extraction,
+    )!;
+    defer catch destroy_captured_motion_chain(captured);
+
+    captured.pose_scale_sums = alloc::new_array_try(allocator, double[<3>], template.nodes.len)
+      ?? c3d::CAPACITY_EXCEEDED~!;
+
+    action.motion_chain = captured;
+    action.motion_reference = capture_generalized_motion_reference(captured, clip);
+}
+
+fn void? validate_motion_rotation_track(Track* track) @private {
+    validate_motion_track_storage(track, TargetPath.ROTATION)!;
+
+    uint key_count = (uint)track.times.len;
+    for (uint key = 0; key < key_count; key++) {
+        float[] value = motion_domain_key(track, (uint)key, CUBIC_SLOT_VALUE);
+        bool nonzero;
+        foreach (component : value) nonzero |= component != 0;
+        if (!nonzero) return c3d::INVALID_ARGUMENT~;
+    }
+}
+
+fn bool? validate_consumed_scale_track(Track* track, bool additive) @private {
+    validate_motion_track_storage(track, TargetPath.SCALE)!;
+
+    float[] reference = motion_domain_key(track, 0, CUBIC_SLOT_VALUE);
+
+    uint key_count = (uint)track.times.len;
+    for (uint key = 0; key < key_count; key++) {
+        float[] value = motion_domain_key(track, (uint)key, CUBIC_SLOT_VALUE);
+        if (additive) {
+            for (uint component = 0; component < 3; component++) {
+                if (value[component] != reference[component]) return c3d::INVALID_ARGUMENT~;
+            }
+        } else {
+            for (uint component = 0; component < 3; component++) {
+                if (!(value[component] > 0)) return c3d::INVALID_ARGUMENT~;
+            }
+
+            if (!motion_scale_uniform(value)) return c3d::INVALID_ARGUMENT~;
+        }
+    }
+
+    return track.interpolation == Interpolation.CUBIC_SPLINE;
+}
+
+fn void? validate_motion_track_storage(Track* track, TargetPath path) @local {
+    usz stride = path == TargetPath.ROTATION ? 4 : 3;
+    usz slots = track.interpolation == Interpolation.CUBIC_SPLINE ? CUBIC_SLOTS_PER_KEY : 1;
+    if (track.path != path || track.times.len == 0 || track.times.len > uint::max
+        || track.times.len > usz::max / (slots * stride)
+        || track.values.len != track.times.len * slots * stride) return c3d::INVALID_ARGUMENT~;
+
+    foreach (key, time : track.times) {
+        if (!math::is_finite(time) || (key && time <= track.times[key - 1])) return c3d::INVALID_ARGUMENT~;
+    }
+
+    foreach (value : track.values) {
+        if (!math::is_finite(value)) return c3d::INVALID_ARGUMENT~;
+    }
+}
+
+fn float[] motion_domain_key(Track* track, uint key, uint slot) @local {
+    usz stride = track.stride();
+    usz offset = track.interpolation == Interpolation.CUBIC_SPLINE
+      ? ((usz)key * CUBIC_SLOTS_PER_KEY + slot) * stride : (usz)key * stride;
+
+    return track.values[offset : stride];
+}
+
+fn bool motion_scale_uniform(float[] value) @local {
+    foreach (smaller : value) foreach (larger : value) {
+        if (smaller >= larger) continue;
+        if ((double)smaller < (double)larger * 0.5) return false;
+
+        // Within a factor of two the difference is exact, and the single fma rounding keeps its sign.
+        if (math::fma((double)larger, MOTION_SCALE_EPSILON, (double)smaller - (double)larger) < 0) return false;
+    }
+
+    return true;
+}
