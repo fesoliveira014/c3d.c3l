@@ -3,10 +3,9 @@ module c3d::spatial;
 import c3d;
 import c3d::asset;
 import c3d::geometry;
-import c3d::material;
 import c3d::maths;
 import c3d::model;
-import c3d::scene;
+import c3d::scene @public;
 import std::math;
 
 <*
@@ -54,13 +53,12 @@ fn bool lod_group_is_live(
               && binding.source_skeleton_revision != assets.skeleton(binding.source_skeleton).header.revision) return false;
         }
 
-        Material* material = &assets.material(part.material).data;
-        if (material.kind == MaterialKind.CUSTOM) {
-            if (!assets.shaders.is_live(material.custom.shader)) return false;
-            CustomVertex* vertex = &assets.shader(material.custom.shader).desc.vertex;
-            if (vertex.shaded.len && (!state.desc.has_bounds_override
-              || (state.mode == LodMode.INSTANCED && !vertex.instanced_shaded.len))) return false;
-        }
+        if (!@ok(scene::validate_lod_material(
+            assets: assets,
+            material_id: part.material,
+            mode: state.mode,
+            bounds_override: state.desc.has_bounds_override,
+        ))) return false;
     }
 
     return true;
@@ -84,24 +82,21 @@ fn Aabb lod_world_bounds(
     Scene* scene = null,
 ) {
     LodGroupState* state = group.state;
-    if (state.animated) {
-        Aabb bounds;
-        bool first = true;
 
-        for (uint instance = 0; instance < state.count; instance++) {
-            foreach (uint part, draw : state.desc.parts) {
-                Aabb current = animated_lod_part_bounds(
-                    assets: assets,
-                    scene: scene,
-                    node: node,
-                    state: state,
-                    instance: instance,
-                    part: part,
-                    origin: origin,
-                );
-                bounds = first ? current : maths::aabb_merge(bounds, current);
-                first = false;
-            }
+    // Crowd and override bounds already cover every representation, so they take the cached rigid path.
+    if (state.animated && !state.desc.has_bounds_override) {
+        Aabb bounds;
+        foreach (uint part, draw : state.desc.parts) {
+            Aabb current = animated_lod_part_bounds(
+                assets: assets,
+                scene: scene,
+                node: node,
+                state: state,
+                instance: 0,
+                part: part,
+                origin: origin,
+            );
+            bounds = part ? maths::aabb_merge(bounds, current) : current;
         }
 
         return bounds;
@@ -172,24 +167,6 @@ fn bool animated_lod_owns_node(Scene* scene, Node* node) @private {
     }
 
     return false;
-}
-
-<*
- Read a logical part's guaranteed level-zero representation.
- @param [&in] state : "Admitted level zero covers every logical mesh."
- @require !state.animated || logical_part < state.animated.channel_offsets.len - 1
- @ensure return < state.desc.parts.len
-*>
-fn uint lod_base_representation(LodGroupState* state, uint logical_part) @private {
-    if (!state.animated) return logical_part;
-
-    LodLevel level = state.desc.levels[0];
-
-    for (uint part = level.first_part; part < level.first_part + level.part_count; part++) {
-        if (state.animated.parts[part].mesh_index == logical_part) return part;
-    }
-
-    unreachable();
 }
 
 <* Current bounds of one admitted animated LOD representation.

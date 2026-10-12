@@ -7,7 +7,7 @@ import c3d::material;
 import c3d::maths;
 import c3d::scene;
 import c3d::shader;
-import c3d::spatial;
+import c3d::spatial @public;
 import std::math;
 
 <*
@@ -305,7 +305,7 @@ fn void include_mesh(
     ExtractCounts* counts,
     Vec3 origin,
 ) @local {
-    if (animated_lod_owns_source(scene, node)) return;
+    if (spatial::animated_lod_owns_node(scene, node)) return;
 
     SkinBinding* skin = scene.get(node, SkinBinding);
     if (!spatial::mesh_is_live(assets, mesh, skin)) {
@@ -385,7 +385,7 @@ fn void include_batch(
     ExtractCounts* counts,
     Vec3 origin,
 ) @local {
-    if (animated_lod_owns_source(scene, node)) return;
+    if (spatial::animated_lod_owns_node(scene, node)) return;
 
     if (!batch_is_drawable(assets, batch)) {
         counts.dangling++;
@@ -522,7 +522,12 @@ fn void emit_lod_candidates(
                     .lod_part = level.first_part + index,
                     .impostor = impostor,
                 };
-                if (state.animated && !bind_animated_lod_candidate(selection, &candidate)) continue;
+                if (state.animated) {
+                    if (!bind_animated_lod_candidate(selection, &candidate)) continue;
+
+                    // The vertex stage composes the part-local affine on top of the owner world.
+                    if (!instanced) candidate.mirrored = animated_lod_part_local(&candidate).determinant() < 0;
+                }
 
                 candidates[counts.visible++] = candidate;
             }
@@ -591,7 +596,7 @@ fn MeshCandidate[] extract_shadow_candidates(
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         Node* node = scene.node(entity);
 
-        if (!animated_lod_owns_source(scene, node) && node.visible_effective && mesh.cast_shadow) {
+        if (!spatial::animated_lod_owns_node(scene, node) && node.visible_effective && mesh.cast_shadow) {
             SkinBinding* skin = scene.get(node, SkinBinding);
             if (!spatial::mesh_is_live(assets, mesh, skin)) {
                 counts.dangling++;
@@ -622,7 +627,7 @@ fn MeshCandidate[] extract_shadow_candidates(
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
         Node* node = scene.node(entity);
 
-        if (!animated_lod_owns_source(scene, node) && batch.count && node.visible_effective && batch.cast_shadow) {
+        if (!spatial::animated_lod_owns_node(scene, node) && batch.count && node.visible_effective && batch.cast_shadow) {
             if (!batch_is_drawable(assets, batch)) {
                 counts.dangling++;
             } else if (casts_shadow(&assets.material(batch.material).data, colored)) {

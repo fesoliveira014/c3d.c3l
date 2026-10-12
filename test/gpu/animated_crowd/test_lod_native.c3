@@ -266,7 +266,6 @@ fn void match_lod_native_shadow_fit(
     Aabb aggregate;
     for (uint source = 0; source < (sources.crowd ? 1u : CROWD_NATIVE_INSTANCES); source++) {
         Node* owner = lod_native_owner(pair, sources, source);
-        model::sync_animated_lod(&fixture.assets, &pair.scene, owner)!!;
         Aabb bounds = spatial::lod_world_bounds(
             assets: &fixture.assets,
             node: owner,
@@ -386,7 +385,7 @@ fn BoundsNativeAssets? add_bounds_native_assets(Fixture* fixture) @private {
         .model = result.parts.mixed,
         .level_count = 2,
         .thresholds = { 0.5f, 0, 0 },
-        .order = { { 4, 1, 2, 3, 0 }, { 2, 0, 4, 1, 3 }, {} },
+        .order = { { 0, 1, 2, 3, 4 }, { 2, 0, 4, 1, 3 }, {} },
     };
     Allocator allocator = fixture.assets.allocator;
     String key = "native_bounds/extension";

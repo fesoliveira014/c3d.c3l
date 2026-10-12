@@ -386,7 +386,7 @@ fn void? check_crowd_configuration(uint capacity, uint actions_per_instance, Aab
     }
 }
 
-fn void? check_crowd_template(AssetStore* assets, ModelTemplate* template) @local {
+fn void? check_crowd_template(AssetStore* assets, ModelTemplate* template) @private {
     if (!template.nodes.len || !template.meshes.len || template.nodes.len > uint::max
       || template.meshes.len > uint::max) return c3d::INVALID_ARGUMENT~;
 

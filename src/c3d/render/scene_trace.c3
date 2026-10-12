@@ -6,7 +6,7 @@ import c3d::material;
 import c3d::maths;
 import c3d::scene;
 import c3d::shader;
-import c3d::spatial;
+import c3d::spatial @public;
 import c3d::spatial::bvh;
 import gpu;
 import std::collections::list;
@@ -335,7 +335,7 @@ fn TraceCollection collect_trace_instances(
     usz count;
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         Node* node = scene.node(entity);
-        if (node.visible_effective && mesh.trace && !animated_lod_owns_source(scene, node)) {
+        if (node.visible_effective && mesh.trace && !spatial::animated_lod_owns_node(scene, node)) {
             SkinBinding* skin = scene.get(node, SkinBinding);
             if (!spatial::mesh_is_live(assets, mesh, skin) || !material_dependencies_live(assets, mesh.material)) {
                 collection.dangling++;
@@ -369,7 +369,7 @@ fn TraceCollection collect_trace_instances(
     };
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
         Node* node = scene.node(entity);
-        if (node.visible_effective && batch.trace && batch.count && !animated_lod_owns_source(scene, node)) {
+        if (node.visible_effective && batch.trace && batch.count && !spatial::animated_lod_owns_node(scene, node)) {
             if (!spatial::instanced_mesh_is_live(assets, batch)
                 || !material_dependencies_live(assets, batch.material)) {
                 collection.dangling++;

@@ -90,7 +90,6 @@ struct AnimatedLodBinding {
     AnimatedLodPartBinding[] parts;
     uint[] weight_indices;
     uint[] channel_offsets;
-    String[] channel_names;
     float[] defaults;
     uint[] joint_nodes;
     Mat4[] inverse_bind;
@@ -390,13 +389,27 @@ fn void? validate_lod_desc(AssetStore* assets, LodDesc desc, LodMode mode) {
         if (!valid_lod_bounds(maths::aabb_transform(geometry.data.bounds, part.local))) {
             return c3d::INVALID_ARGUMENT~;
         }
-        Material* material = &assets.material(part.material).data;
-        if (material.kind != MaterialKind.CUSTOM) continue;
-        if (!assets.shaders.is_live(material.custom.shader)) return c3d::INVALID_ID~;
-        CustomVertex* vertex = &assets.shader(material.custom.shader).desc.vertex;
-        if (vertex.shaded.len && (!desc.has_bounds_override || (mode == LodMode.INSTANCED && !vertex.instanced_shaded.len))) {
-            return c3d::UNSUPPORTED~;
-        }
+        validate_lod_material(
+            assets: assets,
+            material_id: part.material,
+            mode: mode,
+            bounds_override: desc.has_bounds_override,
+        )!;
+    }
+}
+
+fn void? validate_lod_material(
+    AssetStore* assets,
+    MaterialId material_id,
+    LodMode mode,
+    bool bounds_override,
+) @private {
+    Material* material = &assets.materials.try_get(material_id)!.data;
+    if (material.kind != MaterialKind.CUSTOM) return;
+
+    CustomVertex* vertex = &assets.shaders.try_get(material.custom.shader)!.desc.vertex;
+    if (vertex.shaded.len && (!bounds_override || (mode == LodMode.INSTANCED && !vertex.instanced_shaded.len))) {
+        return c3d::UNSUPPORTED~;
     }
 }
 
@@ -578,17 +591,9 @@ fn AnimatedLodBinding* carve_animated_lod(
     AnimatedLodPartBinding[] parts = carve_lod(cursor, AnimatedLodPartBinding, source.parts.len);
     uint[] indices = carve_lod(cursor, uint, source.weight_indices.len);
     uint[] offsets = carve_lod(cursor, uint, source.channel_offsets.len);
-    String[] names = carve_lod(cursor, String, source.channel_names.len);
     float[] defaults = carve_lod(cursor, float, source.defaults.len);
     uint[] joints = carve_lod(cursor, uint, source.joint_nodes.len);
     Mat4[] inverse_bind = carve_lod(cursor, Mat4, source.inverse_bind.len);
-    foreach (index, name : source.channel_names) {
-        char[] text = carve_lod(cursor, char, name.len);
-        if (cursor.base) {
-            text[..] = name[..];
-            names[index] = (String)text;
-        }
-    }
     if (!cursor.base) return null;
 
     parts[..] = source.parts[..];
@@ -605,7 +610,6 @@ fn AnimatedLodBinding* carve_animated_lod(
         .parts = parts,
         .weight_indices = indices,
         .channel_offsets = offsets,
-        .channel_names = names,
         .defaults = defaults,
         .joint_nodes = joints,
         .inverse_bind = inverse_bind,

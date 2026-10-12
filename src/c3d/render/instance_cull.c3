@@ -367,7 +367,8 @@ fn void? record_instance_cull(Renderer* renderer, CullItem[] items) @private {
                 root.lod_parity = item.candidate.mirrored ? 1 : 0;
 
                 if (item.candidate.animated_lod) {
-                    root.lod_animated = 1;
+                    // Skinned parts take their parity from the placement metadata.
+                    root.lod_animated = item.candidate.animated_lod.skinned ? 0 : 1;
                     root.bounds_instances = resolve_animated_lod_parts(renderer, item.candidate)!;
                 }
 

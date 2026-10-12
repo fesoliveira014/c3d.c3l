@@ -11,12 +11,34 @@ import gpu;
 import std::hash::fnv32a;
 import std::math;
 
+const usz ANIMATED_LOD_MIN_ADDRESSES @private = 64; // 3 KiB at creation; doubles past half load and is never shrunk
+
+enum AnimatedLodStream : uint @private {
+    PALETTE,
+    MORPHS,
+    PARTS,
+    VISIBLE_SOURCES,
+}
+
 struct AnimatedLodKey @private {
     ulong scene;
     Entity owner;
     ulong identity;
     uint part;
-    uint padding;
+    AnimatedLodStream stream;
+}
+
+struct AnimatedLodAddress @private {
+    AnimatedLodKey key;
+    ulong epoch;
+    gpu::GpuAddress address;
+}
+
+struct AnimatedLodAddresses @private {
+    Allocator allocator;
+    AnimatedLodAddress[] slots;
+    ulong epoch; // slots stamped by an earlier epoch are empty, so a reset frees nothing
+    usz count;
 }
 
 <*
@@ -25,43 +47,71 @@ struct AnimatedLodKey @private {
 fn uint AnimatedLodKey.hash(self) => fnv32a::hash(@as_char_view(self));
 
 <*
- Compare retained deformation source and logical part.
+ Compare retained deformation source, logical part and stream.
  @pure
 *>
 fn bool AnimatedLodKey.equals(self, AnimatedLodKey other) @operator(==) {
     return self.scene == other.scene && c3d::same_id(self.owner, other.owner)
-      && self.identity == other.identity && self.part == other.part;
+      && self.identity == other.identity && self.part == other.part && self.stream == other.stream;
 }
 
 $assert AnimatedLodKey::size == 32;
 
-fn AnimatedLodKey animated_lod_key(MeshCandidate* candidate, uint part) @private {
+fn gpu::GpuAddress? AnimatedLodAddresses.get(&self, AnimatedLodKey key) {
+    usz mask = self.slots.len - 1;
+    for (usz index = key.hash() & mask; self.slots[index].epoch == self.epoch; index = (index + 1) & mask) {
+        if (self.slots[index].key == key) return self.slots[index].address;
+    }
+
+    return NOT_FOUND~;
+}
+
+<* @require !@ok(self.get(key)) *>
+fn void AnimatedLodAddresses.set(&self, AnimatedLodKey key, gpu::GpuAddress address) {
+    if (2 * (self.count + 1) > self.slots.len) {
+        AnimatedLodAddress[] previous = self.slots;
+        self.slots = alloc::new_array(self.allocator, AnimatedLodAddress, previous.len * 2);
+        self.count = 0;
+
+        foreach (slot : previous) {
+            if (slot.epoch == self.epoch) self.set(slot.key, slot.address);
+        }
+
+        alloc::free(self.allocator, previous.ptr);
+    }
+
+    usz mask = self.slots.len - 1;
+    usz index = key.hash() & mask;
+    while (self.slots[index].epoch == self.epoch) index = (index + 1) & mask;
+    self.slots[index] = { .key = key, .epoch = self.epoch, .address = address };
+    self.count++;
+}
+
+fn void AnimatedLodAddresses.reset(&self) {
+    self.epoch++;
+    self.count = 0;
+}
+
+fn AnimatedLodAddresses create_animated_lod_addresses(Allocator allocator) @private {
+    return {
+        .allocator = allocator,
+        .slots = alloc::new_array(allocator, AnimatedLodAddress, ANIMATED_LOD_MIN_ADDRESSES),
+        .epoch = 1,
+    };
+}
+
+fn void destroy_animated_lod_addresses(AnimatedLodAddresses* addresses) @private {
+    alloc::free(addresses.allocator, addresses.slots.ptr);
+}
+
+fn AnimatedLodKey animated_lod_key(MeshCandidate* candidate, AnimatedLodStream stream, uint part = 0) @private {
     return {
         .scene = candidate.scene_identity,
         .owner = candidate.node.id,
         .identity = candidate.lod.state.identity,
         .part = part,
+        .stream = stream,
     };
-}
-
-fn bool animated_lod_owns_source(Scene* scene, Node* node) @private {
-    for (Node* ancestor = node.parent; ancestor; ancestor = ancestor.parent) {
-        LodGroup* group = scene.get(ancestor, LodGroup);
-        if (!group || !group.state.animated) continue;
-
-        if (ModelInstance* instance = scene.get(ancestor, ModelInstance)) {
-            LodLevel base = group.state.desc.levels[0];
-            foreach (part : group.state.animated.parts[base.first_part:base.part_count]) {
-                if (instance.present_node(part.template_node) == node) return true;
-            }
-        } else if (AnimatedCrowd* crowd = scene.get(ancestor, AnimatedCrowd)) {
-            foreach (part : crowd.parts) {
-                if (c3d::same_id(part.batch, node.id)) return true;
-            }
-        }
-    }
-
-    return false;
 }
 
 fn bool bind_animated_lod_candidate(LodSelection* selection, MeshCandidate* candidate) @private {
@@ -150,8 +200,8 @@ fn void write_animated_lod_palette(
 fn gpu::GpuAddress? resolve_animated_lod_palette(Renderer* renderer, MeshCandidate* candidate) @private {
     if (!candidate.animated_lod.skinned) return (gpu::GpuAddress)0;
 
-    AnimatedLodKey key = animated_lod_key(candidate, uint::max);
-    if (try existing = renderer.deformation.animated_palettes.get(key)) return existing;
+    AnimatedLodKey key = animated_lod_key(candidate, PALETTE);
+    if (try existing = renderer.deformation.animated.get(key)) return existing;
 
     uint count = animated_lod_source_count(candidate);
     usz matrices = (usz)count * candidate.lod.state.animated.joint_nodes.len;
@@ -164,7 +214,7 @@ fn gpu::GpuAddress? resolve_animated_lod_palette(Renderer* renderer, MeshCandida
         origin: renderer.frame_origin,
     );
 
-    renderer.deformation.animated_palettes.set(key, span.address);
+    renderer.deformation.animated.set(key, span.address);
 
     return span.address;
 }
@@ -172,8 +222,8 @@ fn gpu::GpuAddress? resolve_animated_lod_palette(Renderer* renderer, MeshCandida
 fn gpu::GpuAddress? resolve_animated_lod_morph(Renderer* renderer, MeshCandidate* candidate) @private {
     if (!candidate.animated_lod.weight_count) return (gpu::GpuAddress)0;
 
-    AnimatedLodKey key = animated_lod_key(candidate, candidate.lod_part);
-    if (try existing = renderer.deformation.animated_morphs.get(key)) return existing;
+    AnimatedLodKey key = animated_lod_key(candidate, MORPHS, candidate.lod_part);
+    if (try existing = renderer.deformation.animated.get(key)) return existing;
 
     uint count = animated_lod_source_count(candidate);
     Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
@@ -188,14 +238,16 @@ fn gpu::GpuAddress? resolve_animated_lod_morph(Renderer* renderer, MeshCandidate
         blocks[source] = animated_lod_morph(renderer.assets, candidate, source);
     }
 
-    renderer.deformation.animated_morphs.set(key, span.address);
+    renderer.deformation.animated.set(key, span.address);
 
     return span.address;
 }
 
 fn gpu::GpuAddress? resolve_animated_lod_parts(Renderer* renderer, MeshCandidate* candidate) @private {
-    AnimatedLodKey key = animated_lod_key(candidate, candidate.lod_part);
-    if (try existing = renderer.deformation.animated_parts.get(key)) return existing;
+    if (candidate.animated_lod.skinned) return (gpu::GpuAddress)0;
+
+    AnimatedLodKey key = animated_lod_key(candidate, PARTS, candidate.lod_part);
+    if (try existing = renderer.deformation.animated.get(key)) return existing;
 
     uint count = animated_lod_source_count(candidate);
     Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
@@ -213,14 +265,18 @@ fn gpu::GpuAddress? resolve_animated_lod_parts(Renderer* renderer, MeshCandidate
           && candidate.lod.part_mirrored[candidate.lod_part][source] ? 1 : 0;
     }
 
-    renderer.deformation.animated_parts.set(key, span.address);
+    renderer.deformation.animated.set(key, span.address);
 
     return span.address;
 }
 
 fn gpu::GpuAddress? resolve_animated_lod_indices(Renderer* renderer, MeshCandidate* candidate) @private {
-    AnimatedLodKey key = animated_lod_key(candidate, candidate.lod_part * 2 + (candidate.mirrored ? 1 : 0));
-    if (try existing = renderer.deformation.animated_indices.get(key)) return existing;
+    AnimatedLodKey key = animated_lod_key(
+        candidate: candidate,
+        stream: VISIBLE_SOURCES,
+        part: candidate.lod_part * 2 + (candidate.mirrored ? 1 : 0),
+    );
+    if (try existing = renderer.deformation.animated.get(key)) return existing;
 
     Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan span = frame.upload.take(
@@ -237,7 +293,7 @@ fn gpu::GpuAddress? resolve_animated_lod_indices(Renderer* renderer, MeshCandida
         indices[written++] = source;
     }
 
-    renderer.deformation.animated_indices.set(key, span.address);
+    renderer.deformation.animated.set(key, span.address);
 
     return span.address;
 }
@@ -295,19 +351,21 @@ fn gpu::GpuAddress? upload_animated_lod_previous(
         previous.skin = selection.previous_palette;
     }
 
-    gpu::MappedGpuSpan local_span = frame.upload.take(
-        device: &renderer.device,
-        size: (usz)count * Mat4f::size,
-        alignment: STREAM_ALIGNMENT,
-    )!;
-    Mat4f[] locals = ((Mat4f*)local_span.bytes.ptr)[:count];
+    if (!candidate.animated_lod.skinned) {
+        gpu::MappedGpuSpan local_span = frame.upload.take(
+            device: &renderer.device,
+            size: (usz)count * Mat4f::size,
+            alignment: STREAM_ALIGNMENT,
+        )!;
+        Mat4f[] locals = ((Mat4f*)local_span.bytes.ptr)[:count];
 
-    for (uint source = 0; source < count; source++) {
-        locals[source] = animated_lod_previous_valid(pose, candidate, source) ? pose.instances[source]
-          : bitcast(animated_lod_part_local(candidate, source), Mat4f);
+        for (uint source = 0; source < count; source++) {
+            locals[source] = animated_lod_previous_valid(pose, candidate, source) ? pose.instances[source]
+              : bitcast(animated_lod_part_local(candidate, source), Mat4f);
+        }
+
+        previous.instances = local_span.address;
     }
-
-    previous.instances = local_span.address;
 
     if (item.morph != (gpu::GpuAddress)0) {
         gpu::MappedGpuSpan morph_span = frame.upload.take(

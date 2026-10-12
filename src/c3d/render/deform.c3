@@ -18,10 +18,7 @@ struct DeformationCache {
     HashMap{ulong, gpu::GpuAddress} crowd_palettes;
     HashMap{ulong, gpu::GpuAddress} crowd_morphs;
     HashMap{ulong, gpu::GpuAddress} crowd_bounds;
-    HashMap{AnimatedLodKey, gpu::GpuAddress} animated_palettes;
-    HashMap{AnimatedLodKey, gpu::GpuAddress} animated_morphs;
-    HashMap{AnimatedLodKey, gpu::GpuAddress} animated_parts;
-    HashMap{AnimatedLodKey, gpu::GpuAddress} animated_indices;
+    AnimatedLodAddresses animated;
 }
 
 $assert geometry::MAX_ACTIVE_MORPH_TARGETS == shader::MAX_ACTIVE_MORPH_TARGETS;
@@ -94,10 +91,7 @@ fn DeformationCache create_deformation_cache(Allocator allocator) @private {
     cache.crowd_palettes.init(allocator);
     cache.crowd_morphs.init(allocator);
     cache.crowd_bounds.init(allocator);
-    cache.animated_palettes.init(allocator);
-    cache.animated_morphs.init(allocator);
-    cache.animated_parts.init(allocator);
-    cache.animated_indices.init(allocator);
+    cache.animated = create_animated_lod_addresses(allocator);
     return cache;
 }
 
@@ -107,10 +101,7 @@ fn void destroy_deformation_cache(DeformationCache* cache) @private {
     cache.crowd_palettes.free();
     cache.crowd_morphs.free();
     cache.crowd_bounds.free();
-    cache.animated_palettes.free();
-    cache.animated_morphs.free();
-    cache.animated_parts.free();
-    cache.animated_indices.free();
+    destroy_animated_lod_addresses(&cache.animated);
 }
 
 fn void reset_deformation_cache(DeformationCache* cache) @private {
@@ -119,15 +110,12 @@ fn void reset_deformation_cache(DeformationCache* cache) @private {
     cache.crowd_palettes.clear();
     cache.crowd_morphs.clear();
     cache.crowd_bounds.clear();
-    cache.animated_palettes.clear();
-    cache.animated_morphs.clear();
-    cache.animated_parts.clear();
-    cache.animated_indices.clear();
+    cache.animated.reset();
 }
 
 fn gpu::GpuAddress? resolve_crowd_bounds(Renderer* renderer, MeshCandidate* candidate) @private {
     AnimatedCrowd* crowd = candidate.crowd;
-    if (!crowd || crowd.parts[candidate.crowd_part].skinned) return (gpu::GpuAddress)0;
+    if (!crowd || candidate.animated_lod || crowd.parts[candidate.crowd_part].skinned) return (gpu::GpuAddress)0;
 
     ulong key = (ulong)(uptr)candidate.node;
     if (try existing = renderer.deformation.crowd_bounds.get(key)) return existing;

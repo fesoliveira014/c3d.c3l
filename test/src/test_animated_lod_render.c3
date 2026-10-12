@@ -277,6 +277,25 @@ fn void test_animated_lod_history_reuses_owned_storage_between_observations() @t
     assert(!tracker.has_leaks());
 }
 
+fn void test_animated_lod_addresses_grow_and_reset_without_stale_entries() @test {
+    AnimatedLodAddresses addresses = create_animated_lod_addresses(mem);
+    defer destroy_animated_lod_addresses(&addresses);
+    for (uint frame = 0; frame < 2; frame++) {
+        for (uint part = 0; part < 100; part++) {
+            AnimatedLodKey key = { .scene = 1, .identity = 2, .part = part, .stream = MORPHS };
+            assert(@catch(addresses.get(key)) == NOT_FOUND);
+            addresses.set(key, (gpu::GpuAddress)(part + 1));
+        }
+        for (uint part = 0; part < 100; part++) {
+            AnimatedLodKey key = { .scene = 1, .identity = 2, .part = part, .stream = MORPHS };
+            assert(addresses.get(key)!! == (gpu::GpuAddress)(part + 1));
+            key.stream = PARTS;
+            assert(@catch(addresses.get(key)) == NOT_FOUND);
+        }
+        addresses.reset();
+    }
+}
+
 fn AssetStore animated_lod_render_store() @local {
     return asset::create_asset_store(mem, {
         .max_geometries = 8, .max_textures = 8, .max_materials = 4, .max_samplers = 8,
@@ -292,7 +311,7 @@ fn AnimatedLodDesc shadow_lod_desc(AssetStore* assets, ModelId model_id) @local 
     return desc;
 }
 
-fn void test_animated_lod_shadow_ordinary_uses_selected_parts_without_imported_bases() @test {
+fn void test_animated_lod_shadow_ordinary_uses_selected_parts_and_their_parity() @test {
     @pool() {
         AssetStore assets = animated_lod_render_store();
         defer asset::destroy_asset_store(&assets);
@@ -300,11 +319,13 @@ fn void test_animated_lod_shadow_ordinary_uses_selected_parts_without_imported_b
         Scene scene = scene::create_scene(mem, { .max_nodes = 64 });
         defer scene::destroy_scene(&scene);
         Node* owner = model::instantiate(&assets, &scene, fixture.mixed)!!;
+        AnimatedLodDesc desc = shadow_lod_desc(&assets, fixture.mixed);
+        desc.parts[SHADOW_BASE_PARTS + 1].draw.local = matrix::IDENTITY4.scale({ -1, 1, 1 });
         model::attach_animated_lod(
             assets: &assets,
             scene: &scene,
             owner: owner,
-            desc: shadow_lod_desc(&assets, fixture.mixed),
+            desc: desc,
         )!!;
         Node* unrelated = scene.add_mesh(
             geometry: fixture.geometries[1],
@@ -357,7 +378,7 @@ fn void test_animated_lod_shadow_ordinary_uses_selected_parts_without_imported_b
                 assert(candidate.animated_lod.skinned == (part == 0));
                 assert(candidate.model_instance == instance && candidate.crowd == null);
                 assert(candidate.source_node == instance.present_node(part == 0 ? 2u : 5u));
-                assert(candidate.instance_count == 1);
+                assert(candidate.instance_count == 1 && candidate.mirrored == (part == 1));
                 assert(c3d::same_id(candidate.geometry, fixture.geometries[part == 0 ? 0u : 2u]));
             } else {
                 imported++;
@@ -492,7 +513,7 @@ fn Node* trace_lod_crowd(
         assets: assets,
         scene: scene,
         owner: owner,
-        desc: animated_crowd_fixtures::parts_lod_desc(assets, fixture.mixed, permuted: true),
+        desc: animated_crowd_fixtures::parts_lod_desc(assets, fixture.mixed),
     )!!;
     scene.update_world();
     return owner;
@@ -514,7 +535,7 @@ fn void test_traced_animated_lod_respects_source_flags_and_base_signatures() @te
         animator.action(action).time = 1;
         anim::update(&assets, &scene, 0);
         GeometryId coarse = assets.add_geometry(&assets.geometry(fixture.geometries[1]).data)!!;
-        AnimatedLodDesc desc = animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed, permuted: true);
+        AnimatedLodDesc desc = animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed);
         desc.parts[6].draw.geometry = coarse;
         model::attach_animated_lod(
             assets: &assets,
@@ -563,19 +584,6 @@ fn void test_traced_animated_lod_respects_source_flags_and_base_signatures() @te
         PosedTraceKey second_morph = render::trace_pose_key(scene.identity, &first.poses[3], &first.records[3]);
         assert(!(first_morph == second_morph));
         assert(mem::equals(signatures[2].ptr, signatures[3].ptr, MorphWeightsGpu::size));
-        assets.geometry(coarse).data.bounds.max.x += 1;
-        assets.mark_geometry_dirty(coarse);
-        model::sync_animated_lod(&assets, &scene, owner)!!;
-        TraceCollection after_coarse = render::collect_trace_instances(tmem, &scene, &assets);
-        assert(after_coarse.records.len == first.records.len);
-        assert(mem::equals(first.records.ptr, after_coarse.records.ptr, first.records.len * TraceInstance::size));
-        foreach (index, &record : after_coarse.records) {
-            if (after_coarse.poses[index].kind == TracePose.ANIMATED_LOD) {
-                char[] inputs = render::pose_inputs(&renderer, &after_coarse.poses[index], record);
-                char[] before = signatures[record.part_index];
-                assert(inputs.len == before.len && mem::equals(inputs.ptr, before.ptr, inputs.len));
-            }
-        }
         ModelInstance* instance = scene.get(owner, ModelInstance);
         scene.get(instance.present_node(6), Mesh).trace = false;
         TraceCollection disabled_part = render::collect_trace_instances(tmem, &scene, &assets);
@@ -700,15 +708,5 @@ fn void test_traced_animated_lod_crowd_uses_logical_pose_order_and_fresh_keys() 
             assert(!(fresh == keys[logical]));
             assert(fresh.logical_part == keys[logical].logical_part && fresh.instance == keys[logical].instance);
         }
-        AnimatedLodDesc next = animated_crowd_fixtures::parts_lod_desc(&assets, fixture.mixed, permuted: true);
-        model::replace_animated_lod(
-            assets: &assets,
-            scene: &scene,
-            owner: owner,
-            desc: next,
-        )!!;
-        TraceCollection replacement = render::collect_trace_instances(tmem, &scene, &assets);
-        assert(replacement.records.len == 15);
-        assert(replacement.records[0].lod_identity != identity);
     };
 }

@@ -92,6 +92,12 @@ fn void? prepare_lod_instances(Renderer* renderer, LodSelection* selection) @pri
         selection.part_mirrored = alloc::new_array(tmem, bool[], selection.state.desc.parts.len);
 
         foreach (uint part, &split : selection.part_unmirrored) {
+            // Skinned parts reuse the placement parity uploaded with the records the cull stage reads.
+            if (selection.state.animated.parts[part].skinned) {
+                *split = selection.instances.lod_unmirrored_count;
+                continue;
+            }
+
             MeshCandidate candidate = {
                 .node = selection.node,
                 .lod = selection,
@@ -236,7 +242,8 @@ fn void? prepare_lod_cull(Renderer* renderer, CullItem* item, bool culling) @pri
     selection.main_visible |= item.main_view;
     if (selection.fallback) {
         *item.range = prepare_cull_range(renderer, candidate, item.geometry)!;
-        item.range.visible = candidate.animated_lod ? resolve_animated_lod_indices(renderer, candidate)!
+        item.range.visible = candidate.animated_lod && !candidate.animated_lod.skinned
+          ? resolve_animated_lod_indices(renderer, candidate)!
           : (candidate.mirrored ? selection.instances.lod_mirrored_indices : selection.instances.lod_unmirrored_indices);
         item.range.indexed = true;
         return;

@@ -374,12 +374,6 @@ fn void run_lod_trace_crowd_lifecycle(TraceKind kind) @private {
     assert(renderer.stats.trace_poses == 0 && renderer.stats.trace_refits == 0);
     assert(renderer.scene_trace.revision == revision);
 
-    fixture.assets.geometry(coarse).data.positions[0].x += 0.125f;
-    fixture.assets.mark_geometry_dirty(coarse);
-    model::sync_animated_lod(&fixture.assets, &harness.scene, owner)!!;
-    render_lod_trace(&fixture, &harness, kind)!!;
-    assert(renderer.scene_trace.revision == revision && renderer.stats.trace_poses == 0);
-
     phases[2] = 0.9f;
     set_lod_trace_phases(
         fixture: &fixture,
@@ -460,18 +454,6 @@ fn void run_lod_trace_quaternius(TraceKind kind) @private {
     assert(renderer.stats.trace_posed_instances == parts && renderer.stats.trace_posed_overflow == 0);
     assert(renderer.stats.trace_poses == parts && renderer.stats.lod_objects_selected[0] == 1);
     ulong revision = renderer.scene_trace.revision;
-    render_lod_trace(
-        fixture: &fixture,
-        harness: &harness,
-        kind: kind,
-        flat: false,
-    )!!;
-    assert(renderer.scene_trace.revision == revision && renderer.stats.trace_poses == 0);
-
-    GeometryId coarse = corpus.levels[0][1];
-    fixture.assets.geometry(coarse).data.positions[0].x += 0.01f;
-    fixture.assets.mark_geometry_dirty(coarse);
-    model::sync_animated_lod(&fixture.assets, &harness.scene, owner)!!;
     render_lod_trace(
         fixture: &fixture,
         harness: &harness,
