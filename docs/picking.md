@@ -87,7 +87,7 @@ index.refresh(&assets, &scene)!;
 };
 ```
 
-`refresh` reads node world matrices, visibility and batch arrays as left by the last `update_world`; refresh after the last change and before picking. `pick` returns exactly the hits and order `spatial::pick` returns for the scene of the last refresh, triangle ties included. Removing a node between a refresh and a pick leaves the index holding its pointer; refresh first. Instance transforms edited in place reach the index only after `Scene.mark_instances_dirty`, as they reach the renderer.
+`refresh` reads node world matrices, visibility and batch arrays as left by the last `update_world`; refresh after the last change and before picking. `pick` returns exactly the hits and order `spatial::pick` returns for the scene of the last refresh, triangle ties included. Removing a node between a refresh and a pick leaves the index holding its pointer; refresh first. Instance transforms edited in place reach the index only after `Scene.mark_instances_dirty` or `Scene.mark_instances_range_dirty`, as they reach the renderer.
 
 `revision` advances when a refresh finds any entry changed, and the next pick rebuilds the tree. A bound that changes from 0 to -0 counts as a change and costs one rebuild. A refresh visits every mesh; a batch whose node world matrix, geometry and its revision, batch revision, count and flags match the previous refresh keeps its entries without visiting its instances. Readings are in [Benchmarking](benchmarking.md#scene-index-and-triangle-trees): on an i9-14900K at O3, a refresh with nothing changed takes 14 µs for 2,000 meshes and a 4,096-instance batch; the tree rebuild over those 6,096 entries 0.52 ms; 64 bounds picks 0.27 ms through the index against 11 ms through the scan.
 
