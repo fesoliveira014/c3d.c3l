@@ -6,7 +6,7 @@ import c3d::maths;
 import c3d::scene;
 import std::math;
 
-<* @param lead : "Signed update seconds ahead of every clock and fade; STEP tracks keep their current key." *>
+<* @param lead : "Clocks and fades to step ahead; STEP tracks keep their current key." *>
 fn void blend_pose(
     PlaybackView* playback,
     AssetStore* assets,
@@ -14,7 +14,7 @@ fn void blend_pose(
     PoseScratch scratch,
     bool onset = false,
     CapturedMotionChain* consumed_chain = null,
-    float lead = 0,
+    LeadStep lead = LeadStep.NONE,
 ) @private {
     Transform[] result = destination.pose;
     ChannelSums[] sums = scratch.channels;
@@ -231,11 +231,11 @@ fn float masked_weight(Action* action, uint node, float weight) @private {
     return weight * action.weighted_mask[node];
 }
 
-fn float action_lead_weight(Action* action, float lead) @private {
-    // A group member's weight follows its group, whose fade is fixed while a transition captures its onset.
-    if (lead == 0 || action.blend_space || action.fade_rate <= 0) return action.weight;
+fn float action_lead_weight(Action* action, LeadStep lead) @private {
+    // Fades always step forward; a group member's weight follows its group, fixed while a transition starts.
+    if (lead != LeadStep.FORWARD || action.blend_space || action.fade_rate <= 0) return action.weight;
 
-    float step = action.fade_rate * lead;
+    float step = action.fade_rate * LEAD_SECONDS;
     float remaining = action.fade_target - action.weight;
     if (math::abs(remaining) <= step) return action.fade_target;
 

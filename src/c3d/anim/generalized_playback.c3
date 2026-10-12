@@ -11,7 +11,7 @@ import std::math;
    @param [&in] chain : "Captured chain shared by every generalized action."
    @param dt : "Zero reports no motion."
    @param onset : "Pins sample STEP keys on the playback side, as the pose does."
-   @param lead : "Signed update seconds ahead of every clock and fade, as the pose samples them."
+   @param lead : "Clocks and fades to step ahead, as the pose samples them."
    @require math::is_finite(dt) && dt >= 0 *>
 fn GeneralizedMotion evaluate_generalized_playback_motion(
     PlaybackView* playback,
@@ -20,7 +20,7 @@ fn GeneralizedMotion evaluate_generalized_playback_motion(
     CapturedMotionChain* chain,
     double dt,
     bool onset = false,
-    float lead = 0,
+    LeadStep lead = LeadStep.NONE,
 ) @private {
     if (playback.root_node >= destination.pose.len || !destination.present[playback.root_node]) return {};
 

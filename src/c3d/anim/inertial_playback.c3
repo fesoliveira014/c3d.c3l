@@ -4,8 +4,6 @@ import c3d;
 import c3d::asset;
 import std::math;
 
-const float INERTIAL_ONSET_LEAD @local = 1.0f / 256; // Short against key spacing; long against float time rounding.
-
 struct InertialScratch @private {
     Transform[] lead_pose;
     PoseVelocity[] velocity;
@@ -77,35 +75,12 @@ fn AnimationTransitionResult begin_prepared_inertial_transition(
     AnimationTransitionResult installed = install_animation_transition(playback, assets, prepared);
     capture_consumed_scale_nodes(playback, row.consumed_scale);
 
-    float lead = inertial_onset_lead(playback, assets);
-    evaluate_onset_target(
+    evaluate_onset_target_rates(
         playback: playback,
         assets: assets,
         destination: destination,
         scratch: scratch,
-        lead: lead,
     );
-    inertial.lead_pose[..] = destination.pose[..];
-    read_inertial_morphs(destination.morph_weights, inertial.lead_morph);
-
-    evaluate_onset_target(
-        playback: playback,
-        assets: assets,
-        destination: destination,
-        scratch: scratch,
-        lead: 0,
-    );
-    read_inertial_morphs(destination.morph_weights, inertial.morph);
-
-    foreach (index, target : destination.pose) {
-        Transform ahead = inertial.lead_pose[index];
-        inertial.velocity[index] = lead > 0
-          ? inertial_pose_rate(target, ahead, INERTIAL_ONSET_LEAD)
-          : inertial_pose_rate(ahead, target, INERTIAL_ONSET_LEAD);
-    }
-    foreach (index, target : inertial.morph) {
-        inertial.morph_rate[index] = ((double)inertial.lead_morph[index] - (double)target) / lead;
-    }
 
     capture_inertial_pose_residuals(
         row: row,
@@ -190,17 +165,93 @@ fn void invalidate_inertial_history(PlaybackView* playback) @private {
     if (playback.inertial) playback.inertial.control.history_valid = false;
 }
 
-// A looping clock that would cross its clip end within the step takes the difference backward instead.
-fn float inertial_onset_lead(PlaybackView* playback, AssetStore* assets) @local {
+// Leaves the onset target in the destination and its rates, from one-step differences, in the scratch.
+fn void evaluate_onset_target_rates(
+    PlaybackView* playback,
+    AssetStore* assets,
+    PoseDestination destination,
+    PoseScratch scratch,
+) @local {
+    InertialScratch* inertial = scratch.inertial;
+    evaluate_onset_target(
+        playback: playback,
+        assets: assets,
+        destination: destination,
+        scratch: scratch,
+        lead: LeadStep.FORWARD,
+    );
+    inertial.lead_pose[..] = destination.pose[..];
+    read_inertial_morphs(destination.morph_weights, inertial.lead_morph);
+
+    evaluate_onset_target(
+        playback: playback,
+        assets: assets,
+        destination: destination,
+        scratch: scratch,
+        lead: LeadStep.NONE,
+    );
+    read_inertial_morphs(destination.morph_weights, inertial.morph);
+
+    inertial.velocity[..] = (PoseVelocity){};
+    inertial.morph_rate[..] = 0;
+    add_onset_rates(
+        inertial: inertial,
+        from: destination.pose,
+        from_morph: inertial.morph,
+        to: inertial.lead_pose,
+        to_morph: inertial.lead_morph,
+    );
+
+    // Looping clocks that would cross their clip end take their rate from a step backward instead.
+    if (onset_lead_crosses_clip_end(playback, assets)) {
+        inertial.lead_pose[..] = destination.pose[..];
+        evaluate_onset_target(
+            playback: playback,
+            assets: assets,
+            destination: destination,
+            scratch: scratch,
+            lead: LeadStep.BACKWARD,
+        );
+        read_inertial_morphs(destination.morph_weights, inertial.lead_morph);
+        add_onset_rates(
+            inertial: inertial,
+            from: destination.pose,
+            from_morph: inertial.lead_morph,
+            to: inertial.lead_pose,
+            to_morph: inertial.morph,
+        );
+
+        destination.pose[..] = inertial.lead_pose[..];
+        write_inertial_morphs(inertial.morph, destination.morph_weights);
+    }
+}
+
+fn bool onset_lead_crosses_clip_end(PlaybackView* playback, AssetStore* assets) @local {
     foreach (id : playback.order[:*playback.action_count]) {
         Action* action = playback.actions.get(id);
-        if (!action.loop && !action.blend_space) continue;
-
-        double ahead = (double)action.time + action_clock_rate(action) * INERTIAL_ONSET_LEAD;
-        if (ahead < 0 || ahead > (double)assets.clip(action.clip).data.duration) return -INERTIAL_ONSET_LEAD;
+        if (lead_crosses_clip_end(action, &assets.clip(action.clip).data)) return true;
     }
 
-    return INERTIAL_ONSET_LEAD;
+    return false;
+}
+
+fn void add_onset_rates(
+    InertialScratch* inertial,
+    Transform[] from,
+    float[] from_morph,
+    Transform[] to,
+    float[] to_morph,
+) @local {
+    foreach (index, &rate : inertial.velocity) {
+        PoseVelocity step = inertial_pose_rate(from[index], to[index], LEAD_SECONDS);
+        rate.translation += step.translation;
+        rate.angular += step.angular;
+        rate.scale += step.scale;
+    }
+
+    foreach (index, &rate : inertial.morph_rate) {
+        *rate += ((double)to_morph[index] - (double)from_morph[index]) / LEAD_SECONDS;
+    }
 }
 
 fn void evaluate_onset_target(
@@ -208,7 +259,7 @@ fn void evaluate_onset_target(
     AssetStore* assets,
     PoseDestination destination,
     PoseScratch scratch,
-    float lead,
+    LeadStep lead,
 ) @local {
     CapturedMotionChain* chain = generalized_playback_chain(playback);
     blend_pose(

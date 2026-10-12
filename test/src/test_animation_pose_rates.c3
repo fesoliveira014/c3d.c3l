@@ -183,3 +183,62 @@ fn void test_animation_inertial_onset_target_velocity_follows_the_target_clock()
         assert((row.offset_velocity[2].translation - fading).length() < ONSET_RATE_TEST_EPSILON);
     }
 }
+
+fn void test_animation_inertial_onset_lead_takes_each_clock_from_its_own_side() @test {
+    LayerFixture fixture;
+    create_inertial_owner(&fixture);
+    defer destroy_layer_fixture(&fixture);
+    Quat turned = quaternion::from_axis_angle{float}({ 0, 1, 0 }, 1);
+    float[2] times = { 0, 1 };
+    float[6] positions = { 0, 0, 0, 4, 8, -2 };
+    float[8] rotations = { 0, 0, 0, 1, turned.v.x, turned.v.y, turned.v.z, turned.v.w };
+    Track[2] tracks = {
+        make_track(
+            path: TargetPath.TRANSLATION,
+            interpolation: Interpolation.LINEAR,
+            times: times[..],
+            values: positions[..],
+        ),
+        make_track(
+            path: TargetPath.ROTATION,
+            interpolation: Interpolation.LINEAR,
+            times: times[..],
+            values: rotations[..],
+        ),
+    };
+    uint[1] targets = { 3 };
+    ClipId looping = add_clip(
+        assets: &fixture.assets,
+        key: "",
+        tracks: tracks[..],
+        targets: targets[..],
+        duration: 1,
+    );
+    AnimationActionId source = fixture.animator.play(&fixture.assets, looping)!!;
+    fixture.animator.action(source).time = 0.999f;
+    fixture.animator.action(source).playing = false;
+    anim::update(&fixture.assets, &fixture.scene, 0);
+
+    AnimationTargetDesc[4] request = { anim::ANIMATION_TARGET_DEFAULT, anim::ANIMATION_TARGET_DEFAULT,
+        anim::ANIMATION_TARGET_DEFAULT, anim::ANIMATION_TARGET_DEFAULT };
+    request[0].clip = looping;
+    request[0].start_time = 0.999f;
+    request[1].clip = inertial_owner_translation(&fixture, {}, { 4, 0, 0 }, 1);
+    request[1].loop = false;
+    request[2].clip = inertial_owner_translation(&fixture, { 0, 4, 0 }, { 0, 4, 0 }, 2);
+    request[2].weight = 0;
+    request[2].play.fade_in = 0.25f;
+    request[3].clip = inertial_owner_translation(&fixture, { 0, 4, 0 }, { 0, 4, 0 }, 0);
+    request[3].start_time = 0.999f;
+    request[3].play.fade_in = 0.25f;
+    fixture.animator.inertialize(&fixture.assets, { .duration = 0.5f, .actions = request[..] })!!;
+
+    InertialRow* row = inertial_owner_row(&fixture);
+    Vec3 base = fixture.scene.get(fixture.root, ModelInstance).base_pose[2].position;
+    double[<3>] fading = ((double[<3>]){ 0, 4, 0 } - (double[<3>]){ base.x, base.y, base.z }) * -4;
+    assert((row.offset_velocity[3].translation - (double[<3>]){ -4, -8, 2 }).length() < ONSET_RATE_TEST_EPSILON);
+    assert((row.offset_velocity[3].angular - (double[<3>]){ 0, -1, 0 }).length() < ONSET_RATE_TEST_EPSILON);
+    assert((row.offset_velocity[1].translation - (double[<3>]){ -4, 0, 0 }).length() < ONSET_RATE_TEST_EPSILON);
+    assert((row.offset_velocity[2].translation - fading).length() < ONSET_RATE_TEST_EPSILON);
+    assert(row.offset_velocity[0].translation.length() < ONSET_RATE_TEST_EPSILON);
+}

@@ -407,9 +407,10 @@ published velocity. Pose translation, rotation and ordinary scale/morph
 residuals preserve value and velocity at onset and decay to the target. The
 target's onset velocity is a one-sided difference over 1/256 s of its playback:
 clocks advance by their speed or group rate and fades by their rate, while STEP
-tracks keep their onset key. When a looping or group clock would cross its clip
-end within that step, the difference steps backward instead; other clocks clamp
-to the clip. Neither a key nor a loop seam adds a jump to the difference. Scale
+tracks keep their onset key. A looping or group clock that would cross its clip
+end within that step contributes through a separate step backward, with the
+other clocks and fades held; non-looping clocks clamp to the clip, where they
+stop. Neither a key nor a loop seam adds a jump to the difference. Scale
 on a consumed motion chain uses `s_target * exp(residual)` in log space, keeping
 positive uniform scale positive and velocity-matched. Regular blending is
 convex, so admitted positive-uniform scales remain positive under runtime

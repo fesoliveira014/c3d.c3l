@@ -3,11 +3,20 @@ module c3d::anim;
 import std::math;
 
 const double ANALYTIC_NLERP_DOT_THRESHOLD @private = (double)0.95f; // Mirrors the standard quaternion slerp fallback.
+const float LEAD_SECONDS @private = 1.0f / 256; // Short against key spacing; long against float time rounding.
 
 enum StepSampleSide @private {
     EXACT,
     LEFT,
     RIGHT,
+}
+
+// FORWARD advances fades and every clock that stays on its clip; BACKWARD steps back the looping clocks
+// that would cross their clip end, holding everything else.
+enum LeadStep @private {
+    NONE,
+    FORWARD,
+    BACKWARD,
 }
 
 // STEP tracks keep `time` while the other tracks of the action sample at `ahead`.
@@ -129,20 +138,27 @@ fn StepSampleSide action_sample_side(Action* action, bool onset) @private {
     return rate < 0 ? StepSampleSide.LEFT : StepSampleSide.RIGHT;
 }
 
-<* @param lead : "Signed update seconds ahead of the clock; zero samples the current time." *>
 fn ClipTime action_clip_time(
     Action* action,
     AnimationClip* clip,
     bool onset,
-    float lead = 0,
+    LeadStep lead = LeadStep.NONE,
 ) @private {
     ClipTime sampled = { .time = action.time, .ahead = action.time, .side = action_sample_side(action, onset) };
     double rate = action_clock_rate(action);
-    if (lead == 0 || rate == 0) return sampled;
+    if (lead == LeadStep.NONE || rate == 0) return sampled;
+    if ((lead == LeadStep.BACKWARD) != lead_crosses_clip_end(action, clip)) return sampled;
 
-    // Clamping rather than wrapping keeps a loop seam out of the difference; the caller steps backward near one.
-    sampled.ahead = (float)math::clamp((double)action.time + rate * lead, 0.0, (double)clip.duration);
+    double step = lead == LeadStep.FORWARD ? LEAD_SECONDS : -LEAD_SECONDS;
+    sampled.ahead = (float)math::clamp((double)action.time + rate * step, 0.0, (double)clip.duration);
     return sampled;
+}
+
+fn bool lead_crosses_clip_end(Action* action, AnimationClip* clip) @private {
+    if (!action.loop && !action.blend_space) return false;
+
+    double ahead = (double)action.time + action_clock_rate(action) * LEAD_SECONDS;
+    return ahead < 0 || ahead > (double)clip.duration;
 }
 
 fn float track_clip_time(Track* track, ClipTime time) @private {
