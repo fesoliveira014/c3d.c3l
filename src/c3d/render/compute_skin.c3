@@ -142,8 +142,8 @@ fn uint? ComputeSkinTable.bind(&self, PosedTraceKey key) {
 
 // A mesh past either cap answers its rest root and counts a fallback; one outside compute skinning counts none.
 // Animated LOD parts stay out because one binding posing every source at every level would undo the savings of
-// the levels, and a draw with a custom vertex stage because that stage reads the palette and morph block of the draw
-// root, and in a crowd part the root without a source slot.
+// the levels. A draw with a custom vertex stage stays out because the stage deforms from the draw root's palette
+// and morph block, which a posed draw leaves empty, and reads a crowd part's streams without its source slot.
 fn PosedDraw? claim_posed_draw(Renderer* renderer, MeshCandidate* candidate, GpuGeometry* geometry) @private {
     PosedDraw rest = { .root = geometry.root };
     if (!renderer.frame_compute_skinning || candidate.animated_lod || candidate.impostor || candidate.vertex_motion
@@ -311,6 +311,7 @@ fn void? record_compute_skin(Renderer* renderer, gpu::CommandList* commands) @pr
             meshes = true;
         }
     }
+
     if (meshes) {
         acquire_compute_slot(renderer, ComputeSlot.TRACE_POSE)!;
         acquire_compute_slot(renderer, ComputeSlot.TRACE_POSE_U16)!;
@@ -319,6 +320,7 @@ fn void? record_compute_skin(Renderer* renderer, gpu::CommandList* commands) @pr
         acquire_compute_slot(renderer, ComputeSlot.TRACE_POSE_INSTANCED)!;
         acquire_compute_slot(renderer, ComputeSlot.TRACE_POSE_INSTANCED_U16)!;
     }
+
     bool profiled = renderer.frame_open;
     if (profiled) begin_profile_pass(renderer, Pass.COMPUTE_SKIN)!;
 
