@@ -26,6 +26,8 @@ $assert $reflect(BvhNode.count).offset == $reflect(BvhNodeGpu.count).offset;
 *>
 const uint DEFAULT_MAX_TRACE_INSTANCES = 4096; // 4096 x 144 B instances + 8191 x 32 B nodes: 0.81 MiB persistent
 
+const usz MAX_ACCELERATION_BATCH_SCRATCH @private = 64 * 1024 * 1024; // per frame slot (128 MiB resident); lower adds barriers
+
 const BvhBuildDesc TOP_LEVEL_BUILD @private = { .bins = 12, .leaf_size = 1 }; // each instance test walks a bottom level
 
 // The top level depends on a record only up to its software bottom level, which a later preparation may fill.
@@ -134,6 +136,19 @@ struct RtScratch @private {
     usz                size;
 }
 
+// Builds recorded between two barriers; each takes its own aligned range of one scratch allocation.
+struct BuildBatch @private {
+    usz  alignment;
+    usz  end;     // end of the last range in the open batch
+    usz  largest; // end of the largest batch so far
+    uint count;
+}
+
+struct BuildRange @private {
+    usz  offset;
+    bool closes_batch; // the open batch ends before this range
+}
+
 // A frame reads at most one top level: a rebuild targets the one this frame already used, else the other,
 // whose last reader precedes the frame the slot wait completed.
 struct RtContext @private {
@@ -148,6 +163,16 @@ struct RtContext @private {
     uint                         build_target;
     List{GeometryId}             pending_blas;
     usz                          recorded_blas;
+}
+
+fn BuildRange BuildBatch.place(&self, usz size) {
+    usz offset = align_up(self.end, self.alignment);
+    bool closes_batch = self.end > 0 && offset + size > MAX_ACCELERATION_BATCH_SCRATCH;
+    if (closes_batch) offset = 0;
+    if (!self.count || closes_batch) self.count++;
+    self.end = offset + size;
+    self.largest = math::max(self.largest, self.end);
+    return { .offset = offset, .closes_batch = closes_batch };
 }
 
 <*
@@ -860,15 +885,21 @@ fn void? record_acceleration_builds(Renderer* renderer, gpu::CommandList* comman
 
     bool profiled = renderer.frame_open;
     if (profiled) begin_profile_pass(renderer, Pass.ACCELERATION_BUILD)!;
-    usz scratch_size = rt.build_pending ? rt.top_level_scratch_size : 0;
+    usz scratch_alignment = renderer.caps.acceleration_structures.scratch_alignment;
+    BuildBatch sizing = { .alignment = scratch_alignment };
     foreach (geometry : pending) {
-        scratch_size = math::max(scratch_size, renderer.geometries[geometry.index].blas.scratch_size);
+        sizing.place(renderer.geometries[geometry.index].blas.scratch_size);
     }
-    scratch_size = math::max(scratch_size, posed_scratch_size(&renderer.posed_trace));
+    foreach (&build : renderer.posed_trace.builds) {
+        sizing.place(posed_build_scratch_size(&renderer.posed_trace, build));
+    }
+    usz scratch_size = sizing.largest;
+    if (rt.build_pending) scratch_size = math::max(scratch_size, rt.top_level_scratch_size);
     RtScratch* scratch = &rt.scratch[renderer.frame_index % FRAMES_IN_FLIGHT];
     acquire_rt_scratch(renderer, scratch, scratch_size)!;
 
     gpu::Barrier builds_ordered = { .before = { .acceleration_structure_build }, .after = { .acceleration_structure_build } };
+    BuildBatch batch = { .alignment = scratch_alignment };
     foreach (geometry : pending) {
         GpuGeometry* mirror = &renderer.geometries[geometry.index];
         gpu::AccelerationStructureGeometryBuildDesc[1] geometries = {{
@@ -881,21 +912,25 @@ fn void? record_acceleration_builds(Renderer* renderer, gpu::CommandList* comman
                 .primitive_count = blas_primitive_count(&mirror.layout),
             },
         }};
+        BuildRange range = batch.place(mirror.blas.scratch_size);
+        if (range.closes_batch) gpu::cmd_barrier(commands, &builds_ordered)!;
         gpu::AccelerationStructureBuildDesc build = {
             .destination = mirror.blas.handle,
             .geometries  = geometries[..],
-            .scratch     = scratch.span,
+            .scratch     = scratch.span.checked_subspan(range.offset, mirror.blas.scratch_size)!,
         };
         gpu::cmd_build_acceleration_structure(commands, &build)!;
-        gpu::cmd_barrier(commands, &builds_ordered)!;
     }
     rt.recorded_blas = (usz)rt.pending_blas.len();
     record_posed_builds(
         renderer:       renderer,
         commands:       commands,
         scratch:        scratch.span,
+        batch:          &batch,
         builds_ordered: &builds_ordered,
     )!;
+    if (batch.count) gpu::cmd_barrier(commands, &builds_ordered)!;
+    renderer.stats.acceleration_batches += batch.count;
 
     if (rt.build_pending) {
         if (rt.build_after_reads) {
