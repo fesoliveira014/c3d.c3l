@@ -410,59 +410,64 @@ fn uint custom_map_flags(
     return flags;
 }
 
-fn MaterialBindings? resolve_material_bindings(Renderer* renderer, Material* material) @private {
+fn MaterialBindings? resolve_material_bindings(Renderer* renderer, Material* material, bool resolve = true) @private {
     switch (material.kind) {
         case BASIC:
-            return { .base_color = resolve_texture_slot(renderer, material.basic.map)! };
+            return { .base_color = resolve_texture_slot(renderer, material.basic.map, resolve)! };
         case STANDARD:
-            return resolve_standard_bindings(renderer, &material.standard);
+            return resolve_standard_bindings(renderer, &material.standard, resolve);
         case PHYSICAL:
             PhysicalParams* params = &material.physical;
-            MaterialBindings bindings = resolve_standard_bindings(renderer, &params.standard)!;
+            MaterialBindings bindings = resolve_standard_bindings(renderer, &params.standard, resolve)!;
             if (params.clearcoat > 0) {
-                bindings.clearcoat = resolve_texture_slot(renderer, params.clearcoat_map)!;
-                bindings.clearcoat_roughness = resolve_texture_slot(renderer, params.clearcoat_roughness_map)!;
-                bindings.clearcoat_normal = resolve_texture_slot(renderer, params.clearcoat_normal_map)!;
+                bindings.clearcoat = resolve_texture_slot(renderer, params.clearcoat_map, resolve)!;
+                bindings.clearcoat_roughness = resolve_texture_slot(renderer, params.clearcoat_roughness_map, resolve)!;
+                bindings.clearcoat_normal = resolve_texture_slot(renderer, params.clearcoat_normal_map, resolve)!;
             }
             if (material_uses_sheen(material)) {
-                bindings.sheen_color = resolve_texture_slot(renderer, params.sheen_color_map)!;
-                bindings.sheen_roughness = resolve_texture_slot(renderer, params.sheen_roughness_map)!;
+                bindings.sheen_color = resolve_texture_slot(renderer, params.sheen_color_map, resolve)!;
+                bindings.sheen_roughness = resolve_texture_slot(renderer, params.sheen_roughness_map, resolve)!;
             }
             if (params.specular > 0) {
-                bindings.specular = resolve_texture_slot(renderer, params.specular_map)!;
-                bindings.specular_color = resolve_texture_slot(renderer, params.specular_color_map)!;
+                bindings.specular = resolve_texture_slot(renderer, params.specular_map, resolve)!;
+                bindings.specular_color = resolve_texture_slot(renderer, params.specular_color_map, resolve)!;
             }
             if (params.anisotropy > 0) {
-                bindings.anisotropy = resolve_texture_slot(renderer, params.anisotropy_map)!;
+                bindings.anisotropy = resolve_texture_slot(renderer, params.anisotropy_map, resolve)!;
             }
             if (params.transmission > 0) {
-                bindings.transmission = resolve_texture_slot(renderer, params.transmission_map)!;
-                bindings.thickness = resolve_texture_slot(renderer, params.thickness_map)!;
+                bindings.transmission = resolve_texture_slot(renderer, params.transmission_map, resolve)!;
+                bindings.thickness = resolve_texture_slot(renderer, params.thickness_map, resolve)!;
             }
             return bindings;
         case TOON:
             return {
-                .base_color = resolve_texture_slot(renderer, material.toon.map)!,
-                .gradient = resolve_gradient_map(renderer, material.toon.gradient_map)!,
+                .base_color = resolve_texture_slot(renderer, material.toon.map, resolve)!,
+                .gradient = resolve_gradient_map(renderer, material.toon.gradient_map, resolve)!,
             };
         case CUSTOM:
             MaterialBindings bindings;
             // The depth stage and traced coverage sample slot 0 of a masked material.
             bool masked = material.common.alpha_mode == AlphaMode.MASK;
             foreach (index, slot : material.custom.slots) {
-                bindings.custom[index] = resolve_texture_slot(renderer, slot, custom_read: index > 0 || !masked)!;
+                bindings.custom[index] = resolve_texture_slot(
+                    renderer:    renderer,
+                    slot:        slot,
+                    resolve:     resolve,
+                    custom_read: index > 0 || !masked,
+                )!;
             }
             return bindings;
     }
 }
 
-fn MaterialBindings? resolve_standard_bindings(Renderer* renderer, StandardParams* params) @private {
+fn MaterialBindings? resolve_standard_bindings(Renderer* renderer, StandardParams* params, bool resolve) @private {
     return {
-        .base_color = resolve_texture_slot(renderer, params.base_color_map)!,
-        .metallic_roughness = resolve_texture_slot(renderer, params.metallic_roughness_map)!,
-        .normal = resolve_texture_slot(renderer, params.normal_map)!,
-        .occlusion = resolve_texture_slot(renderer, params.occlusion_map)!,
-        .emissive = resolve_texture_slot(renderer, params.emissive_map)!,
+        .base_color = resolve_texture_slot(renderer, params.base_color_map, resolve)!,
+        .metallic_roughness = resolve_texture_slot(renderer, params.metallic_roughness_map, resolve)!,
+        .normal = resolve_texture_slot(renderer, params.normal_map, resolve)!,
+        .occlusion = resolve_texture_slot(renderer, params.occlusion_map, resolve)!,
+        .emissive = resolve_texture_slot(renderer, params.emissive_map, resolve)!,
     };
 }
 

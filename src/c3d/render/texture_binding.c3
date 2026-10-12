@@ -58,7 +58,13 @@ fn bool texture_binding_matches(TextureBinding first, TextureBinding second) {
         && first.present == second.present;
 }
 
-fn TextureBinding? resolve_texture_slot(Renderer* renderer, TextureSlot slot, bool custom_read = false) @private {
+// Budgeted preparation passes resolve = false: its earlier steps made these mirrors current.
+fn TextureBinding? resolve_texture_slot(
+    Renderer* renderer,
+    TextureSlot slot,
+    bool resolve = true,
+    bool custom_read = false,
+) @private {
     if (slot.uv_set > 1) return c3d::INVALID_ARGUMENT~;
 
     SamplerId sampler = renderer.assets.samplers.is_live(slot.sampler)
@@ -66,7 +72,7 @@ fn TextureBinding? resolve_texture_slot(Renderer* renderer, TextureSlot slot, bo
 
     if (renderer.assets.sampler(sampler).desc.compare_enable) return c3d::INVALID_ARGUMENT~;
 
-    SamplerRes* sampler_mirror = resolve_sampler(renderer, sampler)!;
+    SamplerRes* sampler_mirror = resolve ? resolve_sampler(renderer, sampler)! : &renderer.samplers[sampler.index];
 
     if (slot.texture.kind == TextureRefKind.RENDER_TARGET && renderer.targets.is_live(slot.texture.target)) {
         TargetRecord* target = renderer.targets.get(slot.texture.target);
@@ -92,7 +98,9 @@ fn TextureBinding? resolve_texture_slot(Renderer* renderer, TextureSlot slot, bo
     }
 
     TextureId texture = present ? slot.texture.asset : c3d::asset::TEXTURE_WHITE;
-    TextureRes* texture_mirror = resolve_texture(renderer, texture, full_reader: custom_read)!;
+    TextureRes* texture_mirror = resolve
+        ? resolve_texture(renderer, texture, full_reader: custom_read)!
+        : &renderer.textures[texture.index];
     TextureBinding content = texture_binding_content(renderer, texture, texture_mirror);
 
     return {
@@ -108,7 +116,7 @@ fn TextureBinding? resolve_texture_slot(Renderer* renderer, TextureSlot slot, bo
     };
 }
 
-fn TextureBinding? resolve_gradient_map(Renderer* renderer, TextureId texture) @private {
+fn TextureBinding? resolve_gradient_map(Renderer* renderer, TextureId texture, bool resolve = true) @private {
     if (!renderer.assets.textures.is_live(texture)) return {};
 
     TextureAsset* record = renderer.assets.texture(texture);
@@ -117,25 +125,12 @@ fn TextureBinding? resolve_gradient_map(Renderer* renderer, TextureId texture) @
         return c3d::UNSUPPORTED~;
     }
 
-    TextureRes* texture_mirror = resolve_texture(renderer, texture, full_reader: true)!;
+    TextureRes* texture_mirror = resolve
+        ? resolve_texture(renderer, texture, full_reader: true)!
+        : &renderer.textures[texture.index];
     TextureBinding content = texture_binding_content(renderer, texture, texture_mirror);
 
-    if (!renderer.toon_gradient_sampler.is_valid()) {
-        gpu::SamplerDesc sampler = {
-            .min_filter = gpu::Filter.NEAREST,
-            .mag_filter = gpu::Filter.NEAREST,
-            .mip_filter = gpu::Filter.NEAREST,
-            .address_u = gpu::AddressMode.CLAMP_TO_EDGE,
-            .address_v = gpu::AddressMode.CLAMP_TO_EDGE,
-            .address_w = gpu::AddressMode.CLAMP_TO_EDGE,
-            .min_lod = 0,
-            .max_lod = 0,
-            .anisotropy_enable = false,
-            .compare_enable = false,
-            .debug_name = "toon_gradient",
-        };
-        renderer.toon_gradient_sampler = gpu::intern_sampler(&renderer.device, &sampler)!;
-    }
+    if (resolve) acquire_toon_gradient_sampler(renderer)!;
 
     return {
         .texture = texture,
@@ -146,6 +141,21 @@ fn TextureBinding? resolve_gradient_map(Renderer* renderer, TextureId texture) @
         .sampler_index = renderer.toon_gradient_sampler,
         .present = true,
     };
+}
+
+fn void? acquire_toon_gradient_sampler(Renderer* renderer) @private {
+    if (renderer.toon_gradient_sampler.is_valid()) return;
+
+    gpu::SamplerDesc sampler = {
+        .min_filter = gpu::Filter.NEAREST,
+        .mag_filter = gpu::Filter.NEAREST,
+        .mip_filter = gpu::Filter.NEAREST,
+        .address_u = gpu::AddressMode.CLAMP_TO_EDGE,
+        .address_v = gpu::AddressMode.CLAMP_TO_EDGE,
+        .address_w = gpu::AddressMode.CLAMP_TO_EDGE,
+        .debug_name = "toon_gradient",
+    };
+    renderer.toon_gradient_sampler = gpu::intern_sampler(&renderer.device, &sampler)!;
 }
 
 fn TextureBinding texture_binding_content(Renderer* renderer, TextureId texture, TextureRes* mirror) @private {

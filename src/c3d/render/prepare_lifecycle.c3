@@ -6,19 +6,10 @@ import c3d::pool;
 import gpu;
 import std::collections::list;
 
-struct PrepareUploadCheckpoint @private {
-    usz head;
-    usz demand;
-    sz overflow;
-    uint slot;
-    bool active;
-}
-
 struct PrepareRetirement @private {
     Retired resource;
     gpu::CompletionPoint previous;
     uint previous_slot;
-    bool recording;
 }
 
 fn void bind_prepare_record(Renderer* renderer, PrepareId id) @private {
@@ -48,7 +39,7 @@ fn void checkpoint_prepare_unit(Renderer* renderer, PrepareRecord* record, Prepa
     if (unit.checkpoint.active && unit.checkpoint.epoch == record.epoch
       && unit.checkpoint.frame == renderer.frame_index) return;
     unit.checkpoint = {
-        .staged = unit.staged, .done = unit.done, .initialized = unit.initialized,
+        .staged = unit.staged, .done = unit.done,
         .texture_state = unit.texture_candidate.state,
         .epoch = record.epoch, .frame = renderer.frame_index, .active = true,
     };
@@ -60,13 +51,12 @@ fn void install_prepare_texture(Renderer* renderer, PrepareRecord* record, Prepa
     renderer.pending_prepare_installs.push({
         .record = record.id, .unit = unit.index, .epoch = record.epoch, .kind = unit.kind,
         .old_texture = *mirror, .new_texture = unit.texture_candidate,
-        .old_residency = renderer.residencies[unit.texture.index], .new_residency = unit.residency_candidate,
+        .old_residency = renderer.residencies[unit.texture.index],
         .last_submission = unit.last_submission, .last_submission_slot = unit.last_submission_slot,
     });
     *mirror = unit.texture_candidate;
     renderer.residencies[unit.texture.index] = unit.residency_candidate;
     unit.texture_candidate = {};
-    unit.installed = true;
 }
 
 fn void install_prepare_geometry(Renderer* renderer, PrepareRecord* record, PrepareUnit* unit) @private {
@@ -78,7 +68,6 @@ fn void install_prepare_geometry(Renderer* renderer, PrepareRecord* record, Prep
     });
     *mirror = unit.geometry_candidate;
     unit.geometry_candidate = {};
-    unit.installed = true;
 }
 
 fn void install_prepare_material(Renderer* renderer, PrepareRecord* record, PrepareUnit* unit) @private {
@@ -90,7 +79,6 @@ fn void install_prepare_material(Renderer* renderer, PrepareRecord* record, Prep
     });
     *mirror = unit.material_candidate;
     unit.material_candidate = {};
-    unit.installed = true;
 }
 
 fn void retire_prepare_resource(Renderer* renderer, PrepareUnit* unit, Retired resource) @private {
@@ -99,7 +87,7 @@ fn void retire_prepare_resource(Renderer* renderer, PrepareUnit* unit, Retired r
     bool recording = renderer.frame_open && (!unit || unit.referenced_this_frame);
     if (recording) {
         renderer.pending_prepare_retire.push({ .resource = resource, .previous = previous,
-            .previous_slot = previous_slot, .recording = true });
+            .previous_slot = previous_slot });
     } else if (previous.is_valid()) {
         renderer.frames[previous_slot].retire.push(resource);
     } else {
@@ -236,12 +224,11 @@ fn void commit_prepare_jobs(Renderer* renderer, Frame* slot) @private {
 
         if (submitted) record.last_submission = slot.done;
         record.pending_gpu = false;
-        refresh_prepare_progress(record);
+        settle_prepare_state(record);
     }
 
     foreach (&pending : renderer.pending_prepare_retire) slot.retire.push(pending.resource);
     renderer.pending_prepare_retire.clear();
-    renderer.prepare_upload_checkpoint.active = false;
 }
 
 fn bool retired_matches_texture(Retired retired, TextureRes* texture) @local {
@@ -344,7 +331,6 @@ fn void rollback_prepare_jobs(Renderer* renderer) @private {
             case SHADER:
             case FINISH:
         }
-        if (unit) unit.installed = false;
     }
     foreach (&record : renderer.prepares.items) {
         if (record.open) rollback_prepare_cursors(renderer, record);
@@ -356,17 +342,6 @@ fn void rollback_prepare_jobs(Renderer* renderer) @private {
     renderer.pending_prepare_retire.clear();
     foreach (retired : renderer.pending_upload_retire) retire_prepare_resource(renderer, null, retired);
     renderer.pending_upload_retire.clear();
-    if (renderer.prepare_upload_checkpoint.active) {
-        PrepareUploadCheckpoint checkpoint = renderer.prepare_upload_checkpoint;
-        UploadRing* ring = &renderer.frames[checkpoint.slot].upload;
-        while (ring.overflow.len() > checkpoint.overflow) {
-            gpu::GpuAllocation allocation = ring.overflow.pop()!!;
-            (void)gpu::free_allocation(&renderer.device, &allocation);
-        }
-        ring.head = checkpoint.head;
-        ring.demand = checkpoint.demand;
-        renderer.prepare_upload_checkpoint.active = false;
-    }
 }
 
 fn void free_prepares(Renderer* renderer) @private {
@@ -383,13 +358,6 @@ fn void free_prepares(Renderer* renderer) @private {
         immediate.free();
     }
     renderer.pending_prepare_retire.free();
-}
-
-fn void checkpoint_prepare_uploads(Renderer* renderer) @private {
-    if (renderer.prepare_upload_checkpoint.active) return;
-    UploadRing* ring = &renderer.frames[renderer.recording_slot].upload;
-    renderer.prepare_upload_checkpoint = { .head = ring.head, .demand = ring.demand,
-        .overflow = ring.overflow.len(), .slot = renderer.recording_slot, .active = true };
 }
 
 fn void rollback_prepare_cursors(Renderer* renderer, PrepareRecord* record) @private {

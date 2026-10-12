@@ -144,14 +144,7 @@ struct Stats {
     uint  prepare_units;
     usz   prepare_bytes;
     ulong prepare_generated_texels;
-    ulong prepare_copied_bytes;
     uint prepare_pipelines;
-    uint prepare_objects;
-    uint prepare_views;
-    uint prepare_allocations;
-    uint prepare_pipeline_lookups;
-    uint prepare_pipeline_hits;
-    uint prepare_restarts;
     ulong prepare_generation_ns;
     ulong prepare_pipeline_ns;
     ulong prepare_elapsed_ns;

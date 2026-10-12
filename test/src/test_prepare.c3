@@ -181,10 +181,9 @@ fn void test_prepare_totals_change_only_when_restart_reenumerates() @test {
     usz original = record.bytes_total;
     fixture.assets.mark_material_dirty(fixture.material);
     assert(record.bytes_total == original && render::prepare_dependencies_changed(&fixture.renderer, record));
-    PrepareReport report;
-    render::restart_prepare_record(&fixture.renderer, record, &report);
+    render::restart_prepare_record(&fixture.renderer, record);
     assert(record.bytes_total == original && record.units_done == 0 && record.bytes_done == 0);
-    assert(record.restarts == 1 && report.restarts == 1);
+    assert(record.restarts == 1);
 }
 
 fn void test_prepare_capacity_release_and_stale_generation() @test {

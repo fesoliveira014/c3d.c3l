@@ -468,7 +468,7 @@ fn bool? prepare_unit_current(Renderer* renderer, PrepareUnit* unit) @private {
     }
 }
 
-fn void restart_prepare_record(Renderer* renderer, PrepareRecord* record, PrepareReport* report) @private {
+fn void restart_prepare_record(Renderer* renderer, PrepareRecord* record) @private {
     PrepareId id = record.id;
     ModelId model = record.model;
     ulong sequence = record.sequence;
@@ -480,7 +480,6 @@ fn void restart_prepare_record(Renderer* renderer, PrepareRecord* record, Prepar
         .open = true, .state = PrepareState.PENDING };
     enumerate_prepare_record(renderer, record);
     bind_prepare_record(renderer, id);
-    report.restarts++;
 }
 
 fn PrepareReport? advance_prepare_engine(Renderer* renderer, PrepareLimits limits) @private {
@@ -489,7 +488,6 @@ fn PrepareReport? advance_prepare_engine(Renderer* renderer, PrepareLimits limit
         finish_prepare_report(&budget);
         account_prepare_report(renderer, budget.report);
     }
-    checkpoint_prepare_uploads(renderer);
     begin_material_scope(renderer);
     defer end_material_scope(renderer);
     PrepareId[PREPARE_CAPACITY] order;
@@ -498,12 +496,11 @@ fn PrepareReport? advance_prepare_engine(Renderer* renderer, PrepareLimits limit
         PrepareRecord* record = renderer.prepares.get(id);
         check_prepare_model(renderer, record);
         if (record.state == PrepareState.FAILED) continue;
-        if (prepare_dependencies_changed(renderer, record)) restart_prepare_record(renderer, record, &budget.report);
+        if (prepare_dependencies_changed(renderer, record)) restart_prepare_record(renderer, record);
         while (record.units_done < record.units.len) {
             uint unit_index = record.next;
             if (record.chain_active && !record.units[record.chain_unit].done) unit_index = record.chain_unit;
             PrepareUnit* unit = &record.units[unit_index];
-            if (unit.done) { refresh_prepare_progress(record); continue; }
             if (!prepare_unit_live(renderer, unit)) {
                 retire_prepare_candidate(renderer, unit);
                 if (record.chain_active && record.chain_unit == unit_index) clear_prepare_chain(record);
@@ -536,7 +533,7 @@ fn PrepareReport? advance_prepare_engine(Renderer* renderer, PrepareLimits limit
                 continue;
             }
             if (unit.kind == PrepareUnitKind.PIPELINES && !prepare_pipeline_dependencies_current(renderer, unit)) {
-                restart_prepare_record(renderer, record, &budget.report);
+                restart_prepare_record(renderer, record);
                 continue;
             }
             bool done;
@@ -558,6 +555,7 @@ fn PrepareReport? advance_prepare_engine(Renderer* renderer, PrepareLimits limit
                     return budget.report;
                 }
                 checkpoint_prepare_unit(renderer, record, unit);
+                budget.stepped = true;
                 bool? result = run_prepare_step(renderer, record, unit, &plan, &budget.report);
                 if (catch excuse = result) {
                     if (!fails_record(excuse)) return excuse~;
@@ -587,9 +585,14 @@ fn void finish_prepare_report(PrepareBudget* budget) @private {
     }
 }
 
+// Matches refresh_prepare_progress: a done unit counts its total bytes, any other unit its staged bytes.
 fn void finish_prepare_unit(PrepareRecord* record, PrepareUnit* unit) @private {
+    record.bytes_done -= unit.staged.bytes;
+    record.bytes_done += unit.bytes;
     unit.done = true;
-    refresh_prepare_progress(record);
+    record.units_done++;
+    while (record.next < record.units.len && record.units[record.next].done) record.next++;
+    settle_prepare_state(record);
 }
 
 fn void refresh_prepare_progress(PrepareRecord* record) @private {
@@ -604,14 +607,20 @@ fn void refresh_prepare_progress(PrepareRecord* record) @private {
             record.next = index;
         }
     }
+    settle_prepare_state(record);
+}
+
+fn void settle_prepare_state(PrepareRecord* record) @private {
     if (record.state == PrepareState.FAILED) return;
-    if (record.units_done == record.units.len) {
-        record.state = record.pending_gpu ? PrepareState.PENDING
-            : (record.last_submission.is_valid() ? PrepareState.SUBMITTED : PrepareState.READY);
-        record.phase = PreparePhase.COMPLETE;
-    } else if (record.state != PrepareState.FAILED) {
+
+    if (record.units_done < record.units.len) {
         record.state = PrepareState.PENDING;
+        return;
     }
+
+    record.state = record.pending_gpu ? PrepareState.PENDING
+        : (record.last_submission.is_valid() ? PrepareState.SUBMITTED : PrepareState.READY);
+    record.phase = PreparePhase.COMPLETE;
 }
 
 fn void promote_prepare_record(Renderer* renderer, PrepareRecord* record) @private {

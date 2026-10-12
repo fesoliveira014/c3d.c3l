@@ -145,7 +145,6 @@ fn void? acquire_path_tracer(Renderer* renderer, PrepareReport* report = null) @
     };
     gpu::GpuAllocation sbt = gpu::allocate_memory(&renderer.device, &sbt_desc)!;
     defer catch (void)gpu::free_allocation(&renderer.device, &sbt);
-    if (report) report.allocations++;
     gpu::GpuSpan span = gpu::get_allocation_span(&renderer.device, sbt)!;
     gpu::MappedGpuSpan mapped = gpu::mapped_gpu_span(&renderer.device, span)!;
 

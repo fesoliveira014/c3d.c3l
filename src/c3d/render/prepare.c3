@@ -70,12 +70,6 @@ struct PrepareReport {
     ulong generated_texels;
     ulong copied_bytes;
     uint pipelines;
-    uint objects;
-    uint views;
-    uint allocations;
-    uint pipeline_lookups;
-    uint pipeline_hits;
-    uint restarts;
     ulong generation_ns;
     ulong pipeline_ns;
     ulong elapsed_ns;
@@ -120,7 +114,6 @@ struct PrepareCursor @private {
 struct PrepareCheckpoint @private {
     PrepareCursor staged;
     bool done;
-    bool initialized;
     gpu::TextureState texture_state;
     ulong epoch;
     ulong frame;
@@ -131,7 +124,6 @@ struct PrepareUnit @private {
     PrepareUnitKind kind;
     PrepareId owner;
     uint index;
-    uint creation_next;
     ulong generated_done;
     TextureId texture;
     GeometryId geometry;
@@ -142,10 +134,7 @@ struct PrepareUnit @private {
     usz bytes;
     ulong texels;
     bool full_reader;
-    bool morphed;
     bool done;
-    bool initialized;
-    bool installed;
     bool force_restart;
     bool abandoned_candidate;
     PrepareCursor staged;
@@ -178,7 +167,6 @@ struct PrepareRecord @private {
     ulong texels_done;
     uint units_done;
     uint restarts;
-    SceneReads scene_reads;
     TextureMipChain chain;
     uint chain_unit;
     uint generation_mip;
@@ -198,6 +186,7 @@ struct PrepareBudget @private {
     PrepareLimits limits;
     PrepareReport report;
     std::time::Clock started;
+    bool stepped;
 }
 
 struct PrepareInstall @private {
@@ -208,7 +197,6 @@ struct PrepareInstall @private {
     TextureRes old_texture;
     TextureRes new_texture;
     TextureResidency old_residency;
-    TextureResidency new_residency;
     GpuGeometry old_geometry;
     GpuGeometry new_geometry;
     MaterialRes old_material;
@@ -297,8 +285,9 @@ fn usz prepare_byte_allowance(PrepareBudget* budget) @private {
     return math::min(budget.limits.staged_bytes - budget.report.staged_bytes, PREPARE_SPAN_BYTES);
 }
 
+// The first step of a call always runs: a target below the per-call overhead still progresses and reports its overrun.
 fn PrepareStopReason prepare_step_stop(PrepareBudget* budget, PrepareStepCost cost, ulong elapsed_ns) @private {
-    if (budget.limits.time_ns && elapsed_ns >= budget.limits.time_ns) return PrepareStopReason.TIME;
+    if (budget.limits.time_ns && budget.stepped && elapsed_ns >= budget.limits.time_ns) return PrepareStopReason.TIME;
     if (budget.limits.staged_bytes && (cost.staged_bytes > budget.limits.staged_bytes
       || budget.report.staged_bytes > budget.limits.staged_bytes - cost.staged_bytes)) {
         return PrepareStopReason.STAGED_BYTES;
@@ -313,14 +302,7 @@ fn PrepareStopReason prepare_step_stop(PrepareBudget* budget, PrepareStepCost co
 fn void account_prepare_report(Renderer* renderer, PrepareReport report) @private {
     renderer.stats.prepare_bytes += report.staged_bytes;
     renderer.stats.prepare_generated_texels += report.generated_texels;
-    renderer.stats.prepare_copied_bytes += report.copied_bytes;
     renderer.stats.prepare_pipelines += report.pipelines;
-    renderer.stats.prepare_objects += report.objects;
-    renderer.stats.prepare_views += report.views;
-    renderer.stats.prepare_allocations += report.allocations;
-    renderer.stats.prepare_pipeline_lookups += report.pipeline_lookups;
-    renderer.stats.prepare_pipeline_hits += report.pipeline_hits;
-    renderer.stats.prepare_restarts += report.restarts;
     renderer.stats.prepare_generation_ns += report.generation_ns;
     renderer.stats.prepare_pipeline_ns += report.pipeline_ns;
     renderer.stats.prepare_elapsed_ns += report.elapsed_ns;

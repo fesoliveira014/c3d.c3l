@@ -43,6 +43,8 @@ fn void test_prepare_axes_stop_independently_and_zero_is_unbounded() @test {
     pipelines.limits.pipelines = 4;
     assert(render::prepare_step_stop(&pipelines, { .pipelines = 4 }, 0) == PrepareStopReason.NONE);
     PrepareBudget deadline = { .limits = { .time_ns = 100 } };
+    assert(render::prepare_step_stop(&deadline, { .staged_bytes = 16 }, 100) == PrepareStopReason.NONE);
+    deadline.stepped = true;
     assert(render::prepare_step_stop(&deadline, {}, 99) == PrepareStopReason.NONE);
     assert(render::prepare_step_stop(&deadline, { .staged_bytes = 16 }, 100) == PrepareStopReason.TIME);
     PrepareBudget unbounded;
@@ -85,22 +87,6 @@ fn void test_abort_keeps_only_active_chain_and_rolls_finalized_unit_back_for_reg
     assert(record.chain_active && record.chain.pixels.ptr == retained && record.chain.pixels[0] == 99);
     assert(record.generation_outputs == 3 && record.texels_done == 8);
     assert(record.units[2].done && record.units_done == 1 && record.bytes_done == 16);
-}
-
-fn void test_aborted_recording_restores_ring_checkpoint_even_without_ordinary_queues() @test {
-    Renderer renderer = cursor_renderer();
-    defer destroy_cursor_renderer(&renderer);
-    renderer.frames[0].upload.head = 32;
-    renderer.frames[0].upload.demand = 48;
-    render::checkpoint_prepare_uploads(&renderer);
-    renderer.frames[0].upload.head = 96;
-    renderer.frames[0].upload.demand = 112;
-    render::checkpoint_prepare_uploads(&renderer);
-    renderer.frames[0].upload.head = 160;
-    renderer.frames[0].upload.demand = 176;
-    render::discard_uploads(&renderer);
-    assert(renderer.frames[0].upload.head == 32 && renderer.frames[0].upload.demand == 48);
-    assert(!renderer.prepare_upload_checkpoint.active);
 }
 
 fn void test_shader_first_use_adopts_an_owned_copy_in_one_step() @test {

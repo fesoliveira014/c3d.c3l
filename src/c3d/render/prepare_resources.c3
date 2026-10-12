@@ -10,9 +10,7 @@ import std::time;
 import std::time::clock;
 
 enum PrepareResourceStep @private {
-    TEXTURE_IMAGE,
-    TEXTURE_VIEW,
-    TEXTURE_STORAGE_VIEW,
+    TEXTURE_CREATE,
     GENERATION_STORAGE,
     GENERATE,
     TEXTURE_COPY,
@@ -128,7 +126,7 @@ fn PrepareStepPlan? plan_prepare_texture(
     if (!unit.texture_candidate.texture.is_valid()) {
         check_prepare_texture_source(source)!;
 
-        return { .kind = PrepareResourceStep.TEXTURE_IMAGE };
+        return { .kind = PrepareResourceStep.TEXTURE_CREATE };
     }
 
     if (source.source_kind != EMPTY) {
@@ -142,11 +140,6 @@ fn PrepareStepPlan? plan_prepare_texture(
         )!;
     }
 
-    if (!unit.texture_candidate.view.is_valid()) return { .kind = PrepareResourceStep.TEXTURE_VIEW };
-
-    usz storage_count = desc.storage ? (usz)unit.texture_candidate.mip_count * desc.layers : 0;
-    if (unit.creation_next < storage_count) return { .kind = PrepareResourceStep.TEXTURE_STORAGE_VIEW };
-    unit.initialized = true;
     if (source.source_kind == EMPTY) return { .kind = PrepareResourceStep.EMPTY_TEXTURE };
     if (source.source_kind == MIP_ZERO && desc.generate_mips) {
         GeneratedTextureLayout layout = generated_texture_mip_layout(desc)!;
@@ -228,75 +221,8 @@ fn bool? run_prepare_step(
     PrepareReport* report,
 ) @private {
     switch (plan.kind) {
-        case TEXTURE_IMAGE:
-            TextureAsset* source = renderer.assets.texture(unit.texture);
-            uint chain_mips = texture_chain_mips(source);
-            bool eligible = texture_eligible(source.desc, source.source_kind, chain_mips);
-            gpu::TextureDesc desc = texture_gpu_description(
-                desc: source.desc,
-                format: texture_format(source.desc.format),
-                chain_mips: chain_mips,
-                base: unit.texture_base,
-                copy_source: eligible,
-            );
-            report.objects++;
-            unit.texture_candidate = {
-                .asset = unit.texture, .revision = unit.revision,
-                .texture = gpu::create_texture(&renderer.device, &desc)!,
-                .width = desc.width, .height = desc.height, .depth = desc.depth,
-                .mip_count = desc.mip_levels, .layers = desc.array_layers,
-                .is_cube = source.desc.is_cube, .copy_source = eligible, .format = desc.format,
-                .semantic = source.desc.semantic,
-            };
-
-            unit.staged.mip = unit.texture_base;
-            uint chain_extent = math::max(source.desc.width, source.desc.height);
-            uint tail_base = eligible ? texture_tail_base(chain_extent, chain_mips) : 0;
-            unit.residency_candidate = {
-                .chain_mips = chain_mips, .chain_width = source.desc.width, .chain_height = source.desc.height,
-                .format = source.desc.format, .level_bytes = texture_level_bytes(source.desc, chain_mips)!,
-                .tail_base = tail_base,
-                .resident_base = unit.texture_base, .required_base = chain_mips,
-                .last_used_frame = renderer.frame_index, .eligible = eligible,
-                .full_reader = unit.full_reader || renderer.residencies[unit.texture.index].full_reader,
-                .streamed = eligible && !(unit.full_reader || renderer.residencies[unit.texture.index].full_reader),
-                .raisable = texture_source_present(source), .regenerates = source.source_kind == MIP_ZERO,
-            };
-
-            return false;
-
-        case TEXTURE_VIEW:
-            gpu::TextureViewDesc desc = { .cube = unit.texture_candidate.is_cube };
-            report.views++;
-            unit.texture_candidate.view = gpu::create_texture_view(
-                device: &renderer.device,
-                texture: unit.texture_candidate.texture,
-                desc: &desc,
-            )!;
-            TextureAsset* source = renderer.assets.texture(unit.texture);
-            if (source.desc.storage) {
-                unit.texture_candidate.storage_views = alloc::new_array(
-                    allocator: renderer.allocator,
-                    $Type: gpu::TextureView,
-                    elements: (sz)unit.texture_candidate.mip_count * unit.texture_candidate.layers,
-                );
-            }
-
-            return false;
-
-        case TEXTURE_STORAGE_VIEW:
-            uint mip_count = unit.texture_candidate.mip_count;
-            uint mip = unit.creation_next % mip_count;
-            uint layer = unit.creation_next / mip_count;
-            gpu::TextureViewDesc desc = { .base_mip = mip, .mip_count = 1, .base_layer = layer, .layer_count = 1 };
-            report.views++;
-            unit.texture_candidate.storage_views[unit.creation_next] =
-                gpu::create_texture_view(
-                    device: &renderer.device,
-                    texture: unit.texture_candidate.texture,
-                    desc: &desc,
-                )!;
-            unit.creation_next++;
+        case TEXTURE_CREATE:
+            create_prepare_texture(renderer, unit)!;
 
             return false;
 
@@ -448,7 +374,6 @@ fn bool? run_prepare_step(
                 .access = { .graphics },
                 .debug_name = "prepared_geometry"
             };
-            report.allocations++;
             gpu::GpuAllocation allocation = gpu::allocate_memory(&renderer.device, &desc)!;
             unit.geometry_candidate.allocation = allocation;
             gpu::GpuSpan span = gpu::get_allocation_span(&renderer.device, allocation)!;
@@ -463,18 +388,12 @@ fn bool? run_prepare_step(
                 offset: layout.indices,
                 size: (usz)layout.index_count * layout.index_stride,
             )!;
-            unit.initialized = true;
 
             return false;
 
         case GEOMETRY_COPY:
             GeometryAsset* source = renderer.assets.geometry(unit.geometry);
-            gpu::MappedGpuSpan staging = take_prepare_staging(
-                renderer: renderer,
-                bytes: plan.bytes,
-                alignment: STREAM_ALIGNMENT,
-                report: report,
-            )!;
+            gpu::MappedGpuSpan staging = take_prepare_staging(renderer, plan.bytes, STREAM_ALIGNMENT)!;
             write_geometry_range(
                 destination: staging.bytes,
                 geometry: &source.data,
@@ -512,7 +431,6 @@ fn bool? run_prepare_step(
                 .access = { .graphics },
                 .debug_name = "prepared_material_payload"
             };
-            report.allocations++;
             unit.material_candidate.payload = gpu::allocate_memory(&renderer.device, &desc)!;
             unit.material_candidate.payload_size = source.custom.param_block.len;
             unit.material_candidate.payload_address = gpu::get_span_address(
@@ -524,12 +442,7 @@ fn bool? run_prepare_step(
 
         case MATERIAL_PAYLOAD:
             Material* source = &renderer.assets.material(unit.material).data;
-            gpu::MappedGpuSpan staging = take_prepare_staging(
-                renderer: renderer,
-                bytes: plan.bytes,
-                alignment: STREAM_ALIGNMENT,
-                report: report,
-            )!;
+            gpu::MappedGpuSpan staging = take_prepare_staging(renderer, plan.bytes, STREAM_ALIGNMENT)!;
             staging.bytes[..] = source.custom.param_block[plan.offset:plan.bytes];
             report.staged_bytes += plan.bytes;
             renderer.stats.upload_bytes += (uint)plan.bytes;
@@ -547,12 +460,7 @@ fn bool? run_prepare_step(
             return false;
 
         case MATERIAL_BLOCK:
-            gpu::MappedGpuSpan staging = take_prepare_staging(
-                renderer: renderer,
-                bytes: MATERIAL_STRIDE,
-                alignment: STREAM_ALIGNMENT,
-                report: report,
-            )!;
+            gpu::MappedGpuSpan staging = take_prepare_staging(renderer, MATERIAL_STRIDE, STREAM_ALIGNMENT)!;
             material_prepare_block(
                 renderer: renderer,
                 material: unit.material,
@@ -585,11 +493,7 @@ fn bool? run_prepare_step(
             return true;
 
         case TOON_SAMPLER:
-            gpu::SamplerDesc desc = { .min_filter = gpu::Filter.NEAREST, .mag_filter = gpu::Filter.NEAREST,
-                .mip_filter = gpu::Filter.NEAREST, .address_u = gpu::AddressMode.CLAMP_TO_EDGE,
-                .address_v = gpu::AddressMode.CLAMP_TO_EDGE, .address_w = gpu::AddressMode.CLAMP_TO_EDGE,
-                .debug_name = "toon_gradient" };
-            renderer.toon_gradient_sampler = gpu::intern_sampler(&renderer.device, &desc)!;
+            acquire_toon_gradient_sampler(renderer)!;
 
             return true;
 
@@ -601,16 +505,71 @@ fn bool? run_prepare_step(
     }
 }
 
-fn gpu::MappedGpuSpan? take_prepare_staging(
-    Renderer* renderer,
-    usz bytes,
-    usz alignment,
-    PrepareReport* report,
-) @private {
-    UploadRing* upload = &renderer.frames[renderer.recording_slot].upload;
-    if (align_up(upload.head, alignment) + bytes > upload.mapped.bytes.len) report.allocations++;
-    gpu::MappedGpuSpan? result = upload.take(&renderer.device, bytes, alignment);
-    return result;
+fn void? create_prepare_texture(Renderer* renderer, PrepareUnit* unit) @local {
+    defer catch retire_prepare_texture(renderer, unit, &unit.texture_candidate);
+
+    TextureAsset* source = renderer.assets.texture(unit.texture);
+    uint chain_mips = texture_chain_mips(source);
+    bool eligible = texture_eligible(source.desc, source.source_kind, chain_mips);
+    gpu::TextureDesc desc = texture_gpu_description(
+        desc: source.desc,
+        format: texture_format(source.desc.format),
+        chain_mips: chain_mips,
+        base: unit.texture_base,
+        copy_source: eligible,
+    );
+    unit.texture_candidate = {
+        .asset = unit.texture, .revision = unit.revision,
+        .texture = gpu::create_texture(&renderer.device, &desc)!,
+        .width = desc.width, .height = desc.height, .depth = desc.depth,
+        .mip_count = desc.mip_levels, .layers = desc.array_layers,
+        .is_cube = source.desc.is_cube, .copy_source = eligible, .format = desc.format,
+        .semantic = source.desc.semantic,
+    };
+
+    gpu::TextureViewDesc sampled = { .cube = unit.texture_candidate.is_cube };
+    unit.texture_candidate.view = gpu::create_texture_view(
+        device: &renderer.device,
+        texture: unit.texture_candidate.texture,
+        desc: &sampled,
+    )!;
+
+    if (source.desc.storage) {
+        uint mip_count = unit.texture_candidate.mip_count;
+        unit.texture_candidate.storage_views = alloc::new_array(
+            allocator: renderer.allocator,
+            $Type: gpu::TextureView,
+            elements: (sz)mip_count * unit.texture_candidate.layers,
+        );
+        foreach (uint index, &storage_view : unit.texture_candidate.storage_views) {
+            gpu::TextureViewDesc single = {
+                .base_mip = index % mip_count, .mip_count = 1, .base_layer = index / mip_count, .layer_count = 1,
+            };
+            *storage_view = gpu::create_texture_view(
+                device: &renderer.device,
+                texture: unit.texture_candidate.texture,
+                desc: &single,
+            )!;
+        }
+    }
+
+    unit.staged.mip = unit.texture_base;
+    uint chain_extent = math::max(source.desc.width, source.desc.height);
+    uint tail_base = eligible ? texture_tail_base(chain_extent, chain_mips) : 0;
+    unit.residency_candidate = {
+        .chain_mips = chain_mips, .chain_width = source.desc.width, .chain_height = source.desc.height,
+        .format = source.desc.format, .level_bytes = texture_level_bytes(source.desc, chain_mips)!,
+        .tail_base = tail_base,
+        .resident_base = unit.texture_base, .required_base = chain_mips,
+        .last_used_frame = renderer.frame_index, .eligible = eligible,
+        .full_reader = unit.full_reader || renderer.residencies[unit.texture.index].full_reader,
+        .streamed = eligible && !(unit.full_reader || renderer.residencies[unit.texture.index].full_reader),
+        .raisable = texture_source_present(source), .regenerates = source.source_kind == MIP_ZERO,
+    };
+}
+
+fn gpu::MappedGpuSpan? take_prepare_staging(Renderer* renderer, usz bytes, usz alignment) @local {
+    return renderer.frames[renderer.recording_slot].upload.take(&renderer.device, bytes, alignment);
 }
 
 fn void? record_prepare_buffer_copy(
@@ -681,12 +640,7 @@ fn bool? run_prepare_texture_copy(
         case EMPTY: return c3d::INVALID_ARGUMENT~;
     }
 
-    gpu::MappedGpuSpan staging = take_prepare_staging(
-        renderer: renderer,
-        bytes: band.byte_count,
-        alignment: band.alignment,
-        report: report,
-    )!;
+    gpu::MappedGpuSpan staging = take_prepare_staging(renderer, band.byte_count, band.alignment)!;
     staging.bytes[..] = bytes[..];
     report.staged_bytes += band.byte_count;
     renderer.stats.upload_bytes += (uint)band.byte_count;

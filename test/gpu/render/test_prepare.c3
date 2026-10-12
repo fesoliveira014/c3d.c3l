@@ -187,7 +187,7 @@ fn void preparation_partial_restart(uint change) @private {
         assert(renderer.textures[texture.index].texture == old);
         renderer.end_frame()!!;
         PrepareUnit* unit = preparation_texture_unit(renderer, id, texture)!!;
-        assert(unit.staged.bytes > 0 && !unit.done && !unit.installed);
+        assert(unit.staged.bytes > 0 && !unit.done);
         uint before = renderer.prepare_progress(id).restarts;
         switch (change) {
             case 0:
@@ -374,7 +374,7 @@ fn void test_prepare_partial_geometry_revision_restarts_and_preserves_prior_mirr
             geometry: fixture.box,
             material: {},
         );
-        assert(partial.staged.bytes == 16 && !partial.done && !partial.installed);
+        assert(partial.staged.bytes == 16 && !partial.done);
         gpu::GpuAllocation candidate = partial.geometry_candidate.allocation;
         assert(candidate.is_valid() && renderer.geometries[fixture.box.index].allocation == old);
         foreach (&position : source.positions) position.y += 0.075f;
@@ -383,7 +383,7 @@ fn void test_prepare_partial_geometry_revision_restarts_and_preserves_prior_mirr
         GeometryId synchronous = fixture.assets.add_geometry(source)!!;
         renderer.begin_frame()!!;
         PrepareReport restarted = renderer.advance_prepares_within({ .staged_bytes = 16 })!!;
-        assert(restarted.restarts == 1 && restarted.staged_bytes == 16);
+        assert(renderer.prepare_progress(id).restarts == 1 && restarted.staged_bytes == 16);
         assert(renderer.geometries[fixture.box.index].allocation == old);
         gpu::get_allocation_span(&renderer.device, old)!!;
         partial = preparation_asset_unit(
