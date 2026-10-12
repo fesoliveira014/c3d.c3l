@@ -192,7 +192,7 @@ fn void retire_prepare_candidate(Renderer* renderer, PrepareUnit* unit) @private
             retire_prepare_allocation(renderer, unit, unit.material_candidate.payload);
             unit.material_candidate = {};
         case PIPELINES: free_prepare_pipeline_unit(renderer, unit);
-        case SHADER: free_prepare_shader_unit(renderer, unit);
+        case SHADER:
         case SAMPLER:
         case TOON_SAMPLER:
         case FINISH:

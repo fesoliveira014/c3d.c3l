@@ -103,17 +103,15 @@ fn void test_aborted_recording_restores_ring_checkpoint_even_without_ordinary_qu
     assert(!renderer.prepare_upload_checkpoint.active);
 }
 
-fn void test_shader_cpu_spans_are_owned_separate_and_first_use_has_zero_adoption_keys() @test {
+fn void test_shader_first_use_adopts_an_owned_copy_in_one_step() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
     defer tracker.free();
     {
         AssetStore assets = asset::create_asset_store(&tracker, asset::default_asset_store_desc());
         defer asset::destroy_asset_store(&assets);
-        char[] fragment = alloc::new_array(&tracker, char, (sz)(2 * render::PREPARE_SPAN_BYTES + 17));
-        defer alloc::free(&tracker, fragment.ptr);
-        foreach (index, &value : fragment) *value = (char)(index % 251);
-        asset::ShaderDesc desc = { .fragment = fragment };
+        char[4] fragment = { 1, 2, 3, 4 };
+        asset::ShaderDesc desc = { .fragment = fragment[..] };
         ShaderId shader = assets.add_shader(&desc)!!;
         Renderer renderer = { .allocator = &tracker, .assets = &assets,
             .shaders = alloc::new_array(&tracker, ShaderRes, assets.shaders.items.len),
@@ -123,17 +121,12 @@ fn void test_shader_cpu_spans_are_owned_separate_and_first_use_has_zero_adoption
         defer render::destroy_pipeline_cache(&renderer.device, &renderer.pipelines);
         defer render::free_shaders(&renderer);
         PrepareUnit unit = { .kind = PrepareUnitKind.SHADER, .shader = shader, .revision = 1 };
-        defer render::free_prepare_shader_unit(&renderer, &unit);
-        PrepareBudget budget;
         PrepareReport report;
-        uint steps;
-        do {
-            assert(render::prepare_shader_cost(&renderer, &unit, &budget)!!.pipelines == 0);
-            steps++;
-        } while (!render::run_prepare_shader_step(&renderer, &unit, &report)!!);
-        assert(steps == 4 && report.staged_bytes == 0 && report.pipelines == 0 && report.copied_bytes == fragment.len);
+        assert(render::prepare_shader_cost(&renderer, &unit).pipelines == 0);
+        assert(render::run_prepare_shader_step(&renderer, &unit, &report)!!);
+        assert(report.pipelines == 0 && report.copied_bytes == fragment.len);
         assert(renderer.shaders[shader.index].desc.fragment.ptr != assets.shader(shader).desc.fragment.ptr);
-        assert(renderer.shaders[shader.index].desc.fragment == fragment);
+        assert(renderer.shaders[shader.index].desc.fragment == fragment[..]);
     }
     assert(!tracker.has_leaks());
 }

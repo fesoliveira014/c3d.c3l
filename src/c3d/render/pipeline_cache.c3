@@ -54,7 +54,6 @@ struct CustomStageSource {
 struct PipelineCreationCounters @private {
     ulong calls;
     ulong elapsed_ns;
-    ulong keys;
 }
 
 <*
@@ -187,7 +186,6 @@ fn gpu::PipelineHandle[]? PipelineCache.replace_shader(
     asset::ShaderDesc* stages,
 ) {
     PipelineKey[] keys = self.keys_of(tmem, shader, old_revision);
-    self.creations.keys += keys.len;
     gpu::PipelineHandle[] fresh = alloc::new_array(tmem, gpu::PipelineHandle, keys.len);
     defer catch foreach (handle : fresh) {
         if (handle.is_valid()) (void)gpu::destroy_pipeline(device, handle);

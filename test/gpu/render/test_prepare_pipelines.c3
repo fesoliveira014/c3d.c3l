@@ -218,14 +218,14 @@ fn void test_prepare_shader_adoption_counts_eligible_keys_and_survives_abort() @
     renderer.begin_frame()!!;
     PrepareReport blocked = renderer.advance_prepares_within({ .pipelines = eligible - 1 })!!;
     assert(blocked.reason == PrepareStopReason.PIPELINES && blocked.required.pipelines == eligible);
-    assert(blocked.pipelines == 0 && blocked.copied_bytes > 0 && blocked.pipeline_keys >= eligible);
+    assert(blocked.pipelines == 0 && blocked.copied_bytes == 0);
     assert(renderer.shaders[shader_id.index].revision == 1);
     renderer.end_frame()!!;
     render::wait_frames(renderer)!!;
 
     renderer.begin_frame()!!;
     PrepareReport adopted = renderer.advance_prepares_within({ .pipelines = eligible })!!;
-    assert(adopted.pipelines == eligible && adopted.copied_bytes == 0 && adopted.pipeline_keys >= eligible);
+    assert(adopted.pipelines == eligible && adopted.copied_bytes > 0);
     assert(renderer.shaders[shader_id.index].revision == 2);
     render::abort_frame(renderer);
     assert(renderer.shaders[shader_id.index].revision == 2);
@@ -244,7 +244,7 @@ fn void test_prepare_shader_adoption_counts_eligible_keys_and_survives_abort() @
     PrepareId superseded = renderer.begin_prepare_model(model)!!;
     renderer.begin_frame()!!;
     blocked = renderer.advance_prepares_within({ .pipelines = 1 })!!;
-    assert(blocked.reason == PrepareStopReason.PIPELINES && blocked.copied_bytes > 0 && blocked.pipelines == 0);
+    assert(blocked.reason == PrepareStopReason.PIPELINES && blocked.copied_bytes == 0 && blocked.pipelines == 0);
     renderer.end_frame()!!;
     render::wait_frames(renderer)!!;
     renderer.begin_frame()!!;

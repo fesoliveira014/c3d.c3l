@@ -12,8 +12,6 @@ import std::hash::fnv32a;
 import std::math;
 import std::time::clock;
 
-const uint PREPARE_SHADER_STAGE_COUNT @private = 13; // one per ShaderDesc byte array; spans check time between copies
-
 enum PreparePipelineKind @private {
     CACHE,
     COMPUTE,
@@ -75,14 +73,6 @@ struct PreparePipelineUnit @private {
     bool lut_sampler_ready;
 }
 
-struct PrepareShaderUnit @private {
-    asset::ShaderDesc desc;
-    uint stage;
-    usz offset;
-    ulong copied;
-    bool initialized;
-}
-
 struct PreparePipelineIdentity @private {
     PreparePipelineKind kind;
     PreparePipelinePass pass;
@@ -104,25 +94,6 @@ fn bool PreparePipelineIdentity.equals(&self, PreparePipelineIdentity other) {
         && c3d::same_id(self.geometry, other.geometry) && c3d::same_id(self.material, other.material);
 }
 
-fn char[]* prepare_shader_stage(asset::ShaderDesc* desc, uint stage) @private {
-    switch (stage) {
-        case 0: return &desc.fragment;
-        case 1: return &desc.gbuffer;
-        case 2: return &desc.traced_fragment.hardware;
-        case 3: return &desc.traced_fragment.software;
-        case 4: return &desc.vertex.shaded;
-        case 5: return &desc.vertex.depth;
-        case 6: return &desc.vertex.instanced_shaded;
-        case 7: return &desc.vertex.instanced_depth;
-        case 8: return &desc.vertex.velocity;
-        case 9: return &desc.vertex.instanced_velocity;
-        case 10: return &desc.weighted_fragment.shaded;
-        case 11: return &desc.weighted_fragment.traced.hardware;
-        case 12: return &desc.weighted_fragment.traced.software;
-        default: unreachable("invalid shader stage cursor");
-    }
-}
-
 fn bool prepare_shader_current(Renderer* renderer, PrepareUnit* unit) @private {
     if (!renderer.assets.shaders.is_live(unit.shader)) return true;
     ShaderRes* mirror = &renderer.shaders[unit.shader.index];
@@ -138,78 +109,29 @@ fn void account_prepare_cache_creation(
     PipelineCreationCounters after = renderer.pipelines.creations;
     report.pipelines += (uint)(after.calls - before.calls);
     report.pipeline_ns += after.elapsed_ns - before.elapsed_ns;
-    report.pipeline_keys += (uint)(after.keys - before.keys);
 }
 
-fn PrepareStepCost? prepare_shader_cost(Renderer* renderer, PrepareUnit* unit, PrepareBudget* budget) @private {
+fn PrepareStepCost prepare_shader_cost(Renderer* renderer, PrepareUnit* unit) @private {
     if (prepare_shader_current(renderer, unit)) return {};
-    PrepareShaderUnit* job = &unit.shader_job;
-    if (!job.initialized || job.stage < PREPARE_SHADER_STAGE_COUNT) return {};
     ShaderRes* mirror = &renderer.shaders[unit.shader.index];
     uint old_revision = c3d::same_id(mirror.asset, unit.shader) ? mirror.revision : 0;
+    asset::ShaderDesc* stages = &renderer.assets.shader(unit.shader).desc;
     uint required;
     @pool() {
-        PipelineKey[] keys = renderer.pipelines.keys_of(tmem, unit.shader, old_revision);
-        budget.report.pipeline_keys += (uint)keys.len;
-        foreach (key : keys) if (key_stages_present(key, &job.desc)) required++;
+        foreach (key : renderer.pipelines.keys_of(tmem, unit.shader, old_revision)) {
+            if (key_stages_present(key, stages)) required++;
+        }
     };
     return { .pipelines = required };
 }
 
 fn bool? run_prepare_shader_step(Renderer* renderer, PrepareUnit* unit, PrepareReport* report) @private {
-    if (prepare_shader_current(renderer, unit)) {
-        free_prepare_shader_unit(renderer, unit);
-        return true;
-    }
-    PrepareShaderUnit* job = &unit.shader_job;
-    ShaderAsset* source = renderer.assets.shader(unit.shader);
-    if (!job.initialized) {
-        job.desc.param_block_size = source.desc.param_block_size;
-        job.desc.scene_reads = source.desc.scene_reads;
-        job.initialized = true;
-    }
-    while (job.stage < PREPARE_SHADER_STAGE_COUNT) {
-        char[] input = *prepare_shader_stage(&source.desc, job.stage);
-        if (job.offset == input.len) {
-            job.stage++;
-            job.offset = 0;
-            continue;
-        }
-        char[]* output = prepare_shader_stage(&job.desc, job.stage);
-        if (!output.len) *output = alloc::alloc_array(renderer.allocator, char, (sz)input.len);
-        usz bytes = math::min((usz)input.len - job.offset, PREPARE_SPAN_BYTES);
-        mem::copy(output.ptr + job.offset, input.ptr + job.offset, (sz)bytes);
-        job.offset += bytes;
-        job.copied += bytes;
-        report.copied_bytes += bytes;
-        if (job.offset == input.len) {
-            job.stage++;
-            job.offset = 0;
-            while (job.stage < PREPARE_SHADER_STAGE_COUNT && !prepare_shader_stage(&source.desc, job.stage).len) {
-                job.stage++;
-            }
-        }
-        return false;
-    }
+    if (prepare_shader_current(renderer, unit)) return true;
     PipelineCreationCounters before = renderer.pipelines.creations;
     defer account_prepare_cache_creation(renderer, report, before);
-    if (catch excuse = adopt_prepared_shader(
-        renderer: renderer,
-        shader: unit.shader,
-        revision: unit.revision,
-        owned: &job.desc,
-    )) {
-        if (!pipeline_rejected(renderer, unit.shader, excuse)) return excuse~;
-        free_prepare_shader_unit(renderer, unit);
-        return true;
-    }
-    *job = {};
+    ShaderRes* published = resolve_shader(renderer, unit.shader)!;
+    if (published.revision == unit.revision) report.copied_bytes += shader_desc_bytes(&published.desc);
     return true;
-}
-
-fn void free_prepare_shader_unit(Renderer* renderer, PrepareUnit* unit) @private {
-    asset::free_shader_desc(renderer.allocator, &unit.shader_job.desc);
-    unit.shader_job = {};
 }
 
 fn gpu::PipelineHandle* prepare_compute_slot(Renderer* renderer, PrepareComputeSlot slot) @private {

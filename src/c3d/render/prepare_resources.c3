@@ -89,7 +89,7 @@ fn PrepareStepPlan? plan_prepare_step(
         case TOON_SAMPLER: return { .kind = PrepareResourceStep.TOON_SAMPLER };
         case SHADER:
             record.phase = PreparePhase.DEPENDENCIES;
-            return { .kind = PrepareResourceStep.SHADER, .cost = prepare_shader_cost(renderer, unit, budget)! };
+            return { .kind = PrepareResourceStep.SHADER, .cost = prepare_shader_cost(renderer, unit) };
         case PIPELINES:
             record.phase = PreparePhase.PIPELINES;
             return { .kind = PrepareResourceStep.PIPELINE, .cost = prepare_pipeline_cost(renderer, unit, budget)! };
