@@ -361,6 +361,8 @@ sun illuminance in physical units, so their own steps still bound the precision 
 - A clamp that keeps half-float finite acts on the stored value after the scale: the sky pixel at 65,504 (a bright
   disc under a high factor is cut at 65,504 divided by the factor), the weighted blend's accumulation, and the path
   tracer's copy into the view's image.
+- The brightest sun disc the half-float target can hold shrinks as the pre-exposure factor grows, so a disc dimmed by
+  fog can clip at high factors.
 - The weighted blend's colour limit of 64 is in stored units, about 64 times display white at every exposure.
 - TAA's `1 / (1 + luma)` weights and its variance clip work in stored units, so they follow the exposed image
   rather than absolute radiance.
