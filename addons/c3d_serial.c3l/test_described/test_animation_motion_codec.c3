@@ -54,6 +54,12 @@ fn void assert_motion_codec_empty_history(InertialStorage* storage, uint capacit
     }
 }
 
+fn char[] motion_codec_history(InertialStorage* storage) @local {
+    InertialRow* row = &storage.rows[0];
+    usz bytes = anim::inertial_storage_bytes(row.previous_pose.len, row.previous_morph.len, storage.rows.len);
+    return ((char*)storage)[:bytes];
+}
+
 fn Node* motion_codec_crowd(Fixture* fixture, ModelId model_id, bool prepared) @local {
     ClipId clip = fixture.assets.model(model_id).data.clips[0];
     bool[4] all = { true, true, true, true };
@@ -146,17 +152,17 @@ fn void test_animation_motion_codec_animator_active_and_interrupted_export_prese
             }
             InertialStorage* storage = original.inertial_storage;
             assert(storage.rows[0].control.active && storage.rows[0].control.history_valid);
-            char[] history = alloc::clone_slice(tmem, ((char*)storage)[:storage.bytes]);
+            char[] history = alloc::clone_slice(tmem, motion_codec_history(storage));
             Action before = *original.action(original.order[0]);
             Transform[] pose = alloc::clone_slice(tmem, original.pose_storage.destination.pose);
-            float[] morph = alloc::new_array(tmem, float, (sz)storage.morphs);
+            float[] morph = alloc::new_array(tmem, float, storage.rows[0].previous_morph.len);
             anim::read_inertial_morphs(original.pose_storage.destination.morph_weights, morph);
             char[] bytes = fixture_bytes(&fixture, source);
             String text = fixture_text(&fixture, source);
-            assert(mem::equals((char*)storage, history.ptr, (sz)storage.bytes));
+            assert(mem::equals(motion_codec_history(storage), history));
             assert(mem::equals(&before, original.action(original.order[0]), Action::size));
             assert(mem::equals(original.pose_storage.destination.pose, pose));
-            float[] morph_after = alloc::new_array(tmem, float, (sz)storage.morphs);
+            float[] morph_after = alloc::new_array(tmem, float, storage.rows[0].previous_morph.len);
             anim::read_inertial_morphs(original.pose_storage.destination.morph_weights, morph_after);
             assert(morph_after == morph);
             for (uint encoding = 0; encoding < 2; encoding++) {
@@ -228,7 +234,7 @@ fn void test_animation_motion_codec_pending_and_prepared_crowd_restart_enabled_s
                     }
                     InertialStorage* storage = original.playback.inertial_storage;
                     assert(storage.rows[0].control.active && storage.rows[0].control.history_valid);
-                    history = alloc::clone_slice(tmem, ((char*)storage)[:storage.bytes]);
+                    history = alloc::clone_slice(tmem, motion_codec_history(storage));
                     poses = alloc::clone_slice(tmem, original.playback.poses);
                     before = *original.playback.slots[0].actions.get(original.playback.slots[0].base_action);
                 }
@@ -236,7 +242,7 @@ fn void test_animation_motion_codec_pending_and_prepared_crowd_restart_enabled_s
                 String text = fixture_text(&fixture, source);
                 if (prepared) {
                     InertialStorage* storage = original.playback.inertial_storage;
-                    assert(mem::equals((char*)storage, history.ptr, (sz)storage.bytes));
+                    assert(mem::equals(motion_codec_history(storage), history));
                     assert(mem::equals(original.playback.poses, poses));
                     Action* action = original.playback.slots[0].actions.get(original.playback.slots[0].base_action);
                     assert(mem::equals(&before, action, Action::size));
@@ -419,10 +425,8 @@ fn void assert_motion_codec_legacy_planar(PlaybackView* playback, ClipId clip) @
     assert(planar.speed == -0.25f && !planar.playing);
     assert(planar.points[0] == (Vec2){ -1, -1 });
     assert(planar.points[1] == (Vec2){ 2, -1 } && planar.points[2] == (Vec2){ -1, 2 });
-    bool reversed = (planar.reversed & 1) != 0;
     assert(planar.triangles[0].indices[0] == 2);
-    assert(planar.triangles[0].indices[reversed ? 2 : 1] == 1);
-    assert(planar.triangles[0].indices[reversed ? 1 : 2] == 0);
+    assert(planar.triangles[0].indices[1] == 1 && planar.triangles[0].indices[2] == 0);
     foreach (member, id : planar.actions[:planar.count]) {
         assert(c3d::same_id(id, playback.order[member + 1]));
         Action* action = playback.actions.get(id);

@@ -472,30 +472,7 @@ fn void test_crowd_candidate_variant_bits() @test {
     };
 }
 
-fn void test_crowd_palette_pack_orders_by_parity() @test {
-    Fixture fixture = make_fixture();
-    defer destroy_fixture(&fixture);
-    CrowdInstance[3] instances = {
-        walker(&fixture, placed({ 0, 0, 0 }), 0.1f),
-        walker(&fixture, placed({ 3, 0, 0 }, 0, { -1, 1, 1 }), 0.5f),
-        walker(&fixture, placed({ 6, 0, 0 }), 0.9f),
-    };
-    Node* node = add_crowd(&fixture, instances[..]);
-    AnimatedCrowd* crowd = fixture.scene.get(node, AnimatedCrowd);
-    anim::crowd_update(&fixture.assets, &fixture.scene, 0);
-    Mat4f[6] packed;
-    render::pack_crowd_palettes(packed[..], crowd);
-
-    uint[3] source_of_slot = { 0, 2, 1 };
-    foreach (usz slot, source : source_of_slot) {
-        for (usz joint = 0; joint < 2; joint++) {
-            assert(packed[slot * 2 + joint] == bitcast(crowd.palettes[(usz)source * 2 + joint], Mat4f));
-        }
-    }
-    assert(part_batch(&fixture, crowd, 0).mirrored_count() == 1);
-}
-
-fn void test_view_history_keeps_crowd_palettes_per_instance() @test {
+fn void test_view_history_keeps_crowd_instance_count_per_part() @test {
     Fixture fixture = make_fixture();
     defer destroy_fixture(&fixture);
     CrowdInstance[3] instances = {
@@ -522,9 +499,11 @@ fn void test_view_history_keeps_crowd_palettes_per_instance() @test {
     };
     history.publish();
 
-    assert(history.has_previous(&fixture.scene, node));
-    PoseRecord* pose = history.previous_pose(&fixture.scene, node);
-    assert(pose.palette.len == 2 * 4 && pose.instance_count == 3);
+    AnimatedCrowd* crowd = fixture.scene.get(node, AnimatedCrowd);
+    Node* part = fixture.scene.node(crowd.parts[0].batch);
+    assert(history.has_previous(&fixture.scene, part));
+    PoseRecord* pose = history.previous_pose(&fixture.scene, part);
+    assert(pose.instance_count == 3);
     model::set_crowd(
         assets: &fixture.assets,
         scene: &fixture.scene,
@@ -555,7 +534,6 @@ fn void test_crowd_batches_collect_posed_placements_with_pose_bounds() @test {
 
     @pool() {
         render::TraceCollection collection = render::collect_trace_instances(tmem, &fixture.scene, &fixture.assets);
-        uint[3] expected_slots = { 0, 2, 1 };
         usz crowd_rows;
         foreach (index, &record : collection.records) {
             assert(!c3d::same_id(record.entity, crowd.parts[0].batch));
@@ -565,37 +543,12 @@ fn void test_crowd_batches_collect_posed_placements_with_pose_bounds() @test {
                 continue;
             }
             assert(source.kind == render::TracePose.CROWD && source.crowd == crowd && source.part == 1);
-            assert(source.palette_index == expected_slots[record.instance_index]);
             Aabb placed_bounds = maths::aabb_transform(crowd.pose_bounds, render::trace_instance_world(record));
             assert(record.bounds.min == placed_bounds.min && record.bounds.max == placed_bounds.max);
             crowd_rows++;
         }
         assert(crowd_rows == 3);
     };
-}
-
-fn void test_packed_order_finds_each_placement_palette() @test {
-    Fixture fixture = make_fixture();
-    defer destroy_fixture(&fixture);
-    CrowdInstance[4] instances = {
-        walker(&fixture, placed({ 0, 0, 0 }, 0, { -1, 1, 1 }), 0.1f),
-        walker(&fixture, placed({ 3, 0, 0 }), 0.4f),
-        walker(&fixture, placed({ 6, 0, 0 }, 0, { 1, -1, 1 }), 0.6f),
-        walker(&fixture, placed({ 9, 0, 0 }), 0.9f),
-    };
-    Node* node = add_crowd(&fixture, instances[..]);
-    AnimatedCrowd* crowd = fixture.scene.get(node, AnimatedCrowd);
-    anim::crowd_update(&fixture.assets, &fixture.scene, 0);
-    Mat4f[8] packed;
-    render::pack_crowd_palettes(packed[..], crowd);
-    uint[4] slots;
-    render::crowd_packed_order(slots[..], crowd, 0);
-
-    foreach (usz instance, slot : slots) {
-        for (usz joint = 0; joint < 2; joint++) {
-            assert(packed[(usz)slot * 2 + joint] == bitcast(crowd.palettes[instance * 2 + joint], Mat4f));
-        }
-    }
 }
 
 fn void test_removing_the_crowd_node_removes_its_parts() @test {

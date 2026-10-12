@@ -93,10 +93,6 @@ fn void test_crowd_history_keeps_logical_sources_after_equal_count_parity_change
     defer destroy_crowd_history_fixture(&fixture);
     AnimatedCrowd* crowd = fixture.scene.get(fixture.node, AnimatedCrowd);
     capture_crowd_history(&fixture, &fixture.first, 0);
-    PoseRecord* owner = fixture.first.previous_pose(&fixture.scene, fixture.node);
-    foreach (usz index, value : crowd.palettes[:crowd.joint_count * crowd.count]) {
-        assert(owner.palette[index] == bitcast(value, Mat4f));
-    }
     foreach (&candidate : fixture.candidates) {
         PoseRecord* pose = fixture.first.previous_pose(&fixture.scene, candidate.node);
         for (uint source = 0; source < crowd.count; source++) {
@@ -115,7 +111,6 @@ fn void test_crowd_history_keeps_logical_sources_after_equal_count_parity_change
             assets: &fixture.assets,
             candidate: candidate,
             pose: pose,
-            crowd_pose: owner,
         ));
     }
 }
@@ -127,19 +122,16 @@ fn void test_crowd_history_rejects_replacement_and_incompatible_representation()
     AnimatedCrowd* crowd = fixture.scene.get(fixture.node, AnimatedCrowd);
     MeshCandidate* candidate = &fixture.candidates[0];
     PoseRecord* pose = fixture.first.previous_pose(&fixture.scene, candidate.node);
-    PoseRecord* owner = fixture.first.previous_pose(&fixture.scene, fixture.node);
     assert(crowd_history_matches(
         assets: &fixture.assets,
         candidate: candidate,
         pose: pose,
-        crowd_pose: owner,
     ));
     fixture.assets.geometry(candidate.geometry).header.revision++;
     assert(!crowd_history_matches(
         assets: &fixture.assets,
         candidate: candidate,
         pose: pose,
-        crowd_pose: owner,
     ));
     fixture.assets.geometry(candidate.geometry).header.revision--;
     uint saved_part = candidate.crowd_part;
@@ -148,14 +140,12 @@ fn void test_crowd_history_rejects_replacement_and_incompatible_representation()
         assets: &fixture.assets,
         candidate: candidate,
         pose: pose,
-        crowd_pose: owner,
     ));
     candidate.crowd_part = saved_part;
     assert(crowd_history_matches(
         assets: &fixture.assets,
         candidate: candidate,
         pose: pose,
-        crowd_pose: owner,
     ));
     CrowdInstance[3] seeds;
     foreach (uint instance, &seed : seeds) {
@@ -175,6 +165,5 @@ fn void test_crowd_history_rejects_replacement_and_incompatible_representation()
         assets: &fixture.assets,
         candidate: candidate,
         pose: pose,
-        crowd_pose: owner,
     ));
 }

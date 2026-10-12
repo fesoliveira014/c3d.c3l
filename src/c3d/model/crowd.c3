@@ -164,6 +164,9 @@ fn void? prepare_crowd(AssetStore* assets, Scene* scene, Node* node) {
         alloc::free(allocator, crowd.parts.ptr);
         alloc::free(allocator, crowd.scratch_worlds.ptr);
         alloc::free(allocator, crowd.palettes.ptr);
+        alloc::free(allocator, crowd.pose_revisions.ptr);
+        alloc::free(allocator, crowd.published_weights.ptr);
+        alloc::free(allocator, crowd.palette_scratch.ptr);
     }
 
     crowd.playback = anim::create_crowd_playback(
@@ -198,6 +201,13 @@ fn void? prepare_crowd(AssetStore* assets, Scene* scene, Node* node) {
         };
         crowd.morph_stride += weight_count;
     }
+
+    crowd.pose_revisions = alloc::new_array_try(allocator, uint, (sz)capacity)
+      ?? c3d::CAPACITY_EXCEEDED~!;
+    crowd.published_weights = alloc::new_array_try(allocator, float, (sz)capacity * crowd.morph_stride)
+      ?? c3d::CAPACITY_EXCEEDED~!;
+    crowd.palette_scratch = alloc::new_array_try(allocator, Mat4, (sz)crowd.joint_count)
+      ?? c3d::CAPACITY_EXCEEDED~!;
 
     crowd.playback.count = crowd.count;
     foreach (uint index, seed : crowd.seeds[:crowd.count]) {
@@ -436,8 +446,8 @@ fn void? check_authoring(
             template: template,
             source: source,
             actions_per_instance: actions_per_instance,
-            placement: instances[index].placement,
             model: model,
+            placement: instances[index].placement,
         )!;
     }
 }

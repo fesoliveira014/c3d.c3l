@@ -171,25 +171,12 @@ fn void CrowdPlaybackState.sample_range(
             }
         }
 
-        if (report.generalized) {
-            slot.root_motion = publish_generalized_owner_motion(
-                playback: &playback,
-                chain: report.consumed_chain,
-                motion: report.generalized_motion,
-                dt: (double)dt,
-            );
-        } else {
-            slot.root_motion = root_motion_delta(report.motion, reference);
-            if (self.inertial_storage) {
-                slot.root_motion = publish_inertial_root_motion(
-                    row: &self.inertial_storage.rows[index],
-                    target: slot.root_motion,
-                    target_twist: (double)report.motion.yaw,
-                    up: inertial_publication_up(&self.inertial_storage.rows[index]),
-                    dt: (double)dt,
-                );
-            }
-        }
+        slot.root_motion = publish_root_motion(
+            playback: &playback,
+            report: &report,
+            reference: reference,
+            dt: (double)dt,
+        );
 
         record_playback_inertial_history(
             playback: &playback,
@@ -313,18 +300,18 @@ fn BlendSpace1D*? CrowdPlayer.add_blend_space(
 }
 
 <*
- Fade a space out or remove its members immediately.
+ Fade a space of either kind out or remove its members immediately.
  @param [&inout] space : "Current borrow from this instance."
  @param fade_out : "Finite nonnegative seconds."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT
 *>
-fn void? CrowdPlayer.stop_blend_space(&self, BlendSpace1D* space, float fade_out = 0) {
+fn void? CrowdPlayer.stop_blend_space(&self, BlendSpaceControl* space, float fade_out = 0) {
     PlaybackView playback = crowd_player_view(self)!;
     playback.stop_blend_space(space, fade_out)!;
 }
 
 <*
- Fade a space toward a new weight.
+ Fade a space of either kind toward a new weight.
  @param [&inout] space : "Current borrow from this instance."
  @param target_weight : "Finite weight in [0,1]."
  @param duration : "Finite positive seconds."
@@ -332,7 +319,7 @@ fn void? CrowdPlayer.stop_blend_space(&self, BlendSpace1D* space, float fade_out
 *>
 fn void? CrowdPlayer.fade_blend_space(
     &self,
-    BlendSpace1D* space,
+    BlendSpaceControl* space,
     float target_weight,
     float duration,
 ) {
@@ -343,6 +330,7 @@ fn void? CrowdPlayer.fade_blend_space(
 <*
  Choose the template node used for root-motion extraction.
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT
+ @require !@crowd_player_has_actions(self)
 *>
 fn void? CrowdPlayer.set_root_node(&self, uint node) {
     CrowdPlaybackSlot* slot = crowd_slot(self.state, self.instance)!;
@@ -388,7 +376,7 @@ fn void? validate_crowd_seed(AssetStore* assets, ModelTemplate* template, CrowdP
             destination.mesh_widths[index] = (uint)mesh.default_morph_weights.len;
         }
 
-        (void)validate_playback_action(clip, PLAY_DESC_DEFAULT, destination)!;
+        validate_playback_action(clip, PLAY_DESC_DEFAULT, destination)!;
     };
 }
 
@@ -672,6 +660,13 @@ fn void destroy_crowd_pose_scratch(CrowdPlaybackState* state, PoseScratch* scrat
 
 fn PlaybackView? crowd_player_view(CrowdPlayer* player) @private {
     return crowd_playback_view(player.state, crowd_slot(player.state, player.instance)!);
+}
+
+macro bool @crowd_player_has_actions(CrowdPlayer* player) @private {
+    if (player.instance.index >= player.state.count) return false;
+
+    CrowdPlaybackSlot* slot = &player.state.slots[player.instance.index];
+    return slot.generation == player.instance.generation && slot.action_count > 0;
 }
 
 fn CrowdPlaybackSlot*? crowd_slot(CrowdPlaybackState* state, CrowdInstanceId instance) @private {

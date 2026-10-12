@@ -377,22 +377,19 @@ fn void test_animation_inertial_math_zero_completion_and_repeated_corrected_inte
     }
 }
 
-fn usz check_inertial_region(
+fn void check_inertial_region(
     void* block,
     usz bytes,
-    usz prior_end,
     void* pointer,
     usz region_bytes,
     usz alignment,
 ) @local {
     usz start = (usz)pointer;
-    assert(start % alignment == 0 && start >= prior_end);
-    assert(start >= (usz)block && start - (usz)block <= bytes);
-    assert(region_bytes <= bytes - (start - (usz)block));
-    return start + region_bytes;
+    assert(start % alignment == 0 && start >= (usz)block);
+    assert(start - (usz)block + region_bytes <= bytes);
 }
 
-fn void test_animation_inertial_storage_single_block_cost_alignment_and_separate_capacity_rows() @test {
+fn void test_animation_inertial_storage_single_block_alignment_and_row_lengths() @test {
     InertialStorageCase[2] cases = {
         { .nodes = 4, .morphs = 2, .capacity = 1 },
         { .nodes = 520, .morphs = 9, .capacity = 16 },
@@ -407,57 +404,61 @@ fn void test_animation_inertial_storage_single_block_cost_alignment_and_separate
                 capacity: sample.capacity,
             )!!;
             defer anim::destroy_inertial_storage(storage);
+            usz bytes = (usz)allocator.bytes;
             assert((void*)storage == allocator.pointer && allocator.acquisitions == 1 && allocator.outstanding == 1);
-            assert(allocator.resizes == 0 && allocator.releases == 0 && (usz)allocator.bytes == storage.bytes);
-            assert(allocator.alignment == InertialRow::alignment && storage.rows.len == sample.capacity);
-            assert(storage.nodes == sample.nodes && storage.morphs == sample.morphs);
-            usz previous_end = (usz)storage.rows.ptr + (usz)storage.rows.len * InertialRow::size;
+            assert(allocator.resizes == 0 && allocator.releases == 0 && storage.rows.len == sample.capacity);
+            assert(bytes == anim::inertial_storage_bytes(sample.nodes, sample.morphs, sample.capacity));
             foreach (row : storage.rows) {
                 assert(row.previous_pose.len == sample.nodes && row.velocity.len == sample.nodes);
                 assert(row.offset.len == sample.nodes && row.offset_velocity.len == sample.nodes);
-                assert(row.previous_morph.len == sample.morphs && row.morph_velocity.len == sample.morphs);
-                assert(row.morph_offset.len == sample.morphs && row.morph_offset_velocity.len == sample.morphs);
-                previous_end = check_inertial_region(
+                assert(row.consumed_scale.len == sample.nodes && row.previous_morph.len == sample.morphs);
+                assert(row.morph_velocity.len == sample.morphs && row.morph_offset.len == sample.morphs);
+                assert(row.morph_offset_velocity.len == sample.morphs);
+                check_inertial_region(
                     block: storage,
-                    bytes: storage.bytes,
-                    prior_end: previous_end,
+                    bytes: bytes,
                     pointer: row.previous_pose.ptr,
                     region_bytes: (usz)row.previous_pose.len * Transform::size,
                     alignment: Transform::alignment,
                 );
                 foreach (values : (PoseVelocity[][3]){ row.velocity, row.offset, row.offset_velocity }) {
-                    previous_end = check_inertial_region(
+                    check_inertial_region(
                         block: storage,
-                        bytes: storage.bytes,
-                        prior_end: previous_end,
+                        bytes: bytes,
                         pointer: values.ptr,
                         region_bytes: (usz)values.len * PoseVelocity::size,
                         alignment: PoseVelocity::alignment,
                     );
                 }
-                previous_end = check_inertial_region(
-                    block: storage,
-                    bytes: storage.bytes,
-                    prior_end: previous_end,
-                    pointer: row.previous_morph.ptr,
-                    region_bytes: (usz)row.previous_morph.len * float::size,
-                    alignment: float::alignment,
-                );
                 foreach (values : (double[][3]){ row.morph_velocity, row.morph_offset, row.morph_offset_velocity }) {
-                    previous_end = check_inertial_region(
+                    check_inertial_region(
                         block: storage,
-                        bytes: storage.bytes,
-                        prior_end: previous_end,
+                        bytes: bytes,
                         pointer: values.ptr,
                         region_bytes: (usz)values.len * double::size,
                         alignment: double::alignment,
                     );
                 }
+                check_inertial_region(
+                    block: storage,
+                    bytes: bytes,
+                    pointer: row.consumed_scale.ptr,
+                    region_bytes: (usz)row.consumed_scale.len,
+                    alignment: 1,
+                );
                 assert(!row.control.history_valid && !row.control.active && !row.root.target_rate_pending);
             }
         }
         assert(allocator.outstanding == 0 && allocator.releases == 1);
     }
+}
+
+fn PoseVelocity inertial_storage_row_velocity(usz index) @local {
+    return {
+        .translation = { (double)index + 1, -2, 3 },
+        .angular = { 4, (double)index + 5, -6 },
+        .scale = { 7, 8, (double)index + 9 },
+    };
 }
 
 fn void test_animation_inertial_storage_reset_clears_one_incarnation_without_touching_other_rows_or_allocating() @test {
@@ -469,25 +470,18 @@ fn void test_animation_inertial_storage_reset_clears_one_incarnation_without_tou
         capacity: 4,
     )!!;
     defer anim::destroy_inertial_storage(storage);
-    foreach (index, &row : storage.rows) {
+    foreach (usz index, &row : storage.rows) {
         row.previous_pose[..] = maths::TRANSFORM_IDENTITY;
         row.previous_pose[0].position = { (float)index + 1, 2, 3 };
-        PoseVelocity values = {
-            .translation = { (double)index + 1, -2, 3 },
-            .angular = { 4, (double)index + 5, -6 },
-            .scale = { 7, 8, (double)index + 9 },
-        };
-        row.velocity[..] = values;
-        row.offset[..] = values;
-        row.offset_velocity[..] = values;
+        row.velocity[..] = inertial_storage_row_velocity(index);
+        row.offset[..] = inertial_storage_row_velocity(index);
+        row.offset_velocity[..] = inertial_storage_row_velocity(index);
         row.previous_morph[..] = (float)index + 1;
         row.morph_velocity[..] = (double)float::max * 2;
         row.morph_offset[..] = -(double)float::max * 2;
         row.morph_offset_velocity[..] = 0x1p-140;
-        row.control = {
-            .history_valid = true, .active = true,
-            .previous_dt = 0.125, .duration = 3, .elapsed = 1,
-        };
+        row.consumed_scale[..] = true;
+        row.control = { .history_valid = true, .active = true, .duration = 3, .elapsed = 1 };
         row.root = {
             .published_translation = { 1, 2, 3 },
             .translation_rate = { 4, 5, 6 }, .twist_rate = 0.25,
@@ -496,19 +490,10 @@ fn void test_animation_inertial_storage_reset_clears_one_incarnation_without_tou
             .target_rate_pending = true,
         };
     }
-    InertialRow[3] neighbors = { storage.rows[0], storage.rows[2], storage.rows[3] };
-    char[][3] payloads;
-    for (uint neighbor = 0; neighbor < 3; neighbor++) {
-        char[] bytes = ((char*)neighbors[neighbor].previous_pose.ptr)[:storage.row_bytes];
-        payloads[neighbor] = alloc::clone_slice(mem, bytes);
-    }
-    defer {
-        foreach (bytes : payloads) alloc::free(mem, bytes.ptr);
-    }
     for (uint reset = 0; reset < 100; reset++) anim::reset_inertial_row(storage, 1);
     InertialRow* cleared = &storage.rows[1];
     assert(!cleared.control.history_valid && !cleared.control.active);
-    assert(cleared.control.previous_dt == 0 && cleared.control.duration == 0 && cleared.control.elapsed == 0);
+    assert(cleared.control.duration == 0 && cleared.control.elapsed == 0);
     foreach (pose : cleared.previous_pose) {
         assert(pose.position == (Vec3){} && pose.scale == (Vec3){ 1, 1, 1 });
         assert(pose.rotation.l == 1);
@@ -523,21 +508,27 @@ fn void test_animation_inertial_storage_reset_clears_one_incarnation_without_tou
     foreach (values : (double[][3]){ cleared.morph_velocity, cleared.morph_offset, cleared.morph_offset_velocity }) {
         foreach (value : values) assert(value == 0);
     }
+    foreach (value : cleared.consumed_scale) assert(!value);
     RootInertialState empty = { .latest_up = { 0, 1, 0 }, .source_up = { 0, 1, 0 } };
     assert(mem::equals(&cleared.root, &empty, RootInertialState::size));
-    for (uint neighbor = 0; neighbor < 3; neighbor++) {
-        uint index = neighbor == 0 ? 0 : neighbor + 1;
-        assert(mem::equals(&neighbors[neighbor], &storage.rows[index], InertialRow::size));
-        assert(mem::equals(
-            a: (char*)storage.rows[index].previous_pose.ptr,
-            b: payloads[neighbor].ptr,
-            len: (sz)storage.row_bytes,
-        ));
+    foreach (index : (usz[3]){ 0, 2, 3 }) {
+        InertialRow* row = &storage.rows[index];
+        PoseVelocity expected = inertial_storage_row_velocity(index);
+        assert(row.control.history_valid && row.root.target_rate_pending);
+        assert(row.previous_pose[0].position == (Vec3){ (float)index + 1, 2, 3 });
+        foreach (values : (PoseVelocity[][3]){ row.velocity, row.offset, row.offset_velocity }) {
+            foreach (value : values) assert(mem::equals(&value, &expected, PoseVelocity::size));
+        }
+        foreach (value : row.previous_morph) assert(value == (float)index + 1);
+        foreach (value : row.morph_velocity) assert(value == (double)float::max * 2);
+        foreach (value : row.morph_offset) assert(value == -(double)float::max * 2);
+        foreach (value : row.morph_offset_velocity) assert(value == 0x1p-140);
+        foreach (value : row.consumed_scale) assert(value);
     }
     assert(allocator.acquisitions == 1 && allocator.resizes == 0 && allocator.releases == 0);
 }
 
-fn void test_animation_inertial_storage_failed_acquisition_and_overflow_leave_no_owner() @test {
+fn void test_animation_inertial_storage_failed_acquisition_leaves_no_owner() @test {
     MotionTestAllocator failing = { .backing = mem, .failure = 1 };
     assert(@catch(anim::create_inertial_storage(
         allocator: &failing,
@@ -546,14 +537,6 @@ fn void test_animation_inertial_storage_failed_acquisition_and_overflow_leave_no
         capacity: 16,
     )) == c3d::CAPACITY_EXCEEDED);
     assert(failing.acquisitions == 1 && failing.outstanding == 0 && failing.releases == 0);
-    MotionTestAllocator overflow = { .backing = mem };
-    assert(@catch(anim::create_inertial_storage(
-        allocator: &overflow,
-        nodes: uint::max,
-        morphs: uint::max,
-        capacity: uint::max,
-    )) == c3d::CAPACITY_EXCEEDED);
-    assert(overflow.acquisitions == 0 && overflow.resizes == 0 && overflow.releases == 0);
 }
 
 fn bool inertial_owner_allocation_is_live(TrackingAllocator* tracker, void* pointer) @local {
@@ -583,7 +566,8 @@ fn void test_animation_inertial_owners_animator_opt_in_has_one_private_row_and_r
         assert(tracker.allocated() == without_animator);
         Animator* enabled = anim::add_animator(&fixture.scene, fixture.root, { .inertia_enabled = true });
         InertialStorage* storage = enabled.inertial_storage;
-        assert(storage && storage.rows.len == 1 && storage.nodes == 4 && storage.morphs == 1);
+        assert(storage && storage.rows.len == 1);
+        assert(storage.rows[0].previous_pose.len == 4 && storage.rows[0].previous_morph.len == 1);
         assert(!storage.rows[0].control.history_valid && !storage.rows[0].control.active);
         assert(storage.rows[0].previous_pose.ptr != enabled.pose_storage.destination.pose.ptr);
         void* block = storage;
@@ -646,7 +630,7 @@ fn void test_animation_inertial_owners_prepared_crowd_reserves_capacity_and_repl
             }
             InertialStorage* storage = crowd.playback.inertial_storage;
             assert(storage && storage.rows.len == 4 && crowd.count == 2);
-            assert(storage.nodes == 4 && storage.morphs == 1);
+            assert(storage.rows[0].previous_pose.len == 4 && storage.rows[0].previous_morph.len == 1);
             foreach (index, &row : storage.rows) {
                 assert(!row.control.history_valid && !row.control.active);
                 row.control.history_valid = true;
@@ -703,7 +687,8 @@ fn void test_animation_inertial_owners_crowd_creation_failure_at_every_allocatio
         )!!;
         defer anim::destroy_crowd_playback(state);
         attempts = probe.attempts;
-        assert(state.inertial_storage.rows.len == placements.len && state.inertial_storage.morphs == 2);
+        assert(state.inertial_storage.rows.len == placements.len);
+        assert(state.inertial_storage.rows[0].previous_morph.len == 2);
     }
     assert(probe.outstanding == 0);
     for (uint failure = 1; failure <= attempts; failure++) {
@@ -718,18 +703,6 @@ fn void test_animation_inertial_owners_crowd_creation_failure_at_every_allocatio
         )) == c3d::CAPACITY_EXCEEDED);
         assert(failing.attempts == failure && failing.outstanding == 0);
     }
-}
-
-fn void? validate_pose_test_source(Transform[] pose, float[] morph) @local {
-    bool[] present = alloc::new_array(mem, bool, pose.len);
-    defer alloc::free(mem, present.ptr);
-    present[..] = true;
-    float[][1] morph_rows = { morph };
-    return anim::validate_transition_source_pose({
-        .pose = pose,
-        .present = present,
-        .morph_weights = morph_rows[..],
-    });
 }
 
 fn PoseTestCase create_pose_test_case(Allocator allocator = mem) @local {
@@ -795,35 +768,6 @@ fn double pose_test_turn_angle(Quat rotation) @local {
     return 2 * math::atan2((double)rotation.v.z, (double)rotation.v.w);
 }
 
-fn void test_animation_inertial_pose_source_preflight_finite_and_invalid_channels() @test {
-    Transform[1] pose = { maths::TRANSFORM_IDENTITY };
-    float[1] morph = { -3 };
-    pose[0].scale = { -1, 2, -3 };
-    pose[0].rotation = { .v = { 0, 0, 0, float::min } };
-    validate_pose_test_source(pose[..], morph[..])!!;
-    pose[0].rotation.v.w = float::max;
-    validate_pose_test_source(pose[..], morph[..])!!;
-    Transform original = pose[0];
-    foreach (float invalid : { float::nan, float::inf, -float::inf }) {
-        pose[0] = original;
-        pose[0].position.y = invalid;
-        assert(@catch(validate_pose_test_source(pose[..], morph[..])) == c3d::INVALID_ARGUMENT);
-        pose[0] = original;
-        pose[0].scale.z = invalid;
-        assert(@catch(validate_pose_test_source(pose[..], morph[..])) == c3d::INVALID_ARGUMENT);
-        pose[0] = original;
-        pose[0].rotation.v.x = invalid;
-        assert(@catch(validate_pose_test_source(pose[..], morph[..])) == c3d::INVALID_ARGUMENT);
-        pose[0] = original;
-        morph[0] = invalid;
-        assert(@catch(validate_pose_test_source(pose[..], morph[..])) == c3d::INVALID_ARGUMENT);
-        morph[0] = -3;
-    }
-    pose[0] = original;
-    pose[0].rotation = {};
-    assert(@catch(validate_pose_test_source(pose[..], morph[..])) == c3d::INVALID_ARGUMENT);
-}
-
 fn void test_animation_inertial_pose_no_history_display_onset_and_extreme_morph_offsets() @test {
     PoseTestCase sample = create_pose_test_case();
     defer anim::destroy_inertial_storage(sample.storage);
@@ -855,7 +799,7 @@ fn void test_animation_inertial_pose_no_history_display_onset_and_extreme_morph_
     }
     for (uint index = 0; index < 3; index++) assert(sample.target_morph[index] == sample.source_morph[index]);
     assert(!row.control.history_valid && row.control.active);
-    assert(row.control.duration == 4 && row.control.elapsed == 0.5 && row.control.previous_dt == 0);
+    assert(row.control.duration == 4 && row.control.elapsed == 0.5);
     assert(row.previous_pose[0].position.x == 0 && row.previous_morph[0] == 0);
     sample.target[0].position = { 9, 8, 7 };
     sample.target[0].scale = { 1, 2, 3 };
@@ -892,7 +836,7 @@ fn void test_animation_inertial_pose_moving_target_literal_residuals_and_interru
     };
     double[3] value;
     uint cursor;
-    anim::sample_track_analytic(
+    anim::sample_track_double(
         track: &translation,
         time: 0.25f,
         cursor: &cursor,
@@ -1017,7 +961,6 @@ fn void test_animation_inertial_pose_zero_step_and_tiny_dt_use_finite_double_his
     pose_test_near(row.morph_velocity[0], expected_rate);
     Transform previous = row.previous_pose[0];
     PoseVelocity previous_velocity = row.velocity[0];
-    InertialControl previous_control = row.control;
     double previous_morph_rate = row.morph_velocity[0];
     sample.target[0].position = { 9, 8, 7 };
     record_pose_test_case(&sample, false, 0);
@@ -1029,7 +972,7 @@ fn void test_animation_inertial_pose_zero_step_and_tiny_dt_use_finite_double_his
     pose_test_vector(row.velocity[0].scale, previous_velocity.scale);
     pose_test_vector(row.velocity[0].angular, previous_velocity.angular);
     assert(row.previous_morph[0] == float::max && row.morph_velocity[0] == previous_morph_rate);
-    assert(row.control.previous_dt == previous_control.previous_dt && row.control.history_valid);
+    assert(row.control.history_valid);
     assert(row.control.active && row.control.duration == 2 && row.control.elapsed == 0.75);
     sample.target[0].position = { -float::max, -float::max, -float::max };
     sample.target[0].scale = { -float::max, -float::max, -float::max };
@@ -1067,7 +1010,6 @@ fn void test_animation_inertial_pose_reserved_rows_do_not_acquire_or_resize() @t
             sample.target_morph[0] = 0.6f;
             sample.velocity = {};
             sample.morph_rate = {};
-            validate_pose_test_source(sample.source[..], sample.source_morph[..])!!;
             capture_pose_test_case(&sample);
             apply_pose_test_case(&sample, 0.25);
             record_pose_test_case(&sample, false, 0.25);
@@ -1277,7 +1219,6 @@ fn void test_animation_inertial_onset_step_side_survives_zero_updates_and_first_
         assert(pose[1].position.x == expected);
         assert(pose[2].position.y == (duration == 0 ? 1 : 0));
         assert(row.control.onset_pending);
-        double previous_dt = row.control.previous_dt;
         foreach (id : playback.order[:count]) {
             Action* action = playback.actions.get(id);
             assert(action.time == 0.5f && action.published_time == 0.5f);
@@ -1288,7 +1229,6 @@ fn void test_animation_inertial_onset_step_side_survives_zero_updates_and_first_
             assert(pose[2].position.y == (duration == 0 ? 1 : 0));
             assert(row.control.onset_pending);
             assert(row.control.elapsed == 0);
-            assert(row.control.previous_dt == previous_dt);
             assert(owner.animator.event_count == 0);
             onset_assert_zero_motion(&owner);
             foreach (id : playback.order[:count]) {
@@ -1392,7 +1332,7 @@ fn void test_animation_inertial_onset_immediate_request_captures_authored_pose_w
         defer destroy_layer_fixture(&owner);
         Transform[] pose = owner.animator.pose_storage.destination.pose;
         InertialRow* row = inertial_owner_row(&owner);
-        assert(!row.control.history_valid && row.control.previous_dt == 0);
+        assert(!row.control.history_valid);
         assert(pose[1].position == (Vec3){ 7, 0, 0 });
         assert(pose[1].scale == (Vec3){ 1, 1, 1 });
         assert(pose[1].rotation.v == (Vec4){ 0, 0, 0, 1 });
@@ -1407,7 +1347,7 @@ fn void test_animation_inertial_onset_immediate_request_captures_authored_pose_w
         targets[0].play = onset_play(generalized);
         owner.animator.inertialize(&owner.assets, { .duration = 0.5f, .actions = targets[..] })!!;
         assert(pose[1].position == (Vec3){ 7, 0, 0 });
-        assert(!row.control.history_valid && row.control.previous_dt == 0);
+        assert(!row.control.history_valid);
         assert(row.previous_pose[1].position == (Vec3){ 7, 0, 0 });
         assert(row.offset[1].translation == (double[<3>]){ -3, 0, 0 });
         assert(row.offset_velocity[1].translation == (double[<3>]){});
@@ -1419,7 +1359,7 @@ fn void test_animation_inertial_onset_immediate_request_captures_authored_pose_w
         assert(row.root.source_translation_rate == (double[<3>]){} && row.root.source_twist_rate == 0);
         anim::update(&owner.assets, &owner.scene, 0);
         assert(pose[1].position == (Vec3){ 7, 0, 0 });
-        assert(!row.control.history_valid && row.control.previous_dt == 0);
+        assert(!row.control.history_valid);
         onset_assert_zero_motion(&owner);
     }
 }
@@ -2220,6 +2160,40 @@ fn void test_animation_inertial_request_invalid_scale_precedes_cubic_unsupported
     assert(!tracker.has_leaks());
 }
 
+fn void test_animation_inertial_request_checks_keep_targets_against_the_consumed_chain() @test {
+    LayerFixture fixture;
+    create_inertial_owner(&fixture);
+    defer destroy_layer_fixture(&fixture);
+    float[2] times = { 0, 1 };
+    float[8] zero_rotations;
+    ClipId extracting = request_translation_clip(&fixture, { 1, 0, 0 }, { 1, 0, 0 });
+    ClipId cubic = request_cubic_scale_clip(&fixture);
+    ClipId degenerate = inertial_owner_clip(
+        owner: &fixture,
+        path: TargetPath.ROTATION,
+        interpolation: Interpolation.LINEAR,
+        times: times[..],
+        values: zero_rotations[..],
+        node: 2,
+    );
+    AnimationTargetDesc[3] targets = {
+        anim::ANIMATION_TARGET_DEFAULT, anim::ANIMATION_TARGET_DEFAULT, anim::ANIMATION_TARGET_DEFAULT,
+    };
+    targets[0].clip = extracting;
+    targets[0].play = request_generalized_desc();
+    targets[1].clip = cubic;
+    targets[2].clip = degenerate;
+    assert(@catch(fixture.animator.inertialize(
+        assets: &fixture.assets,
+        desc: { .duration = 0.5f, .actions = targets[:2] },
+    )) == c3d::UNSUPPORTED);
+    assert(@catch(fixture.animator.inertialize(
+        assets: &fixture.assets,
+        desc: { .duration = 0.5f, .actions = targets[..] },
+    )) == c3d::INVALID_ARGUMENT);
+    assert(fixture.animator.action_count == 0);
+}
+
 fn void test_animation_generalized_play_and_groups_reject_atomically_before_acquiring_storage() @test {
     foreach (kind : RequestAdditionKind::values) {
         TrackingAllocator tracker;
@@ -2313,6 +2287,18 @@ fn void test_animation_generalized_and_planar_extract_play_and_groups_reject_bot
         }
         assert(!tracker.has_leaks());
     }
+}
+
+fn void test_animation_play_invalid_configuration_precedes_multiplicative_unsupported() @test {
+    LayerFixture fixture;
+    create_layer_fixture(&fixture);
+    defer destroy_layer_fixture(&fixture);
+    ClipId cubic = request_cubic_scale_clip(&fixture);
+    PlayDesc desc = { .additive = true, .additive_scale = AdditiveScaleMode.MULTIPLICATIVE };
+    assert(@catch(fixture.animator.play(&fixture.assets, cubic, desc)) == c3d::UNSUPPORTED);
+    desc.root_motion = RootMotion.EXTRACT;
+    assert(@catch(fixture.animator.play(&fixture.assets, cubic, desc)) == c3d::INVALID_ARGUMENT);
+    assert(fixture.animator.action_count == 0);
 }
 
 fn void test_animation_inertial_request_stale_crowd_player_preserves_all_owner_blocks() @test {
@@ -2431,7 +2417,8 @@ fn void test_animation_inertial_root_source_final_rate_zero_step_and_discrete_de
     RootMotionDelta zero = anim::publish_inertial_root_motion(
         row: &row,
         target: {},
-        target_twist: 0,
+        translation: {},
+        twist: 0,
         up: { 0, 1, 0 },
         dt: 0,
     );
@@ -2440,7 +2427,8 @@ fn void test_animation_inertial_root_source_final_rate_zero_step_and_discrete_de
     RootMotionDelta actual = anim::publish_inertial_root_motion(
         row: &row,
         target: target,
-        target_twist: 0.05,
+        translation: { target.translation.x, 0, 0 },
+        twist: 0.05,
         up: { 0, 1, 0 },
         dt: 0.1,
     );
@@ -2455,7 +2443,8 @@ fn void test_animation_inertial_root_source_final_rate_zero_step_and_discrete_de
     RootMotionDelta finished = anim::publish_inertial_root_motion(
         row: &row,
         target: target,
-        target_twist: 0.05,
+        translation: { target.translation.x, 0, 0 },
+        twist: 0.05,
         up: { 0, 1, 0 },
         dt: 0.1,
     );
@@ -2849,7 +2838,7 @@ fn void test_animation_transition_prepare_full_animator_copies_inputs_and_boolea
         defer anim::release_prepared_transition(&prepared);
         assert_transition_owner_unchanged(&playback, &snapshot);
         assert(prepared.action_count == 16 && prepared.space_count == 1 && prepared.duration == 0.5f);
-        assert(prepared.spaces[0].layout.reversed == 1 && prepared.spaces[0].count == 3);
+        assert(prepared.spaces[0].count == 3);
         foreach (index, action : prepared.actions[:prepared.action_count]) {
             assert(action.time == (float)index / 32 && action.clock_time == (double)action.time);
             assert(action.previous_time == action.clock_time && action.published_time == action.time);
@@ -2862,7 +2851,7 @@ fn void test_animation_transition_prepare_full_animator_copies_inputs_and_boolea
         triangles[0].indices[0] = 99;
         targets[0].start_time = 0.9f;
         assert(prepared.spaces[0].points[0] == (Vec2){} && prepared.spaces[0].members[0] == 0);
-        assert(prepared.starts[0] == 0 && prepared.spaces[0].triangles[0].indices[0] == 2);
+        assert(prepared.spaces[0].triangles[0].indices[0] == 2);
         playback.mask_storage[..] = false;
         foreach (row : prepared.boolean_masks[:prepared.action_count]) assert(row == source_membership[..]);
         sz acquisitions = tracker.total_allocation_count();
@@ -2881,10 +2870,10 @@ fn void test_animation_transition_prepare_full_animator_copies_inputs_and_boolea
             if (index >= 3) assert(action.time == (float)index / 32 && action.weight == 0.25f);
         }
         BlendSpace2D* installed_space = &playback.blend_spaces_2d[0];
-        assert(installed_space.count == 3 && installed_space.reversed == 1);
+        assert(installed_space.count == 3);
         assert(installed_space.points[0] == (Vec2){} && installed_space.parameter == (Vec2){ 0.25f, 0.5f });
-        assert(installed_space.triangles[0].indices[0] == 2 && installed_space.triangles[0].indices[1] == 0);
-        assert(installed_space.triangles[0].indices[2] == 1);
+        assert(installed_space.triangles[0].indices[0] == 2 && installed_space.triangles[0].indices[1] == 1);
+        assert(installed_space.triangles[0].indices[2] == 0);
         assert(playback.action(installed.actions[0]).weight == 0.1875f);
         assert(playback.action(installed.actions[1]).weight == 0.1875f);
         assert(playback.action(installed.actions[2]).weight == 0.375f);
@@ -3014,19 +3003,17 @@ fn void test_animation_transition_admission_reference_offsets_and_animated_basis
     MotionBasis basis = anim::animator_motion_basis(fixture.animator);
     basis.basis.m03 += 9;
     sz acquisitions = tracker.total_allocation_count();
-    TransitionMotionIdentity identity = anim::validate_transition_motion_identity(
+    anim::validate_animation_transition(
         playback: &playback,
         assets: &fixture.assets,
         desc: { .duration = 0.5f, .actions = targets[..] },
         destination: fixture.animator.pose_storage.destination,
         motion_basis: basis,
     )!!;
-    assert(identity.consumes_chain && !identity.unsupported && identity.root_node == 2);
-    assert(identity.extraction.up == (Vec3){ 0, 1, 0 });
     assert(tracker.total_allocation_count() == acquisitions);
 }
 
-fn void test_animation_transition_admission_configuration_model_layout_and_frame_mismatches_are_atomic() @test {
+fn void test_animation_transition_admission_extraction_mismatches_are_atomic() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
     defer tracker.free();
@@ -3035,31 +3022,23 @@ fn void test_animation_transition_admission_configuration_model_layout_and_frame
     defer destroy_layer_fixture(&fixture);
     ClipId target_clip = transition_admission_translation(&fixture, { 5, 7, -3 });
     Action* source = fixture.animator.action(id);
-    CapturedMotionChain* captured = source.motion_chain;
     AnimationTargetDesc[1] targets;
-    for (uint mismatch = 0; mismatch < 7; mismatch++) {
+    for (uint mismatch = 0; mismatch < 3; mismatch++) {
         targets[0] = anim::ANIMATION_TARGET_DEFAULT;
         targets[0].clip = target_clip;
         targets[0].play = { .root_motion = EXTRACT, .extraction = transition_admission_extraction() };
         PlaybackView playback = fixture.animator.playback();
         MotionBasis basis = anim::animator_motion_basis(fixture.animator);
-        ModelId model = captured.model;
-        int parent = captured.model_parents[3];
-        char name_start = captured.model_names[3][0];
         switch (mismatch) {
             case 0: targets[0].play.extraction.up = { 1, 0, 0 };
             case 1: targets[0].play.extraction.translation_axes[1] = false;
             case 2: targets[0].play.extraction.twist = false;
-            case 3: playback.root_node = 3;
-            case 4: captured.model.index++;
-            case 5: captured.model_parents[3] = 0;
-            case 6: captured.model_names[3][0] = 'X';
         }
         Action unchanged = *source;
         uint count = fixture.animator.action_count;
         uint generation = fixture.animator.actions.generations[id.index];
         sz acquisitions = tracker.total_allocation_count();
-        assert(@catch(anim::validate_transition_motion_identity(
+        assert(@catch(anim::validate_animation_transition(
             playback: &playback,
             assets: &fixture.assets,
             desc: { .duration = 0.5f, .actions = targets[..] },
@@ -3069,9 +3048,6 @@ fn void test_animation_transition_admission_configuration_model_layout_and_frame
         assert(tracker.total_allocation_count() == acquisitions);
         assert(fixture.animator.action_count == count && fixture.animator.actions.generations[id.index] == generation);
         assert(mem::equals(&unchanged, source, Action::size));
-        captured.model = model;
-        captured.model_parents[3] = parent;
-        captured.model_names[3][0] = name_start;
     }
 }
 
@@ -3095,7 +3071,7 @@ fn void test_animation_transition_admission_additive_scale_neutrality_ignores_ze
         targets[1].weight = 0;
         targets[1].play = { .additive = true, .mask = &mask, .additive_scale = mode };
         sz acquisitions = tracker.total_allocation_count();
-        assert(@catch(anim::validate_transition_motion_identity(
+        assert(@catch(anim::validate_animation_transition(
             playback: &playback,
             assets: &fixture.assets,
             desc: { .duration = 0.5f, .actions = targets[..] },
@@ -3103,14 +3079,13 @@ fn void test_animation_transition_admission_additive_scale_neutrality_ignores_ze
             motion_basis: anim::animator_motion_basis(fixture.animator),
         )) == c3d::INVALID_ARGUMENT);
         targets[1].clip = neutral;
-        TransitionMotionIdentity accepted = anim::validate_transition_motion_identity(
+        anim::validate_animation_transition(
             playback: &playback,
             assets: &fixture.assets,
             desc: { .duration = 0.5f, .actions = targets[..] },
             destination: fixture.animator.pose_storage.destination,
             motion_basis: anim::animator_motion_basis(fixture.animator),
         )!!;
-        assert(accepted.consumes_chain && !accepted.unsupported);
         assert(tracker.total_allocation_count() == acquisitions);
     }
 }

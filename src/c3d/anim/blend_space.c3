@@ -10,18 +10,23 @@ const uint MAX_BLEND_SPACE_ACTIONS = 8; // eight IDs and positions per space; bo
 <* Blend-space slots owned by each playback owner. *>
 const uint MAX_BLEND_SPACES = 2; // two groups allocated with animator storage; bounds concurrent spaces
 
-<* Phase-synchronized clips controlled by one parameter. *>
-struct BlendSpace1D {
-    AnimationActionId[MAX_BLEND_SPACE_ACTIONS] actions;
-    float[MAX_BLEND_SPACE_ACTIONS] positions;
+<* Member count, weight, fade and shared phase of either blend space kind. *>
+struct BlendSpaceControl {
     uint count;
-    float parameter;
     float weight;
     float fade_target;
     float fade_rate;
     double phase;
     float speed;
     bool playing;
+}
+
+<* Phase-synchronized clips controlled by one parameter. *>
+struct BlendSpace1D {
+    inline BlendSpaceControl control;
+    AnimationActionId[MAX_BLEND_SPACE_ACTIONS] actions;
+    float[MAX_BLEND_SPACE_ACTIONS] positions;
+    float parameter;
 }
 
 <*
@@ -51,18 +56,18 @@ fn BlendSpace1D*? Animator.add_blend_space(
 }
 
 <*
- Fade a space out or remove its members immediately.
+ Fade a space of either kind out or remove its members immediately.
  @param [&inout] space : "Current borrow from this animator."
  @param fade_out : "Finite nonnegative seconds; zero removes immediately."
  @return? c3d::INVALID_ARGUMENT
 *>
-fn void? Animator.stop_blend_space(&self, BlendSpace1D* space, float fade_out = 0) {
+fn void? Animator.stop_blend_space(&self, BlendSpaceControl* space, float fade_out = 0) {
     PlaybackView playback = self.playback();
     playback.stop_blend_space(space, fade_out)!;
 }
 
 <*
- Fade a space toward a new weight.
+ Fade a space of either kind toward a new weight.
  @param [&inout] space : "Current borrow from this animator."
  @param target_weight : "Finite weight in [0,1]."
  @param duration : "Finite positive seconds."
@@ -70,7 +75,7 @@ fn void? Animator.stop_blend_space(&self, BlendSpace1D* space, float fade_out = 
 *>
 fn void? Animator.fade_blend_space(
     &self,
-    BlendSpace1D* space,
+    BlendSpaceControl* space,
     float target_weight,
     float duration,
 ) {
@@ -99,34 +104,22 @@ fn BlendSpace1D*? PlaybackView.add_blend_space(
 
     foreach (index, position : positions) {
         if (!math::is_finite(position) || (index && position <= positions[index - 1])) return c3d::INVALID_ARGUMENT~;
-        float duration = assets.clips.try_get(clips[index])!.data.duration;
-        if (!math::is_finite(duration) || duration <= 0) return c3d::INVALID_ARGUMENT~;
     }
 
-    bool unsupported;
-    foreach (clip : clips) {
-        AnimationClip* data = &assets.clip(clip).data;
-        if (catch excuse = validate_playback_addition(
-            playback: self,
-            assets: assets,
-            clip: data,
-            desc: desc,
-            destination: destination,
-            basis: motion_basis,
-        )) {
-            if (excuse != c3d::UNSUPPORTED) return excuse~;
-            unsupported = true;
-        }
-    }
+    Action[MAX_BLEND_SPACE_ACTIONS] prepared;
+    uint slot = prepare_group_members(
+        playback: self,
+        assets: assets,
+        clips: clips,
+        desc: desc,
+        destination: destination,
+        motion_basis: motion_basis,
+        prepared: prepared[:clips.len],
+    )!;
 
-    if (unsupported) return c3d::UNSUPPORTED~;
-
-    uint slot;
-    while (slot < MAX_BLEND_SPACES
-      && (self.blend_spaces[slot].count || self.blend_spaces_2d[slot].count)) slot++;
-    if (slot == MAX_BLEND_SPACES || self.actions.free_count < clips.len) return c3d::CAPACITY_EXCEEDED~;
-
-    BlendSpace1D created = {
+    BlendSpace1D* space = &self.blend_spaces[slot];
+    *space = {
+        .count = (uint)clips.len,
         .parameter = positions[0],
         .weight = desc.fade_in > 0 ? 0 : 1,
         .fade_target = 1,
@@ -134,75 +127,45 @@ fn BlendSpace1D*? PlaybackView.add_blend_space(
         .speed = 1,
         .playing = true,
     };
+    space.positions[:space.count] = positions[..];
 
-    Action[MAX_BLEND_SPACE_ACTIONS] prepared;
-    uint prepared_count;
-    defer catch {
-        foreach (&action : prepared[:prepared_count]) release_prepared_action(self.allocator, action);
-    }
+    install_group_members(
+        playback: self,
+        prepared: prepared[:space.count],
+        slot: slot,
+        desc: desc,
+        weight: space.weight,
+        members: space.actions[:space.count],
+    );
 
-    PlayDesc member_desc = desc;
-    member_desc.fade_in = 0;
-    foreach (clip : clips) {
-        prepared[prepared_count] = prepare_playback_action(
-            allocator: self.allocator,
-            assets: assets,
-            clip: clip,
-            desc: member_desc,
-            destination: destination,
-            motion_basis: motion_basis,
-            root_node: self.root_node,
-            precise_rotation: desc.extraction.generalized || generalized_playback_chain(self) != null,
-        )!;
-        prepared_count++;
-        prepare_action_motion_capture(
-            allocator: self.allocator,
-            assets: assets,
-            model: self.model,
-            action: &prepared[prepared_count - 1],
-            root_node: self.root_node,
-            motion_basis: motion_basis,
-        )!;
-    }
-
-    foreach (uint index, action : prepared[:prepared_count]) {
-        created.actions[index] = install_playback_action(self, action, desc.mask);
-        created.positions[index] = positions[index];
-        created.count++;
-    }
-
-    foreach (id : created.actions[:created.count]) {
-        Action* action = self.actions.get(id);
-        action.blend_space = slot + 1;
-        action.playing = false;
-        action.weight = 0;
-    }
-
-    self.blend_spaces[slot] = created;
-    self.actions.get(created.actions[0]).weight = created.weight;
-    if (desc.fade_in == 0) invalidate_inertial_history(self);
-
-    return &self.blend_spaces[slot];
+    return space;
 }
 
 <*
- Fade a space out or remove its members immediately.
+ Fade a space of either kind out or remove its members immediately.
  @param [&inout] space : "Current borrow from this playback."
  @param fade_out : "Finite nonnegative seconds."
  @return? c3d::INVALID_ARGUMENT
 *>
-fn void? PlaybackView.stop_blend_space(&self, BlendSpace1D* space, float fade_out = 0) {
-    if (!space.count) return c3d::INVALID_ARGUMENT~;
+fn void? PlaybackView.stop_blend_space(&self, BlendSpaceControl* space, float fade_out = 0) {
+    if (!space.count || !math::is_finite(fade_out) || fade_out < 0) return c3d::INVALID_ARGUMENT~;
 
-    BlendSpaceFade fade = { .weight = &space.weight, .target = &space.fade_target, .rate = &space.fade_rate };
-    if (!stop_blend_space_weight(fade, fade_out)!) return;
+    if (fade_out > 0) {
+        space.fade_target = 0;
+        space.fade_rate = space.weight / fade_out;
+        return;
+    }
 
-    remove_blend_space(self, space);
+    for (uint slot = 0; slot < MAX_BLEND_SPACES; slot++) {
+        if (&self.blend_spaces[slot].control == space) remove_blend_space(self, &self.blend_spaces[slot]);
+        if (&self.blend_spaces_2d[slot].control == space) remove_blend_space_2d(self, &self.blend_spaces_2d[slot]);
+    }
+
     invalidate_inertial_history(self);
 }
 
 <*
- Fade a space toward a new weight.
+ Fade a space of either kind toward a new weight.
  @param [&inout] space : "Current borrow from this playback."
  @param target_weight : "Finite weight in [0,1]."
  @param duration : "Finite positive seconds."
@@ -210,14 +173,15 @@ fn void? PlaybackView.stop_blend_space(&self, BlendSpace1D* space, float fade_ou
 *>
 fn void? PlaybackView.fade_blend_space(
     &self,
-    BlendSpace1D* space,
+    BlendSpaceControl* space,
     float target_weight,
     float duration,
 ) {
-    if (!space.count) return c3d::INVALID_ARGUMENT~;
+    if (!space.count || !math::is_finite(target_weight) || target_weight < 0 || target_weight > 1
+      || !math::is_finite(duration) || duration <= 0) return c3d::INVALID_ARGUMENT~;
 
-    BlendSpaceFade fade = { .weight = &space.weight, .target = &space.fade_target, .rate = &space.fade_rate };
-    fade_blend_space_weight(fade, target_weight, duration)!;
+    space.fade_target = target_weight;
+    space.fade_rate = math::abs(target_weight - space.weight) / duration;
 }
 
 fn void remove_blend_space(PlaybackView* playback, BlendSpace1D* space) @private {
@@ -230,8 +194,7 @@ fn void advance_blend_spaces(PlaybackView* playback, AssetStore* assets, float d
     foreach (&space : playback.blend_spaces) {
         if (!space.count) continue;
 
-        BlendSpaceFade fade = { .weight = &space.weight, .target = &space.fade_target, .rate = &space.fade_rate };
-        if (advance_blend_space_weight(fade, dt)) {
+        if (advance_blend_space_weight(space, dt)) {
             remove_blend_space(playback, space);
             continue;
         }

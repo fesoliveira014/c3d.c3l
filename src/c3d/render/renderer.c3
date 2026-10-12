@@ -82,6 +82,7 @@ struct RendererDesc {
     uint             max_trace_instances;
     uint             max_posed_trace_instances; // zero: DEFAULT_MAX_POSED_TRACE_INSTANCES
     uint             max_instance_batches;
+    uint             max_resident_crowds; // zero: DEFAULT_MAX_RESIDENT_CROWDS
     usz              instance_cull_bytes;
     uint             max_views;             // default view, render_to, impostor bakes and reflection captures included
     uint             max_render_targets;    // at most texture_capacity; each bake or capture takes one
@@ -134,6 +135,7 @@ struct Renderer {
     ulong                   frame_index;
     DeformationCache        deformation;
     InstanceTable           instances;
+    ResidentCrowdTable      crowds;
     CullArena[FRAMES_IN_FLIGHT] cull_arenas;
     CullReadback[FRAMES_IN_FLIGHT] cull_readbacks;
     gpu::PipelineHandle     instance_cull_pipeline;
@@ -396,8 +398,10 @@ fn void? Renderer.end_frame(&self) {
             submit_gpu_profile(self);
             if (present) self.output_submission = slot.done;
             self.frame_submitted = true;
+            commit_resident_crowds(self, self.frame_index);
             commit_uploads(self, slot);
             foreach (&record : self.views.items) {
+                if (record.history.pending) record.history.submitted = self.frame_index;
                 record.history.publish();
                 record.auto_exposure.history.publish();
                 publish_lod_history(&record.lod_history);
@@ -493,6 +497,7 @@ fn void? begin_renderer_frame(Renderer* self, FrameInfo info, bool acquire_outpu
             drain_retired(&self.device, &slot.retire);
             sweep_geometries(self);
             self.instances.sweep(self.frame_index, &self.pending_upload_retire);
+            self.crowds.sweep(self.frame_index, &self.pending_upload_retire);
             self.posed_trace.sweep(self.frame_index, &self.pending_upload_retire);
             sweep_environments(self);
             sweep_textures(self);
@@ -783,6 +788,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         return c3d::UNSUPPORTED~;
     }
     uint max_instance_batches = desc.max_instance_batches ? desc.max_instance_batches : DEFAULT_MAX_INSTANCE_BATCHES;
+    uint max_resident_crowds = desc.max_resident_crowds ? desc.max_resident_crowds : DEFAULT_MAX_RESIDENT_CROWDS;
     uint max_posed_trace_instances = desc.max_posed_trace_instances
       ? desc.max_posed_trace_instances : DEFAULT_MAX_POSED_TRACE_INSTANCES;
     // A device without ray queries or ray-tracing pipelines may reject their stages, so each is named only when enabled.
@@ -927,6 +933,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .pipelines            = create_pipeline_cache(allocator, shader::BUILTIN_REGISTRY),
         .deformation          = create_deformation_cache(allocator),
         .instances            = create_instance_table(allocator, max_instance_batches),
+        .crowds               = create_resident_crowd_table(allocator, max_resident_crowds),
         .posed_trace          = create_posed_trace_table(allocator, max_posed_trace_instances),
         .instance_cull_bytes  = desc.instance_cull_bytes ? desc.instance_cull_bytes : INSTANCE_CULL_ARENA_BYTES,
         .prepares             = pool::create_pool{PrepareRecord, PrepareId}(allocator, PREPARE_CAPACITY),
@@ -965,6 +972,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         free_geometries(&renderer);
         free_billboard_geometry(&renderer);
         free_instance_buffers(&renderer);
+        free_resident_crowds(&renderer);
         free_instance_culling(&renderer);
         alloc::free(allocator, renderer.materials.ptr);
         alloc::free(allocator, renderer.shadow_frusta.ptr);
@@ -1014,6 +1022,7 @@ fn void destroy_renderer(Renderer* renderer) {
     free_geometries(renderer);
     free_billboard_geometry(renderer);
     free_instance_buffers(renderer);
+    free_resident_crowds(renderer);
     free_instance_culling(renderer);
     free_material_heap(renderer);
     free_shaders(renderer);

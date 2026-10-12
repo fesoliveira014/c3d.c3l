@@ -92,6 +92,14 @@ fn ModelId? add_wide_crowd_model(Fixture* fixture) @private {
     return assets.add_model_owned(&template);
 }
 
+fn uint resident_crowd_count(Renderer* renderer) @local {
+    uint count;
+    foreach (&slot : renderer.crowds.slots) {
+        if (slot.key.scene) count++;
+    }
+    return count;
+}
+
 fn void test_crowd_variants_draw_with_validation() @test {
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
@@ -129,7 +137,7 @@ fn void test_crowd_variants_draw_with_validation() @test {
         renderer.finish_view(fixture.view)!!;
         renderer.end_frame()!!;
     }
-    assert(renderer.deformation.crowd_palettes.len() == 1);
+    assert(resident_crowd_count(renderer) == 1);
     Vec3 offset = { 65536, 0, 65536 };
     scene.root.local.position = offset;
     scene.update_world();
@@ -141,7 +149,7 @@ fn void test_crowd_variants_draw_with_validation() @test {
         renderer.render_view(&scene, camera_node, fixture.second_view)!!;
         renderer.finish_view(fixture.second_view)!!;
         renderer.end_frame()!!;
-        assert(renderer.deformation.crowd_palettes.len() == 1);
+        assert(resident_crowd_count(renderer) == 1);
     }
     check_validation(renderer);
 }

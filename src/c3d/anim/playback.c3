@@ -111,7 +111,7 @@ fn AnimationActionId? PlaybackView.play(
     MotionBasis motion_basis,
 ) {
     AnimationClip* data = &assets.clips.try_get(clip)!.data;
-    usz reference_count = validate_playback_addition(
+    bool unsupported = validate_playback_addition(
         playback: self,
         assets: assets,
         clip: data,
@@ -119,6 +119,7 @@ fn AnimationActionId? PlaybackView.play(
         destination: destination,
         basis: motion_basis,
     )!;
+    if (unsupported) return c3d::UNSUPPORTED~;
     if (!self.actions.free_count) return c3d::CAPACITY_EXCEEDED~;
 
     Action state = prepare_validated_playback_action(
@@ -129,7 +130,6 @@ fn AnimationActionId? PlaybackView.play(
         destination: destination,
         motion_basis: motion_basis,
         root_node: self.root_node,
-        reference_count: reference_count,
         precise_rotation: desc.extraction.generalized || generalized_playback_chain(self) != null,
     )!;
     defer catch release_prepared_action(self.allocator, &state);
@@ -140,7 +140,6 @@ fn AnimationActionId? PlaybackView.play(
         model: self.model,
         action: &state,
         root_node: self.root_node,
-        motion_basis: motion_basis,
     )!;
 
     if (desc.fade_in == 0) invalidate_inertial_history(self);
@@ -366,7 +365,9 @@ fn Action? prepare_playback_action(
     bool precise_rotation = false,
 ) {
     AnimationClip* data = &assets.clips.try_get(clip)!.data;
-    usz reference_count = validate_playback_action(data, desc, destination)!;
+    validate_playback_action(data, desc, destination)!;
+    if (desc.additive && desc.additive_scale == AdditiveScaleMode.MULTIPLICATIVE
+      && validate_multiplicative_scale(data)!) return c3d::UNSUPPORTED~;
 
     return prepare_validated_playback_action(
         allocator: allocator,
@@ -376,7 +377,6 @@ fn Action? prepare_playback_action(
         destination: destination,
         motion_basis: motion_basis,
         root_node: root_node,
-        reference_count: reference_count,
         precise_rotation: precise_rotation || desc.extraction.generalized,
     );
 }
@@ -439,7 +439,7 @@ fn bool playback_mask_fits(PlaybackView* playback, JointMask* mask) @private {
     return mask.nodes.len == playback.mask_storage.len / playback.actions.items.len;
 }
 
-fn usz? validate_playback_action(
+fn void? validate_playback_action(
     AnimationClip* data,
     PlayDesc desc,
     PoseDestination destination,
@@ -450,30 +450,28 @@ fn usz? validate_playback_action(
 
     if (desc.mask && desc.mask.nodes.len != destination.base_pose.len) return c3d::INVALID_ARGUMENT~;
     if (desc.mask && desc.weighted_mask) return c3d::INVALID_ARGUMENT~;
-    if (desc.weighted_mask && desc.weighted_mask.nodes.len != destination.base_pose.len) {
-        return c3d::INVALID_ARGUMENT~;
+    if (desc.weighted_mask) {
+        if (desc.weighted_mask.nodes.len != destination.base_pose.len) return c3d::INVALID_ARGUMENT~;
+
+        foreach (weight : desc.weighted_mask.nodes) {
+            if (!math::is_finite(weight) || weight < 0 || weight > 1) return c3d::INVALID_ARGUMENT~;
+        }
     }
 
     foreach (target : data.targets) {
         if (target >= destination.base_pose.len) return c3d::INVALID_ARGUMENT~;
     }
 
-    usz reference_count;
     foreach (&track : data.tracks) {
-        reference_count += track.stride();
+        if (track.target >= data.targets.len) return c3d::INVALID_ARGUMENT~;
         if (track.path != TargetPath.MORPH_WEIGHTS) continue;
+
         uint target = data.targets[track.target];
         uint mesh = destination.mesh_indices[target];
         if (mesh == uint::max) return c3d::INVALID_ARGUMENT~;
         if (!destination.present[target] || !destination.mesh_present[target]) continue;
         if (destination.mesh_widths[mesh] != track.stride()) return c3d::INVALID_ARGUMENT~;
     }
-
-    if (desc.additive && desc.additive_scale == AdditiveScaleMode.MULTIPLICATIVE) {
-        validate_multiplicative_scale(data)!;
-    }
-
-    return reference_count;
 }
 
 fn Action? prepare_validated_playback_action(
@@ -484,7 +482,6 @@ fn Action? prepare_validated_playback_action(
     PoseDestination destination,
     MotionBasis motion_basis,
     uint root_node,
-    usz reference_count,
     bool precise_rotation = false,
 ) @private {
     PlaybackView playback = { .root_node = root_node };
@@ -503,6 +500,8 @@ fn Action? prepare_validated_playback_action(
 
     float[] reference;
     if (desc.additive) {
+        usz reference_count;
+        foreach (&track : data.tracks) reference_count += track.stride();
         reference = alloc::new_array_try(allocator, float, (sz)reference_count)
           ?? c3d::CAPACITY_EXCEEDED~!;
     }
@@ -522,7 +521,7 @@ fn Action? prepare_validated_playback_action(
             uint cursor;
             if (precise_rotation && track.path == TargetPath.ROTATION) {
                 double[4] value;
-                sample_track_analytic(
+                sample_track_double(
                     track: track,
                     time: 0,
                     cursor: &cursor,
@@ -536,13 +535,6 @@ fn Action? prepare_validated_playback_action(
                     cursor: &cursor,
                     out: reference[offset:track.stride()],
                 );
-            }
-
-            if (track.path == TargetPath.SCALE && desc.additive_scale == AdditiveScaleMode.MULTIPLICATIVE) {
-                Vec3 scale = sample_multiplicative_scale_reference(track);
-                reference[offset] = scale.x;
-                reference[offset + 1] = scale.y;
-                reference[offset + 2] = scale.z;
             }
 
             offset += track.stride();

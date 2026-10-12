@@ -19,6 +19,7 @@ import c3d::model;
 import c3d::platform;
 import c3d::render;
 import c3d::scene;
+import c3d::shader;
 import imgui;
 
 const uint  CROWD_COLUMNS @local = 32;
@@ -31,6 +32,9 @@ const float SPEED_MAX @local = 1.2f;
 const uint  RANDOM_SEED @local = 20260927;
 const uint  SCENE_NODES @local = 40000; // the Animator baseline instantiates every template node per instance
 const float REPORT_SECONDS @local = 2;
+const float FROZEN_SHARE_DEFAULT @local = 0.5f; // every other instance
+const uint  PALETTE_ENTRY_BYTES @local = 64; // one 4x4 float matrix per joint
+const String FROZEN_PERCENT_FLAG @local = "--frozen-percent=";
 const Vec3  CAMERA_POSITION @local = { 0, 14, 30 };
 const Vec3  CAMERA_TARGET @local = { 0, 0, 0 };
 const Vec2  PANEL_POSITION @local = { 16, 16 };
@@ -66,6 +70,7 @@ struct Showcase @local {
     double   cache_hit_rate;
     ulong    cache_lookups;
     ulong    cache_hits;
+    float    frozen_share;
     bool     consume_motion;
     RootMotionDelta motion;
     uint events;
@@ -267,7 +272,33 @@ fn void compare_playback(Scene* scene, Showcase* showcase) @local {
     }
 }
 
-fn void? panel(render::Renderer* renderer, AssetStore* assets, Scene* scene, Showcase* showcase) @local {
+fn bool is_frozen(uint index, float share) @local {
+    return (uint)math::floor((float)(index + 1) * share) > (uint)math::floor((float)index * share);
+}
+
+fn void? apply_frozen_share(Scene* scene, Showcase* showcase) @local {
+    AnimatedCrowd* crowd = scene.get(showcase.crowd, AnimatedCrowd);
+    for (uint index = 0; index < CROWD_SIZE; index++) {
+        CrowdPlayer player = crowd.playback.player(crowd.playback.instance_id(index)!)!;
+        player.base_action()!.playing = !is_frozen(index, showcase.frozen_share);
+    }
+}
+
+fn uint resident_crowd_bytes(AnimatedCrowd* crowd) @local {
+    uint morph_parts;
+    foreach (part : crowd.parts) {
+        if (part.weight_count) morph_parts++;
+    }
+    uint per_instance = crowd.joint_count * PALETTE_ENTRY_BYTES + morph_parts * (uint)MorphWeightsGpu::size;
+    return 2 * (uint)crowd.placements.len * per_instance;
+}
+
+fn void? panel(
+    render::Renderer* renderer,
+    AssetStore* assets,
+    Scene* scene,
+    Showcase* showcase,
+) @local {
     bool changed;
     bool phases_changed;
 
@@ -282,6 +313,15 @@ fn void? panel(render::Renderer* renderer, AssetStore* assets, Scene* scene, Sho
         imgui::text("Crowd sample: %.3f ms", showcase.sample_ms);
         imgui::text("Pose cache: %.1f%% of actions share samples", showcase.cache_hit_rate * 100);
         phases_changed = imgui::checkbox("Shared-phase groups (G)", &showcase.shared_phases);
+        imgui::text("Upload: %u bytes per frame", renderer.stats.upload_bytes);
+        imgui::text("Resident crowd: %u bytes", resident_crowd_bytes(scene.get(showcase.crowd, AnimatedCrowd)));
+        bool frozen_changed = imgui::slider_float(
+            label: "Frozen share (F toggles)",
+            v: &showcase.frozen_share,
+            v_min: 0,
+            v_max: 1,
+        );
+        if (frozen_changed) apply_frozen_share(scene, showcase)!;
 
         changed |= imgui::slider_float(
             label: "LOD bias",
@@ -394,6 +434,11 @@ fn void? run(
             showcase.consume_motion = !showcase.consume_motion;
         }
 
+        if (input.key_pressed(Scancode.F) && !input.keyboard_captured_by_gui) {
+            showcase.frozen_share = showcase.frozen_share > 0 ? 0 : FROZEN_SHARE_DEFAULT;
+            apply_frozen_share(scene, showcase)!;
+        }
+
         gui_renderer.new_frame();
         defer {
             if (gui_renderer.frame_open) gui_renderer.finish_frame();
@@ -422,7 +467,12 @@ fn void? run(
         scene.update_world();
         if (showcase.compare) compare_playback(scene, showcase);
 
-        panel(renderer, assets, scene, showcase)!;
+        panel(
+            renderer: renderer,
+            assets:   assets,
+            scene:    scene,
+            showcase: showcase,
+        )!;
         gui_renderer.finish_frame();
         platform::sync_window(window, renderer);
         draw_frame(
@@ -438,6 +488,7 @@ fn void? run(
             io::printf("%s: cpu_record %.3f ms", mode, renderer.stats.cpu_record_ms);
             io::printf(", frame %.3f ms, draws %d", renderer.stats.frame_ms, renderer.stats.draws);
             io::printf(", instances %d", renderer.stats.instances);
+            io::printf(", upload %d bytes, frozen %.0f%%", renderer.stats.upload_bytes, showcase.frozen_share * 100);
             io::printfn(
                 ", sample %.3f ms, shared phases %s, cache hits %.1f%%",
                 showcase.sample_ms,
@@ -452,6 +503,7 @@ fn int main(String[] args) {
     bool baseline;
     bool compare;
     bool shared_phases;
+    float frozen_share;
     foreach (argument : args[1..]) {
         if (argument == "--baseline") {
             baseline = true;
@@ -459,6 +511,17 @@ fn int main(String[] args) {
             compare = true;
         } else if (argument == "--shared-phases") {
             shared_phases = true;
+        } else if (argument.starts_with(FROZEN_PERCENT_FLAG)) {
+            uint? percent = argument[FROZEN_PERCENT_FLAG.len..].to_uint();
+            if (catch excuse = percent) {
+                io::eprintfn("Frozen percent must be 0 to 100: %s", argument);
+                return 1;
+            }
+            if (percent > 100) {
+                io::eprintfn("Frozen percent must be 0 to 100: %s", argument);
+                return 1;
+            }
+            frozen_share = (float)percent / 100;
         } else {
             io::eprintfn("Unknown argument: %s", argument);
             return 1;
@@ -489,7 +552,7 @@ fn int main(String[] args) {
 
     Random random = { .state = RANDOM_SEED };
     CrowdInstance[CROWD_SIZE] instances;
-    Showcase showcase = { .compare = compare, .shared_phases = shared_phases };
+    Showcase showcase = { .compare = compare, .shared_phases = shared_phases, .frozen_share = frozen_share };
     foreach (uint index, &instance : instances) {
         ClipId clip = clips[index % clips.len];
         float duration = assets.clip(clip).data.duration;
@@ -527,6 +590,7 @@ fn int main(String[] args) {
     )!!;
     attach_showcase_lod(&assets, &scene, template, &showcase)!!;
     set_baseline(&scene, &showcase, baseline);
+    apply_frozen_share(&scene, &showcase)!!;
 
     if (catch excuse = run(
         window:   &window,

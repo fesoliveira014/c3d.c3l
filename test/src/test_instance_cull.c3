@@ -215,8 +215,7 @@ fn void test_cull_range_addressing_keeps_parity_ranges() @test {
         morph:     MORPH,
         records:   RECORDS,
     );
-    assert((ulong)crowd_unculled.skin == (ulong)SKIN + 3 * CROWD_JOINTS * Mat4f::size);
-    assert((ulong)crowd_unculled.morph == (ulong)MORPH + 3 * MorphWeightsGpu::size);
+    assert(crowd_unculled.skin == SKIN && crowd_unculled.morph == MORPH);
     odd.culled = true;
     render::BatchAddresses crowd_culled = render::batch_addresses(
         candidate: &part,

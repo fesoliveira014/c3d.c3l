@@ -343,6 +343,16 @@ fn gpu::GpuAddress? resolve_lod_part(Renderer* renderer, MeshCandidate* candidat
     Mat3 normal = maths::normal_matrix(local);
     Vec3 history_delta = selection.history.committed.origin - selection.previous_view_origin;
     Vec3 current_delta = renderer.frame_origin - selection.previous_view_origin;
+    bool stale_deformation;
+    if (candidate.animated_lod && candidate.crowd && selection.view_history_valid) {
+        stale_deformation = !crowd_deformation_history(
+            renderer:  renderer,
+            candidate: candidate,
+            skinned:   candidate.animated_lod.skinned,
+            morphed:   candidate.animated_lod.weight_count > 0,
+            frame:     selection.pose_history.submitted,
+        )!;
+    }
     LodPartGpu part = {
         .local = bitcast(local, Mat4f),
         .normal_0 = { normal.m00, normal.m10, normal.m20, 0 },
@@ -350,7 +360,7 @@ fn gpu::GpuAddress? resolve_lod_part(Renderer* renderer, MeshCandidate* candidat
         .normal_2 = { normal.m02, normal.m12, normal.m22, 0 },
         .current = selection.current,
         .previous = selection.previous,
-        .reject_history = selection.reject_history || !selection.view_history_valid
+        .reject_history = selection.reject_history || !selection.view_history_valid || stale_deformation
           || (candidate.animated_lod && !selection.pose_history.has_previous_representation(selection.scene, candidate))
           ? 1 : 0,
         .seed = instance_seed({}),

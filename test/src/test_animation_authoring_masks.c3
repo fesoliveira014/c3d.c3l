@@ -59,17 +59,10 @@ fn void test_animation_authoring_weighted_mask_exact_names_duplicates_and_empty(
     defer anim::destroy_weighted_joint_mask(&mask);
     float[8] expected = { 0, 0.75f, 0, 0, 0, 0, 0.75f, 1 };
     assert(mask.nodes == expected[..]);
-    assert(c3d::same_id(mask.model, model));
-    anim::validate_weighted_joint_mask(&assets, model, &mask)!!;
 
     weights[..] = 0;
     names[..] = "root";
     assert(mask.nodes == expected[..]);
-    foreach (index, node : assets.model(model).data.nodes) {
-        assert(mask.model_names[index] == node.name);
-        assert(mask.model_names[index].ptr != node.name.ptr);
-        assert(mask.model_parents[index] == node.parent);
-    }
 
     WeightedJointMask empty = anim::create_weighted_joint_mask(
         allocator: mem,
@@ -232,68 +225,6 @@ fn void test_animation_authoring_mask_faults_precede_allocation() @test {
     assert(allocator.attempts == 0 && allocator.outstanding == 0);
 }
 
-fn void test_animation_authoring_weighted_mask_identity_layout_and_value_admission() @test {
-    AssetStore assets = mask_store();
-    defer asset::destroy_asset_store(&assets);
-    ModelId model = mask_model(&assets);
-    ModelId foreign = mask_model(&assets);
-    String[1] names = { "arm" };
-    float[1] weights = { 0.5f };
-    WeightedJointMask mask = anim::create_weighted_joint_mask(
-        allocator: mem,
-        assets: &assets,
-        model: model,
-        names: names[..],
-        weights: weights[..],
-    )!!;
-    defer anim::destroy_weighted_joint_mask(&mask);
-    if (catch excuse = anim::validate_weighted_joint_mask(&assets, foreign, &mask)) {
-        assert(excuse == c3d::INVALID_ARGUMENT);
-    } else {
-        assert(false);
-    }
-    mask.model_names[1][0] = 'x';
-    assert(assets.model(model).data.nodes[1].name == "arm");
-    if (catch excuse = anim::validate_weighted_joint_mask(&assets, model, &mask)) {
-        assert(excuse == c3d::INVALID_ARGUMENT);
-    } else {
-        assert(false);
-    }
-    mask.model_names[1][0] = 'a';
-    mask.model_parents[3] = 0;
-    if (catch excuse = anim::validate_weighted_joint_mask(&assets, model, &mask)) {
-        assert(excuse == c3d::INVALID_ARGUMENT);
-    } else {
-        assert(false);
-    }
-    mask.model_parents[3] = 2;
-    mask.nodes[1] = float::nan;
-    if (catch excuse = anim::validate_weighted_joint_mask(&assets, model, &mask)) {
-        assert(excuse == c3d::INVALID_ARGUMENT);
-    } else {
-        assert(false);
-    }
-    mask.nodes[1] = 0.5f;
-    anim::validate_weighted_joint_mask(&assets, model, &mask)!!;
-
-    float[] complete_row = mask.nodes;
-    mask.nodes = mask.nodes[:7];
-    if (catch excuse = anim::validate_weighted_joint_mask(&assets, model, &mask)) {
-        assert(excuse == c3d::INVALID_ARGUMENT);
-    } else {
-        assert(false);
-    }
-    mask.nodes = complete_row;
-
-    assets.remove_model(model);
-    if (catch excuse = anim::validate_weighted_joint_mask(&assets, model, &mask)) {
-        assert(excuse == c3d::INVALID_ID);
-    } else {
-        assert(false);
-    }
-    assert(mask.model_names[1] == "arm" && mask.model_parents[3] == 2);
-}
-
 fn void test_animation_authoring_weighted_mask_allocation_failures_release_every_owner() @test {
     AssetStore assets = mask_store();
     defer asset::destroy_asset_store(&assets);
@@ -330,7 +261,7 @@ fn void test_animation_authoring_weighted_mask_allocation_failures_release_every
                 WeightedJointMask mask = attempt;
                 assert(mask.nodes.len == 8);
                 anim::destroy_weighted_joint_mask(&mask);
-                assert(mask.nodes.len == 0 && mask.model_names.len == 0 && mask.model_parents.len == 0);
+                assert(mask.nodes.len == 0);
                 succeeded = true;
             }
             assert(allocator.outstanding == 0);

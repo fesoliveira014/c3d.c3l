@@ -71,7 +71,7 @@ fn uint seek(float[] times, float time) @local {
     return low;
 }
 
-fn float[] key_values(Track* track, uint key, uint slot) @local {
+fn float[] key_values(Track* track, uint key, uint slot) @private {
     uint stride = track.stride();
     usz offset = track.interpolation == Interpolation.CUBIC_SPLINE
       ? (usz)(key * CUBIC_SLOTS_PER_KEY + slot) * stride

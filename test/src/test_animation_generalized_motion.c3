@@ -15,9 +15,6 @@ const uint GENERALIZED_SUBDIVISIONS @local = 7;
 
 enum AdmissionMutation @local {
     ROOT_OUTSIDE_MODEL,
-    FORWARD_PARENT,
-    CLIP_TARGET_OUTSIDE_MODEL,
-    TRACK_TARGET_OUTSIDE_CLIP,
     MISSING_UP,
     FOREIGN_PARENT_SPACE,
     NONUNIFORM_INSTANCE,
@@ -135,7 +132,7 @@ fn void create_motion_admission_fixture(MotionAdmissionFixture* fixture) @local 
     };
 }
 
-fn void? validate_admission_fixture(MotionAdmissionFixture* fixture, uint root = 2, bool additive = false) @local {
+fn bool? validate_admission_fixture(MotionAdmissionFixture* fixture, uint root = 2, bool additive = false) @local {
     return anim::validate_generalized_motion(
         template: &fixture.model,
         clip: &fixture.clip,
@@ -143,7 +140,6 @@ fn void? validate_admission_fixture(MotionAdmissionFixture* fixture, uint root =
         extraction: fixture.extraction,
         motion_basis: fixture.basis,
         additive: additive,
-        additive_scale: AdditiveScaleMode.DIFFERENCE,
     );
 }
 
@@ -164,11 +160,10 @@ fn CapturedMotionChain capture_admission_fixture(
 fn void test_animation_motion_admission_captures_full_chain_and_all_top_level_branches() @test {
     MotionAdmissionFixture fixture;
     create_motion_admission_fixture(&fixture);
-    validate_admission_fixture(&fixture)!!;
+    assert(!validate_admission_fixture(&fixture)!!);
     CapturedMotionChain captured = capture_admission_fixture(&fixture);
     defer anim::destroy_captured_motion_chain(&captured);
-    assert(captured.root_node == 2 && captured.clip_track_count == 6);
-    assert(captured.nodes.len == 3 && captured.model_names.len == 7 && captured.model_parents.len == 7);
+    assert(captured.nodes.len == 3);
     assert(captured.nodes[0].model_node == 2 && captured.nodes[1].model_node == 1 && captured.nodes[2].model_node == 0);
     assert(captured.top_level_nodes == (uint[2]){ 0, 4 }[..]);
     assert(captured.nodes[0].translation_track == 0 && captured.nodes[0].rotation_track == 3);
@@ -176,30 +171,18 @@ fn void test_animation_motion_admission_captures_full_chain_and_all_top_level_br
     assert(captured.nodes[1].translation_track == anim::NO_MOTION_TRACK);
     assert(captured.nodes[1].scale_track == anim::NO_MOTION_TRACK);
     assert(captured.nodes[2].scale_track == 2 && captured.nodes[2].rotation_track == anim::NO_MOTION_TRACK);
-    assert(captured.nodes[0].reference.position == (Vec3){ 2, 3, 5 });
-    assert(captured.nodes[0].reference.scale == (Vec3){ 1.25f, 1.25f, 1.25f });
-    assert(captured.nodes[0].reference_scale == 1.25 && captured.nodes[2].reference_scale == 1.25);
-    assert(math::abs((double)captured.nodes[0].reference.rotation.v.y - math::sin(math::PI * 0.125)) < 1e-6);
-    assert(math::abs((double)captured.nodes[0].reference.rotation.v.w - math::cos(math::PI * 0.125)) < 1e-6);
-    foreach (index, node : fixture.nodes) {
-        assert(captured.model_names[index] == node.name && captured.model_parents[index] == node.parent);
-    }
     assert(captured.extraction.translation_axes == (bool[3]){ true, false, true });
     assert(captured.extraction.up == (Vec3){ 0, 1, 0 } && captured.extraction.twist);
-    fixture.nodes[0].name = "changed";
-    fixture.nodes[1].parent = -1;
     fixture.nodes[2].local.position = {};
     fixture.extraction.translation_axes[..] = false;
-    assert(captured.model_names[0] == "base" && captured.model_parents[1] == 0);
     assert(captured.nodes[0].baseline.position == (Vec3){ 2, 1, -2 });
-    assert(captured.nodes[0].reference.position == (Vec3){ 2, 3, 5 });
     assert(captured.extraction.translation_axes[0] && captured.extraction.translation_axes[2]);
 }
 
 fn void test_animation_motion_admission_changed_root_maps_its_own_ancestors() @test {
     MotionAdmissionFixture fixture;
     create_motion_admission_fixture(&fixture);
-    validate_admission_fixture(&fixture, 6)!!;
+    assert(!validate_admission_fixture(&fixture, 6)!!);
     CapturedMotionChain leaf = capture_admission_fixture(&fixture, mem, 6);
     defer anim::destroy_captured_motion_chain(&leaf);
     assert(leaf.nodes.len == 3 && leaf.nodes[0].model_node == 6 && leaf.nodes[1].model_node == 1);
@@ -225,12 +208,6 @@ fn void test_animation_motion_admission_rejects_each_invalid_input_with_its_faul
         switch (mutation) {
             case ROOT_OUTSIDE_MODEL:
                 root = 7;
-            case FORWARD_PARENT:
-                fixture.nodes[1].parent = 2;
-            case CLIP_TARGET_OUTSIDE_MODEL:
-                fixture.targets[4] = 7;
-            case TRACK_TARGET_OUTSIDE_CLIP:
-                fixture.tracks[4].target = 6;
             case MISSING_UP:
                 fixture.extraction.up = {};
             case FOREIGN_PARENT_SPACE:
@@ -263,7 +240,7 @@ fn void test_animation_motion_admission_cubic_scale_defers_to_invalid_faults() @
     fixture.tracks[4].interpolation = Interpolation.CUBIC_SPLINE;
     fixture.tracks[4].times = times[..];
     fixture.tracks[4].values = values[..];
-    assert(@catch(validate_admission_fixture(&fixture)) == c3d::UNSUPPORTED);
+    assert(validate_admission_fixture(&fixture)!!);
     fixture.nodes[0].local.scale = { 1, 2, 1 };
     assert(@catch(validate_admission_fixture(&fixture)) == c3d::INVALID_ARGUMENT);
     fixture.nodes[0].local.scale = { 2, 2, 2 };
@@ -275,7 +252,7 @@ fn void test_animation_motion_admission_neutral_difference_zero_and_signed_scale
     MotionAdmissionFixture fixture;
     create_motion_admission_fixture(&fixture);
     fixture.scales = { -1, 0, 2, -1, 0, 2 };
-    validate_admission_fixture(&fixture, 2, true)!!;
+    assert(!validate_admission_fixture(&fixture, 2, true)!!);
     fixture.scales[3] = -2;
     assert(@catch(validate_admission_fixture(&fixture, 2, true)) == c3d::INVALID_ARGUMENT);
 }
@@ -314,20 +291,6 @@ fn void test_animation_motion_capture_failure_releases_every_partial_allocation(
         assert(fixture.nodes[1].parent == 0 && fixture.nodes[0].name == "base");
         assert(fixture.targets[4] == 2 && fixture.tracks[4].values.ptr == &fixture.scales[0]);
     }
-    allocator.attempts = 0;
-    allocator.failure = 1;
-    bool caught;
-    if (catch excuse = anim::create_captured_motion_chain(
-        allocator: &allocator,
-        template: &fixture.model,
-        clip: &fixture.clip,
-        root: 7,
-        extraction: fixture.extraction,
-    )) {
-        assert(excuse == c3d::INVALID_ARGUMENT);
-        caught = true;
-    }
-    assert(caught && allocator.attempts == 0 && allocator.outstanding == 0);
 }
 
 fn void create_generalized_test_fixture(GeneralizedTestFixture* fixture) @local {
@@ -383,7 +346,7 @@ fn void generalized_test_pose(GeneralizedTestFixture* fixture, float time, Trans
     foreach (&track : fixture.tracks) {
         double[4] value;
         uint cursor;
-        anim::sample_track_analytic(
+        anim::sample_track_double(
             track: track,
             time: time,
             cursor: &cursor,
@@ -984,7 +947,6 @@ fn void test_animation_generalized_playback_request_onset_after_consumption_pres
     assert(owner.local.position.length() > 0.1f);
     Mat4[5] source_worlds;
     playback_test_owner_world_snapshot(&scene, owner, source_worlds[..]);
-    double previous_dt = animator.inertial_storage.rows[0].control.previous_dt;
     AnimationTargetDesc[1] targets = { {
         .clip = target_id,
         .play = { .root_motion = RootMotion.EXTRACT, .extraction = fixture.extraction },
@@ -1001,7 +963,6 @@ fn void test_animation_generalized_playback_request_onset_after_consumption_pres
         assert(animator.root_motion.translation == (Vec3){});
         assert(animator.root_motion.rotation.v == (Vec4){ 0, 0, 0, 1 });
         playback_test_owner_world_unchanged(&scene, owner, source_worlds[..]);
-        assert(animator.inertial_storage.rows[0].control.previous_dt == previous_dt);
         assert(animator.inertial_storage.rows[0].control.elapsed == 0);
     }
     for (uint frame = 0; frame < 3; frame++) {

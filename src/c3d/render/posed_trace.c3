@@ -684,6 +684,7 @@ fn void? resolve_posed_instance(
     TraceInstance* record,
     TracePoseSource* source,
     GpuGeometry* mirror,
+    ulong scene,
 ) @private {
     PosedTraceTable* table = &renderer.posed_trace;
     bool software = renderer.scene_trace.software_requested;
@@ -717,6 +718,7 @@ fn void? resolve_posed_instance(
                 record:   record,
                 mirror:   mirror,
                 slot:     slot,
+                scene:    scene,
             )!;
         }
     }
@@ -748,6 +750,7 @@ fn gpu::GpuAddress? write_pose_root(
     TraceInstance* record,
     GpuGeometry* mirror,
     PosedTraceRes* slot,
+    ulong scene,
 ) @local {
     gpu::GpuAddress palette;
     gpu::GpuAddress morph;
@@ -767,20 +770,21 @@ fn gpu::GpuAddress? write_pose_root(
             }
         case CROWD:
             AnimatedCrowd* crowd = source.crowd;
-            usz slot_index = source.palette_index;
+            MeshCandidate candidate = {
+                .node = source.node,
+                .geometry = record.geometry,
+                .scene_identity = scene,
+                .crowd = crowd,
+                .crowd_part = source.part,
+            };
             if (crowd.parts[source.part].skinned) {
-                palette = resolve_crowd_palettes(renderer, source.node.parent, crowd)!
-                  + (gpu::GpuAddress)(slot_index * crowd.joint_count * Mat4f::size);
+                palette = resolve_crowd_palette(renderer, &candidate)!.current
+                  + (gpu::GpuAddress)((usz)record.instance_index * crowd.joint_count * Mat4f::size);
             }
 
             if (crowd.parts[source.part].weight_count) {
-                morph = resolve_crowd_morphs(
-                    renderer:   renderer,
-                    batch_node: source.node,
-                    crowd:      crowd,
-                    part:       source.part,
-                    channels:   renderer.assets.geometry(record.geometry).data.channels,
-                )! + (gpu::GpuAddress)(slot_index * MorphWeightsGpu::size);
+                morph = resolve_crowd_morph(renderer, &candidate)!.current
+                  + (gpu::GpuAddress)((usz)record.instance_index * MorphWeightsGpu::size);
             }
         case ANIMATED_LOD:
             LodSelection selection;

@@ -12,7 +12,7 @@ struct OnsetRateCase @local {
     bool playing;
 }
 
-fn void test_animation_analytic_sample_step_sides_keys_endpoints_and_normal_cursor() @test {
+fn void test_animation_double_sample_step_sides_keys_endpoints_and_normal_cursor() @test {
     float[3] times = { 0, 0.5f, 1 };
     float[9] values = { 0, 0, 0, 10, 20, -5, 30, 40, -10 };
     float[3] saved_times = times;
@@ -25,7 +25,7 @@ fn void test_animation_analytic_sample_step_sides_keys_endpoints_and_normal_curs
             float time = times[key];
             uint time_bits = bitcast(time, uint);
             double[3] actual;
-            anim::sample_track_analytic(
+            anim::sample_track_double(
                 track: &track,
                 time: time,
                 cursor: &cursor,
@@ -39,7 +39,7 @@ fn void test_animation_analytic_sample_step_sides_keys_endpoints_and_normal_curs
         foreach (float time : { -1.0f, 0.25f, 0.75f, 2.0f }) {
             uint cursor = 2;
             double[3] actual;
-            anim::sample_track_analytic(
+            anim::sample_track_double(
                 track: &track,
                 time: time,
                 cursor: &cursor,
@@ -54,7 +54,7 @@ fn void test_animation_analytic_sample_step_sides_keys_endpoints_and_normal_curs
     assert(times == saved_times && values == saved_values);
 }
 
-fn void test_animation_analytic_sample_tiny_huge_rotation_keys_remain_normalized() @test {
+fn void test_animation_double_sample_tiny_huge_rotation_keys_remain_normalized() @test {
     float[3] magnitudes = { 0x1p-140f, 1, 0x1p120f };
     float[2] times = { 0, 2 };
     foreach (uint index, first : magnitudes) {
@@ -65,7 +65,7 @@ fn void test_animation_analytic_sample_tiny_huge_rotation_keys_remain_normalized
         double complete_angle = 2 * math::atan2((double)values[5], (double)values[7]);
         uint cursor;
         double[4] value;
-        anim::sample_track_analytic(
+        anim::sample_track_double(
             track: &track,
             time: 0.75f,
             cursor: &cursor,
@@ -76,7 +76,7 @@ fn void test_animation_analytic_sample_tiny_huge_rotation_keys_remain_normalized
         assert(math::abs(2 * math::atan2(value[1], value[3]) - complete_angle * 0.375) < 1e-12);
         track.interpolation = Interpolation.STEP;
         foreach (StepSampleSide side : { StepSampleSide.EXACT, StepSampleSide.LEFT, StepSampleSide.RIGHT }) {
-            anim::sample_track_analytic(
+            anim::sample_track_double(
                 track: &track,
                 time: 2,
                 cursor: &cursor,
@@ -90,14 +90,14 @@ fn void test_animation_analytic_sample_tiny_huge_rotation_keys_remain_normalized
     }
 }
 
-fn void test_animation_analytic_sample_cubic_value_at_segment_midpoint() @test {
+fn void test_animation_double_sample_cubic_value_at_segment_midpoint() @test {
     float[2] times = { -1, 1 };
     float[18] values = { 99, 99, 99, 1, -2, 0, 1, 0.25f, 0, 4, 0.75f, 1.5f, 4, -0.5f, 1, -99, -99, -99 };
     Track track = { .path = TargetPath.TRANSLATION, .interpolation = Interpolation.CUBIC_SPLINE,
         .times = times[..], .values = values[..] };
     uint cursor;
     double[3] actual;
-    anim::sample_track_analytic(
+    anim::sample_track_double(
         track: &track,
         time: 0,
         cursor: &cursor,

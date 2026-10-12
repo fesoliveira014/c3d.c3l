@@ -72,8 +72,6 @@ struct Controls @local {
     float upper_weight;
     float scale_weight;
     bool paused;
-    float pose_error;
-    float morph_error;
     float transition_seconds;
     PlaybackChoice choice;
     bool request;
@@ -368,25 +366,6 @@ fn void apply_controls(DisplayPair* pair, Controls* controls) @local {
     }
 }
 
-fn void compare_pair(Scene* scene, DisplayPair* pair, Controls* controls) @local {
-    ModelInstance* instance = scene.get(pair.ordinary, ModelInstance);
-    CrowdPlaybackState* playback = scene.get(pair.crowd, AnimatedCrowd).playback;
-
-    foreach (uint node, pose : playback.poses[:playback.base_pose.len]) {
-        Transform reference = instance.present_node(node).local;
-        controls.pose_error = math::max(controls.pose_error, pose.position.distance(reference.position));
-        controls.pose_error = math::max(controls.pose_error, pose.scale.distance(reference.scale));
-        controls.pose_error = math::max(controls.pose_error, (pose.rotation.v - reference.rotation.v).length());
-    }
-
-    foreach (mesh, node : playback.mesh_nodes) {
-        float[] reference = scene.get(instance.present_node(node), Mesh).morph_weights;
-        foreach (index, weight : playback.logical_weights[mesh]) {
-            controls.morph_error = math::max(controls.morph_error, math::abs(weight - reference[index]));
-        }
-    }
-}
-
 fn void panel(Controls* controls) @local {
     imgui::set_next_window_pos({ 16, 16 }, imgui::COND_FIRST_USE_EVER);
     if (imgui::begin("Animation authoring", null, {})) {
@@ -444,8 +423,6 @@ fn void panel(Controls* controls) @local {
         if (imgui::button("Cancel transition")) controls.cancel = true;
         imgui::checkbox("Apply extracted movement", &controls.consume_motion);
 
-        imgui::text("Maximum pose difference: %.6g", (double)controls.pose_error);
-        imgui::text("Maximum morph difference: %.6g", (double)controls.morph_error);
         imgui::text("16 fixed action slots; copied mask and 2D layout rows");
     }
     imgui::end();
@@ -520,9 +497,6 @@ fn void? run(
         }
 
         scene.update_world();
-
-        compare_pair(scene, character, &controls);
-        compare_pair(scene, morph, &controls);
 
         gui_renderer.finish_frame();
         platform::sync_window(window, renderer);

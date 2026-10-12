@@ -176,13 +176,7 @@ fn void blend_pose(
                 if (weight <= 0) continue;
 
                 float[] sample = samples[:stride];
-                if (!onset && track.path == TargetPath.SCALE
-                  && action.additive_scale == AdditiveScaleMode.MULTIPLICATIVE) {
-                    Vec3 scale = sample_multiplicative_scale(track, action.time, &action.cursors[track_index]);
-                    sample[0] = scale.x;
-                    sample[1] = scale.y;
-                    sample[2] = scale.z;
-                } else if (!onset && !consumed_chain) {
+                if (!onset && !consumed_chain) {
                     sample_track(
                         track: track,
                         time: action.time,
@@ -216,7 +210,7 @@ fn void blend_pose(
                     case SCALE:
                         if (action.additive_scale == AdditiveScaleMode.MULTIPLICATIVE) {
                             for (uint axis = 0; axis < 3; axis++) {
-                                double factor = 1 + (double)weight * ((double)sample[axis] / reference[axis] - 1);
+                                double factor = math::pow((double)sample[axis] / reference[axis], (double)weight);
                                 result[node].scale[axis] = (float)((double)result[node].scale[axis] * factor);
                             }
                         } else {
@@ -400,7 +394,7 @@ fn void sample_pose_channel(
     }
 
     double[4] value;
-    sample_track_analytic(
+    sample_track_double(
         track: track,
         time: track_clip_time(track, time),
         cursor: cursor,

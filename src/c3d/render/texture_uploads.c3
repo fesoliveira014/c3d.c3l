@@ -128,6 +128,7 @@ fn void commit_uploads(Renderer* renderer, Frame* slot) @private {
     commit_font_uploads(renderer);
     renderer.pending_geometry_uploads.clear();
     renderer.pending_instance_uploads.clear();
+    commit_resident_crowds(renderer, 0);
     commit_prepare_jobs(renderer, slot);
     renderer.scene_trace.pending_builds.clear();
     renderer.rt.pending_blas.clear();
@@ -140,6 +141,7 @@ fn void commit_uploads(Renderer* renderer, Frame* slot) @private {
 }
 
 fn void discard_uploads(Renderer* renderer) @private {
+    discard_resident_crowds(renderer);
     if (renderer.billboard_geometry_pending) {
         renderer.billboard_geometry.revision = 0;
         renderer.billboard_geometry_pending = false;

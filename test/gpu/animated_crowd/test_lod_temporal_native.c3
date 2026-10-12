@@ -305,19 +305,18 @@ fn void test_animated_lod_native_independent_view_skip_cut_abort_and_compatible_
         placement_offset: 0.4f,
     );
     capture_crowd_native_temporal(&fixture, &pair, outputs[..])!!;
-    float resumed_motion = check_crowd_native_view_motion(
-        outputs: outputs[..],
-        view: 1,
-        rejection: 0,
-        still: false,
-    );
+    CrowdNativeImages* skipped = &outputs[2].actual;
+    uint rejected;
+    foreach (index, depth : skipped.depth) {
+        if (depth.x > 0 && skipped.velocity[index].w == 1) rejected++;
+    }
+    assert(rejected > 0, "A view that skipped a frame kept deformed history");
     (void)check_crowd_native_view_motion(
         outputs: outputs[..],
         view: 0,
         rejection: 0,
         still: false,
     );
-    assert(resumed_motion > first_motion + CROWD_NATIVE_VELOCITY_TOLERANCE);
 
     render::reset_view_history(&fixture.renderer, outputs[0].view)!!;
     render::reset_view_history(&fixture.renderer, outputs[1].view)!!;

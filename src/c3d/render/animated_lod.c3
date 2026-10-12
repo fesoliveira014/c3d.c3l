@@ -198,11 +198,6 @@ fn void write_animated_lod_palette(
     MeshCandidate* candidate,
     Vec3 origin = {},
 ) @private {
-    if (candidate.crowd) {
-        foreach (index, value : candidate.crowd.palettes[:palette.len]) palette[index] = bitcast(value, Mat4f);
-        return;
-    }
-
     AnimatedLodBinding* binding = candidate.lod.state.animated;
     Mat4[] inverse_bind = assets.skeleton(binding.skeleton).data.inverse_bind;
     Mat4 inverse_owner = maths::inverse_affine(maths::rebase(candidate.node.world, origin));
@@ -218,12 +213,12 @@ fn void write_animated_lod_palette(
 
 fn gpu::GpuAddress? resolve_animated_lod_palette(Renderer* renderer, MeshCandidate* candidate) @private {
     if (!candidate.animated_lod.skinned) return (gpu::GpuAddress)0;
+    if (candidate.crowd) return resolve_crowd_palette(renderer, candidate)!.current;
 
     AnimatedLodKey key = animated_lod_key(candidate, PALETTE);
     if (try existing = renderer.deformation.animated.get(key)) return existing;
 
-    uint count = animated_lod_source_count(candidate);
-    usz matrices = (usz)count * candidate.lod.state.animated.joint_nodes.len;
+    usz matrices = candidate.lod.state.animated.joint_nodes.len;
     Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan span = frame.upload.take(&renderer.device, matrices * Mat4f::size, STREAM_ALIGNMENT)!;
 
@@ -241,23 +236,15 @@ fn gpu::GpuAddress? resolve_animated_lod_palette(Renderer* renderer, MeshCandida
 
 fn gpu::GpuAddress? resolve_animated_lod_morph(Renderer* renderer, MeshCandidate* candidate) @private {
     if (!candidate.animated_lod.weight_count) return (gpu::GpuAddress)0;
+    if (candidate.crowd) return resolve_crowd_morph(renderer, candidate)!.current;
 
     AnimatedLodKey key = animated_lod_key(candidate, MORPHS, candidate.lod_part);
     if (try existing = renderer.deformation.animated.get(key)) return existing;
 
-    uint count = animated_lod_source_count(candidate);
     Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
-    gpu::MappedGpuSpan span = frame.upload.take(
-        device: &renderer.device,
-        size: (usz)count * MorphWeightsGpu::size,
-        alignment: STREAM_ALIGNMENT,
-    )!;
-    MorphWeightsGpu[] blocks = ((MorphWeightsGpu*)span.bytes.ptr)[:count];
-
-    for (uint source = 0; source < count; source++) {
-        float[] weights = animated_lod_weights(candidate, candidate.animated_lod.mesh_index, source);
-        blocks[source] = animated_lod_morph(renderer.assets, candidate, weights);
-    }
+    gpu::MappedGpuSpan span = frame.upload.take(&renderer.device, MorphWeightsGpu::size, STREAM_ALIGNMENT)!;
+    float[] weights = animated_lod_weights(candidate, candidate.animated_lod.mesh_index);
+    *(MorphWeightsGpu*)span.bytes.ptr = animated_lod_morph(renderer.assets, candidate, weights);
 
     renderer.deformation.animated.set(key, span.address);
 
@@ -379,12 +366,16 @@ fn gpu::GpuAddress? upload_animated_lod_previous(Renderer* renderer, DrawItem* i
     PreviousPoseGpu previous = { .skin = item.skin, .morph = item.morph };
 
     if (item.skin != (gpu::GpuAddress)0) {
-        if (selection.previous_palette == (gpu::GpuAddress)0) {
-            usz matrices = (usz)count * selection.state.animated.joint_nodes.len;
-            selection.previous_palette = upload_bytes(renderer, owner.palette.ptr, matrices * Mat4f::size)!;
-        }
+        if (candidate.crowd) {
+            previous.skin = resolve_crowd_palette(renderer, candidate)!.previous;
+        } else {
+            if (selection.previous_palette == (gpu::GpuAddress)0) {
+                usz matrices = selection.state.animated.joint_nodes.len;
+                selection.previous_palette = upload_bytes(renderer, owner.palette.ptr, matrices * Mat4f::size)!;
+            }
 
-        previous.skin = selection.previous_palette;
+            previous.skin = selection.previous_palette;
+        }
     }
 
     if (!candidate.animated_lod.skinned) {
@@ -404,19 +395,13 @@ fn gpu::GpuAddress? upload_animated_lod_previous(Renderer* renderer, DrawItem* i
     }
 
     if (item.morph != (gpu::GpuAddress)0) {
-        gpu::MappedGpuSpan morph_span = frame.upload.take(
-            device: &renderer.device,
-            size: (usz)count * MorphWeightsGpu::size,
-            alignment: STREAM_ALIGNMENT,
-        )!;
-        MorphWeightsGpu[] blocks = ((MorphWeightsGpu*)morph_span.bytes.ptr)[:count];
-
-        for (uint source = 0; source < count; source++) {
-            float[] weights = animated_lod_previous_weights(owner, candidate, source);
-            blocks[source] = animated_lod_morph(renderer.assets, candidate, weights);
+        if (candidate.crowd) {
+            previous.morph = resolve_crowd_morph(renderer, candidate)!.previous;
+        } else {
+            float[] weights = animated_lod_previous_weights(owner, candidate);
+            MorphWeightsGpu block = animated_lod_morph(renderer.assets, candidate, weights);
+            previous.morph = upload_bytes(renderer, &block, MorphWeightsGpu::size)!;
         }
-
-        previous.morph = morph_span.address;
     }
 
     return upload_bytes(renderer, &previous, PreviousPoseGpu::size);
