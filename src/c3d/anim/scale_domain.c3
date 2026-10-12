@@ -9,7 +9,7 @@ fn bool? validate_multiplicative_scale(AnimationClip* clip) @private {
         if (track.path != TargetPath.SCALE) continue;
 
         for (uint key = 0; key < track.times.len; key++) {
-            if (!positive_scale(analytic_key_values(track, key, CUBIC_SLOT_VALUE))) return c3d::INVALID_ARGUMENT~;
+            if (!positive_scale(key_values(track, key, CUBIC_SLOT_VALUE))) return c3d::INVALID_ARGUMENT~;
         }
 
         float[3] reference;

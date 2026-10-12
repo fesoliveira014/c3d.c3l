@@ -86,7 +86,7 @@ fn void test_animation_motion_rotation_cubic_crossing_zero_is_admitted_and_sampl
     uint cursor;
     double[4] sampled;
     // The scalar component is (1 - 2t)^2 and the other components vanish identically.
-    anim::sample_track_analytic(
+    anim::sample_track_double(
         track: &track,
         time: 0.5f,
         cursor: &cursor,

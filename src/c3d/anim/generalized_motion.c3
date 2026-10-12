@@ -66,7 +66,7 @@ fn GeneralizedMotionFrame sample_generalized_endpoint(
 fn void sample_endpoint_track(Track* track, ClipTime time, double[] value) @local {
     // A cursor past the last key bisects the keys rather than walking from the first.
     uint cursor = uint::max;
-    sample_track_analytic(
+    sample_track_double(
         track: track,
         time: track_clip_time(track, time),
         cursor: &cursor,

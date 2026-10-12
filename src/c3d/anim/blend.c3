@@ -265,7 +265,7 @@ fn void sample_pose_channel(
     }
 
     double[4] value;
-    sample_track_analytic(
+    sample_track_double(
         track: track,
         time: track_clip_time(track, time),
         cursor: cursor,

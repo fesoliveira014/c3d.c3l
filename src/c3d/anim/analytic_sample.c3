@@ -2,7 +2,7 @@ module c3d::anim;
 
 import std::math;
 
-const double ANALYTIC_NLERP_DOT_THRESHOLD @private = (double)0.95f; // Mirrors the standard quaternion slerp fallback.
+const double DOUBLE_NLERP_DOT_THRESHOLD @private = (double)0.95f; // Mirrors the standard quaternion slerp fallback.
 const float LEAD_SECONDS @private = 1.0f / 256; // Short against key spacing; long against float time rounding.
 
 enum StepSampleSide @private {
@@ -34,7 +34,7 @@ struct ClipTime @private {
  @require value.len == track.stride() && value.len <= 4
  @require math::is_finite(time)
 *>
-fn void sample_track_analytic(
+fn void sample_track_double(
     Track* track,
     float time,
     uint* cursor,
@@ -44,8 +44,8 @@ fn void sample_track_analytic(
     uint last = (uint)track.times.len - 1;
     if (!last || time < track.times[0] || time > track.times[last]) {
         *cursor = time < track.times[0] ? 0 : last;
-        analytic_copy_key(track, *cursor, value);
-        if (track.path == TargetPath.ROTATION) analytic_normalize_rotation(value);
+        copy_key_double(track, *cursor, value);
+        if (track.path == TargetPath.ROTATION) normalize_rotation_double(value);
         return;
     }
 
@@ -74,8 +74,8 @@ fn void sample_track_analytic(
         uint sampled = key;
         if (side == StepSampleSide.LEFT && sampled && time == track.times[sampled]) sampled--;
 
-        analytic_copy_key(track, sampled, value);
-        if (track.path == TargetPath.ROTATION) analytic_normalize_rotation(value);
+        copy_key_double(track, sampled, value);
+        if (track.path == TargetPath.ROTATION) normalize_rotation_double(value);
         return;
     }
 
@@ -86,14 +86,14 @@ fn void sample_track_analytic(
     switch (track.interpolation) {
         case STEP: unreachable();
         case LINEAR:
-            analytic_linear(
+            interpolate_linear_double(
                 track: track,
                 key: key,
                 fraction: fraction,
                 value: value,
             );
         case CUBIC_SPLINE:
-            analytic_cubic(
+            interpolate_cubic_double(
                 track: track,
                 key: key,
                 fraction: fraction,
@@ -102,7 +102,7 @@ fn void sample_track_analytic(
             );
     }
 
-    if (track.path == TargetPath.ROTATION) analytic_normalize_rotation(value);
+    if (track.path == TargetPath.ROTATION) normalize_rotation_double(value);
 }
 
 <* @require track.times.len > 0 && out.len == track.stride() *>
@@ -122,7 +122,7 @@ fn void sample_track_on_side(
     if (side != StepSampleSide.LEFT || track.interpolation != Interpolation.STEP) return;
     if (!*cursor || time != track.times[*cursor]) return;
 
-    out[..] = analytic_key_values(track, *cursor - 1, CUBIC_SLOT_VALUE)[..];
+    out[..] = key_values(track, *cursor - 1, CUBIC_SLOT_VALUE)[..];
 }
 
 fn double action_clock_rate(Action* action) @private {
@@ -165,29 +165,21 @@ fn float track_clip_time(Track* track, ClipTime time) @private {
     return track.interpolation == Interpolation.STEP ? time.time : time.ahead;
 }
 
-fn float[] analytic_key_values(Track* track, uint key, uint slot) @private {
-    uint stride = track.stride();
-    usz offset = track.interpolation == Interpolation.CUBIC_SPLINE
-      ? (usz)(key * CUBIC_SLOTS_PER_KEY + slot) * stride : (usz)key * stride;
-
-    return track.values[offset:stride];
-}
-
-fn void analytic_copy_key(Track* track, uint key, double[] value) @private {
-    float[] stored = analytic_key_values(track, key, CUBIC_SLOT_VALUE);
+fn void copy_key_double(Track* track, uint key, double[] value) @private {
+    float[] stored = key_values(track, key, CUBIC_SLOT_VALUE);
     foreach (index, component : stored) value[index] = component;
 }
 
-fn void analytic_linear(
+fn void interpolate_linear_double(
     Track* track,
     uint key,
     double fraction,
     double[] value,
 ) @private {
-    float[] first = analytic_key_values(track, key, CUBIC_SLOT_VALUE);
-    float[] second = analytic_key_values(track, key + 1, CUBIC_SLOT_VALUE);
+    float[] first = key_values(track, key, CUBIC_SLOT_VALUE);
+    float[] second = key_values(track, key + 1, CUBIC_SLOT_VALUE);
     if (track.path == TargetPath.ROTATION) {
-        analytic_linear_rotation(
+        interpolate_rotation_double(
             first: first,
             second: second,
             fraction: fraction,
@@ -201,17 +193,17 @@ fn void analytic_linear(
     }
 }
 
-fn void analytic_cubic(
+fn void interpolate_cubic_double(
     Track* track,
     uint key,
     double fraction,
     double duration,
     double[] value,
 ) @private {
-    float[] first = analytic_key_values(track, key, CUBIC_SLOT_VALUE);
-    float[] first_tangent = analytic_key_values(track, key, CUBIC_SLOT_OUT_TANGENT);
-    float[] second = analytic_key_values(track, key + 1, CUBIC_SLOT_VALUE);
-    float[] second_tangent = analytic_key_values(track, key + 1, CUBIC_SLOT_IN_TANGENT);
+    float[] first = key_values(track, key, CUBIC_SLOT_VALUE);
+    float[] first_tangent = key_values(track, key, CUBIC_SLOT_OUT_TANGENT);
+    float[] second = key_values(track, key + 1, CUBIC_SLOT_VALUE);
+    float[] second_tangent = key_values(track, key + 1, CUBIC_SLOT_IN_TANGENT);
 
     double complement = 1 - fraction;
     double square = fraction * fraction;
@@ -226,14 +218,14 @@ fn void analytic_cubic(
     }
 }
 
-fn void analytic_linear_rotation(
+fn void interpolate_rotation_double(
     float[] first,
     float[] second,
     double fraction,
     double[] value,
 ) @private {
-    double[<4>] from = analytic_unit_rotation({ first[0], first[1], first[2], first[3] });
-    double[<4>] to = analytic_unit_rotation({ second[0], second[1], second[2], second[3] });
+    double[<4>] from = unit_rotation_double({ first[0], first[1], first[2], first[3] });
+    double[<4>] to = unit_rotation_double({ second[0], second[1], second[2], second[3] });
     double dot = from.dot(to);
     if (dot < 0) {
         to = -to;
@@ -241,7 +233,7 @@ fn void analytic_linear_rotation(
     }
 
     double[<4>] sampled;
-    if (dot > ANALYTIC_NLERP_DOT_THRESHOLD) {
+    if (dot > DOUBLE_NLERP_DOT_THRESHOLD) {
         sampled = from + (to - from) * fraction;
     } else {
         double angle = math::acos(dot);
@@ -253,7 +245,7 @@ fn void analytic_linear_rotation(
 }
 
 // A zero quaternion, such as a cubic segment crossing zero, samples as identity.
-fn double[<4>] analytic_unit_rotation(double[<4>] rotation) @private {
+fn double[<4>] unit_rotation_double(double[<4>] rotation) @private {
     double maximum = math::max(math::max(math::abs(rotation.x), math::abs(rotation.y)),
       math::max(math::abs(rotation.z), math::abs(rotation.w)));
     if (maximum == 0) return { 0, 0, 0, 1 };
@@ -263,7 +255,7 @@ fn double[<4>] analytic_unit_rotation(double[<4>] rotation) @private {
     return scaled / scaled.length();
 }
 
-fn void analytic_normalize_rotation(double[] value) @private {
-    double[<4>] unit = analytic_unit_rotation({ value[0], value[1], value[2], value[3] });
+fn void normalize_rotation_double(double[] value) @private {
+    double[<4>] unit = unit_rotation_double({ value[0], value[1], value[2], value[3] });
     for (uint component = 0; component < 4; component++) value[component] = unit[component];
 }

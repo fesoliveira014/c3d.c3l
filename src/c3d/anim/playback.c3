@@ -457,7 +457,7 @@ fn Action? prepare_validated_playback_action(
             uint cursor;
             if (precise_rotation && track.path == TargetPath.ROTATION) {
                 double[4] value;
-                sample_track_analytic(
+                sample_track_double(
                     track: track,
                     time: 0,
                     cursor: &cursor,

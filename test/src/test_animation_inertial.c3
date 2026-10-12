@@ -830,7 +830,7 @@ fn void test_animation_inertial_pose_moving_target_literal_residuals_and_interru
     };
     double[3] value;
     uint cursor;
-    anim::sample_track_analytic(
+    anim::sample_track_double(
         track: &translation,
         time: 0.25f,
         cursor: &cursor,

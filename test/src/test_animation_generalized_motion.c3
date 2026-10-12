@@ -347,7 +347,7 @@ fn void generalized_test_pose(GeneralizedTestFixture* fixture, float time, Trans
     foreach (&track : fixture.tracks) {
         double[4] value;
         uint cursor;
-        anim::sample_track_analytic(
+        anim::sample_track_double(
             track: track,
             time: time,
             cursor: &cursor,
