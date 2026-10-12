@@ -938,7 +938,10 @@ instead of in the vertex stage of every draw. It is off by default and latched p
 the next frame. With it on, every view, depth prepass, shadow layer and velocity pass of the frame draws the
 posed positions, normals and tangents through the plain vertex form. Images match vertex skinning visually,
 not bit for bit. The pass runs the `trace_pose` shader, so the posed streams hold unnormalized normals that
-the vertex stage normalizes as before, and a tangent keeps its handedness.
+the vertex stage normalizes as before, and a tangent keeps its handedness. It replaces the vertex-stage
+skinning of every pass with one dispatch and one root upload per mesh per frame, so it pays when a mesh is
+drawn by many passes, such as velocity, more views or cascades, or is heavy per vertex; with few passes it
+can cost more GPU and CPU time than vertex skinning.
 
 - **Scope.** Ordinary meshes that are skinned, morphed or both. Crowds, animated LOD parts and instanced
   groups keep vertex skinning, as do meshes with `Mesh.vertex_motion`, whose previous positions the
@@ -948,11 +951,12 @@ the vertex stage normalizes as before, and a tangent keeps its handedness.
   are double buffered, current and previous; normals and tangents are written in place each frame behind a
   barrier, since nothing reads their history. A mesh costs 52 B per vertex plus two root blocks in one device
   allocation: the example character, two meshes of about 5,900 vertices together, holds 0.31 MB.
-- **Cap.** `MAX_COMPUTE_SKINNING_BYTES` (512 MiB) caps the resident posed bytes. A mesh whose blocks would
-  exceed it keeps vertex skinning and counts in `Stats.compute_skinning_fallbacks`; this is never a fault.
-  `Stats.compute_skinned` counts the meshes posed this frame and `Stats.compute_skinning_bytes` the
-  resident bytes. Each posed mesh takes one of the device's 4,096 allocation slots, which the byte cap does
-  not bound.
+- **Caps.** `MAX_COMPUTE_SKINNING_BYTES` (512 MiB) caps the resident posed bytes, and
+  `MAX_COMPUTE_SKINNING_MESHES` (2,048) caps the posed meshes, since each takes one of the device's 4,096
+  allocation slots, which the rest of the renderer shares. A mesh past either keeps vertex skinning. Each
+  pass that draws it counts once in `Stats.compute_skinning_fallbacks`; this is never a fault, while a failed
+  device allocation still is one. `Stats.compute_skinned` counts the meshes posed this frame and
+  `Stats.compute_skinning_bytes` the resident bytes.
 - **Recording.** One `trace_pose` dispatch per mesh per frame under `Pass.COMPUTE_SKIN`, recorded before the
   first raster pass of the view, depth prepass or shadow layer that draws the mesh. Later passes and views of
   the frame reuse the pose. A dispatch waits for the shaders of earlier frames that read the block it
