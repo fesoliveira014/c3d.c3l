@@ -4,6 +4,8 @@ import c3d;
 import c3d::maths;
 import std::math;
 
+const double INERTIAL_MIN_SCALE @local = 0x1p-126; // Smallest normal float; keeps corrected consumed scale invertible.
+
 <* Capture residuals from the displayed source and admitted target onset.
    @param [&inout] row : "Reserved residual rows; history remains unchanged."
    @require source_pose.len == row.previous_pose.len && target_pose.len == source_pose.len
@@ -139,7 +141,7 @@ fn void apply_inertial_pose(
             elapsed: elapsed,
         );
         InertialScalarState result = inertial_correct_log_scale(residual, target_scale);
-        float value = (float)result.value;
+        float value = (float)math::clamp(result.value, INERTIAL_MIN_SCALE, (double)float::max);
         target.scale = { value, value, value };
         velocity.scale = { result.rate, result.rate, result.rate };
     }

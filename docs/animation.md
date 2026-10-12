@@ -409,13 +409,12 @@ residuals preserve value and velocity at onset and decay to the target. Scale
 on a consumed motion chain uses `s_target * exp(residual)` in log space, keeping
 positive uniform scale positive and velocity-matched. Regular blending is
 convex, so admitted positive-uniform scales remain positive under runtime
-weights, masks, fades and group controls. Request-time bounds also require the
-whole corrected scale window to remain representable as float. A proven
-out-of-range result faults `INVALID_ARGUMENT`; a result within the directed
-rounding margin faults `UNSUPPORTED`. Cubic scale on a consumed chain is
-unsupported: such a request faults `UNSUPPORTED` unless its keys alone are out
-of range. A shorter transition duration may succeed; the runtime does not clamp
-accepted scale.
+weights, masks, fades and group controls; the request faults `INVALID_ARGUMENT`
+when a consumed node's source or baseline scale is not positive. The corrected
+scale is clamped to the positive normal float range, `[2^-126, float::max]`, so
+a large residual saturates instead of overflowing. Cubic scale on a consumed
+chain is unsupported: such a request faults `UNSUPPORTED` unless its keys alone
+are out of range.
 
 For a consumed root, source and target use the same motion node, selected axes,
 up, twist and frame. Different clip reference positions are allowed; the pose

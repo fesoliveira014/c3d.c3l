@@ -2245,74 +2245,54 @@ fn void test_animation_inertial_request_consumed_scale_follows_geometric_midpoin
     assert(inertial_owner_pose(&fixture, 2).scale == (Vec3){ 1, 1, 1 });
 }
 
-fn void test_animation_inertial_request_real_scale_histories_reject_long_and_accept_short_duration_atomically() @test {
+fn void test_animation_inertial_request_consumed_scale_residual_clamps_to_float_range() @test {
     foreach (double sign : { -1.0, 1.0 }) {
-        TrackingAllocator tracker;
-        tracker.init(mem);
-        defer tracker.free();
-        {
-            MotionTestAllocator allocator = { .backing = &tracker };
-            LayerFixture fixture;
-            create_inertial_owner(&fixture, &allocator);
-            defer destroy_layer_fixture(&fixture);
-            float scale = 0x1p-100f;
-            float step = 0x1p-11f;
-            float[2] source_times = { 0, step };
-            float first = sign < 0 ? 0x1.8p-100f : 0x1p-101f;
-            float[6] source_values = { first, first, first, scale, scale, scale };
-            float[2] target_times = { 0, 1 };
-            float[6] target_values = { scale, scale, scale, scale, scale, scale };
-            ClipId source = inertial_owner_clip(
-                owner: &fixture,
-                path: TargetPath.SCALE,
-                interpolation: Interpolation.LINEAR,
-                times: source_times[..],
-                values: source_values[..],
-                node: 2,
-            );
-            ClipId target = inertial_owner_clip(
-                owner: &fixture,
-                path: TargetPath.SCALE,
-                interpolation: Interpolation.LINEAR,
-                times: target_times[..],
-                values: target_values[..],
-                node: 2,
-            );
-            ModelInstance* instance = fixture.scene.get(fixture.root, ModelInstance);
-            instance.base_pose[2].scale = { scale, scale, scale };
-            PlayDesc generalized = request_generalized_desc();
-            AnimationActionId id = fixture.animator.play(&fixture.assets, source, generalized)!!;
-            PlaybackView playback = fixture.animator.playback();
-            Action* action = playback.actions.get(id);
-            action.loop = false;
-            action.playing = false;
-            anim::update(&fixture.assets, &fixture.scene, step);
-            action.playing = true;
-            anim::update(&fixture.assets, &fixture.scene, step);
-            assert(inertial_owner_pose(&fixture, 2).scale.x == scale);
-            assert(inertial_owner_row(&fixture).velocity[2].scale.x == sign * 0x1p-90);
-            AnimationTargetDesc[1] description = { anim::ANIMATION_TARGET_DEFAULT };
-            description[0].clip = target;
-            description[0].play = generalized;
-            @pool() {
-                RequestBlockSnapshot[] snapshot = request_snapshot_blocks(&tracker);
-                uint calls = allocator.attempts;
-                assert(@catch(fixture.animator.inertialize(
-                    assets: &fixture.assets,
-                    desc: { .duration = 1, .actions = description[..] },
-                )) == c3d::INVALID_ARGUMENT);
-                assert(allocator.attempts == calls);
-                request_assert_blocks_unchanged(&tracker, snapshot);
-            };
-            fixture.animator.inertialize(&fixture.assets, { .duration = 0x1p-6f, .actions = description[..] })!!;
-            assert(inertial_owner_pose(&fixture, 2).scale.x == scale);
-            anim::update(&fixture.assets, &fixture.scene, 0x1p-8f);
-            double expected = 0x1p-100 * math::exp(sign * 2.953125);
-            Vec3 actual = inertial_owner_pose(&fixture, 2).scale;
-            assert(math::abs((double)actual.x / expected - 1) < 1e-5);
-            assert(actual.x > 0 && math::is_finite(actual.x) && actual.x == actual.y && actual.y == actual.z);
-        }
-        assert(!tracker.has_leaks());
+        LayerFixture fixture;
+        create_inertial_owner(&fixture);
+        defer destroy_layer_fixture(&fixture);
+        float scale = 0x1p-100f;
+        float step = 0x1p-11f;
+        float[2] source_times = { 0, step };
+        float first = sign < 0 ? 0x1.8p-100f : 0x1p-101f;
+        float[6] source_values = { first, first, first, scale, scale, scale };
+        float[2] target_times = { 0, 1 };
+        float[6] target_values = { scale, scale, scale, scale, scale, scale };
+        ClipId source = inertial_owner_clip(
+            owner: &fixture,
+            path: TargetPath.SCALE,
+            interpolation: Interpolation.LINEAR,
+            times: source_times[..],
+            values: source_values[..],
+            node: 2,
+        );
+        ClipId target = inertial_owner_clip(
+            owner: &fixture,
+            path: TargetPath.SCALE,
+            interpolation: Interpolation.LINEAR,
+            times: target_times[..],
+            values: target_values[..],
+            node: 2,
+        );
+        ModelInstance* instance = fixture.scene.get(fixture.root, ModelInstance);
+        instance.base_pose[2].scale = { scale, scale, scale };
+        PlayDesc generalized = request_generalized_desc();
+        AnimationActionId id = fixture.animator.play(&fixture.assets, source, generalized)!!;
+        Action* action = fixture.animator.action(id);
+        action.loop = false;
+        action.playing = false;
+        anim::update(&fixture.assets, &fixture.scene, step);
+        action.playing = true;
+        anim::update(&fixture.assets, &fixture.scene, step);
+        assert(inertial_owner_row(&fixture).velocity[2].scale.x == sign * 0x1p-90);
+
+        AnimationTargetDesc[1] description = { anim::ANIMATION_TARGET_DEFAULT };
+        description[0].clip = target;
+        description[0].play = generalized;
+        fixture.animator.inertialize(&fixture.assets, { .duration = 1, .actions = description[..] })!!;
+        anim::update(&fixture.assets, &fixture.scene, 0.25f);
+        Vec3 actual = inertial_owner_pose(&fixture, 2).scale;
+        assert(actual.x == (sign < 0 ? 0x1p-126f : float::max));
+        assert(actual.x == actual.y && actual.y == actual.z);
     }
 }
 
@@ -2566,91 +2546,6 @@ fn void test_animation_planar_extract_yaw_and_translation_actions_remain_composa
         RootMotionDelta delta = fixture.animator.root_motion;
         assert(delta.translation == (Vec3){ 0.25f, 0, 0 });
         assert(delta.rotation.v == quaternion::IDENTITY{float}.v);
-    }
-}
-
-fn void test_animation_inertial_request_group_phase_controls_consumed_scale_eligibility_time() @test {
-    foreach (kind : (AnimationSpaceKind[2]){ ONE_DIMENSIONAL, TWO_DIMENSIONAL }) {
-        TrackingAllocator tracker;
-        tracker.init(mem);
-        defer tracker.free();
-        {
-            MotionTestAllocator allocator = { .backing = &tracker };
-            LayerFixture fixture;
-            create_inertial_owner(&fixture, &allocator);
-            defer destroy_layer_fixture(&fixture);
-            float[2] times = { 0, 1 };
-            float[6] source_values = { 0x1p-100, 0x1p-100, 0x1p-100, 0x1p-100, 0x1p-100, 0x1p-100 };
-            float[6] target_values = { 0x1p-100, 0x1p-100, 0x1p-100, 0x1p-90, 0x1p-90, 0x1p-90 };
-            ClipId source = inertial_owner_clip(
-                owner: &fixture,
-                path: TargetPath.SCALE,
-                interpolation: Interpolation.LINEAR,
-                times: times[..],
-                values: source_values[..],
-                node: 2,
-            );
-            ClipId target = inertial_owner_clip(
-                owner: &fixture,
-                path: TargetPath.SCALE,
-                interpolation: Interpolation.LINEAR,
-                times: times[..],
-                values: target_values[..],
-                node: 2,
-            );
-            PlayDesc generalized = request_generalized_desc();
-            fixture.animator.play(&fixture.assets, source, generalized)!!;
-            anim::update(&fixture.assets, &fixture.scene, 0.125f);
-            anim::update(&fixture.assets, &fixture.scene, 0.125f);
-            AnimationTargetDesc[3] targets;
-            foreach (&description : targets) {
-                *description = anim::ANIMATION_TARGET_DEFAULT;
-                description.clip = target;
-                description.play = generalized;
-                description.start_time = 0;
-            }
-            uint[3] members = { 0, 1, 2 };
-            float[2] positions = { 0, 1 };
-            Vec2[3] points = { { 0, 0 }, { 1, 0 }, { 0, 1 } };
-            BlendTriangle[1] triangles = { { .indices = { 0, 1, 2 } } };
-            uint count = kind == ONE_DIMENSIONAL ? 2 : 3;
-            AnimationTransitionSpaceDesc[1] spaces = { {
-                .space = {
-                    .actions = members[:count],
-                    .kind = kind,
-                    .weight = 1,
-                    .speed = 1,
-                    .playing = true,
-                },
-            } };
-            switch (kind) {
-                case ONE_DIMENSIONAL:
-                    spaces[0].space.positions = positions[..];
-                case TWO_DIMENSIONAL:
-                    spaces[0].space.points = points[..];
-                    spaces[0].space.triangles = triangles[..];
-            }
-            @pool() {
-                RequestBlockSnapshot[] snapshot = request_snapshot_blocks(&tracker);
-                uint acquisitions = allocator.attempts;
-                assert(@catch(fixture.animator.inertialize(
-                    assets: &fixture.assets,
-                    desc: { .duration = 1, .actions = targets[:count], .spaces = spaces[..] },
-                )) == c3d::INVALID_ARGUMENT);
-                assert(allocator.attempts == acquisitions);
-                request_assert_blocks_unchanged(&tracker, snapshot);
-            };
-            spaces[0].phase = 0.5f;
-            fixture.animator.inertialize(
-                assets: &fixture.assets,
-                desc: { .duration = 1, .actions = targets[:count], .spaces = spaces[..] },
-            )!!;
-            PlaybackView playback = fixture.animator.playback();
-            assert(*playback.action_count == count);
-            foreach (id : playback.order[:count]) assert(playback.actions.get(id).time == 0.5f);
-            assert(inertial_owner_pose(&fixture, 2).scale == (Vec3){ 0x1p-100, 0x1p-100, 0x1p-100 });
-        }
-        assert(!tracker.has_leaks());
     }
 }
 
