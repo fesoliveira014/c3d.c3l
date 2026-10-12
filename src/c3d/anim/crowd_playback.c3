@@ -19,7 +19,7 @@ struct CrowdEvent {
     FiredEvent event;
 }
 
-<* Fixed playback arrays and outputs owned by one crowd slot. *>
+<* One crowd slot's playback state over slices of the crowd's storage. *>
 struct CrowdPlaybackSlot {
     Pool{Action, AnimationActionId} actions;
     AnimationActionId[] order;
@@ -33,6 +33,16 @@ struct CrowdPlaybackSlot {
     RootMotionDelta root_motion;
 }
 
+struct CrowdSlotStorage @private {
+    Action[] actions;
+    uint[] generations;
+    uint[] free;
+    AnimationActionId[] order;
+    bool[] masks;
+    BlendSpace1D[] spaces;
+    BlendSpace2D[] spaces_2d;
+}
+
 <* Owns crowd playback storage, baselines and one event buffer. *>
 struct CrowdPlaybackState {
     Allocator allocator;
@@ -40,6 +50,7 @@ struct CrowdPlaybackState {
     ulong identity;
     Transform[] placements;
     CrowdPlaybackSlot[] slots;
+    CrowdSlotStorage slot_storage;
     Transform[] base_pose;
     int[] parents;
     uint[] mesh_nodes;
@@ -500,31 +511,44 @@ fn CrowdPlaybackState*? create_crowd_playback(
         )!;
     }
 
+    CrowdSlotStorage* storage = &state.slot_storage;
+    usz slot_actions = (usz)capacity * actions_per_instance;
+    usz mask_width = (usz)actions_per_instance * template.nodes.len;
+    storage.actions = alloc::new_array_try(allocator, Action, (sz)slot_actions)
+      ?? c3d::CAPACITY_EXCEEDED~!;
+    storage.generations = alloc::new_array_try(allocator, uint, (sz)slot_actions)
+      ?? c3d::CAPACITY_EXCEEDED~!;
+    storage.free = alloc::new_array_try(allocator, uint, (sz)slot_actions)
+      ?? c3d::CAPACITY_EXCEEDED~!;
+    storage.order = alloc::new_array_try(allocator, AnimationActionId, (sz)slot_actions)
+      ?? c3d::CAPACITY_EXCEEDED~!;
+    storage.masks = alloc::new_array_try(allocator, bool, (sz)((usz)capacity * mask_width))
+      ?? c3d::CAPACITY_EXCEEDED~!;
+    storage.spaces = alloc::new_array_try(allocator, BlendSpace1D, (sz)capacity * MAX_BLEND_SPACES)
+      ?? c3d::CAPACITY_EXCEEDED~!;
+    storage.spaces_2d = create_blend_spaces_2d(allocator, actions_per_instance, capacity)!;
+
+    storage.generations[..] = 1;
+
     uint root_node = crowd_default_root(template);
     state.default_root_node = root_node;
+
     foreach (usz index, &slot : state.slots) {
-        slot.actions.allocator = allocator;
-        slot.actions.items = alloc::new_array_try(allocator, Action, actions_per_instance)
-          ?? c3d::CAPACITY_EXCEEDED~!;
-        slot.actions.generations = alloc::new_array_try(allocator, uint, actions_per_instance)
-          ?? c3d::CAPACITY_EXCEEDED~!;
-        slot.actions.free = alloc::new_array_try(allocator, uint, actions_per_instance)
-          ?? c3d::CAPACITY_EXCEEDED~!;
-        slot.order = alloc::new_array_try(allocator, AnimationActionId, actions_per_instance)
-          ?? c3d::CAPACITY_EXCEEDED~!;
-        slot.masks = alloc::new_array_try(allocator, bool, (sz)actions_per_instance * template.nodes.len)
-          ?? c3d::CAPACITY_EXCEEDED~!;
-        slot.spaces = alloc::new_array_try(allocator, BlendSpace1D, MAX_BLEND_SPACES)
-          ?? c3d::CAPACITY_EXCEEDED~!;
-
-        slot.spaces_2d = create_blend_spaces_2d(allocator, actions_per_instance)!;
-
-        slot.actions.free_count = actions_per_instance;
-        slot.actions.generations[..] = 1;
+        usz first = index * actions_per_instance;
+        slot.actions = {
+            .items = storage.actions[first:actions_per_instance],
+            .generations = storage.generations[first:actions_per_instance],
+            .free = storage.free[first:actions_per_instance],
+            .free_count = actions_per_instance,
+        };
         for (uint action = 0; action < actions_per_instance; action++) {
             slot.actions.free[action] = actions_per_instance - 1 - action;
         }
 
+        slot.order = storage.order[first:actions_per_instance];
+        slot.masks = storage.masks[index * mask_width:mask_width];
+        slot.spaces = storage.spaces[index * MAX_BLEND_SPACES:MAX_BLEND_SPACES];
+        slot.spaces_2d = storage.spaces_2d[index * MAX_BLEND_SPACES:MAX_BLEND_SPACES];
         slot.generation = 1;
 
         slot.root_node = root_node;
@@ -544,20 +568,20 @@ fn CrowdPlaybackState*? create_crowd_playback(
 fn void destroy_crowd_playback(CrowdPlaybackState* state) {
     Allocator allocator = state.allocator;
     foreach (&slot : state.slots) {
-        foreach (id : slot.order[:slot.action_count]) {
-            Action* action = slot.actions.get(id);
-            release_prepared_action(allocator, action);
-        }
-
-        pool::destroy_pool{Action, AnimationActionId}(&slot.actions);
-        alloc::free(allocator, slot.order.ptr);
-        alloc::free(allocator, slot.masks.ptr);
-        alloc::free(allocator, slot.spaces.ptr);
-        destroy_blend_spaces_2d(allocator, slot.spaces_2d);
+        foreach (id : slot.order[:slot.action_count]) release_prepared_action(allocator, slot.actions.get(id));
     }
 
     if (state.inertial_storage) destroy_inertial_storage(state.inertial_storage);
     if (state.pose_storage) destroy_pose_storage(allocator, state.pose_storage);
+
+    CrowdSlotStorage* storage = &state.slot_storage;
+    alloc::free(allocator, storage.actions.ptr);
+    alloc::free(allocator, storage.generations.ptr);
+    alloc::free(allocator, storage.free.ptr);
+    alloc::free(allocator, storage.order.ptr);
+    alloc::free(allocator, storage.masks.ptr);
+    alloc::free(allocator, storage.spaces.ptr);
+    destroy_blend_spaces_2d(allocator, storage.spaces_2d);
 
     foreach (values : state.base_morph_weights) alloc::free(allocator, values.ptr);
 

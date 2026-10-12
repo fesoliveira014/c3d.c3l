@@ -378,22 +378,23 @@ fn void advance_blend_spaces_2d(PlaybackView* playback, AssetStore* assets, floa
     }
 }
 
-fn BlendSpace2D[]? create_blend_spaces_2d(Allocator allocator, uint capacity) @private {
+fn BlendSpace2D[]? create_blend_spaces_2d(Allocator allocator, uint capacity, uint owners = 1) @private {
     $assert BlendSpace2D::alignment % AnimationActionId::alignment == 0
       && BlendSpace2D::alignment % Vec2::alignment == 0;
 
     uint triangles = capacity * 2 > 5 ? capacity * 2 - 5 : 0;
-    usz controls = MAX_BLEND_SPACES * BlendSpace2D::size;
+    usz count = (usz)owners * MAX_BLEND_SPACES;
+    usz controls = count * BlendSpace2D::size;
     usz points_offset = align_blend_space_storage(capacity * AnimationActionId::size, Vec2::alignment);
     usz triangles_offset = points_offset + capacity * Vec2::size;
     usz hull_offset = triangles_offset + triangles * BlendTriangleIndices::size;
     usz slot_end = hull_offset + capacity * BlendHullIndices::size;
     usz slot_bytes = align_blend_space_storage(slot_end, BlendSpace2D::alignment);
-    usz bytes = controls + MAX_BLEND_SPACES * slot_bytes;
+    usz bytes = controls + count * slot_bytes;
 
     char* storage = (char*)(allocator.acquire((sz)bytes, AllocInitType.ZERO, BlendSpace2D::alignment)
       ?? c3d::CAPACITY_EXCEEDED~!);
-    BlendSpace2D[] spaces = ((BlendSpace2D*)storage)[:MAX_BLEND_SPACES];
+    BlendSpace2D[] spaces = ((BlendSpace2D*)storage)[:count];
 
     foreach (usz slot, &space : spaces) {
         char* slot_storage = storage + controls + slot * slot_bytes;
