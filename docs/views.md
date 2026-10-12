@@ -519,11 +519,12 @@ pipeline calls; callers can raise that allowance for a later call.
 
 Uploads split into legal texture row/block bands and aligned geometry or payload
 ranges. Mip filtering splits into destination row bands, preserving the synchronous
-filter and rounding. Each band costs its output texels once per pass over its level,
-so a complete chain costs its generated texel count times its pass count; a coverage
-pass that a level skips counts as done without a charge. CPU-only shader copies are
-reported separately as `copied_bytes`. Pipeline and finish work never upload a stale dependency outside
-the accounting. Normal pipeline misses create one pipeline per step. Atomic custom
+filter and rounding. Threshold coverage adds a second, correction pass over each
+level. Each band costs its output texels once per pass, so a complete chain costs its
+generated texel count, twice with threshold coverage; a level that needs no correction
+counts that pass as done without a charge. CPU-only shader copies are reported
+separately as `copied_bytes`. Pipeline and finish work never upload a stale
+dependency outside the accounting. Normal pipeline misses create one pipeline per step. Atomic custom
 shader adoption can require several cached keys; a bounded call defers until its true
 creation count fits, while an unbounded call admits the atomic operation.
 

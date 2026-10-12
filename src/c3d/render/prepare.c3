@@ -173,6 +173,7 @@ struct PrepareRecord @private {
     uint generation_layer;
     uint generation_row;
     TextureCoverageState coverage;
+    bool correcting_coverage;
     material::TextureDesc generation_desc;
     CoverageStatistics generation_statistics;
     bool chain_active;

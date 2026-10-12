@@ -105,7 +105,7 @@ fn GeneratedTextureLayout? generated_texture_mip_layout(material::TextureDesc de
     GeneratedTextureLayout layout = {
         .mip_count = desc.generate_mips ? material::texture_mip_count(desc.width, desc.height) - 1 : 0,
         .layer_count = desc.layers,
-        .passes = texture_generation_passes(desc),
+        .passes = desc.coverage == CoveragePolicy.THRESHOLD ? COVERAGE_PASSES : 1,
     };
 
     for (uint index = 0; index < layout.mip_count; index++) {
@@ -119,8 +119,6 @@ fn GeneratedTextureLayout? generated_texture_mip_layout(material::TextureDesc de
         layout.byte_count += (usz)texels * texel_bytes;
         layout.output_texels += texels;
     }
-
-    if (layout.output_texels > ulong::max / layout.passes) return c3d::INVALID_ARGUMENT~;
 
     return layout;
 }

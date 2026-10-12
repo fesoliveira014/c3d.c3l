@@ -221,14 +221,11 @@ fn bool? run_prepare_step(
             record.generation_row = 0;
             record.generation_desc = source.desc;
             record.generation_statistics = source.coverage_statistics;
+            record.correcting_coverage = false;
 
             if (source.desc.coverage == CoveragePolicy.THRESHOLD) {
-                record.coverage = begin_texture_coverage(
-                    desc: source.desc,
-                    mip: 1,
-                    face: 0,
-                    statistics: &record.generation_statistics,
-                );
+                record.coverage = begin_texture_coverage(source.desc);
+                record.coverage.base_passing = source.coverage_statistics.passing;
             }
 
             unit.generated_done = 0;
@@ -238,11 +235,21 @@ fn bool? run_prepare_step(
         case GENERATE:
             TextureAsset* source = renderer.assets.texture(unit.texture);
             material::TextureDesc desc = record.generation_desc;
-            bool coverage = desc.coverage == CoveragePolicy.THRESHOLD;
+            TextureCoverageState* coverage = desc.coverage == CoveragePolicy.THRESHOLD ? &record.coverage : null;
             std::time::Clock started = clock::now();
             defer report.generation_ns = prepare_add(report.generation_ns, (ulong)started.to_now());
 
-            if (!coverage || record.coverage.phase == 0) {
+            if (record.correcting_coverage) {
+                write_texture_coverage_band(
+                    state: coverage,
+                    desc: desc,
+                    chain: &record.chain,
+                    mip: plan.band.mip,
+                    layer: plan.band.layer,
+                    first_row: plan.band.y,
+                    row_count: plan.band.height,
+                );
+            } else {
                 write_texture_filter_band(
                     desc: desc,
                     mip: plan.band.mip,
@@ -251,60 +258,43 @@ fn bool? run_prepare_step(
                     row_count: plan.band.height,
                     mip_zero: source.pixels,
                     chain: &record.chain,
-                    coverage: coverage ? &record.coverage : null,
+                    coverage: coverage,
                 )!;
-            } else {
-                usz layer_bytes = material::texture_mip_bytes(desc, plan.band.mip)!;
-                char[] destination = record.chain.pixels[
-                    record.chain.offsets[plan.band.mip - 1] + (usz)plan.band.layer * layer_bytes:layer_bytes];
-                write_texture_coverage_band(
-                    desc: desc,
-                    destination: destination,
-                    state: &record.coverage,
-                    row_count: plan.band.height,
-                );
             }
 
             record.generation_row += plan.band.height;
             unit.generated_done = prepare_add(unit.generated_done, plan.cost.generated_texels);
             record.texels_done = prepare_add(record.texels_done, plan.cost.generated_texels);
             report.generated_texels = prepare_add(report.generated_texels, plan.cost.generated_texels);
-            if (coverage) {
-                record.coverage.reserved += plan.cost.generated_texels;
-                record.coverage.row = record.generation_row;
+
+            uint height = material::texture_mip_extent(desc.height, plan.band.mip);
+
+            if (record.generation_row < height) return false;
+
+            record.generation_row = 0;
+
+            if (coverage && !record.correcting_coverage) {
+                record.correcting_coverage = choose_texture_coverage(
+                    state: coverage,
+                    desc: desc,
+                    mip: plan.band.mip,
+                    layer: plan.band.layer,
+                );
+
+                if (record.correcting_coverage) return false;
+
+                ulong skipped = (ulong)plan.band.width * height;
+                unit.generated_done = prepare_add(unit.generated_done, skipped);
+                record.texels_done = prepare_add(record.texels_done, skipped);
             }
 
-            if (record.generation_row == material::texture_mip_extent(desc.height, record.generation_mip)) {
-                bool completed = true;
+            record.correcting_coverage = false;
 
-                if (coverage) {
-                    ulong reserved_before = record.coverage.reserved;
-                    finish_texture_coverage_pass(&record.coverage);
+            if (coverage) coverage.level = {};
 
-                    ulong credit = record.coverage.reserved - reserved_before;
-                    unit.generated_done = prepare_add(unit.generated_done, credit);
-                    record.texels_done = prepare_add(record.texels_done, credit);
-
-                    completed = record.coverage.phase == texture_generation_passes(desc);
-                }
-
-                record.generation_row = 0;
-
-                if (completed) {
-                    if (++record.generation_layer == desc.layers) {
-                        record.generation_layer = 0;
-                        record.generation_mip++;
-                    }
-
-                    if (coverage && record.generation_mip <= record.chain.mip_count) {
-                        record.coverage = begin_texture_coverage(
-                            desc: desc,
-                            mip: record.generation_mip,
-                            face: record.generation_layer,
-                            statistics: &record.generation_statistics,
-                        );
-                    }
-                }
+            if (++record.generation_layer == desc.layers) {
+                record.generation_layer = 0;
+                record.generation_mip++;
             }
 
             return false;
@@ -654,6 +644,7 @@ fn void clear_prepare_chain(PrepareRecord* record) @private {
     record.generation_layer = 0;
     record.generation_row = 0;
     record.coverage = {};
+    record.correcting_coverage = false;
     record.generation_desc = {};
     record.generation_statistics = {};
 }

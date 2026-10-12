@@ -11,8 +11,6 @@ struct FilteringExecution @local {
     TextureMipChain chain;
     ulong work;
     ulong progress;
-    bool first_skipped;
-    bool later_plateau;
 }
 
 fn void test_mip_scalar_bands_accept_byte_aligned_half_and_float_storage() @test {
@@ -284,21 +282,6 @@ fn void test_explicit_normal_srgb_and_supplied_coverage_are_rejected() @test {
     }
 }
 
-fn void test_hash_prefix_collision_quota_keeps_raster_ties() @test {
-    TextureHashChoice choice = { .prefix = 0x12345678, .length = 4, .rank = 2, .bucket = 3 };
-
-    assert(selected_texture_hash(&choice, 0x12345677));
-    assert(selected_texture_hash(&choice, 0x12345678));
-
-    TextureHashChoice resumed = choice;
-
-    assert(selected_texture_hash(&choice, 0x12345678));
-    assert(selected_texture_hash(&resumed, 0x12345678));
-    assert(!selected_texture_hash(&choice, 0x12345678));
-    assert(!selected_texture_hash(&resumed, 0x12345678));
-    assert(!selected_texture_hash(&choice, 0x12345679));
-}
-
 fn FilteringExecution run_filtered_rows(
     material::TextureDesc desc,
     char[] pixels,
@@ -309,27 +292,22 @@ fn FilteringExecution run_filtered_rows(
     defer asset::destroy_asset_store(&assets);
 
     TextureId texture = assets.add_texture(desc, pixels)!!;
-
-    TextureAsset* source = assets.texture(texture);
     GeneratedTextureLayout layout = generated_texture_mip_layout(desc)!!;
     PrepareUnit unit = { .kind = PrepareUnitKind.TEXTURE, .texture = texture, .revision = 1 };
-    PrepareRecord record = {
-        .chain = create_generated_texture_mips(mem, desc)!!,
-        .chain_active = true, .generation_mip = 1,
-        .generation_desc = desc, .generation_statistics = source.coverage_statistics,
-    };
-
-    if (desc.coverage == CoveragePolicy.THRESHOLD) record.coverage = begin_texture_coverage(
-        desc: desc,
-        mip: 1,
-        face: 0,
-        statistics: &record.generation_statistics,
-    );
-
-    Renderer renderer = { .assets = &assets };
+    PrepareRecord record;
+    Renderer renderer = { .assets = &assets, .allocator = mem };
     PrepareReport report;
     FilteringExecution execution;
     bool released;
+    PrepareStepPlan storage = { .kind = PrepareResourceStep.GENERATION_STORAGE };
+
+    run_prepare_step(
+        renderer: &renderer,
+        record: &record,
+        unit: &unit,
+        plan: &storage,
+        report: &report,
+    )!!;
 
     while (record.generation_mip <= layout.mip_count) {
         uint height = material::texture_mip_extent(desc.height, record.generation_mip);
@@ -342,8 +320,6 @@ fn FilteringExecution run_filtered_rows(
             first_block_row: record.generation_row,
             block_rows: rows,
         )!!;
-        uint previous_mip = record.generation_mip;
-        uint previous_phase = record.coverage.phase;
         PrepareStepPlan plan = { .kind = PrepareResourceStep.GENERATE, .band = band,
             .cost = { .generated_texels = (ulong)band.width * rows } };
 
@@ -355,11 +331,7 @@ fn FilteringExecution run_filtered_rows(
             report: &report,
         )!!;
 
-        if (previous_mip == 1 && previous_phase == 0 && record.coverage.phase >= 5) execution.first_skipped = true;
-
-        if (record.generation_mip > 1 && record.coverage.plateau) execution.later_plateau = true;
-
-        if (release_after_filter && !released && (record.generation_mip > 1 || record.coverage.phase > 0)) {
+        if (release_after_filter && !released && (record.generation_mip > 1 || record.correcting_coverage)) {
             assets.release_texture_cpu(texture);
 
             released = true;
@@ -376,7 +348,21 @@ fn FilteringExecution run_filtered_rows(
     return execution;
 }
 
-fn void test_later_plateau_engages_after_skipped_hashes_and_held_source_resumes() @test {
+fn bool meets_base_coverage(
+    ulong passing,
+    ulong texels,
+    ulong base_passing,
+    ulong base_texels,
+) @local {
+    ulong nearest = (2 * base_passing * texels + base_texels) / (2 * base_texels);
+    ulong actual = passing * base_texels;
+    ulong expected = base_passing * texels;
+    ulong error = actual > expected ? actual - expected : expected - actual;
+
+    return passing == nearest || error * 50 <= base_texels * texels;
+}
+
+fn void test_plateau_level_promotes_its_target_and_keeps_color() @test {
     material::TextureDesc desc = material::texture_2d_desc(16, 16, RGBA8_UNORM);
     desc.coverage = CoveragePolicy.THRESHOLD;
     desc.alpha_threshold = 0.5;
@@ -407,8 +393,7 @@ fn void test_later_plateau_engages_after_skipped_hashes_and_held_source_resumes(
     defer destroy_texture_mips(&held.chain);
 
     assert(single.chain.pixels == whole.chain.pixels && single.chain.pixels == held.chain.pixels);
-    assert(single.first_skipped && single.later_plateau && held.first_skipped && held.later_plateau);
-    assert(single.progress == 6 * 85 && single.work < single.progress);
+    assert(single.progress == 2 * 85 && single.work < single.progress);
     assert(single.work == whole.work && single.work == held.work && held.progress == single.progress);
 
     char[] first = single.chain.pixels[:256];
@@ -432,6 +417,25 @@ fn void test_later_plateau_engages_after_skipped_hashes_and_held_source_resumes(
     }
 }
 
+fn void test_opaque_threshold_texture_keeps_ordinary_mips() @test {
+    material::TextureDesc desc = material::texture_2d_desc(8, 4, RGBA8_SRGB);
+    desc.coverage = CoveragePolicy.THRESHOLD;
+    desc.alpha_threshold = 0.5;
+    char[128] pixels;
+
+    foreach (index, &value : pixels) *value = index % 4 == 3 ? 255 : (char)(index * 7);
+
+    TextureMipChain masked = create_texture_mips(mem, desc, pixels[..])!!;
+    defer destroy_texture_mips(&masked);
+
+    desc.coverage = CoveragePolicy.NONE;
+
+    TextureMipChain color = create_texture_mips(mem, desc, pixels[..])!!;
+    defer destroy_texture_mips(&color);
+
+    assert(masked.pixels == color.pixels);
+}
+
 fn void test_zero_output_cube_has_zero_work_and_no_generation_allocation() @test {
     material::TextureDesc desc = material::texture_cube_desc(1, RGBA16_FLOAT);
     desc.semantic = TextureSemantic.NORMAL_RG;
@@ -439,7 +443,7 @@ fn void test_zero_output_cube_has_zero_work_and_no_generation_allocation() @test
     desc.alpha_threshold = 0.5;
     GeneratedTextureLayout layout = generated_texture_mip_layout(desc)!!;
 
-    assert(layout.output_texels == 0 && layout.byte_count == 0 && layout.passes == 7);
+    assert(layout.output_texels == 0 && layout.byte_count == 0 && layout.passes == 2);
 
     TextureMipChain generated = create_generated_texture_mips(mem, desc)!!;
     defer destroy_texture_mips(&generated);
@@ -447,14 +451,11 @@ fn void test_zero_output_cube_has_zero_work_and_no_generation_allocation() @test
     assert(!generated.pixels.len && generated.mip_count == 0 && generated.layer_count == 6);
 }
 
-fn void test_frozen_leaf_meets_stored_coverage_in_every_row_resume() @test {
+fn void test_leaf_levels_keep_mip_zero_coverage_in_every_row_resume() @test {
     material::TextureDesc desc = material::texture_2d_desc(32, 32, RGBA8_UNORM);
     desc.coverage = CoveragePolicy.THRESHOLD;
     desc.alpha_threshold = 0.5;
-
-    CoverageStatistics statistics = asset::create_coverage_statistics(desc, LEAF_RGBA8)!!;
-
-    assert(statistics.passing[0] == 484 && statistics.total[0] == 1024);
+    ulong base_passing = count_filtered_alpha(desc, LEAF_RGBA8, 0.5);
 
     FilteringExecution single = run_filtered_rows(desc, LEAF_RGBA8, 1);
     defer destroy_texture_mips(&single.chain);
@@ -463,163 +464,90 @@ fn void test_frozen_leaf_meets_stored_coverage_in_every_row_resume() @test {
     defer destroy_texture_mips(&whole.chain);
 
     assert(single.chain.pixels == whole.chain.pixels && single.progress == whole.progress);
-    assert(single.progress == 6 * 341 && single.work == whole.work && single.work < single.progress);
+    assert(single.progress == 2 * 341 && single.work == whole.work);
 
-    usz mip_two_bytes = material::texture_mip_bytes(desc, 2)!!;
-    char[] mip_two = single.chain.pixels[single.chain.offsets[1]:mip_two_bytes];
-
-    assert(count_filtered_alpha(desc, mip_two, 0.5) == 30);
-
-    for (uint mip = 1; mip <= 2; mip++) {
+    for (uint mip = 1; mip <= single.chain.mip_count; mip++) {
         usz bytes = material::texture_mip_bytes(desc, mip)!!;
-        ulong count = count_filtered_alpha(desc, single.chain.pixels[single.chain.offsets[mip - 1]:bytes], 0.5);
-        ulong width = material::texture_mip_extent(desc.width, mip);
-        ulong height = material::texture_mip_extent(desc.height, mip);
-        double error = math::abs((double)count / (double)(width * height) - 484.0 / 1024.0);
+        ulong passing = count_filtered_alpha(desc, single.chain.pixels[single.chain.offsets[mip - 1]:bytes], 0.5);
+        uint width = material::texture_mip_extent(desc.width, mip);
+        ulong texels = (ulong)width * material::texture_mip_extent(desc.height, mip);
 
-        assert(error <= COVERAGE_TOLERANCE);
+        assert(meets_base_coverage(
+            passing: passing,
+            texels: texels,
+            base_passing: base_passing,
+            base_texels: 1024,
+        ), "mip %d passes %d", mip, passing);
     }
 
-    TextureMipChain synchronous = create_texture_mips(
-        allocator: mem,
-        desc: desc,
-        pixels: LEAF_RGBA8,
-        statistics: &statistics,
-    )!!;
+    TextureMipChain synchronous = create_texture_mips(mem, desc, LEAF_RGBA8)!!;
     defer destroy_texture_mips(&synchronous);
 
     assert(synchronous.pixels[:LEAF_RGBA8.len] == LEAF_RGBA8);
     assert(synchronous.pixels[LEAF_RGBA8.len..] == single.chain.pixels);
 }
 
-fn TextureCoverageState solve_stored_groups(
-    material::TextureDesc desc,
-    char[] stored,
-    ulong base_passing,
-    ulong base_total,
-) @local {
-    usz texels = stored.len / material::texture_block_bytes(desc.format);
-    TextureCoverageState state = {
-        .texels = (ulong)texels, .format = desc.format, .width = (uint)texels, .height = 1,
-        .mip = 1, .alpha_bytes = (uint)material::texture_block_bytes(desc.format) / 4,
-        .base_pass = base_passing, .base_total = base_total, .cutoff = desc.alpha_threshold,
-    };
+fn void correct_stored_level(material::TextureDesc desc, char[] level, ulong base_passing) @local {
+    TextureCoverageState state = begin_texture_coverage(desc);
+    state.base_passing[0] = base_passing;
+    usz texels = level.len / material::texture_block_bytes(desc.format);
 
     for (usz texel = 0; texel < texels; texel++) {
-        collect_texture_filter_output(&state, asset::texture_alpha_code(desc.format, stored, texel));
+        collect_texture_coverage(&state, asset::texture_alpha_code(desc.format, level, texel));
     }
 
-    state.reserved += state.texels;
-    finish_texture_coverage_pass(&state);
+    TextureMipChain chain = { .first_mip = 1, .mip_count = 1, .layer_count = 1, .pixels = level };
 
-    while (state.phase < texture_generation_passes(desc)) {
+    if (choose_texture_coverage(
+        state: &state,
+        desc: desc,
+        mip: 1,
+        layer: 0,
+    )) {
         write_texture_coverage_band(
-            desc: desc,
-            destination: stored,
             state: &state,
+            desc: desc,
+            chain: &chain,
+            mip: 1,
+            layer: 0,
+            first_row: 0,
             row_count: 1,
         );
-
-        state.reserved += state.texels;
-        state.row = 1;
-        finish_texture_coverage_pass(&state);
     }
-
-    assert(count_filtered_alpha(desc, stored, desc.alpha_threshold) == state.expected);
-    assert(state.reserved == state.texels * texture_generation_passes(desc));
-
-    return state;
 }
 
-fn void test_canonical_zero_group_retains_minimal_positive_global_scale_within_tolerance() @test {
-    material::TextureDesc desc = material::texture_2d_desc(100, 1, RGBA32_FLOAT);
-    desc.coverage = CoveragePolicy.THRESHOLD;
-    desc.alpha_threshold = 0.5;
-    float[400] pixels;
-
-    for (usz texel = 0; texel < 99; texel++) pixels[texel * 4 + 3] = bitcast(1u, float);
-
-    TextureCoverageState state = solve_stored_groups(
-        desc: desc,
-        stored: ((char*)&pixels)[:pixels.len * float::size],
-        base_passing: 100,
-        base_total: 100,
-    );
-
-    assert(!state.plateau && state.zero_critical && state.global_count == 99 && state.expected == 99);
-    assert(state.scale == state.global_scale && state.scale > 1.0);
-
-    for (usz texel = 0; texel < 99; texel++) assert(pixels[texel * 4 + 3] == 0.5);
-
-    assert(pixels[399] == 0.0);
-}
-
-fn void test_zero_underflow_group_promotes_without_zero_activation_search() @test {
-    material::TextureDesc desc = material::texture_2d_desc(2, 1, RGBA32_FLOAT);
-    desc.coverage = CoveragePolicy.THRESHOLD;
-    desc.alpha_threshold = 0.5;
-    float[8] pixels;
-    TextureCoverageState state = solve_stored_groups(
-        desc: desc,
-        stored: ((char*)&pixels)[:pixels.len * float::size],
-        base_passing: 1,
-        base_total: 2,
-    );
-
-    assert(state.plateau && state.zero_critical && state.global_count == 0 && state.expected == 1);
-    assert(state.global_scale == 1.0 && state.scale == 1.0 && state.promote_count == 1);
-    assert(pixels[3] + pixels[7] == 0.5f && (pixels[3] == 0.0f || pixels[7] == 0.0f));
-}
-
-fn void test_exact_tolerance_boundary_preserves_global_bytes_then_neighbor_engages() @test {
-    PixelFormat[3] formats = { RGBA8_UNORM, RGBA16_FLOAT, RGBA32_FLOAT };
-
-    foreach (format : formats) {
-        material::TextureDesc desc = material::texture_2d_desc(100, 1, format);
+fn void test_levels_within_tolerance_keep_their_bytes_and_others_meet_the_nearest_count() @test {
+    foreach (format : (PixelFormat[3]){ RGBA8_UNORM, RGBA16_FLOAT, RGBA32_FLOAT }) {
+        material::TextureDesc desc = material::texture_2d_desc(200, 1, format);
         desc.coverage = CoveragePolicy.THRESHOLD;
         desc.alpha_threshold = 0.5;
         char[1600] storage;
-        char[] pixels = storage[:100 * material::texture_block_bytes(format)];
+        char[] level = storage[:100 * material::texture_block_bytes(format)];
         uint code = asset::encode_texture_alpha(format, 0.5);
 
         for (usz texel = 0; texel < 51; texel++) {
             asset::write_texture_alpha_code(
                 format: format,
-                pixels: pixels,
+                pixels: level,
                 texel: texel,
                 code: code,
             );
         }
 
         char[1600] original = storage;
-        TextureCoverageState equality = solve_stored_groups(
-            desc: desc,
-            stored: pixels,
-            base_passing: 49,
-            base_total: 100,
-        );
 
-        assert(!equality.plateau && equality.global_count == 51 && equality.scale == 1.0);
-        assert(pixels == original[:pixels.len]);
+        correct_stored_level(desc, level, 98);
 
-        TextureCoverageState inside = solve_stored_groups(
-            desc: desc,
-            stored: pixels,
-            base_passing: 50,
-            base_total: 100,
-        );
+        assert(level == original[:level.len], "format %s at the tolerance changed", format);
 
-        assert(!inside.plateau && inside.global_count == 51 && inside.scale == 1.0);
-        assert(pixels == original[:pixels.len]);
+        correct_stored_level(desc, level, 96);
 
-        TextureCoverageState outside = solve_stored_groups(
-            desc: desc,
-            stored: pixels,
-            base_passing: 48,
-            base_total: 100,
-        );
+        assert(count_filtered_alpha(desc, level, 0.5) == 48, "format %s outside the tolerance", format);
 
-        assert(outside.plateau && outside.expected == 48 && outside.promote_count == 48);
+        storage = {};
+        correct_stored_level(desc, level, 100);
+
+        assert(count_filtered_alpha(desc, level, 0.5) == 50, "format %s from zero alpha", format);
     }
 }
 
@@ -636,16 +564,10 @@ fn void test_missing_base_faults_before_remaining_filter_row_without_advancing_s
         pixels[texel * 4 + 3] = (texel & 1) ? 255 : 0;
     }
 
-    CoverageStatistics statistics = asset::create_coverage_statistics(desc, pixels[..], 1)!!;
     TextureMipChain chain = create_generated_texture_mips(mem, desc)!!;
     defer destroy_texture_mips(&chain);
 
-    TextureCoverageState state = begin_texture_coverage(
-        desc: desc,
-        mip: 1,
-        face: 0,
-        statistics: &statistics,
-    );
+    TextureCoverageState state = begin_texture_coverage(desc);
     write_texture_filter_band(
         desc: desc,
         mip: 1,
@@ -673,8 +595,8 @@ fn void test_missing_base_faults_before_remaining_filter_row_without_advancing_s
         assert(false, "Missing base row accepted");
     }
 
-    assert(state.histogram[..] == saved.histogram[..]);
-    assert(state.identity == saved.identity && state.phase == saved.phase);
+    assert(state.level.histogram[..] == saved.level.histogram[..] && state.level.passing == saved.level.passing);
+    assert(state.base_passing[..] == saved.base_passing[..]);
 }
 
 fn void test_threshold_restore_verifies_counts_once_and_retains_or_advances_revision() @test {
@@ -721,53 +643,5 @@ fn void test_threshold_restore_verifies_counts_once_and_retains_or_advances_revi
         assert(excuse == c3d::INVALID_ARGUMENT);
     } else {
         assert(false, "Invalid restored alpha prepared");
-    }
-}
-
-fn void test_adjacent_half_and_float_alpha_codes_keep_exact_identity_and_threshold_boundary() @test {
-    uint[2][2] half_pairs = { { 0x37ff, 0x3800 }, { 0x3800, 0x3801 } };
-    uint[2][2] float_pairs = { { 0x3effffff, 0x3f000000 }, { 0x3f000000, 0x3f000001 } };
-
-    foreach (format : (PixelFormat[2]){ RGBA16_FLOAT, RGBA32_FLOAT }) {
-        for (usz index = 0; index < half_pairs.len; index++) {
-            uint lower = format == RGBA16_FLOAT ? half_pairs[index][0] : float_pairs[index][0];
-            uint upper = format == RGBA16_FLOAT ? half_pairs[index][1] : float_pairs[index][1];
-            double lower_value = asset::decode_texture_alpha(format, lower);
-            double upper_value = asset::decode_texture_alpha(format, upper);
-
-            assert(lower_value < upper_value);
-            assert(asset::encode_texture_alpha(format, lower_value) == lower);
-            assert(asset::encode_texture_alpha(format, upper_value) == upper);
-
-            char[32] storage;
-            char[] pixels = storage[:2 * material::texture_block_bytes(format)];
-
-            asset::write_texture_alpha_code(
-                format: format,
-                pixels: pixels,
-                texel: 0,
-                code: lower,
-            );
-            asset::write_texture_alpha_code(
-                format: format,
-                pixels: pixels,
-                texel: 1,
-                code: upper,
-            );
-
-            char[32] original = storage;
-            material::TextureDesc desc = material::texture_2d_desc(2, 1, format);
-            desc.coverage = CoveragePolicy.THRESHOLD;
-            desc.alpha_threshold = (float)upper_value;
-            TextureCoverageState state = solve_stored_groups(
-                desc: desc,
-                stored: pixels,
-                base_passing: 1,
-                base_total: 2,
-            );
-
-            assert(!state.plateau && state.global_count == 1 && state.expected == 1 && state.scale == 1.0);
-            assert(pixels == original[:pixels.len]);
-        }
     }
 }

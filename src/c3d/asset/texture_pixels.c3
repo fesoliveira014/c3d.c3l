@@ -137,11 +137,6 @@ fn uint encode_texture_alpha(PixelFormat format, double value) {
     }
 }
 
-<* Canonical nonnegative code used by alpha radix ordering. *>
-fn uint texture_alpha_key(PixelFormat format, uint code) {
-    return decode_texture_alpha(format, code) == 0.0 ? 0 : code;
-}
-
 <* Scale alpha using its unchanged destination conversion order. *>
 fn uint scale_texture_alpha(PixelFormat format, uint code, double scale) {
     if (scale == 1.0) return code;

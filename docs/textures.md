@@ -69,6 +69,14 @@ texels passing `alpha_threshold` during mip generation; `ALL_PASS` and
 (0, 1]. Coverage filtering applies only to eligible uncompressed generated
 color mips. Supplied DDS/KTX levels remain unchanged.
 
+Each generated level, per cube face, keeps its filtered alpha when its passing
+fraction is within 0.02 of mip zero's or already the nearest count to it. Otherwise
+the level's alpha is scaled about the threshold and its passing count becomes the
+nearest one: texels above a cutoff alpha pass, texels below fail, and evenly spaced
+texels at the cutoff pass in raster order. Eight-bit alpha selects the cutoff by
+code; float alpha selects it in 1/256 steps. The result is deterministic and
+independent of banding, and color channels are unchanged.
+
 Restoring identical pixels preserves a texture's revision. For a threshold
 texture, restoration rescans alpha on the owner thread: equal passing counts
 retain the revision; changed counts or invalid alpha advance it and refresh or

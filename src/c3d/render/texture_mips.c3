@@ -276,23 +276,19 @@ fn TextureMipChain? create_full_texture_mips(
         .offsets = layout.offsets, .pixels = chain.pixels[pixels.len..],
     };
 
+    TextureCoverageState coverage;
+    TextureCoverageState* collector;
+
+    if (desc.coverage == CoveragePolicy.THRESHOLD) {
+        coverage = begin_texture_coverage(desc);
+        coverage.base_passing = statistics.passing;
+        collector = &coverage;
+    }
+
     for (uint mip = 1; mip <= layout.mip_count; mip++) {
+        uint height = material::texture_mip_extent(desc.height, mip);
+
         for (uint layer = 0; layer < desc.layers; layer++) {
-            TextureCoverageState state;
-            TextureCoverageState* collector;
-
-            if (desc.coverage == CoveragePolicy.THRESHOLD) {
-                state = begin_texture_coverage(
-                    desc: desc,
-                    mip: mip,
-                    face: layer,
-                    statistics: statistics,
-                );
-                collector = &state;
-            }
-
-            uint height = material::texture_mip_extent(desc.height, mip);
-
             write_texture_filter_band(
                 desc: desc,
                 mip: mip,
@@ -304,26 +300,26 @@ fn TextureMipChain? create_full_texture_mips(
                 coverage: collector,
             )!;
 
-            if (collector) {
-                finish_texture_coverage_pass(&state);
+            if (!collector) continue;
 
-                usz layer_bytes = material::texture_mip_bytes(desc, mip)!;
-                usz offset = generated.offsets[mip - 1] + (usz)layer * layer_bytes;
-                char[] destination = generated.pixels[offset:layer_bytes];
-
-                while (state.phase < texture_generation_passes(desc)) {
-                    uint rows = math::min(PREPARE_GENERATION_ROWS, height - state.row);
-                    write_texture_coverage_band(
-                        desc: desc,
-                        destination: destination,
-                        state: &state,
-                        row_count: rows,
-                    );
-                    state.row += rows;
-
-                    if (state.row == height) finish_texture_coverage_pass(&state);
-                }
+            if (choose_texture_coverage(
+                state: collector,
+                desc: desc,
+                mip: mip,
+                layer: layer,
+            )) {
+                write_texture_coverage_band(
+                    state: collector,
+                    desc: desc,
+                    chain: &generated,
+                    mip: mip,
+                    layer: layer,
+                    first_row: 0,
+                    row_count: height,
+                );
             }
+
+            collector.level = {};
         }
     }
 
@@ -464,8 +460,8 @@ macro void? write_typed_mip_band(
 
             if (collector) {
                 usz destination_texel = (usz)destination_y * next_width + destination_x;
-                uint code = asset::texture_alpha_code(collector.format, destination_bytes, destination_texel);
-                collect_texture_filter_output(collector, code);
+                uint stored = asset::texture_alpha_code(collector.format, destination_bytes, destination_texel);
+                collect_texture_coverage(collector, stored);
             }
         }
     }
