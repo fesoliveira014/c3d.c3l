@@ -86,7 +86,8 @@ void main() {
             bool faces = dot(surface_normal(root, frame, hit_texel, stored_depth, hit_position), -direction) > 0.0;
             if (faces && ssgi_uv_inside(previous_uv)
                 && ssgi_depth_matches(frame, root.previous_depth, previous_uv, velocity.z, root.depth_tolerance)) {
-                sum += sample_texture_2d(root.previous_color, root.sampler_index, previous_uv).rgb;
+                sum += sample_texture_2d(root.previous_color, root.sampler_index, previous_uv).rgb
+                    * frame.pre_exposure_ratio;
                 hits += 1.0;
             }
             break;

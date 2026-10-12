@@ -45,6 +45,7 @@ void main() {
             float velocity_pixels = length(velocity.xy * vec2(extent));
             float confidence = ssgi_history_confidence(depth_match, velocity_pixels, root.velocity_threshold) * (1.0 - clamp(velocity.a, 0.0, 1.0));
             vec4 history = sample_texture_2d(root.history, root.sampler_index, previous_uv);
+            history.rgb *= frame.pre_exposure_ratio;
             result = mix(result, history, root.history_weight * confidence);
         }
     }

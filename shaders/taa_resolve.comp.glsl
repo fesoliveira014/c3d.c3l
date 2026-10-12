@@ -68,7 +68,7 @@ vec3 sample_history(TaaRoot root, vec2 uv) {
         + history_tap(root, vec2(uv_12.x, uv_3.y)) * (weight_12.x * weight_3.y);
     float total = weight_12.x * weight_0.y + weight_0.x * weight_12.y + weight_12.x * weight_12.y
         + weight_3.x * weight_12.y + weight_12.x * weight_3.y;
-    return max(color / total, vec3(0.0));
+    return max(color / total, vec3(0.0)) * root.pre_exposure_ratio;
 }
 
 // Any texel of the 2x2 footprint within the relative tolerance keeps the history.
