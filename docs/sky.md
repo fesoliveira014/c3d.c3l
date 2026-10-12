@@ -483,7 +483,7 @@ per view, as `fog_temporal` is: the history lives in the view's own images, a mi
 camera, and the layer is a scene component the views share. A view without it runs the plain march, a separate shader variant
 with none of what follows.
 
-- **Jitter.** The view's frame counter selects one of `CLOUD_TEMPORAL_SAMPLES` (16) Halton points a frame. Base 2 moves each
+- **Jitter.** Each submitted march advances the view's index into `CLOUD_TEMPORAL_SAMPLES` (16) Halton points. Base 2 moves each
   pixel's march start within its first step, added to the pixel's interleaved gradient value and wrapped, so neighbouring pixels
   sample different depths in the same frame. Bases 3 and 5 move the ray within its half-resolution pixel, by up to half a pixel
   each way. The first averages the sampling along the ray and the second the pixel's footprint across it. The history belongs to
