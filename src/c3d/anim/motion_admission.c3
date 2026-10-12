@@ -295,6 +295,7 @@ fn void? prepare_action_motion_capture(
 
     ModelTemplate* template = &assets.model(model).data;
     AnimationClip* clip = &assets.clip(action.clip).data;
+
     CapturedMotionChain* captured = alloc::new_try(allocator, CapturedMotionChain)
       ?? c3d::CAPACITY_EXCEEDED~!;
     defer catch alloc::free(allocator, captured);
