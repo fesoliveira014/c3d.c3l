@@ -2160,6 +2160,40 @@ fn void test_animation_inertial_request_invalid_scale_precedes_cubic_unsupported
     assert(!tracker.has_leaks());
 }
 
+fn void test_animation_inertial_request_checks_keep_targets_against_the_consumed_chain() @test {
+    LayerFixture fixture;
+    create_inertial_owner(&fixture);
+    defer destroy_layer_fixture(&fixture);
+    float[2] times = { 0, 1 };
+    float[8] zero_rotations;
+    ClipId extracting = request_translation_clip(&fixture, { 1, 0, 0 }, { 1, 0, 0 });
+    ClipId cubic = request_cubic_scale_clip(&fixture);
+    ClipId degenerate = inertial_owner_clip(
+        owner: &fixture,
+        path: TargetPath.ROTATION,
+        interpolation: Interpolation.LINEAR,
+        times: times[..],
+        values: zero_rotations[..],
+        node: 2,
+    );
+    AnimationTargetDesc[3] targets = {
+        anim::ANIMATION_TARGET_DEFAULT, anim::ANIMATION_TARGET_DEFAULT, anim::ANIMATION_TARGET_DEFAULT,
+    };
+    targets[0].clip = extracting;
+    targets[0].play = request_generalized_desc();
+    targets[1].clip = cubic;
+    targets[2].clip = degenerate;
+    assert(@catch(fixture.animator.inertialize(
+        assets: &fixture.assets,
+        desc: { .duration = 0.5f, .actions = targets[:2] },
+    )) == c3d::UNSUPPORTED);
+    assert(@catch(fixture.animator.inertialize(
+        assets: &fixture.assets,
+        desc: { .duration = 0.5f, .actions = targets[..] },
+    )) == c3d::INVALID_ARGUMENT);
+    assert(fixture.animator.action_count == 0);
+}
+
 fn void test_animation_generalized_play_and_groups_reject_atomically_before_acquiring_storage() @test {
     foreach (kind : RequestAdditionKind::values) {
         TrackingAllocator tracker;
