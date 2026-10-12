@@ -128,31 +128,35 @@ fn void write_texture_coverage_band(
     uint height = material::texture_mip_extent(desc.height, mip);
     usz layer_bytes = (usz)width * height * material::texture_block_bytes(desc.format);
     char[] destination = chain.pixels[chain.offsets[mip - 1] + (usz)layer * layer_bytes:layer_bytes];
-    usz last = (usz)(first_row + row_count) * width;
 
-    for (usz texel = (usz)first_row * width; texel < last; texel++) {
-        uint stored = asset::texture_alpha_code(state.format, destination, texel);
-        uint bin = coverage_bin(state.format, stored);
-        bool passes = bin > level.cutoff;
+    for (uint row = first_row; row < first_row + row_count; row++) {
+        for (uint step = 0; step < width; step++) {
+            // Odd rows run right to left so evenly spaced promotions alternate between rows, not form columns.
+            uint column = row % 2 ? width - 1 - step : step;
+            usz texel = (usz)row * width + column;
+            uint stored = asset::texture_alpha_code(state.format, destination, texel);
+            uint bin = coverage_bin(state.format, stored);
+            bool passes = bin > level.cutoff;
 
-        if (bin == level.cutoff) {
-            level.spacing += level.promote;
-            passes = level.spacing >= level.group;
+            if (bin == level.cutoff) {
+                level.spacing += level.promote;
+                passes = level.spacing >= level.group;
 
-            if (passes) level.spacing -= level.group;
+                if (passes) level.spacing -= level.group;
+            }
+
+            uint corrected = asset::scale_texture_alpha(state.format, stored, level.scale);
+
+            if (passes != (asset::decode_texture_alpha(state.format, corrected) >= state.threshold)) {
+                corrected = passes ? state.minimum_passing : state.minimum_passing - 1;
+            }
+
+            asset::write_texture_alpha_code(
+                format: state.format,
+                pixels: destination,
+                texel: texel,
+                code: corrected,
+            );
         }
-
-        uint corrected = asset::scale_texture_alpha(state.format, stored, level.scale);
-
-        if (passes != (asset::decode_texture_alpha(state.format, corrected) >= state.threshold)) {
-            corrected = passes ? state.minimum_passing : state.minimum_passing - 1;
-        }
-
-        asset::write_texture_alpha_code(
-            format: state.format,
-            pixels: destination,
-            texel: texel,
-            code: corrected,
-        );
     }
 }
