@@ -118,13 +118,6 @@ fn PreparedTransition? validate_animation_transition(
             }
         }
 
-        if (playback.inertial) {
-            if (catch excuse = validate_inertial_rotation_domains(clip)) {
-                if (excuse != c3d::UNSUPPORTED) return excuse~;
-                unsupported = true;
-            }
-        }
-
         if (target.play.extraction.generalized) {
             ModelTemplate* template = &assets.models.try_get(playback.model)!.data;
             if (catch excuse = validate_generalized_motion(

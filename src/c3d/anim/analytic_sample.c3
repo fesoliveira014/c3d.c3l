@@ -210,11 +210,12 @@ fn void analytic_linear_rotation(float[] first, float[] second, double fraction,
     for (uint component = 0; component < 4; component++) value[component] = sampled[component];
 }
 
-<* Normalize admitted quaternion components without magnitude thresholds.
-   @require rotation.x != 0 || rotation.y != 0 || rotation.z != 0 || rotation.w != 0 *>
+// A zero quaternion, such as a cubic segment crossing zero, samples as identity.
 fn double[<4>] analytic_unit_rotation(double[<4>] rotation) @private {
     double maximum = math::max(math::max(math::abs(rotation.x), math::abs(rotation.y)),
       math::max(math::abs(rotation.z), math::abs(rotation.w)));
+    if (maximum == 0) return { 0, 0, 0, 1 };
+
     double[<4>] scaled = rotation / maximum;
 
     return scaled / scaled.length();

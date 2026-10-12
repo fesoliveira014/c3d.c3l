@@ -137,20 +137,6 @@ fn void? prepare_action_motion_capture(
     action.motion_reference = capture_generalized_motion_reference(captured, clip);
 }
 
-fn void? validate_inertial_rotation_domains(AnimationClip* clip) @private {
-    bool unsupported;
-    foreach (&track : clip.tracks) {
-        if (track.path != TargetPath.ROTATION) continue;
-
-        if (catch excuse = validate_motion_rotation_track(track)) {
-            if (excuse != c3d::UNSUPPORTED) return excuse~;
-            unsupported = true;
-        }
-    }
-
-    if (unsupported) return c3d::UNSUPPORTED~;
-}
-
 fn void? validate_live_motion_addition(
     PlaybackView* playback,
     AssetStore* assets,

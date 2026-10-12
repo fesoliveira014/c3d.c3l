@@ -70,10 +70,7 @@ fn void? validate_generalized_motion(
                 case MORPH_WEIGHTS:
                     continue;
                 case ROTATION:
-                    if (catch excuse = validate_motion_rotation_track(track)) {
-                        if (excuse != c3d::UNSUPPORTED) return excuse~;
-                        unsupported = true;
-                    }
+                    validate_motion_rotation_track(track)!;
                 case SCALE:
                     ConsumedScaleDomain domain = classify_consumed_scale_track(track, additive)!;
                     unsupported |= domain == ConsumedScaleDomain.SAMPLING_UNPROVEN;

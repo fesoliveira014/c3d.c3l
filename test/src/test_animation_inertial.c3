@@ -1990,7 +1990,7 @@ fn void test_animation_inertial_instant_play_and_stop_invalidate_history() @test
     assert(inertial_owner_row(&fixture).velocity[3].translation.z == 0);
 }
 
-fn void test_animation_inertial_owner_plays_degenerate_rotations_without_faulting() @test {
+fn void test_animation_inertial_owner_accepts_degenerate_rotations_without_faulting() @test {
     LayerFixture fixture;
     create_inertial_owner(&fixture);
     defer destroy_layer_fixture(&fixture);
@@ -2012,6 +2012,12 @@ fn void test_animation_inertial_owner_plays_degenerate_rotations_without_faultin
     AnimationTargetDesc[1] description = { anim::ANIMATION_TARGET_DEFAULT };
     description[0].clip = target;
     fixture.animator.inertialize(&fixture.assets, { .duration = 0.5f, .actions = description[..] })!!;
+
+    AnimationTargetDesc[2] degenerate_targets = { description[0], description[0] };
+    degenerate_targets[1].clip = degenerate;
+    degenerate_targets[1].play.layer = 1;
+    fixture.animator.inertialize(&fixture.assets, { .duration = 0.5f, .actions = degenerate_targets[..] })!!;
+    assert(inertial_owner_row(&fixture).offset[3].angular == (double[<3>]){});
 
     fixture.animator.play(&fixture.assets, degenerate, { .layer = 1 })!!;
     anim::update(&fixture.assets, &fixture.scene, 0.125f);

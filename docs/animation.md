@@ -327,16 +327,15 @@ animator.play(&assets, walk, {
 
 The chain may contain animated proper rotations, translations and finite
 positive uniform scales. Nonuniform scale, reflection, shear, invalid root
-layout, nonfinite values and zero quaternions fault `INVALID_ARGUMENT` at
-admission. Rotation tracks are checked over their full domain; STEP uses keys,
-LINEAR also requires a sign-corrected nonnegative endpoint dot, and CUBIC uses a
-bounded polynomial certificate. Scale tracks are checked at their keys; a
-`CUBIC_SPLINE` scale track on the chain is unsupported. An unproved cubic
-rotation domain or a cubic scale track faults `UNSUPPORTED` before playback
-changes, after every `INVALID_ARGUMENT` check. No repeated domain scan runs at
-update. Under generalized extraction, a scale track with nonneutral keys on an
-additive action's consumed chain is invalid in either additive scale mode, including
-zero-weight or fully masked actions.
+layout, nonfinite values and zero quaternion keys fault `INVALID_ARGUMENT` at
+admission. Rotation and scale tracks are checked at their keys. A cubic
+rotation segment is not checked between its keys; where it crosses zero it
+samples as the identity rotation. A `CUBIC_SPLINE` scale track on the chain
+faults `UNSUPPORTED` before playback changes, after every `INVALID_ARGUMENT`
+check. No repeated domain scan runs at update. Under generalized extraction, a
+scale track with nonneutral keys on an additive action's consumed chain is
+invalid in either additive scale mode, including zero-weight or fully masked
+actions.
 
 Each generalized action samples its own chain endpoint at its current time and
 removes the selected translation and twist relative to its reference. These

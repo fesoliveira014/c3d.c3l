@@ -26,8 +26,6 @@ enum AdmissionMutation @local {
     SHEARED_BASELINE,
     DUPLICATE_TRACK_PATH,
     ZERO_QUATERNION,
-    UNPROVEN_QUATERNION,
-    UNPROVEN_QUATERNION_AND_NONUNIFORM_BASELINE,
 }
 
 struct MotionAdmissionFixture @local {
@@ -248,18 +246,10 @@ fn void test_animation_motion_admission_rejects_each_invalid_input_with_its_faul
             case DUPLICATE_TRACK_PATH:
                 fixture.tracks[4].path = TargetPath.ROTATION;
             case ZERO_QUATERNION:
-            case UNPROVEN_QUATERNION:
-            case UNPROVEN_QUATERNION_AND_NONUNIFORM_BASELINE:
+                rotations[7] = 0;
                 fixture.tracks[3].interpolation = Interpolation.CUBIC_SPLINE;
                 fixture.tracks[3].times = times[..];
                 fixture.tracks[3].values = rotations[..];
-                if (mutation == ZERO_QUATERNION) break;
-                rotations[4] = rotations[16] = 1e-12;
-                if (mutation == UNPROVEN_QUATERNION) {
-                    expected = c3d::UNSUPPORTED;
-                } else {
-                    fixture.nodes[0].local.scale = { 1, 2, 1 };
-                }
         }
         assert(@catch(validate_admission_fixture(&fixture, root)) == expected);
     }
