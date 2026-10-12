@@ -291,10 +291,11 @@ the complete pending authoring for retry.
 
 Each owner validates its authored numeric domain on export and import, for both
 binary IEEE values and JSONC float-bit tokens. Invalid values return
-`INVALID_ARGUMENT` with the component type and node path. These are owner rules;
-generic described floats, node transforms, crowd placements and colours retain
-IEEE fidelity, including non-finite values. Runtime APIs retain their existing
-contracts. Existing shared runtime validators also govern serialization.
+`INVALID_ARGUMENT` with the component type and node path. AnimatedCrowd validates
+on import only; its runtime contracts keep exported seeds and actions in domain.
+These are owner rules; generic described floats, node transforms, crowd placements
+and colours retain IEEE fidelity, including non-finite values. Runtime APIs retain
+their existing contracts. Existing shared runtime validators also govern serialization.
 
 | Owner | Fields | Domain |
 | --- | --- | --- |

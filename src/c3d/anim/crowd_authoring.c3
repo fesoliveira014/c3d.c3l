@@ -143,7 +143,7 @@ fn void? validate_crowd_authoring(
  @param base_start : "Captured authoring start of the retained base action."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
  @require index < state.count, state.slots[index].action_count == 0
- @require source.configured
+ @require source.configured, math::is_finite(base_start)
 *>
 fn void? restore_crowd_authoring(
     CrowdPlaybackState* state,
@@ -152,9 +152,6 @@ fn void? restore_crowd_authoring(
     CrowdInstanceAuthoring source,
     float base_start,
 ) {
-    check_crowd_instance(source, state.base_pose.len, state.slots[index].actions.items.len)!;
-    if (!math::is_finite(base_start)) return c3d::INVALID_ARGUMENT~;
-
     CrowdPlaybackSlot* slot = &state.slots[index];
     slot.root_node = source.root_node;
     PlaybackView playback = crowd_playback_view(state, slot);

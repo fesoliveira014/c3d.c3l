@@ -43,24 +43,6 @@ fn Node*? add_crowd(
     uint event_capacity = anim::DEFAULT_CROWD_EVENT_CAPACITY,
     anim::CrowdInstanceAuthoring[] authoring = {},
 ) {
-    ModelTemplate* template = &assets.models.try_get(model)!.data;
-    check_crowd_configuration(capacity, actions_per_instance, pose_bounds)!;
-    check_crowd_template(assets, template)!;
-    check_instances(
-        assets: assets,
-        template: template,
-        capacity: capacity,
-        instances: instances,
-    )!;
-    check_authoring(
-        assets: assets,
-        template: template,
-        instances: instances,
-        authoring: authoring,
-        actions_per_instance: actions_per_instance,
-        model: model,
-    )!;
-
     Node* root = scene::add_crowd_node(scene, parent, name)!;
     defer catch scene.remove(root);
 
@@ -172,25 +154,9 @@ fn void? prepare_crowd(AssetStore* assets, Scene* scene, Node* node) {
     if (crowd.is_prepared()) return;
 
     ModelTemplate* template = &assets.models.try_get(crowd.model)!.data;
+    check_crowd_template(assets, template)!;
 
     uint capacity = (uint)crowd.placements.len;
-    check_crowd_configuration(capacity, crowd.actions_per_instance, crowd.pose_bounds)!;
-    check_crowd_template(assets, template)!;
-    foreach (seed : crowd.seeds[:crowd.count]) anim::validate_crowd_seed(assets, template, seed)!;
-
-    if (crowd.authoring) {
-        foreach (index, source : crowd.authoring.instances) {
-            anim::validate_crowd_authoring(
-                assets: assets,
-                template: template,
-                source: source,
-                actions_per_instance: crowd.actions_per_instance,
-                placement: crowd.placements[index],
-                model: crowd.model,
-            )!;
-        }
-    }
-
     Allocator allocator = scene.allocator;
     defer catch {
         foreach (part : crowd.parts) {
@@ -240,6 +206,7 @@ fn void? prepare_crowd(AssetStore* assets, Scene* scene, Node* node) {
     crowd.playback.count = crowd.count;
     foreach (uint index, seed : crowd.seeds[:crowd.count]) {
         if (crowd.authoring && crowd.authoring.instances[index].configured) {
+            anim::validate_crowd_seed(assets, template, seed)!;
             anim::restore_crowd_authoring(
                 state: crowd.playback,
                 index: index,
@@ -326,14 +293,15 @@ fn void? set_crowd(
     AnimatedCrowd* crowd = scene.get(node, AnimatedCrowd);
     ModelTemplate* template = &assets.models.try_get(crowd.model)!.data;
     check_crowd_template(assets, template)!;
-    check_instances(
-        assets: assets,
-        template: template,
-        capacity: (uint)crowd.placements.len,
-        instances: instances,
-    )!;
 
     if (!crowd.is_prepared()) {
+        check_instances(
+            assets: assets,
+            template: template,
+            capacity: (uint)crowd.placements.len,
+            instances: instances,
+        )!;
+
         if (crowd.authoring) {
             anim::destroy_crowd_authoring(crowd.authoring);
             crowd.authoring = null;
@@ -342,6 +310,8 @@ fn void? set_crowd(
         fill_crowd_authoring(crowd, instances);
         return;
     }
+
+    if (instances.len > crowd.placements.len) return c3d::INVALID_ARGUMENT~;
 
     @pool() {
         anim::Action[] staged = alloc::new_array_try(tmem, anim::Action, instances.len)

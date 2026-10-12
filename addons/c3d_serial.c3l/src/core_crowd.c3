@@ -8,7 +8,6 @@ import c3d::ecs;
 import c3d::maths;
 import c3d::model;
 import c3d::scene;
-import std::math;
 
 const ulong CROWD_POSE_LAYOUT @local = 0x7ffc763d1a2c701e;
 const ulong CROWD_INSTANCE_LAYOUT @local = 0xfbef1798330b2174;
@@ -277,25 +276,11 @@ fn void? project_crowd(void* component, void* value, WriteContext* context) @loc
         instance.pose.time = crowd.start_times[index];
     }
 
-    check_crowd_scalars(instances)!;
-
     CrowdInstanceAuthoring[] playback;
     if (crowd.is_prepared()) {
         playback = anim::capture_crowd_authoring(tmem, crowd.playback)!.instances;
     } else if (crowd.authoring) {
         playback = crowd.authoring.instances;
-    }
-
-    ModelTemplate* template = &context.assets.models.try_get(crowd.model)!.data;
-    foreach (index, source : playback) {
-        anim::validate_crowd_authoring(
-            assets: context.assets,
-            template: template,
-            source: source,
-            actions_per_instance: crowd.actions_per_instance,
-            placement: crowd.placements[index],
-            model: crowd.model,
-        )!;
     }
 
     *(CrowdAuthoringV4*)value = {
@@ -311,18 +296,8 @@ fn void? project_crowd(void* component, void* value, WriteContext* context) @loc
     };
 }
 
-fn void? check_crowd_scalars(CrowdInstance[] instances) @local {
-    foreach (instance : instances) {
-        if (!math::is_finite(instance.pose.speed) || !math::is_finite(instance.pose.time)) {
-            return c3d::INVALID_ARGUMENT~;
-        }
-    }
-}
-
 fn void? attach_crowd(void* value, ReadContext* context) @local {
     CrowdAuthoringV4* source = value;
-    check_crowd_scalars(source.instances)!;
-
     model::attach_crowd(
         assets: context.assets,
         scene: context.scene,
