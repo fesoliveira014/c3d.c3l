@@ -527,13 +527,14 @@ the accounting. Normal pipeline misses create one pipeline per step. Atomic cust
 shader adoption can require several cached keys; a bounded call defers until its true
 creation count fits, while an unbounded call admits the atomic operation.
 
-The time target is checked between bounded spans and indivisible steps. A span, an
-allocation or a texture's creation (its image and every view, in one step) can
-overrun it; elapsed time, overrun, generation time and pipeline driver time are
-reported separately, with pipeline creation calls. `Stats` sums each frame's staged
-bytes, generated texels, pipeline calls and times. View targets and unrelated view
-resources are outside model preparation. Ordinary residency raises keep their
-separate pacing.
+The time target is checked between bounded spans and indivisible steps, after the
+first step of each call, so a target below a call's fixed overhead still advances one
+step per call. A span, an allocation or a texture's creation (its image and every
+view, in one step) can overrun it; elapsed time, overrun, generation time and pipeline
+driver time are reported separately, with pipeline creation calls. `Stats` sums each
+frame's staged bytes, generated texels, pipeline calls and times. View targets and
+unrelated view resources are outside model preparation. Ordinary residency raises
+keep their separate pacing.
 
 `PREPARE_FRAME_BUDGET_BYTES` is a 1 MiB staged-byte allowance suited to one call per
 frame. A byte allowance below the minimum legal step blocks that step until a later

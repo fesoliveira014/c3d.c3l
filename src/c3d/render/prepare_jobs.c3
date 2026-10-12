@@ -555,6 +555,7 @@ fn PrepareReport? advance_prepare_engine(Renderer* renderer, PrepareLimits limit
                     return budget.report;
                 }
                 checkpoint_prepare_unit(renderer, record, unit);
+                budget.stepped = true;
                 bool? result = run_prepare_step(renderer, record, unit, &plan, &budget.report);
                 if (catch excuse = result) {
                     if (!fails_record(excuse)) return excuse~;

@@ -43,6 +43,8 @@ fn void test_prepare_axes_stop_independently_and_zero_is_unbounded() @test {
     pipelines.limits.pipelines = 4;
     assert(render::prepare_step_stop(&pipelines, { .pipelines = 4 }, 0) == PrepareStopReason.NONE);
     PrepareBudget deadline = { .limits = { .time_ns = 100 } };
+    assert(render::prepare_step_stop(&deadline, { .staged_bytes = 16 }, 100) == PrepareStopReason.NONE);
+    deadline.stepped = true;
     assert(render::prepare_step_stop(&deadline, {}, 99) == PrepareStopReason.NONE);
     assert(render::prepare_step_stop(&deadline, { .staged_bytes = 16 }, 100) == PrepareStopReason.TIME);
     PrepareBudget unbounded;

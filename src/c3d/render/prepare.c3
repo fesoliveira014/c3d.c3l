@@ -186,6 +186,7 @@ struct PrepareBudget @private {
     PrepareLimits limits;
     PrepareReport report;
     std::time::Clock started;
+    bool stepped;
 }
 
 struct PrepareInstall @private {
@@ -284,8 +285,9 @@ fn usz prepare_byte_allowance(PrepareBudget* budget) @private {
     return math::min(budget.limits.staged_bytes - budget.report.staged_bytes, PREPARE_SPAN_BYTES);
 }
 
+// The first step of a call always runs: a target below the per-call overhead still progresses and reports its overrun.
 fn PrepareStopReason prepare_step_stop(PrepareBudget* budget, PrepareStepCost cost, ulong elapsed_ns) @private {
-    if (budget.limits.time_ns && elapsed_ns >= budget.limits.time_ns) return PrepareStopReason.TIME;
+    if (budget.limits.time_ns && budget.stepped && elapsed_ns >= budget.limits.time_ns) return PrepareStopReason.TIME;
     if (budget.limits.staged_bytes && (cost.staged_bytes > budget.limits.staged_bytes
       || budget.report.staged_bytes > budget.limits.staged_bytes - cost.staged_bytes)) {
         return PrepareStopReason.STAGED_BYTES;
