@@ -171,7 +171,6 @@ fn BlendLayoutSelection blend_triangle_selection(
     };
 }
 
-// Signed distance to the nearest edge line of the triangle; positive inside.
 fn double blend_edge_distance(Vec2[] points, BlendTriangleIndices triangle, Vec2 parameter) @private {
     Vec2 a = points[triangle.indices[0]];
     double winding = blend_orientation(a, points[triangle.indices[1]], points[triangle.indices[2]]) > 0 ? 1 : -1;
@@ -182,7 +181,8 @@ fn double blend_edge_distance(Vec2[] points, BlendTriangleIndices triangle, Vec2
         Vec2 to = points[triangle.indices[(edge + 1) % 3]];
         double dx = (double)to.x - from.x;
         double dy = (double)to.y - from.y;
-        distance = math::min(distance, winding * blend_orientation(from, to, parameter) / math::sqrt(dx * dx + dy * dy));
+        double length = math::sqrt(dx * dx + dy * dy);
+        distance = math::min(distance, winding * blend_orientation(from, to, parameter) / length);
     }
 
     return distance;
