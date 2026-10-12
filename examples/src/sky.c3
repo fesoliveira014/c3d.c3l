@@ -824,6 +824,7 @@ fn void? sky_panel(
                 foreach (index, quality : FOG_QUALITY_CHOICES) {
                     if (quality == demo.options.fog_quality) choice = (int)index;
                 }
+
                 bool changed = imgui::combo_char(
                     label:        "Volume quality",
                     current_item: &choice,
