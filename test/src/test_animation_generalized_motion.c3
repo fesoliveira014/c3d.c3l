@@ -15,9 +15,6 @@ const uint GENERALIZED_SUBDIVISIONS @local = 7;
 
 enum AdmissionMutation @local {
     ROOT_OUTSIDE_MODEL,
-    FORWARD_PARENT,
-    CLIP_TARGET_OUTSIDE_MODEL,
-    TRACK_TARGET_OUTSIDE_CLIP,
     MISSING_UP,
     FOREIGN_PARENT_SPACE,
     NONUNIFORM_INSTANCE,
@@ -219,12 +216,6 @@ fn void test_animation_motion_admission_rejects_each_invalid_input_with_its_faul
         switch (mutation) {
             case ROOT_OUTSIDE_MODEL:
                 root = 7;
-            case FORWARD_PARENT:
-                fixture.nodes[1].parent = 2;
-            case CLIP_TARGET_OUTSIDE_MODEL:
-                fixture.targets[4] = 7;
-            case TRACK_TARGET_OUTSIDE_CLIP:
-                fixture.tracks[4].target = 6;
             case MISSING_UP:
                 fixture.extraction.up = {};
             case FOREIGN_PARENT_SPACE:
@@ -308,20 +299,6 @@ fn void test_animation_motion_capture_failure_releases_every_partial_allocation(
         assert(fixture.nodes[1].parent == 0 && fixture.nodes[0].name == "base");
         assert(fixture.targets[4] == 2 && fixture.tracks[4].values.ptr == &fixture.scales[0]);
     }
-    allocator.attempts = 0;
-    allocator.failure = 1;
-    bool caught;
-    if (catch excuse = anim::create_captured_motion_chain(
-        allocator: &allocator,
-        template: &fixture.model,
-        clip: &fixture.clip,
-        root: 7,
-        extraction: fixture.extraction,
-    )) {
-        assert(excuse == c3d::INVALID_ARGUMENT);
-        caught = true;
-    }
-    assert(caught && allocator.attempts == 0 && allocator.outstanding == 0);
 }
 
 fn void create_generalized_test_fixture(GeneralizedTestFixture* fixture) @local {

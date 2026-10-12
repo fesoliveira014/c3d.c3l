@@ -720,18 +720,6 @@ fn void test_animation_inertial_owners_crowd_creation_failure_at_every_allocatio
     }
 }
 
-fn void? validate_pose_test_source(Transform[] pose, float[] morph) @local {
-    bool[] present = alloc::new_array(mem, bool, pose.len);
-    defer alloc::free(mem, present.ptr);
-    present[..] = true;
-    float[][1] morph_rows = { morph };
-    return anim::validate_transition_source_pose({
-        .pose = pose,
-        .present = present,
-        .morph_weights = morph_rows[..],
-    });
-}
-
 fn PoseTestCase create_pose_test_case(Allocator allocator = mem) @local {
     return {
         .storage = anim::create_inertial_storage(
@@ -793,35 +781,6 @@ fn Quat pose_test_turn(double angle) @local {
 
 fn double pose_test_turn_angle(Quat rotation) @local {
     return 2 * math::atan2((double)rotation.v.z, (double)rotation.v.w);
-}
-
-fn void test_animation_inertial_pose_source_preflight_finite_and_invalid_channels() @test {
-    Transform[1] pose = { maths::TRANSFORM_IDENTITY };
-    float[1] morph = { -3 };
-    pose[0].scale = { -1, 2, -3 };
-    pose[0].rotation = { .v = { 0, 0, 0, float::min } };
-    validate_pose_test_source(pose[..], morph[..])!!;
-    pose[0].rotation.v.w = float::max;
-    validate_pose_test_source(pose[..], morph[..])!!;
-    Transform original = pose[0];
-    foreach (float invalid : { float::nan, float::inf, -float::inf }) {
-        pose[0] = original;
-        pose[0].position.y = invalid;
-        assert(@catch(validate_pose_test_source(pose[..], morph[..])) == c3d::INVALID_ARGUMENT);
-        pose[0] = original;
-        pose[0].scale.z = invalid;
-        assert(@catch(validate_pose_test_source(pose[..], morph[..])) == c3d::INVALID_ARGUMENT);
-        pose[0] = original;
-        pose[0].rotation.v.x = invalid;
-        assert(@catch(validate_pose_test_source(pose[..], morph[..])) == c3d::INVALID_ARGUMENT);
-        pose[0] = original;
-        morph[0] = invalid;
-        assert(@catch(validate_pose_test_source(pose[..], morph[..])) == c3d::INVALID_ARGUMENT);
-        morph[0] = -3;
-    }
-    pose[0] = original;
-    pose[0].rotation = {};
-    assert(@catch(validate_pose_test_source(pose[..], morph[..])) == c3d::INVALID_ARGUMENT);
 }
 
 fn void test_animation_inertial_pose_no_history_display_onset_and_extreme_morph_offsets() @test {
@@ -1066,7 +1025,6 @@ fn void test_animation_inertial_pose_reserved_rows_do_not_acquire_or_resize() @t
             sample.target_morph[0] = 0.6f;
             sample.velocity = {};
             sample.morph_rate = {};
-            validate_pose_test_source(sample.source[..], sample.source_morph[..])!!;
             capture_pose_test_case(&sample);
             apply_pose_test_case(&sample, 0.25);
             record_pose_test_case(&sample, false, 0.25);

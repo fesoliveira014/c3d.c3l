@@ -5,8 +5,7 @@ import c3d::asset;
 import c3d::maths;
 import std::math;
 
-const double MOTION_UP_UNIT_TOLERANCE @local = 1e-5; // Bounds squared-length error of the captured twist axis.
-const double MOTION_FRAME_ORTHONORMAL_TOLERANCE @local = 1e-5; // Bounds axis length, dot and handedness error.
+const double MOTION_UNIT_TOLERANCE @local = 1e-5; // Bounds squared-length error of the twist axis and baseline rotations.
 const double MOTION_FRAME_SCALE_TOLERANCE @local = 1e-5; // Bounds relative spread of positive baseline scale.
 const uint MOTION_TRANSLATION_SLOT @local = 0;
 const uint MOTION_ROTATION_SLOT @local = 1;
@@ -41,8 +40,8 @@ fn void? validate_generalized_motion(
     bool additive,
     AdditiveScaleMode additive_scale,
 ) @private {
-    validate_motion_model_layout(template, clip, root)!;
-    validate_motion_up(extraction)!;
+    if (root >= template.nodes.len) return c3d::INVALID_ARGUMENT~;
+    validate_motion_up(extraction.up)!;
 
     if (!motion_basis.root_present || !motion_basis.parent_space || !motion_basis.ancestors_parent_space) {
         return c3d::INVALID_ARGUMENT~;
@@ -85,9 +84,6 @@ fn CapturedMotionChain? create_captured_motion_chain(
     uint root,
     RootExtractionDesc extraction,
 ) @private {
-    validate_motion_model_layout(template, clip, root)!;
-    validate_motion_up(extraction)!;
-
     sz chain_count;
     for (int node = (int)root; node >= 0; node = template.nodes[node].parent) chain_count++;
     sz top_level_count;
@@ -163,31 +159,9 @@ fn void destroy_captured_motion_chain(CapturedMotionChain* captured) @private {
     *captured = {};
 }
 
-fn void? validate_motion_model_layout(ModelTemplate* template, AnimationClip* clip, uint root) @local {
-    if (root >= template.nodes.len || template.nodes.len > int::max || clip.tracks.len > uint::max) {
-        return c3d::INVALID_ARGUMENT~;
-    }
-
-    foreach (index, node : template.nodes) {
-        if (node.parent < -1 || node.parent >= index) return c3d::INVALID_ARGUMENT~;
-    }
-
-    foreach (target : clip.targets) {
-        if (target >= template.nodes.len) return c3d::INVALID_ARGUMENT~;
-    }
-
-    foreach (track : clip.tracks) {
-        if (track.target >= clip.targets.len) return c3d::INVALID_ARGUMENT~;
-    }
-}
-
-fn void? validate_motion_up(RootExtractionDesc extraction) @local {
-    Vec3 up = extraction.up;
-    double squared = (double)up.x * (double)up.x + (double)up.y * (double)up.y + (double)up.z * (double)up.z;
-    if (!extraction.generalized || !math::is_finite(up.x) || !math::is_finite(up.y)
-        || !math::is_finite(up.z) || math::abs(squared - 1) > MOTION_UP_UNIT_TOLERANCE) {
-        return c3d::INVALID_ARGUMENT~;
-    }
+fn void? validate_motion_up(Vec3 up) @local {
+    double squared = (double)up.x * up.x + (double)up.y * up.y + (double)up.z * up.z;
+    if (!motion_unit_length(squared)) return c3d::INVALID_ARGUMENT~;
 }
 
 fn uint motion_chain_track_slot(TargetPath path) @local {
@@ -218,59 +192,11 @@ fn void? validate_motion_baseline(Transform baseline) @local {
 
     validate_motion_baseline_scale(baseline.scale)!;
 
-    bool nonzero;
-    foreach (component : baseline.rotation.v) {
-        if (!math::is_finite(component)) return c3d::INVALID_ARGUMENT~;
-        nonzero |= component != 0;
-    }
-    if (!nonzero) return c3d::INVALID_ARGUMENT~;
-
-    double quaternion_x = baseline.rotation.v.x;
-    double quaternion_y = baseline.rotation.v.y;
-    double quaternion_z = baseline.rotation.v.z;
-    double quaternion_w = baseline.rotation.v.w;
-    double square_x = quaternion_x * quaternion_x;
-    double square_y = quaternion_y * quaternion_y;
-    double square_z = quaternion_z * quaternion_z;
-    double product_xy = quaternion_x * quaternion_y;
-    double product_xz = quaternion_x * quaternion_z;
-    double product_yz = quaternion_y * quaternion_z;
-    double product_xw = quaternion_x * quaternion_w;
-    double product_yw = quaternion_y * quaternion_w;
-    double product_zw = quaternion_z * quaternion_w;
-
-    // The standard conversion normalizes first, which would conceal a malformed authored frame.
-    double[3][3] columns = {
-        { 1 - 2 * square_y - 2 * square_z, 2 * (product_xy + product_zw), 2 * (product_xz - product_yw) },
-        { 2 * (product_xy - product_zw), 1 - 2 * square_x - 2 * square_z, 2 * (product_yz + product_xw) },
-        { 2 * (product_xz + product_yw), 2 * (product_yz - product_xw), 1 - 2 * square_x - 2 * square_y },
-    };
-
-    foreach (&column : columns) {
-        double squared;
-        foreach (component : *column) {
-            if (!math::is_finite(component)) return c3d::INVALID_ARGUMENT~;
-            squared += component * component;
-        }
-        double length = math::sqrt(squared);
-        if (!(length > 0) || math::abs(length - 1) > MOTION_FRAME_ORTHONORMAL_TOLERANCE) {
-            return c3d::INVALID_ARGUMENT~;
-        }
-        foreach (&component : *column) *component /= length;
-    }
-
-    for (uint left = 0; left < 3; left++) {
-        for (uint right = left + 1; right < 3; right++) {
-            double product;
-            for (uint component = 0; component < 3; component++) {
-                product += columns[left][component] * columns[right][component];
-            }
-            if (math::abs(product) > MOTION_FRAME_ORTHONORMAL_TOLERANCE) return c3d::INVALID_ARGUMENT~;
-        }
-    }
-
-    double determinant = columns[0][0] * (columns[1][1] * columns[2][2] - columns[1][2] * columns[2][1])
-      - columns[0][1] * (columns[1][0] * columns[2][2] - columns[1][2] * columns[2][0])
-      + columns[0][2] * (columns[1][0] * columns[2][1] - columns[1][1] * columns[2][0]);
-    if (determinant < 1 - MOTION_FRAME_ORTHONORMAL_TOLERANCE) return c3d::INVALID_ARGUMENT~;
+    // Matrix conversion normalizes the rotation, which would conceal a malformed authored frame.
+    Quat rotation = baseline.rotation;
+    double squared = (double)rotation.v.x * rotation.v.x + (double)rotation.v.y * rotation.v.y
+      + (double)rotation.v.z * rotation.v.z + (double)rotation.v.w * rotation.v.w;
+    if (!motion_unit_length(squared)) return c3d::INVALID_ARGUMENT~;
 }
+
+fn bool motion_unit_length(double squared) @local => math::abs(squared - 1) <= MOTION_UNIT_TOLERANCE;

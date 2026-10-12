@@ -19,7 +19,6 @@ fn TransitionMotionIdentity? validate_transition_motion_identity(
     MotionBasis motion_basis,
     bool defer_unsupported = false,
 ) @private {
-    validate_transition_source_pose(destination)!;
     ModelTemplate* template = &assets.models.try_get(playback.model)!.data;
     TransitionMotionIdentity identity = { .root_node = playback.root_node };
 
@@ -95,25 +94,6 @@ fn TransitionMotionIdentity? validate_transition_motion_identity(
     if (identity.unsupported && !defer_unsupported) return c3d::UNSUPPORTED~;
 
     return identity;
-}
-
-fn void? validate_transition_source_pose(PoseDestination destination) @private {
-    foreach (index, pose : destination.pose) {
-        if (!destination.present[index]) continue;
-        foreach (component : pose.position) if (!math::is_finite(component)) return c3d::INVALID_ARGUMENT~;
-        foreach (component : pose.scale) if (!math::is_finite(component)) return c3d::INVALID_ARGUMENT~;
-
-        bool nonzero;
-        foreach (component : pose.rotation.v) {
-            if (!math::is_finite(component)) return c3d::INVALID_ARGUMENT~;
-            nonzero |= component != 0;
-        }
-        if (!nonzero) return c3d::INVALID_ARGUMENT~;
-    }
-
-    foreach (values : destination.morph_weights) {
-        foreach (value : values) if (!math::is_finite(value)) return c3d::INVALID_ARGUMENT~;
-    }
 }
 
 fn void? validate_transition_capture_layout(

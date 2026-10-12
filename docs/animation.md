@@ -329,9 +329,9 @@ animator.play(&assets, walk, {
 ```
 
 The chain may contain animated proper rotations, translations and finite
-positive uniform scales. Nonuniform scale, reflection, shear, invalid root
-layout, nonfinite values and zero quaternion keys fault `INVALID_ARGUMENT` at
-admission. Rotation and scale tracks are checked at their keys. A cubic
+positive uniform scales. Nonuniform scale, reflection, a baseline rotation that
+is not unit length, a root outside the model, nonfinite values and zero
+quaternion keys fault `INVALID_ARGUMENT` at admission. Rotation and scale tracks are checked at their keys. A cubic
 rotation segment is not checked between its keys; where it crosses zero it
 samples as the identity rotation. A `CUBIC_SPLINE` scale track on the chain
 faults `UNSUPPORTED` before playback changes, after every `INVALID_ARGUMENT`
