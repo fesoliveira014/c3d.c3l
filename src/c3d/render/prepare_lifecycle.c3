@@ -224,7 +224,7 @@ fn void commit_prepare_jobs(Renderer* renderer, Frame* slot) @private {
 
         if (submitted) record.last_submission = slot.done;
         record.pending_gpu = false;
-        refresh_prepare_progress(record);
+        settle_prepare_state(record);
     }
 
     foreach (&pending : renderer.pending_prepare_retire) slot.retire.push(pending.resource);

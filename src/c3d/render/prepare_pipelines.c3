@@ -578,7 +578,6 @@ fn void? run_prepare_sheen_step(Renderer* renderer, PrepareUnit* unit, PrepareRe
     acquire_sheen_lut(renderer)!;
     record_sheen_lut(renderer, &renderer.commands)!;
     report.staged_bytes += BrdfLutRoot::size;
-    unit.staged.bytes = unit.bytes;
     unit.referenced_this_frame = true;
     renderer.prepares.get(unit.owner).pending_gpu = true;
     renderer.work_recorded = true;
