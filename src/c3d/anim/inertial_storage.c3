@@ -49,21 +49,15 @@ struct InertialRow @private {
 struct InertialStorage @private {
     Allocator allocator;
     InertialRow[] rows;
-    usz bytes;
-    usz row_bytes;
-    uint nodes;
-    uint morphs;
 }
 
-struct InertialStorageCursor @local {
-    char* base;
-    usz offset;
-}
-
-$assert InertialRow::alignment >= InertialStorage::alignment;
-$assert InertialRow::alignment >= Transform::alignment;
-$assert InertialRow::alignment >= PoseVelocity::alignment;
-$assert InertialRow::alignment >= double::alignment;
+// Regions follow in this order, so each one starts aligned without padding.
+$assert InertialStorage::size % InertialRow::alignment == 0;
+$assert InertialRow::size % PoseVelocity::alignment == 0;
+$assert PoseVelocity::size % double::alignment == 0;
+$assert double::size % Transform::alignment == 0;
+$assert Transform::size % float::alignment == 0;
+$assert InertialRow::alignment >= InertialStorage::alignment && InertialRow::alignment >= PoseVelocity::alignment;
 
 <* @require capacity > 0 *>
 fn InertialStorage*? create_inertial_storage(
@@ -72,50 +66,46 @@ fn InertialStorage*? create_inertial_storage(
     uint morphs,
     uint capacity,
 ) @private {
-    usz row_bytes = inertial_row_storage_bytes(nodes, morphs)!;
-    usz rows_offset = inertial_aligned_offset(InertialStorage::size, InertialRow::alignment)!;
-    usz payload_offset = inertial_region_end(
-        offset: rows_offset,
-        count: capacity,
-        element_size: InertialRow::size,
-        alignment: InertialRow::alignment,
-    )!;
-    usz bytes = inertial_region_end(
-        offset: payload_offset,
-        count: capacity,
-        element_size: row_bytes,
-        alignment: InertialRow::alignment,
-    )!;
-
+    usz bytes = inertial_storage_bytes(nodes, morphs, capacity);
     char* block = (char*)(allocator.acquire((sz)bytes, AllocInitType.ZERO, InertialRow::alignment)
       ?? c3d::CAPACITY_EXCEEDED~!);
 
     InertialStorage* storage = (InertialStorage*)block;
-    *storage = {
-        .allocator = allocator,
-        .rows = ((InertialRow*)(block + rows_offset))[:capacity],
-        .bytes = bytes,
-        .row_bytes = row_bytes,
-        .nodes = nodes,
-        .morphs = morphs,
-    };
+    storage.allocator = allocator;
+    storage.rows = ((InertialRow*)(storage + 1))[:capacity];
 
-    foreach (index, &row : storage.rows) {
-        InertialStorageCursor cursor = { .base = block + payload_offset + (usz)index * row_bytes };
-        row.previous_pose = carve_inertial_array(&cursor, Transform, nodes);
-        row.velocity = carve_inertial_array(&cursor, PoseVelocity, nodes);
-        row.offset = carve_inertial_array(&cursor, PoseVelocity, nodes);
-        row.offset_velocity = carve_inertial_array(&cursor, PoseVelocity, nodes);
-        row.previous_morph = carve_inertial_array(&cursor, float, morphs);
-        row.morph_velocity = carve_inertial_array(&cursor, double, morphs);
-        row.morph_offset = carve_inertial_array(&cursor, double, morphs);
-        row.morph_offset_velocity = carve_inertial_array(&cursor, double, morphs);
-        row.consumed_scale = carve_inertial_array(&cursor, bool, nodes);
+    usz node_count = (usz)capacity * nodes;
+    usz morph_count = (usz)capacity * morphs;
+    PoseVelocity* velocities = (PoseVelocity*)(storage.rows.ptr + capacity);
+    double* morph_rates = (double*)(velocities + 3 * node_count);
+    Transform* poses = (Transform*)(morph_rates + 3 * morph_count);
+    float* morph_values = (float*)(poses + node_count);
+    bool* consumed = (bool*)(morph_values + morph_count);
+
+    foreach (usz index, &row : storage.rows) {
+        usz node = index * nodes;
+        usz morph = index * morphs;
+        row.velocity = velocities[node:nodes];
+        row.offset = velocities[node_count + node:nodes];
+        row.offset_velocity = velocities[2 * node_count + node:nodes];
+        row.morph_velocity = morph_rates[morph:morphs];
+        row.morph_offset = morph_rates[morph_count + morph:morphs];
+        row.morph_offset_velocity = morph_rates[2 * morph_count + morph:morphs];
+        row.previous_pose = poses[node:nodes];
+        row.previous_morph = morph_values[morph:morphs];
+        row.consumed_scale = consumed[node:nodes];
 
         reset_inertial_row(storage, (uint)index);
     }
 
     return storage;
+}
+
+fn usz inertial_storage_bytes(usz nodes, usz morphs, usz capacity) @private {
+    usz node_bytes = 3 * PoseVelocity::size + Transform::size + bool::size;
+    usz morph_bytes = 3 * double::size + float::size;
+
+    return InertialStorage::size + capacity * (InertialRow::size + nodes * node_bytes + morphs * morph_bytes);
 }
 
 fn void destroy_inertial_storage(InertialStorage* storage) @private {
@@ -141,75 +131,4 @@ fn void reset_inertial_row(InertialStorage* storage, uint index) @private {
         .latest_up = { 0, 1, 0 },
         .source_up = { 0, 1, 0 },
     };
-}
-
-fn usz? inertial_row_storage_bytes(uint nodes, uint morphs) @local {
-    usz offset = inertial_region_end(
-        offset: 0,
-        count: nodes,
-        element_size: Transform::size,
-        alignment: Transform::alignment,
-    )!;
-
-    for (uint field = 0; field < 3; field++) {
-        offset = inertial_region_end(
-            offset: offset,
-            count: nodes,
-            element_size: PoseVelocity::size,
-            alignment: PoseVelocity::alignment,
-        )!;
-    }
-
-    offset = inertial_region_end(
-        offset: offset,
-        count: morphs,
-        element_size: float::size,
-        alignment: float::alignment,
-    )!;
-
-    for (uint field = 0; field < 3; field++) {
-        offset = inertial_region_end(
-            offset: offset,
-            count: morphs,
-            element_size: double::size,
-            alignment: double::alignment,
-        )!;
-    }
-
-    offset = inertial_region_end(
-        offset: offset,
-        count: nodes,
-        element_size: bool::size,
-        alignment: bool::alignment,
-    )!;
-
-    return inertial_aligned_offset(offset, InertialRow::alignment);
-}
-
-fn usz? inertial_region_end(
-    usz offset,
-    usz count,
-    usz element_size,
-    usz alignment,
-) @local {
-    usz aligned = inertial_aligned_offset(offset, alignment)!;
-    usz limit = (usz)sz::max;
-    if (count && element_size > (limit - aligned) / count) return c3d::CAPACITY_EXCEEDED~;
-
-    return aligned + count * element_size;
-}
-
-fn usz? inertial_aligned_offset(usz offset, usz alignment) @local {
-    usz padding = (alignment - offset % alignment) % alignment;
-    if (offset > (usz)sz::max || padding > (usz)sz::max - offset) return c3d::CAPACITY_EXCEEDED~;
-
-    return offset + padding;
-}
-
-macro carve_inertial_array(InertialStorageCursor* cursor, $Type, usz count) @local {
-    cursor.offset = (usz)mem::aligned_offset((sz)cursor.offset, $Type::alignment);
-    $Type[] result = (($Type*)(cursor.base + cursor.offset))[:count];
-    cursor.offset += count * $Type::size;
-
-    return result;
 }

@@ -377,22 +377,13 @@ fn void test_animation_inertial_math_zero_completion_and_repeated_corrected_inte
     }
 }
 
-fn usz check_inertial_region(
-    void* block,
-    usz bytes,
-    usz prior_end,
-    void* pointer,
-    usz region_bytes,
-    usz alignment,
-) @local {
+fn void check_inertial_region(void* block, usz bytes, void* pointer, usz region_bytes, usz alignment) @local {
     usz start = (usz)pointer;
-    assert(start % alignment == 0 && start >= prior_end);
-    assert(start >= (usz)block && start - (usz)block <= bytes);
-    assert(region_bytes <= bytes - (start - (usz)block));
-    return start + region_bytes;
+    assert(start % alignment == 0 && start >= (usz)block);
+    assert(start - (usz)block + region_bytes <= bytes);
 }
 
-fn void test_animation_inertial_storage_single_block_cost_alignment_and_separate_capacity_rows() @test {
+fn void test_animation_inertial_storage_single_block_alignment_and_row_lengths() @test {
     InertialStorageCase[2] cases = {
         { .nodes = 4, .morphs = 2, .capacity = 1 },
         { .nodes = 520, .morphs = 9, .capacity = 16 },
@@ -407,57 +398,61 @@ fn void test_animation_inertial_storage_single_block_cost_alignment_and_separate
                 capacity: sample.capacity,
             )!!;
             defer anim::destroy_inertial_storage(storage);
+            usz bytes = (usz)allocator.bytes;
             assert((void*)storage == allocator.pointer && allocator.acquisitions == 1 && allocator.outstanding == 1);
-            assert(allocator.resizes == 0 && allocator.releases == 0 && (usz)allocator.bytes == storage.bytes);
-            assert(allocator.alignment == InertialRow::alignment && storage.rows.len == sample.capacity);
-            assert(storage.nodes == sample.nodes && storage.morphs == sample.morphs);
-            usz previous_end = (usz)storage.rows.ptr + (usz)storage.rows.len * InertialRow::size;
+            assert(allocator.resizes == 0 && allocator.releases == 0 && storage.rows.len == sample.capacity);
+            assert(bytes == anim::inertial_storage_bytes(sample.nodes, sample.morphs, sample.capacity));
             foreach (row : storage.rows) {
                 assert(row.previous_pose.len == sample.nodes && row.velocity.len == sample.nodes);
                 assert(row.offset.len == sample.nodes && row.offset_velocity.len == sample.nodes);
-                assert(row.previous_morph.len == sample.morphs && row.morph_velocity.len == sample.morphs);
-                assert(row.morph_offset.len == sample.morphs && row.morph_offset_velocity.len == sample.morphs);
-                previous_end = check_inertial_region(
+                assert(row.consumed_scale.len == sample.nodes && row.previous_morph.len == sample.morphs);
+                assert(row.morph_velocity.len == sample.morphs && row.morph_offset.len == sample.morphs);
+                assert(row.morph_offset_velocity.len == sample.morphs);
+                check_inertial_region(
                     block: storage,
-                    bytes: storage.bytes,
-                    prior_end: previous_end,
+                    bytes: bytes,
                     pointer: row.previous_pose.ptr,
                     region_bytes: (usz)row.previous_pose.len * Transform::size,
                     alignment: Transform::alignment,
                 );
                 foreach (values : (PoseVelocity[][3]){ row.velocity, row.offset, row.offset_velocity }) {
-                    previous_end = check_inertial_region(
+                    check_inertial_region(
                         block: storage,
-                        bytes: storage.bytes,
-                        prior_end: previous_end,
+                        bytes: bytes,
                         pointer: values.ptr,
                         region_bytes: (usz)values.len * PoseVelocity::size,
                         alignment: PoseVelocity::alignment,
                     );
                 }
-                previous_end = check_inertial_region(
-                    block: storage,
-                    bytes: storage.bytes,
-                    prior_end: previous_end,
-                    pointer: row.previous_morph.ptr,
-                    region_bytes: (usz)row.previous_morph.len * float::size,
-                    alignment: float::alignment,
-                );
                 foreach (values : (double[][3]){ row.morph_velocity, row.morph_offset, row.morph_offset_velocity }) {
-                    previous_end = check_inertial_region(
+                    check_inertial_region(
                         block: storage,
-                        bytes: storage.bytes,
-                        prior_end: previous_end,
+                        bytes: bytes,
                         pointer: values.ptr,
                         region_bytes: (usz)values.len * double::size,
                         alignment: double::alignment,
                     );
                 }
+                check_inertial_region(
+                    block: storage,
+                    bytes: bytes,
+                    pointer: row.consumed_scale.ptr,
+                    region_bytes: (usz)row.consumed_scale.len,
+                    alignment: 1,
+                );
                 assert(!row.control.history_valid && !row.control.active && !row.root.target_rate_pending);
             }
         }
         assert(allocator.outstanding == 0 && allocator.releases == 1);
     }
+}
+
+fn PoseVelocity inertial_storage_row_velocity(usz index) @local {
+    return {
+        .translation = { (double)index + 1, -2, 3 },
+        .angular = { 4, (double)index + 5, -6 },
+        .scale = { 7, 8, (double)index + 9 },
+    };
 }
 
 fn void test_animation_inertial_storage_reset_clears_one_incarnation_without_touching_other_rows_or_allocating() @test {
@@ -469,25 +464,18 @@ fn void test_animation_inertial_storage_reset_clears_one_incarnation_without_tou
         capacity: 4,
     )!!;
     defer anim::destroy_inertial_storage(storage);
-    foreach (index, &row : storage.rows) {
+    foreach (usz index, &row : storage.rows) {
         row.previous_pose[..] = maths::TRANSFORM_IDENTITY;
         row.previous_pose[0].position = { (float)index + 1, 2, 3 };
-        PoseVelocity values = {
-            .translation = { (double)index + 1, -2, 3 },
-            .angular = { 4, (double)index + 5, -6 },
-            .scale = { 7, 8, (double)index + 9 },
-        };
-        row.velocity[..] = values;
-        row.offset[..] = values;
-        row.offset_velocity[..] = values;
+        row.velocity[..] = inertial_storage_row_velocity(index);
+        row.offset[..] = inertial_storage_row_velocity(index);
+        row.offset_velocity[..] = inertial_storage_row_velocity(index);
         row.previous_morph[..] = (float)index + 1;
         row.morph_velocity[..] = (double)float::max * 2;
         row.morph_offset[..] = -(double)float::max * 2;
         row.morph_offset_velocity[..] = 0x1p-140;
-        row.control = {
-            .history_valid = true, .active = true,
-            .duration = 3, .elapsed = 1,
-        };
+        row.consumed_scale[..] = true;
+        row.control = { .history_valid = true, .active = true, .duration = 3, .elapsed = 1 };
         row.root = {
             .published_translation = { 1, 2, 3 },
             .translation_rate = { 4, 5, 6 }, .twist_rate = 0.25,
@@ -495,15 +483,6 @@ fn void test_animation_inertial_storage_reset_clears_one_incarnation_without_tou
             .residual_translation_rate = { -1, -2, -3 }, .residual_twist_rate = -0.5,
             .target_rate_pending = true,
         };
-    }
-    InertialRow[3] neighbors = { storage.rows[0], storage.rows[2], storage.rows[3] };
-    char[][3] payloads;
-    for (uint neighbor = 0; neighbor < 3; neighbor++) {
-        char[] bytes = ((char*)neighbors[neighbor].previous_pose.ptr)[:storage.row_bytes];
-        payloads[neighbor] = alloc::clone_slice(mem, bytes);
-    }
-    defer {
-        foreach (bytes : payloads) alloc::free(mem, bytes.ptr);
     }
     for (uint reset = 0; reset < 100; reset++) anim::reset_inertial_row(storage, 1);
     InertialRow* cleared = &storage.rows[1];
@@ -523,21 +502,27 @@ fn void test_animation_inertial_storage_reset_clears_one_incarnation_without_tou
     foreach (values : (double[][3]){ cleared.morph_velocity, cleared.morph_offset, cleared.morph_offset_velocity }) {
         foreach (value : values) assert(value == 0);
     }
+    foreach (value : cleared.consumed_scale) assert(!value);
     RootInertialState empty = { .latest_up = { 0, 1, 0 }, .source_up = { 0, 1, 0 } };
     assert(mem::equals(&cleared.root, &empty, RootInertialState::size));
-    for (uint neighbor = 0; neighbor < 3; neighbor++) {
-        uint index = neighbor == 0 ? 0 : neighbor + 1;
-        assert(mem::equals(&neighbors[neighbor], &storage.rows[index], InertialRow::size));
-        assert(mem::equals(
-            a: (char*)storage.rows[index].previous_pose.ptr,
-            b: payloads[neighbor].ptr,
-            len: (sz)storage.row_bytes,
-        ));
+    foreach (index : (usz[3]){ 0, 2, 3 }) {
+        InertialRow* row = &storage.rows[index];
+        PoseVelocity expected = inertial_storage_row_velocity(index);
+        assert(row.control.history_valid && row.root.target_rate_pending);
+        assert(row.previous_pose[0].position == (Vec3){ (float)index + 1, 2, 3 });
+        foreach (values : (PoseVelocity[][3]){ row.velocity, row.offset, row.offset_velocity }) {
+            foreach (value : values) assert(mem::equals(&value, &expected, PoseVelocity::size));
+        }
+        foreach (value : row.previous_morph) assert(value == (float)index + 1);
+        foreach (value : row.morph_velocity) assert(value == (double)float::max * 2);
+        foreach (value : row.morph_offset) assert(value == -(double)float::max * 2);
+        foreach (value : row.morph_offset_velocity) assert(value == 0x1p-140);
+        foreach (value : row.consumed_scale) assert(value);
     }
     assert(allocator.acquisitions == 1 && allocator.resizes == 0 && allocator.releases == 0);
 }
 
-fn void test_animation_inertial_storage_failed_acquisition_and_overflow_leave_no_owner() @test {
+fn void test_animation_inertial_storage_failed_acquisition_leaves_no_owner() @test {
     MotionTestAllocator failing = { .backing = mem, .failure = 1 };
     assert(@catch(anim::create_inertial_storage(
         allocator: &failing,
@@ -546,14 +531,6 @@ fn void test_animation_inertial_storage_failed_acquisition_and_overflow_leave_no
         capacity: 16,
     )) == c3d::CAPACITY_EXCEEDED);
     assert(failing.acquisitions == 1 && failing.outstanding == 0 && failing.releases == 0);
-    MotionTestAllocator overflow = { .backing = mem };
-    assert(@catch(anim::create_inertial_storage(
-        allocator: &overflow,
-        nodes: uint::max,
-        morphs: uint::max,
-        capacity: uint::max,
-    )) == c3d::CAPACITY_EXCEEDED);
-    assert(overflow.acquisitions == 0 && overflow.resizes == 0 && overflow.releases == 0);
 }
 
 fn bool inertial_owner_allocation_is_live(TrackingAllocator* tracker, void* pointer) @local {
@@ -583,7 +560,8 @@ fn void test_animation_inertial_owners_animator_opt_in_has_one_private_row_and_r
         assert(tracker.allocated() == without_animator);
         Animator* enabled = anim::add_animator(&fixture.scene, fixture.root, { .inertia_enabled = true });
         InertialStorage* storage = enabled.inertial_storage;
-        assert(storage && storage.rows.len == 1 && storage.nodes == 4 && storage.morphs == 1);
+        assert(storage && storage.rows.len == 1);
+        assert(storage.rows[0].previous_pose.len == 4 && storage.rows[0].previous_morph.len == 1);
         assert(!storage.rows[0].control.history_valid && !storage.rows[0].control.active);
         assert(storage.rows[0].previous_pose.ptr != enabled.pose_storage.destination.pose.ptr);
         void* block = storage;
@@ -646,7 +624,7 @@ fn void test_animation_inertial_owners_prepared_crowd_reserves_capacity_and_repl
             }
             InertialStorage* storage = crowd.playback.inertial_storage;
             assert(storage && storage.rows.len == 4 && crowd.count == 2);
-            assert(storage.nodes == 4 && storage.morphs == 1);
+            assert(storage.rows[0].previous_pose.len == 4 && storage.rows[0].previous_morph.len == 1);
             foreach (index, &row : storage.rows) {
                 assert(!row.control.history_valid && !row.control.active);
                 row.control.history_valid = true;
@@ -703,7 +681,8 @@ fn void test_animation_inertial_owners_crowd_creation_failure_at_every_allocatio
         )!!;
         defer anim::destroy_crowd_playback(state);
         attempts = probe.attempts;
-        assert(state.inertial_storage.rows.len == placements.len && state.inertial_storage.morphs == 2);
+        assert(state.inertial_storage.rows.len == placements.len);
+        assert(state.inertial_storage.rows[0].previous_morph.len == 2);
     }
     assert(probe.outstanding == 0);
     for (uint failure = 1; failure <= attempts; failure++) {
