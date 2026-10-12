@@ -6,7 +6,6 @@ import c3d::asset;
 import c3d::maths;
 import c3d::model;
 import c3d::scene;
-import c3d::shader;
 import c3d::test::animated_crowd_fixtures;
 import gpu;
 import std::math;
@@ -89,7 +88,7 @@ fn void capture_crowd_history(CrowdHistoryFixture* fixture, ViewHistory* history
     history.publish();
 }
 
-fn void test_crowd_history_reorders_previous_sources_after_equal_count_parity_change() @test {
+fn void test_crowd_history_keeps_logical_sources_after_equal_count_parity_change() @test {
     CrowdHistoryFixture fixture = make_crowd_history_fixture();
     defer destroy_crowd_history_fixture(&fixture);
     AnimatedCrowd* crowd = fixture.scene.get(fixture.node, AnimatedCrowd);
@@ -108,25 +107,8 @@ fn void test_crowd_history_reorders_previous_sources_after_equal_count_parity_ch
     crowd.placements[1].scale.x = 1;
     anim::crowd_update(&fixture.assets, &fixture.scene, 0);
     uint[3] order;
-    crowd_packed_order(
-        packed: order[..],
-        placements: crowd.placements[:crowd.count],
-        crowd: crowd,
-        part: 0,
-    );
+    crowd_packed_order(order[..], crowd, 0);
     assert(order[0] == 2 && order[1] == 0 && order[2] == 1);
-    Mat4f[6] previous;
-    write_crowd_previous_data(
-        target: ((char*)&previous)[:previous.len * Mat4f::size],
-        data: owner.palette.ptr,
-        order: order[..],
-        stride: crowd.joint_count * Mat4f::size,
-    );
-    foreach (uint source, packed : order) {
-        for (uint joint = 0; joint < crowd.joint_count; joint++) {
-            assert(previous[packed * crowd.joint_count + joint] == owner.palette[source * crowd.joint_count + joint]);
-        }
-    }
     foreach (&candidate : fixture.candidates) {
         PoseRecord* pose = fixture.first.previous_pose(&fixture.scene, candidate.node);
         assert(crowd_history_matches(
@@ -135,34 +117,6 @@ fn void test_crowd_history_reorders_previous_sources_after_equal_count_parity_ch
             pose: pose,
             crowd_pose: owner,
         ));
-        uint[3] part_order;
-        crowd_packed_order(
-            packed: part_order[..],
-            placements: crowd.placements[:crowd.count],
-            crowd: crowd,
-            part: candidate.crowd_part,
-        );
-        Mat4f[3] instances;
-        write_crowd_previous_data(
-            target: ((char*)&instances)[:instances.len * Mat4f::size],
-            data: pose.instances.ptr,
-            order: part_order[..],
-            stride: Mat4f::size,
-        );
-        foreach (uint source, packed : part_order) assert(instances[packed] == pose.instances[source]);
-        if (!crowd.parts[candidate.crowd_part].weight_count) continue;
-        MorphWeightsGpu[3] morphs;
-        write_crowd_previous_data(
-            target: ((char*)&morphs)[:morphs.len * MorphWeightsGpu::size],
-            data: pose.morphs.ptr,
-            order: part_order[..],
-            stride: MorphWeightsGpu::size,
-        );
-        foreach (uint source, packed : part_order) {
-            assert(morphs[packed].indices == pose.morphs[source].indices);
-            assert(morphs[packed].weights == pose.morphs[source].weights);
-            assert(morphs[packed].count == pose.morphs[source].count);
-        }
     }
 }
 

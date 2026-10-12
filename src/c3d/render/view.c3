@@ -1616,12 +1616,7 @@ fn gpu::GpuAddress? upload_previous_pose(
     uint[] crowd_order;
     if (AnimatedCrowd* crowd = candidate.crowd) {
         crowd_order = alloc::new_array(tmem, uint, crowd.count);
-        crowd_packed_order(
-            packed: crowd_order,
-            placements: crowd.placements[:crowd.count],
-            crowd: crowd,
-            part: candidate.crowd_part,
-        );
+        crowd_packed_order(crowd_order, crowd, candidate.crowd_part);
 
         if (item.skin != (gpu::GpuAddress)0) {
             ulong key = (ulong)(uptr)candidate.node.parent;
@@ -1735,28 +1730,11 @@ fn gpu::GpuAddress? upload_crowd_previous_data(
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, order.len * stride, STREAM_ALIGNMENT)!;
 
-    write_crowd_previous_data(
-        target: span.bytes,
-        data: data,
-        order: order,
-        stride: stride,
-    );
+    foreach (usz source, packed : order) {
+        mem::copy(span.bytes.ptr + (usz)packed * stride, (char*)data + source * stride, (sz)stride);
+    }
 
     return span.address;
-}
-
-<* Copy logical source records into their current packed slots.
- @require target.len == order.len * stride
-*>
-fn void write_crowd_previous_data(
-    char[] target,
-    void* data,
-    uint[] order,
-    usz stride,
-) @private {
-    foreach (usz source, packed : order) {
-        mem::copy(target.ptr + (usz)packed * stride, (char*)data + source * stride, (sz)stride);
-    }
 }
 
 <*

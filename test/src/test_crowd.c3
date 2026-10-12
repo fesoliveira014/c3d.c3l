@@ -589,7 +589,7 @@ fn void test_packed_order_finds_each_placement_palette() @test {
     Mat4f[8] packed;
     render::pack_crowd_palettes(packed[..], crowd);
     uint[4] slots;
-    render::crowd_packed_order(slots[..], crowd.placements[:crowd.count]);
+    render::crowd_packed_order(slots[..], crowd, 0);
 
     foreach (usz instance, slot : slots) {
         for (usz joint = 0; joint < 2; joint++) {

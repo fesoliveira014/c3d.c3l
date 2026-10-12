@@ -144,30 +144,15 @@ fn gpu::GpuAddress? resolve_crowd_bounds(Renderer* renderer, MeshCandidate* cand
 }
 
 <*
- Palette slot of each placement in the parity-packed draw order: unmirrored instances first.
- @param [out] packed : "One entry per placement."
- @param [in] crowd : "Null selects placement-only parity."
- @param part : "Logical crowd mesh; ignored without a crowd."
- @require packed.len == placements.len
+ Packed draw slot of each live instance of one part: unmirrored instances first.
+ @param [out] packed : "One entry per live instance."
+ @param [&in] crowd : "Prepared crowd."
+ @param part : "Logical crowd mesh."
+ @require packed.len == crowd.count
 *>
-fn void crowd_packed_order(
-    uint[] packed,
-    Transform[] placements,
-    AnimatedCrowd* crowd = null,
-    uint part = 0,
-) {
-    uint unmirrored;
-    foreach (uint index, placement : placements) {
-        bool mirrored = crowd ? crowd.part_mirrored(index, part) : scene::transform_mirrored(placement);
-        if (!mirrored) unmirrored++;
-    }
-
-    uint[2] next = { 0, unmirrored };
-    foreach (uint instance, placement : placements) {
-        bool mirrored = crowd ? crowd.part_mirrored(instance, part) : scene::transform_mirrored(placement);
-        usz parity = mirrored ? 1 : 0;
-        packed[instance] = next[parity]++;
-    }
+fn void crowd_packed_order(uint[] packed, AnimatedCrowd* crowd, uint part) {
+    uint[2] next = { 0, crowd.count - crowd.part_mirrored_count(part) };
+    foreach (uint instance, &slot : packed) *slot = next[crowd.part_mirrored(instance, part) ? 1 : 0]++;
 }
 
 <*
