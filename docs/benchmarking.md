@@ -380,7 +380,7 @@ the atmosphere, so the crossing regenerates nothing. `--volumetric-fog` adds a f
 choosing its grid and `--fog-temporal` adding its [temporal accumulation](sky.md#temporal-accumulation); `--local-lights N`, `--lamp-range METRES` and `--lamps-in-fog on|off` place and configure
 [lamps](sky.md#example) that `FOG_SCATTERING` scatters; `--taa` turns on TAA, so
 `--volumetric-fog --taa` on the pan segment shows whether sun shafts crawl; `--clouds` adds a [cloud layer](sky.md#clouds) and the
-`CLOUDS` pass line reports it (0 without the switch). A failed gate exits 1. `--fog off --atmosphere off` is the fog-off baseline. `--atmosphere dense|empty` selects the
+`CLOUDS` and `CLOUD_SHADOWS` pass lines report it (0 without the switch). A failed gate exits 1. `--fog off --atmosphere off` is the fog-off baseline. `--atmosphere dense|empty` selects the
 dense and the non-scattering atmospheres of [the sky example](sky.md#example); the header prints the value.
 
 ## Instancing benchmark
