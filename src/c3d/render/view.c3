@@ -2263,7 +2263,7 @@ fn ShaderVariant material_fragment(Material* material, uint shadow_flags, bool w
         case STANDARD: return { .shader = STANDARD, .flags = shadow_flags | weighted_flag };
         case TOON: return { .shader = TOON, .flags = shadow_flags | weighted_flag };
         case PHYSICAL: return { .shader = PHYSICAL, .flags = shadow_flags | weighted_flag };
-        case CUSTOM: return { .flags = shadow_flags };
+        case CUSTOM: return { .flags = shadow_flags | weighted_flag };
     }
 }
 
