@@ -218,6 +218,21 @@ fn void Scene.mark_instances_dirty(&self, Node* node) {
 }
 
 <*
+ Declare in-place edits of instances [first, first + count) to the renderer.
+ @param [&in] node : "Carries an InstancedMesh."
+ @require self.has(node, InstancedMesh), count > 0, (usz)first + count <= self.get(node, InstancedMesh).count
+*>
+fn void Scene.mark_instances_range_dirty(&self, Node* node, uint first, uint count) {
+    InstancedMesh* batch = self.get(node, InstancedMesh);
+    uint base_revision = batch.revision;
+    step_revision(batch);
+    batch.ranges.append(
+        base_revision,
+        { .revision = batch.revision, .span = { .first = first, .end = first + count } },
+    );
+}
+
+<*
  Destroy the subtree's entities through their hooks, then release the nodes.
  Invalidates component pointers of every store the subtree used.
  @param [&inout] node : "Dead afterwards, with every descendant."
@@ -505,6 +520,11 @@ fn void fill_instances(InstancedMesh* batch, Transform[] transforms, Vec4[] colo
 }
 
 fn void advance_revision(InstancedMesh* batch) @local {
+    step_revision(batch);
+    batch.ranges.count = 0;
+}
+
+fn void step_revision(InstancedMesh* batch) @local {
     batch.revision = batch.revision == uint::max ? 1 : batch.revision + 1;
 }
 
