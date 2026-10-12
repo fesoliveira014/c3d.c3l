@@ -52,9 +52,11 @@ const float SHADOW_DISTANCE @local = 400; // metres; four cascades over the near
 const uint SHADOW_CASCADES @local = 4;
 
 // Exposure from the zenith sky luminance at intensity 3: exposure = 0.045 / luminance, log-linear between entries.
-// The table stops at -4 degrees, the last elevation whose zenith stays above RGBA16F subnormals.
-const float[8] EXPOSURE_ELEVATIONS @local = { 60, 30, 10, 5, 2, 0, -2, -4 };
-const float[8] EXPOSURE_VALUES @local = { 1, 1.6f, 2.8f, 4, 6.5f, 12, 35, 155 };
+const float[10] EXPOSURE_ELEVATIONS @local = { 60, 30, 10, 5, 2, 0, -2, -4, -6, -8 };
+const float[10] EXPOSURE_VALUES @local = { 1, 1.6f, 2.8f, 4, 6.5f, 12, 35, 155, 2050, 13500 };
+const float TWILIGHT_ELEVATION_DEGREES @local = -4;
+const float DUSK_ELEVATION_DEGREES @local = -6;
+const float NAUTICAL_ELEVATION_DEGREES @local = -8;
 
 const float CAMERA_FOV_DEGREES @local = 60;
 const float CAMERA_NEAR @local = 0.1f;
@@ -200,6 +202,8 @@ enum Segment @local {
 enum Preset @local {
     NOON,
     TWILIGHT,
+    DUSK,
+    NAUTICAL,
     VALLEY,
     PAN,
     ORBIT,
@@ -234,6 +238,7 @@ struct Options @local {
     bool        lamps_in_fog;
     bool        taa;
     bool        auto_exposure;
+    float       pre_exposure; // 0 follows the camera exposure
     Preset      preset;
     uint        width;
     uint        height;
@@ -702,6 +707,7 @@ fn ViewDesc main_view_desc(ViewDesc desc, Options options) @local {
     if (options.local_lights > 0) desc.lights = LightSelection.CLUSTERED;
     if (options.taa && !options.path_traced) desc.post.anti_aliasing = AntiAliasing.TAA;
     desc.post.auto_exposure = options.auto_exposure;
+    desc.pre_exposure_override = options.pre_exposure;
     if (options.ssgi) {
         desc.post.anti_aliasing = AntiAliasing.TAA;
         desc.screen_space_gi = render::SCREEN_SPACE_GI_DEFAULT;
@@ -720,6 +726,7 @@ fn ViewDesc mirror_view_desc(Demo* demo) @local {
     desc.shading = demo.options.shading;
     desc.post.anti_aliasing = AntiAliasing.NONE;
     desc.clip_plane = MIRROR_PLANE;
+    desc.pre_exposure_override = demo.options.pre_exposure;
     desc.ray_tracing.shadows = demo.options.traced_shadows;
     desc.volumetric_fog = demo.options.volumetric_fog;
     desc.fog_quality = demo.options.fog_quality;
@@ -805,7 +812,13 @@ fn SkyPose preset_pose(Preset preset, bool clouds = false) @local {
             pose.elevation_degrees = NOON_ELEVATION_DEGREES;
             if (clouds) pose.pitch = CLOUD_VIEW_PITCH_DEGREES * DEGREE;
         case TWILIGHT:
-            pose.elevation_degrees = EXPOSURE_ELEVATIONS[EXPOSURE_ELEVATIONS.len - 1];
+            pose.elevation_degrees = TWILIGHT_ELEVATION_DEGREES;
+            if (clouds) pose.pitch = CLOUD_VIEW_PITCH_DEGREES * DEGREE;
+        case DUSK:
+            pose.elevation_degrees = DUSK_ELEVATION_DEGREES;
+            if (clouds) pose.pitch = CLOUD_VIEW_PITCH_DEGREES * DEGREE;
+        case NAUTICAL:
+            pose.elevation_degrees = NAUTICAL_ELEVATION_DEGREES;
             if (clouds) pose.pitch = CLOUD_VIEW_PITCH_DEGREES * DEGREE;
         case VALLEY:
             pose.camera_position.y = VALLEY_HEIGHT;
@@ -901,6 +914,9 @@ fn Options? parse_options(String[] args) @local {
             case "--lamps-in-fog": options.lamps_in_fog = on_off(option_value(args, &index)!)!;
             case "--taa": options.taa = true;
             case "--auto-exposure": options.auto_exposure = true;
+            case "--pre-exposure":
+                String value = option_value(args, &index)!;
+                options.pre_exposure = value == "off" ? 1 : value.to_float()!;
             case "--fog": options.fog = on_off(option_value(args, &index)!)!;
             case "--atmosphere":
                 switch (option_value(args, &index)!) {
@@ -914,6 +930,8 @@ fn Options? parse_options(String[] args) @local {
                 switch (option_value(args, &index)!) {
                     case "noon": options.preset = Preset.NOON;
                     case "twilight": options.preset = Preset.TWILIGHT;
+                    case "dusk": options.preset = Preset.DUSK;
+                    case "nautical": options.preset = Preset.NAUTICAL;
                     case "valley": options.preset = Preset.VALLEY;
                     case "pan": options.preset = Preset.PAN;
                     case "orbit": options.preset = Preset.ORBIT;
@@ -1044,6 +1062,10 @@ fn void? sky_panel(
         if (imgui::button("Noon")) apply_preset(controls, fly_camera, Preset.NOON, demo.options.clouds);
         imgui::same_line();
         if (imgui::button("Twilight")) apply_preset(controls, fly_camera, Preset.TWILIGHT, demo.options.clouds);
+        imgui::same_line();
+        if (imgui::button("Dusk")) apply_preset(controls, fly_camera, Preset.DUSK, demo.options.clouds);
+        imgui::same_line();
+        if (imgui::button("Nautical")) apply_preset(controls, fly_camera, Preset.NAUTICAL, demo.options.clouds);
         imgui::same_line();
         if (imgui::button("Valley")) apply_preset(controls, fly_camera, Preset.VALLEY, demo.options.clouds);
         imgui::same_line();
@@ -1653,8 +1675,9 @@ fn int main(String[] args) {
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--shadows atlas|traced] [--ssgi] [--path-traced] [--reflections on|off] [--volumetric-fog] "
               "[--fog-quality low|medium|high] [--local-lights N] [--lamp-range METRES] [--lamps-in-fog on|off] "
-              "[--taa] [--auto-exposure] [--clouds] [--fog on|off] [--atmosphere on|off|dense|empty] "
-              "[--preset noon|twilight|valley|pan|orbit|time-lapse] [--width W] [--height H].");
+              "[--taa] [--auto-exposure] [--pre-exposure off|FACTOR] [--clouds] [--fog on|off] "
+              "[--atmosphere on|off|dense|empty] "
+              "[--preset noon|twilight|dusk|nautical|valley|pan|orbit|time-lapse] [--width W] [--height H].");
         }
         return 1;
     }

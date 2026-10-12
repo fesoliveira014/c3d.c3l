@@ -18,6 +18,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Tr
     uint width;
     uint height;
     uint split_x;
+    float pre_exposure;
 };
 
 const uint MODE_DISTANCE = 0u; // mirrored as TraceMode.DISTANCE in software_rt.c3
@@ -82,5 +83,5 @@ void main() {
             color = hashed_color(hit.instance);
         }
     }
-    store_storage_texture(target.texture_index, ivec2(pixel), vec4(color, 1.0));
+    store_storage_texture(target.texture_index, ivec2(pixel), vec4(color * root.pre_exposure, 1.0));
 }

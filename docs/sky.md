@@ -429,14 +429,9 @@ exposure: the application drives `Camera.exposure`. A table of sun elevations wo
 proportional to 1 / (zenith sky luminance), interpolated in elevation on log₂ of the exposure. The
 sky example's table, measured from its zenith luminance at sun intensity 3:
 
-| Sun elevation | 60° | 30° | 10° | 5° | 2° | 0° | −2° | −4° |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `Camera.exposure` | 1 | 1.6 | 2.8 | 4 | 6.5 | 12 | 35 | 155 |
-
-Below about intensity × 10⁻⁵ the sky sits in `RGBA16F`'s subnormal range, whose steps of 6 × 10⁻⁸
-band after exposure. The table stops at −4°, above civil twilight, where the zenith leaves the normal
-half-float range. On an RTX 4090 the −4° sky shows no banding: a zenith-to-horizon column holds 270
-distinct values over 430 rows, with no run longer than 5 rows and no step above 2 levels.
+| Sun elevation | 60° | 30° | 10° | 5° | 2° | 0° | −2° | −4° | −6° | −8° |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `Camera.exposure` | 1 | 1.6 | 2.8 | 4 | 6.5 | 12 | 35 | 155 | 2050 | 13500 |
 
 `--auto-exposure` sets `Camera.exposure` to 1 and turns on [auto exposure](post.md#auto-exposure) on the main view
 instead of the table; the panel shows the table's value beside the adapted one. Converged on the RTX 4090, ten
@@ -451,6 +446,26 @@ seconds after setting the elevation:
 At −4° the main view applies 301.5 while its `LINEAR_HDR` mirror stays at 1.000.
 
 The table stays the manual default.
+
+### Pre-exposure
+
+Every view stores its sky and its lighting multiplied by a power of two near its exposure, and post divides it
+out ([pre-exposure](post.md#pre-exposure)). The sky pixel, the fog and the lights then sit near display scale in
+`RGBA16F` at every elevation, where unscaled radiance below about intensity × 10⁻⁵ would sit in the subnormal
+range, whose steps are 6 × 10⁻⁸. The shared environment and sky cubes stay physical and reach a view through its
+per-view intensity. The view's sky-view and aerial-perspective tables are the exception: they hold luminance per unit
+sun illuminance in physical units, so their own steps still bound the precision of a twilight sky.
+
+- A clamp that shapes the image acts on physical radiance: the sun's disc is limited to 60,000 first, and then
+  scaled.
+- A clamp that keeps half-float finite acts on the stored value after the scale: the sky pixel at 65,504 (a bright
+  disc under a high factor is cut at 65,504 divided by the factor), the weighted blend's accumulation, and the path
+  tracer's copy into the view's image.
+- The brightest sun disc the half-float target can hold shrinks as the pre-exposure factor grows, so a disc dimmed by
+  fog can clip at high factors, and a disc clipped by the storage guard also weakens its bloom.
+- The weighted blend's colour limit of 64 is in stored units, about 64 times display white at every exposure.
+- TAA's `1 / (1 + luma)` weights and its variance clip work in stored units, so they follow the exposed image
+  rather than absolute radiance.
 
 ## Path tracing
 
@@ -473,8 +488,10 @@ sky example does under `--path-traced`.
   froxel volume and no aerial perspective table; a miss takes the height fog alone.
 - Opaque stages cannot opt out of the fog pass.
 - Path-traced views are unfogged; a sky change does not restart their accumulation.
-- Twilight bands below about intensity × 10⁻⁵; the example stops its exposure table at −4°.
-- The sun's disc saturates at 60,000.
+- Twilight bands below about intensity × 10⁻⁵, near −4° of sun elevation: a view's sky-view and aerial-perspective
+  tables hold physical `RGBA16F` luminance per unit sun illuminance, which bounds the precision of the twilight sky.
+  Pre-exposure does not lift it.
+- The sun's disc saturates at 60,000 physical radiance.
 - Aerial perspective keeps one mean transmittance, covers 128 km (from the shell above it) and composes behind
   the height fog;
   a refracted segment through both media is approximate, and the refraction's bend is ignored for
@@ -502,7 +519,9 @@ regeneration count; the presets noon, twilight, valley (300 m up, looking down i
 time-lapse pose the camera and the sun. The mirror pad renders with the main camera as its shadow camera, so the
 frame records one shadow atlas, the mirror's, and the main view binds it ([shadow sets](shadows.md#shadow-sets)).
 
-`--auto-exposure` replaces the exposure table with auto exposure on the main view.
+`--auto-exposure` replaces the exposure table with auto exposure on the main view. `--pre-exposure off|FACTOR`
+forces the main and mirror views' [pre-exposure](#pre-exposure) to 1 or to a power of two from 2⁻¹⁶ to 2¹⁶. The presets
+`dusk` and `nautical` set the sun to −6° and −8°.
 
 The `orbit` preset puts the camera 400 km up, pitched 10° down, with the sun 12° up: the limb curves 9.8° below the
 view's axis and the sun's disc stands against space. The sun slider reaches −25°; near −19.4° the disc is seen through
@@ -598,7 +617,7 @@ transmission pane shows no double fog; the water's reflections of far peaks are 
 peaks seen directly.
 
 A refresh (0.84 ms) is far under the 4.2 ms at which refreshes would be time-sliced; a second view's
-tables (0.035 ms) do not call for a per-view switch; the −4° twilight does not call for pre-exposure.
+tables do not call for a per-view switch.
 
 ### Volumetric fog, RTX 4090, 2560 × 1440
 

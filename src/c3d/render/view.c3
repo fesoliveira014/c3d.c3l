@@ -197,7 +197,8 @@ fn void? record_camera_view(
         begin_profile_view(renderer, view, "view.render")!;
         Camera* camera = &view_camera.camera;
         record.exposure = camera.exposure;
-        record.pre_exposure = post::view_pre_exposure(record);
+        record.pre_exposure = post::view_pre_exposure(record, scene.identity);
+        record.stats.pre_exposure = record.pre_exposure.factor;
         if (!post::auto_exposure_active(&record.desc)) record.stats.exposure = camera.exposure;
 
         Vec2 viewport = { (float)record.hdr_color.width, (float)record.hdr_color.height };
@@ -1099,13 +1100,14 @@ fn void? record_raster_view(
             }
             if (temporal) {
                 record.history.commit(
-                    allocator:  renderer.allocator,
-                    assets:     renderer.assets,
-                    scene:      scene,
-                    candidates: candidates,
-                    view_proj:  matrices.view_proj,
-                    time:       renderer.info.time,
-                    origin:     renderer.frame_origin,
+                    allocator:    renderer.allocator,
+                    assets:       renderer.assets,
+                    scene:        scene,
+                    candidates:   candidates,
+                    view_proj:    matrices.view_proj,
+                    time:         renderer.info.time,
+                    origin:       renderer.frame_origin,
+                    pre_exposure: pre_exposure,
                 );
             }
         };
