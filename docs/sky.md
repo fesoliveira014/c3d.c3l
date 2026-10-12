@@ -365,6 +365,7 @@ the lighting.
 | `wind_offset` | 0 | metres the clouds have drifted along each axis; the application advances it |
 | `albedo` | 1 | single-scattering albedo, 0 to 1 |
 | `anisotropy` | 0.6 | Henyey-Greenstein `g` of the forward lobe; the back lobe takes −g / 2 |
+| `cast_shadows` | true | the layer shadows the sun's light on the scene ([cloud shadows](#cloud-shadows)); a bare `CloudLayer{}` casts none, `CLOUD_LAYER_DEFAULT` does |
 
 `light::cloud_layer_valid` states what the renderer accepts. A dangling `coverage` counts in
 `Stats.dangling_refs` and the view draws no clouds; a cube, array, 3D or integer map faults
@@ -412,7 +413,8 @@ phase(cos θ, g) = mix(HG(cos θ, g), HG(cos θ, −g / 2), 0.3)
 `E` is the sun's `color × intensity`, `T_air` the atmosphere's transmittance from the sample's altitude along
 the sun, and `τ` the optical depth toward the sun: `CLOUD_LIGHT_STEPS` (6) samples without detail over the
 sun's path out of the layer, at most 4 km. The sum is Wrenninge's octaves of multiple scattering, the
-factor before it a Beer-powder darkening of the thin fringe. Cloud shadows on the scene are not computed.
+factor before it a Beer-powder darkening of the thin fringe. The march shadows the deck itself; the scene's shadow is
+the [cloud shadow map](#cloud-shadows).
 
 **Composition.** `Pass.CLOUDS` follows the forward or deferred pass and its sky, so the scene readers'
 snapshots hold the clouds. It marches the half-resolution target, then a second dispatch composites it into
@@ -430,12 +432,48 @@ height fog. A view with a cloud layer splits its blended draws after the pass, a
 **Memory.** Per view, `12 · ceil(w / 2) · ceil(h / 2)` bytes: a half-resolution `RGBA16F` target (8 B,
 scattered radiance and transmittance) and an `R32F` target (4 B, the distance), allocated the first
 frame the view draws a layer and kept until the view is destroyed or its working size changes. The renderer adds one 128³ `RGBA8`
-volume, 8 MiB.
+volume, 8 MiB. The [cloud shadow map](#cloud-shadows) adds `CLOUD_SHADOW_SIZE² × 2 B` per view.
+
+### Cloud shadows
+
+A layer with `cast_shadows` multiplies the sun's visibility by the transmittance the layer lets through. `Pass.CLOUD_SHADOWS`
+writes one map per view every frame, before the fog volume and the forward or deferred pass, from the layer as it is that
+frame: nothing is cached, so wind and weather edits show at once. A view with no layer, or whose layer has `cast_shadows` false,
+records no pass and allocates no map.
+
+- **Map.** `CLOUD_SHADOW_SIZE` (512) texels, `R16F`, cover `CLOUD_SHADOW_EXTENT` (16,384 m) of the layer's bottom plane: 32 m a
+  texel, finer than the soft edge of a shadow, with the extent the lever for reach against sharpness. A texel holds `e^−τ`, `τ` the
+  optical depth along the sun from that point of the plane up through the layer, taken in `CLOUD_SHADOW_STEPS` (16) samples with
+  the detail octave. The layer is taken as flat over the map, also under an atmosphere, where the shell drops about 5 m over the
+  map's half extent. The path leans along the sun by `1 / max(sun_up, CLOUD_SUN_FLOOR)`, with `CLOUD_SUN_FLOOR` (0.1) the floor the
+  cloud march's own light march uses, so a low sun shortens the path and shifts the shadow instead of dividing by zero.
+- **Placement.** The map is centred on the camera's footprint along the sun, taken at the lower of the camera's altitude and the
+  layer's bottom so the ground under a camera above the layer stays inside it, and snapped to the world's 32 m grid. Its content
+  stays where it is in the world while the camera moves; only the corner steps, by whole texels.
+- **Light.** The sun is the one the cloud march uses: the atmosphere's sun, otherwise the scene's first directional light. Its
+  packed light carries `LIGHT_CLOUD_SHADOW`, and `FrameRoot.cloud_shadow` addresses the `CloudShadowRoot`; it is zero without a map.
+  No map exists while the sun is at or below the horizon, and the sun's visibility is then unchanged.
+- **Receivers.** `shadow_visibility` and `shadow_transmittance` multiply that light's visibility, so forward Standard, Physical
+  and Toon, the deferred lighting resolve, the volumetric fog's sun term and custom stages that call them receive it, as does a
+  sun with traced shadows. `light_casts_shadow` is true for the flagged light even when it has no shadow layers. A draw that does
+  not receive shadows receives none. The volumetric fog's froxels take it too, so gaps between clouds light shafts.
+- **Projection.** A receiver at altitude `y` goes along the sun to the bottom plane and reads the map there. A receiver inside
+  the layer reads `T^s`, with `s` the share of the layer above it, which treats the density as uniform along the way; a receiver
+  above the layer gets 1.
+- **Edge.** Outside the map the transmittance is 1. It fades to 1 over the outer `CLOUD_SHADOW_EDGE_BAND` (10 %) of the map's half
+  extent, so the border never shows as a seam; a narrower band shows it on the ground.
+- **Temporal fog.** The map's motion is not part of the fog history's rejection key. It changes the in-scatter the clamp sees, as
+  a moving shadow edge does, so wind and camera motion do not reset the history.
+- **Memory.** `CLOUD_SHADOW_SIZE² × 2 B` per view, 512 KiB, allocated the first frame the view casts the shadow and kept until the
+  view is destroyed.
+- **Not shadowed.** The path tracer, traced reflection and probe-update hits, and the atmosphere's lighting cubes do not see the
+  map, as they do not see the clouds. Reflection captures render without clouds and so without their shadow. Mirror and
+  clip-plane views have a map of their own.
 
 **Not drawn.**
 
 - The path tracer, traced reflection and probe hits and misses, and the atmosphere's lighting cubes do not
-  see clouds: an overcast sky still lights the scene, its reflections and its probes as a clear one.
+  see clouds or their shadow: an overcast sky still lights the scene, its reflections and its probes as a clear one.
   Reflection captures render without clouds (`ViewCamera.clouds`, the way `height_fog` is switched).
 - Clouds write no depth and the transparent pass draws after them. A blended surface farther than a cloud
   draws over it, and so does a scene reader, which draws after the composite and tests against the scene's
@@ -575,7 +613,8 @@ sky example does under `--path-traced`.
   changes its in-scatter slope at `max_distance` and does not exist on path-traced views.
 - The analytic fog has no direct-sun phase term, so a view with volumetric fog and a view without it show
   different haze colours.
-- Clouds: see [Clouds](#clouds) for what they leave out; the layer is one deck, with no shadows on the scene.
+- Clouds: see [Clouds](#clouds) for what they leave out; the layer is one deck, and its [shadow map](#cloud-shadows) is flat over
+  its extent.
 
 ## Example
 
@@ -634,8 +673,8 @@ exposure; at noon the sun outshines them.
 
 `--clouds` adds a `CloudLayer` over a procedural coverage map the example builds on the CPU as the application's
 weather, lifts the noon and twilight presets 15° so the deck fills the view and advances `wind_offset` along +x every
-frame. Its panel section edits the coverage, which rebuilds the map, the density, the two altitudes and the wind speed.
-It is rejected under `--path-traced`.
+frame. Its panel section edits the coverage, which rebuilds the map, the density, the two altitudes and the wind speed, and
+switches the layer's shadows with a "Cloud shadows" checkbox; the wind moves them. It is rejected under `--path-traced`.
 
 The landscape examples `terrain`, `vegetation` and `water` take `--sky`: an `ATMOSPHERE_EARTH` on
 their sun and a haze pooling in the valleys, and `--volumetric-fog` with it.
