@@ -1640,6 +1640,52 @@ fn void test_animation_inertial_history_invalidates_on_revisions_and_removed_nod
     assert(row.velocity[3].translation.x == 0);
 }
 
+fn void test_animation_inertial_crowd_reset_keeps_the_other_slot_history() @test {
+    LayerFixture fixture;
+    create_inertial_owner(&fixture);
+    defer destroy_layer_fixture(&fixture);
+    Transform[2] placements = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
+    CrowdPlaybackState* state = anim::create_crowd_playback(
+        allocator: mem,
+        template: &fixture.assets.model(fixture.model).data,
+        placements: placements[..],
+        actions_per_instance: 4,
+        event_capacity: 0,
+        inertia_enabled: true,
+    )!!;
+    defer anim::destroy_crowd_playback(state);
+    state.model = fixture.model;
+    state.count = 2;
+    ClipId first_clip = history_translation_clip(&fixture);
+    ClipId second_clip = history_translation_clip(
+        fixture: &fixture,
+        node: 3,
+        first: { 8, 0, 3 },
+        last: { 12, 0, 3 },
+    );
+    ClipId target = layer_translation(&fixture, { 6, 0, 3 });
+    CrowdPlayer first = state.player(state.instance_id(0)!!)!!;
+    CrowdPlayer second = state.player(state.instance_id(1)!!)!!;
+    first.play(&fixture.assets, first_clip)!!;
+    second.play(&fixture.assets, second_clip)!!;
+    state.update(&fixture.assets, 0.125f);
+    state.update(&fixture.assets, 0.125f);
+
+    AnimationTargetDesc[1] targets = { anim::ANIMATION_TARGET_DEFAULT };
+    targets[0].clip = target;
+    first.inertialize(&fixture.assets, { .duration = 0.5f, .actions = targets[..] })!!;
+    second.inertialize(&fixture.assets, { .duration = 0.75f, .actions = targets[..] })!!;
+    InertialRow* first_row = &state.inertial_storage.rows[0];
+    InertialRow* second_row = &state.inertial_storage.rows[1];
+    assert(first_row.offset_velocity[3].translation.x == 2 && second_row.offset_velocity[3].translation.x == 4);
+
+    anim::reset_crowd_playback_slot(state, 0);
+    assert(!first_row.control.history_valid && !first_row.control.active);
+    assert(first_row.offset_velocity[3].translation.x == 0);
+    assert(second_row.control.history_valid && second_row.control.active);
+    assert(second_row.velocity[3].translation.x == 4 && second_row.offset_velocity[3].translation.x == 4);
+}
+
 fn void test_animation_inertial_history_paused_seek_invalidates_once_and_later_request_captures_velocity() @test {
     foreach (zero_speed : (bool[2]){ false, true }) {
         LayerFixture fixture;
