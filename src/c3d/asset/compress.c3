@@ -173,9 +173,9 @@ fn Track pack_track(Track* source, float budget) @local {
         .path = source.path,
         .interpolation = source.interpolation,
         .encoding = TrackEncoding.PACKED,
+        .packed_stride = (ushort)stride,
         .times = alloc::new_array(tmem, float, kept),
     };
-    result.packed_stride = (ushort)stride;
     foreach (usz position, key : kept_keys[:kept]) result.times[position] = source.key_time(key);
     ushort[] codes = alloc::new_array(tmem, ushort, (sz)code_count(&result));
     float[] ranges = alloc::new_array(tmem, float, (sz)range_count(&result));
@@ -230,6 +230,7 @@ fn void reduce_keys(Track* source, float budget, bool[] keep) @local {
     uint stride = source.stride();
     keep[0] = true;
     keep[keys - 1] = true;
+
     float[] scratch = alloc::new_array(tmem, float, (sz)(4 * stride));
     float[] pair = scratch[:2 * stride];
     uint[2][] pending = alloc::new_array(tmem, uint[2], keys);
@@ -253,6 +254,7 @@ fn void reduce_keys(Track* source, float budget, bool[] keep) @local {
             .value = scratch[3 * stride:stride],
             .source_cursor = range[0],
         };
+
         uint worst;
         double worst_error = budget;
         for (uint key = range[0]; key < range[1]; key++) {
@@ -266,6 +268,7 @@ fn void reduce_keys(Track* source, float budget, bool[] keep) @local {
                 worst = owner;
             }
         }
+
         if (!worst) continue;
         keep[worst] = true;
         pending[count++] = { range[0], worst };
