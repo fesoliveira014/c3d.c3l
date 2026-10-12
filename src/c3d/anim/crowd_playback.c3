@@ -66,6 +66,7 @@ struct CrowdPlaybackState {
     uint count;
     uint default_root_node;
     float advanced_dt;
+    uint sample_generation;
 }
 
 <* Borrowed controls for one generational crowd instance. *>
@@ -103,6 +104,7 @@ fn void CrowdPlaybackState.advance(&self, AssetStore* assets, float dt) {
     self.event_count = 0;
     self.events_dropped = 0;
     self.advanced_dt = dt;
+    self.sample_generation++;
 
     for (uint index = 0; index < self.count; index++) {
         CrowdPlaybackSlot* slot = &self.slots[index];
@@ -131,6 +133,7 @@ fn void CrowdPlaybackState.advance(&self, AssetStore* assets, float dt) {
 <*
  Sample advanced instances into their own pose, morph weights and root motion.
  Concurrent calls on disjoint ranges are safe, each with its own scratch, while the store is unchanged.
+ A scratch keeps its shared raw samples across the ranges it serves until the next advance.
  @param [&in] assets : "Owns every retained action's clip; read only."
  @param [&inout] scratch : "From create_crowd_pose_scratch; one per concurrent caller."
  @require first <= self.count && count <= self.count - first
@@ -144,6 +147,7 @@ fn void CrowdPlaybackState.sample_range(
     PoseScratch* scratch,
 ) {
     float dt = self.advanced_dt;
+    if (scratch.cache) scratch.cache.begin_generation(self.sample_generation);
 
     for (uint index = first; index < first + count; index++) {
         CrowdPlaybackSlot* slot = &self.slots[index];
@@ -543,6 +547,7 @@ fn CrowdPlaybackState*? create_crowd_playback(
         event_capacity: event_capacity,
         inertia_enabled: inertia_enabled,
         owns_output: false,
+        pose_cache: true,
     )!;
 
     if (inertia_enabled) {
@@ -652,6 +657,7 @@ fn PoseScratch? create_crowd_pose_scratch(CrowdPlaybackState* state) {
         base_morph_weights: state.base_morph_weights,
         event_capacity: 0,
         inertia_enabled: state.inertial_storage != null,
+        pose_cache: true,
     );
 }
 

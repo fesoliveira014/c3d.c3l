@@ -67,6 +67,8 @@ struct PoseScratch {
     float[] sample;
     EventBookmark[] event_bookmarks;
     InertialScratch* inertial;
+    <* Null unless the scratch serves crowd sampling. *>
+    PoseCache* cache;
 }
 
 <* Counts from this evaluation; dropped crossings saturate at uint::max. *>
