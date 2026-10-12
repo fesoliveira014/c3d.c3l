@@ -329,7 +329,9 @@ creates a crowd of COUNT instances with six looping clips at random phases and s
 `advance` on the caller, `sample_range` over the pool in ranges of 16 instances with one scratch per range, then
 `publish_crowd_pose` on the caller. One line per path prints the median stage times over fifteen frames; the
 `update` line is the serial `CrowdPlaybackState.update`. Every line's per-frame digest of poses, morph weights,
-root motion and events must equal the `update` line's, and the exit status is 1 when one does not.
+root motion and events must equal the `update` line's, and the exit status is 1 when one does not. With
+`--compress` the clips are quantized first (see [Compressed clips](animation.md#compressed-clips)) and the header
+line prints their bytes before and after and the largest error per path.
 
 Background lines time one background run of 1024 empty ranges at batch 1, from `try_run` until its last range
 has run, on the capped workers alone; the caller only polls. Loaded lines time the 65 536-item kernel at batch

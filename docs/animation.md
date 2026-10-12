@@ -796,6 +796,31 @@ live instance.
 Each instance's output depends only on its own state, so range splits, order and
 thread count change no pose, morph weight, root motion or event, bit for bit.
 
+### Compressed clips
+
+`assets.compress_clip(clip, tolerance)` quantizes a clip's key data once, at load or import time. `ClipTolerance`
+holds the largest accepted deviation per path: `translation` in metres, `rotation` in radians, `scale` as a ratio
+and `weight` in weight units. Translation, scale and morph weight tracks store 16-bit codes per component over the
+track's own range; rotation tracks store smallest-three codes in 48 bits. Cubic spline tracks quantize their values
+and tangents the same way and report an analytic per-segment bound; cubic rotations and empty tracks stay raw.
+Times are never quantized, and tracks of one clip whose time arrays are identical share one.
+
+The call samples the source and the quantized track through `sample_track` at every source key time, and for
+rotations also at each segment's midpoint, and returns the largest error per path with the bytes before and after.
+A rotation error is the larger of those samples, not a true maximum. When an error exceeds its tolerance the call
+returns `TOLERANCE_EXCEEDED`; a failure of any kind leaves the clip, its arrays and its revision unchanged. On success
+the raw arrays are freed, one block holds the packed keys, and the revision moves once. A later `replace_clip_owned`
+installs raw tracks again, and compressing a compressed clip is a contract violation (`clip.data.is_compressed()`).
+
+Error is bounded per key, so a looping root-motion clip's per-cycle displacement can drift by up to twice the
+translation tolerance, and the drift accumulates over cycles.
+
+Compressed tracks sample with the same cursor contract. Code that reads keys goes through `Track.key_count`,
+`key_time` and `read_key`, since `Track.values` holds floats only while `encoding` is `RAW`. The blends pick the
+raw or the dispatching sampler once per clip, so raw clips sample as before. `skinned_crowd --compress` and
+`job_bench --crowd COUNT --compress` compress the model's clips with a tolerance of 1e-3 on every path and print the
+bytes before and after and the largest errors.
+
 ## What deforms
 
 The animation update writes node transforms and morph weights; the renderer
