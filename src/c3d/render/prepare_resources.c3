@@ -146,7 +146,6 @@ fn PrepareStepPlan? plan_prepare_texture(
 
     usz storage_count = desc.storage ? (usz)unit.texture_candidate.mip_count * desc.layers : 0;
     if (unit.creation_next < storage_count) return { .kind = PrepareResourceStep.TEXTURE_STORAGE_VIEW };
-    unit.initialized = true;
     if (source.source_kind == EMPTY) return { .kind = PrepareResourceStep.EMPTY_TEXTURE };
     if (source.source_kind == MIP_ZERO && desc.generate_mips) {
         GeneratedTextureLayout layout = generated_texture_mip_layout(desc)!;
@@ -463,7 +462,6 @@ fn bool? run_prepare_step(
                 offset: layout.indices,
                 size: (usz)layout.index_count * layout.index_stride,
             )!;
-            unit.initialized = true;
 
             return false;
 

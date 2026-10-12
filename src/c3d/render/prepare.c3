@@ -120,7 +120,6 @@ struct PrepareCursor @private {
 struct PrepareCheckpoint @private {
     PrepareCursor staged;
     bool done;
-    bool initialized;
     gpu::TextureState texture_state;
     ulong epoch;
     ulong frame;
@@ -142,10 +141,7 @@ struct PrepareUnit @private {
     usz bytes;
     ulong texels;
     bool full_reader;
-    bool morphed;
     bool done;
-    bool initialized;
-    bool installed;
     bool force_restart;
     bool abandoned_candidate;
     PrepareCursor staged;
@@ -178,7 +174,6 @@ struct PrepareRecord @private {
     ulong texels_done;
     uint units_done;
     uint restarts;
-    SceneReads scene_reads;
     TextureMipChain chain;
     uint chain_unit;
     uint generation_mip;
@@ -208,7 +203,6 @@ struct PrepareInstall @private {
     TextureRes old_texture;
     TextureRes new_texture;
     TextureResidency old_residency;
-    TextureResidency new_residency;
     GpuGeometry old_geometry;
     GpuGeometry new_geometry;
     MaterialRes old_material;
