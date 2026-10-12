@@ -243,6 +243,7 @@ struct Renderer {
     Target                  window_target;
     FrameInfo               info;
     time::Clock             frame_started;
+    ulong                   frame_pipeline_calls; // cache creations as the frame began
     bool                    frame_open;
     bool                    overlay_open;
     bool                    has_output;
@@ -369,6 +370,7 @@ fn void? Renderer.end_frame(&self) {
         Frame* slot = &self.frames[frame % FRAMES_IN_FLIGHT];
         self.frame_open = false;
         self.frame_index++;
+        self.stats.pipelines_created = (uint)(self.pipelines.creations.calls - self.frame_pipeline_calls);
 
         foreach (&record : self.views.items) {
             if (record.live && record.rendered) return c3d::INVALID_ARGUMENT~;
@@ -491,6 +493,7 @@ fn void? begin_renderer_frame(Renderer* self, FrameInfo info, bool acquire_outpu
         };
 
         reset_frame_stats(&self.stats);
+        self.frame_pipeline_calls = self.pipelines.creations.calls;
         instrumentation::@scope("renderer.readback") {
             collect_gpu_profile(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
             read_cluster_stats(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
