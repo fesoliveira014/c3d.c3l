@@ -28,6 +28,7 @@ struct GeometryAsset {
     uint        triangle_revision;   // header.revision the tree matches; 0 when absent
     uint        validated_revision;  // header.revision whose arrays form a triangle list; 0 when unknown
     uint        rejected_revision;   // header.revision whose arrays form none, or whose topology is not TRIANGLES
+    GeometryDirty dirty;             // edits the renderer has not yet copied
 }
 
 struct GeometryShape @private {
@@ -151,18 +152,15 @@ fn GeometryAsset* AssetStore.geometry(&self, GeometryId geometry) {
 }
 
 <*
- Advance the content revision after an edit; rebuilds packing width, skin and morph bounds while streams are present.
+ Advance the revision after an edit the streams cannot describe; the renderer uploads the whole block.
+ Rebuilds packing width, skin and morph bounds while streams are present.
  @require self.geometries.is_live(geometry)
 *>
 fn void AssetStore.mark_geometry_dirty(&self, GeometryId geometry) {
     GeometryAsset* record = self.geometries.get(geometry);
     record.header.revision++;
-    if (!record.data.positions.len) return;
-    record.joints_u16 = record.data.joints_exceed_byte();
-    geometry::free_skin_bounds(self.allocator, &record.skin_bounds);
-    record.skin_bounds = geometry::build_skin_bounds(self.allocator, &record.data);
-    geometry::free_morph_bounds(self.allocator, &record.morph_bounds);
-    record.morph_bounds = geometry::build_morph_bounds(self.allocator, &record.data);
+    record.dirty.whole = true;
+    refresh_derived_geometry(self.allocator, record, { .positions = true, .joints = true, .weights = true });
 }
 
 <*
@@ -300,6 +298,7 @@ fn void apply_geometry(Allocator allocator, GeometryAsset* record, Geometry geom
     record.rejected_revision = 0;
 
     mark_replaced(&record.header);
+    record.dirty.whole = true;
 }
 
 fn void free_triangle_tree(Allocator allocator, GeometryAsset* record) @private {
@@ -469,6 +468,7 @@ fn void replace_prepared_geometry(
     derived.morph_bounds = {};
 
     mark_replaced(&record.header);
+    record.dirty.whole = true;
 }
 
 fn void? import_tangents(

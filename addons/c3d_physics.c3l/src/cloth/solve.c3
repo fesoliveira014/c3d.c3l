@@ -69,7 +69,7 @@ fn void publish_cloth(ClothState* state, Mat4 world) @private {
     if (!changed) return;
     geometry.data.compute_normals(state.assets.allocator);
     geometry.data.finalize();
-    state.assets.mark_geometry_dirty(state.geometry);
+    state.assets.mark_geometry_streams_dirty(state.geometry, { .positions = true, .normals = true });
 }
 
 fn void accumulate_wind(ClothState* state, Wind* wind, uint[] indices) @local {

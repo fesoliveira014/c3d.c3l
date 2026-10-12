@@ -771,8 +771,9 @@ turns them into deformed draws:
   conservative bound: at insertion the store retains, per joint, the bound of
   the vertices that joint influences and of their morph deltas per target
   (`GeometryAsset.skin_bounds`, one allocation, kept through
-  `release_geometry_cpu`, rebuilt by `mark_geometry_dirty` while the streams
-  are present). Each frame every influencing joint's bound, widened by the
+  `release_geometry_cpu`, rebuilt by `mark_geometry_dirty`, and by a stream
+  mark that names positions, joints or weights, while the streams are
+  present). Each frame every influencing joint's bound, widened by the
   mesh's selected morph targets, is transformed by `joint.world *
   inverse_bind[joint]` and merged; a `Mesh.local_bounds` override replaces it.
   A binding that addresses none of the geometry's joints falls back to the

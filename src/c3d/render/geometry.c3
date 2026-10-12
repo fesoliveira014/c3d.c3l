@@ -200,17 +200,12 @@ fn void write_geometry_block(char[] block, Geometry* geometry, GeometryLayout* l
     copy_stream(block, layout.colors, geometry.colors);
     copy_stream(block, layout.weights, geometry.weights);
     copy_stream(block, layout.custom_data, geometry.custom_data);
-    if (layout.flags.joints_u16) {
-        uint* packed = (uint*)&block[layout.joints];
-        foreach (index, joints : geometry.joints) {
-            packed[2 * index] = (uint)joints.x | (uint)joints.y << 16;
-            packed[2 * index + 1] = (uint)joints.z | (uint)joints.w << 16;
-        }
-    } else if (layout.flags.skinned) {
-        uint* packed = (uint*)&block[layout.joints];
-        foreach (index, joints : geometry.joints) {
-            packed[index] = (uint)joints.x | (uint)joints.y << 8 | (uint)joints.z << 16 | (uint)joints.w << 24;
-        }
+    if (layout.flags.skinned) {
+        pack_joints(
+            packed: (uint*)&block[layout.joints],
+            joints: geometry.joints,
+            wide:   layout.flags.joints_u16,
+        );
     }
     if (layout.flags.has_morphs) {
         usz target_bytes = PACKED_VEC3_BYTES * layout.vertex_count;
@@ -229,6 +224,19 @@ fn void write_geometry_block(char[] block, Geometry* geometry, GeometryLayout* l
         foreach (index, value : geometry.indices) narrow[index] = (ushort)value;
     } else if (layout.index_count) {
         copy_stream(block, layout.indices, geometry.indices);
+    }
+}
+
+fn void pack_joints(uint* packed, ushort[<4>][] joints, bool wide) @private {
+    if (wide) {
+        foreach (index, vertex : joints) {
+            packed[2 * index] = (uint)vertex.x | (uint)vertex.y << 16;
+            packed[2 * index + 1] = (uint)vertex.z | (uint)vertex.w << 16;
+        }
+    } else {
+        foreach (index, vertex : joints) {
+            packed[index] = (uint)vertex.x | (uint)vertex.y << 8 | (uint)vertex.z << 16 | (uint)vertex.w << 24;
+        }
     }
 }
 
@@ -299,6 +307,8 @@ fn GpuGeometry*? resolve_geometry(Renderer* renderer, GeometryId geometry) @priv
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     GeometryLayout layout = geometry_layout_from_width(&record.data, record.joints_u16);
     bool reuse = same_asset && mem::equals(&layout, &mirror.layout, GeometryLayout::size);
+    bool partial = reuse && mirror.revision != 0
+        && !record.dirty.whole && record.dirty.base_revision == mirror.revision;
     if (reuse) {
         renderer.pending_overwrite = true;
     } else {
@@ -344,15 +354,23 @@ fn GpuGeometry*? resolve_geometry(Renderer* renderer, GeometryId geometry) @priv
         mirror.revision = 0;
     }
 
-    gpu::MappedGpuSpan staging = slot.upload.take(&renderer.device, layout.total_bytes, STREAM_ALIGNMENT)!;
-    write_geometry_block(
-        block:    staging.bytes,
-        geometry: &record.data,
-        layout:   &layout,
-        base:     mirror.root,
-    );
-    gpu::GpuSpan destination = gpu::get_allocation_span(&renderer.device, mirror.allocation)!;
-    renderer.pending_copies.push({ .src = staging.span, .dst = destination.checked_subspan(0, layout.total_bytes)! });
+    usz staged_bytes = layout.total_bytes;
+    if (partial) {
+        staged_bytes = stage_dirty_geometry(renderer, slot, mirror, record)!;
+    } else {
+        gpu::MappedGpuSpan staging = slot.upload.take(&renderer.device, layout.total_bytes, STREAM_ALIGNMENT)!;
+        write_geometry_block(
+            block:    staging.bytes,
+            geometry: &record.data,
+            layout:   &layout,
+            base:     mirror.root,
+        );
+        gpu::GpuSpan destination = gpu::get_allocation_span(&renderer.device, mirror.allocation)!;
+        renderer.pending_copies.push({
+            .src = staging.span,
+            .dst = destination.checked_subspan(0, layout.total_bytes)!,
+        });
+    }
 
     renderer.pending_geometry_uploads.push(geometry);
     mirror.asset = geometry;
@@ -360,8 +378,9 @@ fn GpuGeometry*? resolve_geometry(Renderer* renderer, GeometryId geometry) @priv
     mirror.layout = layout;
     mirror.topology = record.data.topology;
     mirror.bounds = record.data.bounds;
+    renderer.assets.clear_geometry_dirty(geometry);
     renderer.stats.uploads++;
-    renderer.stats.upload_bytes += (uint)layout.total_bytes;
+    renderer.stats.upload_bytes += (uint)staged_bytes;
     return mirror;
 }
 

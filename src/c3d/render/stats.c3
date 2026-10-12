@@ -139,7 +139,7 @@ struct Stats {
     ShadowTiming[] shadow_timings;
     uint  environment_prepares;
     uint  uploads;
-    uint  upload_bytes;
+    uint  upload_bytes;          // this frame: bytes staged; an edited geometry range counts only its vertices
     uint  vertex_history_bytes;  // this frame: previous vertex positions written for temporal views
     uint  prepare_units;
     usz   prepare_bytes;

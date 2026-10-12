@@ -195,7 +195,8 @@ output and the shared tile images; disabling retires them. `configure_view` faul
 
 `Mesh.vertex_motion = true` gives an ordinary mesh (not a batch, crowd or LOD group) velocity
 for CPU-edited positions. Edit `assets.geometry(id).data.positions` in place, recompute normals
-when needed and call `AssetStore.mark_geometry_dirty` before recording the frame. Vertex indices
+when needed and publish the edit before recording the frame, as described under
+[Publishing geometry edits](#publishing-geometry-edits). Vertex indices
 must keep naming the same vertices: a new correspondence needs a new `GeometryId`, and a changed
 vertex count starts over.
 
@@ -212,9 +213,43 @@ those pixels only; an RG16 velocity image keeps the zero motion. A temporal view
 positions were released; its published history stays as it was.
 
 Every pose slot grows by 32 bytes (176 to 208), 512 KiB per temporal view at the default
-16,384-node scene. Geometry still uploads whole on each revision, counted in `Stats.upload_bytes`;
+16,384-node scene. Geometry uploads what its edit published, counted in `Stats.upload_bytes`;
 previous positions travel through the frame ring, counted per frame in
 `Stats.vertex_history_bytes`. Blended surfaces keep the velocity of the surface behind them.
+
+### Publishing geometry edits
+
+An in-place edit of `assets.geometry(id).data` reaches the renderer through one of three calls, each of
+which advances the geometry revision:
+
+| Call | The renderer copies |
+| --- | --- |
+| `mark_geometry_streams_dirty(id, streams)` | Every vertex of each named stream |
+| `mark_geometry_range_dirty(id, streams, first_vertex, vertex_count)` | The named vertices of each named stream |
+| `mark_geometry_dirty(id)` | The whole block |
+
+`streams` is a `GeometryStreams`: `positions`, `normals`, `tangents`, `uv0`, `uv1`, `colors`, `joints`,
+`weights` and `custom`. The marked streams must exist in the geometry, `vertex_count` is positive and
+the range lies inside the vertex count; each is a contract. A stream mark names only data the edit
+changed: an unmarked edit is not uploaded.
+
+The record keeps one vertex range per stream since the renderer last held the geometry. A second mark
+before the next resolve extends that union, so two distant ranges of one stream cover the vertices
+between them. When the layout is unchanged and only stream ranges are marked, the renderer stages each
+stream's range, packed as the whole block packs it, and queues one copy region per stream into the
+existing block behind the barrier a whole overwrite uses. `Stats.upload_bytes` counts those staged
+bytes. The renderer uploads the whole block instead after `mark_geometry_dirty`, after a replacement,
+when a stream appears or disappears, when the vertex or index count, the morph target count or the
+joint packing width changes, and for a geometry it has never uploaded or whose upload an aborted frame
+dropped. Index and morph-target edits have no stream, so they publish with `mark_geometry_dirty`.
+
+The store recomputes derived data only from the marked streams: the 16-bit joint packing width when
+`joints` is marked, and the skin and morph bounds when `positions`, `joints` or `weights` is marked.
+`mark_geometry_dirty` recomputes all of it. `Geometry.bounds` is never recomputed by a mark; call
+`Geometry.finalize` after editing positions. Traced and temporal consumers read only the revision, so
+they behave the same for every call. The ranges are relative to the revision the last resolving renderer
+held, so a renderer whose copy is at another revision, such as a second renderer on the same store,
+uploads whole.
 
 ## Auto exposure
 
