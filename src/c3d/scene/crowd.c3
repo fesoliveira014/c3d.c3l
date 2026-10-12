@@ -61,6 +61,7 @@ fn bool AnimatedCrowd.is_prepared(&self) => self.playback != null;
 
 <*
  Publish placements and colors to every part without replacing identities.
+ Skinned parts mark only the instances whose placement or color changed; rigid parts depend on the pose and mark whole.
  @param [&inout] crowd : "Contains complete runtime and valid placements."
  @require crowd.is_prepared()
 *>
@@ -73,14 +74,37 @@ fn void Scene.write_crowd_batches(&self, AnimatedCrowd* crowd) {
 
     foreach (&part : crowd.parts) {
         InstancedMesh* batch = self.world.get(part.batch, InstancedMesh);
+        bool whole = !part.skinned || batch.count != crowd.count
+            || batch.local_bounds.min != bounds.min || batch.local_bounds.max != bounds.max;
+        InstanceSpan changed = whole ? (InstanceSpan){} : changed_instances(batch, crowd);
+
         batch.transforms[:crowd.count] = crowd.placements[:crowd.count];
         batch.colors[:crowd.count] = crowd.colors[:crowd.count];
         batch.count = crowd.count;
         batch.local_bounds = bounds;
-        self.mark_instances_dirty(self.node(part.batch));
+
+        Node* node = self.node(part.batch);
+        if (whole) {
+            self.mark_instances_dirty(node);
+        } else if (changed.end > changed.first) {
+            self.mark_instances_range_dirty(node, changed.first, changed.end - changed.first);
+        }
     }
 
     if (crowd.parts.len) publish_crowd_lod_owner(self, self.node(crowd.parts[0].batch).parent, crowd);
+}
+
+fn InstanceSpan changed_instances(InstancedMesh* batch, AnimatedCrowd* crowd) @local {
+    InstanceSpan changed = { .first = crowd.count };
+    for (uint index = 0; index < crowd.count; index++) {
+        if (mem::equals(&batch.transforms[index], &crowd.placements[index], Transform::size)
+            && batch.colors[index] == crowd.colors[index]) continue;
+
+        changed.first = math::min(changed.first, index);
+        changed.end = index + 1;
+    }
+
+    return changed.first == crowd.count ? (InstanceSpan){} : changed;
 }
 
 fn void free_crowd(Entity entity, void* component, void* user) @private {
