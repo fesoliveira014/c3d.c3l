@@ -949,9 +949,10 @@ heavy per vertex; with few passes it can cost more GPU and CPU time than vertex 
   previous positions the application supplies, keep vertex skinning. They are outside the scope, not
   fallbacks, and `Stats.compute_skinning_fallbacks` does not count them. One binding that posed every source
   at every level would undo the savings of the levels; limiting the dispatch to the instances drawn at each
-  level is not done. A crowd part drawn by a material with a custom vertex stage stays out too, since that
-  stage reads its streams without the source's slot. A mesh or crowd part no view or shadow layer draws is
-  not posed.
+  level is not done. A mesh or crowd part drawn by a material with a custom vertex stage stays out too, since
+  that stage applies its own deformation from the draw's palette and morph block, which a posed draw leaves
+  empty, and a crowd part's stage reads its streams without the source's slot. A mesh or crowd part no view
+  or shadow layer draws is not posed.
 - **Buffers.** Each drawn mesh node, and each drawn crowd part, owns a pair of posed blocks, allocated on
   first use, reallocated when its geometry's layout or the crowd's capacity changes and released after
   `INSTANCE_ABSENCE_FRAMES` frames without a draw. Positions are double buffered, current and previous;

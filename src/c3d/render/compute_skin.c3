@@ -142,16 +142,17 @@ fn uint? ComputeSkinTable.bind(&self, PosedTraceKey key) {
 
 // A mesh past either cap answers its rest root and counts a fallback; one outside compute skinning counts none.
 // Animated LOD parts stay out because one binding posing every source at every level would undo the savings of
-// the levels, and a crowd part with a custom vertex stage because that stage reads the root without a source slot.
+// the levels, and a draw with a custom vertex stage because that stage reads the palette and morph block of the draw
+// root, and in a crowd part the root without a source slot.
 fn PosedDraw? claim_posed_draw(Renderer* renderer, MeshCandidate* candidate, GpuGeometry* geometry) @private {
     PosedDraw rest = { .root = geometry.root };
     if (!renderer.frame_compute_skinning || candidate.animated_lod || candidate.impostor || candidate.vertex_motion
       || (candidate_instanced(candidate) && !candidate.crowd)) return rest;
-    if (candidate.crowd && custom_vertex_stage(renderer.assets, candidate_material(renderer, candidate))) return rest;
 
     ShaderVariant deformed = candidate_vertex_variant(geometry.layout.flags, candidate);
     uint deformation = shader::SHADER_FLAG_SKINNED | shader::SHADER_FLAG_SKINNED_U16 | shader::SHADER_FLAG_MORPH;
     if (!(deformed.flags & deformation)) return rest;
+    if (custom_vertex_stage(renderer.assets, candidate_material(renderer, candidate))) return rest;
 
     ComputeSkinTable* table = &renderer.compute_skin;
     PosedTraceKey key = { .scene = candidate.scene_identity, .node = candidate.node.id };
