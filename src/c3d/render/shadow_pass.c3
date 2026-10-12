@@ -41,16 +41,14 @@ struct ShadowDrawState @private {
     bool writes_color;
 }
 
-fn gpu::PipelineHandle? shadow_pipeline_for(
-    Renderer* renderer,
-    bool wireframe,
+fn PipelineKey shadow_pipeline_key(
     ShaderVariant vertex,
+    bool wireframe,
     Material* material = null,
     bool vertex_color = false,
     bool tint = false,
     ReflectionPrepass reflection = ReflectionPrepass.OFF,
 ) @private {
-    renderer.stats.pipeline_lookups++;
     PipelineKey key = {
         .vertex = vertex,
         .fragment = { .shader = DEPTH_ONLY, .flags = vertex_color ? shader::SHADER_FLAG_VERTEX_COLOR : 0 },
@@ -70,6 +68,27 @@ fn gpu::PipelineHandle? shadow_pipeline_for(
         key.depth_format = gpu::Format.UNDEFINED;
     }
     if (vertex.shader == IMPOSTOR_VERTEX) key.fragment = { .shader = IMPOSTOR_DEPTH };
+    return key;
+}
+
+fn gpu::PipelineHandle? shadow_pipeline_for(
+    Renderer* renderer,
+    bool wireframe,
+    ShaderVariant vertex,
+    Material* material = null,
+    bool vertex_color = false,
+    bool tint = false,
+    ReflectionPrepass reflection = ReflectionPrepass.OFF,
+) @private {
+    renderer.stats.pipeline_lookups++;
+    PipelineKey key = shadow_pipeline_key(
+        vertex:       vertex,
+        wireframe:    wireframe,
+        material:     material,
+        vertex_color: vertex_color,
+        tint:         tint,
+        reflection:   reflection,
+    );
     if (material && material.kind == MaterialKind.CUSTOM) {
         ShaderRes* published = resolve_shader(renderer, material.custom.shader)!;
         if (published.desc.vertex.depth.len) {

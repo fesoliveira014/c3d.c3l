@@ -68,6 +68,7 @@ fn void? stats_panel(Renderer* renderer) {
     imgui::text("Prepare bytes: %llu", (ulong)stats.prepare_bytes);
     imgui::text("Prepare generated texels: %llu", stats.prepare_generated_texels);
     imgui::text("Prepare pipeline calls: %u", stats.prepare_pipelines);
+    imgui::text("Pipelines created: %u", stats.pipelines_created);
     imgui::text("Prepare generation ns: %llu", stats.prepare_generation_ns);
     imgui::text("Prepare pipeline driver ns: %llu", stats.prepare_pipeline_ns);
     imgui::text("Prepare elapsed / overrun ns: %llu / %llu", stats.prepare_elapsed_ns, stats.prepare_overrun_ns);

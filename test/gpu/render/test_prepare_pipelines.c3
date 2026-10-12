@@ -500,3 +500,72 @@ fn void test_prepare_rejected_builtin_key_fails_only_its_record() @test {
     renderer.end_prepare(good)!!;
     check_validation(renderer);
 }
+
+fn Node*? populate_view_pipeline_scene(Fixture* fixture, c3d::scene::Scene* scene) @private {
+    GeometryId floor;
+    GeometryId sphere;
+    @pool() {
+        Geometry plane = c3d::geometry::plane(tmem, 30, 30);
+        floor = fixture.assets.add_geometry(&plane)!;
+        Geometry ball = c3d::geometry::sphere(tmem, 0.5f);
+        sphere = fixture.assets.add_geometry(&ball)!;
+    };
+    c3d::material::MaterialCommon cutout = c3d::material::MATERIAL_COMMON_DEFAULT;
+    cutout.alpha_mode = AlphaMode.MASK;
+    cutout.alpha_cutoff = 0.5f;
+    c3d::material::MaterialCommon blended = c3d::material::MATERIAL_COMMON_DEFAULT;
+    blended.alpha_mode = AlphaMode.BLEND;
+    c3d::material::PhysicalParams coat = c3d::material::PHYSICAL_PARAMS_DEFAULT;
+    coat.clearcoat = 1;
+    c3d::material::PhysicalParams glass = c3d::material::PHYSICAL_PARAMS_DEFAULT;
+    glass.transmission = 1;
+    glass.thickness = 0.4f;
+    MaterialId[6] materials = {
+        fixture.assets.add_material(c3d::material::standard({ .base_color = { 1, 1, 1, 1 }, .metallic = 1 }))!,
+        fixture.assets.add_material(c3d::material::standard({ .base_color = { 1, 1, 1, 1 } }, cutout))!,
+        fixture.assets.add_material(c3d::material::standard({ .base_color = { 1, 1, 1, 0.5f } }, blended))!,
+        fixture.assets.add_material(c3d::material::physical(coat))!,
+        fixture.assets.add_material(c3d::material::physical(glass))!,
+        fixture.assets.add_material(c3d::material::toon(c3d::material::TOON_PARAMS_DEFAULT))!,
+    };
+    scene.add_mesh(floor, materials[0])!;
+    foreach (index, material : materials) {
+        Node* node = scene.add_mesh(sphere, material)!;
+        node.local.position = { (float)index * 1.5f - 4, 0.5f, 0 };
+    }
+    Node* camera = scene.add_camera(c3d::camera::perspective_deg(55, 0.1f, 100))!;
+    camera.local.position = { 0, 3, 8 };
+    camera.local.rotation = c3d::maths::look_rotation((Vec3){ 0, -0.3f, -1 }.normalize(), { 0, 1, 0 });
+    scene.update_world();
+    return camera;
+}
+
+fn void test_prepare_scene_builds_every_pipeline_a_configured_view_draws() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        Renderer* renderer = &fixture.renderer;
+        c3d::scene::Scene scene = c3d::scene::create_scene(fixture.allocator, c3d::scene::default_scene_desc());
+        defer c3d::scene::destroy_scene(&scene);
+        Node* camera = populate_view_pipeline_scene(&fixture, &scene)!!;
+        AoView forward = create_ao_view(&fixture, ShadingPath.FORWARD)!!;
+        defer destroy_ao_view(&fixture, &forward);
+        ViewDesc desc = renderer.views.get(forward.view).desc;
+        desc.transparency = TransparencyMode.WEIGHTED;
+        desc.ray_tracing.shadows = true;
+        desc.ray_tracing.reflections = true;
+        render::configure_view(renderer, forward.view, desc)!!;
+        renderer.prepare_scene(&scene)!!;
+
+        ulong calls = renderer.pipelines.creations.calls;
+        renderer.begin_frame()!!;
+        renderer.render_view(&scene, camera, forward.view)!!;
+        renderer.finish_view(forward.view)!!;
+        renderer.end_frame()!!;
+        render::wait_frames(renderer)!!;
+        assert(renderer.pipelines.creations.calls == calls);
+        assert(renderer.stats.pipelines_created == 0);
+        check_validation(renderer);
+    }
+}

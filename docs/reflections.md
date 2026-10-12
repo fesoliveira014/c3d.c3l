@@ -117,8 +117,8 @@ and the specular-weight input. `reflections` forces the depth prepass on whateve
   reflections, so `Custom` stays probe-only. The traced term replaces the prefiltered specular
   even in a scene with no lighting environment or probes, as in the deferred resolve.
 - **Order.** `DEPTH_PREPASS`, then `AMBIENT_OCCLUSION` and screen-space GI when enabled, then
-  `RT_REFLECTIONS`, then `FORWARD_OPAQUE`. The thin image's pipelines are created on first use,
-  not by `prepare_scene`.
+  `RT_REFLECTIONS`, then `FORWARD_OPAQUE`. `prepare_scene` and model preparation create the thin
+  image's pipelines for each live forward view with traced reflections.
 
 ## Reflection lights
 

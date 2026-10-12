@@ -318,10 +318,16 @@ fn void trace_panel(Renderer* renderer) @local {
 fn int main(String[] args) {
     bool gpu_timings;
     bool software;
+    bool forward;
+    bool reflections = true;
     uint benchmark_frames;
     for (usz index = 1; index < args.len; index++) {
         if (args[index] == "--software") {
             software = true;
+        } else if (args[index] == "--forward") {
+            forward = true;
+        } else if (args[index] == "--no-reflections") {
+            reflections = false;
         } else if (args[index] == "--gpu-timings") {
             $if $feat(C3D_PROFILE_GPU):
                 gpu_timings = true;
@@ -391,19 +397,19 @@ fn int main(String[] args) {
     Orbit orbit = { .target = { 0, 0.5f, 0 }, .distance = 8, .yaw = 0, .pitch = 0.45f };
     apply_orbit(&orbit, &window.input, camera_node);
     scene.update_world();
-    renderer.prepare_scene(&scene)!!;
 
     ViewDesc view_desc = renderer.views.get(renderer.default_view).desc;
-    view_desc.shading = ShadingPath.DEFERRED;
+    view_desc.shading = forward ? ShadingPath.FORWARD : ShadingPath.DEFERRED;
     view_desc.post.anti_aliasing = AntiAliasing.TAA;
     view_desc.ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
     view_desc.ambient_occlusion.kind = AoKind.RAY_TRACED;
     view_desc.ray_tracing = {
         .shadows                  = true,
-        .reflections              = true,
+        .reflections              = reflections,
         .max_reflection_roughness = render::RT_REFLECTION_ROUGHNESS_DEFAULT,
     };
     render::configure_view(&renderer, renderer.default_view, view_desc)!!;
+    renderer.prepare_scene(&scene)!!;
 
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, &renderer, &window)!!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
@@ -458,6 +464,13 @@ fn int main(String[] args) {
         )!!;
 
         frame++;
+        if (frame == 1) {
+            io::printfn(
+                "first frame: %d pipelines created after prepare_scene, %.2f ms recording",
+                renderer.stats.pipelines_created,
+                renderer.stats.cpu_record_ms,
+            );
+        }
         if (!benchmark_frames || frame <= BENCHMARK_WARMUP_FRAMES) continue;
         accumulate_timings(&timings, &renderer);
         if (timings.frames == benchmark_frames) {
