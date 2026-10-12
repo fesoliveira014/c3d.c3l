@@ -232,15 +232,17 @@ action. After regular blending, each additive action applies:
 below *= (sample / reference) ^ effective_weight
 ```
 
-The factor stays positive at every weight, including weights above 1, and is
-the plain ratio at weight 1. For below `(2,3,4)`, reference `(2,4,8)`, sample
-`(8,1,32)` and weight 0.5, the result is `(4,1.5,8)`. The scale mode and time-zero reference are captured
-at play. Only STEP and LINEAR scale tracks are supported. Admission checks their
-keys once: every key and the reference must be finite and strictly positive,
-positive subnormals included, or play returns `INVALID_ARGUMENT` before creating
-an action or group. A `CUBIC_SPLINE` scale track with valid keys returns
-`UNSUPPORTED` before mutation. Playback samples these tracks like any other
-and applies no clamp or repeated domain scan.
+A positive sampled ratio gives a positive factor at every weight, including
+weights above 1, and the factor is the plain ratio at weight 1. For below
+`(2,3,4)`, reference `(2,4,8)`, sample `(8,1,32)` and weight 0.5, the result is
+`(4,1.5,8)`. The scale mode and time-zero reference are captured at play. Only
+STEP and LINEAR scale tracks are supported. Admission checks their keys once:
+every key and the reference must be finite and strictly positive, positive
+subnormals included, or play returns `INVALID_ARGUMENT` before creating an
+action or group. Positive keys are the guarantee: between adjacent keys whose
+ratio exceeds 2^24, a sample can round to zero. A `CUBIC_SPLINE` scale track
+with valid keys returns `UNSUPPORTED` before mutation. Playback samples these
+tracks like any other and applies no clamp or repeated domain scan.
 
 An additive action keeps the reference pose it sampled at `play` until it is played again. After
 `replace_clip_owned`, running actions re-seek on the new tracks, but an additive action's reference pose and
@@ -599,13 +601,13 @@ admit a 2D group.
 Coordinates must be distinct and finite. Triangles must form a connected,
 non-overlapping triangulation of the convex hull, include every sample and have
 valid distinct indices. Either winding is accepted and the authored triangles
-are kept as given; gaps, crossings,
-duplicate triangles, unused samples and non-convex boundaries fault
-`INVALID_ARGUMENT`. For maximum coordinate extent `S`, triangle double-area
-must exceed `1e-10 * S*S`. No automatic triangulation or degenerate fallback is
-performed. Clips must be live and have finite positive durations. Exhausted
-slots/actions or failed allocation return `CAPACITY_EXCEEDED`; dead IDs return
-`INVALID_ID`. Failure preserves existing actions, groups and output.
+are kept as given; gaps, crossings, duplicate triangles, unused samples and
+non-convex boundaries fault `INVALID_ARGUMENT`. For maximum coordinate extent
+`S`, triangle double-area must exceed `1e-10 * S*S`. No automatic triangulation
+or degenerate fallback is performed. Clips must be live and have finite
+positive durations. Exhausted slots/actions or failed allocation return
+`CAPACITY_EXCEEDED`; dead IDs return `INVALID_ID`. Failure preserves existing
+actions, groups and output.
 
 An exact coordinate selects that authored sample. Otherwise the first authored
 triangle that contains the parameter supplies up to three nonnegative
@@ -634,9 +636,10 @@ owner's 2D slot storage after structural changes and discard it after removal.
 
 Every playback owner prepares two 2D rows even when neither is active. For action
 capacity `A`, each row holds `A` action IDs, `A` coordinates, up to
-`max(0, 2*A - 5)` three-byte triangles and `A` two-byte hull edges. On x64 the
-control is 120 bytes, aligned to eight bytes. Both rows share one allocation;
-these totals include controls and alignment padding:
+`max(0, 2*A - 5)` three-byte triangles and `A` two-byte hull edges. On x64
+`BlendSpace2D` is 120 bytes, aligned to eight bytes. Both rows share one
+allocation; these totals include the two `BlendSpace2D` values and alignment
+padding:
 
 | Action capacity | Retained 2D bytes per playback owner |
 | ---: | ---: |
