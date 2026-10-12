@@ -253,35 +253,17 @@ fn void update(AssetStore* assets, Scene* scene, float dt) {
 
             publish_animator_pose(animator, instance);
 
-            if (report.generalized) {
-                animator.root_motion = publish_generalized_owner_motion(
-                    playback: &playback,
-                    chain: report.consumed_chain,
-                    motion: report.generalized_motion,
-                    dt: (double)dt,
-                );
-            } else {
-                Vec3 reference;
-                if (report.motion.yaw != 0) {
-                    Node* root = instance.present_node(animator.root_node);
-                    reference = root.local.position;
+            Vec3 reference;
+            if (report.motion.yaw != 0) {
+                Node* root = instance.present_node(animator.root_node);
+                reference = root.local.position;
 
-                    for (Node* parent = root.parent; parent && parent != animator.instance_root; parent = parent.parent) {
-                        reference = maths::transform_point(parent.local.to_mat4(), reference);
-                    }
-                }
-
-                animator.root_motion = root_motion_delta(report.motion, reference);
-                if (animator.inertial_storage) {
-                    animator.root_motion = publish_inertial_root_motion(
-                        row: &animator.inertial_storage.rows[0],
-                        target: animator.root_motion,
-                        target_twist: (double)report.motion.yaw,
-                        up: inertial_publication_up(&animator.inertial_storage.rows[0]),
-                        dt: (double)dt,
-                    );
+                for (Node* parent = root.parent; parent && parent != animator.instance_root; parent = parent.parent) {
+                    reference = maths::transform_point(parent.local.to_mat4(), reference);
                 }
             }
+
+            animator.root_motion = publish_root_motion(&playback, &report, reference, (double)dt);
 
             record_playback_inertial_history(
                 playback: &playback,

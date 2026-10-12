@@ -111,25 +111,7 @@ fn void CrowdPlaybackState.update(&self, AssetStore* assets, float dt) {
             }
         }
 
-        if (report.generalized) {
-            slot.root_motion = publish_generalized_owner_motion(
-                playback: &playback,
-                chain: report.consumed_chain,
-                motion: report.generalized_motion,
-                dt: (double)dt,
-            );
-        } else {
-            slot.root_motion = root_motion_delta(report.motion, reference);
-            if (self.inertial_storage) {
-                slot.root_motion = publish_inertial_root_motion(
-                    row: &self.inertial_storage.rows[index],
-                    target: slot.root_motion,
-                    target_twist: (double)report.motion.yaw,
-                    up: inertial_publication_up(&self.inertial_storage.rows[index]),
-                    dt: (double)dt,
-                );
-            }
-        }
+        slot.root_motion = publish_root_motion(&playback, &report, reference, (double)dt);
 
         record_playback_inertial_history(
             playback: &playback,

@@ -2377,7 +2377,8 @@ fn void test_animation_inertial_root_source_final_rate_zero_step_and_discrete_de
     RootMotionDelta zero = anim::publish_inertial_root_motion(
         row: &row,
         target: {},
-        target_twist: 0,
+        translation: {},
+        twist: 0,
         up: { 0, 1, 0 },
         dt: 0,
     );
@@ -2386,7 +2387,8 @@ fn void test_animation_inertial_root_source_final_rate_zero_step_and_discrete_de
     RootMotionDelta actual = anim::publish_inertial_root_motion(
         row: &row,
         target: target,
-        target_twist: 0.05,
+        translation: { target.translation.x, 0, 0 },
+        twist: 0.05,
         up: { 0, 1, 0 },
         dt: 0.1,
     );
@@ -2401,7 +2403,8 @@ fn void test_animation_inertial_root_source_final_rate_zero_step_and_discrete_de
     RootMotionDelta finished = anim::publish_inertial_root_motion(
         row: &row,
         target: target,
-        target_twist: 0.05,
+        translation: { target.translation.x, 0, 0 },
+        twist: 0.05,
         up: { 0, 1, 0 },
         dt: 0.1,
     );
