@@ -587,6 +587,7 @@ fn void? record_raster_view(
                     acquire_cloud_noise(renderer)!;
                     acquire_cloud_pipelines(renderer)!;
                     acquire_cloud_targets(renderer, record)!;
+                    if (clouds.layer.cast_shadows) acquire_cloud_shadow(renderer, record)!;
                     cloud_pass = { .layer = clouds.layer, .coverage = coverage.texture };
                     if (environments.atmosphere) {
                         cloud_pass.planet_radius = environments.atmosphere_selection.atmosphere.planet_radius;
@@ -651,6 +652,8 @@ fn void? record_raster_view(
                     atmospheric:  environments.atmosphere != null,
                     pre_exposure: pre_exposure,
                 );
+                cloud_pass.shadowed = cloud_pass.layer.cast_shadows && fog_sun != 0 && cloud_pass.sun.to_sun.y > 0;
+                if (cloud_pass.shadowed) extraction.lights[fog_sun - 1].flags |= shader::LIGHT_CLOUD_SHADOW;
             }
             ShadowCamera own_view = { .lens = *camera, .matrices = *matrices };
             resolve_shadow_set(
@@ -722,6 +725,15 @@ fn void? record_raster_view(
                 pre_exposure,
             )!;
             frame_span = slot.upload.take(&renderer.device, FrameRoot::size, STREAM_ALIGNMENT)!;
+            if (cloud_pass.shadowed) {
+                cloud_pass.shadow = upload_cloud_shadow(
+                    renderer:        renderer,
+                    record:          record,
+                    cloud:           &cloud_pass,
+                    camera_position: matrices.position,
+                    frame:           frame_span.address,
+                )!;
+            }
             write_frame_root(
                 root:        (FrameRoot*)frame_span.bytes.ptr,
                 matrices:    &raster,
@@ -762,6 +774,7 @@ fn void? record_raster_view(
                 max_reflection_roughness: forward_reflections ? record.desc.ray_tracing.max_reflection_roughness : 0,
                 pre_exposure: pre_exposure,
                 pre_exposure_ratio: record.pre_exposure.ratio,
+                cloud_shadow: cloud_pass.shadow,
             );
             if (record.desc.lights == LightSelection.CLUSTERED) {
                 record_clusters(
@@ -913,6 +926,7 @@ fn void? record_raster_view(
                     frame:    frame_span.address,
                 )!;
             }
+            if (cloud_pass.shadowed) record_cloud_shadows(renderer, record, &cloud_pass)!;
             if (fog_volume) {
                 FogFrame fog_frame = {
                     .scene           = scene.identity,
@@ -1516,6 +1530,7 @@ fn bool velocity_before_lighting(ViewDesc* desc) @private {
  @param max_reflection_roughness : "Roughness above which a pixel keeps the raster reflection."
  @param pre_exposure : "Scale of the radiance uploaded for this root; 1 is physical."
  @param pre_exposure_ratio : "Factor over the previous rendering's; 1 without history."
+ @param cloud_shadow : "Root of the cloud layer's shadow map; zero when the view has none."
 *>
 fn void write_frame_root(
     FrameRoot* root,
@@ -1556,6 +1571,7 @@ fn void write_frame_root(
     float max_reflection_roughness = 0,
     float pre_exposure = 1,
     float pre_exposure_ratio = 1,
+    gpu::GpuAddress cloud_shadow = (gpu::GpuAddress)0,
 ) {
     *root = {
         .view            = bitcast(matrices.view, Mat4f),
@@ -1603,6 +1619,7 @@ fn void write_frame_root(
         .max_reflection_roughness = max_reflection_roughness,
         .pre_exposure             = pre_exposure,
         .pre_exposure_ratio       = pre_exposure_ratio,
+        .cloud_shadow             = cloud_shadow,
     };
 }
 

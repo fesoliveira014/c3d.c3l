@@ -155,9 +155,10 @@ const String[Air::len] AIR_NAMES @local = { "off", "on", "dense", "empty" };
 const String[Segment::len] SEGMENT_NAMES @local = {
     "noon", "twilight", "valley", "pan", "orbit", "ascent", "time-lapse",
 };
-const Pass[19] REPORTED_PASSES @local = {
+const Pass[20] REPORTED_PASSES @local = {
     Pass.SKY_VIEW,
     Pass.AERIAL_PERSPECTIVE,
+    Pass.CLOUD_SHADOWS,
     Pass.FOG_SCATTERING,
     Pass.FOG_INTEGRATION,
     Pass.DEPTH_PREPASS,
@@ -1036,6 +1037,7 @@ fn void? clouds_panel(Demo* demo) @local {
         v_min: 0,
         v_max: CLOUD_WIND_SPEED_MAX,
     );
+    imgui::checkbox("Cloud shadows", &layer.cast_shadows);
 }
 
 fn void? sky_panel(

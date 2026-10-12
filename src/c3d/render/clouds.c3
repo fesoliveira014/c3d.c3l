@@ -11,6 +11,7 @@ import std::math;
 
 $assert CloudNoiseRoot::size == 16;
 $assert CloudsRoot::size == 128;
+$assert CloudShadowRoot::size == 64;
 $assert CloudsCompositeRoot::size == 48;
 
 <*
@@ -36,6 +37,8 @@ struct CloudPass @private {
     gpu::TextureIndex coverage;
     CloudSun          sun;
     float             planet_radius; // zero: a flat slab
+    bool              shadowed;      // the sun is up and the layer casts its shadow
+    gpu::GpuAddress   shadow;        // the frame's CloudShadowRoot
 }
 
 <*
@@ -120,6 +123,19 @@ fn void? acquire_cloud_pipelines(Renderer* renderer) @private {
     acquire_sky_pipeline(renderer, &renderer.sky_pipelines.clouds_composite, CLOUDS_COMPOSITE)!;
 }
 
+fn void? acquire_cloud_shadow(Renderer* renderer, ViewRecord* record) @private {
+    acquire_sky_pipeline(renderer, &renderer.sky_pipelines.cloud_shadows, CLOUD_SHADOWS)!;
+    if (record.cloud_shadow.texture.is_valid()) return;
+
+    record.cloud_shadow = allocate_storage_target(
+        device:     &renderer.device,
+        width:      shader::CLOUD_SHADOW_SIZE,
+        height:     shader::CLOUD_SHADOW_SIZE,
+        format:     gpu::Format.R16_FLOAT,
+        debug_name: "cloud_shadow",
+    )!;
+}
+
 fn void? acquire_cloud_targets(Renderer* renderer, ViewRecord* record) @private {
     if (record.clouds.texture.is_valid()) return;
 
@@ -168,6 +184,105 @@ fn void? record_cloud_noise(Renderer* renderer, gpu::CommandList* commands) @pri
     noise.state = EnvironmentLutState.RECORDED;
 }
 
+fn void? write_cloud_march_root(
+    Renderer* renderer,
+    ViewRecord* record,
+    CloudPass* cloud,
+    gpu::GpuAddress frame,
+    CloudsRoot* root,
+) @local {
+    CloudLayer* layer = cloud.layer;
+    gpu::SamplerIndex repeat_sampler = resolve_sampler(renderer, c3d::asset::SAMPLER_LINEAR_REPEAT)!.index;
+    *root = {
+        .sun_direction    = { cloud.sun.to_sun.x, cloud.sun.to_sun.y, cloud.sun.to_sun.z, 0 },
+        .sun_illuminance  = { cloud.sun.illuminance.x, cloud.sun.illuminance.y, cloud.sun.illuminance.z, 0 },
+        .wind_offset      = { layer.wind_offset.x, layer.wind_offset.y, layer.wind_offset.z, 0 },
+        .frame            = frame,
+        .output_texture   = record.clouds.view.index,
+        .distance_texture = record.cloud_distance.view.index,
+        .depth            = record.depth.view.index,
+        .noise            = renderer.environment_state.cloud_noise.view.index,
+        .coverage         = cloud.coverage,
+        .noise_sampler    = repeat_sampler,
+        .coverage_sampler = repeat_sampler,
+        .width            = record.clouds.width,
+        .height           = record.clouds.height,
+        .planet_radius    = cloud.planet_radius,
+        .bottom           = layer.bottom,
+        .top              = layer.top,
+        .density          = layer.density,
+        .albedo           = layer.albedo,
+        .anisotropy       = layer.anisotropy,
+        .coverage_extent  = layer.coverage_extent,
+        .noise_scale      = layer.noise_scale,
+        .erosion          = layer.erosion,
+    };
+}
+
+// Centred on the camera's footprint along the sun: from its own altitude between the datum and the layer's bottom, from
+// the datum at or above the bottom or below the datum itself (a reflected camera), which keeps the ground under the camera
+// at the centre. The window steps at those altitudes; the content is anchored to the world and snapped to its texel grid,
+// so a receiver inside both windows reads the same.
+fn Vec2 cloud_shadow_corner(CloudPass* cloud, Vec3 camera_position, Vec3 frame_origin) @local {
+    Vec3 to_sun = cloud.sun.to_sun;
+    float camera_altitude = camera_position.y + frame_origin.y;
+    float altitude = camera_altitude > 0 && camera_altitude < cloud.layer.bottom ? camera_altitude : 0;
+    float lean = (cloud.layer.bottom - altitude) / math::max(to_sun.y, shader::CLOUD_SUN_FLOOR);
+    float texel = shader::CLOUD_SHADOW_EXTENT / (float)shader::CLOUD_SHADOW_SIZE;
+    Vec2 footprint = {
+        camera_position.x + frame_origin.x + to_sun.x * lean,
+        camera_position.z + frame_origin.z + to_sun.z * lean,
+    };
+    Vec2 snapped = {
+        math::floor(footprint.x / texel + 0.5f) * texel,
+        math::floor(footprint.y / texel + 0.5f) * texel,
+    };
+    return snapped - 0.5f * shader::CLOUD_SHADOW_EXTENT - (Vec2){ frame_origin.x, frame_origin.z };
+}
+
+<*
+ @require cloud.shadowed
+ @require record.cloud_shadow.texture.is_valid()
+*>
+fn gpu::GpuAddress? upload_cloud_shadow(
+    Renderer* renderer,
+    ViewRecord* record,
+    CloudPass* cloud,
+    Vec3 camera_position,
+    gpu::GpuAddress frame,
+) @private {
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan march = slot.upload.take(&renderer.device, CloudsRoot::size, STREAM_ALIGNMENT)!;
+    write_cloud_march_root(renderer, record, cloud, frame, (CloudsRoot*)march.bytes.ptr)!;
+
+    Vec2 corner = cloud_shadow_corner(cloud, camera_position, renderer.frame_origin);
+    gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, CloudShadowRoot::size, STREAM_ALIGNMENT)!;
+    *(CloudShadowRoot*)root.bytes.ptr = {
+        .to_sun        = { cloud.sun.to_sun.x, cloud.sun.to_sun.y, cloud.sun.to_sun.z, 0 },
+        .map           = { corner.x, corner.y, 0, 0 },
+        .clouds        = march.address,
+        .texture       = record.cloud_shadow.view.index,
+        .sampler_index = renderer.linear_clamp_sampler,
+        .bottom        = cloud.layer.bottom,
+        .top           = cloud.layer.top,
+    };
+    return root.address;
+}
+
+<*
+ @require cloud.shadowed
+ @require record.cloud_shadow.texture.is_valid()
+*>
+fn void? record_cloud_shadows(Renderer* renderer, ViewRecord* record, CloudPass* cloud) @private {
+    @profile_pass(renderer, Pass.CLOUD_SHADOWS) {
+        record.cloud_shadow.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;
+        gpu::cmd_bind_pipeline(&renderer.commands, renderer.sky_pipelines.cloud_shadows)!;
+        dispatch_over(renderer, cloud.shadow, &record.cloud_shadow)!;
+        record.cloud_shadow.transition(&renderer.commands, renderer.sampled_state)!;
+    }!;
+    renderer.stats.post_dispatches++;
+}
+
 <*
  @require record.clouds.texture.is_valid() && record.hdr_color.texture.is_valid()
 *>
@@ -177,38 +292,13 @@ fn void? record_clouds(
     CloudPass* cloud,
     gpu::GpuAddress frame,
 ) @private {
-    CloudLayer* layer = cloud.layer;
-    gpu::SamplerIndex repeat_sampler = resolve_sampler(renderer, c3d::asset::SAMPLER_LINEAR_REPEAT)!.index;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     @profile_pass(renderer, Pass.CLOUDS) {
         record.depth.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
         record.clouds.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;
         record.cloud_distance.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;
         gpu::MappedGpuSpan march = slot.upload.take(&renderer.device, CloudsRoot::size, STREAM_ALIGNMENT)!;
-        *(CloudsRoot*)march.bytes.ptr = {
-            .sun_direction    = { cloud.sun.to_sun.x, cloud.sun.to_sun.y, cloud.sun.to_sun.z, 0 },
-            .sun_illuminance  = { cloud.sun.illuminance.x, cloud.sun.illuminance.y, cloud.sun.illuminance.z, 0 },
-            .wind_offset      = { layer.wind_offset.x, layer.wind_offset.y, layer.wind_offset.z, 0 },
-            .frame            = frame,
-            .output_texture   = record.clouds.view.index,
-            .distance_texture = record.cloud_distance.view.index,
-            .depth            = record.depth.view.index,
-            .noise            = renderer.environment_state.cloud_noise.view.index,
-            .coverage         = cloud.coverage,
-            .noise_sampler    = repeat_sampler,
-            .coverage_sampler = repeat_sampler,
-            .width            = record.clouds.width,
-            .height           = record.clouds.height,
-            .planet_radius    = cloud.planet_radius,
-            .bottom           = layer.bottom,
-            .top              = layer.top,
-            .density          = layer.density,
-            .albedo           = layer.albedo,
-            .anisotropy       = layer.anisotropy,
-            .coverage_extent  = layer.coverage_extent,
-            .noise_scale      = layer.noise_scale,
-            .erosion          = layer.erosion,
-        };
+        write_cloud_march_root(renderer, record, cloud, frame, (CloudsRoot*)march.bytes.ptr)!;
         gpu::cmd_bind_pipeline(&renderer.commands, renderer.sky_pipelines.clouds)!;
         dispatch_over(renderer, march.address, &record.clouds)!;
 

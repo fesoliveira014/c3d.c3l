@@ -105,6 +105,7 @@ const uint PREVIEW_MODE_GRAY = 10u;
 const uint PREVIEW_MODE_DISTANCE = 11u;
 const uint LIGHT_RT_SHADOW = 1u;
 const uint LIGHT_VOLUMETRIC = 2u;
+const uint LIGHT_CLOUD_SHADOW = 4u;
 const uint ENVIRONMENT_FACE_POSITIVE_X = 0u;
 const uint ENVIRONMENT_FACE_NEGATIVE_X = 1u;
 const uint ENVIRONMENT_FACE_POSITIVE_Y = 2u;
@@ -150,6 +151,11 @@ const uint CLOUD_NOISE_SIZE = 128u;
 const uint CLOUD_NOISE_GROUP_SIZE = 4u;
 const uint CLOUD_STEPS = 64u;
 const uint CLOUD_LIGHT_STEPS = 6u;
+const float CLOUD_SUN_FLOOR = 0.1;
+const uint CLOUD_SHADOW_SIZE = 512u;
+const float CLOUD_SHADOW_EXTENT = 16384.0;
+const uint CLOUD_SHADOW_STEPS = 16u;
+const float CLOUD_SHADOW_EDGE_BAND = 0.1;
 const uint PHYSICAL_MAP_CLEARCOAT = 1u;
 const uint PHYSICAL_MAP_CLEARCOAT_ROUGHNESS = 2u;
 const uint PHYSICAL_MAP_CLEARCOAT_NORMAL = 4u;
@@ -385,8 +391,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
     float max_reflection_roughness;
     float pre_exposure;
     float pre_exposure_ratio;
-    float _pad0;
-    float _pad1;
+    uint64_t cloud_shadow;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
@@ -1156,6 +1161,18 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer CloudsRoot 
     float coverage_extent;
     float noise_scale;
     float erosion;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer CloudShadowRoot {
+    vec4 to_sun;
+    vec4 map;
+    uint64_t clouds;
+    uint texture;
+    uint sampler_index;
+    float bottom;
+    float top;
+    uint _pad0;
+    uint _pad1;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer CloudsCompositeRoot {

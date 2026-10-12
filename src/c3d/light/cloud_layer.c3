@@ -4,7 +4,7 @@ import c3d;
 import std::math;
 
 <*
- A broken cumulus deck between 1.5 and 3 km, thick where the weather map is full.
+ A broken cumulus deck between 1.5 and 3 km, thick where the weather map is full, casting its shadow.
 *>
 const CloudLayer CLOUD_LAYER_DEFAULT = {
     .bottom          = 1_500,
@@ -15,6 +15,7 @@ const CloudLayer CLOUD_LAYER_DEFAULT = {
     .erosion         = 0.3f,
     .albedo          = 1,
     .anisotropy      = 0.6f,
+    .cast_shadows    = true,
 };
 
 <*
@@ -31,6 +32,7 @@ struct CloudLayer {
     Vec3      wind_offset;     // metres the clouds have drifted; the application advances it
     float     albedo;          // single-scattering albedo
     float     anisotropy;      // Henyey-Greenstein g of the forward lobe; the back lobe is -g / 2
+    bool      cast_shadows;    // shadows the sun on the scene; CloudLayer{} casts none, CLOUD_LAYER_DEFAULT does
 }
 
 <*

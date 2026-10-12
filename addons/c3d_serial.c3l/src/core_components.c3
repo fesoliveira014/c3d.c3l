@@ -19,7 +19,7 @@ const ulong ATMOSPHERE_LAYOUT @local = 0x0a0ac3087385a43b;
 const ulong FOG_LAYOUT @local = 0x1b730abab72fb88f;
 const ulong REFLECTION_LAYOUT @local = 0x7654f53807d7357a;
 const ulong DECAL_LAYOUT @local = 0xa4dd177052750847;
-const ulong CLOUD_LAYOUT @local = 0x88503a573f335ca9;
+const ulong CLOUD_LAYOUT @local = 0x5aed71b1b6ed4a13;
 
 struct LightV1 @private {
     LightKind kind;

@@ -6,6 +6,7 @@
 #include "ambient_occlusion.glsl"
 #include "fog.glsl"
 #include "noise.glsl"
+#include "cloud_density.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -16,15 +17,10 @@ layout(push_constant) uniform Push {
 const float CLOUD_MAX_MARCH = 60000.0;       // metres of deck one ray marches from its entry; the air hides the rest
 const float CLOUD_MIN_TRANSMITTANCE = 0.02;  // a ray this dark adds under 2 % of its radiance by marching on
 const float CLOUD_PARALLEL_LIMIT = 1e-4;     // vertical cosine under which a ray runs parallel to a slab
-const float CLOUD_DETAIL_FREQUENCY = 8.0;    // erosion repeats this many times per base repeat
-const float CLOUD_EROSION_REACH = 0.5;       // share of a cloud's body the strongest erosion can carve away
-const float CLOUD_BASE_RAMP = 0.1;           // share of the layer over which density rises from its bottom
-const float CLOUD_TOP_ROUNDING = 0.4;        // share of a cloud's height over which it thins toward its top
 const float CLOUD_BACK_LOBE_SHARE = 0.3;     // fixed blend of the back lobe into the phase function
 const float CLOUD_POWDER = 0.5;              // darkening of the thinnest fringe, as a share of its radiance
 const float CLOUD_POWDER_LENGTH = 400.0;     // metres of path over which a fringe still reads as thin
 const float CLOUD_AMBIENT_FLOOR = 0.4;       // share of the sky light that reaches the bottom of the layer
-const float CLOUD_SUN_FLOOR = 0.1;           // lowest sun cosine the light march divides by
 const float CLOUD_LIGHT_MAX_LENGTH = 4000.0; // metres toward the sun the light march covers at most
 const uint CLOUD_SCATTER_OCTAVES = 3u;       // multiple-scattering octaves; each halves extinction, weight, anisotropy
 
@@ -119,41 +115,6 @@ float cloud_altitude_along(float planet_radius, float altitude, float cos_zenith
     float radius = planet_radius + altitude;
     float lift = distance * distance + 2.0 * radius * cos_zenith * distance;
     return altitude + lift / (sqrt(max(radius * radius + lift, 0.0)) + radius);
-}
-
-// Extinction per metre at a point of the layer; the light march skips the detail octave.
-float cloud_density(CloudsRoot root, vec2 horizontal, float altitude, bool detailed) {
-    float fraction = (altitude - root.bottom) / (root.top - root.bottom);
-    if (fraction <= 0.0 || fraction >= 1.0) return 0.0;
-
-    vec2 weather = vec2(1.0);
-    if (root.coverage != 0u) {
-        weather = sample_texture_2d(
-            root.coverage,
-            root.coverage_sampler,
-            (horizontal - root.wind_offset.xz) / root.coverage_extent
-        ).rg;
-    }
-    float cover = weather.x;
-    float profile = clamp(fraction / CLOUD_BASE_RAMP, 0.0, 1.0)
-        * clamp((weather.y - fraction) / (CLOUD_TOP_ROUNDING * weather.y + 1e-4), 0.0, 1.0);
-    if (cover <= 0.0 || profile <= 0.0) return 0.0;
-
-    vec3 coordinate = vec3(
-        horizontal.x - root.wind_offset.x,
-        altitude - root.wind_offset.y,
-        horizontal.y - root.wind_offset.z
-    ) / root.noise_scale;
-    vec4 shape = sample_texture_3d(root.noise, root.noise_sampler, coordinate);
-    float low_frequency = dot(shape.gba, vec3(0.625, 0.25, 0.125));
-    float base = clamp((shape.r - (low_frequency - 1.0)) / (2.0 - low_frequency), 0.0, 1.0);
-    float body = clamp((base * profile - (1.0 - cover)) / cover, 0.0, 1.0) * cover;
-    if (detailed && body > 0.0) {
-        vec4 detail = sample_texture_3d(root.noise, root.noise_sampler, coordinate * CLOUD_DETAIL_FREQUENCY);
-        float threshold = root.erosion * CLOUD_EROSION_REACH * dot(detail.gba, vec3(0.625, 0.25, 0.125));
-        body = clamp((body - threshold) / (1.0 - threshold), 0.0, 1.0);
-    }
-    return root.density * body;
 }
 
 // Optical depth from a point of the layer along the sun until the ray leaves the layer.

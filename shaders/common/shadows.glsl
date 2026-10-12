@@ -145,23 +145,46 @@ vec3 atlas_shadow(FrameRoot frame, LightGpu light, vec3 world_position, vec3 nor
     return vec3(1.0);
 }
 
+// The layer's transmittance toward the sun, which the map holds on the layer's bottom plane; one for any other light.
+// A point inside the layer keeps the share of the layer above it: the map's value raised to that share.
+float cloud_shadow_visibility(FrameRoot frame, LightGpu light, vec3 world_position) {
+    if ((light.flags & LIGHT_CLOUD_SHADOW) == 0u || frame.cloud_shadow == 0ul) return 1.0;
+
+    CloudShadowRoot shadow = CloudShadowRoot(frame.cloud_shadow);
+    float altitude = world_position.y + frame.origin.y;
+    float layer_above = clamp((shadow.top - altitude) / (shadow.top - shadow.bottom), 0.0, 1.0);
+    if (layer_above == 0.0) return 1.0;
+
+    vec3 to_sun = shadow.to_sun.xyz;
+    vec2 on_plane = world_position.xz + to_sun.xz * ((shadow.bottom - altitude) / max(to_sun.y, CLOUD_SUN_FLOOR));
+    vec2 uv = (on_plane - shadow.map.xy) / CLOUD_SHADOW_EXTENT;
+    vec2 from_centre = abs(uv * 2.0 - 1.0);
+    float inside = clamp((1.0 - max(from_centre.x, from_centre.y)) / CLOUD_SHADOW_EDGE_BAND, 0.0, 1.0);
+    if (inside == 0.0) return 1.0;
+
+    float transmittance = sample_texture_2d_lod(shadow.texture, shadow.sampler_index, uv, 0.0).r;
+    return mix(1.0, pow(transmittance, layer_above), inside);
+}
+
 float shadow_visibility(FrameRoot frame, LightGpu light, vec3 world_position, vec3 normal, float view_depth) {
+    float clouds = cloud_shadow_visibility(frame, light, world_position);
 #ifdef RT_SHADOWS
     if ((light.flags & LIGHT_RT_SHADOW) != 0u && (frame.flags & FRAME_TRACE_PRESENT) != 0u) {
-        return ray_shadow_visibility(frame, light, world_position, normal);
+        return clouds * ray_shadow_visibility(frame, light, world_position, normal);
     }
 #endif
-    return atlas_shadow(frame, light, world_position, normal, view_depth, false).x;
+    return clouds * atlas_shadow(frame, light, world_position, normal, view_depth, false).x;
 }
 
 // Share of the light reaching the point per channel. Traced lights and the float form above ignore the tint.
 vec3 shadow_transmittance(FrameRoot frame, LightGpu light, vec3 world_position, vec3 normal, float view_depth) {
+    float clouds = cloud_shadow_visibility(frame, light, world_position);
 #ifdef RT_SHADOWS
     if ((light.flags & LIGHT_RT_SHADOW) != 0u && (frame.flags & FRAME_TRACE_PRESENT) != 0u) {
-        return vec3(ray_shadow_visibility(frame, light, world_position, normal));
+        return vec3(clouds * ray_shadow_visibility(frame, light, world_position, normal));
     }
 #endif
-    return atlas_shadow(frame, light, world_position, normal, view_depth, true);
+    return clouds * atlas_shadow(frame, light, world_position, normal, view_depth, true);
 }
 
 #endif
