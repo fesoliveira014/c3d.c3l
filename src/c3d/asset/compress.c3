@@ -4,6 +4,7 @@ import c3d;
 import c3d::anim;
 import std::math;
 
+const float REDUCTION_SHARE @local = 0.5f; // 50/50 with quantization; reported error stays near half the tolerance
 const double CUBIC_TANGENT_WEIGHT @local = 4.0 / 27; // largest |h10| and |h11| of the Hermite basis
 
 <*
@@ -44,7 +45,7 @@ fn float* path_value(ClipTolerance* tolerance, TargetPath path) @local {
 }
 
 <*
- Quantize the key data of a clip and measure the error.
+ Quantize the key data of a clip, dropping keys within the tolerance, and measure the error.
  Error is bounded per key, so a looping root-motion clip's displacement per cycle can drift by twice the tolerance.
  Cubic rotation and empty tracks stay raw; the clip is unchanged on every fault.
  @return? c3d::INVALID_ARGUMENT, c3d::TOLERANCE_EXCEEDED, c3d::CAPACITY_EXCEEDED
@@ -66,7 +67,7 @@ fn CompressionReport? AssetStore.compress_clip(&self, ClipId clip, ClipTolerance
 
             validate_track(source)!;
             Track* candidate = &staged[index];
-            *candidate = pack_track(source);
+            *candidate = pack_track(source, *path_value(&tolerance, source.path) * REDUCTION_SHARE);
             owners[index] = shared_times(staged, owners, (uint)index);
             words += range_count(candidate) + (code_count(candidate) + 1) / 2;
             if (owners[index] == index) {
@@ -150,18 +151,31 @@ fn void? validate_track(Track* track) @local {
     }
 }
 
-fn Track pack_track(Track* source) @local {
+fn Track pack_track(Track* source, float budget) @local {
     uint keys = source.key_count();
     uint stride = source.stride();
     uint slots = source.slot_count();
+    bool[] keep = alloc::new_array(tmem, bool, keys);
+    if (source.interpolation == Interpolation.CUBIC_SPLINE) {
+        keep[..] = true;
+    } else {
+        reduce_keys(source, budget, keep);
+    }
+    uint[] kept_keys = alloc::new_array(tmem, uint, keys);
+    uint kept;
+    foreach (key, flag : keep) {
+        if (flag) kept_keys[kept++] = (uint)key;
+    }
+
     Track result = {
         .target = source.target,
         .path = source.path,
         .interpolation = source.interpolation,
         .encoding = TrackEncoding.PACKED,
-        .packed_stride = (ushort)stride,
-        .times = source.times,
+        .times = alloc::new_array(tmem, float, kept),
     };
+    result.packed_stride = (ushort)stride;
+    foreach (usz position, key : kept_keys[:kept]) result.times[position] = source.key_time(key);
     ushort[] codes = alloc::new_array(tmem, ushort, (sz)code_count(&result));
     float[] ranges = alloc::new_array(tmem, float, (sz)range_count(&result));
     result.packed.codes = codes.ptr;
@@ -169,9 +183,9 @@ fn Track pack_track(Track* source) @local {
     float[] value = alloc::new_array(tmem, float, stride);
 
     if (source.path == TargetPath.ROTATION) {
-        for (uint key = 0; key < keys; key++) {
+        foreach (usz position, key : kept_keys[:kept]) {
             source.read_key(key, 0, value);
-            anim::pack_rotation(value, codes[(usz)key * anim::ROTATION_WORDS:anim::ROTATION_WORDS]);
+            anim::pack_rotation(value, codes[position * anim::ROTATION_WORDS:anim::ROTATION_WORDS]);
         }
         return result;
     }
@@ -180,7 +194,7 @@ fn Track pack_track(Track* source) @local {
         ranges[range] = float::max;
         ranges[range + 1] = -float::max;
     }
-    for (uint key = 0; key < keys; key++) {
+    foreach (key : kept_keys[:kept]) {
         for (uint slot = 0; slot < slots; slot++) {
             source.read_key(key, slot, value);
             foreach (uint component, entry : value) {
@@ -193,17 +207,65 @@ fn Track pack_track(Track* source) @local {
     for (usz range = 0; range < ranges.len; range += 2) {
         ranges[range + 1] = (ranges[range + 1] - ranges[range]) / anim::QUANTIZED_CODE_MAX;
     }
-    for (uint key = 0; key < keys; key++) {
+    foreach (usz position, key : kept_keys[:kept]) {
         for (uint slot = 0; slot < slots; slot++) {
             source.read_key(key, slot, value);
             foreach (uint component, entry : value) {
                 float* range = &ranges[((usz)slot * stride + component) * 2];
-                usz code = ((usz)key * slots + slot) * stride + component;
+                usz code = (position * slots + slot) * stride + component;
                 codes[code] = range[1] > 0 ? (ushort)math::round((entry - range[0]) / range[1]) : 0;
             }
         }
     }
     return result;
+}
+
+fn void reduce_keys(Track* source, float budget, bool[] keep) @local {
+    uint keys = source.key_count();
+    uint stride = source.stride();
+    keep[0] = true;
+    keep[keys - 1] = true;
+    float[] scratch = alloc::new_array(tmem, float, (sz)(4 * stride));
+    float[] pair = scratch[:2 * stride];
+    uint[2][] pending = alloc::new_array(tmem, uint[2], keys);
+    usz count;
+    pending[count++] = { 0, keys - 1 };
+    while (count) {
+        uint[2] range = pending[--count];
+        float[2] segment_times = { source.key_time(range[0]), source.key_time(range[1]) };
+        source.read_key(range[0], 0, pair[:stride]);
+        source.read_key(range[1], 0, pair[stride:stride]);
+        Track segment = {
+            .path = source.path,
+            .interpolation = source.interpolation,
+            .times = segment_times[..],
+            .values = pair,
+        };
+        Measurement probe = {
+            .source = source,
+            .candidate = &segment,
+            .reference = scratch[2 * stride:stride],
+            .value = scratch[3 * stride:stride],
+            .source_cursor = range[0],
+        };
+        uint worst;
+        double worst_error = budget;
+        for (uint key = range[0]; key < range[1]; key++) {
+            uint owner = key > range[0] ? key : key + 1;
+            if (owner == range[1]) continue;
+
+            double error = key > range[0] ? error_at(&probe, source.key_time(key)) : 0;
+            if (source.path == TargetPath.ROTATION) error = math::max(error, error_at(&probe, midpoint(source, key)));
+            if (error > worst_error) {
+                worst_error = error;
+                worst = owner;
+            }
+        }
+        if (!worst) continue;
+        keep[worst] = true;
+        pending[count++] = { range[0], worst };
+        pending[count++] = { worst, range[1] };
+    }
 }
 
 fn double error_at(Measurement* probe, float time) @local {
