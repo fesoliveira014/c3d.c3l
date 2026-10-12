@@ -470,7 +470,7 @@ records no pass and allocates no map.
 - **Temporal fog.** The map's motion is not part of the fog history's rejection key. It changes the in-scatter the clamp sees, as
   a moving shadow edge does, so wind and camera motion do not reset the history.
 - **Memory.** `CLOUD_SHADOW_SIZE² × 2 B` per view, 512 KiB, allocated the first frame the view casts the shadow and kept until the
-  view is destroyed.
+  view is destroyed or its images are reallocated.
 - **Not shadowed.** The path tracer, traced reflection and probe-update hits, and the atmosphere's lighting cubes do not see the
   map, as they do not see the clouds. Reflection captures render without clouds and so without their shadow. Mirror and
   clip-plane views have a map of their own.
