@@ -3,8 +3,8 @@
 `c3d::render::post` turns the scene-linear `hdr_color` of a `DISPLAY_LDR` view into display-ready
 linear color for the view's output. The `BGRA8_SRGB` swapchain or an sRGB target encodes; no shader
 encodes for output. `LINEAR_HDR` views skip this module. They also ignore `auto_exposure`, as does a view
-while it shows a TAA debug image: a linear output keeps scene-linear values, and `ViewStats.exposure` reports
-`Camera.exposure`, which it does not apply.
+while it shows a TAA debug image: a linear output keeps scene-linear values in physical units, and
+`ViewStats.exposure` reports `Camera.exposure`, which it does not apply.
 
 ```bash
 python3 scripts/build.py --example post
@@ -27,6 +27,23 @@ view; a dead view or LUT faults `INVALID_ID`; a LUT that is not a single-mip RGB
 
 Exposure is `Camera.exposure` (05 Cameras) times, under [auto exposure](#auto-exposure), the view's adapted
 multiplier. `GradeParams` carries no exposure of its own.
+
+### Pre-exposure
+
+The scene image is stored multiplied by the view's pre-exposure, and the grade applies
+`exposure / pre_exposure`. The factor is `Camera.exposure` times the adapted multiplier, rounded to a power of two
+and clamped to 2^-16 to 2^16, so multiplying and dividing are exact. The adapted multiplier is the one last read
+back (`FRAMES_IN_FLIGHT` frames old); the factor is 1 in manual mode, before the first readback and after a cut or
+a scene change until the next readback. Stored values then sit near display scale at every exposure, with about 16
+stops of half-float headroom above display white, so a dim scene is not stored in the subnormal range.
+`ViewDesc.pre_exposure_override` forces the factor and `ViewStats.pre_exposure` reports it.
+
+Everything that reads the stored image in absolute units divides first, so its settings keep their units: the
+exposure histogram, the bloom prefilter's threshold and the `LINEAR_HDR` copy. TAA and screen-space GI
+multiply their histories by the ratio of consecutive factors. TAA's `1 / (1 + luma)` weights and its variance clip
+work in stored units, so they follow the exposed image rather than absolute radiance. Light and radiance inputs
+are scaled where they are uploaded; see [custom shaders](custom_shaders.md#pre-exposure) for stages that emit
+their own radiance.
 
 ## Routes
 
@@ -128,7 +145,7 @@ that add each coarser level into the finer one in place. Both display routes sam
 never rewritten. `2 * levels - 1` dispatches are counted and timed under `POST_CHAIN`. Disabling
 bloom or changing `levels` retires the chain through the frame lifecycle; resize recreates it.
 `configure_view` faults `INVALID_ARGUMENT` when bloom is on with `levels` outside `[1, 8]`.
-Under auto exposure the prefilter multiplies its input by the adapted multiplier, so `threshold` is in
+The prefilter divides out the pre-exposure first. Under auto exposure it then multiplies its input by the adapted multiplier, so `threshold` is in
 auto-exposed units (1.0 is about 2.5 stops above mid-grey after adaptation) and a scene's bloom is the same
 at any absolute radiance. In manual mode `threshold` is in scene units. `Camera.exposure` never changes bloom.
 
@@ -266,7 +283,7 @@ and bounds whose targets leave the histogram's luminance range (log2 -18 to 14).
   never metered. Jitter and the blurs barely move the mean, and bloom is not in the metered image. NaN, infinite and
   black pixels (below the smallest half float) are not counted; brighter or darker values clamp into the edge bins.
   The metered value is the mean log2 luminance between the two percentiles. The meter reads the image before
-  exposure, so the result depends on the scene alone.
+  exposure and divides out the pre-exposure, so the result depends on the scene alone.
 - Target: `clamp(log2(0.18) - metered + compensation_ev, min_ev, max_ev)` stops; the final exposure is
   `Camera.exposure * 2^ev`. Leave `Camera.exposure` at 1 under auto exposure unless one camera needs a fixed
   offset; `compensation_ev` biases one view in stops.
@@ -286,6 +303,7 @@ and bounds whose targets leave the histogram's luminance range (log2 -18 to 14).
   under `EXPOSURE` and counted in `Stats.post_dispatches`. Manual mode records nothing and binds nothing.
 - `Renderer.view_stats(view).exposure` reports the applied multiplier, `FRAMES_IN_FLIGHT` frames old under auto
   exposure. On a view created with auto exposure on it is zero until the first readback.
+- Its readback also sets the view's [pre-exposure](#pre-exposure) from the next rendering on.
 
 ### Measured cost
 

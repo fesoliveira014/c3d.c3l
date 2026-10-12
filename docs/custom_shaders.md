@@ -54,7 +54,9 @@ light positions, clip planes, scene reconstruction and tracing already use the
 same relative space. Convert application-supplied absolute payload positions
 before combining them with those values. Local geometry, palettes and directions
 keep their existing spaces. Rebuild consumer SPIR-V against the appended frame
-root layout; do not hand-copy the ABI. `write_mesh_outputs` also handles previous
+root layout; do not hand-copy the ABI. A stage built before `FrameRoot.pre_exposure`
+existed must also route the radiance it emits itself through `pre_exposed`
+([pre-exposure](#pre-exposure)). `write_mesh_outputs` also handles previous
 origins and LOD history for published velocity stages.
 
 A custom fragment stage declares the 16-byte graphics push block, reads `DrawRoot` through `pc.fragment_root_gpu`, and finds its header and payload through `DrawRoot.material`:
@@ -200,7 +202,8 @@ A custom or package stage starts with the prelude, `generated/shader_abi.glsl` (
 | `constants.glsl` | `PI` |
 | `material_uv.glsl` | `custom_slot_present`, `custom_map_uv` |
 | `material_alpha.glsl` | `material_output` |
-| `blend_output.glsl` | `write_blend_output`, the `out_color` output and, under `WEIGHTED_BLEND`, the `out_revealage` output ([weighted transparency](#weighted-transparency)) |
+| `blend_output.glsl` | `write_blend_output`, the `out_color` output and, under `WEIGHTED_BLEND`, the `out_revealage` output ([weighted transparency](#weighted-transparency)); includes `pre_exposure.glsl` |
+| `pre_exposure.glsl` | `pre_exposed` ([pre-exposure](#pre-exposure)); fragment and compute stages |
 | `custom_material.glsl` | `sample_custom_map` (both overloads), `custom_reference` |
 | `normal_mapping.glsl` | `decode_normal`, `tangent_normal`, `derivative_normal`, `derivative_tangent`, `surface_tangent_frame` |
 | `noise.glsl` | `interleaved_gradient_noise`, `pcg_hash`, `hash_unit` |
@@ -331,6 +334,30 @@ The forms, by what the view traces:
 The traced forms follow [traced shadows](#traced-shadows), with one difference: a missing form does not fall back to another. A draw joins the accumulation only when the form its view needs exists, so a shader that supplies `shaded` alone is weighted in views that trace no shadows and sorted in views that do, where its `traced_fragment` form, or `fragment`, still draws. A stage that reads no shadows supplies the same source for the traced forms. The pipelines are keyed by the shader id, its revision, the form and the two accumulation formats, so a shader's weighted and sorted pipelines coexist and a view that switches mode creates nothing new once both have drawn. A replacement retires them together, and one that drops a form retires that form's pipelines; the next frame draws the draw sorted.
 
 Scene reads work as for a sorted blended stage. Their snapshots are taken before the accumulation, so the stage sees the opaque scene without any weighted surface, and a stage that reads depth for a soft fade measures the gap to opaque geometry.
+
+## Pre-exposure
+
+A view stores its scene radiance multiplied by a power of two, its pre-exposure, and the display
+route divides it out. The factor follows `Camera.exposure` times the view's
+[adapted exposure](post.md#auto-exposure), so stored values stay near display scale however dim or bright
+the scene is. `FrameRoot.pre_exposure` carries it to every stage and `ViewStats.pre_exposure` reports it on the
+CPU. A stage that emits unscaled radiance appears `pre_exposure` times too dark.
+
+- Radiance that comes from the frame's data or a public helper is already scaled: the frame's lights through
+  `sample_light` and the light loop, `shade_standard_surface`, image-based lighting, probes, ambient,
+  `scene_color_at` and the fog helpers.
+- Radiance a stage produces itself is not. An unlit or emissive colour, a constant and a texture sampled as light
+  (a render target, an HDR texture) go through `pre_exposed(frame, radiance)` from `pre_exposure.glsl`, which
+  `blend_output.glsl` includes. Directions, positions, depth, alpha and optical depth are not radiance and stay
+  as they are.
+- A `LINEAR_HDR` target is physical. A stage that shows one as light, such as a mirror or a planar
+  reflection, passes the sample through `pre_exposed`.
+- A clamp that shapes the image applies to physical radiance, before `pre_exposed`; a clamp that only keeps
+  half-float finite applies to the scaled value, after it.
+- A compute dispatch that reads or writes `read_view_color` or `write_view_color` sees scaled values. It
+  multiplies the constants it mixes in by `ViewStats.pre_exposure`, read after `render_view`.
+- `ViewDesc.pre_exposure_override` forces the factor; 0 keeps it automatic. A stage not yet migrated
+  renders unchanged under an override of 1.
 
 ## Scene reads
 
