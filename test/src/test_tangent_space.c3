@@ -12,6 +12,13 @@ import std::math;
 const char[] CURATED_INPUT @local = $embed("../fixtures/tangent_space/curated.input.bin");
 const char[] CURATED_EXPECTED @local = $embed("../fixtures/tangent_space/curated.expected.bin");
 
+struct CuratedVertex @local {
+    float[3] position;
+    float[3] normal;
+    float[2] uv0;
+    float[2] uv1;
+}
+
 struct TangentFaultAllocator (Allocator) @local {
     Allocator allocator;
     int attempt;
@@ -62,14 +69,14 @@ fn uint take_u32(char[] bytes, usz* offset) @local {
     return value;
 }
 
-fn MikkFullMesh take_mesh(char[] bytes, usz* offset) @local {
+fn Geometry take_mesh(char[] bytes, usz* offset, uint* uv_set) @local {
     uint vertex_count = take_u32(bytes, offset);
     uint face_count = take_u32(bytes, offset);
-    uint uv_set = take_u32(bytes, offset);
+    *uv_set = take_u32(bytes, offset);
 
-    MikkVertex[] vertices = alloc::new_array(tmem, MikkVertex, vertex_count);
-    mem::copy(vertices.ptr, &bytes[*offset], vertices.len * MikkVertex::size);
-    *offset += vertices.len * MikkVertex::size;
+    CuratedVertex[] vertices = alloc::new_array(tmem, CuratedVertex, vertex_count);
+    mem::copy(vertices.ptr, &bytes[*offset], vertices.len * CuratedVertex::size);
+    *offset += vertices.len * CuratedVertex::size;
 
     for (uint face = 0; face < face_count; face++) assert(take_u32(bytes, offset) == 3);
 
@@ -77,7 +84,40 @@ fn MikkFullMesh take_mesh(char[] bytes, usz* offset) @local {
     mem::copy(indices.ptr, &bytes[*offset], indices.len * uint::size);
     *offset += indices.len * uint::size;
 
-    return { .vertices = vertices, .indices = indices, .uv_set = uv_set };
+    Geometry source = {
+        .positions = alloc::new_array(tmem, Vec3, vertex_count),
+        .normals = alloc::new_array(tmem, Vec3, vertex_count),
+        .uv0 = alloc::new_array(tmem, Vec2, vertex_count),
+        .uv1 = alloc::new_array(tmem, Vec2, vertex_count),
+        .indices = indices,
+    };
+
+    foreach (index, vertex : vertices) {
+        source.positions[index] = { vertex.position[0], vertex.position[1], vertex.position[2] };
+        source.normals[index] = { vertex.normal[0], vertex.normal[1], vertex.normal[2] };
+        source.uv0[index] = { vertex.uv0[0], vertex.uv0[1] };
+        source.uv1[index] = { vertex.uv1[0], vertex.uv1[1] };
+    }
+
+    source.finalize();
+
+    return source;
+}
+
+fn MikkFullMesh mikk_mesh(Geometry* source, uint uv_set) @local {
+    MikkVertex[] vertices = alloc::new_array(tmem, MikkVertex, source.positions.len);
+    Vec2[] selected = uv_set == 0 ? source.uv0 : source.uv1;
+
+    foreach (index, position : source.positions) {
+        Vec3 normal = source.normals[index];
+        vertices[index] = {
+            .position = { .x = position.x, .y = position.y, .z = position.z },
+            .normal = { .x = normal.x, .y = normal.y, .z = normal.z },
+            .uv = { selected[index].x, selected[index].y },
+        };
+    }
+
+    return { .vertices = vertices, .indices = source.indices };
 }
 
 fn MikkTangent[] take_expected(char[] bytes, usz* offset) @local {
@@ -92,63 +132,7 @@ fn MikkTangent[] take_expected(char[] bytes, usz* offset) @local {
 }
 
 fn void compare_tangent(MikkTangent actual, MikkTangent expected) @local {
-    assert(actual.sign == expected.sign);
-    assert(geometry::mikk_finite_vector(actual.direction));
-
-    double[3] first = { actual.direction.x, actual.direction.y, actual.direction.z };
-    double[3] second = { expected.direction.x, expected.direction.y, expected.direction.z };
-    double first_squared = first[0] * first[0] + first[1] * first[1] + first[2] * first[2];
-    double second_squared = second[0] * second[0] + second[1] * second[1] + second[2] * second[2];
-
-    if (second_squared == 0) {
-        assert(first_squared == 0);
-
-        return;
-    }
-
-    assert(first_squared > 0);
-
-    double first_length = math::sqrt(first_squared);
-    double second_length = math::sqrt(second_squared);
-
-    for (int i = 0; i < 3; i++) {
-        first[i] /= first_length;
-        second[i] /= second_length;
-    }
-
-    double[3] cross = {
-        first[1] * second[2] - first[2] * second[1],
-        first[2] * second[0] - first[0] * second[2],
-        first[0] * second[1] - first[1] * second[0],
-    };
-
-    double cosine = first[0] * second[0] + first[1] * second[1] + first[2] * second[2];
-    double sine = math::sqrt(cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]);
-    double angle = math::atan2(sine, cosine);
-
-    assert(math::is_finite(angle) && angle <= 1e-4);
-    assert(geometry::mikk_equal_vectors(actual.direction, expected.direction));
-}
-
-fn Geometry mesh_geometry(MikkFullMesh mesh) @local {
-    Geometry source = {
-        .positions = alloc::new_array(tmem, Vec3, mesh.vertices.len),
-        .normals = alloc::new_array(tmem, Vec3, mesh.vertices.len),
-        .uv0 = alloc::new_array(tmem, Vec2, mesh.vertices.len),
-        .uv1 = alloc::new_array(tmem, Vec2, mesh.vertices.len),
-        .indices = mesh.indices,
-    };
-
-    foreach (index, vertex : mesh.vertices) {
-        source.positions[index] = { vertex.position.x, vertex.position.y, vertex.position.z };
-        source.normals[index] = { vertex.normal.x, vertex.normal.y, vertex.normal.z };
-        source.uv0[index] = { vertex.uv0[0], vertex.uv0[1] };
-        source.uv1[index] = { vertex.uv1[0], vertex.uv1[1] };
-    }
-
-    source.finalize();
-
-    return source;
+    assert(actual.sign == expected.sign && geometry::mikk_equal_vectors(actual.direction, expected.direction));
 }
 
 fn void test_pinned_tangents_match_curated_corpus() @test {
@@ -165,32 +149,27 @@ fn void test_pinned_tangents_match_curated_corpus() @test {
         assert(take_u32(CURATED_EXPECTED, &expected_offset) == count);
 
         for (uint case_index = 0; case_index < count; case_index++) {
-            MikkFullMesh mesh = take_mesh(CURATED_INPUT, &input_offset);
+            uint uv_set;
+            Geometry source = take_mesh(CURATED_INPUT, &input_offset, &uv_set);
             MikkTangent[] expected = take_expected(CURATED_EXPECTED, &expected_offset);
-            MikkTangent[] actual = geometry::mikk_generate_full(tmem, mesh)!!;
+            MikkTangent[] actual = geometry::mikk_generate_full(tmem, mikk_mesh(&source, uv_set))!!;
 
             assert(actual.len == expected.len);
 
             foreach (corner, tangent : actual) compare_tangent(tangent, expected[corner]);
 
-            Geometry source = mesh_geometry(mesh);
+            Geometry generated = geometry::create_tangent_geometry(mem, &source, uv_set)!!;
+            defer asset::free_geometry(mem, &generated);
 
-            TangentGeometry owner = geometry::create_tangent_geometry(mem, &source, mesh.uv_set)!!;
-            defer geometry::destroy_tangent_geometry(&owner);
-
-            assert(owner.tangent_provenance.origin == TangentOrigin.GENERATED);
-            assert(owner.tangent_provenance.uv_set == mesh.uv_set);
-            assert(owner.tangent_provenance.derivation_revision == 0);
-
-            foreach (corner, index : owner.data.indices) {
-                Vec4 tangent = owner.data.tangents[index];
+            foreach (corner, index : generated.indices) {
+                Vec4 tangent = generated.tangents[index];
 
                 compare_tangent({
                     .direction = { .x = tangent.x, .y = tangent.y, .z = tangent.z },
                     .sign = tangent.w,
                 }, expected[corner]);
 
-                assert(owner.data.positions[index] == source.positions[source.indices[corner]]);
+                assert(generated.positions[index] == source.positions[source.indices[corner]]);
             }
         }
 
@@ -259,48 +238,48 @@ fn void test_tangent_splits_copy_every_stream_without_merging_source_vertices() 
         defer tracker.free();
 
         {
-            TangentGeometry owner = geometry::create_tangent_geometry(&tracker, &source)!!;
-            defer geometry::destroy_tangent_geometry(&owner);
+            Geometry owner = geometry::create_tangent_geometry(&tracker, &source)!!;
+            defer asset::free_geometry(&tracker, &owner);
 
-            TangentGeometry repeated = geometry::create_tangent_geometry(&tracker, &source)!!;
-            defer geometry::destroy_tangent_geometry(&repeated);
+            Geometry repeated = geometry::create_tangent_geometry(&tracker, &source)!!;
+            defer asset::free_geometry(&tracker, &repeated);
 
-            assert(owner.data.positions.len == 6 && owner.data.indices.len == source.indices.len);
-            assert(owner.data.indices == repeated.data.indices && owner.data.tangents == repeated.data.tangents);
-            assert(owner.data.indices[0] != owner.data.indices[3] && owner.data.indices[2] != owner.data.indices[4]);
+            assert(owner.positions.len == 6 && owner.indices.len == source.indices.len);
+            assert(owner.indices == repeated.indices && owner.tangents == repeated.tangents);
+            assert(owner.indices[0] != owner.indices[3] && owner.indices[2] != owner.indices[4]);
             assert(source.positions.len == 4 && source.indices == (uint[6]){ 0, 1, 2, 0, 2, 3 }[..]);
-            assert(!source.tangents.len && owner.data.positions.ptr != source.positions.ptr);
-            assert(tangent_allocation_bytes(&tracker, owner.data.tangents.ptr)
-              == (sz)(owner.data.positions.len * Vec4::size));
-            assert(tangent_allocation_bytes(&tracker, repeated.data.tangents.ptr)
-              == (sz)(repeated.data.positions.len * Vec4::size));
+            assert(!source.tangents.len && owner.positions.ptr != source.positions.ptr);
+            assert(tangent_allocation_bytes(&tracker, owner.tangents.ptr)
+              == (sz)(owner.positions.len * Vec4::size));
+            assert(tangent_allocation_bytes(&tracker, repeated.tangents.ptr)
+              == (sz)(repeated.positions.len * Vec4::size));
 
-            foreach (corner, destination : owner.data.indices) {
+            foreach (corner, destination : owner.indices) {
                 uint original = source.indices[corner];
 
-                assert(owner.data.positions[destination] == source.positions[original]);
-                assert(owner.data.normals[destination] == source.normals[original]);
-                assert(owner.data.uv0[destination] == source.uv0[original]);
-                assert(owner.data.uv1[destination] == source.uv1[original]);
-                assert(owner.data.colors[destination] == source.colors[original]);
-                assert(owner.data.joints[destination] == source.joints[original]);
-                assert(owner.data.weights[destination] == source.weights[original]);
-                assert(owner.data.custom_data[(usz)destination * 7:7] == source.custom_data[(usz)original * 7:7]);
+                assert(owner.positions[destination] == source.positions[original]);
+                assert(owner.normals[destination] == source.normals[original]);
+                assert(owner.uv0[destination] == source.uv0[original]);
+                assert(owner.uv1[destination] == source.uv1[original]);
+                assert(owner.colors[destination] == source.colors[original]);
+                assert(owner.joints[destination] == source.joints[original]);
+                assert(owner.weights[destination] == source.weights[original]);
+                assert(owner.custom_data[(usz)destination * 7:7] == source.custom_data[(usz)original * 7:7]);
 
-                foreach (index, target : owner.data.targets) {
+                foreach (index, target : owner.targets) {
                     assert(target.position_deltas[destination] == source.targets[index].position_deltas[original]);
                     assert(target.normal_deltas[destination] == source.targets[index].normal_deltas[original]);
                     assert(target.name == source.targets[index].name && target.name.ptr != source.targets[index].name.ptr);
                 }
             }
 
-            assert(owner.data.custom_stride == source.custom_stride
-              && owner.data.bounds.min == source.bounds.min && owner.data.bounds.max == source.bounds.max);
-            assert(owner.data.channels[0].name == source.channels[0].name
-              && owner.data.channels[0].name.ptr != source.channels[0].name.ptr);
-            assert(owner.data.channels[0].full_weights == source.channels[0].full_weights
-              && owner.data.channels[0].full_weights.ptr != source.channels[0].full_weights.ptr);
-            assert(owner.data.channels[0].first_target == source.channels[0].first_target);
+            assert(owner.custom_stride == source.custom_stride
+              && owner.bounds.min == source.bounds.min && owner.bounds.max == source.bounds.max);
+            assert(owner.channels[0].name == source.channels[0].name
+              && owner.channels[0].name.ptr != source.channels[0].name.ptr);
+            assert(owner.channels[0].full_weights == source.channels[0].full_weights
+              && owner.channels[0].full_weights.ptr != source.channels[0].full_weights.ptr);
+            assert(owner.channels[0].first_target == source.channels[0].first_target);
         }
 
         assert(!tracker.has_leaks());
@@ -319,14 +298,14 @@ fn void test_tangent_generation_is_atomic_at_every_allocation_failure() @test {
         for (int fail_at = 0; fail_at < 128; fail_at++) {
             TangentFaultAllocator failing = { .allocator = &tracker, .fail_at = fail_at };
 
-            TangentGeometry? result = geometry::create_tangent_geometry(&failing, &source);
+            Geometry? result = geometry::create_tangent_geometry(&failing, &source);
 
             if (catch excuse = result) {
                 assert(excuse == c3d::CAPACITY_EXCEEDED);
             } else {
-                TangentGeometry owner = result;
+                Geometry generated = result;
 
-                geometry::destroy_tangent_geometry(&owner);
+                asset::free_geometry(&failing, &generated);
 
                 succeeded = true;
             }
@@ -361,10 +340,10 @@ fn void test_tangent_generation_validates_real_inputs_and_discards_old_tangents(
         source.tangents = alloc::new_array(tmem, Vec4, 1);
         source.tangents[0] = { 0, 0, 0, 0 };
 
-        TangentGeometry owner = geometry::create_tangent_geometry(mem, &source)!!;
-        defer geometry::destroy_tangent_geometry(&owner);
+        Geometry generated = geometry::create_tangent_geometry(mem, &source)!!;
+        defer asset::free_geometry(mem, &generated);
 
-        assert(owner.data.positions.len == 6 && source.tangents.len == 1 && source.tangents[0].w == 0);
+        assert(generated.positions.len == 6 && source.tangents.len == 1 && source.tangents[0].w == 0);
     };
 }
 
@@ -375,12 +354,12 @@ fn void test_tangent_generation_has_no_small_mesh_cap_and_preserves_nonindexed_t
 
         foreach (corner, &index : source.indices) *index = (uint)(corner % 3);
 
-        TangentGeometry owner = geometry::create_tangent_geometry(mem, &source)!!;
-        defer geometry::destroy_tangent_geometry(&owner);
+        Geometry generated = geometry::create_tangent_geometry(mem, &source)!!;
+        defer asset::free_geometry(mem, &generated);
 
-        assert(owner.data.indices.len == 1800 && owner.data.positions.len == 4);
+        assert(generated.indices.len == 1800 && generated.positions.len == 4);
 
-        foreach (index : owner.data.indices) assert(owner.data.tangents[index] == (Vec4){ 1, 0, 0, 1 });
+        foreach (index : generated.indices) assert(generated.tangents[index] == (Vec4){ 1, 0, 0, 1 });
 
         source = mirrored_geometry();
         source.positions = source.positions[:3];
@@ -388,10 +367,10 @@ fn void test_tangent_generation_has_no_small_mesh_cap_and_preserves_nonindexed_t
         source.uv0 = source.uv0[:3];
         source.indices = {};
 
-        TangentGeometry nonindexed = geometry::create_tangent_geometry(mem, &source)!!;
-        defer geometry::destroy_tangent_geometry(&nonindexed);
+        Geometry nonindexed = geometry::create_tangent_geometry(mem, &source)!!;
+        defer asset::free_geometry(mem, &nonindexed);
 
-        assert(!nonindexed.data.indices.len && nonindexed.data.positions.len == 3);
+        assert(!nonindexed.indices.len && nonindexed.positions.len == 3);
     };
 }
 
@@ -408,8 +387,6 @@ fn void test_authored_tangents_keep_xyz_and_accept_mixed_nonunit_signs() @test {
 
         GeometryAsset* record = assets.geometry(id);
 
-        assert(record.tangent_provenance.origin == TangentOrigin.AUTHORED);
-        assert(record.tangent_provenance.derivation_revision == record.header.revision);
         assert(record.data.tangents[0] == (Vec4){ 2, 3, 4, -1 });
         assert(record.data.tangents[1] == (Vec4){ 5, 6, 7, 1 });
         assert(source.tangents[0].w == -8 && source.tangents[1].w == 3);
@@ -417,11 +394,11 @@ fn void test_authored_tangents_keep_xyz_and_accept_mixed_nonunit_signs() @test {
         source.tangents[0].x = 7;
         assets.replace_geometry(id, &source)!!;
 
-        assert(record.header.revision == 2 && record.tangent_provenance.derivation_revision == 2);
+        assert(record.header.revision == 2);
         assert(record.data.tangents[0] == (Vec4){ 7, 3, 4, -1 });
 
         uint revision = record.header.revision;
-        source.tangents[0] = { 0, 0, 0, 1 };
+        source.tangents[0] = { float::nan, 0, 0, 1 };
 
         assert(@catch(assets.replace_geometry(id, &source)) == c3d::INVALID_ARGUMENT);
         assert(record.header.revision == revision && record.data.tangents[0] == (Vec4){ 7, 3, 4, -1 });
@@ -436,7 +413,7 @@ fn void test_authored_tangents_keep_xyz_and_accept_mixed_nonunit_signs() @test {
     };
 }
 
-fn void test_generated_tangent_publication_ownership_revision_and_release() @test {
+fn void test_generated_geometry_transfers_to_the_store_and_regenerates_explicitly() @test {
     @pool() {
         Geometry source = all_stream_geometry();
         TrackingAllocator tracker;
@@ -444,133 +421,58 @@ fn void test_generated_tangent_publication_ownership_revision_and_release() @tes
         defer tracker.free();
 
         {
-            AssetStoreDesc desc = asset::default_asset_store_desc();
-            desc.max_geometries = 1;
-
-            AssetStore assets = asset::create_asset_store(&tracker, desc);
+            AssetStore assets = asset::create_asset_store(&tracker, asset::default_asset_store_desc());
             defer asset::destroy_asset_store(&assets);
 
-            TangentGeometry owner = geometry::create_tangent_geometry(&tracker, &source)!!;
-            defer geometry::destroy_tangent_geometry(&owner);
+            Geometry generated = geometry::create_tangent_geometry(&tracker, &source)!!;
+            Vec3* transferred = generated.positions.ptr;
 
-            Vec3* transferred = owner.data.positions.ptr;
-
-            GeometryId id = assets.add_tangent_geometry_owned(&owner, "generated")!!;
-
-            assert(!owner.data.positions.len && owner.allocator == null);
-
+            GeometryId id = assets.add_geometry_owned(&generated, "generated")!!;
             GeometryAsset* record = assets.geometry(id);
 
             assert(record.data.positions.ptr == transferred && record.joints_u16);
             assert(record.skin_bounds.joints.len > 0 && record.morph_bounds.len == 2);
-            assert(record.tangent_provenance.origin == TangentOrigin.GENERATED
-              && record.tangent_provenance.derivation_revision == record.header.revision);
-
-            TangentGeometry capacity = geometry::create_tangent_geometry(&tracker, &source)!!;
-            defer geometry::destroy_tangent_geometry(&capacity);
-
-            Vec3* retained = capacity.data.positions.ptr;
-
-            assert(@catch(assets.add_tangent_geometry_owned(&capacity, "other")) == c3d::CAPACITY_EXCEEDED);
-            assert(capacity.data.positions.ptr == retained && record.header.revision == 1);
-
-            Vec4 valid_tangent = capacity.data.tangents[0];
-            capacity.data.tangents[0].w = 0;
-
-            assert(@catch(assets.replace_tangent_geometry_owned(id, &capacity)) == c3d::INVALID_ARGUMENT);
-            assert(capacity.data.positions.ptr == retained && record.header.revision == 1);
-
-            capacity.data.tangents[0] = valid_tangent;
-
-            Geometry incompatible = mirrored_geometry();
-
-            TangentGeometry replacement = geometry::create_tangent_geometry(&tracker, &incompatible)!!;
-            defer geometry::destroy_tangent_geometry(&replacement);
-
-            retained = replacement.data.positions.ptr;
-
-            assert(@catch(assets.replace_tangent_geometry_owned(id, &replacement)) == c3d::INCOMPATIBLE_STRUCTURE);
-            assert(replacement.data.positions.ptr == retained && record.data.positions.ptr == transferred);
-
-            assets.replace_tangent_geometry_owned(id, &capacity)!!;
-
-            assert(!capacity.data.positions.len && record.header.revision == 2
-              && record.tangent_provenance.derivation_revision == 2);
-
-            assets.mark_geometry_dirty(id);
-
-            assert(record.header.revision == 3 && record.tangent_provenance.derivation_revision == 2);
 
             assets.regenerate_geometry_tangents(id, 1)!!;
 
-            assert(record.header.revision == 4 && record.tangent_provenance.derivation_revision == 4
-              && record.tangent_provenance.uv_set == 1);
+            assert(record.header.revision == 2 && record.data.tangents.len == record.data.positions.len);
 
-            TangentGeometry authored = geometry::create_tangent_geometry(&tracker, &source)!!;
-            defer geometry::destroy_tangent_geometry(&authored);
-
-            assets.replace_geometry_owned(id, &authored.data)!!;
-            authored.data = {};
-
-            assert(record.tangent_provenance.origin == TangentOrigin.AUTHORED
-              && record.header.revision == 5 && record.tangent_provenance.derivation_revision == 5);
-
-            TangentProvenance before_release = record.tangent_provenance;
             assets.release_geometry_cpu(id);
 
-            assert(!record.data.positions.len
-              && record.tangent_provenance.origin == before_release.origin
-              && record.tangent_provenance.uv_set == before_release.uv_set
-              && record.tangent_provenance.derivation_revision == before_release.derivation_revision);
-
-            assets.mark_geometry_dirty(id);
-
-            assert(record.header.revision == 6 && record.tangent_provenance.derivation_revision == 5);
             assert(@catch(assets.regenerate_geometry_tangents(id)) == c3d::ASSET_DATA_UNAVAILABLE);
             assert(@catch(assets.regenerate_geometry_tangents((GeometryId){})) == c3d::INVALID_ID);
+
+            Geometry empty;
+            GeometryId empty_id = assets.add_geometry(&empty)!!;
+
+            assert(@catch(assets.regenerate_geometry_tangents(empty_id)) == c3d::INVALID_ARGUMENT);
         }
 
         assert(!tracker.has_leaks());
     };
 }
 
-fn void test_generated_reference_zero_directions_publish_with_their_origin() @test {
+fn void test_generated_zero_directions_publish() @test {
     @pool() {
         usz input_offset = 8;
-        MikkFullMesh mesh;
+        uint uv_set;
+        Geometry source;
 
-        for (uint index = 0; index <= 6; index++) mesh = take_mesh(CURATED_INPUT, &input_offset);
-
-        Geometry source = mesh_geometry(mesh);
+        for (uint index = 0; index <= 6; index++) source = take_mesh(CURATED_INPUT, &input_offset, &uv_set);
 
         AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
         defer asset::destroy_asset_store(&assets);
 
-        TangentGeometry owner = geometry::create_tangent_geometry(mem, &source, mesh.uv_set)!!;
-        defer geometry::destroy_tangent_geometry(&owner);
-
+        Geometry generated = geometry::create_tangent_geometry(mem, &source, uv_set)!!;
         bool zero_found = false;
 
-        foreach (tangent : owner.data.tangents) {
+        foreach (tangent : generated.tangents) {
             if (tangent.x == 0 && tangent.y == 0 && tangent.z == 0) zero_found = true;
         }
 
         assert(zero_found);
-        assert(@catch(assets.add_geometry(&owner.data)) == c3d::INVALID_ARGUMENT);
 
-        GeometryId id = assets.add_tangent_geometry_owned(&owner)!!;
-
-        assert(assets.geometry(id).tangent_provenance.origin == TangentOrigin.GENERATED);
-
-        assets.release_geometry_cpu(id);
-
-        assert(@catch(assets.regenerate_geometry_tangents(id)) == c3d::ASSET_DATA_UNAVAILABLE);
-
-        Geometry empty;
-
-        GeometryId empty_id = assets.add_geometry(&empty)!!;
-
-        assert(@catch(assets.regenerate_geometry_tangents(empty_id)) == c3d::INVALID_ARGUMENT);
+        (void)assets.add_geometry_owned(&generated)!!;
     };
 }
 
@@ -593,10 +495,10 @@ fn void test_equal_attributes_do_not_merge_distinct_source_vertices() @test {
 
         source = { .positions = positions, .normals = normals, .uv0 = uv0, .colors = colors, .indices = indices };
 
-        TangentGeometry owner = geometry::create_tangent_geometry(mem, &source)!!;
-        defer geometry::destroy_tangent_geometry(&owner);
+        Geometry generated = geometry::create_tangent_geometry(mem, &source)!!;
+        defer asset::free_geometry(mem, &generated);
 
-        assert(owner.data.positions.len == 6 && owner.data.indices == indices);
-        assert(owner.data.colors == colors && owner.data.colors.ptr != colors.ptr);
+        assert(generated.positions.len == 6 && generated.indices == indices);
+        assert(generated.colors == colors && generated.colors.ptr != colors.ptr);
     };
 }

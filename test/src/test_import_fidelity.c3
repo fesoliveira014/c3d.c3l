@@ -164,7 +164,7 @@ fn void test_normal_only_source_does_not_label_normal_ids_as_color() @test {
     assert(document.textures[0].desc.semantic == TextureSemantic.NORMAL_RGB);
 }
 
-fn void test_mask_variants_use_effective_thresholds_and_constant_pass_classes() @test {
+fn void test_mask_variants_use_effective_thresholds_and_constant_masks_share_the_unmasked_texture() @test {
     String text = png_document(`[
         {"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}},
         {"alphaMode":"MASK","alphaCutoff":0.5,"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}},
@@ -180,7 +180,7 @@ fn void test_mask_variants_use_effective_thresholds_and_constant_pass_classes() 
     ModelDocument document = decode_text(text);
     defer asset::destroy_model_document(&document);
 
-    assert(document.textures.len == 6);
+    assert(document.textures.len == 4);
 
     TextureId[9] references;
 
@@ -189,16 +189,13 @@ fn void test_mask_variants_use_effective_thresholds_and_constant_pass_classes() 
         *reference = params.base_color_map.texture.asset;
     }
 
-    assert(c3d::same_id(references[0], references[8]));
+    foreach (index : (usz[5]){ 4, 5, 6, 7, 8 }) assert(c3d::same_id(references[0], references[index]));
+
     assert(c3d::same_id(references[1], references[2]));
     assert(!c3d::same_id(references[1], references[3]));
-    assert(c3d::same_id(references[4], references[5]));
-    assert(c3d::same_id(references[6], references[7]));
     assert(texture_entry(&document, references[0]).desc.coverage == CoveragePolicy.NONE);
     assert(texture_entry(&document, references[1]).desc.alpha_threshold == 0.5);
     assert(texture_entry(&document, references[3]).desc.alpha_threshold == 0.25);
-    assert(texture_entry(&document, references[4]).desc.coverage == CoveragePolicy.ALL_PASS);
-    assert(texture_entry(&document, references[6]).desc.coverage == CoveragePolicy.ALL_FAIL);
 
     document.materials[2].data.common.alpha_cutoff = 0.1f;
 
@@ -302,8 +299,6 @@ fn void test_authored_xyz_and_mixed_handedness_are_retained_then_signs_normalize
     ModelDocument document = decode_text(tangent_fixture());
     defer asset::destroy_model_document(&document);
 
-    assert(document.geometries[0].tangent_provenance.origin == TangentOrigin.AUTHORED);
-
     foreach (index, tangent : document.geometries[0].data.tangents) {
         assert(tangent.x == 2 && tangent.y == 0 && tangent.z == 0);
         assert(tangent.w == (index % 2 ? -3 : 2));
@@ -317,8 +312,6 @@ fn void test_authored_xyz_and_mixed_handedness_are_retained_then_signs_normalize
     GeometryId id = assets.model(model).data.meshes[0].geometry;
     GeometryAsset* geometry = assets.geometry(id);
 
-    assert(geometry.tangent_provenance.origin == TangentOrigin.AUTHORED);
-
     foreach (index, tangent : geometry.data.tangents) {
         assert(tangent.x == 2 && tangent.w == (index % 2 ? -1 : 1));
     }
@@ -329,7 +322,7 @@ fn void test_force_recovers_only_decodable_invalid_tangent_values() @test {
     forced.generate_tangents = false;
     forced.regenerate_tangents = true;
 
-    foreach (uint accessor : { 10, 11, 12 }) {
+    foreach (uint accessor : { 10, 12 }) {
         String text = tangent_fixture().treplace(`"TANGENT":5`, string::tformat(`"TANGENT":%d`, accessor));
 
         expect_decode_fault(text, asset::LOAD_OPTIONS_DEFAULT, c3d::ASSET_FORMAT_ERROR);
@@ -337,10 +330,25 @@ fn void test_force_recovers_only_decodable_invalid_tangent_values() @test {
         ModelDocument document = decode_text(text, forced);
         defer asset::destroy_model_document(&document);
 
-        assert(document.geometries[0].tangent_provenance.origin == TangentOrigin.GENERATED);
-
         foreach (tangent : document.geometries[0].data.tangents) expect_direction(tangent, { 1, 0, 0 });
     }
+}
+
+fn void test_authored_zero_tangent_directions_import_and_publish() @test {
+    String text = tangent_fixture().treplace(`"TANGENT":5`, `"TANGENT":11`);
+
+    ModelDocument document = decode_text(text);
+    defer asset::destroy_model_document(&document);
+
+    foreach (tangent : document.geometries[0].data.tangents) assert(tangent == (Vec4){ 0, 0, 0, 1 });
+
+    AssetStore assets = create_store();
+    defer asset::destroy_asset_store(&assets);
+
+    ModelId model = assets.publish_document(&document)!!;
+    GeometryAsset* geometry = assets.geometry(assets.model(model).data.meshes[0].geometry);
+
+    foreach (tangent : geometry.data.tangents) assert(tangent == (Vec4){ 0, 0, 0, 1 });
 }
 
 fn void test_force_does_not_bypass_structural_tangent_shape_count_or_component_faults() @test {
@@ -367,8 +375,6 @@ fn void test_declared_signed_normalized_quantized_tangents_remain_authored() @te
     ModelDocument document = decode_text(text);
     defer asset::destroy_model_document(&document);
 
-    assert(document.geometries[0].tangent_provenance.origin == TangentOrigin.AUTHORED);
-
     foreach (tangent : document.geometries[0].data.tangents) assert(tangent == (Vec4){ 1, 0, 0, 1 });
 }
 
@@ -391,7 +397,6 @@ fn void test_selected_raw_uv1_and_generated_normals_preserve_all_owned_streams()
     DocumentGeometry* entry = &document.geometries[0];
     Geometry* geometry = &entry.data;
 
-    assert(entry.tangent_provenance.origin == TangentOrigin.GENERATED && entry.tangent_provenance.uv_set == 1);
     assert(geometry.positions.len == 4 && geometry.normals.len == 4 && geometry.uv0.len == 4 && geometry.uv1.len == 4);
     assert(geometry.colors.len == 4 && geometry.joints.len == 4
       && geometry.weights.len == 4 && geometry.indices.len == 6);
@@ -418,12 +423,9 @@ fn void test_selected_raw_uv1_and_generated_normals_preserve_all_owned_streams()
     GeometryId id = assets.model(model).data.meshes[0].geometry;
     GeometryAsset* published = assets.geometry(id);
 
-    assert(published.tangent_provenance.origin == TangentOrigin.GENERATED && published.tangent_provenance.uv_set == 1);
-    assert(published.tangent_provenance.derivation_revision == published.header.revision);
-
     assets.release_geometry_cpu(id);
 
-    assert(!published.data.positions.ptr && published.tangent_provenance.origin == TangentOrigin.GENERATED);
+    assert(!published.data.positions.ptr);
 
     asset::destroy_model_document(&document);
     asset::destroy_asset_store(&assets);
@@ -444,7 +446,6 @@ fn void test_lookup_transform_changes_sampling_but_generation_uses_raw_selected_
 
     assert(document.materials[0].data.standard.normal_map.uv_set == 1);
     assert(document.materials[0].data.standard.normal_map.transform.rotation == 1.2f);
-    assert(document.geometries[0].tangent_provenance.uv_set == 1);
 
     foreach (tangent : document.geometries[0].data.tangents) expect_direction(tangent, { 0, -1, 0 });
 }
@@ -461,37 +462,28 @@ fn void test_missing_selected_uv_keeps_derivative_fallback_even_when_forced() @t
 
     assert(!document.geometries[0].data.tangents.len);
     assert(document.geometries[0].data.uv0.len == 4 && !document.geometries[0].data.uv1.len);
-    assert(document.geometries[0].tangent_provenance.origin == TangentOrigin.NONE);
 }
 
-fn void test_base_and_coat_uv_conflict_faults_only_when_generation_is_requested() @test {
+fn void test_base_normal_map_uv_set_wins_over_a_different_coat_uv_set() @test {
     String coating = `"normalTexture":{"index":0,"texCoord":0},"extensions":{"KHR_materials_clearcoat":{"clearcoatNormalTexture":{"index":0,"texCoord":1}}}`;
     String text = tangent_fixture().treplace(
         needle: `"normalTexture":{"index":0,"texCoord":0}`,
         new_str: coating,
-    );
+    ).treplace(`"TANGENT":5,`, "");
 
-    ModelDocument authored = decode_text(text);
-    defer asset::destroy_model_document(&authored);
+    ModelDocument generated = decode_text(text);
+    defer asset::destroy_model_document(&generated);
 
-    assert(authored.geometries[0].tangent_provenance.origin == TangentOrigin.AUTHORED);
+    assert(generated.geometries[0].data.tangents.len == 4);
 
-    LoadOptions forced = asset::LOAD_OPTIONS_DEFAULT;
-    forced.regenerate_tangents = true;
+    foreach (tangent : generated.geometries[0].data.tangents) expect_direction(tangent, { 1, 0, 0 });
 
-    expect_decode_fault(text, forced, c3d::UNSUPPORTED);
+    String coat_only = text.treplace(`"normalTexture":{"index":0,"texCoord":0},`, "");
 
-    String missing = text.treplace(`"TANGENT":5,`, "");
+    ModelDocument coat = decode_text(coat_only);
+    defer asset::destroy_model_document(&coat);
 
-    expect_decode_fault(missing, asset::LOAD_OPTIONS_DEFAULT, c3d::UNSUPPORTED);
-
-    LoadOptions disabled = asset::LOAD_OPTIONS_DEFAULT;
-    disabled.generate_tangents = false;
-
-    ModelDocument fallback = decode_text(missing, disabled);
-    defer asset::destroy_model_document(&fallback);
-
-    assert(!fallback.geometries[0].data.tangents.len);
+    foreach (tangent : coat.geometries[0].data.tangents) expect_direction(tangent, { 0, -1, 0 });
 }
 
 fn void test_forced_regeneration_keeps_line_and_point_primitives() @test {
@@ -513,9 +505,8 @@ fn void test_forced_regeneration_keeps_line_and_point_primitives() @test {
 
         assert(nontriangle.data.topology == (mode == 1 ? Topology.LINES : Topology.POINTS));
         assert(nontriangle.data.uv0.len == 4 && nontriangle.data.indices.len == 6);
-        assert(!nontriangle.data.tangents.len && nontriangle.tangent_provenance.origin == TangentOrigin.NONE);
+        assert(!nontriangle.data.tangents.len);
         assert(document.geometries[1].data.topology == Topology.TRIANGLES);
-        assert(document.geometries[1].tangent_provenance.origin == TangentOrigin.GENERATED);
 
         foreach (tangent : document.geometries[1].data.tangents) expect_direction(tangent, { 1, 0, 0 });
     }

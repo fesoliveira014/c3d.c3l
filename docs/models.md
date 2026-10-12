@@ -30,19 +30,20 @@ transform.
 imported normal textures. Their generated mips filter decoded vectors; normal
 roles and color roles use distinct texture variants. glTF masked base textures
 also get a variant for their effective alpha threshold, including the material
-factor. A zero factor with zero cutoff passes every texel. Supplied container
-mips retain their authored bytes.
+factor. A mask that every texel passes or fails, such as a zero cutoff, shares
+the unmasked texture. Supplied container mips retain their authored bytes.
 
 With `generate_tangents`, a missing tangent stream for a normal-mapped triangle
 primitive is generated from the map's raw UV0 or UV1 using pinned MikkTSpace.
-Lookup transforms are excluded. Conflicting base and coat UV selections return
-`UNSUPPORTED`; a missing UV stream retains derivative fallback. Existing valid
-authored tangent XYZ is preserved and its handedness is normalized to a sign.
+Lookup transforms are excluded. When the base and clearcoat normal maps use
+different UV sets, generated tangents follow the base map's set and the coat is
+shaded with that frame; a missing UV stream retains derivative fallback.
+Existing finite authored tangent XYZ, zero included, is preserved and its
+handedness is normalized to a sign.
 `regenerate_tangents` explicitly replaces authored tangents and splits geometry
-where needed. It can recover decoded non-finite, zero-XYZ or zero-W tangent
-values, but a structural TANGENT count or type mismatch still returns
-`ASSET_FORMAT_ERROR`. Geometry records expose `tangent_provenance`, including
-origin, raw UV set and derivation revision.
+where needed. It can recover decoded non-finite or zero-W tangent values, but
+a structural TANGENT count or type mismatch still returns
+`ASSET_FORMAT_ERROR`.
 
 Instantiation creates one synthetic root under the parent and one live node per
 template node, parents before children. `ModelInstance.present_node(i)` resolves

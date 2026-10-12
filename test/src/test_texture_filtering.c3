@@ -258,32 +258,6 @@ fn void test_rg_reconstruction_precedes_filtering_and_ignores_unused_blue() @tes
     assert(output[0] == 1.0 && output[1] == 0.5 && output[2] == 0.5);
 }
 
-fn void test_nonfinite_normal_fails_even_when_no_generated_level_consumes_it() @test {
-    material::TextureDesc desc = material::texture_2d_desc(1, 1, RGBA32_FLOAT);
-    desc.semantic = TextureSemantic.NORMAL_RGB;
-    float[4] pixels = { 0.5, 0.5, bitcast(0x7f800000u, float), 1.0 };
-
-    if (catch excuse = create_texture_mips(mem, desc, ((char*)&pixels)[:pixels.len * float::size])) {
-        assert(excuse == c3d::INVALID_ARGUMENT);
-    } else {
-        assert(false, "Nonfinite normal accepted");
-    }
-
-    desc.semantic = TextureSemantic.NORMAL_RG;
-
-    TextureMipChain chain = create_texture_mips(mem, desc, ((char*)&pixels)[:pixels.len * float::size])!!;
-    defer destroy_texture_mips(&chain);
-
-    assert(chain.mip_count == 1 && chain.pixels == ((char*)&pixels)[:pixels.len * float::size]);
-
-    GeneratedTextureLayout layout = generated_texture_mip_layout(desc)!!;
-
-    TextureMipChain generated = create_generated_texture_mips(mem, desc)!!;
-    defer destroy_texture_mips(&generated);
-
-    assert(layout.output_texels == 0 && layout.byte_count == 0 && !generated.pixels.len);
-}
-
 fn void test_explicit_normal_srgb_and_supplied_coverage_are_rejected() @test {
     AssetStore assets = filtering_store(mem);
     defer asset::destroy_asset_store(&assets);

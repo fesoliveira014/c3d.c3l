@@ -962,10 +962,10 @@ fn GeometryId? fidelity_quad(Fixture* fixture, bool mirrored = false) @private {
 
     source.finalize();
 
-    TangentGeometry owner = geometry::create_tangent_geometry(fixture.allocator, &source)!;
-    defer geometry::destroy_tangent_geometry(&owner);
+    Geometry generated = geometry::create_tangent_geometry(fixture.allocator, &source)!;
+    defer asset::free_geometry(fixture.allocator, &generated);
 
-    return fixture.assets.add_geometry(&owner.data);
+    return fixture.assets.add_geometry(&generated);
 }
 
 fn void fidelity_compare_images(Vec4[] first, Vec4[] second, float tolerance) @private {

@@ -170,22 +170,11 @@ fn void test_compute_normals_flat_needs_unindexed() @test {
     }
 }
 
-fn void test_compute_tangents_follow_u() @test {
-    Geometry quad = make_quad(mem);
-    defer free_geometry(&quad);
-    quad.compute_normals(mem);
-    quad.compute_tangents(mem);
-
-    foreach (tangent : quad.tangents) {
-        assert(close_vec3(tangent.xyz, { 1, 0, 0 }));
-        assert(tangent.w == 1);
-    }
-}
-
 fn void test_transform_moves_bounds_and_rotates_normals() @test {
     Geometry box = geometry::box(mem, 2, 2, 2);
     defer free_geometry(&box);
-    box.compute_tangents(mem);
+    box.tangents = alloc::new_array(mem, Vec4, box.positions.len);
+    box.tangents[..] = (Vec4){ 0, 0, -1, 1 };
     Transform transform = {
         .position = { 1, 2, 3 },
         .rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, (float)math::PI / 2),
@@ -204,7 +193,8 @@ fn void test_baked_reflection_updates_tangent_handedness_without_winding() @test
     Geometry quad = make_quad(mem);
     defer free_geometry(&quad);
     quad.compute_normals(mem, smooth: true);
-    quad.compute_tangents(mem);
+    quad.tangents = alloc::new_array(mem, Vec4, quad.positions.len);
+    quad.tangents[..] = (Vec4){ 1, 0, 0, 1 };
 
     Mat4 reflection = matrix::IDENTITY4;
     reflection.m00 = -2;

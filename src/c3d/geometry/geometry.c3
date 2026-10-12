@@ -119,50 +119,6 @@ fn void Geometry.compute_normals(&self, Allocator allocator, bool smooth = true)
 }
 
 <*
- Write UV0 tangents without splitting conflicting corners; no Mikk guarantee.
- @param allocator : "Allocates tangents when the geometry has none."
- @require self.topology == Topology.TRIANGLES
- @require self.normals.len == self.positions.len, self.uv0.len == self.positions.len
-*>
-fn void Geometry.compute_tangents(&self, Allocator allocator) @deprecated("Use create_tangent_geometry for split tangent geometry.") {
-    if (!self.tangents.len) {
-        self.tangents = alloc::new_array(allocator, Vec4, self.positions.len);
-    }
-    @pool() {
-        Vec3[] tangent_sum = alloc::new_array(tmem, Vec3, self.positions.len);
-        Vec3[] bitangent_sum = alloc::new_array(tmem, Vec3, self.positions.len);
-        usz corners = triangle_count(self) * 3;
-        for (usz slot = 0; slot < corners; slot += 3) {
-            uint a = corner(self, slot);
-            uint b = corner(self, slot + 1);
-            uint c = corner(self, slot + 2);
-            Vec3 edge_1 = self.positions[b] - self.positions[a];
-            Vec3 edge_2 = self.positions[c] - self.positions[a];
-            Vec2 delta_1 = self.uv0[b] - self.uv0[a];
-            Vec2 delta_2 = self.uv0[c] - self.uv0[a];
-            float area = delta_1.x * delta_2.y - delta_2.x * delta_1.y;
-            if (area == 0) continue;
-            float inverse_area = 1.0f / area;
-            Vec3 tangent = (edge_1 * delta_2.y - edge_2 * delta_1.y) * inverse_area;
-            Vec3 bitangent = (edge_2 * delta_1.x - edge_1 * delta_2.x) * inverse_area;
-            tangent_sum[a] += tangent;
-            tangent_sum[b] += tangent;
-            tangent_sum[c] += tangent;
-            bitangent_sum[a] += bitangent;
-            bitangent_sum[b] += bitangent;
-            bitangent_sum[c] += bitangent;
-        }
-        foreach (index, normal : self.normals) {
-            Vec3 tangent = tangent_sum[index];
-            Vec3 orthogonal = tangent - normal * normal.dot(tangent);
-            if (orthogonal.length() > 0) orthogonal = orthogonal.normalize();
-            float handedness = normal.cross(orthogonal).dot(bitangent_sum[index]) < 0 ? -1.0f : 1.0f;
-            self.tangents[index] = { orthogonal.x, orthogonal.y, orthogonal.z, handedness };
-        }
-    };
-}
-
-<*
  Give every triangle corner its own vertex and drop the indices.
  Old arrays stay owned by the caller.
  @param allocator : "Allocates the unrolled streams."

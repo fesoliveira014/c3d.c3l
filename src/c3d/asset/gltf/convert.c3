@@ -2,7 +2,7 @@ module c3d::asset::gltf;
 
 import c3d;
 import c3d::asset;
-import c3d::asset::image;
+import c3d::asset::image @public;
 import c3d::camera;
 import c3d::light;
 import c3d::material;
@@ -11,13 +11,6 @@ import std::math;
 
 const String DATA_URI_PREFIX @private = "data:";
 const uint UV_SET_MAX @private = 1; // texture_slot accepts UV0 and UV1 only
-const char[4] DDS_MAGIC @private = { 'D', 'D', 'S', ' ' };
-const char[12] KTX1_MAGIC @private = {
-  0xAB, 'K', 'T', 'X', ' ', '1', '1', 0xBB, 0x0D, 0x0A, 0x1A, 0x0A,
-};
-const char[12] KTX2_MAGIC @private = {
-  0xAB, 'K', 'T', 'X', ' ', '2', '0', 0xBB, 0x0D, 0x0A, 0x1A, 0x0A,
-};
 
 fn void convert_samplers(Importer* importer) @private {
     foreach (index, &sampler : importer.data.samplers) {
@@ -82,39 +75,18 @@ fn TextureId? texture_for(
     char[] encoded = importer.source ? importer.source.images[image_index].encoded : (char[]){};
     if (!encoded.len) encoded = image_bytes(importer, texture.image)!;
 
-    TextureDesc desc;
-    image::Image decoded;
-    defer catch image::destroy_image(&decoded);
+    image::ImportedTexture decoded = image::decode_imported_texture(
+        allocator: importer.allocator,
+        encoded: encoded,
+        srgb: srgb,
+        semantic: semantic,
+        debug_name: "gltf_image",
+    )!;
+    defer alloc::free(importer.allocator, decoded.pixels.ptr);
 
-    image::TextureContainerView container;
-    bool supplied;
+    TextureDesc* desc = &decoded.desc;
 
-    if (is_texture_container(encoded)) {
-        container = image::parse_texture_container(
-            scratch: tmem,
-            bytes: encoded,
-            color_space: srgb ? image::ColorSpace.SRGB : image::ColorSpace.LINEAR,
-            semantic: semantic,
-        )!;
-        desc = container.desc;
-        supplied = !desc.generate_mips;
-    } else {
-        decoded = image::decode_image(importer.allocator, encoded)!;
-
-        if (decoded.format != RGBA8_UNORM) return c3d::ASSET_FORMAT_ERROR~;
-
-        desc = material::texture_2d_desc(
-            width: decoded.width,
-            height: decoded.height,
-            format: decoded.format == RGBA8_UNORM && srgb ? RGBA8_SRGB : decoded.format,
-            debug_name: "gltf_image",
-        );
-        desc.semantic = semantic;
-    }
-
-    desc.debug_name = "gltf_image";
-
-    if (!supplied && coverage_eligible(desc)) {
+    if (coverage_eligible(*desc)) {
         desc.coverage = coverage;
         desc.alpha_threshold = alpha_threshold;
     }
@@ -123,27 +95,18 @@ fn TextureId? texture_for(
         if (variant.image != image_index || variant.semantic != desc.semantic || variant.format != desc.format
             || variant.coverage != desc.coverage || variant.alpha_threshold != desc.alpha_threshold) continue;
 
-        image::destroy_image(&decoded);
-
         if (desc.coverage == CoveragePolicy.NONE) table[image_index] = variant.texture;
 
         return variant.texture;
     }
 
-    String key = texture_variant_key(importer, image_index, srgb, desc);
-    TextureId id;
-    if (supplied) {
-        id = importer.document.push_texture_mips(desc, container.levels[:container.level_count], key)!;
-    } else {
-        char[] pixels = decoded.pixels;
-        if (container.level_count) {
-            char[] source = container.levels[0].bytes;
-            pixels = alloc::new_array(importer.allocator, char, (sz)source.len);
-            pixels[..] = source[..];
-        }
-        id = importer.document.push_texture(desc, pixels, key);
-        decoded = {};
-    }
+    String key = texture_variant_key(
+        importer: importer,
+        image_index: image_index,
+        srgb: srgb,
+        desc: *desc,
+    );
+    TextureId id = image::push_imported_texture(&importer.document, &decoded, key)!;
 
     importer.texture_variants[importer.texture_variant_count++] = {
         .image = image_index,
@@ -166,13 +129,6 @@ fn TextureId? texture_for(
     return id;
 }
 
-fn bool is_texture_container(char[] bytes) @private {
-    if (bytes.len >= DDS_MAGIC.len && bytes[:DDS_MAGIC.len] == DDS_MAGIC[..]) return true;
-
-    return bytes.len >= KTX1_MAGIC.len
-      && (bytes[:KTX1_MAGIC.len] == KTX1_MAGIC[..] || bytes[:KTX2_MAGIC.len] == KTX2_MAGIC[..]);
-}
-
 fn bool coverage_eligible(TextureDesc desc) @private {
     if (!desc.generate_mips || desc.mip_levels != 1 || desc.depth || desc.storage) return false;
     if (desc.layers != 1 && !desc.is_cube) return false;
@@ -192,8 +148,6 @@ fn String texture_variant_key(
     bool srgb,
     TextureDesc desc,
 ) @private {
-    String role = srgb ? "srgb" : "linear";
-
     if (desc.coverage != CoveragePolicy.NONE) {
         ulong threshold = *(ulong*)&desc.alpha_threshold;
 
@@ -207,26 +161,18 @@ fn String texture_variant_key(
         );
     }
 
-    switch (desc.semantic) {
-        case COLOR: break;
-        case NORMAL_RGB: role = string::tformat("normal_rgb/%d", desc.format.ordinal);
-        case NORMAL_RG: role = string::tformat("normal_rg/%d", desc.format.ordinal);
-    }
-
-    return string::tformat("%s#image/%d/%s", importer.key, image_index, role);
-}
-
-fn TextureSemantic normal_semantic(NormalEncoding encoding) @private {
-    switch (encoding) {
-        case RGB: return TextureSemantic.NORMAL_RGB;
-        case RG: return TextureSemantic.NORMAL_RG;
-    }
+    return image::imported_texture_key(
+        model_key: importer.key,
+        image_index: image_index,
+        srgb: srgb,
+        desc: desc,
+    );
 }
 
 fn CoveragePolicy mask_policy(material::AlphaMode mode, float cutoff, float factor) @private {
     if (mode != material::AlphaMode.MASK) return CoveragePolicy.NONE;
-    if (cutoff == 0) return CoveragePolicy.ALL_PASS;
-    if (factor == 0 || (double)cutoff / factor > 1) return CoveragePolicy.ALL_FAIL;
+    // Every texel passes or every texel fails, so the unmasked texture keeps the coverage.
+    if (cutoff == 0 || factor == 0 || (double)cutoff / factor > 1) return CoveragePolicy.NONE;
 
     return CoveragePolicy.THRESHOLD;
 }
@@ -368,7 +314,7 @@ fn material::Material? convert_material(Importer* importer, gltf::Material* sour
         importer: importer,
         view: &source.clearcoat.clearcoat_normal_texture,
         srgb: false,
-        semantic: normal_semantic(importer.options.normal_encoding),
+        semantic: image::normal_semantic(importer.options.normal_encoding),
     )!;
     params.sheen_color_map = texture_slot_for(importer, &source.sheen.sheen_color_texture, true)!;
     params.sheen_roughness_map = texture_slot_for(importer, &source.sheen.sheen_roughness_texture, false)!;
@@ -418,7 +364,7 @@ fn StandardParams? standard_params(Importer* importer, gltf::Material* source, M
         importer: importer,
         view: &source.normal_texture,
         srgb: false,
-        semantic: normal_semantic(importer.options.normal_encoding),
+        semantic: image::normal_semantic(importer.options.normal_encoding),
     )!;
     params.occlusion_map = texture_slot_for(importer, &source.occlusion_texture, false)!;
     params.emissive_map = texture_slot_for(importer, &source.emissive_texture, true)!;

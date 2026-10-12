@@ -1,7 +1,7 @@
 module c3d::asset::gltf;
 
 import c3d;
-import c3d::asset;
+import c3d::asset @public;
 import c3d::geometry;
 import c3d::material;
 import c3d::maths;
@@ -56,14 +56,8 @@ fn GeometryId? convert_primitive(
             case NORMAL:
                 if (attribute.index == 0) geometry.normals = read_vec3(importer, attribute.data, vertex_count)!;
             case TANGENT:
-                if (attribute.index == 0) {
-                    if (attribute.data.type != gltf::Type.VEC4 || attribute.data.count != vertex_count) {
-                        return c3d::ASSET_FORMAT_ERROR~;
-                    }
-
-                    if (!importer.options.regenerate_tangents) {
-                        geometry.tangents = read_vec4(importer, attribute.data, vertex_count)!;
-                    }
+                if (attribute.index == 0 && !importer.options.regenerate_tangents) {
+                    geometry.tangents = read_vec4(importer, attribute.data, vertex_count)!;
                 }
             case TEXCOORD:
                 if (attribute.index == 0) geometry.uv0 = read_vec2(importer, attribute.data, vertex_count)!;
@@ -89,90 +83,42 @@ fn GeometryId? convert_primitive(
 
     if (geometry.topology == Topology.TRIANGLES && !geometry.normals.len) geometry.compute_normals(allocator);
 
-    TangentProvenance provenance;
-    if (geometry.tangents.len) {
-        if (catch excuse = geometry::check_tangent_stream(&geometry)) return c3d::ASSET_FORMAT_ERROR~;
-
-        provenance.origin = TangentOrigin.AUTHORED;
-    }
-
-    bool wants_tangents = geometry.topology == Topology.TRIANGLES
-      && (importer.options.regenerate_tangents
-          || (importer.options.generate_tangents && !geometry.tangents.len && has_normal_map(importer, primitive)));
-    if (wants_tangents) {
-        uint uv_set = tangent_uv_set(importer, primitive)!;
-        Vec2[] selected = uv_set == 0 ? geometry.uv0 : geometry.uv1;
-        if (selected.len) {
-            TangentGeometry? derived = geometry::create_tangent_geometry(allocator, &geometry, uv_set);
-            if (catch excuse = derived) {
-                return excuse == c3d::INVALID_ARGUMENT ? c3d::ASSET_FORMAT_ERROR~ : excuse~;
-            }
-
-            TangentGeometry generated = derived;
-            asset::free_geometry(allocator, &geometry);
-            geometry = generated.data;
-            provenance = generated.tangent_provenance;
-            generated = {};
-        }
-    }
+    TextureSlot normal_map = tangent_normal_map(importer, primitive);
+    asset::import_tangents(
+        allocator: allocator,
+        geometry: &geometry,
+        options: importer.options,
+        normal_mapped: has_texture(&normal_map),
+        uv_set: normal_map.uv_set,
+    )!;
 
     geometry.finalize();
 
     String key = string::tformat("%s#mesh/%d/%d", importer.key, mesh_index, primitive_index);
-    GeometryId id = importer.document.push_geometry(&geometry, key);
-
-    importer.document.geometry(id).tangent_provenance = provenance;
-
-    return id;
+    return importer.document.push_geometry(&geometry, key);
 }
 
 fn bool compressed(gltf::Accessor* accessor) @private {
     return accessor.buffer_view && accessor.buffer_view.has_meshopt_compression;
 }
 
-fn bool has_normal_map(Importer* importer, gltf::Primitive* primitive) @private {
-    if (!primitive.material) return false;
-    MaterialId material_id = importer.materials[gltf::material_index(importer.data, primitive.material)];
-    material::Material* material = &importer.document.material(material_id).data;
-    switch (material.kind) {
-        case STANDARD:
-            return has_texture(&material.standard.normal_map);
-        case PHYSICAL:
-            return has_texture(&material.physical.standard.normal_map)
-                || has_texture(&material.physical.clearcoat_normal_map);
-        case CUSTOM:
-            return false;
-        case BASIC:
-        case TOON:
-            return false;
-    }
-}
-
-fn uint? tangent_uv_set(Importer* importer, gltf::Primitive* primitive) @private {
-    if (!primitive.material) return 0;
+fn TextureSlot tangent_normal_map(Importer* importer, gltf::Primitive* primitive) @private {
+    if (!primitive.material) return material::texture_slot();
 
     MaterialId id = importer.materials[gltf::material_index(importer.data, primitive.material)];
     material::Material* material = &importer.document.material(id).data;
-    TextureSlot* base;
-    TextureSlot* coat;
 
     switch (material.kind) {
-        case STANDARD: base = &material.standard.normal_map;
+        case STANDARD:
+            return material.standard.normal_map;
         case PHYSICAL:
-            base = &material.physical.standard.normal_map;
-            coat = &material.physical.clearcoat_normal_map;
+            TextureSlot base = material.physical.standard.normal_map;
+            return has_texture(&base) ? base : material.physical.clearcoat_normal_map;
         case BASIC:
         case TOON:
-        case CUSTOM: return 0;
+        case CUSTOM:
+            return material::texture_slot();
     }
-
-    bool base_present = base && has_texture(base);
-    bool coat_present = coat && has_texture(coat);
-    if (base_present && coat_present && base.uv_set != coat.uv_set) return c3d::UNSUPPORTED~;
-    if (base_present) return base.uv_set;
-    if (coat_present) return coat.uv_set;
-
-    return 0;
 }
 
 fn bool has_texture(TextureSlot* slot) @private {

@@ -2,7 +2,7 @@ module c3d::asset::fbx;
 
 import c3d;
 import c3d::asset;
-import c3d::asset::image;
+import c3d::asset::image @public;
 import c3d::material;
 import std::math;
 import ufbx;
@@ -13,13 +13,6 @@ const uint GREEN @private = 1;
 const uint BLUE @private = 2;
 const uint ALPHA @private = 3;
 const uint CHANNEL_MAX @private = char::max;
-const char[4] DDS_CONTAINER_MAGIC @private = { 'D', 'D', 'S', ' ' };
-const char[12] KTX1_CONTAINER_MAGIC @private = {
-  0xAB, 'K', 'T', 'X', ' ', '1', '1', 0xBB, 0x0D, 0x0A, 0x1A, 0x0A,
-};
-const char[12] KTX2_CONTAINER_MAGIC @private = {
-  0xAB, 'K', 'T', 'X', ' ', '2', '0', 0xBB, 0x0D, 0x0A, 0x1A, 0x0A,
-};
 
 fn void? convert_materials(Importer* importer) @private {
     foreach (source : importer.scene.materials) {
@@ -72,7 +65,7 @@ fn material::Material? convert_material(Importer* importer, ufbx::Material* sour
         importer: importer,
         texture:  pbr.normal_map.texture,
         srgb:     false,
-        semantic: normal_semantic(importer.options.normal_encoding),
+        semantic: image::normal_semantic(importer.options.normal_encoding),
     )!;
     params.occlusion_map = texture_slot_for(importer, pbr.ambient_occlusion.texture, false)!;
     params.emissive_map = texture_slot_for(importer, pbr.emission_color.texture, true)!;
@@ -98,13 +91,6 @@ fn vector::Vec3 map_color(ufbx::MaterialMap* map, vector::Vec3 fallback) @privat
 
 fn bool finite_rgb(vector::Vec3 color) @private {
     return math::is_finite(color.x) && math::is_finite(color.y) && math::is_finite(color.z);
-}
-
-fn TextureSemantic normal_semantic(NormalEncoding encoding) @private {
-    switch (encoding) {
-        case RGB: return TextureSemantic.NORMAL_RGB;
-        case RG: return TextureSemantic.NORMAL_RG;
-    }
 }
 
 fn TextureSlot? texture_slot_for(
@@ -200,86 +186,25 @@ fn TextureId? plain_texture(
 
     char[] encoded = texture_bytes(importer, texture)!;
 
-    if (is_texture_container(encoded)) {
-        image::TextureContainerView container = image::parse_texture_container(
-            scratch:     tmem,
-            bytes:       encoded,
-            color_space: srgb ? image::ColorSpace.SRGB : image::ColorSpace.LINEAR,
-            semantic:    semantic,
-        )!;
-        container.desc.debug_name = "fbx_image";
-
-        String key = plain_texture_key(
-            importer: importer,
-            texture:  texture,
-            srgb:     srgb,
-            desc:     container.desc,
-        );
-
-        TextureId id;
-        if (container.desc.generate_mips) {
-            char[] source = container.levels[0].bytes;
-            char[] pixels = alloc::new_array(importer.allocator, char, (sz)source.len);
-            mem::copy(pixels.ptr, source.ptr, (sz)source.len);
-            id = importer.document.push_texture(container.desc, pixels, key);
-        } else {
-            id = importer.document.push_texture_mips(container.desc, container.levels[:container.level_count], key)!;
-        }
-
-        table[texture.typed_id] = id;
-
-        return id;
-    }
-
-    image::Image decoded = image::decode_image(importer.allocator, encoded)!;
-    defer catch image::destroy_image(&decoded);
-    if (decoded.format != RGBA8_UNORM) return c3d::ASSET_FORMAT_ERROR~;
-
-    TextureDesc desc = material::texture_2d_desc(
-        width:      decoded.width,
-        height:     decoded.height,
-        format:     srgb ? RGBA8_SRGB : RGBA8_UNORM,
+    image::ImportedTexture decoded = image::decode_imported_texture(
+        allocator: importer.allocator,
+        encoded: encoded,
+        srgb: srgb,
+        semantic: semantic,
         debug_name: "fbx_image",
-    );
-    desc.semantic = semantic;
+    )!;
 
-    String key = plain_texture_key(
-        importer: importer,
-        texture:  texture,
-        srgb:     srgb,
-        desc:     desc,
+    String key = image::imported_texture_key(
+        model_key: importer.key,
+        image_index: texture.typed_id,
+        srgb: srgb,
+        desc: decoded.desc,
     );
-
-    TextureId id = importer.document.push_texture(desc, decoded.pixels, key);
+    TextureId id = image::push_imported_texture(&importer.document, &decoded, key)!;
 
     table[texture.typed_id] = id;
 
     return id;
-}
-
-fn bool is_texture_container(char[] bytes) @private {
-    if (bytes.len >= DDS_CONTAINER_MAGIC.len && bytes[:DDS_CONTAINER_MAGIC.len] == DDS_CONTAINER_MAGIC[..]) return true;
-    if (bytes.len < KTX1_CONTAINER_MAGIC.len) return false;
-
-    return bytes[:KTX1_CONTAINER_MAGIC.len] == KTX1_CONTAINER_MAGIC[..]
-      || bytes[:KTX2_CONTAINER_MAGIC.len] == KTX2_CONTAINER_MAGIC[..];
-}
-
-fn String plain_texture_key(
-    Importer* importer,
-    ufbx::Texture* texture,
-    bool srgb,
-    TextureDesc desc,
-) @private {
-    String role = srgb ? "srgb" : "linear";
-
-    switch (desc.semantic) {
-        case COLOR: break;
-        case NORMAL_RGB: role = string::tformat("normal_rgb/%d", desc.format.ordinal);
-        case NORMAL_RG: role = string::tformat("normal_rg/%d", desc.format.ordinal);
-    }
-
-    return string::tformat("%s#image/%d/%s", importer.key, texture.typed_id, role);
 }
 
 fn SamplerId? sampler_for(Importer* importer, ufbx::Texture* texture) @private {
