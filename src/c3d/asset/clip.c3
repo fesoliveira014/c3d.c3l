@@ -113,15 +113,19 @@ fn ClipId? AssetStore.find_clip(&self, String key) {
  @param [&inout] clip : "Left zeroed."
 *>
 fn void free_clip(Allocator allocator, AnimationClip* clip) {
-    foreach (&track : clip.tracks) {
-        alloc::free(allocator, track.times.ptr);
-        alloc::free(allocator, track.values.ptr);
-    }
+    foreach (&track : clip.tracks) free_track_keys(allocator, track);
+    alloc::free(allocator, clip.packed_keys.ptr);
     alloc::free(allocator, clip.tracks.ptr);
     alloc::free(allocator, clip.targets.ptr);
     alloc::free(allocator, clip.events.ptr);
     alloc::free(allocator, clip.name.ptr);
     *clip = {};
+}
+
+fn void free_track_keys(Allocator allocator, Track* track) @private {
+    if (track.encoding == TrackEncoding.PACKED) return;
+    alloc::free(allocator, track.times.ptr);
+    alloc::free(allocator, track.values.ptr);
 }
 
 fn void? validate_clip_events(float duration, ClipEvent[] events) @private {

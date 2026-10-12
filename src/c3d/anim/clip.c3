@@ -33,15 +33,37 @@ enum Interpolation {
 }
 
 <*
+ Storage form of a track's keys.
+*>
+enum TrackEncoding : char {
+    RAW,
+    PACKED,
+}
+
+<*
+ Quantized keys of a packed track, stored in the block of the clip.
+*>
+struct PackedValues {
+    ushort* codes;
+    float*  ranges; // minimum and step per slot and component; rotations have none
+}
+
+<*
  Keyed values for one target property; target indexes the clip's targets list.
- Values are stride 3, 4, 3 or the morph count per key; cubic keys store in-tangent, value, out-tangent.
+ Raw values are stride 3, 4, 3 or the morph count per key; cubic keys store in-tangent, value, out-tangent.
+ Read packed tracks through the key accessors only.
 *>
 struct Track {
     uint          target;
     TargetPath    path;
     Interpolation interpolation;
+    TrackEncoding encoding;
+    ushort        packed_stride; // morph weights per key when packed
     float[]       times;
-    float[]       values;
+    union {
+        float[]      values;
+        PackedValues packed;
+    }
 }
 
 <* Authored clip instant with application-defined meaning. *>
@@ -57,6 +79,7 @@ struct AnimationClip {
     Track[] tracks;
     uint[]  targets;
     ClipEvent[] events;
+    float[] packed_keys;
 }
 
 <*
@@ -81,6 +104,7 @@ fn uint Track.stride(&self) {
         case ROTATION:
             return 4;
         case MORPH_WEIGHTS:
+            if (self.encoding == TrackEncoding.PACKED) return self.packed_stride;
             uint per_key = (uint)(self.values.len / self.times.len);
             return self.interpolation == Interpolation.CUBIC_SPLINE ? per_key / 3 : per_key;
     }
@@ -112,6 +136,30 @@ fn uint Track.value_slot(&self) {
 }
 
 <*
+ Number of slots each key occupies.
+ @pure
+*>
+fn uint Track.slot_count(&self) {
+    return self.interpolation == Interpolation.CUBIC_SPLINE ? CUBIC_SLOTS_PER_KEY : 1;
+}
+
+<*
+ Whether the keys are quantized.
+ @pure
+*>
+fn bool Track.is_packed(&self) {
+    return self.encoding == TrackEncoding.PACKED;
+}
+
+<*
+ Whether any track of the clip is quantized.
+ @pure
+*>
+fn bool AnimationClip.is_compressed(&self) {
+    return self.packed_keys.len != 0;
+}
+
+<*
  Copy one slot of a key into out.
  @param [out] out : "Receives one stride of values at its start."
  @require key < self.key_count()
@@ -119,6 +167,10 @@ fn uint Track.value_slot(&self) {
  @require out.len >= self.stride()
 *>
 fn void Track.read_key(&self, uint key, uint slot, float[] out) {
+    if (self.encoding == TrackEncoding.PACKED) {
+        unpack_key(self, key, slot, out);
+        return;
+    }
     float[] stored = key_values(self, key, slot);
     out[:stored.len] = stored[..];
 }

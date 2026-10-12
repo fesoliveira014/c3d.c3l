@@ -355,9 +355,9 @@ fn bool? validate_consumed_scale_track(Track* track, bool additive) @private {
 fn void? validate_motion_track_storage(Track* track, TargetPath path) @local {
     usz stride = path == TargetPath.ROTATION ? 4 : 3;
     usz slots = track.interpolation == Interpolation.CUBIC_SPLINE ? CUBIC_SLOTS_PER_KEY : 1;
-    if (track.path != path || track.times.len == 0 || track.times.len > uint::max
-        || track.times.len > usz::max / (slots * stride)
-        || track.values.len != track.times.len * slots * stride) return c3d::INVALID_ARGUMENT~;
+    if (track.path != path || track.times.len == 0 || track.times.len > uint::max) return c3d::INVALID_ARGUMENT~;
+    if (!track.is_packed() && (track.times.len > usz::max / (slots * stride)
+        || track.values.len != track.times.len * slots * stride)) return c3d::INVALID_ARGUMENT~;
 
     for (uint key = 0; key < track.key_count(); key++) {
         float time = track.key_time(key);
