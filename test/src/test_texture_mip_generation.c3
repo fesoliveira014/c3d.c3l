@@ -67,14 +67,12 @@ fn void expect_generated_bands_equal(material::TextureDesc desc, char[] pixels, 
         GeneratedTextureLayout layout = generated_texture_mip_layout(desc)!!;
         assert(stepped.pixels.len == layout.byte_count && tracker.allocs_total == 1);
         ulong completed;
-        ulong charged;
         for (uint mip = 1; mip < reference.mip_count; mip++) {
             uint width = material::texture_mip_extent(desc.width, mip);
             uint height = material::texture_mip_extent(desc.height, mip);
             for (uint layer = 0; layer < desc.layers; layer++) {
                 for (uint row = 0; row < height;) {
                     uint rows = math::min(row_limit, height - row);
-                    ulong previous = generated_mip_charge(layout.base_texels, completed, layout.output_texels);
                     write_texture_filter_band(
                         desc: desc,
                         mip: mip,
@@ -85,12 +83,11 @@ fn void expect_generated_bands_equal(material::TextureDesc desc, char[] pixels, 
                         chain: &stepped,
                     )!!;
                     completed += (ulong)width * rows;
-                    charged += generated_mip_charge(layout.base_texels, completed, layout.output_texels) - previous;
                     row += rows;
                 }
             }
         }
-        assert(completed == layout.output_texels && charged == layout.base_texels);
+        assert(completed == layout.output_texels);
         assert(stepped.pixels == reference.pixels[reference.offsets[1]..]);
     }
     assert(tracker.allocated() == 0);
@@ -157,16 +154,6 @@ fn void test_generated_mip_bands_reacquire_base_and_retain_owned_levels() @test 
     assert(chain.pixels == reference.pixels[reference.offsets[1]..]);
 }
 
-fn void test_generated_texel_charge_avoids_large_products() @test {
-    assert(generated_mip_charge(1000, 100, 333) == 300);
-    assert(generated_mip_charge(ulong::max, ulong::max - 1, ulong::max) == ulong::max - 1);
-    assert(generated_mip_charge(ulong::max, ulong::max - 2, ulong::max - 1) == ulong::max - 2);
-    assert(generated_mip_charge(ulong::max - 7, ulong::max - 12, ulong::max - 11) == ulong::max - 9);
-    assert(generated_mip_charge(ulong::max / 2, ulong::max - 2, ulong::max - 1) == ulong::max / 2 - 1);
-    assert(generated_mip_charge(ulong::max, 0, ulong::max - 1) == 0);
-    assert(generated_mip_charge(ulong::max, ulong::max - 1, ulong::max - 1) == ulong::max);
-}
-
 fn void test_generated_layout_has_no_base_snapshot_or_empty_allocation() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
@@ -175,7 +162,7 @@ fn void test_generated_layout_has_no_base_snapshot_or_empty_allocation() @test {
     TextureMipChain chain = create_generated_texture_mips(&tracker, desc)!!;
     defer destroy_texture_mips(&chain);
     GeneratedTextureLayout layout = generated_texture_mip_layout(desc)!!;
-    assert(layout.base_texels == 1 && layout.output_texels == 0 && layout.byte_count == 0);
+    assert(layout.output_texels == 0 && layout.byte_count == 0);
     assert(chain.first_mip == 1 && chain.mip_count == 0 && chain.pixels.len == 0);
     assert(tracker.allocs_total == 0 && tracker.allocated() == 0);
 }

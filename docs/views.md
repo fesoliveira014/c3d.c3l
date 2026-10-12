@@ -510,8 +510,8 @@ Referenced STANDARD layers, samplers, custom shader data and full-reader texture
 demand are dependencies of their parent material.
 
 `advance_prepares_within` requires an open frame. Its four axes are actual GPU-bound
-staged bytes, generated mip-zero-equivalent texels, pipeline creation calls and a
-cooperative nanosecond target. A zero configured axis is unbounded; all-zero limits
+staged bytes, generated mip texels, pipeline creation calls and a cooperative
+nanosecond target. A zero configured axis is unbounded; all-zero limits
 drain pending work. Pause by omitting the call. Every call has a fresh allowance,
 shared across records in begin order. A depleted finite remainder never becomes
 unbounded. A blocked step reports its reason and required bytes, texels or
@@ -519,10 +519,10 @@ pipeline calls; callers can raise that allowance for a later call.
 
 Uploads split into legal texture row/block bands and aligned geometry or payload
 ranges. Mip filtering splits into destination row bands, preserving the synchronous
-filter and rounding. Generation charges each band's increase in
-`floor(base_texels * completed_output_texels / total_output_texels)`; a complete
-chain costs its mip-zero texel count. CPU-only shader copies are reported separately
-as `copied_bytes`. Pipeline and finish work never upload a stale dependency outside
+filter and rounding. Each band costs its output texels once per pass over its level,
+so a complete chain costs its generated texel count times its pass count; a coverage
+pass that a level skips counts as done without a charge. CPU-only shader copies are
+reported separately as `copied_bytes`. Pipeline and finish work never upload a stale dependency outside
 the accounting. Normal pipeline misses create one pipeline per step. Atomic custom
 shader adoption can require several cached keys; a bounded call defers until its true
 creation count fits, while an unbounded call admits the atomic operation.
@@ -542,7 +542,7 @@ call raises it.
 
 `PrepareProgress` reports phase, state, fixed totals, completed bytes/texels/units,
 restarts and failure. CURRENT or removed dependencies advance their recorded byte progress without
-staging; generated-texel progress counts only generation actually performed, so
+staging; generated-texel progress counts only generation performed or skipped, so
 it can remain below the fixed total when units become current or are removed.
 Removed dependencies count as dangling. `SUBMITTED`
 means final work was submitted, and `READY` means its covering submission completed.

@@ -67,7 +67,7 @@ fn void enumerate_prepare_record(Renderer* renderer, PrepareRecord* record) @pri
                 if (source.source_kind == MIP_ZERO && source.desc.generate_mips
                   && !(prepare_unit_current(renderer, unit) ?? false)) {
                     if (try layout = generated_texture_mip_layout(source.desc)) {
-                        unit.texels = layout.output_texels ? layout.base_texels * layout.passes : 0;
+                        unit.texels = layout.output_texels * layout.passes;
                     }
                 }
             }

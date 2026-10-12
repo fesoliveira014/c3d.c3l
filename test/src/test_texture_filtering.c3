@@ -284,59 +284,6 @@ fn void test_explicit_normal_srgb_and_supplied_coverage_are_rejected() @test {
     }
 }
 
-fn void test_pass_billing_crosses_whole_cycles_without_overflow() @test {
-    ulong base = ulong::max / 9;
-    ulong output = ulong::max / 9;
-
-    assert(texture_scan_charge(
-        base_texels: base,
-        position: 0,
-        output_total: output,
-        passes: 9,
-    ) == 0);
-    assert(texture_scan_charge(
-        base_texels: base,
-        position: 9 * output,
-        output_total: output,
-        passes: 9,
-    ) == 9 * base);
-    assert(texture_scan_charge(
-        base_texels: base,
-        position: 4 * output + 17,
-        output_total: output,
-        passes: 9,
-    ) == 4 * base + 17);
-    assert(texture_scan_charge(
-        base_texels: 3074457345618258595,
-        position: 3074457345618258590,
-        output_total: 3074457345618258591,
-        passes: 6,
-    ) == 3074457345618258593);
-    assert(texture_scan_charge(
-        base_texels: 3074457345618258595,
-        position: 3074457345618258592,
-        output_total: 3074457345618258591,
-        passes: 6,
-    ) == 3074457345618258596);
-    assert(texture_scan_charge(
-        base_texels: 3074457345618258595,
-        position: 18446744073709551546,
-        output_total: 3074457345618258591,
-        passes: 6,
-    ) == 18446744073709551570);
-
-    for (ulong position = 0; position <= 9 * 13; position++) {
-        ulong reference = 101 * position / 13;
-
-        assert(texture_scan_charge(
-            base_texels: 101,
-            position: position,
-            output_total: 13,
-            passes: 9,
-        ) == reference);
-    }
-}
-
 fn void test_hash_prefix_collision_quota_keeps_raster_ties() @test {
     TextureHashChoice choice = { .prefix = 0x12345678, .length = 4, .rank = 2, .bucket = 3 };
 
@@ -395,22 +342,10 @@ fn FilteringExecution run_filtered_rows(
             first_block_row: record.generation_row,
             block_rows: rows,
         )!!;
-        ulong before = texture_scan_charge(
-            base_texels: layout.base_texels,
-            position: record.generation_outputs,
-            output_total: layout.output_texels,
-            passes: layout.passes,
-        );
-        ulong after = texture_scan_charge(
-            base_texels: layout.base_texels,
-            position: record.generation_outputs + (ulong)band.width * rows,
-            output_total: layout.output_texels,
-            passes: layout.passes,
-        );
         uint previous_mip = record.generation_mip;
         uint previous_phase = record.coverage.phase;
         PrepareStepPlan plan = { .kind = PrepareResourceStep.GENERATE, .band = band,
-            .cost = { .generated_texels = after - before } };
+            .cost = { .generated_texels = (ulong)band.width * rows } };
 
         run_prepare_step(
             renderer: &renderer,
@@ -436,7 +371,7 @@ fn FilteringExecution run_filtered_rows(
     execution.progress = record.texels_done;
 
     assert(unit.generated_done == record.texels_done);
-    assert(record.generation_outputs == layout.output_texels * layout.passes);
+    assert(record.texels_done == layout.output_texels * layout.passes);
 
     return execution;
 }
@@ -473,7 +408,7 @@ fn void test_later_plateau_engages_after_skipped_hashes_and_held_source_resumes(
 
     assert(single.chain.pixels == whole.chain.pixels && single.chain.pixels == held.chain.pixels);
     assert(single.first_skipped && single.later_plateau && held.first_skipped && held.later_plateau);
-    assert(single.progress == 6 * 256 && single.work < single.progress);
+    assert(single.progress == 6 * 85 && single.work < single.progress);
     assert(single.work == whole.work && single.work == held.work && held.progress == single.progress);
 
     char[] first = single.chain.pixels[:256];
@@ -528,7 +463,7 @@ fn void test_frozen_leaf_meets_stored_coverage_in_every_row_resume() @test {
     defer destroy_texture_mips(&whole.chain);
 
     assert(single.chain.pixels == whole.chain.pixels && single.progress == whole.progress);
-    assert(single.progress == 6 * 1024 && single.work == whole.work && single.work < single.progress);
+    assert(single.progress == 6 * 341 && single.work == whole.work && single.work < single.progress);
 
     usz mip_two_bytes = material::texture_mip_bytes(desc, 2)!!;
     char[] mip_two = single.chain.pixels[single.chain.offsets[1]:mip_two_bytes];

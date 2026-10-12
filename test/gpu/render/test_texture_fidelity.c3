@@ -279,16 +279,6 @@ fn void test_fidelity_shared_gpu_normal_decoder_matches_double_reference() @test
     check_validation(&fixture.renderer);
 }
 
-fn PrepareId? fidelity_texture_job(Fixture* fixture, TextureId texture) @private {
-    Renderer* renderer = &fixture.renderer;
-    PrepareId id = preparation_texture_only(fixture, texture)!;
-    PrepareRecord* record = renderer.prepares.get(id);
-    GeneratedTextureLayout layout = render::generated_texture_mip_layout(fixture.assets.texture(texture).desc)!;
-    record.units[0].texels = layout.output_texels ? layout.base_texels * layout.passes : 0;
-    record.texels_total = record.units[0].texels;
-    return id;
-}
-
 fn FidelityDrain fidelity_drain(
     Fixture* fixture,
     PrepareId id,
@@ -359,7 +349,7 @@ fn void test_fidelity_leaf_gpu_counts_and_one_row_progress_meet_stored_coverage(
 
         assert(stored.passing[0] == 484 && stored.total[0] == 1024);
 
-        PrepareId id = fidelity_texture_job(&fixture, texture)!!;
+        PrepareId id = preparation_texture_only(&fixture, texture)!!;
         fixture.renderer.begin_frame()!!;
 
         PrepareReport blocked = fixture.renderer.advance_prepares_within({ .generated_texels = 1 })!!;
@@ -600,7 +590,7 @@ fn void test_fidelity_coverage_chain_regenerates_after_finalized_abort_and_survi
         fixture.assets.mark_texture_dirty(texture);
 
         TextureId expected = fixture.assets.add_texture(desc, FIDELITY_LEAF)!!;
-        PrepareId id = fidelity_texture_job(&fixture, texture)!!;
+        PrepareId id = preparation_texture_only(&fixture, texture)!!;
         PrepareRecord* record = renderer.prepares.get(id);
 
         renderer.begin_frame()!!;
@@ -665,7 +655,7 @@ fn void test_fidelity_single_texel_cube_has_zero_generation_and_exact_face_stati
 
         TextureId texture = fixture.assets.add_texture(desc, pixels[..])!!;
 
-        PrepareId id = fidelity_texture_job(&fixture, texture)!!;
+        PrepareId id = preparation_texture_only(&fixture, texture)!!;
         assert(fixture.renderer.prepare_progress(id).texels_total == 0);
 
         FidelityDrain drain = fidelity_drain(

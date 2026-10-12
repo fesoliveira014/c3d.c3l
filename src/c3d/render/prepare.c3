@@ -172,7 +172,6 @@ struct PrepareRecord @private {
     uint generation_mip;
     uint generation_layer;
     uint generation_row;
-    ulong generation_outputs;
     TextureCoverageState coverage;
     material::TextureDesc generation_desc;
     CoverageStatistics generation_statistics;

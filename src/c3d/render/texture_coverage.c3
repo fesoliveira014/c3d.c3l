@@ -453,22 +453,3 @@ fn uint texture_generation_passes(material::TextureDesc desc) @private {
 
     return (uint)material::texture_block_bytes(desc.format) / 4 + HASH_BYTES + 1;
 }
-
-<*
- Charge a cumulative reserved scan range in mip-zero texels.
- @require output_total > 0, passes > 0
- @require position / output_total < passes || (position / output_total == passes && position % output_total == 0)
- @require base_texels <= ulong::max / passes
- @pure
-*>
-fn ulong texture_scan_charge(
-    ulong base_texels,
-    ulong position,
-    ulong output_total,
-    uint passes,
-) {
-    ulong whole = position / output_total;
-    ulong remainder = position % output_total;
-
-    return whole * base_texels + generated_mip_charge(base_texels, remainder, output_total);
-}
