@@ -304,7 +304,7 @@ fn bool needs_upload(
  @param world : "Batch node world matrix."
  @param origin : "Absolute origin used to pack the records."
  @param [in] crowd : "Null selects ordinary batch transforms."
- @return "Empty when the whole batch must upload."
+ @return "Empty when the whole batch must upload, including when the slot holds a mirrored record or the span now does."
 *>
 fn InstanceSpan patchable_span(
     GpuInstances* slot,
