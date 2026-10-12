@@ -235,7 +235,8 @@ fn void blend_pose(
     }
 }
 
-// Folds a plain action whose raw samples come from the cache; mirrors blend_pose's plain branch.
+// Duplicates blend_pose's plain branch for actions with an entry: a cache branch inside that loop
+// stopped pin_root_sample inlining and cost 4% more instructions.
 fn void blend_shared_action(
     Action* action,
     AnimationClip* clip,
