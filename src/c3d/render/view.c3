@@ -2004,6 +2004,7 @@ fn void? record_depth_prepass(
     gpu::GraphicsState state = gpu::render_geometry_state(width, height)!;
     state.viewport = flipped_viewport(width, height);
     state.depth = { .test_enable = true, .write_enable = true, .compare = gpu::CompareOp.GREATER };
+
     // Cleared to zero, so a pixel no eligible draw covers keeps zero specular weight.
     gpu::ColorTargetDesc[1] thin_color = {{
         .view     = record.reflection_gbuffer.attachment,
@@ -2016,6 +2017,7 @@ fn void? record_depth_prepass(
         state.color.targets = thin_state[..];
         record.reflection_gbuffer.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
     }
+
     gpu::PipelineHandle first = draws.len
       ? draws[0].pipeline : shadow_pipeline_for(
           renderer: renderer,
