@@ -580,14 +580,14 @@ fn void create_pose_fade_fixture(PoseFadeFixture* fixture, Allocator allocator =
         .action_count = &fixture.action_count,
         .root_node = 0,
     };
-    fixture.pose = anim::create_pose_storage(
+    fixture.pose = anim::create_pose_storage_try(
         allocator: allocator,
         base_pose: fixture.base[..],
         mesh_nodes: fixture.mesh_nodes[..],
         base_morph_weights: fixture.morph_rows[..],
         event_capacity: 0,
         inertia_enabled: true,
-    );
+    )!!;
 }
 
 fn void destroy_pose_fade_fixture(PoseFadeFixture* fixture, Allocator allocator = mem) @local {

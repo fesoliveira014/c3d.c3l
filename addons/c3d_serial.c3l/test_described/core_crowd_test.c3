@@ -48,7 +48,7 @@ fn void test_crowd_authoring_round_trips_pending_and_restarts_captured_clocks() 
         anim::crowd_update(&fixture.assets, &fixture.source, 0.5f);
         AnimatedCrowd* original = fixture.source.get(source, AnimatedCrowd);
         assert(original.playback.slots[0].actions.get(original.playback.slots[0].base_action).time == 0.375f
-          && original.start_times[0] == 0.125f);
+          && original.seeds[0].time == 0.125f);
         assert(text == serial::write_subtree_text(
             allocator: tmem,
             scene: &fixture.source,
@@ -63,7 +63,7 @@ fn void test_crowd_authoring_round_trips_pending_and_restarts_captured_clocks() 
             assert(!loaded.is_prepared() && restored.first_child == null);
             assert(loaded.count == 1 && loaded.placements.len == 3 && loaded.trace);
             assert(loaded.colors[0] == instances[0].color && loaded.colors[2] == (Vec4){ 1, 1, 1, 1 });
-            assert(loaded.start_times[0] == 0.125f && loaded.seeds[0].time == 0.125f);
+            assert(loaded.seeds[0].time == 0.125f);
             assert(text == serial::write_subtree_text(
                 allocator: tmem,
                 scene: &fixture.destination,
@@ -149,7 +149,7 @@ fn void test_crowd_owned_array_failures_leave_existing_scene_unchanged() @test {
         };
         ReadContext context = { .scene = &fixture.destination, .assets = &fixture.assets, .node = node };
         uint slot = ecs::assigned_slot(AnimatedCrowd)!!;
-        for (uint failure = 1; failure <= 4; failure++) {
+        for (uint failure = 1; failure <= 3; failure++) {
             FailingAllocator allocator = { .failure = failure };
             fixture.destination.allocator = &allocator;
             defer fixture.destination.allocator = mem;

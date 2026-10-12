@@ -109,7 +109,7 @@ fn AnimatedLodSource? animated_lod_source(AssetStore* assets, Scene* scene, Node
             if (!scene.world.is_alive(part.batch)) return c3d::INVALID_ID~;
             InstancedMesh* live = scene.world.get(part.batch, InstancedMesh);
             ModelMesh mesh = template.meshes[index];
-            if (!live || part.mesh_index != index || part.template_node != mesh.node
+            if (!live || part.template_node != mesh.node
               || !c3d::same_id(live.geometry, mesh.geometry) || !c3d::same_id(live.material, mesh.material)) {
                 return c3d::INVALID_ARGUMENT~;
             }

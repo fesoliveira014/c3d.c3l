@@ -202,14 +202,14 @@ fn Animator* add_animator(Scene* scene, Node* instance_root, AnimatorDesc desc =
 
     animator.root_node = find_root_node(&animator);
 
-    animator.pose_storage = create_pose_storage(
+    animator.pose_storage = create_pose_storage_try(
         allocator: scene.allocator,
         base_pose: instance.base_pose,
         mesh_nodes: instance.mesh_nodes,
         base_morph_weights: instance.base_morph_weights,
         event_capacity: MAX_FIRED_EVENTS,
         inertia_enabled: desc.inertia_enabled,
-    );
+    )!!;
 
     if (desc.inertia_enabled) {
         uint morphs;

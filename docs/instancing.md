@@ -231,7 +231,7 @@ while (window.poll()) {
   Placement, tint and root-motion helper edits preserve playback and identity.
 - Shared preparation and removal rules are in the [owner readiness table](owner_readiness.md).
 - `model::attach_crowd` attaches authoring to an existing node. It copies capacity-sized placements,
-  seed poses, authored start times and colors, and retains the pose bounds and initial part trace flag.
+  seed poses and colors, and retains the pose bounds and initial part trace flag.
   Optional neutral authoring captures per-instance actions, masks and spaces for later preparation.
   It creates no part nodes, palettes or assets. `AnimatedCrowd.is_prepared()` reports readiness;
   pending crowds produce no generated draw and `crowd_update` skips them unchanged.
@@ -240,7 +240,7 @@ while (window.poll()) {
   selected root, including the root. Null selects the whole scene. It returns the first fault and
   retains owners that prepared successfully. A failed owner retains its authoring for retry;
   preparing an already-prepared crowd is a no-op. `add_crowd` combines attachment and preparation.
-- `attach_crowd` and `set_crowd` capture each input `pose.time` in `AnimatedCrowd.start_times`.
+- `attach_crowd` and `set_crowd` copy each input pose and its start `time` to `AnimatedCrowd.seeds`.
   The input pose is a seed/base action, not writable runtime storage. `AnimatedCrowd.poses` is
   removed: obtain `crowd.playback.instance_id(index)`, borrow a `CrowdPlayer` with `player(id)`,
   then use `base_action()` or shared `play`, `action`, `stop`, `cross_fade` and 1D/2D space controls.
@@ -277,7 +277,7 @@ while (window.poll()) {
   The [complete 2D table](animation.md#prepared-storage) includes smaller capacities.
   The owner also retains copied model baselines and one shared pose scratch block. Crowd-wide
   output and crossing scratch cost `event_capacity*(CrowdEvent::size + EventBookmark::size)`.
-  Crowd placements, tints, seeds, starts, parts and `capacity*joints*Mat4::size`
+  Crowd placements, tints, seeds, parts and `capacity*joints*Mat4::size`
   palettes are separate retained arrays. Active cursors/additive references add their actual
   clip-dependent bytes at play; captured weighted masks add `N*float::size` per masked action.
   Allocator alignment and metadata add overhead outside the 2D table's aligned block totals.

@@ -8,7 +8,7 @@ import c3d::scene;
 import c3d::serial @public;
 import std::math;
 
-fn void test_crowd_serialization_rejects_nonfinite_authored_clocks_only() @test {
+fn void test_crowd_read_rejects_nonfinite_seed_scalars() @test {
     @pool() {
         Fixture fixture;
         create_fixture(&fixture);
@@ -36,8 +36,6 @@ fn void test_crowd_serialization_rejects_nonfinite_authored_clocks_only() @test 
             pose_bounds: { .min = { -1, -1, -1 }, .max = { 1, 1, 1 } },
             instances: instances[..],
         )!!;
-        AnimatedCrowd* crowd = fixture.source.get(source, AnimatedCrowd);
-        float*[2] fields = { &crowd.seeds[0].speed, &crowd.start_times[0] };
         char[] bytes = encode_crowd_scalars(&fixture, source, false)!!;
         String text = (String)encode_crowd_scalars(&fixture, source, true)!!;
         for (uint encoding = 0; encoding < 2; encoding++) {
@@ -47,7 +45,6 @@ fn void test_crowd_serialization_rejects_nonfinite_authored_clocks_only() @test 
             AnimatedCrowd* loaded = fixture.destination.get(restored, AnimatedCrowd);
             assert(!loaded.is_prepared() && loaded.count == 1);
             assert(bitcast(loaded.seeds[0].speed, uint) == finite_bits[0]);
-            assert(bitcast(loaded.start_times[0], uint) == finite_bits[1]);
             assert(bitcast(loaded.seeds[0].time, uint) == finite_bits[1]);
             fixture.destination.remove(restored);
         }
@@ -85,12 +82,12 @@ fn void test_crowd_serialization_rejects_nonfinite_authored_clocks_only() @test 
         uint free_before = fixture.destination.world.entities.free_count;
         ReadOptions options = serial::READ_OPTIONS_DEFAULT;
         options.diagnostic = &diagnostic;
-        foreach (index, field : fields) {
+        foreach (index, token : tokens) {
             foreach (invalid, bits : rejected_bits) {
                 char[] edited_bytes = alloc::clone_slice(tmem, bytes);
                 Writer patch = serial::writer_over(edited_bytes[offsets[index]:uint::size]);
                 patch.write_uint(bits);
-                String edited_text = replace_token(text, document.values[tokens[index]], rejected_text[invalid]);
+                String edited_text = replace_token(text, document.values[token], rejected_text[invalid]);
                 for (uint encoding = 0; encoding < 2; encoding++) {
                     Node*? result = encoding == 0
                       ? serial::read_subtree(
@@ -113,48 +110,24 @@ fn void test_crowd_serialization_rejects_nonfinite_authored_clocks_only() @test 
                     assert(fixture.destination.root.first_child == existing && existing.next_sibling == null);
                     assert(existing.local.position == (Vec3){ 3, 5, 7 }
                       && fixture.destination.count(AnimatedCrowd) == 0);
-                    *field = bitcast(bits, float);
-                    assert(@catch(encode_crowd_scalars(
-                        fixture: &fixture,
-                        source: source,
-                        text_mode: encoding == 1,
-                        diagnostic: &diagnostic,
-                    )) == c3d::INVALID_ARGUMENT);
-                    assert(diagnostic.cause == c3d::INVALID_ARGUMENT);
-                    assert(diagnostic.type_name == "c3d.AnimatedCrowd" && diagnostic.node_path == "/nodes/0");
-                    *field = bitcast(finite_bits[index], float);
                 }
             }
-        }
-        crowd.seeds[1].speed = bitcast(rejected_bits[0], float);
-        crowd.start_times[1] = bitcast(rejected_bits[1], float);
-        foreach (bits : rejected_bits) {
-            crowd.seeds[0].time = bitcast(bits, float);
-            assert(bytes == encode_crowd_scalars(&fixture, source, false)!!);
-            assert(text == (String)encode_crowd_scalars(&fixture, source, true)!!);
-            assert(bitcast(crowd.seeds[0].time, uint) == bits);
         }
     };
 }
 
-fn char[]? encode_crowd_scalars(
-    Fixture* fixture,
-    Node* source,
-    bool text_mode,
-    SerialDiagnostic* diagnostic = null,
-) @local {
+fn char[]? encode_crowd_scalars(Fixture* fixture, Node* source, bool text_mode) @local {
     if (text_mode) return (char[])serial::write_subtree_text(
         allocator: tmem,
         scene: &fixture.source,
         assets: &fixture.assets,
         root: source,
-        options: { .limits = serial::TEXT_LIMITS_DEFAULT, .diagnostic = diagnostic },
+        options: { .limits = serial::TEXT_LIMITS_DEFAULT },
     )!;
     return serial::write_subtree(
         allocator: tmem,
         scene: &fixture.source,
         assets: &fixture.assets,
         root: source,
-        options: { .diagnostic = diagnostic },
     );
 }

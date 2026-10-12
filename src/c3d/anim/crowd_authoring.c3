@@ -87,21 +87,7 @@ fn CrowdAuthoringState*? copy_crowd_authoring(Allocator allocator, CrowdInstance
 *>
 fn void destroy_crowd_authoring(CrowdAuthoringState* state) {
     Allocator allocator = state.allocator;
-    foreach (instance : state.instances) {
-        foreach (action : instance.actions) {
-            alloc::free(allocator, action.mask.ptr);
-            alloc::free(allocator, action.weighted_mask.ptr);
-        }
-        foreach (space : instance.spaces) {
-            alloc::free(allocator, space.actions.ptr);
-            alloc::free(allocator, space.positions.ptr);
-            alloc::free(allocator, space.points.ptr);
-            alloc::free(allocator, space.triangles.ptr);
-        }
-
-        alloc::free(allocator, instance.actions.ptr);
-        alloc::free(allocator, instance.spaces.ptr);
-    }
+    foreach (&instance : state.instances) free_authored_instance(allocator, instance);
 
     alloc::free(allocator, state.instances.ptr);
     alloc::free(allocator, state);
@@ -157,7 +143,7 @@ fn void? validate_crowd_authoring(
  @param base_start : "Captured authoring start of the retained base action."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
  @require index < state.count, state.slots[index].action_count == 0
- @require source.configured
+ @require source.configured, math::is_finite(base_start)
 *>
 fn void? restore_crowd_authoring(
     CrowdPlaybackState* state,
@@ -166,9 +152,6 @@ fn void? restore_crowd_authoring(
     CrowdInstanceAuthoring source,
     float base_start,
 ) {
-    check_crowd_instance(source, state.base_pose.len, state.slots[index].actions.items.len)!;
-    if (!math::is_finite(base_start)) return c3d::INVALID_ARGUMENT~;
-
     CrowdPlaybackSlot* slot = &state.slots[index];
     slot.root_node = source.root_node;
     PlaybackView playback = crowd_playback_view(state, slot);
@@ -310,7 +293,7 @@ fn void? restore_authored_space_2d(PlaybackView* playback, uint ordinal, CrowdSp
 <*
  Capture restartable configuration without changing live playback.
  @param [&in] playback : "Supplies live action order, masks and spaces."
- @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::CAPACITY_EXCEEDED
 *>
 fn CrowdAuthoringState*? capture_crowd_authoring(Allocator allocator, CrowdPlaybackState* playback) {
     CrowdAuthoringState* state = alloc::new_try(allocator, CrowdAuthoringState)
@@ -484,10 +467,9 @@ fn CrowdInstanceAuthoring? capture_playback_authoring(
       ?? c3d::CAPACITY_EXCEEDED~!;
 
     uint[MAX_ACTIONS] mapping;
-    mapping[..] = uint::max;
     uint action_count;
 
-    foreach (index, id : playback.order[:*playback.action_count]) {
+    foreach (id : playback.order[:*playback.action_count]) {
         Action* action = playback.actions.get(id);
         if (action.blend_space) {
             if (!retained_spaces[action.blend_space - 1]) continue;
@@ -495,7 +477,7 @@ fn CrowdInstanceAuthoring? capture_playback_authoring(
             continue;
         }
 
-        mapping[index] = action_count;
+        mapping[id.index] = action_count;
         CrowdActionAuthoring* captured = &destination.actions[action_count];
 
         *captured = {
@@ -569,17 +551,7 @@ fn CrowdInstanceAuthoring? capture_playback_authoring(
 
         for (uint member = 0; member < count; member++) {
             AnimationActionId id = planar.count ? planar.actions[member] : space.actions[member];
-            bool found;
-            foreach (ordered, candidate : playback.order[:*playback.action_count]) {
-                if (c3d::same_id(candidate, id)) {
-                    if (mapping[ordered] == uint::max) return c3d::INVALID_ARGUMENT~;
-                    captured.actions[member] = mapping[ordered];
-                    found = true;
-                    break;
-                }
-            }
-
-            if (!found) return c3d::INVALID_ARGUMENT~;
+            captured.actions[member] = mapping[id.index];
         }
     }
 

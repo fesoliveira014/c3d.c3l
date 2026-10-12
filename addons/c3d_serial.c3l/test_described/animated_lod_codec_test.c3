@@ -241,7 +241,7 @@ fn void test_animated_lod_codec_crowd_preserves_pending_owner_and_prepares_later
                 assert(!crowd.is_prepared() && restored.first_child == null);
                 assert(crowd.count == 2 && crowd.placements.len == 4 && crowd.actions_per_instance == 6);
                 assert(crowd.event_capacity == 0 && crowd.placements[0].scale == instances[0].placement.scale);
-                assert(crowd.start_times[0] == 0.125f && crowd.start_times[1] == 0.25f);
+                assert(crowd.seeds[0].time == 0.125f && crowd.seeds[1].time == 0.25f);
                 assert(loaded.mode == INSTANCED && loaded.count == 0 && loaded.slot_generations.len == 4);
                 assert(loaded.transforms.ptr == crowd.placements.ptr && loaded.colors.ptr == crowd.colors.ptr);
                 assert(loaded.desc.has_bounds_override && loaded.desc.local_bounds.min == crowd.pose_bounds.min);

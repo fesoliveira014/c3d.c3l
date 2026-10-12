@@ -271,8 +271,8 @@ LookAt/IK retargeting after slot reuse. Skin joints alone retain captured templa
 identity: deleting a required template joint rejects export even if its address
 was reused, rather than silently rebinding the original skin.
 AnimatedCrowd authoring version 3 restores in OWNER with its model, capacity,
-live placements/colors, action and event capacities, seed settings, captured
-start times, bounds and trace flag. It also retains configured per-instance
+live placements/colors, action and event capacities, seed settings, bounds and
+trace flag. It also retains configured per-instance
 actions, copied boolean/weighted masks, layers, additive scale/root settings and
 1D/2D spaces. Version-1 and version-2 binary and JSONC streams remain readable;
 new fields receive the original boolean-mask, 1D and DIFFERENCE defaults. Loads remain
@@ -291,10 +291,11 @@ the complete pending authoring for retry.
 
 Each owner validates its authored numeric domain on export and import, for both
 binary IEEE values and JSONC float-bit tokens. Invalid values return
-`INVALID_ARGUMENT` with the component type and node path. These are owner rules;
-generic described floats, node transforms, crowd placements and colours retain
-IEEE fidelity, including non-finite values. Runtime APIs retain their existing
-contracts. Existing shared runtime validators also govern serialization.
+`INVALID_ARGUMENT` with the component type and node path. AnimatedCrowd validates
+on import only; its runtime contracts keep exported seeds and actions in domain.
+These are owner rules; generic described floats, node transforms, crowd placements
+and colours retain IEEE fidelity, including non-finite values. Runtime APIs retain
+their existing contracts. Existing shared runtime validators also govern serialization.
 
 | Owner | Fields | Domain |
 | --- | --- | --- |
@@ -305,7 +306,7 @@ contracts. Existing shared runtime validators also govern serialization.
 | Animator | Action `speed`; 1D/2D blend-space coordinates, parameter and `speed` | Finite; negative speeds allowed |
 | Animator | Action and blend-space `weight` | Finite and nonnegative; no upper cap |
 | Animator / AnimatedCrowd | Weighted mask node values | Finite and in `[0,1]`; full captured node width |
-| AnimatedCrowd | Pose `speed`, captured start time | Finite; negative values allowed |
+| AnimatedCrowd | Pose `speed` and `time` | Finite; negative values allowed |
 | Ragdoll | Aggregate `weight`, each `bone_weights` value, `drive_strength` | Finite and nonnegative; no upper cap |
 | NavVolume | BOX `box`; CONVEX `verts[:vert_count]`, `min_y`, `max_y`; CYLINDER `base`, `radius`, `height` | Finite active fields; `min_y <= max_y`; cylinder radius and height positive |
 | NavLink | `start`, `end`, `radius` | Finite; positive radius and distinct endpoints |

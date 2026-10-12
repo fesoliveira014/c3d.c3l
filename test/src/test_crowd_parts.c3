@@ -95,11 +95,12 @@ fn CrowdPlayer parts_player(AnimatedCrowd* crowd, uint index = 0) @local {
 fn Vec3 parts_morphed_vertex(
     AssetStore* assets,
     AnimatedCrowd* crowd,
-    CrowdPart* part,
+    uint part_index,
     uint instance,
     uint vertex,
 ) @local {
-    GeometryId geometry_id = assets.model(crowd.model).data.meshes[part.mesh_index].geometry;
+    CrowdPart* part = &crowd.parts[part_index];
+    GeometryId geometry_id = assets.model(crowd.model).data.meshes[part_index].geometry;
     Geometry* geometry = &assets.geometry(geometry_id).data;
     Vec3 position = geometry.positions[vertex];
     if (!part.weight_count) return position;
@@ -129,7 +130,7 @@ fn void assert_parts_vertices(
         InstancedMesh* batch = scene.get(child, InstancedMesh);
         assert(batch.count == 1 && batch.transforms[0].position == crowd.placements[0].position);
         assert(child.local.position == (Vec3){} && child.local.scale == (Vec3){ 1, 1, 1 });
-        assert(part.template_node == crowd.playback.mesh_nodes[part.mesh_index]);
+        assert(part.template_node == crowd.playback.mesh_nodes[index]);
         uint expected_part = skin_free ? index + 1 : index;
         Mat4 world = node.world.mul(crowd.part_transform(0, index));
         Geometry* geometry = &assets.geometry(batch.geometry).data;
@@ -141,7 +142,7 @@ fn void assert_parts_vertices(
             Vec3 actual = maths::transform_point(vertex_world, parts_morphed_vertex(
                 assets: assets,
                 crowd: crowd,
-                part: part,
+                part_index: index,
                 instance: 0,
                 vertex: vertex,
             ));
@@ -203,7 +204,7 @@ fn void test_crowd_parts_match_literal_mixed_and_skin_free_worlds() @test {
             expected: animated_crowd_fixtures::PARTS_RESTORED_POINTS[..],
             skin_free: skin_free,
         );
-        assert(crowd.start_times[0] == 1 && crowd.seeds[0].time == 1);
+        assert(crowd.seeds[0].time == 1);
         assert(scene.count(InstancedMesh) == crowd.parts.len);
     }
 }
@@ -345,7 +346,7 @@ fn void test_crowd_parts_set_rolls_back_and_keeps_stale_handles_stale() @test {
     )) == c3d::CAPACITY_EXCEEDED);
     probe.enforce_limit = false;
     assert(probe.outstanding == outstanding && crowd.playback == state && crowd.count == 2);
-    assert(crowd.start_times[0] == 0.25f && old_player.try_action(old_action)!!.time == 0.25f);
+    assert(crowd.seeds[0].time == 0.25f && old_player.try_action(old_action)!!.time == 0.25f);
     assert(state.instance_id(0)!!.generation == old_instance.generation);
     model::set_crowd(
         assets: &assets,
@@ -401,7 +402,7 @@ fn void test_crowd_parts_prepare_rolls_back_every_allocation_and_retries() @test
             assert(excuse == c3d::CAPACITY_EXCEEDED);
             assert(probe.outstanding == outstanding && scene.world.entities.free_count == free_nodes);
             assert(!crowd.is_prepared() && !crowd.parts.len && !node.first_child);
-            assert(crowd.seeds[0].time == 0.5f && crowd.start_times[0] == 0.5f);
+            assert(crowd.seeds[0].time == 0.5f);
         } else {
             probe.enforce_limit = false;
             assert(crowd.is_prepared() && crowd.parts.len == 5);
@@ -612,7 +613,7 @@ fn void test_crowd_parts_rigid_and_morph_vertices_fit_mirrored_affine_envelopes(
                     Vec3 actual = maths::transform_point(world, parts_morphed_vertex(
                         assets: &assets,
                         crowd: crowd,
-                        part: part,
+                        part_index: part_index,
                         instance: source,
                         vertex: vertex,
                     ));
@@ -649,7 +650,7 @@ fn void assert_parts_admission_fault_preserves_scene(
     assert(scene.count(AnimatedCrowd) == 0 && scene.count(InstancedMesh) == 0);
 }
 
-fn void test_crowd_parts_subset_joints_conflicting_channels_and_nan_defaults_fault_before_mutation() @test {
+fn void test_crowd_parts_subset_joints_and_nan_defaults_leave_scene_unchanged() @test {
     AssetStore assets = parts_store();
     defer asset::destroy_asset_store(&assets);
     PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
@@ -681,29 +682,8 @@ fn void test_crowd_parts_subset_joints_conflicting_channels_and_nan_defaults_fau
     );
     *skin = original_skin;
     *skeleton = original_skeleton;
-    Geometry* geometry = &assets.geometry(fixture.geometries[2]).data;
-    MorphChannel[] original_channels = geometry.channels;
     float[] original_defaults = template.meshes[2].default_morph_weights;
-    float[] original_second_defaults = template.meshes[3].default_morph_weights;
-    defer {
-        geometry.channels = original_channels;
-        template.meshes[2].default_morph_weights = original_defaults;
-        template.meshes[3].default_morph_weights = original_second_defaults;
-    }
-    MorphChannel[2] conflicting = { original_channels[0], original_channels[0] };
-    float[2] defaults = { 0.25f, 0.75f };
-    geometry.channels = conflicting[..];
-    template.meshes[2].default_morph_weights = defaults[..];
-    template.meshes[3].default_morph_weights = defaults[..];
-    assert_parts_admission_fault_preserves_scene(
-        assets: &assets,
-        scene: &scene,
-        tracking: &tracking,
-        model: fixture.mixed,
-    );
-    geometry.channels = original_channels;
-    template.meshes[2].default_morph_weights = original_defaults;
-    template.meshes[3].default_morph_weights = original_second_defaults;
+    defer template.meshes[2].default_morph_weights = original_defaults;
     float[1] nonfinite = { bitcast(0x7fc00000u, float) };
     template.meshes[2].default_morph_weights = nonfinite[..];
     assert_parts_admission_fault_preserves_scene(

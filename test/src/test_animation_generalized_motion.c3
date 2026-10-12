@@ -726,13 +726,13 @@ fn void create_generalized_playback_fixture(
         .action_count = &fixture.action_count,
         .root_node = 2,
     };
-    fixture.pose = anim::create_pose_storage(
+    fixture.pose = anim::create_pose_storage_try(
         allocator: mem,
         base_pose: fixture.base_pose[..],
         mesh_nodes: {},
         base_morph_weights: {},
         event_capacity: 0,
-    );
+    )!!;
     fixture.extraction = extraction;
     playback_test_raw_pose(fixture, 0, fixture.reference_pose[..]);
 }

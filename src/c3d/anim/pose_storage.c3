@@ -5,7 +5,7 @@ import c3d::asset;
 import c3d::scene @public;
 import std::math;
 
-<* Owns evaluated pose and scratch arrays, borrowing immutable baselines. *>
+<* Owns scratch and, optionally, evaluated output, borrowing immutable baselines. *>
 struct PoseStorage {
     PoseDestination destination;
     PoseScratch scratch;
@@ -33,6 +33,7 @@ fn PlaybackView Animator.playback(&self) {
 <*
  Allocate fixed pose/scratch arrays; baselines remain borrowed until destruction.
  @param event_capacity : "Maximum retained events in one evaluation."
+ @param owns_output : "False when the caller supplies the evaluated pose and weights."
  @return? c3d::CAPACITY_EXCEEDED
  @require mesh_nodes.len == base_morph_weights.len
 *>
@@ -43,6 +44,7 @@ fn PoseStorage*? create_pose_storage_try(
     float[][] base_morph_weights,
     usz event_capacity,
     bool inertia_enabled = false,
+    bool owns_output = true,
 ) {
     PoseStorage* storage = alloc::new_try(allocator, PoseStorage) ?? c3d::CAPACITY_EXCEEDED~!;
     defer catch destroy_pose_storage(allocator, storage);
@@ -59,11 +61,6 @@ fn PoseStorage*? create_pose_storage_try(
     destination.mesh_indices[..] = uint::max;
     destination.mesh_widths = alloc::new_array_try(allocator, uint, mesh_nodes.len) ?? c3d::CAPACITY_EXCEEDED~!;
 
-    destination.pose = alloc::new_array_try(allocator, Transform, base_pose.len) ?? c3d::CAPACITY_EXCEEDED~!;
-    destination.pose[..] = base_pose[..];
-    destination.morph_weights = alloc::new_array_try(allocator, float[], base_morph_weights.len)
-      ?? c3d::CAPACITY_EXCEEDED~!;
-
     PoseScratch* scratch = &storage.scratch;
     scratch.channels = alloc::new_array_try(allocator, ChannelSums, base_pose.len) ?? c3d::CAPACITY_EXCEEDED~!;
     scratch.morph_sums = alloc::new_array_try(allocator, float[], base_morph_weights.len) ?? c3d::CAPACITY_EXCEEDED~!;
@@ -74,8 +71,6 @@ fn PoseStorage*? create_pose_storage_try(
     usz sample_width = 4;
 
     foreach (usz index, base : base_morph_weights) {
-        destination.morph_weights[index] = alloc::new_array_try(allocator, float, base.len) ?? c3d::CAPACITY_EXCEEDED~!;
-        destination.morph_weights[index][..] = base[..];
         scratch.morph_sums[index] = alloc::new_array_try(allocator, float, base.len) ?? c3d::CAPACITY_EXCEEDED~!;
         destination.mesh_indices[mesh_nodes[index]] = (uint)index;
         destination.mesh_present[mesh_nodes[index]] = true;
@@ -84,6 +79,19 @@ fn PoseStorage*? create_pose_storage_try(
     }
 
     scratch.sample = alloc::new_array_try(allocator, float, (sz)sample_width) ?? c3d::CAPACITY_EXCEEDED~!;
+
+    if (owns_output) {
+        destination.pose = alloc::new_array_try(allocator, Transform, base_pose.len) ?? c3d::CAPACITY_EXCEEDED~!;
+        destination.pose[..] = base_pose[..];
+        destination.morph_weights = alloc::new_array_try(allocator, float[], base_morph_weights.len)
+          ?? c3d::CAPACITY_EXCEEDED~!;
+
+        foreach (usz index, base : base_morph_weights) {
+            destination.morph_weights[index] = alloc::new_array_try(allocator, float, base.len)
+              ?? c3d::CAPACITY_EXCEEDED~!;
+            destination.morph_weights[index][..] = base[..];
+        }
+    }
 
     if (inertia_enabled) {
         scratch.derivative = create_pose_derivative_scratch(
@@ -95,25 +103,6 @@ fn PoseStorage*? create_pose_storage_try(
     }
 
     return storage;
-}
-
-<* Allocate fixed pose/scratch arrays using an infallible owner allocator. *>
-fn PoseStorage* create_pose_storage(
-    Allocator allocator,
-    Transform[] base_pose,
-    uint[] mesh_nodes,
-    float[][] base_morph_weights,
-    usz event_capacity,
-    bool inertia_enabled = false,
-) {
-    return create_pose_storage_try(
-        allocator: allocator,
-        base_pose: base_pose,
-        mesh_nodes: mesh_nodes,
-        base_morph_weights: base_morph_weights,
-        event_capacity: event_capacity,
-        inertia_enabled: inertia_enabled,
-    )!!;
 }
 
 <*
