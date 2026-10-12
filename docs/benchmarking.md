@@ -376,7 +376,8 @@ time-lapse gate expects `floor(sweep / period)` regenerations after its first fr
 the noon segment's first frame. `--volumetric-fog` adds a froxel volume to the main and mirror views and the
 `FOG_SCATTERING` and `FOG_INTEGRATION` pass lines report it (0 without the switch), with `--fog-quality low|medium|high`
 choosing its grid; `--taa` turns on TAA, so
-`--volumetric-fog --taa` on the pan segment shows whether sun shafts crawl. A failed gate exits 1. `--fog off --atmosphere off` is the fog-off baseline.
+`--volumetric-fog --taa` on the pan segment shows whether sun shafts crawl. A failed gate exits 1. `--fog off --atmosphere off` is the fog-off baseline. `--atmosphere dense|empty` selects the
+dense and the non-scattering atmospheres of [the sky example](sky.md#example); the header prints the value.
 
 ## Instancing benchmark
 

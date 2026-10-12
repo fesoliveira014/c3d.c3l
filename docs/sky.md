@@ -115,6 +115,10 @@ intensity scales them as the environment intensity. They light the scene through
 environment path: image-based lighting, reflections that miss, probe volumes filled from the
 environment and the path tracer.
 
+The multiple-scattering table sums the orders after the second as a geometric series truncated at 32 terms.
+However thick and scattering the air, a texel is finite, non-negative and at most 33 times its second-order
+light; where the series ratio is within 1e-4 of 1 the sum takes its limit of 33 terms.
+
 The lighting regenerates, in place, when compared with the last generation the sun has turned by
 more than `render::SKY_REGENERATION_SUN_ANGLE` (0.5°), `observer_altitude` has moved by more than
 `render::SKY_REGENERATION_ALTITUDE` (500 m), the sun's colour changed or any air field changed (the
@@ -363,8 +367,12 @@ per-view passes, frame times, the refresh cost per stage, refreshes per minute a
 `sun_radiance`. Its gates: the time-lapse regenerates exactly `floor(sweep / period)` times, with
 `period = (floor(0.5° / step) + 1) · step`, and the noon segment regenerates nothing after its first
 frame. `--shading forward|deferred`, `--shadows atlas|traced`, `--ssgi`, `--path-traced`, `--reflections on|off`,
-`--fog on|off`, `--atmosphere on|off`, `--preset`, `--gpu-timings` and `--validation` select the
+`--fog on|off`, `--atmosphere on|off|dense|empty`, `--preset`, `--gpu-timings` and `--validation` select the
 configuration. See [benchmarking](benchmarking.md#sky-benchmark).
+
+`--atmosphere` takes `on` (`ATMOSPHERE_EARTH`), `off`, `dense` (Earth's air with a Rayleigh scattering of 0.5 per
+metre on every channel, opaque to the sun) and `empty` (Earth's air with no Rayleigh or Mie scattering). They are
+the limits of the [multiple-scattering table](#lighting-and-regeneration): a series ratio of 1 and no scattering.
 
 `--reflections on` needs `--shading deferred`. It gives the main view [traced reflections](reflections.md) and the
 ground a roughness under their threshold, so the boxes and spheres show in it; each reflected path takes the
