@@ -22,12 +22,6 @@ struct GeneralizedMotion @private {
     double twist;
 }
 
-struct GeneralizedFrameRate @private {
-    double[<3>] position;
-    double[<3>] angular;
-    double scale;
-}
-
 struct GeneralizedMotionReference @private {
     GeneralizedMotionFrame frame;
     double[<3>] up;
@@ -36,82 +30,53 @@ struct GeneralizedMotionReference @private {
     float duration;
 }
 
-<* Sample the composed motion-node frame and, optionally, its rate in clip time.
-   @param [out] rate : "Optional position, spatial angular and scale rates." *>
 fn GeneralizedMotionFrame sample_generalized_endpoint(
     CapturedMotionChain* chain,
     AnimationClip* clip,
-    float time,
-    StepSampleSide side = StepSampleSide.EXACT,
-    GeneralizedFrameRate* rate = null,
+    ClipTime time,
 ) @private {
     GeneralizedMotionFrame world = GENERALIZED_FRAME_IDENTITY;
-    GeneralizedFrameRate world_rate;
 
     for (sz index = chain.nodes.len; index > 0; index--) {
         CapturedMotionNode* node = &chain.nodes[index - 1];
         GeneralizedMotionFrame local = generalized_frame_from_transform(node.baseline);
-        GeneralizedFrameRate local_rate;
         double[4] value;
-        double[4] value_rate;
-        uint cursor;
 
         if (node.translation_track != NO_MOTION_TRACK) {
-            sample_track_analytic(
-                track: &clip.tracks[node.translation_track],
-                time: time,
-                cursor: &cursor,
-                value: value[:3],
-                rate: value_rate[:3],
-                side: side,
-            );
+            sample_endpoint_track(&clip.tracks[node.translation_track], time, value[:3]);
             local.position = { value[0], value[1], value[2] };
-            local_rate.position = { value_rate[0], value_rate[1], value_rate[2] };
         }
 
         if (node.rotation_track != NO_MOTION_TRACK) {
-            cursor = 0;
-            sample_track_analytic(
-                track: &clip.tracks[node.rotation_track],
-                time: time,
-                cursor: &cursor,
-                value: value[..],
-                rate: value_rate[..],
-                side: side,
-            );
+            sample_endpoint_track(&clip.tracks[node.rotation_track], time, value[..]);
             local.rotation = { .v = { value[0], value[1], value[2], value[3] } };
-            double[<4>] rotation_rate = { value_rate[0], value_rate[1], value_rate[2], value_rate[3] };
-            local_rate.angular = spatial_rotation_rate(local.rotation.v, rotation_rate);
         }
 
         if (node.scale_track != NO_MOTION_TRACK) {
-            cursor = 0;
-            sample_track_analytic(
-                track: &clip.tracks[node.scale_track],
-                time: time,
-                cursor: &cursor,
-                value: value[:3],
-                rate: value_rate[:3],
-                side: side,
-            );
+            sample_endpoint_track(&clip.tracks[node.scale_track], time, value[:3]);
             local.scale = (value[0] + value[1] + value[2]) / 3;
-            local_rate.scale = (value_rate[0] + value_rate[1] + value_rate[2]) / 3;
         }
 
-        if (rate) {
-            world_rate = compose_generalized_frame_rates(
-                parent: world,
-                parent_rate: world_rate,
-                local: local,
-                local_rate: local_rate,
-            );
-        }
         world = compose_generalized_frames(world, local);
     }
 
-    if (rate) *rate = world_rate;
-
     return world;
+}
+
+fn void sample_endpoint_track(Track* track, ClipTime time, double[] value) @local {
+    // A cursor past the last key bisects the keys rather than walking from the first.
+    uint cursor = uint::max;
+    sample_track_analytic(
+        track: track,
+        time: track_clip_time(track, time),
+        cursor: &cursor,
+        value: value,
+        side: time.side,
+    );
+}
+
+fn ClipTime fixed_clip_time(float time, StepSampleSide side = StepSampleSide.EXACT) @private {
+    return { .time = time, .ahead = time, .side = side };
 }
 
 fn GeneralizedMotionReference capture_generalized_motion_reference(
@@ -125,12 +90,7 @@ fn GeneralizedMotionReference capture_generalized_motion_reference(
     up /= up.length();
 
     GeneralizedMotionReference reference = {
-        .frame = sample_generalized_endpoint(
-            chain: chain,
-            clip: clip,
-            time: 0,
-            side: side,
-        ),
+        .frame = sample_generalized_endpoint(chain, clip, fixed_clip_time(0, side)),
         .up = up,
         .duration = clip.duration,
     };
@@ -139,7 +99,7 @@ fn GeneralizedMotionReference capture_generalized_motion_reference(
     reference.cycle = generalized_endpoint_motion(
         chain: chain,
         reference: &reference,
-        endpoint: sample_generalized_endpoint(chain, clip, clip.duration),
+        endpoint: sample_generalized_endpoint(chain, clip, fixed_clip_time(clip.duration)),
     );
 
     return reference;
@@ -208,22 +168,6 @@ fn GeneralizedMotionFrame compose_generalized_frames(
         .position = parent.position + parent.rotation.rotate_vec3(local.position * parent.scale),
         .rotation = inertial_normalize_rotation(parent.rotation.mul(local.rotation)),
         .scale = parent.scale * local.scale,
-    };
-}
-
-fn GeneralizedFrameRate compose_generalized_frame_rates(
-    GeneralizedMotionFrame parent,
-    GeneralizedFrameRate parent_rate,
-    GeneralizedMotionFrame local,
-    GeneralizedFrameRate local_rate,
-) @local {
-    double[<3>] lever = parent.rotation.rotate_vec3(local.position * parent.scale);
-
-    return {
-        .position = parent_rate.position + parent_rate.angular.cross(lever)
-          + parent.rotation.rotate_vec3(local.position * parent_rate.scale + local_rate.position * parent.scale),
-        .angular = parent_rate.angular + parent.rotation.rotate_vec3(local_rate.angular),
-        .scale = parent_rate.scale * local.scale + parent.scale * local_rate.scale,
     };
 }
 
@@ -322,41 +266,6 @@ fn GeneralizedMotion generalized_endpoint_motion(
     };
 }
 
-fn GeneralizedMotion generalized_endpoint_motion_rate(
-    CapturedMotionChain* chain,
-    GeneralizedMotionReference* reference,
-    GeneralizedMotionFrame endpoint,
-    GeneralizedFrameRate rate,
-) @private {
-    double[<3>] translation = rate.position;
-    for (uint axis = 0; axis < 3; axis++) {
-        if (!chain.extraction.translation_axes[axis]) translation[axis] = 0;
-    }
-
-    if (!chain.extraction.twist) return { .translation = translation };
-
-    double angle = generalized_twist_angle(endpoint.rotation, reference.up);
-    double twist = nearest_generalized_twist(angle - reference.twist);
-    double twist_rate = generalized_twist_rate(endpoint.rotation, rate.angular, reference.up);
-    double[<3>] pivot = reference.frame.position;
-    double[<3>] radial = pivot - reference.up * reference.up.dot(pivot);
-    double[<3>] pivot_rate = radial * math::sin(twist) - reference.up.cross(pivot) * math::cos(twist);
-
-    return { .translation = translation + pivot_rate * twist_rate, .twist = twist_rate };
-}
-
-fn double generalized_twist_rate(Quaternion rotation, double[<3>] angular, double[<3>] up) @local {
-    double[<3>] axis = { rotation.v.x, rotation.v.y, rotation.v.z };
-    double projected = axis.dot(up);
-    double denominator = projected * projected + rotation.v.w * rotation.v.w;
-    if (denominator == 0) return 0;
-
-    double projected_rate = 0.5 * (rotation.v.w * angular.dot(up) + angular.cross(axis).dot(up));
-    double scalar_rate = -0.5 * angular.dot(axis);
-
-    return 2 * (rotation.v.w * projected_rate - projected * scalar_rate) / denominator;
-}
-
 fn GeneralizedMotion generalized_cycle_power(
     GeneralizedMotion cycle,
     double count,
@@ -391,12 +300,7 @@ fn GeneralizedMotion generalized_motion_trajectory(
         return generalized_endpoint_motion(
             chain: chain,
             reference: reference,
-            endpoint: sample_generalized_endpoint(
-                chain: chain,
-                clip: clip,
-                time: clamped,
-                side: side,
-            ),
+            endpoint: sample_generalized_endpoint(chain, clip, fixed_clip_time(clamped, side)),
         );
     }
 
@@ -410,12 +314,7 @@ fn GeneralizedMotion generalized_motion_trajectory(
     GeneralizedMotion partial = generalized_endpoint_motion(
         chain: chain,
         reference: reference,
-        endpoint: sample_generalized_endpoint(
-            chain: chain,
-            clip: clip,
-            time: (float)phase,
-            side: side,
-        ),
+        endpoint: sample_generalized_endpoint(chain, clip, fixed_clip_time((float)phase, side)),
     );
 
     return compose_generalized_motion(

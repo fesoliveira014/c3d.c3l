@@ -101,7 +101,7 @@ fn void cancel_inertial_row(InertialRow* row) @local {
     row.root.target_rate_pending = false;
 }
 
-<* @require playback.inertial != null && scratch.derivative != null *>
+<* @require playback.inertial != null && scratch.inertial != null *>
 fn AnimationTransitionResult? request_inertial_transition(
     PlaybackView* playback,
     AssetStore* assets,
@@ -130,19 +130,7 @@ fn AnimationTransitionResult? request_inertial_transition(
         defer_unsupported: true,
     )!;
 
-    bool unsupported = validation.unsupported || identity.unsupported;
-    if (catch excuse = validate_transition_scale_eligibility(
-        playback: playback,
-        assets: assets,
-        desc: desc,
-        prepared: &validation,
-        destination: destination,
-    )) {
-        if (excuse != c3d::UNSUPPORTED) return excuse~;
-        unsupported = true;
-    }
-
-    if (unsupported) return c3d::UNSUPPORTED~;
+    if (validation.unsupported || identity.unsupported) return c3d::UNSUPPORTED~;
 
     PreparedTransition prepared = prepare_animation_transition(
         playback: playback,

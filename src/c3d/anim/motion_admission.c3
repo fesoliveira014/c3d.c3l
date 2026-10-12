@@ -70,10 +70,7 @@ fn void? validate_generalized_motion(
                 case MORPH_WEIGHTS:
                     continue;
                 case ROTATION:
-                    if (catch excuse = validate_motion_rotation_track(track)) {
-                        if (excuse != c3d::UNSUPPORTED) return excuse~;
-                        unsupported = true;
-                    }
+                    validate_motion_rotation_track(track)!;
                 case SCALE:
                     ConsumedScaleDomain domain = classify_consumed_scale_track(track, additive)!;
                     unsupported |= domain == ConsumedScaleDomain.SAMPLING_UNPROVEN;
@@ -287,7 +284,6 @@ fn void? validate_motion_baseline(Transform baseline) @local {
 
 fn void capture_motion_reference(CapturedMotionNode* node, AnimationClip* clip) @local {
     double[4] values;
-    double[4] rates;
     uint cursor;
 
     if (node.translation_track != NO_MOTION_TRACK) {
@@ -296,7 +292,6 @@ fn void capture_motion_reference(CapturedMotionNode* node, AnimationClip* clip) 
             time: 0,
             cursor: &cursor,
             value: values[:3],
-            rate: rates[:3],
         );
         node.reference.position = { (float)values[0], (float)values[1], (float)values[2] };
     }
@@ -308,7 +303,6 @@ fn void capture_motion_reference(CapturedMotionNode* node, AnimationClip* clip) 
             time: 0,
             cursor: &cursor,
             value: values[..],
-            rate: rates[..],
         );
         node.reference.rotation = { .v = { (float)values[0], (float)values[1], (float)values[2], (float)values[3] } };
     }
@@ -320,7 +314,6 @@ fn void capture_motion_reference(CapturedMotionNode* node, AnimationClip* clip) 
             time: 0,
             cursor: &cursor,
             value: values[:3],
-            rate: rates[:3],
         );
         node.reference.scale = { (float)values[0], (float)values[1], (float)values[2] };
         node.reference_scale = (values[0] + values[1] + values[2]) / 3;

@@ -7,8 +7,6 @@ const double INERTIAL_JACOBIAN_SERIES_LIMIT @private = 1e-4; // Avoids coefficie
 struct InertialQuinticBasis @private {
     double value;
     double velocity;
-    double value_rate;
-    double velocity_rate;
 }
 
 struct InertialScalarState @private {
@@ -16,17 +14,7 @@ struct InertialScalarState @private {
     double rate;
 }
 
-struct InertialVectorState @private {
-    double[<3>] value;
-    double[<3>] rate;
-}
-
-struct InertialRotationState @private {
-    Quaternion orientation;
-    double[<3>] angular_velocity;
-}
-
-<* Evaluate the residual basis and normalized-time derivatives.
+<* Evaluate the residual basis in normalized time.
    @require time >= 0 && time <= 1 *>
 fn InertialQuinticBasis inertial_quintic_basis(double time) @private {
     double square = time * time;
@@ -37,33 +25,28 @@ fn InertialQuinticBasis inertial_quintic_basis(double time) @private {
     return {
         .value = 1 - 10 * cube + 15 * fourth - 6 * fifth,
         .velocity = time - 6 * cube + 8 * fourth - 3 * fifth,
-        .value_rate = -30 * square + 60 * cube - 30 * fourth,
-        .velocity_rate = 1 - 18 * square + 32 * cube - 15 * fourth,
     };
 }
 
 <* Decay one admitted linear residual in update seconds.
    @require math::is_finite(duration) && duration >= 0
    @require math::is_finite(elapsed) && elapsed >= 0 *>
-fn InertialScalarState inertial_scalar_residual(
+fn double inertial_scalar_residual(
     double offset,
     double velocity,
     double duration,
     double elapsed,
 ) @private {
-    if (duration == 0 || elapsed >= duration) return {};
+    if (duration == 0 || elapsed >= duration) return 0;
 
     InertialQuinticBasis basis = inertial_quintic_basis(elapsed / duration);
-    return {
-        .value = offset * basis.value + duration * velocity * basis.velocity,
-        .rate = offset * basis.value_rate / duration + velocity * basis.velocity_rate,
-    };
+    return offset * basis.value + duration * velocity * basis.velocity;
 }
 
 <* Decay one admitted vector residual in update seconds.
    @require math::is_finite(duration) && duration >= 0
    @require math::is_finite(elapsed) && elapsed >= 0 *>
-fn InertialVectorState inertial_vector_residual(
+fn double[<3>] inertial_vector_residual(
     double[<3>] offset,
     double[<3>] velocity,
     double duration,
@@ -72,10 +55,7 @@ fn InertialVectorState inertial_vector_residual(
     if (duration == 0 || elapsed >= duration) return {};
 
     InertialQuinticBasis basis = inertial_quintic_basis(elapsed / duration);
-    return {
-        .value = offset * basis.value + velocity * (duration * basis.velocity),
-        .rate = offset * (basis.value_rate / duration) + velocity * basis.velocity_rate,
-    };
+    return offset * basis.value + velocity * (duration * basis.velocity);
 }
 
 <* Capture an admitted scale residual in log coordinates.
@@ -88,16 +68,6 @@ fn InertialScalarState inertial_onset_scale_residual(
         .value = math::ln(source.value / target.value),
         .rate = source.rate / source.value - target.rate / target.value,
     };
-}
-
-<* Apply a sampled log residual to the current target scale.
-   @require target.value > 0 *>
-fn InertialScalarState inertial_correct_log_scale(
-    InertialScalarState residual,
-    InertialScalarState target,
-) @private {
-    double value = target.value * math::exp(residual.value);
-    return { .value = value, .rate = value * (target.rate / target.value + residual.rate) };
 }
 
 fn Quaternion inertial_rotation_exp(double[<3>] rotation) @private {
@@ -126,23 +96,6 @@ fn double[<3>] inertial_rotation_log(Quaternion value) @private {
     return axis * (2 * math::atan2(length, value.v.w) / length);
 }
 
-fn double[<3>] inertial_left_jacobian(double[<3>] rotation, double[<3>] velocity) @private {
-    double angle = rotation.length();
-    double square = angle * angle;
-    double first;
-    double second;
-    if (angle < INERTIAL_JACOBIAN_SERIES_LIMIT) {
-        first = 0.5 - square / 24 + square * square / 720;
-        second = 1.0 / 6 - square / 120 + square * square / 5040;
-    } else {
-        first = (1 - math::cos(angle)) / square;
-        second = (angle - math::sin(angle)) / (square * angle);
-    }
-
-    double[<3>] cross = rotation.cross(velocity);
-    return velocity + cross * first + rotation.cross(cross) * second;
-}
-
 <* Transport through a nonsingular shortest rotation chart.
    @require rotation.length() < 2 * math::PI *>
 fn double[<3>] inertial_left_jacobian_inverse(double[<3>] rotation, double[<3>] velocity) @private {
@@ -165,29 +118,24 @@ fn double[<3>] inertial_onset_rotation_rate(
     return inertial_left_jacobian_inverse(residual, source_rate - correction.rotate_vec3(target_rate));
 }
 
-<* Apply the residual orientation and its transported spatial rate.
+<* Apply the residual orientation to the target.
    @require math::is_finite(duration) && duration >= 0
    @require math::is_finite(elapsed) && elapsed >= 0 *>
-fn InertialRotationState inertial_correct_rotation(
+fn Quaternion inertial_correct_rotation(
     double[<3>] initial,
     double[<3>] initial_rate,
     double duration,
     double elapsed,
     Quaternion target,
-    double[<3>] target_rate,
 ) @private {
-    InertialVectorState residual = inertial_vector_residual(
+    double[<3>] residual = inertial_vector_residual(
         offset: initial,
         velocity: initial_rate,
         duration: duration,
         elapsed: elapsed,
     );
-    Quaternion correction = inertial_rotation_exp(residual.value);
 
-    return {
-        .orientation = correction.mul(target),
-        .angular_velocity = inertial_left_jacobian(residual.value, residual.rate) + correction.rotate_vec3(target_rate),
-    };
+    return inertial_rotation_exp(residual).mul(target);
 }
 
 fn bool inertial_rotation_valid(Quaternion value) @private {

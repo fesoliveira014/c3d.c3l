@@ -37,7 +37,7 @@ fn void expect_motion_rotation_fault(Track* track, fault expected) @local {
         assert(excuse == expected);
         caught = true;
     }
-    assert(caught, "uncertified rotation domain was admitted");
+    assert(caught, "invalid rotation domain was admitted");
 }
 
 fn void expect_motion_scale_invalid(Track* track, bool additive = false) @local {
@@ -73,7 +73,7 @@ fn void test_animation_motion_rotation_step_linear_without_magnitude_limits() @t
     }
 }
 
-fn void test_animation_motion_rotation_cubic_exact_zero_and_bounded_uncertainty() @test {
+fn void test_animation_motion_rotation_cubic_crossing_zero_is_admitted_and_samples_identity() @test {
     float[2] times = { 0, 1 };
     float[24] values = motion_rotation_cubic_values(
         start: 1,
@@ -82,61 +82,17 @@ fn void test_animation_motion_rotation_cubic_exact_zero_and_bounded_uncertainty(
         incoming: 4,
     );
     Track track = motion_rotation_track(Interpolation.CUBIC_SPLINE, times[..], values[..]);
-    // The scalar component is (1 - 2t)^2 and the other components vanish identically.
-    expect_motion_rotation_fault(&track, c3d::INVALID_ARGUMENT);
-    values[4] = values[16] = 1e-12;
-    expect_motion_rotation_fault(&track, c3d::UNSUPPORTED);
-    values[4] = values[16] = 0.01;
     anim::validate_motion_rotation_track(&track)!!;
-    values = motion_rotation_cubic_values(
-        start: -1,
-        end: 2,
-        outgoing: 3,
-        incoming: 3,
+    uint cursor;
+    double[4] sampled;
+    // The scalar component is (1 - 2t)^2 and the other components vanish identically.
+    anim::sample_track_analytic(
+        track: &track,
+        time: 0.5f,
+        cursor: &cursor,
+        value: sampled[..],
     );
-    // The raw scalar vanishes at 1/3; the finite dyadic subdivision cannot certify it.
-    expect_motion_rotation_fault(&track, c3d::UNSUPPORTED);
-    values[11] = bitcast(0x7fc00000u, float);
-    expect_motion_rotation_fault(&track, c3d::INVALID_ARGUMENT);
-}
-
-fn void test_animation_motion_rotation_cubic_constants_and_timestamp_provenance() @test {
-    float[2] times = { 0, 1 };
-    float[3] magnitudes = { 0x1p-149, 1e-7, 1e16 };
-    float[24] values;
-    Track track = motion_rotation_track(Interpolation.CUBIC_SPLINE, times[..], values[..]);
-    foreach (magnitude : magnitudes) {
-        values = motion_rotation_cubic_values(
-            start: magnitude,
-            end: magnitude,
-            outgoing: 0,
-            incoming: 0,
-        );
-        anim::validate_motion_rotation_track(&track)!!;
-    }
-    values = motion_rotation_cubic_values(
-        start: 1,
-        end: 1,
-        outgoing: -4,
-        incoming: 4,
-    );
-    times[0] = 0x1p-149;
-    expect_motion_rotation_fault(&track, c3d::UNSUPPORTED);
-    times[0] = times[1];
-    expect_motion_rotation_fault(&track, c3d::INVALID_ARGUMENT);
-}
-
-fn void test_animation_motion_rotation_invalid_segment_precedes_unproven_segment() @test {
-    float[3] times = { 0x1p-149, 1, 2 };
-    float[36] values;
-    for (uint key = 0; key < 3; key++) {
-        values[key * 12 + 3] = 4;
-        values[key * 12 + 7] = 1;
-        values[key * 12 + 11] = -4;
-    }
-    Track track = motion_rotation_track(Interpolation.CUBIC_SPLINE, times[..], values[..]);
-    // First segment is positive but uncertain; the second has the exact zero at t=1.5.
-    expect_motion_rotation_fault(&track, c3d::INVALID_ARGUMENT);
+    assert(sampled == (double[4]){ 0, 0, 0, 1 });
 }
 
 fn void test_animation_motion_scale_step_linear_uniform_positive_domains() @test {

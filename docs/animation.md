@@ -327,16 +327,15 @@ animator.play(&assets, walk, {
 
 The chain may contain animated proper rotations, translations and finite
 positive uniform scales. Nonuniform scale, reflection, shear, invalid root
-layout, nonfinite values and zero quaternions fault `INVALID_ARGUMENT` at
-admission. Rotation tracks are checked over their full domain; STEP uses keys,
-LINEAR also requires a sign-corrected nonnegative endpoint dot, and CUBIC uses a
-bounded polynomial certificate. Scale tracks are checked at their keys; a
-`CUBIC_SPLINE` scale track on the chain is unsupported. An unproved cubic
-rotation domain or a cubic scale track faults `UNSUPPORTED` before playback
-changes, after every `INVALID_ARGUMENT` check. No repeated domain scan runs at
-update. Under generalized extraction, a scale track with nonneutral keys on an
-additive action's consumed chain is invalid in either additive scale mode, including
-zero-weight or fully masked actions.
+layout, nonfinite values and zero quaternion keys fault `INVALID_ARGUMENT` at
+admission. Rotation and scale tracks are checked at their keys. A cubic
+rotation segment is not checked between its keys; where it crosses zero it
+samples as the identity rotation. A `CUBIC_SPLINE` scale track on the chain
+faults `UNSUPPORTED` before playback changes, after every `INVALID_ARGUMENT`
+check. No repeated domain scan runs at update. Under generalized extraction, a
+scale track with nonneutral keys on an additive action's consumed chain is
+invalid in either additive scale mode, including zero-weight or fully masked
+actions.
 
 Each generalized action samples its own chain endpoint at its current time and
 removes the selected translation and twist relative to its reference. These
@@ -405,17 +404,22 @@ become stale after a successful request. Reacquire action and group pointers.
 
 A replacement while active captures the current corrected output and its
 published velocity. Pose translation, rotation and ordinary scale/morph
-residuals preserve value and velocity at onset and decay to the target. Scale
+residuals preserve value and velocity at onset and decay to the target. The
+target's onset velocity is a one-sided difference over 1/256 s of its playback:
+clocks advance by their speed or group rate and fades by their rate, while STEP
+tracks keep their onset key. A looping or group clock that would cross its clip
+end within that step contributes through a separate step backward, with the
+other clocks and fades held; non-looping clocks clamp to the clip, where they
+stop. Neither a key nor a loop seam adds a jump to the difference. Scale
 on a consumed motion chain uses `s_target * exp(residual)` in log space, keeping
 positive uniform scale positive and velocity-matched. Regular blending is
 convex, so admitted positive-uniform scales remain positive under runtime
-weights, masks, fades and group controls. Request-time bounds also require the
-whole corrected scale window to remain representable as float. A proven
-out-of-range result faults `INVALID_ARGUMENT`; a result within the directed
-rounding margin faults `UNSUPPORTED`. Cubic scale on a consumed chain is
-unsupported: such a request faults `UNSUPPORTED` unless its keys alone are out
-of range. A shorter transition duration may succeed; the runtime does not clamp
-accepted scale.
+weights, masks, fades and group controls; the request faults `INVALID_ARGUMENT`
+when a consumed node's source or baseline scale is not positive. The corrected
+scale is clamped to the positive normal float range, `[2^-126, float::max]`, so
+a large residual saturates instead of overflowing. Cubic scale on a consumed
+chain is unsupported: such a request faults `UNSUPPORTED` unless its keys alone
+are out of range.
 
 For a consumed root, source and target use the same motion node, selected axes,
 up, twist and frame. Different clip reference positions are allowed; the pose
@@ -427,8 +431,8 @@ Events come from target actions only. The source's previous published delta
 divided by its positive update interval supplies velocity; invalid history
 starts with zero source velocity.
 
-At a STEP boundary, request onset takes the one-sided value and derivative in
-the target playback direction, including reverse starts at duration. It does
+At a STEP boundary, request onset takes the one-sided value in the target
+playback direction, including reverse starts at duration. It does
 not epsilon-seek the clock or emit events. A zero update freezes transition
 time. `cancel_inertial_transition` discards the residual while retaining target
 actions and clocks; the next pose is the target output. Inertial requests and

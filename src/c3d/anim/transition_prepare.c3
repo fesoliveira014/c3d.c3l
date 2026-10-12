@@ -118,13 +118,6 @@ fn PreparedTransition? validate_animation_transition(
             }
         }
 
-        if (playback.inertial) {
-            if (catch excuse = validate_inertial_rotation_domains(clip)) {
-                if (excuse != c3d::UNSUPPORTED) return excuse~;
-                unsupported = true;
-            }
-        }
-
         if (target.play.extraction.generalized) {
             ModelTemplate* template = &assets.models.try_get(playback.model)!.data;
             if (catch excuse = validate_generalized_motion(
@@ -164,6 +157,9 @@ fn PreparedTransition? prepare_animation_transition(
     )!;
     defer catch release_prepared_transition(&prepared);
 
+    bool generalized;
+    foreach (target : desc.actions) generalized |= target.play.extraction.generalized;
+
     foreach (index, target : desc.actions) {
         prepared.actions[index] = prepare_playback_action(
             allocator: playback.allocator,
@@ -173,7 +169,7 @@ fn PreparedTransition? prepare_animation_transition(
             destination: destination,
             motion_basis: motion_basis,
             root_node: playback.root_node,
-            precise_rotation: playback.inertial != null || target.play.extraction.generalized,
+            precise_rotation: generalized,
         )!;
         prepared.action_count++;
 
@@ -184,7 +180,6 @@ fn PreparedTransition? prepare_animation_transition(
             action: &prepared.actions[index],
             root_node: playback.root_node,
             motion_basis: motion_basis,
-            derivatives_enabled: playback.inertial != null,
         )!;
 
         if (target.play.mask) {

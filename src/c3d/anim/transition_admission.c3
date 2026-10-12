@@ -62,10 +62,14 @@ fn TransitionMotionIdentity? validate_transition_motion_identity(
       || !destination.present[playback.root_node] || !motion_basis.root_present || !motion_basis.parent_space
       || !motion_basis.ancestors_parent_space) return c3d::INVALID_ARGUMENT~;
 
+    // Positive source and baseline scales keep every blended consumed scale positive for the log residual.
     for (int node = (int)playback.root_node; node >= 0; node = template.nodes[node].parent) {
         if (!destination.present[node]) return c3d::INVALID_ARGUMENT~;
         foreach (component : destination.pose[node].scale) {
             if (component <= 0) return c3d::INVALID_ARGUMENT~;
+        }
+        foreach (component : destination.base_pose[node].scale) {
+            if (!(component > 0) || !math::is_finite(component)) return c3d::INVALID_ARGUMENT~;
         }
     }
 

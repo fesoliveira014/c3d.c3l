@@ -11,7 +11,6 @@ import std::math;
 
 const double INERTIAL_TEST_MATRIX_EPSILON @local = 1e-4;
 const double INERTIAL_TEST_RATE_EPSILON @local = 1e-4;
-const double INERTIAL_TEST_SCALAR_EPSILON @local = 1e-6;
 const double INERTIAL_TEST_ORACLE_SERIES_LIMIT @local = 0.01;
 const double POSE_TEST_FLOAT_EPSILON @local = 2e-6;
 const double POSE_TEST_RATE_EPSILON @local = 1e-10;
@@ -76,22 +75,6 @@ struct TransitionPrepareSnapshot @local {
     char[] planar;
     uint action_count;
     uint free_count;
-}
-
-fn InertialScalarState sample_test_log_scale(
-    InertialScalarState source,
-    InertialScalarState target,
-    double duration,
-    double elapsed,
-) @local {
-    InertialScalarState onset = anim::inertial_onset_scale_residual(source, target);
-    InertialScalarState residual = anim::inertial_scalar_residual(
-        offset: onset.value,
-        velocity: onset.rate,
-        duration: duration,
-        elapsed: elapsed,
-    );
-    return anim::inertial_correct_log_scale(residual, target);
 }
 
 fn Matrix3 inertial_oracle_identity() @local {
@@ -240,11 +223,6 @@ fn void inertial_assert_rate(double[<3>] actual, double[<3>] expected) @local {
     assert((actual - expected).length() <= INERTIAL_TEST_RATE_EPSILON * (1 + expected.length()));
 }
 
-fn void inertial_assert_scalar(InertialScalarState actual, InertialScalarState expected) @local {
-    assert(math::abs(actual.value - expected.value) <= INERTIAL_TEST_SCALAR_EPSILON);
-    assert(math::abs(actual.rate - expected.rate) <= INERTIAL_TEST_RATE_EPSILON * (1 + math::abs(expected.rate)));
-}
-
 fn Quaternion inertial_input_rotation(double[<3>] rotation) @local {
     double angle = rotation.length();
     if (angle == 0) return { .v = { 0, 0, 0, 1 } };
@@ -254,98 +232,30 @@ fn Quaternion inertial_input_rotation(double[<3>] rotation) @local {
 fn void test_animation_inertial_math_quintic_basis_residuals_and_endpoints_are_literal() @test {
     InertialQuinticBasis middle = anim::inertial_quintic_basis(0.5);
     assert(middle.value == 0.5 && middle.velocity == 0.15625);
-    assert(middle.value_rate == -1.875 && middle.velocity_rate == -0.4375);
-    InertialScalarState scalar = anim::inertial_scalar_residual(
+    double scalar = anim::inertial_scalar_residual(
         offset: 3,
         velocity: -2,
         duration: 2,
         elapsed: 1,
     );
-    assert(scalar.value == 0.875 && scalar.rate == -1.9375);
-    InertialVectorState vector = anim::inertial_vector_residual(
+    assert(scalar == 0.875);
+    double[<3>] vector = anim::inertial_vector_residual(
         offset: { 3, -4, 0.5 },
         velocity: { -2, 1.5, 5 },
         duration: 2,
         elapsed: 1,
     );
-    assert(vector.value == (double[<3>]){ 0.875, -1.53125, 1.8125 });
-    assert(vector.rate == (double[<3>]){ -1.9375, 3.09375, -2.65625 });
-    InertialScalarState onset = anim::inertial_scalar_residual(
-        offset: 3,
-        velocity: -2,
-        duration: 2,
-        elapsed: 0,
-    );
-    assert(onset.value == 3 && onset.rate == -2);
-    InertialScalarState finished = anim::inertial_scalar_residual(
-        offset: 3,
-        velocity: -2,
-        duration: 2,
-        elapsed: 3,
-    );
-    assert(finished.value == 0 && finished.rate == 0);
-    InertialScalarState zero = anim::inertial_scalar_residual(
-        offset: 3,
-        velocity: -2,
-        duration: 0,
-        elapsed: 0,
-    );
-    assert(zero.value == 0 && zero.rate == 0);
-}
-
-fn void test_animation_inertial_math_log_scale_preserves_positive_physical_velocity() @test {
-    InertialScalarState source = { .value = 1, .rate = -10 };
-    InertialScalarState target = { .value = 1 };
-    InertialScalarState onset = sample_test_log_scale(
-        source: source,
-        target: target,
-        duration: 1,
-        elapsed: 0,
-    );
-    assert(onset.value == 1 && onset.rate == -10);
-    InertialScalarState quarter = sample_test_log_scale(
-        source: source,
-        target: target,
-        duration: 1,
-        elapsed: 0.25,
-    );
-    double expected = math::exp(-1.845703125);
-    assert(math::abs(quarter.value - expected) < 1e-12 && quarter.value > 0);
-    assert(math::abs(quarter.rate - expected * -3.1640625) < 1e-12);
-    InertialScalarState finished = sample_test_log_scale(
-        source: source,
-        target: target,
-        duration: 1,
-        elapsed: 1,
-    );
-    assert(finished.value == target.value && finished.rate == target.rate);
-    InertialScalarState tiny = sample_test_log_scale(
-        source: { .value = 1e-30, .rate = -1e-29 },
-        target: { .value = 2e-30, .rate = 1e-30 },
-        duration: 0.1,
-        elapsed: 0,
-    );
-    assert(tiny.value > 0 && math::abs(tiny.value / 1e-30 - 1) < 1e-12);
-    assert(math::abs(tiny.rate / 1e-30 + 10) < 1e-12);
-    InertialScalarState captured = anim::inertial_onset_scale_residual(
-        source: { .value = 1.5, .rate = -0.2 },
-        target: { .value = 0.8, .rate = 0.1 },
-    );
-    InertialScalarState residual = anim::inertial_scalar_residual(
-        offset: captured.value,
-        velocity: captured.rate,
-        duration: 1,
-        elapsed: 0.5,
-    );
-    InertialScalarState moving = anim::inertial_correct_log_scale(residual, { .value = 0.85, .rate = 0.1 });
-    inertial_assert_scalar(moving, { .value = 1.1178652244448, .rate = -1.0597064352490 });
-    InertialScalarState unrelated = anim::inertial_scalar_residual(
-        offset: -2,
-        velocity: -10,
-        duration: 1,
-        elapsed: 0.25,
-    );
-    assert(-1 + unrelated.value < 0);
+    assert(vector == (double[<3>]){ 0.875, -1.53125, 1.8125 });
+    double[3][3] controls = { { 2, 0, 3 }, { 2, 3, 0 }, { 0, 0, 0 } };
+    foreach (control : controls) {
+        double value = anim::inertial_scalar_residual(
+            offset: 3,
+            velocity: -2,
+            duration: control[0],
+            elapsed: control[1],
+        );
+        assert(value == control[2]);
+    }
 }
 
 fn void test_animation_inertial_math_half_turn_ties_and_transported_onset_rate() @test {
@@ -407,16 +317,14 @@ fn void test_animation_inertial_math_fixed_angles_signs_and_series_boundary() @t
             Quaternion signed_target = (signs & 2) != 0 ? -target : target;
             double[<3>] initial = anim::inertial_rotation_log(signed_source.mul(signed_target.conjugate()));
             double[<3>] initial_rate = anim::inertial_onset_rotation_rate(initial, source_rate, target_rate);
-            InertialRotationState actual = anim::inertial_correct_rotation(
+            Quaternion actual = anim::inertial_correct_rotation(
                 initial: initial,
                 initial_rate: initial_rate,
                 duration: 0.7,
                 elapsed: 0,
                 target: signed_target,
-                target_rate: target_rate,
             );
-            inertial_assert_matrix(actual.orientation, inertial_oracle_quaternion_matrix(signed_source));
-            inertial_assert_rate(actual.angular_velocity, source_rate);
+            inertial_assert_matrix(actual, inertial_oracle_quaternion_matrix(signed_source));
             inertial_assert_rate(
                 actual: inertial_oracle_spatial_rate(
                     rotation: initial,
@@ -433,59 +341,39 @@ fn void test_animation_inertial_math_fixed_angles_signs_and_series_boundary() @t
 fn void test_animation_inertial_math_zero_completion_and_repeated_corrected_interruptions() @test {
     double[<3>] initial = { 0.4, -0.8, 0.2 };
     Quaternion target = inertial_input_rotation({ 0.2, 0.1, -0.5 });
-    double[<3>] source_rate = { -0.4, 0.7, 1.1 };
-    double[<3>] target_rate = { 0.2, -0.6, 0.3 };
-    double[<3>] initial_rate = anim::inertial_onset_rotation_rate(initial, source_rate, target_rate);
-    foreach (double elapsed : { 0.0, 1.0, 2.0 }) {
-        InertialRotationState completed = anim::inertial_correct_rotation(
-            initial: initial,
-            initial_rate: initial_rate,
-            duration: 0,
-            elapsed: elapsed,
-            target: target,
-            target_rate: target_rate,
-        );
-        inertial_assert_matrix(completed.orientation, inertial_oracle_quaternion_matrix(target));
-        inertial_assert_rate(completed.angular_velocity, target_rate);
-    }
-    foreach (double elapsed : { 1.0, 2.0 }) {
-        InertialRotationState completed = anim::inertial_correct_rotation(
-            initial: initial,
-            initial_rate: initial_rate,
-            duration: 1,
-            elapsed: elapsed,
-            target: target,
-            target_rate: target_rate,
-        );
-        inertial_assert_matrix(completed.orientation, inertial_oracle_quaternion_matrix(target));
-        inertial_assert_rate(completed.angular_velocity, target_rate);
+    double[<3>] initial_rate = anim::inertial_onset_rotation_rate(initial, { -0.4, 0.7, 1.1 }, { 0.2, -0.6, 0.3 });
+    foreach (double duration : { 0.0, 1.0 }) {
+        foreach (double elapsed : { 1.0, 2.0 }) {
+            Quaternion completed = anim::inertial_correct_rotation(
+                initial: initial,
+                initial_rate: initial_rate,
+                duration: duration,
+                elapsed: elapsed,
+                target: target,
+            );
+            inertial_assert_matrix(completed, inertial_oracle_quaternion_matrix(target));
+        }
     }
     foreach (double elapsed : { 1e-4, 0.5, 1 - 1e-6, 0.25 }) {
-        Quaternion advanced = inertial_input_rotation(target_rate * elapsed).mul(target);
-        InertialRotationState current = anim::inertial_correct_rotation(
+        Quaternion current = anim::inertial_correct_rotation(
             initial: initial,
             initial_rate: initial_rate,
             duration: 1,
             elapsed: elapsed,
-            target: advanced,
-            target_rate: target_rate,
+            target: target,
         );
         Quaternion replacement = inertial_input_rotation({ -0.3, 0.2, 0.7 });
-        double[<3>] replacement_rate = { -0.1, 0.5, -0.4 };
-        initial = anim::inertial_rotation_log(current.orientation.mul(replacement.conjugate()));
-        initial_rate = anim::inertial_onset_rotation_rate(initial, current.angular_velocity, replacement_rate);
-        InertialRotationState onset = anim::inertial_correct_rotation(
+        initial = anim::inertial_rotation_log(current.mul(replacement.conjugate()));
+        initial_rate = anim::inertial_onset_rotation_rate(initial, { 0.3, 0.1, -0.2 }, { -0.1, 0.5, -0.4 });
+        Quaternion onset = anim::inertial_correct_rotation(
             initial: initial,
             initial_rate: initial_rate,
             duration: 0.8,
             elapsed: 0,
             target: replacement,
-            target_rate: replacement_rate,
         );
-        inertial_assert_matrix(onset.orientation, inertial_oracle_quaternion_matrix(current.orientation));
-        inertial_assert_rate(onset.angular_velocity, current.angular_velocity);
+        inertial_assert_matrix(onset, inertial_oracle_quaternion_matrix(current));
         target = replacement;
-        target_rate = replacement_rate;
     }
 }
 
@@ -874,9 +762,7 @@ fn void apply_pose_test_case(PoseTestCase* sample, double elapsed, double durati
     anim::apply_inertial_pose(
         row: &sample.storage.rows[0],
         target_pose: sample.target[..],
-        target_velocity: sample.velocity[..],
         target_morph: sample.target_morph[..],
-        target_morph_rate: sample.morph_rate[..],
         consumed_scale: sample.consumed[..],
         duration: duration,
         elapsed: elapsed,
@@ -966,24 +852,17 @@ fn void test_animation_inertial_pose_no_history_display_onset_and_extreme_morph_
     for (uint node = 0; node < 2; node++) for (uint axis = 0; axis < 3; axis++) {
         assert(sample.target[node].position[axis] == sample.source[node].position[axis]);
         assert(sample.target[node].scale[axis] == sample.source[node].scale[axis]);
-        pose_test_near(sample.velocity[node].translation[axis], 0);
-        pose_test_near(sample.velocity[node].scale[axis], 0);
     }
-    for (uint index = 0; index < 3; index++) {
-        assert(sample.target_morph[index] == sample.source_morph[index]);
-        pose_test_near(sample.morph_rate[index], 0);
-    }
+    for (uint index = 0; index < 3; index++) assert(sample.target_morph[index] == sample.source_morph[index]);
     assert(!row.control.history_valid && row.control.active);
     assert(row.control.duration == 4 && row.control.elapsed == 0.5 && row.control.previous_dt == 0);
     assert(row.previous_pose[0].position.x == 0 && row.previous_morph[0] == 0);
     sample.target[0].position = { 9, 8, 7 };
     sample.target[0].scale = { 1, 2, 3 };
     sample.target_morph = { 0.75f, -float::max, float::max };
-    sample.morph_rate = { 0.2, 0, 0 };
     apply_pose_test_case(&sample, 1);
     assert(sample.target[0].position.x == 9 && sample.target[0].scale == (Vec3){ 1, 2, 3 });
     assert(sample.target_morph[1] == -float::max && sample.target_morph[2] == float::max);
-    assert(sample.morph_rate[0] == 0.2);
 }
 
 fn void test_animation_inertial_pose_moving_target_literal_residuals_and_interruption() @test {
@@ -1012,35 +891,26 @@ fn void test_animation_inertial_pose_moving_target_literal_residuals_and_interru
         .values = translations[..],
     };
     double[3] value;
-    double[3] rate;
     uint cursor;
     anim::sample_track_analytic(
         track: &translation,
         time: 0.25f,
         cursor: &cursor,
         value: value[..],
-        rate: rate[..],
     );
     sample.target[0].position = { (float)value[0], (float)value[1], (float)value[2] };
-    sample.velocity[0].translation = { rate[0], rate[1], rate[2] };
     sample.target[0].scale = { -1.875f, 0.9375f, -0.95f };
     sample.target[0].rotation = pose_test_turn(0.1);
     sample.target_morph[0] = -0.75f;
     double[3] expected_position = { 3.6513671875, -1.662109375, 0.8310546875 };
-    double[3] expected_velocity = { -3.53515625, 3.4765625, -1.73828125 };
     double[3] expected_scale = { -1.07080078125, 1.880126953125, -2.7798828005791 };
-    double[3] expected_scale_rate = { -0.712890625, -1.2255859375, 2.24609375 };
     apply_pose_test_case(&sample, 0.25);
     for (uint axis = 0; axis < 3; axis++) {
         pose_test_near(sample.target[0].position[axis], expected_position[axis], POSE_TEST_FLOAT_EPSILON);
-        pose_test_near(sample.velocity[0].translation[axis], expected_velocity[axis]);
         pose_test_near(sample.target[0].scale[axis], expected_scale[axis], POSE_TEST_FLOAT_EPSILON);
-        pose_test_near(sample.velocity[0].scale[axis], expected_scale_rate[axis]);
     }
     pose_test_near(pose_test_turn_angle(sample.target[0].rotation), 0.026171875, POSE_TEST_FLOAT_EPSILON);
-    pose_test_near(sample.velocity[0].angular.z, 0.2734375);
     pose_test_near(sample.target_morph[0], -0.486328125, POSE_TEST_FLOAT_EPSILON);
-    pose_test_near(sample.morph_rate[0], 0.15625);
     record_pose_test_case(&sample, false, 0.25);
     for (uint axis = 0; axis < 3; axis++) {
         pose_test_near(
@@ -1060,8 +930,6 @@ fn void test_animation_inertial_pose_moving_target_literal_residuals_and_interru
     );
     sample.source = sample.target;
     sample.source_morph = sample.target_morph;
-    PoseVelocity source_rate = row.velocity[0];
-    double source_morph_rate = row.morph_velocity[0];
     sample.target[0] = {
         .position = { -5, 1, 2 },
         .rotation = pose_test_turn(0.7),
@@ -1080,16 +948,12 @@ fn void test_animation_inertial_pose_moving_target_literal_residuals_and_interru
         assert(sample.target[0].position[axis] == sample.source[0].position[axis]);
         assert(sample.target[0].scale[axis] == sample.source[0].scale[axis]);
     }
-    pose_test_vector(sample.velocity[0].translation, source_rate.translation);
-    pose_test_vector(sample.velocity[0].scale, source_rate.scale);
-    pose_test_vector(sample.velocity[0].angular, source_rate.angular);
     pose_test_near(
         actual: pose_test_turn_angle(sample.target[0].rotation),
         expected: pose_test_turn_angle(sample.source[0].rotation),
         epsilon: POSE_TEST_FLOAT_EPSILON,
     );
     assert(sample.target_morph[0] == sample.source_morph[0]);
-    pose_test_near(sample.morph_rate[0], source_morph_rate);
 }
 
 fn void test_animation_inertial_pose_consumed_log_scale_and_unrelated_linear_scale() @test {
@@ -1112,9 +976,7 @@ fn void test_animation_inertial_pose_consumed_log_scale_and_unrelated_linear_sca
     for (uint axis = 0; axis < 3; axis++) {
         assert(sample.target[0].scale[axis] > 0 && sample.target[1].scale[axis] < 0);
         pose_test_near(sample.target[0].scale[axis], expected_log, POSE_TEST_FLOAT_EPSILON);
-        pose_test_near(sample.velocity[0].scale[axis], expected_log * -3.1640625);
         pose_test_near(sample.target[1].scale[axis], -1 - 1.845703125, POSE_TEST_FLOAT_EPSILON);
-        pose_test_near(sample.velocity[1].scale[axis], -3.1640625);
     }
     sample.source[0].scale = { 2, 2, 2 };
     sample.target = sample.source;
@@ -1128,7 +990,6 @@ fn void test_animation_inertial_pose_consumed_log_scale_and_unrelated_linear_sca
       && sample.target[0].scale.y == sample.target[0].scale.z);
     for (uint axis = 0; axis < 3; axis++) {
         pose_test_near(sample.target[0].scale[axis], 0.7485780154827066, POSE_TEST_FLOAT_EPSILON);
-        pose_test_near(sample.velocity[0].scale[axis], -1.6363091796081373);
     }
 }
 
@@ -1182,20 +1043,14 @@ fn void test_animation_inertial_pose_zero_step_and_tiny_dt_use_finite_double_his
     apply_pose_test_case(&sample, 0);
     for (uint axis = 0; axis < 3; axis++) {
         assert(sample.target[0].position[axis] == float::max && sample.target[0].scale[axis] == float::max);
-        pose_test_near(sample.velocity[0].translation[axis], expected_rate);
-        pose_test_near(sample.velocity[0].scale[axis], expected_rate);
     }
-    assert(sample.target_morph[0] == float::max && math::is_finite(sample.morph_rate[0]));
-    pose_test_near(sample.morph_rate[0], expected_rate);
+    assert(sample.target_morph[0] == float::max);
     sample.target[0].position = { -float::max, -float::max, -float::max };
     sample.target[0].scale = { -float::max, -float::max, -float::max };
     sample.target_morph[0] = -float::max;
-    sample.velocity = {};
-    sample.morph_rate = {};
     apply_pose_test_case(&sample, 1);
     assert(sample.target[0].position.x == -float::max && sample.target[0].scale.x == -float::max);
-    assert(sample.target_morph[0] == -float::max && sample.morph_rate[0] == 0);
-    pose_test_vector(sample.velocity[0].translation, {});
+    assert(sample.target_morph[0] == -float::max);
 }
 
 fn void test_animation_inertial_pose_reserved_rows_do_not_acquire_or_resize() @test {
@@ -2088,7 +1943,7 @@ fn void test_animation_inertial_instant_play_and_stop_invalidate_history() @test
     assert(inertial_owner_row(&fixture).velocity[3].translation.z == 0);
 }
 
-fn void test_animation_inertial_owner_plays_degenerate_rotations_without_faulting() @test {
+fn void test_animation_inertial_owner_accepts_degenerate_rotations_without_faulting() @test {
     LayerFixture fixture;
     create_inertial_owner(&fixture);
     defer destroy_layer_fixture(&fixture);
@@ -2110,6 +1965,12 @@ fn void test_animation_inertial_owner_plays_degenerate_rotations_without_faultin
     AnimationTargetDesc[1] description = { anim::ANIMATION_TARGET_DEFAULT };
     description[0].clip = target;
     fixture.animator.inertialize(&fixture.assets, { .duration = 0.5f, .actions = description[..] })!!;
+
+    AnimationTargetDesc[2] degenerate_targets = { description[0], description[0] };
+    degenerate_targets[1].clip = degenerate;
+    degenerate_targets[1].play.layer = 1;
+    fixture.animator.inertialize(&fixture.assets, { .duration = 0.5f, .actions = degenerate_targets[..] })!!;
+    assert(inertial_owner_row(&fixture).offset[3].angular == (double[<3>]){});
 
     fixture.animator.play(&fixture.assets, degenerate, { .layer = 1 })!!;
     anim::update(&fixture.assets, &fixture.scene, 0.125f);
@@ -2245,74 +2106,62 @@ fn void test_animation_inertial_request_consumed_scale_follows_geometric_midpoin
     assert(inertial_owner_pose(&fixture, 2).scale == (Vec3){ 1, 1, 1 });
 }
 
-fn void test_animation_inertial_request_real_scale_histories_reject_long_and_accept_short_duration_atomically() @test {
+fn void test_animation_inertial_request_consumed_scale_residual_clamps_to_float_range() @test {
     foreach (double sign : { -1.0, 1.0 }) {
-        TrackingAllocator tracker;
-        tracker.init(mem);
-        defer tracker.free();
-        {
-            MotionTestAllocator allocator = { .backing = &tracker };
-            LayerFixture fixture;
-            create_inertial_owner(&fixture, &allocator);
-            defer destroy_layer_fixture(&fixture);
-            float scale = 0x1p-100f;
-            float step = 0x1p-11f;
-            float[2] source_times = { 0, step };
-            float first = sign < 0 ? 0x1.8p-100f : 0x1p-101f;
-            float[6] source_values = { first, first, first, scale, scale, scale };
-            float[2] target_times = { 0, 1 };
-            float[6] target_values = { scale, scale, scale, scale, scale, scale };
-            ClipId source = inertial_owner_clip(
-                owner: &fixture,
-                path: TargetPath.SCALE,
-                interpolation: Interpolation.LINEAR,
-                times: source_times[..],
-                values: source_values[..],
-                node: 2,
-            );
-            ClipId target = inertial_owner_clip(
-                owner: &fixture,
-                path: TargetPath.SCALE,
-                interpolation: Interpolation.LINEAR,
-                times: target_times[..],
-                values: target_values[..],
-                node: 2,
-            );
-            ModelInstance* instance = fixture.scene.get(fixture.root, ModelInstance);
-            instance.base_pose[2].scale = { scale, scale, scale };
-            PlayDesc generalized = request_generalized_desc();
-            AnimationActionId id = fixture.animator.play(&fixture.assets, source, generalized)!!;
-            PlaybackView playback = fixture.animator.playback();
-            Action* action = playback.actions.get(id);
-            action.loop = false;
-            action.playing = false;
-            anim::update(&fixture.assets, &fixture.scene, step);
-            action.playing = true;
-            anim::update(&fixture.assets, &fixture.scene, step);
-            assert(inertial_owner_pose(&fixture, 2).scale.x == scale);
-            assert(inertial_owner_row(&fixture).velocity[2].scale.x == sign * 0x1p-90);
-            AnimationTargetDesc[1] description = { anim::ANIMATION_TARGET_DEFAULT };
-            description[0].clip = target;
-            description[0].play = generalized;
-            @pool() {
-                RequestBlockSnapshot[] snapshot = request_snapshot_blocks(&tracker);
-                uint calls = allocator.attempts;
-                assert(@catch(fixture.animator.inertialize(
-                    assets: &fixture.assets,
-                    desc: { .duration = 1, .actions = description[..] },
-                )) == c3d::INVALID_ARGUMENT);
-                assert(allocator.attempts == calls);
-                request_assert_blocks_unchanged(&tracker, snapshot);
-            };
-            fixture.animator.inertialize(&fixture.assets, { .duration = 0x1p-6f, .actions = description[..] })!!;
-            assert(inertial_owner_pose(&fixture, 2).scale.x == scale);
-            anim::update(&fixture.assets, &fixture.scene, 0x1p-8f);
-            double expected = 0x1p-100 * math::exp(sign * 2.953125);
-            Vec3 actual = inertial_owner_pose(&fixture, 2).scale;
-            assert(math::abs((double)actual.x / expected - 1) < 1e-5);
-            assert(actual.x > 0 && math::is_finite(actual.x) && actual.x == actual.y && actual.y == actual.z);
-        }
-        assert(!tracker.has_leaks());
+        LayerFixture fixture;
+        create_inertial_owner(&fixture);
+        defer destroy_layer_fixture(&fixture);
+        float scale = 0x1p-100f;
+        float step = 0x1p-11f;
+        float[2] source_times = { 0, step };
+        float first = sign < 0 ? 0x1.8p-100f : 0x1p-101f;
+        float[6] source_values = { first, first, first, scale, scale, scale };
+        float[2] target_times = { 0, 1 };
+        float[6] target_values = { scale, scale, scale, scale, scale, scale };
+        ClipId source = inertial_owner_clip(
+            owner: &fixture,
+            path: TargetPath.SCALE,
+            interpolation: Interpolation.LINEAR,
+            times: source_times[..],
+            values: source_values[..],
+            node: 2,
+        );
+        ClipId target = inertial_owner_clip(
+            owner: &fixture,
+            path: TargetPath.SCALE,
+            interpolation: Interpolation.LINEAR,
+            times: target_times[..],
+            values: target_values[..],
+            node: 2,
+        );
+        ModelInstance* instance = fixture.scene.get(fixture.root, ModelInstance);
+        instance.base_pose[2].scale = { scale, scale, scale };
+        PlayDesc generalized = request_generalized_desc();
+        AnimationActionId id = fixture.animator.play(&fixture.assets, source, generalized)!!;
+        Action* action = fixture.animator.action(id);
+        action.loop = false;
+        action.playing = false;
+        anim::update(&fixture.assets, &fixture.scene, step);
+        action.playing = true;
+        anim::update(&fixture.assets, &fixture.scene, step);
+        assert(inertial_owner_row(&fixture).velocity[2].scale.x == sign * 0x1p-90);
+
+        AnimationTargetDesc[1] description = { anim::ANIMATION_TARGET_DEFAULT };
+        description[0].clip = target;
+        description[0].play = generalized;
+        instance.base_pose[2].scale = {};
+        assert(@catch(fixture.animator.inertialize(
+            assets: &fixture.assets,
+            desc: { .duration = 1, .actions = description[..] },
+        )) == c3d::INVALID_ARGUMENT);
+        assert(c3d::same_id(fixture.animator.try_action(id)!!.clip, source));
+        instance.base_pose[2].scale = { scale, scale, scale };
+
+        fixture.animator.inertialize(&fixture.assets, { .duration = 1, .actions = description[..] })!!;
+        anim::update(&fixture.assets, &fixture.scene, 0.25f);
+        Vec3 actual = inertial_owner_pose(&fixture, 2).scale;
+        assert(actual.x == (sign < 0 ? 0x1p-126f : float::max));
+        assert(actual.x == actual.y && actual.y == actual.z);
     }
 }
 
@@ -2566,91 +2415,6 @@ fn void test_animation_planar_extract_yaw_and_translation_actions_remain_composa
         RootMotionDelta delta = fixture.animator.root_motion;
         assert(delta.translation == (Vec3){ 0.25f, 0, 0 });
         assert(delta.rotation.v == quaternion::IDENTITY{float}.v);
-    }
-}
-
-fn void test_animation_inertial_request_group_phase_controls_consumed_scale_eligibility_time() @test {
-    foreach (kind : (AnimationSpaceKind[2]){ ONE_DIMENSIONAL, TWO_DIMENSIONAL }) {
-        TrackingAllocator tracker;
-        tracker.init(mem);
-        defer tracker.free();
-        {
-            MotionTestAllocator allocator = { .backing = &tracker };
-            LayerFixture fixture;
-            create_inertial_owner(&fixture, &allocator);
-            defer destroy_layer_fixture(&fixture);
-            float[2] times = { 0, 1 };
-            float[6] source_values = { 0x1p-100, 0x1p-100, 0x1p-100, 0x1p-100, 0x1p-100, 0x1p-100 };
-            float[6] target_values = { 0x1p-100, 0x1p-100, 0x1p-100, 0x1p-90, 0x1p-90, 0x1p-90 };
-            ClipId source = inertial_owner_clip(
-                owner: &fixture,
-                path: TargetPath.SCALE,
-                interpolation: Interpolation.LINEAR,
-                times: times[..],
-                values: source_values[..],
-                node: 2,
-            );
-            ClipId target = inertial_owner_clip(
-                owner: &fixture,
-                path: TargetPath.SCALE,
-                interpolation: Interpolation.LINEAR,
-                times: times[..],
-                values: target_values[..],
-                node: 2,
-            );
-            PlayDesc generalized = request_generalized_desc();
-            fixture.animator.play(&fixture.assets, source, generalized)!!;
-            anim::update(&fixture.assets, &fixture.scene, 0.125f);
-            anim::update(&fixture.assets, &fixture.scene, 0.125f);
-            AnimationTargetDesc[3] targets;
-            foreach (&description : targets) {
-                *description = anim::ANIMATION_TARGET_DEFAULT;
-                description.clip = target;
-                description.play = generalized;
-                description.start_time = 0;
-            }
-            uint[3] members = { 0, 1, 2 };
-            float[2] positions = { 0, 1 };
-            Vec2[3] points = { { 0, 0 }, { 1, 0 }, { 0, 1 } };
-            BlendTriangle[1] triangles = { { .indices = { 0, 1, 2 } } };
-            uint count = kind == ONE_DIMENSIONAL ? 2 : 3;
-            AnimationTransitionSpaceDesc[1] spaces = { {
-                .space = {
-                    .actions = members[:count],
-                    .kind = kind,
-                    .weight = 1,
-                    .speed = 1,
-                    .playing = true,
-                },
-            } };
-            switch (kind) {
-                case ONE_DIMENSIONAL:
-                    spaces[0].space.positions = positions[..];
-                case TWO_DIMENSIONAL:
-                    spaces[0].space.points = points[..];
-                    spaces[0].space.triangles = triangles[..];
-            }
-            @pool() {
-                RequestBlockSnapshot[] snapshot = request_snapshot_blocks(&tracker);
-                uint acquisitions = allocator.attempts;
-                assert(@catch(fixture.animator.inertialize(
-                    assets: &fixture.assets,
-                    desc: { .duration = 1, .actions = targets[:count], .spaces = spaces[..] },
-                )) == c3d::INVALID_ARGUMENT);
-                assert(allocator.attempts == acquisitions);
-                request_assert_blocks_unchanged(&tracker, snapshot);
-            };
-            spaces[0].phase = 0.5f;
-            fixture.animator.inertialize(
-                assets: &fixture.assets,
-                desc: { .duration = 1, .actions = targets[:count], .spaces = spaces[..] },
-            )!!;
-            PlaybackView playback = fixture.animator.playback();
-            assert(*playback.action_count == count);
-            foreach (id : playback.order[:count]) assert(playback.actions.get(id).time == 0.5f);
-            assert(inertial_owner_pose(&fixture, 2).scale == (Vec3){ 0x1p-100, 0x1p-100, 0x1p-100 });
-        }
-        assert(!tracker.has_leaks());
     }
 }
 

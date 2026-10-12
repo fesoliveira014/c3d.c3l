@@ -100,7 +100,6 @@ fn void? prepare_action_motion_capture(
     Action* action,
     uint root_node,
     MotionBasis motion_basis,
-    bool derivatives_enabled = false,
 ) @private {
     if (!action.extraction.generalized) return;
 
@@ -129,29 +128,13 @@ fn void? prepare_action_motion_capture(
     )!;
     defer catch destroy_captured_motion_chain(captured);
 
-    if (!derivatives_enabled) {
-        captured.pose_scale_sums = alloc::new_array_try(allocator, double[<3>], template.nodes.len)
-          ?? c3d::CAPACITY_EXCEEDED~!;
-    }
+    captured.pose_scale_sums = alloc::new_array_try(allocator, double[<3>], template.nodes.len)
+      ?? c3d::CAPACITY_EXCEEDED~!;
 
     captured.model = model;
 
     action.motion_chain = captured;
     action.motion_reference = capture_generalized_motion_reference(captured, clip);
-}
-
-fn void? validate_inertial_rotation_domains(AnimationClip* clip) @private {
-    bool unsupported;
-    foreach (&track : clip.tracks) {
-        if (track.path != TargetPath.ROTATION) continue;
-
-        if (catch excuse = validate_motion_rotation_track(track)) {
-            if (excuse != c3d::UNSUPPORTED) return excuse~;
-            unsupported = true;
-        }
-    }
-
-    if (unsupported) return c3d::UNSUPPORTED~;
 }
 
 fn void? validate_live_motion_addition(

@@ -152,8 +152,7 @@ fn BlendSpace1D*? PlaybackView.add_blend_space(
             destination: destination,
             motion_basis: motion_basis,
             root_node: self.root_node,
-            precise_rotation: self.inertial != null || desc.extraction.generalized
-              || generalized_playback_chain(self) != null,
+            precise_rotation: desc.extraction.generalized || generalized_playback_chain(self) != null,
         )!;
         prepared_count++;
         prepare_action_motion_capture(
@@ -163,7 +162,6 @@ fn BlendSpace1D*? PlaybackView.add_blend_space(
             action: &prepared[prepared_count - 1],
             root_node: self.root_node,
             motion_basis: motion_basis,
-            derivatives_enabled: self.inertial != null,
         )!;
     }
 
@@ -252,7 +250,6 @@ fn void advance_blend_spaces(PlaybackView* playback, AssetStore* assets, float d
             speed: space.speed,
             playing: space.playing,
             duration: duration,
-            derivatives_enabled: playback.inertial != null,
         );
         space.phase = phase.phase;
 
@@ -266,8 +263,6 @@ fn void advance_blend_spaces(PlaybackView* playback, AssetStore* assets, float d
                 duration: clip_duration,
                 normalized: normalized,
                 weight: space.weight,
-                weight_rate: playback.inertial ? blend_space_weight_rate(fade) : 0,
-                derivatives_enabled: playback.inertial != null,
             );
         }
     }

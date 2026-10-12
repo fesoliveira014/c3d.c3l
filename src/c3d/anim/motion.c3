@@ -127,28 +127,15 @@ fn Vec3 motion_position(
     StepSampleSide side = StepSampleSide.EXACT,
 ) @private {
     if (action.translation_track == NO_MOTION_TRACK) return {};
-    if (side != StepSampleSide.EXACT) {
-        double[3] values;
-        double[3] rate;
-        uint cursor;
-        sample_track_analytic(
-            track: &clip.tracks[action.translation_track],
-            time: time,
-            cursor: &cursor,
-            value: values[..],
-            rate: rate[..],
-            side: side,
-        );
-        return { (float)values[0], (float)values[1], (float)values[2] };
-    }
 
     float[3] values;
     uint cursor;
-    sample_track(
+    sample_track_on_side(
         track: &clip.tracks[action.translation_track],
         time: time,
         cursor: &cursor,
         out: values[..],
+        side: side,
     );
     return { values[0], values[1], values[2] };
 }
@@ -160,28 +147,15 @@ fn Quat motion_rotation(
     StepSampleSide side = StepSampleSide.EXACT,
 ) @private {
     if (action.rotation_track == NO_MOTION_TRACK) return quaternion::IDENTITY;
-    if (side != StepSampleSide.EXACT) {
-        double[4] values;
-        double[4] rate;
-        uint cursor;
-        sample_track_analytic(
-            track: &clip.tracks[action.rotation_track],
-            time: time,
-            cursor: &cursor,
-            value: values[..],
-            rate: rate[..],
-            side: side,
-        );
-        return { .v = { (float)values[0], (float)values[1], (float)values[2], (float)values[3] } };
-    }
 
     float[4] values;
     uint cursor;
-    sample_track(
+    sample_track_on_side(
         track: &clip.tracks[action.rotation_track],
         time: time,
         cursor: &cursor,
         out: values[..],
+        side: side,
     );
     return { .v = { values[0], values[1], values[2], values[3] } };
 }
