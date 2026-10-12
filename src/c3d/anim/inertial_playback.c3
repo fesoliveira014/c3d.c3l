@@ -77,12 +77,13 @@ fn AnimationTransitionResult begin_prepared_inertial_transition(
     AnimationTransitionResult installed = install_animation_transition(playback, assets, prepared);
     capture_consumed_scale_nodes(playback, row.consumed_scale);
 
+    float lead = inertial_onset_lead(playback, assets);
     evaluate_onset_target(
         playback: playback,
         assets: assets,
         destination: destination,
         scratch: scratch,
-        lead: INERTIAL_ONSET_LEAD,
+        lead: lead,
     );
     inertial.lead_pose[..] = destination.pose[..];
     read_inertial_morphs(destination.morph_weights, inertial.lead_morph);
@@ -97,10 +98,13 @@ fn AnimationTransitionResult begin_prepared_inertial_transition(
     read_inertial_morphs(destination.morph_weights, inertial.morph);
 
     foreach (index, target : destination.pose) {
-        inertial.velocity[index] = inertial_pose_rate(target, inertial.lead_pose[index], INERTIAL_ONSET_LEAD);
+        Transform ahead = inertial.lead_pose[index];
+        inertial.velocity[index] = lead > 0
+          ? inertial_pose_rate(target, ahead, INERTIAL_ONSET_LEAD)
+          : inertial_pose_rate(ahead, target, INERTIAL_ONSET_LEAD);
     }
     foreach (index, target : inertial.morph) {
-        inertial.morph_rate[index] = ((double)inertial.lead_morph[index] - (double)target) / INERTIAL_ONSET_LEAD;
+        inertial.morph_rate[index] = ((double)inertial.lead_morph[index] - (double)target) / lead;
     }
 
     capture_inertial_pose_residuals(
@@ -184,6 +188,19 @@ fn void advance_inertial_elapsed(InertialRow* row, double dt) @private {
 
 fn void invalidate_inertial_history(PlaybackView* playback) @private {
     if (playback.inertial) playback.inertial.control.history_valid = false;
+}
+
+// A looping clock that would cross its clip end within the step takes the difference backward instead.
+fn float inertial_onset_lead(PlaybackView* playback, AssetStore* assets) @local {
+    foreach (id : playback.order[:*playback.action_count]) {
+        Action* action = playback.actions.get(id);
+        if (!action.loop && !action.blend_space) continue;
+
+        double ahead = (double)action.time + action_clock_rate(action) * INERTIAL_ONSET_LEAD;
+        if (ahead < 0 || ahead > (double)assets.clip(action.clip).data.duration) return -INERTIAL_ONSET_LEAD;
+    }
+
+    return INERTIAL_ONSET_LEAD;
 }
 
 fn void evaluate_onset_target(

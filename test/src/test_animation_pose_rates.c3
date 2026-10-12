@@ -7,6 +7,11 @@ import std::math;
 
 const double ONSET_RATE_TEST_EPSILON @local = 1e-3;
 
+struct OnsetRateCase @local {
+    float start;
+    bool playing;
+}
+
 fn void test_animation_analytic_sample_step_sides_keys_endpoints_and_normal_cursor() @test {
     float[3] times = { 0, 0.5f, 1 };
     float[9] values = { 0, 0, 0, 10, 20, -5, 30, 40, -10 };
@@ -85,8 +90,29 @@ fn void test_animation_analytic_sample_tiny_huge_rotation_keys_remain_normalized
     }
 }
 
+fn void test_animation_analytic_sample_cubic_value_at_segment_midpoint() @test {
+    float[2] times = { -1, 1 };
+    float[18] values = { 99, 99, 99, 1, -2, 0, 1, 0.25f, 0, 4, 0.75f, 1.5f, 4, -0.5f, 1, -99, -99, -99 };
+    Track track = { .path = TargetPath.TRANSLATION, .interpolation = Interpolation.CUBIC_SPLINE,
+        .times = times[..], .values = values[..] };
+    uint cursor;
+    double[3] actual;
+    anim::sample_track_analytic(
+        track: &track,
+        time: 0,
+        cursor: &cursor,
+        value: actual[..],
+    );
+    assert(actual == (double[3]){ 1.75, -1.375, 0.125 });
+}
+
 fn void test_animation_inertial_onset_target_velocity_follows_the_target_clock() @test {
-    foreach (bool playing : { true, false }) {
+    OnsetRateCase[3] cases = {
+        { .start = 0.25f, .playing = true },
+        { .start = 0, .playing = true },
+        { .start = 0.25f, .playing = false },
+    };
+    foreach (sample : cases) {
         LayerFixture fixture;
         create_inertial_owner(&fixture);
         defer destroy_layer_fixture(&fixture);
@@ -116,22 +142,44 @@ fn void test_animation_inertial_onset_target_velocity_follows_the_target_clock()
             targets: targets[..],
             duration: 1,
         );
+        float[4] step_times = { 0, 0.499f, 0.501f, 1 };
+        float[12] step_positions = { 0, 0, 0, 5, 0, 0, 10, 0, 0, 10, 0, 0 };
+        ClipId stepped = inertial_owner_clip(
+            owner: &fixture,
+            path: TargetPath.TRANSLATION,
+            interpolation: Interpolation.STEP,
+            times: step_times[..],
+            values: step_positions[..],
+            node: 1,
+        );
+        ClipId held = inertial_owner_translation(&fixture, { 0, 4, 0 }, { 0, 4, 0 }, 2);
         AnimationActionId source = fixture.animator.play(&fixture.assets, clip)!!;
-        fixture.animator.action(source).time = 0.25f;
+        fixture.animator.action(source).time = sample.start;
         fixture.animator.action(source).playing = false;
         anim::update(&fixture.assets, &fixture.scene, 0);
 
-        AnimationTargetDesc[1] request = { anim::ANIMATION_TARGET_DEFAULT };
+        AnimationTargetDesc[3] request = { anim::ANIMATION_TARGET_DEFAULT, anim::ANIMATION_TARGET_DEFAULT,
+            anim::ANIMATION_TARGET_DEFAULT };
         request[0].clip = clip;
-        request[0].start_time = 0.25f;
+        request[0].start_time = sample.start;
         request[0].speed = -2;
-        request[0].playing = playing;
+        request[0].playing = sample.playing;
+        request[1].clip = held;
+        request[1].weight = 0.5f;
+        request[1].play.fade_in = 0.25f;
+        request[2].clip = stepped;
+        request[2].start_time = 0.5f;
         fixture.animator.inertialize(&fixture.assets, { .duration = 0.5f, .actions = request[..] })!!;
 
-        PoseVelocity offset_rate = inertial_owner_row(&fixture).offset_velocity[3];
-        double[<3>] translation = playing ? (double[<3>]){ 8, 16, -4 } : (double[<3>]){};
-        double[<3>] angular = playing ? (double[<3>]){ 0, 2, 0 } : (double[<3>]){};
-        assert((offset_rate.translation - translation).length() < ONSET_RATE_TEST_EPSILON);
-        assert((offset_rate.angular - angular).length() < ONSET_RATE_TEST_EPSILON);
+        InertialRow* row = inertial_owner_row(&fixture);
+        double[<3>] translation = sample.playing ? (double[<3>]){ 8, 16, -4 } : (double[<3>]){};
+        double[<3>] angular = sample.playing ? (double[<3>]){ 0, 2, 0 } : (double[<3>]){};
+        assert((row.offset_velocity[3].translation - translation).length() < ONSET_RATE_TEST_EPSILON);
+        assert((row.offset_velocity[3].angular - angular).length() < ONSET_RATE_TEST_EPSILON);
+        assert(row.offset_velocity[1].translation == (double[<3>]){});
+
+        Vec3 base = fixture.scene.get(fixture.root, ModelInstance).base_pose[2].position;
+        double[<3>] fading = ((double[<3>]){ 0, 4, 0 } - (double[<3>]){ base.x, base.y, base.z }) * -4;
+        assert((row.offset_velocity[2].translation - fading).length() < ONSET_RATE_TEST_EPSILON);
     }
 }
