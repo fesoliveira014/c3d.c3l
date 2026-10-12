@@ -375,13 +375,6 @@ fn void? check_crowd_template(AssetStore* assets, ModelTemplate* template) @priv
             if (!math::is_finite(weight)) return c3d::INVALID_ARGUMENT~;
         }
 
-        foreach (channel_index, channel : geometry.data.channels) {
-            if (!channel.name.len) continue;
-            foreach (previous : geometry.data.channels[:channel_index]) {
-                if (previous.name == channel.name) return c3d::INVALID_ARGUMENT~;
-            }
-        }
-
         weight_stride += width;
         if (weight_stride > uint::max) return c3d::CAPACITY_EXCEEDED~;
     }

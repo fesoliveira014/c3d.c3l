@@ -287,6 +287,16 @@ fn void test_animated_lod_attach_rejects_incompatible_parts() @test {
                 assert(!scene.has(owner, LodGroup));
                 assert(scene.world.entities.free_count == free_nodes && owner.first_child == first_child);
             }
+            Geometry* base = &assets.geometry(assets.model(fixture.mixed).data.meshes[2].geometry).data;
+            String right = base.channels[2].name;
+            base.channels[2].name = base.channels[1].name;
+            assert(@catch(model::attach_animated_lod(
+                assets: &assets,
+                scene: &scene,
+                owner: owner,
+                desc: desc,
+            )) == c3d::INVALID_ARGUMENT);
+            base.channels[2].name = right;
             model::attach_animated_lod(
                 assets: &assets,
                 scene: &scene,

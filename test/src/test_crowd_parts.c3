@@ -650,7 +650,7 @@ fn void assert_parts_admission_fault_preserves_scene(
     assert(scene.count(AnimatedCrowd) == 0 && scene.count(InstancedMesh) == 0);
 }
 
-fn void test_crowd_parts_subset_joints_conflicting_channels_and_nan_defaults_fault_before_mutation() @test {
+fn void test_crowd_parts_subset_joints_and_nan_defaults_leave_scene_unchanged() @test {
     AssetStore assets = parts_store();
     defer asset::destroy_asset_store(&assets);
     PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
@@ -682,29 +682,8 @@ fn void test_crowd_parts_subset_joints_conflicting_channels_and_nan_defaults_fau
     );
     *skin = original_skin;
     *skeleton = original_skeleton;
-    Geometry* geometry = &assets.geometry(fixture.geometries[2]).data;
-    MorphChannel[] original_channels = geometry.channels;
     float[] original_defaults = template.meshes[2].default_morph_weights;
-    float[] original_second_defaults = template.meshes[3].default_morph_weights;
-    defer {
-        geometry.channels = original_channels;
-        template.meshes[2].default_morph_weights = original_defaults;
-        template.meshes[3].default_morph_weights = original_second_defaults;
-    }
-    MorphChannel[2] conflicting = { original_channels[0], original_channels[0] };
-    float[2] defaults = { 0.25f, 0.75f };
-    geometry.channels = conflicting[..];
-    template.meshes[2].default_morph_weights = defaults[..];
-    template.meshes[3].default_morph_weights = defaults[..];
-    assert_parts_admission_fault_preserves_scene(
-        assets: &assets,
-        scene: &scene,
-        tracking: &tracking,
-        model: fixture.mixed,
-    );
-    geometry.channels = original_channels;
-    template.meshes[2].default_morph_weights = original_defaults;
-    template.meshes[3].default_morph_weights = original_second_defaults;
+    defer template.meshes[2].default_morph_weights = original_defaults;
     float[1] nonfinite = { bitcast(0x7fc00000u, float) };
     template.meshes[2].default_morph_weights = nonfinite[..];
     assert_parts_admission_fault_preserves_scene(
