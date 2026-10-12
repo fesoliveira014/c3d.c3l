@@ -35,5 +35,6 @@ void main() {
         false
     );
     float opacity = 1.0 - dot(scattering.transmittance, vec3(1.0 / 3.0));
-    store_storage_texture_3d(root.output_texture, ivec3(texel), vec4(scattering.luminance, opacity));
+    vec3 stored = sky_table_store(scattering.luminance, sky.sky_table_scale);
+    store_storage_texture_3d(root.output_texture, ivec3(texel), vec4(stored, opacity));
 }

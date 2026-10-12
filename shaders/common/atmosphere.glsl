@@ -11,7 +11,10 @@ const uint SKY_MULTI_SCATTERING_STEPS = 20u;
 const uint AERIAL_PERSPECTIVE_STEPS_PER_SLICE = 2u; // the last slice marches 64 steps over 128 km
 const uint ATMOSPHERE_SEGMENT_STEPS = 8u;       // per reflection or probe hit; two table reads a step, the cost lever
 const float SKY_SUN_DISC_LIMIT = 60000.0;        // physical luminance where the sun disc saturates; a look limit
-const float SKY_STORAGE_MAX = 65504.0;           // largest finite RGBA16F value; guards the pre-exposed sky
+const float SKY_STORAGE_MAX = 65504.0;           // largest finite RGBA16F value; guards the sky and the scaled tables
+
+// 2^10 lifts the table's twilight minimum into half's normal range; each doubling halves the largest value it holds.
+const float SKY_MULTI_SCATTERING_SCALE = 1024.0;
 
 struct AtmosphereMedium {
     vec3 rayleigh;
@@ -155,13 +158,14 @@ vec3 sky_transmittance(SkyFogGpu sky, float altitude, float cos_zenith) {
     return sample_texture_2d(sky.transmittance_lut, sky.lut_sampler, uv).rgb;
 }
 
+// Second-order luminance for unit sun illuminance; the table holds it times SKY_MULTI_SCATTERING_SCALE.
 vec3 sky_multi_scattering(SkyFogGpu sky, float altitude, float cos_sun) {
     vec2 unit = vec2(cos_sun * 0.5 + 0.5, altitude / (sky.top_radius - sky.planet_radius));
     vec2 uv = vec2(
         sky_unit_to_uv(clamp(unit.x, 0.0, 1.0), float(SKY_MULTI_SCATTERING_SIZE)),
         sky_unit_to_uv(clamp(unit.y, 0.0, 1.0), float(SKY_MULTI_SCATTERING_SIZE))
     );
-    return sample_texture_2d(sky.multi_scattering_lut, sky.lut_sampler, uv).rgb;
+    return sample_texture_2d(sky.multi_scattering_lut, sky.lut_sampler, uv).rgb / SKY_MULTI_SCATTERING_SCALE;
 }
 
 // Luminance for unit sun illuminance along a ray from an altitude, the local up being +y.
@@ -285,7 +289,13 @@ float sky_cos_azimuth(vec3 direction, vec3 sun_direction) {
     return lengths > 0.0 ? clamp(dot(view_flat, sun_flat) / lengths, -1.0, 1.0) : 1.0;
 }
 
-// Sky luminance for unit sun illuminance; horizon_clamped reads below-horizon views at the horizon.
+// A table texel's luminance times its scale, kept finite in half.
+vec3 sky_table_store(vec3 luminance, float scale) {
+    return min(luminance * scale, vec3(SKY_STORAGE_MAX));
+}
+
+// Sky luminance for unit sun illuminance; the view's table holds it times sky.sky_table_scale.
+// horizon_clamped reads below-horizon views at the horizon.
 vec3 sky_view_radiance(SkyFogGpu sky, vec3 direction, bool horizon_clamped) {
     float altitude = sky.camera_altitude;
     float cos_zenith = direction.y;
@@ -298,7 +308,7 @@ vec3 sky_view_radiance(SkyFogGpu sky, vec3 direction, bool horizon_clamped) {
     }
     float cos_azimuth = sky_cos_azimuth(direction, sky.sun_direction_cos_radius.xyz);
     vec2 uv = sky_view_uv(sky, cos_zenith, cos_azimuth, ground);
-    return sample_texture_2d(sky.sky_view_lut, sky.lut_sampler, uv).rgb;
+    return sample_texture_2d(sky.sky_view_lut, sky.lut_sampler, uv).rgb / sky.sky_table_scale;
 }
 
 // The sun disc above the horizon, through the atmosphere, for unit illuminance; whole where the ray misses it.
@@ -313,6 +323,7 @@ vec3 sky_sun_disc(SkyFogGpu sky, vec3 direction) {
 }
 
 // Aerial perspective at a distance along a pixel's ray: in-scattering for unit illuminance and mean transmittance.
+// The view's table holds the in-scattering times sky.sky_table_scale; its alpha is opacity, unscaled.
 // Slices are squared toward the camera and counted from where the ray enters the atmosphere; nearer than the first
 // slice's centre the value fades linearly to zero, and a ray that misses the atmosphere holds none.
 vec4 sky_aerial_perspective(SkyFogGpu sky, vec2 uv, float cos_zenith, float distance) {
@@ -326,7 +337,7 @@ vec4 sky_aerial_perspective(SkyFogGpu sky, vec2 uv, float cos_zenith, float dist
         w = first;
     }
     vec4 table = sample_texture_3d(sky.aerial_perspective_lut, sky.lut_sampler, vec3(uv, w)) * weight;
-    return vec4(table.rgb, 1.0 - table.a);
+    return vec4(table.rgb / sky.sky_table_scale, 1.0 - table.a);
 }
 
 #endif
