@@ -358,10 +358,10 @@ while (window.poll()) {
   beyond it are left out of the trace, counted in `Stats.trace_posed_overflow`). A slot costs the posed streams, a
   refit copy and a bottom level of its part ([scene trace](scene_trace.md#posed-instances)). Raster shadows and
   temporal views work either way. The default is untraced.
-- **Traced crowd cost.** On the RTX 4090 a posed bottom-level update costs about 0.073 ms per posed instance per frame.
-  A 512-placement crowd traced on the hardware kind spends about 75 ms a frame in acceleration builds and holds
-  558 MB; the same crowd on the software kind costs 1.3 ms of posing and refit plus 0.6 ms of tracing. Prefer the
-  software kind, or few traced placements, for animated crowds ([measured cost](scene_trace.md#measured-cost)).
+- **Traced crowd cost.** On the hardware kind each posed placement part costs a bottom-level update every frame its
+  pose changes, recorded in barrier-separated batches; each posed slot holds its own streams and bottom level, so
+  memory scales with the number of traced placements. The software kind poses and refits a tree copy and builds no
+  bottom level ([animated crowds](scene_trace.md#animated-crowds)).
 - Custom materials: a fragment-only custom material draws with the built-in skinned instanced stage. A
   custom instanced vertex pair skins a crowd when compiled with the deformation defines
   ([Custom shaders](custom_shaders.md)); under compute skinning such a crowd part keeps that vertex skinning.
