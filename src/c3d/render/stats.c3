@@ -170,6 +170,7 @@ struct Stats {
     float trace_build_ms;
     uint  blas_builds;
     uint  blas_updates;          // this frame: in-place updates of posed bottom levels
+    uint  acceleration_batches;  // this frame: bottom-level build groups, each ordered by one barrier
     uint  tlas_builds;
     uint  path_trace_samples;
     uint  shader_rejections;

@@ -906,6 +906,7 @@ fn void? record_posed_builds(
     Renderer* renderer,
     gpu::CommandList* commands,
     gpu::GpuSpan scratch,
+    BuildBatch* batch,
     gpu::Barrier* builds_ordered,
 ) @private {
     PosedTraceTable* table = &renderer.posed_trace;
@@ -926,10 +927,13 @@ fn void? record_posed_builds(
                 .primitive_count = blas_primitive_count(&mirror.layout),
             },
         }};
+        usz scratch_size = posed_build_scratch_size(table, build);
+        BuildRange range = batch.place(scratch_size);
+        if (range.closes_batch) gpu::cmd_barrier(commands, builds_ordered)!;
         gpu::AccelerationStructureBuildDesc desc = {
             .destination = slot.blas,
             .geometries  = geometries[..],
-            .scratch     = scratch,
+            .scratch     = scratch.checked_subspan(range.offset, scratch_size)!,
         };
         if (build.update) {
             gpu::cmd_update_acceleration_structure(commands, &desc)!;
@@ -938,16 +942,11 @@ fn void? record_posed_builds(
             gpu::cmd_build_acceleration_structure(commands, &desc)!;
             renderer.stats.blas_builds++;
         }
-        gpu::cmd_barrier(commands, builds_ordered)!;
     }
     table.builds.clear();
 }
 
-fn usz posed_scratch_size(PosedTraceTable* table) @private {
-    usz size;
-    foreach (&build : table.builds) {
-        PosedTraceRes* slot = &table.slots[build.slot];
-        size = math::max(size, build.update ? slot.update_scratch_size : slot.build_scratch_size);
-    }
-    return size;
+fn usz posed_build_scratch_size(PosedTraceTable* table, PosedBuild* build) @private {
+    PosedTraceRes* slot = &table.slots[build.slot];
+    return build.update ? slot.update_scratch_size : slot.build_scratch_size;
 }
