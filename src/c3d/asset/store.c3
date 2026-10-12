@@ -2,6 +2,7 @@ module c3d::asset;
 
 import c3d;
 import c3d::pool;
+import std::collections::list;
 import std::collections::map;
 
 <*
@@ -12,6 +13,8 @@ import std::collections::map;
 alias CustomFreeFn = fn void (Allocator allocator, void* data, void* user);
 
 alias ErasedKey @local = fn String? (void* erased, Id id);
+
+alias KeyNamespaces @private = HashMap{String, List{String}};
 
 alias ErasedDestroy @local = fn void (void* erased, Allocator allocator, CustomFreeFn on_destroy, void* user);
 
@@ -88,6 +91,7 @@ struct AssetStore {
     ComputeShaderPool         compute_shaders;
     FontPool                  fonts;
     HashMap{String, AssetRef} keys;
+    KeyNamespaces             key_namespaces; // text before a key's last '#' to the owned keys under it
     CustomSlot[MAX_CUSTOM_ASSET_TYPES] custom;
     FileSource                file_source; // fixed at creation
     ulong                     key_capacity;
@@ -281,6 +285,7 @@ fn AssetStore create_asset_store(Allocator allocator, AssetStoreDesc desc) {
       + desc.max_samplers + desc.max_environments + desc.max_models + desc.max_skeletons
       + desc.max_clips + desc.max_shaders + desc.max_compute_shaders + desc.max_fonts;
     store.keys.init(allocator, key_map_buckets(store.key_capacity), KEY_MAP_LOAD_FACTOR);
+    store.key_namespaces.init(allocator, key_map_buckets(store.key_capacity), KEY_MAP_LOAD_FACTOR);
     add_builtins(&store);
     return store;
 }
@@ -351,6 +356,11 @@ fn void destroy_asset_store(AssetStore* store) {
         if (slot.pool) slot.destroy(slot.pool, store.allocator, slot.on_destroy, slot.user);
     }
     store.keys.free();
+    store.key_namespaces.@each(; String prefix, List{String} members) {
+        foreach (member : members.array_view()) free_string(store.allocator, member);
+        members.free();
+    };
+    store.key_namespaces.free();
     pool::destroy_pool{GeometryAsset, GeometryId}(&store.geometries);
     pool::destroy_pool{TextureAsset, TextureId}(&store.textures);
     pool::destroy_pool{MaterialAsset, MaterialId}(&store.materials);
@@ -385,7 +395,16 @@ fn void? check_key(AssetStore* store, String key) {
  @param [&inout] store
 *>
 fn void register_key(AssetStore* store, String key, AssetRef ref) {
-    if (key.len) store.keys.set(key, ref);
+    if (!key.len || store.keys.set(key, ref)) return;
+
+    if (try prefix = key_namespace(key)) {
+        if (!store.key_namespaces.has_key(prefix)) {
+            List{String} members;
+            members.init(store.allocator);
+            store.key_namespaces.set(prefix, members);
+        }
+        store.key_namespaces.get_ref(prefix)!!.push(key.copy(store.allocator));
+    }
 }
 
 <*
@@ -393,7 +412,19 @@ fn void register_key(AssetStore* store, String key, AssetRef ref) {
  @param [&inout] store
 *>
 fn void forget_key(AssetStore* store, String key) {
-    if (key.len) (void)store.keys.remove(key);
+    if (!key.len || !@ok(store.keys.remove(key))) return;
+
+    if (try prefix = key_namespace(key)) {
+        List{String}* members = store.key_namespaces.get_ref(prefix)!!;
+        sz index = members.index_of(key)!!;
+        free_string(store.allocator, members.get(index));
+        members.remove_unordered_at(index);
+
+        if (members.is_empty()) {
+            members.free();
+            (void)store.key_namespaces.remove(prefix);
+        }
+    }
 }
 
 <*
@@ -421,6 +452,12 @@ macro copy_slice(Allocator allocator, slice) @private {
     return copy;
 }
 
+fn String? key_namespace(String key) @local {
+    sz separator = key.rindex_of_char('#')!;
+    if (separator + 1 == key.len) return NOT_FOUND~;
+    return key[:separator];
+}
+
 fn sz key_map_buckets(ulong entries) @private {
     return (sz)(entries + entries / 3 + 1);
 }
@@ -432,4 +469,10 @@ fn void extend_key_capacity(AssetStore* store, uint added) @private {
     store.keys.@each(; String key, AssetRef ref) { expanded.set(key, ref); };
     store.keys.free();
     store.keys = expanded;
+
+    KeyNamespaces namespaces;
+    namespaces.init(store.allocator, key_map_buckets(store.key_capacity), KEY_MAP_LOAD_FACTOR);
+    store.key_namespaces.@each(; String prefix, List{String} members) { namespaces.set(prefix, members); };
+    store.key_namespaces.free();
+    store.key_namespaces = namespaces;
 }

@@ -461,34 +461,31 @@ requests that this call moved to `PUBLISHED` or commit `FAILED`; earlier worker 
 
 ### Publication allowance and reports
 
-`PublishLimits.items` is a logical inventory allowance per call. Zero is unbounded. Decoded documents are admitted
+`PublishLimits.items` is a logical item allowance per call. Zero is unbounded. Decoded documents are admitted
 atomically in FIFO order; a head that cannot fit stops the call, and later smaller documents do not bypass it. An
 admitted commit failure consumes its charge and leaves existing assets unchanged.
 
-Items count asset entries, template and nested structural arrays, compared names, prepared metadata cleanup and old
-payload cleanup. Replacement also counts key-map buckets, live entries and collected missing parts. Every variable
-owner-thread traversal is represented by the charge function. Keys and compared names have a string-length exception;
-items do not count their bytes or promise a CPU instruction or wall-clock limit. Missing parts keep their existing
-namespace membership and kind/key order; sorting is O(n log n), bounded by the configured store inventory.
+A document's charge is one item for the model and one per entry, template node, template mesh, skin joint node, LOD
+part, morph target, morph channel, skeleton joint and clip track. The worker computes it while decoding. A matched entry
+keeps its structure, so the incoming document also measures the payload a replacement frees. A replacement adds one
+item per store key in its model's part namespace (`<model key>#<suffix>`, as for missing parts), which it visits to
+collect missing parts; admission reads that count with one lookup. Items do not count key or name bytes and promise no
+CPU instruction or wall-clock limit.
 
-The key map is sized for built-in pools at store creation and extended when a custom pool is first registered.
-Publication does not trigger a table rehash. Matching and estimating the current charge consumes items in the call,
-without publishing or retaining a preflight between calls. Checked accounting saturates rather than wrapping.
+The store indexes keys by part namespace as they are registered, so collecting missing parts never scans the key map.
+The key map and the namespace index are sized for built-in pools at store creation and extended when a custom pool is
+first registered; publication does not trigger a table rehash.
 
 | `PublishReport` field | Meaning |
 | --- | --- |
 | `published` | Requests this call published. |
 | `failed` | Commit failures in this call, excluding earlier decode failures. |
-| `items_used` | Charged estimation and admitted publication/cleanup work. |
+| `items_used` | Charges of the requests this call admitted. |
 | `deferred` | A decoded head could not fit. |
-| `required_items` | The deferred head's requirement; zero when none. |
-| `required_exact` | True for a complete estimate; false for the minimum estimation reserve. |
+| `required_items` | The deferred head's charge; zero when none. |
 
-The minimum reserve combines incoming items with the complete estimation cost, computed from current table sizes
-and liveness before traversal. A call below this reserve spends no items and defers immediately. A call at that
-reserve either admits the head or returns its exact fresh-call requirement after one full estimation. The caller
-can choose that larger allowance or explicitly select unbounded publication. A depleted finite allowance stays finite;
-its zero remainder does not become unbounded.
+A deferred head spends nothing. The caller can raise the allowance to `required_items` or select unbounded
+publication. A depleted finite allowance stays finite; its zero remainder does not become unbounded.
 
 ### Cancellation and request lifetime
 
@@ -524,11 +521,10 @@ it before the store; shutdown and active abandonment can wait for a source/parse
 
 ### Counters
 
-`counters()` snapshots occupied phase counts (`queued`, `decoding`, `decoded`, `cancelling`, `published`, `failed`,
-`cancelled`) and cumulative `publications`, `decode_failures`, `commit_failures`, `cancellations`, `publication_items`,
-`decode_ns` and `publication_ns`. Each terminal transition counts once. Decode time includes independent preparation;
-publication time includes admission and cleanup. The counters retain nanoseconds. A publication report contains only
-its current call and has no cancellation field or event cursor.
+`counters()` snapshots pending phase counts (`queued`, `decoding`, `decoded`, `cancelling`) and cumulative
+`publications`, `decode_failures`, `commit_failures`, `cancellations`, `publication_items` and `decode_ns`. Each terminal
+transition counts once. Decode time includes independent preparation and is kept in nanoseconds. A publication report
+contains only its current call and has no cancellation field or event cursor.
 
 | Function | Fault | Meaning |
 | --- | --- | --- |

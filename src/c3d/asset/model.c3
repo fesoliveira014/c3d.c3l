@@ -135,7 +135,7 @@ fn ModelId? AssetStore.add_model_owned(&self, ModelTemplate* template, String ke
 fn void? AssetStore.replace_model_owned(&self, ModelId model, ModelTemplate* template) {
     ModelAsset* record = self.models.get(model);
     if (!same_model_structure(&record.data, template)) return c3d::INCOMPATIBLE_STRUCTURE~;
-    check_lod_groups(self, template, null)!;
+    check_lod_groups(self, template)!;
     free_model_template(self.allocator, &record.data);
     record.data = *template;
     mark_replaced(&record.header);

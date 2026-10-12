@@ -3,6 +3,7 @@ module c3d::asset;
 import c3d;
 import c3d::material;
 import c3d::scene;
+import std::collections::list;
 import std::collections::map;
 import std::sort;
 
@@ -354,30 +355,18 @@ fn void apply_replacement(
     mark_replaced(&record.header);
 }
 
-fn bool is_missing_part(String prefix, String key, HashMap{String, bool}* named) @private {
-    return key.len > prefix.len + 1
-        && key.starts_with(prefix)
-        && key[prefix.len] == '#'
-        && !key[prefix.len + 1..].contains_char('#')
-        && !named.has_key(key);
-}
-
 fn uint collect_missing(AssetStore* store, PreparedModelDocument* prepared, AssetRef[] missing) @private {
-    ModelDocument* document = &prepared.document;
-    HashMap{String, bool}* named = &prepared.named;
+    List{String}*? members = store.key_namespaces.get_ref(prepared.document.key);
+    if (catch members) return 0;
 
+    MissingPart[] parts = alloc::new_array(tmem, MissingPart, members.len());
     usz count;
-    store.keys.@each(; String key, AssetRef ref) {
-        if (is_missing_part(document.key, key, named)) count++;
-    };
-    MissingPart[] parts = alloc::new_array(tmem, MissingPart, (sz)count);
-    usz next;
-    store.keys.@each(; String key, AssetRef ref) {
-        if (is_missing_part(document.key, key, named)) parts[next++] = { .ref = ref, .key = key };
-    };
+    foreach (key : members.array_view()) {
+        if (!prepared.named.has_key(key)) parts[count++] = { .ref = store.keys.get(key)!!, .key = key };
+    }
 
-    sort::mergesort(parts, &compare_missing_parts);
-    usz limit = missing.len < parts.len ? missing.len : parts.len;
+    sort::mergesort(parts[:count], &compare_missing_parts);
+    usz limit = missing.len < count ? missing.len : count;
     for (usz index = 0; index < limit; index++) missing[index] = parts[index].ref;
     return (uint)count;
 }

@@ -67,35 +67,30 @@ struct PublishLimits {
 }
 
 <*
- Publication transitions and logical work charged by one call.
+ Publication transitions and items charged by one call.
 *>
 struct PublishReport {
     uint  published;
     uint  failed;
     ulong items_used;
-    ulong required_items;
-    bool  required_exact;
+    ulong required_items; // the deferred head's charge; zero when none
     bool  deferred;
 }
 
 <*
- Occupied request phases and cumulative work since loader creation.
+ Pending request phases and cumulative work since loader creation.
 *>
 struct LoaderCounters {
     uint  queued;
     uint  decoding;
     uint  decoded;
     uint  cancelling;
-    uint  published;
-    uint  failed;
-    uint  cancelled;
     ulong publications;
     ulong decode_failures;
     ulong commit_failures;
     ulong cancellations;
     ulong publication_items;
     ulong decode_ns;
-    ulong publication_ns;
 }
 
 struct LoadSlot @private {
@@ -105,8 +100,6 @@ struct LoadSlot @private {
     uint                  generation;
     ulong                 sequence;
     PreparedModelDocument prepared;
-    uint                  decoded_previous;
-    uint                  decoded_next;
     ModelId               model;
     fault                 failure;
     ModelReplaceReport    report;
@@ -121,8 +114,6 @@ struct LoaderState @private {
     ConditionVariable wake;
     Thread            worker; // Thread.create writes this while the worker runs; the worker never reads it
     LoadSlot[]        slots;
-    uint              decoded_head;
-    uint              decoded_tail;
     ulong             next_sequence;
     LoaderCounters    counters;
     bool              stopping;
@@ -195,47 +186,36 @@ fn uint AsyncLoader.publish(&self) {
 
 <*
  Publish FIFO requests within a logical item allowance.
- @return "Current-call work and the deferred head's requirement."
+ @return "Current-call work and the deferred head's charge."
 *>
 fn PublishReport AsyncLoader.publish_within(&self, PublishLimits limits) {
-    std::time::Clock started = clock::now();
     LoaderState* state = self.state;
     state.lock.lock();
     defer state.lock.unlock();
+
     PublishReport report;
-    bool bounded = limits.items != 0;
-    while (state.decoded_head) {
-        uint index = state.decoded_head - 1;
+    while (try index = oldest_in_phase(state, LoadPhase.DECODED)) {
         LoadSlot* slot = &state.slots[index];
-        ulong remaining = bounded ? limits.items - report.items_used : 0;
-        PublicationEstimate estimate = asset::estimate_model_publication(
-            store:     state.assets,
-            prepared:  &slot.prepared,
-            model:     slot.request.replace,
-            allowance: remaining,
-            bounded:   bounded,
-        );
-        report.items_used = add_saturated(report.items_used, estimate.items_used);
-        if (!estimate.admitted) {
-            report.required_items = estimate.required_items;
-            report.required_exact = estimate.required_exact;
+        ulong items = asset::publication_charge(state.assets, &slot.prepared, slot.request.replace);
+        if (limits.items && items > limits.items - report.items_used) {
+            report.required_items = items;
             report.deferred = true;
             break;
         }
-        report.items_used = add_saturated(report.items_used, estimate.required_items - estimate.items_used);
-        remove_decoded(state, index);
+
+        report.items_used += items;
         publish_slot(state.assets, slot);
         asset::destroy_prepared_model_document(&slot.prepared);
         if (slot.phase == LoadPhase.PUBLISHED) {
             report.published++;
-            state.counters.publications = add_saturated(state.counters.publications, 1);
+            state.counters.publications++;
         } else {
             report.failed++;
-            state.counters.commit_failures = add_saturated(state.counters.commit_failures, 1);
+            state.counters.commit_failures++;
         }
     }
-    state.counters.publication_items = add_saturated(state.counters.publication_items, report.items_used);
-    state.counters.publication_ns = add_saturated(state.counters.publication_ns, (ulong)started.to_now());
+
+    state.counters.publication_items += report.items_used;
     return report;
 }
 
@@ -255,7 +235,6 @@ fn void? AsyncLoader.cancel(&self, LoadId id) {
         case DECODING:
             slot.phase = LoadPhase.CANCELLING;
         case DECODED:
-            remove_decoded(state, id.index);
             asset::destroy_prepared_model_document(&slot.prepared);
             finish_cancel(state, slot);
         case CANCELLING:
@@ -267,12 +246,13 @@ fn void? AsyncLoader.cancel(&self, LoadId id) {
 }
 
 <*
- Snapshot occupied phases and cumulative decode/publication accounts.
+ Snapshot pending phases and cumulative decode/publication accounts.
 *>
 fn LoaderCounters AsyncLoader.counters(&self) {
     LoaderState* state = self.state;
     state.lock.lock();
     defer state.lock.unlock();
+
     LoaderCounters counters = state.counters;
     foreach (&slot : state.slots) {
         if (!slot.occupied) continue;
@@ -281,11 +261,13 @@ fn LoaderCounters AsyncLoader.counters(&self) {
             case DECODING: counters.decoding++;
             case DECODED: counters.decoded++;
             case CANCELLING: counters.cancelling++;
-            case PUBLISHED: counters.published++;
-            case FAILED: counters.failed++;
-            case CANCELLED: counters.cancelled++;
+            case PUBLISHED:
+            case FAILED:
+            case CANCELLED:
+                break;
         }
     }
+
     return counters;
 }
 
@@ -357,38 +339,9 @@ fn void destroy_async_loader(AsyncLoader* loader) {
     *loader = {};
 }
 
-fn ulong add_saturated(ulong first, ulong second) @private => second > ulong::max - first ? ulong::max : first + second;
-
 fn void finish_cancel(LoaderState* state, LoadSlot* slot) @private {
     slot.phase = LoadPhase.CANCELLED;
-    state.counters.cancellations = add_saturated(state.counters.cancellations, 1);
-}
-
-fn void append_decoded(LoaderState* state, uint index) @private {
-    LoadSlot* slot = &state.slots[index];
-    slot.decoded_previous = state.decoded_tail;
-    if (state.decoded_tail) {
-        state.slots[state.decoded_tail - 1].decoded_next = index + 1;
-    } else {
-        state.decoded_head = index + 1;
-    }
-    state.decoded_tail = index + 1;
-}
-
-fn void remove_decoded(LoaderState* state, uint index) @private {
-    LoadSlot* slot = &state.slots[index];
-    if (slot.decoded_previous) {
-        state.slots[slot.decoded_previous - 1].decoded_next = slot.decoded_next;
-    } else {
-        state.decoded_head = slot.decoded_next;
-    }
-    if (slot.decoded_next) {
-        state.slots[slot.decoded_next - 1].decoded_previous = slot.decoded_previous;
-    } else {
-        state.decoded_tail = slot.decoded_previous;
-    }
-    slot.decoded_previous = 0;
-    slot.decoded_next = 0;
+    state.counters.cancellations++;
 }
 
 fn void publish_slot(AssetStore* assets, LoadSlot* slot) @private {
@@ -439,10 +392,11 @@ fn bool is_pending(LoadPhase phase) @private {
         || phase == LoadPhase.DECODED || phase == LoadPhase.CANCELLING;
 }
 
-fn usz? oldest_queued(LoaderState* state) @private {
+// One worker decodes in request order, so request order is also the decoded FIFO order.
+fn usz? oldest_in_phase(LoaderState* state, LoadPhase phase) @private {
     usz? oldest = NOT_FOUND~;
     foreach (usz index, &slot : state.slots) {
-        if (!slot.occupied || slot.phase != LoadPhase.QUEUED) continue;
+        if (!slot.occupied || slot.phase != phase) continue;
         if (try current = oldest) {
             if (state.slots[current].sequence < slot.sequence) continue;
         }
@@ -455,7 +409,7 @@ fn usz? next_decode(LoaderState* state) @private {
     state.lock.lock();
     defer state.lock.unlock();
     while (!state.stopping) {
-        if (try index = oldest_queued(state)) {
+        if (try index = oldest_in_phase(state, LoadPhase.QUEUED)) {
             state.slots[index].phase = LoadPhase.DECODING;
             return index;
         }
@@ -475,7 +429,7 @@ fn void decode_slot(LoaderState* state, usz index) @private {
     ulong elapsed_ns = (ulong)started.to_now();
     state.lock.lock();
     defer state.lock.unlock();
-    state.counters.decode_ns = add_saturated(state.counters.decode_ns, elapsed_ns);
+    state.counters.decode_ns += elapsed_ns;
     LoadSlot* slot = &state.slots[index];
     if (slot.phase == LoadPhase.CANCELLING) {
         if (try result = prepared) asset::destroy_prepared_model_document(&result);
@@ -485,12 +439,11 @@ fn void decode_slot(LoaderState* state, usz index) @private {
     if (catch excuse = prepared) {
         slot.phase = LoadPhase.FAILED;
         slot.failure = excuse;
-        state.counters.decode_failures = add_saturated(state.counters.decode_failures, 1);
+        state.counters.decode_failures++;
         return;
     }
     slot.prepared = prepared;
     slot.phase = LoadPhase.DECODED;
-    append_decoded(state, (uint)index);
 }
 
 fn PreparedModelDocument? decode_prepared_request(
