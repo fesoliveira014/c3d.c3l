@@ -195,6 +195,7 @@ fn void? time_crowd(
 ) @local {
     Scene scene = scene::create_scene(mem, { .max_nodes = CROWD_SCENE_NODES });
     defer scene::destroy_scene(&scene);
+
     AnimatedCrowd* crowd = scene.get(add_bench_crowd(setup, &scene)!, AnimatedCrowd);
     CrowdPlaybackState* state = crowd.playback;
 
@@ -208,6 +209,7 @@ fn void? time_crowd(
     defer {
         foreach (&scratch : scratches) anim::destroy_crowd_pose_scratch(state, scratch);
     }
+
     SampleRun run = { .state = state, .assets = setup.assets, .scratches = scratches };
 
     double[CROWD_TIMED_FRAMES] advance_samples;
