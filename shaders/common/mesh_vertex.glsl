@@ -238,10 +238,14 @@ void write_mesh_outputs(
 
         previous_instance = reject_history != 0.0 ? instance.model : LodPreviousArray(part.previous).values[source].model;
     } else {
-        // Without previous instance matrices, prev_model carries only the batch node's motion.
-        uint64_t previous_instances = PreviousPoseGpu(draw.previous_pose).instances;
-        previous_instance = previous_instances != 0ul
-            ? PreviousInstanceArray(previous_instances).values[source] : draw.prev_model * model;
+        // An instance without a previous matrix did not change, so prev_model carries only the batch node's motion.
+        PreviousPoseGpu previous_pose = PreviousPoseGpu(draw.previous_pose);
+        previous_instance = draw.prev_model * model;
+        if (previous_pose.instances != 0ul
+            && source >= previous_pose.instances_first && source < previous_pose.instances_end) {
+            previous_instance = PreviousInstanceArray(previous_pose.instances)
+                .values[source - previous_pose.instances_first];
+        }
     }
 #endif
     if (draw.lod_part != 0ul) {

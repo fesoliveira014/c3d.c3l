@@ -1674,6 +1674,12 @@ fn gpu::GpuAddress? upload_previous_pose(
 
     InstancedMesh* batch = candidate.batch;
     if (batch && pose.instance_count == batch.count && pose.instance_revision != batch.revision) {
+        InstanceSpan span = { .end = batch.count };
+        if (!candidate.crowd && previous_world == maths::rebase(candidate.node.world, renderer.frame_origin)) {
+            InstanceSpan edited = history_span(pose, batch);
+            if (edited.end > edited.first) span = edited;
+        }
+
         ulong key = (ulong)(uptr)candidate.node;
         gpu::GpuAddress base;
         if (try existing = instances.get(key)) {
@@ -1687,11 +1693,17 @@ fn gpu::GpuAddress? upload_previous_pose(
 
                 base = upload_bytes(renderer, worlds.ptr, worlds.len * Mat4f::size)!;
             } else {
-                base = upload_previous_worlds(renderer, pose.instances[:pose.instance_count], previous_world)!;
+                Mat4f[] locals = pose.instances[span.first:span.end - span.first];
+                base = upload_previous_worlds(renderer, locals, previous_world)!;
             }
             instances.set(key, base);
         }
-        previous.instances = offset_by_instances(base, offset, Mat4f::size);
+        bind_previous_instances(
+            previous: &previous,
+            base:     base,
+            span:     span,
+            offset:   offset,
+        );
     }
     if (positions) {
         usz history_bytes = pose.vertices.len * Vec3::size;
@@ -1699,6 +1711,18 @@ fn gpu::GpuAddress? upload_previous_pose(
         renderer.stats.vertex_history_bytes += (uint)history_bytes;
     }
     return upload_bytes(renderer, &previous, PreviousPoseGpu::size);
+}
+
+fn void bind_previous_instances(
+    PreviousPoseGpu* previous,
+    gpu::GpuAddress base,
+    InstanceSpan span,
+    uint offset,
+) @local {
+    // A draw that starts at instance offset indexes its own matrices from zero.
+    previous.instances = offset_by_instances(base, offset > span.first ? offset - span.first : 0, Mat4f::size);
+    previous.instances_first = span.first > offset ? span.first - offset : 0;
+    previous.instances_end = span.end > offset ? span.end - offset : 0;
 }
 
 fn VertexHistory vertex_history_of(AssetStore* assets, MeshCandidate* candidate, PoseRecord* pose) @local {

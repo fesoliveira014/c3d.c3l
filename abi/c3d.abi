@@ -298,6 +298,8 @@ root PreviousPoseGpu {
     GpuAddress morph;
     GpuAddress instances;
     GpuAddress positions;
+    uint       instances_first;
+    uint       instances_end;
 }
 
 const uint INSTANCE_CULL_GROUP_SIZE = 64;

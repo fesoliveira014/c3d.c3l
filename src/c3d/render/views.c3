@@ -108,6 +108,7 @@ struct PoseRecord {
     Mat4f[]           instances;
     uint              instance_count;
     uint              instance_revision; // batch revision of instances; 0 = none
+    uint              instance_mirrored; // mirrored instances in instances, which sit last
     ulong             crowd_identity;
     ModelId           crowd_model;
     uint              crowd_model_revision;
@@ -655,12 +656,26 @@ fn void commit_pose(
 
             pose.instance_revision = batch.revision;
         } else if (pose.instance_revision != batch.revision) {
-            write_instance_locals(pose.instances, batch);
+            InstanceSpan edited = history_span(pose, batch);
+            if (edited.end > edited.first) {
+                foreach (index, transform : batch.transforms[edited.first:edited.end - edited.first]) {
+                    pose.instances[edited.first + index] = bitcast(transform.to_mat4(), Mat4f);
+                }
+            } else {
+                write_instance_locals(pose.instances, batch);
+                pose.instance_mirrored = batch.mirrored_count();
+            }
+
             pose.instance_revision = batch.revision;
         }
 
         pose.instance_count = batch.count;
     }
+}
+
+fn InstanceSpan history_span(PoseRecord* pose, InstancedMesh* batch) @private {
+    if (pose.instance_count != batch.count || pose.instance_mirrored || batch.mirrored_count()) return {};
+    return batch.ranges.span_since(pose.instance_revision);
 }
 
 fn void capture_vertices(
