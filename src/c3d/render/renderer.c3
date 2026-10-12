@@ -42,6 +42,8 @@ const ZString[FRAMES_IN_FLIGHT] UPLOAD_RING_NAMES @private = {
 const usz RETIRE_INITIAL_CAPACITY @private = 16; // a frame retiring more than this grows once and keeps the storage
 const uint FULLSCREEN_VERTEX_COUNT @private = 3; // one clipped triangle covers the area without a vertex buffer
 const double NANOSECONDS_PER_MILLISECOND @private = 1_000_000.0;
+// The acquire semaphore waits at this stage; the first swapchain transition sources from it.
+const gpu::StageMask WINDOW_READINESS_STAGES @private = { .color_output };
 
 <*
  Per-view light budget when renderer creation omits one.
@@ -395,7 +397,7 @@ fn void? Renderer.end_frame(&self) {
             gpu::SubmitDesc submit = { .command_lists = executable[..] };
             if (present) {
                 submit.readiness = self.acquired.readiness;
-                submit.readiness_before = { .color_output };
+                submit.readiness_before = WINDOW_READINESS_STAGES;
             }
             slot.done = gpu::submit(self.graphics, &submit)!;
             submit_gpu_profile(self);
@@ -682,6 +684,7 @@ fn void? acquire_window_output(Renderer* renderer) @private {
         .width      = renderer.swapchain_info.width,
         .height     = renderer.swapchain_info.height,
     };
+    renderer.window_target.state.stages = WINDOW_READINESS_STAGES;
     renderer.has_output = true;
 }
 
@@ -720,7 +723,7 @@ fn void? finish_pending_output(Renderer* renderer) @private {
         gpu::SubmitDesc submit = {
             .command_lists = executable[..],
             .readiness = renderer.acquired.readiness,
-            .readiness_before = { .color_output },
+            .readiness_before = WINDOW_READINESS_STAGES,
         };
         slot.done = gpu::submit(renderer.graphics, &submit)!;
         renderer.output_submission = slot.done;
