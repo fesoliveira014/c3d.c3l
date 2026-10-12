@@ -583,11 +583,7 @@ fn bool? run_prepare_step(
             return true;
 
         case TOON_SAMPLER:
-            gpu::SamplerDesc desc = { .min_filter = gpu::Filter.NEAREST, .mag_filter = gpu::Filter.NEAREST,
-                .mip_filter = gpu::Filter.NEAREST, .address_u = gpu::AddressMode.CLAMP_TO_EDGE,
-                .address_v = gpu::AddressMode.CLAMP_TO_EDGE, .address_w = gpu::AddressMode.CLAMP_TO_EDGE,
-                .debug_name = "toon_gradient" };
-            renderer.toon_gradient_sampler = gpu::intern_sampler(&renderer.device, &desc)!;
+            acquire_toon_gradient_sampler(renderer)!;
 
             return true;
 

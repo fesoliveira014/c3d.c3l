@@ -68,7 +68,7 @@ fn bool? material_prepare_current(Renderer* renderer, MaterialId material) @priv
     MaterialAsset* source = renderer.assets.material(material);
     MaterialRes* mirror = &renderer.materials[material.index];
     if (!c3d::same_id(mirror.asset, material) || mirror.revision != source.header.revision) return false;
-    MaterialBindings bindings = material_prepare_bindings(renderer, &source.data)!;
+    MaterialBindings bindings = resolve_material_bindings(renderer, &source.data, resolve: false)!;
     if (!material_bindings_match(mirror.bindings, bindings)) return false;
     if (source.data.kind == MaterialKind.CUSTOM) {
         ShaderRes* shader_mirror = &renderer.shaders[source.data.custom.shader.index];
@@ -92,7 +92,7 @@ fn void? material_prepare_block(
     char[] block,
 ) @private {
     MaterialAsset* source = renderer.assets.material(material);
-    MaterialBindings bindings = material_prepare_bindings(renderer, &source.data)!;
+    MaterialBindings bindings = resolve_material_bindings(renderer, &source.data, resolve: false)!;
     uint capabilities;
     gpu::GpuAddress[material::MAX_CUSTOM_MATERIAL_REFERENCES] references;
     ShaderId shader_id;
@@ -122,131 +122,4 @@ fn void? material_prepare_block(
     candidate.shader = shader_id;
     candidate.shader_revision = shader_revision;
     candidate.resolved_epoch = 0;
-}
-
-fn TextureBinding? material_prepare_texture_slot(Renderer* renderer, TextureSlot slot, bool custom_read = false) @private {
-    if (slot.uv_set > 1) return c3d::INVALID_ARGUMENT~;
-
-    SamplerId sampler = renderer.assets.samplers.is_live(slot.sampler) ? slot.sampler : asset::SAMPLER_LINEAR_REPEAT;
-    if (renderer.assets.sampler(sampler).desc.compare_enable) return c3d::INVALID_ARGUMENT~;
-
-    SamplerRes* sampler_mirror = &renderer.samplers[sampler.index];
-    if (slot.texture.kind == TextureRefKind.RENDER_TARGET && renderer.targets.is_live(slot.texture.target)) {
-        TargetRecord* target = renderer.targets.get(slot.texture.target);
-        target.sample_pending = true;
-
-        return {
-            .target = slot.texture.target,
-            .sampler = sampler,
-            .texture_binding_revision = target.revision,
-            .sampler_revision = sampler_mirror.revision,
-            .texture_index = target.target.view.index,
-            .sampler_index = sampler_mirror.index,
-            .present = true,
-        };
-    }
-
-    bool present = slot.texture.kind == TextureRefKind.ASSET && renderer.assets.textures.is_live(slot.texture.asset);
-    if (present) {
-        material::TextureDesc desc = renderer.assets.texture(slot.texture.asset).desc;
-        if (desc.is_cube || (desc.format == PixelFormat.R16_UINT && !custom_read)) return c3d::UNSUPPORTED~;
-    }
-
-    TextureId texture = present ? slot.texture.asset : asset::TEXTURE_WHITE;
-    TextureRes* texture_mirror = &renderer.textures[texture.index];
-    TextureBinding content = texture_binding_content(renderer, texture, texture_mirror);
-
-    return {
-        .texture = texture,
-        .sampler = sampler,
-        .texture_binding_revision = texture_mirror.binding_revision,
-        .texture_content_revision = content.texture_content_revision,
-        .semantic = content.semantic,
-        .sampler_revision = sampler_mirror.revision,
-        .texture_index = texture_mirror.view.index,
-        .sampler_index = sampler_mirror.index,
-        .present = present,
-    };
-}
-
-fn TextureBinding? material_prepare_gradient_map(Renderer* renderer, TextureId texture) @private {
-    if (!renderer.assets.textures.is_live(texture)) return {};
-    material::TextureDesc desc = renderer.assets.texture(texture).desc;
-    if (desc.is_cube || desc.depth || desc.layers != 1 || desc.format == PixelFormat.R16_UINT) return c3d::UNSUPPORTED~;
-
-    TextureRes* mirror = &renderer.textures[texture.index];
-    TextureBinding content = texture_binding_content(renderer, texture, mirror);
-
-    return {
-        .texture = texture,
-        .texture_binding_revision = mirror.binding_revision,
-        .texture_content_revision = content.texture_content_revision,
-        .semantic = content.semantic,
-        .texture_index = mirror.view.index,
-        .sampler_index = renderer.toon_gradient_sampler,
-        .present = true,
-    };
-}
-
-fn MaterialBindings? material_prepare_bindings(Renderer* renderer, Material* material) @private {
-    switch (material.kind) {
-        case BASIC:
-            return { .base_color = material_prepare_texture_slot(renderer, material.basic.map)! };
-        case STANDARD:
-            return material_prepare_standard_bindings(renderer, &material.standard);
-        case PHYSICAL:
-            PhysicalParams* params = &material.physical;
-            MaterialBindings bindings = material_prepare_standard_bindings(renderer, &params.standard)!;
-            if (params.clearcoat > 0) {
-                bindings.clearcoat = material_prepare_texture_slot(renderer, params.clearcoat_map)!;
-                bindings.clearcoat_roughness = material_prepare_texture_slot(
-                    renderer: renderer,
-                    slot: params.clearcoat_roughness_map,
-                )!;
-                bindings.clearcoat_normal = material_prepare_texture_slot(renderer, params.clearcoat_normal_map)!;
-            }
-            if (material_uses_sheen(material)) {
-                bindings.sheen_color = material_prepare_texture_slot(renderer, params.sheen_color_map)!;
-                bindings.sheen_roughness = material_prepare_texture_slot(renderer, params.sheen_roughness_map)!;
-            }
-            if (params.specular > 0) {
-                bindings.specular = material_prepare_texture_slot(renderer, params.specular_map)!;
-                bindings.specular_color = material_prepare_texture_slot(renderer, params.specular_color_map)!;
-            }
-            if (params.anisotropy > 0) {
-                bindings.anisotropy = material_prepare_texture_slot(renderer, params.anisotropy_map)!;
-            }
-            if (params.transmission > 0) {
-                bindings.transmission = material_prepare_texture_slot(renderer, params.transmission_map)!;
-                bindings.thickness = material_prepare_texture_slot(renderer, params.thickness_map)!;
-            }
-            return bindings;
-        case TOON:
-            return {
-                .base_color = material_prepare_texture_slot(renderer, material.toon.map)!,
-                .gradient = material_prepare_gradient_map(renderer, material.toon.gradient_map)!,
-            };
-        case CUSTOM:
-            MaterialBindings bindings;
-            // The depth stage and traced coverage sample slot 0 of a masked material.
-            bool masked = material.common.alpha_mode == AlphaMode.MASK;
-            foreach (index, slot : material.custom.slots) {
-                bindings.custom[index] = material_prepare_texture_slot(
-                    renderer: renderer,
-                    slot: slot,
-                    custom_read: index > 0 || !masked,
-                )!;
-            }
-            return bindings;
-    }
-}
-
-fn MaterialBindings? material_prepare_standard_bindings(Renderer* renderer, StandardParams* params) @private {
-    return {
-        .base_color = material_prepare_texture_slot(renderer, params.base_color_map)!,
-        .metallic_roughness = material_prepare_texture_slot(renderer, params.metallic_roughness_map)!,
-        .normal = material_prepare_texture_slot(renderer, params.normal_map)!,
-        .occlusion = material_prepare_texture_slot(renderer, params.occlusion_map)!,
-        .emissive = material_prepare_texture_slot(renderer, params.emissive_map)!,
-    };
 }
