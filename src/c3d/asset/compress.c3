@@ -80,16 +80,17 @@ fn CompressionReport? AssetStore.compress_clip(&self, ClipId clip, ClipTolerance
 
         foreach (index, &candidate : staged) {
             if (!candidate.is_packed()) continue;
-            double error = candidate.interpolation == Interpolation.CUBIC_SPLINE
-              ? cubic_error(candidate) : measure_error(&data.tracks[index], candidate);
+            double error = measure_error(&data.tracks[index], candidate);
+            if (candidate.interpolation == Interpolation.CUBIC_SPLINE) error = math::max(error, cubic_error(candidate));
             float* worst = path_value(&report.error, candidate.path);
             *worst = math::max(*worst, (float)error);
         }
+
         foreach (path : TargetPath::values) {
             if (!(*path_value(&report.error, path) <= *path_value(&tolerance, path))) return c3d::TOLERANCE_EXCEEDED~;
         }
 
-        float[] block = alloc::new_array_try(self.allocator, float, (sz)words) ?? c3d::CAPACITY_EXCEEDED~!;
+        uint[] block = alloc::new_array_try(self.allocator, uint, (sz)words) ?? c3d::CAPACITY_EXCEEDED~!;
         usz used;
         foreach (index, &candidate : staged) {
             if (!candidate.is_packed()) continue;
@@ -104,7 +105,7 @@ fn CompressionReport? AssetStore.compress_clip(&self, ClipId clip, ClipTolerance
             free_track_keys(self.allocator, &data.tracks[index]);
             data.tracks[index] = *candidate;
         }
-        data.packed_keys = block;
+        data.packed_block = block;
         record.header.revision++;
     };
     report.bytes_after = key_bytes(data);
@@ -117,11 +118,11 @@ fn bool is_packable(Track* track) @local {
 }
 
 fn usz key_bytes(AnimationClip* clip) @local {
-    usz floats = clip.packed_keys.len;
+    usz words = clip.packed_block.len;
     foreach (&track : clip.tracks) {
-        if (!track.is_packed()) floats += track.times.len + track.values.len;
+        if (!track.is_packed()) words += track.times.len + track.values.len;
     }
-    return floats * float::size;
+    return words * uint::size;
 }
 
 fn void? validate_track(Track* track) @local {
@@ -194,6 +195,7 @@ fn Track pack_track(Track* source, float budget) @local {
         ranges[range] = float::max;
         ranges[range + 1] = -float::max;
     }
+
     foreach (key : kept_keys[:kept]) {
         for (uint slot = 0; slot < slots; slot++) {
             source.read_key(key, slot, value);
@@ -204,16 +206,19 @@ fn Track pack_track(Track* source, float budget) @local {
             }
         }
     }
+
     for (usz range = 0; range < ranges.len; range += 2) {
         ranges[range + 1] = (ranges[range + 1] - ranges[range]) / anim::QUANTIZED_CODE_MAX;
     }
+
     foreach (usz position, key : kept_keys[:kept]) {
         for (uint slot = 0; slot < slots; slot++) {
             source.read_key(key, slot, value);
             foreach (uint component, entry : value) {
                 float* range = &ranges[((usz)slot * stride + component) * 2];
                 usz code = (position * slots + slot) * stride + component;
-                codes[code] = range[1] > 0 ? (ushort)math::round((entry - range[0]) / range[1]) : 0;
+                float scaled = range[1] > 0 ? math::round((entry - range[0]) / range[1]) : 0;
+                codes[code] = (ushort)math::min(scaled, anim::QUANTIZED_CODE_MAX);
             }
         }
     }
@@ -298,12 +303,11 @@ fn double measure_error(Track* source, Track* candidate) @local {
         .reference = scratch[:stride],
         .value = scratch[stride:stride],
     };
+    bool midpoints = source.path == TargetPath.ROTATION || source.interpolation == Interpolation.CUBIC_SPLINE;
     double worst;
     for (uint key = 0; key < keys; key++) {
         worst = math::max(worst, error_at(&probe, source.key_time(key)));
-        if (source.path == TargetPath.ROTATION && key + 1 < keys) {
-            worst = math::max(worst, error_at(&probe, midpoint(source, key)));
-        }
+        if (midpoints && key + 1 < keys) worst = math::max(worst, error_at(&probe, midpoint(source, key)));
     }
     return worst;
 }
@@ -314,6 +318,7 @@ fn double cubic_error(Track* track) @local {
     for (uint key = 1; key < track.key_count(); key++) {
         longest = math::max(longest, (double)track.key_time(key) - (double)track.key_time(key - 1));
     }
+
     double[anim::CUBIC_SLOTS_PER_KEY] widest_step;
     for (uint slot = 0; slot < anim::CUBIC_SLOTS_PER_KEY; slot++) {
         for (uint component = 0; component < stride; component++) {
@@ -364,21 +369,21 @@ fn usz code_count(Track* track) @local {
     return track.key_count() * per_key;
 }
 
-fn void place_track(float[] block, usz* used, Track* track, bool owns_times) @local {
+fn void place_track(uint[] block, usz* used, Track* track, bool owns_times) @local {
     usz ranges = range_count(track);
     usz codes = code_count(track);
-    float[] range_slot = block[*used:ranges];
+    float[] range_slot = ((float*)(block.ptr + *used))[:ranges];
     range_slot[..] = track.packed.ranges[:ranges];
     track.packed.ranges = range_slot.ptr;
     *used += ranges;
 
-    float[] code_slot = block[*used:(codes + 1) / 2];
-    ((ushort*)code_slot.ptr)[:codes] = track.packed.codes[:codes];
-    track.packed.codes = (ushort*)code_slot.ptr;
-    *used += code_slot.len;
+    ushort* code_slot = (ushort*)(block.ptr + *used);
+    code_slot[:codes] = track.packed.codes[:codes];
+    track.packed.codes = code_slot;
+    *used += (codes + 1) / 2;
 
     if (!owns_times) return;
-    float[] time_slot = block[*used:track.times.len];
+    float[] time_slot = ((float*)(block.ptr + *used))[:track.times.len];
     time_slot[..] = track.times[..];
     track.times = time_slot;
     *used += time_slot.len;

@@ -79,7 +79,7 @@ struct AnimationClip {
     Track[] tracks;
     uint[]  targets;
     ClipEvent[] events;
-    float[] packed_keys;
+    uint[]  packed_block; // ranges, codes and times of the packed tracks, in four-byte words
 }
 
 <*
@@ -156,7 +156,7 @@ fn bool Track.is_packed(&self) {
  @pure
 *>
 fn bool AnimationClip.is_compressed(&self) {
-    return self.packed_keys.len != 0;
+    return self.packed_block.len != 0;
 }
 
 <*

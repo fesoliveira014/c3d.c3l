@@ -3,8 +3,6 @@ module c3d::anim;
 import c3d::maths;
 import std::math;
 
-alias TrackSampler @private = fn void(Track* track, float time, uint* cursor, float[] out);
-
 const float SLERP_DOT_THRESHOLD = 0.99875f; // cos(0.05 rad): keys further apart than 0.1 rad slerp, nearer ones nlerp
 
 <*
@@ -37,13 +35,6 @@ fn void sample_track(Track* track, float time, uint* cursor, float[] out) {
         return;
     }
     sample_raw(track, time, cursor, out);
-}
-
-<*
- Sampler that suits the encodings of a clip's tracks, picked once per clip.
-*>
-fn TrackSampler clip_sampler(AnimationClip* clip) @private {
-    return clip.is_compressed() ? &sample_track : &sample_raw;
 }
 
 fn void sample_raw(Track* track, float time, uint* cursor, float[] out) @private {

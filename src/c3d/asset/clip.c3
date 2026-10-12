@@ -114,7 +114,7 @@ fn ClipId? AssetStore.find_clip(&self, String key) {
 *>
 fn void free_clip(Allocator allocator, AnimationClip* clip) {
     foreach (&track : clip.tracks) free_track_keys(allocator, track);
-    alloc::free(allocator, clip.packed_keys.ptr);
+    alloc::free(allocator, clip.packed_block.ptr);
     alloc::free(allocator, clip.tracks.ptr);
     alloc::free(allocator, clip.targets.ptr);
     alloc::free(allocator, clip.events.ptr);

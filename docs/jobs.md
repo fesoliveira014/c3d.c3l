@@ -326,12 +326,16 @@ equals its serial output bit for bit. The tables hold the median of three proces
 
 `job_bench --crowd COUNT` times an animated crowd instead of the kernels. It loads the Quaternius character,
 creates a crowd of COUNT instances with six looping clips at random phases and speeds, and per frame runs
-`advance` on the caller, `sample_range` over the pool in ranges of 16 instances with one scratch per range, then
-`publish_crowd_pose` on the caller. One line per path prints the median stage times over fifteen frames; the
-`update` line is the serial `CrowdPlaybackState.update`. Every line's per-frame digest of poses, morph weights,
-root motion and events must equal the `update` line's, and the exit status is 1 when one does not. With
-`--compress` the clips are quantized first (see [Compressed clips](animation.md#compressed-clips)) and the header
-line prints their bytes before and after and the largest error per path.
+`advance` on the caller, `sample_range` over the pool in ranges of `ceil(COUNT / (4 * (workers + 1)))` instances
+with one scratch per range, then `publish_crowd_pose` on the caller. The ranges follow the pool, so the scratches
+(and their pose caches) number at most four for each thread that samples. One line per path prints the median
+stage times over fifteen frames; the `update` line is the serial `CrowdPlaybackState.update`. `cpu_ms` sums the
+time of the sampled ranges. Every line's per-frame digest of poses, morph weights, root motion and events must
+equal the `update` line's, and the exit status is 1 when one does not. `--shared-phases` also runs the crowd with
+instances in twelve groups that share a clip and a time, interleaved by instance index, and adds the hit rate and
+the sample and CPU time saved against the unshared line of the same worker count. With `--compress` the clips are
+quantized first (see [Compressed clips](animation.md#compressed-clips)) and the header line prints their bytes before
+and after and the largest error per path.
 
 Background lines time one background run of 1024 empty ranges at batch 1, from `try_run` until its last range
 has run, on the capped workers alone; the caller only polls. Loaded lines time the 65 536-item kernel at batch
