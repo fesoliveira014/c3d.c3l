@@ -164,6 +164,7 @@ struct Stats {
     uint  trace_posed_overflow;  // this frame: posed candidates left out past the slot capacity
     usz   trace_posed_bytes;     // this frame: GPU bytes the posed slots hold
     uint  trace_poses;           // this frame: posing dispatches
+    uint  trace_poses_reused;    // this frame: poses a trace slot took from compute skinning instead of dispatching
     uint  trace_refits;          // this frame: node refit dispatches
     float trace_build_ms;
     uint  blas_builds;

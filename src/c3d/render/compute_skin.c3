@@ -24,7 +24,13 @@ struct PosedDraw @private {
     gpu::GpuAddress root;      // posed block when active, else the rest block
     gpu::GpuAddress previous;  // positions of the pose before this one; 0 without history
     ulong           committed; // submitted frame whose pose previous holds; 0 before the first
+    uint            binding;   // index in the table when active
     bool            active;
+}
+
+struct PosedSource @private {
+    GeometryRoot root;
+    gpu::GpuSpan positions;
 }
 
 struct SkinDispatch @private {
@@ -253,7 +259,46 @@ fn PosedDraw? stage_posed_draw(
         .root      = binding.roots[binding.current],
         .previous  = binding.committed ? previous : (gpu::GpuAddress)0,
         .committed = binding.committed,
+        .binding   = (uint)(binding - table.bindings.ptr),
         .active    = true,
+    };
+}
+
+<*
+ Root and positions of one source in the binding's current pose.
+ @param sources : "Sources the binding holds; 1 for a mesh."
+ @param source : "Logical source whose streams the root addresses."
+ @require posed.active
+*>
+fn PosedSource? posed_source(
+    Renderer* renderer,
+    PosedDraw* posed,
+    GpuGeometry* geometry,
+    uint sources,
+    uint source,
+) @private {
+    ComputeSkinBinding* binding = &renderer.compute_skin.bindings[posed.binding];
+    GeometryLayout* layout = &geometry.layout;
+    PosedLayout streams = posed_layout(layout, sources);
+    // Block one borrows block zero's normals and tangents, so only the positions follow the current block.
+    GeometryRoot root = posed_geometry_root(
+        source:  layout,
+        base:    geometry.root,
+        posed:   binding.roots[0],
+        sources: sources,
+    );
+    usz first = (usz)source * layout.vertex_count;
+    root.positions = posed.root + (gpu::GpuAddress)(streams.positions + first * PACKED_VEC3_BYTES);
+    if (root.normals) root.normals += (gpu::GpuAddress)(first * PACKED_VEC3_BYTES);
+    if (root.tangents) root.tangents += (gpu::GpuAddress)(first * Vec4::size);
+
+    gpu::GpuSpan block = gpu::get_allocation_span(&renderer.device, binding.allocation)!;
+    return {
+        .root      = root,
+        .positions = block.checked_subspan(
+            (usz)(root.positions - binding.roots[0]),
+            PACKED_VEC3_BYTES * layout.vertex_count,
+        )!,
     };
 }
 
@@ -333,7 +378,9 @@ fn void? record_compute_skin(Renderer* renderer, gpu::CommandList* commands) @pr
         gpu::cmd_dispatch(commands, dispatch.root, { groups, math::max(dispatch.sources, 1u), 1 })!;
     }
 
-    gpu::Barrier posed = { .before = { .compute }, .after = { .vertex_shader } };
+    // Raster reads the posed streams in the vertex stage, trace shaders and refits in compute and ray tracing,
+    // and a hardware bottom-level build as its vertex input.
+    gpu::Barrier posed = { .before = { .compute }, .after = renderer.consumer_stages };
     gpu::cmd_barrier(commands, &posed)!;
 
     table.dispatches.clear();

@@ -91,6 +91,7 @@ struct TracePoseSource @private {
     Mesh*          mesh;          // MESH
     SkinBinding*   skin;          // MESH; null for a morph-only mesh
     AnimatedCrowd* crowd;         // CROWD
+    InstancedMesh* batch;         // CROWD: the part's batch
     uint           part;          // CROWD: index into crowd.parts
     Scene*         scene;         // ANIMATED_LOD: source scene, borrowed for this collection
     LodGroupState* lod;           // animated level-zero descriptor, borrowed for this collection
@@ -186,7 +187,8 @@ fn gpu::GpuAddress? Renderer.prepare_scene_trace(&self, Scene* scene, TraceKind 
             record_scene_trace(self, scene)!;
         };
         trace.prepared_frame = self.frame_index + 1;
-        if (trace.hardware_requested || self.posed_trace.dispatches.len()) {
+        // The trace claims posed bindings, whose dispatches must precede every reader of the slots' streams.
+        if (trace.hardware_requested || self.posed_trace.dispatches.len() || self.compute_skin.dispatches.len()) {
             record_pending_copies(self, &self.commands)!;
             record_trace_poses(self, &self.commands)!;
         }
@@ -385,6 +387,7 @@ fn TraceCollection collect_trace_instances(
                             .kind = crowd_part.skinned || crowd_part.weight_count ? TracePose.CROWD : TracePose.REST,
                             .node = node,
                             .crowd = crowd,
+                            .batch = batch,
                             .part = part,
                         };
                     }
