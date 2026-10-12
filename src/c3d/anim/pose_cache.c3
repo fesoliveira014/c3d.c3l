@@ -26,8 +26,9 @@ struct PoseCacheEntry @private {
 }
 
 <*
- Raw track samples of clips at exact times, shared by the actions of one scratch.
- An entry records tracks in ascending order; every recorded value is what sample_track returns for it.
+ Track samples of clips at exact times, shared by the actions of one scratch.
+ An entry records tracks in ascending order; every recorded value is what sample_track returns for it,
+ so a compressed clip records decoded samples.
 *>
 struct PoseCache {
     PoseCacheEntry[] entries;

@@ -10,4 +10,6 @@ faultdef
     ASSET_FORMAT_ERROR,
     ASSET_IO_ERROR,
     ASSET_DATA_UNAVAILABLE,
-    INCOMPATIBLE_STRUCTURE;
+    INCOMPATIBLE_STRUCTURE,
+    <* Measured error of a compressed clip exceeds the tolerance. *>
+    TOLERANCE_EXCEEDED;

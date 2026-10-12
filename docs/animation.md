@@ -803,10 +803,10 @@ sampling. A scratch from `create_crowd_pose_scratch`, and the state's own, holds
 `PoseCache` of `POSE_CACHE_CAPACITY` (64) entries that lets them share it.
 
 - **Entry.** An entry is keyed on the clip id, the clip revision and the exact bits of
-  the action's time. It lists, in ascending track order, the raw values `sample_track`
+  the action's time. It lists, in ascending track order, the values `sample_track`
   returns for the tracks the plain blend branch sampled, before the root pin copies and
-  edits them. A later action at the same key reads the tracks it needs from the list,
-  samples the ones the list lacks and appends them. A masked, weighted or differently
+  edits them; a compressed clip records its decoded samples. A later action at the same key reads the
+  tracks it needs from the list, samples the ones the list lacks and appends them. A masked, weighted or differently
   present action therefore never samples a track it would not sample alone, and every
   value equals an uncached sample. A hit leaves the action's seek cursors unchanged;
   they are hints.
@@ -835,6 +835,32 @@ sampling. A scratch from `create_crowd_pose_scratch`, and the state's own, holds
 twelve groups that share a clip and a time, interleaved by instance index, and shows the
 sample time and hit rate. `job_bench --crowd COUNT --shared-phases` times the same crowd
 on 0, 1 and 3 workers beside the unshared one.
+
+### Compressed clips
+
+`assets.compress_clip(clip, tolerance)` quantizes a clip's key data once, at load or import time. `ClipTolerance`
+holds the largest accepted deviation per path: `translation` in metres, `rotation` in radians, `scale` as a ratio
+and `weight` in weight units. Translation, scale and morph weight tracks store 16-bit codes per component over the
+track's own range; rotation tracks store smallest-three codes in 48 bits. Cubic spline tracks quantize their values
+and tangents the same way and report an analytic per-segment bound; cubic rotations and empty tracks stay raw.
+Times are never quantized, and tracks of one clip whose time arrays are identical share one.
+
+The call samples the source and the quantized track through `sample_track` at every source key time, and for
+rotations also at each segment's midpoint, and returns the largest error per path with the bytes before and after.
+A rotation error is the larger of those samples, not a true maximum. When an error exceeds its tolerance the call
+returns `TOLERANCE_EXCEEDED`; a failure of any kind leaves the clip, its arrays and its revision unchanged. On success
+the raw arrays are freed, one block holds the packed keys, and the revision moves once. A later `replace_clip_owned`
+installs raw tracks again, and compressing a compressed clip is a contract violation (`clip.data.is_compressed()`).
+
+Error is bounded per key, so a looping root-motion clip's per-cycle displacement can drift by up to twice the
+translation tolerance, and the drift accumulates over cycles.
+
+Compressed tracks sample with the same cursor contract, but they cost more CPU to sample than raw ones, because every
+key read is dequantized: compression trades sampling time for memory. Code that reads keys goes through `Track.key_count`,
+`key_time` and `read_key`, since `Track.values` holds floats only while `encoding` is `RAW`. The blends pick the
+raw or the dispatching sampler once per clip, so raw clips sample as before. `skinned_crowd --compress` and
+`job_bench --crowd COUNT --compress` compress the model's clips with a tolerance of 1e-3 on every path and print the
+bytes before and after and the largest errors.
 
 ## What deforms
 
