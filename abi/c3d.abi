@@ -1094,6 +1094,57 @@ root FogVolumeRoot {
     uint         _pad1;
 }
 
+const uint CLOUD_NOISE_SIZE = 128; // 8 MiB of RGBA8 shared by every deck; 64 repeats visibly, 256 costs 64 MiB
+const uint CLOUD_NOISE_GROUP_SIZE = 4;
+const uint CLOUD_STEPS = 64; // samples along a half-resolution ray; fewer band the deck: the cloud pass's cost lever
+const uint CLOUD_LIGHT_STEPS = 6; // samples toward the sun per ray sample; fewer lose the self-shadowing of depth
+
+root CloudNoiseRoot {
+    TextureIndex output_texture;
+    uint         size;
+    uint         _pad0;
+    uint         _pad1;
+}
+
+root CloudsRoot {
+    vec4         sun_direction;    // xyz: unit vector toward the sun
+    vec4         sun_illuminance;  // rgb: before the air above the deck; the view's pre-exposure applied
+    vec4         wind_offset;      // xyz: metres the clouds have drifted
+    GpuAddress   frame;
+    TextureIndex output_texture;   // RGBA16F: scattered radiance and transmittance
+    TextureIndex distance_texture; // R32F: opacity-weighted distance of the cloud along the ray
+    TextureIndex depth;
+    TextureIndex noise;
+    TextureIndex coverage;         // zero: full cover
+    SamplerIndex noise_sampler;
+    SamplerIndex coverage_sampler;
+    uint         width;
+    uint         height;
+    float        planet_radius;    // zero: a flat slab
+    float        bottom;
+    float        top;
+    float        density;
+    float        albedo;
+    float        anisotropy;
+    float        coverage_extent;
+    float        noise_scale;
+    float        erosion;
+}
+
+root CloudsCompositeRoot {
+    GpuAddress   frame;
+    TextureIndex color;
+    TextureIndex depth;
+    TextureIndex clouds;
+    TextureIndex distance_texture;
+    uint         width;
+    uint         height;
+    uint         cloud_width;
+    uint         cloud_height;
+    uint         _pad0;
+    uint         _pad1;
+}
+
 const uint PHYSICAL_MAP_CLEARCOAT = 1;
 const uint PHYSICAL_MAP_CLEARCOAT_ROUGHNESS = 2;
 const uint PHYSICAL_MAP_CLEARCOAT_NORMAL = 4;
