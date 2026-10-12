@@ -318,7 +318,9 @@ the slice's depth and over time. Optical depth is analytic and carries no histor
   the froxel and at the froxels just in front of and behind it in the same column. History that the current
   depth neighbours no longer support, such as the shadow a moving caster left in a shaft, goes to their range at
   once instead of fading, and a moving shadow edge lags by about the depth of a slice. The jitter spreads the
-  samples along depth, so a still shaft keeps its history inside the range and settles.
+  samples along depth, so a still shaft keeps its history inside the range and settles. A feature narrower than a
+  slice, such as the glow of a lamp beside the view ray, is pulled toward the range its neighbours sample too, and
+  settles dimmer than the average of the jitter.
 - **Rejection.** The history of a view is dropped, and the next frame injects without it, when:
   - `reset_view_history` ran, the view was created or configured (a resize and a `fog_quality` change reallocate
     the volumes), the switch was turned on, or the scene changed;
