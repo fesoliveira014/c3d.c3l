@@ -465,8 +465,8 @@ requests that this call moved to `PUBLISHED` or commit `FAILED`; earlier worker 
 atomically in FIFO order; a head that cannot fit stops the call, and later smaller documents do not bypass it. An
 admitted commit failure consumes its charge and leaves existing assets unchanged.
 
-A document's charge is one item for the model and one per entry, template node, template mesh, LOD part and clip
-track. A replacement is charged like an addition: a matched entry keeps its structure, so the incoming document also
+A document's charge is one item for the model and one per entry, template node, template mesh, skin joint node, LOD
+part, morph target, morph channel, skeleton joint and clip track. A replacement is charged like an addition: a matched entry keeps its structure, so the incoming document also
 measures the payload the replacement frees. The worker computes the charge while decoding; admission on the owner
 thread reads it without traversing anything. Items do not count key or name bytes and promise no CPU instruction or
 wall-clock limit.

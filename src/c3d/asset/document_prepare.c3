@@ -365,7 +365,10 @@ fn ulong publication_items(ModelDocument* document) @private {
       + document.geometries.len + document.skeletons.len + document.clips.len
       + template.nodes.len + template.meshes.len;
 
+    foreach (&skin : template.skins) items += skin.joint_nodes.len;
     foreach (&group : template.lod_groups) items += group.desc.parts.len;
+    foreach (&entry : document.geometries) items += entry.data.targets.len + entry.data.channels.len;
+    foreach (&entry : document.skeletons) items += entry.data.parents.len;
     foreach (&entry : document.clips) items += entry.data.tracks.len;
 
     return items;
