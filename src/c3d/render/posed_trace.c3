@@ -690,8 +690,10 @@ fn void? resolve_posed_instance(
     bool hardware = renderer.scene_trace.hardware_requested;
     PosedDraw posed = claim_trace_pose(renderer, source, record, mirror, scene)!;
     PosedTraceRes* slot = &table.slots[index];
+
     // The slot's own streams went stale while it followed the compute pass.
     if (slot.aliased && !posed.active) slot.built_revision = 0;
+
     acquire_posed_streams(
         renderer:      renderer,
         index:         index,
@@ -804,6 +806,7 @@ fn void? alias_posed_pose(
         sources:  crowd ? (uint)source.crowd.placements.len : 1,
         source:   crowd ? record.instance_index : 0,
     )!;
+
     write_posed_root(renderer, slot, pose.root)!;
     renderer.pending_overwrite = true;
     slot.positions = pose.positions;

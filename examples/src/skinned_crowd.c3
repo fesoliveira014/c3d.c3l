@@ -518,6 +518,7 @@ fn void? run(
     anim::update(assets, scene, 0);
     scene.update_world();
     renderer.prepare_scene(scene)!;
+
     if (showcase.traced_shadows) {
         ViewDesc desc = renderer.views.get(renderer.default_view).desc;
         desc.ray_tracing.shadows = true;
@@ -712,8 +713,9 @@ fn int main(String[] args) {
     sun_light.shadow.enabled = traced_shadows;
     sun_light.shadow.ray_traced = traced_shadows;
     Node* sun = scene.add_light(sun_light, name: "sun")!!;
-    if (traced_shadows) add_ground(&assets, &scene)!!;
     sun.local.rotation = maths::look_rotation((Vec3){ -0.4f, -1, -0.5f }.normalize(), { 0, 1, 0 });
+
+    if (traced_shadows) add_ground(&assets, &scene)!!;
 
     Random random = { .state = RANDOM_SEED };
     CrowdInstance[CROWD_SIZE] instances;
