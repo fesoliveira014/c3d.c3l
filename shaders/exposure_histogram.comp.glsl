@@ -21,7 +21,7 @@ void main() {
 
     uvec2 texel = gl_GlobalInvocationID.xy * EXPOSURE_METER_STRIDE;
     if (texel.x < root.width && texel.y < root.height) {
-        float luminance = dot(fetch_texture_2d(root.input_texture, ivec2(texel)).rgb, REC709_LUMA);
+        float luminance = dot(fetch_texture_2d(root.input_texture, ivec2(texel)).rgb, REC709_LUMA) / root.pre_exposure;
         if (exposure_metered(luminance)) atomicAdd(group_bins[exposure_bin(luminance)], 1u);
     }
     barrier();

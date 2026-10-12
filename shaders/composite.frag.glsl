@@ -13,5 +13,6 @@ layout(push_constant) uniform Push {
 
 void main() {
     CompositeRoot root = CompositeRoot(pc.fragment_root_gpu);
-    out_color = sample_texture_2d(root.source_texture, root.source_sampler, v_uv);
+    vec4 source = sample_texture_2d(root.source_texture, root.source_sampler, v_uv);
+    out_color = vec4(source.rgb / root.pre_exposure, source.a);
 }

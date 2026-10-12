@@ -193,8 +193,8 @@ const uint TAA_DEBUG_VELOCITY_RANGE = 16u;
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer CompositeRoot {
     uint source_texture;
     uint source_sampler;
+    float pre_exposure;
     uint _pad0;
-    uint _pad1;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer WeightedCompositeRoot {
@@ -376,6 +376,10 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
     uint reflection_brdf_lut;
     uint reflection_sampler;
     float max_reflection_roughness;
+    float pre_exposure;
+    float pre_exposure_ratio;
+    float _pad0;
+    float _pad1;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
@@ -695,7 +699,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer PathTraceRo
     uint sample_index;
     uint sample_count;
     uint max_bounces;
-    uint _pad0;
+    float pre_exposure;
 };
 
 struct TextureMapGpu {
@@ -784,7 +788,7 @@ struct DebugVertexGpu {
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer DebugLinesRoot {
     uint64_t vertices;
     float alpha;
-    uint _pad0;
+    float pre_exposure;
     mat4 view_proj;
 };
 
@@ -1168,8 +1172,8 @@ struct GradeGpu {
     float bloom_intensity;
     uint _pad_bloom;
     uint64_t auto_exposure;
-    uint _pad_exposure0;
-    uint _pad_exposure1;
+    float pre_exposure;
+    uint _pad_exposure;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer GradeRoot {
@@ -1214,6 +1218,10 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer BloomRoot {
     float knee;
     vec2 input_texel;
     uint64_t auto_exposure;
+    float pre_exposure;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer ExposureGpu {
@@ -1232,7 +1240,7 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer ExposureMete
     uint input_texture;
     uint width;
     uint height;
-    uint _pad0;
+    float pre_exposure;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer ExposureAdaptRoot {
@@ -1320,7 +1328,8 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer TaaRoot {
     float velocity_threshold;
     float proj_22;
     float proj_23;
-    vec2 _pad0;
+    float pre_exposure_ratio;
+    float _pad0;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer MotionBlurRoot {

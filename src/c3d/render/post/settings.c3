@@ -298,6 +298,7 @@ fn float lut_offset(uint size) {
  @param lut_size : "Edge texel count of the LUT; ignored without one."
  @param bloom_texture : "Zero without bloom."
  @param auto_exposure : "Adapted ExposureGpu of this rendering; zero in manual mode."
+ @param pre_exposure : "Divided out of the scene color with the exposure applied."
 *>
 fn void write_grade_gpu(
     GradeGpu* gpu_grade,
@@ -310,6 +311,7 @@ fn void write_grade_gpu(
     gpu::SamplerIndex bloom_sampler = (gpu::SamplerIndex)0,
     float bloom_intensity = 0,
     gpu::GpuAddress auto_exposure = (gpu::GpuAddress)0,
+    float pre_exposure = 1,
 ) {
     Vec3 balance = white_balance_coefficients(params.temperature, params.tint);
     bool lut = lut_texture != (gpu::TextureIndex)0;
@@ -330,6 +332,7 @@ fn void write_grade_gpu(
         .bloom_sampler   = bloom_texture ? bloom_sampler : (gpu::SamplerIndex)0,
         .bloom_intensity = bloom_texture ? bloom_intensity : 0,
         .auto_exposure   = auto_exposure,
+        .pre_exposure    = pre_exposure,
     };
 }
 

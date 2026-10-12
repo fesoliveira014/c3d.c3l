@@ -278,7 +278,12 @@ fn usz? select_view_reflection_probes(
     return count;
 }
 
-fn gpu::GpuAddress? pack_reflection_probes(Renderer* renderer, ReflectionCandidate[] picks, bool sheen) @private {
+fn gpu::GpuAddress? pack_reflection_probes(
+    Renderer* renderer,
+    ReflectionCandidate[] picks,
+    bool sheen,
+    float pre_exposure,
+) @private {
     if (!picks.len) return (gpu::GpuAddress)0;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, ReflectionProbeSetGpu::size, STREAM_ALIGNMENT)!;
@@ -296,6 +301,7 @@ fn gpu::GpuAddress? pack_reflection_probes(Renderer* renderer, ReflectionCandida
             specular_cube: pick.environment.specular_view.index,
             sheen_cube:    sheen ? pick.environment.sheen_view.index : (gpu::TextureIndex)0,
         );
+        set.probes[index].center_intensity.w *= pre_exposure;
     }
     return span.address;
 }

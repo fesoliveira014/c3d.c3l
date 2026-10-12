@@ -18,6 +18,7 @@ void main() {
     vec3 direction;
     fog_pixel_ray(frame, v_uv, origin, direction);
     vec3 illuminance = sky.sun_illuminance.rgb;
-    vec3 disc = min(sky_sun_disc(sky, direction) * illuminance, vec3(SKY_SUN_DISC_LIMIT));
-    out_color = vec4(sky_view_radiance(sky, direction, false) * illuminance + disc, 1.0);
+    vec3 physical_disc = sky_sun_disc(sky, direction) * (illuminance / frame.pre_exposure);
+    vec3 disc = min(physical_disc, vec3(SKY_SUN_DISC_LIMIT)) * frame.pre_exposure;
+    out_color = vec4(min(sky_view_radiance(sky, direction, false) * illuminance + disc, vec3(SKY_STORAGE_MAX)), 1.0);
 }

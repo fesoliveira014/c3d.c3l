@@ -25,6 +25,6 @@ void main() {
     CustomMaterialGpu material = CustomMaterialGpu(draw.material);
     vec4 color = GlowParams(material.parameters).color;
     color.a *= 1.0 - GLOW_PULSE_DEPTH * (0.5 + 0.5 * sin(frame.jitter_time.z * GLOW_PULSE_RATE));
-    vec3 fogged = apply_material_fog(frame, v_world_pos, color.rgb, material.flags);
+    vec3 fogged = apply_material_fog(frame, v_world_pos, pre_exposed(frame, color.rgb), material.flags);
     write_blend_output(frame, material_output(fogged, color.a, material.flags), v_world_pos);
 }

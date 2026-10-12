@@ -43,6 +43,7 @@ fn BloomBinding? record_bloom(Renderer* renderer, ViewRecord* record) {
             prefilter:     level == 0,
             params:        params,
             auto_exposure: level == 0 ? auto_exposure : (gpu::GpuAddress)0,
+            pre_exposure:  record.pre_exposure.factor,
         )!;
         input = output;
     }
@@ -60,6 +61,7 @@ fn BloomBinding? record_bloom(Renderer* renderer, ViewRecord* record) {
             prefilter:     false,
             params:        params,
             auto_exposure: (gpu::GpuAddress)0,
+            pre_exposure:  record.pre_exposure.factor,
         )!;
     }
 
@@ -81,6 +83,7 @@ fn void? record_bloom_dispatch(
     bool prefilter,
     BloomParams* params,
     gpu::GpuAddress auto_exposure,
+    float pre_exposure,
 ) @private {
     Frame* slot = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, BloomRoot::size)!;
@@ -95,6 +98,7 @@ fn void? record_bloom_dispatch(
         .knee           = params.knee,
         .input_texel    = { 1.0f / (float)input.width, 1.0f / (float)input.height },
         .auto_exposure  = auto_exposure,
+        .pre_exposure   = pre_exposure,
     };
     return render::dispatch_over(renderer, root.address, output);
 }

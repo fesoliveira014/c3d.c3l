@@ -54,7 +54,7 @@ void main() {
     float ambient_occlusion = frame_ambient_occlusion(frame, texel);
     vec4 screen_indirect = frame_screen_space_indirect(frame, texel);
     vec3 color = standard_ambient_fill(frame, base_color, metallic, occlusion, ambient_occlusion, screen_indirect)
-        + emissive_specular.rgb;
+        + pre_exposed(frame, emissive_specular.rgb);
     vec3 diffuse = vec3(0.0);
     vec3 specular = vec3(0.0);
     if (frame_has_indirect(frame)) {

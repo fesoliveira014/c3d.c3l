@@ -2,6 +2,7 @@
 #define C3D_TOON_GLSL
 
 #include "descriptor_heap.glsl"
+#include "pre_exposure.glsl"
 
 float toon_response(ToonMaterialGpu material, float normal_light) {
     if (normal_light <= 0.0) return 0.0;
@@ -19,10 +20,12 @@ float toon_response(ToonMaterialGpu material, float normal_light) {
     return min(floor(cosine * bands), bands - 1.0) / (bands - 1.0);
 }
 
-vec3 toon_rim(ToonMaterialGpu material, vec3 normal, vec3 view_direction) {
+vec3 toon_rim(FrameRoot frame, ToonMaterialGpu material, vec3 normal, vec3 view_direction) {
     float facing = clamp(dot(normal, view_direction), 0.0, 1.0);
-    return material.rim_color_strength.rgb * material.rim_color_strength.w
-        * pow(1.0 - facing, material.rim_power);
+    return pre_exposed(
+        frame,
+        material.rim_color_strength.rgb * material.rim_color_strength.w * pow(1.0 - facing, material.rim_power)
+    );
 }
 
 #endif

@@ -169,7 +169,8 @@ void main() {
     ivec2 texel = ivec2(gl_LaunchIDEXT.xy);
     if (root.sample_count == 0u) {
         vec3 held = load_storage_texture(root.accumulation, texel).rgb;
-        store_storage_texture(root.output_texture, texel, vec4(min(held, vec3(HDR_OUTPUT_MAX)), 1.0));
+        vec3 stored = min(held * root.pre_exposure, vec3(HDR_OUTPUT_MAX));
+        store_storage_texture(root.output_texture, texel, vec4(stored, 1.0));
         return;
     }
 
@@ -194,5 +195,5 @@ void main() {
         mean = (held * float(root.sample_index) + sum) / float(root.sample_index + root.sample_count);
     }
     store_storage_texture(root.accumulation, texel, vec4(mean, 1.0));
-    store_storage_texture(root.output_texture, texel, vec4(min(mean, vec3(HDR_OUTPUT_MAX)), 1.0));
+    store_storage_texture(root.output_texture, texel, vec4(min(mean * root.pre_exposure, vec3(HDR_OUTPUT_MAX)), 1.0));
 }

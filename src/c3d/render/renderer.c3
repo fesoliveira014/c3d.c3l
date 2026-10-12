@@ -579,6 +579,7 @@ fn void? composite_target(
     Target* source,
     Target* output,
     PixelRect rect,
+    float pre_exposure = 1,
 ) @private {
     source.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
     output.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
@@ -588,6 +589,7 @@ fn void? composite_target(
     *(CompositeRoot*)root.bytes.ptr = {
         .source_texture = source.view.index,
         .source_sampler = renderer.linear_clamp_sampler,
+        .pre_exposure   = pre_exposure,
     };
 
     gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, composite_pipeline_key(output.format))!;

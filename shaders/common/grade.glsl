@@ -103,7 +103,7 @@ vec3 tonemap(vec3 color, uint operator_index) {
 vec3 grade_color(vec3 color, vec2 uv, GradeGpu grade) {
     float exposure = grade.exposure;
     if (grade.auto_exposure != 0ul) exposure *= ExposureGpu(grade.auto_exposure).scale;
-    color *= exposure;
+    color *= exposure / grade.pre_exposure;
     if (grade.bloom_texture != 0u) {
         color += grade.bloom_intensity * sample_texture_2d(grade.bloom_texture, grade.bloom_sampler, uv).rgb;
     }

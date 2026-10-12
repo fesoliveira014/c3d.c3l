@@ -44,6 +44,8 @@ void main() {
         vec3 view_direction = normalize(frame.camera_position.xyz - v_world_pos);
         color.rgb *= frame.ambient.rgb
             + indirect_diffuse_irradiance(frame, v_world_pos, normalize(v_normal), view_direction);
+    } else {
+        color.rgb = pre_exposed(frame, color.rgb);
     }
     color.rgb = apply_material_fog(frame, v_world_pos, color.rgb, material.flags);
     write_blend_output(frame, material_output(color.rgb, color.a, material.flags), v_world_pos);

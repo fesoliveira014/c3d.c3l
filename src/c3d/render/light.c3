@@ -27,6 +27,7 @@ struct LightCounts {
  @param ray_tracing : "Flagged lights trace instead of requesting atlas layers."
  @param trace_shadows : "Every shadowing light traces, whatever its own flag says."
  @param origin : "Absolute origin shared by frustum and packed positions."
+ @param pre_exposure : "Multiplies every packed intensity."
  @require capacity > 0
 *>
 fn LightExtraction extract_lights(
@@ -41,6 +42,7 @@ fn LightExtraction extract_lights(
     RayTracingDesc ray_tracing = {},
     bool trace_shadows = false,
     Vec3 origin = {},
+    float pre_exposure = 1,
 ) {
     LightGpu[] packed = alloc::new_array(allocator, LightGpu, math::min(scene.count(Light), capacity));
     uint sun_light;
@@ -58,6 +60,7 @@ fn LightExtraction extract_lights(
         trace_shadows: trace_shadows,
         sun_light: &sun_light,
         origin: origin,
+        pre_exposure: pre_exposure,
     );
     return { .lights = packed[:counts.packed], .shadows = requests, .sun_light = sun_light };
 }
@@ -76,6 +79,7 @@ fn ShadowRequest[] collect_shadow_requests(
     bool trace_shadows = false,
     uint* sun_light = null,
     Vec3 origin = {},
+    float pre_exposure = 1,
 ) @private {
     *counts = {};
     ShadowRequest[] requests = alloc::new_array(allocator, ShadowRequest, capacity);
@@ -101,6 +105,7 @@ fn ShadowRequest[] collect_shadow_requests(
                 counts.culled++;
             }
         }
+        color_intensity.w *= pre_exposure;
         if (eligible) {
             uint packed_index = counts.packed;
             bool ray_traced = trace_shadows ? light.shadow.enabled : light_ray_traced(light, ray_tracing);
