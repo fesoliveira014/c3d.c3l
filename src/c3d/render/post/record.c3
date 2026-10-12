@@ -165,31 +165,6 @@ fn PipelineKey fxaa_fragment_pipeline_key(gpu::Format output_format) @private {
 }
 
 <*
- Create the pipelines the view's display route needs.
- @param [&inout] renderer : "No open frame required; pipelines persist."
- @param [&in] record : "Selects the route by its FXAA setting."
- @return? c3d::SHADER_NOT_FOUND, gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE
- @return? gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL, gpu::INVALID_ARGUMENT
- @return? gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
-*>
-fn void? prepare_display(Renderer* renderer, ViewRecord* record) {
-    if (record.desc.post.bloom) acquire_bloom_pipelines(renderer)!;
-    if (record.desc.post.depth_of_field) acquire_dof_pipelines(renderer)!;
-    if (record.desc.post.motion_blur) acquire_motion_blur_pipelines(renderer)!;
-    if (uses_velocity(&record.desc)) acquire_velocity_pipelines(renderer, velocity_format(&record.desc))!;
-    if (record.desc.post.anti_aliasing == AntiAliasing.TAA) acquire_taa_pipeline(renderer)!;
-    if (auto_exposure_active(&record.desc)) acquire_exposure_pipelines(renderer)!;
-    if (!record.hdr_color.texture.is_valid()) return;
-    gpu::Format output_format = render::view_output_format(renderer, &record.desc);
-    if (record.desc.post.anti_aliasing == AntiAliasing.FXAA) {
-        acquire_post_pipelines(renderer)!;
-        renderer.pipelines.get(&renderer.device, fxaa_fragment_pipeline_key(output_format))!;
-        return;
-    }
-    renderer.pipelines.get(&renderer.device, display_pipeline_key(output_format))!;
-}
-
-<*
  Destroy the compute pipelines.
  @param [&inout] device : "Owner of the pipelines."
  @param [&inout] pipelines : "Cleared."

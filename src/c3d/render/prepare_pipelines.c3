@@ -186,34 +186,32 @@ fn bool prepare_pipeline_dependencies_current(Renderer* renderer, PrepareUnit* u
     return true;
 }
 
-fn PipelineKey? prepare_cache_key(Renderer* renderer, PrepareUnit* unit) @private {
-    PipelineKey key = unit.pipeline.key;
+// The custom stages come from the published mirror, which the material resolution or shader unit made current.
+fn PipelineKey? prepare_cache_key(Renderer* renderer, PreparePipelineUnit* request) @private {
+    PipelineKey key = request.key;
     if (!key.shader.generation) return key;
     ShaderRes* mirror = &renderer.shaders[key.shader.index];
     asset::ShaderDesc* desc = &mirror.desc;
     key.shader_revision = mirror.revision;
-    switch (unit.pipeline.pass) {
+    uint instanced = key.vertex.flags & shader::SHADER_FLAG_INSTANCED;
+
+    switch (request.pass) {
         case FORWARD:
             key.custom = { .vertex = desc.vertex.shaded.len > 0, .fragment = true };
             key.fragment = custom_fragment_variant(desc, key.fragment.flags);
-            if (key.custom.vertex) key.vertex = { .shader = MESH, .flags = key.vertex.flags & shader::SHADER_FLAG_INSTANCED };
+            if (key.custom.vertex) key.vertex = { .shader = MESH, .flags = instanced };
         case GBUFFER:
             key.custom = { .vertex = desc.vertex.shaded.len > 0, .gbuffer = true };
-            if (key.custom.vertex) key.vertex = { .shader = MESH, .flags = key.vertex.flags & shader::SHADER_FLAG_INSTANCED };
+            if (key.custom.vertex) key.vertex = { .shader = MESH, .flags = instanced };
         case DEPTH:
             key.custom = { .vertex = desc.vertex.depth.len > 0 };
-            if (key.custom.vertex) key.vertex = {
-                .shader = MESH,
-                .flags = shader::SHADER_FLAG_DEPTH_ONLY | (key.vertex.flags & shader::SHADER_FLAG_INSTANCED),
-            };
+            if (key.custom.vertex) key.vertex = { .shader = MESH, .flags = shader::SHADER_FLAG_DEPTH_ONLY | instanced };
         case VELOCITY:
-            key.custom = { .vertex = desc.vertex.velocity.len > 0 };
-            if (key.custom.vertex) key.vertex = {
-                .shader = MESH,
-                .flags = shader::SHADER_FLAG_VELOCITY | (key.vertex.flags & shader::SHADER_FLAG_INSTANCED),
-            };
+            key.custom = { .vertex = (instanced ? desc.vertex.instanced_velocity : desc.vertex.velocity).len > 0 };
+            if (key.custom.vertex) key.vertex = { .shader = MESH, .flags = shader::SHADER_FLAG_VELOCITY | instanced };
         case REGISTRY:
     }
+
     if (!(uint)key.custom) {
         key.shader = {};
         key.shader_revision = 0;
@@ -235,7 +233,7 @@ fn PrepareStepCost? prepare_pipeline_cost(Renderer* renderer, PrepareUnit* unit)
             )!;
             return {};
         case CACHE:
-            PipelineKey? key = prepare_cache_key(renderer, unit);
+            PipelineKey? key = prepare_cache_key(renderer, &unit.pipeline);
             if (catch excuse = key) return {};
             bool cached = renderer.pipelines.pipelines.has_key(key) || renderer.pipelines.rejected.has_key(key);
             return { .pipelines = cached ? 0 : 1 };
@@ -256,78 +254,91 @@ fn bool? run_prepare_pipeline_step(Renderer* renderer, PrepareUnit* unit, Prepar
     if (prepare_pipeline_dead(renderer, unit)) return true;
     switch (unit.pipeline.kind) {
         case VALIDATE: return true;
+        case SHEEN_LUT: run_prepare_sheen_step(renderer, unit, report)!;
         case CACHE:
-            report.pipeline_lookups++;
+        case COMPUTE:
+        case PATH_TRACER: acquire_prepare_pipeline(renderer, &unit.pipeline, report)!;
+    }
+    return true;
+}
+
+<*
+ @require request.kind != PreparePipelineKind.SHEEN_LUT && request.kind != PreparePipelineKind.VALIDATE
+*>
+fn void? acquire_prepare_pipeline(Renderer* renderer, PreparePipelineUnit* request, PrepareReport* report) @private {
+    report.pipeline_lookups++;
+    switch (request.kind) {
+        case CACHE:
             renderer.stats.pipeline_lookups++;
-            PipelineKey? selected = prepare_cache_key(renderer, unit);
+            PipelineKey? selected = prepare_cache_key(renderer, request);
             if (catch excuse = selected) {
-                if (excuse == PIPELINE_REJECTED) return true;
+                if (excuse == PIPELINE_REJECTED) return;
                 return excuse~;
             }
             PipelineKey key = selected;
-            bool hit = renderer.pipelines.pipelines.has_key(key);
-            if (hit) report.pipeline_hits++;
+            if (renderer.pipelines.pipelines.has_key(key)) report.pipeline_hits++;
             PipelineCreationCounters before = renderer.pipelines.creations;
             defer account_prepare_cache_creation(renderer, report, before);
             CustomStageSource source;
             if ((uint)key.custom) source = custom_stage_source(&renderer.shaders[key.shader.index].desc, key);
             if (catch excuse = renderer.pipelines.get(&renderer.device, key, &source)) {
-                if (key.shader.generation && pipeline_rejected(renderer, key.shader, excuse)) return true;
+                if (key.shader.generation && pipeline_rejected(renderer, key.shader, excuse)) return;
                 return excuse~;
             }
-            return true;
+
         case COMPUTE:
-            gpu::PipelineHandle* slot = prepare_compute_slot(renderer, unit.pipeline.slot);
-            report.pipeline_lookups++;
+            gpu::PipelineHandle* slot = prepare_compute_slot(renderer, request.slot);
             if (slot.is_valid()) {
                 report.pipeline_hits++;
-                return true;
+                return;
             }
-            gpu::ComputePipelineDesc description = {
-                .shader = { .spirv = renderer.pipelines.registry.get(unit.pipeline.compute)! },
-                .debug_name = "prepared_compute",
-            };
             std::time::Clock started = clock::now();
             report.pipelines++;
             defer report.pipeline_ns += (ulong)started.to_now();
-            *slot = gpu::create_compute_pipeline(&renderer.device, &description)!;
-            return true;
+            acquire_compute_pipeline(
+                renderer: renderer,
+                pipeline: slot,
+                shader: request.compute.shader,
+                debug_name: "prepared_compute",
+                flags: request.compute.flags,
+            )!;
+
         case PATH_TRACER:
-            report.pipeline_lookups++;
             if (renderer.path_tracer.pipeline.is_valid()) report.pipeline_hits++;
             acquire_path_tracer(renderer, report)!;
-            return true;
+
         case SHEEN_LUT:
-            run_prepare_sheen_step(renderer, unit, report)!;
-            return true;
+        case VALIDATE:
+            unreachable("not a listed pipeline request");
     }
 }
 
-fn void append_prepare_compute(
-    List{PrepareUnit}* listed,
+fn void? acquire_prepare_pipelines(Renderer* renderer, PreparePipelineUnit[] requests) @private {
+    PrepareReport report;
+    foreach (&request : requests) acquire_prepare_pipeline(renderer, request, &report)!;
+}
+
+fn void list_prepare_compute(
+    List{PreparePipelineUnit}* requests,
     PrepareComputeSlot slot,
     ShaderName shader_name,
     uint flags = 0,
-) @private {
-    listed.push({
-        .kind = PrepareUnitKind.PIPELINES,
-        .pipeline = { .kind = PreparePipelineKind.COMPUTE, .slot = slot, .compute = { .shader = shader_name, .flags = flags } },
+) @local {
+    requests.push({
+        .kind = PreparePipelineKind.COMPUTE,
+        .slot = slot,
+        .compute = { .shader = shader_name, .flags = flags },
     });
 }
 
-fn void append_prepare_cache(
-    List{PrepareUnit}* listed,
+fn void list_prepare_key(
+    List{PreparePipelineUnit}* requests,
     PipelineKey key,
     PreparePipelinePass pass = PreparePipelinePass.REGISTRY,
-    GeometryId geometry = {},
-    MaterialId material = {},
-) @private {
-    listed.push({
-        .kind = PrepareUnitKind.PIPELINES,
-        .geometry = geometry,
-        .material = material,
-        .pipeline = { .kind = PreparePipelineKind.CACHE, .pass = pass, .key = key },
-    });
+    ShaderId shader = {},
+) @local {
+    key.shader = shader;
+    requests.push({ .kind = PreparePipelineKind.CACHE, .pass = pass, .key = key });
 }
 
 fn void append_prepare_material_pipelines(Renderer* renderer, MaterialId material, List{PrepareUnit}* listed) @private {
@@ -337,26 +348,98 @@ fn void append_prepare_material_pipelines(Renderer* renderer, MaterialId materia
         .pipeline = { .kind = PreparePipelineKind.SHEEN_LUT } });
 }
 
-fn void append_prepare_mesh_key(
+fn bool prepare_custom_gbuffer(Renderer* renderer, Material* material) @local {
+    if (material.kind != MaterialKind.CUSTOM || !renderer.assets.shaders.is_live(material.custom.shader)) return false;
+    ShaderId shader = material.custom.shader;
+    ShaderRes* mirror = &renderer.shaders[shader.index];
+    if (c3d::same_id(mirror.asset, shader) && mirror.desc.gbuffer.len) return true;
+    return renderer.assets.shader(shader).desc.gbuffer.len > 0;
+}
+
+fn void list_mesh_pipelines(
     Renderer* renderer,
-    List{PrepareUnit}* listed,
-    PipelineKey key,
-    PreparePipelinePass pass,
-    GeometryId geometry,
-    MaterialId material,
+    List{PreparePipelineUnit}* requests,
+    GeometryFlags flags,
+    Material* material,
+    bool morphed,
+    bool depth,
+    bool instanced = false,
+    bool crowd = false,
+    bool skinned = true,
 ) @private {
-    Material* data = &renderer.assets.material(material).data;
-    if (data.kind == MaterialKind.CUSTOM) {
-        key.shader = data.custom.shader;
-        if (renderer.assets.shaders.is_live(key.shader)) key.shader_revision = renderer.assets.shader(key.shader).header.revision;
-    }
-    append_prepare_cache(
-        listed: listed,
-        key: key,
-        pass: pass,
-        geometry: geometry,
+    bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
+    gpu::PolygonMode polygon = wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL;
+    uint instanced_flag = instanced ? shader::SHADER_FLAG_INSTANCED : 0;
+    bool deformed = skinned && (!instanced || crowd);
+    ShaderVariant vertex = mesh_vertex_variant(flags, morphed, deformed, instanced_flag);
+    ShaderId custom = material.kind == MaterialKind.CUSTOM ? material.custom.shader : (ShaderId){};
+
+    PipelineKey forward = forward_pipeline_key(
         material: material,
+        vertex: vertex,
+        polygon: polygon,
+        shadow_flags: 0,
     );
+    list_prepare_key(requests, forward, PreparePipelinePass.FORWARD, custom);
+
+    if (renderer.has_deferred_view() && gbuffer_encodable(material, prepare_custom_gbuffer(renderer, material))) {
+        PipelineKey gbuffer = gbuffer_pipeline_key(vertex, gbuffer_fragment(material), polygon);
+        list_prepare_key(requests, gbuffer, PreparePipelinePass.GBUFFER, custom);
+    }
+
+    if (depth && material.common.alpha_mode != AlphaMode.BLEND) {
+        bool vertex_color = material.common.alpha_mode == AlphaMode.MASK && (flags.has_colors || instanced);
+        PipelineKey caster = {
+            .vertex = mesh_vertex_variant(
+                flags: flags,
+                morphed: morphed,
+                skinned: deformed,
+                base_flags: shader::SHADER_FLAG_DEPTH_ONLY | instanced_flag,
+            ),
+            .fragment = { .shader = DEPTH_ONLY, .flags = vertex_color ? shader::SHADER_FLAG_VERTEX_COLOR : 0 },
+            .depth_format = DEPTH_FORMAT,
+            .samples = gpu::SampleCount.ONE,
+            .polygon = polygon,
+        };
+        list_prepare_key(requests, caster, PreparePipelinePass.DEPTH, custom);
+    }
+
+    foreach (&view : renderer.views.items) {
+        if (!view.live) continue;
+        ViewDesc* desc = &view.desc;
+        bool traces = desc.shading == ShadingPath.PATH_TRACED || desc.ray_tracing.shadows
+          || desc.ray_tracing.reflections || desc.ambient_occlusion.kind == AoKind.RAY_TRACED;
+
+        if ((flags.skinned || flags.has_morphs) && traces) {
+            list_prepare_compute(requests, PrepareComputeSlot.TRACE_POSE, TRACE_POSE);
+            list_prepare_compute(
+                requests: requests,
+                slot: PrepareComputeSlot.TRACE_POSE_U16,
+                shader_name: TRACE_POSE,
+                flags: shader::SHADER_FLAG_SKINNED_U16,
+            );
+            list_prepare_compute(requests, PrepareComputeSlot.TRACE_REFIT, TRACE_REFIT);
+        }
+
+        if (desc.ray_tracing.shadows) {
+            PipelineKey traced = forward_pipeline_key(
+                material: material,
+                vertex: vertex,
+                polygon: polygon,
+                shadow_flags: rt_shadow_flags(renderer, true),
+            );
+            list_prepare_key(requests, traced, PreparePipelinePass.FORWARD, custom);
+        }
+
+        if (post::uses_velocity(desc) && writes_own_depth(material)) {
+            PipelineKey velocity = post::geometry_velocity_pipeline_key(
+                vertex: vertex,
+                polygon: polygon,
+                format: post::velocity_format(desc),
+            );
+            list_prepare_key(requests, velocity, PreparePipelinePass.VELOCITY, custom);
+        }
+    }
 }
 
 fn void append_prepare_pipelines(
@@ -368,196 +451,128 @@ fn void append_prepare_pipelines(
 ) @private {
     GeometryAsset* source = renderer.assets.geometry(geometry);
     GeometryFlags flags = geometry_current(renderer, geometry)
-        ? renderer.geometries[geometry.index].layout.flags : geometry_layout_from_width(&source.data, source.joints_u16).flags;
-    Material* data = &renderer.assets.material(material).data;
-    bool wireframe = data.common.wireframe && renderer.caps.line_polygon_mode;
-    gpu::PolygonMode polygon = wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL;
+        ? renderer.geometries[geometry.index].layout.flags
+        : geometry_layout_from_width(&source.data, source.joints_u16).flags;
     listed.push({ .kind = PrepareUnitKind.PIPELINES, .geometry = geometry, .material = material,
         .pipeline = { .kind = PreparePipelineKind.VALIDATE } });
-    ShaderVariant vertex = mesh_vertex_variant(flags, morphed, true);
-    PipelineKey forward = forward_pipeline_key(
-        material: data,
-        vertex: vertex,
-        polygon: polygon,
-        shadow_flags: 0,
-    );
-    append_prepare_mesh_key(
+
+    List{PreparePipelineUnit} requests;
+    requests.init(tmem);
+    list_mesh_pipelines(
         renderer: renderer,
+        requests: &requests,
+        flags: flags,
+        material: &renderer.assets.material(material).data,
+        morphed: morphed,
+        depth: true,
+    );
+    append_prepare_requests(
         listed: listed,
-        key: forward,
-        pass: PreparePipelinePass.FORWARD,
+        requests: requests.array_view(),
         geometry: geometry,
         material: material,
     );
-    if (data.common.alpha_mode != AlphaMode.BLEND) {
-        ShaderVariant depth_vertex = mesh_vertex_variant(
-            flags: flags,
-            morphed: morphed,
-            skinned: true,
-            base_flags: shader::SHADER_FLAG_DEPTH_ONLY,
-        );
-        PipelineKey depth = {
-            .vertex = depth_vertex,
-            .fragment = { .shader = DEPTH_ONLY,
-                .flags = data.common.alpha_mode == AlphaMode.MASK && flags.has_colors ? shader::SHADER_FLAG_VERTEX_COLOR : 0 },
-            .depth_format = DEPTH_FORMAT,
-            .samples = gpu::SampleCount.ONE,
-            .polygon = polygon,
-        };
-        append_prepare_mesh_key(
-            renderer: renderer,
-            listed: listed,
-            key: depth,
-            pass: PreparePipelinePass.DEPTH,
-            geometry: geometry,
-            material: material,
-        );
-    }
-    bool custom_gbuffer;
-    if (data.kind == MaterialKind.CUSTOM && renderer.assets.shaders.is_live(data.custom.shader)) {
-        custom_gbuffer = renderer.assets.shader(data.custom.shader).desc.gbuffer.len > 0;
-        ShaderRes* mirror = &renderer.shaders[data.custom.shader.index];
-        if (c3d::same_id(mirror.asset, data.custom.shader)) custom_gbuffer |= mirror.desc.gbuffer.len > 0;
-    }
-    if (gbuffer_encodable(data, custom_gbuffer)) {
-        PipelineKey gbuffer = gbuffer_pipeline_key(vertex, gbuffer_fragment(data), polygon);
-        append_prepare_mesh_key(
-            renderer: renderer,
-            listed: listed,
-            key: gbuffer,
-            pass: PreparePipelinePass.GBUFFER,
-            geometry: geometry,
-            material: material,
-        );
-    }
-    foreach (&view : renderer.views.items) {
-        if (!view.live) continue;
-        ViewDesc* desc = &view.desc;
-        bool traces = desc.shading == ShadingPath.PATH_TRACED || desc.ray_tracing.shadows
-          || desc.ray_tracing.reflections || desc.ambient_occlusion.kind == AoKind.RAY_TRACED;
-        if ((flags.skinned || flags.has_morphs) && traces) {
-            append_prepare_compute(listed, PrepareComputeSlot.TRACE_POSE, TRACE_POSE);
-            append_prepare_compute(
-                listed: listed,
-                slot: PrepareComputeSlot.TRACE_POSE_U16,
-                shader_name: TRACE_POSE,
-                flags: shader::SHADER_FLAG_SKINNED_U16,
-            );
-            append_prepare_compute(listed, PrepareComputeSlot.TRACE_REFIT, TRACE_REFIT);
-        }
-        if (view.desc.ray_tracing.shadows) {
-            PipelineKey traced = forward_pipeline_key(
-                material: data,
-                vertex: vertex,
-                polygon: polygon,
-                shadow_flags: rt_shadow_flags(renderer, true),
-            );
-            append_prepare_mesh_key(
-                renderer: renderer,
-                listed: listed,
-                key: traced,
-                pass: PreparePipelinePass.FORWARD,
-                geometry: geometry,
-                material: material,
-            );
-        }
-        if (post::uses_velocity(&view.desc) && writes_own_depth(data)) {
-            PipelineKey velocity = post::geometry_velocity_pipeline_key(
-                vertex: vertex,
-                polygon: polygon,
-                format: post::velocity_format(&view.desc),
-            );
-            append_prepare_mesh_key(
-                renderer: renderer,
-                listed: listed,
-                key: velocity,
-                pass: PreparePipelinePass.VELOCITY,
-                geometry: geometry,
-                material: material,
-            );
-        }
-    }
 }
 
-fn void append_prepare_view_pipelines(Renderer* renderer, SceneReads reads, List{PrepareUnit}* listed) @private {
-    if (reads.color) append_prepare_cache(listed, composite_pipeline_key(HDR_FORMAT));
-    if (reads.depth) append_prepare_cache(listed, composite_pipeline_key(SCENE_DEPTH_FORMAT));
+fn void list_view_pipelines(Renderer* renderer, SceneReads reads, List{PreparePipelineUnit}* requests) @private {
+    if (reads.color) list_prepare_key(requests, composite_pipeline_key(HDR_FORMAT));
+    if (reads.depth) list_prepare_key(requests, composite_pipeline_key(SCENE_DEPTH_FORMAT));
+
     foreach (&view : renderer.views.items) {
         if (!view.live) continue;
         ViewDesc* desc = &view.desc;
         if (desc.lights == LightSelection.CLUSTERED) {
-            append_prepare_compute(listed, PrepareComputeSlot.CLUSTER, LIGHT_CULL);
+            list_prepare_compute(requests, PrepareComputeSlot.CLUSTER, LIGHT_CULL);
         }
         if (desc.shading == ShadingPath.DEFERRED) {
-            append_prepare_cache(
-                listed: listed,
-                key: lighting_resolve_pipeline_key(rt_shadow_flags(renderer, desc.ray_tracing.shadows)),
-            );
+            uint shadow_flags = rt_shadow_flags(renderer, desc.ray_tracing.shadows);
+            list_prepare_key(requests, lighting_resolve_pipeline_key(shadow_flags));
         }
+
         switch (desc.ambient_occlusion.kind) {
             case NONE: break;
-            case SSAO: append_prepare_compute(listed, PrepareComputeSlot.SSAO, SSAO);
+            case SSAO: list_prepare_compute(requests, PrepareComputeSlot.SSAO, SSAO);
             case RAY_TRACED:
-                append_prepare_compute(
-                    listed: listed,
+                list_prepare_compute(
+                    requests: requests,
                     slot: PrepareComputeSlot.RT_AO,
                     shader_name: RT_AO,
                     flags: trace_shader_flags(renderer),
                 );
         }
         if (desc.ambient_occlusion.kind != AoKind.NONE) {
-            append_prepare_compute(listed, PrepareComputeSlot.AO_BLUR, AO_BLUR);
+            list_prepare_compute(requests, PrepareComputeSlot.AO_BLUR, AO_BLUR);
         }
+
         if (desc.ray_tracing.reflections) {
-            append_prepare_compute(
-                listed: listed,
+            list_prepare_compute(
+                requests: requests,
                 slot: PrepareComputeSlot.REFLECTION,
                 shader_name: RT_REFLECTIONS,
                 flags: trace_shader_flags(renderer),
             );
-            append_prepare_compute(listed, PrepareComputeSlot.REFLECTION_BLUR, RT_REFLECTION_BLUR);
+            list_prepare_compute(requests, PrepareComputeSlot.REFLECTION_BLUR, RT_REFLECTION_BLUR);
         }
+
         if (desc.screen_space_gi.enabled) {
-            append_prepare_compute(listed, PrepareComputeSlot.SSGI_TRACE, SSGI_TRACE);
-            append_prepare_compute(listed, PrepareComputeSlot.SSGI_TEMPORAL, SSGI_TEMPORAL);
-            append_prepare_compute(listed, PrepareComputeSlot.SSGI_FILTER, SSGI_FILTER);
+            list_prepare_compute(requests, PrepareComputeSlot.SSGI_TRACE, SSGI_TRACE);
+            list_prepare_compute(requests, PrepareComputeSlot.SSGI_TEMPORAL, SSGI_TEMPORAL);
+            list_prepare_compute(requests, PrepareComputeSlot.SSGI_FILTER, SSGI_FILTER);
         }
-        if (desc.shading == ShadingPath.PATH_TRACED) {
-            listed.push({ .kind = PrepareUnitKind.PIPELINES, .pipeline = { .kind = PreparePipelineKind.PATH_TRACER } });
-        }
+
+        if (desc.shading == ShadingPath.PATH_TRACED) requests.push({ .kind = PreparePipelineKind.PATH_TRACER });
+
         if (desc.post.bloom) {
-            append_prepare_compute(listed, PrepareComputeSlot.BLOOM_DOWN, BLOOM_DOWNSAMPLE);
-            append_prepare_compute(listed, PrepareComputeSlot.BLOOM_UP, BLOOM_UPSAMPLE);
+            list_prepare_compute(requests, PrepareComputeSlot.BLOOM_DOWN, BLOOM_DOWNSAMPLE);
+            list_prepare_compute(requests, PrepareComputeSlot.BLOOM_UP, BLOOM_UPSAMPLE);
         }
         if (desc.post.depth_of_field) {
-            append_prepare_compute(listed, PrepareComputeSlot.DOF_COC, DOF_COC);
-            append_prepare_compute(listed, PrepareComputeSlot.DOF_GATHER, DOF_GATHER);
-            append_prepare_compute(listed, PrepareComputeSlot.DOF_COMPOSITE, DOF_COMPOSITE);
+            list_prepare_compute(requests, PrepareComputeSlot.DOF_COC, DOF_COC);
+            list_prepare_compute(requests, PrepareComputeSlot.DOF_GATHER, DOF_GATHER);
+            list_prepare_compute(requests, PrepareComputeSlot.DOF_COMPOSITE, DOF_COMPOSITE);
         }
         if (desc.post.motion_blur || desc.post.depth_of_field) {
-            append_prepare_compute(listed, PrepareComputeSlot.TILE_MAX, TILE_MAX);
-            append_prepare_compute(listed, PrepareComputeSlot.TILE_NEIGHBOR, TILE_NEIGHBOR);
+            list_prepare_compute(requests, PrepareComputeSlot.TILE_MAX, TILE_MAX);
+            list_prepare_compute(requests, PrepareComputeSlot.TILE_NEIGHBOR, TILE_NEIGHBOR);
         }
-        if (desc.post.motion_blur) append_prepare_compute(listed, PrepareComputeSlot.MOTION_BLUR, MOTION_BLUR);
+        if (desc.post.motion_blur) list_prepare_compute(requests, PrepareComputeSlot.MOTION_BLUR, MOTION_BLUR);
         if (post::uses_velocity(desc)) {
-            append_prepare_cache(listed, post::camera_velocity_pipeline_key(post::velocity_format(desc)));
+            list_prepare_key(requests, post::camera_velocity_pipeline_key(post::velocity_format(desc)));
         }
         if (desc.post.anti_aliasing == AntiAliasing.TAA) {
-            append_prepare_compute(listed, PrepareComputeSlot.TAA, TAA_RESOLVE);
+            list_prepare_compute(requests, PrepareComputeSlot.TAA, TAA_RESOLVE);
         }
         if (post::auto_exposure_active(desc)) {
-            append_prepare_compute(listed, PrepareComputeSlot.EXPOSURE_HISTOGRAM, EXPOSURE_HISTOGRAM);
-            append_prepare_compute(listed, PrepareComputeSlot.EXPOSURE_ADAPT, EXPOSURE_ADAPT);
+            list_prepare_compute(requests, PrepareComputeSlot.EXPOSURE_HISTOGRAM, EXPOSURE_HISTOGRAM);
+            list_prepare_compute(requests, PrepareComputeSlot.EXPOSURE_ADAPT, EXPOSURE_ADAPT);
         }
+
         if (!view.hdr_color.texture.is_valid()) continue;
         gpu::Format output_format = view_output_format(renderer, desc);
         if (desc.post.anti_aliasing == AntiAliasing.FXAA) {
-            append_prepare_compute(listed, PrepareComputeSlot.GRADE, GRADE);
-            append_prepare_compute(listed, PrepareComputeSlot.FXAA, FXAA);
-            append_prepare_cache(listed, post::fxaa_fragment_pipeline_key(output_format));
+            list_prepare_compute(requests, PrepareComputeSlot.GRADE, GRADE);
+            list_prepare_compute(requests, PrepareComputeSlot.FXAA, FXAA);
+            list_prepare_key(requests, post::fxaa_fragment_pipeline_key(output_format));
         } else {
-            append_prepare_cache(listed, post::display_pipeline_key(output_format));
+            list_prepare_key(requests, post::display_pipeline_key(output_format));
         }
+    }
+}
+
+fn void append_prepare_requests(
+    List{PrepareUnit}* listed,
+    PreparePipelineUnit[] requests,
+    GeometryId geometry = {},
+    MaterialId material = {},
+) @local {
+    foreach (request : requests) {
+        bool keyed = request.kind == PreparePipelineKind.CACHE;
+        listed.push({
+            .kind = PrepareUnitKind.PIPELINES,
+            .geometry = keyed ? geometry : (GeometryId){},
+            .material = keyed ? material : (MaterialId){},
+            .pipeline = request,
+        });
     }
 }
 
@@ -574,7 +589,11 @@ fn void append_prepare_finish(Renderer* renderer, List{PrepareUnit}* listed) @pr
         }
         reads |= material_scene_reads(data, custom_reads);
     }
-    append_prepare_view_pipelines(renderer, reads, listed);
+
+    List{PreparePipelineUnit} requests;
+    requests.init(tmem);
+    list_view_pipelines(renderer, reads, &requests);
+    append_prepare_requests(listed, requests.array_view());
     listed.push({ .kind = PrepareUnitKind.FINISH });
 }
 

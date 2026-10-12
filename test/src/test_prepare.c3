@@ -109,6 +109,28 @@ fn void test_prepare_dependency_order_and_deduplication() @test {
     assert(fixture.renderer.prepare_progress(id).bytes_total > render::MATERIAL_STRIDE);
 }
 
+fn void test_forward_only_preparation_lists_no_gbuffer_pipeline() @test {
+    PrepareFixture fixture;
+    create_prepare_fixture(&fixture);
+    defer destroy_prepare_fixture(&fixture);
+    MaterialId standard = fixture.assets.add_material(material::standard())!!;
+    ModelTemplate template = {
+        .nodes = alloc::new_array(mem, NodeTemplate, 1),
+        .meshes = alloc::new_array(mem, ModelMesh, 1),
+    };
+    template.nodes[0].parent = -1;
+    template.meshes[0] = { .node = 0, .geometry = fixture.first, .material = standard };
+    ModelId model = fixture.assets.add_model_owned(&template)!!;
+    PrepareId id = fixture.renderer.begin_prepare_model(model)!!;
+    bool forward;
+    foreach (unit : fixture.renderer.prepares.get(id).units) {
+        if (unit.kind != PrepareUnitKind.PIPELINES) continue;
+        assert(unit.pipeline.pass != PreparePipelinePass.GBUFFER);
+        forward |= unit.pipeline.pass == PreparePipelinePass.FORWARD;
+    }
+    assert(forward);
+}
+
 fn void test_prepare_totals_include_current_geometry_with_released_source() @test {
     PrepareFixture fixture;
     create_prepare_fixture(&fixture);
