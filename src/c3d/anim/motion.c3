@@ -375,7 +375,7 @@ fn RootMotionDelta root_motion_delta(PlanarMotion motion, Vec3 reference) {
 
 fn void advance_clock(Action* action, float duration, double travel) @private {
     if (duration <= 0 || travel == 0) return;
-    double start = action.time != action.published_time ? (double)action.time : action.clock_time;
+    double start = action.clock_time;
     if (action.loop) {
         start -= math::floor(start / duration) * duration;
         if (start == 0 && travel < 0) start = duration;

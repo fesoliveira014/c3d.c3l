@@ -265,6 +265,8 @@ fn BlendSpace2D*? PlaybackView.add_blend_space_2d(
         installed.weight = index == 0 ? space.weight : 0;
     }
 
+    if (desc.fade_in == 0) invalidate_inertial_history(self);
+
     return space;
 }
 
@@ -278,7 +280,10 @@ fn void? PlaybackView.stop_blend_space_2d(&self, BlendSpace2D* space, float fade
     if (!space.count) return c3d::INVALID_ARGUMENT~;
 
     BlendSpaceFade fade = { .weight = &space.weight, .target = &space.fade_target, .rate = &space.fade_rate };
-    if (stop_blend_space_weight(fade, fade_out)!) remove_blend_space_2d(self, space);
+    if (!stop_blend_space_weight(fade, fade_out)!) return;
+
+    remove_blend_space_2d(self, space);
+    invalidate_inertial_history(self);
 }
 
 <*

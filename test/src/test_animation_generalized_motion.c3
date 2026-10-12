@@ -83,7 +83,7 @@ struct GeneralizedPlaybackFixture @local {
     uint action_count;
     PlaybackView view;
     PoseStorage* pose;
-    GeneralizedPlaybackState state;
+    RootExtractionDesc extraction;
 }
 
 fn void create_motion_admission_fixture(MotionAdmissionFixture* fixture) @local {
@@ -438,7 +438,7 @@ fn void test_animation_generalized_motion_composes_animated_ancestors_and_compen
             loop: false,
         );
         GeneralizedMotionFrame carrier = anim::generalized_frame_from_motion(motion, fixture.reference.up);
-        GeneralizedMotionFrame correction = anim::generalized_branch_correction(carrier);
+        GeneralizedMotionFrame correction = anim::inverse_generalized_frame(carrier);
         Transform[7] original = pose;
         anim::compensate_generalized_branches(&fixture.chain, pose[..], correction);
         assert(pose[2].position == original[2].position && pose[2].scale == original[2].scale);
@@ -583,43 +583,6 @@ fn void test_animation_generalized_motion_loops_reverse_subdivision_and_zero_ide
     assert(zero.translation == (double[<3>]){} && zero.twist == 0);
 }
 
-fn void test_animation_generalized_motion_reference_anchor_preserves_reference_and_every_branch() @test {
-    GeneralizedTestFixture fixture;
-    create_generalized_test_fixture(&fixture);
-    defer anim::destroy_captured_motion_chain(&fixture.chain);
-    GeneralizedMotionFrame immutable = fixture.reference.frame;
-    GeneralizedMotionFrame consumed = {
-        .position = { 3, 2, -1 },
-        .rotation = quaternion::from_axis_angle{double}({ 0, 0, 1 }, 0.7),
-        .scale = 1,
-    };
-    GeneralizedMotionFrame anchor = anim::generalized_reference_anchor(consumed, fixture.reference.frame);
-    GeneralizedMotionFrame rebased = anim::compose_generalized_frames(anchor, fixture.reference.frame);
-    assert((rebased.position - consumed.position).length() < 1e-12);
-    assert(math::abs(rebased.scale - 1) < 1e-12);
-    assert(fixture.reference.frame.position == immutable.position);
-    assert(fixture.reference.frame.rotation.v == immutable.rotation.v);
-    Transform[7] pose;
-    generalized_test_pose(&fixture, 0.5f, pose[..]);
-    MotionTestMatrix[7] keep;
-    motion_test_worlds(fixture.nodes[..], pose[..], keep[..]);
-    anim::compensate_generalized_branches(
-        chain: &fixture.chain,
-        pose: pose[..],
-        correction: anim::generalized_branch_correction(consumed, anchor),
-    );
-    MotionTestMatrix[7] corrected;
-    motion_test_worlds(fixture.nodes[..], pose[..], corrected[..]);
-    MotionTestMatrix carrier_matrix = motion_test_frame(consumed);
-    MotionTestMatrix anchor_matrix = motion_test_frame(anchor);
-    for (uint node = 0; node < 7; node++) {
-        MotionTestMatrix actual = motion_test_product(carrier_matrix, corrected[node]);
-        MotionTestMatrix expected = motion_test_product(anchor_matrix, keep[node]);
-        assert((motion_test_point(actual, {}) - motion_test_point(expected, {})).length()
-          <= GENERALIZED_POINT_EPSILON);
-    }
-}
-
 fn double[<4>] playback_test_quaternion_product(double[<4>] left, double[<4>] right) @local {
     return {
         left.w*right.x + left.x*right.w + left.y*right.z - left.z*right.y,
@@ -640,7 +603,7 @@ fn double[<4>] playback_test_chain_rotation(Transform[] pose) @local {
 }
 
 fn double[<3>] playback_test_up(GeneralizedPlaybackFixture* fixture) @local {
-    Vec3 value = fixture.state.extraction.up;
+    Vec3 value = fixture.extraction.up;
     double[<3>] up = { value.x, value.y, value.z };
     return up / up.length();
 }
@@ -656,11 +619,11 @@ fn GeneralizedMotion playback_test_expected_endpoint(
     double[<3>] pivot = motion_test_point(reference[2], {});
     double[<3>] translation = motion_test_point(current[2], {}) - pivot;
     for (uint axis = 0; axis < 3; axis++) {
-        if (!fixture.state.extraction.translation_axes[axis]) translation[axis] = 0;
+        if (!fixture.extraction.translation_axes[axis]) translation[axis] = 0;
     }
     double[<3>] up = playback_test_up(fixture);
     double twist;
-    if (fixture.state.extraction.twist) {
+    if (fixture.extraction.twist) {
         double[<4>] begin = playback_test_chain_rotation(fixture.reference_pose[..]);
         double[<4>] end = playback_test_chain_rotation(pose);
         double initial = 2 * math::atan2(begin.x*up.x + begin.y*up.y + begin.z*up.z, begin.w);
@@ -735,7 +698,6 @@ fn void create_generalized_playback_fixture(
         extraction: extraction,
     )!!;
     fixture.chain.pose_scale_sums = alloc::new_array(mem, double[<3>], fixture.nodes.len);
-    fixture.chain.instance_scale = { 1, 1, 1 };
     fixture.assets.clips = pool::create_pool{ClipAsset, ClipId}(mem, 1);
     ClipId clip_id = fixture.assets.clips.add({ .data = clip })!!;
     fixture.actions = pool::create_pool{Action, AnimationActionId}(mem, 2);
@@ -771,7 +733,7 @@ fn void create_generalized_playback_fixture(
         base_morph_weights: {},
         event_capacity: 0,
     );
-    anim::initialize_generalized_playback(&fixture.state, &fixture.view);
+    fixture.extraction = extraction;
     playback_test_raw_pose(fixture, 0, fixture.reference_pose[..]);
 }
 
@@ -785,7 +747,6 @@ fn void destroy_generalized_playback_fixture(GeneralizedPlaybackFixture* fixture
 fn void playback_test_compare_worlds(
     GeneralizedPlaybackFixture* fixture,
     MotionTestMatrix consumed,
-    MotionTestMatrix anchor,
     Transform[] keep,
 ) @local {
     MotionTestMatrix[5] expected;
@@ -794,10 +755,9 @@ fn void playback_test_compare_worlds(
     motion_test_worlds(fixture.nodes[..], fixture.pose.destination.pose, actual[..]);
     double[<3>][4] corners = { {}, { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };
     for (uint node = 0; node < 5; node++) {
-        MotionTestMatrix reference = motion_test_product(anchor, expected[node]);
         MotionTestMatrix reconstructed = motion_test_product(consumed, actual[node]);
         foreach (corner : corners) {
-            assert((motion_test_point(reconstructed, corner) - motion_test_point(reference, corner)).length()
+            assert((motion_test_point(reconstructed, corner) - motion_test_point(expected[node], corner)).length()
               <= GENERALIZED_POINT_EPSILON);
         }
     }
@@ -835,7 +795,7 @@ fn void test_animation_generalized_playback_axes_weighted_layers_and_exact_emitt
             playback: &fixture.view,
             assets: &fixture.assets,
             destination: fixture.pose.destination,
-            state: &fixture.state,
+            chain: anim::generalized_playback_chain(&fixture.view),
             dt: 0.25,
         );
         assert(delta.twist == 0);
@@ -843,32 +803,9 @@ fn void test_animation_generalized_playback_axes_weighted_layers_and_exact_emitt
             assert(math::abs(delta.translation[axis] - expected.translation[axis]) < GENERALIZED_MOTION_EPSILON);
             if (!extraction.translation_axes[axis]) assert(delta.translation[axis] == 0);
         }
-        GeneralizedMotion supplied = {
-            .translation = delta.translation + (double[<3>]){ 0.1, -0.2, 0.3 },
-            .twist = 0.2,
-        };
-        RootMotionDelta emitted = {
-            .translation = {
-                (float)supplied.translation.x, (float)supplied.translation.y, (float)supplied.translation.z,
-            },
-            .rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, 0.2f),
-        };
-        MotionTestMatrix external = motion_test_local({
-            .position = emitted.translation,
-            .rotation = emitted.rotation,
-            .scale = { 1, 1, 1 },
-        });
-        anim::finish_generalized_playback(
-            state: &fixture.state,
-            playback: &fixture.view,
-            destination: fixture.pose.destination,
-            final_motion: supplied,
-            published: &emitted,
-        );
         playback_test_compare_worlds(
             fixture: &fixture,
-            consumed: external,
-            anchor: motion_test_identity(),
+            consumed: motion_test_motion(delta, playback_test_up(&fixture)),
             keep: keep[..],
         );
     }
@@ -929,7 +866,7 @@ fn void test_animation_generalized_playback_animator_consumption_matches_keep_wi
         AnimationActionId extracted_id = extracted.play(
             assets: &assets,
             clip: clip_id,
-            desc: { .root_motion = RootMotion.EXTRACT, .extraction = fixture.state.extraction },
+            desc: { .root_motion = RootMotion.EXTRACT, .extraction = fixture.extraction },
         )!!;
         kept.action(kept_id).loop = mode != 0;
         extracted.action(extracted_id).loop = mode != 0;
@@ -1046,7 +983,7 @@ fn void test_animation_generalized_playback_request_onset_after_consumption_pres
     animator.play(
         assets: &assets,
         clip: source_id,
-        desc: { .root_motion = RootMotion.EXTRACT, .extraction = fixture.state.extraction },
+        desc: { .root_motion = RootMotion.EXTRACT, .extraction = fixture.extraction },
     )!!;
     for (uint frame = 0; frame < 3; frame++) {
         anim::update(&assets, &scene, 0.125f);
@@ -1058,7 +995,7 @@ fn void test_animation_generalized_playback_request_onset_after_consumption_pres
     double previous_dt = animator.inertial_storage.rows[0].control.previous_dt;
     AnimationTargetDesc[1] targets = { {
         .clip = target_id,
-        .play = { .root_motion = RootMotion.EXTRACT, .extraction = fixture.state.extraction },
+        .play = { .root_motion = RootMotion.EXTRACT, .extraction = fixture.extraction },
         .start_time = 0.375f,
         .speed = 1,
         .weight = 1,
@@ -1086,4 +1023,144 @@ fn void test_animation_generalized_playback_request_onset_after_consumption_pres
     playback_test_owner_world_unchanged(&scene, owner, source_worlds[..]);
     anim::update(&assets, &scene, 0);
     playback_test_owner_world_unchanged(&scene, owner, source_worlds[..]);
+}
+
+fn PlayDesc carrier_test_desc() @local {
+    return {
+        .root_motion = RootMotion.EXTRACT,
+        .extraction = { .generalized = true, .translation_axes = { true, false, true }, .up = { 0, 1, 0 } },
+    };
+}
+
+fn ClipId carrier_test_clip(LayerFixture* fixture, float stride) @local {
+    return inertial_owner_translation(
+        owner: fixture,
+        start: { 0, 0, 0 },
+        end: { 0, 0, stride },
+        node: 2,
+    );
+}
+
+fn Vec3 carrier_test_skeleton_offset(LayerFixture* fixture) @local {
+    fixture.scene.update_world();
+    ModelInstance* instance = fixture.scene.get(fixture.root, ModelInstance);
+    Vec3 skeleton = maths::transform_point(instance.present_node(2).world, {});
+    return skeleton - maths::transform_point(fixture.root.world, {});
+}
+
+fn void carrier_test_advance(LayerFixture* fixture, uint frames) @local {
+    for (uint frame = 0; frame < frames; frame++) {
+        anim::update(&fixture.assets, &fixture.scene, 0.125f);
+        anim::apply_root_motion(fixture.root, fixture.animator.root_motion);
+    }
+}
+
+fn void test_animation_generalized_playback_fade_keeps_skeleton_on_carrier() @test {
+    LayerFixture fixture;
+    create_inertial_owner(&fixture, inertia_enabled: false);
+    defer destroy_layer_fixture(&fixture);
+    fixture.animator.root_node = 2;
+    ClipId walk = carrier_test_clip(&fixture, 2);
+    ClipId run = carrier_test_clip(&fixture, 4);
+    AnimationActionId walking = fixture.animator.play(&fixture.assets, walk, carrier_test_desc())!!;
+    carrier_test_advance(&fixture, 4);
+    Vec3 pinned = carrier_test_skeleton_offset(&fixture);
+    carrier_test_advance(&fixture, 76);
+
+    PlayDesc fade = carrier_test_desc();
+    fade.fade_in = 1;
+    fixture.animator.play(&fixture.assets, run, fade)!!;
+    fixture.animator.stop(walking, 1)!!;
+    carrier_test_advance(&fixture, 10);
+
+    assert(fixture.root.local.position.z > 20);
+    assert((carrier_test_skeleton_offset(&fixture) - pinned).length() < 1e-3f);
+}
+
+fn void test_animation_generalized_playback_partial_weight_keeps_skeleton_across_loops() @test {
+    LayerFixture fixture;
+    create_inertial_owner(&fixture, inertia_enabled: false);
+    defer destroy_layer_fixture(&fixture);
+    fixture.animator.root_node = 2;
+    ClipId walk = carrier_test_clip(&fixture, 2);
+    AnimationActionId id = fixture.animator.play(&fixture.assets, walk, carrier_test_desc())!!;
+    Action* action = fixture.animator.action(id);
+    action.weight = 0.5f;
+    action.fade_target = 0.5f;
+    carrier_test_advance(&fixture, 1);
+    Vec3 pinned = carrier_test_skeleton_offset(&fixture);
+
+    for (uint frame = 0; frame < 12; frame++) {
+        carrier_test_advance(&fixture, 1);
+        assert((carrier_test_skeleton_offset(&fixture) - pinned).length() < 1e-4f);
+    }
+}
+
+fn void test_animation_generalized_inertial_request_keeps_skeleton_on_carrier() @test {
+    LayerFixture fixture;
+    create_inertial_owner(&fixture);
+    defer destroy_layer_fixture(&fixture);
+    fixture.animator.root_node = 2;
+    ClipId walk = carrier_test_clip(&fixture, 2);
+    ClipId run = carrier_test_clip(&fixture, 4);
+    fixture.animator.play(&fixture.assets, walk, carrier_test_desc())!!;
+    carrier_test_advance(&fixture, 8);
+    Vec3 pinned = carrier_test_skeleton_offset(&fixture);
+
+    AnimationTargetDesc[1] targets = { anim::ANIMATION_TARGET_DEFAULT };
+    targets[0].clip = run;
+    targets[0].play = carrier_test_desc();
+    fixture.animator.inertialize(&fixture.assets, { .duration = 0.5f, .actions = targets[..] })!!;
+    carrier_test_advance(&fixture, 12);
+
+    assert(!fixture.animator.inertial_status().active);
+    assert((carrier_test_skeleton_offset(&fixture) - pinned).length() < 1e-3f);
+}
+
+fn void test_animation_generalized_inertial_request_onset_rates_exclude_extracted_motion() @test {
+    LayerFixture fixture;
+    create_inertial_owner(&fixture);
+    defer destroy_layer_fixture(&fixture);
+    fixture.animator.root_node = 2;
+    Quat turned = quaternion::from_axis_angle{float}({ 0, 1, 0 }, 0.5f);
+    float[2] times = { 0, 1 };
+    float[6] positions = { 0.5f, 0, 0, 0.5f, 0, 2 };
+    float[8] rotations = { 0, 0, 0, 1, turned.v.x, turned.v.y, turned.v.z, turned.v.w };
+    Track[2] tracks = {
+        make_track(
+            path: TargetPath.TRANSLATION,
+            interpolation: Interpolation.LINEAR,
+            times: times[..],
+            values: positions[..],
+        ),
+        make_track(
+            path: TargetPath.ROTATION,
+            interpolation: Interpolation.LINEAR,
+            times: times[..],
+            values: rotations[..],
+            target: 1,
+        ),
+    };
+    uint[2] targets = { 2, 2 };
+    ClipId walk = add_clip(
+        assets: &fixture.assets,
+        key: "",
+        tracks: tracks[..],
+        targets: targets[..],
+        duration: 1,
+    );
+    PlayDesc desc = carrier_test_desc();
+    desc.extraction.twist = true;
+    fixture.animator.play(&fixture.assets, walk, desc)!!;
+    for (uint frame = 0; frame < 12; frame++) anim::update(&fixture.assets, &fixture.scene, 0.03125f);
+
+    AnimationTargetDesc[1] request = { anim::ANIMATION_TARGET_DEFAULT };
+    request[0].clip = walk;
+    request[0].play = desc;
+    request[0].start_time = 0.375f;
+    fixture.animator.inertialize(&fixture.assets, { .duration = 0.5f, .actions = request[..] })!!;
+
+    foreach (rate : inertial_owner_row(&fixture).offset_velocity) {
+        assert(rate.translation.length() < 0.05 && rate.angular.length() < 0.05);
+    }
 }

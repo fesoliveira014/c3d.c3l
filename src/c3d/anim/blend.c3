@@ -20,13 +20,14 @@ fn void blend_pose(
     float[][] morph_sums = scratch.morph_sums;
     float[] morph_weights = scratch.morph_weights;
 
-    PoseDerivativeScratch* derivative = scratch.derivative;
+    // Rates are read only when a transition captures its onset.
+    PoseDerivativeScratch* derivative = onset ? scratch.derivative : null;
     bool precise_scale = derivative != null || consumed_chain != null;
-    double[<3>][] scale_values = derivative ? derivative.scale_values
+    double[<3>][] scale_values = scratch.derivative ? scratch.derivative.scale_values
       : consumed_chain ? consumed_chain.pose_scale_sums : (double[<3>][]){};
-    if (derivative) {
-        derivative.velocity[..] = (PoseVelocity){};
-        derivative.morph_rates[..] = 0;
+    if (scratch.derivative) {
+        scratch.derivative.velocity[..] = (PoseVelocity){};
+        scratch.derivative.morph_rates[..] = 0;
     }
 
     result[..] = destination.base_pose[..];

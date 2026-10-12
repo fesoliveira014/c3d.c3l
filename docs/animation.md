@@ -338,14 +338,20 @@ update. Under generalized extraction, a scale track with nonneutral keys on an
 additive action's consumed chain is invalid in either additive scale mode, including
 zero-weight or fully masked actions.
 
-The final blended and inertia-corrected chain determines the consumed motion.
-One instance-root compensation applies to every top-level branch, including
-branches outside the motion node, so applying the published delta reproduces
-the corresponding KEEP pose. The root turns about its reference position in
-the instance-root frame. Consume the delta with `apply_root_motion` once after
-update; for crowds use `Scene.apply_crowd_root_motion`. The default planar path
-keeps its previous behavior. Float32 application still accumulates drift with
-distance; compare articulated poses in their carrier's frame.
+Each generalized action samples its own chain endpoint at its current time and
+removes the selected translation and twist relative to its reference. These
+offsets blend with the same weights as the motion, so KEEP actions, additive
+layers and the authored pose under partial weights stay in the pose. Twist
+offsets use each action's shortest turn from its reference. One instance-root
+compensation applies to every top-level branch, including branches outside the
+motion node, so the articulated pose stays attached to the carrier through
+fades, weight changes and inertial residuals. For a single action, applying the
+published deltas reproduces the corresponding KEEP pose.
+The root turns about its reference position in the instance-root frame.
+Consume the delta with `apply_root_motion` once after update; for crowds use
+`Scene.apply_crowd_root_motion`. The default planar path keeps its previous
+behavior. Float32 application still accumulates drift with distance; compare
+articulated poses in their carrier's frame.
 
 ## Inertial transitions
 
@@ -364,8 +370,9 @@ For a crowd, set `AnimatedCrowd.inertia_enabled = true` after `attach_crowd`
 and before `prepare_crowd`. Preparation fixes this option; changing it on a
 prepared owner is invalid. A crowd reserves separate history/residual rows for
 its full capacity, including inactive placements, and shares evaluation scratch.
-Each row owns a previous node pose, double velocity/offset/offset-rate rows and
-28 bytes per logical morph component, plus controls and root-motion state.
+Each row owns a previous node pose, double velocity/offset/offset-rate rows, one
+byte per node of consumed-scale membership and 28 bytes per logical morph
+component, plus controls and root-motion state.
 Disabled owners reserve none of this storage. Enabled updates allocate nothing.
 
 `Animator.inertialize` and `CrowdPlayer.inertialize` replace the owner's current
@@ -411,9 +418,11 @@ of range. A shorter transition duration may succeed; the runtime does not clamp
 accepted scale.
 
 For a consumed root, source and target use the same motion node, selected axes,
-up, twist and frame. Different clip reference positions are allowed and rebase
-to the current consumed carrier anchor. Root output adds a decaying residual
-translation/twist velocity to the target delta, with one final pivot correction.
+up, twist and frame. Different clip reference positions are allowed; the pose
+residual carries the articulated pose from the source's pinned reference to the
+target's. Root output adds a decaying residual translation/twist velocity to the
+target delta, with one final pivot correction, and the compensated pose moves
+with the carrier.
 Events come from target actions only. The source's previous published delta
 divided by its positive update interval supplies velocity; invalid history
 starts with zero source velocity.
@@ -430,10 +439,16 @@ Clips, model layout and captured references must remain live and compatible
 through playback. Recreate actions when changing captured motion settings or
 reference data. Removing an owner releases its history and target resources;
 replacing a crowd placement resets that slot's generation and history. Seeks,
-removed targets, relevant clip/model revisions and layout changes invalidate
-affected history; captured references are not silently rebuilt. Saving
-keeps authored settings and target playback, while sampled clocks, source
-velocities, history and active/interrupted residuals restart empty on restore.
+instant play, stop and group additions or removals without a fade, removed
+target nodes and clip/model revisions invalidate the owner's velocity history;
+an active residual keeps decaying. Fades and weight changes keep history, and no
+playback change cancels a residual. A rotation that cannot be normalized (zero or
+nonfinite) records no angular velocity and receives no rotation residual, so
+inertia admits the same clips as an owner without it. Consumed-scale membership
+is fixed when a transition starts. Captured references are not silently
+rebuilt. Saving keeps authored settings and target playback,
+while sampled clocks, source velocities, history and active/interrupted
+residuals restart empty on restore.
 
 ## Clip events
 

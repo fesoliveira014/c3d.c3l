@@ -17,7 +17,6 @@ struct PlaybackView {
     BlendSpace2D[] blend_spaces_2d;
     uint root_node;
     InertialRow* inertial;
-    GeneralizedPlaybackState* generalized;
 }
 
 <* Destination baselines, presence and caller-owned evaluated output. *>
@@ -144,6 +143,8 @@ fn AnimationActionId? PlaybackView.play(
         derivatives_enabled: self.inertial != null,
     )!;
 
+    if (desc.fade_in == 0) invalidate_inertial_history(self);
+
     return install_playback_action(self, state, desc.mask);
 }
 
@@ -162,9 +163,8 @@ fn void? PlaybackView.stop(&self, AnimationActionId action, float fade_out = 0) 
     if (!math::is_finite(fade_out) || fade_out < 0) return c3d::INVALID_ARGUMENT~;
 
     if (fade_out == 0) {
-        uint index;
-        while (!c3d::same_id(self.order[index], action)) index++;
-        remove_action(self, index);
+        remove_playback_action(self, action);
+        invalidate_inertial_history(self);
         return;
     }
 
@@ -220,65 +220,47 @@ fn PoseReport evaluate_pose(
     float dt,
     EventOutput events,
 ) {
-    if (playback.inertial) {
-        InertialIdentityState identity = compute_inertial_identity(playback, assets, destination.present);
-        refresh_inertial_identity(playback.inertial, identity);
-    }
+    if (playback.inertial) refresh_inertial_model_revision(playback, assets);
 
     advance(playback, assets, dt);
     advance_blend_spaces(playback, assets, dt);
     advance_blend_spaces_2d(playback, assets, dt);
 
-    if (playback.inertial) {
-        InertialIdentityState identity = compute_inertial_identity(playback, assets, destination.present);
-        refresh_inertial_identity(playback.inertial, identity);
-    }
-
     CapturedMotionChain* consumed_chain = generalized_playback_chain(playback);
+    bool onset = playback.inertial != null && playback.inertial.control.onset_pending && dt == 0;
     blend_pose(
         playback: playback,
         assets: assets,
         destination: destination,
         scratch: scratch,
-        onset: playback.inertial != null && playback.inertial.control.onset_pending && dt == 0,
+        onset: onset,
         consumed_chain: consumed_chain,
     );
 
-    bool generalized = playback.generalized != null && consumed_chain != null;
-    if (playback.inertial) {
-        if (generalized) {
-            advance_inertial_elapsed(playback.inertial, (double)dt);
-        } else {
-            correct_inertial_pose(
-                playback: playback,
-                destination: destination,
-                scratch: scratch,
-                dt: (double)dt,
-            );
-        }
-    }
-
     PlanarMotion motion;
     GeneralizedMotion generalized_motion;
-    if (generalized) {
-        if (!playback.generalized.initialized) initialize_generalized_playback(
-            state: playback.generalized,
-            playback: playback,
-            chain: consumed_chain,
-        );
+    if (consumed_chain) {
         generalized_motion = evaluate_generalized_playback_motion(
             playback: playback,
             assets: assets,
             destination: destination,
-            state: playback.generalized,
-            dt: (double)dt,
             chain: consumed_chain,
+            dt: (double)dt,
+            onset: onset,
         );
     } else {
         motion = evaluate_root_motion(playback, assets, destination);
     }
 
-    if (playback.inertial && dt > 0) playback.inertial.control.onset_pending = false;
+    if (playback.inertial) {
+        correct_inertial_pose(
+            playback: playback,
+            destination: destination,
+            scratch: scratch,
+            dt: (double)dt,
+        );
+        if (dt > 0) playback.inertial.control.onset_pending = false;
+    }
 
     EventReport report = publish_events(
         playback: playback,
@@ -290,7 +272,7 @@ fn PoseReport evaluate_pose(
     return {
         .motion = motion,
         .generalized_motion = generalized_motion,
-        .generalized = generalized,
+        .generalized = consumed_chain != null,
         .consumed_chain = consumed_chain,
         .events = report,
     };
@@ -525,6 +507,14 @@ fn Action? prepare_validated_playback_action(
     return state;
 }
 
+<* @require playback.actions.is_live(action) *>
+fn void remove_playback_action(PlaybackView* playback, AnimationActionId action) @private {
+    uint index;
+    while (!c3d::same_id(playback.order[index], action)) index++;
+
+    remove_action(playback, index);
+}
+
 fn void remove_action(PlaybackView* playback, uint index) @local {
     AnimationActionId id = playback.order[index];
     Action* action = playback.actions.get(id);
@@ -538,10 +528,25 @@ fn void remove_action(PlaybackView* playback, uint index) @local {
 fn void advance(PlaybackView* playback, AssetStore* assets, float dt) @local {
     for (uint index = *playback.action_count; index > 0; index--) {
         Action* action = playback.actions.get(playback.order[index - 1]);
+        ClipAsset* clip = assets.clip(action.clip);
         action.previous_time = action.time;
         action.clock_delta = 0;
+
+        // Zero marks a revision not yet observed since the action was created or restored.
+        bool revised = action.clip_revision != 0 && action.clip_revision != clip.header.revision;
+        action.clip_revision = clip.header.revision;
+
+        bool sought;
+        if (!action.blend_space && action.time != action.published_time) {
+            action.clock_time = action.time;
+            action.published_time = action.time;
+            sought = true;
+        }
+
+        if (revised || sought) invalidate_inertial_history(playback);
         if (action.blend_space) continue;
-        if (action.playing) advance_clock(action, assets.clip(action.clip).data.duration, (double)dt * action.speed);
+
+        if (action.playing) advance_clock(action, clip.data.duration, (double)dt * action.speed);
 
         if (action.fade_rate > 0) {
             float step = action.fade_rate * dt;
@@ -556,4 +561,13 @@ fn void advance(PlaybackView* playback, AssetStore* assets, float dt) @local {
 
         if (action.fade_target == 0 && action.weight == 0) remove_action(playback, index - 1);
     }
+}
+
+fn void refresh_inertial_model_revision(PlaybackView* playback, AssetStore* assets) @local {
+    InertialControl* control = &playback.inertial.control;
+    uint revision = assets.model(playback.model).header.revision;
+    if (control.model_revision == revision) return;
+
+    control.history_valid = false;
+    control.model_revision = revision;
 }

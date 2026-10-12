@@ -93,10 +93,7 @@ fn void write_blend_space_member(
 }
 
 fn void remove_blend_space_members(PlaybackView* playback, AnimationActionId[] members) @private {
-    foreach (id : members) {
-        playback.actions.get(id).blend_space = 0;
-        playback.stop(id)!!;
-    }
+    foreach (id : members) remove_playback_action(playback, id);
 }
 
 fn double blend_space_weight_rate(BlendSpaceFade fade) @private {

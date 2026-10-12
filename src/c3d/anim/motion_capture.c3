@@ -55,13 +55,6 @@ fn usz? validate_playback_addition(
         unsupported = true;
     }
 
-    if (playback.inertial) {
-        if (catch excuse = validate_inertial_rotation_domains(clip)) {
-            if (excuse != c3d::UNSUPPORTED) return excuse~;
-            unsupported = true;
-        }
-    }
-
     if (generalized && desc.additive && desc.additive_scale == AdditiveScaleMode.MULTIPLICATIVE) {
         foreach (index, track : clip.tracks) {
             if (track.path != TargetPath.SCALE) continue;
@@ -142,7 +135,6 @@ fn void? prepare_action_motion_capture(
     }
 
     captured.model = model;
-    captured.instance_scale = motion_basis.instance_scale;
 
     action.motion_chain = captured;
     action.motion_reference = capture_generalized_motion_reference(captured, clip);

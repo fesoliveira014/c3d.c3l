@@ -22,7 +22,6 @@ struct PoseDerivativeScratch @private {
     double[] morph_rates;
     double[] morph_weight_rates;
     float[] morph_values;
-    bool[] consumed_scale;
     double[] sample;
     double[] sample_rate;
 }
@@ -54,8 +53,6 @@ fn PoseDerivativeScratch*? create_pose_derivative_scratch(
       ?? c3d::CAPACITY_EXCEEDED~!;
     scratch.morph_values = alloc::new_array_try(allocator, float, (sz)morphs)
       ?? c3d::CAPACITY_EXCEEDED~!;
-    scratch.consumed_scale = alloc::new_array_try(allocator, bool, (sz)nodes)
-      ?? c3d::CAPACITY_EXCEEDED~!;
     scratch.sample = alloc::new_array_try(allocator, double, (sz)sample_width)
       ?? c3d::CAPACITY_EXCEEDED~!;
     scratch.sample_rate = alloc::new_array_try(allocator, double, (sz)sample_width)
@@ -72,14 +69,17 @@ fn void destroy_pose_derivative_scratch(Allocator allocator, PoseDerivativeScrat
     alloc::free(allocator, scratch.morph_rates.ptr);
     alloc::free(allocator, scratch.morph_weight_rates.ptr);
     alloc::free(allocator, scratch.morph_values.ptr);
-    alloc::free(allocator, scratch.consumed_scale.ptr);
     alloc::free(allocator, scratch.sample.ptr);
     alloc::free(allocator, scratch.sample_rate.ptr);
     alloc::free(allocator, scratch);
 }
 
+fn double action_analytic_speed(Action* action) @private {
+    return action.blend_space ? action.analytic_speed : action.playing ? (double)action.speed : 0;
+}
+
 fn StepSampleSide action_sample_side(Action* action, bool onset) @private {
-    double speed = action.blend_space ? action.analytic_speed : action.playing ? (double)action.speed : 0;
+    double speed = action_analytic_speed(action);
     if (!onset || speed == 0) return StepSampleSide.EXACT;
 
     return speed < 0 ? StepSampleSide.LEFT : StepSampleSide.RIGHT;
@@ -132,7 +132,7 @@ fn void sample_pose_channel(
         side: action_sample_side(action, onset),
     );
 
-    double speed = action.blend_space ? action.analytic_speed : action.playing ? (double)action.speed : 0;
+    double speed = action_analytic_speed(action);
     foreach (index, component : value) {
         sample[index] = (float)component;
         rate[index] *= speed;

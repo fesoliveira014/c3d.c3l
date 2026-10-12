@@ -25,7 +25,6 @@ struct CapturedMotionNode @private {
 struct CapturedMotionChain @private {
     Allocator allocator;
     ModelId model;
-    Vec3 instance_scale;
     uint root_node;
     uint clip_track_count;
     RootExtractionDesc extraction;
