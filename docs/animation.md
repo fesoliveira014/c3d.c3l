@@ -810,8 +810,9 @@ Compute skinning for drawing and generic skinned `InstancedMesh` bindings are no
 Animated crowds provide the supported shared-pose instanced path
 ([crowds](instancing.md#crowds)). Traced effects see the raster
 pose of a skinned or morphed mesh through a posing pass ([scene trace](scene_trace.md#posed-instances)); the
-velocity pass reads the view's previous palettes, and a crowd's previous resident buffers, which a view that
-skipped a submitted frame cannot use.
+velocity pass reads the view's previous palettes, and a crowd's previous resident buffers. A view that skipped a
+submitted frame has none: a crowd part binds the current buffers and gets no deformation motion for that frame,
+while node and instance motion are unchanged, and an animated LOD part rejects the history instead.
 
 ## Retargeting
 

@@ -331,11 +331,12 @@ while (window.poll()) {
   bounds the crowds holding buffers; past it `render_view` faults `CAPACITY_EXCEEDED`. A crowd not drawn
   by any view, shadow layer or trace for more than `INSTANCE_ABSENCE_FRAMES` frames releases its buffers.
 - **Velocity.** The velocity pass reads the previous buffers of the pair, so a temporal view keeps no copy
-  of the palettes or morph weights. A crowd draw takes no deformation history, and so draws with zero
-  motion, when the view did not render in the previous submitted frame, when the crowd is new or was
-  released, or when the existing source, geometry or model checks fail. A view rendered less often than
-  every frame therefore shows no crowd deformation motion; per-instance transform history and node motion
-  of draws without deformation are unchanged.
+  of the palettes or morph weights. A crowd part has no deformation history when the view did not render in
+  the previous submitted frame, or when the crowd is new or was released. Its previous pose then binds the
+  current buffers: the frame shows no deformation motion, while node motion and the view's per-instance
+  transform history are unchanged. A view rendered less often than every frame therefore shows no crowd
+  deformation motion. A part whose source, geometry or model checks fail draws with zero motion. An animated
+  LOD part rejects its history instead ([lod](lod.md#animated-models-and-crowds)).
 - `InstanceGpu.normal_2.w` of a crowd record holds the logical source index, the row of the draw's
   palette and morph block, so a parity change reorders records without moving any pose.
 - Crowds enter the ray tracing paths (shadows, ambient occlusion, reflections, probes, path tracing) only through

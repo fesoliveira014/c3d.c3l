@@ -755,15 +755,20 @@ fn void? record_raster_view(
 
                 bool crowd_deformed = item.candidate.crowd
                   && (item.skin != (gpu::GpuAddress)0 || item.morph != (gpu::GpuAddress)0);
+                bool stale_deformation;
                 if (temporal && crowd_deformed && !crowd_history_invalid) {
-                    crowd_history_invalid = !crowd_deformation_history(
+                    bool deformation_history = crowd_deformation_history(
                         renderer: renderer,
                         candidate: item.candidate,
                         skinned: item.skin != (gpu::GpuAddress)0,
                         morphed: item.morph != (gpu::GpuAddress)0,
                         frame: record.history.submitted,
                     )!;
-                    has_previous &= !crowd_history_invalid;
+                    if (!deformation_history && item.candidate.animated_lod) {
+                        crowd_history_invalid = true;
+                        has_previous = false;
+                    }
+                    stale_deformation = !deformation_history && !crowd_history_invalid;
                 }
 
                 if (has_previous) prev_world = record.history.previous_model(scene, node);
@@ -792,12 +797,13 @@ fn void? record_raster_view(
                 gpu::GpuAddress previous_pose;
                 if (has_previous && posed && redrawn_by_velocity) {
                     previous_pose = upload_previous_pose(
-                        renderer:       renderer,
-                        item:           item,
-                        pose:           pose,
-                        instances:      &previous_instances,
-                        previous_world: prev_world,
-                        positions:      vertices == VertexHistory.CHANGED,
+                        renderer:          renderer,
+                        item:              item,
+                        pose:              pose,
+                        instances:         &previous_instances,
+                        previous_world:    prev_world,
+                        positions:         vertices == VertexHistory.CHANGED,
+                        stale_deformation: stale_deformation,
                     )!;
                 }
 
@@ -1605,6 +1611,7 @@ fn gpu::GpuAddress? upload_previous_pose(
     PreviousInstanceCache* instances,
     Mat4 previous_world,
     bool positions,
+    bool stale_deformation,
 ) @private {
     MeshCandidate* candidate = item.candidate;
     if (candidate.animated_lod) return upload_animated_lod_previous(renderer, item, pose);
@@ -1616,8 +1623,10 @@ fn gpu::GpuAddress? upload_previous_pose(
         crowd_order = alloc::new_array(tmem, uint, crowd.count);
         crowd_packed_order(crowd_order, crowd, candidate.crowd_part);
 
-        if (item.skin != (gpu::GpuAddress)0) previous.skin = resolve_crowd_palette(renderer, candidate)!.previous;
-        if (item.morph != (gpu::GpuAddress)0) previous.morph = resolve_crowd_morph(renderer, candidate)!.previous;
+        if (!stale_deformation) {
+            if (item.skin != (gpu::GpuAddress)0) previous.skin = resolve_crowd_palette(renderer, candidate)!.previous;
+            if (item.morph != (gpu::GpuAddress)0) previous.morph = resolve_crowd_morph(renderer, candidate)!.previous;
+        }
     } else {
         if (item.skin != (gpu::GpuAddress)0 && pose.palette.len == candidate.skin.joints.len) {
             previous.skin = upload_bytes(renderer, pose.palette.ptr, pose.palette.len * Mat4f::size)!;

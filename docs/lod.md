@@ -246,8 +246,9 @@ and rejection; ordinary pose changes alone do not reject correspondence.
 Skipped/aborted views do not publish new observations. A crowd group's
 deformation history exists only for a view that rendered in the previous
 submitted frame: after a skipped frame the group draws with rejected history for
-that view. Update animation, morphs and world transforms before preparing any
-view, depth, shadow, velocity or trace pass of the frame.
+that view, while an ordinary crowd part loses only its deformation motion
+([crowds](instancing.md#crowds)). Update animation, morphs and world transforms
+before preparing any view, depth, shadow, velocity or trace pass of the frame.
 
 ## GPU drawing
 
