@@ -448,6 +448,8 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer PreviousPose
     uint64_t morph;
     uint64_t instances;
     uint64_t positions;
+    uint instances_first;
+    uint instances_end;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer InstanceCullRoot {

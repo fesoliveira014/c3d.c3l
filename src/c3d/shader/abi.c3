@@ -657,12 +657,16 @@ struct PreviousPoseGpu {
     GpuAddress morph;
     GpuAddress instances;
     GpuAddress positions;
+    uint       instances_first;
+    uint       instances_end;
 }
-$assert PreviousPoseGpu::size == 32;
+$assert PreviousPoseGpu::size == 40;
 $assert $reflect(PreviousPoseGpu.skin).offset == 0;
 $assert $reflect(PreviousPoseGpu.morph).offset == 8;
 $assert $reflect(PreviousPoseGpu.instances).offset == 16;
 $assert $reflect(PreviousPoseGpu.positions).offset == 24;
+$assert $reflect(PreviousPoseGpu.instances_first).offset == 32;
+$assert $reflect(PreviousPoseGpu.instances_end).offset == 36;
 
 struct InstanceCullRoot {
     GpuAddress instances;

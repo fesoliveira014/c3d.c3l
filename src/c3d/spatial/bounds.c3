@@ -86,14 +86,25 @@ fn Aabb instanced_world_bounds(
 fn Aabb kept_instance_bounds(AssetStore* assets, InstancedMesh* batch) @local {
     GeometryAsset* record = assets.geometry(batch.geometry);
     InstanceAggregate* aggregate = &batch.aggregate;
-    bool current = aggregate.bounds_revision == batch.revision && c3d::same_id(aggregate.geometry, batch.geometry)
+    bool same_geometry = c3d::same_id(aggregate.geometry, batch.geometry)
       && aggregate.geometry_revision == record.header.revision;
-    if (current) return aggregate.bounds;
+    if (same_geometry && aggregate.bounds_revision == batch.revision) return aggregate.bounds;
+
+    // A range edit leaves no record of the old transforms, so the bound only grows until count edits accumulate.
+    InstanceSpan span = same_geometry ? batch.ranges.span_since(aggregate.bounds_revision) : (InstanceSpan){};
+    uint edited = aggregate.bounds_edited + span.end - span.first;
+    bool grow = span.end > span.first && edited < batch.count;
+
     Aabb local = record.data.bounds;
-    aggregate.bounds = maths::aabb_transform(local, batch.transforms[0].to_mat4());
-    foreach (transform : batch.transforms[1:batch.count - 1]) {
+    if (!grow) {
+        aggregate.bounds = maths::aabb_transform(local, batch.transforms[0].to_mat4());
+        span = { .first = 1, .end = batch.count };
+    }
+    foreach (transform : batch.transforms[span.first:span.end - span.first]) {
         aggregate.bounds = maths::aabb_merge(aggregate.bounds, maths::aabb_transform(local, transform.to_mat4()));
     }
+
+    aggregate.bounds_edited = grow ? edited : 0;
     aggregate.geometry = batch.geometry;
     aggregate.geometry_revision = record.header.revision;
     aggregate.bounds_revision = batch.revision;
