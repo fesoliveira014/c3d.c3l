@@ -293,6 +293,21 @@ fn void list_mesh_pipelines(
     bool crowd = false,
     bool skinned = true,
 ) @private {
+    bool pose = renderer.compute_skinning && !instanced && (flags.skinned || flags.has_morphs);
+    if (pose && (morphed || skinned)) {
+        // Compute skinning draws the plain forms; the deformed ones remain for meshes it leaves out.
+        list_prepare_compute(requests, ComputeSlot.TRACE_POSE);
+        list_prepare_compute(requests, ComputeSlot.TRACE_POSE_U16);
+        list_mesh_pipelines(
+            renderer: renderer,
+            requests: requests,
+            flags: flags,
+            material: material,
+            morphed: false,
+            depth: depth,
+            skinned: false,
+        );
+    }
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
     gpu::PolygonMode polygon = wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL;
     uint instanced_flag = instanced ? shader::SHADER_FLAG_INSTANCED : 0;

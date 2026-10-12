@@ -337,6 +337,7 @@ fn void include_mesh(
         .receive_shadow = mesh.receive_shadow,
         .instance_count = 1,
         .vertex_motion  = mesh.vertex_motion,
+        .scene_identity = scene.identity,
     };
     counts.visible++;
 }
@@ -619,6 +620,8 @@ fn MeshCandidate[] extract_shadow_candidates(
                         ),
                         .receive_shadow = mesh.receive_shadow,
                         .instance_count = 1,
+                        .vertex_motion  = mesh.vertex_motion,
+                        .scene_identity = scene.identity,
                     };
                 }
             }

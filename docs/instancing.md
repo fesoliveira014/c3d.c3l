@@ -358,7 +358,10 @@ while (window.poll()) {
 
 Example: `python3 scripts/build.py --example skinned_crowd` walks 512 instances of the committed Quaternius
 character through six of its clips; `B` switches to 512 `Animator` instances of the same model for
-comparison, `--baseline` starts there. `--compare` advances both representations on every update and
+comparison, `--baseline` starts there. `K` (or the panel checkbox, or `--compute-skinning`) turns on
+[compute skinning](animation.md#compute-skinning) for those instances; the flag also leaves them without
+animated LOD, whose parts keep vertex skinning, and the panel shows the posed meshes, fallbacks, resident
+posed bytes and the GPU time of `Pass.COMPUTE_SKIN`, shadows, prepass, forward and velocity. `--compare` advances both representations on every update and
 shows maximum local position, rotation, scale and morph differences. This mode includes both
 playback costs and the comparison loop; use the single-representation modes for measurements.
 `F` freezes every other instance by pausing its base action, `--frozen-percent=P` starts with `P` percent

@@ -405,6 +405,7 @@ fn void? record_pending_copies(Renderer* renderer, gpu::CommandList* commands) @
     }
     if (has_environment_preparations(renderer)) renderer.work_recorded = true;
     record_environment_preparations(renderer, commands)!;
+    record_compute_skin(renderer, commands)!;
 }
 
 fn void? open_closed_frame_slot(Renderer* renderer) @private {

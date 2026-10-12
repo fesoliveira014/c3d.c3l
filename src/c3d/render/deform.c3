@@ -42,7 +42,12 @@ fn ShaderVariant mesh_vertex_variant(
     return { .shader = MESH, .flags = variant_flags };
 }
 
-fn ShaderVariant candidate_vertex_variant(GeometryFlags flags, MeshCandidate* candidate, uint base_flags = 0) @private {
+fn ShaderVariant candidate_vertex_variant(
+    GeometryFlags flags,
+    MeshCandidate* candidate,
+    uint base_flags = 0,
+    bool posed = false,
+) @private {
     if (candidate.impostor) return { .shader = IMPOSTOR_VERTEX };
     if (candidate.animated_lod) {
         return mesh_vertex_variant(
@@ -65,8 +70,8 @@ fn ShaderVariant candidate_vertex_variant(GeometryFlags flags, MeshCandidate* ca
     }
     return mesh_vertex_variant(
         flags:      flags,
-        morphed:    candidate.morph_weights.len > 0,
-        skinned:    candidate.skin != null,
+        morphed:    !posed && candidate.morph_weights.len > 0,
+        skinned:    !posed && candidate.skin != null,
         base_flags: base_flags,
     );
 }

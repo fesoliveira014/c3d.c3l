@@ -54,6 +54,9 @@ const uint SHARED_GROUPS @local = 12; // Six clips at two phases; a range of 24 
 const float SHARED_PHASE @local = 0.5f; // Fraction of a clip between the two phases of a clip.
 const double NANOSECONDS_PER_MILLISECOND @local = 1000000;
 const double STATS_SMOOTHING @local = 0.1; // Weight of the newest frame in the shown sample time and hit rate.
+const Pass[5] REPORTED_PASSES @local = {
+    Pass.COMPUTE_SKIN, Pass.SHADOW_ATLAS, Pass.DEPTH_PREPASS, Pass.FORWARD_OPAQUE, Pass.VELOCITY,
+};
 const String CHARACTER @local = "../assets/quaternius/AnimationLibrary_Godot.glb";
 const String[] CLIP_NAMES @local = {
     "Walk_Loop", "Jog_Fwd_Loop", "Idle_Loop", "Sprint_Loop", "Walk_Formal_Loop", "Dance_Loop",
@@ -68,6 +71,8 @@ struct Showcase @local {
     Node*[CROWD_SIZE] animated;
     AnimationActionId[CROWD_SIZE] base_actions;
     bool     baseline;
+    bool     compute_skinning;
+    bool     lod_baseline; // animated LOD parts keep vertex skinning; the baseline then draws ordinary meshes
     bool     compare;
     bool     shared_phases;
     float[CROWD_SIZE] seed_times;
@@ -210,13 +215,15 @@ fn void? attach_showcase_lod(
             desc: desc,
         )!;
 
-        foreach (node : showcase.animated) {
-            model::attach_animated_lod(
-                assets: assets,
-                scene: scene,
-                owner: node,
-                desc: desc,
-            )!;
+        if (showcase.lod_baseline) {
+            foreach (node : showcase.animated) {
+                model::attach_animated_lod(
+                    assets: assets,
+                    scene: scene,
+                    owner: node,
+                    desc: desc,
+                )!;
+            }
         }
     };
 }
@@ -357,6 +364,19 @@ fn void? panel(
         phases_changed = imgui::checkbox("Shared-phase groups (G)", &showcase.shared_phases);
         imgui::text("Upload: %u bytes per frame", renderer.stats.upload_bytes);
         imgui::text("Resident crowd: %u bytes", resident_crowd_bytes(scene.get(showcase.crowd, AnimatedCrowd)));
+        Stats* stats = &renderer.stats;
+        if (imgui::checkbox("Compute skinning (K)", &showcase.compute_skinning)) {
+            renderer.set_compute_skinning(showcase.compute_skinning);
+        }
+        imgui::text("Posed: %u meshes, fallbacks: %u", stats.compute_skinned, stats.compute_skinning_fallbacks);
+        imgui::text("Resident posed: %u bytes", (uint)stats.compute_skinning_bytes);
+        foreach (pass : REPORTED_PASSES) {
+            imgui::text(
+                "%s: %.3f ms",
+                Pass::names[pass.ordinal].zstr_tcopy(),
+                (double)stats.gpu_pass_ms[pass.ordinal],
+            );
+        }
         bool frozen_changed = imgui::slider_float(
             label: "Frozen share (F toggles)",
             v: &showcase.frozen_share,
@@ -374,7 +394,7 @@ fn void? panel(
         changed |= imgui::checkbox("Force full-detail meshes", &showcase.full_detail);
         imgui::text_unformatted("Triangle subsets; preview has holes.");
 
-        if (showcase.baseline || renderer.stats.lod_counts_valid) {
+        if (showcase.baseline ? showcase.lod_baseline : renderer.stats.lod_counts_valid) {
             foreach (uint level, triangles : showcase.lod_triangles) {
                 uint selected = showcase.baseline
                   ? renderer.stats.lod_objects_selected[level] : renderer.stats.lod_selected[level];
@@ -439,6 +459,23 @@ fn void? draw_frame(
     return renderer.end_frame();
 }
 
+fn void report_compute_skinning(render::Renderer* renderer, Showcase* showcase) @local {
+    Stats* stats = &renderer.stats;
+    io::printf(
+        "  compute skinning %s: posed %d, fallbacks %d",
+        showcase.compute_skinning ? "on" : "off",
+        stats.compute_skinned,
+        stats.compute_skinning_fallbacks,
+    );
+    io::printf(", resident posed %d bytes", (uint)stats.compute_skinning_bytes);
+    if (stats.gpu_timing_state != GpuTimingState.READY) {
+        io::printfn(", gpu timings pending");
+        return;
+    }
+    foreach (pass : REPORTED_PASSES) io::printf(", %s %.3f ms", pass, stats.gpu_pass_ms[pass.ordinal]);
+    io::printn("");
+}
+
 fn void? run(
     platform::Window* window,
     render::Renderer* renderer,
@@ -489,6 +526,11 @@ fn void? run(
             base.playing = !base.playing;
             Animator* animator = scene.get(showcase.animated[0], Animator);
             animator.action(showcase.base_actions[0]).playing = base.playing;
+        }
+
+        if (input.key_pressed(Scancode.K) && !input.keyboard_captured_by_gui) {
+            showcase.compute_skinning = !showcase.compute_skinning;
+            renderer.set_compute_skinning(showcase.compute_skinning);
         }
 
         if (input.key_pressed(Scancode.R) && !input.keyboard_captured_by_gui) {
@@ -563,6 +605,7 @@ fn void? run(
                 showcase.shared_phases ? "on" : "off",
                 showcase.cache_hit_rate * 100,
             );
+            report_compute_skinning(renderer, showcase);
         }
     }
 }
@@ -570,12 +613,15 @@ fn void? run(
 fn int main(String[] args) {
     bool baseline;
     bool compare;
+    bool compute_skinning;
     bool compress;
     bool shared_phases;
     float frozen_share;
     foreach (argument : args[1..]) {
         if (argument == "--baseline") {
             baseline = true;
+        } else if (argument == "--compute-skinning") {
+            compute_skinning = true;
         } else if (argument == "--compress") {
             compress = true;
         } else if (argument == "--compare") {
@@ -607,9 +653,10 @@ fn int main(String[] args) {
         allocator: mem,
         window:    &window,
         assets:    &assets,
-        desc:      { .validation = true, .application_name = "c3d_crowd" },
+        desc:      { .validation = true, .gpu_timings = true, .application_name = "c3d_crowd" },
     )!!;
     defer render::destroy_renderer(&renderer);
+    renderer.set_compute_skinning(compute_skinning);
 
     ModelId model = gltf::load_model(&assets, example_path(CHARACTER))!!;
     ModelTemplate* template = &assets.model(model).data;
@@ -624,7 +671,13 @@ fn int main(String[] args) {
 
     Random random = { .state = RANDOM_SEED };
     CrowdInstance[CROWD_SIZE] instances;
-    Showcase showcase = { .compare = compare, .shared_phases = shared_phases, .frozen_share = frozen_share };
+    Showcase showcase = {
+        .compare          = compare,
+        .compute_skinning = compute_skinning,
+        .lod_baseline     = !compute_skinning,
+        .shared_phases    = shared_phases,
+        .frozen_share     = frozen_share,
+    };
     foreach (uint index, &instance : instances) {
         ClipId clip = clips[index % clips.len];
         float duration = assets.clip(clip).data.duration;
