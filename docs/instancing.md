@@ -372,7 +372,10 @@ comparison, `--baseline` starts there. `K` (or the panel checkbox, or `--compute
 [compute skinning](animation.md#compute-skinning) for the crowd and for those instances; the flag also starts
 the example without animated LOD, whose parts keep vertex skinning and leave the switch no crowd draw to pose,
 and the panel shows the posed bindings, fallback draws, resident posed bytes and the GPU time of
-`Pass.COMPUTE_SKIN`, shadows, prepass, forward and velocity. `--compare` advances both representations on every update and
+`Pass.COMPUTE_SKIN`, `Pass.TRACE_POSE`, `Pass.ACCELERATION_BUILD`, shadows, prepass, forward and velocity.
+`--traced-shadows` adds a ground plane, ray-traced sun shadows and traced crowd parts, through the software
+kind or, with `--ray-queries`, the hardware kind, and the panel then shows the trace poses dispatched and
+reused. `--compare` advances both representations on every update and
 shows maximum local position, rotation, scale and morph differences. This mode includes both
 playback costs and the comparison loop; use the single-representation modes for measurements.
 `F` freezes every other instance by pausing its base action, `--frozen-percent=P` starts with `P` percent
