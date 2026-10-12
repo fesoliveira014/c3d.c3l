@@ -77,7 +77,6 @@ fn void collect_texture_coverage(TextureCoverageState* state, uint stored) @priv
     state.level.passing += asset::decode_texture_alpha(state.format, stored) >= state.threshold ? 1 : 0;
 }
 
-// Texels above the cutoff bin pass, texels below fail, and evenly spaced texels of the cutoff bin pass.
 fn bool choose_texture_coverage(
     TextureCoverageState* state,
     material::TextureDesc desc,
