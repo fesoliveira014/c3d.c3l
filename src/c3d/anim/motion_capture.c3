@@ -19,7 +19,6 @@ fn usz? validate_playback_addition(
     PlayDesc structural = desc;
     if (generalized) structural.additive_scale = AdditiveScaleMode.DIFFERENCE;
     usz reference_count = validate_playback_action(clip, structural, destination)!;
-    if (desc.weighted_mask) validate_weighted_joint_mask(assets, playback.model, desc.weighted_mask)!;
 
     Action motion;
     configure_motion(

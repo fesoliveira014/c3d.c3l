@@ -181,12 +181,12 @@ defer anim::destroy_weighted_joint_mask(&upper);
 animator.play(&assets, overlay_clip, { .layer = 1, .weighted_mask = &upper })!;
 ```
 
-Use the model's actual names. A weighted mask captures the model identity and
-ordered node names/parents. A different model or changed layout, wrong row
-width, invalid weight, or supplying both mask types faults `INVALID_ARGUMENT`
-before playback changes. Play copies the float row; editing or destroying the
-caller mask afterwards does not change existing actions. Each masked action
-owns `node_count * float::size` extra bytes until removal.
+Use the model's actual names. As with `JointMask`, reuse a weighted mask only
+with instances of the model whose node indices it describes. A wrong row
+width, a weight outside `[0,1]` or supplying both mask types faults
+`INVALID_ARGUMENT` before playback changes. Play copies the float row; editing
+or destroying the caller mask afterwards does not change existing actions.
+Each masked action owns `node_count * float::size` extra bytes until removal.
 
 The effective contribution is `action.weight * mask.nodes[node]` for every
 translation, rotation, scale and logical morph channel, including root motion.
@@ -229,17 +229,20 @@ Opt in to componentwise scale ratios with
 action. After regular blending, each additive action applies:
 
 ```plain text
-below *= 1 + effective_weight * (sample / reference - 1)
+below *= (sample / reference) ^ effective_weight
 ```
 
-For below `(2,3,4)`, reference `(2,4,8)`, sample `(4,2,16)` and weight 0.5,
-the result is `(3,2.25,6)`. The scale mode and time-zero reference are captured
-at play. Only STEP and LINEAR scale tracks are supported. Admission checks their
-keys once: every key and the reference must be finite and strictly positive,
-positive subnormals included, or play returns `INVALID_ARGUMENT` before creating
-an action or group. A `CUBIC_SPLINE` scale track with valid keys and finite
-tangents returns `UNSUPPORTED` before mutation. Runtime applies no clamp or
-repeated domain scan.
+A positive sampled ratio gives a positive factor at every weight, including
+weights above 1, and the factor is the plain ratio at weight 1. For below
+`(2,3,4)`, reference `(2,4,8)`, sample `(8,1,32)` and weight 0.5, the result is
+`(4,1.5,8)`. The scale mode and time-zero reference are captured at play. Only
+STEP and LINEAR scale tracks are supported. Admission checks their keys once:
+every key and the reference must be finite and strictly positive, positive
+subnormals included, or play returns `INVALID_ARGUMENT` before creating an
+action or group. Positive keys are the guarantee: between adjacent keys whose
+ratio exceeds 2^24, a sample can round to zero. A `CUBIC_SPLINE` scale track
+with valid keys returns `UNSUPPORTED` before mutation. Playback samples these
+tracks like any other and applies no clamp or repeated domain scan.
 
 An additive action keeps the reference pose it sampled at `play` until it is played again. After
 `replace_clip_owned`, running actions re-seek on the new tracks, but an additive action's reference pose and
@@ -597,20 +600,22 @@ admit a 2D group.
 
 Coordinates must be distinct and finite. Triangles must form a connected,
 non-overlapping triangulation of the convex hull, include every sample and have
-valid distinct indices. Winding is normalized at admission; gaps, crossings,
-duplicate triangles, unused samples and non-convex boundaries fault
-`INVALID_ARGUMENT`. For maximum coordinate extent `S`, triangle double-area
-must exceed `1e-10 * S*S`. No automatic triangulation or degenerate fallback is
-performed. Clips must be live and have finite positive durations. Exhausted
-slots/actions or failed allocation return `CAPACITY_EXCEEDED`; dead IDs return
-`INVALID_ID`. Failure preserves existing actions, groups and output.
+valid distinct indices. Either winding is accepted and the authored triangles
+are kept as given; gaps, crossings, duplicate triangles, unused samples and
+non-convex boundaries fault `INVALID_ARGUMENT`. For maximum coordinate extent
+`S`, triangle double-area must exceed `1e-10 * S*S`. No automatic triangulation
+or degenerate fallback is performed. Clips must be live and have finite
+positive durations. Exhausted slots/actions or failed allocation return
+`CAPACITY_EXCEEDED`; dead IDs return `INVALID_ID`. Failure preserves existing
+actions, groups and output.
 
 An exact coordinate selects that authored sample. Otherwise the first authored
-containing triangle supplies up to three nonnegative barycentric weights.
-Boundary roundoff within `1e-7` is clamped to zero and normalized. Outside the
-hull, the parameter projects onto the nearest boundary segment. Distance ties
-within `1e-12 * S*S` choose the earliest authored triangle-edge occurrence.
-Selection does not depend on the previous parameter.
+triangle that contains the parameter supplies up to three nonnegative
+barycentric weights. When no triangle contains it, the nearest triangle by
+edge distance supplies its weights, clamped to zero and normalized, if its
+barycentric roundoff stays within `1e-7`. Otherwise the parameter projects onto
+the nearest boundary segment of the hull. Selection does not depend on the
+previous parameter.
 
 Selected weights sum to `space.weight`; the selected durations advance the same
 normalized phase law as 1D. All members retain their shared clocks and event
@@ -618,8 +623,9 @@ semantics, including unselected and zero-weight members. Pausing the phase still
 allows parameter edits to change the pose. Keep parameter, speed and phase
 finite, phase in `[0,1)`, and weight in `[0,1]`.
 
-Use `stop_blend_space_2d(space, fade_out)` and
-`fade_blend_space_2d(space, target_weight, duration)` for group removal and fades.
+Both group kinds embed one `BlendSpaceControl` (member count, weight,
+fade, phase, speed and playing), so `stop_blend_space(space, fade_out)` and
+`fade_blend_space(space, target_weight, duration)` serve 2D groups too.
 Independent member stop/cross-fade returns `INVALID_ARGUMENT`. Creation copies
 coordinates, triangles and captured masks; caller arrays may be changed or freed
 afterwards. Group arrays and member configuration stay library-owned and
@@ -630,22 +636,23 @@ owner's 2D slot storage after structural changes and discard it after removal.
 
 Every playback owner prepares two 2D rows even when neither is active. For action
 capacity `A`, each row holds `A` action IDs, `A` coordinates, up to
-`max(0, 2*A - 5)` three-byte triangles and `A` two-byte hull edges. On x64 the
-control is 128 bytes, aligned to eight bytes. Both rows share one allocation;
-these totals include controls and alignment padding:
+`max(0, 2*A - 5)` three-byte triangles and `A` two-byte hull edges. On x64
+`BlendSpace2D` is 120 bytes, aligned to eight bytes. Both rows share one
+allocation; these totals include the two `BlendSpace2D` values and alignment
+padding:
 
 | Action capacity | Retained 2D bytes per playback owner |
 | ---: | ---: |
-| 1 | 304 |
-| 2 | 336 |
-| 3 | 384 |
-| 4 | 432 |
-| 8 | 624 |
-| 9 | 672 |
-| 15 | 960 |
-| 16 | 1008 |
+| 1 | 288 |
+| 2 | 320 |
+| 3 | 368 |
+| 4 | 416 |
+| 8 | 608 |
+| 9 | 656 |
+| 15 | 944 |
+| 16 | 992 |
 
-An Animator pays 1008 bytes. A crowd pays the table value for every slot of its
+An Animator pays 992 bytes. A crowd pays the table value for every slot of its
 fixed capacity, including inactive slots. These bytes exclude existing 1D rows,
 actions, cursors, additive references and weighted mask rows. Group updates
 allocate nothing; creation allocates only the members' captured action data.

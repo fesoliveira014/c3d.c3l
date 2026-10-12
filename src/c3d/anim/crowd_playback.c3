@@ -260,18 +260,18 @@ fn BlendSpace1D*? CrowdPlayer.add_blend_space(
 }
 
 <*
- Fade a space out or remove its members immediately.
+ Fade a space of either kind out or remove its members immediately.
  @param [&inout] space : "Current borrow from this instance."
  @param fade_out : "Finite nonnegative seconds."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT
 *>
-fn void? CrowdPlayer.stop_blend_space(&self, BlendSpace1D* space, float fade_out = 0) {
+fn void? CrowdPlayer.stop_blend_space(&self, BlendSpaceControl* space, float fade_out = 0) {
     PlaybackView playback = crowd_player_view(self)!;
     playback.stop_blend_space(space, fade_out)!;
 }
 
 <*
- Fade a space toward a new weight.
+ Fade a space of either kind toward a new weight.
  @param [&inout] space : "Current borrow from this instance."
  @param target_weight : "Finite weight in [0,1]."
  @param duration : "Finite positive seconds."
@@ -279,7 +279,7 @@ fn void? CrowdPlayer.stop_blend_space(&self, BlendSpace1D* space, float fade_out
 *>
 fn void? CrowdPlayer.fade_blend_space(
     &self,
-    BlendSpace1D* space,
+    BlendSpaceControl* space,
     float target_weight,
     float duration,
 ) {

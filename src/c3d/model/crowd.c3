@@ -436,8 +436,8 @@ fn void? check_authoring(
             template: template,
             source: source,
             actions_per_instance: actions_per_instance,
-            placement: instances[index].placement,
             model: model,
+            placement: instances[index].placement,
         )!;
     }
 }

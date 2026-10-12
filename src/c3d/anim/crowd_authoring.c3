@@ -106,8 +106,8 @@ fn void? validate_crowd_authoring(
     ModelTemplate* template,
     CrowdInstanceAuthoring source,
     uint actions_per_instance,
+    ModelId model,
     Transform placement = maths::TRANSFORM_IDENTITY,
-    ModelId model = {},
 ) {
     check_crowd_instance(source, template.nodes.len, actions_per_instance)!;
     if (!source.configured) return;
@@ -185,86 +185,68 @@ fn AnimationActionId? restore_playback_authoring(
         }
     }
 
-    @pool() {
-        WeightedJointMask weighted = { .model = playback.model };
-        bool has_weighted;
-        foreach (action : source.actions) has_weighted |= action.weighted_mask.len != 0;
-        if (has_weighted) {
-            ModelTemplate* template = &assets.models.try_get(playback.model)!.data;
-            weighted.model_names = alloc::new_array_try(tmem, String, template.nodes.len)
-              ?? c3d::CAPACITY_EXCEEDED~!;
-            weighted.model_parents = alloc::new_array_try(tmem, int, template.nodes.len)
-              ?? c3d::CAPACITY_EXCEEDED~!;
+    AnimationActionId[MAX_ACTIONS] ids;
+    foreach (ordinal, action : source.actions) {
+        JointMask boolean = { .nodes = action.mask };
+        WeightedJointMask weighted = { .nodes = action.weighted_mask };
+        PlayDesc desc = {
+            .layer = action.layer,
+            .additive = action.additive,
+            .mask = action.weighted_mask.len ? null : &boolean,
+            .weighted_mask = action.weighted_mask.len ? &weighted : null,
+            .additive_scale = action.additive_scale,
+            .root_motion = action.root_motion,
+            .root_yaw = action.root_yaw,
+            .extraction = action.extraction,
+        };
 
-            foreach (index, node : template.nodes) {
-                weighted.model_names[index] = node.name;
-                weighted.model_parents[index] = node.parent;
-            }
-        }
+        ids[ordinal] = playback.play(
+            assets: assets,
+            clip: action.clip,
+            desc: desc,
+            destination: destination,
+            motion_basis: motion_basis,
+        )!;
 
-        AnimationActionId[MAX_ACTIONS] ids;
-        foreach (ordinal, action : source.actions) {
-            JointMask boolean = { .nodes = action.mask };
-            weighted.nodes = action.weighted_mask;
-            PlayDesc desc = {
-                .layer = action.layer,
-                .additive = action.additive,
-                .mask = action.weighted_mask.len ? null : &boolean,
-                .weighted_mask = action.weighted_mask.len ? &weighted : null,
-                .additive_scale = action.additive_scale,
-                .root_motion = action.root_motion,
-                .root_yaw = action.root_yaw,
-                .extraction = action.extraction,
+        Action* restored = playback.action(ids[ordinal]);
+        restored.speed = action.speed;
+        restored.weight = action.weight;
+        restored.fade_target = action.weight == 0 ? 1 : action.weight;
+        restored.loop = action.loop;
+        restored.playing = action.playing;
+    }
+
+    foreach (ordinal, space : source.spaces) {
+        if (space.kind == TWO_DIMENSIONAL) {
+            restore_authored_space_2d(playback, (uint)ordinal, space)!;
+        } else {
+            playback.blend_spaces[ordinal] = {
+                .count = (uint)space.actions.len,
+                .parameter = space.parameter,
+                .weight = space.weight,
+                .fade_target = space.weight == 0 ? 1 : space.weight,
+                .speed = space.speed,
+                .playing = space.playing,
             };
-
-            ids[ordinal] = playback.play(
-                assets: assets,
-                clip: action.clip,
-                desc: desc,
-                destination: destination,
-                motion_basis: motion_basis,
-            )!;
-
-            Action* restored = playback.action(ids[ordinal]);
-            restored.speed = action.speed;
-            restored.weight = action.weight;
-            restored.fade_target = action.weight == 0 ? 1 : action.weight;
-            restored.loop = action.loop;
-            restored.playing = action.playing;
+            playback.blend_spaces[ordinal].positions[:space.positions.len] = space.positions[..];
         }
 
-        foreach (ordinal, space : source.spaces) {
+        foreach (member, action_ordinal : space.actions) {
+            AnimationActionId id = ids[action_ordinal];
             if (space.kind == TWO_DIMENSIONAL) {
-                restore_authored_space_2d(playback, (uint)ordinal, space)!;
+                playback.blend_spaces_2d[ordinal].actions[member] = id;
             } else {
-                playback.blend_spaces[ordinal] = {
-                    .count = (uint)space.actions.len,
-                    .parameter = space.parameter,
-                    .weight = space.weight,
-                    .fade_target = space.weight == 0 ? 1 : space.weight,
-                    .speed = space.speed,
-                    .playing = space.playing,
-                };
-                playback.blend_spaces[ordinal].positions[:space.positions.len] = space.positions[..];
+                playback.blend_spaces[ordinal].actions[member] = id;
             }
 
-            foreach (member, action_ordinal : space.actions) {
-                AnimationActionId id = ids[action_ordinal];
-                if (space.kind == TWO_DIMENSIONAL) {
-                    playback.blend_spaces_2d[ordinal].actions[member] = id;
-                } else {
-                    playback.blend_spaces[ordinal].actions[member] = id;
-                }
-
-                Action* action = playback.action(id);
-                action.blend_space = (uint)ordinal + 1;
-                action.weight = 0;
-                action.playing = false;
-            }
+            Action* action = playback.action(id);
+            action.blend_space = (uint)ordinal + 1;
+            action.weight = 0;
+            action.playing = false;
         }
+    }
 
-        return source.base_action == uint::max ? (AnimationActionId){} : ids[source.base_action];
-    };
+    return source.base_action == uint::max ? (AnimationActionId){} : ids[source.base_action];
 }
 
 fn void? restore_authored_space_2d(PlaybackView* playback, uint ordinal, CrowdSpaceAuthoring source) @local {
@@ -280,7 +262,6 @@ fn void? restore_authored_space_2d(PlaybackView* playback, uint ordinal, CrowdSp
     destination.count = (uint)source.actions.len;
     destination.triangle_count = layout.triangle_count;
     destination.hull_count = layout.hull_count;
-    destination.reversed = layout.reversed;
     destination.extent = layout.extent;
     destination.points[:source.points.len] = source.points[..];
     destination.parameter = source.parameter_2d;
@@ -456,10 +437,9 @@ fn CrowdInstanceAuthoring? capture_playback_authoring(
 
     bool[MAX_BLEND_SPACES] retained_spaces;
     uint space_count;
-    foreach (index, space : playback.blend_spaces) {
-        BlendSpace2D* planar = &playback.blend_spaces_2d[index];
-        retained_spaces[index] = (space.count != 0 && !(space.fade_rate > 0 && space.fade_target == 0))
-          || (planar.count != 0 && !(planar.fade_rate > 0 && planar.fade_target == 0));
+    foreach (index, &space : playback.blend_spaces) {
+        BlendSpaceControl* control = space.count ? &space.control : &playback.blend_spaces_2d[index].control;
+        retained_spaces[index] = control.count != 0 && !(control.fade_rate > 0 && control.fade_target == 0);
         if (retained_spaces[index]) space_count++;
     }
 
@@ -510,19 +490,18 @@ fn CrowdInstanceAuthoring? capture_playback_authoring(
     }
 
     uint space_index;
-    foreach (index, space : playback.blend_spaces) {
+    foreach (index, &space : playback.blend_spaces) {
         if (!retained_spaces[index]) continue;
 
         CrowdSpaceAuthoring* captured = &destination.spaces[space_index++];
         BlendSpace2D* planar = &playback.blend_spaces_2d[index];
-        uint count = planar.count ? planar.count : space.count;
+        BlendSpaceControl* control = planar.count ? &planar.control : &space.control;
+        uint count = control.count;
         *captured = {
             .parameter = planar.count ? 0 : space.parameter,
-            .weight = planar.count
-              ? (planar.fade_rate > 0 ? planar.fade_target : planar.weight)
-              : (space.fade_rate > 0 ? space.fade_target : space.weight),
-            .speed = planar.count ? planar.speed : space.speed,
-            .playing = planar.count ? planar.playing : space.playing,
+            .weight = control.fade_rate > 0 ? control.fade_target : control.weight,
+            .speed = control.speed,
+            .playing = control.playing,
             .kind = planar.count ? TWO_DIMENSIONAL : ONE_DIMENSIONAL,
             .parameter_2d = planar.count ? planar.parameter : (Vec2){},
         };
@@ -536,13 +515,8 @@ fn CrowdInstanceAuthoring? capture_playback_authoring(
               ?? c3d::CAPACITY_EXCEEDED~!;
 
             foreach (triangle, &authored : captured.triangles) {
-                BlendTriangleIndices stored = planar.triangles[triangle];
-                bool reversed = (planar.reversed & (1u << triangle)) != 0;
-                authored.indices = {
-                    stored.indices[0],
-                    stored.indices[reversed ? 2 : 1],
-                    stored.indices[reversed ? 1 : 2],
-                };
+                char[3] stored = planar.triangles[triangle].indices;
+                authored.indices = { stored[0], stored[1], stored[2] };
             }
         } else {
             captured.positions = alloc::new_array_try(allocator, float, count) ?? c3d::CAPACITY_EXCEEDED~!;

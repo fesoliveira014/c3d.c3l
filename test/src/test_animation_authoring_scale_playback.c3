@@ -90,10 +90,10 @@ fn void expect_scale_play_fault(
 
 fn void test_animation_scale_playback_ratio_and_default_difference_use_literal_oracles() @test {
     float[2] times = { 0, 1 };
-    float[6] values = { 2, 4, 8, 4, 2, 16 };
+    float[6] values = { 2, 4, 8, 8, 1, 32 };
     float[3] weights = { 0, 0.5f, 1 };
-    Vec3[3] ratio_expected = { { 2, 3, 4 }, { 3, 2.25f, 6 }, { 4, 1.5f, 8 } };
-    Vec3[3] difference_expected = { { 2, 3, 4 }, { 3, 2, 8 }, { 4, 1, 12 } };
+    Vec3[3] ratio_expected = { { 2, 3, 4 }, { 4, 1.5f, 8 }, { 8, 0.75f, 16 } };
+    Vec3[3] difference_expected = { { 2, 3, 4 }, { 5, 1.5f, 16 }, { 8, 0, 28 } };
     foreach (bool ratio : { false, true }) {
         foreach (index, weight : weights) {
             LayerFixture fixture;
@@ -145,9 +145,31 @@ fn void test_animation_scale_playback_ratio_and_default_difference_use_literal_o
     assert(fixture.animator.action(action).reference == straddling_reference[..]);
 }
 
+fn void test_animation_scale_playback_ratio_above_unit_weight_keeps_scale_positive() @test {
+    float[2] times = { 0, 1 };
+    float[6] values = { 4, 2, 8, 1, 4, 2 };
+    LayerFixture fixture;
+    create_scale_playback_fixture(&fixture, { 2, 3, 4 });
+    defer destroy_layer_fixture(&fixture);
+    ClipId clip = scale_playback_clip(
+        fixture: &fixture,
+        interpolation: Interpolation.LINEAR,
+        times: times[..],
+        values: values[..],
+    );
+    (void)play_scale_playback(
+        fixture: &fixture,
+        clip: clip,
+        desc: { .additive = true, .additive_scale = AdditiveScaleMode.MULTIPLICATIVE },
+        weight: 2,
+        time: 1,
+    );
+    update_scale_playback(&fixture, { 0.125f, 12, 0.25f });
+}
+
 fn void test_animation_scale_playback_weighted_and_boolean_masks_are_copied() @test {
     float[2] times = { 0, 1 };
-    float[6] values = { 2, 4, 8, 4, 2, 16 };
+    float[6] values = { 2, 4, 8, 8, 1, 32 };
     foreach (uint kind : { 0u, 1u, 2u }) {
         LayerFixture fixture;
         create_scale_playback_fixture(&fixture, { 2, 3, 4 });
@@ -179,21 +201,21 @@ fn void test_animation_scale_playback_weighted_and_boolean_masks_are_copied() @t
         weighted.nodes[..] = 0;
         included[..] = false;
         if (kind == 0) assert(fixture.animator.action(action).weighted_mask[3] == 0.25f);
-        update_scale_playback(&fixture, kind == 1 ? (Vec3){ 2, 3, 4 } : (Vec3){ 3, 2.25f, 6 });
+        update_scale_playback(&fixture, kind == 1 ? (Vec3){ 2, 3, 4 } : (Vec3){ 4, 1.5f, 8 });
     }
 }
 
 fn void test_animation_scale_playback_multiple_additives_preserve_authored_order() @test {
     float[2] times = { 0, 1 };
-    float[6] ratio_values = { 2, 4, 8, 4, 2, 16 };
-    float[6] difference_values = { 1, 1, 1, 2, 3, 4 };
+    float[6] ratio_values = { 2, 4, 8, 8, 1, 32 };
+    float[6] difference_values = { 1, 1, 1, 4, 9, 16 };
     uint[2][3] clip_order = { { 0, 1 }, { 1, 0 }, { 0, 1 } };
     AdditiveScaleMode[2][3] modes = {
         { MULTIPLICATIVE, DIFFERENCE },
         { DIFFERENCE, MULTIPLICATIVE },
         { MULTIPLICATIVE, MULTIPLICATIVE },
     };
-    Vec3[3] expected = { { 3.5f, 3.25f, 7.5f }, { 3.75f, 3, 8.25f }, { 4.5f, 4.5f, 15 } };
+    Vec3[3] expected = { { 5.5f, 5.5f, 15.5f }, { 7, 3.5f, 23 }, { 8, 4.5f, 32 } };
     for (uint arrangement = 0; arrangement < 3; arrangement++) {
         LayerFixture fixture;
         create_scale_playback_fixture(&fixture, { 2, 3, 4 });
@@ -262,7 +284,7 @@ fn void test_animation_scale_playback_invalid_domains_reject_before_pool_or_allo
     create_scale_playback_fixture(&fixture, { 2, 3, 4 }, &tracker);
     defer destroy_layer_fixture(&fixture);
     float[2] times = { 0, 1 };
-    float[6] valid_values = { 2, 4, 8, 4, 2, 16 };
+    float[6] valid_values = { 2, 4, 8, 8, 1, 32 };
     ClipId valid = scale_playback_clip(
         fixture: &fixture,
         interpolation: Interpolation.LINEAR,
@@ -276,7 +298,7 @@ fn void test_animation_scale_playback_invalid_domains_reject_before_pool_or_allo
         weight: 0.5f,
         time: 1,
     );
-    update_scale_playback(&fixture, { 3, 2.25f, 6 });
+    update_scale_playback(&fixture, { 4, 1.5f, 8 });
     for (uint invalid = 0; invalid < 6; invalid++) {
         float[6] ordinary = { 1, 1, 1, 1, 1, 1 };
         float[18] cubic = { 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
@@ -301,7 +323,7 @@ fn void test_animation_scale_playback_invalid_domains_reject_before_pool_or_allo
             clip: clip,
             expected: c3d::INVALID_ARGUMENT,
         );
-        update_scale_playback(&fixture, { 3, 2.25f, 6 });
+        update_scale_playback(&fixture, { 4, 1.5f, 8 });
         fixture.assets.remove_clip(clip);
     }
 }

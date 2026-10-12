@@ -419,10 +419,8 @@ fn void assert_motion_codec_legacy_planar(PlaybackView* playback, ClipId clip) @
     assert(planar.speed == -0.25f && !planar.playing);
     assert(planar.points[0] == (Vec2){ -1, -1 });
     assert(planar.points[1] == (Vec2){ 2, -1 } && planar.points[2] == (Vec2){ -1, 2 });
-    bool reversed = (planar.reversed & 1) != 0;
     assert(planar.triangles[0].indices[0] == 2);
-    assert(planar.triangles[0].indices[reversed ? 2 : 1] == 1);
-    assert(planar.triangles[0].indices[reversed ? 1 : 2] == 0);
+    assert(planar.triangles[0].indices[1] == 1 && planar.triangles[0].indices[2] == 0);
     foreach (member, id : planar.actions[:planar.count]) {
         assert(c3d::same_id(id, playback.order[member + 1]));
         Action* action = playback.actions.get(id);

@@ -97,10 +97,6 @@ fn PreparedTransition? validate_animation_transition(
         structural.additive_scale = AdditiveScaleMode.DIFFERENCE;
         (void)validate_playback_action(clip, structural, destination)!;
 
-        if (target.play.weighted_mask) {
-            validate_weighted_joint_mask(assets, playback.model, target.play.weighted_mask)!;
-        }
-
         Action motion;
         configure_motion(
             playback: playback,

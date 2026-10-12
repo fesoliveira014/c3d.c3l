@@ -154,9 +154,9 @@ fn BlendSpace2D*? space_add(
 
 fn void space_stop(LayerFixture* fixture, CrowdPlayer* crowd, BlendSpace2D* space) @local {
     if (crowd) {
-        crowd.stop_blend_space_2d(space)!!;
+        crowd.stop_blend_space(space)!!;
     } else {
-        fixture.animator.stop_blend_space_2d(space)!!;
+        fixture.animator.stop_blend_space(space)!!;
     }
 }
 
@@ -381,8 +381,8 @@ fn void test_animation_authoring_blend_space_phase_reverse_seams_pause_and_zero_
         retired[..] = ordinary.actions[:3];
         AnimationActionId[3] retired_crowd;
         retired_crowd[..] = crowd.actions[:3];
-        fixture.animator.stop_blend_space_2d(ordinary, 0.5f)!!;
-        player.stop_blend_space_2d(crowd, 0.5f)!!;
+        fixture.animator.stop_blend_space(ordinary, 0.5f)!!;
+        player.stop_blend_space(crowd, 0.5f)!!;
         space_update_both(&fixture, state, 0.25f);
         assert(ordinary.weight == 0.5f && crowd.weight == 0.5f);
         space_update_both(&fixture, state, 0.25f);

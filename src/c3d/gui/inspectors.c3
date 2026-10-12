@@ -286,8 +286,7 @@ fn bool animator_inspector(void* component) @local {
     Animator* animator = (Animator*)component;
     bool changed;
     AnimationActionId stopped;
-    BlendSpace1D* stopped_space;
-    BlendSpace2D* stopped_space_2d;
+    BlendSpaceControl* stopped_space;
 
     AnimationInertialStatus inertia = animator.inertial_status();
     imgui::text("Inertia enabled: %s", inertia.enabled ? "yes" : "no");
@@ -359,7 +358,7 @@ fn bool animator_inspector(void* component) @local {
         ) || changed;
         changed = imgui::drag_float("Speed", &space.speed) || changed;
         changed = imgui::checkbox("Playing", &space.playing) || changed;
-        if (imgui::button("Stop space")) stopped_space_2d = space;
+        if (imgui::button("Stop space")) stopped_space = space;
     }
 
     foreach (id : animator.order[:animator.action_count]) {
@@ -430,11 +429,6 @@ fn bool animator_inspector(void* component) @local {
     }
     if (stopped_space) {
         animator.stop_blend_space(stopped_space)!!;
-        changed = true;
-    }
-
-    if (stopped_space_2d) {
-        animator.stop_blend_space_2d(stopped_space_2d)!!;
         changed = true;
     }
 
