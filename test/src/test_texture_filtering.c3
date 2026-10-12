@@ -488,6 +488,44 @@ fn void test_leaf_levels_keep_mip_zero_coverage_in_every_row_resume() @test {
     assert(synchronous.pixels[LEAF_RGBA8.len..] == single.chain.pixels);
 }
 
+fn void test_cube_texture_faces_keep_their_own_mip_zero_coverage() @test {
+    material::TextureDesc desc = material::texture_cube_desc(8, RGBA8_UNORM);
+    desc.coverage = CoveragePolicy.THRESHOLD;
+    desc.alpha_threshold = 0.5;
+    char[6 * 8 * 8 * 4] pixels;
+
+    for (uint face = 0; face < 6; face++) {
+        for (uint y = 0; y <= face; y++) {
+            for (uint x = 0; x < 8; x++) pixels[(((usz)face * 8 + y) * 8 + x) * 4 + 3] = (x + y) % 2 ? 0 : 255;
+        }
+    }
+
+    TextureMipChain chain = create_texture_mips(mem, desc, pixels[..])!!;
+    defer destroy_texture_mips(&chain);
+
+    FilteringExecution banded = run_filtered_rows(desc, pixels[..], 1);
+    defer destroy_texture_mips(&banded.chain);
+
+    assert(chain.pixels[pixels.len..] == banded.chain.pixels);
+
+    for (uint face = 0; face < 6; face++) {
+        ulong base_passing = count_filtered_alpha(desc, pixels[(usz)face * 256:256], 0.5);
+
+        for (uint mip = 1; mip < chain.mip_count; mip++) {
+            usz bytes = material::texture_mip_bytes(desc, mip)!!;
+            ulong passing = count_filtered_alpha(desc, chain.pixels[chain.offsets[mip] + face * bytes:bytes], 0.5);
+            ulong extent = material::texture_mip_extent(desc.width, mip);
+
+            assert(meets_base_coverage(
+                passing: passing,
+                texels: extent * extent,
+                base_passing: base_passing,
+                base_texels: 64,
+            ), "face %d mip %d passes %d", face, mip, passing);
+        }
+    }
+}
+
 fn void correct_stored_level(material::TextureDesc desc, char[] level, ulong base_passing) @local {
     TextureCoverageState state = begin_texture_coverage(desc);
     state.base_passing[0] = base_passing;
