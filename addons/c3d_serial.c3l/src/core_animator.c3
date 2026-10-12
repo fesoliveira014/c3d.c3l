@@ -131,19 +131,22 @@ fn void? project_animator(void* component, void* value, WriteContext* context) @
     Animator* animator = component;
     PlaybackView playback = animator.playback();
     CrowdInstanceAuthoring captured = anim::capture_playback_authoring(tmem, &playback)!;
+    anim::check_crowd_instance(
+        source: captured,
+        node_count: animator.pose_storage.destination.base_pose.len,
+        action_capacity: anim::MAX_ACTIONS,
+    )!;
+
     *(AnimatorAuthoringV3*)value = {
         .root_node = captured.root_node,
         .actions = captured.actions,
         .spaces = captured.spaces,
         .inertia_enabled = animator.inertial_storage != null,
     };
-    check_animator_scalars((AnimatorAuthoringV3*)value)!;
 }
 
 fn void? validate_animator(void* value, ReadContext* context) @local {
     AnimatorAuthoringV3* source = value;
-    check_animator_scalars(source)!;
-
     ModelAuthoring* model = context.authored(ModelInstance, ModelAuthoring, context.node.id)!;
     if (!model) return c3d::INVALID_ARGUMENT~;
 
@@ -187,27 +190,6 @@ fn void? validate_animator(void* value, ReadContext* context) @local {
         foreach (action : space.actions) {
             float duration = context.assets.clip(source.actions[action].clip).data.duration;
             if (!math::is_finite(duration) || duration <= 0) return c3d::INVALID_ARGUMENT~;
-        }
-    }
-}
-
-fn void? check_animator_scalars(AnimatorAuthoringV3* source) @local {
-    foreach (action : source.actions) {
-        if (!math::is_finite(action.speed) || !math::is_finite(action.weight) || action.weight < 0) {
-            return c3d::INVALID_ARGUMENT~;
-        }
-
-        foreach (weight : action.weighted_mask) {
-            if (!math::is_finite(weight) || weight < 0 || weight > 1) return c3d::INVALID_ARGUMENT~;
-        }
-    }
-
-    foreach (space : source.spaces) {
-        if (!math::is_finite(space.speed) || !math::is_finite(space.weight) || space.weight < 0
-          || (space.kind == ONE_DIMENSIONAL && !math::is_finite(space.parameter))
-          || (space.kind == TWO_DIMENSIONAL
-            && (!math::is_finite(space.parameter_2d.x) || !math::is_finite(space.parameter_2d.y)))) {
-            return c3d::INVALID_ARGUMENT~;
         }
     }
 }
