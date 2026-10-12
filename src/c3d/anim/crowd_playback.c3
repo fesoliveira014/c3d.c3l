@@ -179,15 +179,14 @@ fn AnimationActionId? CrowdPlayer.play(
     ClipId clip,
     PlayDesc desc = PLAY_DESC_DEFAULT,
 ) {
-    CrowdPlaybackSlot* slot = crowd_slot(self.state, self.instance)!;
-    PlaybackView playback = crowd_playback_view(self.state, slot);
+    PlaybackView playback = crowd_player_view(self)!;
 
     return playback.play(
         assets: assets,
         clip: clip,
         desc: desc,
         destination: crowd_destination(self.state, self.instance.index),
-        motion_basis: crowd_motion_basis(self.state, self.instance.index, slot.root_node),
+        motion_basis: crowd_motion_basis(self.state, self.instance.index, playback.root_node),
     );
 }
 
@@ -206,9 +205,7 @@ fn Action* CrowdPlayer.action(&self, AnimationActionId action) {
  @return? c3d::INVALID_ID
 *>
 fn Action*? CrowdPlayer.try_action(&self, AnimationActionId action) {
-    CrowdPlaybackSlot* slot = crowd_slot(self.state, self.instance)!;
-
-    return slot.actions.try_get(action);
+    return crowd_slot(self.state, self.instance)!.actions.try_get(action);
 }
 
 <*
@@ -217,9 +214,7 @@ fn Action*? CrowdPlayer.try_action(&self, AnimationActionId action) {
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT
 *>
 fn void? CrowdPlayer.stop(&self, AnimationActionId action, float fade_out = 0) {
-    CrowdPlaybackSlot* slot = crowd_slot(self.state, self.instance)!;
-    PlaybackView playback = crowd_playback_view(self.state, slot);
-
+    PlaybackView playback = crowd_player_view(self)!;
     playback.stop(action, fade_out)!;
 }
 
@@ -234,9 +229,7 @@ fn void? CrowdPlayer.cross_fade(
     AnimationActionId to,
     float duration,
 ) {
-    CrowdPlaybackSlot* slot = crowd_slot(self.state, self.instance)!;
-    PlaybackView playback = crowd_playback_view(self.state, slot);
-
+    PlaybackView playback = crowd_player_view(self)!;
     playback.cross_fade(from, to, duration)!;
 }
 
@@ -254,8 +247,7 @@ fn BlendSpace1D*? CrowdPlayer.add_blend_space(
     float[] positions,
     PlayDesc desc = PLAY_DESC_DEFAULT,
 ) {
-    CrowdPlaybackSlot* slot = crowd_slot(self.state, self.instance)!;
-    PlaybackView playback = crowd_playback_view(self.state, slot);
+    PlaybackView playback = crowd_player_view(self)!;
 
     return playback.add_blend_space(
         assets: assets,
@@ -263,7 +255,7 @@ fn BlendSpace1D*? CrowdPlayer.add_blend_space(
         positions: positions,
         desc: desc,
         destination: crowd_destination(self.state, self.instance.index),
-        motion_basis: crowd_motion_basis(self.state, self.instance.index, slot.root_node),
+        motion_basis: crowd_motion_basis(self.state, self.instance.index, playback.root_node),
     );
 }
 
@@ -274,9 +266,7 @@ fn BlendSpace1D*? CrowdPlayer.add_blend_space(
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT
 *>
 fn void? CrowdPlayer.stop_blend_space(&self, BlendSpace1D* space, float fade_out = 0) {
-    CrowdPlaybackSlot* slot = crowd_slot(self.state, self.instance)!;
-    PlaybackView playback = crowd_playback_view(self.state, slot);
-
+    PlaybackView playback = crowd_player_view(self)!;
     playback.stop_blend_space(space, fade_out)!;
 }
 
@@ -293,9 +283,7 @@ fn void? CrowdPlayer.fade_blend_space(
     float target_weight,
     float duration,
 ) {
-    CrowdPlaybackSlot* slot = crowd_slot(self.state, self.instance)!;
-    PlaybackView playback = crowd_playback_view(self.state, slot);
-
+    PlaybackView playback = crowd_player_view(self)!;
     playback.fade_blend_space(space, target_weight, duration)!;
 }
 
@@ -596,6 +584,10 @@ fn void destroy_crowd_playback(CrowdPlaybackState* state) {
     alloc::free(allocator, state.logical_weights.ptr);
     alloc::free(allocator, state.events.ptr);
     alloc::free(allocator, state);
+}
+
+fn PlaybackView? crowd_player_view(CrowdPlayer* player) @private {
+    return crowd_playback_view(player.state, crowd_slot(player.state, player.instance)!);
 }
 
 fn CrowdPlaybackSlot*? crowd_slot(CrowdPlaybackState* state, CrowdInstanceId instance) @private {

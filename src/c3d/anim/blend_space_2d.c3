@@ -102,8 +102,7 @@ fn BlendSpace2D*? CrowdPlayer.add_blend_space_2d(
     BlendTriangle[] triangles,
     PlayDesc desc = PLAY_DESC_DEFAULT,
 ) {
-    CrowdPlaybackSlot* slot = crowd_slot(self.state, self.instance)!;
-    PlaybackView playback = crowd_playback_view(self.state, slot);
+    PlaybackView playback = crowd_player_view(self)!;
 
     return playback.add_blend_space_2d(
         assets: assets,
@@ -112,7 +111,7 @@ fn BlendSpace2D*? CrowdPlayer.add_blend_space_2d(
         triangles: triangles,
         desc: desc,
         destination: crowd_destination(self.state, self.instance.index),
-        motion_basis: crowd_motion_basis(self.state, self.instance.index, slot.root_node),
+        motion_basis: crowd_motion_basis(self.state, self.instance.index, playback.root_node),
     );
 }
 
@@ -123,8 +122,7 @@ fn BlendSpace2D*? CrowdPlayer.add_blend_space_2d(
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT
 *>
 fn void? CrowdPlayer.stop_blend_space_2d(&self, BlendSpace2D* space, float fade_out = 0) {
-    CrowdPlaybackSlot* slot = crowd_slot(self.state, self.instance)!;
-    PlaybackView playback = crowd_playback_view(self.state, slot);
+    PlaybackView playback = crowd_player_view(self)!;
     playback.stop_blend_space_2d(space, fade_out)!;
 }
 
@@ -141,8 +139,7 @@ fn void? CrowdPlayer.fade_blend_space_2d(
     float target_weight,
     float duration,
 ) {
-    CrowdPlaybackSlot* slot = crowd_slot(self.state, self.instance)!;
-    PlaybackView playback = crowd_playback_view(self.state, slot);
+    PlaybackView playback = crowd_player_view(self)!;
     playback.fade_blend_space_2d(space, target_weight, duration)!;
 }
 
