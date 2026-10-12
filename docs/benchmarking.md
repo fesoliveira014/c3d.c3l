@@ -357,7 +357,7 @@ python3 scripts/build.py --target sky --opt O3 --define C3D_PROFILE_GPU --define
 
 `sky --benchmark [frames]` renders the [sky example](sky.md#example) offscreen at 2560 × 1440 after 60
 warm-up frames: noon, twilight (the sun at −4°), valley (the camera 300 m up, looking 30° down into the fog),
-pan (the sun 15° up, the camera's yaw sweeping 8° a second from −20°) and a time-lapse four segments long (the sun rising 0.0045° a frame from 10°). Lines:
+pan (the sun 15° up, the camera's yaw sweeping 8° a second from −20°), orbit (the camera 400 km up, the sun 12° up), ascent (the camera rising 4 km a second from 90 km to 110 km, the sun 9° below the horizontal) and a time-lapse four segments long (the sun rising 0.0045° a frame from 10°). Lines:
 
 ```
 # sky shading=forward shadows=atlas ssgi=off path_traced=off reflections=off fog=on atmosphere=on volumetric_fog=off fog_quality=medium local_lights=0 lamp_range=14 lamps_in_fog=on taa=off extent=2560x1440 frames=300
@@ -368,12 +368,14 @@ refresh_ms segment=time-lapse stage=<environment.sky|environment.prefilter|envir
 refreshes_per_minute segment=time-lapse value=<>
 gate time_lapse_regenerations expected=<n> found=<n> <pass|fail>
 gate steady_sky <pass|fail>
+gate ascent_regenerations <pass|fail>
 ```
 
 `refresh_ms` reads the frames that regenerated the sky; `total` is the whole `ENVIRONMENT` pass. The
 time-lapse gate expects `floor(sweep / period)` regenerations after its first frame, with
 `period = (floor(0.5° / step) + 1) · step`, and none without an atmosphere; `steady_sky` expects none after
-the noon segment's first frame. `--volumetric-fog` adds a froxel volume to the main and mirror views and the
+the noon segment's first frame and `ascent_regenerations` none after the ascent segment's first; at the default 300 frames the ascent crosses the top of
+the atmosphere, so the crossing regenerates nothing. `--volumetric-fog` adds a froxel volume to the main and mirror views and the
 `FOG_SCATTERING` and `FOG_INTEGRATION` pass lines report it (0 without the switch), with `--fog-quality low|medium|high`
 choosing its grid; `--local-lights N`, `--lamp-range METRES` and `--lamps-in-fog on|off` place and configure
 [lamps](sky.md#example) that `FOG_SCATTERING` scatters; `--taa` turns on TAA, so

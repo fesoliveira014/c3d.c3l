@@ -86,10 +86,10 @@ and callable from any thread.
 
 ## Units and the altitude datum
 
-Everything is in metres, and world y = 0 is the planet's surface for both the camera's altitude and
-`observer_altitude`; altitudes clamp into [0, atmosphere height]. There is no datum field: a world
-whose ground sits elsewhere moves its content, not the atmosphere. The fog's density follows its own
-node instead, so moving the fog node moves the fog.
+Everything is in metres, and world y = 0 is the planet's surface. A camera's altitude is its y plus the
+frame origin's y: unbounded above, and zero below zero. `observer_altitude` stays in [0, atmosphere height).
+There is no datum field: a world whose ground sits elsewhere moves its content, not the atmosphere. The
+fog's density follows its own node instead, so moving the fog node moves the fog.
 
 The sky's tables are computed for a sun of unit illuminance. The drawn sky, the lighting, the fog's
 in-scatter and aerial perspective all scale with the sun's `color × intensity`, so doubling the
@@ -99,12 +99,36 @@ intensity doubles every sky pixel. Exposure is the application's `Camera.exposur
 ## The sun
 
 Every light extraction (views, probe updates and the path tracer) attenuates the atmosphere's sun,
-and only it: `sun_radiance` at the extracting camera's y (probe updates use `observer_altitude`)
+and only it: `sun_radiance` at the extracting camera's altitude (probe updates use `observer_altitude`)
 becomes the packed light colour. Other directional lights pass unchanged. A sun whose radiance is
 exactly zero, below the horizon, packs no light, requests no shadow layer and counts in the view's
 `LightCounts.culled`; the shadow atlas stays allocated for its return. The sun's disc is drawn in the
 background only, never in the lighting, and saturates at 60,000 (an intensity above about 4.1) to
 stay inside `RGBA16F`.
+
+## Above the atmosphere
+
+A camera's altitude is not clamped. A ray from above the atmosphere's top starts where it enters the shell,
+the near root against the sphere of radius `planet_radius + atmosphere_height`; a ray that misses the shell
+sees space, with transmittance 1 and no in-scatter. At or below the top the entry is the ray's origin, so a
+camera inside the atmosphere renders as it did before. `light::atmosphere_transmittance` and the shaders'
+`atmosphere_entry` use the same formula.
+
+- **Sky.** The per-view sky-view table keeps its mapping about the planet's horizon at the camera's altitude and
+  integrates from the entry. Below the horizon it shows the planet's ground, lit and shaded with `ground_albedo`;
+  rays that miss the shell hold zero. The scene's geometry is the application's and does not curve.
+- **Sun.** `sun_radiance` follows each view's camera altitude, so a sun ray that misses the shell is
+  unattenuated and one that meets the planet is zero. The sun's disc is attenuated from the entry, whole where
+  its ray misses the shell, and absent behind the planet.
+- **Aerial perspective.** Each pixel's slices count from the distance at which its ray enters the shell, so the
+  volume covers `[entry, entry + 128 km]` along the ray, as it covers `[0, 128 km]` from the surface. Geometry
+  beyond that range reads the far slice, as geometry beyond 128 km does from the surface; the analytic
+  segment is not used for it. A ray that misses the shell reads no aerial perspective.
+- **Traced hits.** A segment's air starts at its ray's entry; a hit that lies before the entry takes none.
+- **Regeneration.** The camera's altitude keys no table and no cube, so rising through the top regenerates
+  nothing.
+- **Lighting.** The cubes and SH, the path tracer's background and the probe update's sun stay at
+  `observer_altitude`. A camera above the atmosphere, or far from the observer, sees a sky they do not match.
 
 ## Lighting and regeneration
 
@@ -184,7 +208,7 @@ costs what it did before.
   so its frame carries the first valid `HeightFog` on a visible node of any layer, the way its light list takes every
   layer, whatever a camera's `height_fog` switch says, and the scene's atmosphere: the one every view of the scene
   resolves, with the sun's `color × intensity` and the tables of its mirror. A segment's air is sampled at the
-  segment's world altitude, the packed y plus `FrameRoot.origin.y` clamped into the atmosphere, the datum the camera
+  segment's world altitude, the packed y plus `FrameRoot.origin.y` and zero below zero, the datum the camera
   uses; `observer_altitude` still sets the altitude at which the probe update's sun is attenuated
   ([The sun](#the-sun)), and the march does not read it. Probes have no sky-view table, so under an atmosphere a
   fog's in-scatter is the environment's SH, else the ambient. A fog or atmosphere change reaches the atlases at the
@@ -338,8 +362,9 @@ sky example does under `--path-traced`.
 
 ## Limits
 
-- One atmosphere per scene, lit from `observer_altitude`: a camera far above it sees a sky the
-  lighting does not match.
+- One atmosphere per scene, lit from `observer_altitude`: the lighting, the path tracer's background and the
+  probe update's sun do not follow a camera above the atmosphere or far from the observer.
+- Above the atmosphere the limb is as sharp as the 192 × 108 sky-view table: its edge blurs over about one texel.
 - One fog medium per view, the first the view's layers see.
 - Readers that write no depth take the fog of what is behind them; blended Physical transmission is
   one.
@@ -350,7 +375,8 @@ sky example does under `--path-traced`.
 - Path-traced views are unfogged; a sky change does not restart their accumulation.
 - Twilight bands below about intensity × 10⁻⁵; the example stops its exposure table at −4°.
 - The sun's disc saturates at 60,000.
-- Aerial perspective keeps one mean transmittance, covers 128 km and composes behind the height fog;
+- Aerial perspective keeps one mean transmittance, covers 128 km (from the shell above it) and composes behind
+  the height fog;
   a refracted segment through both media is approximate, and the refraction's bend is ignored for
   the fog distance.
 - Screen-space GI gathers unfogged radiance without blended draws on fogged views.
@@ -360,7 +386,7 @@ sky example does under `--path-traced`.
   atlas, changes its in-scatter slope at `max_distance` and does not exist on path-traced views.
 - The analytic fog has no direct-sun phase term, so a view with volumetric fog and a view without it show
   different haze colours.
-- No clouds, no observers above the atmosphere.
+- No clouds.
 
 ## Example
 
@@ -372,18 +398,25 @@ python3 scripts/build.py --example sky
 transmissive sphere, a blended transmissive pane, a blended quad, a water pond (a scene reader) and a
 planar mirror beside it. The panel sets the sun's elevation and azimuth, plays a time-lapse at 0.27° a
 second, edits the fog, switches the exposure table and shows the sky's passes and stages and the
-regeneration count; the presets noon, twilight, valley (300 m up, looking down into the fog) and
+regeneration count; the presets noon, twilight, valley (300 m up, looking down into the fog), pan, orbit and
 time-lapse pose the camera and the sun. The mirror pad renders with the main camera as its shadow camera, so the
 frame records one shadow atlas, the mirror's, and the main view binds it ([shadow sets](shadows.md#shadow-sets)).
 
 `--auto-exposure` replaces the exposure table with auto exposure on the main view.
 
-`--benchmark [frames]` renders offscreen at 2560 × 1440 through four segments (noon, twilight,
-valley and a time-lapse four segments long, the sun rising 0.0045° a frame from 10°) and prints the
+The `orbit` preset puts the camera 400 km up, pitched 10° down, with the sun 12° up: the limb curves 9.8° below the
+view's axis and the sun's disc stands against space. The sun slider reaches −25°; near −19.4° the disc is seen through
+the limb, reddened, and below −19.8° the planet hides it. Above 50 km the example gives the camera a
+1,000 km far plane, sets `FrameInfo.reference_position` to it and uses an exposure of 1, because the exposure table
+describes a sun over an observer on the surface.
+
+`--benchmark [frames]` renders offscreen at 2560 × 1440 through the noon, twilight, valley, pan, orbit and ascent
+segments (the ascent raises the camera 4 km a second from 90 km to 110 km, the sun 9° below the horizontal, seen
+through the limb) and a time-lapse four segments long (the sun rising 0.0045° a frame from 10°) and prints the
 per-view passes, frame times, the refresh cost per stage, refreshes per minute and the CPU cost of
 `sun_radiance`. Its gates: the time-lapse regenerates exactly `floor(sweep / period)` times, with
-`period = (floor(0.5° / step) + 1) · step`, and the noon segment regenerates nothing after its first
-frame. `--shading forward|deferred`, `--shadows atlas|traced`, `--ssgi`, `--path-traced`, `--reflections on|off`,
+`period = (floor(0.5° / step) + 1) · step`, and the noon and ascent segments regenerate nothing after their
+first frames. `--shading forward|deferred`, `--shadows atlas|traced`, `--ssgi`, `--path-traced`, `--reflections on|off`,
 `--fog on|off`, `--atmosphere on|off|dense|empty`, `--preset`, `--gpu-timings` and `--validation` select the
 configuration. See [benchmarking](benchmarking.md#sky-benchmark).
 
