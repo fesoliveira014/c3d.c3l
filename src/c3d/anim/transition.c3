@@ -461,7 +461,7 @@ fn void? validate_consumed_scales(ModelTemplate* template, uint root_node, PoseD
         if (!destination.present[node]) return c3d::INVALID_ARGUMENT~;
 
         foreach (component : destination.pose[node].scale) {
-            if (!(component > 0)) return c3d::INVALID_ARGUMENT~;
+            if (!(component > 0) || !math::is_finite(component)) return c3d::INVALID_ARGUMENT~;
         }
         foreach (component : destination.base_pose[node].scale) {
             if (!(component > 0) || !math::is_finite(component)) return c3d::INVALID_ARGUMENT~;
