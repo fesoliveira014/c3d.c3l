@@ -157,6 +157,9 @@ fn PreparedTransition? prepare_animation_transition(
     )!;
     defer catch release_prepared_transition(&prepared);
 
+    bool generalized;
+    foreach (target : desc.actions) generalized |= target.play.extraction.generalized;
+
     foreach (index, target : desc.actions) {
         prepared.actions[index] = prepare_playback_action(
             allocator: playback.allocator,
@@ -166,7 +169,7 @@ fn PreparedTransition? prepare_animation_transition(
             destination: destination,
             motion_basis: motion_basis,
             root_node: playback.root_node,
-            precise_rotation: playback.inertial != null || target.play.extraction.generalized,
+            precise_rotation: generalized,
         )!;
         prepared.action_count++;
 

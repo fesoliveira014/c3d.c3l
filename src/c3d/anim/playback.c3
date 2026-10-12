@@ -128,8 +128,7 @@ fn AnimationActionId? PlaybackView.play(
         motion_basis: motion_basis,
         root_node: self.root_node,
         reference_count: reference_count,
-        precise_rotation: self.inertial != null || desc.extraction.generalized
-          || generalized_playback_chain(self) != null,
+        precise_rotation: desc.extraction.generalized || generalized_playback_chain(self) != null,
     )!;
     defer catch release_prepared_action(self.allocator, &state);
 

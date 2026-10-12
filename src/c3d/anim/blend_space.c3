@@ -152,8 +152,7 @@ fn BlendSpace1D*? PlaybackView.add_blend_space(
             destination: destination,
             motion_basis: motion_basis,
             root_node: self.root_node,
-            precise_rotation: self.inertial != null || desc.extraction.generalized
-              || generalized_playback_chain(self) != null,
+            precise_rotation: desc.extraction.generalized || generalized_playback_chain(self) != null,
         )!;
         prepared_count++;
         prepare_action_motion_capture(
