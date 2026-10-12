@@ -87,22 +87,6 @@ fn void test_abort_keeps_only_active_chain_and_rolls_finalized_unit_back_for_reg
     assert(record.units[2].done && record.units_done == 1 && record.bytes_done == 16);
 }
 
-fn void test_aborted_recording_restores_ring_checkpoint_even_without_ordinary_queues() @test {
-    Renderer renderer = cursor_renderer();
-    defer destroy_cursor_renderer(&renderer);
-    renderer.frames[0].upload.head = 32;
-    renderer.frames[0].upload.demand = 48;
-    render::checkpoint_prepare_uploads(&renderer);
-    renderer.frames[0].upload.head = 96;
-    renderer.frames[0].upload.demand = 112;
-    render::checkpoint_prepare_uploads(&renderer);
-    renderer.frames[0].upload.head = 160;
-    renderer.frames[0].upload.demand = 176;
-    render::discard_uploads(&renderer);
-    assert(renderer.frames[0].upload.head == 32 && renderer.frames[0].upload.demand == 48);
-    assert(!renderer.prepare_upload_checkpoint.active);
-}
-
 fn void test_shader_first_use_adopts_an_owned_copy_in_one_step() @test {
     TrackingAllocator tracker;
     tracker.init(mem);

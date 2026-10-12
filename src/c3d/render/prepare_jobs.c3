@@ -489,7 +489,6 @@ fn PrepareReport? advance_prepare_engine(Renderer* renderer, PrepareLimits limit
         finish_prepare_report(&budget);
         account_prepare_report(renderer, budget.report);
     }
-    checkpoint_prepare_uploads(renderer);
     begin_material_scope(renderer);
     defer end_material_scope(renderer);
     PrepareId[PREPARE_CAPACITY] order;

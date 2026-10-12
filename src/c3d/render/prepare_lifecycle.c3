@@ -6,14 +6,6 @@ import c3d::pool;
 import gpu;
 import std::collections::list;
 
-struct PrepareUploadCheckpoint @private {
-    usz head;
-    usz demand;
-    sz overflow;
-    uint slot;
-    bool active;
-}
-
 struct PrepareRetirement @private {
     Retired resource;
     gpu::CompletionPoint previous;
@@ -237,7 +229,6 @@ fn void commit_prepare_jobs(Renderer* renderer, Frame* slot) @private {
 
     foreach (&pending : renderer.pending_prepare_retire) slot.retire.push(pending.resource);
     renderer.pending_prepare_retire.clear();
-    renderer.prepare_upload_checkpoint.active = false;
 }
 
 fn bool retired_matches_texture(Retired retired, TextureRes* texture) @local {
@@ -351,17 +342,6 @@ fn void rollback_prepare_jobs(Renderer* renderer) @private {
     renderer.pending_prepare_retire.clear();
     foreach (retired : renderer.pending_upload_retire) retire_prepare_resource(renderer, null, retired);
     renderer.pending_upload_retire.clear();
-    if (renderer.prepare_upload_checkpoint.active) {
-        PrepareUploadCheckpoint checkpoint = renderer.prepare_upload_checkpoint;
-        UploadRing* ring = &renderer.frames[checkpoint.slot].upload;
-        while (ring.overflow.len() > checkpoint.overflow) {
-            gpu::GpuAllocation allocation = ring.overflow.pop()!!;
-            (void)gpu::free_allocation(&renderer.device, &allocation);
-        }
-        ring.head = checkpoint.head;
-        ring.demand = checkpoint.demand;
-        renderer.prepare_upload_checkpoint.active = false;
-    }
 }
 
 fn void free_prepares(Renderer* renderer) @private {
@@ -378,13 +358,6 @@ fn void free_prepares(Renderer* renderer) @private {
         immediate.free();
     }
     renderer.pending_prepare_retire.free();
-}
-
-fn void checkpoint_prepare_uploads(Renderer* renderer) @private {
-    if (renderer.prepare_upload_checkpoint.active) return;
-    UploadRing* ring = &renderer.frames[renderer.recording_slot].upload;
-    renderer.prepare_upload_checkpoint = { .head = ring.head, .demand = ring.demand,
-        .overflow = ring.overflow.len(), .slot = renderer.recording_slot, .active = true };
 }
 
 fn void rollback_prepare_cursors(Renderer* renderer, PrepareRecord* record) @private {
