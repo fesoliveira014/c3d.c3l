@@ -445,12 +445,15 @@ fn void? add_shapes(OverlayList* list, float time) @local {
         *point = STAR_CENTER + (Vec2){ math::sin(angle), -math::cos(angle) } * radius;
     }
     list.add_path(star[..], STAR_WIDTH, STAR_COLOR, closed: true)!;
+
     list.add_path(RIBBON_POINTS[..], RIBBON_WIDTH, RIBBON_COLOR)!;
 
     list.push_transform(placement_transform(CHART_COPY_CENTER, CHART_COPY_ANGLE))!;
     list.push_transform(scale_transform(CHART_COPY_SCALE))!;
+
     Vec2 half = (CHART_MAX - CHART_MIN) * 0.5f;
     add_chart(list, -half, half, time)!;
+
     list.pop_transform();
     list.pop_transform();
 }
