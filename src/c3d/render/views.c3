@@ -601,6 +601,7 @@ struct ViewRecord {
     bool                                 live;
     ViewDesc                             desc;
     Frustum                              frustum; // of the rendering in progress; the depth prepass culls with it
+    bool                                 soft_shadows; // a light the view traces has a source extent
     Target                               hdr_color;
     Target                               depth;
     Target                               scene_color;

@@ -404,7 +404,9 @@ fn ShaderVariant custom_fragment_variant(asset::ShaderDesc* stages, uint fragmen
     // A weighted draw never falls back to the plain form: it writes two attachments.
     bool weighted = (fragment_flags & shader::SHADER_FLAG_WEIGHTED_BLEND) != 0;
     if (!weighted && (custom_fragment_form(stages, fragment_flags) @pure).len == 0) return {};
-    return { .flags = fragment_flags };
+
+    // The traced forms are the application's sources, so the built-in hard-only flag is not part of their key.
+    return { .flags = fragment_flags & ~shader::SHADER_FLAG_RT_SHADOWS_HARD };
 }
 
 <*
