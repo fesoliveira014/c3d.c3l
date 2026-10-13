@@ -6,7 +6,7 @@ import c3d;
 <* Flag the build gives every polygon; the default query filter includes it. *>
 const ushort POLY_FLAG_WALK = 1;
 
-const usz       TILE_DATA_ALIGNMENT @local = 8; // dtAlign4 widened: Link holds a 64-bit ref
+const usz       TILE_DATA_ALIGNMENT @local = 8;
 const char      INSIDE_TILE @local = 0xff; // classify_off_mesh_point of a point inside the tile's XZ
 const ushort    PORTAL_SIDE_MASK @local = 0xf;
 const ushort    NO_PORTAL_SIDE @local = 0xf; // a Recast neighbour word with PORTAL_EDGE and this side is a plain border
@@ -43,17 +43,9 @@ struct TileDataParams {
 struct TileDataLayout @private {
     usz verts;
     usz polys;
-    usz links;
     usz bv_tree;
     usz off_mesh;
     usz size;
-}
-
-struct TileDataCounts @local {
-    uint stored;             // connections whose start lies in the tile
-    uint off_mesh_links;     // connection endpoints inside the tile
-    uint edges;
-    uint portals;
 }
 
 <*
@@ -61,7 +53,7 @@ struct TileDataCounts @local {
  @param params : "Its walkable_climb bounds the connections kept; build_bv_tree sizes the tree."
 *>
 fn usz tile_data_size(TileMeshView mesh, OffMeshConnectionDesc[] connections, TileDataParams params) {
-    TileHeader header = tile_header(mesh, count_tile_data(mesh, connections, params.walkable_climb), params);
+    TileHeader header = tile_header(mesh, count_stored_connections(mesh, connections, params.walkable_climb), params);
     return tile_data_layout(&header).size;
 }
 
@@ -82,8 +74,8 @@ fn void? create_tile_data(
     TileMeshHeader* source = mesh.header;
     uint stride = source.verts_per_poly;
     if (stride > MAX_VERTS_PER_POLY) return c3d::INVALID_ARGUMENT~;
-    TileDataCounts counts = count_tile_data(mesh, connections, params.walkable_climb);
-    if ((usz)source.vert_count + (usz)counts.stored * 2 >= MESH_NULL_INDEX) return c3d::INVALID_ARGUMENT~;
+    uint stored_count = count_stored_connections(mesh, connections, params.walkable_climb);
+    if ((usz)source.vert_count + (usz)stored_count * 2 >= MESH_NULL_INDEX) return c3d::INVALID_ARGUMENT~;
     for (uint index = 0; index < source.poly_count; index++) {
         foreach (vertex : mesh.polys[(usz)index * stride * 2:stride]) {
             if (vertex == MESH_NULL_INDEX) break;
@@ -92,7 +84,7 @@ fn void? create_tile_data(
     }
 
     blob[..] = 0;
-    *(TileHeader*)blob.ptr = tile_header(mesh, counts, params);
+    *(TileHeader*)blob.ptr = tile_header(mesh, stored_count, params);
     MeshTile tile;
     carve_tile_data(&tile, blob);
 
@@ -145,19 +137,18 @@ fn void? create_tile_data(
     }
 
     if (!params.build_bv_tree) return;
-    // The link area stays unused until add_tile and holds at least three 16-byte links per polygon, so it fits
-    // the one 16-byte leaf item per polygon the tree build sorts.
-    BvNode[] items = ((BvNode*)tile.links.ptr)[:source.poly_count];
-    foreach (index, &item : items) *item = poly_leaf(mesh, (uint)index);
-    usz cursor;
-    subdivide(
-        items:  items,
-        first:  0,
-        last:   items.len,
-        cursor: &cursor,
-        nodes:  tile.bv_tree,
-    );
-    ((char*)items.ptr)[:items.len * BvNode::size] = 0;
+    @pool() {
+        BvNode[] items = alloc::new_array(tmem, BvNode, source.poly_count);
+        foreach (index, &item : items) *item = poly_leaf(mesh, (uint)index);
+        usz cursor;
+        subdivide(
+            items:  items,
+            first:  0,
+            last:   items.len,
+            cursor: &cursor,
+            nodes:  tile.bv_tree,
+        );
+    };
 }
 
 fn TileDataLayout tile_data_layout(TileHeader* header) @private {
@@ -167,8 +158,6 @@ fn TileDataLayout tile_data_layout(TileHeader* header) @private {
     offset += aligned_size(Vec3::size * header.vert_count);
     layout.polys = offset;
     offset += aligned_size(Poly::size * header.poly_count);
-    layout.links = offset;
-    offset += aligned_size(Link::size * header.max_link_count);
     layout.bv_tree = offset;
     offset += aligned_size(BvNode::size * header.bv_node_count);
     layout.off_mesh = offset;
@@ -184,7 +173,6 @@ fn void carve_tile_data(MeshTile* tile, char[] data) @private {
     tile.header = header;
     tile.verts = ((Vec3*)(data.ptr + layout.verts))[:header.vert_count];
     tile.polys = ((Poly*)(data.ptr + layout.polys))[:header.poly_count];
-    tile.links = ((Link*)(data.ptr + layout.links))[:header.max_link_count];
     tile.bv_tree = ((BvNode*)(data.ptr + layout.bv_tree))[:header.bv_node_count];
     tile.off_mesh = ((OffMeshConnection*)(data.ptr + layout.off_mesh))[:header.off_mesh_count];
     tile.data = data;
@@ -192,7 +180,7 @@ fn void carve_tile_data(MeshTile* tile, char[] data) @private {
 
 fn usz aligned_size(usz bytes) @local => (bytes + TILE_DATA_ALIGNMENT - 1) / TILE_DATA_ALIGNMENT * TILE_DATA_ALIGNMENT;
 
-fn TileHeader tile_header(TileMeshView mesh, TileDataCounts counts, TileDataParams params) @local {
+fn TileHeader tile_header(TileMeshView mesh, uint stored, TileDataParams params) @local {
     TileMeshHeader* source = mesh.header;
     return {
         .magic           = TILE_MAGIC,
@@ -201,11 +189,10 @@ fn TileHeader tile_header(TileMeshView mesh, TileDataCounts counts, TileDataPara
         .z               = params.tile_z,
         .layer           = params.tile_layer,
         .user_id         = params.user_id,
-        .poly_count      = source.poly_count + counts.stored,
-        .vert_count      = source.vert_count + counts.stored * 2,
-        .max_link_count  = counts.edges + counts.portals * 2 + counts.off_mesh_links * 2,
+        .poly_count      = source.poly_count + stored,
+        .vert_count      = source.vert_count + stored * 2,
         .bv_node_count   = params.build_bv_tree ? source.poly_count * 2 - 1 : 0, // a full binary tree over the polygons
-        .off_mesh_count  = counts.stored,
+        .off_mesh_count  = stored,
         .off_mesh_base   = source.poly_count,
         .walkable_height = params.walkable_height,
         .walkable_radius = params.walkable_radius,
@@ -215,30 +202,14 @@ fn TileHeader tile_header(TileMeshView mesh, TileDataCounts counts, TileDataPara
     };
 }
 
-fn TileDataCounts count_tile_data(TileMeshView mesh, OffMeshConnectionDesc[] connections, float walkable_climb) @local {
-    TileDataCounts counts;
-    uint stride = mesh.header.verts_per_poly;
-    for (uint index = 0; index < mesh.header.poly_count; index++) {
-        ushort[] indices = mesh.polys[(usz)index * stride * 2:stride];
-        ushort[] neighbours = mesh.polys[(usz)index * stride * 2 + stride:stride];
-        for (uint slot = 0; slot < stride; slot++) {
-            if (indices[slot] == MESH_NULL_INDEX) break;
-            counts.edges++;
-            ushort neighbour = neighbours[slot];
-            if ((neighbour & PORTAL_EDGE) != 0 && (neighbour & PORTAL_SIDE_MASK) != NO_PORTAL_SIDE) counts.portals++;
-        }
-    }
-
-    if (!connections.len) return counts;
+fn uint count_stored_connections(TileMeshView mesh, OffMeshConnectionDesc[] connections, float walkable_climb) @local {
+    if (!connections.len) return 0;
     Aabb bounds = connection_bounds(mesh, walkable_climb);
+    uint stored;
     foreach (connection : connections) {
-        bool start_inside = classify_start(connection.start, bounds) == INSIDE_TILE;
-        // An end inside the tile reserves link space even when its start lies elsewhere, as upstream counts it.
-        if (start_inside) counts.off_mesh_links++;
-        if (classify_off_mesh_point(connection.end, bounds) == INSIDE_TILE) counts.off_mesh_links++;
-        if (start_inside) counts.stored++;
+        if (classify_start(connection.start, bounds) == INSIDE_TILE) stored++;
     }
-    return counts;
+    return stored;
 }
 
 // The tile's XZ bounds with the height range of its vertices widened by the climb.

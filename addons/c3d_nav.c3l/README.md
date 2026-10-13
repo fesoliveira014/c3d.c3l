@@ -101,11 +101,19 @@ published with `mark_geometry_dirty`, `mark_geometry_streams_dirty` or `mark_geo
 `replace_geometry`) as a changed source: it dirties the old and new bounds and
 restarts a tile job in progress. A `NavMesh` the application built keeps its tiles until it rebuilds them.
 
-A `NavMesh` from `create_nav_mesh_for(builder)` receives the tiles: `nav_sync` turns every committed
-`TileMesh` into a `TileData` blob with `create_tile_data`, adds it with `add_tile` and links it to its
-neighbours. `NavLink` components author off-mesh connections; adding, changing (`mark_changed`) or
-removing one relinks the tiles under its endpoints without rebuilding them. Every install advances
-the tile's salt, so a `PolyRef` into a reinstalled tile stops resolving and is found again with a
+A `NavMesh` from `create_nav_mesh_for(allocator, builder, max_links)` receives the tiles: `nav_sync`
+turns every committed `TileMesh` into a `TileData` blob with `create_tile_data`, adds it with
+`add_tile` and links it to its neighbours. Internal, portal and off-mesh links come from one
+mesh-owned pool sized by `NavMeshDesc.max_links` (16 bytes per `Link`), which defaults to
+`DEFAULT_LINKS_PER_TILE` (4096) per tile slot; `free_links` reports the remaining capacity. A large
+or streamed world sets `max_links` to its resident budget, sized from `NO_FREE_LINKS`. Every
+qualifying polygon edge across a tile border gets a portal link in both directions, with `Link.min`
+and `Link.max` quantized to 255 steps along the source edge as the remaining per-edge resolution
+limit. An install that needs more links than are free faults `NO_FREE_LINKS` and leaves the mesh
+unchanged; a failed `install_tile_mesh` over a resident tile keeps the resident tile and its links.
+`NavLink` components author off-mesh connections; adding, changing (`mark_changed`) or removing one
+relinks the tiles under its endpoints without rebuilding them. Every install advances the tile's
+salt, so a `PolyRef` into a reinstalled tile stops resolving and is found again with a
 nearest-polygon query.
 
 With `NavBuilderDesc.cache_layers`, `build_tile` stops at the heightfield layers and `commit`
@@ -116,17 +124,20 @@ cylinder, box and yawed box obstacles; `mark_changed` re-adds one at the node's 
 and removing the component or the node removes the obstacle. A builder without `cache_layers`
 skips obstacles and counts them in `NavSyncResult.skipped`.
 
-A `NavQuery` from `create_nav_query(allocator, &mesh, max_nodes)` answers the queries; it allocates
-its node pools once and no query allocates. `find_nearest_poly` snaps a point to the mesh,
-`find_path` fills a caller slice with the polygon corridor (`partial` when the goal is unreachable,
-`truncated` when the slice is short), `straight_path` pulls the corridor into points and marks the
-start of each off-mesh connection, and `raycast` walks a straight line along the surface.
-`init_sliced_find_path`, `update_sliced_find_path` and `finalize_sliced_find_path` spread one A*
-search over several calls; a `NavQuery` runs one sliced search at a time, and the A* and Dijkstra
-queries on the same query corrupt it until it is finalized. The local queries serve steering:
-`find_polys_around_circle` and `find_polys_around_shape` list the reachable polygons by cost,
-`find_local_neighbourhood` the non-overlapping ones, `move_along_surface` slides a point along the
-walls, `find_distance_to_wall` and `poly_wall_segments` report the boundary, and
+A `NavQuery` from `create_nav_query(allocator, &mesh, max_nodes, max_edge_links)` answers the
+queries; it allocates its node pools and per-edge portal scratch (`DEFAULT_EDGE_LINKS` = 64, at
+least 1) once and no query allocates. `find_nearest_poly` snaps a point to the mesh, `find_path`
+fills a caller slice with the polygon corridor (`partial` when the goal is unreachable, `truncated`
+when the slice is short), `straight_path` pulls the corridor into points and marks the start of each
+off-mesh connection, and `raycast` walks a straight line along the surface. `init_sliced_find_path`,
+`update_sliced_find_path` and `finalize_sliced_find_path` spread one A* search over several calls; a
+`NavQuery` runs one sliced search at a time, and the A* and Dijkstra queries on the same query
+corrupt it until it is finalized. The local queries serve steering: `find_polys_around_circle` and
+`find_polys_around_shape` list the reachable polygons by cost, `find_local_neighbourhood` the
+non-overlapping ones, `move_along_surface` slides a point along the walls, `find_distance_to_wall`
+and `poly_wall_segments` report the boundary (treating a border edge as a wall only when no link on
+it passes the filter, and faulting `CAPACITY_EXCEEDED` in `move_along_surface` and
+`poly_wall_segments` when an edge has more passable links than `max_edge_links`), and
 `find_random_point` and `find_random_point_around_circle` draw points weighted by area through a
 caller's `RandomFn`.
 A `QueryFilter` from `default_query_filter` passes every built polygon; applications set area costs,
@@ -183,6 +194,13 @@ the panel shows how many tiles the edit rebuilt and how long it took:
 python3 scripts/build.py --example grid
 ```
 
+With `--fan-in` a wide hall polygon in one tile faces 16 alternating step strips across the tile
+border, and the agents cross into the neighbouring tile past the fourth strip:
+
+```bash
+c3c build grid --path addons/c3d_nav.c3l && addons/c3d_nav.c3l/build/grid --fan-in
+```
+
 ## Crowds
 
 A `Crowd` from `create_crowd(allocator, desc, &mesh, scene)` steers up to `desc.max_agents` agents
@@ -191,7 +209,9 @@ checks corridors, answers move requests with a short sliced search and then the 
 shortens corridors, gathers neighbours and walls, steers toward the next corners, samples a velocity
 that avoids both, integrates, pushes overlapping agents apart and moves every agent along the
 surface. Agents pick one of the crowd's 16 query filters and 8 avoidance configurations by index; a
-target further than `CROWD_MAX_PATH` polygons is reached partially.
+target further than `CROWD_MAX_PATH` polygons is reached partially, and a polygon whose border edge
+is split by many portals caps its local boundary contribution at `MAX_SEGMENTS_PER_POLY` (18) wall
+segments.
 
 Agents live on nodes: `Scene.add_nav_agent` authors a `NavAgent`, `set_nav_target`,
 `set_nav_velocity` and `clear_nav_target` request motion, and `crowd_update` adds and frees crowd

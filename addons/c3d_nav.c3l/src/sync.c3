@@ -178,15 +178,17 @@ fn NavSyncResult nav_sync(
 <*
  Mesh whose tile grid matches the builder's, one slot per tile or expected_layers_per_tile with cache_layers.
  @param [&in] builder : "Fixes the origin, tile size and tile count."
+ @param max_links : "0 reserves DEFAULT_LINKS_PER_TILE per slot."
  @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
-fn NavMesh? create_nav_mesh_for(Allocator allocator, NavBuilder* builder) {
+fn NavMesh? create_nav_mesh_for(Allocator allocator, NavBuilder* builder, uint max_links = 0) {
     uint layers = builder.cache_layers ? builder.expected_layers_per_tile : 1;
     return create_nav_mesh(allocator, {
         .origin      = builder.bounds.min,
         .tile_width  = builder.tile_world_size,
         .tile_height = builder.tile_world_size,
         .max_tiles   = builder.tiles_x * builder.tiles_z * layers,
+        .max_links   = max_links,
     });
 }
 
@@ -437,7 +439,6 @@ fn void? install_tile(
 ) @local {
     TileRecord* record = &builder.tiles[index];
     record.relink = false;
-    record.ref = (TileRef)0;
     TileDataParams params = {
         .tile_x          = (int)(index % builder.tiles_x),
         .tile_z          = (int)(index / builder.tiles_x),

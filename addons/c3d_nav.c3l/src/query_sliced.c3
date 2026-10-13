@@ -124,8 +124,8 @@ fn SlicedProgress? NavQuery.update_sliced_find_path(&self, uint max_iterations) 
         bool try_shortcut = sliced.options.any_angle && parent_ref
             && (current.position - parent.position).length_sq() < sliced.raycast_limit_sqr;
 
-        for (uint link = found.poly.first_link; link != NULL_LINK; link = found.tile.links[link].next) {
-            Link* entry = &found.tile.links[link];
+        for (uint link = found.poly.first_link; link != NULL_LINK; link = mesh.links[link].next) {
+            Link* entry = &mesh.links[link];
             PolyRef neighbour_ref = entry.ref;
             if (!neighbour_ref || neighbour_ref == parent_ref) continue;
             TileAndPoly neighbour = mesh.tile_and_poly_unchecked(neighbour_ref);
@@ -143,7 +143,13 @@ fn SlicedProgress? NavQuery.update_sliced_find_path(&self, uint max_iterations) 
             bool sibling = node.bits.parent != 0 && node.bits.parent == current.bits.parent;
             if (sliced.options.any_angle && sibling) continue;
             if (first_visit(node)) {
-                if (try portal = portal_points(current.id, found, neighbour_ref, neighbour)) {
+                if (try portal = portal_points(
+                    mesh:     mesh,
+                    from_ref: current.id,
+                    from:     found,
+                    to_ref:   neighbour_ref,
+                    to:       neighbour,
+                )) {
                     node.position = (portal.left + portal.right) * 0.5f;
                 }
             }

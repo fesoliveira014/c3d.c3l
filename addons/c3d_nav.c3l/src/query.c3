@@ -6,6 +6,9 @@ import c3d;
 <* Search nodes of the small pool used by local queries; mirrors dtNavMeshQuery's tiny pool. *>
 const uint TINY_NODE_POOL = 64;
 
+<* Portals per border edge a local query follows when max_edge_links is omitted. *>
+const uint DEFAULT_EDGE_LINKS = 64; // portals per border edge a local query follows; about 1.5 KiB per query
+
 const uint  TINY_NODE_HASH @local = 32; // mirrors dtNavMeshQuery::init
 const float HEURISTIC_SCALE @private = 0.999f; // mirrors findPath's H_SCALE; keeps the heuristic below the cost
 const float PORTAL_SKIP_DISTANCE @local = 0.001f; // metres; a start this close to the first portal skips it
@@ -67,11 +70,14 @@ struct RaycastHit {
 
 <* Pathfinding over one NavMesh with its own node pools; mirrors dtNavMeshQuery. *>
 struct NavQuery {
-    NavMesh*    mesh;
-    NodePool    nodes;
-    NodePool    tiny_nodes;
-    NodeQueue   open;
-    SlicedQuery sliced;
+    Allocator        allocator;
+    NavMesh*         mesh;
+    NodePool         nodes;
+    NodePool         tiny_nodes;
+    NodeQueue        open;
+    PolyRef[]        edge_neighbours;
+    PortalInterval[] edge_intervals;
+    SlicedQuery      sliced;
 }
 
 struct Portal @private {
@@ -234,8 +240,8 @@ fn PathResult? NavQuery.find_path(
         TileAndPoly found = mesh.tile_and_poly_unchecked(current.id);
         SearchNode* parent = self.nodes.node_at(current.bits.parent);
         PolyRef parent_ref = parent ? parent.id : (PolyRef)0;
-        for (uint link = found.poly.first_link; link != NULL_LINK; link = found.tile.links[link].next) {
-            Link* entry = &found.tile.links[link];
+        for (uint link = found.poly.first_link; link != NULL_LINK; link = mesh.links[link].next) {
+            Link* entry = &mesh.links[link];
             PolyRef neighbour_ref = entry.ref;
             if (!neighbour_ref || neighbour_ref == parent_ref) continue;
             TileAndPoly neighbour = mesh.tile_and_poly_unchecked(neighbour_ref);
@@ -249,7 +255,13 @@ fn PathResult? NavQuery.find_path(
                 continue;
             }
             if (first_visit(node)) {
-                if (try portal = portal_points(current.id, found, neighbour_ref, neighbour)) {
+                if (try portal = portal_points(
+                    mesh:     mesh,
+                    from_ref: current.id,
+                    from:     found,
+                    to_ref:   neighbour_ref,
+                    to:       neighbour,
+                )) {
                     node.position = (portal.left + portal.right) * 0.5f;
                 }
             }
@@ -505,8 +517,8 @@ fn RaycastHit? NavQuery.raycast(
 
         PolyRef next_ref;
         TileAndPoly next;
-        for (uint link = current.poly.first_link; link != NULL_LINK; link = current.tile.links[link].next) {
-            Link* entry = &current.tile.links[link];
+        for (uint link = current.poly.first_link; link != NULL_LINK; link = mesh.links[link].next) {
+            Link* entry = &mesh.links[link];
             if ((int)entry.edge != crossing.edge_max) continue;
             TileAndPoly candidate = mesh.tile_and_poly_unchecked(entry.ref);
             if (candidate.poly.area_type.type == OFF_MESH_CONNECTION) continue;
@@ -583,26 +595,43 @@ fn void NavQuery.shift_origin(&self, Vec3 offset) {
 <*
  Query over the mesh with a node pool of max_nodes, allocated once.
  @param [&in] mesh : "Outlives the query."
+ @param max_edge_links : "Portals per border edge move_along_surface and poly_wall_segments hold."
  @return? c3d::CAPACITY_EXCEEDED
  @require max_nodes > 0 && max_nodes < (uint)NULL_NODE
+ @require max_edge_links >= 1
 *>
-fn NavQuery? create_nav_query(Allocator allocator, NavMesh* mesh, uint max_nodes) {
-    NodePool nodes = create_node_pool(allocator, max_nodes, math::max(next_pow2(max_nodes / 4), 1u))!;
-    defer catch destroy_node_pool(&nodes);
-    NodePool tiny_nodes = create_node_pool(allocator, TINY_NODE_POOL, TINY_NODE_HASH)!;
-    defer catch destroy_node_pool(&tiny_nodes);
-    NodeQueue open = create_node_queue(allocator, max_nodes)!;
-    return { .mesh = mesh, .nodes = nodes, .tiny_nodes = tiny_nodes, .open = open };
+fn NavQuery? create_nav_query(
+    Allocator allocator,
+    NavMesh* mesh,
+    uint max_nodes,
+    uint max_edge_links = DEFAULT_EDGE_LINKS,
+) {
+    NavQuery query = { .allocator = allocator, .mesh = mesh };
+    defer catch destroy_nav_query(&query);
+
+    query.nodes = create_node_pool(allocator, max_nodes, math::max(next_pow2(max_nodes / 4), 1u))!;
+    query.tiny_nodes = create_node_pool(allocator, TINY_NODE_POOL, TINY_NODE_HASH)!;
+    query.open = create_node_queue(allocator, max_nodes)!;
+    PolyRef[]? edge_neighbours = alloc::new_array_try(allocator, PolyRef, max_edge_links);
+    if (catch edge_neighbours) return c3d::CAPACITY_EXCEEDED~;
+    query.edge_neighbours = edge_neighbours;
+    // Two sentinels bound the edge in poly_wall_segments.
+    PortalInterval[]? edge_intervals = alloc::new_array_try(allocator, PortalInterval, (usz)max_edge_links + 2);
+    if (catch edge_intervals) return c3d::CAPACITY_EXCEEDED~;
+    query.edge_intervals = edge_intervals;
+    return query;
 }
 
 <*
- Free the pools and the queue.
+ Free the pools, queue and edge buffers.
  @param [&inout] query : "Left zeroed."
 *>
 fn void destroy_nav_query(NavQuery* query) {
     destroy_node_pool(&query.nodes);
     destroy_node_pool(&query.tiny_nodes);
     destroy_node_queue(&query.open);
+    alloc::free(query.allocator, query.edge_neighbours.ptr);
+    alloc::free(query.allocator, query.edge_intervals.ptr);
     *query = {};
 }
 
@@ -627,7 +656,9 @@ macro void @each_poly_in_box(
         for (int x = low.x; x <= high.x; x++) {
             usz count = mesh.tiles_at(x, z, tiles[..]);
             foreach (tile : tiles[:count]) {
-                @each_poly_overlapping(mesh, tile, box; ref, poly) {
+                PolyRef base = mesh.poly_ref_base(tile);
+                @each_poly_overlapping(tile, box; index, poly) {
+                    PolyRef ref = base | (PolyRef)index;
                     if (filter.passes(ref, poly)) @body(tile, ref, poly);
                 };
             }
@@ -652,24 +683,31 @@ fn PathResult path_to_node(NodePool* nodes, SearchNode* end_node, PolyRef[] out_
 fn Portal? portal_points_by_ref(NavMesh* mesh, PolyRef from_ref, PolyRef to_ref) @local {
     TileAndPoly from = mesh.tile_and_poly(from_ref)!;
     TileAndPoly to = mesh.tile_and_poly(to_ref)!;
-    return portal_points(from_ref, from, to_ref, to);
+    return portal_points(
+        mesh:     mesh,
+        from_ref: from_ref,
+        from:     from,
+        to_ref:   to_ref,
+        to:       to,
+    );
 }
 
 // INVALID_REF when from holds no link to to; mirrors getPortalPoints.
 fn Portal? portal_points(
+    NavMesh* mesh,
     PolyRef from_ref,
     TileAndPoly from,
     PolyRef to_ref,
     TileAndPoly to,
 ) @private {
-    Link* link = find_link(from, to_ref)!;
+    Link* link = find_link(mesh, from, to_ref)!;
     PolyType to_type = to.poly.area_type.type;
     if (from.poly.area_type.type == OFF_MESH_CONNECTION) {
         Vec3 vertex = from.tile.verts[from.poly.verts[link.edge]];
         return { .left = vertex, .right = vertex, .to_type = to_type };
     }
     if (to_type == OFF_MESH_CONNECTION) {
-        Link* back = find_link(to, from_ref)!;
+        Link* back = find_link(mesh, to, from_ref)!;
         Vec3 vertex = to.tile.verts[to.poly.verts[back.edge]];
         return { .left = vertex, .right = vertex, .to_type = to_type };
     }
@@ -685,9 +723,9 @@ fn Portal? portal_points(
     return portal;
 }
 
-fn Link*? find_link(TileAndPoly from, PolyRef to_ref) @private {
-    for (uint link = from.poly.first_link; link != NULL_LINK; link = from.tile.links[link].next) {
-        if (from.tile.links[link].ref == to_ref) return &from.tile.links[link];
+fn Link*? find_link(NavMesh* mesh, TileAndPoly from, PolyRef to_ref) @private {
+    for (uint link = from.poly.first_link; link != NULL_LINK; link = mesh.links[link].next) {
+        if (mesh.links[link].ref == to_ref) return &mesh.links[link];
     }
     return INVALID_REF~;
 }
@@ -755,7 +793,13 @@ fn AppendStatus? append_portals(
     for (usz index = start_index; index < end_index; index++) {
         TileAndPoly from = mesh.tile_and_poly(path[index])!;
         TileAndPoly to = mesh.tile_and_poly(path[index + 1])!;
-        Portal? portal = portal_points(path[index], from, path[index + 1], to);
+        Portal? portal = portal_points(
+            mesh:     mesh,
+            from_ref: path[index],
+            from:     from,
+            to_ref:   path[index + 1],
+            to:       to,
+        );
         if (catch portal) break;
         if (options.area_crossings && from.poly.area_type.area == to.poly.area_type.area) continue;
         if (try crossing = intersect_seg_seg_2d(start, end, portal.left, portal.right)) {

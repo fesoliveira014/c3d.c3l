@@ -70,7 +70,7 @@ fn void NavMesh.debug_draw(&self, debug::DebugDraw* sink, NavMeshDebugOptions op
             for (int edge = 0; edge < count; edge++) {
                 Vec3 start = tile.verts[poly.verts[edge]] + lift;
                 Vec3 end = tile.verts[poly.verts[(edge + 1) % count]] + lift;
-                if (options.links && has_portal_link(tile, poly, edge)) {
+                if (options.links && has_portal_link(self, poly, edge)) {
                     sink.line(start + lift, end + lift, PORTAL_COLOR);
                 } else if (options.polys) {
                     sink.line(start, end, area_color(poly.area_type.area));
@@ -211,10 +211,10 @@ fn uint area_color(char area) @local {
     return AREA_PALETTE[area % AREA_PALETTE.len];
 }
 
-fn bool has_portal_link(MeshTile* tile, Poly* poly, int edge) @local {
+fn bool has_portal_link(NavMesh* mesh, Poly* poly, int edge) @local {
     if ((poly.neighbours[edge] & EXTERNAL_LINK) == 0) return false;
-    for (uint link = poly.first_link; link != NULL_LINK; link = tile.links[link].next) {
-        if (tile.links[link].edge == edge) return true;
+    for (uint link = poly.first_link; link != NULL_LINK; link = mesh.links[link].next) {
+        if (mesh.links[link].edge == edge) return true;
     }
     return false;
 }

@@ -38,16 +38,17 @@ fn void teardown_link(LinkFixture* fixture) @private {
     free(fixture.builder);
 }
 
-fn PolyRef link_on_edge(MeshTile* tile, Poly* poly, char edge) @private {
-    for (uint link = poly.first_link; link != nav::NULL_LINK; link = tile.links[link].next) {
-        if (tile.links[link].edge == edge) return tile.links[link].ref;
+fn PolyRef link_on_edge(NavMesh* mesh, Poly* poly, char edge) @private {
+    for (uint link = poly.first_link; link != nav::NULL_LINK; link = mesh.links[link].next) {
+        if (mesh.links[link].edge == edge) return mesh.links[link].ref;
     }
     return (PolyRef)0;
 }
 
-fn bool links_to(MeshTile* tile, uint poly, PolyRef target) @private {
-    for (uint link = tile.polys[poly].first_link; link != nav::NULL_LINK; link = tile.links[link].next) {
-        if (tile.links[link].ref == target) return true;
+fn bool links_to(NavMesh* mesh, PolyRef from, PolyRef target) @private {
+    Poly* poly = mesh.tile_and_poly(from)!!.poly;
+    for (uint link = poly.first_link; link != nav::NULL_LINK; link = mesh.links[link].next) {
+        if (mesh.links[link].ref == target) return true;
     }
     return false;
 }
@@ -65,18 +66,18 @@ fn void test_off_mesh_connection_links_both_ends() @test {
     Poly* poly = &start_tile.polys[connection.poly];
     PolyRef connection_ref = mesh.poly_ref_base(start_tile) | (PolyRef)connection.poly;
 
-    PolyRef start_landing = link_on_edge(start_tile, poly, 0);
-    PolyRef end_landing = link_on_edge(start_tile, poly, 1);
+    PolyRef start_landing = link_on_edge(mesh, poly, 0);
+    PolyRef end_landing = link_on_edge(mesh, poly, 1);
 
     assert(nav::decode_tile(start_landing) == tile_slot(mesh, start_tile));
     assert(nav::decode_tile(end_landing) == tile_slot(mesh, end_tile));
-    assert(links_to(start_tile, nav::decode_poly(start_landing), connection_ref));
-    assert(links_to(end_tile, nav::decode_poly(end_landing), connection_ref), "bidirectional");
+    assert(links_to(mesh, start_landing, connection_ref));
+    assert(links_to(mesh, end_landing, connection_ref), "bidirectional");
 
     mesh.remove_tile(mesh.tile_ref(end_tile))!!;
 
-    assert(!link_on_edge(start_tile, poly, 1));
-    assert(link_on_edge(start_tile, poly, 0) == start_landing);
+    assert(!link_on_edge(mesh, poly, 1));
+    assert(link_on_edge(mesh, poly, 0) == start_landing);
 }
 
 fn void test_link_change_relinks_without_rebuilding() @test {
