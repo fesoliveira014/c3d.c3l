@@ -650,9 +650,10 @@ resolved `depth`. Those passes test pixel-centre fragments against sample 0's de
 scene-reading surface meeting an opaque silhouette shows a slight fringe where the resolved color and the sample-0
 depth disagree.
 
-Velocity is not averaged. Camera velocity and the redraw of moved opaque items run at the view's count against
-`msaa_depth` into `msaa_velocity`, and a copy of sample 0 fills `velocity`. Moved depth writers among the scene-read
-draws were drawn single-sample, so they redraw last into `velocity` against the resolved `depth`.
+Velocity is not averaged. Camera velocity runs at the view's count from the resolved `depth`, and moved opaque items
+redraw at the view's count against `msaa_depth`; both write `msaa_velocity`, and a copy of sample 0 fills `velocity`.
+Moved depth writers among the scene-read draws were drawn single-sample, so they redraw last into `velocity` against
+the resolved `depth`.
 
 | Combination with `msaa` above `ONE` | Behavior |
 | --- | --- |
