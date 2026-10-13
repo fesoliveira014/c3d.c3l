@@ -124,6 +124,7 @@ fn void resolve_world_anchors(
             } else {
                 *resolved = resolve_anchored_entry(&world.table[root], &list.transforms[entry]);
             }
+
             continue;
         }
 
@@ -235,6 +236,7 @@ fn Vec4 plane_output_bounds(OverlayWorld* world, uint entry, Vec4 box) @private 
         low = math::min(low, pixel);
         high = math::max(high, pixel);
     }
+
     return { low.x, low.y, high.x, high.y };
 }
 

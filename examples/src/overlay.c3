@@ -996,7 +996,9 @@ fn void animate(Demo* demo, float time) @local {
     Quat spin = quaternion::from_axis_angle{float}({ 0, 1, 0 }, time * PORTRAIT_SPIN_RADIANS_PER_SECOND);
     Quat tilt = quaternion::from_axis_angle{float}({ 1, 0, 0 }, 0.5f);
     demo.cube.local.rotation = spin.mul(tilt).normalize();
+
     demo.wall.visible = demo.world;
+
     demo.scene.update_world();
 }
 
@@ -1201,6 +1203,7 @@ fn int main(String[] args) {
         material::basic({ .color = BACKDROP_COLOR }),
         "overlay/backdrop",
     )!!;
+
     MaterialId wall_material = assets.add_material(material::basic({ .color = SIGN_WALL_COLOR }), "overlay/paint")!!;
 
     char[SKIN_SIZE * SKIN_SIZE * 4] skin_pixels;
@@ -1284,11 +1287,13 @@ fn int main(String[] args) {
             &renderer,
             render::render_target_desc(MIRROR_WIDTH, MIRROR_HEIGHT),
         )!!;
+
         ViewDesc mirror_desc = render::texture_view_desc(mirror_target);
         mirror_desc.post.anti_aliasing = AntiAliasing.NONE;
         mirror_desc.clip_plane = MIRROR_PLANE;
         mirror_view = render::create_view(&renderer, mirror_desc)!!;
     }
+
     defer if (options.mirror) {
         (void)render::destroy_view(&renderer, mirror_view);
         (void)render::destroy_render_target(&renderer, mirror_target);

@@ -535,6 +535,7 @@ fn void? OverlayList.push_anchor(&self, OverlayAnchor anchor) {
     self.transform_depth++;
     self.clip_depth++;
     self.anchor_count++;
+
     if (anchor.facing == PLANE) self.plane_count++;
 }
 
@@ -869,6 +870,7 @@ fn Vec4 world_clip(OverlayWorld* world, uint anchor, Vec4 clip) @local {
     } else {
         bounds = plane_output_bounds(world, anchor, clip);
     }
+
     return {
         math::max(bounds.x, (float)rect.x),
         math::max(bounds.y, (float)rect.y),

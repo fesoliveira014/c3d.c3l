@@ -165,6 +165,7 @@ fn void? Renderer.render_view(
         .clouds        = true,
         .world_overlay = true,
     };
+
     ShadowCamera shadow_view;
     if (shadow_camera) {
         shadow_view = shadow_camera_of(

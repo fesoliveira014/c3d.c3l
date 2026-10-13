@@ -206,6 +206,7 @@ fn void? prepare_overlay(Renderer* self, OverlayList* list, RenderTargetId targe
             mem::copy(planes.bytes.ptr, world.planes.ptr, (sz)plane_bytes);
             list.prepared.world.planes = planes.address;
         }
+
         if (list.prepared.backdrop_count) prepare_overlay_backdrop(self, output, window)!;
     }
     list.prepared.target = target;
