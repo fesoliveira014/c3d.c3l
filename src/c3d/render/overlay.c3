@@ -137,6 +137,7 @@ fn void? Renderer.prepare_overlay_list(&self, OverlayList* list, RenderTargetId 
 // Resolves what the list references and uploads its instances, fitted to a view's world when there is one.
 fn void? prepare_overlay(Renderer* self, OverlayList* list, RenderTargetId target, OverlayWorld* world) @private {
     bool window = c3d::same_id(target, (RenderTargetId){});
+
     foreach (index, &entry : list.entries[:list.item_count]) {
         OverlayBinding* binding = &list.bindings[index];
         if (entry.kind == TRIANGLE || entry.kind == SEGMENT) continue;
@@ -236,11 +237,13 @@ fn void? OverlayContext.draw_list(&self, OverlayList* list) {
         .samples       = gpu::SampleCount.ONE,
         .polygon       = gpu::PolygonMode.FILL,
     };
+
     OverlayWorldView* world = &list.prepared.world;
     if (world.enabled) {
         key.vertex.flags |= shader::SHADER_FLAG_WORLD;
         key.fragment.flags |= shader::SHADER_FLAG_WORLD;
     }
+
     gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, key)!;
     gpu::PipelineHandle backdrop_pipeline;
     if (list.prepared.backdrop_count) {
@@ -287,6 +290,7 @@ fn void? OverlayContext.draw_list(&self, OverlayList* list) {
             usz root_size = OverlayRoot::size;
             if (backdrop) root_size = OverlayBackdropRoot::size;
             if (world.enabled) root_size = OverlayWorldRoot::size;
+
             gpu::MappedGpuSpan root = self.alloc(root_size)!;
             *(OverlayRoot*)root.bytes.ptr = {
                 .items      = (gpu::GpuAddress)((ulong)list.prepared.items + run.first * OverlayItemGpu::size),
@@ -294,6 +298,7 @@ fn void? OverlayContext.draw_list(&self, OverlayList* list) {
                 .scale      = scale,
                 .translate  = { -1, 1 },
             };
+
             if (world.enabled) {
                 OverlayWorldRoot* world_root = (OverlayWorldRoot*)root.bytes.ptr;
                 world_root.planes = world.planes;
