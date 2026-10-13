@@ -26,6 +26,7 @@ enum ShaderName : int {
     LINES_FRAGMENT,
     PREVIEW,
     LIGHT_CULL,
+    CLUSTER_DEPTH,
     INSTANCE_CULL,
     INSTANCE_SORT,
     CUBE_PREVIEW,
@@ -187,6 +188,11 @@ const uint SHADER_FLAG_RT_SHADOWS_HARD = 1 << 16;
 *>
 const uint SHADER_FLAG_OUTLINE = 1 << 17;
 
+<*
+ Flag bit for DEPTH_PRUNING.
+*>
+const uint SHADER_FLAG_DEPTH_PRUNING = 1 << 18;
+
 const char[*] FULLSCREEN_SPIRV @private = $embed("../../../shaders/spv/fullscreen.spv");
 const char[*] GRADIENT_SPIRV @private = $embed("../../../shaders/spv/gradient.spv");
 const char[*] COMPOSITE_SPIRV @private = $embed("../../../shaders/spv/composite.spv");
@@ -219,6 +225,8 @@ const char[*] LINES_VERTEX_SPIRV @private = $embed("../../../shaders/spv/lines_v
 const char[*] LINES_FRAGMENT_SPIRV @private = $embed("../../../shaders/spv/lines_fragment.spv");
 const char[*] PREVIEW_SPIRV @private = $embed("../../../shaders/spv/preview.spv");
 const char[*] LIGHT_CULL_SPIRV @private = $embed("../../../shaders/spv/light_cull.spv");
+const char[*] LIGHT_CULL_DEPTH_PRUNING_SPIRV @private = $embed("../../../shaders/spv/light_cull_depth_pruning.spv");
+const char[*] CLUSTER_DEPTH_SPIRV @private = $embed("../../../shaders/spv/cluster_depth.spv");
 const char[*] INSTANCE_CULL_SPIRV @private = $embed("../../../shaders/spv/instance_cull.spv");
 const char[*] INSTANCE_SORT_SPIRV @private = $embed("../../../shaders/spv/instance_sort.spv");
 const char[*] CUBE_PREVIEW_SPIRV @private = $embed("../../../shaders/spv/cube_preview.spv");
@@ -403,7 +411,7 @@ const char[*] TRACE_REFIT_SPIRV @private = $embed("../../../shaders/spv/trace_re
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[212] SHADER_ENTRIES = {
+const ShaderEntry[214] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -436,6 +444,8 @@ const ShaderEntry[212] SHADER_ENTRIES = {
     { .variant = { .shader = LINES_FRAGMENT }, .spirv = LINES_FRAGMENT_SPIRV[..] },
     { .variant = { .shader = PREVIEW }, .spirv = PREVIEW_SPIRV[..] },
     { .variant = { .shader = LIGHT_CULL }, .spirv = LIGHT_CULL_SPIRV[..] },
+    { .variant = { .shader = LIGHT_CULL, .flags = SHADER_FLAG_DEPTH_PRUNING }, .spirv = LIGHT_CULL_DEPTH_PRUNING_SPIRV[..] },
+    { .variant = { .shader = CLUSTER_DEPTH }, .spirv = CLUSTER_DEPTH_SPIRV[..] },
     { .variant = { .shader = INSTANCE_CULL }, .spirv = INSTANCE_CULL_SPIRV[..] },
     { .variant = { .shader = INSTANCE_SORT }, .spirv = INSTANCE_SORT_SPIRV[..] },
     { .variant = { .shader = CUBE_PREVIEW }, .spirv = CUBE_PREVIEW_SPIRV[..] },

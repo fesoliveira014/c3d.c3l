@@ -585,6 +585,7 @@ struct ViewStats {
     uint              decals_dropped;
     uint              cluster_count;
     uint              cluster_overflows;
+    uint              cluster_skipped;
     uint              decal_overflows;
     uint              accumulated_samples;
     bool              shadow_set_shared; // the last raster rendering bound a set an earlier view recorded

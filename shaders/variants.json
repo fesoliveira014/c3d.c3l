@@ -2,7 +2,7 @@
   "flags": [
     "DEPTH_ONLY", "SKINNED", "SKINNED_U16", "MORPH", "VELOCITY", "VERTEX_COLOR", "INSTANCED", "RT_SHADOWS",
     "SCENE_TRACE_BVH", "WEIGHTED_BLEND", "REFLECTION_PREPASS", "POSED_INSTANCED", "TEMPORAL", "TRANSFORMED",
-    "BACKDROP", "WORLD", "RT_SHADOWS_HARD", "OUTLINE"
+    "BACKDROP", "WORLD", "RT_SHADOWS_HARD", "OUTLINE", "DEPTH_PRUNING"
   ],
   "entries": [
     { "shader": "fullscreen", "source": "fullscreen.vert.glsl", "stage": "vert", "defines": [] },
@@ -39,6 +39,8 @@
     { "shader": "lines_fragment", "source": "lines.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "preview", "source": "preview.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "light_cull", "source": "light_cull.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "light_cull", "source": "light_cull.comp.glsl", "stage": "comp", "defines": ["DEPTH_PRUNING"] },
+    { "shader": "cluster_depth", "source": "cluster_depth.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "instance_cull", "source": "instance_cull.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "instance_sort", "source": "instance_sort.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "cube_preview", "source": "cube_preview.frag.glsl", "stage": "frag", "defines": [] },

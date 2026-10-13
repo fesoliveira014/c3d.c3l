@@ -68,11 +68,12 @@ fn ClusterFrame? prepare_cluster_frame(
     camera::CameraMatrices* matrices,
     LightGpu[] lights,
     DecalGpu[] decals,
+    bool pruned,
 ) @private {
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     ClusterFrame result = { .depth = cluster_depth(camera, record.desc.clusters) };
     bool active = result.depth.near < result.depth.far;
-    begin_profile_pass(renderer, Pass.LIGHT_CULL)!;
+    if (!pruned) begin_profile_pass(renderer, Pass.LIGHT_CULL)!;
 
     gpu::StageMask previous = CONSUMER_STAGES;
     previous.transfer = true;
@@ -116,6 +117,12 @@ fn ClusterFrame? prepare_cluster_frame(
         global_count = pack_global_light_indices(lights, ((uint*)indices.bytes.ptr)[:lights.len]);
         if (global_count) globals = indices.address;
     }
+
+    gpu::GpuAddress tile_depth;
+    if (pruned) {
+        tile_depth = (gpu::GpuAddress)((ulong)record.clusters.address + record.clusters.layout.tile_depth_offset);
+    }
+
     gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, ClusterGpu::size, STREAM_ALIGNMENT)!;
     ClusterDesc desc = record.desc.clusters;
     *((ClusterGpu*)root.bytes.ptr) = {
@@ -130,6 +137,7 @@ fn ClusterFrame? prepare_cluster_frame(
         .lights_per_cluster = desc.lights_per_cluster,
         .global_count = global_count,
         .orthographic = camera.projection == camera::Projection.ORTHOGRAPHIC ? 1 : 0,
+        .tile_depth = tile_depth,
         .view_proj = bitcast(matrices.view_proj, Mat4f),
         .decal_ranges = (gpu::GpuAddress)((ulong)record.clusters.address + record.clusters.layout.decal_ranges_offset),
         .decal_indices = (gpu::GpuAddress)(
@@ -139,15 +147,34 @@ fn ClusterFrame? prepare_cluster_frame(
     return result;
 }
 
+fn void? record_cluster_depth(Renderer* renderer, ViewRecord* record, gpu::MappedGpuSpan frame) @private {
+    acquire_compute_slot(renderer, ComputeSlot.CLUSTER_DEPTH)!;
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, ClusterDepthRoot::size, STREAM_ALIGNMENT)!;
+    *((ClusterDepthRoot*)root.bytes.ptr) = { .frame = frame.address, .depth = record.depth.view.index };
+
+    record.depth.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
+    ClusterDesc desc = record.desc.clusters;
+    gpu::cmd_bind_pipeline(&renderer.commands, renderer.cluster_depth_pipeline)!;
+    gpu::cmd_dispatch(&renderer.commands, root.address, { desc.tiles_x, desc.tiles_y, 1 })!;
+    record.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
+
+    gpu::Barrier reduced = { .before = { .compute }, .after = { .compute } };
+    gpu::cmd_barrier(&renderer.commands, &reduced)!;
+}
+
 fn void? record_clusters(
     Renderer* renderer,
     ViewRecord* record,
     ViewId view,
     gpu::MappedGpuSpan frame,
+    bool pruned,
 ) @private {
+    if (pruned) begin_profile_pass(renderer, Pass.LIGHT_CULL)!;
+
     FrameRoot* root = (FrameRoot*)frame.bytes.ptr;
     if (root.clusters != (gpu::GpuAddress)0) {
-        acquire_compute_slot(renderer, ComputeSlot.CLUSTER)!;
+        acquire_compute_slot(renderer, pruned ? ComputeSlot.CLUSTER_PRUNED : ComputeSlot.CLUSTER)!;
         ClusterReadback* readback = &record.cluster_readback[renderer.frame_index % FRAMES_IN_FLIGHT];
         if (!readback.mapped.span.allocation().is_valid()) {
             gpu::AllocationDesc desc = {
@@ -159,7 +186,10 @@ fn void? record_clusters(
             };
             readback.mapped = gpu::allocate_mapped_memory(&renderer.device, &desc)!;
         }
-        gpu::cmd_bind_pipeline(&renderer.commands, renderer.cluster_pipeline)!;
+        if (pruned) record_cluster_depth(renderer, record, frame)!;
+
+        gpu::PipelineHandle pipeline = pruned ? renderer.cluster_pruned_pipeline : renderer.cluster_pipeline;
+        gpu::cmd_bind_pipeline(&renderer.commands, pipeline)!;
         ClusterDesc desc = record.desc.clusters;
         gpu::cmd_dispatch(&renderer.commands, frame.address, { desc.tiles_x, desc.tiles_y, desc.depth_slices })!;
         gpu::StageMask consumers = CONSUMER_STAGES;
@@ -201,10 +231,12 @@ fn void? read_cluster_stats(Renderer* renderer, uint slot_index) @private {
         ClusterCounterGpu* counter = (ClusterCounterGpu*)readback.mapped.bytes.ptr;
         record.stats.cluster_count = readback.cluster_count;
         record.stats.cluster_overflows = counter.overflows;
+        record.stats.cluster_skipped = counter.skipped;
         record.stats.decal_overflows = counter.decal_overflows;
         renderer.stats.cluster_view = readback.view;
         renderer.stats.cluster_count = readback.cluster_count;
         renderer.stats.cluster_overflows = counter.overflows;
+        renderer.stats.cluster_skipped = counter.skipped;
         renderer.stats.decal_overflows = counter.decal_overflows;
         readback.pending = false;
     }
@@ -225,5 +257,13 @@ fn void release_cluster_resources(Renderer* renderer) @private {
     if (renderer.cluster_pipeline.is_valid()) {
         (void)gpu::destroy_pipeline(&renderer.device, renderer.cluster_pipeline);
         renderer.cluster_pipeline = {};
+    }
+    if (renderer.cluster_pruned_pipeline.is_valid()) {
+        (void)gpu::destroy_pipeline(&renderer.device, renderer.cluster_pruned_pipeline);
+        renderer.cluster_pruned_pipeline = {};
+    }
+    if (renderer.cluster_depth_pipeline.is_valid()) {
+        (void)gpu::destroy_pipeline(&renderer.device, renderer.cluster_depth_pipeline);
+        renderer.cluster_depth_pipeline = {};
     }
 }

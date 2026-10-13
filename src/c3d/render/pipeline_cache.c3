@@ -27,6 +27,8 @@ bitstruct CustomStages : uint {
 
 enum ComputeSlot @private {
     CLUSTER,
+    CLUSTER_PRUNED,
+    CLUSTER_DEPTH,
     TRACE_POSE,
     TRACE_POSE_U16,
     TRACE_POSE_INSTANCED,
@@ -154,6 +156,10 @@ fn ComputeSlotTarget compute_slot_target(Renderer* renderer, ComputeSlot slot) @
     switch (slot) {
         case CLUSTER: return { .pipeline = &renderer.cluster_pipeline,
             .shader = LIGHT_CULL, .debug_name = "environment_processing" };
+        case CLUSTER_PRUNED: return { .pipeline = &renderer.cluster_pruned_pipeline,
+            .shader = LIGHT_CULL, .flags = shader::SHADER_FLAG_DEPTH_PRUNING, .debug_name = "light_cull_pruned" };
+        case CLUSTER_DEPTH: return { .pipeline = &renderer.cluster_depth_pipeline,
+            .shader = CLUSTER_DEPTH, .debug_name = "cluster_depth" };
         case TRACE_POSE: return { .pipeline = &renderer.posed_trace.pose_pipeline,
             .shader = TRACE_POSE, .debug_name = "trace_pose" };
         case TRACE_POSE_U16: return { .pipeline = &renderer.posed_trace.pose_u16_pipeline,

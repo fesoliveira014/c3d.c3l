@@ -286,6 +286,8 @@ fn void? record_raster_view(
     bool ambient_occlusion = record.desc.ambient_occlusion.kind != AoKind.NONE;
     bool forward_reflections = record.desc.ray_tracing.reflections && record.desc.shading == ShadingPath.FORWARD;
     bool forward_prepass = record.desc.depth_prepass || ambient_occlusion || screen_space_gi || forward_reflections;
+    bool pruned_clusters = record.desc.lights == LightSelection.CLUSTERED && record.desc.clusters.depth_pruning
+      && (record.desc.shading == ShadingPath.DEFERRED || forward_prepass);
     bool early_velocity = velocity_before_lighting(&record.desc);
     bool late_velocity = temporal && !early_velocity;
     bool ssgi_history_valid = record.history.valid && record.history.scene == scene.identity;
@@ -706,6 +708,7 @@ fn void? record_raster_view(
                     matrices: matrices,
                     lights: lights,
                     decals: decals,
+                    pruned: pruned_clusters,
                 )!;
                 light_address = cluster_frame.lights;
                 decal_address = cluster_frame.decals;
@@ -805,12 +808,16 @@ fn void? record_raster_view(
                 shadow_samples: math::max(record.desc.ray_tracing.shadow_samples, 1u),
             );
             if (record.desc.lights == LightSelection.CLUSTERED) {
-                record_clusters(
-                    renderer: renderer,
-                    record: record,
-                    view: view,
-                    frame: frame_span,
-                )!;
+                if (!pruned_clusters) {
+                    record_clusters(
+                        renderer: renderer,
+                        record: record,
+                        view: view,
+                        frame: frame_span,
+                        pruned: false,
+                    )!;
+                }
+
                 record.cluster_root = cluster_frame.clusters;
                 record.cluster_depth = cluster_frame.depth;
             }
@@ -955,8 +962,9 @@ fn void? record_raster_view(
                 )!;
             }
             if (cloud_pass.shadowed) record_cloud_shadows(renderer, record, &cloud_pass)!;
+            FogFrame fog_frame;
             if (fog_volume) {
-                FogFrame fog_frame = {
+                fog_frame = {
                     .scene           = scene.identity,
                     .medium          = *fog.fog,
                     .base_height     = fog.base_height,
@@ -967,6 +975,9 @@ fn void? record_raster_view(
                     .camera_position = matrices.position,
                     .pre_exposure    = pre_exposure,
                 };
+            }
+
+            if (fog_volume && !pruned_clusters) {
                 record_fog_volume(
                     renderer:      renderer,
                     record:        record,
@@ -1003,6 +1014,20 @@ fn void? record_raster_view(
                             effects_view:   &effects_view,
                         )!;
                     }
+
+                    if (pruned_clusters) {
+                        record_pruned_clusters(
+                            renderer:      renderer,
+                            record:        record,
+                            view:          view,
+                            frame:         frame_span,
+                            fog_volume:    fog_volume,
+                            sun_light:     fog_sun,
+                            atlas_shadows: shadow_set.layer_count > 0,
+                            fog_frame:     &fog_frame,
+                        )!;
+                    }
+
                     if (early_velocity) {
                         post::record_velocity(
                             renderer:  renderer,
@@ -1058,6 +1083,20 @@ fn void? record_raster_view(
                         opaque:         opaque_items,
                         effects_view:   &effects_view,
                     )!;
+
+                    if (pruned_clusters) {
+                        record_pruned_clusters(
+                            renderer:      renderer,
+                            record:        record,
+                            view:          view,
+                            frame:         frame_span,
+                            fog_volume:    fog_volume,
+                            sun_light:     fog_sun,
+                            atlas_shadows: shadow_set.layer_count > 0,
+                            fog_frame:     &fog_frame,
+                        )!;
+                    }
+
                     if (early_velocity) {
                         post::record_velocity(
                             renderer:  renderer,
@@ -2010,6 +2049,36 @@ fn void? record_forward_pass(
         }!;
     }
     gpu::cmd_end_render_pass(&renderer.commands)!;
+}
+
+fn void? record_pruned_clusters(
+    Renderer* renderer,
+    ViewRecord* record,
+    ViewId view,
+    gpu::MappedGpuSpan frame,
+    bool fog_volume,
+    uint sun_light,
+    bool atlas_shadows,
+    FogFrame* fog_frame,
+) @private {
+    record_clusters(
+        renderer: renderer,
+        record: record,
+        view: view,
+        frame: frame,
+        pruned: true,
+    )!;
+
+    if (fog_volume) {
+        record_fog_volume(
+            renderer:      renderer,
+            record:        record,
+            frame:         frame.address,
+            sun_light:     sun_light,
+            atlas_shadows: atlas_shadows,
+            current:       fog_frame,
+        )!;
+    }
 }
 
 fn void? record_depth_prepass(
