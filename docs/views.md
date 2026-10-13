@@ -99,7 +99,8 @@ The view owns its working images (`hdr_color`, `depth`, the scene color and dept
 effect images) at the working extent `working_extent(viewport, output, render_scale)`, at least one pixel
 per dimension. Reconfiguring with a different extent or output waits for outstanding frames and
 reallocates them; every configuration resets the view's history except its
-[adapted exposure](post.md#auto-exposure) and [adapted focus](post.md#auto-focus), which a resize or parameter edit keeps. The history is otherwise keyed
+[adapted exposure](post.md#auto-exposure) and [adapted focus](post.md#auto-focus), which a resize or parameter edit
+keeps. The history is otherwise keyed
 by scene identity and needs no reset when a scene is replaced (`reset_view_history` remains the camera cut).
 Window resize resizes every window view; target resize resizes every view on that target. A headless renderer's window views
 hold no images and record nothing. `configure_view` and both resizes allocate the new images before they release the old
