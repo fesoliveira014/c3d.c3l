@@ -251,6 +251,7 @@ fn void? run_gui(
             fit_cube_domain(&view_desc.post.grade, look);
             render::configure_view(renderer, renderer.default_view, view_desc)!;
         }
+
         draw_gui_frame(
             renderer: renderer,
             scene: scene,

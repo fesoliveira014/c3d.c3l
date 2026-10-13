@@ -49,19 +49,23 @@ fn Lut3d? parse_lut_cube(Allocator allocator, char[] text) {
             switch (first) {
                 case "TITLE":
                     if (has_title) return c3d::ASSET_FORMAT_ERROR~;
+
                     has_title = true;
                 case "LUT_1D_SIZE":
                     return c3d::UNSUPPORTED~;
                 case "LUT_3D_SIZE":
                     if (lut.size) return c3d::ASSET_FORMAT_ERROR~;
+
                     lut.size = read_size(&rest)!;
                     lut.rgba = alloc::new_array(allocator, char, (sz)lut.size * lut.size * lut.size * LUT_TEXEL_BYTES);
                 case "DOMAIN_MIN":
                     if (has_domain_min) return c3d::ASSET_FORMAT_ERROR~;
+
                     lut.domain_min = read_triple(&rest)!;
                     has_domain_min = true;
                 case "DOMAIN_MAX":
                     if (has_domain_max) return c3d::ASSET_FORMAT_ERROR~;
+
                     lut.domain_max = read_triple(&rest)!;
                     has_domain_max = true;
                 default:
