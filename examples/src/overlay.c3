@@ -56,7 +56,7 @@ const char[4] SKIN_HIGHLIGHT_COLOR @local = { 255, 255, 255, 255 };
 const float SKIN_SLICE_UV @local = 0.25f; // SKIN_FRAME_PIXELS of SKIN_SIZE
 const float SKIN_SLICE_PIXELS @local = 8;
 
-const uint TRANSFORM_LIST_ENTRIES @local = 8; // the placement, the scale and the transformed clip, with room to spare
+const uint TRANSFORM_LIST_ENTRIES @local = 8; // every transform and transformed clip the fixed scenes push, with room to spare
 const uint TRANSFORM_PANEL_GLYPHS @local = 64;
 const uint TRANSFORM_LINE_GLYPHS @local = 32;
 const Vec2 TRANSFORM_CENTER @local = { 500, 600 };
@@ -109,6 +109,27 @@ const Vec4 CHART_MARKER_COLOR @local = { 1, 0.75f, 0.2f, 1 };
 const Vec4 STAR_COLOR @local = { 0.95f, 0.45f, 0.85f, 1 };
 const Vec4 RIBBON_COLOR @local = { 0.3f, 0.65f, 1, 0.55f };
 
+const Vec2 GRADIENT_BUTTON_MIN @local = { 396, 288 };
+const Vec2 GRADIENT_BUTTON_MAX @local = { 556, 320 };
+const Vec2 GRADIENT_SKIN_MIN @local = { 580, 288 };
+const Vec2 GRADIENT_SKIN_MAX @local = { 652, 360 };
+const Vec2 GRADIENT_TILT_CENTER @local = { 470, 360 };
+const Vec2 GRADIENT_TILT_MIN @local = { -44, -12 };
+const Vec2 GRADIENT_TILT_MAX @local = { 44, 12 };
+const float GRADIENT_TILT_ANGLE @local = 0.3f;
+const float GRADIENT_TILT_SWING @local = 0.2f;
+const float GRADIENT_TILT_SCALE @local = 1.15f;
+const float GRADIENT_SPEED @local = 0.8f;
+const float VIGNETTE_REACH @local = 192; // past the portrait's half side, so the radius point lies outside the rect
+const float VIGNETTE_PULSE @local = 24;
+const Vec4 GRADIENT_BUTTON_TOP @local = { 1, 0.78f, 0.25f, 1 };
+const Vec4 GRADIENT_BUTTON_BOTTOM @local = { 0.85f, 0.25f, 0.15f, 1 };
+const Vec4 GRADIENT_SKIN_END @local = { 0.2f, 0.8f, 1, 1 };
+const Vec4 GRADIENT_TILT_START @local = { 1, 0.9f, 0.2f, 1 };
+const Vec4 GRADIENT_TILT_END @local = { 0.8f, 0.2f, 0.9f, 1 };
+const Vec4 VIGNETTE_CLEAR @local = { 0, 0, 0, 0 };
+const Vec4 VIGNETTE_EDGE @local = { 0, 0, 0, 0.85f };
+
 const uint STRESS_RECT_SIZE @local = 6;
 const uint STRESS_RECT_PITCH @local = 8;
 const float STRESS_RECT_RADIUS @local = 2;
@@ -149,9 +170,9 @@ const Vec4 WHITE @local = { 1, 1, 1, 1 };
 const Vec4 BACKDROP_COLOR @local = { 0.9f, 0.25f, 0.3f, 1 };
 const Vec4 CUBE_COLOR @local = { 0.2f, 0.7f, 0.9f, 1 };
 const Vec2 STATS_PANEL_POSITION @local = { 1010, 16 };
-const Vec2 STATS_PANEL_SIZE @local = { 260, 112 };
-const Vec2 RENDERER_PANEL_POSITION @local = { 1010, 142 };
-const Vec2 RENDERER_PANEL_SIZE @local = { 260, 538 };
+const Vec2 STATS_PANEL_SIZE @local = { 260, 172 };
+const Vec2 RENDERER_PANEL_POSITION @local = { 1010, 196 };
+const Vec2 RENDERER_PANEL_SIZE @local = { 260, 484 };
 
 struct Options @local {
     uint stress_count;
@@ -159,6 +180,7 @@ struct Options @local {
     bool target_overlay;
     bool transform_panel;
     bool shapes;
+    bool gradients;
     bool benchmark;
     uint rects;
     uint frames;
@@ -184,6 +206,7 @@ struct Demo @local {
     bool              target_overlay;
     bool              transform_panel;
     bool              shapes;
+    bool              gradients;
     double            prepare_ms;
     uint              overlay_draws;
 }
@@ -432,6 +455,92 @@ fn void? add_shapes(OverlayList* list, float time) @local {
     list.pop_transform();
 }
 
+fn OverlayRect skin_rect(Vec2 min, Vec2 max, TextureId skin) @local {
+    OverlayRect rect = solid_rect(
+        min:  min,
+        max:  max,
+        fill: WHITE,
+    );
+    rect.texture = { .kind = ASSET, .asset = skin };
+    rect.slice_uv = { SKIN_SLICE_UV, SKIN_SLICE_UV, SKIN_SLICE_UV, SKIN_SLICE_UV };
+    rect.slice_pixels = { SKIN_SLICE_PIXELS, SKIN_SLICE_PIXELS, SKIN_SLICE_PIXELS, SKIN_SLICE_PIXELS };
+
+    return rect;
+}
+
+// The vignette's radius point lies outside its rect, and the tilted rect's gradient follows its transform.
+fn void? add_gradients(Demo* demo, float time) @local {
+    OverlayList* list = demo.list;
+
+    OverlayRect button = solid_rect(
+        min:    GRADIENT_BUTTON_MIN,
+        max:    GRADIENT_BUTTON_MAX,
+        fill:   GRADIENT_BUTTON_TOP,
+        radius: 10,
+    );
+    button.gradient = {
+        .kind  = LINEAR,
+        .from  = GRADIENT_BUTTON_MIN,
+        .to    = { GRADIENT_BUTTON_MIN.x, GRADIENT_BUTTON_MAX.y },
+        .color = GRADIENT_BUTTON_BOTTOM,
+    };
+    button.border_widths = { 2, 2, 2, 2 };
+    button.border_color = PANEL_BORDER;
+
+    list.add_rect(button)!;
+
+    OverlayRect framed = skin_rect(GRADIENT_SKIN_MIN, GRADIENT_SKIN_MAX, demo.skin);
+    framed.gradient = {
+        .kind  = LINEAR,
+        .from  = GRADIENT_SKIN_MIN,
+        .to    = GRADIENT_SKIN_MAX,
+        .color = GRADIENT_SKIN_END,
+    };
+
+    list.add_rect(framed)!;
+
+    Vec2 portrait_center = PORTRAIT_MIN + (Vec2){ PORTRAIT_SIZE, PORTRAIT_SIZE } * 0.5f;
+    float reach = VIGNETTE_REACH + VIGNETTE_PULSE * math::sin(time * GRADIENT_SPEED);
+
+    OverlayRect vignette = solid_rect(
+        min:    PORTRAIT_MIN,
+        max:    PORTRAIT_MIN + (Vec2){ PORTRAIT_SIZE, PORTRAIT_SIZE },
+        fill:   VIGNETTE_CLEAR,
+        radius: 24,
+    );
+    vignette.gradient = {
+        .kind  = RADIAL,
+        .from  = portrait_center,
+        .to    = portrait_center + (Vec2){ reach, 0 },
+        .color = VIGNETTE_EDGE,
+    };
+
+    list.add_rect(vignette)!;
+
+    float angle = GRADIENT_TILT_ANGLE + GRADIENT_TILT_SWING * math::sin(time * GRADIENT_SPEED);
+
+    list.push_transform(placement_transform(GRADIENT_TILT_CENTER, angle))!;
+    list.push_transform(scale_transform(GRADIENT_TILT_SCALE))!;
+
+    OverlayRect tilted = solid_rect(
+        min:    GRADIENT_TILT_MIN,
+        max:    GRADIENT_TILT_MAX,
+        fill:   GRADIENT_TILT_START,
+        radius: 12,
+    );
+    tilted.gradient = {
+        .kind  = LINEAR,
+        .from  = { GRADIENT_TILT_MIN.x, 0 },
+        .to    = { GRADIENT_TILT_MAX.x, 0 },
+        .color = GRADIENT_TILT_END,
+    };
+
+    list.add_rect(tilted)!;
+
+    list.pop_transform();
+    list.pop_transform();
+}
+
 fn void? fill_target_list(OverlayList* list, float time) @local {
     list.clear();
 
@@ -567,6 +676,7 @@ fn void? fill_scenes(Demo* demo, Options* options, float time) @local {
     add_samples(list)!;
     if (demo.transform_panel) add_transform_panel(demo, time)!;
     if (demo.shapes) add_shapes(list, time)!;
+    if (demo.gradients) add_gradients(demo, time)!;
     if (demo.with_portrait && demo.target_overlay) fill_target_list(demo.target_list, time)!;
 }
 
@@ -633,6 +743,7 @@ fn void? run_interactive(Demo* demo, Options* options) @local {
             imgui::checkbox("Portrait overlay", &demo.target_overlay);
             imgui::checkbox("Transformed panel", &demo.transform_panel);
             imgui::checkbox("Shapes", &demo.shapes);
+            imgui::checkbox("Gradients", &demo.gradients);
             imgui::text("Items: %u of %u", demo.list.item_count, (uint)demo.list.entries.len);
         }
         imgui::end();
@@ -741,6 +852,8 @@ fn int main(String[] args) {
             options.transform_panel = true;
         } else if (argument == "--shapes") {
             options.shapes = true;
+        } else if (argument == "--gradients") {
+            options.gradients = true;
         } else if (argument == "--rects" && has_value) {
             options.rects = args[++index].to_uint() ?? 0;
         } else if (argument == "--frames" && has_value) {
@@ -755,7 +868,7 @@ fn int main(String[] args) {
             options.height = size[1];
         } else {
             io::eprintn(
-                "Use overlay [--stress [N]] [--target] [--transform] [--shapes] [--frames N]"
+                "Use overlay [--stress [N]] [--target] [--transform] [--shapes] [--gradients] [--frames N]"
                 " [--benchmark --rects N --frames F --size WxH]."
             );
             return 1;
@@ -870,6 +983,7 @@ fn int main(String[] args) {
         .target_overlay  = options.target_overlay,
         .transform_panel = options.transform_panel,
         .shapes          = options.shapes,
+        .gradients       = options.gradients,
     };
     renderer.prepare_scene(&scene)!!;
 
