@@ -370,8 +370,9 @@ body on the same node. Destroy the scene before the store.
 - **Screen-space march**: opaque, masked and sky from this view only; no blends, nothing off-screen or behind
   the camera; 24 steps over four times the pixel's view distance.
 - **Blends under the surface are hidden**: the water writes depth and readers never see ordinary blends.
-- **SSGI views**: readers keep camera-only velocity ([screen-space GI](screen_space_gi.md)), so moving waves
-  smear under TAA there; readers get no AO and no SSGI terms.
+- **SSGI and temporal AO views**: readers keep camera-only velocity ([screen-space GI](screen_space_gi.md),
+  [temporal AO](ambient_occlusion.md#temporal)), so moving waves smear under TAA there; readers get no AO and
+  no SSGI terms.
 - **Wave edits** give one rendering of wrong wave motion vectors: the velocity form evaluates the new waves at
   the previous time. Queries follow once `surface_view` is retaken.
 - **Long sessions**: core's float time limit; wrap the clock and call `render::reset_view_history`.

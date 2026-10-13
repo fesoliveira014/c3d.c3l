@@ -533,6 +533,8 @@ fn void list_view_pipelines(
             case SSAO: list_prepare_compute(requests, ComputeSlot.SSAO);
             case RAY_TRACED: list_prepare_compute(requests, ComputeSlot.RT_AO);
         }
+
+        if (ambient_occlusion_accumulates(desc)) list_prepare_compute(requests, ComputeSlot.AO_TEMPORAL);
         if (desc.ambient_occlusion.kind != AoKind.NONE) {
             list_prepare_compute(requests, ComputeSlot.AO_BLUR);
         }

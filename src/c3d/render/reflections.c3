@@ -192,7 +192,7 @@ fn void? record_reflections(
         .width             = record.reflection.width,
         .height            = record.reflection.height,
         .max_roughness     = record.desc.ray_tracing.max_reflection_roughness,
-        .noise_frame       = temporal_noise_frame(record),
+        .noise_frame       = temporal_noise_frame(record, false),
         .light_count       = lights.count,
     };
 
