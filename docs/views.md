@@ -200,7 +200,9 @@ whose near boundary lies beyond that depth holds no opaque point, so the cull sk
 writes an overflowing, empty range for lights and decals and runs neither loop. Readers that
 reach such a cell, such as fog froxels behind the farthest surface, take the complete flat
 list. Cells in front of the nearest surface are never skipped, so blended surfaces keep
-their lists. No light is dropped.
+their lists. No light is dropped. On a view with [`msaa`](#multisample-anti-aliasing) above `ONE` the reduction reads
+the depth the prepass resolved from sample 0, and a sample farther than its tile's resolved depth reaches a skipped
+cell and takes the flat list.
 
 The reduction needs depth before any pass reads the cell lists, so on a pruned view the
 reduction, the cull and the [volumetric fog](sky.md#volumetric-fog) volume run right after the
@@ -686,11 +688,12 @@ the resolved `depth`.
 
 A `DEFERRED` view holds its G-buffer at the view's count and lights once per sample. Its pass order is:
 
-- `DEPTH_PREPASS` fills `msaa_depth` and resolves nothing.
-- `GBUFFER` draws the five channels at the view's count with depth `EQUAL` against `msaa_depth` and resolves sample 0
-  of the depth into `depth`. Copies of sample 0 of the normal and specular channels follow: `normal_sample_zero` with
-  ambient occlusion, screen-space GI or traced reflections, and `specular_sample_zero` with traced reflections.
-  Those effects read `depth` and the copies, as a forward view's effects read its resolved images.
+- `DEPTH_PREPASS` fills `msaa_depth` and resolves sample 0 into `depth`, so the pruned cluster reduction and every
+  later single-sample reader find a depth before the G-buffer exists.
+- `GBUFFER` draws the five channels at the view's count with depth `EQUAL` against `msaa_depth`. Copies of sample 0 of
+  the normal and specular channels follow: `normal_sample_zero` with ambient occlusion, screen-space GI or traced
+  reflections, and `specular_sample_zero` with traced reflections. Those effects read `depth` and the copies, as a
+  forward view's effects read its resolved images.
 - `LIGHTING` is a fullscreen pass at the view's count into `msaa_color`. It shades every sample in its own
   invocation (sample-rate shading), which reads that sample of the five channels and of `msaa_depth`. The layer mask
   and the receive-shadow bit are never averaged, so a sample takes the shadow decision of the surface it covers,
@@ -828,8 +831,8 @@ depth prepass when its scene has an atmosphere, and splits before the transparen
 blended readers, the SSGI colour copy, then `FOG`, then transparency. With `volumetric_fog` the view also
 records `FOG_SCATTERING` and `FOG_INTEGRATION` after the sky tables. Dielectric F0 in the resolve is
 `0.04 · specular` for IOR 1.5, which is why other IORs and tinted specular colors route forward. On a view with
-[`msaa`](#multisample-anti-aliasing) above `ONE`, `GBUFFER` also resolves sample 0 of the depth, `LIGHTING` runs once
-per sample into `msaa_color`, and `FORWARD_OPAQUE` resolves color into `hdr_color` and depth into `depth` (see
+[`msaa`](#multisample-anti-aliasing) above `ONE`, `DEPTH_PREPASS` also resolves sample 0 of the depth, `LIGHTING` runs
+once per sample into `msaa_color`, and `FORWARD_OPAQUE` resolves color into `hdr_color` and depth into `depth` (see
 [deferred views](#deferred-views)).
 
 Light selection follows `lights` on both paths: the resolve calls the same clustered or flat

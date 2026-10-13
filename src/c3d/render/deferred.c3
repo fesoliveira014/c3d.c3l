@@ -152,10 +152,9 @@ fn void? record_gbuffer_pass(Renderer* renderer, ViewRecord* record, DrawItem[] 
         color_targets[channel] = gpu::color_blend_disabled();
     }
     gpu::DepthTargetDesc depth = {
-        .view         = depth_image.attachment,
-        .resolve_view = multisample ? record.depth.attachment : (gpu::AttachmentViewHandle){},
-        .load_op      = gpu::LoadOp.LOAD,
-        .store_op     = gpu::StoreOp.STORE,
+        .view     = depth_image.attachment,
+        .load_op  = gpu::LoadOp.LOAD,
+        .store_op = gpu::StoreOp.STORE,
     };
     gpu::RenderPassDesc pass = {
         .colors = colors[..],
