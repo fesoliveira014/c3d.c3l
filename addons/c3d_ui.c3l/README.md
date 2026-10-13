@@ -474,7 +474,6 @@ frame, and prints the mean CPU time per frame of `route_input`, `update` and `dr
 
 - `--labels N` adds a document of N labels in a scroll area; Clay culls the labels outside the window, so they cost
   layout but few glyphs.
-
 - `--windows N` adds a document of N windows of 20 elements each and drags the first one with synthetic events: a
   press on its title bar, a motion each frame and a release, to one side and back. The drag takes 16 of every 32
   frames and the HUD sweep the rest.

@@ -1076,6 +1076,7 @@ fn String benchmark_rich_document(uint labels) @local {
         if (label) document.append_char(',');
         document.appendf(BENCHMARK_RICH_LABEL, label)!!;
     }
+
     document.append_string(`] } }`);
     return document.str_view();
 }
@@ -1101,6 +1102,7 @@ fn String benchmark_windows_document(uint windows) @local {
 
         document.append_string(`] }`);
     }
+
     document.append_string(`] } }`);
     return document.str_view();
 }
