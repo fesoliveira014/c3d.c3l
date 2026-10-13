@@ -185,6 +185,9 @@ use the flat list for their entire direct-light loop, preserving exit-point ligh
 Existing custom shaders remain flat unless they opt into the
 [shared light selector](custom_shaders.md#light-selection).
 
+See [many lights](many_lights.md) for a controlled comparison and
+[GUI diagnostics](gui.md#cluster-diagnostics) for slice occupancy and completed counters.
+
 ### Depth pruning
 
 With `ClusterDesc.depth_pruning` set, the view reduces its depth image to the farthest view
@@ -203,9 +206,6 @@ pruning keep the cull before every other pass of the view. A forward view with n
 before shading and ignores `depth_pruning`; this is not a fault. `LIGHT_CULL` includes the
 reduction. `Stats.cluster_skipped` and `ViewStats.cluster_skipped` count the skipped cells and
 are not part of `cluster_overflows`. See [many lights](many_lights.md#depth-pruning).
-
-See [many lights](many_lights.md) for a controlled comparison and
-[GUI diagnostics](gui.md#cluster-diagnostics) for slice occupancy and completed counters.
 
 ## Frames
 
