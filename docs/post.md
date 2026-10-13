@@ -394,6 +394,8 @@ With GPU timings and internal scopes, `Pass.POST_CHAIN` has one stage scope per 
 completed times summed over the frame's views. They are parts of the `POST_CHAIN` bucket and are not added to it;
 the grade, FXAA and identity-composite dispatches belong to the pass alone. The depth of field stage covers its
 auto-focus metering and tile reduction, and the motion blur stage its tile reduction.
+`effects --gpu-timings --benchmark FRAMES` prints the mean of each stage
+([benchmarking](benchmarking.md#post-processing-benchmark)).
 
 ## GUI
 

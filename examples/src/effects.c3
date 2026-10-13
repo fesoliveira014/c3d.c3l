@@ -2,6 +2,7 @@ module effects_example;
 
 import std::io;
 import std::math;
+import bench_loop;
 import c3d;
 import c3d::asset;
 import c3d::asset::image;
@@ -49,6 +50,10 @@ const Vec2 POST_PANEL_POSITION @local = { 16, 212 };
 const Vec2 POST_PANEL_SIZE @local = { 360, 496 };
 const Vec2 STATS_PANEL_POSITION @local = { 900, 16 };
 const Vec2 STATS_PANEL_SIZE @local = { 360, 660 };
+const uint BENCHMARK_WARMUP_FRAMES @local = 30; // lets clocks and caches settle before the timed frames
+const uint BENCHMARK_WIDTH @local = 1920;
+const uint BENCHMARK_HEIGHT @local = 1080;
+const float BENCHMARK_FRAMES_PER_SECOND @local = 60; // the benchmark loop's fixed frame time
 
 struct Orbit @local {
     Vec3  target;
@@ -57,11 +62,35 @@ struct Orbit @local {
     float pitch;
 }
 
+struct Content @local {
+    TextureId lut;
+    Node*     cube;
+    Node*     camera_node;
+}
+
 struct Options @local {
     bool gpu_timings;
+    bool benchmark;
+    uint benchmark_frames;
     bool auto_focus;
     bool focus_fixed;
     Vec2 focus_point;
+}
+
+fn Quat cube_rotation(float spin_angle) @local {
+    Quat roll = quaternion::from_axis_angle{float}({ 0, 0, 1 }, math::deg_to_rad(CUBE_ROLL_DEGREES));
+    Quat yaw = quaternion::from_axis_angle{float}({ 0, 1, 0 }, spin_angle);
+    return yaw.mul(roll).normalize();
+}
+
+fn void enable_effects(ViewDesc* view_desc, Options* options) @local {
+    view_desc.post.bloom = true;
+    view_desc.post.depth_of_field = true;
+    view_desc.post.dof_params.focus_distance = FOCUS_DISTANCE;
+    view_desc.post.dof_params.aperture = APERTURE;
+    view_desc.post.dof_params.focus_mode = options.auto_focus ? FocusMode.AUTO : FocusMode.MANUAL;
+    if (options.focus_fixed) view_desc.post.dof_params.focus_point = options.focus_point;
+    view_desc.post.motion_blur = true;
 }
 
 fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
@@ -140,15 +169,8 @@ fn void? run_gui(
 
     Orbit orbit = { .distance = 6 };
     ViewDesc view_desc = render::default_view_desc();
-    view_desc.post.bloom = true;
-    view_desc.post.depth_of_field = true;
-    view_desc.post.dof_params.focus_distance = FOCUS_DISTANCE;
-    view_desc.post.dof_params.aperture = APERTURE;
-    view_desc.post.dof_params.focus_mode = options.auto_focus ? FocusMode.AUTO : FocusMode.MANUAL;
-    if (options.focus_fixed) view_desc.post.dof_params.focus_point = options.focus_point;
-    view_desc.post.motion_blur = true;
+    enable_effects(&view_desc, options);
     render::configure_view(renderer, renderer.default_view, view_desc)!;
-    Quat roll = quaternion::from_axis_angle{float}({ 0, 0, 1 }, math::deg_to_rad(CUBE_ROLL_DEGREES));
     float spin_angle;
     float sweep_time;
     bool spin = true;
@@ -224,8 +246,7 @@ fn void? run_gui(
         gui::stats_panel(renderer)!;
 
         if (spin) spin_angle += window.clock.delta * SPIN_RADIANS_PER_SECOND;
-        Quat yaw = quaternion::from_axis_angle{float}({ 0, 1, 0 }, spin_angle);
-        cube.local.rotation = yaw.mul(roll).normalize();
+        cube.local.rotation = cube_rotation(spin_angle);
         if (sweep) sweep_time += window.clock.delta;
         apply_orbit(&orbit, input, camera_node);
         if (sweep) {
@@ -249,51 +270,7 @@ fn void? run_gui(
     }
 }
 
-fn int main(String[] args) {
-    Options options;
-
-    for (usz index = 1; index < args.len; index++) {
-        String argument = args[index];
-        if (argument == "--auto-focus") {
-            options.auto_focus = true;
-        } else if (argument == "--focus-point" && index + 2 < args.len) {
-            Vec2? point = parse_focus_point(args[index + 1], args[index + 2]);
-            if (catch excuse = point) {
-                io::printfn("Bad --focus-point: %s", excuse);
-                return 1;
-            }
-
-            options.focus_point = point;
-            options.focus_fixed = true;
-            index += 2;
-        } else if (argument == "--gpu-timings") {
-            $if $feat(C3D_PROFILE_GPU):
-                options.gpu_timings = true;
-            $else
-                io::eprintfn("--gpu-timings needs GPU profiling: c3c build <target> --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL");
-                return 1;
-            $endif
-        } else {
-            io::printfn("Unknown argument: %s", argument);
-            return 1;
-        }
-    }
-
-    platform::Window window = platform::create_window(
-        platform::default_window_desc("c3d effects", 1280, 720))!!;
-    defer platform::destroy_window(&window);
-
-    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
-    defer asset::destroy_asset_store(&assets);
-
-    render::Renderer renderer = platform::create_window_renderer(
-        allocator: mem,
-        window:    &window,
-        assets:    &assets,
-        desc:      { .gpu_timings = options.gpu_timings, .validation = true, .application_name = "c3d_effects" },
-    )!!;
-    defer render::destroy_renderer(&renderer);
-
+fn Content build_content(AssetStore* assets, Scene* scene) @local {
     Image decoded = image::decode_image(mem, $embed("../assets/texture.png"))!!;
     defer image::destroy_image(&decoded);
     TextureId image_texture = assets.add_texture(
@@ -349,8 +326,6 @@ fn int main(String[] args) {
         "effects/matte",
     )!!;
 
-    Scene scene = scene::create_scene(mem, scene::default_scene_desc());
-    defer scene::destroy_scene(&scene);
     scene.ambient_intensity = AMBIENT_INTENSITY;
 
     Node* floor = scene.add_mesh(ground, matte, name: "ground")!!;
@@ -368,15 +343,183 @@ fn int main(String[] args) {
     sun.local.rotation = maths::look_rotation((Vec3){ 0.4f, -0.7f, -0.6f }.normalize(), { 0, 1, 0 });
     Node* camera_node = scene.add_camera(camera::perspective_deg(60, 0.1f), name: "camera")!!;
 
+    return { .lut = lut, .cube = cube, .camera_node = camera_node };
+}
+
+fn void spin_cube(void* user, uint frame) @local {
+    Node* cube = user;
+    cube.local.rotation = cube_rotation((float)frame / BENCHMARK_FRAMES_PER_SECOND * SPIN_RADIANS_PER_SECOND);
+}
+
+fn void print_stage_means(FrameSample[] samples) @local {
+    float bloom_ms;
+    float depth_of_field_ms;
+    float motion_blur_ms;
+    float post_chain_ms;
+    foreach (sample : samples) {
+        bloom_ms += sample.gpu_post_stage_ms[PostStage.BLOOM.ordinal];
+        depth_of_field_ms += sample.gpu_post_stage_ms[PostStage.DEPTH_OF_FIELD.ordinal];
+        motion_blur_ms += sample.gpu_post_stage_ms[PostStage.MOTION_BLUR.ordinal];
+        post_chain_ms += sample.gpu_ms[Pass.POST_CHAIN.ordinal];
+    }
+
+    float frames = (float)samples.len;
+    io::printfn(
+        "Bloom: %.4f ms, depth of field: %.4f ms, motion blur: %.4f ms, "
+        "post chain: %.4f ms, mean over %d frames at %dx%d",
+        bloom_ms / frames,
+        depth_of_field_ms / frames,
+        motion_blur_ms / frames,
+        post_chain_ms / frames,
+        samples.len,
+        BENCHMARK_WIDTH,
+        BENCHMARK_HEIGHT,
+    );
+}
+
+fn void? run_benchmark(Options* options) @local {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+
+    Scene scene = scene::create_scene(mem, scene::default_scene_desc());
+    defer scene::destroy_scene(&scene);
+
+    Content content = build_content(&assets, &scene);
+    Orbit orbit = { .distance = 6 };
+    place_camera(&orbit, content.camera_node);
+
+    BenchmarkFlags flags = bench_loop::default_flags();
+    flags.frames = options.benchmark_frames;
+    flags.warmup = BENCHMARK_WARMUP_FRAMES;
+    flags.width = BENCHMARK_WIDTH;
+    flags.height = BENCHMARK_HEIGHT;
+    bench_loop::validate_flags(flags, ShadingPath.FORWARD)!;
+
+    FrameSample[] samples = alloc::new_array(mem, FrameSample, flags.frames);
+    defer alloc::free(mem, samples.ptr);
+
+    render::Renderer renderer = render::create_renderer(
+        allocator: mem,
+        assets:    &assets,
+        desc:      {
+            .gpu_timings      = options.gpu_timings,
+            .validation       = true,
+            .application_name = "c3d_effects_benchmark",
+        },
+    )!;
+    defer render::destroy_renderer(&renderer);
+
+    if (!renderer.timestamps_enabled) {
+        io::eprintn("GPU timestamps are unavailable on this device");
+        return c3d::UNSUPPORTED~;
+    }
+
+    RenderTargetId target = render::create_render_target(
+        renderer: &renderer,
+        desc:     render::render_target_desc(flags.width, flags.height, PixelFormat.RGBA8_UNORM),
+    )!;
+    ViewDesc view_desc = render::texture_view_desc(target, OutputMode.DISPLAY_LDR);
+    enable_effects(&view_desc, options);
+    ViewId view = render::create_view(&renderer, view_desc)!;
+
+    BenchmarkRun run = {
+        .renderer          = &renderer,
+        .scene             = &scene,
+        .camera_node       = content.camera_node,
+        .view              = view,
+        .before_frame      = &spin_cube,
+        .before_frame_user = content.cube,
+    };
+
+    usz collected = bench_loop::run_frames(&run, flags, samples)!;
+    print_stage_means(samples[:collected]);
+}
+
+fn int main(String[] args) {
+    Options options;
+
+    for (usz index = 1; index < args.len; index++) {
+        String argument = args[index];
+        if (argument == "--auto-focus") {
+            options.auto_focus = true;
+        } else if (argument == "--focus-point" && index + 2 < args.len) {
+            Vec2? point = parse_focus_point(args[index + 1], args[index + 2]);
+            if (catch excuse = point) {
+                io::printfn("Bad --focus-point: %s", excuse);
+                return 1;
+            }
+
+            options.focus_point = point;
+            options.focus_fixed = true;
+            index += 2;
+        } else if (argument == "--gpu-timings") {
+            $if $feat(C3D_PROFILE_GPU):
+                options.gpu_timings = true;
+            $else
+                io::eprintfn(
+                    "--gpu-timings needs GPU profiling: c3c build <target> --path examples --lib c3d_profile "
+                    "-D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL"
+                );
+                return 1;
+            $endif
+        } else if (argument == "--benchmark" && index + 1 < args.len) {
+            uint? frames = args[++index].to_uint();
+            if (catch excuse = frames) {
+                io::printfn("Bad --benchmark: %s", excuse);
+                return 1;
+            }
+
+            options.benchmark = true;
+            options.benchmark_frames = frames;
+        } else {
+            io::printfn("Unknown argument: %s", argument);
+            return 1;
+        }
+    }
+
+    if (options.benchmark) {
+        if (!options.gpu_timings) {
+            io::eprintn("--benchmark FRAMES needs --gpu-timings");
+            return 1;
+        }
+
+        fault excuse = @catch(run_benchmark(&options));
+        if (excuse) {
+            io::eprintfn("effects benchmark failed: %s", excuse);
+            return 1;
+        }
+
+        return 0;
+    }
+
+    platform::Window window = platform::create_window(
+        platform::default_window_desc("c3d effects", 1280, 720))!!;
+    defer platform::destroy_window(&window);
+
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+
+    render::Renderer renderer = platform::create_window_renderer(
+        allocator: mem,
+        window:    &window,
+        assets:    &assets,
+        desc:      { .gpu_timings = options.gpu_timings, .validation = true, .application_name = "c3d_effects" },
+    )!!;
+    defer render::destroy_renderer(&renderer);
+
+    Scene scene = scene::create_scene(mem, scene::default_scene_desc());
+    defer scene::destroy_scene(&scene);
+
+    Content content = build_content(&assets, &scene);
     renderer.prepare_scene(&scene)!!;
 
     if (catch excuse = run_gui(
         window: &window,
         renderer: &renderer,
         scene: &scene,
-        cube: cube,
-        camera_node: camera_node,
-        lut: lut,
+        cube: content.cube,
+        camera_node: content.camera_node,
+        lut: content.lut,
         options: &options,
     )) {
         io::printfn("GUI failed: %s", excuse);
