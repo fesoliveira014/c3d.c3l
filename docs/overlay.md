@@ -1,9 +1,9 @@
 # Overlay list
 
 Module `c3d::render` draws application-owned 2D items over the composed window or into a render target: rectangles
-with rounded corners, borders, textures and nine-slice fields, glyph runs of placed text ([Text](text.md)),
-and triangles, lines and paths ([Shapes](#shapes)), each under a clip and a transform. The list holds plain values; it
-names no `gpu` type.
+with rounded corners, borders, textures, nine-slice fields and gradients, glyph runs of placed text
+([Text](text.md)), and triangles, lines and paths ([Shapes](#shapes)), each under a clip and a transform. The list
+holds plain values; it names no `gpu` type.
 Dear ImGui stays the tool for debug panels and inspectors ([GUI overlay](gui.md)). The list serves interfaces the
 application draws itself.
 
@@ -102,6 +102,39 @@ formats store the linear values.
   All-zero `slice_pixels` disables nine-slice. Corners keep their size, edges stretch along one axis and the centre
   along both. The margins on opposite sides must fit the box (`slice_pixels`) and the region (`slice_uv`).
 
+## Gradients
+
+```c3
+rect.fill = { 1, 0.78f, 0.25f, 1 };
+rect.gradient = {
+    .kind  = LINEAR,
+    .from  = rect.min,
+    .to    = { rect.min.x, rect.max.y },
+    .color = { 0.85f, 0.25f, 0.15f, 1 },
+};
+```
+
+- `OverlayRect.gradient` ramps the rect's color from `fill`, the start color, to `gradient.color`, the end color. Both
+  are sRGB with straight alpha. `NONE`, the zero value, keeps `fill` alone, so a rect that sets no gradient draws as it
+  did without the field.
+- `LINEAR` ramps along the line from `from` to `to`: the start color at `from` and the end color at `to`. Points on
+  a line across it share a color.
+- `RADIAL` takes `from` as the centre and `to` as a point on the radius: the start color at the centre, the end color
+  at that distance and beyond.
+- Past either end the ramp stays at that end's color.
+- The points use the rect's coordinates: output pixels, or local pixels under a transform, so the gradient follows the
+  transform. They may lie outside the rect, such as a vignette whose radius point is past a corner.
+- The ramp is interpolated in linear light, on colors premultiplied by alpha. The midpoint of black to white is
+  linear 0.5, which is about 188 as sRGB, and a fade to a transparent color keeps the hue of the start color.
+- A textured rect multiplies its texture by the ramp. Corner radii, borders and the clip apply as without a gradient;
+  `border_color` stays flat over the ramp.
+- **Precision.** An item stores each point as a half-precision offset from `min`, so the item stays 96 bytes. A point
+  is off by at most half a pixel while it is under 2,048 pixels from `min`, and by at most one pixel under 4,096; the
+  error doubles with each further doubling of the distance. Keep `from` and `to` several times that error apart.
+- **Faults.** `add_rect` faults with `INVALID_ARGUMENT` for a non-finite point or color, for `from` equal to `to` (a
+  radial gradient then has no radius), and for a point more than 65,504 pixels from `min` on either axis. A rect with
+  kind `NONE` ignores the other gradient fields.
+
 ## Glyph runs
 
 `add_glyphs(OverlayGlyphRun run)` copies a run's placements into the list: one font, one pixel size, one color, the
@@ -178,7 +211,7 @@ list.pop_transform();
 
 | Call | Faults |
 | --- | --- |
-| `add_rect` | `CAPACITY_EXCEEDED` (list full); `INVALID_ARGUMENT` (non-finite or negative values, `max` below `min`, nine-slice margins larger than the box or region) |
+| `add_rect` | `CAPACITY_EXCEEDED` (list full); `INVALID_ARGUMENT` (non-finite or negative values, `max` below `min`, nine-slice margins larger than the box or region, a gradient point non-finite, equal to the other or more than 65,504 pixels from `min`) |
 | `add_glyphs` | `CAPACITY_EXCEEDED` (list full, or not enough glyph room); `INVALID_ARGUMENT` (non-finite origin, color or placement position; size not above zero) |
 | `add_triangle` | `CAPACITY_EXCEEDED` (list full); `INVALID_ARGUMENT` (non-finite point or color) |
 | `add_line` | `CAPACITY_EXCEEDED` (list full); `INVALID_ARGUMENT` (non-finite point or color; width not above zero) |
@@ -216,4 +249,6 @@ draws), averaged over `F` frames after `F` warm-up frames. The benchmark pushes 
 The `overlay` example shows every feature; `--stress N` adds N small rects under one clip, `--target` draws a
 panel into the portrait's render target, `--transform` draws a rotated and scaled panel of text, a nine-slice
 frame and rects under a transformed clip, and `--shapes` draws a line chart with a triangle marker, a star and a
-translucent ribbon, and the chart again under a transform.
+translucent ribbon, and the chart again under a transform, and `--gradients` draws a linear gradient button, a
+textured nine-slice rect with a gradient, a rect with a gradient under a transform, and a radial vignette over the
+portrait whose radius point lies outside its rect.
