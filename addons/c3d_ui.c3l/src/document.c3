@@ -52,6 +52,9 @@ struct UiElement @private {
     uint           style;          // index in the style set, UI_NONE without a style
     uint           style_offset;   // style name in the document's strings
     uint           style_length;
+    uint           id_offset;      // id name in the document's strings
+    uint           id_length;      // 0 without an id
+    uint           id_hash;        // 32-bit FNV-1a of the id name
     UiProperties   properties;     // inline
     ulong          mask;
     uint           text_first;
@@ -124,7 +127,7 @@ fn UiDocumentId? Ui.load_document(&self, String jsonc) {
 
 <*
  Replace a document's tree; on a fault the old tree stays.
- Resets the document's focus, press and drag state; scroll offsets stay.
+ Resets the document's focus, press and drag state; a scroll with an id keeps its offset.
  @return? c3d::INVALID_ID, Ui.load_document!
 *>
 fn void? Ui.reload_document(&self, UiDocumentId document, String jsonc) {
@@ -396,9 +399,13 @@ fn uint? load_element(
         pop_token(load);
     }
 
+    if (try id = value.get("id")) read_element_id(load, index, id)!;
+
     uint last_child = UI_NONE;
     foreach (key : sorted_keys(value)) {
         switch (key) {
+            case "id":
+                continue;
             case "kind":
             case "items":
             case "template":
@@ -470,6 +477,32 @@ fn uint? load_element(
 
     if (kind == LABEL || kind == TEXT_FIELD) check_font(load, &load.elements[index])!;
     return index;
+}
+
+fn uint name_hash(String name) @private {
+    uint hash = UI_HASH_BASIS;
+    foreach (character : name) hash = mix_hash(hash, character);
+
+    return hash;
+}
+
+fn void? read_element_id(UiLoad* load, uint index, Object* value) @private {
+    push_token(load, "id");
+    String name = read_word(load, value)!;
+    if (!valid_name(name)) return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+
+    // An equal hash is a repeated id or two ids whose hashes collide; both would share one Clay id.
+    uint hash = name_hash(name);
+    foreach (&other : load.elements) {
+        if (other.id_length && other.id_hash == hash) return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+    }
+
+    UiElement* element = &load.elements[index];
+    element.id_offset = (uint)load.strings.len();
+    element.id_length = (uint)name.len;
+    element.id_hash = hash;
+    load.strings.append(name);
+    pop_token(load);
 }
 
 fn void? read_element_key(

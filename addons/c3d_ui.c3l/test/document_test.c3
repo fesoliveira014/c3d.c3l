@@ -107,6 +107,26 @@ fn void test_load_faults_report_json_pointers() @test {
         expected: c3d::ASSET_FORMAT_ERROR,
         path:     "/root/fill",
     );
+    fixture::expect_load_fault(
+        fixture:  &fixture,
+        document: `{ "root": { "kind": "panel", "id": "log", "children": [
+            { "kind": "panel", "id": "side" }, { "kind": "panel", "id": "log" } ] } }`,
+        expected: c3d::ASSET_FORMAT_ERROR,
+        path:     "/root/children/1/id",
+    );
+    fixture::expect_load_fault(
+        fixture:  &fixture,
+        document: `{ "root": { "kind": "panel", "id": "Log" } }`,
+        expected: c3d::ASSET_FORMAT_ERROR,
+        path:     "/root/id",
+    );
+    fixture::expect_load_fault(
+        fixture:  &fixture,
+        document: `{ "root": { "kind": "panel", "children": [
+            { "kind": "panel", "id": "gv_u" }, { "kind": "panel", "id": "15xa" } ] } }`,
+        expected: c3d::ASSET_FORMAT_ERROR,
+        path:     "/root/children/1/id",
+    );
     fixture::expect_styles_fault(
         fixture:  &fixture,
         sheets:   { `{ "title": { "font": ["ui/latin", "ui/gothic"] } }` },

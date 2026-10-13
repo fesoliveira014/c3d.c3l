@@ -98,7 +98,7 @@ The root's anchor point sits on the screen's matching point; `offset` moves it. 
 | `tooltip` | `children` | |
 | `grid` | `template` | `items` (`{LIST}`), `columns`, `rows`, `cell_size` [w, h], `item_cell` (`{INT}`), `item_span` [w, h] (numbers or `{INT}`) |
 
-Every element takes `kind`, `style`, `visible` and `enabled` (a literal or `{BOOL}`), the actions `on_click`,
+Every element takes `kind`, `id`, `style`, `visible` and `enabled` (a literal or `{BOOL}`), the actions `on_click`,
 `on_secondary_click` and `on_drop`, and every style property inline.
 
 - `list` lays its items out like a panel, one template copy per item.
@@ -113,6 +113,20 @@ Every element takes `kind`, `style`, `visible` and `enabled` (a literal or `{BOO
 - Interactive elements are buttons, text fields, grid items and any element with an action. Hover, press and
   disabled states apply to the interactive element and its descendants, except that an interactive descendant takes
   its own hover and press; focus applies to the focused field.
+
+### Ids
+
+`"id": "log.view"` names an element of any kind. An id is a dotted lowercase name, the rule of binding names, and is
+unique within its document. Inside a list or grid template the id names the template's element in every item.
+
+- A repeated id faults `c3d::ASSET_FORMAT_ERROR` at the `id` of the later element in document order, as does a name
+  that breaks the rule.
+- Layout state follows an element's id. A `scroll` element with an id keeps its offset across `reload_document` while
+  the new tree has a scroll with that id, wherever the tree moved it. A scroll without an id is keyed by its position
+  in the tree, so it keeps its offset only while its position stays.
+- An element's layout id hashes its document, its id and its item scope; an element without an id hashes its position
+  instead, tagged apart so the two inputs never coincide. Two different ids whose 32-bit FNV-1a hashes are equal
+  would share a layout id, so they fault `c3d::ASSET_FORMAT_ERROR` at the later `id`, like a repeated id. Rename one.
 
 ### Text templates
 
@@ -238,7 +252,7 @@ points into it.
 | `BINDING_KIND_MISMATCH` | a binding of a kind the key does not take |
 | `UNKNOWN_ACTION` | an action nothing registered with `Ui.on` |
 | `UNKNOWN_ASSET` | an image or font key the store lacks; a text element without a font |
-| `c3d::ASSET_FORMAT_ERROR` | a value of the wrong JSON type or out of range |
+| `c3d::ASSET_FORMAT_ERROR` | a value of the wrong JSON type or out of range; an `id` that is not a valid name, repeats or collides |
 | `c3d::CAPACITY_EXCEEDED` | a UI table full; lists nested deeper than `UI_SCOPE_DEPTH` |
 | `json::*`, `io::EOF` | syntax errors from `std::encoding::json`; the error path is empty |
 
