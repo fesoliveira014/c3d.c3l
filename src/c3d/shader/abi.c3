@@ -1592,8 +1592,13 @@ struct ToonMaterialGpu {
     TextureIndex  gradient_texture;
     SamplerIndex  gradient_sampler;
     TextureMapGpu map;
+    Vec4f         outline_color_width;
+    float         outline_depth_offset;
+    uint          _pad0;
+    uint          _pad1;
+    uint          _pad2;
 }
-$assert ToonMaterialGpu::size == 96;
+$assert ToonMaterialGpu::size == 128;
 $assert $reflect(ToonMaterialGpu.kind).offset == 0;
 $assert $reflect(ToonMaterialGpu.flags).offset == 4;
 $assert $reflect(ToonMaterialGpu.alpha_cutoff).offset == 8;
@@ -1605,6 +1610,11 @@ $assert $reflect(ToonMaterialGpu.steps).offset == 52;
 $assert $reflect(ToonMaterialGpu.gradient_texture).offset == 56;
 $assert $reflect(ToonMaterialGpu.gradient_sampler).offset == 60;
 $assert $reflect(ToonMaterialGpu.map).offset == 64;
+$assert $reflect(ToonMaterialGpu.outline_color_width).offset == 96;
+$assert $reflect(ToonMaterialGpu.outline_depth_offset).offset == 112;
+$assert $reflect(ToonMaterialGpu._pad0).offset == 116;
+$assert $reflect(ToonMaterialGpu._pad1).offset == 120;
+$assert $reflect(ToonMaterialGpu._pad2).offset == 124;
 
 struct EnvironmentRotationGpu {
     Vec4f row0;

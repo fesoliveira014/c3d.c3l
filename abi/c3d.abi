@@ -906,6 +906,11 @@ root ToonMaterialGpu {
     TextureIndex gradient_texture;
     SamplerIndex gradient_sampler;
     TextureMapGpu map;
+    vec4 outline_color_width; // rgb: linear color; w: screen pixels, 0 draws no outline
+    float outline_depth_offset;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
 }
 
 const uint ENVIRONMENT_FACE_POSITIVE_X = 0;
