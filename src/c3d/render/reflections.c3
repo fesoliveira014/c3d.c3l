@@ -171,10 +171,8 @@ fn void? record_reflections(
 ) @private {
     acquire_reflection_pipelines(renderer)!;
     bool forward = record.desc.shading == ShadingPath.FORWARD;
-    Target* normals = forward
-      ? &record.reflection_gbuffer : &record.gbuffer[GBufferChannel.NORMAL_ROUGHNESS.ordinal];
-    Target* specular = forward
-      ? &record.reflection_gbuffer : &record.gbuffer[GBufferChannel.EMISSIVE_SPECULAR.ordinal];
+    Target* normals = forward ? &record.reflection_gbuffer : deferred_normals(record);
+    Target* specular = forward ? &record.reflection_gbuffer : deferred_specular(record);
     record.depth.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
     normals.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
     if (specular != normals) specular.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;

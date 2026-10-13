@@ -286,7 +286,7 @@ fn void? record_ambient_occlusion(
     bool accumulates = ambient_occlusion_accumulates(&record.desc);
     acquire_ambient_occlusion_pipelines(renderer, ambient_occlusion, accumulates)!;
     bool deferred = record.desc.shading == ShadingPath.DEFERRED;
-    Target* normals = &record.gbuffer[GBufferChannel.NORMAL_ROUGHNESS.ordinal];
+    Target* normals = deferred_normals(record);
     record.depth.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
     if (deferred) normals.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
     record.ao_raw.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;

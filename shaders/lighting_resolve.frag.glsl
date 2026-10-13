@@ -2,6 +2,9 @@
 #include "generated/shader_abi.glsl"
 #include "c3d_abi.glsl"
 #include "descriptor_heap.glsl"
+#ifdef MULTISAMPLE
+#include "multisample_heap.glsl"
+#endif
 #include "brdf.glsl"
 #include "ibl.glsl"
 #include "lights.glsl"
@@ -21,11 +24,25 @@ layout(push_constant) uniform Push {
 
 void main() {
     LightingResolveRoot root = LightingResolveRoot(pc.fragment_root_gpu);
+#ifdef MULTISAMPLE
+    // One invocation per sample: it reads its own sample of every channel, flags and layers included.
+    ivec2 texel = ivec2(gl_FragCoord.xy);
+    float depth = gpu_fetch_ms(root.depth, texel, gl_SampleID).r;
+#else
     float depth = sample_texture_2d(root.depth, root.sampler_index, v_uv).r;
+#endif
     // No geometry keeps the pass clear color for the sky.
     if (depth == 0.0) discard;
 
     FrameRoot frame = FrameRoot(root.frame);
+#ifdef MULTISAMPLE
+    vec3 world_position = depth_face_texel_position(frame, texel, DEPTH_FACE_EXTENT(root.depth), depth);
+    vec4 base_color_metallic = gpu_fetch_ms(root.base_color_metallic, texel, gl_SampleID);
+    vec4 normal_roughness = gpu_fetch_ms(root.normal_roughness, texel, gl_SampleID);
+    vec4 emissive_specular = gpu_fetch_ms(root.emissive_specular, texel, gl_SampleID);
+    uint layers = gpu_fetch_ms_uint(root.layers, texel, gl_SampleID);
+    uint flags = gpu_fetch_ms_uint(root.flags, texel, gl_SampleID);
+#else
     vec3 world_position = reconstruct_world_position(frame, v_uv, depth);
     vec4 base_color_metallic = sample_texture_2d(root.base_color_metallic, root.sampler_index, v_uv);
     vec4 normal_roughness = sample_texture_2d(root.normal_roughness, root.sampler_index, v_uv);
@@ -33,6 +50,7 @@ void main() {
     ivec2 texel = ivec2(gl_FragCoord.xy);
     uint layers = gpu_fetch_uint(root.layers, texel, 0);
     uint flags = gpu_fetch_uint(root.flags, texel, 0);
+#endif
 
     vec3 base_color = base_color_metallic.rgb;
     float metallic = base_color_metallic.a;

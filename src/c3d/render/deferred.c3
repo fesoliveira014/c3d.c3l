@@ -20,25 +20,36 @@ fn ShaderVariant gbuffer_fragment(Material* material) @private {
     }
 }
 
-fn PipelineKey gbuffer_pipeline_key(ShaderVariant vertex, ShaderVariant fragment, gpu::PolygonMode polygon) @private {
+fn PipelineKey gbuffer_pipeline_key(
+    ShaderVariant vertex,
+    ShaderVariant fragment,
+    gpu::PolygonMode polygon,
+    gpu::SampleCount samples = gpu::SampleCount.ONE,
+) @private {
     return {
         .vertex        = vertex,
         .fragment      = fragment,
         .color_formats = GBUFFER_FORMATS,
         .color_count   = GBUFFER_CHANNEL_COUNT,
         .depth_format  = DEPTH_FORMAT,
-        .samples       = gpu::SampleCount.ONE,
+        .samples       = samples,
         .polygon       = polygon,
     };
 }
 
-fn gpu::PipelineHandle? gbuffer_pipeline_for(Renderer* renderer, Material* material, ShaderVariant vertex) @private {
+fn gpu::PipelineHandle? gbuffer_pipeline_for(
+    Renderer* renderer,
+    Material* material,
+    ShaderVariant vertex,
+    gpu::SampleCount samples = gpu::SampleCount.ONE,
+) @private {
     renderer.stats.pipeline_lookups++;
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
     PipelineKey key = gbuffer_pipeline_key(
         vertex:   vertex,
         fragment: vertex.shader == IMPOSTOR_VERTEX ? (ShaderVariant){ .shader = IMPOSTOR_GBUFFER } : gbuffer_fragment(material),
         polygon:  wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
+        samples:  samples,
     );
     if (material.kind != MaterialKind.CUSTOM) return renderer.pipelines.get(&renderer.device, key);
 
@@ -48,24 +59,32 @@ fn gpu::PipelineHandle? gbuffer_pipeline_for(Renderer* renderer, Material* mater
     return custom_pipeline(renderer, published, key);
 }
 
-fn gpu::PipelineHandle? default_gbuffer_pipeline(Renderer* renderer) @private {
+fn gpu::PipelineHandle? default_gbuffer_pipeline(
+    Renderer* renderer,
+    gpu::SampleCount samples = gpu::SampleCount.ONE,
+) @private {
     renderer.stats.pipeline_lookups++;
     PipelineKey key = gbuffer_pipeline_key(
         vertex:   { .shader = MESH },
         fragment: { .shader = STANDARD_GBUFFER },
         polygon:  gpu::PolygonMode.FILL,
+        samples:  samples,
     );
     return renderer.pipelines.get(&renderer.device, key);
 }
 
-fn PipelineKey lighting_resolve_pipeline_key(uint shadow_flags) @private {
+fn PipelineKey lighting_resolve_pipeline_key(
+    uint shadow_flags,
+    gpu::SampleCount samples = gpu::SampleCount.ONE,
+) @private {
+    uint multisample = samples == gpu::SampleCount.ONE ? 0 : shader::SHADER_FLAG_MULTISAMPLE;
     return {
         .vertex        = { .shader = FULLSCREEN },
-        .fragment      = { .shader = LIGHTING_RESOLVE, .flags = shadow_flags },
+        .fragment      = { .shader = LIGHTING_RESOLVE, .flags = shadow_flags | multisample },
         .color_formats = { [0] = HDR_FORMAT },
         .color_count   = 1,
         .depth_format  = gpu::Format.UNDEFINED,
-        .samples       = gpu::SampleCount.ONE,
+        .samples       = samples,
         .polygon       = gpu::PolygonMode.FILL,
     };
 }
@@ -102,7 +121,8 @@ fn void? record_deferred_shading(
         )!;
     }
     record_lighting_pass(renderer, record, frame, clear_color)!;
-    record.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
+    if (record.desc.msaa == MsaaSamples.ONE) record.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
+
     record_forward_pass(
         renderer:      renderer,
         record:        record,
@@ -118,6 +138,8 @@ fn void? record_deferred_shading(
 }
 
 fn void? record_gbuffer_pass(Renderer* renderer, ViewRecord* record, DrawItem[] gbuffer) @private {
+    bool multisample = record.desc.msaa != MsaaSamples.ONE;
+    Target* depth_image = multisample ? &record.msaa_depth : &record.depth;
     foreach (&target : record.gbuffer) target.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
     gpu::ColorTargetDesc[GBUFFER_CHANNEL_COUNT] colors;
     gpu::ColorTargetState[GBUFFER_CHANNEL_COUNT] color_targets;
@@ -130,7 +152,7 @@ fn void? record_gbuffer_pass(Renderer* renderer, ViewRecord* record, DrawItem[] 
         color_targets[channel] = gpu::color_blend_disabled();
     }
     gpu::DepthTargetDesc depth = {
-        .view     = record.depth.attachment,
+        .view     = depth_image.attachment,
         .load_op  = gpu::LoadOp.LOAD,
         .store_op = gpu::StoreOp.STORE,
     };
@@ -140,7 +162,8 @@ fn void? record_gbuffer_pass(Renderer* renderer, ViewRecord* record, DrawItem[] 
         .width  = record.depth.width,
         .height = record.depth.height,
     };
-    gpu::PipelineHandle first = gbuffer.len ? gbuffer[0].pipeline : default_gbuffer_pipeline(renderer)!;
+    gpu::PipelineHandle first = gbuffer.len
+      ? gbuffer[0].pipeline : default_gbuffer_pipeline(renderer, msaa_sample_count(record.desc.msaa))!;
 
     @profile_pass(renderer, Pass.GBUFFER) {
         // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
@@ -158,7 +181,27 @@ fn void? record_gbuffer_pass(Renderer* renderer, ViewRecord* record, DrawItem[] 
             },
         )!;
         gpu::cmd_end_render_pass(&renderer.commands)!;
+
+        if (multisample) record_deferred_sample_zero(renderer, record)!;
     }!;
+}
+
+fn void? record_deferred_sample_zero(Renderer* renderer, ViewRecord* record) @private {
+    if (record.normal_sample_zero.texture.is_valid()) {
+        record_sample_zero(
+            renderer:    renderer,
+            source:      &record.gbuffer[GBufferChannel.NORMAL_ROUGHNESS.ordinal],
+            destination: &record.normal_sample_zero,
+        )!;
+    }
+
+    if (record.specular_sample_zero.texture.is_valid()) {
+        record_sample_zero(
+            renderer:    renderer,
+            source:      &record.gbuffer[GBufferChannel.EMISSIVE_SPECULAR.ordinal],
+            destination: &record.specular_sample_zero,
+        )!;
+    }
 }
 
 fn void? record_lighting_pass(
@@ -167,9 +210,12 @@ fn void? record_lighting_pass(
     gpu::GpuAddress frame,
     Vec4 clear_color,
 ) @private {
+    bool multisample = record.desc.msaa != MsaaSamples.ONE;
+    Target* color = multisample ? &record.msaa_color : &record.hdr_color;
+    Target* depth = multisample ? &record.msaa_depth : &record.depth;
     foreach (&target : record.gbuffer) target.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
-    record.depth.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
-    record.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
+    depth.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
+    color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
 
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     bool reflections = record.desc.ray_tracing.reflections;
@@ -181,7 +227,7 @@ fn void? record_lighting_pass(
         .emissive_specular        = record.gbuffer[GBufferChannel.EMISSIVE_SPECULAR.ordinal].view.index,
         .layers                   = record.gbuffer[GBufferChannel.LAYERS.ordinal].view.index,
         .flags                    = record.gbuffer[GBufferChannel.FLAGS.ordinal].view.index,
-        .depth                    = record.depth.view.index,
+        .depth                    = depth.view.index,
         .sampler_index            = renderer.linear_clamp_sampler,
         .reflection_texture       = reflections ? record.reflection_blur.view.index : (gpu::TextureIndex)0,
         .brdf_lut                 = reflections ? renderer.environment_state.brdf_lut.view.index : (gpu::TextureIndex)0,
@@ -189,17 +235,20 @@ fn void? record_lighting_pass(
     };
     gpu::PipelineHandle pipeline = renderer.pipelines.get(
         &renderer.device,
-        lighting_resolve_pipeline_key(rt_shadow_flags(
-            renderer,
-            record.desc.ray_tracing.shadows,
-            record.soft_shadows,
-        )),
+        lighting_resolve_pipeline_key(
+            shadow_flags: rt_shadow_flags(
+                renderer,
+                record.desc.ray_tracing.shadows,
+                record.soft_shadows,
+            ),
+            samples:      msaa_sample_count(record.desc.msaa),
+        ),
     )!;
 
     @profile_pass(renderer, Pass.LIGHTING) {
         record_fullscreen_pass(
             renderer:      renderer,
-            target:        &record.hdr_color,
+            target:        color,
             pipeline:      pipeline,
             fragment_root: root.address,
             rect:          {},

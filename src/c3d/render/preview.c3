@@ -248,19 +248,35 @@ fn void? record_previews(Renderer* renderer) @private {
         };
         resolve_preview_source(renderer, preview, &root)!;
 
-        acquire_compute_pipeline(renderer, &renderer.preview_pipeline, PREVIEW, "preview")!;
+        bool multisample = preview_multisampled(renderer, preview.source);
+        gpu::PipelineHandle* pipeline = multisample
+          ? &renderer.preview_multisample_pipeline : &renderer.preview_pipeline;
+        acquire_compute_pipeline(
+            renderer:   renderer,
+            pipeline:   pipeline,
+            shader:     PREVIEW,
+            debug_name: multisample ? "preview_multisample" : "preview",
+            flags:      multisample ? shader::SHADER_FLAG_MULTISAMPLE : 0,
+        )!;
         preview.image.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;
 
         Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
         gpu::MappedGpuSpan root_span = slot.upload.take(&renderer.device, PreviewRoot::size)!;
         *(PreviewRoot*)root_span.bytes.ptr = root;
-        gpu::cmd_bind_pipeline(&renderer.commands, renderer.preview_pipeline)!;
+        gpu::cmd_bind_pipeline(&renderer.commands, *pipeline)!;
         uint groups_x = (root.width + shader::POST_GROUP_SIZE - 1) / shader::POST_GROUP_SIZE;
         uint groups_y = (root.height + shader::POST_GROUP_SIZE - 1) / shader::POST_GROUP_SIZE;
         gpu::cmd_dispatch(&renderer.commands, root_span.address, { groups_x, groups_y, 1 })!;
 
         preview.image.transition(&renderer.commands, gpu::sampled_at({ .fragment_shader }))!;
     }
+}
+
+// A multisample G-buffer channel previews through the form that reads its first sample.
+fn bool preview_multisampled(Renderer* renderer, PreviewSource source) @local {
+    if (source.kind != PreviewKind.VIEW_GBUFFER || !renderer.views.is_live(source.view)) return false;
+
+    return renderer.views.get(source.view).gbuffer[source.level].samples != gpu::SampleCount.ONE;
 }
 
 fn void? resolve_preview_source(Renderer* renderer, PreviewSlot* preview, PreviewRoot* root) @private {
@@ -418,5 +434,10 @@ fn void release_previews(Renderer* renderer) @private {
     }
     if (renderer.preview_pipeline.is_valid()) (void)gpu::destroy_pipeline(&renderer.device, renderer.preview_pipeline);
     renderer.preview_pipeline = {};
+    if (renderer.preview_multisample_pipeline.is_valid()) {
+        (void)gpu::destroy_pipeline(&renderer.device, renderer.preview_multisample_pipeline);
+    }
+
+    renderer.preview_multisample_pipeline = {};
 }
 

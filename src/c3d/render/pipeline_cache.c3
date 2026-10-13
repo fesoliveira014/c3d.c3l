@@ -542,20 +542,22 @@ fn gpu::PipelineHandle? create_pipeline(
         return gpu::create_compute_pipeline(device, &compute_desc);
     }
     bool custom_fragment = key.custom.fragment || key.custom.gbuffer;
+    bool per_sample = (key.fragment.flags & shader::SHADER_FLAG_MULTISAMPLE) != 0;
     gpu::GraphicsPipelineDesc desc = {
-        .vertex_shader   = {
+        .vertex_shader      = {
             .spirv = key.custom.vertex ? custom.vertex : registry.get(key.vertex)!,
             .debug_name = key.custom.vertex ? "custom_vertex" : "c3d_vertex",
         },
-        .fragment_shader = {
+        .fragment_shader    = {
             .spirv = custom_fragment ? custom.fragment : registry.get(key.fragment)!,
             .debug_name = custom_fragment ? "custom_fragment" : "c3d_fragment",
         },
-        .color_formats   = key.color_formats[:key.color_count],
-        .depth_format    = key.depth_format,
-        .sample_count    = key.samples,
-        .polygon_mode    = key.polygon,
-        .debug_name      = (uint)key.custom ? "custom_pipeline" : "c3d_pipeline",
+        .color_formats      = key.color_formats[:key.color_count],
+        .depth_format       = key.depth_format,
+        .sample_count       = key.samples,
+        .min_sample_shading = per_sample ? 1.0f : 0.0f,
+        .polygon_mode       = key.polygon,
+        .debug_name         = (uint)key.custom ? "custom_pipeline" : "c3d_pipeline",
     };
     std::time::Clock started = clock::now();
     if (counters) counters.calls++;
