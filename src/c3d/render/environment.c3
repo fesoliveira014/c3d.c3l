@@ -490,6 +490,7 @@ fn void free_environments(Renderer* renderer) @private {
     if (renderer.environment_state.cloud_noise.state == EnvironmentLutState.READY) {
         release_lut(&renderer.device, &renderer.environment_state.cloud_noise);
     }
+
     gpu::PipelineHandle[9] pipelines = {
         renderer.environment_state.pipelines.source, renderer.environment_state.pipelines.downsample,
         renderer.environment_state.pipelines.prefilter,
