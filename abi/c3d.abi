@@ -165,8 +165,14 @@ struct ClusterRange {
 root ClusterCounterGpu {
     uint overflows;
     uint decal_overflows;
-    uint _pad1;
+    uint skipped;
     uint _pad2;
+}
+
+root ClusterDepthRoot {
+    GpuAddress   frame;
+    TextureIndex depth;
+    uint         _pad0;
 }
 
 root ClusterGpu {
@@ -181,8 +187,7 @@ root ClusterGpu {
     uint lights_per_cluster;
     uint global_count;
     uint orthographic;
-    uint _pad0;
-    uint _pad1;
+    GpuAddress tile_depth;
     mat4 view_proj;
     GpuAddress decal_ranges;
     GpuAddress decal_indices;

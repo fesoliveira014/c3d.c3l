@@ -338,8 +338,14 @@ struct ClusterRange {
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer ClusterCounterGpu {
     uint overflows;
     uint decal_overflows;
-    uint _pad1;
+    uint skipped;
     uint _pad2;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer ClusterDepthRoot {
+    uint64_t frame;
+    uint depth;
+    uint _pad0;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer ClusterGpu {
@@ -354,8 +360,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer ClusterGpu 
     uint lights_per_cluster;
     uint global_count;
     uint orthographic;
-    uint _pad0;
-    uint _pad1;
+    uint64_t tile_depth;
     mat4 view_proj;
     uint64_t decal_ranges;
     uint64_t decal_indices;

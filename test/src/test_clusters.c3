@@ -62,7 +62,7 @@ fn void test_cluster_layout_aligns_regions() @test {
     assert(layout.ranges_offset == 560 && layout.indices_offset == 752);
     assert(layout.decals_offset == 1232 && layout.decal_ranges_offset == 42192);
     assert(layout.decal_indices_offset == 42384 && layout.decal_index_count == 192);
-    assert(layout.counter_offset == 43152 && layout.size == 43168);
+    assert(layout.counter_offset == 43152 && layout.tile_depth_offset == 43168 && layout.size == 43200);
 
     desc = { .tiles_x = 1, .tiles_y = 1, .depth_slices = 1, .lights_per_cluster = 1, .far_distance = 100 };
     ClusterLayout padded = render::cluster_layout(desc, 1, { 64, 64, 64 })!!;
@@ -70,9 +70,10 @@ fn void test_cluster_layout_aligns_regions() @test {
     assert(padded.ranges_offset == 80 && padded.indices_offset == 96);
     assert(padded.decals_offset == 112 && padded.decal_ranges_offset == 41072);
     assert(padded.decal_indices_offset == 41088 && padded.decal_index_count == 8);
-    assert(padded.counter_offset == 41120 && padded.size == 41136);
+    assert(padded.counter_offset == 41120 && padded.tile_depth_offset == 41136 && padded.size == 41152);
     ClusterLayout[2] layouts = { layout, padded };
     uint[2] capacities = { 7, 1 };
+    uint[2] tile_counts = { 6, 1 };
     foreach (index, region : layouts) {
         assert(region.ranges_offset % render::STREAM_ALIGNMENT == 0);
         assert(region.indices_offset % render::STREAM_ALIGNMENT == 0);
@@ -80,6 +81,7 @@ fn void test_cluster_layout_aligns_regions() @test {
         assert(region.decal_ranges_offset % render::STREAM_ALIGNMENT == 0);
         assert(region.decal_indices_offset % render::STREAM_ALIGNMENT == 0);
         assert(region.counter_offset % render::STREAM_ALIGNMENT == 0);
+        assert(region.tile_depth_offset % render::STREAM_ALIGNMENT == 0);
         assert(region.size % render::STREAM_ALIGNMENT == 0);
         assert((usz)capacities[index] * LightGpu::size <= region.ranges_offset);
         assert(region.ranges_offset + (usz)region.cluster_count * ClusterRange::size <= region.indices_offset);
@@ -89,7 +91,8 @@ fn void test_cluster_layout_aligns_regions() @test {
           <= region.decal_indices_offset);
         assert(region.decal_indices_offset + (usz)region.decal_index_count * uint::size <= region.counter_offset);
         assert(region.decal_index_count == region.cluster_count * shader::MAX_CLUSTER_DECALS);
-        assert(region.counter_offset + ClusterCounterGpu::size <= region.size);
+        assert(region.counter_offset + ClusterCounterGpu::size <= region.tile_depth_offset);
+        assert(region.tile_depth_offset + (usz)tile_counts[index] * float::size <= region.size);
     }
 }
 

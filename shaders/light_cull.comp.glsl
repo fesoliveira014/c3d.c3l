@@ -5,6 +5,9 @@
 #include "lights.glsl"
 
 GPU_DECLARE_READONLY_ARRAY_REF(DecalArray, DecalGpu);
+#ifdef DEPTH_PRUNING
+GPU_DECLARE_READONLY_ARRAY_REF(TileDepthArray, float);
+#endif
 
 const uint DECAL_MASK_WORD_BITS = 32u;
 
@@ -41,6 +44,20 @@ void main() {
     ClusterGpu clusters = ClusterGpu(frame.clusters);
     uvec3 cell = gl_WorkGroupID;
     uint lane = gl_LocalInvocationIndex;
+#ifdef DEPTH_PRUNING
+    // No opaque point lies in a cell behind its tile's farthest depth; other readers there take the flat list.
+    float tile_farthest = TileDepthArray(clusters.tile_depth).values[cell.x + clusters.tiles_x * cell.y];
+    if (cluster_depth_boundary(clusters, cell.z) > tile_farthest) {
+        if (lane == 0u) {
+            uint skipped_cell = cluster_index(clusters, cell);
+            ClusterRangesOutput(clusters.ranges).values[skipped_cell] = ClusterRange(0u, 1u);
+            ClusterRangesOutput(clusters.decal_ranges).values[skipped_cell] = ClusterRange(0u, 1u);
+            atomicAdd(ClusterCounterGpu(clusters.counter).skipped, 1u);
+        }
+
+        return;
+    }
+#endif
     uint segment = cluster_index(clusters, cell) * clusters.lights_per_cluster;
     for (uint word = lane; word < MAX_DECALS / DECAL_MASK_WORD_BITS; word += CLUSTER_GROUP_SIZE) {
         decal_mask[word] = 0u;

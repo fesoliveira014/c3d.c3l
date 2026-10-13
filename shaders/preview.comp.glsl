@@ -108,9 +108,13 @@ void main() {
             ClusterRange range = ClusterRanges(clusters.ranges).values[
                 cluster_index(clusters, uvec3(tile, root.cluster_slice))];
             float occupancy = float(range.count) / float(clusters.lights_per_cluster);
-            result = range.overflow != 0u
-                ? vec3(1.0, 0.0, 1.0)
-                : vec3(occupancy, 4.0 * occupancy * (1.0 - occupancy), 1.0 - occupancy);
+            // Only a depth-pruned cell is flagged with no candidates; an overflowing cell holds a full segment.
+            bool pruned = range.count == 0u && range.overflow != 0u;
+            result = pruned
+                ? vec3(0.25)
+                : range.overflow != 0u
+                    ? vec3(1.0, 0.0, 1.0)
+                    : vec3(occupancy, 4.0 * occupancy * (1.0 - occupancy), 1.0 - occupancy);
             break;
         default:
             break;

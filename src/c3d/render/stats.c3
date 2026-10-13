@@ -133,6 +133,7 @@ struct Stats {
     ViewId cluster_view;
     uint  cluster_count;
     uint  cluster_overflows;
+    uint  cluster_skipped;
     uint  decal_overflows;
     uint  debug_lines;
     uint  debug_dropped;         // segments a sink drawn this frame refused; the largest count

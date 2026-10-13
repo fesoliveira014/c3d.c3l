@@ -87,6 +87,7 @@ fn void? stats_panel(Renderer* renderer) {
     imgui::text("Completed cluster view: %u:%u", stats.cluster_view.index, stats.cluster_view.generation);
     imgui::text("Completed cluster count: %u", stats.cluster_count);
     imgui::text("Completed cluster overflows: %u", stats.cluster_overflows);
+    imgui::text("Completed cluster cells skipped: %u", stats.cluster_skipped);
     imgui::text("Completed decal overflows: %u", stats.decal_overflows);
 
     if (renderer.frame_index) {

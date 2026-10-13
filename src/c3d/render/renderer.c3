@@ -226,6 +226,8 @@ struct Renderer {
     gpu::PipelineHandle      preview_pipeline;
     gpu::PipelineHandle      preview_multisample_pipeline;
     gpu::PipelineHandle      cluster_pipeline;
+    gpu::PipelineHandle      cluster_pruned_pipeline;
+    gpu::PipelineHandle      cluster_depth_pipeline;
     bool                     validation;
 
     uint                    output_width;

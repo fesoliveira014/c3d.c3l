@@ -67,6 +67,7 @@ struct BenchmarkOptions @local {
     uint lights;
     uint capacity;
     float range;
+    bool depth_pruning;
 }
 
 fn HallView? populate_hall(AssetStore* assets, Scene* scene) @local {
@@ -244,9 +245,10 @@ fn void? run_example(bool gpu_timings) @local {
         bool workload_changed;
         bool reset;
         bool capacity_changed;
+        bool pruning_changed;
         uint[<2>] extent = renderer.view_extent(renderer.default_view)!;
         imgui::set_next_window_pos({ 16, 16 }, imgui::COND_FIRST_USE_EVER);
-        imgui::set_next_window_size({ 360, 355 }, imgui::COND_FIRST_USE_EVER);
+        imgui::set_next_window_size({ 360, 380 }, imgui::COND_FIRST_USE_EVER);
         if (imgui::begin("Many lights", null, {})) {
             foreach (index, count : LIGHT_COUNTS) {
                 if (imgui::radio_button(LIGHT_COUNT_LABELS[index], workload.light_count == count)) {
@@ -271,6 +273,8 @@ fn void? run_example(bool gpu_timings) @local {
                 }
                 if (index % 2 == 0) imgui::same_line();
             }
+
+            pruning_changed = imgui::checkbox("Depth pruning", &desc.clusters.depth_pruning);
             reset = imgui::button("Reset camera");
             imgui::text("Requested: %u   selected: %u", workload.light_count, renderer.stats.lights);
             imgui::text("Dropped: %u", renderer.stats.lights_dropped);
@@ -281,10 +285,10 @@ fn void? run_example(bool gpu_timings) @local {
             imgui::text_unformatted("Keep workload and camera fixed when comparing modes.");
         }
         imgui::end();
-        if (capacity_changed) render::configure_view(&renderer, renderer.default_view, desc)!;
+        if (capacity_changed || pruning_changed) render::configure_view(&renderer, renderer.default_view, desc)!;
 
-        imgui::set_next_window_pos({ 16, 390 }, imgui::COND_FIRST_USE_EVER);
-        imgui::set_next_window_size({ 360, 490 }, imgui::COND_FIRST_USE_EVER);
+        imgui::set_next_window_pos({ 16, 405 }, imgui::COND_FIRST_USE_EVER);
+        imgui::set_next_window_size({ 360, 475 }, imgui::COND_FIRST_USE_EVER);
         gui::targets_panel(&renderer, renderer.default_view, &targets)!;
         imgui::set_next_window_pos({ 1040, 16 }, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size({ 384, 850 }, imgui::COND_FIRST_USE_EVER);
@@ -333,6 +337,14 @@ fn BenchmarkOptions? parse_options(String[] args) @local {
             case "--lights": options.lights = value.to_uint()!;
             case "--capacity": options.capacity = value.to_uint()!;
             case "--range": options.range = value.to_float()!;
+            case "--depth-pruning":
+                if (value == "on") {
+                    options.depth_pruning = true;
+                } else if (value == "off") {
+                    options.depth_pruning = false;
+                } else {
+                    return c3d::INVALID_ARGUMENT~;
+                }
             default: return c3d::INVALID_ARGUMENT~;
         }
     }
@@ -357,6 +369,7 @@ fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkOptions options) @local 
     // A path-traced view loops every light itself and rejects the cluster grid.
     base.lights = options.shading == ShadingPath.PATH_TRACED ? LightSelection.FLAT : options.selection;
     base.clusters.lights_per_cluster = options.capacity;
+    base.clusters.depth_pruning = options.depth_pruning;
     return base;
 }
 
@@ -375,6 +388,7 @@ fn void print_banner(BenchmarkOptions options, bool timestamps_active) @local {
             traces:      bench_loop::needs_ray_queries(flags) || options.shading == ShadingPath.PATH_TRACED,
             ray_queries: bench_loop::requests_ray_queries(flags) || options.shading == ShadingPath.PATH_TRACED,
         ));
+    io::eprintfn("depth_pruning=%s", options.depth_pruning ? "on" : "off");
 }
 
 fn void? run_benchmark(BenchmarkOptions options) @local {
@@ -460,6 +474,7 @@ fn int main(String[] args) {
         if (excuse != c3d::UNSUPPORTED) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use --benchmark --mode flat|clustered [--shading forward|deferred|path-traced] --lights N --frames N --warmup N --capacity N --range N --width N --height N [--anti-aliasing none|fxaa|taa] [--ambient-occlusion none|half|full] [--depth-prepass on|off] [--msaa 1|2|4|8] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
+            io::eprintn("Also --depth-pruning on|off.");
         }
         return 1;
     }
