@@ -2,7 +2,7 @@ module c3d::ui::input_test;
 
 import c3d;
 import c3d::platform;
-import c3d::ui;
+import c3d::ui @public;
 import c3d::ui::fixture;
 import std::math;
 
@@ -28,6 +28,22 @@ const String SCROLLED @local = `{ "offset": [0, 100], "root": { "kind": "panel",
 const String FIELD @local = `{ "root": { "kind": "text_field", "style": "text", "size": [100, 20],
     "value": "{field.text}", "on_change": "field.change", "on_submit": "field.submit" } }`;
 
+const String WINDOW @local = `{ "root": { "kind": "panel", "size": [200, 100], "padding": 10, "children": [
+    { "kind": "panel", "id": "tool", "window": true, "position": [20, 20], "size": [60, 40], "fill": "#ffffffff",
+      "drag_handle": true, "on_move_start": "tool.start", "on_move_end": "tool.end" } ] } }`;
+
+const String WINDOW_AFTER_LABEL @local = `{ "root": { "kind": "panel", "size": [200, 100], "padding": 10, "children": [
+    { "kind": "label", "style": "text", "text": "hi" },
+    { "kind": "panel", "id": "tool", "window": true, "position": [20, 20], "size": [60, 40], "fill": "#ffffffff",
+      "drag_handle": true, "on_move_start": "tool.start", "on_move_end": "tool.end" } ] } }`;
+
+const String HIDEABLE_WINDOW @local = `{ "root": { "kind": "panel", "size": [200, 100], "children": [
+    { "kind": "panel", "id": "tool", "window": true, "position": [20, 20], "size": [60, 40], "fill": "#ffffffff",
+      "drag_handle": true, "visible": "{tool.shown}", "on_move_start": "tool.start", "on_move_end": "tool.end" } ] } }`;
+
+const String BUTTON_ABOVE @local = `{ "layer": 1, "offset": [300, 0],
+    "root": { "kind": "button", "size": [100, 100], "on_click": "other.click" } }`;
+
 struct Many @local {
     uint count;
 }
@@ -47,6 +63,34 @@ struct Field @local {
 }
 
 fn UiValue field_text(void* user, UiScope* scope) @local => { .kind = TEXT, .text = ((Field*)user).text };
+
+struct WindowRecorders @local {
+    Recorder start;
+    Recorder finish;
+    Recorder other;
+}
+
+fn UiValue tool_shown(void* user, UiScope* scope) @local => { .kind = BOOL, .boolean = *(bool*)user };
+
+fn void register_window_actions(Fixture* fixture, WindowRecorders* recorders) @local {
+    fixture.ui.on("tool.start", &fixture::record_action, &recorders.start)!!;
+    fixture.ui.on("tool.end", &fixture::record_action, &recorders.finish)!!;
+    fixture.ui.on("other.click", &fixture::record_action, &recorders.other)!!;
+}
+
+fn void drag_to(
+    Fixture* fixture,
+    Vec2 from,
+    Vec2 to,
+    float scale = 1,
+) @local {
+    fixture::point(fixture, from, held: true);
+    fixture::frame(fixture, { fixture::button_down(from) }, scale: scale);
+    fixture::point(fixture, to, held: true);
+    fixture::frame(fixture, { fixture::motion(to) }, scale: scale);
+    fixture::point(fixture, to);
+    fixture::frame(fixture, { fixture::button_up(to) }, scale: scale);
+}
 
 fn String scrolled_document(bool spacer, bool named) @local {
     return string::tformat(
@@ -379,4 +423,125 @@ fn void test_drop_reports_source_scope_list_and_cell() @test {
     fixture::frame(&fixture, { fixture::button_up({ 20, 70 }) });
     assert(fixture.recorder.calls == 2 && fixture.recorder.source.indices[0] == 0);
     assert(fixture.recorder.cell == ui::UI_NO_CELL);
+}
+
+fn void test_window_drag_holds_capture_over_controls() @test {
+    Fixture fixture;
+    fixture::create_fixture(&fixture);
+    defer fixture::destroy_fixture(&fixture);
+    WindowRecorders recorders;
+    register_window_actions(&fixture, &recorders);
+    UiDocumentId window = fixture.ui.load_document(WINDOW)!!;
+    fixture.ui.load_document(BUTTON_ABOVE)!!;
+    fixture::frame(&fixture);
+
+    fixture::point(&fixture, { 50, 40 }, held: true);
+    fixture::frame(&fixture, { fixture::button_down({ 50, 40 }) });
+    fixture::point(&fixture, { 90, 40 }, held: true);
+    fixture::frame(&fixture, { fixture::motion({ 90, 40 }) });
+    assert(recorders.start.calls == 1 && recorders.start.offset == (Vec2){ 20, 20 });
+    assert(fixture.ui.window_offset(window, "tool")!! == (Vec2){ 60, 20 });
+
+    fixture.gui_mouse = true;
+    fixture::point(&fixture, { 350, 50 }, held: true);
+    fixture::frame(&fixture, { fixture::motion({ 350, 50 }) });
+    fixture.gui_mouse = false;
+    assert(fixture.input.mouse_captured_by_gui && fixture.input.keyboard_captured_by_gui);
+    assert(fixture.ui.window_offset(window, "tool")!! == (Vec2){ 130, 30 }, "the offset stays inside the parent");
+
+    fixture::point(&fixture, { 600, 400 }, held: true);
+    fixture::frame(&fixture, { fixture::motion({ 600, 400 }) });
+    assert(fixture.input.mouse_captured_by_gui, "the drag holds the mouse over empty space");
+
+    fixture::point(&fixture, { 350, 50 }, held: true);
+    fixture::frame(&fixture);
+    assert(!ui::key_valid(&fixture.ui.hover) && !ui::key_valid(&fixture.ui.press));
+    fixture::point(&fixture, { 350, 50 });
+    fixture::frame(&fixture, { fixture::button_up({ 350, 50 }) });
+    assert(recorders.finish.calls == 1 && recorders.finish.offset == (Vec2){ 130, 30 });
+    assert(recorders.other.calls == 0 && recorders.start.calls == 1);
+
+    fixture::click(&fixture, { 350, 50 });
+    assert(recorders.other.calls == 1, "the button works again after the drag");
+}
+
+fn void test_window_drag_clamps_to_parent_bounds() @test {
+    Fixture fixture;
+    fixture::create_fixture(&fixture);
+    defer fixture::destroy_fixture(&fixture);
+    WindowRecorders recorders;
+    register_window_actions(&fixture, &recorders);
+    UiDocumentId window = fixture.ui.load_document(WINDOW)!!;
+    fixture::frame(&fixture, scale: 2);
+
+    drag_to(&fixture, { 100, 80 }, { 2000, 2000 }, scale: 2);
+    assert(fixture.ui.window_offset(window, "tool")!! == (Vec2){ 130, 50 }, "right and bottom edges keep the padding");
+    assert(recorders.finish.calls == 1 && recorders.finish.offset == (Vec2){ 130, 50 });
+
+    drag_to(&fixture, { 320, 140 }, { -2000, -2000 }, scale: 2);
+    assert(fixture.ui.window_offset(window, "tool")!! == (Vec2){ 10, 10 }, "left and top edges keep the padding");
+    assert(recorders.finish.calls == 2);
+}
+
+fn void test_window_drag_cancels_when_window_disappears() @test {
+    Fixture fixture;
+    fixture::create_fixture(&fixture);
+    defer fixture::destroy_fixture(&fixture);
+    WindowRecorders recorders;
+    register_window_actions(&fixture, &recorders);
+    bool shown = true;
+    fixture.ui.bind(
+        name:   "tool.shown",
+        kind:   BOOL,
+        getter: &tool_shown,
+        user:   &shown,
+    )!!;
+    UiDocumentId window = fixture.ui.load_document(HIDEABLE_WINDOW)!!;
+    fixture::frame(&fixture);
+
+    fixture::point(&fixture, { 50, 40 }, held: true);
+    fixture::frame(&fixture, { fixture::button_down({ 50, 40 }) });
+    fixture::point(&fixture, { 90, 40 }, held: true);
+    fixture::frame(&fixture, { fixture::motion({ 90, 40 }) });
+    assert(fixture.ui.window_offset(window, "tool")!! == (Vec2){ 60, 20 });
+
+    shown = false;
+    fixture::frame(&fixture);
+    assert(fixture.ui.window_offset(window, "tool")!! == (Vec2){ 20, 20 }, "the offset returns to the start");
+
+    shown = true;
+    fixture::point(&fixture, { 90, 40 });
+    fixture::frame(&fixture, { fixture::button_up({ 90, 40 }) });
+    assert(recorders.start.calls == 1 && recorders.finish.calls == 0);
+    assert(fixture.ui.window_offset(window, "tool")!! == (Vec2){ 20, 20 });
+}
+
+fn void test_window_drag_continues_across_reload_by_id() @test {
+    Fixture fixture;
+    fixture::create_fixture(&fixture);
+    defer fixture::destroy_fixture(&fixture);
+    WindowRecorders recorders;
+    register_window_actions(&fixture, &recorders);
+    UiDocumentId window = fixture.ui.load_document(WINDOW)!!;
+    fixture::frame(&fixture);
+
+    fixture::point(&fixture, { 50, 40 }, held: true);
+    fixture::frame(&fixture, { fixture::button_down({ 50, 40 }) });
+    fixture::point(&fixture, { 90, 40 }, held: true);
+    fixture::frame(&fixture, { fixture::motion({ 90, 40 }) });
+
+    fixture.ui.reload_document(window, WINDOW_AFTER_LABEL)!!;
+    fixture::frame(&fixture);
+    assert(fixture.ui.window_offset(window, "tool")!! == (Vec2){ 60, 20 }, "the offset is kept by id");
+    assert(recorders.start.calls == 1);
+
+    fixture::point(&fixture, { 130, 40 }, held: true);
+    fixture::frame(&fixture, { fixture::motion({ 130, 40 }) });
+    assert(fixture.ui.window_offset(window, "tool")!! == (Vec2){ 100, 20 }, "the drag continues from its press");
+
+    fixture.ui.reload_document(window, WINDOW)!!;
+    fixture.input.begin_frame();
+    fixture.ui.route_input(&fixture.input, { fixture::button_up({ 130, 40 }) });
+    assert(recorders.finish.calls == 1 && recorders.finish.offset == (Vec2){ 100, 20 });
+    assert(fixture.input.mouse_captured_by_gui, "the release is handled before the first update");
 }

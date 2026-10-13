@@ -15,7 +15,10 @@ struct UiDeclare @private {
     Ui*   ui;
     fault failure;
     short band;              // z of the document being declared
+    short z;                 // z of the nearest enclosing window, the band outside windows
+    uint  windows;           // windows declared in the document being declared
     bool  drag_source_found; // the dragged item is still declared this frame
+    bool  handle_found;      // a drag handle of the dragged window is still declared this frame
 }
 
 struct UiPlacement @private {
@@ -27,6 +30,7 @@ struct UiPlacement @private {
     uint                        list;        // LIST binding a grid item came from
     uint                        span_width;
     uint                        span_height;
+    bool                        ghost;       // follows the pointer, so the element's offset does not apply
 }
 
 <*
@@ -49,21 +53,28 @@ fn void? Ui.update(
     self.stats.instances = 0;
     self.stats.getter_calls = 0;
     self.stats.text_bytes = 0;
+    self.stats.text_pieces = 0;
+    self.stats.transitions = 0;
+    self.update_serial++;
     self.text_used = 0;
+    self.piece_count = 0;
     self.instance_count = 0;
     self.instance_lookup[..] = {};
     self.clay_error.raised = false;
     self.frame_ready = false;
     self.scale = scale;
     self.delta_seconds = delta_seconds;
+    self.layout_size = { (float)width / scale, (float)height / scale };
+    foreach (&window : self.windows) window.instance = UI_NONE;
 
-    clay::set_layout_dimensions({ (float)width / scale, (float)height / scale });
+    clay::set_layout_dimensions({ self.layout_size.x, self.layout_size.y });
     clay::begin_layout();
     UiDeclare declare = { .ui = self };
     uint stack_count = stack_documents(self);
     for (uint rank = 0; rank < stack_count; rank++) {
         UiDocument* document = self.document_stack[rank];
-        declare.band = (short)rank * UI_Z_BAND;
+        declare.z = declare.band;
+        declare.windows = 0;
         clay::AttachPoint anchor = attach_point(document.anchor);
         UiPlacement placement = {
             .floating = {
@@ -84,10 +95,14 @@ fn void? Ui.update(
             index:     0,
             scope:     &root_scope,
             inherited: {},
+            alpha:     1,
             placement: &placement,
         );
+
+        declare.band += (short)(UI_Z_BAND + 2 * declare.windows);
     }
     if (self.drag.active && !declare.drag_source_found) self.drag = {};
+    if (!declare.failure) check_window_drag(self, &declare);
     declare_ghost(&declare);
     clay::RenderCommandArray commands = clay::end_layout(0);
     self.stats.instances = self.instance_count;
@@ -106,6 +121,7 @@ fn void? Ui.update(
     }
     self.commands = commands;
     self.frame_ready = true;
+    finish_transitions(self);
 }
 
 fn uint stack_documents(Ui* ui) @private {
@@ -159,6 +175,7 @@ fn void declare_ghost(UiDeclare* declare) @private {
         .size       = ui.drag.size,
         .grid       = UI_NONE,
         .list       = UI_NONE,
+        .ghost      = true,
     };
     declare_element(
         declare:   declare,
@@ -166,6 +183,7 @@ fn void declare_ghost(UiDeclare* declare) @private {
         index:     ui.drag.source.element,
         scope:     &ui.drag.source.scope,
         inherited: {},
+        alpha:     1,
         placement: &placement,
     );
 }
@@ -196,7 +214,8 @@ fn float ref_number(Ui* ui, UiRef* reference, UiScope* scope) @private {
 
 fn bool is_interactive(UiElement* element) @private {
     if (element.kind == BUTTON || element.kind == TEXT_FIELD) return true;
-    foreach (action : element.actions) {
+    foreach (kind, action : element.actions) {
+        if (kind == UiEventKind.MOVE_START.ordinal || kind == UiEventKind.MOVE_END.ordinal) continue;
         if (action != UI_NONE) return true;
     }
     return false;
@@ -219,6 +238,8 @@ fn bool instance_draws(UiInstance* instance) @private {
         case BAR:
         case GRID:
             return true;
+        case LABEL:
+            return instance.element.span_count != 0;
         case TEXT_FIELD:
             return instance.state.focused;
         default:
@@ -309,7 +330,8 @@ fn clay::LayoutConfig layout_config(UiProperties* properties) @private {
     };
 }
 
-fn clay::TextElementConfig text_config(Ui* ui, UiProperties* properties, float alpha = 1) @private {
+fn clay::TextElementConfig text_config(Ui* ui, UiInstance* instance, float alpha = 1) @private {
+    UiProperties* properties = &instance.properties;
     Vec4 color = properties.text_color;
     clay::TextWrap wrap;
     switch (properties.wrap) {
@@ -324,6 +346,7 @@ fn clay::TextElementConfig text_config(Ui* ui, UiProperties* properties, float a
         case RIGHT: align = RIGHT;
     }
     return {
+        .user_data      = instance,
         .text_color     = { color.x, color.y, color.z, color.w * alpha },
         .font_id        = (ushort)properties.font_set,
         .font_size      = (ushort)properties.font_size,
@@ -343,6 +366,7 @@ fn void declare_element(
     uint index,
     UiScope* scope,
     UiStateFlags inherited,
+    float alpha,
     UiPlacement* placement,
 ) @private {
     if (declare.failure) return;
@@ -353,6 +377,7 @@ fn void declare_element(
     UiElementKey key = { .document = document.id, .element = index, .scope = *scope };
     bool interactive = is_interactive(element) || placement.list != UI_NONE;
     if (placement.hit && ui.drag.active && same_key(&key, &ui.drag.source)) declare.drag_source_found = true;
+    track_drag_handle(declare, document, element);
     UiStateFlags state = inherited;
     // An interactive element takes its own hover and press, not its ancestor's.
     if (interactive) {
@@ -365,6 +390,10 @@ fn void declare_element(
     if (!ref_bool(ui, &element.enabled, scope)) state.disabled = true;
 
     if (ui.instance_count == ui.instances.len) return fail_declare(declare, c3d::CAPACITY_EXCEEDED);
+
+    short outer_z = declare.z;
+    if (element.window && !claim_window_z(declare, placement)) return fail_declare(declare, c3d::CAPACITY_EXCEEDED);
+
     uint instance_index = ui.instance_count;
     ui.instance_count++;
     UiInstance* instance = &ui.instances[instance_index];
@@ -383,7 +412,17 @@ fn void declare_element(
         .enabled     = !state.disabled,
     };
     instance.clay_id = assign_clay_id(ui, &key, element, instance_index);
+
+    UiTransitionStep step = begin_transition(ui, instance);
     if (catch excuse = prepare_instance(ui, instance, scope)) return fail_declare(declare, excuse);
+
+    animate_value(ui, instance, &step);
+    instance.alpha = alpha * instance.properties.opacity;
+
+    if (placement.floating.attach_to != NONE && !placement.ghost) {
+        placement.floating.offset.x += instance.properties.offset.x;
+        placement.floating.offset.y += instance.properties.offset.y;
+    }
 
     clay::open_element(clay::id(instance.clay_id));
     clay::ElementDeclaration declaration = {
@@ -394,6 +433,8 @@ fn void declare_element(
         declaration.layout.sizing = { clay::fixed(placement.size.x), clay::fixed(placement.size.y) };
     }
     switch (element.kind) {
+        case LABEL:
+            if (element.span_count) size_rich_label(instance, &declaration.layout.sizing);
         case IMAGE:
             size_image(ui, instance, &declaration.layout.sizing);
         case SCROLL:
@@ -425,6 +466,7 @@ fn void declare_element(
         scope:          scope,
     );
     clay::close_element();
+    declare.z = outer_z;
 }
 
 fn void? prepare_instance(Ui* ui, UiInstance* instance, UiScope* scope) @private {
@@ -432,13 +474,17 @@ fn void? prepare_instance(Ui* ui, UiInstance* instance, UiScope* scope) @private
     UiDocument* document = instance.document;
     switch (element.kind) {
         case LABEL:
-            instance.text = expand_template(
-                ui:       ui,
-                document: document,
-                first:    element.text_first,
-                count:    element.text_count,
-                scope:    scope,
-            )!;
+            if (element.span_count) {
+                layout_rich_label(ui, instance, scope)!;
+            } else {
+                instance.text = expand_template(
+                    ui:       ui,
+                    document: document,
+                    first:    element.text_first,
+                    count:    element.text_count,
+                    scope:    scope,
+                )!;
+            }
         case TEXT_FIELD:
             if (instance.state.focused) {
                 instance.text = copy_text(ui, (String)ui.field[:ui.field_length])!;
@@ -476,10 +522,10 @@ fn void declare_contents(
     inherited.focused = false;
     switch (element.kind) {
         case LABEL:
-            clay::text(instance.text, text_config(ui, &instance.properties));
+            if (!element.span_count) clay::text(instance.text, text_config(ui, instance));
         case TEXT_FIELD:
             if (instance.text.len) {
-                clay::text(instance.text, text_config(ui, &instance.properties));
+                clay::text(instance.text, text_config(ui, instance));
             } else if (element.placeholder_count) {
                 String? placeholder = expand_template(
                     ui:       ui,
@@ -489,7 +535,7 @@ fn void declare_contents(
                     scope:    scope,
                 );
                 if (catch excuse = placeholder) return fail_declare(declare, excuse);
-                clay::text(placeholder, text_config(ui, &instance.properties, UI_PLACEHOLDER_ALPHA));
+                clay::text(placeholder, text_config(ui, instance, UI_PLACEHOLDER_ALPHA));
             }
         case LIST:
             uint count = call_getter(ui, element.items, scope).count;
@@ -504,6 +550,7 @@ fn void declare_contents(
                     index:     element.template,
                     scope:     &item_scope,
                     inherited: inherited,
+                    alpha:     instance.alpha,
                     placement: &placement,
                 );
             }
@@ -521,6 +568,8 @@ fn void declare_contents(
         case SCROLL:
         case TOOLTIP:
             for (uint child = element.first_child; child != UI_NONE; child = document.elements[child].next_sibling) {
+                if (document.elements[child].window) continue;
+
                 UiPlacement placement = { .hit = true, .grid = UI_NONE, .list = UI_NONE };
                 if (document.elements[child].kind == TOOLTIP) {
                     if (!pointer_over(ui, &instance.key)) continue;
@@ -538,7 +587,20 @@ fn void declare_contents(
                     index:     child,
                     scope:     scope,
                     inherited: inherited,
+                    alpha:     instance.alpha,
                     placement: &placement,
+                );
+            }
+
+            if (element.has_windows) {
+                declare_windows(
+                    declare:      declare,
+                    document:     document,
+                    parent:       element,
+                    parent_index: instance_index,
+                    inherited:    inherited,
+                    alpha:        instance.alpha,
+                    scope:        scope,
                 );
             }
         case IMAGE:
@@ -578,7 +640,7 @@ fn void declare_grid_items(
                     padding.x + column * grid.cell_size.x,
                     padding.y + row * grid.cell_size.y,
                 },
-                .z_index              = declare.band + 1,
+                .z_index              = declare.z + 1,
                 .attach_points        = { .element = LEFT_TOP, .parent = LEFT_TOP },
                 .pointer_capture_mode = CAPTURE,
                 .attach_to            = PARENT,
@@ -598,6 +660,7 @@ fn void declare_grid_items(
             index:     grid.template,
             scope:     &item_scope,
             inherited: inherited,
+            alpha:     instance.alpha,
             placement: &placement,
         );
     }

@@ -30,6 +30,12 @@ enum UiScrollAxes @private {
     BOTH,
 }
 
+enum UiDragBounds @private {
+    PARENT,
+    VIEWPORT,
+    NONE,
+}
+
 struct UiRef @private {
     uint  binding; // UI_NONE: the literal
     float literal; // booleans as 0 or 1
@@ -40,6 +46,14 @@ struct UiSegment @private {
     uint offset;   // literal bytes in the document's strings
     uint length;
     uint decimals; // UI_DEFAULT_DECIMALS: the kind's default format
+    uint span;     // innermost span in the document's spans, UI_NONE for the label's own properties
+}
+
+struct UiSpan @private {
+    uint style;       // index in the style set
+    uint name_offset; // style name in the document's strings
+    uint name_length;
+    uint parent;      // enclosing span, UI_NONE at the top
 }
 
 struct UiElement @private {
@@ -61,6 +75,10 @@ struct UiElement @private {
     uint           text_count;
     uint           placeholder_first;
     uint           placeholder_count;
+    bool           may_transition; // an inline property or a block of the style sets transition
+    bool           markup;
+    uint           span_first;     // spans of a markup label, in the document's spans
+    uint           span_count;
     UiRef          visible;
     UiRef          enabled;
     UiRef          value;          // bar value; a text field's TEXT binding
@@ -77,15 +95,23 @@ struct UiElement @private {
     uint           rows;
     Vec2           cell_size;
     bool           has_tooltip;    // a tooltip child shows while the pointer is over this element
+    bool           window;
+    bool           has_windows;    // a child is a window
+    bool           drag_handle;
+    UiDragBounds   drag_bounds;
+    Vec2           position;       // a window's offset when its document loads
+    uint           window_of;      // nearest enclosing window element, itself included; UI_NONE outside windows
+    uint           window_slot;    // a window's index in Ui.windows
     uint[UiEventKind::len] actions; // indices in Ui.actions, UI_NONE without one
 }
 
 struct UiDocument @private {
     bool         live;
     UiDocumentId id;
-    char[]       storage;   // one allocation: elements, segments, strings
+    char[]       storage;   // one allocation: elements, segments, spans, strings
     UiElement[]  elements;  // depth-first preorder, root first
     UiSegment[]  segments;
+    UiSpan[]     spans;
     String       strings;
     bool         visible;
     uint         order;
@@ -102,6 +128,10 @@ struct UiLoad @private {
     uint                    list_depth;
     List{UiElement}         elements;
     List{UiSegment}         segments;
+    List{UiSpan}            spans;
+    uint[UI_SPAN_DEPTH]     open_spans; // spans of the label being read that are not closed yet, outermost first
+    uint                    open_count;
+    uint                    label_spans; // first span of the label being read
     DString                 strings;
 }
 
@@ -117,27 +147,41 @@ fn UiDocumentId? Ui.load_document(&self, String jsonc) {
     begin_load(self);
     if (!self.documents.free_count) return c3d::CAPACITY_EXCEEDED~;
     UiDocument document = build_document(self, jsonc)!;
+    if (count_windows(&document) > free_window_slots(self)) {
+        free_document(self, &document);
+        return c3d::CAPACITY_EXCEEDED~;
+    }
+
     UiDocumentId id = self.documents.add(document)!;
     UiDocument* record = self.documents.get(id);
     record.id = id;
     record.order = self.next_order++;
+    assign_windows(self, record, null);
     invalidate_frame(self);
     return id;
 }
 
 <*
  Replace a document's tree; on a fault the old tree stays.
- Resets the document's focus, press and drag state; a scroll with an id keeps its offset.
+ Resets the document's focus, press and grid drag state. A scroll with an id keeps its offset, and a window with an
+ id keeps its offset, order and drag.
  @return? c3d::INVALID_ID, Ui.load_document!
 *>
 fn void? Ui.reload_document(&self, UiDocumentId document, String jsonc) {
     begin_load(self);
     UiDocument* record = self.documents.try_get(document)!;
     UiDocument replacement = build_document(self, jsonc)!;
-    free_document(self, record);
+    if (count_windows(&replacement) > free_window_slots(self) + count_windows(record)) {
+        free_document(self, &replacement);
+        return c3d::CAPACITY_EXCEEDED~;
+    }
+
     replacement.id = document;
     replacement.order = record.order;
     replacement.visible = record.visible;
+    assign_windows(self, &replacement, record);
+    remap_transitions(self, record, &replacement);
+    free_document(self, record);
     *record = replacement;
     forget_document(self, document);
     invalidate_frame(self);
@@ -154,6 +198,8 @@ fn String Ui.load_error_path(&self) => (String)self.error_path[:self.error_path_
 *>
 fn void? Ui.unload_document(&self, UiDocumentId document) {
     UiDocument* record = self.documents.try_get(document)!;
+    release_windows(self, document);
+    drop_transitions(self, document);
     free_document(self, record);
     *record = {};
     self.documents.remove(document);
@@ -236,6 +282,7 @@ fn UiDocument? build_document(Ui* ui, String jsonc) @private {
         UiLoad load = { .ui = ui };
         load.elements.tinit();
         load.segments.tinit();
+        load.spans.tinit();
         load.strings.tinit();
         Object* root = json::tparse(jsonc, JSONC)!;
         if (!root.is_map()) return fail_load(&load, c3d::ASSET_FORMAT_ERROR)~;
@@ -278,20 +325,24 @@ fn UiDocument? build_document(Ui* ui, String jsonc) @private {
 
         usz elements_bytes = (usz)load.elements.len() * UiElement::size;
         usz segments_at = elements_bytes;
-        usz strings_at = segments_at + (usz)load.segments.len() * UiSegment::size;
+        usz spans_at = segments_at + (usz)load.segments.len() * UiSegment::size;
+        usz strings_at = spans_at + (usz)load.spans.len() * UiSpan::size;
         usz total = strings_at + (usz)load.strings.len();
         Vec4[] block = alloc::new_array(ui.allocator, Vec4, (sz)((total + Vec4::size - 1) / Vec4::size));
         char[] storage = ((char*)block.ptr)[:block.len * Vec4::size];
         UiElement[] elements = ((UiElement*)storage.ptr)[:load.elements.len()];
         UiSegment[] segments = ((UiSegment*)(storage.ptr + segments_at))[:load.segments.len()];
+        UiSpan[] spans = ((UiSpan*)(storage.ptr + spans_at))[:load.spans.len()];
         elements[..] = load.elements.array_view()[..];
         segments[..] = load.segments.array_view()[..];
+        spans[..] = load.spans.array_view()[..];
         storage[strings_at : load.strings.len()] = load.strings.str_view()[..];
         document = {
             .live     = true,
             .storage  = storage,
             .elements = elements,
             .segments = segments,
+            .spans    = spans,
             .strings  = (String)storage[strings_at : load.strings.len()],
             .visible  = true,
             .anchor   = anchor,
@@ -386,6 +437,8 @@ fn uint? load_element(
         .items             = UI_NONE,
         .image_binding     = UI_NONE,
         .uv                = { 0, 0, 1, 1 },
+        .window_of         = parent == UI_NONE ? UI_NONE : load.elements[parent].window_of,
+        .window_slot       = UI_NONE,
     };
     element.actions[..] = UI_NONE;
     load.elements.push(element);
@@ -400,11 +453,15 @@ fn uint? load_element(
     }
 
     if (try id = value.get("id")) read_element_id(load, index, id)!;
+    if (try window = value.get("window")) read_window(load, index, window)!;
+    if (try markup = value.get("markup")) read_markup_flag(load, index, markup)!;
 
     uint last_child = UI_NONE;
     foreach (key : sorted_keys(value)) {
         switch (key) {
             case "id":
+            case "window":
+            case "markup":
                 continue;
             case "kind":
             case "items":
@@ -476,6 +533,7 @@ fn uint? load_element(
     }
 
     if (kind == LABEL || kind == TEXT_FIELD) check_font(load, &load.elements[index])!;
+    load.elements[index].may_transition = can_transition(&load.ui.styles, &load.elements[index]);
     return index;
 }
 
@@ -484,6 +542,16 @@ fn uint name_hash(String name) @private {
     foreach (character : name) hash = mix_hash(hash, character);
 
     return hash;
+}
+
+fn uint find_id_element(UiDocument* document, String id) @private {
+    uint hash = name_hash(id);
+    foreach (uint index, &element : document.elements) {
+        if (element.id_hash != hash) continue;
+        if (document.strings[element.id_offset : element.id_length] == id) return index;
+    }
+
+    return UI_NONE;
 }
 
 fn void? read_element_id(UiLoad* load, uint index, Object* value) @private {
@@ -503,6 +571,41 @@ fn void? read_element_id(UiLoad* load, uint index, Object* value) @private {
     element.id_hash = hash;
     load.strings.append(name);
     pop_token(load);
+}
+
+fn void? read_markup_flag(UiLoad* load, uint index, Object* value) @private {
+    push_token(load, "markup");
+    if (load.elements[index].kind != LABEL) return fail_load(load, UNKNOWN_PROPERTY)~;
+    if (!value.is_bool()) return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+
+    load.elements[index].markup = value.b;
+    pop_token(load);
+}
+
+fn void? read_window(UiLoad* load, uint index, Object* value) @private {
+    push_token(load, "window");
+    UiElement* element = &load.elements[index];
+    if (element.kind != PANEL) return fail_load(load, UNKNOWN_PROPERTY)~;
+    if (!value.is_bool()) return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+
+    if (value.b) {
+        if (!window_placement_valid(load, element) || !element.id_length) {
+            return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+        }
+
+        element.window = true;
+        element.window_of = index;
+        load.elements[element.parent].has_windows = true;
+    }
+
+    pop_token(load);
+}
+
+fn bool window_placement_valid(UiLoad* load, UiElement* element) @private {
+    if (element.parent == UI_NONE || load.list_depth > 0) return false;
+
+    UiElementKind parent_kind = load.elements[element.parent].kind;
+    return parent_kind == PANEL || parent_kind == SCROLL;
 }
 
 fn void? read_element_key(
@@ -525,12 +628,17 @@ fn void? read_element_key(
             load.strings.append(name);
         case "text":
             if (kind != LABEL) return fail_load(load, UNKNOWN_PROPERTY)~;
+
+            element.span_first = (uint)load.spans.len();
             read_template(
-                load:  load,
-                value: entry,
-                first: &element.text_first,
-                count: &element.text_count,
+                load:   load,
+                value:  entry,
+                first:  &element.text_first,
+                count:  &element.text_count,
+                markup: element.markup,
             )!;
+
+            element.span_count = (uint)load.spans.len() - element.span_first;
         case "placeholder":
             if (kind != TEXT_FIELD) return fail_load(load, UNKNOWN_PROPERTY)~;
             read_template(
@@ -594,6 +702,26 @@ fn void? read_element_key(
         case "cell_size":
             if (kind != GRID) return fail_load(load, UNKNOWN_PROPERTY)~;
             element.cell_size = read_pair(load, entry, false)!;
+        case "position":
+            if (!element.window) return fail_load(load, UNKNOWN_PROPERTY)~;
+            element.position = read_pair(load, entry, true)!;
+        case "drag_bounds":
+            if (!element.window) return fail_load(load, UNKNOWN_PROPERTY)~;
+            switch (read_word(load, entry)!) {
+                case "parent": element.drag_bounds = PARENT;
+                case "viewport": element.drag_bounds = VIEWPORT;
+                case "none": element.drag_bounds = NONE;
+                default: return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+            }
+        case "drag_handle":
+            if (element.window_of == UI_NONE) return fail_load(load, UNKNOWN_PROPERTY)~;
+            if (!entry.is_bool()) return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+            element.drag_handle = entry.b;
+        case "on_move_start":
+        case "on_move_end":
+            if (!element.window) return fail_load(load, UNKNOWN_PROPERTY)~;
+            UiEventKind move = key == "on_move_start" ? UiEventKind.MOVE_START : UiEventKind.MOVE_END;
+            element.actions[move.ordinal] = read_action(load, entry)!;
         case "on_click": element.actions[UiEventKind.CLICK.ordinal] = read_action(load, entry)!;
         case "on_secondary_click": element.actions[UiEventKind.SECONDARY_CLICK.ordinal] = read_action(load, entry)!;
         case "on_drop": element.actions[UiEventKind.DROP.ordinal] = read_action(load, entry)!;
@@ -731,20 +859,32 @@ fn void? read_template(
     Object* value,
     uint* first,
     uint* count,
+    bool markup = false,
 ) @private {
     String text = read_word(load, value)!;
     *first = (uint)load.segments.len();
+    load.label_spans = (uint)load.spans.len();
+    load.open_count = 0;
     usz literal_start;
     usz cursor;
     while (cursor < text.len) {
         char character = text[cursor];
         bool doubled = cursor + 1 < text.len && text[cursor + 1] == character;
-        if (character == '}' && doubled) {
+        bool escaped = doubled && (character == '}' || (markup && character == '['));
+        if (escaped) {
             push_literal(load, text[literal_start : cursor + 1 - literal_start]);
             cursor += 2;
             literal_start = cursor;
             continue;
         }
+
+        if (markup && character == '[') {
+            push_literal(load, text[literal_start : cursor - literal_start]);
+            cursor = read_span_tag(load, text, cursor)!;
+            literal_start = cursor;
+            continue;
+        }
+
         if (character != '{') {
             cursor++;
             continue;
@@ -772,11 +912,13 @@ fn void? read_template(
         uint binding = resolve_binding(load, inner[:colon])!;
         UiValueKind kind = load.ui.bindings[binding].kind;
         if (kind == IMAGE || kind == LIST) return fail_load(load, BINDING_KIND_MISMATCH)~;
-        load.segments.push({ .binding = binding, .decimals = decimals });
+        load.segments.push({ .binding = binding, .decimals = decimals, .span = current_span(load) });
         cursor = close + 1;
         literal_start = cursor;
     }
     push_literal(load, text[literal_start : text.len - literal_start]);
+    if (load.open_count) return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+
     *count = (uint)load.segments.len() - *first;
 }
 
@@ -787,8 +929,70 @@ fn void push_literal(UiLoad* load, String bytes) @private {
         .offset   = (uint)load.strings.len(),
         .length   = (uint)bytes.len,
         .decimals = UI_DEFAULT_DECIMALS,
+        .span     = current_span(load),
     });
     load.strings.append(bytes);
+}
+
+fn uint current_span(UiLoad* load) @private {
+    return load.open_count ? load.open_spans[load.open_count - 1] : UI_NONE;
+}
+
+fn usz? read_span_tag(UiLoad* load, String text, usz cursor) @private {
+    usz close = cursor + 1;
+    while (close < text.len && text[close] != ']') close++;
+
+    if (close == text.len) return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+
+    String tag = text[cursor + 1 : close - cursor - 1];
+    bool closing = tag.len > 0 && tag[0] == '/';
+    String name = closing ? tag[1..] : tag;
+    if (!name.len) return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+
+    foreach (character : name) {
+        if (character == '[' || character == '{' || character == '}') {
+            return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+        }
+    }
+
+    if (closing) {
+        close_span(load, name)!;
+    } else {
+        open_span(load, name)!;
+    }
+
+    return close + 1;
+}
+
+fn void? open_span(UiLoad* load, String name) @private {
+    UiStyleSet* styles = &load.ui.styles;
+    usz style = find_style_index(styles, name);
+    if (style == styles.styles.len) return fail_load(load, UNKNOWN_STYLE)~;
+    if (!span_style_valid(&styles.styles[style])) return fail_load(load, UNKNOWN_PROPERTY)~;
+    if (load.open_count == UI_SPAN_DEPTH || (uint)load.spans.len() - load.label_spans == UI_MAX_SPANS) {
+        return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+    }
+
+    load.open_spans[load.open_count] = (uint)load.spans.len();
+    load.open_count++;
+    load.spans.push({
+        .style       = (uint)style,
+        .name_offset = (uint)load.strings.len(),
+        .name_length = (uint)name.len,
+        .parent      = load.open_count > 1 ? load.open_spans[load.open_count - 2] : UI_NONE,
+    });
+    load.strings.append(name);
+}
+
+fn void? close_span(UiLoad* load, String name) @private {
+    if (!load.open_count) return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+
+    UiSpan* span = &load.spans[load.open_spans[load.open_count - 1]];
+    if (load.strings.str_view()[span.name_offset : span.name_length] != name) {
+        return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+    }
+
+    load.open_count--;
 }
 
 fn usz find_style_index(UiStyleSet* set, String name) @private {
@@ -812,15 +1016,26 @@ fn void? rebind_documents(Ui* ui, UiStyleSet* set) @private {
     foreach (&document : ui.documents.items) {
         if (!document.live) continue;
         foreach (uint index, &element : document.elements) {
-            if (!element.style_length) continue;
-            String name = document.strings[element.style_offset : element.style_length];
-            if (find_style_index(set, name) == set.styles.len) {
+            if (element.style_length) {
+                String name = document.strings[element.style_offset : element.style_length];
+                if (find_style_index(set, name) == set.styles.len) {
+                    return fail_in_document(
+                        ui:       ui,
+                        document: document,
+                        element:  index,
+                        key:      "style",
+                        excuse:   UNKNOWN_STYLE,
+                    )~;
+                }
+            }
+
+            if (catch excuse = check_span_styles(set, document, element)) {
                 return fail_in_document(
                     ui:       ui,
                     document: document,
                     element:  index,
-                    key:      "style",
-                    excuse:   UNKNOWN_STYLE,
+                    key:      "text",
+                    excuse:   excuse,
                 )~;
             }
         }
@@ -828,9 +1043,13 @@ fn void? rebind_documents(Ui* ui, UiStyleSet* set) @private {
     foreach (&document : ui.documents.items) {
         if (!document.live) continue;
         foreach (uint index, &element : document.elements) {
-            if (!element.style_length) continue;
-            String name = document.strings[element.style_offset : element.style_length];
-            element.style = (uint)find_style_index(set, name);
+            if (element.style_length) {
+                String name = document.strings[element.style_offset : element.style_length];
+                element.style = (uint)find_style_index(set, name);
+            }
+
+            element.may_transition = can_transition(set, element);
+            assign_span_styles(set, document, element);
         }
     }
     ui.styles = *set;
@@ -853,14 +1072,32 @@ fn void? rebind_documents(Ui* ui, UiStyleSet* set) @private {
     invalidate_frame(ui);
 }
 
+fn void? check_span_styles(UiStyleSet* set, UiDocument* document, UiElement* element) @private {
+    foreach (&span : document.spans[element.span_first : element.span_count]) {
+        usz style = find_style_index(set, document.strings[span.name_offset : span.name_length]);
+        if (style == set.styles.len) return UNKNOWN_STYLE~;
+        if (!span_style_valid(&set.styles[style])) return UNKNOWN_PROPERTY~;
+    }
+}
+
+fn void assign_span_styles(UiStyleSet* set, UiDocument* document, UiElement* element) @private {
+    foreach (&span : document.spans[element.span_first : element.span_count]) {
+        span.style = (uint)find_style_index(set, document.strings[span.name_offset : span.name_length]);
+    }
+}
+
 fn void restore_styles(Ui* ui, UiStyleSet* old) @private {
     ui.styles = *old;
     foreach (&document : ui.documents.items) {
         if (!document.live) continue;
         foreach (&element : document.elements) {
-            if (!element.style_length) continue;
-            String name = document.strings[element.style_offset : element.style_length];
-            element.style = (uint)find_style_index(old, name);
+            if (element.style_length) {
+                String name = document.strings[element.style_offset : element.style_length];
+                element.style = (uint)find_style_index(old, name);
+            }
+
+            element.may_transition = can_transition(old, element);
+            assign_span_styles(old, document, element);
         }
     }
 }
