@@ -28,6 +28,7 @@
     "gap": 8,
     "width": "grow",
     "align": ["left", "center"],
+    "transition": { "properties": ["fill"], "duration": 0.15, "easing": "ease_out" },
     "hover": { "fill": "#2c313dff" },
     "pressed": { "fill": "#383f4fff" }
   },
@@ -41,7 +42,8 @@
     "fill": "#3a1010ff",
     "bar_fill": "#4cc45aff",
     "radius": 3,
-    "size": [140, 10]
+    "size": [140, 10],
+    "transition": { "properties": ["value"], "duration": 0.4, "easing": "ease_out" }
   },
 
   "button": {
@@ -51,6 +53,7 @@
     "padding": [10, 5],
     "align": ["center", "center"],
     "border": { "width": 1, "color": "#5a4a30ff" },
+    "transition": { "properties": ["fill"], "duration": 0.12 },
     "hover": { "fill": "#3a3a3aff" },
     "pressed": { "fill": "#4a4a4aff" },
     "disabled": { "fill": "#1c1c1cff", "text_color": "#7a7466ff" }
@@ -97,6 +100,26 @@
     "align": ["left", "center"]
   },
   "close": { "extends": "button", "padding": [6, 1], "fill": "#4a2222ff", "hover": { "fill": "#6a3030ff" } },
+  "lift_card": {
+    "fill": "#2c3550ff",
+    "radius": 6,
+    "padding": 10,
+    "gap": 4,
+    "width": 300,
+    "direction": "column",
+    "border": { "width": 1, "color": "#7a8aa8ff" },
+    "transition": { "properties": ["fill", "border", "offset"], "duration": 0.3, "easing": "ease_out" },
+    "hover": { "fill": "#3d4f6eff", "offset": [0, -10], "border": { "width": 1, "color": "#f2c96bff" } },
+    "pressed": { "fill": "#4a608aff", "offset": [0, -4] }
+  },
+  "lift_hint": {
+    "fill": "#14161cdd",
+    "radius": 4,
+    "padding": 6,
+    "opacity": 0.3,
+    "transition": { "properties": ["opacity"], "duration": 0.3, "easing": "ease_out" },
+    "hover": { "opacity": 1 }
+  },
   "tooltip": {
     "fill": "#0b0c10f2",
     "radius": 4,

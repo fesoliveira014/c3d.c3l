@@ -30,6 +30,7 @@ struct UiPlacement @private {
     uint                        list;        // LIST binding a grid item came from
     uint                        span_width;
     uint                        span_height;
+    bool                        ghost;       // follows the pointer, so the element's offset does not apply
 }
 
 <*
@@ -53,6 +54,8 @@ fn void? Ui.update(
     self.stats.getter_calls = 0;
     self.stats.text_bytes = 0;
     self.stats.text_pieces = 0;
+    self.stats.transitions = 0;
+    self.update_serial++;
     self.text_used = 0;
     self.piece_count = 0;
     self.instance_count = 0;
@@ -92,6 +95,7 @@ fn void? Ui.update(
             index:     0,
             scope:     &root_scope,
             inherited: {},
+            alpha:     1,
             placement: &placement,
         );
 
@@ -117,6 +121,7 @@ fn void? Ui.update(
     }
     self.commands = commands;
     self.frame_ready = true;
+    finish_transitions(self);
 }
 
 fn uint stack_documents(Ui* ui) @private {
@@ -170,6 +175,7 @@ fn void declare_ghost(UiDeclare* declare) @private {
         .size       = ui.drag.size,
         .grid       = UI_NONE,
         .list       = UI_NONE,
+        .ghost      = true,
     };
     declare_element(
         declare:   declare,
@@ -177,6 +183,7 @@ fn void declare_ghost(UiDeclare* declare) @private {
         index:     ui.drag.source.element,
         scope:     &ui.drag.source.scope,
         inherited: {},
+        alpha:     1,
         placement: &placement,
     );
 }
@@ -359,6 +366,7 @@ fn void declare_element(
     uint index,
     UiScope* scope,
     UiStateFlags inherited,
+    float alpha,
     UiPlacement* placement,
 ) @private {
     if (declare.failure) return;
@@ -404,7 +412,17 @@ fn void declare_element(
         .enabled     = !state.disabled,
     };
     instance.clay_id = assign_clay_id(ui, &key, element, instance_index);
+
+    UiTransitionStep step = begin_transition(ui, instance);
     if (catch excuse = prepare_instance(ui, instance, scope)) return fail_declare(declare, excuse);
+
+    animate_value(ui, instance, &step);
+    instance.alpha = alpha * instance.properties.opacity;
+
+    if (placement.floating.attach_to != NONE && !placement.ghost) {
+        placement.floating.offset.x += instance.properties.offset.x;
+        placement.floating.offset.y += instance.properties.offset.y;
+    }
 
     clay::open_element(clay::id(instance.clay_id));
     clay::ElementDeclaration declaration = {
@@ -532,6 +550,7 @@ fn void declare_contents(
                     index:     element.template,
                     scope:     &item_scope,
                     inherited: inherited,
+                    alpha:     instance.alpha,
                     placement: &placement,
                 );
             }
@@ -568,6 +587,7 @@ fn void declare_contents(
                     index:     child,
                     scope:     scope,
                     inherited: inherited,
+                    alpha:     instance.alpha,
                     placement: &placement,
                 );
             }
@@ -579,6 +599,7 @@ fn void declare_contents(
                     parent:       element,
                     parent_index: instance_index,
                     inherited:    inherited,
+                    alpha:        instance.alpha,
                     scope:        scope,
                 );
             }
@@ -639,6 +660,7 @@ fn void declare_grid_items(
             index:     grid.template,
             scope:     &item_scope,
             inherited: inherited,
+            alpha:     instance.alpha,
             placement: &placement,
         );
     }

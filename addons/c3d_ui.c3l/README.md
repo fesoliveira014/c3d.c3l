@@ -59,7 +59,7 @@ while (window.poll()) {
   Without ImGui, call `input.clear_gui_flags()` before `route_input` and apply `ui.wants_text_input` yourself.
 - `update` takes the output size in pixels and `scale`, the output pixels per layout unit: pixel density times any
   user UI scale. Every number in a document is a layout unit. `delta_seconds` is the time since the previous update,
-  finite and not negative; `ui.delta_seconds` holds the last value.
+  finite and not negative; it advances every running transition, and `ui.delta_seconds` holds the last value.
 - `draw` may run any time after `update` and before `prepare_overlay_list`. A load, reload, unload or style load
   invalidates the frame until the next `update`.
 
@@ -248,14 +248,61 @@ scroll and field text. Load styles before the documents that use them.
 | `underline` | `true` or `false` (default); a line under the text |
 | `text_highlight` | color (default transparent) behind the text |
 | `skin`, `bar_skin` | `{ "image": key, "slice": [l, t, r, b] }`, nine-slice margins in texels |
+| `transition` | `{ "properties": [...], "duration": s, "delay": s, "easing": e }`, see Transitions |
+| `opacity` | n from 0 to 1 (default 1); multiplies the alpha of everything the element and its descendants draw |
+| `offset` | [x, y], signed; moves a floating element: a document root, window, grid item or tooltip |
 
 The state blocks `hover`, `pressed`, `disabled` and `focused` take properties only. Effective properties are the
 flattened base, then the active state blocks in the order focused, hover, pressed, disabled (later wins), then the
 element's inline properties. Defaults: transparent fill, white text, `font_size` 16, no underline or text highlight, no
-border, radius or padding.
+border, radius or padding, no transition, opacity 1 and no offset.
 An image multiplies its texture by `fill`, white when the fill is transparent; `highlight` colors a grid's drop
 footprint; a bar draws `bar_fill` or `bar_skin` over its content box. `underline` and `text_highlight` apply to
 label, field and placeholder text, and inside spans.
+
+## Transitions
+
+A style's `transition` times each change of the properties it lists, whether the change comes from a state block, a
+style reload or a bar's bound value.
+
+```jsonc
+"member_row": {
+  "fill": "#1f222bff",
+  "transition": { "properties": ["fill"], "duration": 0.15, "easing": "ease_out" },
+  "hover": { "fill": "#2c313dff" }
+},
+"health_bar": { "transition": { "properties": ["value"], "duration": 0.4 } }
+```
+
+- `properties` is a non-empty list of distinct names: `fill`, `border` (color and widths), `text_color`, `opacity`,
+  `offset`, `size` and `value` (a bar's fill fraction). `duration` is required; `duration` and `delay` are seconds, not
+  negative. `easing` is `linear` (default), `ease_in`, `ease_out` or `ease_in_out`. A bad value faults
+  `c3d::ASSET_FORMAT_ERROR` at its pointer and an unknown key `UNKNOWN_PROPERTY`.
+- The transition of the state an element changes to times the change. A `transition` in the base style times both
+  directions of a hover; one in the `hover` block times only the way in.
+- `update` advances each running transition by `delta_seconds`. A delta of 0 advances nothing and a large one finishes
+  the transition in that update. A change shows its start value in the `update` that notices it.
+- A change that interrupts a running transition starts from the current value, and the duration scales by the share of
+  the old distance that remains, measured by the largest component. A property the new state's `transition` does not
+  list snaps.
+- `size` animates only while `width` and `height` are both fixed numbers before and after the change; any other size
+  snaps. `offset` moves floating elements only, so an in-flow element cannot lift on hover; it can fade, resize and
+  change a bar's value.
+- `opacity` multiplies the alpha of every color an element and its descendants draw: fills, borders, bars, text,
+  highlights, underlines and carets. There is no group opacity, so overlapping descendants show through each other.
+  Hit testing ignores opacity.
+- Each element whose inline properties or style blocks set a `transition` holds one entry in a fixed table
+  (`UiDesc.max_transitions`, zero holds none). An entry starts at its element's first target with no animation. An
+  element that is not laid out in an `update` loses its entry. When the table is full, changes of the elements without
+  an entry snap. `ui.stats.transitions` counts the entries with a running transition.
+- `ui.set_reduced_motion(true)` makes `offset`, `size` and `value` changes instant, and running ones snap at the next
+  `update`. Fades of `fill`, `border`, `text_color` and `opacity` still run.
+- An element with an `id` keeps its entry across `reload_document` and `load_styles` and retargets from its current
+  value; an element without one starts at its new target. `unload_document` drops the document's entries.
+- The `ui` example's HUD rows and buttons fade on hover and press, and its health bars animate `value`. `ui --transitions`
+  adds a lift card: hovering it moves its floating root, fades its colors and brightens a hint through `opacity`. With
+  `--frames N` a scripted pointer hovers the card, presses Damage and hovers a row. `--reduced-motion` and the `M` key
+  toggle reduced motion.
 
 ## Bindings
 
@@ -324,14 +371,14 @@ points into it.
 | Fault | Meaning |
 | --- | --- |
 | `UNKNOWN_ELEMENT_KIND` | `kind` names no element kind, or is missing |
-| `UNKNOWN_PROPERTY` | a key the element kind, style or state block does not take; a span style that sets a property other than the five of a span |
+| `UNKNOWN_PROPERTY` | a key the element kind, style, state block or `transition` does not take; a span style that sets a property other than the five of a span |
 | `UNKNOWN_STYLE` | `style`, `extends` or a span tag names no style of the set |
 | `STYLE_CYCLE` | an `extends` chain returns to a style it left; the pointer is the closing `extends` |
 | `UNKNOWN_BINDING` | a binding no registration provides in that scope |
 | `BINDING_KIND_MISMATCH` | a binding of a kind the key does not take |
 | `UNKNOWN_ACTION` | an action nothing registered with `Ui.on` |
 | `UNKNOWN_ASSET` | an image or font key the store lacks; a text element without a font |
-| `c3d::ASSET_FORMAT_ERROR` | a value of the wrong JSON type or out of range; an `id` that is not a valid name, repeats or collides; a `window` without an `id`, on the root, in a template or under a parent that is not a `panel` or `scroll`; malformed span markup |
+| `c3d::ASSET_FORMAT_ERROR` | a value of the wrong JSON type or out of range, including a `transition` without `properties` or `duration`; an `id` that is not a valid name, repeats or collides; a `window` without an `id`, on the root, in a template or under a parent that is not a `panel` or `scroll`; malformed span markup |
 | `c3d::CAPACITY_EXCEEDED` | a UI table full, including the window table; lists nested deeper than `UI_SCOPE_DEPTH` |
 | `json::*`, `io::EOF` | syntax errors from `std::encoding::json`; the error path is empty |
 
@@ -367,12 +414,13 @@ several errors reports the same one every time.
 
 `default_ui_desc()`: 16 documents, 256 styles, 64 font sets, 1,024 bindings, 256 actions, 64 item sources, 32 KiB of
 names, 4,096 laid-out elements per frame, 64 KiB of expanded text per frame, 2,048 cached lines with 32,768 cached
-glyphs, a 256-byte field buffer, 64 windows (60 bytes each) across the loaded documents and 1,024 rich text pieces per
-frame (76 bytes each); `max_windows` and `max_text_pieces` may be 0, which holds none. Every table is allocated once
-in `create_ui`; documents and style sets allocate once when they load. Nothing allocates per frame. A load or reload
-whose windows do not fit the table faults `CAPACITY_EXCEEDED` and changes nothing. `update` faults
-`CAPACITY_EXCEEDED` when a frame overflows, including a frame whose rich labels need more pieces than the table holds;
-that frame draws nothing and the next frame retries.
+glyphs, a 256-byte field buffer, 64 windows (60 bytes each) across the loaded documents, 1,024 rich text pieces per
+frame (76 bytes each) and 128 transition entries; `max_windows`, `max_text_pieces` and `max_transitions` may be 0,
+which holds none. A transition entry is 424 bytes in a table of two slots per entry, so the default 256 slots take
+106 KiB of the `create_ui` storage. Every table is allocated once in `create_ui`; documents and style sets allocate
+once when they load. Nothing allocates per frame. A load or reload whose windows do not fit the table faults
+`CAPACITY_EXCEEDED` and changes nothing. `update` faults `CAPACITY_EXCEEDED` when a frame overflows, including a frame
+whose rich labels need more pieces than the table holds; that frame draws nothing and the next frame retries.
 
 ## Measured costs
 

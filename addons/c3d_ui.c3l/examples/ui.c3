@@ -59,6 +59,7 @@ const float LOG_POINTER_Y @local = 120;
 const float FIXED_STEP_SECONDS @local = 1.0f / 60; // bounded runs step by this, so frame N is reproducible
 
 const uint WINDOW_SCRIPT_EVENTS @local = 2; // a motion and a button release in the same frame
+const Vec2 STATS_PANEL_TRANSITIONS_SIZE @local = { 260, 186 }; // two more lines
 
 const int RICH_GOLD @local = 1250;
 const float RICH_GEMS @local = 3.5f;
@@ -101,6 +102,8 @@ struct Options @local {
     bool reload_scroll;
     bool windows;
     bool rich_text;
+    bool transitions;
+    bool reduced_motion;
     uint frames;
     uint labels;
 }
@@ -170,6 +173,27 @@ const ScriptedDrag[3] WINDOW_SCRIPT @local = {
     { .press_frame = 40, .release_frame = 55, .from = { 497, 518 }, .to = { 877, 518 } },
 };
 
+enum ScriptedAction @local {
+    MOVE,
+    PRESS,
+    RELEASE,
+}
+
+struct ScriptedStep @local {
+    uint           frame;
+    ScriptedAction action;
+    Vec2           at;     // layout units
+}
+
+// Layout units at 1280 x 720: hover the lift card, press and release Damage, then hover the second member's row.
+const ScriptedStep[5] TRANSITION_SCRIPT @local = {
+    { .frame = 10, .action = MOVE, .at = { 500, 660 } },
+    { .frame = 40, .action = MOVE, .at = { 150, 353 } },
+    { .frame = 44, .action = PRESS, .at = { 150, 353 } },
+    { .frame = 52, .action = RELEASE, .at = { 150, 353 } },
+    { .frame = 80, .action = MOVE, .at = { 150, 160 } },
+};
+
 struct Icons @local {
     material::TextureRef potion;
     material::TextureRef ration;
@@ -215,6 +239,10 @@ struct Demo @local {
     UiDocumentId      log_document;
     bool              reload_scroll;
     bool              windows;
+    bool              transitions;
+    bool              reduced_motion;
+    Vec2              script_pointer;
+    bool              script_down;
     Desk              desk;
     Loot              loot;
     Event[WINDOW_SCRIPT_EVENTS] script_events;
@@ -706,6 +734,39 @@ fn void? load_rich_text(Demo* demo) @local {
     ui.load_document((String)document)!;
 }
 
+fn void? load_transitions(Demo* demo) @local {
+    char[] document = $embed("ui/transitions.jsonc");
+    demo.ui.load_document((String)document)!;
+}
+
+fn Event[] replay_transitions(Demo* demo, uint frame) @local {
+    uint count;
+    foreach (&step : TRANSITION_SCRIPT) {
+        if (step.frame != frame) continue;
+
+        demo.script_pointer = step.at * demo.window.pixel_density;
+        Vec2 at = demo.script_pointer;
+
+        switch (step.action) {
+            case MOVE:
+                demo.script_events[count++] = { .kind = MOUSE_MOTION, .position = at };
+            case PRESS:
+                demo.script_down = true;
+                demo.script_events[count++] = { .kind = MOUSE_MOTION, .position = at };
+                demo.script_events[count++] = { .kind = MOUSE_BUTTON_DOWN, .button = LEFT, .position = at };
+            case RELEASE:
+                demo.script_down = false;
+                demo.script_events[count++] = { .kind = MOUSE_BUTTON_UP, .button = LEFT, .position = at };
+        }
+    }
+
+    Input* input = &demo.window.input;
+    input.mouse_position = demo.script_pointer;
+    input.mouse_buttons[(usz)platform::MouseButton.LEFT] = demo.script_down;
+
+    return demo.script_events[:count];
+}
+
 fn Event[] replay_windows(Demo* demo, uint frame) @local {
     Input* input = &demo.window.input;
     uint count;
@@ -830,6 +891,7 @@ fn void? run_interactive(Demo* demo, uint frame_limit) @local {
 
         Event[] events = window.events();
         if (demo.windows && frame_limit) events = replay_windows(demo, frames);
+        if (demo.transitions && frame_limit) events = replay_transitions(demo, frames);
 
         Input* input = &window.input;
         // A field blurs and a window drag cancels on Escape down, so the release that follows must not quit.
@@ -844,6 +906,12 @@ fn void? run_interactive(Demo* demo, uint frame_limit) @local {
         if (!input.keyboard_captured_by_gui && input.key_pressed(platform::Scancode.F5)) {
             reload_from_disk(demo);
         }
+
+        if (!input.keyboard_captured_by_gui && input.key_pressed(platform::Scancode.M)) {
+            demo.reduced_motion = !demo.reduced_motion;
+            ui.set_reduced_motion(demo.reduced_motion);
+        }
+
         animate(demo, (float)window.clock.total);
         platform::sync_window(window, renderer);
         refresh_hud(demo);
@@ -859,7 +927,10 @@ fn void? run_interactive(Demo* demo, uint frame_limit) @local {
         }
 
         imgui::set_next_window_pos(STATS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
-        imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
+        imgui::set_next_window_size(
+            demo.transitions ? STATS_PANEL_TRANSITIONS_SIZE : STATS_PANEL_SIZE,
+            imgui::COND_FIRST_USE_EVER,
+        );
         if (imgui::begin("UI", null, {})) {
             imgui::text("Instances: %u", ui.stats.instances);
             imgui::text("Getter calls: %u", ui.stats.getter_calls);
@@ -867,6 +938,10 @@ fn void? run_interactive(Demo* demo, uint frame_limit) @local {
             imgui::text("Placement hits: %u", ui.stats.placement_hits);
             imgui::text("Placement misses: %u", ui.stats.placement_misses);
             imgui::text("Overlay items: %u glyphs: %u", demo.list.item_count, demo.list.glyph_count);
+            if (demo.transitions) {
+                imgui::text("Transitions running: %u", ui.stats.transitions);
+                imgui::text("Reduced motion (M): %s", demo.reduced_motion ? "on" : "off");
+            }
         }
         imgui::end();
         gui_renderer.finish_frame();
@@ -1047,9 +1122,13 @@ fn int main(String[] args) {
             options.windows = true;
         } else if (argument == "--rich-text") {
             options.rich_text = true;
+        } else if (argument == "--transitions") {
+            options.transitions = true;
+        } else if (argument == "--reduced-motion") {
+            options.reduced_motion = true;
         } else {
-            io::eprintn("Use ui [--frames N] [--reload-scroll] [--windows] [--rich-text]");
-            io::eprintn("       [--benchmark --frames F [--labels N]].");
+            io::eprintn("Use ui [--frames N] [--reload-scroll] [--windows] [--rich-text] [--transitions]");
+            io::eprintn("       [--reduced-motion] [--benchmark --frames F [--labels N]].");
             return 1;
         }
     }
@@ -1136,6 +1215,8 @@ fn int main(String[] args) {
         .portrait_view   = portrait_view,
         .reload_scroll   = options.reload_scroll,
         .windows         = options.windows,
+        .transitions     = options.transitions,
+        .reduced_motion  = options.reduced_motion,
     };
     create_squad(&demo, &assets, portrait)!!;
     register_squad(&demo)!!;
@@ -1143,6 +1224,8 @@ fn int main(String[] args) {
     if (options.reload_scroll) load_log(&demo)!!;
     if (options.windows) load_windows(&demo)!!;
     if (options.rich_text) load_rich_text(&demo)!!;
+    if (options.transitions) load_transitions(&demo)!!;
+    ui.set_reduced_motion(options.reduced_motion);
 
     if (catch excuse = run_interactive(&demo, options.frames)) {
         io::eprintfn("UI example failed: %s", excuse);
