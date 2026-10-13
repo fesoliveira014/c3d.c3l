@@ -233,7 +233,7 @@ surface-lighting term; the outline below is geometry.
 ### Toon outline
 
 ```c3
-toon.outline_width = 3;           // screen pixels; 0 draws no outline
+toon.outline_width = 3;           // pixels of the view's image; 0 draws no outline
 toon.outline_color = { 0, 0, 0 }; // linear
 toon.outline_depth_offset = 0;    // world units
 ```
@@ -251,7 +251,8 @@ and leaves the frame as it was.
 - **Which draws.** `OPAQUE` and `MASK` Toon meshes, batches and crowds that test
   and write depth, in every vertex form: static, skinned, morphed, instanced and
   posed. `BLEND`, `WEIGHTED`, billboards, impostors and non-triangle meshes ignore
-  `outline_width`.
+  `outline_width`. Under `MASK` the far side of the hull shows through the
+  cutouts of the near side.
 - **Where.** Forward views draw it in `FORWARD_OPAQUE`, deferred views in the
   forward draws that follow the lighting resolve, where Toon already draws. The
   hull is not drawn in shadow layers, the depth prepass or the G-buffer pass, and
