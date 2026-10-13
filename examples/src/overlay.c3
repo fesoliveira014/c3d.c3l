@@ -752,6 +752,7 @@ fn void? add_world_labels(Demo* demo, float time) @local {
 
     Vec3 pixel_position = WORLD_PIXEL_ANCHOR;
     pixel_position.z += WORLD_PIXEL_TRAVEL * (0.5f + 0.5f * math::sin(time * WORLD_SPEED));
+
     list.push_anchor({ .position = pixel_position, .pixels_per_unit = 1 })!;
     list.add_rect(solid_rect(
         min:    { -WORLD_PIXEL_MARKER, -WORLD_PIXEL_MARKER },
@@ -793,6 +794,7 @@ fn void? add_world_labels(Demo* demo, float time) @local {
 
     Vec3 metre_position = WORLD_METRE_ANCHOR;
     metre_position.z += WORLD_METRE_TRAVEL * (0.5f + 0.5f * math::sin(time * WORLD_SPEED + WORLD_METRE_PHASE));
+
     list.push_anchor({ .position = metre_position })!;
     list.add_rect(solid_rect(
         min:    { -WORLD_METRE_MARKER, -WORLD_METRE_MARKER },
@@ -872,6 +874,7 @@ fn void? draw_frame(Demo* demo, GuiRenderer* gui_renderer, FrameInfo info) @loca
             }
         }
         renderer.render_view(demo.scene, demo.camera_node, renderer.default_view)!;
+
         if (demo.world) renderer.set_view_overlay(renderer.default_view, demo.world_list)!;
         renderer.finish_view(renderer.default_view)!;
 

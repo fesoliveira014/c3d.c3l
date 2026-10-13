@@ -24,6 +24,7 @@ fn void? Renderer.set_view_overlay(&self, ViewId view, OverlayList* list) {
         record.world_overlay = null;
         return;
     }
+
     if (record.desc.color == OutputMode.LINEAR_HDR || record.desc.shading == ShadingPath.PATH_TRACED) {
         return c3d::UNSUPPORTED~;
     }
@@ -32,6 +33,7 @@ fn void? Renderer.set_view_overlay(&self, ViewId view, OverlayList* list) {
     foreach (&entry : list.entries[:list.item_count]) {
         if (!list.anchor_roots[entry.transform]) return c3d::INVALID_ARGUMENT~;
     }
+
     RenderTargetId target = record.desc.output == ViewOutput.TEXTURE ? record.desc.target : (RenderTargetId){};
     check_overlay_refs(self.assets, &self.targets, list, target)!;
 
@@ -53,9 +55,11 @@ fn void? record_world_overlay(Renderer* renderer, ViewRecord* record) @private {
             .table = alloc::new_array(tmem, shader::OverlayTransformGpu, list.transform_count),
             .view  = { .depth = record.depth.view.index, .rect = rect, .enabled = true },
         };
+
         resolve_world_anchors(renderer, &record.overlay_projection, list, &world);
         prepare_overlay(renderer, list, target, &world)!;
     };
+
     if (!list.prepared.run_count) return;
 
     record.depth.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
@@ -91,6 +95,7 @@ fn void resolve_world_anchors(
 ) @local {
     PixelRect rect = world.view.rect;
     Vec2 size = { (float)rect.width, (float)rect.height };
+
     foreach (entry, &resolved : world.table) {
         uint root = list.anchor_roots[entry];
         if (!root) {

@@ -1181,7 +1181,9 @@ fn void? Renderer.finish_view(&self, ViewId view) {
         if (record.desc.post.depth_of_field && !taa_debug) post::record_dof(self, record)!;
         record_view_output(self, record)!;
         post::close_post_chain(self, record)!;
+
         if (record.world_overlay) record_world_overlay(self, record)!;
+
         end_profile_view(self)!;
     };
 }
