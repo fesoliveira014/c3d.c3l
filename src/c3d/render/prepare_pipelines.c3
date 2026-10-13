@@ -439,6 +439,22 @@ fn void list_mesh_pipelines(
             );
         }
 
+        if (list == DrawList.OPAQUE && material_outlined(material)) {
+            list_prepare_key(requests, outline_pipeline_key(vertex, polygon), PreparePipelinePass.FORWARD);
+            if (post::uses_velocity(desc)) {
+                PipelineKey outline_velocity = post::geometry_velocity_pipeline_key(
+                    vertex: outline_vertex_variant(vertex),
+                    polygon: polygon,
+                    format: post::velocity_format(desc),
+                );
+                list_prepare_key(
+                    requests: requests,
+                    key: outline_velocity,
+                    pass: PreparePipelinePass.VELOCITY,
+                );
+            }
+        }
+
         if (post::uses_velocity(desc) && writes_own_depth(material)) {
             PipelineKey velocity = post::geometry_velocity_pipeline_key(
                 vertex: vertex,

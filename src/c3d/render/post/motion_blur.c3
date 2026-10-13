@@ -219,36 +219,49 @@ fn void? record_geometry_velocity(
             state_set = true;
         }
 
-        GeometryLayout* layout = &item.geometry.layout;
-        if (render::candidate_instanced(item.candidate)) {
-            render::issue_batch_draw(
-                renderer: renderer,
-                root:     item.root,
-                geometry: item.geometry,
-                range:    item.range,
-            )!;
-        } else if (layout.index_count) {
-            gpu::cmd_draw_indexed(
-                commands:       &renderer.commands,
-                vertex_root:    item.root,
-                fragment_root:  item.root,
-                index_span:     item.geometry.indices,
-                index_count:    layout.index_count,
-                instance_count: 1,
-                index_type:     layout.flags.indices_u16 ? gpu::IndexType.U16 : gpu::IndexType.U32,
-            )!;
-        } else {
-            gpu::cmd_draw(
-                commands:       &renderer.commands,
-                vertex_root:    item.root,
-                fragment_root:  item.root,
-                vertex_count:   layout.vertex_count,
-                instance_count: 1,
-            )!;
+        draw_velocity_item(renderer, item)!;
+
+        if (item.outline_velocity_pipeline.is_valid()) {
+            gpu::cmd_bind_pipeline(&renderer.commands, item.outline_velocity_pipeline)!;
+            bound = item.outline_velocity_pipeline;
+            state.raster.cull_mode = gpu::CullMode.FRONT;
+            gpu::cmd_set_graphics_state(&renderer.commands, &state)!;
+
+            draw_velocity_item(renderer, item)!;
         }
-        renderer.stats.draws++;
     }
     gpu::cmd_end_render_pass(&renderer.commands)!;
+}
+
+fn void? draw_velocity_item(Renderer* renderer, DrawItem* item) @private {
+    GeometryLayout* layout = &item.geometry.layout;
+    if (render::candidate_instanced(item.candidate)) {
+        render::issue_batch_draw(
+            renderer: renderer,
+            root:     item.root,
+            geometry: item.geometry,
+            range:    item.range,
+        )!;
+    } else if (layout.index_count) {
+        gpu::cmd_draw_indexed(
+            commands:       &renderer.commands,
+            vertex_root:    item.root,
+            fragment_root:  item.root,
+            index_span:     item.geometry.indices,
+            index_count:    layout.index_count,
+            instance_count: 1,
+            index_type:     layout.flags.indices_u16 ? gpu::IndexType.U16 : gpu::IndexType.U32,
+        )!;
+    } else {
+        gpu::cmd_draw(
+            commands:       &renderer.commands,
+            vertex_root:    item.root,
+            fragment_root:  item.root,
+            vertex_count:   layout.vertex_count,
+            instance_count: 1,
+        )!;
+    }
+    renderer.stats.draws++;
 }
 
 // An invalid result means no item is redrawn, so the pass is not begun.
@@ -266,6 +279,15 @@ fn gpu::PipelineHandle? resolve_velocity_pipelines(
             continue;
         }
         item.velocity_pipeline = pipeline;
+        if (item.outline_pipeline.is_valid()) {
+            item.outline_velocity_pipeline = velocity_pipeline_for(
+                renderer: renderer,
+                item:     item,
+                format:   format,
+                outline:  true,
+            )!;
+        }
+
         if (!first.is_valid()) first = pipeline;
     }
     return first;
@@ -293,11 +315,16 @@ fn PipelineKey geometry_velocity_pipeline_key(ShaderVariant vertex, gpu::Polygon
     };
 }
 
-fn gpu::PipelineHandle? velocity_pipeline_for(Renderer* renderer, DrawItem* item, gpu::Format format) @private {
+fn gpu::PipelineHandle? velocity_pipeline_for(
+    Renderer* renderer,
+    DrawItem* item,
+    gpu::Format format,
+    bool outline = false,
+) @private {
     Material* material = render::material_data(renderer, item.material);
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
     PipelineKey key = geometry_velocity_pipeline_key(
-        vertex: item.vertex,
+        vertex: outline ? render::outline_vertex_variant(item.vertex) : item.vertex,
         polygon: wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
         format: format,
     );
