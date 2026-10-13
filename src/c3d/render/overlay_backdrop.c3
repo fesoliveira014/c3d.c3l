@@ -13,9 +13,6 @@ const gpu::TextureState TRANSFER_DESTINATION_STATE @local = {
     .access = { .write },
 };
 
-<*
- Renderer-owned images the backdrop blur works in, grown to the largest output a backdrop list was prepared for.
-*>
 struct OverlayBackdrop @private {
     Target              window_copy;   // the window's pixels in the swapchain format; a target is blurred in place
     Target              horizontal;    // RGBA16F: the box after the horizontal pass
@@ -61,18 +58,7 @@ fn void? prepare_overlay_backdrop(Renderer* renderer, Target* output, bool windo
     backdrop.frame_copy_state = {};
 }
 
-<*
- Blur the pixels under a backdrop item, then reopen the pass and ready the draw.
- Ends the open pass, so state the pass held is set again by the caller's pipeline and state.
- @param [&inout] context : "Active overlay of a list prepared with this backdrop."
- @param [&in] run : "The backdrop item's box and radius."
- @param [&inout] root : "Receives the blurred image's fields."
- @param pipeline : "Bound for the draw once the pass reopens."
- @param [&in] state : "Set once the pass reopens."
- @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
- @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
- @return? gpu::DEVICE_BUSY, gpu::DEVICE_LOST, gpu::BACKEND_ERROR, gpu::UNSUPPORTED_FEATURE
-*>
+// Ends the open pass, blurs the pixels under the item and reopens the pass with the draw's pipeline and state bound.
 fn void? record_overlay_backdrop(
     OverlayContext* context,
     OverlayBackdropRun* run,
