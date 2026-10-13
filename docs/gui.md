@@ -222,7 +222,8 @@ The statistics panel labels cluster view, cell count and overflowing-cell count 
 CPU counters, and work with GPU timestamps disabled. With multiple views they follow
 the [last-recorded-view policy](views.md#frames), not an aggregate. Timestamp-enabled
 runs also show completed `LIGHT_CULL` and opaque GPU times. Cull time includes private
-light upload/reset, assignment and counter copy, and the tile-depth reduction of a pruned view; opaque time alone is not total cost.
+light upload/reset (an unpruned view only), the tile-depth reduction (a pruned view only),
+assignment and counter copy; opaque time alone is not total cost.
 The dispatch also assigns decals; sampling is timed in the receiver's draw pass,
 including `FORWARD_OPAQUE` and `GBUFFER`. The occupancy heatmap still displays
 finite-light counts, not decal counts.

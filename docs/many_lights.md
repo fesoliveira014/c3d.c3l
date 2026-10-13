@@ -104,12 +104,14 @@ Limits:
   geometry of each tile.
 - The reduction reads the depth image once and adds a dispatch and a barrier to `LIGHT_CULL`.
   Compare the completed `LIGHT_CULL` time with the setting off.
-- Pruning needs depth before shading. A forward view with no depth prepass, and no ambient
-  occlusion, screen-space GI or traced reflections (each implies one), ignores the field
-  without a fault. Deferred views always have depth.
+- Pruning needs depth before any pass reads the cell lists. A forward view with no depth
+  prepass (and no ambient occlusion or screen-space GI, each of which implies one) ignores
+  the field without a fault, and so does a forward view with traced reflections: its thin
+  reflection prepass is both the depth producer and a reader of the decal lists. Deferred
+  views always have depth.
 - On a pruned view the reduction, the cull and the [volumetric fog](sky.md#volumetric-fog)
-  volume are recorded after the depth prepass (forward) or the G-buffer (deferred) instead
-  of before every other pass.
+  volume are recorded after the depth prepass instead of before every other pass: on a
+  deferred view between the prepass and the G-buffer pass, whose stages read the decal lists.
 - The reduction maps pixels to tiles as cluster selection does, from the unjittered view.
   Under TAA a pixel within half a pixel of a tile edge can shade with the neighbouring tile's
   lists; when that tile's bound is nearer, the point takes the complete flat list.
@@ -135,7 +137,7 @@ The timing displays measure different intervals:
 | Stats `Frame` | Renderer CPU-side frame interval through submission/presentation; not the whole application loop |
 | Stats `CPU record` | Renderer CPU interval through submission, before presentation; not isolated GPU work |
 | Completed GPU opaque | Timestamped opaque pass from a completed frame slot |
-| Completed GPU light cull | Private light upload/reset, the tile-depth reduction of a pruned view, cluster assignment and counter copy from a completed slot |
+| Completed GPU light cull | Private light upload/reset (an unpruned view only), the tile-depth reduction (a pruned view only), cluster assignment and counter copy from a completed slot |
 
 The renderer's CPU clock starts after frame-slot completion/readback processing, so neither
 CPU timing row includes that initial wait. Wall interval can expose pacing those rows omit.

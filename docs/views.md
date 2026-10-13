@@ -199,13 +199,15 @@ reach such a cell, such as fog froxels behind the farthest surface, take the com
 list. Cells in front of the nearest surface are never skipped, so blended surfaces keep
 their lists. No light is dropped.
 
-The reduction needs depth before shading, so on a pruned view the reduction, the cull and the
-[volumetric fog](sky.md#volumetric-fog) volume run after the depth producer: after the
-depth prepass of a forward view and after the G-buffer of a deferred view. Views without
-pruning keep the cull before every other pass of the view. A forward view with no depth prepass
-(`depth_prepass` false, and no AO, SSGI or traced reflections that imply one) has no depth
-before shading and ignores `depth_pruning`; this is not a fault. `LIGHT_CULL` includes the
-reduction. `Stats.cluster_skipped` and `ViewStats.cluster_skipped` count the skipped cells and
+The reduction needs depth before any pass reads the cell lists, so on a pruned view the
+reduction, the cull and the [volumetric fog](sky.md#volumetric-fog) volume run right after the
+depth prepass. On a deferred view that is between the prepass and the G-buffer pass, whose
+stages read the decal lists. Views without pruning keep the cull before every other pass of
+the view. A forward view with no depth prepass (`depth_prepass` false, and no AO or SSGI, which
+imply one) has no depth before shading, and a forward view with traced reflections shades
+decals in the thin reflection prepass that produces its depth. Both ignore `depth_pruning`;
+this is not a fault. `LIGHT_CULL` includes the reduction. `Stats.cluster_skipped` and
+`ViewStats.cluster_skipped` count the skipped cells and
 are not part of `cluster_overflows`. See [many lights](many_lights.md#depth-pruning).
 
 ## Frames
