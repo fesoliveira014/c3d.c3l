@@ -671,6 +671,11 @@ const uint OVERLAY_SAMPLER_MASK = 65535;
 const uint OVERLAY_FLAG_TEXTURED = 1;
 const uint OVERLAY_FLAG_NINE_SLICE = 2;
 const uint OVERLAY_FLAG_BORDER = 4;
+// A gradient rect holds its end color in glyph_location, and its from and to points as half2 offsets from the
+// top left of bounds in glyph_band_max and band_texture.
+const uint OVERLAY_FLAG_GRADIENT = 8;
+// With OVERLAY_FLAG_GRADIENT: from is the centre and to a point on the radius.
+const uint OVERLAY_FLAG_GRADIENT_RADIAL = 16;
 const uint OVERLAY_QUAD_VERTICES = 6;
 // Quad margin past an item's bounds; the antialiased edge fades out half a pixel past them.
 const float OVERLAY_EDGE_PIXELS = 1.0;
