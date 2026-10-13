@@ -6,6 +6,7 @@ import gpu;
 
 const gpu::TextureUsage MSAA_COLOR_USAGE @private = { .color_attach };
 const gpu::TextureUsage MSAA_DEPTH_USAGE @private = { .depth_attach };
+const gpu::TextureUsage MSAA_SAMPLED_DEPTH_USAGE @private = { .depth_attach, .sampled };
 const gpu::TextureUsage MSAA_SAMPLED_USAGE @private = { .color_attach, .sampled };
 
 <*
@@ -65,6 +66,23 @@ fn bool msaa_reflection_gbuffer_wanted(ViewDesc* desc) @private {
     return desc.ray_tracing.reflections && desc.shading == ShadingPath.FORWARD;
 }
 
+// The deferred lighting reads the multisample depth by sample.
+fn gpu::TextureUsage msaa_depth_usage(ViewDesc* desc) @private {
+    if (desc.shading == ShadingPath.DEFERRED) return MSAA_SAMPLED_DEPTH_USAGE;
+
+    return MSAA_DEPTH_USAGE;
+}
+
+fn bool msaa_normal_copy_wanted(ViewDesc* desc) @private {
+    if (desc.msaa == MsaaSamples.ONE || desc.shading != ShadingPath.DEFERRED) return false;
+
+    return desc.ambient_occlusion.kind != AoKind.NONE || desc.screen_space_gi.enabled || desc.ray_tracing.reflections;
+}
+
+fn bool msaa_specular_copy_wanted(ViewDesc* desc) @private {
+    return desc.msaa != MsaaSamples.ONE && desc.shading == ShadingPath.DEFERRED && desc.ray_tracing.reflections;
+}
+
 fn gpu::TextureState opaque_depth_state(ViewRecord* record) @private {
     if (record.desc.msaa == MsaaSamples.ONE) return DEPTH_ATTACHMENT_STATE;
 
@@ -96,10 +114,18 @@ fn MsaaCounts live_msaa_counts(Renderer* renderer, bool prepassed = false) @priv
     return counts;
 }
 
-// A deferred view takes no multisample count; a window view without a surface has no images to check.
+fn bool? msaa_gbuffer_supported(MsaaProbe* probe) @private {
+    foreach (format : GBUFFER_FORMATS) {
+        if (!msaa_image_supported(probe, format, MSAA_SAMPLED_USAGE)!) return false;
+    }
+
+    return true;
+}
+
+// A window view without a surface has no images to check.
 fn void? validate_msaa_support(Renderer* renderer, ViewDesc* desc, uint[<2>] output) @private {
     if (desc.msaa == MsaaSamples.ONE) return;
-    if (desc.shading == ShadingPath.DEFERRED) return c3d::UNSUPPORTED~;
+    if (desc.shading == ShadingPath.DEFERRED && !renderer.caps.sample_rate_shading) return c3d::UNSUPPORTED~;
     if (output.x == 0 || output.y == 0) return;
 
     MsaaProbe probe = {
@@ -114,7 +140,8 @@ fn void? validate_msaa_support(Renderer* renderer, ViewDesc* desc, uint[<2>] out
     };
 
     bool supported = msaa_image_supported(&probe, HDR_FORMAT, MSAA_COLOR_USAGE)!
-        && msaa_image_supported(&probe, DEPTH_FORMAT, MSAA_DEPTH_USAGE)!;
+        && msaa_image_supported(&probe, DEPTH_FORMAT, msaa_depth_usage(desc))!;
+    if (supported && desc.shading == ShadingPath.DEFERRED) supported = msaa_gbuffer_supported(&probe)!;
     if (supported && post::uses_velocity(desc)) {
         supported = msaa_image_supported(&probe, post::velocity_format(desc), MSAA_SAMPLED_USAGE)!;
     }
@@ -144,6 +171,22 @@ fn Target? allocate_msaa_target(
     );
 }
 
+fn Target? allocate_sample_zero_target(
+    Renderer* renderer,
+    ViewRecord* record,
+    GBufferChannel channel,
+    ZString debug_name,
+) @local {
+    return allocate_target(
+        device:     &renderer.device,
+        width:      record.hdr_color.width,
+        height:     record.hdr_color.height,
+        format:     GBUFFER_FORMATS[channel.ordinal],
+        usage:      MSAA_SAMPLED_USAGE,
+        debug_name: debug_name,
+    );
+}
+
 fn void? acquire_msaa_images(Renderer* renderer, ViewRecord* record) @private {
     ViewDesc* desc = &record.desc;
     if (desc.msaa == MsaaSamples.ONE || !record.hdr_color.texture.is_valid()) return;
@@ -163,7 +206,7 @@ fn void? acquire_msaa_images(Renderer* renderer, ViewRecord* record) @private {
             renderer:   renderer,
             record:     record,
             format:     DEPTH_FORMAT,
-            usage:      MSAA_DEPTH_USAGE,
+            usage:      msaa_depth_usage(desc),
             debug_name: "msaa_depth",
         )!;
     }
@@ -187,16 +230,38 @@ fn void? acquire_msaa_images(Renderer* renderer, ViewRecord* record) @private {
             debug_name: "msaa_reflection_gbuffer",
         )!;
     }
+
+    if (msaa_normal_copy_wanted(desc) && !record.normal_sample_zero.texture.is_valid()) {
+        record.normal_sample_zero = allocate_sample_zero_target(
+            renderer:   renderer,
+            record:     record,
+            channel:    GBufferChannel.NORMAL_ROUGHNESS,
+            debug_name: "normal_sample_zero",
+        )!;
+    }
+
+    if (msaa_specular_copy_wanted(desc) && !record.specular_sample_zero.texture.is_valid()) {
+        record.specular_sample_zero = allocate_sample_zero_target(
+            renderer:   renderer,
+            record:     record,
+            channel:    GBufferChannel.EMISSIVE_SPECULAR,
+            debug_name: "specular_sample_zero",
+        )!;
+    }
 }
 
 // Clears the staged images a new configuration cannot reuse; the caller retires what it gave up.
 fn void drop_stale_msaa_images(ViewRecord* staged, ViewDesc* previous) @private {
     ViewDesc* desc = &staged.desc;
+    if (!msaa_normal_copy_wanted(desc)) staged.normal_sample_zero = {};
+    if (!msaa_specular_copy_wanted(desc)) staged.specular_sample_zero = {};
+
     if (desc.msaa != previous.msaa) {
         staged.msaa_color = {};
         staged.msaa_depth = {};
         staged.msaa_velocity = {};
         staged.msaa_reflection_gbuffer = {};
+        staged.gbuffer = {};
         return;
     }
 
@@ -205,6 +270,9 @@ fn void drop_stale_msaa_images(ViewRecord* staged, ViewDesc* previous) @private 
     }
 
     if (!msaa_reflection_gbuffer_wanted(desc)) staged.msaa_reflection_gbuffer = {};
+
+    // Only a deferred view samples its multisample depth, and a usage cannot change in place.
+    if (staged.msaa_depth.view.is_valid() != (desc.shading == ShadingPath.DEFERRED)) staged.msaa_depth = {};
 }
 
 fn PipelineKey sample_zero_pipeline_key(gpu::Format target_format) @private {
