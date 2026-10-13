@@ -207,10 +207,11 @@ MaterialId toon_id = assets.add_material(material::toon(toon))!;
 ```
 
 `TOON_PARAMS_DEFAULT` uses white RGBA, four uniform direct-light steps, no base
-or gradient map, white rim color, rim strength 0 and rim power 2. Color channels
-are in [0, 1], steps is at least 2, rim color and strength are finite and
-nonnegative, and rim power is finite and positive. A zero rim strength leaves the
-surface unchanged.
+or gradient map, white rim color, rim strength 0, rim power 2 and no outline.
+Color channels are in [0, 1], steps is at least 2, rim color and strength are
+finite and nonnegative, and rim power is finite and positive. A zero rim strength
+leaves the surface unchanged. The outline width, color and depth offset are
+finite and nonnegative.
 
 Toon quantizes the clamped normal-light cosine separately for each directional,
 point or spot light. Light color, intensity, range/cone attenuation and shadow
@@ -227,7 +228,48 @@ uniform steps. A live cube, array, 3D or `R16_UINT` source returns `c3d::UNSUPPO
 The rim adds `rim_color * rim_strength * (1 - NdotV)^rim_power` after diffuse and
 indirect lighting. It is independent of base texture color, lights and shadows,
 and final blend alpha scales it with the rest of the shaded result. It is a
-surface-lighting term, not a geometric or post-process outline.
+surface-lighting term; the outline below is geometry.
+
+### Toon outline
+
+```c3
+toon.outline_width = 3;           // screen pixels; 0 draws no outline
+toon.outline_color = { 0, 0, 0 }; // linear
+toon.outline_depth_offset = 0;    // world units
+```
+
+An inverted hull draws the outline: the mesh is drawn a second time, right after
+itself in the forward pass, with its front faces culled and each vertex moved along
+its normal. The move is in clip space and scales with `w`, so the width is constant
+on screen whatever the distance or the object scale. The hull is flat
+`outline_color`, linear radiance exposed with the rest of the view, and cut out by
+the same coverage as the surface under `MASK`. `outline_depth_offset` pushes the
+hull away from the eye by that many view-space units, which hides the hull where it
+intersects other geometry. A width of 0, the default, adds no draw and no pipeline
+and leaves the frame as it was.
+
+- **Which draws.** `OPAQUE` and `MASK` Toon meshes, batches and crowds that test
+  and write depth, in every vertex form: static, skinned, morphed, instanced and
+  posed. `BLEND`, `WEIGHTED`, billboards, impostors and non-triangle meshes ignore
+  `outline_width`.
+- **Where.** Forward views draw it in `FORWARD_OPAQUE`, deferred views in the
+  forward draws that follow the lighting resolve, where Toon already draws. The
+  hull is not drawn in shadow layers, the depth prepass or the G-buffer pass, and
+  it is not part of the trace structures: ray-traced effects and the path tracer
+  do not see outlines.
+- **Depth.** The hull always tests `GREATER` and writes depth, also in a pass that
+  shades with `EQUAL`, so outline pixels stay in the depth the later passes read.
+- **Winding.** The hull culls the faces that are front-facing in its view, so a
+  mirror view, whose camera matrix reflects, culls the right side.
+- **Motion.** Under TAA, motion blur or screen-space GI, a moved outlined draw
+  redraws its hull in the velocity pass from the extruded current and previous
+  vertices, so a moving outline does not trail. The previous vertex takes the
+  current frame's extrusion direction.
+- **Counts.** The hull is a second draw: `Stats.draws` and `Stats.triangles` count it.
+
+A mesh with hard edges has split vertices, each moving along its own face normal,
+so its outline opens at those edges; smooth normals keep it continuous. An open
+surface has no back faces to extrude and shows no outline from the front.
 
 ## Standard maps
 
@@ -583,9 +625,9 @@ bits 5–9 select UV1 for those same slots. The matching schema constants are
 
 `BasicMaterialGpu` occupies 64 bytes: `map_flags` is at offset 12 and its
 `TextureMapGpu map` is at offset 32. It uses the same base-color presence and
-UV1 bits as Standard. `ToonMaterialGpu` occupies 96 bytes, including its color,
-rim factors, step count, gradient texture/sampler indices and one nested base-map
-record. `PhysicalMaterialGpu` occupies the full 640-byte slot: its Standard value
+UV1 bits as Standard. `ToonMaterialGpu` occupies 128 bytes, including its color,
+rim factors, step count, gradient texture/sampler indices, one nested base-map
+record and the outline color, width and depth offset. `PhysicalMaterialGpu` occupies the full 640-byte slot: its Standard value
 is followed by layer factors, five 32-byte layer-map records, the specular,
 anisotropy and volume factors and five more map records. Layer presence lives in
 `map_flags` with `PHYSICAL_MAP_*` bits; the extension maps use a second word,
@@ -844,7 +886,9 @@ python3 scripts/build.py --example materials
 `materials` combines seven interactive presets. Masked foliage casts cutout
 shadows onto an opaque receiver. Two separated blended objects show source-over
 composition against an opaque reference and HDR sky. Three Toon spheres compare
-uniform steps, a nonuniform grayscale ramp and an enabled rim. The Physical view
+uniform steps, a nonuniform grayscale ramp and an enabled rim; the Toon preset
+toggles an outline on all three (`O`, or `--toon-outline <pixels>` to start with it)
+and sets its width (`[` and `]`). The Physical view
 places an ordinary Standard sphere beside an equivalent zero-layer Physical
 sphere, factor-only coated paint and fabric, and a combined mapped surface.
 The Physical specular view compares an IOR row of 1.0, 1.5 and 2.4 with a

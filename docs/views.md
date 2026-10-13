@@ -613,7 +613,8 @@ compares the window, capture and mirror views.
 ## Shading path
 
 `shading = DEFERRED` renders the view's encodable opaque materials through a G-buffer and one
-fullscreen lighting resolve; every other material keeps its forward pass on the same view. A
+fullscreen lighting resolve; every other material keeps its forward pass on the same view, and
+a Toon material draws its [outline](materials.md#toon-outline) in that pass. A
 `FORWARD` view allocates no G-buffer image. With `depth_prepass` (the constructors' default) it runs
 `DEPTH_PREPASS` over its opaque set, then [`AMBIENT_OCCLUSION`](ambient_occlusion.md) when enabled,
 then `FORWARD_OPAQUE` with depth `EQUAL` and no depth write, so every opaque pixel is shaded once.
