@@ -33,6 +33,7 @@ enum ShaderName : int {
     PHYSICAL,
     TOON,
     ENVIRONMENT_SOURCE,
+    ENVIRONMENT_DOWNSAMPLE,
     ENVIRONMENT_PREFILTER,
     SHEEN_PREFILTER,
     IRRADIANCE_PROJECT,
@@ -227,6 +228,7 @@ const char[*] TOON_WEIGHTED_BLEND_SPIRV @private = $embed("../../../shaders/spv/
 const char[*] TOON_RT_SHADOWS_WEIGHTED_BLEND_SPIRV @private = $embed("../../../shaders/spv/toon_rt_shadows_weighted_blend.spv");
 const char[*] TOON_RT_SHADOWS_SCENE_TRACE_BVH_WEIGHTED_BLEND_SPIRV @private = $embed("../../../shaders/spv/toon_rt_shadows_scene_trace_bvh_weighted_blend.spv");
 const char[*] ENVIRONMENT_SOURCE_SPIRV @private = $embed("../../../shaders/spv/environment_source.spv");
+const char[*] ENVIRONMENT_DOWNSAMPLE_SPIRV @private = $embed("../../../shaders/spv/environment_downsample.spv");
 const char[*] ENVIRONMENT_PREFILTER_SPIRV @private = $embed("../../../shaders/spv/environment_prefilter.spv");
 const char[*] SHEEN_PREFILTER_SPIRV @private = $embed("../../../shaders/spv/sheen_prefilter.spv");
 const char[*] IRRADIANCE_PROJECT_SPIRV @private = $embed("../../../shaders/spv/irradiance_project.spv");
@@ -347,7 +349,7 @@ const char[*] TRACE_REFIT_SPIRV @private = $embed("../../../shaders/spv/trace_re
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[168] SHADER_ENTRIES = {
+const ShaderEntry[169] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -400,6 +402,7 @@ const ShaderEntry[168] SHADER_ENTRIES = {
     { .variant = { .shader = TOON, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_WEIGHTED_BLEND }, .spirv = TOON_RT_SHADOWS_WEIGHTED_BLEND_SPIRV[..] },
     { .variant = { .shader = TOON, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH | SHADER_FLAG_WEIGHTED_BLEND }, .spirv = TOON_RT_SHADOWS_SCENE_TRACE_BVH_WEIGHTED_BLEND_SPIRV[..] },
     { .variant = { .shader = ENVIRONMENT_SOURCE }, .spirv = ENVIRONMENT_SOURCE_SPIRV[..] },
+    { .variant = { .shader = ENVIRONMENT_DOWNSAMPLE }, .spirv = ENVIRONMENT_DOWNSAMPLE_SPIRV[..] },
     { .variant = { .shader = ENVIRONMENT_PREFILTER }, .spirv = ENVIRONMENT_PREFILTER_SPIRV[..] },
     { .variant = { .shader = SHEEN_PREFILTER }, .spirv = SHEEN_PREFILTER_SPIRV[..] },
     { .variant = { .shader = IRRADIANCE_PROJECT }, .spirv = IRRADIANCE_PROJECT_SPIRV[..] },

@@ -30,12 +30,13 @@ void main() {
         return;
     }
 
+    float alpha = root.roughness * root.roughness;
     vec3 accumulated = vec3(0.0);
     float accumulated_weight = 0.0;
-    for (uint index = 0u; index < ENVIRONMENT_PREFILTER_SAMPLES; index++) {
+    for (uint index = 0u; index < root.sample_count; index++) {
         vec3 half_direction = environment_sample_ggx(
             index,
-            ENVIRONMENT_PREFILTER_SAMPLES,
+            root.sample_count,
             root.roughness,
             direction
         );
@@ -43,11 +44,13 @@ void main() {
         float normal_light = dot(direction, light_direction);
         if (normal_light <= 0.0) continue;
 
+        // Light-direction density for a normal equal to the view: a quarter of the distribution.
+        float sample_pdf = 0.25 * distribution_ggx(dot(direction, half_direction), alpha * alpha);
         accumulated += sample_texture_cube_lod(
             root.source_cube,
             root.sampler_index,
             light_direction,
-            0.0
+            environment_sample_lod(sample_pdf, root.sample_count, root.source_size)
         ).rgb * normal_light;
         accumulated_weight += normal_light;
     }

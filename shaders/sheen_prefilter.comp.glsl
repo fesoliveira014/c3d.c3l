@@ -30,8 +30,8 @@ void main() {
     vec3 accumulated = vec3(0.0);
     float accumulated_weight = 0.0;
 
-    for (uint index = 0u; index < SHEEN_PREFILTER_SAMPLES; index++) {
-        float sample_u = (float(index) + 0.5) / float(SHEEN_PREFILTER_SAMPLES);
+    for (uint index = 0u; index < root.sample_count; index++) {
+        float sample_u = (float(index) + 0.5) / float(root.sample_count);
         float phi = 2.0 * PI * environment_radical_inverse(index);
         float sine = sqrt(0.5) * pow(sample_u, exponent);
         float cosine = sqrt(1.0 - sine * sine);
@@ -43,11 +43,14 @@ void main() {
         );
         vec3 light_direction = reflect(-direction, half_direction);
         float normal_light = dot(direction, light_direction);
+
+        // The density of the truncated distribution the sampler inverts, taken at the light direction.
+        float sample_pdf = (2.0 + 1.0 / alpha) / (4.0 * PI) * pow(sample_u, 1.0 / (2.0 * alpha + 1.0));
         accumulated += sample_texture_cube_lod(
             root.source_cube,
             root.sampler_index,
             light_direction,
-            0.0
+            environment_sample_lod(sample_pdf, root.sample_count, root.source_size)
         ).rgb * normal_light;
         accumulated_weight += normal_light;
     }
