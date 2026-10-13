@@ -61,6 +61,15 @@ enum OverlayEntryKind @private {
 }
 
 <*
+ Direction in which a gradient changes color.
+*>
+enum OverlayGradientKind {
+    NONE,
+    LINEAR,
+    RADIAL,
+}
+
+<*
  Capacities of an overlay list.
 *>
 struct OverlayListDesc {
@@ -80,6 +89,16 @@ struct OverlayTransform {
 }
 
 <*
+ Two-color ramp from a rectangle's fill to an end color.
+*>
+struct OverlayGradient {
+    OverlayGradientKind kind;
+    Vec2                from;  // start point, or the centre of a radial gradient
+    Vec2                to;    // end point, or a point on the radius of a radial gradient
+    Vec4                color; // end color; sRGB, straight alpha
+}
+
+<*
  Rounded, bordered and optionally textured rectangle in output pixels.
 *>
 struct OverlayRect {
@@ -94,6 +113,7 @@ struct OverlayRect {
     Vec4       uv_rect;       // u0, v0, u1, v1 of the sampled region
     Vec4       slice_uv;      // nine-slice margins as fractions of uv_rect: left, top, right, bottom
     Vec4       slice_pixels;  // the same margins on screen; all zero disables nine-slice
+    OverlayGradient gradient; // NONE keeps fill alone; otherwise fill is the start color
 }
 
 <*
@@ -537,7 +557,23 @@ fn bool overlay_rect_valid(OverlayRect* rect) @private {
     if (!non_negative_vec4(rect.slice_uv) || !non_negative_vec4(rect.slice_pixels)) return false;
     if (rect.slice_pixels.x + rect.slice_pixels.z > rect.max.x - rect.min.x) return false;
     if (rect.slice_pixels.y + rect.slice_pixels.w > rect.max.y - rect.min.y) return false;
-    return rect.slice_uv.x + rect.slice_uv.z <= 1 && rect.slice_uv.y + rect.slice_uv.w <= 1;
+    if (rect.slice_uv.x + rect.slice_uv.z > 1 || rect.slice_uv.y + rect.slice_uv.w > 1) return false;
+    return overlay_gradient_valid(rect);
+}
+
+// Both points are stored as half-precision offsets from the rectangle's top left, so they must fit that range.
+fn bool overlay_gradient_valid(OverlayRect* rect) @local {
+    OverlayGradient* gradient = &rect.gradient;
+    if (gradient.kind == NONE) return true;
+    if (!finite_vec2(gradient.from) || !finite_vec2(gradient.to) || !finite_vec4(gradient.color)) return false;
+    if ((gradient.to - gradient.from).length() <= 0) return false;
+
+    Vec2 from = gradient.from - rect.min;
+    Vec2 to = gradient.to - rect.min;
+    return math::abs(from.x) <= HALF_MAX
+        && math::abs(from.y) <= HALF_MAX
+        && math::abs(to.x) <= HALF_MAX
+        && math::abs(to.y) <= HALF_MAX;
 }
 
 fn Vec4 current_overlay_clip(OverlayList* list) @private {
@@ -727,7 +763,7 @@ fn OverlayItemGpu pack_overlay_rect(OverlayRect* rect, OverlayBinding binding) @
     uint kind = shader::OVERLAY_KIND_RECT << shader::OVERLAY_KIND_SHIFT;
     uint kind_flags = kind | (flags << shader::OVERLAY_FLAGS_SHIFT);
 
-    return {
+    OverlayItemGpu item = {
         .bounds                    = { rect.min.x, rect.min.y, rect.max.x, rect.max.y },
         .uv_rect                   = rect.uv_rect,
         .radii_top                 = pack_half2(radii.x, radii.y),
@@ -743,6 +779,24 @@ fn OverlayItemGpu pack_overlay_rect(OverlayRect* rect, OverlayBinding binding) @
         .texture                   = binding.texture,
         .sampler_kind_flags        = ((uint)binding.sampler & shader::OVERLAY_SAMPLER_MASK) | kind_flags,
     };
+
+    if (rect.gradient.kind != NONE) pack_overlay_gradient(&item, rect);
+
+    return item;
+}
+
+// The glyph words are free in a rect item.
+fn void pack_overlay_gradient(OverlayItemGpu* item, OverlayRect* rect) @local {
+    OverlayGradient* gradient = &rect.gradient;
+    Vec2 from = gradient.from - rect.min;
+    Vec2 to = gradient.to - rect.min;
+    uint flags = shader::OVERLAY_FLAG_GRADIENT;
+    if (gradient.kind == RADIAL) flags |= shader::OVERLAY_FLAG_GRADIENT_RADIAL;
+
+    item.sampler_kind_flags |= flags << shader::OVERLAY_FLAGS_SHIFT;
+    item.glyph_location = pack_rgba8(gradient.color);
+    item.glyph_band_max = pack_half2(from.x, from.y);
+    item.band_texture = (gpu::TextureIndex)pack_half2(to.x, to.y);
 }
 
 fn OverlayItemGpu pack_overlay_glyph(

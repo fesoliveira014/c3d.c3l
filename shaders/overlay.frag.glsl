@@ -165,6 +165,25 @@ vec4 sample_texture_2d_grad(
         uv_dy);
 }
 
+// Ramps in linear light between colors premultiplied by alpha, so a fade to a transparent color keeps its hue. The
+// points are the item's half2 offsets from its top left, and position is in the item's local pixels.
+vec4 overlay_gradient_color(OverlayItemGpu item, vec2 position, vec4 start, bool radial) {
+    vec2 from = item.bounds.xy + unpackHalf2x16(item.glyph_band_max);
+    vec2 to = item.bounds.xy + unpackHalf2x16(item.band_texture);
+    vec2 span = to - from;
+    float ramp = radial
+        ? length(position - from) / max(length(span), 1e-6)
+        : dot(position - from, span) / max(dot(span, span), 1e-12);
+
+    vec4 end = unpackUnorm4x8(item.glyph_location);
+    vec4 premultiplied = mix(
+        vec4(start.rgb * start.a, start.a),
+        vec4(srgb_to_linear(end.rgb) * end.a, end.a),
+        clamp(ramp, 0.0, 1.0));
+
+    return vec4(premultiplied.rgb / max(premultiplied.a, 1e-6), premultiplied.a);
+}
+
 #ifdef TRANSFORMED
 vec4 overlay_glyph_color(OverlayItemGpu item, vec2 position, vec2 pixels_per_unit) {
 #else
@@ -275,6 +294,9 @@ void main() {
 
     vec4 fill = unpackUnorm4x8(item.fill);
     vec4 color = vec4(srgb_to_linear(fill.rgb), fill.a);
+    if ((flags & OVERLAY_FLAG_GRADIENT) != 0u) {
+        color = overlay_gradient_color(item, position, color, (flags & OVERLAY_FLAG_GRADIENT_RADIAL) != 0u);
+    }
 
     if ((flags & OVERLAY_FLAG_TEXTURED) != 0u) {
         vec4 slice_pixels = vec4(0.0);
