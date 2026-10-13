@@ -224,6 +224,7 @@ fn void? read_light_v2(Reader* reader, ReadContext* context) @local {
         owned: &owned,
         value: &legacy,
     )!;
+
     context.scene.add(context.node, (Light){
         .kind = legacy.kind,
         .color = legacy.color,
