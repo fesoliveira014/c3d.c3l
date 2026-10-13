@@ -812,10 +812,10 @@ fn void? run_interactive(Demo* demo, uint frame_limit) @local {
         if (demo.windows && frame_limit) events = replay_windows(demo, frames);
 
         Input* input = &window.input;
-        // A field blurs on Escape down, so the release that follows must not quit.
+        // A field blurs and a window drag cancels on Escape down, so the release that follows must not quit.
         bool typing = ui.wants_text_input || input.keyboard_captured_by_gui;
         ui.route_input(input, events);
-        if (input.key_pressed(platform::Scancode.ESCAPE)) escape_captured = typing;
+        if (input.key_pressed(platform::Scancode.ESCAPE)) escape_captured = typing || input.keyboard_captured_by_gui;
         if (input.key_released(platform::Scancode.ESCAPE)) {
             if (!escape_captured && !typing) break;
             escape_captured = false;
