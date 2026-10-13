@@ -233,7 +233,8 @@
     { "shader": "trace_pose", "source": "trace_pose.comp.glsl", "stage": "comp", "defines": ["SKINNED_U16"] },
     { "shader": "trace_pose", "source": "trace_pose.comp.glsl", "stage": "comp", "defines": ["INSTANCED"] },
     { "shader": "trace_pose", "source": "trace_pose.comp.glsl", "stage": "comp", "defines": ["INSTANCED", "SKINNED_U16"] },
-    { "shader": "trace_refit", "source": "trace_refit.comp.glsl", "stage": "comp", "defines": [] }
+    { "shader": "trace_refit", "source": "trace_refit.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "sample_zero", "source": "sample_zero.frag.glsl", "stage": "frag", "defines": [] }
   ],
   "public_includes": [
     { "include": "constants.glsl", "stage": "frag", "defines": [] },

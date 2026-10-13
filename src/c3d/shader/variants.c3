@@ -97,6 +97,7 @@ enum ShaderName : int {
     LIGHTING_RESOLVE,
     TRACE_POSE,
     TRACE_REFIT,
+    SAMPLE_ZERO,
 }
 
 <*
@@ -403,11 +404,12 @@ const char[*] TRACE_POSE_SKINNED_U16_SPIRV @private = $embed("../../../shaders/s
 const char[*] TRACE_POSE_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/trace_pose_instanced.spv");
 const char[*] TRACE_POSE_SKINNED_U16_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/trace_pose_skinned_u16_instanced.spv");
 const char[*] TRACE_REFIT_SPIRV @private = $embed("../../../shaders/spv/trace_refit.spv");
+const char[*] SAMPLE_ZERO_SPIRV @private = $embed("../../../shaders/spv/sample_zero.spv");
 
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[214] SHADER_ENTRIES = {
+const ShaderEntry[215] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -622,4 +624,5 @@ const ShaderEntry[214] SHADER_ENTRIES = {
     { .variant = { .shader = TRACE_POSE, .flags = SHADER_FLAG_INSTANCED }, .spirv = TRACE_POSE_INSTANCED_SPIRV[..] },
     { .variant = { .shader = TRACE_POSE, .flags = SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_INSTANCED }, .spirv = TRACE_POSE_SKINNED_U16_INSTANCED_SPIRV[..] },
     { .variant = { .shader = TRACE_REFIT }, .spirv = TRACE_REFIT_SPIRV[..] },
+    { .variant = { .shader = SAMPLE_ZERO }, .spirv = SAMPLE_ZERO_SPIRV[..] },
 };

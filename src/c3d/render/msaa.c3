@@ -179,3 +179,42 @@ fn void drop_stale_msaa_images(ViewRecord* staged, ViewDesc* previous) @private 
 
     if (!msaa_reflection_gbuffer_wanted(desc)) staged.msaa_reflection_gbuffer = {};
 }
+
+fn PipelineKey sample_zero_pipeline_key(gpu::Format target_format) @private {
+    return {
+        .vertex        = { .shader = FULLSCREEN },
+        .fragment      = { .shader = SAMPLE_ZERO },
+        .color_formats = { [0] = target_format },
+        .color_count   = 1,
+        .depth_format  = gpu::Format.UNDEFINED,
+        .samples       = gpu::SampleCount.ONE,
+        .polygon       = gpu::PolygonMode.FILL,
+    };
+}
+
+// Vulkan resolves a float color attachment only by averaging; velocity and surface data take one sample.
+fn void? record_sample_zero(Renderer* renderer, Target* source, Target* destination) @private {
+    source.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
+    destination.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
+
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, CompositeRoot::size)!;
+    *(CompositeRoot*)root.bytes.ptr = {
+        .source_texture = source.view.index,
+        .pre_exposure   = 1,
+    };
+
+    gpu::PipelineHandle pipeline = renderer.pipelines.get(
+        &renderer.device,
+        sample_zero_pipeline_key(destination.format),
+    )!;
+
+    return record_fullscreen_pass(
+        renderer:      renderer,
+        target:        destination,
+        pipeline:      pipeline,
+        fragment_root: root.address,
+        rect:          {},
+        load:          gpu::LoadOp.DONT_CARE,
+    );
+}

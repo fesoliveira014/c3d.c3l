@@ -598,6 +598,15 @@ fn void list_view_pipelines(
             );
             list_prepare_key(requests, camera_velocity);
         }
+
+        if (desc.msaa != MsaaSamples.ONE && post::uses_velocity(desc)) {
+            list_prepare_key(requests, sample_zero_pipeline_key(post::velocity_format(desc)));
+        }
+
+        if (desc.msaa != MsaaSamples.ONE && msaa_reflection_gbuffer_wanted(desc)) {
+            list_prepare_key(requests, sample_zero_pipeline_key(REFLECTION_SURFACE_FORMAT));
+        }
+
         if (desc.post.anti_aliasing == AntiAliasing.TAA) {
             list_prepare_compute(requests, ComputeSlot.TAA);
         }
