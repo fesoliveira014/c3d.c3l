@@ -199,6 +199,7 @@ fn void? prepare_overlay(Renderer* self, OverlayList* list, RenderTargetId targe
             mem::copy(table.bytes.ptr, entries.ptr, (sz)table_bytes);
             list.prepared.transforms = table.address;
         }
+
         if (world && world.planes.len) {
             usz plane_bytes = world.planes.len * shader::OverlayPlaneGpu::size;
             gpu::MappedGpuSpan planes = slot.upload.take(&self.device, plane_bytes)!;

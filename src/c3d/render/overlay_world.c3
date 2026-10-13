@@ -47,6 +47,7 @@ fn void? Renderer.set_view_overlay(&self, ViewId view, OverlayList* list) {
 fn void? record_world_overlay(Renderer* renderer, ViewRecord* record) @private {
     OverlayList* list = record.world_overlay;
     OverlayProjection* projection = &record.overlay_projection;
+
     if (!projection.enabled || !list.item_count || !(list.layers & projection.layers)) return;
 
     RenderTargetId target = record.desc.output == ViewOutput.TEXTURE ? record.desc.target : (RenderTargetId){};
@@ -65,6 +66,7 @@ fn void? record_world_overlay(Renderer* renderer, ViewRecord* record) @private {
                 .enabled     = true,
             },
         };
+
         if (list.plane_count) world.planes = alloc::new_array(tmem, shader::OverlayPlaneGpu, list.transform_count);
 
         resolve_world_anchors(renderer, projection, list, &world);

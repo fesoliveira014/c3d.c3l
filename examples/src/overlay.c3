@@ -1239,6 +1239,7 @@ fn int main(String[] args) {
     scene.get(mirror_camera, camera::Camera).layers = camera::ALL_LAYERS & ~PORTRAIT_LAYER;
     Mat4 mirrored = maths::reflection_matrix(MIRROR_PLANE).mul(camera_node.local.to_mat4());
     mirror_camera.local = maths::transform_from_affine(mirrored)!!;
+
     scene.update_world();
 
     uint capacity = (options.benchmark ? options.rects : options.stress_count) + SCENE_ITEM_RESERVE;
