@@ -16,6 +16,7 @@ shared uint group_fractions[FOCUS_HISTOGRAM_BINS];
 // Forward distance from reverse-Z depth, the formula of dof_linear_depth.
 float linear_depth(FocusMeterRoot root, float depth) {
     if (root.orthographic != 0u) return (root.proj_23 - depth) / root.proj_22;
+
     float denominator = depth + root.proj_22;
     return denominator > 0.0 ? root.proj_23 / denominator : exp2(FOCUS_LOG2_MAX);
 }

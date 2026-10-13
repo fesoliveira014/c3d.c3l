@@ -20,6 +20,7 @@ struct DofFocus {
 // The root's manual focus, or the adapted focus its address names.
 DofFocus dof_focus(DofRoot root) {
     if (root.focus == 0ul) return DofFocus(root.focus_distance, root.aperture_scale);
+
     return DofFocus(FocusGpu(root.focus).distance, FocusGpu(root.focus).aperture_scale);
 }
 
