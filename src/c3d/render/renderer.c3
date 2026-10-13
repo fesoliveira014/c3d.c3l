@@ -560,6 +560,7 @@ fn void? begin_renderer_frame(Renderer* self, FrameInfo info, bool acquire_outpu
             record.stats.images = live_view_images(record);
             record.cluster_root = (gpu::GpuAddress)0;
             record.scene_input = &record.hdr_color;
+            record.world_overlay = null;
             record.post_chain_open = false;
             record.bloom_recorded = false;
         }

@@ -221,6 +221,9 @@ shadow set is fitted to; null uses `camera_node`. A view binds an earlier view's
 their keys match ([shadow sets](shadows.md#shadow-sets)). A `shadow_camera` without a `Camera` faults
 `INVALID_ARGUMENT` and aborts the frame.
 
+`set_view_overlay(view, list)` gives a view an overlay list of items anchored in the world for one frame; `finish_view`
+draws it over the view's output after post, tested against the view's depth ([World-space items](overlay.md#world-space-items)).
+
 `Renderer.render(scene, camera)` is the default-view convenience. `render_to(scene, camera, target,
 color = LINEAR_HDR, info = {})` renders and finishes one frame into a target through a view it
 creates and destroys, without touching the window; it waits for completion and is a bake path, not

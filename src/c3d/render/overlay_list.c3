@@ -23,7 +23,7 @@ const uint OVERLAY_LIST_DEFAULT_CLIPS = 16; // UI nesting of panels and scroll a
 const uint OVERLAY_LIST_DEFAULT_GLYPHS = 16384; // 1.5 MiB of instances per prepared list, under 5% of the ring
 
 <*
- Transforms and transformed clips an overlay list holds by default.
+ Transforms, anchors and transformed clips an overlay list holds by default.
 *>
 const uint OVERLAY_LIST_DEFAULT_TRANSFORMS = 256; // 20 KiB of table per prepared list, 0.06% of the ring
 
@@ -97,6 +97,14 @@ struct OverlayTransform {
     Vec2 x_axis;
     Vec2 y_axis;
     Vec2 offset;
+}
+
+<*
+ World point that the items added under it are laid out around, in a plane facing the camera.
+*>
+struct OverlayAnchor {
+    Vec3  position;        // world space, rebased with the frame origin
+    float pixels_per_unit; // screen pixels per layout unit, whatever the distance; zero lays out in metres
 }
 
 <*
@@ -193,12 +201,24 @@ struct OverlayBackdropRun @private {
     uint             radius; // whole pixels, at most MAX_BACKDROP_RADIUS
 }
 
+struct OverlayWorldView @private {
+    gpu::TextureIndex depth; // the view's depth, which the fragment stage tests items against
+    PixelRect         rect;  // output pixels the view covers
+    bool              enabled;
+}
+
+struct OverlayWorld @private {
+    shader::OverlayTransformGpu[] table; // the list's transform table with every anchor resolved for one view
+    OverlayWorldView              view;
+}
+
 struct OverlayPrepared @private {
     gpu::GpuAddress items;
     gpu::GpuAddress transforms; // zero when no emitted item has a transform or a transformed clip
     bool            transformed; // some emitted item has one: the list draws with the transformed shaders
     uint            run_count;
     uint            backdrop_count; // emitted backdrop items, the first entries of OverlayList.backdrops
+    OverlayWorldView world;         // enabled when the instances were fitted to a view's world overlay
     RenderTargetId  target; // the output the instances were fitted to; zero for the window
     ulong           frame;  // renderer frame index plus one; zero before the first preparation
 }
@@ -236,6 +256,9 @@ struct OverlayList {
     uint                          transform_depth;
     OverlayBackdropRun[]          backdrops;       // MAX_BACKDROP_ITEMS entries, filled by preparation
     uint                          backdrop_count;  // backdrop items added since clear()
+    Vec4[]                        anchor_points;   // per table entry that is an anchor: position, pixels per unit
+    uint[]                        anchor_roots;    // per table entry: the anchor entry it lies under; zero for none
+    uint                          anchor_count;    // anchors pushed since clear()
 }
 
 <*
@@ -244,6 +267,7 @@ struct OverlayList {
 fn void OverlayList.clear(&self) {
     self.item_count = 0;
     self.backdrop_count = 0;
+    self.anchor_count = 0;
     self.glyph_count = 0;
     self.clip_depth = 0;
     self.transform_count = 1;
@@ -419,6 +443,7 @@ fn void? OverlayList.push_clip(&self, Vec2 min, Vec2 max) {
         *entry = self.transforms[transform_entry];
         entry.clip_box = box;
         entry.clip_parent = clip_entry;
+        self.anchor_roots[self.transform_count] = self.anchor_roots[transform_entry];
         clip_entry = self.transform_count;
         self.transform_count++;
         box = overlay_output_bounds(box, entry);
@@ -450,8 +475,10 @@ fn void OverlayList.pop_clip(&self) {
 fn void? OverlayList.push_transform(&self, OverlayTransform transform) {
     if (self.transform_count == self.transforms.len) return c3d::CAPACITY_EXCEEDED~;
 
-    shader::OverlayTransformGpu parent = self.transforms[current_overlay_transform(self)];
+    uint parent_entry = current_overlay_transform(self);
+    shader::OverlayTransformGpu parent = self.transforms[parent_entry];
     self.transforms[self.transform_count] = compose_overlay_transform(&parent, transform)!;
+    self.anchor_roots[self.transform_count] = self.anchor_roots[parent_entry];
     self.transform_stack[self.transform_depth] = self.transform_count;
     self.transform_count++;
     self.transform_depth++;
@@ -463,6 +490,41 @@ fn void? OverlayList.push_transform(&self, OverlayTransform transform) {
 *>
 fn void OverlayList.pop_transform(&self) {
     self.transform_depth--;
+}
+
+<*
+ Lay out the items added until the matching pop around a world point, facing the camera.
+ Enclosing transforms and clips do not apply inside; the list then draws only through Renderer.set_view_overlay.
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
+*>
+fn void? OverlayList.push_anchor(&self, OverlayAnchor anchor) {
+    if (self.transform_count == self.transforms.len || self.clip_depth == self.clips.len) {
+        return c3d::CAPACITY_EXCEEDED~;
+    }
+    if (!finite_vec3(anchor.position) || !math::is_finite(anchor.pixels_per_unit) || anchor.pixels_per_unit < 0) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+
+    uint entry = self.transform_count;
+    self.transforms[entry] = IDENTITY_TABLE_ENTRY;
+    self.anchor_points[entry] = { anchor.position.x, anchor.position.y, anchor.position.z, anchor.pixels_per_unit };
+    self.anchor_roots[entry] = entry;
+    self.transform_stack[self.transform_depth] = entry;
+    self.clips[self.clip_depth] = UNBOUNDED_CLIP;
+    self.clip_entries[self.clip_depth] = 0;
+    self.transform_count++;
+    self.transform_depth++;
+    self.clip_depth++;
+    self.anchor_count++;
+}
+
+<*
+ Restore the transform and clip active before the matching push_anchor.
+ @require self.transform_depth > 0, self.clip_depth > 0
+*>
+fn void OverlayList.pop_anchor(&self) {
+    self.transform_depth--;
+    self.clip_depth--;
 }
 
 <*
@@ -491,7 +553,10 @@ fn OverlayList create_overlay_list(Allocator allocator, OverlayListDesc desc) {
     usz transform_stack_offset = transforms_offset + ((usz)desc.max_transforms + 1) * shader::OverlayTransformGpu::size;
     usz clip_entries_offset = transform_stack_offset + (usz)desc.max_transforms * uint::size;
     usz backdrops_offset = clip_entries_offset + (usz)desc.max_clips * uint::size;
-    usz total_bytes = align_up(backdrops_offset + (usz)MAX_BACKDROP_ITEMS * OverlayBackdropRun::size, Vec4::size);
+    usz backdrops_end = backdrops_offset + (usz)MAX_BACKDROP_ITEMS * OverlayBackdropRun::size;
+    usz anchor_points_offset = align_up(backdrops_end, Vec4::size);
+    usz anchor_roots_offset = anchor_points_offset + ((usz)desc.max_transforms + 1) * Vec4::size;
+    usz total_bytes = align_up(anchor_roots_offset + ((usz)desc.max_transforms + 1) * uint::size, Vec4::size);
 
     // Allocated as Vec4 so every allocator aligns the block for the Vec4 members of the carved slices.
     Vec4[] block = alloc::new_array(allocator, Vec4, (sz)(total_bytes / Vec4::size));
@@ -509,6 +574,8 @@ fn OverlayList create_overlay_list(Allocator allocator, OverlayListDesc desc) {
         .transform_stack = ((uint*)&storage[transform_stack_offset])[:desc.max_transforms],
         .clip_entries    = ((uint*)&storage[clip_entries_offset])[:desc.max_clips],
         .backdrops       = ((OverlayBackdropRun*)&storage[backdrops_offset])[:MAX_BACKDROP_ITEMS],
+        .anchor_points   = ((Vec4*)&storage[anchor_points_offset])[:desc.max_transforms + 1],
+        .anchor_roots    = ((uint*)&storage[anchor_roots_offset])[:desc.max_transforms + 1],
         .transform_count = 1,
     };
     list.transforms[0] = IDENTITY_TABLE_ENTRY;
@@ -526,6 +593,10 @@ fn void destroy_overlay_list(OverlayList* list) {
 
 fn bool finite_vec2(Vec2 value) @local {
     return math::is_finite(value.x) && math::is_finite(value.y);
+}
+
+fn bool finite_vec3(Vec3 value) @local {
+    return math::is_finite(value.x) && math::is_finite(value.y) && math::is_finite(value.z);
 }
 
 fn bool finite_vec4(Vec4 value) @local {
@@ -744,8 +815,20 @@ fn bool same_scissor(gpu::ScissorRect first, gpu::ScissorRect second) @local {
     return first.x == second.x && first.y == second.y && first.width == second.width && first.height == second.height;
 }
 
-fn Vec4 item_output_bounds(OverlayList* list, uint transform_entry, Vec4 bounds) @local {
-    return transform_entry ? overlay_output_bounds(bounds, &list.transforms[transform_entry]) : bounds;
+fn Vec4 item_output_bounds(shader::OverlayTransformGpu[] table, uint transform_entry, Vec4 bounds) @local {
+    return transform_entry ? overlay_output_bounds(bounds, &table[transform_entry]) : bounds;
+}
+
+// An anchored clip box lies in its anchor's plane; the view's rectangle bounds it in output pixels.
+fn Vec4 world_clip(OverlayWorld* world, shader::OverlayTransformGpu* anchor, Vec4 clip) @local {
+    PixelRect rect = world.view.rect;
+    Vec4 bounds = overlay_output_bounds(clip, anchor);
+    return {
+        math::max(bounds.x, (float)rect.x),
+        math::max(bounds.y, (float)rect.y),
+        math::min(bounds.z, (float)(rect.x + rect.width)),
+        math::min(bounds.w, (float)(rect.y + rect.height)),
+    };
 }
 
 fn bool overlay_bounds_reach(Vec4 bounds, gpu::ScissorRect scissor) @local {
@@ -923,24 +1006,34 @@ fn void add_overlay_backdrop(
 }
 
 // Every emitted item stays in submission order; a run splits where the scissor changes, whatever the kinds, and
-// around a backdrop item, which draws alone.
+// around a backdrop item, which draws alone. A world packs against its resolved table and skips culled anchors.
 fn uint pack_overlay_items(
     OverlayList* list,
     AssetStore* assets,
     uint width,
     uint height,
     OverlayItemGpu[] destination,
+    OverlayWorld* world = null,
 ) @private {
     OverlayPacker packer = { .list = list, .destination = destination };
+    shader::OverlayTransformGpu[] table = world ? world.table : list.transforms;
 
     foreach (index, &entry : list.entries[:list.item_count]) {
-        gpu::ScissorRect scissor = overlay_scissor(entry.clip, width, height);
+        Vec4 clip = entry.clip;
+        if (world) {
+            shader::OverlayTransformGpu* anchor = &table[list.anchor_roots[entry.transform]];
+            if (anchor.depth < 0) continue;
+
+            clip = world_clip(world, anchor, clip);
+        }
+
+        gpu::ScissorRect scissor = overlay_scissor(clip, width, height);
         uint transform_clip = entry.transform | entry.clip_entry << shader::OVERLAY_CLIP_SHIFT;
         switch (entry.kind) {
             case RECT:
                 OverlayRect* rect = &entry.rect;
                 Vec4 rect_bounds = { rect.min.x, rect.min.y, rect.max.x, rect.max.y };
-                Vec4 output_bounds = item_output_bounds(list, entry.transform, rect_bounds);
+                Vec4 output_bounds = item_output_bounds(table, entry.transform, rect_bounds);
                 if (!overlay_bounds_reach(output_bounds, scissor)) continue;
                 OverlayItemGpu item = pack_overlay_rect(rect, list.bindings[index]);
                 item.transform_clip = transform_clip;
@@ -973,7 +1066,7 @@ fn uint pack_overlay_items(
                         glyph:     glyph,
                         binding:   list.bindings[index],
                     );
-                    Vec4 glyph_bounds = item_output_bounds(list, entry.transform, item.bounds);
+                    Vec4 glyph_bounds = item_output_bounds(table, entry.transform, item.bounds);
                     if (!overlay_bounds_reach(glyph_bounds, scissor)) continue;
                     item.transform_clip = transform_clip;
                     emit_overlay_item(&packer, scissor, item);
@@ -983,7 +1076,7 @@ fn uint pack_overlay_items(
                 OverlayItemGpu item = entry.kind == TRIANGLE
                     ? pack_overlay_triangle(&entry.triangle)
                     : pack_overlay_segment(&entry.segment);
-                if (!overlay_bounds_reach(item_output_bounds(list, entry.transform, item.bounds), scissor)) continue;
+                if (!overlay_bounds_reach(item_output_bounds(table, entry.transform, item.bounds), scissor)) continue;
                 item.transform_clip = transform_clip;
                 emit_overlay_item(&packer, scissor, item);
         }

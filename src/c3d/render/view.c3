@@ -212,6 +212,10 @@ fn void? record_camera_view(
             .m23          = matrices.proj.m23,
             .orthographic = camera.projection == Projection.ORTHOGRAPHIC,
         };
+        record.overlay_projection = {
+            .view_proj  = matrices.view_proj,
+            .axis_scale = { matrices.proj.m00, matrices.proj.m11 },
+        };
         ShadowCamera own_shadow_view = { .lens = *camera, .matrices = matrices };
         if (!shadow_view) shadow_view = &own_shadow_view;
 
@@ -1177,6 +1181,9 @@ fn void? Renderer.finish_view(&self, ViewId view) {
         if (record.desc.post.depth_of_field && !taa_debug) post::record_dof(self, record)!;
         record_view_output(self, record)!;
         post::close_post_chain(self, record)!;
+
+        if (record.world_overlay) record_world_overlay(self, record)!;
+
         end_profile_view(self)!;
     };
 }
@@ -2163,7 +2170,7 @@ fn void? prepare_sampled_targets(Renderer* renderer, ViewRecord* record) @privat
     }
 }
 
-fn PixelRect clip_rect(PixelRect rect, uint width, uint height) @local {
+fn PixelRect clip_rect(PixelRect rect, uint width, uint height) @private {
     if (rect.width == 0 || rect.height == 0) return rect;
     if (rect.x >= width || rect.y >= height) return {};
     return {

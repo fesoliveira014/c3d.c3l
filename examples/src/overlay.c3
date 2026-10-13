@@ -148,6 +148,35 @@ const float TARGET_FROST_RADIUS @local = 10;
 const Vec4 FROST_FILL @local = { 1, 1, 1, 0.16f };
 const Vec4 FROST_BORDER @local = { 1, 1, 1, 0.55f };
 
+const uint WORLD_LIST_ITEMS @local = 32;
+const uint WORLD_LIST_GLYPHS @local = 96;
+const uint WORLD_LIST_ENTRIES @local = 8; // two anchors, with room to spare
+// Both start behind the sphere's front, so its silhouette hides part of each label.
+const Vec3 WORLD_PIXEL_ANCHOR @local = { 0.42f, -1, -0.4f };
+const Vec3 WORLD_METRE_ANCHOR @local = { -1.9f, -1.2f, -0.9f };
+const float WORLD_PIXEL_TRAVEL @local = 3; // metres the anchors sweep toward the camera
+const float WORLD_METRE_TRAVEL @local = 2;
+const float WORLD_SPEED @local = 0.6f;
+const float WORLD_METRE_PHASE @local = 2;
+const Vec2 WORLD_PIXEL_PANEL_MIN @local = { 12, -26 };
+const Vec2 WORLD_PIXEL_PANEL_MAX @local = { 212, 26 };
+const Vec2 WORLD_PIXEL_TITLE_ORIGIN @local = { 24, -3 };
+const Vec2 WORLD_PIXEL_CAPTION_ORIGIN @local = { 24, 15 };
+const float WORLD_PIXEL_TITLE_SIZE @local = 22;
+const float WORLD_PIXEL_CAPTION_SIZE @local = 14;
+const float WORLD_PIXEL_MARKER @local = 4;
+const Vec2 WORLD_METRE_PANEL_MIN @local = { 0.1f, -0.3f };
+const Vec2 WORLD_METRE_PANEL_MAX @local = { 1.7f, 0.3f };
+const Vec2 WORLD_METRE_TITLE_ORIGIN @local = { 0.2f, -0.03f };
+const Vec2 WORLD_METRE_CAPTION_ORIGIN @local = { 0.2f, 0.19f };
+const float WORLD_METRE_TITLE_SIZE @local = 0.24f;
+const float WORLD_METRE_CAPTION_SIZE @local = 0.14f;
+const float WORLD_METRE_MARKER @local = 0.05f;
+const float WORLD_METRE_RADIUS @local = 0.1f;
+const float WORLD_METRE_BORDER @local = 0.025f;
+const Vec4 WORLD_PANEL_FILL @local = { 0.04f, 0.07f, 0.2f, 0.88f };
+const Vec4 WORLD_MARKER_COLOR @local = { 1, 0.85f, 0.2f, 1 };
+
 const uint STRESS_RECT_SIZE @local = 6;
 const uint STRESS_RECT_PITCH @local = 8;
 const float STRESS_RECT_RADIUS @local = 2;
@@ -200,6 +229,7 @@ struct Options @local {
     bool shapes;
     bool gradients;
     bool backdrop;
+    bool world;
     bool benchmark;
     uint rects;
     uint frames;
@@ -221,12 +251,14 @@ struct Demo @local {
     FontId            font;
     OverlayList*      list;
     OverlayList*      target_list;
+    OverlayList*      world_list;
     bool              with_portrait;
     bool              target_overlay;
     bool              transform_panel;
     bool              shapes;
     bool              gradients;
     bool              backdrop;
+    bool              world;
     double            prepare_ms;
     uint              overlay_draws;
 }
@@ -334,6 +366,7 @@ fn void? add_text(
     String text,
     Vec2 origin,
     float size,
+    Vec4 color = TRANSFORM_TEXT_COLOR,
 ) @local {
     GlyphPlacement[TRANSFORM_LINE_GLYPHS] placements;
     usz count = assets.place_text(font, text, placements[..])!;
@@ -342,7 +375,7 @@ fn void? add_text(
         .glyphs      = placements[:count],
         .origin      = origin,
         .size_pixels = size,
-        .color       = TRANSFORM_TEXT_COLOR,
+        .color       = color,
     })!;
 }
 
@@ -713,6 +746,95 @@ fn void? add_samples(OverlayList* list) @local {
     list.add_rect(uneven)!;
 }
 
+fn void? add_world_labels(Demo* demo, float time) @local {
+    OverlayList* list = demo.world_list;
+    list.clear();
+
+    Vec3 pixel_position = WORLD_PIXEL_ANCHOR;
+    pixel_position.z += WORLD_PIXEL_TRAVEL * (0.5f + 0.5f * math::sin(time * WORLD_SPEED));
+
+    list.push_anchor({ .position = pixel_position, .pixels_per_unit = 1 })!;
+    list.add_rect(solid_rect(
+        min:    { -WORLD_PIXEL_MARKER, -WORLD_PIXEL_MARKER },
+        max:    { WORLD_PIXEL_MARKER, WORLD_PIXEL_MARKER },
+        fill:   WORLD_MARKER_COLOR,
+        radius: WORLD_PIXEL_MARKER,
+    ))!;
+
+    OverlayRect pixel_panel = solid_rect(
+        min:    WORLD_PIXEL_PANEL_MIN,
+        max:    WORLD_PIXEL_PANEL_MAX,
+        fill:   WORLD_PANEL_FILL,
+        radius: 10,
+    );
+    pixel_panel.border_widths = { 2, 2, 2, 2 };
+    pixel_panel.border_color = PANEL_BORDER;
+    list.add_rect(pixel_panel)!;
+
+    add_text(
+        list:   list,
+        assets: demo.assets,
+        font:   demo.font,
+        text:   "Pixel label",
+        origin: WORLD_PIXEL_TITLE_ORIGIN,
+        size:   WORLD_PIXEL_TITLE_SIZE,
+        color:  WHITE,
+    )!;
+    add_text(
+        list:   list,
+        assets: demo.assets,
+        font:   demo.font,
+        text:   "same size at any distance",
+        origin: WORLD_PIXEL_CAPTION_ORIGIN,
+        size:   WORLD_PIXEL_CAPTION_SIZE,
+        color:  WHITE,
+    )!;
+
+    list.pop_anchor();
+
+    Vec3 metre_position = WORLD_METRE_ANCHOR;
+    metre_position.z += WORLD_METRE_TRAVEL * (0.5f + 0.5f * math::sin(time * WORLD_SPEED + WORLD_METRE_PHASE));
+
+    list.push_anchor({ .position = metre_position })!;
+    list.add_rect(solid_rect(
+        min:    { -WORLD_METRE_MARKER, -WORLD_METRE_MARKER },
+        max:    { WORLD_METRE_MARKER, WORLD_METRE_MARKER },
+        fill:   WORLD_MARKER_COLOR,
+        radius: WORLD_METRE_MARKER,
+    ))!;
+
+    OverlayRect metre_panel = solid_rect(
+        min:    WORLD_METRE_PANEL_MIN,
+        max:    WORLD_METRE_PANEL_MAX,
+        fill:   WORLD_PANEL_FILL,
+        radius: WORLD_METRE_RADIUS,
+    );
+    metre_panel.border_widths = { WORLD_METRE_BORDER, WORLD_METRE_BORDER, WORLD_METRE_BORDER, WORLD_METRE_BORDER };
+    metre_panel.border_color = PANEL_BORDER;
+    list.add_rect(metre_panel)!;
+
+    add_text(
+        list:   list,
+        assets: demo.assets,
+        font:   demo.font,
+        text:   "Metre label",
+        origin: WORLD_METRE_TITLE_ORIGIN,
+        size:   WORLD_METRE_TITLE_SIZE,
+        color:  WHITE,
+    )!;
+    add_text(
+        list:   list,
+        assets: demo.assets,
+        font:   demo.font,
+        text:   "scales with distance",
+        origin: WORLD_METRE_CAPTION_ORIGIN,
+        size:   WORLD_METRE_CAPTION_SIZE,
+        color:  WHITE,
+    )!;
+
+    list.pop_anchor();
+}
+
 fn void? fill_scenes(Demo* demo, Options* options, float time) @local {
     OverlayList* list = demo.list;
     list.clear();
@@ -730,6 +852,7 @@ fn void? fill_scenes(Demo* demo, Options* options, float time) @local {
     if (demo.shapes) add_shapes(list, time)!;
     if (demo.gradients) add_gradients(demo, time)!;
     if (demo.backdrop) add_backdrops(list, time)!;
+    if (demo.world) add_world_labels(demo, time)!;
     if (demo.with_portrait && demo.target_overlay) fill_target_list(demo.target_list, time, demo.backdrop)!;
 }
 
@@ -751,6 +874,8 @@ fn void? draw_frame(Demo* demo, GuiRenderer* gui_renderer, FrameInfo info) @loca
             }
         }
         renderer.render_view(demo.scene, demo.camera_node, renderer.default_view)!;
+
+        if (demo.world) renderer.set_view_overlay(renderer.default_view, demo.world_list)!;
         renderer.finish_view(renderer.default_view)!;
 
         time::Clock started = clock::now();
@@ -798,6 +923,7 @@ fn void? run_interactive(Demo* demo, Options* options) @local {
             imgui::checkbox("Shapes", &demo.shapes);
             imgui::checkbox("Gradients", &demo.gradients);
             imgui::checkbox("Backdrop", &demo.backdrop);
+            imgui::checkbox("World labels", &demo.world);
             imgui::text("Items: %u of %u", demo.list.item_count, (uint)demo.list.entries.len);
         }
         imgui::end();
@@ -910,6 +1036,8 @@ fn int main(String[] args) {
             options.gradients = true;
         } else if (argument == "--backdrop") {
             options.backdrop = true;
+        } else if (argument == "--world") {
+            options.world = true;
         } else if (argument == "--rects" && has_value) {
             options.rects = args[++index].to_uint() ?? 0;
         } else if (argument == "--frames" && has_value) {
@@ -924,8 +1052,8 @@ fn int main(String[] args) {
             options.height = size[1];
         } else {
             io::eprintn(
-                "Use overlay [--stress [N]] [--target] [--transform] [--shapes] [--gradients] [--backdrop] [--frames N]"
-                " [--benchmark --rects N --frames F --size WxH]."
+                "Use overlay [--stress [N]] [--target] [--transform] [--shapes] [--gradients] [--backdrop] [--world]"
+                " [--frames N] [--benchmark --rects N --frames F --size WxH]."
             );
             return 1;
         }
@@ -1009,6 +1137,14 @@ fn int main(String[] args) {
     };
     OverlayList target_list = render::create_overlay_list(mem, target_list_desc);
     defer render::destroy_overlay_list(&target_list);
+    OverlayListDesc world_list_desc = {
+        .max_items      = WORLD_LIST_ITEMS,
+        .max_clips      = render::OVERLAY_LIST_DEFAULT_CLIPS,
+        .max_glyphs     = WORLD_LIST_GLYPHS,
+        .max_transforms = WORLD_LIST_ENTRIES,
+    };
+    OverlayList world_list = render::create_overlay_list(mem, world_list_desc);
+    defer render::destroy_overlay_list(&world_list);
 
     RenderTargetId portrait = render::create_render_target(
         &renderer,
@@ -1035,12 +1171,14 @@ fn int main(String[] args) {
         .font            = font,
         .list            = &list,
         .target_list     = &target_list,
+        .world_list      = &world_list,
         .with_portrait   = !options.benchmark,
         .target_overlay  = options.target_overlay,
         .transform_panel = options.transform_panel,
         .shapes          = options.shapes,
         .gradients       = options.gradients,
         .backdrop        = options.backdrop,
+        .world           = options.world,
     };
     renderer.prepare_scene(&scene)!!;
 

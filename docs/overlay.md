@@ -3,7 +3,8 @@
 Module `c3d::render` draws application-owned 2D items over the composed window or into a render target: rectangles
 with rounded corners, borders, textures, nine-slice fields, gradients and a blurred backdrop
 ([Backdrop](#backdrop)), glyph runs of placed text ([Text](text.md)), and triangles, lines and paths
-([Shapes](#shapes)), each under a clip and a transform. The list holds plain values; it names no `gpu` type.
+([Shapes](#shapes)), each under a clip and a transform, and items placed in the world around a point
+([World-space items](#world-space-items)). The list holds plain values; it names no `gpu` type.
 Dear ImGui stays the tool for debug panels and inspectors ([GUI overlay](gui.md)). The list serves interfaces the
 application draws itself.
 
@@ -263,6 +264,62 @@ list.pop_transform();
   clip; then the whole list draws with the transformed variants of both stages. Pushing transforms around items that
   are all skipped leaves the list plain.
 
+## World-space items
+
+```c3
+list.clear();
+list.push_anchor({ .position = world_position, .pixels_per_unit = 1 })!;
+list.add_rect(label)!;
+list.add_glyphs(text)!;
+list.pop_anchor();
+
+renderer.render_view(scene, camera_node, view)!;
+renderer.set_view_overlay(view, &list)!;
+renderer.finish_view(view)!;
+```
+
+- **The call.** `set_view_overlay(view, list)` gives one view a list for the frame; `null` clears it. `finish_view`
+  prepares the list for the view's output and draws it there, after the view's post: into the window or into the view's
+  render target. The application does not call `prepare_overlay_list` or open an overlay for it.
+- **Lifetime.** The list must be valid and unchanged from the call until `end_frame`: the renderer reads it when
+  `finish_view` records the view, so a change in between is drawn. The setting lasts one frame; the next `begin_frame`
+  clears it. One list may be given to several views; each prepares it when it records.
+- **Anchors.** `push_anchor(anchor)` starts a plane at a world position and `pop_anchor` ends it. Items added in
+  between are laid out in that plane with the ordinary calls: x to the right, y down, the origin at the anchor, the
+  plane facing the camera. Enclosing transforms and clips do not apply inside it; `push_transform` and `push_clip` inside
+  it apply in the plane. An anchor inside another starts its own plane.
+- **Position.** `position` is a world position, rebased with the frame origin as scene nodes are. An anchor behind the
+  camera, or outside the near and far planes, draws none of its items.
+- **Size.** With `pixels_per_unit` above zero a layout unit is that many screen pixels at any distance: `1` lays out in
+  pixels and the size stays constant as the anchor moves away. With zero a layout unit is a world unit, so a label
+  `1.5` wide is 1.5 metres wide and shrinks with distance as the scene does. Both measure the pixels of the view's
+  output rectangle.
+- **Depth test.** An anchor has one depth, that of its position. A fragment of its items is drawn where that depth is
+  at least as near as the view's depth at the pixel, so geometry nearer than the anchor hides the items behind it, and
+  the sky never does. Reverse-Z, larger is nearer. Nothing is written to the depth image.
+- **Colors.** The items draw after post, in the view's display output: exposure, tone mapping, temporal
+  anti-aliasing, bloom and blur do not apply. Colors, blending and encoding are those of a window or target overlay
+  ([Render-target output](#render-target-output)), so a label is as bright as its sRGB color says, whatever the exposure.
+- **Temporal jitter.** The test reads the view's own depth, which temporal anti-aliasing renders with a sub-pixel
+  jitter, and the items are placed without it. Where an item meets a silhouette in front of it, the cut moves with the
+  jitter: up to about half a pixel either side of the unjittered edge, so up to about a pixel between two frames. The
+  renderer keeps no unjittered copy of the depth.
+- **Resolution and viewport.** A view may render below its output's size (`render_scale`) or cover only a rectangle of
+  it (`viewport`). Each fragment maps its output pixel into the view's rectangle and reads the depth texel there. The
+  items are clipped to that rectangle.
+- **Limits.** Every item of a world list is under an anchor, and a backdrop item is not allowed. A list that holds
+  anchors is a world list, drawn only through `set_view_overlay`; `prepare_overlay_list` rejects it, so it is never
+  drawn as a screen list. Build a second list to show the same content on screen. A view with `LINEAR_HDR` output has
+  no display image, and a path-traced view has no depth image: both refuse a world list.
+- **Faults.** `set_view_overlay` checks the list when called and faults with `INVALID_ID` (dead view, texture, sampler,
+  font or render target), `INVALID_ARGUMENT` (an item outside an anchor, a backdrop item, a comparison sampler, a glyph
+  past its font, a list sampling the view's own target) or `UNSUPPORTED` (the cases above, or a texture kind the
+  overlay cannot sample). These leave the frame open. Faults while `finish_view` records the list (asset data
+  unavailable, device and recording faults) abort the frame like any other fault in `finish_view`.
+- **Cost.** A view with a world list that has visible items records one extra pass after its output, with one root of
+  64 bytes and one draw per run, and uploads one transform table of the list's size. Views without a world list, and
+  lists without anchors, record the passes and use the pipelines they used before.
+
 ## Faults
 
 | Call | Faults |
@@ -276,13 +333,16 @@ list.pop_transform();
 | `pop_clip` | Contract: the stack is not empty |
 | `push_transform` | `CAPACITY_EXCEEDED` (table full); `INVALID_ARGUMENT` (non-finite values, or a composed transform with no inverse) |
 | `pop_transform` | Contract: the stack is not empty |
+| `push_anchor` | `CAPACITY_EXCEEDED` (table or clip stack full); `INVALID_ARGUMENT` (non-finite position, or `pixels_per_unit` negative or non-finite) |
+| `pop_anchor` | Contract: the stacks are not empty |
+| `Renderer.set_view_overlay` | `INVALID_ID` (dead view, texture, sampler, font or render target); `INVALID_ARGUMENT` (an item outside an anchor, a backdrop item, comparison sampler, glyph past its font or without a built outline, the list samples the view's output target); `UNSUPPORTED` (`LINEAR_HDR` or path-traced view; texture kind above); contract: frame open, list not destroyed |
 | `Renderer.begin_overlay_target` | `INVALID_ID` (dead target); `gpu` faults from state transitions and recording |
-| `Renderer.prepare_overlay_list` | `INVALID_ID` (dead texture, sampler, render target or font, or a dead output `target`); `INVALID_ARGUMENT` (comparison sampler; glyph past its font or without a built outline; the list samples its output `target`); `UNSUPPORTED` (texture kind above; a window list with a backdrop item on a surface that cannot be copied from); `ASSET_DATA_UNAVAILABLE`; `gpu` faults from upload and state transitions |
+| `Renderer.prepare_overlay_list` | `INVALID_ID` (dead texture, sampler, render target or font, or a dead output `target`); `INVALID_ARGUMENT` (comparison sampler; glyph past its font or without a built outline; the list samples its output `target`; the list holds anchors); `UNSUPPORTED` (texture kind above; a window list with a backdrop item on a surface that cannot be copied from); `ASSET_DATA_UNAVAILABLE`; `gpu` faults from upload and state transitions |
 | `OverlayContext.draw_list` | `gpu` and shader faults from pipeline creation and recording; contract: prepared this frame for this output |
 
-A reference fault in `prepare_overlay_list` (`INVALID_ID`, `INVALID_ARGUMENT`, `UNSUPPORTED`) and the `INVALID_ID` of
-`begin_overlay_target` record nothing and leave the frame open, so the application can skip that overlay and still
-present. Any later fault aborts the frame, like other renderer faults.
+A reference fault in `prepare_overlay_list` (`INVALID_ID`, `INVALID_ARGUMENT`, `UNSUPPORTED`), the `INVALID_ID` of
+`begin_overlay_target` and every fault of `set_view_overlay` record nothing and leave the frame open, so the application
+can skip that overlay and still present. Any later fault aborts the frame, like other renderer faults.
 
 ## Capacities and costs
 
@@ -291,11 +351,12 @@ present. Any later fault aborts the frame, like other renderer faults.
 - One rectangle, glyph, triangle or segment is 96 bytes of instance data in the frame upload ring.
   4,096 items cost 384 KiB of the ring per prepared list; 16,384 glyphs cost 1.5 MiB.
 - A transform table entry is 80 bytes of the frame upload ring. A prepared list uploads its entries only when it
-  pushed a transform or a transformed clip.
+  pushed a transform, an anchor or a transformed clip. An anchor takes one entry, so `max_transforms` also bounds the
+  anchors, and the list keeps 20 bytes of anchor data on the CPU for each entry.
 - One run costs one 32-byte root and one draw. Rects with alternating clips cost one run each. Items under different
   transforms and the same scissor share a run. A backdrop item's run takes a 64-byte root and two 48-byte blur roots.
 - `MAX_BACKDROP_ITEMS` is 8 backdrop items per list and `MAX_BACKDROP_RADIUS` is 32 pixels ([Backdrop](#backdrop)).
-- `Pass.OVERLAY` times `draw_list` when GPU timings are on; a frame's window and target overlays add up.
+- `Pass.OVERLAY` times `draw_list` when GPU timings are on; a frame's window, target and world overlays add up.
 
 ## Benchmark
 
@@ -309,4 +370,6 @@ frame and rects under a transformed clip, and `--shapes` draws a line chart with
 translucent ribbon, and the chart again under a transform, and `--gradients` draws a linear gradient button, a
 textured nine-slice rect with a gradient, a rect with a gradient under a transform, and a radial vignette over the
 portrait whose radius point lies outside its rect. `--backdrop` draws a frosted panel over the sphere and the sample
-row, a rotated one over the scroll list's rows and, with `--target`, one over the portrait's cube.
+row, a rotated one over the scroll list's rows and, with `--target`, one over the portrait's cube. `--world` anchors
+two labels in the scene, one sized in pixels and one in metres, which sweep toward the camera and pass behind and in
+front of the sphere.

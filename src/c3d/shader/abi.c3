@@ -1287,7 +1287,7 @@ struct OverlayTransformGpu {
     Vec2f inverse_offset;
     Vec4f clip_box;
     uint  clip_parent;
-    uint  _pad0;
+    float depth;
     uint  _pad1;
     uint  _pad2;
 }
@@ -1300,7 +1300,7 @@ $assert $reflect(OverlayTransformGpu.inverse_y_axis).offset == 32;
 $assert $reflect(OverlayTransformGpu.inverse_offset).offset == 40;
 $assert $reflect(OverlayTransformGpu.clip_box).offset == 48;
 $assert $reflect(OverlayTransformGpu.clip_parent).offset == 64;
-$assert $reflect(OverlayTransformGpu._pad0).offset == 68;
+$assert $reflect(OverlayTransformGpu.depth).offset == 68;
 $assert $reflect(OverlayTransformGpu._pad1).offset == 72;
 $assert $reflect(OverlayTransformGpu._pad2).offset == 76;
 
@@ -1343,6 +1343,34 @@ $assert $reflect(OverlayBackdropRoot.backdrop_height).offset == 48;
 $assert $reflect(OverlayBackdropRoot._pad0).offset == 52;
 $assert $reflect(OverlayBackdropRoot._pad1).offset == 56;
 $assert $reflect(OverlayBackdropRoot._pad2).offset == 60;
+
+struct OverlayWorldRoot {
+    GpuAddress   items;
+    GpuAddress   transforms;
+    Vec2f        scale;
+    Vec2f        translate;
+    TextureIndex depth_texture;
+    uint         view_x;
+    uint         view_y;
+    uint         view_width;
+    uint         view_height;
+    uint         _pad0;
+    uint         _pad1;
+    uint         _pad2;
+}
+$assert OverlayWorldRoot::size == 64;
+$assert $reflect(OverlayWorldRoot.items).offset == 0;
+$assert $reflect(OverlayWorldRoot.transforms).offset == 8;
+$assert $reflect(OverlayWorldRoot.scale).offset == 16;
+$assert $reflect(OverlayWorldRoot.translate).offset == 24;
+$assert $reflect(OverlayWorldRoot.depth_texture).offset == 32;
+$assert $reflect(OverlayWorldRoot.view_x).offset == 36;
+$assert $reflect(OverlayWorldRoot.view_y).offset == 40;
+$assert $reflect(OverlayWorldRoot.view_width).offset == 44;
+$assert $reflect(OverlayWorldRoot.view_height).offset == 48;
+$assert $reflect(OverlayWorldRoot._pad0).offset == 52;
+$assert $reflect(OverlayWorldRoot._pad1).offset == 56;
+$assert $reflect(OverlayWorldRoot._pad2).offset == 60;
 
 struct OverlayBlurRoot {
     TextureIndex input_texture;

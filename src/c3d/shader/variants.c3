@@ -170,6 +170,11 @@ const uint SHADER_FLAG_TRANSFORMED = 1 << 13;
 *>
 const uint SHADER_FLAG_BACKDROP = 1 << 14;
 
+<*
+ Flag bit for WORLD.
+*>
+const uint SHADER_FLAG_WORLD = 1 << 15;
+
 const char[*] FULLSCREEN_SPIRV @private = $embed("../../../shaders/spv/fullscreen.spv");
 const char[*] GRADIENT_SPIRV @private = $embed("../../../shaders/spv/gradient.spv");
 const char[*] COMPOSITE_SPIRV @private = $embed("../../../shaders/spv/composite.spv");
@@ -193,6 +198,7 @@ const char[*] OVERLAY_VERTEX_TRANSFORMED_SPIRV @private = $embed("../../../shade
 const char[*] OVERLAY_FRAGMENT_TRANSFORMED_SPIRV @private = $embed("../../../shaders/spv/overlay_fragment_transformed.spv");
 const char[*] OVERLAY_FRAGMENT_BACKDROP_SPIRV @private = $embed("../../../shaders/spv/overlay_fragment_backdrop.spv");
 const char[*] OVERLAY_FRAGMENT_TRANSFORMED_BACKDROP_SPIRV @private = $embed("../../../shaders/spv/overlay_fragment_transformed_backdrop.spv");
+const char[*] OVERLAY_FRAGMENT_TRANSFORMED_WORLD_SPIRV @private = $embed("../../../shaders/spv/overlay_fragment_transformed_world.spv");
 const char[*] OVERLAY_BLUR_SPIRV @private = $embed("../../../shaders/spv/overlay_blur.spv");
 const char[*] LINES_VERTEX_SPIRV @private = $embed("../../../shaders/spv/lines_vertex.spv");
 const char[*] LINES_FRAGMENT_SPIRV @private = $embed("../../../shaders/spv/lines_fragment.spv");
@@ -340,7 +346,7 @@ const char[*] TRACE_REFIT_SPIRV @private = $embed("../../../shaders/spv/trace_re
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[166] SHADER_ENTRIES = {
+const ShaderEntry[167] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -364,6 +370,7 @@ const ShaderEntry[166] SHADER_ENTRIES = {
     { .variant = { .shader = OVERLAY_FRAGMENT, .flags = SHADER_FLAG_TRANSFORMED }, .spirv = OVERLAY_FRAGMENT_TRANSFORMED_SPIRV[..] },
     { .variant = { .shader = OVERLAY_FRAGMENT, .flags = SHADER_FLAG_BACKDROP }, .spirv = OVERLAY_FRAGMENT_BACKDROP_SPIRV[..] },
     { .variant = { .shader = OVERLAY_FRAGMENT, .flags = SHADER_FLAG_TRANSFORMED | SHADER_FLAG_BACKDROP }, .spirv = OVERLAY_FRAGMENT_TRANSFORMED_BACKDROP_SPIRV[..] },
+    { .variant = { .shader = OVERLAY_FRAGMENT, .flags = SHADER_FLAG_TRANSFORMED | SHADER_FLAG_WORLD }, .spirv = OVERLAY_FRAGMENT_TRANSFORMED_WORLD_SPIRV[..] },
     { .variant = { .shader = OVERLAY_BLUR }, .spirv = OVERLAY_BLUR_SPIRV[..] },
     { .variant = { .shader = LINES_VERTEX }, .spirv = LINES_VERTEX_SPIRV[..] },
     { .variant = { .shader = LINES_FRAGMENT }, .spirv = LINES_FRAGMENT_SPIRV[..] },

@@ -801,7 +801,7 @@ struct OverlayTransformGpu {
     vec2 inverse_offset;
     vec4 clip_box;
     uint clip_parent;
-    uint _pad0;
+    float depth;
     uint _pad1;
     uint _pad2;
 };
@@ -823,6 +823,21 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer OverlayBackd
     uint backdrop_y;
     uint backdrop_width;
     uint backdrop_height;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer OverlayWorldRoot {
+    uint64_t items;
+    uint64_t transforms;
+    vec2 scale;
+    vec2 translate;
+    uint depth_texture;
+    uint view_x;
+    uint view_y;
+    uint view_width;
+    uint view_height;
     uint _pad0;
     uint _pad1;
     uint _pad2;

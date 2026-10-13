@@ -705,18 +705,19 @@ struct OverlayItemGpu {
 }
 
 // Entry zero is the identity. A clip entry also holds its box in its own local space and the next clip to test.
+// An entry under a world anchor holds the anchor's reverse-Z depth, which a world overlay tests against the view.
 struct OverlayTransformGpu {
-    vec2 x_axis;
-    vec2 y_axis;
-    vec2 offset;
-    vec2 inverse_x_axis;
-    vec2 inverse_y_axis;
-    vec2 inverse_offset;
-    vec4 clip_box;
-    uint clip_parent;
-    uint _pad0;
-    uint _pad1;
-    uint _pad2;
+    vec2  x_axis;
+    vec2  y_axis;
+    vec2  offset;
+    vec2  inverse_x_axis;
+    vec2  inverse_y_axis;
+    vec2  inverse_offset;
+    vec4  clip_box;
+    uint  clip_parent;
+    float depth;
+    uint  _pad1;
+    uint  _pad2;
 }
 
 root OverlayRoot {
@@ -737,6 +738,22 @@ root OverlayBackdropRoot {
     uint         backdrop_y;
     uint         backdrop_width;   // texels the image holds; reads clamp to them
     uint         backdrop_height;
+    uint         _pad0;
+    uint         _pad1;
+    uint         _pad2;
+}
+
+// Fragment root of a world overlay. It starts with the OverlayRoot fields, so the vertex stage reads it as one.
+root OverlayWorldRoot {
+    GpuAddress   items;
+    GpuAddress   transforms;
+    vec2         scale;
+    vec2         translate;
+    TextureIndex depth_texture; // the view's depth, which items are tested against
+    uint         view_x;        // output pixel of the view's first column
+    uint         view_y;
+    uint         view_width;    // output pixels the view covers; the depth texture may be a different size
+    uint         view_height;
     uint         _pad0;
     uint         _pad1;
     uint         _pad2;
