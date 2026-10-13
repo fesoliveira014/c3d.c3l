@@ -7,6 +7,9 @@
   "title": { "extends": "text", "font_size": 20, "text_color": "#f2c96bff" },
   "caption": { "extends": "text", "font_size": 13, "text_color": "#a89f88ff" },
   "item_label": { "extends": "text", "font_size": 11, "text_color": "#ffffffff" },
+  "key": { "text_color": "#ffffffff", "text_highlight": "#3b4a6bff" },
+  "warn": { "text_color": "#ff8a6bff", "underline": true },
+  "gold": { "text_color": "#f2c96bff" },
 
   "panel": {
     "fill": "#14161cdd",
