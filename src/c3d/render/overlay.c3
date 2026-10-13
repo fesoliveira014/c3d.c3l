@@ -199,6 +199,14 @@ fn void? prepare_overlay(Renderer* self, OverlayList* list, RenderTargetId targe
             mem::copy(table.bytes.ptr, entries.ptr, (sz)table_bytes);
             list.prepared.transforms = table.address;
         }
+
+        if (world && world.planes.len) {
+            usz plane_bytes = world.planes.len * shader::OverlayPlaneGpu::size;
+            gpu::MappedGpuSpan planes = slot.upload.take(&self.device, plane_bytes)!;
+            mem::copy(planes.bytes.ptr, world.planes.ptr, (sz)plane_bytes);
+            list.prepared.world.planes = planes.address;
+        }
+
         if (list.prepared.backdrop_count) prepare_overlay_backdrop(self, output, window)!;
     }
     list.prepared.target = target;
@@ -233,7 +241,10 @@ fn void? OverlayContext.draw_list(&self, OverlayList* list) {
     };
 
     OverlayWorldView* world = &list.prepared.world;
-    if (world.enabled) key.fragment.flags |= shader::SHADER_FLAG_WORLD;
+    if (world.enabled) {
+        key.vertex.flags |= shader::SHADER_FLAG_WORLD;
+        key.fragment.flags |= shader::SHADER_FLAG_WORLD;
+    }
 
     gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, key)!;
     gpu::PipelineHandle backdrop_pipeline;
@@ -292,7 +303,9 @@ fn void? OverlayContext.draw_list(&self, OverlayList* list) {
 
             if (world.enabled) {
                 OverlayWorldRoot* world_root = (OverlayWorldRoot*)root.bytes.ptr;
+                world_root.planes = world.planes;
                 world_root.depth_texture = world.depth;
+                world_root.color_scale = world.color_scale;
                 world_root.view_x = world.rect.x;
                 world_root.view_y = world.rect.y;
                 world_root.view_width = world.rect.width;

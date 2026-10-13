@@ -1290,7 +1290,7 @@ struct OverlayTransformGpu {
     Vec4f clip_box;
     uint  clip_parent;
     float depth;
-    uint  _pad1;
+    uint  plane;
     uint  _pad2;
 }
 $assert OverlayTransformGpu::size == 80;
@@ -1303,8 +1303,20 @@ $assert $reflect(OverlayTransformGpu.inverse_offset).offset == 40;
 $assert $reflect(OverlayTransformGpu.clip_box).offset == 48;
 $assert $reflect(OverlayTransformGpu.clip_parent).offset == 64;
 $assert $reflect(OverlayTransformGpu.depth).offset == 68;
-$assert $reflect(OverlayTransformGpu._pad1).offset == 72;
+$assert $reflect(OverlayTransformGpu.plane).offset == 72;
 $assert $reflect(OverlayTransformGpu._pad2).offset == 76;
+
+struct OverlayPlaneGpu {
+    Vec4f u_axis;
+    Vec4f v_axis;
+    Vec4f origin;
+    Vec4f distance;
+}
+$assert OverlayPlaneGpu::size == 64;
+$assert $reflect(OverlayPlaneGpu.u_axis).offset == 0;
+$assert $reflect(OverlayPlaneGpu.v_axis).offset == 16;
+$assert $reflect(OverlayPlaneGpu.origin).offset == 32;
+$assert $reflect(OverlayPlaneGpu.distance).offset == 48;
 
 struct OverlayRoot {
     GpuAddress items;
@@ -1351,28 +1363,26 @@ struct OverlayWorldRoot {
     GpuAddress   transforms;
     Vec2f        scale;
     Vec2f        translate;
+    GpuAddress   planes;
     TextureIndex depth_texture;
     uint         view_x;
     uint         view_y;
     uint         view_width;
     uint         view_height;
-    uint         _pad0;
-    uint         _pad1;
-    uint         _pad2;
+    float        color_scale;
 }
 $assert OverlayWorldRoot::size == 64;
 $assert $reflect(OverlayWorldRoot.items).offset == 0;
 $assert $reflect(OverlayWorldRoot.transforms).offset == 8;
 $assert $reflect(OverlayWorldRoot.scale).offset == 16;
 $assert $reflect(OverlayWorldRoot.translate).offset == 24;
-$assert $reflect(OverlayWorldRoot.depth_texture).offset == 32;
-$assert $reflect(OverlayWorldRoot.view_x).offset == 36;
-$assert $reflect(OverlayWorldRoot.view_y).offset == 40;
-$assert $reflect(OverlayWorldRoot.view_width).offset == 44;
-$assert $reflect(OverlayWorldRoot.view_height).offset == 48;
-$assert $reflect(OverlayWorldRoot._pad0).offset == 52;
-$assert $reflect(OverlayWorldRoot._pad1).offset == 56;
-$assert $reflect(OverlayWorldRoot._pad2).offset == 60;
+$assert $reflect(OverlayWorldRoot.planes).offset == 32;
+$assert $reflect(OverlayWorldRoot.depth_texture).offset == 40;
+$assert $reflect(OverlayWorldRoot.view_x).offset == 44;
+$assert $reflect(OverlayWorldRoot.view_y).offset == 48;
+$assert $reflect(OverlayWorldRoot.view_width).offset == 52;
+$assert $reflect(OverlayWorldRoot.view_height).offset == 56;
+$assert $reflect(OverlayWorldRoot.color_scale).offset == 60;
 
 struct OverlayBlurRoot {
     TextureIndex input_texture;

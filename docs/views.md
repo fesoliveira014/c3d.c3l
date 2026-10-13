@@ -451,6 +451,8 @@ renderer.render_view(&scene, camera_node, main_view)!;
 - A mirror view stays `LINEAR_HDR`, so it ignores auto exposure; the view that shows the surface meters the
   composited reflection as part of its image. The target holds physical radiance: the surface's stage multiplies
   the sample by `pre_exposed` ([pre-exposure](custom_shaders.md#pre-exposure)).
+- World-space overlay items draw in a mirror view when their layers match its camera, reflected as the view shows them
+  ([World-space items](overlay.md#world-space-items)).
 - Water from the landscape add-on places its mirror camera and clip plane for you; see [water](water.md#the-mirror).
 - Under [fog or an atmosphere](sky.md#where-fog-applies) a mirror view fogs only the path behind its plane,
   from the plane to the reflected surface; the view that shows the surface fogs the path to it, so the
