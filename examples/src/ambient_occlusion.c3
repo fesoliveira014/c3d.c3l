@@ -32,9 +32,9 @@ const float NEAR_PLANE_SCALE @local = 0.002f;
 const uint WINDOW_WIDTH @local = 1280;
 const uint WINDOW_HEIGHT @local = 720;
 const Vec2 CONTROLS_PANEL_POSITION @local = { 16, 16 };
-const Vec2 CONTROLS_PANEL_SIZE @local = { 340, 176 };
-const Vec2 POST_PANEL_POSITION @local = { 16, 208 };
-const Vec2 POST_PANEL_SIZE @local = { 340, 330 };
+const Vec2 CONTROLS_PANEL_SIZE @local = { 340, 202 };
+const Vec2 POST_PANEL_POSITION @local = { 16, 234 };
+const Vec2 POST_PANEL_SIZE @local = { 340, 356 };
 const Vec2 TARGETS_PANEL_POSITION @local = { 920, 16 };
 const Vec2 TARGETS_PANEL_SIZE @local = { 344, 690 };
 const Vec2 STATS_PANEL_POSITION @local = { 372, 16 };
@@ -62,6 +62,7 @@ struct Options @local {
     bool gpu_timings;
     bool full_resolution;
     bool temporal;
+    bool bent_normals;
 }
 
 fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
@@ -131,6 +132,11 @@ fn void set_temporal(Views* views, bool temporal) @local {
     views.right_desc.ambient_occlusion.temporal = temporal;
 }
 
+fn void set_bent_normals(Views* views, bool bent_normals) @local {
+    views.left_desc.ambient_occlusion.bent_normals = bent_normals;
+    views.right_desc.ambient_occlusion.bent_normals = bent_normals;
+}
+
 fn void? draw_frame(
     render::Renderer* renderer,
     Scene* scene,
@@ -171,6 +177,7 @@ fn void? run_gui(
     AmbientOcclusionDesc ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
     ambient_occlusion.full_resolution = options.full_resolution;
     ambient_occlusion.temporal = options.temporal;
+    ambient_occlusion.bent_normals = options.bent_normals;
     Views views = {
         .left       = renderer.default_view,
         .left_desc  = render::default_view_desc(),
@@ -236,6 +243,12 @@ fn void? run_gui(
                 views_changed = true;
             }
 
+            bool bent_normals = views.right_desc.ambient_occlusion.bent_normals;
+            if (imgui::checkbox("Bent normals", &bent_normals)) {
+                set_bent_normals(&views, bent_normals);
+                views_changed = true;
+            }
+
             if (imgui::radio_button("Edit left", !edit_right)) edit_right = false;
             imgui::same_line();
             if (imgui::radio_button("Edit right", edit_right)) edit_right = true;
@@ -282,6 +295,8 @@ fn int main(String[] args) {
             options.full_resolution = true;
         } else if (argument == "--temporal") {
             options.temporal = true;
+        } else if (argument == "--bent-normals") {
+            options.bent_normals = true;
         } else {
             io::printfn("Unknown argument: %s", argument);
             return 1;
