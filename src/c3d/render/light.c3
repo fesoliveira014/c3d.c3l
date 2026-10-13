@@ -200,10 +200,7 @@ fn float light_source_extent(Light* light) @local {
     return light.kind == DIRECTIONAL ? light.source_angle : light.source_radius;
 }
 
-<*
- Whether a light a view could trace has a source extent, which selects the soft forms of the traced fragment stages.
- @param [&in] scene : "Current node visibility."
-*>
+// Any visible traced light with an extent, whatever a view's layers: the soft form draws a superset of the lights.
 fn bool traced_light_has_extent(Scene* scene) @private {
     bool found;
     scene.@each(Light; Entity entity, Light* light) {
