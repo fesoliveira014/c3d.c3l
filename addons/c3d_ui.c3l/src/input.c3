@@ -12,7 +12,11 @@ import std::math;
  @param events : "The window's events of this frame."
 *>
 fn void Ui.route_input(&self, Input* input, Event[] events) {
-    if (self.frame_ready) route_pointer(self, input, events);
+    if (self.frame_ready) {
+        route_pointer(self, input, events);
+    } else {
+        route_stale_window_drag(self, input, events);
+    }
     if (key_valid(&self.focus)) {
         foreach (&event : events) route_key(self, event);
     }
@@ -35,12 +39,15 @@ fn void route_pointer(Ui* ui, Input* input, Event[] events) @private {
     clay::ElementId[] over = clay::get_pointer_over_ids().ids();
 
     uint hover = UI_NONE;
+    uint innermost = UI_NONE;
     bool over_ui;
+    bool was_moving = moving_window(ui);
     ui.tooltip_host_count = 0;
     foreach (element_id : over) {
         uint index = lookup_instance(ui, element_id.id);
         if (index == UI_NONE || !ui.instances[index].hit) continue;
         over_ui = true;
+        innermost = index;
         if (ui.instances[index].interactive) hover = index;
         if (ui.instances[index].element.has_tooltip && ui.tooltip_host_count < UI_TOOLTIP_HOSTS) {
             ui.tooltip_hosts[ui.tooltip_host_count] = ui.instances[index].key;
@@ -53,18 +60,22 @@ fn void route_pointer(Ui* ui, Input* input, Event[] events) @private {
         switch (event.kind) {
             case MOUSE_BUTTON_DOWN:
                 press(
-                    ui:      ui,
-                    button:  event.button,
-                    blocked: blocked,
-                    hover:   hover,
-                    pointer: pointer,
+                    ui:        ui,
+                    button:    event.button,
+                    blocked:   blocked,
+                    hover:     hover,
+                    innermost: innermost,
+                    pointer:   pointer,
                 );
             case MOUSE_MOTION:
+                move_window(ui, event.position / ui.scale);
                 if (ui.drag.candidate && !ui.drag.active && input.mouse_buttons[(usz)MouseButton.LEFT]) {
                     Vec2 travel = event.position / ui.scale - ui.drag.origin;
                     if (travel.length() > UI_DRAG_THRESHOLD) ui.drag.active = true;
                 }
             case MOUSE_BUTTON_UP:
+                if (release_window(ui, event)) break;
+
                 release(
                     ui:      ui,
                     button:  event.button,
@@ -72,14 +83,46 @@ fn void route_pointer(Ui* ui, Input* input, Event[] events) @private {
                     over:    over,
                     pointer: pointer,
                 );
+            case KEY_DOWN:
+                if (event.scancode == Scancode.ESCAPE) cancel_window_drag(ui);
             default:
                 break;
         }
     }
     if (ui.drag.active) track_drop_target(ui, over, pointer);
-    clay::update_scroll_containers(false, { 0, blocked ? 0 : input.wheel * UI_WHEEL_STEP }, 0);
 
-    if (!blocked && (over_ui || key_valid(&ui.press) || ui.drag.active)) input.mouse_captured_by_gui = true;
+    bool moving = moving_window(ui);
+    if (moving) {
+        ui.hover = {};
+        ui.tooltip_host_count = 0;
+    }
+
+    clay::update_scroll_containers(false, { 0, blocked || moving ? 0 : input.wheel * UI_WHEEL_STEP }, 0);
+
+    bool held = moving || was_moving;
+    if (held || (!blocked && (over_ui || key_valid(&ui.press) || ui.drag.active))) {
+        input.mouse_captured_by_gui = true;
+    }
+
+    if (held) input.keyboard_captured_by_gui = true;
+}
+
+fn void route_stale_window_drag(Ui* ui, Input* input, Event[] events) @private {
+    if (!moving_window(ui)) return;
+
+    foreach (&event : events) {
+        switch (event.kind) {
+            case MOUSE_BUTTON_UP:
+                release_window(ui, event);
+            case KEY_DOWN:
+                if (event.scancode == Scancode.ESCAPE) cancel_window_drag(ui);
+            default:
+                break;
+        }
+    }
+
+    input.mouse_captured_by_gui = true;
+    input.keyboard_captured_by_gui = true;
 }
 
 fn void press(
@@ -87,12 +130,19 @@ fn void press(
     MouseButton button,
     bool blocked,
     uint hover,
+    uint innermost,
     Vec2 pointer,
 ) @private {
     if (button != LEFT && button != RIGHT) return;
-    if (ui.drag.active) return;
+    if (ui.drag.active || moving_window(ui)) return;
     UiInstance* target = hover == UI_NONE || blocked ? null : &ui.instances[hover];
     if (!target || !same_key(&target.key, &ui.focus)) ui.focus = {};
+
+    if (!blocked && innermost != UI_NONE) {
+        raise_windows(ui, &ui.instances[innermost]);
+        if (button == LEFT) begin_window_drag(ui, &ui.instances[innermost], pointer);
+    }
+
     if (!target) return;
 
     ui.press = target.key;
@@ -102,7 +152,7 @@ fn void press(
         focus_field(ui, target);
         return;
     }
-    if (target.list == UI_NONE) return;
+    if (target.list == UI_NONE || moving_window(ui)) return;
     clay::BoundingBox box = clay::get_element_data(clay::id(target.clay_id)).bounding_box;
     ui.drag = {
         .candidate   = true,

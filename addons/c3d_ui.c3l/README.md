@@ -51,6 +51,10 @@ while (window.poll()) {
 - `route_input` hit-tests the pointer against the previous `update`'s layout. It ORs `mouse_captured_by_gui`,
   `keyboard_captured_by_gui` and `text_input_wanted_by_gui` into `Input` and never clears them. When ImGui already
   holds the mouse, the UI receives no hover, press or wheel that frame; a press there still blurs a focused field.
+- While a window drag is pending or active, `route_input` sets `mouse_captured_by_gui` and `keyboard_captured_by_gui`,
+  also when ImGui holds the mouse, and keeps following the pointer. Hover and tooltips stay empty and the wheel is
+  ignored until the button is released or Escape cancels the drag. Before the first `update` after a load, a drag
+  still ends on release and cancels on Escape.
 - With ImGui, `GuiRenderer.new_frame` writes the three flags and `finish_frame` applies the combined text input want.
   Without ImGui, call `input.clear_gui_flags()` before `route_input` and apply `ui.wants_text_input` yourself.
 - `update` takes the output size in pixels and `scale`, the output pixels per layout unit: pixel density times any
@@ -87,7 +91,7 @@ The root's anchor point sits on the screen's matching point; `offset` moves it. 
 
 | Kind | Children | Own keys |
 | --- | --- | --- |
-| `panel` | `children` | |
+| `panel` | `children` | `window`, `position`, `drag_bounds`, `on_move_start`, `on_move_end` (see Windows) |
 | `label` | | `text` |
 | `image` | | `image` (asset key or `{IMAGE}`), `uv` [u0, v0, u1, v1] |
 | `button` | `children` | |
@@ -99,7 +103,7 @@ The root's anchor point sits on the screen's matching point; `offset` moves it. 
 | `grid` | `template` | `items` (`{LIST}`), `columns`, `rows`, `cell_size` [w, h], `item_cell` (`{INT}`), `item_span` [w, h] (numbers or `{INT}`) |
 
 Every element takes `kind`, `id`, `style`, `visible` and `enabled` (a literal or `{BOOL}`), the actions `on_click`,
-`on_secondary_click` and `on_drop`, and every style property inline.
+`on_secondary_click` and `on_drop`, `drag_handle` inside a window, and every style property inline.
 
 - `list` lays its items out like a panel, one template copy per item.
 - A `tooltip` shows while the pointer is over its parent, interactive or not, floating below it above everything,
@@ -113,6 +117,55 @@ Every element takes `kind`, `id`, `style`, `visible` and `enabled` (a literal or
 - Interactive elements are buttons, text fields, grid items and any element with an action. Hover, press and
   disabled states apply to the interactive element and its descendants, except that an interactive descendant takes
   its own hover and press; focus applies to the focused field.
+
+### Windows
+
+`"window": true` makes a `panel` a window: it floats over its parent's content, takes a runtime offset and moves when
+its drag handle is dragged.
+
+```jsonc
+{ "kind": "panel", "id": "inspector", "window": true, "position": [24, 40], "on_move_end": "inspector.moved",
+  "children": [
+    { "kind": "panel", "drag_handle": true, "children": [
+        { "kind": "label", "text": "Inspector" },
+        { "kind": "button", "on_click": "inspector.close", "children": [ { "kind": "label", "text": "x" } ] } ] },
+    { "kind": "label", "text": "Contents" }
+  ] }
+```
+
+| Key | On | Value |
+| --- | --- | --- |
+| `window` | `panel` | `true` for a window; it needs an `id` |
+| `position` | window | [x, y], signed layout units from the parent's top left; the offset a window starts at (default [0, 0]) |
+| `drag_bounds` | window | `parent` (default): the window stays inside its parent's padding box; `viewport`: inside the layout area; `none` |
+| `drag_handle` | the window or a descendant | `true` marks the region that drags the nearest enclosing window |
+| `on_move_start`, `on_move_end` | window | actions fired when a drag starts and ends; `event.offset` is the window offset |
+
+- A window's parent is a `panel` or a `scroll`. A window is not the root and not inside a list or grid template.
+  Windows nest. A window with a `window` key that breaks these rules faults `c3d::ASSET_FORMAT_ERROR` at its `window`;
+  `window` on another kind, and `position`, `drag_bounds`, `on_move_start` and `on_move_end` off a window, fault
+  `UNKNOWN_PROPERTY`, as does `drag_handle` outside every window.
+- A parent declares its other children first, in document order, then its windows from the lowest raise order to the
+  highest. A press anywhere in a window raises it and every window around it above their sibling windows. The
+  nearest enclosing `scroll` clips a window, and a window directly in a `scroll` scrolls with the content. Hover,
+  press and wheel reach only the topmost window under the pointer.
+- A press on a handle starts a drag after `UI_DRAG_THRESHOLD` layout units of travel. An interactive element between
+  the press and the handle, such as a close button on the title bar, keeps the press. A press on an interactive
+  handle that never moves is still a click. `on_move_start` fires when the drag starts, and `on_move_end` on release
+  with the final offset.
+- The offset follows the pointer's travel since the press, in layout units, and is clamped to `drag_bounds` against
+  the previous layout. Escape cancels a drag: the offset returns to its start and no `on_move_end` fires. A drag also
+  cancels, without `on_move_end`, when the window or all of its handles are not laid out in an `update`.
+- `ui.window_offset(document, id)` reads a window's offset; `ui.set_window_offset(document, id, offset)` moves a
+  window without clamping and cancels a drag of it.
+- Offsets and raise order belong to the window's `id`. `reload_document` keeps them for ids the new tree still has and
+  drops the rest; a drag continues if the new tree has the window and one of its handles, and cancels otherwise.
+  `load_styles` and the load of another document change nothing, and `unload_document` drops the document's windows.
+- A document without windows lays out and draws as before. Each window takes two layers above its document's root
+  and grid items, so documents keep their order; `update` faults `c3d::CAPACITY_EXCEEDED` when the layers reach the
+  tooltips.
+- `ui --windows` loads `examples/ui/windows.jsonc`; with `--frames N` it replays a scripted drag, raise and nested
+  drag.
 
 ### Ids
 
@@ -226,6 +279,8 @@ ui.on("squad.select", &select_member, &game)!;
 | `on_change` | each edit of a focused text field; `event.text` is the field text |
 | `on_submit` | Enter in a focused text field, which then blurs |
 | `on_drop` | a grid item released over the element; `event.source` and `event.source_list` name the item, `event.cell` the target grid cell (`UI_NO_CELL` outside a grid) |
+| `on_move_start` | a window drag began; `event.offset` is the window's offset |
+| `on_move_end` | a window drag was released; `event.offset` is the final offset. Escape and a disappearing window cancel without it |
 
 Handlers run inside `route_input` with the scope of the element that fired. In an engine they queue commands for the
 next simulation tick. A drop handler accepts by changing data and rejects by leaving it unchanged; the next frame
@@ -252,8 +307,8 @@ points into it.
 | `BINDING_KIND_MISMATCH` | a binding of a kind the key does not take |
 | `UNKNOWN_ACTION` | an action nothing registered with `Ui.on` |
 | `UNKNOWN_ASSET` | an image or font key the store lacks; a text element without a font |
-| `c3d::ASSET_FORMAT_ERROR` | a value of the wrong JSON type or out of range; an `id` that is not a valid name, repeats or collides |
-| `c3d::CAPACITY_EXCEEDED` | a UI table full; lists nested deeper than `UI_SCOPE_DEPTH` |
+| `c3d::ASSET_FORMAT_ERROR` | a value of the wrong JSON type or out of range; an `id` that is not a valid name, repeats or collides; a `window` without an `id`, on the root, in a template or under a parent that is not a `panel` or `scroll` |
+| `c3d::CAPACITY_EXCEEDED` | a UI table full, including the window table; lists nested deeper than `UI_SCOPE_DEPTH` |
 | `json::*`, `io::EOF` | syntax errors from `std::encoding::json`; the error path is empty |
 
 The std parser reports no line or column for syntax errors. Keys are checked in sorted order, so a document with
@@ -272,9 +327,11 @@ several errors reports the same one every time.
 
 `default_ui_desc()`: 16 documents, 256 styles, 64 font sets, 1,024 bindings, 256 actions, 64 item sources, 32 KiB of
 names, 4,096 laid-out elements per frame, 64 KiB of expanded text per frame, 2,048 cached lines with 32,768 cached
-glyphs, and a 256-byte field buffer. Every table is allocated once in `create_ui`; documents and style sets allocate
-once when they load. Nothing allocates per frame. `update` faults `CAPACITY_EXCEEDED` when a frame overflows; that
-frame draws nothing and the next frame retries.
+glyphs, a 256-byte field buffer, and 64 windows (60 bytes each) across the loaded documents; `max_windows` may be 0,
+which holds none. Every table is allocated once in `create_ui`; documents and style sets allocate once when they load.
+Nothing allocates per frame. A load or reload whose windows do not fit the table faults `CAPACITY_EXCEEDED` and
+changes nothing. `update` faults `CAPACITY_EXCEEDED` when a frame overflows; that frame draws nothing and the next
+frame retries.
 
 ## Measured costs
 

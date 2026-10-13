@@ -127,6 +127,32 @@ fn void test_load_faults_report_json_pointers() @test {
         expected: c3d::ASSET_FORMAT_ERROR,
         path:     "/root/children/1/id",
     );
+    fixture::expect_load_fault(
+        fixture:  &fixture,
+        document: `{ "root": { "kind": "panel", "children": [ { "kind": "panel", "window": true } ] } }`,
+        expected: c3d::ASSET_FORMAT_ERROR,
+        path:     "/root/children/0/window",
+    );
+    fixture::expect_load_fault(
+        fixture:  &fixture,
+        document: `{ "root": { "kind": "panel", "children": [
+            { "kind": "label", "style": "text", "id": "tool", "window": true, "text": "a" } ] } }`,
+        expected: ui::UNKNOWN_PROPERTY,
+        path:     "/root/children/0/window",
+    );
+    fixture::expect_load_fault(
+        fixture:  &fixture,
+        document: `{ "root": { "kind": "list", "items": "{squad.members}", "template": { "kind": "panel", "children": [
+            { "kind": "panel", "id": "tool", "window": true } ] } } }`,
+        expected: c3d::ASSET_FORMAT_ERROR,
+        path:     "/root/template/children/0/window",
+    );
+    fixture::expect_load_fault(
+        fixture:  &fixture,
+        document: `{ "root": { "kind": "panel", "drag_handle": true } }`,
+        expected: ui::UNKNOWN_PROPERTY,
+        path:     "/root/drag_handle",
+    );
     fixture::expect_styles_fault(
         fixture:  &fixture,
         sheets:   { `{ "title": { "font": ["ui/latin", "ui/gothic"] } }` },
