@@ -732,7 +732,7 @@ them. Bytes per working pixel at `N` samples:
 | Image | Bytes per pixel |
 | --- | --- |
 | `msaa_color`, `msaa_depth` | `12 · N` (8 and 4) |
-| `msaa_velocity` | `4 · N` with motion blur alone, `8 · N` with screen-space GI |
+| `msaa_velocity` | `4 · N` with motion blur alone, `8 · N` with screen-space GI or temporal ambient occlusion |
 | `msaa_reflection_gbuffer` | `8 · N`, on a forward view |
 | G-buffer, deferred | `28 · N`, in place of the 28 of a single-sample G-buffer |
 | `normal_sample_zero`, `specular_sample_zero` | 8 each, single-sample |
