@@ -72,6 +72,8 @@ enum ShaderName : int {
     TAA_RESOLVE,
     EXPOSURE_HISTOGRAM,
     EXPOSURE_ADAPT,
+    FOCUS_HISTOGRAM,
+    FOCUS_ADAPT,
     SSAO,
     AO_BLUR,
     PROBE_FILL_ENVIRONMENT,
@@ -285,6 +287,8 @@ const char[*] MOTION_BLUR_SPIRV @private = $embed("../../../shaders/spv/motion_b
 const char[*] TAA_RESOLVE_SPIRV @private = $embed("../../../shaders/spv/taa_resolve.spv");
 const char[*] EXPOSURE_HISTOGRAM_SPIRV @private = $embed("../../../shaders/spv/exposure_histogram.spv");
 const char[*] EXPOSURE_ADAPT_SPIRV @private = $embed("../../../shaders/spv/exposure_adapt.spv");
+const char[*] FOCUS_HISTOGRAM_SPIRV @private = $embed("../../../shaders/spv/focus_histogram.spv");
+const char[*] FOCUS_ADAPT_SPIRV @private = $embed("../../../shaders/spv/focus_adapt.spv");
 const char[*] SSAO_SPIRV @private = $embed("../../../shaders/spv/ssao.spv");
 const char[*] AO_BLUR_SPIRV @private = $embed("../../../shaders/spv/ao_blur.spv");
 const char[*] PROBE_FILL_ENVIRONMENT_SPIRV @private = $embed("../../../shaders/spv/probe_fill_environment.spv");
@@ -347,7 +351,7 @@ const char[*] TRACE_REFIT_SPIRV @private = $embed("../../../shaders/spv/trace_re
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[168] SHADER_ENTRIES = {
+const ShaderEntry[170] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -458,6 +462,8 @@ const ShaderEntry[168] SHADER_ENTRIES = {
     { .variant = { .shader = TAA_RESOLVE }, .spirv = TAA_RESOLVE_SPIRV[..] },
     { .variant = { .shader = EXPOSURE_HISTOGRAM }, .spirv = EXPOSURE_HISTOGRAM_SPIRV[..] },
     { .variant = { .shader = EXPOSURE_ADAPT }, .spirv = EXPOSURE_ADAPT_SPIRV[..] },
+    { .variant = { .shader = FOCUS_HISTOGRAM }, .spirv = FOCUS_HISTOGRAM_SPIRV[..] },
+    { .variant = { .shader = FOCUS_ADAPT }, .spirv = FOCUS_ADAPT_SPIRV[..] },
     { .variant = { .shader = SSAO }, .spirv = SSAO_SPIRV[..] },
     { .variant = { .shader = AO_BLUR }, .spirv = AO_BLUR_SPIRV[..] },
     { .variant = { .shader = PROBE_FILL_ENVIRONMENT }, .spirv = PROBE_FILL_ENVIRONMENT_SPIRV[..] },

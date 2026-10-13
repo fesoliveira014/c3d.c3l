@@ -92,6 +92,14 @@ $assert TaaDebug.REJECTION.ordinal == shader::TAA_DEBUG_REJECTION;
 $assert TaaDebug.HISTORY_WEIGHT.ordinal == shader::TAA_DEBUG_HISTORY_WEIGHT;
 
 <*
+ Where the depth-of-field focus distance comes from.
+*>
+enum FocusMode {
+    MANUAL,
+    AUTO,
+}
+
+<*
  Display grading applied to scene-linear color before output encoding.
 *>
 struct GradeParams {
@@ -122,10 +130,14 @@ struct BloomParams {
  Thin-lens focus: distances in meters, aperture an f-number, max_coc a half-resolution pixel radius.
 *>
 struct DofParams {
-    float focus_distance;
-    float focal_length;
-    float aperture;
-    float max_coc;
+    float     focus_distance; // MANUAL focus, and AUTO's focus while nothing has been metered
+    float     focal_length;
+    float     aperture;
+    float     max_coc;
+    FocusMode focus_mode;
+    Vec2      focus_point;    // normalized to the view's image, origin at the top left
+    float     focus_radius;   // pixels; zero meters the one texel under focus_point
+    float     focus_time;     // seconds; zero snaps to the metered distance
 }
 
 <*
@@ -201,7 +213,15 @@ fn PostStack default_post_stack() {
             .mip_bias           = -1,
         },
         .bloom_params = { .threshold = 1, .knee = 0.5f, .intensity = 0.05f, .levels = 5 },
-        .dof_params   = { .focus_distance = 5, .focal_length = 0.05f, .aperture = 2.8f, .max_coc = 16 },
+        .dof_params   = {
+            .focus_distance = 5,
+            .focal_length   = 0.05f,
+            .aperture       = 2.8f,
+            .max_coc        = 16,
+            .focus_point    = { 0.5f, 0.5f },
+            .focus_radius   = 16,
+            .focus_time     = 0.25f,
+        },
         .motion_blur_params = { .shutter = 0.5f, .samples = 12, .max_velocity = 32 },
         .auto_exposure_params = AUTO_EXPOSURE_DEFAULT,
     };
@@ -363,8 +383,12 @@ fn bool lut_domain_valid(GradeParams* grade) @private {
  @pure
 *>
 fn bool dof_params_valid(DofParams* params) @private {
+    bool focus_valid = params.focus_point.x >= 0 && params.focus_point.x <= 1
+      && params.focus_point.y >= 0 && params.focus_point.y <= 1
+      && math::is_finite(params.focus_radius) && params.focus_radius >= 0
+      && math::is_finite(params.focus_time) && params.focus_time >= 0;
     return params.focal_length > 0 && params.aperture > 0 && params.max_coc > 0
-      && params.focus_distance > params.focal_length;
+      && params.focus_distance > params.focal_length && focus_valid;
 }
 
 <*

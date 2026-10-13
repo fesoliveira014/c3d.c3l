@@ -8,16 +8,24 @@ import gpu;
 <*
  Record depth of field over the scene input into hdr_color.
  @param [&inout] renderer : "Open frame with its forward passes recorded; scene_input returns to hdr_color."
- @param [&inout] record : "Its DoF layers and tiles change state."
+ @param [&inout] record : "Its DoF layers, tiles and focus state change."
  @return? c3d::SHADER_NOT_FOUND, gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED
  @return? gpu::SLOT_TABLE_FULL, gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
  @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
- @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+ @return? gpu::DEVICE_BUSY, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
  @require record.dof_near.texture.is_valid(), record.tile_max.texture.is_valid()
 *>
 fn void? record_dof(Renderer* renderer, ViewRecord* record) {
     acquire_dof_pipelines(renderer)!;
     open_post_chain(renderer, record)!;
+
+    DofParams* params = &record.desc.post.dof_params;
+    if (params.focus_mode == FocusMode.AUTO) {
+        record_focus(renderer, record)!;
+    } else {
+        record.stats.focus_distance = params.focus_distance;
+    }
+
     Target* input = record.scene_input;
     bool in_place = input == &record.hdr_color;
     uint half_width = record.dof_near.width;
@@ -104,6 +112,7 @@ fn void? record_dof_dispatch(
         .proj_23        = record.projection_terms.m23,
         .half_texel     = { 1.0f / (float)record.dof_near.width, 1.0f / (float)record.dof_near.height },
         .full_texel     = { 1.0f / (float)record.hdr_color.width, 1.0f / (float)record.hdr_color.height },
+        .focus          = adapted_focus(record),
     };
     return render::dispatch_extent(renderer, root.address, output.width, output.height);
 }

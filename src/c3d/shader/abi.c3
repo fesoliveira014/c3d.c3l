@@ -195,6 +195,8 @@ const float EXPOSURE_LOG2_MAX = 14.0;
 const float EXPOSURE_LUMINANCE_EPSILON = 0.000000059604645;
 const uint EXPOSURE_METER_STRIDE = 1;
 const uint EXPOSURE_GROUP_SIZE = 16;
+const uint FOCUS_HISTOGRAM_BINS = 256;
+const uint FOCUS_GROUP_SIZE = 16;
 const uint POST_TILE_SIZE = 16;
 const uint TILE_MODE_ALPHA = 0;
 const uint TILE_MODE_VELOCITY = 1;
@@ -2450,6 +2452,78 @@ $assert $reflect(ExposureAdaptRoot.low_percentile).offset == 52;
 $assert $reflect(ExposureAdaptRoot.high_percentile).offset == 56;
 $assert $reflect(ExposureAdaptRoot._pad0).offset == 60;
 
+struct FocusGpu {
+    float distance;
+    float aperture_scale;
+    uint  samples;
+    uint  _pad0;
+}
+$assert FocusGpu::size == 16;
+$assert $reflect(FocusGpu.distance).offset == 0;
+$assert $reflect(FocusGpu.aperture_scale).offset == 4;
+$assert $reflect(FocusGpu.samples).offset == 8;
+$assert $reflect(FocusGpu._pad0).offset == 12;
+
+struct FocusHistogramGpu {
+    uint[256] bins;
+    uint[256] fractions;
+}
+$assert FocusHistogramGpu::size == 2048;
+$assert $reflect(FocusHistogramGpu.bins).offset == 0;
+$assert $reflect(FocusHistogramGpu.fractions).offset == 1024;
+
+struct FocusMeterRoot {
+    GpuAddress   histogram;
+    TextureIndex depth_texture;
+    uint         width;
+    uint         height;
+    uint         center_x;
+    uint         center_y;
+    float        radius;
+    uint         origin_x;
+    uint         origin_y;
+    uint         orthographic;
+    float        proj_22;
+    float        proj_23;
+    uint         _pad0;
+}
+$assert FocusMeterRoot::size == 56;
+$assert $reflect(FocusMeterRoot.histogram).offset == 0;
+$assert $reflect(FocusMeterRoot.depth_texture).offset == 8;
+$assert $reflect(FocusMeterRoot.width).offset == 12;
+$assert $reflect(FocusMeterRoot.height).offset == 16;
+$assert $reflect(FocusMeterRoot.center_x).offset == 20;
+$assert $reflect(FocusMeterRoot.center_y).offset == 24;
+$assert $reflect(FocusMeterRoot.radius).offset == 28;
+$assert $reflect(FocusMeterRoot.origin_x).offset == 32;
+$assert $reflect(FocusMeterRoot.origin_y).offset == 36;
+$assert $reflect(FocusMeterRoot.orthographic).offset == 40;
+$assert $reflect(FocusMeterRoot.proj_22).offset == 44;
+$assert $reflect(FocusMeterRoot.proj_23).offset == 48;
+$assert $reflect(FocusMeterRoot._pad0).offset == 52;
+
+struct FocusAdaptRoot {
+    GpuAddress histogram;
+    GpuAddress previous;
+    GpuAddress current;
+    float      elapsed;
+    uint       snap;
+    float      focus_time;
+    float      fallback_distance;
+    float      focal_length;
+    float      lens_scale;
+}
+$assert FocusAdaptRoot::size == 48;
+$assert $reflect(FocusAdaptRoot.histogram).offset == 0;
+$assert $reflect(FocusAdaptRoot.previous).offset == 8;
+$assert $reflect(FocusAdaptRoot.current).offset == 16;
+$assert $reflect(FocusAdaptRoot.elapsed).offset == 24;
+$assert $reflect(FocusAdaptRoot.snap).offset == 28;
+$assert $reflect(FocusAdaptRoot.focus_time).offset == 32;
+$assert $reflect(FocusAdaptRoot.fallback_distance).offset == 36;
+$assert $reflect(FocusAdaptRoot.focal_length).offset == 40;
+$assert $reflect(FocusAdaptRoot.lens_scale).offset == 44;
+
 struct TileRoot {
     TextureIndex input_texture;
     TextureIndex output_texture;
@@ -2491,8 +2565,9 @@ struct DofRoot {
     uint         _pad0;
     Vec2f        half_texel;
     Vec2f        full_texel;
+    GpuAddress   focus;
 }
-$assert DofRoot::size == 88;
+$assert DofRoot::size == 96;
 $assert $reflect(DofRoot.color_texture).offset == 0;
 $assert $reflect(DofRoot.depth_texture).offset == 4;
 $assert $reflect(DofRoot.sampler_index).offset == 8;
@@ -2513,6 +2588,7 @@ $assert $reflect(DofRoot.proj_23).offset == 64;
 $assert $reflect(DofRoot._pad0).offset == 68;
 $assert $reflect(DofRoot.half_texel).offset == 72;
 $assert $reflect(DofRoot.full_texel).offset == 80;
+$assert $reflect(DofRoot.focus).offset == 88;
 
 struct VelocityRoot {
     TextureIndex depth_texture;

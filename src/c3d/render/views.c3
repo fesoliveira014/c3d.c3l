@@ -584,6 +584,7 @@ struct ViewStats {
     bool              shadow_set_shared; // the last raster rendering bound a set an earlier view recorded
     float             exposure; // applied multiplier, FRAMES_IN_FLIGHT frames late under auto; LINEAR_HDR applies none
     float             pre_exposure; // radiance scale of the last rendering's stored images; 1 is physical
+    float             focus_distance; // applied DoF focus in meters, FRAMES_IN_FLIGHT frames late under AUTO focus
     float[PASS_COUNT] gpu_pass_ms;
     bool[PASS_COUNT]  gpu_pass_valid @if($feat(C3D_PROFILE_GPU));
 }
@@ -650,6 +651,7 @@ struct ViewRecord {
     post::PreExposure                    pre_exposure; // of the rendering in progress; post divides its factor out
     ViewHistory                          history;
     post::ViewExposure                   auto_exposure;
+    post::ViewFocus                      focus;
     LodHistory                          lod_history;
     gpu::TextureState[VIEW_TARGET_COUNT] frame_states;
     ClusterBuffers                       clusters;
@@ -937,6 +939,7 @@ fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
         drop_unwanted_images(images, &record.desc);
         stage_views(renderer, staged)!;
         record.auto_exposure.reconfigure(&record.desc, &desc);
+        record.focus.reconfigure(&record.desc, &desc);
         adopt_view_images(record, images);
         retire_view_images(renderer, images);
         record.desc = desc;
@@ -968,7 +971,7 @@ fn void? destroy_view(Renderer* renderer, ViewId view) {
 }
 
 <*
- Forget the view's previous pose, adapted exposure, fog and cloud history; a camera cut.
+ Forget the view's previous pose, adapted exposure and focus, fog and cloud history; a camera cut.
  @param [&inout] renderer : "No open frame."
  @return? c3d::INVALID_ID
  @require !renderer.frame_open
@@ -980,6 +983,7 @@ fn void? reset_view_history(Renderer* renderer, ViewId view) {
     record.fog_history = {};
     record.cloud_history = {};
     record.auto_exposure.history.invalidate();
+    record.focus.history.invalidate();
     reset_lod_history(&record.lod_history);
 }
 
@@ -1141,6 +1145,7 @@ fn void release_view(Renderer* renderer, ViewRecord* record) @private {
     release_cluster_readback(&renderer.device, record);
     forget_view_history(renderer, record);
     post::release_view_exposure(&renderer.device, record);
+    post::release_view_focus(&renderer.device, record);
 }
 
 fn void copy_view_images(ViewRecord* staged, ViewRecord* live) @private {
@@ -1252,6 +1257,7 @@ fn void commit_resized_views(Renderer* renderer, StagedView[] views) @private {
     foreach (&view : views) {
         ViewRecord* record = view.live;
         record.auto_exposure.reconfigure(&record.desc, &view.images.desc);
+        record.focus.reconfigure(&record.desc, &view.images.desc);
         adopt_view_images(record, &view.images);
         release_view_images(&renderer.device, &view.images);
         release_cluster_readback(&renderer.device, record);

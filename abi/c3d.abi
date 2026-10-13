@@ -1478,6 +1478,51 @@ root ExposureAdaptRoot {
     uint       _pad0;
 }
 
+const uint FOCUS_HISTOGRAM_BINS = 256;
+// Metering threads per group side; 16 x 16 threads flush one group bin each.
+const uint FOCUS_GROUP_SIZE = 16;
+
+// Adapted focus one rendering of a view wrote; the depth-of-field passes read it.
+root FocusGpu {
+    float distance;       // meters
+    float aperture_scale; // of DofRoot, at this distance
+    uint  samples;        // of the last rendering that metered any; zero since a snap makes the next rendering snap
+    uint  _pad0;
+}
+
+root FocusHistogramGpu {
+    uint[256] bins;
+    uint[256] fractions; // per bin, the sum of its samples' positions inside the bin in 1/64 steps
+}
+
+root FocusMeterRoot {
+    GpuAddress   histogram;
+    TextureIndex depth_texture;
+    uint         width;
+    uint         height;
+    uint         center_x;
+    uint         center_y;
+    float        radius;
+    uint         origin_x; // first texel column of the dispatched box
+    uint         origin_y; // first texel row of the dispatched box
+    uint         orthographic;
+    float        proj_22;
+    float        proj_23;
+    uint         _pad0;
+}
+
+root FocusAdaptRoot {
+    GpuAddress histogram;
+    GpuAddress previous;
+    GpuAddress current;
+    float      elapsed;
+    uint       snap;
+    float      focus_time;
+    float      fallback_distance; // used while nothing has been metered
+    float      focal_length;
+    float      lens_scale;        // aperture_scale times (distance - focal_length)
+}
+
 const uint POST_TILE_SIZE = 16;
 const uint TILE_MODE_ALPHA = 0;
 const uint TILE_MODE_VELOCITY = 1;
@@ -1523,6 +1568,7 @@ root DofRoot {
     uint _pad0;
     vec2 half_texel;
     vec2 full_texel;
+    GpuAddress focus; // FocusGpu the view's rendering wrote; zero in manual mode
 }
 
 root VelocityRoot {
