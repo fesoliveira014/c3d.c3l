@@ -210,6 +210,7 @@ struct Renderer {
     ProbeUpdateState          probe_update;
     PathTracer                path_tracer;
     PipelineCache             pipelines;
+    OverlayBackdrop           overlay_backdrop;
     gpu::SamplerIndex         linear_clamp_sampler;
     gpu::SamplerIndex         scene_color_sampler;
 
@@ -552,6 +553,7 @@ fn void? begin_renderer_frame(Renderer* self, FrameInfo info, bool acquire_outpu
             record.sample_pending = false;
         }
         foreach (index, &preview : self.previews) self.frame_preview_states[index] = preview.image.state;
+        snapshot_overlay_backdrop(self);
         snapshot_probe_states(self);
         foreach (&record : self.views.items) {
             record.snapshot_states();
@@ -1062,6 +1064,7 @@ fn void destroy_renderer(Renderer* renderer) {
     destroy_screen_space_gi_pipelines(&renderer.device, &renderer.screen_space_gi_pipelines);
     destroy_reflection_pipelines(&renderer.device, &renderer.reflection_pipelines);
     destroy_path_tracer(&renderer.device, &renderer.path_tracer);
+    free_overlay_backdrop(renderer);
 
     foreach (&record : renderer.targets.items) {
         if (record.target.texture.is_valid()) release_target(&renderer.device, &record.target);
@@ -1184,6 +1187,7 @@ fn void abort_frame(Renderer* renderer) {
         renderer.shadow_atlas.colored.states = renderer.frame_colored_states;
         foreach (&record : renderer.targets.items) record.target.state = record.frame_state;
         foreach (index, &preview : renderer.previews) preview.image.state = renderer.frame_preview_states[index];
+        restore_overlay_backdrop(renderer);
         restore_probe_states(renderer);
         foreach (&record : renderer.views.items) {
             record.restore_states();

@@ -28,6 +28,16 @@ const uint OVERLAY_LIST_DEFAULT_GLYPHS = 16384; // 1.5 MiB of instances per prep
 const uint OVERLAY_LIST_DEFAULT_TRANSFORMS = 256; // 20 KiB of table per prepared list, 0.06% of the ring
 
 <*
+ Largest blur radius of a backdrop item, in output pixels.
+*>
+const uint MAX_BACKDROP_RADIUS = 32; // 65 taps in each of two passes: 130 texel reads for every blurred pixel
+
+<*
+ Backdrop items one overlay list holds.
+*>
+const uint MAX_BACKDROP_ITEMS = 8; // each costs a pass break, two blur dispatches and, on the window, a copy
+
+<*
  White, unbordered rectangle sampling the whole texture region.
 *>
 const OverlayRect OVERLAY_RECT_DEFAULT = {
@@ -44,6 +54,7 @@ const OverlayTransform OVERLAY_TRANSFORM_IDENTITY = {
 };
 
 const float HALF_MAX @local = 65504; // largest finite f16; radii, borders and slice pixels clamp to it
+const float BACKDROP_PADDING @local = 2 * shader::OVERLAY_EDGE_PIXELS; // a rotated quad's margin reaches 1.5 pixels
 const float UNORM16_MAX @local = 65535;
 const Vec4 UNBOUNDED_CLIP @local = { -float::max, -float::max, float::max, float::max };
 const shader::OverlayTransformGpu IDENTITY_TABLE_ENTRY @local = {
@@ -114,6 +125,7 @@ struct OverlayRect {
     Vec4       slice_uv;      // nine-slice margins as fractions of uv_rect: left, top, right, bottom
     Vec4       slice_pixels;  // the same margins on screen; all zero disables nine-slice
     OverlayGradient gradient; // NONE keeps fill alone; otherwise fill is the start color
+    float      backdrop_radius; // blur radius in output pixels, also under a transform; zero is off
 }
 
 <*
@@ -175,11 +187,18 @@ struct OverlayRun @private {
     gpu::ScissorRect scissor;
 }
 
+struct OverlayBackdropRun @private {
+    uint             run;    // index of the one-item run that draws the backdrop item
+    gpu::ScissorRect box;    // output pixels the blurred image covers before the radius is added
+    uint             radius; // whole pixels, at most MAX_BACKDROP_RADIUS
+}
+
 struct OverlayPrepared @private {
     gpu::GpuAddress items;
     gpu::GpuAddress transforms; // zero when no emitted item has a transform or a transformed clip
     bool            transformed; // some emitted item has one: the list draws with the transformed shaders
     uint            run_count;
+    uint            backdrop_count; // emitted backdrop items, the first entries of OverlayList.backdrops
     RenderTargetId  target; // the output the instances were fitted to; zero for the window
     ulong           frame;  // renderer frame index plus one; zero before the first preparation
 }
@@ -190,6 +209,8 @@ struct OverlayPacker @local {
     uint             emitted;
     uint             run_count;
     bool             transformed;
+    uint             backdrop_count;
+    bool             run_isolated; // the last run holds one backdrop item, so the next item opens a run
 }
 
 <*
@@ -213,6 +234,8 @@ struct OverlayList {
     uint[]                        clip_entries;    // per clip stack level: its innermost transformed clip entry
     uint                          transform_count; // table entries in use, the identity included
     uint                          transform_depth;
+    OverlayBackdropRun[]          backdrops;       // MAX_BACKDROP_ITEMS entries, filled by preparation
+    uint                          backdrop_count;  // backdrop items added since clear()
 }
 
 <*
@@ -220,6 +243,7 @@ struct OverlayList {
 *>
 fn void OverlayList.clear(&self) {
     self.item_count = 0;
+    self.backdrop_count = 0;
     self.glyph_count = 0;
     self.clip_depth = 0;
     self.transform_count = 1;
@@ -234,6 +258,9 @@ fn void? OverlayList.add_rect(&self, OverlayRect rect) {
     if (self.item_count == self.entries.len) return c3d::CAPACITY_EXCEEDED~;
     if (!overlay_rect_valid(&rect)) return c3d::INVALID_ARGUMENT~;
 
+    bool backdrop = rect.backdrop_radius > 0;
+    if (backdrop && self.backdrop_count == MAX_BACKDROP_ITEMS) return c3d::CAPACITY_EXCEEDED~;
+
     self.entries[self.item_count] = {
         .kind       = RECT,
         .transform  = current_overlay_transform(self),
@@ -242,6 +269,7 @@ fn void? OverlayList.add_rect(&self, OverlayRect rect) {
         .rect       = rect,
     };
     self.item_count++;
+    if (backdrop) self.backdrop_count++;
 }
 
 <*
@@ -462,7 +490,8 @@ fn OverlayList create_overlay_list(Allocator allocator, OverlayListDesc desc) {
     usz transforms_offset = align_up(runs_offset + (usz)desc.max_items * OverlayRun::size, Vec4::size);
     usz transform_stack_offset = transforms_offset + ((usz)desc.max_transforms + 1) * shader::OverlayTransformGpu::size;
     usz clip_entries_offset = transform_stack_offset + (usz)desc.max_transforms * uint::size;
-    usz total_bytes = align_up(clip_entries_offset + (usz)desc.max_clips * uint::size, Vec4::size);
+    usz backdrops_offset = clip_entries_offset + (usz)desc.max_clips * uint::size;
+    usz total_bytes = align_up(backdrops_offset + (usz)MAX_BACKDROP_ITEMS * OverlayBackdropRun::size, Vec4::size);
 
     // Allocated as Vec4 so every allocator aligns the block for the Vec4 members of the carved slices.
     Vec4[] block = alloc::new_array(allocator, Vec4, (sz)(total_bytes / Vec4::size));
@@ -479,6 +508,7 @@ fn OverlayList create_overlay_list(Allocator allocator, OverlayListDesc desc) {
         .transforms      = ((shader::OverlayTransformGpu*)&storage[transforms_offset])[:desc.max_transforms + 1],
         .transform_stack = ((uint*)&storage[transform_stack_offset])[:desc.max_transforms],
         .clip_entries    = ((uint*)&storage[clip_entries_offset])[:desc.max_clips],
+        .backdrops       = ((OverlayBackdropRun*)&storage[backdrops_offset])[:MAX_BACKDROP_ITEMS],
         .transform_count = 1,
     };
     list.transforms[0] = IDENTITY_TABLE_ENTRY;
@@ -558,6 +588,7 @@ fn bool overlay_rect_valid(OverlayRect* rect) @private {
     if (rect.slice_pixels.x + rect.slice_pixels.z > rect.max.x - rect.min.x) return false;
     if (rect.slice_pixels.y + rect.slice_pixels.w > rect.max.y - rect.min.y) return false;
     if (rect.slice_uv.x + rect.slice_uv.z > 1 || rect.slice_uv.y + rect.slice_uv.w > 1) return false;
+    if (!math::is_finite(rect.backdrop_radius) || rect.backdrop_radius < 0) return false;
     return overlay_gradient_valid(rect);
 }
 
@@ -846,19 +877,53 @@ fn OverlayItemGpu pack_overlay_segment(OverlaySegment* segment) @local {
     };
 }
 
-fn void emit_overlay_item(OverlayPacker* packer, gpu::ScissorRect scissor, OverlayItemGpu item) @local {
+fn void emit_overlay_item(
+    OverlayPacker* packer,
+    gpu::ScissorRect scissor,
+    OverlayItemGpu item,
+    bool backdrop = false,
+) @local {
     packer.transformed = packer.transformed || item.transform_clip != 0;
     OverlayRun[] runs = packer.list.runs;
-    if (!packer.run_count || !same_scissor(runs[packer.run_count - 1].scissor, scissor)) {
+    bool continues = packer.run_count
+        && !packer.run_isolated
+        && !backdrop
+        && same_scissor(runs[packer.run_count - 1].scissor, scissor);
+    if (!continues) {
         runs[packer.run_count] = { .first = packer.emitted, .scissor = scissor };
         packer.run_count++;
     }
     runs[packer.run_count - 1].count++;
+    packer.run_isolated = backdrop;
     packer.destination[packer.emitted] = item;
     packer.emitted++;
 }
 
-// Every emitted item stays in submission order; a run splits only where the scissor changes, whatever the kinds.
+// The blurred image must cover every pixel the item's quad can reach inside its scissor.
+fn void add_overlay_backdrop(
+    OverlayPacker* packer,
+    float radius,
+    Vec4 output_bounds,
+    gpu::ScissorRect scissor,
+    uint width,
+    uint height,
+) @local {
+    Vec4 reach = {
+        math::max(output_bounds.x - BACKDROP_PADDING, (float)scissor.x),
+        math::max(output_bounds.y - BACKDROP_PADDING, (float)scissor.y),
+        math::min(output_bounds.z + BACKDROP_PADDING, (float)(scissor.x + scissor.width)),
+        math::min(output_bounds.w + BACKDROP_PADDING, (float)(scissor.y + scissor.height)),
+    };
+    packer.list.backdrops[packer.backdrop_count] = {
+        .run    = packer.run_count,
+        .box    = overlay_scissor(reach, width, height),
+        .radius = (uint)math::ceil(math::min(radius, (float)MAX_BACKDROP_RADIUS)),
+    };
+    packer.backdrop_count++;
+}
+
+// Every emitted item stays in submission order; a run splits where the scissor changes, whatever the kinds, and
+// around a backdrop item, which draws alone.
 fn uint pack_overlay_items(
     OverlayList* list,
     AssetStore* assets,
@@ -875,10 +940,28 @@ fn uint pack_overlay_items(
             case RECT:
                 OverlayRect* rect = &entry.rect;
                 Vec4 rect_bounds = { rect.min.x, rect.min.y, rect.max.x, rect.max.y };
-                if (!overlay_bounds_reach(item_output_bounds(list, entry.transform, rect_bounds), scissor)) continue;
+                Vec4 output_bounds = item_output_bounds(list, entry.transform, rect_bounds);
+                if (!overlay_bounds_reach(output_bounds, scissor)) continue;
                 OverlayItemGpu item = pack_overlay_rect(rect, list.bindings[index]);
                 item.transform_clip = transform_clip;
-                emit_overlay_item(&packer, scissor, item);
+                if (rect.backdrop_radius > 0) {
+                    add_overlay_backdrop(
+                        packer:        &packer,
+                        radius:        rect.backdrop_radius,
+                        output_bounds: output_bounds,
+                        scissor:       scissor,
+                        width:         width,
+                        height:        height,
+                    );
+                    emit_overlay_item(
+                        packer:   &packer,
+                        scissor:  scissor,
+                        item:     item,
+                        backdrop: true,
+                    );
+                } else {
+                    emit_overlay_item(&packer, scissor, item);
+                }
             case GLYPHS:
                 OverlayText* text = &entry.text;
                 FontAsset* font = assets.font(text.font);
@@ -907,6 +990,7 @@ fn uint pack_overlay_items(
     }
 
     list.prepared.run_count = packer.run_count;
+    list.prepared.backdrop_count = packer.backdrop_count;
     list.prepared.transformed = packer.transformed;
     return packer.emitted;
 }

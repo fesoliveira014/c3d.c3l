@@ -1316,6 +1316,62 @@ $assert $reflect(OverlayRoot.transforms).offset == 8;
 $assert $reflect(OverlayRoot.scale).offset == 16;
 $assert $reflect(OverlayRoot.translate).offset == 24;
 
+struct OverlayBackdropRoot {
+    GpuAddress   items;
+    GpuAddress   transforms;
+    Vec2f        scale;
+    Vec2f        translate;
+    TextureIndex backdrop_texture;
+    uint         backdrop_x;
+    uint         backdrop_y;
+    uint         backdrop_width;
+    uint         backdrop_height;
+    uint         _pad0;
+    uint         _pad1;
+    uint         _pad2;
+}
+$assert OverlayBackdropRoot::size == 64;
+$assert $reflect(OverlayBackdropRoot.items).offset == 0;
+$assert $reflect(OverlayBackdropRoot.transforms).offset == 8;
+$assert $reflect(OverlayBackdropRoot.scale).offset == 16;
+$assert $reflect(OverlayBackdropRoot.translate).offset == 24;
+$assert $reflect(OverlayBackdropRoot.backdrop_texture).offset == 32;
+$assert $reflect(OverlayBackdropRoot.backdrop_x).offset == 36;
+$assert $reflect(OverlayBackdropRoot.backdrop_y).offset == 40;
+$assert $reflect(OverlayBackdropRoot.backdrop_width).offset == 44;
+$assert $reflect(OverlayBackdropRoot.backdrop_height).offset == 48;
+$assert $reflect(OverlayBackdropRoot._pad0).offset == 52;
+$assert $reflect(OverlayBackdropRoot._pad1).offset == 56;
+$assert $reflect(OverlayBackdropRoot._pad2).offset == 60;
+
+struct OverlayBlurRoot {
+    TextureIndex input_texture;
+    TextureIndex output_texture;
+    uint         region_x;
+    uint         region_y;
+    uint         region_width;
+    uint         region_height;
+    uint         box_width;
+    uint         box_height;
+    uint         source_x;
+    uint         source_y;
+    uint         vertical;
+    uint         radius;
+}
+$assert OverlayBlurRoot::size == 48;
+$assert $reflect(OverlayBlurRoot.input_texture).offset == 0;
+$assert $reflect(OverlayBlurRoot.output_texture).offset == 4;
+$assert $reflect(OverlayBlurRoot.region_x).offset == 8;
+$assert $reflect(OverlayBlurRoot.region_y).offset == 12;
+$assert $reflect(OverlayBlurRoot.region_width).offset == 16;
+$assert $reflect(OverlayBlurRoot.region_height).offset == 20;
+$assert $reflect(OverlayBlurRoot.box_width).offset == 24;
+$assert $reflect(OverlayBlurRoot.box_height).offset == 28;
+$assert $reflect(OverlayBlurRoot.source_x).offset == 32;
+$assert $reflect(OverlayBlurRoot.source_y).offset == 36;
+$assert $reflect(OverlayBlurRoot.vertical).offset == 40;
+$assert $reflect(OverlayBlurRoot.radius).offset == 44;
+
 struct DebugVertexGpu {
     float x;
     float y;

@@ -813,6 +813,36 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer OverlayRoot 
     vec2 translate;
 };
 
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer OverlayBackdropRoot {
+    uint64_t items;
+    uint64_t transforms;
+    vec2 scale;
+    vec2 translate;
+    uint backdrop_texture;
+    uint backdrop_x;
+    uint backdrop_y;
+    uint backdrop_width;
+    uint backdrop_height;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer OverlayBlurRoot {
+    uint input_texture;
+    uint output_texture;
+    uint region_x;
+    uint region_y;
+    uint region_width;
+    uint region_height;
+    uint box_width;
+    uint box_height;
+    uint source_x;
+    uint source_y;
+    uint vertical;
+    uint radius;
+};
+
 struct DebugVertexGpu {
     float x;
     float y;
