@@ -434,7 +434,12 @@ fn void? record_raster_view(
                 )!;
                 gpu::SampleCount samples = draw_list_samples(&record.desc, list);
                 gpu::PipelineHandle? pipeline = list == DrawList.GBUFFER
-                  ? gbuffer_pipeline_for(renderer, material_description, vertex)
+                  ? gbuffer_pipeline_for(
+                      renderer: renderer,
+                      material: material_description,
+                      vertex:   vertex,
+                      samples:  samples,
+                  )
                   : pipeline_for(
                       renderer:   renderer,
                       material:   material_description,
@@ -2092,9 +2097,11 @@ fn void? record_depth_prepass(
     uint height = record.depth.height;
     Target* depth_image = multisample ? &record.msaa_depth : &record.depth;
     Target* thin_image = multisample ? &record.msaa_reflection_gbuffer : &record.reflection_gbuffer;
+    // A deferred view resolves in its G-buffer pass; its prepass only fills the multisample depth.
+    bool resolved = multisample && record.desc.shading == ShadingPath.FORWARD;
     gpu::DepthTargetDesc depth = {
         .view         = depth_image.attachment,
-        .resolve_view = multisample ? record.depth.attachment : (gpu::AttachmentViewHandle){},
+        .resolve_view = resolved ? record.depth.attachment : (gpu::AttachmentViewHandle){},
         .load_op      = gpu::LoadOp.CLEAR,
         .store_op     = gpu::StoreOp.STORE,
         .clear        = { .depth = DEPTH_CLEAR },

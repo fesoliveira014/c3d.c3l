@@ -20,25 +20,36 @@ fn ShaderVariant gbuffer_fragment(Material* material) @private {
     }
 }
 
-fn PipelineKey gbuffer_pipeline_key(ShaderVariant vertex, ShaderVariant fragment, gpu::PolygonMode polygon) @private {
+fn PipelineKey gbuffer_pipeline_key(
+    ShaderVariant vertex,
+    ShaderVariant fragment,
+    gpu::PolygonMode polygon,
+    gpu::SampleCount samples = gpu::SampleCount.ONE,
+) @private {
     return {
         .vertex        = vertex,
         .fragment      = fragment,
         .color_formats = GBUFFER_FORMATS,
         .color_count   = GBUFFER_CHANNEL_COUNT,
         .depth_format  = DEPTH_FORMAT,
-        .samples       = gpu::SampleCount.ONE,
+        .samples       = samples,
         .polygon       = polygon,
     };
 }
 
-fn gpu::PipelineHandle? gbuffer_pipeline_for(Renderer* renderer, Material* material, ShaderVariant vertex) @private {
+fn gpu::PipelineHandle? gbuffer_pipeline_for(
+    Renderer* renderer,
+    Material* material,
+    ShaderVariant vertex,
+    gpu::SampleCount samples = gpu::SampleCount.ONE,
+) @private {
     renderer.stats.pipeline_lookups++;
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
     PipelineKey key = gbuffer_pipeline_key(
         vertex:   vertex,
         fragment: vertex.shader == IMPOSTOR_VERTEX ? (ShaderVariant){ .shader = IMPOSTOR_GBUFFER } : gbuffer_fragment(material),
         polygon:  wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
+        samples:  samples,
     );
     if (material.kind != MaterialKind.CUSTOM) return renderer.pipelines.get(&renderer.device, key);
 
@@ -48,12 +59,16 @@ fn gpu::PipelineHandle? gbuffer_pipeline_for(Renderer* renderer, Material* mater
     return custom_pipeline(renderer, published, key);
 }
 
-fn gpu::PipelineHandle? default_gbuffer_pipeline(Renderer* renderer) @private {
+fn gpu::PipelineHandle? default_gbuffer_pipeline(
+    Renderer* renderer,
+    gpu::SampleCount samples = gpu::SampleCount.ONE,
+) @private {
     renderer.stats.pipeline_lookups++;
     PipelineKey key = gbuffer_pipeline_key(
         vertex:   { .shader = MESH },
         fragment: { .shader = STANDARD_GBUFFER },
         polygon:  gpu::PolygonMode.FILL,
+        samples:  samples,
     );
     return renderer.pipelines.get(&renderer.device, key);
 }
@@ -139,6 +154,8 @@ fn void? record_deferred_shading(
 }
 
 fn void? record_gbuffer_pass(Renderer* renderer, ViewRecord* record, DrawItem[] gbuffer) @private {
+    bool multisample = record.desc.msaa != MsaaSamples.ONE;
+    Target* depth_image = multisample ? &record.msaa_depth : &record.depth;
     foreach (&target : record.gbuffer) target.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
     gpu::ColorTargetDesc[GBUFFER_CHANNEL_COUNT] colors;
     gpu::ColorTargetState[GBUFFER_CHANNEL_COUNT] color_targets;
@@ -151,9 +168,10 @@ fn void? record_gbuffer_pass(Renderer* renderer, ViewRecord* record, DrawItem[] 
         color_targets[channel] = gpu::color_blend_disabled();
     }
     gpu::DepthTargetDesc depth = {
-        .view     = record.depth.attachment,
-        .load_op  = gpu::LoadOp.LOAD,
-        .store_op = gpu::StoreOp.STORE,
+        .view         = depth_image.attachment,
+        .resolve_view = multisample ? record.depth.attachment : (gpu::AttachmentViewHandle){},
+        .load_op      = gpu::LoadOp.LOAD,
+        .store_op     = gpu::StoreOp.STORE,
     };
     gpu::RenderPassDesc pass = {
         .colors = colors[..],
@@ -161,7 +179,8 @@ fn void? record_gbuffer_pass(Renderer* renderer, ViewRecord* record, DrawItem[] 
         .width  = record.depth.width,
         .height = record.depth.height,
     };
-    gpu::PipelineHandle first = gbuffer.len ? gbuffer[0].pipeline : default_gbuffer_pipeline(renderer)!;
+    gpu::PipelineHandle first = gbuffer.len
+      ? gbuffer[0].pipeline : default_gbuffer_pipeline(renderer, msaa_sample_count(record.desc.msaa))!;
 
     @profile_pass(renderer, Pass.GBUFFER) {
         // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
@@ -179,7 +198,27 @@ fn void? record_gbuffer_pass(Renderer* renderer, ViewRecord* record, DrawItem[] 
             },
         )!;
         gpu::cmd_end_render_pass(&renderer.commands)!;
+
+        if (multisample) record_deferred_sample_zero(renderer, record)!;
     }!;
+}
+
+fn void? record_deferred_sample_zero(Renderer* renderer, ViewRecord* record) @private {
+    if (record.normal_sample_zero.texture.is_valid()) {
+        record_sample_zero(
+            renderer:    renderer,
+            source:      &record.gbuffer[GBufferChannel.NORMAL_ROUGHNESS.ordinal],
+            destination: &record.normal_sample_zero,
+        )!;
+    }
+
+    if (record.specular_sample_zero.texture.is_valid()) {
+        record_sample_zero(
+            renderer:    renderer,
+            source:      &record.gbuffer[GBufferChannel.EMISSIVE_SPECULAR.ordinal],
+            destination: &record.specular_sample_zero,
+        )!;
+    }
 }
 
 fn void? record_lighting_pass(

@@ -83,6 +83,11 @@ fn bool msaa_specular_copy_wanted(ViewDesc* desc) @private {
     return desc.msaa != MsaaSamples.ONE && desc.shading == ShadingPath.DEFERRED && desc.ray_tracing.reflections;
 }
 
+// A deferred view draws its prepass whatever the description says.
+fn bool view_draws_prepass(ViewDesc* desc) @private {
+    return desc.shading == ShadingPath.DEFERRED || forward_depth_prepass(desc);
+}
+
 fn gpu::TextureState opaque_depth_state(ViewRecord* record) @private {
     if (record.desc.msaa == MsaaSamples.ONE) return DEPTH_ATTACHMENT_STATE;
 
@@ -90,19 +95,21 @@ fn gpu::TextureState opaque_depth_state(ViewRecord* record) @private {
 }
 
 fn gpu::SampleCount draw_list_samples(ViewDesc* desc, DrawList list) @private {
-    if (list == DrawList.OPAQUE) return msaa_sample_count(desc.msaa);
+    if (list == DrawList.OPAQUE || list == DrawList.GBUFFER) return msaa_sample_count(desc.msaa);
 
     return gpu::SampleCount.ONE;
 }
 
-// Distinct counts above ONE among the live views; prepassed keeps the views that draw a depth prepass.
-fn MsaaCounts live_msaa_counts(Renderer* renderer, bool prepassed = false) @private {
+// Distinct counts above ONE among the live views; prepassed keeps the views that draw a depth prepass and
+// deferred the views that shade a G-buffer.
+fn MsaaCounts live_msaa_counts(Renderer* renderer, bool prepassed = false, bool deferred = false) @private {
     MsaaCounts counts;
     uint seen;
     foreach (&view : renderer.views.items) {
         ViewDesc* desc = &view.desc;
         if (!view.live || desc.msaa == MsaaSamples.ONE) continue;
-        if (prepassed && !forward_depth_prepass(desc)) continue;
+        if (prepassed && !view_draws_prepass(desc)) continue;
+        if (deferred && desc.shading != ShadingPath.DEFERRED) continue;
 
         uint bit = 1u << desc.msaa.ordinal;
         if (seen & bit) continue;

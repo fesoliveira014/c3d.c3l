@@ -520,6 +520,16 @@ fn void? prepare_impostor(
         )!;
     }
 
+    MsaaCounts deferred = live_msaa_counts(renderer, deferred: true);
+    foreach (samples : deferred.items[:deferred.len]) {
+        gbuffer_pipeline_for(
+            renderer: renderer,
+            material: material,
+            vertex:   vertex,
+            samples:  samples,
+        )!;
+    }
+
     if (!depth) return;
 
     MsaaCounts prepassed = live_msaa_counts(renderer, prepassed: true);
