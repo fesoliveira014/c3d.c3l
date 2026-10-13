@@ -391,18 +391,36 @@ fn void list_mesh_pipelines(
             custom_gbuffer: custom_gbuffer,
             custom_reads: custom_reads,
         );
+        gpu::SampleCount samples = draw_list_samples(desc, list);
+        bool multisample = samples != gpu::SampleCount.ONE;
         uint shadow_flags = rt_shadow_flags(renderer, desc.ray_tracing.shadows, soft_shadows);
-        if (desc.ray_tracing.shadows && list != DrawList.GBUFFER) {
-            PipelineKey traced = forward_pipeline_key(
+        if ((desc.ray_tracing.shadows && list != DrawList.GBUFFER) || multisample) {
+            PipelineKey view_forward = forward_pipeline_key(
                 material: material,
                 vertex: vertex,
                 polygon: polygon,
                 shadow_flags: shadow_flags,
+                samples: samples,
             );
             list_prepare_key(
                 requests: requests,
-                key: traced,
+                key: view_forward,
                 pass: PreparePipelinePass.FORWARD,
+                shader: custom,
+            );
+        }
+
+        if (multisample && depth && material.common.alpha_mode != AlphaMode.BLEND && forward_depth_prepass(desc)) {
+            PipelineKey view_caster = shadow_pipeline_key(
+                vertex: depth_vertex,
+                wireframe: wireframe,
+                vertex_color: vertex_color,
+                samples: samples,
+            );
+            list_prepare_key(
+                requests: requests,
+                key: view_caster,
+                pass: PreparePipelinePass.DEPTH,
                 shader: custom,
             );
         }
@@ -432,6 +450,7 @@ fn void list_mesh_pipelines(
                 material: material,
                 vertex_color: vertex_color,
                 reflection: reflection,
+                samples: samples,
             );
             list_prepare_key(
                 requests: requests,
@@ -442,12 +461,13 @@ fn void list_mesh_pipelines(
         }
 
         if (list == DrawList.OPAQUE && material_outlined(material)) {
-            list_prepare_key(requests, outline_pipeline_key(vertex, polygon), PreparePipelinePass.FORWARD);
+            list_prepare_key(requests, outline_pipeline_key(vertex, polygon, samples), PreparePipelinePass.FORWARD);
             if (post::uses_velocity(desc)) {
                 PipelineKey outline_velocity = post::geometry_velocity_pipeline_key(
                     vertex: outline_vertex_variant(vertex),
                     polygon: polygon,
                     format: post::velocity_format(desc),
+                    samples: samples,
                 );
                 list_prepare_key(
                     requests: requests,
@@ -462,6 +482,7 @@ fn void list_mesh_pipelines(
                 vertex: vertex,
                 polygon: polygon,
                 format: post::velocity_format(desc),
+                samples: samples,
             );
             list_prepare_key(
                 requests: requests,
@@ -571,7 +592,11 @@ fn void list_view_pipelines(
         }
         if (desc.post.motion_blur) list_prepare_compute(requests, ComputeSlot.MOTION_BLUR);
         if (post::uses_velocity(desc)) {
-            list_prepare_key(requests, post::camera_velocity_pipeline_key(post::velocity_format(desc)));
+            PipelineKey camera_velocity = post::camera_velocity_pipeline_key(
+                format:  post::velocity_format(desc),
+                samples: msaa_sample_count(desc.msaa),
+            );
+            list_prepare_key(requests, camera_velocity);
         }
         if (desc.post.anti_aliasing == AntiAliasing.TAA) {
             list_prepare_compute(requests, ComputeSlot.TAA);

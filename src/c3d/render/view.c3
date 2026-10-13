@@ -285,7 +285,7 @@ fn void? record_raster_view(
     bool temporal = taa || record.desc.post.motion_blur || screen_space_gi;
     bool ambient_occlusion = record.desc.ambient_occlusion.kind != AoKind.NONE;
     bool forward_reflections = record.desc.ray_tracing.reflections && record.desc.shading == ShadingPath.FORWARD;
-    bool forward_prepass = record.desc.depth_prepass || ambient_occlusion || screen_space_gi || forward_reflections;
+    bool forward_prepass = forward_depth_prepass(&record.desc);
     bool early_velocity = velocity_before_lighting(&record.desc);
     bool late_velocity = temporal && !early_velocity;
     bool ssgi_history_valid = record.history.valid && record.history.scene == scene.identity;
@@ -1528,6 +1528,16 @@ fn MeshPreparation? prepare_billboards(Renderer* renderer, BillboardBatch* batch
         if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
         return {};
     }
+
+    MsaaCounts msaa = live_msaa_counts(renderer);
+    foreach (samples : msaa.items[:msaa.len]) {
+        pipeline_for(
+            renderer: renderer,
+            material: data,
+            vertex:   { .shader = BILLBOARD_VERTEX },
+            samples:  samples,
+        )!;
+    }
     return {
         .sheen = material_uses_sheen(data),
         .scene_reads = material_scene_reads(data, custom_scene_reads(renderer, data)!),
@@ -1541,6 +1551,11 @@ fn void? prepare_finish(Renderer* renderer, SceneReads reads, bool soft_shadows 
         list_view_pipelines(renderer, reads, &requests, soft_shadows);
         acquire_prepare_pipelines(renderer, requests.array_view())!;
     };
+}
+
+fn bool forward_depth_prepass(ViewDesc* desc) @private {
+    return desc.depth_prepass || desc.ambient_occlusion.kind != AoKind.NONE || desc.screen_space_gi.enabled
+        || (desc.ray_tracing.reflections && desc.shading == ShadingPath.FORWARD);
 }
 
 // On a screen-space GI view the velocity feeds the effect before lighting; elsewhere it records after the scene.
@@ -2428,6 +2443,7 @@ fn PipelineKey forward_pipeline_key(
     gpu::PolygonMode polygon,
     uint shadow_flags,
     bool weighted = false,
+    gpu::SampleCount samples = gpu::SampleCount.ONE,
 ) @private {
     PipelineKey key = {
         .vertex = vertex,
@@ -2437,7 +2453,7 @@ fn PipelineKey forward_pipeline_key(
         .color_formats = { [0] = HDR_FORMAT },
         .color_count = 1,
         .depth_format = DEPTH_FORMAT,
-        .samples = gpu::SampleCount.ONE,
+        .samples = samples,
         .polygon = polygon,
     };
     if (weighted) {
@@ -2454,6 +2470,7 @@ fn gpu::PipelineHandle? pipeline_for(
     bool rt_shadows = false,
     bool weighted = false,
     bool soft_shadows = true,
+    gpu::SampleCount samples = gpu::SampleCount.ONE,
 ) @private {
     renderer.stats.pipeline_lookups++;
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
@@ -2464,6 +2481,7 @@ fn gpu::PipelineHandle? pipeline_for(
         polygon:      wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
         shadow_flags: shadow_flags,
         weighted:     weighted,
+        samples:      samples,
     );
     if (material.kind != MaterialKind.CUSTOM) return renderer.pipelines.get(&renderer.device, key);
 
@@ -2476,7 +2494,11 @@ fn gpu::PipelineHandle? pipeline_for(
     return custom_pipeline(renderer, published, key);
 }
 
-fn gpu::PipelineHandle? first_pipeline(Renderer* renderer, DrawItem[] items) @private {
+fn gpu::PipelineHandle? first_pipeline(
+    Renderer* renderer,
+    DrawItem[] items,
+    gpu::SampleCount samples = gpu::SampleCount.ONE,
+) @private {
     if (items.len) return items[0].pipeline;
     renderer.stats.pipeline_lookups++;
     PipelineKey key = {
@@ -2485,7 +2507,7 @@ fn gpu::PipelineHandle? first_pipeline(Renderer* renderer, DrawItem[] items) @pr
         .color_formats = { [0] = HDR_FORMAT },
         .color_count = 1,
         .depth_format = DEPTH_FORMAT,
-        .samples = gpu::SampleCount.ONE,
+        .samples = samples,
         .polygon = gpu::PolygonMode.FILL,
     };
     return renderer.pipelines.get(&renderer.device, key);

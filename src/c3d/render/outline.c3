@@ -18,22 +18,35 @@ fn ShaderVariant outline_vertex_variant(ShaderVariant vertex) @private {
     return { .shader = MESH, .flags = vertex.flags | shader::SHADER_FLAG_OUTLINE };
 }
 
-fn PipelineKey outline_pipeline_key(ShaderVariant vertex, gpu::PolygonMode polygon) @private {
+fn PipelineKey outline_pipeline_key(
+    ShaderVariant vertex,
+    gpu::PolygonMode polygon,
+    gpu::SampleCount samples = gpu::SampleCount.ONE,
+) @private {
     return {
         .vertex = outline_vertex_variant(vertex),
         .fragment = { .shader = TOON_OUTLINE },
         .color_formats = { [0] = HDR_FORMAT },
         .color_count = 1,
         .depth_format = DEPTH_FORMAT,
-        .samples = gpu::SampleCount.ONE,
+        .samples = samples,
         .polygon = polygon,
     };
 }
 
-fn gpu::PipelineHandle? outline_pipeline_for(Renderer* renderer, Material* material, ShaderVariant vertex) @private {
+fn gpu::PipelineHandle? outline_pipeline_for(
+    Renderer* renderer,
+    Material* material,
+    ShaderVariant vertex,
+    gpu::SampleCount samples = gpu::SampleCount.ONE,
+) @private {
     renderer.stats.pipeline_lookups++;
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
-    PipelineKey key = outline_pipeline_key(vertex, wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL);
+    PipelineKey key = outline_pipeline_key(
+        vertex:  vertex,
+        polygon: wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
+        samples: samples,
+    );
     return renderer.pipelines.get(&renderer.device, key);
 }
 

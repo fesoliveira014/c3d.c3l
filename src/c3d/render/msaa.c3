@@ -18,6 +18,11 @@ enum MsaaSamples {
     EIGHT,
 }
 
+struct MsaaCounts @private {
+    gpu::SampleCount[3] items;
+    usz                 len;
+}
+
 struct MsaaProbe @private {
     Renderer*        renderer;
     uint[<2>]        extent;
@@ -57,6 +62,31 @@ fn gpu::SampleCount msaa_sample_count(MsaaSamples msaa) @private {
 
 fn bool msaa_reflection_gbuffer_wanted(ViewDesc* desc) @private {
     return desc.ray_tracing.reflections && desc.shading == ShadingPath.FORWARD;
+}
+
+fn gpu::SampleCount draw_list_samples(ViewDesc* desc, DrawList list) @private {
+    if (list == DrawList.OPAQUE) return msaa_sample_count(desc.msaa);
+
+    return gpu::SampleCount.ONE;
+}
+
+// Distinct counts above ONE among the live views; prepassed keeps the views that draw a depth prepass.
+fn MsaaCounts live_msaa_counts(Renderer* renderer, bool prepassed = false) @private {
+    MsaaCounts counts;
+    uint seen;
+    foreach (&view : renderer.views.items) {
+        ViewDesc* desc = &view.desc;
+        if (!view.live || desc.msaa == MsaaSamples.ONE) continue;
+        if (prepassed && !forward_depth_prepass(desc)) continue;
+
+        uint bit = 1u << desc.msaa.ordinal;
+        if (seen & bit) continue;
+
+        seen |= bit;
+        counts.items[counts.len++] = msaa_sample_count(desc.msaa);
+    }
+
+    return counts;
 }
 
 // Deferred views wait for per-sample lighting; a window view without a surface allocates nothing to check.
