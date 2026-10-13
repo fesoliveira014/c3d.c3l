@@ -17,6 +17,7 @@ fn void Ui.route_input(&self, Input* input, Event[] events) {
     } else {
         route_stale_window_drag(self, input, events);
     }
+
     if (key_valid(&self.focus)) {
         foreach (&event : events) route_key(self, event);
     }
@@ -89,6 +90,7 @@ fn void route_pointer(Ui* ui, Input* input, Event[] events) @private {
                 break;
         }
     }
+
     if (ui.drag.active) track_drop_target(ui, over, pointer);
 
     bool moving = moving_window(ui);
@@ -152,6 +154,7 @@ fn void press(
         focus_field(ui, target);
         return;
     }
+
     if (target.list == UI_NONE || moving_window(ui)) return;
     clay::BoundingBox box = clay::get_element_data(clay::id(target.clay_id)).bounding_box;
     ui.drag = {
