@@ -16,7 +16,7 @@ struct OverlayProjection @private {
  @param [in] list : "Every item under an anchor; unchanged until end_frame; null clears."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
  @require self.frame_open
- @require list == null || list.entries.len > 0 : "The list was destroyed."
+ @require overlay_list_live(list) : "The list was destroyed."
 *>
 fn void? Renderer.set_view_overlay(&self, ViewId view, OverlayList* list) {
     ViewRecord* record = self.views.try_get(view)!;
@@ -76,6 +76,10 @@ fn void? record_world_overlay(Renderer* renderer, ViewRecord* record) @private {
     gpu::cmd_end_render_pass(&renderer.commands)!;
     renderer.overlay_open = false;
     renderer.work_recorded = true;
+}
+
+fn bool overlay_list_live(OverlayList* list) @private {
+    return list == null || list.entries.len > 0;
 }
 
 // Entries are created after the anchor they lie under, so an anchor's own entry is resolved before its descendants.
