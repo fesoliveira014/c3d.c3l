@@ -20,6 +20,11 @@ const String GRIDS @local = `{ "root": { "kind": "panel", "direction": "column",
     { "kind": "button", "size": [40, 20], "on_drop": "bag.drop" }
 ] } }`;
 
+const String SCROLLED @local = `{ "offset": [0, 100], "root": { "kind": "panel", "direction": "column", "children": [
+    %s{ "kind": "scroll"%s, "size": [100, 40], "children": [
+        { "kind": "list", "items": "{many.items}", "direction": "column",
+          "template": { "kind": "panel", "fill": "#ffffffff", "size": [100, 20] } } ] } ] } }`;
+
 const String FIELD @local = `{ "root": { "kind": "text_field", "style": "text", "size": [100, 20],
     "value": "{field.text}", "on_change": "field.change", "on_submit": "field.submit" } }`;
 
@@ -42,6 +47,14 @@ struct Field @local {
 }
 
 fn UiValue field_text(void* user, UiScope* scope) @local => { .kind = TEXT, .text = ((Field*)user).text };
+
+fn String scrolled_document(bool spacer, bool named) @local {
+    return string::tformat(
+        SCROLLED,
+        spacer ? `{ "kind": "panel", "size": [100, 10] },` : "",
+        named ? `, "id": "log"` : "",
+    );
+}
 
 fn void load_buttons(Fixture* fixture) @local {
     fixture::register_squad(fixture);
@@ -245,6 +258,35 @@ fn void test_wheel_scrolls_the_hovered_scroll_area() @test {
     fixture.wheel = -1;
     fixture::frame(&fixture);
     assert(fixture.list.entries[0].rect.min.y == 60, "the wheel scrolls only the hovered area");
+}
+
+fn void test_scroll_offset_survives_reload_by_id() @test {
+    Fixture fixture;
+    fixture::create_fixture(&fixture);
+    defer fixture::destroy_fixture(&fixture);
+    Many many = { .count = 10 };
+    fixture.ui.bind(
+        name:   "many.items",
+        kind:   LIST,
+        getter: &many_count,
+        user:   &many,
+    )!!;
+    UiDocumentId document = fixture.ui.load_document(scrolled_document(spacer: false, named: true))!!;
+    fixture::frame(&fixture);
+
+    fixture::point(&fixture, { 50, 120 });
+    fixture.wheel = -1;
+    fixture::frame(&fixture);
+    fixture.wheel = 0;
+    assert(fixture.list.entries[0].rect.min.y == 60, "one notch scrolls 40 layout units");
+
+    fixture.ui.reload_document(document, scrolled_document(spacer: true, named: true))!!;
+    fixture::frame(&fixture);
+    assert(fixture.list.entries[0].rect.min.y == 70, "the scroll keeps its offset below the inserted panel");
+
+    fixture.ui.reload_document(document, scrolled_document(spacer: true, named: false))!!;
+    fixture::frame(&fixture);
+    assert(fixture.list.entries[0].rect.min.y == 110, "a scroll without an id starts at the top");
 }
 
 fn void test_drag_cancels_when_its_item_disappears() @test {

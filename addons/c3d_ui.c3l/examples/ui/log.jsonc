@@ -1,0 +1,24 @@
+{
+  "anchor": "top_right",
+  "offset": [-16, 16],
+  "root": {
+    "kind": "panel",
+    "style": "panel",
+    "width": 240,
+    "children": [
+      {
+        "kind": "scroll",
+        "id": "log.view",
+        "size": ["grow", 120],
+        "children": [
+          {
+            "kind": "list",
+            "items": "{log.lines}",
+            "direction": "column",
+            "template": { "kind": "label", "style": "text", "text": "{log_line.text}" }
+          }
+        ]
+      }
+    ]
+  }
+}

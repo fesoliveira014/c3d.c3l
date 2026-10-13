@@ -8,6 +8,8 @@ import std::math;
 
 const float UI_PLACEHOLDER_ALPHA @private = 0.5;
 const float UI_MAX_PADDING @private = 65535; // Clay stores padding and gaps as u16
+const uint UI_HASH_BASIS @private = 0x811c_9dc5;
+const uint UI_HASH_PRIME @private = 0x0100_0193;
 
 struct UiDeclare @private {
     Ui*   ui;
@@ -30,14 +32,17 @@ struct UiPlacement @private {
 <*
  Evaluate bindings and lay out every visible document.
  @param scale : "Output pixels per layout unit, including pixel density."
+ @param delta_seconds : "Time since the previous update."
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
  @require scale > 0
+ @require math::is_finite(delta_seconds) && delta_seconds >= 0
 *>
 fn void? Ui.update(
     &self,
     uint width,
     uint height,
     float scale,
+    float delta_seconds,
 ) {
     clay::set_current_context(self.context);
     clay::set_measure_text_function(&measure_clay_text, self);
@@ -50,6 +55,7 @@ fn void? Ui.update(
     self.clay_error.raised = false;
     self.frame_ready = false;
     self.scale = scale;
+    self.delta_seconds = delta_seconds;
 
     clay::set_layout_dimensions({ (float)width / scale, (float)height / scale });
     clay::begin_layout();
@@ -220,11 +226,23 @@ fn bool instance_draws(UiInstance* instance) @private {
     }
 }
 
-fn uint key_hash(UiElementKey* key) @private {
-    uint hash = 0x811c_9dc5;
-    uint[4] words = { key.document.index, key.document.generation, key.element, key.scope.depth };
-    foreach (word : words) hash = (hash ^ word) * 0x0100_0193;
-    for (uint level = 0; level < key.scope.depth; level++) hash = (hash ^ key.scope.indices[level]) * 0x0100_0193;
+fn uint mix_hash(uint hash, uint word) @private => (hash ^ word) * UI_HASH_PRIME;
+
+fn uint key_hash(UiElementKey* key, UiElement* element) @private {
+    bool named = element.id_length != 0;
+    // No element has the index UI_NONE, so a named element's input never equals an indexed element's.
+    uint[4] words = {
+        key.document.index,
+        key.document.generation,
+        named ? UI_NONE : key.element,
+        key.scope.depth,
+    };
+
+    uint hash = UI_HASH_BASIS;
+    foreach (word : words) hash = mix_hash(hash, word);
+    if (named) hash = mix_hash(hash, element.id_hash);
+    for (uint level = 0; level < key.scope.depth; level++) hash = mix_hash(hash, key.scope.indices[level]);
+
     return hash;
 }
 
@@ -237,8 +255,8 @@ fn uint lookup_instance(Ui* ui, uint clay_id) @private {
     return UI_NONE;
 }
 
-fn uint assign_clay_id(Ui* ui, UiElementKey* key, uint instance) @private {
-    uint clay_id = key_hash(key);
+fn uint assign_clay_id(Ui* ui, UiElementKey* key, UiElement* element, uint instance) @private {
+    uint clay_id = key_hash(key, element);
     while (!clay_id || lookup_instance(ui, clay_id) != UI_NONE) clay_id += UI_ID_PROBE;
     usz slot = clay_id % (usz)ui.instance_lookup.len;
     while (ui.instance_lookup[slot].clay_id) slot = (slot + 1) % (usz)ui.instance_lookup.len;
@@ -364,7 +382,7 @@ fn void declare_element(
         .hit         = placement.hit,
         .enabled     = !state.disabled,
     };
-    instance.clay_id = assign_clay_id(ui, &key, instance_index);
+    instance.clay_id = assign_clay_id(ui, &key, element, instance_index);
     if (catch excuse = prepare_instance(ui, instance, scope)) return fail_declare(declare, excuse);
 
     clay::open_element(clay::id(instance.clay_id));

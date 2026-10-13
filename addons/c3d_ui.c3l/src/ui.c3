@@ -270,6 +270,7 @@ struct Ui {
     clay::RenderCommandArray  commands;     // of the last successful update
     bool                      frame_ready;
     float                     scale;        // output pixels per layout unit, of the last update
+    float                     delta_seconds; // of the last update
     UiDocumentPool            documents;
     UiDocument*[]             document_stack; // visible documents of one update, bottom first
     uint                      next_order;
