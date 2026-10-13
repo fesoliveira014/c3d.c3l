@@ -314,17 +314,22 @@ style reload or a bar's bound value.
 
 - An element whose transition lists a property its style's `hidden` block sets is shown and hidden through that
   property. It enters when it is laid out with no entry: those properties start at their hidden values and run to
-  their targets. That is a list item that appears, an element whose `visible` binding turns true and every element
-  of a document that `set_visible(document, true)` shows. The first `update` after `load_document`,
-  `reload_document` or `load_styles` enters nothing.
+  their targets. That is a list item at a position the list did not have, an element whose `visible` binding turns
+  true and every element of a document that `set_visible(document, true)` shows. The first `update` after
+  `load_document`, `reload_document` or `load_styles` enters nothing.
 - It exits when it was laid out in the previous `update` and is not laid out now, and its parent is laid out now or
-  it is a document root: a `visible` binding turned false, its list shrank, or `set_visible(document, false)` hid its
-  document. `unload_document` exits nothing. An element with no such property disappears at once.
+  it is a document root: a `visible` binding turned false, its list lost a position, or
+  `set_visible(document, false)` hid its document. `unload_document` exits nothing. An element with no such property
+  disappears at once.
+- List items are keyed by position, so only the last position of a list exits. Removing the last item fades that
+  item out. Removing one from the middle shifts the later items up and fades out the old last position, which shows
+  the former last item: `Beep, Hob, Ruka` becoming `Beep, Ruka` draws Beep, Ruka and an exiting Ruka, and Hob
+  disappears at once. Likewise only an item added at the end enters.
 - An exiting element leaves the flow at once: its siblings close the gap in the `update` that notices the removal.
-  It draws as a floating snapshot of its last frame, attached to its parent at its last position and size, above
-  every document, and ends when each of those properties reaches its hidden value. It takes no hover, press or
-  click, and calls no getter. `size` shrinks only the snapshot, and an in-flow element's `offset`, which has no effect
-  while it is shown, moves the snapshot.
+  It draws as a floating snapshot of its last frame, attached to its parent at its last position and size, at its
+  document's layer above that document's other content and below higher layers, and ends when each of those
+  properties reaches its hidden value. It takes no hover, press or click, and calls no getter. `size` shrinks only
+  the snapshot, and an in-flow element's `offset`, which has no effect while it is shown, moves the snapshot.
 - An element laid out again while exiting cancels its snapshot and retargets from its current values; it does not
   enter again.
 - Under reduced motion `offset` and `size` jump to their hidden values, and an exit whose properties are all motion
