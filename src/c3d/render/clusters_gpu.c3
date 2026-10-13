@@ -186,6 +186,7 @@ fn void? record_clusters(
             };
             readback.mapped = gpu::allocate_mapped_memory(&renderer.device, &desc)!;
         }
+
         if (pruned) record_cluster_depth(renderer, record, frame)!;
 
         gpu::PipelineHandle pipeline = pruned ? renderer.cluster_pruned_pipeline : renderer.cluster_pipeline;
