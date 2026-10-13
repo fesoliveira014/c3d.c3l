@@ -124,8 +124,8 @@ list.add_path(points, width, color, closed: true)!;
 - `add_line` draws a line `width` pixels across with round caps. A line of zero length draws a dot.
 - `add_path` draws one line per edge of `points`, in order, with round joins and caps. `closed` adds the edge from the
   last point back to the first; a path of two points has no closing edge.
-- Edges are anti-aliased over about one output pixel. Under a transform they stay about that wide; a stroke under
-  about two output pixels across has edges slightly sharper than that.
+- Edges are anti-aliased over about one output pixel. Under a transform they stay about that wide, whatever the
+  stroke width.
 - **Joins.** Neighbouring edges overlap at a join. A path with alpha below one draws the overlap twice, so the join
   looks denser. An opaque path is unaffected.
 - **Capacity.** A triangle and a line take one item each; a path takes one item per edge, and `closed` adds the closing

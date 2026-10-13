@@ -48,6 +48,19 @@ float overlay_clip_coverage(OverlayTransformGpu clip, vec2 pixel) {
 float overlay_edge_width(float signed_distance, bool transformed) {
     return transformed ? max(length(vec2(dFdx(signed_distance), dFdy(signed_distance))), 1e-6) : 1.0;
 }
+
+// The same width for a shape's distance field, from the field's direction instead of its pixel differences, which
+// fold across a stroke thinner than two pixels. away is the offset from the nearest outline point. It is zero on
+// the outline and on a line's axis, where the direction is across line, the shape's first two points apart.
+float overlay_shape_edge_width(vec2 away, vec2 line, vec2 local_dx, vec2 local_dy) {
+    vec2 direction = vec2(1.0, 0.0);
+    if (dot(away, away) > 0.0) {
+        direction = normalize(away);
+    } else if (dot(line, line) > 0.0) {
+        direction = normalize(vec2(-line.y, line.x));
+    }
+    return length(vec2(dot(direction, local_dx), dot(direction, local_dy)));
+}
 #endif
 
 // Radii are top left, top right, bottom right, bottom left; y grows downward.
@@ -61,7 +74,8 @@ float rounded_box_distance(vec2 local, vec2 half_extent, vec4 radii) {
 }
 
 // Signed distance to a triangle of either winding, negative inside; a triangle with no area is empty.
-float triangle_distance(vec2 point, vec2 first, vec2 second, vec2 third) {
+// away is the offset from the nearest point of the outline to the point.
+float triangle_distance(vec2 point, vec2 first, vec2 second, vec2 third, out vec2 away) {
     vec2 edge_a = second - first;
     vec2 edge_b = third - second;
     vec2 edge_c = first - third;
@@ -74,23 +88,37 @@ float triangle_distance(vec2 point, vec2 first, vec2 second, vec2 third) {
 
     float winding = sign(edge_a.x * edge_c.y - edge_a.y * edge_c.x);
     if (winding == 0.0) {
+        away = vec2(1.0, 0.0);
         return 1e30;
     }
 
-    // x: squared distance to the nearest edge. y: the smallest side-of-edge value, positive only inside all three.
-    vec2 nearest = min(
-        min(
-            vec2(dot(near_a, near_a), winding * (from_first.x * edge_a.y - from_first.y * edge_a.x)),
-            vec2(dot(near_b, near_b), winding * (from_second.x * edge_b.y - from_second.y * edge_b.x))),
-        vec2(dot(near_c, near_c), winding * (from_third.x * edge_c.y - from_third.y * edge_c.x)));
-    return nearest.y > 0.0 ? -sqrt(nearest.x) : sqrt(nearest.x);
+    away = near_a;
+    float nearest = dot(near_a, near_a);
+    float squared_b = dot(near_b, near_b);
+    float squared_c = dot(near_c, near_c);
+    if (squared_b < nearest) {
+        away = near_b;
+        nearest = squared_b;
+    }
+    if (squared_c < nearest) {
+        away = near_c;
+        nearest = squared_c;
+    }
+
+    // The smallest side-of-edge value is positive only inside all three edges.
+    float inside = min(
+        min(winding * (from_first.x * edge_a.y - from_first.y * edge_a.x),
+            winding * (from_second.x * edge_b.y - from_second.y * edge_b.x)),
+        winding * (from_third.x * edge_c.y - from_third.y * edge_c.x));
+    return inside > 0.0 ? -sqrt(nearest) : sqrt(nearest);
 }
 
-// Distance to the line between two points, which may coincide.
-float segment_distance(vec2 point, vec2 from, vec2 to) {
+// Distance to the line between two points, which may coincide; away is the offset from its nearest point.
+float segment_distance(vec2 point, vec2 from, vec2 to, out vec2 away) {
     vec2 axis = to - from;
     vec2 from_start = point - from;
-    return length(from_start - axis * clamp(dot(from_start, axis) / max(dot(axis, axis), 1e-12), 0.0, 1.0));
+    away = from_start - axis * clamp(dot(from_start, axis) / max(dot(axis, axis), 1e-12), 0.0, 1.0);
+    return length(away);
 }
 
 // Texture coordinate and its change per pixel along one axis; zero margins map the span linearly.
@@ -213,17 +241,21 @@ void main() {
 
     if (kind == OVERLAY_KIND_TRIANGLE || kind == OVERLAY_KIND_SEGMENT) {
         float shape_distance;
+        vec2 away;
         if (kind == OVERLAY_KIND_TRIANGLE) {
             vec2 third = vec2(uintBitsToFloat(item.radii_top), uintBitsToFloat(item.radii_bottom));
-            shape_distance = triangle_distance(position, item.uv_rect.xy, item.uv_rect.zw, third);
+            shape_distance = triangle_distance(position, item.uv_rect.xy, item.uv_rect.zw, third, away);
         } else {
-            shape_distance = segment_distance(position, item.uv_rect.xy, item.uv_rect.zw)
+            shape_distance = segment_distance(position, item.uv_rect.xy, item.uv_rect.zw, away)
                 - uintBitsToFloat(item.radii_top);
         }
 
         vec4 shape_color = unpackUnorm4x8(item.fill);
 #ifdef TRANSFORMED
-        float shape_coverage = clamp(0.5 - shape_distance / overlay_edge_width(shape_distance, transformed), 0.0, 1.0);
+        float edge_width = transformed
+            ? overlay_shape_edge_width(away, item.uv_rect.zw - item.uv_rect.xy, local_dx, local_dy)
+            : 1.0;
+        float shape_coverage = clamp(0.5 - shape_distance / edge_width, 0.0, 1.0);
         out_color = vec4(srgb_to_linear(shape_color.rgb), shape_color.a * shape_coverage * clip_coverage);
 #else
         out_color = vec4(srgb_to_linear(shape_color.rgb), shape_color.a * clamp(0.5 - shape_distance, 0.0, 1.0));
