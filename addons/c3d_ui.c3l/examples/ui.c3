@@ -697,6 +697,7 @@ fn Event[] replay_windows(Demo* demo, uint frame) @local {
         Vec2 at = (drag.from + (drag.to - drag.from) * progress) * demo.window.pixel_density;
         input.mouse_position = at;
         input.mouse_buttons[(usz)platform::MouseButton.LEFT] = frame != drag.release_frame;
+
         if (frame == drag.press_frame) {
             demo.script_events[count++] = { .kind = MOUSE_BUTTON_DOWN, .button = LEFT, .position = at };
             continue;
