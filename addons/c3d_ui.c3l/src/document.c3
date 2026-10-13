@@ -114,6 +114,7 @@ struct UiDocument @private {
     UiSpan[]     spans;
     String       strings;
     bool         visible;
+    bool         fresh;     // not declared since it loaded: its elements do not enter
     uint         order;
     UiAnchor     anchor;
     Vec2         offset;
@@ -213,6 +214,8 @@ fn void? Ui.unload_document(&self, UiDocumentId document) {
 *>
 fn void? Ui.set_visible(&self, UiDocumentId document, bool visible) {
     UiDocument* record = self.documents.try_get(document)!;
+    if (visible && !record.visible) record.fresh = false;
+
     record.visible = visible;
     if (!visible && c3d::same_id(self.focus.document, document)) self.focus = {};
 }
@@ -345,6 +348,7 @@ fn UiDocument? build_document(Ui* ui, String jsonc) @private {
             .spans    = spans,
             .strings  = (String)storage[strings_at : load.strings.len()],
             .visible  = true,
+            .fresh    = true,
             .anchor   = anchor,
             .offset   = offset,
             .layer    = layer,
@@ -1069,6 +1073,10 @@ fn void? rebind_documents(Ui* ui, UiStyleSet* set) @private {
         }
     }
     ui.styles = old;
+    foreach (&document : ui.documents.items) {
+        if (document.live) document.fresh = true;
+    }
+
     invalidate_frame(ui);
 }
 

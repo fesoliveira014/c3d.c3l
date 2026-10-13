@@ -37,6 +37,15 @@ const uint WINDOW_HEIGHT @local = 900;
 const uint BENCHMARK_WIDTH @local = 1920;
 const uint BENCHMARK_HEIGHT @local = 1080;
 const Vec2 TRACE_PANEL_POSITION @local = { 400, 16 };
+const Vec2 SOURCE_PANEL_POSITION @local = { 400, 80 };
+const Vec2 SOURCE_PANEL_SIZE @local = { 360, 100 };
+const float[4] SUN_ANGLE_STEPS @local = { 0, light::ATMOSPHERE_EARTH.sun_angular_radius, 0.03f, 0.08f }; // radians
+const float[4] LAMP_RADIUS_STEPS @local = { 0, 0.15f, 0.5f, 1.2f }; // metres
+const uint[3] SHADOW_SAMPLE_STEPS @local = { 1, 4, 16 };
+const float SUN_ANGLE_SLIDER_MAX_DEGREES @local = 10;
+const float LAMP_RADIUS_SLIDER_MAX @local = 2; // metres
+const Vec3 LAMP_POSITION @local = { -3, 2.2f, 2.5f }; // close enough to the sphere and the box for visible penumbrae
+const float LAMP_INTENSITY @local = 30;
 const char[*] TWIN_INCLUDE_SOURCE @local = $embed("../shaders/custom/standard_twin.glsl");
 const char[*] TWIN_FRAGMENT_SOURCE @local = $embed("../shaders/custom/standard_twin.frag.glsl");
 const char[*] TWIN_GBUFFER_SOURCE @local = $embed("../shaders/custom/standard_twin_gbuffer.frag.glsl");
@@ -49,6 +58,14 @@ struct Orbit @local {
     float distance;
     float yaw;
     float pitch;
+}
+
+struct SourceRig @local {
+    Node*  sun_node;
+    Node*  lamp_node;
+    Light* sun;
+    Light* lamp;
+    bool   lamp_active;
 }
 
 struct TwinParams @local {
@@ -81,6 +98,64 @@ fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
     };
     camera_node.local.position = orbit.target + offset * orbit.distance;
     camera_node.local.rotation = maths::look_rotation(-offset, { 0, 1, 0 });
+}
+
+fn void select_light(SourceRig* rig, bool lamp_active) @local {
+    rig.lamp_active = lamp_active;
+    rig.sun_node.visible = !lamp_active;
+    rig.lamp_node.visible = lamp_active;
+}
+
+fn void set_source_extent(SourceRig* rig, float extent) @local {
+    if (rig.lamp_active) {
+        rig.lamp.source_radius = extent;
+    } else {
+        rig.sun.source_angle = extent;
+    }
+}
+
+fn void step_source_extent(SourceRig* rig) @local {
+    float[4] steps = rig.lamp_active ? LAMP_RADIUS_STEPS : SUN_ANGLE_STEPS;
+    float current = rig.lamp_active ? rig.lamp.source_radius : rig.sun.source_angle;
+    foreach (step : steps) {
+        if (step > current) {
+            set_source_extent(rig, step);
+            return;
+        }
+    }
+
+    set_source_extent(rig, steps[0]);
+}
+
+fn uint next_shadow_samples(uint current) @local {
+    foreach (count : SHADOW_SAMPLE_STEPS) {
+        if (count > current) return count;
+    }
+
+    return SHADOW_SAMPLE_STEPS[0];
+}
+
+fn void source_panel(SourceRig* rig) @local {
+    imgui::set_next_window_pos(SOURCE_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
+    imgui::set_next_window_size(SOURCE_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
+    if (imgui::begin("Source", null, {})) {
+        bool lamp_active = rig.lamp_active;
+        if (imgui::checkbox("Point lamp instead of the sun", &lamp_active)) select_light(rig, lamp_active);
+
+        if (rig.lamp_active) {
+            if (imgui::slider_float("Radius (m)", &rig.lamp.source_radius, 0, LAMP_RADIUS_SLIDER_MAX)) {
+                rig.lamp.source_radius = math::clamp(rig.lamp.source_radius, 0.0f, LAMP_RADIUS_SLIDER_MAX);
+            }
+        } else {
+            float degrees = math::rad_to_deg(rig.sun.source_angle);
+            if (imgui::slider_float("Half-angle (deg)", &degrees, 0, SUN_ANGLE_SLIDER_MAX_DEGREES)) {
+                float clamped = math::clamp(degrees, 0.0f, SUN_ANGLE_SLIDER_MAX_DEGREES);
+                rig.sun.source_angle = math::deg_to_rad(clamped);
+            }
+        }
+    }
+
+    imgui::end();
 }
 
 fn TextureId add_checker(AssetStore* assets) @local {
@@ -187,6 +262,10 @@ fn int main(String[] args) {
     bool software;
     bool atlas_shadows;
     bool twin_ground;
+    bool lamp;
+    bool taa;
+    float extent;
+    uint shadow_samples;
     uint benchmark_frames;
     for (usz index = 1; index < args.len; index++) {
         if (args[index] == "--software") {
@@ -195,6 +274,16 @@ fn int main(String[] args) {
             atlas_shadows = true;
         } else if (args[index] == "--twin-ground") {
             twin_ground = true;
+        } else if (args[index] == "--point-lamp") {
+            lamp = true;
+        } else if (args[index] == "--taa") {
+            taa = true;
+        } else if (args[index] == "--extent" && index + 1 < args.len) {
+            index++;
+            extent = args[index].to_float() ?? -1;
+        } else if (args[index] == "--shadow-samples" && index + 1 < args.len) {
+            index++;
+            shadow_samples = args[index].to_uint() ?? 0;
         } else if (args[index] == "--gpu-timings") {
             $if $feat(C3D_PROFILE_GPU):
                 gpu_timings = true;
@@ -212,6 +301,12 @@ fn int main(String[] args) {
     }
     if (benchmark_frames && !gpu_timings) {
         io::eprintn("--benchmark FRAMES needs --gpu-timings");
+        return 1;
+    }
+
+    bool extent_valid = extent >= 0 && (lamp || extent < (float)math::PI / 2);
+    if (!extent_valid) {
+        io::eprintn("--extent is metres for the point lamp and radians below pi/2 for the sun");
         return 1;
     }
 
@@ -311,6 +406,22 @@ fn int main(String[] args) {
     Node* sun_node = scene.add_light(sun, name: "sun")!!;
     sun_node.local.rotation = maths::look_rotation((Vec3){ 0.1f, -0.4f, -1 }.normalize(), { 0, 1, 0 });
 
+    Light lamp_light = light::point({ 1, 0.9f, 0.7f }, LAMP_INTENSITY);
+    lamp_light.shadow.enabled = true;
+    lamp_light.shadow.ray_traced = true;
+    Node* lamp_node = scene.add_light(lamp_light, name: "lamp")!!;
+    lamp_node.local.position = LAMP_POSITION;
+
+    SourceRig rig = {
+        .sun_node  = sun_node,
+        .lamp_node = lamp_node,
+        .sun       = scene.get(sun_node, Light),
+        .lamp      = scene.get(lamp_node, Light),
+    };
+
+    select_light(&rig, lamp);
+    set_source_extent(&rig, extent);
+
     Node* camera_node = scene.add_camera(camera::perspective_deg(55, 0.1f, 100), name: "camera")!!;
     Orbit orbit = { .target = { 0, 0.5f, 0 }, .distance = 8, .yaw = 0, .pitch = 0.45f };
     apply_orbit(&orbit, &window.input, camera_node);
@@ -319,7 +430,12 @@ fn int main(String[] args) {
 
     ViewDesc view_desc = renderer.views.get(renderer.default_view).desc;
     view_desc.ray_tracing.shadows = !atlas_shadows;
-    render::configure_view(&renderer, renderer.default_view, view_desc)!!;
+    view_desc.ray_tracing.shadow_samples = shadow_samples;
+    if (taa) view_desc.post.anti_aliasing = AntiAliasing.TAA;
+    if (catch excuse = render::configure_view(&renderer, renderer.default_view, view_desc)) {
+        io::printfn("rt_shadows: the view was rejected (%s)", excuse);
+        return 1;
+    }
 
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, &renderer, &window)!!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
@@ -327,6 +443,7 @@ fn int main(String[] args) {
     io::printn("T toggles ray-traced shadows and the atlas; M swaps the box between opaque and masked");
     io::printn("A sways the box, rebuilding the top level every frame");
     io::printn("C swaps the ground between Standard and its custom twin");
+    io::printn("L swaps the sun for a point lamp; E steps the light's source extent; N steps the shadow samples");
     io::printn("Drag to orbit, wheel to zoom; Escape release quits");
     bool box_masked;
     bool swaying = benchmark_frames > 0;
@@ -359,6 +476,16 @@ fn int main(String[] args) {
             twin_ground = !twin_ground;
             ground_mesh.material = twin_ground ? ground_twin_material : ground_material;
         }
+        if (input.key_pressed(platform::Scancode.L) && !input.keyboard_captured_by_gui) {
+            select_light(&rig, !rig.lamp_active);
+        }
+        if (input.key_pressed(platform::Scancode.E) && !input.keyboard_captured_by_gui) {
+            step_source_extent(&rig);
+        }
+        if (input.key_pressed(platform::Scancode.N) && !input.keyboard_captured_by_gui) {
+            view_desc.ray_tracing.shadow_samples = next_shadow_samples(view_desc.ray_tracing.shadow_samples);
+            view_changed = true;
+        }
         if (swaying) {
             sway_phase += window.clock.delta * SWAY_RADIANS_PER_SECOND;
             box.local.position.x = math::sin(sway_phase) * SWAY_AMPLITUDE;
@@ -370,6 +497,7 @@ fn int main(String[] args) {
         imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         gui::stats_panel(&renderer)!!;
         trace_panel(&renderer);
+        source_panel(&rig);
         imgui::set_next_window_pos(POST_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(POST_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         view_changed |= gui::post_panel(&view_desc, {});

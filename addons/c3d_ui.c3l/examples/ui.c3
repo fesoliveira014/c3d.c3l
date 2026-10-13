@@ -57,6 +57,10 @@ const float LOG_WHEEL_NOTCHES @local = -3; // negative scrolls toward later line
 const float LOG_POINTER_FROM_RIGHT @local = 136; // inside the log's scroll area, in layout units
 const float LOG_POINTER_Y @local = 120;
 const float FIXED_STEP_SECONDS @local = 1.0f / 60; // bounded runs step by this, so frame N is reproducible
+const uint SCHEDULE_TICKS_PER_SECOND @local = 60; // a bounded run ticks once per frame
+const uint TOAST_FIRST_TICK @local = 100;
+const uint TOAST_BEAT_TICKS @local = 120; // the toast shows, then hides, every two seconds
+const uint ROW_BEAT_TICKS @local = 180;   // the last member row leaves, then returns, every three seconds
 
 const uint WINDOW_SCRIPT_EVENTS @local = 2; // a motion and a button release in the same frame
 const Vec2 STATS_PANEL_TRANSITIONS_SIZE @local = { 260, 186 }; // two more lines
@@ -159,6 +163,10 @@ struct Loot @local {
     float gems @tag("ui", true);
 }
 
+struct Toast @local {
+    bool shown @tag("ui", true);
+}
+
 struct ScriptedDrag @local {
     uint press_frame;
     uint release_frame;
@@ -245,6 +253,9 @@ struct Demo @local {
     bool              script_down;
     Desk              desk;
     Loot              loot;
+    Toast             toast;
+    bool              toast_loaded;
+    uint              member_rows;
     Event[WINDOW_SCRIPT_EVENTS] script_events;
     bool              drew_list;
 }
@@ -366,7 +377,7 @@ fn void sync_member(Member* member) @local {
 }
 
 fn void refresh_views(Demo* demo) @local {
-    demo.members_view = demo.members[..];
+    demo.members_view = demo.members[:demo.member_rows];
     demo.stash_view = demo.stash.items[:demo.stash.count];
     Inventory* bag = &demo.members[demo.selected].bag;
     demo.bag_view = bag.items[:bag.count];
@@ -375,7 +386,7 @@ fn void refresh_views(Demo* demo) @local {
 fn void refresh_hud(Demo* demo) @local {
     Member* member = &demo.members[demo.selected];
     demo.hud.selected = member.name;
-    demo.hud.member_count = (int)MEMBER_COUNT;
+    demo.hud.member_count = (int)demo.member_rows;
     demo.hud.can_heal = member.hit_points < member.max_hp;
     demo.hud.can_damage = member.hit_points > 0;
 }
@@ -737,6 +748,20 @@ fn void? load_rich_text(Demo* demo) @local {
 fn void? load_transitions(Demo* demo) @local {
     char[] document = $embed("ui/transitions.jsonc");
     demo.ui.load_document((String)document)!;
+    demo.ui.@bind_fields(prefix: "toast", $Type: Toast, instance: &demo.toast)!;
+}
+
+fn void animate_transitions(Demo* demo, uint tick) @local {
+    // The toast document loads one update before it first shows, so that its first update is not an entry.
+    if (!demo.toast_loaded && tick + 1 >= TOAST_FIRST_TICK) {
+        char[] document = $embed("ui/toast.jsonc");
+        demo.ui.load_document((String)document)!!;
+        demo.toast_loaded = true;
+    }
+
+    demo.toast.shown = tick >= TOAST_FIRST_TICK && ((tick - TOAST_FIRST_TICK) / TOAST_BEAT_TICKS) % 2 == 0;
+    demo.member_rows = (tick / ROW_BEAT_TICKS) % 2 == 1 ? MEMBER_COUNT - 1 : MEMBER_COUNT;
+    refresh_views(demo);
 }
 
 fn Event[] replay_transitions(Demo* demo, uint frame) @local {
@@ -914,6 +939,10 @@ fn void? run_interactive(Demo* demo, uint frame_limit) @local {
 
         animate(demo, (float)window.clock.total);
         platform::sync_window(window, renderer);
+        if (demo.transitions) {
+            animate_transitions(demo, frame_limit ? frames : (uint)(window.clock.total * SCHEDULE_TICKS_PER_SECOND));
+        }
+
         refresh_hud(demo);
 
         bool drawable = renderer.output_width && renderer.output_height;
@@ -1217,6 +1246,7 @@ fn int main(String[] args) {
         .windows         = options.windows,
         .transitions     = options.transitions,
         .reduced_motion  = options.reduced_motion,
+        .member_rows     = MEMBER_COUNT,
     };
     create_squad(&demo, &assets, portrait)!!;
     register_squad(&demo)!!;

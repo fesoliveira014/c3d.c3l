@@ -8,8 +8,9 @@ import std::io;
 import std::math;
 import std::sort;
 
-const usz UI_STATE_BLOCKS @private = 4;
-const String[UI_STATE_BLOCKS] UI_STATE_KEYS @private = { "focused", "hover", "pressed", "disabled" };
+const usz UI_STATE_BLOCKS @private = 5;
+const usz UI_HIDDEN_BLOCK @private = 4; // the values while not shown; no state flag activates it
+const String[UI_STATE_BLOCKS] UI_STATE_KEYS @private = { "focused", "hover", "pressed", "disabled", "hidden" };
 
 enum UiStyleVisit @private {
     UNSEEN,
@@ -21,7 +22,7 @@ struct UiStyle @private {
     String                         name;
     UiProperties                   base;
     ulong                          base_mask;
-    UiProperties[UI_STATE_BLOCKS]  blocks;      // focused, hover, pressed, disabled
+    UiProperties[UI_STATE_BLOCKS]  blocks;      // focused, hover, pressed, disabled, hidden
     ulong[UI_STATE_BLOCKS]         block_masks;
 }
 
@@ -107,10 +108,14 @@ fn UiStyle*? find_style(Ui* ui, String name) @private {
     return NOT_FOUND~;
 }
 
+fn bool[UI_STATE_BLOCKS] active_blocks(UiStateFlags state) @private {
+    return { state.focused, state.hovered, state.pressed, state.disabled, false }; // the hidden block never applies
+}
+
 fn UiProperties style_properties(UiStyle* style, UiStateFlags state) @private {
     UiProperties properties = style.base;
     ulong mask = style.base_mask;
-    bool[UI_STATE_BLOCKS] active = { state.focused, state.hovered, state.pressed, state.disabled };
+    bool[UI_STATE_BLOCKS] active = active_blocks(state);
     for (usz block = 0; block < UI_STATE_BLOCKS; block++) {
         if (active[block]) apply_properties(
             target:      &properties,
@@ -124,7 +129,7 @@ fn UiProperties style_properties(UiStyle* style, UiStateFlags state) @private {
 
 fn ulong style_mask(UiStyle* style, UiStateFlags state) @private {
     ulong mask = style.base_mask;
-    bool[UI_STATE_BLOCKS] active = { state.focused, state.hovered, state.pressed, state.disabled };
+    bool[UI_STATE_BLOCKS] active = active_blocks(state);
     for (usz block = 0; block < UI_STATE_BLOCKS; block++) {
         if (active[block]) mask |= style.block_masks[block];
     }
@@ -219,6 +224,7 @@ fn void? visit_style(
                 value:  value,
                 target: &style.blocks[block],
                 mask:   &style.block_masks[block],
+                hidden: block == UI_HIDDEN_BLOCK,
             )!;
         } else if (!read_property(
             load:   load,
@@ -242,17 +248,43 @@ fn usz state_block(String key) @private {
     return UI_STATE_BLOCKS;
 }
 
+fn bool hidden_key(String key) @private {
+    switch (key) {
+        case "fill":
+        case "border":
+        case "text_color":
+        case "opacity":
+        case "offset":
+        case "width":
+        case "height":
+        case "size":
+            return true;
+        default:
+            return false;
+    }
+}
+
+fn bool fixed_sizes(UiProperties* properties, ulong mask) @private {
+    if (has_property(mask, WIDTH) && properties.width.sizing != FIXED) return false;
+    if (has_property(mask, HEIGHT) && properties.height.sizing != FIXED) return false;
+
+    return true;
+}
+
 fn void? read_state_block(
     UiLoad* load,
     Object* value,
     UiProperties* target,
     ulong* mask,
+    bool hidden,
 ) @private {
     if (!value.is_map()) return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
     UiProperties own;
     ulong own_mask;
     foreach (key : sorted_keys(value)) {
         push_token(load, key);
+        if (hidden && !hidden_key(key)) return fail_load(load, UNKNOWN_PROPERTY)~;
+
         if (!read_property(
             load:   load,
             key:    key,
@@ -260,6 +292,9 @@ fn void? read_state_block(
             target: &own,
             mask:   &own_mask,
         )!) return fail_load(load, UNKNOWN_PROPERTY)~;
+
+        if (hidden && !fixed_sizes(&own, own_mask)) return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+
         pop_token(load);
     }
     apply_properties(

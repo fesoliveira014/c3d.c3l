@@ -31,6 +31,7 @@ const float CAMERA_FOV_MIN_DEGREES @local = 1;
 const float CAMERA_FOV_MAX_DEGREES @local = 179;
 const float CONE_MAX_DEGREES @local = 90;
 const float DECAL_FADE_MAX_DEGREES @local = 90;
+const float SOURCE_ANGLE_MAX_DEGREES @local = 89; // the half-angle must stay below a right angle
 const float IK_ANGLE_MAX_DEGREES @local = 180;
 const float CAMERA_MIN_NEAR @local = 0.0001f;
 const float MIN_POSITIVE @local = 0.0001f;
@@ -208,6 +209,17 @@ fn bool light_inspector(void* component) @local {
             changed = true;
         }
     }
+
+    if (light.kind == LightKind.DIRECTIONAL) {
+        float angle = math::rad_to_deg(light.source_angle);
+        if (imgui::slider_float("Source angle (deg)", &angle, 0, SOURCE_ANGLE_MAX_DEGREES)) {
+            light.source_angle = math::deg_to_rad(math::clamp(angle, 0.0f, SOURCE_ANGLE_MAX_DEGREES));
+            changed = true;
+        }
+    } else {
+        changed = nonnegative_drag("Source radius (m)", &light.source_radius) || changed;
+    }
+
     changed = imgui::input_scalar("Layers", imgui::DATA_TYPE_U32, &light.layers) || changed;
     changed = imgui::checkbox("Scatters in volumetric fog", &light.volumetric) || changed;
 

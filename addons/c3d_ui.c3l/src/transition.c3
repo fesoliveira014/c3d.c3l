@@ -3,7 +3,7 @@ module c3d::ui;
 import c3d;
 import std::math;
 
-const uint UI_DEFAULT_TRANSITIONS @private = 128; // 256 slots of 424 bytes: 106 KiB; when full, changes snap
+const uint UI_DEFAULT_TRANSITIONS @private = 128; // 256 slots of 452 bytes: 113 KiB; when full, changes snap
 
 struct UiTrack @private {
     Vec4     from;
@@ -15,19 +15,29 @@ struct UiTrack @private {
     bool     running;
 }
 
+struct UiExitRecord @private {
+    Vec2 position; // from the parent's top left, without the element's own offset
+    Vec2 size;
+    uint parent;   // Clay id of the enclosing element, zero for a document root
+}
+
 struct UiTransition @private {
     UiElementKey             key;      // zero generation: free
     uint                     hash;
     uint                     declared; // update serial of the last declaration
+    uint                     instance; // of the last declaration, in the instance table of its update
+    bool                     exiting;
+    UiExitRecord             exit;     // of the last update, for an element whose style can exit
     UiTrack[UiAnimated::len] tracks;
 }
 
-$assert UiTransition::size == 424; // the cost stated at UI_DEFAULT_TRANSITIONS and in the README
+$assert UiTransition::size == 452; // the cost stated at UI_DEFAULT_TRANSITIONS and in the README
 
 struct UiTransitionStep @private {
-    UiTransition* entry;   // null: the element snaps
+    UiTransition* entry;    // null: the element snaps
     bool          created;
-    bool          advance; // first declaration of the entry in this update
+    bool          advance;  // first declaration of the entry in this update
+    uint          entering; // animated bits that start at their hidden values
 }
 
 <*
@@ -145,7 +155,7 @@ fn Vec4 step_track(
     Vec4 target,
     UiTransitionConfig* config,
 ) @private {
-    if (step.created) {
+    if (step.created && (step.entering & @animated_bit(animated)) == 0) {
         settle_track(track, target);
         return target;
     }
@@ -188,6 +198,46 @@ fn UiTransition* acquire_transition(Ui* ui, UiInstance* instance, bool* created)
     return &table[slot];
 }
 
+fn uint hidden_bits(ulong mask) @private {
+    uint bits;
+    if (has_property(mask, FILL)) bits |= @animated_bit(FILL);
+    if (has_property(mask, BORDER_COLOR)) bits |= @animated_bit(BORDER_COLOR);
+    if (has_property(mask, BORDER_WIDTHS)) bits |= @animated_bit(BORDER_WIDTHS);
+    if (has_property(mask, TEXT_COLOR)) bits |= @animated_bit(TEXT_COLOR);
+    if (has_property(mask, OPACITY)) bits |= @animated_bit(OPACITY);
+    if (has_property(mask, OFFSET)) bits |= @animated_bit(OFFSET);
+    if (has_property(mask, WIDTH) || has_property(mask, HEIGHT)) bits |= @animated_bit(SIZE);
+
+    return bits;
+}
+
+fn uint exit_bits(Ui* ui, UiInstance* instance) @private {
+    uint style = instance.element.style;
+    if (style == UI_NONE) return 0;
+
+    ulong hidden = ui.styles.styles[style].block_masks[UI_HIDDEN_BLOCK];
+    return instance.properties.transition.properties & hidden_bits(hidden);
+}
+
+fn Vec4 hidden_target(UiStyle* style, UiAnimated animated, Vec4 reference) @private {
+    UiProperties* hidden = &style.blocks[UI_HIDDEN_BLOCK];
+    ulong mask = style.block_masks[UI_HIDDEN_BLOCK];
+    switch (animated) {
+        case FILL: return hidden.fill;
+        case BORDER_COLOR: return hidden.border_color;
+        case BORDER_WIDTHS: return hidden.border_widths;
+        case TEXT_COLOR: return hidden.text_color;
+        case OPACITY: return { hidden.opacity, 0, 0, 0 };
+        case OFFSET: return { hidden.offset.x, hidden.offset.y, 0, 0 };
+        case VALUE: return reference;
+        case SIZE:
+            float width = has_property(mask, WIDTH) ? hidden.width.value : reference.x;
+            float height = has_property(mask, HEIGHT) ? hidden.height.value : reference.y;
+
+            return { width, height, 1, 0 };
+    }
+}
+
 fn UiTransitionStep begin_transition(Ui* ui, UiInstance* instance) @private {
     if (!instance.element.may_transition) return {};
 
@@ -197,24 +247,70 @@ fn UiTransitionStep begin_transition(Ui* ui, UiInstance* instance) @private {
 
     step.advance = step.entry.declared != ui.update_serial;
     step.entry.declared = ui.update_serial;
+    step.entry.exiting = false;
+    if (step.created && !instance.document.fresh) step.entering = exit_bits(ui, instance);
 
     UiTransitionConfig config = instance.properties.transition;
     for (usz index = 0; index < UiAnimated::len; index++) {
         UiAnimated animated = UiAnimated::from_ordinal(index);
         if (animated == VALUE) continue;
 
+        UiTrack* track = &step.entry.tracks[index];
+        Vec4 target = track_target(instance, animated);
+        if ((step.entering & @animated_bit(animated)) != 0) {
+            settle_track(track, hidden_target(&ui.styles.styles[instance.element.style], animated, target));
+        }
+
         Vec4 value = step_track(
             ui:       ui,
             step:     &step,
-            track:    &step.entry.tracks[index],
+            track:    track,
             animated: animated,
-            target:   track_target(instance, animated),
+            target:   target,
             config:   &config,
         );
         apply_track(instance, animated, value);
     }
 
     return step;
+}
+
+fn bool step_exit(Ui* ui, UiInstance* instance, UiTransition* entry) @private {
+    UiStyle* style = &ui.styles.styles[instance.element.style];
+    uint exit_mask = exit_bits(ui, instance);
+    UiTransitionConfig config = instance.properties.transition;
+    UiTransitionStep step = { .entry = entry, .advance = true };
+    bool running;
+    for (usz index = 0; index < UiAnimated::len; index++) {
+        UiAnimated animated = UiAnimated::from_ordinal(index);
+        if (animated == VALUE) continue;
+
+        UiTrack* track = &entry.tracks[index];
+        bool in_exit = (exit_mask & @animated_bit(animated)) != 0;
+        Vec4 target = track.to;
+        if (in_exit) {
+            // A size that was not a fixed number starts at the last box.
+            if (animated == SIZE && track.to.z == 0) {
+                settle_track(track, { entry.exit.size.x, entry.exit.size.y, 1, 0 });
+            }
+
+            target = hidden_target(style, animated, track_value(track));
+        }
+
+        Vec4 value = step_track(
+            ui:       ui,
+            step:     &step,
+            track:    track,
+            animated: animated,
+            target:   target,
+            config:   &config,
+        );
+        apply_track(instance, animated, value);
+
+        if (in_exit && track.running) running = true;
+    }
+
+    return running;
 }
 
 fn void animate_value(Ui* ui, UiInstance* instance, UiTransitionStep* step) @private {
@@ -275,11 +371,16 @@ fn void finish_transitions(Ui* ui) @private {
     }
 
     uint running;
+    uint exiting;
     foreach (&entry : ui.transitions) {
-        if (key_valid(&entry.key) && transition_running(entry)) running++;
+        if (!key_valid(&entry.key)) continue;
+
+        if (transition_running(entry)) running++;
+        if (entry.exiting) exiting++;
     }
 
     ui.stats.transitions = running;
+    ui.stats.exiting = exiting;
 }
 
 fn bool named_transition(Ui* ui, UiTransition* entry) @private {

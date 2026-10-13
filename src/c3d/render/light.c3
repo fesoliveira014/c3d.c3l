@@ -87,8 +87,7 @@ fn ShadowRequest[] collect_shadow_requests(
 
     scene.@each(Light; Entity entity, Light* light) {
         Node* node = scene.node(entity);
-        bool eligible = node.visible_effective && (node.layers & view_layers)
-          && light.layers != 0 && light.intensity > 0;
+        bool eligible = light_eligible(node, light, view_layers);
         Vec4 color_intensity = { light.color.r, light.color.g, light.color.b, light.intensity };
         bool atmosphere_sun = eligible && atmosphere && atmosphere.atmosphere
           && c3d::same_id(entity, atmosphere.entity);
@@ -107,6 +106,8 @@ fn ShadowRequest[] collect_shadow_requests(
         }
         color_intensity.w *= pre_exposure;
         if (eligible) {
+            if (light.shadow.enabled) light.validate_source();
+
             uint packed_index = counts.packed;
             bool ray_traced = trace_shadows ? light.shadow.enabled : light_ray_traced(light, ray_tracing);
             include_light(
@@ -183,9 +184,30 @@ fn void include_light(
         .layers = light.layers,
         .cos_inner = light.kind == SPOT ? math::cos(light.inner_cone) : 0,
         .flags = (ray_traced ? shader::LIGHT_RT_SHADOW : 0) | (light.volumetric ? shader::LIGHT_VOLUMETRIC : 0),
+        .source_extent = light_source_extent(light),
     };
 }
 
 fn bool light_ray_traced(Light* light, RayTracingDesc ray_tracing) @private {
     return light.shadow.enabled && light.shadow.ray_traced && ray_tracing.shadows;
+}
+
+fn bool light_eligible(Node* node, Light* light, uint view_layers) @local {
+    return node.visible_effective && (node.layers & view_layers) && light.layers != 0 && light.intensity > 0;
+}
+
+fn float light_source_extent(Light* light) @local {
+    return light.kind == DIRECTIONAL ? light.source_angle : light.source_radius;
+}
+
+// Any visible traced light with an extent, whatever a view's layers: the soft form draws a superset of the lights.
+fn bool traced_light_has_extent(Scene* scene) @private {
+    bool found;
+    scene.@each(Light; Entity entity, Light* light) {
+        Node* node = scene.node(entity);
+        found = found || (light_source_extent(light) > 0 && light.shadow.enabled && light.shadow.ray_traced
+          && light_eligible(node, light, uint::max));
+    };
+
+    return found;
 }

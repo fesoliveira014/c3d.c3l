@@ -10,8 +10,10 @@ Node transform values pass through unchanged, matching direct `node.local` assig
 
 `register_core_codecs()` installs described policies for Mesh, Camera,
 Light, ProbeVolume, Atmosphere, HeightFog, ReflectionProbe, Decal and CloudLayer, all in the
-VALUE phase. Light is version 2, with `volumetric`; version-1 binary and JSONC
-payloads, which lack it, read it as true. Mesh copies its morph-weight array into ordinary Scene ownership.
+VALUE phase. Light is version 3, with `source_radius` and `source_angle`; version-1 and
+version-2 binary and JSONC payloads, which lack them, read them as zero, and
+version-1 payloads read `volumetric` as true. A negative or non-finite extent, or an angle of `PI / 2` or more,
+faults `INVALID_ARGUMENT` on read and on write. Mesh copies its morph-weight array into ordinary Scene ownership.
 The other value components use fixed-size copying attachment. ProbeVolume,
 Atmosphere, HeightFog, ReflectionProbe and CloudLayer use their existing owner validity
 predicates on both export and decoded authoring before attachment. CloudLayer's

@@ -19,6 +19,8 @@ struct UiDeclare @private {
     uint  windows;           // windows declared in the document being declared
     bool  drag_source_found; // the dragged item is still declared this frame
     bool  handle_found;      // a drag handle of the dragged window is still declared this frame
+    short floating_z;        // z of the nearest enclosing floating element
+    uint  parent_clay_id;    // Clay id of the element being declared into, zero outside documents
 }
 
 struct UiPlacement @private {
@@ -50,11 +52,14 @@ fn void? Ui.update(
 ) {
     clay::set_current_context(self.context);
     clay::set_measure_text_function(&measure_clay_text, self);
+    bool previous_ready = self.frame_ready;
+    swap_frames(self);
     self.stats.instances = 0;
     self.stats.getter_calls = 0;
     self.stats.text_bytes = 0;
     self.stats.text_pieces = 0;
     self.stats.transitions = 0;
+    self.stats.exiting = 0;
     self.update_serial++;
     self.text_used = 0;
     self.piece_count = 0;
@@ -99,8 +104,12 @@ fn void? Ui.update(
             placement: &placement,
         );
 
+        document.fresh = false;
         declare.band += (short)(UI_Z_BAND + 2 * declare.windows);
     }
+
+    declare_exits(&declare, previous_ready);
+
     if (self.drag.active && !declare.drag_source_found) self.drag = {};
     if (!declare.failure) check_window_drag(self, &declare);
     declare_ghost(&declare);
@@ -121,6 +130,7 @@ fn void? Ui.update(
     }
     self.commands = commands;
     self.frame_ready = true;
+    record_exits(self);
     finish_transitions(self);
 }
 
@@ -414,6 +424,8 @@ fn void declare_element(
     instance.clay_id = assign_clay_id(ui, &key, element, instance_index);
 
     UiTransitionStep step = begin_transition(ui, instance);
+    if (step.entry && !placement.ghost) step.entry.instance = instance_index;
+
     if (catch excuse = prepare_instance(ui, instance, scope)) return fail_declare(declare, excuse);
 
     animate_value(ui, instance, &step);
@@ -424,6 +436,40 @@ fn void declare_element(
         placement.floating.offset.y += instance.properties.offset.y;
     }
 
+    short outer_floating_z = declare.floating_z;
+    if (placement.floating.attach_to != NONE) declare.floating_z = placement.floating.z_index;
+
+    if (ui.links.len) {
+        ui.links[instance_index] = {
+            .placement = *placement,
+            .parent    = declare.parent_clay_id,
+            .z         = declare.floating_z,
+        };
+    }
+
+    open_instance(ui, instance, placement);
+
+    uint outer_parent = declare.parent_clay_id;
+    declare.parent_clay_id = instance.clay_id;
+    declare_contents(
+        declare:        declare,
+        document:       document,
+        element:        element,
+        instance:       instance,
+        instance_index: instance_index,
+        scope:          scope,
+    );
+    declare.parent_clay_id = outer_parent;
+    clay::close_element();
+
+    if (ui.links.len) ui.links[instance_index].subtree_end = ui.instance_count;
+
+    declare.floating_z = outer_floating_z;
+    declare.z = outer_z;
+}
+
+fn void open_instance(Ui* ui, UiInstance* instance, UiPlacement* placement) @private {
+    UiElement* element = instance.element;
     clay::open_element(clay::id(instance.clay_id));
     clay::ElementDeclaration declaration = {
         .layout   = layout_config(&instance.properties),
@@ -456,17 +502,6 @@ fn void declare_element(
     }
     if (instance_draws(instance)) declaration.custom = { .custom_data = instance };
     clay::configure_element(&declaration);
-
-    declare_contents(
-        declare:        declare,
-        document:       document,
-        element:        element,
-        instance:       instance,
-        instance_index: instance_index,
-        scope:          scope,
-    );
-    clay::close_element();
-    declare.z = outer_z;
 }
 
 fn void? prepare_instance(Ui* ui, UiInstance* instance, UiScope* scope) @private {
@@ -535,6 +570,9 @@ fn void declare_contents(
                     scope:    scope,
                 );
                 if (catch excuse = placeholder) return fail_declare(declare, excuse);
+
+                if (ui.links.len) ui.links[instance_index].placeholder = placeholder;
+
                 clay::text(placeholder, text_config(ui, instance, UI_PLACEHOLDER_ALPHA));
             }
         case LIST:

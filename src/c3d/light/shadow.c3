@@ -51,3 +51,9 @@ struct ShadowSettings {
  @require !self.shadow.enabled || self.kind != SPOT || (self.outer_cone > 0 && self.outer_cone < (float)math::PI / 2)
 *>
 fn void Light.validate_shadow(&self) {}
+
+<*
+ Check the programming contract for this light's source extent.
+ @require light_source_valid(self)
+*>
+fn void Light.validate_source(&self) {}
