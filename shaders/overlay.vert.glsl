@@ -67,7 +67,6 @@ void place_plane_corner(OverlayWorldRoot root, OverlayTransformGpu transform, ui
 #endif
 
 void main() {
-    v_item = uint(gl_InstanceIndex);
 #ifdef WORLD
     OverlayWorldRoot root = OverlayWorldRoot(pc.vertex_root_gpu);
     v_plane = vec2(0.0);
@@ -86,6 +85,7 @@ void main() {
 #ifdef WORLD
         if (transform.plane != 0u) {
             place_plane_corner(root, transform, transform_index, bounds);
+            v_item = uint(gl_InstanceIndex);
             return;
         }
 #endif
@@ -108,4 +108,5 @@ void main() {
 #endif
 
     gl_Position = vec4(position * root.scale + root.translate, 0.0, 1.0);
+    v_item = uint(gl_InstanceIndex);
 }

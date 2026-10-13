@@ -53,20 +53,25 @@ vec2 overlay_local_pixel_size(OverlayTransformGpu transform) {
 }
 
 // A clip box is tested in its own local space, with its edges one output pixel wide.
-float overlay_clip_coverage(OverlayTransformGpu clip, vec2 local, vec2 local_pixel_size) {
+float overlay_clip_coverage(OverlayTransformGpu clip, vec2 pixel) {
     vec2 center = (clip.clip_box.xy + clip.clip_box.zw) * 0.5;
     vec2 half_extent = (clip.clip_box.zw - clip.clip_box.xy) * 0.5;
-    vec2 inside = half_extent - abs(local - center);
-    vec2 coverage = clamp(0.5 + inside / local_pixel_size, 0.0, 1.0);
+    vec2 inside = half_extent - abs(overlay_local_position(clip, pixel) - center);
+    vec2 coverage = clamp(0.5 + inside / overlay_local_pixel_size(clip), 0.0, 1.0);
     return coverage.x * coverage.y;
 }
 
 #ifdef WORLD
-// Local units one output pixel spans along each local axis, where the local position varies across the screen.
-vec2 overlay_local_pixel_size_from_change(vec2 local) {
-    return vec2(
+// The same test for a plane item, whose position in the plane varies across the screen with perspective.
+float overlay_plane_clip_coverage(OverlayTransformGpu clip, vec2 plane_position) {
+    vec2 center = (clip.clip_box.xy + clip.clip_box.zw) * 0.5;
+    vec2 half_extent = (clip.clip_box.zw - clip.clip_box.xy) * 0.5;
+    vec2 local = overlay_local_position(clip, plane_position);
+    vec2 pixel_size = vec2(
         length(vec2(dFdx(local.x), dFdy(local.x))),
         length(vec2(dFdx(local.y), dFdy(local.y))));
+    vec2 coverage = clamp(0.5 + (half_extent - abs(local - center)) / pixel_size, 0.0, 1.0);
+    return coverage.x * coverage.y;
 }
 
 // Output pixels per local unit along each local axis, from the local change per output pixel along x and y.
@@ -243,7 +248,11 @@ vec4 overlay_glyph_color(OverlayItemGpu item, vec2 position) {
     return vec4(srgb_to_linear(fill.rgb), fill.a * coverage);
 }
 
+#ifdef WORLD
 void overlay_shade() {
+#else
+void main() {
+#endif
 #if defined(BACKDROP)
     OverlayBackdropRoot root = OverlayBackdropRoot(pc.fragment_root_gpu);
 #elif defined(WORLD)
@@ -266,16 +275,11 @@ void overlay_shade() {
     while (clip_index != 0u) {
         OverlayTransformGpu clip = transforms.values[clip_index];
 #ifdef WORLD
-        vec2 clip_local = overlay_local_position(clip, plane ? v_plane : gl_FragCoord.xy);
-        vec2 clip_pixel_size = plane
-            ? overlay_local_pixel_size_from_change(clip_local)
-            : overlay_local_pixel_size(clip);
-        clip_coverage *= overlay_clip_coverage(clip, clip_local, clip_pixel_size);
+        clip_coverage *= plane
+            ? overlay_plane_clip_coverage(clip, v_plane)
+            : overlay_clip_coverage(clip, gl_FragCoord.xy);
 #else
-        clip_coverage *= overlay_clip_coverage(
-            clip,
-            overlay_local_position(clip, gl_FragCoord.xy),
-            overlay_local_pixel_size(clip));
+        clip_coverage *= overlay_clip_coverage(clip, gl_FragCoord.xy);
 #endif
         clip_index = clip.clip_parent;
     }
@@ -438,9 +442,9 @@ void overlay_shade() {
 #endif
 }
 
+#ifdef WORLD
 void main() {
     overlay_shade();
-#ifdef WORLD
     out_color.rgb *= OverlayWorldRoot(pc.fragment_root_gpu).color_scale;
-#endif
 }
+#endif
