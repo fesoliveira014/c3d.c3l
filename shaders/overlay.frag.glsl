@@ -9,9 +9,11 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Ov
     OverlayItemGpu values[];
 };
 
+#ifdef TRANSFORMED
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer OverlayTransforms {
     OverlayTransformGpu values[];
 };
+#endif
 
 layout(push_constant) uniform Push {
     uint64_t vertex_root_gpu;
@@ -21,6 +23,7 @@ layout(push_constant) uniform Push {
 layout(location = 0) flat in uint v_item;
 layout(location = 0) out vec4 out_color;
 
+#ifdef TRANSFORMED
 vec2 overlay_local_position(OverlayTransformGpu transform, vec2 pixel) {
     return transform.inverse_x_axis * pixel.x + transform.inverse_y_axis * pixel.y + transform.inverse_offset;
 }
@@ -45,6 +48,7 @@ float overlay_clip_coverage(OverlayTransformGpu clip, vec2 pixel) {
 float overlay_edge_width(float signed_distance, bool transformed) {
     return transformed ? max(length(vec2(dFdx(signed_distance), dFdy(signed_distance))), 1e-6) : 1.0;
 }
+#endif
 
 // Radii are top left, top right, bottom right, bottom left; y grows downward.
 float rounded_box_distance(vec2 local, vec2 half_extent, vec4 radii) {
@@ -100,7 +104,11 @@ vec4 sample_texture_2d_grad(
         uv_dy);
 }
 
+#ifdef TRANSFORMED
 vec4 overlay_glyph_color(OverlayItemGpu item, vec2 position, vec2 pixels_per_unit) {
+#else
+vec4 overlay_glyph_color(OverlayItemGpu item, vec2 position) {
+#endif
     vec2 em_per_pixel = (item.uv_rect.zw - item.uv_rect.xy) / (item.bounds.zw - item.bounds.xy);
     vec2 em = item.uv_rect.xy + (position - item.bounds.xy) * em_per_pixel;
     vec2 em_low = min(item.uv_rect.xy, item.uv_rect.zw);
@@ -112,7 +120,11 @@ vec4 overlay_glyph_color(OverlayItemGpu item, vec2 position, vec2 pixels_per_uni
         item.texture,
         item.band_texture,
         em,
+#ifdef TRANSFORMED
         pixels_per_unit / abs(em_per_pixel),
+#else
+        1.0 / abs(em_per_pixel),
+#endif
         vec4(band_scale, -em_low * band_scale),
         glyph);
     vec4 fill = unpackUnorm4x8(item.fill);
@@ -122,10 +134,12 @@ vec4 overlay_glyph_color(OverlayItemGpu item, vec2 position, vec2 pixels_per_uni
 void main() {
     OverlayRoot root = OverlayRoot(pc.fragment_root_gpu);
     OverlayItemGpu item = OverlayItems(root.items).values[v_item];
+    uint kind = (item.sampler_kind_flags >> OVERLAY_KIND_SHIFT) & OVERLAY_KIND_MASK;
+
+#ifdef TRANSFORMED
     OverlayTransforms transforms = OverlayTransforms(root.transforms);
     uint transform_index = item.transform_clip & OVERLAY_TRANSFORM_MASK;
     uint clip_index = item.transform_clip >> OVERLAY_CLIP_SHIFT;
-    uint kind = (item.sampler_kind_flags >> OVERLAY_KIND_SHIFT) & OVERLAY_KIND_MASK;
 
     float clip_coverage = 1.0;
     while (clip_index != 0u) {
@@ -147,20 +161,32 @@ void main() {
         local_dy = transform.inverse_y_axis;
         pixels_per_unit = vec2(length(transform.x_axis), length(transform.y_axis));
     }
+#endif
 
     if (kind == OVERLAY_KIND_GLYPH) {
+#ifdef TRANSFORMED
         vec4 glyph = overlay_glyph_color(item, position, pixels_per_unit);
         out_color = vec4(glyph.rgb, glyph.a * clip_coverage);
+#else
+        out_color = overlay_glyph_color(item, gl_FragCoord.xy);
+#endif
         return;
     }
 
     uint flags = item.sampler_kind_flags >> OVERLAY_FLAGS_SHIFT;
+#ifndef TRANSFORMED
+    vec2 position = gl_FragCoord.xy;
+#endif
 
     vec2 center = (item.bounds.xy + item.bounds.zw) * 0.5;
     vec2 half_extent = (item.bounds.zw - item.bounds.xy) * 0.5;
     vec4 radii = vec4(unpackHalf2x16(item.radii_top), unpackHalf2x16(item.radii_bottom));
+#ifdef TRANSFORMED
     float outer = rounded_box_distance(position - center, half_extent, radii);
     float coverage = clamp(0.5 - outer / overlay_edge_width(outer, transformed), 0.0, 1.0);
+#else
+    float coverage = clamp(0.5 - rounded_box_distance(position - center, half_extent, radii), 0.0, 1.0);
+#endif
 
     vec4 fill = unpackUnorm4x8(item.fill);
     vec4 color = vec4(srgb_to_linear(fill.rgb), fill.a);
@@ -179,9 +205,13 @@ void main() {
         vec2 u = slice_axis(position.x, item.bounds.xz, item.uv_rect.xz, slice_pixels.xz, slice_uv.xz * uv_size.x);
         vec2 v = slice_axis(position.y, item.bounds.yw, item.uv_rect.yw, slice_pixels.yw, slice_uv.yw * uv_size.y);
         uint sampler_index = item.sampler_kind_flags & OVERLAY_SAMPLER_MASK;
+#ifdef TRANSFORMED
         vec2 uv_dx = vec2(u.y * local_dx.x, v.y * local_dx.y);
         vec2 uv_dy = vec2(u.y * local_dy.x, v.y * local_dy.y);
         color *= sample_texture_2d_grad(item.texture, sampler_index, vec2(u.x, v.x), uv_dx, uv_dy);
+#else
+        color *= sample_texture_2d_grad(item.texture, sampler_index, vec2(u.x, v.x), vec2(u.y, 0.0), vec2(0.0, v.y));
+#endif
     }
 
     if ((flags & OVERLAY_FLAG_BORDER) != 0u) {
@@ -198,12 +228,20 @@ void main() {
             (inner_high - inner_low) * 0.5,
             inner_radii);
         // Borders that meet across the box leave no inner area at all.
+#ifdef TRANSFORMED
         float in_border = any(lessThanEqual(inner_high, inner_low))
             ? 1.0
             : clamp(0.5 + inner / overlay_edge_width(inner, transformed), 0.0, 1.0);
+#else
+        float in_border = any(lessThanEqual(inner_high, inner_low)) ? 1.0 : clamp(0.5 + inner, 0.0, 1.0);
+#endif
         vec4 border = unpackUnorm4x8(item.border_color);
         color = mix(color, vec4(srgb_to_linear(border.rgb), border.a), in_border);
     }
 
+#ifdef TRANSFORMED
     out_color = vec4(color.rgb, color.a * coverage * clip_coverage);
+#else
+    out_color = vec4(color.rgb, color.a * coverage);
+#endif
 }

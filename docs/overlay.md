@@ -147,6 +147,9 @@ list.pop_transform();
   no transforms, as `max_glyphs` does for text: its pushes fault and its lists draw as before.
 - **Outputs.** Window and render-target outputs treat transforms alike. Items under the identity pack and draw as they
   do without transforms.
+- **Shaders.** A list draws with the plain overlay shaders unless an emitted item has a transform or a transformed
+  clip; then the whole list draws with the transformed variants of both stages. Pushing transforms around items that
+  are all skipped leaves the list plain.
 
 ## Faults
 

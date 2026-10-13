@@ -139,7 +139,8 @@ struct OverlayRun @private {
 
 struct OverlayPrepared @private {
     gpu::GpuAddress items;
-    gpu::GpuAddress transforms; // zero when no transform is in use
+    gpu::GpuAddress transforms; // zero when no emitted item has a transform or a transformed clip
+    bool            transformed; // some emitted item has one: the list draws with the transformed shaders
     uint            run_count;
     RenderTargetId  target; // the output the instances were fitted to; zero for the window
     ulong           frame;  // renderer frame index plus one; zero before the first preparation
@@ -150,6 +151,7 @@ struct OverlayPacker @local {
     OverlayItemGpu[] destination;
     uint             emitted;
     uint             run_count;
+    bool             transformed;
 }
 
 <*
@@ -623,6 +625,7 @@ fn OverlayItemGpu pack_overlay_glyph(
 }
 
 fn void emit_overlay_item(OverlayPacker* packer, gpu::ScissorRect scissor, OverlayItemGpu item) @local {
+    packer.transformed = packer.transformed || item.transform_clip != 0;
     OverlayRun[] runs = packer.list.runs;
     if (!packer.run_count || !same_scissor(runs[packer.run_count - 1].scissor, scissor)) {
         runs[packer.run_count] = { .first = packer.emitted, .scissor = scissor };
@@ -674,5 +677,6 @@ fn uint pack_overlay_items(
     }
 
     list.prepared.run_count = packer.run_count;
+    list.prepared.transformed = packer.transformed;
     return packer.emitted;
 }
