@@ -49,6 +49,8 @@ const uint LIST_GLYPHS @local = 16384;
 const Vec2 STATS_PANEL_POSITION @local = { 360, 16 };
 const Vec2 STATS_PANEL_SIZE @local = { 260, 150 };
 
+const float FIXED_STEP_SECONDS @local = 1.0f / 60; // bounded runs step by this, so frame N is reproducible
+
 const uint BENCHMARK_ROWS @local = 50;
 const uint DEFAULT_BENCHMARK_FRAMES @local = 100;
 const uint BENCHMARK_WIDTH @local = 1920;
@@ -685,7 +687,14 @@ fn void? run_interactive(Demo* demo, uint frame_limit) @local {
         refresh_hud(demo);
 
         bool drawable = renderer.output_width && renderer.output_height;
-        if (drawable) ui.update(window.width, window.height, window.pixel_density)!;
+        if (drawable) {
+            ui.update(
+                width:         window.width,
+                height:        window.height,
+                scale:         window.pixel_density,
+                delta_seconds: frame_limit ? FIXED_STEP_SECONDS : window.clock.delta,
+            )!;
+        }
 
         imgui::set_next_window_pos(STATS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
@@ -826,7 +835,12 @@ fn void? run_benchmark(Options* options) @local {
         if (measured) route_ms += elapsed_ms(started);
 
         started = clock::now();
-        ui.update(BENCHMARK_WIDTH, BENCHMARK_HEIGHT, 1)!;
+        ui.update(
+            width:         BENCHMARK_WIDTH,
+            height:        BENCHMARK_HEIGHT,
+            scale:         1,
+            delta_seconds: FIXED_STEP_SECONDS,
+        )!;
         if (measured) update_ms += elapsed_ms(started);
 
         started = clock::now();

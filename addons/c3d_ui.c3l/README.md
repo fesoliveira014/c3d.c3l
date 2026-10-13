@@ -27,7 +27,12 @@ while (window.poll()) {
     gui_renderer.new_frame();                       // without ImGui: window.input.clear_gui_flags();
     ui.route_input(&window.input, window.events()); // actions fire here
     // game input reads Input; the capture flags gate it
-    ui.update(window.width, window.height, window.pixel_density)!;
+    ui.update(
+        width:         window.width,
+        height:        window.height,
+        scale:         window.pixel_density,
+        delta_seconds: window.clock.delta,
+    )!;
     gui_renderer.finish_frame();                    // without ImGui: window.set_text_input(ui.wants_text_input);
 
     list.clear();
@@ -49,7 +54,8 @@ while (window.poll()) {
 - With ImGui, `GuiRenderer.new_frame` writes the three flags and `finish_frame` applies the combined text input want.
   Without ImGui, call `input.clear_gui_flags()` before `route_input` and apply `ui.wants_text_input` yourself.
 - `update` takes the output size in pixels and `scale`, the output pixels per layout unit: pixel density times any
-  user UI scale. Every number in a document is a layout unit.
+  user UI scale. Every number in a document is a layout unit. `delta_seconds` is the time since the previous update,
+  finite and not negative; `ui.delta_seconds` holds the last value.
 - `draw` may run any time after `update` and before `prepare_overlay_list`. A load, reload, unload or style load
   invalidates the frame until the next `update`.
 

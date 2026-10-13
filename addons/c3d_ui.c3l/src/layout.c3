@@ -30,14 +30,17 @@ struct UiPlacement @private {
 <*
  Evaluate bindings and lay out every visible document.
  @param scale : "Output pixels per layout unit, including pixel density."
+ @param delta_seconds : "Time since the previous update."
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
  @require scale > 0
+ @require math::is_finite(delta_seconds) && delta_seconds >= 0
 *>
 fn void? Ui.update(
     &self,
     uint width,
     uint height,
     float scale,
+    float delta_seconds,
 ) {
     clay::set_current_context(self.context);
     clay::set_measure_text_function(&measure_clay_text, self);
@@ -50,6 +53,7 @@ fn void? Ui.update(
     self.clay_error.raised = false;
     self.frame_ready = false;
     self.scale = scale;
+    self.delta_seconds = delta_seconds;
 
     clay::set_layout_dimensions({ (float)width / scale, (float)height / scale });
     clay::begin_layout();
