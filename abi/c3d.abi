@@ -670,6 +670,9 @@ const uint OVERLAY_FLAG_BORDER = 4;
 const uint OVERLAY_QUAD_VERTICES = 6;
 // Quad margin past an item's bounds; the antialiased edge fades out half a pixel past them.
 const float OVERLAY_EDGE_PIXELS = 1.0;
+// Transform table index in the low bits of transform_clip, clip table index in the bits from OVERLAY_CLIP_SHIFT.
+const uint OVERLAY_TRANSFORM_MASK = 65535;
+const uint OVERLAY_CLIP_SHIFT = 16;
 
 struct OverlayItemGpu {
     vec4         bounds;
@@ -689,11 +692,27 @@ struct OverlayItemGpu {
     uint         glyph_location;
     uint         glyph_band_max;
     TextureIndex band_texture;
-    uint         _pad0;
+    uint         transform_clip;
+}
+
+// Entry zero is the identity. A clip entry also holds its box in its own local space and the next clip to test.
+struct OverlayTransformGpu {
+    vec2 x_axis;
+    vec2 y_axis;
+    vec2 offset;
+    vec2 inverse_x_axis;
+    vec2 inverse_y_axis;
+    vec2 inverse_offset;
+    vec4 clip_box;
+    uint clip_parent;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
 }
 
 root OverlayRoot {
     GpuAddress items;
+    GpuAddress transforms;
     vec2       scale;
     vec2       translate;
 }

@@ -88,6 +88,8 @@ const uint OVERLAY_FLAG_NINE_SLICE = 2;
 const uint OVERLAY_FLAG_BORDER = 4;
 const uint OVERLAY_QUAD_VERTICES = 6;
 const float OVERLAY_EDGE_PIXELS = 1.0;
+const uint OVERLAY_TRANSFORM_MASK = 65535;
+const uint OVERLAY_CLIP_SHIFT = 16;
 const uint PREVIEW_MODE_COLOR = 0;
 const uint PREVIEW_MODE_DEPTH_VIEW = 1;
 const uint PREVIEW_MODE_DEPTH_RAW = 2;
@@ -1248,7 +1250,7 @@ struct OverlayItemGpu {
     uint         glyph_location;
     uint         glyph_band_max;
     TextureIndex band_texture;
-    uint         _pad0;
+    uint         transform_clip;
 }
 $assert OverlayItemGpu::size == 96;
 $assert $reflect(OverlayItemGpu.bounds).offset == 0;
@@ -1268,17 +1270,45 @@ $assert $reflect(OverlayItemGpu.sampler_kind_flags).offset == 76;
 $assert $reflect(OverlayItemGpu.glyph_location).offset == 80;
 $assert $reflect(OverlayItemGpu.glyph_band_max).offset == 84;
 $assert $reflect(OverlayItemGpu.band_texture).offset == 88;
-$assert $reflect(OverlayItemGpu._pad0).offset == 92;
+$assert $reflect(OverlayItemGpu.transform_clip).offset == 92;
+
+struct OverlayTransformGpu {
+    Vec2f x_axis;
+    Vec2f y_axis;
+    Vec2f offset;
+    Vec2f inverse_x_axis;
+    Vec2f inverse_y_axis;
+    Vec2f inverse_offset;
+    Vec4f clip_box;
+    uint  clip_parent;
+    uint  _pad0;
+    uint  _pad1;
+    uint  _pad2;
+}
+$assert OverlayTransformGpu::size == 80;
+$assert $reflect(OverlayTransformGpu.x_axis).offset == 0;
+$assert $reflect(OverlayTransformGpu.y_axis).offset == 8;
+$assert $reflect(OverlayTransformGpu.offset).offset == 16;
+$assert $reflect(OverlayTransformGpu.inverse_x_axis).offset == 24;
+$assert $reflect(OverlayTransformGpu.inverse_y_axis).offset == 32;
+$assert $reflect(OverlayTransformGpu.inverse_offset).offset == 40;
+$assert $reflect(OverlayTransformGpu.clip_box).offset == 48;
+$assert $reflect(OverlayTransformGpu.clip_parent).offset == 64;
+$assert $reflect(OverlayTransformGpu._pad0).offset == 68;
+$assert $reflect(OverlayTransformGpu._pad1).offset == 72;
+$assert $reflect(OverlayTransformGpu._pad2).offset == 76;
 
 struct OverlayRoot {
     GpuAddress items;
+    GpuAddress transforms;
     Vec2f      scale;
     Vec2f      translate;
 }
-$assert OverlayRoot::size == 24;
+$assert OverlayRoot::size == 32;
 $assert $reflect(OverlayRoot.items).offset == 0;
-$assert $reflect(OverlayRoot.scale).offset == 8;
-$assert $reflect(OverlayRoot.translate).offset == 16;
+$assert $reflect(OverlayRoot.transforms).offset == 8;
+$assert $reflect(OverlayRoot.scale).offset == 16;
+$assert $reflect(OverlayRoot.translate).offset == 24;
 
 struct DebugVertexGpu {
     float x;

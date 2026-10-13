@@ -91,6 +91,8 @@ const uint OVERLAY_FLAG_NINE_SLICE = 2u;
 const uint OVERLAY_FLAG_BORDER = 4u;
 const uint OVERLAY_QUAD_VERTICES = 6u;
 const float OVERLAY_EDGE_PIXELS = 1.0;
+const uint OVERLAY_TRANSFORM_MASK = 65535u;
+const uint OVERLAY_CLIP_SHIFT = 16u;
 const uint PREVIEW_MODE_COLOR = 0u;
 const uint PREVIEW_MODE_DEPTH_VIEW = 1u;
 const uint PREVIEW_MODE_DEPTH_RAW = 2u;
@@ -781,11 +783,26 @@ struct OverlayItemGpu {
     uint glyph_location;
     uint glyph_band_max;
     uint band_texture;
+    uint transform_clip;
+};
+
+struct OverlayTransformGpu {
+    vec2 x_axis;
+    vec2 y_axis;
+    vec2 offset;
+    vec2 inverse_x_axis;
+    vec2 inverse_y_axis;
+    vec2 inverse_offset;
+    vec4 clip_box;
+    uint clip_parent;
     uint _pad0;
+    uint _pad1;
+    uint _pad2;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer OverlayRoot {
     uint64_t items;
+    uint64_t transforms;
     vec2 scale;
     vec2 translate;
 };

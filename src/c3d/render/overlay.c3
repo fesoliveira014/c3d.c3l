@@ -198,6 +198,14 @@ fn void? Renderer.prepare_overlay_list(&self, OverlayList* list, RenderTargetId 
             destination: ((OverlayItemGpu*)items.bytes.ptr)[:capacity],
         );
         list.prepared.items = items.address;
+
+        list.prepared.transforms = (gpu::GpuAddress)0;
+        if (list.transform_count > 1) {
+            usz table_bytes = (usz)list.transform_count * shader::OverlayTransformGpu::size;
+            gpu::MappedGpuSpan table = slot.upload.take(&self.device, table_bytes)!;
+            mem::copy(table.bytes.ptr, list.transforms.ptr, (sz)table_bytes);
+            list.prepared.transforms = table.address;
+        }
     }
     list.prepared.target = target;
     list.prepared.frame = self.frame_index + 1;
@@ -257,9 +265,10 @@ fn void? OverlayContext.draw_list(&self, OverlayList* list) {
         foreach (&run : list.runs[:list.prepared.run_count]) {
             gpu::MappedGpuSpan root = self.alloc(OverlayRoot::size)!;
             *(OverlayRoot*)root.bytes.ptr = {
-                .items     = (gpu::GpuAddress)((ulong)list.prepared.items + run.first * OverlayItemGpu::size),
-                .scale     = scale,
-                .translate = { -1, 1 },
+                .items      = (gpu::GpuAddress)((ulong)list.prepared.items + run.first * OverlayItemGpu::size),
+                .transforms = list.prepared.transforms,
+                .scale      = scale,
+                .translate  = { -1, 1 },
             };
 
             gpu::cmd_set_scissor(self.commands, &run.scissor);
