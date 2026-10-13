@@ -287,7 +287,7 @@ fn void? record_raster_view(
     bool forward_reflections = record.desc.ray_tracing.reflections && record.desc.shading == ShadingPath.FORWARD;
     bool forward_prepass = record.desc.depth_prepass || ambient_occlusion || screen_space_gi || forward_reflections;
     bool pruned_clusters = record.desc.lights == LightSelection.CLUSTERED && record.desc.clusters.depth_pruning
-      && (record.desc.shading == ShadingPath.DEFERRED || forward_prepass);
+      && (record.desc.shading == ShadingPath.DEFERRED || (forward_prepass && !forward_reflections));
     bool early_velocity = velocity_before_lighting(&record.desc);
     bool late_velocity = temporal && !early_velocity;
     bool ssgi_history_valid = record.history.valid && record.history.scene == scene.identity;
@@ -1074,7 +1074,7 @@ fn void? record_raster_view(
                         depth_matched: forward_prepass,
                     )!;
                 case DEFERRED:
-                    record_deferred_geometry(
+                    record_depth_prepass(
                         renderer:       renderer,
                         record:         record,
                         frame:          frame_span.address,
@@ -1096,6 +1096,8 @@ fn void? record_raster_view(
                             fog_frame:     &fog_frame,
                         )!;
                     }
+
+                    record_gbuffer_pass(renderer, record, gbuffer_items)!;
 
                     if (early_velocity) {
                         post::record_velocity(
