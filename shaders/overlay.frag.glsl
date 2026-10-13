@@ -42,8 +42,8 @@ float overlay_clip_coverage(OverlayTransformGpu clip, vec2 pixel) {
 }
 
 // Local units per output pixel across an edge, so a transformed shape keeps edges about one pixel wide.
-float overlay_edge_width(float distance, bool transformed) {
-    return transformed ? max(length(vec2(dFdx(distance), dFdy(distance))), 1e-6) : 1.0;
+float overlay_edge_width(float signed_distance, bool transformed) {
+    return transformed ? max(length(vec2(dFdx(signed_distance), dFdy(signed_distance))), 1e-6) : 1.0;
 }
 
 // Radii are top left, top right, bottom right, bottom left; y grows downward.
@@ -159,8 +159,8 @@ void main() {
     vec2 center = (item.bounds.xy + item.bounds.zw) * 0.5;
     vec2 half_extent = (item.bounds.zw - item.bounds.xy) * 0.5;
     vec4 radii = vec4(unpackHalf2x16(item.radii_top), unpackHalf2x16(item.radii_bottom));
-    float distance = rounded_box_distance(position - center, half_extent, radii);
-    float coverage = clamp(0.5 - distance / overlay_edge_width(distance, transformed), 0.0, 1.0);
+    float outer = rounded_box_distance(position - center, half_extent, radii);
+    float coverage = clamp(0.5 - outer / overlay_edge_width(outer, transformed), 0.0, 1.0);
 
     vec4 fill = unpackUnorm4x8(item.fill);
     vec4 color = vec4(srgb_to_linear(fill.rgb), fill.a);
