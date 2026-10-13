@@ -1,8 +1,9 @@
 # Overlay list
 
 Module `c3d::render` draws application-owned 2D items over the composed window or into a render target: rectangles
-with rounded corners, borders, textures and nine-slice fields, and glyph runs of placed text ([Text](text.md)), each
-under a clip and a transform. The list holds plain values; it names no `gpu` type.
+with rounded corners, borders, textures and nine-slice fields, glyph runs of placed text ([Text](text.md)),
+and triangles, lines and paths ([Shapes](#shapes)), each under a clip and a transform. The list holds plain values; it
+names no `gpu` type.
 Dear ImGui stays the tool for debug panels and inspectors ([GUI overlay](gui.md)). The list serves interfaces the
 application draws itself.
 
@@ -39,11 +40,11 @@ renderer.end_overlay(&overlay)!;
 ```
 
 - `create_overlay_list` allocates every slice once, from the allocator it is given. Nothing allocates per frame.
-- `clear()`, `add_rect`, `add_glyphs`, `push_clip`, `pop_clip`, `push_transform` and `pop_transform` run any time
+- `clear()`, the `add_*` calls, `push_clip`, `pop_clip`, `push_transform` and `pop_transform` run any time
   before `prepare_overlay_list`. Items stay unchanged from preparation until `draw_list` records them.
 - `prepare_overlay_list` resolves textures and fonts, uploads the outline rows fonts gained, readies the render
-  targets the list samples and uploads one instance per visible rectangle or glyph. Its optional `target` names the
-  render target the list is drawn into; zero is the window.
+  targets the list samples and uploads one instance per visible rectangle, glyph, triangle or segment. Its optional
+  `target` names the render target the list is drawn into; zero is the window.
   - A window list is prepared after the frame's last `finish_view`, with output.
   - A target list is prepared after the views that render its target and the targets it samples. It needs no output.
   - Both are prepared with no overlay open. A render target the list samples must not be rendered again that frame.
@@ -109,6 +110,28 @@ rectangles under the run's clip. A glyph that does not reach its clip emits noth
 bounds the placements of all runs; zero holds no text. See [Text](text.md) for placing text and rounding the
 origin.
 
+## Shapes
+
+```c3
+list.add_triangle(first, second, third, color)!;
+list.add_line(from, to, width, color)!;
+list.add_path(points, width, color, closed: true)!;
+```
+
+- `color` is sRGB with straight alpha, like `fill`. Coordinates and `width` are output pixels, or local pixels under a
+  transform.
+- `add_triangle` fills a triangle of either winding. A triangle with no area draws nothing.
+- `add_line` draws a line `width` pixels across with round caps. A line of zero length draws a dot.
+- `add_path` draws one line per edge of `points`, in order, with round joins and caps. `closed` adds the edge from the
+  last point back to the first; a path of two points has no closing edge.
+- Edges are anti-aliased over about one output pixel. Under a transform they stay about that wide; a stroke under
+  about two output pixels across has edges slightly sharper than that.
+- **Joins.** Neighbouring edges overlap at a join. A path with alpha below one draws the overlap twice, so the join
+  looks denser. An opaque path is unaffected.
+- **Capacity.** A triangle and a line take one item each; a path takes one item per edge, and `closed` adds the closing
+  edge. A path that does not fit faults before it adds any edge.
+- Each shape takes the active clip and transform when it is added, as rectangles do.
+
 ## Clipping
 
 `push_clip(min, max)` intersects the current clip with a box in output pixels, or in local pixels under a transform
@@ -157,6 +180,9 @@ list.pop_transform();
 | --- | --- |
 | `add_rect` | `CAPACITY_EXCEEDED` (list full); `INVALID_ARGUMENT` (non-finite or negative values, `max` below `min`, nine-slice margins larger than the box or region) |
 | `add_glyphs` | `CAPACITY_EXCEEDED` (list full, or not enough glyph room); `INVALID_ARGUMENT` (non-finite origin, color or placement position; size not above zero) |
+| `add_triangle` | `CAPACITY_EXCEEDED` (list full); `INVALID_ARGUMENT` (non-finite point or color) |
+| `add_line` | `CAPACITY_EXCEEDED` (list full); `INVALID_ARGUMENT` (non-finite point or color; width not above zero) |
+| `add_path` | `CAPACITY_EXCEEDED` (not enough item room for every edge); `INVALID_ARGUMENT` (fewer than two points; non-finite point or color; width not above zero) |
 | `push_clip` | `CAPACITY_EXCEEDED` (stack full, or under a transform the table full); `INVALID_ARGUMENT` (non-finite, `max` below `min`) |
 | `pop_clip` | Contract: the stack is not empty |
 | `push_transform` | `CAPACITY_EXCEEDED` (table full); `INVALID_ARGUMENT` (non-finite values, or a composed transform with no inverse) |
@@ -173,7 +199,7 @@ present. Any later fault aborts the frame, like other renderer faults.
 
 - `OVERLAY_LIST_DEFAULT_ITEMS` is 4,096 items. `OVERLAY_LIST_DEFAULT_CLIPS` is 16 nested clips.
   `OVERLAY_LIST_DEFAULT_GLYPHS` is 16,384 placements. `OVERLAY_LIST_DEFAULT_TRANSFORMS` is 256 table entries.
-- One rectangle or glyph is 96 bytes of instance data in the frame upload ring.
+- One rectangle, glyph, triangle or segment is 96 bytes of instance data in the frame upload ring.
   4,096 items cost 384 KiB of the ring per prepared list; 16,384 glyphs cost 1.5 MiB.
 - A transform table entry is 80 bytes of the frame upload ring. A prepared list uploads its entries only when it
   pushed a transform or a transformed clip.
@@ -188,5 +214,6 @@ present. Any later fault aborts the frame, like other renderer faults.
 draws), averaged over `F` frames after `F` warm-up frames. The benchmark pushes no clip, so every rect falls in one run.
 
 The `overlay` example shows every feature; `--stress N` adds N small rects under one clip, `--target` draws a
-panel into the portrait's render target, and `--transform` draws a rotated and scaled panel of text, a nine-slice
-frame and rects under a transformed clip.
+panel into the portrait's render target, `--transform` draws a rotated and scaled panel of text, a nine-slice
+frame and rects under a transformed clip, and `--shapes` draws a line chart with a triangle marker, a star and a
+translucent ribbon, and the chart again under a transform.
