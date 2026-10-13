@@ -49,6 +49,13 @@ const uint LIST_GLYPHS @local = 16384;
 const Vec2 STATS_PANEL_POSITION @local = { 360, 16 };
 const Vec2 STATS_PANEL_SIZE @local = { 260, 150 };
 
+const uint LOG_LINES @local = 40;
+const uint LOG_LINE_BYTES @local = 16;
+const uint LOG_WHEEL_FRAME @local = 10;
+const uint LOG_RELOAD_FRAME @local = 20;
+const float LOG_WHEEL_NOTCHES @local = -3; // negative scrolls toward later lines
+const float LOG_POINTER_FROM_RIGHT @local = 136; // inside the log's scroll area, in layout units
+const float LOG_POINTER_Y @local = 120;
 const float FIXED_STEP_SECONDS @local = 1.0f / 60; // bounded runs step by this, so frame N is reproducible
 
 const uint BENCHMARK_ROWS @local = 50;
@@ -86,6 +93,7 @@ const String BENCHMARK_ROW @local = `{
 
 struct Options @local {
     bool benchmark;
+    bool reload_scroll;
     uint frames;
     uint labels;
 }
@@ -116,6 +124,11 @@ struct Member @local {
     float                   health @tag("ui", true);
     bool                    selected @tag("ui", true);
     Inventory               bag;
+}
+
+struct LogLine @local {
+    char[LOG_LINE_BYTES] bytes;
+    String               text @tag("ui", true);
 }
 
 struct Hud @local {
@@ -166,6 +179,10 @@ struct Demo @local {
     DropTarget        stash_target;
     DropTarget        bag_target;
     DocumentSource[2] documents;
+    LogLine[LOG_LINES] log;
+    LogLine[]         log_view;
+    UiDocumentId      log_document;
+    bool              reload_scroll;
     bool              drew_list;
 }
 
@@ -574,6 +591,41 @@ fn void? load_embedded(Demo* demo) @local {
     demo.documents[1] = { .file = "inventory.jsonc", .id = ui.load_document((String)inventory)! };
 }
 
+fn void? load_log(Demo* demo) @local {
+    Ui* ui = demo.ui;
+    foreach (number, &line : demo.log) {
+        line.text = string::bformat(line.bytes[..], "Entry %d", number + 1);
+    }
+    demo.log_view = demo.log[..];
+
+    ui.@bind_list(
+        name:  "log.lines",
+        item:  "log_line",
+        $Type: LogLine,
+        items: &demo.log_view,
+    )!;
+
+    char[] document = $embed("ui/log.jsonc");
+    demo.log_document = ui.load_document((String)document)!;
+}
+
+fn void? replay_log(Demo* demo, uint frame) @local {
+    platform::Window* window = demo.window;
+
+    if (frame == LOG_WHEEL_FRAME) {
+        window.input.mouse_position = {
+            (float)window.width - LOG_POINTER_FROM_RIGHT * window.pixel_density,
+            LOG_POINTER_Y * window.pixel_density,
+        };
+        window.input.wheel = LOG_WHEEL_NOTCHES;
+    }
+
+    if (frame == LOG_RELOAD_FRAME) {
+        char[] titled = $embed("ui/log_titled.jsonc");
+        demo.ui.reload_document(demo.log_document, (String)titled)!;
+    }
+}
+
 fn String source_directory() @local {
     String path = $$FILEPATH;
     usz end = path.len;
@@ -668,6 +720,8 @@ fn void? run_interactive(Demo* demo, uint frame_limit) @local {
 
         gui_renderer.new_frame();
         defer if (gui_renderer.frame_open) gui_renderer.finish_frame();
+
+        if (demo.reload_scroll) replay_log(demo, frames)!;
 
         Input* input = &window.input;
         // A field blurs on Escape down, so the release that follows must not quit.
@@ -879,8 +933,10 @@ fn int main(String[] args) {
             if (!options.frames) return 1;
         } else if (argument == "--labels" && has_value) {
             options.labels = args[++index].to_uint() ?? 0;
+        } else if (argument == "--reload-scroll") {
+            options.reload_scroll = true;
         } else {
-            io::eprintn("Use ui [--frames N] [--benchmark --frames F [--labels N]].");
+            io::eprintn("Use ui [--frames N] [--reload-scroll] [--benchmark --frames F [--labels N]].");
             return 1;
         }
     }
@@ -965,10 +1021,12 @@ fn int main(String[] args) {
         .portrait_camera = portrait_camera,
         .cube            = cube,
         .portrait_view   = portrait_view,
+        .reload_scroll   = options.reload_scroll,
     };
     create_squad(&demo, &assets, portrait)!!;
     register_squad(&demo)!!;
     load_embedded(&demo)!!;
+    if (options.reload_scroll) load_log(&demo)!!;
 
     if (catch excuse = run_interactive(&demo, options.frames)) {
         io::eprintfn("UI example failed: %s", excuse);
