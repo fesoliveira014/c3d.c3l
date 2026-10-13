@@ -21,6 +21,7 @@
     { "shader": "overlay_vertex", "source": "overlay.vert.glsl", "stage": "vert", "defines": [] },
     { "shader": "overlay_fragment", "source": "overlay.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "overlay_vertex", "source": "overlay.vert.glsl", "stage": "vert", "defines": ["TRANSFORMED"] },
+    { "shader": "overlay_vertex", "source": "overlay.vert.glsl", "stage": "vert", "defines": ["WORLD", "TRANSFORMED"] },
     { "shader": "overlay_fragment", "source": "overlay.frag.glsl", "stage": "frag", "defines": ["TRANSFORMED"] },
     { "shader": "overlay_fragment", "source": "overlay.frag.glsl", "stage": "frag", "defines": ["BACKDROP"] },
     { "shader": "overlay_fragment", "source": "overlay.frag.glsl", "stage": "frag", "defines": ["BACKDROP", "TRANSFORMED"] },

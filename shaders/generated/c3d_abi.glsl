@@ -802,8 +802,15 @@ struct OverlayTransformGpu {
     vec4 clip_box;
     uint clip_parent;
     float depth;
-    uint _pad1;
+    uint plane;
     uint _pad2;
+};
+
+struct OverlayPlaneGpu {
+    vec4 u_axis;
+    vec4 v_axis;
+    vec4 origin;
+    vec4 distance;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer OverlayRoot {
@@ -833,14 +840,13 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer OverlayWorld
     uint64_t transforms;
     vec2 scale;
     vec2 translate;
+    uint64_t planes;
     uint depth_texture;
     uint view_x;
     uint view_y;
     uint view_width;
     uint view_height;
-    uint _pad0;
-    uint _pad1;
-    uint _pad2;
+    float color_scale;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer OverlayBlurRoot {

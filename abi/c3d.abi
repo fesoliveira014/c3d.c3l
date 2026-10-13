@@ -705,7 +705,8 @@ struct OverlayItemGpu {
 }
 
 // Entry zero is the identity. A clip entry also holds its box in its own local space and the next clip to test.
-// An entry under a world anchor holds the anchor's reverse-Z depth, which a world overlay tests against the view.
+// An entry under a world anchor holds the anchor's reverse-Z depth, which a world overlay tests against the view, and
+// whether the anchor is a plane, whose entry then maps layout units into the plane's own units.
 struct OverlayTransformGpu {
     vec2  x_axis;
     vec2  y_axis;
@@ -716,8 +717,17 @@ struct OverlayTransformGpu {
     vec4  clip_box;
     uint  clip_parent;
     float depth;
-    uint  _pad1;
+    uint  plane;
     uint  _pad2;
+}
+
+// A plane anchor in the view's clip space: the position of a point of the plane is u_axis * x + v_axis * y + origin.
+// distance is the signed distance to the view's clip plane, distance.x * x + distance.y * y + distance.z.
+struct OverlayPlaneGpu {
+    vec4 u_axis;
+    vec4 v_axis;
+    vec4 origin;
+    vec4 distance;
 }
 
 root OverlayRoot {
@@ -749,14 +759,13 @@ root OverlayWorldRoot {
     GpuAddress   transforms;
     vec2         scale;
     vec2         translate;
+    GpuAddress   planes;        // OverlayPlaneGpu per transform table entry; zero without plane anchors
     TextureIndex depth_texture; // the view's depth, which items are tested against
     uint         view_x;        // output pixel of the view's first column
     uint         view_y;
     uint         view_width;    // output pixels the view covers; the depth texture may be a different size
     uint         view_height;
-    uint         _pad0;
-    uint         _pad1;
-    uint         _pad2;
+    float        color_scale;   // multiplies the color: one, or one over the exposure in a LINEAR_HDR view
 }
 
 // One separable blur pass over a rectangle of the backdrop box. Taps clamp to the box.

@@ -91,6 +91,7 @@ struct ViewCamera @private {
     Entity excluded_probe; // the reflection probe being captured; never selected
     bool   height_fog;     // captures render without height fog
     bool   clouds;         // captures render without the cloud layer
+    bool   world_overlay;  // captures draw no world overlay
 }
 
 <*
@@ -157,7 +158,13 @@ fn void? Renderer.render_view(
     defer catch abort_frame(self);
     Camera* camera = scene.get(camera_node, Camera);
     if (!camera) return c3d::INVALID_ARGUMENT~;
-    ViewCamera view_camera = { .camera = *camera, .world = camera_node.world, .height_fog = true, .clouds = true };
+    ViewCamera view_camera = {
+        .camera        = *camera,
+        .world         = camera_node.world,
+        .height_fog    = true,
+        .clouds        = true,
+        .world_overlay = true,
+    };
     ShadowCamera shadow_view;
     if (shadow_camera) {
         shadow_view = shadow_camera_of(
@@ -215,6 +222,10 @@ fn void? record_camera_view(
         record.overlay_projection = {
             .view_proj  = matrices.view_proj,
             .axis_scale = { matrices.proj.m00, matrices.proj.m11 },
+            .clip_plane = maths::rebase_plane(record.desc.clip_plane, renderer.frame_origin),
+            .layers     = camera.layers,
+            .reflected  = matrices.view.determinant() < 0,
+            .enabled    = view_camera.world_overlay,
         };
         ShadowCamera own_shadow_view = { .lens = *camera, .matrices = matrices };
         if (!shadow_view) shadow_view = &own_shadow_view;
