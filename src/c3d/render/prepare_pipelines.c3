@@ -540,6 +540,10 @@ fn void list_view_pipelines(
         ViewDesc* desc = &view.desc;
         if (desc.lights == LightSelection.CLUSTERED) {
             list_prepare_compute(requests, ComputeSlot.CLUSTER);
+            if (desc.clusters.depth_pruning) {
+                list_prepare_compute(requests, ComputeSlot.CLUSTER_PRUNED);
+                list_prepare_compute(requests, ComputeSlot.CLUSTER_DEPTH);
+            }
         }
         if (desc.shading == ShadingPath.DEFERRED) {
             uint shadow_flags = rt_shadow_flags(renderer, desc.ray_tracing.shadows, soft_shadows);

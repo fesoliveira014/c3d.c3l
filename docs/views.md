@@ -122,7 +122,8 @@ render::configure_view(&renderer, renderer.default_view, desc)!;
 ```
 
 Create and configure views only between frames. The cluster fields are mutable:
-`tiles_x`, `tiles_y`, `depth_slices`, `lights_per_cluster` and `far_distance`.
+`tiles_x`, `tiles_y`, `depth_slices`, `lights_per_cluster`, `far_distance` and `depth_pruning`
+(false by default; see [depth pruning](#depth-pruning)).
 `CLUSTERED` requires nonzero dimensions/capacity, a positive finite far distance and
 representable storage sizes (`INVALID_ARGUMENT`); a valid grid beyond the device's
 compute dispatch limits faults `UNSUPPORTED`.
@@ -135,7 +136,7 @@ Each drawable clustered view owns one private GPU buffer containing its complete
 selected light and decal arrays, separate cell ranges and fixed-capacity index
 segments, and a shared overflow counter record.
 It uses no application `BufferId` slot and is not part of the texture-only `view_targets`.
-Grid/capacity changes replace this storage; changing only far distance does not.
+Grid/capacity changes replace this storage; changing only far distance or `depth_pruning` does not.
 Switching to flat retires the old allocation after submitted users complete; resizing,
 destroying a view and renderer teardown likewise preserve in-flight ownership.
 
@@ -162,11 +163,14 @@ The default 16 × 9 × 24 grid has 3,456 cells. Its additional decal storage is:
 data, tangent/handedness, weights and material/layer fields. Transform rebasing
 precedes inverse and bound construction. `FrameRoot` is 576 bytes with `decals`
 at offset 528 and `decal_count` at 536. `ClusterGpu` is 160 bytes;
-`ClusterCounterGpu` remains 16 bytes with separate light and decal overflow counts.
+`ClusterCounterGpu` remains 16 bytes with separate light and decal overflow counts and a
+skipped-cell count. The buffer ends with one `float` per tile (576 bytes at the default grid)
+for the pruning bound; it is reserved whether pruning is on or off.
 These are storage costs; no decal timing delta is established by them.
 
 Selection uses the view's unjittered camera projection and each shaded position, not
-the opaque depth buffer. Perspective depth slices are logarithmic; orthographic slices
+the opaque depth buffer; only [depth pruning](#depth-pruning) reads the depth buffer, to skip cells.
+Perspective depth slices are logarithmic; orthographic slices
 are linear. Coverage ends at the lesser of the clustering far distance and the camera's
 finite far plane. Perspective camera far zero means infinity; orthographic far zero
 does not. An empty depth interval disables clustering for that rendering.
@@ -187,6 +191,27 @@ Existing custom shaders remain flat unless they opt into the
 
 See [many lights](many_lights.md) for a controlled comparison and
 [GUI diagnostics](gui.md#cluster-diagnostics) for slice occupancy and completed counters.
+
+### Depth pruning
+
+With `ClusterDesc.depth_pruning` set, the view reduces its depth image to the farthest view
+depth of each tile (unbounded when any pixel of the tile has no geometry) before the cull. A cell
+whose near boundary lies beyond that depth holds no opaque point, so the cull skips it: it
+writes an overflowing, empty range for lights and decals and runs neither loop. Readers that
+reach such a cell, such as fog froxels behind the farthest surface, take the complete flat
+list. Cells in front of the nearest surface are never skipped, so blended surfaces keep
+their lists. No light is dropped.
+
+The reduction needs depth before any pass reads the cell lists, so on a pruned view the
+reduction, the cull and the [volumetric fog](sky.md#volumetric-fog) volume run right after the
+depth prepass. On a deferred view that is between the prepass and the G-buffer pass, whose
+stages read the decal lists. Views without pruning keep the cull before every other pass of
+the view. A forward view with no depth prepass (`depth_prepass` false, and no AO or SSGI, which
+imply one) has no depth before shading, and a forward view with traced reflections shades
+decals in the thin reflection prepass that produces its depth. Both ignore `depth_pruning`;
+this is not a fault. `LIGHT_CULL` includes the reduction. `Stats.cluster_skipped` and
+`ViewStats.cluster_skipped` count the skipped cells and
+are not part of `cluster_overflows`. See [many lights](many_lights.md#depth-pruning).
 
 ## Frames
 
@@ -243,12 +268,13 @@ for the required build features and capture configuration.
 views and reset at `begin_frame`. Hidden, culled and collapsed decals are not
 budget drops. `ViewStats.decals` and `decals_dropped` describe one view's selection.
 
-`Stats.cluster_view`, `cluster_count`, `cluster_overflows` and `decal_overflows` are delayed results read
+`Stats.cluster_view`, `cluster_count`, `cluster_overflows`, `cluster_skipped` and `decal_overflows` are delayed results read
 only after the reused frame slot has completed, independently of GPU timestamp enablement.
 They describe that slot's last recorded drawable view, not a sum across views: a later
 flat view clears its cluster result, while a dormant/non-recorded view does not replace
 it. `cluster_count` is the grid's total cells; `cluster_overflows` and
-`decal_overflows` count overflowing light and decal cells, not budget drops.
+`decal_overflows` count overflowing light and decal cells, not budget drops;
+`cluster_skipped` counts cells depth pruning skipped.
 Each view also retains its own completed counters. The readback adds no
 synchronous wait inside `render_view`.
 
