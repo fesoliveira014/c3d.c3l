@@ -149,9 +149,10 @@ panel.backdrop_radius = 16;
 list.add_rect(panel)!;
 ```
 
-- `OverlayRect.backdrop_radius` is a blur radius in pixels; zero, the default, is off. A rect with a radius is a
-  backdrop item. It blurs what is already drawn on the output under its shape, then draws its own fill, gradient,
-  texture and border over the blurred pixels. A fill with alpha zero shows the blur alone.
+- `OverlayRect.backdrop_radius` is a blur radius in output pixels, also under a transform: scaling an item does not
+  scale its blur. Zero, the default, is off. A rect with a radius is a backdrop item. It blurs what is already drawn
+  on the output under its shape, then draws its own fill, gradient, texture and border over the blurred pixels. A fill
+  with alpha zero shows the blur alone.
 - "Already drawn" is everything on the output before the item: the views the output shows, earlier items of the list
   and earlier lists drawn on it. Items after the backdrop item draw over it and are not blurred. A second backdrop
   item blurs the first one's result.
@@ -245,9 +246,10 @@ list.pop_transform();
 
 - **Composition.** A push composes with the active transform: the new transform applies first, then the enclosing
   one. The example above scales by two and then rotates and moves the result.
-- **Coordinates.** Under a transform, bounds, glyph origins, radii, borders and nine-slice margins are local pixels.
-  Edges stay about one output pixel wide at any scale, rotation or shear, and glyphs stay sharp. A textured item
-  samples with the gradients of the local mapping, so a scaled-down item still picks smaller mips.
+- **Coordinates.** Under a transform, bounds, glyph origins, corner radii, borders and nine-slice margins are local
+  pixels. The one exception is the backdrop radius, which stays in output pixels ([Backdrop](#backdrop)). Edges stay
+  about one output pixel wide at any scale, rotation or shear, and glyphs stay sharp. A textured item samples with the
+  gradients of the local mapping, so a scaled-down item still picks smaller mips.
 - **Clips.** `push_clip` takes its box in the active transform's local space. A clip pushed with no transform keeps
   the scissor-only path. A clip pushed under a transform is tested per fragment in its local space, with an edge
   about one output pixel wide. Its scissor is the bounding box of the box in output pixels, so a rotated clip costs
