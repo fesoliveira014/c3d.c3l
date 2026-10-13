@@ -359,6 +359,7 @@ fn BenchmarkOptions? parse_options(String[] args) @local {
 
 fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkOptions options) @local {
     base.post.anti_aliasing = options.flags.anti_aliasing;
+    base.msaa = options.flags.msaa;
     base.ambient_occlusion = options.flags.ambient_occlusion;
     base.depth_prepass = options.flags.depth_prepass;
     base.post.auto_exposure = options.flags.auto_exposure;
@@ -374,7 +375,7 @@ fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkOptions options) @local 
 
 fn void print_banner(BenchmarkOptions options, bool timestamps_active) @local {
     BenchmarkFlags flags = options.flags;
-    io::eprintfn("mode=%s shading=%s lights=%d range=%.1f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s reflections=%s screen_space_gi=%s auto_exposure=%s trace=%s",
+    io::eprintfn("mode=%s shading=%s lights=%d range=%.1f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s reflections=%s screen_space_gi=%s auto_exposure=%s msaa=%s trace=%s",
         options.selection == LightSelection.FLAT || options.shading == ShadingPath.PATH_TRACED ? "flat" : "clustered",
         bench_loop::shading_name(options.shading), options.lights, options.range,
         options.capacity, flags.width, flags.height, flags.warmup, flags.frames,
@@ -382,7 +383,7 @@ fn void print_banner(BenchmarkOptions options, bool timestamps_active) @local {
         flags.window ? "window" : "none", flags.panel, flags.depth_prepass,
         bench_loop::ambient_occlusion_name(flags.ambient_occlusion), flags.reflections ? "on" : "off",
         flags.screen_space_gi ? "on" : "off",
-        flags.auto_exposure ? "on" : "off",
+        flags.auto_exposure ? "on" : "off", bench_loop::msaa_name(flags.msaa),
         bench_loop::trace_name(
             traces:      bench_loop::needs_ray_queries(flags) || options.shading == ShadingPath.PATH_TRACED,
             ray_queries: bench_loop::requests_ray_queries(flags) || options.shading == ShadingPath.PATH_TRACED,
@@ -472,7 +473,7 @@ fn int main(String[] args) {
     if (catch excuse = parsed) {
         if (excuse != c3d::UNSUPPORTED) {
             io::eprintfn("Invalid options: %s", excuse);
-            io::eprintn("Use --benchmark --mode flat|clustered [--shading forward|deferred|path-traced] --lights N --frames N --warmup N --capacity N --range N --width N --height N [--anti-aliasing none|fxaa|taa] [--ambient-occlusion none|half|full] [--depth-prepass on|off] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
+            io::eprintn("Use --benchmark --mode flat|clustered [--shading forward|deferred|path-traced] --lights N --frames N --warmup N --capacity N --range N --width N --height N [--anti-aliasing none|fxaa|taa] [--ambient-occlusion none|half|full] [--depth-prepass on|off] [--msaa 1|2|4|8] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
             io::eprintn("Also --depth-pruning on|off.");
         }
         return 1;

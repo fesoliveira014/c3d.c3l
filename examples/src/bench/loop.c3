@@ -35,6 +35,7 @@ struct BenchmarkFlags {
     uint width;
     uint height;
     AntiAliasing anti_aliasing;
+    MsaaSamples msaa;
     AmbientOcclusionDesc ambient_occlusion;
     bool depth_prepass;
     bool reflections;
@@ -145,6 +146,14 @@ fn bool? parse_flag(String[] args, usz* index, BenchmarkFlags* flags, String tar
                 case "taa": flags.anti_aliasing = AntiAliasing.TAA;
                 default: return c3d::INVALID_ARGUMENT~;
             }
+        case "--msaa":
+            switch (option_value(args, index)!) {
+                case "1": flags.msaa = MsaaSamples.ONE;
+                case "2": flags.msaa = MsaaSamples.TWO;
+                case "4": flags.msaa = MsaaSamples.FOUR;
+                case "8": flags.msaa = MsaaSamples.EIGHT;
+                default: return c3d::INVALID_ARGUMENT~;
+            }
         case "--depth-prepass":
             switch (option_value(args, index)!) {
                 case "on": flags.depth_prepass = true;
@@ -209,7 +218,9 @@ fn void? validate_flags(BenchmarkFlags flags, ShadingPath shading) {
     if (!flags.frames || flags.frames > FRAMES_MAX || flags.warmup > FRAMES_MAX
         || !flags.width || flags.width > EXTENT_MAX || !flags.height || flags.height > EXTENT_MAX
         || (flags.panel && (!flags.window || !flags.capture))
-        || (flags.trace == TraceKind.SOFTWARE && shading == ShadingPath.PATH_TRACED)) {
+        || (flags.trace == TraceKind.SOFTWARE && shading == ShadingPath.PATH_TRACED)
+        || (flags.msaa != MsaaSamples.ONE
+            && (flags.anti_aliasing == AntiAliasing.TAA || shading == ShadingPath.PATH_TRACED))) {
         return c3d::INVALID_ARGUMENT~;
     }
 }
@@ -263,6 +274,18 @@ fn String shading_name(ShadingPath shading) {
         case FORWARD: return "forward";
         case DEFERRED: return "deferred";
         case PATH_TRACED: return "path-traced";
+    }
+}
+
+<*
+ Banner count of the multisample flag: 1, 2, 4 or 8.
+*>
+fn String msaa_name(MsaaSamples msaa) {
+    switch (msaa) {
+        case ONE: return "1";
+        case TWO: return "2";
+        case FOUR: return "4";
+        case EIGHT: return "8";
     }
 }
 

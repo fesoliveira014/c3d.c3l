@@ -150,6 +150,7 @@
     { "shader": "focus_adapt", "source": "focus_adapt.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "ssao", "source": "ssao.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "ao_blur", "source": "ao_blur.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "ao_temporal", "source": "ao_temporal.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "probe_fill_environment", "source": "probe_fill_environment.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "probe_border", "source": "probe_border.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "probe_trace", "source": "probe_trace.comp.glsl", "stage": "comp", "defines": [] },
@@ -235,7 +236,8 @@
     { "shader": "trace_pose", "source": "trace_pose.comp.glsl", "stage": "comp", "defines": ["SKINNED_U16"] },
     { "shader": "trace_pose", "source": "trace_pose.comp.glsl", "stage": "comp", "defines": ["INSTANCED"] },
     { "shader": "trace_pose", "source": "trace_pose.comp.glsl", "stage": "comp", "defines": ["INSTANCED", "SKINNED_U16"] },
-    { "shader": "trace_refit", "source": "trace_refit.comp.glsl", "stage": "comp", "defines": [] }
+    { "shader": "trace_refit", "source": "trace_refit.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "sample_zero", "source": "sample_zero.frag.glsl", "stage": "frag", "defines": [] }
   ],
   "public_includes": [
     { "include": "constants.glsl", "stage": "frag", "defines": [] },

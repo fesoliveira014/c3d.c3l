@@ -258,7 +258,8 @@ fn LodSelection[]? prepare_lod_view(
                     renderer.stats.lod_objects_selected[selection.level]++;
                 }
                 bool temporal = record.desc.post.anti_aliasing == AntiAliasing.TAA
-                  || record.desc.post.motion_blur || record.desc.screen_space_gi.enabled;
+                  || record.desc.post.motion_blur || record.desc.screen_space_gi.enabled
+                  || ambient_occlusion_accumulates(&record.desc);
                 selection.view_history_valid = temporal && record.history.has_previous(scene, node);
                 selection.previous_view_origin = temporal && record.history.valid
                   ? record.history.origin : renderer.frame_origin;

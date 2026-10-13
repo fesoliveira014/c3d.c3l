@@ -17,7 +17,10 @@ python3 scripts/build.py --example post
 fields). `render::default_view_desc()` selects `DISPLAY_LDR` with `post::default_post_stack()`: ACES,
 contrast 1, saturation 1, temperature 0, tint 0, lift 0, gamma 1, gain 1, no LUT with the unit LUT domain, and
 `anti_aliasing = AntiAliasing.FXAA`. `AntiAliasing { NONE, FXAA, TAA }` selects one filter per view, so
-FXAA and TAA never stack. A zeroed `PostStack` is not neutral.
+FXAA and TAA never stack. A zeroed `PostStack` is not neutral. Multisampling is `ViewDesc.msaa`, not a post
+setting: it excludes `TAA`, combines with `FXAA`, which filters the resolved image, and leaves bloom, depth of field,
+motion blur and grading unchanged, because every one reads single-sample images (see
+[multisample anti-aliasing](views.md#multisample-anti-aliasing)).
 
 Apply a configuration between frames with `render::configure_view(&renderer, renderer.default_view,
 desc)`. The call copies the description into the view record, uploads a selected LUT, and allocates
@@ -294,8 +297,8 @@ through the frame ring into `PreviousPoseGpu.positions` and composes it with the
 skin and model, so a stationary node shows its deformation. An unchanged revision keeps the
 ordinary rule. A first observation, another geometry or count, re-enabling after an untracked
 rendering, a reset, a missing previous rendering or an aborted capture writes zero motion and sets
-the rejection channel (`DRAW_VERTEX_HISTORY_INVALID`), so TAA and screen-space GI drop history for
-those pixels only; an RG16 velocity image keeps the zero motion. A temporal view faults
+the rejection channel (`DRAW_VERTEX_HISTORY_INVALID`), so TAA, screen-space GI and temporal
+ambient occlusion drop history for those pixels only; an RG16 velocity image keeps the zero motion. A temporal view faults
 `c3d::ASSET_DATA_UNAVAILABLE` from `render_view` before recording when a flagged mesh's CPU
 positions were released; its published history stays as it was.
 

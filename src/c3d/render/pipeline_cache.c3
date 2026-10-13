@@ -36,6 +36,7 @@ enum ComputeSlot @private {
     TRACE_REFIT,
     SSAO,
     RT_AO,
+    AO_TEMPORAL,
     AO_BLUR,
     REFLECTION,
     REFLECTION_BLUR,
@@ -178,6 +179,8 @@ fn ComputeSlotTarget compute_slot_target(Renderer* renderer, ComputeSlot slot) @
             .shader = SSAO, .debug_name = "ssao" };
         case RT_AO: return { .pipeline = &renderer.ambient_occlusion_pipelines.ray_traced,
             .shader = RT_AO, .flags = trace_shader_flags(renderer), .debug_name = "rt_ao" };
+        case AO_TEMPORAL: return { .pipeline = &renderer.ambient_occlusion_pipelines.temporal,
+            .shader = AO_TEMPORAL, .debug_name = "ao_temporal" };
         case AO_BLUR: return { .pipeline = &renderer.ambient_occlusion_pipelines.blur,
             .shader = AO_BLUR, .debug_name = "ao_blur" };
         case REFLECTION: return { .pipeline = &renderer.reflection_pipelines.trace,

@@ -69,6 +69,14 @@ const Vec2 TARGETS_PANEL_SIZE @local = { 344, 690 };
 const Vec2 STATS_PANEL_POSITION @local = { 372, 16 };
 const Vec2 STATS_PANEL_SIZE @local = { 300, 700 };
 const double NANOSECONDS_PER_MILLISECOND @local = 1000000;
+const ZString[MsaaSamples::values.len] MSAA_LABELS @local = { "1x", "2x", "4x", "8x" };
+
+enum MsaaOutcome @local {
+    APPLIED,
+    UNSUPPORTED,
+    INVALID_ARGUMENT,
+    DEVICE_FAULT,
+}
 
 struct DecalTimings @local @feat(C3D_PROFILE_CPU & C3D_PROFILE_INTERNAL) {
     double[2] milliseconds;
@@ -84,15 +92,18 @@ struct Orbit @local {
 }
 
 struct Views @local {
-    ViewId   left;
-    ViewId   right;
-    ViewDesc left_desc;
-    ViewDesc right_desc;
-    uint     width;
-    uint     height;
+    ViewId         left;
+    ViewId         right;
+    ViewDesc       left_desc;
+    ViewDesc       right_desc;
+    uint           width;
+    uint           height;
+    MsaaSamples    msaa;          // requested for both views
+    MsaaOutcome[2] msaa_outcomes; // per side, left first: what the request did
 }
 
 struct Options @local {
+    MsaaSamples msaa;
     bool gpu_timings;
     bool effects;
     bool clustered;
@@ -147,8 +158,92 @@ fn void? configure_views(render::Renderer* renderer, Views* views) @local {
     views.height = renderer.swapchain_info.height;
     views.left_desc.viewport = half_viewport(views.width, views.height, false);
     views.right_desc.viewport = half_viewport(views.width, views.height, true);
-    render::configure_view(renderer, views.left, views.left_desc)!;
-    render::configure_view(renderer, views.right, views.right_desc)!;
+    views.left_desc.msaa = views.msaa;
+    views.right_desc.msaa = views.msaa;
+    views.msaa_outcomes[0] = configure_side(renderer, views.left, &views.left_desc)!;
+    views.msaa_outcomes[1] = configure_side(renderer, views.right, &views.right_desc)!;
+}
+
+// A count the view cannot take leaves it at the count it had, or at ONE when that no longer fits.
+fn MsaaOutcome? configure_side(render::Renderer* renderer, ViewId view, ViewDesc* desc) @local {
+    if (catch excuse = render::configure_view(renderer, view, *desc)) {
+        if (desc.msaa == MsaaSamples.ONE) return excuse~;
+
+        desc.msaa = renderer.views.get(view).desc.msaa;
+        if (catch render::configure_view(renderer, view, *desc)) {
+            desc.msaa = MsaaSamples.ONE;
+            render::configure_view(renderer, view, *desc)!;
+        }
+
+        return outcome_of(excuse);
+    }
+
+    return MsaaOutcome.APPLIED;
+}
+
+fn MsaaOutcome outcome_of(fault excuse) @local {
+    if (excuse == c3d::UNSUPPORTED) return MsaaOutcome.UNSUPPORTED;
+    if (excuse == c3d::INVALID_ARGUMENT) return MsaaOutcome.INVALID_ARGUMENT;
+    return MsaaOutcome.DEVICE_FAULT;
+}
+
+fn ZString outcome_label(MsaaOutcome outcome) @local {
+    switch (outcome) {
+        case APPLIED: return "applied";
+        case UNSUPPORTED: return "UNSUPPORTED";
+        case INVALID_ARGUMENT: return "INVALID_ARGUMENT";
+        case DEVICE_FAULT: return "a device fault";
+    }
+}
+
+fn MsaaSamples? parse_msaa(String value) @local {
+    switch (value) {
+        case "1": return MsaaSamples.ONE;
+        case "2": return MsaaSamples.TWO;
+        case "4": return MsaaSamples.FOUR;
+        case "8": return MsaaSamples.EIGHT;
+        default: return c3d::INVALID_ARGUMENT~;
+    }
+}
+
+fn MsaaSamples next_msaa(MsaaSamples msaa) @local {
+    return MsaaSamples::from_ordinal((usz)(msaa.ordinal + 1) % MsaaSamples::values.len);
+}
+
+fn bool msaa_radios(Views* views) @local {
+    bool changed;
+    imgui::push_id("MSAA");
+    defer imgui::pop_id();
+    imgui::text_unformatted("MSAA");
+    foreach (msaa : MsaaSamples::values) {
+        imgui::same_line();
+        if (imgui::radio_button(MSAA_LABELS[msaa.ordinal], views.msaa == msaa) && views.msaa != msaa) {
+            views.msaa = msaa;
+            changed = true;
+        }
+    }
+
+    return changed;
+}
+
+fn void msaa_status(
+    ZString side,
+    MsaaSamples applied,
+    MsaaSamples requested,
+    MsaaOutcome outcome,
+) @local {
+    if (outcome == MsaaOutcome.APPLIED) {
+        imgui::text("%s: MSAA %s", side, MSAA_LABELS[applied.ordinal]);
+        return;
+    }
+
+    imgui::text(
+        "%s: MSAA %s; %s faulted %s",
+        side,
+        MSAA_LABELS[applied.ordinal],
+        MSAA_LABELS[requested.ordinal],
+        outcome_label(outcome),
+    );
 }
 
 fn bool shading_radios(ZString label, ViewDesc* desc) @local {
@@ -237,6 +332,7 @@ fn void? run_gui(
     views.right_desc.shading = ShadingPath.DEFERRED;
     views.right = render::create_view(renderer, views.right_desc)!;
     defer (void)render::destroy_view(renderer, views.right);
+    views.msaa = options.msaa;
     configure_views(renderer, &views)!;
     renderer.prepare_scene(scene)!;
 
@@ -265,12 +361,19 @@ fn void? run_gui(
         }
 
         bool views_changed;
+        if (input.key_pressed(platform::Scancode.M) && !input.keyboard_captured_by_gui) {
+            views.msaa = next_msaa(views.msaa);
+            views_changed = true;
+        }
+
         imgui::set_next_window_pos(CONTROLS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(CONTROLS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         if (imgui::begin("Deferred", null, {})) {
             imgui::text_unformatted("Left and right views render the same scene and camera.");
             views_changed |= shading_radios("Left", &views.left_desc);
             views_changed |= shading_radios("Right", &views.right_desc);
+            views_changed |= msaa_radios(&views);
+            imgui::text_unformatted("Key M cycles the count. Deferred views fault UNSUPPORTED with MSAA.");
             imgui::checkbox("Orbit lamp", &orbit_lamp);
             imgui::same_line();
             if (imgui::checkbox("Decals", &options.decals)) {
@@ -300,6 +403,18 @@ fn void? run_gui(
                 right_stats.decals,
                 right_stats.decals_dropped,
                 right_stats.decal_overflows,
+            );
+            msaa_status(
+                side:      "Left",
+                applied:   renderer.views.get(views.left).desc.msaa,
+                requested: views.msaa,
+                outcome:   views.msaa_outcomes[0],
+            );
+            msaa_status(
+                side:      "Right",
+                applied:   renderer.views.get(views.right).desc.msaa,
+                requested: views.msaa,
+                outcome:   views.msaa_outcomes[1],
             );
             imgui::text("Output: %u x %u", views.width, views.height);
             $if $feat(C3D_PROFILE_CPU) && $feat(C3D_PROFILE_INTERNAL):
@@ -580,7 +695,8 @@ fn void? place_decals(
 
 fn int main(String[] args) {
     Options options = { .decals = true };
-    foreach (argument : args[1..]) {
+    for (usz index = 1; index < args.len; index++) {
+        String argument = args[index];
         if (argument == "--gpu-timings") {
             $if $feat(C3D_PROFILE_GPU):
                 options.gpu_timings = true;
@@ -594,6 +710,19 @@ fn int main(String[] args) {
             options.clustered = true;
         } else if (argument == "--dense-decals") {
             options.dense_decals = true;
+        } else if (argument == "--msaa") {
+            if (++index == args.len) {
+                io::printfn("--msaa takes 1, 2, 4 or 8.");
+                return 1;
+            }
+
+            MsaaSamples? parsed = parse_msaa(args[index]);
+            if (catch parsed) {
+                io::printfn("--msaa takes 1, 2, 4 or 8, not %s.", args[index]);
+                return 1;
+            }
+
+            options.msaa = parsed;
         } else {
             io::printfn("Unknown argument: %s", argument);
             return 1;

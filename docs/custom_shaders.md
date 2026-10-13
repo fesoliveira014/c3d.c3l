@@ -383,6 +383,11 @@ center, in a pass that keeps `MaterialCommon.depth_write`, so water writes depth
 blended reader stays in the transparent list, sorted with every other blend, and never writes
 depth.
 
+On a view with [`msaa`](views.md#multisample-anti-aliasing) above `ONE`, the snapshots and the scene-read list are
+recorded after the resolve: a reader samples single-sample color and depth and draws single-sample. A custom stage in
+the opaque list, including its velocity and depth forms, runs in the multisample pass with the view's sample count
+as pipeline state; the stage source does not change, and it still shades once per pixel.
+
 Before each list that holds a reader the renderer copies the finished scene into the view's snapshot
 images, only the kinds the list's draws declare, once before each non-empty layer of the scene-read list
 and once before the transparent list when it holds a reader. A layer's snapshot holds opaque, masked and
@@ -502,7 +507,7 @@ Limits of a custom vertex stage:
 
 ### Velocity form
 
-Motion blur, TAA and screen-space GI read the view's velocity image. Its geometry pass redraws each moved item with depth test `EQUAL` and no depth write. A custom vertex stage makes its own displacement visible there through a velocity form: `velocity` for meshes and `instanced_velocity` for batches, the same source compiled with `VELOCITY` (and `INSTANCED`). The pulse example's body:
+Motion blur, TAA, screen-space GI and temporal ambient occlusion read the view's velocity image. Its geometry pass redraws each moved item with depth test `EQUAL` and no depth write. A custom vertex stage makes its own displacement visible there through a velocity form: `velocity` for meshes and `instanced_velocity` for batches, the same source compiled with `VELOCITY` (and `INSTANCED`). The pulse example's body:
 
 ```glsl
     MeshVertexInput vertex = pull_mesh_vertex(geometry, index);
@@ -519,7 +524,7 @@ Motion blur, TAA and screen-space GI read the view's velocity image. Its geometr
 
 - `previous_mesh_position(draw, geometry, index)` exists only under `VELOCITY`: the object-space position under the skin and morph the view drew last time.
 - `write_mesh_outputs(vertex, previous_position, draw, frame, geometry)` takes the previous object-space position with the stage's displacement applied; every other form ignores it. The four-argument call passes `previous_mesh_position` in a velocity form, so a velocity form that ends in it sees the undisplaced previous position.
-- `FrameRoot.previous_time` is the `FrameInfo.time` of the view's last rendering, narrowed to float like `jitter_time.z`. It equals `jitter_time.z` on a view's first rendering, after `render::reset_view_history`, `configure_view`, a resize or an aborted frame, on a view without motion blur, TAA or screen-space GI, and in shadow, path-traced and probe roots. Any stage may read it; it is meaningful in velocity forms.
+- `FrameRoot.previous_time` is the `FrameInfo.time` of the view's last rendering, narrowed to float like `jitter_time.z`. It equals `jitter_time.z` on a view's first rendering, after `render::reset_view_history`, `configure_view`, a resize or an aborted frame, on a view without motion blur, TAA, screen-space GI or temporal ambient occlusion, and in shadow, path-traced and probe roots. Any stage may read it; it is meaningful in velocity forms.
 - A velocity form computes its current position exactly as its depth form does, with the same source and expressions and only `VELOCITY` added: the pass tests `EQUAL` against the depth the depth or shaded form wrote.
 - A velocity stage that does not include `mesh_vertex.glsl` declares the 16-byte push block and writes `gl_Position`, identical to its depth form's; `gl_ClipDistance[0]` through `view_clip.glsl`, identical to its depth form's; location 6 `vec4 v_clip_pos`, `gl_Position` with `xy -= frame.jitter_time.xy * gl_Position.w`; and location 7 `vec4 v_prev_clip_pos`, `frame.prev_view_proj * previous_world` with `previous = vec4(previous_local, 1.0)` and `previous_world` `draw.prev_model * previous` for a plain form. For an instanced form, with `model` the current instance matrix, `previous_world` is `PreviousInstanceArray(pose.instances).values[instance_source(draw) - pose.instances_first] * previous` when `pose = PreviousPoseGpu(draw.previous_pose)` has a non-zero `instances` address and `instance_source(draw)` lies in `[pose.instances_first, pose.instances_end)`, and `draw.prev_model * (model * previous)` otherwise; with sway or fade on the batch, both world positions also pass through the effects helpers, which only `mesh_vertex.glsl` declares.
 - An item whose shader has the velocity form for its draw is redrawn on every rendering whose view has its node in history, also at a still node; at frozen time and rest its velocity equals the camera velocity.

@@ -509,4 +509,26 @@ fn void? prepare_impostor(
     pipeline_for(renderer, material, vertex)!;
     if (gbuffer) gbuffer_pipeline_for(renderer, material, vertex)!;
     if (depth) shadow_pipeline_for(renderer, false, vertex)!;
+
+    MsaaCounts msaa = live_msaa_counts(renderer);
+    foreach (samples : msaa.items[:msaa.len]) {
+        pipeline_for(
+            renderer: renderer,
+            material: material,
+            vertex:   vertex,
+            samples:  samples,
+        )!;
+    }
+
+    if (!depth) return;
+
+    MsaaCounts prepassed = live_msaa_counts(renderer, prepassed: true);
+    foreach (samples : prepassed.items[:prepassed.len]) {
+        shadow_pipeline_for(
+            renderer:  renderer,
+            wireframe: false,
+            vertex:    vertex,
+            samples:   samples,
+        )!;
+    }
 }

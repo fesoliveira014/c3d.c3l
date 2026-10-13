@@ -67,13 +67,14 @@ const char[*] GPU_BUFFER_REFERENCE_TEXT @private = $embed("../../../shaders/gpu/
 const char[*] GPU_DESCRIPTOR_HEAP_TEXT @private = $embed("../../../shaders/gpu/descriptor_heap.glsl");
 const char[*] GPU_GENERATED_SHADER_ABI_TEXT @private = $embed("../../../shaders/gpu/generated/shader_abi.glsl");
 const char[*] GPU_INTERNAL_ACCELERATION_STRUCTURE_HEAP_TEXT @private = $embed("../../../shaders/gpu/internal/acceleration_structure_heap.glsl");
+const char[*] GPU_MULTISAMPLE_HEAP_TEXT @private = $embed("../../../shaders/gpu/multisample_heap.glsl");
 const char[*] GPU_RAY_QUERY_TEXT @private = $embed("../../../shaders/gpu/ray_query.glsl");
 const char[*] GPU_RAY_TRACING_TEXT @private = $embed("../../../shaders/gpu/ray_tracing.glsl");
 
 <*
  Every include a custom stage may resolve, in table order.
 *>
-const asset::ShaderInclude[66] SHADER_INCLUDES = {
+const asset::ShaderInclude[67] SHADER_INCLUDES = {
     { .name = "c3d_abi.glsl", .text = (String)C3D_GENERATED_C3D_ABI_TEXT[..] },
     { .name = "ambient_occlusion.glsl", .text = (String)C3D_COMMON_AMBIENT_OCCLUSION_TEXT[..] },
     { .name = "ao_estimate.glsl", .text = (String)C3D_COMMON_AO_ESTIMATE_TEXT[..] },
@@ -138,6 +139,7 @@ const asset::ShaderInclude[66] SHADER_INCLUDES = {
     { .name = "descriptor_heap.glsl", .text = (String)GPU_DESCRIPTOR_HEAP_TEXT[..] },
     { .name = "generated/shader_abi.glsl", .text = (String)GPU_GENERATED_SHADER_ABI_TEXT[..] },
     { .name = "internal/acceleration_structure_heap.glsl", .text = (String)GPU_INTERNAL_ACCELERATION_STRUCTURE_HEAP_TEXT[..] },
+    { .name = "multisample_heap.glsl", .text = (String)GPU_MULTISAMPLE_HEAP_TEXT[..] },
     { .name = "ray_query.glsl", .text = (String)GPU_RAY_QUERY_TEXT[..] },
     { .name = "ray_tracing.glsl", .text = (String)GPU_RAY_TRACING_TEXT[..] },
 };

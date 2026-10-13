@@ -79,6 +79,7 @@ enum ShaderName : int {
     FOCUS_ADAPT,
     SSAO,
     AO_BLUR,
+    AO_TEMPORAL,
     PROBE_FILL_ENVIRONMENT,
     PROBE_BORDER,
     PROBE_TRACE,
@@ -98,6 +99,7 @@ enum ShaderName : int {
     LIGHTING_RESOLVE,
     TRACE_POSE,
     TRACE_REFIT,
+    SAMPLE_ZERO,
 }
 
 <*
@@ -327,6 +329,7 @@ const char[*] FOCUS_HISTOGRAM_SPIRV @private = $embed("../../../shaders/spv/focu
 const char[*] FOCUS_ADAPT_SPIRV @private = $embed("../../../shaders/spv/focus_adapt.spv");
 const char[*] SSAO_SPIRV @private = $embed("../../../shaders/spv/ssao.spv");
 const char[*] AO_BLUR_SPIRV @private = $embed("../../../shaders/spv/ao_blur.spv");
+const char[*] AO_TEMPORAL_SPIRV @private = $embed("../../../shaders/spv/ao_temporal.spv");
 const char[*] PROBE_FILL_ENVIRONMENT_SPIRV @private = $embed("../../../shaders/spv/probe_fill_environment.spv");
 const char[*] PROBE_BORDER_SPIRV @private = $embed("../../../shaders/spv/probe_border.spv");
 const char[*] PROBE_TRACE_SPIRV @private = $embed("../../../shaders/spv/probe_trace.spv");
@@ -411,11 +414,12 @@ const char[*] TRACE_POSE_SKINNED_U16_SPIRV @private = $embed("../../../shaders/s
 const char[*] TRACE_POSE_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/trace_pose_instanced.spv");
 const char[*] TRACE_POSE_SKINNED_U16_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/trace_pose_skinned_u16_instanced.spv");
 const char[*] TRACE_REFIT_SPIRV @private = $embed("../../../shaders/spv/trace_refit.spv");
+const char[*] SAMPLE_ZERO_SPIRV @private = $embed("../../../shaders/spv/sample_zero.spv");
 
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[216] SHADER_ENTRIES = {
+const ShaderEntry[218] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -548,6 +552,7 @@ const ShaderEntry[216] SHADER_ENTRIES = {
     { .variant = { .shader = FOCUS_ADAPT }, .spirv = FOCUS_ADAPT_SPIRV[..] },
     { .variant = { .shader = SSAO }, .spirv = SSAO_SPIRV[..] },
     { .variant = { .shader = AO_BLUR }, .spirv = AO_BLUR_SPIRV[..] },
+    { .variant = { .shader = AO_TEMPORAL }, .spirv = AO_TEMPORAL_SPIRV[..] },
     { .variant = { .shader = PROBE_FILL_ENVIRONMENT }, .spirv = PROBE_FILL_ENVIRONMENT_SPIRV[..] },
     { .variant = { .shader = PROBE_BORDER }, .spirv = PROBE_BORDER_SPIRV[..] },
     { .variant = { .shader = PROBE_TRACE }, .spirv = PROBE_TRACE_SPIRV[..] },
@@ -632,4 +637,5 @@ const ShaderEntry[216] SHADER_ENTRIES = {
     { .variant = { .shader = TRACE_POSE, .flags = SHADER_FLAG_INSTANCED }, .spirv = TRACE_POSE_INSTANCED_SPIRV[..] },
     { .variant = { .shader = TRACE_POSE, .flags = SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_INSTANCED }, .spirv = TRACE_POSE_SKINNED_U16_INSTANCED_SPIRV[..] },
     { .variant = { .shader = TRACE_REFIT }, .spirv = TRACE_REFIT_SPIRV[..] },
+    { .variant = { .shader = SAMPLE_ZERO }, .spirv = SAMPLE_ZERO_SPIRV[..] },
 };

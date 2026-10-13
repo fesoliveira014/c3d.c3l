@@ -63,6 +63,7 @@ const uint DRAW_SWAY_VERTEX_ALPHA = 32;
 const uint DRAW_VERTEX_HISTORY_INVALID = 64;
 const uint DRAW_TRACED_REFLECTION = 128;
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1;
+const uint AO_TEMPORAL_FLAG_HISTORY_VALID = 1;
 const uint SSGI_FLAG_GBUFFER_NORMALS = 1;
 const uint SSGI_FLAG_HISTORY_VALID = 2;
 const uint MATERIAL_MAP_BASE_COLOR = 1;
@@ -957,6 +958,40 @@ $assert $reflect(AoBlurRoot.input_height).offset == 32;
 $assert $reflect(AoBlurRoot._pad0).offset == 36;
 $assert $reflect(AoBlurRoot._pad1).offset == 40;
 $assert $reflect(AoBlurRoot._pad2).offset == 44;
+
+struct AoTemporalRoot {
+    GpuAddress   frame;
+    TextureIndex raw;
+    TextureIndex history;
+    TextureIndex previous_depth;
+    TextureIndex depth;
+    TextureIndex velocity;
+    TextureIndex output_texture;
+    TextureIndex output_depth;
+    SamplerIndex sampler_index;
+    uint         width;
+    uint         height;
+    float        depth_tolerance;
+    float        velocity_threshold;
+    uint         flags;
+    uint         _pad0;
+}
+$assert AoTemporalRoot::size == 64;
+$assert $reflect(AoTemporalRoot.frame).offset == 0;
+$assert $reflect(AoTemporalRoot.raw).offset == 8;
+$assert $reflect(AoTemporalRoot.history).offset == 12;
+$assert $reflect(AoTemporalRoot.previous_depth).offset == 16;
+$assert $reflect(AoTemporalRoot.depth).offset == 20;
+$assert $reflect(AoTemporalRoot.velocity).offset == 24;
+$assert $reflect(AoTemporalRoot.output_texture).offset == 28;
+$assert $reflect(AoTemporalRoot.output_depth).offset == 32;
+$assert $reflect(AoTemporalRoot.sampler_index).offset == 36;
+$assert $reflect(AoTemporalRoot.width).offset == 40;
+$assert $reflect(AoTemporalRoot.height).offset == 44;
+$assert $reflect(AoTemporalRoot.depth_tolerance).offset == 48;
+$assert $reflect(AoTemporalRoot.velocity_threshold).offset == 52;
+$assert $reflect(AoTemporalRoot.flags).offset == 56;
+$assert $reflect(AoTemporalRoot._pad0).offset == 60;
 
 struct SsgiTraceRoot {
     GpuAddress   frame;

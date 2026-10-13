@@ -483,6 +483,26 @@ root AoBlurRoot {
     uint         _pad2;
 }
 
+const uint AO_TEMPORAL_FLAG_HISTORY_VALID = 1;
+
+root AoTemporalRoot {
+    GpuAddress   frame;
+    TextureIndex raw;
+    TextureIndex history;
+    TextureIndex previous_depth;
+    TextureIndex depth;
+    TextureIndex velocity;
+    TextureIndex output_texture;
+    TextureIndex output_depth;
+    SamplerIndex sampler_index;
+    uint         width;
+    uint         height;
+    float        depth_tolerance;
+    float        velocity_threshold;
+    uint         flags;
+    uint         _pad0;
+}
+
 const uint SSGI_FLAG_GBUFFER_NORMALS = 1;
 const uint SSGI_FLAG_HISTORY_VALID = 2;
 

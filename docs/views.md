@@ -73,6 +73,7 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `transparency` | How premultiplied-alpha blended surfaces compose: `SORTED` (default, both constructors) orders them by object, `WEIGHTED` accumulates them without ordering into two extra images, 10 bytes per pixel, allocated on the first frame with a participating draw (see [weighted transparency](materials.md#weighted-transparency)); custom `BLEND` materials stay sorted in a `WEIGHTED` view, a current limit |
 | `pre_exposure_override` | Forces the view's [pre-exposure](post.md#pre-exposure) factor, a power of two from 2^-16 to 2^16; zero, the default, follows the camera exposure. Any other value faults `INVALID_ARGUMENT` |
 | `transmission_layers` | Snapshots the scene-read list samples, so glass can see glass behind it (see [transmission layers](materials.md#transmission-layers)); 1 to `MAX_TRANSMISSION_LAYERS` (4), zero reads as 1 and both constructors leave it zero |
+| `msaa` | `MsaaSamples`: samples per pixel of the opaque scene passes, `ONE`, `TWO`, `FOUR` or `EIGHT` (see [Multisample anti-aliasing](#multisample-anti-aliasing)); `ONE`, the zero value and the value of both constructors, is off |
 
 An installed [static impostor](lod.md#static-impostors) participates in the same
 per-view LOD selection and hysteresis. Forward and deferred views share its
@@ -88,7 +89,9 @@ RGBA8 target, a viewport outside the output, a render scale outside its range an
 stack fault `INVALID_ARGUMENT`; a `clip_plane` other than the zero plane with a normal that is not
 unit length or a `d` that is not finite, and any non-zero `clip_plane` on a `PATH_TRACED` view, fault
 `INVALID_ARGUMENT`; `volumetric_fog` on a `PATH_TRACED` view and a `transmission_layers` above `MAX_TRANSMISSION_LAYERS` and a `ray_tracing.shadow_samples` above `MAX_SHADOW_SAMPLES` fault `INVALID_ARGUMENT`; invalid ambient occlusion settings fault `INVALID_ARGUMENT` and
-`AoKind.RAY_TRACED` faults `UNSUPPORTED`; a full pool faults `CAPACITY_EXCEEDED` (`RendererDesc.max_views`, 8 by
+`AoKind.RAY_TRACED` faults `UNSUPPORTED`; an `msaa` above `ONE` with `TAA` or on a `PATH_TRACED` view faults
+`INVALID_ARGUMENT`, and on a `DEFERRED` view or at a count the device cannot create the view's multisample images at it
+faults `UNSUPPORTED`; a full pool faults `CAPACITY_EXCEEDED` (`RendererDesc.max_views`, 8 by
 default; see [Capacities](#capacities)).
 `destroy_view` on the default view faults `INVALID_ARGUMENT`.
 
@@ -308,7 +311,7 @@ write it with `image::write_png`. Every render target carries transfer-source us
 
 | `RendererDesc` field | Zero selects | Bound |
 | --- | --- | --- |
-| `max_views` | `DEFAULT_MAX_VIEWS`, 8 | none beyond memory: a view record is 5.5 KiB |
+| `max_views` | `DEFAULT_MAX_VIEWS`, 8 | none beyond memory: a view record is 8.5 KiB |
 | `max_render_targets` | `DEFAULT_MAX_RENDER_TARGETS`, 8 | at most the resolved `texture_capacity`, else `create_renderer` faults `c3d::INVALID_ARGUMENT` |
 | `max_posed_trace_instances` | `DEFAULT_MAX_POSED_TRACE_INSTANCES`, 64 | none beyond memory: a slot holds a mesh's posed streams, a node copy and a bottom level; the example Mannequin's two parts hold 205 KB of streams; on the RTX 4090 one mannequin of two posed meshes holds 483,032 B of posed data in software and 1,088,920 B in hardware, about 242 KB and 544 KB per slot, and bottom-level sizes are driver-specific |
 | `texture_capacity` | `gpu::DEFAULT_TEXTURE_CAPACITY`, 1,024 | 65,536 (`gpu::MAX_SHADER_HEAP_CAPACITY`), else `gpu::INVALID_ARGUMENT` |
@@ -325,9 +328,11 @@ The pools are fixed at creation. A full pool faults `c3d::CAPACITY_EXCEEDED`. Th
 An editor with a game view, two viewports and live thumbnails drawn through `render_to` needs `max_views` of at least
 1 + 1 + 2 + 1.
 
-Every working image of a view and every render target holds one texture-table entry and one heap slot. A render target
-also holds one attachment view. So do a view's `hdr_color`, `depth`, scene snapshots, weighted accumulation and revealage, velocity, G-buffer
-and SSGI color, at most 13 per view. gpu.c3l's attachment table holds 4,096 views and cannot be configured: a renderer with
+Every working image of a view and every render target holds one texture-table entry and one heap slot, except a
+view's attachment-only multisample images, `msaa_color` and a forward view's `msaa_depth`, which hold no heap slot.
+A render target also holds one attachment view. So do a view's `hdr_color`, `depth`, scene snapshots, weighted
+accumulation and revealage, velocity, G-buffer and SSGI color, at most 13 per view, and each multisample image, at
+most 4 more. gpu.c3l's attachment table holds 4,096 views and cannot be configured: a renderer with
 three plain views holds at most 4,090 render targets, whatever `texture_capacity` allows. Asset textures share the
 table and the heap with the renderer. `default_asset_store_desc()` holds 4,096 textures and the table 1,024 by
 default, so a store filled past about 1,000 uploaded textures faults on upload unless `texture_capacity` is raised.
@@ -342,19 +347,21 @@ Images a view allocates at creation, by setting:
 | `bloom` | +`bloom_params.levels` (5 by default, 8 at most) |
 | `depth_of_field` | +4, plus the 2 tile images |
 | `motion_blur` | +1, plus the 2 tile images |
-| Velocity, under `TAA`, `motion_blur` or `screen_space_gi` | +1 |
+| Velocity, under `TAA`, `motion_blur`, `screen_space_gi` or `ambient_occlusion.temporal` | +1 |
 | `DEFERRED` G-buffer | +5 |
+| `msaa` above `ONE` | +2 (`msaa_color`, `msaa_depth`), +1 `msaa_velocity` where velocity is used, +1 `msaa_reflection_gbuffer` with `ray_tracing.reflections` |
 | `ambient_occlusion` | +2 |
+| `ambient_occlusion.temporal` | +4: two history and two depth images |
 | `screen_space_gi` | +7 |
 | `ray_tracing.reflections` | +2, and +1 on a `FORWARD` view |
 | `volumetric_fog` | +1 |
 | `PATH_TRACED`: accumulation, no sky images | 3 in all |
 
 `texture_view_desc` and `default_view_desc` hold 5 images. A raster view with `TAA`, eight bloom levels and every
-other row except the debug image, reflections and path tracing holds 41. Up to three images are allocated during a
-frame: the scene color and depth snapshots inside `render_view` when a material reads the scene, and the FXAA fallback
-output inside `finish_view` when FXAA cannot write the output rectangle directly. A headless renderer's default view
-holds none.
+other row except the debug image, temporal ambient occlusion, reflections and path tracing holds 41. Up to three
+images are allocated during a frame: the scene color and depth snapshots inside `render_view` when a material reads
+the scene, and the FXAA fallback output inside `finish_view` when FXAA cannot write the output rectangle directly.
+A headless renderer's default view holds none.
 
 Exhaustion faults come unchanged from gpu.c3l: a full texture table or attachment table faults `gpu::SLOT_TABLE_FULL`,
 a full heap `gpu::DESCRIPTOR_HEAP_FULL`. Creation faults leave no partial resource: `create_view`,
@@ -638,6 +645,71 @@ reflection shows the sphere's buried half and the crate as if they rose out of t
 also sets the mirror view's render scale and the floor's reflectance, and a "View stats" window
 compares the window, capture and mirror views.
 
+## Multisample anti-aliasing
+
+`ViewDesc.msaa` selects 1, 2, 4 or 8 samples per pixel for the opaque scene passes of a `FORWARD` view. `ONE` is off:
+the view records the passes, images and pipelines of a view without the field.
+
+```c3
+ViewDesc desc = render::default_view_desc();
+desc.msaa = MsaaSamples.FOUR;
+render::configure_view(&renderer, renderer.default_view, desc)!;
+```
+
+An MSAA view draws its depth prepass, its forward pass and the sky into multisample twins of `hdr_color` and `depth`
+(`msaa_color` and `msaa_depth`), and each of the two passes ends with a render-pass resolve:
+
+- `DEPTH_PREPASS` writes `msaa_depth` and resolves sample 0 into `depth`, so ambient occlusion, screen-space GI and
+  traced reflections read a single-sample depth. With traced reflections its thin surface image is multisample too, and
+  a copy of sample 0 fills `reflection_gbuffer`.
+- `FORWARD_OPAQUE` writes `msaa_color` and `msaa_depth` and resolves into `hdr_color` and `depth`: color is the average
+  of the samples, depth is sample 0. Opaque items, Toon outlines, installed impostors and the sky draw here.
+
+A fragment shades once per pixel and primitive and the covered samples share its color: the sample count does not
+multiply shading cost, and a `MASK` material's alpha test is evaluated once as well, so its cut-out edges are not
+antialiased. There is no alpha-to-coverage.
+
+Every later pass reads single-sample images, as on a view without the field: clouds, fog and the atmosphere's aerial
+perspective, scene-read and transmission draws, weighted and sorted transparency, the screen-space GI color copy,
+exposure, debug lines, motion blur, depth of field, bloom, grading, FXAA and the output. An MSAA view therefore always
+takes the split a fogged view takes: blended draws and scene readers draw after the resolve, single-sample, against the
+resolved `depth`. Those passes test pixel-centre fragments against sample 0's depth, so a blended or
+scene-reading surface meeting an opaque silhouette shows a slight fringe where the resolved color and the sample-0
+depth disagree.
+
+Velocity is not averaged. Camera velocity runs at the view's count from the resolved `depth`, and moved opaque items
+redraw at the view's count against `msaa_depth`; both write `msaa_velocity`, and a copy of sample 0 fills `velocity`.
+Moved depth writers among the scene-read draws were drawn single-sample, so they redraw last into `velocity` against
+the resolved `depth`.
+
+| Combination with `msaa` above `ONE` | Behavior |
+| --- | --- |
+| `TAA` | Faults `INVALID_ARGUMENT` |
+| `PATH_TRACED` | Faults `INVALID_ARGUMENT` |
+| `DEFERRED` | Faults `UNSUPPORTED` |
+| A count an image cannot be created at on the device | Faults `UNSUPPORTED`; adapters differ in the counts they accept |
+| `FXAA`, `NONE` | Allowed; FXAA filters the resolved image |
+| Motion blur, screen-space GI | Velocity from sample 0 |
+| Ambient occlusion, traced reflections | Read the resolved depth and the sample-0 thin surface |
+| Traced shadows | Evaluated per fragment |
+| Depth of field, auto focus, bloom, grading, LUT, auto exposure | Read the resolved images |
+| Decals | Unchanged: applied in the receiving draw's stage |
+| Installed impostors | Draw in the multisample pass; their alpha cut is not antialiased |
+| `render_scale`, `clip_plane`, mirror views, `share_shadows`, clustered lights, instance culling, LOD | Allowed |
+| Shadow maps, overlays, reflection captures, probe updates, `bake_impostor` | Single-sample |
+
+`create_view` and `configure_view` check every image the view needs at the working extent, and a fault changes nothing.
+Changing `msaa`, velocity use or traced reflections reallocates only the multisample images. `ViewStats.images` counts
+them. Bytes per working pixel at `N` samples:
+
+| Image | Bytes per pixel |
+| --- | --- |
+| `msaa_color`, `msaa_depth` | `12 · N` (8 and 4) |
+| `msaa_velocity` | `4 · N` with motion blur alone, `8 · N` with screen-space GI |
+| `msaa_reflection_gbuffer` | `8 · N` |
+
+The single-sample images keep their formats and usages and are the resolve and copy targets.
+
 ## Shading path
 
 `shading = DEFERRED` renders the view's encodable opaque materials through a G-buffer and one
@@ -665,7 +737,10 @@ python3 scripts/build.py --example deferred
 
 `examples/deferred` renders one scene twice, the left half forward and the right half deferred,
 switches either half at runtime and lists the G-buffer channels of the deferred view in the targets
-panel. It includes 64 bullet-hole decals on the floor and opaque boxes plus a
+panel. Key `M` and the panel's MSAA row cycle both views through 1, 2, 4 and 8 samples, and
+`--msaa <1|2|4|8>` starts with a count. A view whose configuration faults keeps the count it had and the panel
+names the fault: the deferred half stays at 1 sample with `UNSUPPORTED`.
+It includes 64 bullet-hole decals on the floor and opaque boxes plus a
 road-paint stripe parented to the orbiting lamp: 65 decals in total. The Decals
 checkbox changes their node visibility, and the panel prints packed, dropped and
 overflow counts for each view. `--clustered` starts both views with clustered
@@ -772,5 +847,5 @@ for overdraw and light count and charges the G-buffer round trip without them.
 
 Known difference: the resolve offsets shadow lookups along a face normal rebuilt from depth, the
 forward shaders along the face-corrected vertex normal; neither reads the normal map, and on curved
-surfaces the two directions differ slightly. No MSAA on deferred views; no screen-space effect
-consumes the G-buffer.
+surfaces the two directions differ slightly. No MSAA on deferred views: `msaa` above `ONE` faults
+`UNSUPPORTED` there; no screen-space effect consumes the G-buffer.

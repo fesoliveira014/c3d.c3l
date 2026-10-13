@@ -92,13 +92,15 @@ struct ViewDesc {
     uint                 transmission_layers; // up to MAX_TRANSMISSION_LAYERS; zero reads as 1
     TransparencyMode     transparency; // how premultiplied-alpha blended surfaces compose
     float                pre_exposure_override; // 0 follows the camera exposure; else the power-of-two radiance scale stored images carry
+    MsaaSamples          msaa; // samples per pixel of the opaque scene passes; ONE is off
 }
 
 <*
  Working images one view owns, in view_targets order.
 *>
 const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8 + GBUFFER_CHANNEL_COUNT
-  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1 + 1 + 2 * SSGI_HISTORY_SLOTS + 2 + 1 + 3 + 2 + 1 + 2 + 1 + 1 + 2;
+  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1 + 1 + 2 * SSGI_HISTORY_SLOTS + 2 + 1 + 3 + 2 + 1 + 2 + 1 + 1 + 2
+  + 2 * AO_HISTORY_SLOTS + 4;
 
 <*
  Reverse-Z projection terms that recover forward distance from stored depth.
@@ -629,6 +631,8 @@ struct ViewRecord {
     Target                               taa_debug;
     Target                               ao_raw;
     Target                               ao;
+    Target[AO_HISTORY_SLOTS]             ao_history;
+    Target[AO_HISTORY_SLOTS]             ao_depth;
     Target                               reflection;
     Target                               reflection_blur;
     Target                               reflection_gbuffer;
@@ -648,6 +652,10 @@ struct ViewRecord {
     Target                               cloud_shadow;
     Target                               weighted_accum;
     Target                               weighted_revealage;
+    Target                               msaa_color;
+    Target                               msaa_depth;
+    Target                               msaa_velocity;
+    Target                               msaa_reflection_gbuffer;
     Target*                              scene_input;
     bool                                 post_chain_open;
     bool                                 rendered;
@@ -747,6 +755,17 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
     targets[next + 13 + 2 * SSGI_HISTORY_SLOTS] = &record.cloud_shadow;
     targets[next + 14 + 2 * SSGI_HISTORY_SLOTS] = &record.clouds[1];
     targets[next + 15 + 2 * SSGI_HISTORY_SLOTS] = &record.cloud_distances[1];
+    next += 16 + 2 * SSGI_HISTORY_SLOTS;
+    for (uint slot = 0; slot < AO_HISTORY_SLOTS; slot++) {
+        targets[next + slot] = &record.ao_history[slot];
+        targets[next + AO_HISTORY_SLOTS + slot] = &record.ao_depth[slot];
+    }
+
+    next += 2 * AO_HISTORY_SLOTS;
+    targets[next] = &record.msaa_color;
+    targets[next + 1] = &record.msaa_depth;
+    targets[next + 2] = &record.msaa_velocity;
+    targets[next + 3] = &record.msaa_reflection_gbuffer;
     return targets;
 }
 
@@ -1003,6 +1022,7 @@ fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
     if (!post::pre_exposure_override_valid(desc.pre_exposure_override)) return c3d::INVALID_ARGUMENT~;
     if (!ambient_occlusion_desc_valid(&desc.ambient_occlusion)) return c3d::INVALID_ARGUMENT~;
     if (!screen_space_gi_desc_valid(&desc.screen_space_gi)) return c3d::INVALID_ARGUMENT~;
+    if (!msaa_desc_valid(desc)) return c3d::INVALID_ARGUMENT~;
     RayTracingDesc* ray_tracing = &desc.ray_tracing;
     if (ray_tracing.reflections) {
         if (desc.shading == ShadingPath.PATH_TRACED) return c3d::UNSUPPORTED~;
@@ -1041,6 +1061,7 @@ fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
         return c3d::INVALID_ARGUMENT~;
     }
     if (!post::post_stack_valid(&desc.post)) return c3d::INVALID_ARGUMENT~;
+    validate_msaa_support(renderer, desc, output)!;
     if (desc.post.grade.lut.generation) {
         TextureAsset* lut = renderer.assets.textures.try_get(desc.post.grade.lut)!;
         if (!lut_desc_valid(&lut.desc)) return c3d::INVALID_ARGUMENT~;
@@ -1103,6 +1124,7 @@ fn void? acquire_view_images(Renderer* renderer, ViewRecord* record, uint[<2>] o
     acquire_accumulation(renderer, record)!;
     acquire_sky_view_images(renderer, record)!;
     acquire_fog_volume(renderer, record)!;
+    acquire_msaa_images(renderer, record)!;
     if (record.desc.lights == LightSelection.CLUSTERED && !record.clusters.allocation.is_valid()) {
         ClusterLayout layout = cluster_layout(
             desc: record.desc.clusters,
@@ -1185,6 +1207,13 @@ fn void drop_unwanted_images(ViewRecord* staged, ViewDesc* previous) @private {
         staged.ao_raw = {};
         staged.ao = {};
     }
+
+    if (!ambient_occlusion_accumulates(desc)
+        || ambient_occlusion.full_resolution != previous.ambient_occlusion.full_resolution) {
+        staged.ao_history = {};
+        staged.ao_depth = {};
+    }
+
     if (!desc.screen_space_gi.enabled) {
         staged.ssgi_raw = {};
         staged.ssgi_history = {};
@@ -1211,6 +1240,7 @@ fn void drop_unwanted_images(ViewRecord* staged, ViewDesc* previous) @private {
         staged.cloud_distances[1] = {};
     }
     post::drop_stale_effect_targets(staged);
+    drop_stale_msaa_images(staged, previous);
 }
 
 fn bool view_writes(ViewRecord* record, ViewOutput output, RenderTargetId target) @private {
