@@ -4,6 +4,9 @@
 #include "descriptor_heap.glsl"
 #include "clusters.glsl"
 #include "gbuffer.glsl"
+#ifdef MULTISAMPLE
+#include "multisample_heap.glsl"
+#endif
 
 layout(local_size_x = POST_GROUP_SIZE, local_size_y = POST_GROUP_SIZE, local_size_z = 1) in;
 
@@ -12,6 +15,21 @@ layout(push_constant) uniform Push {
 } pc;
 
 const float PREVIEW_BACKGROUND_DEPTH = 1e30;
+
+#ifdef MULTISAMPLE
+// A multisample source shows its first sample.
+ivec2 preview_source_texel(uint texture_index, vec2 uv) {
+    return ivec2(uv * vec2(textureSize(gpu_texture_ms_heap[nonuniformEXT(GPU_HEAP_SLOT(texture_index))])));
+}
+
+#define PREVIEW_VALUE(root, uv) gpu_fetch_ms(root.input_texture, preview_source_texel(root.input_texture, uv), 0)
+#define PREVIEW_BITS_SIZE(root) textureSize(gpu_utexture_ms_heap[nonuniformEXT(GPU_HEAP_SLOT(root.input_texture))])
+#define PREVIEW_BITS(root, texel) gpu_fetch_ms_uint(root.input_texture, texel, 0)
+#else
+#define PREVIEW_VALUE(root, uv) sample_texture_2d(root.input_texture, root.input_sampler, uv)
+#define PREVIEW_BITS_SIZE(root) textureSize(gpu_utexture_heap[nonuniformEXT(GPU_HEAP_SLOT(root.input_texture))], 0)
+#define PREVIEW_BITS(root, texel) gpu_fetch_uint(root.input_texture, texel, 0)
+#endif
 
 // Forward distance from reverse-Z depth; no geometry (depth 0) reads as infinitely far.
 float preview_view_distance(float depth, PreviewRoot root) {
@@ -43,18 +61,18 @@ void main() {
     vec3 result = vec3(0.0);
     switch (root.mode) {
         case PREVIEW_MODE_COLOR:
-            vec3 color = sample_texture_2d(root.input_texture, root.input_sampler, uv).rgb;
+            vec3 color = PREVIEW_VALUE(root, uv).rgb;
             result = 1.0 - exp(-max(color, vec3(0.0)) * root.exposure);
             break;
         case PREVIEW_MODE_DEPTH_VIEW:
-            float depth = sample_texture_2d(root.input_texture, root.input_sampler, uv).r;
+            float depth = PREVIEW_VALUE(root, uv).r;
             result = vec3(clamp(preview_view_distance(depth, root) / root.range, 0.0, 1.0));
             break;
         case PREVIEW_MODE_DEPTH_RAW:
-            result = vec3(1.0 - sample_texture_2d(root.input_texture, root.input_sampler, uv).r);
+            result = vec3(1.0 - PREVIEW_VALUE(root, uv).r);
             break;
         case PREVIEW_MODE_VELOCITY:
-            vec2 velocity = sample_texture_2d(root.input_texture, root.input_sampler, uv).rg
+            vec2 velocity = PREVIEW_VALUE(root, uv).rg
                 * vec2(root.width, root.height);
             result = vec3(clamp(length(velocity) / root.range, 0.0, 1.0));
             break;
@@ -64,22 +82,22 @@ void main() {
             result = 1.0 - exp(-max(radiance, vec3(0.0)) * root.exposure);
             break;
         case PREVIEW_MODE_RAW:
-            result = sample_texture_2d(root.input_texture, root.input_sampler, uv).rgb;
+            result = PREVIEW_VALUE(root, uv).rgb;
             break;
         case PREVIEW_MODE_GRAY:
-            result = vec3(sample_texture_2d(root.input_texture, root.input_sampler, uv).r);
+            result = vec3(PREVIEW_VALUE(root, uv).r);
             break;
         case PREVIEW_MODE_DISTANCE:
-            float distance_value = sample_texture_2d(root.input_texture, root.input_sampler, uv).r;
+            float distance_value = PREVIEW_VALUE(root, uv).r;
             result = vec3(clamp(distance_value / root.range, 0.0, 1.0));
             break;
         case PREVIEW_MODE_OCTAHEDRAL_NORMAL:
-            vec2 encoded = sample_texture_2d(root.input_texture, root.input_sampler, uv).rg;
+            vec2 encoded = PREVIEW_VALUE(root, uv).rg;
             result = decode_octahedral(encoded) * 0.5 + 0.5;
             break;
         case PREVIEW_MODE_BITS:
-            ivec2 source_size = textureSize(gpu_utexture_heap[nonuniformEXT(GPU_HEAP_SLOT(root.input_texture))], 0);
-            uint bits = gpu_fetch_uint(root.input_texture, ivec2(uv * vec2(source_size)), 0);
+            ivec2 source_size = PREVIEW_BITS_SIZE(root);
+            uint bits = PREVIEW_BITS(root, ivec2(uv * vec2(source_size)));
             result = vec3(float(bits & 1u), float((bits >> 1u) & 1u), float((bits >> 2u) & 1u));
             if ((bits >> 3u) != 0u) result += 0.25;
             break;

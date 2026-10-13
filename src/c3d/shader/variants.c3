@@ -227,6 +227,7 @@ const char[*] OVERLAY_BLUR_SPIRV @private = $embed("../../../shaders/spv/overlay
 const char[*] LINES_VERTEX_SPIRV @private = $embed("../../../shaders/spv/lines_vertex.spv");
 const char[*] LINES_FRAGMENT_SPIRV @private = $embed("../../../shaders/spv/lines_fragment.spv");
 const char[*] PREVIEW_SPIRV @private = $embed("../../../shaders/spv/preview.spv");
+const char[*] PREVIEW_MULTISAMPLE_SPIRV @private = $embed("../../../shaders/spv/preview_multisample.spv");
 const char[*] LIGHT_CULL_SPIRV @private = $embed("../../../shaders/spv/light_cull.spv");
 const char[*] INSTANCE_CULL_SPIRV @private = $embed("../../../shaders/spv/instance_cull.spv");
 const char[*] INSTANCE_SORT_SPIRV @private = $embed("../../../shaders/spv/instance_sort.spv");
@@ -421,7 +422,7 @@ const char[*] SAMPLE_ZERO_SPIRV @private = $embed("../../../shaders/spv/sample_z
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[221] SHADER_ENTRIES = {
+const ShaderEntry[222] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -453,6 +454,7 @@ const ShaderEntry[221] SHADER_ENTRIES = {
     { .variant = { .shader = LINES_VERTEX }, .spirv = LINES_VERTEX_SPIRV[..] },
     { .variant = { .shader = LINES_FRAGMENT }, .spirv = LINES_FRAGMENT_SPIRV[..] },
     { .variant = { .shader = PREVIEW }, .spirv = PREVIEW_SPIRV[..] },
+    { .variant = { .shader = PREVIEW, .flags = SHADER_FLAG_MULTISAMPLE }, .spirv = PREVIEW_MULTISAMPLE_SPIRV[..] },
     { .variant = { .shader = LIGHT_CULL }, .spirv = LIGHT_CULL_SPIRV[..] },
     { .variant = { .shader = INSTANCE_CULL }, .spirv = INSTANCE_CULL_SPIRV[..] },
     { .variant = { .shader = INSTANCE_SORT }, .spirv = INSTANCE_SORT_SPIRV[..] },

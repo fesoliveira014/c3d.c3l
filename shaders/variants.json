@@ -38,6 +38,7 @@
     { "shader": "lines_vertex", "source": "lines.vert.glsl", "stage": "vert", "defines": [] },
     { "shader": "lines_fragment", "source": "lines.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "preview", "source": "preview.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "preview", "source": "preview.comp.glsl", "stage": "comp", "defines": ["MULTISAMPLE"] },
     { "shader": "light_cull", "source": "light_cull.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "instance_cull", "source": "instance_cull.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "instance_sort", "source": "instance_sort.comp.glsl", "stage": "comp", "defines": [] },
