@@ -278,6 +278,18 @@ renderer.set_view_overlay(view, &list)!;
 renderer.finish_view(view)!;
 ```
 
+A plane fixed in the world, such as a sign on a wall, names its axes:
+
+```c3
+list.push_anchor({
+    .position        = sign_top_left,
+    .facing          = PLANE,
+    .right           = along_the_wall,
+    .up              = { 0, 1, 0 },
+    .pixels_per_unit = 200,
+})!;
+```
+
 - **The call.** `set_view_overlay(view, list)` gives one view a list for the frame; `null` clears it. `finish_view`
   prepares the list for the view's output and draws it there, after the view's post: into the window or into the view's
   render target. The application does not call `prepare_overlay_list` or open an overlay for it.
@@ -285,21 +297,56 @@ renderer.finish_view(view)!;
   `finish_view` records the view, so a change in between is drawn. The setting lasts one frame; the next `begin_frame`
   clears it. One list may be given to several views; each prepares it when it records.
 - **Anchors.** `push_anchor(anchor)` starts a plane at a world position and `pop_anchor` ends it. Items added in
-  between are laid out in that plane with the ordinary calls: x to the right, y down, the origin at the anchor, the
-  plane facing the camera. Enclosing transforms and clips do not apply inside it; `push_transform` and `push_clip` inside
-  it apply in the plane. An anchor inside another starts its own plane.
-- **Position.** `position` is a world position, rebased with the frame origin as scene nodes are. An anchor behind the
-  camera, or outside the near and far planes, draws none of its items.
-- **Size.** With `pixels_per_unit` above zero a layout unit is that many screen pixels at any distance: `1` lays out in
-  pixels and the size stays constant as the anchor moves away. With zero a layout unit is a world unit, so a label
-  `1.5` wide is 1.5 metres wide and shrinks with distance as the scene does. Both measure the pixels of the view's
-  output rectangle.
-- **Depth test.** An anchor has one depth, that of its position. A fragment of its items is drawn where that depth is
-  at least as near as the view's depth at the pixel, so geometry nearer than the anchor hides the items behind it, and
-  the sky never does. Reverse-Z, larger is nearer. Nothing is written to the depth image.
+  between are laid out in that plane with the ordinary calls: x to the right, y down, the origin at the anchor.
+  `facing` is `BILLBOARD`, the default, or `PLANE`. Enclosing transforms and clips do not apply inside it;
+  `push_transform` and `push_clip` inside it apply in the plane. An anchor inside another starts its own plane.
+- **Billboards.** A `BILLBOARD` plane faces the camera and keeps its orientation on the screen as the camera turns.
+  Only `position` and `pixels_per_unit` apply to it.
+- **Planes.** A `PLANE` is fixed in the world. Layout x runs along `right` and layout y against `up`, from `position`,
+  so a sign laid out from its top left corner reads upright when `up` points up. The vectors need not be unit
+  length or perpendicular, but they must be finite and not parallel: `push_anchor` faults `INVALID_ARGUMENT`
+  otherwise. A layout unit spans `right` along x and `up` along y when `pixels_per_unit` is zero, and one
+  `pixels_per_unit`th of each when it is above zero: with unit vectors and 200, a sign 600 units wide is 3 metres wide.
+  Its size is a size in the world, so it shrinks with distance and foreshortens at an angle; items are projected with
+  perspective and filtered per pixel.
+- **Back faces.** The front of a plane is the side `right` cross `up` points to, and from there layout x runs to the
+  right. A plane seen from behind, or edge-on, draws nothing. Two anchors with opposite normals make a sign that shows
+  on both sides. The test follows the plane's side of the camera, not the winding on screen, so it holds in a mirror
+  view.
+- **Position.** `position` is a world position, rebased with the frame origin as scene nodes are. A billboard anchor
+  behind the camera, or outside the near and far planes, draws none of its items. A plane is clipped by the near and far
+  planes per fragment, like geometry.
+- **Size.** With `pixels_per_unit` above zero a billboard's layout unit is that many screen pixels at any distance: `1`
+  lays out in pixels and the size stays constant as the anchor moves away. With zero a layout unit is a world unit,
+  so a label `1.5` wide is 1.5 metres wide and shrinks with distance as the scene does. Both measure the pixels of the
+  view's output rectangle.
+- **Depth test.** A billboard anchor has one depth, that of its position. A plane has the depth of each of its
+  fragments. A fragment is drawn where its depth is at least as near as the view's depth at the pixel, so geometry
+  nearer than the item hides it, and the sky never does. Reverse-Z, larger is nearer. Nothing is written to the depth
+  image. A plane's depth is raised by one part in 65,536, so a plane lying on a surface of the view draws over it; keep
+  a plane a few millimetres off a surface when the view renders below its output size or with temporal anti-aliasing,
+  whose depth differs from the plane's by more than that.
+- **Layers.** `set_layers(mask)` takes a mask of the type of `Camera.layers`. `finish_view` draws the list in a view
+  only when the mask shares a layer with the camera that rendered the view. A new list has every layer, and `clear()`
+  keeps the mask. The mask filters world lists only.
 - **Colors.** The items draw after post, in the view's display output: exposure, tone mapping, temporal
   anti-aliasing, bloom and blur do not apply. Colors, blending and encoding are those of a window or target overlay
   ([Render-target output](#render-target-output)), so a label is as bright as its sRGB color says, whatever the exposure.
+  A `LINEAR_HDR` view has no display image: its output holds physical radiance, so the pass writes each color divided
+  by the view's `Camera.exposure`. A consumer that applies the same exposure, as the grade of a view does, shows the
+  label at its own color; one that applies none shows it that much darker. The view's pre-exposure does not enter,
+  since the output is in physical units and the pass writes after post. A `LINEAR_HDR` view ignores auto exposure, so
+  a consumer that adapts shows the label brighter or darker with the scene.
+- **Mirrors and clip planes.** A mirror view, the view of a camera reflected across a plane with `ViewDesc.clip_plane`
+  set to it ([Planar reflections](views.md#planar-reflections)), draws a world list when the layers match. The view's
+  handedness is flipped, and the plane test above accounts for it. A plane in a mirror is drawn as a mirror shows it:
+  its text is reversed where its front faces the reflected camera, and nothing is drawn where its back does. A
+  billboard is laid out in the mirror view's image like in any view, so it faces the mirror camera and reads
+  normally in the reflection. An anchor on the negative side of the view's `clip_plane` draws none of its items. A
+  plane is clipped per fragment where it crosses the clip plane, like geometry; a billboard is clipped as a whole by
+  its anchor, not item by item.
+- **Reflection captures.** The cube capture of a reflection probe draws no world overlay, as it draws no cloud layer
+  and no height fog.
 - **Temporal jitter.** The test reads the view's own depth, which temporal anti-aliasing renders with a sub-pixel
   jitter, and the items are placed without it. Where an item meets a silhouette in front of it, the cut moves with the
   jitter: up to about half a pixel either side of the unjittered edge, so up to about a pixel between two frames. The
@@ -309,15 +356,16 @@ renderer.finish_view(view)!;
   items are clipped to that rectangle.
 - **Limits.** Every item of a world list is under an anchor, and a backdrop item is not allowed. A list that holds
   anchors is a world list, drawn only through `set_view_overlay`; `prepare_overlay_list` rejects it, so it is never
-  drawn as a screen list. Build a second list to show the same content on screen. A view with `LINEAR_HDR` output has
-  no display image, and a path-traced view has no depth image: both refuse a world list.
+  drawn as a screen list. Build a second list to show the same content on screen. A path-traced view has no depth
+  image and refuses a world list.
 - **Faults.** `set_view_overlay` checks the list when called and faults with `INVALID_ID` (dead view, texture, sampler,
   font or render target), `INVALID_ARGUMENT` (an item outside an anchor, a backdrop item, a comparison sampler, a glyph
-  past its font, a list sampling the view's own target) or `UNSUPPORTED` (the cases above, or a texture kind the
+  past its font, a list sampling the view's own target) or `UNSUPPORTED` (a path-traced view, or a texture kind the
   overlay cannot sample). These leave the frame open. Faults while `finish_view` records the list (asset data
   unavailable, device and recording faults) abort the frame like any other fault in `finish_view`.
 - **Cost.** A view with a world list that has visible items records one extra pass after its output, with one root of
-  64 bytes and one draw per run, and uploads one transform table of the list's size. Views without a world list, and
+  64 bytes and one draw per run, and uploads one transform table of the list's size and, with plane anchors, one plane
+  table of 64 bytes per entry. Views without a world list, and
   lists without anchors, record the passes and use the pipelines they used before.
 
 ## Faults
@@ -333,9 +381,9 @@ renderer.finish_view(view)!;
 | `pop_clip` | Contract: the stack is not empty |
 | `push_transform` | `CAPACITY_EXCEEDED` (table full); `INVALID_ARGUMENT` (non-finite values, or a composed transform with no inverse) |
 | `pop_transform` | Contract: the stack is not empty |
-| `push_anchor` | `CAPACITY_EXCEEDED` (table or clip stack full); `INVALID_ARGUMENT` (non-finite position, or `pixels_per_unit` negative or non-finite) |
+| `push_anchor` | `CAPACITY_EXCEEDED` (table or clip stack full); `INVALID_ARGUMENT` (non-finite position, `pixels_per_unit` negative or non-finite, or a `PLANE` whose `right` and `up` are non-finite or parallel) |
 | `pop_anchor` | Contract: the stacks are not empty |
-| `Renderer.set_view_overlay` | `INVALID_ID` (dead view, texture, sampler, font or render target); `INVALID_ARGUMENT` (an item outside an anchor, a backdrop item, comparison sampler, glyph past its font or without a built outline, the list samples the view's output target); `UNSUPPORTED` (`LINEAR_HDR` or path-traced view; texture kind above); contract: frame open, list not destroyed |
+| `Renderer.set_view_overlay` | `INVALID_ID` (dead view, texture, sampler, font or render target); `INVALID_ARGUMENT` (an item outside an anchor, a backdrop item, comparison sampler, glyph past its font or without a built outline, the list samples the view's output target); `UNSUPPORTED` (path-traced view; texture kind above); contract: frame open, list not destroyed |
 | `Renderer.begin_overlay_target` | `INVALID_ID` (dead target); `gpu` faults from state transitions and recording |
 | `Renderer.prepare_overlay_list` | `INVALID_ID` (dead texture, sampler, render target or font, or a dead output `target`); `INVALID_ARGUMENT` (comparison sampler; glyph past its font or without a built outline; the list samples its output `target`; the list holds anchors); `UNSUPPORTED` (texture kind above; a window list with a backdrop item on a surface that cannot be copied from); `ASSET_DATA_UNAVAILABLE`; `gpu` faults from upload and state transitions |
 | `OverlayContext.draw_list` | `gpu` and shader faults from pipeline creation and recording; contract: prepared this frame for this output |
@@ -352,7 +400,7 @@ can skip that overlay and still present. Any later fault aborts the frame, like 
   4,096 items cost 384 KiB of the ring per prepared list; 16,384 glyphs cost 1.5 MiB.
 - A transform table entry is 80 bytes of the frame upload ring. A prepared list uploads its entries only when it
   pushed a transform, an anchor or a transformed clip. An anchor takes one entry, so `max_transforms` also bounds the
-  anchors, and the list keeps 20 bytes of anchor data on the CPU for each entry.
+  anchors, and the list keeps 44 bytes of anchor data on the CPU for each entry.
 - One run costs one 32-byte root and one draw. Rects with alternating clips cost one run each. Items under different
   transforms and the same scissor share a run. A backdrop item's run takes a 64-byte root and two 48-byte blur roots.
 - `MAX_BACKDROP_ITEMS` is 8 backdrop items per list and `MAX_BACKDROP_RADIUS` is 32 pixels ([Backdrop](#backdrop)).
@@ -372,4 +420,7 @@ textured nine-slice rect with a gradient, a rect with a gradient under a transfo
 portrait whose radius point lies outside its rect. `--backdrop` draws a frosted panel over the sphere and the sample
 row, a rotated one over the scroll list's rows and, with `--target`, one over the portrait's cube. `--world` anchors
 two labels in the scene, one sized in pixels and one in metres, which sweep toward the camera and pass behind and in
-front of the sphere.
+front of the sphere, and a sign laid out on a wall behind the sphere, which hides part of it; the "World layer"
+checkbox moves the list off the cameras' layers. `--mirror` adds a mirror view of the scene reflected across a plane,
+clipped to it, shown as an inset with the same world list, so the sign reads reversed there and a label behind the
+clip plane is missing.
