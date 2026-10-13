@@ -44,9 +44,9 @@ const float EXPOSURE_MIN @local = 0.05f;
 const float EXPOSURE_MAX @local = 8;
 const uint LUT_SIZE @local = 32;
 const Vec2 CONTROLS_PANEL_POSITION @local = { 16, 16 };
-const Vec2 CONTROLS_PANEL_SIZE @local = { 360, 156 };
-const Vec2 POST_PANEL_POSITION @local = { 16, 188 };
-const Vec2 POST_PANEL_SIZE @local = { 360, 520 };
+const Vec2 CONTROLS_PANEL_SIZE @local = { 360, 180 };
+const Vec2 POST_PANEL_POSITION @local = { 16, 212 };
+const Vec2 POST_PANEL_SIZE @local = { 360, 496 };
 const Vec2 STATS_PANEL_POSITION @local = { 900, 16 };
 const Vec2 STATS_PANEL_SIZE @local = { 360, 660 };
 
