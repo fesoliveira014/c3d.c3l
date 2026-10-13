@@ -286,6 +286,23 @@ fn bool edit_from_keys(Input* input, ViewDesc* desc) @local {
         ray_tracing.reflections = !ray_tracing.reflections;
         changed = true;
     }
+
+    for (uint rays = 1; rays <= render::RT_REFLECTION_RAYS_MAX; rays++) {
+        platform::Scancode key = (platform::Scancode)((usz)platform::Scancode.CODE_1 + rays - 1);
+        if (!input.key_pressed(key) || ray_tracing.reflection_rays == rays) continue;
+
+        ray_tracing.reflection_rays = rays;
+        io::printfn("reflection rays %d", rays);
+        changed = true;
+    }
+
+    if (input.key_pressed(platform::Scancode.H)) {
+        bool was_full = ray_tracing.reflection_resolution == ReflectionResolution.FULL;
+        ray_tracing.reflection_resolution = was_full ? ReflectionResolution.HALF : ReflectionResolution.FULL;
+        io::printfn("reflection resolution %s", ray_tracing.reflection_resolution);
+        changed = true;
+    }
+
     float roughness = ray_tracing.max_reflection_roughness;
     if (input.key_pressed(platform::Scancode.LEFTBRACKET)) roughness -= ROUGHNESS_STEP;
     if (input.key_pressed(platform::Scancode.RIGHTBRACKET)) roughness += ROUGHNESS_STEP;
@@ -321,6 +338,8 @@ fn int main(String[] args) {
     bool forward;
     bool reflections = true;
     float pre_exposure;
+    uint reflection_rays = 1;
+    ReflectionResolution reflection_resolution = ReflectionResolution.FULL;
     uint benchmark_frames;
     for (usz index = 1; index < args.len; index++) {
         if (args[index] == "--software") {
@@ -332,6 +351,19 @@ fn int main(String[] args) {
         } else if (args[index] == "--pre-exposure" && index + 1 < args.len) {
             index++;
             pre_exposure = args[index] == "off" ? 1 : args[index].to_float() ?? -1;
+        } else if (args[index] == "--reflection-rays" && index + 1 < args.len) {
+            index++;
+            reflection_rays = args[index].to_uint() ?? render::RT_REFLECTION_RAYS_MAX + 1;
+        } else if (args[index] == "--reflection-resolution" && index + 1 < args.len) {
+            index++;
+            if (args[index] == "full") {
+                reflection_resolution = ReflectionResolution.FULL;
+            } else if (args[index] == "half") {
+                reflection_resolution = ReflectionResolution.HALF;
+            } else {
+                io::eprintfn("--reflection-resolution takes full or half");
+                return 1;
+            }
         } else if (args[index] == "--gpu-timings") {
             $if $feat(C3D_PROFILE_GPU):
                 gpu_timings = true;
@@ -412,9 +444,13 @@ fn int main(String[] args) {
         .shadows                  = true,
         .reflections              = reflections,
         .max_reflection_roughness = render::RT_REFLECTION_ROUGHNESS_DEFAULT,
+        .reflection_rays          = reflection_rays,
+        .reflection_resolution    = reflection_resolution,
     };
     if (catch excuse = render::configure_view(&renderer, renderer.default_view, view_desc)) {
-        io::eprintfn("View configuration rejected (%s); --pre-exposure takes off or a power of two from 2^-16 to 2^16", excuse);
+        io::eprintfn("View configuration rejected (%s)", excuse);
+        io::eprintfn("--pre-exposure takes off or a power of two from 2^-16 to 2^16");
+        io::eprintfn("--reflection-rays takes 1 to %d", render::RT_REFLECTION_RAYS_MAX);
         return 1;
     }
     renderer.prepare_scene(&scene)!!;
@@ -425,6 +461,7 @@ fn int main(String[] args) {
 
     io::printn("A cycles AO: none, SSAO, ray traced; R toggles reflections; S switches deferred and forward shading");
     io::printn("[ and ] move the roughness threshold");
+    io::printn("1 to 4 set the rays per reflection pixel; H toggles half resolution reflections");
     io::printn("F toggles a haze over the reflected paths");
     io::printn("Drag to orbit, wheel to zoom; Escape release quits");
     uint frame;

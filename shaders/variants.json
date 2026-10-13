@@ -170,6 +170,8 @@
     { "shader": "rt_reflections", "source": "rt_reflections.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "rt_reflections", "source": "rt_reflections.comp.glsl", "stage": "comp", "defines": ["SCENE_TRACE_BVH"] },
     { "shader": "rt_reflection_blur", "source": "rt_reflection_blur.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "rt_reflection_upsample", "source": "rt_reflection_upsample.comp.glsl", "stage": "comp",
+      "defines": [] },
     { "shader": "path_trace", "source": "path_trace.rgen.glsl", "stage": "rgen", "defines": [] },
     { "shader": "path_trace_miss", "source": "path_trace.rmiss.glsl", "stage": "rmiss", "defines": [] },
     { "shader": "path_trace_hit", "source": "path_trace.rchit.glsl", "stage": "rchit", "defines": [] },
