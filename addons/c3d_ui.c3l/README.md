@@ -27,7 +27,12 @@ while (window.poll()) {
     gui_renderer.new_frame();                       // without ImGui: window.input.clear_gui_flags();
     ui.route_input(&window.input, window.events()); // actions fire here
     // game input reads Input; the capture flags gate it
-    ui.update(window.width, window.height, window.pixel_density)!;
+    ui.update(
+        width:         window.width,
+        height:        window.height,
+        scale:         window.pixel_density,
+        delta_seconds: window.clock.delta,
+    )!;
     gui_renderer.finish_frame();                    // without ImGui: window.set_text_input(ui.wants_text_input);
 
     list.clear();
@@ -46,10 +51,15 @@ while (window.poll()) {
 - `route_input` hit-tests the pointer against the previous `update`'s layout. It ORs `mouse_captured_by_gui`,
   `keyboard_captured_by_gui` and `text_input_wanted_by_gui` into `Input` and never clears them. When ImGui already
   holds the mouse, the UI receives no hover, press or wheel that frame; a press there still blurs a focused field.
+- While a window drag is pending or active, `route_input` sets `mouse_captured_by_gui` and `keyboard_captured_by_gui`,
+  also when ImGui holds the mouse, and keeps following the pointer. Hover and tooltips stay empty and the wheel is
+  ignored until the button is released or Escape cancels the drag. Before the first `update` after a load, a drag
+  still ends on release and cancels on Escape.
 - With ImGui, `GuiRenderer.new_frame` writes the three flags and `finish_frame` applies the combined text input want.
   Without ImGui, call `input.clear_gui_flags()` before `route_input` and apply `ui.wants_text_input` yourself.
 - `update` takes the output size in pixels and `scale`, the output pixels per layout unit: pixel density times any
-  user UI scale. Every number in a document is a layout unit.
+  user UI scale. Every number in a document is a layout unit. `delta_seconds` is the time since the previous update,
+  finite and not negative; it advances every running transition, and `ui.delta_seconds` holds the last value.
 - `draw` may run any time after `update` and before `prepare_overlay_list`. A load, reload, unload or style load
   invalidates the frame until the next `update`.
 
@@ -81,8 +91,8 @@ The root's anchor point sits on the screen's matching point; `offset` moves it. 
 
 | Kind | Children | Own keys |
 | --- | --- | --- |
-| `panel` | `children` | |
-| `label` | | `text` |
+| `panel` | `children` | `window`, `position`, `drag_bounds`, `on_move_start`, `on_move_end` (see Windows) |
+| `label` | | `text`, `markup` (see Text templates) |
 | `image` | | `image` (asset key or `{IMAGE}`), `uv` [u0, v0, u1, v1] |
 | `button` | `children` | |
 | `bar` | | `value` (number or `{INT}`/`{FLOAT}`), `bar_direction`: `left_to_right` (default), `right_to_left`, `bottom_to_top`, `top_to_bottom` |
@@ -92,8 +102,8 @@ The root's anchor point sits on the screen's matching point; `offset` moves it. 
 | `tooltip` | `children` | |
 | `grid` | `template` | `items` (`{LIST}`), `columns`, `rows`, `cell_size` [w, h], `item_cell` (`{INT}`), `item_span` [w, h] (numbers or `{INT}`) |
 
-Every element takes `kind`, `style`, `visible` and `enabled` (a literal or `{BOOL}`), the actions `on_click`,
-`on_secondary_click` and `on_drop`, and every style property inline.
+Every element takes `kind`, `id`, `style`, `visible` and `enabled` (a literal or `{BOOL}`), the actions `on_click`,
+`on_secondary_click` and `on_drop`, `drag_handle` inside a window, and every style property inline.
 
 - `list` lays its items out like a panel, one template copy per item.
 - A `tooltip` shows while the pointer is over its parent, interactive or not, floating below it above everything,
@@ -108,11 +118,94 @@ Every element takes `kind`, `style`, `visible` and `enabled` (a literal or `{BOO
   disabled states apply to the interactive element and its descendants, except that an interactive descendant takes
   its own hover and press; focus applies to the focused field.
 
+### Windows
+
+`"window": true` makes a `panel` a window: it floats over its parent's content, takes a runtime offset and moves when
+its drag handle is dragged.
+
+```jsonc
+{ "kind": "panel", "id": "inspector", "window": true, "position": [24, 40], "on_move_end": "inspector.moved",
+  "children": [
+    { "kind": "panel", "drag_handle": true, "children": [
+        { "kind": "label", "text": "Inspector" },
+        { "kind": "button", "on_click": "inspector.close", "children": [ { "kind": "label", "text": "x" } ] } ] },
+    { "kind": "label", "text": "Contents" }
+  ] }
+```
+
+| Key | On | Value |
+| --- | --- | --- |
+| `window` | `panel` | `true` for a window; it needs an `id` |
+| `position` | window | [x, y], signed layout units from the parent's top left; the offset a window starts at (default [0, 0]) |
+| `drag_bounds` | window | `parent` (default): the window stays inside its parent's padding box; `viewport`: inside the layout area; `none` |
+| `drag_handle` | the window or a descendant | `true` marks the region that drags the nearest enclosing window |
+| `on_move_start`, `on_move_end` | window | actions fired when a drag starts and ends; `event.offset` is the window offset |
+
+- A window's parent is a `panel` or a `scroll`. A window is not the root and not inside a list or grid template.
+  Windows nest. A window with a `window` key that breaks these rules faults `c3d::ASSET_FORMAT_ERROR` at its `window`;
+  `window` on another kind, and `position`, `drag_bounds`, `on_move_start` and `on_move_end` off a window, fault
+  `UNKNOWN_PROPERTY`, as does `drag_handle` outside every window.
+- A parent declares its other children first, in document order, then its windows from the lowest raise order to the
+  highest. A press anywhere in a window raises it and every window around it above their sibling windows. The
+  nearest enclosing `scroll` clips a window, and a window directly in a `scroll` scrolls with the content. Hover,
+  press and wheel reach only the topmost window under the pointer.
+- A press on a handle starts a drag after `UI_DRAG_THRESHOLD` layout units of travel. An interactive element between
+  the press and the handle, such as a close button on the title bar, keeps the press. A press on an interactive
+  handle that never moves is still a click. `on_move_start` fires when the drag starts, and `on_move_end` on release
+  with the final offset.
+- The offset follows the pointer's travel since the press, in layout units, and is clamped to `drag_bounds` against
+  the previous layout. Escape cancels a drag: the offset returns to its start and no `on_move_end` fires. A drag also
+  cancels, without `on_move_end`, when the window or all of its handles are not laid out in an `update`.
+- `ui.window_offset(document, id)` reads a window's offset; `ui.set_window_offset(document, id, offset)` moves a
+  window without clamping and cancels a drag of it.
+- Offsets and raise order belong to the window's `id`. `reload_document` keeps them for ids the new tree still has and
+  drops the rest; a drag continues if the new tree has the window and one of its handles, and cancels otherwise.
+  `load_styles` and the load of another document change nothing, and `unload_document` drops the document's windows.
+- A document without windows lays out and draws as before. Each window takes two layers above its document's root
+  and grid items, so documents keep their order; `update` faults `c3d::CAPACITY_EXCEEDED` when the layers reach the
+  tooltips.
+- `ui --windows` loads `examples/ui/windows.jsonc`; with `--frames N` it replays a scripted drag, raise and nested
+  drag.
+
+### Ids
+
+`"id": "log.view"` names an element of any kind. An id is a dotted lowercase name, the rule of binding names, and is
+unique within its document. Inside a list or grid template the id names the template's element in every item.
+
+- A repeated id faults `c3d::ASSET_FORMAT_ERROR` at the `id` of the later element in document order, as does a name
+  that breaks the rule.
+- Layout state follows an element's id. A `scroll` element with an id keeps its offset across `reload_document` while
+  the new tree has a scroll with that id, wherever the tree moved it. A scroll without an id is keyed by its position
+  in the tree, so it keeps its offset only while its position stays.
+- An element's layout id hashes its document, its id and its item scope; an element without an id hashes its position
+  instead, tagged apart so the two inputs never coincide. Two different ids whose 32-bit FNV-1a hashes are equal
+  would share a layout id, so they fault `c3d::ASSET_FORMAT_ERROR` at the later `id`, like a repeated id. Rename one.
+
 ### Text templates
 
 `"text": "Squad ({squad.size}): {squad.gold:0} gold"`. `{name}` inserts a BOOL, INT, FLOAT or TEXT binding; `{{`
 and `}}` insert braces. INT prints as decimal. FLOAT prints with up to 2 decimals, trailing zeros and point trimmed.
 `{name:N}` prints an INT or FLOAT with N fixed decimals, N from 0 to 6. BOOL prints `true` or `false`.
+
+`"markup": true` turns on span tags in a label's `text`, so one label can mix fonts, sizes, colors, underlines and
+highlights:
+
+```jsonc
+{ "kind": "label", "style": "text", "markup": true,
+  "text": "[title]Wave 3[/title] holds for [caption]02:41[/caption]. Press [key] E [/key] to [warn]open[/warn]." }
+```
+
+- `[name]` opens a span and `[/name]` closes it; `name` is a style of the set. A span style may set only `font`,
+  `font_size`, `text_color`, `underline` and `text_highlight`, in its base and its state blocks; the state blocks apply
+  with the label's state. A span overrides the label's own properties for the text it covers.
+- Spans nest up to `UI_SPAN_DEPTH` (4), with at most `UI_MAX_SPANS` (16) per label.
+- `[[` inserts `[` and a lone `]` is literal. Any other `[` sequence faults. Without `"markup": true`, brackets are
+  literal; `markup` on any other kind faults `UNKNOWN_PROPERTY`.
+- A value inserted by `{name}` goes into the open span verbatim and is never read as markup.
+- Malformed text faults at the label's `text`: `c3d::ASSET_FORMAT_ERROR` for an unclosed span, a close tag that
+  matches no open span, a malformed tag, nesting past `UI_SPAN_DEPTH` or more than `UI_MAX_SPANS` spans;
+  `UNKNOWN_STYLE` for a name that is no style; `UNKNOWN_PROPERTY` for a span style that sets another property.
+  `load_styles` re-resolves every span name with the same faults, atomically, and names the document.
 
 Every other binding reference is written in braces too: `"enabled": "{member.alive}"`, `"image": "{member.portrait}"`.
 A string without braces in `image` is an asset key.
@@ -152,13 +245,64 @@ scroll and field text. Load styles before the documents that use them.
 | `line_height` | n; 0 (default) uses the first font's ascent, descent and line gap |
 | `wrap` | `words` (default), `newlines`, `none` |
 | `text_align` | `left` (default), `center`, `right` |
+| `underline` | `true` or `false` (default); a line under the text |
+| `text_highlight` | color (default transparent) behind the text |
 | `skin`, `bar_skin` | `{ "image": key, "slice": [l, t, r, b] }`, nine-slice margins in texels |
+| `transition` | `{ "properties": [...], "duration": s, "delay": s, "easing": e }`, see Transitions |
+| `opacity` | n from 0 to 1 (default 1); multiplies the alpha of everything the element and its descendants draw |
+| `offset` | [x, y], signed; moves a floating element: a document root, window, grid item or tooltip |
 
 The state blocks `hover`, `pressed`, `disabled` and `focused` take properties only. Effective properties are the
 flattened base, then the active state blocks in the order focused, hover, pressed, disabled (later wins), then the
-element's inline properties. Defaults: transparent fill, white text, `font_size` 16, no border, radius or padding.
+element's inline properties. Defaults: transparent fill, white text, `font_size` 16, no underline or text highlight, no
+border, radius or padding, no transition, opacity 1 and no offset.
 An image multiplies its texture by `fill`, white when the fill is transparent; `highlight` colors a grid's drop
-footprint; a bar draws `bar_fill` or `bar_skin` over its content box.
+footprint; a bar draws `bar_fill` or `bar_skin` over its content box. `underline` and `text_highlight` apply to
+label, field and placeholder text, and inside spans.
+
+## Transitions
+
+A style's `transition` times each change of the properties it lists, whether the change comes from a state block, a
+style reload or a bar's bound value.
+
+```jsonc
+"member_row": {
+  "fill": "#1f222bff",
+  "transition": { "properties": ["fill"], "duration": 0.15, "easing": "ease_out" },
+  "hover": { "fill": "#2c313dff" }
+},
+"health_bar": { "transition": { "properties": ["value"], "duration": 0.4 } }
+```
+
+- `properties` is a non-empty list of distinct names: `fill`, `border` (color and widths), `text_color`, `opacity`,
+  `offset`, `size` and `value` (a bar's fill fraction). `duration` is required; `duration` and `delay` are seconds, not
+  negative. `easing` is `linear` (default), `ease_in`, `ease_out` or `ease_in_out`. A bad value faults
+  `c3d::ASSET_FORMAT_ERROR` at its pointer and an unknown key `UNKNOWN_PROPERTY`.
+- The transition of the state an element changes to times the change. A `transition` in the base style times both
+  directions of a hover; one in the `hover` block times only the way in.
+- `update` advances each running transition by `delta_seconds`. A delta of 0 advances nothing and a large one finishes
+  the transition in that update. A change shows its start value in the `update` that notices it.
+- A change that interrupts a running transition starts from the current value, and the duration scales by the share of
+  the old distance that remains, measured by the largest component. A property the new state's `transition` does not
+  list snaps.
+- `size` animates only while `width` and `height` are both fixed numbers before and after the change; any other size
+  snaps. `offset` moves floating elements only, so an in-flow element cannot lift on hover; it can fade, resize and
+  change a bar's value.
+- `opacity` multiplies the alpha of every color an element and its descendants draw: fills, borders, bars, text,
+  highlights, underlines and carets. There is no group opacity, so overlapping descendants show through each other.
+  Hit testing ignores opacity.
+- Each element whose inline properties or style blocks set a `transition` holds one entry in a fixed table
+  (`UiDesc.max_transitions`, zero holds none). An entry starts at its element's first target with no animation. An
+  element that is not laid out in an `update` loses its entry. When the table is full, changes of the elements without
+  an entry snap. `ui.stats.transitions` counts the entries with a running transition.
+- `ui.set_reduced_motion(true)` makes `offset`, `size` and `value` changes instant, and running ones snap at the next
+  `update`. Fades of `fill`, `border`, `text_color` and `opacity` still run.
+- An element with an `id` keeps its entry across `reload_document` and `load_styles` and retargets from its current
+  value; an element without one starts at its new target. `unload_document` drops the document's entries.
+- The `ui` example's HUD rows and buttons fade on hover and press, and its health bars animate `value`. `ui --transitions`
+  adds a lift card: hovering it moves its floating root, fades its colors and brightens a hint through `opacity`. With
+  `--frames N` a scripted pointer hovers the card, presses Damage and hovers a row. `--reduced-motion` and the `M` key
+  toggle reduced motion.
 
 ## Bindings
 
@@ -206,6 +350,8 @@ ui.on("squad.select", &select_member, &game)!;
 | `on_change` | each edit of a focused text field; `event.text` is the field text |
 | `on_submit` | Enter in a focused text field, which then blurs |
 | `on_drop` | a grid item released over the element; `event.source` and `event.source_list` name the item, `event.cell` the target grid cell (`UI_NO_CELL` outside a grid) |
+| `on_move_start` | a window drag began; `event.offset` is the window's offset |
+| `on_move_end` | a window drag was released; `event.offset` is the final offset. Escape and a disappearing window cancel without it |
 
 Handlers run inside `route_input` with the scope of the element that fired. In an engine they queue commands for the
 next simulation tick. A drop handler accepts by changing data and rejects by leaving it unchanged; the next frame
@@ -225,15 +371,15 @@ points into it.
 | Fault | Meaning |
 | --- | --- |
 | `UNKNOWN_ELEMENT_KIND` | `kind` names no element kind, or is missing |
-| `UNKNOWN_PROPERTY` | a key the element kind, style or state block does not take |
-| `UNKNOWN_STYLE` | `style` or `extends` names no style of the set |
+| `UNKNOWN_PROPERTY` | a key the element kind, style, state block or `transition` does not take; a span style that sets a property other than the five of a span |
+| `UNKNOWN_STYLE` | `style`, `extends` or a span tag names no style of the set |
 | `STYLE_CYCLE` | an `extends` chain returns to a style it left; the pointer is the closing `extends` |
 | `UNKNOWN_BINDING` | a binding no registration provides in that scope |
 | `BINDING_KIND_MISMATCH` | a binding of a kind the key does not take |
 | `UNKNOWN_ACTION` | an action nothing registered with `Ui.on` |
 | `UNKNOWN_ASSET` | an image or font key the store lacks; a text element without a font |
-| `c3d::ASSET_FORMAT_ERROR` | a value of the wrong JSON type or out of range |
-| `c3d::CAPACITY_EXCEEDED` | a UI table full; lists nested deeper than `UI_SCOPE_DEPTH` |
+| `c3d::ASSET_FORMAT_ERROR` | a value of the wrong JSON type or out of range, including a `transition` without `properties` or `duration`; an `id` that is not a valid name, repeats or collides; a `window` without an `id`, on the root, in a template or under a parent that is not a `panel` or `scroll`; malformed span markup |
+| `c3d::CAPACITY_EXCEEDED` | a UI table full, including the window table; lists nested deeper than `UI_SCOPE_DEPTH` |
 | `json::*`, `io::EOF` | syntax errors from `std::encoding::json`; the error path is empty |
 
 The std parser reports no line or column for syntax errors. Keys are checked in sorted order, so a document with
@@ -247,14 +393,34 @@ several errors reports the same one every time.
   shaping: no ligatures, contextual forms, complex scripts or bidirectional text.
 - Placements of unchanged lines come from a fixed cache keyed by font list and line bytes (`UiDesc.cache_lines`,
   `cache_glyphs`); a full cache clears and refills, counted in `ui.stats.placement_clears`.
+- A label with at least one span lays its text out itself; every other label keeps the plain path above. Each run of
+  text that shares its spans resolves its properties (the label's, then each enclosing span's, outermost first) and is
+  measured once; a run that does not fit the line is split at spaces. Breaks fall at spaces and newlines, also across
+  span boundaries, and never inside a word: `wrap: words` breaks at both, `newlines` only at newlines and `none` never
+  breaks. A break consumes the space it breaks at.
+- A line is as tall as its tallest run, or `line_height` when the label sets one, and all runs on a line share one
+  baseline. `text_align` positions each line within the label's content width. A rich label sizes its `fit` width and
+  height to the text it laid out.
+- A rich label wraps at its fixed `width`, or at `max_width` when its width is not fixed, and at nothing else: it
+  never wraps against the width a `grow` or `percent` panel gives it. Give a rich label in such a panel a `max_width`.
+- `underline` sits 0.12 em below the baseline and is 0.06 em thick, at least one pixel; fonts carry no underline
+  metrics. Each piece of text draws its highlight, then its glyphs, then its underline.
+- Each run on each line is one piece; `UiDesc.max_text_pieces` bounds the pieces of a frame and `ui.stats.text_pieces`
+  counts them. A label without spans uses none.
+- `ui --rich-text` loads `examples/ui/rich.jsonc`: mixed sizes on one baseline, a highlighted key and an underlined
+  warning, a bound value in a span, CJK text through the font fallback and a paragraph wrapped at `max_width`.
 
 ## Capacities
 
 `default_ui_desc()`: 16 documents, 256 styles, 64 font sets, 1,024 bindings, 256 actions, 64 item sources, 32 KiB of
 names, 4,096 laid-out elements per frame, 64 KiB of expanded text per frame, 2,048 cached lines with 32,768 cached
-glyphs, and a 256-byte field buffer. Every table is allocated once in `create_ui`; documents and style sets allocate
-once when they load. Nothing allocates per frame. `update` faults `CAPACITY_EXCEEDED` when a frame overflows; that
-frame draws nothing and the next frame retries.
+glyphs, a 256-byte field buffer, 64 windows (60 bytes each) across the loaded documents, 1,024 rich text pieces per
+frame (76 bytes each) and 128 transition entries; `max_windows`, `max_text_pieces` and `max_transitions` may be 0,
+which holds none. A transition entry is 424 bytes in a table of two slots per entry, so the default 256 slots take
+106 KiB of the `create_ui` storage. Every table is allocated once in `create_ui`; documents and style sets allocate
+once when they load. Nothing allocates per frame. A load or reload whose windows do not fit the table faults
+`CAPACITY_EXCEEDED` and changes nothing. `update` faults `CAPACITY_EXCEEDED` when a frame overflows, including a frame
+whose rich labels need more pieces than the table holds; that frame draws nothing and the next frame retries.
 
 ## Measured costs
 

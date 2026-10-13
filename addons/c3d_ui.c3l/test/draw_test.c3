@@ -79,7 +79,13 @@ fn void test_instance_capacity_fault_leaves_the_ui_usable() @test {
     fixture.ui.load_document(`{ "root": { "kind": "list", "items": "{many.items}",
         "template": { "kind": "panel", "fill": "#ffffffff", "size": [4, 4] } } }`)!!;
 
-    assert(@catch(fixture.ui.update(800, 600, 1)) == c3d::CAPACITY_EXCEEDED);
+    fault failure = @catch(fixture.ui.update(
+        width:         800,
+        height:        600,
+        scale:         1,
+        delta_seconds: 0,
+    ));
+    assert(failure == c3d::CAPACITY_EXCEEDED);
     fixture.list.clear();
     fixture.ui.draw(&fixture.list)!!;
     assert(fixture.list.item_count == 0);
@@ -98,7 +104,12 @@ fn void test_overlay_capacity_fault_leaves_the_ui_usable() @test {
         { "kind": "panel", "fill": "#00ff00ff", "size": [4, 4] },
         { "kind": "panel", "fill": "#0000ffff", "size": [4, 4] } ] } }`)!!;
 
-    fixture.ui.update(800, 600, 1)!!;
+    fixture.ui.update(
+        width:         800,
+        height:        600,
+        scale:         1,
+        delta_seconds: 0,
+    )!!;
     fixture.list.clear();
     assert(@catch(fixture.ui.draw(&fixture.list)) == c3d::CAPACITY_EXCEEDED);
 

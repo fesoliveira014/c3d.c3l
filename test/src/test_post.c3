@@ -75,11 +75,14 @@ fn void test_grade_gpu_packs_settings_and_camera_exposure() @test {
     assert(packed.balance.x == balance.x && packed.balance.y == balance.y && packed.balance.z == balance.z);
     assert(packed.lift.x == 0.1f && packed.lift.y == 0.2f && packed.lift.z == 0.3f);
     assert(packed.lut_texture == (gpu::TextureIndex)7 && packed.lut_sampler == (gpu::SamplerIndex)3);
-    assert(packed.lut_scale == post::lut_scale(32) && packed.lut_offset == post::lut_offset(32));
+    float scale = post::lut_scale(32);
+    float offset = post::lut_offset(32);
+    assert(packed.lut_scale.equals((Vec4f){ scale, scale, scale, 0 }));
+    assert(packed.lut_offset.equals((Vec4f){ offset, offset, offset, 0 }));
 
     post::write_grade_gpu(&packed, &params, 1.0f);
     assert(packed.lut_texture == (gpu::TextureIndex)0 && packed.lut_sampler == (gpu::SamplerIndex)0);
-    assert(packed.lut_scale == 0 && packed.lut_offset == 0);
+    assert(packed.lut_scale.equals((Vec4f){}) && packed.lut_offset.equals((Vec4f){}));
 }
 
 fn void test_default_post_stack_disables_every_effect() @test {
