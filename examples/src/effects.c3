@@ -44,9 +44,9 @@ const float EXPOSURE_MIN @local = 0.05f;
 const float EXPOSURE_MAX @local = 8;
 const uint LUT_SIZE @local = 32;
 const Vec2 CONTROLS_PANEL_POSITION @local = { 16, 16 };
-const Vec2 CONTROLS_PANEL_SIZE @local = { 360, 130 };
-const Vec2 POST_PANEL_POSITION @local = { 16, 162 };
-const Vec2 POST_PANEL_SIZE @local = { 360, 540 };
+const Vec2 CONTROLS_PANEL_SIZE @local = { 360, 156 };
+const Vec2 POST_PANEL_POSITION @local = { 16, 188 };
+const Vec2 POST_PANEL_SIZE @local = { 360, 520 };
 const Vec2 STATS_PANEL_POSITION @local = { 900, 16 };
 const Vec2 STATS_PANEL_SIZE @local = { 360, 660 };
 
@@ -55,6 +55,13 @@ struct Orbit @local {
     float distance;
     float yaw;
     float pitch;
+}
+
+struct Options @local {
+    bool gpu_timings;
+    bool auto_focus;
+    bool focus_fixed;
+    Vec2 focus_point;
 }
 
 fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
@@ -82,6 +89,19 @@ fn void place_camera(Orbit* orbit, Node* camera_node) @local {
     };
     camera_node.local.position = orbit.target + offset * orbit.distance;
     camera_node.local.rotation = maths::look_rotation(-offset, { 0, 1, 0 });
+}
+
+fn Vec2 cursor_focus_point(platform::Window* window) @local {
+    Vec2 position = window.input.mouse_position / (Vec2){ (float)window.width, (float)window.height };
+    return { math::clamp(position.x, 0.0f, 1.0f), math::clamp(position.y, 0.0f, 1.0f) };
+}
+
+fn Vec2? parse_focus_point(String horizontal, String vertical) @local {
+    float x = (float)horizontal.to_float()!;
+    float y = (float)vertical.to_float()!;
+    if (!(x >= 0 && x <= 1 && y >= 0 && y <= 1)) return c3d::INVALID_ARGUMENT~;
+
+    return { x, y };
 }
 
 fn void? draw_gui_frame(
@@ -113,6 +133,7 @@ fn void? run_gui(
     Node* cube,
     Node* camera_node,
     TextureId lut,
+    Options* options,
 ) @local {
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
@@ -123,6 +144,8 @@ fn void? run_gui(
     view_desc.post.depth_of_field = true;
     view_desc.post.dof_params.focus_distance = FOCUS_DISTANCE;
     view_desc.post.dof_params.aperture = APERTURE;
+    view_desc.post.dof_params.focus_mode = options.auto_focus ? FocusMode.AUTO : FocusMode.MANUAL;
+    if (options.focus_fixed) view_desc.post.dof_params.focus_point = options.focus_point;
     view_desc.post.motion_blur = true;
     render::configure_view(renderer, renderer.default_view, view_desc)!;
     Quat roll = quaternion::from_axis_angle{float}({ 0, 0, 1 }, math::deg_to_rad(CUBE_ROLL_DEGREES));
@@ -131,6 +154,7 @@ fn void? run_gui(
     bool spin = true;
     bool sweep;
     bool orthographic;
+    bool focus_follows_cursor = !options.focus_fixed;
     bool escape_captured;
 
     while (window.poll()) {
@@ -171,12 +195,29 @@ fn void? run_gui(
                 format: "%.2f",
                 flags:  imgui::SLIDER_FLAGS_ALWAYS_CLAMP,
             );
+            imgui::checkbox("Focus follows cursor", &focus_follows_cursor);
+            imgui::text("F toggles auto focus");
         }
         imgui::end();
 
+        DofParams* dof = &view_desc.post.dof_params;
+        bool focus_changed;
+        if (input.key_pressed(platform::Scancode.F) && !input.keyboard_captured_by_gui) {
+            dof.focus_mode = dof.focus_mode == FocusMode.AUTO ? FocusMode.MANUAL : FocusMode.AUTO;
+            focus_changed = true;
+        }
+
+        bool follows = focus_follows_cursor && dof.focus_mode == FocusMode.AUTO && !input.mouse_captured_by_gui;
+        Vec2 cursor = cursor_focus_point(window);
+        if (follows && cursor != dof.focus_point) {
+            dof.focus_point = cursor;
+            focus_changed = true;
+        }
+
+        ViewStats stats = renderer.view_stats(renderer.default_view)!;
         imgui::set_next_window_pos(POST_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(POST_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
-        bool changed = gui::post_panel(&view_desc, lut);
+        bool changed = gui::post_panel(&view_desc, lut, &stats) || focus_changed;
 
         imgui::set_next_window_pos(STATS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
@@ -209,12 +250,25 @@ fn void? run_gui(
 }
 
 fn int main(String[] args) {
-    bool gpu_timings;
+    Options options;
 
-    foreach (argument : args[1..]) {
-        if (argument == "--gpu-timings") {
+    for (usz index = 1; index < args.len; index++) {
+        String argument = args[index];
+        if (argument == "--auto-focus") {
+            options.auto_focus = true;
+        } else if (argument == "--focus-point" && index + 2 < args.len) {
+            Vec2? point = parse_focus_point(args[index + 1], args[index + 2]);
+            if (catch excuse = point) {
+                io::printfn("Bad --focus-point: %s", excuse);
+                return 1;
+            }
+
+            options.focus_point = point;
+            options.focus_fixed = true;
+            index += 2;
+        } else if (argument == "--gpu-timings") {
             $if $feat(C3D_PROFILE_GPU):
-                gpu_timings = true;
+                options.gpu_timings = true;
             $else
                 io::eprintfn("--gpu-timings needs GPU profiling: c3c build <target> --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL");
                 return 1;
@@ -236,7 +290,7 @@ fn int main(String[] args) {
         allocator: mem,
         window:    &window,
         assets:    &assets,
-        desc:      { .gpu_timings = gpu_timings, .validation = true, .application_name = "c3d_effects" },
+        desc:      { .gpu_timings = options.gpu_timings, .validation = true, .application_name = "c3d_effects" },
     )!!;
     defer render::destroy_renderer(&renderer);
 
@@ -323,6 +377,7 @@ fn int main(String[] args) {
         cube: cube,
         camera_node: camera_node,
         lut: lut,
+        options: &options,
     )) {
         io::printfn("GUI failed: %s", excuse);
         return 1;
