@@ -49,12 +49,18 @@ enum TransparencyMode : char {
 }
 
 <*
+ Most shadow rays a view casts per pixel toward a light with a source extent.
+*>
+const uint MAX_SHADOW_SAMPLES = 16; // four bits of FrameRoot.flags; each sample is a traced query
+
+<*
  Ray-query effects of a view; zero disables all.
 *>
 struct RayTracingDesc {
     bool  shadows;
     bool  reflections;
     float max_reflection_roughness;
+    uint  shadow_samples; // up to MAX_SHADOW_SAMPLES; zero reads as 1
 }
 
 <*
@@ -986,6 +992,7 @@ fn void? reset_view_history(Renderer* renderer, ViewId view) {
 fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
     if (!math::is_finite(desc.lod_bias)) return c3d::INVALID_ARGUMENT~;
     if (desc.transmission_layers > MAX_TRANSMISSION_LAYERS) return c3d::INVALID_ARGUMENT~;
+    if (desc.ray_tracing.shadow_samples > MAX_SHADOW_SAMPLES) return c3d::INVALID_ARGUMENT~;
     if (!clip_plane_valid(desc.clip_plane)) return c3d::INVALID_ARGUMENT~;
     if (!post::pre_exposure_override_valid(desc.pre_exposure_override)) return c3d::INVALID_ARGUMENT~;
     if (!ambient_occlusion_desc_valid(&desc.ambient_occlusion)) return c3d::INVALID_ARGUMENT~;

@@ -779,6 +779,7 @@ fn void? record_raster_view(
                 pre_exposure: pre_exposure,
                 pre_exposure_ratio: record.pre_exposure.ratio,
                 cloud_shadow: cloud_pass.shadow,
+                shadow_samples: math::max(record.desc.ray_tracing.shadow_samples, 1u),
             );
             if (record.desc.lights == LightSelection.CLUSTERED) {
                 record_clusters(
@@ -1548,6 +1549,8 @@ fn bool velocity_before_lighting(ViewDesc* desc) @private {
  @param pre_exposure : "Scale of the radiance uploaded for this root; 1 is physical."
  @param pre_exposure_ratio : "Factor over the previous rendering's; 1 without history."
  @param cloud_shadow : "Root of the cloud layer's shadow map; zero when the view has none."
+ @param shadow_samples : "Rays a pixel casts toward a light with a source extent."
+ @require shadow_samples >= 1 && shadow_samples <= MAX_SHADOW_SAMPLES
 *>
 fn void write_frame_root(
     FrameRoot* root,
@@ -1589,6 +1592,7 @@ fn void write_frame_root(
     float pre_exposure = 1,
     float pre_exposure_ratio = 1,
     gpu::GpuAddress cloud_shadow = (gpu::GpuAddress)0,
+    uint shadow_samples = 1,
 ) {
     *root = {
         .view            = bitcast(matrices.view, Mat4f),
@@ -1615,7 +1619,8 @@ fn void write_frame_root(
           | (ao_texture != (gpu::TextureIndex)0 ? shader::FRAME_AO_PRESENT : 0)
           | (ssgi_texture != (gpu::TextureIndex)0 ? shader::FRAME_SSGI_PRESENT : 0)
           | (clip_plane.normal != (Vec3){} ? shader::FRAME_CLIP_PLANE : 0)
-          | (reflection_texture != (gpu::TextureIndex)0 ? shader::FRAME_REFLECTIONS_PRESENT : 0),
+          | (reflection_texture != (gpu::TextureIndex)0 ? shader::FRAME_REFLECTIONS_PRESENT : 0)
+          | ((shadow_samples - 1) << shader::FRAME_SHADOW_SAMPLES_SHIFT),
         .mip_bias        = mip_bias,
         .ao_texture      = ao_texture,
         .probe_volumes   = probe_volumes,
