@@ -61,6 +61,7 @@ fn String? expand_template(
     for (uint index = first; index < first + count; index++) {
         append_segment(ui, document, &document.segments[index], scope)!;
     }
+
     String text = (String)ui.text[start : ui.text_used - start];
     if (!valid_utf8(text)) return c3d::INVALID_ARGUMENT~;
     return text;
