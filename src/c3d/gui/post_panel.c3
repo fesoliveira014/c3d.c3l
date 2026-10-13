@@ -126,8 +126,8 @@ fn bool post_panel(ViewDesc* desc, TextureId lut, ViewStats* stats = null) {
             changed = true;
         }
 
-        changed |= edit_grade_factor("Focus radius (px)", &dof.focus_radius, 0, FOCUS_RADIUS_MAX);
-        changed |= edit_grade_factor("Focus time (s)", &dof.focus_time, 0, ADAPTATION_TIME_MAX);
+        changed |= edit_grade_factor("Radius (px)", &dof.focus_radius, 0, FOCUS_RADIUS_MAX);
+        changed |= edit_grade_factor("Time (s)", &dof.focus_time, 0, ADAPTATION_TIME_MAX);
         if (stats && stats.focus_distance > 0) imgui::text("Focus %.2f m", stats.focus_distance);
     }
     if (imgui::collapsing_header("Motion blur", {})) {
