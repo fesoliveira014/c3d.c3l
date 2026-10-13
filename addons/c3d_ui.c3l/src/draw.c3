@@ -96,6 +96,7 @@ fn void? draw_instance(
         rect.uv_rect = instance.element.uv;
         if (rect.fill.w == 0) rect.fill = { 1, 1, 1, 1 };
     }
+
     rect.fill = faded(rect.fill, instance.alpha);
     rect.border_color = faded(rect.border_color, instance.alpha);
     if (rect_visible(&rect)) list.add_rect(rect)!;

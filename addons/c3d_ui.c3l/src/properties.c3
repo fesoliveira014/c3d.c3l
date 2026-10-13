@@ -519,6 +519,7 @@ fn UiTransitionConfig? read_transition(UiLoad* load, Object* value) @private {
             default:
                 return fail_load(load, UNKNOWN_PROPERTY)~;
         }
+
         pop_token(load);
     }
 
