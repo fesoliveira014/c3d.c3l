@@ -726,6 +726,38 @@ root OverlayRoot {
     vec2       translate;
 }
 
+// Fragment root of a backdrop item. It starts with the OverlayRoot fields, so the vertex stage reads it as one.
+root OverlayBackdropRoot {
+    GpuAddress   items;
+    GpuAddress   transforms;
+    vec2         scale;
+    vec2         translate;
+    TextureIndex backdrop_texture; // the blurred image under the item
+    uint         backdrop_x;       // output pixel of the image's first texel
+    uint         backdrop_y;
+    uint         backdrop_width;   // texels the image holds; reads clamp to them
+    uint         backdrop_height;
+    uint         _pad0;
+    uint         _pad1;
+    uint         _pad2;
+}
+
+// One separable blur pass over a rectangle of the backdrop box. Taps clamp to the box.
+root OverlayBlurRoot {
+    TextureIndex input_texture;
+    TextureIndex output_texture;
+    uint         region_x;      // first texel written, in box texels
+    uint         region_y;
+    uint         region_width;
+    uint         region_height;
+    uint         box_width;
+    uint         box_height;
+    uint         source_x;      // texel of the input that box texel zero reads
+    uint         source_y;
+    uint         vertical;      // zero blurs along x, one along y
+    uint         radius;        // taps on each side of the centre
+}
+
 struct DebugVertexGpu {
     float x;
     float y;

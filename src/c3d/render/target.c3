@@ -337,13 +337,14 @@ fn Target? allocate_storage_target(
     gpu::Format format,
     ZString debug_name,
     uint depth = 0,
+    gpu::TextureUsage usage = { .sampled, .storage },
 ) @private {
     gpu::TextureDesc texture_desc = {
         .width      = width,
         .height     = height,
         .depth      = depth,
         .format     = format,
-        .usage      = { .sampled, .storage },
+        .usage      = usage,
         .access     = { .graphics },
         .debug_name = debug_name,
     };

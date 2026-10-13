@@ -4,6 +4,9 @@
 #include "descriptor_heap.glsl"
 #include "grade.glsl"
 #include "overlay_glyph.glsl"
+#ifdef BACKDROP
+#include "texture_fetch.glsl"
+#endif
 
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer OverlayItems {
     OverlayItemGpu values[];
@@ -212,7 +215,11 @@ vec4 overlay_glyph_color(OverlayItemGpu item, vec2 position) {
 }
 
 void main() {
+#ifdef BACKDROP
+    OverlayBackdropRoot root = OverlayBackdropRoot(pc.fragment_root_gpu);
+#else
     OverlayRoot root = OverlayRoot(pc.fragment_root_gpu);
+#endif
     OverlayItemGpu item = OverlayItems(root.items).values[v_item];
     uint kind = (item.sampler_kind_flags >> OVERLAY_KIND_SHIFT) & OVERLAY_KIND_MASK;
 
@@ -345,6 +352,14 @@ void main() {
         vec4 border = unpackUnorm4x8(item.border_color);
         color = mix(color, vec4(srgb_to_linear(border.rgb), border.a), in_border);
     }
+
+#ifdef BACKDROP
+    // The blurred image replaces what is under the shape; the item's own color goes over it.
+    ivec2 behind_extent = ivec2(root.backdrop_width, root.backdrop_height);
+    ivec2 behind_texel = ivec2(gl_FragCoord.xy) - ivec2(root.backdrop_x, root.backdrop_y);
+    vec4 behind = fetch_texture_2d(root.backdrop_texture, clamp(behind_texel, ivec2(0), behind_extent - 1));
+    color = vec4(mix(behind.rgb, color.rgb, color.a), color.a + behind.a * (1.0 - color.a));
+#endif
 
 #ifdef TRANSFORMED
     out_color = vec4(color.rgb, color.a * coverage * clip_coverage);

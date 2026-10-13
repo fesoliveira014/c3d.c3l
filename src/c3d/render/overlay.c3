@@ -32,19 +32,7 @@ fn OverlayContext? Renderer.begin_overlay(&self) {
     record_previews(self)!;
     self.window_target.transition(&self.commands, COLOR_ATTACHMENT_STATE)!;
 
-    gpu::ColorTargetDesc[1] colors = {{
-        .view = self.window_target.attachment,
-        .load_op = gpu::LoadOp.LOAD,
-        .store_op = gpu::StoreOp.STORE,
-    }};
-
-    gpu::RenderPassDesc pass = {
-        .colors = colors[..],
-        .width = self.window_target.width,
-        .height = self.window_target.height,
-    };
-
-    gpu::cmd_begin_render_pass(&self.commands, &pass)!;
+    begin_overlay_pass(self, &self.window_target)!;
     self.overlay_open = true;
     self.work_recorded = true;
 
@@ -71,19 +59,7 @@ fn OverlayContext? Renderer.begin_overlay_target(&self, RenderTargetId target) {
     Target* image = &self.targets.try_get(target)!.target;
     image.transition(&self.commands, COLOR_ATTACHMENT_STATE)!;
 
-    gpu::ColorTargetDesc[1] colors = {{
-        .view = image.attachment,
-        .load_op = gpu::LoadOp.LOAD,
-        .store_op = gpu::StoreOp.STORE,
-    }};
-
-    gpu::RenderPassDesc pass = {
-        .colors = colors[..],
-        .width = image.width,
-        .height = image.height,
-    };
-
-    gpu::cmd_begin_render_pass(&self.commands, &pass)!;
+    begin_overlay_pass(self, image)!;
     self.overlay_open = true;
     self.work_recorded = true;
 
@@ -149,6 +125,9 @@ fn gpu::MappedGpuSpan? OverlayContext.alloc(&self, usz bytes, usz alignment = 16
 *>
 fn void? Renderer.prepare_overlay_list(&self, OverlayList* list, RenderTargetId target = {}) {
     check_overlay_refs(self.assets, &self.targets, list, target)!;
+    bool window = c3d::same_id(target, (RenderTargetId){});
+    if (window && list.backdrop_count && !self.swapchain_info.usage.transfer_src) return c3d::UNSUPPORTED~;
+
     defer catch abort_frame(self);
 
     foreach (index, &entry : list.entries[:list.item_count]) {
@@ -185,6 +164,7 @@ fn void? Renderer.prepare_overlay_list(&self, OverlayList* list, RenderTargetId 
     }
 
     list.prepared.run_count = 0;
+    list.prepared.backdrop_count = 0;
     list.prepared.transformed = false;
     if (list.item_count) {
         Target* output = overlay_output(self, target);
@@ -208,6 +188,7 @@ fn void? Renderer.prepare_overlay_list(&self, OverlayList* list, RenderTargetId 
             mem::copy(table.bytes.ptr, list.transforms.ptr, (sz)table_bytes);
             list.prepared.transforms = table.address;
         }
+        if (list.prepared.backdrop_count) prepare_overlay_backdrop(self, output, window)!;
     }
     list.prepared.target = target;
     list.prepared.frame = self.frame_index + 1;
@@ -215,6 +196,7 @@ fn void? Renderer.prepare_overlay_list(&self, OverlayList* list, RenderTargetId 
 
 <*
  Record a prepared list over the overlay's output.
+ A backdrop item ends and reopens the overlay pass.
  @param [&inout] self : "Active overlay of the renderer that prepared the list."
  @param [&in] list : "Prepared this frame for this output and unchanged since."
  @return? c3d::SHADER_NOT_FOUND, PIPELINE_REJECTED, gpu::SHADER_INVALID, gpu::PIPELINE_CREATE_FAILED
@@ -239,6 +221,11 @@ fn void? OverlayContext.draw_list(&self, OverlayList* list) {
         .polygon       = gpu::PolygonMode.FILL,
     };
     gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, key)!;
+    gpu::PipelineHandle backdrop_pipeline;
+    if (list.prepared.backdrop_count) {
+        key.fragment.flags |= shader::SHADER_FLAG_BACKDROP;
+        backdrop_pipeline = renderer.pipelines.get(&renderer.device, key)!;
+    }
 
     gpu::ColorTargetState[1] colors = { gpu::color_blend_disabled() };
     colors[0].blend = {
@@ -265,14 +252,36 @@ fn void? OverlayContext.draw_list(&self, OverlayList* list) {
         gpu::cmd_bind_pipeline(self.commands, pipeline)!;
         gpu::cmd_set_graphics_state(self.commands, &state)!;
 
-        foreach (&run : list.runs[:list.prepared.run_count]) {
-            gpu::MappedGpuSpan root = self.alloc(OverlayRoot::size)!;
+        uint next_backdrop;
+        bool plain_bound = true;
+        foreach (run_index, &run : list.runs[:list.prepared.run_count]) {
+            bool backdrop = next_backdrop < list.prepared.backdrop_count
+                && list.backdrops[next_backdrop].run == run_index;
+            if (!backdrop && !plain_bound) {
+                gpu::cmd_bind_pipeline(self.commands, pipeline)!;
+                gpu::cmd_set_graphics_state(self.commands, &state)!;
+                plain_bound = true;
+            }
+
+            gpu::MappedGpuSpan root = self.alloc(backdrop ? OverlayBackdropRoot::size : OverlayRoot::size)!;
             *(OverlayRoot*)root.bytes.ptr = {
                 .items      = (gpu::GpuAddress)((ulong)list.prepared.items + run.first * OverlayItemGpu::size),
                 .transforms = list.prepared.transforms,
                 .scale      = scale,
                 .translate  = { -1, 1 },
             };
+
+            if (backdrop) {
+                record_overlay_backdrop(
+                    context:  self,
+                    run:      &list.backdrops[next_backdrop],
+                    root:     (OverlayBackdropRoot*)root.bytes.ptr,
+                    pipeline: backdrop_pipeline,
+                    state:    &state,
+                )!;
+                next_backdrop++;
+                plain_bound = false;
+            }
 
             gpu::cmd_set_scissor(self.commands, &run.scissor);
             gpu::cmd_draw(
@@ -287,6 +296,22 @@ fn void? OverlayContext.draw_list(&self, OverlayList* list) {
     }!;
 }
 
-fn Target* overlay_output(Renderer* renderer, RenderTargetId target) @local {
+fn void? begin_overlay_pass(Renderer* renderer, Target* output) @private {
+    gpu::ColorTargetDesc[1] colors = {{
+        .view = output.attachment,
+        .load_op = gpu::LoadOp.LOAD,
+        .store_op = gpu::StoreOp.STORE,
+    }};
+
+    gpu::RenderPassDesc pass = {
+        .colors = colors[..],
+        .width = output.width,
+        .height = output.height,
+    };
+
+    return gpu::cmd_begin_render_pass(&renderer.commands, &pass);
+}
+
+fn Target* overlay_output(Renderer* renderer, RenderTargetId target) @private {
     return c3d::same_id(target, (RenderTargetId){}) ? &renderer.window_target : &renderer.targets.get(target).target;
 }
