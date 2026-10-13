@@ -22,6 +22,8 @@ struct PostPipelines {
     gpu::PipelineHandle taa_resolve;
     gpu::PipelineHandle exposure_histogram;
     gpu::PipelineHandle exposure_adapt;
+    gpu::PipelineHandle focus_histogram;
+    gpu::PipelineHandle focus_adapt;
 }
 
 struct LutBinding @private {
@@ -170,11 +172,11 @@ fn PipelineKey fxaa_fragment_pipeline_key(gpu::Format output_format) @private {
  @param [&inout] pipelines : "Cleared."
 *>
 fn void destroy_post_pipelines(gpu::Device* device, PostPipelines* pipelines) {
-    gpu::PipelineHandle*[13] handles = {
+    gpu::PipelineHandle*[15] handles = {
         &pipelines.grade, &pipelines.fxaa, &pipelines.bloom_downsample, &pipelines.bloom_upsample,
         &pipelines.tile_max, &pipelines.tile_neighbor, &pipelines.dof_coc, &pipelines.dof_gather,
         &pipelines.dof_composite, &pipelines.motion_blur, &pipelines.taa_resolve, &pipelines.exposure_histogram,
-        &pipelines.exposure_adapt,
+        &pipelines.exposure_adapt, &pipelines.focus_histogram, &pipelines.focus_adapt,
     };
     foreach (handle : handles) {
         if (handle.is_valid()) (void)gpu::destroy_pipeline(device, *handle);

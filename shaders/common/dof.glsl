@@ -12,9 +12,21 @@ float dof_linear_depth(float depth, DofRoot root) {
     return denominator > 0.0 ? root.proj_23 / denominator : DOF_BACKGROUND_DEPTH;
 }
 
+struct DofFocus {
+    float distance;
+    float aperture_scale;
+};
+
+// The root's manual focus, or the adapted focus its address names.
+DofFocus dof_focus(DofRoot root) {
+    if (root.focus == 0ul) return DofFocus(root.focus_distance, root.aperture_scale);
+
+    return DofFocus(FocusGpu(root.focus).distance, FocusGpu(root.focus).aperture_scale);
+}
+
 // Signed circle-of-confusion radius in half-resolution pixels: negative in front of focus.
-float dof_signed_coc(float view_depth, DofRoot root) {
-    float coc = root.aperture_scale * (view_depth - root.focus_distance) / view_depth;
+float dof_signed_coc(float view_depth, DofFocus focus, DofRoot root) {
+    float coc = focus.aperture_scale * (view_depth - focus.distance) / view_depth;
     return clamp(coc, -root.max_coc, root.max_coc);
 }
 

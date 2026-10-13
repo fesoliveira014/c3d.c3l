@@ -99,7 +99,8 @@ The view owns its working images (`hdr_color`, `depth`, the scene color and dept
 effect images) at the working extent `working_extent(viewport, output, render_scale)`, at least one pixel
 per dimension. Reconfiguring with a different extent or output waits for outstanding frames and
 reallocates them; every configuration resets the view's history except its
-[adapted exposure](post.md#auto-exposure), which a resize or parameter edit keeps. The history is otherwise keyed
+[adapted exposure](post.md#auto-exposure) and [adapted focus](post.md#auto-focus), which a resize or parameter edit
+keeps. The history is otherwise keyed
 by scene identity and needs no reset when a scene is replaced (`reset_view_history` remains the camera cut).
 Window resize resizes every window view; target resize resizes every view on that target. A headless renderer's window views
 hold no images and record nothing. `configure_view` and both resizes allocate the new images before they release the old
@@ -720,8 +721,9 @@ like `STANDARD` on a deferred view, one without stays forward; see
 Per-view numbers live on the view: `Renderer.view_stats(view)` returns `ViewStats` with the view's live working images
 at frame start (`images`), its selected and dropped light and decal counts, whether it bound another view's shadow set
 (`shadow_set_shared`, the table's "Shadow set" row), its cluster count and light/decal overflow counts, its completed GPU pass
-timings (`C3D_PROFILE_GPU`), its applied exposure (`exposure`, delayed under auto exposure) and the radiance scale of its
-last rendering (`pre_exposure`, 1 is physical), while `Stats` keeps
+timings (`C3D_PROFILE_GPU`), its applied exposure (`exposure`, delayed under auto exposure), the radiance scale of its
+last rendering (`pre_exposure`, 1 is physical) and its depth-of-field focus in meters (`focus_distance`, delayed under
+[auto focus](post.md#auto-focus)), while `Stats` keeps
 renderer-wide selection sums and the last completed cluster result described above.
 `gui::view_stats_table(renderer, views, labels)` prints several views side by side.
 

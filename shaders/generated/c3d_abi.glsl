@@ -198,6 +198,8 @@ const float EXPOSURE_LOG2_MAX = 14.0;
 const float EXPOSURE_LUMINANCE_EPSILON = 0.000000059604645;
 const uint EXPOSURE_METER_STRIDE = 1u;
 const uint EXPOSURE_GROUP_SIZE = 16u;
+const uint FOCUS_HISTOGRAM_BINS = 256u;
+const uint FOCUS_GROUP_SIZE = 16u;
 const uint POST_TILE_SIZE = 16u;
 const uint TILE_MODE_ALPHA = 0u;
 const uint TILE_MODE_VELOCITY = 1u;
@@ -1443,6 +1445,46 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer ExposureAdap
     uint _pad0;
 };
 
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer FocusGpu {
+    float distance;
+    float aperture_scale;
+    uint samples;
+    uint _pad0;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer FocusHistogramGpu {
+    uint bins[256];
+    uint fractions[256];
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer FocusMeterRoot {
+    uint64_t histogram;
+    uint depth_texture;
+    uint width;
+    uint height;
+    uint center_x;
+    uint center_y;
+    float radius;
+    uint origin_x;
+    uint origin_y;
+    uint orthographic;
+    float proj_22;
+    float proj_23;
+    uint _pad0;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer FocusAdaptRoot {
+    uint64_t histogram;
+    uint64_t previous;
+    uint64_t current;
+    float elapsed;
+    uint snap;
+    float focus_time;
+    float fallback_distance;
+    float focal_length;
+    float lens_scale;
+};
+
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer TileRoot {
     uint input_texture;
     uint output_texture;
@@ -1475,6 +1517,7 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer DofRoot {
     uint _pad0;
     vec2 half_texel;
     vec2 full_texel;
+    uint64_t focus;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer VelocityRoot {

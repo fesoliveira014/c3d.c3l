@@ -185,8 +185,9 @@ at any absolute radiance. In manual mode `threshold` is in scene units. `Camera.
 
 ## Depth of field
 
-`PostStack.depth_of_field` with `DofParams { focus_distance; focal_length; aperture; max_coc; }`
-(meters, meters, f-number, half-resolution pixel radius) blurs the scene image around the focus
+`PostStack.depth_of_field` with `DofParams { focus_distance; focal_length; aperture; max_coc; focus_mode;
+focus_point; focus_radius; focus_time; }` (meters, meters, f-number, half-resolution pixel radius; the focus
+fields are under [Auto focus](#auto-focus)) blurs the scene image around the focus
 distance before bloom and grading. The circle of confusion is the thin-lens formula on a 35 mm
 frame: `dof_aperture_scale` turns the lens settings into a pixel radius per unit of
 `(depth - focus) / depth`, and `dof_coc` clamps the signed result to `max_coc`; negative is in
@@ -204,7 +205,42 @@ circle, the near layer uses the dilated radius so it spreads over sharp backgrou
 Six dispatches are counted and timed under `POST_CHAIN`. Enabling allocates four half-resolution
 RGBA16_FLOAT layers plus the two RG16_FLOAT tile images; disabling retires them.
 `configure_view` faults `INVALID_ARGUMENT` when depth of field is on with a non-positive focal
-length, aperture or `max_coc`, or a focus distance not beyond the focal length.
+length, aperture or `max_coc`, or a focus distance not beyond the focal length, or, in either focus mode, a
+`focus_point` outside `[0, 1]` on an axis or a `focus_radius` or `focus_time` that is negative or not finite.
+
+### Auto focus
+
+`focus_mode` is `MANUAL` by default: the focus is `focus_distance` and nothing below applies. `AUTO` meters the
+focus from the view's own depth; `focus_distance` then only supplies the focus while nothing has been metered.
+`default_post_stack()` sets `focus_point` to the center, `focus_radius` to 16 and `focus_time` to 0.25.
+
+- Region: `focus_point` is normalized to the view's image with its origin at the top left, like a mouse position.
+  The region is every texel whose center lies within `focus_radius` pixels of the center of the texel under the point,
+  clipped to the image. A `focus_radius` of 0 reads that one texel.
+- Metering: `finish_view` reads the view's depth over the region, linearized as above. A texel without geometry (depth
+  0) and a distance of 2^14 m or more are not counted. The rest go into a 256-bin histogram of log2 distance from
+  2^-6 m to 2^14 m, about 5.6 % per bin, with nearer distances in the first bin. The target is the median, the sample
+  of rank n / 2, placed at the mean position of the samples in its bin: a flat target meters its own distance and a
+  thin foreground edge does not take the focus. The target is at least twice `focal_length`, unit magnification.
+- Adaptation: exponential in distance, on a log axis, from the view's own clock, `FrameInfo.time` minus the time of its
+  last committed rendering. `focus_time` is the time constant: the remaining log distance to the target falls to
+  1/e every `focus_time` seconds, whatever the frame rate, and never passes the target. A `focus_time` of 0 snaps to
+  the target with no adaptation. A rendering at the same time as the previous one holds the focus. Pass a finite
+  `FrameInfo.time`: with the default 0 every rendering snaps to its own target.
+- No target: a region with nothing counted, because it is all sky, background or farther than the histogram reaches,
+  holds the previous focus. When there is none, on the first rendering and after a cut, the focus is `focus_distance`.
+  The first rendering that meters anything snaps to its target.
+- History: per view, so two views of one camera adapt independently. `reset_view_history`, a scene change and
+  turning `AUTO` on (through `configure_view`, enabling depth of field, or hiding a TAA debug image) restart it.
+  Parameter edits and resizes keep it, so `focus_point` can move every frame and the focus follows over `focus_time`.
+  An aborted frame changes nothing; a skipped view folds the elapsed time into its next step.
+- Cost: `AUTO` allocates a 2,080-byte GPU allocation and a 32-byte readback per view at its first automatic rendering
+  and records two dispatches, counted in `Stats.post_dispatches` and timed under `POST_CHAIN`. `MANUAL` records and
+  binds nothing extra.
+- `Renderer.view_stats(view).focus_distance` is the focus in meters: under `AUTO` the adapted value, `FRAMES_IN_FLIGHT`
+  frames old and zero until the first readback, and under `MANUAL` the `focus_distance` of the last rendering.
+- World-point targets are application policy, not a mode. The application computes the distance along the view axis
+  to the point it wants sharp and sets a `MANUAL` `focus_distance`.
 
 ## Motion blur
 
@@ -348,14 +384,17 @@ per-case delta). In the post example's light scene the pass reads 0.029 ms at 19
 
 ## GUI
 
-`gui::post_panel(&view_desc, lut, &stats)` edits every setting, auto exposure included, and, given the view's
-`ViewStats`, shows its exposure in stops, `FRAMES_IN_FLIGHT` frames old under auto exposure. It returns whether something changed; the
+`gui::post_panel(&view_desc, lut, &stats)` edits every setting, auto exposure and auto focus included, and, given the
+view's `ViewStats`, shows its exposure in stops, `FRAMES_IN_FLIGHT` frames old under auto exposure, and its focus
+distance. It returns whether something changed; the
 example calls `configure_view` before its next frame when it did. The post example's key `L` (and the "Lights at
 1/16" box) scales the sun, the ambient term, the lamp's emission and the textured material by 1/16, a four-stop
 step that auto exposure undoes. The ray-traced controls are enabled on
 every renderer, since traced effects run without ray queries too; reflections stay disabled on a
 `PATH_TRACED` view. `gui::anti_aliasing_combo`
-selects one view's filter on its own. `gui::stats_panel` reports post
+selects one view's filter on its own. The effects example's key `F` toggles auto focus, and while it is on, "Focus
+follows cursor" moves `focus_point` under the mouse; `--auto-focus` starts with it on and `--focus-point x y`
+fixes the point in `[0, 1]`. `gui::stats_panel` reports post
 dispatches and the completed velocity and post-chain timings.
 
 ## Limits
@@ -363,6 +402,7 @@ dispatches and the completed velocity and post-chain timings.
 Pass timings describe the last recorded view of the frame; counters accumulate across views.
 Auto exposure has one metering method (a whole-image percentile histogram), no local exposure, and meters the
 image before TAA, motion blur, depth of field and application dispatches.
+Auto focus has one region and one statistic, the median depth; targets in the world are set through `MANUAL`.
 
 Bloom records only when its intensity is positive or a bloom preview waits for the view; a bloom preview
 requested after its view finished stays pending until a frame records the chain. Opaque, sky and

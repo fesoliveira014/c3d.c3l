@@ -190,7 +190,8 @@ python3 scripts/build.py --example post
 
 `effects` adds the [post-processing effects](docs/post.md) to the same kind of scene: an
 emissive lamp under bloom, a row of marbles for focus pulling, a fast-spinning cube and a camera
-sweep. Effects start enabled; the post panel's sections toggle and tune each one:
+sweep. Effects start enabled; the post panel's sections toggle and tune each one, and key `F` switches
+depth of field to [auto focus](docs/post.md#auto-focus) on the point under the cursor:
 
 ```bash
 python3 scripts/build.py --example effects

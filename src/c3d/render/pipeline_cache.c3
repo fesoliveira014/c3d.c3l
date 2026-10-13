@@ -53,6 +53,8 @@ enum ComputeSlot @private {
     TAA,
     EXPOSURE_HISTOGRAM,
     EXPOSURE_ADAPT,
+    FOCUS_HISTOGRAM,
+    FOCUS_ADAPT,
 }
 
 <*
@@ -206,6 +208,10 @@ fn ComputeSlotTarget compute_slot_target(Renderer* renderer, ComputeSlot slot) @
             .shader = EXPOSURE_HISTOGRAM, .debug_name = "post_exposure_histogram" };
         case EXPOSURE_ADAPT: return { .pipeline = &renderer.post_pipelines.exposure_adapt,
             .shader = EXPOSURE_ADAPT, .debug_name = "post_exposure_adapt" };
+        case FOCUS_HISTOGRAM: return { .pipeline = &renderer.post_pipelines.focus_histogram,
+            .shader = FOCUS_HISTOGRAM, .debug_name = "post_focus_histogram" };
+        case FOCUS_ADAPT: return { .pipeline = &renderer.post_pipelines.focus_adapt,
+            .shader = FOCUS_ADAPT, .debug_name = "post_focus_adapt" };
     }
 }
 
