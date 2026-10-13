@@ -56,6 +56,31 @@ const char[4] SKIN_HIGHLIGHT_COLOR @local = { 255, 255, 255, 255 };
 const float SKIN_SLICE_UV @local = 0.25f; // SKIN_FRAME_PIXELS of SKIN_SIZE
 const float SKIN_SLICE_PIXELS @local = 8;
 
+const uint TRANSFORM_LIST_ENTRIES @local = 8; // the placement, the scale and the transformed clip, with room to spare
+const uint TRANSFORM_PANEL_GLYPHS @local = 64;
+const uint TRANSFORM_LINE_GLYPHS @local = 32;
+const Vec2 TRANSFORM_CENTER @local = { 500, 600 };
+const float TRANSFORM_ANGLE @local = -0.18f; // radians; y grows downward, so negative turns counterclockwise
+const float TRANSFORM_ANGLE_SWING @local = 0.12f;
+const float TRANSFORM_ANGLE_SPEED @local = 0.7f;
+const float TRANSFORM_SCALE @local = 1;
+const float TRANSFORM_SCALE_SWING @local = 0.15f;
+const float TRANSFORM_SCALE_SPEED @local = 0.9f;
+const Vec2 TRANSFORM_FRAME_MIN @local = { -130, -64 };
+const Vec2 TRANSFORM_FRAME_MAX @local = { 130, 64 };
+const Vec2 TRANSFORM_CLIP_MIN @local = { -140, -70 };
+const Vec2 TRANSFORM_CLIP_MAX @local = { 100, 70 };
+const Vec2 TRANSFORM_TITLE_ORIGIN @local = { -112, -16 };
+const Vec2 TRANSFORM_CAPTION_ORIGIN @local = { -112, 6 };
+const float TRANSFORM_TITLE_SIZE @local = 24;
+const float TRANSFORM_CAPTION_SIZE @local = 15;
+const Vec2 TRANSFORM_BUTTON_MIN @local = { -112, 20 };
+const Vec2 TRANSFORM_BUTTON_MAX @local = { -12, 48 };
+const Vec2 TRANSFORM_BAR_MIN @local = { 0, 20 };
+const Vec2 TRANSFORM_BAR_MAX @local = { 120, 48 };
+const Vec4 TRANSFORM_TEXT_COLOR @local = { 0.08f, 0.1f, 0.16f, 1 };
+const Vec4 TRANSFORM_BAR_COLOR @local = { 0.25f, 0.75f, 0.45f, 1 };
+
 const uint STRESS_RECT_SIZE @local = 6;
 const uint STRESS_RECT_PITCH @local = 8;
 const float STRESS_RECT_RADIUS @local = 2;
@@ -104,6 +129,7 @@ struct Options @local {
     uint stress_count;
     bool stress_enabled;
     bool target_overlay;
+    bool transform_panel;
     bool benchmark;
     uint rects;
     uint frames;
@@ -121,10 +147,13 @@ struct Demo @local {
     ViewId            portrait_view;
     RenderTargetId    portrait;
     TextureId         skin;
+    AssetStore*       assets;
+    FontId            font;
     OverlayList*      list;
     OverlayList*      target_list;
     bool              with_portrait;
     bool              target_overlay;
+    bool              transform_panel;
     double            prepare_ms;
     uint              overlay_draws;
 }
@@ -223,6 +252,92 @@ fn void? add_portrait(OverlayList* list, RenderTargetId portrait) @local {
     rect.border_widths = { 3, 3, 3, 3 };
     rect.border_color = PANEL_BORDER;
     list.add_rect(rect)!;
+}
+
+fn void? add_text(
+    OverlayList* list,
+    AssetStore* assets,
+    FontId font,
+    String text,
+    Vec2 origin,
+    float size,
+) @local {
+    GlyphPlacement[TRANSFORM_LINE_GLYPHS] placements;
+    usz count = assets.place_text(font, text, placements[..])!;
+    list.add_glyphs({
+        .font        = font,
+        .glyphs      = placements[:count],
+        .origin      = origin,
+        .size_pixels = size,
+        .color       = TRANSFORM_TEXT_COLOR,
+    })!;
+}
+
+fn OverlayTransform placement_transform(Vec2 position, float radians) @local {
+    float cosine = math::cos(radians);
+    float sine = math::sin(radians);
+    return { .x_axis = { cosine, sine }, .y_axis = { -sine, cosine }, .offset = position };
+}
+
+fn OverlayTransform scale_transform(float scale) @local {
+    return { .x_axis = { scale, 0 }, .y_axis = { 0, scale } };
+}
+
+// The frame, text and bar run past the clip's right edge, which cuts them at an angle on screen.
+fn void? add_transform_panel(Demo* demo, float time) @local {
+    OverlayList* list = demo.list;
+    float angle = TRANSFORM_ANGLE + TRANSFORM_ANGLE_SWING * math::sin(time * TRANSFORM_ANGLE_SPEED);
+    float scale = TRANSFORM_SCALE + TRANSFORM_SCALE_SWING * math::sin(time * TRANSFORM_SCALE_SPEED);
+    list.push_transform(placement_transform(TRANSFORM_CENTER, angle))!;
+    list.push_transform(scale_transform(scale))!;
+    list.push_clip(TRANSFORM_CLIP_MIN, TRANSFORM_CLIP_MAX)!;
+
+    OverlayRect frame = solid_rect(
+        min:  TRANSFORM_FRAME_MIN,
+        max:  TRANSFORM_FRAME_MAX,
+        fill: WHITE,
+    );
+    frame.texture = { .kind = ASSET, .asset = demo.skin };
+    frame.slice_uv = { SKIN_SLICE_UV, SKIN_SLICE_UV, SKIN_SLICE_UV, SKIN_SLICE_UV };
+    frame.slice_pixels = { SKIN_SLICE_PIXELS, SKIN_SLICE_PIXELS, SKIN_SLICE_PIXELS, SKIN_SLICE_PIXELS };
+    list.add_rect(frame)!;
+
+    add_text(
+        list:   list,
+        assets: demo.assets,
+        font:   demo.font,
+        text:   "Transformed overlay",
+        origin: TRANSFORM_TITLE_ORIGIN,
+        size:   TRANSFORM_TITLE_SIZE,
+    )!;
+    add_text(
+        list:   list,
+        assets: demo.assets,
+        font:   demo.font,
+        text:   "rotated, scaled and clipped",
+        origin: TRANSFORM_CAPTION_ORIGIN,
+        size:   TRANSFORM_CAPTION_SIZE,
+    )!;
+
+    OverlayRect button = solid_rect(
+        min:    TRANSFORM_BUTTON_MIN,
+        max:    TRANSFORM_BUTTON_MAX,
+        fill:   SAMPLE_FILL,
+        radius: 8,
+    );
+    button.border_widths = { 2, 2, 2, 2 };
+    button.border_color = SAMPLE_BORDER;
+    list.add_rect(button)!;
+    list.add_rect(solid_rect(
+        min:    TRANSFORM_BAR_MIN,
+        max:    TRANSFORM_BAR_MAX,
+        fill:   TRANSFORM_BAR_COLOR,
+        radius: 14,
+    ))!;
+
+    list.pop_clip();
+    list.pop_transform();
+    list.pop_transform();
 }
 
 fn void? fill_target_list(OverlayList* list, float time) @local {
@@ -356,6 +471,7 @@ fn void? fill_scenes(Demo* demo, Options* options, float time) @local {
     add_portrait(list, demo.portrait)!;
     add_scroll_list(list, time)!;
     add_samples(list)!;
+    if (demo.transform_panel) add_transform_panel(demo, time)!;
     if (demo.with_portrait && demo.target_overlay) fill_target_list(demo.target_list, time)!;
 }
 
@@ -419,6 +535,7 @@ fn void? run_interactive(Demo* demo, Options* options) @local {
         if (imgui::begin("Overlay", null, {})) {
             imgui::checkbox("Stress rects", &options.stress_enabled);
             imgui::checkbox("Portrait overlay", &demo.target_overlay);
+            imgui::checkbox("Transformed panel", &demo.transform_panel);
             imgui::text("Items: %u of %u", demo.list.item_count, (uint)demo.list.entries.len);
         }
         imgui::end();
@@ -523,6 +640,8 @@ fn int main(String[] args) {
             }
         } else if (argument == "--target") {
             options.target_overlay = true;
+        } else if (argument == "--transform") {
+            options.transform_panel = true;
         } else if (argument == "--rects" && has_value) {
             options.rects = args[++index].to_uint() ?? 0;
         } else if (argument == "--frames" && has_value) {
@@ -537,7 +656,8 @@ fn int main(String[] args) {
             options.height = size[1];
         } else {
             io::eprintn(
-                "Use overlay [--stress [N]] [--target] [--frames N] [--benchmark --rects N --frames F --size WxH]."
+                "Use overlay [--stress [N]] [--target] [--transform] [--frames N]"
+                " [--benchmark --rects N --frames F --size WxH]."
             );
             return 1;
         }
@@ -587,6 +707,12 @@ fn int main(String[] args) {
         "overlay/skin",
     )!!;
 
+    FontId font = assets.add_font(
+        $embed("../assets/fonts/NotoSans-Regular.ttf"),
+        asset::default_font_desc(),
+        "overlay/font",
+    )!!;
+
     Scene scene = scene::create_scene(mem, scene::default_scene_desc());
     defer scene::destroy_scene(&scene);
     Node* camera_node = scene.add_camera(camera::perspective_deg(50, 0.1f), name: "camera")!!;
@@ -601,7 +727,12 @@ fn int main(String[] args) {
     scene.update_world();
 
     uint capacity = (options.benchmark ? options.rects : options.stress_count) + SCENE_ITEM_RESERVE;
-    OverlayListDesc list_desc = { .max_items = capacity, .max_clips = render::OVERLAY_LIST_DEFAULT_CLIPS };
+    OverlayListDesc list_desc = {
+        .max_items      = capacity,
+        .max_clips      = render::OVERLAY_LIST_DEFAULT_CLIPS,
+        .max_glyphs     = TRANSFORM_PANEL_GLYPHS,
+        .max_transforms = TRANSFORM_LIST_ENTRIES,
+    };
     OverlayList list = render::create_overlay_list(mem, list_desc);
     defer render::destroy_overlay_list(&list);
     OverlayListDesc target_list_desc = {
@@ -632,10 +763,13 @@ fn int main(String[] args) {
         .portrait        = portrait,
         .portrait_view   = portrait_view,
         .skin            = skin,
+        .assets          = &assets,
+        .font            = font,
         .list            = &list,
         .target_list     = &target_list,
         .with_portrait   = !options.benchmark,
         .target_overlay  = options.target_overlay,
+        .transform_panel = options.transform_panel,
     };
     renderer.prepare_scene(&scene)!!;
 
