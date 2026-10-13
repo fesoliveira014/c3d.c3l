@@ -60,7 +60,7 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `instance_culling` | Batch instances are culled per instance on the GPU in this view, its depth prepass and its shadow layers (see [instancing](instancing.md#instance-culling)); on in both constructors |
 | `lights` | `FLAT` or `CLUSTERED` candidate light selection |
 | `clusters` | Editable `ClusterDesc`; ignored by `FLAT` |
-| `ray_tracing` | `RayTracingDesc`: `shadows` and `shadow_samples`, 1 to `MAX_SHADOW_SAMPLES` (16) with zero reading as 1 (see [shadows](shadows.md#soft-shadows)), `reflections` and `max_reflection_roughness`, `reflection_rays`, 1 to `RT_REFLECTION_RAYS_MAX` (4) with zero reading as 1, and `reflection_resolution`, `FULL` or `HALF` (see [reflections](reflections.md)); zero disables all |
+| `ray_tracing` | `RayTracingDesc`: `shadows` and `shadow_samples`, 1 to `MAX_SHADOW_SAMPLES` (16) with zero reading as 1 (see [shadows](shadows.md#soft-shadows)), `reflections` and `max_reflection_roughness`, `reflection_rays`, 1 to `RT_REFLECTION_RAYS_MAX` (4) with zero reading as 1, `reflection_resolution`, `FULL` or `HALF`, and `reflection_history` (see [reflections](reflections.md)); zero disables all |
 | `ambient_occlusion` | `AmbientOcclusionDesc`; zero is off (see [ambient occlusion](ambient_occlusion.md)) |
 | `screen_space_gi` | `ScreenSpaceGiDesc`; zero is off (see [screen-space GI](screen_space_gi.md)) |
 | `path_trace` | `PathTraceDesc`: bounces, samples per frame and sample cap of a `PATH_TRACED` view (see [path tracing](path_tracing.md)) |
@@ -349,7 +349,7 @@ Images a view allocates at creation, by setting:
 | `bloom` | +`bloom_params.levels` (5 by default, 8 at most) |
 | `depth_of_field` | +4, plus the 2 tile images |
 | `motion_blur` | +1, plus the 2 tile images |
-| Velocity, under `TAA`, `motion_blur`, `screen_space_gi` or `ambient_occlusion.temporal` | +1 |
+| Velocity, under `TAA`, `motion_blur`, `screen_space_gi`, `ambient_occlusion.temporal` or `ray_tracing.reflection_history` | +1 |
 | `DEFERRED` G-buffer | +5 |
 | `msaa` above `ONE` | +2 (`msaa_color`, `msaa_depth`), +1 `msaa_velocity` where velocity is used, +1 `msaa_reflection_gbuffer` with `ray_tracing.reflections` on a `FORWARD` view; a `DEFERRED` view also holds its G-buffer at that count and adds +1 `normal_sample_zero` with ambient occlusion, screen-space GI or `ray_tracing.reflections`, +1 `specular_sample_zero` with `ray_tracing.reflections` |
 | `ambient_occlusion` | +2 |
@@ -357,6 +357,7 @@ Images a view allocates at creation, by setting:
 | `screen_space_gi` | +7 |
 | `ray_tracing.reflections` | +2, and +1 on a `FORWARD` view |
 | `ray_tracing.reflection_resolution` `HALF`, with `reflections` | +1 (`reflection_half`) |
+| `ray_tracing.reflection_history`, with `reflections` | +4: two history and two depth images |
 | `volumetric_fog` | +1 |
 | `PATH_TRACED`: accumulation, no sky images | 3 in all |
 
@@ -732,7 +733,7 @@ them. Bytes per working pixel at `N` samples:
 | Image | Bytes per pixel |
 | --- | --- |
 | `msaa_color`, `msaa_depth` | `12 · N` (8 and 4) |
-| `msaa_velocity` | `4 · N` with motion blur alone, `8 · N` with screen-space GI |
+| `msaa_velocity` | `4 · N` with motion blur alone, `8 · N` where velocity carries the previous depth (`TAA`, screen-space GI, temporal ambient occlusion or reflection history) |
 | `msaa_reflection_gbuffer` | `8 · N`, on a forward view |
 | G-buffer, deferred | `28 · N`, in place of the 28 of a single-sample G-buffer |
 | `normal_sample_zero`, `specular_sample_zero` | 8 each, single-sample |

@@ -297,8 +297,8 @@ through the frame ring into `PreviousPoseGpu.positions` and composes it with the
 skin and model, so a stationary node shows its deformation. An unchanged revision keeps the
 ordinary rule. A first observation, another geometry or count, re-enabling after an untracked
 rendering, a reset, a missing previous rendering or an aborted capture writes zero motion and sets
-the rejection channel (`DRAW_VERTEX_HISTORY_INVALID`), so TAA, screen-space GI and temporal
-ambient occlusion drop history for those pixels only; an RG16 velocity image keeps the zero motion. A temporal view faults
+the rejection channel (`DRAW_VERTEX_HISTORY_INVALID`), so TAA, screen-space GI, temporal
+ambient occlusion and the reflection history drop history for those pixels only; an RG16 velocity image keeps the zero motion. A temporal view faults
 `c3d::ASSET_DATA_UNAVAILABLE` from `render_view` before recording when a flagged mesh's CPU
 positions were released; its published history stays as it was.
 
