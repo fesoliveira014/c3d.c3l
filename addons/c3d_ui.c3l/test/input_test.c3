@@ -449,6 +449,11 @@ fn void test_window_drag_holds_capture_over_controls() @test {
     assert(fixture.input.mouse_captured_by_gui && fixture.input.keyboard_captured_by_gui);
     assert(fixture.ui.window_offset(window, "tool")!! == (Vec2){ 130, 30 }, "the offset stays inside the parent");
 
+    fixture::point(&fixture, { 600, 400 }, held: true);
+    fixture::frame(&fixture, { fixture::motion({ 600, 400 }) });
+    assert(fixture.input.mouse_captured_by_gui, "the drag holds the mouse over empty space");
+
+    fixture::point(&fixture, { 350, 50 }, held: true);
     fixture::frame(&fixture);
     assert(!ui::key_valid(&fixture.ui.hover) && !ui::key_valid(&fixture.ui.press));
     fixture::point(&fixture, { 350, 50 });
