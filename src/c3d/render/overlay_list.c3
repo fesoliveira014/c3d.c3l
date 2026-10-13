@@ -109,7 +109,8 @@ struct OverlayRun @private {
 struct OverlayPrepared @private {
     gpu::GpuAddress items;
     uint            run_count;
-    ulong           frame; // renderer frame index plus one; zero before the first preparation
+    RenderTargetId  target; // the output the instances were fitted to; zero for the window
+    ulong           frame;  // renderer frame index plus one; zero before the first preparation
 }
 
 struct OverlayPacker @local {
@@ -307,16 +308,28 @@ fn bool overlay_ref_solid(TextureRef texture) @private {
     return texture.kind == TextureRefKind.ASSET && c3d::same_id(texture.asset, (TextureId){});
 }
 
-fn void? check_overlay_refs(AssetStore* assets, TargetPool* targets, OverlayList* list) @private {
+fn void? check_overlay_refs(
+    AssetStore* assets,
+    TargetPool* targets,
+    OverlayList* list,
+    RenderTargetId output = {},
+) @private {
+    if (!c3d::same_id(output, (RenderTargetId){}) && !targets.is_live(output)) return c3d::INVALID_ID~;
+
     foreach (&entry : list.entries[:list.item_count]) {
         switch (entry.kind) {
-            case RECT: check_rect_refs(assets, targets, &entry.rect)!;
+            case RECT: check_rect_refs(assets, targets, &entry.rect, output)!;
             case GLYPHS: check_text_refs(assets, list, &entry.text)!;
         }
     }
 }
 
-fn void? check_rect_refs(AssetStore* assets, TargetPool* targets, OverlayRect* rect) @local {
+fn void? check_rect_refs(
+    AssetStore* assets,
+    TargetPool* targets,
+    OverlayRect* rect,
+    RenderTargetId output,
+) @local {
     if (!c3d::same_id(rect.sampler, (SamplerId){})) {
         if (!assets.samplers.is_live(rect.sampler)) return c3d::INVALID_ID~;
         if (assets.sampler(rect.sampler).desc.compare_enable) return c3d::INVALID_ARGUMENT~;
@@ -333,6 +346,7 @@ fn void? check_rect_refs(AssetStore* assets, TargetPool* targets, OverlayRect* r
             }
         case RENDER_TARGET:
             if (!targets.is_live(rect.texture.target)) return c3d::INVALID_ID~;
+            if (c3d::same_id(rect.texture.target, output)) return c3d::INVALID_ARGUMENT~;
     }
 }
 

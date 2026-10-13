@@ -33,6 +33,21 @@ const float CUBE_SIZE @local = 1.6f;
 const float BACKDROP_RADIUS @local = 1.2f;
 const float CAMERA_DISTANCE @local = 5;
 
+const uint TARGET_LIST_ITEMS @local = 16;
+const Vec2 TARGET_PANEL_MIN @local = { 12, 172 };
+const Vec2 TARGET_PANEL_MAX @local = { 244, 244 };
+const Vec2 TARGET_BAR_MIN @local = { 28, 188 };
+const Vec2 TARGET_BAR_MAX @local = { 228, 204 };
+const float TARGET_SWATCH_SIZE @local = 24;
+const float TARGET_SWATCH_PITCH @local = 32;
+const float TARGET_SWATCH_TOP @local = 212;
+const uint TARGET_SWATCH_COUNT @local = 3;
+const float TARGET_BAR_SPEED @local = 1.3f;
+const float TARGET_BAR_RADIUS @local = 8; // the fill never shrinks below its two rounded caps
+const uint TARGET_SWATCH_COLOR_STRIDE @local = 5;
+const Vec4 TARGET_PANEL_FILL @local = { 0.05f, 0.07f, 0.16f, 0.8f };
+const Vec4 TARGET_BAR_TRACK @local = { 0.02f, 0.02f, 0.04f, 1 };
+
 const uint SKIN_SIZE @local = 32;
 const uint SKIN_FRAME_PIXELS @local = 8;
 const char[4] SKIN_FRAME_COLOR @local = { 40, 44, 66, 255 };
@@ -81,13 +96,14 @@ const Vec4 WHITE @local = { 1, 1, 1, 1 };
 const Vec4 BACKDROP_COLOR @local = { 0.9f, 0.25f, 0.3f, 1 };
 const Vec4 CUBE_COLOR @local = { 0.2f, 0.7f, 0.9f, 1 };
 const Vec2 STATS_PANEL_POSITION @local = { 1010, 16 };
-const Vec2 STATS_PANEL_SIZE @local = { 260, 90 };
-const Vec2 RENDERER_PANEL_POSITION @local = { 1010, 120 };
-const Vec2 RENDERER_PANEL_SIZE @local = { 260, 560 };
+const Vec2 STATS_PANEL_SIZE @local = { 260, 112 };
+const Vec2 RENDERER_PANEL_POSITION @local = { 1010, 142 };
+const Vec2 RENDERER_PANEL_SIZE @local = { 260, 538 };
 
 struct Options @local {
     uint stress_count;
     bool stress_enabled;
+    bool target_overlay;
     bool benchmark;
     uint rects;
     uint frames;
@@ -106,7 +122,9 @@ struct Demo @local {
     RenderTargetId    portrait;
     TextureId         skin;
     OverlayList*      list;
+    OverlayList*      target_list;
     bool              with_portrait;
+    bool              target_overlay;
     double            prepare_ms;
     uint              overlay_draws;
 }
@@ -207,6 +225,46 @@ fn void? add_portrait(OverlayList* list, RenderTargetId portrait) @local {
     list.add_rect(rect)!;
 }
 
+fn void? fill_target_list(OverlayList* list, float time) @local {
+    list.clear();
+
+    OverlayRect panel = solid_rect(
+        min:    TARGET_PANEL_MIN,
+        max:    TARGET_PANEL_MAX,
+        fill:   TARGET_PANEL_FILL,
+        radius: 10,
+    );
+    panel.border_widths = { 2, 2, 2, 2 };
+    panel.border_color = PANEL_BORDER;
+    list.add_rect(panel)!;
+
+    list.add_rect(solid_rect(
+        min:    TARGET_BAR_MIN,
+        max:    TARGET_BAR_MAX,
+        fill:   TARGET_BAR_TRACK,
+        radius: TARGET_BAR_RADIUS,
+    ))!;
+
+    float level = 0.5f + 0.5f * math::sin(time * TARGET_BAR_SPEED);
+    float fill_right = TARGET_BAR_MIN.x + (TARGET_BAR_MAX.x - TARGET_BAR_MIN.x) * level;
+    list.add_rect(solid_rect(
+        min:    TARGET_BAR_MIN,
+        max:    { math::max(fill_right, TARGET_BAR_MIN.x + 2 * TARGET_BAR_RADIUS), TARGET_BAR_MAX.y },
+        fill:   SAMPLE_FILL,
+        radius: TARGET_BAR_RADIUS,
+    ))!;
+
+    for (uint index = 0; index < TARGET_SWATCH_COUNT; index++) {
+        float left = TARGET_BAR_MIN.x + index * TARGET_SWATCH_PITCH;
+        list.add_rect(solid_rect(
+            min:    { left, TARGET_SWATCH_TOP },
+            max:    { left + TARGET_SWATCH_SIZE, TARGET_SWATCH_TOP + TARGET_SWATCH_SIZE },
+            fill:   row_color(index * TARGET_SWATCH_COLOR_STRIDE),
+            radius: 6,
+        ))!;
+    }
+}
+
 fn void? add_scroll_list(OverlayList* list, float time) @local {
     list.push_clip(SCROLL_WINDOW_MIN, SCROLL_WINDOW_MAX)!;
     list.add_rect(solid_rect(
@@ -300,6 +358,7 @@ fn void? fill_scenes(Demo* demo, Options* options, float time) @local {
     add_portrait(list, demo.portrait)!;
     add_scroll_list(list, time)!;
     add_samples(list)!;
+    if (demo.with_portrait && demo.target_overlay) fill_target_list(demo.target_list, time)!;
 }
 
 fn void? draw_frame(Demo* demo, GuiRenderer* gui_renderer, FrameInfo info) @local {
@@ -311,6 +370,13 @@ fn void? draw_frame(Demo* demo, GuiRenderer* gui_renderer, FrameInfo info) @loca
         if (demo.with_portrait) {
             renderer.render_view(demo.scene, demo.portrait_camera, demo.portrait_view)!;
             renderer.finish_view(demo.portrait_view)!;
+
+            if (demo.target_overlay) {
+                renderer.prepare_overlay_list(demo.target_list, demo.portrait)!;
+                OverlayContext portrait_overlay = renderer.begin_overlay_target(demo.portrait)!;
+                portrait_overlay.draw_list(demo.target_list)!;
+                renderer.end_overlay(&portrait_overlay)!;
+            }
         }
         renderer.render_view(demo.scene, demo.camera_node, renderer.default_view)!;
         renderer.finish_view(renderer.default_view)!;
@@ -355,6 +421,7 @@ fn void? run_interactive(Demo* demo, Options* options) @local {
         imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         if (imgui::begin("Overlay", null, {})) {
             imgui::checkbox("Stress rects", &options.stress_enabled);
+            imgui::checkbox("Portrait overlay", &demo.target_overlay);
             imgui::text("Items: %u of %u", demo.list.item_count, (uint)demo.list.entries.len);
         }
         imgui::end();
@@ -457,6 +524,8 @@ fn int main(String[] args) {
                     index++;
                 }
             }
+        } else if (argument == "--target") {
+            options.target_overlay = true;
         } else if (argument == "--rects" && has_value) {
             options.rects = args[++index].to_uint() ?? 0;
         } else if (argument == "--frames" && has_value) {
@@ -470,7 +539,9 @@ fn int main(String[] args) {
             options.width = size[0];
             options.height = size[1];
         } else {
-            io::eprintn("Use overlay [--stress [N]] [--frames N] [--benchmark --rects N --frames F --size WxH].");
+            io::eprintn(
+                "Use overlay [--stress [N]] [--target] [--frames N] [--benchmark --rects N --frames F --size WxH]."
+            );
             return 1;
         }
     }
@@ -536,6 +607,12 @@ fn int main(String[] args) {
     OverlayListDesc list_desc = { .max_items = capacity, .max_clips = render::OVERLAY_LIST_DEFAULT_CLIPS };
     OverlayList list = render::create_overlay_list(mem, list_desc);
     defer render::destroy_overlay_list(&list);
+    OverlayListDesc target_list_desc = {
+        .max_items = TARGET_LIST_ITEMS,
+        .max_clips = render::OVERLAY_LIST_DEFAULT_CLIPS,
+    };
+    OverlayList target_list = render::create_overlay_list(mem, target_list_desc);
+    defer render::destroy_overlay_list(&target_list);
 
     RenderTargetId portrait = render::create_render_target(
         &renderer,
@@ -559,7 +636,9 @@ fn int main(String[] args) {
         .portrait_view   = portrait_view,
         .skin            = skin,
         .list            = &list,
+        .target_list     = &target_list,
         .with_portrait   = !options.benchmark,
+        .target_overlay  = options.target_overlay,
     };
     renderer.prepare_scene(&scene)!!;
 

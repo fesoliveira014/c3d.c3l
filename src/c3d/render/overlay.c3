@@ -15,6 +15,7 @@ struct OverlayContext {
     uint width;
     uint height;
     gpu::Format color_format;
+    RenderTargetId target; // zero for the window
 }
 
 <*
@@ -57,7 +58,48 @@ fn OverlayContext? Renderer.begin_overlay(&self) {
 }
 
 <*
+ Open a color overlay over a render target, keeping its contents.
+ A target nothing has written holds undefined contents.
+ @param [&inout] self : "No window output needed; no attachment pass is open."
+ @return? c3d::INVALID_ID
+ @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
+ @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
+ @return? gpu::DEVICE_BUSY, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+ @require self.frame_open, !self.overlay_open
+*>
+fn OverlayContext? Renderer.begin_overlay_target(&self, RenderTargetId target) {
+    Target* image = &self.targets.try_get(target)!.target;
+    image.transition(&self.commands, COLOR_ATTACHMENT_STATE)!;
+
+    gpu::ColorTargetDesc[1] colors = {{
+        .view = image.attachment,
+        .load_op = gpu::LoadOp.LOAD,
+        .store_op = gpu::StoreOp.STORE,
+    }};
+
+    gpu::RenderPassDesc pass = {
+        .colors = colors[..],
+        .width = image.width,
+        .height = image.height,
+    };
+
+    gpu::cmd_begin_render_pass(&self.commands, &pass)!;
+    self.overlay_open = true;
+    self.work_recorded = true;
+
+    return {
+        .renderer = self,
+        .commands = &self.commands,
+        .width = image.width,
+        .height = image.height,
+        .color_format = image.format,
+        .target = target,
+    };
+}
+
+<*
  Close the pass and invalidate its overlay borrow.
+ Leaves a render target readable by shaders.
  @param [&inout] self : "Renderer that opened this overlay."
  @param [&inout] overlay : "Cleared after successful pass closure."
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
@@ -69,6 +111,9 @@ fn OverlayContext? Renderer.begin_overlay(&self) {
 fn void? Renderer.end_overlay(&self, OverlayContext* overlay) {
     gpu::cmd_end_render_pass(&self.commands)!;
     self.overlay_open = false;
+    if (!c3d::same_id(overlay.target, (RenderTargetId){})) {
+        self.targets.get(overlay.target).target.transition(&self.commands, self.sampled_state)!;
+    }
 
     *overlay = {};
 }
@@ -90,18 +135,20 @@ fn gpu::MappedGpuSpan? OverlayContext.alloc(&self, usz bytes, usz alignment = 16
 
 <*
  Resolve the list's textures and fonts, ready its render targets and upload its instances.
- Render targets it samples must not be rendered again this frame.
- @param [&inout] self : "Frame open with output; overlay not yet open."
+ Prepare after every view that renders its output or a target it samples.
+ @param [&inout] self : "Frame open; overlay not yet open; window output when target is zero."
  @param [&inout] list : "Items must stay unchanged until draw_list records them."
+ @param target : "Render target the list is drawn into; zero for the window."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
  @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::SLOT_TABLE_FULL, gpu::DESCRIPTOR_HEAP_FULL, gpu::UNSUPPORTED_FEATURE
  @return? gpu::DEVICE_BUSY, gpu::RESOURCE_IN_USE, gpu::WAIT_TIMEOUT, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
- @require self.frame_open, self.has_output, !self.overlay_open
+ @require self.frame_open, !self.overlay_open
+ @require self.has_output || !c3d::same_id(target, (RenderTargetId){})
 *>
-fn void? Renderer.prepare_overlay_list(&self, OverlayList* list) {
-    check_overlay_refs(self.assets, &self.targets, list)!;
+fn void? Renderer.prepare_overlay_list(&self, OverlayList* list, RenderTargetId target = {}) {
+    check_overlay_refs(self.assets, &self.targets, list, target)!;
     defer catch abort_frame(self);
 
     foreach (index, &entry : list.entries[:list.item_count]) {
@@ -130,14 +177,15 @@ fn void? Renderer.prepare_overlay_list(&self, OverlayList* list) {
     record_pending_copies(self, &self.commands)!;
     foreach (&entry : list.entries[:list.item_count]) {
         if (entry.kind != RECT || entry.rect.texture.kind != RENDER_TARGET) continue;
-        Target* target = &self.targets.get(entry.rect.texture.target).target;
+        Target* sampled = &self.targets.get(entry.rect.texture.target).target;
         // Read after read needs no barrier: a target a view or an earlier rect already readied keeps its state.
-        if (same_texture_state(target.state, self.sampled_state)) continue;
-        target.transition(&self.commands, self.sampled_state)!;
+        if (same_texture_state(sampled.state, self.sampled_state)) continue;
+        sampled.transition(&self.commands, self.sampled_state)!;
     }
 
     list.prepared.run_count = 0;
     if (list.item_count) {
+        Target* output = overlay_output(self, target);
         // A glyph entry emits one item per placement, so entries plus placements bound the emitted items.
         uint capacity = list.item_count + list.glyph_count;
         Frame* slot = &self.frames[self.frame_index % FRAMES_IN_FLIGHT];
@@ -145,24 +193,26 @@ fn void? Renderer.prepare_overlay_list(&self, OverlayList* list) {
         pack_overlay_items(
             list:        list,
             assets:      self.assets,
-            width:       self.window_target.width,
-            height:      self.window_target.height,
+            width:       output.width,
+            height:      output.height,
             destination: ((OverlayItemGpu*)items.bytes.ptr)[:capacity],
         );
         list.prepared.items = items.address;
     }
+    list.prepared.target = target;
     list.prepared.frame = self.frame_index + 1;
 }
 
 <*
- Record a prepared list over the composed window.
+ Record a prepared list over the overlay's output.
  @param [&inout] self : "Active overlay of the renderer that prepared the list."
- @param [&in] list : "Prepared this frame and unchanged since."
+ @param [&in] list : "Prepared this frame for this output and unchanged since."
  @return? c3d::SHADER_NOT_FOUND, PIPELINE_REJECTED, gpu::SHADER_INVALID, gpu::PIPELINE_CREATE_FAILED
  @return? gpu::SLOT_TABLE_FULL, gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
  @return? gpu::COMMAND_RECORDING_ERROR, gpu::RESOURCE_IN_USE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::UNSUPPORTED_FEATURE, gpu::DEVICE_BUSY, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
  @require self.renderer.overlay_open, list.prepared.frame == self.renderer.frame_index + 1
+ @require c3d::same_id(list.prepared.target, self.target)
 *>
 fn void? OverlayContext.draw_list(&self, OverlayList* list) {
     if (!list.prepared.run_count) return;
@@ -223,4 +273,8 @@ fn void? OverlayContext.draw_list(&self, OverlayList* list) {
             renderer.stats.draws++;
         }
     }!;
+}
+
+fn Target* overlay_output(Renderer* renderer, RenderTargetId target) @local {
+    return c3d::same_id(target, (RenderTargetId){}) ? &renderer.window_target : &renderer.targets.get(target).target;
 }
