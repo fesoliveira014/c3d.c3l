@@ -71,6 +71,13 @@ const Vec2 STATS_PANEL_SIZE @local = { 300, 700 };
 const double NANOSECONDS_PER_MILLISECOND @local = 1000000;
 const ZString[MsaaSamples::values.len] MSAA_LABELS @local = { "1x", "2x", "4x", "8x" };
 
+enum MsaaOutcome @local {
+    APPLIED,
+    UNSUPPORTED,
+    INVALID_ARGUMENT,
+    DEVICE_FAULT,
+}
+
 struct DecalTimings @local @feat(C3D_PROFILE_CPU & C3D_PROFILE_INTERNAL) {
     double[2] milliseconds;
     ulong capture_id;
@@ -85,14 +92,14 @@ struct Orbit @local {
 }
 
 struct Views @local {
-    ViewId      left;
-    ViewId      right;
-    ViewDesc    left_desc;
-    ViewDesc    right_desc;
-    uint        width;
-    uint        height;
-    MsaaSamples msaa;           // requested for both views
-    ZString[2]  msaa_faults;    // per side, left first: why the request did not apply; null when it did
+    ViewId         left;
+    ViewId         right;
+    ViewDesc       left_desc;
+    ViewDesc       right_desc;
+    uint           width;
+    uint           height;
+    MsaaSamples    msaa;          // requested for both views
+    MsaaOutcome[2] msaa_outcomes; // per side, left first: what the request did
 }
 
 struct Options @local {
@@ -153,12 +160,12 @@ fn void? configure_views(render::Renderer* renderer, Views* views) @local {
     views.right_desc.viewport = half_viewport(views.width, views.height, true);
     views.left_desc.msaa = views.msaa;
     views.right_desc.msaa = views.msaa;
-    views.msaa_faults[0] = configure_side(renderer, views.left, &views.left_desc)!;
-    views.msaa_faults[1] = configure_side(renderer, views.right, &views.right_desc)!;
+    views.msaa_outcomes[0] = configure_side(renderer, views.left, &views.left_desc)!;
+    views.msaa_outcomes[1] = configure_side(renderer, views.right, &views.right_desc)!;
 }
 
 // A count the view cannot take leaves it at the count it had, or at ONE when that no longer fits.
-fn ZString? configure_side(render::Renderer* renderer, ViewId view, ViewDesc* desc) @local {
+fn MsaaOutcome? configure_side(render::Renderer* renderer, ViewId view, ViewDesc* desc) @local {
     if (catch excuse = render::configure_view(renderer, view, *desc)) {
         if (desc.msaa == MsaaSamples.ONE) return excuse~;
 
@@ -168,16 +175,25 @@ fn ZString? configure_side(render::Renderer* renderer, ViewId view, ViewDesc* de
             render::configure_view(renderer, view, *desc)!;
         }
 
-        return fault_label(excuse);
+        return outcome_of(excuse);
     }
 
-    return null;
+    return MsaaOutcome.APPLIED;
 }
 
-fn ZString fault_label(fault excuse) @local {
-    if (excuse == c3d::UNSUPPORTED) return "UNSUPPORTED";
-    if (excuse == c3d::INVALID_ARGUMENT) return "INVALID_ARGUMENT";
-    return "a device fault";
+fn MsaaOutcome outcome_of(fault excuse) @local {
+    if (excuse == c3d::UNSUPPORTED) return MsaaOutcome.UNSUPPORTED;
+    if (excuse == c3d::INVALID_ARGUMENT) return MsaaOutcome.INVALID_ARGUMENT;
+    return MsaaOutcome.DEVICE_FAULT;
+}
+
+fn ZString outcome_label(MsaaOutcome outcome) @local {
+    switch (outcome) {
+        case APPLIED: return "applied";
+        case UNSUPPORTED: return "UNSUPPORTED";
+        case INVALID_ARGUMENT: return "INVALID_ARGUMENT";
+        case DEVICE_FAULT: return "a device fault";
+    }
 }
 
 fn MsaaSamples? parse_msaa(String value) @local {
@@ -214,9 +230,9 @@ fn void msaa_status(
     ZString side,
     MsaaSamples applied,
     MsaaSamples requested,
-    ZString reason,
+    MsaaOutcome outcome,
 ) @local {
-    if (!reason) {
+    if (outcome == MsaaOutcome.APPLIED) {
         imgui::text("%s: MSAA %s", side, MSAA_LABELS[applied.ordinal]);
         return;
     }
@@ -226,7 +242,7 @@ fn void msaa_status(
         side,
         MSAA_LABELS[applied.ordinal],
         MSAA_LABELS[requested.ordinal],
-        reason,
+        outcome_label(outcome),
     );
 }
 
@@ -392,13 +408,13 @@ fn void? run_gui(
                 side:      "Left",
                 applied:   renderer.views.get(views.left).desc.msaa,
                 requested: views.msaa,
-                reason:    views.msaa_faults[0],
+                outcome:   views.msaa_outcomes[0],
             );
             msaa_status(
                 side:      "Right",
                 applied:   renderer.views.get(views.right).desc.msaa,
                 requested: views.msaa,
-                reason:    views.msaa_faults[1],
+                outcome:   views.msaa_outcomes[1],
             );
             imgui::text("Output: %u x %u", views.width, views.height);
             $if $feat(C3D_PROFILE_CPU) && $feat(C3D_PROFILE_INTERNAL):
