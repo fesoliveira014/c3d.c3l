@@ -92,7 +92,7 @@ The root's anchor point sits on the screen's matching point; `offset` moves it. 
 | Kind | Children | Own keys |
 | --- | --- | --- |
 | `panel` | `children` | `window`, `position`, `drag_bounds`, `on_move_start`, `on_move_end` (see Windows) |
-| `label` | | `text` |
+| `label` | | `text`, `markup` (see Text templates) |
 | `image` | | `image` (asset key or `{IMAGE}`), `uv` [u0, v0, u1, v1] |
 | `button` | `children` | |
 | `bar` | | `value` (number or `{INT}`/`{FLOAT}`), `bar_direction`: `left_to_right` (default), `right_to_left`, `bottom_to_top`, `top_to_bottom` |
@@ -187,6 +187,26 @@ unique within its document. Inside a list or grid template the id names the temp
 and `}}` insert braces. INT prints as decimal. FLOAT prints with up to 2 decimals, trailing zeros and point trimmed.
 `{name:N}` prints an INT or FLOAT with N fixed decimals, N from 0 to 6. BOOL prints `true` or `false`.
 
+`"markup": true` turns on span tags in a label's `text`, so one label can mix fonts, sizes, colors, underlines and
+highlights:
+
+```jsonc
+{ "kind": "label", "style": "text", "markup": true,
+  "text": "[title]Wave 3[/title] holds for [caption]02:41[/caption]. Press [key] E [/key] to [warn]open[/warn]." }
+```
+
+- `[name]` opens a span and `[/name]` closes it; `name` is a style of the set. A span style may set only `font`,
+  `font_size`, `text_color`, `underline` and `text_highlight`, in its base and its state blocks; the state blocks apply
+  with the label's state. A span overrides the label's own properties for the text it covers.
+- Spans nest up to `UI_SPAN_DEPTH` (4), with at most `UI_MAX_SPANS` (16) per label.
+- `[[` inserts `[` and a lone `]` is literal. Any other `[` sequence faults. Without `"markup": true`, brackets are
+  literal; `markup` on any other kind faults `UNKNOWN_PROPERTY`.
+- A value inserted by `{name}` goes into the open span verbatim and is never read as markup.
+- Malformed text faults at the label's `text`: `c3d::ASSET_FORMAT_ERROR` for an unclosed span, a close tag that
+  matches no open span, a malformed tag, nesting past `UI_SPAN_DEPTH` or more than `UI_MAX_SPANS` spans;
+  `UNKNOWN_STYLE` for a name that is no style; `UNKNOWN_PROPERTY` for a span style that sets another property.
+  `load_styles` re-resolves every span name with the same faults, atomically, and names the document.
+
 Every other binding reference is written in braces too: `"enabled": "{member.alive}"`, `"image": "{member.portrait}"`.
 A string without braces in `image` is an asset key.
 
@@ -225,13 +245,17 @@ scroll and field text. Load styles before the documents that use them.
 | `line_height` | n; 0 (default) uses the first font's ascent, descent and line gap |
 | `wrap` | `words` (default), `newlines`, `none` |
 | `text_align` | `left` (default), `center`, `right` |
+| `underline` | `true` or `false` (default); a line under the text |
+| `text_highlight` | color (default transparent) behind the text |
 | `skin`, `bar_skin` | `{ "image": key, "slice": [l, t, r, b] }`, nine-slice margins in texels |
 
 The state blocks `hover`, `pressed`, `disabled` and `focused` take properties only. Effective properties are the
 flattened base, then the active state blocks in the order focused, hover, pressed, disabled (later wins), then the
-element's inline properties. Defaults: transparent fill, white text, `font_size` 16, no border, radius or padding.
+element's inline properties. Defaults: transparent fill, white text, `font_size` 16, no underline or text highlight, no
+border, radius or padding.
 An image multiplies its texture by `fill`, white when the fill is transparent; `highlight` colors a grid's drop
-footprint; a bar draws `bar_fill` or `bar_skin` over its content box.
+footprint; a bar draws `bar_fill` or `bar_skin` over its content box. `underline` and `text_highlight` apply to
+label, field and placeholder text, and inside spans.
 
 ## Bindings
 
@@ -300,14 +324,14 @@ points into it.
 | Fault | Meaning |
 | --- | --- |
 | `UNKNOWN_ELEMENT_KIND` | `kind` names no element kind, or is missing |
-| `UNKNOWN_PROPERTY` | a key the element kind, style or state block does not take |
-| `UNKNOWN_STYLE` | `style` or `extends` names no style of the set |
+| `UNKNOWN_PROPERTY` | a key the element kind, style or state block does not take; a span style that sets a property other than the five of a span |
+| `UNKNOWN_STYLE` | `style`, `extends` or a span tag names no style of the set |
 | `STYLE_CYCLE` | an `extends` chain returns to a style it left; the pointer is the closing `extends` |
 | `UNKNOWN_BINDING` | a binding no registration provides in that scope |
 | `BINDING_KIND_MISMATCH` | a binding of a kind the key does not take |
 | `UNKNOWN_ACTION` | an action nothing registered with `Ui.on` |
 | `UNKNOWN_ASSET` | an image or font key the store lacks; a text element without a font |
-| `c3d::ASSET_FORMAT_ERROR` | a value of the wrong JSON type or out of range; an `id` that is not a valid name, repeats or collides; a `window` without an `id`, on the root, in a template or under a parent that is not a `panel` or `scroll` |
+| `c3d::ASSET_FORMAT_ERROR` | a value of the wrong JSON type or out of range; an `id` that is not a valid name, repeats or collides; a `window` without an `id`, on the root, in a template or under a parent that is not a `panel` or `scroll`; malformed span markup |
 | `c3d::CAPACITY_EXCEEDED` | a UI table full, including the window table; lists nested deeper than `UI_SCOPE_DEPTH` |
 | `json::*`, `io::EOF` | syntax errors from `std::encoding::json`; the error path is empty |
 
@@ -322,16 +346,33 @@ several errors reports the same one every time.
   shaping: no ligatures, contextual forms, complex scripts or bidirectional text.
 - Placements of unchanged lines come from a fixed cache keyed by font list and line bytes (`UiDesc.cache_lines`,
   `cache_glyphs`); a full cache clears and refills, counted in `ui.stats.placement_clears`.
+- A label with at least one span lays its text out itself; every other label keeps the plain path above. Each run of
+  text that shares its spans resolves its properties (the label's, then each enclosing span's, outermost first) and is
+  measured once; a run that does not fit the line is split at spaces. Breaks fall at spaces and newlines, also across
+  span boundaries, and never inside a word: `wrap: words` breaks at both, `newlines` only at newlines and `none` never
+  breaks. A break consumes the space it breaks at.
+- A line is as tall as its tallest run, or `line_height` when the label sets one, and all runs on a line share one
+  baseline. `text_align` positions each line within the label's content width. A rich label sizes its `fit` width and
+  height to the text it laid out.
+- A rich label wraps at its fixed `width`, or at `max_width` when its width is not fixed, and at nothing else: it
+  never wraps against the width a `grow` or `percent` panel gives it. Give a rich label in such a panel a `max_width`.
+- `underline` sits 0.12 em below the baseline and is 0.06 em thick, at least one pixel; fonts carry no underline
+  metrics. Each piece of text draws its highlight, then its glyphs, then its underline.
+- Each run on each line is one piece; `UiDesc.max_text_pieces` bounds the pieces of a frame and `ui.stats.text_pieces`
+  counts them. A label without spans uses none.
+- `ui --rich-text` loads `examples/ui/rich.jsonc`: mixed sizes on one baseline, a highlighted key and an underlined
+  warning, a bound value in a span, CJK text through the font fallback and a paragraph wrapped at `max_width`.
 
 ## Capacities
 
 `default_ui_desc()`: 16 documents, 256 styles, 64 font sets, 1,024 bindings, 256 actions, 64 item sources, 32 KiB of
 names, 4,096 laid-out elements per frame, 64 KiB of expanded text per frame, 2,048 cached lines with 32,768 cached
-glyphs, a 256-byte field buffer, and 64 windows (60 bytes each) across the loaded documents; `max_windows` may be 0,
-which holds none. Every table is allocated once in `create_ui`; documents and style sets allocate once when they load.
-Nothing allocates per frame. A load or reload whose windows do not fit the table faults `CAPACITY_EXCEEDED` and
-changes nothing. `update` faults `CAPACITY_EXCEEDED` when a frame overflows; that frame draws nothing and the next
-frame retries.
+glyphs, a 256-byte field buffer, 64 windows (60 bytes each) across the loaded documents and 1,024 rich text pieces per
+frame (76 bytes each); `max_windows` and `max_text_pieces` may be 0, which holds none. Every table is allocated once
+in `create_ui`; documents and style sets allocate once when they load. Nothing allocates per frame. A load or reload
+whose windows do not fit the table faults `CAPACITY_EXCEEDED` and changes nothing. `update` faults
+`CAPACITY_EXCEEDED` when a frame overflows, including a frame whose rich labels need more pieces than the table holds;
+that frame draws nothing and the next frame retries.
 
 ## Measured costs
 

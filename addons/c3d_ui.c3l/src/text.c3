@@ -59,17 +59,26 @@ fn String? expand_template(
 ) @private {
     uint start = ui.text_used;
     for (uint index = first; index < first + count; index++) {
-        UiSegment* segment = &document.segments[index];
-        if (segment.binding == UI_NONE) {
-            append_text(ui, document.strings[segment.offset : segment.length])!;
-            continue;
-        }
-        UiValue value = call_getter(ui, segment.binding, scope);
-        append_value(ui, value, segment.decimals)!;
+        append_segment(ui, document, &document.segments[index], scope)!;
     }
     String text = (String)ui.text[start : ui.text_used - start];
     if (!valid_utf8(text)) return c3d::INVALID_ARGUMENT~;
     return text;
+}
+
+fn void? append_segment(
+    Ui* ui,
+    UiDocument* document,
+    UiSegment* segment,
+    UiScope* scope,
+) @private {
+    if (segment.binding == UI_NONE) {
+        append_text(ui, document.strings[segment.offset : segment.length])!;
+        return;
+    }
+
+    UiValue value = call_getter(ui, segment.binding, scope);
+    append_value(ui, value, segment.decimals)!;
 }
 
 fn String? copy_text(Ui* ui, String text) @private {
@@ -185,9 +194,24 @@ fn float measure_line(Ui* ui, uint font_set, String text, float font_size) @priv
 }
 
 fn float line_height(Ui* ui, UiProperties* properties) @private {
-    if (properties.line_height > 0) return math::round(properties.line_height);
-    FontMetrics metrics = ui.assets.font_metrics(ui.font_sets[properties.font_set].fonts[0]);
-    return math::round((metrics.ascent - metrics.descent + metrics.line_gap) * properties.font_size);
+    return text_line_height(
+        ui:           ui,
+        font_set:     properties.font_set,
+        font_size:    properties.font_size,
+        fixed_height: properties.line_height,
+    );
+}
+
+fn float text_line_height(
+    Ui* ui,
+    uint font_set,
+    float font_size,
+    float fixed_height,
+) @private {
+    if (fixed_height > 0) return math::round(fixed_height);
+
+    FontMetrics metrics = ui.assets.font_metrics(ui.font_sets[font_set].fonts[0]);
+    return math::round((metrics.ascent - metrics.descent + metrics.line_gap) * font_size);
 }
 
 fn clay::Dimensions measure_clay_text(clay::CharsSlice text, clay::TextElementConfig* config, void* user) @private {

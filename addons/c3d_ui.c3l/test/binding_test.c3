@@ -3,6 +3,7 @@ module c3d::ui::binding_test;
 import c3d;
 import c3d::ui @public;
 import c3d::ui::fixture;
+import std::math;
 
 const String COUNTED_LABEL @local = `{ "root": { "kind": "label", "style": "text", "text": "{count.value}" } }`;
 
@@ -56,6 +57,8 @@ fn UiValue counted_flag(void* user, UiScope* scope) @local {
     ((Counter*)user).flag_calls++;
     return { .kind = BOOL, .boolean = false };
 }
+
+fn UiValue note_text(void* user, UiScope* scope) @local => { .kind = TEXT, .text = "[warn]x[/warn]" };
 
 fn UiValue rows_count(void* user, UiScope* scope) @local => { .kind = LIST, .count = 2 };
 
@@ -279,4 +282,30 @@ fn void test_templates_format_values() @test {
         expected: c3d::ASSET_FORMAT_ERROR,
         path:     "/root/text",
     );
+}
+
+fn void test_bound_values_never_open_spans() @test {
+    Fixture fixture;
+    fixture::create_fixture(&fixture);
+    defer fixture::destroy_fixture(&fixture);
+    fixture.ui.load_styles({ `{
+        "text": { "font": "ui/latin", "font_size": 10 },
+        "warn": { "text_color": "#ff0000ff" },
+        "big": { "font_size": 20 } }` })!!;
+    fixture.ui.bind(
+        name:   "note.text",
+        kind:   TEXT,
+        getter: &note_text,
+        user:   null,
+    )!!;
+    fixture.ui.load_document(`{ "root": { "kind": "label", "style": "text", "markup": true,
+        "text": "{note.text}[big]end[/big]" } }`)!!;
+    fixture::frame(&fixture);
+
+    assert(fixture.ui.piece_count == 2);
+    UiTextPiece* note = &fixture.ui.pieces[0];
+    assert((String)fixture.ui.text[note.offset : note.length] == "[warn]x[/warn]");
+    assert(note.font_size == 10 && note.color == (Vec4){ 1, 1, 1, 1 });
+    UiTextPiece* end = &fixture.ui.pieces[1];
+    assert((String)fixture.ui.text[end.offset : end.length] == "end" && end.font_size == 20);
 }

@@ -52,7 +52,9 @@ fn void? Ui.update(
     self.stats.instances = 0;
     self.stats.getter_calls = 0;
     self.stats.text_bytes = 0;
+    self.stats.text_pieces = 0;
     self.text_used = 0;
+    self.piece_count = 0;
     self.instance_count = 0;
     self.instance_lookup[..] = {};
     self.clay_error.raised = false;
@@ -229,6 +231,8 @@ fn bool instance_draws(UiInstance* instance) @private {
         case BAR:
         case GRID:
             return true;
+        case LABEL:
+            return instance.element.span_count != 0;
         case TEXT_FIELD:
             return instance.state.focused;
         default:
@@ -319,7 +323,8 @@ fn clay::LayoutConfig layout_config(UiProperties* properties) @private {
     };
 }
 
-fn clay::TextElementConfig text_config(Ui* ui, UiProperties* properties, float alpha = 1) @private {
+fn clay::TextElementConfig text_config(Ui* ui, UiInstance* instance, float alpha = 1) @private {
+    UiProperties* properties = &instance.properties;
     Vec4 color = properties.text_color;
     clay::TextWrap wrap;
     switch (properties.wrap) {
@@ -334,6 +339,7 @@ fn clay::TextElementConfig text_config(Ui* ui, UiProperties* properties, float a
         case RIGHT: align = RIGHT;
     }
     return {
+        .user_data      = instance,
         .text_color     = { color.x, color.y, color.z, color.w * alpha },
         .font_id        = (ushort)properties.font_set,
         .font_size      = (ushort)properties.font_size,
@@ -409,6 +415,8 @@ fn void declare_element(
         declaration.layout.sizing = { clay::fixed(placement.size.x), clay::fixed(placement.size.y) };
     }
     switch (element.kind) {
+        case LABEL:
+            if (element.span_count) size_rich_label(instance, &declaration.layout.sizing);
         case IMAGE:
             size_image(ui, instance, &declaration.layout.sizing);
         case SCROLL:
@@ -448,13 +456,17 @@ fn void? prepare_instance(Ui* ui, UiInstance* instance, UiScope* scope) @private
     UiDocument* document = instance.document;
     switch (element.kind) {
         case LABEL:
-            instance.text = expand_template(
-                ui:       ui,
-                document: document,
-                first:    element.text_first,
-                count:    element.text_count,
-                scope:    scope,
-            )!;
+            if (element.span_count) {
+                layout_rich_label(ui, instance, scope)!;
+            } else {
+                instance.text = expand_template(
+                    ui:       ui,
+                    document: document,
+                    first:    element.text_first,
+                    count:    element.text_count,
+                    scope:    scope,
+                )!;
+            }
         case TEXT_FIELD:
             if (instance.state.focused) {
                 instance.text = copy_text(ui, (String)ui.field[:ui.field_length])!;
@@ -492,10 +504,10 @@ fn void declare_contents(
     inherited.focused = false;
     switch (element.kind) {
         case LABEL:
-            clay::text(instance.text, text_config(ui, &instance.properties));
+            if (!element.span_count) clay::text(instance.text, text_config(ui, instance));
         case TEXT_FIELD:
             if (instance.text.len) {
-                clay::text(instance.text, text_config(ui, &instance.properties));
+                clay::text(instance.text, text_config(ui, instance));
             } else if (element.placeholder_count) {
                 String? placeholder = expand_template(
                     ui:       ui,
@@ -505,7 +517,7 @@ fn void declare_contents(
                     scope:    scope,
                 );
                 if (catch excuse = placeholder) return fail_declare(declare, excuse);
-                clay::text(placeholder, text_config(ui, &instance.properties, UI_PLACEHOLDER_ALPHA));
+                clay::text(placeholder, text_config(ui, instance, UI_PLACEHOLDER_ALPHA));
             }
         case LIST:
             uint count = call_getter(ui, element.items, scope).count;

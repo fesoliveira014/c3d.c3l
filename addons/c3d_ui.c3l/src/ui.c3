@@ -56,6 +56,16 @@ const float UI_WHEEL_STEP = 4; // Clay scales scroll deltas by 10: 40 layout uni
 *>
 const float UI_DRAG_THRESHOLD = 4;
 
+<*
+ Span nesting a rich label may open.
+*>
+const uint UI_SPAN_DEPTH = 4; // emphasis inside emphasis is the deepest common case; a run resolves one style per level
+
+<*
+ Spans one rich label may open.
+*>
+const uint UI_MAX_SPANS = 16; // a HUD line rarely needs more than 8; each span adds a piece to every line it covers
+
 const uint UI_NONE @private = uint::max;
 const short UI_Z_BAND @private = 4;              // per visible document: root, grid items, spare; each window adds 2
 const short UI_Z_TOOLTIP @private = short::max - 1;
@@ -173,6 +183,7 @@ struct UiDesc {
     uint cache_glyphs;     // placements the cache holds
     uint field_bytes;      // the focused field's edit buffer
     uint max_windows;      // window elements across the loaded documents; zero holds none
+    uint max_text_pieces;  // rich label pieces per frame; zero holds none
 }
 
 <*
@@ -185,6 +196,7 @@ struct UiStats {
     uint placement_hits;
     uint placement_misses;
     uint placement_clears;
+    uint text_pieces;
 }
 
 struct UiClayError @private {
@@ -230,6 +242,9 @@ struct UiInstance @private {
     uint         span_width;
     uint         span_height;
     String       text;        // expanded text of a label or field
+    uint         first_piece; // of a rich label, in Ui.pieces
+    uint         piece_count;
+    Vec2         text_size;   // layout units covered by the pieces of a rich label
     TextureRef   image;
     float        value;       // bar fill fraction
     bool         interactive;
@@ -312,6 +327,8 @@ struct Ui {
     UiInstanceSlot[]          instance_lookup;
     char[]                    text;
     uint                      text_used;
+    UiTextPiece[]             pieces;
+    uint                      piece_count;
     UiPlacementCache          cache;
     char[]                    field;
     uint                      field_length;
@@ -349,6 +366,7 @@ fn UiDesc default_ui_desc() {
         .cache_glyphs     = 32 * 1024,
         .field_bytes      = 256,
         .max_windows      = 64,
+        .max_text_pieces  = 1024,
     };
 }
 
@@ -389,6 +407,7 @@ fn Ui? create_ui(Allocator allocator, AssetStore* assets, UiDesc desc) {
     usz field_at = @reserve(&offset, char, desc.field_bytes);
     usz replacements_at = @reserve(&offset, uint, (usz)desc.max_font_sets * UI_FONT_FALLBACKS);
     usz windows_at = @reserve(&offset, UiWindow, desc.max_windows);
+    usz pieces_at = @reserve(&offset, UiTextPiece, desc.max_text_pieces);
 
     // Allocated as Vec4 so every allocator aligns the block for the Vec4 members of the carved tables.
     Vec4[] block = alloc::new_array(allocator, Vec4, (sz)((offset + Vec4::size - 1) / Vec4::size));
@@ -426,6 +445,7 @@ fn Ui? create_ui(Allocator allocator, AssetStore* assets, UiDesc desc) {
         .text            = @carve(storage, text_at, char, desc.text_bytes),
         .field           = @carve(storage, field_at, char, desc.field_bytes),
         .windows         = @carve(storage, windows_at, UiWindow, desc.max_windows),
+        .pieces          = @carve(storage, pieces_at, UiTextPiece, desc.max_text_pieces),
         .cache           = {
             .lines             = @carve(storage, lines_at, UiPlacementLine, desc.cache_lines),
             .slots             = @carve(storage, line_slots_at, uint, 2 * (usz)desc.cache_lines),
