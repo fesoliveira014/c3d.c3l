@@ -44,6 +44,9 @@ void main() {
     float weight_sum = 0.0;
     for (int y = 0; y < 2; y++) {
         for (int x = 0; x < 2; x++) {
+            float bilinear = (x == 0 ? 1.0 - fraction.x : fraction.x) * (y == 0 ? 1.0 - fraction.y : fraction.y);
+            if (bilinear == 0.0) continue;
+
             ivec2 half_texel = base + ivec2(x, y);
             if (any(lessThan(half_texel, ivec2(0))) || any(greaterThanEqual(half_texel, input_extent))) continue;
 
@@ -57,7 +60,6 @@ void main() {
             float tap_specular_weight = fetch_texture_2d(root.emissive_specular, traced).a;
             if (abs(tap_specular_weight - specular_weight) > RT_REFLECTION_SPECULAR_TOLERANCE) continue;
 
-            float bilinear = (x == 0 ? 1.0 - fraction.x : fraction.x) * (y == 0 ? 1.0 - fraction.y : fraction.y);
             float weight = bilinear * rt_reflection_tap_weight(
                 frame,
                 centre_distance,
