@@ -13,7 +13,7 @@ struct OverlayProjection @private {
 <*
  Draw the list in world space over the view's output, after its post, tested against the view's depth.
  The renderer prepares the list for that output when finish_view records the view.
- @param [&in] list : "Every item under an anchor; unchanged until end_frame; null clears."
+ @param [in] list : "Every item under an anchor; unchanged until end_frame; null clears."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
  @require self.frame_open
  @require list == null || list.entries.len > 0 : "The list was destroyed."
