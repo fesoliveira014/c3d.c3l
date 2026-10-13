@@ -74,6 +74,8 @@ def parse_arguments():
     render.add_argument("--lights", type=int, nargs="+", help="render default 64 256 1024 4096; scene default 16 64 256")
     render.add_argument("--modes", nargs="+", choices=["flat", "clustered"], default=["flat", "clustered"])
     render.add_argument("--shadings", nargs="+", choices=["forward", "deferred", "path-traced"], default=["forward"])
+    render.add_argument("--msaa", type=int, nargs="+", choices=[1, 2, 4, 8], default=[1],
+                        help="samples per pixel of the measured view; each value is a job, 1 keeps the plain label")
     render.add_argument("--frames", type=int, default=300)
     render.add_argument("--warmup", type=int, default=60)
     render.add_argument("--width", type=int, default=1440)
@@ -244,23 +246,30 @@ def common_switches(args):
                                         ("--panel", args.panel)] if enabled]
 
 
-def workload_arguments(args, mode, lights, shading):
+def workload_arguments(args, mode, lights, shading, msaa):
+    # A count of 1 passes no flag, so a binary from before the option still runs the plain jobs.
     return ["--benchmark", "--mode", mode, "--shading", shading, "--lights", str(lights), "--frames", str(args.frames),
             "--warmup", str(args.warmup), "--width", str(args.width), "--height", str(args.height),
             "--capacity", str(args.capacity), "--range", str(args.range), "--anti-aliasing", args.anti_aliasing,
+            *(["--msaa", str(msaa)] if msaa != 1 else []),
             "--ambient-occlusion", args.ambient_occlusion, "--depth-prepass", args.depth_prepass,
             "--reflections", args.reflections, "--auto-exposure", args.auto_exposure, *common_switches(args)]
 
 
+def msaa_label(msaa):
+    return f"-msaa{msaa}" if msaa != 1 else ""
+
+
 def render_jobs(args):
-    return [(f"{shading}-{mode}-{lights}", workload_arguments(args, mode, lights, shading))
-            for lights in args.lights for mode in args.modes for shading in args.shadings]
+    return [(f"{shading}-{mode}-{lights}{msaa_label(msaa)}", workload_arguments(args, mode, lights, shading, msaa))
+            for lights in args.lights for mode in args.modes for shading in args.shadings for msaa in args.msaa]
 
 
 def scene_jobs(args):
-    return [(f"{shading}-{mode}-{lights}-shadows-{args.shadows}",
-             [str(args.model.resolve()), "--shadows", args.shadows, *workload_arguments(args, mode, lights, shading)])
-            for lights in args.lights for mode in args.modes for shading in args.shadings]
+    return [(f"{shading}-{mode}-{lights}-shadows-{args.shadows}{msaa_label(msaa)}",
+             [str(args.model.resolve()), "--shadows", args.shadows,
+              *workload_arguments(args, mode, lights, shading, msaa)])
+            for lights in args.lights for mode in args.modes for shading in args.shadings for msaa in args.msaa]
 
 
 def instancing_jobs(args):

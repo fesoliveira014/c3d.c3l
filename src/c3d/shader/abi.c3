@@ -432,14 +432,24 @@ $assert $reflect(ClusterRange.overflow).offset == 4;
 struct ClusterCounterGpu {
     uint overflows;
     uint decal_overflows;
-    uint _pad1;
+    uint skipped;
     uint _pad2;
 }
 $assert ClusterCounterGpu::size == 16;
 $assert $reflect(ClusterCounterGpu.overflows).offset == 0;
 $assert $reflect(ClusterCounterGpu.decal_overflows).offset == 4;
-$assert $reflect(ClusterCounterGpu._pad1).offset == 8;
+$assert $reflect(ClusterCounterGpu.skipped).offset == 8;
 $assert $reflect(ClusterCounterGpu._pad2).offset == 12;
+
+struct ClusterDepthRoot {
+    GpuAddress   frame;
+    TextureIndex depth;
+    uint         _pad0;
+}
+$assert ClusterDepthRoot::size == 16;
+$assert $reflect(ClusterDepthRoot.frame).offset == 0;
+$assert $reflect(ClusterDepthRoot.depth).offset == 8;
+$assert $reflect(ClusterDepthRoot._pad0).offset == 12;
 
 struct ClusterGpu {
     GpuAddress ranges;
@@ -453,8 +463,7 @@ struct ClusterGpu {
     uint       lights_per_cluster;
     uint       global_count;
     uint       orthographic;
-    uint       _pad0;
-    uint       _pad1;
+    GpuAddress tile_depth;
     Mat4f      view_proj;
     GpuAddress decal_ranges;
     GpuAddress decal_indices;
@@ -471,8 +480,7 @@ $assert $reflect(ClusterGpu.depth_slices).offset == 56;
 $assert $reflect(ClusterGpu.lights_per_cluster).offset == 60;
 $assert $reflect(ClusterGpu.global_count).offset == 64;
 $assert $reflect(ClusterGpu.orthographic).offset == 68;
-$assert $reflect(ClusterGpu._pad0).offset == 72;
-$assert $reflect(ClusterGpu._pad1).offset == 76;
+$assert $reflect(ClusterGpu.tile_depth).offset == 72;
 $assert $reflect(ClusterGpu.view_proj).offset == 80;
 $assert $reflect(ClusterGpu.decal_ranges).offset == 144;
 $assert $reflect(ClusterGpu.decal_indices).offset == 152;

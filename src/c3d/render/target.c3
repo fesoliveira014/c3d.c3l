@@ -33,6 +33,15 @@ const gpu::TextureState DEPTH_ATTACHMENT_STATE = {
 };
 
 <*
+ State a depth image is in while a pass resolves it as source or target.
+*>
+const gpu::TextureState DEPTH_RESOLVE_STATE = {
+    .layout = gpu::TextureLayout.DEPTH_ATTACHMENT,
+    .stages = { .depth_output, .color_output },
+    .access = { .read, .write },
+};
+
+<*
  State an image is presented from.
 *>
 const gpu::TextureState PRESENT_STATE = { .layout = gpu::TextureLayout.PRESENT };
@@ -64,6 +73,7 @@ struct Target {
     uint                      width;
     uint                      height;
     uint                      depth; // zero for a 2D image
+    gpu::SampleCount          samples; // ONE except a view's multisample images
 }
 
 <*
@@ -295,15 +305,17 @@ fn Target? allocate_target(
     gpu::TextureUsage usage,
     ZString debug_name,
     uint mip_levels = 1,
+    gpu::SampleCount samples = gpu::SampleCount.ONE,
 ) @private {
     gpu::TextureDesc texture_desc = {
-        .width      = width,
-        .height     = height,
-        .mip_levels = mip_levels,
-        .format     = format,
-        .usage      = usage,
-        .access     = { .graphics },
-        .debug_name = debug_name,
+        .width        = width,
+        .height       = height,
+        .mip_levels   = mip_levels,
+        .format       = format,
+        .usage        = usage,
+        .access       = { .graphics },
+        .sample_count = samples,
+        .debug_name   = debug_name,
     };
     gpu::TextureHandle texture = gpu::create_texture(device, &texture_desc)!;
     defer catch (void)gpu::destroy_texture(device, texture);
@@ -312,7 +324,10 @@ fn Target? allocate_target(
     gpu::AttachmentViewHandle attachment = gpu::create_attachment_view(device, &attachment_desc)!;
     defer catch (void)gpu::destroy_attachment_view(device, attachment);
 
-    gpu::TextureView view = gpu::create_texture_view(device, texture, null)!;
+    // The heap publishes only sampled or storage images; an attachment-only image has no view.
+    gpu::TextureView view;
+    if (usage.sampled || usage.storage) view = gpu::create_texture_view(device, texture, null)!;
+
     return {
         .texture    = texture,
         .attachment = attachment,
@@ -320,11 +335,12 @@ fn Target? allocate_target(
         .format     = format,
         .width      = width,
         .height     = height,
+        .samples    = samples,
     };
 }
 
 fn void release_target(gpu::Device* device, Target* target) @private {
-    (void)gpu::destroy_texture_view(device, target.view);
+    if (target.view.is_valid()) (void)gpu::destroy_texture_view(device, target.view);
     (void)gpu::destroy_attachment_view(device, target.attachment);
     (void)gpu::destroy_texture(device, target.texture);
     *target = {};
@@ -363,13 +379,13 @@ fn Target? allocate_storage_target(
 }
 
 fn void retire_storage_target(RetireList* retire, Target* target) @private {
-    retire.push({ .kind = RetiredKind.TEXTURE_VIEW, .texture_view = target.view });
+    if (target.view.is_valid()) retire.push({ .kind = RetiredKind.TEXTURE_VIEW, .texture_view = target.view });
     retire.push({ .kind = RetiredKind.TEXTURE, .texture = target.texture });
     *target = {};
 }
 
 fn void release_storage_target(gpu::Device* device, Target* target) @private {
-    (void)gpu::destroy_texture_view(device, target.view);
+    if (target.view.is_valid()) (void)gpu::destroy_texture_view(device, target.view);
     (void)gpu::destroy_texture(device, target.texture);
     *target = {};
 }

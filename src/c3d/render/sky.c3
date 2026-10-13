@@ -282,14 +282,17 @@ fn void? acquire_sky_pipeline(Renderer* renderer, gpu::PipelineHandle* pipeline,
     return acquire_compute_pipeline(renderer, pipeline, shader, "sky");
 }
 
-fn gpu::PipelineHandle? sky_atmosphere_pipeline(Renderer* renderer) @private {
+fn gpu::PipelineHandle? sky_atmosphere_pipeline(
+    Renderer* renderer,
+    gpu::SampleCount samples = gpu::SampleCount.ONE,
+) @private {
     PipelineKey key = {
         .vertex        = { .shader = FULLSCREEN },
         .fragment      = { .shader = SKY_ATMOSPHERE },
         .color_formats = { [0] = HDR_FORMAT },
         .color_count   = 1,
         .depth_format  = DEPTH_FORMAT,
-        .samples       = gpu::SampleCount.ONE,
+        .samples       = samples,
         .polygon       = gpu::PolygonMode.FILL,
     };
     return renderer.pipelines.get(&renderer.device, key);

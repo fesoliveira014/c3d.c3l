@@ -58,6 +58,9 @@ fn void view_stats_table(Renderer* renderer, ViewId[] views, ZString[] labels) {
     @row("Cluster overflows", views; ViewId view) {
         imgui::text("%u", renderer.views.get(view).stats.cluster_overflows);
     };
+    @row("Cluster cells skipped", views; ViewId view) {
+        imgui::text("%u", renderer.views.get(view).stats.cluster_skipped);
+    };
 
     $if $feat(C3D_PROFILE_GPU):
         switch (renderer.stats.gpu_timing_state) {

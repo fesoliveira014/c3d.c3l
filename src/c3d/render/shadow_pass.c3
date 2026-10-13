@@ -48,12 +48,13 @@ fn PipelineKey shadow_pipeline_key(
     bool vertex_color = false,
     bool tint = false,
     ReflectionPrepass reflection = ReflectionPrepass.OFF,
+    gpu::SampleCount samples = gpu::SampleCount.ONE,
 ) @private {
     PipelineKey key = {
         .vertex = vertex,
         .fragment = { .shader = DEPTH_ONLY, .flags = vertex_color ? shader::SHADER_FLAG_VERTEX_COLOR : 0 },
         .depth_format = DEPTH_FORMAT,
-        .samples = gpu::SampleCount.ONE,
+        .samples = samples,
         .polygon = wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
     };
     if (reflection != ReflectionPrepass.OFF) {
@@ -79,6 +80,7 @@ fn gpu::PipelineHandle? shadow_pipeline_for(
     bool vertex_color = false,
     bool tint = false,
     ReflectionPrepass reflection = ReflectionPrepass.OFF,
+    gpu::SampleCount samples = gpu::SampleCount.ONE,
 ) @private {
     renderer.stats.pipeline_lookups++;
     PipelineKey key = shadow_pipeline_key(
@@ -88,6 +90,7 @@ fn gpu::PipelineHandle? shadow_pipeline_for(
         vertex_color: vertex_color,
         tint:         tint,
         reflection:   reflection,
+        samples:      samples,
     );
     if (material && material.kind == MaterialKind.CUSTOM) {
         ShaderRes* published = resolve_shader(renderer, material.custom.shader)!;
@@ -126,6 +129,7 @@ fn ShadowDraw[]? prepare_shadow_draws(
     InstanceEffectsView* effects_view,
     bool colored = false,
     bool thin = false,
+    gpu::SampleCount samples = gpu::SampleCount.ONE,
 ) @private {
     ShadowDraw[] draws = alloc::new_array(tmem, ShadowDraw, candidates.len);
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
@@ -182,6 +186,7 @@ fn ShadowDraw[]? prepare_shadow_draws(
             material:     material,
             vertex_color: draw.masked && colored_vertices,
             reflection:   reflection,
+            samples:      samples,
         );
         if (catch excuse = pipeline) {
             if (!shadow_pipeline_skippable(renderer, material, excuse)) return excuse~;

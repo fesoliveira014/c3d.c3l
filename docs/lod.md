@@ -407,6 +407,10 @@ synchronous and is unsuitable for the frame loop.
 Source asset edits do not update an existing atlas; rebake explicitly after
 changing the captured geometry or material.
 
+An installed impostor draws at the view's [multisample count](views.md#multisample-anti-aliasing) in the multisample
+pass, but its alpha cut is evaluated once per pixel, so the cut edge is not antialiased. `bake_impostor` renders through
+an internal single-sample view.
+
 Supported sources are rigid Standard meshes with opaque or masked coverage,
 zero metallic factor, no emissive contribution, and no active occlusion map.
 Base color, normal and metallic/roughness asset textures are supported.

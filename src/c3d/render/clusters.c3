@@ -12,7 +12,7 @@ const ClusterDesc CLUSTER_DESC_DEFAULT @local = {
     .depth_slices = 24,
     .lights_per_cluster = 64,
     .far_distance = 100,
-}; // Starting coverage: 3456 cells and decals cost 1091584 bytes, plus lights and a 16-byte counter.
+}; // Starting coverage: 3456 cells and decals cost 1091584 bytes, plus lights, counter and 576 bytes of tile depths.
 
 <* Opaque shading route selected by a view. *>
 enum ShadingPath : uint {
@@ -29,13 +29,14 @@ enum LightSelection : uint {
 }
 $assert LightSelection.FLAT.ordinal == 0;
 
-<* Fixed cluster dimensions, capacity and camera-depth coverage. *>
+<* Fixed cluster dimensions, capacity, camera-depth coverage and optional depth pruning. *>
 struct ClusterDesc {
     uint tiles_x;
     uint tiles_y;
     uint depth_slices;
     uint lights_per_cluster;
     float far_distance;
+    bool depth_pruning;
 }
 
 <* Aligned regions within one view's cluster allocation. *>
@@ -46,6 +47,7 @@ struct ClusterLayout {
     usz decal_ranges_offset;
     usz decal_indices_offset;
     usz counter_offset;
+    usz tile_depth_offset;
     usz size;
     uint cluster_count;
     uint index_count;
@@ -87,9 +89,9 @@ fn ClusterLayout? cluster_layout(ClusterDesc desc, uint max_lights, uint[<3>] ma
         return c3d::INVALID_ARGUMENT~;
     }
     if (desc.tiles_x > uint::max / desc.tiles_y) return c3d::INVALID_ARGUMENT~;
-    uint cluster_count = desc.tiles_x * desc.tiles_y;
-    if (cluster_count > uint::max / desc.depth_slices) return c3d::INVALID_ARGUMENT~;
-    cluster_count *= desc.depth_slices;
+    uint tile_count = desc.tiles_x * desc.tiles_y;
+    if (tile_count > uint::max / desc.depth_slices) return c3d::INVALID_ARGUMENT~;
+    uint cluster_count = tile_count * desc.depth_slices;
     if (cluster_count > uint::max / desc.lights_per_cluster) return c3d::INVALID_ARGUMENT~;
     uint index_count = cluster_count * desc.lights_per_cluster;
     if (cluster_count > uint::max / shader::MAX_CLUSTER_DECALS) return c3d::INVALID_ARGUMENT~;
@@ -101,7 +103,8 @@ fn ClusterLayout? cluster_layout(ClusterDesc desc, uint max_lights, uint[<3>] ma
     usz decal_ranges_offset = cluster_region_end(decals_offset, shader::MAX_DECALS, DecalGpu::size)!;
     usz decal_indices_offset = cluster_region_end(decal_ranges_offset, cluster_count, ClusterRange::size)!;
     usz counter_offset = cluster_region_end(decal_indices_offset, decal_index_count, uint::size)!;
-    usz size = cluster_region_end(counter_offset, 1, ClusterCounterGpu::size)!;
+    usz tile_depth_offset = cluster_region_end(counter_offset, 1, ClusterCounterGpu::size)!;
+    usz size = cluster_region_end(tile_depth_offset, tile_count, float::size)!;
     if (desc.tiles_x > max_groups.x || desc.tiles_y > max_groups.y || desc.depth_slices > max_groups.z) {
         return c3d::UNSUPPORTED~;
     }
@@ -112,6 +115,7 @@ fn ClusterLayout? cluster_layout(ClusterDesc desc, uint max_lights, uint[<3>] ma
         .decal_ranges_offset = decal_ranges_offset,
         .decal_indices_offset = decal_indices_offset,
         .counter_offset = counter_offset,
+        .tile_depth_offset = tile_depth_offset,
         .size = size,
         .cluster_count = cluster_count,
         .index_count = index_count,

@@ -286,7 +286,10 @@ fn void? record_raster_view(
     bool temporal = taa || record.desc.post.motion_blur || screen_space_gi
       || ambient_occlusion_accumulates(&record.desc);
     bool forward_reflections = record.desc.ray_tracing.reflections && record.desc.shading == ShadingPath.FORWARD;
-    bool forward_prepass = record.desc.depth_prepass || ambient_occlusion || screen_space_gi || forward_reflections;
+    bool forward_prepass = forward_depth_prepass(&record.desc);
+    bool multisample = record.desc.msaa != MsaaSamples.ONE;
+    bool pruned_clusters = record.desc.lights == LightSelection.CLUSTERED && record.desc.clusters.depth_pruning
+      && (record.desc.shading == ShadingPath.DEFERRED || (forward_prepass && !forward_reflections));
     bool early_velocity = velocity_before_lighting(&record.desc);
     bool late_velocity = temporal && !early_velocity;
     bool history_valid = record.history.valid && record.history.scene == scene.identity;
@@ -431,6 +434,7 @@ fn void? record_raster_view(
                     mode:         record.desc.transparency,
                     shadow_flags: shadow_flags,
                 )!;
+                gpu::SampleCount samples = draw_list_samples(&record.desc, list);
                 gpu::PipelineHandle? pipeline = list == DrawList.GBUFFER
                   ? gbuffer_pipeline_for(renderer, material_description, vertex)
                   : pipeline_for(
@@ -440,6 +444,7 @@ fn void? record_raster_view(
                       rt_shadows: record.desc.ray_tracing.shadows,
                       weighted:   weighted,
                       soft_shadows: record.soft_shadows,
+                      samples:    samples,
                   );
                 if (catch excuse = pipeline) {
                     if (!custom_pipeline_rejected(renderer, material_description, excuse)) return excuse~;
@@ -448,7 +453,12 @@ fn void? record_raster_view(
 
                 gpu::PipelineHandle outline;
                 if (list == DrawList.OPAQUE && outlined(material_description, candidate, geometry)) {
-                    outline = outline_pipeline_for(renderer, material_description, vertex)!;
+                    outline = outline_pipeline_for(
+                        renderer: renderer,
+                        material: material_description,
+                        vertex:   vertex,
+                        samples:  samples,
+                    )!;
                 }
 
                 gpu::GpuAddress effects = resolve_instance_effects(
@@ -707,6 +717,7 @@ fn void? record_raster_view(
                     matrices: matrices,
                     lights: lights,
                     decals: decals,
+                    pruned: pruned_clusters,
                 )!;
                 light_address = cluster_frame.lights;
                 decal_address = cluster_frame.decals;
@@ -807,12 +818,16 @@ fn void? record_raster_view(
                 ao_bent_normals: ambient_occlusion && record.desc.ambient_occlusion.bent_normals,
             );
             if (record.desc.lights == LightSelection.CLUSTERED) {
-                record_clusters(
-                    renderer: renderer,
-                    record: record,
-                    view: view,
-                    frame: frame_span,
-                )!;
+                if (!pruned_clusters) {
+                    record_clusters(
+                        renderer: renderer,
+                        record: record,
+                        view: view,
+                        frame: frame_span,
+                        pruned: false,
+                    )!;
+                }
+
                 record.cluster_root = cluster_frame.clusters;
                 record.cluster_depth = cluster_frame.depth;
             }
@@ -946,7 +961,7 @@ fn void? record_raster_view(
         };
 
         bool transparent_after_split = scene_read_items.len > 0 || transparent_reads != (SceneReads){} || fog_pass
-          || weighted_items.len > 0 || cloud_pass.layer != null;
+          || weighted_items.len > 0 || cloud_pass.layer != null || multisample;
         instrumentation::@scope("view.record") {
             if (environments.atmosphere) {
                 record_sky_view_tables(
@@ -957,8 +972,9 @@ fn void? record_raster_view(
                 )!;
             }
             if (cloud_pass.shadowed) record_cloud_shadows(renderer, record, &cloud_pass)!;
+            FogFrame fog_frame;
             if (fog_volume) {
-                FogFrame fog_frame = {
+                fog_frame = {
                     .scene           = scene.identity,
                     .medium          = *fog.fog,
                     .base_height     = fog.base_height,
@@ -969,6 +985,9 @@ fn void? record_raster_view(
                     .camera_position = matrices.position,
                     .pre_exposure    = pre_exposure,
                 };
+            }
+
+            if (fog_volume && !pruned_clusters) {
                 record_fog_volume(
                     renderer:      renderer,
                     record:        record,
@@ -979,7 +998,7 @@ fn void? record_raster_view(
                 )!;
             }
             record.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
-            record.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
+            record.depth.transition(&renderer.commands, opaque_depth_state(record))!;
             gpu::GpuAddress sky_root;
             if (environments.sky) {
                 sky_root = pack_sky(
@@ -1005,6 +1024,20 @@ fn void? record_raster_view(
                             effects_view:   &effects_view,
                         )!;
                     }
+
+                    if (pruned_clusters) {
+                        record_pruned_clusters(
+                            renderer:      renderer,
+                            record:        record,
+                            view:          view,
+                            frame:         frame_span,
+                            fog_volume:    fog_volume,
+                            sun_light:     fog_sun,
+                            atlas_shadows: shadow_set.layer_count > 0,
+                            fog_frame:     &fog_frame,
+                        )!;
+                    }
+
                     if (early_velocity) {
                         post::record_velocity(
                             renderer:  renderer,
@@ -1044,7 +1077,7 @@ fn void? record_raster_view(
                             lights:   reflection_lights,
                         )!;
                     }
-                    if (ambient_occlusion || screen_space_gi || forward_reflections) {
+                    if (!multisample && (ambient_occlusion || screen_space_gi || forward_reflections)) {
                         record.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
                     }
                     record_forward_pass(
@@ -1060,7 +1093,7 @@ fn void? record_raster_view(
                         depth_matched: forward_prepass,
                     )!;
                 case DEFERRED:
-                    record_deferred_geometry(
+                    record_depth_prepass(
                         renderer:       renderer,
                         record:         record,
                         frame:          frame_span.address,
@@ -1069,6 +1102,22 @@ fn void? record_raster_view(
                         opaque:         opaque_items,
                         effects_view:   &effects_view,
                     )!;
+
+                    if (pruned_clusters) {
+                        record_pruned_clusters(
+                            renderer:      renderer,
+                            record:        record,
+                            view:          view,
+                            frame:         frame_span,
+                            fog_volume:    fog_volume,
+                            sun_light:     fog_sun,
+                            atlas_shadows: shadow_set.layer_count > 0,
+                            fog_frame:     &fog_frame,
+                        )!;
+                    }
+
+                    record_gbuffer_pass(renderer, record, gbuffer_items)!;
+
                     if (early_velocity) {
                         post::record_velocity(
                             renderer:  renderer,
@@ -1539,6 +1588,17 @@ fn MeshPreparation? prepare_billboards(Renderer* renderer, BillboardBatch* batch
         if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
         return {};
     }
+
+    MsaaCounts msaa = live_msaa_counts(renderer);
+    foreach (samples : msaa.items[:msaa.len]) {
+        pipeline_for(
+            renderer: renderer,
+            material: data,
+            vertex:   { .shader = BILLBOARD_VERTEX },
+            samples:  samples,
+        )!;
+    }
+
     return {
         .sheen = material_uses_sheen(data),
         .scene_reads = material_scene_reads(data, custom_scene_reads(renderer, data)!),
@@ -1552,6 +1612,11 @@ fn void? prepare_finish(Renderer* renderer, SceneReads reads, bool soft_shadows 
         list_view_pipelines(renderer, reads, &requests, soft_shadows);
         acquire_prepare_pipelines(renderer, requests.array_view())!;
     };
+}
+
+fn bool forward_depth_prepass(ViewDesc* desc) @private {
+    return desc.depth_prepass || desc.ambient_occlusion.kind != AoKind.NONE || desc.screen_space_gi.enabled
+        || (desc.ray_tracing.reflections && desc.shading == ShadingPath.FORWARD);
 }
 
 // On a view whose screen-space GI or ambient occlusion accumulates, the velocity feeds the effect before lighting;
@@ -1960,17 +2025,23 @@ fn void? record_forward_pass(
 ) @private {
     uint width = record.hdr_color.width;
     uint height = record.hdr_color.height;
+    bool multisample = record.desc.msaa != MsaaSamples.ONE;
+    gpu::SampleCount samples = msaa_sample_count(record.desc.msaa);
+    Target* color_image = multisample ? &record.msaa_color : &record.hdr_color;
+    Target* depth_image = multisample ? &record.msaa_depth : &record.depth;
     gpu::ColorTargetDesc[1] colors = {{
-        .view     = record.hdr_color.attachment,
-        .load_op  = color_loaded ? gpu::LoadOp.LOAD : gpu::LoadOp.CLEAR,
-        .store_op = gpu::StoreOp.STORE,
-        .clear    = { .rgba = { clear_color.r, clear_color.g, clear_color.b, clear_color.a } },
+        .view         = color_image.attachment,
+        .resolve_view = multisample ? record.hdr_color.attachment : (gpu::AttachmentViewHandle){},
+        .load_op      = color_loaded ? gpu::LoadOp.LOAD : gpu::LoadOp.CLEAR,
+        .store_op     = multisample ? gpu::StoreOp.DONT_CARE : gpu::StoreOp.STORE,
+        .clear        = { .rgba = { clear_color.r, clear_color.g, clear_color.b, clear_color.a } },
     }};
     gpu::DepthTargetDesc depth = {
-        .view     = record.depth.attachment,
-        .load_op  = depth_matched ? gpu::LoadOp.LOAD : gpu::LoadOp.CLEAR,
-        .store_op = gpu::StoreOp.STORE,
-        .clear    = { .depth = DEPTH_CLEAR },
+        .view         = depth_image.attachment,
+        .resolve_view = multisample ? record.depth.attachment : (gpu::AttachmentViewHandle){},
+        .load_op      = depth_matched ? gpu::LoadOp.LOAD : gpu::LoadOp.CLEAR,
+        .store_op     = gpu::StoreOp.STORE,
+        .clear        = { .depth = DEPTH_CLEAR },
     };
     gpu::ColorTargetState[1] color_targets = { gpu::color_blend_disabled() };
     DrawPassState write_depth = {
@@ -1990,7 +2061,13 @@ fn void? record_forward_pass(
         .height = height,
     };
 
-    gpu::PipelineHandle bound = first_pipeline(renderer, opaque)!;
+    gpu::PipelineHandle bound = first_pipeline(renderer, opaque, samples)!;
+    if (multisample) {
+        record.msaa_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
+        record.msaa_depth.transition(&renderer.commands, DEPTH_RESOLVE_STATE)!;
+        record.depth.transition(&renderer.commands, DEPTH_RESOLVE_STATE)!;
+    }
+
     @profile_pass(renderer, Pass.FORWARD_OPAQUE) {
         // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
         gpu::cmd_bind_pipeline(&renderer.commands, bound)!;
@@ -2027,6 +2104,36 @@ fn void? record_forward_pass(
     gpu::cmd_end_render_pass(&renderer.commands)!;
 }
 
+fn void? record_pruned_clusters(
+    Renderer* renderer,
+    ViewRecord* record,
+    ViewId view,
+    gpu::MappedGpuSpan frame,
+    bool fog_volume,
+    uint sun_light,
+    bool atlas_shadows,
+    FogFrame* fog_frame,
+) @private {
+    record_clusters(
+        renderer: renderer,
+        record: record,
+        view: view,
+        frame: frame,
+        pruned: true,
+    )!;
+
+    if (fog_volume) {
+        record_fog_volume(
+            renderer:      renderer,
+            record:        record,
+            frame:         frame.address,
+            sun_light:     sun_light,
+            atlas_shadows: atlas_shadows,
+            current:       fog_frame,
+        )!;
+    }
+}
+
 fn void? record_depth_prepass(
     Renderer* renderer,
     ViewRecord* record,
@@ -2041,11 +2148,14 @@ fn void? record_depth_prepass(
     foreach (&item : gbuffer) candidates[count++] = *item.candidate;
     foreach (&item : opaque) candidates[count++] = *item.candidate;
     bool thin = record.reflection_gbuffer.texture.is_valid();
+    bool multisample = record.desc.msaa != MsaaSamples.ONE;
+    gpu::SampleCount samples = msaa_sample_count(record.desc.msaa);
     ShadowDraw[] draws = prepare_shadow_draws(
         renderer:     renderer,
         candidates:   candidates,
         effects_view: effects_view,
         thin:         thin,
+        samples:      samples,
     )!;
     CullRange[] ranges = alloc::new_array(tmem, CullRange, (sz)draws.len);
     CullItem[] culls = shadow_cull_items(draws, ranges, &record.frustum);
@@ -2055,11 +2165,14 @@ fn void? record_depth_prepass(
 
     uint width = record.depth.width;
     uint height = record.depth.height;
+    Target* depth_image = multisample ? &record.msaa_depth : &record.depth;
+    Target* thin_image = multisample ? &record.msaa_reflection_gbuffer : &record.reflection_gbuffer;
     gpu::DepthTargetDesc depth = {
-        .view     = record.depth.attachment,
-        .load_op  = gpu::LoadOp.CLEAR,
-        .store_op = gpu::StoreOp.STORE,
-        .clear    = { .depth = DEPTH_CLEAR },
+        .view         = depth_image.attachment,
+        .resolve_view = multisample ? record.depth.attachment : (gpu::AttachmentViewHandle){},
+        .load_op      = gpu::LoadOp.CLEAR,
+        .store_op     = gpu::StoreOp.STORE,
+        .clear        = { .depth = DEPTH_CLEAR },
     };
     gpu::RenderPassDesc pass = { .depth = &depth, .width = width, .height = height };
     gpu::GraphicsState state = gpu::render_geometry_state(width, height)!;
@@ -2068,7 +2181,7 @@ fn void? record_depth_prepass(
 
     // Cleared to zero, so a pixel no eligible draw covers keeps zero specular weight.
     gpu::ColorTargetDesc[1] thin_color = {{
-        .view     = record.reflection_gbuffer.attachment,
+        .view     = thin_image.attachment,
         .load_op  = gpu::LoadOp.CLEAR,
         .store_op = gpu::StoreOp.STORE,
     }};
@@ -2076,8 +2189,10 @@ fn void? record_depth_prepass(
     if (thin) {
         pass.colors = thin_color[..];
         state.color.targets = thin_state[..];
-        record.reflection_gbuffer.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
+        thin_image.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
     }
+
+    if (multisample) record.msaa_depth.transition(&renderer.commands, DEPTH_RESOLVE_STATE)!;
 
     gpu::PipelineHandle first = draws.len
       ? draws[0].pipeline : shadow_pipeline_for(
@@ -2085,6 +2200,7 @@ fn void? record_depth_prepass(
           wireframe: false,
           vertex: depth_only_vertex_variant({}),
           reflection: thin ? ReflectionPrepass.MASKED : ReflectionPrepass.OFF,
+          samples: samples,
       )!;
 
     @profile_pass(renderer, Pass.DEPTH_PREPASS) {
@@ -2101,6 +2217,7 @@ fn void? record_depth_prepass(
             first:          first,
         )!;
         gpu::cmd_end_render_pass(&renderer.commands)!;
+        if (multisample && thin) record_sample_zero(renderer, thin_image, &record.reflection_gbuffer)!;
     }!;
 }
 
@@ -2443,6 +2560,7 @@ fn PipelineKey forward_pipeline_key(
     gpu::PolygonMode polygon,
     uint shadow_flags,
     bool weighted = false,
+    gpu::SampleCount samples = gpu::SampleCount.ONE,
 ) @private {
     PipelineKey key = {
         .vertex = vertex,
@@ -2452,7 +2570,7 @@ fn PipelineKey forward_pipeline_key(
         .color_formats = { [0] = HDR_FORMAT },
         .color_count = 1,
         .depth_format = DEPTH_FORMAT,
-        .samples = gpu::SampleCount.ONE,
+        .samples = samples,
         .polygon = polygon,
     };
     if (weighted) {
@@ -2469,6 +2587,7 @@ fn gpu::PipelineHandle? pipeline_for(
     bool rt_shadows = false,
     bool weighted = false,
     bool soft_shadows = true,
+    gpu::SampleCount samples = gpu::SampleCount.ONE,
 ) @private {
     renderer.stats.pipeline_lookups++;
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
@@ -2479,6 +2598,7 @@ fn gpu::PipelineHandle? pipeline_for(
         polygon:      wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
         shadow_flags: shadow_flags,
         weighted:     weighted,
+        samples:      samples,
     );
     if (material.kind != MaterialKind.CUSTOM) return renderer.pipelines.get(&renderer.device, key);
 
@@ -2491,7 +2611,11 @@ fn gpu::PipelineHandle? pipeline_for(
     return custom_pipeline(renderer, published, key);
 }
 
-fn gpu::PipelineHandle? first_pipeline(Renderer* renderer, DrawItem[] items) @private {
+fn gpu::PipelineHandle? first_pipeline(
+    Renderer* renderer,
+    DrawItem[] items,
+    gpu::SampleCount samples = gpu::SampleCount.ONE,
+) @private {
     if (items.len) return items[0].pipeline;
     renderer.stats.pipeline_lookups++;
     PipelineKey key = {
@@ -2500,7 +2624,7 @@ fn gpu::PipelineHandle? first_pipeline(Renderer* renderer, DrawItem[] items) @pr
         .color_formats = { [0] = HDR_FORMAT },
         .color_count = 1,
         .depth_format = DEPTH_FORMAT,
-        .samples = gpu::SampleCount.ONE,
+        .samples = samples,
         .polygon = gpu::PolygonMode.FILL,
     };
     return renderer.pipelines.get(&renderer.device, key);
