@@ -719,7 +719,25 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer RtReflection
     float max_roughness;
     uint noise_frame;
     uint light_count;
+    uint ray_count;
+    uint trace_shift;
+    uint _pad1;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer RtReflectionUpsampleRoot {
+    uint64_t frame;
+    uint input_texture;
+    uint depth;
+    uint normal_roughness;
+    uint emissive_specular;
+    uint output_texture;
+    uint width;
+    uint height;
+    uint input_width;
+    uint input_height;
+    uint offset;
     uint _pad0;
+    uint _pad1;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer RtReflectionBlurRoot {
@@ -730,7 +748,7 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer RtReflection
     uint output_texture;
     uint width;
     uint height;
-    uint _pad0;
+    uint emissive_specular;
     uint _pad1;
 };
 

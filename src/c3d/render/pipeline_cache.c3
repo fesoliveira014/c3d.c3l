@@ -39,6 +39,7 @@ enum ComputeSlot @private {
     AO_TEMPORAL,
     AO_BLUR,
     REFLECTION,
+    REFLECTION_UPSAMPLE,
     REFLECTION_BLUR,
     SSGI_TRACE,
     SSGI_TEMPORAL,
@@ -185,6 +186,8 @@ fn ComputeSlotTarget compute_slot_target(Renderer* renderer, ComputeSlot slot) @
             .shader = AO_BLUR, .debug_name = "ao_blur" };
         case REFLECTION: return { .pipeline = &renderer.reflection_pipelines.trace,
             .shader = RT_REFLECTIONS, .flags = trace_shader_flags(renderer), .debug_name = "rt_reflections" };
+        case REFLECTION_UPSAMPLE: return { .pipeline = &renderer.reflection_pipelines.upsample,
+            .shader = RT_REFLECTION_UPSAMPLE, .debug_name = "rt_reflection_upsample" };
         case REFLECTION_BLUR: return { .pipeline = &renderer.reflection_pipelines.blur,
             .shader = RT_REFLECTION_BLUR, .debug_name = "rt_reflection_blur" };
         case SSGI_TRACE: return { .pipeline = &renderer.screen_space_gi_pipelines.trace,
