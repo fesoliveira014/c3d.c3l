@@ -301,8 +301,9 @@ renderer.finish_view(view)!;
   anti-aliasing, bloom and blur do not apply. Colors, blending and encoding are those of a window or target overlay
   ([Render-target output](#render-target-output)), so a label is as bright as its sRGB color says, whatever the exposure.
 - **Temporal jitter.** The test reads the view's own depth, which temporal anti-aliasing renders with a sub-pixel
-  jitter, and the items are placed without it. Where an item meets a silhouette in front of it, the edge can shimmer by
-  up to about half a pixel from frame to frame. The renderer keeps no unjittered copy of the depth.
+  jitter, and the items are placed without it. Where an item meets a silhouette in front of it, the cut moves with the
+  jitter: up to about half a pixel either side of the unjittered edge, so up to about a pixel between two frames. The
+  renderer keeps no unjittered copy of the depth.
 - **Resolution and viewport.** A view may render below its output's size (`render_scale`) or cover only a rectangle of
   it (`viewport`). Each fragment maps its output pixel into the view's rectangle and reads the depth texel there. The
   items are clipped to that rectangle.
