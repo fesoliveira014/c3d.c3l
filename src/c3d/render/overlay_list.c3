@@ -28,7 +28,7 @@ const uint OVERLAY_LIST_DEFAULT_GLYPHS = 16384; // 1.5 MiB of instances per prep
 const uint OVERLAY_LIST_DEFAULT_TRANSFORMS = 256; // 20 KiB of table per prepared list, 0.06% of the ring
 
 <*
- Largest blur radius of a backdrop item, in pixels.
+ Largest blur radius of a backdrop item, in output pixels.
 *>
 const uint MAX_BACKDROP_RADIUS = 32; // 65 taps in each of two passes: 130 texel reads for every blurred pixel
 
@@ -125,7 +125,7 @@ struct OverlayRect {
     Vec4       slice_uv;      // nine-slice margins as fractions of uv_rect: left, top, right, bottom
     Vec4       slice_pixels;  // the same margins on screen; all zero disables nine-slice
     OverlayGradient gradient; // NONE keeps fill alone; otherwise fill is the start color
-    float      backdrop_radius; // pixels blurred under the rect; zero is off, clamped to MAX_BACKDROP_RADIUS
+    float      backdrop_radius; // blur radius in output pixels, also under a transform; zero is off
 }
 
 <*
