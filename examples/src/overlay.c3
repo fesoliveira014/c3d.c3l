@@ -56,7 +56,8 @@ const char[4] SKIN_HIGHLIGHT_COLOR @local = { 255, 255, 255, 255 };
 const float SKIN_SLICE_UV @local = 0.25f; // SKIN_FRAME_PIXELS of SKIN_SIZE
 const float SKIN_SLICE_PIXELS @local = 8;
 
-const uint TRANSFORM_LIST_ENTRIES @local = 8; // every transform and transformed clip the fixed scenes push, with room to spare
+// every transform and transformed clip the fixed scenes push, with room to spare
+const uint TRANSFORM_LIST_ENTRIES @local = 8;
 const uint TRANSFORM_PANEL_GLYPHS @local = 64;
 const uint TRANSFORM_LINE_GLYPHS @local = 32;
 const Vec2 TRANSFORM_CENTER @local = { 500, 600 };
