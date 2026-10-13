@@ -254,7 +254,10 @@ scroll and field text. Load styles before the documents that use them.
 
 The state blocks `hover`, `pressed`, `disabled` and `focused` take properties only. Effective properties are the
 flattened base, then the active state blocks in the order focused, hover, pressed, disabled (later wins), then the
-element's inline properties. Defaults: transparent fill, white text, `font_size` 16, no underline or text highlight, no
+element's inline properties. The `hidden` block holds the values an element has while it is not shown; no state flag
+activates it, and it takes `fill`, `border`, `text_color`, `opacity`, `offset` and a `width`, `height` or `size` of
+fixed numbers, see Transitions. Any other key faults `UNKNOWN_PROPERTY` and a size that is not a number
+`c3d::ASSET_FORMAT_ERROR`. Defaults: transparent fill, white text, `font_size` 16, no underline or text highlight, no
 border, radius or padding, no transition, opacity 1 and no offset.
 An image multiplies its texture by `fill`, white when the fill is transparent; `highlight` colors a grid's drop
 footprint; a bar draws `bar_fill` or `bar_skin` over its content box. `underline` and `text_highlight` apply to
@@ -293,16 +296,48 @@ style reload or a bar's bound value.
   Hit testing ignores opacity.
 - Each element whose inline properties or style blocks set a `transition` holds one entry in a fixed table
   (`UiDesc.max_transitions`, zero holds none). An entry starts at its element's first target with no animation. An
-  element that is not laid out in an `update` loses its entry. When the table is full, changes of the elements without
-  an entry snap. `ui.stats.transitions` counts the entries with a running transition.
+  element that is not laid out in an `update` loses its entry, unless it is exiting. When the table is full, changes
+  of the elements without an entry snap. `ui.stats.transitions` counts the entries with a running transition.
 - `ui.set_reduced_motion(true)` makes `offset`, `size` and `value` changes instant, and running ones snap at the next
   `update`. Fades of `fill`, `border`, `text_color` and `opacity` still run.
 - An element with an `id` keeps its entry across `reload_document` and `load_styles` and retargets from its current
   value; an element without one starts at its new target. `unload_document` drops the document's entries.
+
+### Enter and exit
+
+```jsonc
+"toast": {
+  "transition": { "properties": ["opacity", "offset"], "duration": 0.3, "easing": "ease_out" },
+  "hidden": { "opacity": 0, "offset": [48, 0] }
+}
+```
+
+- An element whose transition lists a property its style's `hidden` block sets is shown and hidden through that
+  property. It enters when it is laid out with no entry: those properties start at their hidden values and run to
+  their targets. That is a list item that appears, an element whose `visible` binding turns true and every element
+  of a document that `set_visible(document, true)` shows. The first `update` after `load_document`,
+  `reload_document` or `load_styles` enters nothing.
+- It exits when it was laid out in the previous `update` and is not laid out now, and its parent is laid out now or
+  it is a document root: a `visible` binding turned false, its list shrank, or `set_visible(document, false)` hid its
+  document. `unload_document` exits nothing. An element with no such property disappears at once.
+- An exiting element leaves the flow at once: its siblings close the gap in the `update` that notices the removal.
+  It draws as a floating snapshot of its last frame, attached to its parent at its last position and size, above
+  every document, and ends when each of those properties reaches its hidden value. It takes no hover, press or
+  click, and calls no getter. `size` shrinks only the snapshot, and an in-flow element's `offset`, which has no effect
+  while it is shown, moves the snapshot.
+- An element laid out again while exiting cancels its snapshot and retargets from its current values; it does not
+  enter again.
+- Under reduced motion `offset` and `size` jump to their hidden values, and an exit whose properties are all motion
+  ends at once.
+- `load_document`, `reload_document`, `unload_document` and `load_styles` end every exit at once, and so does an
+  `update` that faults. A snapshot counts against `max_instances`, `text_bytes` and `max_text_pieces`; overflowing
+  them faults `CAPACITY_EXCEEDED` like any frame. An element without an entry, because the table is full, disappears
+  at once. `ui.stats.exiting` counts the exits. A UI created with `max_transitions` 0 keeps no exit buffers.
 - The `ui` example's HUD rows and buttons fade on hover and press, and its health bars animate `value`. `ui --transitions`
   adds a lift card: hovering it moves its floating root, fades its colors and brightens a hint through `opacity`. With
-  `--frames N` a scripted pointer hovers the card, presses Damage and hovers a row. `--reduced-motion` and the `M` key
-  toggle reduced motion.
+  `--frames N` a scripted pointer hovers the card, presses Damage and hovers a row, and a toast enters and exits every
+  two seconds through a `visible` binding while the last squad row leaves and returns every three. `--reduced-motion`
+  and the `M` key toggle reduced motion.
 
 ## Bindings
 
@@ -416,8 +451,11 @@ several errors reports the same one every time.
 names, 4,096 laid-out elements per frame, 64 KiB of expanded text per frame, 2,048 cached lines with 32,768 cached
 glyphs, a 256-byte field buffer, 64 windows (60 bytes each) across the loaded documents, 1,024 rich text pieces per
 frame (76 bytes each) and 128 transition entries; `max_windows`, `max_text_pieces` and `max_transitions` may be 0,
-which holds none. A transition entry is 424 bytes in a table of two slots per entry, so the default 256 slots take
-106 KiB of the `create_ui` storage. Every table is allocated once in `create_ui`; documents and style sets allocate
+which holds none. A transition entry is 452 bytes in a table of two slots per entry, so the default 256 slots take
+113 KiB of the `create_ui` storage. A non-zero `max_transitions` also keeps the instance table (424 bytes per
+element), a 96-byte link per element, the expanded text and the rich text pieces of the update before, so that a
+removed element can exit: 2.5 MiB more at the defaults. With `max_transitions` 0 none of it is allocated. Every table
+is allocated once in `create_ui`; documents and style sets allocate
 once when they load. Nothing allocates per frame. A load or reload whose windows do not fit the table faults
 `CAPACITY_EXCEEDED` and changes nothing. `update` faults `CAPACITY_EXCEEDED` when a frame overflows, including a frame
 whose rich labels need more pieces than the table holds; that frame draws nothing and the next frame retries.
