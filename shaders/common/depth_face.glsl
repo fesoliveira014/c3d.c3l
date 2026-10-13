@@ -4,6 +4,19 @@
 #include "gbuffer.glsl"
 #include "texture_fetch.glsl"
 
+#ifdef MULTISAMPLE
+#include "multisample_heap.glsl"
+
+// A multisample invocation shades one sample: depth reads take its index and texel positions its offset in the pixel.
+#define DEPTH_FACE_FETCH(depth_texture, texel) gpu_fetch_ms(depth_texture, texel, gl_SampleID).r
+#define DEPTH_FACE_EXTENT(depth_texture) textureSize(gpu_texture_ms_heap[nonuniformEXT(GPU_HEAP_SLOT(depth_texture))])
+#define DEPTH_FACE_TEXEL_OFFSET gl_SamplePosition
+#else
+#define DEPTH_FACE_FETCH(depth_texture, texel) fetch_texture_2d(depth_texture, texel).r
+#define DEPTH_FACE_EXTENT(depth_texture) texture_extent(depth_texture)
+#define DEPTH_FACE_TEXEL_OFFSET 0.5
+#endif
+
 const float DEPTH_FACE_SIDE_MISSING = 1e30; // error of a side that leaves the image or meets the background
 
 vec3 depth_face_texel_position(
@@ -12,7 +25,7 @@ vec3 depth_face_texel_position(
     ivec2 extent,
     float depth
 ) {
-    return reconstruct_world_position(frame, (vec2(texel) + 0.5) / vec2(extent), depth);
+    return reconstruct_world_position(frame, (vec2(texel) + DEPTH_FACE_TEXEL_OFFSET) / vec2(extent), depth);
 }
 
 // Depth is linear in screen space across a plane, so a side whose two texels extrapolate to the
@@ -28,8 +41,8 @@ float depth_face_side_error(
     side_depth = 0.0;
     ivec2 far_texel = texel + 2 * side;
     if (any(lessThan(far_texel, ivec2(0))) || any(greaterThanEqual(far_texel, extent))) return DEPTH_FACE_SIDE_MISSING;
-    side_depth = fetch_texture_2d(depth_texture, texel + side).r;
-    float far_depth = fetch_texture_2d(depth_texture, far_texel).r;
+    side_depth = DEPTH_FACE_FETCH(depth_texture, texel + side);
+    float far_depth = DEPTH_FACE_FETCH(depth_texture, far_texel);
     if (side_depth == 0.0 || far_depth == 0.0) return DEPTH_FACE_SIDE_MISSING;
     return abs(2.0 * side_depth - far_depth - depth);
 }
@@ -62,7 +75,7 @@ vec3 depth_face_normal(
     float depth,
     vec3 toward_camera
 ) {
-    ivec2 extent = texture_extent(depth_texture);
+    ivec2 extent = DEPTH_FACE_EXTENT(depth_texture);
     vec3 centre = depth_face_texel_position(frame, texel, extent, depth);
     vec3 across = depth_face_axis_step(frame, depth_texture, texel, extent, ivec2(1, 0), depth, centre);
     vec3 down = depth_face_axis_step(frame, depth_texture, texel, extent, ivec2(0, 1), depth, centre);
