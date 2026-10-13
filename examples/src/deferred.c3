@@ -38,6 +38,9 @@ const float COLUMN_SPACING @local = 1.7f;
 const float ROW_SPACING @local = 1.9f;
 const float GROUND_SIZE @local = 16;
 const float GROUND_LEVEL @local = -0.7f;
+const Vec2 PAIR_POSITION @local = { -2.2f, 7.2f }; // the two shadow receivers touch, beside the decals and rows
+const Vec3 CANOPY_SIZE @local = { 3.2f, 0.1f, 2.4f };
+const Vec3 CANOPY_OFFSET @local = { -0.4f, 1.4f, 1 }; // from the pair; its sun shadow covers both receivers
 const uint COLUMNS @local = 5;
 const uint DEFAULT_BULLET_COUNT @local = 64;
 const uint DENSE_BULLET_COUNT @local = 255; // Leaves one slot for the moving road stripe.
@@ -373,7 +376,7 @@ fn void? run_gui(
             views_changed |= shading_radios("Left", &views.left_desc);
             views_changed |= shading_radios("Right", &views.right_desc);
             views_changed |= msaa_radios(&views);
-            imgui::text_unformatted("Key M cycles the count. Deferred views fault UNSUPPORTED with MSAA.");
+            imgui::text_unformatted("Key M cycles the count; a count the device lacks faults UNSUPPORTED.");
             imgui::checkbox("Orbit lamp", &orbit_lamp);
             imgui::same_line();
             if (imgui::checkbox("Decals", &options.decals)) {
@@ -560,6 +563,23 @@ fn void? place_row(Scene* scene, GeometryId geometry, MaterialId[] materials, fl
         Node* node = scene.add_mesh(geometry, material, name: prefix)!;
         node.local.position = { start + (float)index * COLUMN_SPACING, 0, z };
     }
+}
+
+fn void? place_shadow_pair(
+    Scene* scene,
+    GeometryId box,
+    GeometryId canopy,
+    Materials* materials,
+) @local {
+    for (uint receiver = 0; receiver < 2; receiver++) {
+        bool receives = receiver == 0;
+        Node* node = scene.add_mesh(box, materials.dielectric, name: receives ? "shadowed" : "unshadowed")!;
+        node.local.position = { PAIR_POSITION.x + (receives ? -0.5f : 0.5f) * CUBE_SIZE, 0, PAIR_POSITION.y };
+        if (Mesh* mesh = scene.get(node, Mesh)) mesh.receive_shadow = receives;
+    }
+
+    Node* shade = scene.add_mesh(canopy, materials.ground, name: "canopy")!;
+    shade.local.position = (Vec3){ PAIR_POSITION.x, 0, PAIR_POSITION.y } + CANOPY_OFFSET;
 }
 
 fn void? add_decal_materials(AssetStore* assets, Materials* materials) @local {
@@ -773,6 +793,7 @@ fn int main(String[] args) {
     GeometryId sphere;
     GeometryId box;
     GeometryId ground;
+    GeometryId canopy;
     @pool() {
         Geometry sphere_geometry = geometry::sphere(tmem, SPHERE_RADIUS);
         sphere = assets.add_geometry(&sphere_geometry, "deferred/sphere")!!;
@@ -780,6 +801,8 @@ fn int main(String[] args) {
         box = assets.add_geometry(&box_geometry, "deferred/box")!!;
         Geometry ground_geometry = geometry::plane(tmem, GROUND_SIZE, GROUND_SIZE);
         ground = assets.add_geometry(&ground_geometry, "deferred/ground")!!;
+        Geometry canopy_geometry = geometry::box(tmem, CANOPY_SIZE.x, CANOPY_SIZE.y, CANOPY_SIZE.z);
+        canopy = assets.add_geometry(&canopy_geometry, "deferred/canopy")!!;
     };
     Materials materials = create_materials(&assets, base_color, material_data, normal)!!;
     add_decal_materials(&assets, &materials)!!;
@@ -805,6 +828,12 @@ fn int main(String[] args) {
     };
     place_row(&scene, sphere, back_row[..], -ROW_SPACING * 0.5f, "back")!!;
     place_row(&scene, box, front_row[..], ROW_SPACING * 0.5f, "front")!!;
+    place_shadow_pair(
+        scene:     &scene,
+        box:       box,
+        canopy:    canopy,
+        materials: &materials,
+    )!!;
 
     Node* sun = scene.add_light(light::directional({ 1, 0.98f, 0.92f }, SUN_INTENSITY), name: "sun")!!;
     sun.local.rotation = maths::look_rotation((Vec3){ 0.35f, -0.8f, -0.45f }.normalize(), { 0, 1, 0 });

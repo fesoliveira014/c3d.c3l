@@ -90,6 +90,7 @@ fn void? acquire_gbuffer(Renderer* renderer, ViewRecord* record) @private {
             format:     GBUFFER_FORMATS[channel],
             usage:      { .color_attach, .sampled },
             debug_name: GBUFFER_NAMES[channel],
+            samples:    msaa_sample_count(record.desc.msaa),
         )!;
     }
 }

@@ -394,7 +394,20 @@ fn void list_mesh_pipelines(
         gpu::SampleCount samples = draw_list_samples(desc, list);
         bool multisample = samples != gpu::SampleCount.ONE;
         uint shadow_flags = rt_shadow_flags(renderer, desc.ray_tracing.shadows, soft_shadows);
-        if ((desc.ray_tracing.shadows && list != DrawList.GBUFFER) || multisample) {
+        if (list == DrawList.GBUFFER && multisample) {
+            PipelineKey view_gbuffer = gbuffer_pipeline_key(
+                vertex: vertex,
+                fragment: gbuffer_fragment(material),
+                polygon: polygon,
+                samples: samples,
+            );
+            list_prepare_key(
+                requests: requests,
+                key: view_gbuffer,
+                pass: PreparePipelinePass.GBUFFER,
+                shader: custom,
+            );
+        } else if ((desc.ray_tracing.shadows && list != DrawList.GBUFFER) || multisample) {
             PipelineKey view_forward = forward_pipeline_key(
                 material: material,
                 vertex: vertex,
@@ -410,7 +423,7 @@ fn void list_mesh_pipelines(
             );
         }
 
-        if (multisample && depth && material.common.alpha_mode != AlphaMode.BLEND && forward_depth_prepass(desc)) {
+        if (multisample && depth && material.common.alpha_mode != AlphaMode.BLEND && view_draws_prepass(desc)) {
             PipelineKey view_caster = shadow_pipeline_key(
                 vertex: depth_vertex,
                 wireframe: wireframe,
@@ -547,8 +560,19 @@ fn void list_view_pipelines(
         }
         if (desc.shading == ShadingPath.DEFERRED) {
             uint shadow_flags = rt_shadow_flags(renderer, desc.ray_tracing.shadows, soft_shadows);
-            list_prepare_key(requests, lighting_resolve_pipeline_key(shadow_flags));
+            list_prepare_key(requests, lighting_resolve_pipeline_key(shadow_flags, msaa_sample_count(desc.msaa)));
         }
+
+        if (msaa_normal_copy_wanted(desc)) {
+            gpu::Format normals = GBUFFER_FORMATS[GBufferChannel.NORMAL_ROUGHNESS.ordinal];
+            list_prepare_key(requests, sample_zero_pipeline_key(normals));
+        }
+
+        if (msaa_specular_copy_wanted(desc)) {
+            gpu::Format specular = GBUFFER_FORMATS[GBufferChannel.EMISSIVE_SPECULAR.ordinal];
+            list_prepare_key(requests, sample_zero_pipeline_key(specular));
+        }
+
         if (desc.transparency == TransparencyMode.WEIGHTED) {
             list_prepare_key(requests, weighted_composite_pipeline_key());
         }

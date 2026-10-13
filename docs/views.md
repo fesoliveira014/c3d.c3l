@@ -90,9 +90,9 @@ stack fault `INVALID_ARGUMENT`; a `clip_plane` other than the zero plane with a 
 unit length or a `d` that is not finite, and any non-zero `clip_plane` on a `PATH_TRACED` view, fault
 `INVALID_ARGUMENT`; `volumetric_fog` on a `PATH_TRACED` view and a `transmission_layers` above `MAX_TRANSMISSION_LAYERS` and a `ray_tracing.shadow_samples` above `MAX_SHADOW_SAMPLES` fault `INVALID_ARGUMENT`; invalid ambient occlusion settings fault `INVALID_ARGUMENT` and
 `AoKind.RAY_TRACED` faults `UNSUPPORTED`; an `msaa` above `ONE` with `TAA` or on a `PATH_TRACED` view faults
-`INVALID_ARGUMENT`, and on a `DEFERRED` view or at a count the device cannot create the view's multisample images at it
-faults `UNSUPPORTED`; a full pool faults `CAPACITY_EXCEEDED` (`RendererDesc.max_views`, 8 by
-default; see [Capacities](#capacities)).
+`INVALID_ARGUMENT`, and at a count the device cannot create the view's multisample images at, or on a `DEFERRED` view
+whose device lacks sample-rate shading, faults `UNSUPPORTED`; a full pool faults `CAPACITY_EXCEEDED`
+(`RendererDesc.max_views`, 8 by default; see [Capacities](#capacities)).
 `destroy_view` on the default view faults `INVALID_ARGUMENT`.
 
 The view owns its working images (`hdr_color`, `depth`, the scene color and depth snapshots, the
@@ -200,7 +200,9 @@ whose near boundary lies beyond that depth holds no opaque point, so the cull sk
 writes an overflowing, empty range for lights and decals and runs neither loop. Readers that
 reach such a cell, such as fog froxels behind the farthest surface, take the complete flat
 list. Cells in front of the nearest surface are never skipped, so blended surfaces keep
-their lists. No light is dropped.
+their lists. No light is dropped. On a view with [`msaa`](#multisample-anti-aliasing) above `ONE` the reduction reads
+the depth the prepass resolved from sample 0, and a sample farther than its tile's resolved depth reaches a skipped
+cell and takes the flat list.
 
 The reduction needs depth before any pass reads the cell lists, so on a pruned view the
 reduction, the cull and the [volumetric fog](sky.md#volumetric-fog) volume run right after the
@@ -311,7 +313,7 @@ write it with `image::write_png`. Every render target carries transfer-source us
 
 | `RendererDesc` field | Zero selects | Bound |
 | --- | --- | --- |
-| `max_views` | `DEFAULT_MAX_VIEWS`, 8 | none beyond memory: a view record is 8.5 KiB |
+| `max_views` | `DEFAULT_MAX_VIEWS`, 8 | none beyond memory: a view record is 9 KiB |
 | `max_render_targets` | `DEFAULT_MAX_RENDER_TARGETS`, 8 | at most the resolved `texture_capacity`, else `create_renderer` faults `c3d::INVALID_ARGUMENT` |
 | `max_posed_trace_instances` | `DEFAULT_MAX_POSED_TRACE_INSTANCES`, 64 | none beyond memory: a slot holds a mesh's posed streams, a node copy and a bottom level; the example Mannequin's two parts hold 205 KB of streams; on the RTX 4090 one mannequin of two posed meshes holds 483,032 B of posed data in software and 1,088,920 B in hardware, about 242 KB and 544 KB per slot, and bottom-level sizes are driver-specific |
 | `texture_capacity` | `gpu::DEFAULT_TEXTURE_CAPACITY`, 1,024 | 65,536 (`gpu::MAX_SHADER_HEAP_CAPACITY`), else `gpu::INVALID_ARGUMENT` |
@@ -331,8 +333,8 @@ An editor with a game view, two viewports and live thumbnails drawn through `ren
 Every working image of a view and every render target holds one texture-table entry and one heap slot, except a
 view's attachment-only multisample images, `msaa_color` and a forward view's `msaa_depth`, which hold no heap slot.
 A render target also holds one attachment view. So do a view's `hdr_color`, `depth`, scene snapshots, weighted
-accumulation and revealage, velocity, G-buffer and SSGI color, at most 13 per view, and each multisample image, at
-most 4 more. gpu.c3l's attachment table holds 4,096 views and cannot be configured: a renderer with
+accumulation and revealage, velocity, G-buffer and SSGI color, at most 13 per view, and each multisample image or
+sample-0 copy, at most 5 more. gpu.c3l's attachment table holds 4,096 views and cannot be configured: a renderer with
 three plain views holds at most 4,090 render targets, whatever `texture_capacity` allows. Asset textures share the
 table and the heap with the renderer. `default_asset_store_desc()` holds 4,096 textures and the table 1,024 by
 default, so a store filled past about 1,000 uploaded textures faults on upload unless `texture_capacity` is raised.
@@ -349,7 +351,7 @@ Images a view allocates at creation, by setting:
 | `motion_blur` | +1, plus the 2 tile images |
 | Velocity, under `TAA`, `motion_blur`, `screen_space_gi` or `ambient_occlusion.temporal` | +1 |
 | `DEFERRED` G-buffer | +5 |
-| `msaa` above `ONE` | +2 (`msaa_color`, `msaa_depth`), +1 `msaa_velocity` where velocity is used, +1 `msaa_reflection_gbuffer` with `ray_tracing.reflections` |
+| `msaa` above `ONE` | +2 (`msaa_color`, `msaa_depth`), +1 `msaa_velocity` where velocity is used, +1 `msaa_reflection_gbuffer` with `ray_tracing.reflections` on a `FORWARD` view; a `DEFERRED` view also holds its G-buffer at that count and adds +1 `normal_sample_zero` with ambient occlusion, screen-space GI or `ray_tracing.reflections`, +1 `specular_sample_zero` with `ray_tracing.reflections` |
 | `ambient_occlusion` | +2 |
 | `ambient_occlusion.temporal` | +4: two history and two depth images |
 | `screen_space_gi` | +7 |
@@ -647,8 +649,8 @@ compares the window, capture and mirror views.
 
 ## Multisample anti-aliasing
 
-`ViewDesc.msaa` selects 1, 2, 4 or 8 samples per pixel for the opaque scene passes of a `FORWARD` view. `ONE` is off:
-the view records the passes, images and pipelines of a view without the field.
+`ViewDesc.msaa` selects 1, 2, 4 or 8 samples per pixel for the opaque scene passes of a `FORWARD` or `DEFERRED` view.
+`ONE` is off: the view records the passes, images and pipelines of a view without the field.
 
 ```c3
 ViewDesc desc = render::default_view_desc();
@@ -657,7 +659,7 @@ render::configure_view(&renderer, renderer.default_view, desc)!;
 ```
 
 An MSAA view draws its depth prepass, its forward pass and the sky into multisample twins of `hdr_color` and `depth`
-(`msaa_color` and `msaa_depth`), and each of the two passes ends with a render-pass resolve:
+(`msaa_color` and `msaa_depth`). On a `FORWARD` view each of the two passes ends with a render-pass resolve:
 
 - `DEPTH_PREPASS` writes `msaa_depth` and resolves sample 0 into `depth`, so ambient occlusion, screen-space GI and
   traced reflections read a single-sample depth. With traced reflections its thin surface image is multisample too, and
@@ -682,16 +684,40 @@ redraw at the view's count against `msaa_depth`; both write `msaa_velocity`, and
 Moved depth writers among the scene-read draws were drawn single-sample, so they redraw last into `velocity` against
 the resolved `depth`.
 
+### Deferred views
+
+A `DEFERRED` view holds its G-buffer at the view's count and lights once per sample. Its pass order is:
+
+- `DEPTH_PREPASS` fills `msaa_depth` and resolves sample 0 into `depth`, so the pruned cluster reduction and every
+  later single-sample reader find a depth before the G-buffer exists.
+- `GBUFFER` draws the five channels at the view's count with depth `EQUAL` against `msaa_depth`. Copies of sample 0 of
+  the normal and specular channels follow: `normal_sample_zero` with ambient occlusion, screen-space GI or traced
+  reflections, and `specular_sample_zero` with traced reflections. Those effects read `depth` and the copies, as a
+  forward view's effects read its resolved images.
+- `LIGHTING` is a fullscreen pass at the view's count into `msaa_color`. It shades every sample in its own
+  invocation (sample-rate shading), which reads that sample of the five channels and of `msaa_depth`. The layer mask
+  and the receive-shadow bit are never averaged, so a sample takes the shadow decision of the surface it covers,
+  including at a seam between a receiver and a non-receiver. The face normal used for shadow offsets is rebuilt from
+  the same sample of neighboring texels. A sample with no geometry keeps the clear color. Ambient occlusion,
+  screen-space GI and traced reflection results are per pixel.
+- `FORWARD_OPAQUE` loads `msaa_color` and `msaa_depth`, draws the forward remainder and the sky at the view's count,
+  then resolves color (the average of the lit samples) into `hdr_color` and depth sample 0 into `depth`.
+
+Everything after the resolve is single-sample, as on a forward view. A traced shadow is evaluated for every sample, so a
+view that traces shadows casts `N` times the rays at `N` samples, and a lighting invocation costs the same
+whatever the count; the G-buffer writes and the lighting invocations scale with `N` on every pixel, not only on edges.
+Previews of a multisample G-buffer channel show sample 0.
+
 | Combination with `msaa` above `ONE` | Behavior |
 | --- | --- |
 | `TAA` | Faults `INVALID_ARGUMENT` |
 | `PATH_TRACED` | Faults `INVALID_ARGUMENT` |
-| `DEFERRED` | Faults `UNSUPPORTED` |
+| `DEFERRED` | Lights once per sample; faults `UNSUPPORTED` without sample-rate shading |
 | A count an image cannot be created at on the device | Faults `UNSUPPORTED`; adapters differ in the counts they accept |
 | `FXAA`, `NONE` | Allowed; FXAA filters the resolved image |
 | Motion blur, screen-space GI | Velocity from sample 0 |
-| Ambient occlusion, traced reflections | Read the resolved depth and the sample-0 thin surface |
-| Traced shadows | Evaluated per fragment |
+| Ambient occlusion, screen-space GI, traced reflections | Read the resolved depth and the sample-0 thin surface (forward) or sample-0 copies of the G-buffer channels (deferred) |
+| Traced shadows | Evaluated per fragment on a forward view, per sample on a deferred view |
 | Depth of field, auto focus, bloom, grading, LUT, auto exposure | Read the resolved images |
 | Decals | Unchanged: applied in the receiving draw's stage |
 | Installed impostors | Draw in the multisample pass; their alpha cut is not antialiased |
@@ -706,7 +732,9 @@ them. Bytes per working pixel at `N` samples:
 | --- | --- |
 | `msaa_color`, `msaa_depth` | `12 · N` (8 and 4) |
 | `msaa_velocity` | `4 · N` with motion blur alone, `8 · N` with screen-space GI |
-| `msaa_reflection_gbuffer` | `8 · N` |
+| `msaa_reflection_gbuffer` | `8 · N`, on a forward view |
+| G-buffer, deferred | `28 · N`, in place of the 28 of a single-sample G-buffer |
+| `normal_sample_zero`, `specular_sample_zero` | 8 each, single-sample |
 
 The single-sample images keep their formats and usages and are the resolve and copy targets.
 
@@ -739,8 +767,10 @@ python3 scripts/build.py --example deferred
 switches either half at runtime and lists the G-buffer channels of the deferred view in the targets
 panel. Key `M` and the panel's MSAA row cycle both views through 1, 2, 4 and 8 samples, and
 `--msaa <1|2|4|8>` starts with a count. A view whose configuration faults keeps the count it had and the panel
-names the fault: the deferred half stays at 1 sample with `UNSUPPORTED`.
-It includes 64 bullet-hole decals on the floor and opaque boxes plus a
+names the fault: a count the adapter cannot create the images at faults `UNSUPPORTED` on both halves.
+Two touching boxes in the foreground sit under a canopy's sun shadow; the left one receives shadows and the right one
+does not (`Mesh.receive_shadow`), so their seam shows the per-sample receive-shadow bit of the deferred half at
+`FOUR` samples. It includes 64 bullet-hole decals on the floor and opaque boxes plus a
 road-paint stripe parented to the orbiting lamp: 65 decals in total. The Decals
 checkbox changes their node visibility, and the panel prints packed, dropped and
 overflow counts for each view. `--clustered` starts both views with clustered
@@ -800,7 +830,10 @@ velocity and the post chain. `Stats.gpu_pass_ms` carries the three new passes. A
 depth prepass when its scene has an atmosphere, and splits before the transparent draws: the snapshot for
 blended readers, the SSGI colour copy, then `FOG`, then transparency. With `volumetric_fog` the view also
 records `FOG_SCATTERING` and `FOG_INTEGRATION` after the sky tables. Dielectric F0 in the resolve is
-`0.04 · specular` for IOR 1.5, which is why other IORs and tinted specular colors route forward.
+`0.04 · specular` for IOR 1.5, which is why other IORs and tinted specular colors route forward. On a view with
+[`msaa`](#multisample-anti-aliasing) above `ONE`, `DEPTH_PREPASS` also resolves sample 0 of the depth, `LIGHTING` runs
+once per sample into `msaa_color`, and `FORWARD_OPAQUE` resolves color into `hdr_color` and depth into `depth` (see
+[deferred views](#deferred-views)).
 
 Light selection follows `lights` on both paths: the resolve calls the same clustered or flat
 selection as the forward shaders, so `DEFERRED` with `CLUSTERED` needs no extra configuration.
@@ -847,5 +880,7 @@ for overdraw and light count and charges the G-buffer round trip without them.
 
 Known difference: the resolve offsets shadow lookups along a face normal rebuilt from depth, the
 forward shaders along the face-corrected vertex normal; neither reads the normal map, and on curved
-surfaces the two directions differ slightly. No MSAA on deferred views: `msaa` above `ONE` faults
-`UNSUPPORTED` there; no screen-space effect consumes the G-buffer.
+surfaces the two directions differ slightly.
+
+Ambient occlusion, screen-space GI and traced reflections on a deferred view read the G-buffer's normal channel, and
+traced reflections its specular weight; on an MSAA view they read the sample-0 copies.
