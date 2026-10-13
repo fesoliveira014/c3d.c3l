@@ -590,6 +590,7 @@ fn void list_view_pipelines(
 
         if (desc.ray_tracing.reflections) {
             list_prepare_compute(requests, ComputeSlot.REFLECTION);
+            if (reflection_half_resolution(desc)) list_prepare_compute(requests, ComputeSlot.REFLECTION_UPSAMPLE);
             list_prepare_compute(requests, ComputeSlot.REFLECTION_BLUR);
         }
 

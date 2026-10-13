@@ -4,6 +4,7 @@
 #include "descriptor_heap.glsl"
 #include "gbuffer.glsl"
 #include "texture_fetch.glsl"
+#include "rt_reflection.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -12,9 +13,6 @@ layout(push_constant) uniform Push {
 } pc;
 
 const float RT_REFLECTION_BLUR_STEP = 2.0; // texels between taps at roughness 1; wider smooths more grain and bleeds across edges
-const float RT_REFLECTION_BLUR_DEPTH_FRACTION = 0.05; // relative depth gap at which a tap's weight falls to e^-1
-const float RT_REFLECTION_BLUR_NORMAL_POWER = 16.0; // rejects taps across creases
-const float RT_REFLECTION_BLUR_ROUGHNESS_TOLERANCE = 0.1; // taps on a visibly different material are skipped
 const int RT_REFLECTION_BLUR_RADIUS = 2; // taps each side; a 5x5 kernel
 
 void main() {
@@ -35,6 +33,7 @@ void main() {
     FrameRoot frame = FrameRoot(root.frame);
     ivec2 extent = ivec2(root.width, root.height);
     vec3 normal = decode_octahedral(centre_normal_roughness.rg);
+    float specular_weight = fetch_texture_2d(root.emissive_specular, texel).a;
     float centre_distance = view_distance(frame, fetch_texture_2d(root.depth, texel).r);
     vec3 total = vec3(0.0);
     float weight_sum = 0.0;
@@ -45,14 +44,22 @@ void main() {
             if (tap_value.a == 0.0) continue;
 
             vec4 tap_normal_roughness = fetch_texture_2d(root.normal_roughness, tap);
-            if (abs(tap_normal_roughness.b - roughness) > RT_REFLECTION_BLUR_ROUGHNESS_TOLERANCE) continue;
-            float gap = abs(view_distance(frame, fetch_texture_2d(root.depth, tap).r) - centre_distance);
-            float facing = max(dot(normal, decode_octahedral(tap_normal_roughness.rg)), 0.0);
-            float weight = exp(-gap / (RT_REFLECTION_BLUR_DEPTH_FRACTION * centre_distance))
-                * pow(facing, RT_REFLECTION_BLUR_NORMAL_POWER);
+            if (abs(tap_normal_roughness.b - roughness) > RT_REFLECTION_ROUGHNESS_TOLERANCE) continue;
+
+            float tap_specular_weight = fetch_texture_2d(root.emissive_specular, tap).a;
+            if (abs(tap_specular_weight - specular_weight) > RT_REFLECTION_SPECULAR_TOLERANCE) continue;
+
+            float weight = rt_reflection_tap_weight(
+                frame,
+                centre_distance,
+                normal,
+                fetch_texture_2d(root.depth, tap).r,
+                tap_normal_roughness.rg
+            );
             total += weight * tap_value.rgb;
             weight_sum += weight;
         }
     }
+
     store_storage_texture(root.output_texture, texel, vec4(total / weight_sum, 1.0));
 }

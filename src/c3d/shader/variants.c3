@@ -90,6 +90,7 @@ enum ShaderName : int {
     RT_AO,
     RT_REFLECTIONS,
     RT_REFLECTION_BLUR,
+    RT_REFLECTION_UPSAMPLE,
     PATH_TRACE,
     PATH_TRACE_MISS,
     PATH_TRACE_HIT,
@@ -349,6 +350,7 @@ const char[*] RT_AO_SCENE_TRACE_BVH_SPIRV @private = $embed("../../../shaders/sp
 const char[*] RT_REFLECTIONS_SPIRV @private = $embed("../../../shaders/spv/rt_reflections.spv");
 const char[*] RT_REFLECTIONS_SCENE_TRACE_BVH_SPIRV @private = $embed("../../../shaders/spv/rt_reflections_scene_trace_bvh.spv");
 const char[*] RT_REFLECTION_BLUR_SPIRV @private = $embed("../../../shaders/spv/rt_reflection_blur.spv");
+const char[*] RT_REFLECTION_UPSAMPLE_SPIRV @private = $embed("../../../shaders/spv/rt_reflection_upsample.spv");
 const char[*] PATH_TRACE_SPIRV @private = $embed("../../../shaders/spv/path_trace.spv");
 const char[*] PATH_TRACE_MISS_SPIRV @private = $embed("../../../shaders/spv/path_trace_miss.spv");
 const char[*] PATH_TRACE_HIT_SPIRV @private = $embed("../../../shaders/spv/path_trace_hit.spv");
@@ -430,7 +432,7 @@ const char[*] SAMPLE_ZERO_SPIRV @private = $embed("../../../shaders/spv/sample_z
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[224] SHADER_ENTRIES = {
+const ShaderEntry[225] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -578,6 +580,7 @@ const ShaderEntry[224] SHADER_ENTRIES = {
     { .variant = { .shader = RT_REFLECTIONS }, .spirv = RT_REFLECTIONS_SPIRV[..] },
     { .variant = { .shader = RT_REFLECTIONS, .flags = SHADER_FLAG_SCENE_TRACE_BVH }, .spirv = RT_REFLECTIONS_SCENE_TRACE_BVH_SPIRV[..] },
     { .variant = { .shader = RT_REFLECTION_BLUR }, .spirv = RT_REFLECTION_BLUR_SPIRV[..] },
+    { .variant = { .shader = RT_REFLECTION_UPSAMPLE }, .spirv = RT_REFLECTION_UPSAMPLE_SPIRV[..] },
     { .variant = { .shader = PATH_TRACE }, .spirv = PATH_TRACE_SPIRV[..] },
     { .variant = { .shader = PATH_TRACE_MISS }, .spirv = PATH_TRACE_MISS_SPIRV[..] },
     { .variant = { .shader = PATH_TRACE_HIT }, .spirv = PATH_TRACE_HIT_SPIRV[..] },
