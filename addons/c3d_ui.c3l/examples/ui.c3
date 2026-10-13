@@ -716,6 +716,7 @@ fn Event[] replay_windows(Demo* demo, uint frame) @local {
         Vec2 at = (drag.from + (drag.to - drag.from) * progress) * demo.window.pixel_density;
         input.mouse_position = at;
         input.mouse_buttons[(usz)platform::MouseButton.LEFT] = frame != drag.release_frame;
+
         if (frame == drag.press_frame) {
             demo.script_events[count++] = { .kind = MOUSE_BUTTON_DOWN, .button = LEFT, .position = at };
             continue;
@@ -831,10 +832,10 @@ fn void? run_interactive(Demo* demo, uint frame_limit) @local {
         if (demo.windows && frame_limit) events = replay_windows(demo, frames);
 
         Input* input = &window.input;
-        // A field blurs on Escape down, so the release that follows must not quit.
+        // A field blurs and a window drag cancels on Escape down, so the release that follows must not quit.
         bool typing = ui.wants_text_input || input.keyboard_captured_by_gui;
         ui.route_input(input, events);
-        if (input.key_pressed(platform::Scancode.ESCAPE)) escape_captured = typing;
+        if (input.key_pressed(platform::Scancode.ESCAPE)) escape_captured = typing || input.keyboard_captured_by_gui;
         if (input.key_released(platform::Scancode.ESCAPE)) {
             if (!escape_captured && !typing) break;
             escape_captured = false;

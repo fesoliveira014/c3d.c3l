@@ -15,14 +15,15 @@ python3 scripts/build.py --example post
 
 `ViewDesc.post` is the CPU post configuration of a view (see `docs/views.md` for the output
 fields). `render::default_view_desc()` selects `DISPLAY_LDR` with `post::default_post_stack()`: ACES,
-contrast 1, saturation 1, temperature 0, tint 0, lift 0, gamma 1, gain 1, no LUT, and
+contrast 1, saturation 1, temperature 0, tint 0, lift 0, gamma 1, gain 1, no LUT with the unit LUT domain, and
 `anti_aliasing = AntiAliasing.FXAA`. `AntiAliasing { NONE, FXAA, TAA }` selects one filter per view, so
 FXAA and TAA never stack. A zeroed `PostStack` is not neutral.
 
 Apply a configuration between frames with `render::configure_view(&renderer, renderer.default_view,
 desc)`. The call copies the description into the view record, uploads a selected LUT, and allocates
 or retires the two working images FXAA needs. `LINEAR_HDR` faults `INVALID_ARGUMENT` on a window
-view; a dead view or LUT faults `INVALID_ID`; a LUT that is not a single-mip RGBA8 3D texture faults
+view; a dead view or LUT faults `INVALID_ID`; a LUT that is not a single-mip RGBA8 3D texture, or a selected LUT
+whose [domain](#lut) is not finite with `lut_domain_min` below `lut_domain_max` in every channel, faults
 `INVALID_ARGUMENT`.
 
 Exposure is `Camera.exposure` (05 Cameras) times, under [auto exposure](#auto-exposure), the view's adapted
@@ -67,13 +68,44 @@ contrast about linear mid-gray 0.18, saturation on Rec.709 luma, lift-gamma-gain
 
 ## LUT
 
-The LUT is a user artistic LUT applied after tone mapping on display-referred `[0, 1]` color. Lookup
-coordinates are sRGB-encoded (the domain grading tools export), the sampled value is decoded back
-to linear, and texel centers are addressed with `lut_scale(n) = (n - 1) / n` and
-`lut_offset(n) = 0.5 / n`. The texture is a single-mip RGBA8 3D texture, x fastest, then y, then z:
-`post::identity_lut(allocator, size)` builds the identity cube and `post::identity_lut_desc(size)`
-its description. The identity LUT is a no-op within RGBA8 quantization. File parsing (`.cube`) is
-not provided.
+The LUT is a user artistic LUT applied after tone mapping on display-referred `[0, 1]` color. The input is
+sRGB-encoded display-referred color inside the LUT domain and the output is sRGB-encoded; there is no conversion
+parameter. Lookup coordinates are sRGB-encoded (the domain grading tools export), the sampled value is decoded back
+to linear, and texel centers are addressed with `lut_scale(n) = (n - 1) / n` and `lut_offset(n) = 0.5 / n`.
+The texture is a single-mip RGBA8 3D texture, x fastest, then y, then z; there is no floating-point LUT.
+`post::identity_lut(allocator, size)` builds the identity cube and `post::identity_lut_desc(size)` its description.
+The identity LUT is a no-op within RGBA8 quantization.
+
+### Domain
+
+`GradeParams.lut_domain_min` and `lut_domain_max` give the color range the LUT covers, per channel; the defaults
+are 0 and 1. The lookup maps `(c - min) / (max - min)` before the texel-center mapping, with the domain folded into
+`GradeGpu.lut_scale` and `lut_offset` on the CPU, so the shader keeps one multiply-add. A unit domain produces the
+same values as no domain. Colors outside the domain read the edge texels. A zeroed `GradeParams` has an empty domain
+and is not neutral; `configure_view` faults `INVALID_ARGUMENT` for a selected LUT whose domain is not finite with
+`min < max` in every channel.
+
+### `.cube` files
+
+`image::parse_lut_cube(allocator, text)` and `image::load_lut_cube(allocator, path, file_source)` read an Adobe
+`.cube` 3D LUT, or a Resolve one with `LUT_3D_INPUT_RANGE`, into a `Lut3d { size, domain_min, domain_max, rgba }`.
+
+- Read: `LUT_3D_SIZE`, `DOMAIN_MIN`, `DOMAIN_MAX`, `LUT_3D_INPUT_RANGE min max` (the Resolve spelling: one range for
+  all three channels, not combined with `DOMAIN_MIN` or `DOMAIN_MAX`), `TITLE` (accepted and ignored) and `#`
+  comment lines. Data rows hold three numbers each, red varying fastest, then green, then blue. Values clamp to
+  `[0, 1]` and round to RGBA8 with opaque alpha.
+- `UNSUPPORTED`: `LUT_1D_SIZE`, or a size outside 2 to `image::MAX_LUT_SIZE` (64, 1 MiB of RGBA8).
+- `ASSET_FORMAT_ERROR`: a wrong row count, a row without three numbers, a non-numeric or non-finite token, an
+  unknown keyword, a duplicate keyword, `LUT_3D_INPUT_RANGE` together with `DOMAIN_MIN` or `DOMAIN_MAX`, a keyword
+  after the first row, a missing size, or a domain whose minimum is not below its maximum in every channel.
+- Ownership: `Lut3d.rgba` is allocated with the allocator passed to the parser and belongs to the table;
+  `image::destroy_lut3d(&lut)` frees it. `post::lut_texture_desc(&lut)` describes the texture and holds no pixels.
+  `AssetStore.add_texture(post::lut_texture_desc(&lut), lut.rgba, key)` copies the texels, so the table can be
+  destroyed afterwards. The application sets `GradeParams.lut` to the texture and copies `domain_min` and
+  `domain_max` into the grade.
+
+The post example's key `G` (and the "Cube LUT" box) switches between no LUT and a teal and orange `.cube` look
+embedded from `examples/assets/lut`; `--cube-lut` starts with it on and `--cube-lut-file <path>` loads another file.
 
 ## FXAA
 

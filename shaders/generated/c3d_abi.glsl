@@ -1335,8 +1335,10 @@ struct GradeGpu {
     vec4 gain;
     uint lut_texture;
     uint lut_sampler;
-    float lut_scale;
-    float lut_offset;
+    uint _pad_lut0;
+    uint _pad_lut1;
+    vec4 lut_scale;
+    vec4 lut_offset;
     uint bloom_texture;
     uint bloom_sampler;
     float bloom_intensity;
