@@ -89,6 +89,7 @@ void main() {
             radiance = trace_miss_radiance(frame, direction);
             radiance = apply_fog_to_infinity(frame, position, direction, radiance);
         }
+
         radiance_sum += radiance;
     }
 

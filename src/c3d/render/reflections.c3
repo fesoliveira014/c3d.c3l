@@ -261,6 +261,7 @@ fn void? record_reflections(
                 .input_height      = traced.height,
                 .offset            = noise_frame % RT_REFLECTION_HALF_PHASES,
             };
+
             gpu::cmd_bind_pipeline(&renderer.commands, renderer.reflection_pipelines.upsample)!;
             dispatch_over(renderer, upsample_root.address, &record.reflection)!;
         }
@@ -279,6 +280,7 @@ fn void? record_reflections(
             .width             = record.reflection_blur.width,
             .height            = record.reflection_blur.height,
         };
+
         gpu::cmd_bind_pipeline(&renderer.commands, renderer.reflection_pipelines.blur)!;
         dispatch_over(renderer, blur_root.address, &record.reflection_blur)!;
     }!;

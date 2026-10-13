@@ -1230,6 +1230,7 @@ fn void drop_unwanted_images(ViewRecord* staged, ViewDesc* previous) @private {
         staged.reflection = {};
         staged.reflection_blur = {};
     }
+
     if (!reflection_half_resolution(desc)) staged.reflection_half = {};
     if (!desc.ray_tracing.reflections || desc.shading != ShadingPath.FORWARD) staged.reflection_gbuffer = {};
     if (desc.shading != ShadingPath.PATH_TRACED) staged.accumulation = {};
