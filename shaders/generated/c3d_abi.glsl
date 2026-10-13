@@ -69,6 +69,7 @@ const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1u;
 const uint AO_TEMPORAL_FLAG_HISTORY_VALID = 1u;
 const uint SSGI_FLAG_GBUFFER_NORMALS = 1u;
 const uint SSGI_FLAG_HISTORY_VALID = 2u;
+const uint RT_REFLECTION_TEMPORAL_FLAG_HISTORY_VALID = 1u;
 const uint MATERIAL_MAP_BASE_COLOR = 1u;
 const uint MATERIAL_MAP_METALLIC_ROUGHNESS = 2u;
 const uint MATERIAL_MAP_NORMAL = 4u;
@@ -750,6 +751,26 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer RtReflection
     uint height;
     uint emissive_specular;
     uint _pad1;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer RtReflectionTemporalRoot {
+    uint64_t frame;
+    uint current;
+    uint history;
+    uint previous_depth;
+    uint depth;
+    uint velocity;
+    uint normal_roughness;
+    uint emissive_specular;
+    uint output_texture;
+    uint output_depth;
+    uint sampler_index;
+    uint width;
+    uint height;
+    float pre_exposure_ratio;
+    float max_roughness;
+    uint flags;
+    uint _pad0;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer PathTraceRoot {

@@ -63,6 +63,7 @@ struct RayTracingDesc {
     uint                 shadow_samples; // up to MAX_SHADOW_SAMPLES; zero reads as 1
     uint                 reflection_rays; // up to RT_REFLECTION_RAYS_MAX; zero reads as 1
     ReflectionResolution reflection_resolution; // the extent the rays are cast at
+    bool                 reflection_history; // accumulates the traced reflection; keeps two history and depth images
 }
 
 <*
@@ -102,7 +103,7 @@ struct ViewDesc {
 *>
 const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8 + GBUFFER_CHANNEL_COUNT
   + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1 + 1 + 2 * SSGI_HISTORY_SLOTS + 2 + 1 + 3 + 2 + 1 + 2 + 1 + 1 + 2
-  + 2 * AO_HISTORY_SLOTS + 6 + 1;
+  + 2 * AO_HISTORY_SLOTS + 6 + 1 + 2 * REFLECTION_HISTORY_SLOTS;
 
 <*
  Reverse-Z projection terms that recover forward distance from stored depth.
@@ -639,6 +640,9 @@ struct ViewRecord {
     Target                               reflection_blur;
     Target                               reflection_half;
     Target                               reflection_gbuffer;
+    Target[REFLECTION_HISTORY_SLOTS]     reflection_history;
+    Target[REFLECTION_HISTORY_SLOTS]     reflection_depth;
+    float[REFLECTION_HISTORY_SLOTS]      reflection_history_pre_exposure; // radiance scale each history slot carries
     Target                               accumulation;
     Target                               ssgi_raw;
     Target[SSGI_HISTORY_SLOTS]           ssgi_history;
@@ -774,6 +778,11 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
     targets[next + 4] = &record.normal_sample_zero;
     targets[next + 5] = &record.specular_sample_zero;
     targets[next + 6] = &record.reflection_half;
+    next += 7;
+    for (uint slot = 0; slot < REFLECTION_HISTORY_SLOTS; slot++) {
+        targets[next + slot] = &record.reflection_history[slot];
+        targets[next + REFLECTION_HISTORY_SLOTS + slot] = &record.reflection_depth[slot];
+    }
     return targets;
 }
 
@@ -1236,6 +1245,11 @@ fn void drop_unwanted_images(ViewRecord* staged, ViewDesc* previous) @private {
     }
 
     if (!reflection_half_resolution(desc)) staged.reflection_half = {};
+    if (!reflection_accumulates(desc)) {
+        staged.reflection_history = {};
+        staged.reflection_depth = {};
+    }
+
     if (!desc.ray_tracing.reflections || desc.shading != ShadingPath.FORWARD) staged.reflection_gbuffer = {};
     if (desc.shading != ShadingPath.PATH_TRACED) staged.accumulation = {};
     if (desc.shading == ShadingPath.PATH_TRACED) {
