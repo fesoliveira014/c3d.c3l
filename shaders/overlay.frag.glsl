@@ -18,6 +18,12 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Ov
 };
 #endif
 
+#ifdef WORLD
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer OverlayPlanes {
+    OverlayPlaneGpu values[];
+};
+#endif
+
 layout(push_constant) uniform Push {
     uint64_t vertex_root_gpu;
     uint64_t fragment_root_gpu;
@@ -284,6 +290,11 @@ void overlay_shade() {
     float view_depth = fetch_texture_2d(root.depth_texture, clamp(ivec2(depth_texel), ivec2(0), depth_extent - 1)).r;
     float item_depth = plane ? gl_FragCoord.z * PLANE_DEPTH_SCALE : transforms.values[transform_index].depth;
     clip_coverage *= item_depth >= view_depth ? 1.0 : 0.0;
+    if (plane) {
+        // The view's clip plane, as the distance of the fragment's point on the plane.
+        vec4 clip_plane = OverlayPlanes(root.planes).values[transform_index].distance;
+        clip_coverage *= dot(clip_plane.xyz, vec3(v_plane, 1.0)) >= 0.0 ? 1.0 : 0.0;
+    }
 #endif
 
     // Item-local position, the local change per output pixel along x and y, and output pixels per local unit.

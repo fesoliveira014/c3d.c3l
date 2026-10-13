@@ -17,7 +17,6 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Ov
     OverlayPlaneGpu values[];
 };
 
-out float gl_ClipDistance[1];
 layout(location = 1) out vec2 v_plane;
 #endif
 
@@ -63,7 +62,6 @@ void place_plane_corner(OverlayWorldRoot root, OverlayTransformGpu transform, ui
     vec2 view_center = vec2(root.view_x, root.view_y) + half_view;
     vec2 pixel_times_w = view_center * clip.w + half_view * vec2(clip.x, -clip.y);
     gl_Position = vec4(pixel_times_w * root.scale + root.translate * clip.w, clip.z, clip.w);
-    gl_ClipDistance[0] = dot(plane.distance.xyz, vec3(in_plane, 1.0));
     v_plane = in_plane;
 }
 #endif
@@ -72,7 +70,6 @@ void main() {
     v_item = uint(gl_InstanceIndex);
 #ifdef WORLD
     OverlayWorldRoot root = OverlayWorldRoot(pc.vertex_root_gpu);
-    gl_ClipDistance[0] = 1.0;
     v_plane = vec2(0.0);
 #else
     OverlayRoot root = OverlayRoot(pc.vertex_root_gpu);
