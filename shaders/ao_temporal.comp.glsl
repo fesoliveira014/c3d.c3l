@@ -26,6 +26,7 @@ void main() {
     ivec2 texel = ao_depth_texel(ivec2(pixel), ivec2(root.width, root.height), extent);
     float depth = fetch_texture_2d(root.depth, texel).r;
     float visibility = load_storage_texture(root.raw, ivec2(pixel)).r;
+
     if (depth != 0.0 && (root.flags & AO_TEMPORAL_FLAG_HISTORY_VALID) != 0u) {
         vec4 velocity = fetch_texture_2d(root.velocity, texel);
         // The history has the estimate's extent: reproject the estimate texel centre, not its depth texel's.
