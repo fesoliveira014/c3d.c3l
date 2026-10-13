@@ -596,6 +596,7 @@ fn void? load_log(Demo* demo) @local {
     foreach (number, &line : demo.log) {
         line.text = string::bformat(line.bytes[..], "Entry %d", number + 1);
     }
+
     demo.log_view = demo.log[..];
 
     ui.@bind_list(
