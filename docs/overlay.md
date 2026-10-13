@@ -1,9 +1,9 @@
 # Overlay list
 
 Module `c3d::render` draws application-owned 2D items over the composed window or into a render target: rectangles
-with rounded corners, borders, textures, nine-slice fields and gradients, glyph runs of placed text
-([Text](text.md)), and triangles, lines and paths ([Shapes](#shapes)), each under a clip and a transform. The list
-holds plain values; it names no `gpu` type.
+with rounded corners, borders, textures, nine-slice fields, gradients and a blurred backdrop
+([Backdrop](#backdrop)), glyph runs of placed text ([Text](text.md)), and triangles, lines and paths
+([Shapes](#shapes)), each under a clip and a transform. The list holds plain values; it names no `gpu` type.
 Dear ImGui stays the tool for debug panels and inspectors ([GUI overlay](gui.md)). The list serves interfaces the
 application draws itself.
 
@@ -44,12 +44,14 @@ renderer.end_overlay(&overlay)!;
   before `prepare_overlay_list`. Items stay unchanged from preparation until `draw_list` records them.
 - `prepare_overlay_list` resolves textures and fonts, uploads the outline rows fonts gained, readies the render
   targets the list samples and uploads one instance per visible rectangle, glyph, triangle or segment. Its optional
-  `target` names the render target the list is drawn into; zero is the window.
+  `target` names the render target the list is drawn into; zero is the window. A list with backdrop items also readies
+  the images its blur works in.
   - A window list is prepared after the frame's last `finish_view`, with output.
   - A target list is prepared after the views that render its target and the targets it samples. It needs no output.
   - Both are prepared with no overlay open. A render target the list samples must not be rendered again that frame.
 - `draw_list` runs inside the overlay, before `GuiRenderer.record`. The ImGui backend binds its own pipeline and state.
-  The overlay's output must be the one the list was prepared for.
+  The overlay's output must be the one the list was prepared for. A backdrop item ends and reopens the overlay pass;
+  the record after the list is unaffected.
 - A list is prepared and drawn at most once per frame. Preparing a later frame without `clear()` draws the same items.
 - Destroy the list after the renderer's last use of it.
 
@@ -135,6 +137,58 @@ rect.gradient = {
   radial gradient then has no radius), and for a point more than 65,504 pixels from `min` on either axis. A rect with
   kind `NONE` ignores the other gradient fields.
 
+## Backdrop
+
+```c3
+OverlayRect panel = render::OVERLAY_RECT_DEFAULT;
+panel.min = { 460, 300 };
+panel.max = { 760, 440 };
+panel.fill = { 1, 1, 1, 0.16f };
+panel.backdrop_radius = 16;
+list.add_rect(panel)!;
+```
+
+- `OverlayRect.backdrop_radius` is a blur radius in pixels; zero, the default, is off. A rect with a radius is a
+  backdrop item. It blurs what is already drawn on the output under its shape, then draws its own fill, gradient,
+  texture and border over the blurred pixels. A fill with alpha zero shows the blur alone.
+- "Already drawn" is everything on the output before the item: the views the output shows, earlier items of the list
+  and earlier lists drawn on it. Items after the backdrop item draw over it and are not blurred. A second backdrop
+  item blurs the first one's result.
+- The shape, the clip and the transform apply as for any rect: a rotated item blurs the pixels under its rotated
+  shape, and a clipped item blurs only inside its clip, though the blur reads pixels outside it.
+- The blur is a Gaussian in linear light, applied along x and then along y. Its deviation is a third of the radius,
+  at least half a pixel, and it ends at the radius. Past the output's edge the image repeats its edge pixels. Alpha
+  is blurred like a color channel, so the result is exact over opaque pixels.
+- A radius above `MAX_BACKDROP_RADIUS` (32 pixels) clamps to it, and a fractional radius rounds up to a whole pixel.
+  A negative or non-finite radius faults with `INVALID_ARGUMENT`.
+- A backdrop item draws alone, in its own run, in submission order with the items around it.
+
+**Recording.** At a backdrop item `draw_list`:
+
+1. ends the overlay pass;
+2. on the window, copies the pixels under the item, grown by the radius, into a copy image; a render target needs
+   no copy, since it is read in place;
+3. blurs them with two compute dispatches over that box;
+4. reopens the pass, keeping the output's contents, and draws the item over the blurred image.
+
+**Limits.**
+
+- A list holds at most `MAX_BACKDROP_ITEMS` backdrop items (8). The ninth `add_rect` with a radius faults with
+  `CAPACITY_EXCEEDED` and leaves the list unchanged. Rects without a radius are not counted. `clear()` resets the count.
+- The window must be copyable. `prepare_overlay_list` faults with `UNSUPPORTED` for a window list that holds a backdrop
+  item when the surface does not grant copy-source usage (`SwapchainInfo.usage.transfer_src` is false in gpu.c3l).
+  The fault leaves the frame open, as the other reference faults do. A render target output always works.
+- A box clamps to the output, so an item at the edge blurs its edge pixels.
+
+**Memory.** The renderer allocates the blur images when it first prepares a list with a backdrop item, and grows
+them only when it prepares a list for a larger output. It frees them with the renderer; nothing allocates per frame.
+Two RGBA16F images of the largest output size take `width * height * 16` bytes. A window also keeps a copy image in
+the swapchain's format, `width * height * texel_bytes` more, 4 bytes per pixel for the common formats.
+
+**Cost.** Each backdrop item ends and begins the overlay pass, runs two compute dispatches and, on the window, copies
+its box. A blurred pixel reads `2 * radius + 1` texels in each of the two passes, so the cost of an item grows with
+its box area and its radius. Lists without backdrop items record the same passes and pipelines as before.
+
 ## Glyph runs
 
 `add_glyphs(OverlayGlyphRun run)` copies a run's placements into the list: one font, one pixel size, one color, the
@@ -171,7 +225,7 @@ list.add_path(points, width, color, closed: true)!;
 ([Transforms](#transforms)); `pop_clip` restores the previous one. Each item keeps the clip active when it was added.
 Preparation clamps the clip to the output and rounds it outward to whole pixels. An item that does not reach its clip,
 and an empty item, is skipped. Consecutive emitted items with the same scissor form one run, drawn with one instanced
-draw; `stats.draws` grows by one per run. Items draw in submission order.
+draw; `stats.draws` grows by one per run. Items draw in submission order. A backdrop item always forms a run of its own.
 
 ## Transforms
 
@@ -211,7 +265,7 @@ list.pop_transform();
 
 | Call | Faults |
 | --- | --- |
-| `add_rect` | `CAPACITY_EXCEEDED` (list full); `INVALID_ARGUMENT` (non-finite or negative values, `max` below `min`, nine-slice margins larger than the box or region, a gradient point non-finite, equal to the other or more than 65,504 pixels from `min`) |
+| `add_rect` | `CAPACITY_EXCEEDED` (list full, or a ninth backdrop item); `INVALID_ARGUMENT` (non-finite or negative values, `max` below `min`, nine-slice margins larger than the box or region, a gradient point non-finite, equal to the other or more than 65,504 pixels from `min`, a negative or non-finite backdrop radius) |
 | `add_glyphs` | `CAPACITY_EXCEEDED` (list full, or not enough glyph room); `INVALID_ARGUMENT` (non-finite origin, color or placement position; size not above zero) |
 | `add_triangle` | `CAPACITY_EXCEEDED` (list full); `INVALID_ARGUMENT` (non-finite point or color) |
 | `add_line` | `CAPACITY_EXCEEDED` (list full); `INVALID_ARGUMENT` (non-finite point or color; width not above zero) |
@@ -221,7 +275,7 @@ list.pop_transform();
 | `push_transform` | `CAPACITY_EXCEEDED` (table full); `INVALID_ARGUMENT` (non-finite values, or a composed transform with no inverse) |
 | `pop_transform` | Contract: the stack is not empty |
 | `Renderer.begin_overlay_target` | `INVALID_ID` (dead target); `gpu` faults from state transitions and recording |
-| `Renderer.prepare_overlay_list` | `INVALID_ID` (dead texture, sampler, render target or font, or a dead output `target`); `INVALID_ARGUMENT` (comparison sampler; glyph past its font or without a built outline; the list samples its output `target`); `UNSUPPORTED` (texture kind above); `ASSET_DATA_UNAVAILABLE`; `gpu` faults from upload and state transitions |
+| `Renderer.prepare_overlay_list` | `INVALID_ID` (dead texture, sampler, render target or font, or a dead output `target`); `INVALID_ARGUMENT` (comparison sampler; glyph past its font or without a built outline; the list samples its output `target`); `UNSUPPORTED` (texture kind above; a window list with a backdrop item on a surface that cannot be copied from); `ASSET_DATA_UNAVAILABLE`; `gpu` faults from upload and state transitions |
 | `OverlayContext.draw_list` | `gpu` and shader faults from pipeline creation and recording; contract: prepared this frame for this output |
 
 A reference fault in `prepare_overlay_list` (`INVALID_ID`, `INVALID_ARGUMENT`, `UNSUPPORTED`) and the `INVALID_ID` of
@@ -237,7 +291,8 @@ present. Any later fault aborts the frame, like other renderer faults.
 - A transform table entry is 80 bytes of the frame upload ring. A prepared list uploads its entries only when it
   pushed a transform or a transformed clip.
 - One run costs one 32-byte root and one draw. Rects with alternating clips cost one run each. Items under different
-  transforms and the same scissor share a run.
+  transforms and the same scissor share a run. A backdrop item's run takes a 64-byte root and two 48-byte blur roots.
+- `MAX_BACKDROP_ITEMS` is 8 backdrop items per list and `MAX_BACKDROP_RADIUS` is 32 pixels ([Backdrop](#backdrop)).
 - `Pass.OVERLAY` times `draw_list` when GPU timings are on; a frame's window and target overlays add up.
 
 ## Benchmark
@@ -251,4 +306,5 @@ panel into the portrait's render target, `--transform` draws a rotated and scale
 frame and rects under a transformed clip, and `--shapes` draws a line chart with a triangle marker, a star and a
 translucent ribbon, and the chart again under a transform, and `--gradients` draws a linear gradient button, a
 textured nine-slice rect with a gradient, a rect with a gradient under a transform, and a radial vignette over the
-portrait whose radius point lies outside its rect.
+portrait whose radius point lies outside its rect. `--backdrop` draws a frosted panel over the sphere and the sample
+row, a rotated one over the scroll list's rows and, with `--target`, one over the portrait's cube.
