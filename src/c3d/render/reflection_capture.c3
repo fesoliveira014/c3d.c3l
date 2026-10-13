@@ -16,10 +16,10 @@ import std::time::clock;
 const uint REFLECTION_CAPTURE_TEXEL_BYTES @local = 8; // RGBA16_FLOAT
 
 <* Face edge of a default reflection capture, in texels. *>
-const uint DEFAULT_REFLECTION_CAPTURE_SIZE = 128; // 768 KiB source and CPU copy, 1 MiB filtered; work scales by texels
+const uint DEFAULT_REFLECTION_CAPTURE_SIZE = 128; // 768 KiB CPU copy, 1 MiB source and filtered; work scales by texels
 
 <* Largest face edge a reflection capture accepts, in texels. *>
-const uint MAX_REFLECTION_CAPTURE_SIZE = 1024; // 48 MiB source cube, CPU copy and readback, about 64 MiB filtered
+const uint MAX_REFLECTION_CAPTURE_SIZE = 1024; // 48 MiB CPU copy and readback, 64 MiB source and about 64 MiB filtered
 
 <* Near plane of a default reflection capture, in world units. *>
 const float DEFAULT_REFLECTION_CAPTURE_NEAR = 0.05f; // clips what lies closer than 5 cm to the capture point
@@ -79,7 +79,6 @@ fn EnvironmentId? Renderer.capture_reflection_probe(
     usz cube_bytes = reflection_cube_bytes(desc.size);
     char[] pixels = alloc::new_array(self.assets.allocator, char, (sz)cube_bytes);
     material::TextureDesc cube_desc = material::texture_cube_desc(desc.size, RGBA16_FLOAT, "reflection_capture");
-    cube_desc.generate_mips = false;
     TextureId? added = self.assets.add_texture_owned(cube_desc, pixels);
     if (catch excuse = added) {
         alloc::free(self.assets.allocator, pixels.ptr);

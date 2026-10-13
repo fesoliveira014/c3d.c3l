@@ -69,10 +69,10 @@ headless still at constant time snaps on every rendering and ends on the target 
 ## What the integrator models
 
 - **Materials.** Standard, and Physical through its Standard prefix, scatter with Lambert plus
-  GGX; Toon scatters as Lambert over its colour and Custom as Lambert over neutral grey. Basic is
-  unlit in raster and acts as an emitter here: a path that hits it gains its colour and ends.
-  Emission, base colour, metallic-roughness and normal maps are read at every hit; alpha-masked
-  surfaces are tested in the any-hit stage.
+  GGX; Toon scatters as Lambert over its colour, without its outline hull, and Custom as Lambert
+  over neutral grey. Basic is unlit in raster and acts as an emitter here: a path that hits it
+  gains its colour and ends. Emission, base colour, metallic-roughness and normal maps are read at
+  every hit; alpha-masked surfaces are tested in the any-hit stage.
 - **Lights.** Every punctual light in the scene, up to the renderer's `max_lights`, is sampled at
   every bounce with a shadow ray (next-event estimation), whether or not it lies in the camera
   frustum; a light with a source extent takes one point of its source for each ray. A light with shadows

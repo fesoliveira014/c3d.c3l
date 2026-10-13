@@ -1,11 +1,21 @@
 module c3d::render;
 
 import c3d::light;
+import c3d::material;
 import c3d::shader;
 import gpu;
 
 const uint ENVIRONMENT_LUT_SIZE @private = 256; // Two integrated BRDF terms in a shared 512 KiB image.
 const uint ENVIRONMENT_IMAGE_GROUP_SIZE @private = 8; // Mirrors local_size_x/y in environment image stages.
+const uint UNFILTERED_PREFILTER_SAMPLES @private = 4096; // Per texel for a source without mips, read at level zero.
+
+// Samples per texel at each roughness mip of a source with mips; the cost lever of a prefilter.
+const uint[shader::ENVIRONMENT_SPECULAR_MIPS] ENVIRONMENT_PREFILTER_SAMPLE_COUNTS @private = {
+    1, 256, 256, 512, 512, 1024,
+};
+const uint[shader::ENVIRONMENT_SPECULAR_MIPS] SHEEN_PREFILTER_SAMPLE_COUNTS @private = {
+    128, 256, 512, 512, 512, 512,
+};
 
 fn void? acquire_environment_lut(Renderer* renderer) @private {
     if (renderer.environment_state.brdf_lut.state != EnvironmentLutState.NONE) return;
@@ -182,12 +192,44 @@ fn void? record_environment_source(
         uint groups = (result.source_size + ENVIRONMENT_IMAGE_GROUP_SIZE - 1) / ENVIRONMENT_IMAGE_GROUP_SIZE;
         gpu::cmd_dispatch(commands, root.address, { groups, groups, 1 })!;
     }
+
+    record_source_mips(renderer, commands, result)!;
+
     gpu::TextureBarrier ready = gpu::texture_transition(
         texture: result.source_cube,
         before: write.after,
         after: renderer.sampled_state,
     )!;
     gpu::cmd_texture_barrier(commands, &ready)!;
+}
+
+fn void? record_source_mips(
+    Renderer* renderer,
+    gpu::CommandList* commands,
+    EnvironmentRes* result,
+) @private {
+    acquire_environment_pipeline(renderer, &renderer.environment_state.pipelines.downsample, ENVIRONMENT_DOWNSAMPLE)!;
+    Frame* slot = recording_frame(renderer, commands);
+    gpu::cmd_bind_pipeline(commands, renderer.environment_state.pipelines.downsample)!;
+
+    uint levels = material::texture_mip_count(result.source_size, result.source_size);
+    for (uint level = 1; level < levels; level++) {
+        // Orders each level's storage reads after the previous level's storage writes.
+        gpu::Barrier level_written = { .before = { .compute }, .after = { .compute } };
+        gpu::cmd_barrier(commands, &level_written)!;
+
+        uint output_size = material::texture_mip_extent(result.source_size, level);
+        uint groups = (output_size + ENVIRONMENT_IMAGE_GROUP_SIZE - 1) / ENVIRONMENT_IMAGE_GROUP_SIZE;
+        for (uint face = 0; face < shader::ENVIRONMENT_FACE_COUNT; face++) {
+            gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, EnvironmentDownsampleRoot::size)!;
+            *(EnvironmentDownsampleRoot*)root.bytes.ptr = {
+                .input_texture = result.source_faces[(level - 1) * shader::ENVIRONMENT_FACE_COUNT + face].index,
+                .output_texture = result.source_faces[level * shader::ENVIRONMENT_FACE_COUNT + face].index,
+                .size = material::texture_mip_extent(result.source_size, level - 1),
+            };
+            gpu::cmd_dispatch(commands, root.address, { groups, groups, 1 })!;
+        }
+    }
 }
 
 fn void? record_environment_prefilter(
@@ -202,6 +244,8 @@ fn void? record_environment_prefilter(
         commands: commands,
         pipeline: renderer.environment_state.pipelines.prefilter,
         source_view: result.source_view,
+        source_size: result.source_full_chain ? result.source_size : 0,
+        sample_counts: ENVIRONMENT_PREFILTER_SAMPLE_COUNTS[..],
         output: result.specular_cube,
         faces: result.specular_faces[..],
         previous: previous,
@@ -249,6 +293,8 @@ fn void? record_cube_prefilter(
     gpu::CommandList* commands,
     gpu::PipelineHandle pipeline,
     gpu::TextureView source_view,
+    uint source_size,
+    uint[] sample_counts,
     gpu::TextureHandle output,
     gpu::TextureView[] faces,
     gpu::TextureState previous,
@@ -268,11 +314,13 @@ fn void? record_cube_prefilter(
             gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, EnvironmentPrefilterRoot::size)!;
             *(EnvironmentPrefilterRoot*)root.bytes.ptr = {
                 .source_cube = source_view.index,
-                .sampler_index = renderer.environment_state.sampler,
+                .sampler_index = renderer.environment_state.prefilter_sampler,
                 .output_texture = faces[mip * shader::ENVIRONMENT_FACE_COUNT + face].index,
                 .face = face,
                 .size = size,
                 .roughness = (float)mip / (float)(shader::ENVIRONMENT_SPECULAR_MIPS - 1),
+                .sample_count = source_size ? sample_counts[mip] : UNFILTERED_PREFILTER_SAMPLES,
+                .source_size = source_size,
             };
             uint groups = (size + ENVIRONMENT_IMAGE_GROUP_SIZE - 1) / ENVIRONMENT_IMAGE_GROUP_SIZE;
             gpu::cmd_dispatch(commands, root.address, { groups, groups, 1 })!;

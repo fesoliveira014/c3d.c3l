@@ -658,8 +658,8 @@ sky example does under `--path-traced`.
   a refracted segment through both media is approximate, and the refraction's bend is ignored for
   the fog distance.
 - Screen-space GI gathers unfogged radiance without blended draws on fogged views.
-- Memory: 418 KiB and two heap slots per raster view; about 0.6 MiB and 46 heap slots per atmosphere
-  (0.85 MiB and 83 with sheen); four atmospheres at once.
+- Memory: 418 KiB and two heap slots per raster view; about 0.7 MiB and 82 heap slots per atmosphere
+  (0.9 MiB and 119 with sheen); four atmospheres at once.
 - Volumetric fog without `fog_temporal` has no reprojection or jitter. It is unshadowed past the shadow atlas,
   changes its in-scatter slope at `max_distance` and does not exist on path-traced views.
 - The analytic fog has no direct-sun phase term, so a view with volumetric fog and a view without it show
@@ -747,9 +747,7 @@ half size.
 | `FOG`, deferred | 0.037 | 0.012 |
 | `water --sky`: `SKY_VIEW`, `AERIAL_PERSPECTIVE`, `FOG` | 0.014, 0.020, 0.041 | 0.015, 0.020, 0.014 |
 
-One refresh of the 64-texel sky cube (the time-lapse's 11 refreshes a run): `environment.sky` 0.015,
-`environment.prefilter` 0.813, `environment.irradiance` 0.011, `ENVIRONMENT` total 0.840, max 0.862 (1.06
-once in deferred). The prefilter is 97 % of it. At 0.27° a second the sky regenerates 30.0 times a
+The time-lapse refreshes the 64-texel sky cube 11 times a run. At 0.27° a second the sky regenerates 30.0 times a
 minute (period 0.504°). `sun_radiance` costs 0.90 µs on the CPU.
 
 | `sky` frame, ms | Noon | Twilight | Valley | Time-lapse |
@@ -781,8 +779,7 @@ shows no banding; valley haze seen from 300 m up takes the warm horizon colour; 
 transmission pane shows no double fog; the water's reflections of far peaks are no hazier than the
 peaks seen directly.
 
-A refresh (0.84 ms) is far under the 4.2 ms at which refreshes would be time-sliced; a second view's
-tables do not call for a per-view switch.
+A second view's tables do not call for a per-view switch.
 
 ### Volumetric fog, RTX 4090, 2560 × 1440
 
@@ -808,8 +805,7 @@ from 0.0369 to 0.0410 ms on the main view and from 0.0123 to 0.0133 ms on the mi
 | time-lapse | 0.504 | 0.512 | 0.597 |
 | pan | | 0.513 | 0.597 |
 
-With the switch at noon: deferred 0.654, `--shadows traced` 0.487, `--taa` 0.707. The environment refresh stays
-at 0.842 ms and `sun_radiance` at 0.90 µs. Sponza without fog: `cpu_record_ms` 0.1444 (0.1429 to 0.1638) before
+With the switch at noon: deferred 0.654, `--shadows traced` 0.487, `--taa` 0.707. `sun_radiance` stays at 0.90 µs. Sponza without fog: `cpu_record_ms` 0.1444 (0.1429 to 0.1638) before
 and 0.1518 (0.1424 to 0.1661) after, with its six largest passes overlapping.
 
 | Landscape `still` frame, ms | `--sky` | `--sky --volumetric-fog` | Volume passes |
@@ -857,5 +853,4 @@ Environment only: a CPU rasterizer, not a GPU. `sky --benchmark 30 --width 256 -
 | `FOG` | 0.870 |
 | `SKY` | 0.323 |
 
-One refresh: `environment.sky` 4.93 ms, `environment.prefilter` 65.65 ms, `environment.irradiance`
-1.29 ms, `ENVIRONMENT` total 71.84 ms. `sun_radiance` costs 0.78 µs.
+`sun_radiance` costs 0.78 µs.

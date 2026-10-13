@@ -97,6 +97,8 @@ fn void? record_environment_sheen(
         commands: commands,
         pipeline: renderer.environment_state.pipelines.sheen_prefilter,
         source_view: result.source_view,
+        source_size: result.source_full_chain ? result.source_size : 0,
+        sample_counts: SHEEN_PREFILTER_SAMPLE_COUNTS[..],
         output: result.sheen_cube,
         faces: result.sheen_faces[..],
         previous: previous,

@@ -114,9 +114,9 @@ Every element takes `kind`, `id`, `style`, `visible` and `enabled` (a literal or
 - An image sizes to its asset texture in texels when `width` or `height` is `fit`; a render-target image needs both.
 - `visible: false` collapses a subtree: no layout and no getter calls. `enabled: false` gives the disabled state to
   the element and its descendants, and they fire no actions.
-- Interactive elements are buttons, text fields, grid items and any element with an action. Hover, press and
-  disabled states apply to the interactive element and its descendants, except that an interactive descendant takes
-  its own hover and press; focus applies to the focused field.
+- Interactive elements are buttons, text fields, grid items and any element with an action other than `on_move_start`
+  and `on_move_end`. Hover, press and disabled states apply to the interactive element and its descendants, except that
+  an interactive descendant takes its own hover and press; focus applies to the focused field.
 
 ### Windows
 
@@ -460,18 +460,31 @@ which holds none. A transition entry is 452 bytes in a table of two slots per en
 113 KiB of the `create_ui` storage. A non-zero `max_transitions` also keeps the instance table (424 bytes per
 element), a 96-byte link per element, the expanded text and the rich text pieces of the update before, so that a
 removed element can exit: 2.5 MiB more at the defaults. With `max_transitions` 0 none of it is allocated. Every table
-is allocated once in `create_ui`; documents and style sets allocate
-once when they load. Nothing allocates per frame. A load or reload whose windows do not fit the table faults
-`CAPACITY_EXCEEDED` and changes nothing. `update` faults `CAPACITY_EXCEEDED` when a frame overflows, including a frame
-whose rich labels need more pieces than the table holds; that frame draws nothing and the next frame retries.
+is allocated once in `create_ui`; documents and style sets allocate once when they load. Nothing allocates per frame. A
+load or reload whose windows do not fit the table faults `CAPACITY_EXCEEDED` and changes nothing. `update` faults
+`CAPACITY_EXCEEDED` when a frame overflows, including a frame whose rich labels need more pieces than the table holds;
+that frame draws nothing and the next frame retries.
 
 ## Measured costs
 
-`ui --benchmark --frames F [--labels N]` needs no window or device. It lays out a HUD of 50 rows (485 elements, 200
-bound values: a name, a formatted number, a bar fraction and a visibility flag per row) at 1920 x 1080, moves a
-synthetic pointer across it, clicks every 8th frame, changes one row's values every frame, and prints the mean CPU
-time per frame of `route_input`, `update` and `draw` after F warm-up frames. `--labels N` adds a document of N labels
-in a scroll area; Clay culls the labels outside the window, so they cost layout but few glyphs.
+`ui --benchmark --frames F [--labels N] [--windows N] [--rich N] [--transitions]` needs no window or device. It lays
+out a HUD of 50 rows (485 elements, 200 bound values: a name, a formatted number, a bar fraction and a visibility flag
+per row) at 1920 x 1080, moves a synthetic pointer across it, clicks every 8th frame, changes one row's values every
+frame, and prints the mean CPU time per frame of `route_input`, `update` and `draw` after F warm-up frames.
+
+- `--labels N` adds a document of N labels in a scroll area; Clay culls the labels outside the window, so they cost
+  layout but few glyphs.
+- `--windows N` adds a document of N windows of 20 elements each and drags the first one with synthetic events: a
+  press on its title bar, a motion each frame and a release, to one side and back. The drag takes 16 of every 32
+  frames and the HUD sweep the rest.
+- `--rich N` adds a scroll of N rich labels, each with three spans and two wrapped lines.
+- `--transitions` gives the HUD rows a hover fade and an exit: the last row leaves every 30 frames and returns 15
+  frames later.
+
+The output line also holds `text_pieces`, the largest `transitions` and `exiting` over the measured frames, `moves`
+(window drags released in the measured frames), `resident_bytes` (the `create_ui` storage plus Clay's memory) and
+`allocations`: the allocations made through the allocator that the UI, the asset store and the overlay list share,
+counted over the measured frames; the count is 0.
 
 Measured on an Intel i9-14900K under WSL, c3c 0.8.3, `--opt O3`, `--frames 200`:
 

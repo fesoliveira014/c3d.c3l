@@ -22,6 +22,9 @@ const float ORBIT_PITCH_LIMIT @local = 1.5f; // Avoids the look-rotation up-axis
 const float ORBIT_ZOOM_STEP @local = 0.9f; // Keeps each wheel step visually useful.
 const float ORBIT_DISTANCE_MIN @local = 3; // Keeps the camera outside the largest fixture.
 const float ORBIT_DISTANCE_MAX @local = 32; // Keeps the fixture readable inside the far plane.
+const float OUTLINE_WIDTH_DEFAULT @local = 3; // Reads on every Toon sphere at the default camera distance.
+const float OUTLINE_WIDTH_MAX @local = 12; // Wider hulls separate from the sphere and stop reading as an outline.
+const float OUTLINE_WIDTH_STEP @local = 0.5f; // One key press moves the width a visible half pixel.
 const uint ALPHA_TEXTURE_SIZE @local = 16; // Preserves a recognizable leaf silhouette at example scale.
 const uint RAMP_TEXTURE_WIDTH @local = 8; // A 32-byte fixture keeps unequal band widths visible.
 const uint PHYSICAL_TEXTURE_SIZE @local = 4; // Keeps all mapped layer patterns inspectable without asset files.
@@ -184,6 +187,9 @@ struct Controls @local {
     bool environment_fill;
     bool directional_light;
     bool point_light;
+    bool toon_outline;
+    float toon_outline_width;
+    bool toon_outline_changed;
 }
 
 fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
@@ -512,6 +518,16 @@ fn void select_preset(
     }
 }
 
+fn void apply_toon_outline(AssetStore* assets, ExampleMaterials materials, Controls* controls) @local {
+    MaterialId[*] toons = { materials.toon_steps, materials.toon_ramp, materials.toon_rim };
+    foreach (toon : toons) {
+        assets.material(toon).data.toon.outline_width = controls.toon_outline ? controls.toon_outline_width : 0;
+        assets.mark_material_dirty(toon);
+    }
+
+    controls.toon_outline_changed = false;
+}
+
 fn void preset_controls(
     ExampleMaterials materials,
     ExampleNodes nodes,
@@ -612,6 +628,15 @@ fn void preset_controls(
             )) {
                 controls.selected_material = materials.toon_rim;
             }
+
+            imgui::separator_text("Outline");
+            controls.toon_outline_changed |= imgui::checkbox("Outline (O)", &controls.toon_outline);
+            controls.toon_outline_changed |= imgui::slider_float(
+                label: "Width px ([ and ])",
+                v:     &controls.toon_outline_width,
+                v_min: OUTLINE_WIDTH_STEP,
+                v_max: OUTLINE_WIDTH_MAX,
+            );
         case PHYSICAL_LAYERS:
             imgui::text_unformatted("Top: Standard / zero / coat");
             imgui::text_unformatted("Bottom: fabric / combined maps");
@@ -918,6 +943,27 @@ fn void? run_gui(
             if (quit) break;
         }
 
+        if (!input.keyboard_captured_by_gui) {
+            if (input.key_pressed(platform::Scancode.O)) {
+                controls.toon_outline = !controls.toon_outline;
+                controls.toon_outline_changed = true;
+            }
+            if (input.key_pressed(platform::Scancode.LEFTBRACKET)) {
+                controls.toon_outline_width -= OUTLINE_WIDTH_STEP;
+                controls.toon_outline_changed = true;
+            }
+            if (input.key_pressed(platform::Scancode.RIGHTBRACKET)) {
+                controls.toon_outline_width += OUTLINE_WIDTH_STEP;
+                controls.toon_outline_changed = true;
+            }
+
+            controls.toon_outline_width = math::clamp(
+                x:     controls.toon_outline_width,
+                lower: OUTLINE_WIDTH_STEP,
+                upper: OUTLINE_WIDTH_MAX,
+            );
+        }
+
         controls_panel(
             assets: renderer.assets,
             scene: scene,
@@ -937,6 +983,8 @@ fn void? run_gui(
         imgui::set_next_window_pos(STATS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         gui::stats_panel(renderer)!;
+
+        if (controls.toon_outline_changed) apply_toon_outline(renderer.assets, materials, controls);
 
         apply_orbit(orbit, input, camera_node);
         scene.update_world();
@@ -1548,16 +1596,27 @@ fn ExampleNodes create_fixtures(
 
 fn int main(String[] args) {
     bool gpu_timings;
-    foreach (argument : args[1..]) {
-        if (argument == "--gpu-timings") {
+    float outline_width;
+    for (usz index = 1; index < args.len; index++) {
+        if (args[index] == "--gpu-timings") {
             $if $feat(C3D_PROFILE_GPU):
                 gpu_timings = true;
             $else
                 io::eprintfn("--gpu-timings needs GPU profiling: c3c build <target> --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL");
                 return 1;
             $endif
+        } else if (args[index] == "--toon-outline" && index + 1 < args.len) {
+            index++;
+            outline_width = args[index].to_float() ?? -1;
+            if (!(outline_width > 0 && outline_width <= OUTLINE_WIDTH_MAX)) {
+                io::eprintfn(
+                    "--toon-outline is the outline width in pixels, above 0 and at most %s",
+                    OUTLINE_WIDTH_MAX,
+                );
+                return 1;
+            }
         } else {
-            io::printfn("Unknown argument: %s", argument);
+            io::printfn("Unknown argument: %s", args[index]);
             return 1;
         }
     }
@@ -1644,13 +1703,17 @@ fn int main(String[] args) {
         .environment_fill = true,
         .directional_light = true,
         .point_light = true,
+        .toon_outline = outline_width > 0,
+        .toon_outline_width = outline_width > 0 ? outline_width : OUTLINE_WIDTH_DEFAULT,
     };
     select_preset(
-        preset: MASKED_FOLIAGE,
+        preset: outline_width > 0 ? TOON_LIGHTING : MASKED_FOLIAGE,
         materials: materials,
         nodes: nodes,
         controls: &controls,
     );
+    if (controls.toon_outline) apply_toon_outline(&assets, materials, &controls);
+
     scene.update_world();
     renderer.prepare_scene(&scene)!!;
 

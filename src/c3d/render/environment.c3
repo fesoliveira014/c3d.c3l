@@ -17,6 +17,8 @@ $assert shader::ENVIRONMENT_FACE_COUNT == material::CUBE_FACE_COUNT;
 
 // Storage views per face and mip, mip-major.
 const uint ENVIRONMENT_FILTERED_FACES @private = shader::ENVIRONMENT_FACE_COUNT * shader::ENVIRONMENT_SPECULAR_MIPS;
+const uint ENVIRONMENT_SOURCE_MIP_CAPACITY @private = 16; // 65,535-texel faces; a storage view per face and mip
+const uint ENVIRONMENT_SOURCE_FACES @private = shader::ENVIRONMENT_FACE_COUNT * ENVIRONMENT_SOURCE_MIP_CAPACITY;
 
 <* Preparation and submission state of one shared environment lookup. *>
 enum EnvironmentLutState {
@@ -45,12 +47,13 @@ struct EnvironmentRes {
     uint specular_size;
     uint sheen_size;
     bool source_owned;
+    bool source_full_chain;
     bool source_ready;
     bool lighting_ready;
     bool sheen_ready;
     gpu::TextureHandle source_cube;
     gpu::TextureView source_view;
-    gpu::TextureView[shader::ENVIRONMENT_FACE_COUNT] source_faces;
+    gpu::TextureView[ENVIRONMENT_SOURCE_FACES] source_faces;
     gpu::TextureHandle specular_cube;
     gpu::TextureView specular_view;
     gpu::TextureView[ENVIRONMENT_FILTERED_FACES] specular_faces;
@@ -82,6 +85,7 @@ struct PendingEnvironment {
 <* Renderer-shared fixed environment processing stages. *>
 struct EnvironmentPipelines {
     gpu::PipelineHandle source;
+    gpu::PipelineHandle downsample;
     gpu::PipelineHandle prefilter;
     gpu::PipelineHandle project;
     gpu::PipelineHandle reduce;
@@ -98,6 +102,7 @@ struct EnvironmentState {
     EnvironmentPipelines pipelines;
     gpu::SamplerIndex source_sampler;
     gpu::SamplerIndex sampler;
+    gpu::SamplerIndex prefilter_sampler;
     bool samplers_ready;
     EnvironmentLut brdf_lut;
     EnvironmentLut sheen_lut;
@@ -209,6 +214,8 @@ fn EnvironmentRes*? resolve_environment(
         result.source_binding_revision = source_binding_revision;
         result.source_size = source_size;
         result.source_owned = source_owned;
+        result.source_full_chain = source_owned
+          || texture.mip_count == material::texture_mip_count(texture.width, texture.height);
         if (!source_owned) {
             result.source_cube = texture.texture;
             result.source_view = texture.view;
@@ -272,10 +279,12 @@ fn EnvironmentRes*? resolve_environment(
 }
 
 fn void? create_environment_cube(Renderer* renderer, EnvironmentRes* result, bool specular) @private {
+    uint levels = specular
+      ? shader::ENVIRONMENT_SPECULAR_MIPS : material::texture_mip_count(result.source_size, result.source_size);
     gpu::TextureDesc description = {
         .width = specular ? result.specular_size : result.source_size,
         .height = specular ? result.specular_size : result.source_size,
-        .mip_levels = specular ? shader::ENVIRONMENT_SPECULAR_MIPS : 1,
+        .mip_levels = levels,
         .array_layers = shader::ENVIRONMENT_FACE_COUNT,
         .cube_compatible = true,
         .format = gpu::Format.RGBA16_FLOAT,
@@ -293,7 +302,8 @@ fn void? create_environment_cube(Renderer* renderer, EnvironmentRes* result, boo
         result.specular_cube = texture;
         result.specular_view = view;
     } else {
-        create_environment_faces(renderer, texture, result.source_faces[..])!;
+        result.source_faces = {};
+        create_environment_faces(renderer, texture, result.source_faces[:shader::ENVIRONMENT_FACE_COUNT * levels])!;
         result.source_cube = texture;
         result.source_view = view;
     }
@@ -346,6 +356,9 @@ fn void? acquire_environment_samplers(Renderer* renderer) @private {
     description.max_lod = (float)(shader::ENVIRONMENT_SPECULAR_MIPS - 1);
     description.debug_name = "environment_filtered";
     renderer.environment_state.sampler = gpu::intern_sampler(&renderer.device, &description)!;
+    description.max_lod = (float)(material::TEXTURE_MIP_CAPACITY - 1);
+    description.debug_name = "environment_prefilter";
+    renderer.environment_state.prefilter_sampler = gpu::intern_sampler(&renderer.device, &description)!;
     renderer.environment_state.samplers_ready = true;
 }
 
@@ -477,8 +490,10 @@ fn void free_environments(Renderer* renderer) @private {
     if (renderer.environment_state.cloud_noise.state == EnvironmentLutState.READY) {
         release_lut(&renderer.device, &renderer.environment_state.cloud_noise);
     }
-    gpu::PipelineHandle[8] pipelines = {
-        renderer.environment_state.pipelines.source, renderer.environment_state.pipelines.prefilter,
+
+    gpu::PipelineHandle[9] pipelines = {
+        renderer.environment_state.pipelines.source, renderer.environment_state.pipelines.downsample,
+        renderer.environment_state.pipelines.prefilter,
         renderer.environment_state.pipelines.project, renderer.environment_state.pipelines.reduce,
         renderer.environment_state.pipelines.brdf, renderer.environment_state.pipelines.sheen_prefilter,
         renderer.environment_state.pipelines.sheen_lut, renderer.environment_state.pipelines.cloud_noise,
