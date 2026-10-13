@@ -9,8 +9,10 @@
 #if !defined(SCENE_TRACE_BVH) && !defined(SCENE_TRACE_RAY_QUERY)
 #define SCENE_TRACE_RAY_QUERY
 #endif
+#ifndef RT_SHADOWS_HARD
 #include "noise.glsl"
 #include "sampling.glsl"
+#endif
 #include "scene_trace.glsl"
 #endif
 
@@ -78,6 +80,31 @@ uint point_shadow_face(vec3 direction) {
 
 #ifdef RT_SHADOWS
 const float RT_SHADOW_FAR = 1.0e4; // world units; directional rays stop here
+
+#ifdef RT_SHADOWS_HARD
+// One ray toward the light's centre or the sun's direction; a source extent is ignored. The built-in fragment stages
+// compile this form for views that trace no light with an extent, and it adds none of the soft path's code.
+float ray_shadow_visibility(FrameRoot frame, LightGpu light, vec3 world_position, vec3 normal) {
+    vec3 origin = world_position + normal * TRACE_SURFACE_OFFSET;
+    vec3 direction = -light.direction_cos_outer.xyz;
+    float t_max = RT_SHADOW_FAR;
+    if (light.kind != LIGHT_DIRECTIONAL) {
+        vec3 to_light = light.position_range.xyz - origin;
+        t_max = length(to_light);
+        if (t_max == 0.0) return 1.0;
+        direction = to_light / t_max;
+    }
+
+    bool occluded = trace_scene_any(
+        SceneTraceRoot(frame.trace),
+        origin,
+        direction,
+        t_max,
+        TRACE_MASK_SHADOW_CASTER
+    );
+    return occluded ? 0.0 : 1.0;
+}
+#else
 const uint RT_SHADOW_NOISE_FRAMES = 64u; // frames until a TAA view repeats its noise; keeps the pixel phase small
 
 // Rays a pixel casts toward a source with extent: the view's count in a fragment stage, one in the others.
@@ -157,6 +184,7 @@ float ray_shadow_visibility(FrameRoot frame, LightGpu light, vec3 world_position
 
     return visible / float(samples);
 }
+#endif
 #endif
 
 // colored: lights with translucent maps also multiply in the tint of their translucent casters.
