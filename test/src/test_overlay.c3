@@ -61,6 +61,24 @@ fn void test_full_list_faults_and_keeps_items() @test {
     list.push_clip({ 0, 0 }, { 1, 1 })!!;
 }
 
+fn void test_overlay_path_capacity_checked_before_write() @test {
+    OverlayList list = render::create_overlay_list(mem, { .max_items = 4, .max_clips = 1 });
+    defer render::destroy_overlay_list(&list);
+
+    list.add_rect(rect_at({ 1, 2 }, { 3, 4 }))!!;
+    sz entry_bytes = (sz)(OverlayEntry::size * 4);
+    OverlayEntry[4] before;
+    mem::copy(&before[0], list.entries.ptr, entry_bytes);
+
+    Vec2[5] points = { { 0, 0 }, { 10, 0 }, { 10, 10 }, { 0, 10 }, { 0, 0 } };
+    assert(@catch(list.add_path(points[..], 2, { 1, 1, 1, 1 })) == c3d::CAPACITY_EXCEEDED);
+    assert(list.item_count == 1);
+    assert(mem::equals(list.entries.ptr, &before[0], entry_bytes));
+
+    list.add_path(points[:3], 2, { 1, 1, 1, 1 }, closed: true)!!;
+    assert(list.item_count == 4);
+}
+
 fn void test_add_rect_rejects_each_invalid_class() @test {
     OverlayList list = render::create_overlay_list(mem, { .max_items = 4, .max_clips = 1 });
     defer render::destroy_overlay_list(&list);

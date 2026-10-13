@@ -56,6 +56,8 @@ const shader::OverlayTransformGpu IDENTITY_TABLE_ENTRY @local = {
 enum OverlayEntryKind @private {
     RECT,
     GLYPHS,
+    TRIANGLE,
+    SEGMENT,
 }
 
 <*
@@ -114,14 +116,30 @@ struct OverlayText @private {
     Vec4   color;
 }
 
+struct OverlayTriangle @private {
+    Vec2 first;
+    Vec2 second;
+    Vec2 third;
+    Vec4 color;
+}
+
+struct OverlaySegment @private {
+    Vec2  from;
+    Vec2  to;
+    float half_width;
+    Vec4  color;
+}
+
 struct OverlayEntry @private {
     OverlayEntryKind kind;
     uint             transform;  // table entry the item's coordinates pass through; zero is the identity
     uint             clip_entry; // table entry of the innermost transformed clip; zero for none
     Vec4             clip;       // output-pixel bounds of the clip: min x, min y, max x, max y
     union {
-        OverlayRect rect;
-        OverlayText text;
+        OverlayRect     rect;
+        OverlayText     text;
+        OverlayTriangle triangle;
+        OverlaySegment  segment;
     }
 }
 
@@ -160,7 +178,7 @@ struct OverlayPacker @local {
 struct OverlayList {
     Allocator        allocator;
     char[]           storage;     // one allocation behind every slice below
-    OverlayEntry[]   entries;     // rects and glyph runs with their clips
+    OverlayEntry[]   entries;     // rects, glyph runs, triangles and segments with their clips
     GlyphPlacement[] glyphs;      // placements of every glyph run
     OverlayBinding[] bindings;    // per entry
     Vec4[]           clips;       // the clip stack
@@ -236,6 +254,102 @@ fn void? OverlayList.add_glyphs(&self, OverlayGlyphRun run) {
     };
     self.glyph_count += (uint)run.glyphs.len;
     self.item_count++;
+}
+
+<*
+ Append a filled triangle of either winding under the current clip and transform.
+ @param color : "sRGB, straight alpha."
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
+*>
+fn void? OverlayList.add_triangle(
+    &self,
+    Vec2 first,
+    Vec2 second,
+    Vec2 third,
+    Vec4 color,
+) {
+    if (self.item_count == self.entries.len) return c3d::CAPACITY_EXCEEDED~;
+    if (!finite_vec2(first) || !finite_vec2(second) || !finite_vec2(third) || !finite_vec4(color)) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+
+    OverlayEntry entry = new_overlay_entry(self, TRIANGLE);
+    entry.triangle = { .first = first, .second = second, .third = third, .color = color };
+    self.entries[self.item_count] = entry;
+    self.item_count++;
+}
+
+<*
+ Append a line with round caps under the current clip and transform.
+ @param width : "Pixels across the line; above zero."
+ @param color : "sRGB, straight alpha."
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
+*>
+fn void? OverlayList.add_line(
+    &self,
+    Vec2 from,
+    Vec2 to,
+    float width,
+    Vec4 color,
+) {
+    if (self.item_count == self.entries.len) return c3d::CAPACITY_EXCEEDED~;
+    if (!finite_vec2(from) || !finite_vec2(to) || !overlay_stroke_valid(width, color)) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+
+    append_overlay_segment(
+        list:       self,
+        from:       from,
+        to:         to,
+        half_width: width * 0.5f,
+        color:      color,
+    );
+}
+
+<*
+ Append a polyline with round joins and caps, one item per edge.
+ Edges overlap at joins, so a translucent path draws those areas twice.
+ @param width : "Pixels across the path; above zero."
+ @param color : "sRGB, straight alpha."
+ @param closed : "Adds the edge from the last point back to the first."
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
+*>
+fn void? OverlayList.add_path(
+    &self,
+    Vec2[] points,
+    float width,
+    Vec4 color,
+    bool closed = false,
+) {
+    if (points.len < 2) return c3d::INVALID_ARGUMENT~;
+
+    bool closing_edge = closed && points.len > 2;
+    usz edges = closing_edge ? points.len : points.len - 1;
+    if (edges > self.entries.len - self.item_count) return c3d::CAPACITY_EXCEEDED~;
+    if (!overlay_stroke_valid(width, color)) return c3d::INVALID_ARGUMENT~;
+    foreach (point : points) {
+        if (!finite_vec2(point)) return c3d::INVALID_ARGUMENT~;
+    }
+
+    float half_width = width * 0.5f;
+    for (usz index = 1; index < points.len; index++) {
+        append_overlay_segment(
+            list:       self,
+            from:       points[index - 1],
+            to:         points[index],
+            half_width: half_width,
+            color:      color,
+        );
+    }
+    if (closing_edge) {
+        append_overlay_segment(
+            list:       self,
+            from:       points[^1],
+            to:         points[0],
+            half_width: half_width,
+            color:      color,
+        );
+    }
 }
 
 <*
@@ -368,6 +482,32 @@ fn bool finite_vec4(Vec4 value) @local {
     return math::is_finite(value.x) && math::is_finite(value.y) && math::is_finite(value.z) && math::is_finite(value.w);
 }
 
+fn bool overlay_stroke_valid(float width, Vec4 color) @local {
+    return math::is_finite(width) && width > 0 && finite_vec4(color);
+}
+
+fn OverlayEntry new_overlay_entry(OverlayList* list, OverlayEntryKind kind) @local {
+    return {
+        .kind       = kind,
+        .transform  = current_overlay_transform(list),
+        .clip_entry = current_overlay_clip_entry(list),
+        .clip       = current_overlay_clip(list),
+    };
+}
+
+fn void append_overlay_segment(
+    OverlayList* list,
+    Vec2 from,
+    Vec2 to,
+    float half_width,
+    Vec4 color,
+) @local {
+    OverlayEntry entry = new_overlay_entry(list, SEGMENT);
+    entry.segment = { .from = from, .to = to, .half_width = half_width, .color = color };
+    list.entries[list.item_count] = entry;
+    list.item_count++;
+}
+
 fn bool non_negative_vec4(Vec4 value) @local {
     return value.x >= 0 && value.y >= 0 && value.z >= 0 && value.w >= 0;
 }
@@ -472,6 +612,8 @@ fn void? check_overlay_refs(
         switch (entry.kind) {
             case RECT: check_rect_refs(assets, targets, &entry.rect, output)!;
             case GLYPHS: check_text_refs(assets, list, &entry.text)!;
+            case TRIANGLE:
+            case SEGMENT:
         }
     }
 }
@@ -624,6 +766,32 @@ fn OverlayItemGpu pack_overlay_glyph(
     };
 }
 
+// The bounds are the shape's own box, so the quad and the culling work as they do for rects.
+fn OverlayItemGpu pack_overlay_triangle(OverlayTriangle* triangle) @local {
+    Vec2 low = math::min(math::min(triangle.first, triangle.second), triangle.third);
+    Vec2 high = math::max(math::max(triangle.first, triangle.second), triangle.third);
+    return {
+        .bounds             = { low.x, low.y, high.x, high.y },
+        .uv_rect            = { triangle.first.x, triangle.first.y, triangle.second.x, triangle.second.y },
+        .radii_top          = bitcast(triangle.third.x, uint),
+        .radii_bottom       = bitcast(triangle.third.y, uint),
+        .fill               = pack_rgba8(triangle.color),
+        .sampler_kind_flags = shader::OVERLAY_KIND_TRIANGLE << shader::OVERLAY_KIND_SHIFT,
+    };
+}
+
+fn OverlayItemGpu pack_overlay_segment(OverlaySegment* segment) @local {
+    Vec2 low = math::min(segment.from, segment.to) - segment.half_width;
+    Vec2 high = math::max(segment.from, segment.to) + segment.half_width;
+    return {
+        .bounds             = { low.x, low.y, high.x, high.y },
+        .uv_rect            = { segment.from.x, segment.from.y, segment.to.x, segment.to.y },
+        .radii_top          = bitcast(segment.half_width, uint),
+        .fill               = pack_rgba8(segment.color),
+        .sampler_kind_flags = shader::OVERLAY_KIND_SEGMENT << shader::OVERLAY_KIND_SHIFT,
+    };
+}
+
 fn void emit_overlay_item(OverlayPacker* packer, gpu::ScissorRect scissor, OverlayItemGpu item) @local {
     packer.transformed = packer.transformed || item.transform_clip != 0;
     OverlayRun[] runs = packer.list.runs;
@@ -673,6 +841,14 @@ fn uint pack_overlay_items(
                     item.transform_clip = transform_clip;
                     emit_overlay_item(&packer, scissor, item);
                 }
+            case TRIANGLE:
+            case SEGMENT:
+                OverlayItemGpu item = entry.kind == TRIANGLE
+                    ? pack_overlay_triangle(&entry.triangle)
+                    : pack_overlay_segment(&entry.segment);
+                if (!overlay_bounds_reach(item_output_bounds(list, entry.transform, item.bounds), scissor)) continue;
+                item.transform_clip = transform_clip;
+                emit_overlay_item(&packer, scissor, item);
         }
     }
 

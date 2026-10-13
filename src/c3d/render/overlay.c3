@@ -153,6 +153,7 @@ fn void? Renderer.prepare_overlay_list(&self, OverlayList* list, RenderTargetId 
 
     foreach (index, &entry : list.entries[:list.item_count]) {
         OverlayBinding* binding = &list.bindings[index];
+        if (entry.kind == TRIANGLE || entry.kind == SEGMENT) continue;
         if (entry.kind == GLYPHS) {
             FontRes* font_mirror = resolve_font(self, entry.text.font)!;
             *binding = { .texture = font_mirror.curve_view.index, .bands = font_mirror.band_view.index };

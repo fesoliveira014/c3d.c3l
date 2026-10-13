@@ -81,6 +81,34 @@ const Vec2 TRANSFORM_BAR_MAX @local = { 120, 48 };
 const Vec4 TRANSFORM_TEXT_COLOR @local = { 0.08f, 0.1f, 0.16f, 1 };
 const Vec4 TRANSFORM_BAR_COLOR @local = { 0.25f, 0.75f, 0.45f, 1 };
 
+const uint CHART_POINTS @local = 24;
+const Vec2 CHART_MIN @local = { 24, 488 };
+const Vec2 CHART_MAX @local = { 344, 700 };
+const float CHART_INSET @local = 16;
+const uint CHART_GRID_LINES @local = 3;
+const float CHART_GRID_WIDTH @local = 1;
+const float CHART_LINE_WIDTH @local = 3;
+const float CHART_MARKER_SIZE @local = 9;
+const float CHART_PHASE_STEP @local = 0.5f;
+const float CHART_SPEED @local = 1.1f;
+const Vec2 CHART_COPY_CENTER @local = { 830, 640 };
+const float CHART_COPY_ANGLE @local = -0.22f;
+const float CHART_COPY_SCALE @local = 0.6f;
+const Vec2 STAR_CENTER @local = { 730, 530 };
+const float STAR_OUTER_RADIUS @local = 56;
+const float STAR_INNER_RADIUS @local = 24;
+const uint STAR_TIPS @local = 5;
+const float STAR_WIDTH @local = 4;
+const float STAR_SPIN_SPEED @local = 0.4f;
+const float RIBBON_WIDTH @local = 18;
+const Vec2[4] RIBBON_POINTS @local = { { 810, 560 }, { 850, 500 }, { 890, 560 }, { 930, 500 } };
+const Vec4 CHART_FILL @local = { 0.06f, 0.08f, 0.14f, 0.9f };
+const Vec4 CHART_GRID_COLOR @local = { 1, 1, 1, 0.25f };
+const Vec4 CHART_LINE_COLOR @local = { 0.35f, 0.85f, 0.55f, 1 };
+const Vec4 CHART_MARKER_COLOR @local = { 1, 0.75f, 0.2f, 1 };
+const Vec4 STAR_COLOR @local = { 0.95f, 0.45f, 0.85f, 1 };
+const Vec4 RIBBON_COLOR @local = { 0.3f, 0.65f, 1, 0.55f };
+
 const uint STRESS_RECT_SIZE @local = 6;
 const uint STRESS_RECT_PITCH @local = 8;
 const float STRESS_RECT_RADIUS @local = 2;
@@ -130,6 +158,7 @@ struct Options @local {
     bool stress_enabled;
     bool target_overlay;
     bool transform_panel;
+    bool shapes;
     bool benchmark;
     uint rects;
     uint frames;
@@ -154,6 +183,7 @@ struct Demo @local {
     bool              with_portrait;
     bool              target_overlay;
     bool              transform_panel;
+    bool              shapes;
     double            prepare_ms;
     uint              overlay_draws;
 }
@@ -342,6 +372,69 @@ fn void? add_transform_panel(Demo* demo, float time) @local {
     list.pop_transform();
 }
 
+fn Vec2 chart_point(Vec2 min, Vec2 max, uint index, float time) @local {
+    float phase = (float)index * CHART_PHASE_STEP + time * CHART_SPEED;
+    float level = 0.5f + 0.32f * math::sin(phase) + 0.1f * math::sin(phase * 2.6f - time);
+    float across = (float)index / (float)(CHART_POINTS - 1);
+    Vec2 low = { min.x + CHART_INSET, max.y - CHART_INSET };
+    Vec2 high = { max.x - CHART_INSET, min.y + CHART_INSET };
+    return { low.x + (high.x - low.x) * across, low.y + (high.y - low.y) * level };
+}
+
+fn void? add_chart(OverlayList* list, Vec2 min, Vec2 max, float time) @local {
+    list.add_rect(solid_rect(
+        min:    min,
+        max:    max,
+        fill:   CHART_FILL,
+        radius: 10,
+    ))!;
+
+    for (uint line = 1; line <= CHART_GRID_LINES; line++) {
+        float height = min.y + (max.y - min.y) * (float)line / (float)(CHART_GRID_LINES + 1);
+        list.add_line(
+            from:  { min.x + CHART_INSET, height },
+            to:    { max.x - CHART_INSET, height },
+            width: CHART_GRID_WIDTH,
+            color: CHART_GRID_COLOR,
+        )!;
+    }
+
+    Vec2[CHART_POINTS] points;
+    foreach (index, &point : points) *point = chart_point(min, max, (uint)index, time);
+    list.add_path(points[..], CHART_LINE_WIDTH, CHART_LINE_COLOR)!;
+
+    Vec2 last = points[CHART_POINTS - 1];
+    list.add_triangle(
+        first:  { last.x - CHART_MARKER_SIZE, last.y - 2 * CHART_MARKER_SIZE },
+        second: { last.x + CHART_MARKER_SIZE, last.y - 2 * CHART_MARKER_SIZE },
+        third:  last,
+        color:  CHART_MARKER_COLOR,
+    )!;
+}
+
+fn void? add_shapes(OverlayList* list, float time) @local {
+    add_chart(list, CHART_MIN, CHART_MAX, time)!;
+
+    Vec2[2 * STAR_TIPS] star;
+    foreach (index, &point : star) {
+        float radius = index % 2 == 0 ? STAR_OUTER_RADIUS : STAR_INNER_RADIUS;
+        float angle = time * STAR_SPIN_SPEED + (float)index * (float)math::PI / STAR_TIPS;
+        *point = STAR_CENTER + (Vec2){ math::sin(angle), -math::cos(angle) } * radius;
+    }
+    list.add_path(star[..], STAR_WIDTH, STAR_COLOR, closed: true)!;
+
+    list.add_path(RIBBON_POINTS[..], RIBBON_WIDTH, RIBBON_COLOR)!;
+
+    list.push_transform(placement_transform(CHART_COPY_CENTER, CHART_COPY_ANGLE))!;
+    list.push_transform(scale_transform(CHART_COPY_SCALE))!;
+
+    Vec2 half = (CHART_MAX - CHART_MIN) * 0.5f;
+    add_chart(list, -half, half, time)!;
+
+    list.pop_transform();
+    list.pop_transform();
+}
+
 fn void? fill_target_list(OverlayList* list, float time) @local {
     list.clear();
 
@@ -476,6 +569,7 @@ fn void? fill_scenes(Demo* demo, Options* options, float time) @local {
     add_scroll_list(list, time)!;
     add_samples(list)!;
     if (demo.transform_panel) add_transform_panel(demo, time)!;
+    if (demo.shapes) add_shapes(list, time)!;
     if (demo.with_portrait && demo.target_overlay) fill_target_list(demo.target_list, time)!;
 }
 
@@ -541,6 +635,7 @@ fn void? run_interactive(Demo* demo, Options* options) @local {
             imgui::checkbox("Stress rects", &options.stress_enabled);
             imgui::checkbox("Portrait overlay", &demo.target_overlay);
             imgui::checkbox("Transformed panel", &demo.transform_panel);
+            imgui::checkbox("Shapes", &demo.shapes);
             imgui::text("Items: %u of %u", demo.list.item_count, (uint)demo.list.entries.len);
         }
         imgui::end();
@@ -647,6 +742,8 @@ fn int main(String[] args) {
             options.target_overlay = true;
         } else if (argument == "--transform") {
             options.transform_panel = true;
+        } else if (argument == "--shapes") {
+            options.shapes = true;
         } else if (argument == "--rects" && has_value) {
             options.rects = args[++index].to_uint() ?? 0;
         } else if (argument == "--frames" && has_value) {
@@ -661,7 +758,7 @@ fn int main(String[] args) {
             options.height = size[1];
         } else {
             io::eprintn(
-                "Use overlay [--stress [N]] [--target] [--transform] [--frames N]"
+                "Use overlay [--stress [N]] [--target] [--transform] [--shapes] [--frames N]"
                 " [--benchmark --rects N --frames F --size WxH]."
             );
             return 1;
@@ -775,6 +872,7 @@ fn int main(String[] args) {
         .with_portrait   = !options.benchmark,
         .target_overlay  = options.target_overlay,
         .transform_panel = options.transform_panel,
+        .shapes          = options.shapes,
     };
     renderer.prepare_scene(&scene)!!;
 
