@@ -32,13 +32,10 @@ fn void? Ui.set_window_offset(
 
 fn uint? find_window(Ui* ui, UiDocumentId document, String id) @private {
     UiDocument* record = ui.documents.try_get(document)!;
-    uint hash = name_hash(id);
-    foreach (&element : record.elements) {
-        if (!element.window || element.id_hash != hash) continue;
-        if (record.strings[element.id_offset : element.id_length] == id) return element.window_slot;
-    }
+    uint element = find_window_element(record, id);
+    if (element == UI_NONE) return c3d::INVALID_ARGUMENT~;
 
-    return c3d::INVALID_ARGUMENT~;
+    return record.elements[element].window_slot;
 }
 
 fn uint count_windows(UiDocument* document) @private {
