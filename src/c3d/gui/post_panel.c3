@@ -368,6 +368,7 @@ fn bool edit_ray_tracing(ViewDesc* desc) @local {
             changed = true;
         }
     }
+
     return changed;
 }
 

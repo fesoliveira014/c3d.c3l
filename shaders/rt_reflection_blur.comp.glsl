@@ -45,6 +45,7 @@ void main() {
 
             vec4 tap_normal_roughness = fetch_texture_2d(root.normal_roughness, tap);
             if (abs(tap_normal_roughness.b - roughness) > RT_REFLECTION_ROUGHNESS_TOLERANCE) continue;
+
             float tap_specular_weight = fetch_texture_2d(root.emissive_specular, tap).a;
             if (abs(tap_specular_weight - specular_weight) > RT_REFLECTION_SPECULAR_TOLERANCE) continue;
 
