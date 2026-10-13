@@ -95,7 +95,7 @@ fn MsaaCounts live_msaa_counts(Renderer* renderer, bool prepassed = false) @priv
     return counts;
 }
 
-// Deferred views wait for per-sample lighting; a window view without a surface allocates nothing to check.
+// A deferred view takes no multisample count; a window view without a surface has no images to check.
 fn void? validate_msaa_support(Renderer* renderer, ViewDesc* desc, uint[<2>] output) @private {
     if (desc.msaa == MsaaSamples.ONE) return;
     if (desc.shading == ShadingPath.DEFERRED) return c3d::UNSUPPORTED~;
@@ -103,17 +103,25 @@ fn void? validate_msaa_support(Renderer* renderer, ViewDesc* desc, uint[<2>] out
 
     MsaaProbe probe = {
         .renderer = renderer,
-        .extent   = working_extent(desc.viewport, output.x, output.y, desc.render_scale),
+        .extent   = working_extent(
+            viewport:      desc.viewport,
+            output_width:  output.x,
+            output_height: output.y,
+            render_scale:  desc.render_scale,
+        ),
         .samples  = msaa_sample_count(desc.msaa),
     };
+
     bool supported = msaa_image_supported(&probe, HDR_FORMAT, MSAA_COLOR_USAGE)!
         && msaa_image_supported(&probe, DEPTH_FORMAT, MSAA_DEPTH_USAGE)!;
     if (supported && post::uses_velocity(desc)) {
         supported = msaa_image_supported(&probe, post::velocity_format(desc), MSAA_SAMPLED_USAGE)!;
     }
+
     if (supported && msaa_reflection_gbuffer_wanted(desc)) {
         supported = msaa_image_supported(&probe, REFLECTION_SURFACE_FORMAT, MSAA_SAMPLED_USAGE)!;
     }
+
     if (!supported) return c3d::UNSUPPORTED~;
 }
 
@@ -140,11 +148,23 @@ fn void? acquire_msaa_images(Renderer* renderer, ViewRecord* record) @private {
     if (desc.msaa == MsaaSamples.ONE || !record.hdr_color.texture.is_valid()) return;
 
     if (!record.msaa_color.texture.is_valid()) {
-        record.msaa_color = allocate_msaa_target(renderer, record, HDR_FORMAT, MSAA_COLOR_USAGE, "msaa_color")!;
+        record.msaa_color = allocate_msaa_target(
+            renderer:   renderer,
+            record:     record,
+            format:     HDR_FORMAT,
+            usage:      MSAA_COLOR_USAGE,
+            debug_name: "msaa_color",
+        )!;
     }
 
     if (!record.msaa_depth.texture.is_valid()) {
-        record.msaa_depth = allocate_msaa_target(renderer, record, DEPTH_FORMAT, MSAA_DEPTH_USAGE, "msaa_depth")!;
+        record.msaa_depth = allocate_msaa_target(
+            renderer:   renderer,
+            record:     record,
+            format:     DEPTH_FORMAT,
+            usage:      MSAA_DEPTH_USAGE,
+            debug_name: "msaa_depth",
+        )!;
     }
 
     if (post::uses_velocity(desc) && !record.msaa_velocity.texture.is_valid()) {

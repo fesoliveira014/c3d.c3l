@@ -210,7 +210,12 @@ fn bool msaa_radios(Views* views) @local {
     return changed;
 }
 
-fn void msaa_status(ZString side, MsaaSamples applied, MsaaSamples requested, ZString reason) @local {
+fn void msaa_status(
+    ZString side,
+    MsaaSamples applied,
+    MsaaSamples requested,
+    ZString reason,
+) @local {
     if (!reason) {
         imgui::text("%s: MSAA %s", side, MSAA_LABELS[applied.ordinal]);
         return;
@@ -383,8 +388,18 @@ fn void? run_gui(
                 right_stats.decals_dropped,
                 right_stats.decal_overflows,
             );
-            msaa_status("Left", renderer.views.get(views.left).desc.msaa, views.msaa, views.msaa_faults[0]);
-            msaa_status("Right", renderer.views.get(views.right).desc.msaa, views.msaa, views.msaa_faults[1]);
+            msaa_status(
+                side:      "Left",
+                applied:   renderer.views.get(views.left).desc.msaa,
+                requested: views.msaa,
+                reason:    views.msaa_faults[0],
+            );
+            msaa_status(
+                side:      "Right",
+                applied:   renderer.views.get(views.right).desc.msaa,
+                requested: views.msaa,
+                reason:    views.msaa_faults[1],
+            );
             imgui::text("Output: %u x %u", views.width, views.height);
             $if $feat(C3D_PROFILE_CPU) && $feat(C3D_PROFILE_INTERNAL):
                 if (decal_timings.ready) {
