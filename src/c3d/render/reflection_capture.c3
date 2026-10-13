@@ -293,6 +293,7 @@ fn void? render_reflection_faces(
         .excluded_probe = probe_node.id,
         .height_fog     = false,
         .clouds         = false,
+        .world_overlay  = false,
     };
     foreach (face : CubeFace::values) {
         view_camera.world = reflection_capture_face_world(face, capture);

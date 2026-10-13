@@ -18,13 +18,27 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Ov
 };
 #endif
 
+#ifdef WORLD
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer OverlayPlanes {
+    OverlayPlaneGpu values[];
+};
+#endif
+
 layout(push_constant) uniform Push {
     uint64_t vertex_root_gpu;
     uint64_t fragment_root_gpu;
 } pc;
 
 layout(location = 0) flat in uint v_item;
+#ifdef WORLD
+layout(location = 1) in vec2 v_plane;
+#endif
 layout(location = 0) out vec4 out_color;
+
+#ifdef WORLD
+// Reverse-Z depth that a plane item gains, so one lying on a surface of the view draws over it.
+const float PLANE_DEPTH_SCALE = 1.0 + 1.0 / 65536.0;
+#endif
 
 #ifdef TRANSFORMED
 vec2 overlay_local_position(OverlayTransformGpu transform, vec2 pixel) {
@@ -46,6 +60,26 @@ float overlay_clip_coverage(OverlayTransformGpu clip, vec2 pixel) {
     vec2 coverage = clamp(0.5 + inside / overlay_local_pixel_size(clip), 0.0, 1.0);
     return coverage.x * coverage.y;
 }
+
+#ifdef WORLD
+// The same test for a plane item, whose position in the plane varies across the screen with perspective.
+float overlay_plane_clip_coverage(OverlayTransformGpu clip, vec2 plane_position) {
+    vec2 center = (clip.clip_box.xy + clip.clip_box.zw) * 0.5;
+    vec2 half_extent = (clip.clip_box.zw - clip.clip_box.xy) * 0.5;
+    vec2 local = overlay_local_position(clip, plane_position);
+    vec2 pixel_size = vec2(
+        length(vec2(dFdx(local.x), dFdy(local.x))),
+        length(vec2(dFdx(local.y), dFdy(local.y))));
+    vec2 coverage = clamp(0.5 + (half_extent - abs(local - center)) / pixel_size, 0.0, 1.0);
+    return coverage.x * coverage.y;
+}
+
+// Output pixels per local unit along each local axis, from the local change per output pixel along x and y.
+vec2 overlay_pixels_per_unit_from_change(vec2 local_dx, vec2 local_dy) {
+    float determinant = max(abs(local_dx.x * local_dy.y - local_dy.x * local_dx.y), 1e-12);
+    return vec2(length(vec2(local_dy.y, -local_dx.y)), length(vec2(-local_dy.x, local_dx.x))) / determinant;
+}
+#endif
 
 // Local units per output pixel across an edge, so a transformed shape keeps edges about one pixel wide.
 float overlay_edge_width(float signed_distance, bool transformed) {
@@ -214,7 +248,11 @@ vec4 overlay_glyph_color(OverlayItemGpu item, vec2 position) {
     return vec4(srgb_to_linear(fill.rgb), fill.a * coverage);
 }
 
+#ifdef WORLD
+void overlay_shade() {
+#else
 void main() {
+#endif
 #if defined(BACKDROP)
     OverlayBackdropRoot root = OverlayBackdropRoot(pc.fragment_root_gpu);
 #elif defined(WORLD)
@@ -230,21 +268,37 @@ void main() {
     uint transform_index = item.transform_clip & OVERLAY_TRANSFORM_MASK;
     uint clip_index = item.transform_clip >> OVERLAY_CLIP_SHIFT;
 
+#ifdef WORLD
+    bool plane = transforms.values[transform_index].plane != 0u;
+#endif
     float clip_coverage = 1.0;
     while (clip_index != 0u) {
         OverlayTransformGpu clip = transforms.values[clip_index];
+#ifdef WORLD
+        clip_coverage *= plane
+            ? overlay_plane_clip_coverage(clip, v_plane)
+            : overlay_clip_coverage(clip, gl_FragCoord.xy);
+#else
         clip_coverage *= overlay_clip_coverage(clip, gl_FragCoord.xy);
+#endif
         clip_index = clip.clip_parent;
     }
 
 #ifdef WORLD
     // Reverse-Z, so larger is closer. Hidden items fade to nothing instead of discarding, which keeps the derivatives
-    // below defined; the view's depth is jittered under temporal anti-aliasing.
+    // below defined; the view's depth is jittered under temporal anti-aliasing. A plane has the depth of its own
+    // fragment, an anchored billboard that of its anchor.
     ivec2 depth_extent = texture_extent(root.depth_texture);
     vec2 depth_texel = (gl_FragCoord.xy - vec2(root.view_x, root.view_y)) * vec2(depth_extent)
         / vec2(root.view_width, root.view_height);
     float view_depth = fetch_texture_2d(root.depth_texture, clamp(ivec2(depth_texel), ivec2(0), depth_extent - 1)).r;
-    clip_coverage *= transforms.values[transform_index].depth >= view_depth ? 1.0 : 0.0;
+    float item_depth = plane ? gl_FragCoord.z * PLANE_DEPTH_SCALE : transforms.values[transform_index].depth;
+    clip_coverage *= item_depth >= view_depth ? 1.0 : 0.0;
+    if (plane) {
+        // The view's clip plane, as the distance of the fragment's point on the plane.
+        vec4 clip_plane = OverlayPlanes(root.planes).values[transform_index].distance;
+        clip_coverage *= dot(clip_plane.xyz, vec3(v_plane, 1.0)) >= 0.0 ? 1.0 : 0.0;
+    }
 #endif
 
     // Item-local position, the local change per output pixel along x and y, and output pixels per local unit.
@@ -259,6 +313,14 @@ void main() {
         local_dx = transform.inverse_x_axis;
         local_dy = transform.inverse_y_axis;
         pixels_per_unit = vec2(length(transform.x_axis), length(transform.y_axis));
+#ifdef WORLD
+        if (plane) {
+            position = overlay_local_position(transform, v_plane);
+            local_dx = dFdx(position);
+            local_dy = dFdy(position);
+            pixels_per_unit = overlay_pixels_per_unit_from_change(local_dx, local_dy);
+        }
+#endif
     }
 #endif
 
@@ -379,3 +441,10 @@ void main() {
     out_color = vec4(color.rgb, color.a * coverage);
 #endif
 }
+
+#ifdef WORLD
+void main() {
+    overlay_shade();
+    out_color.rgb *= OverlayWorldRoot(pc.fragment_root_gpu).color_scale;
+}
+#endif

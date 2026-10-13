@@ -176,6 +176,27 @@ const float WORLD_METRE_RADIUS @local = 0.1f;
 const float WORLD_METRE_BORDER @local = 0.025f;
 const Vec4 WORLD_PANEL_FILL @local = { 0.04f, 0.07f, 0.2f, 0.88f };
 const Vec4 WORLD_MARKER_COLOR @local = { 1, 0.85f, 0.2f, 1 };
+const uint HIDDEN_WORLD_LAYERS @local = PORTRAIT_LAYER; // the cameras that draw the world exclude it
+
+const float DEGREE @local = (float)math::PI / 180;
+const Vec3 SIGN_WALL_FRONT @local = { 1.2f, -1.5f, -3 }; // centre of the wall's front face
+const Vec3 SIGN_WALL_SIZE @local = { 6, 3, 0.1f };
+const float SIGN_WALL_YAW @local = -25 * DEGREE;
+const Vec4 SIGN_WALL_COLOR @local = { 0.22f, 0.26f, 0.32f, 1 };
+const float SIGN_OFFSET @local = 0.02f; // metres off the wall, which the sign's depth would otherwise tie with
+const float SIGN_UNITS_PER_METRE @local = 200;
+const Vec2 SIGN_PANEL_SIZE @local = { 600, 180 };
+const float SIGN_PANEL_RADIUS @local = 16;
+const float SIGN_PANEL_BORDER @local = 4;
+const Vec2 SIGN_TITLE_ORIGIN @local = { 28, 84 };
+const Vec2 SIGN_CAPTION_ORIGIN @local = { 28, 140 };
+const float SIGN_TITLE_SIZE @local = 64;
+const float SIGN_CAPTION_SIZE @local = 34;
+
+const Plane MIRROR_PLANE @local = { .normal = { 1, 0, 0 }, .d = 1.5f }; // keeps x >= -1.5
+const uint MIRROR_WIDTH @local = 320;
+const uint MIRROR_HEIGHT @local = 180;
+const Vec2 MIRROR_INSET_MIN @local = { 24, 500 };
 
 const uint STRESS_RECT_SIZE @local = 6;
 const uint STRESS_RECT_PITCH @local = 8;
@@ -230,6 +251,7 @@ struct Options @local {
     bool gradients;
     bool backdrop;
     bool world;
+    bool mirror;
     bool benchmark;
     uint rects;
     uint frames;
@@ -244,6 +266,10 @@ struct Demo @local {
     Node*             camera_node;
     Node*             portrait_camera;
     Node*             cube;
+    Node*             wall;
+    Node*             mirror_camera;
+    ViewId            mirror_view;
+    RenderTargetId    mirror_target;
     ViewId            portrait_view;
     RenderTargetId    portrait;
     TextureId         skin;
@@ -259,6 +285,8 @@ struct Demo @local {
     bool              gradients;
     bool              backdrop;
     bool              world;
+    bool              world_layer;
+    bool              mirror;
     double            prepare_ms;
     uint              overlay_draws;
 }
@@ -749,6 +777,7 @@ fn void? add_samples(OverlayList* list) @local {
 fn void? add_world_labels(Demo* demo, float time) @local {
     OverlayList* list = demo.world_list;
     list.clear();
+    list.set_layers(demo.world_layer ? camera::ALL_LAYERS : HIDDEN_WORLD_LAYERS);
 
     Vec3 pixel_position = WORLD_PIXEL_ANCHOR;
     pixel_position.z += WORLD_PIXEL_TRAVEL * (0.5f + 0.5f * math::sin(time * WORLD_SPEED));
@@ -833,6 +862,68 @@ fn void? add_world_labels(Demo* demo, float time) @local {
     )!;
 
     list.pop_anchor();
+
+    add_wall_sign(demo)!;
+}
+
+fn void? add_wall_sign(Demo* demo) @local {
+    OverlayList* list = demo.world_list;
+    Vec3 normal = { math::sin(SIGN_WALL_YAW), 0, math::cos(SIGN_WALL_YAW) };
+    Vec3 right = { math::cos(SIGN_WALL_YAW), 0, -math::sin(SIGN_WALL_YAW) };
+    Vec3 up = { 0, 1, 0 };
+    Vec2 half = SIGN_PANEL_SIZE / SIGN_UNITS_PER_METRE * 0.5f;
+
+    list.push_anchor({
+        .position        = SIGN_WALL_FRONT - right * half.x + up * half.y + normal * SIGN_OFFSET,
+        .facing          = PLANE,
+        .right           = right,
+        .up              = up,
+        .pixels_per_unit = SIGN_UNITS_PER_METRE,
+    })!;
+
+    OverlayRect panel = solid_rect(
+        min:    { 0, 0 },
+        max:    SIGN_PANEL_SIZE,
+        fill:   WORLD_PANEL_FILL,
+        radius: SIGN_PANEL_RADIUS,
+    );
+    panel.border_widths = { SIGN_PANEL_BORDER, SIGN_PANEL_BORDER, SIGN_PANEL_BORDER, SIGN_PANEL_BORDER };
+    panel.border_color = PANEL_BORDER;
+    list.add_rect(panel)!;
+
+    add_text(
+        list:   list,
+        assets: demo.assets,
+        font:   demo.font,
+        text:   "Wall sign",
+        origin: SIGN_TITLE_ORIGIN,
+        size:   SIGN_TITLE_SIZE,
+        color:  WHITE,
+    )!;
+    add_text(
+        list:   list,
+        assets: demo.assets,
+        font:   demo.font,
+        text:   "fixed in the world plane",
+        origin: SIGN_CAPTION_ORIGIN,
+        size:   SIGN_CAPTION_SIZE,
+        color:  WHITE,
+    )!;
+
+    list.pop_anchor();
+}
+
+fn void? add_mirror_inset(OverlayList* list, RenderTargetId target) @local {
+    OverlayRect inset = solid_rect(
+        min:    MIRROR_INSET_MIN,
+        max:    MIRROR_INSET_MIN + (Vec2){ MIRROR_WIDTH, MIRROR_HEIGHT },
+        fill:   WHITE,
+        radius: 12,
+    );
+    inset.texture = { .kind = RENDER_TARGET, .target = target };
+    inset.border_widths = { 3, 3, 3, 3 };
+    inset.border_color = PANEL_BORDER;
+    list.add_rect(inset)!;
 }
 
 fn void? fill_scenes(Demo* demo, Options* options, float time) @local {
@@ -853,6 +944,7 @@ fn void? fill_scenes(Demo* demo, Options* options, float time) @local {
     if (demo.gradients) add_gradients(demo, time)!;
     if (demo.backdrop) add_backdrops(list, time)!;
     if (demo.world) add_world_labels(demo, time)!;
+    if (demo.mirror) add_mirror_inset(list, demo.mirror_target)!;
     if (demo.with_portrait && demo.target_overlay) fill_target_list(demo.target_list, time, demo.backdrop)!;
 }
 
@@ -873,6 +965,13 @@ fn void? draw_frame(Demo* demo, GuiRenderer* gui_renderer, FrameInfo info) @loca
                 renderer.end_overlay(&portrait_overlay)!;
             }
         }
+
+        if (demo.mirror) {
+            renderer.render_view(demo.scene, demo.mirror_camera, demo.mirror_view)!;
+            if (demo.world) renderer.set_view_overlay(demo.mirror_view, demo.world_list)!;
+            renderer.finish_view(demo.mirror_view)!;
+        }
+
         renderer.render_view(demo.scene, demo.camera_node, renderer.default_view)!;
 
         if (demo.world) renderer.set_view_overlay(renderer.default_view, demo.world_list)!;
@@ -897,6 +996,9 @@ fn void animate(Demo* demo, float time) @local {
     Quat spin = quaternion::from_axis_angle{float}({ 0, 1, 0 }, time * PORTRAIT_SPIN_RADIANS_PER_SECOND);
     Quat tilt = quaternion::from_axis_angle{float}({ 1, 0, 0 }, 0.5f);
     demo.cube.local.rotation = spin.mul(tilt).normalize();
+
+    demo.wall.visible = demo.world;
+
     demo.scene.update_world();
 }
 
@@ -924,6 +1026,7 @@ fn void? run_interactive(Demo* demo, Options* options) @local {
             imgui::checkbox("Gradients", &demo.gradients);
             imgui::checkbox("Backdrop", &demo.backdrop);
             imgui::checkbox("World labels", &demo.world);
+            imgui::checkbox("World layer", &demo.world_layer);
             imgui::text("Items: %u of %u", demo.list.item_count, (uint)demo.list.entries.len);
         }
         imgui::end();
@@ -1038,6 +1141,9 @@ fn int main(String[] args) {
             options.backdrop = true;
         } else if (argument == "--world") {
             options.world = true;
+        } else if (argument == "--mirror") {
+            options.world = true;
+            options.mirror = true;
         } else if (argument == "--rects" && has_value) {
             options.rects = args[++index].to_uint() ?? 0;
         } else if (argument == "--frames" && has_value) {
@@ -1053,7 +1159,7 @@ fn int main(String[] args) {
         } else {
             io::eprintn(
                 "Use overlay [--stress [N]] [--target] [--transform] [--shapes] [--gradients] [--backdrop] [--world]"
-                " [--frames N] [--benchmark --rects N --frames F --size WxH]."
+                " [--mirror] [--frames N] [--benchmark --rects N --frames F --size WxH]."
             );
             return 1;
         }
@@ -1083,17 +1189,22 @@ fn int main(String[] args) {
 
     GeometryId box;
     GeometryId ball;
+    GeometryId wall_geometry;
     @pool() {
         Geometry box_geometry = geometry::box(tmem, CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
         box = assets.add_geometry(&box_geometry, "overlay/box")!!;
         Geometry ball_geometry = geometry::sphere(tmem, BACKDROP_RADIUS);
         ball = assets.add_geometry(&ball_geometry, "overlay/sphere")!!;
+        Geometry wall_box = geometry::box(tmem, SIGN_WALL_SIZE.x, SIGN_WALL_SIZE.y, SIGN_WALL_SIZE.z);
+        wall_geometry = assets.add_geometry(&wall_box, "overlay/slab")!!;
     };
     MaterialId cube_material = assets.add_material(material::basic({ .color = CUBE_COLOR }), "overlay/cube")!!;
     MaterialId backdrop_material = assets.add_material(
         material::basic({ .color = BACKDROP_COLOR }),
         "overlay/backdrop",
     )!!;
+
+    MaterialId wall_material = assets.add_material(material::basic({ .color = SIGN_WALL_COLOR }), "overlay/paint")!!;
 
     char[SKIN_SIZE * SKIN_SIZE * 4] skin_pixels;
     fill_skin(skin_pixels[..]);
@@ -1120,6 +1231,18 @@ fn int main(String[] args) {
     Node* cube = scene.add_mesh(box, cube_material, name: "cube")!!;
     cube.layers = PORTRAIT_LAYER;
     if (!options.benchmark) scene.add_mesh(ball, backdrop_material, name: "backdrop")!!;
+
+    Vec3 wall_normal = { math::sin(SIGN_WALL_YAW), 0, math::cos(SIGN_WALL_YAW) };
+    Node* wall = scene.add_mesh(wall_geometry, wall_material, name: "wall")!!;
+    wall.local.position = SIGN_WALL_FRONT - wall_normal * (SIGN_WALL_SIZE.z * 0.5f);
+    wall.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, SIGN_WALL_YAW);
+    wall.visible = false;
+
+    Node* mirror_camera = scene.add_camera(camera::perspective_deg(50, 0.1f), name: "mirror")!!;
+    scene.get(mirror_camera, camera::Camera).layers = camera::ALL_LAYERS & ~PORTRAIT_LAYER;
+    Mat4 mirrored = maths::reflection_matrix(MIRROR_PLANE).mul(camera_node.local.to_mat4());
+    mirror_camera.local = maths::transform_from_affine(mirrored)!!;
+
     scene.update_world();
 
     uint capacity = (options.benchmark ? options.rects : options.stress_count) + SCENE_ITEM_RESERVE;
@@ -1157,6 +1280,25 @@ fn int main(String[] args) {
     )!!;
     defer (void)render::destroy_view(&renderer, portrait_view);
 
+    RenderTargetId mirror_target;
+    ViewId mirror_view;
+    if (options.mirror) {
+        mirror_target = render::create_render_target(
+            &renderer,
+            render::render_target_desc(MIRROR_WIDTH, MIRROR_HEIGHT),
+        )!!;
+
+        ViewDesc mirror_desc = render::texture_view_desc(mirror_target);
+        mirror_desc.post.anti_aliasing = AntiAliasing.NONE;
+        mirror_desc.clip_plane = MIRROR_PLANE;
+        mirror_view = render::create_view(&renderer, mirror_desc)!!;
+    }
+
+    defer if (options.mirror) {
+        (void)render::destroy_view(&renderer, mirror_view);
+        (void)render::destroy_render_target(&renderer, mirror_target);
+    }
+
     Demo demo = {
         .window          = &window,
         .renderer        = &renderer,
@@ -1164,6 +1306,10 @@ fn int main(String[] args) {
         .camera_node     = camera_node,
         .portrait_camera = portrait_camera,
         .cube            = cube,
+        .wall            = wall,
+        .mirror_camera   = mirror_camera,
+        .mirror_view     = mirror_view,
+        .mirror_target   = mirror_target,
         .portrait        = portrait,
         .portrait_view   = portrait_view,
         .skin            = skin,
@@ -1179,6 +1325,8 @@ fn int main(String[] args) {
         .gradients       = options.gradients,
         .backdrop        = options.backdrop,
         .world           = options.world,
+        .world_layer     = true,
+        .mirror          = options.mirror,
     };
     renderer.prepare_scene(&scene)!!;
 
