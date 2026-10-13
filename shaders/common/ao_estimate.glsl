@@ -3,6 +3,7 @@
 
 #include "gbuffer.glsl"
 #include "depth_face.glsl"
+#include "ambient_occlusion.glsl"
 
 const float AO_FALLOFF_FRACTION = 0.6; // outer share of the radius where occluders fade out; hides the cut-off ring
 
@@ -15,6 +16,11 @@ bool ao_gbuffer_normal_written(vec4 normal_roughness) {
 float ao_falloff(float distance, float radius) {
     float falloff_range = radius * AO_FALLOFF_FRACTION;
     return clamp(1.0 - (distance - (radius - falloff_range)) / falloff_range, 0.0, 1.0);
+}
+
+// The estimate's direction pulled from the normal by the effect's intensity, capped at the full estimate.
+vec3 ao_stored_bent_normal(vec3 normal, vec3 bent_sum, float intensity) {
+    return normalize(mix(normal, ao_direction_or(bent_sum, normal), min(intensity, 1.0)));
 }
 
 vec3 ao_view_position(

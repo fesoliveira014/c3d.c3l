@@ -44,7 +44,8 @@ void main() {
     float base_share = screen_space_base_share(1.0, ambient_occlusion, screen_indirect);
     vec3 color = frame.ambient.rgb * base_color.rgb * base_share;
     if (frame_has_indirect(frame)) {
-        vec3 irradiance = indirect_diffuse_irradiance(frame, v_world_pos, normal, view_direction);
+        vec3 irradiance_direction = draw_bent_normal(frame, draw.flags, ivec2(gl_FragCoord.xy), normal);
+        vec3 irradiance = indirect_diffuse_irradiance(frame, v_world_pos, normal, irradiance_direction, view_direction);
         color += base_color.rgb / PI * (irradiance * base_share + screen_indirect.rgb);
     }
 

@@ -80,6 +80,7 @@ void main() {
             frame,
             world_position,
             surface,
+            frame_bent_normal(frame, texel, normal),
             roughness,
             occlusion,
             ambient_occlusion,

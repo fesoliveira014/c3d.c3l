@@ -274,6 +274,7 @@ fn bool edit_ambient_occlusion(AmbientOcclusionDesc* ambient_occlusion) @local {
     changed |= edit_grade_factor("AO intensity", &ambient_occlusion.intensity, 0, AO_INTENSITY_MAX);
     changed |= imgui::checkbox("Full resolution", &ambient_occlusion.full_resolution);
     changed |= imgui::checkbox("Temporal", &ambient_occlusion.temporal);
+    changed |= imgui::checkbox("Bent normals", &ambient_occlusion.bent_normals);
     if (ambient_occlusion.kind == AoKind.RAY_TRACED) {
         changed |= edit_level_count(
             label:   "Rays",

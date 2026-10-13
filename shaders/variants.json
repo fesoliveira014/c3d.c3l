@@ -2,7 +2,7 @@
   "flags": [
     "DEPTH_ONLY", "SKINNED", "SKINNED_U16", "MORPH", "VELOCITY", "VERTEX_COLOR", "INSTANCED", "RT_SHADOWS",
     "SCENE_TRACE_BVH", "WEIGHTED_BLEND", "REFLECTION_PREPASS", "POSED_INSTANCED", "TEMPORAL", "TRANSFORMED",
-    "BACKDROP", "WORLD", "RT_SHADOWS_HARD", "OUTLINE", "DEPTH_PRUNING", "MULTISAMPLE"
+    "BACKDROP", "WORLD", "RT_SHADOWS_HARD", "OUTLINE", "DEPTH_PRUNING", "MULTISAMPLE", "BENT_NORMALS"
   ],
   "entries": [
     { "shader": "fullscreen", "source": "fullscreen.vert.glsl", "stage": "vert", "defines": [] },
@@ -150,8 +150,11 @@
     { "shader": "focus_histogram", "source": "focus_histogram.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "focus_adapt", "source": "focus_adapt.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "ssao", "source": "ssao.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "ssao", "source": "ssao.comp.glsl", "stage": "comp", "defines": ["BENT_NORMALS"] },
     { "shader": "ao_blur", "source": "ao_blur.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "ao_blur", "source": "ao_blur.comp.glsl", "stage": "comp", "defines": ["BENT_NORMALS"] },
     { "shader": "ao_temporal", "source": "ao_temporal.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "ao_temporal", "source": "ao_temporal.comp.glsl", "stage": "comp", "defines": ["BENT_NORMALS"] },
     { "shader": "probe_fill_environment", "source": "probe_fill_environment.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "probe_border", "source": "probe_border.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "probe_trace", "source": "probe_trace.comp.glsl", "stage": "comp", "defines": [] },
@@ -162,6 +165,8 @@
     { "shader": "probe_blend", "source": "probe_blend.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "rt_ao", "source": "rt_ao.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "rt_ao", "source": "rt_ao.comp.glsl", "stage": "comp", "defines": ["SCENE_TRACE_BVH"] },
+    { "shader": "rt_ao", "source": "rt_ao.comp.glsl", "stage": "comp", "defines": ["BENT_NORMALS"] },
+    { "shader": "rt_ao", "source": "rt_ao.comp.glsl", "stage": "comp", "defines": ["SCENE_TRACE_BVH", "BENT_NORMALS"] },
     { "shader": "rt_reflections", "source": "rt_reflections.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "rt_reflections", "source": "rt_reflections.comp.glsl", "stage": "comp", "defines": ["SCENE_TRACE_BVH"] },
     { "shader": "rt_reflection_blur", "source": "rt_reflection_blur.comp.glsl", "stage": "comp", "defines": [] },

@@ -352,8 +352,8 @@ Images a view allocates at creation, by setting:
 | Velocity, under `TAA`, `motion_blur`, `screen_space_gi` or `ambient_occlusion.temporal` | +1 |
 | `DEFERRED` G-buffer | +5 |
 | `msaa` above `ONE` | +2 (`msaa_color`, `msaa_depth`), +1 `msaa_velocity` where velocity is used, +1 `msaa_reflection_gbuffer` with `ray_tracing.reflections` on a `FORWARD` view; a `DEFERRED` view also holds its G-buffer at that count and adds +1 `normal_sample_zero` with ambient occlusion, screen-space GI or `ray_tracing.reflections`, +1 `specular_sample_zero` with `ray_tracing.reflections` |
-| `ambient_occlusion` | +2 |
-| `ambient_occlusion.temporal` | +4: two history and two depth images |
+| `ambient_occlusion` | +2: `ao_raw` and `ao`, `R8_UNORM`, or `RGBA8_UNORM` with `ambient_occlusion.bent_normals` |
+| `ambient_occlusion.temporal` | +4: two history images, `R16_FLOAT` or `RGBA16_FLOAT` with `bent_normals`, and two depth images |
 | `screen_space_gi` | +7 |
 | `ray_tracing.reflections` | +2, and +1 on a `FORWARD` view |
 | `ray_tracing.reflection_resolution` `HALF`, with `reflections` | +1 (`reflection_half`) |

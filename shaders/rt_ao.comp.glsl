@@ -52,6 +52,9 @@ void main() {
     SceneTraceRoot scene = SceneTraceRoot(frame.trace);
     vec3 origin = position + normal * TRACE_SURFACE_OFFSET;
     float occlusion = 0.0;
+#ifdef BENT_NORMALS
+    vec3 bent_sum = vec3(0.0);
+#endif
     for (uint ray = 0u; ray < root.ray_count; ray++) {
         vec2 u = vec2(
             fract((float(ray) + noise_a) / float(root.ray_count)),
@@ -61,9 +64,19 @@ void main() {
         SceneHit hit;
         if (trace_scene(scene, origin, direction, root.radius, TRACE_MASK_ALL, hit)) {
             occlusion += ao_falloff(hit.t, root.radius);
+#ifdef BENT_NORMALS
+            bent_sum += direction * (1.0 - ao_falloff(hit.t, root.radius));
+        } else {
+            bent_sum += direction;
+#endif
         }
     }
     float visibility = 1.0 - occlusion / float(root.ray_count);
     float value = clamp(1.0 - root.intensity * (1.0 - visibility), 0.0, 1.0);
+#ifdef BENT_NORMALS
+    vec2 packed_normal = ao_pack_bent_normal(ao_stored_bent_normal(normal, bent_sum, root.intensity));
+    store_storage_texture(root.output_texture, ivec2(pixel), vec4(value, packed_normal, 1.0));
+#else
     store_storage_texture(root.output_texture, ivec2(pixel), vec4(value));
+#endif
 }

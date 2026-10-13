@@ -63,6 +63,8 @@ const uint DRAW_SWAY_VERTEX_ALPHA = 32;
 const uint DRAW_VERTEX_HISTORY_INVALID = 64;
 const uint DRAW_TRACED_REFLECTION = 128;
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1;
+const uint FRAME_AO_BENT_NORMALS = 1024;
+const uint AO_BLUR_FLAG_VECTOR_INPUT = 1;
 const uint AO_TEMPORAL_FLAG_HISTORY_VALID = 1;
 const uint SSGI_FLAG_GBUFFER_NORMALS = 1;
 const uint SSGI_FLAG_HISTORY_VALID = 2;
@@ -942,9 +944,9 @@ struct AoBlurRoot {
     uint         height;
     uint         input_width;
     uint         input_height;
+    uint         flags;
     uint         _pad0;
     uint         _pad1;
-    uint         _pad2;
 }
 $assert AoBlurRoot::size == 48;
 $assert $reflect(AoBlurRoot.frame).offset == 0;
@@ -955,9 +957,9 @@ $assert $reflect(AoBlurRoot.width).offset == 20;
 $assert $reflect(AoBlurRoot.height).offset == 24;
 $assert $reflect(AoBlurRoot.input_width).offset == 28;
 $assert $reflect(AoBlurRoot.input_height).offset == 32;
-$assert $reflect(AoBlurRoot._pad0).offset == 36;
-$assert $reflect(AoBlurRoot._pad1).offset == 40;
-$assert $reflect(AoBlurRoot._pad2).offset == 44;
+$assert $reflect(AoBlurRoot.flags).offset == 36;
+$assert $reflect(AoBlurRoot._pad0).offset == 40;
+$assert $reflect(AoBlurRoot._pad1).offset == 44;
 
 struct AoTemporalRoot {
     GpuAddress   frame;
