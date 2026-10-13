@@ -291,7 +291,7 @@ style reload or a bar's bound value.
 - `opacity` multiplies the alpha of every color an element and its descendants draw: fills, borders, bars, text,
   highlights, underlines and carets. There is no group opacity, so overlapping descendants show through each other.
   Hit testing ignores opacity.
-- Each element whose style or inline properties set a `transition` holds one entry in a fixed table
+- Each element whose inline properties or style blocks set a `transition` holds one entry in a fixed table
   (`UiDesc.max_transitions`, zero holds none). An entry starts at its element's first target with no animation. An
   element that is not laid out in an `update` loses its entry. When the table is full, changes of the elements without
   an entry snap. `ui.stats.transitions` counts the entries with a running transition.
@@ -299,8 +299,8 @@ style reload or a bar's bound value.
   `update`. Fades of `fill`, `border`, `text_color` and `opacity` still run.
 - An element with an `id` keeps its entry across `reload_document` and `load_styles` and retargets from its current
   value; an element without one starts at its new target. `unload_document` drops the document's entries.
-- `ui --transitions` adds a lift card; hovering it moves its floating root, fades its colors and brightens a hint
-  through `opacity`. The HUD rows and buttons fade on hover and press, and the health bars animate `value`. With
+- The `ui` example's HUD rows and buttons fade on hover and press, and its health bars animate `value`. `ui --transitions`
+  adds a lift card: hovering it moves its floating root, fades its colors and brightens a hint through `opacity`. With
   `--frames N` a scripted pointer hovers the card, presses Damage and hovers a row. `--reduced-motion` and the `M` key
   toggle reduced motion.
 
