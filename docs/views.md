@@ -318,8 +318,8 @@ Images a view allocates at creation, by setting:
 | `motion_blur` | +1, plus the 2 tile images |
 | Velocity, under `TAA`, `motion_blur`, `screen_space_gi` or `ambient_occlusion.temporal` | +1 |
 | `DEFERRED` G-buffer | +5 |
-| `ambient_occlusion` | +2 |
-| `ambient_occlusion.temporal` | +4: two history and two depth images |
+| `ambient_occlusion` | +2: `ao_raw` and `ao`, `R8_UNORM`, or `RGBA8_UNORM` with `ambient_occlusion.bent_normals` |
+| `ambient_occlusion.temporal` | +4: two history images, `R16_FLOAT` or `RGBA16_FLOAT` with `bent_normals`, and two depth images |
 | `screen_space_gi` | +7 |
 | `ray_tracing.reflections` | +2, and +1 on a `FORWARD` view |
 | `volumetric_fog` | +1 |

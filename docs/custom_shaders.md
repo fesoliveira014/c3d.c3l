@@ -212,10 +212,10 @@ A custom or package stage starts with the prelude, `generated/shader_abi.glsl` (
 | `brdf.glsl` | `StandardSurface`, `prepare_surface`, `prepare_standard_surface`, `apply_anisotropy`, `apply_surface_anisotropy`, `evaluate_standard_lobes`, `evaluate_standard_brdf`, `fresnel_schlick` |
 | `lights.glsl` | `LightArray`, `LightList`, `LightSample`, `select_lights`, `flat_lights`, `selected_light_index`, `sample_light`, `light_casts_shadow`, `standard_view_direction`, `evaluate_standard_light` |
 | `shadows.glsl` | `shadow_visibility`, `shadow_transmittance`; both include the [cloud layer's shadow](sky.md#cloud-shadows) for the sun |
-| `ibl.glsl` | `frame_has_indirect`, `indirect_diffuse_irradiance`, `evaluate_environment` (both), `evaluate_environment_lobes` (both; one takes a `ReflectionSelection`), `environment_lobe_radiance`, `environment_tables` |
+| `ibl.glsl` | `frame_has_indirect`, `indirect_diffuse_irradiance` (with or without an `irradiance_direction`), `evaluate_environment` (both), `evaluate_environment_lobes` (with or without an `irradiance_direction` and a `ReflectionSelection`), `environment_lobe_radiance`, `environment_tables` |
 | `probe_classification.glsl` | `probe_classification(ProbeVolumeGpu, uvec3)` reads a valid probe's live provisional/eligible/excluded state; compiled in fragment and compute stages |
 | `reflection_probe.glsl` | `ReflectionSelection`, `reflection_probe_select`, `reflection_probe_weight`, `reflection_box_direction`, `reflection_probe_radiance`, `ENVIRONMENT_GGX_CUBE`, `ENVIRONMENT_CHARLIE_CUBE`; compiled in fragment and compute stages |
-| `ambient_occlusion.glsl` | `draw_ambient_occlusion`, `frame_ambient_occlusion`, `specular_occlusion` |
+| `ambient_occlusion.glsl` | `draw_ambient_occlusion`, `frame_ambient_occlusion`, `draw_bent_normal`, `frame_bent_normal` ([bent normals](ambient_occlusion.md#bent-normals)), `specular_occlusion` |
 | `screen_space_gi.glsl` | `draw_screen_space_indirect`, `frame_screen_space_indirect`, `screen_space_base_share` |
 | `fog.glsl` | `FogTerms`, `fog_terms`, `fog_background_terms`, `apply_fog`, `fog_behind`, `apply_fog_refracted`; the helpers include the view's [fog volume](sky.md#volumetric-fog) ([sky](sky.md#custom-stages)) |
 | `scene_snapshot.glsl` | `scene_uv`, `scene_color_at`, `scene_depth_at`, `scene_view_distance_at`, `scene_position_at`, `scene_depth_gap` ([scene reads](#scene-reads)) |
@@ -414,8 +414,8 @@ compute dispatches keep `read_view_color` and `read_view_depth`. Background pixe
 `scene_view_distance_at` returns `BACKGROUND_VIEW_DISTANCE` under an infinite far plane and the far
 distance otherwise. The snapshots have the view's working extent and share the frame's jittered
 matrices, so render scale and TAA need nothing from the shader. Like transparent draws, readers get
-no screen-space terms: `draw_ambient_occlusion` returns 1 and `draw_screen_space_indirect` returns
-zero.
+no screen-space terms: `draw_ambient_occlusion` returns 1, `draw_bent_normal` returns the normal it is
+given and `draw_screen_space_indirect` returns zero.
 
 On a view with fog or an atmosphere ([sky](sky.md#where-fog-applies)) the snapshots are taken before the
 view's fog pass, so readers see unfogged radiance, and a colour read also takes a depth snapshot. The pass
