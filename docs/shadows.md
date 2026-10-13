@@ -415,10 +415,26 @@ render::configure_view(&renderer, renderer.default_view, desc)!;
 - The ray starts `TRACE_SURFACE_OFFSET` (0.02 world units, shared with every traced effect) along the receiver's normal. The offset hides self-intersection at the cost of a small gap where a caster meets its receiver. `bias`, the normal offsets and `max_distance` do not apply; directional rays stop at `RT_SHADOW_FAR` (10000 world units), punctual rays at the light.
 - A single-sided caster casts where its front faces the light, as in the atlas; a double-sided one casts from both faces ([facing](scene_trace.md#facing)).
 - Casters are the traced scene (see [scene tracing](scene_trace.md#what-traces)): `cast_shadow = false` keeps a mesh out of shadow rays, `MASK` materials cast their alpha-tested coverage, and off-camera objects cast like any other. Skinned and morphed meshes cast at their raster pose; crowd placements cast traced shadows only through `add_crowd(trace: true)`; custom vertex stages and `BLEND` meshes do not.
-- Shadows are hard; the sun has no angular size.
+- A light with no source extent casts a hard shadow, one ray to its centre. A source extent softens the edge ([soft shadows](#soft-shadows)).
 - Custom forward stages receive traced shadows through `ShaderDesc.traced_fragment`, a form compiled with `RT_SHADOWS` for renderers with ray queries and one with `RT_SHADOWS` and `SCENE_TRACE_BVH` for the software walk ([custom shaders](custom_shaders.md#traced-shadows)). Without the form the view draws the plain stage, which a traced light reaches with `shadow_count == 0`: lit, without that shadow. Custom G-buffer stages are shadowed by the lighting resolve.
 
-`examples/rt_shadows` shows a box behind the camera casting onto the ground. `T` switches between traced shadows and the atlas, `M` swaps the box to a masked checker material, `C` swaps the ground between its Standard material and a custom twin with traced forms (`--twin-ground` starts on the twin). `--software` creates the renderer without ray queries, and the Trace panel names the kind. Under WSL the only Vulkan 1.3 device is llvmpipe, which supports ray queries: use it for correctness and a hardware driver for timing.
+### Soft shadows
+
+```c3
+sun.source_angle = 0.02f;
+lamp.source_radius = 0.3f;
+desc.ray_tracing.shadow_samples = 8;
+```
+
+- **Source extent.** `Light.source_radius` (metres; point and spot lights) and `Light.source_angle` (half-angle in radians; directional lights) give the light a size. Both are zero by default, which keeps the hard shadow above. A value is finite and not negative, and an angle is below `PI / 2`. `extract_lights` checks the contract for every light with shadows enabled; the serialization add-on reads an invalid value as `c3d::INVALID_ARGUMENT`.
+- **Samples.** `ViewDesc.ray_tracing.shadow_samples` is the number of rays a pixel casts toward a light that has an extent: 1 to `MAX_SHADOW_SAMPLES` (16), where zero reads as 1. A larger value faults `c3d::INVALID_ARGUMENT` in `create_view` and `configure_view`. A light without an extent casts one ray whatever the count, so existing scenes draw the same pixels.
+- **Rays.** The rays go to points spread uniformly over the source as the surface sees it: a cone of the half-angle around the sun's direction, or the disc of the radius that faces the surface at a point or spot light. The shadow is the share of rays that arrive. Each pixel starts its pattern from interleaved gradient noise, and on a TAA view the pattern changes every frame.
+- **Noise.** One ray per pixel draws the penumbra as a dither of lit and shadowed pixels, `N` rays as `N + 1` steps of grey with a smaller dither. TAA averages the frames of the pattern; without it, raise the count. The cost is the count in traced queries for each shadowed pixel and each light with an extent.
+- **Other consumers.** [Volumetric fog](sky.md#volumetric-fog), the hits of [traced reflections](reflections.md) and [probe updates](probe_volumes.md) cast one ray toward a point of the source, which their averaging smooths. The [path tracer](path_tracing.md) takes one point of the source at each bounce and converges with its accumulated samples; `shadow_samples` does not apply to it. A custom stage that calls `shadow_visibility`, `shadow_transmittance` or `ray_shadow_visibility` inherits this: a fragment stage casts the view's count and any other stage casts one ray.
+- **Atlas shadows** stay hard. They do not read the extent, and a light with one that a view does not trace shows the atlas's hard edge.
+- **The sun's disc.** `Atmosphere.sun_angular_radius` sizes the sun in the sky and is independent of `source_angle`. Set both from one value when the shadow should match the disc.
+
+`examples/rt_shadows` shows a box behind the camera casting onto the ground. `T` switches between traced shadows and the atlas, `M` swaps the box to a masked checker material, `C` swaps the ground between its Standard material and a custom twin with traced forms (`--twin-ground` starts on the twin). `L` swaps the sun for a point lamp, `E` steps the light's source extent through hard, the Earth's sun (for the sun) and larger sizes, and `N` steps the shadow samples through 1, 4 and 16; the Source panel and the Post panel edit the same values, and `--extent`, `--shadow-samples`, `--point-lamp` and `--taa` start the example in a state. `--software` creates the renderer without ray queries, and the Trace panel names the kind. Under WSL the only Vulkan 1.3 device is llvmpipe, which supports ray queries: use it for correctness and a hardware driver for timing.
 
 ## Example and timing
 

@@ -75,7 +75,7 @@ headless still at constant time snaps on every rendering and ends on the target 
   surfaces are tested in the any-hit stage.
 - **Lights.** Every punctual light in the scene, up to the renderer's `max_lights`, is sampled at
   every bounce with a shadow ray (next-event estimation), whether or not it lies in the camera
-  frustum. A light with shadows
+  frustum; a light with a source extent takes one point of its source for each ray. A light with shadows
   disabled is unoccluded, and a mesh with `cast_shadow` off does not block light, as in raster.
 - **Emitters and the environment** are reached by bounce rays only. A camera ray that misses shows
   the scene background; a bounce ray that misses reads the lighting environment, or the ambient
