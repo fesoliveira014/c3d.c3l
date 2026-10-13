@@ -45,6 +45,7 @@ constructor preset: 16 × 9 × 24 cells, capacity 64 per cell, far distance 100.
   1 to 32; choose cell capacity 1, 16, 64 or 256. Count changes reposition the active
   lights deterministically; range changes do not move them. Capacity is a storage limit,
   not a light-selection budget. Changes are applied between renderer frames.
+- **Depth pruning:** a checkbox for `ClusterDesc.depth_pruning`; see [depth pruning](#depth-pruning).
 - **Targets:** switch Flat/Clustered without changing the scene or camera. Deferred is
   disabled. Choose `Cluster slice` and expand `clusters` for its occupancy heatmap.
 - **Camera:** left-drag to orbit and use the wheel to zoom. GUI mouse capture suppresses
@@ -57,20 +58,22 @@ constructor preset: 16 × 9 × 24 cells, capacity 64 per cell, far distance 100.
   presentation mode. Cluster counters and optional GPU times are delayed completed results.
 
 Capacity 1 with overlapping lights deliberately exercises overflow. The heatmap excludes
-all global lights: blue is empty, red is full, intermediate occupancy adds green, and
-magenta is overflow. It shows one selected depth slice, not the cells occupied by visible
-surfaces. Slice labels are camera-depth bounds from the last matching render; lighting
-mode, depth-slice or far-distance changes invalidate labels until new data is rendered.
-An inactive grid has no available depth labels or occupancy image.
+all global lights: blue is empty, red is full, intermediate occupancy adds green,
+magenta is overflow and dark grey is a cell [depth pruning](#depth-pruning) skipped. It shows
+one selected depth slice, not the cells occupied by visible surfaces. Slice labels are
+camera-depth bounds from the last matching render; lighting mode, depth-slice or
+far-distance changes invalidate labels until new data is rendered. An inactive grid has no
+available depth labels or occupancy image.
 
 ## Selection behavior
 
 Clustering changes candidate lookup, not the accepted scene-light budget, receiver masks,
 shadow mapping or BRDF. Finite point/spot lights use conservative range spheres. Directional
-and range-zero lights are globals evaluated once. A cell that overflows, a shaded position
-outside the grid or its finite depth interval, and inactive coverage all use the complete
-flat light list. Small capacity therefore trades potential savings for fallback; it does
-not intentionally remove light contributions.
+and range-zero lights are globals evaluated once. A cell that overflows or that
+[depth pruning](#depth-pruning) skipped, a shaded position outside the grid or its finite
+depth interval, and inactive coverage all use the complete flat light list. Small capacity
+therefore trades potential savings for fallback; it does not intentionally remove light
+contributions.
 
 Standard, Toon and non-transmitting Physical materials use the selector, including ordinary
 blended surfaces. Active Physical transmission keeps its entire direct-light loop flat
@@ -78,6 +81,43 @@ because exit-point lighting can lie outside the surface cell. Existing custom sh
 remain flat unless they opt into the shared `LightList` helpers. See
 [views](views.md#light-selection) for configuration, validation and buffer lifetime, and
 [custom shaders](custom_shaders.md#light-selection) for opt-in compatibility.
+
+## Depth pruning
+
+`ClusterDesc.depth_pruning` (off by default) lets the cull skip cells that no opaque surface
+can occupy. Before the cull the view reduces its depth image to one value per cluster tile:
+the farthest view depth of the tile's pixels, or unbounded when any of them shows no
+geometry. A cell whose near boundary lies beyond that value is not assigned lights or decals.
+It is written as an empty overflowing range and counted in the completed `cluster_skipped`
+counter, which is not part of `cluster_overflows`. Shading is unchanged: an overflowing cell
+already selects the complete flat list, so any point that reaches a skipped cell receives
+every light and decal. Opaque surfaces do not lie in skipped cells. Fog froxels and draws
+without a depth test, behind the farthest opaque depth of their tile, do; they differ from
+an unpruned view only in the order the same lights are summed.
+
+Limits:
+
+- Only the far side is pruned. Cells in front of the nearest surface of a tile keep their
+  lists, because fog froxels and blended surfaces read them.
+- A tile with a single background pixel (sky, or depth cleared and never drawn) is never
+  pruned, so open horizons prune little. The savings are the cells behind the visible
+  geometry of each tile.
+- The reduction reads the depth image once and adds a dispatch and a barrier to `LIGHT_CULL`.
+  Compare the completed `LIGHT_CULL` time with the setting off.
+- Pruning needs depth before shading. A forward view with no depth prepass, and no ambient
+  occlusion, screen-space GI or traced reflections (each implies one), ignores the field
+  without a fault. Deferred views always have depth.
+- On a pruned view the reduction, the cull and the [volumetric fog](sky.md#volumetric-fog)
+  volume are recorded after the depth prepass (forward) or the G-buffer (deferred) instead
+  of before every other pass.
+- The reduction maps pixels to tiles as cluster selection does, from the unjittered view.
+  Under TAA a pixel within half a pixel of a tile edge can shade with the neighbouring tile's
+  lists; when that tile's bound is nearer, the point takes the complete flat list.
+- The tile bounds take 4 bytes per tile (576 bytes at the default grid) in the view's cluster
+  buffer, reserved with pruning on or off.
+
+The benchmark flag is `--depth-pruning on|off` (off by default). Keep the camera fixed when
+comparing: the effect depends on how much of the grid lies behind the visible geometry.
 
 ## Comparing costs
 
@@ -95,7 +135,7 @@ The timing displays measure different intervals:
 | Stats `Frame` | Renderer CPU-side frame interval through submission/presentation; not the whole application loop |
 | Stats `CPU record` | Renderer CPU interval through submission, before presentation; not isolated GPU work |
 | Completed GPU opaque | Timestamped opaque pass from a completed frame slot |
-| Completed GPU light cull | Private light upload/reset, cluster assignment and counter copy from a completed slot |
+| Completed GPU light cull | Private light upload/reset, the tile-depth reduction of a pruned view, cluster assignment and counter copy from a completed slot |
 
 The renderer's CPU clock starts after frame-slot completion/readback processing, so neither
 CPU timing row includes that initial wait. Wall interval can expose pacing those rows omit.

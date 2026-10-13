@@ -203,7 +203,8 @@ The [view contract](views.md#light-selection) describes the editable cluster set
 For a clustered view, `Cluster slice` starts at zero and is clamped to the current slice
 count. Expand `clusters` to see that depth slice's tile occupancy. Color is based on
 stored finite-light count divided by per-cell capacity: blue is empty, intermediate
-values add green, red is full, and **magenta marks overflow**. Globals are excluded.
+values add green, red is full, and **magenta marks overflow**. Dark grey marks a cell that
+[depth pruning](many_lights.md#depth-pruning) skipped. Globals are excluded.
 This is a selected-slice heatmap, not the occupancy at visible surfaces or a readback
 of the depth image. Overflow uses complete flat lighting, so magenta does not mean
 lights were dropped.
@@ -217,11 +218,11 @@ live clustered view and an in-range slice (`PreviewSource.level`); a dead view f
 `INVALID_ID`, and a flat view or invalid slice faults `INVALID_ARGUMENT`.
 
 The statistics panel labels cluster view, cell count and overflowing-cell count as
-**Completed**. They arrive after frame-slot completion, can lag current controls and
+**Completed**, the skipped-cell count included. They arrive after frame-slot completion, can lag current controls and
 CPU counters, and work with GPU timestamps disabled. With multiple views they follow
 the [last-recorded-view policy](views.md#frames), not an aggregate. Timestamp-enabled
 runs also show completed `LIGHT_CULL` and opaque GPU times. Cull time includes private
-light upload/reset, assignment and counter copy; opaque time alone is not total cost.
+light upload/reset, assignment and counter copy, and the tile-depth reduction of a pruned view; opaque time alone is not total cost.
 The dispatch also assigns decals; sampling is timed in the receiver's draw pass,
 including `FORWARD_OPAQUE` and `GBUFFER`. The occupancy heatmap still displays
 finite-light counts, not decal counts.
