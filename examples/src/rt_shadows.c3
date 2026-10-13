@@ -303,6 +303,7 @@ fn int main(String[] args) {
         io::eprintn("--benchmark FRAMES needs --gpu-timings");
         return 1;
     }
+
     bool extent_valid = extent >= 0 && (lamp || extent < (float)math::PI / 2);
     if (!extent_valid) {
         io::eprintn("--extent is metres for the point lamp and radians below pi/2 for the sun");
@@ -410,6 +411,7 @@ fn int main(String[] args) {
     lamp_light.shadow.ray_traced = true;
     Node* lamp_node = scene.add_light(lamp_light, name: "lamp")!!;
     lamp_node.local.position = LAMP_POSITION;
+
     SourceRig rig = {
         .sun_node  = sun_node,
         .lamp_node = lamp_node,
@@ -474,8 +476,12 @@ fn int main(String[] args) {
             twin_ground = !twin_ground;
             ground_mesh.material = twin_ground ? ground_twin_material : ground_material;
         }
-        if (input.key_pressed(platform::Scancode.L) && !input.keyboard_captured_by_gui) select_light(&rig, !rig.lamp_active);
-        if (input.key_pressed(platform::Scancode.E) && !input.keyboard_captured_by_gui) step_source_extent(&rig);
+        if (input.key_pressed(platform::Scancode.L) && !input.keyboard_captured_by_gui) {
+            select_light(&rig, !rig.lamp_active);
+        }
+        if (input.key_pressed(platform::Scancode.E) && !input.keyboard_captured_by_gui) {
+            step_source_extent(&rig);
+        }
         if (input.key_pressed(platform::Scancode.N) && !input.keyboard_captured_by_gui) {
             view_desc.ray_tracing.shadow_samples = next_shadow_samples(view_desc.ray_tracing.shadow_samples);
             view_changed = true;
