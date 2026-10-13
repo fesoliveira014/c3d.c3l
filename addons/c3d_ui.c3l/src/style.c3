@@ -121,6 +121,26 @@ fn UiProperties style_properties(UiStyle* style, UiStateFlags state) @private {
     return properties;
 }
 
+fn ulong style_mask(UiStyle* style, UiStateFlags state) @private {
+    ulong mask = style.base_mask;
+    bool[UI_STATE_BLOCKS] active = { state.focused, state.hovered, state.pressed, state.disabled };
+    for (usz block = 0; block < UI_STATE_BLOCKS; block++) {
+        if (active[block]) mask |= style.block_masks[block];
+    }
+
+    return mask;
+}
+
+fn bool span_style_valid(UiStyle* style) @private {
+    ulong allowed = @property_bit(FONT_SET) | @property_bit(FONT_SIZE) | @property_bit(TEXT_COLOR);
+    allowed |= @property_bit(UNDERLINE) | @property_bit(TEXT_HIGHLIGHT);
+
+    ulong mask = style.base_mask;
+    foreach (block_mask : style.block_masks) mask |= block_mask;
+
+    return (mask & ~allowed) == 0;
+}
+
 fn void free_style_set(Ui* ui, UiStyleSet* set) @private {
     if (set.storage.ptr) alloc::free(ui.allocator, set.storage.ptr);
     *set = {};

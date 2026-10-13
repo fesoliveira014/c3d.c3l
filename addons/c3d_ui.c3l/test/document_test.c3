@@ -5,6 +5,15 @@ import c3d::ui @public;
 import c3d::ui::fixture;
 import std::encoding::json;
 
+const String SPAN_SHEET @local = `{
+  "text": { "font": ["ui/latin", "ui/cjk"], "font_size": 10 },
+  "warn": { "text_color": "#ff0000ff", "underline": true },
+  "big": { "font_size": 20 },
+  "boxed": { "padding": 4 }
+}`;
+
+const String MARKUP_LABEL @local = `{ "root": { "kind": "label", "style": "text", "markup": true, "text": "%s" } }`;
+
 const String TREE @local = `{
   "root": { "kind": "panel", "direction": "column", "children": [
     { "kind": "label", "style": "text", "text": "Squad" },
@@ -36,6 +45,22 @@ fn void test_document_builds_expected_tree() @test {
     fixture::frame(&fixture);
     String[] lines = fixture::text_lines(&fixture);
     assert(lines.len == 4 && lines[0] == "Squad" && lines[1] == "Beep" && lines[2] == "Hob" && lines[3] == "Ruka");
+}
+
+fn void expect_markup_fault(Fixture* fixture, String text, fault expected) @local {
+    fixture::expect_load_fault(
+        fixture:  fixture,
+        document: string::tformat(MARKUP_LABEL, text),
+        expected: expected,
+        path:     "/root/text",
+    );
+}
+
+fn String repeat_span(uint count) @local {
+    String text = "";
+    for (uint index = 0; index < count; index++) text = string::tformat("%s[warn]a[/warn]", text);
+
+    return text;
 }
 
 fn void test_load_faults_report_json_pointers() @test {
@@ -209,4 +234,64 @@ fn void test_failed_reload_keeps_the_old_tree() @test {
     fixture.ui.reload_document(document, `{ "root": { "kind": "label", "style": "text", "text": "two" } }`)!!;
     fixture::frame(&fixture);
     assert(fixture::has_line(&fixture, "two") && !fixture::has_line(&fixture, "one"));
+}
+
+fn void test_markup_faults_report_json_pointers() @test {
+    Fixture fixture;
+    fixture::create_fixture(&fixture);
+    defer fixture::destroy_fixture(&fixture);
+    fixture.ui.load_styles({ SPAN_SHEET })!!;
+
+    expect_markup_fault(&fixture, "[warn]open", c3d::ASSET_FORMAT_ERROR);
+    expect_markup_fault(&fixture, "[warn]a[/big]", c3d::ASSET_FORMAT_ERROR);
+    expect_markup_fault(&fixture, "a[/warn]", c3d::ASSET_FORMAT_ERROR);
+    expect_markup_fault(&fixture, "a [warn b", c3d::ASSET_FORMAT_ERROR);
+    expect_markup_fault(&fixture, "a [] b", c3d::ASSET_FORMAT_ERROR);
+    expect_markup_fault(&fixture, "[/]", c3d::ASSET_FORMAT_ERROR);
+    expect_markup_fault(&fixture, "[{x}]a", c3d::ASSET_FORMAT_ERROR);
+    expect_markup_fault(&fixture, "[warn][warn][warn][warn][warn]a", c3d::ASSET_FORMAT_ERROR);
+    expect_markup_fault(&fixture, repeat_span(ui::UI_MAX_SPANS + 1), c3d::ASSET_FORMAT_ERROR);
+    expect_markup_fault(&fixture, "[nope]a[/nope]", ui::UNKNOWN_STYLE);
+    expect_markup_fault(&fixture, "[boxed]a[/boxed]", ui::UNKNOWN_PROPERTY);
+    fixture::expect_load_fault(
+        fixture:  &fixture,
+        document: `{ "root": { "kind": "panel", "markup": true } }`,
+        expected: ui::UNKNOWN_PROPERTY,
+        path:     "/root/markup",
+    );
+    fixture::expect_load_fault(
+        fixture:  &fixture,
+        document: `{ "root": { "kind": "label", "style": "text", "markup": "yes", "text": "a" } }`,
+        expected: c3d::ASSET_FORMAT_ERROR,
+        path:     "/root/markup",
+    );
+
+    UiDocumentId document = fixture.ui.load_document(
+        `{ "root": { "kind": "panel", "children": [
+            { "kind": "label", "style": "text", "markup": true, "text": "[warn]x[/warn]" } ] } }`,
+    )!!;
+    fixture::expect_styles_fault(
+        fixture:  &fixture,
+        sheets:   { `{ "text": { "font": "ui/latin" }, "big": { "font_size": 20 } }` },
+        expected: ui::UNKNOWN_STYLE,
+        path:     "/root/children/0/text",
+    );
+    assert(c3d::same_id(fixture.ui.load_error_document, document));
+    fixture::expect_styles_fault(
+        fixture:  &fixture,
+        sheets:   { `{ "text": { "font": "ui/latin" }, "warn": { "padding": 2 } }` },
+        expected: ui::UNKNOWN_PROPERTY,
+        path:     "/root/children/0/text",
+    );
+    assert(c3d::same_id(fixture.ui.load_error_document, document));
+
+    fixture.ui.load_document(`{ "root": { "kind": "label", "style": "text", "text": "[nope] [[ ]" } }`)!!;
+    fixture.ui.load_document(`{ "root": { "kind": "label", "style": "text", "markup": true, "text": "a [[b] c" } }`)!!;
+    fixture.ui.load_document(string::tformat(MARKUP_LABEL, repeat_span(ui::UI_MAX_SPANS)))!!;
+    fixture.ui.load_document(
+        `{ "root": { "kind": "label", "style": "text", "markup": true,
+            "text": "[warn][warn][warn][warn]a[/warn][/warn][/warn][/warn]" } }`,
+    )!!;
+    fixture::frame(&fixture);
+    assert(fixture::has_line(&fixture, "[nope] [[ ]") && fixture::has_line(&fixture, "a [b] c"));
 }

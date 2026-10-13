@@ -46,6 +46,14 @@ struct UiSegment @private {
     uint offset;   // literal bytes in the document's strings
     uint length;
     uint decimals; // UI_DEFAULT_DECIMALS: the kind's default format
+    uint span;     // innermost span in the document's spans, UI_NONE for the label's own properties
+}
+
+struct UiSpan @private {
+    uint style;       // index in the style set
+    uint name_offset; // style name in the document's strings
+    uint name_length;
+    uint parent;      // enclosing span, UI_NONE at the top
 }
 
 struct UiElement @private {
@@ -67,6 +75,9 @@ struct UiElement @private {
     uint           text_count;
     uint           placeholder_first;
     uint           placeholder_count;
+    bool           markup;
+    uint           span_first;     // spans of a markup label, in the document's spans
+    uint           span_count;
     UiRef          visible;
     UiRef          enabled;
     UiRef          value;          // bar value; a text field's TEXT binding
@@ -96,9 +107,10 @@ struct UiElement @private {
 struct UiDocument @private {
     bool         live;
     UiDocumentId id;
-    char[]       storage;   // one allocation: elements, segments, strings
+    char[]       storage;   // one allocation: elements, segments, spans, strings
     UiElement[]  elements;  // depth-first preorder, root first
     UiSegment[]  segments;
+    UiSpan[]     spans;
     String       strings;
     bool         visible;
     uint         order;
@@ -115,6 +127,10 @@ struct UiLoad @private {
     uint                    list_depth;
     List{UiElement}         elements;
     List{UiSegment}         segments;
+    List{UiSpan}            spans;
+    uint[UI_SPAN_DEPTH]     open_spans; // spans of the label being read that are not closed yet, outermost first
+    uint                    open_count;
+    uint                    label_spans; // first span of the label being read
     DString                 strings;
 }
 
@@ -263,6 +279,7 @@ fn UiDocument? build_document(Ui* ui, String jsonc) @private {
         UiLoad load = { .ui = ui };
         load.elements.tinit();
         load.segments.tinit();
+        load.spans.tinit();
         load.strings.tinit();
         Object* root = json::tparse(jsonc, JSONC)!;
         if (!root.is_map()) return fail_load(&load, c3d::ASSET_FORMAT_ERROR)~;
@@ -305,20 +322,24 @@ fn UiDocument? build_document(Ui* ui, String jsonc) @private {
 
         usz elements_bytes = (usz)load.elements.len() * UiElement::size;
         usz segments_at = elements_bytes;
-        usz strings_at = segments_at + (usz)load.segments.len() * UiSegment::size;
+        usz spans_at = segments_at + (usz)load.segments.len() * UiSegment::size;
+        usz strings_at = spans_at + (usz)load.spans.len() * UiSpan::size;
         usz total = strings_at + (usz)load.strings.len();
         Vec4[] block = alloc::new_array(ui.allocator, Vec4, (sz)((total + Vec4::size - 1) / Vec4::size));
         char[] storage = ((char*)block.ptr)[:block.len * Vec4::size];
         UiElement[] elements = ((UiElement*)storage.ptr)[:load.elements.len()];
         UiSegment[] segments = ((UiSegment*)(storage.ptr + segments_at))[:load.segments.len()];
+        UiSpan[] spans = ((UiSpan*)(storage.ptr + spans_at))[:load.spans.len()];
         elements[..] = load.elements.array_view()[..];
         segments[..] = load.segments.array_view()[..];
+        spans[..] = load.spans.array_view()[..];
         storage[strings_at : load.strings.len()] = load.strings.str_view()[..];
         document = {
             .live     = true,
             .storage  = storage,
             .elements = elements,
             .segments = segments,
+            .spans    = spans,
             .strings  = (String)storage[strings_at : load.strings.len()],
             .visible  = true,
             .anchor   = anchor,
@@ -430,12 +451,14 @@ fn uint? load_element(
 
     if (try id = value.get("id")) read_element_id(load, index, id)!;
     if (try window = value.get("window")) read_window(load, index, window)!;
+    if (try markup = value.get("markup")) read_markup_flag(load, index, markup)!;
 
     uint last_child = UI_NONE;
     foreach (key : sorted_keys(value)) {
         switch (key) {
             case "id":
             case "window":
+            case "markup":
                 continue;
             case "kind":
             case "items":
@@ -536,6 +559,15 @@ fn void? read_element_id(UiLoad* load, uint index, Object* value) @private {
     pop_token(load);
 }
 
+fn void? read_markup_flag(UiLoad* load, uint index, Object* value) @private {
+    push_token(load, "markup");
+    if (load.elements[index].kind != LABEL) return fail_load(load, UNKNOWN_PROPERTY)~;
+    if (!value.is_bool()) return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+
+    load.elements[index].markup = value.b;
+    pop_token(load);
+}
+
 fn void? read_window(UiLoad* load, uint index, Object* value) @private {
     push_token(load, "window");
     UiElement* element = &load.elements[index];
@@ -582,12 +614,17 @@ fn void? read_element_key(
             load.strings.append(name);
         case "text":
             if (kind != LABEL) return fail_load(load, UNKNOWN_PROPERTY)~;
+
+            element.span_first = (uint)load.spans.len();
             read_template(
-                load:  load,
-                value: entry,
-                first: &element.text_first,
-                count: &element.text_count,
+                load:   load,
+                value:  entry,
+                first:  &element.text_first,
+                count:  &element.text_count,
+                markup: element.markup,
             )!;
+
+            element.span_count = (uint)load.spans.len() - element.span_first;
         case "placeholder":
             if (kind != TEXT_FIELD) return fail_load(load, UNKNOWN_PROPERTY)~;
             read_template(
@@ -808,20 +845,32 @@ fn void? read_template(
     Object* value,
     uint* first,
     uint* count,
+    bool markup = false,
 ) @private {
     String text = read_word(load, value)!;
     *first = (uint)load.segments.len();
+    load.label_spans = (uint)load.spans.len();
+    load.open_count = 0;
     usz literal_start;
     usz cursor;
     while (cursor < text.len) {
         char character = text[cursor];
         bool doubled = cursor + 1 < text.len && text[cursor + 1] == character;
-        if (character == '}' && doubled) {
+        bool escaped = doubled && (character == '}' || (markup && character == '['));
+        if (escaped) {
             push_literal(load, text[literal_start : cursor + 1 - literal_start]);
             cursor += 2;
             literal_start = cursor;
             continue;
         }
+
+        if (markup && character == '[') {
+            push_literal(load, text[literal_start : cursor - literal_start]);
+            cursor = read_span_tag(load, text, cursor)!;
+            literal_start = cursor;
+            continue;
+        }
+
         if (character != '{') {
             cursor++;
             continue;
@@ -849,11 +898,13 @@ fn void? read_template(
         uint binding = resolve_binding(load, inner[:colon])!;
         UiValueKind kind = load.ui.bindings[binding].kind;
         if (kind == IMAGE || kind == LIST) return fail_load(load, BINDING_KIND_MISMATCH)~;
-        load.segments.push({ .binding = binding, .decimals = decimals });
+        load.segments.push({ .binding = binding, .decimals = decimals, .span = current_span(load) });
         cursor = close + 1;
         literal_start = cursor;
     }
     push_literal(load, text[literal_start : text.len - literal_start]);
+    if (load.open_count) return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+
     *count = (uint)load.segments.len() - *first;
 }
 
@@ -864,8 +915,70 @@ fn void push_literal(UiLoad* load, String bytes) @private {
         .offset   = (uint)load.strings.len(),
         .length   = (uint)bytes.len,
         .decimals = UI_DEFAULT_DECIMALS,
+        .span     = current_span(load),
     });
     load.strings.append(bytes);
+}
+
+fn uint current_span(UiLoad* load) @private {
+    return load.open_count ? load.open_spans[load.open_count - 1] : UI_NONE;
+}
+
+fn usz? read_span_tag(UiLoad* load, String text, usz cursor) @private {
+    usz close = cursor + 1;
+    while (close < text.len && text[close] != ']') close++;
+
+    if (close == text.len) return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+
+    String tag = text[cursor + 1 : close - cursor - 1];
+    bool closing = tag.len > 0 && tag[0] == '/';
+    String name = closing ? tag[1..] : tag;
+    if (!name.len) return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+
+    foreach (character : name) {
+        if (character == '[' || character == '{' || character == '}') {
+            return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+        }
+    }
+
+    if (closing) {
+        close_span(load, name)!;
+    } else {
+        open_span(load, name)!;
+    }
+
+    return close + 1;
+}
+
+fn void? open_span(UiLoad* load, String name) @private {
+    UiStyleSet* styles = &load.ui.styles;
+    usz style = find_style_index(styles, name);
+    if (style == styles.styles.len) return fail_load(load, UNKNOWN_STYLE)~;
+    if (!span_style_valid(&styles.styles[style])) return fail_load(load, UNKNOWN_PROPERTY)~;
+    if (load.open_count == UI_SPAN_DEPTH || (uint)load.spans.len() - load.label_spans == UI_MAX_SPANS) {
+        return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+    }
+
+    load.open_spans[load.open_count] = (uint)load.spans.len();
+    load.open_count++;
+    load.spans.push({
+        .style       = (uint)style,
+        .name_offset = (uint)load.strings.len(),
+        .name_length = (uint)name.len,
+        .parent      = load.open_count > 1 ? load.open_spans[load.open_count - 2] : UI_NONE,
+    });
+    load.strings.append(name);
+}
+
+fn void? close_span(UiLoad* load, String name) @private {
+    if (!load.open_count) return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+
+    UiSpan* span = &load.spans[load.open_spans[load.open_count - 1]];
+    if (load.strings.str_view()[span.name_offset : span.name_length] != name) {
+        return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+    }
+
+    load.open_count--;
 }
 
 fn usz find_style_index(UiStyleSet* set, String name) @private {
@@ -889,15 +1002,26 @@ fn void? rebind_documents(Ui* ui, UiStyleSet* set) @private {
     foreach (&document : ui.documents.items) {
         if (!document.live) continue;
         foreach (uint index, &element : document.elements) {
-            if (!element.style_length) continue;
-            String name = document.strings[element.style_offset : element.style_length];
-            if (find_style_index(set, name) == set.styles.len) {
+            if (element.style_length) {
+                String name = document.strings[element.style_offset : element.style_length];
+                if (find_style_index(set, name) == set.styles.len) {
+                    return fail_in_document(
+                        ui:       ui,
+                        document: document,
+                        element:  index,
+                        key:      "style",
+                        excuse:   UNKNOWN_STYLE,
+                    )~;
+                }
+            }
+
+            if (catch excuse = check_span_styles(set, document, element)) {
                 return fail_in_document(
                     ui:       ui,
                     document: document,
                     element:  index,
-                    key:      "style",
-                    excuse:   UNKNOWN_STYLE,
+                    key:      "text",
+                    excuse:   excuse,
                 )~;
             }
         }
@@ -905,9 +1029,12 @@ fn void? rebind_documents(Ui* ui, UiStyleSet* set) @private {
     foreach (&document : ui.documents.items) {
         if (!document.live) continue;
         foreach (uint index, &element : document.elements) {
-            if (!element.style_length) continue;
-            String name = document.strings[element.style_offset : element.style_length];
-            element.style = (uint)find_style_index(set, name);
+            if (element.style_length) {
+                String name = document.strings[element.style_offset : element.style_length];
+                element.style = (uint)find_style_index(set, name);
+            }
+
+            assign_span_styles(set, document, element);
         }
     }
     ui.styles = *set;
@@ -930,14 +1057,31 @@ fn void? rebind_documents(Ui* ui, UiStyleSet* set) @private {
     invalidate_frame(ui);
 }
 
+fn void? check_span_styles(UiStyleSet* set, UiDocument* document, UiElement* element) @private {
+    foreach (&span : document.spans[element.span_first : element.span_count]) {
+        usz style = find_style_index(set, document.strings[span.name_offset : span.name_length]);
+        if (style == set.styles.len) return UNKNOWN_STYLE~;
+        if (!span_style_valid(&set.styles[style])) return UNKNOWN_PROPERTY~;
+    }
+}
+
+fn void assign_span_styles(UiStyleSet* set, UiDocument* document, UiElement* element) @private {
+    foreach (&span : document.spans[element.span_first : element.span_count]) {
+        span.style = (uint)find_style_index(set, document.strings[span.name_offset : span.name_length]);
+    }
+}
+
 fn void restore_styles(Ui* ui, UiStyleSet* old) @private {
     ui.styles = *old;
     foreach (&document : ui.documents.items) {
         if (!document.live) continue;
         foreach (&element : document.elements) {
-            if (!element.style_length) continue;
-            String name = document.strings[element.style_offset : element.style_length];
-            element.style = (uint)find_style_index(old, name);
+            if (element.style_length) {
+                String name = document.strings[element.style_offset : element.style_length];
+                element.style = (uint)find_style_index(old, name);
+            }
+
+            assign_span_styles(old, document, element);
         }
     }
 }

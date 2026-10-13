@@ -71,6 +71,8 @@ enum UiProperty @private {
     BAR_FILL,
     BAR_SKIN,
     HIGHLIGHT,
+    UNDERLINE,
+    TEXT_HIGHLIGHT,
 }
 
 struct UiSize @private {
@@ -109,6 +111,8 @@ struct UiProperties @private {
     Vec4        bar_fill;
     UiSkin      bar_skin;
     Vec4        highlight;
+    Vec4        text_highlight;
+    bool        underline;
 }
 
 macro ulong @property_bit(UiProperty property) @private => 1ul << property.ordinal;
@@ -150,6 +154,8 @@ fn void apply_properties(
             case BAR_FILL: target.bar_fill = source.bar_fill;
             case BAR_SKIN: target.bar_skin = source.bar_skin;
             case HIGHLIGHT: target.highlight = source.highlight;
+            case UNDERLINE: target.underline = source.underline;
+            case TEXT_HIGHLIGHT: target.text_highlight = source.text_highlight;
         }
     }
     *target_mask |= source_mask;
@@ -175,6 +181,14 @@ fn bool? read_property(
         case "highlight":
             target.highlight = read_color(load, value)!;
             *mask |= @property_bit(HIGHLIGHT);
+        case "text_highlight":
+            target.text_highlight = read_color(load, value)!;
+            *mask |= @property_bit(TEXT_HIGHLIGHT);
+        case "underline":
+            if (!value.is_bool()) return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+
+            target.underline = value.b;
+            *mask |= @property_bit(UNDERLINE);
         case "border":
             read_border(
                 load:   load,

@@ -1,0 +1,49 @@
+{
+  "anchor": "bottom_left",
+  "offset": [352, -16],
+  "root": {
+    "kind": "panel",
+    "style": "panel",
+    "width": 560,
+    "children": [
+      {
+        "kind": "label",
+        "style": "text",
+        "markup": true,
+        "text": "[title]Wave 3[/title] holds for [caption]02:41 left[/caption] at the [title]north gate[/title]"
+      },
+      {
+        "kind": "label",
+        "style": "text",
+        "markup": true,
+        "text": "Press [key] E [/key] to open the door. [warn]Low ammo[/warn], reload soon."
+      },
+      {
+        "kind": "label",
+        "style": "text",
+        "markup": true,
+        "text": "You carry [gold]{loot.gold}[/gold] coins and [gold]{loot.gems:1}[/gold] gems, [[gold] stays plain."
+      },
+      {
+        "kind": "label",
+        "style": "text",
+        "markup": true,
+        "text": "Squad leader [title]李雷[/title] reports: 你好, the gate holds."
+      },
+      {
+        "kind": "label",
+        "style": "text",
+        "markup": true,
+        "max_width": 230,
+        "text": "[warn]Ration potions[/warn], save [gold]gold[/gold] for [title]smith[/title]; avoid [key] N [/key]."
+      },
+      {
+        "kind": "label",
+        "style": "caption",
+        "underline": true,
+        "text_highlight": "#2c3550ff",
+        "text": "A plain label takes underline and highlight too."
+      }
+    ]
+  }
+}

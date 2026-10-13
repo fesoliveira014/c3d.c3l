@@ -60,6 +60,9 @@ const float FIXED_STEP_SECONDS @local = 1.0f / 60; // bounded runs step by this,
 
 const uint WINDOW_SCRIPT_EVENTS @local = 2; // a motion and a button release in the same frame
 
+const int RICH_GOLD @local = 1250;
+const float RICH_GEMS @local = 3.5f;
+
 const uint BENCHMARK_ROWS @local = 50;
 const uint DEFAULT_BENCHMARK_FRAMES @local = 100;
 const uint BENCHMARK_WIDTH @local = 1920;
@@ -97,6 +100,7 @@ struct Options @local {
     bool benchmark;
     bool reload_scroll;
     bool windows;
+    bool rich_text;
     uint frames;
     uint labels;
 }
@@ -145,6 +149,11 @@ struct Hud @local {
 struct Desk @local {
     bool inspector_open @tag("ui", true);
     bool notes_open @tag("ui", true);
+}
+
+struct Loot @local {
+    int   gold @tag("ui", true);
+    float gems @tag("ui", true);
 }
 
 struct ScriptedDrag @local {
@@ -207,6 +216,7 @@ struct Demo @local {
     bool              reload_scroll;
     bool              windows;
     Desk              desk;
+    Loot              loot;
     Event[WINDOW_SCRIPT_EVENTS] script_events;
     bool              drew_list;
 }
@@ -687,6 +697,15 @@ fn void? load_windows(Demo* demo) @local {
     ui.load_document((String)document)!;
 }
 
+fn void? load_rich_text(Demo* demo) @local {
+    Ui* ui = demo.ui;
+    demo.loot = { .gold = RICH_GOLD, .gems = RICH_GEMS };
+    ui.@bind_fields(prefix: "loot", $Type: Loot, instance: &demo.loot)!;
+
+    char[] document = $embed("ui/rich.jsonc");
+    ui.load_document((String)document)!;
+}
+
 fn Event[] replay_windows(Demo* demo, uint frame) @local {
     Input* input = &demo.window.input;
     uint count;
@@ -1026,8 +1045,11 @@ fn int main(String[] args) {
             options.reload_scroll = true;
         } else if (argument == "--windows") {
             options.windows = true;
+        } else if (argument == "--rich-text") {
+            options.rich_text = true;
         } else {
-            io::eprintn("Use ui [--frames N] [--reload-scroll] [--windows] [--benchmark --frames F [--labels N]].");
+            io::eprintn("Use ui [--frames N] [--reload-scroll] [--windows] [--rich-text]");
+            io::eprintn("       [--benchmark --frames F [--labels N]].");
             return 1;
         }
     }
@@ -1120,6 +1142,7 @@ fn int main(String[] args) {
     load_embedded(&demo)!!;
     if (options.reload_scroll) load_log(&demo)!!;
     if (options.windows) load_windows(&demo)!!;
+    if (options.rich_text) load_rich_text(&demo)!!;
 
     if (catch excuse = run_interactive(&demo, options.frames)) {
         io::eprintfn("UI example failed: %s", excuse);
