@@ -1014,6 +1014,7 @@ fn void? record_raster_view(
                             jitter:    jitter,
                         )!;
                     }
+
                     if (ambient_occlusion) {
                         record_ambient_occlusion(
                             renderer:      renderer,

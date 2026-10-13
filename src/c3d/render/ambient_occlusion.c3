@@ -109,6 +109,7 @@ fn void? acquire_ambient_occlusion_pipelines(Renderer* renderer, AoKind kind, bo
         case RAY_TRACED: acquire_compute_slot(renderer, ComputeSlot.RT_AO)!;
         case NONE:
     }
+
     if (accumulates) acquire_compute_slot(renderer, ComputeSlot.AO_TEMPORAL)!;
     acquire_compute_slot(renderer, ComputeSlot.AO_BLUR)!;
 }
