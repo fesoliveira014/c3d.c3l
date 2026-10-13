@@ -102,7 +102,7 @@ struct ViewDesc {
 *>
 const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8 + GBUFFER_CHANNEL_COUNT
   + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1 + 1 + 2 * SSGI_HISTORY_SLOTS + 2 + 1 + 3 + 2 + 1 + 2 + 1 + 1 + 2
-  + 2 * AO_HISTORY_SLOTS + 4 + 1;
+  + 2 * AO_HISTORY_SLOTS + 6 + 1;
 
 <*
  Reverse-Z projection terms that recover forward distance from stored depth.
@@ -659,6 +659,8 @@ struct ViewRecord {
     Target                               msaa_depth;
     Target                               msaa_velocity;
     Target                               msaa_reflection_gbuffer;
+    Target                               normal_sample_zero;
+    Target                               specular_sample_zero;
     Target*                              scene_input;
     bool                                 post_chain_open;
     bool                                 rendered;
@@ -769,7 +771,9 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
     targets[next + 1] = &record.msaa_depth;
     targets[next + 2] = &record.msaa_velocity;
     targets[next + 3] = &record.msaa_reflection_gbuffer;
-    targets[next + 4] = &record.reflection_half;
+    targets[next + 4] = &record.normal_sample_zero;
+    targets[next + 5] = &record.specular_sample_zero;
+    targets[next + 6] = &record.reflection_half;
     return targets;
 }
 

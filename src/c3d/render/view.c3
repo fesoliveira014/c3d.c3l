@@ -436,7 +436,12 @@ fn void? record_raster_view(
                 )!;
                 gpu::SampleCount samples = draw_list_samples(&record.desc, list);
                 gpu::PipelineHandle? pipeline = list == DrawList.GBUFFER
-                  ? gbuffer_pipeline_for(renderer, material_description, vertex)
+                  ? gbuffer_pipeline_for(
+                      renderer: renderer,
+                      material: material_description,
+                      vertex:   vertex,
+                      samples:  samples,
+                  )
                   : pipeline_for(
                       renderer:   renderer,
                       material:   material_description,

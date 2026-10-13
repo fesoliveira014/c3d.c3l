@@ -278,6 +278,10 @@ route by those terms; a forward stage that calls `shade_standard_surface` with t
 weight its G-buffer stage writes matches that route, as the Standard twin does.
 `examples/shaders/custom/pulse_gbuffer.frag.glsl` is the reference.
 
+On a `DEFERRED` view with [`msaa`](views.md#multisample-anti-aliasing) above `ONE` the stage writes the multisample
+G-buffer: the sample count is pipeline state, the stage source does not change, and it still shades once per pixel
+and primitive. The resolve lights each sample from its own channels.
+
 The capability is also visible to shaders: `CustomMaterialGpu.capabilities` carries
 `CUSTOM_CAPABILITY_GBUFFER` when the stage is present. Pipelines for the G-buffer stage are keyed
 separately, so a rejected G-buffer stage leaves the forward stage of the same shader drawing, and

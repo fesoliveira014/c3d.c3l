@@ -210,10 +210,8 @@ fn void? record_reflections(
     bool half_resolution = reflection_half_resolution(&record.desc);
     acquire_reflection_pipelines(renderer, half_resolution)!;
     bool forward = record.desc.shading == ShadingPath.FORWARD;
-    Target* normals = forward
-      ? &record.reflection_gbuffer : &record.gbuffer[GBufferChannel.NORMAL_ROUGHNESS.ordinal];
-    Target* specular = forward
-      ? &record.reflection_gbuffer : &record.gbuffer[GBufferChannel.EMISSIVE_SPECULAR.ordinal];
+    Target* normals = forward ? &record.reflection_gbuffer : deferred_normals(record);
+    Target* specular = forward ? &record.reflection_gbuffer : deferred_specular(record);
     Target* traced = half_resolution ? &record.reflection_half : &record.reflection;
     uint noise_frame = temporal_noise_frame(record, false);
     record.depth.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
