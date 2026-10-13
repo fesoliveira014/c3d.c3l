@@ -28,9 +28,10 @@
     "gap": 8,
     "width": "grow",
     "align": ["left", "center"],
-    "transition": { "properties": ["fill"], "duration": 0.15, "easing": "ease_out" },
+    "transition": { "properties": ["fill", "opacity", "offset"], "duration": 0.15, "easing": "ease_out" },
     "hover": { "fill": "#2c313dff" },
-    "pressed": { "fill": "#383f4fff" }
+    "pressed": { "fill": "#383f4fff" },
+    "hidden": { "opacity": 0, "offset": [-24, 0] }
   },
   "marker": { "fill": "#f2c96bff", "radius": 2, "size": [4, 40] },
   "portrait": {
@@ -119,6 +120,12 @@
     "opacity": 0.3,
     "transition": { "properties": ["opacity"], "duration": 0.3, "easing": "ease_out" },
     "hover": { "opacity": 1 }
+  },
+  "toast": {
+    "extends": "panel",
+    "width": 280,
+    "transition": { "properties": ["opacity", "offset"], "duration": 0.3, "easing": "ease_out" },
+    "hidden": { "opacity": 0, "offset": [48, 0] }
   },
   "tooltip": {
     "fill": "#0b0c10f2",
