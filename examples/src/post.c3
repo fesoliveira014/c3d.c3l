@@ -35,8 +35,8 @@ const float EXPOSURE_MAX @local = 8;
 const float DIM_LIGHT_SCALE @local = 1.0f / 16; // four stops down, the step auto exposure undoes
 const uint LUT_SIZE @local = 32;
 const Vec2 CONTROLS_PANEL_POSITION @local = { 16, 16 };
-const Vec2 CONTROLS_PANEL_SIZE @local = { 360, 150 };
-const Vec2 POST_PANEL_POSITION @local = { 16, 182 };
+const Vec2 CONTROLS_PANEL_SIZE @local = { 360, 175 };
+const Vec2 POST_PANEL_POSITION @local = { 16, 207 };
 const Vec2 POST_PANEL_SIZE @local = { 360, 330 };
 const Vec2 STATS_PANEL_POSITION @local = { 900, 16 };
 const Vec2 STATS_PANEL_SIZE @local = { 360, 660 };
@@ -45,6 +45,13 @@ struct LightRig @local {
     Node*      sun;
     MaterialId lamp;
     MaterialId textured;
+}
+
+struct CubeLook @local {
+    TextureId texture;
+    Vec3      domain_min;
+    Vec3      domain_max;
+    bool      start_enabled;
 }
 
 struct Orbit @local {
@@ -75,6 +82,12 @@ fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
     };
     camera_node.local.position = orbit.target + offset * orbit.distance;
     camera_node.local.rotation = maths::look_rotation(-offset, { 0, 1, 0 });
+}
+
+fn void fit_cube_domain(GradeParams* grade, CubeLook* look) @local {
+    bool selected = c3d::same_id(grade.lut, look.texture);
+    grade.lut_domain_min = selected ? look.domain_min : (Vec3){ 0, 0, 0 };
+    grade.lut_domain_max = selected ? look.domain_max : (Vec3){ 1, 1, 1 };
 }
 
 fn void scale_lights(
@@ -122,12 +135,15 @@ fn void? run_gui(
     Node* cube,
     Node* camera_node,
     TextureId lut,
+    CubeLook* look,
 ) @local {
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
 
     Orbit orbit = { .distance = 6 };
     ViewDesc view_desc = render::default_view_desc();
+    if (look.start_enabled) view_desc.post.grade.lut = look.texture;
+    fit_cube_domain(&view_desc.post.grade, look);
     render::configure_view(renderer, renderer.default_view, view_desc)!;
     Quat roll = quaternion::from_axis_angle{float}({ 0, 0, 1 }, math::deg_to_rad(CUBE_ROLL_DEGREES));
     float spin_angle;
@@ -158,6 +174,7 @@ fn void? run_gui(
         camera::Camera* camera = scene.get(camera_node, camera::Camera);
         ViewStats stats = renderer.view_stats(renderer.default_view)!;
         bool lights_changed;
+        bool cube_changed;
         imgui::set_next_window_pos(CONTROLS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(CONTROLS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         if (imgui::begin("Controls", null, {})) {
@@ -176,6 +193,12 @@ fn void? run_gui(
                 flags:  imgui::SLIDER_FLAGS_ALWAYS_CLAMP,
             );
             lights_changed = imgui::checkbox("Lights at 1/16 (L)", &dimmed);
+            bool cube_selected = c3d::same_id(view_desc.post.grade.lut, look.texture);
+            if (imgui::checkbox("Cube LUT (G)", &cube_selected)) {
+                view_desc.post.grade.lut = cube_selected ? look.texture : (TextureId){};
+                cube_changed = true;
+            }
+
             if (stats.exposure > 0) {
                 if (post::auto_exposure_active(&view_desc)) {
                     imgui::text("Exposure %.2f EV, %u frames old", math::log2(stats.exposure),
@@ -190,6 +213,13 @@ fn void? run_gui(
             dimmed = !dimmed;
             lights_changed = true;
         }
+
+        if (input.key_pressed(platform::Scancode.G) && !input.keyboard_captured_by_gui) {
+            bool cube_selected = c3d::same_id(view_desc.post.grade.lut, look.texture);
+            view_desc.post.grade.lut = cube_selected ? (TextureId){} : look.texture;
+            cube_changed = true;
+        }
+
         if (lights_changed) {
             scale_lights(
                 scene:  scene,
@@ -202,6 +232,7 @@ fn void? run_gui(
         imgui::set_next_window_pos(POST_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(POST_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         bool changed = gui::post_panel(&view_desc, lut, &stats);
+        changed |= cube_changed;
 
         imgui::set_next_window_pos(STATS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
@@ -216,7 +247,11 @@ fn void? run_gui(
         gui_renderer.finish_frame();
 
         platform::sync_window(window, renderer);
-        if (changed) render::configure_view(renderer, renderer.default_view, view_desc)!;
+        if (changed) {
+            fit_cube_domain(&view_desc.post.grade, look);
+            render::configure_view(renderer, renderer.default_view, view_desc)!;
+        }
+
         draw_gui_frame(
             renderer: renderer,
             scene: scene,
@@ -229,9 +264,17 @@ fn void? run_gui(
 
 fn int main(String[] args) {
     bool gpu_timings;
+    bool cube_enabled;
+    String cube_file;
 
-    foreach (argument : args[1..]) {
-        if (argument == "--gpu-timings") {
+    for (usz index = 1; index < args.len; index++) {
+        String argument = args[index];
+        if (argument == "--cube-lut") {
+            cube_enabled = true;
+        } else if (argument == "--cube-lut-file" && index + 1 < args.len) {
+            cube_file = args[++index];
+            cube_enabled = true;
+        } else if (argument == "--gpu-timings") {
             $if $feat(C3D_PROFILE_GPU):
                 gpu_timings = true;
             $else
@@ -271,6 +314,17 @@ fn int main(String[] args) {
     @pool() {
         char[] lut_pixels = post::identity_lut(tmem, LUT_SIZE);
         lut = assets.add_texture(post::identity_lut_desc(LUT_SIZE), lut_pixels, "post/identity_lut")!!;
+    };
+
+    Lut3d cube_table = cube_file.len
+        ? image::load_lut_cube(mem, cube_file)!!
+        : image::parse_lut_cube(mem, $embed("../assets/lut/teal_orange.cube"))!!;
+    defer image::destroy_lut3d(&cube_table);
+    CubeLook look = {
+        .texture       = assets.add_texture(post::lut_texture_desc(&cube_table), cube_table.rgba, "post/cube_lut")!!,
+        .domain_min    = cube_table.domain_min,
+        .domain_max    = cube_table.domain_max,
+        .start_enabled = cube_enabled,
     };
 
     GeometryId box;
@@ -326,6 +380,7 @@ fn int main(String[] args) {
         cube: cube,
         camera_node: camera_node,
         lut: lut,
+        look: &look,
     )) {
         io::printfn("GUI failed: %s", excuse);
         return 1;

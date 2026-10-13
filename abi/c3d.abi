@@ -1367,8 +1367,10 @@ struct GradeGpu {
     vec4 gain;
     TextureIndex lut_texture;
     SamplerIndex lut_sampler;
-    float lut_scale;
-    float lut_offset;
+    uint _pad_lut0;
+    uint _pad_lut1;
+    vec4 lut_scale; // coordinate = srgb * lut_scale + lut_offset, with the LUT domain and texel centers folded in
+    vec4 lut_offset;
     TextureIndex bloom_texture;
     SamplerIndex bloom_sampler;
     float bloom_intensity;

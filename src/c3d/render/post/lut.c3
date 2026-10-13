@@ -1,5 +1,6 @@
 module c3d::render::post;
 
+import c3d::asset::image;
 import c3d::material;
 
 const uint LUT_CHANNELS @private = 4;
@@ -40,4 +41,12 @@ fn material::TextureDesc identity_lut_desc(uint size, ZString debug_name = "iden
         format:     PixelFormat.RGBA8_UNORM,
         debug_name: debug_name,
     );
+}
+
+<*
+ Single-mip RGBA8 3D description for the texels of a parsed LUT.
+ @param [&in] lut : "Supplies the edge length; the table keeps ownership of its texels."
+*>
+fn material::TextureDesc lut_texture_desc(image::Lut3d* lut, ZString debug_name = "cube_lut") {
+    return identity_lut_desc(lut.size, debug_name);
 }
