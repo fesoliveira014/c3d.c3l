@@ -47,6 +47,7 @@ void main() {
             visibility = mix(visibility, history, AO_HISTORY_WEIGHT * confidence);
         }
     }
+
     store_storage_texture(root.output_texture, ivec2(pixel), vec4(visibility));
     store_storage_texture(root.output_depth, ivec2(pixel), vec4(depth, 0.0, 0.0, 0.0));
 }

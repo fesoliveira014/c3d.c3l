@@ -184,6 +184,7 @@ fn void release_ao_history_images(gpu::Device* device, ViewRecord* record) @priv
     foreach (&image : record.ao_history) {
         if (image.texture.is_valid()) release_storage_target(device, image);
     }
+
     foreach (&image : record.ao_depth) {
         if (image.texture.is_valid()) release_storage_target(device, image);
     }

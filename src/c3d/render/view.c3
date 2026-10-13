@@ -1022,6 +1022,7 @@ fn void? record_raster_view(
                             history_valid: history_valid,
                         )!;
                     }
+
                     if (screen_space_gi) {
                         record_screen_space_gi(renderer, record, frame_span.address, history_valid)!;
                     }

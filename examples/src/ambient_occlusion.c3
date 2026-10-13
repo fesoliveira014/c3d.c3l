@@ -229,11 +229,13 @@ fn void? run_gui(
                 set_ambient_occlusion(&views, enabled);
                 views_changed = true;
             }
+
             bool temporal = views.right_desc.ambient_occlusion.temporal;
             if (imgui::checkbox("Temporal", &temporal)) {
                 set_temporal(&views, temporal);
                 views_changed = true;
             }
+
             if (imgui::radio_button("Edit left", !edit_right)) edit_right = false;
             imgui::same_line();
             if (imgui::radio_button("Edit right", edit_right)) edit_right = true;

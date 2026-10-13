@@ -754,6 +754,7 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
         targets[next + slot] = &record.ao_history[slot];
         targets[next + AO_HISTORY_SLOTS + slot] = &record.ao_depth[slot];
     }
+
     return targets;
 }
 
@@ -1192,11 +1193,13 @@ fn void drop_unwanted_images(ViewRecord* staged, ViewDesc* previous) @private {
         staged.ao_raw = {};
         staged.ao = {};
     }
+
     if (!ambient_occlusion_accumulates(desc)
         || ambient_occlusion.full_resolution != previous.ambient_occlusion.full_resolution) {
         staged.ao_history = {};
         staged.ao_depth = {};
     }
+
     if (!desc.screen_space_gi.enabled) {
         staged.ssgi_raw = {};
         staged.ssgi_history = {};
