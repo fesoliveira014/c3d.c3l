@@ -65,13 +65,10 @@ fn bool has_drag_handle(UiDocument* document, uint window) @private {
 }
 
 fn uint find_window_element(UiDocument* document, String id) @private {
-    uint hash = name_hash(id);
-    foreach (uint index, &element : document.elements) {
-        if (!element.window || element.id_hash != hash) continue;
-        if (document.strings[element.id_offset : element.id_length] == id) return index;
-    }
+    uint index = find_id_element(document, id);
+    if (index == UI_NONE || !document.elements[index].window) return UI_NONE;
 
-    return UI_NONE;
+    return index;
 }
 
 fn void assign_windows(Ui* ui, UiDocument* document, UiDocument* previous) @private {
@@ -189,6 +186,7 @@ fn void declare_windows(
     UiElement* parent,
     uint parent_index,
     UiStateFlags inherited,
+    float alpha,
     UiScope* scope,
 ) @private {
     Ui* ui = declare.ui;
@@ -226,6 +224,7 @@ fn void declare_windows(
             index:     next,
             scope:     scope,
             inherited: inherited,
+            alpha:     alpha,
             placement: &placement,
         );
 

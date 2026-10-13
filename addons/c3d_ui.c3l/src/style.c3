@@ -87,6 +87,7 @@ fn void? Ui.load_styles(&self, String[] sheets) {
         }
         free_style_set(self, &self.styles);
         self.styles = set;
+        drop_unnamed_transitions(self);
     };
 }
 
@@ -131,14 +132,25 @@ fn ulong style_mask(UiStyle* style, UiStateFlags state) @private {
     return mask;
 }
 
+fn ulong style_any_mask(UiStyle* style) @private {
+    ulong mask = style.base_mask;
+    foreach (block_mask : style.block_masks) mask |= block_mask;
+
+    return mask;
+}
+
 fn bool span_style_valid(UiStyle* style) @private {
     ulong allowed = @property_bit(FONT_SET) | @property_bit(FONT_SIZE) | @property_bit(TEXT_COLOR);
     allowed |= @property_bit(UNDERLINE) | @property_bit(TEXT_HIGHLIGHT);
 
-    ulong mask = style.base_mask;
-    foreach (block_mask : style.block_masks) mask |= block_mask;
+    return (style_any_mask(style) & ~allowed) == 0;
+}
 
-    return (mask & ~allowed) == 0;
+fn bool can_transition(UiStyleSet* set, UiElement* element) @private {
+    if (has_property(element.mask, TRANSITION)) return true;
+    if (element.style == UI_NONE) return false;
+
+    return has_property(style_any_mask(&set.styles[element.style]), TRANSITION);
 }
 
 fn void free_style_set(Ui* ui, UiStyleSet* set) @private {

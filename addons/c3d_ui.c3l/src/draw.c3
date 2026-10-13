@@ -74,6 +74,8 @@ fn void apply_skin(Ui* ui, OverlayRect* rect, UiSkin* skin) @private {
     if (rect.fill.w == 0) rect.fill = { 1, 1, 1, 1 };
 }
 
+fn Vec4 faded(Vec4 color, float alpha) @private => { color.x, color.y, color.z, color.w * alpha };
+
 fn bool rect_visible(OverlayRect* rect) @private {
     if (rect.fill.w > 0) return true;
     Vec4 widths = rect.border_widths;
@@ -94,6 +96,8 @@ fn void? draw_instance(
         rect.uv_rect = instance.element.uv;
         if (rect.fill.w == 0) rect.fill = { 1, 1, 1, 1 };
     }
+    rect.fill = faded(rect.fill, instance.alpha);
+    rect.border_color = faded(rect.border_color, instance.alpha);
     if (rect_visible(&rect)) list.add_rect(rect)!;
 
     Vec4 padding = properties.padding * ui.scale;
@@ -154,6 +158,7 @@ fn void? draw_bar_fill(
     rect.corner_radii = instance.properties.corner_radii * ui.scale;
     rect.fill = instance.properties.bar_fill;
     apply_skin(ui, &rect, &instance.properties.bar_skin);
+    rect.fill = faded(rect.fill, instance.alpha);
     if (rect_visible(&rect)) list.add_rect(rect)!;
 }
 
@@ -172,7 +177,7 @@ fn void? draw_footprint(
     OverlayRect rect = render::OVERLAY_RECT_DEFAULT;
     rect.min = { content.x + column * cell.x, content.y + row * cell.y };
     rect.max = rect.min + (Vec2){ ui.drag.span_width * cell.x, ui.drag.span_height * cell.y };
-    rect.fill = grid.properties.highlight;
+    rect.fill = faded(grid.properties.highlight, grid.alpha);
     list.add_rect(rect)!;
 }
 
@@ -194,7 +199,7 @@ fn void? draw_caret(
     OverlayRect rect = render::OVERLAY_RECT_DEFAULT;
     rect.min = { math::round(content.x + prefix * ui.scale), top };
     rect.max = { rect.min.x + UI_CARET_PIXELS, top + height };
-    rect.fill = properties.text_color;
+    rect.fill = faded(properties.text_color, field.alpha);
     list.add_rect(rect)!;
 }
 
@@ -212,12 +217,12 @@ fn void? draw_text(Ui* ui, OverlayList* list, clay::RenderCommand* command) @pri
     float baseline = box.y + (box.height - extent) / 2 + metrics.ascent * font_size;
     Vec2 origin = { box.x * ui.scale, math::round(baseline * ui.scale) };
     float size_pixels = font_size * ui.scale;
-    Vec4 color = { data.text_color.r, data.text_color.g, data.text_color.b, data.text_color.a };
-
     UiInstance* instance = command.user_data;
+    Vec4 color = faded({ data.text_color.r, data.text_color.g, data.text_color.b, data.text_color.a }, instance.alpha);
+
     Vec4 pixels = scaled_box(ui, box);
     if (instance.properties.text_highlight.w > 0) {
-        add_fill(list, pixels, instance.properties.text_highlight)!;
+        add_fill(list, pixels, faded(instance.properties.text_highlight, instance.alpha))!;
     }
 
     add_line_glyphs(
@@ -261,8 +266,10 @@ fn void? draw_pieces(
         float left = content.x + (line_start + piece.x) * ui.scale;
         float right = left + piece.width * ui.scale;
         float top = content.y + piece.top * ui.scale;
+        Vec4 color = faded(piece.color, instance.alpha);
+        Vec4 highlight = faded(piece.highlight, instance.alpha);
         if (piece.highlight.w > 0) {
-            add_fill(list, { left, top, right, top + piece.height * ui.scale }, piece.highlight)!;
+            add_fill(list, { left, top, right, top + piece.height * ui.scale }, highlight)!;
         }
 
         float size_pixels = piece.font_size * ui.scale;
@@ -274,7 +281,7 @@ fn void? draw_pieces(
             placed:      placed,
             origin:      { left, baseline },
             size_pixels: size_pixels,
-            color:       piece.color,
+            color:       color,
         )!;
 
         if (piece.underline) add_underline(
@@ -283,7 +290,7 @@ fn void? draw_pieces(
             right:       right,
             baseline:    baseline,
             size_pixels: size_pixels,
-            color:       piece.color,
+            color:       color,
         )!;
     }
 }

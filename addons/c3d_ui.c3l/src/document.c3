@@ -75,6 +75,7 @@ struct UiElement @private {
     uint           text_count;
     uint           placeholder_first;
     uint           placeholder_count;
+    bool           may_transition; // an inline property or a block of the style sets transition
     bool           markup;
     uint           span_first;     // spans of a markup label, in the document's spans
     uint           span_count;
@@ -179,6 +180,7 @@ fn void? Ui.reload_document(&self, UiDocumentId document, String jsonc) {
     replacement.order = record.order;
     replacement.visible = record.visible;
     assign_windows(self, &replacement, record);
+    remap_transitions(self, record, &replacement);
     free_document(self, record);
     *record = replacement;
     forget_document(self, document);
@@ -197,6 +199,7 @@ fn String Ui.load_error_path(&self) => (String)self.error_path[:self.error_path_
 fn void? Ui.unload_document(&self, UiDocumentId document) {
     UiDocument* record = self.documents.try_get(document)!;
     release_windows(self, document);
+    drop_transitions(self, document);
     free_document(self, record);
     *record = {};
     self.documents.remove(document);
@@ -530,6 +533,7 @@ fn uint? load_element(
     }
 
     if (kind == LABEL || kind == TEXT_FIELD) check_font(load, &load.elements[index])!;
+    load.elements[index].may_transition = can_transition(&load.ui.styles, &load.elements[index]);
     return index;
 }
 
@@ -538,6 +542,16 @@ fn uint name_hash(String name) @private {
     foreach (character : name) hash = mix_hash(hash, character);
 
     return hash;
+}
+
+fn uint find_id_element(UiDocument* document, String id) @private {
+    uint hash = name_hash(id);
+    foreach (uint index, &element : document.elements) {
+        if (element.id_hash != hash) continue;
+        if (document.strings[element.id_offset : element.id_length] == id) return index;
+    }
+
+    return UI_NONE;
 }
 
 fn void? read_element_id(UiLoad* load, uint index, Object* value) @private {
@@ -1033,6 +1047,7 @@ fn void? rebind_documents(Ui* ui, UiStyleSet* set) @private {
                 element.style = (uint)find_style_index(set, name);
             }
 
+            element.may_transition = can_transition(set, element);
             assign_span_styles(set, document, element);
         }
     }
@@ -1082,6 +1097,7 @@ fn void restore_styles(Ui* ui, UiStyleSet* old) @private {
                 element.style = (uint)find_style_index(old, name);
             }
 
+            element.may_transition = can_transition(old, element);
             assign_span_styles(old, document, element);
         }
     }

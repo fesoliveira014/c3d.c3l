@@ -184,6 +184,7 @@ struct UiDesc {
     uint field_bytes;      // the focused field's edit buffer
     uint max_windows;      // window elements across the loaded documents; zero holds none
     uint max_text_pieces;  // rich label pieces per frame; zero holds none
+    uint max_transitions;  // elements holding transition state; zero holds none
 }
 
 <*
@@ -197,6 +198,7 @@ struct UiStats {
     uint placement_misses;
     uint placement_clears;
     uint text_pieces;
+    uint transitions;
 }
 
 struct UiClayError @private {
@@ -247,6 +249,7 @@ struct UiInstance @private {
     Vec2         text_size;   // layout units covered by the pieces of a rich label
     TextureRef   image;
     float        value;       // bar fill fraction
+    float        alpha;       // own opacity times every ancestor's
     bool         interactive;
     bool         hit;         // tooltips and the drag ghost take no hits
     bool         enabled;
@@ -343,6 +346,10 @@ struct Ui {
     UiWindow[]                windows;
     UiWindowDrag              window_drag;
     uint                      window_order;
+    UiTransition[]            transitions;  // open addressing over twice max_transitions slots
+    uint                      transition_count;
+    uint                      update_serial;
+    bool                      reduced_motion;
     Vec2                      pointer;      // layout units, of the last route
     char[UI_ERROR_PATH_BYTES] error_path;
     uint                      error_path_length;
@@ -367,6 +374,7 @@ fn UiDesc default_ui_desc() {
         .field_bytes      = 256,
         .max_windows      = 64,
         .max_text_pieces  = 1024,
+        .max_transitions  = UI_DEFAULT_TRANSITIONS,
     };
 }
 
@@ -408,6 +416,7 @@ fn Ui? create_ui(Allocator allocator, AssetStore* assets, UiDesc desc) {
     usz replacements_at = @reserve(&offset, uint, (usz)desc.max_font_sets * UI_FONT_FALLBACKS);
     usz windows_at = @reserve(&offset, UiWindow, desc.max_windows);
     usz pieces_at = @reserve(&offset, UiTextPiece, desc.max_text_pieces);
+    usz transitions_at = @reserve(&offset, UiTransition, 2 * (usz)desc.max_transitions);
 
     // Allocated as Vec4 so every allocator aligns the block for the Vec4 members of the carved tables.
     Vec4[] block = alloc::new_array(allocator, Vec4, (sz)((offset + Vec4::size - 1) / Vec4::size));
@@ -446,6 +455,7 @@ fn Ui? create_ui(Allocator allocator, AssetStore* assets, UiDesc desc) {
         .field           = @carve(storage, field_at, char, desc.field_bytes),
         .windows         = @carve(storage, windows_at, UiWindow, desc.max_windows),
         .pieces          = @carve(storage, pieces_at, UiTextPiece, desc.max_text_pieces),
+        .transitions     = @carve(storage, transitions_at, UiTransition, 2 * (usz)desc.max_transitions),
         .cache           = {
             .lines             = @carve(storage, lines_at, UiPlacementLine, desc.cache_lines),
             .slots             = @carve(storage, line_slots_at, uint, 2 * (usz)desc.cache_lines),

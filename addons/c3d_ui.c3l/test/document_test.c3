@@ -56,6 +56,20 @@ fn void expect_markup_fault(Fixture* fixture, String text, fault expected) @loca
     );
 }
 
+fn void expect_transition_fault(
+    Fixture* fixture,
+    String value,
+    String pointer,
+    fault expected = c3d::ASSET_FORMAT_ERROR,
+) @local {
+    fixture::expect_styles_fault(
+        fixture:  fixture,
+        sheets:   { string::tformat(`{ "t": { "transition": %s } }`, value) },
+        expected: expected,
+        path:     string::tformat("/0/t/transition/%s", pointer),
+    );
+}
+
 fn String repeat_span(uint count) @local {
     String text = "";
     for (uint index = 0; index < count; index++) text = string::tformat("%s[warn]a[/warn]", text);
@@ -183,6 +197,30 @@ fn void test_load_faults_report_json_pointers() @test {
         sheets:   { `{ "title": { "font": ["ui/latin", "ui/gothic"] } }` },
         expected: ui::UNKNOWN_ASSET,
         path:     "/0/title/font/1",
+    );
+    fixture::expect_load_fault(
+        fixture:  &fixture,
+        document: `{ "root": { "kind": "panel", "opacity": 1.5 } }`,
+        expected: c3d::ASSET_FORMAT_ERROR,
+        path:     "/root/opacity",
+    );
+    fixture::expect_load_fault(
+        fixture:  &fixture,
+        document: `{ "root": { "kind": "panel", "offset": [4] } }`,
+        expected: c3d::ASSET_FORMAT_ERROR,
+        path:     "/root/offset",
+    );
+    expect_transition_fault(&fixture, `{ "properties": ["fill"] }`, "duration");
+    expect_transition_fault(&fixture, `{ "properties": [], "duration": 1 }`, "properties");
+    expect_transition_fault(&fixture, `{ "properties": ["fill_"], "duration": 1 }`, "properties/0");
+    expect_transition_fault(&fixture, `{ "properties": ["fill", "size", "fill"], "duration": 1 }`, "properties/2");
+    expect_transition_fault(&fixture, `{ "properties": ["fill"], "duration": -1 }`, "duration");
+    expect_transition_fault(&fixture, `{ "properties": ["fill"], "duration": 1, "easing": "bounce" }`, "easing");
+    expect_transition_fault(
+        fixture:  &fixture,
+        value:    `{ "properties": ["fill"], "duration": 1, "speed": 2 }`,
+        pointer:  "speed",
+        expected: ui::UNKNOWN_PROPERTY,
     );
 }
 
