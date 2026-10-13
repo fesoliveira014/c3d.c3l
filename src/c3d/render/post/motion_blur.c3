@@ -8,8 +8,16 @@ import c3d::shader;
 import gpu;
 import std::math;
 
+struct VelocityTargets @private {
+    Target*           color;
+    Target*           depth;
+    gpu::TextureState depth_state;
+    gpu::SampleCount  samples;
+}
+
 <*
  Record camera and geometry velocity of the view into its velocity image.
+ A multisample view draws opaque motion at its sample count and keeps sample 0.
  @param [&inout] renderer : "Open frame with the view's scene passes recorded."
  @param [&inout] record : "Its velocity and depth change state."
  @param items : "Opaque draw items with their roots written; moved ones are redrawn."
@@ -32,7 +40,8 @@ fn void? record_velocity(
     Vec2 jitter,
     DrawItem[] after_opaque = {},
 ) {
-    acquire_velocity_pipelines(renderer, record.velocity.format)!;
+    VelocityTargets opaque = opaque_velocity_targets(record);
+    acquire_velocity_pipelines(renderer, record.velocity.format, opaque.samples)!;
     render::@profile_pass(renderer, Pass.VELOCITY) {
         record_camera_velocity(
             renderer:  renderer,
@@ -40,8 +49,9 @@ fn void? record_velocity(
             raster:    raster,
             view_proj: view_proj,
             jitter:    jitter,
+            output:    &opaque,
         )!;
-        record_geometry_velocity(
+        record_geometry_velocity_passes(
             renderer:     renderer,
             record:       record,
             items:        items,
@@ -107,8 +117,32 @@ fn void? acquire_motion_blur_pipelines(Renderer* renderer) @private {
     render::acquire_compute_slot(renderer, ComputeSlot.MOTION_BLUR)!;
 }
 
-fn void? acquire_velocity_pipelines(Renderer* renderer, gpu::Format format) @private {
-    renderer.pipelines.get(&renderer.device, camera_velocity_pipeline_key(format))!;
+fn void? acquire_velocity_pipelines(
+    Renderer* renderer,
+    gpu::Format format,
+    gpu::SampleCount samples,
+) @private {
+    renderer.pipelines.get(&renderer.device, camera_velocity_pipeline_key(format, samples))!;
+}
+
+fn VelocityTargets single_velocity_targets(ViewRecord* record) @private {
+    return {
+        .color       = &record.velocity,
+        .depth       = &record.depth,
+        .depth_state = render::DEPTH_ATTACHMENT_STATE,
+        .samples     = gpu::SampleCount.ONE,
+    };
+}
+
+fn VelocityTargets opaque_velocity_targets(ViewRecord* record) @private {
+    if (record.desc.msaa == MsaaSamples.ONE) return single_velocity_targets(record);
+
+    return {
+        .color       = &record.msaa_velocity,
+        .depth       = &record.msaa_depth,
+        .depth_state = render::DEPTH_RESOLVE_STATE,
+        .samples     = render::msaa_sample_count(record.desc.msaa),
+    };
 }
 
 fn void? record_camera_velocity(
@@ -117,9 +151,10 @@ fn void? record_camera_velocity(
     CameraMatrices* raster,
     Mat4 view_proj,
     Vec2 jitter,
+    VelocityTargets* output,
 ) @private {
     record.depth.transition(&renderer.commands, render::FRAGMENT_READ_STATE)!;
-    record.velocity.transition(&renderer.commands, render::COLOR_ATTACHMENT_STATE)!;
+    output.color.transition(&renderer.commands, render::COLOR_ATTACHMENT_STATE)!;
 
     Frame* slot = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, VelocityRoot::size)!;
@@ -142,11 +177,11 @@ fn void? record_camera_velocity(
     };
     gpu::PipelineHandle pipeline = renderer.pipelines.get(
         &renderer.device,
-        camera_velocity_pipeline_key(record.velocity.format),
+        camera_velocity_pipeline_key(record.velocity.format, output.samples),
     )!;
     return render::record_fullscreen_pass(
         renderer:      renderer,
-        target:        &record.velocity,
+        target:        output.color,
         pipeline:      pipeline,
         fragment_root: root.address,
         rect:          {},
@@ -154,25 +189,70 @@ fn void? record_camera_velocity(
     );
 }
 
-fn void? record_geometry_velocity(
+// Opaque motion is drawn at the view's count and copied to the single-sample image first; scene-read depth
+// writers were drawn single-sample, so they redraw last against the resolved depth.
+fn void? record_geometry_velocity_passes(
     Renderer* renderer,
     ViewRecord* record,
     DrawItem[] items,
     DrawItem[] after_opaque,
 ) @private {
-    DrawItem[][2] groups = { items, after_opaque };
-    gpu::PipelineHandle bound = resolve_velocity_pipelines(renderer, groups[..], record.velocity.format)!;
+    VelocityTargets opaque = opaque_velocity_targets(record);
+    if (record.desc.msaa == MsaaSamples.ONE) {
+        DrawItem[][2] groups = { items, after_opaque };
+        return record_geometry_velocity(
+            renderer:           renderer,
+            groups:             groups[..],
+            after_opaque_first: 1,
+            targets:            &opaque,
+        );
+    }
+
+    DrawItem[][1] opaque_groups = { items };
+    record_geometry_velocity(
+        renderer:           renderer,
+        groups:             opaque_groups[..],
+        after_opaque_first: 1,
+        targets:            &opaque,
+    )!;
+    render::record_sample_zero(renderer, &record.msaa_velocity, &record.velocity)!;
+
+    VelocityTargets single = single_velocity_targets(record);
+    DrawItem[][1] late_groups = { after_opaque };
+    return record_geometry_velocity(
+        renderer:           renderer,
+        groups:             late_groups[..],
+        after_opaque_first: 0,
+        targets:            &single,
+    );
+}
+
+// Groups from after_opaque_first on were drawn after the opaque pass; only their depth writers are redrawn.
+fn void? record_geometry_velocity(
+    Renderer* renderer,
+    DrawItem[][] groups,
+    uint after_opaque_first,
+    VelocityTargets* targets,
+) @private {
+    Target* velocity = targets.color;
+    gpu::PipelineHandle bound = resolve_velocity_pipelines(
+        renderer:           renderer,
+        groups:             groups,
+        after_opaque_first: after_opaque_first,
+        format:             velocity.format,
+        samples:            targets.samples,
+    )!;
     if (!bound.is_valid()) return;
 
-    uint width = record.velocity.width;
-    uint height = record.velocity.height;
+    uint width = velocity.width;
+    uint height = velocity.height;
     gpu::ColorTargetDesc[1] colors = {{
-        .view     = record.velocity.attachment,
+        .view     = velocity.attachment,
         .load_op  = gpu::LoadOp.LOAD,
         .store_op = gpu::StoreOp.STORE,
     }};
     gpu::DepthTargetDesc depth = {
-        .view     = record.depth.attachment,
+        .view     = targets.depth.attachment,
         .load_op  = gpu::LoadOp.LOAD,
         .store_op = gpu::StoreOp.STORE,
     };
@@ -197,7 +277,7 @@ fn void? record_geometry_velocity(
 
     // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
     gpu::cmd_bind_pipeline(&renderer.commands, bound)!;
-    record.depth.transition(&renderer.commands, render::DEPTH_ATTACHMENT_STATE)!;
+    targets.depth.transition(&renderer.commands, targets.depth_state)!;
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
     bool state_set;
     foreach (group : groups) foreach (&item : group) {
@@ -269,12 +349,19 @@ fn void? draw_velocity_item(Renderer* renderer, DrawItem* item) @private {
 fn gpu::PipelineHandle? resolve_velocity_pipelines(
     Renderer* renderer,
     DrawItem[][] groups,
+    uint after_opaque_first,
     gpu::Format format,
+    gpu::SampleCount samples,
 ) @private {
     gpu::PipelineHandle first;
     foreach (group_index, group : groups) foreach (&item : group) {
-        if (!velocity_redrawn(renderer, item, group_index > 0)) continue;
-        gpu::PipelineHandle? pipeline = velocity_pipeline_for(renderer, item, format);
+        if (!velocity_redrawn(renderer, item, group_index >= after_opaque_first)) continue;
+        gpu::PipelineHandle? pipeline = velocity_pipeline_for(
+            renderer: renderer,
+            item:     item,
+            format:   format,
+            samples:  samples,
+        );
         if (catch excuse = pipeline) {
             if (!velocity_form_rejected(renderer, item, excuse)) return excuse~;
             continue;
@@ -286,6 +373,7 @@ fn gpu::PipelineHandle? resolve_velocity_pipelines(
                 item:     item,
                 format:   format,
                 outline:  true,
+                samples:  samples,
             )!;
         }
 
@@ -304,14 +392,19 @@ fn bool velocity_form_rejected(Renderer* renderer, DrawItem* item, fault excuse)
     return render::custom_pipeline_rejected(renderer, render::material_data(renderer, item.material), excuse);
 }
 
-fn PipelineKey geometry_velocity_pipeline_key(ShaderVariant vertex, gpu::PolygonMode polygon, gpu::Format format) @private {
+fn PipelineKey geometry_velocity_pipeline_key(
+    ShaderVariant vertex,
+    gpu::PolygonMode polygon,
+    gpu::Format format,
+    gpu::SampleCount samples = gpu::SampleCount.ONE,
+) @private {
     return {
         .vertex = { .shader = MESH, .flags = vertex.flags | shader::SHADER_FLAG_VELOCITY },
         .fragment = { .shader = VELOCITY },
         .color_formats = { [0] = format },
         .color_count = 1,
         .depth_format = render::DEPTH_FORMAT,
-        .samples = gpu::SampleCount.ONE,
+        .samples = samples,
         .polygon = polygon,
     };
 }
@@ -321,6 +414,7 @@ fn gpu::PipelineHandle? velocity_pipeline_for(
     DrawItem* item,
     gpu::Format format,
     bool outline = false,
+    gpu::SampleCount samples = gpu::SampleCount.ONE,
 ) @private {
     Material* material = render::material_data(renderer, item.material);
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
@@ -328,6 +422,7 @@ fn gpu::PipelineHandle? velocity_pipeline_for(
         vertex: outline ? render::outline_vertex_variant(item.vertex) : item.vertex,
         polygon: wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
         format: format,
+        samples: samples,
     );
     if (item.candidate.impostor) {
         key.vertex = { .shader = IMPOSTOR_VERTEX };
@@ -342,14 +437,17 @@ fn gpu::PipelineHandle? velocity_pipeline_for(
     return render::custom_pipeline(renderer, published, key);
 }
 
-fn PipelineKey camera_velocity_pipeline_key(gpu::Format format) @private {
+fn PipelineKey camera_velocity_pipeline_key(
+    gpu::Format format,
+    gpu::SampleCount samples = gpu::SampleCount.ONE,
+) @private {
     return {
         .vertex        = { .shader = FULLSCREEN },
         .fragment      = { .shader = VELOCITY_CAMERA },
         .color_formats = { [0] = format },
         .color_count   = 1,
         .depth_format  = gpu::Format.UNDEFINED,
-        .samples       = gpu::SampleCount.ONE,
+        .samples       = samples,
         .polygon       = gpu::PolygonMode.FILL,
     };
 }

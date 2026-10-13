@@ -45,7 +45,7 @@ fn ViewEnvironments? resolve_view_environments(Renderer* renderer, Scene* scene_
         selected.sky = &selected.atmosphere.lighting;
         selected.sky_intensity = sun_intensity;
         selected.sky_rotation = quaternion::IDENTITY;
-        sky_atmosphere_pipeline(renderer)!;
+        prepare_sky_pipelines(renderer, true)!;
         return selected;
     }
     if (renderer.assets.environments.is_live(scene_data.environment)) {
@@ -67,7 +67,7 @@ fn ViewEnvironments? resolve_view_environments(Renderer* renderer, Scene* scene_
                 lighting: false,
                 sheen: false,
             )!;
-            sky_pipeline(renderer)!;
+            prepare_sky_pipelines(renderer, false)!;
         } else if (environment.generation) {
             renderer.stats.dangling_refs++;
         }
@@ -124,14 +124,34 @@ fn EnvironmentRotationGpu pack_environment_rotation(Quat rotation) @private {
     };
 }
 
-fn gpu::PipelineHandle? sky_pipeline(Renderer* renderer) @private {
+fn void? prepare_sky_pipelines(Renderer* renderer, bool atmosphere) @private {
+    if (atmosphere) {
+        sky_atmosphere_pipeline(renderer)!;
+    } else {
+        sky_pipeline(renderer)!;
+    }
+
+    MsaaCounts msaa = live_msaa_counts(renderer);
+    foreach (samples : msaa.items[:msaa.len]) {
+        if (atmosphere) {
+            sky_atmosphere_pipeline(renderer, samples)!;
+        } else {
+            sky_pipeline(renderer, samples)!;
+        }
+    }
+}
+
+fn gpu::PipelineHandle? sky_pipeline(
+    Renderer* renderer,
+    gpu::SampleCount samples = gpu::SampleCount.ONE,
+) @private {
     PipelineKey key = {
         .vertex        = { .shader = FULLSCREEN },
         .fragment      = { .shader = SKY },
         .color_formats = { [0] = HDR_FORMAT },
         .color_count   = 1,
         .depth_format  = DEPTH_FORMAT,
-        .samples       = gpu::SampleCount.ONE,
+        .samples       = samples,
         .polygon       = gpu::PolygonMode.FILL,
     };
     return renderer.pipelines.get(&renderer.device, key);
@@ -156,7 +176,9 @@ fn gpu::PipelineHandle? record_sky_draw(
         .compare      = gpu::CompareOp.GREATER_EQUAL,
     };
 
-    gpu::PipelineHandle pipeline = atmosphere ? sky_atmosphere_pipeline(renderer)! : sky_pipeline(renderer)!;
+    gpu::SampleCount samples = msaa_sample_count(record.desc.msaa);
+    gpu::PipelineHandle pipeline = atmosphere
+        ? sky_atmosphere_pipeline(renderer, samples)! : sky_pipeline(renderer, samples)!;
     gpu::cmd_bind_pipeline(&renderer.commands, pipeline)!;
     gpu::cmd_set_graphics_state(&renderer.commands, &state)!;
     gpu::cmd_draw(

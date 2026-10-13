@@ -383,6 +383,11 @@ center, in a pass that keeps `MaterialCommon.depth_write`, so water writes depth
 blended reader stays in the transparent list, sorted with every other blend, and never writes
 depth.
 
+On a view with [`msaa`](views.md#multisample-anti-aliasing) above `ONE`, the snapshots and the scene-read list are
+recorded after the resolve: a reader samples single-sample color and depth and draws single-sample. A custom stage in
+the opaque list, including its velocity and depth forms, runs in the multisample pass with the view's sample count
+as pipeline state; the stage source does not change, and it still shades once per pixel.
+
 Before each list that holds a reader the renderer copies the finished scene into the view's snapshot
 images, only the kinds the list's draws declare, once before each non-empty layer of the scene-read list
 and once before the transparent list when it holds a reader. A layer's snapshot holds opaque, masked and
