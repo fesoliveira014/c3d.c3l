@@ -804,6 +804,7 @@ fn void? record_raster_view(
                 pre_exposure_ratio: record.pre_exposure.ratio,
                 cloud_shadow: cloud_pass.shadow,
                 shadow_samples: math::max(record.desc.ray_tracing.shadow_samples, 1u),
+                ao_bent_normals: ambient_occlusion && record.desc.ambient_occlusion.bent_normals,
             );
             if (record.desc.lights == LightSelection.CLUSTERED) {
                 record_clusters(
@@ -1590,6 +1591,7 @@ fn bool velocity_before_lighting(ViewDesc* desc) @private {
  @param pre_exposure_ratio : "Factor over the previous rendering's; 1 without history."
  @param cloud_shadow : "Root of the cloud layer's shadow map; zero when the view has none."
  @param shadow_samples : "Rays a pixel casts toward a light with a source extent."
+ @param ao_bent_normals : "The AO view holds the world bent normal in its green and blue channels."
  @require shadow_samples >= 1 && shadow_samples <= MAX_SHADOW_SAMPLES
 *>
 fn void write_frame_root(
@@ -1633,6 +1635,7 @@ fn void write_frame_root(
     float pre_exposure_ratio = 1,
     gpu::GpuAddress cloud_shadow = (gpu::GpuAddress)0,
     uint shadow_samples = 1,
+    bool ao_bent_normals = false,
 ) {
     *root = {
         .view            = bitcast(matrices.view, Mat4f),
@@ -1660,7 +1663,8 @@ fn void write_frame_root(
           | (ssgi_texture != (gpu::TextureIndex)0 ? shader::FRAME_SSGI_PRESENT : 0)
           | (clip_plane.normal != (Vec3){} ? shader::FRAME_CLIP_PLANE : 0)
           | (reflection_texture != (gpu::TextureIndex)0 ? shader::FRAME_REFLECTIONS_PRESENT : 0)
-          | ((shadow_samples - 1) << shader::FRAME_SHADOW_SAMPLES_SHIFT),
+          | ((shadow_samples - 1) << shader::FRAME_SHADOW_SAMPLES_SHIFT)
+          | (ao_bent_normals ? shader::FRAME_AO_BENT_NORMALS : 0),
         .mip_bias        = mip_bias,
         .ao_texture      = ao_texture,
         .probe_volumes   = probe_volumes,

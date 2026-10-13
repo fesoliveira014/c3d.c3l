@@ -190,6 +190,11 @@ const uint SHADER_FLAG_RT_SHADOWS_HARD = 1 << 16;
 *>
 const uint SHADER_FLAG_OUTLINE = 1 << 17;
 
+<*
+ Flag bit for BENT_NORMALS.
+*>
+const uint SHADER_FLAG_BENT_NORMALS = 1 << 18;
+
 const char[*] FULLSCREEN_SPIRV @private = $embed("../../../shaders/spv/fullscreen.spv");
 const char[*] GRADIENT_SPIRV @private = $embed("../../../shaders/spv/gradient.spv");
 const char[*] COMPOSITE_SPIRV @private = $embed("../../../shaders/spv/composite.spv");
@@ -319,8 +324,11 @@ const char[*] EXPOSURE_ADAPT_SPIRV @private = $embed("../../../shaders/spv/expos
 const char[*] FOCUS_HISTOGRAM_SPIRV @private = $embed("../../../shaders/spv/focus_histogram.spv");
 const char[*] FOCUS_ADAPT_SPIRV @private = $embed("../../../shaders/spv/focus_adapt.spv");
 const char[*] SSAO_SPIRV @private = $embed("../../../shaders/spv/ssao.spv");
+const char[*] SSAO_BENT_NORMALS_SPIRV @private = $embed("../../../shaders/spv/ssao_bent_normals.spv");
 const char[*] AO_BLUR_SPIRV @private = $embed("../../../shaders/spv/ao_blur.spv");
+const char[*] AO_BLUR_BENT_NORMALS_SPIRV @private = $embed("../../../shaders/spv/ao_blur_bent_normals.spv");
 const char[*] AO_TEMPORAL_SPIRV @private = $embed("../../../shaders/spv/ao_temporal.spv");
+const char[*] AO_TEMPORAL_BENT_NORMALS_SPIRV @private = $embed("../../../shaders/spv/ao_temporal_bent_normals.spv");
 const char[*] PROBE_FILL_ENVIRONMENT_SPIRV @private = $embed("../../../shaders/spv/probe_fill_environment.spv");
 const char[*] PROBE_BORDER_SPIRV @private = $embed("../../../shaders/spv/probe_border.spv");
 const char[*] PROBE_TRACE_SPIRV @private = $embed("../../../shaders/spv/probe_trace.spv");
@@ -331,6 +339,8 @@ const char[*] SSGI_FILTER_SPIRV @private = $embed("../../../shaders/spv/ssgi_fil
 const char[*] PROBE_BLEND_SPIRV @private = $embed("../../../shaders/spv/probe_blend.spv");
 const char[*] RT_AO_SPIRV @private = $embed("../../../shaders/spv/rt_ao.spv");
 const char[*] RT_AO_SCENE_TRACE_BVH_SPIRV @private = $embed("../../../shaders/spv/rt_ao_scene_trace_bvh.spv");
+const char[*] RT_AO_BENT_NORMALS_SPIRV @private = $embed("../../../shaders/spv/rt_ao_bent_normals.spv");
+const char[*] RT_AO_SCENE_TRACE_BVH_BENT_NORMALS_SPIRV @private = $embed("../../../shaders/spv/rt_ao_scene_trace_bvh_bent_normals.spv");
 const char[*] RT_REFLECTIONS_SPIRV @private = $embed("../../../shaders/spv/rt_reflections.spv");
 const char[*] RT_REFLECTIONS_SCENE_TRACE_BVH_SPIRV @private = $embed("../../../shaders/spv/rt_reflections_scene_trace_bvh.spv");
 const char[*] RT_REFLECTION_BLUR_SPIRV @private = $embed("../../../shaders/spv/rt_reflection_blur.spv");
@@ -409,7 +419,7 @@ const char[*] TRACE_REFIT_SPIRV @private = $embed("../../../shaders/spv/trace_re
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[215] SHADER_ENTRIES = {
+const ShaderEntry[220] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -539,8 +549,11 @@ const ShaderEntry[215] SHADER_ENTRIES = {
     { .variant = { .shader = FOCUS_HISTOGRAM }, .spirv = FOCUS_HISTOGRAM_SPIRV[..] },
     { .variant = { .shader = FOCUS_ADAPT }, .spirv = FOCUS_ADAPT_SPIRV[..] },
     { .variant = { .shader = SSAO }, .spirv = SSAO_SPIRV[..] },
+    { .variant = { .shader = SSAO, .flags = SHADER_FLAG_BENT_NORMALS }, .spirv = SSAO_BENT_NORMALS_SPIRV[..] },
     { .variant = { .shader = AO_BLUR }, .spirv = AO_BLUR_SPIRV[..] },
+    { .variant = { .shader = AO_BLUR, .flags = SHADER_FLAG_BENT_NORMALS }, .spirv = AO_BLUR_BENT_NORMALS_SPIRV[..] },
     { .variant = { .shader = AO_TEMPORAL }, .spirv = AO_TEMPORAL_SPIRV[..] },
+    { .variant = { .shader = AO_TEMPORAL, .flags = SHADER_FLAG_BENT_NORMALS }, .spirv = AO_TEMPORAL_BENT_NORMALS_SPIRV[..] },
     { .variant = { .shader = PROBE_FILL_ENVIRONMENT }, .spirv = PROBE_FILL_ENVIRONMENT_SPIRV[..] },
     { .variant = { .shader = PROBE_BORDER }, .spirv = PROBE_BORDER_SPIRV[..] },
     { .variant = { .shader = PROBE_TRACE }, .spirv = PROBE_TRACE_SPIRV[..] },
@@ -551,6 +564,8 @@ const ShaderEntry[215] SHADER_ENTRIES = {
     { .variant = { .shader = PROBE_BLEND }, .spirv = PROBE_BLEND_SPIRV[..] },
     { .variant = { .shader = RT_AO }, .spirv = RT_AO_SPIRV[..] },
     { .variant = { .shader = RT_AO, .flags = SHADER_FLAG_SCENE_TRACE_BVH }, .spirv = RT_AO_SCENE_TRACE_BVH_SPIRV[..] },
+    { .variant = { .shader = RT_AO, .flags = SHADER_FLAG_BENT_NORMALS }, .spirv = RT_AO_BENT_NORMALS_SPIRV[..] },
+    { .variant = { .shader = RT_AO, .flags = SHADER_FLAG_SCENE_TRACE_BVH | SHADER_FLAG_BENT_NORMALS }, .spirv = RT_AO_SCENE_TRACE_BVH_BENT_NORMALS_SPIRV[..] },
     { .variant = { .shader = RT_REFLECTIONS }, .spirv = RT_REFLECTIONS_SPIRV[..] },
     { .variant = { .shader = RT_REFLECTIONS, .flags = SHADER_FLAG_SCENE_TRACE_BVH }, .spirv = RT_REFLECTIONS_SCENE_TRACE_BVH_SPIRV[..] },
     { .variant = { .shader = RT_REFLECTION_BLUR }, .spirv = RT_REFLECTION_BLUR_SPIRV[..] },

@@ -1188,14 +1188,14 @@ fn void drop_unwanted_images(ViewRecord* staged, ViewDesc* previous) @private {
         staged.clusters = {};
     }
     AmbientOcclusionDesc* ambient_occlusion = &desc.ambient_occlusion;
-    if (ambient_occlusion.kind == AoKind.NONE
-        || ambient_occlusion.full_resolution != previous.ambient_occlusion.full_resolution) {
+    bool ambient_occlusion_reshaped = ambient_occlusion.full_resolution != previous.ambient_occlusion.full_resolution
+        || ambient_occlusion.bent_normals != previous.ambient_occlusion.bent_normals;
+    if (ambient_occlusion.kind == AoKind.NONE || ambient_occlusion_reshaped) {
         staged.ao_raw = {};
         staged.ao = {};
     }
 
-    if (!ambient_occlusion_accumulates(desc)
-        || ambient_occlusion.full_resolution != previous.ambient_occlusion.full_resolution) {
+    if (!ambient_occlusion_accumulates(desc) || ambient_occlusion_reshaped) {
         staged.ao_history = {};
         staged.ao_depth = {};
     }

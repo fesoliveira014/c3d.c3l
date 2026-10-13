@@ -464,6 +464,9 @@ root SsaoRoot {
     uint         _pad1;
 }
 
+const uint FRAME_AO_BENT_NORMALS = 1024; // FrameRoot.flags bit 10: the ao view holds a bent normal in green and blue
+const uint AO_BLUR_FLAG_VECTOR_INPUT = 1; // the input holds the bent normal in xyz and visibility in w
+
 root AoBlurRoot {
     GpuAddress   frame;
     TextureIndex input_texture;
@@ -473,9 +476,9 @@ root AoBlurRoot {
     uint         height;
     uint         input_width;
     uint         input_height;
+    uint         flags;
     uint         _pad0;
     uint         _pad1;
-    uint         _pad2;
 }
 
 const uint AO_TEMPORAL_FLAG_HISTORY_VALID = 1;

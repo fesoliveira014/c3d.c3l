@@ -60,6 +60,7 @@ struct AmbientOcclusionDesc {
     bool   full_resolution;
     uint   ray_count;
     bool   temporal; // accumulates the estimate over frames; keeps history and depth images beside the estimate
+    bool   bent_normals; // stores the world bent normal beside the visibility; RGBA8 images in place of R8
 }
 
 struct AmbientOcclusionPipelines @private {
@@ -67,6 +68,10 @@ struct AmbientOcclusionPipelines @private {
     gpu::PipelineHandle ray_traced;
     gpu::PipelineHandle temporal;
     gpu::PipelineHandle blur;
+    gpu::PipelineHandle ssao_bent_normals;
+    gpu::PipelineHandle ray_traced_bent_normals;
+    gpu::PipelineHandle temporal_bent_normals;
+    gpu::PipelineHandle blur_bent_normals;
 }
 
 <*
@@ -103,22 +108,50 @@ fn uint[<2>] ambient_occlusion_extent(uint width, uint height, bool full_resolut
 <*
  @require kind != AoKind.NONE
 *>
-fn void? acquire_ambient_occlusion_pipelines(Renderer* renderer, AoKind kind, bool accumulates) @private {
+fn ComputeSlot ambient_occlusion_estimate_slot(AoKind kind, bool bent_normals) @private {
     switch (kind) {
-        case SSAO: acquire_compute_slot(renderer, ComputeSlot.SSAO)!;
-        case RAY_TRACED: acquire_compute_slot(renderer, ComputeSlot.RT_AO)!;
-        case NONE:
+        case SSAO: return bent_normals ? ComputeSlot.SSAO_BENT_NORMALS : ComputeSlot.SSAO;
+        case RAY_TRACED: return bent_normals ? ComputeSlot.RT_AO_BENT_NORMALS : ComputeSlot.RT_AO;
+        case NONE: unreachable("an effect without a kind has no estimate");
     }
+}
 
-    if (accumulates) acquire_compute_slot(renderer, ComputeSlot.AO_TEMPORAL)!;
-    acquire_compute_slot(renderer, ComputeSlot.AO_BLUR)!;
+fn ComputeSlot ambient_occlusion_temporal_slot(bool bent_normals) @private {
+    return bent_normals ? ComputeSlot.AO_TEMPORAL_BENT_NORMALS : ComputeSlot.AO_TEMPORAL;
+}
+
+fn ComputeSlot ambient_occlusion_blur_slot(bool bent_normals) @private {
+    return bent_normals ? ComputeSlot.AO_BLUR_BENT_NORMALS : ComputeSlot.AO_BLUR;
+}
+
+<*
+ @require desc.kind != AoKind.NONE
+*>
+fn void? acquire_ambient_occlusion_pipelines(
+    Renderer* renderer,
+    AmbientOcclusionDesc* desc,
+    bool accumulates,
+) @private {
+    acquire_compute_slot(renderer, ambient_occlusion_estimate_slot(desc.kind, desc.bent_normals))!;
+    if (accumulates) acquire_compute_slot(renderer, ambient_occlusion_temporal_slot(desc.bent_normals))!;
+    acquire_compute_slot(renderer, ambient_occlusion_blur_slot(desc.bent_normals))!;
 }
 
 fn void destroy_ambient_occlusion_pipelines(gpu::Device* device, AmbientOcclusionPipelines* pipelines) @private {
-    if (pipelines.ssao.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.ssao);
-    if (pipelines.ray_traced.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.ray_traced);
-    if (pipelines.temporal.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.temporal);
-    if (pipelines.blur.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.blur);
+    gpu::PipelineHandle*[8] handles = {
+        &pipelines.ssao,
+        &pipelines.ray_traced,
+        &pipelines.temporal,
+        &pipelines.blur,
+        &pipelines.ssao_bent_normals,
+        &pipelines.ray_traced_bent_normals,
+        &pipelines.temporal_bent_normals,
+        &pipelines.blur_bent_normals,
+    };
+    foreach (handle : handles) {
+        if (handle.is_valid()) (void)gpu::destroy_pipeline(device, *handle);
+    }
+
     *pipelines = {};
 }
 
@@ -132,38 +165,38 @@ fn void? acquire_ao_images(Renderer* renderer, ViewRecord* record) @private {
 
 fn void? acquire_ao_estimate_images(Renderer* renderer, ViewRecord* record) @private {
     defer catch release_ao_estimate_images(&renderer.device, record);
+    AmbientOcclusionDesc* desc = &record.desc.ambient_occlusion;
+    gpu::Format format = desc.bent_normals ? gpu::Format.RGBA8_UNORM : gpu::Format.R8_UNORM;
     uint width = record.hdr_color.width;
     uint height = record.hdr_color.height;
-    uint[<2>] extent = ambient_occlusion_extent(width, height, record.desc.ambient_occlusion.full_resolution);
+    uint[<2>] extent = ambient_occlusion_extent(width, height, desc.full_resolution);
     record.ao_raw = allocate_storage_target(
         device:     &renderer.device,
         width:      extent.x,
         height:     extent.y,
-        format:     gpu::Format.R8_UNORM,
+        format:     format,
         debug_name: "ao_raw",
     )!;
     record.ao = allocate_storage_target(
         device:     &renderer.device,
         width:      width,
         height:     height,
-        format:     gpu::Format.R8_UNORM,
+        format:     format,
         debug_name: "ao",
     )!;
 }
 
 fn void? acquire_ao_history_images(Renderer* renderer, ViewRecord* record) @private {
     defer catch release_ao_history_images(&renderer.device, record);
-    uint[<2>] extent = ambient_occlusion_extent(
-        record.hdr_color.width,
-        record.hdr_color.height,
-        record.desc.ambient_occlusion.full_resolution,
-    );
+    AmbientOcclusionDesc* desc = &record.desc.ambient_occlusion;
+    gpu::Format format = desc.bent_normals ? gpu::Format.RGBA16_FLOAT : gpu::Format.R16_FLOAT;
+    uint[<2>] extent = ambient_occlusion_extent(record.hdr_color.width, record.hdr_color.height, desc.full_resolution);
     for (uint slot = 0; slot < AO_HISTORY_SLOTS; slot++) {
         record.ao_history[slot] = allocate_storage_target(
             device:     &renderer.device,
             width:      extent.x,
             height:     extent.y,
-            format:     gpu::Format.R16_FLOAT,
+            format:     format,
             debug_name: AO_HISTORY_NAMES[slot],
         )!;
         record.ao_depth[slot] = allocate_storage_target(
@@ -232,7 +265,8 @@ fn Target*? record_ambient_occlusion_history(
         .flags              = history_valid ? shader::AO_TEMPORAL_FLAG_HISTORY_VALID : 0,
     };
 
-    gpu::cmd_bind_pipeline(&renderer.commands, renderer.ambient_occlusion_pipelines.temporal)!;
+    ComputeSlot temporal_slot = ambient_occlusion_temporal_slot(record.desc.ambient_occlusion.bent_normals);
+    gpu::cmd_bind_pipeline(&renderer.commands, *compute_slot_target(renderer, temporal_slot).pipeline)!;
     dispatch_over(renderer, root.address, &record.ao_history[next])!;
 
     return &record.ao_history[next];
@@ -250,7 +284,7 @@ fn void? record_ambient_occlusion(
 ) @private {
     AmbientOcclusionDesc* ambient_occlusion = &record.desc.ambient_occlusion;
     bool accumulates = ambient_occlusion_accumulates(&record.desc);
-    acquire_ambient_occlusion_pipelines(renderer, ambient_occlusion.kind, accumulates)!;
+    acquire_ambient_occlusion_pipelines(renderer, ambient_occlusion, accumulates)!;
     bool deferred = record.desc.shading == ShadingPath.DEFERRED;
     Target* normals = &record.gbuffer[GBufferChannel.NORMAL_ROUGHNESS.ordinal];
     record.depth.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
@@ -259,11 +293,11 @@ fn void? record_ambient_occlusion(
 
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::TextureIndex normals_index = deferred ? normals.view.index : (gpu::TextureIndex)0;
-    gpu::PipelineHandle estimate;
+    ComputeSlot estimate_slot = ambient_occlusion_estimate_slot(ambient_occlusion.kind, ambient_occlusion.bent_normals);
+    gpu::PipelineHandle estimate = *compute_slot_target(renderer, estimate_slot).pipeline;
     gpu::MappedGpuSpan estimate_root;
     switch (ambient_occlusion.kind) {
         case SSAO:
-            estimate = renderer.ambient_occlusion_pipelines.ssao;
             estimate_root = slot.upload.take(&renderer.device, SsaoRoot::size, STREAM_ALIGNMENT)!;
             *(SsaoRoot*)estimate_root.bytes.ptr = {
                 .frame          = frame,
@@ -277,7 +311,6 @@ fn void? record_ambient_occlusion(
                 .noise_frame    = temporal_noise_frame(record, accumulates),
             };
         case RAY_TRACED:
-            estimate = renderer.ambient_occlusion_pipelines.ray_traced;
             estimate_root = slot.upload.take(&renderer.device, RtAoRoot::size, STREAM_ALIGNMENT)!;
             *(RtAoRoot*)estimate_root.bytes.ptr = {
                 .frame          = frame,
@@ -321,8 +354,10 @@ fn void? record_ambient_occlusion(
             .height         = record.ao.height,
             .input_width    = blur_input.width,
             .input_height   = blur_input.height,
+            .flags          = accumulates && ambient_occlusion.bent_normals ? shader::AO_BLUR_FLAG_VECTOR_INPUT : 0,
         };
-        gpu::cmd_bind_pipeline(&renderer.commands, renderer.ambient_occlusion_pipelines.blur)!;
+        ComputeSlot blur_slot = ambient_occlusion_blur_slot(ambient_occlusion.bent_normals);
+        gpu::cmd_bind_pipeline(&renderer.commands, *compute_slot_target(renderer, blur_slot).pipeline)!;
         dispatch_over(renderer, blur_root.address, &record.ao)!;
     }!;
 

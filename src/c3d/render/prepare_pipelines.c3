@@ -528,15 +528,14 @@ fn void list_view_pipelines(
             list_prepare_key(requests, weighted_composite_pipeline_key());
         }
 
-        switch (desc.ambient_occlusion.kind) {
-            case NONE: break;
-            case SSAO: list_prepare_compute(requests, ComputeSlot.SSAO);
-            case RAY_TRACED: list_prepare_compute(requests, ComputeSlot.RT_AO);
-        }
-
-        if (ambient_occlusion_accumulates(desc)) list_prepare_compute(requests, ComputeSlot.AO_TEMPORAL);
-        if (desc.ambient_occlusion.kind != AoKind.NONE) {
-            list_prepare_compute(requests, ComputeSlot.AO_BLUR);
+        AmbientOcclusionDesc* ambient_occlusion = &desc.ambient_occlusion;
+        bool bent_normals = ambient_occlusion.bent_normals;
+        if (ambient_occlusion.kind != AoKind.NONE) {
+            list_prepare_compute(requests, ambient_occlusion_estimate_slot(ambient_occlusion.kind, bent_normals));
+            if (ambient_occlusion_accumulates(desc)) {
+                list_prepare_compute(requests, ambient_occlusion_temporal_slot(bent_normals));
+            }
+            list_prepare_compute(requests, ambient_occlusion_blur_slot(bent_normals));
         }
 
         if (desc.ray_tracing.reflections) {

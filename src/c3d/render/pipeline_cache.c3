@@ -36,6 +36,10 @@ enum ComputeSlot @private {
     RT_AO,
     AO_TEMPORAL,
     AO_BLUR,
+    SSAO_BENT_NORMALS,
+    RT_AO_BENT_NORMALS,
+    AO_TEMPORAL_BENT_NORMALS,
+    AO_BLUR_BENT_NORMALS,
     REFLECTION,
     REFLECTION_BLUR,
     SSGI_TRACE,
@@ -177,6 +181,16 @@ fn ComputeSlotTarget compute_slot_target(Renderer* renderer, ComputeSlot slot) @
             .shader = AO_TEMPORAL, .debug_name = "ao_temporal" };
         case AO_BLUR: return { .pipeline = &renderer.ambient_occlusion_pipelines.blur,
             .shader = AO_BLUR, .debug_name = "ao_blur" };
+        case SSAO_BENT_NORMALS: return { .pipeline = &renderer.ambient_occlusion_pipelines.ssao_bent_normals,
+            .shader = SSAO, .flags = shader::SHADER_FLAG_BENT_NORMALS, .debug_name = "ssao_bent_normals" };
+        case RT_AO_BENT_NORMALS: return { .pipeline = &renderer.ambient_occlusion_pipelines.ray_traced_bent_normals,
+            .shader = RT_AO, .flags = trace_shader_flags(renderer) | shader::SHADER_FLAG_BENT_NORMALS,
+            .debug_name = "rt_ao_bent_normals" };
+        case AO_TEMPORAL_BENT_NORMALS: return { .pipeline = &renderer.ambient_occlusion_pipelines.temporal_bent_normals,
+            .shader = AO_TEMPORAL, .flags = shader::SHADER_FLAG_BENT_NORMALS,
+            .debug_name = "ao_temporal_bent_normals" };
+        case AO_BLUR_BENT_NORMALS: return { .pipeline = &renderer.ambient_occlusion_pipelines.blur_bent_normals,
+            .shader = AO_BLUR, .flags = shader::SHADER_FLAG_BENT_NORMALS, .debug_name = "ao_blur_bent_normals" };
         case REFLECTION: return { .pipeline = &renderer.reflection_pipelines.trace,
             .shader = RT_REFLECTIONS, .flags = trace_shader_flags(renderer), .debug_name = "rt_reflections" };
         case REFLECTION_BLUR: return { .pipeline = &renderer.reflection_pipelines.blur,
