@@ -24,16 +24,16 @@ struct MsaaProbe @private {
     gpu::SampleCount samples;
 }
 
-fn bool? MsaaProbe.supports(&self, gpu::Format format, gpu::TextureUsage usage) @private {
+fn bool? msaa_image_supported(MsaaProbe* probe, gpu::Format format, gpu::TextureUsage usage) @private {
     gpu::TextureDesc desc = {
-        .width        = self.extent.x,
-        .height       = self.extent.y,
+        .width        = probe.extent.x,
+        .height       = probe.extent.y,
         .format       = format,
         .usage        = usage,
         .access       = { .graphics },
-        .sample_count = self.samples,
+        .sample_count = probe.samples,
     };
-    return gpu::supports_texture_desc(&self.renderer.device, &desc);
+    return gpu::supports_texture_desc(&probe.renderer.device, &desc);
 }
 
 <*
@@ -70,12 +70,82 @@ fn void? validate_msaa_support(Renderer* renderer, ViewDesc* desc, uint[<2>] out
         .extent   = working_extent(desc.viewport, output.x, output.y, desc.render_scale),
         .samples  = msaa_sample_count(desc.msaa),
     };
-    bool supported = probe.supports(HDR_FORMAT, MSAA_COLOR_USAGE)! && probe.supports(DEPTH_FORMAT, MSAA_DEPTH_USAGE)!;
+    bool supported = msaa_image_supported(&probe, HDR_FORMAT, MSAA_COLOR_USAGE)!
+        && msaa_image_supported(&probe, DEPTH_FORMAT, MSAA_DEPTH_USAGE)!;
     if (supported && post::uses_velocity(desc)) {
-        supported = probe.supports(post::velocity_format(desc), MSAA_SAMPLED_USAGE)!;
+        supported = msaa_image_supported(&probe, post::velocity_format(desc), MSAA_SAMPLED_USAGE)!;
     }
     if (supported && msaa_reflection_gbuffer_wanted(desc)) {
-        supported = probe.supports(REFLECTION_SURFACE_FORMAT, MSAA_SAMPLED_USAGE)!;
+        supported = msaa_image_supported(&probe, REFLECTION_SURFACE_FORMAT, MSAA_SAMPLED_USAGE)!;
     }
     if (!supported) return c3d::UNSUPPORTED~;
+}
+
+fn Target? allocate_msaa_target(
+    Renderer* renderer,
+    ViewRecord* record,
+    gpu::Format format,
+    gpu::TextureUsage usage,
+    ZString debug_name,
+) @local {
+    return allocate_target(
+        device:     &renderer.device,
+        width:      record.hdr_color.width,
+        height:     record.hdr_color.height,
+        format:     format,
+        usage:      usage,
+        debug_name: debug_name,
+        samples:    msaa_sample_count(record.desc.msaa),
+    );
+}
+
+fn void? acquire_msaa_images(Renderer* renderer, ViewRecord* record) @private {
+    ViewDesc* desc = &record.desc;
+    if (desc.msaa == MsaaSamples.ONE || !record.hdr_color.texture.is_valid()) return;
+
+    if (!record.msaa_color.texture.is_valid()) {
+        record.msaa_color = allocate_msaa_target(renderer, record, HDR_FORMAT, MSAA_COLOR_USAGE, "msaa_color")!;
+    }
+
+    if (!record.msaa_depth.texture.is_valid()) {
+        record.msaa_depth = allocate_msaa_target(renderer, record, DEPTH_FORMAT, MSAA_DEPTH_USAGE, "msaa_depth")!;
+    }
+
+    if (post::uses_velocity(desc) && !record.msaa_velocity.texture.is_valid()) {
+        record.msaa_velocity = allocate_msaa_target(
+            renderer:   renderer,
+            record:     record,
+            format:     post::velocity_format(desc),
+            usage:      MSAA_SAMPLED_USAGE,
+            debug_name: "msaa_velocity",
+        )!;
+    }
+
+    if (msaa_reflection_gbuffer_wanted(desc) && !record.msaa_reflection_gbuffer.texture.is_valid()) {
+        record.msaa_reflection_gbuffer = allocate_msaa_target(
+            renderer:   renderer,
+            record:     record,
+            format:     REFLECTION_SURFACE_FORMAT,
+            usage:      MSAA_SAMPLED_USAGE,
+            debug_name: "msaa_reflection_gbuffer",
+        )!;
+    }
+}
+
+// Clears the staged images a new configuration cannot reuse; the caller retires what it gave up.
+fn void drop_stale_msaa_images(ViewRecord* staged, ViewDesc* previous) @private {
+    ViewDesc* desc = &staged.desc;
+    if (desc.msaa != previous.msaa) {
+        staged.msaa_color = {};
+        staged.msaa_depth = {};
+        staged.msaa_velocity = {};
+        staged.msaa_reflection_gbuffer = {};
+        return;
+    }
+
+    if (!post::uses_velocity(desc) || staged.msaa_velocity.format != post::velocity_format(desc)) {
+        staged.msaa_velocity = {};
+    }
+
+    if (!msaa_reflection_gbuffer_wanted(desc)) staged.msaa_reflection_gbuffer = {};
 }
