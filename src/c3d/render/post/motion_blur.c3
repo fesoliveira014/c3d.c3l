@@ -72,11 +72,18 @@ fn void? record_velocity(
 *>
 fn void? record_motion_blur(Renderer* renderer, ViewRecord* record) {
     acquire_motion_blur_pipelines(renderer)!;
+    open_post_chain(renderer, record)!;
+
+    render::@profile_stage(renderer, PostStage.MOTION_BLUR) {
+        record_motion_blur_dispatches(renderer, record)!;
+    }!;
+}
+
+fn void? record_motion_blur_dispatches(Renderer* renderer, ViewRecord* record) @private {
     Frame* slot = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
     uint width = record.velocity.width;
     uint height = record.velocity.height;
 
-    open_post_chain(renderer, record)!;
     record_tiles(
         renderer: renderer,
         input:    &record.velocity,

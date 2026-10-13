@@ -19,6 +19,12 @@ fn void? record_dof(Renderer* renderer, ViewRecord* record) {
     acquire_dof_pipelines(renderer)!;
     open_post_chain(renderer, record)!;
 
+    render::@profile_stage(renderer, PostStage.DEPTH_OF_FIELD) {
+        record_dof_dispatches(renderer, record)!;
+    }!;
+}
+
+fn void? record_dof_dispatches(Renderer* renderer, ViewRecord* record) @private {
     DofParams* params = &record.desc.post.dof_params;
     if (params.focus_mode == FocusMode.AUTO) {
         record_focus(renderer, record)!;
