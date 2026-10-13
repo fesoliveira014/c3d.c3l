@@ -323,9 +323,9 @@ list.push_anchor({
 - **Depth test.** A billboard anchor has one depth, that of its position. A plane has the depth of each of its
   fragments. A fragment is drawn where its depth is at least as near as the view's depth at the pixel, so geometry
   nearer than the item hides it, and the sky never does. Reverse-Z, larger is nearer. Nothing is written to the depth
-  image. A plane's depth is raised by one part in 65,536, so a plane lying on a surface of the view draws over it; keep
-  a plane a few millimetres off a surface when the view renders below its output size or with temporal anti-aliasing,
-  whose depth differs from the plane's by more than that.
+  image. A plane's depth is raised by one part in 65,536, so a plane lying on a surface of the view draws over it. Under
+  `render_scale` below one or temporal anti-aliasing the sampled depth can differ from the plane's by more, so keep a
+  plane a few millimetres off a surface it hangs on.
 - **Layers.** `set_layers(mask)` takes a mask of the type of `Camera.layers`. `finish_view` draws the list in a view
   only when the mask shares a layer with the camera that rendered the view. A new list has every layer, and `clear()`
   keeps the mask. The mask filters world lists only.
@@ -342,9 +342,9 @@ list.push_anchor({
   handedness is flipped, and the plane test above accounts for it. A plane in a mirror is drawn as a mirror shows it:
   its text is reversed where its front faces the reflected camera, and nothing is drawn where its back does. A
   billboard is laid out in the mirror view's image like in any view, so it faces the mirror camera and reads
-  normally in the reflection. An anchor on the negative side of the view's `clip_plane` draws none of its items. A
-  plane is clipped per fragment where it crosses the clip plane, like geometry; a billboard is clipped as a whole by
-  its anchor, not item by item.
+  normally in the reflection. A billboard whose anchor lies on the negative side of the view's `clip_plane` draws none
+  of its items, and one on the positive side draws all of them. A plane is clipped per fragment where it crosses the
+  clip plane, like geometry.
 - **Reflection captures.** The cube capture of a reflection probe draws no world overlay, as it draws no cloud layer
   and no height fog.
 - **Temporal jitter.** The test reads the view's own depth, which temporal anti-aliasing renders with a sub-pixel
