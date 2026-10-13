@@ -23,6 +23,11 @@ const uint OVERLAY_LIST_DEFAULT_CLIPS = 16; // UI nesting of panels and scroll a
 const uint OVERLAY_LIST_DEFAULT_GLYPHS = 16384; // 1.5 MiB of instances per prepared list, under 5% of the ring
 
 <*
+ Transforms and transformed clips an overlay list holds by default.
+*>
+const uint OVERLAY_LIST_DEFAULT_TRANSFORMS = 256; // 20 KiB of table per prepared list, 0.06% of the ring
+
+<*
  White, unbordered rectangle sampling the whole texture region.
 *>
 const OverlayRect OVERLAY_RECT_DEFAULT = {
@@ -30,9 +35,23 @@ const OverlayRect OVERLAY_RECT_DEFAULT = {
     .uv_rect = { 0, 0, 1, 1 },
 };
 
+<*
+ Transform that leaves every position unchanged.
+*>
+const OverlayTransform OVERLAY_TRANSFORM_IDENTITY = {
+    .x_axis = { 1, 0 },
+    .y_axis = { 0, 1 },
+};
+
 const float HALF_MAX @local = 65504; // largest finite f16; radii, borders and slice pixels clamp to it
 const float UNORM16_MAX @local = 65535;
 const Vec4 UNBOUNDED_CLIP @local = { -float::max, -float::max, float::max, float::max };
+const shader::OverlayTransformGpu IDENTITY_TABLE_ENTRY @local = {
+    .x_axis         = { 1, 0 },
+    .y_axis         = { 0, 1 },
+    .inverse_x_axis = { 1, 0 },
+    .inverse_y_axis = { 0, 1 },
+};
 
 enum OverlayEntryKind @private {
     RECT,
@@ -45,7 +64,17 @@ enum OverlayEntryKind @private {
 struct OverlayListDesc {
     uint max_items;
     uint max_clips;
-    uint max_glyphs; // zero holds no text
+    uint max_glyphs;     // zero holds no text
+    uint max_transforms; // zero holds no transforms
+}
+
+<*
+ Affine map from local pixels to output pixels.
+*>
+struct OverlayTransform {
+    Vec2 x_axis;
+    Vec2 y_axis;
+    Vec2 offset;
 }
 
 <*
@@ -87,7 +116,9 @@ struct OverlayText @private {
 
 struct OverlayEntry @private {
     OverlayEntryKind kind;
-    Vec4             clip; // min x, min y, max x, max y
+    uint             transform;  // table entry the item's coordinates pass through; zero is the identity
+    uint             clip_entry; // table entry of the innermost transformed clip; zero for none
+    Vec4             clip;       // output-pixel bounds of the clip: min x, min y, max x, max y
     union {
         OverlayRect rect;
         OverlayText text;
@@ -108,6 +139,8 @@ struct OverlayRun @private {
 
 struct OverlayPrepared @private {
     gpu::GpuAddress items;
+    gpu::GpuAddress transforms; // zero when no emitted item has a transform or a transformed clip
+    bool            transformed; // some emitted item has one: the list draws with the transformed shaders
     uint            run_count;
     RenderTargetId  target; // the output the instances were fitted to; zero for the window
     ulong           frame;  // renderer frame index plus one; zero before the first preparation
@@ -118,6 +151,7 @@ struct OverlayPacker @local {
     OverlayItemGpu[] destination;
     uint             emitted;
     uint             run_count;
+    bool             transformed;
 }
 
 <*
@@ -135,31 +169,45 @@ struct OverlayList {
     uint             glyph_count;
     uint             clip_depth;
     OverlayPrepared  prepared;
+
+    shader::OverlayTransformGpu[] transforms; // composed transforms and transformed clips; entry zero is the identity
+    uint[]                        transform_stack; // table entry of each transform pushed and not yet popped
+    uint[]                        clip_entries;    // per clip stack level: its innermost transformed clip entry
+    uint                          transform_count; // table entries in use, the identity included
+    uint                          transform_depth;
 }
 
 <*
- Remove every item and clip; capacity is kept.
+ Remove every item, clip and transform; capacity is kept.
 *>
 fn void OverlayList.clear(&self) {
     self.item_count = 0;
     self.glyph_count = 0;
     self.clip_depth = 0;
+    self.transform_count = 1;
+    self.transform_depth = 0;
 }
 
 <*
- Append a rectangle under the current clip.
+ Append a rectangle under the current clip and transform.
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
 *>
 fn void? OverlayList.add_rect(&self, OverlayRect rect) {
     if (self.item_count == self.entries.len) return c3d::CAPACITY_EXCEEDED~;
     if (!overlay_rect_valid(&rect)) return c3d::INVALID_ARGUMENT~;
 
-    self.entries[self.item_count] = { .kind = RECT, .clip = current_overlay_clip(self), .rect = rect };
+    self.entries[self.item_count] = {
+        .kind       = RECT,
+        .transform  = current_overlay_transform(self),
+        .clip_entry = current_overlay_clip_entry(self),
+        .clip       = current_overlay_clip(self),
+        .rect       = rect,
+    };
     self.item_count++;
 }
 
 <*
- Append a glyph run under the current clip.
+ Append a glyph run under the current clip and transform.
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
 *>
 fn void? OverlayList.add_glyphs(&self, OverlayGlyphRun run) {
@@ -173,9 +221,11 @@ fn void? OverlayList.add_glyphs(&self, OverlayGlyphRun run) {
 
     self.glyphs[self.glyph_count : run.glyphs.len] = run.glyphs[..];
     self.entries[self.item_count] = {
-        .kind = GLYPHS,
-        .clip = current_overlay_clip(self),
-        .text = {
+        .kind       = GLYPHS,
+        .transform  = current_overlay_transform(self),
+        .clip_entry = current_overlay_clip_entry(self),
+        .clip       = current_overlay_clip(self),
+        .text       = {
             .font        = run.font,
             .first       = self.glyph_count,
             .count       = (uint)run.glyphs.len,
@@ -189,20 +239,37 @@ fn void? OverlayList.add_glyphs(&self, OverlayGlyphRun run) {
 }
 
 <*
- Intersect the current clip with a box in output pixels.
+ Intersect the current clip with a box in the current transform's local space.
+ A box under a transform takes one transform table entry.
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
 *>
 fn void? OverlayList.push_clip(&self, Vec2 min, Vec2 max) {
     if (self.clip_depth == self.clips.len) return c3d::CAPACITY_EXCEEDED~;
     if (!finite_vec2(min) || !finite_vec2(max) || max.x < min.x || max.y < min.y) return c3d::INVALID_ARGUMENT~;
 
+    uint transform_entry = current_overlay_transform(self);
+    if (transform_entry && self.transform_count == self.transforms.len) return c3d::CAPACITY_EXCEEDED~;
+
+    Vec4 box = { min.x, min.y, max.x, max.y };
+    uint clip_entry = current_overlay_clip_entry(self);
+    if (transform_entry) {
+        shader::OverlayTransformGpu* entry = &self.transforms[self.transform_count];
+        *entry = self.transforms[transform_entry];
+        entry.clip_box = box;
+        entry.clip_parent = clip_entry;
+        clip_entry = self.transform_count;
+        self.transform_count++;
+        box = overlay_output_bounds(box, entry);
+    }
+
     Vec4 current = current_overlay_clip(self);
     self.clips[self.clip_depth] = {
-        math::max(current.x, min.x),
-        math::max(current.y, min.y),
-        math::min(current.z, max.x),
-        math::min(current.w, max.y),
+        math::max(current.x, box.x),
+        math::max(current.y, box.y),
+        math::min(current.z, box.z),
+        math::min(current.w, box.w),
     };
+    self.clip_entries[self.clip_depth] = clip_entry;
     self.clip_depth++;
 }
 
@@ -215,40 +282,73 @@ fn void OverlayList.pop_clip(&self) {
 }
 
 <*
+ Apply a transform, ahead of the enclosing ones, until the matching pop.
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
+*>
+fn void? OverlayList.push_transform(&self, OverlayTransform transform) {
+    if (self.transform_count == self.transforms.len) return c3d::CAPACITY_EXCEEDED~;
+
+    shader::OverlayTransformGpu parent = self.transforms[current_overlay_transform(self)];
+    self.transforms[self.transform_count] = compose_overlay_transform(&parent, transform)!;
+    self.transform_stack[self.transform_depth] = self.transform_count;
+    self.transform_count++;
+    self.transform_depth++;
+}
+
+<*
+ Restore the transform active before the matching push.
+ @require self.transform_depth > 0
+*>
+fn void OverlayList.pop_transform(&self) {
+    self.transform_depth--;
+}
+
+<*
  Default overlay list capacities.
 *>
 fn OverlayListDesc default_overlay_list_desc() {
     return {
-        .max_items  = OVERLAY_LIST_DEFAULT_ITEMS,
-        .max_clips  = OVERLAY_LIST_DEFAULT_CLIPS,
-        .max_glyphs = OVERLAY_LIST_DEFAULT_GLYPHS,
+        .max_items      = OVERLAY_LIST_DEFAULT_ITEMS,
+        .max_clips      = OVERLAY_LIST_DEFAULT_CLIPS,
+        .max_glyphs     = OVERLAY_LIST_DEFAULT_GLYPHS,
+        .max_transforms = OVERLAY_LIST_DEFAULT_TRANSFORMS,
     };
 }
 
 <*
- Allocate a list's fixed item, clip and run storage.
+ Allocate a list's fixed item, clip, transform and run storage.
  @require desc.max_items > 0, desc.max_clips > 0
+ @require desc.max_transforms <= shader::OVERLAY_TRANSFORM_MASK
 *>
 fn OverlayList create_overlay_list(Allocator allocator, OverlayListDesc desc) {
     usz glyphs_offset = (usz)desc.max_items * OverlayEntry::size;
     usz bindings_offset = glyphs_offset + (usz)desc.max_glyphs * GlyphPlacement::size;
     usz clips_offset = align_up(bindings_offset + (usz)desc.max_items * OverlayBinding::size, Vec4::size);
     usz runs_offset = clips_offset + (usz)desc.max_clips * Vec4::size;
-    usz total_bytes = align_up(runs_offset + (usz)desc.max_items * OverlayRun::size, Vec4::size);
+    usz transforms_offset = align_up(runs_offset + (usz)desc.max_items * OverlayRun::size, Vec4::size);
+    usz transform_stack_offset = transforms_offset + ((usz)desc.max_transforms + 1) * shader::OverlayTransformGpu::size;
+    usz clip_entries_offset = transform_stack_offset + (usz)desc.max_transforms * uint::size;
+    usz total_bytes = align_up(clip_entries_offset + (usz)desc.max_clips * uint::size, Vec4::size);
 
     // Allocated as Vec4 so every allocator aligns the block for the Vec4 members of the carved slices.
     Vec4[] block = alloc::new_array(allocator, Vec4, (sz)(total_bytes / Vec4::size));
     char[] storage = ((char*)block.ptr)[:total_bytes];
 
-    return {
-        .allocator  = allocator,
-        .storage    = storage,
-        .entries    = ((OverlayEntry*)storage.ptr)[:desc.max_items],
-        .glyphs     = ((GlyphPlacement*)&storage[glyphs_offset])[:desc.max_glyphs],
-        .bindings   = ((OverlayBinding*)&storage[bindings_offset])[:desc.max_items],
-        .clips      = ((Vec4*)&storage[clips_offset])[:desc.max_clips],
-        .runs       = ((OverlayRun*)&storage[runs_offset])[:desc.max_items],
+    OverlayList list = {
+        .allocator       = allocator,
+        .storage         = storage,
+        .entries         = ((OverlayEntry*)storage.ptr)[:desc.max_items],
+        .glyphs          = ((GlyphPlacement*)&storage[glyphs_offset])[:desc.max_glyphs],
+        .bindings        = ((OverlayBinding*)&storage[bindings_offset])[:desc.max_items],
+        .clips           = ((Vec4*)&storage[clips_offset])[:desc.max_clips],
+        .runs            = ((OverlayRun*)&storage[runs_offset])[:desc.max_items],
+        .transforms      = ((shader::OverlayTransformGpu*)&storage[transforms_offset])[:desc.max_transforms + 1],
+        .transform_stack = ((uint*)&storage[transform_stack_offset])[:desc.max_transforms],
+        .clip_entries    = ((uint*)&storage[clip_entries_offset])[:desc.max_clips],
+        .transform_count = 1,
     };
+    list.transforms[0] = IDENTITY_TABLE_ENTRY;
+    return list;
 }
 
 <*
@@ -302,6 +402,58 @@ fn bool overlay_rect_valid(OverlayRect* rect) @private {
 
 fn Vec4 current_overlay_clip(OverlayList* list) @private {
     return list.clip_depth ? list.clips[list.clip_depth - 1] : UNBOUNDED_CLIP;
+}
+
+fn uint current_overlay_clip_entry(OverlayList* list) @local {
+    return list.clip_depth ? list.clip_entries[list.clip_depth - 1] : 0;
+}
+
+fn uint current_overlay_transform(OverlayList* list) @local {
+    return list.transform_depth ? list.transform_stack[list.transform_depth - 1] : 0;
+}
+
+fn Vec2 map_overlay_point(shader::OverlayTransformGpu* transform, Vec2 point) @local {
+    return transform.x_axis * point.x + transform.y_axis * point.y + transform.offset;
+}
+
+fn Vec4 overlay_output_bounds(Vec4 bounds, shader::OverlayTransformGpu* transform) @local {
+    Vec2 top_left = map_overlay_point(transform, { bounds.x, bounds.y });
+    Vec2 top_right = map_overlay_point(transform, { bounds.z, bounds.y });
+    Vec2 bottom_left = map_overlay_point(transform, { bounds.x, bounds.w });
+    Vec2 bottom_right = map_overlay_point(transform, { bounds.z, bounds.w });
+    Vec2 low = math::min(math::min(top_left, top_right), math::min(bottom_left, bottom_right));
+    Vec2 high = math::max(math::max(top_left, top_right), math::max(bottom_left, bottom_right));
+    return { low.x, low.y, high.x, high.y };
+}
+
+// The fragment shader reads the inverse, so a transform without a finite one is rejected.
+fn shader::OverlayTransformGpu? compose_overlay_transform(
+    shader::OverlayTransformGpu* parent,
+    OverlayTransform child,
+) @local {
+    Vec2 x_axis = parent.x_axis * child.x_axis.x + parent.y_axis * child.x_axis.y;
+    Vec2 y_axis = parent.x_axis * child.y_axis.x + parent.y_axis * child.y_axis.y;
+    Vec2 offset = parent.x_axis * child.offset.x + parent.y_axis * child.offset.y + parent.offset;
+
+    float determinant = x_axis.x * y_axis.y - y_axis.x * x_axis.y;
+    if (!math::is_finite(determinant) || determinant == 0) return c3d::INVALID_ARGUMENT~;
+
+    Vec2 inverse_x_axis = (Vec2){ y_axis.y, -x_axis.y } / determinant;
+    Vec2 inverse_y_axis = (Vec2){ -y_axis.x, x_axis.x } / determinant;
+    Vec2 inverse_offset = -(inverse_x_axis * offset.x + inverse_y_axis * offset.y);
+    Vec2[6] values = { x_axis, y_axis, offset, inverse_x_axis, inverse_y_axis, inverse_offset };
+    foreach (value : values) {
+        if (!finite_vec2(value)) return c3d::INVALID_ARGUMENT~;
+    }
+
+    return {
+        .x_axis         = x_axis,
+        .y_axis         = y_axis,
+        .offset         = offset,
+        .inverse_x_axis = inverse_x_axis,
+        .inverse_y_axis = inverse_y_axis,
+        .inverse_offset = inverse_offset,
+    };
 }
 
 fn bool overlay_ref_solid(TextureRef texture) @private {
@@ -381,6 +533,10 @@ fn gpu::ScissorRect overlay_scissor(Vec4 clip, uint width, uint height) @private
 
 fn bool same_scissor(gpu::ScissorRect first, gpu::ScissorRect second) @local {
     return first.x == second.x && first.y == second.y && first.width == second.width && first.height == second.height;
+}
+
+fn Vec4 item_output_bounds(OverlayList* list, uint transform_entry, Vec4 bounds) @local {
+    return transform_entry ? overlay_output_bounds(bounds, &list.transforms[transform_entry]) : bounds;
 }
 
 fn bool overlay_bounds_reach(Vec4 bounds, gpu::ScissorRect scissor) @local {
@@ -469,6 +625,7 @@ fn OverlayItemGpu pack_overlay_glyph(
 }
 
 fn void emit_overlay_item(OverlayPacker* packer, gpu::ScissorRect scissor, OverlayItemGpu item) @local {
+    packer.transformed = packer.transformed || item.transform_clip != 0;
     OverlayRun[] runs = packer.list.runs;
     if (!packer.run_count || !same_scissor(runs[packer.run_count - 1].scissor, scissor)) {
         runs[packer.run_count] = { .first = packer.emitted, .scissor = scissor };
@@ -491,11 +648,15 @@ fn uint pack_overlay_items(
 
     foreach (index, &entry : list.entries[:list.item_count]) {
         gpu::ScissorRect scissor = overlay_scissor(entry.clip, width, height);
+        uint transform_clip = entry.transform | entry.clip_entry << shader::OVERLAY_CLIP_SHIFT;
         switch (entry.kind) {
             case RECT:
                 OverlayRect* rect = &entry.rect;
-                if (!overlay_bounds_reach({ rect.min.x, rect.min.y, rect.max.x, rect.max.y }, scissor)) continue;
-                emit_overlay_item(&packer, scissor, pack_overlay_rect(rect, list.bindings[index]));
+                Vec4 rect_bounds = { rect.min.x, rect.min.y, rect.max.x, rect.max.y };
+                if (!overlay_bounds_reach(item_output_bounds(list, entry.transform, rect_bounds), scissor)) continue;
+                OverlayItemGpu item = pack_overlay_rect(rect, list.bindings[index]);
+                item.transform_clip = transform_clip;
+                emit_overlay_item(&packer, scissor, item);
             case GLYPHS:
                 OverlayText* text = &entry.text;
                 FontAsset* font = assets.font(text.font);
@@ -507,12 +668,15 @@ fn uint pack_overlay_items(
                         glyph:     glyph,
                         binding:   list.bindings[index],
                     );
-                    if (!overlay_bounds_reach(item.bounds, scissor)) continue;
+                    Vec4 glyph_bounds = item_output_bounds(list, entry.transform, item.bounds);
+                    if (!overlay_bounds_reach(glyph_bounds, scissor)) continue;
+                    item.transform_clip = transform_clip;
                     emit_overlay_item(&packer, scissor, item);
                 }
         }
     }
 
     list.prepared.run_count = packer.run_count;
+    list.prepared.transformed = packer.transformed;
     return packer.emitted;
 }

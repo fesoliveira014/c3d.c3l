@@ -184,6 +184,7 @@ fn void? Renderer.prepare_overlay_list(&self, OverlayList* list, RenderTargetId 
     }
 
     list.prepared.run_count = 0;
+    list.prepared.transformed = false;
     if (list.item_count) {
         Target* output = overlay_output(self, target);
         // A glyph entry emits one item per placement, so entries plus placements bound the emitted items.
@@ -198,6 +199,14 @@ fn void? Renderer.prepare_overlay_list(&self, OverlayList* list, RenderTargetId 
             destination: ((OverlayItemGpu*)items.bytes.ptr)[:capacity],
         );
         list.prepared.items = items.address;
+
+        list.prepared.transforms = (gpu::GpuAddress)0;
+        if (list.prepared.transformed) {
+            usz table_bytes = (usz)list.transform_count * shader::OverlayTransformGpu::size;
+            gpu::MappedGpuSpan table = slot.upload.take(&self.device, table_bytes)!;
+            mem::copy(table.bytes.ptr, list.transforms.ptr, (sz)table_bytes);
+            list.prepared.transforms = table.address;
+        }
     }
     list.prepared.target = target;
     list.prepared.frame = self.frame_index + 1;
@@ -218,9 +227,10 @@ fn void? OverlayContext.draw_list(&self, OverlayList* list) {
     if (!list.prepared.run_count) return;
 
     Renderer* renderer = self.renderer;
+    uint shader_flags = list.prepared.transformed ? shader::SHADER_FLAG_TRANSFORMED : 0;
     PipelineKey key = {
-        .vertex        = { .shader = OVERLAY_VERTEX },
-        .fragment      = { .shader = OVERLAY_FRAGMENT },
+        .vertex        = { .shader = OVERLAY_VERTEX, .flags = shader_flags },
+        .fragment      = { .shader = OVERLAY_FRAGMENT, .flags = shader_flags },
         .color_formats = { [0] = self.color_format },
         .color_count   = 1,
         .depth_format  = gpu::Format.UNDEFINED,
@@ -257,9 +267,10 @@ fn void? OverlayContext.draw_list(&self, OverlayList* list) {
         foreach (&run : list.runs[:list.prepared.run_count]) {
             gpu::MappedGpuSpan root = self.alloc(OverlayRoot::size)!;
             *(OverlayRoot*)root.bytes.ptr = {
-                .items     = (gpu::GpuAddress)((ulong)list.prepared.items + run.first * OverlayItemGpu::size),
-                .scale     = scale,
-                .translate = { -1, 1 },
+                .items      = (gpu::GpuAddress)((ulong)list.prepared.items + run.first * OverlayItemGpu::size),
+                .transforms = list.prepared.transforms,
+                .scale      = scale,
+                .translate  = { -1, 1 },
             };
 
             gpu::cmd_set_scissor(self.commands, &run.scissor);
