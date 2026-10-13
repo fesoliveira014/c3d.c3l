@@ -135,6 +135,19 @@ fn void? material_panel(AssetStore* assets, MaterialId material) {
                 minimum: MIN_EDITABLE_RIM_POWER,
                 maximum: float::max,
             );
+            changed |= edit_material_factor(
+                label: "Outline width",
+                value: &record.data.toon.outline_width,
+                minimum: 0,
+                maximum: float::max,
+            );
+            changed |= edit_material_color("Outline color", (float*)&record.data.toon.outline_color, 3);
+            changed |= edit_material_factor(
+                label: "Outline depth offset",
+                value: &record.data.toon.outline_depth_offset,
+                minimum: 0,
+                maximum: float::max,
+            );
         case CUSTOM:
             show_custom_params(assets, &record.data.custom);
     }

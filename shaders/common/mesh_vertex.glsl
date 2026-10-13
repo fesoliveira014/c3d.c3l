@@ -9,6 +9,9 @@
 #if !defined(DEPTH_ONLY) && !defined(VELOCITY)
 #include "normal_mapping.glsl"
 #endif
+#ifdef OUTLINE
+#include "outline.glsl"
+#endif
 
 #include "instance_effects.glsl"
 GPU_DECLARE_READONLY_ARRAY_REF(LodPreviousArray, LodHistoryGpu);
@@ -239,6 +242,10 @@ void write_mesh_outputs(
 
     vec4 world = model * vec4(vertex.position, 1.0);
     world.xyz = apply_instance_effects(draw, instance, world.xyz, instance_bend_weight(draw, effect_position, vertex.color));
+#ifdef OUTLINE
+    ToonMaterialGpu outline_material = ToonMaterialGpu(draw.material);
+    vec2 outline_offset = outline_shift(frame, outline_material, normalize(normal_matrix * vertex.normal));
+#endif
 #ifdef VELOCITY
     vec4 previous = vec4(previous_position, 1.0);
     mat4 previous_instance = draw.prev_model;
@@ -302,6 +309,9 @@ void write_mesh_outputs(
 #endif
     }
     v_prev_clip_pos = frame.prev_view_proj * previous_world;
+#ifdef OUTLINE
+    v_prev_clip_pos.xy += outline_offset * v_prev_clip_pos.w;
+#endif
 #endif
 #if !defined(DEPTH_ONLY) && !defined(VELOCITY)
     v_world_pos = world.xyz;
@@ -315,7 +325,12 @@ void write_mesh_outputs(
     v_color = vertex.color;
     if ((draw.flags & DRAW_SWAY_VERTEX_ALPHA) != 0u) v_color.a = 1.0;
     v_color *= instance.color;
+#ifdef OUTLINE
+    // precise: the velocity form must rasterize the hull at the depth the colour form wrote.
+    precise vec4 clip = outline_clip(frame, outline_material, world, outline_offset);
+#else
     vec4 clip = frame.view_proj * world;
+#endif
     gl_Position = clip;
     gl_ClipDistance[0] = view_clip_distance(frame, world.xyz);
 #ifdef VELOCITY

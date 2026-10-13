@@ -77,6 +77,22 @@ const uint BENCHMARK_VALUE_STEPS @local = 100; // distinct formatted values: the
 const double NANOSECONDS_PER_MILLISECOND @local = 1000000;
 const String[6] BENCHMARK_NAMES @local = { "Alder", "Birch", "Cedar", "李雷", "Elm", "Fir" };
 
+const uint BENCHMARK_WINDOW_FRAME_ELEMENTS @local = 5; // window, title bar, title, close button and its label
+const uint BENCHMARK_WINDOW_LINES @local = 15; // body labels
+const uint BENCHMARK_WINDOW_ELEMENTS @local = BENCHMARK_WINDOW_FRAME_ELEMENTS + BENCHMARK_WINDOW_LINES;
+const uint BENCHMARK_WINDOW_COLUMNS @local = 4;
+const uint BENCHMARK_WINDOW_ROWS @local = 3; // further windows stack on the first ones
+const uint BENCHMARK_WINDOW_STEP_X @local = 240; // layout units between window positions
+const uint BENCHMARK_WINDOW_STEP_Y @local = 340;
+const uint BENCHMARK_DRAG_PERIOD @local = 32; // frames per cycle: the drag, then the HUD sweep
+const uint BENCHMARK_DRAG_FRAMES @local = 16; // a press, 14 motions and a release
+const float BENCHMARK_DRAG_DISTANCE @local = 200;
+const Vec2 BENCHMARK_DRAG_GRAB @local = { 950, 10 }; // on the first window's title bar: the desk starts at x 920
+const uint BENCHMARK_LINE_BYTES @local = 16; // text bytes and cached glyphs reserved per label or cached line
+const uint BENCHMARK_RICH_RUNS @local = 12; // pieces and cached lines reserved per rich label
+const uint BENCHMARK_RICH_TEXT_BYTES @local = 160; // expanded text reserved per rich label
+const uint BENCHMARK_EXIT_PERIOD @local = 30; // frames between two removals; the row returns half a period later
+
 const String BENCHMARK_STYLES @local = `{
   "bench_text": { "font": ["ui/latin", "ui/cjk"], "font_size": 14, "text_color": "#e0e0e0ff" },
   "bench_row": { "direction": "row", "gap": 6, "height": 18, "align": ["left", "center"] },
@@ -84,11 +100,27 @@ const String BENCHMARK_STYLES @local = `{
   "bench_marker": { "fill": "#f2c96bff", "size": [4, 14] },
   "bench_bar": { "fill": "#3a1010ff", "bar_fill": "#4cc45aff", "size": [80, 8] },
   "bench_button": { "fill": "#2b2b2bff", "padding": [6, 1], "hover": { "fill": "#3a3a3aff" } },
-  "bench_spacer": { "width": "grow" }
+  "bench_spacer": { "width": "grow" },
+  "bench_fading_row": {
+    "extends": "bench_row",
+    "transition": { "properties": ["fill", "opacity", "offset"], "duration": 0.15, "easing": "ease_out" },
+    "hover": { "fill": "#2c313dff" },
+    "hidden": { "opacity": 0, "offset": [-24, 0] }
+  },
+  "key": { "text_color": "#ffffffff", "text_highlight": "#3b4a6bff" },
+  "warn": { "text_color": "#ff8a6bff", "underline": true },
+  "gold": { "text_color": "#f2c96bff", "font_size": 18 },
+  "bench_desk": { "size": [1000, 1080] },
+  "bench_window": { "fill": "#1b1e27ff", "direction": "column", "size": [220, 320] },
+  "bench_title": { "fill": "#2c3550ff", "padding": [6, 2], "gap": 6, "width": "grow", "align": ["left", "center"] }
 }`;
 
-const String BENCHMARK_ROW @local = `{
-  "kind": "panel", "style": "bench_row", "children": [
+const String BENCHMARK_ROW_OPEN @local = `{ "kind": "panel", "style": "bench_row",`;
+const String BENCHMARK_FADING_ROW_OPEN @local = `{ "kind": "panel", "style": "bench_fading_row",
+  "on_click": "bench.bump",`;
+
+const String BENCHMARK_ROW_CHILDREN @local = `
+  "children": [
     { "kind": "panel", "style": "bench_marker", "visible": "{row.alive}" },
     { "kind": "label", "style": "bench_text", "text": "{row.name}" },
     { "kind": "label", "style": "bench_text", "text": "HP" },
@@ -101,6 +133,17 @@ const String BENCHMARK_ROW @local = `{
   ]
 }`;
 
+const String BENCHMARK_RICH_LABEL @local = `{ "kind": "label", "style": "bench_text", "markup": true, "width": 200,
+  "text": "Quest %d: press [key] E [/key] at the gate. [warn]Low ammo[/warn], [gold]{bench.score}[/gold] gold." }`;
+
+const String BENCHMARK_WINDOW_OPEN @local = `{ "kind": "panel", "id": "window%d", "window": true,
+  "style": "bench_window", "position": [%d, %d], "on_move_end": "bench.moved", "children": [
+    { "kind": "panel", "style": "bench_title", "drag_handle": true, "children": [
+      { "kind": "label", "style": "bench_text", "width": "grow", "text": "Window" },
+      { "kind": "button", "style": "bench_button", "children": [
+        { "kind": "label", "style": "bench_text", "text": "x" } ] } ] }`;
+const String BENCHMARK_WINDOW_LINE @local = `{ "kind": "label", "style": "bench_text", "text": "%s" }`;
+
 struct Options @local {
     bool benchmark;
     bool reload_scroll;
@@ -110,6 +153,8 @@ struct Options @local {
     bool reduced_motion;
     uint frames;
     uint labels;
+    uint window_count;
+    uint rich_labels;
 }
 
 struct Item @local {
@@ -270,6 +315,8 @@ struct BenchmarkRow @local {
 struct Benchmark @local {
     BenchmarkRow[BENCHMARK_ROWS] rows;
     BenchmarkRow[]               view;
+    int                          score @tag("ui", true);
+    uint                         moves;
 }
 
 fn void? add_fonts(AssetStore* assets) @local {
@@ -993,12 +1040,18 @@ fn void benchmark_bump(void* user, UiScope* scope, UiEvent* event) @local {
     benchmark.rows[scope.indices[0]].value += 0.5f;
 }
 
-fn String benchmark_hud_document() @local {
+fn void benchmark_moved(void* user, UiScope* scope, UiEvent* event) @local {
+    Benchmark* benchmark = user;
+    benchmark.moves++;
+}
+
+fn String benchmark_hud_document(bool fading) @local {
     DString document = dstring::temp_with_capacity(2048);
     document.append_string(`{ "anchor": "top_left", "root": { "kind": "scroll", "style": "bench_panel",
   "size": [900, 1080], "scroll": "vertical", "children": [
     { "kind": "list", "items": "{bench.rows}", "direction": "column", "template": `);
-    document.append_string(BENCHMARK_ROW);
+    document.append_string(fading ? BENCHMARK_FADING_ROW_OPEN : BENCHMARK_ROW_OPEN);
+    document.append_string(BENCHMARK_ROW_CHILDREN);
     document.append_string(` } ] } }`);
     return document.str_view();
 }
@@ -1015,13 +1068,65 @@ fn String benchmark_labels_document(uint labels) @local {
     return document.str_view();
 }
 
+fn String benchmark_rich_document(uint labels) @local {
+    DString document = dstring::temp_with_capacity((sz)(64 + labels * BENCHMARK_RICH_LABEL.len));
+    document.append_string(`{ "anchor": "top_right", "root": { "kind": "scroll", "style": "bench_panel",
+  "size": [300, 1080], "scroll": "vertical", "children": [`);
+    for (uint label = 0; label < labels; label++) {
+        if (label) document.append_char(',');
+        document.appendf(BENCHMARK_RICH_LABEL, label)!!;
+    }
+
+    document.append_string(`] } }`);
+    return document.str_view();
+}
+
+fn String benchmark_windows_document(uint windows) @local {
+    DString document = dstring::temp_with_capacity((sz)(64 + windows * BENCHMARK_WINDOW_OPEN.len * 2));
+    document.append_string(`{ "anchor": "top_right", "root": { "kind": "panel", "style": "bench_desk", "children": [`);
+    for (uint window = 0; window < windows; window++) {
+        uint column = window % BENCHMARK_WINDOW_COLUMNS;
+        uint row = window / BENCHMARK_WINDOW_COLUMNS % BENCHMARK_WINDOW_ROWS;
+
+        if (window) document.append_char(',');
+        document.appendf(
+            BENCHMARK_WINDOW_OPEN,
+            window,
+            column * BENCHMARK_WINDOW_STEP_X,
+            row * BENCHMARK_WINDOW_STEP_Y,
+        )!!;
+        for (uint line = 0; line < BENCHMARK_WINDOW_LINES; line++) {
+            document.append_char(',');
+            document.appendf(BENCHMARK_WINDOW_LINE, line % 2 ? "{bench.score}" : "Stat")!!;
+        }
+
+        document.append_string(`] }`);
+    }
+
+    document.append_string(`] } }`);
+    return document.str_view();
+}
+
+fn UiDesc benchmark_desc(Options* options) @local {
+    UiDesc desc = ui::default_ui_desc();
+    uint window_elements = options.window_count * BENCHMARK_WINDOW_ELEMENTS;
+    uint rich_runs = options.rich_labels * BENCHMARK_RICH_RUNS;
+
+    desc.max_instances += options.labels * 2 + window_elements + options.rich_labels;
+    desc.text_bytes += (options.labels + window_elements) * BENCHMARK_LINE_BYTES;
+    desc.text_bytes += options.rich_labels * BENCHMARK_RICH_TEXT_BYTES;
+    desc.cache_lines += options.labels + window_elements + rich_runs;
+    desc.cache_glyphs += (options.labels + window_elements + rich_runs) * BENCHMARK_LINE_BYTES;
+    desc.max_windows = math::max(desc.max_windows, options.window_count);
+    desc.max_text_pieces += rich_runs;
+    return desc;
+}
+
 fn void benchmark_input(Input* input, Event[] events, uint frame, uint period, uint* count) @local {
     Vec2 pointer = {
         40 + (float)((frame * 37) % 800),
         40 + (float)((frame * 53) % 1000),
     };
-    input.begin_frame();
-    input.clear_gui_flags();
     input.mouse_position = pointer;
     events[0] = { .kind = MOUSE_MOTION, .position = pointer };
     *count = 1;
@@ -1032,21 +1137,57 @@ fn void benchmark_input(Input* input, Event[] events, uint frame, uint period, u
     }
 }
 
+fn bool benchmark_drag(Input* input, Event[] events, uint frame, uint* count) @local {
+    uint phase = frame % BENCHMARK_DRAG_PERIOD;
+    if (phase >= BENCHMARK_DRAG_FRAMES) return false;
+
+    bool back = (frame / BENCHMARK_DRAG_PERIOD) % 2 == 1;
+    bool release = phase == BENCHMARK_DRAG_FRAMES - 1;
+    float travel = (float)phase / (float)(BENCHMARK_DRAG_FRAMES - 1) * BENCHMARK_DRAG_DISTANCE;
+    Vec2 at = {
+        BENCHMARK_DRAG_GRAB.x + (back ? BENCHMARK_DRAG_DISTANCE - travel : travel),
+        BENCHMARK_DRAG_GRAB.y,
+    };
+
+    input.mouse_position = at;
+    input.mouse_buttons[(usz)platform::MouseButton.LEFT] = !release;
+
+    if (phase == 0) {
+        events[0] = { .kind = MOUSE_BUTTON_DOWN, .button = LEFT, .position = at };
+        *count = 1;
+        return true;
+    }
+
+    events[0] = { .kind = MOUSE_MOTION, .position = at };
+    *count = 1;
+    if (release) {
+        events[1] = { .kind = MOUSE_BUTTON_UP, .button = LEFT, .position = at };
+        *count = 2;
+    }
+
+    return true;
+}
+
+fn uint benchmark_visible_rows(uint frame) @local {
+    bool leaving = frame % BENCHMARK_EXIT_PERIOD >= BENCHMARK_EXIT_PERIOD / 2;
+    return leaving ? BENCHMARK_ROWS - 1 : BENCHMARK_ROWS;
+}
+
 fn double elapsed_ms(time::Clock started) @local => (double)started.to_now() / NANOSECONDS_PER_MILLISECOND;
 
 fn void? run_benchmark(Options* options) @local {
-    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+
+    AssetStore assets = asset::create_asset_store(&tracker, asset::default_asset_store_desc());
     defer asset::destroy_asset_store(&assets);
     add_fonts(&assets)!;
 
-    UiDesc desc = ui::default_ui_desc();
-    desc.max_instances += options.labels * 2;
-    desc.text_bytes += options.labels * 16;
-    desc.cache_lines += options.labels;
-    desc.cache_glyphs += options.labels * 16;
-    Ui ui = ui::create_ui(mem, &assets, desc)!;
+    UiDesc desc = benchmark_desc(options);
+    Ui ui = ui::create_ui(&tracker, &assets, desc)!;
     defer ui::destroy_ui(&ui);
-    OverlayList list = render::create_overlay_list(mem, {
+    OverlayList list = render::create_overlay_list(&tracker, {
         .max_items  = desc.max_instances * 4,
         .max_clips  = render::OVERLAY_LIST_DEFAULT_CLIPS,
         .max_glyphs = desc.cache_glyphs,
@@ -1069,11 +1210,15 @@ fn void? run_benchmark(Options* options) @local {
         $Type: BenchmarkRow,
         items: &benchmark.view,
     )!;
+    ui.@bind_fields(prefix: "bench", $Type: Benchmark, instance: &benchmark)!;
     ui.on("bench.bump", &benchmark_bump, &benchmark)!;
+    ui.on("bench.moved", &benchmark_moved, &benchmark)!;
     ui.load_styles({ BENCHMARK_STYLES })!;
     @pool() {
-        ui.load_document(benchmark_hud_document())!;
+        ui.load_document(benchmark_hud_document(options.transitions))!;
         if (options.labels) ui.load_document(benchmark_labels_document(options.labels))!;
+        if (options.rich_labels) ui.load_document(benchmark_rich_document(options.rich_labels))!;
+        if (options.window_count) ui.load_document(benchmark_windows_document(options.window_count))!;
     };
 
     Input input;
@@ -1081,20 +1226,36 @@ fn void? run_benchmark(Options* options) @local {
     double route_ms;
     double update_ms;
     double draw_ms;
+    uint peak_transitions;
+    uint peak_exiting;
+    sz allocations_before;
     for (uint frame = 0; frame < options.frames * 2; frame++) {
         BenchmarkRow* row = &benchmark.rows[frame % BENCHMARK_ROWS];
         row.value = (float)(frame % BENCHMARK_VALUE_STEPS) / 10;
         row.fraction = (float)(frame % 10) / 10;
+        benchmark.score = (int)(frame % BENCHMARK_VALUE_STEPS);
+        if (options.transitions) benchmark.view = benchmark.rows[:benchmark_visible_rows(frame)];
+
+        input.begin_frame();
+        input.clear_gui_flags();
 
         uint event_count;
-        benchmark_input(
-            input:  &input,
-            events: events[..],
-            frame:  frame,
-            period: BENCHMARK_CLICK_PERIOD,
-            count:  &event_count,
-        );
+        bool dragging = options.window_count > 0 && benchmark_drag(&input, events[..], frame, &event_count);
+        if (!dragging) {
+            benchmark_input(
+                input:  &input,
+                events: events[..],
+                frame:  frame,
+                period: BENCHMARK_CLICK_PERIOD,
+                count:  &event_count,
+            );
+        }
+
         bool measured = frame >= options.frames;
+        if (frame == options.frames) {
+            benchmark.moves = 0;
+            allocations_before = tracker.total_allocation_count();
+        }
 
         time::Clock started = clock::now();
         ui.route_input(&input, events[:event_count]);
@@ -1113,14 +1274,22 @@ fn void? run_benchmark(Options* options) @local {
         list.clear();
         ui.draw(&list)!;
         if (measured) draw_ms += elapsed_ms(started);
+
+        if (measured) {
+            peak_transitions = math::max(peak_transitions, ui.stats.transitions);
+            peak_exiting = math::max(peak_exiting, ui.stats.exiting);
+        }
     }
 
     double frames = (double)options.frames;
     io::printfn(
-        "frames=%d labels=%d route_ms=%.4f update_ms=%.4f draw_ms=%.4f instances=%d glyphs=%d "
-        "placement_hits=%d placement_misses=%d",
+        "frames=%d labels=%d windows=%d rich=%d route_ms=%.4f update_ms=%.4f draw_ms=%.4f instances=%d glyphs=%d "
+        "placement_hits=%d placement_misses=%d text_pieces=%d transitions=%d exiting=%d moves=%d "
+        "resident_bytes=%d allocations=%d",
         options.frames,
         options.labels,
+        options.window_count,
+        options.rich_labels,
         route_ms / frames,
         update_ms / frames,
         draw_ms / frames,
@@ -1128,6 +1297,12 @@ fn void? run_benchmark(Options* options) @local {
         list.glyph_count,
         ui.stats.placement_hits,
         ui.stats.placement_misses,
+        ui.stats.text_pieces,
+        peak_transitions,
+        peak_exiting,
+        benchmark.moves,
+        ui.storage.len + ui.clay_memory.len,
+        tracker.total_allocation_count() - allocations_before,
     );
 }
 
@@ -1149,6 +1324,10 @@ fn int main(String[] args) {
             options.reload_scroll = true;
         } else if (argument == "--windows") {
             options.windows = true;
+            options.window_count = has_value ? (args[index + 1].to_uint() ?? 0) : 0;
+            if (options.window_count) index++;
+        } else if (argument == "--rich" && has_value) {
+            options.rich_labels = args[++index].to_uint() ?? 0;
         } else if (argument == "--rich-text") {
             options.rich_text = true;
         } else if (argument == "--transitions") {
@@ -1157,7 +1336,8 @@ fn int main(String[] args) {
             options.reduced_motion = true;
         } else {
             io::eprintn("Use ui [--frames N] [--reload-scroll] [--windows] [--rich-text] [--transitions]");
-            io::eprintn("       [--reduced-motion] [--benchmark --frames F [--labels N]].");
+            io::eprintn("       [--reduced-motion] [--benchmark --frames F [--labels N] [--windows N] [--rich N]");
+            io::eprintn("       [--transitions]].");
             return 1;
         }
     }

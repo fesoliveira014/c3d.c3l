@@ -967,6 +967,11 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer ToonMateria
     uint gradient_texture;
     uint gradient_sampler;
     TextureMapGpu map;
+    vec4 outline_color_width;
+    float outline_depth_offset;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
 };
 
 struct EnvironmentRotationGpu {

@@ -300,6 +300,13 @@ fn void write_material_block(
                 .gradient_texture = bindings.gradient.texture_index,
                 .gradient_sampler = bindings.gradient.sampler_index,
                 .map = pack_texture_map(params.map, bindings.base_color),
+                .outline_color_width = {
+                    params.outline_color.r,
+                    params.outline_color.g,
+                    params.outline_color.b,
+                    params.outline_width,
+                },
+                .outline_depth_offset = params.outline_depth_offset,
             };
 
         case CUSTOM:

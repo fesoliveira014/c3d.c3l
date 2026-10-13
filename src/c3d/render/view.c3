@@ -59,6 +59,8 @@ struct DrawItem @private {
     bool            weighted;
     bool            custom_velocity;
     gpu::PipelineHandle velocity_pipeline;
+    gpu::PipelineHandle outline_pipeline;
+    gpu::PipelineHandle outline_velocity_pipeline;
 }
 
 struct MeshPreparation @private {
@@ -442,6 +444,12 @@ fn void? record_raster_view(
                     if (!custom_pipeline_rejected(renderer, material_description, excuse)) return excuse~;
                     continue;
                 }
+
+                gpu::PipelineHandle outline;
+                if (list == DrawList.OPAQUE && outlined(material_description, candidate, geometry)) {
+                    outline = outline_pipeline_for(renderer, material_description, vertex)!;
+                }
+
                 gpu::GpuAddress effects = resolve_instance_effects(
                     renderer:     renderer,
                     effects_view: &effects_view,
@@ -485,6 +493,7 @@ fn void? record_raster_view(
                     .material  = material,
                     .vertex    = vertex,
                     .pipeline  = pipeline,
+                    .outline_pipeline = outline,
                     .skin      = posed.active ? (gpu::GpuAddress)0 : resolve_candidate_skin(renderer, candidate)!,
                     .morph     = resolve_candidate_morph(renderer, candidate, vertex)!,
                     .posed     = posed,
@@ -2310,17 +2319,27 @@ fn void? record_draws(
         }
         bound = wanted;
 
-        if (candidate_instanced(item.candidate)) {
-            record_batch_draw(
-                renderer: renderer,
-                root:     item.root,
-                geometry: item.geometry,
-                range:    item.range,
-            )!;
-        } else {
-            record_geometry_draw(renderer, item.root, item.geometry)!;
+        record_item_draw(renderer, item)!;
+
+        if (item.outline_pipeline.is_valid()) {
+            record_outline_draw(renderer, item, &state)!;
+            bound.pipeline = item.outline_pipeline;
+            state_set = false;
         }
     }
+}
+
+fn void? record_item_draw(Renderer* renderer, DrawItem* item) @private {
+    if (candidate_instanced(item.candidate)) {
+        return record_batch_draw(
+            renderer: renderer,
+            root:     item.root,
+            geometry: item.geometry,
+            range:    item.range,
+        );
+    }
+
+    return record_geometry_draw(renderer, item.root, item.geometry);
 }
 
 fn void? record_geometry_draw(Renderer* renderer, gpu::GpuAddress root, GpuGeometry* geometry) @private {
