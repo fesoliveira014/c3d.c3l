@@ -2,7 +2,7 @@
 
 Module `c3d::render` draws application-owned 2D items over the composed window or into a render target: rectangles
 with rounded corners, borders, textures and nine-slice fields, and glyph runs of placed text ([Text](text.md)), each
-under a clip. The list holds plain values; it names no `gpu` type.
+under a clip and a transform. The list holds plain values; it names no `gpu` type.
 Dear ImGui stays the tool for debug panels and inspectors ([GUI overlay](gui.md)). The list serves interfaces the
 application draws itself.
 
@@ -39,8 +39,8 @@ renderer.end_overlay(&overlay)!;
 ```
 
 - `create_overlay_list` allocates every slice once, from the allocator it is given. Nothing allocates per frame.
-- `clear()`, `add_rect`, `add_glyphs`, `push_clip` and `pop_clip` run any time before `prepare_overlay_list`. Items
-  stay unchanged from preparation until `draw_list` records them.
+- `clear()`, `add_rect`, `add_glyphs`, `push_clip`, `pop_clip`, `push_transform` and `pop_transform` run any time
+  before `prepare_overlay_list`. Items stay unchanged from preparation until `draw_list` records them.
 - `prepare_overlay_list` runs after the frame's last `finish_view`, with output and no overlay open. It resolves
   textures and fonts, uploads the outline rows fonts gained, readies the render targets the list samples and
   uploads one instance per visible rectangle or glyph. A render target
@@ -110,11 +110,42 @@ origin.
 
 ## Clipping
 
-`push_clip(min, max)` intersects the current clip with a box in output pixels; `pop_clip` restores the previous one.
-Each item keeps the clip active when it was added. Preparation clamps the clip to the output and rounds it outward to
-whole pixels. An item that does not reach its clip, and an empty item, is skipped. Consecutive emitted items with
-the same clip form one run, drawn with one instanced draw; `stats.draws` grows by one per run. Items draw in
-submission order.
+`push_clip(min, max)` intersects the current clip with a box in output pixels, or in local pixels under a transform
+([Transforms](#transforms)); `pop_clip` restores the previous one. Each item keeps the clip active when it was added.
+Preparation clamps the clip to the output and rounds it outward to whole pixels. An item that does not reach its clip,
+and an empty item, is skipped. Consecutive emitted items with the same scissor form one run, drawn with one instanced
+draw; `stats.draws` grows by one per run. Items draw in submission order.
+
+## Transforms
+
+`push_transform(transform)` applies an `OverlayTransform` to every item and clip added until the matching
+`pop_transform`. It maps local pixels to output pixels: `x_axis` and `y_axis` are the images of the local unit
+vectors and `offset` is the image of the local origin, so `(x, y)` lands at `x_axis * x + y_axis * y + offset`.
+`OVERLAY_TRANSFORM_IDENTITY` leaves positions unchanged.
+
+```c3
+list.push_transform({ .x_axis = { cosine, sine }, .y_axis = { -sine, cosine }, .offset = center })!;
+list.push_transform({ .x_axis = { 2, 0 }, .y_axis = { 0, 2 } })!;
+list.add_rect(rect)!;
+list.pop_transform();
+list.pop_transform();
+```
+
+- **Composition.** A push composes with the active transform: the new transform applies first, then the enclosing
+  one. The example above scales by two and then rotates and moves the result.
+- **Coordinates.** Under a transform, bounds, glyph origins, radii, borders and nine-slice margins are local pixels.
+  Edges stay about one output pixel wide at any scale, rotation or shear, and glyphs stay sharp. A textured item
+  samples with the gradients of the local mapping, so a scaled-down item still picks smaller mips.
+- **Clips.** `push_clip` takes its box in the active transform's local space. A clip pushed with no transform keeps
+  the scissor-only path. A clip pushed under a transform is tested per fragment in its local space, with an edge
+  about one output pixel wide. Its scissor is the bounding box of the box in output pixels, so a rotated clip costs
+  fragment work inside that box. Clips nest: an item draws only inside every clip active when it was added.
+- **Capacity.** Each push, and each clip pushed under a transform, takes one entry of the list's transform table. The
+  entry stays in use after the pop until `clear()`. `OverlayListDesc.max_transforms` sets the table size, up to
+  65,535. `default_overlay_list_desc()` sets it to `OVERLAY_LIST_DEFAULT_TRANSFORMS`. A desc that leaves it zero holds
+  no transforms, as `max_glyphs` does for text: its pushes fault and its lists draw as before.
+- **Outputs.** Window and render-target outputs treat transforms alike. Items under the identity pack and draw as they
+  do without transforms.
 
 ## Faults
 
@@ -122,8 +153,10 @@ submission order.
 | --- | --- |
 | `add_rect` | `CAPACITY_EXCEEDED` (list full); `INVALID_ARGUMENT` (non-finite or negative values, `max` below `min`, nine-slice margins larger than the box or region) |
 | `add_glyphs` | `CAPACITY_EXCEEDED` (list full, or not enough glyph room); `INVALID_ARGUMENT` (non-finite origin, color or placement position; size not above zero) |
-| `push_clip` | `CAPACITY_EXCEEDED` (stack full); `INVALID_ARGUMENT` (non-finite, `max` below `min`) |
+| `push_clip` | `CAPACITY_EXCEEDED` (stack full, or under a transform the table full); `INVALID_ARGUMENT` (non-finite, `max` below `min`) |
 | `pop_clip` | Contract: the stack is not empty |
+| `push_transform` | `CAPACITY_EXCEEDED` (table full); `INVALID_ARGUMENT` (non-finite values, or a composed transform with no inverse) |
+| `pop_transform` | Contract: the stack is not empty |
 | `Renderer.begin_overlay_target` | `INVALID_ID` (dead target); `gpu` faults from state transitions and recording |
 | `Renderer.prepare_overlay_list` | `INVALID_ID` (dead texture, sampler, render target or font, or a dead output `target`); `INVALID_ARGUMENT` (comparison sampler; glyph past its font or without a built outline; the list samples its output `target`); `UNSUPPORTED` (texture kind above); `ASSET_DATA_UNAVAILABLE`; `gpu` faults from upload and state transitions |
 | `OverlayContext.draw_list` | `gpu` and shader faults from pipeline creation and recording; contract: prepared this frame for this output |
@@ -135,10 +168,13 @@ present. Any later fault aborts the frame, like other renderer faults.
 ## Capacities and costs
 
 - `OVERLAY_LIST_DEFAULT_ITEMS` is 4,096 items. `OVERLAY_LIST_DEFAULT_CLIPS` is 16 nested clips.
-  `OVERLAY_LIST_DEFAULT_GLYPHS` is 16,384 placements.
+  `OVERLAY_LIST_DEFAULT_GLYPHS` is 16,384 placements. `OVERLAY_LIST_DEFAULT_TRANSFORMS` is 256 table entries.
 - One rectangle or glyph is 96 bytes of instance data in the frame upload ring.
   4,096 items cost 384 KiB of the ring per prepared list; 16,384 glyphs cost 1.5 MiB.
-- One run costs one 24-byte root and one draw. Rects with alternating clips cost one run each.
+- A transform table entry is 80 bytes of the frame upload ring. A prepared list uploads its entries only when it
+  pushed a transform or a transformed clip.
+- One run costs one 32-byte root and one draw. Rects with alternating clips cost one run each. Items under different
+  transforms and the same scissor share a run.
 - `Pass.OVERLAY` times `draw_list` when GPU timings are on; a frame's window and target overlays add up.
 
 ## Benchmark
@@ -147,5 +183,6 @@ present. Any later fault aborts the frame, like other renderer faults.
 `prepare_ms` (CPU time of `prepare_overlay_list`), `overlay_gpu_ms` (`Pass.OVERLAY`) and `draws` (the overlay's own
 draws), averaged over `F` frames after `F` warm-up frames. The benchmark pushes no clip, so every rect falls in one run.
 
-The `overlay` example shows every feature; `--stress N` adds N small rects under one clip, and `--target` draws a
-panel into the portrait's render target.
+The `overlay` example shows every feature; `--stress N` adds N small rects under one clip, `--target` draws a
+panel into the portrait's render target, and `--transform` draws a rotated and scaled panel of text, a nine-slice
+frame and rects under a transformed clip.
