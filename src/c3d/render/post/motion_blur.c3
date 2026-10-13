@@ -261,6 +261,7 @@ fn void? draw_velocity_item(Renderer* renderer, DrawItem* item) @private {
             instance_count: 1,
         )!;
     }
+
     renderer.stats.draws++;
 }
 

@@ -2330,6 +2330,7 @@ fn void? record_item_draw(Renderer* renderer, DrawItem* item) @private {
             range:    item.range,
         );
     }
+
     return record_geometry_draw(renderer, item.root, item.geometry);
 }
 

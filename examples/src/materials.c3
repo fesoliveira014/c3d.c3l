@@ -524,6 +524,7 @@ fn void apply_toon_outline(AssetStore* assets, ExampleMaterials materials, Contr
         assets.material(toon).data.toon.outline_width = controls.toon_outline ? controls.toon_outline_width : 0;
         assets.mark_material_dirty(toon);
     }
+
     controls.toon_outline_changed = false;
 }
 
@@ -627,6 +628,7 @@ fn void preset_controls(
             )) {
                 controls.selected_material = materials.toon_rim;
             }
+
             imgui::separator_text("Outline");
             controls.toon_outline_changed |= imgui::checkbox("Outline (O)", &controls.toon_outline);
             controls.toon_outline_changed |= imgui::slider_float(
@@ -954,6 +956,7 @@ fn void? run_gui(
                 controls.toon_outline_width += OUTLINE_WIDTH_STEP;
                 controls.toon_outline_changed = true;
             }
+
             controls.toon_outline_width = math::clamp(
                 x:     controls.toon_outline_width,
                 lower: OUTLINE_WIDTH_STEP,

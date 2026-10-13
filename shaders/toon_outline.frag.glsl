@@ -26,6 +26,7 @@ void main() {
         if ((material.map_flags & MATERIAL_MAP_BASE_COLOR) != 0u) {
             alpha *= sample_map(material.map, material.map_flags, MATERIAL_MAP_BASE_COLOR, v_uv0, v_uv1).a;
         }
+
         if (alpha < material.alpha_cutoff) discard;
     }
 
