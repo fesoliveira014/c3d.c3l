@@ -13,12 +13,6 @@ layout(push_constant) uniform Push {
     uint64_t root_gpu;
 } pc;
 
-// Mirrored as ssgi_history_confidence in screen_space_gi.c3: TAA's velocity ramp from 1x to 2x the threshold.
-float ssgi_history_confidence(bool depth_match, float velocity_pixels, float threshold) {
-    if (!depth_match) return 0.0;
-    return 1.0 - smoothstep(threshold, 2.0 * threshold, velocity_pixels);
-}
-
 void main() {
     SsgiTemporalRoot root = SsgiTemporalRoot(pc.root_gpu);
     uvec2 pixel = gl_GlobalInvocationID.xy;

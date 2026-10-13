@@ -47,4 +47,10 @@ bool ssgi_uv_inside(vec2 uv) {
     return all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)));
 }
 
+// Mirrored as ssgi_history_confidence in screen_space_gi.c3: TAA's velocity ramp from 1x to 2x the threshold.
+float ssgi_history_confidence(bool depth_match, float velocity_pixels, float threshold) {
+    if (!depth_match) return 0.0;
+    return 1.0 - smoothstep(threshold, 2.0 * threshold, velocity_pixels);
+}
+
 #endif

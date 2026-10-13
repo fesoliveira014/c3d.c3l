@@ -101,11 +101,18 @@ fn void? record_deferred_shading(
     bool sky,
     bool atmosphere,
     Vec4 clear_color,
-    bool ssgi_history_valid,
+    bool history_valid,
     ReflectionLights reflection_lights,
 ) @private {
-    if (record.desc.ambient_occlusion.kind != AoKind.NONE) record_ambient_occlusion(renderer, record, frame)!;
-    if (record.desc.screen_space_gi.enabled) record_screen_space_gi(renderer, record, frame, ssgi_history_valid)!;
+    if (record.desc.ambient_occlusion.kind != AoKind.NONE) {
+        record_ambient_occlusion(
+            renderer:      renderer,
+            record:        record,
+            frame:         frame,
+            history_valid: history_valid,
+        )!;
+    }
+    if (record.desc.screen_space_gi.enabled) record_screen_space_gi(renderer, record, frame, history_valid)!;
     if (record.desc.ray_tracing.reflections) {
         record_reflections(
             renderer: renderer,
