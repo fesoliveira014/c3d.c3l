@@ -202,7 +202,7 @@ fn void? record_screen_space_gi(
     acquire_screen_space_gi_pipelines(renderer)!;
     ScreenSpaceGiPipelines* pipelines = &renderer.screen_space_gi_pipelines;
     bool deferred = record.desc.shading == ShadingPath.DEFERRED;
-    Target* normals = &record.gbuffer[GBufferChannel.NORMAL_ROUGHNESS.ordinal];
+    Target* normals = deferred_normals(record);
     gpu::TextureIndex normals_index = deferred ? normals.view.index : (gpu::TextureIndex)0;
     uint normal_flag = deferred ? shader::SSGI_FLAG_GBUFFER_NORMALS : 0;
     uint history_flag = history_valid ? shader::SSGI_FLAG_HISTORY_VALID : 0;

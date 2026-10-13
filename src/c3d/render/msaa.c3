@@ -83,6 +83,19 @@ fn bool msaa_specular_copy_wanted(ViewDesc* desc) @private {
     return desc.msaa != MsaaSamples.ONE && desc.shading == ShadingPath.DEFERRED && desc.ray_tracing.reflections;
 }
 
+// Screen-space effects and traced reflections read one sample of the deferred channels they use.
+fn Target* deferred_normals(ViewRecord* record) @private {
+    if (record.desc.msaa == MsaaSamples.ONE) return &record.gbuffer[GBufferChannel.NORMAL_ROUGHNESS.ordinal];
+
+    return &record.normal_sample_zero;
+}
+
+fn Target* deferred_specular(ViewRecord* record) @private {
+    if (record.desc.msaa == MsaaSamples.ONE) return &record.gbuffer[GBufferChannel.EMISSIVE_SPECULAR.ordinal];
+
+    return &record.specular_sample_zero;
+}
+
 // A deferred view draws its prepass whatever the description says.
 fn bool view_draws_prepass(ViewDesc* desc) @private {
     return desc.shading == ShadingPath.DEFERRED || forward_depth_prepass(desc);
