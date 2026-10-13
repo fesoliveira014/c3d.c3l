@@ -356,6 +356,7 @@ fn void print_stage_means(FrameSample[] samples) @local {
     float depth_of_field_ms;
     float motion_blur_ms;
     float post_chain_ms;
+
     foreach (sample : samples) {
         bloom_ms += sample.gpu_post_stage_ms[PostStage.BLOOM.ordinal];
         depth_of_field_ms += sample.gpu_post_stage_ms[PostStage.DEPTH_OF_FIELD.ordinal];
@@ -418,6 +419,7 @@ fn void? run_benchmark(Options* options) @local {
         renderer: &renderer,
         desc:     render::render_target_desc(flags.width, flags.height, PixelFormat.RGBA8_UNORM),
     )!;
+
     ViewDesc view_desc = render::texture_view_desc(target, OutputMode.DISPLAY_LDR);
     enable_effects(&view_desc, options);
     ViewId view = render::create_view(&renderer, view_desc)!;
