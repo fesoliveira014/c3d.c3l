@@ -316,19 +316,20 @@ Images a view allocates at creation, by setting:
 | `bloom` | +`bloom_params.levels` (5 by default, 8 at most) |
 | `depth_of_field` | +4, plus the 2 tile images |
 | `motion_blur` | +1, plus the 2 tile images |
-| Velocity, under `TAA`, `motion_blur` or `screen_space_gi` | +1 |
+| Velocity, under `TAA`, `motion_blur`, `screen_space_gi` or `ambient_occlusion.temporal` | +1 |
 | `DEFERRED` G-buffer | +5 |
 | `ambient_occlusion` | +2 |
+| `ambient_occlusion.temporal` | +4: two history and two depth images |
 | `screen_space_gi` | +7 |
 | `ray_tracing.reflections` | +2, and +1 on a `FORWARD` view |
 | `volumetric_fog` | +1 |
 | `PATH_TRACED`: accumulation, no sky images | 3 in all |
 
 `texture_view_desc` and `default_view_desc` hold 5 images. A raster view with `TAA`, eight bloom levels and every
-other row except the debug image, reflections and path tracing holds 41. Up to three images are allocated during a
-frame: the scene color and depth snapshots inside `render_view` when a material reads the scene, and the FXAA fallback
-output inside `finish_view` when FXAA cannot write the output rectangle directly. A headless renderer's default view
-holds none.
+other row except the debug image, temporal ambient occlusion, reflections and path tracing holds 41. Up to three
+images are allocated during a frame: the scene color and depth snapshots inside `render_view` when a material reads
+the scene, and the FXAA fallback output inside `finish_view` when FXAA cannot write the output rectangle directly.
+A headless renderer's default view holds none.
 
 Exhaustion faults come unchanged from gpu.c3l: a full texture table or attachment table faults `gpu::SLOT_TABLE_FULL`,
 a full heap `gpu::DESCRIPTOR_HEAP_FULL`. Creation faults leave no partial resource: `create_view`,
