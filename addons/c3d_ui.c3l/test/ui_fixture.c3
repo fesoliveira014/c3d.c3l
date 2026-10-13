@@ -34,6 +34,7 @@ struct Recorder {
     UiScope     source;
     String      source_list;
     uint        cell;
+    Vec2        offset;
     char[RECORDED_TEXT] text_bytes;
     usz         text_len;
 }
@@ -65,6 +66,7 @@ fn void record_action(void* user, UiScope* scope, UiEvent* event) {
     recorder.source = event.source;
     recorder.source_list = event.source_list;
     recorder.cell = event.cell;
+    recorder.offset = event.offset;
     recorder.text_len = event.text.len > RECORDED_TEXT ? RECORDED_TEXT : event.text.len;
     recorder.text_bytes[:recorder.text_len] = event.text[:recorder.text_len];
 }

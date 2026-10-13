@@ -30,6 +30,12 @@ enum UiScrollAxes @private {
     BOTH,
 }
 
+enum UiDragBounds @private {
+    PARENT,
+    VIEWPORT,
+    NONE,
+}
+
 struct UiRef @private {
     uint  binding; // UI_NONE: the literal
     float literal; // booleans as 0 or 1
@@ -77,6 +83,13 @@ struct UiElement @private {
     uint           rows;
     Vec2           cell_size;
     bool           has_tooltip;    // a tooltip child shows while the pointer is over this element
+    bool           window;
+    bool           has_windows;    // a child is a window
+    bool           drag_handle;
+    UiDragBounds   drag_bounds;
+    Vec2           position;       // a window's offset when its document loads
+    uint           window_of;      // nearest enclosing window element, itself included; UI_NONE outside windows
+    uint           window_slot;    // a window's index in Ui.windows
     uint[UiEventKind::len] actions; // indices in Ui.actions, UI_NONE without one
 }
 
@@ -117,27 +130,40 @@ fn UiDocumentId? Ui.load_document(&self, String jsonc) {
     begin_load(self);
     if (!self.documents.free_count) return c3d::CAPACITY_EXCEEDED~;
     UiDocument document = build_document(self, jsonc)!;
+    if (count_windows(&document) > free_window_slots(self)) {
+        free_document(self, &document);
+        return c3d::CAPACITY_EXCEEDED~;
+    }
+
     UiDocumentId id = self.documents.add(document)!;
     UiDocument* record = self.documents.get(id);
     record.id = id;
     record.order = self.next_order++;
+    assign_windows(self, record, null);
     invalidate_frame(self);
     return id;
 }
 
 <*
  Replace a document's tree; on a fault the old tree stays.
- Resets the document's focus, press and drag state; a scroll with an id keeps its offset.
+ Resets the document's focus, press and grid drag state. A scroll with an id keeps its offset, and a window with an
+ id keeps its offset, order and drag.
  @return? c3d::INVALID_ID, Ui.load_document!
 *>
 fn void? Ui.reload_document(&self, UiDocumentId document, String jsonc) {
     begin_load(self);
     UiDocument* record = self.documents.try_get(document)!;
     UiDocument replacement = build_document(self, jsonc)!;
-    free_document(self, record);
+    if (count_windows(&replacement) > free_window_slots(self) + count_windows(record)) {
+        free_document(self, &replacement);
+        return c3d::CAPACITY_EXCEEDED~;
+    }
+
     replacement.id = document;
     replacement.order = record.order;
     replacement.visible = record.visible;
+    assign_windows(self, &replacement, record);
+    free_document(self, record);
     *record = replacement;
     forget_document(self, document);
     invalidate_frame(self);
@@ -154,6 +180,7 @@ fn String Ui.load_error_path(&self) => (String)self.error_path[:self.error_path_
 *>
 fn void? Ui.unload_document(&self, UiDocumentId document) {
     UiDocument* record = self.documents.try_get(document)!;
+    release_windows(self, document);
     free_document(self, record);
     *record = {};
     self.documents.remove(document);
@@ -386,6 +413,8 @@ fn uint? load_element(
         .items             = UI_NONE,
         .image_binding     = UI_NONE,
         .uv                = { 0, 0, 1, 1 },
+        .window_of         = parent == UI_NONE ? UI_NONE : load.elements[parent].window_of,
+        .window_slot       = UI_NONE,
     };
     element.actions[..] = UI_NONE;
     load.elements.push(element);
@@ -400,11 +429,13 @@ fn uint? load_element(
     }
 
     if (try id = value.get("id")) read_element_id(load, index, id)!;
+    if (try window = value.get("window")) read_window(load, index, window)!;
 
     uint last_child = UI_NONE;
     foreach (key : sorted_keys(value)) {
         switch (key) {
             case "id":
+            case "window":
                 continue;
             case "kind":
             case "items":
@@ -505,6 +536,32 @@ fn void? read_element_id(UiLoad* load, uint index, Object* value) @private {
     pop_token(load);
 }
 
+fn void? read_window(UiLoad* load, uint index, Object* value) @private {
+    push_token(load, "window");
+    UiElement* element = &load.elements[index];
+    if (element.kind != PANEL) return fail_load(load, UNKNOWN_PROPERTY)~;
+    if (!value.is_bool()) return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+
+    if (value.b) {
+        if (!window_placement_valid(load, element) || !element.id_length) {
+            return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+        }
+
+        element.window = true;
+        element.window_of = index;
+        load.elements[element.parent].has_windows = true;
+    }
+
+    pop_token(load);
+}
+
+fn bool window_placement_valid(UiLoad* load, UiElement* element) @private {
+    if (element.parent == UI_NONE || load.list_depth > 0) return false;
+
+    UiElementKind parent_kind = load.elements[element.parent].kind;
+    return parent_kind == PANEL || parent_kind == SCROLL;
+}
+
 fn void? read_element_key(
     UiLoad* load,
     uint index,
@@ -594,6 +651,26 @@ fn void? read_element_key(
         case "cell_size":
             if (kind != GRID) return fail_load(load, UNKNOWN_PROPERTY)~;
             element.cell_size = read_pair(load, entry, false)!;
+        case "position":
+            if (!element.window) return fail_load(load, UNKNOWN_PROPERTY)~;
+            element.position = read_pair(load, entry, true)!;
+        case "drag_bounds":
+            if (!element.window) return fail_load(load, UNKNOWN_PROPERTY)~;
+            switch (read_word(load, entry)!) {
+                case "parent": element.drag_bounds = PARENT;
+                case "viewport": element.drag_bounds = VIEWPORT;
+                case "none": element.drag_bounds = NONE;
+                default: return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+            }
+        case "drag_handle":
+            if (element.window_of == UI_NONE) return fail_load(load, UNKNOWN_PROPERTY)~;
+            if (!entry.is_bool()) return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+            element.drag_handle = entry.b;
+        case "on_move_start":
+        case "on_move_end":
+            if (!element.window) return fail_load(load, UNKNOWN_PROPERTY)~;
+            UiEventKind move = key == "on_move_start" ? UiEventKind.MOVE_START : UiEventKind.MOVE_END;
+            element.actions[move.ordinal] = read_action(load, entry)!;
         case "on_click": element.actions[UiEventKind.CLICK.ordinal] = read_action(load, entry)!;
         case "on_secondary_click": element.actions[UiEventKind.SECONDARY_CLICK.ordinal] = read_action(load, entry)!;
         case "on_drop": element.actions[UiEventKind.DROP.ordinal] = read_action(load, entry)!;

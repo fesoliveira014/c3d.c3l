@@ -58,6 +58,8 @@ const float LOG_POINTER_FROM_RIGHT @local = 136; // inside the log's scroll area
 const float LOG_POINTER_Y @local = 120;
 const float FIXED_STEP_SECONDS @local = 1.0f / 60; // bounded runs step by this, so frame N is reproducible
 
+const uint WINDOW_SCRIPT_EVENTS @local = 2; // a motion and a button release in the same frame
+
 const uint BENCHMARK_ROWS @local = 50;
 const uint DEFAULT_BENCHMARK_FRAMES @local = 100;
 const uint BENCHMARK_WIDTH @local = 1920;
@@ -94,6 +96,7 @@ const String BENCHMARK_ROW @local = `{
 struct Options @local {
     bool benchmark;
     bool reload_scroll;
+    bool windows;
     uint frames;
     uint labels;
 }
@@ -139,6 +142,25 @@ struct Hud @local {
     bool   can_damage @tag("ui", true);
 }
 
+struct Desk @local {
+    bool inspector_open @tag("ui", true);
+    bool notes_open @tag("ui", true);
+}
+
+struct ScriptedDrag @local {
+    uint press_frame;
+    uint release_frame;
+    Vec2 from;          // layout units
+    Vec2 to;
+}
+
+// Layout units at 1280 x 720, calibrated to windows.jsonc: drag the inspector, raise the notes, drag the palette.
+const ScriptedDrag[3] WINDOW_SCRIPT @local = {
+    { .press_frame = 10, .release_frame = 20, .from = { 402, 446 }, .to = { 482, 462 } },
+    { .press_frame = 30, .release_frame = 32, .from = { 702, 516 }, .to = { 702, 516 } },
+    { .press_frame = 40, .release_frame = 55, .from = { 497, 518 }, .to = { 877, 518 } },
+};
+
 struct Icons @local {
     material::TextureRef potion;
     material::TextureRef ration;
@@ -183,6 +205,9 @@ struct Demo @local {
     LogLine[]         log_view;
     UiDocumentId      log_document;
     bool              reload_scroll;
+    bool              windows;
+    Desk              desk;
+    Event[WINDOW_SCRIPT_EVENTS] script_events;
     bool              drew_list;
 }
 
@@ -627,6 +652,66 @@ fn void? replay_log(Demo* demo, uint frame) @local {
     }
 }
 
+fn void on_window_moved(void* user, UiScope* scope, UiEvent* event) @local {
+    Demo* demo = user;
+    @pool() {
+        set_status(demo, string::tformat("Moved a window to %d, %d", (int)event.offset.x, (int)event.offset.y));
+    };
+}
+
+fn void on_close_inspector(void* user, UiScope* scope, UiEvent* event) @local {
+    Demo* demo = user;
+    demo.desk.inspector_open = false;
+}
+
+fn void on_close_notes(void* user, UiScope* scope, UiEvent* event) @local {
+    Demo* demo = user;
+    demo.desk.notes_open = false;
+}
+
+fn void on_reset_windows(void* user, UiScope* scope, UiEvent* event) @local {
+    Demo* demo = user;
+    demo.desk = { .inspector_open = true, .notes_open = true };
+}
+
+fn void? load_windows(Demo* demo) @local {
+    Ui* ui = demo.ui;
+    demo.desk = { .inspector_open = true, .notes_open = true };
+    ui.@bind_fields(prefix: "desk", $Type: Desk, instance: &demo.desk)!;
+    ui.on("windows.moved", &on_window_moved, demo)!;
+    ui.on("windows.close_inspector", &on_close_inspector, demo)!;
+    ui.on("windows.close_notes", &on_close_notes, demo)!;
+    ui.on("windows.reset", &on_reset_windows, demo)!;
+
+    char[] document = $embed("ui/windows.jsonc");
+    ui.load_document((String)document)!;
+}
+
+fn Event[] replay_windows(Demo* demo, uint frame) @local {
+    Input* input = &demo.window.input;
+    uint count;
+    foreach (&drag : WINDOW_SCRIPT) {
+        if (frame < drag.press_frame || frame > drag.release_frame) continue;
+
+        float progress = (float)(frame - drag.press_frame) / (float)(drag.release_frame - drag.press_frame);
+        Vec2 at = (drag.from + (drag.to - drag.from) * progress) * demo.window.pixel_density;
+        input.mouse_position = at;
+        input.mouse_buttons[(usz)platform::MouseButton.LEFT] = frame != drag.release_frame;
+
+        if (frame == drag.press_frame) {
+            demo.script_events[count++] = { .kind = MOUSE_BUTTON_DOWN, .button = LEFT, .position = at };
+            continue;
+        }
+
+        demo.script_events[count++] = { .kind = MOUSE_MOTION, .position = at };
+        if (frame == drag.release_frame) {
+            demo.script_events[count++] = { .kind = MOUSE_BUTTON_UP, .button = LEFT, .position = at };
+        }
+    }
+
+    return demo.script_events[:count];
+}
+
 fn String source_directory() @local {
     String path = $$FILEPATH;
     usz end = path.len;
@@ -724,11 +809,14 @@ fn void? run_interactive(Demo* demo, uint frame_limit) @local {
 
         if (demo.reload_scroll) replay_log(demo, frames)!;
 
+        Event[] events = window.events();
+        if (demo.windows && frame_limit) events = replay_windows(demo, frames);
+
         Input* input = &window.input;
-        // A field blurs on Escape down, so the release that follows must not quit.
+        // A field blurs and a window drag cancels on Escape down, so the release that follows must not quit.
         bool typing = ui.wants_text_input || input.keyboard_captured_by_gui;
-        ui.route_input(input, window.events());
-        if (input.key_pressed(platform::Scancode.ESCAPE)) escape_captured = typing;
+        ui.route_input(input, events);
+        if (input.key_pressed(platform::Scancode.ESCAPE)) escape_captured = typing || input.keyboard_captured_by_gui;
         if (input.key_released(platform::Scancode.ESCAPE)) {
             if (!escape_captured && !typing) break;
             escape_captured = false;
@@ -936,8 +1024,10 @@ fn int main(String[] args) {
             options.labels = args[++index].to_uint() ?? 0;
         } else if (argument == "--reload-scroll") {
             options.reload_scroll = true;
+        } else if (argument == "--windows") {
+            options.windows = true;
         } else {
-            io::eprintn("Use ui [--frames N] [--reload-scroll] [--benchmark --frames F [--labels N]].");
+            io::eprintn("Use ui [--frames N] [--reload-scroll] [--windows] [--benchmark --frames F [--labels N]].");
             return 1;
         }
     }
@@ -1023,11 +1113,13 @@ fn int main(String[] args) {
         .cube            = cube,
         .portrait_view   = portrait_view,
         .reload_scroll   = options.reload_scroll,
+        .windows         = options.windows,
     };
     create_squad(&demo, &assets, portrait)!!;
     register_squad(&demo)!!;
     load_embedded(&demo)!!;
     if (options.reload_scroll) load_log(&demo)!!;
+    if (options.windows) load_windows(&demo)!!;
 
     if (catch excuse = run_interactive(&demo, options.frames)) {
         io::eprintfn("UI example failed: %s", excuse);

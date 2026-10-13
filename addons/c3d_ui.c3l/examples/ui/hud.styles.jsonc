@@ -79,6 +79,21 @@
     "border": { "width": 1, "color": "#7a8aa8ff" },
     "hover": { "fill": "#3d4f6eff" }
   },
+  "window": {
+    "fill": "#1b1e27ff",
+    "radius": 6,
+    "direction": "column",
+    "border": { "width": 1, "color": "#7a8aa8ff" }
+  },
+  "title_bar": {
+    "fill": "#2c3550ff",
+    "radius": [6, 6, 0, 0],
+    "padding": [8, 4],
+    "gap": 8,
+    "width": "grow",
+    "align": ["left", "center"]
+  },
+  "close": { "extends": "button", "padding": [6, 1], "fill": "#4a2222ff", "hover": { "fill": "#6a3030ff" } },
   "tooltip": {
     "fill": "#0b0c10f2",
     "radius": 4,

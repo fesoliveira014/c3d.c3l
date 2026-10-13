@@ -15,7 +15,10 @@ struct UiDeclare @private {
     Ui*   ui;
     fault failure;
     short band;              // z of the document being declared
+    short z;                 // z of the nearest enclosing window, the band outside windows
+    uint  windows;           // windows declared in the document being declared
     bool  drag_source_found; // the dragged item is still declared this frame
+    bool  handle_found;      // a drag handle of the dragged window is still declared this frame
 }
 
 struct UiPlacement @private {
@@ -56,14 +59,17 @@ fn void? Ui.update(
     self.frame_ready = false;
     self.scale = scale;
     self.delta_seconds = delta_seconds;
+    self.layout_size = { (float)width / scale, (float)height / scale };
+    foreach (&window : self.windows) window.instance = UI_NONE;
 
-    clay::set_layout_dimensions({ (float)width / scale, (float)height / scale });
+    clay::set_layout_dimensions({ self.layout_size.x, self.layout_size.y });
     clay::begin_layout();
     UiDeclare declare = { .ui = self };
     uint stack_count = stack_documents(self);
     for (uint rank = 0; rank < stack_count; rank++) {
         UiDocument* document = self.document_stack[rank];
-        declare.band = (short)rank * UI_Z_BAND;
+        declare.z = declare.band;
+        declare.windows = 0;
         clay::AttachPoint anchor = attach_point(document.anchor);
         UiPlacement placement = {
             .floating = {
@@ -86,8 +92,11 @@ fn void? Ui.update(
             inherited: {},
             placement: &placement,
         );
+
+        declare.band += (short)(UI_Z_BAND + 2 * declare.windows);
     }
     if (self.drag.active && !declare.drag_source_found) self.drag = {};
+    if (!declare.failure) check_window_drag(self, &declare);
     declare_ghost(&declare);
     clay::RenderCommandArray commands = clay::end_layout(0);
     self.stats.instances = self.instance_count;
@@ -196,7 +205,8 @@ fn float ref_number(Ui* ui, UiRef* reference, UiScope* scope) @private {
 
 fn bool is_interactive(UiElement* element) @private {
     if (element.kind == BUTTON || element.kind == TEXT_FIELD) return true;
-    foreach (action : element.actions) {
+    foreach (kind, action : element.actions) {
+        if (kind == UiEventKind.MOVE_START.ordinal || kind == UiEventKind.MOVE_END.ordinal) continue;
         if (action != UI_NONE) return true;
     }
     return false;
@@ -353,6 +363,7 @@ fn void declare_element(
     UiElementKey key = { .document = document.id, .element = index, .scope = *scope };
     bool interactive = is_interactive(element) || placement.list != UI_NONE;
     if (placement.hit && ui.drag.active && same_key(&key, &ui.drag.source)) declare.drag_source_found = true;
+    track_drag_handle(declare, document, element);
     UiStateFlags state = inherited;
     // An interactive element takes its own hover and press, not its ancestor's.
     if (interactive) {
@@ -365,6 +376,10 @@ fn void declare_element(
     if (!ref_bool(ui, &element.enabled, scope)) state.disabled = true;
 
     if (ui.instance_count == ui.instances.len) return fail_declare(declare, c3d::CAPACITY_EXCEEDED);
+
+    short outer_z = declare.z;
+    if (element.window && !claim_window_z(declare, placement)) return fail_declare(declare, c3d::CAPACITY_EXCEEDED);
+
     uint instance_index = ui.instance_count;
     ui.instance_count++;
     UiInstance* instance = &ui.instances[instance_index];
@@ -425,6 +440,7 @@ fn void declare_element(
         scope:          scope,
     );
     clay::close_element();
+    declare.z = outer_z;
 }
 
 fn void? prepare_instance(Ui* ui, UiInstance* instance, UiScope* scope) @private {
@@ -521,6 +537,8 @@ fn void declare_contents(
         case SCROLL:
         case TOOLTIP:
             for (uint child = element.first_child; child != UI_NONE; child = document.elements[child].next_sibling) {
+                if (document.elements[child].window) continue;
+
                 UiPlacement placement = { .hit = true, .grid = UI_NONE, .list = UI_NONE };
                 if (document.elements[child].kind == TOOLTIP) {
                     if (!pointer_over(ui, &instance.key)) continue;
@@ -539,6 +557,17 @@ fn void declare_contents(
                     scope:     scope,
                     inherited: inherited,
                     placement: &placement,
+                );
+            }
+
+            if (element.has_windows) {
+                declare_windows(
+                    declare:      declare,
+                    document:     document,
+                    parent:       element,
+                    parent_index: instance_index,
+                    inherited:    inherited,
+                    scope:        scope,
                 );
             }
         case IMAGE:
@@ -578,7 +607,7 @@ fn void declare_grid_items(
                     padding.x + column * grid.cell_size.x,
                     padding.y + row * grid.cell_size.y,
                 },
-                .z_index              = declare.band + 1,
+                .z_index              = declare.z + 1,
                 .attach_points        = { .element = LEFT_TOP, .parent = LEFT_TOP },
                 .pointer_capture_mode = CAPTURE,
                 .attach_to            = PARENT,
