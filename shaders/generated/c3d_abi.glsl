@@ -66,6 +66,7 @@ const uint DRAW_SWAY_VERTEX_ALPHA = 32u;
 const uint DRAW_VERTEX_HISTORY_INVALID = 64u;
 const uint DRAW_TRACED_REFLECTION = 128u;
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1u;
+const uint AO_TEMPORAL_FLAG_HISTORY_VALID = 1u;
 const uint SSGI_FLAG_GBUFFER_NORMALS = 1u;
 const uint SSGI_FLAG_HISTORY_VALID = 2u;
 const uint MATERIAL_MAP_BASE_COLOR = 1u;
@@ -613,6 +614,24 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer AoBlurRoot {
     uint _pad0;
     uint _pad1;
     uint _pad2;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer AoTemporalRoot {
+    uint64_t frame;
+    uint raw;
+    uint history;
+    uint previous_depth;
+    uint depth;
+    uint velocity;
+    uint output_texture;
+    uint output_depth;
+    uint sampler_index;
+    uint width;
+    uint height;
+    float depth_tolerance;
+    float velocity_threshold;
+    uint flags;
+    uint _pad0;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer SsgiTraceRoot {

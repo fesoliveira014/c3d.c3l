@@ -282,14 +282,15 @@ fn void? record_raster_view(
     Vec2 viewport = { (float)record.hdr_color.width, (float)record.hdr_color.height };
     bool taa = record.desc.post.anti_aliasing == AntiAliasing.TAA;
     bool screen_space_gi = record.desc.screen_space_gi.enabled;
-    bool temporal = taa || record.desc.post.motion_blur || screen_space_gi;
     bool ambient_occlusion = record.desc.ambient_occlusion.kind != AoKind.NONE;
+    bool temporal = taa || record.desc.post.motion_blur || screen_space_gi
+      || ambient_occlusion_accumulates(&record.desc);
     bool forward_reflections = record.desc.ray_tracing.reflections && record.desc.shading == ShadingPath.FORWARD;
     bool forward_prepass = forward_depth_prepass(&record.desc);
     bool multisample = record.desc.msaa != MsaaSamples.ONE;
     bool early_velocity = velocity_before_lighting(&record.desc);
     bool late_velocity = temporal && !early_velocity;
-    bool ssgi_history_valid = record.history.valid && record.history.scene == scene.identity;
+    bool history_valid = record.history.valid && record.history.scene == scene.identity;
     Vec2 jitter = taa
       ? post::taa_jitter(record.history.sample_index, record.hdr_color.width, record.hdr_color.height)
       : (Vec2){};
@@ -1021,9 +1022,18 @@ fn void? record_raster_view(
                             jitter:    jitter,
                         )!;
                     }
-                    if (ambient_occlusion) record_ambient_occlusion(renderer, record, frame_span.address)!;
+
+                    if (ambient_occlusion) {
+                        record_ambient_occlusion(
+                            renderer:      renderer,
+                            record:        record,
+                            frame:         frame_span.address,
+                            history_valid: history_valid,
+                        )!;
+                    }
+
                     if (screen_space_gi) {
-                        record_screen_space_gi(renderer, record, frame_span.address, ssgi_history_valid)!;
+                        record_screen_space_gi(renderer, record, frame_span.address, history_valid)!;
                     }
                     if (forward_reflections) {
                         ReflectionLights reflection_lights = upload_reflection_lights(
@@ -1099,7 +1109,7 @@ fn void? record_raster_view(
                         sky:                environments.sky != null,
                         atmosphere:         environments.atmosphere != null,
                         clear_color:        clear_color,
-                        ssgi_history_valid: ssgi_history_valid,
+                        history_valid:      history_valid,
                         reflection_lights:  reflection_lights,
                     )!;
                 case PATH_TRACED:
@@ -1567,9 +1577,10 @@ fn bool forward_depth_prepass(ViewDesc* desc) @private {
         || (desc.ray_tracing.reflections && desc.shading == ShadingPath.FORWARD);
 }
 
-// On a screen-space GI view the velocity feeds the effect before lighting; elsewhere it records after the scene.
+// On a view whose screen-space GI or ambient occlusion accumulates, the velocity feeds the effect before lighting;
+// elsewhere it records after the scene.
 fn bool velocity_before_lighting(ViewDesc* desc) @private {
-    return desc.screen_space_gi.enabled;
+    return desc.screen_space_gi.enabled || ambient_occlusion_accumulates(desc);
 }
 
 <*

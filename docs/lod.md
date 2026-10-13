@@ -310,8 +310,8 @@ invalidates temporal correspondence, and selects fresh when classification
 resumes. Other groups may still fit. GPU allocation failures remain faults.
 
 Fresh and incompatible LOD pixels write one into velocity alpha; stable compatible pixels write
-zero. Velocity xy and previous depth z retain their meaning. TAA and screen-space
-GI reject those pixels without discarding view history. Custom stages using
+zero. Velocity xy and previous depth z retain their meaning. TAA, screen-space
+GI and temporal ambient occlusion reject those pixels without discarding view history. Custom stages using
 `write_mesh_outputs` inherit the part and velocity contracts.
 
 ## Other consumers

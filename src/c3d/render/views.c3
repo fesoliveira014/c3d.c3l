@@ -99,7 +99,8 @@ struct ViewDesc {
  Working images one view owns, in view_targets order.
 *>
 const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8 + GBUFFER_CHANNEL_COUNT
-  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1 + 1 + 2 * SSGI_HISTORY_SLOTS + 2 + 1 + 3 + 2 + 1 + 2 + 1 + 1 + 2 + 4;
+  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1 + 1 + 2 * SSGI_HISTORY_SLOTS + 2 + 1 + 3 + 2 + 1 + 2 + 1 + 1 + 2
+  + 2 * AO_HISTORY_SLOTS + 4;
 
 <*
  Reverse-Z projection terms that recover forward distance from stored depth.
@@ -629,6 +630,8 @@ struct ViewRecord {
     Target                               taa_debug;
     Target                               ao_raw;
     Target                               ao;
+    Target[AO_HISTORY_SLOTS]             ao_history;
+    Target[AO_HISTORY_SLOTS]             ao_depth;
     Target                               reflection;
     Target                               reflection_blur;
     Target                               reflection_gbuffer;
@@ -751,10 +754,17 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
     targets[next + 13 + 2 * SSGI_HISTORY_SLOTS] = &record.cloud_shadow;
     targets[next + 14 + 2 * SSGI_HISTORY_SLOTS] = &record.clouds[1];
     targets[next + 15 + 2 * SSGI_HISTORY_SLOTS] = &record.cloud_distances[1];
-    targets[next + 16 + 2 * SSGI_HISTORY_SLOTS] = &record.msaa_color;
-    targets[next + 17 + 2 * SSGI_HISTORY_SLOTS] = &record.msaa_depth;
-    targets[next + 18 + 2 * SSGI_HISTORY_SLOTS] = &record.msaa_velocity;
-    targets[next + 19 + 2 * SSGI_HISTORY_SLOTS] = &record.msaa_reflection_gbuffer;
+    next += 16 + 2 * SSGI_HISTORY_SLOTS;
+    for (uint slot = 0; slot < AO_HISTORY_SLOTS; slot++) {
+        targets[next + slot] = &record.ao_history[slot];
+        targets[next + AO_HISTORY_SLOTS + slot] = &record.ao_depth[slot];
+    }
+
+    next += 2 * AO_HISTORY_SLOTS;
+    targets[next] = &record.msaa_color;
+    targets[next + 1] = &record.msaa_depth;
+    targets[next + 2] = &record.msaa_velocity;
+    targets[next + 3] = &record.msaa_reflection_gbuffer;
     return targets;
 }
 
@@ -1196,6 +1206,13 @@ fn void drop_unwanted_images(ViewRecord* staged, ViewDesc* previous) @private {
         staged.ao_raw = {};
         staged.ao = {};
     }
+
+    if (!ambient_occlusion_accumulates(desc)
+        || ambient_occlusion.full_resolution != previous.ambient_occlusion.full_resolution) {
+        staged.ao_history = {};
+        staged.ao_depth = {};
+    }
+
     if (!desc.screen_space_gi.enabled) {
         staged.ssgi_raw = {};
         staged.ssgi_history = {};

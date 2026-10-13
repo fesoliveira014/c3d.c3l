@@ -78,6 +78,7 @@ enum ShaderName : int {
     FOCUS_ADAPT,
     SSAO,
     AO_BLUR,
+    AO_TEMPORAL,
     PROBE_FILL_ENVIRONMENT,
     PROBE_BORDER,
     PROBE_TRACE,
@@ -320,6 +321,7 @@ const char[*] FOCUS_HISTOGRAM_SPIRV @private = $embed("../../../shaders/spv/focu
 const char[*] FOCUS_ADAPT_SPIRV @private = $embed("../../../shaders/spv/focus_adapt.spv");
 const char[*] SSAO_SPIRV @private = $embed("../../../shaders/spv/ssao.spv");
 const char[*] AO_BLUR_SPIRV @private = $embed("../../../shaders/spv/ao_blur.spv");
+const char[*] AO_TEMPORAL_SPIRV @private = $embed("../../../shaders/spv/ao_temporal.spv");
 const char[*] PROBE_FILL_ENVIRONMENT_SPIRV @private = $embed("../../../shaders/spv/probe_fill_environment.spv");
 const char[*] PROBE_BORDER_SPIRV @private = $embed("../../../shaders/spv/probe_border.spv");
 const char[*] PROBE_TRACE_SPIRV @private = $embed("../../../shaders/spv/probe_trace.spv");
@@ -409,7 +411,7 @@ const char[*] SAMPLE_ZERO_SPIRV @private = $embed("../../../shaders/spv/sample_z
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[215] SHADER_ENTRIES = {
+const ShaderEntry[216] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -540,6 +542,7 @@ const ShaderEntry[215] SHADER_ENTRIES = {
     { .variant = { .shader = FOCUS_ADAPT }, .spirv = FOCUS_ADAPT_SPIRV[..] },
     { .variant = { .shader = SSAO }, .spirv = SSAO_SPIRV[..] },
     { .variant = { .shader = AO_BLUR }, .spirv = AO_BLUR_SPIRV[..] },
+    { .variant = { .shader = AO_TEMPORAL }, .spirv = AO_TEMPORAL_SPIRV[..] },
     { .variant = { .shader = PROBE_FILL_ENVIRONMENT }, .spirv = PROBE_FILL_ENVIRONMENT_SPIRV[..] },
     { .variant = { .shader = PROBE_BORDER }, .spirv = PROBE_BORDER_SPIRV[..] },
     { .variant = { .shader = PROBE_TRACE }, .spirv = PROBE_TRACE_SPIRV[..] },
