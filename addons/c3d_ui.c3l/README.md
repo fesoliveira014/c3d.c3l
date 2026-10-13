@@ -467,11 +467,24 @@ whose rich labels need more pieces than the table holds; that frame draws nothin
 
 ## Measured costs
 
-`ui --benchmark --frames F [--labels N]` needs no window or device. It lays out a HUD of 50 rows (485 elements, 200
-bound values: a name, a formatted number, a bar fraction and a visibility flag per row) at 1920 x 1080, moves a
-synthetic pointer across it, clicks every 8th frame, changes one row's values every frame, and prints the mean CPU
-time per frame of `route_input`, `update` and `draw` after F warm-up frames. `--labels N` adds a document of N labels
-in a scroll area; Clay culls the labels outside the window, so they cost layout but few glyphs.
+`ui --benchmark --frames F [--labels N] [--windows N] [--rich N] [--transitions]` needs no window or device. It lays
+out a HUD of 50 rows (485 elements, 200 bound values: a name, a formatted number, a bar fraction and a visibility flag
+per row) at 1920 x 1080, moves a synthetic pointer across it, clicks every 8th frame, changes one row's values every
+frame, and prints the mean CPU time per frame of `route_input`, `update` and `draw` after F warm-up frames.
+
+- `--labels N` adds a document of N labels in a scroll area; Clay culls the labels outside the window, so they cost
+  layout but few glyphs.
+- `--windows N` adds a document of N windows of 20 elements each and drags the first one with synthetic events: a
+  press on its title bar, a motion each frame and a release, to one side and back. The drag takes 16 of every 32
+  frames and the HUD sweep the rest.
+- `--rich N` adds a scroll of N rich labels, each with three spans and two wrapped lines.
+- `--transitions` gives the HUD rows a hover fade and an exit: the last row leaves every 30 frames and returns 15
+  frames later.
+
+The output line also holds `text_pieces`, the largest `transitions` and `exiting` over the measured frames, `moves`
+(window drags released in the measured frames), `resident_bytes` (the `create_ui` storage plus Clay's memory) and
+`allocations`: the allocations made through the allocator that the UI, the asset store and the overlay list share,
+counted over the measured frames; the count is 0.
 
 Measured on an Intel i9-14900K under WSL, c3c 0.8.3, `--opt O3`, `--frames 200`:
 
