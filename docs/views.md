@@ -303,9 +303,10 @@ An editor with a game view, two viewports and live thumbnails drawn through `ren
 1 + 1 + 2 + 1.
 
 Every working image of a view and every render target holds one texture-table entry and one heap slot, except a
-view's attachment-only multisample images, `msaa_color` and a forward view's `msaa_depth`, which hold no heap slot. A render target
-also holds one attachment view. So do a view's `hdr_color`, `depth`, scene snapshots, weighted accumulation and revealage, velocity, G-buffer
-and SSGI color, at most 13 per view, and each multisample image, at most 4 more. gpu.c3l's attachment table holds 4,096 views and cannot be configured: a renderer with
+view's attachment-only multisample images, `msaa_color` and a forward view's `msaa_depth`, which hold no heap slot.
+A render target also holds one attachment view. So do a view's `hdr_color`, `depth`, scene snapshots, weighted
+accumulation and revealage, velocity, G-buffer and SSGI color, at most 13 per view, and each multisample image, at
+most 4 more. gpu.c3l's attachment table holds 4,096 views and cannot be configured: a renderer with
 three plain views holds at most 4,090 render targets, whatever `texture_capacity` allows. Asset textures share the
 table and the heap with the renderer. `default_asset_store_desc()` holds 4,096 textures and the table 1,024 by
 default, so a store filled past about 1,000 uploaded textures faults on upload unless `texture_capacity` is raised.
@@ -645,8 +646,9 @@ Every later pass reads single-sample images, as on a view without the field: clo
 perspective, scene-read and transmission draws, weighted and sorted transparency, the screen-space GI color copy,
 exposure, debug lines, motion blur, depth of field, bloom, grading, FXAA and the output. An MSAA view therefore always
 takes the split a fogged view takes: blended draws and scene readers draw after the resolve, single-sample, against the
-resolved `depth`. Those passes test pixel-centre fragments against sample 0's depth, so a blended or scene-reading surface
-meeting an opaque silhouette shows a slight fringe where the resolved color and the sample-0 depth disagree.
+resolved `depth`. Those passes test pixel-centre fragments against sample 0's depth, so a blended or
+scene-reading surface meeting an opaque silhouette shows a slight fringe where the resolved color and the sample-0
+depth disagree.
 
 Velocity is not averaged. Camera velocity and the redraw of moved opaque items run at the view's count against
 `msaa_depth` into `msaa_velocity`, and a copy of sample 0 fills `velocity`. Moved depth writers among the scene-read
@@ -709,7 +711,8 @@ python3 scripts/build.py --example deferred
 switches either half at runtime and lists the G-buffer channels of the deferred view in the targets
 panel. Key `M` and the panel's MSAA row cycle both views through 1, 2, 4 and 8 samples, and
 `--msaa <1|2|4|8>` starts with a count. A view whose configuration faults keeps the count it had and the panel
-names the fault: the deferred half stays at 1 sample with `UNSUPPORTED`. It includes 64 bullet-hole decals on the floor and opaque boxes plus a
+names the fault: the deferred half stays at 1 sample with `UNSUPPORTED`.
+It includes 64 bullet-hole decals on the floor and opaque boxes plus a
 road-paint stripe parented to the orbiting lamp: 65 decals in total. The Decals
 checkbox changes their node visibility, and the panel prints packed, dropped and
 overflow counts for each view. `--clustered` starts both views with clustered

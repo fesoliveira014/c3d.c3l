@@ -38,6 +38,7 @@ fn bool? msaa_image_supported(MsaaProbe* probe, gpu::Format format, gpu::Texture
         .access       = { .graphics },
         .sample_count = probe.samples,
     };
+
     return gpu::supports_texture_desc(&probe.renderer.device, &desc);
 }
 
