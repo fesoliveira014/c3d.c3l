@@ -60,6 +60,39 @@ float rounded_box_distance(vec2 local, vec2 half_extent, vec4 radii) {
     return min(max(corner.x, corner.y), 0.0) + length(max(corner, 0.0)) - radius;
 }
 
+// Signed distance to a triangle of either winding, negative inside; a triangle with no area is empty.
+float triangle_distance(vec2 point, vec2 first, vec2 second, vec2 third) {
+    vec2 edge_a = second - first;
+    vec2 edge_b = third - second;
+    vec2 edge_c = first - third;
+    vec2 from_first = point - first;
+    vec2 from_second = point - second;
+    vec2 from_third = point - third;
+    vec2 near_a = from_first - edge_a * clamp(dot(from_first, edge_a) / max(dot(edge_a, edge_a), 1e-12), 0.0, 1.0);
+    vec2 near_b = from_second - edge_b * clamp(dot(from_second, edge_b) / max(dot(edge_b, edge_b), 1e-12), 0.0, 1.0);
+    vec2 near_c = from_third - edge_c * clamp(dot(from_third, edge_c) / max(dot(edge_c, edge_c), 1e-12), 0.0, 1.0);
+
+    float winding = sign(edge_a.x * edge_c.y - edge_a.y * edge_c.x);
+    if (winding == 0.0) {
+        return 1e30;
+    }
+
+    // x: squared distance to the nearest edge. y: the smallest side-of-edge value, positive only inside all three.
+    vec2 nearest = min(
+        min(
+            vec2(dot(near_a, near_a), winding * (from_first.x * edge_a.y - from_first.y * edge_a.x)),
+            vec2(dot(near_b, near_b), winding * (from_second.x * edge_b.y - from_second.y * edge_b.x))),
+        vec2(dot(near_c, near_c), winding * (from_third.x * edge_c.y - from_third.y * edge_c.x)));
+    return nearest.y > 0.0 ? -sqrt(nearest.x) : sqrt(nearest.x);
+}
+
+// Distance to the line between two points, which may coincide.
+float segment_distance(vec2 point, vec2 from, vec2 to) {
+    vec2 axis = to - from;
+    vec2 from_start = point - from;
+    return length(from_start - axis * clamp(dot(from_start, axis) / max(dot(axis, axis), 1e-12), 0.0, 1.0));
+}
+
 // Texture coordinate and its change per pixel along one axis; zero margins map the span linearly.
 vec2 slice_axis(
     float position,
@@ -177,6 +210,26 @@ void main() {
 #ifndef TRANSFORMED
     vec2 position = gl_FragCoord.xy;
 #endif
+
+    if (kind == OVERLAY_KIND_TRIANGLE || kind == OVERLAY_KIND_SEGMENT) {
+        float shape_distance;
+        if (kind == OVERLAY_KIND_TRIANGLE) {
+            vec2 third = vec2(uintBitsToFloat(item.radii_top), uintBitsToFloat(item.radii_bottom));
+            shape_distance = triangle_distance(position, item.uv_rect.xy, item.uv_rect.zw, third);
+        } else {
+            shape_distance = segment_distance(position, item.uv_rect.xy, item.uv_rect.zw)
+                - uintBitsToFloat(item.radii_top);
+        }
+
+        vec4 shape_color = unpackUnorm4x8(item.fill);
+#ifdef TRANSFORMED
+        float shape_coverage = clamp(0.5 - shape_distance / overlay_edge_width(shape_distance, transformed), 0.0, 1.0);
+        out_color = vec4(srgb_to_linear(shape_color.rgb), shape_color.a * shape_coverage * clip_coverage);
+#else
+        out_color = vec4(srgb_to_linear(shape_color.rgb), shape_color.a * clamp(0.5 - shape_distance, 0.0, 1.0));
+#endif
+        return;
+    }
 
     vec2 center = (item.bounds.xy + item.bounds.zw) * 0.5;
     vec2 half_extent = (item.bounds.zw - item.bounds.xy) * 0.5;

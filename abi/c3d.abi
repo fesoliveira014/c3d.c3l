@@ -655,6 +655,10 @@ root GuiFragmentRoot {
 // Items of one overlay list, tagged by kind.
 const uint OVERLAY_KIND_RECT = 0;
 const uint OVERLAY_KIND_GLYPH = 1;
+// A triangle holds its first two points in uv_rect and the third as float bits in radii_top and radii_bottom.
+const uint OVERLAY_KIND_TRIANGLE = 2;
+// A segment holds its end points in uv_rect and its half width as float bits in radii_top.
+const uint OVERLAY_KIND_SEGMENT = 3;
 // Kind bits of sampler_kind_flags after OVERLAY_KIND_SHIFT.
 const uint OVERLAY_KIND_MASK = 255;
 // Texels per row of the font curve and band textures.
