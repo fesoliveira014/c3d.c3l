@@ -288,6 +288,7 @@ fn void? add_transform_panel(Demo* demo, float time) @local {
     OverlayList* list = demo.list;
     float angle = TRANSFORM_ANGLE + TRANSFORM_ANGLE_SWING * math::sin(time * TRANSFORM_ANGLE_SPEED);
     float scale = TRANSFORM_SCALE + TRANSFORM_SCALE_SWING * math::sin(time * TRANSFORM_SCALE_SPEED);
+
     list.push_transform(placement_transform(TRANSFORM_CENTER, angle))!;
     list.push_transform(scale_transform(scale))!;
     list.push_clip(TRANSFORM_CLIP_MIN, TRANSFORM_CLIP_MAX)!;
@@ -328,6 +329,7 @@ fn void? add_transform_panel(Demo* demo, float time) @local {
     button.border_widths = { 2, 2, 2, 2 };
     button.border_color = SAMPLE_BORDER;
     list.add_rect(button)!;
+
     list.add_rect(solid_rect(
         min:    TRANSFORM_BAR_MIN,
         max:    TRANSFORM_BAR_MAX,
