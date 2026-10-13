@@ -19,7 +19,7 @@ const uint ATMOSPHERE_CAPACITY = 4; // one per scene rendered in a frame; each h
 <*
  Face size of an atmosphere's source and specular cubes.
 *>
-const uint SKY_ENVIRONMENT_SIZE = 64; // 192 KiB and 256 KiB; a regeneration marches 24,576 texels and prefilters 32,760
+const uint SKY_ENVIRONMENT_SIZE = 64; // 256 KiB each; a regeneration marches 24,576 texels and prefilters 32,760
 
 <*
  Sun motion that regenerates an atmosphere's lighting.
@@ -405,6 +405,7 @@ fn void? create_atmosphere(Renderer* renderer, AtmosphereRes* mirror) @private {
     )!;
     EnvironmentRes* lighting = &mirror.lighting;
     lighting.source_owned = true;
+    lighting.source_full_chain = true;
     lighting.source_size = SKY_ENVIRONMENT_SIZE;
     lighting.specular_size = SKY_ENVIRONMENT_SIZE;
     lighting.source_ready = true;
@@ -647,6 +648,9 @@ fn void? record_sky_environment(
         };
         gpu::cmd_dispatch(commands, root.address, { groups, groups, 1 })!;
     }
+
+    record_source_mips(renderer, commands, lighting)!;
+
     gpu::TextureBarrier ready = gpu::texture_transition(
         texture: lighting.source_cube,
         before:  write.after,

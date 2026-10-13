@@ -85,6 +85,7 @@
       "defines": ["RT_SHADOWS", "SCENE_TRACE_BVH", "WEIGHTED_BLEND", "RT_SHADOWS_HARD"] },
     { "shader": "toon_outline", "source": "toon_outline.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "environment_source", "source": "environment_source.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "environment_downsample", "source": "environment_downsample.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "environment_prefilter", "source": "environment_prefilter.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "sheen_prefilter", "source": "sheen_prefilter.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "irradiance_project", "source": "irradiance_project.comp.glsl", "stage": "comp", "defines": [] },

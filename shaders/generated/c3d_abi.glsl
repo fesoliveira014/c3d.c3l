@@ -122,7 +122,6 @@ const uint ENVIRONMENT_FACE_POSITIVE_Z = 4u;
 const uint ENVIRONMENT_FACE_NEGATIVE_Z = 5u;
 const uint ENVIRONMENT_FACE_COUNT = 6u;
 const uint ENVIRONMENT_SPECULAR_MIPS = 6u;
-const uint ENVIRONMENT_PREFILTER_SAMPLES = 4096u;
 const uint ENVIRONMENT_BRDF_SAMPLES = 1024u;
 const uint ENVIRONMENT_SH_GROUPS = 64u;
 const uint ENVIRONMENT_SH_GROUP_SIZE = 64u;
@@ -179,7 +178,6 @@ const uint PHYSICAL_EXTENSION_MAP_TRANSMISSION = 8u;
 const uint PHYSICAL_EXTENSION_MAP_THICKNESS = 16u;
 const uint SHEEN_LUT_SIZE = 256u;
 const uint SHEEN_LUT_SAMPLES = 4096u;
-const uint SHEEN_PREFILTER_SAMPLES = 4096u;
 const uint CUSTOM_TEXTURE_SLOTS = 8u;
 const uint CUSTOM_MAP_UV1_SHIFT = 8u;
 const uint MATERIAL_KIND_BASIC = 0u;
@@ -1118,8 +1116,15 @@ layout(buffer_reference, std430, buffer_reference_align = 4) buffer EnvironmentP
     uint face;
     uint size;
     float roughness;
+    uint sample_count;
+    uint source_size;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer EnvironmentDownsampleRoot {
+    uint input_texture;
+    uint output_texture;
+    uint size;
     uint _pad0;
-    uint _pad1;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer IrradianceProjectRoot {

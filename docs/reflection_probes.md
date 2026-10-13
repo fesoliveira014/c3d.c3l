@@ -128,10 +128,14 @@ Per probe:
 
 | Face size | Source cube (GPU) | GGX cube | SH buffers | Charlie cube (sheen only) | CPU copy | Capture readback (temporary) |
 | --- | --- | --- | --- | --- | --- | --- |
-| 128 | 768 KiB | 1,023.75 KiB | 18 KiB | 1,023.75 KiB | 768 KiB | 768 KiB |
-| 256 | 3 MiB | 4.0 MiB | 18 KiB | 4.0 MiB | 3 MiB | 3 MiB |
-| 1024 | 48 MiB | 64.0 MiB | 18 KiB | 64.0 MiB | 48 MiB | 48 MiB |
+| 128 | 1,023.98 KiB | 1,023.75 KiB | 18 KiB | 1,023.75 KiB | 768 KiB | 768 KiB |
+| 256 | 4.0 MiB | 4.0 MiB | 18 KiB | 4.0 MiB | 3 MiB | 3 MiB |
+| 1024 | 64.0 MiB | 64.0 MiB | 18 KiB | 64.0 MiB | 48 MiB | 48 MiB |
 
+- The source cube keeps its full mip chain, which the prefilters read: one third more than its base level
+  (1.33 times). The chain is built when the renderer uploads the capture; the CPU copy holds the base level only.
+  A capture whose chain is incomplete when it is filtered is read at its base level with a much larger sampling
+  budget.
 - A resolved probe holds 38 texture heap slots, 75 with a Charlie cube, of the 4,096-slot heap. Only probes a
   renderer has resolved hold cubes and slots.
 - Each probe takes one environment and one texture record from the asset store. Raise
@@ -186,11 +190,10 @@ are in [benchmarking](benchmarking.md) and the example section above.
 | Sampling, `gpu_lighting_ms` with the same placements, deferred | 0.338, 0.360, 0.413, 0.371 and 0.463 ms |
 | Capture time per probe, steady (the second probe) | 4.6 to 5.8 ms at 128; 17 to 19 ms at 256 |
 | Capture time of the first probe in a run, with first-use pipeline creation | 59 to 61 ms at 128 (839 ms on a cold first run); 56 to 64 ms at 256 |
-| First-frame `environment.prefilter`, two probes | 1.00 to 1.07 ms at 128; 4.0 to 4.4 ms at 256 |
 | First-frame `environment.irradiance`, two probes | 0.017 ms at 128; 0.045 to 0.047 ms at 256 |
 | The example's forward opaque pass | 0.17 to 0.20 ms at both sizes |
 
-The profiler sums stage times over a frame, so the environment rows cover both probes.
+The profiler sums stage times over a frame, so the environment row covers both probes.
 
 Selection tests the packed boxes in order until a box holds the point at full weight, or two boxes hold it, loading
 only each box's centre, axes and blend distance. Sixteen boxes that hold no point are the worst case: 0.128 ms forward and 0.103 ms deferred over one

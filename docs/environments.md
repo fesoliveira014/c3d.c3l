@@ -126,19 +126,22 @@ renderer.upload_environment(preview)!;
 Sizes are not restricted to powers of two. Each filtered mip halves the previous
 dimensions, rounded down. GPU device limits and allocation failures still apply.
 Sampling budgets and the six roughness levels are internal implementation choices.
+The prefilters read the source's mip chain, which keeps their sampling budgets small. The renderer builds
+the chain of a converted, solid or atmosphere source. A native cube or a reflection capture needs every level
+down to one texel for the same; without them it is read at its base level with a much larger budget.
 
 Generated cubes use RGBA16_FLOAT and its precision/range. At the defaults, the
-converted source occupies 12 MiB and the GGX-filtered cube occupies just under
-4 MiB of texels per equirectangular environment. An environment used by an active
+converted source occupies 16 MiB (12 MiB and its mip chain) and the GGX-filtered cube
+occupies just under 4 MiB of texels per equirectangular environment. An environment used by an active
 sheen material adds a separate Charlie-filtered cube of the same size. These
 figures exclude the original source texture and its mips, CPU pixels, allocator
 overhead, the renderer-shared 256-square BRDF LUT and the 512 KiB renderer-shared
 sheen LUT. Each generated cube also keeps one storage view per face and mip (6 for
-a converted or solid source, 36 for each filtered cube), and a lit environment keeps
+each mip of a converted or solid source, 36 for each filtered cube), and a lit environment keeps
 a 9 KiB buffer for its SH projection. The views occupy texture heap slots while their
-cube lives: 42 for a lit environment with a converted or solid source, 36 with a
-native cube, and 36 more with a Charlie cube, against the renderer's default heap of
-4,096 slots. A full heap fails the preparation with `gpu::DESCRIPTOR_HEAP_FULL`. A
+cube lives: 96 for a lit environment with a converted source at the default size (60 for its 10
+mips), 42 with a solid source, 36 with a native cube, and 36 more with a Charlie cube, against the
+renderer's default heap of 4,096 slots. A full heap fails the preparation with `gpu::DESCRIPTOR_HEAP_FULL`. A
 native cube needs no converted copy; a solid source uses one texel per face. Doubling
 an edge dimension roughly quadruples each generated cube's storage and processing
 work.
@@ -212,21 +215,13 @@ environment like any other lighting regeneration.
 
 `Pass.ENVIRONMENT` times environment work recorded inside a frame. Its stage scopes
 split it by `EnvironmentStage`: `environment.source` (conversion of an equirectangular
-or solid source), `environment.prefilter` (GGX), `environment.irradiance` (SH
+or solid source, and the mip chain of either), `environment.prefilter` (GGX), `environment.irradiance` (SH
 projection), `environment.sheen` (Charlie) and `environment.luts` (the shared lookup
 tables, once); an atmosphere adds `environment.sky_transmittance`,
-`environment.sky_multi_scattering` and `environment.sky` (its tables and the march of its cube). `Stats.gpu_environment_stage_ms` holds their completed times.
+`environment.sky_multi_scattering` and `environment.sky` (its tables, and the march and mip chain of its cube). `Stats.gpu_environment_stage_ms` holds their completed times.
 Preparation outside a frame is not timed. `gltf_viewer --benchmark
 --environment-refresh on` regenerates its environment every frame; see
 [benchmarking](benchmarking.md#scene-benchmark).
-
-One refresh of the default environment costs 9.900 ms of GPU time on an RTX 4090 (driver 610.88,
-`gltf_viewer`, median of three runs): prefilter 9.723 ms (98 %), irradiance 0.142 ms, source
-0.029 ms; sheen and the lookup tables read 0 in the measured frames. The prefilter's fixed sample
-count dominates. With refresh off, the in-place path costs nothing measurable: `cpu_record` reads
-0.158 ms against 0.157 ms before this path, and every pass stays inside the before range. The
-benchmark's refresh-on `cpu_record` of 4.25 ms is the re-upload of its 1K HDR source each frame, not
-the in-place regeneration.
 
 Keep environment descriptions, processing settings and source pixels stable from
 `begin_frame` through `end_frame` or `abort_frame`. Cheap scene lighting/background

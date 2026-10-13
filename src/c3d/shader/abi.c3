@@ -119,7 +119,6 @@ const uint ENVIRONMENT_FACE_POSITIVE_Z = 4;
 const uint ENVIRONMENT_FACE_NEGATIVE_Z = 5;
 const uint ENVIRONMENT_FACE_COUNT = 6;
 const uint ENVIRONMENT_SPECULAR_MIPS = 6;
-const uint ENVIRONMENT_PREFILTER_SAMPLES = 4096;
 const uint ENVIRONMENT_BRDF_SAMPLES = 1024;
 const uint ENVIRONMENT_SH_GROUPS = 64;
 const uint ENVIRONMENT_SH_GROUP_SIZE = 64;
@@ -176,7 +175,6 @@ const uint PHYSICAL_EXTENSION_MAP_TRANSMISSION = 8;
 const uint PHYSICAL_EXTENSION_MAP_THICKNESS = 16;
 const uint SHEEN_LUT_SIZE = 256;
 const uint SHEEN_LUT_SAMPLES = 4096;
-const uint SHEEN_PREFILTER_SAMPLES = 4096;
 const uint CUSTOM_TEXTURE_SLOTS = 8;
 const uint CUSTOM_MAP_UV1_SHIFT = 8;
 const uint MATERIAL_KIND_BASIC = 0;
@@ -1865,8 +1863,8 @@ struct EnvironmentPrefilterRoot {
     uint         face;
     uint         size;
     float        roughness;
-    uint         _pad0;
-    uint         _pad1;
+    uint         sample_count;
+    uint         source_size;
 }
 $assert EnvironmentPrefilterRoot::size == 32;
 $assert $reflect(EnvironmentPrefilterRoot.source_cube).offset == 0;
@@ -1875,8 +1873,20 @@ $assert $reflect(EnvironmentPrefilterRoot.output_texture).offset == 8;
 $assert $reflect(EnvironmentPrefilterRoot.face).offset == 12;
 $assert $reflect(EnvironmentPrefilterRoot.size).offset == 16;
 $assert $reflect(EnvironmentPrefilterRoot.roughness).offset == 20;
-$assert $reflect(EnvironmentPrefilterRoot._pad0).offset == 24;
-$assert $reflect(EnvironmentPrefilterRoot._pad1).offset == 28;
+$assert $reflect(EnvironmentPrefilterRoot.sample_count).offset == 24;
+$assert $reflect(EnvironmentPrefilterRoot.source_size).offset == 28;
+
+struct EnvironmentDownsampleRoot {
+    TextureIndex input_texture;
+    TextureIndex output_texture;
+    uint         size;
+    uint         _pad0;
+}
+$assert EnvironmentDownsampleRoot::size == 16;
+$assert $reflect(EnvironmentDownsampleRoot.input_texture).offset == 0;
+$assert $reflect(EnvironmentDownsampleRoot.output_texture).offset == 4;
+$assert $reflect(EnvironmentDownsampleRoot.size).offset == 8;
+$assert $reflect(EnvironmentDownsampleRoot._pad0).offset == 12;
 
 struct IrradianceProjectRoot {
     TextureIndex source_cube;
