@@ -176,7 +176,9 @@ fn gpu::PipelineHandle? record_sky_draw(
         .compare      = gpu::CompareOp.GREATER_EQUAL,
     };
 
-    gpu::PipelineHandle pipeline = atmosphere ? sky_atmosphere_pipeline(renderer)! : sky_pipeline(renderer)!;
+    gpu::SampleCount samples = msaa_sample_count(record.desc.msaa);
+    gpu::PipelineHandle pipeline = atmosphere
+        ? sky_atmosphere_pipeline(renderer, samples)! : sky_pipeline(renderer, samples)!;
     gpu::cmd_bind_pipeline(&renderer.commands, pipeline)!;
     gpu::cmd_set_graphics_state(&renderer.commands, &state)!;
     gpu::cmd_draw(

@@ -64,6 +64,12 @@ fn bool msaa_reflection_gbuffer_wanted(ViewDesc* desc) @private {
     return desc.ray_tracing.reflections && desc.shading == ShadingPath.FORWARD;
 }
 
+fn gpu::TextureState opaque_depth_state(ViewRecord* record) @private {
+    if (record.desc.msaa == MsaaSamples.ONE) return DEPTH_ATTACHMENT_STATE;
+
+    return DEPTH_RESOLVE_STATE;
+}
+
 fn gpu::SampleCount draw_list_samples(ViewDesc* desc, DrawList list) @private {
     if (list == DrawList.OPAQUE) return msaa_sample_count(desc.msaa);
 
