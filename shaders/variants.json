@@ -1,5 +1,5 @@
 {
-  "flags": ["DEPTH_ONLY", "SKINNED", "SKINNED_U16", "MORPH", "VELOCITY", "VERTEX_COLOR", "INSTANCED", "RT_SHADOWS", "SCENE_TRACE_BVH", "WEIGHTED_BLEND", "REFLECTION_PREPASS", "POSED_INSTANCED", "TEMPORAL", "TRANSFORMED", "BACKDROP"],
+  "flags": ["DEPTH_ONLY", "SKINNED", "SKINNED_U16", "MORPH", "VELOCITY", "VERTEX_COLOR", "INSTANCED", "RT_SHADOWS", "SCENE_TRACE_BVH", "WEIGHTED_BLEND", "REFLECTION_PREPASS", "POSED_INSTANCED", "TEMPORAL", "TRANSFORMED", "BACKDROP", "WORLD"],
   "entries": [
     { "shader": "fullscreen", "source": "fullscreen.vert.glsl", "stage": "vert", "defines": [] },
     { "shader": "gradient", "source": "gradient.frag.glsl", "stage": "frag", "defines": [] },
@@ -24,6 +24,7 @@
     { "shader": "overlay_fragment", "source": "overlay.frag.glsl", "stage": "frag", "defines": ["TRANSFORMED"] },
     { "shader": "overlay_fragment", "source": "overlay.frag.glsl", "stage": "frag", "defines": ["BACKDROP"] },
     { "shader": "overlay_fragment", "source": "overlay.frag.glsl", "stage": "frag", "defines": ["BACKDROP", "TRANSFORMED"] },
+    { "shader": "overlay_fragment", "source": "overlay.frag.glsl", "stage": "frag", "defines": ["WORLD", "TRANSFORMED"] },
     { "shader": "overlay_blur", "source": "overlay_blur.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "lines_vertex", "source": "lines.vert.glsl", "stage": "vert", "defines": [] },
     { "shader": "lines_fragment", "source": "lines.frag.glsl", "stage": "frag", "defines": [] },

@@ -4,7 +4,7 @@
 #include "descriptor_heap.glsl"
 #include "grade.glsl"
 #include "overlay_glyph.glsl"
-#ifdef BACKDROP
+#if defined(BACKDROP) || defined(WORLD)
 #include "texture_fetch.glsl"
 #endif
 
@@ -215,8 +215,10 @@ vec4 overlay_glyph_color(OverlayItemGpu item, vec2 position) {
 }
 
 void main() {
-#ifdef BACKDROP
+#if defined(BACKDROP)
     OverlayBackdropRoot root = OverlayBackdropRoot(pc.fragment_root_gpu);
+#elif defined(WORLD)
+    OverlayWorldRoot root = OverlayWorldRoot(pc.fragment_root_gpu);
 #else
     OverlayRoot root = OverlayRoot(pc.fragment_root_gpu);
 #endif
@@ -234,6 +236,16 @@ void main() {
         clip_coverage *= overlay_clip_coverage(clip, gl_FragCoord.xy);
         clip_index = clip.clip_parent;
     }
+
+#ifdef WORLD
+    // Reverse-Z, so larger is closer. Hidden items fade to nothing instead of discarding, which keeps the derivatives
+    // below defined; the view's depth is jittered under temporal anti-aliasing.
+    ivec2 depth_extent = texture_extent(root.depth_texture);
+    vec2 depth_texel = (gl_FragCoord.xy - vec2(root.view_x, root.view_y)) * vec2(depth_extent)
+        / vec2(root.view_width, root.view_height);
+    float view_depth = fetch_texture_2d(root.depth_texture, clamp(ivec2(depth_texel), ivec2(0), depth_extent - 1)).r;
+    clip_coverage *= transforms.values[transform_index].depth >= view_depth ? 1.0 : 0.0;
+#endif
 
     // Item-local position, the local change per output pixel along x and y, and output pixels per local unit.
     bool transformed = transform_index != 0u;

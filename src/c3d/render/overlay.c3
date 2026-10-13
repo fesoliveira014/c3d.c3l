@@ -113,7 +113,7 @@ fn gpu::MappedGpuSpan? OverlayContext.alloc(&self, usz bytes, usz alignment = 16
  Resolve the list's textures and fonts, ready its render targets and upload its instances.
  Prepare after every view that renders its output or a target it samples.
  @param [&inout] self : "Frame open; overlay not yet open; window output when target is zero."
- @param [&inout] list : "Items must stay unchanged until draw_list records them."
+ @param [&inout] list : "Items must stay unchanged until draw_list records them; no anchors."
  @param target : "Render target the list is drawn into; zero for the window."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
@@ -126,10 +126,17 @@ fn gpu::MappedGpuSpan? OverlayContext.alloc(&self, usz bytes, usz alignment = 16
 fn void? Renderer.prepare_overlay_list(&self, OverlayList* list, RenderTargetId target = {}) {
     check_overlay_refs(self.assets, &self.targets, list, target)!;
     bool window = c3d::same_id(target, (RenderTargetId){});
+    if (list.anchor_count) return c3d::INVALID_ARGUMENT~;
     if (window && list.backdrop_count && !self.swapchain_info.usage.transfer_src) return c3d::UNSUPPORTED~;
 
     defer catch abort_frame(self);
 
+    return prepare_overlay(self, list, target, null);
+}
+
+// Resolves what the list references and uploads its instances, fitted to a view's world when there is one.
+fn void? prepare_overlay(Renderer* self, OverlayList* list, RenderTargetId target, OverlayWorld* world) @private {
+    bool window = c3d::same_id(target, (RenderTargetId){});
     foreach (index, &entry : list.entries[:list.item_count]) {
         OverlayBinding* binding = &list.bindings[index];
         if (entry.kind == TRIANGLE || entry.kind == SEGMENT) continue;
@@ -166,6 +173,7 @@ fn void? Renderer.prepare_overlay_list(&self, OverlayList* list, RenderTargetId 
     list.prepared.run_count = 0;
     list.prepared.backdrop_count = 0;
     list.prepared.transformed = false;
+    list.prepared.world = world ? world.view : (OverlayWorldView){};
     if (list.item_count) {
         Target* output = overlay_output(self, target);
         // A glyph entry emits one item per placement, so entries plus placements bound the emitted items.
@@ -178,14 +186,16 @@ fn void? Renderer.prepare_overlay_list(&self, OverlayList* list, RenderTargetId 
             width:       output.width,
             height:      output.height,
             destination: ((OverlayItemGpu*)items.bytes.ptr)[:capacity],
+            world:       world,
         );
         list.prepared.items = items.address;
 
         list.prepared.transforms = (gpu::GpuAddress)0;
         if (list.prepared.transformed) {
-            usz table_bytes = (usz)list.transform_count * shader::OverlayTransformGpu::size;
+            shader::OverlayTransformGpu[] entries = world ? world.table : list.transforms[:list.transform_count];
+            usz table_bytes = entries.len * shader::OverlayTransformGpu::size;
             gpu::MappedGpuSpan table = slot.upload.take(&self.device, table_bytes)!;
-            mem::copy(table.bytes.ptr, list.transforms.ptr, (sz)table_bytes);
+            mem::copy(table.bytes.ptr, entries.ptr, (sz)table_bytes);
             list.prepared.transforms = table.address;
         }
         if (list.prepared.backdrop_count) prepare_overlay_backdrop(self, output, window)!;
@@ -220,6 +230,8 @@ fn void? OverlayContext.draw_list(&self, OverlayList* list) {
         .samples       = gpu::SampleCount.ONE,
         .polygon       = gpu::PolygonMode.FILL,
     };
+    OverlayWorldView* world = &list.prepared.world;
+    if (world.enabled) key.fragment.flags |= shader::SHADER_FLAG_WORLD;
     gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, key)!;
     gpu::PipelineHandle backdrop_pipeline;
     if (list.prepared.backdrop_count) {
@@ -263,13 +275,24 @@ fn void? OverlayContext.draw_list(&self, OverlayList* list) {
                 plain_bound = true;
             }
 
-            gpu::MappedGpuSpan root = self.alloc(backdrop ? OverlayBackdropRoot::size : OverlayRoot::size)!;
+            usz root_size = OverlayRoot::size;
+            if (backdrop) root_size = OverlayBackdropRoot::size;
+            if (world.enabled) root_size = OverlayWorldRoot::size;
+            gpu::MappedGpuSpan root = self.alloc(root_size)!;
             *(OverlayRoot*)root.bytes.ptr = {
                 .items      = (gpu::GpuAddress)((ulong)list.prepared.items + run.first * OverlayItemGpu::size),
                 .transforms = list.prepared.transforms,
                 .scale      = scale,
                 .translate  = { -1, 1 },
             };
+            if (world.enabled) {
+                OverlayWorldRoot* world_root = (OverlayWorldRoot*)root.bytes.ptr;
+                world_root.depth_texture = world.depth;
+                world_root.view_x = world.rect.x;
+                world_root.view_y = world.rect.y;
+                world_root.view_width = world.rect.width;
+                world_root.view_height = world.rect.height;
+            }
 
             if (backdrop) {
                 record_overlay_backdrop(

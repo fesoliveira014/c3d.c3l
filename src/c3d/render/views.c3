@@ -644,6 +644,8 @@ struct ViewRecord {
     bool                                 rendered;
     ulong                                last_scene; // identity of the scene this view last rendered
     ProjectionTerms                      projection_terms;
+    OverlayProjection                    overlay_projection; // of the rendering in progress, for the world overlay
+    OverlayList*                         world_overlay;      // set per frame by set_view_overlay; null draws none
     float                                exposure;
     post::PreExposure                    pre_exposure; // of the rendering in progress; post divides its factor out
     ViewHistory                          history;
