@@ -1029,14 +1029,15 @@ fn void? rebind_documents(Ui* ui, UiStyleSet* set) @private {
                 }
             }
 
-            fault span_fault = check_span_styles(set, document, element);
-            if (span_fault) return fail_in_document(
-                ui:       ui,
-                document: document,
-                element:  index,
-                key:      "text",
-                excuse:   span_fault,
-            )~;
+            if (catch excuse = check_span_styles(set, document, element)) {
+                return fail_in_document(
+                    ui:       ui,
+                    document: document,
+                    element:  index,
+                    key:      "text",
+                    excuse:   excuse,
+                )~;
+            }
         }
     }
     foreach (&document : ui.documents.items) {
@@ -1071,14 +1072,12 @@ fn void? rebind_documents(Ui* ui, UiStyleSet* set) @private {
     invalidate_frame(ui);
 }
 
-fn fault check_span_styles(UiStyleSet* set, UiDocument* document, UiElement* element) @private {
+fn void? check_span_styles(UiStyleSet* set, UiDocument* document, UiElement* element) @private {
     foreach (&span : document.spans[element.span_first : element.span_count]) {
         usz style = find_style_index(set, document.strings[span.name_offset : span.name_length]);
-        if (style == set.styles.len) return UNKNOWN_STYLE;
-        if (!span_style_valid(&set.styles[style])) return UNKNOWN_PROPERTY;
+        if (style == set.styles.len) return UNKNOWN_STYLE~;
+        if (!span_style_valid(&set.styles[style])) return UNKNOWN_PROPERTY~;
     }
-
-    return {};
 }
 
 fn void assign_span_styles(UiStyleSet* set, UiDocument* document, UiElement* element) @private {
