@@ -1070,11 +1070,21 @@ fn void? record_raster_view(
             }
 
             if (cloud_pass.layer) {
+                CloudFrame cloud_frame = {
+                    .scene         = scene.identity,
+                    .layer         = *cloud_pass.layer,
+                    .planet_radius = cloud_pass.planet_radius,
+                    .to_sun        = cloud_pass.sun.to_sun,
+                    .origin        = renderer.frame_origin,
+                    .view_proj     = raster.view_proj,
+                    .pre_exposure  = pre_exposure,
+                };
                 record_clouds(
                     renderer: renderer,
                     record:   record,
                     cloud:    &cloud_pass,
                     frame:    frame_span.address,
+                    current:  &cloud_frame,
                 )!;
             }
             record_scene_read_layers(

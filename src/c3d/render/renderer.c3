@@ -413,6 +413,7 @@ fn void? Renderer.end_frame(&self) {
                 record.history.publish();
                 record.auto_exposure.history.publish();
                 record.fog_history.publish();
+                record.cloud_history.publish();
                 publish_lod_history(&record.lod_history);
             }
             submitted = true;
@@ -1189,6 +1190,7 @@ fn void abort_frame(Renderer* renderer) {
             record.history.discard();
             record.auto_exposure.history.discard();
             record.fog_history.discard();
+            record.cloud_history.discard();
             discard_lod_history(&record.lod_history);
         }
     }

@@ -235,6 +235,7 @@ struct Options @local {
     FogQuality  fog_quality;
     bool        fog_temporal;
     bool        clouds;
+    bool        cloud_temporal;
     uint        local_lights;
     float       lamp_range;
     bool        lamps_in_fog;
@@ -707,6 +708,7 @@ fn ViewDesc main_view_desc(ViewDesc desc, Options options) @local {
     desc.volumetric_fog = options.volumetric_fog && !options.path_traced;
     desc.fog_quality = options.fog_quality;
     desc.fog_temporal = options.fog_temporal;
+    desc.cloud_temporal = options.cloud_temporal;
     if (options.local_lights > 0) desc.lights = LightSelection.CLUSTERED;
     if (options.taa && !options.path_traced) desc.post.anti_aliasing = AntiAliasing.TAA;
     desc.post.auto_exposure = options.auto_exposure;
@@ -734,6 +736,7 @@ fn ViewDesc mirror_view_desc(Demo* demo) @local {
     desc.volumetric_fog = demo.options.volumetric_fog;
     desc.fog_quality = demo.options.fog_quality;
     desc.fog_temporal = demo.options.fog_temporal;
+    desc.cloud_temporal = demo.options.cloud_temporal;
     if (demo.options.local_lights > 0) desc.lights = LightSelection.CLUSTERED;
     return desc;
 }
@@ -910,6 +913,7 @@ fn Options? parse_options(String[] args) @local {
                     default: return c3d::INVALID_ARGUMENT~;
                 }
             case "--fog-temporal": options.fog_temporal = true;
+            case "--cloud-temporal": options.cloud_temporal = true;
             case "--local-lights":
                 options.local_lights = option_value(args, &index)!.to_uint()!;
                 if (options.local_lights > MAX_LAMPS) return c3d::INVALID_ARGUMENT~;
@@ -994,7 +998,7 @@ fn void apply_fly_camera(FlyCamera* fly_camera, Input* input, float delta) @loca
     fly_camera.position.y = math::max(fly_camera.position.y, CAMERA_NEAR);
 }
 
-fn void? apply_fog_volume(Demo* demo, Renderer* renderer) @local {
+fn void? apply_view_options(Demo* demo, Renderer* renderer) @local {
     render::configure_view(
         renderer,
         renderer.default_view,
@@ -1003,7 +1007,7 @@ fn void? apply_fog_volume(Demo* demo, Renderer* renderer) @local {
     render::configure_view(renderer, demo.mirror.view, mirror_view_desc(demo))!;
 }
 
-fn void? clouds_panel(Demo* demo) @local {
+fn void? clouds_panel(Demo* demo, Renderer* renderer) @local {
     imgui::separator_text("Clouds");
     CloudLayer* layer = demo.scene.get(demo.weather.node, CloudLayer);
     bool changed = imgui::slider_float(
@@ -1038,6 +1042,9 @@ fn void? clouds_panel(Demo* demo) @local {
         v_max: CLOUD_WIND_SPEED_MAX,
     );
     imgui::checkbox("Cloud shadows", &layer.cast_shadows);
+    if (imgui::checkbox("Cloud temporal accumulation", &demo.options.cloud_temporal)) {
+        apply_view_options(demo, renderer)!;
+    }
 }
 
 fn void? sky_panel(
@@ -1121,17 +1128,17 @@ fn void? sky_panel(
                 );
                 if (changed) {
                     demo.options.fog_quality = FOG_QUALITY_CHOICES[choice];
-                    apply_fog_volume(demo, renderer)!;
+                    apply_view_options(demo, renderer)!;
                 }
                 if (imgui::checkbox("Temporal accumulation", &demo.options.fog_temporal)) {
-                    apply_fog_volume(demo, renderer)!;
+                    apply_view_options(demo, renderer)!;
                 }
                 if (demo.options.local_lights > 0 && imgui::checkbox("Lamps in fog", &demo.options.lamps_in_fog)) {
                     set_lamps_in_fog(demo.scene, demo.options.lamps_in_fog);
                 }
             }
         }
-        if (demo.weather.node) clouds_panel(demo)!;
+        if (demo.weather.node) clouds_panel(demo, renderer)!;
         imgui::separator_text("Frame");
         float exposure = demo.scene.get(demo.camera_node, Camera).exposure;
         imgui::text("Sun elevation %.2f, exposure %.2f", controls.elevation_degrees, exposure);
@@ -1596,8 +1603,8 @@ fn String fog_quality_name(FogQuality quality) @local {
 fn void print_header(Options options) @local {
     io::printfn(
         "# sky shading=%s shadows=%s ssgi=%s path_traced=%s reflections=%s fog=%s atmosphere=%s "
-          "volumetric_fog=%s fog_quality=%s fog_temporal=%s clouds=%s local_lights=%d lamp_range=%g lamps_in_fog=%s taa=%s "
-          "extent=%dx%d frames=%d",
+          "volumetric_fog=%s fog_quality=%s fog_temporal=%s clouds=%s cloud_temporal=%s local_lights=%d "
+          "lamp_range=%g lamps_in_fog=%s taa=%s extent=%dx%d frames=%d",
         options.shading == ShadingPath.DEFERRED ? "deferred" : "forward",
         options.traced_shadows ? "traced" : "atlas",
         options.ssgi ? "on" : "off",
@@ -1609,6 +1616,7 @@ fn void print_header(Options options) @local {
         fog_quality_name(options.fog_quality),
         options.fog_temporal ? "on" : "off",
         options.clouds ? "on" : "off",
+        options.cloud_temporal ? "on" : "off",
         options.local_lights,
         options.lamp_range,
         options.lamps_in_fog ? "on" : "off",
@@ -1685,8 +1693,8 @@ fn int main(String[] args) {
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--shadows atlas|traced] [--ssgi] [--path-traced] [--reflections on|off] [--volumetric-fog] "
               "[--fog-quality low|medium|high] [--fog-temporal] [--local-lights N] [--lamp-range METRES] "
-              "[--lamps-in-fog on|off] [--taa] [--auto-exposure] [--pre-exposure off|FACTOR] [--clouds] [--fog on|off] "
-              "[--atmosphere on|off|dense|empty] "
+              "[--lamps-in-fog on|off] [--taa] [--auto-exposure] [--pre-exposure off|FACTOR] [--clouds] "
+              "[--cloud-temporal] [--fog on|off] [--atmosphere on|off|dense|empty] "
               "[--preset noon|twilight|dusk|nautical|valley|pan|orbit|time-lapse] [--width W] [--height H].");
         }
         return 1;

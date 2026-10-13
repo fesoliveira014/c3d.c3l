@@ -4,6 +4,7 @@ import c3d;
 import c3d::asset;
 import c3d::light;
 import c3d::material;
+import c3d::maths;
 import c3d::scene;
 import c3d::shader;
 import gpu;
@@ -13,6 +14,11 @@ $assert CloudNoiseRoot::size == 16;
 $assert CloudsRoot::size == 128;
 $assert CloudShadowRoot::size == 64;
 $assert CloudsCompositeRoot::size == 48;
+$assert CloudsTemporalRoot::size == 128;
+
+const uint CLOUD_SLOTS @private = 2; // a temporal view ping-pongs the images; any other view uses slot 0
+const uint CLOUD_TEMPORAL_SAMPLES @private = 16; // jitter cycle; the history spans about ten frames, more repeats
+const float CLOUD_HISTORY_SUN_DEGREES @private = 0.1f; // a faster sun rejects history; slower trails under a degree
 
 <*
  The cloud layer one view draws.
@@ -39,6 +45,89 @@ struct CloudPass @private {
     float             planet_radius; // zero: a flat slab
     bool              shadowed;      // the sun is up and the layer casts its shadow
     gpu::GpuAddress   shadow;        // the frame's CloudShadowRoot
+}
+
+// What a march was made under; the sun's direction is compared by angle, the layer field by field but for its wind.
+struct CloudFrame @private {
+    ulong      scene;
+    CloudLayer layer;
+    float      planet_radius;
+    Vec3       to_sun;
+    Vec3       origin;
+    Mat4       view_proj;
+    float      pre_exposure;
+}
+
+struct CloudHistory @private {
+    CloudFrame committed;
+    CloudFrame pending;
+    bool       valid;    // the images hold what the view's last submitted frame marched
+    bool       recorded; // a recording this frame wrote them
+    uint       slot;     // images that hold the history; the march writes the other pair
+    uint       sample;   // jitter index of the next frame
+}
+
+<*
+ Whether the history stands for a march made under these conditions.
+ @param [&in] frame : "Conditions of the recording about to be made."
+*>
+fn bool CloudHistory.accepts(&self, CloudFrame* frame) {
+    if (!self.valid || self.recorded) return false;
+
+    CloudFrame* previous = &self.committed;
+    float sun_cosine = math::cos(math::deg_to_rad(CLOUD_HISTORY_SUN_DEGREES));
+    bool same_sun = previous.to_sun == frame.to_sun || previous.to_sun.dot(frame.to_sun) >= sun_cosine;
+    return previous.scene == frame.scene
+      && same_cloud_layer(&previous.layer, &frame.layer)
+      && previous.planet_radius == frame.planet_radius
+      && previous.origin == frame.origin
+      && same_sun;
+}
+
+<*
+ Remember the recording's conditions, pending publication.
+ @param [&in] frame : "Conditions the recording was made under."
+*>
+fn void CloudHistory.record(&self, CloudFrame* frame) {
+    self.pending = *frame;
+    self.recorded = true;
+}
+
+<*
+ Commit a submitted frame's recording and swap the images; a view that recorded nothing loses its history.
+*>
+fn void CloudHistory.publish(&self) {
+    self.valid = self.recorded;
+    if (self.recorded) {
+        self.committed = self.pending;
+        self.slot ^= 1;
+        self.sample = (self.sample + 1) % CLOUD_TEMPORAL_SAMPLES;
+    }
+    self.recorded = false;
+}
+
+<*
+ Drop the pending recording; the committed history stays.
+*>
+fn void CloudHistory.discard(&self) {
+    self.recorded = false;
+}
+
+fn bool same_cloud_layer(CloudLayer* first, CloudLayer* second) @local {
+    return first.bottom == second.bottom
+      && first.top == second.top
+      && first.density == second.density
+      && c3d::same_id(first.coverage, second.coverage)
+      && first.coverage_extent == second.coverage_extent
+      && first.noise_scale == second.noise_scale
+      && first.erosion == second.erosion
+      && first.albedo == second.albedo
+      && first.anisotropy == second.anisotropy
+      && first.cast_shadows == second.cast_shadows;
+}
+
+fn uint cloud_written_slot(ViewRecord* record) @local {
+    return record.desc.cloud_temporal ? record.cloud_history.slot ^ 1 : 0;
 }
 
 <*
@@ -137,24 +226,27 @@ fn void? acquire_cloud_shadow(Renderer* renderer, ViewRecord* record) @private {
 }
 
 fn void? acquire_cloud_targets(Renderer* renderer, ViewRecord* record) @private {
-    if (record.clouds.texture.is_valid()) return;
-
     uint[<2>] extent = ambient_occlusion_extent(record.hdr_color.width, record.hdr_color.height, false);
-    record.clouds = allocate_storage_target(
-        device:     &renderer.device,
-        width:      extent.x,
-        height:     extent.y,
-        format:     gpu::Format.RGBA16_FLOAT,
-        debug_name: "clouds",
-    )!;
-    defer catch release_storage_target(&renderer.device, &record.clouds);
-    record.cloud_distance = allocate_storage_target(
-        device:     &renderer.device,
-        width:      extent.x,
-        height:     extent.y,
-        format:     gpu::Format.R32_FLOAT,
-        debug_name: "cloud_distance",
-    )!;
+    uint count = record.desc.cloud_temporal ? CLOUD_SLOTS : 1;
+    for (uint slot = 0; slot < count; slot++) {
+        if (record.clouds[slot].texture.is_valid()) continue;
+
+        record.clouds[slot] = allocate_storage_target(
+            device:     &renderer.device,
+            width:      extent.x,
+            height:     extent.y,
+            format:     gpu::Format.RGBA16_FLOAT,
+            debug_name: "clouds",
+        )!;
+        defer catch release_storage_target(&renderer.device, &record.clouds[slot]);
+        record.cloud_distances[slot] = allocate_storage_target(
+            device:     &renderer.device,
+            width:      extent.x,
+            height:     extent.y,
+            format:     gpu::Format.R32_FLOAT,
+            debug_name: "cloud_distance",
+        )!;
+    }
 }
 
 fn void? record_cloud_noise(Renderer* renderer, gpu::CommandList* commands) @private {
@@ -192,21 +284,22 @@ fn void? write_cloud_march_root(
     CloudsRoot* root,
 ) @local {
     CloudLayer* layer = cloud.layer;
+    uint written = cloud_written_slot(record);
     gpu::SamplerIndex repeat_sampler = resolve_sampler(renderer, c3d::asset::SAMPLER_LINEAR_REPEAT)!.index;
     *root = {
         .sun_direction    = { cloud.sun.to_sun.x, cloud.sun.to_sun.y, cloud.sun.to_sun.z, 0 },
         .sun_illuminance  = { cloud.sun.illuminance.x, cloud.sun.illuminance.y, cloud.sun.illuminance.z, 0 },
         .wind_offset      = { layer.wind_offset.x, layer.wind_offset.y, layer.wind_offset.z, 0 },
         .frame            = frame,
-        .output_texture   = record.clouds.view.index,
-        .distance_texture = record.cloud_distance.view.index,
+        .output_texture   = record.clouds[written].view.index,
+        .distance_texture = record.cloud_distances[written].view.index,
         .depth            = record.depth.view.index,
         .noise            = renderer.environment_state.cloud_noise.view.index,
         .coverage         = cloud.coverage,
         .noise_sampler    = repeat_sampler,
         .coverage_sampler = repeat_sampler,
-        .width            = record.clouds.width,
-        .height           = record.clouds.height,
+        .width            = record.clouds[written].width,
+        .height           = record.clouds[written].height,
         .planet_radius    = cloud.planet_radius,
         .bottom           = layer.bottom,
         .top              = layer.top,
@@ -283,39 +376,109 @@ fn void? record_cloud_shadows(Renderer* renderer, ViewRecord* record, CloudPass*
     renderer.stats.post_dispatches++;
 }
 
+fn void? record_cloud_march(
+    Renderer* renderer,
+    ViewRecord* record,
+    CloudPass* cloud,
+    gpu::GpuAddress frame,
+    CloudFrame* current,
+) @local {
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan march = slot.upload.take(&renderer.device, CloudsRoot::size, STREAM_ALIGNMENT)!;
+    write_cloud_march_root(renderer, record, cloud, frame, (CloudsRoot*)march.bytes.ptr)!;
+    Target* written = &record.clouds[cloud_written_slot(record)];
+    if (!record.desc.cloud_temporal) {
+        gpu::cmd_bind_pipeline(&renderer.commands, renderer.sky_pipelines.clouds)!;
+        return dispatch_over(renderer, march.address, written);
+    }
+
+    acquire_compute_pipeline(
+        renderer:   renderer,
+        pipeline:   &renderer.sky_pipelines.clouds_temporal,
+        shader:     CLOUDS,
+        debug_name: "sky",
+        flags:      shader::SHADER_FLAG_TEMPORAL,
+    )!;
+
+    CloudHistory* history = &record.cloud_history;
+    Target* history_clouds = &record.clouds[history.slot];
+    Target* history_distances = &record.cloud_distances[history.slot];
+    bool reproject = history.accepts(current);
+    Vec3 wind_delta;
+    float pre_exposure_ratio = 1;
+    if (reproject) {
+        history_clouds.transition(&renderer.commands, renderer.sampled_state)!;
+        history_distances.transition(&renderer.commands, renderer.sampled_state)!;
+        wind_delta = current.layer.wind_offset - history.committed.layer.wind_offset;
+        pre_exposure_ratio = current.pre_exposure / history.committed.pre_exposure;
+    }
+
+    gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, CloudsTemporalRoot::size, STREAM_ALIGNMENT)!;
+    *(CloudsTemporalRoot*)root.bytes.ptr = {
+        .previous_view_proj = bitcast(history.committed.view_proj, Mat4f),
+        .wind_delta         = { wind_delta.x, wind_delta.y, wind_delta.z, 0 },
+        .clouds             = march.address,
+        .history            = reproject ? history_clouds.view.index : (gpu::TextureIndex)0,
+        .history_distance   = reproject ? history_distances.view.index : (gpu::TextureIndex)0,
+        .history_sampler    = renderer.linear_clamp_sampler,
+        .jitter             = maths::halton(history.sample + 1, 2),
+        .pixel_jitter_x     = maths::halton(history.sample + 1, 3) - 0.5f,
+        .pixel_jitter_y     = maths::halton(history.sample + 1, 5) - 0.5f,
+        .pre_exposure_ratio = pre_exposure_ratio,
+    };
+    history.record(current);
+
+    gpu::cmd_bind_pipeline(&renderer.commands, renderer.sky_pipelines.clouds_temporal)!;
+    return dispatch_extent(
+        renderer:   renderer,
+        root:       root.address,
+        width:      written.width,
+        height:     written.height,
+        group_size: shader::CLOUD_TEMPORAL_GROUP,
+    );
+}
+
 <*
- @require record.clouds.texture.is_valid() && record.hdr_color.texture.is_valid()
+ @require record.clouds[cloud_written_slot(record)].texture.is_valid() && record.hdr_color.texture.is_valid()
+ @param [&in] current : "Conditions of the march; kept as the history when the frame is submitted."
 *>
 fn void? record_clouds(
     Renderer* renderer,
     ViewRecord* record,
     CloudPass* cloud,
     gpu::GpuAddress frame,
+    CloudFrame* current,
 ) @private {
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    uint written = cloud_written_slot(record);
+    Target* clouds = &record.clouds[written];
+    Target* distances = &record.cloud_distances[written];
     @profile_pass(renderer, Pass.CLOUDS) {
         record.depth.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
-        record.clouds.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;
-        record.cloud_distance.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;
-        gpu::MappedGpuSpan march = slot.upload.take(&renderer.device, CloudsRoot::size, STREAM_ALIGNMENT)!;
-        write_cloud_march_root(renderer, record, cloud, frame, (CloudsRoot*)march.bytes.ptr)!;
-        gpu::cmd_bind_pipeline(&renderer.commands, renderer.sky_pipelines.clouds)!;
-        dispatch_over(renderer, march.address, &record.clouds)!;
+        clouds.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;
+        distances.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;
+        record_cloud_march(
+            renderer: renderer,
+            record:   record,
+            cloud:    cloud,
+            frame:    frame,
+            current:  current,
+        )!;
 
-        record.clouds.transition(&renderer.commands, gpu::storage_at({ .compute }, { .read }))!;
-        record.cloud_distance.transition(&renderer.commands, gpu::storage_at({ .compute }, { .read }))!;
+        clouds.transition(&renderer.commands, gpu::storage_at({ .compute }, { .read }))!;
+        distances.transition(&renderer.commands, gpu::storage_at({ .compute }, { .read }))!;
         record.hdr_color.transition(&renderer.commands, gpu::storage_at({ .compute }, { .read, .write }))!;
         gpu::MappedGpuSpan composite = slot.upload.take(&renderer.device, CloudsCompositeRoot::size, STREAM_ALIGNMENT)!;
         *(CloudsCompositeRoot*)composite.bytes.ptr = {
             .frame            = frame,
             .color            = record.hdr_color.view.index,
             .depth            = record.depth.view.index,
-            .clouds           = record.clouds.view.index,
-            .distance_texture = record.cloud_distance.view.index,
+            .clouds           = clouds.view.index,
+            .distance_texture = distances.view.index,
             .width            = record.hdr_color.width,
             .height           = record.hdr_color.height,
-            .cloud_width      = record.clouds.width,
-            .cloud_height     = record.clouds.height,
+            .cloud_width      = clouds.width,
+            .cloud_height     = clouds.height,
         };
         gpu::cmd_bind_pipeline(&renderer.commands, renderer.sky_pipelines.clouds_composite)!;
         dispatch_over(renderer, composite.address, &record.hdr_color)!;

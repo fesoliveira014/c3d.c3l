@@ -158,6 +158,8 @@ const uint CLOUD_SHADOW_SIZE = 512u;
 const float CLOUD_SHADOW_EXTENT = 16384.0;
 const uint CLOUD_SHADOW_STEPS = 16u;
 const float CLOUD_SHADOW_EDGE_BAND = 0.1;
+const float CLOUD_HISTORY_WEIGHT = 0.9;
+const uint CLOUD_TEMPORAL_GROUP = 16u;
 const uint PHYSICAL_MAP_CLEARCOAT = 1u;
 const uint PHYSICAL_MAP_CLEARCOAT_ROUGHNESS = 2u;
 const uint PHYSICAL_MAP_CLEARCOAT_NORMAL = 4u;
@@ -1178,6 +1180,22 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer CloudsRoot 
     float coverage_extent;
     float noise_scale;
     float erosion;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer CloudsTemporalRoot {
+    mat4 previous_view_proj;
+    vec4 wind_delta;
+    uint64_t clouds;
+    uint history;
+    uint history_distance;
+    uint history_sampler;
+    float jitter;
+    float pixel_jitter_x;
+    float pixel_jitter_y;
+    float pre_exposure_ratio;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer CloudShadowRoot {

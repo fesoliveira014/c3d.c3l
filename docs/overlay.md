@@ -41,11 +41,12 @@ renderer.end_overlay(&overlay)!;
 - `create_overlay_list` allocates every slice once, from the allocator it is given. Nothing allocates per frame.
 - `clear()`, `add_rect`, `add_glyphs`, `push_clip`, `pop_clip`, `push_transform` and `pop_transform` run any time
   before `prepare_overlay_list`. Items stay unchanged from preparation until `draw_list` records them.
-- `prepare_overlay_list` runs after the frame's last `finish_view`, with output and no overlay open. It resolves
-  textures and fonts, uploads the outline rows fonts gained, readies the render targets the list samples and
-  uploads one instance per visible rectangle or glyph. A render target
-  the list samples must not be rendered again that frame. Its optional `target` names the render target the list
-  is drawn into; zero is the window.
+- `prepare_overlay_list` resolves textures and fonts, uploads the outline rows fonts gained, readies the render
+  targets the list samples and uploads one instance per visible rectangle or glyph. Its optional `target` names the
+  render target the list is drawn into; zero is the window.
+  - A window list is prepared after the frame's last `finish_view`, with output.
+  - A target list is prepared after the views that render its target and the targets it samples. It needs no output.
+  - Both are prepared with no overlay open. A render target the list samples must not be rendered again that frame.
 - `draw_list` runs inside the overlay, before `GuiRenderer.record`. The ImGui backend binds its own pipeline and state.
   The overlay's output must be the one the list was prepared for.
 - A list is prepared and drawn at most once per frame. Preparing a later frame without `clear()` draws the same items.
