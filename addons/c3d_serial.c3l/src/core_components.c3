@@ -12,8 +12,9 @@ const ulong SHADOW_LAYOUT @local = 0x79ccc384defd9804;
 const ulong PROBE_UPDATE_LAYOUT @local = 0x92e32fe9bced397e;
 const ulong DECAL_WEIGHTS_LAYOUT @local = 0x985beb1deac562f9;
 const ulong CAMERA_LAYOUT @local = 0x5dd0d6ce96e600ac;
-const ulong LIGHT_LAYOUT @local = 0x4fe02031be92ca17;
+const ulong LIGHT_LAYOUT @local = 0x89bf800250a191bf;
 const ulong LIGHT_V1_LAYOUT @local = 0xa41c0d2284b8d046;
+const ulong LIGHT_V2_LAYOUT @local = 0x4fe02031be92ca17;
 const ulong PROBE_LAYOUT @local = 0xaed5ed822ebdf51a;
 const ulong ATMOSPHERE_LAYOUT @local = 0x0a0ac3087385a43b;
 const ulong FOG_LAYOUT @local = 0x1b730abab72fb88f;
@@ -32,10 +33,23 @@ struct LightV1 @private {
     ShadowSettings shadow;
 }
 
-BinaryCompatibility[1] light_binary_compatibility @local = {
+struct LightV2 @private {
+    LightKind kind;
+    Vec3 color;
+    float intensity;
+    float range;
+    float inner_cone;
+    float outer_cone;
+    uint layers;
+    bool volumetric;
+    ShadowSettings shadow;
+}
+
+BinaryCompatibility[2] light_binary_compatibility @local = {
     { .version = 1, .read = &read_light_v1 },
+    { .version = 2, .read = &read_light_v2 },
 };
-uint[1] light_text_default_versions @local = { 1 };
+uint[2] light_text_default_versions @local = { 1, 2 };
 
 <*
  Register portable core components and their semantic defaults.
@@ -51,9 +65,16 @@ fn void? register_core_codecs() {
     register_core_value(Camera, CAMERA_LAYOUT, &defaults_camera)!;
     describe::register_reflected(LightV1)!;
     register_core_value(LightV1, LIGHT_V1_LAYOUT, &defaults_light_v1)!;
+    describe::register_reflected(LightV2)!;
+    register_described_type(
+        $Type: LightV2,
+        version: 2,
+        layout: LIGHT_V2_LAYOUT,
+        defaults: &defaults_light_v2,
+    )!;
     register_described_type(
         $Type: Light,
-        version: 2,
+        version: 3,
         layout: LIGHT_LAYOUT,
         defaults: &defaults_light,
     )!;
@@ -67,6 +88,8 @@ fn void? register_core_codecs() {
     register_described(Camera, { .name = "c3d.Camera" })!;
     register_described(Light, {
         .name = "c3d.Light",
+        .project = &project_light,
+        .validate = &validate_light,
         .binary_compatibility = light_binary_compatibility[..],
         .text_default_versions = light_text_default_versions[..],
     })!;
@@ -126,6 +149,22 @@ fn void defaults_light_v1(void* value) @local {
     };
 }
 
+fn void defaults_light_v2(void* value) @local {
+    Light defaults;
+    defaults_light(&defaults);
+    *(LightV2*)value = {
+        .kind = defaults.kind,
+        .color = defaults.color,
+        .intensity = defaults.intensity,
+        .range = defaults.range,
+        .inner_cone = defaults.inner_cone,
+        .outer_cone = defaults.outer_cone,
+        .layers = defaults.layers,
+        .volumetric = defaults.volumetric,
+        .shadow = defaults.shadow,
+    };
+}
+
 fn void defaults_probe(void* value) @local {
     *(ProbeVolume*)value = light::probe_volume({ 1, 1, 1 }, { 2, 2, 2 });
 }
@@ -174,6 +213,30 @@ fn void? read_light_v1(Reader* reader, ReadContext* context) @local {
     });
 }
 
+fn void? read_light_v2(Reader* reader, ReadContext* context) @local {
+    LightV2 legacy;
+    Acquisitions owned = { .allocator = context.allocator };
+    defer owned.release();
+    read_described_value(
+        type: described_type(LightV2)!,
+        reader: reader,
+        context: context,
+        owned: &owned,
+        value: &legacy,
+    )!;
+    context.scene.add(context.node, (Light){
+        .kind = legacy.kind,
+        .color = legacy.color,
+        .intensity = legacy.intensity,
+        .range = legacy.range,
+        .inner_cone = legacy.inner_cone,
+        .outer_cone = legacy.outer_cone,
+        .layers = legacy.layers,
+        .volumetric = legacy.volumetric,
+        .shadow = legacy.shadow,
+    });
+}
+
 fn void? attach_mesh(void* value, ReadContext* context) @local {
     Mesh mesh = *(Mesh*)value;
     float[]? weights = alloc::new_array_try(context.scene.allocator, float, (sz)mesh.morph_weights.len);
@@ -194,6 +257,15 @@ fn void? project_mesh(void* component, void* value, WriteContext* context) @loca
         }
     }
     *(Mesh*)value = mesh;
+}
+
+fn void? validate_light(void* value, ReadContext* context) @local {
+    if (!light::light_source_valid((Light*)value)) return c3d::INVALID_ARGUMENT~;
+}
+
+fn void? project_light(void* component, void* value, WriteContext* context) @local {
+    if (!light::light_source_valid((Light*)component)) return c3d::INVALID_ARGUMENT~;
+    *(Light*)value = *(Light*)component;
 }
 
 fn void? validate_probe(void* value, ReadContext* context) @local {

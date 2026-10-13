@@ -25,7 +25,7 @@ fn void test_every_registered_core_component_has_one_expected_policy() @test {
             .identity = Mesh::typeid, .component_description = true },
         { .slot = ecs::assigned_slot(Camera)!!, .version = 1, .name = "c3d.Camera",
             .identity = Camera::typeid, .component_description = true },
-        { .slot = ecs::assigned_slot(Light)!!, .version = 2, .name = "c3d.Light",
+        { .slot = ecs::assigned_slot(Light)!!, .version = 3, .name = "c3d.Light",
             .identity = Light::typeid, .component_description = true },
         { .slot = ecs::assigned_slot(ProbeVolume)!!, .version = 1, .name = "c3d.ProbeVolume",
             .identity = ProbeVolume::typeid, .component_description = true },

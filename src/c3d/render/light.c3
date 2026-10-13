@@ -107,6 +107,8 @@ fn ShadowRequest[] collect_shadow_requests(
         }
         color_intensity.w *= pre_exposure;
         if (eligible) {
+            if (light.shadow.enabled) light.validate_source();
+
             uint packed_index = counts.packed;
             bool ray_traced = trace_shadows ? light.shadow.enabled : light_ray_traced(light, ray_tracing);
             include_light(
@@ -183,6 +185,7 @@ fn void include_light(
         .layers = light.layers,
         .cos_inner = light.kind == SPOT ? math::cos(light.inner_cone) : 0,
         .flags = (ray_traced ? shader::LIGHT_RT_SHADOW : 0) | (light.volumetric ? shader::LIGHT_VOLUMETRIC : 0),
+        .source_extent = light.kind == DIRECTIONAL ? light.source_angle : light.source_radius,
     };
 }
 

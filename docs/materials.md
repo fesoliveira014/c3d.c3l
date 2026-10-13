@@ -681,6 +681,10 @@ reduce the angular weight inside the authored inner cone.
 one, and nothing else. The three constructors set it; set it to false to opt a light out. A zero-initialized
 `Light` has it false and does not scatter.
 
+`Light.source_radius` (point and spot lights, metres) and `Light.source_angle` (directional lights, half-angle in
+radians) size the source that [ray-traced shadows](shadows.md#soft-shadows) sample. Both are zero by default, a point
+source with a hard shadow. They are finite and not negative, and the angle is below `PI / 2`. Atlas shadows ignore them.
+
 `Scene.add_light` can return `c3d::CAPACITY_EXCEEDED` when node capacity is full.
 Lights are ordinary components owned by the scene. Edit the component and call
 `scene.update_world()` after transform changes, before rendering. Light values

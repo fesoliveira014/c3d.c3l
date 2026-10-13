@@ -1488,7 +1488,7 @@ struct LightGpu {
     uint  shadow_first;
     uint  shadow_count;
     uint  flags;
-    uint  _pad1;
+    float source_extent;
     uint  _pad2;
 }
 $assert LightGpu::size == 80;
@@ -1501,7 +1501,7 @@ $assert $reflect(LightGpu.cos_inner).offset == 56;
 $assert $reflect(LightGpu.shadow_first).offset == 60;
 $assert $reflect(LightGpu.shadow_count).offset == 64;
 $assert $reflect(LightGpu.flags).offset == 68;
-$assert $reflect(LightGpu._pad1).offset == 72;
+$assert $reflect(LightGpu.source_extent).offset == 72;
 $assert $reflect(LightGpu._pad2).offset == 76;
 
 struct ShadowGpu {

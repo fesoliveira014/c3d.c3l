@@ -911,7 +911,7 @@ struct LightGpu {
     uint shadow_first;
     uint shadow_count;
     uint flags;
-    uint _pad1;
+    float source_extent;
     uint _pad2;
 };
 
