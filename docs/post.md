@@ -17,7 +17,10 @@ python3 scripts/build.py --example post
 fields). `render::default_view_desc()` selects `DISPLAY_LDR` with `post::default_post_stack()`: ACES,
 contrast 1, saturation 1, temperature 0, tint 0, lift 0, gamma 1, gain 1, no LUT with the unit LUT domain, and
 `anti_aliasing = AntiAliasing.FXAA`. `AntiAliasing { NONE, FXAA, TAA }` selects one filter per view, so
-FXAA and TAA never stack. A zeroed `PostStack` is not neutral.
+FXAA and TAA never stack. A zeroed `PostStack` is not neutral. Multisampling is `ViewDesc.msaa`, not a post
+setting: it excludes `TAA`, combines with `FXAA`, which filters the resolved image, and leaves bloom, depth of field,
+motion blur and grading unchanged, because every one reads single-sample images (see
+[multisample anti-aliasing](views.md#multisample-anti-aliasing)).
 
 Apply a configuration between frames with `render::configure_view(&renderer, renderer.default_view,
 desc)`. The call copies the description into the view record, uploads a selected LUT, and allocates
