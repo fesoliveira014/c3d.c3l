@@ -142,7 +142,8 @@ fn void? record_deferred_shading(
         )!;
     }
     record_lighting_pass(renderer, record, frame, clear_color)!;
-    record.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
+    if (record.desc.msaa == MsaaSamples.ONE) record.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
+
     record_forward_pass(
         renderer:      renderer,
         record:        record,
