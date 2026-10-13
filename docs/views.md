@@ -60,7 +60,7 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `instance_culling` | Batch instances are culled per instance on the GPU in this view, its depth prepass and its shadow layers (see [instancing](instancing.md#instance-culling)); on in both constructors |
 | `lights` | `FLAT` or `CLUSTERED` candidate light selection |
 | `clusters` | Editable `ClusterDesc`; ignored by `FLAT` |
-| `ray_tracing` | `RayTracingDesc`: `shadows` (see [shadows](shadows.md)), `reflections` and `max_reflection_roughness` (see [reflections](reflections.md)); zero disables all |
+| `ray_tracing` | `RayTracingDesc`: `shadows` and `shadow_samples`, 1 to `MAX_SHADOW_SAMPLES` (16) with zero reading as 1 (see [shadows](shadows.md#soft-shadows)), `reflections` and `max_reflection_roughness` (see [reflections](reflections.md)); zero disables all |
 | `ambient_occlusion` | `AmbientOcclusionDesc`; zero is off (see [ambient occlusion](ambient_occlusion.md)) |
 | `screen_space_gi` | `ScreenSpaceGiDesc`; zero is off (see [screen-space GI](screen_space_gi.md)) |
 | `path_trace` | `PathTraceDesc`: bounces, samples per frame and sample cap of a `PATH_TRACED` view (see [path tracing](path_tracing.md)) |
@@ -87,7 +87,7 @@ validate between frames: a dead target faults `INVALID_ID`; `LINEAR_HDR` on a wi
 RGBA8 target, a viewport outside the output, a render scale outside its range and an invalid post
 stack fault `INVALID_ARGUMENT`; a `clip_plane` other than the zero plane with a normal that is not
 unit length or a `d` that is not finite, and any non-zero `clip_plane` on a `PATH_TRACED` view, fault
-`INVALID_ARGUMENT`; `volumetric_fog` on a `PATH_TRACED` view and a `transmission_layers` above `MAX_TRANSMISSION_LAYERS` fault `INVALID_ARGUMENT`; invalid ambient occlusion settings fault `INVALID_ARGUMENT` and
+`INVALID_ARGUMENT`; `volumetric_fog` on a `PATH_TRACED` view and a `transmission_layers` above `MAX_TRANSMISSION_LAYERS` and a `ray_tracing.shadow_samples` above `MAX_SHADOW_SAMPLES` fault `INVALID_ARGUMENT`; invalid ambient occlusion settings fault `INVALID_ARGUMENT` and
 `AoKind.RAY_TRACED` faults `UNSUPPORTED`; a full pool faults `CAPACITY_EXCEEDED` (`RendererDesc.max_views`, 8 by
 default; see [Capacities](#capacities)).
 `destroy_view` on the default view faults `INVALID_ARGUMENT`.
