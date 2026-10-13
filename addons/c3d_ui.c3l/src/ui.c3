@@ -184,7 +184,7 @@ struct UiDesc {
     uint field_bytes;      // the focused field's edit buffer
     uint max_windows;      // window elements across the loaded documents; zero holds none
     uint max_text_pieces;  // rich label pieces per frame; zero holds none
-    uint max_transitions;  // elements holding transition state; zero holds none
+    uint max_transitions;  // elements holding transition state; zero holds none and keeps no exit buffers
 }
 
 <*
@@ -199,6 +199,7 @@ struct UiStats {
     uint placement_clears;
     uint text_pieces;
     uint transitions;
+    uint exiting;
 }
 
 struct UiClayError @private {
@@ -326,6 +327,8 @@ struct Ui {
     char[]                    names;
     uint                      names_used;
     UiInstance[]              instances;
+    UiInstanceLink[]          links;        // per instance, empty when max_transitions is 0
+    UiFrameStore              previous;     // the buffers of the update before, empty when max_transitions is 0
     uint                      instance_count;
     UiInstanceSlot[]          instance_lookup;
     char[]                    text;
@@ -417,6 +420,14 @@ fn Ui? create_ui(Allocator allocator, AssetStore* assets, UiDesc desc) {
     usz windows_at = @reserve(&offset, UiWindow, desc.max_windows);
     usz pieces_at = @reserve(&offset, UiTextPiece, desc.max_text_pieces);
     usz transitions_at = @reserve(&offset, UiTransition, 2 * (usz)desc.max_transitions);
+    usz exit_instances = desc.max_transitions ? desc.max_instances : 0;
+    usz exit_text = desc.max_transitions ? desc.text_bytes : 0;
+    usz exit_pieces = desc.max_transitions ? desc.max_text_pieces : 0;
+    usz links_at = @reserve(&offset, UiInstanceLink, exit_instances);
+    usz previous_instances_at = @reserve(&offset, UiInstance, exit_instances);
+    usz previous_links_at = @reserve(&offset, UiInstanceLink, exit_instances);
+    usz previous_text_at = @reserve(&offset, char, exit_text);
+    usz previous_pieces_at = @reserve(&offset, UiTextPiece, exit_pieces);
 
     // Allocated as Vec4 so every allocator aligns the block for the Vec4 members of the carved tables.
     Vec4[] block = alloc::new_array(allocator, Vec4, (sz)((offset + Vec4::size - 1) / Vec4::size));
@@ -456,6 +467,13 @@ fn Ui? create_ui(Allocator allocator, AssetStore* assets, UiDesc desc) {
         .windows         = @carve(storage, windows_at, UiWindow, desc.max_windows),
         .pieces          = @carve(storage, pieces_at, UiTextPiece, desc.max_text_pieces),
         .transitions     = @carve(storage, transitions_at, UiTransition, 2 * (usz)desc.max_transitions),
+        .links           = @carve(storage, links_at, UiInstanceLink, exit_instances),
+        .previous        = {
+            .instances = @carve(storage, previous_instances_at, UiInstance, exit_instances),
+            .links     = @carve(storage, previous_links_at, UiInstanceLink, exit_instances),
+            .text      = @carve(storage, previous_text_at, char, exit_text),
+            .pieces    = @carve(storage, previous_pieces_at, UiTextPiece, exit_pieces),
+        },
         .cache           = {
             .lines             = @carve(storage, lines_at, UiPlacementLine, desc.cache_lines),
             .slots             = @carve(storage, line_slots_at, uint, 2 * (usz)desc.cache_lines),

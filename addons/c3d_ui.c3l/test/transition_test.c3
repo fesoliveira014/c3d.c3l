@@ -21,6 +21,11 @@ const String FADE_SHEET @local = `{
     "fill": "#000000ff", "size": [40, 20],
     "transition": { "properties": ["fill", "offset"], "duration": 1 },
     "hover": { "fill": "#ffffffff", "offset": [20, 0] }
+  },
+  "leave": {
+    "fill": "#ffffffff", "size": [40, 20],
+    "transition": { "properties": ["opacity"], "duration": 1 },
+    "hidden": { "opacity": 0 }
   }
 }`;
 
@@ -156,4 +161,48 @@ fn void test_transition_retargets_across_reload_by_id() @test {
     fixture::frame(&fixture);
     assert(nth_rect(&fixture, 0).fill.x == 0.5f, "an element with an id keeps its value and retargets from it");
     assert(nth_rect(&fixture, 1).fill.x == 0, "an element without an id snaps to its target");
+}
+
+fn uint rect_count(Fixture* fixture) @local {
+    uint count;
+    foreach (&entry : fixture.list.entries[:fixture.list.item_count]) {
+        if (entry.kind == RECT) count++;
+    }
+
+    return count;
+}
+
+fn void test_removed_element_exits_without_input() @test {
+    Fixture fixture;
+    fixture::create_fixture(&fixture);
+    defer fixture::destroy_fixture(&fixture);
+    fixture::register_squad(&fixture);
+    fixture.ui.load_styles({ FADE_SHEET })!!;
+    fixture.ui.load_document(
+        `{ "root": { "kind": "list", "items": "{squad.members}", "direction": "column", "template": {
+            "kind": "button", "style": "leave", "enabled": "{member.alive}", "on_click": "squad.select" } } }`,
+    )!!;
+    fixture::frame(&fixture);
+    assert(rect_count(&fixture) == 3 && fixture.ui.stats.getter_calls == 4);
+
+    fixture.squad = fixture.members[:2];
+    fixture::frame(&fixture, delta: 0.25f);
+    assert(rect_count(&fixture) == 3, "the removed row keeps drawing");
+    assert(nth_rect(&fixture, 2).fill.w == 1 && fixture.ui.stats.exiting == 1);
+    assert(fixture.ui.stats.getter_calls == 3, "and calls no getter for its scope");
+
+    fixture::frame(&fixture, delta: 0.25f);
+    assert(nth_rect(&fixture, 2).fill.w == 0.75f, "its alpha falls");
+
+    fixture::click(&fixture, { 10, 50 });
+    assert(fixture.recorder.calls == 0 && !fixture.input.mouse_captured_by_gui, "it takes no click");
+
+    fixture::click(&fixture, { 10, 10 });
+    assert(fixture.recorder.calls == 1, "while the rows that stay do");
+
+    fixture::frame(&fixture, delta: 0.25f);
+    assert(nth_rect(&fixture, 2).fill.w == 0.5f);
+
+    fixture::frame(&fixture, delta: 1);
+    assert(rect_count(&fixture) == 2 && fixture.ui.stats.exiting == 0, "it is gone after the duration");
 }
