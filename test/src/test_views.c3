@@ -48,6 +48,28 @@ fn void test_output_mode_allows_format() @test {
     assert(render::output_mode_allows_format(OutputMode.DISPLAY_LDR, PixelFormat.RGBA16_FLOAT));
 }
 
+fn void test_msaa_count_is_validated_against_anti_aliasing_and_path() @test {
+    ViewDesc desc = render::default_view_desc();
+    desc.post.anti_aliasing = AntiAliasing.TAA;
+    assert(render::msaa_desc_valid(&desc));
+    desc.shading = ShadingPath.PATH_TRACED;
+    assert(render::msaa_desc_valid(&desc));
+
+    desc = render::default_view_desc();
+    desc.msaa = MsaaSamples.FOUR;
+    desc.post.anti_aliasing = AntiAliasing.FXAA;
+    assert(render::msaa_desc_valid(&desc));
+    desc.shading = ShadingPath.DEFERRED;
+    assert(render::msaa_desc_valid(&desc));
+
+    desc.post.anti_aliasing = AntiAliasing.TAA;
+    assert(!render::msaa_desc_valid(&desc));
+
+    desc.post.anti_aliasing = AntiAliasing.FXAA;
+    desc.shading = ShadingPath.PATH_TRACED;
+    assert(!render::msaa_desc_valid(&desc));
+}
+
 fn void test_texture_view_desc_defaults() @test {
     RenderTargetId target = { .index = 3, .generation = 7 };
     ViewDesc desc = render::texture_view_desc(target);

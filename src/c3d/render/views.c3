@@ -92,6 +92,7 @@ struct ViewDesc {
     uint                 transmission_layers; // up to MAX_TRANSMISSION_LAYERS; zero reads as 1
     TransparencyMode     transparency; // how premultiplied-alpha blended surfaces compose
     float                pre_exposure_override; // 0 follows the camera exposure; else the power-of-two radiance scale stored images carry
+    MsaaSamples          msaa; // samples per pixel of the opaque scene passes; ONE is off
 }
 
 <*
@@ -1002,6 +1003,7 @@ fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
     if (!post::pre_exposure_override_valid(desc.pre_exposure_override)) return c3d::INVALID_ARGUMENT~;
     if (!ambient_occlusion_desc_valid(&desc.ambient_occlusion)) return c3d::INVALID_ARGUMENT~;
     if (!screen_space_gi_desc_valid(&desc.screen_space_gi)) return c3d::INVALID_ARGUMENT~;
+    if (!msaa_desc_valid(desc)) return c3d::INVALID_ARGUMENT~;
     RayTracingDesc* ray_tracing = &desc.ray_tracing;
     if (ray_tracing.reflections) {
         if (desc.shading == ShadingPath.PATH_TRACED) return c3d::UNSUPPORTED~;
@@ -1040,6 +1042,7 @@ fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
         return c3d::INVALID_ARGUMENT~;
     }
     if (!post::post_stack_valid(&desc.post)) return c3d::INVALID_ARGUMENT~;
+    validate_msaa_support(renderer, desc, output)!;
     if (desc.post.grade.lut.generation) {
         TextureAsset* lut = renderer.assets.textures.try_get(desc.post.grade.lut)!;
         if (!lut_desc_valid(&lut.desc)) return c3d::INVALID_ARGUMENT~;
