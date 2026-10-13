@@ -563,6 +563,12 @@ fn void list_view_pipelines(
             list_prepare_compute(requests, ComputeSlot.DOF_GATHER);
             list_prepare_compute(requests, ComputeSlot.DOF_COMPOSITE);
         }
+
+        if (post::auto_focus_active(desc)) {
+            list_prepare_compute(requests, ComputeSlot.FOCUS_HISTOGRAM);
+            list_prepare_compute(requests, ComputeSlot.FOCUS_ADAPT);
+        }
+
         if (desc.post.motion_blur || desc.post.depth_of_field) {
             list_prepare_compute(requests, ComputeSlot.TILE_MAX);
             list_prepare_compute(requests, ComputeSlot.TILE_NEIGHBOR);

@@ -16,6 +16,7 @@ void main() {
     uvec2 texel = gl_GlobalInvocationID.xy;
     if (texel.x >= root.width || texel.y >= root.height) return;
 
+    DofFocus focus = dof_focus(root);
     vec3 near_color = vec3(0.0);
     vec3 far_color = vec3(0.0);
     float near_coverage = 0.0;
@@ -25,7 +26,7 @@ void main() {
         vec2 uv = (vec2(texel) * 2.0 + offset + 0.5) * root.full_texel;
         vec3 color = sample_texture_2d(root.color_texture, root.sampler_index, uv).rgb;
         float depth = sample_texture_2d(root.depth_texture, root.sampler_index, uv).r;
-        float coc = dof_signed_coc(dof_linear_depth(depth, root), root);
+        float coc = dof_signed_coc(dof_linear_depth(depth, root), focus, root);
         float near_weight = max(-coc, 0.0) / root.max_coc;
         float far_weight = max(coc, 0.0) / root.max_coc;
         near_color += color * near_weight;

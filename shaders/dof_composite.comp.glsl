@@ -24,7 +24,7 @@ void main() {
         ? load_storage_texture(root.output_texture, ivec2(texel))
         : sample_texture_2d(root.color_texture, root.sampler_index, uv);
     float depth = sample_texture_2d(root.depth_texture, root.sampler_index, uv).r;
-    float coc = dof_signed_coc(dof_linear_depth(depth, root), root);
+    float coc = dof_signed_coc(dof_linear_depth(depth, root), dof_focus(root), root);
     float far_blend = max(coc, 0.0) / root.max_coc;
 
     vec4 far = sample_texture_2d(root.far_texture, root.sampler_index, uv);

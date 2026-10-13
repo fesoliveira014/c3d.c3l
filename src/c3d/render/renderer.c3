@@ -415,6 +415,7 @@ fn void? Renderer.end_frame(&self) {
                 if (record.history.pending) record.history.submitted = self.frame_index;
                 record.history.publish();
                 record.auto_exposure.history.publish();
+                record.focus.history.publish();
                 record.fog_history.publish();
                 record.cloud_history.publish();
                 publish_lod_history(&record.lod_history);
@@ -505,6 +506,7 @@ fn void? begin_renderer_frame(Renderer* self, FrameInfo info, bool acquire_outpu
             collect_gpu_profile(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
             read_cluster_stats(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
             post::read_exposure_stats(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
+            post::read_focus_stats(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
             read_cull_stats(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
         };
         instrumentation::@scope("renderer.retire") {
@@ -1185,6 +1187,7 @@ fn void abort_frame(Renderer* renderer) {
     if (!renderer.frame_submitted) {
         clear_cluster_readback(renderer, renderer.recording_slot);
         post::clear_exposure_readback(renderer, renderer.recording_slot);
+        post::clear_focus_readback(renderer, renderer.recording_slot);
         renderer.cull_readbacks[renderer.recording_slot].pending = false;
         renderer.shadow_atlas.state = renderer.frame_shadow_state;
         renderer.shadow_atlas.colored.states = renderer.frame_colored_states;
@@ -1196,6 +1199,7 @@ fn void abort_frame(Renderer* renderer) {
             record.restore_states();
             record.history.discard();
             record.auto_exposure.history.discard();
+            record.focus.history.discard();
             record.fog_history.discard();
             record.cloud_history.discard();
             discard_lod_history(&record.lod_history);
