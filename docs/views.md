@@ -60,7 +60,7 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `instance_culling` | Batch instances are culled per instance on the GPU in this view, its depth prepass and its shadow layers (see [instancing](instancing.md#instance-culling)); on in both constructors |
 | `lights` | `FLAT` or `CLUSTERED` candidate light selection |
 | `clusters` | Editable `ClusterDesc`; ignored by `FLAT` |
-| `ray_tracing` | `RayTracingDesc`: `shadows` and `shadow_samples`, 1 to `MAX_SHADOW_SAMPLES` (16) with zero reading as 1 (see [shadows](shadows.md#soft-shadows)), `reflections` and `max_reflection_roughness` (see [reflections](reflections.md)); zero disables all |
+| `ray_tracing` | `RayTracingDesc`: `shadows` and `shadow_samples`, 1 to `MAX_SHADOW_SAMPLES` (16) with zero reading as 1 (see [shadows](shadows.md#soft-shadows)), `reflections` and `max_reflection_roughness`, `reflection_rays`, 1 to `RT_REFLECTION_RAYS_MAX` (4) with zero reading as 1, and `reflection_resolution`, `FULL` or `HALF` (see [reflections](reflections.md)); zero disables all |
 | `ambient_occlusion` | `AmbientOcclusionDesc`; zero is off (see [ambient occlusion](ambient_occlusion.md)) |
 | `screen_space_gi` | `ScreenSpaceGiDesc`; zero is off (see [screen-space GI](screen_space_gi.md)) |
 | `path_trace` | `PathTraceDesc`: bounces, samples per frame and sample cap of a `PATH_TRACED` view (see [path tracing](path_tracing.md)) |
@@ -354,6 +354,7 @@ Images a view allocates at creation, by setting:
 | `ambient_occlusion.temporal` | +4: two history and two depth images |
 | `screen_space_gi` | +7 |
 | `ray_tracing.reflections` | +2, and +1 on a `FORWARD` view |
+| `ray_tracing.reflection_resolution` `HALF`, with `reflections` | +1 (`reflection_half`) |
 | `volumetric_fog` | +1 |
 | `PATH_TRACED`: accumulation, no sky images | 3 in all |
 
