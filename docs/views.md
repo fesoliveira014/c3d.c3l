@@ -494,7 +494,8 @@ depth-only variants unconditionally. Views created afterwards prepare their pipe
 render.
 
 A mesh's pipelines follow the live views: the `RT_SHADOWS` forms (with `SCENE_TRACE_BVH` on the
-software path) of a view with traced shadows, for each draw the view shades in the forward pass; the
+software path) of a view with traced shadows, hard-only unless the scene has a traced light with a
+[source extent](shadows.md#soft-shadows), for each draw the view shades in the forward pass; the
 `WEIGHTED_BLEND` forms and the composite of a `WEIGHTED` view; and the thin reflection prepass pair, written
 and masked, of a forward view with traced reflections. Configure the views before preparing.
 `Stats.pipelines_created` counts the pipelines the cache built in a frame, prepared ones included; a
