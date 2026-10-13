@@ -469,6 +469,9 @@ root SsaoRoot {
     uint         _pad1;
 }
 
+const uint FRAME_AO_BENT_NORMALS = 1024; // FrameRoot.flags bit 10: the ao view holds a bent normal in green and blue
+const uint AO_BLUR_FLAG_VECTOR_INPUT = 1; // the input holds the bent normal in xyz and visibility in w
+
 root AoBlurRoot {
     GpuAddress   frame;
     TextureIndex input_texture;
@@ -478,9 +481,9 @@ root AoBlurRoot {
     uint         height;
     uint         input_width;
     uint         input_height;
+    uint         flags;
     uint         _pad0;
     uint         _pad1;
-    uint         _pad2;
 }
 
 const uint AO_TEMPORAL_FLAG_HISTORY_VALID = 1;
@@ -586,7 +589,25 @@ root RtReflectionRoot {
     float        max_roughness;
     uint         noise_frame;
     uint         light_count;
+    uint         ray_count;
+    uint         trace_shift; // 0 traces every pixel of the output, 1 one pixel of each 2 x 2 block
+    uint         _pad1;
+}
+
+root RtReflectionUpsampleRoot {
+    GpuAddress   frame;
+    TextureIndex input_texture;
+    TextureIndex depth;
+    TextureIndex normal_roughness;
+    TextureIndex emissive_specular;
+    TextureIndex output_texture;
+    uint         width;
+    uint         height;
+    uint         input_width;
+    uint         input_height;
+    uint         offset; // index into RT_REFLECTION_HALF_OFFSETS that the trace used
     uint         _pad0;
+    uint         _pad1;
 }
 
 root RtReflectionBlurRoot {
@@ -597,7 +618,7 @@ root RtReflectionBlurRoot {
     TextureIndex output_texture;
     uint         width;
     uint         height;
-    uint         _pad0;
+    TextureIndex emissive_specular;
     uint         _pad1;
 }
 

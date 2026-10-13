@@ -20,6 +20,8 @@ render::configure_view(&renderer, renderer.default_view, desc)!;
 | `shadows` | Ray-traced shadows (see [shadows](shadows.md)) |
 | `reflections` | Ray-traced reflections on this view |
 | `max_reflection_roughness` | Surfaces rougher than this keep the environment reflection; in `(0, 1]` while `reflections` is set |
+| `reflection_rays` | Rays per traced pixel, 1 to `RT_REFLECTION_RAYS_MAX` (4); zero reads as 1 |
+| `reflection_resolution` | `FULL` traces every pixel; `HALF` traces one of each 2 x 2 block ([half resolution](#half-resolution)) |
 
 `default_view_desc` and `texture_view_desc` set `max_reflection_roughness` to
 `RT_REFLECTION_ROUGHNESS_DEFAULT` (0.5). `create_view` and `configure_view` fault:
@@ -29,10 +31,14 @@ render::configure_view(&renderer, renderer.default_view, desc)!;
   ([scene tracing](scene_trace.md)). On an RTX 4090 (Sponza, 2160p) they cost about 12 times the
   ray-query rays: 5.4 ms against 0.45 ms.
 - `INVALID_ARGUMENT` when `reflections` is set and `max_reflection_roughness` is not finite or
-  lies outside `(0, 1]`.
+  lies outside `(0, 1]`, or `reflection_rays` is above `RT_REFLECTION_RAYS_MAX`.
+
+`reflection_rays` and `reflection_resolution` are ignored while `reflections` is clear. The defaults, one ray at
+full resolution, give the images of a view that sets neither.
 
 The view allocates two `RGBA16_FLOAT` images at its working extent, `reflection` and
-`reflection_blur`, while `reflections` is set, and retires them when it is cleared. A `FORWARD` view also
+`reflection_blur`, while `reflections` is set, and retires them when it is cleared. `HALF` adds a third,
+`reflection_half`, at the working extent halved and rounded up. A `FORWARD` view also
 allocates `reflection_gbuffer` ([forward views](#forward-views)).
 
 ## What traces
@@ -43,10 +49,11 @@ overrides. Materials the G-buffer cannot encode keep their forward shading and t
 reflection. A pixel traces when it has geometry, a specular weight above zero and a roughness at
 or below `max_reflection_roughness`.
 
-Each such pixel casts one ray, sampled from the GGX distribution of visible normals (Dupuy and
-Benyoub 2023) around the G-buffer normal. The sample rotates with interleaved gradient noise,
-per frame only on a TAA view, where TAA averages it; without TAA a still camera shows a fixed
-grain on rougher surfaces.
+Each such pixel casts `reflection_rays` rays (one by default), each sampled from the GGX distribution of visible
+normals (Dupuy and Benyoub 2023) around the G-buffer normal, and averages their radiance. Ray `n` of a frame uses
+noise sequence `noise_frame * rays + n`, so a single ray uses `noise_frame` as before. The sample rotates with
+interleaved gradient noise, per frame only on a TAA view, where TAA averages it; without TAA a still camera shows a
+fixed grain on rougher surfaces, which more rays reduce.
 
 - **Hit.** The hit surface is shaded from its material: `STANDARD` with the Standard BRDF,
   `PHYSICAL` with the forward Physical stage's lobes (see below), `BASIC` unlit, `TOON` with its
@@ -82,11 +89,34 @@ grain on rougher surfaces.
   never reads a reflection probe: indoor misses happen only through openings or excluded geometry
   (`RT_REFLECTION_FAR` is 1e4), and a ray through excluded geometry reads the global environment.
 
-A spatial blur then averages each traced pixel with neighbours of similar depth, normal and
-roughness over a 5x5 footprint that widens with roughness; mirror-like pixels are not blurred.
+A spatial blur then averages each traced pixel with neighbours of similar depth, normal,
+roughness and specular weight over a 5x5 footprint that widens with roughness; mirror-like pixels are not blurred.
 
 Traced reflections ignore a view's clip plane: they trace the whole scene. A planar mirror is a
 clipped view of its own (see [clip plane](views.md#clip-plane)).
+
+## Material edges
+
+The blur and the half-resolution reconstruction skip a neighbour whose roughness differs from the pixel's by more than
+0.1 or whose specular weight differs by more than `RT_REFLECTION_SPECULAR_TOLERANCE` (0.1). Pixels on either side of a
+specular-weight edge, such as two Physical materials with different `specular`, then never average into each other, so
+a reflection does not smear across the boundary. A pixel beside an edge averages fewer neighbours and shows more
+grain, within the blur's footprint. The weight comes from the G-buffer `emissive_specular` alpha on a deferred view
+and from the alpha of `reflection_gbuffer` on a forward view. Surfaces of equal specular weight, such as every
+Standard material, behave as before.
+
+## Half resolution
+
+With `reflection_resolution` set to `HALF` the trace writes `reflection_half`, one texel per 2 x 2 block, and spends a
+quarter of the rays. Texel `t` traces the pixel `2t + o` of the working extent, clamped to the image. With TAA the
+offset `o` steps through (0, 0), (1, 1), (1, 0) and (0, 1) with the noise frame, so four frames cover each block;
+without TAA it stays (0, 0).
+
+A reconstruction pass then fills `reflection`: each pixel takes the 2 x 2 texels around it, weighted bilinearly by the
+pixel's position among the traced pixels and by the blur's depth and normal weights. A texel counts for nothing when
+its pixel has a roughness more than 0.1 away or a specular weight more than `RT_REFLECTION_SPECULAR_TOLERANCE` away,
+or when it traced nothing. A pixel with no compatible texel is untraced: it keeps the prefiltered specular and the
+surface shows no traced reflection there. The blur follows as at full resolution.
 
 ## Forward views
 
@@ -146,18 +176,22 @@ the only reflection of indirect light; the renderer builds the split-sum table f
 ## Passes and inspection
 
 `Pass.RT_REFLECTIONS` runs after `AMBIENT_OCCLUSION` and before `LIGHTING` (before `FORWARD_OPAQUE` on a
-forward view): the trace and the blur, two compute dispatches. `render_view` prepares the scene trace and the split-sum table itself.
+forward view): the trace and the blur, two compute dispatches, and the reconstruction between them at `HALF`.
+`render_view` prepares the scene trace and the split-sum table itself.
 `gui::targets_panel` lists `reflection_blur` and `reflection`; programmatically
 `PreviewKind.VIEW_REFLECTION` previews `reflection_blur` at level 0 and `reflection` at level 1.
 The post panel's "Ray tracing" header toggles reflections on a deferred view and sets the
-threshold.
+threshold, the rays per pixel and half resolution.
 
 `examples/rt_effects` shows a mirror floor reflecting an emissive panel above the view, a chalk
 sphere above the view lit by a warm lamp outside the camera frustum and not by a cold lamp whose
 `layers` exclude the sphere, a row of metal spheres from roughness 0 to 1, and in front of them a
 clearcoated red sphere, a high-IOR tinted-specular dielectric, a transmissive glass sphere, a sheen
 fabric sphere and a brushed anisotropic metal sphere, each seen beside its own reflection. `R` toggles
-reflections, `S` switches the view between deferred and forward shading, `F` toggles a height fog over the reflected paths, `[` and `]` move the threshold, `A` cycles ambient occlusion; `--gpu-timings --benchmark N` prints the mean pass times. The
+reflections, `S` switches the view between deferred and forward shading, `F` toggles a height fog over the reflected
+paths, `[` and `]` move the threshold, `1` to `4` set the rays per pixel, `H` toggles half resolution, `A` cycles
+ambient occlusion; `--reflection-rays N` and `--reflection-resolution full|half` set the rays and the resolution at
+start; `--gpu-timings --benchmark N` prints the mean pass times. The
 rendering benchmarks take `--reflections on|off` on a deferred view ([benchmarking](benchmarking.md))
 and report `gpu_rt_reflections_ms`.
 
@@ -169,7 +203,10 @@ python3 scripts/build.py --example rt_effects
 
 - Forward views trace Standard and plain Physical draws only; other draws keep the environment reflection and
   the reflection probes.
-- One ray per pixel and a spatial blur; no temporal accumulation beyond what TAA provides.
+- Up to `RT_REFLECTION_RAYS_MAX` rays per traced pixel and a spatial blur; no temporal accumulation beyond what TAA
+  provides.
+- `HALF` rebuilds untraced pixels from compatible neighbours only; a pixel at a depth, normal, roughness or
+  specular-weight edge with none keeps the prefiltered specular.
 - Hits see the traced scene: skinned and morphed meshes appear at their raster pose; crowd placements appear only through `add_crowd(trace: true)`; custom vertex stages and `BLEND` meshes are absent.
 - Every hit loops the whole reflection light list (no clustering) with a shadow ray per shadowing
   light in reach, so hit cost grows with the light count.

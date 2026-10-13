@@ -46,6 +46,7 @@ bool probe_irradiance(
     ProbeVolumeGpu volume,
     vec3 position,
     vec3 normal,
+    vec3 irradiance_direction,
     vec3 view_direction,
     out vec3 irradiance
 ) {
@@ -67,7 +68,12 @@ bool probe_irradiance(
         uvec3 probe = base + corner;
         uvec2 cell = probe_cell(counts, volume.slices_per_row, probe);
         vec4 sampled = probe_atlas_sample(
-            volume.irradiance, volume.sampler_index, cell, PROBE_IRRADIANCE_CELL, normal, irradiance_extent
+            volume.irradiance,
+            volume.sampler_index,
+            cell,
+            PROBE_IRRADIANCE_CELL,
+            irradiance_direction,
+            irradiance_extent
         );
         if (sampled.a == float(PROBE_CLASS_EXCLUDED)) continue;
 

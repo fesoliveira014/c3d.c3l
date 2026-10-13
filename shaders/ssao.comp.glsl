@@ -29,6 +29,16 @@ float slice_visibility(float horizon_0, float horizon_1, float normal_angle) {
     return 0.25 * (arc_0 + arc_1);
 }
 
+// Jimenez 2016, Algorithm 2: the slice's cosine-weighted direction along the slice axis (x) and the view vector (y).
+vec2 slice_bent_terms(float horizon_0, float horizon_1, float normal_angle) {
+    float along_axis = (6.0 * sin(horizon_0 - normal_angle) - sin(3.0 * horizon_0 - normal_angle)
+        + 6.0 * sin(horizon_1 - normal_angle) - sin(3.0 * horizon_1 - normal_angle)
+        + 16.0 * sin(normal_angle) - 3.0 * (sin(horizon_0 + normal_angle) + sin(horizon_1 + normal_angle))) / 12.0;
+    float along_view = (-cos(3.0 * horizon_0 - normal_angle) - cos(3.0 * horizon_1 - normal_angle)
+        + 8.0 * cos(normal_angle) - 3.0 * (cos(horizon_0 + normal_angle) + cos(horizon_1 + normal_angle))) / 12.0;
+    return vec2(along_axis, along_view);
+}
+
 void main() {
     SsaoRoot root = SsaoRoot(pc.root_gpu);
     uvec2 pixel = gl_GlobalInvocationID.xy;
@@ -54,7 +64,12 @@ void main() {
     float projected_scale = frame.proj[0][0] * 0.5 * float(extent.x);
     float radius_pixels = root.radius * projected_scale / (orthographic ? 1.0 : -position.z);
     if (radius_pixels < 1.0) {
+#ifdef BENT_NORMALS
+        vec3 world_normal = transpose(mat3(frame.view)) * normal;
+        store_storage_texture(root.output_texture, ivec2(pixel), vec4(1.0, ao_pack_bent_normal(world_normal), 1.0));
+#else
         store_storage_texture(root.output_texture, ivec2(pixel), vec4(1.0));
+#endif
         return;
     }
     vec2 radius_uv = radius_pixels / vec2(extent);
@@ -64,6 +79,9 @@ void main() {
     float step_noise = interleaved_gradient_noise(vec2(pixel.yx), root.noise_frame);
 
     float visibility = 0.0;
+#ifdef BENT_NORMALS
+    vec3 bent_sum = vec3(0.0);
+#endif
     for (uint slice = 0u; slice < SSAO_SLICE_COUNT; slice++) {
         float phi = (float(slice) + slice_noise) * PI / float(SSAO_SLICE_COUNT);
         vec3 direction = vec3(cos(phi), sin(phi), 0.0);
@@ -111,8 +129,18 @@ void main() {
         horizon_1 = normal_angle + clamp(horizon_1 - normal_angle, -HALF_PI, HALF_PI);
         horizon_0 = normal_angle + clamp(horizon_0 - normal_angle, -HALF_PI, HALF_PI);
         visibility += projected_length * slice_visibility(horizon_0, horizon_1, normal_angle);
+#ifdef BENT_NORMALS
+        vec2 bent_terms = slice_bent_terms(horizon_0, horizon_1, normal_angle);
+        bent_sum += projected_length * (bent_terms.x * normalize(ortho_direction) + bent_terms.y * view_vector);
+#endif
     }
     visibility = clamp(visibility / float(SSAO_SLICE_COUNT), 0.0, 1.0);
     float occlusion = clamp(1.0 - root.intensity * (1.0 - visibility), 0.0, 1.0);
+#ifdef BENT_NORMALS
+    vec3 bent_normal = ao_stored_bent_normal(normal, bent_sum, root.intensity);
+    vec2 packed_normal = ao_pack_bent_normal(transpose(mat3(frame.view)) * bent_normal);
+    store_storage_texture(root.output_texture, ivec2(pixel), vec4(occlusion, packed_normal, 1.0));
+#else
     store_storage_texture(root.output_texture, ivec2(pixel), vec4(occlusion));
+#endif
 }

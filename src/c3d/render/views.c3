@@ -57,10 +57,12 @@ const uint MAX_SHADOW_SAMPLES = 16; // four bits of FrameRoot.flags; each sample
  Ray-query effects of a view; zero disables all.
 *>
 struct RayTracingDesc {
-    bool  shadows;
-    bool  reflections;
-    float max_reflection_roughness;
-    uint  shadow_samples; // up to MAX_SHADOW_SAMPLES; zero reads as 1
+    bool                 shadows;
+    bool                 reflections;
+    float                max_reflection_roughness;
+    uint                 shadow_samples; // up to MAX_SHADOW_SAMPLES; zero reads as 1
+    uint                 reflection_rays; // up to RT_REFLECTION_RAYS_MAX; zero reads as 1
+    ReflectionResolution reflection_resolution; // the extent the rays are cast at
 }
 
 <*
@@ -100,7 +102,7 @@ struct ViewDesc {
 *>
 const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8 + GBUFFER_CHANNEL_COUNT
   + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1 + 1 + 2 * SSGI_HISTORY_SLOTS + 2 + 1 + 3 + 2 + 1 + 2 + 1 + 1 + 2
-  + 2 * AO_HISTORY_SLOTS + 6;
+  + 2 * AO_HISTORY_SLOTS + 6 + 1;
 
 <*
  Reverse-Z projection terms that recover forward distance from stored depth.
@@ -635,6 +637,7 @@ struct ViewRecord {
     Target[AO_HISTORY_SLOTS]             ao_depth;
     Target                               reflection;
     Target                               reflection_blur;
+    Target                               reflection_half;
     Target                               reflection_gbuffer;
     Target                               accumulation;
     Target                               ssgi_raw;
@@ -770,6 +773,7 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
     targets[next + 3] = &record.msaa_reflection_gbuffer;
     targets[next + 4] = &record.normal_sample_zero;
     targets[next + 5] = &record.specular_sample_zero;
+    targets[next + 6] = &record.reflection_half;
     return targets;
 }
 
@@ -1032,6 +1036,7 @@ fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
         if (desc.shading == ShadingPath.PATH_TRACED) return c3d::UNSUPPORTED~;
         float roughness = ray_tracing.max_reflection_roughness;
         if (!math::is_finite(roughness) || roughness <= 0 || roughness > 1) return c3d::INVALID_ARGUMENT~;
+        if (ray_tracing.reflection_rays > RT_REFLECTION_RAYS_MAX) return c3d::INVALID_ARGUMENT~;
     }
     if (desc.shading == ShadingPath.PATH_TRACED) {
         if (!renderer.caps.ray_tracing_pipelines.enabled) return c3d::UNSUPPORTED~;
@@ -1206,14 +1211,14 @@ fn void drop_unwanted_images(ViewRecord* staged, ViewDesc* previous) @private {
         staged.clusters = {};
     }
     AmbientOcclusionDesc* ambient_occlusion = &desc.ambient_occlusion;
-    if (ambient_occlusion.kind == AoKind.NONE
-        || ambient_occlusion.full_resolution != previous.ambient_occlusion.full_resolution) {
+    bool ambient_occlusion_reshaped = ambient_occlusion.full_resolution != previous.ambient_occlusion.full_resolution
+        || ambient_occlusion.bent_normals != previous.ambient_occlusion.bent_normals;
+    if (ambient_occlusion.kind == AoKind.NONE || ambient_occlusion_reshaped) {
         staged.ao_raw = {};
         staged.ao = {};
     }
 
-    if (!ambient_occlusion_accumulates(desc)
-        || ambient_occlusion.full_resolution != previous.ambient_occlusion.full_resolution) {
+    if (!ambient_occlusion_accumulates(desc) || ambient_occlusion_reshaped) {
         staged.ao_history = {};
         staged.ao_depth = {};
     }
@@ -1229,6 +1234,8 @@ fn void drop_unwanted_images(ViewRecord* staged, ViewDesc* previous) @private {
         staged.reflection = {};
         staged.reflection_blur = {};
     }
+
+    if (!reflection_half_resolution(desc)) staged.reflection_half = {};
     if (!desc.ray_tracing.reflections || desc.shading != ShadingPath.FORWARD) staged.reflection_gbuffer = {};
     if (desc.shading != ShadingPath.PATH_TRACED) staged.accumulation = {};
     if (desc.shading == ShadingPath.PATH_TRACED) {

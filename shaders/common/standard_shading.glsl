@@ -95,6 +95,7 @@ vec3 shade_standard_surface(
             frame,
             world_position,
             surface,
+            draw_bent_normal(frame, draw.flags, pixel, surface.normal),
             surface_sample.roughness,
             surface_sample.occlusion,
             ambient_occlusion,
