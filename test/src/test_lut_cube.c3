@@ -9,6 +9,7 @@ import std::math;
 
 const uint IDENTITY_SIZE @local = 5;
 const String SIZE_TWO @local = "LUT_3D_SIZE 2\n";
+const String RANGE_UNIT @local = "LUT_3D_INPUT_RANGE 0 1\n";
 const String EIGHT_ROWS @local = "0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n";
 
 fn void expect_fault(String text, fault expected) @local {
@@ -95,6 +96,12 @@ fn void test_cube_domain_folds_into_the_grade() @test {
         float high = lut.domain_max[channel] * packed.lut_scale[channel] + packed.lut_offset[channel];
         assert(math::abs(low - 0.25f) < 1e-6f && math::abs(high - 0.75f) < 1e-6f);
     }
+
+    Lut3d ranged = image::parse_lut_cube(mem, "LUT_3D_INPUT_RANGE 0.25 0.75\n" +++ SIZE_TWO +++ EIGHT_ROWS)!!;
+    defer image::destroy_lut3d(&ranged);
+
+    assert(ranged.domain_min.equals((Vec3){ 0.25f, 0.25f, 0.25f }));
+    assert(ranged.domain_max.equals((Vec3){ 0.75f, 0.75f, 0.75f }));
 }
 
 fn void test_cube_faults_name_the_problem() @test {
@@ -108,12 +115,15 @@ fn void test_cube_faults_name_the_problem() @test {
     expect_fault(SIZE_TWO +++ "0 0 0 0\n" +++ EIGHT_ROWS, c3d::ASSET_FORMAT_ERROR);
     expect_fault(SIZE_TWO +++ "0 red 0\n" +++ EIGHT_ROWS, c3d::ASSET_FORMAT_ERROR);
     expect_fault("LUT_3D_SIZE two\n" +++ EIGHT_ROWS, c3d::ASSET_FORMAT_ERROR);
-    expect_fault(SIZE_TWO +++ "LUT_3D_INPUT_RANGE 0 1\n" +++ EIGHT_ROWS, c3d::ASSET_FORMAT_ERROR);
+    expect_fault(SIZE_TWO +++ "GAMMA 2.2\n" +++ EIGHT_ROWS, c3d::ASSET_FORMAT_ERROR);
 
     expect_fault(SIZE_TWO +++ SIZE_TWO +++ EIGHT_ROWS, c3d::ASSET_FORMAT_ERROR);
     expect_fault("TITLE \"a\"\nTITLE \"b\"\n" +++ SIZE_TWO +++ EIGHT_ROWS, c3d::ASSET_FORMAT_ERROR);
     expect_fault("DOMAIN_MIN 0 0 0\nDOMAIN_MIN 0 0 0\n" +++ SIZE_TWO +++ EIGHT_ROWS, c3d::ASSET_FORMAT_ERROR);
     expect_fault("DOMAIN_MAX 1 1 1\nDOMAIN_MAX 1 1 1\n" +++ SIZE_TWO +++ EIGHT_ROWS, c3d::ASSET_FORMAT_ERROR);
+    expect_fault(RANGE_UNIT +++ RANGE_UNIT +++ SIZE_TWO +++ EIGHT_ROWS, c3d::ASSET_FORMAT_ERROR);
+    expect_fault(RANGE_UNIT +++ "DOMAIN_MIN 0 0 0\n" +++ SIZE_TWO +++ EIGHT_ROWS, c3d::ASSET_FORMAT_ERROR);
+    expect_fault("DOMAIN_MAX 1 1 1\n" +++ RANGE_UNIT +++ SIZE_TWO +++ EIGHT_ROWS, c3d::ASSET_FORMAT_ERROR);
 
     expect_fault(SIZE_TWO +++ EIGHT_ROWS +++ "TITLE \"late\"\n", c3d::ASSET_FORMAT_ERROR);
     expect_fault(SIZE_TWO +++ "0 0 0\nDOMAIN_MAX 1 1 1\n", c3d::ASSET_FORMAT_ERROR);
@@ -122,4 +132,6 @@ fn void test_cube_faults_name_the_problem() @test {
 
     expect_fault("DOMAIN_MAX 1 0 1\n" +++ SIZE_TWO +++ EIGHT_ROWS, c3d::ASSET_FORMAT_ERROR);
     expect_fault("DOMAIN_MIN 2 0 0\n" +++ SIZE_TWO +++ EIGHT_ROWS, c3d::ASSET_FORMAT_ERROR);
+    expect_fault("LUT_3D_INPUT_RANGE 1 1\n" +++ SIZE_TWO +++ EIGHT_ROWS, c3d::ASSET_FORMAT_ERROR);
+    expect_fault("LUT_3D_INPUT_RANGE 0\n" +++ SIZE_TWO +++ EIGHT_ROWS, c3d::ASSET_FORMAT_ERROR);
 }

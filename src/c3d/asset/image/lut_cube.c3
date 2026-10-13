@@ -36,6 +36,7 @@ fn Lut3d? parse_lut_cube(Allocator allocator, char[] text) {
     bool has_title;
     bool has_domain_min;
     bool has_domain_max;
+    bool has_input_range;
 
     Splitter lines = ((String)text).tokenize("\n");
     while (try line = lines.next()) {
@@ -58,13 +59,20 @@ fn Lut3d? parse_lut_cube(Allocator allocator, char[] text) {
 
                     lut.size = read_size(&rest)!;
                     lut.rgba = alloc::new_array(allocator, char, (sz)lut.size * lut.size * lut.size * LUT_TEXEL_BYTES);
+                case "LUT_3D_INPUT_RANGE":
+                    if (has_input_range || has_domain_min || has_domain_max) return c3d::ASSET_FORMAT_ERROR~;
+
+                    Vec2 range = read_pair(&rest)!;
+                    lut.domain_min = { range.x, range.x, range.x };
+                    lut.domain_max = { range.y, range.y, range.y };
+                    has_input_range = true;
                 case "DOMAIN_MIN":
-                    if (has_domain_min) return c3d::ASSET_FORMAT_ERROR~;
+                    if (has_domain_min || has_input_range) return c3d::ASSET_FORMAT_ERROR~;
 
                     lut.domain_min = read_triple(&rest)!;
                     has_domain_min = true;
                 case "DOMAIN_MAX":
-                    if (has_domain_max) return c3d::ASSET_FORMAT_ERROR~;
+                    if (has_domain_max || has_input_range) return c3d::ASSET_FORMAT_ERROR~;
 
                     lut.domain_max = read_triple(&rest)!;
                     has_domain_max = true;
@@ -132,6 +140,17 @@ fn float? read_float(String token) @local {
     if (!math::is_finite(value)) return c3d::ASSET_FORMAT_ERROR~;
 
     return value;
+}
+
+fn Vec2? read_pair(String* rest) @local {
+    Vec2 pair;
+    for (usz index = 0; index < 2; index++) {
+        pair[index] = read_float(next_token(rest))!;
+    }
+
+    if (next_token(rest).len) return c3d::ASSET_FORMAT_ERROR~;
+
+    return pair;
 }
 
 fn Vec3? read_triple(String* rest) @local {

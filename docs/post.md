@@ -87,16 +87,17 @@ and is not neutral; `configure_view` faults `INVALID_ARGUMENT` for a selected LU
 
 ### `.cube` files
 
-`image::parse_lut_cube(allocator, text)` and `image::load_lut_cube(allocator, path, file_source)` read an Adobe or
-Resolve `.cube` 3D LUT into a `Lut3d { size, domain_min, domain_max, rgba }`.
+`image::parse_lut_cube(allocator, text)` and `image::load_lut_cube(allocator, path, file_source)` read an Adobe
+`.cube` 3D LUT, or a Resolve one with `LUT_3D_INPUT_RANGE`, into a `Lut3d { size, domain_min, domain_max, rgba }`.
 
-- Read: `LUT_3D_SIZE`, `DOMAIN_MIN`, `DOMAIN_MAX`, `TITLE` (accepted and ignored) and `#` comment lines. Data rows
-  hold three numbers each, red varying fastest, then green, then blue. Values clamp to `[0, 1]` and round to
-  RGBA8 with opaque alpha.
+- Read: `LUT_3D_SIZE`, `DOMAIN_MIN`, `DOMAIN_MAX`, `LUT_3D_INPUT_RANGE min max` (the Resolve spelling: one range for
+  all three channels, not combined with `DOMAIN_MIN` or `DOMAIN_MAX`), `TITLE` (accepted and ignored) and `#`
+  comment lines. Data rows hold three numbers each, red varying fastest, then green, then blue. Values clamp to
+  `[0, 1]` and round to RGBA8 with opaque alpha.
 - `UNSUPPORTED`: `LUT_1D_SIZE`, or a size outside 2 to `image::MAX_LUT_SIZE` (64, 1 MiB of RGBA8).
 - `ASSET_FORMAT_ERROR`: a wrong row count, a row without three numbers, a non-numeric or non-finite token, an
-  unknown keyword, a duplicate keyword, a keyword after the first row, a missing size, or a domain whose minimum is
-  not below its maximum in every channel.
+  unknown keyword, a duplicate keyword, `LUT_3D_INPUT_RANGE` together with `DOMAIN_MIN` or `DOMAIN_MAX`, a keyword
+  after the first row, a missing size, or a domain whose minimum is not below its maximum in every channel.
 - Ownership: `Lut3d.rgba` is allocated with the allocator passed to the parser and belongs to the table;
   `image::destroy_lut3d(&lut)` frees it. `post::lut_texture_desc(&lut)` describes the texture and holds no pixels.
   `AssetStore.add_texture(post::lut_texture_desc(&lut), lut.rgba, key)` copies the texels, so the table can be
