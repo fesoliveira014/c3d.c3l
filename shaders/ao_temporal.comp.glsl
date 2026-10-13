@@ -25,7 +25,13 @@ void main() {
     ivec2 extent = texture_extent(root.depth);
     ivec2 texel = ao_depth_texel(ivec2(pixel), ivec2(root.width, root.height), extent);
     float depth = fetch_texture_2d(root.depth, texel).r;
+#ifdef BENT_NORMALS
+    vec4 raw = load_storage_texture(root.raw, ivec2(pixel));
+    float visibility = raw.r;
+    vec3 bent_normal = depth != 0.0 ? ao_unpack_bent_normal(raw.gb) : vec3(0.0);
+#else
     float visibility = load_storage_texture(root.raw, ivec2(pixel)).r;
+#endif
 
     if (depth != 0.0 && (root.flags & AO_TEMPORAL_FLAG_HISTORY_VALID) != 0u) {
         vec4 velocity = fetch_texture_2d(root.velocity, texel);
@@ -44,11 +50,21 @@ void main() {
             float velocity_pixels = length(velocity.xy * vec2(extent));
             float confidence = ssgi_history_confidence(depth_match, velocity_pixels, root.velocity_threshold)
                 * (1.0 - clamp(velocity.a, 0.0, 1.0));
+#ifdef BENT_NORMALS
+            vec4 history = sample_texture_2d(root.history, root.sampler_index, previous_uv);
+            visibility = mix(visibility, history.w, AO_HISTORY_WEIGHT * confidence);
+            bent_normal = ao_direction_or(mix(bent_normal, history.xyz, AO_HISTORY_WEIGHT * confidence), bent_normal);
+#else
             float history = sample_texture_2d(root.history, root.sampler_index, previous_uv).r;
             visibility = mix(visibility, history, AO_HISTORY_WEIGHT * confidence);
+#endif
         }
     }
 
+#ifdef BENT_NORMALS
+    store_storage_texture(root.output_texture, ivec2(pixel), vec4(bent_normal, visibility));
+#else
     store_storage_texture(root.output_texture, ivec2(pixel), vec4(visibility));
+#endif
     store_storage_texture(root.output_depth, ivec2(pixel), vec4(depth, 0.0, 0.0, 0.0));
 }

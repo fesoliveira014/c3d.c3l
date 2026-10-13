@@ -293,6 +293,7 @@ void main() {
             reflections,
             v_world_pos,
             surface,
+            draw_bent_normal(frame, draw.flags, ivec2(gl_FragCoord.xy), surface.standard.normal),
             material_sample.roughness,
             material_sample.occlusion,
             ambient_occlusion,

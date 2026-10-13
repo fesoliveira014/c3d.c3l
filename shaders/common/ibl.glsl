@@ -120,8 +120,15 @@ bool frame_has_indirect(FrameRoot frame) {
     return false;
 }
 
-// Irradiance E from the first probe volume containing the position, else the environment SH, else zero.
-vec3 indirect_diffuse_irradiance(FrameRoot frame, vec3 position, vec3 normal, vec3 view_direction) {
+// Irradiance E from the first probe volume containing the position, else the environment SH, else zero. The
+// lookups read irradiance_direction; the probe bias and back-face weight keep the surface normal.
+vec3 indirect_diffuse_irradiance(
+    FrameRoot frame,
+    vec3 position,
+    vec3 normal,
+    vec3 irradiance_direction,
+    vec3 view_direction
+) {
     if (frame.probe_volumes != 0ul) {
         ProbeVolumeSetGpu set = ProbeVolumeSetGpu(frame.probe_volumes);
         uint index;
@@ -131,6 +138,7 @@ vec3 indirect_diffuse_irradiance(FrameRoot frame, vec3 position, vec3 normal, ve
                 set.volumes[index],
                 position,
                 normal,
+                irradiance_direction,
                 view_direction,
                 irradiance
             )) return irradiance;
@@ -138,8 +146,12 @@ vec3 indirect_diffuse_irradiance(FrameRoot frame, vec3 position, vec3 normal, ve
     }
     if (frame.environment == 0ul) return vec3(0.0);
     EnvironmentGpu environment = EnvironmentGpu(frame.environment);
-    return environment_irradiance(environment.sh, environment_rotate(environment.rotation, normal))
+    return environment_irradiance(environment.sh, environment_rotate(environment.rotation, irradiance_direction))
         * environment.intensity;
+}
+
+vec3 indirect_diffuse_irradiance(FrameRoot frame, vec3 position, vec3 normal, vec3 view_direction) {
+    return indirect_diffuse_irradiance(frame, position, normal, normal, view_direction);
 }
 
 // The split-sum table and filtered sampler are renderer-wide; a frame without an environment carries them in its
@@ -187,11 +199,13 @@ vec3 environment_lobe_radiance(
 }
 
 // screen_indirect: the pixel's premultiplied screen-space bounce and hit share, zero where there is none.
+// irradiance_direction: where the diffuse irradiance is read, the surface normal or the pixel's bent normal.
 void evaluate_environment_lobes(
     FrameRoot frame,
     ReflectionSelection selection,
     vec3 world_position,
     StandardSurface surface,
+    vec3 irradiance_direction,
     float roughness,
     float occlusion,
     float ambient_occlusion,
@@ -200,8 +214,14 @@ void evaluate_environment_lobes(
     out vec3 specular
 ) {
     vec3 fresnel = fresnel_schlick(surface.reflectance, surface.grazing_reflectance, surface.normal_view);
-    vec3 irradiance = indirect_diffuse_irradiance(frame, world_position, surface.normal, surface.view_direction)
-        * screen_space_base_share(occlusion, ambient_occlusion, screen_indirect)
+    vec3 base_irradiance = indirect_diffuse_irradiance(
+        frame,
+        world_position,
+        surface.normal,
+        irradiance_direction,
+        surface.view_direction
+    );
+    vec3 irradiance = base_irradiance * screen_space_base_share(occlusion, ambient_occlusion, screen_indirect)
         + screen_indirect.rgb * occlusion;
     diffuse = irradiance * surface.diffuse_color * (1.0 - fresnel);
     specular = vec3(0.0);
@@ -220,6 +240,60 @@ void evaluate_environment_lobes(
 
 void evaluate_environment_lobes(
     FrameRoot frame,
+    ReflectionSelection selection,
+    vec3 world_position,
+    StandardSurface surface,
+    float roughness,
+    float occlusion,
+    float ambient_occlusion,
+    vec4 screen_indirect,
+    out vec3 diffuse,
+    out vec3 specular
+) {
+    evaluate_environment_lobes(
+        frame,
+        selection,
+        world_position,
+        surface,
+        surface.normal,
+        roughness,
+        occlusion,
+        ambient_occlusion,
+        screen_indirect,
+        diffuse,
+        specular
+    );
+}
+
+void evaluate_environment_lobes(
+    FrameRoot frame,
+    vec3 world_position,
+    StandardSurface surface,
+    vec3 irradiance_direction,
+    float roughness,
+    float occlusion,
+    float ambient_occlusion,
+    vec4 screen_indirect,
+    out vec3 diffuse,
+    out vec3 specular
+) {
+    evaluate_environment_lobes(
+        frame,
+        reflection_probe_select(frame, world_position),
+        world_position,
+        surface,
+        irradiance_direction,
+        roughness,
+        occlusion,
+        ambient_occlusion,
+        screen_indirect,
+        diffuse,
+        specular
+    );
+}
+
+void evaluate_environment_lobes(
+    FrameRoot frame,
     vec3 world_position,
     StandardSurface surface,
     float roughness,
@@ -234,6 +308,7 @@ void evaluate_environment_lobes(
         reflection_probe_select(frame, world_position),
         world_position,
         surface,
+        surface.normal,
         roughness,
         occlusion,
         ambient_occlusion,

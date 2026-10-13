@@ -17,6 +17,7 @@ render::configure_view(&renderer, renderer.default_view, desc)!;
 | `full_resolution` | Estimate at the working extent instead of half of it |
 | `ray_count` | Rays per estimate texel for `RAY_TRACED`, `RT_AO_RAYS_MIN` (1) to `RT_AO_RAYS_MAX` (16); `SSAO` ignores it |
 | `temporal` | Accumulates the estimate over frames, whether or not the view uses TAA; off by default; applies to `SSAO` and `RAY_TRACED` (see [Temporal](#temporal)) |
+| `bent_normals` | Also estimates the average unoccluded direction and lights the diffuse ambient term along it; off by default; applies to `SSAO` and `RAY_TRACED` (see [Bent normals](#bent-normals)) |
 
 `AMBIENT_OCCLUSION_DEFAULT` is `SSAO` at half resolution with a 0.5 m radius, intensity 1 and
 4 rays for when the kind is switched to `RAY_TRACED`. `create_view` and `configure_view` fault
@@ -48,7 +49,8 @@ The pass (`Pass.AMBIENT_OCCLUSION`) runs two compute dispatches between the dept
 lighting, three with [`temporal`](#temporal):
 
 1. The estimate: GTAO (Jimenez et al. 2016), two slice directions per texel with four steps on
-   each side, writing `ao_raw` at half or full resolution. Deferred views read the G-buffer
+   each side, writing `ao_raw` at half or full resolution (`R8_UNORM`, or `RGBA8_UNORM` with
+   [`bent_normals`](#bent-normals)). Deferred views read the G-buffer
    normal; forward views rebuild it from depth by the rule of the deferred
    [normal offset](shadows.md#normal-offset).
 2. With `temporal`, the accumulation between the estimate and the blur ([Temporal](#temporal)).
@@ -86,9 +88,41 @@ under `Pass.AMBIENT_OCCLUSION`.
   the velocity image uses the four-channel format, and scene-read items draw after the velocity
   and keep the camera velocity. A view without TAA or motion blur also pays the velocity pass and
   the per-candidate history commit.
-- The view keeps two history images (`R16_FLOAT`) and two depth images (`R32_FLOAT`) at the
-  estimate's extent, half the working extent by default, selected by the view history's slot. They
-  are dropped when `temporal` is cleared, the kind is `NONE` or `full_resolution` changes.
+- The view keeps two history images (`R16_FLOAT`, or `RGBA16_FLOAT` with
+  [`bent_normals`](#bent-normals)) and two depth images (`R32_FLOAT`) at the estimate's extent, half the
+  working extent by default, selected by the view history's slot. They are dropped when `temporal` is
+  cleared, the kind is `NONE`, or `full_resolution` or `bent_normals` changes.
+
+## Bent normals
+
+`bent_normals` stores, beside each pixel's visibility, the average direction the surface sees
+unoccluded: the world-space bent normal. The diffuse environment term reads its irradiance along that
+direction instead of along the surface normal, so a crease takes its light from the open side. It
+applies to `SSAO` and `RAY_TRACED`, with or without `temporal`.
+
+- `ao_raw` and `ao` become `RGBA8_UNORM`, four times the memory. Red holds the visibility, so readers
+  of `.r` see what they did before. Green and blue hold the bent normal as an octahedral pair
+  (`encode_octahedral`, remapped to 0 to 1). Alpha is unused. With `temporal` the history images
+  are `RGBA16_FLOAT`: the normal in xyz and the visibility in w. Changing `bent_normals` drops the
+  AO images, which the next rendering allocates again.
+- `SSAO` sums each slice's bent direction from its two horizon angles (Jimenez et al. 2016,
+  Algorithm 2), weighted like its visibility. `RAY_TRACED` averages the directions of its rays,
+  each weighted by one minus the falloff of its hit, so an unoccluded ray counts fully and an
+  occluded one not at all; a texel whose rays are all occluded keeps the surface normal.
+- The stored direction is the surface normal turned toward the estimate by `min(intensity, 1)`:
+  `intensity` 0 stores the normal itself.
+- The blur and upsample weight the neighbouring directions like the visibility and renormalize the
+  sum. With `temporal` the accumulation blends the directions and renormalizes too.
+- A view with bent normals sets `FRAME_AO_BENT_NORMALS` (bit 10 of `FrameRoot.flags`).
+  `frame_bent_normal(frame, pixel, normal)` and `draw_bent_normal(frame, draw_flags, pixel, normal)`
+  return the pixel's bent normal when the bit is set and the draw has screen-space terms, and
+  `normal` otherwise. Standard, Physical and Toon shading, and the deferred lighting resolve, pass it
+  as the `irradiance_direction` of `indirect_diffuse_irradiance` and `evaluate_environment_lobes`
+  ([custom shaders](custom_shaders.md#public-includes)).
+- Only the direction of the environment's diffuse irradiance changes: the SH lookup and the probe
+  volume's atlas direction. A probe volume still biases its lookup position along, and weighs its
+  probes by facing, the surface normal. The flat ambient fill, the specular lobes and specular
+  occlusion are as without bent normals.
 
 ## Ray traced
 
@@ -129,9 +163,11 @@ render::configure_view(&renderer, renderer.default_view, desc)!;
 
 `gui::targets_panel` lists `ao` and `ao_raw` while the view has them. Programmatically,
 `PreviewKind.VIEW_AMBIENT_OCCLUSION` previews `ao` at level 0 and `ao_raw`, the estimate before
-accumulation and blur, at level 1, white where unoccluded. `examples/ambient_occlusion` renders
+accumulation and blur, at level 1, white where unoccluded; the preview shows the visibility
+channel only. `examples/ambient_occlusion` renders
 Sponza on a forward and a deferred view side by side; `O` toggles AO, the Temporal checkbox (and
-`--temporal`) sets `temporal` on both views, and `--gpu-timings` shows the pass cost.
+`--temporal`) sets `temporal` on both views, the Bent normals checkbox (and `--bent-normals`) sets
+`bent_normals`, and `--gpu-timings` shows the pass cost.
 It needs the benchmark assets (`python3 scripts/fetch_benchmark_assets.py`):
 
 ```bash
@@ -146,4 +182,7 @@ The rendering benchmarks take `--ambient-occlusion none|half|full|ray-traced`
 - `SSAO` is screen space only: occluders outside the view or hidden behind nearer surfaces are
   absent. `RAY_TRACED` sees them, for the traced scene.
 - With `SSAO`, thin objects occlude as if they were solid to the depth behind them.
+- The bent normal is estimated around the normal the effect sees: the G-buffer normal on deferred
+  views, the one rebuilt from depth on forward views. On a forward view a normal map therefore does
+  not shape the diffuse environment term while `bent_normals` is on.
 - `LINEAR_HDR` views apply AO as part of lighting, so captures include it.

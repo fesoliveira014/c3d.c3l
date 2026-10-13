@@ -235,7 +235,7 @@ surface-lighting term; the outline below is geometry.
 ```c3
 toon.outline_width = 3;           // pixels of the view's image; 0 draws no outline
 toon.outline_color = { 0, 0, 0 }; // linear
-toon.outline_depth_offset = 0;    // world units
+toon.outline_depth_offset = 0;    // view-space units
 ```
 
 An inverted hull draws the outline: the mesh is drawn a second time, right after
@@ -956,8 +956,8 @@ Texture ownership and sampling are described in [Textures and
 images](textures.md). [Sun, spot and point shadows](shadows.md) attenuate Standard,
 Physical and Toon direct lighting. Standard and Physical support [environment
 lighting and independent skies](environments.md); Toon uses only its diffuse SH
-contribution, and Basic remains unlit. Toon does not provide PBR reflections,
-outlines or transmission. Physical transmission samples
+contribution, and Basic remains unlit. Toon does not provide PBR reflections or
+transmission. Physical transmission samples
 the opaque scene through a 2x2 box-filtered mip chain and never sees other
 transmissive or blended surfaces. Shading writes scene-linear HDR into the view's
 working image; the view's output mode decides whether display processing tone
