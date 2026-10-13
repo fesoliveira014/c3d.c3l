@@ -202,7 +202,11 @@ fn void? record_lighting_pass(
     };
     gpu::PipelineHandle pipeline = renderer.pipelines.get(
         &renderer.device,
-        lighting_resolve_pipeline_key(rt_shadow_flags(renderer, record.desc.ray_tracing.shadows)),
+        lighting_resolve_pipeline_key(rt_shadow_flags(
+            renderer,
+            record.desc.ray_tracing.shadows,
+            record.soft_shadows,
+        )),
     )!;
 
     @profile_pass(renderer, Pass.LIGHTING) {

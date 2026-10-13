@@ -320,6 +320,13 @@ fn bool edit_path_trace(PathTraceDesc* path_trace) @local {
 fn bool edit_ray_tracing(ViewDesc* desc) @local {
     RayTracingDesc* ray_tracing = &desc.ray_tracing;
     bool changed = imgui::checkbox("Shadows", &ray_tracing.shadows);
+    if (ray_tracing.shadows) {
+        uint samples = math::max(ray_tracing.shadow_samples, 1u);
+        if (edit_level_count("Shadow samples", &samples, 1, render::MAX_SHADOW_SAMPLES)) {
+            ray_tracing.shadow_samples = samples;
+            changed = true;
+        }
+    }
 
     imgui::begin_disabled(desc.shading == ShadingPath.PATH_TRACED);
     if (imgui::checkbox("Reflections", &ray_tracing.reflections)) {

@@ -259,8 +259,11 @@ fn uint trace_shader_flags(Renderer* renderer) @private {
     return renderer.caps.ray_queries.enabled ? 0 : shader::SHADER_FLAG_SCENE_TRACE_BVH;
 }
 
-fn uint rt_shadow_flags(Renderer* renderer, bool rt_shadows) @private {
-    return rt_shadows ? shader::SHADER_FLAG_RT_SHADOWS | trace_shader_flags(renderer) : 0;
+fn uint rt_shadow_flags(Renderer* renderer, bool rt_shadows, bool soft_shadows = true) @private {
+    if (!rt_shadows) return 0;
+
+    uint hard_only = soft_shadows ? 0 : shader::SHADER_FLAG_RT_SHADOWS_HARD;
+    return shader::SHADER_FLAG_RT_SHADOWS | trace_shader_flags(renderer) | hard_only;
 }
 
 // buildable: the store proved the list for this revision and still holds the CPU arrays.

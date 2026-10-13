@@ -30,6 +30,8 @@ const uint FRAME_AO_PRESENT = 4;
 const uint FRAME_SSGI_PRESENT = 8;
 const uint FRAME_CLIP_PLANE = 16;
 const uint FRAME_REFLECTIONS_PRESENT = 32;
+const uint FRAME_SHADOW_SAMPLES_SHIFT = 6;
+const uint FRAME_SHADOW_SAMPLES_MASK = 15;
 const uint CLUSTER_GROUP_SIZE = 64;
 const uint MAX_DECALS = 256;
 const uint MAX_CLUSTER_DECALS = 8;
@@ -1498,7 +1500,7 @@ struct LightGpu {
     uint  shadow_first;
     uint  shadow_count;
     uint  flags;
-    uint  _pad1;
+    float source_extent;
     uint  _pad2;
 }
 $assert LightGpu::size == 80;
@@ -1511,7 +1513,7 @@ $assert $reflect(LightGpu.cos_inner).offset == 56;
 $assert $reflect(LightGpu.shadow_first).offset == 60;
 $assert $reflect(LightGpu.shadow_count).offset == 64;
 $assert $reflect(LightGpu.flags).offset == 68;
-$assert $reflect(LightGpu._pad1).offset == 72;
+$assert $reflect(LightGpu.source_extent).offset == 72;
 $assert $reflect(LightGpu._pad2).offset == 76;
 
 struct ShadowGpu {

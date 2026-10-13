@@ -20,9 +20,21 @@ struct Light {
     float range;
     float inner_cone;
     float outer_cone;
+    float source_radius; // metres, point and spot lights; the ray-traced shadow's penumbra, zero is hard
+    float source_angle; // half-angle in radians, directional lights; the same, zero is hard
     uint layers;
     bool volumetric;
     ShadowSettings shadow;
+}
+
+<*
+ Whether the light's source extent is finite, nonnegative and the angle is below a right angle.
+ @param [&in] light : "Component to check."
+*>
+fn bool light_source_valid(Light* light) {
+    return math::is_finite(light.source_radius) && light.source_radius >= 0
+        && math::is_finite(light.source_angle) && light.source_angle >= 0
+        && light.source_angle < (float)math::PI / 2;
 }
 
 <*
