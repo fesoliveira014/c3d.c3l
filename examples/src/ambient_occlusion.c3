@@ -32,8 +32,8 @@ const float NEAR_PLANE_SCALE @local = 0.002f;
 const uint WINDOW_WIDTH @local = 1280;
 const uint WINDOW_HEIGHT @local = 720;
 const Vec2 CONTROLS_PANEL_POSITION @local = { 16, 16 };
-const Vec2 CONTROLS_PANEL_SIZE @local = { 340, 150 };
-const Vec2 POST_PANEL_POSITION @local = { 16, 182 };
+const Vec2 CONTROLS_PANEL_SIZE @local = { 340, 176 };
+const Vec2 POST_PANEL_POSITION @local = { 16, 208 };
 const Vec2 POST_PANEL_SIZE @local = { 340, 330 };
 const Vec2 TARGETS_PANEL_POSITION @local = { 920, 16 };
 const Vec2 TARGETS_PANEL_SIZE @local = { 344, 690 };
@@ -61,6 +61,7 @@ struct Views @local {
 struct Options @local {
     bool gpu_timings;
     bool full_resolution;
+    bool temporal;
 }
 
 fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
@@ -125,6 +126,11 @@ fn void set_ambient_occlusion(Views* views, bool enabled) @local {
     views.right_desc.ambient_occlusion.kind = kind;
 }
 
+fn void set_temporal(Views* views, bool temporal) @local {
+    views.left_desc.ambient_occlusion.temporal = temporal;
+    views.right_desc.ambient_occlusion.temporal = temporal;
+}
+
 fn void? draw_frame(
     render::Renderer* renderer,
     Scene* scene,
@@ -164,6 +170,7 @@ fn void? run_gui(
 
     AmbientOcclusionDesc ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
     ambient_occlusion.full_resolution = options.full_resolution;
+    ambient_occlusion.temporal = options.temporal;
     Views views = {
         .left       = renderer.default_view,
         .left_desc  = render::default_view_desc(),
@@ -222,6 +229,11 @@ fn void? run_gui(
                 set_ambient_occlusion(&views, enabled);
                 views_changed = true;
             }
+            bool temporal = views.right_desc.ambient_occlusion.temporal;
+            if (imgui::checkbox("Temporal", &temporal)) {
+                set_temporal(&views, temporal);
+                views_changed = true;
+            }
             if (imgui::radio_button("Edit left", !edit_right)) edit_right = false;
             imgui::same_line();
             if (imgui::radio_button("Edit right", edit_right)) edit_right = true;
@@ -266,6 +278,8 @@ fn int main(String[] args) {
             $endif
         } else if (argument == "--full") {
             options.full_resolution = true;
+        } else if (argument == "--temporal") {
+            options.temporal = true;
         } else {
             io::printfn("Unknown argument: %s", argument);
             return 1;
