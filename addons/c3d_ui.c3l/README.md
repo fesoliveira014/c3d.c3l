@@ -299,6 +299,10 @@ style reload or a bar's bound value.
   `update`. Fades of `fill`, `border`, `text_color` and `opacity` still run.
 - An element with an `id` keeps its entry across `reload_document` and `load_styles` and retargets from its current
   value; an element without one starts at its new target. `unload_document` drops the document's entries.
+- `ui --transitions` adds a lift card; hovering it moves its floating root, fades its colors and brightens a hint
+  through `opacity`. The HUD rows and buttons fade on hover and press, and the health bars animate `value`. With
+  `--frames N` a scripted pointer hovers the card, presses Damage and hovers a row. `--reduced-motion` and the `M` key
+  toggle reduced motion.
 
 ## Bindings
 

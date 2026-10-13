@@ -1,0 +1,18 @@
+{
+  "anchor": "bottom_left",
+  "offset": [352, -16],
+  "root": {
+    "kind": "button",
+    "id": "card",
+    "style": "lift_card",
+    "children": [
+      { "kind": "label", "style": "title", "text": "Lift card" },
+      { "kind": "label", "style": "caption", "text": "The root floats, so its offset lifts it on hover." },
+      {
+        "kind": "panel",
+        "style": "lift_hint",
+        "children": [ { "kind": "label", "style": "text", "text": "This hint fades in with the hover." } ]
+      }
+    ]
+  }
+}
