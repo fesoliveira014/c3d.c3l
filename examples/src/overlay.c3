@@ -131,6 +131,23 @@ const Vec4 GRADIENT_TILT_END @local = { 0.8f, 0.2f, 0.9f, 1 };
 const Vec4 VIGNETTE_CLEAR @local = { 0, 0, 0, 0 };
 const Vec4 VIGNETTE_EDGE @local = { 0, 0, 0, 0.85f };
 
+const Vec2 FROST_MIN @local = { 460, 300 };
+const Vec2 FROST_MAX @local = { 760, 440 };
+const Vec2 FROST_TILT_CENTER @local = { 832, 184 };
+const Vec2 FROST_TILT_MIN @local = { -110, -56 };
+const Vec2 FROST_TILT_MAX @local = { 110, 56 };
+const float FROST_TILT_ANGLE @local = -0.25f;
+const float FROST_TILT_SWING @local = 0.12f;
+const float FROST_SPEED @local = 0.8f;
+const float FROST_RADIUS @local = 16; // pixels of blur at rest
+const float FROST_RADIUS_SWING @local = 12; // keeps the pulse inside 4 to 28, under MAX_BACKDROP_RADIUS
+const float FROST_BORDER_WIDTH @local = 1.5f;
+const Vec2 TARGET_FROST_MIN @local = { 32, 84 };
+const Vec2 TARGET_FROST_MAX @local = { 224, 148 };
+const float TARGET_FROST_RADIUS @local = 10;
+const Vec4 FROST_FILL @local = { 1, 1, 1, 0.16f };
+const Vec4 FROST_BORDER @local = { 1, 1, 1, 0.55f };
+
 const uint STRESS_RECT_SIZE @local = 6;
 const uint STRESS_RECT_PITCH @local = 8;
 const float STRESS_RECT_RADIUS @local = 2;
@@ -171,9 +188,9 @@ const Vec4 WHITE @local = { 1, 1, 1, 1 };
 const Vec4 BACKDROP_COLOR @local = { 0.9f, 0.25f, 0.3f, 1 };
 const Vec4 CUBE_COLOR @local = { 0.2f, 0.7f, 0.9f, 1 };
 const Vec2 STATS_PANEL_POSITION @local = { 1010, 16 };
-const Vec2 STATS_PANEL_SIZE @local = { 260, 172 };
-const Vec2 RENDERER_PANEL_POSITION @local = { 1010, 196 };
-const Vec2 RENDERER_PANEL_SIZE @local = { 260, 484 };
+const Vec2 STATS_PANEL_SIZE @local = { 260, 194 };
+const Vec2 RENDERER_PANEL_POSITION @local = { 1010, 218 };
+const Vec2 RENDERER_PANEL_SIZE @local = { 260, 462 };
 
 struct Options @local {
     uint stress_count;
@@ -182,6 +199,7 @@ struct Options @local {
     bool transform_panel;
     bool shapes;
     bool gradients;
+    bool backdrop;
     bool benchmark;
     uint rects;
     uint frames;
@@ -208,6 +226,7 @@ struct Demo @local {
     bool              transform_panel;
     bool              shapes;
     bool              gradients;
+    bool              backdrop;
     double            prepare_ms;
     uint              overlay_draws;
 }
@@ -545,8 +564,37 @@ fn void? add_gradients(Demo* demo, float time) @local {
     list.pop_transform();
 }
 
-fn void? fill_target_list(OverlayList* list, float time) @local {
+fn OverlayRect frost_rect(Vec2 min, Vec2 max, float radius) @local {
+    OverlayRect rect = solid_rect(
+        min:    min,
+        max:    max,
+        fill:   FROST_FILL,
+        radius: 18,
+    );
+    rect.border_widths = { FROST_BORDER_WIDTH, FROST_BORDER_WIDTH, FROST_BORDER_WIDTH, FROST_BORDER_WIDTH };
+    rect.border_color = FROST_BORDER;
+    rect.backdrop_radius = radius;
+
+    return rect;
+}
+
+// The second panel blurs the scroll list's rows through a rotation; both blur everything drawn before them.
+fn void? add_backdrops(OverlayList* list, float time) @local {
+    float pulse = FROST_RADIUS + FROST_RADIUS_SWING * math::sin(time * FROST_SPEED);
+
+    list.add_rect(frost_rect(FROST_MIN, FROST_MAX, pulse))!;
+
+    float angle = FROST_TILT_ANGLE + FROST_TILT_SWING * math::sin(time * FROST_SPEED);
+
+    list.push_transform(placement_transform(FROST_TILT_CENTER, angle))!;
+    list.add_rect(frost_rect(FROST_TILT_MIN, FROST_TILT_MAX, pulse))!;
+    list.pop_transform();
+}
+
+fn void? fill_target_list(OverlayList* list, float time, bool backdrop) @local {
     list.clear();
+
+    if (backdrop) list.add_rect(frost_rect(TARGET_FROST_MIN, TARGET_FROST_MAX, TARGET_FROST_RADIUS))!;
 
     OverlayRect panel = solid_rect(
         min:    TARGET_PANEL_MIN,
@@ -681,7 +729,8 @@ fn void? fill_scenes(Demo* demo, Options* options, float time) @local {
     if (demo.transform_panel) add_transform_panel(demo, time)!;
     if (demo.shapes) add_shapes(list, time)!;
     if (demo.gradients) add_gradients(demo, time)!;
-    if (demo.with_portrait && demo.target_overlay) fill_target_list(demo.target_list, time)!;
+    if (demo.backdrop) add_backdrops(list, time)!;
+    if (demo.with_portrait && demo.target_overlay) fill_target_list(demo.target_list, time, demo.backdrop)!;
 }
 
 fn void? draw_frame(Demo* demo, GuiRenderer* gui_renderer, FrameInfo info) @local {
@@ -748,6 +797,7 @@ fn void? run_interactive(Demo* demo, Options* options) @local {
             imgui::checkbox("Transformed panel", &demo.transform_panel);
             imgui::checkbox("Shapes", &demo.shapes);
             imgui::checkbox("Gradients", &demo.gradients);
+            imgui::checkbox("Backdrop", &demo.backdrop);
             imgui::text("Items: %u of %u", demo.list.item_count, (uint)demo.list.entries.len);
         }
         imgui::end();
@@ -858,6 +908,8 @@ fn int main(String[] args) {
             options.shapes = true;
         } else if (argument == "--gradients") {
             options.gradients = true;
+        } else if (argument == "--backdrop") {
+            options.backdrop = true;
         } else if (argument == "--rects" && has_value) {
             options.rects = args[++index].to_uint() ?? 0;
         } else if (argument == "--frames" && has_value) {
@@ -872,7 +924,7 @@ fn int main(String[] args) {
             options.height = size[1];
         } else {
             io::eprintn(
-                "Use overlay [--stress [N]] [--target] [--transform] [--shapes] [--gradients] [--frames N]"
+                "Use overlay [--stress [N]] [--target] [--transform] [--shapes] [--gradients] [--backdrop] [--frames N]"
                 " [--benchmark --rects N --frames F --size WxH]."
             );
             return 1;
@@ -988,6 +1040,7 @@ fn int main(String[] args) {
         .transform_panel = options.transform_panel,
         .shapes          = options.shapes,
         .gradients       = options.gradients,
+        .backdrop        = options.backdrop,
     };
     renderer.prepare_scene(&scene)!!;
 
