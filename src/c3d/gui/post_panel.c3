@@ -25,6 +25,7 @@ const float APERTURE_MIN @local = 0.7f;
 const float APERTURE_MAX @local = 22;
 const float MAX_COC_MIN @local = 1;
 const float MAX_COC_MAX @local = 32;
+const float FOCUS_RADIUS_MAX @local = 128;
 const float SHUTTER_MAX @local = 1;
 const float MAX_VELOCITY_MIN @local = 1;
 const float MAX_VELOCITY_MAX @local = 128;
@@ -61,7 +62,7 @@ const ZString[AoKind::len] AO_KIND_LABELS @local = { "None", "SSAO", "Ray traced
  Edit the view's post settings; the caller applies them with configure_view.
  @param [&inout] desc : "Edited in place."
  @param lut : "Offered by a checkbox when live; zero hides it."
- @param [in] stats : "The view's stats; shows its delayed exposure, null hides it."
+ @param [in] stats : "The view's stats; shows its delayed exposure and focus, null hides them."
  @return "Whether any setting changed."
 *>
 fn bool post_panel(ViewDesc* desc, TextureId lut, ViewStats* stats = null) {
@@ -118,6 +119,16 @@ fn bool post_panel(ViewDesc* desc, TextureId lut, ViewStats* stats = null) {
         changed |= edit_grade_factor("Focal length", &dof.focal_length, FOCAL_LENGTH_MIN, FOCAL_LENGTH_MAX);
         changed |= edit_grade_factor("Aperture", &dof.aperture, APERTURE_MIN, APERTURE_MAX);
         changed |= edit_grade_factor("Max CoC", &dof.max_coc, MAX_COC_MIN, MAX_COC_MAX);
+
+        bool automatic = dof.focus_mode == FocusMode.AUTO;
+        if (imgui::checkbox("Auto focus", &automatic)) {
+            dof.focus_mode = automatic ? FocusMode.AUTO : FocusMode.MANUAL;
+            changed = true;
+        }
+
+        changed |= edit_grade_factor("Focus radius (px)", &dof.focus_radius, 0, FOCUS_RADIUS_MAX);
+        changed |= edit_grade_factor("Focus time (s)", &dof.focus_time, 0, ADAPTATION_TIME_MAX);
+        if (stats && stats.focus_distance > 0) imgui::text("Focus %.2f m", stats.focus_distance);
     }
     if (imgui::collapsing_header("Motion blur", {})) {
         MotionBlurParams* blur = &desc.post.motion_blur_params;
