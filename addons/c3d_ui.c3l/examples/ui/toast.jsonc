@@ -1,0 +1,13 @@
+{
+  "anchor": "top_right",
+  "offset": [-16, 16],
+  "root": {
+    "kind": "panel",
+    "style": "toast",
+    "visible": "{toast.shown}",
+    "children": [
+      { "kind": "label", "style": "title", "text": "Quest updated" },
+      { "kind": "label", "style": "caption", "text": "The toast enters and exits through a visible binding." }
+    ]
+  }
+}

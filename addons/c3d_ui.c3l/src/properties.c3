@@ -13,6 +13,7 @@ const UiProperties UI_PROPERTIES_DEFAULT @private = {
     .max_width  = float::max,
     .max_height = float::max,
     .font_set   = UI_NONE,
+    .opacity    = 1,
 };
 
 enum UiSizing @private {
@@ -45,6 +46,24 @@ enum UiTextAlign @private {
     RIGHT,
 }
 
+enum UiEasing : char @private {
+    LINEAR,
+    EASE_IN,
+    EASE_OUT,
+    EASE_IN_OUT,
+}
+
+enum UiAnimated @private {
+    FILL,
+    BORDER_COLOR,
+    BORDER_WIDTHS,
+    TEXT_COLOR,
+    OPACITY,
+    OFFSET,
+    SIZE,
+    VALUE,
+}
+
 enum UiProperty @private {
     FILL,
     BORDER_WIDTHS,
@@ -71,6 +90,11 @@ enum UiProperty @private {
     BAR_FILL,
     BAR_SKIN,
     HIGHLIGHT,
+    UNDERLINE,
+    TEXT_HIGHLIGHT,
+    TRANSITION,
+    OPACITY,
+    OFFSET,
 }
 
 struct UiSize @private {
@@ -81,6 +105,13 @@ struct UiSize @private {
 struct UiSkin @private {
     TextureId image; // zero: no skin
     Vec4      slice; // texels: left, top, right, bottom
+}
+
+struct UiTransitionConfig @private {
+    uint     properties; // one bit per UiAnimated; zero: no transition
+    float    duration;   // seconds
+    float    delay;      // seconds
+    UiEasing easing;
 }
 
 struct UiProperties @private {
@@ -109,6 +140,11 @@ struct UiProperties @private {
     Vec4        bar_fill;
     UiSkin      bar_skin;
     Vec4        highlight;
+    Vec4        text_highlight;
+    bool        underline;
+    UiTransitionConfig transition;
+    float       opacity;       // multiplies the alpha of everything the element and its descendants draw
+    Vec2        offset;        // layout units; moves floating elements only
 }
 
 macro ulong @property_bit(UiProperty property) @private => 1ul << property.ordinal;
@@ -150,6 +186,11 @@ fn void apply_properties(
             case BAR_FILL: target.bar_fill = source.bar_fill;
             case BAR_SKIN: target.bar_skin = source.bar_skin;
             case HIGHLIGHT: target.highlight = source.highlight;
+            case UNDERLINE: target.underline = source.underline;
+            case TEXT_HIGHLIGHT: target.text_highlight = source.text_highlight;
+            case TRANSITION: target.transition = source.transition;
+            case OPACITY: target.opacity = source.opacity;
+            case OFFSET: target.offset = source.offset;
         }
     }
     *target_mask |= source_mask;
@@ -175,6 +216,26 @@ fn bool? read_property(
         case "highlight":
             target.highlight = read_color(load, value)!;
             *mask |= @property_bit(HIGHLIGHT);
+        case "text_highlight":
+            target.text_highlight = read_color(load, value)!;
+            *mask |= @property_bit(TEXT_HIGHLIGHT);
+        case "underline":
+            if (!value.is_bool()) return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+
+            target.underline = value.b;
+            *mask |= @property_bit(UNDERLINE);
+        case "transition":
+            target.transition = read_transition(load, value)!;
+            *mask |= @property_bit(TRANSITION);
+        case "opacity":
+            double opacity = read_number(load, value)!;
+            if (!(opacity >= 0 && opacity <= 1)) return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+
+            target.opacity = (float)opacity;
+            *mask |= @property_bit(OPACITY);
+        case "offset":
+            target.offset = read_pair(load, value, true)!;
+            *mask |= @property_bit(OFFSET);
         case "border":
             read_border(
                 load:   load,
@@ -425,6 +486,76 @@ fn UiSkin? read_skin(UiLoad* load, Object* value) @private {
         return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
     }
     return skin;
+}
+
+macro uint @animated_bit(UiAnimated animated) @private => 1u << animated.ordinal;
+
+fn UiTransitionConfig? read_transition(UiLoad* load, Object* value) @private {
+    if (!value.is_map()) return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+
+    UiTransitionConfig config;
+    bool has_properties;
+    bool has_duration;
+    foreach (key : sorted_keys(value)) {
+        push_token(load, key);
+        Object* entry = value.get(key)!!;
+        switch (key) {
+            case "properties":
+                config.properties = read_animated(load, entry)!;
+                has_properties = true;
+            case "duration":
+                config.duration = read_length(load, entry)!;
+                has_duration = true;
+            case "delay":
+                config.delay = read_length(load, entry)!;
+            case "easing":
+                switch (read_word(load, entry)!) {
+                    case "linear": config.easing = LINEAR;
+                    case "ease_in": config.easing = EASE_IN;
+                    case "ease_out": config.easing = EASE_OUT;
+                    case "ease_in_out": config.easing = EASE_IN_OUT;
+                    default: return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+                }
+            default:
+                return fail_load(load, UNKNOWN_PROPERTY)~;
+        }
+
+        pop_token(load);
+    }
+
+    if (!has_properties) return fail_at(load, "properties", c3d::ASSET_FORMAT_ERROR)~;
+    if (!has_duration) return fail_at(load, "duration", c3d::ASSET_FORMAT_ERROR)~;
+
+    return config;
+}
+
+fn uint? read_animated(UiLoad* load, Object* value) @private {
+    if (!value.is_array() || !value.get_len()) return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+
+    uint mask;
+    for (usz index = 0; index < (usz)value.get_len(); index++) {
+        push_index(load, index);
+        uint bits = animated_bits(read_word(load, value.get_at((sz)index))!);
+        if (!bits || (mask & bits) != 0) return fail_load(load, c3d::ASSET_FORMAT_ERROR)~;
+
+        mask |= bits;
+        pop_token(load);
+    }
+
+    return mask;
+}
+
+fn uint animated_bits(String name) @private {
+    switch (name) {
+        case "fill": return @animated_bit(FILL);
+        case "border": return @animated_bit(BORDER_COLOR) | @animated_bit(BORDER_WIDTHS);
+        case "text_color": return @animated_bit(TEXT_COLOR);
+        case "opacity": return @animated_bit(OPACITY);
+        case "offset": return @animated_bit(OFFSET);
+        case "size": return @animated_bit(SIZE);
+        case "value": return @animated_bit(VALUE);
+        default: return 0;
+    }
 }
 
 fn uint? intern_font_set(Ui* ui, UiFontSet* set) @private {

@@ -296,6 +296,7 @@ fn void? record_raster_view(
     CameraMatrices raster = taa ? camera::jitter_matrices(*matrices, jitter) : *matrices;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     bool view_reflected = matrices.view.determinant() < 0;
+    record.soft_shadows = record.desc.ray_tracing.shadows && traced_light_has_extent(scene);
 
     @pool() {
         LodSelection[] lod = prepare_lod_view(
@@ -356,7 +357,7 @@ fn void? record_raster_view(
             usz scene_read_count;
             usz transparent_count;
             usz weighted_count;
-            uint shadow_flags = rt_shadow_flags(renderer, record.desc.ray_tracing.shadows);
+            uint shadow_flags = rt_shadow_flags(renderer, record.desc.ray_tracing.shadows, record.soft_shadows);
             foreach (&candidate : candidates) {
                 Material* material_data = candidate_material(renderer, candidate);
                 DrawList counted = view_draw_list(
@@ -437,6 +438,7 @@ fn void? record_raster_view(
                       vertex:     vertex,
                       rt_shadows: record.desc.ray_tracing.shadows,
                       weighted:   weighted,
+                      soft_shadows: record.soft_shadows,
                   );
                 if (catch excuse = pipeline) {
                     if (!custom_pipeline_rejected(renderer, material_description, excuse)) return excuse~;
@@ -1275,6 +1277,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
         bool shadows_enabled;
         bool deferred = self.has_deferred_view();
         bool prepass = self.has_depth_prepass_view();
+        bool soft_shadows = traced_light_has_extent(scene);
         @pool() {
             LightCounts counts;
             ShadowRequest[] requests = collect_shadow_requests(
@@ -1300,6 +1303,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
                 material_id: mesh.material,
                 morphed:     mesh.morph_weights.len > 0,
                 depth:       casts || prepass,
+                soft_shadows: soft_shadows,
             )!;
             sheen |= prepared.sheen;
             scene_reads |= prepared.scene_reads;
@@ -1317,6 +1321,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
                 instanced:   true,
                 crowd:       part.crowd != null && part.crowd.parts[part.crowd_part].skinned,
                 crowd_part:  part.crowd != null,
+                soft_shadows: soft_shadows,
             )!;
             sheen |= prepared.sheen;
             scene_reads |= prepared.scene_reads;
@@ -1343,6 +1348,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
                         instanced: group.state.mode == LodMode.INSTANCED,
                         crowd: group.state.animated != null && binding.skinned,
                         skinned: group.state.animated == null || binding.skinned,
+                        soft_shadows: soft_shadows,
                     )!;
                     sheen |= prepared.sheen;
                     scene_reads |= prepared.scene_reads;
@@ -1381,7 +1387,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
                 acquire_cloud_pipelines(self)!;
             }
         };
-        prepare_finish(self, scene_reads)!;
+        prepare_finish(self, scene_reads, soft_shadows)!;
         (void)resolve_view_environments(self, scene, sheen)!;
         prepare_reflection_probes(self, scene, sheen)!;
         if (!has_environment_preparations(self) && !self.pending_copies.len()
@@ -1451,6 +1457,7 @@ fn MeshPreparation? prepare_mesh(
     bool crowd = false,
     bool skinned = true,
     bool crowd_part = false,
+    bool soft_shadows = false,
 ) @private {
     if (!renderer.assets.geometries.is_live(geometry_id) || !renderer.assets.materials.is_live(material_id)) {
         renderer.stats.dangling_refs++;
@@ -1486,6 +1493,7 @@ fn MeshPreparation? prepare_mesh(
             crowd: crowd,
             skinned: skinned,
             crowd_part: crowd_part,
+            soft_shadows: soft_shadows,
         );
         acquire_prepare_pipelines(renderer, requests.array_view())!;
     };
@@ -1526,11 +1534,11 @@ fn MeshPreparation? prepare_billboards(Renderer* renderer, BillboardBatch* batch
     };
 }
 
-fn void? prepare_finish(Renderer* renderer, SceneReads reads) @private {
+fn void? prepare_finish(Renderer* renderer, SceneReads reads, bool soft_shadows = false) @private {
     @pool() {
         List{PreparePipelineUnit} requests;
         requests.init(tmem);
-        list_view_pipelines(renderer, reads, &requests);
+        list_view_pipelines(renderer, reads, &requests, soft_shadows);
         acquire_prepare_pipelines(renderer, requests.array_view())!;
     };
 }
@@ -2445,10 +2453,11 @@ fn gpu::PipelineHandle? pipeline_for(
     ShaderVariant vertex,
     bool rt_shadows = false,
     bool weighted = false,
+    bool soft_shadows = true,
 ) @private {
     renderer.stats.pipeline_lookups++;
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
-    uint shadow_flags = rt_shadow_flags(renderer, rt_shadows);
+    uint shadow_flags = rt_shadow_flags(renderer, rt_shadows, soft_shadows);
     PipelineKey key = forward_pipeline_key(
         material:     material,
         vertex:       vertex,

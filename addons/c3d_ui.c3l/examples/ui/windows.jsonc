@@ -1,0 +1,105 @@
+{
+  "anchor": "bottom_left",
+  "offset": [352, -16],
+  "root": {
+    "kind": "scroll",
+    "id": "desk.view",
+    "style": "panel",
+    "size": [560, 320],
+    "children": [
+      {
+        "kind": "panel",
+        "id": "desk",
+        "size": [520, 480],
+        "fill": "#0d0f14ff",
+        "radius": 4,
+        "gap": 8,
+        "padding": 8,
+        "children": [
+          { "kind": "label", "style": "caption", "text": "Drag a title bar. A press raises the window." },
+          {
+            "kind": "button",
+            "style": "button",
+            "on_click": "windows.reset",
+            "children": [ { "kind": "label", "style": "text", "text": "Reset" } ]
+          },
+          {
+            "kind": "panel",
+            "id": "inspector",
+            "window": true,
+            "style": "window",
+            "position": [16, 40],
+            "size": [230, 170],
+            "visible": "{desk.inspector_open}",
+            "on_move_end": "windows.moved",
+            "children": [
+              {
+                "kind": "panel",
+                "style": "title_bar",
+                "drag_handle": true,
+                "children": [
+                  { "kind": "label", "style": "text", "text": "Inspector" },
+                  { "kind": "panel", "width": "grow" },
+                  {
+                    "kind": "button",
+                    "style": "close",
+                    "on_click": "windows.close_inspector",
+                    "children": [ { "kind": "label", "style": "text", "text": "x" } ]
+                  }
+                ]
+              },
+              { "kind": "label", "style": "caption", "padding": 8, "text": "Holds the palette window." },
+              {
+                "kind": "panel",
+                "id": "palette",
+                "window": true,
+                "style": "window",
+                "position": [30, 56],
+                "size": [180, 100],
+                "drag_bounds": "none",
+                "on_move_end": "windows.moved",
+                "children": [
+                  {
+                    "kind": "panel",
+                    "style": "title_bar",
+                    "drag_handle": true,
+                    "children": [ { "kind": "label", "style": "text", "text": "Palette" } ]
+                  },
+                  { "kind": "label", "style": "caption", "padding": 8, "text": "Not bound to its parent." }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "panel",
+            "id": "notes",
+            "window": true,
+            "style": "window",
+            "position": [150, 110],
+            "size": [240, 150],
+            "visible": "{desk.notes_open}",
+            "on_move_end": "windows.moved",
+            "children": [
+              {
+                "kind": "panel",
+                "style": "title_bar",
+                "drag_handle": true,
+                "children": [
+                  { "kind": "label", "style": "text", "text": "Notes" },
+                  { "kind": "panel", "width": "grow" },
+                  {
+                    "kind": "button",
+                    "style": "close",
+                    "on_click": "windows.close_notes",
+                    "children": [ { "kind": "label", "style": "text", "text": "x" } ]
+                  }
+                ]
+              },
+              { "kind": "label", "style": "caption", "padding": 8, "text": "Overlaps the inspector." }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

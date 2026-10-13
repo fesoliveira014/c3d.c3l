@@ -115,7 +115,7 @@ vec3 grade_color(vec3 color, vec2 uv, GradeGpu grade) {
     color = pow(max(color, vec3(0.0)), 1.0 / grade.gamma.xyz);
     color = tonemap(color, grade.tonemap);
     if (grade.lut_texture != 0u) {
-        vec3 coordinate = linear_to_srgb(color) * grade.lut_scale + grade.lut_offset;
+        vec3 coordinate = linear_to_srgb(color) * grade.lut_scale.xyz + grade.lut_offset.xyz;
         color = srgb_to_linear(sample_texture_3d(grade.lut_texture, grade.lut_sampler, coordinate).rgb);
     }
     return color;

@@ -294,6 +294,7 @@ fn void list_mesh_pipelines(
     bool skinned = true,
     bool crowd_part = false,
     bool posed = false,
+    bool soft_shadows = false,
 ) @private {
     bool deforms = instanced ? crowd_part && (morphed || crowd) : morphed || skinned;
     if (renderer.compute_skinning && deforms && (flags.skinned || flags.has_morphs)) {
@@ -310,6 +311,7 @@ fn void list_mesh_pipelines(
             instanced: instanced,
             skinned: false,
             posed: instanced,
+            soft_shadows: soft_shadows,
         );
     }
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
@@ -389,7 +391,7 @@ fn void list_mesh_pipelines(
             custom_gbuffer: custom_gbuffer,
             custom_reads: custom_reads,
         );
-        uint shadow_flags = rt_shadow_flags(renderer, desc.ray_tracing.shadows);
+        uint shadow_flags = rt_shadow_flags(renderer, desc.ray_tracing.shadows, soft_shadows);
         if (desc.ray_tracing.shadows && list != DrawList.GBUFFER) {
             PipelineKey traced = forward_pipeline_key(
                 material: material,
@@ -503,7 +505,12 @@ fn void append_prepare_pipelines(
     );
 }
 
-fn void list_view_pipelines(Renderer* renderer, SceneReads reads, List{PreparePipelineUnit}* requests) @private {
+fn void list_view_pipelines(
+    Renderer* renderer,
+    SceneReads reads,
+    List{PreparePipelineUnit}* requests,
+    bool soft_shadows = false,
+) @private {
     if (reads.color) list_prepare_key(requests, composite_pipeline_key(HDR_FORMAT));
     if (reads.depth) list_prepare_key(requests, composite_pipeline_key(SCENE_DEPTH_FORMAT));
 
@@ -514,7 +521,7 @@ fn void list_view_pipelines(Renderer* renderer, SceneReads reads, List{PreparePi
             list_prepare_compute(requests, ComputeSlot.CLUSTER);
         }
         if (desc.shading == ShadingPath.DEFERRED) {
-            uint shadow_flags = rt_shadow_flags(renderer, desc.ray_tracing.shadows);
+            uint shadow_flags = rt_shadow_flags(renderer, desc.ray_tracing.shadows, soft_shadows);
             list_prepare_key(requests, lighting_resolve_pipeline_key(shadow_flags));
         }
         if (desc.transparency == TransparencyMode.WEIGHTED) {

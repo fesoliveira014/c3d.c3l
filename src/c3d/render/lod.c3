@@ -229,7 +229,11 @@ fn LodSelection[]? prepare_lod_view(
                         .bias = record.desc.lod_bias,
                         .impostor = lod_impostor_live(renderer.assets, group.state),
                         .transparency = record.desc.transparency,
-                        .shadow_flags = rt_shadow_flags(renderer, record.desc.ray_tracing.shadows),
+                        .shadow_flags = rt_shadow_flags(
+                            renderer,
+                            record.desc.ray_tracing.shadows,
+                            record.soft_shadows,
+                        ),
                     };
                     prepare_lod_instances(renderer, selection)!;
                 } else {

@@ -9,8 +9,10 @@
 #if !defined(SCENE_TRACE_BVH) && !defined(SCENE_TRACE_RAY_QUERY)
 #define SCENE_TRACE_RAY_QUERY
 #endif
+#ifndef RT_SHADOWS_HARD
 #include "noise.glsl"
 #include "sampling.glsl"
+#endif
 #include "scene_trace.glsl"
 #endif
 
@@ -78,6 +80,31 @@ uint point_shadow_face(vec3 direction) {
 
 #ifdef RT_SHADOWS
 const float RT_SHADOW_FAR = 1.0e4; // world units; directional rays stop here
+
+#ifdef RT_SHADOWS_HARD
+// One ray toward the light's centre or the sun's direction; a source extent is ignored. The built-in fragment stages
+// compile this form for views that trace no light with an extent, and it adds none of the soft path's code.
+float ray_shadow_visibility(FrameRoot frame, LightGpu light, vec3 world_position, vec3 normal) {
+    vec3 origin = world_position + normal * TRACE_SURFACE_OFFSET;
+    vec3 direction = -light.direction_cos_outer.xyz;
+    float t_max = RT_SHADOW_FAR;
+    if (light.kind != LIGHT_DIRECTIONAL) {
+        vec3 to_light = light.position_range.xyz - origin;
+        t_max = length(to_light);
+        if (t_max == 0.0) return 1.0;
+        direction = to_light / t_max;
+    }
+
+    bool occluded = trace_scene_any(
+        SceneTraceRoot(frame.trace),
+        origin,
+        direction,
+        t_max,
+        TRACE_MASK_SHADOW_CASTER
+    );
+    return occluded ? 0.0 : 1.0;
+}
+#else
 const uint RT_SHADOW_NOISE_FRAMES = 64u; // frames until a TAA view repeats its noise; keeps the pixel phase small
 
 // Rays a pixel casts toward a source with extent: the view's count in a fragment stage, one in the others.
@@ -105,56 +132,44 @@ vec2 ray_shadow_noise(FrameRoot frame, vec3 world_position) {
 #endif
 }
 
-// One ray toward the light's centre, or toward the sun's direction.
-float ray_shadow_hard(FrameRoot frame, LightGpu light, vec3 origin) {
-    vec3 direction = -light.direction_cos_outer.xyz;
-    float t_max = RT_SHADOW_FAR;
-    if (light.kind != LIGHT_DIRECTIONAL) {
-        vec3 to_light = light.position_range.xyz - origin;
-        t_max = length(to_light);
-        if (t_max == 0.0) return 1.0;
-        direction = to_light / t_max;
-    }
-
-    bool occluded = trace_scene_any(
-        SceneTraceRoot(frame.trace),
-        origin,
-        direction,
-        t_max,
-        TRACE_MASK_SHADOW_CASTER
-    );
-    return occluded ? 0.0 : 1.0;
-}
-
-// Share of the rays toward the source that arrive. The source is the cone of half-angle source_extent around the sun's
-// direction, or the disc of radius source_extent facing the surface at a punctual light. Ray i draws its radius or
-// cone coordinate from the i-th of `samples` equal strata, and its angle steps by the golden ratio from a per-pixel
-// start, so the rays spread over the source at any count.
-float ray_shadow_soft(FrameRoot frame, LightGpu light, vec3 origin, uint samples, vec2 noise) {
+// Share of the rays toward the light that arrive. A light without an extent casts one ray toward its centre. With an
+// extent the rays go to points of the source: the cone of half-angle source_extent around the sun's direction, or the
+// disc of radius source_extent facing the surface at a punctual light. Ray i draws its radius or cone coordinate from
+// the i-th of `samples` equal strata and steps its angle by the golden ratio from a per-pixel start, so the rays
+// spread over the source at any count. One loop and one trace site serve both, so the soft path adds no second copy
+// of the query to a stage.
+float ray_shadow_visibility(FrameRoot frame, LightGpu light, vec3 world_position, vec3 normal) {
+    vec3 origin = world_position + normal * TRACE_SURFACE_OFFSET;
     bool directional = light.kind == LIGHT_DIRECTIONAL;
     vec3 to_light = directional ? -light.direction_cos_outer.xyz : light.position_range.xyz - origin;
     float to_light_length = directional ? 1.0 : length(to_light);
     if (to_light_length == 0.0) return 1.0;
 
-    mat3 basis = tangent_frame(to_light / to_light_length);
+    bool soft = light.source_extent > 0.0;
+    uint samples = soft ? ray_shadow_samples(frame) : 1u;
+    vec2 noise = soft ? ray_shadow_noise(frame, world_position) : vec2(0.0);
+    vec3 centre = to_light / to_light_length;
     // From the half-angle's sine: the cosine itself rounds to one for a thin sun.
     float half_sine = sin(0.5 * light.source_extent);
     float cone_versine = 2.0 * half_sine * half_sine;
     float visible = 0.0;
     for (uint index = 0u; index < samples; index++) {
-        float radial = (float(index) + noise.x) / float(samples);
-        float angle = 2.0 * PI * fract(noise.y + float(index) * GOLDEN_RATIO_CONJUGATE);
-        vec3 direction;
-        float t_max = RT_SHADOW_FAR;
-        if (directional) {
-            float versine = radial * cone_versine;
-            float sine = sqrt(versine * (2.0 - versine));
-            direction = basis * vec3(sine * cos(angle), sine * sin(angle), 1.0 - versine);
-        } else {
-            vec2 offset = light.source_extent * sqrt(radial) * vec2(cos(angle), sin(angle));
-            vec3 to_point = to_light + basis * vec3(offset, 0.0);
-            t_max = length(to_point);
-            direction = to_point / t_max;
+        vec3 direction = centre;
+        float t_max = directional ? RT_SHADOW_FAR : to_light_length;
+        if (soft) {
+            mat3 basis = tangent_frame(centre);
+            float radial = (float(index) + noise.x) / float(samples);
+            float angle = 2.0 * PI * fract(noise.y + float(index) * GOLDEN_RATIO_CONJUGATE);
+            if (directional) {
+                float versine = radial * cone_versine;
+                float sine = sqrt(versine * (2.0 - versine));
+                direction = basis * vec3(sine * cos(angle), sine * sin(angle), 1.0 - versine);
+            } else {
+                vec2 offset = light.source_extent * sqrt(radial) * vec2(cos(angle), sin(angle));
+                vec3 to_point = to_light + basis * vec3(offset, 0.0);
+                t_max = length(to_point);
+                direction = to_point / t_max;
+            }
         }
 
         bool occluded = trace_scene_any(
@@ -169,20 +184,7 @@ float ray_shadow_soft(FrameRoot frame, LightGpu light, vec3 origin, uint samples
 
     return visible / float(samples);
 }
-
-// A light with a source extent casts ray_shadow_samples rays across its source; any other casts one.
-float ray_shadow_visibility(FrameRoot frame, LightGpu light, vec3 world_position, vec3 normal) {
-    vec3 origin = world_position + normal * TRACE_SURFACE_OFFSET;
-    if (light.source_extent <= 0.0) return ray_shadow_hard(frame, light, origin);
-
-    return ray_shadow_soft(
-        frame,
-        light,
-        origin,
-        ray_shadow_samples(frame),
-        ray_shadow_noise(frame, world_position)
-    );
-}
+#endif
 #endif
 
 // colored: lights with translucent maps also multiply in the tint of their translucent casters.
