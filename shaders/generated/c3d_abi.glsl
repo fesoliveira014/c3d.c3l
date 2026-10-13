@@ -33,6 +33,8 @@ const uint FRAME_AO_PRESENT = 4u;
 const uint FRAME_SSGI_PRESENT = 8u;
 const uint FRAME_CLIP_PLANE = 16u;
 const uint FRAME_REFLECTIONS_PRESENT = 32u;
+const uint FRAME_SHADOW_SAMPLES_SHIFT = 6u;
+const uint FRAME_SHADOW_SAMPLES_MASK = 15u;
 const uint CLUSTER_GROUP_SIZE = 64u;
 const uint MAX_DECALS = 256u;
 const uint MAX_CLUSTER_DECALS = 8u;
@@ -915,7 +917,7 @@ struct LightGpu {
     uint shadow_first;
     uint shadow_count;
     uint flags;
-    uint _pad1;
+    float source_extent;
     uint _pad2;
 };
 
@@ -1340,8 +1342,10 @@ struct GradeGpu {
     vec4 gain;
     uint lut_texture;
     uint lut_sampler;
-    float lut_scale;
-    float lut_offset;
+    uint _pad_lut0;
+    uint _pad_lut1;
+    vec4 lut_scale;
+    vec4 lut_offset;
     uint bloom_texture;
     uint bloom_sampler;
     float bloom_intensity;

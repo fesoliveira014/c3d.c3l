@@ -158,7 +158,12 @@ fn void test_documents_draw_with_a_render_target_portrait() @test {
         platform::sync_window(&window, &renderer);
         window.input.clear_gui_flags();
         ui.route_input(&window.input, window.events());
-        ui.update(window.width, window.height, window.pixel_density)!!;
+        ui.update(
+            width:         window.width,
+            height:        window.height,
+            scale:         window.pixel_density,
+            delta_seconds: window.clock.delta,
+        )!!;
         list.clear();
         ui.draw(&list)!!;
         assert(list.item_count > 0);

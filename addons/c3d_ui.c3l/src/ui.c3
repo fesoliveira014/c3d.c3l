@@ -56,8 +56,18 @@ const float UI_WHEEL_STEP = 4; // Clay scales scroll deltas by 10: 40 layout uni
 *>
 const float UI_DRAG_THRESHOLD = 4;
 
+<*
+ Span nesting a rich label may open.
+*>
+const uint UI_SPAN_DEPTH = 4; // emphasis inside emphasis is the deepest common case; a run resolves one style per level
+
+<*
+ Spans one rich label may open.
+*>
+const uint UI_MAX_SPANS = 16; // a HUD line rarely needs more than 8; each span adds a piece to every line it covers
+
 const uint UI_NONE @private = uint::max;
-const short UI_Z_BAND @private = 4;              // per visible document: its root, its grid items, spare
+const short UI_Z_BAND @private = 4;              // per visible document: root, grid items, spare; each window adds 2
 const short UI_Z_TOOLTIP @private = short::max - 1;
 const short UI_Z_GHOST @private = short::max;
 const usz UI_ERROR_PATH_BYTES @private = 256;
@@ -85,6 +95,8 @@ enum UiEventKind {
     SUBMIT,
     CHANGE,
     DROP,
+    MOVE_START,
+    MOVE_END,
 }
 
 enum UiElementKind @private {
@@ -151,6 +163,7 @@ struct UiEvent {
     String      source_list; // list binding of the dragged item for DROP
     uint        cell;        // target grid cell for DROP; UI_NO_CELL outside a grid
     String      text;        // field text for SUBMIT and CHANGE; borrowed during the handler
+    Vec2        offset;      // window offset for MOVE_START and MOVE_END, layout units from the parent's top left
 }
 
 <*
@@ -169,6 +182,9 @@ struct UiDesc {
     uint cache_lines;      // placement cache entries
     uint cache_glyphs;     // placements the cache holds
     uint field_bytes;      // the focused field's edit buffer
+    uint max_windows;      // window elements across the loaded documents; zero holds none
+    uint max_text_pieces;  // rich label pieces per frame; zero holds none
+    uint max_transitions;  // elements holding transition state; zero holds none and keeps no exit buffers
 }
 
 <*
@@ -181,6 +197,9 @@ struct UiStats {
     uint placement_hits;
     uint placement_misses;
     uint placement_clears;
+    uint text_pieces;
+    uint transitions;
+    uint exiting;
 }
 
 struct UiClayError @private {
@@ -226,8 +245,12 @@ struct UiInstance @private {
     uint         span_width;
     uint         span_height;
     String       text;        // expanded text of a label or field
+    uint         first_piece; // of a rich label, in Ui.pieces
+    uint         piece_count;
+    Vec2         text_size;   // layout units covered by the pieces of a rich label
     TextureRef   image;
     float        value;       // bar fill fraction
+    float        alpha;       // own opacity times every ancestor's
     bool         interactive;
     bool         hit;         // tooltips and the drag ghost take no hits
     bool         enabled;
@@ -236,6 +259,23 @@ struct UiInstance @private {
 struct UiInstanceSlot @private {
     uint clay_id; // zero: empty
     uint instance;
+}
+
+struct UiWindow @private {
+    UiElementKey key;             // zero generation: free
+    Vec2         offset;          // layout units from the parent's top left
+    uint         order;           // raise stamp; a higher stamp draws above its sibling windows
+    uint         instance;        // of the last update, UI_NONE when not declared
+    uint         parent_instance; // of the last update
+    Vec2         child_offset;    // scroll offset a scroll parent applied in the last update
+}
+
+struct UiWindowDrag @private {
+    bool candidate;
+    bool active;
+    uint window;                  // index in Ui.windows
+    Vec2 start;                   // offset at the press
+    Vec2 origin;                  // pointer at the press, layout units
 }
 
 struct UiDrag @private {
@@ -270,6 +310,8 @@ struct Ui {
     clay::RenderCommandArray  commands;     // of the last successful update
     bool                      frame_ready;
     float                     scale;        // output pixels per layout unit, of the last update
+    float                     delta_seconds; // of the last update
+    Vec2                      layout_size;  // layout units, of the last update
     UiDocumentPool            documents;
     UiDocument*[]             document_stack; // visible documents of one update, bottom first
     uint                      next_order;
@@ -285,10 +327,14 @@ struct Ui {
     char[]                    names;
     uint                      names_used;
     UiInstance[]              instances;
+    UiInstanceLink[]          links;        // per instance, empty when max_transitions is 0
+    UiFrameStore              previous;     // the buffers of the update before, empty when max_transitions is 0
     uint                      instance_count;
     UiInstanceSlot[]          instance_lookup;
     char[]                    text;
     uint                      text_used;
+    UiTextPiece[]             pieces;
+    uint                      piece_count;
     UiPlacementCache          cache;
     char[]                    field;
     uint                      field_length;
@@ -300,6 +346,13 @@ struct Ui {
     MouseButton               press_button;
     UiElementKey              focus;
     UiDrag                    drag;
+    UiWindow[]                windows;
+    UiWindowDrag              window_drag;
+    uint                      window_order;
+    UiTransition[]            transitions;  // open addressing over twice max_transitions slots
+    uint                      transition_count;
+    uint                      update_serial;
+    bool                      reduced_motion;
     Vec2                      pointer;      // layout units, of the last route
     char[UI_ERROR_PATH_BYTES] error_path;
     uint                      error_path_length;
@@ -322,6 +375,9 @@ fn UiDesc default_ui_desc() {
         .cache_lines      = 2048,
         .cache_glyphs     = 32 * 1024,
         .field_bytes      = 256,
+        .max_windows      = 64,
+        .max_text_pieces  = 1024,
+        .max_transitions  = UI_DEFAULT_TRANSITIONS,
     };
 }
 
@@ -361,6 +417,17 @@ fn Ui? create_ui(Allocator allocator, AssetStore* assets, UiDesc desc) {
     usz cache_text_at = @reserve(&offset, char, (usz)UI_CACHE_BYTES_PER_LINE * desc.cache_lines);
     usz field_at = @reserve(&offset, char, desc.field_bytes);
     usz replacements_at = @reserve(&offset, uint, (usz)desc.max_font_sets * UI_FONT_FALLBACKS);
+    usz windows_at = @reserve(&offset, UiWindow, desc.max_windows);
+    usz pieces_at = @reserve(&offset, UiTextPiece, desc.max_text_pieces);
+    usz transitions_at = @reserve(&offset, UiTransition, 2 * (usz)desc.max_transitions);
+    usz exit_instances = desc.max_transitions ? desc.max_instances : 0;
+    usz exit_text = desc.max_transitions ? desc.text_bytes : 0;
+    usz exit_pieces = desc.max_transitions ? desc.max_text_pieces : 0;
+    usz links_at = @reserve(&offset, UiInstanceLink, exit_instances);
+    usz previous_instances_at = @reserve(&offset, UiInstance, exit_instances);
+    usz previous_links_at = @reserve(&offset, UiInstanceLink, exit_instances);
+    usz previous_text_at = @reserve(&offset, char, exit_text);
+    usz previous_pieces_at = @reserve(&offset, UiTextPiece, exit_pieces);
 
     // Allocated as Vec4 so every allocator aligns the block for the Vec4 members of the carved tables.
     Vec4[] block = alloc::new_array(allocator, Vec4, (sz)((offset + Vec4::size - 1) / Vec4::size));
@@ -397,6 +464,16 @@ fn Ui? create_ui(Allocator allocator, AssetStore* assets, UiDesc desc) {
         .instance_lookup = @carve(storage, lookup_at, UiInstanceSlot, 2 * (usz)desc.max_instances),
         .text            = @carve(storage, text_at, char, desc.text_bytes),
         .field           = @carve(storage, field_at, char, desc.field_bytes),
+        .windows         = @carve(storage, windows_at, UiWindow, desc.max_windows),
+        .pieces          = @carve(storage, pieces_at, UiTextPiece, desc.max_text_pieces),
+        .transitions     = @carve(storage, transitions_at, UiTransition, 2 * (usz)desc.max_transitions),
+        .links           = @carve(storage, links_at, UiInstanceLink, exit_instances),
+        .previous        = {
+            .instances = @carve(storage, previous_instances_at, UiInstance, exit_instances),
+            .links     = @carve(storage, previous_links_at, UiInstanceLink, exit_instances),
+            .text      = @carve(storage, previous_text_at, char, exit_text),
+            .pieces    = @carve(storage, previous_pieces_at, UiTextPiece, exit_pieces),
+        },
         .cache           = {
             .lines             = @carve(storage, lines_at, UiPlacementLine, desc.cache_lines),
             .slots             = @carve(storage, line_slots_at, uint, 2 * (usz)desc.cache_lines),

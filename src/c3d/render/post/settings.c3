@@ -104,6 +104,8 @@ struct GradeParams {
     Vec3      gamma;
     Vec3      gain;
     TextureId lut;
+    Vec3      lut_domain_min;
+    Vec3      lut_domain_max;
 }
 
 <*
@@ -188,6 +190,7 @@ fn PostStack default_post_stack() {
             .saturation = 1,
             .gamma      = { 1, 1, 1 },
             .gain       = { 1, 1, 1 },
+            .lut_domain_max = { 1, 1, 1 },
         },
         .anti_aliasing = AntiAliasing.FXAA,
         .taa_params = {
@@ -215,6 +218,7 @@ fn bool post_stack_valid(PostStack* stack) {
     if (stack.motion_blur && !motion_blur_params_valid(&stack.motion_blur_params)) return false;
     if (stack.anti_aliasing == AntiAliasing.TAA && !taa_params_valid(&stack.taa_params)) return false;
     if (stack.auto_exposure && !auto_exposure_params_valid(&stack.auto_exposure_params)) return false;
+    if (stack.grade.lut.generation && !lut_domain_valid(&stack.grade)) return false;
     return true;
 }
 
@@ -293,7 +297,7 @@ fn float lut_offset(uint size) {
 <*
  Pack grading and the camera exposure into the shader layout.
  @param [&out] gpu_grade : "Overwritten whole."
- @param [&in] params : "CPU grading."
+ @param [&in] params : "CPU grading; its LUT domain is folded into the lookup coordinate."
  @param lut_texture : "Zero without a LUT."
  @param lut_size : "Edge texel count of the LUT; ignored without one."
  @param bloom_texture : "Zero without bloom."
@@ -315,6 +319,13 @@ fn void write_grade_gpu(
 ) {
     Vec3 balance = white_balance_coefficients(params.temperature, params.tint);
     bool lut = lut_texture != (gpu::TextureIndex)0;
+    Vec3 coordinate_scale;
+    Vec3 coordinate_offset;
+    if (lut) {
+        coordinate_scale = lut_scale(lut_size) / (params.lut_domain_max - params.lut_domain_min);
+        coordinate_offset = lut_offset(lut_size) - params.lut_domain_min * coordinate_scale;
+    }
+
     *gpu_grade = {
         .exposure    = camera_exposure,
         .contrast    = params.contrast,
@@ -326,14 +337,26 @@ fn void write_grade_gpu(
         .gain        = { params.gain.x, params.gain.y, params.gain.z, 0 },
         .lut_texture = lut ? lut_texture : (gpu::TextureIndex)0,
         .lut_sampler = lut ? lut_sampler : (gpu::SamplerIndex)0,
-        .lut_scale   = lut ? lut_scale(lut_size) : 0,
-        .lut_offset  = lut ? lut_offset(lut_size) : 0,
+        .lut_scale   = { coordinate_scale.x, coordinate_scale.y, coordinate_scale.z, 0 },
+        .lut_offset  = { coordinate_offset.x, coordinate_offset.y, coordinate_offset.z, 0 },
         .bloom_texture   = bloom_texture,
         .bloom_sampler   = bloom_texture ? bloom_sampler : (gpu::SamplerIndex)0,
         .bloom_intensity = bloom_texture ? bloom_intensity : 0,
         .auto_exposure   = auto_exposure,
         .pre_exposure    = pre_exposure,
     };
+}
+
+<*
+ @pure
+*>
+fn bool lut_domain_valid(GradeParams* grade) @private {
+    for (usz channel = 0; channel < 3; channel++) {
+        float span = grade.lut_domain_max[channel] - grade.lut_domain_min[channel];
+        if (!math::is_finite(span) || span <= 0) return false;
+    }
+
+    return true;
 }
 
 <*

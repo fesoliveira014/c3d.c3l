@@ -30,6 +30,8 @@ const uint FRAME_AO_PRESENT = 4;
 const uint FRAME_SSGI_PRESENT = 8;
 const uint FRAME_CLIP_PLANE = 16;
 const uint FRAME_REFLECTIONS_PRESENT = 32;
+const uint FRAME_SHADOW_SAMPLES_SHIFT = 6;
+const uint FRAME_SHADOW_SAMPLES_MASK = 15;
 const uint CLUSTER_GROUP_SIZE = 64;
 const uint MAX_DECALS = 256;
 const uint MAX_CLUSTER_DECALS = 8;
@@ -1496,7 +1498,7 @@ struct LightGpu {
     uint  shadow_first;
     uint  shadow_count;
     uint  flags;
-    uint  _pad1;
+    float source_extent;
     uint  _pad2;
 }
 $assert LightGpu::size == 80;
@@ -1509,7 +1511,7 @@ $assert $reflect(LightGpu.cos_inner).offset == 56;
 $assert $reflect(LightGpu.shadow_first).offset == 60;
 $assert $reflect(LightGpu.shadow_count).offset == 64;
 $assert $reflect(LightGpu.flags).offset == 68;
-$assert $reflect(LightGpu._pad1).offset == 72;
+$assert $reflect(LightGpu.source_extent).offset == 72;
 $assert $reflect(LightGpu._pad2).offset == 76;
 
 struct ShadowGpu {
@@ -2275,8 +2277,10 @@ struct GradeGpu {
     Vec4f        gain;
     TextureIndex lut_texture;
     SamplerIndex lut_sampler;
-    float        lut_scale;
-    float        lut_offset;
+    uint         _pad_lut0;
+    uint         _pad_lut1;
+    Vec4f        lut_scale;
+    Vec4f        lut_offset;
     TextureIndex bloom_texture;
     SamplerIndex bloom_sampler;
     float        bloom_intensity;
@@ -2285,7 +2289,7 @@ struct GradeGpu {
     float        pre_exposure;
     uint         _pad_exposure;
 }
-$assert GradeGpu::size == 128;
+$assert GradeGpu::size == 160;
 $assert $reflect(GradeGpu.exposure).offset == 0;
 $assert $reflect(GradeGpu.contrast).offset == 4;
 $assert $reflect(GradeGpu.saturation).offset == 8;
@@ -2296,15 +2300,17 @@ $assert $reflect(GradeGpu.gamma).offset == 48;
 $assert $reflect(GradeGpu.gain).offset == 64;
 $assert $reflect(GradeGpu.lut_texture).offset == 80;
 $assert $reflect(GradeGpu.lut_sampler).offset == 84;
-$assert $reflect(GradeGpu.lut_scale).offset == 88;
-$assert $reflect(GradeGpu.lut_offset).offset == 92;
-$assert $reflect(GradeGpu.bloom_texture).offset == 96;
-$assert $reflect(GradeGpu.bloom_sampler).offset == 100;
-$assert $reflect(GradeGpu.bloom_intensity).offset == 104;
-$assert $reflect(GradeGpu._pad_bloom).offset == 108;
-$assert $reflect(GradeGpu.auto_exposure).offset == 112;
-$assert $reflect(GradeGpu.pre_exposure).offset == 120;
-$assert $reflect(GradeGpu._pad_exposure).offset == 124;
+$assert $reflect(GradeGpu._pad_lut0).offset == 88;
+$assert $reflect(GradeGpu._pad_lut1).offset == 92;
+$assert $reflect(GradeGpu.lut_scale).offset == 96;
+$assert $reflect(GradeGpu.lut_offset).offset == 112;
+$assert $reflect(GradeGpu.bloom_texture).offset == 128;
+$assert $reflect(GradeGpu.bloom_sampler).offset == 132;
+$assert $reflect(GradeGpu.bloom_intensity).offset == 136;
+$assert $reflect(GradeGpu._pad_bloom).offset == 140;
+$assert $reflect(GradeGpu.auto_exposure).offset == 144;
+$assert $reflect(GradeGpu.pre_exposure).offset == 152;
+$assert $reflect(GradeGpu._pad_exposure).offset == 156;
 
 struct GradeRoot {
     TextureIndex input_texture;
@@ -2317,7 +2323,7 @@ struct GradeRoot {
     uint         _pad2;
     GradeGpu     grade;
 }
-$assert GradeRoot::size == 160;
+$assert GradeRoot::size == 192;
 $assert $reflect(GradeRoot.input_texture).offset == 0;
 $assert $reflect(GradeRoot.sampler_index).offset == 4;
 $assert $reflect(GradeRoot.output_texture).offset == 8;
@@ -2355,7 +2361,7 @@ struct DisplayRoot {
     uint         _pad1;
     GradeGpu     grade;
 }
-$assert DisplayRoot::size == 144;
+$assert DisplayRoot::size == 176;
 $assert $reflect(DisplayRoot.source_texture).offset == 0;
 $assert $reflect(DisplayRoot.source_sampler).offset == 4;
 $assert $reflect(DisplayRoot._pad0).offset == 8;

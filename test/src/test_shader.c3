@@ -145,7 +145,7 @@ fn void test_software_trace_variants_declare_no_ray_capability() @test {
         assert(!features.ray_capability && !features.ray_extension);
         software_count++;
     }
-    assert(software_count == 13);
+    assert(software_count == 21);
 }
 
 // glslang names a function by its signature, so the name up to the parenthesis is the function.
@@ -188,7 +188,7 @@ fn void test_only_weighted_forms_write_the_revealage_output() @test {
         assert(spirv_names(entry.spirv, "out_revealage") == weighted);
         if (weighted) weighted_count++;
     }
-    assert(weighted_count == 10);
+    assert(weighted_count == 16);
 }
 
 fn void test_builtin_standard_shades_through_the_public_include() @test {

@@ -34,6 +34,7 @@ struct Recorder {
     UiScope     source;
     String      source_list;
     uint        cell;
+    Vec2        offset;
     char[RECORDED_TEXT] text_bytes;
     usz         text_len;
 }
@@ -65,6 +66,7 @@ fn void record_action(void* user, UiScope* scope, UiEvent* event) {
     recorder.source = event.source;
     recorder.source_list = event.source_list;
     recorder.cell = event.cell;
+    recorder.offset = event.offset;
     recorder.text_len = event.text.len > RECORDED_TEXT ? RECORDED_TEXT : event.text.len;
     recorder.text_bytes[:recorder.text_len] = event.text[:recorder.text_len];
 }
@@ -115,14 +117,24 @@ fn void register_squad(Fixture* fixture) {
     fixture.ui.on("squad.select", &record_action, &fixture.recorder)!!;
 }
 
-fn void frame(Fixture* fixture, Event[] events = {}, float scale = 1) {
+fn void frame(
+    Fixture* fixture,
+    Event[] events = {},
+    float scale = 1,
+    float delta = 0,
+) {
     fixture.input.begin_frame();
     fixture.input.mouse_captured_by_gui = fixture.gui_mouse;
     fixture.input.keyboard_captured_by_gui = fixture.gui_keyboard;
     fixture.input.text_input_wanted_by_gui = fixture.gui_text_input;
     fixture.input.wheel = fixture.wheel;
     fixture.ui.route_input(&fixture.input, events);
-    fixture.ui.update(800, 600, scale)!!;
+    fixture.ui.update(
+        width:         800,
+        height:        600,
+        scale:         scale,
+        delta_seconds: delta,
+    )!!;
     fixture.list.clear();
     fixture.ui.draw(&fixture.list)!!;
 }

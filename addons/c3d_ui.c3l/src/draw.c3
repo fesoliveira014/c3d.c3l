@@ -8,6 +8,8 @@ import clay;
 import std::math;
 
 const float UI_CARET_PIXELS @private = 1;
+const float UI_UNDERLINE_POSITION @private = 0.12;  // em below the baseline; fonts carry no underline metrics
+const float UI_UNDERLINE_THICKNESS @private = 0.06; // em, and never under one pixel
 
 <*
  Append the laid-out documents to an overlay list.
@@ -72,6 +74,8 @@ fn void apply_skin(Ui* ui, OverlayRect* rect, UiSkin* skin) @private {
     if (rect.fill.w == 0) rect.fill = { 1, 1, 1, 1 };
 }
 
+fn Vec4 faded(Vec4 color, float alpha) @private => { color.x, color.y, color.z, color.w * alpha };
+
 fn bool rect_visible(OverlayRect* rect) @private {
     if (rect.fill.w > 0) return true;
     Vec4 widths = rect.border_widths;
@@ -92,6 +96,9 @@ fn void? draw_instance(
         rect.uv_rect = instance.element.uv;
         if (rect.fill.w == 0) rect.fill = { 1, 1, 1, 1 };
     }
+
+    rect.fill = faded(rect.fill, instance.alpha);
+    rect.border_color = faded(rect.border_color, instance.alpha);
     if (rect_visible(&rect)) list.add_rect(rect)!;
 
     Vec4 padding = properties.padding * ui.scale;
@@ -117,6 +124,13 @@ fn void? draw_instance(
                 list:    list,
                 field:   instance,
                 content: content,
+            )!;
+        case LABEL:
+            if (instance.element.span_count) draw_pieces(
+                ui:       ui,
+                list:     list,
+                instance: instance,
+                content:  content,
             )!;
         default:
             break;
@@ -145,6 +159,7 @@ fn void? draw_bar_fill(
     rect.corner_radii = instance.properties.corner_radii * ui.scale;
     rect.fill = instance.properties.bar_fill;
     apply_skin(ui, &rect, &instance.properties.bar_skin);
+    rect.fill = faded(rect.fill, instance.alpha);
     if (rect_visible(&rect)) list.add_rect(rect)!;
 }
 
@@ -163,7 +178,7 @@ fn void? draw_footprint(
     OverlayRect rect = render::OVERLAY_RECT_DEFAULT;
     rect.min = { content.x + column * cell.x, content.y + row * cell.y };
     rect.max = rect.min + (Vec2){ ui.drag.span_width * cell.x, ui.drag.span_height * cell.y };
-    rect.fill = grid.properties.highlight;
+    rect.fill = faded(grid.properties.highlight, grid.alpha);
     list.add_rect(rect)!;
 }
 
@@ -185,7 +200,7 @@ fn void? draw_caret(
     OverlayRect rect = render::OVERLAY_RECT_DEFAULT;
     rect.min = { math::round(content.x + prefix * ui.scale), top };
     rect.max = { rect.min.x + UI_CARET_PIXELS, top + height };
-    rect.fill = properties.text_color;
+    rect.fill = faded(properties.text_color, field.alpha);
     list.add_rect(rect)!;
 }
 
@@ -203,8 +218,92 @@ fn void? draw_text(Ui* ui, OverlayList* list, clay::RenderCommand* command) @pri
     float baseline = box.y + (box.height - extent) / 2 + metrics.ascent * font_size;
     Vec2 origin = { box.x * ui.scale, math::round(baseline * ui.scale) };
     float size_pixels = font_size * ui.scale;
-    Vec4 color = { data.text_color.r, data.text_color.g, data.text_color.b, data.text_color.a };
+    UiInstance* instance = command.user_data;
+    Vec4 color = faded({ data.text_color.r, data.text_color.g, data.text_color.b, data.text_color.a }, instance.alpha);
 
+    Vec4 pixels = scaled_box(ui, box);
+    if (instance.properties.text_highlight.w > 0) {
+        add_fill(list, pixels, faded(instance.properties.text_highlight, instance.alpha))!;
+    }
+
+    add_line_glyphs(
+        ui:          ui,
+        list:        list,
+        placed:      placed,
+        origin:      origin,
+        size_pixels: size_pixels,
+        color:       color,
+    )!;
+
+    if (instance.properties.underline) add_underline(
+        list:        list,
+        left:        pixels.x,
+        right:       pixels.z,
+        baseline:    origin.y,
+        size_pixels: size_pixels,
+        color:       color,
+    )!;
+}
+
+fn void? draw_pieces(
+    Ui* ui,
+    OverlayList* list,
+    UiInstance* instance,
+    Vec4 content,
+) @private {
+    UiProperties* properties = &instance.properties;
+    float content_width = (content.z - content.x) / ui.scale;
+
+    for (uint index = instance.first_piece; index < instance.first_piece + instance.piece_count; index++) {
+        UiTextPiece* piece = &ui.pieces[index];
+        float slack = math::max(content_width - piece.line_width, 0.0f);
+        float line_start;
+        switch (properties.text_align) {
+            case LEFT: line_start = 0;
+            case CENTER: line_start = slack / 2;
+            case RIGHT: line_start = slack;
+        }
+
+        float left = content.x + (line_start + piece.x) * ui.scale;
+        float right = left + piece.width * ui.scale;
+        float top = content.y + piece.top * ui.scale;
+        Vec4 color = faded(piece.color, instance.alpha);
+        Vec4 highlight = faded(piece.highlight, instance.alpha);
+        if (piece.highlight.w > 0) {
+            add_fill(list, { left, top, right, top + piece.height * ui.scale }, highlight)!;
+        }
+
+        float size_pixels = piece.font_size * ui.scale;
+        float baseline = math::round(content.y + piece.baseline * ui.scale);
+        UiPlacementLine* placed = cached_line(ui, piece.font_set, piece_text(ui, piece))!;
+        add_line_glyphs(
+            ui:          ui,
+            list:        list,
+            placed:      placed,
+            origin:      { left, baseline },
+            size_pixels: size_pixels,
+            color:       color,
+        )!;
+
+        if (piece.underline) add_underline(
+            list:        list,
+            left:        left,
+            right:       right,
+            baseline:    baseline,
+            size_pixels: size_pixels,
+            color:       color,
+        )!;
+    }
+}
+
+fn void? add_line_glyphs(
+    Ui* ui,
+    OverlayList* list,
+    UiPlacementLine* placed,
+    Vec2 origin,
+    float size_pixels,
+    Vec4 color,
+) @private {
     for (uint index = placed.first_segment; index < placed.first_segment + placed.segment_count; index++) {
         UiPlacementSegment* segment = &ui.cache.segments[index];
         if (!segment.count) continue;
@@ -216,4 +315,25 @@ fn void? draw_text(Ui* ui, OverlayList* list, clay::RenderCommand* command) @pri
             .color       = color,
         })!;
     }
+}
+
+fn void? add_fill(OverlayList* list, Vec4 box, Vec4 color) @private {
+    OverlayRect rect = render::OVERLAY_RECT_DEFAULT;
+    rect.min = box.xy;
+    rect.max = box.zw;
+    rect.fill = color;
+    list.add_rect(rect)!;
+}
+
+fn void? add_underline(
+    OverlayList* list,
+    float left,
+    float right,
+    float baseline,
+    float size_pixels,
+    Vec4 color,
+) @private {
+    float top = math::round(baseline + UI_UNDERLINE_POSITION * size_pixels);
+    float thickness = math::max(math::round(UI_UNDERLINE_THICKNESS * size_pixels), 1.0f);
+    add_fill(list, { left, top, right, top + thickness }, color)!;
 }
