@@ -86,6 +86,7 @@ enum ShaderName : int {
     SSGI_TRACE,
     SSGI_TEMPORAL,
     SSGI_FILTER,
+    DEPTH_PYRAMID,
     PROBE_BLEND,
     RT_AO,
     RT_REFLECTIONS,
@@ -201,6 +202,11 @@ const uint SHADER_FLAG_DEPTH_PRUNING = 1 << 18;
  Flag bit for MULTISAMPLE.
 *>
 const uint SHADER_FLAG_MULTISAMPLE = 1 << 19;
+
+<*
+ Flag bit for HI_Z.
+*>
+const uint SHADER_FLAG_HI_Z = 1 << 20;
 
 const char[*] FULLSCREEN_SPIRV @private = $embed("../../../shaders/spv/fullscreen.spv");
 const char[*] GRADIENT_SPIRV @private = $embed("../../../shaders/spv/gradient.spv");
@@ -341,8 +347,10 @@ const char[*] PROBE_BORDER_SPIRV @private = $embed("../../../shaders/spv/probe_b
 const char[*] PROBE_TRACE_SPIRV @private = $embed("../../../shaders/spv/probe_trace.spv");
 const char[*] PROBE_TRACE_SCENE_TRACE_BVH_SPIRV @private = $embed("../../../shaders/spv/probe_trace_scene_trace_bvh.spv");
 const char[*] SSGI_TRACE_SPIRV @private = $embed("../../../shaders/spv/ssgi_trace.spv");
+const char[*] SSGI_TRACE_HI_Z_SPIRV @private = $embed("../../../shaders/spv/ssgi_trace_hi_z.spv");
 const char[*] SSGI_TEMPORAL_SPIRV @private = $embed("../../../shaders/spv/ssgi_temporal.spv");
 const char[*] SSGI_FILTER_SPIRV @private = $embed("../../../shaders/spv/ssgi_filter.spv");
+const char[*] DEPTH_PYRAMID_SPIRV @private = $embed("../../../shaders/spv/depth_pyramid.spv");
 const char[*] PROBE_BLEND_SPIRV @private = $embed("../../../shaders/spv/probe_blend.spv");
 const char[*] RT_AO_SPIRV @private = $embed("../../../shaders/spv/rt_ao.spv");
 const char[*] RT_AO_SCENE_TRACE_BVH_SPIRV @private = $embed("../../../shaders/spv/rt_ao_scene_trace_bvh.spv");
@@ -430,7 +438,7 @@ const char[*] SAMPLE_ZERO_SPIRV @private = $embed("../../../shaders/spv/sample_z
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[224] SHADER_ENTRIES = {
+const ShaderEntry[226] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -570,8 +578,10 @@ const ShaderEntry[224] SHADER_ENTRIES = {
     { .variant = { .shader = PROBE_TRACE }, .spirv = PROBE_TRACE_SPIRV[..] },
     { .variant = { .shader = PROBE_TRACE, .flags = SHADER_FLAG_SCENE_TRACE_BVH }, .spirv = PROBE_TRACE_SCENE_TRACE_BVH_SPIRV[..] },
     { .variant = { .shader = SSGI_TRACE }, .spirv = SSGI_TRACE_SPIRV[..] },
+    { .variant = { .shader = SSGI_TRACE, .flags = SHADER_FLAG_HI_Z }, .spirv = SSGI_TRACE_HI_Z_SPIRV[..] },
     { .variant = { .shader = SSGI_TEMPORAL }, .spirv = SSGI_TEMPORAL_SPIRV[..] },
     { .variant = { .shader = SSGI_FILTER }, .spirv = SSGI_FILTER_SPIRV[..] },
+    { .variant = { .shader = DEPTH_PYRAMID }, .spirv = DEPTH_PYRAMID_SPIRV[..] },
     { .variant = { .shader = PROBE_BLEND }, .spirv = PROBE_BLEND_SPIRV[..] },
     { .variant = { .shader = RT_AO }, .spirv = RT_AO_SPIRV[..] },
     { .variant = { .shader = RT_AO, .flags = SHADER_FLAG_SCENE_TRACE_BVH }, .spirv = RT_AO_SCENE_TRACE_BVH_SPIRV[..] },

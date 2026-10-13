@@ -41,8 +41,10 @@ enum ComputeSlot @private {
     REFLECTION,
     REFLECTION_BLUR,
     SSGI_TRACE,
+    SSGI_TRACE_HIERARCHICAL,
     SSGI_TEMPORAL,
     SSGI_FILTER,
+    DEPTH_PYRAMID,
     GRADE,
     FXAA,
     BLOOM_DOWN,
@@ -189,10 +191,14 @@ fn ComputeSlotTarget compute_slot_target(Renderer* renderer, ComputeSlot slot) @
             .shader = RT_REFLECTION_BLUR, .debug_name = "rt_reflection_blur" };
         case SSGI_TRACE: return { .pipeline = &renderer.screen_space_gi_pipelines.trace,
             .shader = SSGI_TRACE, .debug_name = "ssgi_trace" };
+        case SSGI_TRACE_HIERARCHICAL: return { .pipeline = &renderer.screen_space_gi_pipelines.trace_hierarchical,
+            .shader = SSGI_TRACE, .flags = shader::SHADER_FLAG_HI_Z, .debug_name = "ssgi_trace_hierarchical" };
         case SSGI_TEMPORAL: return { .pipeline = &renderer.screen_space_gi_pipelines.temporal,
             .shader = SSGI_TEMPORAL, .debug_name = "ssgi_temporal" };
         case SSGI_FILTER: return { .pipeline = &renderer.screen_space_gi_pipelines.filter,
             .shader = SSGI_FILTER, .debug_name = "ssgi_filter" };
+        case DEPTH_PYRAMID: return { .pipeline = &renderer.screen_space_gi_pipelines.depth_pyramid,
+            .shader = DEPTH_PYRAMID, .debug_name = "depth_pyramid" };
         case GRADE: return { .pipeline = &renderer.post_pipelines.grade, .shader = GRADE, .debug_name = "post_grade" };
         case FXAA: return { .pipeline = &renderer.post_pipelines.fxaa, .shader = FXAA, .debug_name = "post_fxaa" };
         case BLOOM_DOWN: return { .pipeline = &renderer.post_pipelines.bloom_downsample,

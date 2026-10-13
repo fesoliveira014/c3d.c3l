@@ -100,7 +100,7 @@ struct ViewDesc {
 *>
 const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8 + GBUFFER_CHANNEL_COUNT
   + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1 + 1 + 2 * SSGI_HISTORY_SLOTS + 2 + 1 + 3 + 2 + 1 + 2 + 1 + 1 + 2
-  + 2 * AO_HISTORY_SLOTS + 6;
+  + 2 * AO_HISTORY_SLOTS + 6 + 1;
 
 <*
  Reverse-Z projection terms that recover forward distance from stored depth.
@@ -642,6 +642,8 @@ struct ViewRecord {
     Target[SSGI_HISTORY_SLOTS]           ssgi_depth;
     Target                               ssgi_color;
     Target                               ssgi;
+    Target                               depth_pyramid;
+    DepthPyramidLevels                   depth_pyramid_levels;
     Target                               sky_view;
     Target                               aerial_perspective;
     Target[FOG_VOLUME_SLOTS]             fog_volumes;
@@ -770,6 +772,7 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
     targets[next + 3] = &record.msaa_reflection_gbuffer;
     targets[next + 4] = &record.normal_sample_zero;
     targets[next + 5] = &record.specular_sample_zero;
+    targets[next + 6] = &record.depth_pyramid;
     return targets;
 }
 
@@ -1123,6 +1126,7 @@ fn void? acquire_view_images(Renderer* renderer, ViewRecord* record, uint[<2>] o
     if (record.desc.shading == ShadingPath.DEFERRED) acquire_gbuffer(renderer, record)!;
     acquire_ao_images(renderer, record)!;
     acquire_ssgi_images(renderer, record)!;
+    acquire_depth_pyramid(renderer, record)!;
     acquire_reflection_images(renderer, record)!;
     acquire_reflection_gbuffer(renderer, record)!;
     acquire_accumulation(renderer, record)!;
@@ -1145,6 +1149,7 @@ fn void? acquire_view_images(Renderer* renderer, ViewRecord* record, uint[<2>] o
 
 fn void release_view_images(gpu::Device* device, ViewRecord* record) @private {
     release_scene_mips(device, &record.scene_mips);
+    release_depth_pyramid_levels(device, &record.depth_pyramid_levels);
     foreach (image : view_targets(record)) {
         if (!image.texture.is_valid()) continue;
         if (image.attachment.is_valid()) (void)gpu::destroy_attachment_view(device, image.attachment);
@@ -1157,6 +1162,7 @@ fn void release_view_images(gpu::Device* device, ViewRecord* record) @private {
 fn void retire_view_images(Renderer* renderer, ViewRecord* record) @private {
     RetireList* retire = last_submitted_retire(renderer);
     retire_scene_mips(retire, &record.scene_mips);
+    retire_depth_pyramid_levels(retire, &record.depth_pyramid_levels);
     foreach (image : view_targets(record)) {
         if (!image.texture.is_valid()) continue;
         if (image.attachment.is_valid()) {
@@ -1187,6 +1193,7 @@ fn void copy_view_images(ViewRecord* staged, ViewRecord* live) @private {
     Target*[VIEW_TARGET_COUNT] staged_images = view_targets(staged);
     foreach (index, image : view_targets(live)) *staged_images[index] = *image;
     staged.scene_mips = live.scene_mips;
+    staged.depth_pyramid_levels = live.depth_pyramid_levels;
     staged.bloom_levels = live.bloom_levels;
     staged.clusters = live.clusters;
 }
@@ -1225,6 +1232,12 @@ fn void drop_unwanted_images(ViewRecord* staged, ViewDesc* previous) @private {
         staged.ssgi_color = {};
         staged.ssgi = {};
     }
+
+    if (!depth_pyramid_wanted(desc)) {
+        staged.depth_pyramid = {};
+        staged.depth_pyramid_levels = {};
+    }
+
     if (!desc.ray_tracing.reflections) {
         staged.reflection = {};
         staged.reflection_blur = {};
@@ -1263,6 +1276,7 @@ fn void? stage_views(Renderer* renderer, StagedView[] views) @private {
 
 fn void release_staged_images(Renderer* renderer, StagedView* view) @private {
     if (view.images.scene_color.texture == view.live.scene_color.texture) view.images.scene_mips = {};
+    if (view.images.depth_pyramid.texture == view.live.depth_pyramid.texture) view.images.depth_pyramid_levels = {};
     Target*[VIEW_TARGET_COUNT] live_images = view_targets(view.live);
     foreach (index, image : view_targets(&view.images)) {
         if (image.texture == live_images[index].texture) *image = {};
@@ -1274,6 +1288,7 @@ fn void release_staged_images(Renderer* renderer, StagedView* view) @private {
 // Afterwards staged holds exactly the images live gave up.
 fn void adopt_view_images(ViewRecord* live, ViewRecord* staged) @private {
     bool shared_color = live.scene_color.texture == staged.scene_color.texture;
+    bool shared_pyramid = live.depth_pyramid.texture == staged.depth_pyramid.texture;
     Target*[VIEW_TARGET_COUNT] staged_images = view_targets(staged);
     foreach (index, image : view_targets(live)) {
         Target* replacement = staged_images[index];
@@ -1288,6 +1303,13 @@ fn void adopt_view_images(ViewRecord* live, ViewRecord* staged) @private {
     } else {
         @swap(live.scene_mips, staged.scene_mips);
     }
+
+    if (shared_pyramid) {
+        staged.depth_pyramid_levels = {};
+    } else {
+        @swap(live.depth_pyramid_levels, staged.depth_pyramid_levels);
+    }
+
     @swap(live.bloom_levels, staged.bloom_levels);
     if (live.clusters.allocation == staged.clusters.allocation) {
         staged.clusters = {};

@@ -51,20 +51,31 @@ const ZString[SSGI_HISTORY_SLOTS] SSGI_DEPTH_NAMES @private = { "ssgi_depth_0", 
 const float SSGI_BACKGROUND_DISTANCE @private = 1e30f; // mirrored as BACKGROUND_VIEW_DISTANCE in gbuffer.glsl
 
 <*
+ Ray search of screen-space GI.
+*>
+enum SsgiTrace {
+    LINEAR,
+    HIERARCHICAL,
+}
+
+<*
  Screen-space indirect diffuse of one view; a zeroed value is off.
 *>
 struct ScreenSpaceGiDesc {
-    bool  enabled;
-    uint  rays;           // per half-resolution texel and frame
-    uint  max_steps;      // march steps per ray
-    float max_distance;   // view-space units a ray marches
-    float thickness;      // view-space depth a marched point may sit behind a stored surface and hit
-    float intensity;      // blend strength in [0, 1]
-    float history_weight; // share of the accumulation kept per frame, in [0, 1)
+    bool      enabled;
+    uint      rays;           // per half-resolution texel and frame
+    uint      max_steps;      // march steps per ray; cell steps when HIERARCHICAL
+    float     max_distance;   // view-space units a ray marches
+    float     thickness;      // view-space depth a marched point may sit behind a stored surface and hit
+    float     intensity;      // blend strength in [0, 1]
+    float     history_weight; // share of the accumulation kept per frame, in [0, 1)
+    SsgiTrace trace;          // HIERARCHICAL walks a depth pyramid the view builds for it
 }
 
 struct ScreenSpaceGiPipelines @private {
     gpu::PipelineHandle trace;
+    gpu::PipelineHandle trace_hierarchical;
+    gpu::PipelineHandle depth_pyramid;
     gpu::PipelineHandle temporal;
     gpu::PipelineHandle filter;
 }
@@ -81,7 +92,8 @@ fn bool screen_space_gi_desc_valid(ScreenSpaceGiDesc* desc) {
         && math::is_finite(desc.max_distance) && desc.max_distance > 0
         && math::is_finite(desc.thickness) && desc.thickness > 0
         && math::is_finite(desc.intensity) && desc.intensity >= 0 && desc.intensity <= 1
-        && math::is_finite(desc.history_weight) && desc.history_weight >= 0 && desc.history_weight < 1;
+        && math::is_finite(desc.history_weight) && desc.history_weight >= 0 && desc.history_weight < 1
+        && desc.trace.ordinal <= SsgiTrace.HIERARCHICAL.ordinal;
 }
 
 // Mirrored as view_distance in gbuffer.glsl.
@@ -116,14 +128,21 @@ fn float screen_space_base_share(float occlusion, float ambient_occlusion, Vec4 
     return math::min(occlusion, ambient_occlusion, 1 - screen_indirect.w);
 }
 
-fn void? acquire_screen_space_gi_pipelines(Renderer* renderer) @private {
-    acquire_compute_slot(renderer, ComputeSlot.SSGI_TRACE)!;
+fn void? acquire_screen_space_gi_pipelines(Renderer* renderer, SsgiTrace trace) @private {
+    switch (trace) {
+        case LINEAR: acquire_compute_slot(renderer, ComputeSlot.SSGI_TRACE)!;
+        case HIERARCHICAL:
+            acquire_compute_slot(renderer, ComputeSlot.SSGI_TRACE_HIERARCHICAL)!;
+            acquire_compute_slot(renderer, ComputeSlot.DEPTH_PYRAMID)!;
+    }
     acquire_compute_slot(renderer, ComputeSlot.SSGI_TEMPORAL)!;
     acquire_compute_slot(renderer, ComputeSlot.SSGI_FILTER)!;
 }
 
 fn void destroy_screen_space_gi_pipelines(gpu::Device* device, ScreenSpaceGiPipelines* pipelines) @private {
     if (pipelines.trace.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.trace);
+    if (pipelines.trace_hierarchical.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.trace_hierarchical);
+    if (pipelines.depth_pyramid.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.depth_pyramid);
     if (pipelines.temporal.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.temporal);
     if (pipelines.filter.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.filter);
     *pipelines = {};
@@ -191,6 +210,7 @@ fn void release_ssgi_images(gpu::Device* device, ViewRecord* record) @private {
 
 <*
  @require record.ssgi.texture.is_valid() && record.velocity.texture.is_valid()
+ @require record.desc.screen_space_gi.trace == SsgiTrace.LINEAR || record.depth_pyramid.texture.is_valid()
 *>
 fn void? record_screen_space_gi(
     Renderer* renderer,
@@ -199,8 +219,9 @@ fn void? record_screen_space_gi(
     bool history_valid,
 ) @private {
     ScreenSpaceGiDesc* desc = &record.desc.screen_space_gi;
-    acquire_screen_space_gi_pipelines(renderer)!;
+    acquire_screen_space_gi_pipelines(renderer, desc.trace)!;
     ScreenSpaceGiPipelines* pipelines = &renderer.screen_space_gi_pipelines;
+    bool hierarchical = desc.trace == SsgiTrace.HIERARCHICAL;
     bool deferred = record.desc.shading == ShadingPath.DEFERRED;
     Target* normals = deferred_normals(record);
     gpu::TextureIndex normals_index = deferred ? normals.view.index : (gpu::TextureIndex)0;
@@ -211,6 +232,8 @@ fn void? record_screen_space_gi(
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::TextureState compute_read = gpu::sampled_at({ .compute });
     gpu::TextureState compute_write = gpu::storage_at({ .compute }, { .write });
+
+    if (hierarchical) record_depth_pyramid(renderer, record)!;
 
     @profile_pass(renderer, Pass.SCREEN_SPACE_GI) {
         record.depth.transition(&renderer.commands, compute_read)!;
@@ -239,8 +262,10 @@ fn void? record_screen_space_gi(
             .depth_tolerance = SSGI_DEPTH_TOLERANCE,
             .noise_frame     = (uint)(renderer.frame_index % SSGI_NOISE_PERIOD),
             .flags           = normal_flag | history_flag,
+            .depth_pyramid   = hierarchical ? record.depth_pyramid.view.index : (gpu::TextureIndex)0,
+            .pyramid_levels  = hierarchical ? record.depth_pyramid_levels.count : 0,
         };
-        gpu::cmd_bind_pipeline(&renderer.commands, pipelines.trace)!;
+        gpu::cmd_bind_pipeline(&renderer.commands, hierarchical ? pipelines.trace_hierarchical : pipelines.trace)!;
         dispatch_over(renderer, trace_root.address, &record.ssgi_raw)!;
 
         record.ssgi_raw.transition(&renderer.commands, compute_read)!;

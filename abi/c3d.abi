@@ -524,6 +524,17 @@ root SsgiTraceRoot {
     float        depth_tolerance;
     uint         noise_frame;
     uint         flags;
+    TextureIndex depth_pyramid;
+    uint         pyramid_levels;
+}
+
+root DepthPyramidRoot {
+    TextureIndex input_texture;
+    TextureIndex output_texture;
+    uint         input_width;
+    uint         input_height;
+    uint         width;
+    uint         height;
     uint         _pad0;
     uint         _pad1;
 }

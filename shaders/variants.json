@@ -2,7 +2,7 @@
   "flags": [
     "DEPTH_ONLY", "SKINNED", "SKINNED_U16", "MORPH", "VELOCITY", "VERTEX_COLOR", "INSTANCED", "RT_SHADOWS",
     "SCENE_TRACE_BVH", "WEIGHTED_BLEND", "REFLECTION_PREPASS", "POSED_INSTANCED", "TEMPORAL", "TRANSFORMED",
-    "BACKDROP", "WORLD", "RT_SHADOWS_HARD", "OUTLINE", "DEPTH_PRUNING", "MULTISAMPLE"
+    "BACKDROP", "WORLD", "RT_SHADOWS_HARD", "OUTLINE", "DEPTH_PRUNING", "MULTISAMPLE", "HI_Z"
   ],
   "entries": [
     { "shader": "fullscreen", "source": "fullscreen.vert.glsl", "stage": "vert", "defines": [] },
@@ -157,8 +157,10 @@
     { "shader": "probe_trace", "source": "probe_trace.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "probe_trace", "source": "probe_trace.comp.glsl", "stage": "comp", "defines": ["SCENE_TRACE_BVH"] },
     { "shader": "ssgi_trace", "source": "ssgi_trace.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "ssgi_trace", "source": "ssgi_trace.comp.glsl", "stage": "comp", "defines": ["HI_Z"] },
     { "shader": "ssgi_temporal", "source": "ssgi_temporal.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "ssgi_filter", "source": "ssgi_filter.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "depth_pyramid", "source": "depth_pyramid.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "probe_blend", "source": "probe_blend.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "rt_ao", "source": "rt_ao.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "rt_ao", "source": "rt_ao.comp.glsl", "stage": "comp", "defines": ["SCENE_TRACE_BVH"] },
