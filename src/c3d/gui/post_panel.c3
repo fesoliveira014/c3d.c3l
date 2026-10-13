@@ -274,6 +274,7 @@ fn bool edit_ambient_occlusion(AmbientOcclusionDesc* ambient_occlusion) @local {
     changed |= edit_grade_factor("AO intensity", &ambient_occlusion.intensity, 0, AO_INTENSITY_MAX);
     changed |= imgui::checkbox("Full resolution", &ambient_occlusion.full_resolution);
     changed |= imgui::checkbox("Temporal", &ambient_occlusion.temporal);
+    changed |= imgui::checkbox("Bent normals", &ambient_occlusion.bent_normals);
     if (ambient_occlusion.kind == AoKind.RAY_TRACED) {
         changed |= edit_level_count(
             label:   "Rays",
@@ -355,7 +356,20 @@ fn bool edit_ray_tracing(ViewDesc* desc) @local {
             minimum: REFLECTION_ROUGHNESS_MIN,
             maximum: REFLECTION_ROUGHNESS_MAX,
         );
+
+        uint rays = math::max(ray_tracing.reflection_rays, 1u);
+        if (edit_level_count("Reflection rays", &rays, 1, render::RT_REFLECTION_RAYS_MAX)) {
+            ray_tracing.reflection_rays = rays;
+            changed = true;
+        }
+
+        bool half_resolution = ray_tracing.reflection_resolution == ReflectionResolution.HALF;
+        if (imgui::checkbox("Half resolution reflections", &half_resolution)) {
+            ray_tracing.reflection_resolution = half_resolution ? ReflectionResolution.HALF : ReflectionResolution.FULL;
+            changed = true;
+        }
     }
+
     return changed;
 }
 

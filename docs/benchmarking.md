@@ -239,6 +239,7 @@ lacks it, so an excluded mode never silently reports zero timings.
 | `--panel` | `--window`, `--capture`, `C3D_PROFILE_GUI` | Draws the profiler panel every frame through the overlay and reports its cost as `gui_ms`. |
 | `--print-features` | nothing | Prints `cpu=<0|1> gpu=<0|1> internal=<0|1> gui=<0|1>` and exits. |
 | `--anti-aliasing none\|fxaa\|taa` | nothing | Selects the measured view's anti-aliasing filter (`benchmark.py --anti-aliasing`); FXAA by default. |
+| `--msaa 1\|2\|4\|8` | nothing | Selects the measured view's samples per pixel (`benchmark.py --msaa`, one job per value, the label of a count above 1 ending in `-msaa<N>`); 1 by default. `--anti-aliasing taa` or `--shading path-traced` with a count above 1 is rejected as an invalid argument. The banner prints `msaa=<N>`. |
 | `--depth-prepass on\|off` | nothing | Selects the forward measured view's depth prepass (`benchmark.py --depth-prepass`); on by default, as in the view constructors. Deferred views always run it. |
 | `--depth-pruning on\|off` | nothing | `many_lights` only: sets `ClusterDesc.depth_pruning` on the measured clustered view ([depth pruning](many_lights.md#depth-pruning)); off by default. A forward run without a depth prepass, or with traced reflections, ignores it. A second banner line prints `depth_pruning=on\|off`. |
 | `--ambient-occlusion none\|half\|full\|ray-traced` | `ray-traced`: a ray-query adapter | Selects the measured view's AO: screen space at half or full resolution, or ray traced at half resolution with 4 rays (`benchmark.py --ambient-occlusion`); none by default. The CSV reports it as `gpu_ambient_occlusion_ms`. |
@@ -262,7 +263,7 @@ windowed rows only with other windowed rows.
 | `end_ms` | `end_frame` submission, including presentation in windowed runs |
 | `gui_ms` | Profiler panel draw and overlay recording; zero without `--panel` |
 | `cpu_record_ms` | Existing renderer statistic; excludes the beginning wait/readback/sweep work |
-| `gpu_*_ms` | Completed per-pass timestamps for shadow atlas, light culling, depth prepass, G-buffer, ambient occlusion, ray-traced reflections, path tracing, lighting resolve, forward opaque, post chain, composite, velocity, temporal resolve, probe update, acceleration builds, screen-space GI, its colour copy, instance culling (`gpu_instance_cull_ms`), environment preparation (`gpu_environment_ms`) and its stages (`gpu_environment_source_ms`, `gpu_environment_irradiance_ms`, `gpu_environment_prefilter_ms`, `gpu_environment_sheen_ms`, `gpu_environment_luts_ms`, and an atmosphere's `gpu_environment_sky_transmittance_ms`, `gpu_environment_sky_multi_scattering_ms`, `gpu_environment_sky_ms`, last; parts of `gpu_environment_ms`, not added to it); `-1` when unavailable, zero for an omitted pass |
+| `gpu_*_ms` | Completed per-pass timestamps for shadow atlas, light culling, depth prepass, G-buffer, ambient occlusion, ray-traced reflections, path tracing, lighting resolve, forward opaque, post chain and its stages (`gpu_bloom_ms`, `gpu_dof_ms`, `gpu_motion_blur_ms`; parts of `gpu_post_ms`, not added to it), composite, velocity, temporal resolve, probe update, acceleration builds, screen-space GI, its colour copy, instance culling (`gpu_instance_cull_ms`), environment preparation (`gpu_environment_ms`) and its stages (`gpu_environment_source_ms`, `gpu_environment_irradiance_ms`, `gpu_environment_prefilter_ms`, `gpu_environment_sheen_ms`, `gpu_environment_luts_ms`, and an atmosphere's `gpu_environment_sky_transmittance_ms`, `gpu_environment_sky_multi_scattering_ms`, `gpu_environment_sky_ms`, last; parts of `gpu_environment_ms`, not added to it); `-1` when unavailable, zero for an omitted pass |
 | `draws`, `lights`, `dropped` | Current-frame renderer counters |
 | `batches_faded` | Current-frame `Stats.batches_faded`: view batches inside the frustum wholly past their fade band |
 | `upload_bytes` | Current-frame `Stats.upload_bytes`: bytes staged for upload this frame |
@@ -405,6 +406,22 @@ time, and animates the trio; `range` publishes the row with `Scene.mark_instance
 `Scene.mark_instances_dirty`. The pictures are identical, and `upload_bytes` shows 40,832 and 12,781,952 bytes per
 frame. Without the flag the scene is still, as above.
 `benchmark.py instancing` runs `fade-field-off` and `fade-field-on` jobs (`--fade-fields` selects them).
+
+## Post-processing benchmark
+
+```bash
+python3 scripts/build.py --target effects --opt O3 --define C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL \
+  --lib c3d_profile
+./examples/build/effects --gpu-timings --benchmark 300 [--auto-focus] [--focus-point X Y]
+```
+
+`effects --benchmark FRAMES` renders the interactive example's scene offscreen through the shared benchmark loop,
+without a window, at 1920x1080 after 30 warmup frames. Bloom, depth of field and motion blur are on, with FXAA,
+and the cube spins at the loop's fixed frame time. It needs `--gpu-timings`, prints no CSV, and prints the mean
+over the frames of each [post stage](post.md#timings) and of the whole post chain, for example `Bloom: ... ms,
+depth of field: ... ms, motion blur: ... ms, post chain: ... ms, mean over N frames at 1920x1080`. The stages are
+parts of the post chain, so their sum is at most its mean. The other benchmark examples report the same stages as
+the `gpu_bloom_ms`, `gpu_dof_ms` and `gpu_motion_blur_ms` columns when their view enables the effects.
 
 ## Profiling configurations and overhead
 
