@@ -355,6 +355,18 @@ fn bool edit_ray_tracing(ViewDesc* desc) @local {
             minimum: REFLECTION_ROUGHNESS_MIN,
             maximum: REFLECTION_ROUGHNESS_MAX,
         );
+
+        uint rays = math::max(ray_tracing.reflection_rays, 1u);
+        if (edit_level_count("Reflection rays", &rays, 1, render::RT_REFLECTION_RAYS_MAX)) {
+            ray_tracing.reflection_rays = rays;
+            changed = true;
+        }
+
+        bool half_resolution = ray_tracing.reflection_resolution == ReflectionResolution.HALF;
+        if (imgui::checkbox("Half resolution reflections", &half_resolution)) {
+            ray_tracing.reflection_resolution = half_resolution ? ReflectionResolution.HALF : ReflectionResolution.FULL;
+            changed = true;
+        }
     }
     return changed;
 }
