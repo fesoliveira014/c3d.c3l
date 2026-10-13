@@ -1117,6 +1117,8 @@ const uint CLOUD_SHADOW_SIZE = 512; // texels per side of the cloud shadow map: 
 const float CLOUD_SHADOW_EXTENT = 16384.0; // metres the map covers: 32 m a texel, finer than a shadow edge; more reach blurs it
 const uint CLOUD_SHADOW_STEPS = 16; // samples through the deck per texel; fewer band the shadow of a thick deck
 const float CLOUD_SHADOW_EDGE_BAND = 0.1; // share of the half extent that fades to light; narrower shows the border
+const float CLOUD_HISTORY_WEIGHT = 0.9; // memory of about ten frames; higher smooths longer and trails longer
+const uint CLOUD_TEMPORAL_GROUP = 16; // texels per side a temporal march group covers; its threads also march a 1-texel border for the clamp: 1.27x the marches, 1.56x at 8
 
 root CloudNoiseRoot {
     TextureIndex output_texture;
@@ -1148,6 +1150,22 @@ root CloudsRoot {
     float        coverage_extent;
     float        noise_scale;
     float        erosion;
+}
+
+root CloudsTemporalRoot {
+    mat4         previous_view_proj;
+    vec4         wind_delta;       // xyz: metres the clouds drifted since the history frame
+    GpuAddress   clouds;           // the CloudsRoot the march reads
+    TextureIndex history;          // RGBA16F: the previous frame's radiance and transmittance; zero: no history
+    TextureIndex history_distance; // R32F: the previous frame's distance
+    SamplerIndex history_sampler;
+    float        jitter;           // Halton offset of the frame's march start, in steps
+    float        pixel_jitter_x;   // Halton offsets of the frame's rays within their pixels, in pixels from -0.5 to 0.5
+    float        pixel_jitter_y;
+    float        pre_exposure_ratio;
+    uint         _pad0;
+    uint         _pad1;
+    uint         _pad2;
 }
 
 root CloudShadowRoot {

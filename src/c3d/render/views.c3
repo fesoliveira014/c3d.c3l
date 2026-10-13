@@ -81,6 +81,7 @@ struct ViewDesc {
     bool                 volumetric_fog; // a froxel volume for the view's HeightFog; allocated with the view
     FogQuality           fog_quality; // grid of that volume; reallocated when it changes
     bool                 fog_temporal; // jitters the volume and blends the previous frame's; a second volume per view
+    bool                 cloud_temporal; // jitters the cloud march and blends the previous frame's; doubles its images
     bool                 share_shadows;  // binds an earlier view's matching shadow set and publishes its own
     uint                 transmission_layers; // up to MAX_TRANSMISSION_LAYERS; zero reads as 1
     TransparencyMode     transparency; // how premultiplied-alpha blended surfaces compose
@@ -91,7 +92,7 @@ struct ViewDesc {
  Working images one view owns, in view_targets order.
 *>
 const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8 + GBUFFER_CHANNEL_COUNT
-  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1 + 1 + 2 * SSGI_HISTORY_SLOTS + 2 + 1 + 3 + 2 + 1 + 2 + 1 + 1;
+  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1 + 1 + 2 * SSGI_HISTORY_SLOTS + 2 + 1 + 3 + 2 + 1 + 2 + 1 + 1 + 2;
 
 <*
  Reverse-Z projection terms that recover forward distance from stored depth.
@@ -632,8 +633,9 @@ struct ViewRecord {
     Target                               aerial_perspective;
     Target[FOG_VOLUME_SLOTS]             fog_volumes;
     FogHistory                           fog_history;
-    Target                               clouds;
-    Target                               cloud_distance;
+    Target[CLOUD_SLOTS]                  clouds;
+    Target[CLOUD_SLOTS]                  cloud_distances;
+    CloudHistory                         cloud_history;
     Target                               cloud_shadow;
     Target                               weighted_accum;
     Target                               weighted_revealage;
@@ -727,10 +729,12 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
     targets[next + 7 + 2 * SSGI_HISTORY_SLOTS] = &record.weighted_accum;
     targets[next + 8 + 2 * SSGI_HISTORY_SLOTS] = &record.weighted_revealage;
     targets[next + 9 + 2 * SSGI_HISTORY_SLOTS] = &record.reflection_gbuffer;
-    targets[next + 10 + 2 * SSGI_HISTORY_SLOTS] = &record.clouds;
-    targets[next + 11 + 2 * SSGI_HISTORY_SLOTS] = &record.cloud_distance;
+    targets[next + 10 + 2 * SSGI_HISTORY_SLOTS] = &record.clouds[0];
+    targets[next + 11 + 2 * SSGI_HISTORY_SLOTS] = &record.cloud_distances[0];
     targets[next + 12 + 2 * SSGI_HISTORY_SLOTS] = &record.fog_volumes[1];
     targets[next + 13 + 2 * SSGI_HISTORY_SLOTS] = &record.cloud_shadow;
+    targets[next + 14 + 2 * SSGI_HISTORY_SLOTS] = &record.clouds[1];
+    targets[next + 15 + 2 * SSGI_HISTORY_SLOTS] = &record.cloud_distances[1];
     return targets;
 }
 
@@ -939,6 +943,7 @@ fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
         record.history.valid = false;
         record.history.pending = false;
         record.fog_history = {};
+        record.cloud_history = {};
         record.stats.accumulated_samples = 0;
     };
 }
@@ -961,7 +966,7 @@ fn void? destroy_view(Renderer* renderer, ViewId view) {
 }
 
 <*
- Forget the view's previous pose, adapted exposure and fog history; a camera cut.
+ Forget the view's previous pose, adapted exposure, fog and cloud history; a camera cut.
  @param [&inout] renderer : "No open frame."
  @return? c3d::INVALID_ID
  @require !renderer.frame_open
@@ -971,6 +976,7 @@ fn void? reset_view_history(Renderer* renderer, ViewId view) {
     record.history.valid = false;
     record.history.pending = false;
     record.fog_history = {};
+    record.cloud_history = {};
     record.auto_exposure.history.invalidate();
     reset_lod_history(&record.lod_history);
 }
@@ -1124,6 +1130,7 @@ fn void retire_view_images(Renderer* renderer, ViewRecord* record) @private {
 fn void forget_view_history(Renderer* renderer, ViewRecord* record) @private {
     free_view_history(renderer.allocator, &record.history);
     record.fog_history = {};
+    record.cloud_history = {};
     free_lod_history(renderer, &record.lod_history);
 }
 
@@ -1183,6 +1190,10 @@ fn void drop_unwanted_images(ViewRecord* staged, ViewDesc* previous) @private {
         staged.fog_volumes = {};
     }
     if (!desc.fog_temporal) staged.fog_volumes[1] = {};
+    if (!desc.cloud_temporal) {
+        staged.clouds[1] = {};
+        staged.cloud_distances[1] = {};
+    }
     post::drop_stale_effect_targets(staged);
 }
 

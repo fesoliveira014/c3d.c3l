@@ -116,6 +116,7 @@ struct SkyPipelines @private {
     gpu::PipelineHandle fog_scattering_temporal_traced;
     gpu::PipelineHandle fog_integration;
     gpu::PipelineHandle clouds;
+    gpu::PipelineHandle clouds_temporal;
     gpu::PipelineHandle clouds_composite;
     gpu::PipelineHandle cloud_shadows;
 }
@@ -681,7 +682,7 @@ fn void free_atmospheres(Renderer* renderer) @private {
         if (mirror.entity.generation) release_atmosphere(&renderer.device, mirror);
         *mirror = {};
     }
-    gpu::PipelineHandle[14] pipelines = {
+    gpu::PipelineHandle[15] pipelines = {
         renderer.sky_pipelines.transmittance, renderer.sky_pipelines.multi_scattering,
         renderer.sky_pipelines.sky_view, renderer.sky_pipelines.aerial_perspective,
         renderer.sky_pipelines.environment, renderer.sky_pipelines.fog,
@@ -689,6 +690,7 @@ fn void free_atmospheres(Renderer* renderer) @private {
         renderer.sky_pipelines.fog_scattering_temporal, renderer.sky_pipelines.fog_scattering_temporal_traced,
         renderer.sky_pipelines.fog_integration, renderer.sky_pipelines.clouds,
         renderer.sky_pipelines.clouds_composite, renderer.sky_pipelines.cloud_shadows,
+        renderer.sky_pipelines.clouds_temporal,
     };
     foreach (pipeline : pipelines) if (pipeline.is_valid()) (void)gpu::destroy_pipeline(&renderer.device, pipeline);
     renderer.sky_pipelines = {};

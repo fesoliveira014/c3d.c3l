@@ -8,7 +8,14 @@
 #include "noise.glsl"
 #include "cloud_density.glsl"
 
+#ifdef TEMPORAL
+const uint CLOUD_TILE = CLOUD_TEMPORAL_GROUP + 2u;
+const uint CLOUD_TILE_CELLS = CLOUD_TILE * CLOUD_TILE;
+
+layout(local_size_x = CLOUD_TILE, local_size_y = CLOUD_TILE) in;
+#else
 layout(local_size_x = 8, local_size_y = 8) in;
+#endif
 
 layout(push_constant) uniform Push {
     uint64_t root_gpu;
@@ -137,15 +144,12 @@ void store_clouds(CloudsRoot root, ivec2 pixel, vec3 scattered, float transmitta
 }
 
 // One half-resolution pixel: the radiance the layer scatters toward the camera and what it lets through, up to the
-// scene depth the pixel samples.
-void main() {
-    CloudsRoot root = CloudsRoot(pc.root_gpu);
-    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
-    if (pixel.x >= int(root.width) || pixel.y >= int(root.height)) return;
-
+// scene depth the pixel samples, and the distance of the cloud along the ray. The ray leaves the pixel's centre by
+// pixel_offset, in pixels.
+vec4 march_clouds(CloudsRoot root, ivec2 pixel, float frame_jitter, vec2 pixel_offset, out float cloud_distance) {
     FrameRoot frame = FrameRoot(root.frame);
     ivec2 extent = ivec2(root.width, root.height);
-    vec2 uv = (vec2(pixel) + 0.5) / vec2(extent);
+    vec2 uv = (vec2(pixel) + 0.5 + pixel_offset) / vec2(extent);
     vec3 origin;
     vec3 direction;
     fog_pixel_ray(frame, uv, origin, direction);
@@ -162,9 +166,9 @@ void main() {
     float altitude = origin.y + frame.origin.y;
     float start;
     float end;
+    cloud_distance = 0.0;
     if (!cloud_interval(root, altitude, direction.y, start, end) || min(end, scene_distance) <= start) {
-        store_clouds(root, pixel, vec3(0.0), 1.0, 0.0);
-        return;
+        return vec4(0.0, 0.0, 0.0, 1.0);
     }
     end = min(end, scene_distance);
 
@@ -177,6 +181,9 @@ void main() {
     float cos_view_sun = dot(direction, to_sun);
     float step_length = (end - start) / float(CLOUD_STEPS);
     float jitter = interleaved_gradient_noise(vec2(pixel), 0u);
+#ifdef TEMPORAL
+    jitter = fract(jitter + frame_jitter);
+#endif
     vec3 scattered = vec3(0.0);
     float transmittance = 1.0;
     float weighted_distance = 0.0;
@@ -210,5 +217,125 @@ void main() {
         transmittance *= step_transmittance;
         if (transmittance < CLOUD_MIN_TRANSMITTANCE) break;
     }
-    store_clouds(root, pixel, scattered, transmittance, weight_sum > 0.0 ? weighted_distance / weight_sum : 0.0);
+    cloud_distance = weight_sum > 0.0 ? weighted_distance / weight_sum : 0.0;
+    return vec4(scattered, transmittance);
 }
+
+#ifdef TEMPORAL
+shared vec4 tile_cloud[CLOUD_TILE_CELLS];
+shared float tile_distance[CLOUD_TILE_CELLS];
+
+vec4 cloud_history_tap(CloudsTemporalRoot temporal, vec2 uv) {
+    return sample_texture_2d(temporal.history, temporal.history_sampler, uv);
+}
+
+// Jimenez 2016: a Catmull-Rom filter from five bilinear taps, corners dropped. Wind and camera shift the history a
+// fraction of a texel every frame, and a bilinear read blurs it more with each.
+vec4 cloud_history_sample(CloudsTemporalRoot temporal, vec2 uv, vec2 size) {
+    vec2 position = uv * size;
+    vec2 center = floor(position - 0.5) + 0.5;
+    vec2 fraction = position - center;
+    vec2 weight_0 = fraction * (-0.5 + fraction * (1.0 - 0.5 * fraction));
+    vec2 weight_1 = 1.0 + fraction * fraction * (-2.5 + 1.5 * fraction);
+    vec2 weight_2 = fraction * (0.5 + fraction * (2.0 - 1.5 * fraction));
+    vec2 weight_3 = fraction * fraction * (-0.5 + 0.5 * fraction);
+    vec2 weight_12 = weight_1 + weight_2;
+    vec2 uv_0 = (center - 1.0) / size;
+    vec2 uv_3 = (center + 2.0) / size;
+    vec2 uv_12 = (center + weight_2 / weight_12) / size;
+
+    vec4 sum = cloud_history_tap(temporal, vec2(uv_12.x, uv_0.y)) * (weight_12.x * weight_0.y)
+        + cloud_history_tap(temporal, vec2(uv_0.x, uv_12.y)) * (weight_0.x * weight_12.y)
+        + cloud_history_tap(temporal, uv_12) * (weight_12.x * weight_12.y)
+        + cloud_history_tap(temporal, vec2(uv_3.x, uv_12.y)) * (weight_3.x * weight_12.y)
+        + cloud_history_tap(temporal, vec2(uv_12.x, uv_3.y)) * (weight_12.x * weight_3.y);
+    float total = weight_12.x * weight_0.y + weight_0.x * weight_12.y + weight_12.x * weight_12.y
+        + weight_3.x * weight_12.y + weight_12.x * weight_3.y;
+    return sum / total;
+}
+
+// Where a pixel's cloud was in the previous frame, as a texture coordinate; z is 0 outside the previous view. A cloud
+// comes from where the wind had it, a pixel without one from its direction at infinity.
+vec3 cloud_history_uv(CloudsTemporalRoot temporal, vec3 origin, vec3 direction, float cloud_distance) {
+    vec4 clip = cloud_distance > 0.0
+        ? temporal.previous_view_proj * vec4(origin + direction * cloud_distance - temporal.wind_delta.xyz, 1.0)
+        : temporal.previous_view_proj * vec4(direction, 0.0);
+    if (clip.w <= 0.0) return vec3(0.0);
+
+    vec2 ndc = clip.xy / clip.w;
+    vec2 uv = vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    bool inside = all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)));
+    return vec3(uv, inside ? 1.0 : 0.0);
+}
+
+// A group has a thread for each of its pixels and for the border of one around them, so every pixel can clamp its
+// reprojected history to the range of its 3 x 3 neighbours' current radiance before the blend. The history belongs to the
+// pixel's centre, which the reprojection starts from, while the march takes the frame's offset ray.
+void main() {
+    CloudsTemporalRoot temporal = CloudsTemporalRoot(pc.root_gpu);
+    CloudsRoot root = CloudsRoot(temporal.clouds);
+    FrameRoot frame = FrameRoot(root.frame);
+    ivec2 extent = ivec2(root.width, root.height);
+    // An orthographic view has no camera position to reproject a distant direction from: no jitter, no history.
+    bool perspective = frame.proj[3][3] == 0.0;
+    bool reproject = temporal.history != 0u && perspective;
+    float jitter = perspective ? temporal.jitter : 0.0;
+    vec2 pixel_offset = perspective ? vec2(temporal.pixel_jitter_x, temporal.pixel_jitter_y) : vec2(0.0);
+
+    ivec2 local = ivec2(gl_LocalInvocationID.xy);
+    bool border = any(equal(local, ivec2(0))) || any(equal(local, ivec2(int(CLOUD_TILE) - 1)));
+    ivec2 pixel = ivec2(gl_WorkGroupID.xy) * int(CLOUD_TEMPORAL_GROUP) - 1 + local;
+    if (!border || reproject) {
+        float cell_distance;
+        ivec2 cell_pixel = clamp(pixel, ivec2(0), extent - 1);
+        tile_cloud[gl_LocalInvocationIndex] = march_clouds(root, cell_pixel, jitter, pixel_offset, cell_distance);
+        tile_distance[gl_LocalInvocationIndex] = cell_distance;
+    }
+    barrier();
+    if (border || pixel.x >= extent.x || pixel.y >= extent.y) return;
+
+    uint own = gl_LocalInvocationIndex;
+    vec4 cloud = tile_cloud[own];
+    float cloud_distance = tile_distance[own];
+    if (reproject) {
+        vec3 origin;
+        vec3 direction;
+        fog_pixel_ray(frame, (vec2(pixel) + 0.5) / vec2(extent), origin, direction);
+        vec3 history_uv = cloud_history_uv(temporal, origin, direction, cloud_distance);
+        if (history_uv.z > 0.0) {
+            vec4 history = cloud_history_sample(temporal, history_uv.xy, vec2(extent));
+            history.rgb *= temporal.pre_exposure_ratio;
+
+            vec4 lowest = cloud;
+            vec4 highest = cloud;
+            for (int y = -1; y <= 1; y++) {
+                for (int x = -1; x <= 1; x++) {
+                    vec4 neighbour = tile_cloud[int(own) + y * int(CLOUD_TILE) + x];
+                    lowest = min(lowest, neighbour);
+                    highest = max(highest, neighbour);
+                }
+            }
+            cloud = mix(cloud, clamp(history, lowest, highest), CLOUD_HISTORY_WEIGHT);
+
+            ivec2 history_texel = min(ivec2(history_uv.xy * vec2(extent)), extent - 1);
+            float history_distance = fetch_texture_2d(temporal.history_distance, history_texel).r;
+            if (history_distance > 0.0) {
+                cloud_distance = cloud_distance > 0.0
+                    ? mix(cloud_distance, history_distance, CLOUD_HISTORY_WEIGHT)
+                    : history_distance;
+            }
+        }
+    }
+    store_clouds(root, pixel, cloud.rgb, cloud.a, cloud_distance);
+}
+#else
+void main() {
+    CloudsRoot root = CloudsRoot(pc.root_gpu);
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (pixel.x >= int(root.width) || pixel.y >= int(root.height)) return;
+
+    float cloud_distance;
+    vec4 cloud = march_clouds(root, pixel, 0.0, vec2(0.0), cloud_distance);
+    store_clouds(root, pixel, cloud.rgb, cloud.a, cloud_distance);
+}
+#endif
