@@ -114,9 +114,9 @@ Every element takes `kind`, `id`, `style`, `visible` and `enabled` (a literal or
 - An image sizes to its asset texture in texels when `width` or `height` is `fit`; a render-target image needs both.
 - `visible: false` collapses a subtree: no layout and no getter calls. `enabled: false` gives the disabled state to
   the element and its descendants, and they fire no actions.
-- Interactive elements are buttons, text fields, grid items and any element with an action. Hover, press and
-  disabled states apply to the interactive element and its descendants, except that an interactive descendant takes
-  its own hover and press; focus applies to the focused field.
+- Interactive elements are buttons, text fields, grid items and any element with an action other than `on_move_start`
+  and `on_move_end`. Hover, press and disabled states apply to the interactive element and its descendants, except that
+  an interactive descendant takes its own hover and press; focus applies to the focused field.
 
 ### Windows
 
@@ -460,10 +460,10 @@ which holds none. A transition entry is 452 bytes in a table of two slots per en
 113 KiB of the `create_ui` storage. A non-zero `max_transitions` also keeps the instance table (424 bytes per
 element), a 96-byte link per element, the expanded text and the rich text pieces of the update before, so that a
 removed element can exit: 2.5 MiB more at the defaults. With `max_transitions` 0 none of it is allocated. Every table
-is allocated once in `create_ui`; documents and style sets allocate
-once when they load. Nothing allocates per frame. A load or reload whose windows do not fit the table faults
-`CAPACITY_EXCEEDED` and changes nothing. `update` faults `CAPACITY_EXCEEDED` when a frame overflows, including a frame
-whose rich labels need more pieces than the table holds; that frame draws nothing and the next frame retries.
+is allocated once in `create_ui`; documents and style sets allocate once when they load. Nothing allocates per frame. A
+load or reload whose windows do not fit the table faults `CAPACITY_EXCEEDED` and changes nothing. `update` faults
+`CAPACITY_EXCEEDED` when a frame overflows, including a frame whose rich labels need more pieces than the table holds;
+that frame draws nothing and the next frame retries.
 
 ## Measured costs
 
