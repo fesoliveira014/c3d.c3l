@@ -635,7 +635,7 @@ fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkFlags flags) @local {
     base.depth_prepass = flags.depth_prepass;
     base.post.auto_exposure = flags.auto_exposure;
     base.ray_tracing.reflections = flags.reflections;
-    if (flags.screen_space_gi) base.screen_space_gi = render::SCREEN_SPACE_GI_DEFAULT;
+    if (flags.screen_space_gi) base.screen_space_gi = bench_loop::screen_space_gi_desc(flags);
     base.instance_culling = true;
     return base;
 }
