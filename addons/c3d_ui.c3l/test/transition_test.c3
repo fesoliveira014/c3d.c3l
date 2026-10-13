@@ -12,6 +12,11 @@ const String FADE_SHEET @local = `{
     "transition": { "properties": ["fill"], "duration": 1 },
     "hover": { "fill": "#ffffffff" }
   },
+  "hold": {
+    "fill": "#000000ff", "size": [40, 20],
+    "transition": { "properties": ["fill"], "duration": 0, "delay": 1 },
+    "hover": { "fill": "#ffffffff" }
+  },
   "slide": {
     "fill": "#000000ff", "size": [40, 20],
     "transition": { "properties": ["fill", "offset"], "duration": 1 },
@@ -85,6 +90,18 @@ fn void test_zero_delta_holds_and_large_delta_finishes() @test {
 
     fixture::frame(&fixture, delta: 100);
     assert(nth_rect(&fixture).fill.x == 1, "a large delta ends the transition in the same update");
+
+    Fixture delayed;
+    fixture::create_fixture(&delayed);
+    defer fixture::destroy_fixture(&delayed);
+    load_card(&delayed, "hold");
+
+    move_pointer(&delayed, OVER);
+    fixture::frame(&delayed, delta: 0.5f);
+    assert(nth_rect(&delayed).fill.x == 0, "a zero duration waits out its delay");
+
+    fixture::frame(&delayed, delta: 0.6f);
+    assert(nth_rect(&delayed).fill.x == 1, "and ends once the delay has passed");
 }
 
 fn void test_reduced_motion_snaps_offset_and_keeps_fades() @test {

@@ -63,7 +63,7 @@ fn float track_distance(Vec4 first, Vec4 second) @private => math::abs(first - s
 fn Vec4 track_value(UiTrack* track) @private {
     if (!track.running) return track.to;
 
-    float progress = 1;
+    float progress = track.elapsed >= track.delay ? 1 : 0;
     if (track.duration > 0) progress = math::clamp((track.elapsed - track.delay) / track.duration, 0.0f, 1.0f);
 
     return track.from + (track.to - track.from) * ease(track.easing, progress);
