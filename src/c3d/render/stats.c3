@@ -76,6 +76,20 @@ enum EnvironmentStage : int (String label) {
 const usz ENVIRONMENT_STAGE_COUNT = EnvironmentStage::len;
 
 <*
+ Display processing effects timed separately inside Pass.POST_CHAIN.
+*>
+enum PostStage : int (String label) {
+    BLOOM { "post.bloom" },
+    DEPTH_OF_FIELD { "post.depth_of_field" },
+    MOTION_BLUR { "post.motion_blur" },
+}
+
+<*
+ Number of post stages in timing summaries.
+*>
+const usz POST_STAGE_COUNT = PostStage::len;
+
+<*
  Frames between the texture readings in Stats.
 *>
 const uint TEXTURE_STATS_INTERVAL = 16; // a table walk: 0.2 us at 27 entries, 5.4 us at 4,019 on an RTX 4090
@@ -193,6 +207,7 @@ struct Stats {
     float cpu_record_ms;
     float[PASS_COUNT] gpu_pass_ms;
     float[ENVIRONMENT_STAGE_COUNT] gpu_environment_stage_ms; // parts of the ENVIRONMENT pass, not added to it
+    float[POST_STAGE_COUNT] gpu_post_stage_ms; // parts of the POST_CHAIN pass, not added to it
     ulong gpu_frame_index @if($feat(C3D_PROFILE_GPU));
     GpuTimingState gpu_timing_state @if($feat(C3D_PROFILE_GPU));
     bool[PASS_COUNT] gpu_pass_valid @if($feat(C3D_PROFILE_GPU));
@@ -204,6 +219,7 @@ fn void reset_frame_stats(Stats* stats) @private {
     *stats = {};
     stats.gpu_pass_ms = previous.gpu_pass_ms;
     stats.gpu_environment_stage_ms = previous.gpu_environment_stage_ms;
+    stats.gpu_post_stage_ms = previous.gpu_post_stage_ms;
     stats.shadow_timings = previous.shadow_timings;
     stats.textures = previous.textures;
     stats.texture_capacity = previous.texture_capacity;

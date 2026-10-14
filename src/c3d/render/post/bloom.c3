@@ -26,6 +26,16 @@ struct BloomBinding {
 fn BloomBinding? record_bloom(Renderer* renderer, ViewRecord* record) {
     acquire_bloom_pipelines(renderer)!;
     open_post_chain(renderer, record)!;
+
+    BloomBinding binding;
+    render::@profile_stage(renderer, PostStage.BLOOM) {
+        binding = record_bloom_dispatches(renderer, record)!;
+    }!;
+
+    return binding;
+}
+
+fn BloomBinding? record_bloom_dispatches(Renderer* renderer, ViewRecord* record) @private {
     BloomParams* params = &record.desc.post.bloom_params;
     uint levels = record.bloom_levels;
     gpu::GpuAddress auto_exposure = adapted_exposure(record);
