@@ -45,9 +45,9 @@ const int      FAN_IN_NORTH_WALL @local = 25; // bounds the hall in tile (1, 1) 
 const int      FAN_IN_HALL_START @local = 26;
 const int      FAN_IN_SEAM_Z @local = 32; // tile border between (1, 1) and (1, 2)
 const int      FAN_IN_STRIP_END @local = 36; // four cells deep of alternating step strips in tile (1, 2)
-const int[<2>] FAN_IN_SPAWN_CELL @local = { 22, 28 }; // eastern half of the hall in tile (1, 1)
+const int[<2>] FAN_IN_SPAWN_CELL @local = { 17, 28 }; // western half of the hall in tile (1, 1)
 const int      FAN_IN_SPAWN_SPACING @local = 2;
-const Vec3     FAN_IN_GOAL @local = { 27.5f, 0, 40.5f }; // eastern side of tile (1, 2), past the fifth strip
+const Vec3     FAN_IN_GOAL @local = { 18.5f, 0, 40.5f }; // western side of tile (1, 2), south of the strips
 const Vec3     FAN_IN_CAMERA_START @local = { 24, 18, 48 };
 const float    FAN_IN_CAMERA_PITCH @local = -0.75f;
 const float    AGENT_BODY_RADIUS @local = 0.6f; // the default agent's radius, so drawn bodies show real overlap
@@ -327,7 +327,7 @@ fn usz block_kind(char cell) @local {
     }
 }
 
-// One wide hall polygon in tile (1, 1) faces 16 alternating step strips across the z = 32 border of tile (1, 2).
+// One wide hall polygon in tile (1, 1) faces 16 alternating floor and step segments across the z = 32 border.
 fn void apply_fan_in(GridLevel* level) @local {
     for (int cell_x = FAN_IN_WEST_WALL; cell_x <= FAN_IN_EAST_WALL; cell_x++) {
         level.cells[cell_x + FAN_IN_NORTH_WALL * MAP_SIDE] = '#';
@@ -381,6 +381,7 @@ fn TileInstallTiming? install_tile(GridTileBuilder* builder, NavMesh* mesh, int[
     NavBuildConfig config = builder.config;
     time::Clock build_start = clock::now();
     char[] tile_mesh = builder.build(tile.x, tile.y)!;
+
     time::Clock install_start = clock::now();
     mesh.install_tile_mesh(
         tile_mesh:   tile_mesh,
@@ -395,6 +396,7 @@ fn TileInstallTiming? install_tile(GridTileBuilder* builder, NavMesh* mesh, int[
         },
     )!;
     time::Clock finished = clock::now();
+
     return {
         .build_milliseconds   = (float)((double)(install_start - build_start) / NANOSECONDS_PER_MILLISECOND),
         .install_milliseconds = (float)((double)(finished - install_start) / NANOSECONDS_PER_MILLISECOND),
@@ -448,6 +450,7 @@ fn void? spawn_agents(
         Geometry capsule = geometry::capsule(tmem, AGENT_BODY_RADIUS, AGENT_BODY_HEIGHT);
         body = assets.add_geometry(&capsule, "grid/agent_body")!;
     };
+
     int[<2>] start_cell = fan_in ? FAN_IN_SPAWN_CELL : SPAWN_CELL;
     int spacing = fan_in ? FAN_IN_SPAWN_SPACING : SPAWN_SPACING;
     for (int index = 0; index < (int)AGENT_COUNT; index++) {
@@ -620,6 +623,7 @@ fn void? run(
     for (int tile_z = 0; tile_z < MAP_TILES; tile_z++) {
         for (int tile_x = 0; tile_x < MAP_TILES; tile_x++) (void)install_tile(&builder, &mesh, { tile_x, tile_z })!;
     }
+
     if (fan_in) {
         TileInstallTiming ordinary = install_tile(&builder, &mesh, ORDINARY_TILE)!;
         TileInstallTiming seam = install_tile(&builder, &mesh, FAN_IN_TILE)!;
