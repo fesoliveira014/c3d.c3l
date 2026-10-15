@@ -32,12 +32,13 @@ fn void? record_tiles(
     record.tile_max.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;
     gpu::cmd_bind_pipeline(&renderer.commands, renderer.post_pipelines.tile_max)!;
     record_tile_dispatch(
-        renderer: renderer,
-        input:    input,
-        output:   &record.tile_max,
-        mode:     mode,
-        tiles_x:  tiles_x,
-        tiles_y:  tiles_y,
+        renderer:   renderer,
+        input:      input,
+        output:     &record.tile_max,
+        mode:       mode,
+        tiles_x:    tiles_x,
+        tiles_y:    tiles_y,
+        group_size: 1,
     )!;
 
     record.tile_max.transition(&renderer.commands, gpu::storage_at({ .compute }, { .read }))!;
@@ -62,6 +63,7 @@ fn void? record_tile_dispatch(
     uint mode,
     uint tiles_x,
     uint tiles_y,
+    uint group_size = shader::POST_GROUP_SIZE,
 ) @private {
     Frame* slot = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, TileRoot::size)!;
@@ -72,5 +74,11 @@ fn void? record_tile_dispatch(
         .height         = tiles_y,
         .mode           = mode,
     };
-    return render::dispatch_extent(renderer, root.address, tiles_x, tiles_y);
+    return render::dispatch_extent(
+        renderer:   renderer,
+        root:       root.address,
+        width:      tiles_x,
+        height:     tiles_y,
+        group_size: group_size,
+    );
 }
