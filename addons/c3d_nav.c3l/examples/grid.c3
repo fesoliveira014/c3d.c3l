@@ -37,6 +37,19 @@ const uint     SCENE_NODE_CAPACITY @local = 1024; // a node per wall cell and pe
 const int[<2>] SPAWN_CELL @local = { 7, 40 }; // open ground south of the long walls
 const int      SPAWN_SPACING @local = 3; // cells between agents
 const int      SPAWN_ROW @local = 5; // agents per row
+const int[<2>] ORDINARY_TILE @local = { 0, 0 };
+const int[<2>] FAN_IN_TILE @local = { 1, 1 };
+const int      FAN_IN_WEST_WALL @local = 14; // outside tile column 1; one-cell erosion stops at x = 16
+const int      FAN_IN_EAST_WALL @local = 33; // outside tile column 1; one-cell erosion stops at x = 32
+const int      FAN_IN_NORTH_WALL @local = 25; // bounds the hall in tile (1, 1) to one rectangle polygon
+const int      FAN_IN_HALL_START @local = 26;
+const int      FAN_IN_SEAM_Z @local = 32; // tile border between (1, 1) and (1, 2)
+const int      FAN_IN_STRIP_END @local = 36; // four cells deep of alternating step strips in tile (1, 2)
+const int[<2>] FAN_IN_SPAWN_CELL @local = { 17, 28 }; // western half of the hall in tile (1, 1)
+const int      FAN_IN_SPAWN_SPACING @local = 2;
+const Vec3     FAN_IN_GOAL @local = { 18.5f, 0, 40.5f }; // western side of tile (1, 2), south of the strips
+const Vec3     FAN_IN_CAMERA_START @local = { 24, 18, 48 };
+const float    FAN_IN_CAMERA_PITCH @local = -0.75f;
 const float    AGENT_BODY_RADIUS @local = 0.6f; // the default agent's radius, so drawn bodies show real overlap
 const float    AGENT_BODY_HEIGHT @local = 0.8f; // between the hemisphere centres; two metres tall in all
 const float    AGENT_BODY_LIFT @local = 1; // metres from the agent's floor point to the capsule's centre
@@ -146,6 +159,12 @@ struct RebuildStats @local {
     uint  last_tiles;
     uint  total_tiles;
     float last_milliseconds;
+}
+
+struct TileInstallTiming @local {
+    float build_milliseconds;
+    float install_milliseconds;
+    uint  free_links;
 }
 
 struct GridPick @local {
@@ -308,10 +327,27 @@ fn usz block_kind(char cell) @local {
     }
 }
 
-fn GridLevel*? build_level(AssetStore* assets, Scene* scene) @local {
+// One wide hall polygon in tile (1, 1) faces 16 alternating floor and step segments across the z = 32 border.
+fn void apply_fan_in(GridLevel* level) @local {
+    for (int cell_x = FAN_IN_WEST_WALL; cell_x <= FAN_IN_EAST_WALL; cell_x++) {
+        level.cells[cell_x + FAN_IN_NORTH_WALL * MAP_SIDE] = '#';
+    }
+    for (int cell_z = FAN_IN_HALL_START; cell_z <= FAN_IN_STRIP_END; cell_z++) {
+        level.cells[FAN_IN_WEST_WALL + cell_z * MAP_SIDE] = '#';
+        level.cells[FAN_IN_EAST_WALL + cell_z * MAP_SIDE] = '#';
+        for (int cell_x = FAN_IN_WEST_WALL + 1; cell_x < FAN_IN_EAST_WALL; cell_x++) {
+            bool strip = cell_z >= FAN_IN_SEAM_Z && cell_z < FAN_IN_STRIP_END && cell_x >= TILE_CELLS &&
+                cell_x < TILE_CELLS * 2 && (cell_x & 1) != 0;
+            level.cells[cell_x + cell_z * MAP_SIDE] = strip ? 'a' : '.';
+        }
+    }
+}
+
+fn GridLevel*? build_level(AssetStore* assets, Scene* scene, bool fan_in) @local {
     GridLevel* level = mem::new(GridLevel);
     defer catch free(level);
     foreach (cell_z, row : LEVEL_MAP) level.cells[cell_z * MAP_SIDE:MAP_SIDE] = row[..];
+    if (fan_in) apply_fan_in(level);
 
     MaterialId ground_material = add_colour(assets, { 0.5f, 0.56f, 0.5f, 1 }, "grid/ground")!;
     level.wall_material = add_colour(assets, { 0.45f, 0.45f, 0.5f, 1 }, "grid/wall")!;
@@ -341,10 +377,14 @@ fn GridLevel*? build_level(AssetStore* assets, Scene* scene) @local {
     return level;
 }
 
-fn void? install_tile(GridTileBuilder* builder, NavMesh* mesh, int[<2>] tile) @local {
+fn TileInstallTiming? install_tile(GridTileBuilder* builder, NavMesh* mesh, int[<2>] tile) @local {
     NavBuildConfig config = builder.config;
+    time::Clock build_start = clock::now();
+    char[] tile_mesh = builder.build(tile.x, tile.y)!;
+
+    time::Clock install_start = clock::now();
     mesh.install_tile_mesh(
-        tile_mesh:   builder.build(tile.x, tile.y)!,
+        tile_mesh:   tile_mesh,
         connections: {},
         params:      {
             .tile_x          = tile.x,
@@ -355,6 +395,13 @@ fn void? install_tile(GridTileBuilder* builder, NavMesh* mesh, int[<2>] tile) @l
             .build_bv_tree   = true,
         },
     )!;
+    time::Clock finished = clock::now();
+
+    return {
+        .build_milliseconds   = (float)((double)(install_start - build_start) / NANOSECONDS_PER_MILLISECOND),
+        .install_milliseconds = (float)((double)(finished - install_start) / NANOSECONDS_PER_MILLISECOND),
+        .free_links           = mesh.free_links(),
+    };
 }
 
 // A cell inside a neighbour's border changes that tile's window too, so it is rebuilt as well.
@@ -365,7 +412,7 @@ fn uint? rebuild_around(GridTileBuilder* builder, NavMesh* mesh, int[<2>] cell) 
     uint rebuilt;
     for (int tile_z = first.y; tile_z <= last.y; tile_z++) {
         for (int tile_x = first.x; tile_x <= last.x; tile_x++) {
-            install_tile(builder, mesh, { tile_x, tile_z })!;
+            (void)install_tile(builder, mesh, { tile_x, tile_z })!;
             rebuilt++;
         }
     }
@@ -396,14 +443,18 @@ fn void? spawn_agents(
     Scene* scene,
     GridLevel* level,
     Agents* agents,
+    bool fan_in,
 ) @local {
     GeometryId body;
     @pool() {
         Geometry capsule = geometry::capsule(tmem, AGENT_BODY_RADIUS, AGENT_BODY_HEIGHT);
         body = assets.add_geometry(&capsule, "grid/agent_body")!;
     };
+
+    int[<2>] start_cell = fan_in ? FAN_IN_SPAWN_CELL : SPAWN_CELL;
+    int spacing = fan_in ? FAN_IN_SPAWN_SPACING : SPAWN_SPACING;
     for (int index = 0; index < (int)AGENT_COUNT; index++) {
-        int[<2>] cell = SPAWN_CELL + (int[<2>]){ index % SPAWN_ROW, index / SPAWN_ROW } * SPAWN_SPACING;
+        int[<2>] cell = start_cell + (int[<2>]){ index % SPAWN_ROW, index / SPAWN_ROW } * spacing;
         Node* node = scene.add_node(name: "agent")!;
         node.local.position = { ((float)cell.x + 0.5f) * CELL_SIZE, 0, ((float)cell.y + 0.5f) * CELL_SIZE };
         Node* mesh = scene.add_mesh(body, level.agent_material, parent: node)!;
@@ -551,8 +602,9 @@ fn void? run(
     render::Renderer* renderer,
     AssetStore* assets,
     Scene* scene,
+    bool fan_in,
 ) @local {
-    GridLevel* level = build_level(assets, scene)!;
+    GridLevel* level = build_level(assets, scene, fan_in)!;
     defer free(level);
     scene.update_world();
 
@@ -569,7 +621,28 @@ fn void? run(
     NavMesh mesh = nav::create_nav_mesh(mem, builder.mesh_desc(MAP_TILES * MAP_TILES))!;
     defer nav::destroy_nav_mesh(&mesh);
     for (int tile_z = 0; tile_z < MAP_TILES; tile_z++) {
-        for (int tile_x = 0; tile_x < MAP_TILES; tile_x++) install_tile(&builder, &mesh, { tile_x, tile_z })!;
+        for (int tile_x = 0; tile_x < MAP_TILES; tile_x++) (void)install_tile(&builder, &mesh, { tile_x, tile_z })!;
+    }
+
+    if (fan_in) {
+        TileInstallTiming ordinary = install_tile(&builder, &mesh, ORDINARY_TILE)!;
+        TileInstallTiming seam = install_tile(&builder, &mesh, FAN_IN_TILE)!;
+        io::printfn(
+            "ordinary tile (%d, %d): build %.3f ms, install %.3f ms, free_links %d",
+            ORDINARY_TILE.x,
+            ORDINARY_TILE.y,
+            ordinary.build_milliseconds,
+            ordinary.install_milliseconds,
+            ordinary.free_links,
+        );
+        io::printfn(
+            "fan-in tile (%d, %d): build %.3f ms, install %.3f ms, free_links %d",
+            FAN_IN_TILE.x,
+            FAN_IN_TILE.y,
+            seam.build_milliseconds,
+            seam.install_milliseconds,
+            seam.free_links,
+        );
     }
 
     Crowd crowd = nav::create_crowd(
@@ -585,7 +658,9 @@ fn void? run(
         scene:  scene,
         level:  level,
         agents: &agents,
+        fan_in: fan_in,
     )!;
+    if (fan_in) send_agents(scene, &agents, FAN_IN_GOAL);
 
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
@@ -593,9 +668,9 @@ fn void? run(
     defer debug::destroy_debug_draw(&sink);
 
     FreeCamera camera = {
-        .position = CAMERA_START,
+        .position = fan_in ? FAN_IN_CAMERA_START : CAMERA_START,
         .yaw      = (float)math::PI,
-        .pitch    = CAMERA_START_PITCH,
+        .pitch    = fan_in ? FAN_IN_CAMERA_PITCH : CAMERA_START_PITCH,
         .speed    = FREE_SPEED,
     };
     Controls controls = {
@@ -675,7 +750,15 @@ fn void? run(
     }
 }
 
-fn int main() {
+fn int main(String[] args) {
+    bool fan_in;
+    foreach (arg : args[1..]) {
+        if (arg != "--fan-in") {
+            io::eprintfn("Unknown argument: %s; --fan-in builds a many-segment tile border", arg);
+            return 1;
+        }
+        fan_in = true;
+    }
     platform::Window window = platform::create_window(platform::default_window_desc("c3d grid", 1280, 720))!!;
     defer platform::destroy_window(&window);
 
@@ -699,6 +782,7 @@ fn int main() {
         renderer: &renderer,
         assets:   &assets,
         scene:    &scene,
+        fan_in:   fan_in,
     )) {
         io::eprintfn("grid example failed: %s", excuse);
         return 1;

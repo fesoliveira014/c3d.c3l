@@ -8,6 +8,7 @@ faultdef
     INVALID_REF,
     NO_POLY,
     TILE_OCCUPIED,
+    NO_FREE_LINKS,
     LINK_EXISTS,
     NO_PATH,
     LAYER_CORRUPTED,
