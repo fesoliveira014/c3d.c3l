@@ -211,12 +211,8 @@ fn void PosedTraceTable.sweep(&self, ulong frame_index, RetireList* retire) {
     }
 }
 
+// Slot of a crowd placement, shared by the batch rows with the same pose inputs.
 <*
- Slot of a crowd placement, shared by the batch rows with the same pose inputs.
- @param [&inout] table : "Claims the slot of each group's first row."
- @param pose : "Pose inputs, live until the preparation ends."
- @param frame_index : "Renderer frame being recorded."
- @param [&inout] retire : "Receives a taken slot's GPU objects."
  @return? c3d::CAPACITY_EXCEEDED
  @require key.scene != 0
 *>
@@ -227,7 +223,7 @@ fn PosedGroupClaim? PosedPoseGroups.claim(
     char[] pose,
     ulong frame_index,
     RetireList* retire,
-) {
+) @private {
     PosedTraceKey batch = key;
     batch.instance = 0;
     uint pose_hash = fnv32a::hash(pose);
@@ -251,6 +247,7 @@ fn PosedGroupClaim? PosedPoseGroups.claim(
         .pose_hash = pose_hash,
         .occupied  = true,
     };
+
     uint? slot = table.claim(key, frame_index, retire);
     if (catch excuse = slot) {
         entry.overflow = true;
@@ -759,9 +756,8 @@ fn void point_at_posed_slot(TraceInstance* record, PosedTraceRes* slot, GpuGeome
     record.pose_serial = slot.pose_serial;
 }
 
+// Bring the row's posed slot to the current pose and point the row at it; empty inputs gather here.
 <*
- Bring the row's posed slot to the current pose and point the row at it.
- @param inputs : "Pose inputs the row already gathered; empty gathers them here."
  @require source.kind != TracePose.REST
 *>
 fn void? resolve_posed_instance(
