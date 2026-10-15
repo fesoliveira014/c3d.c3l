@@ -9,7 +9,6 @@ const ushort POLY_FLAG_WALK = 1;
 const usz       TILE_DATA_ALIGNMENT @local = 8;
 const char      INSIDE_TILE @local = 0xff; // classify_off_mesh_point of a point inside the tile's XZ
 const ushort    PORTAL_SIDE_MASK @local = 0xf;
-const ushort    NO_PORTAL_SIDE @local = 0xf; // a Recast neighbour word with PORTAL_EDGE and this side is a plain border
 const ushort[4] DETOUR_PORTAL_SIDE @local = { 4, 2, 0, 6 }; // by Recast side: x-, z+, x+, z-
 const char      OUTSIDE_POSITIVE_X @local = 1 << 0;
 const char      OUTSIDE_POSITIVE_Z @local = 1 << 1;

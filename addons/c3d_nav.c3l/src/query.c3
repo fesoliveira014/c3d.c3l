@@ -7,7 +7,7 @@ import c3d;
 const uint TINY_NODE_POOL = 64;
 
 <* Portals per border edge a local query follows when max_edge_links is omitted. *>
-const uint DEFAULT_EDGE_LINKS = 64; // portals per border edge a local query follows; about 1.5 KiB per query
+const uint DEFAULT_EDGE_LINKS = 64; // about 1.5 KiB per query
 
 const uint  TINY_NODE_HASH @local = 32; // mirrors dtNavMeshQuery::init
 const float HEURISTIC_SCALE @private = 0.999f; // mirrors findPath's H_SCALE; keeps the heuristic below the cost

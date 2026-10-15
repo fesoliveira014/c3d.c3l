@@ -14,11 +14,11 @@ const ushort PORTAL_MINUS_X @private = nav::PORTAL_EDGE | 0;
 const ushort PORTAL_PLUS_Z @private = nav::PORTAL_EDGE | 1;
 const ushort PORTAL_MINUS_Z @private = nav::PORTAL_EDGE | 3;
 const char   SIDE_PLUS_X @private = 0;
-const char   SIDE_PLUS_Z @private = 2;
 const char   SIDE_MINUS_X @private = 4;
-const char   SIDE_MINUS_Z @private = 6;
+const char   LONG_NORTH_EDGE @private = 1;
 const char   LONG_BORDER_EDGE @private = 2;
 const char   STRIP_BORDER_EDGE @private = 0;
+const uint   FAN_MAX_TILES @private = 4;
 const usz    WALL_SEGMENT_CAPACITY @private = 128;
 
 struct FanInFixture @private {
@@ -27,20 +27,15 @@ struct FanInFixture @private {
     QueryFilter filter;
 }
 
-fn FanInFixture* create_fan_in_fixture(uint max_tiles = 4, uint max_links = 0, uint max_edge_links = nav::DEFAULT_EDGE_LINKS) @private {
+fn FanInFixture* create_fan_in_fixture(uint max_links = 0) @private {
     FanInFixture* fixture = mem::new(FanInFixture);
     fixture.mesh = nav::create_nav_mesh(mem, {
         .tile_width  = FAN_TILE_SIZE,
         .tile_height = FAN_TILE_SIZE,
-        .max_tiles   = max_tiles,
+        .max_tiles   = FAN_MAX_TILES,
         .max_links   = max_links,
     })!!;
-    fixture.query = nav::create_nav_query(
-        allocator:      mem,
-        mesh:           &fixture.mesh,
-        max_nodes:      QUERY_NODES,
-        max_edge_links: max_edge_links,
-    )!!;
+    fixture.query = nav::create_nav_query(mem, &fixture.mesh, QUERY_NODES)!!;
     fixture.filter = nav::default_query_filter();
     return fixture;
 }
@@ -563,7 +558,7 @@ fn void test_reversed_install_order_links_the_same_portals() @test {
 fn void test_install_without_free_links_faults_and_changes_nothing() @test {
     // Strip tile needs 62 internal links + 64 portal links = 126 links.
     uint strip_links = (STRIP_QUADS - 1) * 2 + STRIP_QUADS * 2;
-    FanInFixture* fixture = create_fan_in_fixture(max_tiles: 4, max_links: strip_links);
+    FanInFixture* fixture = create_fan_in_fixture(strip_links);
     defer destroy_fan_in_fixture(fixture);
     char[] long_mesh = long_tile_mesh();
     defer free(long_mesh);
@@ -582,7 +577,7 @@ fn void test_install_without_free_links_faults_and_changes_nothing() @test {
     usz before_count = collect_edge_links(
         mesh:      &fixture.mesh,
         poly:      &long_tile.polys[0],
-        edge:      1,
+        edge:      LONG_NORTH_EDGE,
         out_links: before_links[..],
     );
     assert(before_count == 1);
@@ -594,7 +589,7 @@ fn void test_install_without_free_links_faults_and_changes_nothing() @test {
     usz after_count = collect_edge_links(
         mesh:      &fixture.mesh,
         poly:      &long_tile.polys[0],
-        edge:      1,
+        edge:      LONG_NORTH_EDGE,
         out_links: after_links[..],
     );
     assert(after_count == 1 && after_links[0].ref == before_links[0].ref);
@@ -607,7 +602,7 @@ fn void test_install_without_free_links_faults_and_changes_nothing() @test {
 }
 
 fn void test_failed_replace_keeps_the_resident_tile() @test {
-    FanInFixture* fixture = create_fan_in_fixture(max_tiles: 4, max_links: 64);
+    FanInFixture* fixture = create_fan_in_fixture(64);
     defer destroy_fan_in_fixture(fixture);
     char[] long_mesh = long_tile_mesh();
     defer free(long_mesh);
