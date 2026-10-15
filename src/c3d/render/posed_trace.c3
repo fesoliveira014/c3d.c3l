@@ -106,6 +106,25 @@ struct PosedDispatch @private {
     bool            joints_u16;
 }
 
+struct PosedGroupClaim @private {
+    uint slot;
+    bool shared; // the slot is an earlier placement's
+}
+
+struct PosedPoseGroup @private {
+    PosedTraceKey batch;     // the leader's key with instance zero
+    char[]        pose;      // the leader's inputs, live for the preparation
+    uint          pose_hash;
+    uint          slot;
+    bool          occupied;
+    bool          overflow;  // the leader found no slot, so its followers find none either
+}
+
+struct PosedPoseGroups @private {
+    PosedPoseGroup[] entries;
+    usz              mask;
+}
+
 <*
  Hash of the full source, part and incarnation identity.
 *>
@@ -192,6 +211,55 @@ fn void PosedTraceTable.sweep(&self, ulong frame_index, RetireList* retire) {
     }
 }
 
+<*
+ Slot of a crowd placement, shared by the batch rows with the same pose inputs.
+ @param [&inout] table : "Claims the slot of each group's first row."
+ @param pose : "Pose inputs, live until the preparation ends."
+ @param frame_index : "Renderer frame being recorded."
+ @param [&inout] retire : "Receives a taken slot's GPU objects."
+ @return? c3d::CAPACITY_EXCEEDED
+ @require key.scene != 0
+*>
+fn PosedGroupClaim? PosedPoseGroups.claim(
+    &self,
+    PosedTraceTable* table,
+    PosedTraceKey key,
+    char[] pose,
+    ulong frame_index,
+    RetireList* retire,
+) {
+    PosedTraceKey batch = key;
+    batch.instance = 0;
+    uint pose_hash = fnv32a::hash(pose);
+    usz index = (usz)(batch.hash() ^ pose_hash) & self.mask;
+    while (self.entries[index].occupied) {
+        PosedPoseGroup* entry = &self.entries[index];
+        bool same_pose = entry.pose_hash == pose_hash && entry.batch == batch && entry.pose.len == pose.len
+          && mem::equals(entry.pose.ptr, pose.ptr, (sz)pose.len);
+        if (same_pose) {
+            if (entry.overflow) return c3d::CAPACITY_EXCEEDED~;
+            return { .slot = entry.slot, .shared = true };
+        }
+        index = (index + 1) & self.mask;
+    }
+
+    // A batch's rows arrive in placement order, so the slot key is the group's lowest placement.
+    PosedPoseGroup* entry = &self.entries[index];
+    *entry = {
+        .batch     = batch,
+        .pose      = pose,
+        .pose_hash = pose_hash,
+        .occupied  = true,
+    };
+    uint? slot = table.claim(key, frame_index, retire);
+    if (catch excuse = slot) {
+        entry.overflow = true;
+        return excuse~;
+    }
+    entry.slot = slot;
+    return { .slot = slot, .shared = false };
+}
+
 fn PosedTraceTable create_posed_trace_table(Allocator allocator, uint capacity) @private {
     PosedTraceTable table = { .allocator = allocator, .capacity = capacity };
     table.pending.init(allocator);
@@ -199,6 +267,16 @@ fn PosedTraceTable create_posed_trace_table(Allocator allocator, uint capacity) 
     table.builds.init(allocator);
     table.motion_copies.init(allocator);
     return table;
+}
+
+// More entries than twice the rows keeps probes short and always leaves an empty entry to end one.
+fn PosedPoseGroups create_posed_pose_groups(Allocator allocator, usz row_count) @private {
+    usz capacity = 1;
+    while (capacity <= 2 * row_count) capacity *= 2;
+    return {
+        .entries = alloc::new_array(allocator, PosedPoseGroup, (sz)capacity),
+        .mask    = capacity - 1,
+    };
 }
 
 fn void free_posed_trace(Renderer* renderer) @private {
@@ -673,8 +751,17 @@ fn void? acquire_posed_blas(Renderer* renderer, uint index, GpuGeometry* mirror)
     table.bytes += requirements.storage_size;
 }
 
+fn void point_at_posed_slot(TraceInstance* record, PosedTraceRes* slot, GpuGeometry* mirror) @private {
+    record.geometry_root = slot.root;
+    record.bottom_level = slot.blas;
+    record.nodes = slot.nodes;
+    record.primitives = mirror.trace.primitives;
+    record.pose_serial = slot.pose_serial;
+}
+
 <*
  Bring the row's posed slot to the current pose and point the row at it.
+ @param inputs : "Pose inputs the row already gathered; empty gathers them here."
  @require source.kind != TracePose.REST
 *>
 fn void? resolve_posed_instance(
@@ -684,6 +771,7 @@ fn void? resolve_posed_instance(
     TracePoseSource* source,
     GpuGeometry* mirror,
     ulong scene,
+    char[] inputs,
 ) @private {
     PosedTraceTable* table = &renderer.posed_trace;
     bool software = renderer.scene_trace.software_requested;
@@ -717,7 +805,7 @@ fn void? resolve_posed_instance(
         }
     } else if (slot.compared_epoch != table.epoch) {
         slot.compared_epoch = table.epoch;
-        bool changed = slot.update_pose(pose_inputs(renderer, source, record));
+        bool changed = slot.update_pose(inputs.len ? inputs : pose_inputs(renderer, source, record));
         if (posed.active) {
             alias_posed_pose(renderer, slot, &posed, mirror, source, record)!;
             if (changed) renderer.stats.trace_poses_reused++;
@@ -747,11 +835,7 @@ fn void? resolve_posed_instance(
         mark_posed_pending(table, index);
     }
 
-    record.geometry_root = slot.root;
-    record.bottom_level = slot.blas;
-    record.nodes = slot.nodes;
-    record.primitives = mirror.trace.primitives;
-    record.pose_serial = slot.pose_serial;
+    point_at_posed_slot(record, slot, mirror);
 }
 
 // A mesh or crowd part compute skinning poses this frame answers its posed binding, which the slot then follows.

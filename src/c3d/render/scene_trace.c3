@@ -700,7 +700,9 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
     bool hardware = renderer.scene_trace.hardware_requested;
     TraceInstance[] records = collection.records;
     PosedTraceTable* posed = &renderer.posed_trace;
+    PosedPoseGroups groups = create_posed_pose_groups(tmem, records.len);
     renderer.stats.trace_posed_instances = 0;
+    renderer.stats.trace_posed_shared = 0;
     renderer.stats.trace_posed_overflow = 0;
     usz kept;
     foreach (index, &record : records) {
@@ -750,27 +752,46 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
         MaterialRes* material = resolve_material(renderer, record.material)!;
         if (!published_without_vertex_stage(renderer, record.material)) continue;
         uint slot;
+        bool shared_slot;
+        char[] inputs;
         if (posed_row) {
-            uint? claimed = posed.claim(key, renderer.frame_index, &renderer.pending_upload_retire);
-            if (catch claimed) {
-                if (!motion_row) {
+            if (pose.crowd && !motion_row) {
+                inputs = pose_inputs(renderer, pose, record);
+                PosedGroupClaim? claimed = groups.claim(
+                    table:       posed,
+                    key:         key,
+                    pose:        inputs,
+                    frame_index: renderer.frame_index,
+                    retire:      &renderer.pending_upload_retire,
+                );
+                if (catch claimed) {
                     renderer.stats.trace_posed_overflow++;
                     continue;
                 }
-                // No free slot: the mesh traces through the shared geometry, rebuilt per revision.
-                posed_row = false;
-                hardware_source = blas_source(
-                    built_revision: same_asset ? mirror.blas.revision : 0,
-                    revision:       revision,
-                    proven:         proven,
-                    streams:        cpu_present || geometry_current(renderer, record.geometry),
-                );
-                if (hardware && hardware_source == TraceSource.SKIP) {
-                    renderer.stats.trace_skipped++;
-                    continue;
-                }
+                slot = claimed.slot;
+                shared_slot = claimed.shared;
             } else {
-                slot = claimed;
+                uint? claimed = posed.claim(key, renderer.frame_index, &renderer.pending_upload_retire);
+                if (catch claimed) {
+                    if (!motion_row) {
+                        renderer.stats.trace_posed_overflow++;
+                        continue;
+                    }
+                    // No free slot: the mesh traces through the shared geometry, rebuilt per revision.
+                    posed_row = false;
+                    hardware_source = blas_source(
+                        built_revision: same_asset ? mirror.blas.revision : 0,
+                        revision:       revision,
+                        proven:         proven,
+                        streams:        cpu_present || geometry_current(renderer, record.geometry),
+                    );
+                    if (hardware && hardware_source == TraceSource.SKIP) {
+                        renderer.stats.trace_skipped++;
+                        continue;
+                    }
+                } else {
+                    slot = claimed;
+                }
             }
         }
         if (hardware && hardware_source == TraceSource.BUILD && !posed_row) {
@@ -792,6 +813,10 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
             record.bottom_level = mirror.blas.handle;
             record.nodes = mirror.trace.nodes;
             record.primitives = mirror.trace.primitives;
+        } else if (shared_slot) {
+            point_at_posed_slot(record, &posed.slots[slot], mirror);
+            renderer.stats.trace_posed_instances++;
+            renderer.stats.trace_posed_shared++;
         } else {
             resolve_posed_instance(
                 renderer: renderer,
@@ -800,6 +825,7 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
                 source:   pose,
                 mirror:   mirror,
                 scene:    scene,
+                inputs:   inputs,
             )!;
             renderer.stats.trace_posed_instances++;
         }

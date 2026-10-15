@@ -353,15 +353,16 @@ while (window.poll()) {
   without moving any pose.
 - Crowds enter the ray tracing paths (shadows, ambient occlusion, reflections, probes, path tracing) only through
   `add_crowd(trace: true)`, which sets `trace` on every part batch; a part batch's `trace` can be edited afterwards
-  like any other. Each traced skinned or morphed placement takes one posed trace slot; rigid-only parts retain the
-  rest-geometry path. Raise `RendererDesc.max_posed_trace_instances` past the required posed slots (placements
-  beyond it are left out of the trace, counted in `Stats.trace_posed_overflow`). A slot costs the posed streams, a
-  refit copy and a bottom level of its part ([scene trace](scene_trace.md#posed-instances)). Raster shadows and
-  temporal views work either way. The default is untraced.
-- **Traced crowd cost.** On the hardware kind each posed placement part costs a bottom-level update every frame its
-  pose changes, recorded in barrier-separated batches; each posed slot holds its own streams and bottom level, so
-  memory scales with the number of traced placements. The software kind poses and refits a tree copy and builds no
-  bottom level ([animated crowds](scene_trace.md#animated-crowds)).
+  like any other. Placements of a traced skinned or morphed part batch (including a crowd-backed `LodGroup`) with
+  byte-identical palette and morph inputs share the lowest placement index's posed trace slot (`Stats.trace_posed_shared`);
+  rigid-only parts retain the rest-geometry path. Raise `RendererDesc.max_posed_trace_instances` past the required
+  posed slots (placements beyond it are left out of the trace, counted in `Stats.trace_posed_overflow`). A slot costs
+  the posed streams, a refit copy and a bottom level of its part ([scene trace](scene_trace.md#posed-instances)).
+  Raster shadows and temporal views work either way. The default is untraced.
+- **Traced crowd cost.** On the hardware kind each claimed slot costs a bottom-level update every frame its pose
+  changes, recorded in barrier-separated batches; each posed slot holds its own streams and bottom level, so memory
+  scales with the number of distinct poses per part batch. The software kind poses and refits a tree copy per distinct
+  pose and builds no bottom level ([animated crowds](scene_trace.md#animated-crowds)).
 - Custom materials: a fragment-only custom material draws with the built-in skinned instanced stage. A
   custom instanced vertex pair skins a crowd when compiled with the deformation defines
   ([Custom shaders](custom_shaders.md)); under compute skinning such a crowd part keeps that vertex skinning.
@@ -374,8 +375,8 @@ the example without animated LOD, whose parts keep vertex skinning and leave the
 and the panel shows the posed bindings, fallback draws, resident posed bytes and the GPU time of
 `Pass.COMPUTE_SKIN`, `Pass.TRACE_POSE`, `Pass.ACCELERATION_BUILD`, shadows, prepass, forward and velocity.
 `--traced-shadows` adds a ground plane, ray-traced sun shadows and traced crowd parts, through the software
-kind or, with `--ray-queries`, the hardware kind, and the panel then shows the trace poses dispatched and
-reused. `--compare` advances both representations on every update and
+kind or, with `--ray-queries`, the hardware kind, and the panel then shows the trace poses dispatched,
+reused and shared. `--compare` advances both representations on every update and
 shows maximum local position, rotation, scale and morph differences. This mode includes both
 playback costs and the comparison loop; use the single-representation modes for measurements.
 `F` freezes every other instance by pausing its base action, `--frozen-percent=P` starts with `P` percent

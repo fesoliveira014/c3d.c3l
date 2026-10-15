@@ -167,6 +167,7 @@ struct Stats {
     uint  compute_skinning_fallbacks; // this frame: pass claims of deformed meshes and crowd parts a cap left on vertex skinning
     usz   compute_skinning_bytes; // GPU bytes the posed buffers hold after the frame
     uint  trace_posed_instances; // this frame: posed rows
+    uint  trace_posed_shared;    // this frame: posed rows that use another row's slot
     uint  trace_posed_overflow;  // this frame: posed candidates left out past the slot capacity
     usz   trace_posed_bytes;     // this frame: GPU bytes the posed slots hold
     uint  trace_poses;           // this frame: posing dispatches
