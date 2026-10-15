@@ -114,10 +114,11 @@ fn void? record_deferred_shading(
     if (record.desc.screen_space_gi.enabled) record_screen_space_gi(renderer, record, frame, history_valid)!;
     if (record.desc.ray_tracing.reflections) {
         record_reflections(
-            renderer: renderer,
-            record:   record,
-            frame:    frame,
-            lights:   reflection_lights,
+            renderer:      renderer,
+            record:        record,
+            frame:         frame,
+            lights:        reflection_lights,
+            history_valid: history_valid,
         )!;
     }
     record_lighting_pass(renderer, record, frame, clear_color)!;

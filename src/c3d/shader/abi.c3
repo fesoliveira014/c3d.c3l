@@ -68,6 +68,7 @@ const uint AO_BLUR_FLAG_VECTOR_INPUT = 1;
 const uint AO_TEMPORAL_FLAG_HISTORY_VALID = 1;
 const uint SSGI_FLAG_GBUFFER_NORMALS = 1;
 const uint SSGI_FLAG_HISTORY_VALID = 2;
+const uint RT_REFLECTION_TEMPORAL_FLAG_HISTORY_VALID = 1;
 const uint MATERIAL_MAP_BASE_COLOR = 1;
 const uint MATERIAL_MAP_METALLIC_ROUGHNESS = 2;
 const uint MATERIAL_MAP_NORMAL = 4;
@@ -1206,6 +1207,44 @@ $assert $reflect(RtReflectionBlurRoot.width).offset == 24;
 $assert $reflect(RtReflectionBlurRoot.height).offset == 28;
 $assert $reflect(RtReflectionBlurRoot.emissive_specular).offset == 32;
 $assert $reflect(RtReflectionBlurRoot._pad1).offset == 36;
+
+struct RtReflectionTemporalRoot {
+    GpuAddress   frame;
+    TextureIndex current;
+    TextureIndex history;
+    TextureIndex previous_depth;
+    TextureIndex depth;
+    TextureIndex velocity;
+    TextureIndex normal_roughness;
+    TextureIndex emissive_specular;
+    TextureIndex output_texture;
+    TextureIndex output_depth;
+    SamplerIndex sampler_index;
+    uint         width;
+    uint         height;
+    float        pre_exposure_ratio;
+    float        max_roughness;
+    uint         flags;
+    uint         _pad0;
+}
+$assert RtReflectionTemporalRoot::size == 72;
+$assert $reflect(RtReflectionTemporalRoot.frame).offset == 0;
+$assert $reflect(RtReflectionTemporalRoot.current).offset == 8;
+$assert $reflect(RtReflectionTemporalRoot.history).offset == 12;
+$assert $reflect(RtReflectionTemporalRoot.previous_depth).offset == 16;
+$assert $reflect(RtReflectionTemporalRoot.depth).offset == 20;
+$assert $reflect(RtReflectionTemporalRoot.velocity).offset == 24;
+$assert $reflect(RtReflectionTemporalRoot.normal_roughness).offset == 28;
+$assert $reflect(RtReflectionTemporalRoot.emissive_specular).offset == 32;
+$assert $reflect(RtReflectionTemporalRoot.output_texture).offset == 36;
+$assert $reflect(RtReflectionTemporalRoot.output_depth).offset == 40;
+$assert $reflect(RtReflectionTemporalRoot.sampler_index).offset == 44;
+$assert $reflect(RtReflectionTemporalRoot.width).offset == 48;
+$assert $reflect(RtReflectionTemporalRoot.height).offset == 52;
+$assert $reflect(RtReflectionTemporalRoot.pre_exposure_ratio).offset == 56;
+$assert $reflect(RtReflectionTemporalRoot.max_roughness).offset == 60;
+$assert $reflect(RtReflectionTemporalRoot.flags).offset == 64;
+$assert $reflect(RtReflectionTemporalRoot._pad0).offset == 68;
 
 struct PathTraceRoot {
     GpuAddress   frame;

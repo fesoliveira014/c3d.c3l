@@ -622,6 +622,28 @@ root RtReflectionBlurRoot {
     uint         _pad1;
 }
 
+const uint RT_REFLECTION_TEMPORAL_FLAG_HISTORY_VALID = 1;
+
+root RtReflectionTemporalRoot {
+    GpuAddress   frame;
+    TextureIndex current;
+    TextureIndex history;
+    TextureIndex previous_depth;
+    TextureIndex depth;
+    TextureIndex velocity;
+    TextureIndex normal_roughness;
+    TextureIndex emissive_specular;
+    TextureIndex output_texture;
+    TextureIndex output_depth;
+    SamplerIndex sampler_index;
+    uint         width;
+    uint         height;
+    float        pre_exposure_ratio; // current pre-exposure over the one recorded with the history
+    float        max_roughness;
+    uint         flags;
+    uint         _pad0;
+}
+
 root PathTraceRoot {
     GpuAddress   frame;
     GpuAddress   sky;

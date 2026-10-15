@@ -311,7 +311,7 @@ resumes. Other groups may still fit. GPU allocation failures remain faults.
 
 Fresh and incompatible LOD pixels write one into velocity alpha; stable compatible pixels write
 zero. Velocity xy and previous depth z retain their meaning. TAA, screen-space
-GI and temporal ambient occlusion reject those pixels without discarding view history. Custom stages using
+GI, temporal ambient occlusion and the reflection history reject those pixels without discarding view history. Custom stages using
 `write_mesh_outputs` inherit the part and velocity contracts.
 
 ## Other consumers

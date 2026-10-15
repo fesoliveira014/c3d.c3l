@@ -284,7 +284,7 @@ fn void? record_raster_view(
     bool screen_space_gi = record.desc.screen_space_gi.enabled;
     bool ambient_occlusion = record.desc.ambient_occlusion.kind != AoKind.NONE;
     bool temporal = taa || record.desc.post.motion_blur || screen_space_gi
-      || ambient_occlusion_accumulates(&record.desc);
+      || ambient_occlusion_accumulates(&record.desc) || reflection_accumulates(&record.desc);
     bool forward_reflections = record.desc.ray_tracing.reflections && record.desc.shading == ShadingPath.FORWARD;
     bool forward_prepass = forward_depth_prepass(&record.desc);
     bool multisample = record.desc.msaa != MsaaSamples.ONE;
@@ -1076,10 +1076,11 @@ fn void? record_raster_view(
                             pre_exposure: pre_exposure,
                         )!;
                         record_reflections(
-                            renderer: renderer,
-                            record:   record,
-                            frame:    frame_span.address,
-                            lights:   reflection_lights,
+                            renderer:      renderer,
+                            record:        record,
+                            frame:         frame_span.address,
+                            lights:        reflection_lights,
+                            history_valid: history_valid,
                         )!;
                     }
                     if (!multisample && (ambient_occlusion || screen_space_gi || forward_reflections)) {
@@ -1624,10 +1625,10 @@ fn bool forward_depth_prepass(ViewDesc* desc) @private {
         || (desc.ray_tracing.reflections && desc.shading == ShadingPath.FORWARD);
 }
 
-// On a view whose screen-space GI or ambient occlusion accumulates, the velocity feeds the effect before lighting;
-// elsewhere it records after the scene.
+// On a view whose screen-space GI, ambient occlusion or reflections accumulate, the velocity feeds the effect before
+// lighting; elsewhere it records after the scene.
 fn bool velocity_before_lighting(ViewDesc* desc) @private {
-    return desc.screen_space_gi.enabled || ambient_occlusion_accumulates(desc);
+    return desc.screen_space_gi.enabled || ambient_occlusion_accumulates(desc) || reflection_accumulates(desc);
 }
 
 <*

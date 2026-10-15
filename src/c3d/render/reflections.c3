@@ -10,6 +10,7 @@ import std::math;
 $assert RtReflectionRoot::size == 64;
 $assert RtReflectionUpsampleRoot::size == 56;
 $assert RtReflectionBlurRoot::size == 40;
+$assert RtReflectionTemporalRoot::size == 72;
 
 <*
  Roughness above which a pixel keeps the raster environment reflection.
@@ -25,6 +26,18 @@ const uint RT_REFLECTION_RAYS_MAX = 4; // each ray is one more trace and hit sha
  Format of the thin reflection G-buffer: octahedral normal, roughness, specular weight.
 *>
 const gpu::Format REFLECTION_SURFACE_FORMAT = gpu::Format.RGBA16_FLOAT; // 8 B per pixel of the view's working extent
+
+<*
+ History images per kind; they follow ViewHistory.slot.
+*>
+const uint REFLECTION_HISTORY_SLOTS = 2; // 1080p: 33.2 MB of radiance history and 16.6 MB of depth history
+
+const ZString[REFLECTION_HISTORY_SLOTS] REFLECTION_HISTORY_NAMES @private = {
+    "reflection_history_0", "reflection_history_1",
+};
+const ZString[REFLECTION_HISTORY_SLOTS] REFLECTION_DEPTH_NAMES @private = {
+    "reflection_depth_0", "reflection_depth_1",
+};
 
 const uint RT_REFLECTION_HALF_PHASES @private = 4; // the size of RT_REFLECTION_HALF_OFFSETS in rt_reflection.glsl
 const uint RT_REFLECTION_HALF_SHIFT @private = 1; // the half-resolution trace takes one pixel of each 2 x 2 block
@@ -51,6 +64,7 @@ struct ReflectionLights @private {
 struct ReflectionPipelines @private {
     gpu::PipelineHandle trace;
     gpu::PipelineHandle upsample;
+    gpu::PipelineHandle temporal;
     gpu::PipelineHandle blur;
 }
 
@@ -116,21 +130,28 @@ fn ReflectionLights? upload_reflection_lights(
     return { .address = upload_lights(renderer, lights)!, .count = (uint)lights.len };
 }
 
-fn void? acquire_reflection_pipelines(Renderer* renderer, bool half_resolution) @private {
+fn void? acquire_reflection_pipelines(Renderer* renderer, bool half_resolution, bool accumulates) @private {
     acquire_compute_slot(renderer, ComputeSlot.REFLECTION)!;
     if (half_resolution) acquire_compute_slot(renderer, ComputeSlot.REFLECTION_UPSAMPLE)!;
+    if (accumulates) acquire_compute_slot(renderer, ComputeSlot.REFLECTION_TEMPORAL)!;
     acquire_compute_slot(renderer, ComputeSlot.REFLECTION_BLUR)!;
 }
 
 fn void destroy_reflection_pipelines(gpu::Device* device, ReflectionPipelines* pipelines) @private {
     if (pipelines.trace.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.trace);
     if (pipelines.upsample.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.upsample);
+    if (pipelines.temporal.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.temporal);
     if (pipelines.blur.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.blur);
     *pipelines = {};
 }
 
 fn bool reflection_half_resolution(ViewDesc* desc) @private {
     return desc.ray_tracing.reflections && desc.ray_tracing.reflection_resolution == ReflectionResolution.HALF;
+}
+
+// Accumulation needs the velocity image and a committed ViewHistory, as screen-space GI does.
+fn bool reflection_accumulates(ViewDesc* desc) @private {
+    return desc.ray_tracing.reflections && desc.ray_tracing.reflection_history;
 }
 
 fn bool forward_reflection_eligible(MeshCandidate* candidate, Material* material) @private {
@@ -156,6 +177,9 @@ fn void? acquire_reflection_images(Renderer* renderer, ViewRecord* record) @priv
             debug_name: "reflection_half",
         )!;
     }
+    if (reflection_accumulates(&record.desc) && !record.reflection_history[0].texture.is_valid()) {
+        acquire_reflection_history_images(renderer, record)!;
+    }
 }
 
 fn void? acquire_reflection_full_images(Renderer* renderer, ViewRecord* record) @private {
@@ -174,6 +198,26 @@ fn void? acquire_reflection_full_images(Renderer* renderer, ViewRecord* record) 
         format:     gpu::Format.RGBA16_FLOAT,
         debug_name: "reflection_blur",
     )!;
+}
+
+fn void? acquire_reflection_history_images(Renderer* renderer, ViewRecord* record) @private {
+    defer catch release_reflection_history_images(&renderer.device, record);
+    for (uint slot = 0; slot < REFLECTION_HISTORY_SLOTS; slot++) {
+        record.reflection_history[slot] = allocate_storage_target(
+            device:     &renderer.device,
+            width:      record.hdr_color.width,
+            height:     record.hdr_color.height,
+            format:     gpu::Format.RGBA16_FLOAT,
+            debug_name: REFLECTION_HISTORY_NAMES[slot],
+        )!;
+        record.reflection_depth[slot] = allocate_storage_target(
+            device:     &renderer.device,
+            width:      record.hdr_color.width,
+            height:     record.hdr_color.height,
+            format:     gpu::Format.R32_FLOAT,
+            debug_name: REFLECTION_DEPTH_NAMES[slot],
+        )!;
+    }
 }
 
 fn void? acquire_reflection_gbuffer(Renderer* renderer, ViewRecord* record) @private {
@@ -196,24 +240,85 @@ fn void release_reflection_images(gpu::Device* device, ViewRecord* record) @priv
     if (record.reflection_half.texture.is_valid()) release_storage_target(device, &record.reflection_half);
 }
 
+fn void release_reflection_history_images(gpu::Device* device, ViewRecord* record) @private {
+    foreach (&image : record.reflection_history) {
+        if (image.texture.is_valid()) release_storage_target(device, image);
+    }
+    foreach (&image : record.reflection_depth) {
+        if (image.texture.is_valid()) release_storage_target(device, image);
+    }
+}
+
+fn Target*? record_reflection_history(
+    Renderer* renderer,
+    ViewRecord* record,
+    gpu::GpuAddress frame,
+    Target* normals,
+    Target* specular,
+    bool history_valid,
+) @local {
+    uint previous = record.history.slot;
+    uint next = (previous + 1) % REFLECTION_HISTORY_SLOTS;
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::TextureState compute_read = gpu::sampled_at({ .compute });
+    gpu::TextureState compute_write = gpu::storage_at({ .compute }, { .write });
+    float pre_exposure = record.pre_exposure.factor;
+    float pre_exposure_ratio = history_valid ? pre_exposure / record.reflection_history_pre_exposure[previous] : 1;
+    record.reflection_history_pre_exposure[next] = pre_exposure;
+
+    record.velocity.transition(&renderer.commands, compute_read)!;
+    record.reflection_history[previous].transition(&renderer.commands, compute_read)!;
+    record.reflection_depth[previous].transition(&renderer.commands, compute_read)!;
+    record.reflection_history[next].transition(&renderer.commands, compute_write)!;
+    record.reflection_depth[next].transition(&renderer.commands, compute_write)!;
+
+    gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, RtReflectionTemporalRoot::size, STREAM_ALIGNMENT)!;
+    *(RtReflectionTemporalRoot*)root.bytes.ptr = {
+        .frame              = frame,
+        .current            = record.reflection.view.index,
+        .history            = record.reflection_history[previous].view.index,
+        .previous_depth     = record.reflection_depth[previous].view.index,
+        .depth              = record.depth.view.index,
+        .velocity           = record.velocity.view.index,
+        .normal_roughness   = normals.view.index,
+        .emissive_specular  = specular.view.index,
+        .output_texture     = record.reflection_history[next].view.index,
+        .output_depth       = record.reflection_depth[next].view.index,
+        .sampler_index      = renderer.linear_clamp_sampler,
+        .width              = record.reflection.width,
+        .height             = record.reflection.height,
+        .pre_exposure_ratio = pre_exposure_ratio,
+        .max_roughness      = record.desc.ray_tracing.max_reflection_roughness,
+        .flags              = history_valid ? shader::RT_REFLECTION_TEMPORAL_FLAG_HISTORY_VALID : 0,
+    };
+
+    gpu::cmd_bind_pipeline(&renderer.commands, renderer.reflection_pipelines.temporal)!;
+    dispatch_over(renderer, root.address, &record.reflection_history[next])!;
+
+    return &record.reflection_history[next];
+}
+
 <*
  @require record.desc.shading != ShadingPath.PATH_TRACED
  @require record.reflection.texture.is_valid()
  @require !reflection_half_resolution(&record.desc) || record.reflection_half.texture.is_valid()
+ @require !reflection_accumulates(&record.desc) || record.velocity.texture.is_valid()
 *>
 fn void? record_reflections(
     Renderer* renderer,
     ViewRecord* record,
     gpu::GpuAddress frame,
     ReflectionLights lights,
+    bool history_valid,
 ) @private {
     bool half_resolution = reflection_half_resolution(&record.desc);
-    acquire_reflection_pipelines(renderer, half_resolution)!;
+    bool accumulates = reflection_accumulates(&record.desc);
+    acquire_reflection_pipelines(renderer, half_resolution, accumulates)!;
     bool forward = record.desc.shading == ShadingPath.FORWARD;
     Target* normals = forward ? &record.reflection_gbuffer : deferred_normals(record);
     Target* specular = forward ? &record.reflection_gbuffer : deferred_specular(record);
     Target* traced = half_resolution ? &record.reflection_half : &record.reflection;
-    uint noise_frame = temporal_noise_frame(record, false);
+    uint noise_frame = temporal_noise_frame(record, accumulates);
     record.depth.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
     normals.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
     if (specular != normals) specular.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
@@ -265,12 +370,25 @@ fn void? record_reflections(
         }
 
         record.reflection.transition(&renderer.commands, gpu::storage_at({ .compute }, { .read }))!;
+        Target* blur_input = &record.reflection;
+        if (accumulates) {
+            blur_input = record_reflection_history(
+                renderer:      renderer,
+                record:        record,
+                frame:         frame,
+                normals:       normals,
+                specular:      specular,
+                history_valid: history_valid,
+            )!;
+            blur_input.transition(&renderer.commands, gpu::storage_at({ .compute }, { .read }))!;
+        }
+
         record.reflection_blur.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;
         gpu::MappedGpuSpan blur_root = slot.upload.take(
             &renderer.device, RtReflectionBlurRoot::size, STREAM_ALIGNMENT)!;
         *(RtReflectionBlurRoot*)blur_root.bytes.ptr = {
             .frame             = frame,
-            .input_texture     = record.reflection.view.index,
+            .input_texture     = blur_input.view.index,
             .depth             = record.depth.view.index,
             .normal_roughness  = normals.view.index,
             .emissive_specular = specular.view.index,
@@ -284,5 +402,5 @@ fn void? record_reflections(
     }!;
 
     record.reflection_blur.transition(&renderer.commands, gpu::sampled_at({ .fragment_shader }))!;
-    renderer.stats.post_dispatches += half_resolution ? 3 : 2;
+    renderer.stats.post_dispatches += (half_resolution ? 3 : 2) + (accumulates ? 1 : 0);
 }
