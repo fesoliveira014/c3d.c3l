@@ -390,7 +390,13 @@ fn void? panel(
         imgui::text("Posed bindings: %u, fallback draws: %u", stats.compute_skinned, stats.compute_skinning_fallbacks);
         imgui::text("Resident posed: %u bytes", (uint)stats.compute_skinning_bytes);
         if (showcase.traced_shadows) {
-            imgui::text("Trace poses: %u dispatched, %u reused", stats.trace_poses, stats.trace_poses_reused);
+            imgui::text(
+                "Trace poses: %u dispatched, %u reused, %u shared",
+                stats.trace_poses,
+                stats.trace_poses_reused,
+                stats.trace_posed_shared,
+            );
+            imgui::text("Trace posed: %u bytes", (uint)stats.trace_posed_bytes);
         }
         foreach (pass : REPORTED_PASSES) {
             imgui::text(
@@ -492,7 +498,15 @@ fn void report_compute_skinning(render::Renderer* renderer, Showcase* showcase) 
         stats.compute_skinning_fallbacks,
     );
     io::printf(", resident posed %d bytes", (uint)stats.compute_skinning_bytes);
-    if (showcase.traced_shadows) io::printf(", trace poses %d reused %d", stats.trace_poses, stats.trace_poses_reused);
+    if (showcase.traced_shadows) {
+        io::printf(
+            ", trace poses %d reused %d shared %d, trace posed %d bytes",
+            stats.trace_poses,
+            stats.trace_poses_reused,
+            stats.trace_posed_shared,
+            (uint)stats.trace_posed_bytes,
+        );
+    }
     if (stats.gpu_timing_state != GpuTimingState.READY) {
         io::printfn(", gpu timings pending");
         return;

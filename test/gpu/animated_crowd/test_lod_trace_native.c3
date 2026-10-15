@@ -327,7 +327,7 @@ fn void run_lod_trace_crowd_lifecycle(TraceKind kind) @private {
             harness.camera.local.position = centre + (Vec3){ 0, 0, LOD_TRACE_CAMERA_DISTANCE };
             render_lod_trace(&fixture, &harness, kind)!!;
             assert(renderer.stats.trace_posed_instances == 12 && renderer.stats.trace_posed_overflow == 0);
-            assert(renderer.stats.trace_poses == (!source && !part ? 12u : 0u));
+            assert(renderer.stats.trace_poses == (!source && !part ? 10u : 0u));
         }
     }
 
@@ -397,7 +397,7 @@ fn void run_lod_trace_crowd_lifecycle(TraceKind kind) @private {
         instances: instances[..],
     )!!;
     render_lod_trace(&fixture, &harness, kind)!!;
-    assert(renderer.stats.trace_poses == 12);
+    assert(renderer.stats.trace_poses == 10);
     check_crowd_native_validation(renderer);
 }
 

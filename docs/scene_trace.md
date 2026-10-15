@@ -24,7 +24,7 @@ A mesh contributes one instance at its node's world matrix. An instanced batch c
 | --- | --- |
 | Mesh with no skin binding over joints and no selected morph target | At its rest pose |
 | Mesh with a skin binding over a geometry with joints, or morph weights that select a target | At its raster pose, in both kinds (see [Posed instances](#posed-instances)) |
-| Crowd part batch | Only with `add_crowd(trace: true)`: one slot per placement and part, at the placement's raster pose, boxed by the crowd's `pose_bounds` |
+| Crowd part batch | Only with `add_crowd(trace: true)`: one slot per distinct pose in the part batch, at the placement's raster pose, boxed by the crowd's `pose_bounds` |
 | `InstancedMesh` or `LodGroup` with sway | At its rest pose, counted in `Stats.trace_sway_at_rest`; the error is bounded by the sway reach |
 | Material with a custom vertex stage, water included | Never |
 
@@ -50,7 +50,7 @@ A skinned mesh, a morphed mesh or both traces at the pose raster draws in the sa
 - **Cost.** A slot holds 24 bytes per vertex (40 with tangents) of posed streams, a 112-byte root, 32 bytes per node of refit copy, and on the CPU 64 bytes per joint plus 80 bytes with morph targets. A geometry that can deform adds a depth table to its rest trace allocation: 4 bytes per node plus 132 bytes. The example Mannequin holds 205 KB of streams over its two parts. A skinned mesh in bind pose still takes a slot. With no traced consumer in a frame nothing is allocated or recorded.
 - **Closed frames.** A preparation outside a frame poses and refits in its own submission and reads the current pose.
 - **Compute skinning.** With [compute skinning](animation.md#compute-skinning) on, a slot whose mesh or crowd part has a posed binding this frame takes that pose instead of running its own pose pass; its streams stay allocated, unwritten. The rule and its exceptions are on the animation page.
-- **Stats.** `trace_posed_instances`, `trace_posed_overflow`, `trace_posed_bytes`, `trace_poses`, `trace_poses_reused`, `trace_refits` and `blas_updates` (this frame). Posing and refits run under `Pass.TRACE_POSE`.
+- **Stats.** `trace_posed_instances`, `trace_posed_shared`, `trace_posed_overflow`, `trace_posed_bytes`, `trace_poses`, `trace_poses_reused`, `trace_refits` and `blas_updates` (this frame). Posing and refits run under `Pass.TRACE_POSE`.
 - **Hardware.** Each slot owns one bottom level created with `allow_update` and `prefer_fast_trace`: a full build when the slot is new, rebuilt or its source geometry changed, and an in-place update each frame the pose changes. Static bottom levels keep `prefer_fast_trace` alone. A pose change rebuilds the top level too. Updates and builds share the batched scratch described under [Hardware lifetime](#hardware-lifetime). `Stats.blas_updates` counts the updates; a full posed build counts in `blas_builds`. Both kinds refit rather than rebuild, so a strong pose traces slower than rest. A geometry whose vertex or primitive counts change replaces the slot's bottom level.
 
 ### Vertex-motion slots
@@ -65,7 +65,7 @@ A traced `Mesh` with `vertex_motion` and neither a skin binding nor selected mor
 
 ### Animated crowds
 
-A posed hardware instance costs a bottom-level update every frame its pose changes. The updates of a frame run in barrier-separated batches ([Hardware lifetime](#hardware-lifetime)). Each posed slot holds its own streams and bottom level, so memory scales with the number of traced placements. The software kind poses and refits a tree copy and builds no bottom level.
+Placements of one crowd part batch (`AnimatedCrowd` or a crowd-backed `LodGroup`) with byte-identical palette and morph inputs share a posed trace slot: the lowest placement index in the group claims the slot, and the others point their rows at its root, refit nodes and bottom level (`Stats.trace_posed_shared`). Under compute skinning the shared slot aliases the leader's skinned copy. When the leader's pose changes, its slot updates in place; a placement that leaves its group claims its own slot with a full build, and unclaimed slots release after `INSTANCE_ABSENCE_FRAMES` frames. On the hardware kind each claimed slot costs a bottom-level update every frame its pose changes, recorded in barrier-separated batches ([Hardware lifetime](#hardware-lifetime)); each posed slot holds its own streams and bottom level, so memory scales with the number of distinct poses per part batch. The software kind poses and refits a tree copy per distinct pose and builds no bottom level.
 
 ### Measured cost
 
@@ -98,12 +98,6 @@ Crowds (`Walk_Loop`, `add_crowd(trace: true)`, two posed meshes per placement):
 | 512 hardware | 557.5 MB | 0.227 | 1,024 + 0 | 0.070 | 3.357 |
 | 64 software | 30.9 MB | 0.160 | 128 + 128 | 0.344 | 0.181 |
 | 512 software | 247.3 MB | 1.269 | 1,024 + 1,024 | 0.579 | 1.871 |
-
-### Carried forward
-
-| Item | Trigger |
-| --- | --- |
-| Shared or bucketed bottom levels for crowd placements, for example one bottom level per distinct pose sample | An application traces an animated crowd above 64 placements on the hardware kind |
 
 ## Preparing
 
