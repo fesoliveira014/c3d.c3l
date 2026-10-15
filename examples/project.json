@@ -318,7 +318,8 @@
     "effects": {
       "type": "executable",
       "sources": [
-        "src/effects.c3"
+        "src/effects.c3",
+        "src/bench/loop.c3"
       ]
     },
     "views": {

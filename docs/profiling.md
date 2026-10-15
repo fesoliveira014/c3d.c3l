@@ -394,7 +394,9 @@ nested parents and children as a total.
 `gpu_frame_index`: two views taking 2 ms and 3 ms contribute 5 ms. Frame, view,
 application, pass-stage and shadow-layer parents/children do not inflate those
 buckets. `gpu_environment_stage_ms` sums the `PASS_STAGE` scopes inside
-`Pass.ENVIRONMENT` per `EnvironmentStage`; they are parts of that pass's bucket.
+`Pass.ENVIRONMENT` per `EnvironmentStage`, and `gpu_post_stage_ms` those inside
+`Pass.POST_CHAIN` per `PostStage` (`post.bloom`, `post.depth_of_field` and
+`post.motion_blur`); they are parts of their pass's bucket.
 Custom dispatches each have their own interval and keep the active successful
 shader revision, including fallback after a rejected replacement. `POST_CHAIN`
 is split into contiguous render/finish segments under its single pass bucket.
@@ -408,7 +410,8 @@ may therefore describe an older frame than the current CPU counters.
 
 GPU-enabled JSON extends schema version 1 with GPU feature availability, state,
 counts and completed samples. A sample's `pass_ordinal` and `stage_ordinal` are
-ordinals of the producing build's `render::Pass` and `render::EnvironmentStage`;
+ordinals of the producing build's `render::Pass` and, for the stage, `render::EnvironmentStage`
+or `render::PostStage` as the pass says;
 match them across builds by `label`. GPU-only captures have unavailable, empty CPU
 lanes. CPU-only output remains unchanged. Export owns its text, so subsequent
 GPU publication does not mutate an earlier export.

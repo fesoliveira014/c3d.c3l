@@ -71,11 +71,16 @@ fn char[] tile_data_of(char[] tile_mesh, OffMeshConnectionDesc[] connections = {
 fn usz offset_in(void* pointer, char[] blob) @private => (usz)pointer - (usz)blob.ptr;
 
 // Links of the tile on the side, each on a portal edge of that side and into the target tile.
-fn uint links_on_side(MeshTile* tile, char side, uint target_index) @private {
+fn uint links_on_side(
+    NavMesh* mesh,
+    MeshTile* tile,
+    char side,
+    uint target_index,
+) @private {
     uint count;
     foreach (&poly : tile.polys) {
-        for (uint link = poly.first_link; link != nav::NULL_LINK; link = tile.links[link].next) {
-            Link* entry = &tile.links[link];
+        for (uint link = poly.first_link; link != nav::NULL_LINK; link = mesh.links[link].next) {
+            Link* entry = &mesh.links[link];
             if (entry.side != side) continue;
             assert(poly.neighbours[entry.edge] == (nav::EXTERNAL_LINK | (ushort)side));
             assert(nav::decode_tile(entry.ref) == target_index);
@@ -128,9 +133,8 @@ fn void test_tile_data_layout_is_aligned_and_counts_links() @test {
 
     TileHeader* header = (TileHeader*)plain.ptr;
     assert(header.poly_count == 1 && header.vert_count == 4 && header.bv_node_count == 1);
-    assert(header.max_link_count == 4, "four border edges, no portals");
     MeshTile* tile = mesh.tile_by_ref(ref)!!;
-    void*[5] arrays = { tile.verts.ptr, tile.polys.ptr, tile.links.ptr, tile.bv_tree.ptr, tile.off_mesh.ptr };
+    void*[4] arrays = { tile.verts.ptr, tile.polys.ptr, tile.bv_tree.ptr, tile.off_mesh.ptr };
     foreach (array : arrays) assert(offset_in(array, plain) % ARRAY_ALIGNMENT == 0);
     usz end = offset_in(tile.off_mesh.ptr + tile.off_mesh.len, plain);
     assert(end <= plain.len && plain.len - end < ARRAY_ALIGNMENT);
@@ -139,7 +143,6 @@ fn void test_tile_data_layout_is_aligned_and_counts_links() @test {
     TileHeader* linked_header = (TileHeader*)linked.ptr;
     assert(linked_header.off_mesh_count == 1, "the connection starting outside the tile is dropped");
     assert(linked_header.poly_count == 2 && linked_header.vert_count == 6);
-    assert(linked_header.max_link_count == 4 + 3 * 2, "both ends of the first connection and the end of the second");
 }
 
 fn void test_add_tile_links_neighbours_across_the_border() @test {
@@ -157,12 +160,30 @@ fn void test_add_tile_links_neighbours_across_the_border() @test {
     MeshTile* right = mesh.tile_at(1, 0, 0);
     uint right_index = nav::decode_tile((PolyRef)mesh.tile_ref(right));
     uint left_index = nav::decode_tile((PolyRef)mesh.tile_ref(left));
-    assert(links_on_side(left, 0, right_index) > 0, "side 0 is +X");
-    assert(links_on_side(right, 4, left_index) > 0, "side 4 is -X");
+    uint left_links = links_on_side(
+        mesh:         mesh,
+        tile:         left,
+        side:         0,
+        target_index: right_index,
+    );
+    uint right_links = links_on_side(
+        mesh:         mesh,
+        tile:         right,
+        side:         4,
+        target_index: left_index,
+    );
+    assert(left_links > 0, "side 0 is +X");
+    assert(right_links > 0, "side 4 is -X");
 
     mesh.remove_tile(mesh.tile_ref(right))!!;
 
-    assert(links_on_side(left, 0, right_index) == 0);
+    uint after_remove = links_on_side(
+        mesh:         mesh,
+        tile:         left,
+        side:         0,
+        target_index: right_index,
+    );
+    assert(after_remove == 0);
 }
 
 fn void test_add_tile_faults_when_occupied() @test {

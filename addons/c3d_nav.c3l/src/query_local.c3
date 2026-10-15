@@ -7,8 +7,6 @@ import c3d;
 alias RandomFn = fn float (void* context);
 
 const usz   MAX_STACK @local = 48; // mirrors MAX_STACK of findLocalNeighbourhood and moveAlongSurface: polygons queued
-const usz   MAX_NEIGHBOURS @local = 8; // mirrors moveAlongSurface's MAX_NEIS: portals followed per edge
-const usz   MAX_INTERVALS @local = 16; // mirrors getPolyWallSegments' MAX_INTERVAL: portal pieces per edge
 const float SEARCH_RADIUS_MARGIN @local = 0.001f; // metres; mirrors moveAlongSurface's slack on its search circle
 
 enum SearchShape @local {
@@ -62,15 +60,15 @@ struct BreadthQueue @local {
     usz                    count;
 }
 
-struct PortalInterval @local {
+struct PortalInterval @private {
     short   min;    // along the edge, 0..255
     short   max;
     PolyRef ref;
 }
 
 struct IntervalList @local {
-    PortalInterval[MAX_INTERVALS] items;
-    usz                           count;
+    PortalInterval[] items;
+    usz              count;
 }
 
 <*
@@ -202,15 +200,21 @@ fn DijkstraResult? NavQuery.find_local_neighbourhood(
     while (queue.count) {
         SearchNode* current = pop_front(&queue);
         TileAndPoly found = mesh.tile_and_poly_unchecked(current.id);
-        for (uint link = found.poly.first_link; link != NULL_LINK; link = found.tile.links[link].next) {
-            PolyRef neighbour_ref = found.tile.links[link].ref;
+        for (uint link = found.poly.first_link; link != NULL_LINK; link = mesh.links[link].next) {
+            PolyRef neighbour_ref = mesh.links[link].ref;
             if (!neighbour_ref) continue;
             SearchNode* node = nodes.get_node(neighbour_ref);
             if (!node || node.bits.closed) continue;
             TileAndPoly neighbour = mesh.tile_and_poly_unchecked(neighbour_ref);
             if (neighbour.poly.area_type.type == OFF_MESH_CONNECTION) continue;
             if (!filter.passes(neighbour_ref, neighbour.poly)) continue;
-            Portal? portal = portal_points(current.id, found, neighbour_ref, neighbour);
+            Portal? portal = portal_points(
+                mesh:     mesh,
+                from_ref: current.id,
+                from:     found,
+                to_ref:   neighbour_ref,
+                to:       neighbour,
+            );
             if (catch portal) continue;
             if (distance_pt_seg_sqr_2d(center, portal.left, portal.right).distance_sqr > radius_sqr) continue;
 
@@ -244,7 +248,7 @@ fn DijkstraResult? NavQuery.find_local_neighbourhood(
  @param start : "Inside the start polygon."
  @param [&in] filter : "Polygons it rejects are walls."
  @param [out] out_visited : "Polygons crossed, start first; filled up to its length."
- @return? INVALID_REF, c3d::INVALID_ARGUMENT
+ @return? INVALID_REF, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
 fn MoveResult? NavQuery.move_along_surface(
     &self,
@@ -285,14 +289,13 @@ fn MoveResult? NavQuery.move_along_surface(
 
         usz edge = corners.len - 1;
         for (usz vertex = 0; vertex < corners.len; edge = vertex++) {
-            PolyRef[MAX_NEIGHBOURS] neighbours;
             usz neighbour_count = passable_neighbours(
                 mesh:     mesh,
                 found:    found,
                 edge:     edge,
                 filter:   filter,
-                out_refs: neighbours[..],
-            );
+                out_refs: self.edge_neighbours,
+            )!;
             if (!neighbour_count) {
                 SegmentProjection projection = distance_pt_seg_sqr_2d(end, corners[edge], corners[vertex]);
                 if (projection.distance_sqr < best_distance) {
@@ -302,7 +305,7 @@ fn MoveResult? NavQuery.move_along_surface(
                 }
                 continue;
             }
-            foreach (neighbour_ref : neighbours[:neighbour_count]) {
+            foreach (neighbour_ref : self.edge_neighbours[:neighbour_count]) {
                 SearchNode* node = nodes.get_node(neighbour_ref);
                 if (!node || node.bits.closed) continue;
                 // The whole edge stands in for the portal, as upstream does for speed.
@@ -375,8 +378,8 @@ fn WallHit? NavQuery.find_distance_to_wall(
             hit.point = lerp_point(verts[edge], verts[vertex], projection.t);
         }
 
-        for (uint link = found.poly.first_link; link != NULL_LINK; link = found.tile.links[link].next) {
-            Link* entry = &found.tile.links[link];
+        for (uint link = found.poly.first_link; link != NULL_LINK; link = mesh.links[link].next) {
+            Link* entry = &mesh.links[link];
             PolyRef neighbour_ref = entry.ref;
             if (!neighbour_ref || neighbour_ref == parent_ref) continue;
             TileAndPoly neighbour = mesh.tile_and_poly_unchecked(neighbour_ref);
@@ -389,7 +392,13 @@ fn WallHit? NavQuery.find_distance_to_wall(
             SearchNode* node = self.nodes.get_node(neighbour_ref);
             if (!node || node.bits.closed) continue;
             if (first_visit(node)) {
-                if (try portal = portal_points(current.id, found, neighbour_ref, neighbour)) {
+                if (try portal = portal_points(
+                    mesh:     mesh,
+                    from_ref: current.id,
+                    from:     found,
+                    to_ref:   neighbour_ref,
+                    to:       neighbour,
+                )) {
                     node.position = (portal.left + portal.right) * 0.5f;
                 }
             }
@@ -416,7 +425,7 @@ fn WallHit? NavQuery.find_distance_to_wall(
  Boundary segments of a polygon and the neighbour across each; mirrors getPolyWallSegments.
  @param [in] filter : "Neighbours it rejects are walls; null returns whole edges with neighbour 0 for every edge."
  @param [out] out_segments : "Filled up to its length."
- @return? INVALID_REF
+ @return? INVALID_REF, c3d::CAPACITY_EXCEEDED
 *>
 fn QueryResult? NavQuery.poly_wall_segments(
     &self,
@@ -444,11 +453,12 @@ fn QueryResult? NavQuery.poly_wall_segments(
             continue;
         }
 
-        IntervalList intervals;
-        for (uint link = found.poly.first_link; link != NULL_LINK; link = found.tile.links[link].next) {
-            Link* entry = &found.tile.links[link];
+        IntervalList intervals = { .items = self.edge_intervals };
+        for (uint link = found.poly.first_link; link != NULL_LINK; link = mesh.links[link].next) {
+            Link* entry = &mesh.links[link];
             if (entry.edge != edge || !entry.ref) continue;
             if (!filter.passes(entry.ref, mesh.tile_and_poly_unchecked(entry.ref).poly)) continue;
+            if (intervals.count + 2 == intervals.items.len) return c3d::CAPACITY_EXCEEDED~;
             insert_interval(
                 list: &intervals,
                 min:  entry.min,
@@ -584,12 +594,18 @@ fn RandomPoint? NavQuery.find_random_point_around_circle(
 
         SearchNode* parent = self.nodes.node_at(current.bits.parent);
         PolyRef parent_ref = parent ? parent.id : (PolyRef)0;
-        for (uint link = found.poly.first_link; link != NULL_LINK; link = found.tile.links[link].next) {
-            PolyRef neighbour_ref = found.tile.links[link].ref;
+        for (uint link = found.poly.first_link; link != NULL_LINK; link = mesh.links[link].next) {
+            PolyRef neighbour_ref = mesh.links[link].ref;
             if (!neighbour_ref || neighbour_ref == parent_ref) continue;
             TileAndPoly neighbour = mesh.tile_and_poly_unchecked(neighbour_ref);
             if (!filter.passes(neighbour_ref, neighbour.poly)) continue;
-            Portal? portal = portal_points(current.id, found, neighbour_ref, neighbour);
+            Portal? portal = portal_points(
+                mesh:     mesh,
+                from_ref: current.id,
+                from:     found,
+                to_ref:   neighbour_ref,
+                to:       neighbour,
+            );
             if (catch portal) continue;
             if (distance_pt_seg_sqr_2d(center, portal.left, portal.right).distance_sqr > radius_sqr) continue;
 
@@ -659,12 +675,18 @@ fn DijkstraResult dijkstra_search(
             cost:        current.total,
         );
 
-        for (uint link = found.poly.first_link; link != NULL_LINK; link = found.tile.links[link].next) {
-            PolyRef neighbour_ref = found.tile.links[link].ref;
+        for (uint link = found.poly.first_link; link != NULL_LINK; link = mesh.links[link].next) {
+            PolyRef neighbour_ref = mesh.links[link].ref;
             if (!neighbour_ref || neighbour_ref == parent_ref) continue;
             TileAndPoly neighbour = mesh.tile_and_poly_unchecked(neighbour_ref);
             if (!filter.passes(neighbour_ref, neighbour.poly)) continue;
-            Portal? portal = portal_points(current.id, found, neighbour_ref, neighbour);
+            Portal? portal = portal_points(
+                mesh:     mesh,
+                from_ref: current.id,
+                from:     found,
+                to_ref:   neighbour_ref,
+                to:       neighbour,
+            );
             if (catch portal) continue;
             if (!portal_touches(boundary, portal.left, portal.right)) continue;
 
@@ -736,7 +758,7 @@ fn bool overlaps_results(
 ) @local {
     Vec3[MAX_VERTS_PER_POLY] candidate_verts = polygon_vertices(candidate.tile, candidate.poly);
     foreach (past_ref : results) {
-        if (@ok(find_link(current, past_ref))) continue;
+        if (@ok(find_link(mesh, current, past_ref))) continue;
         TileAndPoly past = mesh.tile_and_poly_unchecked(past_ref);
         Vec3[MAX_VERTS_PER_POLY] past_verts = polygon_vertices(past.tile, past.poly);
         if (overlap_poly_poly_2d(candidate_verts[:candidate.poly.vert_count], past_verts[:past.poly.vert_count])) {
@@ -759,7 +781,7 @@ fn void push_back(BreadthQueue* queue, SearchNode* node) @local {
 }
 
 // Refs across the edge that pass the filter; a tile border edge may lead to several.
-fn usz passable_neighbours(
+fn usz? passable_neighbours(
     NavMesh* mesh,
     TileAndPoly found,
     usz edge,
@@ -775,15 +797,17 @@ fn usz passable_neighbours(
         return 1;
     }
     usz count;
-    for (uint link = found.poly.first_link; link != NULL_LINK; link = found.tile.links[link].next) {
-        Link* entry = &found.tile.links[link];
-        if (entry.edge != edge || !entry.ref || count == out_refs.len) continue;
-        if (filter.passes(entry.ref, mesh.tile_and_poly_unchecked(entry.ref).poly)) out_refs[count++] = entry.ref;
+    for (uint link = found.poly.first_link; link != NULL_LINK; link = mesh.links[link].next) {
+        Link* entry = &mesh.links[link];
+        if (entry.edge != edge || !entry.ref) continue;
+        if (!filter.passes(entry.ref, mesh.tile_and_poly_unchecked(entry.ref).poly)) continue;
+        if (count == out_refs.len) return c3d::CAPACITY_EXCEEDED~;
+        out_refs[count++] = entry.ref;
     }
     return count;
 }
 
-// Mirrors findDistanceToWall's edge test, which decides a tile border edge by its first link.
+// A border edge is a wall only when no link on it passes the filter.
 fn bool is_wall_edge(
     NavMesh* mesh,
     TileAndPoly found,
@@ -792,11 +816,10 @@ fn bool is_wall_edge(
 ) @local {
     ushort neighbour_word = found.poly.neighbours[edge];
     if ((neighbour_word & EXTERNAL_LINK) != 0) {
-        for (uint link = found.poly.first_link; link != NULL_LINK; link = found.tile.links[link].next) {
-            Link* entry = &found.tile.links[link];
-            if (entry.edge != edge) continue;
-            if (!entry.ref) return true;
-            return !filter.passes(entry.ref, mesh.tile_and_poly_unchecked(entry.ref).poly);
+        for (uint link = found.poly.first_link; link != NULL_LINK; link = mesh.links[link].next) {
+            Link* entry = &mesh.links[link];
+            if (entry.edge != edge || !entry.ref) continue;
+            if (filter.passes(entry.ref, mesh.tile_and_poly_unchecked(entry.ref).poly)) return false;
         }
         return true;
     }
@@ -805,14 +828,13 @@ fn bool is_wall_edge(
     return !filter.passes(ref, &found.tile.polys[neighbour_word - 1]);
 }
 
-// Mirrors insertInterval: kept sorted along the edge; a full list drops the interval.
+// Mirrors insertInterval: kept sorted along the edge.
 fn void insert_interval(
     IntervalList* list,
     short min,
     short max,
     PolyRef ref,
 ) @local {
-    if (list.count == MAX_INTERVALS) return;
     usz slot = 0;
     while (slot < list.count && max > list.items[slot].min) slot++;
     for (usz index = list.count; index > slot; index--) list.items[index] = list.items[index - 1];

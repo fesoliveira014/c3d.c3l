@@ -32,8 +32,8 @@ fn void add_stripes(QueryFixture* fixture, uint tiles) @private {
 
 fn bool linked(NavMesh* mesh, PolyRef from, PolyRef to) @private {
     TileAndPoly found = mesh.tile_and_poly(from)!!;
-    for (uint link = found.poly.first_link; link != nav::NULL_LINK; link = found.tile.links[link].next) {
-        if (found.tile.links[link].ref == to) return true;
+    for (uint link = found.poly.first_link; link != nav::NULL_LINK; link = mesh.links[link].next) {
+        if (mesh.links[link].ref == to) return true;
     }
     return false;
 }

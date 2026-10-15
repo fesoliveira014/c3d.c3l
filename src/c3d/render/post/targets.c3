@@ -108,13 +108,13 @@ fn bool uses_tiles(PostStack* stack) @private {
 
 fn bool uses_velocity(ViewDesc* desc) @private {
     return desc.post.motion_blur || desc.post.anti_aliasing == AntiAliasing.TAA || desc.screen_space_gi.enabled
-      || render::ambient_occlusion_accumulates(desc);
+      || render::ambient_occlusion_accumulates(desc) || render::reflection_accumulates(desc);
 }
 
-// The expected previous depth in z serves TAA and the screen-space GI and ambient occlusion rejections.
+// The expected previous depth in z serves TAA and the screen-space GI, ambient occlusion and reflection rejections.
 fn gpu::Format velocity_format(ViewDesc* desc) @private {
     bool previous_depth = desc.post.anti_aliasing == AntiAliasing.TAA || desc.screen_space_gi.enabled
-      || render::ambient_occlusion_accumulates(desc);
+      || render::ambient_occlusion_accumulates(desc) || render::reflection_accumulates(desc);
     return previous_depth ? TEMPORAL_VELOCITY_FORMAT : VELOCITY_FORMAT;
 }
 

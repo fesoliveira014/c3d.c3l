@@ -223,7 +223,7 @@ fn bool PathCorridor.is_valid(
  Move the position along the surface and merge the visited polygons; mirrors movePosition.
  @param [&in] query : "Moves the position."
  @param [&in] filter : "Polygons it rejects are walls."
- @return? INVALID_REF, c3d::INVALID_ARGUMENT
+ @return? INVALID_REF, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
  @require self.count > 0
 *>
 fn void? PathCorridor.move_position(
@@ -250,7 +250,7 @@ fn void? PathCorridor.move_position(
  Move the target along the surface and merge the visited polygons; mirrors moveTargetPosition.
  @param [&in] query : "Moves the target."
  @param [&in] filter : "Polygons it rejects are walls."
- @return? INVALID_REF, c3d::INVALID_ARGUMENT
+ @return? INVALID_REF, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
  @require self.count > 0
 *>
 fn void? PathCorridor.move_target_position(

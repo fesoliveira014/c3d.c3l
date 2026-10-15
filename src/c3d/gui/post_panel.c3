@@ -368,6 +368,8 @@ fn bool edit_ray_tracing(ViewDesc* desc) @local {
             ray_tracing.reflection_resolution = half_resolution ? ReflectionResolution.HALF : ReflectionResolution.FULL;
             changed = true;
         }
+
+        changed |= imgui::checkbox("Reflection history", &ray_tracing.reflection_history);
     }
 
     return changed;

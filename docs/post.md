@@ -179,7 +179,8 @@ the scene input into level 0 with the soft threshold (Unity knee curve on the br
 and Karis averaging, 13-tap downsamples through the remaining levels, then 9-tap tent upsamples
 that add each coarser level into the finer one in place. Both display routes sample level 0 inside
 `grade_color` and add `intensity` times the sample after exposure, so the scene image itself is
-never rewritten. `2 * levels - 1` dispatches are counted and timed under `POST_CHAIN`. Disabling
+never rewritten. `2 * levels - 1` dispatches are counted and timed under `POST_CHAIN`, and as the
+`PostStage.BLOOM` stage. Disabling
 bloom or changing `levels` retires the chain through the frame lifecycle; resize recreates it.
 `configure_view` faults `INVALID_ARGUMENT` when bloom is on with `levels` outside `[1, 8]`.
 The prefilter divides out the pre-exposure first. Under auto exposure it then multiplies its input by the adapted multiplier, so `threshold` is in
@@ -205,8 +206,9 @@ block into premultiplied half-resolution near and far layers with their coverage
 `dof_gather.comp` blurs each layer with a 48-tap disc (the far layer weights taps by their own
 circle, the near layer uses the dilated radius so it spreads over sharp background);
 `dof_composite.comp` blends far then near over the sharp image and writes `hdr_color` in place.
-Six dispatches are counted and timed under `POST_CHAIN`. Enabling allocates four half-resolution
-RGBA16_FLOAT layers plus the two RG16_FLOAT tile images; disabling retires them.
+Six dispatches are counted and timed under `POST_CHAIN`, and as the `PostStage.DEPTH_OF_FIELD`
+stage. Enabling allocates four half-resolution RGBA16_FLOAT layers plus the two RG16_FLOAT tile images; disabling
+retires them.
 `configure_view` faults `INVALID_ARGUMENT` when depth of field is on with a non-positive focal
 length, aperture or `max_coc`, or a focus distance not beyond the focal length, or, in either focus mode, a
 `focus_point` outside `[0, 1]` on an axis or a `focus_radius` or `focus_time` that is negative or not finite.
@@ -238,8 +240,8 @@ focus from the view's own depth; `focus_distance` then only supplies the focus w
   Parameter edits and resizes keep it, so `focus_point` can move every frame and the focus follows over `focus_time`.
   An aborted frame changes nothing; a skipped view folds the elapsed time into its next step.
 - Cost: `AUTO` allocates a 2,080-byte GPU allocation and a 32-byte readback per view at its first automatic rendering
-  and records two dispatches, counted in `Stats.post_dispatches` and timed under `POST_CHAIN`. `MANUAL` records and
-  binds nothing extra.
+  and records two dispatches, counted in `Stats.post_dispatches` and timed in the `PostStage.DEPTH_OF_FIELD` stage.
+  `MANUAL` records and binds nothing extra.
 - `Renderer.view_stats(view).focus_distance` is the focus in meters: under `AUTO` the adapted value, `FRAMES_IN_FLIGHT`
   frames old and zero until the first readback, and under `MANUAL` the `focus_distance` of the last rendering.
 - World-point targets are application policy, not a mode. The application computes the distance along the view axis
@@ -263,7 +265,7 @@ their own previous matrices (`DrawRoot.previous_pose`). Both passes are timed un
 16-pixel tile maxima, and `motion_blur.comp` (McGuire 2012) samples `samples` taps along the
 tile's dominant motion scaled by `shutter` and clamped to `max_velocity`, weighted by cone,
 cylinder and depth order, into `motion_blur_out`, which the later stages read instead of
-`hdr_color`. Three dispatches are counted under `POST_CHAIN`.
+`hdr_color`. Three dispatches are counted and timed under `POST_CHAIN`, and as the `PostStage.MOTION_BLUR` stage.
 
 The previous pose is renderer-owned per view (`ViewHistory`): the camera's view-projection, the
 rendering's `FrameInfo.time` (read back as `FrameRoot.previous_time`), the world matrix of every
@@ -297,8 +299,8 @@ through the frame ring into `PreviousPoseGpu.positions` and composes it with the
 skin and model, so a stationary node shows its deformation. An unchanged revision keeps the
 ordinary rule. A first observation, another geometry or count, re-enabling after an untracked
 rendering, a reset, a missing previous rendering or an aborted capture writes zero motion and sets
-the rejection channel (`DRAW_VERTEX_HISTORY_INVALID`), so TAA, screen-space GI and temporal
-ambient occlusion drop history for those pixels only; an RG16 velocity image keeps the zero motion. A temporal view faults
+the rejection channel (`DRAW_VERTEX_HISTORY_INVALID`), so TAA, screen-space GI, temporal
+ambient occlusion and the reflection history drop history for those pixels only; an RG16 velocity image keeps the zero motion. A temporal view faults
 `c3d::ASSET_DATA_UNAVAILABLE` from `render_view` before recording when a flagged mesh's CPU
 positions were released; its published history stays as it was.
 
@@ -384,6 +386,16 @@ On an RTX 4090 with Sponza through the benchmark at 2560 x 1440, the `EXPOSURE` 
 stride 1 and 0.020 ms at stride 2; the stride stays 1. Auto exposure adds 0.035 ms of GPU time per frame (the median
 per-case delta). In the post example's light scene the pass reads 0.029 ms at 1920 x 1080 and 0.049 ms at
 2560 x 1440, with the GPU at low clocks.
+
+## Timings
+
+With GPU timings and internal scopes, `Pass.POST_CHAIN` has one stage scope per effect: `post.bloom`,
+`post.depth_of_field` and `post.motion_blur`. `Stats.gpu_post_stage_ms`, indexed by `PostStage`, holds their
+completed times summed over the frame's views. They are parts of the `POST_CHAIN` bucket and are not added to it;
+the grade, FXAA and identity-composite dispatches belong to the pass alone. The depth of field stage covers its
+auto-focus metering and tile reduction, and the motion blur stage its tile reduction.
+`effects --gpu-timings --benchmark FRAMES` prints the mean of each stage
+([benchmarking](benchmarking.md#post-processing-benchmark)).
 
 ## GUI
 

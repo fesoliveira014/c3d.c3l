@@ -27,8 +27,11 @@ const uint NULL_LINK = uint::max;
 <* Magic of a TileData blob; mirrors DT_NAVMESH_MAGIC. *>
 const int TILE_MAGIC = 'D' << 24 | 'N' << 16 | 'A' << 8 | 'V';
 
-<* Version of a TileData blob; 7 upstream, 100 here because refs are 64-bit and detail arrays are absent. *>
-const int TILE_VERSION = 100;
+<* Version of a TileData blob; 7 upstream, 101 here: refs are 64-bit, detail arrays are absent and links live in the mesh. *>
+const int TILE_VERSION = 101;
+
+<* Links a mesh reserves per tile slot when NavMeshDesc.max_links is 0. *>
+const uint DEFAULT_LINKS_PER_TILE = 4096; // 64 KiB per slot; about 1000 quads at four links each
 
 <* Off-mesh connection flag for two-way travel; mirrors DT_OFFMESH_CON_BIDIR. *>
 const char BIDIRECTIONAL = 1;
@@ -36,8 +39,8 @@ const char BIDIRECTIONAL = 1;
 const char NO_SIDE @private = 0xff; // link side of a link inside one tile; mirrors upstream's 0xff
 const char LANDING_EDGE @private = 0xff; // link edge of a landing polygon's link back to its off-mesh connection
 const int  ANY_SIDE @private = -1; // connects every portal side, for tiles stacked at one coordinate
+const uint START_LANDED @local = 0; // any link index but NULL_LINK; marks an off-mesh polygon whose start landed
 const uint MAX_TILES_AT @private = 32; // mirrors MAX_NEIS: layers read at one tile coordinate
-const uint MAX_CONNECTING_POLYS @local = 4; // mirrors connectExtLinks' candidate array
 const uint MAX_NEAREST_CANDIDATES @local = 128; // mirrors findNearestPolyInTile's candidate array
 const uint TILE_HASH_X @local = 0x8da6b343; // upstream's arbitrarily chosen large primes
 const uint TILE_HASH_Z @local = 0xd8163841;
@@ -127,7 +130,6 @@ struct TileHeader {
     uint  user_id;
     uint  poly_count;
     uint  vert_count;
-    uint  max_link_count;
     uint  bv_node_count;       // 0 when the tree was not built
     uint  off_mesh_count;
     uint  off_mesh_base;       // first off-mesh polygon
@@ -138,16 +140,14 @@ struct TileHeader {
     float bv_quant_factor;
 }
 
-$assert TileHeader::size == 88;
+$assert TileHeader::size == 84;
 
 <* One resident tile; the arrays borrow into data. *>
 struct MeshTile {
     uint                salt;
-    uint                links_free;
     TileHeader*         header;        // null while the slot is free
     Poly[]              polys;
     Vec3[]              verts;
-    Link[]              links;
     BvNode[]            bv_tree;
     OffMeshConnection[] off_mesh;
     char[]              data;
@@ -161,6 +161,7 @@ struct NavMeshDesc {
     float tile_width;     // metres along X
     float tile_height;    // metres along Z
     uint  max_tiles;
+    uint  max_links;      // 0 takes max_tiles * DEFAULT_LINKS_PER_TILE; the mesh holds the resolved count
 }
 
 <* Tiles of convex polygons with links across tile borders; mirrors dtNavMesh. *>
@@ -172,6 +173,9 @@ struct NavMesh {
     MeshTile*[] lookup;         // by tile position hash
     MeshTile*   next_free;
     MeshTile[]  tiles;          // max_tiles
+    Link[]      links;          // max_links, shared by every tile; Poly.first_link and Link.next index it
+    uint        links_free;     // head of the free list; NULL_LINK when the pool is spent
+    uint        free_link_count;
 }
 
 <* A tile and one of its polygons, resolved from a ref. *>
@@ -198,17 +202,31 @@ struct Slab @local {
     float[<2>] max;
 }
 
-struct ConnectingPolys @local {
-    PolyRef[MAX_CONNECTING_POLYS]    refs;
-    float[<2>][MAX_CONNECTING_POLYS] ranges;    // overlap along the edge
-    usz                              count;
+// An off-mesh connection point that lands on a polygon, and the links that join them.
+struct OffMeshLanding @local {
+    MeshTile* connection_tile;
+    uint      connection_poly;    // the off-mesh polygon
+    uint      vertex;             // of that polygon the point moves onto the landing
+    char      edge;               // of that polygon the link leaves
+    char      side;               // of that link
+    MeshTile* landing_tile;
+    uint      landing_poly;
+    char      landing_side;       // of the link back from the landing polygon
+    Vec3      point;
+    bool      back_link;          // the landing polygon links back to the connection
+}
+
+struct LandingPoly @local {
+    uint index;
+    Vec3 point;
 }
 
 <*
  Add a tile blob, link it to its neighbours and its own off-mesh connections; mirrors dtNavMesh::addTile.
+ Changes nothing when it faults.
  @param data : "A TileData blob, 8-byte aligned; borrowed unless flags.free_data."
  @param last_ref : "Ref to restore when reloading; 0 takes any free slot."
- @return? c3d::INVALID_ARGUMENT, TILE_OCCUPIED, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ARGUMENT, TILE_OCCUPIED, c3d::CAPACITY_EXCEEDED, NO_FREE_LINKS
 *>
 fn TileRef? NavMesh.add_tile(
     &self,
@@ -222,43 +240,25 @@ fn TileRef? NavMesh.add_tile(
     if (data.len < tile_data_layout(header).size) return c3d::INVALID_ARGUMENT~;
     if (self.tile_at(header.x, header.z, header.layer)) return TILE_OCCUPIED~;
 
-    MeshTile* tile = take_free_tile(self, last_ref)!;
-    uint hash = tile_hash(header.x, header.z, self.lookup_mask);
-    tile.next = self.lookup[hash];
-    self.lookup[hash] = tile;
-
-    carve_tile_data(tile, data);
-    tile.flags = flags;
-    tile.links_free = tile.links.len ? 0 : NULL_LINK;
-    foreach (index, &link : tile.links) link.next = index + 1 < tile.links.len ? (uint)index + 1 : NULL_LINK;
-
-    connect_internal_links(self, tile);
-    base_off_mesh_links(self, tile);
-    connect_external_off_mesh_links(self, tile, tile, ANY_SIDE);
-
-    MeshTile*[MAX_TILES_AT] neighbours;
-    usz layers = self.tiles_at(header.x, header.z, neighbours[..]);
-    foreach (neighbour : neighbours[:layers]) {
-        if (neighbour == tile) continue;
-        connect_external_links(self, tile, neighbour, ANY_SIDE);
-        connect_external_links(self, neighbour, tile, ANY_SIDE);
-        connect_external_off_mesh_links(self, tile, neighbour, ANY_SIDE);
-        connect_external_off_mesh_links(self, neighbour, tile, ANY_SIDE);
-    }
-    for (int side = 0; side < 8; side++) {
-        usz count = neighbour_tiles_at(self, header.x, header.z, side, neighbours[..]);
-        foreach (neighbour : neighbours[:count]) {
-            connect_external_links(self, tile, neighbour, side);
-            connect_external_links(self, neighbour, tile, opposite_tile(side));
-            connect_external_off_mesh_links(self, tile, neighbour, side);
-            connect_external_off_mesh_links(self, neighbour, tile, opposite_tile(side));
-        }
-    }
-    return self.tile_ref(tile);
+    MeshTile* slot = find_free_tile(self, last_ref)!;
+    require_free_links(
+        mesh:     self,
+        data:     data,
+        resident: null,
+        credit:   0,
+    )!;
+    return commit_tile(
+        mesh:     self,
+        slot:     slot,
+        data:     data,
+        flags:    flags,
+        last_ref: last_ref,
+    );
 }
 
 <*
  Unlink and remove the tile; advances its salt so every ref into it fails.
+ Returns every link the tile or its neighbours held for it to the pool.
  @return "The blob, for a caller that owns it; empty when the mesh freed it."
  @return? INVALID_REF
 *>
@@ -280,15 +280,10 @@ fn char[]? NavMesh.remove_tile(&self, TileRef ref) {
         break;
     }
 
-    MeshTile*[MAX_TILES_AT] neighbours;
-    usz layers = self.tiles_at(header.x, header.z, neighbours[..]);
-    foreach (neighbour : neighbours[:layers]) {
-        if (neighbour != tile) unconnect_links(self, neighbour, tile);
-    }
-    for (int side = 0; side < 8; side++) {
-        usz count = neighbour_tiles_at(self, header.x, header.z, side, neighbours[..]);
-        foreach (neighbour : neighbours[:count]) unconnect_links(self, neighbour, tile);
-    }
+    @each_adjacent_tile(self, header, tile; neighbour, side, opposite_side) {
+        unconnect_links(self, neighbour, tile);
+    };
+    release_own_links(self, tile);
 
     char[] data = tile.data;
     if (tile.flags.free_data) {
@@ -306,8 +301,9 @@ fn char[]? NavMesh.remove_tile(&self, TileRef ref) {
 
 <*
  Add the tile built from a TileMesh blob; the mesh owns the TileData it allocates.
+ Changes nothing when it faults.
  @param [in] connections : "Off-mesh connections whose start lies in the tile."
- @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, TILE_OCCUPIED
+ @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, TILE_OCCUPIED, NO_FREE_LINKS
  @require tile_mesh.len > 0
 *>
 fn TileRef? NavMesh.add_tile_mesh(
@@ -316,20 +312,18 @@ fn TileRef? NavMesh.add_tile_mesh(
     OffMeshConnectionDesc[] connections,
     TileDataParams params,
 ) {
-    TileMeshView view = tile_mesh_view(tile_mesh);
-    char[]? blob = alloc::alloc_array_try(self.allocator, char, (sz)tile_data_size(view, connections, params));
-    if (catch blob) return c3d::CAPACITY_EXCEEDED~;
+    char[] blob = create_tile_blob(self, tile_mesh, connections, params)!;
     defer catch alloc::free(self.allocator, blob.ptr);
-    create_tile_data(view, connections, params, blob)!;
     return self.add_tile(blob, { .free_data = true });
 }
 
 <*
  Replace the tile at params.tile_x, params.tile_z and params.tile_layer; an empty blob only removes it.
  Invalidates every PolyRef into the replaced tile; the resident tile must own its data, which is freed.
+ The resident tile stays installed when it faults.
  @param [in] connections : "Off-mesh connections whose start lies in the tile."
  @return "The new tile, or 0 when the blob was empty."
- @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, NO_FREE_LINKS
 *>
 fn TileRef? NavMesh.install_tile_mesh(
     &self,
@@ -337,11 +331,31 @@ fn TileRef? NavMesh.install_tile_mesh(
     OffMeshConnectionDesc[] connections,
     TileDataParams params,
 ) {
-    // Removing first frees the slot the add takes; a failed add leaves the coordinate empty.
-    TileRef resident = self.tile_ref_at(params.tile_x, params.tile_z, params.tile_layer);
-    if (resident) (void)self.remove_tile(resident);
-    if (!tile_mesh.len) return (TileRef)0;
-    return self.add_tile_mesh(tile_mesh, connections, params);
+    MeshTile* resident = self.tile_at(params.tile_x, params.tile_z, params.tile_layer);
+    if (!tile_mesh.len) {
+        if (resident) (void)self.remove_tile(self.tile_ref(resident));
+        return (TileRef)0;
+    }
+    if (!resident) return self.add_tile_mesh(tile_mesh, connections, params);
+
+    char[] blob = create_tile_blob(self, tile_mesh, connections, params)!;
+    defer catch alloc::free(self.allocator, blob.ptr);
+    require_free_links(
+        mesh:     self,
+        data:     blob,
+        resident: resident,
+        credit:   held_link_count(self, resident),
+    )!;
+
+    // The removal frees the slot the new tile takes.
+    (void)self.remove_tile(self.tile_ref(resident));
+    return commit_tile(
+        mesh:     self,
+        slot:     self.next_free,
+        data:     blob,
+        flags:    { .free_data = true },
+        last_ref: (TileRef)0,
+    );
 }
 
 <*
@@ -461,6 +475,9 @@ fn bool NavMesh.is_valid_ref(&self, PolyRef ref) {
     return decode_poly(ref) < tile.header.poly_count;
 }
 
+<* Links left in the pool. *>
+fn uint NavMesh.free_links(&self) => self.free_link_count;
+
 <*
  Ref of polygon 0 of the tile; mirrors getPolyRefBase.
  @param [&in] tile : "One of self.tiles."
@@ -480,9 +497,9 @@ fn Vec3[2]? NavMesh.off_mesh_end_points(&self, PolyRef previous_ref, PolyRef pol
     if (poly.area_type.type != OFF_MESH_CONNECTION) return INVALID_REF~;
 
     usz first = 0;
-    for (uint link = poly.first_link; link != NULL_LINK; link = tile.links[link].next) {
-        if (tile.links[link].edge != 0) continue;
-        if (tile.links[link].ref != previous_ref) first = 1;
+    for (uint link = poly.first_link; link != NULL_LINK; link = self.links[link].next) {
+        if (self.links[link].edge != 0) continue;
+        if (self.links[link].ref != previous_ref) first = 1;
         break;
     }
     return { tile.verts[poly.verts[first]], tile.verts[poly.verts[1 - first]] };
@@ -532,18 +549,25 @@ fn char? NavMesh.poly_area(&self, PolyRef ref) {
 }
 
 <*
- Empty mesh with max_tiles free slots; mirrors dtNavMesh::init.
+ Empty mesh with max_tiles free slots and a pool of desc.max_links links; mirrors dtNavMesh::init.
+ @param desc : "A max_links of 0 reserves DEFAULT_LINKS_PER_TILE per slot, 16 bytes per link."
  @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
 fn NavMesh? create_nav_mesh(Allocator allocator, NavMeshDesc desc) {
     if (desc.max_tiles == 0 || desc.max_tiles > 1u << TILE_BITS) return c3d::INVALID_ARGUMENT~;
     if (desc.tile_width <= 0 || desc.tile_height <= 0) return c3d::INVALID_ARGUMENT~;
+    ulong link_count = desc.max_links ? desc.max_links : (ulong)desc.max_tiles * DEFAULT_LINKS_PER_TILE;
+    if (link_count >= NULL_LINK) return c3d::INVALID_ARGUMENT~;
+
+    desc.max_links = (uint)link_count;
     uint lookup_size = math::max(next_pow2(desc.max_tiles / 4), 1u);
     NavMesh mesh = {
-        .allocator   = allocator,
-        .desc        = desc,
-        .lookup_size = lookup_size,
-        .lookup_mask = lookup_size - 1,
+        .allocator       = allocator,
+        .desc            = desc,
+        .lookup_size     = lookup_size,
+        .lookup_mask     = lookup_size - 1,
+        .links_free      = 0,
+        .free_link_count = desc.max_links,
     };
     defer catch destroy_nav_mesh(&mesh);
 
@@ -553,6 +577,9 @@ fn NavMesh? create_nav_mesh(Allocator allocator, NavMeshDesc desc) {
     MeshTile*[]? lookup = alloc::new_array_try(allocator, MeshTile*, lookup_size);
     if (catch lookup) return c3d::CAPACITY_EXCEEDED~;
     mesh.lookup = lookup;
+    Link[]? links = alloc::new_array_try(allocator, Link, desc.max_links);
+    if (catch links) return c3d::CAPACITY_EXCEEDED~;
+    mesh.links = links;
 
     // Pushed in reverse so the first free slot is tile 0.
     for (usz index = tiles.len; index > 0; index--) {
@@ -561,6 +588,7 @@ fn NavMesh? create_nav_mesh(Allocator allocator, NavMeshDesc desc) {
         tile.next = mesh.next_free;
         mesh.next_free = tile;
     }
+    foreach (index, &link : links) link.next = index + 1 < links.len ? (uint)index + 1 : NULL_LINK;
     return mesh;
 }
 
@@ -574,6 +602,7 @@ fn void destroy_nav_mesh(NavMesh* mesh) {
     }
     alloc::free(mesh.allocator, mesh.tiles.ptr);
     alloc::free(mesh.allocator, mesh.lookup.ptr);
+    alloc::free(mesh.allocator, mesh.links.ptr);
     *mesh = {};
 }
 
@@ -595,32 +624,35 @@ fn uint tile_index(NavMesh* mesh, MeshTile* tile) @local => (uint)(tile - mesh.t
 
 fn uint tile_hash(int x, int z, uint mask) @local => (TILE_HASH_X * (uint)x + TILE_HASH_Z * (uint)z) & mask;
 
-fn MeshTile*? take_free_tile(NavMesh* mesh, TileRef last_ref) @local {
+fn MeshTile*? find_free_tile(NavMesh* mesh, TileRef last_ref) @local {
     if (!last_ref) {
-        MeshTile* tile = mesh.next_free;
-        if (!tile) return c3d::CAPACITY_EXCEEDED~;
-        mesh.next_free = tile.next;
-        tile.next = null;
-        return tile;
+        if (!mesh.next_free) return c3d::CAPACITY_EXCEEDED~;
+        return mesh.next_free;
     }
 
     uint index = decode_tile((PolyRef)last_ref);
     if (index >= mesh.tiles.len) return c3d::CAPACITY_EXCEEDED~;
     MeshTile* target = &mesh.tiles[index];
-    MeshTile* previous;
-    MeshTile* tile = mesh.next_free;
-    while (tile && tile != target) {
-        previous = tile;
-        tile = tile.next;
+    for (MeshTile* tile = mesh.next_free; tile; tile = tile.next) {
+        if (tile == target) return target;
     }
-    if (tile != target) return c3d::CAPACITY_EXCEEDED~;
+    return c3d::CAPACITY_EXCEEDED~;
+}
+
+fn void claim_free_tile(NavMesh* mesh, MeshTile* tile, TileRef last_ref) @local {
+    MeshTile* previous;
+    MeshTile* current = mesh.next_free;
+    while (current != tile) {
+        previous = current;
+        current = current.next;
+    }
     if (previous) {
         previous.next = tile.next;
     } else {
         mesh.next_free = tile.next;
     }
-    tile.salt = decode_salt((PolyRef)last_ref);
-    return tile;
+    tile.next = null;
+    if (last_ref) tile.salt = decode_salt((PolyRef)last_ref);
 }
 
 fn usz neighbour_tiles_at(
@@ -633,92 +665,187 @@ fn usz neighbour_tiles_at(
     return mesh.tiles_at(x + SIDE_OFFSETS[side].x, z + SIDE_OFFSETS[side].y, out_tiles);
 }
 
-fn uint allocate_link(MeshTile* tile) @local {
-    uint link = tile.links_free;
-    if (link != NULL_LINK) tile.links_free = tile.links[link].next;
+fn uint allocate_link(NavMesh* mesh) @local {
+    uint link = mesh.links_free;
+    mesh.links_free = mesh.links[link].next;
+    mesh.free_link_count--;
     return link;
 }
 
-fn void free_link(MeshTile* tile, uint link) @local {
-    tile.links[link].next = tile.links_free;
-    tile.links_free = link;
+fn void free_link(NavMesh* mesh, uint link) @local {
+    mesh.links[link].next = mesh.links_free;
+    mesh.links_free = link;
+    mesh.free_link_count++;
 }
 
-fn void push_link(MeshTile* tile, Poly* poly, Link link) @local {
-    uint index = allocate_link(tile);
-    if (index == NULL_LINK) return;
+// Callers hold a count that proves the pool has a free link.
+fn uint push_link(NavMesh* mesh, Poly* poly, Link link) @local {
+    uint index = allocate_link(mesh);
     link.next = poly.first_link;
-    tile.links[index] = link;
+    mesh.links[index] = link;
     poly.first_link = index;
+    return index;
 }
 
-fn void connect_internal_links(NavMesh* mesh, MeshTile* tile) @local {
-    PolyRef base = mesh.poly_ref_base(tile);
+fn uint insert_link_after(NavMesh* mesh, uint previous, Link link) @local {
+    uint index = allocate_link(mesh);
+    link.next = mesh.links[previous].next;
+    mesh.links[index] = link;
+    mesh.links[previous].next = index;
+    return index;
+}
+
+fn char[]? create_tile_blob(
+    NavMesh* mesh,
+    char[] tile_mesh,
+    OffMeshConnectionDesc[] connections,
+    TileDataParams params,
+) @local {
+    TileMeshView view = tile_mesh_view(tile_mesh);
+    char[]? blob = alloc::alloc_array_try(mesh.allocator, char, (sz)tile_data_size(view, connections, params));
+    if (catch blob) return c3d::CAPACITY_EXCEEDED~;
+    defer catch alloc::free(mesh.allocator, blob.ptr);
+
+    create_tile_data(
+        mesh:        view,
+        connections: connections,
+        params:      params,
+        blob:        blob,
+    )!;
+    return blob;
+}
+
+// Faults unless the blob's links fit the free links plus the credit; resident is the tile the blob replaces.
+fn void? require_free_links(
+    NavMesh* mesh,
+    char[] data,
+    MeshTile* resident,
+    uint credit,
+) @local {
+    MeshTile probe;
+    carve_tile_data(&probe, data);
+    if (count_tile_links(mesh, &probe, resident) > mesh.free_link_count + credit) return NO_FREE_LINKS~;
+}
+
+// Takes the slot and links the tile; require_free_links has proved the pool holds every link.
+fn TileRef commit_tile(
+    NavMesh* mesh,
+    MeshTile* slot,
+    char[] data,
+    TileFlags flags,
+    TileRef last_ref,
+) @local {
+    claim_free_tile(mesh, slot, last_ref);
+    TileHeader* header = (TileHeader*)data.ptr;
+    uint hash = tile_hash(header.x, header.z, mesh.lookup_mask);
+    slot.next = mesh.lookup[hash];
+    mesh.lookup[hash] = slot;
+
+    carve_tile_data(slot, data);
+    slot.flags = flags;
+    link_tile(mesh, slot);
+    return mesh.tile_ref(slot);
+}
+
+// Every tile joined to the tile by a shared coordinate or a shared border, except the one skipped.
+macro void @each_adjacent_tile(
+    NavMesh* mesh,
+    TileHeader* header,
+    MeshTile* skip;
+    @body(MeshTile* neighbour, int side, int opposite_side)
+) @local {
+    MeshTile*[MAX_TILES_AT] adjacent;
+    usz layers = mesh.tiles_at(header.x, header.z, adjacent[..]);
+    foreach (neighbour : adjacent[:layers]) {
+        if (neighbour != skip) @body(neighbour, ANY_SIDE, ANY_SIDE);
+    }
+    for (int side = 0; side < 8; side++) {
+        usz count = neighbour_tiles_at(mesh, header.x, header.z, side, adjacent[..]);
+        foreach (neighbour : adjacent[:count]) @body(neighbour, side, opposite_tile(side));
+    }
+}
+
+// The links between polygons of the tile; mirrors the internal pass of connectIntLinks.
+macro void @each_internal_link(MeshTile* tile, PolyRef base; @body(Poly* poly, Link link)) @local {
     foreach (&poly : tile.polys) {
-        poly.first_link = NULL_LINK;
         if (poly.area_type.type == OFF_MESH_CONNECTION) continue;
-        // Built backwards so the list runs from the lowest edge to the highest.
+        // Visited backwards so the pushed list runs from the lowest edge to the highest.
         for (int edge = poly.vert_count - 1; edge >= 0; edge--) {
             ushort neighbour = poly.neighbours[edge];
             if (neighbour == 0 || (neighbour & EXTERNAL_LINK) != 0) continue;
-            push_link(tile, poly, { .ref = base | (PolyRef)(neighbour - 1), .edge = (char)edge, .side = NO_SIDE });
+            Link link = { .ref = base | (PolyRef)(neighbour - 1), .edge = (char)edge, .side = NO_SIDE };
+            @body(poly, link);
         }
     }
 }
 
-// The start of each connection moves onto the polygon it lands on.
-fn void base_off_mesh_links(NavMesh* mesh, MeshTile* tile) @local {
-    PolyRef base = mesh.poly_ref_base(tile);
+// The start of each connection of the tile that lands on a polygon of the tile.
+macro void @each_start_landing(MeshTile* tile; @body(OffMeshLanding landing)) @local {
     foreach (&connection : tile.off_mesh) {
-        Poly* poly = &tile.polys[connection.poly];
         Vec3 half_extents = { connection.radius, tile.header.walkable_climb, connection.radius };
-        NearestPoly? nearest = nearest_poly_in_tile(mesh, tile, connection.start, half_extents);
+        LandingPoly? nearest = nearest_poly_in_tile(tile, connection.start, half_extents);
         if (catch nearest) continue;
         // The nearest polygon may lie beyond the radius along XZ.
         if (distance_sqr_2d(nearest.point, connection.start) > connection.radius * connection.radius) continue;
-        tile.verts[poly.verts[0]] = nearest.point;
 
-        push_link(tile, poly, { .ref = nearest.ref, .edge = 0, .side = NO_SIDE });
-        Poly* landing = &tile.polys[decode_poly(nearest.ref)];
-        push_link(tile, landing, { .ref = base | (PolyRef)connection.poly, .edge = LANDING_EDGE, .side = NO_SIDE });
+        OffMeshLanding landing = {
+            .connection_tile = tile,
+            .connection_poly = connection.poly,
+            .vertex          = 0,
+            .edge            = 0,
+            .side            = NO_SIDE,
+            .landing_tile    = tile,
+            .landing_poly    = nearest.index,
+            .landing_side    = NO_SIDE,
+            .point           = nearest.point,
+            .back_link       = true,
+        };
+        @body(landing);
     }
 }
 
-// Links the connections of target whose end lands in tile; the end moves onto the polygon it lands on.
-fn void connect_external_off_mesh_links(
-    NavMesh* mesh,
+// The connections of target whose end lands on a polygon of tile; mirrors connectExtOffMeshLinks.
+macro void @each_end_landing(
     MeshTile* tile,
     MeshTile* target,
-    int side,
+    int side;
+    @body(OffMeshLanding landing)
 ) @local {
     char opposite_side = side == ANY_SIDE ? NO_SIDE : (char)opposite_tile(side);
     foreach (&connection : target.off_mesh) {
         if (connection.side != opposite_side) continue;
-        Poly* target_poly = &target.polys[connection.poly];
-        if (target_poly.first_link == NULL_LINK) continue;
+        // A start that could not land leaves the connection nothing to link from.
+        if (target.polys[connection.poly].first_link == NULL_LINK) continue;
 
         Vec3 half_extents = { connection.radius, target.header.walkable_climb, connection.radius };
-        NearestPoly? nearest = nearest_poly_in_tile(mesh, tile, connection.end, half_extents);
+        LandingPoly? nearest = nearest_poly_in_tile(tile, connection.end, half_extents);
         if (catch nearest) continue;
         if (distance_sqr_2d(nearest.point, connection.end) > connection.radius * connection.radius) continue;
-        target.verts[target_poly.verts[1]] = nearest.point;
 
-        push_link(target, target_poly, { .ref = nearest.ref, .edge = 1, .side = opposite_side });
-        if ((connection.flags & BIDIRECTIONAL) == 0) continue;
-        Poly* landing = &tile.polys[decode_poly(nearest.ref)];
-        push_link(tile, landing, {
-            .ref  = mesh.poly_ref_base(target) | (PolyRef)connection.poly,
-            .edge = LANDING_EDGE,
-            .side = side == ANY_SIDE ? NO_SIDE : (char)side,
-        });
+        OffMeshLanding landing = {
+            .connection_tile = target,
+            .connection_poly = connection.poly,
+            .vertex          = 1,
+            .edge            = 1,
+            .side            = opposite_side,
+            .landing_tile    = tile,
+            .landing_poly    = nearest.index,
+            .landing_side    = side == ANY_SIDE ? NO_SIDE : (char)side,
+            .point           = nearest.point,
+            .back_link       = (connection.flags & BIDIRECTIONAL) != 0,
+        };
+        @body(landing);
     }
 }
 
-fn void connect_external_links(
-    NavMesh* mesh,
+// The links from polygons of tile across their portal edges to polygons of target, one per target polygon and edge.
+// The body gets first set for the first link of each source edge. Mirrors connectExtLinks and findConnectingPolys.
+macro void @each_portal_link(
     MeshTile* tile,
     MeshTile* target,
-    int side,
+    PolyRef target_base,
+    int side;
+    @body(Poly* poly, Link link, bool first)
 ) @local {
     foreach (&poly : tile.polys) {
         int count = poly.vert_count;
@@ -730,66 +857,161 @@ fn void connect_external_links(
 
             Vec3 start = tile.verts[poly.verts[edge]];
             Vec3 end = tile.verts[poly.verts[(edge + 1) % count]];
-            ConnectingPolys found = find_connecting_polys(
-                mesh:   mesh,
-                start:  start,
-                end:    end,
-                tile:   target,
-                side:   opposite_tile(direction),
-            );
+            int target_side = opposite_tile(direction);
+            Slab edge_slab = slab_end_points(start, end, target_side);
+            float edge_position = slab_coord(start, target_side);
+            ushort portal = EXTERNAL_LINK | (ushort)target_side;
             bool along_z = direction == 0 || direction == 4;
             float edge_start = along_z ? start.z : start.x;
             float edge_length = along_z ? end.z - start.z : end.x - start.x;
-            for (usz candidate = 0; candidate < found.count; candidate++) {
-                float t_min = (found.ranges[candidate][0] - edge_start) / edge_length;
-                float t_max = (found.ranges[candidate][1] - edge_start) / edge_length;
-                if (t_min > t_max) @swap(t_min, t_max);
-                push_link(tile, poly, {
-                    .ref  = found.refs[candidate],
-                    .edge = (char)edge,
-                    .side = (char)direction,
-                    .min  = (char)math::round(math::clamp(t_min, 0.0f, 1.0f) * PORTAL_LIMIT_SCALE),
-                    .max  = (char)math::round(math::clamp(t_max, 0.0f, 1.0f) * PORTAL_LIMIT_SCALE),
-                });
+
+            bool first = true;
+            foreach (index, &other : target.polys) {
+                int other_count = other.vert_count;
+                for (int other_edge = 0; other_edge < other_count; other_edge++) {
+                    if (other.neighbours[other_edge] != portal) continue;
+                    Vec3 other_start = target.verts[other.verts[other_edge]];
+                    Vec3 other_end = target.verts[other.verts[(other_edge + 1) % other_count]];
+                    if (math::abs(edge_position - slab_coord(other_start, target_side)) > SLAB_TOLERANCE) continue;
+                    Slab other_slab = slab_end_points(other_start, other_end, target_side);
+                    if (!overlap_slabs(edge_slab, other_slab, SLAB_TOLERANCE, target.header.walkable_climb)) continue;
+
+                    float t_min = (math::max(edge_slab.min[0], other_slab.min[0]) - edge_start) / edge_length;
+                    float t_max = (math::min(edge_slab.max[0], other_slab.max[0]) - edge_start) / edge_length;
+                    if (t_min > t_max) @swap(t_min, t_max);
+                    Link link = {
+                        .ref  = target_base | (PolyRef)index,
+                        .edge = (char)edge,
+                        .side = (char)direction,
+                        .min  = (char)math::round(math::clamp(t_min, 0.0f, 1.0f) * PORTAL_LIMIT_SCALE),
+                        .max  = (char)math::round(math::clamp(t_max, 0.0f, 1.0f) * PORTAL_LIMIT_SCALE),
+                    };
+                    @body(poly, link, first);
+                    first = false;
+                    break;
+                }
             }
         }
     }
 }
 
-fn ConnectingPolys find_connecting_polys(
-    NavMesh* mesh,
-    Vec3 start,
-    Vec3 end,
-    MeshTile* tile,
-    int side,
-) @local {
-    ConnectingPolys found;
-    Slab edge_slab = slab_end_points(start, end, side);
-    float edge_position = slab_coord(start, side);
-    ushort portal = EXTERNAL_LINK | (ushort)side;
-    PolyRef base = mesh.poly_ref_base(tile);
-    foreach (index, &poly : tile.polys) {
-        int count = poly.vert_count;
-        for (int edge = 0; edge < count; edge++) {
-            if (poly.neighbours[edge] != portal) continue;
-            Vec3 other_start = tile.verts[poly.verts[edge]];
-            Vec3 other_end = tile.verts[poly.verts[(edge + 1) % count]];
-            if (math::abs(edge_position - slab_coord(other_start, side)) > SLAB_TOLERANCE) continue;
-            Slab other_slab = slab_end_points(other_start, other_end, side);
-            if (!overlap_slabs(edge_slab, other_slab, SLAB_TOLERANCE, tile.header.walkable_climb)) continue;
+// How many links link_tile pushes for the tile, against the mesh as it would be without the resident tile.
+// Marks the polygons of connections whose start lands, which the end landings read.
+fn uint count_tile_links(NavMesh* mesh, MeshTile* tile, MeshTile* resident) @local {
+    foreach (&poly : tile.polys) poly.first_link = NULL_LINK;
 
-            if (found.count < MAX_CONNECTING_POLYS) {
-                found.ranges[found.count] = {
-                    math::max(edge_slab.min[0], other_slab.min[0]),
-                    math::min(edge_slab.max[0], other_slab.max[0]),
-                };
-                found.refs[found.count] = base | (PolyRef)index;
-                found.count++;
+    uint needed;
+    @each_internal_link(tile, (PolyRef)0; poly, link) {
+        needed++;
+    };
+    @each_start_landing(tile; landing) {
+        needed += 2;
+        tile.polys[landing.connection_poly].first_link = START_LANDED;
+    };
+    needed += count_landing_links(tile, tile, ANY_SIDE);
+    @each_adjacent_tile(mesh, tile.header, resident; neighbour, side, opposite_side) {
+        needed += count_portal_links(tile, neighbour, side);
+        needed += count_portal_links(neighbour, tile, opposite_side);
+        needed += count_landing_links(tile, neighbour, side);
+        needed += count_landing_links(neighbour, tile, opposite_side);
+    };
+    return needed;
+}
+
+fn uint count_portal_links(MeshTile* tile, MeshTile* target, int side) @local {
+    uint count;
+    @each_portal_link(tile, target, (PolyRef)0, side; poly, link, first) {
+        count++;
+    };
+    return count;
+}
+
+fn uint count_landing_links(MeshTile* tile, MeshTile* target, int side) @local {
+    uint count;
+    @each_end_landing(tile, target, side; landing) {
+        count += landing.back_link ? 2 : 1;
+    };
+    return count;
+}
+
+// Mirrors the order of dtNavMesh::addTile's connect calls.
+fn void link_tile(NavMesh* mesh, MeshTile* tile) @local {
+    foreach (&poly : tile.polys) poly.first_link = NULL_LINK;
+
+    @each_internal_link(tile, mesh.poly_ref_base(tile); poly, link) {
+        push_link(mesh, poly, link);
+    };
+    @each_start_landing(tile; landing) {
+        link_off_mesh_landing(mesh, &landing);
+    };
+    push_landing_links(mesh, tile, tile, ANY_SIDE);
+    @each_adjacent_tile(mesh, tile.header, tile; neighbour, side, opposite_side) {
+        push_portal_links(mesh, tile, neighbour, side);
+        push_portal_links(mesh, neighbour, tile, opposite_side);
+        push_landing_links(mesh, tile, neighbour, side);
+        push_landing_links(mesh, neighbour, tile, opposite_side);
+    };
+}
+
+// Within one source edge the links keep ascending target order: the first goes to the head, the rest follow it.
+fn void push_portal_links(NavMesh* mesh, MeshTile* tile, MeshTile* target, int side) @local {
+    uint batch_tail;
+    @each_portal_link(tile, target, mesh.poly_ref_base(target), side; poly, link, first) {
+        batch_tail = first ? push_link(mesh, poly, link) : insert_link_after(mesh, batch_tail, link);
+    };
+}
+
+fn void push_landing_links(NavMesh* mesh, MeshTile* tile, MeshTile* target, int side) @local {
+    @each_end_landing(tile, target, side; landing) {
+        link_off_mesh_landing(mesh, &landing);
+    };
+}
+
+// The connection's point moves onto the polygon it lands on.
+fn void link_off_mesh_landing(NavMesh* mesh, OffMeshLanding* landing) @local {
+    MeshTile* connection_tile = landing.connection_tile;
+    Poly* connection_poly = &connection_tile.polys[landing.connection_poly];
+    connection_tile.verts[connection_poly.verts[landing.vertex]] = landing.point;
+
+    push_link(mesh, connection_poly, {
+        .ref  = mesh.poly_ref_base(landing.landing_tile) | (PolyRef)landing.landing_poly,
+        .edge = landing.edge,
+        .side = landing.side,
+    });
+    if (!landing.back_link) return;
+    push_link(mesh, &landing.landing_tile.polys[landing.landing_poly], {
+        .ref  = mesh.poly_ref_base(connection_tile) | (PolyRef)landing.connection_poly,
+        .edge = LANDING_EDGE,
+        .side = landing.landing_side,
+    });
+}
+
+// Links that disappear with the tile: its own, and those its neighbours hold into it.
+fn uint held_link_count(NavMesh* mesh, MeshTile* tile) @local {
+    uint held;
+    foreach (&poly : tile.polys) {
+        for (uint link = poly.first_link; link != NULL_LINK; link = mesh.links[link].next) held++;
+    }
+    uint index = tile_index(mesh, tile);
+    @each_adjacent_tile(mesh, tile.header, tile; neighbour, side, opposite_side) {
+        foreach (&poly : neighbour.polys) {
+            for (uint link = poly.first_link; link != NULL_LINK; link = mesh.links[link].next) {
+                if (decode_tile(mesh.links[link].ref) == index) held++;
             }
-            break;
+        }
+    };
+    return held;
+}
+
+fn void release_own_links(NavMesh* mesh, MeshTile* tile) @local {
+    foreach (&poly : tile.polys) {
+        uint link = poly.first_link;
+        while (link != NULL_LINK) {
+            uint next = mesh.links[link].next;
+            free_link(mesh, link);
+            link = next;
         }
     }
-    return found;
 }
 
 fn float slab_coord(Vec3 vertex, int side) @local {
@@ -833,8 +1055,8 @@ fn void unconnect_links(NavMesh* mesh, MeshTile* tile, MeshTile* target) @local 
         uint previous = NULL_LINK;
         uint link = poly.first_link;
         while (link != NULL_LINK) {
-            uint next = tile.links[link].next;
-            if (decode_tile(tile.links[link].ref) != target_index) {
+            uint next = mesh.links[link].next;
+            if (decode_tile(mesh.links[link].ref) != target_index) {
                 previous = link;
                 link = next;
                 continue;
@@ -842,21 +1064,20 @@ fn void unconnect_links(NavMesh* mesh, MeshTile* tile, MeshTile* target) @local 
             if (previous == NULL_LINK) {
                 poly.first_link = next;
             } else {
-                tile.links[previous].next = next;
+                mesh.links[previous].next = next;
             }
-            free_link(tile, link);
+            free_link(mesh, link);
             link = next;
         }
     }
 }
 
 // Polygons whose bounds overlap the box, through the BV tree when the tile has one; mirrors queryPolygonsInTile.
-macro void @each_poly_overlapping(NavMesh* mesh, MeshTile* tile, Aabb box; @body(PolyRef ref, Poly* poly)) @private {
-    PolyRef base = mesh.poly_ref_base(tile);
+macro void @each_poly_overlapping(MeshTile* tile, Aabb box; @body(uint index, Poly* poly)) @private {
     if (!tile.bv_tree.len) {
         foreach (index, &poly : tile.polys) {
             if (poly.area_type.type == OFF_MESH_CONNECTION) continue;
-            if (overlap_bounds(box, polygon_bounds(tile, poly))) @body(base | (PolyRef)index, poly);
+            if (overlap_bounds(box, polygon_bounds(tile, poly))) @body((uint)index, poly);
         }
         return;
     }
@@ -881,7 +1102,7 @@ macro void @each_poly_overlapping(NavMesh* mesh, MeshTile* tile, Aabb box; @body
         BvNode* current = &tile.bv_tree[node];
         bool overlap = overlap_quant_bounds(query_min, query_max, current.min, current.max);
         bool leaf = current.index >= 0;
-        if (leaf && overlap) @body(base | (PolyRef)current.index, &tile.polys[current.index]);
+        if (leaf && overlap) @body((uint)current.index, &tile.polys[current.index]);
         node += overlap || leaf ? 1 : (usz)-current.index;
     }
 }
@@ -897,39 +1118,39 @@ fn Aabb polygon_bounds(MeshTile* tile, Poly* poly) @private {
 }
 
 fn usz polys_in_tile(
-    NavMesh* mesh,
     MeshTile* tile,
     Aabb box,
-    PolyRef[] out_refs,
+    uint[] out_polys,
 ) @local {
     usz count;
-    @each_poly_overlapping(mesh, tile, box; ref, poly) {
-        if (count < out_refs.len) out_refs[count++] = ref;
+    @each_poly_overlapping(tile, box; index, poly) {
+        if (count < out_polys.len) out_polys[count++] = index;
     };
     return count;
 }
 
 // NO_POLY when no polygon overlaps the box; mirrors findNearestPolyInTile.
-fn NearestPoly? nearest_poly_in_tile(
-    NavMesh* mesh,
+fn LandingPoly? nearest_poly_in_tile(
     MeshTile* tile,
     Vec3 center,
     Vec3 half_extents,
 ) @local {
-    PolyRef[MAX_NEAREST_CANDIDATES] candidates;
+    uint[MAX_NEAREST_CANDIDATES] candidates;
     Aabb box = { .min = center - half_extents, .max = center + half_extents };
-    usz count = polys_in_tile(mesh, tile, box, candidates[..]);
+    usz count = polys_in_tile(tile, box, candidates[..]);
 
-    NearestPoly nearest;
+    LandingPoly nearest;
+    bool found;
     float nearest_distance = float::max;
-    foreach (ref : candidates[:count]) {
-        ClosestPoint closest = closest_point_on_polygon(mesh, ref, center);
+    foreach (index : candidates[:count]) {
+        ClosestPoint closest = closest_point_on_poly_in_tile(tile, &tile.polys[index], center);
         float distance = nearness(center, closest, tile.header.walkable_climb);
         if (distance >= nearest_distance) continue;
-        nearest = { .ref = ref, .point = closest.point, .over_poly = closest.over_poly };
+        nearest = { .index = index, .point = closest.point };
         nearest_distance = distance;
+        found = true;
     }
-    if (!nearest.ref) return NO_POLY~;
+    if (!found) return NO_POLY~;
     return nearest;
 }
 
@@ -993,8 +1214,10 @@ fn Vec3 closest_point_on_fan_edges(Vec3[] corners, Vec3 position, bool only_boun
 // Mirrors dtNavMesh::closestPointOnPoly.
 fn ClosestPoint closest_point_on_polygon(NavMesh* mesh, PolyRef ref, Vec3 position) @private {
     TileAndPoly found = mesh.tile_and_poly_unchecked(ref);
-    MeshTile* tile = found.tile;
-    Poly* poly = found.poly;
+    return closest_point_on_poly_in_tile(found.tile, found.poly, position);
+}
+
+fn ClosestPoint closest_point_on_poly_in_tile(MeshTile* tile, Poly* poly, Vec3 position) @private {
     if (try height = polygon_height(tile, poly, position)) {
         return { .point = { position.x, height, position.z }, .over_poly = true };
     }

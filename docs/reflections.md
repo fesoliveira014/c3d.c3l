@@ -22,6 +22,7 @@ render::configure_view(&renderer, renderer.default_view, desc)!;
 | `max_reflection_roughness` | Surfaces rougher than this keep the environment reflection; in `(0, 1]` while `reflections` is set |
 | `reflection_rays` | Rays per traced pixel, 1 to `RT_REFLECTION_RAYS_MAX` (4); zero reads as 1 |
 | `reflection_resolution` | `FULL` traces every pixel; `HALF` traces one of each 2 x 2 block ([half resolution](#half-resolution)) |
+| `reflection_history` | Blends each traced pixel with the previous frames' reflection ([history](#history)); off by default |
 
 `default_view_desc` and `texture_view_desc` set `max_reflection_roughness` to
 `RT_REFLECTION_ROUGHNESS_DEFAULT` (0.5). `create_view` and `configure_view` fault:
@@ -33,12 +34,13 @@ render::configure_view(&renderer, renderer.default_view, desc)!;
 - `INVALID_ARGUMENT` when `reflections` is set and `max_reflection_roughness` is not finite or
   lies outside `(0, 1]`, or `reflection_rays` is above `RT_REFLECTION_RAYS_MAX`.
 
-`reflection_rays` and `reflection_resolution` are ignored while `reflections` is clear. The defaults, one ray at
-full resolution, give the images of a view that sets neither.
+`reflection_rays`, `reflection_resolution` and `reflection_history` are ignored while `reflections` is clear. The
+defaults, one ray at full resolution with no history, give the images of a view that sets none of them.
 
 The view allocates two `RGBA16_FLOAT` images at its working extent, `reflection` and
 `reflection_blur`, while `reflections` is set, and retires them when it is cleared. `HALF` adds a third,
-`reflection_half`, at the working extent halved and rounded up. A `FORWARD` view also
+`reflection_half`, at the working extent halved and rounded up. `reflection_history` adds two `RGBA16_FLOAT`
+history images and two `R32_FLOAT` depth images at the working extent. A `FORWARD` view also
 allocates `reflection_gbuffer` ([forward views](#forward-views)).
 
 ## What traces
@@ -52,8 +54,9 @@ or below `max_reflection_roughness`.
 Each such pixel casts `reflection_rays` rays (one by default), each sampled from the GGX distribution of visible
 normals (Dupuy and Benyoub 2023) around the G-buffer normal, and averages their radiance. Ray `n` of a frame uses
 noise sequence `noise_frame * rays + n`, so a single ray uses `noise_frame` as before. The sample rotates with
-interleaved gradient noise, per frame only on a TAA view, where TAA averages it; without TAA a still camera shows a
-fixed grain on rougher surfaces, which more rays reduce.
+interleaved gradient noise, per frame on a TAA view, where TAA averages it, and on a view with
+[`reflection_history`](#history), where the history does; otherwise a still camera shows a fixed grain on rougher
+surfaces, which more rays reduce.
 
 - **Hit.** The hit surface is shaded from its material: `STANDARD` with the Standard BRDF,
   `PHYSICAL` with the forward Physical stage's lobes (see below), `BASIC` unlit, `TOON` with its
@@ -110,13 +113,43 @@ Standard material, behave as before.
 With `reflection_resolution` set to `HALF` the trace writes `reflection_half`, one texel per 2 x 2 block, and spends a
 quarter of the rays. Texel `t` traces the pixel `2t + o` of the working extent, clamped to the image. With TAA the
 offset `o` steps through (0, 0), (1, 1), (1, 0) and (0, 1) with the noise frame, so four frames cover each block;
-without TAA it stays (0, 0).
+without TAA or `reflection_history` it stays (0, 0).
 
 A reconstruction pass then fills `reflection`: each pixel takes the 2 x 2 texels around it, weighted bilinearly by the
 pixel's position among the traced pixels and by the blur's depth and normal weights. A texel counts for nothing when
 its pixel has a roughness more than 0.1 away or a specular weight more than `RT_REFLECTION_SPECULAR_TOLERANCE` away,
 or when it traced nothing. A pixel with no compatible texel is untraced: it keeps the prefiltered specular and the
 surface shows no traced reflection there. The blur follows as at full resolution.
+
+## History
+
+With `reflection_history` set the view blends each traced pixel with the reflection the previous frames traced there,
+so a still camera averages the noise of many frames without TAA, and TAA receives a steadier input. A temporal pass
+runs after the trace, and after the reconstruction at `HALF`, and before the blur, which reads its output.
+
+- **Images.** `reflection_history[2]` (`RGBA16_FLOAT`) holds the blended radiance with alpha 1 where the pixel traced and
+  0 where it did not. `reflection_depth[2]` (`R32_FLOAT`) holds the depth the pass saw. Both are at the working
+  extent, 16.6 MB and 8.3 MB each at 1080p. `ViewHistory.slot` selects the one read and the one written. The images are
+  allocated with the view while the field is set, retired when it is cleared or the view is resized, and the pass
+  reads no history on the frame after `reset_view_history`, `configure_view`, a resize or a change of scene.
+- **Reprojection.** The pass fetches the history at the pixel centre minus the view's velocity, filtered bilinearly,
+  without the frame's jitter. The view records its velocity before the reflections, with the previous frame's depth in
+  `z`, as it does for temporal ambient occlusion and screen-space GI, and commits a `ViewHistory` for itself.
+- **Confidence.** The product of: a depth match (any of the four history depths within 5% of the expected previous
+  depth); TAA's velocity ramp, full below 2 pixels of motion and zero from 4; one minus the velocity's rejection flag;
+  a material match (the current G-buffer at the history position has a roughness within 0.1 and a specular weight
+  within `RT_REFLECTION_SPECULAR_TOLERANCE` of the pixel's); and the traced share of the filtered history texels. An
+  untraced history texel counts nothing.
+- **Weight.** The kept share is `RT_REFLECTION_HISTORY_WEIGHT` (0.9, about ten frames) times the confidence times the
+  pixel's roughness over `RT_REFLECTION_HISTORY_ROUGHNESS` (0.25), at most 1. The factor ends where the blur starts,
+  so mirror-like pixels keep no history and never show a trail.
+- **Clamp.** Before blending, the history radiance is clamped in YCoCg to the mean of the current frame's traced 3 x 3
+  neighbourhood plus or minus `RT_REFLECTION_CLAMP_SIGMA` (1) standard deviations. Untraced neighbours are left out.
+  The clamp bounds how far an old reflection can stay from what the neighbourhood shows now.
+- **Pre-exposure.** The history radiance is scaled by the ratio of the current pre-exposure factor to the factor
+  recorded with the history slot it came from.
+- **Untraced pixels.** A pixel the current frame did not trace, or whose roughness is above `max_reflection_roughness`
+  (which the half-resolution reconstruction can fill), writes alpha 0 and no radiance, whatever its history.
 
 ## Forward views
 
@@ -176,12 +209,13 @@ the only reflection of indirect light; the renderer builds the split-sum table f
 ## Passes and inspection
 
 `Pass.RT_REFLECTIONS` runs after `AMBIENT_OCCLUSION` and before `LIGHTING` (before `FORWARD_OPAQUE` on a
-forward view): the trace and the blur, two compute dispatches, and the reconstruction between them at `HALF`.
+forward view): the trace and the blur, two compute dispatches, the reconstruction between them at `HALF` and the
+temporal pass before the blur with `reflection_history`.
 `render_view` prepares the scene trace and the split-sum table itself.
 `gui::targets_panel` lists `reflection_blur` and `reflection`; programmatically
 `PreviewKind.VIEW_REFLECTION` previews `reflection_blur` at level 0 and `reflection` at level 1.
 The post panel's "Ray tracing" header toggles reflections on a deferred view and sets the
-threshold, the rays per pixel and half resolution.
+threshold, the rays per pixel, half resolution and the history.
 
 `examples/rt_effects` shows a mirror floor reflecting an emissive panel above the view, a chalk
 sphere above the view lit by a warm lamp outside the camera frustum and not by a cold lamp whose
@@ -189,9 +223,9 @@ sphere above the view lit by a warm lamp outside the camera frustum and not by a
 clearcoated red sphere, a high-IOR tinted-specular dielectric, a transmissive glass sphere, a sheen
 fabric sphere and a brushed anisotropic metal sphere, each seen beside its own reflection. `R` toggles
 reflections, `S` switches the view between deferred and forward shading, `F` toggles a height fog over the reflected
-paths, `[` and `]` move the threshold, `1` to `4` set the rays per pixel, `H` toggles half resolution, `A` cycles
-ambient occlusion; `--reflection-rays N` and `--reflection-resolution full|half` set the rays and the resolution at
-start; `--gpu-timings --benchmark N` prints the mean pass times. The
+paths, `[` and `]` move the threshold, `1` to `4` set the rays per pixel, `H` toggles half resolution, `T` toggles the
+history, `A` cycles ambient occlusion; `--reflection-rays N`, `--reflection-resolution full|half` and
+`--reflection-history` set the rays, the resolution and the history at start; `--gpu-timings --benchmark N` prints the mean pass times. The
 rendering benchmarks take `--reflections on|off` on a deferred view ([benchmarking](benchmarking.md))
 and report `gpu_rt_reflections_ms`.
 
@@ -203,8 +237,10 @@ python3 scripts/build.py --example rt_effects
 
 - Forward views trace Standard and plain Physical draws only; other draws keep the environment reflection and
   the reflection probes.
-- Up to `RT_REFLECTION_RAYS_MAX` rays per traced pixel and a spatial blur; no temporal accumulation beyond what TAA
-  provides.
+- Up to `RT_REFLECTION_RAYS_MAX` rays per traced pixel and a spatial blur. Temporal accumulation is opt-in
+  through `reflection_history`, which reprojects by the surface's motion: the reflected content of a moving object or
+  a changing light is not tracked, so its old image fades over the history's length, held to the current
+  neighbourhood by the clamp, and mirror-like pixels keep no history.
 - `HALF` rebuilds untraced pixels from compatible neighbours only; a pixel at a depth, normal, roughness or
   specular-weight edge with none keeps the prefiltered specular.
 - Hits see the traced scene: skinned and morphed meshes appear at their raster pose; crowd placements appear only through `add_crowd(trace: true)`; custom vertex stages and `BLEND` meshes are absent.
