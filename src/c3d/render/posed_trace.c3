@@ -257,7 +257,7 @@ fn PosedGroupClaim? PosedPoseGroups.claim(
     return { .slot = slot, .shared = false };
 }
 
-fn PosedTraceTable create_posed_trace_table(Allocator allocator, uint capacity) {
+fn PosedTraceTable create_posed_trace_table(Allocator allocator, uint capacity) @private {
     PosedTraceTable table = { .allocator = allocator, .capacity = capacity };
     table.pending.init(allocator);
     table.dispatches.init(allocator);
@@ -267,7 +267,7 @@ fn PosedTraceTable create_posed_trace_table(Allocator allocator, uint capacity) 
 }
 
 // More entries than twice the rows keeps probes short and always leaves an empty entry to end one.
-fn PosedPoseGroups create_posed_pose_groups(Allocator allocator, usz row_count) {
+fn PosedPoseGroups create_posed_pose_groups(Allocator allocator, usz row_count) @private {
     usz capacity = 1;
     while (capacity <= 2 * row_count) capacity *= 2;
     return {
@@ -276,7 +276,7 @@ fn PosedPoseGroups create_posed_pose_groups(Allocator allocator, usz row_count) 
     };
 }
 
-fn void free_posed_trace(Renderer* renderer) {
+fn void free_posed_trace(Renderer* renderer) @private {
     PosedTraceTable* table = &renderer.posed_trace;
     foreach (&slot : table.slots) {
         if (slot.allocation.is_valid()) (void)gpu::free_allocation(&renderer.device, &slot.allocation);
@@ -289,7 +289,7 @@ fn void free_posed_trace(Renderer* renderer) {
     free_posed_trace_storage(table);
 }
 
-fn void free_posed_trace_storage(PosedTraceTable* table) {
+fn void free_posed_trace_storage(PosedTraceTable* table) @private {
     foreach (&slot : table.slots) {
         if (slot.pose.len) alloc::free(table.allocator, slot.pose.ptr);
     }
@@ -312,7 +312,7 @@ fn uint? vacant_posed_slot(PosedTraceTable* table) @local {
     return c3d::CAPACITY_EXCEEDED~;
 }
 
-fn void empty_posed_slot(PosedTraceTable* table, PosedTraceRes* slot, RetireList* retire) {
+fn void empty_posed_slot(PosedTraceTable* table, PosedTraceRes* slot, RetireList* retire) @private {
     if (slot.allocation.is_valid()) retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = slot.allocation });
     if (slot.node_allocation.is_valid()) {
         retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = slot.node_allocation });
@@ -325,20 +325,20 @@ fn void empty_posed_slot(PosedTraceTable* table, PosedTraceRes* slot, RetireList
     *slot = {};
 }
 
-fn void mark_posed_pending(PosedTraceTable* table, uint index) {
+fn void mark_posed_pending(PosedTraceTable* table, uint index) @private {
     PosedTraceRes* slot = &table.slots[index];
     if (slot.pending) return;
     slot.pending = true;
     table.pending.push(index);
 }
 
-fn void commit_posed_trace(PosedTraceTable* table) {
+fn void commit_posed_trace(PosedTraceTable* table) @private {
     foreach (index : table.pending) table.slots[index].pending = false;
     table.pending.clear();
 }
 
 // An aborted recording never ran: its slots rebuild their root, pose, refit and BLAS from scratch.
-fn void discard_posed_trace(PosedTraceTable* table) {
+fn void discard_posed_trace(PosedTraceTable* table) @private {
     foreach (index : table.pending) {
         PosedTraceRes* slot = &table.slots[index];
         slot.built_revision = 0;
@@ -367,7 +367,7 @@ fn bool vertex_motion_slot_valid(PosedTopology recorded, PosedTopology current) 
       && (uint)recorded.flags == (uint)current.flags;
 }
 
-fn PosedTopology posed_topology(GpuGeometry* mirror) {
+fn PosedTopology posed_topology(GpuGeometry* mirror) @private {
     return {
         .geometry     = mirror.asset,
         .vertex_count = mirror.layout.vertex_count,
@@ -384,7 +384,7 @@ fn bool vertex_motion_held(
     GeometryId geometry,
     bool cpu_present,
     bool proven,
-) {
+) @private {
     PosedTraceTable* table = &renderer.posed_trace;
     if (!table.slots.len) return false;
     uint? found = table.lookup.get(key);
@@ -410,7 +410,7 @@ fn bool vertex_motion_held(
     return !trace.hardware_requested || slot.blas.is_valid();
 }
 
-fn PosedTraceKey trace_pose_key(ulong scene, TracePoseSource* source, TraceInstance* record) {
+fn PosedTraceKey trace_pose_key(ulong scene, TracePoseSource* source, TraceInstance* record) @private {
     PosedTraceKey key = { .scene = scene, .node = source.node.id, .instance = record.instance_index };
     if (source.lod) {
         key.lod_identity = source.lod.identity;
@@ -423,7 +423,7 @@ fn PosedTraceKey trace_pose_key(ulong scene, TracePoseSource* source, TraceInsta
     return key;
 }
 
-fn uint pose_input_bytes(TracePoseSource* source, AssetStore* assets) {
+fn uint pose_input_bytes(TracePoseSource* source, AssetStore* assets) @private {
     switch (source.kind) {
         case REST:
         case VERTEX_MOTION:
@@ -449,7 +449,7 @@ fn bool mesh_morphs(AssetStore* assets, Mesh* mesh) @local {
 }
 
 // The bytes the posing pass consumes: the palette resolve_palette uploads, then the packed morph block.
-fn char[] pose_inputs(Renderer* renderer, TracePoseSource* source, TraceInstance* record) {
+fn char[] pose_inputs(Renderer* renderer, TracePoseSource* source, TraceInstance* record) @private {
     char[] inputs = alloc::new_array(tmem, char, pose_input_bytes(source, renderer.assets));
     usz palette_bytes;
     MorphWeightsGpu block;
@@ -522,7 +522,7 @@ fn char[] pose_inputs(Renderer* renderer, TracePoseSource* source, TraceInstance
     return inputs;
 }
 
-fn void? acquire_trace_pose_pipelines(Renderer* renderer) {
+fn void? acquire_trace_pose_pipelines(Renderer* renderer) @private {
     acquire_compute_slot(renderer, ComputeSlot.TRACE_POSE)!;
     acquire_compute_slot(renderer, ComputeSlot.TRACE_POSE_U16)!;
     acquire_compute_slot(renderer, ComputeSlot.TRACE_REFIT)!;
@@ -530,7 +530,7 @@ fn void? acquire_trace_pose_pipelines(Renderer* renderer) {
 
 // Every stream a vertex-motion slot exposes is refilled from the geometry mirror the revision just uploaded.
 // Both sides pack positions and normals at PACKED_VEC3_BYTES and tangents at Vec4::size, so each copy is one range.
-fn void? record_vertex_motion_copies(Renderer* renderer, gpu::CommandList* commands) {
+fn void? record_vertex_motion_copies(Renderer* renderer, gpu::CommandList* commands) @private {
     PosedTraceTable* table = &renderer.posed_trace;
     if (!table.motion_copies.len()) return;
     // The mirror upload is a transfer write, and trace readers still read the slot's earlier streams.
@@ -572,7 +572,7 @@ fn void? record_vertex_motion_copies(Renderer* renderer, gpu::CommandList* comma
 }
 
 // Every posing dispatch, then every refit, so three barriers serve any number of slots.
-fn void? record_trace_poses(Renderer* renderer, gpu::CommandList* commands) {
+fn void? record_trace_poses(Renderer* renderer, gpu::CommandList* commands) @private {
     PosedTraceTable* table = &renderer.posed_trace;
     record_vertex_motion_copies(renderer, commands)!;
     if (!table.dispatches.len()) return;
@@ -615,7 +615,7 @@ fn void? acquire_posed_streams(
     usz pose_bytes,
     bool vertex_motion,
     bool aliased,
-) {
+) @private {
     PosedTraceTable* table = &renderer.posed_trace;
     PosedTraceRes* slot = &table.slots[index];
     PosedTopology topology = posed_topology(mirror);
@@ -682,7 +682,7 @@ fn void? acquire_posed_streams(
     mark_posed_pending(table, index);
 }
 
-fn void? acquire_posed_nodes(Renderer* renderer, uint index, GpuGeometry* mirror) {
+fn void? acquire_posed_nodes(Renderer* renderer, uint index, GpuGeometry* mirror) @private {
     PosedTraceTable* table = &renderer.posed_trace;
     PosedTraceRes* slot = &table.slots[index];
     if (slot.node_allocation.is_valid() && slot.node_count == mirror.trace.node_count) return;
@@ -710,7 +710,7 @@ fn void? acquire_posed_nodes(Renderer* renderer, uint index, GpuGeometry* mirror
 }
 
 // A BLAS is sized by its creation counts, so another geometry or another revision's counts replace it.
-fn void? acquire_posed_blas(Renderer* renderer, uint index, GpuGeometry* mirror) {
+fn void? acquire_posed_blas(Renderer* renderer, uint index, GpuGeometry* mirror) @private {
     PosedTraceTable* table = &renderer.posed_trace;
     PosedTraceRes* slot = &table.slots[index];
     gpu::AccelerationStructureGeometryDesc[1] geometries = { blas_geometry_desc(&mirror.layout) };
@@ -748,7 +748,7 @@ fn void? acquire_posed_blas(Renderer* renderer, uint index, GpuGeometry* mirror)
     table.bytes += requirements.storage_size;
 }
 
-fn void point_at_posed_slot(TraceInstance* record, PosedTraceRes* slot, GpuGeometry* mirror) {
+fn void point_at_posed_slot(TraceInstance* record, PosedTraceRes* slot, GpuGeometry* mirror) @private {
     record.geometry_root = slot.root;
     record.bottom_level = slot.blas;
     record.nodes = slot.nodes;
@@ -768,7 +768,7 @@ fn void? resolve_posed_instance(
     GpuGeometry* mirror,
     ulong scene,
     char[] inputs,
-) {
+) @private {
     PosedTraceTable* table = &renderer.posed_trace;
     bool software = renderer.scene_trace.software_requested;
     bool hardware = renderer.scene_trace.hardware_requested;
@@ -988,7 +988,7 @@ fn void? record_posed_builds(
     gpu::GpuSpan scratch,
     BuildBatch* batch,
     gpu::Barrier* builds_ordered,
-) {
+) @private {
     PosedTraceTable* table = &renderer.posed_trace;
     if (!table.builds.len()) return;
     // Ray queries and top-level builds of earlier frames still read the bottom levels updated in place.
@@ -1026,7 +1026,7 @@ fn void? record_posed_builds(
     table.builds.clear();
 }
 
-fn usz posed_build_scratch_size(PosedTraceTable* table, PosedBuild* build) {
+fn usz posed_build_scratch_size(PosedTraceTable* table, PosedBuild* build) @private {
     PosedTraceRes* slot = &table.slots[build.slot];
     return build.update ? slot.update_scratch_size : slot.build_scratch_size;
 }
