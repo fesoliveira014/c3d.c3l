@@ -40,22 +40,34 @@ fn void? solve_cloth(
               : state.pin_anchors[slot] + (state.pin_targets[slot] - state.pin_anchors[slot]) * progress;
         }
         filter_displacement(
-            world: world, state: state, start: state.positions, proposed: state.predicted,
-            begin: (double)(substep - 1) / total, end: (double)substep / total,
+            world: world,
+            state: state,
+            start: state.positions,
+            proposed: state.predicted,
+            begin: (double)(substep - 1) / total,
+            end: (double)substep / total,
         )!;
         place_shapes(state, (double)substep / total)!;
         for (uint iteration = 0; iteration < desc.iterations; iteration++) {
             if (desc.collisions.continuous) state.sweep_start[..] = state.predicted[..];
             project_constraints(state, state.edges, stretch);
             filter_displacement(
-                world: world, state: state, start: state.sweep_start, proposed: state.predicted,
-                begin: (double)substep / total, end: (double)substep / total,
+                world: world,
+                state: state,
+                start: state.sweep_start,
+                proposed: state.predicted,
+                begin: (double)substep / total,
+                end: (double)substep / total,
             )!;
             if (desc.collisions.continuous) state.sweep_start[..] = state.predicted[..];
             project_constraints(state, state.bends, bend);
             filter_displacement(
-                world: world, state: state, start: state.sweep_start, proposed: state.predicted,
-                begin: (double)substep / total, end: (double)substep / total,
+                world: world,
+                state: state,
+                start: state.sweep_start,
+                proposed: state.predicted,
+                begin: (double)substep / total,
+                end: (double)substep / total,
             )!;
             (void)contact_pass(world: world, state: state, positions: state.predicted, apply: true)!;
         }
@@ -77,8 +89,12 @@ fn void? prepare_publication(PhysicsWorld* world, ClothState* state, bool solved
     state.published[..] = state.positions[..];
     foreach (slot, pin : state.pins) state.published[pin] = state.pin_targets[slot];
     filter_displacement(
-        world: world, state: state, start: state.sweep_start, proposed: state.published,
-        begin: solved ? 1 : 0, end: 1,
+        world: world,
+        state: state,
+        start: state.sweep_start,
+        proposed: state.published,
+        begin: solved ? 1 : 0,
+        end: 1,
     )!;
     place_shapes(state, 1)!;
     resolve_contacts(world, state, state.published)!;

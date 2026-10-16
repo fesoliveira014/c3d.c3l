@@ -44,11 +44,21 @@ fn void test_cloth_continuous_rotating_box_and_mesh_crossing() @test {
         defer teardown(&fixture);
         ColliderDesc box = physics::default_collider_desc(BOX);
         box.half_extents = { 2, 0.05f, 0.2f };
-        Node* body = add_body_node(fixture: &fixture, colliders: (&box)[:1], position: {}, kind: STATIC,);
+        Node* body = add_body_node(
+            fixture: &fixture,
+            colliders: (&box)[:1],
+            position: {},
+            kind: STATIC,
+        );
         body.local.rotation = quaternion::from_axis_angle((Vec3){ 0, 0, 1 }, -(float)math::PI / 4);
         fixture.scene.update_world();
         Entity[1] owners = { body.id };
-        Node* probe = continuous_probe(fixture: &fixture, point: { 1.8f, 0, 0 }, owners: owners[..], continuous: continuous,);
+        Node* probe = continuous_probe(
+            fixture: &fixture,
+            point: { 1.8f, 0, 0 },
+            owners: owners[..],
+            continuous: continuous,
+        );
         publish(&fixture);
         ClothState* state = state_of(&fixture, probe);
         assert(!state.contact_result.failure);
@@ -57,9 +67,17 @@ fn void test_cloth_continuous_rotating_box_and_mesh_crossing() @test {
         body.local.rotation = quaternion::from_axis_angle((Vec3){ 0, 0, 1 }, (float)math::PI / 4);
         fixture.scene.update_world();
         fixture.physics.update_cloths();
-        io::printfn("continuous_box,enabled,%s,failure,%s,stage,%s,sweeps,%s,iterations,%s,impacts,%s,resweeps,%s,point,%s",
-            continuous, state.contact_result.failure, state.contact_result.stage, state.contact_result.sweeps,
-            state.contact_result.ccd_iterations, state.contact_result.impacts, state.contact_result.resweeps, state.published[0]);
+        io::printfn(
+            "continuous_box,enabled,%s,failure,%s,stage,%s,sweeps,%s,iterations,%s,impacts,%s,resweeps,%s,point,%s",
+            continuous,
+            state.contact_result.failure,
+            state.contact_result.stage,
+            state.contact_result.sweeps,
+            state.contact_result.ccd_iterations,
+            state.contact_result.impacts,
+            state.contact_result.resweeps,
+            state.published[0]
+        );
         assert(!state.contact_result.failure);
         if (continuous) {
             assert(state.contact_result.impacts > 0 && state.contact_result.resweeps > 0);
@@ -87,11 +105,22 @@ fn void test_cloth_continuous_rotating_box_and_mesh_crossing() @test {
           + state.path_nodes.len * ClothPathNode::size + state.path_values.len * ContactIntervals::size
           + state.body_motions.len * ContactMotion::size;
         ClothStats stats = fixture.physics.cloth_stats;
-        io::printfn("cloth_continuous_measurement,continuous,%s,steps,1,particles,3,triangles,1,bodies,1,state_bytes,%s,prepared_scratch_bytes,%s,solve_ms,%.9f,publish_ms,%.9f,candidates,%s,contacts,%s,peak_candidates,%s,peak_contacts,%s,ccd_iterations,%s,impacts,%s,failed,%s,max_residual,%.9f",
-            continuous, state_bytes, scratch_bytes, stats.solve_seconds * 1000, stats.publish_seconds * 1000,
-            state.contact_result.candidates, state.contact_result.contacts, state.contact_result.peak_candidates,
-            state.contact_result.peak_contacts, state.contact_result.ccd_iterations, state.contact_result.impacts,
-            stats.failed, state.contact_result.max_residual);
+        io::printfn(
+            "cloth_continuous_measurement,continuous,%s,steps,1,particles,3,triangles,1,bodies,1,state_bytes,%s,prepared_scratch_bytes,%s,solve_ms,%.9f,publish_ms,%.9f,candidates,%s,contacts,%s,peak_candidates,%s,peak_contacts,%s,ccd_iterations,%s,impacts,%s,failed,%s,max_residual,%.9f",
+            continuous,
+            state_bytes,
+            scratch_bytes,
+            stats.solve_seconds * 1000,
+            stats.publish_seconds * 1000,
+            state.contact_result.candidates,
+            state.contact_result.contacts,
+            state.contact_result.peak_candidates,
+            state.contact_result.peak_contacts,
+            state.contact_result.ccd_iterations,
+            state.contact_result.impacts,
+            stats.failed,
+            state.contact_result.max_residual
+        );
     }
 
     Fixture fixture;
@@ -104,15 +133,26 @@ fn void test_cloth_continuous_rotating_box_and_mesh_crossing() @test {
     GeometryId source = fixture.assets.add_geometry(&triangle)!!;
     ColliderDesc mesh = physics::default_collider_desc(MESH);
     mesh.geometry = source;
-    Node* body = add_body_node(fixture: &fixture, colliders: (&mesh)[:1], position: {}, kind: STATIC,);
+    Node* body = add_body_node(
+        fixture: &fixture,
+        colliders: (&mesh)[:1],
+        position: {},
+        kind: STATIC,
+    );
     Entity[1] owners = { body.id };
     Node* probe = continuous_probe(fixture: &fixture, point: { 0, 1, 0 }, owners: owners[..]);
     publish(&fixture);
     ClothState* state = state_of(&fixture, probe);
     state.velocities[0] = { 0, -2 / physics::DEFAULT_FIXED_DT, 0 };
     step(&fixture, physics::DEFAULT_FIXED_DT);
-    io::printfn("continuous_mesh,failure,%s,stage,%s,iterations,%s,impacts,%s,point,%s", state.contact_result.failure,
-        state.contact_result.stage, state.contact_result.ccd_iterations, state.contact_result.impacts, state.published[0]);
+    io::printfn(
+        "continuous_mesh,failure,%s,stage,%s,iterations,%s,impacts,%s,point,%s",
+        state.contact_result.failure,
+        state.contact_result.stage,
+        state.contact_result.ccd_iterations,
+        state.contact_result.impacts,
+        state.published[0]
+    );
     assert(!state.contact_result.failure && state.contact_result.impacts > 0);
     assert(state.published[0].y >= state.desc.thickness - state.desc.collisions.contact_tolerance);
 }
@@ -140,9 +180,17 @@ fn void test_cloth_continuous_folded_crossings_and_step_splits() @test {
         assert(!state.contact_result.failure);
         for (uint vertex = 8; vertex < 12; vertex++) state.velocities[vertex].y = -2 / physics::DEFAULT_FIXED_DT;
         step(&fixture, physics::DEFAULT_FIXED_DT);
-        io::printfn("continuous_fold,split,%s,failure,%s,stage,%s,iterations,%s,impacts,%s,resweeps,%s,upper,%s,lower,%s",
-            split, state.contact_result.failure, state.contact_result.stage, state.contact_result.ccd_iterations,
-            state.contact_result.impacts, state.contact_result.resweeps, state.published[10], state.published[0]);
+        io::printfn(
+            "continuous_fold,split,%s,failure,%s,stage,%s,iterations,%s,impacts,%s,resweeps,%s,upper,%s,lower,%s",
+            split,
+            state.contact_result.failure,
+            state.contact_result.stage,
+            state.contact_result.ccd_iterations,
+            state.contact_result.impacts,
+            state.contact_result.resweeps,
+            state.published[10],
+            state.published[0]
+        );
         assert(!state.contact_result.failure && state.contact_result.impacts > 0 && state.contact_result.resweeps > 0);
         assert(state.contact_result.edge_edge_impacts > 0);
         check_folded_contacts(state, false);
@@ -184,9 +232,14 @@ fn void test_cloth_continuous_face_crossing_and_step_splits() @test {
         assert(!state.contact_result.failure);
         for (uint vertex = 3; vertex < 6; vertex++) state.velocities[vertex].y = -2 / physics::DEFAULT_FIXED_DT;
         step(&fixture, physics::DEFAULT_FIXED_DT);
-        io::printfn("continuous_face,split,%s,failure,%s,iterations,%s,vertex_face_impacts,%s,edge_edge_impacts,%s",
-            split, state.contact_result.failure, state.contact_result.ccd_iterations,
-            state.contact_result.vertex_face_impacts, state.contact_result.edge_edge_impacts);
+        io::printfn(
+            "continuous_face,split,%s,failure,%s,iterations,%s,vertex_face_impacts,%s,edge_edge_impacts,%s",
+            split,
+            state.contact_result.failure,
+            state.contact_result.ccd_iterations,
+            state.contact_result.vertex_face_impacts,
+            state.contact_result.edge_edge_impacts
+        );
         assert(!state.contact_result.failure && state.contact_result.vertex_face_impacts > 0);
         SelfVector normal = ((SelfVector)state.published[2] - (SelfVector)state.published[0])
           .cross((SelfVector)state.published[1] - (SelfVector)state.published[0]);
@@ -205,7 +258,12 @@ fn void test_cloth_continuous_structural_correction_is_swept() @test {
         defer teardown(&fixture);
         ColliderDesc box = physics::default_collider_desc(BOX);
         box.half_extents = { 10, 0.01f, 10 };
-        Node* body = add_body_node(fixture: &fixture, colliders: (&box)[:1], position: {}, kind: STATIC,);
+        Node* body = add_body_node(
+            fixture: &fixture,
+            colliders: (&box)[:1],
+            position: {},
+            kind: STATIC,
+        );
         Entity[1] owners = { body.id };
         Node* node = add_cloth_node(&fixture, add_triangle(&fixture, { 0, 1, 0 }, PROBE_REACH));
         uint[2] pins = { 1, 2 };
@@ -222,11 +280,19 @@ fn void test_cloth_continuous_structural_correction_is_swept() @test {
         fixture.scene.update_world();
         fixture.physics.update_cloths();
         ClothState* state = state_of(&fixture, node);
-        io::printfn("continuous_structural,enabled,%s,failure,%s,impacts,%s,point,%s", continuous,
-            state.contact_result.failure, state.contact_result.impacts, state.published[0]);
+        io::printfn(
+            "continuous_structural,enabled,%s,failure,%s,impacts,%s,point,%s",
+            continuous,
+            state.contact_result.failure,
+            state.contact_result.impacts,
+            state.published[0]
+        );
         assert(!state.contact_result.failure);
         if (continuous) {
-            assert(state.contact_result.impacts > 0 && state.published[0].y >= box.half_extents.y + desc.thickness - desc.collisions.contact_tolerance);
+            assert(
+                state.contact_result.impacts > 0
+                  && state.published[0].y >= box.half_extents.y + desc.thickness - desc.collisions.contact_tolerance
+            );
         } else {
             assert(state.published[0].y < -1);
         }
@@ -240,7 +306,12 @@ fn void test_cloth_continuous_zero_step_and_discontinuity_histories() @test {
     defer teardown(&fixture);
     ColliderDesc box = physics::default_collider_desc(BOX);
     box.half_extents = { 2, 0.05f, 0.2f };
-    Node* body = add_body_node(fixture: &fixture, colliders: (&box)[:1], position: {}, kind: STATIC,);
+    Node* body = add_body_node(
+        fixture: &fixture,
+        colliders: (&box)[:1],
+        position: {},
+        kind: STATIC,
+    );
     Quat first = quaternion::from_axis_angle((Vec3){ 0, 0, 1 }, -(float)math::PI / 4);
     Quat last = quaternion::from_axis_angle((Vec3){ 0, 0, 1 }, (float)math::PI / 4);
     body.local.rotation = first;
@@ -261,7 +332,10 @@ fn void test_cloth_continuous_zero_step_and_discontinuity_histories() @test {
     fixture.physics.update_cloths();
     assert(!state.contact_result.failure && state.contact_result.impacts > 0);
     assert(state.positions == solved[..] && state.velocities == velocities[..] && state.pin_anchors == anchors[..]);
-    assert(state.bodies[0].solved.position == solved_body.position && state.bodies[0].solved.rotation.v == solved_body.rotation.v);
+    assert(
+        state.bodies[0].solved.position == solved_body.position
+          && state.bodies[0].solved.rotation.v == solved_body.rotation.v
+    );
     assert(state.bodies[0].published.position == body.local.position);
     assert(state.pin_targets[0] == maths::transform_point(node.world, state.rest[state.pins[0]]));
     step(&fixture, physics::DEFAULT_FIXED_DT);
@@ -307,11 +381,21 @@ fn void test_cloth_continuous_iteration_failure_rolls_back_and_recovers() @test 
     defer teardown(&fixture);
     ColliderDesc box = physics::default_collider_desc(BOX);
     box.half_extents = { 2, 0.05f, 0.2f };
-    Node* body = add_body_node(fixture: &fixture, colliders: (&box)[:1], position: {}, kind: STATIC,);
+    Node* body = add_body_node(
+        fixture: &fixture,
+        colliders: (&box)[:1],
+        position: {},
+        kind: STATIC,
+    );
     body.local.rotation = quaternion::from_axis_angle((Vec3){ 0, 0, 1 }, -(float)math::PI / 4);
     fixture.scene.update_world();
     Entity[1] owners = { body.id };
-    Node* node = continuous_probe(fixture: &fixture, point: { 1.8f, 0, 0 }, owners: owners[..], limit: 1,);
+    Node* node = continuous_probe(
+        fixture: &fixture,
+        point: { 1.8f, 0, 0 },
+        owners: owners[..],
+        limit: 1,
+    );
     Node* other = continuous_probe(fixture: &fixture, point: { 8, 3, 0 }, owners: {});
     publish(&fixture);
     ClothState* state = state_of(&fixture, node);
@@ -328,13 +412,28 @@ fn void test_cloth_continuous_iteration_failure_rolls_back_and_recovers() @test 
     body.local.rotation = quaternion::from_axis_angle((Vec3){ 0, 0, 1 }, (float)math::PI / 4);
     fixture.scene.update_world();
     fixture.physics.update_cloths();
-    assert(state.contact_result.failure == cloth::CONTACT_NONCONVERGENT && state.contact_result.stage == ClothContactStage.CONTACTS);
+    assert(
+        state.contact_result.failure == cloth::CONTACT_NONCONVERGENT
+          && state.contact_result.stage == ClothContactStage.CONTACTS
+    );
     assert(state.positions == positions[..] && state.velocities == velocities[..] && state.published == published[..]);
     assert(state.pin_anchors == anchors[..] && geometry_of(&fixture, node).header.revision == revision);
-    assert(state.bodies[0].solved.rotation.v == history.solved.rotation.v && state.bodies[0].published.rotation.v == history.published.rotation.v);
-    assert(state.bodies[0].solved.position == history.solved.position && state.bodies[0].published.position == history.published.position);
-    assert(state.bodies[0].current.position == history.current.position && state.bodies[0].current.rotation.v == history.current.rotation.v);
-    assert(state.bodies[0].observed == history.observed && state.bodies[0].published_observed == history.published_observed);
+    assert(
+        state.bodies[0].solved.rotation.v == history.solved.rotation.v
+          && state.bodies[0].published.rotation.v == history.published.rotation.v
+    );
+    assert(
+        state.bodies[0].solved.position == history.solved.position
+          && state.bodies[0].published.position == history.published.position
+    );
+    assert(
+        state.bodies[0].current.position == history.current.position
+          && state.bodies[0].current.rotation.v == history.current.rotation.v
+    );
+    assert(
+        state.bodies[0].observed == history.observed
+          && state.bodies[0].published_observed == history.published_observed
+    );
     assert(state.bodies[0].native_identity == history.native_identity);
     assert(!other_state.contact_result.failure && other_state.positions[0].x > 8);
 
@@ -345,7 +444,10 @@ fn void test_cloth_continuous_iteration_failure_rolls_back_and_recovers() @test 
     assert(state.contact_result.failure == cloth::CONTACT_NONCONVERGENT);
     assert(state.positions == positions[..] && state.published == published[..]);
     assert(state.pin_targets == anchors[..] && state.pin_anchors == anchors[..]);
-    assert(state.bodies[0].solved.position == history.solved.position && state.bodies[0].published.position == history.published.position);
+    assert(
+        state.bodies[0].solved.position == history.solved.position
+          && state.bodies[0].published.position == history.published.position
+    );
     assert(geometry_of(&fixture, node).header.revision == revision + 1);
     foreach (index, point : published) assert(near(published_world(&fixture, node, (uint)index), point));
     Vec3[3] local = { geometry_of(&fixture, node).data.positions[0], geometry_of(&fixture, node).data.positions[1], geometry_of(&fixture, node).data.positions[2] };
@@ -353,8 +455,14 @@ fn void test_cloth_continuous_iteration_failure_rolls_back_and_recovers() @test 
     node.local.scale = { 1e-39f, 1e-39f, 1e-39f };
     fixture.scene.update_world();
     fixture.physics.update_cloths();
-    assert(state.contact_result.failure == cloth::CONTACT_PRECISION_EXCEEDED && state.contact_result.stage == ClothContactStage.REEXPRESSION);
-    assert(geometry_of(&fixture, node).data.positions == local[..] && geometry_of(&fixture, node).header.revision == revision + 1);
+    assert(
+        state.contact_result.failure == cloth::CONTACT_PRECISION_EXCEEDED
+          && state.contact_result.stage == ClothContactStage.REEXPRESSION
+    );
+    assert(
+        geometry_of(&fixture, node).data.positions == local[..]
+          && geometry_of(&fixture, node).header.revision == revision + 1
+    );
     assert(state.positions == positions[..] && state.published == published[..]);
     node.local.scale = { 1, 1, 1 };
     fixture.scene.update_world();
@@ -369,13 +477,28 @@ fn void test_cloth_continuous_curved_response_regenerates_other_candidates() @te
     defer teardown(&fixture);
     ColliderDesc box = physics::default_collider_desc(BOX);
     box.half_extents = { 2, 0.05f, 0.2f };
-    Node* moving = add_body_node(fixture: &fixture, colliders: (&box)[:1], position: {}, kind: STATIC,);
+    Node* moving = add_body_node(
+        fixture: &fixture,
+        colliders: (&box)[:1],
+        position: {},
+        kind: STATIC,
+    );
     moving.local.rotation = quaternion::from_axis_angle((Vec3){ 0, 0, 1 }, -(float)math::PI / 4);
     ColliderDesc ball = sphere(0.08f);
-    Node* obstacle = add_body_node(fixture: &fixture, colliders: (&ball)[:1], position: { 1.5244f, 0.6652f, 0 }, kind: STATIC,);
+    Node* obstacle = add_body_node(
+        fixture: &fixture,
+        colliders: (&ball)[:1],
+        position: { 1.5244f, 0.6652f, 0 },
+        kind: STATIC,
+    );
     fixture.scene.update_world();
     Entity[2] owners = { moving.id, obstacle.id };
-    Node* node = continuous_probe(fixture: &fixture, point: { 1.8f, 0, 0 }, owners: owners[..], contacts: 1,);
+    Node* node = continuous_probe(
+        fixture: &fixture,
+        point: { 1.8f, 0, 0 },
+        owners: owners[..],
+        contacts: 1,
+    );
     publish(&fixture);
     ClothState* state = state_of(&fixture, node);
     assert(!state.contact_result.failure);
@@ -386,11 +509,28 @@ fn void test_cloth_continuous_curved_response_regenerates_other_candidates() @te
     moving.local.rotation = quaternion::from_axis_angle((Vec3){ 0, 0, 1 }, (float)math::PI / 4);
     fixture.scene.update_world();
     fixture.physics.update_cloths();
-    io::printfn("continuous_curve,failure,%s,stage,%s,contacts,%s,impacts,%s,resweeps,%s", state.contact_result.failure,
-        state.contact_result.stage, state.contact_result.contacts, state.contact_result.impacts, state.contact_result.resweeps);
-    assert(state.contact_result.failure == c3d::CAPACITY_EXCEEDED && state.contact_result.stage == ClothContactStage.CONTACTS);
-    assert(state.contact_result.impacts == 1 && state.contact_result.resweeps == 1 && state.contact_result.contacts >= 2);
-    assert(state.positions[0] == original && state.published[0] == original && geometry_of(&fixture, node).header.revision == revision);
+    io::printfn(
+        "continuous_curve,failure,%s,stage,%s,contacts,%s,impacts,%s,resweeps,%s",
+        state.contact_result.failure,
+        state.contact_result.stage,
+        state.contact_result.contacts,
+        state.contact_result.impacts,
+        state.contact_result.resweeps
+    );
+    assert(
+        state.contact_result.failure == c3d::CAPACITY_EXCEEDED
+          && state.contact_result.stage == ClothContactStage.CONTACTS
+    );
+    assert(
+        state.contact_result.impacts == 1
+          && state.contact_result.resweeps == 1
+          && state.contact_result.contacts >= 2
+    );
+    assert(
+        state.positions[0] == original
+          && state.published[0] == original
+          && geometry_of(&fixture, node).header.revision == revision
+    );
 }
 
 fn void test_cloth_continuous_rebuild_and_prepared_allocation_lifetime() @test {
@@ -405,24 +545,44 @@ fn void test_cloth_continuous_rebuild_and_prepared_allocation_lifetime() @test {
         defer teardown(&fixture);
         GeometryId geometry;
         @pool() {
-            Geometry box = geometry::box(allocator: tmem, width: 2, height: 1, depth: 2,);
+            Geometry box = geometry::box(
+                allocator: tmem,
+                width: 2,
+                height: 1,
+                depth: 2,
+            );
             geometry = fixture.assets.add_geometry(&box)!!;
         };
         ColliderDesc hull = physics::default_collider_desc(HULL);
         hull.geometry = geometry;
-        Node* body = add_body_node(fixture: &fixture, colliders: (&hull)[:1], position: { -3, 0, 0 }, kind: STATIC,);
+        Node* body = add_body_node(
+            fixture: &fixture,
+            colliders: (&hull)[:1],
+            position: { -3, 0, 0 },
+            kind: STATIC,
+        );
         Entity owner = body.id;
         Entity[1] owners = { owner };
         ClothCollisionDesc limits = cloth::default_cloth_collision_desc();
         limits.continuous = true;
         limits.max_shapes = 2;
-        Node* probe = bounded_probe(fixture: &fixture, point: { 0, 0.4f, 0 }, colliders: owners[..], collisions: limits,);
+        Node* probe = bounded_probe(
+            fixture: &fixture,
+            point: { 0, 0.4f, 0 },
+            colliders: owners[..],
+            collisions: limits,
+        );
         publish(&fixture);
         ClothState* state = state_of(&fixture, probe);
         assert(!state.contact_result.failure);
         SnapshotHandle previous = state.shapes[0].snapshot;
         @pool() {
-            Geometry taller = geometry::box(allocator: tmem, width: 2, height: 2, depth: 2,);
+            Geometry taller = geometry::box(
+                allocator: tmem,
+                width: 2,
+                height: 2,
+                depth: 2,
+            );
             fixture.assets.replace_geometry(geometry, &taller)!!;
         };
         body.local.position.x = 3;
@@ -434,7 +594,10 @@ fn void test_cloth_continuous_rebuild_and_prepared_allocation_lifetime() @test {
         fixture.physics.update_cloths();
         assert(tracker.total_allocation_count() == allocations);
         assert(!state.contact_result.failure && state.contact_result.impacts == 0);
-        assert(state.shapes[0].snapshot.index != previous.index || state.shapes[0].snapshot.generation != previous.generation);
+        assert(
+            state.shapes[0].snapshot.index != previous.index
+              || state.shapes[0].snapshot.generation != previous.generation
+        );
         assert(state.bodies[0].solved.position.x == 3 && state.bodies[0].published.position.x == 3);
 
         CompoundChild[3] children;
@@ -449,7 +612,10 @@ fn void test_cloth_continuous_rebuild_and_prepared_allocation_lifetime() @test {
         fixture.physics.remove_body(body);
         fixture.physics.add_body(body, physics::default_body_desc(STATIC), (&compound)[:1])!!;
         publish(&fixture);
-        assert(state.contact_result.failure == c3d::CAPACITY_EXCEEDED && state.contact_result.stage == ClothContactStage.BINDINGS);
+        assert(
+            state.contact_result.failure == c3d::CAPACITY_EXCEEDED
+              && state.contact_result.stage == ClothContactStage.BINDINGS
+        );
         assert(state.shapes.len == 1 && state.published[0] == (Vec3){ 0, 0.4f, 0 });
         fixture.physics.remove_body(body);
         compound.children = children[:2];
@@ -458,7 +624,11 @@ fn void test_cloth_continuous_rebuild_and_prepared_allocation_lifetime() @test {
         fixture.scene.update_world();
         allocations = tracker.total_allocation_count();
         fixture.physics.update_cloths();
-        assert(tracker.total_allocation_count() == allocations && !state.contact_result.failure && state.shapes.len == 2);
+        assert(
+            tracker.total_allocation_count() == allocations
+              && !state.contact_result.failure
+              && state.shapes.len == 2
+        );
 
         GeometryId fold_source = add_folded_strip(&fixture);
         GeometryAsset* fold_geometry = fixture.assets.geometry(fold_source);
@@ -491,7 +661,12 @@ fn void test_cloth_continuous_rebuild_and_prepared_allocation_lifetime() @test {
         assert(c3d::same_id(fixture.scene.get(fold, Mesh).geometry, fold_source));
         assert(!fixture.scene.get(fold, Mesh).vertex_motion);
         fixture.scene.remove(body);
-        Node* replacement = add_body_node(fixture: &fixture, colliders: (&hull)[:1], position: {}, kind: STATIC,);
+        Node* replacement = add_body_node(
+            fixture: &fixture,
+            colliders: (&hull)[:1],
+            position: {},
+            kind: STATIC,
+        );
         assert(replacement.id.index == owner.index && replacement.id.generation != owner.generation);
         publish(&fixture);
         assert(!state.contact_result.failure && state.shapes.len == 0 && state.contact_result.impacts == 0);
@@ -509,7 +684,12 @@ fn void test_cloth_continuous_arbitrary_axis_and_rotation_limits() @test {
     ColliderDesc box = physics::default_collider_desc(BOX);
     box.half_extents = { 2, 0.05f, 0.2f };
     box.local.rotation = basis;
-    Node* body = add_body_node(fixture: &fixture, colliders: (&box)[:1], position: {}, kind: STATIC,);
+    Node* body = add_body_node(
+        fixture: &fixture,
+        colliders: (&box)[:1],
+        position: {},
+        kind: STATIC,
+    );
     body.local.rotation = basis * first_turn * basis.conjugate();
     fixture.scene.update_world();
     Entity[1] owners = { body.id };
@@ -525,8 +705,10 @@ fn void test_cloth_continuous_arbitrary_axis_and_rotation_limits() @test {
     assert(!state.contact_result.failure && state.contact_result.impacts > 0);
     assert((state.published[0] - original).length() > 0.1f);
     Vec3 local = (body.local.rotation * basis).conjugate().rotate_vec3(state.published[0] - body.local.position);
-    assert((local - math::clamp(local, -box.half_extents, box.half_extents)).length()
-        >= state.desc.thickness - state.desc.collisions.contact_tolerance);
+    assert(
+        (local - math::clamp(local, -box.half_extents, box.half_extents)).length()
+            >= state.desc.thickness - state.desc.collisions.contact_tolerance
+    );
 
     Quat[3] rotations = {
         { .v = { 1.0f / 3, 2.0f / 3, 2.0f / 3, 0 } },

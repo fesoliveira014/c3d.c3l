@@ -35,8 +35,14 @@ fn ContactRotation? contact_rotation(ContactInterval angle) @local {
     ContactInterval cosine = contact_value(1);
     ContactRotation result = { .sine = sine, .cosine = cosine };
     for (uint order = 1; order <= CONTACT_SERIES_TERMS; order++) {
-        sine = contact_divide(contact_multiply(sine, negative_square)!, contact_value((double)(2 * order * (2 * order + 1))))!;
-        cosine = contact_divide(contact_multiply(cosine, negative_square)!, contact_value((double)((2 * order - 1) * 2 * order)))!;
+        sine = contact_divide(
+            numerator: contact_multiply(sine, negative_square)!,
+            denominator: contact_value((double)(2 * order * (2 * order + 1))),
+        )!;
+        cosine = contact_divide(
+            numerator: contact_multiply(cosine, negative_square)!,
+            denominator: contact_value((double)((2 * order - 1) * 2 * order)),
+        )!;
         result.sine = contact_add(result.sine, sine)!;
         result.cosine = contact_add(result.cosine, cosine)!;
     }
@@ -84,7 +90,10 @@ fn ContactInterval? contact_half_angle(ContactInterval cosine) @local {
             double derivative = contact_rotation(contact_value(low))!.sine.min;
             if (derivative > 0) {
                 ContactInterval error = contact_subtract(evaluated, cosine)!;
-                double radius = contact_divide(contact_value(math::max(math::abs(error.min), math::abs(error.max))), contact_value(derivative))!.max;
+                double radius = contact_divide(
+                    numerator: contact_value(math::max(math::abs(error.min), math::abs(error.max))),
+                    denominator: contact_value(derivative),
+                )!.max;
                 low = math::max(low, contact_subtract(contact_value(middle), contact_value(radius))!.min);
                 high = math::min(high, contact_add(contact_value(middle), contact_value(radius))!.max);
             }
@@ -97,7 +106,9 @@ fn ContactInterval? contact_half_angle(ContactInterval cosine) @local {
 fn ContactMotion? contact_motion(maths::Transform first, maths::Transform last) @private {
     ContactMotion result = { .first = contact_frame_of(first)!, .last_position = (ContactVector)last.position };
     if (!contact_finite(last.position)) return cloth::CONTACT_PRECISION_EXCEEDED~;
-    result.translation_speed = contact_length(contact_vector_subtract(contact_vector(result.last_position), result.first.position)!)!.max;
+    result.translation_speed = contact_length(
+        value: contact_vector_subtract(contact_vector(result.last_position), result.first.position)!,
+    )!.max;
     if (first.rotation.v == last.rotation.v || first.rotation.v == -last.rotation.v) {
         result.constant_rotation = true;
         return result;
@@ -129,8 +140,11 @@ fn ContactMotion? contact_motion(maths::Transform first, maths::Transform last) 
         uint next = (axis + 1) % 3;
         uint last_axis = (axis + 2) % 3;
         result.axis[axis] = contact_add(
-            contact_subtract(contact_multiply(start[3], end[axis])!, contact_multiply(start[axis], end[3])!)!,
-            contact_subtract(contact_multiply(start[last_axis], end[next])!, contact_multiply(start[next], end[last_axis])!)!,
+            first: contact_subtract(contact_multiply(start[3], end[axis])!, contact_multiply(start[axis], end[3])!)!,
+            second: contact_subtract(
+                first: contact_multiply(start[last_axis], end[next])!,
+                second: contact_multiply(start[next], end[last_axis])!,
+            )!,
         )!;
     }
     ContactInterval axis_length = contact_length(result.axis)!;
@@ -145,8 +159,13 @@ fn ContactMotion? contact_motion(maths::Transform first, maths::Transform last) 
 
 fn ContactFrame? contact_motion_frame(ContactMotion* motion, ContactInterval time) @private {
     ContactFrame result = motion.first;
-    result.position = contact_vector_add(motion.first.position,
-        contact_vector_scale(contact_vector_subtract(contact_vector(motion.last_position), motion.first.position)!, time)!)!;
+    result.position = contact_vector_add(
+        first: motion.first.position,
+        second: contact_vector_scale(
+            value: contact_vector_subtract(contact_vector(motion.last_position), motion.first.position)!,
+            scale: time,
+        )!,
+    )!;
     if (motion.constant_rotation) return result;
     if (motion.small_rotation) {
         double extent = contact_multiply(motion.angle, time)!.max;
@@ -159,13 +178,22 @@ fn ContactFrame? contact_motion_frame(ContactMotion* motion, ContactInterval tim
     ContactFrame relative;
     for (uint row = 0; row < 3; row++) {
         for (uint column = 0; column < 3; column++) {
-            ContactInterval value = contact_multiply(contact_multiply(motion.axis[row], motion.axis[column])!, complement)!;
+            ContactInterval value = contact_multiply(
+                first: contact_multiply(motion.axis[row], motion.axis[column])!,
+                second: complement,
+            )!;
             if (row == column) {
                 value = contact_add(value, rotation.cosine)!;
             } else {
                 uint remaining = 3 - row - column;
                 double sign = (row + 1) % 3 == column ? -1 : 1;
-                value = contact_add(value, contact_multiply(contact_multiply(motion.axis[remaining], rotation.sine)!, contact_value(sign))!)!;
+                value = contact_add(
+                    first: value,
+                    second: contact_multiply(
+                        first: contact_multiply(motion.axis[remaining], rotation.sine)!,
+                        second: contact_value(sign),
+                    )!,
+                )!;
             }
             relative.rotation[3 * row + column] = value;
         }
@@ -174,7 +202,13 @@ fn ContactFrame? contact_motion_frame(ContactMotion* motion, ContactInterval tim
         for (uint column = 0; column < 3; column++) {
             ContactInterval value = contact_value(0);
             for (uint index = 0; index < 3; index++) {
-                value = contact_add(value, contact_multiply(motion.first.rotation[3 * row + index], relative.rotation[3 * index + column])!)!;
+                value = contact_add(
+                    first: value,
+                    second: contact_multiply(
+                        first: motion.first.rotation[3 * row + index],
+                        second: relative.rotation[3 * index + column],
+                    )!,
+                )!;
             }
             result.rotation[3 * row + column] = value;
         }
@@ -190,7 +224,10 @@ fn ContactFrame? contact_motion_leaf(ContactMotion* motion, maths::Transform loc
         for (uint column = 0; column < 3; column++) {
             ContactInterval value = contact_value(0);
             for (uint index = 0; index < 3; index++) {
-                value = contact_add(value, contact_multiply(outer.rotation[row * 3 + index], inner.rotation[index * 3 + column])!)!;
+                value = contact_add(
+                    first: value,
+                    second: contact_multiply(outer.rotation[row * 3 + index], inner.rotation[index * 3 + column])!,
+                )!;
             }
             result.rotation[row * 3 + column] = value;
         }

@@ -454,7 +454,10 @@ fn void ClothState.shift_origin(&self, Vec3 offset) {
     self.path_count = 0;
 }
 
-<* Reset collider observations without changing cloth positions or velocities. *>
+<*
+ Reset collider observations without changing cloth positions or velocities.
+ @param [inout] component : "Borrowed mutably for this call; null or pending is unchanged."
+*>
 fn void reset_contact_history(Cloth* component) {
     if (!component || !component.state) return;
     foreach (&body : component.state.bodies) body.observed = body.published_observed = false;

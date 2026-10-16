@@ -271,7 +271,12 @@ fn usz? gather_cloth_candidates(PhysicsWorld* world, cloth::ClothState* state, V
         if (shape.kind == HEIGHT_FIELD) height_field = collider.shape.height_field()!;
         foreach (particle, position : positions) {
             maths::Aabb query = state.sweep_active
-              ? cloth_swept_query_bounds(state: state, shape_index: (uint)shape_index, particle: (uint)particle, reach: reach)!
+              ? cloth_swept_query_bounds(
+                  state: state,
+                  shape_index: (uint)shape_index,
+                  particle: (uint)particle,
+                  reach: reach,
+              )!
               : contact_query_bounds(&state.frames[shape_index], position, reach)!;
             if (!cloth_bounds_overlap(query, shape.bounds)) continue;
             switch (shape.kind) {
@@ -341,11 +346,16 @@ fn void? sample_cloth_external(
         sample.second_count = 3;
         foreach (index, vertex : candidate.vertices) sample.second[index] = contact_point(frame, vertex)!;
         ContactVector weights = contact_triangle_weights(
-            point: contact_middle(particle), first: contact_middle(sample.second[0]),
-            second: contact_middle(sample.second[1]), third: contact_middle(sample.second[2]),
+            point: contact_middle(particle),
+            first: contact_middle(sample.second[0]),
+            second: contact_middle(sample.second[1]),
+            third: contact_middle(sample.second[2]),
         );
         sample.witness_second = contact_triangle_witness(
-            first: sample.second[0], second: sample.second[1], third: sample.second[2], weights: weights,
+            first: sample.second[0],
+            second: sample.second[1],
+            third: sample.second[2],
+            weights: weights,
         )!;
         return;
     }
@@ -357,8 +367,13 @@ fn void? sample_cloth_external(
         ContactVector edge = contact_middle(sample.second[1]) - first;
         double squared = edge.dot(edge);
         double along = squared > 0 ? math::clamp((contact_middle(particle) - first).dot(edge) / squared, 0.0, 1.0) : 0;
-        sample.witness_second = contact_vector_add(sample.second[0],
-            contact_vector_scale(contact_vector_subtract(sample.second[1], sample.second[0])!, contact_value(along))!)!;
+        sample.witness_second = contact_vector_add(
+            first: sample.second[0],
+            second: contact_vector_scale(
+                value: contact_vector_subtract(sample.second[1], sample.second[0])!,
+                scale: contact_value(along),
+            )!,
+        )!;
         sample.radius = shape.radius;
         return;
     }
@@ -379,11 +394,16 @@ fn void? sample_cloth_external(
         while (edge != first_edge) {
             uint third = edges[edge].origin;
             ContactVector weights = contact_triangle_weights(
-                point: contact_middle(particle), first: contact_middle(sample.second[first]),
-                second: contact_middle(sample.second[second]), third: contact_middle(sample.second[third]),
+                point: contact_middle(particle),
+                first: contact_middle(sample.second[first]),
+                second: contact_middle(sample.second[second]),
+                third: contact_middle(sample.second[third]),
             );
             ContactIntervals witness = contact_triangle_witness(
-                first: sample.second[first], second: sample.second[second], third: sample.second[third], weights: weights,
+                first: sample.second[first],
+                second: sample.second[second],
+                third: sample.second[third],
+                weights: weights,
             )!;
             double upper = contact_length(contact_vector_subtract(particle, witness)!)!.max;
             if (upper < best) {
@@ -407,13 +427,21 @@ fn double? cloth_local_support(
     ContactIntervals axis = contact_vector(normal);
     double support = -double::max;
     if (candidate.kind == TRIANGLE) {
-        foreach (vertex : candidate.vertices) support = math::max(support, contact_dot(axis, contact_vector((ContactVector)vertex))!.max);
+        foreach (vertex : candidate.vertices) support = math::max(
+            x: support,
+            y: contact_dot(axis, contact_vector((ContactVector)vertex))!.max
+        );
         return support;
     }
     if (shape.kind == SPHERE || shape.kind == CAPSULE) {
-        support = math::max(contact_dot(axis, contact_vector((ContactVector)shape.start))!.max,
-            contact_dot(axis, contact_vector((ContactVector)shape.end))!.max);
-        return contact_add(contact_value(support), contact_multiply(contact_length(axis)!, contact_value(shape.radius))!)!.max;
+        support = math::max(
+            x: contact_dot(axis, contact_vector((ContactVector)shape.start))!.max,
+            y: contact_dot(axis, contact_vector((ContactVector)shape.end))!.max
+        );
+        return contact_add(
+            first: contact_value(support),
+            second: contact_multiply(contact_length(axis)!, contact_value(shape.radius))!,
+        )!.max;
     }
     b3::HullData* hull = cloth_contact_hull(world, state, shape)!;
     Vec3* points = (Vec3*)((char*)hull + hull.point_offset);

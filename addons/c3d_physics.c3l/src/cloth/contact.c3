@@ -200,8 +200,12 @@ fn usz? contact_pass(
     }
     if (count) {
         filter_displacement(
-            world: world, state: state, start: state.sweep_start, proposed: positions,
-            begin: state.sweep_end, end: state.sweep_end,
+            world: world,
+            state: state,
+            start: state.sweep_start,
+            proposed: positions,
+            begin: state.sweep_end,
+            end: state.sweep_end,
         )!;
     }
     return count;

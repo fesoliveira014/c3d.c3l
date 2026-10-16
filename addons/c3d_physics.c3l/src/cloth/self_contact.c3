@@ -150,7 +150,12 @@ fn usz? gather_self_candidates(ClothState* state, Vec3[] positions, usz count) @
     foreach (index, position : positions) {
         uint[1] vertices = { (uint)index };
         state.self_primitives[primitive_count++] = {
-            .bounds = self_bounds(state: state, positions: positions, vertices: vertices[..], thickness: thickness,)!,
+            .bounds = self_bounds(
+                state: state,
+                positions: positions,
+                vertices: vertices[..],
+                thickness: thickness,
+            )!,
             .index = (uint)index,
             .kind = VERTEX,
         };
@@ -158,14 +163,24 @@ fn usz? gather_self_candidates(ClothState* state, Vec3[] positions, usz count) @
     foreach (index, edge : state.edges) {
         uint[2] vertices = { edge.first, edge.second };
         state.self_primitives[primitive_count++] = {
-            .bounds = self_bounds(state: state, positions: positions, vertices: vertices[..], thickness: thickness,)!,
+            .bounds = self_bounds(
+                state: state,
+                positions: positions,
+                vertices: vertices[..],
+                thickness: thickness,
+            )!,
             .index = (uint)index,
             .kind = EDGE,
         };
     }
     foreach (index, face : state.faces) {
         state.self_primitives[primitive_count++] = {
-            .bounds = self_bounds(state: state, positions: positions, vertices: face.vertices[..], thickness: thickness,)!,
+            .bounds = self_bounds(
+                state: state,
+                positions: positions,
+                vertices: face.vertices[..],
+                thickness: thickness,
+            )!,
             .index = (uint)index,
             .kind = FACE,
         };

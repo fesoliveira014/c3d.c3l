@@ -242,8 +242,16 @@ fn ClothState* carve_cloth_state(BlockCursor* cursor, ClothCounts counts) @local
         .sweep_start = physics::carve(cursor, Vec3, continuous ? counts.vertices : 0),
         .sweep_bounds = physics::carve(cursor, Aabb, continuous ? counts.vertices : 0),
         .path_heads = physics::carve(cursor, usz, continuous ? counts.vertices : 0),
-        .path_nodes = physics::carve(cursor, ClothPathNode, continuous ? (usz)counts.vertices + 4UL * counts.collisions.max_contacts : 0),
-        .path_values = physics::carve(cursor, ContactIntervals, continuous ? (usz)counts.vertices + 4UL * counts.collisions.max_contacts : 0),
+        .path_nodes = physics::carve(
+            cursor: cursor,
+            $Type: ClothPathNode,
+            count: continuous ? (usz)counts.vertices + 4UL * counts.collisions.max_contacts : 0,
+        ),
+        .path_values = physics::carve(
+            cursor: cursor,
+            $Type: ContactIntervals,
+            count: continuous ? (usz)counts.vertices + 4UL * counts.collisions.max_contacts : 0,
+        ),
         .body_motions = physics::carve(cursor, ContactMotion, continuous ? counts.bodies : 0),
     };
     if (!cursor.base) return null;

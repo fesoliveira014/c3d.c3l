@@ -574,15 +574,30 @@ fn void? build_fast(Demo* demo) @local {
     const uint COLUMNS = 4;
     const uint ROWS = 2;
     @pool() {
-        Geometry patch = cloth_grid(allocator: tmem, columns: COLUMNS, rows: ROWS, width: 1.4f, height: 0.7f,);
+        Geometry patch = cloth_grid(
+            allocator: tmem,
+            columns: COLUMNS,
+            rows: ROWS,
+            width: 1.4f,
+            height: 0.7f,
+        );
         foreach (&position : patch.positions) *position = { 0.4f + position.x, 0, position.y + 0.35f };
         patch.compute_normals(tmem);
         patch.finalize();
         MaterialId fabric = cloth_material(&demo.assets, { 0.95f, 0.32f, 0.06f, 1 })!;
         demo.fast = demo.scene.add_mesh(demo.assets.add_geometry(&patch)!, fabric, name: "continuous cloth")!;
         demo.scene.get(demo.fast, scene::Mesh).trace = demo.traced;
-        Geometry bar = geometry::box(allocator: tmem, width: 4, height: 0.1f, depth: 1.2f,);
-        MaterialId metal = demo.assets.add_material(material::standard({ .base_color = { 0.14f, 0.28f, 0.44f, 1 }, .roughness = 0.4f, .metallic = 0.3f }))!;
+        Geometry bar = geometry::box(
+            allocator: tmem,
+            width: 4,
+            height: 0.1f,
+            depth: 1.2f,
+        );
+        MaterialId metal = demo.assets.add_material(
+            material: material::standard(
+                params: { .base_color = { 0.14f, 0.28f, 0.44f, 1 }, .roughness = 0.4f, .metallic = 0.3f },
+            ),
+        )!;
         demo.fast_body = demo.scene.add_mesh(demo.assets.add_geometry(&bar)!, metal, name: "sweeping thin box")!;
         demo.fast_body.local.rotation = quaternion::from_axis_angle((Vec3){ 0, 0, 1 }, -(float)math::PI / 4);
         demo.scene.update_world();
@@ -594,7 +609,8 @@ fn void? build_fast(Demo* demo) @local {
 
 fn void? attach_fast(Demo* demo) @local {
     demo.physics.teleport(
-        node: demo.fast_body, position: {},
+        node: demo.fast_body,
+        position: {},
         rotation: quaternion::from_axis_angle((Vec3){ 0, 0, 1 }, -(float)math::PI / 4),
     );
     demo.scene.update_world();
@@ -1037,12 +1053,28 @@ fn void? run_benchmark(Options options) @local {
     ClothStats stats = demo.physics.cloth_stats;
     io::printfn("adapter,%s", renderer.adapter_name);
     io::printfn("scene,%s,simulated,%s", SCENARIO_NAMES[options.scenario.ordinal], demo.simulated);
-    io::printfn("contacts,%s,candidates,%d,contacts,%d,failed,%d,residual_m,%.8f", demo.fast ? "continuous" : "discrete", stats.candidates, stats.contacts, stats.failed, stats.max_residual);
-    if (demo.fast) io::printfn("continuous_impacts,%d,ccd_iterations_last_update,%d", demo.fast_impacts, stats.ccd_iterations);
+    io::printfn(
+        "contacts,%s,candidates,%d,contacts,%d,failed,%d,residual_m,%.8f",
+        demo.fast ? "continuous" : "discrete",
+        stats.candidates,
+        stats.contacts,
+        stats.failed,
+        stats.max_residual
+    );
+    if (demo.fast) io::printfn(
+        "continuous_impacts,%d,ccd_iterations_last_update,%d",
+        demo.fast_impacts,
+        stats.ccd_iterations
+    );
     io::printfn("publication,%s", demo.whole_publication ? "whole" : "streams");
     io::printfn("resolution,%dx%d,particles,%d,constraints,%d", WIDTH, HEIGHT, stats.particles, stats.constraints);
-    io::printfn("frames,%d,warmup,%d,substeps,%d,iterations,%d", MEASURED_FRAMES, WARMUP_FRAMES,
-        demo.fast ? 1 : cloth::DEFAULT_CLOTH_SUBSTEPS, demo.fast ? 1 : cloth::DEFAULT_CLOTH_ITERATIONS);
+    io::printfn(
+        "frames,%d,warmup,%d,substeps,%d,iterations,%d",
+        MEASURED_FRAMES,
+        WARMUP_FRAMES,
+        demo.fast ? 1 : cloth::DEFAULT_CLOTH_SUBSTEPS,
+        demo.fast ? 1 : cloth::DEFAULT_CLOTH_ITERATIONS
+    );
     io::printfn("solve_ms,mean,%.4f,p95,%.4f", mean(solve_ms[..]), percentile(solve_ms[..], PERCENTILE_95));
     io::printfn("publish_ms,mean,%.4f,p95,%.4f", mean(publish_ms[..]), percentile(publish_ms[..], PERCENTILE_95));
     io::printfn("upload_bytes_per_frame,%.0f", (double)upload_bytes / MEASURED_FRAMES);

@@ -34,8 +34,16 @@ fn void? prepare_body_motions(ClothState* state, bool publication) @private {
 }
 
 fn ContactInterval? path_body_time(ClothState* state, ContactInterval time) @local {
-    return physics::contact_add(physics::contact_value(state.sweep_begin), physics::contact_multiply(
-        physics::contact_subtract(physics::contact_value(state.sweep_end), physics::contact_value(state.sweep_begin))!, time)!)!;
+    return physics::contact_add(
+        first: physics::contact_value(state.sweep_begin),
+        second: physics::contact_multiply(
+            first: physics::contact_subtract(
+                first: physics::contact_value(state.sweep_end),
+                second: physics::contact_value(state.sweep_begin),
+            )!,
+            second: time,
+        )!,
+    )!;
 }
 
 fn ContactFrame? path_shape_frame(ClothState* state, uint shape_index, ContactInterval time) @private {
@@ -49,13 +57,26 @@ fn double? path_shape_speed(ClothState* state, uint shape_index, bool centre_onl
     ContactIntervals extent = physics::contact_vector((ContactVector)shape.local.position);
     double radius = physics::contact_length(extent)!.max;
     if (!centre_only) {
-        ContactVector reach = math::max(math::abs((ContactVector)shape.bounds.min), math::abs((ContactVector)shape.bounds.max));
-        radius = physics::contact_add(physics::contact_value(radius), physics::contact_length(physics::contact_vector(reach))!)!.max;
+        ContactVector reach = math::max(
+            x: math::abs((ContactVector)shape.bounds.min),
+            y: math::abs((ContactVector)shape.bounds.max)
+        );
+        radius = physics::contact_add(
+            first: physics::contact_value(radius),
+            second: physics::contact_length(physics::contact_vector(reach))!,
+        )!.max;
     }
-    ContactInterval speed = physics::contact_add(physics::contact_value(motion.translation_speed),
-        physics::contact_multiply(physics::contact_value(motion.angular_speed), physics::contact_value(radius))!)!;
-    return physics::contact_multiply(speed,
-        physics::contact_subtract(physics::contact_value(state.sweep_end), physics::contact_value(state.sweep_begin))!)!.max;
+    ContactInterval speed = physics::contact_add(
+        first: physics::contact_value(motion.translation_speed),
+        second: physics::contact_multiply(physics::contact_value(motion.angular_speed), physics::contact_value(radius))!,
+    )!;
+    return physics::contact_multiply(
+        first: speed,
+        second: physics::contact_subtract(
+            first: physics::contact_value(state.sweep_end),
+            second: physics::contact_value(state.sweep_begin),
+        )!,
+    )!.max;
 }
 
 fn void? evaluate_paths(ClothState* state, ContactInterval time) @private {
@@ -64,17 +85,30 @@ fn void? evaluate_paths(ClothState* state, ContactInterval time) @private {
         ContactIntervals value;
         switch (node.kind) {
             case LINEAR:
-                value = physics::contact_vector_add(physics::contact_vector(node.start), physics::contact_vector_scale(
-                    physics::contact_vector_subtract(physics::contact_vector(node.end), physics::contact_vector(node.start))!, time)!)!;
+                value = physics::contact_vector_add(
+                    first: physics::contact_vector(node.start),
+                    second: physics::contact_vector_scale(
+                        value: physics::contact_vector_subtract(
+                            first: physics::contact_vector(node.end),
+                            second: physics::contact_vector(node.start),
+                        )!,
+                        scale: time,
+                    )!,
+                )!;
             case OFFSET:
                 ContactInterval progress = physics::contact_divide(
-                    physics::contact_subtract(time, physics::contact_value(node.begin))!,
-                    physics::contact_subtract(physics::contact_value(1), physics::contact_value(node.begin))!,
+                    numerator: physics::contact_subtract(time, physics::contact_value(node.begin))!,
+                    denominator: physics::contact_subtract(
+                        first: physics::contact_value(1),
+                        second: physics::contact_value(node.begin),
+                    )!,
                 )!;
                 progress.min = math::max(0.0, progress.min);
                 progress.max = math::max(0.0, progress.max);
-                value = physics::contact_vector_add(state.path_values[node.parent],
-                    physics::contact_vector_scale(physics::contact_vector(node.end), progress)!)!;
+                value = physics::contact_vector_add(
+                    first: state.path_values[node.parent],
+                    second: physics::contact_vector_scale(physics::contact_vector(node.end), progress)!,
+                )!;
             case PLANE:
                 value = state.path_values[node.parent];
                 ContactIntervals normal = physics::contact_vector(node.normal);
@@ -84,12 +118,20 @@ fn void? evaluate_paths(ClothState* state, ContactInterval time) @private {
                     normal = physics::contact_rotate(&frame, normal)!;
                     centre = frame.position;
                 }
-                ContactInterval gap = physics::contact_subtract(physics::contact_value(node.level),
-                    physics::contact_dot(normal, physics::contact_vector_subtract(value, centre)!)!)!;
+                ContactInterval gap = physics::contact_subtract(
+                    first: physics::contact_value(node.level),
+                    second: physics::contact_dot(normal, physics::contact_vector_subtract(value, centre)!)!,
+                )!;
                 gap.min = math::max(0.0, gap.min);
                 gap.max = math::max(0.0, gap.max);
-                ContactInterval squared = physics::contact_dot(physics::contact_vector(node.normal), physics::contact_vector(node.normal))!;
-                value = physics::contact_vector_add(value, physics::contact_vector_scale(normal, physics::contact_divide(gap, squared)!)!)!;
+                ContactInterval squared = physics::contact_dot(
+                    first: physics::contact_vector(node.normal),
+                    second: physics::contact_vector(node.normal),
+                )!;
+                value = physics::contact_vector_add(
+                    first: value,
+                    second: physics::contact_vector_scale(normal, physics::contact_divide(gap, squared)!)!,
+                )!;
         }
         state.path_values[index] = value;
     }
@@ -122,8 +164,12 @@ fn void? start_paths(
             .kind = LINEAR,
             .start = (ContactVector)position,
             .end = (ContactVector)end[index],
-            .speed = physics::contact_length(physics::contact_vector_subtract(
-                physics::contact_vector((ContactVector)end[index]), physics::contact_vector((ContactVector)position))!)!.max,
+            .speed = physics::contact_length(
+                value: physics::contact_vector_subtract(
+                    first: physics::contact_vector((ContactVector)end[index]),
+                    second: physics::contact_vector((ContactVector)position),
+                )!,
+            )!.max,
         };
         state.path_heads[index] = (usz)index;
     }
@@ -153,11 +199,21 @@ fn void? append_plane_path(
         node.level = physics::contact_add(physics::contact_value(node.support), physics::contact_value(offset))!.max;
     } else {
         frame = path_shape_frame(state, candidate.shape, physics::contact_value(time))!;
-        node.normal = physics::contact_middle(physics::contact_inverse_rotate(&frame, physics::contact_vector(direction))!);
+        node.normal = physics::contact_middle(
+            value: physics::contact_inverse_rotate(&frame, physics::contact_vector(direction))!,
+        );
         ContactInterval length = physics::contact_length(physics::contact_vector(node.normal))!;
         if (!(length.min > 0)) return CONTACT_PRECISION_EXCEEDED~;
-        node.support = physics::cloth_local_support(world: world, state: state, candidate: &candidate, normal: node.normal,)!;
-        node.level = physics::contact_add(physics::contact_value(node.support), physics::contact_multiply(physics::contact_value(offset), length)!)!.max;
+        node.support = physics::cloth_local_support(
+            world: world,
+            state: state,
+            candidate: &candidate,
+            normal: node.normal,
+        )!;
+        node.level = physics::contact_add(
+            first: physics::contact_value(node.support),
+            second: physics::contact_multiply(physics::contact_value(offset), length)!,
+        )!.max;
     }
     evaluate_paths(state, physics::contact_value(0))!;
     ContactIntervals normal = physics::contact_vector(node.normal);
@@ -175,17 +231,29 @@ fn void? append_plane_path(
     if (candidate.kind != GROUND) {
         evaluate_paths(state, { .min = 0, .max = 1 })!;
         frame = path_shape_frame(state, candidate.shape, { .min = 0, .max = 1 })!;
-        double radius = physics::contact_length(physics::contact_vector_subtract(state.path_values[parent], frame.position)!)!.max;
+        double radius = physics::contact_length(
+            value: physics::contact_vector_subtract(state.path_values[parent], frame.position)!,
+        )!.max;
         double length = physics::contact_length(physics::contact_vector(node.normal))!.min;
         double centre_speed = path_shape_speed(state, candidate.shape, true)!;
-        double angular = physics::contact_multiply(physics::contact_value(state.body_motions[state.shapes[candidate.shape].body].angular_speed),
-            physics::contact_subtract(physics::contact_value(state.sweep_end), physics::contact_value(state.sweep_begin))!)!.max;
+        double angular = physics::contact_multiply(
+            first: physics::contact_value(state.body_motions[state.shapes[candidate.shape].body].angular_speed),
+            second: physics::contact_subtract(
+                first: physics::contact_value(state.sweep_end),
+                second: physics::contact_value(state.sweep_begin),
+            )!,
+        )!.max;
         ContactInterval lever = physics::contact_add(
-            physics::contact_divide(physics::contact_value(math::abs(node.level)), physics::contact_value(length))!,
-            physics::contact_multiply(physics::contact_value(radius), physics::contact_value(2))!,
+            first: physics::contact_divide(
+                numerator: physics::contact_value(math::abs(node.level)),
+                denominator: physics::contact_value(length),
+            )!,
+            second: physics::contact_multiply(physics::contact_value(radius), physics::contact_value(2))!,
         )!;
-        node.speed = physics::contact_add(physics::contact_add(physics::contact_value(node.speed), physics::contact_value(centre_speed))!,
-            physics::contact_multiply(physics::contact_value(angular), lever)!)!.max;
+        node.speed = physics::contact_add(
+            first: physics::contact_add(physics::contact_value(node.speed), physics::contact_value(centre_speed))!,
+            second: physics::contact_multiply(physics::contact_value(angular), lever)!,
+        )!.max;
     }
     state.path_nodes[state.path_count] = node;
     state.path_heads[candidate.particle] = state.path_count++;
@@ -199,8 +267,10 @@ fn void? append_offset_path(
 ) @private {
     if (state.path_count == state.path_nodes.len) return c3d::CAPACITY_EXCEEDED~;
     usz parent = state.path_heads[particle];
-    ContactInterval speed = physics::contact_divide(physics::contact_length(physics::contact_vector(displacement))!,
-        physics::contact_subtract(physics::contact_value(1), physics::contact_value(begin))!)!;
+    ContactInterval speed = physics::contact_divide(
+        numerator: physics::contact_length(physics::contact_vector(displacement))!,
+        denominator: physics::contact_subtract(physics::contact_value(1), physics::contact_value(begin))!,
+    )!;
     state.path_nodes[state.path_count] = {
         .kind = OFFSET,
         .parent = parent,
