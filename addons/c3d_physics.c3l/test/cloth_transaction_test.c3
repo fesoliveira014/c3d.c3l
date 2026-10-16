@@ -6,9 +6,14 @@ import c3d::geometry;
 import c3d::physics;
 import c3d::physics::cloth;
 import c3d::scene;
+import std::io;
 import std::math;
 import std::math::quaternion;
 import std::core::mem::allocators;
+
+const sz CAPTURE_POOL_BYTES @private = 4096;
+const sz CAPTURE_VMEM_BYTES @private = 64 * mem::KB;
+const uint CAPTURE_SHAPE_LIMIT @private = 1024;
 
 fn Node* bounded_probe(
     Fixture* fixture,
@@ -27,6 +32,44 @@ fn Node* bounded_probe(
     return node;
 }
 
+fn fault prepare_with_small_capture_pool(
+    Fixture* fixture,
+    Node* node,
+    ClothDesc desc,
+    bool eager,
+) @private {
+    // Small topology scratch fits; the shape capture exceeds this owned pool.
+    char[2 * CAPTURE_POOL_BYTES] storage;
+    ArenaAllocator backing;
+    backing.init(storage[..]);
+    TempAllocator* pool = allocators::new_temp_allocator(
+        allocator: &backing,
+        size: CAPTURE_POOL_BYTES,
+        reserve: 64,
+        min_size: CAPTURE_POOL_BYTES / 8,
+        realloc_size: CAPTURE_POOL_BYTES,
+    )!!;
+    defer pool.free();
+    Allocator previous = allocators::current_temp;
+    TempAllocator* previous_top = allocators::top_temp;
+    allocators::top_temp = pool;
+    allocators::current_temp = pool;
+    defer {
+        allocators::current_temp = previous;
+        allocators::top_temp = previous_top;
+    }
+    $if $feat(VMEM_TEMP):
+        TempAllocator* child = pool.derive_allocator()!!;
+        child.vmem.free();
+        child.vmem.init(CAPTURE_VMEM_BYTES, CAPTURE_VMEM_BYTES)!!;
+        assert(ClothShape::size * desc.collisions.max_shapes > child.vmem.memory.size);
+    $else
+        assert(ClothShape::size * desc.collisions.max_shapes > storage.len);
+    $endif
+    if (eager) return @catch(fixture.scene.add_cloth(&fixture.assets, node, desc));
+    return @catch(cloth::prepare(&fixture.scene, &fixture.assets, node));
+}
+
 fn void test_cloth_contact_capacity_rollback_and_recovery() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
@@ -38,6 +81,13 @@ fn void test_cloth_contact_capacity_rollback_and_recovery() @test {
     Node* body = add_body_node(&fixture, colliders[:1], kind: STATIC);
     Entity[1] owners = { body.id };
     Node* independent = add_probe(&fixture, { 10, 0.5f, 0 }, {});
+    GeometryId contact_plane;
+    @pool() {
+        Geometry plane = geometry::plane(tmem, 2, 2);
+        foreach (&position : plane.positions) position.y = 0.1f;
+        plane.finalize();
+        contact_plane = fixture.assets.add_geometry(&plane)!!;
+    };
     ClothState* continuing = state_of(&fixture, independent);
     continuing.velocities[0] = { 1, 0, 0 };
 
@@ -73,6 +123,11 @@ fn void test_cloth_contact_capacity_rollback_and_recovery() @test {
         assert(tracker.total_allocation_count() == allocations);
         assert(state.contact_result.failure == c3d::CAPACITY_EXCEEDED);
         assert(state.contact_result.stage == (capacity_case == 0 ? ClothContactStage.CANDIDATES : ClothContactStage.CONTACTS));
+        assert(state.contact_result.candidates == (capacity_case == 0 ? 1 : 2));
+        assert(state.contact_result.peak_candidates == (capacity_case == 0 ? 1 : 2));
+        assert(state.contact_result.contacts == (capacity_case == 0 ? 0 : 1));
+        assert(state.contact_result.peak_contacts == (capacity_case == 0 ? 0 : 1));
+        assert(state.contact_result.unresolved == (capacity_case == 0 ? 0 : 2));
         assert(fixture.physics.cloth_stats.failed == 1 && continuing.positions[0].x > other_x);
         foreach (index, value : solved) {
             assert(state.positions[index] == value && state.velocities[index] == velocities[index]);
@@ -86,6 +141,16 @@ fn void test_cloth_contact_capacity_rollback_and_recovery() @test {
         assert(geometry_of(&fixture, probe).header.revision == revision);
 
         if (capacity_case == 0) {
+            fixture.physics.remove_body(body);
+            ColliderDesc mesh = physics::default_collider_desc(MESH);
+            mesh.geometry = contact_plane;
+            fixture.physics.add_body(body, physics::default_body_desc(STATIC), (&mesh)[:1])!!;
+            publish(&fixture);
+            assert(state.contact_result.failure == c3d::CAPACITY_EXCEEDED);
+            assert(state.contact_result.stage == ClothContactStage.CANDIDATES);
+            assert(state.contact_result.candidates == 1 && state.contact_result.peak_candidates == 1);
+            assert(state.contact_result.contacts == 0 && state.contact_result.peak_contacts == 0);
+            assert(geometry_of(&fixture, probe).header.revision == revision);
             probe.local.position.x = 2;
             publish(&fixture);
             assert(state.contact_result.failure == c3d::CAPACITY_EXCEEDED);
@@ -330,4 +395,101 @@ fn void test_cloth_mesh_asymmetric_bounds_keep_near_edge_contact() @test {
     ClothState* tiny_state = state_of(&fixture, tiny);
     assert(!tiny_state.contact_result.failure && tiny_state.contact_result.contacts > 0);
     assert(math::abs(published_world(&fixture, tiny, 0).y) >= 0.01f - CONTACT_TOLERANCE);
+}
+
+fn void test_cloth_zero_step_box_uses_exact_final_endpoint() @test {
+    Fixture fixture;
+    setup(&fixture, weightless());
+    defer teardown(&fixture);
+    ColliderDesc box = physics::default_collider_desc(BOX);
+    box.half_extents = { 0.5f, 0.5f, 0.5f };
+    Node* body = add_body_node(&fixture, (&box)[:1], { 65536, 0, 0 }, STATIC);
+    Entity[1] owners = { body.id };
+    Node* probe = bounded_probe(
+        fixture: &fixture,
+        point: { -0.409f, 0, 0 },
+        colliders: owners[..],
+        collisions: cloth::default_cloth_collision_desc(),
+    );
+    publish(&fixture);
+    ClothState* state = state_of(&fixture, probe);
+    assert(!state.contact_result.failure && state.bodies[0].solved.position.x == 65536);
+    Vec3 solved = state.positions[0];
+    Vec3 velocity = state.velocities[0];
+    fixture.physics.update(0);
+    body.local.position.x = 0.1f;
+    fixture.scene.update_world();
+    fixture.physics.update_cloths();
+    Vec3 output = published_world(&fixture, probe, 0);
+    double separation = (double)body.local.position.x - box.half_extents.x - output.x;
+    io::printfn("endpoint_case,solved_x,%.9f,current_x,%.9f,contact_frame_x,%.9f,published_x,%.9f,separation,%.9f",
+        state.bodies[0].solved.position.x, body.local.position.x, state.shape_starts[0].x, output.x, separation);
+    assert(!state.contact_result.failure);
+    assert(separation >= (double)state.desc.thickness - state.desc.collisions.contact_tolerance);
+    assert(state.shape_starts[0].x == body.local.position.x);
+    assert(state.positions[0] == solved && state.velocities[0] == velocity);
+    assert(state.bodies[0].solved.position.x == 65536);
+}
+
+fn void test_cloth_capture_scratch_failure_preserves_pending_and_eager_ownership() @test {
+    TrackingAllocator tracking;
+    tracking.init(mem);
+    defer tracking.free();
+    Fixture fixture;
+    setup(&fixture, desc: weightless(), allocator: &tracking);
+    defer {
+        teardown(&fixture);
+        assert(!tracking.has_leaks());
+    }
+    GeometryId source = add_grid(&fixture, 1);
+    Node* pending_node = add_cloth_node(&fixture, source);
+    Node* eager_node = add_cloth_node(&fixture, source);
+    fixture.scene.get(pending_node, scene::Mesh).vertex_motion = true;
+    uint[2] pins = { 0, 1 };
+    ClothDesc desc = pinned_desc(pins[..]);
+    desc.collisions.max_shapes = CAPTURE_SHAPE_LIMIT;
+    fixture.scene.attach_cloth(&fixture.assets, pending_node, desc)!!;
+    Cloth* pending = fixture.scene.get(pending_node, Cloth);
+    ClothAuthoring* authoring = pending.authoring;
+    uint geometries = fixture.assets.geometries.free_count;
+    uint nodes = fixture.scene.world.entities.free_count;
+    uint revision = fixture.assets.geometry(source).header.revision;
+    Allocator previous_temp = allocators::current_temp;
+    TempAllocator* previous_top = allocators::top_temp;
+    assert(prepare_with_small_capture_pool(
+        fixture: &fixture,
+        node: pending_node,
+        desc: desc,
+        eager: false,
+    ) == c3d::CAPACITY_EXCEEDED);
+    assert(allocators::current_temp.ptr == previous_temp.ptr && allocators::top_temp == previous_top);
+    assert(!pending.is_prepared() && pending.authoring == authoring);
+    assert(authoring.desc.collisions.max_shapes == CAPTURE_SHAPE_LIMIT && authoring.desc.pins == pins[..]);
+    assert(c3d::same_id(fixture.scene.get(pending_node, scene::Mesh).geometry, source));
+    assert(fixture.scene.get(pending_node, scene::Mesh).vertex_motion);
+    assert(fixture.assets.geometries.free_count == geometries && fixture.scene.world.entities.free_count == nodes);
+    assert(fixture.assets.geometry(source).header.revision == revision);
+
+    assert(prepare_with_small_capture_pool(
+        fixture: &fixture,
+        node: eager_node,
+        desc: desc,
+        eager: true,
+    ) == c3d::CAPACITY_EXCEEDED);
+    assert(allocators::current_temp.ptr == previous_temp.ptr && allocators::top_temp == previous_top);
+    assert(!fixture.scene.has(eager_node, Cloth) && fixture.scene.count(Cloth) == 1);
+    assert(c3d::same_id(fixture.scene.get(eager_node, scene::Mesh).geometry, source));
+    assert(!fixture.scene.get(eager_node, scene::Mesh).vertex_motion);
+    assert(fixture.assets.geometries.free_count == geometries && fixture.scene.world.entities.free_count == nodes);
+    assert(pending.authoring == authoring && !pending.is_prepared());
+    $if $feat(VMEM_TEMP):
+        io::printn("capture_scratch_backend,vmem");
+    $else
+        io::printn("capture_scratch_backend,fixed_arena");
+    $endif
+
+    cloth::prepare(&fixture.scene, &fixture.assets, pending_node)!!;
+    fixture.scene.add_cloth(&fixture.assets, eager_node, desc)!!;
+    assert(pending.is_prepared() && fixture.scene.get(eager_node, Cloth).is_prepared());
+    assert(pending.authoring == authoring);
 }

@@ -235,6 +235,10 @@ fn b3::Aabb? cloth_field_query_bounds(maths::Aabb query, maths::Aabb bounds, Vec
 
 fn usz? gather_cloth_candidates(PhysicsWorld* world, cloth::ClothState* state, Vec3[] positions) @private {
     usz count;
+    defer {
+        state.contact_result.candidates += (uint)count;
+        state.contact_result.peak_candidates = math::max(state.contact_result.peak_candidates, (uint)count);
+    }
     double reach = (double)state.desc.thickness + state.desc.collisions.contact_tolerance;
     foreach (position : positions) {
         if (!contact_finite(position)) return cloth::CONTACT_PRECISION_EXCEEDED~;

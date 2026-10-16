@@ -25,8 +25,8 @@ fn void? check_collider_owners(Scene* scene, Entity[] owners) @private {
 fn ClothCapture? capture_colliders(Scene* scene, Entity[] owners, uint max_shapes) @private {
     check_collider_owners(scene, owners)!;
     ClothCapture capture = {
-        .bodies = alloc::new_array(tmem, ClothBody, (sz)owners.len),
-        .shapes = alloc::new_array(tmem, ClothShape, (sz)max_shapes),
+        .bodies = alloc::new_array_try(tmem, ClothBody, (sz)owners.len) ?? c3d::CAPACITY_EXCEEDED~!,
+        .shapes = alloc::new_array_try(tmem, ClothShape, (sz)max_shapes) ?? c3d::CAPACITY_EXCEEDED~!,
     };
     usz count;
     foreach (index, owner : owners) {
@@ -130,6 +130,8 @@ fn void finish_body_poses(ClothState* state) @private {
 }
 
 fn maths::Transform interpolate_body(maths::Transform solved, maths::Transform current, float progress) @local {
+    if (progress == 0) return solved;
+    if (progress == 1) return current;
     return {
         .position = solved.position + (current.position - solved.position) * progress,
         .rotation = solved.rotation.slerp(current.rotation, progress),

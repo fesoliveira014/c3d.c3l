@@ -125,13 +125,15 @@ fn usz? contact_pass(
     ClothContactResult* result = &state.contact_result;
     result.stage = ClothContactStage.CANDIDATES;
     usz candidates = physics::gather_cloth_candidates(world, state, positions)!;
-    result.candidates += (uint)candidates;
-    result.peak_candidates = math::max(result.peak_candidates, (uint)candidates);
     result.stage = ClothContactStage.CONTACTS;
     result.max_residual = 0;
     result.unresolved = 0;
     result.pinned_overlaps = 0;
     usz count;
+    defer {
+        result.contacts += (uint)count;
+        result.peak_contacts = math::max(result.peak_contacts, (uint)count);
+    }
     foreach (index, &candidate : state.candidates[:candidates]) {
         bool pinned = state.inverse_masses[candidate.particle] == 0;
         ContactProjection projection = evaluate_contact(
@@ -155,8 +157,6 @@ fn usz? contact_pass(
             .corrected = projection.corrected,
         };
     }
-    result.contacts += (uint)count;
-    result.peak_contacts = math::max(result.peak_contacts, (uint)count);
     if (!apply) return count;
 
     foreach (&contact : state.contacts[:count]) {
