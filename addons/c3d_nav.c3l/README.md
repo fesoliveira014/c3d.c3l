@@ -244,7 +244,7 @@ the whole XZ replacement set atomically. Neighboring precision tiles require the
 pitch, subdivision, clearance mode and error.
 
 Precision arithmetic requires IEEE binary64 round-to-nearest operations with gradual underflow.
-Consumers select `"fp-math": "strict"` in their `project.json`, or pass `--fp-math strict` to
+Consumers select `"fp-math": "strict"` in their `project.json`, or pass `--fp-math=strict` to
 `c3c`. The package's example and test project sets this option. The existing builder scratch
 capacities also bound fragment clipping, clearance queues and polygonization; callers can increase
 `slot_scratch_bytes`, `cache_scratch_bytes`, or the grid builder's `scratch_bytes` when needed.
