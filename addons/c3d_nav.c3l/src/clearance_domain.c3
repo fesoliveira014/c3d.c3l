@@ -36,8 +36,10 @@ struct ClearanceWork @private {
 fn ClearanceWork? create_clearance_work(Allocator allocator, usz face_count) @private {
     uint[]? queue = alloc::alloc_array_try(allocator, uint, (sz)face_count);
     if (catch queue) return c3d::CAPACITY_EXCEEDED~;
+
     uint[]? seen = alloc::new_array_try(allocator, uint, (sz)face_count);
     if (catch seen) return c3d::CAPACITY_EXCEEDED~;
+
     return { .queue = queue, .seen = seen };
 }
 

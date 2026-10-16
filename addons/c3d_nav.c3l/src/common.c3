@@ -67,7 +67,11 @@ fn Vec3 random_point_in_convex_poly(Vec3[] points, float s, float t) {
 
 fn float perp_2d(Vec3 u, Vec3 v) @private => u.z * v.x - u.x * v.z;
 
-fn Vec3 lerp_point(Vec3 from, Vec3 to, float t) @private => from + (to - from) * t;
+fn Vec3 lerp_point(Vec3 from, Vec3 to, float t) @private {
+    if (t == 0) return from;
+    if (t == 1) return to;
+    return from + (to - from) * t;
+}
 
 fn bool same_point(Vec3 first, Vec3 second) @private {
     Vec3 delta = second - first;

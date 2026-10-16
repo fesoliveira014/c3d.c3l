@@ -118,6 +118,38 @@ fn void test_clearance_partial_climb_portal() @test {
     assert(wall.t < 1 && wall.path_count > 0);
 }
 
+fn void test_clearance_portal_keeps_shared_stored_endpoint() @test {
+    NavBuildConfig config = clearance_grid_config();
+    config.tile_size = 1;
+    config.agent_radius = 0;
+    GridFixture* fixture = clearance_grid_fixture(config, { 0, 0, 0.1f });
+    defer destroy_grid_fixture(fixture);
+    lay_floor(&fixture.map, { 0, 0, 3, 3 }, open_floor(0));
+    install_grid_tile(fixture, 0, 0);
+    install_grid_tile(fixture, 1, 0);
+    Vec3 first = { 0.5f, 0, 0.35f };
+    Vec3 last = { 1.5f, 0, 0.35f };
+    NearestPoly first_nearest = grid_nearest(fixture, first);
+    NearestPoly last_nearest = grid_nearest(fixture, last);
+    assert(first_nearest.point.z == first.z && last_nearest.point.z == last.z);
+    RaycastHit forward = fixture.query.raycast(
+        start_ref: first_nearest.ref,
+        start: first,
+        end: last,
+        filter: &fixture.filter,
+        out_path: fixture.path[..],
+    )!!;
+    RaycastHit reverse = fixture.query.raycast(
+        start_ref: last_nearest.ref,
+        start: last,
+        end: first,
+        filter: &fixture.filter,
+        out_path: fixture.path[..],
+    )!!;
+    assert(forward.t > 1 && reverse.t > 1);
+    assert(forward.path_count == 2 && reverse.path_count == 2);
+}
+
 fn void test_clearance_analytic_grid_core() @test {
     NavBuildConfig config = clearance_grid_config();
     GridFixture* fixture = clearance_grid_fixture(config);
