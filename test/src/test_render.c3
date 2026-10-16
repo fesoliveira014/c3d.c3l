@@ -295,6 +295,32 @@ fn void test_write_geometry_block_fills_the_root() @test {
     };
 }
 
+fn void test_write_geometry_block_zeros_absent_morph_streams() @test {
+    @pool() {
+        Geometry quad = make_quad(tmem);
+        quad.targets = alloc::new_array(tmem, MorphTarget, 2);
+        quad.targets[0].position_deltas = alloc::new_array(tmem, Vec3, quad.positions.len);
+        quad.targets[0].position_deltas[..] = (Vec3){ 0.25f, 0.5f, 0.75f };
+        quad.targets[1].normal_deltas = alloc::new_array(tmem, Vec3, quad.positions.len);
+        quad.targets[1].normal_deltas[..] = (Vec3){ 0.125f, 0.25f, 0.5f };
+        render::GeometryLayout layout = render::geometry_layout(&quad);
+        char[] block = alloc::new_array(tmem, char, (sz)layout.total_bytes);
+        block[..] = 0x7f;
+        render::write_geometry_block(
+            block: block,
+            geometry: &quad,
+            layout: &layout,
+            base: (gpu::GpuAddress)0x1000,
+        );
+
+        usz target_bytes = quad.positions.len * Vec3::size;
+        assert(mem::equals(&block[layout.morph_deltas], (char*)quad.targets[0].position_deltas.ptr, (sz)target_bytes));
+        assert(mem::equals(&block[layout.morph_deltas + 3 * target_bytes], (char*)quad.targets[1].normal_deltas.ptr,
+            (sz)target_bytes));
+        foreach (value : block[layout.morph_deltas + target_bytes:2 * target_bytes]) assert(value == 0);
+    };
+}
+
 fn ulong key_of(uint fragment, uint material, uint geometry, float depth, uint vertex_flags = 0) @local {
     return render::draw_sort_key(
         vertex:    { .shader = MESH, .flags = vertex_flags },

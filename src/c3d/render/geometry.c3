@@ -185,6 +185,7 @@ fn GeometryLayout geometry_layout_from_width(Geometry* geometry, bool joints_u16
 
 <*
  Write the root and every packed stream of the geometry into the block.
+ Missing morph streams are written as zero deltas.
  @param block : "At least layout.total_bytes long."
  @param [&in] geometry : "The geometry the layout was computed from."
  @param [&in] layout : "Computed from the same geometry."
@@ -211,11 +212,19 @@ fn void write_geometry_block(char[] block, Geometry* geometry, GeometryLayout* l
         usz target_bytes = PACKED_VEC3_BYTES * layout.vertex_count;
         usz offset = layout.morph_deltas;
         foreach (&target : geometry.targets) {
-            copy_stream(block, offset, target.position_deltas);
+            if (target.position_deltas.len) {
+                copy_stream(block, offset, target.position_deltas);
+            } else {
+                block[offset:target_bytes] = 0;
+            }
             offset += target_bytes;
         }
         foreach (&target : geometry.targets) {
-            copy_stream(block, offset, target.normal_deltas);
+            if (target.normal_deltas.len) {
+                copy_stream(block, offset, target.normal_deltas);
+            } else {
+                block[offset:target_bytes] = 0;
+            }
             offset += target_bytes;
         }
     }
