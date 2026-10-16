@@ -73,9 +73,10 @@ enum Scenario @local {
     CAPE,
     BOTH,
     CONTACTS,
+    FOLD,
 }
 
-const String[Scenario::len] SCENARIO_NAMES @local = { "flag", "cape", "both", "contacts" };
+const String[Scenario::len] SCENARIO_NAMES @local = { "flag", "cape", "both", "contacts", "fold" };
 
 struct Options @local {
     bool      benchmark;
@@ -118,6 +119,7 @@ struct Demo @local {
     uint         flag_columns;
     uint         flag_rows;
     Character    character;
+    Node*        fold;
     Node*[6]     drapes;
     Entity[6]    drape_bodies;
     Node*        camera;
@@ -344,12 +346,14 @@ fn void? attach_cloths(Demo* demo) @local {
     if (demo.flag) attach_flag(demo)!;
     if (demo.character.cape) attach_cape(demo)!;
     if (demo.scenario == CONTACTS) attach_contact_cloths(demo)!;
+    if (demo.fold) attach_fold(demo)!;
 }
 
 fn void? reset_cloths(Demo* demo) @local {
     if (!demo.simulated) return;
     if (demo.flag) demo.scene.remove_cloth(demo.flag);
     if (demo.character.cape) demo.scene.remove_cloth(demo.character.cape);
+    if (demo.fold) demo.scene.remove_cloth(demo.fold);
     foreach (node : demo.drapes) if (node) demo.scene.remove_cloth(node);
     return attach_cloths(demo);
 }
@@ -518,6 +522,47 @@ fn void? attach_contact_cloths(Demo* demo) @local {
     }
 }
 
+fn void? build_fold(Demo* demo) @local {
+    Vec3[14] positions = {
+        { -1, 0, -1 }, { 1, 0, -1 },
+        { -1, 0, 1 }, { 1, 0, 1 },
+        { -1, 0, 3 }, { 1, 0, 3 },
+        { -1, 1, 4 }, { 1, 1, 4 },
+        { -0.6f, 0.005f, 1.2f }, { 1.4f, 0.005f, 1.2f },
+        { -0.6f, 0.005f, -0.8f }, { 1.4f, 0.005f, -0.8f },
+        { -1, 0, 3 }, { 1, 0, 3 },
+    };
+    uint[30] indices;
+    for (uint row = 0; row < 5; row++) {
+        uint first = 2 * row;
+        indices[6 * row:6] = ((uint[6]){ first, first + 2, first + 1, first + 1, first + 2, first + 3 })[..];
+    }
+    for (uint index = 12; index < indices.len; index++) {
+        if (indices[index] == 4) indices[index] = 12;
+        if (indices[index] == 5) indices[index] = 13;
+    }
+    @pool() {
+        Geometry geometry = { .positions = positions[..], .indices = indices[..] };
+        geometry.compute_normals(tmem);
+        geometry.finalize();
+        MaterialId fabric = cloth_material(&demo.assets, { 0.88f, 0.35f, 0.1f, 1 })!;
+        demo.fold = demo.scene.add_mesh(demo.assets.add_geometry(&geometry)!, fabric, name: "folded seamed strip")!;
+        demo.scene.get(demo.fold, scene::Mesh).trace = demo.traced;
+    };
+}
+
+fn void? attach_fold(Demo* demo) @local {
+    uint[6] pins = { 4, 5, 6, 7, 12, 13 };
+    ClothSeam[2] seams = { { .first = 4, .second = 12 }, { .first = 5, .second = 13 } };
+    ClothDesc desc = cloth::default_cloth_desc();
+    desc.pins = pins[..];
+    desc.seams = seams[..];
+    desc.gravity_scale = 0;
+    desc.damping = 3;
+    desc.collisions.self_collision = true;
+    demo.scene.add_cloth(&demo.assets, demo.fold, desc)!;
+}
+
 fn void? create_demo(
     Demo* demo,
     Scenario scenario,
@@ -553,7 +598,7 @@ fn void? create_demo(
         ground_geometry = demo.assets.add_geometry(&ground, "cloth/ground")!;
     };
     Node* ground = demo.scene.add_mesh(ground_geometry, ground_material, name: "ground")!;
-    if (scenario == CONTACTS) ground.local.position.y = -1.2f;
+    if (scenario == CONTACTS || scenario == FOLD) ground.local.position.y = -1.2f;
     Light sun_light = light::directional({ 1, 0.96f, 0.9f }, 3);
     sun_light.shadow.ray_traced = traced;
     Node* sun = demo.scene.add_light(sun_light, name: "sun")!;
@@ -570,6 +615,7 @@ fn void? create_demo(
     if (scenario == FLAG || scenario == BOTH) build_flag(demo)!;
     if (scenario == CAPE || scenario == BOTH) build_character(demo)!;
     if (scenario == CONTACTS) build_contact_scene(demo)!;
+    if (scenario == FOLD) build_fold(demo)!;
     switch (scenario) {
         case FLAG:
             demo.camera.local.position = POLE_POSITION + (Vec3){ 1.4f, POLE_HEIGHT - 0.6f, 4.2f };
@@ -580,6 +626,9 @@ fn void? create_demo(
         case CONTACTS:
             demo.camera.local.position = { 2, 12, 22 };
             demo.camera.local.rotation = maths::look_rotation(((Vec3){ 0, -11, -22 }).normalize(), { 0, 1, 0 });
+        case FOLD:
+            demo.camera.local.position = { 5, 2.6f, -5 };
+            demo.camera.local.rotation = maths::look_rotation(((Vec3){ -5, -2.2f, 6.5f }).normalize(), { 0, 1, 0 });
         case BOTH:
             demo.camera.local.position = { 0.2f, 2.3f, 6.8f };
             demo.camera.local.rotation = maths::look_rotation(((Vec3){ 0, -0.05f, -1 }).normalize(), { 0, 1, 0 });
@@ -644,12 +693,14 @@ fn void step_demo(Demo* demo, float delta, double time) @local {
 
     uint flag_revision = cloth_revision(demo, demo.flag);
     uint cape_revision = cloth_revision(demo, demo.character.cape);
+    uint fold_revision = cloth_revision(demo, demo.fold);
     uint[6] drape_revisions;
     foreach (index, node : demo.drapes) drape_revisions[index] = cloth_revision(demo, node);
     demo.physics.update_cloths();
     if (demo.whole_publication) {
         publish_whole(demo, demo.flag, flag_revision);
         publish_whole(demo, demo.character.cape, cape_revision);
+        publish_whole(demo, demo.fold, fold_revision);
         foreach (index, node : demo.drapes) publish_whole(demo, node, drape_revisions[index]);
     }
 }
@@ -674,12 +725,13 @@ fn void panel(
         imgui::text("Scene: %s", SCENARIO_NAMES[demo.scenario.ordinal]);
         imgui::text("Solve %.3f ms, publish %.3f ms", stats.solve_seconds * 1000, stats.publish_seconds * 1000);
         imgui::text("Particles %u, constraints %u", stats.particles, stats.constraints);
-        imgui::text("Discrete external contacts: %u candidates, %u contacts", stats.candidates, stats.contacts);
+        imgui::text("Discrete contacts: %u candidates, %u contacts", stats.candidates, stats.contacts);
+        if (demo.fold) imgui::text("Self contact enabled, 2 copied seam pairs, gap 0.02 m");
         imgui::text("Failures %u, residual %.6f m", stats.failed, stats.max_residual);
         imgui::text("Geometry upload %u bytes, history %u bytes", upload_bytes, history_bytes);
         imgui::checkbox("Whole geometry upload (U)", &demo.whole_publication);
         imgui::text("Frame %.2f ms", frame_ms);
-        imgui::begin_disabled(demo.scenario == CONTACTS);
+        imgui::begin_disabled(demo.scenario == CONTACTS || demo.scenario == FOLD);
         imgui::slider_float(
             label: "Wind speed",
             v: &demo.wind_speed,
@@ -993,14 +1045,14 @@ fn Options? parse_options(String[] args) @local {
         }
     }
     if ((options.traced || options.validation) && !options.benchmark) return c3d::INVALID_ARGUMENT~;
-    if (options.ragdoll && (!options.benchmark || (options.scenario == FLAG || options.scenario == CONTACTS))) return c3d::INVALID_ARGUMENT~;
+    if (options.ragdoll && (!options.benchmark || (options.scenario == FLAG || options.scenario == CONTACTS || options.scenario == FOLD))) return c3d::INVALID_ARGUMENT~;
     return options;
 }
 
 fn int main(String[] args) {
     Options? options = parse_options(args);
     if (catch excuse = options) {
-        io::eprintn("Use cloth [--scene flag|cape|both|contacts] [--still] [--frames count]");
+        io::eprintn("Use cloth [--scene flag|cape|both|contacts|fold] [--still] [--frames count]");
         io::eprintn("  [--publish whole|streams]");
         io::eprintn("  [--benchmark [--ragdoll] [--capture path.rgba] [--trace software|hardware] [--validation]]");
         io::eprintn("Run timings without --validation; the validation layers inflate them.");

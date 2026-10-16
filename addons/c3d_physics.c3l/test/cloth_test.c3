@@ -911,7 +911,14 @@ fn void test_cloth_contacts_preserve_allocation_and_pins() @test {
     isolated_desc.colliders = single[..];
     fixture.scene.add_cloth(&fixture.assets, isolated, isolated_desc)!!;
     float reach = ball.radius + isolated_desc.thickness;
-    Node*[2] cloths = { draped, isolated };
+    GeometryId fold_source = add_folded_strip(&fixture);
+    Node* folded = add_cloth_node(&fixture, fold_source);
+    uint[2] fold_pins = { 6, 7 };
+    ClothDesc fold_desc = folded_desc();
+    fold_desc.pins = fold_pins[..];
+    fold_desc.gravity_scale = 0;
+    fixture.scene.add_cloth(&fixture.assets, folded, fold_desc)!!;
+    Node*[3] cloths = { draped, isolated, folded };
 
     for (uint update = 0; update < CONTACT_UPDATES; update++) {
         float phase = (float)update * 0.1f;
@@ -941,7 +948,12 @@ fn void test_cloth_contacts_preserve_allocation_and_pins() @test {
             if (stepped) assert((position - centre).length() >= reach - CONTACT_TOLERANCE);
             assert((published_world(&fixture, isolated, (uint)index) - centre).length() >= reach - CONTACT_TOLERANCE);
         }
+        assert(!state_of(&fixture, folded).contact_result.failure);
+        check_folded_contacts(state_of(&fixture, folded));
     }
+    fixture.scene.remove_cloth(folded);
+    assert(c3d::same_id(fixture.scene.get(folded, Mesh).geometry, fold_source));
+    assert(!fixture.scene.get(folded, Mesh).vertex_motion);
 }
 
 // Two ragdoll bones along +Y with an unskinned cape parented to the spine joint.

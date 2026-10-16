@@ -182,6 +182,7 @@ fn void test_cloth_contact_capacity_rollback_and_recovery() @test {
         fixture.scene.remove_cloth(probe);
         fixture.scene.remove(probe);
     }
+    check_self_capacity_rollback(&fixture, &tracker, independent);
 }
 
 fn void test_cloth_unresolved_contacts_preserve_pins_and_publication() @test {

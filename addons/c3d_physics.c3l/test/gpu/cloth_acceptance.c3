@@ -430,3 +430,74 @@ fn void test_cloth_external_contact_failure_preserves_world_motion() @test {
         check_velocity(velocity_at(&fixture, view, centre), {});
     }
 }
+
+fn void test_cloth_self_contact_failure_preserves_world_motion() @test {
+    Fixture fixture;
+    create_fixture(&fixture, 0)!!;
+    defer destroy_fixture(&fixture);
+    configure(&fixture, 1, velocity_view(fixture.targets[1], ShadingPath.DEFERRED));
+    Node* body = fixture.scene.add_node(name: "contact")!!;
+    body.local.position.z = -10;
+    fixture.scene.update_world();
+    ColliderDesc[2] boxes;
+    boxes[0] = physics::default_collider_desc(BOX);
+    boxes[0].half_extents = { 3, 3, 0.1f };
+    boxes[1] = boxes[0];
+    fixture.physics.add_body(body, physics::default_body_desc(STATIC), boxes[:1])!!;
+    Vec3[6] positions = {
+        { -1, -1, 0 }, { 1, -1, 0 }, { 0, 1, 0 },
+        { -0.8f, -0.9f, 0.005f }, { 1.2f, -0.9f, 0.005f }, { 0.2f, 1.1f, 0.005f },
+    };
+    uint[6] indices = { 0, 1, 2, 3, 4, 5 };
+    Geometry source = { .positions = positions[..], .indices = indices[..] };
+    source.finalize();
+    Node* sheet = fixture.scene.add_mesh(fixture.assets.add_geometry(&source)!!, fixture.material)!!;
+    fixture.scene.update_world();
+    uint[3] pins = { 0, 1, 2 };
+    ClothDesc desc = cloth::default_cloth_desc();
+    desc.pins = pins[..];
+    desc.colliders = (&body.id)[:1];
+    desc.collisions.self_collision = true;
+    desc.collisions.max_candidates = 16;
+    fixture.scene.add_cloth(&fixture.assets, sheet, desc)!!;
+    ClothState* state = fixture.scene.get(sheet, Cloth).state;
+    step(&fixture, 0);
+    assert(!state.contact_result.failure && state.contact_result.contacts > 0);
+    assert(state.published[3].z >= 2 * desc.thickness - desc.collisions.contact_tolerance);
+    foreach (pin : pins) assert(state.published[pin] == positions[pin]);
+    Vec3[6] frozen;
+    frozen[..] = state.published[..];
+    uint[2] both = { 0, 1 };
+    render_views(&fixture, both[..]);
+    render_views(&fixture, both[..]);
+    Vec3 centre = { 0, 0, 0.02f };
+    foreach (view : both) {
+        assert(pixel_at(&fixture, view, centre).w > COVERED);
+        check_velocity(velocity_at(&fixture, view, centre), {});
+    }
+    GeometryAsset* geometry = fixture.assets.geometry(state.geometry);
+    uint revision = geometry.header.revision;
+    fixture.physics.remove_body(body);
+    body.local.position.z = -0.09f;
+    fixture.scene.update_world();
+    fixture.physics.add_body(body, physics::default_body_desc(STATIC), boxes[..])!!;
+    step(&fixture, 0);
+    assert(state.contact_result.failure == c3d::CAPACITY_EXCEEDED);
+    assert(state.contact_result.stage == ClothContactStage.CANDIDATES);
+    assert(geometry.header.revision == revision);
+    render_views(&fixture, both[..]);
+    foreach (view : both) check_velocity(velocity_at(&fixture, view, centre), {});
+    sheet.local.position.x = NODE_STEP;
+    step(&fixture, 0);
+    assert(state.contact_result.failure == c3d::CAPACITY_EXCEEDED);
+    assert(geometry.header.revision == revision + 1);
+    foreach (index, position : frozen) {
+        assert(published(&fixture, sheet, (uint)index) == position);
+        assert(state.positions[index] == positions[index]);
+    }
+    render_views(&fixture, both[..]);
+    foreach (view : both) {
+        assert(pixel_at(&fixture, view, centre).w > COVERED);
+        check_velocity(velocity_at(&fixture, view, centre), {});
+    }
+}

@@ -369,8 +369,11 @@ The independent package inventory checks all ten normally registered types.
 Physics registration also installs the Cloth OWNER policy. Export projects its
 ordinary Mesh record to retained source geometry and vertex-motion, preserving
 all other Mesh fields and leaving the source scene untouched. The Cloth payload
-retains complete settings, requested pin order/duplicates and required collider
-references. Reads retain that Mesh and attach pending Cloth without private
+retains complete settings, requested pin order/duplicates, explicit `ClothSeam` pairs
+and required collider references. Authoring version 3 adds `self_collision` and typed
+seams. Version-1/2 JSONC defaults these to false and empty; incompatible older binary
+layouts are rejected before destination mutation. Reads retain that Mesh and attach
+pending Cloth without private
 geometry or solve state. Synchronize physics bodies before cloth preparation.
 The explicit navigation composition test proves a NavSource with no geometry
 can use the restored Mesh before ordinary navigation synchronization.

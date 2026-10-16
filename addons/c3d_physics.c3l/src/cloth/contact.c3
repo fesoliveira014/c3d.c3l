@@ -28,13 +28,14 @@ enum ClothContactStage : uint {
     REEXPRESSION,
 }
 
-<* Prepared storage and convergence limits for external contacts. *>
+<* Prepared storage and convergence limits for cloth contacts. *>
 struct ClothCollisionDesc {
     float contact_tolerance;
     uint  contact_iterations;
     uint  max_shapes;
     uint  max_candidates;
     uint  max_contacts;
+    bool  self_collision;
 }
 
 <* Observed contact work and failure from the last update. *>
@@ -50,7 +51,7 @@ struct ClothContactResult {
     double            max_residual;
 }
 
-<* Default external contact accuracy and prepared capacities. *>
+<* Default cloth contact accuracy and prepared capacities. *>
 fn ClothCollisionDesc default_cloth_collision_desc() {
     return {
         .contact_tolerance = DEFAULT_CONTACT_TOLERANCE,
@@ -88,6 +89,9 @@ fn ContactProjection? evaluate_contact(
                 tolerance: tolerance,
                 correct: correct,
             );
+        case SELF_VERTEX_FACE:
+        case SELF_EDGE_EDGE:
+            return c3d::INVALID_ARGUMENT~;
         case SHAPE:
             ClothShape* shape = &state.shapes[candidate.shape];
             switch (shape.kind) {
@@ -125,6 +129,7 @@ fn usz? contact_pass(
     ClothContactResult* result = &state.contact_result;
     result.stage = ClothContactStage.CANDIDATES;
     usz candidates = physics::gather_cloth_candidates(world, state, positions)!;
+    candidates = gather_self_candidates(state, positions, candidates)!;
     result.stage = ClothContactStage.CONTACTS;
     result.max_residual = 0;
     result.unresolved = 0;
@@ -135,6 +140,15 @@ fn usz? contact_pass(
         result.peak_contacts = math::max(result.peak_contacts, (uint)count);
     }
     foreach (index, &candidate : state.candidates[:candidates]) {
+        if (candidate.kind == SELF_VERTEX_FACE || candidate.kind == SELF_EDGE_EDGE) {
+            double residual = self_contact_residual(state, candidate, positions)!;
+            result.max_residual = math::max(result.max_residual, residual);
+            if (residual <= state.desc.collisions.contact_tolerance) continue;
+            result.unresolved++;
+            if (count == state.contacts.len) return c3d::CAPACITY_EXCEEDED~;
+            state.contacts[count++] = { .candidate = (uint)index };
+            continue;
+        }
         bool pinned = state.inverse_masses[candidate.particle] == 0;
         ContactProjection projection = evaluate_contact(
             world: world,
@@ -161,6 +175,10 @@ fn usz? contact_pass(
 
     foreach (&contact : state.contacts[:count]) {
         ClothCandidate* candidate = &state.candidates[contact.candidate];
+        if (candidate.kind == SELF_VERTEX_FACE || candidate.kind == SELF_EDGE_EDGE) {
+            apply_self_contact(state, candidate, positions)!;
+            continue;
+        }
         Vec3* position = &positions[candidate.particle];
         if (*position == contact.original) {
             *position = contact.corrected;

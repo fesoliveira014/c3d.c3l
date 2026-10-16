@@ -18,6 +18,8 @@ enum ClothCandidateKind @private {
     GROUND,
     SHAPE,
     TRIANGLE,
+    SELF_VERTEX_FACE,
+    SELF_EDGE_EDGE,
 }
 
 struct ClothCandidate @private {
@@ -25,7 +27,10 @@ struct ClothCandidate @private {
     uint       shape;
     int        triangle_index;
     ClothCandidateKind kind;
-    Vec3[3]    vertices;
+    union {
+        Vec3[3] vertices;
+        uint[2] self_pair;
+    }
 }
 
 struct ClothContact @private {
@@ -275,7 +280,7 @@ fn ContactVector contact_triangle_weights(
     ContactVector first,
     ContactVector second,
     ContactVector third,
-) @local {
+) @private {
     ContactVector first_edge = second - first;
     ContactVector second_edge = third - first;
     ContactVector relative = point - first;

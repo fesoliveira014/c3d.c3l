@@ -11,11 +11,17 @@ the scene, create its world, and destroy the world before the scene/assets.
 `Wind` drag, an optional ground and one-way particle contacts with sphere, capsule, box,
 hull, mesh, heightfield and compound colliders of the bodies listed in `ClothDesc.colliders`.
 Contacts are discrete; an unsampled cloth face can pass through a small collider.
+Set `desc.collisions.self_collision = true` for vertex-face and edge-edge contact within
+one cloth at separation `2 * thickness - contact_tolerance`. Copied `ClothSeam` pairs
+in `desc.seams` define vertex equivalence only for incidence and one-ring exclusions;
+position coincidence does not weld topology. Pins have zero response weight, and a
+fully pinned eligible conflict fails with `CONTACT_UNRESOLVED`.
 Attach with `scene.add_cloth(&assets, node, desc)` and
 call `physics.update_cloths()` once after `physics.update`, after final ragdoll/IK poses and
 `scene.update_world()`, before rendering. See [Cloth](../../docs/cloth.md) for the contract,
-faults, frame order and usage; the `cloth` example includes flag, cape and external-contact
-scenes (`--scene flag|cape|both|contacts`). The manual Vulkan acceptance runs with
+faults, frame order and usage; the `cloth` example includes flag, cape, external-contact
+and seamed-fold scenes (`--scene flag|cape|both|contacts|fold`). The manual Vulkan
+acceptance runs with
 `c3c test cloth_acceptance --path addons/c3d_physics.c3l/test/gpu`.
 
 `ClothDesc.collisions` sets contact tolerance, iteration count and prepared shape,
@@ -32,7 +38,9 @@ transform may place that geometry elsewhere.
 Cloth consumers require `fp-math=strict`, owner-thread round-to-nearest and gradual underflow.
 The library checks supported runtime conditions without changing arithmetic modes; runtime
 checks do not establish the consumer's compiler mode. Serialization stores collision authoring
-settings and restores pending cloth; runtime buffers, contact results and histories are excluded.
+settings and seams in authoring version 3 and restores pending cloth; runtime buffers,
+contact results and histories are excluded. Version-1/2 JSONC defaults self-contact off
+and seams empty; incompatible older binary layouts are rejected before mutation.
 
 ## Replaced assets
 

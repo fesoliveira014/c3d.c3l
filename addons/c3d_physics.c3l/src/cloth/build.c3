@@ -20,6 +20,7 @@ struct ClothCounts @local {
     uint vertices;
     uint pins;
     uint edges;
+    uint faces;
     uint bends;
     uint bodies;
     ClothCollisionDesc collisions;
@@ -33,8 +34,12 @@ struct EdgeRecord @local {
 
 fn ClothAuthoring*? copy_authoring(Allocator allocator, ClothDesc desc) @private {
     sz pins_offset = mem::aligned_offset(ClothAuthoring::size, uint::alignment);
-    sz colliders_offset = mem::aligned_offset(pins_offset + desc.pins.len * uint::size, Entity::alignment);
-    sz bytes = colliders_offset + desc.colliders.len * Entity::size;
+    if (desc.pins.len > (usz)(sz::max - pins_offset - Entity::alignment) / uint::size) return c3d::CAPACITY_EXCEEDED~;
+    sz colliders_offset = mem::aligned_offset(pins_offset + (sz)desc.pins.len * uint::size, Entity::alignment);
+    if (desc.colliders.len > (usz)(sz::max - colliders_offset - ClothSeam::alignment) / Entity::size) return c3d::CAPACITY_EXCEEDED~;
+    sz seams_offset = mem::aligned_offset(colliders_offset + (sz)desc.colliders.len * Entity::size, ClothSeam::alignment);
+    if (desc.seams.len > (usz)(sz::max - seams_offset) / ClothSeam::size) return c3d::CAPACITY_EXCEEDED~;
+    sz bytes = seams_offset + (sz)desc.seams.len * ClothSeam::size;
     char*? allocation = alloc::malloc_try(allocator, bytes);
     if (catch allocation) return c3d::CAPACITY_EXCEEDED~;
     ClothAuthoring* copy = (ClothAuthoring*)allocation;
@@ -43,6 +48,8 @@ fn ClothAuthoring*? copy_authoring(Allocator allocator, ClothDesc desc) @private
     copy.desc.colliders = ((Entity*)(allocation + colliders_offset))[:desc.colliders.len];
     copy.desc.pins[..] = desc.pins[..];
     copy.desc.colliders[..] = desc.colliders[..];
+    copy.desc.seams = ((ClothSeam*)(allocation + seams_offset))[:desc.seams.len];
+    copy.desc.seams[..] = desc.seams[..];
     return copy;
 }
 
@@ -165,6 +172,7 @@ fn ClothState*? allocate_cloth_state(
     uint vertex_count,
     uint pin_count,
     uint edge_count,
+    uint face_count,
     uint bend_count,
     uint body_count,
     ClothCollisionDesc collisions,
@@ -173,6 +181,7 @@ fn ClothState*? allocate_cloth_state(
         .vertices = vertex_count,
         .pins     = pin_count,
         .edges    = edge_count,
+        .faces    = face_count,
         .bends    = bend_count,
         .bodies   = body_count,
         .collisions = collisions,
@@ -188,6 +197,7 @@ fn ClothState*? allocate_cloth_state(
 
 fn ClothState* carve_cloth_state(BlockCursor* cursor, ClothCounts counts) @local {
     ClothState[] states = physics::carve(cursor, ClothState, 1);
+    bool self_collision = counts.collisions.self_collision;
     ClothState state = {
         .rest           = physics::carve(cursor, Vec3, counts.vertices),
         .positions      = physics::carve(cursor, Vec3, counts.vertices),
@@ -223,6 +233,10 @@ fn ClothState* carve_cloth_state(BlockCursor* cursor, ClothCounts counts) @local
         .frames = physics::carve(cursor, ContactFrame, counts.collisions.max_shapes),
         .candidates = physics::carve(cursor, ClothCandidate, counts.collisions.max_candidates),
         .contacts = physics::carve(cursor, ClothContact, counts.collisions.max_contacts),
+        .faces = physics::carve(cursor, ClothFace, self_collision ? counts.faces : 0),
+        .canonical_vertices = physics::carve(cursor, uint, self_collision ? counts.vertices : 0),
+        .adjacent_vertices = physics::carve(cursor, ulong, self_collision ? counts.edges : 0),
+        .self_primitives = physics::carve(cursor, ClothSelfPrimitive, self_collision ? (usz)counts.vertices + counts.edges + counts.faces : 0),
     };
     if (!cursor.base) return null;
     states[0] = state;
