@@ -400,6 +400,8 @@ retained authored floors, ceilings, diagonals, labels and halo without rereading
 Source publication applies the same cache's current obstacle state. Bounded mode preserves the
 existing eight-touched-layer limit and rejects oversized footprints before mutation; coarse mode
 keeps its existing footprint limit. Obstacle, request and update capacities remain fixed.
+Retained grid obstacle selection includes agent height and the consumed source border in both modes,
+matching runtime marking and erosion. Ordinary coarse heightfield caches retain their existing selection.
 Retained grid cache records use checked source kind and version 103. These are runtime build records,
 not a portable persistence format.
 

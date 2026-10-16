@@ -60,12 +60,47 @@ fn void test_grid_cache_flat_whole_cell_obstacles() @test {
     fill_cached_grid(fixture, 4, false);
     drain_grid_cache(fixture);
     assert(grid_cache_ray(fixture, { 0.5f, 0, 2 }, { 3.5f, 0, 2 }).t > 1);
-    ObstacleRef obstacle = fixture.grid.cache.add_box_obstacle({ .min = { 1.25f, -1, 1.25f }, .max = { 2.75f, 1, 2.75f } })!!;
+    ObstacleRef obstacle = fixture.grid.cache.add_box_obstacle({ .min = { 1.25f, 0.25f, 1.25f }, .max = { 2.75f, 0.75f, 2.75f } })!!;
+    GridUpdateResult added = fixture.grid.update(&fixture.mesh, 1);
+    assert(added.rebuilt == 1 && added.pending == 0 && added.failed == 0);
+    assert(fixture.grid.cache.obstacle_by_ref(obstacle)!!.touched_count == 1);
+    float blocked = grid_cache_ray(fixture, { 0.5f, 0, 2 }, { 3.5f, 0, 2 }).t;
+    assert(blocked < 1);
+
+    fixture.grid.mark_dirty({ .max_x = 4, .max_z = 4 }, 2)!!;
     drain_grid_cache(fixture);
-    assert(grid_cache_ray(fixture, { 0.5f, 0, 2 }, { 3.5f, 0, 2 }).t < 1);
+    assert(grid_cache_ray(fixture, { 0.5f, 0, 2 }, { 3.5f, 0, 2 }).t == blocked);
     fixture.grid.cache.remove_obstacle(obstacle)!!;
-    drain_grid_cache(fixture);
+    GridUpdateResult removed = fixture.grid.update(&fixture.mesh, 1);
+    assert(removed.rebuilt == 1 && removed.pending == 0 && removed.failed == 0);
     assert(grid_cache_ray(fixture, { 0.5f, 0, 2 }, { 3.5f, 0, 2 }).t > 1);
+
+    GridCacheFixture* border = grid_cache_fixture(
+        side: 2,
+        mode: DetailMode.COARSE,
+        slots: 2,
+        whole_radius: 1,
+    );
+    defer destroy_grid_cache_fixture(border);
+    fill_cached_grid(border, 8, false);
+    drain_grid_cache(border);
+    Vec3 start = { 4.5f, 0, 1.5f };
+    Vec3 end = { 4.5f, 0, 3.5f };
+    assert(grid_cache_ray(border, start, end).t > 1);
+    obstacle = border.grid.cache.add_box_obstacle({ .min = { 3.25f, 0.25f, 2.25f }, .max = { 3.75f, 0.75f, 2.75f } })!!;
+    added = border.grid.update(&border.mesh, 1);
+    assert(added.rebuilt == 1 && added.pending > 0 && added.failed == 0);
+    drain_grid_cache(border);
+    assert(border.grid.cache.obstacle_by_ref(obstacle)!!.touched_count == 4);
+    blocked = grid_cache_ray(border, start, end).t;
+    assert(blocked < 1);
+
+    border.grid.mark_dirty({ .min_x = 4, .min_z = 2, .max_x = 5, .max_z = 3 }, 2)!!;
+    drain_grid_cache(border);
+    assert(grid_cache_ray(border, start, end).t == blocked);
+    border.grid.cache.remove_obstacle(obstacle)!!;
+    drain_grid_cache(border);
+    assert(grid_cache_ray(border, start, end).t > 1);
 }
 
 fn void test_grid_cache_rejects_superseded_detached_capture() @test {
@@ -227,11 +262,16 @@ fn void test_grid_cache_obstacle_footprint_keeps_existing_capacity() @test {
     assert(grid_cache_ray(fixture, { 0.75f, 0, 2 }, { 11.25f, 0, 2 }).t > 1);
 }
 
-fn GridCacheFixture* grid_cache_fixture(uint side, DetailMode mode, uint slots = 2) @private {
+fn GridCacheFixture* grid_cache_fixture(
+    uint side,
+    DetailMode mode,
+    uint slots = 2,
+    float whole_radius = 0,
+) @private {
     GridCacheFixture* fixture = mem::new(GridCacheFixture);
     NavBuildConfig config = nav::default_grid_build_config(1);
     config.tile_size = 4;
-    config.agent_radius = mode == DetailMode.BOUNDED ? 0.2f : 0;
+    config.agent_radius = mode == DetailMode.BOUNDED ? 0.2f : whole_radius;
     config.agent_height = 1;
     config.agent_max_climb = 0.75f;
     config.agent_max_slope_degrees = 60;
