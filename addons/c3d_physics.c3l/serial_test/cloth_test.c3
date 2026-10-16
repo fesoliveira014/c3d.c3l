@@ -24,6 +24,7 @@ fn Node* add_cloth_fixture(Fixture* fixture) @private {
         parent: fixture.root,
         name: "fabric",
     )!!;
+    contact.local.position = fixture.assets.geometry(fixture.geometry).data.positions[0];
     fixture.source.get(node, Mesh).cast_shadow = false;
     fixture.source.get(node, Mesh).trace = false;
     ClothDesc desc = cloth::default_cloth_desc();
@@ -39,6 +40,13 @@ fn Node* add_cloth_fixture(Fixture* fixture) @private {
     desc.gravity_scale = 0.2f;
     desc.collide_ground = true;
     desc.ground_height = -3;
+    desc.collisions = {
+        .contact_tolerance = 0.0002f,
+        .contact_iterations = 12,
+        .max_shapes = 64,
+        .max_candidates = 2048,
+        .max_contacts = 1024,
+    };
     fixture.source.update_world();
     fixture.source.attach_cloth(assets: &fixture.assets, node: node, desc: desc)!!;
     return node;
@@ -77,6 +85,7 @@ fn void test_cloth_both_formats_preserve_source_authoring_and_restore_pending() 
             )!!);
             source_world.update(physics::DEFAULT_FIXED_DT);
             source_world.update_cloths();
+            assert(fixture.source.get(node, Cloth).state.contact_result.candidates > 0);
             assert(bytes == encode(
                 scene: &fixture.source,
                 assets: &fixture.assets,
@@ -95,6 +104,9 @@ fn void test_cloth_both_formats_preserve_source_authoring_and_restore_pending() 
             assert(owner.authoring.desc.colliders.len == 1);
             assert(fixture.destination.node(owner.authoring.desc.colliders[0]).name == "contact");
             assert(owner.authoring.desc.gravity_scale == 0.2f && owner.authoring.desc.ground_height == -3);
+            ClothCollisionDesc collisions = owner.authoring.desc.collisions;
+            assert(collisions.contact_tolerance == 0.0002f && collisions.contact_iterations == 12);
+            assert(collisions.max_shapes == 64 && collisions.max_candidates == 2048 && collisions.max_contacts == 1024);
             assert(fixture.assets.geometries.free_count == free_geometry);
             assert(fixture.assets.geometry(fixture.geometry).header.revision == source_revision);
             assert(bytes == encode(
@@ -161,4 +173,58 @@ fn void test_cloth_late_authoring_copy_failure_rolls_back_body_and_mesh() @test 
         }
         assert(!tracker.has_leaks());
     }
+}
+
+fn void test_cloth_prior_text_defaults_contacts_and_prior_binary_is_unsupported() @test {
+    @pool() {
+        Fixture fixture;
+        create_fixture(&fixture);
+        defer destroy_fixture(&fixture);
+        add_cloth_fixture(&fixture);
+
+        String text = (String)encode(
+            scene: &fixture.source,
+            assets: &fixture.assets,
+            root: fixture.root,
+            text_mode: true,
+        )!!;
+        sz field_start = text.index_of("\"contact_tolerance\"")!!;
+        sz fields_start = text[:field_start].rindex_of_char(',')!!;
+        sz fields_end = field_start + text[field_start..].index_of_char('}')!!;
+        char[] legacy = alloc::new_array(tmem, char, text.len - (fields_end - fields_start));
+        legacy[:fields_start] = ((char[])text[:fields_start])[..];
+        legacy[fields_start..] = ((char[])text[fields_end..])[..];
+        sz cloth_start = ((String)legacy).index_of("\"cloth\"")!!;
+        sz version_start = cloth_start + ((String)legacy[cloth_start..]).index_of("\"version\"")!!;
+        sz version_value = version_start + ((String)legacy[version_start..]).index_of_char(':')!! + 1;
+        while (legacy[version_value] == ' ') version_value++;
+        assert(legacy[version_value] == '2');
+        legacy[version_value] = '1';
+
+        Node* restored = decode(&fixture, legacy, true)!!;
+        Cloth* owner = fixture.destination.get(child_named(restored, "fabric"), Cloth);
+        ClothCollisionDesc collisions = owner.authoring.desc.collisions;
+        ClothCollisionDesc defaults = cloth::default_cloth_collision_desc();
+        assert(!owner.is_prepared() && owner.state == null);
+        assert(collisions.contact_tolerance == defaults.contact_tolerance);
+        assert(collisions.contact_iterations == defaults.contact_iterations);
+        assert(collisions.max_shapes == defaults.max_shapes);
+        assert(collisions.max_candidates == defaults.max_candidates);
+        assert(collisions.max_contacts == defaults.max_contacts);
+        assert(owner.authoring.desc.pins == (uint[4]){ 3, 1, 1, 0 }[..]);
+        assert(owner.authoring.desc.gravity_scale == 0.2f && owner.authoring.desc.ground_height == -3);
+
+        char[] binary = encode(
+            scene: &fixture.source,
+            assets: &fixture.assets,
+            root: fixture.root,
+            text_mode: false,
+        )!!;
+        sz type_version = ((String)binary).index_of("cloth")!! + "cloth".len;
+        assert(binary[type_version] == 2);
+        binary[type_version] = 1;
+        uint before = fixture.destination.world.entities.free_count;
+        assert(@catch(decode(&fixture, binary, false)) == c3d::UNSUPPORTED);
+        assert(fixture.destination.world.entities.free_count == before);
+    };
 }

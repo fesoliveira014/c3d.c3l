@@ -12,6 +12,7 @@ struct ExpectedPolicy @private {
     String name;
     typeid identity;
     RestorePhase phase;
+    uint version;
     bool transient;
 }
 
@@ -34,14 +35,14 @@ fn void test_every_physics_component_has_an_explicit_serialization_policy() @tes
     uint registered_count = ecs::registered_type_count;
     physics::register_serial_codecs()!!;
     ExpectedPolicy[10] expected = {
-        { .slot = ecs::assigned_slot(PhysicsBody)!!, .name = "physics_body", .identity = BodyAuthoring::typeid },
-        { .slot = ecs::assigned_slot(PhysicsJoint)!!, .name = "physics_joint", .identity = JointAuthoring::typeid, .phase = REFERENCES },
-        { .slot = ecs::assigned_slot(Buoyancy)!!, .name = "buoyancy", .identity = BuoyancyAuthoring::typeid },
-        { .slot = ecs::assigned_slot(Wind)!!, .name = "wind", .identity = Wind::typeid },
-        { .slot = ecs::assigned_slot(Force)!!, .name = "force", .identity = Force::typeid },
-        { .slot = ecs::assigned_slot(Cloth)!!, .name = "cloth", .identity = ClothSavedAuthoring::typeid, .phase = OWNER },
-        { .slot = ecs::assigned_slot(Ragdoll)!!, .name = "ragdoll", .identity = RagdollAuthoring::typeid, .phase = OWNER },
-        { .slot = ecs::assigned_slot(Breakable)!!, .name = "breakable", .identity = BreakableAuthoring::typeid, .phase = OWNER },
+        { .slot = ecs::assigned_slot(PhysicsBody)!!, .name = "physics_body", .identity = BodyAuthoring::typeid, .version = 1 },
+        { .slot = ecs::assigned_slot(PhysicsJoint)!!, .name = "physics_joint", .identity = JointAuthoring::typeid, .phase = REFERENCES, .version = 1 },
+        { .slot = ecs::assigned_slot(Buoyancy)!!, .name = "buoyancy", .identity = BuoyancyAuthoring::typeid, .version = 1 },
+        { .slot = ecs::assigned_slot(Wind)!!, .name = "wind", .identity = Wind::typeid, .version = 1 },
+        { .slot = ecs::assigned_slot(Force)!!, .name = "force", .identity = Force::typeid, .version = 1 },
+        { .slot = ecs::assigned_slot(Cloth)!!, .name = "cloth", .identity = ClothSavedAuthoring::typeid, .phase = OWNER, .version = 2 },
+        { .slot = ecs::assigned_slot(Ragdoll)!!, .name = "ragdoll", .identity = RagdollAuthoring::typeid, .phase = OWNER, .version = 1 },
+        { .slot = ecs::assigned_slot(Breakable)!!, .name = "breakable", .identity = BreakableAuthoring::typeid, .phase = OWNER, .version = 1 },
         { .slot = ecs::assigned_slot(RigidBody)!!, .transient = true },
         { .slot = ecs::assigned_slot(Joint)!!, .transient = true },
     };
@@ -60,7 +61,7 @@ fn void test_every_physics_component_has_an_explicit_serialization_policy() @tes
                 assert(!entry.described && !entry.codec.name.len);
             } else {
                 assert(entry.described && entry.codec.name == policy.name);
-                assert(entry.codec.phase == policy.phase && entry.codec.version == 1);
+                assert(entry.codec.phase == policy.phase && entry.codec.version == policy.version);
                 assert(entry.described.type.descriptor.identity == policy.identity);
             }
         }

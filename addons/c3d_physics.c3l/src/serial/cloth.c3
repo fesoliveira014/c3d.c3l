@@ -20,14 +20,21 @@ struct ClothSavedAuthoring @private {
     bool collide_ground;
     float ground_height;
     serial::NodeReference[] colliders;
+    float contact_tolerance;
+    uint contact_iterations;
+    uint max_shapes;
+    uint max_candidates;
+    uint max_contacts;
 }
+
+uint[1] cloth_text_default_versions @private = { 1 };
 
 fn void? register_cloth_codec() @private {
     describe::register_reflected(ClothSavedAuthoring)!;
     serial::register_described_type(
         $Type: ClothSavedAuthoring,
-        version: 1,
-        layout: 0x32d4e314fd540124,
+        version: 2,
+        layout: 0x88a372e0d69da5cb,
         defaults: &defaults_cloth_authoring,
     )!;
     serial::register_described_owner(Cloth, ClothSavedAuthoring, {
@@ -37,6 +44,7 @@ fn void? register_cloth_codec() @private {
         .project = &project_cloth,
         .validate = &validate_cloth,
         .attach = &attach_cloth,
+        .text_default_versions = cloth_text_default_versions[..],
     })!;
 }
 
@@ -53,6 +61,11 @@ fn void defaults_cloth_authoring(void* value) @private {
         .gravity_scale = desc.gravity_scale,
         .collide_ground = desc.collide_ground,
         .ground_height = desc.ground_height,
+        .contact_tolerance = desc.collisions.contact_tolerance,
+        .contact_iterations = desc.collisions.contact_iterations,
+        .max_shapes = desc.collisions.max_shapes,
+        .max_candidates = desc.collisions.max_candidates,
+        .max_contacts = desc.collisions.max_contacts,
     };
 }
 
@@ -96,6 +109,11 @@ fn void? project_cloth(void* component, void* value, serial::WriteContext* conte
         .collide_ground = desc.collide_ground,
         .ground_height = desc.ground_height,
         .colliders = colliders,
+        .contact_tolerance = desc.collisions.contact_tolerance,
+        .contact_iterations = desc.collisions.contact_iterations,
+        .max_shapes = desc.collisions.max_shapes,
+        .max_candidates = desc.collisions.max_candidates,
+        .max_contacts = desc.collisions.max_contacts,
     };
 }
 
@@ -114,6 +132,13 @@ fn ClothDesc? cloth_desc(ClothSavedAuthoring* source, serial::ReadContext* conte
         .collide_ground = source.collide_ground,
         .ground_height = source.ground_height,
         .colliders = colliders,
+        .collisions = {
+            .contact_tolerance = source.contact_tolerance,
+            .contact_iterations = source.contact_iterations,
+            .max_shapes = source.max_shapes,
+            .max_candidates = source.max_candidates,
+            .max_contacts = source.max_contacts,
+        },
     };
 }
 

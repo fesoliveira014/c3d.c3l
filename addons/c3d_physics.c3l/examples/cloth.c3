@@ -72,9 +72,10 @@ enum Scenario @local {
     FLAG,
     CAPE,
     BOTH,
+    CONTACTS,
 }
 
-const String[Scenario::len] SCENARIO_NAMES @local = { "flag", "cape", "both" };
+const String[Scenario::len] SCENARIO_NAMES @local = { "flag", "cape", "both", "contacts" };
 
 struct Options @local {
     bool      benchmark;
@@ -117,6 +118,8 @@ struct Demo @local {
     uint         flag_columns;
     uint         flag_rows;
     Character    character;
+    Node*[6]     drapes;
+    Entity[6]    drape_bodies;
     Node*        camera;
     float        wind_speed;
     float        wind_heading;
@@ -340,13 +343,179 @@ fn void? attach_cloths(Demo* demo) @local {
     if (!demo.simulated) return;
     if (demo.flag) attach_flag(demo)!;
     if (demo.character.cape) attach_cape(demo)!;
+    if (demo.scenario == CONTACTS) attach_contact_cloths(demo)!;
 }
 
 fn void? reset_cloths(Demo* demo) @local {
     if (!demo.simulated) return;
     if (demo.flag) demo.scene.remove_cloth(demo.flag);
     if (demo.character.cape) demo.scene.remove_cloth(demo.character.cape);
+    foreach (node : demo.drapes) if (node) demo.scene.remove_cloth(node);
     return attach_cloths(demo);
+}
+
+fn Geometry contact_surface(Allocator allocator, bool prism) @local {
+    Geometry geometry;
+    if (prism) {
+        geometry.positions = alloc::new_array(allocator, Vec3, 6);
+        geometry.indices = alloc::new_array(allocator, uint, 24);
+        geometry.positions[..] = ((Vec3[6]){
+            { -0.5f, 0, -0.6f }, { 0.5f, 0, -0.6f }, { -0.5f, 0.5f, -0.6f },
+            { -0.5f, 0, 0.6f }, { 0.5f, 0, 0.6f }, { -0.5f, 0.5f, 0.6f },
+        })[..];
+        geometry.indices[..] = { 0, 2, 1, 3, 4, 5, 0, 1, 4, 0, 4, 3, 0, 3, 5, 0, 5, 2, 1, 2, 5, 1, 5, 4 }[..];
+    } else {
+        geometry.positions = alloc::new_array(allocator, Vec3, 4);
+        geometry.indices = alloc::new_array(allocator, uint, 6);
+        geometry.positions[..] = ((Vec3[4]){
+            { -1.5f, -0.375f, -1.5f }, { 1.5f, 0.375f, -1.5f },
+            { -1.5f, -0.375f, 1.5f }, { 1.5f, 0.375f, 1.5f },
+        })[..];
+        geometry.indices[..] = { 0, 2, 1, 1, 2, 3 }[..];
+    }
+    geometry.compute_normals(allocator);
+    geometry.finalize();
+    return geometry;
+}
+
+fn Geometry contact_field(Allocator allocator) @local {
+    Geometry geometry = {
+        .positions = alloc::new_array(allocator, Vec3, 16),
+        .indices = alloc::new_array(allocator, uint, 48),
+    };
+    for (uint row = 0; row < 4; row++) {
+        for (uint column = 0; column < 4; column++) geometry.positions[4 * row + column] = { (float)column, (float)column, (float)row };
+    }
+    usz index;
+    for (uint row = 0; row < 3; row++) {
+        for (uint column = 0; column < 3; column++) {
+            if (row == 1 && column == 1) continue;
+            uint first = 4 * row + column;
+            geometry.indices[index:6] = ((uint[6]){ first, first + 4, first + 1, first + 1, first + 4, first + 5 })[..];
+            index += 6;
+        }
+    }
+    geometry.compute_normals(allocator);
+    geometry.finalize();
+    return geometry;
+}
+
+fn void? contact_visual(
+    Demo* demo,
+    Node* body,
+    GeometryId geometry,
+    MaterialId material,
+    maths::Transform local,
+) @local {
+    Node* visual = demo.scene.add_mesh(geometry: geometry, material: material, parent: body, name: "collider")!;
+    visual.local = local;
+    demo.scene.get(visual, scene::Mesh).trace = demo.traced;
+}
+
+fn void? build_contact_scene(Demo* demo) @local {
+    @pool() {
+        MaterialId obstacle = demo.assets.add_material(material::standard({ .base_color = { 0.23f, 0.26f, 0.3f, 1 }, .roughness = 0.7f }))!;
+        Geometry cube = geometry::box(allocator: tmem, width: 1, height: 1, depth: 1);
+        Geometry prism = contact_surface(tmem, true);
+        Geometry ramp = contact_surface(tmem, false);
+        Geometry field = contact_field(tmem);
+        GeometryId cube_id = demo.assets.add_geometry(&cube)!;
+        GeometryId prism_id = demo.assets.add_geometry(&prism)!;
+        GeometryId ramp_id = demo.assets.add_geometry(&ramp)!;
+        GeometryId field_id = demo.assets.add_geometry(&field)!;
+        Vec3[5] positions = { { -12, 0, 0 }, { -6, 0, 0 }, { 0, 0, 0 }, { 6, 0, 0 }, { 14, 0, 0 } };
+        ColliderDesc[5] colliders;
+        colliders[0] = physics::default_collider_desc(BOX);
+        colliders[0].half_extents = { 0.75f, 0.5f, 0.6f };
+        colliders[0].local.position = { 0.2f, 0.3f, 0 };
+        colliders[0].local.rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, (float)math::PI / 2);
+        colliders[1] = physics::default_collider_desc(HULL);
+        colliders[1].geometry = prism_id;
+        colliders[1].local.position = { 0.25f, 0.25f, 0 };
+        colliders[1].local.scale = { 1, 2, 1 };
+        colliders[2] = physics::default_collider_desc(MESH);
+        colliders[2].geometry = ramp_id;
+        colliders[2].local.scale = { 1, 2, 1 };
+        float[16] heights;
+        foreach (index, &height : heights) *height = (float)(index % 4);
+        char[9] materials;
+        materials[4] = physics::HEIGHT_FIELD_HOLE;
+        SurfaceMaterialDesc surface = physics::default_surface_material();
+        colliders[3] = physics::default_collider_desc(HEIGHT_FIELD);
+        colliders[3].height_field = { .heights = heights[..], .count_x = 4, .count_z = 4 };
+        colliders[3].local.scale = { 1, 0.25f, 1 };
+        colliders[3].material_indices = materials[..];
+        colliders[3].face_materials = (&surface)[:1];
+        CompoundChild[2] children;
+        children[0] = physics::default_compound_child(BOX);
+        children[0].half_extents = { 0.35f, 0.15f, 0.4f };
+        children[0].local.position = { -1, 0.4f, 0 };
+        children[0].local.rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, (float)math::PI / 2);
+        children[1] = physics::default_compound_child(MESH);
+        children[1].geometry = ramp_id;
+        children[1].local.position = { 1, 0.5f, 0 };
+        children[1].local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, (float)math::PI / 2);
+        children[1].local.scale = { 0.5f, 2, 1 };
+        colliders[4] = physics::default_collider_desc(COMPOUND);
+        colliders[4].children = children[..];
+        GeometryId[4] geometry_ids = { cube_id, prism_id, ramp_id, field_id };
+        foreach (index, &collider : colliders) {
+            Node* body = demo.scene.add_node(name: "contact body")!;
+            body.local.position = positions[index];
+            if (index < 4) {
+                maths::Transform local = collider.local;
+                if (index == 0) local.scale = collider.half_extents * 2;
+                contact_visual(demo: demo, body: body, geometry: geometry_ids[index], material: obstacle, local: local)!;
+            } else {
+                foreach (child_index, &child : children) {
+                    maths::Transform local = child.local;
+                    if (!child_index) local.scale = child.half_extents * 2;
+                    contact_visual(demo: demo, body: body, geometry: child_index ? ramp_id : cube_id, material: obstacle, local: local)!;
+                }
+            }
+            demo.scene.update_world();
+            demo.physics.add_body(body, physics::default_body_desc(STATIC), collider[:1])!;
+            demo.drape_bodies[index] = body.id;
+        }
+        demo.drape_bodies[5] = demo.drape_bodies[4];
+        float[5][6] bounds = {
+            { -12.45f, -11.15f, -0.4f, 0.4f, 1.2f }, { -6.15f, -5.35f, -0.4f, 0.4f, 1.25f },
+            { -0.6f, 0.6f, -0.4f, 0.4f, 0.45f }, { 6.15f, 6.85f, 0.15f, 0.85f, 0.35f },
+            { 12.75f, 13.25f, -0.3f, 0.3f, 0.9f }, { 14.65f, 15.35f, -0.3f, 0.3f, 1.0f },
+        };
+        foreach (section, range : bounds) {
+            Geometry sheet = geometry::plane(allocator: tmem, width: 1, depth: 1, segments_x: 4, segments_z: 4);
+            for (uint row = 0; row < 5; row++) {
+                for (uint column = 0; column < 5; column++) {
+                    sheet.positions[5 * row + column] = {
+                        range[0] + (range[1] - range[0]) * (float)row / 4,
+                        range[4], range[2] + (range[3] - range[2]) * (float)column / 4,
+                    };
+                }
+            }
+            for (usz corner = 0; corner < sheet.indices.len; corner += 3) {
+                uint second = sheet.indices[corner + 1];
+                sheet.indices[corner + 1] = sheet.indices[corner + 2];
+                sheet.indices[corner + 2] = second;
+            }
+            sheet.compute_normals(tmem);
+            sheet.finalize();
+            MaterialId fabric = cloth_material(&demo.assets, section % 2 ? (Vec4){ 0.82f, 0.36f, 0.13f, 1 } : (Vec4){ 0.12f, 0.5f, 0.7f, 1 })!;
+            demo.drapes[section] = demo.scene.add_mesh(demo.assets.add_geometry(&sheet)!, fabric, name: "drape")!;
+            demo.scene.get(demo.drapes[section], scene::Mesh).trace = demo.traced;
+        }
+    };
+}
+
+fn void? attach_contact_cloths(Demo* demo) @local {
+    uint[5] pins = { 0, 1, 2, 3, 4 };
+    foreach (index, node : demo.drapes) {
+        if (!node) continue;
+        ClothDesc desc = cloth::default_cloth_desc();
+        desc.pins = pins[..];
+        desc.colliders = (&demo.drape_bodies[index])[:1];
+        demo.scene.add_cloth(&demo.assets, node, desc)!;
+    }
 }
 
 fn void? create_demo(
@@ -384,6 +553,7 @@ fn void? create_demo(
         ground_geometry = demo.assets.add_geometry(&ground, "cloth/ground")!;
     };
     Node* ground = demo.scene.add_mesh(ground_geometry, ground_material, name: "ground")!;
+    if (scenario == CONTACTS) ground.local.position.y = -1.2f;
     Light sun_light = light::directional({ 1, 0.96f, 0.9f }, 3);
     sun_light.shadow.ray_traced = traced;
     Node* sun = demo.scene.add_light(sun_light, name: "sun")!;
@@ -397,8 +567,9 @@ fn void? create_demo(
     ground_collider.geometry = ground_geometry;
     demo.physics.add_body(ground, physics::default_body_desc(STATIC), (&ground_collider)[:1])!;
 
-    if (scenario != CAPE) build_flag(demo)!;
-    if (scenario != FLAG) build_character(demo)!;
+    if (scenario == FLAG || scenario == BOTH) build_flag(demo)!;
+    if (scenario == CAPE || scenario == BOTH) build_character(demo)!;
+    if (scenario == CONTACTS) build_contact_scene(demo)!;
     switch (scenario) {
         case FLAG:
             demo.camera.local.position = POLE_POSITION + (Vec3){ 1.4f, POLE_HEIGHT - 0.6f, 4.2f };
@@ -406,6 +577,9 @@ fn void? create_demo(
         case CAPE:
             demo.camera.local.position = CHARACTER_POSITION + (Vec3){ 0.6f, 1.5f, 2.6f };
             demo.camera.local.rotation = maths::look_rotation(((Vec3){ -0.2f, -0.18f, -1 }).normalize(), { 0, 1, 0 });
+        case CONTACTS:
+            demo.camera.local.position = { 2, 12, 22 };
+            demo.camera.local.rotation = maths::look_rotation(((Vec3){ 0, -11, -22 }).normalize(), { 0, 1, 0 });
         case BOTH:
             demo.camera.local.position = { 0.2f, 2.3f, 6.8f };
             demo.camera.local.rotation = maths::look_rotation(((Vec3){ 0, -0.05f, -1 }).normalize(), { 0, 1, 0 });
@@ -470,10 +644,13 @@ fn void step_demo(Demo* demo, float delta, double time) @local {
 
     uint flag_revision = cloth_revision(demo, demo.flag);
     uint cape_revision = cloth_revision(demo, demo.character.cape);
+    uint[6] drape_revisions;
+    foreach (index, node : demo.drapes) drape_revisions[index] = cloth_revision(demo, node);
     demo.physics.update_cloths();
     if (demo.whole_publication) {
         publish_whole(demo, demo.flag, flag_revision);
         publish_whole(demo, demo.character.cape, cape_revision);
+        foreach (index, node : demo.drapes) publish_whole(demo, node, drape_revisions[index]);
     }
 }
 
@@ -497,9 +674,12 @@ fn void panel(
         imgui::text("Scene: %s", SCENARIO_NAMES[demo.scenario.ordinal]);
         imgui::text("Solve %.3f ms, publish %.3f ms", stats.solve_seconds * 1000, stats.publish_seconds * 1000);
         imgui::text("Particles %u, constraints %u", stats.particles, stats.constraints);
+        imgui::text("Discrete external contacts: %u candidates, %u contacts", stats.candidates, stats.contacts);
+        imgui::text("Failures %u, residual %.6f m", stats.failed, stats.max_residual);
         imgui::text("Geometry upload %u bytes, history %u bytes", upload_bytes, history_bytes);
         imgui::checkbox("Whole geometry upload (U)", &demo.whole_publication);
         imgui::text("Frame %.2f ms", frame_ms);
+        imgui::begin_disabled(demo.scenario == CONTACTS);
         imgui::slider_float(
             label: "Wind speed",
             v: &demo.wind_speed,
@@ -513,6 +693,7 @@ fn void panel(
             v_max: 180,
         );
         imgui::checkbox("Gusts", &demo.gusts);
+        imgui::end_disabled();
         if (demo.character.root) imgui::checkbox("Ragdoll", &controls.ragdoll);
         imgui::checkbox("Collider guides", &controls.colliders);
         imgui::checkbox("TAA", &controls.taa);
@@ -699,6 +880,7 @@ fn void? run_benchmark(Options options) @local {
         double time = (double)frame * STEP_SECONDS;
         if (options.ragdoll && frame == WARMUP_FRAMES) set_ragdoll(&demo, true);
         step_demo(&demo, STEP_SECONDS, time);
+        if (demo.scenario == CONTACTS && demo.physics.cloth_stats.failed) return cloth::CONTACT_UNRESOLVED~;
         renderer.begin_frame({ .time = time, .delta = STEP_SECONDS })!;
         defer catch render::abort_frame(&renderer);
         renderer.render_view(&demo.scene, demo.camera, view)!;
@@ -738,6 +920,7 @@ fn void? run_benchmark(Options options) @local {
     ClothStats stats = demo.physics.cloth_stats;
     io::printfn("adapter,%s", renderer.adapter_name);
     io::printfn("scene,%s,simulated,%s", SCENARIO_NAMES[options.scenario.ordinal], demo.simulated);
+    io::printfn("contacts,discrete,candidates,%d,contacts,%d,failed,%d,residual_m,%.8f", stats.candidates, stats.contacts, stats.failed, stats.max_residual);
     io::printfn("publication,%s", demo.whole_publication ? "whole" : "streams");
     io::printfn("resolution,%dx%d,particles,%d,constraints,%d", WIDTH, HEIGHT, stats.particles, stats.constraints);
     io::printfn("frames,%d,warmup,%d,substeps,%d,iterations,%d", MEASURED_FRAMES, WARMUP_FRAMES,
@@ -810,14 +993,14 @@ fn Options? parse_options(String[] args) @local {
         }
     }
     if ((options.traced || options.validation) && !options.benchmark) return c3d::INVALID_ARGUMENT~;
-    if (options.ragdoll && (!options.benchmark || options.scenario == FLAG)) return c3d::INVALID_ARGUMENT~;
+    if (options.ragdoll && (!options.benchmark || (options.scenario == FLAG || options.scenario == CONTACTS))) return c3d::INVALID_ARGUMENT~;
     return options;
 }
 
 fn int main(String[] args) {
     Options? options = parse_options(args);
     if (catch excuse = options) {
-        io::eprintn("Use cloth [--scene flag|cape|both] [--still] [--frames count]");
+        io::eprintn("Use cloth [--scene flag|cape|both|contacts] [--still] [--frames count]");
         io::eprintn("  [--publish whole|streams]");
         io::eprintn("  [--benchmark [--ragdoll] [--capture path.rgba] [--trace software|hardware] [--validation]]");
         io::eprintn("Run timings without --validation; the validation layers inflate them.");

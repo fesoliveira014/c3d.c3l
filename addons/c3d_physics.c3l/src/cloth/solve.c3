@@ -8,7 +8,8 @@ import std::math;
 
 const float MIN_CONSTRAINT_LENGTH @private = 1e-7f; // metres; a shorter pair separates along its rest direction
 
-fn void solve_cloth(
+fn void? solve_cloth(
+    PhysicsWorld* world,
     ClothState* state,
     Wind* wind,
     Vec3 gravity,
@@ -37,12 +38,13 @@ fn void solve_cloth(
               ? state.pin_targets[slot]
               : state.pin_anchors[slot] + (state.pin_targets[slot] - state.pin_anchors[slot]) * progress;
         }
-        place_shapes(state, progress);
+        place_shapes(state, progress)!;
         for (uint iteration = 0; iteration < desc.iterations; iteration++) {
             project_constraints(state, state.edges, stretch);
             project_constraints(state, state.bends, bend);
-            project_contacts(state, state.predicted);
+            (void)contact_pass(world: world, state: state, positions: state.predicted, apply: true)!;
         }
+        resolve_contacts(world, state, state.predicted)!;
         foreach (index, &position : state.positions) {
             state.velocities[index] = (state.predicted[index] - *position) / dt;
             *position = state.predicted[index];
@@ -52,24 +54,11 @@ fn void solve_cloth(
     finish_body_poses(state);
 }
 
-fn void publish_cloth(ClothState* state, Mat4 world) @private {
+fn void? prepare_publication(PhysicsWorld* world, ClothState* state) @private {
     state.published[..] = state.positions[..];
     foreach (slot, pin : state.pins) state.published[pin] = state.pin_targets[slot];
-    place_shapes(state, 1);
-    project_contacts(state, state.published);
-    Mat4 to_local = maths::inverse_affine(world);
-    GeometryAsset* geometry = state.assets.geometry(state.geometry);
-    bool changed;
-    foreach (index, &local : geometry.data.positions) {
-        Vec3 position = maths::transform_point(to_local, state.published[index]);
-        if (position == *local) continue;
-        *local = position;
-        changed = true;
-    }
-    if (!changed) return;
-    geometry.data.compute_normals(state.assets.allocator);
-    geometry.data.finalize();
-    state.assets.mark_geometry_streams_dirty(state.geometry, { .positions = true, .normals = true });
+    place_shapes(state, 1)!;
+    resolve_contacts(world, state, state.published)!;
 }
 
 fn void accumulate_wind(ClothState* state, Wind* wind, uint[] indices) @local {
@@ -106,18 +95,6 @@ fn void project_constraints(ClothState* state, ClothConstraint[] constraints, fl
         Vec3 correction = direction * ((length - constraint.rest_length) * stiffness / total);
         state.predicted[constraint.first] += correction * first_weight;
         state.predicted[constraint.second] -= correction * second_weight;
-    }
-}
-
-fn void project_contacts(ClothState* state, Vec3[] positions) @local {
-    if (state.desc.collide_ground) project_ground(state, positions);
-    project_shapes(state, positions);
-}
-
-fn void project_ground(ClothState* state, Vec3[] positions) @private {
-    float floor = state.desc.ground_height + state.desc.thickness;
-    foreach (index, &position : positions) {
-        if (state.inverse_masses[index] != 0 && position.y < floor) position.y = floor;
     }
 }
 

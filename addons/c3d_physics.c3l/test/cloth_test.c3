@@ -729,7 +729,7 @@ fn void test_cloth_contact_uses_final_body_pose() @test {
     fixture.scene.update_world();
     cloth::sample_bodies(&fixture.scene, state);
     for (float progress = 0.25f; progress < 1; progress += 0.25f) {
-        cloth::place_shapes(state, progress);
+        cloth::place_shapes(state, progress)!!;
         float length = (state.shape_ends[0] - state.shape_starts[0]).length();
         assert(math::abs(length - 2 * collider.half_height) <= POSITION_TOLERANCE);
     }
@@ -802,9 +802,9 @@ fn void test_cloth_collider_capacity_is_shape_count() @test {
     foreach (index, &shape : spheres) *shape = sphere(0.1f, { (float)index, 0, 0 });
     ColliderDesc block = physics::default_collider_desc(BOX);
     block.half_extents = { 0.1f, 0.1f, 0.1f };
-    ColliderDesc[cloth::MAX_CLOTH_COLLIDERS + 1] mixed;
-    mixed[:cloth::MAX_CLOTH_COLLIDERS] = spheres[:cloth::MAX_CLOTH_COLLIDERS];
-    mixed[cloth::MAX_CLOTH_COLLIDERS] = block;
+    ColliderDesc[cloth::MAX_CLOTH_COLLIDERS] mixed;
+    mixed[:cloth::MAX_CLOTH_COLLIDERS - 1] = spheres[:cloth::MAX_CLOTH_COLLIDERS - 1];
+    mixed[cloth::MAX_CLOTH_COLLIDERS - 1] = block;
     Node* full = add_body_node(&fixture, mixed[..]);
     Node* over = add_body_node(&fixture, spheres[..]);
     ColliderDesc single = capsule(0.1f, 0.2f);
@@ -814,6 +814,7 @@ fn void test_cloth_collider_capacity_is_shape_count() @test {
     GeometryId source = add_grid(&fixture, 1);
 
     ClothDesc desc = cloth::default_cloth_desc();
+    desc.collisions.max_shapes = cloth::MAX_CLOTH_COLLIDERS;
     Entity[1] listed = { full.id };
     desc.colliders = listed[..];
     Node* accepted = add_cloth_node(&fixture, source);
@@ -832,7 +833,7 @@ fn void test_cloth_collider_capacity_is_shape_count() @test {
     desc.colliders = boxes[:cloth::MAX_CLOTH_COLLIDERS];
     fixture.scene.add_cloth(&fixture.assets, plain, desc)!!;
     ClothState* state = state_of(&fixture, plain);
-    assert(state.bodies.len == cloth::MAX_CLOTH_COLLIDERS && state.shapes.len == 1);
+    assert(state.bodies.len == cloth::MAX_CLOTH_COLLIDERS && state.shapes.len == cloth::MAX_CLOTH_COLLIDERS);
 }
 
 fn void test_cloth_collider_bindings_are_owned_and_generational() @test {
@@ -1264,6 +1265,7 @@ fn void test_shift_origin_moves_cloth_in_place() @test {
     shifted.scene.shift_origin(offset);
     shifted.scene.update_world();
     shifted.physics.shift_origin(&shifted.scene, offset);
+    assert(state.published_frame == shifted_node.world);
     assert(near(state.positions[GRID_CELLS * (GRID_CELLS + 1) + GRID_CELLS], corner_before - offset, CONTACT_TOLERANCE));
 
     step(&shifted, physics::DEFAULT_FIXED_DT);

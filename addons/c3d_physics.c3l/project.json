@@ -1,5 +1,6 @@
 {
   "langrev": "1",
+  "fp-math": "strict",
   "dependency-search-paths": [ "lib", "../../lib", "../../lib/gpu.c3l/lib" ],
   "dependencies": [
     "c3d_physics",
