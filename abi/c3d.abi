@@ -193,6 +193,14 @@ root ClusterGpu {
     GpuAddress decal_indices;
 }
 
+root LightSpatialRoot {
+    GpuAddress nodes;
+    GpuAddress indices;
+    GpuAddress globals;
+    uint       global_count;
+    uint       node_count;
+}
+
 root FrameRoot {
     mat4       view;
     mat4       proj;
@@ -235,6 +243,9 @@ root FrameRoot {
     float      pre_exposure; // scale the view's radiance carries while it is rendered; post divides it out
     float      pre_exposure_ratio; // this rendering's pre_exposure over the previous rendering's
     GpuAddress cloud_shadow; // CloudShadowRoot; zero when the view casts no cloud shadows
+    GpuAddress light_spatial;
+    uint       _pad0;
+    uint       _pad1;
 }
 
 root DrawRoot {
@@ -592,6 +603,7 @@ root RtReflectionRoot {
     uint         ray_count;
     uint         trace_shift; // 0 traces every pixel of the output, 1 one pixel of each 2 x 2 block
     uint         _pad1;
+    GpuAddress   light_spatial;
 }
 
 root RtReflectionUpsampleRoot {

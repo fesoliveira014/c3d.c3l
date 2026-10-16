@@ -73,9 +73,10 @@ headless still at constant time snaps on every rendering and ends on the target 
   over neutral grey. Basic is unlit in raster and acts as an emitter here: a path that hits it
   gains its colour and ends. Emission, base colour, metallic-roughness and normal maps are read at
   every hit; alpha-masked surfaces are tested in the any-hit stage.
-- **Lights.** Every punctual light in the scene, up to the renderer's `max_lights`, is sampled at
-  every bounce with a shadow ray (next-event estimation), whether or not it lies in the camera
-  frustum; a light with a source extent takes one point of its source for each ray. A light with shadows
+- **Lights.** The scene's punctual lights, up to the renderer's `max_lights`, form a no-frustum list.
+  At every bounce its [spatial lookup](many_lights.md#spatial-light-lookup) selects finite range
+  candidates and all global lights for next-event estimation. A contributing light is sampled
+  with a shadow ray; a light with a source extent takes one point of its source for each ray. A light with shadows
   disabled is unoccluded, and a mesh with `cast_shadow` off does not block light, as in raster.
 - **Emitters and the environment** are reached by bounce rays only. A camera ray that misses shows
   the scene background; a bounce ray that misses reads the lighting environment, or the ambient

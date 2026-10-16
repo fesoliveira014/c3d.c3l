@@ -369,6 +369,14 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer ClusterGpu 
     uint64_t decal_indices;
 };
 
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer LightSpatialRoot {
+    uint64_t nodes;
+    uint64_t indices;
+    uint64_t globals;
+    uint global_count;
+    uint node_count;
+};
+
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
     mat4 view;
     mat4 proj;
@@ -411,6 +419,9 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
     float pre_exposure;
     float pre_exposure_ratio;
     uint64_t cloud_shadow;
+    uint64_t light_spatial;
+    uint _pad0;
+    uint _pad1;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
@@ -725,6 +736,7 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer RtReflection
     uint ray_count;
     uint trace_shift;
     uint _pad1;
+    uint64_t light_spatial;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer RtReflectionUpsampleRoot {

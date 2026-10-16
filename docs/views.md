@@ -161,8 +161,8 @@ The default 16 × 9 × 24 grid has 3,456 cells. Its additional decal storage is:
 
 `DecalGpu` holds frame-relative inverse and forward affine rows, projection/fade
 data, tangent/handedness, weights and material/layer fields. Transform rebasing
-precedes inverse and bound construction. `FrameRoot` is 576 bytes with `decals`
-at offset 528 and `decal_count` at 536. `ClusterGpu` is 160 bytes;
+precedes inverse and bound construction. `FrameRoot` is 592 bytes with `decals`
+at offset 528, `decal_count` at 536 and the optional `light_spatial` address at 576. `ClusterGpu` is 160 bytes;
 `ClusterCounterGpu` remains 16 bytes with separate light and decal overflow counts and a
 skipped-cell count. The buffer ends with one `float` per tile (576 bytes at the default grid)
 for the pruning bound; it is reserved whether pruning is on or off.

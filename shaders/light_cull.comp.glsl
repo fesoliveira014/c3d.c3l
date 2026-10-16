@@ -3,6 +3,7 @@
 #include "c3d_abi.glsl"
 #include "brdf.glsl"
 #include "lights.glsl"
+#include "light_spatial.glsl"
 
 GPU_DECLARE_READONLY_ARRAY_REF(DecalArray, DecalGpu);
 #ifdef DEPTH_PRUNING
@@ -10,6 +11,7 @@ GPU_DECLARE_READONLY_ARRAY_REF(TileDepthArray, float);
 #endif
 
 const uint DECAL_MASK_WORD_BITS = 32u;
+const float LIGHT_PLANE_ROUNDING = 8.0 * 1.1920928955078125e-7;
 
 layout(local_size_x = CLUSTER_GROUP_SIZE, local_size_y = 1, local_size_z = 1) in;
 
@@ -19,6 +21,10 @@ layout(push_constant) uniform Push {
 
 shared vec4 planes[6];
 shared uint candidate_count;
+shared uint light_stack[BVH_STACK_DEPTH];
+shared uint light_stack_count;
+shared uint light_leaf_first;
+shared uint light_leaf_count;
 shared uint decal_mask[MAX_DECALS / DECAL_MASK_WORD_BITS];
 
 // mirrored as decal_intersects_planes in render/decal.c3
@@ -37,6 +43,62 @@ bool decal_intersects(DecalGpu decal) {
         if (dot(planes[plane], vec4(center, 1.0)) < -radius) return false;
     }
     return true;
+}
+
+bool light_node_intersects(BvhNodeGpu node) {
+    vec3 minimum = vec3(node.min_x, node.min_y, node.min_z);
+    vec3 maximum = vec3(node.max_x, node.max_y, node.max_z);
+    vec3 magnitude = max(abs(minimum), abs(maximum));
+    for (uint plane = 0u; plane < 6u; plane++) {
+        vec3 corner = mix(minimum, maximum, greaterThanEqual(planes[plane].xyz, vec3(0.0)));
+        float distance = dot(planes[plane], vec4(corner, 1.0));
+        float rounding = LIGHT_PLANE_ROUNDING * dot(abs(planes[plane]), vec4(magnitude, 1.0));
+        if (distance < -rounding) return false;
+    }
+    return true;
+}
+
+void append_cluster_light(FrameRoot frame, ClusterGpu clusters, uint segment, uint index) {
+    LightGpu light = LightArray(frame.lights).values[index];
+    if (global_light(light)) return;
+    for (uint plane = 0u; plane < 6u; plane++) {
+        if (dot(planes[plane], vec4(light.position_range.xyz, 1.0)) < -light.position_range.w) return;
+    }
+    uint slot = atomicAdd(candidate_count, 1u);
+    if (slot < clusters.lights_per_cluster) ClusterIndicesOutput(clusters.indices).values[segment + slot] = index;
+}
+
+void append_spatial_lights(FrameRoot frame, ClusterGpu clusters, uint segment, uint lane) {
+    LightSpatialRoot root = LightSpatialRoot(frame.light_spatial);
+    if (lane == 0u) {
+        light_stack_count = 1u;
+        light_stack[0] = 0u;
+    }
+    barrier();
+    for (;;) {
+        if (lane == 0u) {
+            light_leaf_count = 0u;
+            while (light_stack_count != 0u) {
+                BvhNodeGpu node = LightSpatialNodes(root.nodes).values[light_stack[--light_stack_count]];
+                if (!light_node_intersects(node)) continue;
+                if (node.count == 0u) {
+                    light_stack[light_stack_count++] = node.left_or_first + 1u;
+                    light_stack[light_stack_count++] = node.left_or_first;
+                } else {
+                    light_leaf_first = node.left_or_first;
+                    light_leaf_count = node.count;
+                    break;
+                }
+            }
+        }
+        barrier();
+        if (light_leaf_count == 0u) return;
+        for (uint primitive = lane; primitive < light_leaf_count; primitive += CLUSTER_GROUP_SIZE) {
+            uint index = LightSpatialIndices(root.indices).values[light_leaf_first + primitive];
+            append_cluster_light(frame, clusters, segment, index);
+        }
+        barrier();
+    }
 }
 
 void main() {
@@ -87,22 +149,11 @@ void main() {
     }
     barrier();
 
-    for (uint index = lane; index < frame.light_count; index += CLUSTER_GROUP_SIZE) {
-        LightGpu light = LightArray(frame.lights).values[index];
-        if (global_light(light)) continue;
-
-        bool intersects = true;
-        for (uint plane = 0u; plane < 6u; plane++) {
-            if (dot(planes[plane], vec4(light.position_range.xyz, 1.0)) < -light.position_range.w) {
-                intersects = false;
-                break;
-            }
-        }
-        if (!intersects) continue;
-
-        uint slot = atomicAdd(candidate_count, 1u);
-        if (slot < clusters.lights_per_cluster) {
-            ClusterIndicesOutput(clusters.indices).values[segment + slot] = index;
+    if (frame.light_spatial != 0ul) {
+        append_spatial_lights(frame, clusters, segment, lane);
+    } else {
+        for (uint index = lane; index < frame.light_count; index += CLUSTER_GROUP_SIZE) {
+            append_cluster_light(frame, clusters, segment, index);
         }
     }
     for (uint index = lane; index < frame.decal_count; index += CLUSTER_GROUP_SIZE) {

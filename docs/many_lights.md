@@ -82,6 +82,25 @@ remain flat unless they opt into the shared `LightList` helpers. See
 [views](views.md#light-selection) for configuration, validation and buffer lifetime, and
 [custom shaders](custom_shaders.md#light-selection) for opt-in compatibility.
 
+## Spatial light lookup
+
+Cluster construction can build a private BVH over the final packed finite point/spot ranges.
+A private admission check keeps small or widely overlapping lists on the complete flat
+construction path. For admitted lists, the workgroup rejects node boxes against the cell
+planes, then applies the existing sphere admission test to every selected leaf light. Indices still name the original packed array.
+Globals remain separate, and an overflowing cell retains its complete flat fallback.
+
+Reflection hits, path bounces and scene-probe hits use a point cursor over a separate BVH
+for their own no-frustum light list. They visit every candidate and evaluate each global
+once. Raster FLAT selection, the public `LightList` helpers, transmitting Physical raster
+lighting and the fog selector retain their existing behavior.
+
+Each list's nodes, index map, globals and root occupy immutable frame-upload storage.
+They are rebuilt from that rendering's accepted lights; no scene cache or additional light
+budget is introduced. Empty/all-global lists use the flat path. Subnormal squared ranges
+and nonfinite derived bounds or builder arithmetic also use the complete flat path. Upload
+and device failures retain their ordinary fault propagation.
+
 ## Depth pruning
 
 `ClusterDesc.depth_pruning` (off by default) lets the cull skip cells that no opaque surface
