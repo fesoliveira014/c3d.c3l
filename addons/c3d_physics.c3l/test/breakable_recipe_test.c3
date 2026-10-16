@@ -698,6 +698,78 @@ fn void test_breakable_reset_rejects_replacement_bodies_without_destroying_them(
     };
 }
 
+fn void test_breakable_reset_rejects_replaced_assembly_before_deleted_piece_cleanup() @test {
+    foreach (collider_count : (uint[2]){ 2, 1 }) {
+        @pool() {
+            Fixture fixture;
+            setup(&fixture, weightless_desc());
+            defer teardown(&fixture);
+            Node* root = add_row(&fixture, 2);
+            root.local.position = { 3, 4, 5 };
+            fixture.scene.update_world();
+            BreakableRecipeDesc recipe = row_recipe(&fixture, root);
+            recipe.settings.sleep_until_hit = true;
+            fixture.physics.add_breakable_recipe(root, recipe)!!;
+            BreakableState* state = fixture.scene.get(root, Breakable).state;
+            fixture.physics.remove_body(root);
+
+            ColliderDesc[2] colliders;
+            foreach (index, &collider : colliders) {
+                *collider = physics::default_collider_desc(BOX);
+                collider.half_extents = { 0.2f + (float)index, 0.3f, 0.4f };
+                collider.local.position.x = 2 * (float)index;
+            }
+            fixture.physics.add_body(root, physics::default_body_desc(KINEMATIC), colliders[:collider_count])!!;
+            fixture.physics.set_velocity(root, { 2, 3, 4 }, { 0, 1, 0 });
+            b3::BodyId replacement = fixture.physics.body(root)!!;
+            b3::WorldTransform pose = replacement.transform();
+            maths::Transform root_local = root.local;
+            Mat4 root_world = root.world;
+            RigidBody* rigid = fixture.scene.get(root, RigidBody);
+            Collider* native_records = rigid.colliders.ptr;
+            ColliderDesc* authored_records = fixture.scene.get(root, PhysicsBody).colliders.ptr;
+            maths::Transform previous = rigid.previous;
+            maths::Transform current = rigid.current;
+            b3::ShapeId[2] shapes;
+            foreach (index, collider : rigid.colliders) shapes[index] = collider.shape;
+            b3::Counters counts = fixture.physics.world.counters();
+            uint[] holders = alloc::new_array(tmem, uint, fixture.physics.snapshots.slots.len);
+            foreach (index, slot : fixture.physics.snapshots.slots) holders[index] = slot.holders;
+            fixture.scene.remove(fixture.scene.node(state.pieces[0]));
+
+            assert(@catch(fixture.physics.reset_breakable(root, PIECES)) == c3d::INVALID_ARGUMENT);
+            assert(replacement.is_valid() && physics::same_breakable_body(fixture.physics.body(root)!!, replacement));
+            foreach (shape : shapes[:collider_count]) assert(shape.is_valid());
+            rigid = fixture.scene.get(root, RigidBody);
+            PhysicsBody* authored = fixture.scene.get(root, PhysicsBody);
+            assert(rigid.colliders.ptr == native_records && rigid.colliders.len == collider_count);
+            assert(authored.colliders.ptr == authored_records && authored.colliders.len == collider_count);
+            foreach (index, collider : rigid.colliders) {
+                assert(collider.shape.index1 == shapes[index].index1 && collider.shape.world0 == shapes[index].world0
+                    && collider.shape.generation == shapes[index].generation);
+                assert(authored.colliders[index].half_extents == colliders[index].half_extents);
+                assert(authored.colliders[index].local.position == colliders[index].local.position);
+            }
+            b3::Counters retained = fixture.physics.world.counters();
+            assert(retained.body_count == counts.body_count && retained.shape_count == counts.shape_count
+                && retained.joint_count == counts.joint_count);
+            assert(root.local.position == root_local.position && root.local.rotation.v == root_local.rotation.v);
+            assert(root.world == root_world && replacement.transform().p == pose.p && replacement.transform().q.v == pose.q.v);
+            assert(replacement.linear_velocity() == (Vec3){ 2, 3, 4 } && replacement.angular_velocity() == (Vec3){ 0, 1, 0 });
+            assert(rigid.previous.position == previous.position && rigid.previous.rotation.v == previous.rotation.v);
+            assert(rigid.current.position == current.position && rigid.current.rotation.v == current.rotation.v);
+            foreach (index, slot : fixture.physics.snapshots.slots) assert(slot.holders == holders[index]);
+            assert_snapshot_holders_match(&fixture);
+
+            fixture.physics.remove_body(root);
+            fixture.physics.reset_breakable(root, PIECES)!!;
+            assert(state.alive_pieces == 1 && state.alive_welds == 0);
+            assert(fixture.physics.world.counters().body_count == 1 && fixture.physics.world.counters().shape_count == 1);
+            assert_snapshot_holders_match(&fixture);
+        };
+    }
+}
+
 fn void test_breakable_reset_prepares_legacy_survivors_without_deleted_sources() @test {
     Fixture fixture;
     setup(&fixture, weightless_desc());

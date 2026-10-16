@@ -201,9 +201,8 @@ Attachment rejects dead piece/hull identities with `INVALID_ID`; empty hull
 lists, duplicate/non-descendant pieces and fewer than two pieces with
 `INVALID_ARGUMENT`; incompatible ownership with `BREAKABLE_EXISTS` or
 `BODY_EXISTS`; and failed recipe allocation with `CAPACITY_EXCEEDED`.
-Automatic attachment reports unsupported rest transforms with `UNSUPPORTED`.
-Explicit recipes report non-finite frames, non-unit scale or invalid/non-unit
-quaternions with `INVALID_ARGUMENT`, for piece rest frames and weld/anchor frames.
+Invalid captured piece rest frames return `UNSUPPORTED` or `INVALID_ARGUMENT`.
+Malformed explicit weld or anchor frames return `INVALID_ARGUMENT`.
 Every attachment failure adds nothing. Pending owners show their ordinary
 authored piece nodes but have no
 native bodies or welds. `PhysicsWorld.prepare_breakable_subtree` requires a physics

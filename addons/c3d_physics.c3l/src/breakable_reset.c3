@@ -28,10 +28,10 @@ fn void? PhysicsWorld.reset_breakable(
     maths::Transform* root_pose = null,
 ) {
     BreakableState* previous = self.scene.get(root, Breakable).state;
+    check_breakable_reset_roles(self, root, previous)!;
     prune_breakable(self, root, previous);
     maths::Transform pose = root_pose ? *root_pose : breakable_pose(root)!;
     check_breakable_frame(pose)!;
-    check_breakable_reset_roles(self, root, previous)!;
     maths::Transform root_local = maths::transform_from_affine(
         maths::inverse_affine(root.transform_basis()).mul(pose.to_mat4())
     ) ?? c3d::UNSUPPORTED~!;
