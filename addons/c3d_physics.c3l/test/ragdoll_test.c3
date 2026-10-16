@@ -887,6 +887,80 @@ fn void test_recovery_teleport_cancels_before_moving_without_completion() @test 
     assert(ragdoll.recoveries == 0);
 }
 
+fn void test_recovery_teleport_resets_continuous_cloth_collider_history() @test {
+    Fixture fixture;
+    setup(&fixture, weightless_desc());
+    defer teardown(&fixture);
+
+    Rig rig = add_chain(&fixture);
+    rig.character.local.position.x = -1;
+    fixture.scene.update_world();
+    RagdollBone[1] bones = { bone(0, length: 1) };
+    Ragdoll* ragdoll = build(&fixture, &rig, bones[..]);
+    enter_recovery(&fixture, &rig, ragdoll);
+    Node* collider_node = ragdoll.bone_nodes[0];
+    b3::BodyId body = fixture.physics.body(collider_node)!!;
+
+    GeometryId geometry_id;
+    @pool() {
+        Geometry geometry = {
+            .positions = alloc::new_array(tmem, Vec3, 3),
+            .indices = alloc::new_array(tmem, uint, 3),
+        };
+        geometry.positions[..] = ((Vec3[3]){ { 0, 0.5f, 0 }, { 0, 0.5f, 2 }, { 0, 2.5f, 2 } })[..];
+        geometry.indices[..] = { 0, 1, 2 }[..];
+        geometry.finalize();
+        geometry_id = fixture.assets.add_geometry(&geometry)!!;
+    };
+    MaterialId material_id = fixture.assets.add_material(material::basic({ .color = { 1, 1, 1, 1 } }))!!;
+    Node* cloth_node = fixture.scene.add_mesh(geometry_id, material_id)!!;
+    uint[2] pins = { 1, 2 };
+    Entity[1] colliders = { collider_node.id };
+    cloth::ClothDesc desc = cloth::default_cloth_desc();
+    desc.pins = pins[..];
+    desc.colliders = colliders[..];
+    desc.substeps = desc.iterations = 1;
+    desc.stretch_stiffness = desc.bend_stiffness = desc.damping = 0;
+    desc.collisions.continuous = true;
+    fixture.scene.add_cloth(&fixture.assets, cloth_node, desc)!!;
+
+    fixture.scene.update_world();
+    fixture.physics.update(physics::DEFAULT_FIXED_DT);
+    fixture.physics.update_ragdolls();
+    fixture.scene.update_world();
+    fixture.physics.update_cloths();
+    GeometryAsset* geometry = fixture.assets.geometry(fixture.scene.get(cloth_node, scene::Mesh).geometry);
+    Vec3[3] published;
+    published[..] = geometry.data.positions[..];
+
+    assert(fixture.physics.cloth_stats.failed == 0 && fixture.physics.cloth_stats.impacts == 0);
+    assert(ragdoll.recovery_status().participating == 1 && ragdoll.recoveries == 0);
+    assert(close_vec(body.position(), { -1, 0.5f, 0 }));
+
+    Vec3 linear_velocity = { 0.25f, 0, 0 };
+    Vec3 angular_velocity = { 0, 0.5f, 0 };
+    body.set_linear_velocity(linear_velocity);
+    body.set_angular_velocity(angular_velocity);
+    fixture.physics.teleport(collider_node, { 1, 0.5f, 0 }, quaternion::IDENTITY);
+
+    assert(ragdoll.recovery_status().phase == RagdollRecoveryPhase.INACTIVE && ragdoll.recoveries == 0);
+    assert(@catch(fixture.physics.finish_ragdoll_recovery(rig.skin)) == physics::NO_RECOVERY);
+    assert(ragdoll.bone_modes[0] == SIMULATED && body.type() == b3::BodyType.DYNAMIC);
+    assert(body.linear_velocity() == linear_velocity && body.angular_velocity() == angular_velocity);
+    assert(same_body(body, fixture.physics.body(collider_node)!!));
+    assert(close_vec(body.position(), { 1, 0.5f, 0 }));
+
+    fixture.physics.update(0);
+    fixture.physics.update_ragdolls();
+    fixture.scene.update_world();
+    fixture.physics.update_cloths();
+    geometry = fixture.assets.geometry(fixture.scene.get(cloth_node, scene::Mesh).geometry);
+
+    assert(fixture.physics.steps_last_update == 0);
+    assert(fixture.physics.cloth_stats.failed == 0 && fixture.physics.cloth_stats.impacts == 0);
+    foreach (index, point : geometry.data.positions) assert(close_vec(point, published[index]));
+}
+
 fn void test_recovery_removal_and_world_replacement_cancel_transient_state() @test {
     Fixture fixture;
     setup(&fixture, weightless_desc());

@@ -81,6 +81,14 @@ writes bounded visual captures and numeric checks to an existing directory;
 `--cpu-observation` runs a bounded CPU comparison. See
 [Animation](../../docs/animation.md) for the animation/ragdoll contract.
 
+| Prone get-up | Blocked recovery |
+| --- | --- |
+| ![Prone physical recovery](../../docs/images/ragdoll_recovery.png) | ![Recovery constrained by an obstruction](../../docs/images/ragdoll_blocked.png) |
+| The same dynamic capsules follow the get-up target. | An obstruction prevents completion without disabling simulation. |
+
+The [focused contact example](../../docs/images/ragdoll_contact.png) shows recovery
+forces pushing a movable neighbour while the bone remains simulated.
+
 ## Cloth
 
 `c3d::physics::cloth` simulates a mesh over an owned geometry copy with pinned vertices, node
