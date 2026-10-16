@@ -135,21 +135,21 @@ fn Level? build_level(AssetStore* assets, Scene* scene, PhysicsWorld* physics) @
     MaterialId blocker_material;
     @pool() {
         Geometry ground = geometry::plane(tmem, GROUND_SIZE, GROUND_SIZE);
-        ground_geometry = assets.add_geometry(&ground, "ragdoll/ground")!;
+        ground_geometry = assets.find_geometry("ragdoll/ground") ?? assets.add_geometry(&ground, "ragdoll/ground")!;
         Geometry box = geometry::box(
             allocator: tmem,
             width: BOX_SIZE,
             height: BOX_SIZE,
             depth: BOX_SIZE,
         );
-        level.box_geometry = assets.add_geometry(&box, "ragdoll/box")!;
+        level.box_geometry = assets.find_geometry("ragdoll/box") ?? assets.add_geometry(&box, "ragdoll/box")!;
         Geometry blocker = geometry::box(
             allocator: tmem,
             width: BLOCKER_HALF_EXTENTS.x * 2,
             height: BLOCKER_HALF_EXTENTS.y * 2,
             depth: BLOCKER_HALF_EXTENTS.z * 2,
         );
-        blocker_geometry = assets.add_geometry(&blocker, "ragdoll/blocker")!;
+        blocker_geometry = assets.find_geometry("ragdoll/blocker") ?? assets.add_geometry(&blocker, "ragdoll/blocker")!;
         StandardParams params = material::STANDARD_PARAMS_DEFAULT;
         params.base_color = { 0.34f, 0.39f, 0.36f, 1 };
         params.roughness = 0.9f;
@@ -655,9 +655,13 @@ fn void? run_acceptance(
         desc: physics::default_physics_desc(),
     )!;
     defer physics::destroy_physics_world(&physics);
-    Level level = build_level(assets, &scene, &physics)!;
     RagdollFacing facing = scenario == 1 ? FACE_DOWN : FACE_UP;
     String name = scenario == 0 ? "supine" : scenario == 1 ? "prone" : scenario == 2 ? "blocked" : "neighbour";
+    io::printfn("visual_setup,%s,level", name);
+    Level level = build_level(assets, &scene, &physics)!;
+    level.camera_node.local.position = CAMERA_START;
+    Vec3 direction = (Vec3){ 0, 0.7f, 0 } - CAMERA_START;
+    level.camera_node.local.rotation = maths::look_rotation(direction.normalize(), { 0, 1, 0 });
     Controls controls = { .automatic_weight = true, .draw = { .colliders = true }, .obstruction = scenario == 2 };
     physics.set_enabled(level.blocker, controls.obstruction);
     level.blocker.visible = controls.obstruction;
@@ -670,12 +674,14 @@ fn void? run_acceptance(
         )!;
         level.neighbour_start = NEIGHBOUR_POSITION;
     }
+    io::printfn("visual_setup,%s,rig", name);
     ExampleCharacter character = { .humanoid = getup_fixture::create_humanoid(assets, &scene)!, .facing = facing };
     getup_fixture::sample_getup(&character.humanoid, facing, 0);
     scene.update_world();
     physics.update(0);
     physics.update_ragdolls();
     scene.update_world();
+    io::printfn("visual_setup,%s,recovery_entry", name);
     begin_recovery(&character, &scene, &physics);
     if (character.last_error) return character.last_error~;
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
