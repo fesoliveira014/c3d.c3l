@@ -806,8 +806,9 @@ fn void? filter_grid_regions(
         for (usz ordinal = 0; ordinal < column.floors.len; ordinal++) {
             uint span = column.span_base + (uint)ordinal;
             uint root = grid_component_root(parents, span);
-            if (!touches_border[root] && counts[root] < builder.tile_config.min_region_area)
+            if (!touches_border[root] && counts[root] < builder.tile_config.min_region_area) {
                 compact.areas[span] = NULL_AREA;
+            }
         }
     }
 }
@@ -952,8 +953,9 @@ fn char[]? pack_grid_cells(
 
             Vec3[] cell_corners = mesh.detail.corners[vertex_base:GRID_QUAD_VERTICES];
             if (!detail_triangle_valid(cell_corners[0], cell_corners[1], cell_corners[2])
-                || !detail_triangle_valid(cell_corners[0], cell_corners[2], cell_corners[3]))
+                || !detail_triangle_valid(cell_corners[0], cell_corners[2], cell_corners[3])) {
                 return c3d::CAPACITY_EXCEEDED~;
+            }
 
             for (uint part = 0; part < polygons_per_cell; part++) {
                 uint polygon = polygon_base + part;
@@ -1168,8 +1170,9 @@ fn float[2]? grid_match_limits(GridEdgeMatch match, uint direction) @local {
     // Round inward so float endpoints cannot widen a certified opening.
     float minimum = (float)lower.max;
     float maximum = (float)upper.min;
-    if ((double)minimum < lower.max || (!include_lower && (double)minimum == lower.max))
+    if ((double)minimum < lower.max || (!include_lower && (double)minimum == lower.max)) {
         minimum = minimum.nexthigher();
+    }
     if ((double)maximum > upper.min || (!include_upper && (double)maximum == upper.min)) {
         if (maximum == 0) return c3d::CAPACITY_EXCEEDED~;
         maximum = bitcast(bitcast(maximum, uint) - 1, float);
