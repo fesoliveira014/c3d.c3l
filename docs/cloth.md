@@ -389,6 +389,8 @@ substep/pass, zero structural stiffness and gravity, and damping that clears vel
 on the following step, leaving the corrected surface visible. Reset repeats the sweep.
 The panel reports the accumulated swept impacts and current failure/residual counters.
 
+![Cloth after the fast rotating-box crossing](images/cloth_continuous.png)
+
 The benchmark renders one scene (the flag at 32x32 cells) at the default 4x8 settings to a
 1280x720 TAA and motion-blur view with 120 warm-up and 600 measured 60 Hz frames; `--ragdoll`
 drops the character at the end of the warm-up in a cape scene. `--validation` enables Vulkan
