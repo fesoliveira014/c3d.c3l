@@ -1,9 +1,99 @@
 # Collision queries
 
-`c3d::physics::collide`, in the physics package, answers collision questions about shapes that are
-not in a physics world: how two posed shapes touch, how far apart they are, when a moving shape
-first touches a resting one, and where a ray enters one shape. It needs no `PhysicsWorld` and no
-scene. Import `c3d::physics::collide`; the package is selected as for any physics use.
+The physics package provides world-free collision queries and scene-bound world queries.
+`c3d::physics` owns prepared shapes and an optional shared cooking cache. The existing
+`c3d::physics::collide` value API provides direct convex operations and their result types.
+Neither world-free API needs a `PhysicsWorld` or a scene. Select the physics package as for
+any physics use.
+
+## Prepared convex queries
+
+`CollisionCache` owns immutable cooked data for one borrowed `AssetStore`.
+`CollisionShape` owns prepared query state and keeps its cache in use; `CollisionShapeView`
+borrows that state until the owner is destroyed. Keep the store alive through cache destruction,
+and destroy every owner and borrowing world before destroying the cache. Do not copy owner
+values to create another owner. Set box3d's length-unit configuration before creating caches,
+prepared shapes or worlds, and keep it unchanged through their lifetimes.
+Cache mutation, source edits and destruction follow existing owner-thread ordering; callers
+synchronize them against queries and simulation.
+
+Inside a fallible function:
+
+```c3
+CollisionCache cache = physics::create_collision_cache(mem, &assets, physics::default_collision_cache_desc())!;
+defer physics::destroy_collision_cache(&cache)!!;
+CollisionShapeDesc desc = physics::default_collision_shape_desc(physics::ColliderKind.HULL);
+desc.geometry = rock;
+CollisionShape shape = physics::create_collision_shape(mem, &cache, desc)!;
+defer physics::destroy_collision_shape(&shape);
+CollisionShapeView view = shape.view();
+```
+
+`CollisionShapeDesc` contains geometry/source values, without body filtering, events, density,
+friction or restitution. Preparation currently supports unit-scale `SPHERE`, `CAPSULE`, `BOX`
+and `HULL`. Supply positive finite dimensions, or a live hull `geometry` from the cache's store.
+The capsule segment is local Y, with length `2 * half_height`; it must be at least one native
+linear slop. Box half-extents must be at least `0.2 * native linear slop`. At the default native
+unit setting these limits are 0.005 and 0.001 respectively. Smaller positive values return
+`UNSUPPORTED` instead of accepting native clamping. `MESH`, `HEIGHT_FIELD`, `COMPOUND` and
+nonunit prepared scale currently return `UNSUPPORTED`.
+
+Hull preparation retains the native cooked hull, with at most 128 vertices. Query owners admit
+at most 32 vertices per face so native contact clipping stays within its fixed scratch capacity;
+exceeding that limit returns `CAPACITY_EXCEEDED`. This limit does not narrow ordinary body
+creation. Nonfinite authored values return `INVALID_ARGUMENT`; degenerate or unrepresentable
+represented geometry is refused. A geometry ID is local to its store: callers must supply its
+originating store, because equal numeric IDs from different stores cannot establish provenance.
+New hull cooks also check source arithmetic and the native work-allocation count limit before
+calling box3d. Matching retained cooks remain usable after source CPU data is released.
+
+All view operations allocate no memory. Poses use finite unit rotations and unit scale within
+`collide::UNIT_SCALE_TOLERANCE`. Invalid values return `INVALID_ARGUMENT`; unsupported finite
+scale or unrepresentable derived query arithmetic returns `UNSUPPORTED`. Returned points,
+normals and distances are in world space. Normals point from the first shape toward the second.
+
+- `contacts(pose_a, other, pose_b, output)` writes the complete native reduced convex manifold
+  and returns its count. There are at most four points, each with signed native separation,
+  a normal and `triangle_index == NO_COLLISION_TRIANGLE`. Positive separation can occur inside
+  the native speculative margin. An empty result returns zero, including with an empty output
+  slice. Insufficient output returns `CAPACITY_EXCEEDED`; output contents are unspecified on
+  failure. There is no successful truncated prefix.
+- `distance(pose_a, other, pose_b)` returns `collide::Distance`: unsigned separation, world
+  witnesses and a normal. Overlap returns zero; native zero-distance witnesses need not coincide.
+- `cast(pose_a, other, pose_b, translation_a, translation_b)` accepts both world translations
+  and returns `collide::Impact`. Its point includes both shapes' motion at the returned fraction.
+- `time_of_impact(sweep_a, other, sweep_b)` accepts `collide::Sweep` values with both translations
+  and rotations, and returns `collide::Impact`.
+- `ray_cast(pose, origin, direction, max_distance)` returns `collide::ShapeRayHit`. Direction is
+  unit length and the maximum distance is positive. A ray starting inside a convex shape returns
+  fraction zero and a zero normal.
+
+Casts, sweeps and rays return `b3::NO_HIT` on a miss. Casts and sweeps preserve native closing-band
+semantics: a hit already inside that band has time zero and a zero normal. Geometric touching
+alone does not promise time zero. The slop behavior described below also applies to prepared
+convex casts and sweeps.
+
+### Sharing cooked geometry with worlds
+
+Pass an optional fifth `cache` argument to `create_physics_world`. The cache must reference the
+exact same `AssetStore`; a mismatch returns `INVALID_ARGUMENT` without borrowing it. A world
+without that argument retains its private cache. An external cache supplies capacity and
+wireframe policy, so that world's `PhysicsDesc.snapshot_capacity` and `cache_wireframes` do
+not override it. `default_collision_cache_desc()` provides 256 slots with wireframes enabled;
+a zero-slot cache still supports prepared primitives.
+
+Worlds and prepared hulls reuse matching source/revision cooks. Native bodies still clone their
+own hull shape data. A source edit creates a new immutable entry on the next acquisition; held
+older entries remain valid. As before, a live body adopts source edits only after
+`PhysicsBody.mark_changed()` requests a rebuild. Released CPU data does not invalidate a matching
+retained cook; a missing required cook returns `SOURCE_UNAVAILABLE`. Unheld stale entries may be
+reclaimed. Cache occupancy reported by a borrowing world's diagnostics counts the shared table,
+while native body counts remain world-local.
+
+`destroy_collision_cache` returns `RESOURCE_IN_USE` unchanged while any world, prepared owner
+or snapshot holder remains. A world with no bodies still borrows the cache. Successful cache and
+shape destruction zero their owner values. `ColliderDesc` and serialization remain unchanged;
+prepared pointers and native identities are not serialized.
 
 ## Shapes and hulls
 
@@ -84,5 +174,5 @@ Results past a cap are dropped.
 `collide::Sweep`, `collide::Manifold` and `collide::ManifoldPoint` share names with `b3` types. A
 module that imports both `c3d::physics::collide` and `b3` writes these three qualified.
 
-The `collision_math` example in the physics package moves one shape against another and draws the
-manifold points, the closest-point segment and the swept contact.
+The `collision_math` example prepares cached convex owners, moves one shape against another,
+and draws the manifold points, the closest-point segment and the swept contact.
