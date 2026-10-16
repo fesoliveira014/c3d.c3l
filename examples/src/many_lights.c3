@@ -364,7 +364,7 @@ fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkOptions options) @local 
     base.depth_prepass = options.flags.depth_prepass;
     base.post.auto_exposure = options.flags.auto_exposure;
     base.ray_tracing.reflections = options.flags.reflections;
-    if (options.flags.screen_space_gi) base.screen_space_gi = render::SCREEN_SPACE_GI_DEFAULT;
+    if (options.flags.screen_space_gi) base.screen_space_gi = bench_loop::screen_space_gi_desc(options.flags);
     base.shading = options.shading;
     // A path-traced view selects lights at its hits and rejects the cluster grid.
     base.lights = options.shading == ShadingPath.PATH_TRACED ? LightSelection.FLAT : options.selection;
@@ -375,14 +375,14 @@ fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkOptions options) @local 
 
 fn void print_banner(BenchmarkOptions options, bool timestamps_active) @local {
     BenchmarkFlags flags = options.flags;
-    io::eprintfn("mode=%s shading=%s lights=%d range=%.1f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s reflections=%s screen_space_gi=%s auto_exposure=%s msaa=%s trace=%s",
+    io::eprintfn("mode=%s shading=%s lights=%d range=%.1f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s reflections=%s screen_space_gi=%s ssgi_trace=%s auto_exposure=%s msaa=%s trace=%s",
         options.selection == LightSelection.FLAT || options.shading == ShadingPath.PATH_TRACED ? "flat" : "clustered",
         bench_loop::shading_name(options.shading), options.lights, options.range,
         options.capacity, flags.width, flags.height, flags.warmup, flags.frames,
         flags.validation, flags.gpu_timings, timestamps_active, flags.capture,
         flags.window ? "window" : "none", flags.panel, flags.depth_prepass,
         bench_loop::ambient_occlusion_name(flags.ambient_occlusion), flags.reflections ? "on" : "off",
-        flags.screen_space_gi ? "on" : "off",
+        flags.screen_space_gi ? "on" : "off", bench_loop::ssgi_trace_name(flags.ssgi_trace),
         flags.auto_exposure ? "on" : "off", bench_loop::msaa_name(flags.msaa),
         bench_loop::trace_name(
             traces:      bench_loop::needs_ray_queries(flags) || options.shading == ShadingPath.PATH_TRACED,
@@ -473,7 +473,7 @@ fn int main(String[] args) {
     if (catch excuse = parsed) {
         if (excuse != c3d::UNSUPPORTED) {
             io::eprintfn("Invalid options: %s", excuse);
-            io::eprintn("Use --benchmark --mode flat|clustered [--shading forward|deferred|path-traced] --lights N --frames N --warmup N --capacity N --range N --width N --height N [--anti-aliasing none|fxaa|taa] [--ambient-occlusion none|half|full] [--depth-prepass on|off] [--msaa 1|2|4|8] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
+            io::eprintn("Use --benchmark --mode flat|clustered [--shading forward|deferred|path-traced] --lights N --frames N --warmup N --capacity N --range N --width N --height N [--anti-aliasing none|fxaa|taa] [--ambient-occlusion none|half|full] [--screen-space-gi on|off] [--ssgi-trace linear|hierarchical] [--ssgi-steps N] [--depth-prepass on|off] [--msaa 1|2|4|8] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
             io::eprintn("Also --depth-pruning on|off.");
         }
         return 1;

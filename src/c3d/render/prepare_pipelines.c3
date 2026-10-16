@@ -595,7 +595,13 @@ fn void list_view_pipelines(
         }
 
         if (desc.screen_space_gi.enabled) {
-            list_prepare_compute(requests, ComputeSlot.SSGI_TRACE);
+            switch (desc.screen_space_gi.trace) {
+                case LINEAR: list_prepare_compute(requests, ComputeSlot.SSGI_TRACE);
+                case HIERARCHICAL:
+                    list_prepare_compute(requests, ComputeSlot.SSGI_TRACE);
+                    list_prepare_compute(requests, ComputeSlot.SSGI_TRACE_HIERARCHICAL);
+                    list_prepare_compute(requests, ComputeSlot.DEPTH_PYRAMID);
+            }
             list_prepare_compute(requests, ComputeSlot.SSGI_TEMPORAL);
             list_prepare_compute(requests, ComputeSlot.SSGI_FILTER);
         }

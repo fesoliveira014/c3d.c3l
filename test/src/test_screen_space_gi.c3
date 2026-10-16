@@ -52,6 +52,10 @@ fn ProjectionTerms terms_of(CameraMatrices* matrices) @local {
 fn void test_screen_space_gi_desc_validity() @test {
     ScreenSpaceGiDesc desc = render::SCREEN_SPACE_GI_DEFAULT;
     assert(render::screen_space_gi_desc_valid(&desc));
+    assert(desc.trace == SsgiTrace.LINEAR);
+    ScreenSpaceGiDesc hierarchical = desc;
+    hierarchical.trace = SsgiTrace.HIERARCHICAL;
+    assert(render::screen_space_gi_desc_valid(&hierarchical));
     ScreenSpaceGiDesc off;
     assert(render::screen_space_gi_desc_valid(&off));
 

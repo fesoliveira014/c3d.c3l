@@ -354,11 +354,13 @@ fn Target? allocate_storage_target(
     ZString debug_name,
     uint depth = 0,
     gpu::TextureUsage usage = { .sampled, .storage },
+    uint mip_levels = 1,
 ) @private {
     gpu::TextureDesc texture_desc = {
         .width      = width,
         .height     = height,
         .depth      = depth,
+        .mip_levels = mip_levels,
         .format     = format,
         .usage      = usage,
         .access     = { .graphics },

@@ -14,6 +14,7 @@ render::configure_view(&renderer, view, desc)!;
 | `ScreenSpaceGiDesc` field | Meaning |
 | --- | --- |
 | `enabled` | Off by default in the view constructors |
+| `trace` | `SsgiTrace.LINEAR` by default; `HIERARCHICAL` enables depth-pyramid block rejection |
 | `rays` | Rays per half-resolution texel and frame, `SSGI_RAYS_MIN` (1) to `SSGI_RAYS_MAX` (8); default 4 |
 | `max_steps` | March steps per ray, `SSGI_STEPS_MIN` (4) to `SSGI_STEPS_MAX` (64); default 24 |
 | `max_distance` | View-space units a ray marches; default 2 |
@@ -24,6 +25,16 @@ render::configure_view(&renderer, view, desc)!;
 `configure_view` faults `c3d::INVALID_ARGUMENT` for values outside these ranges and for the effect on a
 `PATH_TRACED` view. A forward view with the effect gets a depth prepass whatever `depth_prepass` says, as a
 view with ambient occlusion does.
+
+## Trace mode
+
+Set `desc.screen_space_gi.trace = SsgiTrace.HIERARCHICAL` to use the depth hierarchy on perspective
+views. It keeps the configured ray and step counts and checks samples in order when a block cannot be
+rejected. Orthographic cameras use the original `LINEAR` pipeline and do not build the pyramid.
+
+Hierarchical tracing uses controlled floating-point evaluation for supported rays, so its result can
+differ slightly from `LINEAR`; the modes are not bit-identical. Unsupported ray or projection bounds
+fall back to ordered leaf checks. `LINEAR` remains the default and allocates no depth pyramid.
 
 ## How it works
 
@@ -61,14 +72,17 @@ and holds no blended draws.
 Pass order of a view with the effect:
 
 ```
-forward:   depth prepass, velocity, [ambient occlusion], screen-space GI, forward pass, scene reads and
-           transparent, colour copy, debug lines, [TAA], [motion blur]
-deferred:  depth prepass, G-buffer, velocity, [ambient occlusion], screen-space GI, [reflections], lighting,
-           forward pass, scene reads and transparent, colour copy, debug lines, [TAA], [motion blur]
+forward:   depth prepass, velocity, [ambient occlusion], [depth pyramid], screen-space GI, forward pass,
+           scene reads and transparent, colour copy, debug lines, [TAA], [motion blur]
+deferred:  depth prepass, G-buffer, velocity, [ambient occlusion], [depth pyramid], screen-space GI,
+           [reflections], lighting, forward pass, scene reads and transparent, colour copy, debug lines,
+           [TAA], [motion blur]
 ```
 
-`Pass.SCREEN_SPACE_GI` times the three dispatches and `Pass.SSGI_COLOR_COPY` the copy; the `Pass` enum order
-is not the recording order of every view.
+`Pass.SCREEN_SPACE_GI` times the trace, temporal and filter dispatches, and `Pass.SSGI_COLOR_COPY` times
+the copy. `Pass.DEPTH_PYRAMID` separately times one dispatch per mip level on hierarchical perspective
+views. Include it with `SCREEN_SPACE_GI` when comparing trace modes. The `Pass` enum order is not the
+recording order of every view.
 
 `gui::targets_panel` lists `ssgi` and `ssgi_raw`; programmatically `PreviewKind.VIEW_SCREEN_SPACE_GI`
 previews `ssgi` at level 0 and `ssgi_raw` at level 1. The post panel's "Screen-space GI" header edits the
@@ -117,11 +131,21 @@ beside it over 64 frames at rest, bounces of 6 to 72 levels): a standard deviati
 the image moves faster than the velocity threshold the history is rejected and each frame shows the
 single-frame noise. One filter pass is kept: the accumulation holds the noise at rest under 2 levels.
 
+Hierarchical tracing adds a full-resolution pyramid build and may reduce depth reads during the march.
+Its benefit depends on the scene, resolution and ray settings. Compare the sum of `DEPTH_PYRAMID` and
+`SCREEN_SPACE_GI` on the target workload; the colour copy and velocity passes still apply.
+
 ## Memory
 
 At 1920 x 1080: raw estimate 4.1 MB, two accumulation slots 8.3 MB, two depth history slots 4.1 MB, the
 previous colour 16.6 MB and the full-resolution result 16.6 MB: 49.8 MB. A view that had no velocity image
 gains 16.6 MB more.
+
+`HIERARCHICAL` adds one full-resolution `R32_FLOAT` texture with up to 16 mip levels. Each mip stores
+four bytes per texel before backend allocation alignment. The texture needs one view of the full
+chain and one single-level view per mip. These resources remain allocated while
+hierarchical GI is configured, including when the current camera is orthographic. Switching to
+`LINEAR` or disabling GI retires them after their queued uses complete; resizing recreates the chain.
 
 ## Custom shaders
 

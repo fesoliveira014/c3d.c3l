@@ -53,16 +53,16 @@ fn void retire_scene_mips(RetireList* retire, SceneMips* mips) @private {
     *mips = {};
 }
 
-fn void? transition_scene_levels(
+fn void? transition_levels(
     Renderer* renderer,
-    Target* color,
+    Target* target,
     uint base_level,
     uint level_count,
     gpu::TextureState before,
     gpu::TextureState after,
 ) @private {
     gpu::TextureBarrier barrier = gpu::texture_view_transition(
-        texture: color.texture,
+        texture: target.texture,
         view:    { .base_mip = base_level, .mip_count = level_count },
         before:  before,
         after:   after,
@@ -81,9 +81,9 @@ fn void? record_scene_mips(Renderer* renderer, ViewRecord* record) @private {
 
         // Each level returns to color.state as soon as it is written, so the full-chain view is never read
         // while a level sits in another layout.
-        transition_scene_levels(
+        transition_levels(
             renderer:    renderer,
-            color:       color,
+            target:      color,
             base_level:  1,
             level_count: 0,
             before:      color.state,
@@ -113,9 +113,9 @@ fn void? record_scene_mips(Renderer* renderer, ViewRecord* record) @private {
                 load:          gpu::LoadOp.DONT_CARE,
             )!;
 
-            transition_scene_levels(
+            transition_levels(
                 renderer:    renderer,
-                color:       color,
+                target:      color,
                 base_level:  level,
                 level_count: 1,
                 before:      COLOR_ATTACHMENT_STATE,

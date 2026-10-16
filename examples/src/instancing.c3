@@ -635,7 +635,7 @@ fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkFlags flags) @local {
     base.depth_prepass = flags.depth_prepass;
     base.post.auto_exposure = flags.auto_exposure;
     base.ray_tracing.reflections = flags.reflections;
-    if (flags.screen_space_gi) base.screen_space_gi = render::SCREEN_SPACE_GI_DEFAULT;
+    if (flags.screen_space_gi) base.screen_space_gi = bench_loop::screen_space_gi_desc(flags);
     base.instance_culling = true;
     return base;
 }
@@ -785,7 +785,7 @@ fn int main(String[] args) {
     if (catch excuse = parsed) {
         if (excuse != c3d::UNSUPPORTED) {
             io::eprintfn("Invalid options: %s", excuse);
-            io::eprintn("Use [--fade-field] [--instance-edit range|whole] [--gpu-timings] or --benchmark [--fade-field] [--instance-edit range|whole] --frames N --warmup N --width N --height N [--anti-aliasing none|fxaa|taa] [--ambient-occlusion none|half|full] [--depth-prepass on|off] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
+            io::eprintn("Use [--fade-field] [--instance-edit range|whole] [--gpu-timings] or --benchmark [--fade-field] [--instance-edit range|whole] --frames N --warmup N --width N --height N [--anti-aliasing none|fxaa|taa] [--ambient-occlusion none|half|full] [--screen-space-gi on|off] [--ssgi-trace linear|hierarchical] [--ssgi-steps N] [--depth-prepass on|off] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
         }
         return 1;
     }

@@ -332,8 +332,10 @@ An editor with a game view, two viewports and live thumbnails drawn through `ren
 
 Every working image of a view and every render target holds one texture-table entry and one heap slot, except a
 view's attachment-only multisample images, `msaa_color` and a forward view's `msaa_depth`, which hold no heap slot.
-A render target also holds one attachment view. So do a view's `hdr_color`, `depth`, scene snapshots, weighted
-accumulation and revealage, velocity, G-buffer and SSGI color, at most 13 per view, and each multisample image or
+A hierarchical GI depth pyramid also holds one single-level view and heap slot per mip, in addition to
+its full-chain view. A render target also holds one attachment view. So do a view's `hdr_color`, `depth`,
+scene snapshots, weighted accumulation and revealage, velocity, G-buffer and SSGI color, at most 13 per view,
+and each multisample image or
 sample-0 copy, at most 5 more. gpu.c3l's attachment table holds 4,096 views and cannot be configured: a renderer with
 three plain views holds at most 4,090 render targets, whatever `texture_capacity` allows. Asset textures share the
 table and the heap with the renderer. `default_asset_store_desc()` holds 4,096 textures and the table 1,024 by
@@ -355,6 +357,7 @@ Images a view allocates at creation, by setting:
 | `ambient_occlusion` | +2: `ao_raw` and `ao`, `R8_UNORM`, or `RGBA8_UNORM` with `ambient_occlusion.bent_normals` |
 | `ambient_occlusion.temporal` | +4: two history images, `R16_FLOAT` or `RGBA16_FLOAT` with `bent_normals`, and two depth images |
 | `screen_space_gi` | +7 |
+| Enabled `screen_space_gi` with `trace = HIERARCHICAL` | +1 full-resolution depth pyramid |
 | `ray_tracing.reflections` | +2, and +1 on a `FORWARD` view |
 | `ray_tracing.reflection_resolution` `HALF`, with `reflections` | +1 (`reflection_half`) |
 | `ray_tracing.reflection_history`, with `reflections` | +4: two history and two depth images |
@@ -362,7 +365,7 @@ Images a view allocates at creation, by setting:
 | `PATH_TRACED`: accumulation, no sky images | 3 in all |
 
 `texture_view_desc` and `default_view_desc` hold 5 images. A raster view with `TAA`, eight bloom levels and every
-other row except the debug image, temporal ambient occlusion, reflections and path tracing holds 41. Up to three
+other row except the debug image, temporal ambient occlusion, reflections and path tracing holds 42. Up to three
 images are allocated during a frame: the scene color and depth snapshots inside `render_view` when a material reads
 the scene, and the FXAA fallback output inside `finish_view` when FXAA cannot write the output rectangle directly.
 A headless renderer's default view holds none.
