@@ -57,26 +57,39 @@ fn void? build_poly_details(
         }
     }
     double allowance = detail_numerical_allowance(highest_height - lowest_height);
+    DetailBuildState state = { .mesh = { .mode = DetailMode.BOUNDED, .origin = reference.origin, .polygons = polygons } };
+    state.mesh.origin_correction = reference.origin_correction;
+    state.mesh.origin.y = (float)((double)reference.origin.y + math::floor((double)lowest_height));
+    state.height_bias = (double)reference.origin.y - state.mesh.origin.y;
     uint triangle_capacity;
     for (uint index = 0; index < mesh.poly_count; index++) {
         Vec3[MAX_VERTS_PER_POLY] storage;
         Vec3[] corners = detail_mesh_corners(mesh, index, height_offset, storage[..]);
+        Vec3[MAX_VERTS_PER_POLY] stored_corners;
+        ushort[] polygon = mesh.polys[(usz)index * mesh.verts_per_poly * 2:corners.len];
+        foreach (corner, vertex : polygon) {
+            stored_corners[corner] = detail_corner_position(
+                bounds: mesh.bounds,
+                origin: state.mesh.origin,
+                voxel: &mesh.verts[(usz)vertex * 3],
+                cell_size: mesh.cell_size,
+                cell_height: mesh.cell_height,
+            );
+        }
         analyses[index] = analyse_detail_polygon(
             corners: corners,
+            stored_corners: stored_corners[:corners.len],
             reference: reference,
             regions: regions,
             region: mesh.regions[index],
             maximum_error: config.detail_max_error,
             allowance: allowance,
+            height_bias: state.height_bias,
         )!;
         if (analyses[index].fan) continue;
         if (analyses[index].triangle_count > config.max_detail_triangles - triangle_capacity) return c3d::CAPACITY_EXCEEDED~;
         triangle_capacity += analyses[index].triangle_count;
     }
-    DetailBuildState state = { .mesh = { .mode = DetailMode.BOUNDED, .origin = reference.origin, .polygons = polygons } };
-    state.mesh.origin_correction = reference.origin_correction;
-    state.mesh.origin.y = (float)((double)reference.origin.y + math::floor((double)lowest_height));
-    state.height_bias = (double)reference.origin.y - state.mesh.origin.y;
     if (triangle_capacity == 0) {
         mesh.detail = state.mesh;
         return;
@@ -237,18 +250,18 @@ fn Vec3[] detail_mesh_corners(
 
 fn DetailAnalysis? analyse_detail_polygon(
     Vec3[] corners,
+    Vec3[] stored_corners,
     DetailReference* reference,
     ushort[] regions,
     ushort region,
     float maximum_error,
     double allowance,
+    double height_bias,
 ) @local {
     DetailAnalysis analysis = { .fan = true };
     DetailPoint[MAX_VERTS_PER_POLY] corner_points;
-    Vec3[MAX_VERTS_PER_POLY] stored_corners;
     foreach (index, corner : corners) {
         corner_points[index] = { .x = corner.x, .y = corner.y, .z = corner.z };
-        stored_corners[index] = { (float)((double)corner.x * reference.cell_size), corner.y, (float)((double)corner.z * reference.cell_size) };
     }
     double polygon_area;
     for (usz index = 2; index < corners.len; index++) {
@@ -285,7 +298,7 @@ fn DetailAnalysis? analyse_detail_polygon(
                     double dz = (double)second.z - first.z;
                     double fraction = math::abs(dx) >= math::abs(dz) ? ((double)stored.x - first.x) / dx : ((double)stored.z - first.z) / dz;
                     double height = first.y + fraction * ((double)second.y - first.y);
-                    if (detail_triangle_area(first, second, stored) != 0 || math::abs(point.y - height) > allowance) analysis.fan = false;
+                    if (detail_triangle_area(first, second, stored) != 0 || math::abs(point.y + height_bias - height) > allowance) analysis.fan = false;
                 }
             }
         }
@@ -304,7 +317,7 @@ fn DetailAnalysis? analyse_detail_polygon(
                 region: region,
                 maximum_error: maximum_error,
                 allowance: allowance,
-                height_bias: 0,
+                height_bias: height_bias,
             )) {
                 if (excuse != c3d::CAPACITY_EXCEEDED) return excuse~;
                 analysis.fan = false;

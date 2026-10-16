@@ -103,11 +103,13 @@ fn void? create_tile_data(
         ushort* voxel = &mesh.verts[vertex * 3];
         tile.verts[vertex] = source.bounds.min + (Vec3){ (float)voxel[0], (float)voxel[1], (float)voxel[2] } * scale;
         if (source.detail_mode == DetailMode.BOUNDED) {
-            tile.detail_corners[vertex] = {
-                (float)((double)source.bounds.min.x - source.detail_origin.x + (double)voxel[0] * source.cell_size),
-                (float)((double)source.bounds.min.y - source.detail_origin.y + (double)voxel[1] * source.cell_height),
-                (float)((double)source.bounds.min.z - source.detail_origin.z + (double)voxel[2] * source.cell_size),
-            };
+            tile.detail_corners[vertex] = detail_corner_position(
+                bounds: source.bounds,
+                origin: source.detail_origin,
+                voxel: voxel,
+                cell_size: source.cell_size,
+                cell_height: source.cell_height,
+            );
         }
     }
 

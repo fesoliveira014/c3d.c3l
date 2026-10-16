@@ -442,11 +442,13 @@ fn TileMeshView? validate_tile_mesh(char[] blob) @private {
             }
             ushort* source = &view.verts[(usz)vertex * 3];
             if (header.detail_mode == DetailMode.BOUNDED) {
-                corners[count] = {
-                    (float)((double)header.bounds.min.x - header.detail_origin.x + (double)source[0] * header.cell_size),
-                    (float)((double)header.bounds.min.y - header.detail_origin.y + (double)source[1] * header.cell_height),
-                    (float)((double)header.bounds.min.z - header.detail_origin.z + (double)source[2] * header.cell_size),
-                };
+                corners[count] = detail_corner_position(
+                    bounds: header.bounds,
+                    origin: header.detail_origin,
+                    voxel: source,
+                    cell_size: header.cell_size,
+                    cell_height: header.cell_height,
+                );
             } else {
                 corners[count] = header.bounds.min + (Vec3){ source[0] * header.cell_size, source[1] * header.cell_height, source[2] * header.cell_size };
             }

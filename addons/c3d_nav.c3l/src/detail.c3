@@ -201,6 +201,22 @@ fn double detail_numerical_allowance(float height_range) @private {
     return math::max(1e-5, 32 * DETAIL_FLOAT_EPSILON * math::max(1.0, (double)height_range));
 }
 
+fn Vec3 detail_corner_position(
+    Aabb bounds,
+    Vec3 origin,
+    ushort* voxel,
+    float cell_size,
+    float cell_height,
+) @private {
+    // Round the voxel height to float before changing basis.
+    float height = (float)voxel[1] * cell_height;
+    return {
+        (float)((double)bounds.min.x - origin.x + (double)voxel[0] * cell_size),
+        (float)((double)bounds.min.y - origin.y + height),
+        (float)((double)bounds.min.z - origin.z + (double)voxel[2] * cell_size),
+    };
+}
+
 fn double detail_world_allowance(Aabb bounds) @private {
     Vec3 magnitude = math::max(math::abs(bounds.min), math::abs(bounds.max));
     double x_step = math::is_finite(magnitude.x.nexthigher())
