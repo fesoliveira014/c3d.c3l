@@ -357,8 +357,10 @@ fn void request_figure_recovery(PhysicsWorld* physics, Scene* scene, Level* leve
         io::eprintfn("Recovery request failed: %s", excuse);
         return;
     }
+
     scene.get(level.figure_skin, Ragdoll).weight = 0;
 }
+
 fn void play_demo(
     uint frame,
     PhysicsPanel* panel,
@@ -563,10 +565,12 @@ fn void? run(
             scene.update_world();
             time::Clock started = clock::now();
             physics.update(step);
+
             Ragdoll* ragdoll = scene.get(level.figure_skin, Ragdoll);
             if (ragdoll.recovery_status().phase == RagdollRecoveryPhase.READY) {
                 physics.finish_ragdoll_recovery(level.figure_skin)!;
             }
+
             panel.record_events((float)(long)started.to_now() / 1_000_000);
             physics.update_ragdolls();
             scene.flush_removals();

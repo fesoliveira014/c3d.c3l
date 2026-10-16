@@ -15,39 +15,76 @@ alias Quat @local = Quaternionf;
 
 <* Stable shared humanoid key dataset. *>
 const String DATASET = "humanoid_getup_v1";
+
 <* Number of skeleton joints, including unmapped endpoints. *>
 const uint JOINT_COUNT = 20;
+
 <* Number of mapped capsule bodies. *>
 const uint BONE_COUNT = 15;
+
 <* Duration including the final standing hold, in seconds. *>
 const float DURATION = 18;
+
 <* First standing key, in seconds. *>
 const float STANDING_TIME = 12;
+
 <* Duration of the initial recovery-source fade, in seconds. *>
 const float SOURCE_FADE_TIME = 0.75f;
+
 <* Native capsule density, in kilograms per cubic metre. *>
 const float DENSITY = 200;
+
 <* Numerical fixture penetration limit, in metres. *>
 const float PENETRATION_LIMIT = 0.025f;
+
 <* Repeated frame deltas as multiples of the world's fixed step. *>
 const float[7] FRAME_MULTIPLIERS = { 0, 0.25f, 0.75f, 1, 2.5f, 0.5f, 1 };
 
 <* Shared focused contact sequence and physical dimensions. *>
 const String CONTACT_DATASET = "ragdoll_contact_v1";
+
+<* Focused capsule length, in metres. *>
 const float CONTACT_BONE_LENGTH = 0.84f;
+
+<* Focused capsule radius, in metres. *>
 const float CONTACT_BONE_RADIUS = 0.12f;
+
+<* Focused capsule density, in kilograms per cubic metre. *>
 const float CONTACT_BONE_DENSITY = 200;
+
+<* Capsule-local centre-of-mass offset, in metres. *>
 const Vec3 CONTACT_COM_OFFSET = { 0.04f, 0, 0 };
+
+<* Initial mapped joint world position, in metres. *>
 const Vec3 CONTACT_JOINT_START = { -0.8f, 0.18f, 0 };
+
+<* Initial neighbour box world position, in metres. *>
 const Vec3 CONTACT_BOX_POSITION = { 0.6f, 0.4f, 0 };
+
+<* Neighbour box half-extents, in metres. *>
 const Vec3 CONTACT_BOX_HALF_EXTENTS = { 0.2f, 0.4f, 0.2f };
+
+<* Neighbour box density, in kilograms per cubic metre. *>
 const float CONTACT_BOX_DENSITY = 100;
+
+<* Ground box world position, in metres. *>
 const Vec3 CONTACT_GROUND_POSITION = { 0, -0.5f, 0 };
+
+<* Ground box half-extents, in metres. *>
 const Vec3 CONTACT_GROUND_HALF_EXTENTS = { 10, 0.5f, 10 };
+
+<* Focused sequence duration, in seconds. *>
 const float CONTACT_DURATION = 7;
+
+<* Minimum neighbour displacement, in metres. *>
 const float CONTACT_RESPONSE_LIMIT = 0.05f;
+
+<* Focused joint bind locals, in metres. *>
 const Vec3[3] CONTACT_JOINT_POSITIONS = { { 0, 0, 0 }, { 0, 1, 0 }, { 0, 2, 0 } };
+
+<* Focused joint parent indices; minus one denotes the root. *>
 const int[3] CONTACT_PARENTS = { -1, 0, 1 };
+
 <* Skeleton indices, parents before children. *>
 enum HumanoidJoint : uint {
     PELVIS, SPINE, HEAD, HEAD_TIP,
@@ -132,6 +169,7 @@ const BoneSpec[BONE_COUNT] BONES = {
     { .joint = RIGHT_SHIN, .endpoint = RIGHT_FOOT, .radius = 0.05f, .kind = REVOLUTE, .lower = 0, .upper = 2.6f },
     { .joint = RIGHT_FOOT, .endpoint = RIGHT_TOES, .radius = 0.045f, .kind = SPHERICAL, .cone = 2.8f, .twist = 1.0f },
 };
+
 <* Supine, seated support, roll, kneel, half-kneel, and standing. *>
 const GetupKey[12] SUPINE_KEYS = {
     { .seconds = 0f, .pelvis = { 0.000000000f, 0.110000000f, 0.000000000f }, .rotations = {
@@ -514,8 +552,10 @@ const GetupKey[10] PRONE_KEYS = {
     } },
 };
 
-<* Sample shared local keys, clamping outside the authored interval.
-   @param [&inout] humanoid : "Joint locals receive the fresh authored target." *>
+<*
+ Sample shared local keys, clamping outside the authored interval.
+ @param [&inout] humanoid : "Joint locals receive the fresh authored target."
+*>
 fn void sample_getup(Humanoid* humanoid, RagdollFacing facing, float seconds) {
     GetupKey[] keys = facing == FACE_UP ? SUPINE_KEYS[..] : PRONE_KEYS[..];
     usz first;
@@ -523,6 +563,7 @@ fn void sample_getup(Humanoid* humanoid, RagdollFacing facing, float seconds) {
     GetupKey* before = &keys[first];
     GetupKey* after = &keys[first + 1];
     float fraction = math::clamp((seconds - before.seconds) / (after.seconds - before.seconds), 0.0f, 1.0f);
+
     sample_standing(humanoid);
     humanoid.joints[HumanoidJoint.PELVIS.ordinal].local.position =
       before.pelvis * (1 - fraction) + after.pelvis * fraction;
@@ -532,8 +573,10 @@ fn void sample_getup(Humanoid* humanoid, RagdollFacing facing, float seconds) {
     }
 }
 
-<* Restore every joint's authored bind local.
-   @param [&inout] humanoid : "Joint locals receive the standing target." *>
+<*
+ Restore every joint's authored bind local.
+ @param [&inout] humanoid : "Joint locals receive the standing target."
+*>
 fn void sample_standing(Humanoid* humanoid) {
     foreach (index, spec : JOINTS) {
         humanoid.joints[index].local = maths::TRANSFORM_IDENTITY;
@@ -541,10 +584,12 @@ fn void sample_standing(Humanoid* humanoid) {
     }
 }
 
-<* Build the shared skinned rig and its initially animated ragdoll.
-   @param [&inout] assets : "Owns generated geometry, material, and skeleton."
-   @param [&inout] scene : "Owns the returned nodes and physics authoring."
-   @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, physics::NO_SKIN, physics::RAGDOLL_EXISTS *>
+<*
+ Build the shared skinned rig and its initially animated ragdoll.
+ @param [&inout] assets : "Owns generated geometry, material, and skeleton."
+ @param [&inout] scene : "Owns the returned nodes and physics authoring."
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, physics::NO_SKIN, physics::RAGDOLL_EXISTS
+*>
 fn Humanoid? create_humanoid(AssetStore* assets, Scene* scene) {
     Skeleton skeleton = {
         .joint_names = alloc::new_array(assets.allocator, String, JOINT_COUNT),
@@ -553,6 +598,7 @@ fn Humanoid? create_humanoid(AssetStore* assets, Scene* scene) {
         .inverse_bind = alloc::new_array(assets.allocator, Mat4, JOINT_COUNT),
     };
     defer catch asset::free_skeleton(assets.allocator, &skeleton);
+
     Vec3[JOINT_COUNT] bind_positions;
     foreach (index, spec : JOINTS) {
         skeleton.joint_names[index] = (String)alloc::new_array(assets.allocator, char, spec.name.len);
@@ -566,8 +612,10 @@ fn Humanoid? create_humanoid(AssetStore* assets, Scene* scene) {
         inverse_bind.position = -bind_positions[index];
         skeleton.inverse_bind[index] = inverse_bind.to_mat4();
     }
+
     SkeletonId skeleton_id = assets.add_skeleton_owned(&skeleton)!;
     skeleton = {};
+
     GeometryId geometry;
     @pool() {
         Geometry[BONE_COUNT] parts;
@@ -589,9 +637,11 @@ fn Humanoid? create_humanoid(AssetStore* assets, Scene* scene) {
             };
             parts[index].transform(placement.to_mat4());
         }
+
         Geometry merged = geometry::merge(tmem, parts[..]);
         merged.joints = alloc::new_array(tmem, ushort[<4>], merged.positions.len);
         merged.weights = alloc::new_array(tmem, Vec4, merged.positions.len);
+
         usz vertex;
         foreach (index, part : parts) {
             for (usz part_vertex = 0; part_vertex < part.positions.len; part_vertex++) {
@@ -599,12 +649,15 @@ fn Humanoid? create_humanoid(AssetStore* assets, Scene* scene) {
                 merged.weights[vertex++] = { 1, 0, 0, 0 };
             }
         }
+
         geometry = assets.add_geometry(&merged)!;
     };
+
     StandardParams params = material::STANDARD_PARAMS_DEFAULT;
     params.base_color = { 0.16f, 0.55f, 0.8f, 1 };
     params.roughness = 0.7f;
     MaterialId material_id = assets.add_material(material::standard(params))!;
+
     Humanoid humanoid = { .character = scene.add_node(name: "humanoid")! };
     defer catch scene.remove(humanoid.character);
     humanoid.skin = scene.add_mesh(
@@ -621,6 +674,7 @@ fn Humanoid? create_humanoid(AssetStore* assets, Scene* scene) {
     }
     sample_standing(&humanoid);
     scene.update_world();
+
     RagdollBone[BONE_COUNT] bones;
     foreach (index, spec : BONES) {
         bones[index] = physics::default_ragdoll_bone(spec.joint.ordinal);
@@ -633,17 +687,21 @@ fn Humanoid? create_humanoid(AssetStore* assets, Scene* scene) {
         bones[index].twist = { .enabled = true, .lower = -spec.twist, .upper = spec.twist };
         bones[index].drive = { .enabled = true, .hertz = 4, .damping_ratio = 1 };
     }
+
     RagdollDesc desc = physics::default_ragdoll_desc();
     desc.bones = bones[..];
     desc.filter.group = -1;
     scene.build_ragdoll(assets, humanoid.skin, desc)!;
+
     return humanoid;
 }
+
 <* The focused capsule advances two metres, holds, retreats, then settles. *>
 fn Transform sample_contact_target(float seconds, bool rotate = false) {
     float reach = math::min(seconds / 2, 1.0f);
     if (seconds > 4) reach = math::max(1 - (seconds - 4), 0.0f);
     float angle = rotate ? 20 * reach * (float)math::PI / 180 : 0;
+
     return {
         .position = CONTACT_JOINT_START + (Vec3){ 2 * reach, 0, 0 },
         .rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, angle),
