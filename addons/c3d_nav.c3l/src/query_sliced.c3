@@ -149,6 +149,7 @@ fn SlicedProgress? NavQuery.update_sliced_find_path(&self, uint max_iterations) 
                     from:     found,
                     to_ref:   neighbour_ref,
                     to:       neighbour,
+                    selected_link: &mesh.links[link],
                 )) {
                     node.position = (portal.left + portal.right) * 0.5f;
                 }

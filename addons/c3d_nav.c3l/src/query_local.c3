@@ -20,11 +20,12 @@ struct DijkstraResult {
     bool truncated;    // out_refs or the node pool filled up; reachable polygons may be missing
 }
 
-<* Result of move_along_surface. *>
+<* Reached position, polygon and bounded visited chain. *>
 struct MoveResult {
-    Vec3 position;         // not projected onto the surface; poly_height gives its height
+    Vec3 position;
     usz  visited_count;
     bool truncated;        // out_visited filled up; the chain keeps its start
+    PolyRef end_ref;
 }
 
 <* Nearest wall to a point. *>
@@ -61,8 +62,8 @@ struct BreadthQueue @local {
 }
 
 struct PortalInterval @private {
-    short   min;    // along the edge, 0..255
-    short   max;
+    float   min;
+    float   max;
     PolyRef ref;
 }
 
@@ -214,6 +215,7 @@ fn DijkstraResult? NavQuery.find_local_neighbourhood(
                 from:     found,
                 to_ref:   neighbour_ref,
                 to:       neighbour,
+                selected_link: &mesh.links[link],
             );
             if (catch portal) continue;
             if (distance_pt_seg_sqr_2d(center, portal.left, portal.right).distance_sqr > radius_sqr) continue;
@@ -289,6 +291,44 @@ fn MoveResult? NavQuery.move_along_surface(
 
         usz edge = corners.len - 1;
         for (usz vertex = 0; vertex < corners.len; edge = vertex++) {
+            if (found.tile.header.detail_mode == DetailMode.BOUNDED) {
+                IntervalList intervals = collect_edge_intervals(
+                    query: self,
+                    found: found,
+                    edge: edge,
+                    filter: filter,
+                )!;
+                float covered;
+                for (usz index = 0; index <= intervals.count; index++) {
+                    float limit = index < intervals.count ? intervals.items[index].min : 1.0f;
+                    if (limit > covered) {
+                        Vec3 first = lerp_point(corners[edge], corners[vertex], covered);
+                        Vec3 last = lerp_point(corners[edge], corners[vertex], limit);
+                        SegmentProjection projection = distance_pt_seg_sqr_2d(end, first, last);
+                        if (projection.distance_sqr < best_distance) {
+                            best_position = surface_edge_point(
+                                found: found,
+                                edge: edge,
+                                fraction: covered + (limit - covered) * projection.t,
+                            )!;
+                            best_distance = projection.distance_sqr;
+                            best_node = current;
+                        }
+                    }
+                    if (index < intervals.count) covered = math::max(covered, intervals.items[index].max);
+                }
+                foreach (interval : intervals.items[:intervals.count]) {
+                    SearchNode* node = nodes.get_node(interval.ref);
+                    if (!node || node.bits.closed || queue.count == MAX_STACK) continue;
+                    Vec3 first = lerp_point(corners[edge], corners[vertex], interval.min);
+                    Vec3 last = lerp_point(corners[edge], corners[vertex], interval.max);
+                    if (distance_pt_seg_sqr_2d(search_center, first, last).distance_sqr > search_radius_sqr) continue;
+                    node.bits.parent = nodes.node_index(current);
+                    node.bits.closed = true;
+                    push_back(&queue, node);
+                }
+                continue;
+            }
             usz neighbour_count = passable_neighbours(
                 mesh:     mesh,
                 found:    found,
@@ -319,7 +359,7 @@ fn MoveResult? NavQuery.move_along_surface(
         }
     }
 
-    MoveResult result = { .position = best_position };
+    MoveResult result = { .position = best_position, .end_ref = best_node ? best_node.id : start_ref };
     if (!best_node) return result;
     PathResult chain = path_to_node(nodes, best_node, out_visited);
     result.visited_count = chain.count;
@@ -328,10 +368,35 @@ fn MoveResult? NavQuery.move_along_surface(
 }
 
 <*
+ Move along the mesh and project onto the actual final polygon.
+ @param [&in] filter : "Polygons it rejects are walls."
+ @param [out] out_visited : "Start-first chain, independent of the returned final ref."
+ @return? INVALID_REF, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+*>
+fn MoveResult? NavQuery.move_along_surface_projected(
+    &self,
+    PolyRef start_ref,
+    Vec3 start,
+    Vec3 end,
+    QueryFilter* filter,
+    PolyRef[] out_visited,
+) {
+    MoveResult result = self.move_along_surface(
+        start_ref: start_ref,
+        start: start,
+        end: end,
+        filter: filter,
+        out_visited: out_visited,
+    )!;
+    result.position.y = self.poly_height(result.end_ref, result.position)!;
+    return result;
+}
+
+<*
  Nearest wall within max_radius of the point, searching through portals; mirrors findDistanceToWall.
  @param [&in] filter : "Edges to polygons it rejects are walls."
  @return "Distance max_radius and a zero normal when no wall lies within it."
- @return? INVALID_REF, c3d::INVALID_ARGUMENT
+ @return? INVALID_REF, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
 fn WallHit? NavQuery.find_distance_to_wall(
     &self,
@@ -365,6 +430,33 @@ fn WallHit? NavQuery.find_distance_to_wall(
         usz vert_count = found.poly.vert_count;
         usz edge = vert_count - 1;
         for (usz vertex = 0; vertex < vert_count; edge = vertex++) {
+            if (found.tile.header.detail_mode == DetailMode.BOUNDED) {
+                IntervalList intervals = collect_edge_intervals(
+                    query: self,
+                    found: found,
+                    edge: edge,
+                    filter: filter,
+                )!;
+                float covered;
+                for (usz index = 0; index <= intervals.count; index++) {
+                    float limit = index < intervals.count ? intervals.items[index].min : 1.0f;
+                    if (limit > covered) {
+                        Vec3 first = lerp_point(verts[edge], verts[vertex], covered);
+                        Vec3 last = lerp_point(verts[edge], verts[vertex], limit);
+                        SegmentProjection projection = distance_pt_seg_sqr_2d(center, first, last);
+                        if (projection.distance_sqr <= radius_sqr) {
+                            radius_sqr = projection.distance_sqr;
+                            hit.point = surface_edge_point(
+                                found: found,
+                                edge: edge,
+                                fraction: covered + (limit - covered) * projection.t,
+                            )!;
+                        }
+                    }
+                    if (index < intervals.count) covered = math::max(covered, intervals.items[index].max);
+                }
+                continue;
+            }
             bool wall = is_wall_edge(
                 mesh:   mesh,
                 found:  found,
@@ -386,6 +478,12 @@ fn WallHit? NavQuery.find_distance_to_wall(
             if (neighbour.poly.area_type.type == OFF_MESH_CONNECTION) continue;
             Vec3 edge_start = verts[entry.edge];
             Vec3 edge_end = verts[((usz)entry.edge + 1) % vert_count];
+            if (found.tile.header.detail_mode == DetailMode.BOUNDED && entry.side != NO_SIDE) {
+                Vec3 first = edge_start;
+                Vec3 last = edge_end;
+                edge_start = lerp_point(first, last, entry.min);
+                edge_end = lerp_point(first, last, entry.max);
+            }
             if (distance_pt_seg_sqr_2d(center, edge_start, edge_end).distance_sqr > radius_sqr) continue;
             if (!filter.passes(neighbour_ref, neighbour.poly)) continue;
 
@@ -398,6 +496,7 @@ fn WallHit? NavQuery.find_distance_to_wall(
                     from:     found,
                     to_ref:   neighbour_ref,
                     to:       neighbour,
+                    selected_link: &mesh.links[link],
                 )) {
                     node.position = (portal.left + portal.right) * 0.5f;
                 }
@@ -425,7 +524,7 @@ fn WallHit? NavQuery.find_distance_to_wall(
  Boundary segments of a polygon and the neighbour across each; mirrors getPolyWallSegments.
  @param [in] filter : "Neighbours it rejects are walls; null returns whole edges with neighbour 0 for every edge."
  @param [out] out_segments : "Filled up to its length."
- @return? INVALID_REF, c3d::CAPACITY_EXCEEDED
+ @return? INVALID_REF, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
 fn QueryResult? NavQuery.poly_wall_segments(
     &self,
@@ -442,6 +541,50 @@ fn QueryResult? NavQuery.poly_wall_segments(
     for (usz vertex = 0; vertex < vert_count; edge = vertex++) {
         Vec3 edge_start = verts[edge];
         Vec3 edge_end = verts[vertex];
+        if (found.tile.header.detail_mode == DetailMode.BOUNDED && found.poly.area_type.type == GROUND) {
+            IntervalList intervals = collect_edge_intervals(
+                query: self,
+                found: found,
+                edge: edge,
+                filter: filter,
+            )!;
+            float covered;
+            foreach (interval : intervals.items[:intervals.count]) {
+                if (interval.min > covered) {
+                    append_surface_interval(
+                        result: &result,
+                        out_segments: out_segments,
+                        found: found,
+                        edge: edge,
+                        low: covered,
+                        high: interval.min,
+                        neighbour: (PolyRef)0,
+                    )!;
+                }
+                append_surface_interval(
+                    result: &result,
+                    out_segments: out_segments,
+                    found: found,
+                    edge: edge,
+                    low: interval.min,
+                    high: interval.max,
+                    neighbour: interval.ref,
+                )!;
+                covered = math::max(covered, interval.max);
+            }
+            if (covered < 1) {
+                append_surface_interval(
+                    result: &result,
+                    out_segments: out_segments,
+                    found: found,
+                    edge: edge,
+                    low: covered,
+                    high: 1,
+                    neighbour: (PolyRef)0,
+                )!;
+            }
+            continue;
+        }
         ushort neighbour_word = found.poly.neighbours[edge];
         if (!filter || (neighbour_word & EXTERNAL_LINK) == 0) {
             PolyRef neighbour_ref;
@@ -475,25 +618,25 @@ fn QueryResult? NavQuery.poly_wall_segments(
         );
         insert_interval(
             list: &intervals,
-            min:  char::max,
-            max:  (short)char::max + 1,
+            min:  1,
+            max:  2,
             ref:  (PolyRef)0,
         );
         for (usz index = 1; index < intervals.count; index++) {
             PortalInterval interval = intervals.items[index];
             if (interval.ref) {
                 append_segment(&result, out_segments, {
-                    .start     = lerp_point(edge_start, edge_end, interval.min * PORTAL_LIMIT_STEP),
-                    .end       = lerp_point(edge_start, edge_end, interval.max * PORTAL_LIMIT_STEP),
+                    .start     = lerp_point(edge_start, edge_end, interval.min),
+                    .end       = lerp_point(edge_start, edge_end, interval.max),
                     .neighbour = interval.ref,
                 });
             }
-            short wall_min = intervals.items[index - 1].max;
-            short wall_max = interval.min;
+            float wall_min = intervals.items[index - 1].max;
+            float wall_max = interval.min;
             if (wall_min == wall_max) continue;
             append_segment(&result, out_segments, {
-                .start = lerp_point(edge_start, edge_end, wall_min * PORTAL_LIMIT_STEP),
-                .end   = lerp_point(edge_start, edge_end, wall_max * PORTAL_LIMIT_STEP),
+                .start = lerp_point(edge_start, edge_end, wall_min),
+                .end   = lerp_point(edge_start, edge_end, wall_max),
             });
         }
     }
@@ -605,6 +748,7 @@ fn RandomPoint? NavQuery.find_random_point_around_circle(
                 from:     found,
                 to_ref:   neighbour_ref,
                 to:       neighbour,
+                selected_link: &mesh.links[link],
             );
             if (catch portal) continue;
             if (distance_pt_seg_sqr_2d(center, portal.left, portal.right).distance_sqr > radius_sqr) continue;
@@ -686,6 +830,7 @@ fn DijkstraResult dijkstra_search(
                 from:     found,
                 to_ref:   neighbour_ref,
                 to:       neighbour,
+                selected_link: &mesh.links[link],
             );
             if (catch portal) continue;
             if (!portal_touches(boundary, portal.left, portal.right)) continue;
@@ -831,15 +976,92 @@ fn bool is_wall_edge(
 // Mirrors insertInterval: kept sorted along the edge.
 fn void insert_interval(
     IntervalList* list,
-    short min,
-    short max,
+    float min,
+    float max,
     PolyRef ref,
 ) @local {
     usz slot = 0;
-    while (slot < list.count && max > list.items[slot].min) slot++;
+    while (slot < list.count && (list.items[slot].min < min
+        || (list.items[slot].min == min && list.items[slot].max <= max))) slot++;
     for (usz index = list.count; index > slot; index--) list.items[index] = list.items[index - 1];
     list.items[slot] = { .min = min, .max = max, .ref = ref };
     list.count++;
+}
+
+fn IntervalList? collect_edge_intervals(
+    NavQuery* query,
+    TileAndPoly found,
+    usz edge,
+    QueryFilter* filter,
+) @local {
+    IntervalList result = { .items = query.edge_intervals };
+    if (!filter) return result;
+    ushort neighbour = found.poly.neighbours[edge];
+    if ((neighbour & EXTERNAL_LINK) == 0) {
+        if (neighbour) {
+            PolyRef ref = query.mesh.poly_ref_base(found.tile) | (PolyRef)(neighbour - 1);
+            if (filter.passes(ref, &found.tile.polys[neighbour - 1])) {
+                result.items[0] = { .max = 1, .ref = ref };
+                result.count = 1;
+            }
+        }
+        return result;
+    }
+    for (uint link = found.poly.first_link; link != NULL_LINK; link = query.mesh.links[link].next) {
+        Link* entry = &query.mesh.links[link];
+        if (entry.edge != edge || !entry.ref || entry.min >= entry.max) continue;
+        if (!filter.passes(entry.ref, query.mesh.tile_and_poly_unchecked(entry.ref).poly)) continue;
+        if (result.count + 2 == result.items.len) return c3d::CAPACITY_EXCEEDED~;
+        insert_interval(
+            list: &result,
+            min: entry.min,
+            max: entry.max,
+            ref: entry.ref,
+        );
+    }
+    return result;
+}
+
+fn Vec3? surface_edge_point(TileAndPoly found, usz edge, float fraction) @local {
+    Vec3 first = found.tile.verts[found.poly.verts[edge]];
+    Vec3 last = found.tile.verts[found.poly.verts[(edge + 1) % found.poly.vert_count]];
+    Vec3 point = lerp_point(first, last, fraction);
+    point.y = polygon_height(found.tile, found.poly, point)!;
+    return point;
+}
+
+fn void? append_surface_interval(
+    QueryResult* result,
+    WallSegment[] out_segments,
+    TileAndPoly found,
+    usz edge,
+    float low,
+    float high,
+    PolyRef neighbour,
+) @local {
+    PolyDetail detail = found.tile.details[(usz)(found.poly - found.tile.polys.ptr)];
+    Vec3 first = found.tile.verts[found.poly.verts[edge]];
+    Vec3 last = found.tile.verts[found.poly.verts[(edge + 1) % found.poly.vert_count]];
+    double delta_x = (double)last.x - first.x;
+    double delta_z = (double)last.z - first.z;
+    double length_sqr = delta_x * delta_x + delta_z * delta_z;
+    double tolerance = detail_numerical_allowance(found.tile.header.cell_size);
+    float current = low;
+    while (current < high) {
+        float next = high;
+        foreach (vertex : found.tile.detail_vertices[detail.vertex_base:detail.vertex_count]) {
+            double offset_x = (double)found.tile.header.detail_origin.x + vertex.x - first.x;
+            double offset_z = (double)found.tile.header.detail_origin.z + vertex.z - first.z;
+            double cross = offset_x * delta_z - offset_z * delta_x;
+            if (cross * cross > tolerance * tolerance * length_sqr) continue;
+            float fraction = (float)((offset_x * delta_x + offset_z * delta_z) / length_sqr);
+            if (fraction > current && fraction < next) next = fraction;
+        }
+        Vec3 start = surface_edge_point(found, edge, current)!;
+        Vec3 end = surface_edge_point(found, edge, next)!;
+        append_segment(result, out_segments, { .start = start, .end = end, .neighbour = neighbour });
+        current = next;
+    }
 }
 
 fn void append_segment(QueryResult* result, WallSegment[] out_segments, WallSegment segment) @local {

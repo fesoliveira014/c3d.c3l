@@ -85,6 +85,9 @@ const uint  PROCESSING_COLOR @local = 0xFF40FFFF;
 const uint  PROCESSED_COLOR @local = 0xFF4040FF;
 const uint  REMOVING_COLOR @local = 0xFF808080;
 const double NANOSECONDS_PER_MILLISECOND @local = 1_000_000.0;
+const float DETAIL_CELL_HEIGHT @local = 0.05f;
+const float DETAIL_HEIGHT_ERROR @local = 0.01f;
+const uint NORMAL_COLOR @local = 0xFF80FF80;
 
 struct FreeCamera @local {
     Vec3  position;
@@ -131,6 +134,7 @@ struct CacheLevel @local {
 
 struct Walker @local {
     Vec3                          position;
+    Vec3                          normal;
     Vec3                          goal;
     bool                          has_goal;
     bool                          replan;
@@ -448,6 +452,7 @@ fn void plan_walk(Walker* walker, NavQuery* query, QueryFilter* filter) @local {
     NearestPoly? goal = query.find_nearest_poly(walker.goal, SNAP_EXTENTS, filter);
     if (catch start, goal) return;
     walker.position = start.point;
+    walker.ref = start.ref;
     PathResult? corridor = query.find_path(
         start_ref: start.ref,
         end_ref:   goal.ref,
@@ -473,19 +478,49 @@ fn void plan_walk(Walker* walker, NavQuery* query, QueryFilter* filter) @local {
     }
 }
 
-fn void advance_walker(Walker* walker, float delta_seconds) @local {
+fn void advance_walker(
+    Walker* walker,
+    NavQuery* query,
+    QueryFilter* filter,
+    float delta_seconds,
+) @local {
     float step = WALK_SPEED * delta_seconds;
     while (walker.next_point < walker.straight.count && step > 0) {
         Vec3 target = walker.points[walker.next_point].position;
         Vec3 offset = target - walker.position;
+        bool traversal = walker.next_point > 0 && walker.points[walker.next_point - 1].flags.off_mesh_connection;
+        if (!traversal) offset.y = 0;
         float distance = offset.length();
-        if (distance <= step) {
-            walker.position = target;
-            step -= distance;
+        float advance = math::min(distance, step);
+        Vec3 desired = distance <= step ? target : walker.position + offset * (advance / distance);
+        if (traversal) {
+            walker.position = desired;
+            walker.ref = (PolyRef)0;
+        } else {
+            if (catch excuse = snap_walker(walker, query, filter)) return;
+            PolyRef[MOVE_VISITED_CAPACITY] visited;
+            MoveResult? moved = query.move_along_surface_projected(
+                start_ref: walker.ref,
+                start: walker.position,
+                end: desired,
+                filter: filter,
+                out_visited: visited[..],
+            );
+            if (catch moved) return;
+            Vec3 travelled = moved.position - walker.position;
+            travelled.y = 0;
+            walker.position = moved.position;
+            walker.ref = moved.end_ref;
+            if (advance > 0 && travelled.length() < advance * STUCK_FRACTION) {
+                walker.replan = true;
+                return;
+            }
+        }
+        step -= advance;
+        if (distance <= advance) {
             walker.next_point++;
         } else {
-            walker.position += offset * (step / distance);
-            step = 0;
+            break;
         }
     }
 }
@@ -540,7 +575,7 @@ fn void wander(
 
     float step = math::min(WALK_SPEED * delta_seconds, distance);
     PolyRef[MOVE_VISITED_CAPACITY] visited;
-    MoveResult? moved = query.move_along_surface(
+    MoveResult? moved = query.move_along_surface_projected(
         start_ref:   walker.ref,
         start:       walker.position,
         end:         walker.position + offset * (step / distance),
@@ -550,9 +585,8 @@ fn void wander(
     if (catch moved) return;
     Vec3 travelled = moved.position - walker.position;
     travelled.y = 0;
-    if (moved.visited_count) walker.ref = visited[moved.visited_count - 1];
+    walker.ref = moved.end_ref;
     walker.position = moved.position;
-    walker.position.y = query.poly_height(walker.ref, walker.position) ?? walker.position.y;
     // A wall between the walker and its goal leaves it sliding in place, so it draws another goal.
     if (travelled.length() < step * STUCK_FRACTION) walker.has_goal = false;
 
@@ -570,6 +604,7 @@ fn void draw_walker(Walker* walker, debug::DebugDraw* sink) @local {
     Vec3 up = { 0, 1, 0 };
     sink.circle(walker.position, up, MARKER_RADIUS, WALKER_COLOR);
     sink.line(walker.position, walker.position + up, WALKER_COLOR);
+    sink.line(walker.position, walker.position + walker.normal * (MARKER_RADIUS * 2), NORMAL_COLOR);
     if (walker.wander && walker.has_wall) {
         // A walker slid flush against a wall has no room left to draw.
         if (walker.wall.distance > 0) sink.circle(walker.position, up, walker.wall.distance, WALL_COLOR);
@@ -592,6 +627,7 @@ fn void draw_cache_panel(NavBuilder* builder, CacheLevel* level) @local {
 
 fn void draw_panel(
     NavBuilder* builder,
+    NavMesh* mesh,
     Controls* controls,
     BuildTotals* totals,
     Walker* walker,
@@ -607,10 +643,21 @@ fn void draw_panel(
         imgui::checkbox("Tiles", &controls.draw.tiles);
         imgui::checkbox("Polygons", &controls.mesh.polys);
         imgui::checkbox("Links", &controls.mesh.links);
+        imgui::checkbox("Detail triangles", &controls.mesh.detail);
         imgui::checkbox("Spans of the rasterizing slot", &controls.spans);
         imgui::separator();
         imgui::text("Tiles: %u x %u   dirty: %u", builder.tiles_x, builder.tiles_z, builder.dirty_count);
         imgui::text("Built: %u   skipped sources: %u   failed: %u", totals.built, totals.skipped, totals.failed);
+        uint detail_vertices;
+        uint detail_triangles;
+        foreach (tile : mesh.tiles) {
+            if (!tile.header) continue;
+            detail_vertices += tile.header.detail_vertex_count;
+            detail_triangles += tile.header.detail_triangle_count;
+        }
+        imgui::text("Surface: %s   error: %.3f m", builder.config.detail_mode == DetailMode.BOUNDED ? "bounded".ptr : "coarse".ptr, builder.config.detail_max_error);
+        imgui::text("Detail: %u vertices, %u triangles", detail_vertices, detail_triangles);
+        imgui::text("Walker height: %.3f m   normal: %.2f %.2f %.2f", walker.position.y, walker.normal.x, walker.normal.y, walker.normal.z);
         imgui::separator();
         imgui::text("Ladder: %s", ladder.bidirectional ? "two-way".ptr : "one-way up".ptr);
         imgui::text("Path: %u polygons, %u points, %.1f m", (uint)walker.path.count, (uint)walker.straight.count, walker.length);
@@ -673,14 +720,22 @@ fn void? run(
     AssetStore* assets,
     Scene* scene,
     bool cache_layers,
+    bool bounded_detail,
+    uint frame_limit,
 ) @local {
     Level level = build_level(assets, scene)!;
     CacheLevel cache_level;
     if (cache_layers) cache_level = add_cache_obstacles(assets, scene)!;
-    NavBuilderDesc desc = nav::default_nav_builder_desc({
-        .min = { -LEVEL_HALF_SIZE, -1, -LEVEL_HALF_SIZE },
-        .max = { LEVEL_HALF_SIZE, LEVEL_TOP, LEVEL_HALF_SIZE },
-    });
+    NavBuildConfig config = nav::default_nav_build_config();
+    if (bounded_detail) {
+        config.detail_mode = DetailMode.BOUNDED;
+        config.cell_height = DETAIL_CELL_HEIGHT;
+        config.detail_max_error = DETAIL_HEIGHT_ERROR;
+    }
+    NavBuilderDesc desc = nav::default_nav_builder_desc(
+        bounds: { .min = { -LEVEL_HALF_SIZE, -1, -LEVEL_HALF_SIZE }, .max = { LEVEL_HALF_SIZE, LEVEL_TOP, LEVEL_HALF_SIZE } },
+        config: config,
+    );
     desc.rasterize_budget = RASTERIZE_BUDGET;
     desc.cache_layers = cache_layers;
     NavBuilder builder = nav::create_nav_builder(mem, scene, desc)!;
@@ -693,6 +748,8 @@ fn void? run(
     Walker* walker = mem::new(Walker);
     defer free(walker);
     walker.position = WALKER_START;
+    walker.normal = { 0, 1, 0 };
+    walker.wander = bounded_detail;
     random::seed(&walker.generator, WANDER_SEED);
 
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
@@ -706,10 +763,11 @@ fn void? run(
         .pitch    = CAMERA_START_PITCH,
         .speed    = FREE_SPEED,
     };
-    Controls controls = { .draw = { .tiles = true }, .mesh = { .polys = true, .links = true }, .spans = true };
+    Controls controls = { .draw = { .tiles = true }, .mesh = { .polys = true, .links = true, .detail = bounded_detail }, .spans = true };
     BuildTotals totals;
     renderer.prepare_scene(scene)!;
 
+    uint frames;
     while (window.poll()) {
         Input* input = &window.input;
         if (input.key_released(platform::Scancode.ESCAPE) && !input.keyboard_captured_by_gui) break;
@@ -719,6 +777,7 @@ fn void? run(
         }
         draw_panel(
             builder:     &builder,
+            mesh:        &mesh,
             controls:    &controls,
             totals:      &totals,
             walker:      walker,
@@ -778,7 +837,10 @@ fn void? run(
         } else {
             // An install invalidates the refs of the tiles it replaced, so the walk is planned again.
             if (walker.has_goal && (walker.replan || result.installed)) plan_walk(walker, &query, &filter);
-            advance_walker(walker, window.clock.delta);
+            advance_walker(walker: walker, query: &query, filter: &filter, delta_seconds: window.clock.delta);
+        }
+        if (query.is_valid_ref(walker.ref, &filter)) {
+            if (try surface = query.poly_surface(walker.ref, walker.position)) walker.normal = surface.normal;
         }
         draw_debug(
             builder:  &builder,
@@ -798,17 +860,29 @@ fn void? run(
             sink:         &sink,
             info:         { .time = window.clock.total, .delta = window.clock.delta },
         )!;
+        if (frame_limit && ++frames >= frame_limit) break;
     }
+    if (totals.failed) return builder.last_failure.reason~;
 }
 
 fn int main(String[] args) {
     bool cache_layers;
-    foreach (arg : args[1..]) {
-        if (arg != "--cache") {
-            io::eprintfn("Unknown argument: %s; --cache builds through cached layers with a door and a crate", arg);
+    bool bounded_detail;
+    uint frame_limit;
+    for (usz index = 1; index < args.len; index++) {
+        String arg = args[index];
+        if (arg == "--cache") {
+            cache_layers = true;
+        } else if (arg == "--detail") {
+            bounded_detail = true;
+        } else if (arg == "--frames" && index + 1 < args.len) {
+            uint? parsed = args[++index].to_uint();
+            if (catch parsed) return 1;
+            frame_limit = parsed;
+        } else {
+            io::eprintfn("Unknown argument: %s; use --cache, --detail or --frames N", arg);
             return 1;
         }
-        cache_layers = true;
     }
     platform::Window window = platform::create_window(platform::default_window_desc("c3d navmesh", 1280, 720))!!;
     defer platform::destroy_window(&window);
@@ -834,6 +908,8 @@ fn int main(String[] args) {
         assets:       &assets,
         scene:        &scene,
         cache_layers: cache_layers,
+        bounded_detail: bounded_detail,
+        frame_limit: frame_limit,
     )) {
         io::eprintfn("navmesh example failed: %s", excuse);
         return 1;

@@ -174,6 +174,7 @@ fn GridTileBuilder? create_grid_tile_builder(
     GridSourceDesc source,
     usz scratch_bytes = DEFAULT_GRID_SCRATCH_BYTES,
 ) {
+    if (config.detail_mode != DetailMode.COARSE) return c3d::INVALID_ARGUMENT~;
     TileConfig tile = tile_config(config)!;
     float top_voxel = 1 + math::round((source.max_height - source.min_height) / config.cell_height);
     if (top_voxel >= (float)SPAN_MAX_HEIGHT) return c3d::INVALID_ARGUMENT~;

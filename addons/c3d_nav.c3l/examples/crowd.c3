@@ -72,6 +72,9 @@ const uint  GOAL_COLOR @local = 0xFF4040FF;
 const uint  SELECTED_COLOR @local = 0xFF00C0FF;
 const uint  LOW_PENALTY_COLOR @local = 0xFF40FF40;
 const uint  HIGH_PENALTY_COLOR @local = 0xFF4040FF;
+const float DETAIL_CELL_HEIGHT @local = 0.05f;
+const float DETAIL_HEIGHT_ERROR @local = 0.01f;
+const uint NORMAL_COLOR @local = 0xFF80FF80;
 
 struct FreeCamera @local {
     Vec3  position;
@@ -430,6 +433,7 @@ fn void draw_samples(debug::DebugDraw* sink, CrowdAgent* agent, AvoidanceSample[
 // The agent the slider selects.
 fn uint draw_panel(
     Crowd* crowd,
+    NavBuilder* builder,
     Level* level,
     Agents* agents,
     Controls* controls,
@@ -449,14 +453,21 @@ fn uint draw_panel(
         imgui::checkbox("Neighbours", &controls.draw.neighbours);
         imgui::checkbox("Avoidance samples", &controls.samples);
         imgui::checkbox("Polygons", &controls.mesh.polys);
+        imgui::checkbox("Detail triangles", &controls.mesh.detail);
         imgui::separator();
         CrowdAgent*[CROWD_CAPACITY] active;
         imgui::text("Agents: %u active, %u unbound", (uint)crowd.active_agents(active[..]), crowd.unbound);
         imgui::text("Velocity samples this update: %u", crowd.velocity_sample_count);
         imgui::text("Door: %s", level.door_open ? "open".ptr : "closed".ptr);
+        imgui::text("Surface: %s   error: %.3f m", builder.config.detail_mode == DetailMode.BOUNDED ? "bounded".ptr : "coarse".ptr, builder.config.detail_max_error);
         imgui::separator();
         imgui::slider_int("Agent", &selected, 0, (int)AGENT_COUNT - 1);
         CrowdAgent* agent = crowd.agent(debug.index);
+        if (agent.corridor.count && agent.state == AgentState.WALKING) {
+            if (try surface = crowd.query.poly_surface(agent.corridor.path[0], agent.position)) {
+                imgui::text("Height: %.3f m   normal: %.2f %.2f %.2f", surface.height, surface.normal.x, surface.normal.y, surface.normal.z);
+            }
+        }
         @pool() {
             imgui::text("State: %s   target: %s", string::tformat_zstr("%s", agent.state),
                 string::tformat_zstr("%s", agent.target_state));
@@ -486,6 +497,11 @@ fn void draw_debug(
     CrowdAgent* selected = crowd.agent(debug.index);
     Vec3 up = { 0, 1, 0 };
     sink.circle(selected.position + { 0, 0.05f, 0 }, up, selected.params.radius * 1.4f, SELECTED_COLOR);
+    if (selected.corridor.count && selected.state == AgentState.WALKING) {
+        if (try surface = crowd.query.poly_surface(selected.corridor.path[0], selected.position)) {
+            sink.line(selected.position, selected.position + surface.normal, NORMAL_COLOR);
+        }
+    }
     if (controls.samples) draw_samples(sink, selected, debug.samples[:debug.sample_count]);
     if (agents.has_goal && !controls.wander) sink.circle(agents.goal, up, MARKER_RADIUS, GOAL_COLOR);
 }
@@ -515,14 +531,23 @@ fn void? run(
     render::Renderer* renderer,
     AssetStore* assets,
     Scene* scene,
+    bool cache_layers,
+    bool bounded_detail,
+    uint frame_limit,
 ) @local {
     Level level = build_level(assets, scene)!;
     add_door(assets, scene, &level)!;
-    NavBuilderDesc desc = nav::default_nav_builder_desc({
-        .min = { -LEVEL_HALF_SIZE, -1, -LEVEL_HALF_SIZE },
-        .max = { LEVEL_HALF_SIZE, LEVEL_TOP, LEVEL_HALF_SIZE },
-    });
-    desc.cache_layers = true;
+    NavBuildConfig config = nav::default_nav_build_config();
+    if (bounded_detail) {
+        config.detail_mode = DetailMode.BOUNDED;
+        config.cell_height = DETAIL_CELL_HEIGHT;
+        config.detail_max_error = DETAIL_HEIGHT_ERROR;
+    }
+    NavBuilderDesc desc = nav::default_nav_builder_desc(
+        { .min = { -LEVEL_HALF_SIZE, -1, -LEVEL_HALF_SIZE }, .max = { LEVEL_HALF_SIZE, LEVEL_TOP, LEVEL_HALF_SIZE } },
+        config,
+    );
+    desc.cache_layers = cache_layers;
     NavBuilder builder = nav::create_nav_builder(mem, scene, desc)!;
     defer nav::destroy_nav_builder(&builder);
     NavMesh mesh = nav::create_nav_mesh_for(mem, &builder)!;
@@ -573,13 +598,14 @@ fn void? run(
     };
     Controls controls = {
         .draw    = { .agents = true },
-        .mesh    = { .polys = true, .links = true },
+        .mesh    = { .polys = true, .links = true, .detail = bounded_detail },
         .wander  = true,
         .samples = true,
     };
     renderer.prepare_scene(scene)!;
 
     while (window.poll()) {
+        if (frame_limit && window.clock.frame >= frame_limit) break;
         Input* input = &window.input;
         if (input.key_released(platform::Scancode.ESCAPE) && !input.keyboard_captured_by_gui) break;
         gui_renderer.new_frame();
@@ -588,6 +614,7 @@ fn void? run(
         }
         uint selected = draw_panel(
             crowd:    &crowd,
+            builder:  &builder,
             level:    &level,
             agents:   agents,
             controls: &controls,
@@ -674,7 +701,27 @@ fn void? run(
     }
 }
 
-fn int main() {
+fn int main(String[] args) {
+    bool cache_layers = true;
+    bool bounded_detail;
+    uint frame_limit;
+    for (usz index = 1; index < args.len; index++) {
+        String arg = args[index];
+        if (arg == "--cache") {
+            cache_layers = true;
+        } else if (arg == "--direct") {
+            cache_layers = false;
+        } else if (arg == "--detail") {
+            bounded_detail = true;
+        } else if (arg == "--frames" && index + 1 < args.len) {
+            uint? parsed = args[++index].to_uint();
+            if (catch parsed) return 1;
+            frame_limit = parsed;
+        } else {
+            io::eprintfn("Unknown argument: %s; use --cache, --direct, --detail or --frames N", arg);
+            return 1;
+        }
+    }
     platform::Window window = platform::create_window(platform::default_window_desc("c3d crowd", 1280, 720))!!;
     defer platform::destroy_window(&window);
 
@@ -698,6 +745,9 @@ fn int main() {
         renderer: &renderer,
         assets:   &assets,
         scene:    &scene,
+        cache_layers: cache_layers,
+        bounded_detail: bounded_detail,
+        frame_limit: frame_limit,
     )) {
         io::eprintfn("crowd example failed: %s", excuse);
         return 1;

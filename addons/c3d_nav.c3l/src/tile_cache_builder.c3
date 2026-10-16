@@ -6,8 +6,8 @@ import c3d;
 <* Magic of a layer blob; mirrors DT_TILECACHE_MAGIC. *>
 const int LAYER_MAGIC = 'D' << 24 | 'T' << 16 | 'L' << 8 | 'R';
 
-<* Version of a layer blob; 1 upstream, 100 here because the arrays are stored uncompressed. *>
-const int LAYER_VERSION = 100;
+<* Version of a layer blob with optional retained references. *>
+const int LAYER_VERSION = 101;
 
 const char   NO_LAYER_CELL @local = 0xff; // an empty height, an unassigned region or no sweep neighbour
 const char   PORTAL_BASE @local = 0xf8; // a traced neighbour of 0xf8 + direction is a portal that way
@@ -45,9 +45,11 @@ struct LayerHeader {
     char    min_z;
     char    max_z;
     char[2] _pad0;
+    DetailMode detail_mode;
+    uint reference_bytes;
 }
 
-$assert LayerHeader::size == 56;
+$assert LayerHeader::size == 64;
 
 <* A layer read into scratch with its region ids; mirrors dtTileCacheLayer. *>
 struct TileCacheLayer {
@@ -119,6 +121,7 @@ struct LayerVertexWeld @local {
     ushort[] first;       // LAYER_VERTEX_BUCKETS heads, MESH_NULL_INDEX when empty
     ushort[] next;
     int      count;
+    int height_tolerance;
 }
 
 struct LayerPolyMerge @local {
@@ -494,7 +497,12 @@ fn LayerContourSet? build_tile_cache_contours(
  @param [&in] contours : "Built by build_tile_cache_contours."
  @return? c3d::CAPACITY_EXCEEDED
 *>
-fn LayerPolyMesh? build_tile_cache_poly_mesh(Allocator allocator, Allocator scratch, LayerContourSet* contours) {
+fn LayerPolyMesh? build_tile_cache_poly_mesh(
+    Allocator allocator,
+    Allocator scratch,
+    LayerContourSet* contours,
+    bool preserve_surface = false,
+) {
     int max_vertices;
     int max_triangles;
     int largest_contour;
@@ -542,7 +550,7 @@ fn LayerPolyMesh? build_tile_cache_poly_mesh(Allocator allocator, Allocator scra
 
     ushort[LAYER_VERTEX_BUCKETS] first_vertex;
     first_vertex[..] = MESH_NULL_INDEX;
-    LayerVertexWeld weld = { .verts = verts, .first = first_vertex[..], .next = next_vertex };
+    LayerVertexWeld weld = { .verts = verts, .first = first_vertex[..], .next = next_vertex, .height_tolerance = preserve_surface ? 0 : LAYER_WELD_HEIGHT };
 
     foreach (&contour : contours.contours) {
         int count = (int)(contour.verts.len / 4);
@@ -556,7 +564,10 @@ fn LayerPolyMesh? build_tile_cache_poly_mesh(Allocator allocator, Allocator scra
             triangles: triangles,
         );
         // A contour simplified too aggressively still yields the triangles found before the failure.
-        if (triangle_count <= 0) triangle_count = -triangle_count;
+        if (triangle_count <= 0) {
+            if (preserve_surface) return c3d::CAPACITY_EXCEEDED~;
+            triangle_count = -triangle_count;
+        }
 
         for (int vertex = 0; vertex < count; vertex++) {
             char* point = &contour.verts[vertex * 4];
@@ -593,6 +604,7 @@ fn LayerPolyMesh? build_tile_cache_poly_mesh(Allocator allocator, Allocator scra
     mesh.vert_count = (uint)weld.count;
 
     for (int vertex = 0; vertex < (int)mesh.vert_count; vertex++) {
+        if (preserve_surface) break;
         if (!vertex_flags[vertex]) continue;
         if (!can_remove_layer_vertex(&mesh, (ushort)vertex)) continue;
         remove_layer_vertex(&mesh, (ushort)vertex, max_triangles)!;
@@ -655,16 +667,25 @@ fn void build_tile_cache_layer(
 
 <*
  Copy a blob's arrays into the scratch, where marking and region building write; mirrors dtDecompressTileCacheLayer.
- @param blob : "4-byte aligned; the header stays borrowed."
+ @param blob : "Four-byte aligned; bounded references require eight-byte alignment."
  @param scratch : "At least four bytes per cell of the blob's layer."
- @return? LAYER_CORRUPTED
+ @return? LAYER_CORRUPTED, c3d::CAPACITY_EXCEEDED
 *>
 fn TileCacheLayer? read_tile_cache_layer(char[] blob, char[] scratch) {
     if (blob.len < LayerHeader::size) return LAYER_CORRUPTED~;
     LayerHeader* header = (LayerHeader*)blob.ptr;
     if (header.magic != LAYER_MAGIC || header.version != LAYER_VERSION) return LAYER_CORRUPTED~;
     usz cells = (usz)header.width * header.height;
-    if (blob.len != LayerHeader::size + cells * 3) return LAYER_CORRUPTED~;
+    if (scratch.len < cells * 4) return c3d::CAPACITY_EXCEEDED~;
+    usz base_size = LayerHeader::size + cells * 3;
+    if ((uint)header.detail_mode > (uint)DetailMode.BOUNDED) return LAYER_CORRUPTED~;
+    if (header.detail_mode == DetailMode.COARSE) {
+        if (header.reference_bytes || blob.len != base_size) return LAYER_CORRUPTED~;
+    } else {
+        usz reference_offset = detail_reference_offset(base_size);
+        if (reference_offset > blob.len || header.reference_bytes != blob.len - reference_offset) return LAYER_CORRUPTED~;
+        (void)cached_detail_reference(blob)!;
+    }
 
     scratch[:cells * 3] = blob[LayerHeader::size:cells * 3];
     return {
@@ -693,7 +714,7 @@ fn usz layer_tile_mesh_size(LayerPolyMesh* mesh) {
  Pack a layer mesh as a TileMesh blob at the layer's tile and bounds, so create_tile_data reads it.
  @param [&in] mesh : "Built by build_tile_cache_poly_mesh."
  @param [&in] header : "Of the layer the mesh was built from."
- @param [out] blob : "layer_tile_mesh_size(mesh) bytes, 4-byte aligned."
+ @param [out] blob : "layer_tile_mesh_size(mesh) bytes, 8-byte aligned."
 *>
 fn void pack_layer_tile_mesh(
     LayerPolyMesh* mesh,
@@ -704,6 +725,8 @@ fn void pack_layer_tile_mesh(
 ) {
     blob[..] = 0;
     *(TileMeshHeader*)blob.ptr = {
+        .magic          = TILE_MESH_MAGIC,
+        .version        = TILE_MESH_VERSION,
         .tile_x         = header.tile_x,
         .tile_z         = header.tile_z,
         .vert_count     = mesh.vert_count,
@@ -821,7 +844,8 @@ fn bool walk_layer_contour(
     if (start_direction == -1) return true;
 
     int direction = start_direction;
-    int max_iterations = width * layer.header.height;
+    int max_iterations = width * layer.header.height * 4;
+    bool closed;
     for (int iteration = 0; iteration < max_iterations; iteration++) {
         char neighbour = layer_neighbour_region(layer, x, z, direction);
         int next_x = x;
@@ -854,11 +878,15 @@ fn bool walk_layer_contour(
             next_z = z + dir_offset_z((uint)direction);
             next_direction = (direction + 3) & 3;
         }
-        if (iteration > 0 && x == start_x && z == start_z && direction == start_direction) break;
         x = next_x;
         z = next_z;
         direction = next_direction;
+        if (x == start_x && z == start_z && direction == start_direction) {
+            closed = true;
+            break;
+        }
     }
+    if (!closed) return false;
 
     char* last = &trace.verts[(trace.vert_count - 1) * 4];
     char* first = &trace.verts[0];
@@ -1196,7 +1224,7 @@ fn ushort add_layer_vertex(
     for (ushort index = weld.first[bucket]; index != MESH_NULL_INDEX; index = weld.next[index]) {
         ushort* existing = &weld.verts[index * 3];
         bool same_column = existing[0] == x && existing[2] == z;
-        if (same_column && math::abs((int)existing[1] - (int)y) <= LAYER_WELD_HEIGHT) return index;
+        if (same_column && math::abs((int)existing[1] - (int)y) <= weld.height_tolerance) return index;
     }
 
     ushort index = (ushort)weld.count++;

@@ -128,8 +128,7 @@ fn uint Heightfield.walkable_span_count(&self) {
 <*
  Rasterize one triangle into the columns it overlaps; mirrors rcRasterizeTriangle.
  Triangles outside the bounds add nothing.
- @return? c3d::CAPACITY_EXCEEDED
- @require area <= WALKABLE_AREA
+ @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
 fn void? Heightfield.rasterize_triangle(
     &self,
@@ -139,6 +138,7 @@ fn void? Heightfield.rasterize_triangle(
     char area,
     uint merge_threshold = 1,
 ) {
+    if (area > WALKABLE_AREA || !detail_finite_vertex(vertex_a) || !detail_finite_vertex(vertex_b) || !detail_finite_vertex(vertex_c)) return c3d::INVALID_ARGUMENT~;
     return rasterize(
         heightfield:         self,
         vertex_a:            vertex_a,
@@ -155,8 +155,7 @@ fn void? Heightfield.rasterize_triangle(
  Rasterize an indexed triangle list; mirrors rcRasterizeTriangles.
  @param positions : "World space."
  @param areas : "One per triangle."
- @return? c3d::CAPACITY_EXCEEDED
- @require areas.len * 3 == indices.len
+ @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
 fn void? Heightfield.rasterize_triangles(
     &self,
@@ -165,6 +164,13 @@ fn void? Heightfield.rasterize_triangles(
     char[] areas,
     uint merge_threshold = 1,
 ) {
+    if (indices.len % 3 || areas.len != indices.len / 3) return c3d::INVALID_ARGUMENT~;
+    foreach (area : areas) {
+        if (area > WALKABLE_AREA) return c3d::INVALID_ARGUMENT~;
+    }
+    foreach (index : indices) {
+        if (index >= positions.len || !detail_finite_vertex(positions[index])) return c3d::INVALID_ARGUMENT~;
+    }
     float inverse_cell_size = 1.0f / self.cell_size;
     float inverse_cell_height = 1.0f / self.cell_height;
     foreach (usz triangle, area : areas) {
@@ -185,7 +191,6 @@ fn void? Heightfield.rasterize_triangles(
  Heightfield over the bounds with empty columns and room for initial_spans; mirrors rcCreateHeightfield.
  @param bounds : "World space; the grid covers it at cell_size."
  @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
- @require cell_size > 0, cell_height > 0
 *>
 fn Heightfield? create_heightfield(
     Allocator allocator,
@@ -197,6 +202,11 @@ fn Heightfield? create_heightfield(
     uint initial_spans = SPAN_POOL_GROWTH,
 ) {
     if (width == 0 || height == 0) return c3d::INVALID_ARGUMENT~;
+    if (!math::is_finite(cell_size) || !math::is_finite(cell_height) || cell_size <= 0 || cell_height <= 0
+        || !detail_finite_vertex(bounds.min) || !detail_finite_vertex(bounds.max)
+        || !detail_finite_vertex(bounds.max - bounds.min)
+        || bounds.min.x > bounds.max.x || bounds.min.y > bounds.max.y || bounds.min.z > bounds.max.z) return c3d::INVALID_ARGUMENT~;
+    if (width > int::max || height > int::max || (ulong)width * height > (ulong)sz::max / uint::size) return c3d::INVALID_ARGUMENT~;
     uint[]? columns = alloc::new_array_try(allocator, uint, (sz)width * height);
     if (catch columns) return c3d::CAPACITY_EXCEEDED~;
     defer catch alloc::free(allocator, columns.ptr);

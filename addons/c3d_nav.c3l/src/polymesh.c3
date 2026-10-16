@@ -26,7 +26,13 @@ const ushort SIDE_NEGATIVE_X @local = 0;
 const ushort SIDE_POSITIVE_Z @local = 1;
 const ushort SIDE_POSITIVE_X @local = 2;
 const ushort SIDE_NEGATIVE_Z @local = 3;
-const usz    BLOB_ALIGNMENT @local = 4;
+const usz    BLOB_ALIGNMENT @local = 8;
+
+<* Identify a packed polygon-mesh build product. *>
+const uint TILE_MESH_MAGIC = 0x48534d4e;
+
+<* Identify the packed polygon and detail layout. *>
+const uint TILE_MESH_VERSION = 1;
 
 <* Convex polygons of one tile in voxel coordinates; arrays come from the output allocator. *>
 struct PolyMesh {
@@ -43,10 +49,13 @@ struct PolyMesh {
     float    cell_height;
     uint     border_size;
     float    max_edge_error;
+    DetailMesh detail;
 }
 
-<* Header of a flat TileMesh blob; the arrays follow in PolyMesh order, each 4-byte aligned. *>
+<* Header of a flat TileMesh blob; arrays follow in PolyMesh order, 8-byte aligned. *>
 struct TileMeshHeader {
+    uint magic;
+    uint version;
     int   tile_x;
     int   tile_z;
     uint  vert_count;
@@ -58,9 +67,15 @@ struct TileMeshHeader {
     float cell_height;
     uint  border_size;
     float max_edge_error;
+    DetailMode detail_mode;
+    uint detail_vertex_count;
+    uint detail_triangle_count;
+    uint detail_portal_count;
+    Vec3 detail_origin;
+    double[2] detail_origin_correction;
 }
 
-$assert TileMeshHeader::size == 64;
+$assert TileMeshHeader::size == 120;
 
 <* Borrowed view over a TileMesh blob. *>
 struct TileMeshView {
@@ -70,6 +85,10 @@ struct TileMeshView {
     ushort[]        regions;
     ushort[]        flags;
     char[]          areas;
+    PolyDetail[]    details;
+    Vec3[]          detail_vertices;
+    DetailTriangle[] detail_triangles;
+    DetailPortal[] detail_portals;
 }
 
 struct MeshEdge @local {
@@ -83,6 +102,7 @@ struct VertexWeld @local {
     int[]    first;    // VERTEX_BUCKET_COUNT bucket heads, -1 when empty
     int[]    next;
     int      count;
+    int height_tolerance;
 }
 
 struct IndexedPolygon @local {
@@ -131,6 +151,7 @@ fn PolyMesh? build_poly_mesh(
     Allocator scratch,
     ContourSet* contours,
     uint verts_per_poly,
+    bool preserve_surface = false,
 ) {
     int stride = (int)verts_per_poly;
     int vertex_capacity;
@@ -191,7 +212,7 @@ fn PolyMesh? build_poly_mesh(
     defer alloc::free(scratch, buffer_polys.ptr);
 
     first_vertex[..] = -1;
-    VertexWeld weld = { .verts = verts, .first = first_vertex, .next = next_vertex };
+    VertexWeld weld = { .verts = verts, .first = first_vertex, .next = next_vertex, .height_tolerance = preserve_surface ? 0 : WELD_HEIGHT };
     PolygonBuffer buffer = {
         .polys  = buffer_polys[:(sz)largest_contour * stride],
         .merged = buffer_polys[(sz)largest_contour * stride:stride],
@@ -210,7 +231,10 @@ fn PolyMesh? build_poly_mesh(
             triangles: triangles,
         );
         // A contour simplified too aggressively still yields the triangles found before the failure.
-        if (triangle_count <= 0) triangle_count = -triangle_count;
+        if (triangle_count <= 0) {
+            if (preserve_surface) return c3d::CAPACITY_EXCEEDED~;
+            triangle_count = -triangle_count;
+        }
 
         for (int vertex = 0; vertex < vertex_count; vertex++) {
             int* point = &contour.verts[vertex * 4];
@@ -243,6 +267,7 @@ fn PolyMesh? build_poly_mesh(
     mesh.vert_count = (uint)weld.count;
 
     for (int vertex = 0; vertex < (int)mesh.vert_count; vertex++) {
+        if (preserve_surface) break;
         if (!vertex_flags[vertex]) continue;
         if (!can_remove_vertex(scratch, &mesh, (ushort)vertex)!) continue;
         remove_vertex(
@@ -276,13 +301,17 @@ fn usz tile_mesh_size(PolyMesh* mesh) {
     carve_blob(&cursor, ushort, mesh.poly_count);
     carve_blob(&cursor, ushort, mesh.poly_count);
     carve_blob(&cursor, char, mesh.poly_count);
+    carve_blob(&cursor, PolyDetail, mesh.detail.mode == DetailMode.BOUNDED ? mesh.poly_count : 0);
+    carve_blob(&cursor, Vec3, mesh.detail.vertices.len);
+    carve_blob(&cursor, DetailTriangle, mesh.detail.triangles.len);
+    carve_blob(&cursor, DetailPortal, mesh.detail.portals.len);
     return cursor.offset;
 }
 
 <*
  Pack the poly mesh into a flat blob.
  @param [&in] mesh : "Built."
- @param [out] blob : "tile_mesh_size(mesh) bytes, 4-byte aligned."
+ @param [out] blob : "tile_mesh_size(mesh) bytes, 8-byte aligned."
 *>
 fn void pack_tile_mesh(
     PolyMesh* mesh,
@@ -292,6 +321,8 @@ fn void pack_tile_mesh(
 ) {
     blob[..] = 0;
     *(TileMeshHeader*)blob.ptr = {
+        .magic          = TILE_MESH_MAGIC,
+        .version        = TILE_MESH_VERSION,
         .tile_x         = tile_x,
         .tile_z         = tile_z,
         .vert_count     = mesh.vert_count,
@@ -302,6 +333,12 @@ fn void pack_tile_mesh(
         .cell_height    = mesh.cell_height,
         .border_size    = mesh.border_size,
         .max_edge_error = mesh.max_edge_error,
+        .detail_mode = mesh.detail.mode,
+        .detail_vertex_count = (uint)mesh.detail.vertices.len,
+        .detail_triangle_count = (uint)mesh.detail.triangles.len,
+        .detail_portal_count = (uint)mesh.detail.portals.len,
+        .detail_origin = mesh.detail.origin,
+        .detail_origin_correction = mesh.detail.origin_correction,
     };
     TileMeshView view = tile_mesh_view(blob);
     view.verts[..] = mesh.verts[..];
@@ -309,6 +346,10 @@ fn void pack_tile_mesh(
     view.regions[..] = mesh.regions[..];
     view.flags[..] = mesh.flags[..];
     view.areas[..] = mesh.areas[..];
+    view.details[..] = mesh.detail.polygons[..];
+    view.detail_vertices[..] = mesh.detail.vertices[..];
+    view.detail_triangles[..] = mesh.detail.triangles[..];
+    view.detail_portals[..] = mesh.detail.portals[..];
 }
 
 <*
@@ -325,7 +366,107 @@ fn TileMeshView tile_mesh_view(char[] blob) {
         .regions = carve_blob(&cursor, ushort, header.poly_count),
         .flags   = carve_blob(&cursor, ushort, header.poly_count),
         .areas   = carve_blob(&cursor, char, header.poly_count),
+        .details = carve_blob(&cursor, PolyDetail, header.detail_mode == DetailMode.BOUNDED ? header.poly_count : 0),
+        .detail_vertices = carve_blob(&cursor, Vec3, header.detail_vertex_count),
+        .detail_triangles = carve_blob(&cursor, DetailTriangle, header.detail_triangle_count),
+        .detail_portals = carve_blob(&cursor, DetailPortal, header.detail_portal_count),
     };
+}
+
+fn TileMeshView? validate_tile_mesh(char[] blob) @private {
+    if (blob.len < TileMeshHeader::size || (uptr)blob.ptr % TileMeshHeader::alignment != 0) return c3d::INVALID_ARGUMENT~;
+    TileMeshHeader* header = (TileMeshHeader*)blob.ptr;
+    if (header.magic != TILE_MESH_MAGIC || header.version != TILE_MESH_VERSION
+        || header.vert_count < 3 || header.vert_count >= MESH_NULL_INDEX || header.poly_count == 0
+        || header.poly_count >= MESH_NULL_INDEX || header.verts_per_poly < 3 || header.verts_per_poly > MAX_VERTS_PER_POLY
+        || (uint)header.detail_mode > (uint)DetailMode.BOUNDED
+        || header.detail_vertex_count > DEFAULT_DETAIL_VERTICES || header.detail_triangle_count > DEFAULT_DETAIL_TRIANGLES
+        || header.detail_portal_count > DEFAULT_DETAIL_TRIANGLES) return c3d::INVALID_ARGUMENT~;
+    if (!math::is_finite(header.cell_size) || !math::is_finite(header.cell_height)
+        || header.cell_size <= 0 || header.cell_height <= 0
+        || !detail_finite_vertex(header.bounds.min) || !detail_finite_vertex(header.bounds.max)) return c3d::INVALID_ARGUMENT~;
+    if (header.bounds.min.x > header.bounds.max.x || header.bounds.min.y > header.bounds.max.y || header.bounds.min.z > header.bounds.max.z) return c3d::INVALID_ARGUMENT~;
+    if (header.detail_mode == DetailMode.COARSE && (header.detail_vertex_count || header.detail_triangle_count || header.detail_portal_count)) return c3d::INVALID_ARGUMENT~;
+    if (header.detail_mode == DetailMode.BOUNDED && !detail_finite_vertex(header.detail_origin)) return c3d::INVALID_ARGUMENT~;
+    if (header.detail_mode == DetailMode.BOUNDED) {
+        foreach (value : header.detail_origin_correction) {
+            if (!math::is_finite(value)) return c3d::INVALID_ARGUMENT~;
+        }
+    }
+    BlobCursor cursor = { .offset = TileMeshHeader::size };
+    carve_blob(&cursor, ushort, (usz)header.vert_count * 3);
+    carve_blob(&cursor, ushort, (usz)header.poly_count * header.verts_per_poly * 2);
+    carve_blob(&cursor, ushort, header.poly_count);
+    carve_blob(&cursor, ushort, header.poly_count);
+    carve_blob(&cursor, char, header.poly_count);
+    carve_blob(&cursor, PolyDetail, header.detail_mode == DetailMode.BOUNDED ? header.poly_count : 0);
+    carve_blob(&cursor, Vec3, header.detail_vertex_count);
+    carve_blob(&cursor, DetailTriangle, header.detail_triangle_count);
+    carve_blob(&cursor, DetailPortal, header.detail_portal_count);
+    if (cursor.offset != blob.len) return c3d::INVALID_ARGUMENT~;
+    TileMeshView view = tile_mesh_view(blob);
+    foreach (portal : view.detail_portals) {
+        if (portal.polygon >= header.poly_count || portal.edge >= header.verts_per_poly
+            || !math::is_finite(portal.min) || !math::is_finite(portal.max)
+            || !math::is_finite(portal.source_height) || !math::is_finite(portal.target_height)
+            || portal.min < 0 || portal.max > 1 || portal.min >= portal.max) return c3d::INVALID_ARGUMENT~;
+        ushort[] polygon = view.polys[(usz)portal.polygon * header.verts_per_poly * 2:header.verts_per_poly];
+        uint count;
+        foreach (vertex : polygon) {
+            if (vertex == MESH_NULL_INDEX) break;
+            count++;
+        }
+        if (portal.edge >= count) return c3d::INVALID_ARGUMENT~;
+        ushort neighbour = view.polys[(usz)portal.polygon * header.verts_per_poly * 2 + header.verts_per_poly + portal.edge];
+        if (neighbour == MESH_NULL_INDEX || (neighbour & PORTAL_EDGE) == 0) return c3d::INVALID_ARGUMENT~;
+    }
+    for (uint index = 0; index < header.poly_count; index++) {
+        if (view.areas[index] > WALKABLE_AREA) return c3d::INVALID_ARGUMENT~;
+        uint count;
+        Vec3[MAX_VERTS_PER_POLY] corners;
+        ushort[] indices = view.polys[(usz)index * header.verts_per_poly * 2:header.verts_per_poly];
+        ushort[] neighbours = view.polys[(usz)index * header.verts_per_poly * 2 + header.verts_per_poly:header.verts_per_poly];
+        foreach (slot, vertex : indices) {
+            if (vertex == MESH_NULL_INDEX) break;
+            if (vertex >= header.vert_count) return c3d::INVALID_ARGUMENT~;
+            foreach (previous : indices[:slot]) {
+                if (previous == vertex) return c3d::INVALID_ARGUMENT~;
+            }
+            ushort neighbour = neighbours[slot];
+            if (neighbour != MESH_NULL_INDEX) {
+                if ((neighbour & PORTAL_EDGE) != 0) {
+                    if ((neighbour & 0x7fff) >= 4) return c3d::INVALID_ARGUMENT~;
+                } else if (neighbour >= header.poly_count) {
+                    return c3d::INVALID_ARGUMENT~;
+                }
+            }
+            ushort* source = &view.verts[(usz)vertex * 3];
+            if (header.detail_mode == DetailMode.BOUNDED) {
+                corners[count] = {
+                    (float)((double)header.bounds.min.x - header.detail_origin.x + (double)source[0] * header.cell_size),
+                    (float)((double)header.bounds.min.y - header.detail_origin.y + (double)source[1] * header.cell_height),
+                    (float)((double)header.bounds.min.z - header.detail_origin.z + (double)source[2] * header.cell_size),
+                };
+            } else {
+                corners[count] = header.bounds.min + (Vec3){ source[0] * header.cell_size, source[1] * header.cell_height, source[2] * header.cell_size };
+            }
+            if (!detail_finite_vertex(corners[count])) return c3d::INVALID_ARGUMENT~;
+            count++;
+        }
+        if (count < 3) return c3d::INVALID_ARGUMENT~;
+        if (header.detail_mode == DetailMode.BOUNDED) {
+            @pool() {
+                validate_detail_polygon(
+                    corners: corners[:count],
+                    range: view.details[index],
+                    local_vertices: view.detail_vertices,
+                    triangles: view.detail_triangles,
+                    scratch: tmem,
+                )!;
+            };
+        }
+    }
+    return view;
 }
 
 // With a null base the cursor only measures.
@@ -357,7 +498,7 @@ fn ushort add_vertex(VertexWeld* weld, int* point) @local {
     for (int index = weld.first[bucket]; index != -1; index = weld.next[index]) {
         ushort* existing = &weld.verts[index * 3];
         bool same_column = existing[0] == x && existing[2] == z;
-        if (same_column && math::abs((int)existing[1] - (int)y) <= WELD_HEIGHT) return (ushort)index;
+        if (same_column && math::abs((int)existing[1] - (int)y) <= weld.height_tolerance) return (ushort)index;
     }
 
     int index = weld.count++;
