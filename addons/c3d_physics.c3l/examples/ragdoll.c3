@@ -36,7 +36,7 @@ const float FREE_PITCH_LIMIT @local = 1.5f;
 const float FREE_SPEED @local = 4;
 const float FREE_FAST_MULTIPLIER @local = 4;
 const Vec3 CAMERA_START @local = { 2.8f, 2.2f, 4.5f };
-const Vec3 NEIGHBOUR_POSITION @local = { -0.4f, 0.2f, -0.35f };
+const Vec3 NEIGHBOUR_POSITION @local = { -0.48f, 0.2f, -0.35f };
 const Vec3 BLOCKER_POSITION @local = { 0, 0.8f, 0 };
 const Vec3 BLOCKER_HALF_EXTENTS @local = { 0.55f, 0.08f, 0.55f };
 const Vec2 PANEL_POSITION @local = { 16, 16 };
@@ -484,13 +484,24 @@ fn void? run(
 fn int main(String[] args) {
     String captures;
     bool cpu_observation;
+    uint first_scenario;
+    uint scenario_limit = 4;
     for (usz index = 1; index < args.len; index++) {
         if (args[index] == "--acceptance" && index + 1 < args.len) {
             captures = args[++index];
+        } else if (args[index] == "--case" && index + 1 < args.len) {
+            switch (args[++index]) {
+                case "supine": first_scenario = 0;
+                case "prone": first_scenario = 1;
+                case "blocked": first_scenario = 2;
+                case "neighbour": first_scenario = 3;
+                default: return 1;
+            }
+            scenario_limit = first_scenario + 1;
         } else if (args[index] == "--cpu-observation") {
             cpu_observation = true;
         } else {
-            io::eprintn("Usage: ragdoll [--acceptance existing-output-directory | --cpu-observation]");
+            io::eprintn("Usage: ragdoll [--acceptance existing-output-directory [--case supine|prone|blocked|neighbour] | --cpu-observation]");
             return 1;
         }
     }
@@ -533,7 +544,7 @@ fn int main(String[] args) {
             renderer.adapter_name,
             getup_fixture::DATASET,
         );
-        for (uint scenario = 0; scenario < 4; scenario++) {
+        for (uint scenario = first_scenario; scenario < scenario_limit; scenario++) {
             if (catch excuse = run_acceptance(
                 window: &window,
                 renderer: &renderer,
@@ -546,7 +557,8 @@ fn int main(String[] args) {
             }
         }
         return 0;
-    }    if (catch excuse = run(
+    }
+    if (catch excuse = run(
         window:   &window,
         renderer: &renderer,
         assets:   &assets,
@@ -681,6 +693,7 @@ fn void? run_acceptance(
     physics.update(0);
     physics.update_ragdolls();
     scene.update_world();
+    if (scenario == 3) check_neighbour_clearance(&physics, level.neighbour, scene.get(character.humanoid.skin, Ragdoll))!;
     io::printfn("visual_setup,%s,recovery_entry", name);
     begin_recovery(&character, &scene, &physics);
     if (character.last_error) return character.last_error~;
@@ -808,4 +821,37 @@ fn void? run_acceptance(
     if (scenario < 2 && character.phase != STANDING) return c3d::INVALID_ARGUMENT~;
     if (scenario == 2 && character.phase != RECOVERING) return c3d::INVALID_ARGUMENT~;
     if (scenario == 3 && neighbour_motion <= 0.01f) return c3d::INVALID_ARGUMENT~;
+}
+
+fn void? check_neighbour_clearance(PhysicsWorld* physics, Node* neighbour, Ragdoll* ragdoll) @local {
+    Vec3[8] corners;
+    for (uint corner = 0; corner < 8; corner++) {
+        Vec3 sign = { corner & 1 ? 1 : -1, corner & 2 ? 1 : -1, corner & 4 ? 1 : -1 };
+        corners[corner] = sign * (BOX_SIZE * 0.5f);
+    }
+    b3::ShapeProxy proxy = { .points = &corners[0], .count = 8, .radius = 0 };
+    b3::BodyId box = physics.body(neighbour)!;
+    b3::ShapeId[32] storage;
+    b3::ShapeId[] overlaps = b3::world_overlap_shape_all(
+        world: physics.world,
+        origin: box.position(),
+        proxy: &proxy,
+        filter: b3::default_query_filter(),
+        buffer: storage[..],
+    );
+    uint participants;
+    foreach (shape : overlaps) {
+        b3::BodyId other = shape.body();
+        foreach (node : ragdoll.bone_nodes) {
+            b3::BodyId body = physics.body(node)!;
+            if (body.index1 == other.index1 && body.world0 == other.world0 && body.generation == other.generation) participants++;
+        }
+    }
+    io::printfn(
+        "initial_neighbour,overlapping_bones,%d,position,%s,mass_kg,%.6f",
+        participants,
+        box.position(),
+        box.mass(),
+    );
+    if (participants) return c3d::INVALID_ARGUMENT~;
 }
