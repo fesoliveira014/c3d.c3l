@@ -34,7 +34,7 @@
     },
     "physics_test": {
       "type": "test",
-      "sources": [ "test/*" ]
+      "sources": [ "test/*", "examples/ragdoll_getup.c3" ]
     },
     "cloth": {
       "type": "executable",
@@ -64,7 +64,7 @@
     },
     "ragdoll": {
       "type": "executable",
-      "sources": [ "examples/ragdoll.c3", "examples/ragdoll_bones.c3" ]
+      "sources": [ "examples/ragdoll.c3", "examples/ragdoll_getup.c3" ]
     },
     "collision_math": {
       "type": "executable",

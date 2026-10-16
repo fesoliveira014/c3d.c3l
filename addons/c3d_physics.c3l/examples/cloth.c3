@@ -728,7 +728,10 @@ fn void set_ragdoll(Demo* demo, bool enabled) @local {
         demo.physics.set_ragdoll_mode(character.skin, SIMULATED);
         demo.scene.get(character.skin, Ragdoll).weight = 1;
     } else {
-        demo.physics.recover_bones(character.skin);
+        if (catch excuse = demo.physics.recover_bones(character.skin)) {
+            io::printfn("Cannot recover ragdoll: %s", excuse);
+            return;
+        }
     }
     character.ragdoll = enabled;
 }
@@ -748,12 +751,20 @@ fn void publish_whole(Demo* demo, Node* node, uint revision_before) @local {
 // Animation, physics and final ragdoll poses precede the cloth, so pins and contacts see this frame's pose.
 fn void step_demo(Demo* demo, float delta, double time) @local {
     apply_wind(demo, time);
+    if (demo.character.root && !demo.character.ragdoll) {
+        Ragdoll* ragdoll = demo.scene.get(demo.character.skin, Ragdoll);
+        ragdoll.weight = math::max(ragdoll.weight - delta / BLEND_OUT_SECONDS, 0.0f);
+    }
     if (demo.character.root) anim::update(&demo.assets, &demo.scene, delta);
     demo.scene.update_world();
     demo.physics.update(delta);
     if (demo.character.root && !demo.character.ragdoll) {
         Ragdoll* ragdoll = demo.scene.get(demo.character.skin, Ragdoll);
-        ragdoll.weight = math::max(ragdoll.weight - delta / BLEND_OUT_SECONDS, 0.0f);
+        if (ragdoll.weight == 0 && ragdoll.recovery_status().participating > 0) {
+            if (catch excuse = demo.physics.finish_ragdoll_recovery(demo.character.skin)) {
+                if (excuse != physics::RECOVERY_NOT_READY) io::printfn("Cannot finish ragdoll recovery: %s", excuse);
+            }
+        }
     }
     demo.physics.update_ragdolls();
     if (demo.fast && demo.fast_frame == 1) {
@@ -887,7 +898,10 @@ fn void? run_interactive(Options options) @local {
                 configure_temporal(&renderer, renderer.default_view, controls)!;
                 applied = controls;
             }
-            if (controls.ragdoll != demo.character.ragdoll) set_ragdoll(&demo, controls.ragdoll);
+            if (controls.ragdoll != demo.character.ragdoll) {
+                set_ragdoll(&demo, controls.ragdoll);
+                controls.ragdoll = demo.character.ragdoll;
+            }
             if (controls.reset) reset_cloths(&demo)!;
             elapsed += window.clock.delta;
             step_demo(&demo, window.clock.delta, elapsed);

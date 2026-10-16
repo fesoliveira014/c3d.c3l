@@ -532,6 +532,7 @@ fn void PhysicsWorld.teleport(
     Vec3 position,
     Quat rotation,
 ) {
+    cancel_ragdoll_recovery_for_node(self, node);
     RigidBody* body = self.scene.get(node, RigidBody);
     body.body.set_transform((b3::Pos)position, rotation);
     body.current = { .position = position, .rotation = rotation, .scale = { 1, 1, 1 } };
@@ -552,6 +553,7 @@ fn void PhysicsWorld.shift_origin(&self, Scene* scene, Vec3 offset) {
         body.previous.position -= offset;
         body.current.position -= offset;
     };
+    shift_ragdoll_recovery(scene, offset);
     b3::world_rebuild_static_tree(self.world);
     scene.@each(Cloth; Entity entity, Cloth* cloth) {
         if (cloth.is_prepared()) cloth.state.shift_origin(offset);
@@ -727,6 +729,7 @@ fn PhysicsWorld? create_physics_world(
  @param [&inout] world : "Destroyed before its scene and asset store."
 *>
 fn void destroy_physics_world(PhysicsWorld* world) {
+    suspend_ragdoll_recovery(world);
     suspend_breakables(world);
     Scene* scene = world.scene;
     usz count;

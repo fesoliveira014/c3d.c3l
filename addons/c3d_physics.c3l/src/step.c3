@@ -23,10 +23,12 @@ fn void PhysicsWorld.update(&self, float dt) {
     self.break_count = 0;
     self.failure_count = 0;
     self.dropped_events = 0;
+    capture_ragdoll_recovery(self);
     drive_ragdolls(self);
     prune_breakables(self);
     sync_bodies(self);
     sync_joints(self);
+    mask_ragdoll_recovery(self);
     sync_breakables(self);
 
     float fixed_dt = self.desc.tuning.fixed_dt;
@@ -35,6 +37,7 @@ fn void PhysicsWorld.update(&self, float dt) {
     while (self.accumulator >= fixed_dt && steps < self.desc.tuning.max_steps_per_frame) {
         begin_step(self, fixed_dt, (float)steps * fixed_dt);
         if (self.mover_pass.step) self.mover_pass.step(self.mover_pass.context, self, fixed_dt);
+        apply_ragdoll_recovery(self);
         b3::world_step(self.world, fixed_dt, (int)self.desc.tuning.sub_steps);
         end_step(self);
         self.accumulator -= fixed_dt;
@@ -43,6 +46,7 @@ fn void PhysicsWorld.update(&self, float dt) {
     if (self.accumulator >= fixed_dt) self.accumulator -= math::floor(self.accumulator / fixed_dt) * fixed_dt;
     self.alpha = self.accumulator / fixed_dt;
     self.steps_last_update = steps;
+    observe_ragdoll_recoveries(self);
 
     float alpha = self.desc.tuning.interpolate ? self.alpha : 1;
     self.scene.@each(RigidBody; entity, body) {

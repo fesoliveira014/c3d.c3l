@@ -393,10 +393,16 @@ must be finite and nonnegative, with no upper cap, on both export and import.
 Preflight checks required references and mode/body/joint consistency before any
 component attaches; diagnostics include the bone index and model details when
 applicable. Restored owner arrays are independent copies. Joint order/ownership
-are recomputed, frozen recovery poses start at loaded skin-joint locals, and
-scratch/counters/recovery result reset. Bone-body velocities restart at zero.
+are recomputed; recovery state and counters reset. Bone-body velocities restart at zero.
 Ragdoll collection projects only its listed bodies; ordinary body velocities
 persist and source values are unchanged. Normal physics sync creates native state.
+
+The version 1 payload remains authoring-only. Active recovery saves SIMULATED
+bone modes with DYNAMIC body authoring; successful completion saves ANIMATED
+modes with KINEMATIC body authoring. Weights, authored springs and drive strength
+persist. Recovery settings, captured sources and targets, observations, native
+identities, participation and completing markers are transient and absent from
+the payload. The larger runtime state does not change the wire version or layout.
 
 ## Breakable adapter
 
