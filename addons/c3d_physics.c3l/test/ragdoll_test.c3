@@ -1148,3 +1148,56 @@ fn void test_recovery_masks_revolute_drive_without_removing_its_limit() @test {
     assert(math::abs(joint.spring_hertz() - 6) <= TOLERANCE);
     assert(math::abs(joint.spring_damping_ratio() - 0.6f) <= TOLERANCE);
 }
+fn void test_nonparticipant_spring_controls_survive_recovery_updates() @test {
+    Fixture fixture;
+    setup(&fixture, weightless_desc());
+    defer teardown(&fixture);
+    Rig rig = add_chain(&fixture);
+    Ragdoll* ragdoll = build_driven(&fixture, &rig, SPHERICAL);
+    fixture.physics.update(0);
+    fixture.physics.set_bone_mode(rig.skin, 0, SIMULATED);
+    ragdoll.weight = 1;
+    fixture.physics.update_ragdolls();
+    fixture.scene.update_world();
+    fixture.physics.recover_bones(rig.skin)!!;
+    fixture.physics.set_bone_mode(rig.skin, 1, SIMULATED);
+    ragdoll.drive_strength = 1;
+    Node* child = ragdoll.bone_nodes[1];
+    PhysicsJoint* authored = fixture.scene.get(child, PhysicsJoint);
+    authored.desc.spherical.spring.enabled = false;
+    authored.desc.spherical.spring.damping_ratio = 0.25f;
+    fixture.physics.apply_joint(child);
+    fixture.physics.update(0);
+    b3::SphericalJointId joint = fixture.physics.joint(child)!!.as_spherical()!!;
+    assert(!joint.is_spring_enabled());
+    assert(math::abs(joint.spring_damping_ratio() - 0.25f) <= TOLERANCE);
+    assert(math::abs(joint.spring_hertz() - SPRING_HERTZ) <= TOLERANCE);
+    assert(ragdoll.recovery_status().participating == 1);
+}
+fn void test_nonparticipant_weight_edits_keep_ordinary_publication() @test {
+    Fixture fixture;
+    setup(&fixture, weightless_desc());
+    defer teardown(&fixture);
+    Rig rig = add_chain(&fixture);
+    Ragdoll* ragdoll = build_two_bones(&fixture, &rig);
+    fixture.physics.update(0);
+    fixture.physics.set_bone_mode(rig.skin, 0, SIMULATED);
+    ragdoll.weight = 1;
+    fixture.physics.update_ragdolls();
+    fixture.scene.update_world();
+    fixture.physics.recover_bones(rig.skin)!!;
+    fixture.physics.set_bone_mode(rig.skin, 1, SIMULATED);
+    ragdoll.bone_weights[1] = 0;
+    rig.joints[1].local.position.x = 0.2f;
+    fixture.scene.update_world();
+    fixture.physics.update(0);
+    ragdoll.bone_weights[1] = 1;
+    fixture.physics.update_ragdolls();
+    fixture.scene.update_world();
+    b3::BodyId body = fixture.physics.body(ragdoll.bone_nodes[1])!!;
+    Vec3 expected = body.world_point(ragdoll.joint_in_bone[1].position);
+    assert(close_vec(world_position(rig.joints[1]), expected));
+    fixture.physics.update_ragdolls();
+    fixture.scene.update_world();
+    assert(close_vec(world_position(rig.joints[1]), expected));
+}

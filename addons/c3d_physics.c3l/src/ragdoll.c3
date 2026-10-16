@@ -272,7 +272,8 @@ fn void drive_ragdolls(PhysicsWorld* world) @private {
             node.local = maths::transform_from_mat4(inverse_skin.mul(node.world));
         }
         foreach (usz index, mode : ragdoll.bone_modes) {
-            if (mode != SIMULATED || ragdoll.bone_parents[index] < 0 || ragdoll.recovery.bones[index].active) continue;
+            if (mode != SIMULATED || ragdoll.bone_parents[index] < 0 || !ragdoll.bone_drives[index].enabled
+                || ragdoll.recovery.bones[index].active) continue;
             drive_bone(scene, ragdoll, joints, index);
         }
     };
@@ -294,13 +295,6 @@ fn void drive_bone(
     Quat target = desc.anchor_frame.rotation.conjugate() * parent.conjugate()
         * animated_bone_rotation(ragdoll, joints, bone) * desc.frame.rotation;
     float hertz = ragdoll.bone_drives[bone].hertz * ragdoll.drive_strength;
-    set_recovery_spring(
-        ragdoll: ragdoll,
-        index: bone,
-        joint: joint.joint,
-        kind: joint.kind,
-        masked: false,
-    );
     switch (joint.kind) {
         case SPHERICAL:
             b3::SphericalJointId spherical = (b3::SphericalJointId)joint.joint;

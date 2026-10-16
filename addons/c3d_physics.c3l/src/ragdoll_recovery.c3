@@ -85,27 +85,6 @@ struct RagdollRecovery @private {
 fn RagdollRecoveryStatus Ragdoll.recovery_status(&self) => self.recovery.status;
 
 <*
- Default 4 Hz critically damped recovery, capped at 200 N and 20 Nm per bone.
-*>
-fn RagdollRecoverySettings default_ragdoll_recovery_settings() {
-    return {
-        .position_hertz = 4,
-        .angular_hertz = 4,
-        .damping_ratio = 1,
-        .max_force = 200,
-        .max_torque = 20,
-        .entry_position_tolerance = 0.01f,
-        .entry_angle_tolerance = 0.01f,
-        .tracking_position_tolerance = 0.15f,
-        .tracking_angle_tolerance = 0.3f,
-        .finish_position_tolerance = 0.015f,
-        .finish_angle_tolerance = 0.02f,
-        .finish_linear_speed = 0.03f,
-        .finish_angular_speed = 0.05f,
-    };
-}
-
-<*
  Begin physical recovery before sampling fresh animation, using the preceding final joint worlds.
  Places the character horizontally at its hips and chooses the get-up facing; bodies stay dynamic.
  @param [&inout] character : "Ancestor of the skin and joint nodes, with current final world transforms."
@@ -215,6 +194,27 @@ fn void PhysicsWorld.update_ragdolls(&self) {
         } else if (ragdoll.weight > 0) {
             blend_ragdoll(scene, scene.node(entity), ragdoll, alpha);
         }
+    };
+}
+
+<*
+ Default 4 Hz critically damped recovery, capped at 200 N and 20 Nm per bone.
+*>
+fn RagdollRecoverySettings default_ragdoll_recovery_settings() {
+    return {
+        .position_hertz = 4,
+        .angular_hertz = 4,
+        .damping_ratio = 1,
+        .max_force = 200,
+        .max_torque = 20,
+        .entry_position_tolerance = 0.01f,
+        .entry_angle_tolerance = 0.01f,
+        .tracking_position_tolerance = 0.15f,
+        .tracking_angle_tolerance = 0.3f,
+        .finish_position_tolerance = 0.015f,
+        .finish_angle_tolerance = 0.02f,
+        .finish_linear_speed = 0.03f,
+        .finish_angular_speed = 0.05f,
     };
 }
 
@@ -560,7 +560,7 @@ fn void publish_ragdoll_recovery(
                     target = animation;
                 }
             }
-            float weight = ragdoll.recovery.captured ? bone.weight : math::min(ragdoll.weight, 1.0f) * ragdoll.bone_weights[owner];
+            float weight = math::min(ragdoll.weight, 1.0f) * ragdoll.bone_weights[owner];
             node.local = recovery_blend(animation, target, weight);
         }
         ragdoll.joint_worlds[joint] = parent.mul(node.local.to_mat4());
