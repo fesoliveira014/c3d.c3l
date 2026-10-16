@@ -15,6 +15,7 @@ const usz SNAPSHOT_HEADER_BYTES @local = 64;
 const usz SNAPSHOT_DIRECTORY_BYTES @local = 32;
 const usz SNAPSHOT_TILE_HEADER_BYTES @local = 128;
 const usz SNAPSHOT_POLYGON_BYTES @local = 32;
+const usz SNAPSHOT_QUERY_BOUNDS_BYTES @local = 12;
 const usz SNAPSHOT_VECTOR_BYTES @local = 12;
 const usz SNAPSHOT_DETAIL_BYTES @local = 16;
 const usz SNAPSHOT_TRIANGLE_BYTES @local = 8;
@@ -92,13 +93,17 @@ fn PolyRef? NavMesh.resolve_poly_key(&self, NavPolyKey key) {
 
 <*
  Measure the exact portable snapshot size without allocating.
- @return? c3d::CAPACITY_EXCEEDED
+ @return? INCOMPATIBLE_NAV_SNAPSHOT, c3d::CAPACITY_EXCEEDED
  @require self.tiles.len > 0
 *>
 fn usz? NavMesh.snapshot_size(&self) {
     usz size = SNAPSHOT_HEADER_BYTES;
+    MeshTile*[MAX_TILES_AT + 1] layers;
     foreach (tile : self.tiles) {
         if (!tile.header) continue;
+        if (self.tiles_at(tile.header.x, tile.header.z, layers[..]) > MAX_TILES_AT) {
+            return INCOMPATIBLE_NAV_SNAPSHOT~;
+        }
         usz record_size = snapshot_tile_size(tile.header) ?? c3d::CAPACITY_EXCEEDED~!;
         if (record_size > (usz)sz::max - SNAPSHOT_DIRECTORY_BYTES
             || record_size + SNAPSHOT_DIRECTORY_BYTES > (usz)sz::max - size) {
@@ -113,7 +118,7 @@ fn usz? NavMesh.snapshot_size(&self) {
  Save canonical little-endian bytes into caller-owned output.
  @param [out] output : "Contents are unspecified on failure."
  @param [inout] scratch : "Disjoint caller storage; retained only during this call."
- @return? c3d::CAPACITY_EXCEEDED
+ @return? INCOMPATIBLE_NAV_SNAPSHOT, c3d::CAPACITY_EXCEEDED
  @require self.tiles.len > 0
 *>
 fn usz? NavMesh.write_snapshot(&self, char[] output, char[] scratch) {
@@ -289,6 +294,10 @@ fn int compare_snapshot_tiles(MeshTile* first, MeshTile* second) @local {
     );
 }
 
+fn uint snapshot_query_bounds_count(TileHeader* header) @local {
+    return header.detail_mode == DetailMode.COARSE && header.bv_node_count ? header.off_mesh_base : 0;
+}
+
 fn usz? snapshot_append_size(usz size, ulong count, usz stride) @local {
     if (count > ((ulong)sz::max - SNAPSHOT_ALIGNMENT + 1) / stride) return INVALID_NAV_SNAPSHOT~;
     usz bytes = (usz)count * stride;
@@ -303,6 +312,7 @@ fn usz? snapshot_tile_size(TileHeader* header) @local {
     usz size = SNAPSHOT_TILE_HEADER_BYTES;
     size = snapshot_append_size(size, ground_vertices, SNAPSHOT_VECTOR_BYTES)!;
     size = snapshot_append_size(size, header.off_mesh_base, SNAPSHOT_POLYGON_BYTES)!;
+    size = snapshot_append_size(size, snapshot_query_bounds_count(header), SNAPSHOT_QUERY_BOUNDS_BYTES)!;
     size = snapshot_append_size(size, bounded ? ground_vertices : 0, SNAPSHOT_VECTOR_BYTES)!;
     size = snapshot_append_size(size, bounded ? header.off_mesh_base : 0, SNAPSHOT_DETAIL_BYTES)!;
     size = snapshot_append_size(size, header.detail_vertex_count, SNAPSHOT_VECTOR_BYTES)!;
@@ -495,6 +505,20 @@ fn void write_snapshot_tile(SnapshotWriter* writer, MeshTile* tile) @local {
         writer.offset += uint::size;
     }
     writer.pad();
+    uint query_bounds_count = snapshot_query_bounds_count(header);
+    if (query_bounds_count) {
+        foreach (node : tile.bv_tree) {
+            if (node.index < 0) continue;
+            SnapshotWriter bounds = {
+                .bytes = writer.bytes,
+                .offset = writer.offset + (usz)node.index * SNAPSHOT_QUERY_BOUNDS_BYTES,
+            };
+            foreach (minimum : node.min) bounds.integer(minimum, ushort::size);
+            foreach (maximum : node.max) bounds.integer(maximum, ushort::size);
+        }
+        writer.offset += query_bounds_count * SNAPSHOT_QUERY_BOUNDS_BYTES;
+    }
+    writer.pad();
     foreach (corner : tile.detail_corners) writer.vector(corner);
     writer.pad();
     foreach (detail : tile.details) {
@@ -575,6 +599,13 @@ fn char[]? read_snapshot_tile(
         reader.zeros(uint::size)!;
     }
     reader.pad()!;
+    BvNode[] query_bounds = tile.bv_tree[:snapshot_query_bounds_count(&header)];
+    foreach (index, &bounds : query_bounds) {
+        foreach (&minimum : bounds.min) *minimum = (ushort)reader.integer(ushort::size)!;
+        foreach (&maximum : bounds.max) *maximum = (ushort)reader.integer(ushort::size)!;
+        bounds.index = (int)index;
+    }
+    reader.pad()!;
     foreach (&corner : tile.detail_corners) *corner = reader.vector()!;
     reader.pad()!;
     foreach (&detail : tile.details) {
@@ -635,6 +666,6 @@ fn char[]? read_snapshot_tile(
     arena.init(scratch);
     if (catch excuse = validate_tile_data_scratch(data, &arena)) return snapshot_load_fault(excuse)~;
     arena.clear();
-    if (header.bv_node_count) rebuild_tile_bv_tree(&tile, &arena)!;
+    if (header.bv_node_count) rebuild_tile_bv_tree(&tile, &arena, query_bounds)!;
     return data;
 }

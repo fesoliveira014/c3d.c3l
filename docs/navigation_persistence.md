@@ -1,6 +1,6 @@
 # Baked navigation snapshots
 
-`c3d::nav` saves an initialized `NavMesh` to portable bytes and replaces a mesh from those bytes. The snapshot includes baked geometry, current polygon flags/areas, bounded surface and clearance metadata, and original off-mesh connections. It needs no scene, renderer or serialization add-on.
+`c3d::nav` saves an initialized `NavMesh` to portable bytes and replaces a mesh from those bytes. The snapshot includes baked geometry, current polygon flags/areas, coarse quantized query bounds, bounded surface and clearance metadata, and original off-mesh connections. It needs no scene, renderer or serialization add-on.
 
 [Authored navigation serialization](serialization.md#navigation-adapter) saves NavSource, NavVolume, NavLink, NavObstacle and NavAgent setup. A baked snapshot is independent of that authoring. File I/O, asset versioning, streaming, builder/cache inputs, agents, crowd state and saved searches belong to the application.
 
@@ -61,12 +61,12 @@ Treat the third term as zero when there are no detail triangles and calculate th
 | Fault | Meaning |
 | --- | --- |
 | `INVALID_NAV_SNAPSHOT` | Invalid magic/marker, truncation, overflow, layout, reserved bytes, counts, geometry/topology, precision metadata or incompatible tile adjacency. |
-| `INCOMPATIBLE_NAV_SNAPSHOT` | Recognized snapshot with an unsupported portable version or header layout. |
+| `INCOMPATIBLE_NAV_SNAPSHOT` | Unsupported portable version/header layout, or a source mesh exceeding the snapshot layer limit. |
 | `c3d::CAPACITY_EXCEEDED` | Output/scratch, explicit byte ceiling, destination tile capacity or destination allocation could not satisfy the operation. |
 | `NO_FREE_LINKS` | The complete staged connectivity exceeds the destination link pool. |
 | `INVALID_REF` | A key conversion/resolution refers to a missing or stale polygon. |
 
-Native TileData bytes are not a portable snapshot. Load validates complete wire ranges before native allocation, then validates decoded geometry and adjacency before publication. A tile must contain ground polygons; only the whole snapshot may be empty. At most 32 layers may share an XZ coordinate, matching the runtime's adjacent-layer query capacity.
+Native TileData bytes are not a portable snapshot. Load validates complete wire ranges before native allocation, then validates decoded geometry and adjacency before publication. A tile must contain ground polygons; only the whole snapshot may be empty. At most 32 layers may share an XZ coordinate, matching the runtime's adjacent-layer query capacity. Both exact sizing and writing reject a source above that limit with `INCOMPATIBLE_NAV_SNAPSHOT` before reporting success; the source remains unchanged.
 
 ## Identity and deterministic output
 
@@ -74,7 +74,7 @@ Native TileData bytes are not a portable snapshot. Load validates complete wire 
 
 A successful replacement advances each destination slot's salt before installing any tile. Every reference currently valid before replacement becomes invalid, even if the same tile reuses its slot. Zero salts are skipped. The existing 16-bit generation history is finite: after enough reuse, an ancient reference can repeat. Removal of a restored tile advances its salt normally.
 
-The writer emits little-endian bytes, sorted by signed tile X, then Z, then layer. It preserves polygon, vertex, detail and off-mesh ordering. Equal persisted values produce equal bytes across repeated saves and save/load/save, independent of slot/salt history, spare capacity, native padding, link/BV node ordering and snapped endpoint storage. The BV-enabled setting is retained because the runtime's BV and non-BV query paths can differ; BV nodes themselves are rebuilt.
+The writer emits little-endian bytes, sorted by signed tile X, then Z, then layer. It preserves polygon, vertex, detail and off-mesh ordering. Equal persisted values produce equal bytes across repeated saves and save/load/save, independent of slot/salt history, spare capacity, native padding, link/BV node ordering and snapped endpoint storage. The BV-enabled setting is retained because the runtime's BV and non-BV query paths can differ. BV-enabled COARSE tiles also retain polygon-ordered quantized query bounds, which rounded world vertices cannot reliably reproduce. Native node topology, unions and escape indices are rebuilt from those bounds; BOUNDED nodes are rebuilt from geometry.
 
 Both marked byte orders load. Saving either yields the same canonical little-endian representation. This does not canonicalize different bakes or add a path tie-breaking guarantee for equal-cost alternatives.
 
@@ -130,17 +130,20 @@ Each row starts after the previous row's bytes rounded up to eight; intervening 
 | --- | --- | --- |
 | 1 | Ground vertex count | X/Y/Z as three f32 values, 12 bytes. |
 | 2 | Ground polygon count | Ground polygon record, 32 bytes. |
-| 3 | Ground vertex count when BOUNDED; zero otherwise | Local detail corner X/Y/Z, 12 bytes. |
-| 4 | Ground polygon count when BOUNDED; zero otherwise | Detail range: vertex base/count and triangle base/count as four u32 values, 16 bytes. |
-| 5 | Detail vertex count | Local X/Y/Z as three f32 values, 12 bytes. |
-| 6 | Detail triangle count | Three u16 local vertex indices and one u16 boundary-edge mask, 8 bytes. |
-| 7 | Detail portal count | Detail portal record, 32 bytes. |
-| 8 | Off-mesh connection count | Off-mesh record, 48 bytes. |
+| 3 | Ground polygon count only when COARSE and BV enabled; zero otherwise | Quantized query bounds: minimum X/Y/Z followed by maximum X/Y/Z, six u16 values, 12 bytes. |
+| 4 | Ground vertex count when BOUNDED; zero otherwise | Local detail corner X/Y/Z, 12 bytes. |
+| 5 | Ground polygon count when BOUNDED; zero otherwise | Detail range: vertex base/count and triangle base/count as four u32 values, 16 bytes. |
+| 6 | Detail vertex count | Local X/Y/Z as three f32 values, 12 bytes. |
+| 7 | Detail triangle count | Three u16 local vertex indices and one u16 boundary-edge mask, 8 bytes. |
+| 8 | Detail portal count | Detail portal record, 32 bytes. |
+| 9 | Off-mesh connection count | Off-mesh record, 48 bytes. |
 
 A ground polygon record contains six u16 vertex indices at 0, six u16 neighbor words at 12, current u16 flags at 24, u8 vertex count at 26, u8 area at 27 and four zero bytes at 28. Inactive vertex/neighbor entries are zero. Active neighbors use 0 for none, polygon ordinal plus one for an internal neighbor, or `0x8000 | side` for a tile portal; valid side values are 0, 2, 4 and 6. Areas range from 0 through 63; zero flags are preserved exactly.
+
+A quantized query-bound record stores minimum X/Y/Z at offsets 0/2/4 and maximum X/Y/Z at 6/8/10. Each axis must have minimum <= maximum. Records follow ground polygon order; their count is derived from the ground polygon count and the COARSE/BV-enabled settings. Only the whole section is padded to eight bytes, with zeros. Native node order, internal unions and escape indices are not encoded.
 
 A detail portal contains polygon/edge as u32 at 0/4; accepted interval minimum/maximum and source/target heights as f32 at 8/12/16/20; kind as u16 at 24; source floor as u16 at 26; and target as u32 at 28. Kinds are 0 HEIGHT_BORDER, 1 FLOOR_BORDER and 2 INTERNAL. Target means neighbor floor ordinal for FLOOR_BORDER and polygon ordinal for INTERNAL. Bounds and reciprocal identities follow the current bounded-surface contract.
 
 An off-mesh record contains original start/end X/Y/Z as f32 at 0/12, radius as f32 at 24, user ID as u32 at 28, polygon ordinal as u32 at 32, current polygon flags as u16 at 36, polygon area as u8 at 38, bidirectionality as u8 at 39, side as u8 at 40 and seven zero bytes at 41. Bidirectionality is exactly 0 or 1; side is 0 through 7 or 255 for the same tile. Connection ordinal `i` must refer to polygon `ground_polygon_count + i`. Its two runtime vertices are recreated from the original endpoints and then snapped during linking.
 
-No native header, pointer, runtime ref/salt, ownership flag, link, free list, lookup table, BV node, builder/cache object, query or crowd object is stored.
+No native header, pointer, runtime ref/salt, ownership flag, link, free list, lookup table, native BV node or traversal topology, builder/cache object, query or crowd object is stored.

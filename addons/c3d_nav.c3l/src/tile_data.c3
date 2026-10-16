@@ -519,10 +519,14 @@ fn BvNode runtime_poly_leaf(MeshTile* tile, uint index) @local {
     return leaf;
 }
 
-fn void? rebuild_tile_bv_tree(MeshTile* tile, Allocator scratch) @private {
+fn void? rebuild_tile_bv_tree(MeshTile* tile, Allocator scratch, BvNode[] query_bounds) @private {
     BvNode[] items = alloc::new_array_try(scratch, BvNode, tile.header.off_mesh_base) ?? c3d::CAPACITY_EXCEEDED~!;
     defer alloc::free(scratch, items.ptr);
-    foreach (index, &item : items) *item = runtime_poly_leaf(tile, (uint)index);
+    if (query_bounds.len) {
+        items[..] = query_bounds[..];
+    } else {
+        foreach (index, &item : items) *item = runtime_poly_leaf(tile, (uint)index);
+    }
     usz cursor;
     subdivide(
         items: items,

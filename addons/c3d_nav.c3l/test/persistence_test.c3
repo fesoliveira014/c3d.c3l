@@ -7,6 +7,8 @@ import c3d::nav @public;
 
 const char[] PERSISTENCE_LITTLE @local = $embed("fixtures/nav_snapshot_v1_le.bin");
 const char[] PERSISTENCE_BIG @local = $embed("fixtures/nav_snapshot_v1_be.bin");
+const char[] PERSISTENCE_COARSE_LITTLE @local = $embed("fixtures/nav_snapshot_v1_coarse_le.bin");
+const char[] PERSISTENCE_COARSE_BIG @local = $embed("fixtures/nav_snapshot_v1_coarse_be.bin");
 const usz PERSISTENCE_SCRATCH_BYTES @local = 32768;
 const usz PERSISTENCE_BLOB_LIMIT @local = 1024 * 1024;
 const usz PERSISTENCE_STAGED_LIMIT @local = 8 * 1024 * 1024;
@@ -347,6 +349,46 @@ fn void test_persistence_portable_endian_fixtures_and_unaligned_bytes() @test {
         defer free(written);
         assert(same_bytes(written, PERSISTENCE_LITTLE));
     }
+
+    foreach (char[] fixture : { PERSISTENCE_COARSE_LITTLE, PERSISTENCE_COARSE_BIG }) {
+        NavMesh mesh = nav::create_nav_mesh(mem, {
+            .tile_width = 2,
+            .tile_height = 2,
+            .max_tiles = 1,
+            .max_links = 8,
+        })!!;
+        defer nav::destroy_nav_mesh(&mesh);
+        char[] input = mem::new_array(char, fixture.len + 1);
+        defer free(input);
+        input[1..] = fixture[..];
+        char[1024] scratch;
+        mesh.read_snapshot(input[1..], scratch[1..], persistence_limits())!!;
+        input[..] = 0xcc;
+        scratch[..] = 0xcc;
+        MeshTile* tile = mesh.tile_at(0, 0, 0);
+        assert(tile.header.detail_mode == COARSE && tile.bv_tree.len == 3);
+        assert(tile.header.user_id == 0x87654321 && tile.polys[1].flags == 0x0201);
+        foreach (node : tile.bv_tree) {
+            if (node.index < 0) continue;
+            assert(node.min[0] == node.index * 512 && node.max[0] == (node.index + 1) * 512);
+            assert(node.min[1] == 0 && node.max[1] == 0 && node.min[2] == 0 && node.max[2] == 1024);
+        }
+        NavQuery query = nav::create_nav_query(mem, &mesh, 16)!!;
+        defer nav::destroy_nav_query(&query);
+        QueryFilter filter = nav::default_query_filter();
+        NearestPoly nearest = query.find_nearest_poly({ 3.5f, 0, 1 }, { 0.1f, 0.1f, 0.1f }, &filter)!!;
+        assert(mesh.poly_key(nearest.ref)!!.polygon == 1);
+        char[] canonical = saved_persistence_mesh(&mesh);
+        defer free(canonical);
+        assert(same_bytes(canonical, PERSISTENCE_COARSE_LITTLE));
+
+        BvNode first_leaf = tile.bv_tree[1];
+        tile.bv_tree[1] = tile.bv_tree[2];
+        tile.bv_tree[2] = first_leaf;
+        char[] reordered = saved_persistence_mesh(&mesh);
+        defer free(reordered);
+        assert(same_bytes(canonical, reordered));
+    }
 }
 
 fn void test_persistence_canonical_output_ignores_slots_salts_and_capacity() @test {
@@ -558,6 +600,18 @@ fn void test_persistence_rejects_malformed_and_incompatible_bytes_without_mutati
     check_persistence_rollback(
         mesh: &mesh,
         input: native_copy,
+        expected: nav::INVALID_NAV_SNAPSHOT,
+        scratch: scratch[..],
+        limits: persistence_limits(),
+    );
+
+    char[] reversed = mem::new_array(char, PERSISTENCE_COARSE_LITTLE.len);
+    defer free(reversed);
+    reversed[..] = PERSISTENCE_COARSE_LITTLE[..];
+    persistence_patch_integer(bytes: reversed, offset: 360, value: 513, width: 2);
+    check_persistence_rollback(
+        mesh: &mesh,
+        input: reversed,
         expected: nav::INVALID_NAV_SNAPSHOT,
         scratch: scratch[..],
         limits: persistence_limits(),
@@ -802,4 +856,96 @@ fn void test_persistence_preserves_grid_clearance_and_portal_identities() @test 
     char[] restored = saved_persistence_mesh(&fixture.mesh);
     defer free(restored);
     assert(same_bytes(bytes, restored));
+}
+
+fn char[] coarse_query_tile(float origin_x, float cell_size, uint bounds_cells) @local {
+    ushort[12] vertices = { 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0 };
+    ushort[12] polygons;
+    polygons[..] = nav::MESH_NULL_INDEX;
+    polygons[:4] = (ushort[4]){ 0, 1, 2, 3 }[..];
+    ushort[1] regions;
+    ushort[1] flags = { nav::POLY_FLAG_WALK };
+    char[1] areas = { nav::WALKABLE_AREA };
+    PolyMesh source = {
+        .verts = vertices[..],
+        .polys = polygons[..],
+        .regions = regions[..],
+        .flags = flags[..],
+        .areas = areas[..],
+        .vert_count = 4,
+        .poly_count = 1,
+        .verts_per_poly = nav::MAX_VERTS_PER_POLY,
+        .bounds = { .min = { origin_x, 0, 0 }, .max = { origin_x + cell_size * (float)bounds_cells, 1, cell_size } },
+        .cell_size = cell_size,
+        .cell_height = 1,
+    };
+    char[] bytes = mem::new_array(char, (sz)nav::tile_mesh_size(&source));
+    nav::pack_tile_mesh(mesh: &source, tile_x: 0, tile_z: 0, blob: bytes);
+    return bytes;
+}
+
+fn void test_persistence_retains_quantized_coarse_query_bounds() @test {
+    NavMesh mesh = nav::create_nav_mesh(mem, {
+        .origin = { 0.1f, 0, 0 },
+        .tile_width = 2,
+        .tile_height = 2,
+        .max_tiles = 1,
+        .max_links = 128,
+    })!!;
+    defer nav::destroy_nav_mesh(&mesh);
+    char[] tile = coarse_query_tile(0.1f, 0.2f, 4);
+    defer free(tile);
+    (void)mesh.add_tile_mesh(tile, {}, { .walkable_height = 1, .build_bv_tree = true })!!;
+    NavQuery query = nav::create_nav_query(mem, &mesh, 16)!!;
+    defer nav::destroy_nav_query(&query);
+    QueryFilter filter = nav::default_query_filter();
+    assert(mesh.tile_at(0, 0, 0).bv_tree[0].max[0] == 1);
+    assert(@catch(query.find_nearest_poly({ 0.5f, 0, 0.1f }, { 0, 0.1f, 0.01f }, &filter)) == nav::NO_POLY);
+    char[] snapshot = saved_persistence_mesh(&mesh);
+    defer free(snapshot);
+    char[8192] scratch;
+    mesh.read_snapshot(snapshot, scratch[..], {
+        .max_blob_bytes = snapshot.len,
+        .max_staged_bytes = 1024 * 1024,
+    })!!;
+    fault nearest = @catch(query.find_nearest_poly({ 0.5f, 0, 0.1f }, { 0, 0.1f, 0.01f }, &filter));
+    assert(mesh.tile_at(0, 0, 0).bv_tree[0].max[0] == 1 && nearest == nav::NO_POLY,
+        "restored max X %d, nearest fault %s", mesh.tile_at(0, 0, 0).bv_tree[0].max[0], nearest);
+    char[] restored = saved_persistence_mesh(&mesh);
+    defer free(restored);
+    assert(same_bytes(snapshot, restored));
+}
+
+fn void test_persistence_rejects_excess_layers_before_sizing_or_writing() @test {
+    NavMesh mesh = nav::create_nav_mesh(mem, {
+        .tile_width = 2,
+        .tile_height = 2,
+        .max_tiles = 33,
+        .max_links = 128,
+    })!!;
+    defer nav::destroy_nav_mesh(&mesh);
+    char[] tile = coarse_query_tile(0, 1, 1);
+    defer free(tile);
+    TileRef[33] refs;
+    char[][33] original;
+    defer foreach (bytes : original) free(bytes);
+    for (int layer = 0; layer < 33; layer++) {
+        refs[layer] = mesh.add_tile_mesh(tile, {}, { .tile_layer = layer, .walkable_height = 1 })!!;
+        char[] data = mesh.tile_by_ref(refs[layer])!!.data;
+        original[layer] = mem::new_array(char, data.len);
+        original[layer][..] = data[..];
+    }
+    MeshTile* first_slot = mesh.tiles.ptr;
+    uint free_links = mesh.free_link_count;
+    char[8192] output;
+    char[8192] scratch;
+    fault sizing = @catch(mesh.snapshot_size());
+    fault writing = @catch(mesh.write_snapshot(output[..], scratch[..]));
+    assert(sizing == nav::INCOMPATIBLE_NAV_SNAPSHOT && writing == nav::INCOMPATIBLE_NAV_SNAPSHOT,
+        "sizing fault %s, writing fault %s", sizing, writing);
+    assert(mesh.tiles.ptr == first_slot && mesh.free_link_count == free_links);
+    foreach (layer, ref : refs) {
+        MeshTile* resident = mesh.tile_by_ref(ref)!!;
+        assert(resident.header.layer == layer && same_bytes(resident.data, original[layer]));
+    }
 }
