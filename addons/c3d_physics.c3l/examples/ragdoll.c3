@@ -36,7 +36,7 @@ const float FREE_PITCH_LIMIT @local = 1.5f;
 const float FREE_SPEED @local = 4;
 const float FREE_FAST_MULTIPLIER @local = 4;
 const Vec3 CAMERA_START @local = { 2.8f, 2.2f, 4.5f };
-const Vec3 NEIGHBOUR_POSITION @local = { -0.48f, 0.2f, -0.35f };
+const Vec3 NEIGHBOUR_POSITION @local = { 0.39f, 0.2f, 0.465f };
 const Vec3 BLOCKER_POSITION @local = { 0, 0.8f, 0 };
 const Vec3 BLOCKER_HALF_EXTENTS @local = { 0.55f, 0.08f, 0.55f };
 const Vec2 PANEL_POSITION @local = { 16, 16 };
@@ -153,11 +153,14 @@ fn Level? build_level(AssetStore* assets, Scene* scene, PhysicsWorld* physics) @
         StandardParams params = material::STANDARD_PARAMS_DEFAULT;
         params.base_color = { 0.34f, 0.39f, 0.36f, 1 };
         params.roughness = 0.9f;
-        ground_material = assets.find_material("ragdoll/ground_material") ?? assets.add_material(material::standard(params), "ragdoll/ground_material")!;
+        ground_material = assets.find_material("ragdoll/ground_material")
+          ?? assets.add_material(material::standard(params), "ragdoll/ground_material")!;
         params.base_color = { 0.9f, 0.55f, 0.15f, 1 };
-        level.box_material = assets.find_material("ragdoll/box_material") ?? assets.add_material(material::standard(params), "ragdoll/box_material")!;
+        level.box_material = assets.find_material("ragdoll/box_material")
+          ?? assets.add_material(material::standard(params), "ragdoll/box_material")!;
         params.base_color = { 0.65f, 0.22f, 0.18f, 1 };
-        blocker_material = assets.find_material("ragdoll/blocker_material") ?? assets.add_material(material::standard(params), "ragdoll/blocker_material")!;
+        blocker_material = assets.find_material("ragdoll/blocker_material")
+          ?? assets.add_material(material::standard(params), "ragdoll/blocker_material")!;
     };
     Node* ground = scene.add_mesh(ground_geometry, ground_material, name: "ground")!;
     level.blocker = scene.add_mesh(blocker_geometry, blocker_material, name: "static_blocker")!;
@@ -693,7 +696,11 @@ fn void? run_acceptance(
     physics.update(0);
     physics.update_ragdolls();
     scene.update_world();
-    if (scenario == 3) check_neighbour_clearance(&physics, level.neighbour, scene.get(character.humanoid.skin, Ragdoll))!;
+    if (scenario == 3) check_neighbour_clearance(
+        physics: &physics,
+        neighbour: level.neighbour,
+        ragdoll: scene.get(character.humanoid.skin, Ragdoll),
+    )!;
     io::printfn("visual_setup,%s,recovery_entry", name);
     begin_recovery(&character, &scene, &physics);
     if (character.last_error) return character.last_error~;
@@ -718,6 +725,9 @@ fn void? run_acceptance(
     float peak_force;
     float peak_torque;
     float completion_time;
+    uint neighbour_contacts;
+    b3::BodyId neighbour_body;
+    if (level.neighbour) neighbour_body = physics.body(level.neighbour)!;
     while (next_capture < capture_times.len && window.poll()) {
         float delta = frame == 0 ? 0 : getup_fixture::FRAME_MULTIPLIERS[(frame - 1) % getup_fixture::FRAME_MULTIPLIERS.len] * physics::DEFAULT_FIXED_DT;
         frame++;
@@ -757,6 +767,16 @@ fn void? run_acceptance(
                 }
                 b3::ContactData[32] storage;
                 foreach (contact : body.contact_data(storage[..])) {
+                    if (level.neighbour) {
+                        foreach (shape : (b3::ShapeId[2]){ contact.shape_id_a, contact.shape_id_b }) {
+                            b3::BodyId other = shape.body();
+                            if (other.index1 == neighbour_body.index1 && other.world0 == neighbour_body.world0
+                                && other.generation == neighbour_body.generation) {
+                                neighbour_contacts++;
+                                break;
+                            }
+                        }
+                    }
                     foreach (&manifold : contact.contact_manifolds()) {
                         foreach (point : manifold.contact_points()) peak_penetration = math::max(peak_penetration, -point.separation);
                     }
@@ -805,7 +825,7 @@ fn void? run_acceptance(
     }
     float neighbour_motion = level.neighbour ? (level.neighbour.world_position() - level.neighbour_start).length() : 0;
     io::printfn(
-        "visual,%s,frames,%d,completion,%.6f,position,%.9f,angle,%.9f,penetration,%.9f,force,%.6f,torque,%.6f,neighbour,%.6f",
+        "visual,%s,frames,%d,completion,%.6f,position,%.9f,angle,%.9f,penetration,%.9f,force,%.6f,torque,%.6f,neighbour,%.6f,neighbour_contact_samples,%d",
         name,
         frame,
         completion_time,
@@ -815,12 +835,13 @@ fn void? run_acceptance(
         peak_force,
         peak_torque,
         neighbour_motion,
+        neighbour_contacts,
     );
     if (next_capture != capture_times.len || peak_position > 0.00002f || peak_angle > 0.0001f
         || peak_penetration > getup_fixture::PENETRATION_LIMIT || peak_force > 200.0001f || peak_torque > 20.0001f) return c3d::INVALID_ARGUMENT~;
     if (scenario < 2 && character.phase != STANDING) return c3d::INVALID_ARGUMENT~;
     if (scenario == 2 && character.phase != RECOVERING) return c3d::INVALID_ARGUMENT~;
-    if (scenario == 3 && neighbour_motion <= 0.01f) return c3d::INVALID_ARGUMENT~;
+    if (scenario == 3 && (neighbour_motion <= 0.01f || neighbour_contacts == 0)) return c3d::INVALID_ARGUMENT~;
 }
 
 fn void? check_neighbour_clearance(PhysicsWorld* physics, Node* neighbour, Ragdoll* ragdoll) @local {
