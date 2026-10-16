@@ -537,6 +537,7 @@ fn void PhysicsWorld.teleport(
     body.current = { .position = position, .rotation = rotation, .scale = { 1, 1, 1 } };
     body.previous = body.current;
     node.set_world_pose(position, rotation);
+    reset_cloth_body_contact_history(self.scene, node.id);
 }
 
 <*

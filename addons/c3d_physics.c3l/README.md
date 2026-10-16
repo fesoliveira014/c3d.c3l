@@ -10,7 +10,11 @@ the scene, create its world, and destroy the world before the scene/assets.
 `c3d::physics::cloth` simulates a mesh over an owned geometry copy with pinned vertices, node
 `Wind` drag, an optional ground and one-way particle contacts with sphere, capsule, box,
 hull, mesh, heightfield and compound colliders of the bodies listed in `ClothDesc.colliders`.
-Contacts are discrete; an unsampled cloth face can pass through a small collider.
+Contacts are discrete by default. Set `desc.collisions.continuous = true` to sweep
+prediction, structural/pin corrections and contact responses against interpolated final
+body poses, including shortest-path rotation. The default `max_ccd_iterations` is 64
+per candidate path; exhausted progress reports `CONTACT_NONCONVERGENT`. An unsampled
+cloth face can still pass through a small collider.
 Set `desc.collisions.self_collision = true` for vertex-face and edge-edge contact within
 one cloth at separation `2 * thickness - contact_tolerance`. Copied `ClothSeam` pairs
 in `desc.seams` define vertex equivalence only for incidence and one-ring exclusions;
@@ -19,15 +23,20 @@ fully pinned eligible conflict fails with `CONTACT_UNRESOLVED`.
 Attach with `scene.add_cloth(&assets, node, desc)` and
 call `physics.update_cloths()` once after `physics.update`, after final ragdoll/IK poses and
 `scene.update_world()`, before rendering. See [Cloth](../../docs/cloth.md) for the contract,
-faults, frame order and usage; the `cloth` example includes flag, cape, external-contact
-and seamed-fold scenes (`--scene flag|cape|both|contacts|fold`). The manual Vulkan
+faults, frame order and usage; the `cloth` example includes flag, cape, external-contact,
+seamed-fold and fast-crossing scenes (`--scene flag|cape|both|contacts|fold|fast`). The manual Vulkan
 acceptance runs with
 `c3c test cloth_acceptance --path addons/c3d_physics.c3l/test/gpu`.
 
 `ClothDesc.collisions` sets contact tolerance, iteration count and prepared shape,
 candidate and contact capacities. Native body/snapshot bindings are checked during updates;
 compound leaves are resolved and counted there because preparation has no world argument.
-Shapes use rigid physics' baked geometry and final scene body poses. Pinned body/ground
+Shapes use rigid physics' baked geometry and final scene body poses. Solved and published
+contact histories are separate: zero-step publication never advances solved state.
+`PhysicsWorld.teleport` resets referencing cloth observations after writing the body pose.
+Use `cloth::reset_contact_history(Cloth*)` after direct scene-pose collider teleports;
+reset does not move the fabric or change its velocity, and endpoint contacts still apply.
+Pinned body/ground
 overlaps are excluded from response and counted. A failed cloth retains committed simulation
 and histories while other cloths continue; inspect `ClothState.contact_result` and
 `PhysicsWorld.cloth_stats`. Moved-node publication is preserved only when its local float
@@ -38,9 +47,10 @@ transform may place that geometry elsewhere.
 Cloth consumers require `fp-math=strict`, owner-thread round-to-nearest and gradual underflow.
 The library checks supported runtime conditions without changing arithmetic modes; runtime
 checks do not establish the consumer's compiler mode. Serialization stores collision authoring
-settings and seams in authoring version 3 and restores pending cloth; runtime buffers,
-contact results and histories are excluded. Version-1/2 JSONC defaults self-contact off
-and seams empty; incompatible older binary layouts are rejected before mutation.
+settings and seams in authoring version 4 and restores pending cloth; runtime buffers,
+contact results and histories are excluded. Version-1/2/3 JSONC defaults continuous
+contact off and the CCD limit to 64. Version-1/2 also defaults self-contact off and seams
+empty; incompatible older binary layouts are rejected before mutation.
 
 ## Replaced assets
 

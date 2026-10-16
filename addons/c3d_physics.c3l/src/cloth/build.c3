@@ -61,7 +61,8 @@ fn void? check_cloth_desc(ClothDesc desc) @private {
     if (!math::is_finite(desc.gravity_scale) || !math::is_finite(desc.ground_height)) return c3d::INVALID_ARGUMENT~;
     ClothCollisionDesc collision = desc.collisions;
     if (!math::is_finite(collision.contact_tolerance) || collision.contact_tolerance <= 0) return c3d::INVALID_ARGUMENT~;
-    if (!collision.contact_iterations || !collision.max_shapes || !collision.max_candidates || !collision.max_contacts) {
+    if (!collision.contact_iterations || !collision.max_shapes || !collision.max_candidates || !collision.max_contacts
+        || !collision.max_ccd_iterations) {
         return c3d::INVALID_ARGUMENT~;
     }
 }
@@ -198,6 +199,7 @@ fn ClothState*? allocate_cloth_state(
 fn ClothState* carve_cloth_state(BlockCursor* cursor, ClothCounts counts) @local {
     ClothState[] states = physics::carve(cursor, ClothState, 1);
     bool self_collision = counts.collisions.self_collision;
+    bool continuous = counts.collisions.continuous;
     ClothState state = {
         .rest           = physics::carve(cursor, Vec3, counts.vertices),
         .positions      = physics::carve(cursor, Vec3, counts.vertices),
@@ -237,12 +239,21 @@ fn ClothState* carve_cloth_state(BlockCursor* cursor, ClothCounts counts) @local
         .canonical_vertices = physics::carve(cursor, uint, self_collision ? counts.vertices : 0),
         .adjacent_vertices = physics::carve(cursor, ulong, self_collision ? counts.edges : 0),
         .self_primitives = physics::carve(cursor, ClothSelfPrimitive, self_collision ? (usz)counts.vertices + counts.edges + counts.faces : 0),
+        .sweep_start = physics::carve(cursor, Vec3, continuous ? counts.vertices : 0),
+        .sweep_bounds = physics::carve(cursor, Aabb, continuous ? counts.vertices : 0),
+        .path_heads = physics::carve(cursor, usz, continuous ? counts.vertices : 0),
+        .path_nodes = physics::carve(cursor, ClothPathNode, continuous ? (usz)counts.vertices + 4UL * counts.collisions.max_contacts : 0),
+        .path_values = physics::carve(cursor, ContactIntervals, continuous ? (usz)counts.vertices + 4UL * counts.collisions.max_contacts : 0),
+        .body_motions = physics::carve(cursor, ContactMotion, continuous ? counts.bodies : 0),
     };
     if (!cursor.base) return null;
     states[0] = state;
     states[0].velocities[..] = (Vec3){};
     states[0].shape_starts[..] = (Vec3){};
     states[0].shape_ends[..] = (Vec3){};
+    states[0].path_nodes[..] = (ClothPathNode){};
+    states[0].path_values[..] = (ContactIntervals){};
+    states[0].body_motions[..] = (ContactMotion){};
     return states.ptr;
 }
 

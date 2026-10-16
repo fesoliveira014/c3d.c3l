@@ -15,6 +15,8 @@ const uint DEFAULT_CONTACT_SHAPES = 128;
 const uint DEFAULT_CONTACT_CANDIDATES = 8192;
 <* Active contacts retained in one contact pass. *>
 const uint DEFAULT_CONTACTS = 4096;
+<* Distance advances allowed for one candidate path. *>
+const uint DEFAULT_CCD_ITERATIONS = 64;
 
 <* Stage of the last contact failure. *>
 enum ClothContactStage : uint {
@@ -36,6 +38,8 @@ struct ClothCollisionDesc {
     uint  max_candidates;
     uint  max_contacts;
     bool  self_collision;
+    bool  continuous;
+    uint  max_ccd_iterations;
 }
 
 <* Observed contact work and failure from the last update. *>
@@ -48,6 +52,12 @@ struct ClothContactResult {
     uint              peak_contacts;
     uint              pinned_overlaps;
     uint              unresolved;
+    uint              sweeps;
+    uint              ccd_iterations;
+    uint              impacts;
+    uint              vertex_face_impacts;
+    uint              edge_edge_impacts;
+    uint              resweeps;
     double            max_residual;
 }
 
@@ -59,6 +69,7 @@ fn ClothCollisionDesc default_cloth_collision_desc() {
         .max_shapes = DEFAULT_CONTACT_SHAPES,
         .max_candidates = DEFAULT_CONTACT_CANDIDATES,
         .max_contacts = DEFAULT_CONTACTS,
+        .max_ccd_iterations = DEFAULT_CCD_ITERATIONS,
     };
 }
 
@@ -173,6 +184,7 @@ fn usz? contact_pass(
     }
     if (!apply) return count;
 
+    if (state.desc.collisions.continuous) state.sweep_start[..] = positions[..];
     foreach (&contact : state.contacts[:count]) {
         ClothCandidate* candidate = &state.candidates[contact.candidate];
         if (candidate.kind == SELF_VERTEX_FACE || candidate.kind == SELF_EDGE_EDGE) {
@@ -185,6 +197,12 @@ fn usz? contact_pass(
         } else {
             *position = evaluate_contact(world: world, state: state, candidate: candidate, position: *position, correct: true)!.corrected;
         }
+    }
+    if (count) {
+        filter_displacement(
+            world: world, state: state, start: state.sweep_start, proposed: positions,
+            begin: state.sweep_end, end: state.sweep_end,
+        )!;
     }
     return count;
 }

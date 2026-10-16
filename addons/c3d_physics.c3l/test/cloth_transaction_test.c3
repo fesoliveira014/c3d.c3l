@@ -338,7 +338,7 @@ fn void test_cloth_contact_settings_reject_invalid_values_atomically() @test {
     setup(&fixture, weightless());
     defer teardown(&fixture);
     Node* node = add_cloth_node(&fixture, add_grid(&fixture, 1));
-    for (uint setting = 0; setting < 6; setting++) {
+    for (uint setting = 0; setting < 7; setting++) {
         ClothDesc desc = cloth::default_cloth_desc();
         switch (setting) {
             case 0: desc.collisions.contact_tolerance = 0;
@@ -347,6 +347,7 @@ fn void test_cloth_contact_settings_reject_invalid_values_atomically() @test {
             case 3: desc.collisions.max_shapes = 0;
             case 4: desc.collisions.max_candidates = 0;
             case 5: desc.collisions.max_contacts = 0;
+            case 6: desc.collisions.max_ccd_iterations = 0;
         }
         assert(rejected_atomically(&fixture, node, desc) == c3d::INVALID_ARGUMENT);
     }

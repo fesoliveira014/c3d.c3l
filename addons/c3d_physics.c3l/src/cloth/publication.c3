@@ -116,7 +116,10 @@ fn void? update_cloth(
     double* publication_seconds,
 ) @private {
     ClothState staged = staged_cloth(state);
-    defer state.contact_result = staged.contact_result;
+    defer {
+        state.contact_result = staged.contact_result;
+        state.path_count = staged.path_count;
+    }
     staged.contact_result.stage = ClothContactStage.ARITHMETIC;
     if (!physics::contact_arithmetic_supported()) return CONTACT_PRECISION_EXCEEDED~;
     staged.contact_result.stage = ClothContactStage.BINDINGS;
@@ -137,7 +140,7 @@ fn void? update_cloth(
 
     time::Clock publication_start = clock::now();
     defer *publication_seconds += (clock::now() - publication_start).to_sec();
-    prepare_publication(world, &staged)!;
+    prepare_publication(world, &staged, steps != 0)!;
     staged.contact_result.stage = ClothContactStage.PUBLICATION;
     bool changed = stage_local_publication(&staged, node.world)!;
     if (contact_pass(world: world, state: &staged, positions: staged.publication_roundtrip, apply: false)! != 0) {

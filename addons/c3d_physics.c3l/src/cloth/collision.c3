@@ -66,11 +66,11 @@ fn void? refresh_colliders(PhysicsWorld* world, ClothState* state) @private {
         RigidBody* rigid = body.live ? world.scene.get(world.scene.node(body.owner), RigidBody) : null;
         body.live = physics::cloth_body_live(rigid);
         if (!body.live) {
-            body.observed = false;
+            body.observed = body.published_observed = false;
             continue;
         }
         uint[4] identity = physics::cloth_body_identity(rigid);
-        if (!same_body_identity(body.native_identity, identity)) body.observed = false;
+        if (!same_body_identity(body.native_identity, identity)) body.observed = body.published_observed = false;
         body.native_identity = identity;
         usz first = count;
         count += physics::capture_cloth_shapes(
@@ -83,12 +83,12 @@ fn void? refresh_colliders(PhysicsWorld* world, ClothState* state) @private {
         foreach (&old : previous) {
             if (old.body != body_index) continue;
             if (matching == count || !same_shape_binding(old, &state.shape_storage[matching])) {
-                body.observed = false;
+                body.observed = body.published_observed = false;
                 break;
             }
             matching++;
         }
-        if (matching != count) body.observed = false;
+        if (matching != count) body.observed = body.published_observed = false;
     }
     state.shapes = state.shape_storage[:count];
 }
@@ -99,26 +99,30 @@ fn void sample_bodies(Scene* scene, ClothState* state) @private {
         RigidBody* rigid = body.live ? scene.get(scene.node(body.owner), RigidBody) : null;
         body.live = physics::cloth_body_live(rigid);
         if (!body.live) {
-            body.observed = false;
+            body.observed = body.published_observed = false;
             continue;
         }
         uint[4] identity = physics::cloth_body_identity(rigid);
-        if (!same_body_identity(body.native_identity, identity)) body.observed = false;
+        if (!same_body_identity(body.native_identity, identity)) body.observed = body.published_observed = false;
         body.native_identity = identity;
         body.current = maths::transform_from_mat4(scene.node(body.owner).world);
         body.current.scale = { 1, 1, 1 };
-        if (body.observed) continue;
-        body.solved = body.current;
-        body.observed = true;
+        if (!body.observed) {
+            body.solved = body.current;
+            body.observed = true;
+        }
+        if (!body.published_observed) body.published = body.current;
     }
 }
 
-fn void? place_shapes(ClothState* state, float progress) @private {
+fn void? place_shapes(ClothState* state, double progress) @private {
     foreach (index, &shape : state.shapes) {
         ClothBody* body = &state.bodies[shape.body];
         if (!body.live) continue;
-        maths::Transform pose = interpolate_body(body.solved, body.current, progress);
-        state.frames[index] = physics::contact_frame(pose, shape.local)!;
+        maths::Transform pose = interpolate_body(body.solved, body.current, (float)progress);
+        state.frames[index] = state.desc.collisions.continuous
+          ? physics::contact_motion_leaf(&state.body_motions[shape.body], shape.local, physics::contact_value(progress))!
+          : physics::contact_frame(pose, shape.local)!;
         state.shape_starts[index] = (Vec3)physics::contact_middle(physics::contact_point(&state.frames[index], shape.start)!);
         state.shape_ends[index] = (Vec3)physics::contact_middle(physics::contact_point(&state.frames[index], shape.end)!);
         if (!finite_vector(state.shape_starts[index]) || !finite_vector(state.shape_ends[index])) return CONTACT_PRECISION_EXCEEDED~;
@@ -126,7 +130,11 @@ fn void? place_shapes(ClothState* state, float progress) @private {
 }
 
 fn void finish_body_poses(ClothState* state) @private {
-    foreach (&body : state.bodies) if (body.live) body.solved = body.current;
+    foreach (&body : state.bodies) {
+        if (!body.live) continue;
+        body.solved = body.current;
+        body.observed = true;
+    }
 }
 
 fn maths::Transform interpolate_body(maths::Transform solved, maths::Transform current, float progress) @local {
