@@ -10,6 +10,7 @@ import c3d::asset::image;
 import b3;
 import c3d;
 import c3d::asset;
+import c3d::anim;
 import c3d::camera;
 import c3d::debug;
 import c3d::geometry;
@@ -127,7 +128,12 @@ fn void apply_free_camera(
     camera_node.local.rotation = maths::look_rotation(forward, up);
 }
 
-fn Level? build_level(AssetStore* assets, Scene* scene, PhysicsWorld* physics) @local {
+fn Level? build_level(
+    AssetStore* assets,
+    Scene* scene,
+    PhysicsWorld* physics,
+    bool create_bodies = true,
+) @local {
     Level level;
     GeometryId ground_geometry;
     GeometryId blocker_geometry;
@@ -171,6 +177,7 @@ fn Level? build_level(AssetStore* assets, Scene* scene, PhysicsWorld* physics) @
     scene.background = { .kind = COLOR, .color = { 0.55f, 0.7f, 0.9f, 1 } };
     level.camera_node = scene.add_camera(camera::perspective_deg(60, 0.05f), name: "camera")!;
     scene.update_world();
+    if (!create_bodies) return level;
     ColliderDesc ground_collider = physics::default_collider_desc(BOX);
     ground_collider.half_extents = { GROUND_SIZE * 0.5f, 0.1f, GROUND_SIZE * 0.5f };
     ground_collider.local.position.y = -0.1f;
@@ -543,9 +550,10 @@ fn int main(String[] args) {
 
     if (captures.len) {
         io::printfn(
-            "adapter,%s,width,1280,height,720,validation,true,dataset,%s",
+            "adapter,%s,width,1280,height,720,validation,true,humanoid_dataset,%s,contact_dataset,%s",
             renderer.adapter_name,
             getup_fixture::DATASET,
+            getup_fixture::CONTACT_DATASET,
         );
         for (uint scenario = first_scenario; scenario < scenario_limit; scenario++) {
             if (catch excuse = run_acceptance(
@@ -660,6 +668,12 @@ fn void? run_acceptance(
     String directory,
     uint scenario,
 ) @local {
+    if (scenario == 3) return run_contact_acceptance(
+        window: window,
+        renderer: renderer,
+        assets: assets,
+        directory: directory,
+    );
     Scene scene = scene::create_scene(mem, { .max_nodes = SCENE_NODE_CAPACITY });
     defer scene::destroy_scene(&scene);
     physics::register_physics(&scene)!;
@@ -671,7 +685,7 @@ fn void? run_acceptance(
     )!;
     defer physics::destroy_physics_world(&physics);
     RagdollFacing facing = scenario == 1 ? FACE_DOWN : FACE_UP;
-    String name = scenario == 0 ? "supine" : scenario == 1 ? "prone" : scenario == 2 ? "blocked" : "neighbour";
+    String name = scenario == 0 ? "supine" : scenario == 1 ? "prone" : "blocked";
     io::printfn("visual_setup,%s,level", name);
     Level level = build_level(assets, &scene, &physics)!;
     level.camera_node.local.position = CAMERA_START;
@@ -680,15 +694,6 @@ fn void? run_acceptance(
     Controls controls = { .automatic_weight = true, .draw = { .colliders = true }, .obstruction = scenario == 2 };
     physics.set_enabled(level.blocker, controls.obstruction);
     level.blocker.visible = controls.obstruction;
-    if (scenario == 3) {
-        level.neighbour = add_box(
-            scene: &scene,
-            physics: &physics,
-            level: &level,
-            position: NEIGHBOUR_POSITION,
-        )!;
-        level.neighbour_start = NEIGHBOUR_POSITION;
-    }
     io::printfn("visual_setup,%s,rig", name);
     ExampleCharacter character = { .humanoid = getup_fixture::create_humanoid(assets, &scene)!, .facing = facing };
     getup_fixture::sample_getup(&character.humanoid, facing, 0);
@@ -696,11 +701,6 @@ fn void? run_acceptance(
     physics.update(0);
     physics.update_ragdolls();
     scene.update_world();
-    if (scenario == 3) check_neighbour_clearance(
-        physics: &physics,
-        neighbour: level.neighbour,
-        ragdoll: scene.get(character.humanoid.skin, Ragdoll),
-    )!;
     io::printfn("visual_setup,%s,recovery_entry", name);
     begin_recovery(&character, &scene, &physics);
     if (character.last_error) return character.last_error~;
@@ -725,9 +725,6 @@ fn void? run_acceptance(
     float peak_force;
     float peak_torque;
     float completion_time;
-    uint neighbour_contacts;
-    b3::BodyId neighbour_body;
-    if (level.neighbour) neighbour_body = physics.body(level.neighbour)!;
     while (next_capture < capture_times.len && window.poll()) {
         float delta = frame == 0 ? 0 : getup_fixture::FRAME_MULTIPLIERS[(frame - 1) % getup_fixture::FRAME_MULTIPLIERS.len] * physics::DEFAULT_FIXED_DT;
         frame++;
@@ -767,16 +764,6 @@ fn void? run_acceptance(
                 }
                 b3::ContactData[32] storage;
                 foreach (contact : body.contact_data(storage[..])) {
-                    if (level.neighbour) {
-                        foreach (shape : (b3::ShapeId[2]){ contact.shape_id_a, contact.shape_id_b }) {
-                            b3::BodyId other = shape.body();
-                            if (other.index1 == neighbour_body.index1 && other.world0 == neighbour_body.world0
-                                && other.generation == neighbour_body.generation) {
-                                neighbour_contacts++;
-                                break;
-                            }
-                        }
-                    }
                     foreach (&manifold : contact.contact_manifolds()) {
                         foreach (point : manifold.contact_points()) peak_penetration = math::max(peak_penetration, -point.separation);
                     }
@@ -823,9 +810,8 @@ fn void? run_acceptance(
             next_capture++;
         }
     }
-    float neighbour_motion = level.neighbour ? (level.neighbour.world_position() - level.neighbour_start).length() : 0;
     io::printfn(
-        "visual,%s,frames,%d,completion,%.6f,position,%.9f,angle,%.9f,penetration,%.9f,force,%.6f,torque,%.6f,neighbour,%.6f,neighbour_contact_samples,%d",
+        "visual,%s,frames,%d,completion,%.6f,position,%.9f,angle,%.9f,penetration,%.9f,force,%.6f,torque,%.6f",
         name,
         frame,
         completion_time,
@@ -834,21 +820,23 @@ fn void? run_acceptance(
         peak_penetration,
         peak_force,
         peak_torque,
-        neighbour_motion,
-        neighbour_contacts,
     );
     if (next_capture != capture_times.len || peak_position > 0.00002f || peak_angle > 0.0001f
         || peak_penetration > getup_fixture::PENETRATION_LIMIT || peak_force > 200.0001f || peak_torque > 20.0001f) return c3d::INVALID_ARGUMENT~;
     if (scenario < 2 && character.phase != STANDING) return c3d::INVALID_ARGUMENT~;
     if (scenario == 2 && character.phase != RECOVERING) return c3d::INVALID_ARGUMENT~;
-    if (scenario == 3 && (neighbour_motion <= 0.01f || neighbour_contacts == 0)) return c3d::INVALID_ARGUMENT~;
 }
 
-fn void? check_neighbour_clearance(PhysicsWorld* physics, Node* neighbour, Ragdoll* ragdoll) @local {
+fn void? check_neighbour_clearance(
+    PhysicsWorld* physics,
+    Node* neighbour,
+    Ragdoll* ragdoll,
+    Vec3 half_extents,
+) @local {
     Vec3[8] corners;
     for (uint corner = 0; corner < 8; corner++) {
         Vec3 sign = { corner & 1 ? 1 : -1, corner & 2 ? 1 : -1, corner & 4 ? 1 : -1 };
-        corners[corner] = sign * (BOX_SIZE * 0.5f);
+        corners[corner] = sign * half_extents;
     }
     b3::ShapeProxy proxy = { .points = &corners[0], .count = 8, .radius = 0 };
     b3::BodyId box = physics.body(neighbour)!;
@@ -875,4 +863,253 @@ fn void? check_neighbour_clearance(PhysicsWorld* physics, Node* neighbour, Ragdo
         box.mass(),
     );
     if (participants) return c3d::INVALID_ARGUMENT~;
+}
+fn Humanoid? create_contact_capsule(AssetStore* assets, Scene* scene) @local {
+    const uint JOINTS = 3;
+    Skeleton skeleton = {
+        .joint_names = alloc::new_array(assets.allocator, String, JOINTS),
+        .parents = alloc::new_array(assets.allocator, int, JOINTS),
+        .rest_pose = alloc::new_array(assets.allocator, maths::Transform, JOINTS),
+        .inverse_bind = alloc::new_array(assets.allocator, Mat4, JOINTS),
+    };
+    defer catch asset::free_skeleton(assets.allocator, &skeleton);
+    foreach (index, position : getup_fixture::CONTACT_JOINT_POSITIONS) {
+        skeleton.joint_names[index] = "contact_joint".copy(assets.allocator);
+        skeleton.parents[index] = getup_fixture::CONTACT_PARENTS[index];
+        skeleton.rest_pose[index] = maths::TRANSFORM_IDENTITY;
+        maths::Transform inverse = maths::TRANSFORM_IDENTITY;
+        inverse.position = -position;
+        skeleton.inverse_bind[index] = inverse.to_mat4();
+    }
+    SkeletonId skeleton_id = assets.add_skeleton_owned(&skeleton)!;
+    skeleton = {};
+    GeometryId geometry_id;
+    @pool() {
+        Geometry geometry = geometry::capsule(
+            allocator: tmem,
+            radius: getup_fixture::CONTACT_BONE_RADIUS,
+            height: getup_fixture::CONTACT_BONE_LENGTH - 2 * getup_fixture::CONTACT_BONE_RADIUS,
+            slices: 12,
+            stacks: 4,
+        );
+        maths::Transform placement = maths::TRANSFORM_IDENTITY;
+        placement.position = getup_fixture::CONTACT_COM_OFFSET + (Vec3){ 0, getup_fixture::CONTACT_BONE_LENGTH * 0.5f, 0 };
+        geometry.transform(placement.to_mat4());
+        geometry.joints = alloc::new_array(tmem, ushort[<4>], geometry.positions.len);
+        geometry.weights = alloc::new_array(tmem, Vec4, geometry.positions.len);
+        geometry.weights[..] = { 1, 0, 0, 0 };
+        geometry_id = assets.add_geometry(&geometry)!;
+    };
+    StandardParams params = material::STANDARD_PARAMS_DEFAULT;
+    params.base_color = { 0.16f, 0.55f, 0.8f, 1 };
+    MaterialId material_id = assets.add_material(material::standard(params))!;
+    Humanoid rig = { .character = scene.add_node(name: "contact_capsule")! };
+    defer catch scene.remove(rig.character);
+    rig.skin = scene.add_mesh(
+        geometry: geometry_id,
+        material: material_id,
+        parent: rig.character,
+        name: "contact_skin",
+    )!;
+    rig.joints = alloc::new_array(scene.allocator, Node*, JOINTS);
+    scene.add(rig.skin, (SkinBinding){ .skeleton = skeleton_id, .joints = rig.joints });
+    foreach (index, position : getup_fixture::CONTACT_JOINT_POSITIONS) {
+        int parent = getup_fixture::CONTACT_PARENTS[index];
+        rig.joints[index] = scene.add_node(parent < 0 ? rig.character : rig.joints[parent], "contact_joint")!;
+        rig.joints[index].local.position = parent < 0 ? position : position - getup_fixture::CONTACT_JOINT_POSITIONS[parent];
+    }
+    scene.update_world();
+    RagdollBone bone = physics::default_ragdoll_bone(0);
+    bone.radius = getup_fixture::CONTACT_BONE_RADIUS;
+    bone.density = getup_fixture::CONTACT_BONE_DENSITY;
+    bone.length = getup_fixture::CONTACT_BONE_LENGTH;
+    RagdollDesc desc = physics::default_ragdoll_desc();
+    desc.bones = (&bone)[:1];
+    scene.build_ragdoll(assets, rig.skin, desc)!;
+    Ragdoll* ragdoll = scene.get(rig.skin, Ragdoll);
+    scene.get(ragdoll.bone_nodes[0], PhysicsBody).colliders[0].local.position = getup_fixture::CONTACT_COM_OFFSET;
+    rig.joints[0].local = getup_fixture::sample_contact_target(0);
+    return rig;
+}
+
+fn void? run_contact_acceptance(
+    platform::Window* window,
+    Renderer* renderer,
+    AssetStore* assets,
+    String directory,
+) @local {
+    Scene scene = scene::create_scene(mem, { .max_nodes = SCENE_NODE_CAPACITY });
+    defer scene::destroy_scene(&scene);
+    physics::register_physics(&scene)!;
+    PhysicsWorld physics = physics::create_physics_world(
+        allocator: mem,
+        assets: assets,
+        scene: &scene,
+        desc: physics::default_physics_desc(),
+    )!;
+    defer physics::destroy_physics_world(&physics);
+    Level level = build_level(
+        assets: assets,
+        scene: &scene,
+        physics: &physics,
+        create_bodies: false,
+    )!;
+    scene.remove(level.blocker);
+    level.blocker = null;
+    level.camera_node.local.position = CAMERA_START;
+    level.camera_node.local.rotation = maths::look_rotation(((Vec3){ 0.2f, 0.5f, 0 } - CAMERA_START).normalize(), { 0, 1, 0 });
+    Humanoid rig = create_contact_capsule(assets, &scene)!;
+    Node* ground = scene.add_node(name: "contact_ground")!;
+    ground.local.position = getup_fixture::CONTACT_GROUND_POSITION;
+    ColliderDesc floor = physics::default_collider_desc(BOX);
+    floor.half_extents = getup_fixture::CONTACT_GROUND_HALF_EXTENTS;
+    scene.add_physics_body(ground, physics::default_body_desc(STATIC), (&floor)[:1])!;
+    Node* neighbour = scene.add_mesh(level.box_geometry, level.box_material, name: "focused_neighbour")!;
+    neighbour.local.position = getup_fixture::CONTACT_BOX_POSITION;
+    neighbour.local.scale = getup_fixture::CONTACT_BOX_HALF_EXTENTS * (2 / BOX_SIZE);
+    ColliderDesc box = physics::default_collider_desc(BOX);
+    box.half_extents = getup_fixture::CONTACT_BOX_HALF_EXTENTS;
+    box.density = getup_fixture::CONTACT_BOX_DENSITY;
+    scene.add_physics_body(neighbour, physics::default_body_desc(DYNAMIC), (&box)[:1])!;
+    scene.update_world();
+    physics.update(0);
+    Ragdoll* ragdoll = scene.get(rig.skin, Ragdoll);
+    physics.set_ragdoll_mode(rig.skin, SIMULATED);
+    ragdoll.weight = 1;
+    physics.update_ragdolls();
+    scene.update_world();
+    check_neighbour_clearance(
+        physics: &physics,
+        neighbour: neighbour,
+        ragdoll: ragdoll,
+        half_extents: getup_fixture::CONTACT_BOX_HALF_EXTENTS,
+    )!;
+    physics.recover_bones(rig.skin)!;
+    ragdoll.weight = 0;
+    b3::BodyId body = physics.body(ragdoll.bone_nodes[0])!;
+    b3::BodyId neighbour_body = physics.body(neighbour)!;
+    io::printfn(
+        "focused_dataset,%s,capsule_mass_kg,%.9f,neighbour_mass_kg,%.9f",
+        getup_fixture::CONTACT_DATASET,
+        body.mass(),
+        neighbour_body.mass(),
+    );
+    GuiRenderer gui = gui::create_gui_renderer(mem, renderer, window)!;
+    defer (void)gui::destroy_gui_renderer(&gui);
+    debug::DebugDraw debug = debug::create_debug_draw(mem);
+    defer debug::destroy_debug_draw(&debug);
+    RenderTargetId target = render::create_render_target(
+        renderer: renderer,
+        desc: render::render_target_desc(1280, 720, PixelFormat.RGBA8_SRGB),
+    )!;
+    defer (void)render::destroy_render_target(renderer, target);
+    ViewId view = render::create_view(renderer, render::texture_view_desc(target, OutputMode.DISPLAY_LDR))!;
+    defer (void)render::destroy_view(renderer, view);
+    renderer.prepare_scene(&scene)!;
+    float[5] captures = { 0, 1, 2, 4, getup_fixture::CONTACT_DURATION };
+    uint next_capture;
+    uint frame;
+    uint contacts;
+    float time;
+    float peak_position;
+    float peak_angle;
+    float peak_penetration;
+    float peak_force;
+    float peak_torque;
+    while (next_capture < captures.len && window.poll()) {
+        float delta = getup_fixture::FRAME_MULTIPLIERS[frame++ % getup_fixture::FRAME_MULTIPLIERS.len] * physics::DEFAULT_FIXED_DT;
+        time += delta;
+        rig.joints[0].local = getup_fixture::sample_contact_target(time);
+        if (frame % 2 == 1) rig.joints[0].local.rotation = -rig.joints[0].local.rotation;
+        rig.joints[1].local.position = { 0, 1, 0 };
+        rig.joints[2].local.position = { 0, 1, 0 };
+        scene.update_world();
+        physics.update(delta);
+        if (time >= getup_fixture::CONTACT_DURATION) {
+            physics.finish_ragdoll_recovery(rig.skin)!;
+        } else if (body.type() != b3::BodyType.DYNAMIC) {
+            return c3d::INVALID_ARGUMENT~;
+        }
+        physics.update_ragdolls();
+        scene.update_world();
+        RagdollRecoveryStatus status = ragdoll.recovery_status();
+        b3::WorldTransform native = body.transform();
+        maths::Transform visible = maths::transform_from_mat4(rig.joints[0].world);
+        maths::Transform bone = maths::transform_from_mat4(ragdoll.bone_nodes[0].world);
+        Vec3 mapped_position = body.world_point(ragdoll.joint_in_bone[0].position);
+        Quaternionf mapped_rotation = native.q.mul(ragdoll.joint_in_bone[0].rotation).normalize();
+        peak_position = math::max(peak_position, (visible.position - mapped_position).length(), (bone.position - (Vec3)native.p).length());
+        foreach (difference : (Quaternionf[2]){ visible.rotation.mul(mapped_rotation.conjugate()), bone.rotation.mul(native.q.conjugate()) }) {
+            Vec3 axis = { difference.i, difference.j, difference.k };
+            peak_angle = math::max(peak_angle, 2 * math::atan2(axis.length(), math::abs(difference.l)));
+        }
+        peak_force = math::max(peak_force, status.force);
+        peak_torque = math::max(peak_torque, status.torque);
+        b3::ContactData[16] storage;
+        foreach (contact : body.contact_data(storage[..])) {
+            foreach (&manifold : contact.contact_manifolds()) {
+                foreach (point : manifold.contact_points()) peak_penetration = math::max(peak_penetration, -point.separation);
+            }
+            foreach (shape : (b3::ShapeId[2]){ contact.shape_id_a, contact.shape_id_b }) {
+                b3::BodyId other = shape.body();
+                if (other.index1 == neighbour_body.index1 && other.generation == neighbour_body.generation) contacts++;
+            }
+        }
+        gui.new_frame();
+        if (imgui::begin("Focused ragdoll contact", null, {})) {
+            imgui::text("Time %.2f s", time);
+            imgui::text("Recovery: %s", RECOVERY_NAMES[status.phase.ordinal]);
+            imgui::text("Force %.3f N, torque %.3f Nm", status.force, status.torque);
+            imgui::text("Position %.5f m, angle %.5f rad", status.position_error, status.angle_error);
+            imgui::text("Neighbour %.3f m", (neighbour_body.position() - getup_fixture::CONTACT_BOX_POSITION).length());
+        }
+        imgui::end();
+        gui.finish_frame();
+        debug.clear();
+        physics.debug_draw(&debug, { .colliders = true });
+        platform::sync_window(window, renderer);
+        renderer.begin_frame({ .time = time, .delta = delta })!;
+        defer catch render::abort_frame(renderer);
+        renderer.render_view(
+            scene: &scene,
+            camera_node: level.camera_node,
+            view: view,
+            debug: &debug,
+        )!;
+        renderer.finish_view(view)!;
+        if (renderer.has_output) {
+            renderer.render_view(
+                scene: &scene,
+                camera_node: level.camera_node,
+                view: renderer.default_view,
+                debug: &debug,
+            )!;
+            renderer.finish_view(renderer.default_view)!;
+            OverlayContext overlay = renderer.begin_overlay()!;
+            gui.record(&overlay)!;
+            renderer.end_overlay(&overlay)!;
+        }
+        renderer.end_frame()!;
+        if (time >= captures[next_capture]) {
+            String path = string::tformat("%s/neighbour-%d.png", directory, next_capture);
+            save_capture(renderer, target, path)!;
+            io::printfn("capture,%s,time,%.6f,phase,%s", path, time, status.phase);
+            next_capture++;
+        }
+    }
+    float displacement = (neighbour_body.position() - getup_fixture::CONTACT_BOX_POSITION).length();
+    io::printfn(
+        "visual,focused_neighbour,frames,%d,position,%.9f,angle,%.9f,penetration,%.9f,force,%.6f,torque,%.6f,neighbour,%.9f,neighbour_contact_samples,%d",
+        frame,
+        peak_position,
+        peak_angle,
+        peak_penetration,
+        peak_force,
+        peak_torque,
+        displacement,
+        contacts,
+    );
+    if (next_capture != captures.len || peak_position > 0.00002f || peak_angle > 0.0001f
+        || peak_penetration > getup_fixture::PENETRATION_LIMIT || peak_force > 200.0001f || peak_torque > 20.0001f
+        || displacement <= getup_fixture::CONTACT_RESPONSE_LIMIT || contacts == 0) return c3d::INVALID_ARGUMENT~;
 }

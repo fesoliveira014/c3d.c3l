@@ -1,6 +1,8 @@
 module c3d_physics_ragdoll_test;
 
 import std::math;
+import std::io;
+import c3d::physics::getup_fixture;
 import std::math::quaternion;
 import c3d;
 import c3d::anim;
@@ -1030,32 +1032,32 @@ fn void check_recovery_contact_motion(bool wall, bool neighbour) @private {
     Fixture fixture;
     setup(&fixture);
     defer teardown(&fixture);
-    Rig rig = add_chain(&fixture);
-    RagdollBone[1] bones = { bone(0, length: 0.84f) };
-    bones[0].radius = 0.12f;
-    bones[0].density = 200;
+    Rig rig = add_rig(&fixture, getup_fixture::CONTACT_JOINT_POSITIONS[..], getup_fixture::CONTACT_PARENTS[..]);
+    RagdollBone[1] bones = { bone(0, length: getup_fixture::CONTACT_BONE_LENGTH) };
+    bones[0].radius = getup_fixture::CONTACT_BONE_RADIUS;
+    bones[0].density = getup_fixture::CONTACT_BONE_DENSITY;
     Ragdoll* ragdoll = build(&fixture, &rig, bones[..]);
     PhysicsBody* authoring = fixture.scene.get(ragdoll.bone_nodes[0], PhysicsBody);
-    authoring.colliders[0].local.position = { 0.04f, 0, 0 };
-    rig.joints[0].local.position = { -0.8f, 0.18f, 0 };
+    authoring.colliders[0].local.position = getup_fixture::CONTACT_COM_OFFSET;
+    rig.joints[0].local.position = getup_fixture::CONTACT_JOINT_START;
     Node* ground = fixture.scene.add_node(name: "ground")!!;
-    ground.local.position = { 0, -0.5f, 0 };
+    ground.local.position = getup_fixture::CONTACT_GROUND_POSITION;
     ColliderDesc floor = physics::default_collider_desc(BOX);
-    floor.half_extents = { 10, 0.5f, 10 };
+    floor.half_extents = getup_fixture::CONTACT_GROUND_HALF_EXTENTS;
     fixture.scene.add_physics_body(ground, physics::default_body_desc(STATIC), (&floor)[:1])!!;
     Node* obstacle;
     if (wall || neighbour) {
         obstacle = fixture.scene.add_node(name: "obstacle")!!;
-        obstacle.local.position = { 0.6f, 0.4f, 0 };
+        obstacle.local.position = getup_fixture::CONTACT_BOX_POSITION;
         ColliderDesc collider = physics::default_collider_desc(BOX);
-        collider.half_extents = wall ? (Vec3){ 0.15f, 0.8f, 2 } : (Vec3){ 0.2f, 0.4f, 0.2f };
-        collider.density = 100;
+        collider.half_extents = wall ? (Vec3){ 0.15f, 0.8f, 2 } : getup_fixture::CONTACT_BOX_HALF_EXTENTS;
+        collider.density = getup_fixture::CONTACT_BOX_DENSITY;
         fixture.scene.add_physics_body(obstacle, physics::default_body_desc(wall ? STATIC : DYNAMIC), (&collider)[:1])!!;
     }
     fixture.scene.update_world();
     enter_recovery(&fixture, &rig, ragdoll);
     b3::BodyId body = fixture.physics.body(ragdoll.bone_nodes[0])!!;
-    assert((body.local_center() - (Vec3){ 0.04f, 0, 0 }).length() <= TOLERANCE);
+    assert((body.local_center() - getup_fixture::CONTACT_COM_OFFSET).length() <= TOLERANCE);
     ragdoll.weight = 0;
     float peak_penetration;
     float peak_force;
@@ -1065,14 +1067,10 @@ fn void check_recovery_contact_motion(bool wall, bool neighbour) @private {
     float time;
     uint frame;
     bool blocked;
-    float[7] schedule = { 0, 0.25f, 0.75f, 1, 2.5f, 0.5f, 1 };
-    while (time < 7) {
-        float dt = schedule[frame++ % schedule.len] * physics::DEFAULT_FIXED_DT;
+    while (time < getup_fixture::CONTACT_DURATION) {
+        float dt = getup_fixture::FRAME_MULTIPLIERS[frame++ % getup_fixture::FRAME_MULTIPLIERS.len] * physics::DEFAULT_FIXED_DT;
         time += dt;
-        float reach = math::min(time / 2, 1.0f);
-        if (time > 4) reach = math::max(1 - (time - 4), 0.0f);
-        rig.joints[0].local.position = { -0.8f + 2 * reach, 0.18f, 0 };
-        rig.joints[0].local.rotation = about({ 0, 0, 1 }, wall || neighbour ? 0 : 20 * reach);
+        rig.joints[0].local = getup_fixture::sample_contact_target(time, !wall && !neighbour);
         if (frame % 2 == 1) rig.joints[0].local.rotation = -rig.joints[0].local.rotation;
         rig.joints[1].local.position = { 0, 1, 0 };
         rig.joints[2].local.position = { 0, 1, 0 };
@@ -1105,7 +1103,16 @@ fn void check_recovery_contact_motion(bool wall, bool neighbour) @private {
     if (wall) assert(blocked && contacts > 0);
     if (neighbour) {
         b3::BodyId other = fixture.physics.body(obstacle)!!;
-        assert(contacts > 0 && (other.position() - (Vec3){ 0.6f, 0.4f, 0 }).length() > 0.05f);
+        io::printfn(
+            "focused_neighbour,mass_kg,%.6f,displacement,%.9f,contact_samples,%d,force,%.6f,torque,%.6f,penetration,%.9f",
+            other.mass(),
+            (other.position() - getup_fixture::CONTACT_BOX_POSITION).length(),
+            contacts,
+            peak_force,
+            peak_torque,
+            peak_penetration,
+        );
+        assert(contacts > 0 && (other.position() - getup_fixture::CONTACT_BOX_POSITION).length() > getup_fixture::CONTACT_RESPONSE_LIMIT);
     }
     if (!wall && !neighbour) assert(peak_free_error <= 0.15f);
     fixture.physics.finish_ragdoll_recovery(rig.skin)!!;

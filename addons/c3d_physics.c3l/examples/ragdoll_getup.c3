@@ -32,6 +32,22 @@ const float PENETRATION_LIMIT = 0.025f;
 <* Repeated frame deltas as multiples of the world's fixed step. *>
 const float[7] FRAME_MULTIPLIERS = { 0, 0.25f, 0.75f, 1, 2.5f, 0.5f, 1 };
 
+<* Shared focused contact sequence and physical dimensions. *>
+const String CONTACT_DATASET = "ragdoll_contact_v1";
+const float CONTACT_BONE_LENGTH = 0.84f;
+const float CONTACT_BONE_RADIUS = 0.12f;
+const float CONTACT_BONE_DENSITY = 200;
+const Vec3 CONTACT_COM_OFFSET = { 0.04f, 0, 0 };
+const Vec3 CONTACT_JOINT_START = { -0.8f, 0.18f, 0 };
+const Vec3 CONTACT_BOX_POSITION = { 0.6f, 0.4f, 0 };
+const Vec3 CONTACT_BOX_HALF_EXTENTS = { 0.2f, 0.4f, 0.2f };
+const float CONTACT_BOX_DENSITY = 100;
+const Vec3 CONTACT_GROUND_POSITION = { 0, -0.5f, 0 };
+const Vec3 CONTACT_GROUND_HALF_EXTENTS = { 10, 0.5f, 10 };
+const float CONTACT_DURATION = 7;
+const float CONTACT_RESPONSE_LIMIT = 0.05f;
+const Vec3[3] CONTACT_JOINT_POSITIONS = { { 0, 0, 0 }, { 0, 1, 0 }, { 0, 2, 0 } };
+const int[3] CONTACT_PARENTS = { -1, 0, 1 };
 <* Skeleton indices, parents before children. *>
 enum HumanoidJoint : uint {
     PELVIS, SPINE, HEAD, HEAD_TIP,
@@ -622,4 +638,15 @@ fn Humanoid? create_humanoid(AssetStore* assets, Scene* scene) {
     desc.filter.group = -1;
     scene.build_ragdoll(assets, humanoid.skin, desc)!;
     return humanoid;
+}
+<* The focused capsule advances two metres, holds, retreats, then settles. *>
+fn Transform sample_contact_target(float seconds, bool rotate = false) {
+    float reach = math::min(seconds / 2, 1.0f);
+    if (seconds > 4) reach = math::max(1 - (seconds - 4), 0.0f);
+    float angle = rotate ? 20 * reach * (float)math::PI / 180 : 0;
+    return {
+        .position = CONTACT_JOINT_START + (Vec3){ 2 * reach, 0, 0 },
+        .rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, angle),
+        .scale = { 1, 1, 1 },
+    };
 }
