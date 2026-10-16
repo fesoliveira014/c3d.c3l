@@ -249,7 +249,7 @@ fn void test_clearance_scene_cache_cylinder() @test {
             "mode %d: %s at %s",
             mode,
             fixture.builder.last_failure.reason,
-            fixture.builder.last_failure.stage,
+            fixture.builder.last_failure.stage
         );
 
         NavQuery query = nav::create_nav_query(mem, &fixture.mesh, 1024)!!;
