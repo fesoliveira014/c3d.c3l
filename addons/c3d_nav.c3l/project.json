@@ -34,10 +34,6 @@
       "type": "test",
       "sources": [ "test/**" ]
     },
-    "precision_bench": {
-      "type": "executable",
-      "sources": [ "bench/precision_bench.c3", "test/builder_fixture.c3", "test/precision_fixture.c3" ]
-    },
     "navmesh": {
       "type": "executable",
       "sources": [ "examples/navmesh.c3" ]
