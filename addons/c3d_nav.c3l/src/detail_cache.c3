@@ -231,7 +231,7 @@ fn void mark_precision_obstacle(
     CompactHeightfield* compact,
     Obstacle* obstacle,
     float agent_height,
-) @local {
+) @private {
     Aabb obstacle_bounds = obstacle.bounds();
     double half_cell = (double)reference.cell_size * 0.5;
     foreach (index, sample : reference.samples) {

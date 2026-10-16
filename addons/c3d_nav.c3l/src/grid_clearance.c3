@@ -7,6 +7,27 @@ fn char[]? build_sub_cell_grid(GridTileBuilder* builder, int tile_x, int tile_z)
     GridReference captured = capture_grid_reference(builder, tile_x, tile_z)!;
     if (!captured.span_count) return {};
 
+    ClearanceSource source = clearance_grid_source(
+        builder: builder,
+        captured: &captured,
+        tile_x: tile_x,
+        tile_z: tile_z,
+    )!;
+    return build_clearance_mesh(
+        allocator: &builder.arena,
+        source: &source,
+        config: &builder.tile_config,
+        tile_x: tile_x,
+        tile_z: tile_z,
+    );
+}
+
+fn ClearanceSource? clearance_grid_source(
+    GridTileBuilder* builder,
+    GridReference* captured,
+    int tile_x,
+    int tile_z,
+) @private {
     Allocator allocator = &builder.arena;
     CompactCell[]? columns = alloc::new_array_try(allocator, CompactCell, (sz)captured.columns.len);
     if (catch columns) return c3d::CAPACITY_EXCEEDED~;
@@ -72,11 +93,5 @@ fn char[]? build_sub_cell_grid(GridTileBuilder* builder, int tile_x, int tile_z)
         }
     }
 
-    return build_clearance_mesh(
-        allocator: allocator,
-        source: &source,
-        config: &builder.tile_config,
-        tile_x: tile_x,
-        tile_z: tile_z,
-    );
+    return source;
 }

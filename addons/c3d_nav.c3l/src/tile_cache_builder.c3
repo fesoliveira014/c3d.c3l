@@ -7,7 +7,7 @@ import c3d;
 const int LAYER_MAGIC = 'D' << 24 | 'T' << 16 | 'L' << 8 | 'R';
 
 <* Version of a layer blob with optional retained references. *>
-const int LAYER_VERSION = 102;
+const int LAYER_VERSION = 103;
 
 const char   NO_LAYER_CELL @local = 0xff; // an empty height, an unassigned region or no sweep neighbour
 const char   PORTAL_BASE @local = 0xf8; // a traced neighbour of 0xf8 + direction is a portal that way
@@ -28,6 +28,12 @@ const ushort EAR_INDEX_MASK @local = 0x7fff;
 const ushort NO_POLY_EDGE @local = 0xff; // an open edge with no portal direction; mirrors buildMeshAdjacency's 0xff
 const float  OBSTACLE_BOX_REACH @private = 1.41f; // mirrors upstream's bound on a yawed box's footprint radius
 
+<* Identify the retained source representation of a cached layer. *>
+enum CachedSourceKind : ushort {
+    HEIGHTFIELD,
+    GRID,
+}
+
 <* Header of a layer blob; heights, areas and connections follow, width * height bytes each. *>
 struct LayerHeader {
     int     magic;
@@ -44,7 +50,7 @@ struct LayerHeader {
     char    max_x;
     char    min_z;
     char    max_z;
-    char[2] _pad0;
+    CachedSourceKind source_kind;
     DetailMode detail_mode;
     uint reference_bytes;
 }
@@ -679,7 +685,10 @@ fn TileCacheLayer? read_tile_cache_layer(char[] blob, char[] scratch) {
     if (scratch.len < cells * 4) return c3d::CAPACITY_EXCEEDED~;
     usz base_size = LayerHeader::size + cells * 3;
     if ((uint)header.detail_mode > (uint)DetailMode.BOUNDED) return LAYER_CORRUPTED~;
-    if (header.detail_mode == DetailMode.COARSE) {
+    if ((uint)header.source_kind > (uint)CachedSourceKind.GRID) return LAYER_CORRUPTED~;
+    if (header.source_kind == CachedSourceKind.GRID) {
+        (void)cached_grid_reference(blob)!;
+    } else if (header.detail_mode == DetailMode.COARSE) {
         if (header.reference_bytes || blob.len != base_size) return LAYER_CORRUPTED~;
     } else {
         usz reference_offset = detail_reference_offset(base_size);

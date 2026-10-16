@@ -404,6 +404,9 @@ fn char[]? build_cached_runtime_blob(TileCache* cache, char[] blob, NavMesh* mes
     cache.arena.clear();
     Allocator arena = &cache.arena;
     TileCacheLayer layer = read_tile_cache_layer(tile.data, cache.scratch)!;
+    if (header.source_kind == CachedSourceKind.GRID) {
+        return build_grid_cache_runtime(cache, blob, mesh);
+    }
     if (header.detail_mode == DetailMode.BOUNDED) {
         return build_precision_cache_tile(cache: cache, tile: tile, layer: &layer, mesh: mesh);
     }
@@ -476,6 +479,59 @@ fn void? replace_cached_runtime(
         if (data.len) runtime[count++] = data;
     }
     replace_tile_data_at(mesh: mesh, tile_x: x, tile_z: z, owned_data: runtime[:count])!;
+}
+
+fn uint? publish_cached_layer_set(
+    TileCache* cache,
+    NavMesh* mesh,
+    int tile_x,
+    int tile_z,
+    CachedLayerRef[] previous,
+    char[][] owned_blobs,
+    CachedLayerRef[] output,
+    Aabb bounds,
+) @private {
+    if (previous.len > MAX_LAYERS || owned_blobs.len > output.len) return c3d::CAPACITY_EXCEEDED~;
+    CachedLayer*[MAX_LAYERS] resident;
+    foreach (index, ref : previous) resident[index] = cache.tile_by_ref(ref)!;
+
+    uint free_slots;
+    for (CachedLayer* tile = cache.next_free_tile; tile; tile = tile.next) free_slots++;
+    if (owned_blobs.len > free_slots + previous.len) return c3d::CAPACITY_EXCEEDED~;
+
+    foreach (index, blob : owned_blobs) {
+        validate_cached_layer_blob(cache, blob)!;
+        LayerHeader* header = (LayerHeader*)blob.ptr;
+        if (header.tile_x != tile_x || header.tile_z != tile_z) return c3d::INVALID_ARGUMENT~;
+        foreach (earlier : owned_blobs[:index]) {
+            if (((LayerHeader*)earlier.ptr).tile_layer == header.tile_layer) return c3d::INVALID_ARGUMENT~;
+        }
+        CachedLayer* occupied = cached_layer_at(
+            cache: cache,
+            x: tile_x,
+            z: tile_z,
+            layer: header.tile_layer,
+        );
+        if (occupied && !contains_layer_ref(previous, cached_layer_ref(cache, occupied))) return TILE_OCCUPIED~;
+    }
+
+    validate_precision_cache_replacement(cache, previous, owned_blobs)!;
+    replace_cached_runtime(
+        cache: cache,
+        mesh: mesh,
+        x: tile_x,
+        z: tile_z,
+        blobs: owned_blobs,
+    )!;
+
+    // Runtime ownership and every capacity check precede the non-failing cache commit.
+    finish_cached_rebuild(cache, previous);
+    foreach (tile : resident[:previous.len]) (void)remove_cached_layer(cache, tile);
+    output[..] = (CachedLayerRef)0;
+    foreach (index, blob : owned_blobs) output[index] = insert_cached_layer(cache, blob, { .free_data = true });
+    retouch_obstacles(cache, bounds);
+
+    return (uint)owned_blobs.len;
 }
 
 fn uint? update_cached_group(TileCache* cache, NavMesh* mesh, uint queue_index) @private {
@@ -607,7 +663,11 @@ fn void shift_tile_cache(TileCache* cache, Vec3 offset) @private {
     foreach (&tile : cache.tiles) {
         if (tile.header) {
             shift_bounds(&tile.header.bounds, offset);
-            if (tile.header.detail_mode == DetailMode.BOUNDED) shift_cached_detail_reference(tile.data, offset);
+            if (tile.header.source_kind == CachedSourceKind.GRID) {
+                shift_cached_grid_reference(tile.data, offset);
+            } else if (tile.header.detail_mode == DetailMode.BOUNDED) {
+                shift_cached_detail_reference(tile.data, offset);
+            }
         }
     }
     foreach (&obstacle : cache.obstacles) {
@@ -643,7 +703,16 @@ fn void? validate_cached_layer_blob(TileCache* cache, char[] data) @private {
         || header.detail_mode != cache.desc.detail_mode || !detail_finite_vertex(header.bounds.min)
         || !detail_finite_vertex(header.bounds.max) || header.hmin > header.hmax) return c3d::INVALID_ARGUMENT~;
     if (catch excuse = read_tile_cache_layer(data, cache.scratch)) return c3d::INVALID_ARGUMENT~;
-    if (header.detail_mode == DetailMode.BOUNDED) {
+    if (header.source_kind == CachedSourceKind.GRID) {
+        CachedGridReference reference = cached_grid_reference(data)!;
+        NavBuildConfig config = reference.header.config;
+        if (config.cell_size != cache.desc.cell_size || config.cell_height != cache.desc.cell_height
+            || config.tile_size != cache.desc.width || config.tile_size != cache.desc.height
+            || config.agent_height != cache.desc.walkable_height || config.agent_radius != cache.desc.walkable_radius
+            || config.agent_max_climb != cache.desc.walkable_climb || config.detail_mode != cache.desc.detail_mode
+            || config.clearance_mode != cache.desc.clearance_mode
+            || config.clearance_max_error != cache.desc.clearance_max_error) return c3d::INVALID_ARGUMENT~;
+    } else if (header.detail_mode == DetailMode.BOUNDED) {
         DetailReference? reference = cached_detail_reference(data);
         if (catch reference) return c3d::INVALID_ARGUMENT~;
         if (reference.cell_size != cache.desc.cell_size || reference.cell_height != cache.desc.cell_height

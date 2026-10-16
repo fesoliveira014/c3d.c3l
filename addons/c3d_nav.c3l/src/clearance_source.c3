@@ -266,7 +266,7 @@ fn ClearanceConnection[]? clearance_connections(
     Allocator allocator,
     ClearanceSource* source,
     TileConfig* config,
-) @local {
+) @private {
     if (source.columns.len > (usz)sz::max / 2 / ClearanceConnection::size) return c3d::CAPACITY_EXCEEDED~;
 
     ClearanceConnection[]? allocation = alloc::new_array_try(allocator, ClearanceConnection, (sz)source.columns.len * 2);
@@ -803,7 +803,7 @@ fn char[]? build_clearance_mesh(
     );
 }
 
-fn char? clearance_volume_area(ClearanceSource* source, ClearanceSurface* surface, VolumeRecord[] volumes) @local {
+fn char? clearance_volume_area(ClearanceSource* source, ClearanceSurface* surface, VolumeRecord[] volumes) @private {
     char area = surface.area;
     ClearancePoint point = clearance_source_point(
         source: source,

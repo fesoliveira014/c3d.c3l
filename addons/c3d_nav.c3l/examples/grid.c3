@@ -85,6 +85,20 @@ const float DETAIL_HEIGHT_ERROR @local = 0.01f;
 const usz DETAIL_SCRATCH_BYTES @local = 2 * 1024 * 1024;
 const usz SUB_CELL_SCRATCH_BYTES @local = 8 * 1024 * 1024; // two floors over a 24x24 window, four clipped fans per floor
 const usz DEBUG_LINE_CAPACITY @local = 131072; // 4 MiB of vertices for complete detail and crowd paths
+const uint CACHE_DEMO_TILE_CELLS @local = 4;
+const uint CACHE_DEMO_ADD_FRAME @local = 24;
+const uint CACHE_DEMO_MOVE_FRAME @local = 48;
+const uint CACHE_DEMO_REMOVE_FRAME @local = 72;
+const uint CACHE_DEMO_BORDER_FRAME @local = 96;
+const uint CACHE_DEMO_CORNER_FRAME @local = 120;
+const uint CACHE_DEMO_FRAMES @local = 160;
+const float CACHE_DEMO_VERTEX_RISE @local = 0.25f;
+const float CACHE_DEMO_STEP @local = 1.0f / 60.0f;
+const int[<2>] CACHE_DEMO_BORDER_CELL @local = { 40, 38 };
+const int[<2>] CACHE_DEMO_VERTEX @local = { 40, 40 };
+const uint OBSTACLE_PENDING_COLOR @local = 0xFF40C0FF;
+const uint OBSTACLE_READY_COLOR @local = 0xFF40FF40;
+const uint OBSTACLE_REMOVING_COLOR @local = 0xFF4040FF;
 
 // '.' ground, '#' wall, '1' to '3' terraces, 'a' to 'f' stair steps, 'P' platform, '=' bridge over the corridor.
 const String[] LEVEL_MAP @local = {
@@ -144,6 +158,24 @@ enum PatchSurface @local {
     SADDLE,
 }
 
+enum ObstacleAction @local {
+    NONE,
+    ADD,
+    MOVE,
+    REMOVE,
+}
+
+struct CacheControls @local {
+    bool enabled;
+    bool demo;
+    GridUpdateResult progress;
+    ObstacleRef obstacle;
+    ObstacleAction action;
+    bool moved;
+    uint failed;
+    uint completed;
+}
+
 struct FreeCamera @local {
     Vec3  position;
     float yaw;
@@ -166,6 +198,8 @@ struct GridLevel @local {
     MaterialId                 agent_material;
     Node*                      camera_node;
     bool                       patch_enabled;
+    bool                       cache_demo;
+    bool                       raised_vertex;
     PatchSurface               surface;
     bool                       alternate_diagonal;
     bool                       sloped_ceiling;
@@ -269,6 +303,14 @@ fn usz level_floors(
     GridLevel* level = context;
     if (level.patch_enabled && patch_contains({ cell_x, cell_z })) {
         out_floors[0] = patch_floor(level, cell_x - PATCH_ORIGIN.x, cell_z - PATCH_ORIGIN.y);
+        if (level.cache_demo && level.cells[cell_x + cell_z * MAP_SIDE] == '#') out_floors[0].area = nav::NULL_AREA;
+        if (level.cache_demo && cell_x >= CACHE_DEMO_VERTEX.x && cell_z >= CACHE_DEMO_VERTEX.y - 1
+            && cell_z < CACHE_DEMO_VERTEX.y + 1) {
+            out_floors[0].ceiling_kind = GridSurfaceKind.FLAT;
+            out_floors[0].ceiling = BRIDGE_HEIGHT - BRIDGE_THICKNESS;
+            out_floors[1] = { .height = BRIDGE_HEIGHT, .ceiling = float::max, .area = nav::WALKABLE_AREA };
+            return 2;
+        }
         return 1;
     }
 
@@ -298,10 +340,12 @@ fn bool patch_contains(int[<2>] cell) @local {
 }
 
 fn float patch_height(GridLevel* level, int x, int z) @local {
+    float extra = level.raised_vertex && x == CACHE_DEMO_VERTEX.x - PATCH_ORIGIN.x
+      && z == CACHE_DEMO_VERTEX.y - PATCH_ORIGIN.y ? CACHE_DEMO_VERTEX_RISE : 0;
     switch (level.surface) {
-        case PLANE: return PATCH_BASE;
-        case RAMP: return PATCH_BASE + PATCH_RISE * (float)x / (float)PATCH_SIDE;
-        case SADDLE: return PATCH_BASE + (((x + z) & 1) != 0 ? PATCH_RISE : 0);
+        case PLANE: return PATCH_BASE + extra;
+        case RAMP: return PATCH_BASE + PATCH_RISE * (float)x / (float)PATCH_SIDE + extra;
+        case SADDLE: return PATCH_BASE + (((x + z) & 1) != 0 ? PATCH_RISE : 0) + extra;
     }
 }
 
@@ -310,7 +354,7 @@ fn GridFloor patch_floor(GridLevel* level, int x, int z) @local {
         .height = PATCH_BASE,
         .ceiling = float::max,
         .area = level.narrow_passage && (x == 2 || x == 5) ? nav::NULL_AREA : nav::WALKABLE_AREA,
-        .floor_kind = level.surface == PatchSurface.PLANE ? GridSurfaceKind.FLAT : GridSurfaceKind.CORNERS,
+        .floor_kind = level.surface == PatchSurface.PLANE && !level.raised_vertex ? GridSurfaceKind.FLAT : GridSurfaceKind.CORNERS,
         .ceiling_kind = level.sloped_ceiling ? GridSurfaceKind.CORNERS : GridSurfaceKind.FLAT,
         .diagonal = level.alternate_diagonal ? GridDiagonal.MAX_MIN_TO_MIN_MAX : GridDiagonal.MIN_MIN_TO_MAX_MAX,
     };
@@ -482,6 +526,7 @@ fn GridLevel*? build_level(
     Scene* scene,
     bool fan_in,
     bool bounded_detail,
+    bool cache_demo,
 ) @local {
     GridLevel* level = mem::new(GridLevel);
     defer catch free(level);
@@ -489,6 +534,8 @@ fn GridLevel*? build_level(
     if (fan_in) apply_fan_in(level);
 
     level.patch_enabled = bounded_detail;
+    level.cache_demo = cache_demo;
+    if (cache_demo) level.surface = PatchSurface.RAMP;
     if (bounded_detail) {
         for (int cell_z = PATCH_ORIGIN.y; cell_z < PATCH_ORIGIN.y + PATCH_SIDE; cell_z++) {
             for (int cell_x = PATCH_ORIGIN.x; cell_x < PATCH_ORIGIN.x + PATCH_SIDE; cell_x++) {
@@ -518,6 +565,17 @@ fn GridLevel*? build_level(
     ground_node.local.position = { MAP_WORLD_SIZE * 0.5f, 0, MAP_WORLD_SIZE * 0.5f };
     add_blocks(scene, level, block_materials)!;
     if (bounded_detail) add_patch(assets, scene, level)!;
+    if (cache_demo) {
+        (void)add_box(
+            scene: scene,
+            cube: level.cube,
+            material: block_materials[3],
+            box: {
+                .min = { (float)CACHE_DEMO_VERTEX.x, BRIDGE_HEIGHT - BRIDGE_THICKNESS, (float)CACHE_DEMO_VERTEX.y - 1 },
+                .max = { (float)(PATCH_ORIGIN.x + PATCH_SIDE), BRIDGE_HEIGHT, (float)CACHE_DEMO_VERTEX.y + 1 },
+            },
+        )!;
+    }
 
     Node* sun = scene.add_light(light::directional({ 1, 0.95f, 0.85f }, 3), name: "sun")!;
     sun.local.rotation = maths::look_rotation(((Vec3){ -0.4f, -1, -0.3f }).normalize(), { 0, 1, 0 });
@@ -571,7 +629,7 @@ fn uint? rebuild_around(GridTileBuilder* builder, NavMesh* mesh, int[<2>] cell) 
 // Only ground and wall cells toggle, so a wall never lands inside a raised block.
 fn bool is_toggleable(GridLevel* level, int[<2>] cell) @local {
     if (cell.x < 0 || cell.y < 0 || cell.x >= MAP_SIDE || cell.y >= MAP_SIDE) return false;
-    if (level.patch_enabled && patch_contains(cell)) return false;
+    if (level.patch_enabled && patch_contains(cell) && !level.cache_demo) return false;
     char kind = level.cells[cell.x + cell.y * MAP_SIDE];
     return kind == '.' || kind == '#';
 }
@@ -603,6 +661,10 @@ fn void? spawn_agents(
 
     int[<2>] start_cell = fan_in ? FAN_IN_SPAWN_CELL : SPAWN_CELL;
     int spacing = fan_in ? FAN_IN_SPAWN_SPACING : SPAWN_SPACING;
+    if (level.cache_demo) {
+        start_cell = PATCH_ORIGIN + (int[<2>]){ 1, 1 };
+        spacing = 1;
+    }
     for (int index = 0; index < (int)AGENT_COUNT; index++) {
         int[<2>] cell = start_cell + (int[<2>]){ index % SPAWN_ROW, index / SPAWN_ROW } * spacing;
         Node* node = scene.add_node(name: "agent")!;
@@ -649,18 +711,24 @@ fn void send_agents(Scene* scene, Agents* agents, Vec3 goal) @local {
     foreach (node : agents.nodes) scene.set_nav_target(node, goal);
 }
 
-// The edited tiles are built and installed within the frame of the click, before the crowd update.
+// Direct edits publish immediately; cached edits share the frame update budget.
 fn void? edit_wall(
     Scene* scene,
     GridLevel* level,
     GridTileBuilder* builder,
     NavMesh* mesh,
     RebuildStats* stats,
+    GridCache* cache,
     int[<2>] cell,
 ) @local {
     if (!is_toggleable(level, cell)) return;
     time::Clock started = clock::now();
     toggle_wall(scene, level, cell)!;
+    if (cache) {
+        cache.mark_dirty({ .min_x = cell.x, .min_z = cell.y, .max_x = cell.x + 1, .max_z = cell.y + 1 },
+            cache.source_revision + 1)!;
+        return;
+    }
     stats.last_tiles = rebuild_around(builder, mesh, cell)!;
     stats.last_milliseconds = (float)((double)(clock::now() - started) / NANOSECONDS_PER_MILLISECOND);
     stats.total_tiles += stats.last_tiles;
@@ -671,6 +739,7 @@ fn bool draw_panel(
     RebuildStats* stats,
     GridLevel* level,
     GridTileBuilder* builder,
+    CacheControls* cached,
     debug::DebugDraw* sink,
 ) @local {
     bool changed;
@@ -699,7 +768,7 @@ fn bool draw_panel(
 
         imgui::separator();
         imgui::text("Authored patch: southeast corner");
-        imgui::begin_disabled(!level.patch_enabled);
+        imgui::begin_disabled(!level.patch_enabled || cached.demo);
 
         if (imgui::radio_button("Plane", level.surface == PatchSurface.PLANE) && level.surface != PatchSurface.PLANE) {
             level.surface = PatchSurface.PLANE;
@@ -723,8 +792,24 @@ fn bool draw_panel(
         if (!level.patch_enabled) imgui::text("Use --detail or --sub-cell to edit the authored patch");
 
         imgui::separator();
-        imgui::text("Tiles rebuilt by the last edit: %u in %.2f ms", stats.last_tiles, stats.last_milliseconds);
-        imgui::text("Tiles rebuilt since start: %u", stats.total_tiles);
+        if (cached.enabled) {
+            imgui::text("Cached grid: one coordinate attempt per frame");
+            imgui::text("Pending work: %u; failed attempts: %u", cached.progress.pending, cached.failed);
+            imgui::text("Source installs: %u; obstacle rebuilds: %u", cached.progress.installed, cached.progress.rebuilt);
+            imgui::text("Completed coordinate updates: %u", cached.completed);
+            imgui::begin_disabled(cached.demo);
+            if (imgui::button(cached.obstacle ? "Remove obstacle" : "Add obstacle")) {
+                cached.action = cached.obstacle ? ObstacleAction.REMOVE : ObstacleAction.ADD;
+            }
+            imgui::same_line();
+            imgui::begin_disabled(!cached.obstacle);
+            if (imgui::button("Move obstacle")) cached.action = ObstacleAction.MOVE;
+            imgui::end_disabled();
+            imgui::end_disabled();
+        } else {
+            imgui::text("Tiles rebuilt by the last edit: %u in %.2f ms", stats.last_tiles, stats.last_milliseconds);
+        }
+        if (!cached.enabled) imgui::text("Tiles rebuilt since start: %u", stats.total_tiles);
         imgui::text("Debug lines: %u emitted, %u dropped", (uint)sink.vertices.len() / 2, (uint)sink.dropped);
     }
     imgui::end();
@@ -739,18 +824,20 @@ fn void? update_patch(
     GridTileBuilder* builder,
     NavMesh* mesh,
     RebuildStats* stats,
+    GridCache* cache,
 ) @local {
     time::Clock started = clock::now();
-    @pool() {
-        Geometry floor = patch_mesh(tmem, level, false);
-        Geometry ceiling = patch_mesh(tmem, level, true);
-        assets.replace_geometry(level.patch_geometry, &floor)!;
-        assets.replace_geometry(level.ceiling_geometry, &ceiling)!;
-    };
+    refresh_patch(assets, scene, level)!;
 
-    level.ceiling_node.visible = level.sloped_ceiling;
-    foreach (wall : level.passage_walls) wall.visible = level.narrow_passage;
-    scene.update_world();
+    if (cache) {
+        cache.mark_dirty({
+            .min_x = PATCH_ORIGIN.x,
+            .min_z = PATCH_ORIGIN.y,
+            .max_x = PATCH_ORIGIN.x + PATCH_SIDE,
+            .max_z = PATCH_ORIGIN.y + PATCH_SIDE,
+        }, cache.source_revision + 1)!;
+        return;
+    }
 
     // Neighbouring build windows overlap the edited patch.
     int border = (int)builder.tile_config.border_size;
@@ -769,10 +856,103 @@ fn void? update_patch(
     stats.total_tiles += stats.last_tiles;
 }
 
-fn void draw_cells(debug::DebugDraw* sink) @local {
+fn void? refresh_patch(AssetStore* assets, Scene* scene, GridLevel* level) @local {
+    @pool() {
+        Geometry floor = patch_mesh(tmem, level, false);
+        Geometry ceiling = patch_mesh(tmem, level, true);
+        assets.replace_geometry(level.patch_geometry, &floor)!;
+        assets.replace_geometry(level.ceiling_geometry, &ceiling)!;
+    };
+    level.ceiling_node.visible = level.sloped_ceiling;
+    foreach (wall : level.passage_walls) wall.visible = level.narrow_passage;
+    scene.update_world();
+}
+
+fn void? apply_cache_obstacle(GridCache* cache, CacheControls* controls, bool patch) @local {
+    if (controls.action == ObstacleAction.NONE) return;
+    if (controls.obstacle) {
+        cache.cache.remove_obstacle(controls.obstacle)!;
+        controls.obstacle = (ObstacleRef)0;
+    }
+    switch (controls.action) {
+        case NONE:
+            break;
+        case REMOVE:
+            controls.moved = false;
+        case ADD:
+        case MOVE:
+            if (controls.action == ObstacleAction.MOVE) controls.moved = !controls.moved;
+            Vec3 base = patch ? (Vec3){ 38, 0, 39 } : (Vec3){ 22, 0, 39 };
+            if (controls.moved) base.x += 3;
+            controls.obstacle = cache.cache.add_box_obstacle({ .min = base, .max = base + (Vec3){ 1, 1.5f, 2 } })!;
+    }
+    controls.action = ObstacleAction.NONE;
+}
+
+fn void? advance_cache_demo(
+    AssetStore* assets,
+    Scene* scene,
+    GridLevel* level,
+    GridCache* cache,
+    CacheControls* controls,
+    uint frame,
+) @local {
+    switch (frame) {
+        case CACHE_DEMO_ADD_FRAME:
+            controls.action = ObstacleAction.ADD;
+            io::printfn("frame %d: add obstacle", frame);
+        case CACHE_DEMO_MOVE_FRAME:
+            controls.action = ObstacleAction.MOVE;
+            io::printfn("frame %d: move obstacle", frame);
+        case CACHE_DEMO_REMOVE_FRAME:
+            controls.action = ObstacleAction.REMOVE;
+            io::printfn("frame %d: remove obstacle", frame);
+        case CACHE_DEMO_BORDER_FRAME:
+            toggle_wall(scene, level, CACHE_DEMO_BORDER_CELL)!;
+            cache.mark_dirty({
+                .min_x = CACHE_DEMO_BORDER_CELL.x,
+                .min_z = CACHE_DEMO_BORDER_CELL.y,
+                .max_x = CACHE_DEMO_BORDER_CELL.x + 1,
+                .max_z = CACHE_DEMO_BORDER_CELL.y + 1,
+            }, cache.source_revision + 1)!;
+            io::printfn("frame %d: edit border cell (%d, %d), revision %d", frame,
+                CACHE_DEMO_BORDER_CELL.x, CACHE_DEMO_BORDER_CELL.y, cache.source_revision);
+        case CACHE_DEMO_CORNER_FRAME:
+            level.raised_vertex = true;
+            refresh_patch(assets, scene, level)!;
+            GridRange incident = nav::grid_vertex_cells({
+                .min_x = CACHE_DEMO_VERTEX.x,
+                .min_z = CACHE_DEMO_VERTEX.y,
+                .max_x = CACHE_DEMO_VERTEX.x + 1,
+                .max_z = CACHE_DEMO_VERTEX.y + 1,
+            })!;
+            cache.mark_dirty(incident, cache.source_revision + 1)!;
+            io::printfn("frame %d: raise shared vertex (%d, %d), revision %d", frame,
+                CACHE_DEMO_VERTEX.x, CACHE_DEMO_VERTEX.y, cache.source_revision);
+        default:
+            break;
+    }
+}
+
+fn void draw_cache_obstacles(TileCache* cache, debug::DebugDraw* sink) @local {
+    foreach (&obstacle : cache.obstacles) {
+        switch (obstacle.state) {
+            case EMPTY:
+                break;
+            case PROCESSING:
+                sink.aabb(obstacle.bounds(), OBSTACLE_PENDING_COLOR);
+            case PROCESSED:
+                sink.aabb(obstacle.bounds(), OBSTACLE_READY_COLOR);
+            case REMOVING:
+                sink.aabb(obstacle.bounds(), OBSTACLE_REMOVING_COLOR);
+        }
+    }
+}
+
+fn void draw_cells(debug::DebugDraw* sink, uint tile_cells) @local {
     for (int line = 0; line <= MAP_SIDE; line++) {
         float offset = (float)line * CELL_SIZE;
-        uint color = line % TILE_CELLS == 0 ? TILE_LINE_COLOR : GRID_LINE_COLOR;
+        uint color = (uint)line % tile_cells == 0 ? TILE_LINE_COLOR : GRID_LINE_COLOR;
         sink.line({ offset, GRID_LIFT, 0 }, { offset, GRID_LIFT, MAP_WORLD_SIZE }, color);
         sink.line({ 0, GRID_LIFT, offset }, { MAP_WORLD_SIZE, GRID_LIFT, offset }, color);
     }
@@ -797,10 +977,11 @@ fn void draw_debug(
     Crowd* crowd,
     Agents* agents,
     Controls* controls,
+    uint tile_cells,
     debug::DebugDraw* sink,
 ) @local {
     sink.clear();
-    if (controls.cells) draw_cells(sink);
+    if (controls.cells) draw_cells(sink, tile_cells);
     mesh.debug_draw(sink, controls.mesh);
     crowd.debug_draw(sink, { .agents = true });
     if (controls.paths) draw_paths(crowd, sink);
@@ -839,6 +1020,8 @@ fn void? run(
     AssetStore* assets,
     Scene* scene,
     bool fan_in,
+    bool cache_mode,
+    bool cache_demo,
     NavBuildConfig config,
     uint frame_limit,
 ) @local {
@@ -850,6 +1033,7 @@ fn void? run(
         scene: scene,
         fan_in: fan_in,
         bounded_detail: bounded_detail,
+        cache_demo: cache_demo,
     )!;
     defer free(level);
     scene.update_world();
@@ -868,13 +1052,40 @@ fn void? run(
           : bounded_detail ? DETAIL_SCRATCH_BYTES : nav::DEFAULT_GRID_SCRATCH_BYTES,
     )!;
     defer nav::destroy_grid_tile_builder(&builder);
-    NavMesh mesh = nav::create_nav_mesh(mem, builder.mesh_desc(MAP_TILES * MAP_TILES))!;
+    GridCache cache;
+    if (cache_mode) {
+        GridRange extent = { .max_x = MAP_TILES, .max_z = MAP_TILES };
+        if (cache_demo) extent = {
+            .min_x = PATCH_ORIGIN.x / (int)CACHE_DEMO_TILE_CELLS,
+            .min_z = PATCH_ORIGIN.y / (int)CACHE_DEMO_TILE_CELLS,
+            .max_x = (PATCH_ORIGIN.x + PATCH_SIDE) / (int)CACHE_DEMO_TILE_CELLS,
+            .max_z = (PATCH_ORIGIN.y + PATCH_SIDE) / (int)CACHE_DEMO_TILE_CELLS,
+        };
+        GridCacheDesc desc = nav::default_grid_cache_desc(extent, config);
+        desc.max_cached_layers = (uint)((extent.max_x - extent.min_x) * (extent.max_z - extent.min_z)) * nav::MAX_GRID_FLOORS;
+        desc.build_slots = 1;
+        if (sub_cell) {
+            desc.slot_scratch_bytes = SUB_CELL_SCRATCH_BYTES;
+            desc.cache_scratch_bytes = SUB_CELL_SCRATCH_BYTES;
+        }
+        cache = nav::create_grid_cache(
+            allocator: mem,
+            desc: desc,
+            source: source,
+            identity: (GridSourceId)1,
+            revision: 1,
+        )!;
+    }
+    defer if (cache_mode) nav::destroy_grid_cache(&cache);
+    NavMesh mesh = nav::create_nav_mesh(mem, cache_mode ? cache.mesh_desc() : builder.mesh_desc(MAP_TILES * MAP_TILES))!;
     defer nav::destroy_nav_mesh(&mesh);
-    for (int tile_z = 0; tile_z < MAP_TILES; tile_z++) {
-        for (int tile_x = 0; tile_x < MAP_TILES; tile_x++) (void)install_tile(&builder, &mesh, { tile_x, tile_z })!;
+    if (!cache_mode) {
+        for (int tile_z = 0; tile_z < MAP_TILES; tile_z++) {
+            for (int tile_x = 0; tile_x < MAP_TILES; tile_x++) (void)install_tile(&builder, &mesh, { tile_x, tile_z })!;
+        }
     }
 
-    if (fan_in) {
+    if (fan_in && !cache_mode) {
         TileInstallTiming ordinary = install_tile(&builder, &mesh, ORDINARY_TILE)!;
         TileInstallTiming seam = install_tile(&builder, &mesh, FAN_IN_TILE)!;
         io::printfn(
@@ -903,14 +1114,18 @@ fn void? run(
     )!;
     defer nav::destroy_crowd(&crowd);
     Agents agents;
-    spawn_agents(
-        assets: assets,
-        scene:  scene,
-        level:  level,
-        agents: &agents,
-        fan_in: fan_in,
-    )!;
-    if (fan_in) send_agents(scene, &agents, FAN_IN_GOAL);
+    bool agents_spawned;
+    if (!cache_mode) {
+        spawn_agents(
+            assets: assets,
+            scene: scene,
+            level: level,
+            agents: &agents,
+            fan_in: fan_in,
+        )!;
+        agents_spawned = true;
+        if (fan_in) send_agents(scene, &agents, FAN_IN_GOAL);
+    }
 
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
@@ -929,10 +1144,12 @@ fn void? run(
         .paths = true,
     };
     RebuildStats stats;
+    CacheControls cached = { .enabled = cache_mode, .demo = cache_demo };
     renderer.prepare_scene(scene)!;
 
     uint frames;
     while (window.poll()) {
+        frames++;
         Input* input = &window.input;
         if (input.key_released(platform::Scancode.ESCAPE) && !input.keyboard_captured_by_gui) break;
         gui_renderer.new_frame();
@@ -945,6 +1162,7 @@ fn void? run(
             stats: &stats,
             level: level,
             builder: &builder,
+            cached: &cached,
             sink: &sink,
         )) {
             update_patch(
@@ -954,6 +1172,7 @@ fn void? run(
                 builder: &builder,
                 mesh: &mesh,
                 stats: &stats,
+                cache: cache_mode ? &cache : null,
             )!;
         }
 
@@ -973,9 +1192,10 @@ fn void? run(
                         builder: &builder,
                         mesh:    &mesh,
                         stats:   &stats,
+                        cache:   cache_mode ? &cache : null,
                         cell:    picked.cell,
                     )!;
-                } else {
+                } else if (agents_spawned) {
                     send_agents(scene, &agents, picked.position);
                 }
             }
@@ -988,11 +1208,47 @@ fn void? run(
         );
         scene.update_world();
 
+        if (cache_mode) {
+            if (cache_demo) advance_cache_demo(
+                assets: assets,
+                scene: scene,
+                level: level,
+                cache: &cache,
+                controls: &cached,
+                frame: frames,
+            )!;
+            apply_cache_obstacle(&cache, &cached, bounded_detail)!;
+            cached.progress = cache.update(&mesh, 1);
+            cached.failed += cached.progress.failed;
+            cached.completed += cached.progress.installed + cached.progress.rebuilt;
+            if (cache_demo && cached.progress.attempted) {
+                io::printfn("frame %d: attempted=%d installed=%d rebuilt=%d pending_work=%d failed=%d", frames,
+                    cached.progress.attempted, cached.progress.installed, cached.progress.rebuilt,
+                    cached.progress.pending, cached.progress.failed);
+            }
+            if (cached.progress.failed) {
+                io::eprintfn("cached grid update failed: %s", cache.last_failure.reason);
+                if (cache_demo) return cache.last_failure.reason~;
+            }
+            if (!agents_spawned && !cached.progress.pending) {
+                spawn_agents(
+                    assets: assets,
+                    scene: scene,
+                    level: level,
+                    agents: &agents,
+                    fan_in: fan_in,
+                )!;
+                agents_spawned = true;
+                if (fan_in) send_agents(scene, &agents, FAN_IN_GOAL);
+                if (cache_demo) send_agents(scene, &agents, { 42.5f, PATCH_BASE, 42.5f });
+            }
+        }
+
         // A reinstalled tile retires its polygon refs; the crowd replans the corridors through it.
         nav::crowd_update(
             scene: scene,
             crowd: &crowd,
-            dt:    math::clamp(window.clock.delta, MIN_STEP, MAX_STEP),
+            dt:    cache_demo ? CACHE_DEMO_STEP : math::clamp(window.clock.delta, MIN_STEP, MAX_STEP),
         );
         scene.update_world();
 
@@ -1001,8 +1257,10 @@ fn void? run(
             crowd:    &crowd,
             agents:   &agents,
             controls: &controls,
+            tile_cells: config.tile_size,
             sink:     &sink,
         );
+        if (cache_mode) draw_cache_obstacles(&cache.cache, &sink);
         gui_renderer.finish_frame();
 
         platform::sync_window(window, renderer);
@@ -1014,12 +1272,22 @@ fn void? run(
             sink:         &sink,
             info:         { .time = window.clock.total, .delta = window.clock.delta },
         )!;
-        if (frame_limit && ++frames >= frame_limit) break;
+        if (frame_limit && frames >= frame_limit) break;
+    }
+    if (cache_demo) {
+        io::printfn("cache demo: frames=%d completed=%d pending_work=%d failed=%d revision=%d", frames,
+            cached.completed, cached.progress.pending, cached.failed, cache.source_revision);
+        foreach (index, tile : cache.tiles) {
+            io::printfn("coordinate %d: layers=%d installed_revision=%d", (uint)index,
+                tile.layer_count, tile.installed_revision);
+        }
     }
 }
 
 fn int main(String[] args) {
     bool fan_in;
+    bool cache_mode;
+    bool cache_demo;
     bool custom_clearance_error;
     NavBuildConfig config = nav::default_grid_build_config(CELL_SIZE);
     config.tile_size = (uint)TILE_CELLS;
@@ -1029,6 +1297,11 @@ fn int main(String[] args) {
         String arg = args[index];
         if (arg == "--fan-in") {
             fan_in = true;
+        } else if (arg == "--cache") {
+            cache_mode = true;
+        } else if (arg == "--cache-demo") {
+            cache_mode = true;
+            cache_demo = true;
         } else if (arg == "--detail") {
             config.detail_mode = DetailMode.BOUNDED;
         } else if (arg == "--sub-cell") {
@@ -1048,11 +1321,20 @@ fn int main(String[] args) {
             if (catch parsed) return 1;
             frame_limit = parsed;
         } else {
-            io::eprintfn("Unknown argument: %s; use --fan-in, --detail, --sub-cell, --radius R, --clearance-error E or --frames N", arg);
+            io::eprintfn("Unknown argument: %s; use --fan-in, --cache, --cache-demo, --detail, --sub-cell, --radius R, --clearance-error E or --frames N", arg);
             return 1;
         }
     }
 
+    if (cache_demo) {
+        if (fan_in) {
+            io::eprintfn("--cache-demo and --fan-in select different scenes");
+            return 1;
+        }
+        config.detail_mode = DetailMode.BOUNDED;
+        config.tile_size = CACHE_DEMO_TILE_CELLS;
+        if (!frame_limit) frame_limit = CACHE_DEMO_FRAMES;
+    }
     if (config.detail_mode == DetailMode.BOUNDED) config.detail_max_error = DETAIL_HEIGHT_ERROR;
     if (config.clearance_mode == ClearanceMode.SUB_CELL && !custom_clearance_error) {
         config.clearance_max_error = 2.0f * CELL_SIZE / (float)SUB_CELL_SUBDIVISION;
@@ -1082,6 +1364,8 @@ fn int main(String[] args) {
         assets:   &assets,
         scene:    &scene,
         fan_in:   fan_in,
+        cache_mode: cache_mode,
+        cache_demo: cache_demo,
         config:   config,
         frame_limit: frame_limit,
     )) {
