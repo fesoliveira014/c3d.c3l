@@ -153,11 +153,11 @@ fn Level? build_level(AssetStore* assets, Scene* scene, PhysicsWorld* physics) @
         StandardParams params = material::STANDARD_PARAMS_DEFAULT;
         params.base_color = { 0.34f, 0.39f, 0.36f, 1 };
         params.roughness = 0.9f;
-        ground_material = assets.add_material(material::standard(params), "ragdoll/ground_material")!;
+        ground_material = assets.find_material("ragdoll/ground_material") ?? assets.add_material(material::standard(params), "ragdoll/ground_material")!;
         params.base_color = { 0.9f, 0.55f, 0.15f, 1 };
-        level.box_material = assets.add_material(material::standard(params), "ragdoll/box_material")!;
+        level.box_material = assets.find_material("ragdoll/box_material") ?? assets.add_material(material::standard(params), "ragdoll/box_material")!;
         params.base_color = { 0.65f, 0.22f, 0.18f, 1 };
-        blocker_material = assets.add_material(material::standard(params), "ragdoll/blocker_material")!;
+        blocker_material = assets.find_material("ragdoll/blocker_material") ?? assets.add_material(material::standard(params), "ragdoll/blocker_material")!;
     };
     Node* ground = scene.add_mesh(ground_geometry, ground_material, name: "ground")!;
     level.blocker = scene.add_mesh(blocker_geometry, blocker_material, name: "static_blocker")!;
