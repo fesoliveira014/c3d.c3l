@@ -295,6 +295,8 @@ hull, a sloped mesh, a heightfield ramp with a hole, and a compound with differe
 box and mesh children. It uses the default discrete contact settings. The panel reports candidate
 and active-contact work, failed cloths and the maximum contact deficit.
 
+![Pinned cloth sheets over box, hull, mesh, heightfield and compound colliders](images/cloth_contacts.png)
+
 The benchmark renders one scene (the flag at 32x32 cells) at the default 4x8 settings to a
 1280x720 TAA and motion-blur view with 120 warm-up and 600 measured 60 Hz frames; `--ragdoll`
 drops the character at the end of the warm-up in a cape scene. `--validation` enables Vulkan
