@@ -72,7 +72,9 @@ float surface_pdf(TraceSurface surface, StandardSurface standard, float specular
 
 vec3 direct_light(FrameRoot frame, TraceSurface surface, StandardSurface standard) {
     vec3 radiance = vec3(0.0);
-    for (uint index = 0u; index < frame.light_count; index++) {
+    LightCursor cursor = light_cursor(frame.light_spatial, frame.light_count);
+    uint index;
+    while (next_light(cursor, surface.position, index)) {
         LightGpu light = LightArray(frame.lights).values[index];
         if ((light.layers & surface.layers) == 0u) continue;
 

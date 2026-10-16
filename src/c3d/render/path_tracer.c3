@@ -223,6 +223,7 @@ fn void? record_path_traced_view(
 
         LightCounts light_counts;
         gpu::GpuAddress light_address;
+        gpu::GpuAddress light_spatial;
         instrumentation::@scope("view.lights") {
             LightExtraction extraction = extract_lights(
                 allocator:     tmem,
@@ -237,6 +238,7 @@ fn void? record_path_traced_view(
                 origin:        renderer.frame_origin,
             );
             light_address = upload_lights(renderer, extraction.lights)!;
+            light_spatial = upload_light_spatial(renderer, extraction.lights)!;
             renderer.stats.lights += light_counts.packed;
             renderer.stats.lights_dropped += light_counts.dropped;
             record.stats.lights = light_counts.packed;
@@ -275,6 +277,7 @@ fn void? record_path_traced_view(
                 trace:       trace_root,
                 origin:      renderer.frame_origin,
             );
+            ((FrameRoot*)frame_span.bytes.ptr).light_spatial = light_spatial;
             if (environments.sky) {
                 sky_root = pack_sky(
                     renderer: renderer,

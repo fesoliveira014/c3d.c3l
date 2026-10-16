@@ -670,6 +670,7 @@ fn void? record_raster_view(
         FogLighting fog_lighting;
         ShadowSet* shadow_set = &renderer.shadow_set;
         gpu::GpuAddress light_address;
+        gpu::GpuAddress light_spatial;
         gpu::GpuAddress decal_address;
         ClusterFrame cluster_frame;
         instrumentation::@scope("view.lights") {
@@ -725,6 +726,14 @@ fn void? record_raster_view(
                     pruned: pruned_clusters,
                 )!;
                 light_address = cluster_frame.lights;
+                if (cluster_frame.clusters != (gpu::GpuAddress)0) {
+                    light_spatial = upload_light_spatial(
+                        renderer: renderer,
+                        lights: lights,
+                        desc: LIGHT_CLUSTER_BVH_BUILD,
+                        raster_admission: true,
+                    )!;
+                }
                 decal_address = cluster_frame.decals;
             } else {
                 light_address = upload_lights(renderer, lights)!;
@@ -822,6 +831,7 @@ fn void? record_raster_view(
                 shadow_samples: math::max(record.desc.ray_tracing.shadow_samples, 1u),
                 ao_bent_normals: ambient_occlusion && record.desc.ambient_occlusion.bent_normals,
             );
+            ((FrameRoot*)frame_span.bytes.ptr).light_spatial = light_spatial;
             if (record.desc.lights == LightSelection.CLUSTERED) {
                 if (!pruned_clusters) {
                     record_clusters(

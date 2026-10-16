@@ -184,6 +184,7 @@ fn void? record_probe_updates(Renderer* renderer, ProbeFillRecording* recording,
     );
     renderer.stats.lights_dropped += light_counts.dropped;
     gpu::GpuAddress lights = upload_lights(renderer, extraction.lights)!;
+    gpu::GpuAddress light_spatial = upload_light_spatial(renderer, extraction.lights)!;
 
     if (recording.lighting && !recording.environment_ready) {
         recording.environment = pack_lighting_environment(
@@ -223,6 +224,7 @@ fn void? record_probe_updates(Renderer* renderer, ProbeFillRecording* recording,
         frame_index:   renderer.frame_index,
         origin:        renderer.frame_origin,
     );
+    ((FrameRoot*)frame_span.bytes.ptr).light_spatial = light_spatial;
 
     Quat rotation = maths::random_rotation({
         // Index 0 is the all-zero point, a half turn about y that leaves one ray in each probe layer's plane.

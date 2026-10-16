@@ -486,6 +486,20 @@ $assert $reflect(ClusterGpu.view_proj).offset == 80;
 $assert $reflect(ClusterGpu.decal_ranges).offset == 144;
 $assert $reflect(ClusterGpu.decal_indices).offset == 152;
 
+struct LightSpatialRoot {
+    GpuAddress nodes;
+    GpuAddress indices;
+    GpuAddress globals;
+    uint       global_count;
+    uint       node_count;
+}
+$assert LightSpatialRoot::size == 32;
+$assert $reflect(LightSpatialRoot.nodes).offset == 0;
+$assert $reflect(LightSpatialRoot.indices).offset == 8;
+$assert $reflect(LightSpatialRoot.globals).offset == 16;
+$assert $reflect(LightSpatialRoot.global_count).offset == 24;
+$assert $reflect(LightSpatialRoot.node_count).offset == 28;
+
 struct FrameRoot {
     Mat4f        view;
     Mat4f        proj;
@@ -528,8 +542,11 @@ struct FrameRoot {
     float        pre_exposure;
     float        pre_exposure_ratio;
     GpuAddress   cloud_shadow;
+    GpuAddress   light_spatial;
+    uint         _pad0;
+    uint         _pad1;
 }
-$assert FrameRoot::size == 576;
+$assert FrameRoot::size == 592;
 $assert $reflect(FrameRoot.view).offset == 0;
 $assert $reflect(FrameRoot.proj).offset == 64;
 $assert $reflect(FrameRoot.view_proj).offset == 128;
@@ -571,6 +588,9 @@ $assert $reflect(FrameRoot.max_reflection_roughness).offset == 556;
 $assert $reflect(FrameRoot.pre_exposure).offset == 560;
 $assert $reflect(FrameRoot.pre_exposure_ratio).offset == 564;
 $assert $reflect(FrameRoot.cloud_shadow).offset == 568;
+$assert $reflect(FrameRoot.light_spatial).offset == 576;
+$assert $reflect(FrameRoot._pad0).offset == 584;
+$assert $reflect(FrameRoot._pad1).offset == 588;
 
 struct DrawRoot {
     Mat4f        model;
@@ -1139,8 +1159,9 @@ struct RtReflectionRoot {
     uint         ray_count;
     uint         trace_shift;
     uint         _pad1;
+    GpuAddress   light_spatial;
 }
-$assert RtReflectionRoot::size == 64;
+$assert RtReflectionRoot::size == 72;
 $assert $reflect(RtReflectionRoot.frame).offset == 0;
 $assert $reflect(RtReflectionRoot.lights).offset == 8;
 $assert $reflect(RtReflectionRoot.depth).offset == 16;
@@ -1155,6 +1176,7 @@ $assert $reflect(RtReflectionRoot.light_count).offset == 48;
 $assert $reflect(RtReflectionRoot.ray_count).offset == 52;
 $assert $reflect(RtReflectionRoot.trace_shift).offset == 56;
 $assert $reflect(RtReflectionRoot._pad1).offset == 60;
+$assert $reflect(RtReflectionRoot.light_spatial).offset == 64;
 
 struct RtReflectionUpsampleRoot {
     GpuAddress   frame;

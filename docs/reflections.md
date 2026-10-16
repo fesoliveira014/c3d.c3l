@@ -188,7 +188,9 @@ and the specular-weight input. `reflections` forces the depth prepass on whateve
 The pass packs its own light list each frame, apart from the view's. It holds every light eligible for
 the camera's `layers`, so a finite light outside the camera frustum still lights a reflected surface.
 Lights keep the view's budget order and stop at `RendererDesc.max_lights`. The list lives in the frame's
-upload ring.
+upload ring, together with its own [spatial lookup](many_lights.md#spatial-light-lookup).
+The lookup uses the hit position and preserves the list's original indices and complete
+finite/global membership.
 
 A light skips a hit whose node `layers` do not intersect `Light.layers`, before its shadow ray, as in
 raster. Ambient and emission do not use the mask. Every light with shadows enabled casts a shadow ray at
@@ -244,6 +246,6 @@ python3 scripts/build.py --example rt_effects
 - `HALF` rebuilds untraced pixels from compatible neighbours only; a pixel at a depth, normal, roughness or
   specular-weight edge with none keeps the prefiltered specular.
 - Hits see the traced scene: skinned and morphed meshes appear at their raster pose; crowd placements appear only through `add_crowd(trace: true)`; custom vertex stages and `BLEND` meshes are absent.
-- Every hit loops the whole reflection light list (no clustering) with a shadow ray per shadowing
+- Every hit evaluates its spatial candidates and globals with a shadow ray per shadowing
   light in reach, so hit cost grows with the light count.
 - Hit shading evaluates the Standard lobes and, for Physical, specular and IOR, clearcoat, sheen, anisotropy and the transmission fallback; normal maps apply at hits.

@@ -8,6 +8,7 @@
 #include "constants.glsl"
 #include "brdf.glsl"
 #include "lights.glsl"
+#include "light_spatial.glsl"
 #include "ibl.glsl"
 #include "physical.glsl"
 #include "toon.glsl"
@@ -18,10 +19,11 @@
 struct HitLights {
     uint64_t address;
     uint count;
+    uint64_t spatial;
 };
 
 HitLights frame_hit_lights(FrameRoot frame) {
-    return HitLights(frame.lights, frame.light_count);
+    return HitLights(frame.lights, frame.light_count, frame.light_spatial);
 }
 
 // Raster atlas layers are fitted to the camera, so every shadowing light traces at a hit.
@@ -36,7 +38,9 @@ vec3 hit_environment_diffuse(FrameRoot frame, vec3 albedo, TraceSurface surface,
 
 vec3 hit_lambert_direct(FrameRoot frame, HitLights lights, TraceSurface surface, vec3 albedo) {
     vec3 radiance = vec3(0.0);
-    for (uint index = 0u; index < lights.count; index++) {
+    LightCursor cursor = light_cursor(lights.spatial, lights.count);
+    uint index;
+    while (next_light(cursor, surface.position, index)) {
         LightGpu light = LightArray(lights.address).values[index];
         if ((light.layers & surface.layers) == 0u) continue;
 
@@ -51,7 +55,9 @@ vec3 hit_lambert_direct(FrameRoot frame, HitLights lights, TraceSurface surface,
 vec3 hit_toon_direct(FrameRoot frame, HitLights lights, TraceSurface surface) {
     ToonMaterialGpu material = ToonMaterialGpu(surface.material);
     vec3 radiance = vec3(0.0);
-    for (uint index = 0u; index < lights.count; index++) {
+    LightCursor cursor = light_cursor(lights.spatial, lights.count);
+    uint index;
+    while (next_light(cursor, surface.position, index)) {
         LightGpu light = LightArray(lights.address).values[index];
         if ((light.layers & surface.layers) == 0u) continue;
 
@@ -73,7 +79,9 @@ vec3 shade_standard_hit(FrameRoot frame, HitLights lights, TraceSurface surface,
         view_direction
     );
     vec3 color = pre_exposed(frame, surface.emissive) + frame.ambient.rgb * surface.albedo * (1.0 - surface.metallic);
-    for (uint index = 0u; index < lights.count; index++) {
+    LightCursor cursor = light_cursor(lights.spatial, lights.count);
+    uint index;
+    while (next_light(cursor, surface.position, index)) {
         LightGpu light = LightArray(lights.address).values[index];
         if ((light.layers & surface.layers) == 0u) continue;
 
@@ -163,7 +171,9 @@ vec3 shade_physical_hit(FrameRoot frame, HitLights lights, TraceSurface surface,
         );
     }
 
-    for (uint index = 0u; index < lights.count; index++) {
+    LightCursor cursor = light_cursor(lights.spatial, lights.count);
+    uint index;
+    while (next_light(cursor, surface.position, index)) {
         LightGpu light = LightArray(lights.address).values[index];
         if ((light.layers & surface.layers) == 0u) continue;
 

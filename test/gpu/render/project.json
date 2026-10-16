@@ -41,6 +41,7 @@
       "sources": [
         "test_submission.c3",
         "test_post_tiles.c3",
+        "test_light_spatial.c3",
         "test_prepare_pipelines.c3",
         "test_prepare.c3",
         "test_prepare_textures.c3",

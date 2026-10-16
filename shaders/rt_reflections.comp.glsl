@@ -83,7 +83,7 @@ void main() {
         vec3 radiance;
         if (trace_scene(scene, origin, direction, RT_REFLECTION_FAR, TRACE_MASK_ALL, hit)) {
             TraceSurface surface = surface_from_hit(scene, hit, direction, cone_width + hit.t * cone_spread);
-            radiance = shade_hit(frame, HitLights(root.lights, root.light_count), surface, -direction);
+            radiance = shade_hit(frame, HitLights(root.lights, root.light_count, root.light_spatial), surface, -direction);
             radiance = apply_fog_segment(frame, position, surface.position, radiance);
         } else {
             radiance = trace_miss_radiance(frame, direction);

@@ -7,7 +7,7 @@ import c3d::shader;
 import gpu;
 import std::math;
 
-$assert RtReflectionRoot::size == 64;
+$assert RtReflectionRoot::size == 72;
 $assert RtReflectionUpsampleRoot::size == 56;
 $assert RtReflectionBlurRoot::size == 40;
 $assert RtReflectionTemporalRoot::size == 72;
@@ -58,6 +58,7 @@ enum ReflectionPrepass @private {
 
 struct ReflectionLights @private {
     gpu::GpuAddress address;
+    gpu::GpuAddress spatial;
     uint            count;
 }
 
@@ -127,7 +128,11 @@ fn ReflectionLights? upload_reflection_lights(
         origin:       renderer.frame_origin,
         pre_exposure: pre_exposure,
     );
-    return { .address = upload_lights(renderer, lights)!, .count = (uint)lights.len };
+    return {
+        .address = upload_lights(renderer, lights)!,
+        .spatial = upload_light_spatial(renderer, lights)!,
+        .count = (uint)lights.len,
+    };
 }
 
 fn void? acquire_reflection_pipelines(Renderer* renderer, bool half_resolution, bool accumulates) @private {
@@ -329,6 +334,7 @@ fn void? record_reflections(
     *(RtReflectionRoot*)trace_root.bytes.ptr = {
         .frame             = frame,
         .lights            = lights.address,
+        .light_spatial     = lights.spatial,
         .depth             = record.depth.view.index,
         .normal_roughness  = normals.view.index,
         .emissive_specular = specular.view.index,

@@ -366,7 +366,7 @@ fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkOptions options) @local 
     base.ray_tracing.reflections = options.flags.reflections;
     if (options.flags.screen_space_gi) base.screen_space_gi = render::SCREEN_SPACE_GI_DEFAULT;
     base.shading = options.shading;
-    // A path-traced view loops every light itself and rejects the cluster grid.
+    // A path-traced view selects lights at its hits and rejects the cluster grid.
     base.lights = options.shading == ShadingPath.PATH_TRACED ? LightSelection.FLAT : options.selection;
     base.clusters.lights_per_cluster = options.capacity;
     base.clusters.depth_pruning = options.depth_pruning;
