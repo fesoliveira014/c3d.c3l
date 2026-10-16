@@ -345,6 +345,8 @@ fn void test_collision_cache_allocation_failures_release_partial_hull_cooking() 
         NullAllocator exhausted;
         assert(@catch(physics::create_collision_shape(&exhausted, &fixture.cache, cache_hull_desc(fixture.geometry)))
             == c3d::CAPACITY_EXCEEDED);
+        assert(fixture.cache.state.borrowers == 0);
+        foreach (slot : fixture.cache.state.slots) assert(slot.holders == 0);
         CollisionShape shape = physics::create_collision_shape(
             allocator: mem,
             cache: &fixture.cache,
@@ -367,6 +369,8 @@ fn void test_collision_shape_preparation_refuses_unsupported_and_degenerate_inpu
     desc.scale = { 1, 1, 1 };
     desc.radius = float::nan;
     assert(@catch(physics::create_collision_shape(mem, &fixture.cache, desc)) == c3d::INVALID_ARGUMENT);
+    NullAllocator exhausted;
+    assert(@catch(physics::create_collision_shape(&exhausted, &fixture.cache, desc)) == c3d::INVALID_ARGUMENT);
     desc.radius = float::max;
     assert(@catch(physics::create_collision_shape(mem, &fixture.cache, desc)) == b3::DEGENERATE_GEOMETRY);
     foreach (kind : (ColliderKind[3]){ MESH, HEIGHT_FIELD, COMPOUND }) {

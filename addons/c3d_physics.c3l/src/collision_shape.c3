@@ -73,10 +73,8 @@ fn CollisionShape? create_collision_shape(Allocator allocator, CollisionCache* c
         if (!math::is_finite(scale) || scale == 0) return c3d::INVALID_ARGUMENT~;
     }
     if (desc.scale != (Vec3){ 1, 1, 1 }) return c3d::UNSUPPORTED~;
-    CollisionShapeState* state = alloc::new_try(allocator, CollisionShapeState) ?? c3d::CAPACITY_EXCEEDED~!;
-    defer catch alloc::free(allocator, state);
-    state.allocator = allocator;
-    state.cache = cache.state;
+    CollisionShapeState state = { .allocator = allocator, .cache = cache.state };
+    defer catch release_snapshot(state.cache, state.snapshot);
     Vec3 extents;
     switch (desc.kind) {
         case SPHERE:
@@ -116,7 +114,6 @@ fn CollisionShape? create_collision_shape(Allocator allocator, CollisionCache* c
         case HULL:
             if (!cache.state.assets.geometries.is_live(desc.geometry)) return c3d::INVALID_ID~;
             state.snapshot = acquire_hull(cache.state, desc.geometry, query: true)!;
-            defer catch release_snapshot(cache.state, state.snapshot);
             b3::HullData* hull = snapshot_of(cache.state, state.snapshot).hull;
             check_collision_hull(hull)!;
             state.shape = { .kind = collide::ShapeKind.HULL, .hull = hull };
@@ -127,8 +124,10 @@ fn CollisionShape? create_collision_shape(Allocator allocator, CollisionCache* c
             return c3d::UNSUPPORTED~;
     }
     if (desc.kind != HULL) state.bounds = { .min = -extents, .max = extents };
+    CollisionShapeState* owned = alloc::new_try(allocator, CollisionShapeState) ?? c3d::CAPACITY_EXCEEDED~!;
+    *owned = state;
     cache.state.borrowers++;
-    return { .state = state };
+    return { .state = owned };
 }
 
 <*
