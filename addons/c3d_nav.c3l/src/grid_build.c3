@@ -4,31 +4,31 @@ import std::math;
 import c3d;
 
 const uint GRID_QUAD_VERTICES @local = 4;
-const uint GRID_EDGE_CUT_CAPACITY @local = 2 + 6 * (MAX_GRID_FLOORS - 1);
+const uint GRID_EDGE_CUT_CAPACITY @local = 2 + 6 * (MAX_GRID_FLOORS - 1); // endpoints and three cuts per competitor per side
 const uint GRID_COMPACT_INDEX_LIMIT @local = (1u << 24) - 1;
 
 struct GridColumn @private {
     GridFloor[] floors;
-    uint span_base;
+    uint        span_base;
 }
 
 struct GridReference @private {
     GridColumn[] columns;
-    uint width;
-    uint height;
-    uint border_size;
-    uint span_count;
-    int first_x;
-    int first_z;
+    uint         width;
+    uint         height;
+    uint         border_size;
+    uint         span_count;
+    int          first_x;
+    int          first_z;
 }
 
 struct GridEdgeProfile @private {
     double[2] height;
     double[2] ceiling;
-    double min;
-    double max;
-    ushort ordinal;
-    bool ceiling_open;
+    double    min;
+    double    max;
+    ushort    ordinal;
+    bool      ceiling_open;
 }
 
 struct GridEdgeRoot @private {
@@ -38,26 +38,26 @@ struct GridEdgeRoot @private {
 }
 
 struct GridEdgeMatch @private {
-    ushort first;
-    ushort second;
+    ushort       first;
+    ushort       second;
     GridEdgeRoot min;
     GridEdgeRoot max;
-    bool include_min;
-    bool include_max;
+    bool         include_min;
+    bool         include_max;
 }
 
 struct GridPairRange @local {
     GridEdgeRoot min;
     GridEdgeRoot max;
-    bool active;
+    bool         active;
 }
 
 struct GridPartialEdge @local {
     GridPartialEdge* next;
-    uint first_column;
-    uint second_column;
-    uint direction;
-    GridEdgeMatch[] matches;
+    uint             first_column;
+    uint             second_column;
+    uint             direction;
+    GridEdgeMatch[]  matches;
 }
 
 struct GridPolygonSide @local {
@@ -66,29 +66,32 @@ struct GridPolygonSide @local {
 }
 
 struct GridConnection @local {
-    uint source_column;
-    uint target_column;
-    uint direction;
+    uint   source_column;
+    uint   target_column;
+    uint   direction;
     ushort source_floor;
     ushort target_floor;
-    float min;
-    float max;
+    float  min;
+    float  max;
 }
 
 fn char[]? build_bounded_grid(GridTileBuilder* builder, int tile_x, int tile_z) @private {
     GridReference reference = capture_grid_reference(builder, tile_x, tile_z)!;
     if (!reference.span_count) return {};
+
     CompactHeightfield compact = grid_compact_reference(builder, &reference)!;
     GridPartialEdge* partials = connect_grid_edges(builder, &reference, &compact)!;
     if (builder.tile_config.walkable_radius) {
         compact.erode_walkable_area(&builder.arena, builder.tile_config.walkable_radius)!;
     }
+
     filter_grid_regions(
         builder: builder,
         reference: &reference,
         compact: &compact,
         partials: partials,
     )!;
+
     return pack_grid_cells(
         builder: builder,
         reference: &reference,
@@ -102,11 +105,14 @@ fn char[]? build_bounded_grid(GridTileBuilder* builder, int tile_x, int tile_z) 
 fn GridReference? capture_grid_reference(GridTileBuilder* builder, int tile_x, int tile_z) @private {
     TileConfig* tile = &builder.tile_config;
     ulong column_count = (ulong)tile.width * tile.height;
-    if (column_count > int::max || column_count > (ulong)sz::max / GridColumn::size) return c3d::CAPACITY_EXCEEDED~;
+    if (column_count > int::max) return c3d::CAPACITY_EXCEEDED~;
+    if (column_count > (ulong)sz::max / GridColumn::size) return c3d::CAPACITY_EXCEEDED~;
+
     long first_x = (long)tile_x * builder.config.tile_size - tile.border_size;
     long first_z = (long)tile_z * builder.config.tile_size - tile.border_size;
-    if (first_x < int::min || first_z < int::min || first_x + tile.width - 1 > int::max
-        || first_z + tile.height - 1 > int::max) return c3d::INVALID_ARGUMENT~;
+    if (first_x < int::min || first_z < int::min) return c3d::INVALID_ARGUMENT~;
+    if (first_x + tile.width - 1 > int::max || first_z + tile.height - 1 > int::max) return c3d::INVALID_ARGUMENT~;
+
     GridColumn[]? allocated = alloc::new_array_try(&builder.arena, GridColumn, (sz)column_count);
     if (catch allocated) return c3d::CAPACITY_EXCEEDED~;
     GridReference reference = {
@@ -117,9 +123,11 @@ fn GridReference? capture_grid_reference(GridTileBuilder* builder, int tile_x, i
         .first_x = (int)first_x,
         .first_z = (int)first_z,
     };
+
     GridFloor[MAX_GRID_FLOORS] storage;
     for (uint z = 0; z < tile.height; z++) {
         for (uint x = 0; x < tile.width; x++) {
+            // Flat callbacks may leave the optional corner fields untouched.
             foreach (&floor : storage) *floor = {};
             usz count = builder.source.floors(
                 context: builder.source.context,
@@ -130,6 +138,7 @@ fn GridReference? capture_grid_reference(GridTileBuilder* builder, int tile_x, i
             if (count > MAX_GRID_FLOORS) return c3d::INVALID_ARGUMENT~;
             validate_grid_floors(storage[:count], &builder.source, DetailMode.BOUNDED)!;
             if (count > (usz)(GRID_COMPACT_INDEX_LIMIT - reference.span_count)) return c3d::CAPACITY_EXCEEDED~;
+
             GridColumn* column = &reference.columns[x + z * tile.width];
             column.span_base = reference.span_count;
             if (count) {
@@ -141,6 +150,7 @@ fn GridReference? capture_grid_reference(GridTileBuilder* builder, int tile_x, i
             reference.span_count += (uint)count;
         }
     }
+
     return reference;
 }
 
@@ -151,22 +161,27 @@ fn usz? grid_edge_matches(
     GridEdgeMatch[] output,
 ) @private {
     if (first.len > MAX_GRID_FLOORS || second.len > MAX_GRID_FLOORS) return c3d::CAPACITY_EXCEEDED~;
+
     GridPairRange[MAX_GRID_FLOORS * MAX_GRID_FLOORS] storage;
     GridPairRange[] pairs = storage[:first.len * second.len];
     foreach (first_index, first_profile : first) {
         foreach (second_index, second_profile : second) {
-            pairs[first_index * second.len + second_index] = grid_pair_range(first_profile, second_profile, config)!;
+            pairs[first_index * second.len + second_index] =
+              grid_pair_range(first_profile, second_profile, config)!;
         }
     }
+
     usz count;
     foreach (first_index, first_profile : first) {
         foreach (second_index, second_profile : second) {
             GridPairRange pair = pairs[first_index * second.len + second_index];
             if (!pair.active) continue;
+
             GridEdgeRoot[GRID_EDGE_CUT_CAPACITY] cuts;
             usz cut_count = 2;
             cuts[0] = pair.min;
             cuts[1] = pair.max;
+
             foreach (candidate, profile : second) {
                 if (candidate == second_index) continue;
                 add_grid_winner_cuts(
@@ -179,6 +194,7 @@ fn usz? grid_edge_matches(
                     other: profile,
                 )!;
             }
+
             foreach (candidate, profile : first) {
                 if (candidate == first_index) continue;
                 add_grid_winner_cuts(
@@ -191,6 +207,7 @@ fn usz? grid_edge_matches(
                     other: profile,
                 )!;
             }
+
             GridEdgeMatch match = { .first = first_profile.ordinal, .second = second_profile.ordinal };
             bool open;
             for (usz index = 1; index < cut_count; index++) {
@@ -198,6 +215,7 @@ fn usz? grid_edge_matches(
                 GridEdgeRoot sample = grid_edge_point(parameter)!;
                 if (compare_grid_roots(sample, cuts[index - 1])! <= 0
                     || compare_grid_roots(sample, cuts[index])! >= 0) return c3d::CAPACITY_EXCEEDED~;
+
                 bool selected = grid_pair_wins(
                     first: first,
                     second: second,
@@ -211,6 +229,7 @@ fn usz? grid_edge_matches(
                         append_grid_match(output, &count, match)!;
                         open = false;
                     }
+
                     if (!open) {
                         match.min = cuts[index - 1];
                         match.include_min = grid_pair_wins(
@@ -222,6 +241,7 @@ fn usz? grid_edge_matches(
                             sample: match.min,
                         )!;
                     }
+
                     match.max = cuts[index];
                     match.include_max = grid_pair_wins(
                         first: first,
@@ -237,9 +257,11 @@ fn usz? grid_edge_matches(
                     open = false;
                 }
             }
+
             if (open) append_grid_match(output, &count, match)!;
         }
     }
+
     return count;
 }
 
@@ -250,6 +272,7 @@ fn GridPairRange? grid_pair_range(GridEdgeProfile first, GridEdgeProfile second,
         .active = first.min < first.max && second.min < second.max,
     };
     if (!range.active || compare_grid_roots(range.min, range.max)! >= 0) return {};
+
     PrecisionInterval climb = precision_point(config.agent_max_climb)!;
     PrecisionInterval height = precision_point(config.agent_height)!;
     PrecisionInterval[2] rise;
@@ -259,8 +282,11 @@ fn GridPairRange? grid_pair_range(GridEdgeProfile first, GridEdgeProfile second,
             right: precision_point(first.height[endpoint])!,
         )!;
     }
+
     clip_grid_pair(&range, precision_subtract(climb, rise[0])!, precision_subtract(climb, rise[1])!)!;
     clip_grid_pair(&range, precision_add(climb, rise[0])!, precision_add(climb, rise[1])!)!;
+
+    // Crossing the edge needs headroom above either floor.
     for (uint ceiling = 0; ceiling < 2; ceiling++) {
         GridEdgeProfile upper = ceiling ? second : first;
         if (upper.ceiling_open) continue;
@@ -277,11 +303,13 @@ fn GridPairRange? grid_pair_range(GridEdgeProfile first, GridEdgeProfile second,
             clip_grid_pair(&range, begin, end)!;
         }
     }
+
     return range;
 }
 
 fn void? clip_grid_pair(GridPairRange* range, PrecisionInterval first, PrecisionInterval second) @local {
     if (!range.active) return;
+
     int first_sign = grid_interval_sign(first)!;
     int second_sign = grid_interval_sign(second)!;
     if (first_sign < 0 && second_sign < 0) {
@@ -289,12 +317,14 @@ fn void? clip_grid_pair(GridPairRange* range, PrecisionInterval first, Precision
         return;
     }
     if (first_sign >= 0 && second_sign >= 0) return;
+
     GridEdgeRoot root = grid_linear_root(first, second)!;
     if (first_sign < 0) {
         if (compare_grid_roots(root, range.min)! > 0) range.min = root;
     } else if (compare_grid_roots(root, range.max)! < 0) {
         range.max = root;
     }
+
     range.active = compare_grid_roots(range.min, range.max)! < 0;
 }
 
@@ -309,6 +339,7 @@ fn void? add_grid_winner_cuts(
 ) @local {
     if (!competitor.active || compare_grid_roots(competitor.max, range.min)! <= 0
         || compare_grid_roots(competitor.min, range.max)! >= 0) return;
+
     insert_grid_cut(
         cuts: cuts,
         count: count,
@@ -321,6 +352,7 @@ fn void? add_grid_winner_cuts(
         range: range,
         cut: competitor.max,
     )!;
+
     PrecisionInterval first = grid_rise_midpoint(
         source: source,
         first: selected,
@@ -336,8 +368,11 @@ fn void? add_grid_winner_cuts(
     int first_sign = grid_interval_sign(first)!;
     int second_sign = grid_interval_sign(second)!;
     if (first_sign == second_sign) return;
+
     GridEdgeRoot root = grid_linear_root(first, second)!;
-    if (compare_grid_roots(root, competitor.min)! < 0 || compare_grid_roots(root, competitor.max)! > 0) return;
+    if (compare_grid_roots(root, competitor.min)! < 0
+        || compare_grid_roots(root, competitor.max)! > 0) return;
+
     insert_grid_cut(
         cuts: cuts,
         count: count,
@@ -354,17 +389,20 @@ fn bool? grid_pair_wins(
     usz second_index,
     GridEdgeRoot sample,
 ) @local {
+    // Require the same winning pair in both directions.
     for (uint pass = 0; pass < 2; pass++) {
         GridEdgeProfile source = pass ? second[second_index] : first[first_index];
         GridEdgeProfile selected = pass ? first[first_index] : second[second_index];
         GridEdgeProfile[] choices = pass ? first : second;
         foreach (index, other : choices) {
             if (other.ordinal == selected.ordinal) continue;
+
             usz pair_index = pass ? (usz)index * (usz)second.len + second_index
               : first_index * (usz)second.len + (usz)index;
             GridPairRange range = pairs[pair_index];
             if (!range.active || compare_grid_roots(sample, range.min)! < 0
                 || compare_grid_roots(sample, range.max)! > 0) continue;
+
             PrecisionInterval begin = grid_rise_midpoint(
                 source: source,
                 first: selected,
@@ -383,6 +421,7 @@ fn bool? grid_pair_wins(
                 third: precision_subtract(precision_point(0)!, end)!,
                 fourth: sample.numerator,
             )!;
+            // Ordinals keep equal-climb choices deterministic.
             if (sign == 0) {
                 if (other.ordinal < selected.ordinal) return false;
             } else if ((other.ordinal < selected.ordinal && sign > 0)
@@ -391,6 +430,7 @@ fn bool? grid_pair_wins(
             }
         }
     }
+
     return true;
 }
 
@@ -414,12 +454,15 @@ fn GridEdgeRoot? grid_edge_point(double value) @private {
 fn GridEdgeRoot? grid_linear_root(PrecisionInterval first, PrecisionInterval second) @private {
     if (first.min == 0 && first.max == 0) return grid_edge_point(0);
     if (second.min == 0 && second.max == 0) return grid_edge_point(1);
+
     PrecisionInterval denominator = precision_subtract(first, second)!;
+    // Positive denominators preserve cross-product ordering.
     if (denominator.max < 0) {
         first = precision_subtract(precision_point(0)!, first)!;
         denominator = precision_subtract(precision_point(0)!, denominator)!;
     }
     if (denominator.min <= 0) return c3d::CAPACITY_EXCEEDED~;
+
     return {
         .bounds = precision_divide(first, denominator)!,
         .numerator = first,
@@ -430,6 +473,7 @@ fn GridEdgeRoot? grid_linear_root(PrecisionInterval first, PrecisionInterval sec
 fn int? compare_grid_roots(GridEdgeRoot first, GridEdgeRoot second) @private {
     if (first.bounds.max < second.bounds.min) return -1;
     if (first.bounds.min > second.bounds.max) return 1;
+
     return precision_compare_products(
         first: first.numerator,
         second: second.denominator,
@@ -442,6 +486,8 @@ fn int? grid_interval_sign(PrecisionInterval value) @local {
     if (value.min > 0) return 1;
     if (value.max < 0) return -1;
     if (value.min == 0 && value.max == 0) return 0;
+
+    // An unresolved sign cannot select a stable edge interval.
     return c3d::CAPACITY_EXCEEDED~;
 }
 
@@ -451,7 +497,9 @@ fn void? insert_grid_cut(
     GridPairRange range,
     GridEdgeRoot cut,
 ) @local {
-    if (compare_grid_roots(cut, range.min)! <= 0 || compare_grid_roots(cut, range.max)! >= 0) return;
+    if (compare_grid_roots(cut, range.min)! <= 0
+        || compare_grid_roots(cut, range.max)! >= 0) return;
+
     usz slot;
     while (slot < *count) {
         int order = compare_grid_roots(cut, cuts[slot])!;
@@ -459,6 +507,7 @@ fn void? insert_grid_cut(
         if (order < 0) break;
         slot++;
     }
+
     if (*count == cuts.len) return c3d::CAPACITY_EXCEEDED~;
     for (usz index = *count; index > slot; index--) cuts[index] = cuts[index - 1];
     cuts[slot] = cut;
@@ -466,7 +515,9 @@ fn void? insert_grid_cut(
 }
 
 fn void? append_grid_match(GridEdgeMatch[] output, usz* count, GridEdgeMatch match) @local {
-    if (*count >= DEFAULT_DETAIL_TRIANGLES || (output.len && *count == output.len)) return c3d::CAPACITY_EXCEEDED~;
+    if (*count >= DEFAULT_DETAIL_TRIANGLES
+        || (output.len && *count == output.len)) return c3d::CAPACITY_EXCEEDED~;
+
     if (output.len) output[*count] = match;
     (*count)++;
 }
@@ -479,6 +530,7 @@ fn CompactHeightfield? grid_compact_reference(GridTileBuilder* builder, GridRefe
     if (catch spans) return c3d::CAPACITY_EXCEEDED~;
     char[]? areas = alloc::new_array_try(arena, char, reference.span_count);
     if (catch areas) return c3d::CAPACITY_EXCEEDED~;
+
     CompactHeightfield compact = {
         .width = reference.width,
         .height = reference.height,
@@ -487,6 +539,7 @@ fn CompactHeightfield? grid_compact_reference(GridTileBuilder* builder, GridRefe
         .spans = spans,
         .areas = areas,
     };
+
     double slope = math::tan((double)builder.config.agent_max_slope_degrees * math::PI / 180.0);
     foreach (column_index, column : reference.columns) {
         long cell_x = (long)reference.first_x + (long)(column_index % reference.width);
@@ -496,6 +549,7 @@ fn CompactHeightfield? grid_compact_reference(GridTileBuilder* builder, GridRefe
         double depth = (double)grid_world_coordinate(builder.source.origin.z, cell_z + 1, builder.config.cell_size)!
             - grid_world_coordinate(builder.source.origin.z, cell_z, builder.config.cell_size)!;
         if (width <= 0 || depth <= 0) return c3d::CAPACITY_EXCEEDED~;
+
         compact.cells[column_index] = { .index = column.span_base, .count = (uint)column.floors.len };
         foreach (ordinal, &floor : column.floors) {
             uint span = column.span_base + (uint)ordinal;
@@ -507,11 +561,13 @@ fn CompactHeightfield? grid_compact_reference(GridTileBuilder* builder, GridRefe
                 depth: depth,
                 maximum_gradient: slope * slope,
             )) continue;
+
             if (floor.ceiling_kind == GridSurfaceKind.FLAT && floor.ceiling == float::max
                 && ordinal + 1 == column.floors.len) {
                 compact.areas[span] = floor.area;
                 continue;
             }
+
             bool admitted = true;
             for (uint point = 0; point <= DETAIL_CORNER_X.len; point++) {
                 double sample_x = point < DETAIL_CORNER_X.len ? (double)DETAIL_CORNER_X[point] : 0.5;
@@ -530,9 +586,11 @@ fn CompactHeightfield? grid_compact_reference(GridTileBuilder* builder, GridRefe
                 }
                 if (headroom.min < builder.config.agent_height) return c3d::CAPACITY_EXCEEDED~;
             }
+
             if (admitted) compact.areas[span] = floor.area;
         }
     }
+
     return compact;
 }
 
@@ -543,6 +601,7 @@ fn bool grid_surface_slope(
     double maximum_gradient,
 ) @local {
     if (floor.floor_kind == GridSurfaceKind.FLAT) return true;
+
     for (uint triangle = 0; triangle < 2; triangle++) {
         uint[3] corners = grid_triangle_corners(floor.diagonal, triangle);
         double x1 = (double)(DETAIL_CORNER_X[corners[1]] - DETAIL_CORNER_X[corners[0]]) * width;
@@ -551,11 +610,13 @@ fn bool grid_surface_slope(
         double z2 = (double)(DETAIL_CORNER_Z[corners[2]] - DETAIL_CORNER_Z[corners[0]]) * depth;
         double y1 = (double)floor.floor_corners[corners[1]] - floor.floor_corners[corners[0]];
         double y2 = (double)floor.floor_corners[corners[2]] - floor.floor_corners[corners[0]];
+
         double determinant = x1 * z2 - x2 * z1;
         double gradient_x = (y1 * z2 - y2 * z1) / determinant;
         double gradient_z = (x1 * y2 - x2 * y1) / determinant;
         if (gradient_x * gradient_x + gradient_z * gradient_z > maximum_gradient) return false;
     }
+
     return true;
 }
 
@@ -574,10 +635,12 @@ fn GridPartialEdge*? connect_grid_edges(
                 uint other_x = x + (uint)dir_offset_x(direction);
                 uint other_z = z + (uint)dir_offset_z(direction);
                 if (other_x >= reference.width || other_z >= reference.height) continue;
+
                 uint second_column = other_x + other_z * reference.width;
                 GridColumn* first = &reference.columns[first_column];
                 GridColumn* second = &reference.columns[second_column];
                 if (!first.floors.len || !second.floors.len) continue;
+
                 grid_edge_profiles(
                     column: first,
                     areas: compact.areas,
@@ -597,6 +660,7 @@ fn GridPartialEdge*? connect_grid_edges(
                     output: {},
                 )!;
                 if (!count) continue;
+
                 sz mark = builder.arena.mark();
                 GridEdgeMatch[]? allocated = alloc::new_array_try(&builder.arena, GridEdgeMatch, (sz)count);
                 if (catch allocated) return c3d::CAPACITY_EXCEEDED~;
@@ -607,6 +671,7 @@ fn GridPartialEdge*? connect_grid_edges(
                     config: &builder.config,
                     output: matches,
                 )!;
+                // Full-width links need no separate partial-portal record.
                 usz partial_count;
                 foreach (match : matches) {
                     if (match.min.bounds.min == 0 && match.min.bounds.max == 0
@@ -618,11 +683,13 @@ fn GridPartialEdge*? connect_grid_edges(
                         matches[partial_count++] = match;
                     }
                 }
+
                 if (!partial_count || (!builder.tile_config.min_region_area
                     && !grid_core_column(reference, first_column) && !grid_core_column(reference, second_column))) {
                     builder.arena.reset(mark);
                     continue;
                 }
+
                 GridPartialEdge*? record = alloc::new_try(&builder.arena, GridPartialEdge);
                 if (catch record) return c3d::CAPACITY_EXCEEDED~;
                 *record = {
@@ -636,6 +703,7 @@ fn GridPartialEdge*? connect_grid_edges(
             }
         }
     }
+
     return partials;
 }
 
@@ -651,6 +719,7 @@ fn void grid_edge_profiles(
             .ceiling_open = floor.ceiling_kind == GridSurfaceKind.FLAT && floor.ceiling == float::max
                 && ordinal + 1 == column.floors.len,
         };
+
         for (uint endpoint = 0; endpoint < 2; endpoint++) {
             double cell_x = direction == 0 ? 0 : direction == 2 ? 1 : (double)endpoint;
             double cell_z = direction == 3 ? 0 : direction == 1 ? 1 : (double)endpoint;
@@ -662,6 +731,7 @@ fn void grid_edge_profiles(
                 cell_z: cell_z,
             );
         }
+
         if (areas[column.span_base + ordinal] != NULL_AREA) profile.max = 1;
         profiles[ordinal] = profile;
     }
@@ -681,6 +751,7 @@ fn void? filter_grid_regions(
     GridPartialEdge* partials,
 ) @local {
     if (!builder.tile_config.min_region_area) return;
+
     sz mark = builder.arena.mark();
     defer builder.arena.reset(mark);
     uint[]? parents = alloc::new_array_try(&builder.arena, uint, reference.span_count);
@@ -689,6 +760,7 @@ fn void? filter_grid_regions(
     if (catch counts) return c3d::CAPACITY_EXCEEDED~;
     bool[]? touches_border = alloc::new_array_try(&builder.arena, bool, reference.span_count);
     if (catch touches_border) return c3d::CAPACITY_EXCEEDED~;
+
     for (uint index = 0; index < reference.span_count; index++) parents[index] = index;
     foreach (column_index, column : reference.columns) {
         for (usz ordinal = 0; ordinal < column.floors.len; ordinal++) {
@@ -703,6 +775,7 @@ fn void? filter_grid_regions(
             }
         }
     }
+
     for (GridPartialEdge* edge = partials; edge; edge = edge.next) {
         foreach (match : edge.matches) {
             uint first = reference.columns[edge.first_column].span_base + match.first;
@@ -712,6 +785,8 @@ fn void? filter_grid_regions(
             }
         }
     }
+
+    // Border-touching components may continue into neighbouring tiles.
     foreach (column_index, column : reference.columns) {
         bool core = grid_core_column(reference, (uint)column_index);
         for (usz ordinal = 0; ordinal < column.floors.len; ordinal++) {
@@ -725,12 +800,14 @@ fn void? filter_grid_regions(
             }
         }
     }
+
     foreach (column_index, column : reference.columns) {
         if (!grid_core_column(reference, (uint)column_index)) continue;
         for (usz ordinal = 0; ordinal < column.floors.len; ordinal++) {
             uint span = column.span_base + (uint)ordinal;
             uint root = grid_component_root(parents, span);
-            if (!touches_border[root] && counts[root] < builder.tile_config.min_region_area) compact.areas[span] = NULL_AREA;
+            if (!touches_border[root] && counts[root] < builder.tile_config.min_region_area)
+                compact.areas[span] = NULL_AREA;
         }
     }
 }
@@ -740,6 +817,7 @@ fn uint grid_component_root(uint[] parents, uint index) @local {
         parents[index] = parents[parents[index]];
         index = parents[index];
     }
+
     return index;
 }
 
@@ -766,12 +844,14 @@ fn char[]? pack_grid_cells(
     }
     if (!cell_count) return {};
     if (cell_count > (MESH_NULL_INDEX - 1) / GRID_QUAD_VERTICES) return c3d::CAPACITY_EXCEEDED~;
+
     bool triangles = builder.config.verts_per_poly == 3;
     uint polygons_per_cell = triangles ? 2 : 1;
     uint vertex_count = cell_count * GRID_QUAD_VERTICES;
     uint polygon_count = cell_count * polygons_per_cell;
     uint stride = triangles ? 3 : GRID_QUAD_VERTICES;
     uint portal_count = grid_portal_count(reference, compact, partials)!;
+
     Allocator arena = &builder.arena;
     ushort[]? vertices = alloc::new_array_try(arena, ushort, (sz)vertex_count * 3);
     if (catch vertices) return c3d::CAPACITY_EXCEEDED~;
@@ -791,8 +871,10 @@ fn char[]? pack_grid_cells(
     if (catch portals) return c3d::CAPACITY_EXCEEDED~;
     ushort[]? span_polygons = alloc::new_array_try(arena, ushort, reference.span_count);
     if (catch span_polygons) return c3d::CAPACITY_EXCEEDED~;
+
     span_polygons[..] = MESH_NULL_INDEX;
     polygons[..] = MESH_NULL_INDEX;
+
     long origin_x = (long)tile_x * builder.config.tile_size;
     long origin_z = (long)tile_z * builder.config.tile_size;
     Vec3 origin = {
@@ -806,6 +888,7 @@ fn char[]? pack_grid_cells(
         grid_world_coordinate(builder.source.origin.z, origin_z + builder.config.tile_size, builder.config.cell_size)!,
     };
     if (maximum.x <= origin.x || maximum.z <= origin.z) return c3d::CAPACITY_EXCEEDED~;
+
     PolyMesh mesh = {
         .verts = vertices,
         .polys = polygons,
@@ -834,6 +917,7 @@ fn char[]? pack_grid_cells(
             .portals = portals,
         },
     };
+
     uint cell_index;
     foreach (column_index, column : reference.columns) {
         if (!grid_core_column(reference, (uint)column_index)) continue;
@@ -842,6 +926,7 @@ fn char[]? pack_grid_cells(
         foreach (ordinal, &floor : column.floors) {
             uint span = column.span_base + (uint)ordinal;
             if (compact.areas[span] == NULL_AREA) continue;
+
             uint vertex_base = cell_index * GRID_QUAD_VERTICES;
             uint polygon_base = cell_index * polygons_per_cell;
             span_polygons[span] = (ushort)polygon_base;
@@ -856,16 +941,20 @@ fn char[]? pack_grid_cells(
                     grid_world_coordinate(builder.source.origin.z, origin_z + z, builder.config.cell_size)!,
                 };
                 Vec3 local = { (float)((double)world.x - origin.x), world.y, (float)((double)world.z - origin.z) };
+                // Local storage must reproduce the shared world-space seam.
                 Vec3 restored = local + origin;
-                if (!detail_finite_vertex(local) || restored.x != world.x || restored.y != world.y
-                    || restored.z != world.z) return c3d::CAPACITY_EXCEEDED~;
+                if (!detail_finite_vertex(local)) return c3d::CAPACITY_EXCEEDED~;
+                if (restored.x != world.x || restored.y != world.y || restored.z != world.z) return c3d::CAPACITY_EXCEEDED~;
                 mesh.detail.corners[vertex_base + slot] = local;
                 mesh.verts[(vertex_base + slot) * 3] = (ushort)x;
                 mesh.verts[(vertex_base + slot) * 3 + 2] = (ushort)z;
             }
+
             Vec3[] cell_corners = mesh.detail.corners[vertex_base:GRID_QUAD_VERTICES];
             if (!detail_triangle_valid(cell_corners[0], cell_corners[1], cell_corners[2])
-                || !detail_triangle_valid(cell_corners[0], cell_corners[2], cell_corners[3])) return c3d::CAPACITY_EXCEEDED~;
+                || !detail_triangle_valid(cell_corners[0], cell_corners[2], cell_corners[3]))
+                return c3d::CAPACITY_EXCEEDED~;
+
             for (uint part = 0; part < polygons_per_cell; part++) {
                 uint polygon = polygon_base + part;
                 mesh.areas[polygon] = floor.area;
@@ -876,7 +965,8 @@ fn char[]? pack_grid_cells(
                     indices[1] = (ushort)(vertex_base + part + 1);
                     indices[2] = (ushort)(vertex_base + part + 2);
                     uint diagonal_edge = part ? 0 : 2;
-                    mesh.polys[(usz)polygon * stride * 2 + stride + diagonal_edge] = (ushort)(polygon_base + (1 - part));
+                    mesh.polys[(usz)polygon * stride * 2 + stride + diagonal_edge] =
+                      (ushort)(polygon_base + (1 - part));
                 } else {
                     for (uint slot = 0; slot < stride; slot++) indices[slot] = (ushort)(vertex_base + slot);
                 }
@@ -884,6 +974,7 @@ fn char[]? pack_grid_cells(
             cell_index++;
         }
     }
+
     uint written;
     foreach (column_index, column : reference.columns) {
         if (!grid_core_column(reference, (uint)column_index)) continue;
@@ -912,6 +1003,7 @@ fn char[]? pack_grid_cells(
             }
         }
     }
+
     for (GridPartialEdge* edge = partials; edge; edge = edge.next) {
         foreach (match : edge.matches) {
             uint first = reference.columns[edge.first_column].span_base + match.first;
@@ -940,16 +1032,19 @@ fn char[]? pack_grid_cells(
             }
         }
     }
+
     usz size = tile_mesh_size(&mesh);
     if (size > (usz)sz::max) return c3d::CAPACITY_EXCEEDED~;
     char[]? blob = alloc::alloc_array_try(arena, char, (sz)size);
     if (catch blob) return c3d::CAPACITY_EXCEEDED~;
+
     pack_tile_mesh(
         mesh: &mesh,
         tile_x: tile_x,
         tile_z: tile_z,
         blob: blob,
     );
+
     return blob;
 }
 
@@ -971,16 +1066,19 @@ fn uint? grid_portal_count(GridReference* reference, CompactHeightfield* compact
             }
         }
     }
+
     for (GridPartialEdge* edge = partials; edge; edge = edge.next) {
         foreach (match : edge.matches) {
             uint first = reference.columns[edge.first_column].span_base + match.first;
             uint second = reference.columns[edge.second_column].span_base + match.second;
             if (compact.areas[first] == NULL_AREA || compact.areas[second] == NULL_AREA) continue;
-            uint added = (uint)grid_core_column(reference, edge.first_column) + (uint)grid_core_column(reference, edge.second_column);
+            uint added = (uint)grid_core_column(reference, edge.first_column)
+              + (uint)grid_core_column(reference, edge.second_column);
             if (added > DEFAULT_DETAIL_TRIANGLES - count) return c3d::CAPACITY_EXCEEDED~;
             count += added;
         }
     }
+
     return count;
 }
 
@@ -1001,6 +1099,7 @@ fn void write_grid_connection(
     uint polygon = span_polygons[source.span_base + connection.source_floor] + source_side.polygon;
     uint target_polygon = span_polygons[target.span_base + connection.target_floor];
     bool internal = target_polygon != MESH_NULL_INDEX;
+
     if (internal) {
         GridPolygonSide target_side = grid_polygon_side(
             floor: &target.floors[connection.target_floor],
@@ -1009,12 +1108,15 @@ fn void write_grid_connection(
         );
         target_polygon += target_side.polygon;
         if (connection.min == 0 && connection.max == 1) {
-            mesh.polys[(usz)polygon * mesh.verts_per_poly * 2 + mesh.verts_per_poly + source_side.edge] = (ushort)target_polygon;
+            mesh.polys[(usz)polygon * mesh.verts_per_poly * 2 + mesh.verts_per_poly + source_side.edge] =
+              (ushort)target_polygon;
             return;
         }
     } else {
-        mesh.polys[(usz)polygon * mesh.verts_per_poly * 2 + mesh.verts_per_poly + source_side.edge] = PORTAL_EDGE | (ushort)connection.direction;
+        mesh.polys[(usz)polygon * mesh.verts_per_poly * 2 + mesh.verts_per_poly + source_side.edge] =
+          PORTAL_EDGE | (ushort)connection.direction;
     }
+
     mesh.detail.portals[(*written)++] = {
         .polygon = polygon,
         .edge = source_side.edge,
@@ -1055,19 +1157,25 @@ fn float[2]? grid_match_limits(GridEdgeMatch match, uint direction) @local {
     PrecisionInterval upper = match.max.bounds;
     bool include_lower = match.include_min;
     bool include_upper = match.include_max;
+
     if (reversed) {
         lower = precision_subtract(precision_point(1)!, match.max.bounds)!;
         upper = precision_subtract(precision_point(1)!, match.min.bounds)!;
         include_lower = match.include_max;
         include_upper = match.include_min;
     }
+
+    // Round inward so float endpoints cannot widen a certified opening.
     float minimum = (float)lower.max;
     float maximum = (float)upper.min;
-    if ((double)minimum < lower.max || (!include_lower && (double)minimum == lower.max)) minimum = minimum.nexthigher();
+    if ((double)minimum < lower.max || (!include_lower && (double)minimum == lower.max))
+        minimum = minimum.nexthigher();
     if ((double)maximum > upper.min || (!include_upper && (double)maximum == upper.min)) {
         if (maximum == 0) return c3d::CAPACITY_EXCEEDED~;
         maximum = bitcast(bitcast(maximum, uint) - 1, float);
     }
+
     if (minimum < 0 || maximum > 1 || minimum >= maximum) return c3d::CAPACITY_EXCEEDED~;
+
     return { minimum, maximum };
 }

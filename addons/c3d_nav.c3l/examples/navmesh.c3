@@ -661,6 +661,7 @@ fn void draw_panel(
         }
         char* surface_label = builder.config.detail_mode == DetailMode.BOUNDED ? "bounded".ptr : "coarse".ptr;
         imgui::text("Surface: %s   height error: %.3f m", surface_label, builder.config.detail_max_error);
+
         bool sub_cell = builder.config.clearance_mode == ClearanceMode.SUB_CELL;
         imgui::text("Clearance: %s", sub_cell ? "sub-cell".ptr : "whole-cell".ptr);
         if (sub_cell) {
@@ -668,6 +669,7 @@ fn void draw_panel(
             imgui::same_line();
             imgui::text("N=%u", builder.tile_config.subdivision);
         }
+
         imgui::text("Detail: %u vertices, %u triangles", detail_vertices, detail_triangles);
         imgui::text("Debug lines (previous): %u / %u emitted, %u dropped", (uint)sink.vertices.len() / 2,
             (uint)sink.capacity, (uint)sink.dropped);
@@ -747,10 +749,12 @@ fn void? run(
         config.cell_height = DETAIL_CELL_HEIGHT;
         config.detail_max_error = DETAIL_HEIGHT_ERROR;
     }
+
     if (sub_cell) {
         config.clearance_mode = ClearanceMode.SUB_CELL;
         config.clearance_max_error = 2.0f * config.cell_size / (float)SUB_CELL_SUBDIVISION;
     }
+
     NavBuilderDesc desc = nav::default_nav_builder_desc(
         bounds: { .min = { -LEVEL_HALF_SIZE, -1, -LEVEL_HALF_SIZE }, .max = { LEVEL_HALF_SIZE, LEVEL_TOP, LEVEL_HALF_SIZE } },
         config: config,
@@ -761,6 +765,7 @@ fn void? run(
         desc.slot_scratch_bytes = SUB_CELL_SCRATCH_BYTES;
         desc.cache_scratch_bytes = SUB_CELL_SCRATCH_BYTES;
     }
+
     NavBuilder builder = nav::create_nav_builder(mem, scene, desc)!;
     defer nav::destroy_nav_builder(&builder);
     NavMesh mesh = nav::create_nav_mesh_for(mem, &builder)!;

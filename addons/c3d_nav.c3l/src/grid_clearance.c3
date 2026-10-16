@@ -6,11 +6,13 @@ import c3d;
 fn char[]? build_sub_cell_grid(GridTileBuilder* builder, int tile_x, int tile_z) @private {
     GridReference captured = capture_grid_reference(builder, tile_x, tile_z)!;
     if (!captured.span_count) return {};
+
     Allocator allocator = &builder.arena;
     CompactCell[]? columns = alloc::new_array_try(allocator, CompactCell, (sz)captured.columns.len);
     if (catch columns) return c3d::CAPACITY_EXCEEDED~;
     ClearanceSurface[]? surfaces = alloc::new_array_try(allocator, ClearanceSurface, captured.span_count);
     if (catch surfaces) return c3d::CAPACITY_EXCEEDED~;
+
     long first_x = (long)tile_x * builder.config.tile_size;
     long first_z = (long)tile_z * builder.config.tile_size;
     double pitch = builder.config.cell_size;
@@ -27,8 +29,10 @@ fn char[]? build_sub_cell_grid(GridTileBuilder* builder, int tile_x, int tile_z)
             (float)((double)builder.source.origin.z + (double)(first_z + builder.config.tile_size) * pitch),
         },
     };
-    if (!detail_finite_vertex(origin) || !detail_finite_vertex(bounds.max)
-        || bounds.max.x <= bounds.min.x || bounds.max.z <= bounds.min.z) return c3d::CAPACITY_EXCEEDED~;
+    if (!detail_finite_vertex(origin) || !detail_finite_vertex(bounds.max)) return c3d::CAPACITY_EXCEEDED~;
+    if (bounds.max.x <= bounds.min.x || bounds.max.z <= bounds.min.z) return c3d::CAPACITY_EXCEEDED~;
+
+    // Sampling keeps the authored basis despite rounding the local origin.
     ClearanceSource source = {
         .columns = columns,
         .surfaces = surfaces,
@@ -43,6 +47,7 @@ fn char[]? build_sub_cell_grid(GridTileBuilder* builder, int tile_x, int tile_z)
         .bounds = bounds,
         .center_on_diagonal = true,
     };
+
     foreach (column_index, column : captured.columns) {
         source.columns[column_index] = { .index = column.span_base, .count = (uint)column.floors.len };
         foreach (ordinal, &floor : column.floors) {
@@ -52,6 +57,7 @@ fn char[]? build_sub_cell_grid(GridTileBuilder* builder, int tile_x, int tile_z)
             surface.area = floor.area;
             surface.ceiling_open = floor.ceiling_kind == GridSurfaceKind.FLAT && floor.ceiling == float::max
                 && ordinal + 1 == column.floors.len;
+
             for (uint point = 0; point <= DETAIL_CORNER_X.len; point++) {
                 double cell_x = point < DETAIL_CORNER_X.len ? (double)DETAIL_CORNER_X[point] : 0.5;
                 double cell_z = point < DETAIL_CORNER_Z.len ? (double)DETAIL_CORNER_Z[point] : 0.5;
@@ -65,6 +71,7 @@ fn char[]? build_sub_cell_grid(GridTileBuilder* builder, int tile_x, int tile_z)
             }
         }
     }
+
     return build_clearance_mesh(
         allocator: allocator,
         source: &source,

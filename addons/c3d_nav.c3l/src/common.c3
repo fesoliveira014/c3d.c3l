@@ -70,6 +70,7 @@ fn float perp_2d(Vec3 u, Vec3 v) @private => u.z * v.x - u.x * v.z;
 fn Vec3 lerp_point(Vec3 from, Vec3 to, float t) @private {
     if (t == 0) return from;
     if (t == 1) return to;
+
     return from + (to - from) * t;
 }
 

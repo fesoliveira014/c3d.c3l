@@ -16,15 +16,20 @@ enum GridDiagonal : uint {
 }
 
 fn void? validate_grid_floors(GridFloor[] floors, GridSourceDesc* source, DetailMode mode) @private {
-    if (floors.len > MAX_GRID_FLOORS || (uint)mode > (uint)DetailMode.BOUNDED) return c3d::INVALID_ARGUMENT~;
+    if (floors.len > MAX_GRID_FLOORS) return c3d::INVALID_ARGUMENT~;
+    if ((uint)mode > (uint)DetailMode.BOUNDED) return c3d::INVALID_ARGUMENT~;
+
     foreach (&floor : floors) {
-        if ((uint)floor.floor_kind > (uint)GridSurfaceKind.CORNERS
-            || (uint)floor.ceiling_kind > (uint)GridSurfaceKind.CORNERS
-            || floor.area >= MAX_AREAS) return c3d::INVALID_ARGUMENT~;
+        if ((uint)floor.floor_kind > (uint)GridSurfaceKind.CORNERS) return c3d::INVALID_ARGUMENT~;
+        if ((uint)floor.ceiling_kind > (uint)GridSurfaceKind.CORNERS) return c3d::INVALID_ARGUMENT~;
+        if (floor.area >= MAX_AREAS) return c3d::INVALID_ARGUMENT~;
+
         bool corners = floor.floor_kind == GridSurfaceKind.CORNERS
             || floor.ceiling_kind == GridSurfaceKind.CORNERS;
-        if (corners && (mode != DetailMode.BOUNDED
-            || (uint)floor.diagonal > (uint)GridDiagonal.MAX_MIN_TO_MIN_MAX)) return c3d::INVALID_ARGUMENT~;
+        if (corners) {
+            if (mode != DetailMode.BOUNDED) return c3d::INVALID_ARGUMENT~;
+            if ((uint)floor.diagonal > (uint)GridDiagonal.MAX_MIN_TO_MIN_MAX) return c3d::INVALID_ARGUMENT~;
+        }
 
         switch (floor.floor_kind) {
             case FLAT:
@@ -34,6 +39,7 @@ fn void? validate_grid_floors(GridFloor[] floors, GridSourceDesc* source, Detail
                     if (!valid_grid_height(height, source)) return c3d::INVALID_ARGUMENT~;
                 }
         }
+
         switch (floor.ceiling_kind) {
             case FLAT:
                 if (floor.ceiling != float::max && !valid_grid_height(floor.ceiling, source)) {
@@ -62,12 +68,14 @@ fn void? validate_grid_floors(GridFloor[] floors, GridSourceDesc* source, Detail
             ceiling_below_next |= ceiling < next_height;
             ceiling_above_next |= ceiling > next_height;
         }
+
         if (ceiling_below_next && ceiling_above_next) return c3d::INVALID_ARGUMENT~;
     }
 }
 
 fn double grid_floor_height(GridFloor* floor, double cell_x, double cell_z) @private {
     if (floor.floor_kind == GridSurfaceKind.FLAT) return floor.height;
+
     return grid_corner_height(
         corners: floor.floor_corners,
         diagonal: floor.diagonal,
@@ -78,6 +86,7 @@ fn double grid_floor_height(GridFloor* floor, double cell_x, double cell_z) @pri
 
 fn double grid_ceiling_height(GridFloor* floor, double cell_x, double cell_z) @private {
     if (floor.ceiling_kind == GridSurfaceKind.FLAT) return floor.ceiling;
+
     return grid_corner_height(
         corners: floor.ceiling_corners,
         diagonal: floor.diagonal,
@@ -94,10 +103,13 @@ fn double grid_effective_ceiling(
 ) @private {
     double ceiling = grid_ceiling_height(&floors[ordinal], cell_x, cell_z);
     if (ordinal + 1 == floors.len) return ceiling;
+
+    // The next floor closes headroom even when this ceiling is open.
     return math::min(ceiling, grid_floor_height(&floors[ordinal + 1], cell_x, cell_z));
 }
 
 fn uint[3] grid_triangle_corners(GridDiagonal diagonal, uint triangle) @private {
+    // Both triangles use upward-facing XZ winding.
     switch (diagonal) {
         case MIN_MIN_TO_MAX_MAX:
             if (triangle == 0) return { 0, 2, 1 };
@@ -123,12 +135,14 @@ fn double grid_corner_height(
             if (cell_x >= cell_z) {
                 return corners[0] * (1 - cell_x) + corners[1] * (cell_x - cell_z) + corners[2] * cell_z;
             }
+
             return corners[0] * (1 - cell_z) + corners[2] * cell_x + corners[3] * (cell_z - cell_x);
         case MAX_MIN_TO_MIN_MAX:
             double diagonal_position = cell_x + cell_z;
             if (diagonal_position <= 1) {
                 return corners[0] * (1 - diagonal_position) + corners[1] * cell_x + corners[3] * cell_z;
             }
+
             return corners[1] * (1 - cell_z) + corners[2] * (diagonal_position - 1) + corners[3] * (1 - cell_x);
     }
 }

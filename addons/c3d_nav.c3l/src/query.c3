@@ -759,7 +759,6 @@ fn Link*? find_link(NavMesh* mesh, TileAndPoly from, PolyRef to_ref) @private {
     return INVALID_REF~;
 }
 
-// Whether the ray crosses the accepted interval of the edge.
 fn bool portal_holds(
     TileAndPoly current,
     Link* link,
@@ -768,16 +767,20 @@ fn bool portal_holds(
     float t,
 ) @local {
     if (link.min == 0 && link.max == 1) return true;
+
     Vec3 left = current.tile.verts[current.poly.verts[link.edge]];
     Vec3 right = current.tile.verts[current.poly.verts[(link.edge + 1) % current.poly.vert_count]];
+
     if (current.tile.header.clearance_mode != ClearanceMode.SUB_CELL) {
         double delta_x = (double)right.x - left.x;
         double delta_z = (double)right.z - left.z;
         double offset_x = (double)start.x + ((double)end.x - start.x) * t - left.x;
         double offset_z = (double)start.z + ((double)end.z - start.z) * t - left.z;
         double fraction = (offset_x * delta_x + offset_z * delta_z) / (delta_x * delta_x + delta_z * delta_z);
+
         return fraction >= link.min && fraction <= link.max;
     }
+
     Vec3 crossing = lerp_point(start, end, t);
     Vec3 first = lerp_point(left, right, link.min);
     Vec3 last = lerp_point(left, right, link.max);
@@ -786,6 +789,7 @@ fn bool portal_holds(
     double distance = ((double)crossing.x - left.x) * delta_x + ((double)crossing.z - left.z) * delta_z;
     double minimum = ((double)first.x - left.x) * delta_x + ((double)first.z - left.z) * delta_z;
     double maximum = ((double)last.x - left.x) * delta_x + ((double)last.z - left.z) * delta_z;
+
     return distance >= minimum && distance <= maximum;
 }
 

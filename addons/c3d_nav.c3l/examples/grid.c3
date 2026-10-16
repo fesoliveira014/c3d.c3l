@@ -271,6 +271,7 @@ fn usz level_floors(
         out_floors[0] = patch_floor(level, cell_x - PATCH_ORIGIN.x, cell_z - PATCH_ORIGIN.y);
         return 1;
     }
+
     char cell = level.cells[cell_x + cell_z * MAP_SIDE];
     float top = surface_height(cell);
     if (cell == '=') {
@@ -313,6 +314,7 @@ fn GridFloor patch_floor(GridLevel* level, int x, int z) @local {
         .ceiling_kind = level.sloped_ceiling ? GridSurfaceKind.CORNERS : GridSurfaceKind.FLAT,
         .diagonal = level.alternate_diagonal ? GridDiagonal.MAX_MIN_TO_MIN_MAX : GridDiagonal.MIN_MIN_TO_MAX_MAX,
     };
+
     int[4] corners_x = { x, x + 1, x + 1, x };
     int[4] corners_z = { z, z, z + 1, z + 1 };
     for (uint corner = 0; corner < 4; corner++) {
@@ -320,6 +322,7 @@ fn GridFloor patch_floor(GridLevel* level, int x, int z) @local {
         floor.ceiling_corners[corner] = PATCH_CEILING_BASE
             + PATCH_CEILING_RISE * (float)corners_x[corner] / (float)PATCH_SIDE;
     }
+
     return floor;
 }
 
@@ -340,11 +343,14 @@ fn Geometry patch_mesh(Allocator allocator, GridLevel* level, bool ceiling) @loc
             for (uint corner = 0; corner < 4; corner++) {
                 corners[corner].y = ceiling ? floor.ceiling_corners[corner] : floor.floor_corners[corner];
             }
+
+            // Display the same authored diagonal used by the grid callback.
             uint[6] order = level.alternate_diagonal ? (uint[6]){ 0, 3, 1, 1, 3, 2 }
               : (uint[6]){ 0, 2, 1, 0, 3, 2 };
             foreach (corner : order) geometry.positions[written++] = corners[corner];
         }
     }
+
     geometry.compute_normals(allocator, false);
     geometry.finalize();
     return geometry;
@@ -356,18 +362,23 @@ fn void? add_patch(AssetStore* assets, Scene* scene, GridLevel* level) @local {
     common.alpha_mode = AlphaMode.BLEND;
     common.depth_write = false;
     common.double_sided = true;
+
     BasicParams ceiling_params = material::BASIC_PARAMS_DEFAULT;
     ceiling_params.color = { 1, 0.65f, 0.2f, 0.2f };
-    MaterialId ceiling_material = assets.add_material(material::basic(ceiling_params, common), "grid/authored_ceiling_material")!;
+    MaterialId ceiling_material =
+      assets.add_material(material::basic(ceiling_params, common), "grid/authored_ceiling_material")!;
+
     @pool() {
         Geometry floor = patch_mesh(tmem, level, false);
         Geometry ceiling = patch_mesh(tmem, level, true);
         level.patch_geometry = assets.add_geometry(&floor, "grid/authored_floor")!;
         level.ceiling_geometry = assets.add_geometry(&ceiling, "grid/authored_ceiling")!;
     };
+
     scene.add_mesh(level.patch_geometry, floor_material, name: "authored floor")!;
     level.ceiling_node = scene.add_mesh(level.ceiling_geometry, ceiling_material, name: "sloped ceiling")!;
     level.ceiling_node.visible = level.sloped_ceiling;
+
     for (uint side = 0; side < 2; side++) {
         float x = (float)(PATCH_ORIGIN.x + (side ? 5 : 2)) * CELL_SIZE;
         level.passage_walls[side] = add_box(
@@ -476,6 +487,7 @@ fn GridLevel*? build_level(
     defer catch free(level);
     foreach (cell_z, row : LEVEL_MAP) level.cells[cell_z * MAP_SIDE:MAP_SIDE] = row[..];
     if (fan_in) apply_fan_in(level);
+
     level.patch_enabled = bounded_detail;
     if (bounded_detail) {
         for (int cell_z = PATCH_ORIGIN.y; cell_z < PATCH_ORIGIN.y + PATCH_SIDE; cell_z++) {
@@ -674,6 +686,7 @@ fn bool draw_panel(
         imgui::checkbox("Paths", &controls.paths);
         imgui::separator();
         imgui::text("Surface: %s", level.patch_enabled ? "bounded".ptr : "coarse".ptr);
+
         bool sub_cell = builder.config.clearance_mode == ClearanceMode.SUB_CELL;
         imgui::text("Clearance: %s", sub_cell ? "sub-cell".ptr : "whole-cell".ptr);
         imgui::text("Build radius: %.3f m", builder.config.agent_radius);
@@ -683,9 +696,11 @@ fn bool draw_panel(
             imgui::same_line();
             imgui::text("N=%u", builder.tile_config.subdivision);
         }
+
         imgui::separator();
         imgui::text("Authored patch: southeast corner");
         imgui::begin_disabled(!level.patch_enabled);
+
         if (imgui::radio_button("Plane", level.surface == PatchSurface.PLANE) && level.surface != PatchSurface.PLANE) {
             level.surface = PatchSurface.PLANE;
             changed = true;
@@ -700,17 +715,20 @@ fn bool draw_panel(
             level.surface = PatchSurface.SADDLE;
             changed = true;
         }
+
         changed |= imgui::checkbox("Alternate saddle diagonal", &level.alternate_diagonal);
         changed |= imgui::checkbox("Sloped ceiling", &level.sloped_ceiling);
         changed |= imgui::checkbox("Two-cell passage", &level.narrow_passage);
         imgui::end_disabled();
         if (!level.patch_enabled) imgui::text("Use --detail or --sub-cell to edit the authored patch");
+
         imgui::separator();
         imgui::text("Tiles rebuilt by the last edit: %u in %.2f ms", stats.last_tiles, stats.last_milliseconds);
         imgui::text("Tiles rebuilt since start: %u", stats.total_tiles);
         imgui::text("Debug lines: %u emitted, %u dropped", (uint)sink.vertices.len() / 2, (uint)sink.dropped);
     }
     imgui::end();
+
     return changed;
 }
 
@@ -729,9 +747,12 @@ fn void? update_patch(
         assets.replace_geometry(level.patch_geometry, &floor)!;
         assets.replace_geometry(level.ceiling_geometry, &ceiling)!;
     };
+
     level.ceiling_node.visible = level.sloped_ceiling;
     foreach (wall : level.passage_walls) wall.visible = level.narrow_passage;
     scene.update_world();
+
+    // Neighbouring build windows overlap the edited patch.
     int border = (int)builder.tile_config.border_size;
     int[<2>] first = math::max((PATCH_ORIGIN - border) / TILE_CELLS, (int[<2>]){ 0, 0 });
     int[<2>] last = math::min((PATCH_ORIGIN + PATCH_SIDE - 1 + border) / TILE_CELLS,
@@ -743,6 +764,7 @@ fn void? update_patch(
             stats.last_tiles++;
         }
     }
+
     stats.last_milliseconds = (float)((double)(clock::now() - started) / NANOSECONDS_PER_MILLISECOND);
     stats.total_tiles += stats.last_tiles;
 }
@@ -822,6 +844,7 @@ fn void? run(
 ) @local {
     bool bounded_detail = config.detail_mode == DetailMode.BOUNDED;
     bool sub_cell = config.clearance_mode == ClearanceMode.SUB_CELL;
+
     GridLevel* level = build_level(
         assets: assets,
         scene: scene,
@@ -841,7 +864,8 @@ fn void? run(
         allocator: mem,
         config: config,
         source: source,
-        scratch_bytes: sub_cell ? SUB_CELL_SCRATCH_BYTES : bounded_detail ? DETAIL_SCRATCH_BYTES : nav::DEFAULT_GRID_SCRATCH_BYTES,
+        scratch_bytes: sub_cell ? SUB_CELL_SCRATCH_BYTES
+          : bounded_detail ? DETAIL_SCRATCH_BYTES : nav::DEFAULT_GRID_SCRATCH_BYTES,
     )!;
     defer nav::destroy_grid_tile_builder(&builder);
     NavMesh mesh = nav::create_nav_mesh(mem, builder.mesh_desc(MAP_TILES * MAP_TILES))!;
@@ -915,6 +939,7 @@ fn void? run(
         defer {
             if (gui_renderer.frame_open) gui_renderer.finish_frame();
         }
+
         if (draw_panel(
             controls: &controls,
             stats: &stats,
@@ -999,6 +1024,7 @@ fn int main(String[] args) {
     NavBuildConfig config = nav::default_grid_build_config(CELL_SIZE);
     config.tile_size = (uint)TILE_CELLS;
     uint frame_limit;
+
     for (usz index = 1; index < args.len; index++) {
         String arg = args[index];
         if (arg == "--fan-in") {
@@ -1026,10 +1052,12 @@ fn int main(String[] args) {
             return 1;
         }
     }
+
     if (config.detail_mode == DetailMode.BOUNDED) config.detail_max_error = DETAIL_HEIGHT_ERROR;
     if (config.clearance_mode == ClearanceMode.SUB_CELL && !custom_clearance_error) {
         config.clearance_max_error = 2.0f * CELL_SIZE / (float)SUB_CELL_SUBDIVISION;
     }
+
     platform::Window window = platform::create_window(platform::default_window_desc("c3d grid", 1280, 720))!!;
     defer platform::destroy_window(&window);
 

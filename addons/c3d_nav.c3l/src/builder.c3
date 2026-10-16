@@ -536,11 +536,15 @@ fn void? build_stages(TileJob* job, BuildStage* stage) @local {
         reference.origin = job.detail_origin;
         reference.origin_correction = job.detail_origin_correction;
         reference.basis = job.detail_basis;
+
         long first_x = (long)job.tile_x * (long)(config.width - 2 * config.border_size) - config.border_size;
         long first_z = (long)job.tile_z * (long)(config.height - 2 * config.border_size) - config.border_size;
-        if (first_x < int::min || first_x > int::max || first_z < int::min || first_z > int::max) return c3d::CAPACITY_EXCEEDED~;
+        if (first_x < int::min || first_x > int::max) return c3d::CAPACITY_EXCEEDED~;
+        if (first_z < int::min || first_z > int::max) return c3d::CAPACITY_EXCEEDED~;
+
         reference.first_x = (int)first_x;
         reference.first_z = (int)first_z;
+
         apply_detail_connections(&reference, &compact);
         if (config.clearance_mode == ClearanceMode.WHOLE_CELL) classify_detail_reference(&reference, &compact, config)!;
     } else if (config.walkable_radius > 0) {
@@ -550,6 +554,7 @@ fn void? build_stages(TileJob* job, BuildStage* stage) @local {
         *stage = LAYERS;
         return build_layer_blobs(job, &compact, config.detail_mode == DetailMode.BOUNDED ? &reference : null);
     }
+
     if (config.clearance_mode == ClearanceMode.SUB_CELL) {
         *stage = DETAIL;
         ClearanceSource source = clearance_scene_source(arena, &reference, config)!;
@@ -561,8 +566,10 @@ fn void? build_stages(TileJob* job, BuildStage* stage) @local {
             tile_z: job.tile_z,
             volumes: job.volumes[:job.volume_count],
         )!;
+
         return;
     }
+
     foreach (&volume : job.volumes[:job.volume_count]) apply_volume(&compact, volume);
     if (config.detail_mode == DetailMode.BOUNDED && config.walkable_radius > 0) compact.erode_walkable_area(arena, config.walkable_radius)!;
 
@@ -928,7 +935,11 @@ fn void begin_rasterization(NavBuilder* builder, TileJob* job, Scene* scene) @lo
     double origin_z = (double)builder.bounds.min.z + builder.origin_correction[1] + job.tile_z * tile_size;
     job.detail_origin = { (float)origin_x, builder.bounds.min.y, (float)origin_z };
     job.detail_origin_correction = { origin_x - job.detail_origin.x, origin_z - job.detail_origin.z };
-    job.detail_basis = { (double)builder.bounds.min.x + builder.origin_correction[0], (double)builder.bounds.min.z + builder.origin_correction[1] };
+    job.detail_basis = {
+        (double)builder.bounds.min.x + builder.origin_correction[0],
+        (double)builder.bounds.min.z + builder.origin_correction[1],
+    };
+
     job.state = RASTERIZING;
     job.source_epoch = builder.source_epoch;
     job.config = builder.tile_config;

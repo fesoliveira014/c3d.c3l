@@ -92,10 +92,11 @@ struct DetailValidationEdge @local {
 }
 
 fn bool valid_detail_portal(DetailPortal portal, uint polygon_count) @private {
-    if ((uint)portal.kind > (uint)DetailPortalKind.INTERNAL
-        || portal.polygon >= polygon_count
-        || !math::is_finite(portal.min) || !math::is_finite(portal.max)
-        || portal.min < 0 || portal.max > 1 || portal.min >= portal.max) return false;
+    if ((uint)portal.kind > (uint)DetailPortalKind.INTERNAL) return false;
+    if (portal.polygon >= polygon_count) return false;
+    if (!math::is_finite(portal.min) || !math::is_finite(portal.max)) return false;
+    if (portal.min < 0 || portal.max > 1 || portal.min >= portal.max) return false;
+
     switch (portal.kind) {
         case HEIGHT_BORDER:
             return math::is_finite(portal.source_height) && math::is_finite(portal.target_height);

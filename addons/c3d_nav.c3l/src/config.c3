@@ -92,6 +92,7 @@ fn TileConfig? tile_config(NavBuildConfig config) {
     }) {
         if (!math::is_finite(value)) return c3d::INVALID_ARGUMENT~;
     }
+
     if (config.cell_size <= 0 || config.cell_height <= 0 || config.tile_size == 0) return c3d::INVALID_ARGUMENT~;
     if (config.agent_height <= 0 || config.agent_radius < 0 || config.agent_max_climb < 0) return c3d::INVALID_ARGUMENT~;
     if (config.region_min_size < 0 || config.region_merge_size < 0 || config.edge_max_length < 0 || config.edge_max_error < 0) return c3d::INVALID_ARGUMENT~;
@@ -99,20 +100,24 @@ fn TileConfig? tile_config(NavBuildConfig config) {
     if (config.verts_per_poly < 3 || config.verts_per_poly > MAX_VERTS_PER_POLY) return c3d::INVALID_ARGUMENT~;
     if ((uint)config.detail_mode > (uint)DetailMode.BOUNDED) return c3d::INVALID_ARGUMENT~;
     if ((uint)config.clearance_mode > (uint)ClearanceMode.SUB_CELL) return c3d::INVALID_ARGUMENT~;
-    if (config.clearance_mode == ClearanceMode.SUB_CELL
-        && (config.detail_mode != DetailMode.BOUNDED || !math::is_finite(config.clearance_max_error)
-            || config.clearance_max_error <= 0)) return c3d::INVALID_ARGUMENT~;
+
+    if (config.clearance_mode == ClearanceMode.SUB_CELL) {
+        if (config.detail_mode != DetailMode.BOUNDED) return c3d::INVALID_ARGUMENT~;
+        if (!math::is_finite(config.clearance_max_error) || config.clearance_max_error <= 0) return c3d::INVALID_ARGUMENT~;
+    }
+
     if (config.detail_mode == DetailMode.BOUNDED) {
         if (!math::is_finite(config.detail_max_error) || config.detail_max_error < 0) return c3d::INVALID_ARGUMENT~;
         if (config.max_detail_vertices == 0 || config.max_detail_vertices > DEFAULT_DETAIL_VERTICES) return c3d::INVALID_ARGUMENT~;
         if (config.max_detail_triangles == 0 || config.max_detail_triangles > DEFAULT_DETAIL_TRIANGLES) return c3d::INVALID_ARGUMENT~;
     }
-    if ((double)config.agent_height / config.cell_height > int::max
-        || (double)config.agent_max_climb / config.cell_height > int::max
-        || (double)config.agent_radius / config.cell_size > MAX_EROSION_RADIUS
-        || (double)config.edge_max_length / config.cell_size > int::max
-        || (double)config.region_min_size * config.region_min_size > uint::max
-        || (double)config.region_merge_size * config.region_merge_size > uint::max) return c3d::INVALID_ARGUMENT~;
+
+    if ((double)config.agent_height / config.cell_height > int::max) return c3d::INVALID_ARGUMENT~;
+    if ((double)config.agent_max_climb / config.cell_height > int::max) return c3d::INVALID_ARGUMENT~;
+    if ((double)config.agent_radius / config.cell_size > MAX_EROSION_RADIUS) return c3d::INVALID_ARGUMENT~;
+    if ((double)config.edge_max_length / config.cell_size > int::max) return c3d::INVALID_ARGUMENT~;
+    if ((double)config.region_min_size * config.region_min_size > uint::max) return c3d::INVALID_ARGUMENT~;
+    if ((double)config.region_merge_size * config.region_merge_size > uint::max) return c3d::INVALID_ARGUMENT~;
 
     int walkable_height = (int)math::ceil(config.agent_height / config.cell_height);
     int walkable_climb = (int)math::floor(config.agent_max_climb / config.cell_height);
@@ -128,13 +133,16 @@ fn TileConfig? tile_config(NavBuildConfig config) {
         ClearanceSettings clearance = clearance_settings(config)!;
         double halo = math::ceil(clearance.capture_radius / config.cell_size) + BORDER_PADDING;
         if (halo >= MESH_NULL_INDEX / 2) return c3d::CAPACITY_EXCEEDED~;
+
         border_size = (uint)halo;
         subdivision = clearance.subdivision;
         if (((ulong)config.tile_size + (ulong)border_size * 2) * subdivision >= MESH_NULL_INDEX) {
             return c3d::CAPACITY_EXCEEDED~;
         }
     }
+
     if (config.tile_size >= MESH_NULL_INDEX - border_size * 2) return c3d::INVALID_ARGUMENT~;
+
     return {
         .width                    = config.tile_size + border_size * 2,
         .height                   = config.tile_size + border_size * 2,
@@ -157,7 +165,7 @@ fn TileConfig? tile_config(NavBuildConfig config) {
         .agent_height             = config.agent_height,
         .clearance_mode           = config.clearance_mode,
         .clearance_max_error      = config.clearance_max_error,
-        .subdivision             = subdivision,
+        .subdivision              = subdivision,
         .agent_radius             = config.agent_radius,
         .agent_max_climb          = config.agent_max_climb,
     };

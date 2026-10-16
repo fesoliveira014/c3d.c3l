@@ -22,14 +22,14 @@ const ContourFlags GRID_CONTOUR_FLAGS @local = { .tessellate_wall_edges = true, 
 
 <* One walkable or blocking surface of a grid cell. *>
 struct GridFloor {
-    float height;     // world Y of the top of the solid below the surface
-    float ceiling;    // world Y of the next solid above; float::max when open to the next floor or the sky
-    char  area;       // WALKABLE_AREA or a custom area id; NULL_AREA blocks without being walkable
+    float           height;          // world Y of the top of the solid below the surface
+    float           ceiling;         // world Y of the next solid above; float::max when open to the next floor or the sky
+    char            area;            // WALKABLE_AREA or a custom area id; NULL_AREA blocks without being walkable
     GridSurfaceKind floor_kind;
     GridSurfaceKind ceiling_kind;
-    float[4] floor_corners;   // min/min, max/min, max/max, min/max in XZ
-    float[4] ceiling_corners;
-    GridDiagonal diagonal;  // shared by the selected corner floor and ceiling
+    float[4]        floor_corners;   // min/min, max/min, max/max, min/max in XZ
+    float[4]        ceiling_corners;
+    GridDiagonal    diagonal;        // shared by the selected corner floor and ceiling
 }
 
 <* Where the grid lies and how to read it. *>
@@ -59,10 +59,13 @@ struct GridTileBuilder {
 *>
 fn char[]? GridTileBuilder.build(&self, int tile_x, int tile_z) {
     self.arena.clear();
+
     if (self.config.detail_mode == DetailMode.BOUNDED) {
         if (self.config.clearance_mode == ClearanceMode.SUB_CELL) return build_sub_cell_grid(self, tile_x, tile_z);
+
         return build_bounded_grid(self, tile_x, tile_z);
     }
+
     Allocator arena = &self.arena;
     TileConfig* config = &self.tile_config;
     Heightfield* heightfield = &self.heightfield;
@@ -183,9 +186,11 @@ fn GridTileBuilder? create_grid_tile_builder(
     GridSourceDesc source,
     usz scratch_bytes = DEFAULT_GRID_SCRATCH_BYTES,
 ) {
-    if (!source.floors || !math::is_finite(source.origin.x) || !math::is_finite(source.origin.z)
-        || !math::is_finite(source.min_height) || !math::is_finite(source.max_height)
-        || source.min_height >= source.max_height) return c3d::INVALID_ARGUMENT~;
+    if (!source.floors) return c3d::INVALID_ARGUMENT~;
+    if (!math::is_finite(source.origin.x) || !math::is_finite(source.origin.z)) return c3d::INVALID_ARGUMENT~;
+    if (!math::is_finite(source.min_height) || !math::is_finite(source.max_height)) return c3d::INVALID_ARGUMENT~;
+    if (source.min_height >= source.max_height) return c3d::INVALID_ARGUMENT~;
+
     TileConfig tile = tile_config(config)!;
     double top_voxel = 1 + math::round(((double)source.max_height - source.min_height) / config.cell_height);
     if (top_voxel >= SPAN_MAX_HEIGHT) return c3d::INVALID_ARGUMENT~;
@@ -275,6 +280,7 @@ fn void? add_floor_spans(GridTileBuilder* builder, int tile_x, int tile_z) @loca
             usz count = source.floors(source.context, first_x + (int)x, first_z + (int)z, floors[..]);
             if (count > floors.len) return c3d::INVALID_ARGUMENT~;
             validate_grid_floors(floors[:count], source, builder.config.detail_mode)!;
+
             foreach (floor : floors[:count]) {
                 uint surface = quantize_height(builder, floor.height);
                 heightfield.add_span(

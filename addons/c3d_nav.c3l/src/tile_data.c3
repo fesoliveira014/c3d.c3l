@@ -217,28 +217,33 @@ fn void carve_tile_data(MeshTile* tile, char[] data) @private {
 
 fn void? validate_tile_data(char[] data) @private {
     if (data.len < TileHeader::size || (uptr)data.ptr % TILE_DATA_ALIGNMENT != 0) return c3d::INVALID_ARGUMENT~;
+
     TileHeader* header = (TileHeader*)data.ptr;
-    if (header.magic != TILE_MAGIC || header.version != TILE_VERSION
-        || !header.poly_count || header.poly_count >= (1u << POLY_BITS)
-        || !header.vert_count || header.vert_count >= MESH_NULL_INDEX
-        || !header.off_mesh_base || header.off_mesh_base > header.poly_count
-        || header.off_mesh_count != header.poly_count - header.off_mesh_base
-        || header.off_mesh_count > header.vert_count / 2
-        || (uint)header.detail_mode > (uint)DetailMode.BOUNDED
-        || !finite_point(header.bounds.min) || !finite_point(header.bounds.max)
-        || header.bounds.min.x > header.bounds.max.x || header.bounds.min.y > header.bounds.max.y
-        || header.bounds.min.z > header.bounds.max.z
-        || !math::is_finite(header.walkable_height) || header.walkable_height < 0
-        || !math::is_finite(header.walkable_radius) || header.walkable_radius < 0
-        || !math::is_finite(header.walkable_climb) || header.walkable_climb < 0
-        || !math::is_finite(header.bv_quant_factor) || header.bv_quant_factor <= 0
-        || !math::is_finite(header.cell_size) || header.cell_size <= 0) return c3d::INVALID_ARGUMENT~;
+    if (header.magic != TILE_MAGIC || header.version != TILE_VERSION) return c3d::INVALID_ARGUMENT~;
+    if (!header.poly_count || header.poly_count >= (1u << POLY_BITS)) return c3d::INVALID_ARGUMENT~;
+    if (!header.vert_count || header.vert_count >= MESH_NULL_INDEX) return c3d::INVALID_ARGUMENT~;
+    if (!header.off_mesh_base || header.off_mesh_base > header.poly_count) return c3d::INVALID_ARGUMENT~;
+    if (header.off_mesh_count != header.poly_count - header.off_mesh_base) return c3d::INVALID_ARGUMENT~;
+    if (header.off_mesh_count > header.vert_count / 2) return c3d::INVALID_ARGUMENT~;
+    if ((uint)header.detail_mode > (uint)DetailMode.BOUNDED) return c3d::INVALID_ARGUMENT~;
+
+    if (!finite_point(header.bounds.min) || !finite_point(header.bounds.max)) return c3d::INVALID_ARGUMENT~;
+    if (header.bounds.min.x > header.bounds.max.x || header.bounds.min.y > header.bounds.max.y
+        || header.bounds.min.z > header.bounds.max.z) return c3d::INVALID_ARGUMENT~;
+    if (!math::is_finite(header.walkable_height) || header.walkable_height < 0) return c3d::INVALID_ARGUMENT~;
+    if (!math::is_finite(header.walkable_radius) || header.walkable_radius < 0) return c3d::INVALID_ARGUMENT~;
+    if (!math::is_finite(header.walkable_climb) || header.walkable_climb < 0) return c3d::INVALID_ARGUMENT~;
+    if (!math::is_finite(header.bv_quant_factor) || header.bv_quant_factor <= 0) return c3d::INVALID_ARGUMENT~;
+    if (!math::is_finite(header.cell_size) || header.cell_size <= 0) return c3d::INVALID_ARGUMENT~;
+
     if (header.bv_node_count && header.bv_node_count != header.off_mesh_base * 2 - 1) return c3d::INVALID_ARGUMENT~;
+
     if (header.detail_mode == DetailMode.COARSE
         && (header.detail_vertex_count || header.detail_triangle_count || header.detail_portal_count)) {
         return c3d::INVALID_ARGUMENT~;
     }
     if (header.detail_mode == DetailMode.BOUNDED && !finite_point(header.detail_origin)) return c3d::INVALID_ARGUMENT~;
+
     if (header.detail_mode == DetailMode.BOUNDED) {
         if (!valid_clearance_metadata(
             mode: header.clearance_mode,
@@ -247,6 +252,7 @@ fn void? validate_tile_data(char[] data) @private {
             subdivision: header.subdivision,
             maximum_error: header.clearance_max_error,
         )) return c3d::INVALID_ARGUMENT~;
+
         foreach (value : header.detail_origin_correction) {
             if (!math::is_finite(value)) return c3d::INVALID_ARGUMENT~;
         }
@@ -258,9 +264,11 @@ fn void? validate_tile_data(char[] data) @private {
     foreach (vertex : tile.verts) {
         if (!finite_point(vertex)) return c3d::INVALID_ARGUMENT~;
     }
+
     foreach (vertex : tile.detail_vertices) {
         if (!finite_point(vertex) || !finite_point(vertex + header.detail_origin)) return c3d::INVALID_ARGUMENT~;
     }
+
     foreach (index, vertex : tile.detail_corners) {
         if (!finite_point(vertex) || !finite_point(vertex + header.detail_origin)) return c3d::INVALID_ARGUMENT~;
         Vec3 world = vertex + header.detail_origin;
@@ -315,10 +323,9 @@ fn void? validate_tile_data(char[] data) @private {
             || (connection.side > 7 && connection.side != INSIDE_TILE)) return c3d::INVALID_ARGUMENT~;
     }
     foreach (portal : tile.detail_portals) {
-        if (!valid_detail_portal(portal, header.off_mesh_base)
-            || portal.edge >= tile.polys[portal.polygon].vert_count) {
-            return c3d::INVALID_ARGUMENT~;
-        }
+        if (!valid_detail_portal(portal, header.off_mesh_base)) return c3d::INVALID_ARGUMENT~;
+        if (portal.edge >= tile.polys[portal.polygon].vert_count) return c3d::INVALID_ARGUMENT~;
+
         ushort neighbour = tile.polys[portal.polygon].neighbours[portal.edge];
         if (portal.kind == DetailPortalKind.INTERNAL) {
             if (neighbour) return c3d::INVALID_ARGUMENT~;
@@ -326,11 +333,13 @@ fn void? validate_tile_data(char[] data) @private {
             return c3d::INVALID_ARGUMENT~;
         }
         if (portal.kind != DetailPortalKind.HEIGHT_BORDER) continue;
+
         double source_height = (double)header.detail_origin.y + portal.source_height;
         double target_height = (double)header.detail_origin.y + portal.target_height;
         if (source_height - header.detail_origin.y != (double)portal.source_height
             || target_height - header.detail_origin.y != (double)portal.target_height) return c3d::INVALID_ARGUMENT~;
     }
+
     if (header.detail_mode == DetailMode.BOUNDED) {
         @pool() {
             foreach (index, detail : tile.details) {

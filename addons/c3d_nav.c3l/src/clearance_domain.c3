@@ -52,13 +52,17 @@ fn bool? clearance_admits(
     double storage_delta,
     ClearanceWork* work,
 ) @private {
-    if (root >= domain.faces.len || work.queue.len < domain.faces.len || work.seen.len < domain.faces.len
-        || storage_delta < 0 || storage_delta > settings.storage_limit) return c3d::CAPACITY_EXCEEDED~;
+    if (root >= domain.faces.len) return c3d::CAPACITY_EXCEEDED~;
+    if (work.queue.len < domain.faces.len || work.seen.len < domain.faces.len) return c3d::CAPACITY_EXCEEDED~;
+    if (storage_delta < 0 || storage_delta > settings.storage_limit) return c3d::CAPACITY_EXCEEDED~;
+
     PrecisionInterval radius = precision_add(
         precision_add(precision_point(agent_radius)!, precision_point(storage_delta)!)!,
         precision_point(settings.interval_limit)!,
     )!;
     PrecisionInterval outer_radius = precision_add(radius, precision_point(settings.interval_limit)!)!;
+
+    // The captured border must contain the full neighborhood being tested.
     PrecisionInterval[4] capture_gaps = {
         precision_subtract(square.min_x, domain.captured.min_x)!,
         precision_subtract(square.min_z, domain.captured.min_z)!,
@@ -68,14 +72,17 @@ fn bool? clearance_admits(
     foreach (gap : capture_gaps) {
         if (precision_subtract(gap, outer_radius)!.min <= 0) return c3d::CAPACITY_EXCEEDED~;
     }
+
     if (work.epoch == uint::max) {
         work.seen[..] = 0;
         work.epoch = 0;
     }
     work.epoch++;
+
     uint count = 1;
     work.queue[0] = root;
     work.seen[root] = work.epoch;
+
     for (uint cursor = 0; cursor < count; cursor++) {
         ClearanceFace face = domain.faces[work.queue[cursor]];
         if ((domain.obstacles.len || domain.volumes.len) && clearance_obstacle_meets(
@@ -89,8 +96,10 @@ fn bool? clearance_admits(
             obstacles: domain.obstacles,
             volumes: domain.volumes,
         )!) return false;
+
         foreach (edge : domain.edges[face.first_edge:face.edge_count]) {
             if (edge.neighbour != CLEARANCE_NO_FACE && work.seen[edge.neighbour] == work.epoch) continue;
+
             if (!clearance_neighborhood_meets(
                 first: edge.first,
                 last: edge.last,
@@ -100,9 +109,11 @@ fn bool? clearance_admits(
             )!) continue;
             if (edge.neighbour == CLEARANCE_NO_FACE) return false;
             if (count == work.queue.len) return c3d::CAPACITY_EXCEEDED~;
+
             work.seen[edge.neighbour] = work.epoch;
             work.queue[count++] = edge.neighbour;
         }
     }
+
     return true;
 }

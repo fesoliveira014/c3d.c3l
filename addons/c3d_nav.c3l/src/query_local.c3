@@ -996,12 +996,15 @@ fn IntervalList? collect_edge_intervals(
 ) @local {
     IntervalList result = { .items = query.edge_intervals };
     if (!filter) return result;
+
     for (uint link = found.poly.first_link; link != NULL_LINK; link = query.mesh.links[link].next) {
         Link* entry = &query.mesh.links[link];
         if (entry.edge != edge || !entry.ref || entry.min >= entry.max) continue;
+
         Poly* neighbour = query.mesh.tile_and_poly_unchecked(entry.ref).poly;
         if (neighbour.area_type.type != GROUND || !filter.passes(entry.ref, neighbour)) continue;
         if (result.count + 2 == result.items.len) return c3d::CAPACITY_EXCEEDED~;
+
         insert_interval(
             list: &result,
             min: entry.min,
@@ -1009,6 +1012,7 @@ fn IntervalList? collect_edge_intervals(
             ref: entry.ref,
         );
     }
+
     return result;
 }
 

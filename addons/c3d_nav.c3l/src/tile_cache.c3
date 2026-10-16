@@ -533,11 +533,11 @@ fn Aabb TileCache.tight_tile_bounds(&self, LayerHeader* header) {
 *>
 fn TileCache? create_tile_cache(Allocator allocator, TileCacheDesc desc, usz build_scratch_bytes) {
     if ((uint)desc.detail_mode > (uint)DetailMode.BOUNDED) return c3d::INVALID_ARGUMENT~;
-    if ((uint)desc.clearance_mode > (uint)ClearanceMode.SUB_CELL
-        || (desc.clearance_mode == ClearanceMode.SUB_CELL && desc.detail_mode != DetailMode.BOUNDED)) {
-        return c3d::INVALID_ARGUMENT~;
-    }
+    if ((uint)desc.clearance_mode > (uint)ClearanceMode.SUB_CELL) return c3d::INVALID_ARGUMENT~;
+    if (desc.clearance_mode == ClearanceMode.SUB_CELL && desc.detail_mode != DetailMode.BOUNDED) return c3d::INVALID_ARGUMENT~;
+
     if (desc.detail_mode == DetailMode.BOUNDED) (void)detail_cache_config(desc)!;
+
     uint tile_bits = (uint)next_pow2(desc.max_tiles).ctz();
     uint salt_bits = math::min(MAX_LAYER_SALT_BITS, 32 - tile_bits);
     if (salt_bits < MIN_LAYER_SALT_BITS) return c3d::INVALID_ARGUMENT~;
@@ -694,6 +694,7 @@ fn Aabb precision_obstacle_bounds(TileCache* cache, Obstacle* obstacle) @local {
             double radius = (double)cache.desc.walkable_radius + (double)cache.desc.clearance_max_error / 8;
             halo = (float)((math::ceil(radius / cache.desc.cell_size) + BORDER_PADDING) * cache.desc.cell_size);
         }
+
         box.min -= { halo, cache.desc.walkable_height, halo };
         box.max += { halo, 0, halo };
     }
