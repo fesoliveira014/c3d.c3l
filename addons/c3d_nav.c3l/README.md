@@ -217,6 +217,8 @@ path entry.
 The `navmesh` and `crowd` examples accept `--detail`. Add `--cache` for cached scene construction;
 the crowd example defaults to cached construction and accepts `--direct` for comparison. Their
 panels display the selected height and geometric normal and can draw retained triangles.
+Each example reserves 131072 debug segments (4 MiB of vertices) for the complete detailed scene
+and diagnostic overlays; its panel reports the previous frame's emitted and dropped segments.
 `--frames N` closes either example after N frames. Whole-cell erosion remains the horizontal
 clearance policy in these modes.
 

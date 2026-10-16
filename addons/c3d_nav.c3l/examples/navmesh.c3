@@ -88,6 +88,7 @@ const double NANOSECONDS_PER_MILLISECOND @local = 1_000_000.0;
 const float DETAIL_CELL_HEIGHT @local = 0.05f;
 const float DETAIL_HEIGHT_ERROR @local = 0.01f;
 const uint NORMAL_COLOR @local = 0xFF80FF80;
+const usz DEBUG_LINE_CAPACITY @local = 131072; // 4 MiB of vertices; full detail mesh, rasterizing spans and walker diagnostics
 
 struct FreeCamera @local {
     Vec3  position;
@@ -633,6 +634,7 @@ fn void draw_panel(
     Walker* walker,
     NavLink* ladder,
     CacheLevel* cache_level,
+    debug::DebugDraw* sink,
 ) @local {
     imgui::set_next_window_pos(PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
     imgui::set_next_window_size(PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
@@ -657,6 +659,8 @@ fn void draw_panel(
         }
         imgui::text("Surface: %s   error: %.3f m", builder.config.detail_mode == DetailMode.BOUNDED ? "bounded".ptr : "coarse".ptr, builder.config.detail_max_error);
         imgui::text("Detail: %u vertices, %u triangles", detail_vertices, detail_triangles);
+        imgui::text("Debug lines (previous): %u / %u emitted, %u dropped", (uint)sink.vertices.len() / 2,
+            (uint)sink.capacity, (uint)sink.dropped);
         imgui::text("Walker height: %.3f m   normal: %.2f %.2f %.2f", walker.position.y, walker.normal.x, walker.normal.y, walker.normal.z);
         imgui::separator();
         imgui::text("Ladder: %s", ladder.bidirectional ? "two-way".ptr : "one-way up".ptr);
@@ -754,7 +758,7 @@ fn void? run(
 
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
-    debug::DebugDraw sink = debug::create_debug_draw(mem);
+    debug::DebugDraw sink = debug::create_debug_draw(mem, DEBUG_LINE_CAPACITY);
     defer debug::destroy_debug_draw(&sink);
 
     FreeCamera camera = {
@@ -783,6 +787,7 @@ fn void? run(
             walker:      walker,
             ladder:      scene.get(level.ladder, NavLink),
             cache_level: &cache_level,
+            sink:        &sink,
         );
 
         if (!input.keyboard_captured_by_gui) {

@@ -75,6 +75,7 @@ const uint  HIGH_PENALTY_COLOR @local = 0xFF4040FF;
 const float DETAIL_CELL_HEIGHT @local = 0.05f;
 const float DETAIL_HEIGHT_ERROR @local = 0.01f;
 const uint NORMAL_COLOR @local = 0xFF80FF80;
+const usz DEBUG_LINE_CAPACITY @local = 131072; // 4 MiB of vertices; full detail mesh, agent corridors and avoidance samples
 
 struct FreeCamera @local {
     Vec3  position;
@@ -438,6 +439,7 @@ fn uint draw_panel(
     Agents* agents,
     Controls* controls,
     CrowdDebugInfo* debug,
+    debug::DebugDraw* sink,
 ) @local {
     int selected = (int)agents.selected;
     imgui::set_next_window_pos(PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
@@ -460,6 +462,8 @@ fn uint draw_panel(
         imgui::text("Velocity samples this update: %u", crowd.velocity_sample_count);
         imgui::text("Door: %s", level.door_open ? "open".ptr : "closed".ptr);
         imgui::text("Surface: %s   error: %.3f m", builder.config.detail_mode == DetailMode.BOUNDED ? "bounded".ptr : "coarse".ptr, builder.config.detail_max_error);
+        imgui::text("Debug lines (previous): %u / %u emitted, %u dropped", (uint)sink.vertices.len() / 2,
+            (uint)sink.capacity, (uint)sink.dropped);
         imgui::separator();
         imgui::slider_int("Agent", &selected, 0, (int)AGENT_COUNT - 1);
         CrowdAgent* agent = crowd.agent(debug.index);
@@ -587,7 +591,7 @@ fn void? run(
 
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
-    debug::DebugDraw sink = debug::create_debug_draw(mem);
+    debug::DebugDraw sink = debug::create_debug_draw(mem, DEBUG_LINE_CAPACITY);
     defer debug::destroy_debug_draw(&sink);
 
     FreeCamera camera = {
@@ -619,6 +623,7 @@ fn void? run(
             agents:   agents,
             controls: &controls,
             debug:    &debug,
+            sink:     &sink,
         );
         if (selected != agents.selected) select_agent(scene, &level, agents, selected);
 
