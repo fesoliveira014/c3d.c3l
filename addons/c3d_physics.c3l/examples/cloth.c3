@@ -678,8 +678,8 @@ fn void? create_demo(
             demo.camera.local.position = { 5, 2.6f, -5 };
             demo.camera.local.rotation = maths::look_rotation(((Vec3){ -5, -2.2f, 6.5f }).normalize(), { 0, 1, 0 });
         case FAST:
-            demo.camera.local.position = { -1.5f, 3.5f, 4 };
-            demo.camera.local.rotation = maths::look_rotation(((Vec3){ 1.9f, -3.1f, -4 }).normalize(), { 0, 1, 0 });
+            demo.camera.local.position = { -1.975f, 4.275f, 5 };
+            demo.camera.local.rotation = maths::look_rotation(((Vec3){ 2.375f, -3.875f, -5 }).normalize(), { 0, 1, 0 });
         case BOTH:
             demo.camera.local.position = { 0.2f, 2.3f, 6.8f };
             demo.camera.local.rotation = maths::look_rotation(((Vec3){ 0, -0.05f, -1 }).normalize(), { 0, 1, 0 });
