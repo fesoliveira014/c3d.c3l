@@ -78,6 +78,7 @@ struct TileJob {
     TileConfig     config;
     Vec3           detail_origin;
     double[2]      detail_origin_correction;
+    double[2]      detail_basis;
     Heightfield    heightfield;
     char[]         scratch;           // slot_scratch_bytes, backs arena
     ArenaAllocator arena;
@@ -219,6 +220,8 @@ fn void NavBuilder.shift_origin(&self, Vec3 offset) {
         if (job.state == FREE) continue;
         shift_bounds(&job.heightfield.bounds, offset);
         shift_detail_origin(&job.detail_origin, &job.detail_origin_correction, offset);
+        job.detail_basis[0] -= offset.x;
+        job.detail_basis[1] -= offset.z;
         foreach (&volume : job.volumes[:job.volume_count]) shift_volume(volume, offset);
         if (job.state == BUILT) shift_job_output(job, offset);
     }
@@ -532,14 +535,33 @@ fn void? build_stages(TileJob* job, BuildStage* stage) @local {
         reference = build_detail_reference(arena, &compact, config.border_size)!;
         reference.origin = job.detail_origin;
         reference.origin_correction = job.detail_origin_correction;
+        reference.basis = job.detail_basis;
+        long first_x = (long)job.tile_x * (long)(config.width - 2 * config.border_size) - config.border_size;
+        long first_z = (long)job.tile_z * (long)(config.height - 2 * config.border_size) - config.border_size;
+        if (first_x < int::min || first_x > int::max || first_z < int::min || first_z > int::max) return c3d::CAPACITY_EXCEEDED~;
+        reference.first_x = (int)first_x;
+        reference.first_z = (int)first_z;
         apply_detail_connections(&reference, &compact);
-        classify_detail_reference(&reference, &compact, config)!;
+        if (config.clearance_mode == ClearanceMode.WHOLE_CELL) classify_detail_reference(&reference, &compact, config)!;
     } else if (config.walkable_radius > 0) {
         compact.erode_walkable_area(arena, config.walkable_radius)!;
     }
     if (job.cache_layers) {
         *stage = LAYERS;
         return build_layer_blobs(job, &compact, config.detail_mode == DetailMode.BOUNDED ? &reference : null);
+    }
+    if (config.clearance_mode == ClearanceMode.SUB_CELL) {
+        *stage = DETAIL;
+        ClearanceSource source = clearance_scene_source(arena, &reference, config)!;
+        job.output = build_clearance_mesh(
+            allocator: arena,
+            source: &source,
+            config: config,
+            tile_x: job.tile_x,
+            tile_z: job.tile_z,
+            volumes: job.volumes[:job.volume_count],
+        )!;
+        return;
     }
     foreach (&volume : job.volumes[:job.volume_count]) apply_volume(&compact, volume);
     if (config.detail_mode == DetailMode.BOUNDED && config.walkable_radius > 0) compact.erode_walkable_area(arena, config.walkable_radius)!;
@@ -750,6 +772,8 @@ fn void? create_layer_cache(NavBuilder* builder, Scene* scene, NavBuilderDesc de
             .link_source_context      = sources,
             .detail_mode              = config.detail_mode,
             .detail_max_error         = config.detail_max_error,
+            .clearance_mode           = config.clearance_mode,
+            .clearance_max_error      = config.clearance_max_error,
             .max_detail_vertices      = config.max_detail_vertices,
             .max_detail_triangles     = config.max_detail_triangles,
             .agent_max_slope_degrees  = config.agent_max_slope_degrees,
@@ -904,6 +928,7 @@ fn void begin_rasterization(NavBuilder* builder, TileJob* job, Scene* scene) @lo
     double origin_z = (double)builder.bounds.min.z + builder.origin_correction[1] + job.tile_z * tile_size;
     job.detail_origin = { (float)origin_x, builder.bounds.min.y, (float)origin_z };
     job.detail_origin_correction = { origin_x - job.detail_origin.x, origin_z - job.detail_origin.z };
+    job.detail_basis = { (double)builder.bounds.min.x + builder.origin_correction[0], (double)builder.bounds.min.z + builder.origin_correction[1] };
     job.state = RASTERIZING;
     job.source_epoch = builder.source_epoch;
     job.config = builder.tile_config;

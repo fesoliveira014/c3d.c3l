@@ -87,6 +87,8 @@ const uint  REMOVING_COLOR @local = 0xFF808080;
 const double NANOSECONDS_PER_MILLISECOND @local = 1_000_000.0;
 const float DETAIL_CELL_HEIGHT @local = 0.05f;
 const float DETAIL_HEIGHT_ERROR @local = 0.01f;
+const uint SUB_CELL_SUBDIVISION @local = 2;
+const usz SUB_CELL_SCRATCH_BYTES @local = 16 * 1024 * 1024; // two floors over a 44x44 window, four clipped fans per floor
 const uint NORMAL_COLOR @local = 0xFF80FF80;
 const usz DEBUG_LINE_CAPACITY @local = 131072; // 4 MiB of vertices; full detail mesh, rasterizing spans and walker diagnostics
 
@@ -657,7 +659,15 @@ fn void draw_panel(
             detail_vertices += tile.header.detail_vertex_count;
             detail_triangles += tile.header.detail_triangle_count;
         }
-        imgui::text("Surface: %s   error: %.3f m", builder.config.detail_mode == DetailMode.BOUNDED ? "bounded".ptr : "coarse".ptr, builder.config.detail_max_error);
+        char* surface_label = builder.config.detail_mode == DetailMode.BOUNDED ? "bounded".ptr : "coarse".ptr;
+        imgui::text("Surface: %s   height error: %.3f m", surface_label, builder.config.detail_max_error);
+        bool sub_cell = builder.config.clearance_mode == ClearanceMode.SUB_CELL;
+        imgui::text("Clearance: %s", sub_cell ? "sub-cell".ptr : "whole-cell".ptr);
+        if (sub_cell) {
+            imgui::text("Clearance error: %.3f m", builder.config.clearance_max_error);
+            imgui::same_line();
+            imgui::text("N=%u", builder.tile_config.subdivision);
+        }
         imgui::text("Detail: %u vertices, %u triangles", detail_vertices, detail_triangles);
         imgui::text("Debug lines (previous): %u / %u emitted, %u dropped", (uint)sink.vertices.len() / 2,
             (uint)sink.capacity, (uint)sink.dropped);
@@ -725,6 +735,7 @@ fn void? run(
     Scene* scene,
     bool cache_layers,
     bool bounded_detail,
+    bool sub_cell,
     uint frame_limit,
 ) @local {
     Level level = build_level(assets, scene)!;
@@ -736,12 +747,20 @@ fn void? run(
         config.cell_height = DETAIL_CELL_HEIGHT;
         config.detail_max_error = DETAIL_HEIGHT_ERROR;
     }
+    if (sub_cell) {
+        config.clearance_mode = ClearanceMode.SUB_CELL;
+        config.clearance_max_error = 2.0f * config.cell_size / (float)SUB_CELL_SUBDIVISION;
+    }
     NavBuilderDesc desc = nav::default_nav_builder_desc(
         bounds: { .min = { -LEVEL_HALF_SIZE, -1, -LEVEL_HALF_SIZE }, .max = { LEVEL_HALF_SIZE, LEVEL_TOP, LEVEL_HALF_SIZE } },
         config: config,
     );
     desc.rasterize_budget = RASTERIZE_BUDGET;
     desc.cache_layers = cache_layers;
+    if (sub_cell) {
+        desc.slot_scratch_bytes = SUB_CELL_SCRATCH_BYTES;
+        desc.cache_scratch_bytes = SUB_CELL_SCRATCH_BYTES;
+    }
     NavBuilder builder = nav::create_nav_builder(mem, scene, desc)!;
     defer nav::destroy_nav_builder(&builder);
     NavMesh mesh = nav::create_nav_mesh_for(mem, &builder)!;
@@ -873,6 +892,7 @@ fn void? run(
 fn int main(String[] args) {
     bool cache_layers;
     bool bounded_detail;
+    bool sub_cell;
     uint frame_limit;
     for (usz index = 1; index < args.len; index++) {
         String arg = args[index];
@@ -880,12 +900,15 @@ fn int main(String[] args) {
             cache_layers = true;
         } else if (arg == "--detail") {
             bounded_detail = true;
+        } else if (arg == "--sub-cell") {
+            bounded_detail = true;
+            sub_cell = true;
         } else if (arg == "--frames" && index + 1 < args.len) {
             uint? parsed = args[++index].to_uint();
             if (catch parsed) return 1;
             frame_limit = parsed;
         } else {
-            io::eprintfn("Unknown argument: %s; use --cache, --detail or --frames N", arg);
+            io::eprintfn("Unknown argument: %s; use --cache, --detail, --sub-cell or --frames N", arg);
             return 1;
         }
     }
@@ -914,6 +937,7 @@ fn int main(String[] args) {
         scene:        &scene,
         cache_layers: cache_layers,
         bounded_detail: bounded_detail,
+        sub_cell: sub_cell,
         frame_limit: frame_limit,
     )) {
         io::eprintfn("navmesh example failed: %s", excuse);

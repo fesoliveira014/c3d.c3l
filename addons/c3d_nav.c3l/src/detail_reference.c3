@@ -23,6 +23,9 @@ $assert DetailSample::size == 48;
 struct DetailReference @private {
     Vec3 origin;
     double[2] origin_correction;
+    double[2] basis;
+    int first_x;
+    int first_z;
     uint width;
     uint height;
     uint border_size;
@@ -35,6 +38,9 @@ struct DetailReference @private {
 struct DetailReferenceHeader @private {
     Vec3 origin;
     double[2] origin_correction;
+    double[2] basis;
+    int first_x;
+    int first_z;
     uint width;
     uint height;
     uint border_size;
@@ -43,7 +49,7 @@ struct DetailReferenceHeader @private {
     uint sample_count;
 }
 
-$assert DetailReferenceHeader::size == 56;
+$assert DetailReferenceHeader::size == 80;
 
 fn DetailReference? build_detail_reference(
     Allocator allocator,
@@ -237,6 +243,9 @@ fn void pack_detail_reference(DetailReference* reference, char[] blob) @private 
     *(DetailReferenceHeader*)blob.ptr = {
         .origin = reference.origin,
         .origin_correction = reference.origin_correction,
+        .basis = reference.basis,
+        .first_x = reference.first_x,
+        .first_z = reference.first_z,
         .width = reference.width,
         .height = reference.height,
         .border_size = reference.border_size,
@@ -262,12 +271,19 @@ fn DetailReference? read_detail_reference(char[] blob) @private {
     foreach (value : header.origin_correction) {
         if (!math::is_finite(value)) return LAYER_CORRUPTED~;
     }
+    foreach (value : header.basis) {
+        if (!math::is_finite(value)) return LAYER_CORRUPTED~;
+    }
+    if ((long)header.first_x + header.width > int::max || (long)header.first_z + header.height > int::max) return LAYER_CORRUPTED~;
     usz columns_size = (usz)header.width * header.height * CompactCell::size;
     usz samples_size = (usz)header.sample_count * DetailSample::size;
     if (columns_size > blob.len - DetailReferenceHeader::size || samples_size != blob.len - DetailReferenceHeader::size - columns_size) return LAYER_CORRUPTED~;
     DetailReference reference = {
         .origin = header.origin,
         .origin_correction = header.origin_correction,
+        .basis = header.basis,
+        .first_x = header.first_x,
+        .first_z = header.first_z,
         .width = header.width,
         .height = header.height,
         .border_size = header.border_size,

@@ -7,7 +7,7 @@ import c3d;
 const int LAYER_MAGIC = 'D' << 24 | 'T' << 16 | 'L' << 8 | 'R';
 
 <* Version of a layer blob with optional retained references. *>
-const int LAYER_VERSION = 101;
+const int LAYER_VERSION = 102;
 
 const char   NO_LAYER_CELL @local = 0xff; // an empty height, an unassigned region or no sweep neighbour
 const char   PORTAL_BASE @local = 0xf8; // a traced neighbour of 0xf8 + direction is a portal that way
@@ -735,6 +735,8 @@ fn void pack_layer_tile_mesh(
         .bounds         = header.bounds,
         .cell_size      = cell_size,
         .cell_height    = cell_height,
+        .source_cell_size = cell_size,
+        .subdivision = 1,
     };
     TileMeshView view = tile_mesh_view(blob);
     view.verts[..] = mesh.verts[..];

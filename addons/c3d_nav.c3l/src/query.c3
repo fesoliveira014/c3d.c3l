@@ -541,7 +541,13 @@ fn RaycastHit? NavQuery.raycast(
             TileAndPoly candidate = mesh.tile_and_poly_unchecked(entry.ref);
             if (candidate.poly.area_type.type == OFF_MESH_CONNECTION) continue;
             if (!filter.passes(entry.ref, candidate.poly)) continue;
-            if (entry.side == NO_SIDE || portal_holds(current, entry, start, end, crossing.t_max)) {
+            if (portal_holds(
+                current: current,
+                link: entry,
+                start: start,
+                end: end,
+                t: crossing.t_max,
+            )) {
                 next_ref = entry.ref;
                 next = candidate;
                 break;
@@ -735,8 +741,7 @@ fn Portal? portal_points(
     Vec3 first = from.tile.verts[from.poly.verts[link.edge]];
     Vec3 second = from.tile.verts[from.poly.verts[(link.edge + 1) % from.poly.vert_count]];
     Portal portal = { .left = first, .right = second, .to_type = to_type };
-    // A tile border link may cover only part of its edge.
-    if (link.side != NO_SIDE && (link.min != 0 || link.max != 1)) {
+    if (link.min != 0 || link.max != 1) {
         portal.left = lerp_point(first, second, link.min);
         portal.right = lerp_point(first, second, link.max);
     }
@@ -754,7 +759,7 @@ fn Link*? find_link(NavMesh* mesh, TileAndPoly from, PolyRef to_ref) @private {
     return INVALID_REF~;
 }
 
-// Whether the ray crosses the edge inside the part of it the tile border link covers.
+// Whether the ray crosses the accepted interval of the edge.
 fn bool portal_holds(
     TileAndPoly current,
     Link* link,
@@ -765,14 +770,23 @@ fn bool portal_holds(
     if (link.min == 0 && link.max == 1) return true;
     Vec3 left = current.tile.verts[current.poly.verts[link.edge]];
     Vec3 right = current.tile.verts[current.poly.verts[(link.edge + 1) % current.poly.vert_count]];
-    bool along_z = link.side == 0 || link.side == 4;
-    float left_coord = along_z ? left.z : left.x;
-    float right_coord = along_z ? right.z : right.x;
-    float low = left_coord + (right_coord - left_coord) * link.min;
-    float high = left_coord + (right_coord - left_coord) * link.max;
-    if (low > high) @swap(low, high);
-    float crossing = along_z ? start.z + (end.z - start.z) * t : start.x + (end.x - start.x) * t;
-    return crossing >= low && crossing <= high;
+    if (current.tile.header.clearance_mode != ClearanceMode.SUB_CELL) {
+        double delta_x = (double)right.x - left.x;
+        double delta_z = (double)right.z - left.z;
+        double offset_x = (double)start.x + ((double)end.x - start.x) * t - left.x;
+        double offset_z = (double)start.z + ((double)end.z - start.z) * t - left.z;
+        double fraction = (offset_x * delta_x + offset_z * delta_z) / (delta_x * delta_x + delta_z * delta_z);
+        return fraction >= link.min && fraction <= link.max;
+    }
+    Vec3 crossing = lerp_point(start, end, t);
+    Vec3 first = lerp_point(left, right, link.min);
+    Vec3 last = lerp_point(left, right, link.max);
+    double delta_x = (double)right.x - left.x;
+    double delta_z = (double)right.z - left.z;
+    double distance = ((double)crossing.x - left.x) * delta_x + ((double)crossing.z - left.z) * delta_z;
+    double minimum = ((double)first.x - left.x) * delta_x + ((double)first.z - left.z) * delta_z;
+    double maximum = ((double)last.x - left.x) * delta_x + ((double)last.z - left.z) * delta_z;
+    return distance >= minimum && distance <= maximum;
 }
 
 fn StraightPathFlags corner_flags(PolyRef ref, PolyType type) @local {

@@ -10,7 +10,7 @@ const uint DETAIL_VERTEX_HASH_X @local = 0x8da6b343;
 const uint DETAIL_VERTEX_HASH_Y @local = 0xd8163841;
 const uint DETAIL_VERTEX_HASH_Z @local = 0xcb1ab31f;
 
-struct DetailPoint @local {
+struct DetailPoint @private {
     double x;
     double y;
     double z;
@@ -463,7 +463,7 @@ fn uint? add_detail_vertex(DetailBuildState* state, Vec3 vertex) @local {
     return index;
 }
 
-fn DetailPoint[3] detail_points(Vec3[3] triangle) @local {
+fn DetailPoint[3] detail_points(Vec3[3] triangle) @private {
     DetailPoint[3] points;
     for (uint index = 0; index < 3; index++) {
         points[index] = { .x = triangle[index].x, .y = triangle[index].y, .z = triangle[index].z };
@@ -471,11 +471,11 @@ fn DetailPoint[3] detail_points(Vec3[3] triangle) @local {
     return points;
 }
 
-fn double detail_point_area(DetailPoint first, DetailPoint second, DetailPoint third) @local {
+fn double detail_point_area(DetailPoint first, DetailPoint second, DetailPoint third) @private {
     return (second.x - first.x) * (third.z - first.z) - (second.z - first.z) * (third.x - first.x);
 }
 
-fn double detail_plane_height(DetailPoint[3] triangle, DetailPoint point) @local {
+fn double detail_plane_height(DetailPoint[3] triangle, DetailPoint point) @private {
     double denominator = detail_point_area(triangle[0], triangle[1], triangle[2]);
     double second_weight = detail_point_area(triangle[0], point, triangle[2]) / denominator;
     double third_weight = detail_point_area(triangle[0], triangle[1], point) / denominator;
@@ -486,7 +486,7 @@ fn uint? clip_detail_polygon(
     DetailPoint[] polygon,
     DetailPoint[] clipper,
     DetailPoint[] output,
-) @local {
+) @private {
     DetailPoint[DETAIL_CLIP_VERTICES] first_storage;
     DetailPoint[DETAIL_CLIP_VERTICES] second_storage;
     DetailPoint[] incoming = first_storage[..];
