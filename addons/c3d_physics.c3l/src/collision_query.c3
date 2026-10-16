@@ -304,10 +304,42 @@ fn void? check_collision_world(maths::Aabb bounds, maths::Transform pose, Vec3 t
     }
 }
 
-fn void? check_collision_span(maths::Aabb first, maths::Aabb second) @local {
+fn void? check_collision_span(maths::Aabb first, maths::Aabb second, Vec3 source_span = {}) @local {
     Vec3 lower = second.min - first.max;
     Vec3 upper = second.max - first.min;
-    check_collision_length(math::max(math::abs(lower), math::abs(upper)))!;
+    Vec3 local_span = math::max(math::abs(first.max - first.min), math::abs(second.max - second.min));
+    check_collision_contractions(
+        math::max(math::abs(lower), math::abs(upper)),
+        math::max(local_span, source_span),
+    )!;
+}
+
+fn void? check_collision_contractions(Vec3 span, Vec3 local_span) @local {
+    check_collision_length(span)!;
+    check_collision_vector(local_span)!;
+    float coordinate = math::max(span.x, math::max(span.y, span.z));
+    float edge = collision_bound_sum(coordinate, coordinate)!;
+
+    // Segment closest-point numerators and denominator multiply pairs of dot products.
+    float dot = collision_bound_dot(edge, edge)!;
+    float product = collision_bound_product(dot, dot)!;
+    (void)collision_bound_sum(product, product)!;
+
+    // GJK triangle barycentrics square a cross product; tetrahedra use scalar triples.
+    float normal = collision_bound_cross(edge, edge)!;
+    (void)collision_bound_dot(normal, normal)!;
+    (void)collision_bound_dot(normal, edge)!;
+
+    // The edge search direction is a double cross, whose squared length is sixth order.
+    float first_cross = collision_bound_cross(edge, coordinate)!;
+    float search = collision_bound_cross(first_cross, edge)!;
+    search = math::max(coordinate, math::max(normal, search));
+    (void)collision_bound_dot(search, search)!;
+
+    // Native support projections subtract points[0] in each proxy's own local frame.
+    float support_axis = collision_rotation_bound({ search, search, search })!;
+    float support_span = math::max(local_span.x, math::max(local_span.y, local_span.z));
+    (void)collision_bound_dot(support_axis, support_span)!;
 }
 
 fn void? check_collision_relative(
@@ -339,7 +371,8 @@ fn void? check_collision_relative(
             transformed.max = math::max(transformed.max, math::max(start, end));
         }
     }
-    check_collision_span(first, transformed)!;
+    Vec3 source_span = math::max(math::abs(first.max - first.min), math::abs(second.max - second.min));
+    check_collision_span(first, transformed, source_span)!;
 }
 
 fn void? check_collision_pair(
@@ -393,7 +426,8 @@ fn void? check_collision_sweeps(
     };
     Vec3 span = math::max(math::abs(moving_b.min - moving_a.max), math::abs(moving_b.max - moving_a.min));
     float relative_bound = collision_rotation_bound(span)!;
-    check_collision_length({ relative_bound, relative_bound, relative_bound })!;
+    Vec3 source_span = math::max(math::abs(first.max - first.min), math::abs(second.max - second.min));
+    check_collision_contractions({ relative_bound, relative_bound, relative_bound }, source_span)!;
     Vec3[4] endpoints = {
         sweep_a.start.position,
         sweep_a.end.position,
@@ -443,6 +477,16 @@ fn float? collision_bound_sum(float first, float second) @local {
 
 fn float? collision_bound_product(float first, float second) @local {
     return collision_upper_bound((double)first * second);
+}
+
+fn float? collision_bound_dot(float first, float second) @local {
+    float product = collision_bound_product(first, second)!;
+    return collision_bound_sum(collision_bound_sum(product, product)!, product);
+}
+
+fn float? collision_bound_cross(float first, float second) @local {
+    float product = collision_bound_product(first, second)!;
+    return collision_bound_sum(product, product);
 }
 
 fn void? check_collision_impact(collide::Impact impact) @local {

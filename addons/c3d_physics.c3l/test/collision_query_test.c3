@@ -296,7 +296,11 @@ fn void test_native_query_numeric_admission_precedes_unsafe_native_inputs() @tes
 
 fn void setup_prepared_queries(PreparedQueryFixture* fixture, Allocator allocator = mem) @private {
     fixture.assets = asset::create_asset_store(allocator, asset::default_asset_store_desc());
-    fixture.cache = physics::create_collision_cache(allocator, &fixture.assets, physics::default_collision_cache_desc())!!;
+    fixture.cache = physics::create_collision_cache(
+        allocator: allocator,
+        assets: &fixture.assets,
+        desc: physics::default_collision_cache_desc(),
+    )!!;
     @pool() {
         Geometry box = geometry::box(
             allocator: tmem,
@@ -667,4 +671,122 @@ fn void test_prepared_query_repetition_does_not_allocate() @test {
         assert(b3::byte_count() == native_bytes);
     }
     assert(!tracker.has_leaks() && b3::byte_count() == initial_native);
+}
+
+fn void test_prepared_query_higher_order_arithmetic_keeps_control_results() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    int initial_native = b3::byte_count();
+    {
+        AssetStore assets = asset::create_asset_store(&tracker, asset::default_asset_store_desc());
+        defer asset::destroy_asset_store(&assets);
+        CollisionCache cache = physics::create_collision_cache(&tracker, &assets, { .snapshot_capacity = 0 })!!;
+        defer physics::destroy_collision_cache(&cache)!!;
+        foreach (half_height : (float[2]){ 1, 1e12f }) {
+            CollisionShapeDesc desc = physics::default_collision_shape_desc(physics::ColliderKind.CAPSULE);
+            desc.radius = 0.5f;
+            desc.half_height = half_height;
+            CollisionShape first = physics::create_collision_shape(&tracker, &cache, desc)!!;
+            defer physics::destroy_collision_shape(&first);
+            CollisionShape second = physics::create_collision_shape(&tracker, &cache, desc)!!;
+            defer physics::destroy_collision_shape(&second);
+            sz allocations = tracker.total_allocation_count();
+            sz bytes = tracker.allocated();
+            int native_bytes = b3::byte_count();
+            foreach (separation : (float[2]){ 0.9f, 2 }) {
+                maths::Transform pose_a = maths::TRANSFORM_IDENTITY;
+                maths::Transform pose_b = maths::TRANSFORM_IDENTITY;
+                pose_b.position.z = separation;
+                pose_b.rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, (float)math::PI / 2);
+                Vec3 translation_a = { 0.25f, 0, 0 };
+                Vec3 translation_b = { 0.25f, 0, -3 };
+                collide::Sweep sweep_a = { .start = pose_a, .end = pose_a };
+                collide::Sweep sweep_b = { .start = pose_b, .end = pose_b };
+                sweep_a.end.position += translation_a;
+                sweep_b.end.position += translation_b;
+                CollisionContact[4] contacts;
+                usz? count = first.view().contacts(
+                    pose_a: pose_a,
+                    other: second.view(),
+                    pose_b: pose_b,
+                    output: contacts[..],
+                );
+                collide::Distance? distance = first.view().distance(pose_a, second.view(), pose_b);
+                collide::Impact? cast = first.view().cast(
+                    pose_a: pose_a,
+                    other: second.view(),
+                    pose_b: pose_b,
+                    translation_a: translation_a,
+                    translation_b: translation_b,
+                );
+                collide::Impact? impact = first.view().time_of_impact(sweep_a, second.view(), sweep_b);
+                collide::ShapeRayHit? ray = first.view().ray_cast(
+                    pose: pose_a,
+                    origin: { 0, 0, 2 },
+                    direction: { 0, 0, -1 },
+                    max_distance: 4,
+                );
+                if (half_height > 1) {
+                    assert(@catch(count) == c3d::UNSUPPORTED);
+                    assert(@catch(distance) == c3d::UNSUPPORTED);
+                    assert(@catch(cast) == c3d::UNSUPPORTED);
+                    assert(@catch(impact) == c3d::UNSUPPORTED);
+                    assert(@catch(ray) == c3d::UNSUPPORTED);
+                } else {
+                    bool overlapping = separation < 1;
+                    assert(count!! == (usz)(overlapping ? 1 : 0));
+                    assert(near(distance!!.distance, overlapping ? 0 : 1, LOOSE));
+                    assert(near(cast!!.time, overlapping ? 0 : 0.335f, LOOSE));
+                    assert(near(impact!!.time, overlapping ? 0 : 0.335f, LOOSE));
+                    assert(near(ray!!.fraction, 0.375f, LOOSE));
+                    if (overlapping) {
+                        assert(near(contacts[0].separation, -0.1f, LOOSE));
+                        assert(near_vector(contacts[0].normal, { 0, 0, 1 }, LOOSE));
+                        assert(cast!!.normal == (Vec3){});
+                        assert(near_vector(impact!!.normal, { 0, 0, 1 }, LOOSE));
+                    } else {
+                        assert(near_vector(distance!!.point_a, { 0, 0, 0.5f }, LOOSE));
+                        assert(near_vector(distance!!.point_b, { 0, 0, 1.5f }, LOOSE));
+                        assert(near_vector(cast!!.normal, { 0, 0, 1 }, LOOSE));
+                        assert(near_vector(impact!!.normal, { 0, 0, 1 }, LOOSE));
+                    }
+                }
+                assert(tracker.total_allocation_count() == allocations && tracker.allocated() == bytes);
+                assert(b3::byte_count() == native_bytes);
+            }
+        }
+    }
+    assert(!tracker.has_leaks() && b3::byte_count() == initial_native);
+}
+
+fn void test_prepared_query_off_centre_hulls_use_local_support_spans() @test {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    CollisionCache cache = physics::create_collision_cache(mem, &assets, physics::default_collision_cache_desc())!!;
+    defer physics::destroy_collision_cache(&cache)!!;
+    GeometryId geometry;
+    @pool() {
+        Geometry box = geometry::box(
+            allocator: tmem,
+            width: 2,
+            height: 2,
+            depth: 2,
+        );
+        foreach (&point : box.positions) point.x += 1024;
+        box.finalize();
+        geometry = assets.add_geometry(&box)!!;
+    };
+    CollisionShapeDesc desc = physics::default_collision_shape_desc(physics::ColliderKind.HULL);
+    desc.geometry = geometry;
+    CollisionShape hull = physics::create_collision_shape(mem, &cache, desc)!!;
+    defer physics::destroy_collision_shape(&hull);
+    maths::Transform first = posed({ -1024, 0, 0 });
+    maths::Transform second = posed({ 0, -1024, 0 });
+    second.rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, (float)math::PI / 2);
+    assert(hull.view().distance(first, hull.view(), second)!!.distance == 0);
+    second.position.z = 3;
+    collide::Distance distance = hull.view().distance(first, hull.view(), second)!!;
+    assert(near(distance.distance, 1, LOOSE));
+    assert(near_vector(distance.normal, { 0, 0, 1 }, LOOSE));
 }
