@@ -407,6 +407,11 @@ PIECES does not imply that its native bodies are asleep. Timing results and
 manual acceptance records belong to the corresponding change evidence.
 
 ![An impact opens the authored wall](images/breakable.png)
+The anchored example before and after restoring its captured rest recipe:
+
+![Anchored wall after impact](images/breakable_anchors_broken.png)
+
+![Anchored wall after reset](images/breakable_anchors_reset.png)
 
 Run `python scripts/build.py --test` for the full CPU matrix, or
 `c3c test physics_test --path addons/c3d_physics.c3l` for the package. The breakable
