@@ -1,0 +1,306 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": 0,
+      "parent": null,
+      "name": "physics",
+      "local": {
+        "position": [
+          3,
+          4,
+          5
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "breakable": {
+          "version": 1,
+          "value": {
+            "desc": {
+              "break_force": 2000,
+              "contact_distance": 0.00999999978,
+              "density": 1,
+              "material": {
+                "friction": 0.600000024,
+                "restitution": 0,
+                "rolling_resistance": 0,
+                "tangent_velocity": [
+                  0,
+                  0,
+                  0
+                ],
+                "id": "0"
+              },
+              "filter": {
+                "category": "1",
+                "mask": "18446744073709551615",
+                "group": 0
+              },
+              "hit_events": false,
+              "sleep_until_hit": false
+            },
+            "pieces": [
+              {
+                "node": {
+                  "node": 1,
+                  "model": null,
+                  "template_index": 4294967295
+                },
+                "hulls": [
+                  "cube"
+                ],
+                "rest_frame": {
+                  "position": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                }
+              },
+              {
+                "node": {
+                  "node": 2,
+                  "model": null,
+                  "template_index": 4294967295
+                },
+                "hulls": [
+                  "cube"
+                ],
+                "rest_frame": {
+                  "position": [
+                    1,
+                    0,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                }
+              },
+              {
+                "node": {
+                  "node": 3,
+                  "model": null,
+                  "template_index": 4294967295
+                },
+                "hulls": [
+                  "cube"
+                ],
+                "rest_frame": {
+                  "position": [
+                    4,
+                    0,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 1,
+      "parent": 0,
+      "name": "piece_0",
+      "local": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "c3d.Mesh": {
+          "version": 1,
+          "value": {
+            "geometry": "cube",
+            "material": null,
+            "cast_shadow": true,
+            "receive_shadow": true,
+            "trace": true,
+            "morph_weights": [],
+            "has_bounds_override": false,
+            "local_bounds": {
+              "min": [
+                0,
+                0,
+                0
+              ],
+              "max": [
+                0,
+                0,
+                0
+              ]
+            },
+            "vertex_motion": false
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "parent": 0,
+      "name": "piece_1",
+      "local": {
+        "position": [
+          1,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "c3d.Mesh": {
+          "version": 1,
+          "value": {
+            "geometry": "cube",
+            "material": null,
+            "cast_shadow": true,
+            "receive_shadow": true,
+            "trace": true,
+            "morph_weights": [],
+            "has_bounds_override": false,
+            "local_bounds": {
+              "min": [
+                0,
+                0,
+                0
+              ],
+              "max": [
+                0,
+                0,
+                0
+              ]
+            },
+            "vertex_motion": false
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "parent": 0,
+      "name": "piece_2",
+      "local": {
+        "position": [
+          4,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "c3d.Mesh": {
+          "version": 1,
+          "value": {
+            "geometry": "cube",
+            "material": null,
+            "cast_shadow": true,
+            "receive_shadow": true,
+            "trace": true,
+            "morph_weights": [],
+            "has_bounds_override": false,
+            "local_bounds": {
+              "min": [
+                0,
+                0,
+                0
+              ],
+              "max": [
+                0,
+                0,
+                0
+              ]
+            },
+            "vertex_motion": false
+          }
+        }
+      }
+    }
+  ]
+}

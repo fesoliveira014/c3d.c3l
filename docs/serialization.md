@@ -122,6 +122,16 @@ syntax. Current-version binary truncation never fills defaults. Older binary
 layouts need an explicit compatibility reader, and older text versions must be
 listed explicitly by the codec owner.
 
+An add-on's `BinaryCompatibility` callback can use
+`ReadContext.read_value($Type, reader)` to decode an already registered described
+type from its bounded payload. The returned value and nested arrays borrow from
+the active read context until the subtree read finishes. Validate and copy or
+convert retained data before returning from the callback. The helper preserves
+the normal version/layout, framing, depth and reference checks, including full
+payload consumption; it does not attach components or invoke owner validation.
+All acquisitions, including partial failed reads, are released when the outer
+read exits.
+
 Finite floats/doubles preserve their bits with nine/seventeen significant digits
 and direct conversion into the destination width. Negative zero is `-0.0`.
 Non-finite values use `"f32:xxxxxxxx"` or `"f64:xxxxxxxxxxxxxxxx"`, fixed-width
@@ -386,17 +396,45 @@ persist and source values are unchanged. Normal physics sync creates native stat
 
 ## Breakable adapter
 
-Breakable restores in OWNER as a pending copied recipe with no bodies, welds or
-cooked runtime resources. A prepared export retains ordered surviving pieces and
-hulls, captures current root-relative frames, and projects WORLD piece transforms
-to PARENT while preserving world placement and authored render descendants.
-Fewer than two prepared survivors returns UNSUPPORTED with root/type diagnostics.
-A pending export preserves its exact recipe and saved placements, including a
-mismatch that explicit preparation must still report. Normal world preparation
-rebuilds the graph from current contacts; touching survivors can weld again.
+Breakable owner payload version 2 restores in OWNER through the public pending
+attachment path, without a PhysicsWorld, cooked hulls or native bodies/joints.
+`prepare_breakable` and its subtree variant create runtime afterward. A returned
+preparation failure retains the copied recipe for inspection and retry.
+
+`LEGACY_CURRENT_POSE` preserves the existing constructors and version-1 imports.
+A prepared export keeps ordered surviving pieces/hulls, captures current
+root-relative frames, and projects WORLD piece transforms to PARENT while
+preserving world placement and render descendants. Pending exports retain the
+exact recipe and placements, including a mismatch that preparation must still
+report. Preparation regenerates contact adjacency; touching survivors can weld
+again. Both old binary payloads and version-1 text defaults retain this behavior.
+
+`AUTHORED_REST` is used by explicit `BreakableRecipeDesc` authoring. It saves
+captured rest frames, authoritative internal/anchor edges, axes, strength
+defaults/overrides and evaluation mode. Serialized piece placements are projected
+to rest under the saved root. Loading calls `Scene.attach_breakable_recipe`;
+preparation creates an intact representation with zero velocities. Native IDs,
+damage, measured reactions and runtime velocities are excluded. An explicit
+empty graph stays empty.
+
+Survivors retain their relative input order. Export omits edges incident to
+deleted pieces and anchors to deleted targets, then remaps piece indices.
+Runtime indices remain stable until removal; they are not identities across a
+pruned save/load. Fewer than two portable survivors returns `UNSUPPORTED`, even
+though zero/one survivors are valid runtime reset states.
+
+Every remaining live anchor target must be saved in the same subtree with its
+ordinary STATIC body authoring. A shared ancestor containing the Breakable and
+support siblings is valid. Live locally resolved targets outside or omitted from
+the subtree, or without valid STATIC authoring, return `INVALID_ARGUMENT`.
+Breakable's Entity inputs are scoped to the receiving Scene. Their index and
+generation cannot identify the originating Scene of an equal value. Support
+bodies/joints are not omitted as Breakable-owned data. Existing descendant
+ownership restrictions still apply.
 Only verified owned body components are omitted; modified or unrelated bodies,
-conflicting owners and joints are rejected. Source nodes and assets are unchanged.
-`WriteContext.set_transform` projects transform and coordinate space together.
+conflicting owners and joints are rejected. Export changes no live nodes, assets,
+damage or handles. `WriteContext.set_transform` projects transform and coordinate
+space together.
 
 ## Character adapter
 

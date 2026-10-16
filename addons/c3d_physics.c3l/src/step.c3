@@ -132,6 +132,8 @@ fn void end_step(PhysicsWorld* world) @local {
         Entity other = world.scene.get(node, Joint).other;
         world.joint_event_storage[world.joint_event_count++] = { .node = node, .other = world.scene.node(other) };
     }
+    // Break selection needs every sampled joint to remain alive until the safe point.
+    sample_breakables(world);
     finish_breakable_step(world);
 }
 
