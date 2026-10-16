@@ -678,8 +678,8 @@ fn void? create_demo(
             demo.camera.local.position = { 5, 2.6f, -5 };
             demo.camera.local.rotation = maths::look_rotation(((Vec3){ -5, -2.2f, 6.5f }).normalize(), { 0, 1, 0 });
         case FAST:
-            demo.camera.local.position = { 3.2f, 2.8f, 5 };
-            demo.camera.local.rotation = maths::look_rotation(((Vec3){ -2.8f, -2.4f, -5 }).normalize(), { 0, 1, 0 });
+            demo.camera.local.position = { -1.5f, 3.5f, 4 };
+            demo.camera.local.rotation = maths::look_rotation(((Vec3){ 1.9f, -3.1f, -4 }).normalize(), { 0, 1, 0 });
         case BOTH:
             demo.camera.local.position = { 0.2f, 2.3f, 6.8f };
             demo.camera.local.rotation = maths::look_rotation(((Vec3){ 0, -0.05f, -1 }).normalize(), { 0, 1, 0 });
@@ -1042,7 +1042,7 @@ fn void? run_benchmark(Options options) @local {
     io::printfn("publication,%s", demo.whole_publication ? "whole" : "streams");
     io::printfn("resolution,%dx%d,particles,%d,constraints,%d", WIDTH, HEIGHT, stats.particles, stats.constraints);
     io::printfn("frames,%d,warmup,%d,substeps,%d,iterations,%d", MEASURED_FRAMES, WARMUP_FRAMES,
-        cloth::DEFAULT_CLOTH_SUBSTEPS, cloth::DEFAULT_CLOTH_ITERATIONS);
+        demo.fast ? 1 : cloth::DEFAULT_CLOTH_SUBSTEPS, demo.fast ? 1 : cloth::DEFAULT_CLOTH_ITERATIONS);
     io::printfn("solve_ms,mean,%.4f,p95,%.4f", mean(solve_ms[..]), percentile(solve_ms[..], PERCENTILE_95));
     io::printfn("publish_ms,mean,%.4f,p95,%.4f", mean(publish_ms[..]), percentile(publish_ms[..], PERCENTILE_95));
     io::printfn("upload_bytes_per_frame,%.0f", (double)upload_bytes / MEASURED_FRAMES);

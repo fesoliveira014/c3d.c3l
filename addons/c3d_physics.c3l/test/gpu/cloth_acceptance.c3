@@ -439,10 +439,12 @@ fn void test_cloth_self_and_continuous_failure_preserves_world_motion() @test {
     Node* body = fixture.scene.add_node(name: "contact")!!;
     body.local.position.z = -10;
     fixture.scene.update_world();
-    ColliderDesc[2] boxes;
+    ColliderDesc[4] boxes;
     boxes[0] = physics::default_collider_desc(BOX);
     boxes[0].half_extents = { 3, 3, 0.1f };
     boxes[1] = boxes[0];
+    boxes[2] = boxes[0];
+    boxes[3] = boxes[0];
     fixture.physics.add_body(body, physics::default_body_desc(STATIC), boxes[:1])!!;
     Vec3[6] positions = {
         { -1, -1, 0 }, { 1, -1, 0 }, { 0, 1, 0 },
@@ -490,6 +492,7 @@ fn void test_cloth_self_and_continuous_failure_preserves_world_motion() @test {
     step(&fixture, 0);
     assert(state.contact_result.failure == c3d::CAPACITY_EXCEEDED);
     assert(state.contact_result.stage == ClothContactStage.CANDIDATES);
+    assert(state.contact_result.candidates == desc.collisions.max_candidates);
     assert(geometry.header.revision == revision);
     render_views(&fixture, both[..]);
     foreach (view : both) check_velocity(velocity_at(&fixture, view, centre), {});
