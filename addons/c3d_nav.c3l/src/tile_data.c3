@@ -216,6 +216,12 @@ fn void carve_tile_data(MeshTile* tile, char[] data) @private {
 }
 
 fn void? validate_tile_data(char[] data) @private {
+    @pool() {
+        validate_tile_data_scratch(data, tmem)!;
+    };
+}
+
+fn void? validate_tile_data_scratch(char[] data, Allocator scratch) @private {
     if (data.len < TileHeader::size || (uptr)data.ptr % TILE_DATA_ALIGNMENT != 0) return c3d::INVALID_ARGUMENT~;
 
     TileHeader* header = (TileHeader*)data.ptr;
@@ -341,25 +347,23 @@ fn void? validate_tile_data(char[] data) @private {
     }
 
     if (header.detail_mode == DetailMode.BOUNDED) {
-        @pool() {
-            foreach (index, detail : tile.details) {
-                if (detail.vertex_base > tile.detail_vertices.len
-                    || detail.vertex_count > tile.detail_vertices.len - detail.vertex_base
-                    || detail.triangle_base > tile.detail_triangles.len
-                    || detail.triangle_count > tile.detail_triangles.len - detail.triangle_base) {
-                    return c3d::INVALID_ARGUMENT~;
-                }
-                Vec3[MAX_VERTS_PER_POLY] corners = polygon_vertices(&tile, &tile.polys[index]);
-                for (usz vertex = 0; vertex < tile.polys[index].vert_count; vertex++) corners[vertex] = tile.detail_corners[tile.polys[index].verts[vertex]];
-                validate_detail_polygon(
-                    corners: corners[:tile.polys[index].vert_count],
-                    range: detail,
-                    local_vertices: tile.detail_vertices,
-                    triangles: tile.detail_triangles,
-                    scratch: tmem,
-                )!;
+        foreach (index, detail : tile.details) {
+            if (detail.vertex_base > tile.detail_vertices.len
+                || detail.vertex_count > tile.detail_vertices.len - detail.vertex_base
+                || detail.triangle_base > tile.detail_triangles.len
+                || detail.triangle_count > tile.detail_triangles.len - detail.triangle_base) {
+                return c3d::INVALID_ARGUMENT~;
             }
-        };
+            Vec3[MAX_VERTS_PER_POLY] corners = polygon_vertices(&tile, &tile.polys[index]);
+            for (usz vertex = 0; vertex < tile.polys[index].vert_count; vertex++) corners[vertex] = tile.detail_corners[tile.polys[index].verts[vertex]];
+            validate_detail_polygon(
+                corners: corners[:tile.polys[index].vert_count],
+                range: detail,
+                local_vertices: tile.detail_vertices,
+                triangles: tile.detail_triangles,
+                scratch: scratch,
+            )!;
+        }
     }
 }
 
@@ -500,6 +504,10 @@ fn BvNode poly_leaf(TileMeshView mesh, MeshTile* tile, uint index) @local {
         leaf.max[1] = (ushort)math::ceil((float)leaf.max[1] * source.cell_height / source.cell_size);
         return leaf;
     }
+    return runtime_poly_leaf(tile, index);
+}
+
+fn BvNode runtime_poly_leaf(MeshTile* tile, uint index) @local {
     Aabb bounds = polygon_bounds(tile, &tile.polys[index]);
     Vec3 low = (bounds.min - tile.header.bounds.min) * tile.header.bv_quant_factor;
     Vec3 high = (bounds.max - tile.header.bounds.min) * tile.header.bv_quant_factor;
@@ -509,6 +517,20 @@ fn BvNode poly_leaf(TileMeshView mesh, MeshTile* tile, uint index) @local {
         leaf.max[axis] = (ushort)math::clamp(math::ceil(high[axis]), 0.0f, MAX_BV_COORDINATE);
     }
     return leaf;
+}
+
+fn void? rebuild_tile_bv_tree(MeshTile* tile, Allocator scratch) @private {
+    BvNode[] items = alloc::new_array_try(scratch, BvNode, tile.header.off_mesh_base) ?? c3d::CAPACITY_EXCEEDED~!;
+    defer alloc::free(scratch, items.ptr);
+    foreach (index, &item : items) *item = runtime_poly_leaf(tile, (uint)index);
+    usz cursor;
+    subdivide(
+        items: items,
+        first: 0,
+        last: items.len,
+        cursor: &cursor,
+        nodes: tile.bv_tree,
+    );
 }
 
 fn void? validate_tile_parameters(OffMeshConnectionDesc[] connections, TileDataParams params) @private {

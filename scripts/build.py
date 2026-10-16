@@ -61,6 +61,7 @@ ADDON_EXAMPLES = {
     "vehicle": PHYSICS,
     "ragdoll": PHYSICS,
     "collision_math": PHYSICS,
+    "nav_persistence": NAV,
     "navmesh": NAV,
     "crowd": NAV,
     "grid": NAV,
