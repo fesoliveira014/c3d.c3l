@@ -223,7 +223,7 @@ fn Weld[]? pending_breakable_reset_edges(PhysicsWorld* world, BreakableState* st
         poses[count] = state.runtime.frames[index];
         offsets[count++] = held_count;
         for (uint hull = state.runtime.hull_offsets[index]; hull < state.runtime.hull_offsets[index + 1]; hull++) {
-            held[held_count] = acquire_hull(world, state.runtime.geometries[hull])!;
+            held[held_count] = acquire_hull(world.snapshots, state.runtime.geometries[hull])!;
             held_count++;
         }
     }

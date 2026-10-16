@@ -346,6 +346,7 @@ struct PhysicsDebugOptions {
 struct PhysicsWorld {
     Allocator      allocator;
     SnapshotTable* snapshots;      // heap, so the RigidBody removal hook keeps a stable address
+    bool           owns_snapshots;
     b3::WorldId    world;
     AssetStore*    assets;
     Scene*         scene;
@@ -673,7 +674,8 @@ fn ExplosionDesc default_explosion_desc() {
  Create a physics world bound to the scene and its asset store.
  @param [&in] assets : "Borrowed; outlives the world."
  @param [&inout] scene : "Borrowed; outlives the world; gains the RigidBody and Joint stores and hooks."
- @return? c3d::CAPACITY_EXCEEDED, b3::WORLD_LIMIT_REACHED, b3::INVALID_DEFINITION
+ @param [inout] cache : "Optional same-store cache; outlives the world."
+ @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, b3::WORLD_LIMIT_REACHED, b3::INVALID_DEFINITION
  @require scene.world.is_registered(PhysicsBody), scene.world.is_registered(PhysicsJoint)
 *>
 fn PhysicsWorld? create_physics_world(
@@ -681,7 +683,9 @@ fn PhysicsWorld? create_physics_world(
     AssetStore* assets,
     Scene* scene,
     PhysicsDesc desc,
+    CollisionCache* cache = null,
 ) {
+    if (cache && (!cache.state || cache.state.assets != assets)) return c3d::INVALID_ARGUMENT~;
     PhysicsTuning tuning = desc.tuning;
     b3::WorldDef def = b3::default_world_def();
     def.gravity = tuning.gravity;
@@ -701,13 +705,18 @@ fn PhysicsWorld? create_physics_world(
     scene.register(RigidBody)!;
     scene.register(Joint)!;
 
-    SnapshotTable* snapshots = create_snapshot_table(allocator, desc.snapshot_capacity);
+    SnapshotTable* snapshots = cache ? cache.state : create_snapshot_table(allocator, assets, {
+        .snapshot_capacity = desc.snapshot_capacity,
+        .cache_wireframes = desc.cache_wireframes,
+    })!;
+    snapshots.borrowers++;
     scene.set_remove_hook(RigidBody, &remove_rigid_body, snapshots);
     scene.set_remove_hook(Joint, &remove_joint_component, null);
 
     return {
         .allocator             = allocator,
         .snapshots             = snapshots,
+        .owns_snapshots        = cache == null,
         .world                 = world,
         .assets                = assets,
         .scene                 = scene,
@@ -725,7 +734,7 @@ fn PhysicsWorld? create_physics_world(
 }
 
 <*
- Destroy the world, joints, bodies and snapshots; nodes and authored components remain.
+ Destroy the world, joints and bodies, then release its cache; authored components remain.
  @param [&inout] world : "Destroyed before its scene and asset store."
 *>
 fn void destroy_physics_world(PhysicsWorld* world) {
@@ -755,7 +764,8 @@ fn void destroy_physics_world(PhysicsWorld* world) {
         record::destroy_recording(world.recording);
     }
     b3::destroy_world(world.world);
-    destroy_snapshot_table(world.snapshots);
+    world.snapshots.borrowers--;
+    if (world.owns_snapshots) destroy_snapshot_table(world.snapshots);
 
     alloc::free(world.allocator, world.orphan_scratch.ptr);
     alloc::free(world.allocator, world.contact_begin_storage.ptr);

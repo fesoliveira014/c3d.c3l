@@ -585,7 +585,7 @@ fn void? PhysicsWorld.prepare_breakable(&self, Node* root) {
         uint held_count;
         defer foreach (handle : held[:held_count]) release_snapshot(self.snapshots, handle);
         foreach (geometry : pending.runtime.geometries) {
-            held[held_count] = acquire_hull(self, geometry)!;
+            held[held_count] = acquire_hull(self.snapshots, geometry)!;
             held_count++;
         }
         Weld[] edges = pending.welds;

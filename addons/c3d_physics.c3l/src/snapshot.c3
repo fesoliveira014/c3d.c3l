@@ -60,6 +60,9 @@ struct CollisionSnapshot {
 struct SnapshotTable {
     Allocator           allocator;
     CollisionSnapshot[] slots;
+    AssetStore*         assets;
+    uint                borrowers;
+    bool                cache_wireframes;
 }
 
 struct SnapshotKey @local {
@@ -68,11 +71,18 @@ struct SnapshotKey @local {
     SnapshotSource[] sources;
 }
 
-fn SnapshotTable* create_snapshot_table(Allocator allocator, uint capacity) @private {
-    SnapshotTable* table = alloc::new(allocator, SnapshotTable);
+fn SnapshotTable*? create_snapshot_table(Allocator allocator, AssetStore* assets, CollisionCacheDesc desc) @private {
+    SnapshotTable* table = alloc::new_try(allocator, SnapshotTable) ?? c3d::CAPACITY_EXCEEDED~!;
+    defer catch alloc::free(allocator, table);
+    CollisionSnapshot[] slots;
+    if (desc.snapshot_capacity) {
+        slots = alloc::new_array_try(allocator, CollisionSnapshot, desc.snapshot_capacity) ?? c3d::CAPACITY_EXCEEDED~!;
+    }
     *table = {
         .allocator = allocator,
-        .slots     = alloc::new_array(allocator, CollisionSnapshot, capacity),
+        .slots = slots,
+        .assets = assets,
+        .cache_wireframes = desc.cache_wireframes,
     };
     return table;
 }
@@ -88,38 +98,48 @@ fn void destroy_snapshot_table(SnapshotTable* table) @private {
 
 fn CollisionSnapshot* snapshot_of(SnapshotTable* table, SnapshotHandle handle) @private => &table.slots[handle.index];
 
-fn SnapshotHandle? acquire_hull(PhysicsWorld* world, GeometryId geometry) @private {
-    SnapshotSource[1] sources = { current_source(world, geometry) };
-    foreach (usz index, &slot : world.snapshots.slots) {
-        if (matches(slot, { .kind = HULL, .sources = sources[..] })) return hold(world.snapshots, index);
+fn SnapshotHandle? acquire_hull(SnapshotTable* table, GeometryId geometry, bool query = false) @private {
+    SnapshotSource[1] sources = { current_source(table, geometry) };
+    foreach (usz index, &slot : table.slots) {
+        if (matches(slot, { .kind = HULL, .sources = sources[..] })) return hold(table, index);
     }
 
-    Vec3[] positions = world.assets.geometry(geometry).data.positions;
+    Vec3[] positions = table.assets.geometry(geometry).data.positions;
     if (!positions.len) return SOURCE_UNAVAILABLE~;
-    usz index = reserve_slot(world)!;
+    if (query) check_collision_hull_source(positions)!;
+    usz index = reserve_slot(table)!;
+    SnapshotSource[] captured_sources = alloc::new_array_try(table.allocator, SnapshotSource, 1)
+      ?? c3d::CAPACITY_EXCEEDED~!;
+    defer catch alloc::free(table.allocator, captured_sources.ptr);
+    captured_sources[0] = sources[0];
     b3::HullData* hull = b3::create_hull(positions, b3::MAX_HULL_VERTICES)!;
-    Allocator allocator = world.snapshots.allocator;
+    defer catch b3::destroy_hull(hull);
+    Allocator allocator = table.allocator;
     Vec3[] wire;
-    if (world.desc.cache_wireframes) wire = hull_wire(allocator, hull);
-    return occupy(world.snapshots, index, {
+    if (table.cache_wireframes) {
+        wire = alloc::new_array_try(allocator, Vec3, hull.edge_count) ?? c3d::CAPACITY_EXCEEDED~!;
+        WireWriter writer = { .points = wire };
+        write_hull(&writer, hull, matrix::IDENTITY4);
+    }
+    return occupy(table, index, {
         .kind    = HULL,
-        .sources = copy_sources(allocator, sources[..]),
+        .sources = captured_sources,
         .hull    = hull,
         .wire    = wire,
     });
 }
 
-fn SnapshotHandle? acquire_mesh(PhysicsWorld* world, GeometryId geometry, char[] material_indices) @private {
-    SnapshotSource[1] sources = { current_source(world, geometry) };
+fn SnapshotHandle? acquire_mesh(SnapshotTable* table, GeometryId geometry, char[] material_indices) @private {
+    SnapshotSource[1] sources = { current_source(table, geometry) };
     ulong content = material_indices.len ? fnv64a::hash(material_indices) : 0;
-    foreach (usz index, &slot : world.snapshots.slots) {
-        if (matches(slot, { .kind = MESH, .content = content, .sources = sources[..] })) return hold(world.snapshots, index);
+    foreach (usz index, &slot : table.slots) {
+        if (matches(slot, { .kind = MESH, .content = content, .sources = sources[..] })) return hold(table, index);
     }
 
-    Geometry* source = &world.assets.geometry(geometry).data;
+    Geometry* source = &table.assets.geometry(geometry).data;
     if (!source.positions.len) return SOURCE_UNAVAILABLE~;
-    usz index = reserve_slot(world)!;
-    Allocator allocator = world.snapshots.allocator;
+    usz index = reserve_slot(table)!;
+    Allocator allocator = table.allocator;
     uint[] indices = source.indices;
     if (!indices.len) indices = sequential_indices(allocator, source.positions.len);
     defer {
@@ -134,8 +154,8 @@ fn SnapshotHandle? acquire_mesh(PhysicsWorld* world, GeometryId geometry, char[]
     };
     b3::MeshData* mesh = b3::create_mesh(&def)!;
     Vec3[] wire;
-    if (world.desc.cache_wireframes) wire = mesh_wire(allocator, source.positions, indices);
-    return occupy(world.snapshots, index, {
+    if (table.cache_wireframes) wire = mesh_wire(allocator, source.positions, indices);
+    return occupy(table, index, {
         .kind    = MESH,
         .content = content,
         .sources = copy_sources(allocator, sources[..]),
@@ -144,48 +164,48 @@ fn SnapshotHandle? acquire_mesh(PhysicsWorld* world, GeometryId geometry, char[]
     });
 }
 
-fn SnapshotHandle? acquire_height_field(PhysicsWorld* world, ColliderDesc* desc) @private {
+fn SnapshotHandle? acquire_height_field(SnapshotTable* table, ColliderDesc* desc) @private {
     switch (desc.height_field.source) {
         case HEIGHTS:
-            usz index = reserve_slot(world)!;
-            CollisionSnapshot snapshot = cook_height_field(world, desc, desc.height_field)!;
-            return occupy(world.snapshots, index, snapshot);
+            usz index = reserve_slot(table)!;
+            CollisionSnapshot snapshot = cook_height_field(table, desc, desc.height_field)!;
+            return occupy(table, index, snapshot);
         case TEXTURE:
-            return acquire_height_map(world, desc);
+            return acquire_height_map(table, desc);
     }
 }
 
 // Texture sources share one slot per texture revision, scale and material indices, like asset meshes.
 // Called inside build_body's @pool: the samples live in tmem until box3d copies them.
-fn SnapshotHandle? acquire_height_map(PhysicsWorld* world, ColliderDesc* desc) @local {
+fn SnapshotHandle? acquire_height_map(SnapshotTable* table, ColliderDesc* desc) @local {
     TextureId texture = desc.height_field.texture;
-    SnapshotSource[1] sources = { current_texture_source(world, texture) };
+    SnapshotSource[1] sources = { current_texture_source(table, texture) };
     Fnv64a hash;
     hash.init();
     @hash_value(&hash, desc.local.scale);
     hash.update(desc.material_indices);
     ulong content = (ulong)hash;
-    foreach (usz index, &slot : world.snapshots.slots) {
+    foreach (usz index, &slot : table.slots) {
         if (matches(slot, { .kind = HEIGHT_FIELD, .content = content, .sources = sources[..] })) {
-            return hold(world.snapshots, index);
+            return hold(table, index);
         }
     }
 
-    TextureAsset* record = world.assets.texture(texture);
+    TextureAsset* record = table.assets.texture(texture);
     if (!record.pixels.len) return SOURCE_UNAVAILABLE~;
-    usz index = reserve_slot(world)!;
+    usz index = reserve_slot(table)!;
     HeightField samples = {
         .heights = height_map_samples(record, tmem),
         .count_x = record.desc.width,
         .count_z = record.desc.height,
     };
-    CollisionSnapshot snapshot = cook_height_field(world, desc, samples)!;
+    CollisionSnapshot snapshot = cook_height_field(table, desc, samples)!;
     snapshot.content = content;
-    snapshot.sources = copy_sources(world.snapshots.allocator, sources[..]);
-    return occupy(world.snapshots, index, snapshot);
+    snapshot.sources = copy_sources(table.allocator, sources[..]);
+    return occupy(table, index, snapshot);
 }
 
-fn CollisionSnapshot? cook_height_field(PhysicsWorld* world, ColliderDesc* desc, HeightField field) @local {
+fn CollisionSnapshot? cook_height_field(SnapshotTable* table, ColliderDesc* desc, HeightField field) @local {
     float minimum = field.heights[0];
     float maximum = field.heights[0];
     foreach (height : field.heights) {
@@ -203,31 +223,31 @@ fn CollisionSnapshot? cook_height_field(PhysicsWorld* world, ColliderDesc* desc,
     };
     b3::HeightFieldData* data = b3::create_height_field(&def)!;
     Vec3[] wire;
-    if (world.desc.cache_wireframes) wire = height_field_wire(world.snapshots.allocator, field, desc.local.scale);
+    if (table.cache_wireframes) wire = height_field_wire(table.allocator, field, desc.local.scale);
     return { .kind = HEIGHT_FIELD, .height_field = data, .wire = wire };
 }
 
-fn SnapshotHandle? acquire_compound(PhysicsWorld* world, ColliderDesc* desc) @private {
-    Allocator allocator = world.snapshots.allocator;
-    SnapshotSource[] sources = compound_sources(world, allocator, desc.children);
+fn SnapshotHandle? acquire_compound(SnapshotTable* table, ColliderDesc* desc) @private {
+    Allocator allocator = table.allocator;
+    SnapshotSource[] sources = compound_sources(table, allocator, desc.children);
     defer catch alloc::free(allocator, sources.ptr);
     ulong content = compound_content(desc.children);
-    foreach (usz index, &slot : world.snapshots.slots) {
+    foreach (usz index, &slot : table.slots) {
         if (matches(slot, { .kind = COMPOUND, .content = content, .sources = sources })) {
             alloc::free(allocator, sources.ptr);
-            return hold(world.snapshots, index);
+            return hold(table, index);
         }
     }
 
     Vec3[] wire;
-    b3::CompoundData* compound = bake_compound(world, desc.children, &wire)!;
+    b3::CompoundData* compound = bake_compound(table, desc.children, &wire)!;
     defer catch {
         b3::destroy_compound(compound);
         alloc::free(allocator, wire.ptr);
     }
     // Reserved only after the bake: the bake acquires child snapshots and would take a reserved slot.
-    usz index = reserve_slot(world)!;
-    return occupy(world.snapshots, index, {
+    usz index = reserve_slot(table)!;
+    return occupy(table, index, {
         .kind     = COMPOUND,
         .content  = content,
         .sources  = sources,
@@ -247,42 +267,43 @@ fn void release_snapshot(SnapshotTable* table, SnapshotHandle handle) @private {
     if (!slot.holders && (!slot.sources.len || slot.kind == COMPOUND)) free_snapshot(table, slot);
 }
 
-fn void reclaim_unheld_stale(PhysicsWorld* world) @private {
-    foreach (&slot : world.snapshots.slots) {
-        if (is_occupied(slot) && !slot.holders && slot.sources.len && !sources_current(world, slot)) {
-            free_snapshot(world.snapshots, slot);
+fn void reclaim_unheld_stale(SnapshotTable* table) @private {
+    foreach (&slot : table.slots) {
+        if (is_occupied(slot) && !slot.holders && slot.sources.len && !sources_current(table, slot)) {
+            free_snapshot(table, slot);
         }
     }
 }
 
-fn bool sources_current(PhysicsWorld* world, CollisionSnapshot* slot) @private {
+fn bool sources_current(SnapshotTable* table, CollisionSnapshot* slot) @private {
     foreach (source : slot.sources) {
         switch (slot.kind) {
             case HEIGHT_FIELD:
-                if (texture_revision_or_zero(world, source.texture) != source.revision) return false;
+                if (texture_revision_or_zero(table, source.texture) != source.revision) return false;
             case HULL:
             case MESH:
             case COMPOUND:
-                if (revision_or_zero(world, source.geometry) != source.revision) return false;
+                if (revision_or_zero(table, source.geometry) != source.revision) return false;
         }
     }
     return true;
 }
 
 fn ulong body_revision_sum(PhysicsWorld* world, PhysicsBody* physics_body) @private {
+    SnapshotTable* table = world.snapshots;
     ulong sum;
     foreach (&collider : physics_body.colliders) {
         switch (collider.kind) {
             case HULL:
             case MESH:
-                sum += revision_or_zero(world, collider.geometry);
+                sum += revision_or_zero(table, collider.geometry);
             case COMPOUND:
                 foreach (&child : collider.children) {
-                    if (child.kind == HULL || child.kind == MESH) sum += revision_or_zero(world, child.geometry);
+                    if (child.kind == HULL || child.kind == MESH) sum += revision_or_zero(table, child.geometry);
                 }
             case HEIGHT_FIELD:
                 HeightField field = collider.height_field;
-                if (field.source == TEXTURE) sum += texture_revision_or_zero(world, field.texture);
+                if (field.source == TEXTURE) sum += texture_revision_or_zero(table, field.texture);
             case SPHERE:
             case CAPSULE:
             case BOX:
@@ -321,11 +342,11 @@ fn SnapshotHandle occupy(SnapshotTable* table, usz index, CollisionSnapshot snap
     return { .index = (uint)index, .generation = snapshot.generation };
 }
 
-fn usz? reserve_slot(PhysicsWorld* world) @local {
-    usz? index = first_free_slot(world.snapshots);
+fn usz? reserve_slot(SnapshotTable* table) @local {
+    usz? index = first_free_slot(table);
     if (try index) return index;
-    reclaim_unheld_stale(world);
-    return first_free_slot(world.snapshots);
+    reclaim_unheld_stale(table);
+    return first_free_slot(table);
 }
 
 fn usz? first_free_slot(SnapshotTable* table) @local {
@@ -347,22 +368,22 @@ fn bool matches(CollisionSnapshot* slot, SnapshotKey key) @local {
     return true;
 }
 
-fn SnapshotSource current_source(PhysicsWorld* world, GeometryId geometry) @local {
-    return { .geometry = geometry, .revision = world.assets.geometry(geometry).header.revision };
+fn SnapshotSource current_source(SnapshotTable* table, GeometryId geometry) @local {
+    return { .geometry = geometry, .revision = table.assets.geometry(geometry).header.revision };
 }
 
-fn ulong revision_or_zero(PhysicsWorld* world, GeometryId geometry) @local {
-    if (!world.assets.geometries.is_live(geometry)) return 0;
-    return world.assets.geometry(geometry).header.revision;
+fn ulong revision_or_zero(SnapshotTable* table, GeometryId geometry) @local {
+    if (!table.assets.geometries.is_live(geometry)) return 0;
+    return table.assets.geometry(geometry).header.revision;
 }
 
-fn SnapshotSource current_texture_source(PhysicsWorld* world, TextureId texture) @local {
-    return { .texture = texture, .revision = world.assets.texture(texture).header.revision };
+fn SnapshotSource current_texture_source(SnapshotTable* table, TextureId texture) @local {
+    return { .texture = texture, .revision = table.assets.texture(texture).header.revision };
 }
 
-fn ulong texture_revision_or_zero(PhysicsWorld* world, TextureId texture) @local {
-    if (!world.assets.textures.is_live(texture)) return 0;
-    return world.assets.texture(texture).header.revision;
+fn ulong texture_revision_or_zero(SnapshotTable* table, TextureId texture) @local {
+    if (!table.assets.textures.is_live(texture)) return 0;
+    return table.assets.texture(texture).header.revision;
 }
 
 fn usz? height_texel_bytes(PixelFormat format) @private {
@@ -423,7 +444,7 @@ fn SnapshotSource[] copy_sources(Allocator allocator, SnapshotSource[] sources) 
     return copy;
 }
 
-fn SnapshotSource[] compound_sources(PhysicsWorld* world, Allocator allocator, CompoundChild[] children) @local {
+fn SnapshotSource[] compound_sources(SnapshotTable* table, Allocator allocator, CompoundChild[] children) @local {
     usz count;
     foreach (&child : children) {
         if (child.kind == HULL || child.kind == MESH) count++;
@@ -431,7 +452,7 @@ fn SnapshotSource[] compound_sources(PhysicsWorld* world, Allocator allocator, C
     SnapshotSource[] sources = alloc::new_array(allocator, SnapshotSource, (sz)count);
     usz cursor;
     foreach (&child : children) {
-        if (child.kind == HULL || child.kind == MESH) sources[cursor++] = current_source(world, child.geometry);
+        if (child.kind == HULL || child.kind == MESH) sources[cursor++] = current_source(table, child.geometry);
     }
     return sources;
 }
@@ -467,7 +488,7 @@ fn void hash_material(Fnv64a* hash, SurfaceMaterialDesc* material) @local {
 
 macro void @hash_value(Fnv64a* hash, #value) @local => hash.update(@as_char_view(#value));
 
-fn b3::CompoundData*? bake_compound(PhysicsWorld* world, CompoundChild[] children, Vec3[]* wire) @local {
+fn b3::CompoundData*? bake_compound(SnapshotTable* table, CompoundChild[] children, Vec3[]* wire) @local {
     b3::CompoundData* compound;
     @pool() {
         usz sphere_count;
@@ -493,7 +514,7 @@ fn b3::CompoundData*? bake_compound(PhysicsWorld* world, CompoundChild[] childre
         b3::BoxHull[] boxes = alloc::new_array(tmem, b3::BoxHull, (sz)box_count);
         SnapshotHandle[] held = alloc::new_array(tmem, SnapshotHandle, (sz)children.len);
         // box3d clones every child into the compound, so the child snapshots are held for the bake only.
-        defer foreach (handle : held) release_snapshot(world.snapshots, handle);
+        defer foreach (handle : held) release_snapshot(table, handle);
 
         usz sphere_cursor;
         usz capsule_cursor;
@@ -515,18 +536,18 @@ fn b3::CompoundData*? bake_compound(PhysicsWorld* world, CompoundChild[] childre
                     boxes[box_cursor] = b3::make_box_hull(child.half_extents.x, child.half_extents.y, child.half_extents.z);
                     hulls[hull_cursor++] = { .hull = &boxes[box_cursor++].base, .transform = frame, .material = material };
                 case HULL:
-                    held[index] = acquire_hull(world, child.geometry)!;
+                    held[index] = acquire_hull(table, child.geometry)!;
                     hulls[hull_cursor++] = {
-                        .hull      = snapshot_of(world.snapshots, held[index]).hull,
+                        .hull      = snapshot_of(table, held[index]).hull,
                         .transform = frame,
                         .material  = material,
                     };
                 case MESH:
-                    held[index] = acquire_mesh(world, child.geometry, child.material_indices)!;
+                    held[index] = acquire_mesh(table, child.geometry, child.material_indices)!;
                     meshes[mesh_cursor++] = mesh_child_def(
-                        world: world,
+                        table: table,
                         child: child,
-                        mesh:  snapshot_of(world.snapshots, held[index]).mesh,
+                        mesh:  snapshot_of(table, held[index]).mesh,
                         frame: frame,
                     );
             }
@@ -543,13 +564,13 @@ fn b3::CompoundData*? bake_compound(PhysicsWorld* world, CompoundChild[] childre
             .sphere_count  = (int)spheres.len,
         };
         compound = b3::create_compound(&def)!;
-        if (world.desc.cache_wireframes) *wire = compound_wire(world, children, held);
+        if (table.cache_wireframes) *wire = compound_wire(table, children, held);
     };
     return compound;
 }
 
 fn b3::CompoundMeshDef mesh_child_def(
-    PhysicsWorld* world,
+    SnapshotTable* table,
     CompoundChild* child,
     b3::MeshData* mesh,
     b3::Transform frame,
@@ -576,7 +597,7 @@ fn b3::Capsule capsule_of(maths::Transform local, float half_height, float radiu
     return { .center1 = local.position - half, .center2 = local.position + half, .radius = radius };
 }
 
-fn Vec3[] compound_wire(PhysicsWorld* world, CompoundChild[] children, SnapshotHandle[] held) @local {
+fn Vec3[] compound_wire(SnapshotTable* table, CompoundChild[] children, SnapshotHandle[] held) @local {
     usz length;
     foreach (index, &child : children) {
         switch (child.kind) {
@@ -585,11 +606,11 @@ fn Vec3[] compound_wire(PhysicsWorld* world, CompoundChild[] children, SnapshotH
             case BOX:     length += BOX_EDGE_POINTS;
             case HULL:
             case MESH:
-                length += snapshot_of(world.snapshots, held[index]).wire.len;
+                length += snapshot_of(table, held[index]).wire.len;
         }
     }
 
-    WireWriter writer = { .points = alloc::new_array(world.snapshots.allocator, Vec3, (sz)length) };
+    WireWriter writer = { .points = alloc::new_array(table.allocator, Vec3, (sz)length) };
     foreach (index, &child : children) {
         switch (child.kind) {
             case SPHERE:
@@ -609,7 +630,7 @@ fn Vec3[] compound_wire(PhysicsWorld* world, CompoundChild[] children, SnapshotH
             case HULL:
             case MESH:
                 Mat4 placement = child.local.to_mat4();
-                foreach (point : snapshot_of(world.snapshots, held[index]).wire) {
+                foreach (point : snapshot_of(table, held[index]).wire) {
                     writer.points[writer.count++] = maths::transform_point(placement, point);
                 }
         }
