@@ -32,7 +32,7 @@ const usz    BLOB_ALIGNMENT @local = 8;
 const uint TILE_MESH_MAGIC = 0x48534d4e;
 
 <* Identify the packed polygon and detail layout. *>
-const uint TILE_MESH_VERSION = 1;
+const uint TILE_MESH_VERSION = 2;
 
 <* Convex polygons of one tile in voxel coordinates; arrays come from the output allocator. *>
 struct PolyMesh {
@@ -61,7 +61,7 @@ struct TileMeshHeader {
     uint  vert_count;
     uint  poly_count;
     uint  verts_per_poly;
-    uint  _pad0;
+    uint  detail_corner_count;
     Aabb  bounds;
     float cell_size;
     float cell_height;
@@ -73,9 +73,13 @@ struct TileMeshHeader {
     uint detail_portal_count;
     Vec3 detail_origin;
     double[2] detail_origin_correction;
+    float source_cell_size;
+    ClearanceMode clearance_mode;
+    float clearance_max_error;
+    uint subdivision;
 }
 
-$assert TileMeshHeader::size == 120;
+$assert TileMeshHeader::size == 136;
 
 <* Borrowed view over a TileMesh blob. *>
 struct TileMeshView {
@@ -85,6 +89,7 @@ struct TileMeshView {
     ushort[]        regions;
     ushort[]        flags;
     char[]          areas;
+    Vec3[]          detail_corners;
     PolyDetail[]    details;
     Vec3[]          detail_vertices;
     DetailTriangle[] detail_triangles;
@@ -301,6 +306,7 @@ fn usz tile_mesh_size(PolyMesh* mesh) {
     carve_blob(&cursor, ushort, mesh.poly_count);
     carve_blob(&cursor, ushort, mesh.poly_count);
     carve_blob(&cursor, char, mesh.poly_count);
+    carve_blob(&cursor, Vec3, mesh.detail.corners.len);
     carve_blob(&cursor, PolyDetail, mesh.detail.mode == DetailMode.BOUNDED ? mesh.poly_count : 0);
     carve_blob(&cursor, Vec3, mesh.detail.vertices.len);
     carve_blob(&cursor, DetailTriangle, mesh.detail.triangles.len);
@@ -328,6 +334,7 @@ fn void pack_tile_mesh(
         .vert_count     = mesh.vert_count,
         .poly_count     = mesh.poly_count,
         .verts_per_poly = mesh.verts_per_poly,
+        .detail_corner_count = (uint)mesh.detail.corners.len,
         .bounds         = mesh.bounds,
         .cell_size      = mesh.cell_size,
         .cell_height    = mesh.cell_height,
@@ -339,6 +346,10 @@ fn void pack_tile_mesh(
         .detail_portal_count = (uint)mesh.detail.portals.len,
         .detail_origin = mesh.detail.origin,
         .detail_origin_correction = mesh.detail.origin_correction,
+        .source_cell_size = mesh.detail.source_cell_size > 0 ? mesh.detail.source_cell_size : mesh.cell_size,
+        .clearance_mode = mesh.detail.clearance_mode,
+        .clearance_max_error = mesh.detail.clearance_mode == ClearanceMode.SUB_CELL ? mesh.detail.clearance_max_error : 0,
+        .subdivision = mesh.detail.subdivision ? mesh.detail.subdivision : 1,
     };
     TileMeshView view = tile_mesh_view(blob);
     view.verts[..] = mesh.verts[..];
@@ -346,6 +357,7 @@ fn void pack_tile_mesh(
     view.regions[..] = mesh.regions[..];
     view.flags[..] = mesh.flags[..];
     view.areas[..] = mesh.areas[..];
+    view.detail_corners[..] = mesh.detail.corners[..];
     view.details[..] = mesh.detail.polygons[..];
     view.detail_vertices[..] = mesh.detail.vertices[..];
     view.detail_triangles[..] = mesh.detail.triangles[..];
@@ -366,6 +378,7 @@ fn TileMeshView tile_mesh_view(char[] blob) {
         .regions = carve_blob(&cursor, ushort, header.poly_count),
         .flags   = carve_blob(&cursor, ushort, header.poly_count),
         .areas   = carve_blob(&cursor, char, header.poly_count),
+        .detail_corners = carve_blob(&cursor, Vec3, header.detail_corner_count),
         .details = carve_blob(&cursor, PolyDetail, header.detail_mode == DetailMode.BOUNDED ? header.poly_count : 0),
         .detail_vertices = carve_blob(&cursor, Vec3, header.detail_vertex_count),
         .detail_triangles = carve_blob(&cursor, DetailTriangle, header.detail_triangle_count),
@@ -375,41 +388,66 @@ fn TileMeshView tile_mesh_view(char[] blob) {
 
 fn TileMeshView? validate_tile_mesh(char[] blob) @private {
     if (blob.len < TileMeshHeader::size || (uptr)blob.ptr % TileMeshHeader::alignment != 0) return c3d::INVALID_ARGUMENT~;
+
     TileMeshHeader* header = (TileMeshHeader*)blob.ptr;
-    if (header.magic != TILE_MESH_MAGIC || header.version != TILE_MESH_VERSION
-        || header.vert_count < 3 || header.vert_count >= MESH_NULL_INDEX || header.poly_count == 0
-        || header.poly_count >= MESH_NULL_INDEX || header.verts_per_poly < 3 || header.verts_per_poly > MAX_VERTS_PER_POLY
-        || (uint)header.detail_mode > (uint)DetailMode.BOUNDED
-        || header.detail_vertex_count > DEFAULT_DETAIL_VERTICES || header.detail_triangle_count > DEFAULT_DETAIL_TRIANGLES
-        || header.detail_portal_count > DEFAULT_DETAIL_TRIANGLES) return c3d::INVALID_ARGUMENT~;
-    if (!math::is_finite(header.cell_size) || !math::is_finite(header.cell_height)
-        || header.cell_size <= 0 || header.cell_height <= 0
-        || !detail_finite_vertex(header.bounds.min) || !detail_finite_vertex(header.bounds.max)) return c3d::INVALID_ARGUMENT~;
+    if (header.magic != TILE_MESH_MAGIC || header.version != TILE_MESH_VERSION) return c3d::INVALID_ARGUMENT~;
+    if (header.vert_count < 3 || header.vert_count >= MESH_NULL_INDEX) return c3d::INVALID_ARGUMENT~;
+    if (header.poly_count == 0 || header.poly_count >= MESH_NULL_INDEX) return c3d::INVALID_ARGUMENT~;
+    if (header.verts_per_poly < 3 || header.verts_per_poly > MAX_VERTS_PER_POLY) return c3d::INVALID_ARGUMENT~;
+    if ((uint)header.detail_mode > (uint)DetailMode.BOUNDED) return c3d::INVALID_ARGUMENT~;
+    if (header.detail_vertex_count > DEFAULT_DETAIL_VERTICES) return c3d::INVALID_ARGUMENT~;
+    if (header.detail_triangle_count > DEFAULT_DETAIL_TRIANGLES) return c3d::INVALID_ARGUMENT~;
+    if (header.detail_portal_count > DEFAULT_DETAIL_TRIANGLES) return c3d::INVALID_ARGUMENT~;
+    if (header.detail_corner_count && header.detail_corner_count != header.vert_count) return c3d::INVALID_ARGUMENT~;
+
+    if (!math::is_finite(header.cell_size) || !math::is_finite(header.cell_height)) return c3d::INVALID_ARGUMENT~;
+    if (header.cell_size <= 0 || header.cell_height <= 0) return c3d::INVALID_ARGUMENT~;
+    if (!detail_finite_vertex(header.bounds.min) || !detail_finite_vertex(header.bounds.max)) return c3d::INVALID_ARGUMENT~;
     if (header.bounds.min.x > header.bounds.max.x || header.bounds.min.y > header.bounds.max.y || header.bounds.min.z > header.bounds.max.z) return c3d::INVALID_ARGUMENT~;
-    if (header.detail_mode == DetailMode.COARSE && (header.detail_vertex_count || header.detail_triangle_count || header.detail_portal_count)) return c3d::INVALID_ARGUMENT~;
+
+    if (header.detail_mode == DetailMode.COARSE
+        && (header.detail_corner_count || header.detail_vertex_count || header.detail_triangle_count || header.detail_portal_count)) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+
     if (header.detail_mode == DetailMode.BOUNDED && !detail_finite_vertex(header.detail_origin)) return c3d::INVALID_ARGUMENT~;
+
     if (header.detail_mode == DetailMode.BOUNDED) {
+        if (!valid_clearance_metadata(
+            mode: header.clearance_mode,
+            source_pitch: header.source_cell_size,
+            stored_pitch: header.cell_size,
+            subdivision: header.subdivision,
+            maximum_error: header.clearance_max_error,
+        )) return c3d::INVALID_ARGUMENT~;
+
         foreach (value : header.detail_origin_correction) {
             if (!math::is_finite(value)) return c3d::INVALID_ARGUMENT~;
         }
     }
+
     BlobCursor cursor = { .offset = TileMeshHeader::size };
     carve_blob(&cursor, ushort, (usz)header.vert_count * 3);
     carve_blob(&cursor, ushort, (usz)header.poly_count * header.verts_per_poly * 2);
     carve_blob(&cursor, ushort, header.poly_count);
     carve_blob(&cursor, ushort, header.poly_count);
     carve_blob(&cursor, char, header.poly_count);
+    carve_blob(&cursor, Vec3, header.detail_corner_count);
     carve_blob(&cursor, PolyDetail, header.detail_mode == DetailMode.BOUNDED ? header.poly_count : 0);
     carve_blob(&cursor, Vec3, header.detail_vertex_count);
     carve_blob(&cursor, DetailTriangle, header.detail_triangle_count);
     carve_blob(&cursor, DetailPortal, header.detail_portal_count);
     if (cursor.offset != blob.len) return c3d::INVALID_ARGUMENT~;
+
     TileMeshView view = tile_mesh_view(blob);
+    foreach (corner : view.detail_corners) {
+        if (!detail_finite_vertex(corner) || !detail_finite_vertex(corner + header.detail_origin)) return c3d::INVALID_ARGUMENT~;
+    }
+
     foreach (portal : view.detail_portals) {
-        if (portal.polygon >= header.poly_count || portal.edge >= header.verts_per_poly
-            || !math::is_finite(portal.min) || !math::is_finite(portal.max)
-            || !math::is_finite(portal.source_height) || !math::is_finite(portal.target_height)
-            || portal.min < 0 || portal.max > 1 || portal.min >= portal.max) return c3d::INVALID_ARGUMENT~;
+        if (!valid_detail_portal(portal, header.poly_count)) return c3d::INVALID_ARGUMENT~;
+        if (portal.edge >= header.verts_per_poly) return c3d::INVALID_ARGUMENT~;
+
         ushort[] polygon = view.polys[(usz)portal.polygon * header.verts_per_poly * 2:header.verts_per_poly];
         uint count;
         foreach (vertex : polygon) {
@@ -417,11 +455,18 @@ fn TileMeshView? validate_tile_mesh(char[] blob) @private {
             count++;
         }
         if (portal.edge >= count) return c3d::INVALID_ARGUMENT~;
+
         ushort neighbour = view.polys[(usz)portal.polygon * header.verts_per_poly * 2 + header.verts_per_poly + portal.edge];
-        if (neighbour == MESH_NULL_INDEX || (neighbour & PORTAL_EDGE) == 0) return c3d::INVALID_ARGUMENT~;
+        if (portal.kind == DetailPortalKind.INTERNAL) {
+            if (neighbour != MESH_NULL_INDEX) return c3d::INVALID_ARGUMENT~;
+        } else if (neighbour == MESH_NULL_INDEX || (neighbour & PORTAL_EDGE) == 0) {
+            return c3d::INVALID_ARGUMENT~;
+        }
     }
+
     for (uint index = 0; index < header.poly_count; index++) {
         if (view.areas[index] > WALKABLE_AREA) return c3d::INVALID_ARGUMENT~;
+
         uint count;
         Vec3[MAX_VERTS_PER_POLY] corners;
         ushort[] indices = view.polys[(usz)index * header.verts_per_poly * 2:header.verts_per_poly];
@@ -441,7 +486,9 @@ fn TileMeshView? validate_tile_mesh(char[] blob) @private {
                 }
             }
             ushort* source = &view.verts[(usz)vertex * 3];
-            if (header.detail_mode == DetailMode.BOUNDED) {
+            if (view.detail_corners.len) {
+                corners[count] = view.detail_corners[vertex];
+            } else if (header.detail_mode == DetailMode.BOUNDED) {
                 corners[count] = detail_corner_position(
                     bounds: header.bounds,
                     origin: header.detail_origin,
@@ -468,7 +515,20 @@ fn TileMeshView? validate_tile_mesh(char[] blob) @private {
             };
         }
     }
+
     return view;
+}
+
+fn Vec3 tile_mesh_vertex(TileMeshView mesh, uint vertex) @private {
+    if (mesh.detail_corners.len) return mesh.header.detail_origin + mesh.detail_corners[vertex];
+
+    ushort* point = &mesh.verts[(usz)vertex * 3];
+
+    return mesh.header.bounds.min + (Vec3){
+        point[0] * mesh.header.cell_size,
+        point[1] * mesh.header.cell_height,
+        point[2] * mesh.header.cell_size,
+    };
 }
 
 // With a null base the cursor only measures.

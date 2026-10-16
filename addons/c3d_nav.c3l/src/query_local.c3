@@ -478,7 +478,7 @@ fn WallHit? NavQuery.find_distance_to_wall(
             if (neighbour.poly.area_type.type == OFF_MESH_CONNECTION) continue;
             Vec3 edge_start = verts[entry.edge];
             Vec3 edge_end = verts[((usz)entry.edge + 1) % vert_count];
-            if (found.tile.header.detail_mode == DetailMode.BOUNDED && entry.side != NO_SIDE) {
+            if (found.tile.header.detail_mode == DetailMode.BOUNDED) {
                 Vec3 first = edge_start;
                 Vec3 last = edge_end;
                 edge_start = lerp_point(first, last, entry.min);
@@ -996,22 +996,15 @@ fn IntervalList? collect_edge_intervals(
 ) @local {
     IntervalList result = { .items = query.edge_intervals };
     if (!filter) return result;
-    ushort neighbour = found.poly.neighbours[edge];
-    if ((neighbour & EXTERNAL_LINK) == 0) {
-        if (neighbour) {
-            PolyRef ref = query.mesh.poly_ref_base(found.tile) | (PolyRef)(neighbour - 1);
-            if (filter.passes(ref, &found.tile.polys[neighbour - 1])) {
-                result.items[0] = { .max = 1, .ref = ref };
-                result.count = 1;
-            }
-        }
-        return result;
-    }
+
     for (uint link = found.poly.first_link; link != NULL_LINK; link = query.mesh.links[link].next) {
         Link* entry = &query.mesh.links[link];
         if (entry.edge != edge || !entry.ref || entry.min >= entry.max) continue;
-        if (!filter.passes(entry.ref, query.mesh.tile_and_poly_unchecked(entry.ref).poly)) continue;
+
+        Poly* neighbour = query.mesh.tile_and_poly_unchecked(entry.ref).poly;
+        if (neighbour.area_type.type != GROUND || !filter.passes(entry.ref, neighbour)) continue;
         if (result.count + 2 == result.items.len) return c3d::CAPACITY_EXCEEDED~;
+
         insert_interval(
             list: &result,
             min: entry.min,
@@ -1019,6 +1012,7 @@ fn IntervalList? collect_edge_intervals(
             ref: entry.ref,
         );
     }
+
     return result;
 }
 

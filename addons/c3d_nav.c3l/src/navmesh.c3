@@ -28,7 +28,7 @@ const uint NULL_LINK = uint::max;
 const int TILE_MAGIC = 'D' << 24 | 'N' << 16 | 'A' << 8 | 'V';
 
 <* Version of the runtime tile and its retained surface arrays. *>
-const int TILE_VERSION = 102;
+const int TILE_VERSION = 103;
 
 <* Links a mesh reserves per tile slot when NavMeshDesc.max_links is 0. *>
 const uint DEFAULT_LINKS_PER_TILE = 4096; // 96 KiB per slot; about 1000 quads at four links each
@@ -144,9 +144,14 @@ struct TileHeader {
     float cell_size;
     Vec3 detail_origin;
     double[2] detail_origin_correction;
+    float source_cell_size;
+    ClearanceMode clearance_mode;
+    float clearance_max_error;
+    uint subdivision;
+    bool explicit_corners;
 }
 
-$assert TileHeader::size == 136;
+$assert TileHeader::size == 160;
 
 <* One resident tile; the arrays borrow into data. *>
 struct MeshTile {
@@ -885,7 +890,6 @@ macro void @each_adjacent_tile(
     }
 }
 
-// The links between polygons of the tile; mirrors the internal pass of connectIntLinks.
 macro void @each_internal_link(MeshTile* tile, PolyRef base; @body(Poly* poly, Link link)) @local {
     foreach (&poly : tile.polys) {
         if (poly.area_type.type == OFF_MESH_CONNECTION) continue;
@@ -893,9 +897,29 @@ macro void @each_internal_link(MeshTile* tile, PolyRef base; @body(Poly* poly, L
         for (int edge = poly.vert_count - 1; edge >= 0; edge--) {
             ushort neighbour = poly.neighbours[edge];
             if (neighbour == 0 || (neighbour & EXTERNAL_LINK) != 0) continue;
-            Link link = { .ref = base | (PolyRef)(neighbour - 1), .edge = (char)edge, .side = NO_SIDE };
+
+            Link link = {
+                .ref = base | (PolyRef)(neighbour - 1),
+                .edge = (char)edge,
+                .side = NO_SIDE,
+                .max = 1,
+            };
             @body(poly, link);
         }
+    }
+
+    foreach (portal : tile.detail_portals) {
+        if (portal.kind != DetailPortalKind.INTERNAL) continue;
+
+        Poly* poly = &tile.polys[portal.polygon];
+        Link link = {
+            .ref = base | (PolyRef)portal.target,
+            .edge = (char)portal.edge,
+            .side = NO_SIDE,
+            .min = portal.min,
+            .max = portal.max,
+        };
+        @body(poly, link);
     }
 }
 
@@ -1729,42 +1753,123 @@ fn bool spatial_ref_precedes(NavMesh* mesh, PolyRef candidate, PolyRef current) 
 
 fn void? validate_portal_compatibility(MeshTile* tile, MeshTile* target, int side) @local {
     if (tile.header.detail_mode == DetailMode.COARSE && target.header.detail_mode == DetailMode.COARSE) return;
+
     foreach (&poly : tile.polys) {
         for (usz edge = 0; edge < poly.vert_count; edge++) {
             ushort neighbour = poly.neighbours[edge];
             if ((neighbour & EXTERNAL_LINK) == 0) continue;
+
             int direction = neighbour & 0xff;
             if (side != ANY_SIDE && direction != side) continue;
+
             Vec3 first = tile.verts[poly.verts[edge]];
             Vec3 second = tile.verts[poly.verts[(edge + 1) % poly.vert_count]];
             Slab source = slab_end_points(first, second, direction);
             double allowance = detail_numerical_allowance(tile.header.cell_size)
                 + math::max(detail_world_allowance(tile.header.bounds), detail_world_allowance(target.header.bounds));
+
             foreach (&other : target.polys) {
                 for (usz other_edge = 0; other_edge < other.vert_count; other_edge++) {
                     if (other.neighbours[other_edge] != (EXTERNAL_LINK | (ushort)opposite_tile(direction))) continue;
+
                     Vec3 other_first = target.verts[other.verts[other_edge]];
                     Vec3 other_second = target.verts[other.verts[(other_edge + 1) % other.vert_count]];
                     if (math::abs((double)slab_coord(first, direction) - slab_coord(other_first, direction)) > allowance) continue;
+
                     Slab destination = slab_end_points(other_first, other_second, direction);
                     if (math::max(source.min[0], destination.min[0]) >= math::min(source.max[0], destination.max[0])) continue;
-                    if (tile.header.detail_mode != target.header.detail_mode
-                        || tile.header.cell_size != target.header.cell_size
-                        || tile.header.walkable_height != target.header.walkable_height
-                        || tile.header.walkable_radius != target.header.walkable_radius
-                        || tile.header.walkable_climb != target.header.walkable_climb) return c3d::INVALID_ARGUMENT~;
+
+                    if (tile.header.detail_mode != target.header.detail_mode) return c3d::INVALID_ARGUMENT~;
+                    if (tile.header.cell_size != target.header.cell_size) return c3d::INVALID_ARGUMENT~;
+                    if (tile.header.source_cell_size != target.header.source_cell_size) return c3d::INVALID_ARGUMENT~;
+                    if (tile.header.clearance_mode != target.header.clearance_mode) return c3d::INVALID_ARGUMENT~;
+                    if (tile.header.subdivision != target.header.subdivision) return c3d::INVALID_ARGUMENT~;
+                    if (tile.header.explicit_corners != target.header.explicit_corners) return c3d::INVALID_ARGUMENT~;
+                    if (tile.header.clearance_mode == ClearanceMode.SUB_CELL
+                        && tile.header.clearance_max_error != target.header.clearance_max_error) return c3d::INVALID_ARGUMENT~;
+                    if (tile.header.walkable_height != target.header.walkable_height) return c3d::INVALID_ARGUMENT~;
+                    if (tile.header.walkable_radius != target.header.walkable_radius) return c3d::INVALID_ARGUMENT~;
+                    if (tile.header.walkable_climb != target.header.walkable_climb) return c3d::INVALID_ARGUMENT~;
+
                     Vec3 origin = tile.header.detail_origin;
                     Vec3 other_origin = target.header.detail_origin;
-                    double pitch = tile.header.cell_size;
+                    double pitch = tile.header.source_cell_size;
                     double delta_x = (double)origin.x + tile.header.detail_origin_correction[0]
                         - other_origin.x - target.header.detail_origin_correction[0];
                     double delta_z = (double)origin.z + tile.header.detail_origin_correction[1]
                         - other_origin.z - target.header.detail_origin_correction[1];
                     double lattice_allowance = detail_numerical_allowance(tile.header.cell_size);
-                    if (math::abs(delta_x - math::round(delta_x / pitch) * pitch) > lattice_allowance
-                        || math::abs(delta_z - math::round(delta_z / pitch) * pitch) > lattice_allowance) return c3d::INVALID_ARGUMENT~;
+                    if (math::abs(delta_x - math::round(delta_x / pitch) * pitch) > lattice_allowance) return c3d::INVALID_ARGUMENT~;
+                    if (math::abs(delta_z - math::round(delta_z / pitch) * pitch) > lattice_allowance) return c3d::INVALID_ARGUMENT~;
+
+                    validate_portal_identity(
+                        tile: tile,
+                        poly: poly,
+                        edge: (uint)edge,
+                        target: target,
+                        other: other,
+                        other_edge: (uint)other_edge,
+                    )!;
                 }
             }
+        }
+    }
+}
+
+fn void? validate_portal_identity(
+    MeshTile* tile,
+    Poly* poly,
+    uint edge,
+    MeshTile* target,
+    Poly* other,
+    uint other_edge,
+) @local {
+    int side = poly.neighbours[edge] & 0xff;
+    bool along_z = side == 0 || side == 4;
+    Vec3 basis_offset = detail_basis_offset(tile, target);
+    Vec3 first = tile.detail_corners[poly.verts[edge]];
+    Vec3 second = tile.detail_corners[poly.verts[(edge + 1) % poly.vert_count]];
+    Vec3 other_first = target.detail_corners[other.verts[other_edge]] + basis_offset;
+    Vec3 other_second = target.detail_corners[other.verts[(other_edge + 1) % other.vert_count]] + basis_offset;
+    if (math::abs((double)slab_coord(first, side) - slab_coord(other_first, side))
+        > detail_numerical_allowance(tile.header.cell_size)) return;
+
+    double start = along_z ? first.z : first.x;
+    double length = (along_z ? (double)second.z : (double)second.x) - start;
+    double other_start = along_z ? other_first.z : other_first.x;
+    double other_length = (along_z ? (double)other_second.z : (double)other_second.x) - other_start;
+
+    foreach (source : tile.detail_portals) {
+        if (source.kind == DetailPortalKind.INTERNAL) continue;
+        if (source.polygon != (uint)(poly - tile.polys.ptr) || source.edge != edge) continue;
+
+        double low = start + length * source.min;
+        double high = start + length * source.max;
+        if (low > high) @swap(low, high);
+
+        foreach (destination : target.detail_portals) {
+            if (tile.header.clearance_mode == ClearanceMode.SUB_CELL && source.kind == DetailPortalKind.FLOOR_BORDER
+                && destination.kind == source.kind && destination.polygon == (uint)(other - target.polys.ptr)
+                && destination.edge == other_edge) {
+                if (catch excuse = precision_portal_range(
+                    tile: tile,
+                    poly: poly,
+                    source: source,
+                    target: target,
+                    other: other,
+                    destination: destination,
+                )) {
+                    if (excuse != NOT_FOUND) return excuse~;
+                }
+            }
+
+            if (destination.kind == DetailPortalKind.INTERNAL || destination.kind == source.kind) continue;
+            if (destination.polygon != (uint)(other - target.polys.ptr) || destination.edge != other_edge) continue;
+
+            double other_low = other_start + other_length * destination.min;
+            double other_high = other_start + other_length * destination.max;
+            if (other_low > other_high) @swap(other_low, other_high);
+            if (math::max(low, other_low) < math::min(high, other_high)) return c3d::INVALID_ARGUMENT~;
         }
     }
 }
@@ -1777,11 +1882,32 @@ fn PortalRange? precision_portal_range(
     Poly* other,
     DetailPortal destination,
 ) @local {
-    double source_height = (double)tile.header.detail_origin.y + source.source_height;
-    double source_target = (double)tile.header.detail_origin.y + source.target_height;
-    double target_height = (double)target.header.detail_origin.y + destination.source_height;
-    double target_source = (double)target.header.detail_origin.y + destination.target_height;
-    if (source_height != target_source || source_target != target_height) return NOT_FOUND~;
+    if (source.kind != destination.kind) return NOT_FOUND~;
+
+    switch (source.kind) {
+        case HEIGHT_BORDER:
+            double source_height = (double)tile.header.detail_origin.y + source.source_height;
+            double source_target = (double)tile.header.detail_origin.y + source.target_height;
+            double target_height = (double)target.header.detail_origin.y + destination.source_height;
+            double target_source = (double)target.header.detail_origin.y + destination.target_height;
+            if (source_height != target_source || source_target != target_height) return NOT_FOUND~;
+        case FLOOR_BORDER:
+            if (source.source_floor != destination.target || source.target != destination.source_floor) return NOT_FOUND~;
+        case INTERNAL:
+            return NOT_FOUND~;
+    }
+
+    if (tile.header.clearance_mode == ClearanceMode.SUB_CELL) {
+        return sub_cell_portal_range(
+            tile: tile,
+            poly: poly,
+            source: source,
+            target: target,
+            other: other,
+            destination: destination,
+        );
+    }
+
     int side = poly.neighbours[source.edge] & 0xff;
     bool along_z = side == 0 || side == 4;
     Vec3 basis_offset = detail_basis_offset(tile, target);
@@ -1791,11 +1917,13 @@ fn PortalRange? precision_portal_range(
     Vec3 other_second = target.detail_corners[other.verts[(destination.edge + 1) % other.vert_count]] + basis_offset;
     if (math::abs((double)slab_coord(first, side) - slab_coord(other_first, side))
         > detail_numerical_allowance(tile.header.cell_size)) return NOT_FOUND~;
+
     double start = along_z ? first.z : first.x;
     double length = (along_z ? (double)second.z : (double)second.x) - start;
     double other_start = along_z ? other_first.z : other_first.x;
     double other_length = (along_z ? (double)other_second.z : (double)other_second.x) - other_start;
     if (length == 0 || other_length == 0) return NOT_FOUND~;
+
     double low = start + length * source.min;
     double high = start + length * source.max;
     if (low > high) @swap(low, high);
@@ -1805,12 +1933,14 @@ fn PortalRange? precision_portal_range(
     low = math::max(low, other_low);
     high = math::min(high, other_high);
     if (low >= high) return NOT_FOUND~;
+
     PortalRange result = inward_portal_range(
         start: start,
         length: length,
         low: low,
         high: high,
     )!;
+
     (void)inward_portal_range(
         start: other_start,
         length: other_length,
@@ -1826,8 +1956,73 @@ fn PortalRange? precision_portal_range(
         along_z: along_z,
         low: low,
         high: high,
+        allow_step: source.kind == DetailPortalKind.FLOOR_BORDER,
     )) return NOT_FOUND~;
+
     return result;
+}
+
+fn PortalRange? sub_cell_portal_range(
+    MeshTile* tile,
+    Poly* poly,
+    DetailPortal source,
+    MeshTile* target,
+    Poly* other,
+    DetailPortal destination,
+) @local {
+    int side = poly.neighbours[source.edge] & 0xff;
+    bool along_z = side == 0 || side == 4;
+    Vec3 first = tile.verts[poly.verts[source.edge]];
+    Vec3 last = tile.verts[poly.verts[(source.edge + 1) % poly.vert_count]];
+    Vec3 other_first = target.verts[other.verts[destination.edge]];
+    Vec3 other_last = target.verts[other.verts[(destination.edge + 1) % other.vert_count]];
+    if (slab_coord(first, side) != slab_coord(other_first, side)) return NOT_FOUND~;
+
+    Vec3 begin = lerp_point(first, last, source.min);
+    Vec3 end = lerp_point(first, last, source.max);
+    Vec3 other_begin = lerp_point(other_first, other_last, destination.min);
+    Vec3 other_end = lerp_point(other_first, other_last, destination.max);
+
+    float low = math::max(
+        math::min(along_z ? begin.z : begin.x, along_z ? end.z : end.x),
+        math::min(along_z ? other_begin.z : other_begin.x, along_z ? other_end.z : other_end.x),
+    );
+    float high = math::min(
+        math::max(along_z ? begin.z : begin.x, along_z ? end.z : end.x),
+        math::max(along_z ? other_begin.z : other_begin.x, along_z ? other_end.z : other_end.x),
+    );
+    if (low >= high) return NOT_FOUND~;
+
+    Vec3 low_point = first;
+    Vec3 high_point = first;
+    if (along_z) {
+        low_point.z = low;
+        high_point.z = high;
+    } else {
+        low_point.x = low;
+        high_point.x = high;
+    }
+
+    float minimum = clearance_portal_fraction(first, last, low_point)!;
+    float maximum = clearance_portal_fraction(first, last, high_point)!;
+    (void)clearance_portal_fraction(other_first, other_last, low_point)!;
+    (void)clearance_portal_fraction(other_first, other_last, high_point)!;
+    if (minimum > maximum) @swap(minimum, maximum);
+
+    double origin = along_z ? tile.header.detail_origin.z : tile.header.detail_origin.x;
+    if (!matching_detail_profiles(
+        tile: tile,
+        poly: poly,
+        target: target,
+        other: other,
+        anchor: tile.detail_corners[poly.verts[source.edge]],
+        along_z: along_z,
+        low: (double)low - origin,
+        high: (double)high - origin,
+        allow_step: source.kind == DetailPortalKind.FLOOR_BORDER,
+    )) return c3d::INVALID_ARGUMENT~;
+
+    return { .min = minimum, .max = maximum };
 }
 
 fn PortalRange? inward_portal_range(
@@ -1856,6 +2051,7 @@ fn bool matching_detail_profiles(
     bool along_z,
     double low,
     double high,
+    bool allow_step,
 ) @local {
     Vec3 first = anchor;
     Vec3 last = anchor;
@@ -1872,12 +2068,14 @@ fn bool matching_detail_profiles(
         target: target,
         other: other,
         position: first,
+        allow_step: allow_step,
     ) || !matching_detail_height(
         tile: tile,
         poly: poly,
         target: target,
         other: other,
         position: last,
+        allow_step: allow_step,
     )) return false;
     for (uint pass = 0; pass < 2; pass++) {
         MeshTile* source = pass ? target : tile;
@@ -1902,6 +2100,7 @@ fn bool matching_detail_profiles(
                 target: target,
                 other: other,
                 position: point,
+                allow_step: allow_step,
             )) return false;
         }
     }
@@ -1914,22 +2113,38 @@ fn bool matching_detail_height(
     MeshTile* target,
     Poly* other,
     Vec3 position,
+    bool allow_step,
 ) @local {
     SurfacePoint? source = polygon_surface_at_local(tile, poly, position);
     SurfacePoint? destination = polygon_surface_at_local(target, other, position - detail_basis_offset(tile, target));
     if (catch source) return false;
     if (catch destination) return false;
+
     double height = (double)tile.header.detail_origin.y + source.height;
     double other_height = (double)target.header.detail_origin.y + destination.height;
+    if (allow_step) {
+        return math::abs(height - other_height) <= math::min(tile.header.walkable_climb, target.header.walkable_climb);
+    }
+
     double allowance = math::max(
         detail_numerical_allowance(tile.header.bounds.max.y - tile.header.bounds.min.y),
         detail_numerical_allowance(target.header.bounds.max.y - target.header.bounds.min.y),
     );
+
     return math::abs(height - other_height) <= allowance;
 }
 
 fn Vec3 detail_basis_offset(MeshTile* tile, MeshTile* target) @local {
+    if (tile.header.explicit_corners || target.header.explicit_corners) {
+        return {
+            (float)((double)target.header.detail_origin.x - tile.header.detail_origin.x),
+            0,
+            (float)((double)target.header.detail_origin.z - tile.header.detail_origin.z),
+        };
+    }
+
     double pitch = tile.header.cell_size;
+
     return {
         (float)(math::round(((double)target.header.detail_origin.x + target.header.detail_origin_correction[0]
             - tile.header.detail_origin.x - tile.header.detail_origin_correction[0]) / pitch) * pitch),

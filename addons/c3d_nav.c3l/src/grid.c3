@@ -11,7 +11,7 @@ import c3d;
 alias GridFloorsFn = fn usz (void* context, int cell_x, int cell_z, GridFloor[] out_floors);
 
 <* Floors one grid cell may hold. *>
-const uint MAX_GRID_FLOORS = 16; // 16 * 12 bytes of stack per cell query; a voxel column with 15 overhangs
+const uint MAX_GRID_FLOORS = 16; // one voxel column with up to 15 overhangs
 
 <* Arena of one grid tile build; the blob of the last build lives in it. *>
 const usz DEFAULT_GRID_SCRATCH_BYTES = 256 * 1024; // once per builder; a busy default tile peaks at 123 KiB
@@ -22,9 +22,14 @@ const ContourFlags GRID_CONTOUR_FLAGS @local = { .tessellate_wall_edges = true, 
 
 <* One walkable or blocking surface of a grid cell. *>
 struct GridFloor {
-    float height;     // world Y of the top of the solid below the surface
-    float ceiling;    // world Y of the next solid above; float::max when open to the next floor or the sky
-    char  area;       // WALKABLE_AREA or a custom area id; NULL_AREA blocks without being walkable
+    float           height;          // world Y of the top of the solid below the surface
+    float           ceiling;         // world Y of the next solid above; float::max when open to the next floor or the sky
+    char            area;            // WALKABLE_AREA or a custom area id; NULL_AREA blocks without being walkable
+    GridSurfaceKind floor_kind;
+    GridSurfaceKind ceiling_kind;
+    float[4]        floor_corners;   // min/min, max/min, max/max, min/max in XZ
+    float[4]        ceiling_corners;
+    GridDiagonal    diagonal;        // shared by the selected corner floor and ceiling
 }
 
 <* Where the grid lies and how to read it. *>
@@ -50,10 +55,17 @@ struct GridTileBuilder {
 <*
  Build the TileMesh blob of one tile; empty when nothing is walkable.
  Invalidates the blob of the previous build.
- @return? c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
 fn char[]? GridTileBuilder.build(&self, int tile_x, int tile_z) {
     self.arena.clear();
+
+    if (self.config.detail_mode == DetailMode.BOUNDED) {
+        if (self.config.clearance_mode == ClearanceMode.SUB_CELL) return build_sub_cell_grid(self, tile_x, tile_z);
+
+        return build_bounded_grid(self, tile_x, tile_z);
+    }
+
     Allocator arena = &self.arena;
     TileConfig* config = &self.tile_config;
     Heightfield* heightfield = &self.heightfield;
@@ -174,10 +186,14 @@ fn GridTileBuilder? create_grid_tile_builder(
     GridSourceDesc source,
     usz scratch_bytes = DEFAULT_GRID_SCRATCH_BYTES,
 ) {
-    if (config.detail_mode != DetailMode.COARSE) return c3d::INVALID_ARGUMENT~;
+    if (!source.floors) return c3d::INVALID_ARGUMENT~;
+    if (!math::is_finite(source.origin.x) || !math::is_finite(source.origin.z)) return c3d::INVALID_ARGUMENT~;
+    if (!math::is_finite(source.min_height) || !math::is_finite(source.max_height)) return c3d::INVALID_ARGUMENT~;
+    if (source.min_height >= source.max_height) return c3d::INVALID_ARGUMENT~;
+
     TileConfig tile = tile_config(config)!;
-    float top_voxel = 1 + math::round((source.max_height - source.min_height) / config.cell_height);
-    if (top_voxel >= (float)SPAN_MAX_HEIGHT) return c3d::INVALID_ARGUMENT~;
+    double top_voxel = 1 + math::round(((double)source.max_height - source.min_height) / config.cell_height);
+    if (top_voxel >= SPAN_MAX_HEIGHT) return c3d::INVALID_ARGUMENT~;
 
     GridTileBuilder builder = {
         .allocator   = allocator,
@@ -262,6 +278,9 @@ fn void? add_floor_spans(GridTileBuilder* builder, int tile_x, int tile_z) @loca
     for (uint z = 0; z < heightfield.height; z++) {
         for (uint x = 0; x < heightfield.width; x++) {
             usz count = source.floors(source.context, first_x + (int)x, first_z + (int)z, floors[..]);
+            if (count > floors.len) return c3d::INVALID_ARGUMENT~;
+            validate_grid_floors(floors[:count], source, builder.config.detail_mode)!;
+
             foreach (floor : floors[:count]) {
                 uint surface = quantize_height(builder, floor.height);
                 heightfield.add_span(

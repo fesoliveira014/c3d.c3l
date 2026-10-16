@@ -219,8 +219,35 @@ the crowd example defaults to cached construction and accepts `--direct` for com
 panels display the selected height and geometric normal and can draw retained triangles.
 Each example reserves 131072 debug segments (4 MiB of vertices) for the complete detailed scene
 and diagnostic overlays; its panel reports the previous frame's emitted and dropped segments.
-`--frames N` closes either example after N frames. Whole-cell erosion remains the horizontal
-clearance policy in these modes.
+`--frames N` closes either example after N frames.
+
+## Sub-cell clearance
+
+Set `clearance_mode = ClearanceMode.SUB_CELL` with `detail_mode = DetailMode.BOUNDED` and a
+positive `clearance_max_error` in metres. `WHOLE_CELL` remains the default. For agent radius `r`
+and error `e`, the output stays inside the radius-clear region and retains the `(r + e)`-clear
+region before configured small-region removal. Clearance follows the locally connected floor
+through reciprocal edge intervals. An unrelated overlapping deck is a separate floor; off-mesh
+links do not join these clearance regions.
+
+The builder clips the reference by slope, headroom, blocking areas and obstacles, then admits
+globally aligned microcells. Their subdivision and conservative numerical margin consume the
+requested error budget. Polygonization keeps the admitted union, and portal endpoints decode to
+the same stored shared coordinates. A capacity or precision failure returns `CAPACITY_EXCEEDED`
+before replacement; it does not reduce the subdivision. Radius zero uses the same conservative
+rule and retains at least the `e`-clear region.
+
+Scene, retained-cache and authored-grid builds use this policy. Cached obstacles and NULL-area
+volumes use their convex footprints or exact cylinder cross sections. Cached layers keep the
+complete source halo and floor labels needed for rebuilding. Changing one layer still publishes
+the whole XZ replacement set atomically. Neighboring precision tiles require the same source
+pitch, subdivision, clearance mode and error.
+
+Precision arithmetic requires IEEE binary64 round-to-nearest operations with gradual underflow.
+Consumers select `"fp-math": "strict"` in their `project.json`, or pass `--fp-math=strict` to
+`c3c`. The package's example and test project sets this option. The existing builder scratch
+capacities also bound fragment clipping, clearance queues and polygonization; callers can increase
+`slot_scratch_bytes`, `cache_scratch_bytes`, or the grid builder's `scratch_bytes` when needed.
 
 ## Grid sources
 
@@ -236,7 +263,22 @@ difference is within the climb. Regions split where the floor height changes, so
 on one floor; a vertex on a step takes the higher floor's height, as upstream's corner heights do,
 so a polygon beside a step slopes up to it. A grid whose heights differ from cell to cell, like a
 heightmap, therefore yields a region and a polygon per cell and pays for it in polygon count.
-`GridTileBuilder` accepts `DetailMode.COARSE`.
+These are the `DetailMode.COARSE` defaults.
+
+In `BOUNDED`, `GridFloor.floor_kind` and `ceiling_kind` independently select `FLAT` or `CORNERS`.
+The four corner values are ordered `(0,0), (1,0), (1,1), (0,1)`. `diagonal` selects
+`MIN_MIN_TO_MAX_MAX` or `MAX_MIN_TO_MIN_MAX` for both selected corner surfaces. The chosen two
+triangles are the reference; their heights are not quantized to `cell_height`. Zero-initialized
+kinds remain flat, and inactive scalar or corner fields are ignored. An open flat ceiling is
+still limited by the next authored floor.
+
+Floors must be strictly ordered over the entire cell, including the center where different
+diagonals cross. A ceiling below its floor or cutting through the next floor is invalid. Equal
+floor and ceiling is valid blocked geometry. Whole-cell mode requires each complete cell to pass
+slope and headroom classification; sub-cell mode clips the admissible fragments first. Shared
+edges keep only reciprocal intervals satisfying climb and headroom, with minimum rise and stable
+floor order resolving competing neighbors. Rejected intervals remain walls for pathfinding,
+raycasts, local movement and crowd boundaries.
 
 `NavMesh.install_tile_mesh(blob, connections, params)` replaces the tile at `params.tile_x`,
 `params.tile_z` and `params.tile_layer`, or only removes it when the blob is empty, and
@@ -260,6 +302,21 @@ border, and the agents cross into the neighbouring tile past the fourth strip:
 ```bash
 c3c build grid --path addons/c3d_nav.c3l && addons/c3d_nav.c3l/build/grid --fan-in
 ```
+
+`grid --detail` enables the authored-surface patch and its plane/ramp/saddle, diagonal,
+sloped-ceiling and narrow-passage controls. The camera starts above that patch. Changing a
+surface control updates its geometry and rebuilds the affected navigation tiles.
+`grid --sub-cell` also enables bounded clearance. `--radius R` and `--clearance-error E`
+set its build parameters at startup; `--frames N` limits the run. For example:
+
+```bash
+addons/c3d_nav.c3l/build/grid --sub-cell --radius 0.6 --clearance-error 0.5
+```
+
+The `navmesh` and `crowd` examples also accept `--sub-cell`, which enables bounded detail
+and clearance together. Their panels show both error settings. Each example supplies an
+explicit scratch budget for the selected demonstration; the library's fixed capacity
+rules still apply.
 
 ## Crowds
 

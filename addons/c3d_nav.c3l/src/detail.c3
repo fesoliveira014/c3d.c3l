@@ -16,6 +16,13 @@ enum DetailMode : uint {
     BOUNDED,
 }
 
+<* Select captured-height, labelled-floor or in-tile portal identity. *>
+enum DetailPortalKind : ushort {
+    HEIGHT_BORDER,
+    FLOOR_BORDER,
+    INTERNAL,
+}
+
 <* Default maximum vertices retained by one tile's detail mesh. *>
 const uint DEFAULT_DETAIL_VERTICES = 65534;
 
@@ -48,15 +55,23 @@ struct DetailPortal {
     float max;
     float source_height;
     float target_height;
+    DetailPortalKind kind;
+    ushort source_floor;
+    uint target; // polygon for INTERNAL, neighbour floor ordinal for FLOOR_BORDER
 }
 
-$assert DetailPortal::size == 24;
+$assert DetailPortal::size == 32;
 
 <* Borrow bounded surface arrays in a shared local coordinate basis. *>
 struct DetailMesh {
     DetailMode mode;
     Vec3 origin;
     double[2] origin_correction;
+    float source_cell_size;
+    ClearanceMode clearance_mode;
+    float clearance_max_error;
+    uint subdivision;
+    Vec3[] corners; // optional final local position for every coarse vertex
     PolyDetail[] polygons;
     Vec3[] vertices;
     DetailTriangle[] triangles;
@@ -74,6 +89,22 @@ struct DetailValidationEdge @local {
     uint uses;
     uint forward;
     bool boundary;
+}
+
+fn bool valid_detail_portal(DetailPortal portal, uint polygon_count) @private {
+    if ((uint)portal.kind > (uint)DetailPortalKind.INTERNAL) return false;
+    if (portal.polygon >= polygon_count) return false;
+    if (!math::is_finite(portal.min) || !math::is_finite(portal.max)) return false;
+    if (portal.min < 0 || portal.max > 1 || portal.min >= portal.max) return false;
+
+    switch (portal.kind) {
+        case HEIGHT_BORDER:
+            return math::is_finite(portal.source_height) && math::is_finite(portal.target_height);
+        case FLOOR_BORDER:
+            return portal.source_floor < MESH_NULL_INDEX && portal.target < MESH_NULL_INDEX;
+        case INTERNAL:
+            return portal.target < polygon_count && portal.target != portal.polygon;
+    }
 }
 
 fn void? validate_detail_polygon(

@@ -23,6 +23,9 @@ $assert DetailSample::size == 48;
 struct DetailReference @private {
     Vec3 origin;
     double[2] origin_correction;
+    double[2] basis;
+    int first_x;
+    int first_z;
     uint width;
     uint height;
     uint border_size;
@@ -35,6 +38,9 @@ struct DetailReference @private {
 struct DetailReferenceHeader @private {
     Vec3 origin;
     double[2] origin_correction;
+    double[2] basis;
+    int first_x;
+    int first_z;
     uint width;
     uint height;
     uint border_size;
@@ -43,7 +49,7 @@ struct DetailReferenceHeader @private {
     uint sample_count;
 }
 
-$assert DetailReferenceHeader::size == 56;
+$assert DetailReferenceHeader::size == 80;
 
 fn DetailReference? build_detail_reference(
     Allocator allocator,
@@ -237,6 +243,9 @@ fn void pack_detail_reference(DetailReference* reference, char[] blob) @private 
     *(DetailReferenceHeader*)blob.ptr = {
         .origin = reference.origin,
         .origin_correction = reference.origin_correction,
+        .basis = reference.basis,
+        .first_x = reference.first_x,
+        .first_z = reference.first_z,
         .width = reference.width,
         .height = reference.height,
         .border_size = reference.border_size,
@@ -244,6 +253,7 @@ fn void pack_detail_reference(DetailReference* reference, char[] blob) @private 
         .cell_height = reference.cell_height,
         .sample_count = (uint)reference.samples.len,
     };
+
     usz offset = DetailReferenceHeader::size;
     ((CompactCell*)(blob.ptr + offset))[:reference.columns.len] = reference.columns[..];
     offset += reference.columns.len * CompactCell::size;
@@ -252,22 +262,38 @@ fn void pack_detail_reference(DetailReference* reference, char[] blob) @private 
 
 fn DetailReference? read_detail_reference(char[] blob) @private {
     if (blob.len < DetailReferenceHeader::size || (uptr)blob.ptr % DetailReferenceHeader::alignment != 0) return LAYER_CORRUPTED~;
+
     DetailReferenceHeader* header = (DetailReferenceHeader*)blob.ptr;
-    if (!header.width || !header.height || header.width >= MESH_NULL_INDEX || header.height >= MESH_NULL_INDEX
-        || header.border_size >= header.width || header.border_size >= header.height
-        || header.border_size * 2 >= header.width || header.border_size * 2 >= header.height) return LAYER_CORRUPTED~;
-    if (!math::is_finite(header.cell_size) || !math::is_finite(header.cell_height)
-        || header.cell_size <= 0 || header.cell_height <= 0) return LAYER_CORRUPTED~;
+    if (!header.width || !header.height || header.width >= MESH_NULL_INDEX || header.height >= MESH_NULL_INDEX) return LAYER_CORRUPTED~;
+    if (header.border_size >= header.width || header.border_size >= header.height) return LAYER_CORRUPTED~;
+    if (header.border_size * 2 >= header.width || header.border_size * 2 >= header.height) return LAYER_CORRUPTED~;
+
+    if (!math::is_finite(header.cell_size) || !math::is_finite(header.cell_height)) return LAYER_CORRUPTED~;
+    if (header.cell_size <= 0 || header.cell_height <= 0) return LAYER_CORRUPTED~;
     if (!math::is_finite(header.origin.x) || !math::is_finite(header.origin.y) || !math::is_finite(header.origin.z)) return LAYER_CORRUPTED~;
+
     foreach (value : header.origin_correction) {
         if (!math::is_finite(value)) return LAYER_CORRUPTED~;
     }
+
+    foreach (value : header.basis) {
+        if (!math::is_finite(value)) return LAYER_CORRUPTED~;
+    }
+
+    if ((long)header.first_x + header.width > int::max) return LAYER_CORRUPTED~;
+    if ((long)header.first_z + header.height > int::max) return LAYER_CORRUPTED~;
+
     usz columns_size = (usz)header.width * header.height * CompactCell::size;
     usz samples_size = (usz)header.sample_count * DetailSample::size;
-    if (columns_size > blob.len - DetailReferenceHeader::size || samples_size != blob.len - DetailReferenceHeader::size - columns_size) return LAYER_CORRUPTED~;
+    if (columns_size > blob.len - DetailReferenceHeader::size) return LAYER_CORRUPTED~;
+    if (samples_size != blob.len - DetailReferenceHeader::size - columns_size) return LAYER_CORRUPTED~;
+
     DetailReference reference = {
         .origin = header.origin,
         .origin_correction = header.origin_correction,
+        .basis = header.basis,
+        .first_x = header.first_x,
+        .first_z = header.first_z,
         .width = header.width,
         .height = header.height,
         .border_size = header.border_size,
@@ -276,34 +302,45 @@ fn DetailReference? read_detail_reference(char[] blob) @private {
         .columns = ((CompactCell*)(blob.ptr + DetailReferenceHeader::size))[:(usz)header.width * header.height],
         .samples = ((DetailSample*)(blob.ptr + DetailReferenceHeader::size + columns_size))[:header.sample_count],
     };
+
     usz sample_count;
     foreach (column_index, column : reference.columns) {
         if ((usz)column.index + column.count > reference.samples.len) return LAYER_CORRUPTED~;
         sample_count += column.count;
+
         for (uint index = column.index; index < column.index + column.count; index++) {
             DetailSample* sample = &reference.samples[index];
-            if (sample.column != column_index || !math::is_finite(sample.height) || !math::is_finite(sample.ceiling)
-                || sample.ceiling < sample.height || sample.area > WALKABLE_AREA) return LAYER_CORRUPTED~;
+            if (sample.column != column_index) return LAYER_CORRUPTED~;
+            if (!math::is_finite(sample.height) || !math::is_finite(sample.ceiling)) return LAYER_CORRUPTED~;
+            if (sample.ceiling < sample.height) return LAYER_CORRUPTED~;
+            if (sample.area > WALKABLE_AREA) return LAYER_CORRUPTED~;
+
             if (sample.height != sample.height_voxel * reference.cell_height
                 || sample.ceiling != (float)((uint)sample.height_voxel + sample.clearance) * reference.cell_height) return LAYER_CORRUPTED~;
+
             foreach (corner : sample.corners) {
                 if (!math::is_finite(corner)) return LAYER_CORRUPTED~;
             }
+
             foreach (direction, neighbour : sample.connections) {
                 if (neighbour != NULL_SPAN && neighbour >= reference.samples.len) return LAYER_CORRUPTED~;
                 if (neighbour == NULL_SPAN) continue;
                 if (reference.samples[neighbour].column >= reference.columns.len) return LAYER_CORRUPTED~;
+
                 CompactCell neighbour_column = reference.columns[reference.samples[neighbour].column];
                 if (neighbour < neighbour_column.index || neighbour - neighbour_column.index >= NOT_CONNECTED) return LAYER_CORRUPTED~;
+
                 int neighbour_x = (int)(column_index % reference.width) + dir_offset_x((uint)direction);
                 int neighbour_z = (int)(column_index / reference.width) + dir_offset_z((uint)direction);
-                if (neighbour_x < 0 || neighbour_x >= (int)reference.width || neighbour_z < 0 || neighbour_z >= (int)reference.height
-                    || reference.samples[neighbour].column != (uint)(neighbour_x + neighbour_z * (int)reference.width)
-                    || reference.samples[neighbour].connections[(direction + 2) & 3] != index) return LAYER_CORRUPTED~;
+                if (neighbour_x < 0 || neighbour_x >= (int)reference.width) return LAYER_CORRUPTED~;
+                if (neighbour_z < 0 || neighbour_z >= (int)reference.height) return LAYER_CORRUPTED~;
+                if (reference.samples[neighbour].column != (uint)(neighbour_x + neighbour_z * (int)reference.width)) return LAYER_CORRUPTED~;
+                if (reference.samples[neighbour].connections[(direction + 2) & 3] != index) return LAYER_CORRUPTED~;
             }
         }
     }
     if (sample_count != reference.samples.len) return LAYER_CORRUPTED~;
+
     foreach (index, sample : reference.samples) {
         int x = (int)(sample.column % reference.width);
         int z = (int)(sample.column / reference.width);
@@ -318,6 +355,7 @@ fn DetailReference? read_detail_reference(char[] blob) @private {
             if (height != sample.corners[corner]) return LAYER_CORRUPTED~;
         }
     }
+
     return reference;
 }
 
