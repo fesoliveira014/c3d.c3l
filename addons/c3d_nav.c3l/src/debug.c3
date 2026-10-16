@@ -10,6 +10,7 @@ const uint     UNWALKABLE_SPAN_COLOR @local = 0xFF505050;
 const uint     WALKABLE_COLOR @local = 0xFFFFC040;
 const uint     PORTAL_COLOR @local = 0xFFFFFFFF;
 const uint     LINK_COLOR @local = 0xFFFF40C0;
+const uint DETAIL_COLOR @local = 0xFF80B0FF;
 const uint     UNLINKED_COLOR @local = 0xFF808080; // an off-mesh connection whose start found no polygon
 const uint     AGENT_COLOR @local = 0xFF40E040;
 const uint     OFF_MESH_AGENT_COLOR @local = 0xFFFF40C0;
@@ -42,6 +43,7 @@ struct NavMeshDebugOptions {
     bool polys;     // polygon outlines by area
     bool links;     // linked portal edges and off-mesh connections
     bool bounds;    // tile bounds
+    bool detail;
 }
 
 <* What Crowd.debug_draw appends. *>
@@ -61,10 +63,20 @@ fn void NavMesh.debug_draw(&self, debug::DebugDraw* sink, NavMeshDebugOptions op
     foreach (&tile : self.tiles) {
         if (!tile.header) continue;
         if (options.bounds) sink.aabb(tile.header.bounds, TILE_COLOR);
-        foreach (&poly : tile.polys) {
+        foreach (polygon_index, &poly : tile.polys) {
             if (poly.area_type.type == OFF_MESH_CONNECTION) {
                 if (options.links) draw_off_mesh_connection(sink, tile, poly);
                 continue;
+            }
+            if (options.detail && tile.details.len) {
+                PolyDetail range = tile.details[polygon_index];
+                foreach (triangle : tile.detail_triangles[range.triangle_base:range.triangle_count]) {
+                    for (uint edge = 0; edge < 3; edge++) {
+                        Vec3 first = tile.header.detail_origin + tile.detail_vertices[range.vertex_base + triangle.vertices[edge]] + lift;
+                        Vec3 second = tile.header.detail_origin + tile.detail_vertices[range.vertex_base + triangle.vertices[(edge + 1) % 3]] + lift;
+                        sink.line(first, second, DETAIL_COLOR);
+                    }
+                }
             }
             int count = poly.vert_count;
             for (int edge = 0; edge < count; edge++) {

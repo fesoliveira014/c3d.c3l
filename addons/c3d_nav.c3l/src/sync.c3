@@ -108,13 +108,13 @@ fn void NavBuilder.sync_sources(&self, Scene* scene, AssetStore* assets) {
 
 <*
  Apply scene changes, build up to budget tiles, then install every tile marked for relink into the mesh.
- With cache_layers, rebuilds up to budget queued layers from the cache instead of installing.
+ With cache_layers, replaces up to budget complete XZ layer sets.
  Invalidates every PolyRef into a reinstalled tile.
  @param [&inout] builder : "Owns the TileMesh blobs or the layer cache."
  @param [&inout] mesh : "The builder's one mesh, from create_nav_mesh_for; owns the installed blobs."
  @param [&in] scene : "World matrices as left by the last update_world."
  @param [&in] assets : "Geometry arrays are read, never kept."
- @param budget : "Tiles rasterized and committed, and cached layers rebuilt, this call; installs are unbudgeted."
+ @param budget : "Tiles rasterized and committed, and complete cached XZ sets rebuilt, this call; direct installs are unbudgeted."
 *>
 fn NavSyncResult nav_sync(
     NavBuilder* builder,
@@ -150,6 +150,9 @@ fn NavSyncResult nav_sync(
     if (builder.cache_layers) {
         rebuild_cached_layers(builder, mesh, budget, &result);
         result.pending = builder.dirty_count;
+        foreach (&record : builder.tiles) {
+            if (record.pending_layers) result.pending++;
+        }
         result.skipped = builder.skipped_sources;
         builder.skipped_sources = 0;
         return result;
@@ -340,14 +343,25 @@ fn void rebuild_cached_layers(
 ) @local {
     TileCache* cache = &builder.cache;
     if (cache.update_count == 0) apply_obstacle_requests(cache);
+    uint rounds;
     foreach (index, &record : builder.tiles) {
-        if (!record.relayer && !record.relink) continue;
-        remove_surplus_layers(
-            mesh:        mesh,
-            tile_x:      (int)(index % builder.tiles_x),
-            tile_z:      (int)(index / builder.tiles_x),
-            layer_count: record.layer_count,
-        );
+        if (!record.pending_layers || rounds == budget) continue;
+        rounds++;
+        int x = (int)(index % builder.tiles_x);
+        int z = (int)(index / builder.tiles_x);
+        if (catch excuse = publish_cached_layers(builder: builder, mesh: mesh, index: (uint)index)) {
+            builder.last_failure = { .tile_x = x, .tile_z = z, .reason = excuse, .stage = INSTALL };
+            result.failed++;
+            continue;
+        }
+        result.relayered += record.layer_count;
+        foreach (ref : record.layers[:record.layer_count]) {
+            LayerHeader* header = cache.tile_by_ref(ref)!!.header;
+            if (mesh.tile_ref_at(x, z, header.tile_layer)) result.installed++;
+        }
+    }
+    foreach (index, &record : builder.tiles) {
+        if (record.pending_layers || (!record.relayer && !record.relink)) continue;
         bool queued = true;
         foreach (ref : record.layers[:record.layer_count]) {
             if (catch queue_rebuild(cache, ref)) queued = false;
@@ -357,39 +371,88 @@ fn void rebuild_cached_layers(
         record.relink = false;
     }
 
-    for (uint round = 0; round < budget && cache.update_count > 0; round++) {
-        CachedLayer*? queued = cache.tile_by_ref(cache.update_queue[0]);
-        fault failure = @catch(cache.update(mesh, 1));
-        // A layer replaced since it was queued is skipped.
-        if (catch queued) continue;
-        LayerHeader* header = queued.header;
-        if (failure) {
+    uint queue_index;
+    while (rounds < budget && queue_index < cache.update_count) {
+        CachedLayer*? queued = cache.tile_by_ref(cache.update_queue[queue_index]);
+        if (catch queued) {
+            (void)update_cached_group(cache, mesh, queue_index);
+            continue;
+        }
+        int x = queued.header.tile_x;
+        int z = queued.header.tile_z;
+        TileRecord* record = &builder.tiles[x + z * (int)builder.tiles_x];
+        if (record.pending_layers || record.relayer) {
+            queue_index++;
+            continue;
+        }
+        rounds++;
+        uint? rebuilt = update_cached_group(cache, mesh, queue_index);
+        if (catch failure = rebuilt) {
             builder.last_failure = {
-                .tile_x = header.tile_x,
-                .tile_z = header.tile_z,
+                .tile_x = x,
+                .tile_z = z,
                 .reason = failure,
                 .stage  = INSTALL,
             };
             result.failed++;
+            // Keep the complete set queued and retry it on the next sync.
+            record.relayer = true;
+            queue_index++;
             continue;
         }
-        result.relayered++;
-        if (mesh.tile_ref_at(header.tile_x, header.tile_z, header.tile_layer)) result.installed++;
+        result.relayered += rebuilt;
+        foreach (ref : record.layers[:record.layer_count]) {
+            LayerHeader* header = cache.tile_by_ref(ref)!!.header;
+            if (mesh.tile_ref_at(x, z, header.tile_layer)) result.installed++;
+        }
     }
 }
 
-// A tile rebuilt with fewer layers leaves its higher ones in the mesh.
-fn void remove_surplus_layers(
+fn void? publish_cached_layers(
+    NavBuilder* builder,
     NavMesh* mesh,
-    int tile_x,
-    int tile_z,
-    uint layer_count,
+    uint index,
 ) @local {
-    MeshTile*[MAX_TILES_AT] resident;
-    usz count = mesh.tiles_at(tile_x, tile_z, resident[..]);
-    foreach (tile : resident[:count]) {
-        if (tile.header.layer >= (int)layer_count) (void)mesh.remove_tile(mesh.tile_ref(tile));
+    TileCache* cache = &builder.cache;
+    TileRecord* record = &builder.tiles[index];
+    LayerReplacement* pending = record.pending_layers;
+    if (pending.request != record.requests) return c3d::INVALID_ARGUMENT~;
+    CachedLayer*[MAX_LAYERS] resident;
+    for (uint layer = 0; layer < record.layer_count; layer++) resident[layer] = cache.tile_by_ref(record.layers[layer])!;
+    uint free_slots;
+    for (CachedLayer* tile = cache.next_free_tile; tile; tile = tile.next) free_slots++;
+    if (pending.count > free_slots + record.layer_count) return c3d::CAPACITY_EXCEEDED~;
+    foreach (blob : pending.blobs[:pending.count]) {
+        LayerHeader* header = (LayerHeader*)blob.ptr;
+        foreach (&tile : cache.tiles) {
+            if (!tile.header || tile.header.tile_x != header.tile_x || tile.header.tile_z != header.tile_z
+                || tile.header.tile_layer != header.tile_layer) continue;
+            bool owned;
+            foreach (previous : resident[:record.layer_count]) {
+                if (previous == tile) owned = true;
+            }
+            if (!owned) return TILE_OCCUPIED~;
+        }
     }
+    validate_precision_cache_replacement(cache, record.layers[:record.layer_count], pending.blobs[:pending.count])!;
+    int x = (int)(index % builder.tiles_x);
+    int z = (int)(index / builder.tiles_x);
+    replace_cached_runtime(cache: cache, mesh: mesh, x: x, z: z, blobs: pending.blobs[:pending.count])!;
+
+    // Runtime ownership and all capacity checks have succeeded; publication cannot fail.
+    finish_cached_rebuild(cache, record.layers[:record.layer_count]);
+    foreach (tile : resident[:record.layer_count]) (void)remove_cached_layer(cache, tile);
+    record.layers[..] = (CachedLayerRef)0;
+    record.layer_count = pending.count;
+    for (uint layer = 0; layer < pending.count; layer++) {
+        record.layers[layer] = insert_cached_layer(cache, pending.blobs[layer], { .free_data = true });
+    }
+    pending.count = 0;
+    discard_pending_layers(builder, record);
+    record.revision++;
+    record.relink = false;
+    record.relayer = false;
+    retouch_obstacles(cache, builder.tile_bounds((uint)x, (uint)z));
 }
 
 // An overflowed queue lost bounds, so every tile is rebuilt.

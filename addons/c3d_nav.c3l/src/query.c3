@@ -12,7 +12,6 @@ const uint DEFAULT_EDGE_LINKS = 64; // about 1.5 KiB per query
 const uint  TINY_NODE_HASH @local = 32; // mirrors dtNavMeshQuery::init
 const float HEURISTIC_SCALE @private = 0.999f; // mirrors findPath's H_SCALE; keeps the heuristic below the cost
 const float PORTAL_SKIP_DISTANCE @local = 0.001f; // metres; a start this close to the first portal skips it
-const float PORTAL_LIMIT_STEP @private = 1.0f / 255.0f; // a link's portal sub-range is stored in a byte
 
 <* Flags of one straight-path point; mirrors dtStraightPathFlags. *>
 bitstruct StraightPathFlags : char {
@@ -103,14 +102,16 @@ fn NearestPoly? NavQuery.find_nearest_poly(
     Vec3 half_extents,
     QueryFilter* filter,
 ) {
-    if (!finite_point(center) || !finite_point(half_extents)) return c3d::INVALID_ARGUMENT~;
+    if (!finite_point(center) || !finite_point(half_extents)
+        || half_extents.x < 0 || half_extents.y < 0 || half_extents.z < 0) return c3d::INVALID_ARGUMENT~;
     NearestPoly nearest;
     float nearest_distance = float::max;
     Aabb box = { .min = center - half_extents, .max = center + half_extents };
     @each_poly_in_box(self, box, filter; tile, ref, poly) {
         ClosestPoint closest = closest_point_on_polygon(self.mesh, ref, center);
         float distance = nearness(center, closest, tile.header.walkable_climb);
-        if (distance < nearest_distance) {
+        if (distance < nearest_distance
+            || (distance == nearest_distance && spatial_ref_precedes(self.mesh, ref, nearest.ref))) {
             nearest = { .ref = ref, .point = closest.point, .over_poly = closest.over_poly };
             nearest_distance = distance;
         }
@@ -133,7 +134,8 @@ fn QueryResult? NavQuery.query_polygons(
     QueryFilter* filter,
     PolyRef[] out_refs,
 ) {
-    if (!finite_point(center) || !finite_point(half_extents)) return c3d::INVALID_ARGUMENT~;
+    if (!finite_point(center) || !finite_point(half_extents)
+        || half_extents.x < 0 || half_extents.y < 0 || half_extents.z < 0) return c3d::INVALID_ARGUMENT~;
     QueryResult result;
     Aabb box = { .min = center - half_extents, .max = center + half_extents };
     @each_poly_in_box(self, box, filter; tile, ref, poly) {
@@ -147,26 +149,31 @@ fn QueryResult? NavQuery.query_polygons(
 }
 
 <*
- Closest point on the polygon to the position, its height from the vertex fan; mirrors closestPointOnPoly.
- @return? INVALID_REF
+ Closest point on the polygon's retained surface; mirrors closestPointOnPoly.
+ @return? INVALID_REF, c3d::INVALID_ARGUMENT
 *>
 fn ClosestPoint? NavQuery.closest_point_on_poly(&self, PolyRef ref, Vec3 position) {
     if (!self.mesh.is_valid_ref(ref)) return INVALID_REF~;
+    if (!finite_point(position)) return c3d::INVALID_ARGUMENT~;
     return closest_point_on_polygon(self.mesh, ref, position);
 }
 
 <*
  Point on the polygon boundary closest to a position outside its XZ bounds; mirrors closestPointOnPolyBoundary.
  @return "The position itself when its XZ lies inside the polygon."
- @return? INVALID_REF
+ @return? INVALID_REF, c3d::INVALID_ARGUMENT
 *>
 fn Vec3? NavQuery.closest_point_on_poly_boundary(&self, PolyRef ref, Vec3 position) {
     TileAndPoly found = self.mesh.tile_and_poly(ref)!;
+    if (!finite_point(position)) return c3d::INVALID_ARGUMENT~;
     Vec3[MAX_VERTS_PER_POLY] verts = polygon_vertices(found.tile, found.poly);
     Vec3[] corners = verts[:found.poly.vert_count];
     float[MAX_VERTS_PER_POLY] edge_distances;
     float[MAX_VERTS_PER_POLY] edge_t;
     if (distance_pt_poly_edges_sqr(position, corners, edge_distances[..], edge_t[..])) return position;
+    if (found.tile.header.detail_mode == DetailMode.BOUNDED && found.poly.area_type.type == GROUND) {
+        return closest_point_on_poly_in_tile(found.tile, found.poly, position).point;
+    }
 
     usz nearest = 0;
     for (usz edge = 1; edge < corners.len; edge++) {
@@ -176,8 +183,8 @@ fn Vec3? NavQuery.closest_point_on_poly_boundary(&self, PolyRef ref, Vec3 positi
 }
 
 <*
- Height of the polygon surface under the position, from its vertex fan; mirrors getPolyHeight.
- @return? INVALID_REF, c3d::INVALID_ARGUMENT
+ Height of the polygon's retained surface; mirrors getPolyHeight.
+ @return? INVALID_REF, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
 fn float? NavQuery.poly_height(&self, PolyRef ref, Vec3 position) {
     TileAndPoly found = self.mesh.tile_and_poly(ref)!;
@@ -188,6 +195,16 @@ fn float? NavQuery.poly_height(&self, PolyRef ref, Vec3 position) {
         return lerp_point(start, end, distance_pt_seg_sqr_2d(position, start, end).t).y;
     }
     return polygon_height(found.tile, found.poly, position);
+}
+
+<*
+ Height and upward geometric normal of a ground polygon.
+ @return? INVALID_REF, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+*>
+fn SurfacePoint? NavQuery.poly_surface(&self, PolyRef ref, Vec3 position) {
+    TileAndPoly found = self.mesh.tile_and_poly(ref)!;
+    if (!math::is_finite(position.x) || !math::is_finite(position.z)) return c3d::INVALID_ARGUMENT~;
+    return polygon_surface(found.tile, found.poly, position);
 }
 
 <*
@@ -261,6 +278,7 @@ fn PathResult? NavQuery.find_path(
                     from:     found,
                     to_ref:   neighbour_ref,
                     to:       neighbour,
+                    selected_link: &mesh.links[link],
                 )) {
                     node.position = (portal.left + portal.right) * 0.5f;
                 }
@@ -699,8 +717,10 @@ fn Portal? portal_points(
     TileAndPoly from,
     PolyRef to_ref,
     TileAndPoly to,
+    Link* selected_link = null,
 ) @private {
-    Link* link = find_link(mesh, from, to_ref)!;
+    Link* link = selected_link;
+    if (!link) link = find_link(mesh, from, to_ref)!;
     PolyType to_type = to.poly.area_type.type;
     if (from.poly.area_type.type == OFF_MESH_CONNECTION) {
         Vec3 vertex = from.tile.verts[from.poly.verts[link.edge]];
@@ -716,9 +736,13 @@ fn Portal? portal_points(
     Vec3 second = from.tile.verts[from.poly.verts[(link.edge + 1) % from.poly.vert_count]];
     Portal portal = { .left = first, .right = second, .to_type = to_type };
     // A tile border link may cover only part of its edge.
-    if (link.side != NO_SIDE && (link.min != 0 || link.max != char::max)) {
-        portal.left = lerp_point(first, second, link.min * PORTAL_LIMIT_STEP);
-        portal.right = lerp_point(first, second, link.max * PORTAL_LIMIT_STEP);
+    if (link.side != NO_SIDE && (link.min != 0 || link.max != 1)) {
+        portal.left = lerp_point(first, second, link.min);
+        portal.right = lerp_point(first, second, link.max);
+    }
+    if (from.tile.header.detail_mode == DetailMode.BOUNDED) {
+        portal.left.y = polygon_height(from.tile, from.poly, portal.left)!;
+        portal.right.y = polygon_height(from.tile, from.poly, portal.right)!;
     }
     return portal;
 }
@@ -738,14 +762,14 @@ fn bool portal_holds(
     Vec3 end,
     float t,
 ) @local {
-    if (link.min == 0 && link.max == char::max) return true;
+    if (link.min == 0 && link.max == 1) return true;
     Vec3 left = current.tile.verts[current.poly.verts[link.edge]];
     Vec3 right = current.tile.verts[current.poly.verts[(link.edge + 1) % current.poly.vert_count]];
     bool along_z = link.side == 0 || link.side == 4;
     float left_coord = along_z ? left.z : left.x;
     float right_coord = along_z ? right.z : right.x;
-    float low = left_coord + (right_coord - left_coord) * (link.min * PORTAL_LIMIT_STEP);
-    float high = left_coord + (right_coord - left_coord) * (link.max * PORTAL_LIMIT_STEP);
+    float low = left_coord + (right_coord - left_coord) * link.min;
+    float high = left_coord + (right_coord - left_coord) * link.max;
     if (low > high) @swap(low, high);
     float crossing = along_z ? start.z + (end.z - start.z) * t : start.x + (end.x - start.x) * t;
     return crossing >= low && crossing <= high;

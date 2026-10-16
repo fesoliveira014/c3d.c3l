@@ -26,6 +26,7 @@ struct PathCorridor {
     Vec3      position;
     Vec3      target;
     PolyRef[] path;        // capacity; live in [0, count)
+    PolyRef[] staged_path;
     usz       count;
 }
 
@@ -233,17 +234,20 @@ fn void? PathCorridor.move_position(
     QueryFilter* filter,
 ) {
     PolyRef[MAX_VISITED] visited;
-    MoveResult moved = query.move_along_surface(
+    MoveResult moved = query.move_along_surface_projected(
         start_ref:   self.path[0],
         start:       self.position,
         end:         new_position,
         filter:      filter,
         out_visited: visited[..],
     )!;
-    self.count = merge_corridor_start_moved(self.path, self.count, visited[:moved.visited_count]);
-    Vec3 position = moved.position;
-    position.y = query.poly_height(self.path[0], position) ?? self.position.y;
-    self.position = position;
+    if (moved.truncated || moved.visited_count > self.path.len) return c3d::CAPACITY_EXCEEDED~;
+    self.staged_path[:self.count] = self.path[:self.count];
+    usz count = merge_corridor_start_moved(self.staged_path, self.count, visited[:moved.visited_count]);
+    if (!count || self.staged_path[0] != moved.end_ref) return c3d::CAPACITY_EXCEEDED~;
+    self.path[:count] = self.staged_path[:count];
+    self.count = count;
+    self.position = moved.position;
 }
 
 <*
@@ -260,14 +264,19 @@ fn void? PathCorridor.move_target_position(
     QueryFilter* filter,
 ) {
     PolyRef[MAX_VISITED] visited;
-    MoveResult moved = query.move_along_surface(
+    MoveResult moved = query.move_along_surface_projected(
         start_ref:   self.path[self.count - 1],
         start:       self.target,
         end:         new_target,
         filter:      filter,
         out_visited: visited[..],
     )!;
-    self.count = merge_corridor_end_moved(self.path, self.count, visited[:moved.visited_count]);
+    if (moved.truncated) return c3d::CAPACITY_EXCEEDED~;
+    self.staged_path[:self.count] = self.path[:self.count];
+    usz count = merge_corridor_end_moved(self.staged_path, self.count, visited[:moved.visited_count]);
+    if (!count || self.staged_path[count - 1] != moved.end_ref) return c3d::CAPACITY_EXCEEDED~;
+    self.path[:count] = self.staged_path[:count];
+    self.count = count;
     self.target = moved.position;
 }
 
@@ -358,6 +367,7 @@ fn usz merge_corridor_start_shortcut(PolyRef[] path, usz count, PolyRef[] visite
 *>
 fn void destroy_path_corridor(PathCorridor* corridor) {
     alloc::free(corridor.allocator, corridor.path.ptr);
+    alloc::free(corridor.allocator, corridor.staged_path.ptr);
     *corridor = {};
 }
 
@@ -369,7 +379,10 @@ fn void destroy_path_corridor(PathCorridor* corridor) {
 fn PathCorridor? create_path_corridor(Allocator allocator, usz max_path) {
     PolyRef[]? path = alloc::new_array_try(allocator, PolyRef, (sz)max_path);
     if (catch path) return c3d::CAPACITY_EXCEEDED~;
-    return { .allocator = allocator, .path = path };
+    defer catch alloc::free(allocator, path.ptr);
+    PolyRef[]? staged = alloc::new_array_try(allocator, PolyRef, (sz)max_path);
+    if (catch staged) return c3d::CAPACITY_EXCEEDED~;
+    return { .allocator = allocator, .path = path, .staged_path = staged };
 }
 
 // Mirrors the merges' search: the path polygon nearest the chosen end that visited holds.

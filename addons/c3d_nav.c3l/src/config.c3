@@ -3,7 +3,7 @@ module c3d::nav;
 import std::math;
 import c3d;
 
-const uint BORDER_PADDING @local = 3; // voxels past the erosion radius; mirrors RecastDemo's walkableRadius + 3
+const uint BORDER_PADDING @private = 3; // voxels past the erosion radius; mirrors RecastDemo's walkableRadius + 3
 const uint MIN_WALKABLE_HEIGHT @local = 3; // the compact heightfield's lower bound
 
 <* Build parameters in world units; one per NavBuilder. *>
@@ -20,6 +20,10 @@ struct NavBuildConfig {
     float edge_max_length;          // metres
     float edge_max_error;           // voxels
     uint  verts_per_poly;
+    DetailMode detail_mode;
+    float detail_max_error;
+    uint max_detail_vertices;
+    uint max_detail_triangles;
 }
 
 <* Voxel parameters derived once from a NavBuildConfig; what build_tile reads. *>
@@ -38,6 +42,11 @@ struct TileConfig {
     float slope_degrees;
     float max_simplification_error;
     uint  verts_per_poly;
+    DetailMode detail_mode;
+    float detail_max_error;
+    uint max_detail_vertices;
+    uint max_detail_triangles;
+    float agent_height;
 }
 
 <*
@@ -57,6 +66,9 @@ fn NavBuildConfig default_nav_build_config() {
         .edge_max_length         = 12,
         .edge_max_error          = 1.3f,
         .verts_per_poly          = MAX_VERTS_PER_POLY,
+        .detail_max_error        = 0.1f,
+        .max_detail_vertices     = DEFAULT_DETAIL_VERTICES,
+        .max_detail_triangles    = DEFAULT_DETAIL_TRIANGLES,
     };
 }
 
@@ -65,9 +77,30 @@ fn NavBuildConfig default_nav_build_config() {
  @return? c3d::INVALID_ARGUMENT
 *>
 fn TileConfig? tile_config(NavBuildConfig config) {
+    foreach (float value : {
+        config.cell_size, config.cell_height, config.agent_height, config.agent_radius,
+        config.agent_max_climb, config.agent_max_slope_degrees, config.region_min_size,
+        config.region_merge_size, config.edge_max_length, config.edge_max_error,
+    }) {
+        if (!math::is_finite(value)) return c3d::INVALID_ARGUMENT~;
+    }
     if (config.cell_size <= 0 || config.cell_height <= 0 || config.tile_size == 0) return c3d::INVALID_ARGUMENT~;
+    if (config.agent_height <= 0 || config.agent_radius < 0 || config.agent_max_climb < 0) return c3d::INVALID_ARGUMENT~;
+    if (config.region_min_size < 0 || config.region_merge_size < 0 || config.edge_max_length < 0 || config.edge_max_error < 0) return c3d::INVALID_ARGUMENT~;
     if (config.agent_max_slope_degrees < 0 || config.agent_max_slope_degrees >= 90) return c3d::INVALID_ARGUMENT~;
     if (config.verts_per_poly < 3 || config.verts_per_poly > MAX_VERTS_PER_POLY) return c3d::INVALID_ARGUMENT~;
+    if ((uint)config.detail_mode > (uint)DetailMode.BOUNDED) return c3d::INVALID_ARGUMENT~;
+    if (config.detail_mode == DetailMode.BOUNDED) {
+        if (!math::is_finite(config.detail_max_error) || config.detail_max_error < 0) return c3d::INVALID_ARGUMENT~;
+        if (config.max_detail_vertices == 0 || config.max_detail_vertices > DEFAULT_DETAIL_VERTICES) return c3d::INVALID_ARGUMENT~;
+        if (config.max_detail_triangles == 0 || config.max_detail_triangles > DEFAULT_DETAIL_TRIANGLES) return c3d::INVALID_ARGUMENT~;
+    }
+    if ((double)config.agent_height / config.cell_height > int::max
+        || (double)config.agent_max_climb / config.cell_height > int::max
+        || (double)config.agent_radius / config.cell_size > MAX_EROSION_RADIUS
+        || (double)config.edge_max_length / config.cell_size > int::max
+        || (double)config.region_min_size * config.region_min_size > uint::max
+        || (double)config.region_merge_size * config.region_merge_size > uint::max) return c3d::INVALID_ARGUMENT~;
 
     int walkable_height = (int)math::ceil(config.agent_height / config.cell_height);
     int walkable_climb = (int)math::floor(config.agent_max_climb / config.cell_height);
@@ -78,6 +111,7 @@ fn TileConfig? tile_config(NavBuildConfig config) {
     if (walkable_radius < 0 || walkable_radius > (int)MAX_EROSION_RADIUS) return c3d::INVALID_ARGUMENT~;
 
     uint border_size = (uint)walkable_radius + BORDER_PADDING;
+    if (config.tile_size >= MESH_NULL_INDEX - border_size * 2) return c3d::INVALID_ARGUMENT~;
     return {
         .width                    = config.tile_size + border_size * 2,
         .height                   = config.tile_size + border_size * 2,
@@ -91,7 +125,12 @@ fn TileConfig? tile_config(NavBuildConfig config) {
         .cell_size                = config.cell_size,
         .cell_height              = config.cell_height,
         .slope_degrees            = config.agent_max_slope_degrees,
-        .max_simplification_error = config.edge_max_error,
+        .max_simplification_error = config.detail_mode == DetailMode.BOUNDED ? 0 : config.edge_max_error,
         .verts_per_poly           = config.verts_per_poly,
+        .detail_mode              = config.detail_mode,
+        .detail_max_error         = config.detail_max_error,
+        .max_detail_vertices      = config.max_detail_vertices,
+        .max_detail_triangles     = config.max_detail_triangles,
+        .agent_height             = config.agent_height,
     };
 }

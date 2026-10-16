@@ -32,6 +32,7 @@ struct HeightfieldLayer {
     char[] heights;       // width * height voxels above hmin; 0xff where empty
     char[] areas;
     char[] connections;   // low four bits link neighbours in the layer, high four mark portals
+    uint[] source_spans;
 }
 
 struct LayerSweepSpan @local {
@@ -67,6 +68,7 @@ fn HeightfieldLayer[]? build_heightfield_layers(
     CompactHeightfield* compact,
     uint border_size,
     uint walkable_height,
+    bool retain_sources = false,
 ) {
     int width = (int)compact.width;
     int height = (int)compact.height;
@@ -129,6 +131,13 @@ fn HeightfieldLayer[]? build_heightfield_layers(
         char[]? connections = alloc::new_array_try(allocator, char, cells);
         if (catch connections) return c3d::CAPACITY_EXCEEDED~;
         heights[..] = NO_LAYER_REGION;
+        uint[] source_spans;
+        if (retain_sources) {
+            uint[]? allocated = alloc::alloc_array_try(allocator, uint, cells);
+            if (catch allocated) return c3d::CAPACITY_EXCEEDED~;
+            source_spans = allocated;
+            source_spans[..] = NULL_SPAN;
+        }
 
         uint hmin;
         uint hmax;
@@ -148,6 +157,7 @@ fn HeightfieldLayer[]? build_heightfield_layers(
             .heights     = heights,
             .areas       = areas,
             .connections = connections,
+            .source_spans = source_spans,
         };
         layer.bounds.min.y = compact.bounds.min.y + hmin * compact.cell_height;
         layer.bounds.max.y = compact.bounds.min.y + hmax * compact.cell_height;
@@ -422,6 +432,7 @@ fn void fill_layer(
                 usz cell_index = (usz)(x + z * layer_width);
                 layer.heights[cell_index] = (char)(compact.spans[index].y - layer.hmin);
                 layer.areas[cell_index] = compact.areas[index];
+                if (layer.source_spans.len) layer.source_spans[cell_index] = index;
 
                 char portals;
                 char links;

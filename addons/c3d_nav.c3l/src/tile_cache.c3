@@ -109,6 +109,11 @@ struct TileCacheDesc {
     void*          volume_source_context;
     LinkSourceFn   link_source;                // null adds no off-mesh connections
     void*          link_source_context;
+    DetailMode detail_mode;
+    float detail_max_error;
+    uint max_detail_vertices;
+    uint max_detail_triangles;
+    float agent_max_slope_degrees;
 }
 
 <* Cached layers, obstacles and the rebuild queue; mirrors dtTileCache. *>
@@ -151,28 +156,17 @@ fn Aabb Obstacle.bounds(&self) {
 
 <*
  Cache a layer blob at its header's coordinate; mirrors dtTileCache::addTile.
- @param data : "A layer blob, 4-byte aligned; borrowed unless flags.free_data."
+ @param data : "Borrowed unless flags.free_data; bounded blobs require eight-byte alignment."
  @return? c3d::INVALID_ARGUMENT, TILE_OCCUPIED, c3d::CAPACITY_EXCEEDED
 *>
 fn CachedLayerRef? TileCache.add_tile(&self, char[] data, TileFlags flags) {
-    if (data.len < LayerHeader::size) return c3d::INVALID_ARGUMENT~;
+    validate_cached_layer_blob(self, data)!;
     LayerHeader* header = (LayerHeader*)data.ptr;
-    if (header.magic != LAYER_MAGIC || header.version != LAYER_VERSION) return c3d::INVALID_ARGUMENT~;
-    // The rebuild scratch is sized for the cache's tile.
-    if (header.width > self.desc.width || header.height > self.desc.height) return c3d::INVALID_ARGUMENT~;
     if (cached_layer_at(self, header.tile_x, header.tile_z, header.tile_layer)) return TILE_OCCUPIED~;
-
-    CachedLayer* tile = self.next_free_tile;
-    if (!tile) return c3d::CAPACITY_EXCEEDED~;
-    self.next_free_tile = tile.next;
-    uint hash = cache_hash(header.tile_x, header.tile_z, self.lookup_mask);
-    tile.next = self.lookup[hash];
-    self.lookup[hash] = tile;
-    tile.header = header;
-    tile.data = data;
-    tile.arrays = data[LayerHeader::size..];
-    tile.flags = flags;
-    return cached_layer_ref(self, tile);
+    if (!self.next_free_tile) return c3d::CAPACITY_EXCEEDED~;
+    char[][1] candidate = { data };
+    validate_precision_cache_replacement(self, {}, candidate[..])!;
+    return insert_cached_layer(self, data, flags);
 }
 
 <*
@@ -181,10 +175,13 @@ fn CachedLayerRef? TileCache.add_tile(&self, char[] data, TileFlags flags) {
  @return? INVALID_REF
 *>
 fn char[]? TileCache.remove_tile(&self, CachedLayerRef ref) {
-    CachedLayer* tile = self.tile_by_ref(ref)!;
-    uint hash = cache_hash(tile.header.tile_x, tile.header.tile_z, self.lookup_mask);
+    return remove_cached_layer(self, self.tile_by_ref(ref)!);
+}
+
+fn char[] remove_cached_layer(TileCache* cache, CachedLayer* tile) @private {
+    uint hash = cache_hash(tile.header.tile_x, tile.header.tile_z, cache.lookup_mask);
     CachedLayer* previous;
-    for (CachedLayer* current = self.lookup[hash]; current; current = current.next) {
+    for (CachedLayer* current = cache.lookup[hash]; current; current = current.next) {
         if (current != tile) {
             previous = current;
             continue;
@@ -192,22 +189,22 @@ fn char[]? TileCache.remove_tile(&self, CachedLayerRef ref) {
         if (previous) {
             previous.next = current.next;
         } else {
-            self.lookup[hash] = current.next;
+            cache.lookup[hash] = current.next;
         }
         break;
     }
 
     char[] data = tile.data;
     if (tile.flags.free_data) {
-        alloc::free(self.allocator, data.ptr);
+        alloc::free(cache.allocator, data.ptr);
         data = {};
     }
-    uint salt = (tile.salt + 1) & ((1u << self.salt_bits) - 1);
+    uint salt = (tile.salt + 1) & ((1u << cache.salt_bits) - 1);
     *tile = {
         .salt = salt == 0 ? 1 : salt,
-        .next = self.next_free_tile,
+        .next = cache.next_free_tile,
     };
-    self.next_free_tile = tile;
+    cache.next_free_tile = tile;
     return data;
 }
 
@@ -275,8 +272,7 @@ fn QueryResult TileCache.query_tiles(&self, Aabb box, CachedLayerRef[] out_refs)
 <*
  Queue an upright cylinder obstacle; update marks it; mirrors addObstacle.
  @param base : "Centre of the bottom disc."
- @return? c3d::CAPACITY_EXCEEDED
- @require radius > 0, height > 0
+ @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
 fn ObstacleRef? TileCache.add_obstacle(
     &self,
@@ -284,6 +280,9 @@ fn ObstacleRef? TileCache.add_obstacle(
     float radius,
     float height,
 ) {
+    if (!detail_finite_vertex(base) || !math::is_finite(radius) || !math::is_finite(height) || radius <= 0 || height <= 0) return c3d::INVALID_ARGUMENT~;
+    Obstacle candidate = { .kind = CYLINDER, .position = base, .radius = radius, .height = height };
+    validate_precision_obstacle(self, &candidate)!;
     Obstacle* obstacle = take_obstacle(self, CYLINDER)!;
     obstacle.position = base;
     obstacle.radius = radius;
@@ -294,9 +293,13 @@ fn ObstacleRef? TileCache.add_obstacle(
 <*
  Queue an axis-aligned box obstacle; mirrors the box addBoxObstacle.
  @param box : "World space."
- @return? c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
 fn ObstacleRef? TileCache.add_box_obstacle(&self, Aabb box) {
+    if (!detail_finite_vertex(box.min) || !detail_finite_vertex(box.max)
+        || box.min.x > box.max.x || box.min.y > box.max.y || box.min.z > box.max.z) return c3d::INVALID_ARGUMENT~;
+    Obstacle candidate = { .kind = BOX, .box = box };
+    validate_precision_obstacle(self, &candidate)!;
     Obstacle* obstacle = take_obstacle(self, BOX)!;
     obstacle.box = box;
     return obstacle_ref(self, obstacle);
@@ -304,7 +307,7 @@ fn ObstacleRef? TileCache.add_box_obstacle(&self, Aabb box) {
 
 <*
  Queue a box obstacle turned about +Y; mirrors the oriented addBoxObstacle.
- @return? c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
 fn ObstacleRef? TileCache.add_oriented_box_obstacle(
     &self,
@@ -312,6 +315,10 @@ fn ObstacleRef? TileCache.add_oriented_box_obstacle(
     Vec3 half_extents,
     float yaw_radians,
 ) {
+    if (!detail_finite_vertex(centre) || !detail_finite_vertex(half_extents) || !math::is_finite(yaw_radians)
+        || half_extents.x < 0 || half_extents.y < 0 || half_extents.z < 0) return c3d::INVALID_ARGUMENT~;
+    Obstacle candidate = { .kind = ORIENTED_BOX, .position = centre, .half_extents = half_extents, .rotation = yaw_rotation(yaw_radians) };
+    validate_precision_obstacle(self, &candidate)!;
     Obstacle* obstacle = take_obstacle(self, ORIENTED_BOX)!;
     obstacle.position = centre;
     obstacle.half_extents = half_extents;
@@ -340,10 +347,10 @@ fn Obstacle*? TileCache.obstacle_by_ref(&self, ObstacleRef ref) {
 }
 
 <*
- Apply queued obstacle requests, then rebuild up to budget queued layers into the mesh; mirrors dtTileCache::update.
+ Apply queued obstacle requests, then rebuild up to budget queued XZ sets into the mesh.
  Invalidates every PolyRef into a rebuilt tile; requests wait while a rebuild is queued.
  @param [&inout] mesh : "Receives one TileData blob per rebuilt layer."
- @param budget : "Layers rebuilt this call; 0 only applies requests."
+ @param budget : "Complete XZ sets rebuilt this call; 0 only applies requests."
  @return "Whether no request and no rebuild is left."
  @return? LAYER_CORRUPTED, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
@@ -351,12 +358,7 @@ fn bool? TileCache.update(&self, NavMesh* mesh, uint budget = 1) {
     if (self.update_count == 0) apply_obstacle_requests(self);
 
     for (uint round = 0; round < budget && self.update_count > 0; round++) {
-        CachedLayerRef ref = self.update_queue[0];
-        self.update_count--;
-        for (uint slot = 0; slot < self.update_count; slot++) self.update_queue[slot] = self.update_queue[slot + 1];
-        fault failure = @catch(self.build_tile(ref, mesh));
-        settle_obstacles(self, ref);
-        if (failure && failure != INVALID_REF) return failure~;
+        update_cached_group(self, mesh, 0)!;
     }
     return self.update_count == 0 && self.request_count == 0;
 }
@@ -372,57 +374,70 @@ fn void? TileCache.build_tiles_at(
     int z,
     NavMesh* mesh,
 ) {
-    CachedLayerRef[MAX_LAYERS_AT] layers;
-    usz count = self.tiles_at(x, z, layers[..]);
-    foreach (ref : layers[:count]) self.build_tile(ref, mesh)!;
+    char[][MAX_TILES_AT] blobs;
+    usz count;
+    foreach (&tile : self.tiles) {
+        if (!tile.header || tile.header.tile_x != x || tile.header.tile_z != z) continue;
+        if (count == blobs.len) return c3d::CAPACITY_EXCEEDED~;
+        blobs[count++] = tile.data;
+    }
+    replace_cached_runtime(cache: self, mesh: mesh, x: x, z: z, blobs: blobs[:count])!;
 }
 
 <*
- Rebuild one cached layer into the mesh now, marking volumes then obstacles; mirrors buildNavMeshTile.
- Replaces, or removes when no polygon is left, the mesh tile at the layer's coordinate; its PolyRefs stop resolving.
- @param [&inout] mesh : "Receives the TileData blob."
+ Rebuild the complete XZ set containing the layer, marking volumes then obstacles.
+ Every previous runtime layer remains valid on failure; success replaces the complete set.
+ @param [&inout] mesh : "Receives the complete runtime layer set."
  @return? INVALID_REF, LAYER_CORRUPTED, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
 fn void? TileCache.build_tile(&self, CachedLayerRef ref, NavMesh* mesh) {
     CachedLayer* tile = self.tile_by_ref(ref)!;
-    LayerHeader* header = tile.header;
-    self.arena.clear();
-    Allocator arena = &self.arena;
-    TileCacheLayer layer = read_tile_cache_layer(tile.data, self.scratch)!;
+    self.build_tiles_at(x: tile.header.tile_x, z: tile.header.tile_z, mesh: mesh)!;
+}
 
-    float cell_size = self.desc.cell_size;
-    float cell_height = self.desc.cell_height;
-    if (self.desc.volume_source) {
-        VolumeRecord[] volumes = self.desc.volume_source(self.desc.volume_source_context, header.bounds)!;
+fn char[]? build_cached_runtime_blob(TileCache* cache, char[] blob, NavMesh* mesh) @private {
+    CachedLayer layer_tile = { .header = (LayerHeader*)blob.ptr, .data = blob };
+    CachedLayer* tile = &layer_tile;
+    LayerHeader* header = tile.header;
+    cache.arena.clear();
+    Allocator arena = &cache.arena;
+    TileCacheLayer layer = read_tile_cache_layer(tile.data, cache.scratch)!;
+    if (header.detail_mode == DetailMode.BOUNDED) {
+        return build_precision_cache_tile(cache: cache, tile: tile, layer: &layer, mesh: mesh);
+    }
+
+    float cell_size = cache.desc.cell_size;
+    float cell_height = cache.desc.cell_height;
+    if (cache.desc.volume_source) {
+        VolumeRecord[] volumes = cache.desc.volume_source(cache.desc.volume_source_context, header.bounds)!;
         foreach (&volume : volumes) mark_layer_volume(&layer, cell_size, cell_height, volume);
     }
-    foreach (&obstacle : self.obstacles) {
+    foreach (&obstacle : cache.obstacles) {
         if (obstacle.state == EMPTY || obstacle.state == REMOVING) continue;
-        if (!contains_layer_ref(obstacle.touched[:obstacle.touched_count], ref)) continue;
+        if (!overlap_bounds(obstacle.bounds(), cache.tight_tile_bounds(header))) continue;
         mark_layer_obstacle(&layer, cell_size, cell_height, obstacle);
     }
 
-    uint walkable_climb = (uint)(self.desc.walkable_climb / cell_height);
+    uint walkable_climb = (uint)(cache.desc.walkable_climb / cell_height);
     layer.build_regions(arena, walkable_climb)!;
     LayerContourSet contours = build_tile_cache_contours(
         allocator:      arena,
         scratch:        arena,
         layer:          &layer,
         walkable_climb: walkable_climb,
-        max_error:      self.desc.max_simplification_error,
+        max_error:      cache.desc.max_simplification_error,
     )!;
     LayerPolyMesh poly_mesh = build_tile_cache_poly_mesh(arena, arena, &contours)!;
     TileDataParams params = {
         .tile_x          = header.tile_x,
         .tile_z          = header.tile_z,
         .tile_layer      = header.tile_layer,
-        .walkable_height = self.desc.walkable_height,
-        .walkable_radius = self.desc.walkable_radius,
-        .walkable_climb  = self.desc.walkable_climb,
+        .walkable_height = cache.desc.walkable_height,
+        .walkable_radius = cache.desc.walkable_radius,
+        .walkable_climb  = cache.desc.walkable_climb,
     };
     if (poly_mesh.poly_count == 0) {
-        mesh.install_tile_mesh({}, {}, params)!;
-        return;
+        return {};
     }
 
     char[]? packed = alloc::alloc_array_try(arena, char, (sz)layer_tile_mesh_size(&poly_mesh));
@@ -435,10 +450,56 @@ fn void? TileCache.build_tile(&self, CachedLayerRef ref, NavMesh* mesh) {
         blob:        packed,
     );
     TileMeshView view = tile_mesh_view(packed);
-    if (self.desc.mesh_process) self.desc.mesh_process(self.desc.mesh_process_context, view, view.areas, view.flags);
+    if (cache.desc.mesh_process) cache.desc.mesh_process(cache.desc.mesh_process_context, view, view.areas, view.flags);
     OffMeshConnectionDesc[] connections;
-    if (self.desc.link_source) connections = self.desc.link_source(self.desc.link_source_context, header.bounds);
-    mesh.install_tile_mesh(packed, connections, params)!;
+    if (cache.desc.link_source) connections = cache.desc.link_source(cache.desc.link_source_context, header.bounds);
+    return create_tile_blob(mesh: mesh, tile_mesh: packed, connections: connections, params: params);
+}
+
+fn void? replace_cached_runtime(
+    TileCache* cache,
+    NavMesh* mesh,
+    int x,
+    int z,
+    char[][] blobs,
+) @private {
+    if (blobs.len > MAX_TILES_AT) return c3d::CAPACITY_EXCEEDED~;
+    char[][MAX_TILES_AT] runtime;
+    uint count;
+    defer catch {
+        foreach (blob : runtime[:count]) alloc::free(mesh.allocator, blob.ptr);
+    }
+    foreach (blob : blobs) {
+        char[] data = build_cached_runtime_blob(cache, blob, mesh)!;
+        if (data.len) runtime[count++] = data;
+    }
+    replace_tile_data_at(mesh: mesh, tile_x: x, tile_z: z, owned_data: runtime[:count])!;
+}
+
+fn uint? update_cached_group(TileCache* cache, NavMesh* mesh, uint queue_index) @private {
+    CachedLayerRef ref = cache.update_queue[queue_index];
+    CachedLayer*? found = cache.tile_by_ref(ref);
+    if (catch found) {
+        CachedLayerRef[1] stale = { ref };
+        finish_cached_rebuild(cache, stale[..]);
+        return 0;
+    }
+    int x = found.header.tile_x;
+    int z = found.header.tile_z;
+    CachedLayerRef[MAX_LAYERS_AT] refs;
+    usz count = cache.tiles_at(x, z, refs[..]);
+    cache.build_tiles_at(x: x, z: z, mesh: mesh)!;
+    finish_cached_rebuild(cache, refs[:count]);
+    return (uint)count;
+}
+
+fn void finish_cached_rebuild(TileCache* cache, CachedLayerRef[] refs) @private {
+    uint kept;
+    foreach (ref : cache.update_queue[:cache.update_count]) {
+        if (!contains_layer_ref(refs, ref)) cache.update_queue[kept++] = ref;
+    }
+    cache.update_count = kept;
+    foreach (ref : refs) settle_obstacles(cache, ref);
 }
 
 <*
@@ -469,6 +530,8 @@ fn Aabb TileCache.tight_tile_bounds(&self, LayerHeader* header) {
  @require desc.max_tiles > 0, desc.width <= 255 && desc.height <= 255
 *>
 fn TileCache? create_tile_cache(Allocator allocator, TileCacheDesc desc, usz build_scratch_bytes) {
+    if ((uint)desc.detail_mode > (uint)DetailMode.BOUNDED) return c3d::INVALID_ARGUMENT~;
+    if (desc.detail_mode == DetailMode.BOUNDED) (void)detail_cache_config(desc)!;
     uint tile_bits = (uint)next_pow2(desc.max_tiles).ctz();
     uint salt_bits = math::min(MAX_LAYER_SALT_BITS, 32 - tile_bits);
     if (salt_bits < MIN_LAYER_SALT_BITS) return c3d::INVALID_ARGUMENT~;
@@ -536,7 +599,10 @@ fn void destroy_tile_cache(TileCache* cache) {
 fn void shift_tile_cache(TileCache* cache, Vec3 offset) @private {
     cache.desc.origin -= offset;
     foreach (&tile : cache.tiles) {
-        if (tile.header) shift_bounds(&tile.header.bounds, offset);
+        if (tile.header) {
+            shift_bounds(&tile.header.bounds, offset);
+            if (tile.header.detail_mode == DetailMode.BOUNDED) shift_cached_detail_reference(tile.data, offset);
+        }
     }
     foreach (&obstacle : cache.obstacles) {
         if (obstacle.state == EMPTY) continue;
@@ -556,11 +622,99 @@ fn void? queue_rebuild(TileCache* cache, CachedLayerRef ref) @private {
 fn void retouch_obstacles(TileCache* cache, Aabb bounds) @private {
     foreach (&obstacle : cache.obstacles) {
         if (obstacle.state != PROCESSING && obstacle.state != PROCESSED) continue;
-        Aabb footprint = obstacle.bounds();
+        Aabb footprint = precision_obstacle_bounds(cache, obstacle);
         if (footprint.max.x < bounds.min.x || footprint.min.x > bounds.max.x) continue;
         if (footprint.max.z < bounds.min.z || footprint.min.z > bounds.max.z) continue;
-        obstacle.touched_count = (char)cache.query_tiles(footprint, obstacle.touched[..]).count;
+        obstacle.touched_count = (char)query_obstacle_tiles(cache, obstacle, obstacle.touched[..]).count;
     }
+}
+
+fn void? validate_cached_layer_blob(TileCache* cache, char[] data) @private {
+    if (data.len < LayerHeader::size || (uptr)data.ptr % LayerHeader::alignment != 0) return c3d::INVALID_ARGUMENT~;
+    LayerHeader* header = (LayerHeader*)data.ptr;
+    if (header.magic != LAYER_MAGIC || header.version != LAYER_VERSION
+        || header.width == 0 || header.height == 0 || header.width > cache.desc.width || header.height > cache.desc.height
+        || header.detail_mode != cache.desc.detail_mode || !detail_finite_vertex(header.bounds.min)
+        || !detail_finite_vertex(header.bounds.max) || header.hmin > header.hmax) return c3d::INVALID_ARGUMENT~;
+    if (catch excuse = read_tile_cache_layer(data, cache.scratch)) return c3d::INVALID_ARGUMENT~;
+    if (header.detail_mode == DetailMode.BOUNDED) {
+        DetailReference? reference = cached_detail_reference(data);
+        if (catch reference) return c3d::INVALID_ARGUMENT~;
+        if (reference.cell_size != cache.desc.cell_size || reference.cell_height != cache.desc.cell_height
+            || reference.width - reference.border_size * 2 != cache.desc.width
+            || reference.height - reference.border_size * 2 != cache.desc.height) return c3d::INVALID_ARGUMENT~;
+    }
+}
+
+fn CachedLayerRef insert_cached_layer(TileCache* cache, char[] data, TileFlags flags) @private {
+    LayerHeader* header = (LayerHeader*)data.ptr;
+    CachedLayer* tile = cache.next_free_tile;
+    cache.next_free_tile = tile.next;
+    uint hash = cache_hash(header.tile_x, header.tile_z, cache.lookup_mask);
+    tile.next = cache.lookup[hash];
+    cache.lookup[hash] = tile;
+    tile.header = header;
+    tile.data = data;
+    tile.arrays = data[LayerHeader::size..];
+    tile.flags = flags;
+    return cached_layer_ref(cache, tile);
+}
+
+fn void? validate_precision_cache_replacement(
+    TileCache* cache,
+    CachedLayerRef[] old_refs,
+    char[][] new_blobs,
+) @private {
+    if (cache.desc.detail_mode != DetailMode.BOUNDED) return;
+    foreach (&obstacle : cache.obstacles) {
+        if (obstacle.state == EMPTY || obstacle.state == REMOVING) continue;
+        uint count;
+        foreach (&tile : cache.tiles) {
+            if (!tile.header || contains_layer_ref(old_refs, cached_layer_ref(cache, tile))) continue;
+            if (precision_obstacle_affects(cache, obstacle, tile.header)) count++;
+        }
+        foreach (blob : new_blobs) {
+            if (precision_obstacle_affects(cache, obstacle, (LayerHeader*)blob.ptr)) count++;
+        }
+        if (count > MAX_TOUCHED_TILES) return c3d::CAPACITY_EXCEEDED~;
+    }
+}
+
+fn Aabb precision_obstacle_bounds(TileCache* cache, Obstacle* obstacle) @local {
+    Aabb box = obstacle.bounds();
+    if (cache.desc.detail_mode == DetailMode.BOUNDED) {
+        float halo = ((float)math::ceil(cache.desc.walkable_radius / cache.desc.cell_size) + BORDER_PADDING) * cache.desc.cell_size;
+        box.min -= { halo, cache.desc.walkable_height, halo };
+        box.max += { halo, 0, halo };
+    }
+    return box;
+}
+
+fn bool precision_obstacle_affects(TileCache* cache, Obstacle* obstacle, LayerHeader* header) @local {
+    if (header.min_x > header.max_x || header.min_z > header.max_z) return false;
+    return overlap_bounds(precision_obstacle_bounds(cache, obstacle), cache.tight_tile_bounds(header));
+}
+
+fn QueryResult query_obstacle_tiles(TileCache* cache, Obstacle* obstacle, CachedLayerRef[] output) @local {
+    if (cache.desc.detail_mode != DetailMode.BOUNDED) return cache.query_tiles(obstacle.bounds(), output);
+    QueryResult result;
+    foreach (&tile : cache.tiles) {
+        if (!tile.header || !precision_obstacle_affects(cache, obstacle, tile.header)) continue;
+        if (result.count == output.len) {
+            result.truncated = true;
+            continue;
+        }
+        output[result.count++] = cached_layer_ref(cache, tile);
+    }
+    return result;
+}
+
+fn void? validate_precision_obstacle(TileCache* cache, Obstacle* obstacle) @local {
+    Aabb box = obstacle.bounds();
+    if (!detail_finite_vertex(box.min) || !detail_finite_vertex(box.max)) return c3d::INVALID_ARGUMENT~;
+    if (cache.desc.detail_mode != DetailMode.BOUNDED) return;
+    CachedLayerRef[MAX_TOUCHED_TILES] touched;
+    if (query_obstacle_tiles(cache, obstacle, touched[..]).truncated) return c3d::CAPACITY_EXCEEDED~;
 }
 
 fn uint cache_hash(int x, int z, uint mask) @local => (CACHE_HASH_X * (uint)x + CACHE_HASH_Z * (uint)z) & mask;
@@ -618,7 +772,7 @@ fn void apply_obstacle_requests(TileCache* cache) @private {
         Obstacle* obstacle = found;
         switch (request.action) {
             case ADD:
-                QueryResult touched = cache.query_tiles(obstacle.bounds(), obstacle.touched[..]);
+                QueryResult touched = query_obstacle_tiles(cache, obstacle, obstacle.touched[..]);
                 obstacle.touched_count = (char)touched.count;
             case REMOVE:
                 obstacle.state = REMOVING;

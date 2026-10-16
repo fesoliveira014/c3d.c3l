@@ -19,9 +19,10 @@ const usz  DEFAULT_SLOT_SCRATCH_BYTES @local = 2 * 1024 * 1024; // per slot, onc
 const uint DEFAULT_VOLUMES_PER_TILE @local = 16; // about 3 KiB of volume records per slot
 const uint DEFAULT_MAX_OBSTACLES @local = 128; // mirrors RecastDemo's maxObstacles; 144 bytes per obstacle slot
 const usz  DEFAULT_CACHE_SCRATCH_BYTES @local = 64 * 1024; // once per cache; a default tile with stair, ramp and obstacle peaks at 4 KiB
+const usz DEFAULT_DETAIL_CACHE_SCRATCH_BYTES @local = 2 * 1024 * 1024; // fixed workspace for reference reconstruction and bounded detail
 const uint DEFAULT_LAYERS_PER_TILE @local = 4; // mirrors RecastDemo's EXPECTED_LAYERS_PER_TILE; sizes the cache and the mesh
-const usz  LAYER_LENGTH_BYTES @local = uint::size; // each layer blob of a build's output follows its length
-const usz  LAYER_BLOB_ALIGNMENT @local = 4; // a layer header holds 32-bit fields
+const usz  LAYER_LENGTH_BYTES @local = 8; // length and padding before an aligned layer payload
+const usz  LAYER_BLOB_ALIGNMENT @local = 8;
 const uint MAX_CACHED_TILE_CELLS @local = 255; // a layer header stores its width and height in bytes
 
 <* Where a slot is in the rasterize, build, commit cycle. *>
@@ -41,6 +42,7 @@ enum BuildStage {
     REGIONS,
     CONTOURS,
     POLY_MESH,
+    DETAIL,
     PACK,
     INSTALL,        // create_tile_data and add_tile in nav_sync, or a cached layer rebuild
 }
@@ -74,6 +76,8 @@ struct TileJob {
     uint           request;           // the tile's request count this build answers
     uint           source_epoch;      // builder epoch when rasterization began
     TileConfig     config;
+    Vec3           detail_origin;
+    double[2]      detail_origin_correction;
     Heightfield    heightfield;
     char[]         scratch;           // slot_scratch_bytes, backs arena
     ArenaAllocator arena;
@@ -91,7 +95,7 @@ struct TileJob {
 <* Built mesh and build state of one tile coordinate. *>
 struct TileRecord {
     char[]                     mesh;           // TileMesh blob from the builder allocator; empty when never built or nothing walkable
-    uint                       revision;       // advances on every accepted commit
+    uint                       revision;       // advances on every published source replacement
     uint                       requests;       // advances every time a slot takes the tile
     bool                       dirty;
     bool                       relink;         // the NavMesh tile is stale; nav_sync reinstalls it
@@ -99,6 +103,13 @@ struct TileRecord {
     bool                       relayer;        // with cache_layers: the next sync rebuilds its mesh tiles from the cache
     CachedLayerRef[MAX_LAYERS] layers;         // with cache_layers
     uint                       layer_count;
+    LayerReplacement*          pending_layers; // unpublished complete cached XZ replacement
+}
+
+struct LayerReplacement @private {
+    char[][MAX_LAYERS] blobs;
+    uint count;
+    uint request;
 }
 
 <* The last build that faulted. *>
@@ -154,6 +165,7 @@ struct NavBuilder {
     NavBuildConfig config;
     TileConfig     tile_config;
     Aabb           bounds;
+    double[2]      origin_correction;
     float          tile_world_size;        // tile_size * cell_size
     uint           tiles_x;
     uint           tiles_z;
@@ -175,7 +187,7 @@ struct NavBuilder {
 struct NavSyncResult {
     uint built;
     uint installed;  // tiles added to the mesh, relinks included
-    uint pending;    // dirty tiles left
+    uint pending;    // dirty tiles and unpublished cached source products
     uint skipped;    // sources with released or non-triangle geometry, obstacles on a builder without cache_layers
     uint failed;     // tile builds, installs, rebuilds or rasterizations that faulted; last_failure names the last tile
     uint relayered;  // cached layers rebuilt into the mesh
@@ -187,13 +199,26 @@ struct NavSyncResult {
  @require offset.y == 0
 *>
 fn void NavBuilder.shift_origin(&self, Vec3 offset) {
-    shift_bounds(&self.bounds, offset);
+    shift_detail_origin(&self.bounds.min, &self.origin_correction, offset);
+    self.bounds.max -= offset;
     foreach (&record : self.tiles) {
-        if (record.mesh.len) shift_bounds(&((TileMeshHeader*)record.mesh.ptr).bounds, offset);
+        if (record.mesh.len) {
+            TileMeshHeader* header = (TileMeshHeader*)record.mesh.ptr;
+            shift_bounds(&header.bounds, offset);
+            if (header.detail_mode == DetailMode.BOUNDED) shift_detail_origin(&header.detail_origin, &header.detail_origin_correction, offset);
+        }
+        if (record.pending_layers) {
+            foreach (blob : record.pending_layers.blobs[:record.pending_layers.count]) {
+                LayerHeader* header = (LayerHeader*)blob.ptr;
+                shift_bounds(&header.bounds, offset);
+                if (header.detail_mode == DetailMode.BOUNDED) shift_cached_detail_reference(blob, offset);
+            }
+        }
     }
     foreach (&job : self.jobs) {
         if (job.state == FREE) continue;
         shift_bounds(&job.heightfield.bounds, offset);
+        shift_detail_origin(&job.detail_origin, &job.detail_origin_correction, offset);
         foreach (&volume : job.volumes[:job.volume_count]) shift_volume(volume, offset);
         if (job.state == BUILT) shift_job_output(job, offset);
     }
@@ -296,7 +321,8 @@ fn TileJob*? NavBuilder.rasterize_next(&self, Scene* scene, AssetStore* assets) 
 }
 
 <*
- Copy a built mesh, or swap in the built layers, into its tile record and free the slot.
+ Copy a built mesh, or stage a complete cached layer set, and free the slot.
+ Cached layers and their revision publish together with the runtime set in nav_sync.
  A stale or failed build keeps the record.
  @param [&inout] job : "BUILT or FAILED; FREE afterwards."
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT, TILE_OCCUPIED
@@ -304,7 +330,7 @@ fn TileJob*? NavBuilder.rasterize_next(&self, Scene* scene, AssetStore* assets) 
 *>
 fn void? NavBuilder.commit(&self, TileJob* job) {
     TileRecord* record = tile_record(self, job);
-    bool latest = job.request == record.requests;
+    bool latest = job.request == record.requests && !record.dirty;
     JobState state = job.state;
     job.state = FREE;
     if (state == FAILED) {
@@ -349,7 +375,7 @@ fn NavBuilderDesc default_nav_builder_desc(Aabb bounds, NavBuildConfig config = 
         .initial_spans            = SPAN_POOL_GROWTH,
         .max_volumes_per_tile     = DEFAULT_VOLUMES_PER_TILE,
         .max_obstacles            = DEFAULT_MAX_OBSTACLES,
-        .cache_scratch_bytes      = DEFAULT_CACHE_SCRATCH_BYTES,
+        .cache_scratch_bytes      = config.detail_mode == DetailMode.BOUNDED ? DEFAULT_DETAIL_CACHE_SCRATCH_BYTES : DEFAULT_CACHE_SCRATCH_BYTES,
         .expected_layers_per_tile = DEFAULT_LAYERS_PER_TILE,
     };
 }
@@ -365,12 +391,16 @@ fn NavBuilderDesc default_nav_builder_desc(Aabb bounds, NavBuildConfig config = 
 *>
 fn NavBuilder? create_nav_builder(Allocator allocator, Scene* scene, NavBuilderDesc desc) {
     TileConfig tile = tile_config(desc.config)!;
+    if (!detail_finite_vertex(desc.bounds.min) || !detail_finite_vertex(desc.bounds.max)) return c3d::INVALID_ARGUMENT~;
     Vec3 extent = desc.bounds.max - desc.bounds.min;
-    if (extent.x <= 0 || extent.y < 0 || extent.z <= 0) return c3d::INVALID_ARGUMENT~;
+    if (!detail_finite_vertex(extent) || extent.x <= 0 || extent.y < 0 || extent.z <= 0) return c3d::INVALID_ARGUMENT~;
     if (desc.cache_layers && tile.width > MAX_CACHED_TILE_CELLS) return c3d::INVALID_ARGUMENT~;
     float tile_world_size = desc.config.tile_size * desc.config.cell_size;
+    if (!math::is_finite(tile_world_size) || tile_world_size <= 0
+        || (double)extent.x / tile_world_size > uint::max || (double)extent.z / tile_world_size > uint::max) return c3d::INVALID_ARGUMENT~;
     uint tiles_x = (uint)math::ceil(extent.x / tile_world_size);
     uint tiles_z = (uint)math::ceil(extent.z / tile_world_size);
+    if ((ulong)tiles_x * tiles_z > uint::max) return c3d::INVALID_ARGUMENT~;
 
     NavBuilder builder = {
         .allocator        = allocator,
@@ -439,7 +469,10 @@ fn void destroy_nav_builder(NavBuilder* builder) {
     builder.scene.set_remove_hook(NavVolumeRuntime, null, null);
     builder.scene.set_remove_hook(NavLinkRuntime, null, null);
     builder.scene.set_remove_hook(NavObstacleRuntime, null, null);
-    if (builder.cache_layers) destroy_tile_cache(&builder.cache);
+    if (builder.cache_layers) {
+        foreach (&record : builder.tiles) discard_pending_layers(builder, record);
+        destroy_tile_cache(&builder.cache);
+    }
     if (builder.cache_sources) {
         alloc::free(allocator, builder.cache_sources.volumes.ptr);
         alloc::free(allocator, builder.cache_sources.links.ptr);
@@ -494,12 +527,22 @@ fn void? build_stages(TileJob* job, BuildStage* stage) @local {
 
     *stage = AREAS;
     if (job.volumes_overflowed) return c3d::CAPACITY_EXCEEDED~;
-    if (config.walkable_radius > 0) compact.erode_walkable_area(arena, config.walkable_radius)!;
+    DetailReference reference;
+    if (config.detail_mode == DetailMode.BOUNDED) {
+        reference = build_detail_reference(arena, &compact, config.border_size)!;
+        reference.origin = job.detail_origin;
+        reference.origin_correction = job.detail_origin_correction;
+        apply_detail_connections(&reference, &compact);
+        classify_detail_reference(&reference, &compact, config)!;
+    } else if (config.walkable_radius > 0) {
+        compact.erode_walkable_area(arena, config.walkable_radius)!;
+    }
     if (job.cache_layers) {
         *stage = LAYERS;
-        return build_layer_blobs(job, &compact);
+        return build_layer_blobs(job, &compact, config.detail_mode == DetailMode.BOUNDED ? &reference : null);
     }
     foreach (&volume : job.volumes[:job.volume_count]) apply_volume(&compact, volume);
+    if (config.detail_mode == DetailMode.BOUNDED && config.walkable_radius > 0) compact.erode_walkable_area(arena, config.walkable_radius)!;
 
     *stage = REGIONS;
     compact.build_regions_monotone(
@@ -525,8 +568,31 @@ fn void? build_stages(TileJob* job, BuildStage* stage) @local {
         scratch:        arena,
         contours:       &contours,
         verts_per_poly: config.verts_per_poly,
+        preserve_surface: config.detail_mode == DetailMode.BOUNDED,
     )!;
     if (mesh.poly_count == 0) return;
+
+    if (config.detail_mode == DetailMode.BOUNDED) {
+        *stage = DETAIL;
+        ushort[]? regions = alloc::alloc_array_try(arena, ushort, compact.span_count);
+        if (catch regions) return c3d::CAPACITY_EXCEEDED~;
+        foreach (index, span : compact.spans) regions[index] = compact.areas[index] == NULL_AREA ? 0 : span.region;
+        build_poly_details(
+            allocator: arena,
+            mesh: &mesh,
+            reference: &reference,
+            regions: regions,
+            config: config,
+        )!;
+        build_detail_portals(
+            allocator: arena,
+            mesh: &mesh,
+            reference: &reference,
+            regions: regions,
+            areas: compact.areas,
+            capacity: config.max_detail_triangles,
+        )!;
+    }
 
     *stage = PACK;
     char[]? blob = alloc::alloc_array_try(arena, char, (sz)tile_mesh_size(&mesh));
@@ -541,7 +607,7 @@ fn void? build_stages(TileJob* job, BuildStage* stage) @local {
 }
 
 // Volumes wait for the cache rebuild, so changing one relayers the tile instead of rebuilding it.
-fn void? build_layer_blobs(TileJob* job, CompactHeightfield* compact) @local {
+fn void? build_layer_blobs(TileJob* job, CompactHeightfield* compact, DetailReference* reference = null) @local {
     Allocator arena = &job.arena;
     HeightfieldLayer[] layers = build_heightfield_layers(
         allocator:       arena,
@@ -549,24 +615,33 @@ fn void? build_layer_blobs(TileJob* job, CompactHeightfield* compact) @local {
         compact:         compact,
         border_size:     job.config.border_size,
         walkable_height: job.config.walkable_height,
+        retain_sources: reference != null,
     )!;
     if (!layers.len) return;
     // A tile record holds MAX_LAYERS refs; islands in distinct height bands can split into more.
     if (layers.len > MAX_LAYERS) return c3d::CAPACITY_EXCEEDED~;
 
     usz size;
-    foreach (&layer : layers) size += LAYER_LENGTH_BYTES + aligned_layer_blob_size(layer_blob_size(layer));
+    foreach (&layer : layers) size += LAYER_LENGTH_BYTES + aligned_layer_blob_size(precision_layer_blob_size(layer, reference));
     char[]? output = alloc::alloc_array_try(arena, char, (sz)size);
     if (catch output) return c3d::CAPACITY_EXCEEDED~;
+    output[..] = 0;
     usz offset;
     foreach (index, &layer : layers) {
-        usz blob_size = layer_blob_size(layer);
+        if (reference) {
+            layer.bounds.min.x = reference.origin.x;
+            layer.bounds.min.z = reference.origin.z;
+            layer.bounds.max.x = (float)((double)reference.origin.x + (double)(reference.width - reference.border_size * 2) * reference.cell_size);
+            layer.bounds.max.z = (float)((double)reference.origin.z + (double)(reference.height - reference.border_size * 2) * reference.cell_size);
+        }
+        usz blob_size = precision_layer_blob_size(layer, reference);
         *(uint*)(output.ptr + offset) = (uint)blob_size;
-        build_tile_cache_layer(
+        pack_precision_layer(
             layer:      layer,
             tile_x:     job.tile_x,
             tile_z:     job.tile_z,
             tile_layer: (int)index,
+            reference: reference,
             blob:       output[offset + LAYER_LENGTH_BYTES:blob_size],
         );
         offset += LAYER_LENGTH_BYTES + aligned_layer_blob_size(blob_size);
@@ -576,35 +651,65 @@ fn void? build_layer_blobs(TileJob* job, CompactHeightfield* compact) @local {
 
 fn usz aligned_layer_blob_size(usz size) @local => (size + LAYER_BLOB_ALIGNMENT - 1) / LAYER_BLOB_ALIGNMENT * LAYER_BLOB_ALIGNMENT;
 
-// Swaps the tile's cached layers for the build's; the mesh tiles relink at the next sync.
+// Retains the published cache until the complete replacement runtime set succeeds.
 fn void? commit_layers(NavBuilder* builder, TileRecord* record, TileJob* job) @local {
     TileCache* cache = &builder.cache;
-    foreach (ref : record.layers[:record.layer_count]) (void)cache.remove_tile(ref);
-    record.layer_count = 0;
-    record.relink = true;
+    CachedLayer*[MAX_LAYERS] resident;
+    char[][MAX_LAYERS] copies;
+    uint count;
+    defer catch {
+        foreach (copy : copies[:count]) alloc::free(cache.allocator, copy.ptr);
+        redirty(builder, record);
+    }
+    for (uint index = 0; index < record.layer_count; index++) resident[index] = cache.tile_by_ref(record.layers[index])!;
+    uint free_slots;
+    for (CachedLayer* tile = cache.next_free_tile; tile; tile = tile.next) free_slots++;
 
     usz offset;
     while (offset < job.output.len) {
+        if (job.output.len - offset < LAYER_LENGTH_BYTES) return c3d::INVALID_ARGUMENT~;
         usz size = *(uint*)(job.output.ptr + offset);
-        char[] blob = job.output[offset + LAYER_LENGTH_BYTES:size];
-        offset += LAYER_LENGTH_BYTES + aligned_layer_blob_size(size);
-        // The cache frees the copy with its own allocator when the layer leaves.
+        offset += LAYER_LENGTH_BYTES;
+        if (size > job.output.len - offset || aligned_layer_blob_size(size) > job.output.len - offset) return c3d::INVALID_ARGUMENT~;
+        if (count == MAX_LAYERS || count == free_slots + record.layer_count) return c3d::CAPACITY_EXCEEDED~;
+        char[] blob = job.output[offset:size];
+        offset += aligned_layer_blob_size(size);
+        validate_cached_layer_blob(cache, blob)!;
+        LayerHeader* header = (LayerHeader*)blob.ptr;
+        if (header.tile_x != job.tile_x || header.tile_z != job.tile_z) return c3d::INVALID_ARGUMENT~;
+        foreach (copy : copies[:count]) {
+            if (((LayerHeader*)copy.ptr).tile_layer == header.tile_layer) return c3d::INVALID_ARGUMENT~;
+        }
+        foreach (&tile : cache.tiles) {
+            if (!tile.header || tile.header.tile_x != header.tile_x || tile.header.tile_z != header.tile_z
+                || tile.header.tile_layer != header.tile_layer) continue;
+            bool owned;
+            foreach (previous : resident[:record.layer_count]) {
+                if (previous == tile) owned = true;
+            }
+            if (!owned) return TILE_OCCUPIED~;
+        }
         char[]? copy = alloc::alloc_array_try(cache.allocator, char, (sz)size);
-        if (catch copy) {
-            redirty(builder, record);
-            return c3d::CAPACITY_EXCEEDED~;
-        }
+        if (catch copy) return c3d::CAPACITY_EXCEEDED~;
+        copies[count++] = copy;
         copy[..] = blob[..];
-        CachedLayerRef? ref = cache.add_tile(copy, { .free_data = true });
-        if (catch excuse = ref) {
-            alloc::free(cache.allocator, copy.ptr);
-            redirty(builder, record);
-            return excuse~;
-        }
-        record.layers[record.layer_count++] = ref;
     }
-    record.revision++;
-    retouch_obstacles(cache, builder.tile_bounds((uint)job.tile_x, (uint)job.tile_z));
+    validate_precision_cache_replacement(cache, record.layers[:record.layer_count], copies[:count])!;
+    LayerReplacement*? pending = alloc::new_try(cache.allocator, LayerReplacement);
+    if (catch pending) return c3d::CAPACITY_EXCEEDED~;
+    pending.count = count;
+    pending.request = job.request;
+    pending.blobs[..] = copies[..];
+    discard_pending_layers(builder, record);
+    record.pending_layers = pending;
+}
+
+fn void discard_pending_layers(NavBuilder* builder, TileRecord* record) @private {
+    LayerReplacement* pending = record.pending_layers;
+    if (!pending) return;
+    foreach (blob : pending.blobs[:pending.count]) alloc::free(builder.cache.allocator, blob.ptr);
+    alloc::free(builder.cache.allocator, pending);
+    record.pending_layers = null;
 }
 
 fn void? create_layer_cache(NavBuilder* builder, Scene* scene, NavBuilderDesc desc) @local {
@@ -643,12 +748,17 @@ fn void? create_layer_cache(NavBuilder* builder, Scene* scene, NavBuilderDesc de
             .volume_source_context    = sources,
             .link_source              = &cache_link_source,
             .link_source_context      = sources,
+            .detail_mode              = config.detail_mode,
+            .detail_max_error         = config.detail_max_error,
+            .max_detail_vertices      = config.max_detail_vertices,
+            .max_detail_triangles     = config.max_detail_triangles,
+            .agent_max_slope_degrees  = config.agent_max_slope_degrees,
         },
         build_scratch_bytes: desc.cache_scratch_bytes,
     )!;
 }
 
-fn void apply_volume(CompactHeightfield* compact, VolumeRecord* volume) @local {
+fn void apply_volume(CompactHeightfield* compact, VolumeRecord* volume) @private {
     switch (volume.kind) {
         case BOX:
             compact.mark_box_area(volume.box, volume.area);
@@ -685,13 +795,18 @@ fn void shift_volume(VolumeRecord* volume, Vec3 offset) @private {
 fn void shift_job_output(TileJob* job, Vec3 offset) @local {
     if (!job.output.len) return;
     if (!job.cache_layers) {
-        shift_bounds(&((TileMeshHeader*)job.output.ptr).bounds, offset);
+        TileMeshHeader* header = (TileMeshHeader*)job.output.ptr;
+        shift_bounds(&header.bounds, offset);
+        if (header.detail_mode == DetailMode.BOUNDED) shift_detail_origin(&header.detail_origin, &header.detail_origin_correction, offset);
         return;
     }
     usz position;
     while (position < job.output.len) {
         usz size = *(uint*)(job.output.ptr + position);
-        shift_bounds(&((LayerHeader*)(job.output.ptr + position + LAYER_LENGTH_BYTES)).bounds, offset);
+        char[] blob = job.output[position + LAYER_LENGTH_BYTES:size];
+        LayerHeader* header = (LayerHeader*)blob.ptr;
+        shift_bounds(&header.bounds, offset);
+        if (header.detail_mode == DetailMode.BOUNDED) shift_cached_detail_reference(blob, offset);
         position += LAYER_LENGTH_BYTES + aligned_layer_blob_size(size);
     }
 }
@@ -768,6 +883,7 @@ fn void relayer_tiles(NavBuilder* builder, Aabb box) @private {
 }
 
 fn void redirty(NavBuilder* builder, TileRecord* record) @private {
+    if (builder.cache_layers) discard_pending_layers(builder, record);
     if (record.dirty) return;
     record.dirty = true;
     builder.dirty_count++;
@@ -783,6 +899,11 @@ fn void take_tile(NavBuilder* builder, TileJob* job) @local {
 }
 
 fn void begin_rasterization(NavBuilder* builder, TileJob* job, Scene* scene) @local {
+    double tile_size = (double)builder.config.tile_size * builder.config.cell_size;
+    double origin_x = (double)builder.bounds.min.x + builder.origin_correction[0] + job.tile_x * tile_size;
+    double origin_z = (double)builder.bounds.min.z + builder.origin_correction[1] + job.tile_z * tile_size;
+    job.detail_origin = { (float)origin_x, builder.bounds.min.y, (float)origin_z };
+    job.detail_origin_correction = { origin_x - job.detail_origin.x, origin_z - job.detail_origin.z };
     job.state = RASTERIZING;
     job.source_epoch = builder.source_epoch;
     job.config = builder.tile_config;
@@ -895,6 +1016,9 @@ fn uint? rasterize_source(
         } else {
             indices = alloc::new_array(tmem, uint, (last - first) * 3);
             foreach (index, &value : indices) *value = (uint)(first * 3 + index);
+        }
+        foreach (index : indices) {
+            if (index >= positions.len || !detail_finite_vertex(positions[index])) return c3d::INVALID_ARGUMENT~;
         }
         char[] areas = alloc::new_array(tmem, char, last - first);
         if (source.walkable) {

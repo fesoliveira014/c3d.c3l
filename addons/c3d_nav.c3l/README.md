@@ -37,9 +37,8 @@ Ported so far, from Recast:
 
 From Detour:
 
-- tile data with its BV tree and off-mesh connections (`dtCreateNavMeshData`), without detail arrays:
-  polygon heights come from each polygon's vertex fan, the triangles upstream builds when no detail
-  mesh is given;
+- tile data with its BV tree and off-mesh connections (`dtCreateNavMeshData`); coarse polygon
+  heights use the vertex fan, while bounded surfaces use the package's reference/detail arrays;
 - the tiled navmesh: tile add and remove, internal, portal and off-mesh links, 64-bit salted refs
   (`DetourNavMesh.cpp` with `DT_POLYREF64`);
 - the search node pool and priority queue (`DetourNode.cpp`) and the geometry helpers
@@ -104,12 +103,13 @@ restarts a tile job in progress. A `NavMesh` the application built keeps its til
 A `NavMesh` from `create_nav_mesh_for(allocator, builder, max_links)` receives the tiles: `nav_sync`
 turns every committed `TileMesh` into a `TileData` blob with `create_tile_data`, adds it with
 `add_tile` and links it to its neighbours. Internal, portal and off-mesh links come from one
-mesh-owned pool sized by `NavMeshDesc.max_links` (16 bytes per `Link`), which defaults to
+mesh-owned pool sized by `NavMeshDesc.max_links` (24 bytes per `Link`), which defaults to
 `DEFAULT_LINKS_PER_TILE` (4096) per tile slot; `free_links` reports the remaining capacity. A large
 or streamed world sets `max_links` to its resident budget, sized from `NO_FREE_LINKS`. Every
 qualifying polygon edge across a tile border gets a portal link in both directions, with `Link.min`
-and `Link.max` quantized to 255 steps along the source edge as the remaining per-edge resolution
-limit. An install that needs more links than are free faults `NO_FREE_LINKS` and leaves the mesh
+and `Link.max` normalized along the source edge. Coarse links preserve the legacy 255-step
+quantization; bounded links retain accepted float intervals without that quantization.
+An install that needs more links than are free faults `NO_FREE_LINKS` and leaves the mesh
 unchanged; a failed `install_tile_mesh` over a resident tile keeps the resident tile and its links.
 `NavLink` components author off-mesh connections; adding, changing (`mark_changed`) or removing one
 relinks the tiles under its endpoints without rebuilding them. Every install advances the tile's
@@ -149,7 +149,7 @@ and draws tiles, polygons, links and the spans of the slot being rasterized. A w
 straight path to a clicked goal, across tiles and up a two-way link onto the platform; `L` makes
 that link one-way, and a walk down reroutes through a second, one-way link. `R` switches the walker
 to wandering: it draws goals with `find_random_point_around_circle`, steps toward them with
-`move_along_surface`, and shows `find_distance_to_wall` as a circle around it:
+`move_along_surface_projected`, and shows `find_distance_to_wall` as a circle around it:
 
 ```bash
 python3 scripts/build.py --example navmesh
@@ -162,6 +162,65 @@ closed door:
 ```bash
 c3c build navmesh --path addons/c3d_nav.c3l && addons/c3d_nav.c3l/build/navmesh --cache
 ```
+
+## Bounded scene surfaces
+
+Set `NavBuildConfig.detail_mode = DetailMode.BOUNDED` to retain the quantized scene surface
+inside each polygon. `detail_max_error` is the maximum vertical difference in metres from that
+reference, plus floating-point allowance. The default remains `DetailMode.COARSE`.
+The local vertical allowance is `max(1e-5 m, 32 * FLT_EPSILON * max(1 m, reference height range))`;
+it is separate from `detail_max_error`.
+
+The reference is a four-triangle fan per compact heightfield cell. Its center uses the span's
+quantized height; each corner uses the highest incident span connected locally by reciprocal
+walkable transitions. This defines a reconstructed heightfield surface; it does not preserve the
+original source triangle surface. Reconstructed slope and headroom are checked before whole-cell
+erosion. Separate floors keep separate references.
+
+The builder keeps a coarse polygon fan only when its full reference overlay and boundary profile
+meet the bound. Otherwise it retains clipped reference triangles. `max_detail_vertices` and
+`max_detail_triangles` bound tile storage, with defaults of 65534 each. Insufficient storage,
+scratch space or representable precision returns `CAPACITY_EXCEEDED`; no coarse fallback is
+published. Invalid selected numeric inputs return `INVALID_ARGUMENT`. A failed build, retained
+cache replacement or runtime install preserves the previous usable data and remains retryable.
+For a cached source replacement, `NavBuilder.commit` stages the complete XZ layer set.
+`nav_sync` publishes its cache references, revision and runtime tiles together only after every
+replacement layer succeeds. Failure preserves every old cache and runtime layer at that XZ,
+including layers that a successful replacement removes. Other XZ coordinates commit independently.
+Cached rebuild budgets count complete XZ sets; an obstacle or link rebuild also replaces all layers
+at its coordinate together. Pending source products own their copied blobs until publication or
+supersession; runtime staging temporarily owns every replacement layer's payload.
+
+Cached bounded layers retain the source reference and its halo before erosion. Obstacles and
+area edits change admissibility; they do not overwrite source heights. Neighboring bounded tiles
+require compatible source pitch, agent settings and reciprocal reference identities. Incompatible
+precision data, including unsupported coarse/bounded adjacency, is rejected before installation.
+`TileMesh`, runtime tile and cached-layer blobs carry checked versions; old layouts are rejected.
+
+`NavQuery.poly_surface(ref, point)` returns the selected ground triangle's height and upward unit
+normal. `poly_height`, closest/nearest queries, random points and off-mesh landings use the same
+surface. A normal describes the retained triangle; vertical error alone does not bound its angular
+error. A supplied polygon reference selects the side at a height step. `poly_surface` rejects an
+off-mesh reference; `poly_height` retains its segment interpolation.
+
+`move_along_surface_projected` returns the actual final polygon and projects onto its surface even
+when the visited slice is truncated. `move_along_surface` preserves its existing Y behavior.
+Ordinary corridor and crowd movement uses projected heights; driven-agent positions and off-mesh
+animation keep their existing owners. Queries allocate no detail data. Origin shifts move the
+detail basis and preserve local detail vertices and valid polygon references. Bounded runtime
+tiles retain local coarse vertices as well, adding 12 bytes per coarse vertex. Their compensated
+XZ basis preserves logical grid alignment across shifts; coordinate conversion to world floats
+has a separate scale-dependent ULP allowance and does not increase the vertical detail budget.
+Each `PathCorridor` reserves a second `max_path` array for atomic movement, adding 8 bytes per
+path entry.
+
+The `navmesh` and `crowd` examples accept `--detail`. Add `--cache` for cached scene construction;
+the crowd example defaults to cached construction and accepts `--direct` for comparison. Their
+panels display the selected height and geometric normal and can draw retained triangles.
+Each example reserves 131072 debug segments (4 MiB of vertices) for the complete detailed scene
+and diagnostic overlays; its panel reports the previous frame's emitted and dropped segments.
+`--frames N` closes either example after N frames. Whole-cell erosion remains the horizontal
+clearance policy in these modes.
 
 ## Grid sources
 
@@ -177,6 +236,7 @@ difference is within the climb. Regions split where the floor height changes, so
 on one floor; a vertex on a step takes the higher floor's height, as upstream's corner heights do,
 so a polygon beside a step slopes up to it. A grid whose heights differ from cell to cell, like a
 heightmap, therefore yields a region and a polygon per cell and pays for it in polygon count.
+`GridTileBuilder` accepts `DetailMode.COARSE`.
 
 `NavMesh.install_tile_mesh(blob, connections, params)` replaces the tile at `params.tile_x`,
 `params.tile_z` and `params.tile_layer`, or only removes it when the blob is empty, and

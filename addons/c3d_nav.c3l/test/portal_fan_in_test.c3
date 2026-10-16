@@ -417,8 +417,8 @@ fn void test_disjoint_segments_clip_their_intervals() @test {
     );
     assert(link_count == 2);
     // Edge 2 of the long quad runs from z = 32 down to z = 0: quad 0 covers [0, 8] (t in [0.75, 1]) and quad 1 covers [16, 24] (t in [0.25, 0.5]).
-    assert(links[0].min == 191 && links[0].max == 255);
-    assert(links[1].min == 64 && links[1].max == 128);
+    assert(links[0].min == 191.0f / 255.0f && links[0].max == 1);
+    assert(links[1].min == 64.0f / 255.0f && links[1].max == 128.0f / 255.0f);
 
     WallSegment[WALL_SEGMENT_CAPACITY] segments;
     QueryResult wall_result = fixture.query.poly_wall_segments(
