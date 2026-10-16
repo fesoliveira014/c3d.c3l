@@ -51,6 +51,9 @@ All view operations allocate no memory. Poses use finite unit rotations and unit
 `collide::UNIT_SCALE_TOLERANCE`. Invalid values return `INVALID_ARGUMENT`; unsupported finite
 scale or unrepresentable derived query arithmetic returns `UNSUPPORTED`. Returned points,
 normals and distances are in world space. Normals point from the first shape toward the second.
+Admission uses conservative bounds on relative geometry and motion for native arithmetic.
+A finite prepared shape can therefore return `UNSUPPORTED` for a query whose required bounds
+cannot be represented; a large common world origin alone does not impose a cutoff.
 
 - `contacts(pose_a, other, pose_b, output)` writes the complete native reduced convex manifold
   and returns its count. There are at most four points, each with signed native separation,
@@ -68,10 +71,11 @@ normals and distances are in world space. Normals point from the first shape tow
   unit length and the maximum distance is positive. A ray starting inside a convex shape returns
   fraction zero and a zero normal.
 
-Casts, sweeps and rays return `b3::NO_HIT` on a miss. Casts and sweeps preserve native closing-band
-semantics: a hit already inside that band has time zero and a zero normal. Geometric touching
-alone does not promise time zero. The slop behavior described below also applies to prepared
-convex casts and sweeps.
+Casts, sweeps and rays return `b3::NO_HIT` on a miss. An initial-band translational cast hit has
+time zero and a zero normal. Convex `time_of_impact` retains the native normal for a HIT, including
+a possible time-zero hit; its native OVERLAPPED path returns a zero normal. Time zero alone does
+not determine the normal. Geometric touching alone does not promise time zero. The slop behavior
+described below also applies to prepared convex casts and sweeps.
 
 ### Sharing cooked geometry with worlds
 
@@ -136,8 +140,8 @@ Every returned point, normal and distance is in world space.
   a resting `a`. `time` is the fraction of the translation; the normal points from `a` to `b`. A
   start that already overlaps reports time 0 and a zero normal. Faults `b3::NO_HIT` on a miss.
 - `time_of_impact(a, sweep_a, b, sweep_b)`: first contact of two shapes moving from their start to
-  their end poses; same result rules as `cast`, including time 0 and a zero normal for an overlapped
-  start. Faults `b3::NO_HIT` when they never touch.
+  their end poses. A time-zero HIT can retain a defined native normal; the native OVERLAPPED path
+  returns time zero with a zero normal. Faults `b3::NO_HIT` when they never touch.
 - `hull_points(shape)`: the cooked points of a `HULL` shape, borrowed until `destroy_hull`, for drawing.
 - `ray_cast(shape, pose, origin, direction, max_distance)`: nearest entry of a unit-length ray;
   `fraction` is of `max_distance`. A ray starting inside reports fraction 0 and a zero normal.
