@@ -40,6 +40,8 @@ struct BenchmarkFlags {
     bool depth_prepass;
     bool reflections;
     bool screen_space_gi;
+    uint ssgi_steps;
+    SsgiTrace ssgi_trace;
     bool auto_exposure;
     TraceKind trace; // AUTO: ray queries exactly when a traced effect needs them
 }
@@ -98,6 +100,7 @@ fn BenchmarkFlags default_flags() {
         .height        = 900,
         .anti_aliasing = AntiAliasing.FXAA,
         .depth_prepass = true,
+        .ssgi_steps    = render::SCREEN_SPACE_GI_DEFAULT.max_steps,
     };
 }
 
@@ -185,6 +188,13 @@ fn bool? parse_flag(String[] args, usz* index, BenchmarkFlags* flags, String tar
                 case "off": flags.screen_space_gi = false;
                 default: return c3d::INVALID_ARGUMENT~;
             }
+        case "--ssgi-trace":
+            switch (option_value(args, index)!) {
+                case "linear": flags.ssgi_trace = SsgiTrace.LINEAR;
+                case "hierarchical": flags.ssgi_trace = SsgiTrace.HIERARCHICAL;
+                default: return c3d::INVALID_ARGUMENT~;
+            }
+        case "--ssgi-steps": flags.ssgi_steps = option_value(args, index)!.to_uint()!;
         case "--auto-exposure":
             switch (option_value(args, index)!) {
                 case "on": flags.auto_exposure = true;
@@ -218,6 +228,7 @@ fn String? option_value(String[] args, usz* index) {
 fn void? validate_flags(BenchmarkFlags flags, ShadingPath shading) {
     if (!flags.frames || flags.frames > FRAMES_MAX || flags.warmup > FRAMES_MAX
         || !flags.width || flags.width > EXTENT_MAX || !flags.height || flags.height > EXTENT_MAX
+        || (flags.screen_space_gi && (flags.ssgi_steps < render::SSGI_STEPS_MIN || flags.ssgi_steps > render::SSGI_STEPS_MAX))
         || (flags.panel && (!flags.window || !flags.capture))
         || (flags.trace == TraceKind.SOFTWARE && shading == ShadingPath.PATH_TRACED)
         || (flags.msaa != MsaaSamples.ONE
@@ -302,6 +313,26 @@ fn String ambient_occlusion_name(AmbientOcclusionDesc ambient_occlusion) {
 }
 
 <*
+ Banner name of the screen-space GI trace flag: linear or hierarchical.
+*>
+fn String ssgi_trace_name(SsgiTrace trace) {
+    switch (trace) {
+        case LINEAR: return "linear";
+        case HIERARCHICAL: return "hierarchical";
+    }
+}
+
+<*
+ Screen-space GI settings selected by the benchmark flags.
+*>
+fn ScreenSpaceGiDesc screen_space_gi_desc(BenchmarkFlags flags) {
+    ScreenSpaceGiDesc desc = render::SCREEN_SPACE_GI_DEFAULT;
+    desc.trace = flags.ssgi_trace;
+    desc.max_steps = flags.ssgi_steps;
+    return desc;
+}
+
+<*
  Print the compiled profiling features as cpu= gpu= internal= gui= on one line.
 *>
 fn void print_features() {
@@ -376,7 +407,7 @@ fn usz? run_frames(BenchmarkRun* run, BenchmarkFlags flags, FrameSample[] sample
 fn void write_samples(FrameSample[] samples, bool timestamps_enabled) {
     io::printn(
         "frame,wall_ms,update_ms,begin_ms,render_ms,finish_ms,end_ms,gui_ms,cpu_record_ms,draws,lights,dropped,"
-        "overflows,material_resolutions,pipeline_lookups,gpu_shadow_ms,gpu_cull_ms,gpu_prepass_ms,gpu_gbuffer_ms,"
+        "overflows,material_resolutions,pipeline_lookups,gpu_shadow_ms,gpu_cull_ms,gpu_prepass_ms,gpu_gbuffer_ms,gpu_depth_pyramid_ms,"
         "gpu_ambient_occlusion_ms,gpu_rt_reflections_ms,gpu_path_trace_ms,gpu_lighting_ms,gpu_opaque_ms,gpu_post_ms,"
         "gpu_bloom_ms,gpu_dof_ms,gpu_motion_blur_ms,gpu_composite_ms,gpu_velocity_ms,gpu_taa_ms,gpu_probe_update_ms,"
         "gpu_acceleration_build_ms,gpu_screen_space_gi_ms,gpu_ssgi_copy_ms,gpu_instance_cull_ms,gpu_environment_ms,"
@@ -389,7 +420,7 @@ fn void write_samples(FrameSample[] samples, bool timestamps_enabled) {
         io::printfn(
             "%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,"
             "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,"
-            "%.6f,%.6f,%.6f,%d,%d",
+            "%.6f,%.6f,%.6f,%.6f,%d,%d",
             index, sample.wall_ms, sample.update_ms, sample.begin_ms, sample.render_ms,
             sample.finish_ms, sample.end_ms, sample.gui_ms, sample.cpu_record_ms, sample.draws, sample.lights,
             sample.dropped, sample.overflows, sample.material_resolutions, sample.pipeline_lookups,
@@ -397,6 +428,7 @@ fn void write_samples(FrameSample[] samples, bool timestamps_enabled) {
             timestamps_enabled ? sample.gpu_ms[Pass.LIGHT_CULL.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_ms[Pass.DEPTH_PREPASS.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_ms[Pass.GBUFFER.ordinal] : unavailable,
+            timestamps_enabled ? sample.gpu_ms[Pass.DEPTH_PYRAMID.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_ms[Pass.AMBIENT_OCCLUSION.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_ms[Pass.RT_REFLECTIONS.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_ms[Pass.PATH_TRACE.ordinal] : unavailable,

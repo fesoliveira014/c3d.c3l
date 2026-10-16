@@ -8,6 +8,7 @@ import c3d::material;
 import c3d::maths;
 import c3d::render @public;
 import c3d::scene;
+import gpu;
 import std::io;
 import std::math;
 
@@ -356,7 +357,7 @@ fn void test_ssgi_camera_cut_clears_the_term() @test {
     }
 }
 
-fn void test_ssgi_forces_the_forward_prepass() @test {
+fn void test_ssgi_forces_prepass_and_routes_projection_changes() @test {
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
@@ -371,6 +372,21 @@ fn void test_ssgi_forces_the_forward_prepass() @test {
     uint plain = render_gi_pixel(&fixture, &gi, views.without_gi, BESIDE_CUBE)!!;
     io::eprintfn("forced prepass: beside %08x without %08x", halo, plain);
     assert(pixel_channel(halo, 0) - pixel_channel(plain, 0) > HALO_MIN);
+
+    ViewRecord* record = fixture.renderer.views.get(views.with_gi);
+    ViewDesc hierarchical = record.desc;
+    hierarchical.screen_space_gi.trace = SsgiTrace.HIERARCHICAL;
+    render::configure_view(&fixture.renderer, views.with_gi, hierarchical)!!;
+    *gi.scene.get(gi.camera, Camera) = camera::orthographic(ORTHOGRAPHIC_HEIGHT, 0.1f, FINITE_FAR);
+    render_gi_frames(&fixture, &gi, views.with_gi, 1)!!;
+    assert(record.depth_pyramid.texture.is_valid());
+    assert(record.depth_pyramid.state.layout == gpu::TextureLayout.UNDEFINED);
+    *gi.scene.get(gi.camera, Camera) = camera::perspective_deg(60, 0.1f);
+    render_gi_frames(&fixture, &gi, views.with_gi, 1)!!;
+    assert(record.depth_pyramid.state.layout != gpu::TextureLayout.UNDEFINED);
+    hierarchical.screen_space_gi.trace = SsgiTrace.LINEAR;
+    render::configure_view(&fixture.renderer, views.with_gi, hierarchical)!!;
+    assert(!record.depth_pyramid.texture.is_valid() && !record.depth_pyramid_levels.count);
     check_validation(&fixture.renderer);
 }
 
@@ -418,4 +434,103 @@ fn void test_ssgi_adds_no_bounce_to_open_ground_at_the_image_border() @test {
     io::eprintfn("ssgi: largest relative border change %.4f", largest);
     assert(largest < BORDER_SSGI_CHANGE_MAXIMUM);
     check_validation(&fixture.renderer);
+}
+
+fn void test_ssgi_depth_pyramid_preserves_odd_edges() @test {
+    const uint WIDTH = 5;
+    const uint HEIGHT = 7;
+    const uint INPUT_TEXELS = WIDTH * HEIGHT;
+    const uint LEVELS = 3;
+    const float[7] REDUCED = { 0.5f, 0.625f, 0, 0.75f, 0.25f, 0.875f, 0.875f };
+    const uint READBACK_TEXELS = INPUT_TEXELS + REDUCED.len;
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    ViewRecord record;
+    record.depth = render::allocate_storage_target(
+        device: &renderer.device,
+        width: WIDTH,
+        height: HEIGHT,
+        format: gpu::Format.R32_FLOAT,
+        debug_name: "pyramid_input",
+        usage: { .sampled, .transfer_dst },
+    )!!;
+    defer render::release_storage_target(&renderer.device, &record.depth);
+    record.depth_pyramid = render::allocate_storage_target(
+        device: &renderer.device,
+        width: WIDTH,
+        height: HEIGHT,
+        format: gpu::Format.R32_FLOAT,
+        debug_name: "pyramid_readback",
+        usage: { .sampled, .storage, .transfer_src },
+        mip_levels: LEVELS,
+    )!!;
+    defer render::release_storage_target(&renderer.device, &record.depth_pyramid);
+    record.depth_pyramid_levels = render::create_depth_pyramid_levels(
+        device: &renderer.device,
+        texture: record.depth_pyramid.texture,
+        count: LEVELS,
+    )!!;
+    defer render::release_depth_pyramid_levels(&renderer.device, &record.depth_pyramid_levels);
+    gpu::AllocationDesc readback_desc = {
+        .size = READBACK_TEXELS * float::size,
+        .alignment = 16,
+        .memory_class = gpu::MemoryClass.CPU_READ,
+        .access = { .graphics },
+        .debug_name = "pyramid_readback",
+    };
+    gpu::MappedGpuSpan readback = gpu::allocate_mapped_memory(&renderer.device, &readback_desc)!!;
+    defer {
+        render::wait_frames(renderer)!!;
+        gpu::GpuAllocation allocation = readback.span.allocation();
+        gpu::free_allocation(&renderer.device, &allocation)!!;
+    }
+    render::acquire_compute_slot(renderer, ComputeSlot.DEPTH_PYRAMID)!!;
+    float[INPUT_TEXELS] depth;
+    depth[0] = 0.5f;
+    depth[WIDTH - 1] = 0.625f;
+    depth[2 * WIDTH + 2] = 0.75f;
+    depth[(HEIGHT - 1) * WIDTH] = 0.25f;
+    depth[INPUT_TEXELS - 1] = 0.875f;
+
+    renderer.begin_frame()!!;
+    Frame* frame = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan input = frame.upload.take(
+        device: &renderer.device,
+        size: INPUT_TEXELS * float::size,
+        alignment: render::STREAM_ALIGNMENT,
+    )!!;
+    mem::copy(input.bytes.ptr, &depth, (sz)(INPUT_TEXELS * float::size));
+    record.depth.transition(&renderer.commands, {
+        .layout = gpu::TextureLayout.TRANSFER_DESTINATION,
+        .stages = { .transfer },
+        .access = { .write },
+    })!!;
+    gpu::BufferTextureCopyDesc upload = { .src = input.span, .texture = record.depth.texture };
+    gpu::cmd_copy_buffer_to_texture(&renderer.commands, &upload)!!;
+    render::record_depth_pyramid(renderer, &record)!!;
+    record.depth_pyramid.transition(&renderer.commands, render::TRANSFER_SOURCE_STATE)!!;
+    usz offset;
+    for (uint level = 0; level < LEVELS; level++) {
+        usz bytes = (usz)material::texture_mip_extent(WIDTH, level)
+          * material::texture_mip_extent(HEIGHT, level) * float::size;
+        gpu::TextureBufferCopyDesc copy = {
+            .texture = record.depth_pyramid.texture,
+            .dst = readback.span.checked_subspan(offset, bytes)!!,
+            .mip = level,
+        };
+        gpu::cmd_copy_texture_to_buffer(&renderer.commands, &copy)!!;
+        offset += bytes;
+    }
+    gpu::Barrier host = { .before = { .transfer }, .after = { .host } };
+    gpu::cmd_barrier(&renderer.commands, &host)!!;
+    renderer.work_recorded = true;
+    renderer.end_frame()!!;
+    render::wait_frames(renderer)!!;
+    gpu::invalidate_mapped_span(&renderer.device, readback.span)!!;
+    float[] actual = ((float*)readback.bytes.ptr)[:READBACK_TEXELS];
+    foreach (index, value : depth) assert(actual[index] == value);
+    foreach (index, value : REDUCED) assert(actual[INPUT_TEXELS + index] == value);
+    check_validation(renderer);
 }

@@ -671,6 +671,17 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer SsgiTraceRoo
     float depth_tolerance;
     uint noise_frame;
     uint flags;
+    uint depth_pyramid;
+    uint pyramid_levels;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer DepthPyramidRoot {
+    uint input_texture;
+    uint output_texture;
+    uint input_width;
+    uint input_height;
+    uint width;
+    uint height;
     uint _pad0;
     uint _pad1;
 };

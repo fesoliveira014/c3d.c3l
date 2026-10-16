@@ -1034,8 +1034,8 @@ struct SsgiTraceRoot {
     float        depth_tolerance;
     uint         noise_frame;
     uint         flags;
-    uint         _pad0;
-    uint         _pad1;
+    TextureIndex depth_pyramid;
+    uint         pyramid_levels;
 }
 $assert SsgiTraceRoot::size == 80;
 $assert $reflect(SsgiTraceRoot.frame).offset == 0;
@@ -1055,8 +1055,28 @@ $assert $reflect(SsgiTraceRoot.thickness).offset == 56;
 $assert $reflect(SsgiTraceRoot.depth_tolerance).offset == 60;
 $assert $reflect(SsgiTraceRoot.noise_frame).offset == 64;
 $assert $reflect(SsgiTraceRoot.flags).offset == 68;
-$assert $reflect(SsgiTraceRoot._pad0).offset == 72;
-$assert $reflect(SsgiTraceRoot._pad1).offset == 76;
+$assert $reflect(SsgiTraceRoot.depth_pyramid).offset == 72;
+$assert $reflect(SsgiTraceRoot.pyramid_levels).offset == 76;
+
+struct DepthPyramidRoot {
+    TextureIndex input_texture;
+    TextureIndex output_texture;
+    uint         input_width;
+    uint         input_height;
+    uint         width;
+    uint         height;
+    uint         _pad0;
+    uint         _pad1;
+}
+$assert DepthPyramidRoot::size == 32;
+$assert $reflect(DepthPyramidRoot.input_texture).offset == 0;
+$assert $reflect(DepthPyramidRoot.output_texture).offset == 4;
+$assert $reflect(DepthPyramidRoot.input_width).offset == 8;
+$assert $reflect(DepthPyramidRoot.input_height).offset == 12;
+$assert $reflect(DepthPyramidRoot.width).offset == 16;
+$assert $reflect(DepthPyramidRoot.height).offset == 20;
+$assert $reflect(DepthPyramidRoot._pad0).offset == 24;
+$assert $reflect(DepthPyramidRoot._pad1).offset == 28;
 
 struct SsgiTemporalRoot {
     GpuAddress   frame;

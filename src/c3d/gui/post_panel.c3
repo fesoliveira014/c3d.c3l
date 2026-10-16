@@ -57,6 +57,7 @@ const ZString[Tonemap::len] TONEMAP_LABELS @local = { "None", "ACES", "AgX", "Re
 const ZString[AntiAliasing::len] ANTI_ALIASING_LABELS @local = { "None", "FXAA", "TAA" };
 const ZString[TaaDebug::len] TAA_DEBUG_LABELS @local = { "None", "Velocity", "Rejection", "History weight" };
 const ZString[AoKind::len] AO_KIND_LABELS @local = { "None", "SSAO", "Ray traced" };
+const ZString[SsgiTrace::len] SSGI_TRACE_LABELS @local = { "Linear", "Hierarchical" };
 
 <*
  Edit the view's post settings; the caller applies them with configure_view.
@@ -291,6 +292,16 @@ fn bool edit_screen_space_gi(ScreenSpaceGiDesc* screen_space_gi) @local {
     bool changed = imgui::checkbox("Enabled", &enabled);
     if (changed) *screen_space_gi = enabled ? render::SCREEN_SPACE_GI_DEFAULT : (ScreenSpaceGiDesc){};
     if (!screen_space_gi.enabled) return changed;
+    int trace = (int)screen_space_gi.trace.ordinal;
+    if (imgui::combo_char(
+        label:        "GI trace",
+        current_item: &trace,
+        items:        &SSGI_TRACE_LABELS[0],
+        items_count:  SsgiTrace::len,
+    )) {
+        screen_space_gi.trace = (SsgiTrace)trace;
+        changed = true;
+    }
     changed |= edit_level_count(
         label:   "GI rays",
         value:   &screen_space_gi.rays,
