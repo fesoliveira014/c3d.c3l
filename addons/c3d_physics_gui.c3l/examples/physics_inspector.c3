@@ -348,9 +348,17 @@ fn void handle_keys(
         ragdoll.weight = 1;
     }
     if (input.key_pressed(platform::Scancode.H) && ragdoll.bone_modes[0] == SIMULATED) {
-        physics.recover_ragdoll(level.figure_skin, level.figure);
-        ragdoll.weight = 0;
+        request_figure_recovery(physics, scene, level);
     }
+}
+
+fn void request_figure_recovery(PhysicsWorld* physics, Scene* scene, Level* level) @local {
+    if (catch excuse = physics.recover_ragdoll(level.figure_skin, level.figure)) {
+        io::eprintfn("Recovery request failed: %s", excuse);
+        return;
+    }
+
+    scene.get(level.figure_skin, Ragdoll).weight = 0;
 }
 
 fn void play_demo(
@@ -380,8 +388,7 @@ fn void play_demo(
     }
     if (frame > DEMO_RECORD_STOP && panel.has_replay) (void)panel.replay.step();
     if (frame == DEMO_RECOVER) {
-        physics.recover_ragdoll(level.figure_skin, level.figure);
-        scene.get(level.figure_skin, Ragdoll).weight = 0;
+        request_figure_recovery(physics, scene, level);
     }
     if (frame == DEMO_SELECT) panel.selection.selected = level.first_link.id;
 }
@@ -558,6 +565,12 @@ fn void? run(
             scene.update_world();
             time::Clock started = clock::now();
             physics.update(step);
+
+            Ragdoll* ragdoll = scene.get(level.figure_skin, Ragdoll);
+            if (ragdoll.recovery_status().phase == RagdollRecoveryPhase.READY) {
+                physics.finish_ragdoll_recovery(level.figure_skin)!;
+            }
+
             panel.record_events((float)(long)started.to_now() / 1_000_000);
             physics.update_ragdolls();
             scene.flush_removals();

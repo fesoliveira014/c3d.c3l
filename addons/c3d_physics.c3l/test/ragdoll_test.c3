@@ -1,6 +1,7 @@
 module c3d_physics_ragdoll_test;
 
 import std::math;
+import c3d::physics::getup_fixture;
 import std::math::quaternion;
 import c3d;
 import c3d::anim;
@@ -149,7 +150,10 @@ fn Vec3 world_position(Node* node) @private => maths::translation(node.world);
 fn bool close_vec(Vec3 first, Vec3 second) @private => (first - second).length() <= TOLERANCE;
 
 fn float angle_between(Quat first, Quat second) @private {
-    return 2 * math::acos(math::min(math::abs(first.v.dot(second.v)), 1.0f));
+    Quat difference = first.mul(second.conjugate()).normalize();
+    if (difference.l < 0) difference = -difference;
+    Vec3 vector = { difference.i, difference.j, difference.k };
+    return 2 * math::atan2(vector.length(), difference.l);
 }
 
 fn bool same_body(b3::BodyId first, b3::BodyId second) @private {
@@ -401,7 +405,7 @@ fn void test_set_bone_mode_keeps_velocity() @test {
     assert(math::abs(speed - DRIVE_SPEED) <= VELOCITY_TOLERANCE);
 }
 
-fn void test_recover_bones_freezes_the_limp_arm_and_leaves_the_character() @test {
+fn void test_recover_bones_keeps_the_limp_arm_dynamic_and_leaves_the_character() @test {
     Fixture fixture;
     setup(&fixture);
     defer teardown(&fixture);
@@ -413,8 +417,9 @@ fn void test_recover_bones_freezes_the_limp_arm_and_leaves_the_character() @test
     foreach (index, joint : rig.joints) recorded[index] = world_position(joint);
     Vec3 character = world_position(rig.character);
 
-    fixture.physics.recover_bones(rig.skin);
-    foreach (mode : ragdoll.bone_modes) assert(mode == ANIMATED);
+    fixture.physics.recover_bones(rig.skin)!!;
+    assert(ragdoll.bone_modes[0] == ANIMATED && ragdoll.bone_modes[1] == ANIMATED
+        && ragdoll.bone_modes[2] == SIMULATED);
     assert(close_vec(world_position(rig.character), character));
     fixture.physics.update_ragdolls();
     fixture.scene.update_world();
@@ -496,7 +501,7 @@ fn void fall_and_recover(Fixture* fixture, Rig* rig, Ragdoll* ragdoll, Vec3[] re
     fixture.physics.update_ragdolls();
     fixture.scene.update_world();
     foreach (index, joint : rig.joints) recorded[index] = world_position(joint);
-    fixture.physics.recover_ragdoll(rig.skin, rig.character);
+    fixture.physics.recover_ragdoll(rig.skin, rig.character)!!;
 }
 
 fn void test_recover_moves_the_character_and_keeps_joint_worlds() @test {
@@ -512,28 +517,27 @@ fn void test_recover_moves_the_character_and_keeps_joint_worlds() @test {
     Vec3 hips = fixture.scene.get(ragdoll.bone_nodes[0], RigidBody).current.position;
     Vec3 character = world_position(rig.character);
     assert(math::abs(character.x - hips.x) <= TOLERANCE && math::abs(character.z - hips.z) <= TOLERANCE);
-    foreach (mode : ragdoll.bone_modes) assert(mode == ANIMATED);
+    foreach (mode : ragdoll.bone_modes) assert(mode == SIMULATED);
     fixture.physics.update_ragdolls();
     fixture.scene.update_world();
     foreach (index, joint : rig.joints) assert(close_vec(world_position(joint), recorded[index]));
 }
 
-fn void test_blend_from_frozen_is_halfway_at_half_weight() @test {
+fn void test_recovery_half_weight_keeps_native_publication() @test {
     Fixture fixture;
-    setup(&fixture);
+    setup(&fixture, weightless_desc());
     defer teardown(&fixture);
-
     Rig rig = add_chain(&fixture);
     Ragdoll* ragdoll = build_two_bones(&fixture, &rig);
     Vec3[3] recorded;
     fall_and_recover(&fixture, &rig, ragdoll, recorded[..]);
-
-    Vec3 animated = { 0, 1, 0 };
     rig.joints[0].local.position = {};
-    rig.joints[1].local.position = animated;
+    rig.joints[1].local.position = { 0, 1, 0 };
     ragdoll.weight = 0.5f;
-    fixture.physics.update_ragdolls();
-    assert(close_vec(rig.joints[1].local.position, (animated + ragdoll.frozen[1].position) * 0.5f));
+    fixture.scene.update_world();
+    fixture.physics.update(0);
+    assert_recovery_publication(&fixture, &rig, ragdoll);
+    foreach (index, joint : rig.joints) assert(close_vec(world_position(joint), recorded[index]));
 }
 
 fn void test_remove_ragdoll_removes_bone_nodes_and_components() @test {
@@ -566,7 +570,7 @@ fn RagdollFacing fall_rotated(Fixture* fixture, Rig* rig, Ragdoll* ragdoll, Quat
     fixture.physics.update(0);
     fixture.physics.update_ragdolls();
     fixture.scene.update_world();
-    return fixture.physics.recover_ragdoll(rig.skin, rig.character);
+    return fixture.physics.recover_ragdoll(rig.skin, rig.character)!!;
 }
 
 fn Vec3 character_forward(Rig* rig) @private {
@@ -622,8 +626,9 @@ fn void test_recover_bones_keeps_the_recovery_reading() @test {
     Ragdoll* ragdoll = build_two_bones(&fixture, &rig);
     Quat fall = about({ 0, 1, 0 }, 90).mul(about({ 1, 0, 0 }, 90));
     assert(fall_rotated(&fixture, &rig, ragdoll, fall) == FACE_DOWN);
-    fixture.physics.set_ragdoll_mode(rig.skin, SIMULATED);
-    fixture.physics.recover_bones(rig.skin);
+    fixture.physics.update_ragdolls();
+    fixture.scene.update_world();
+    fixture.physics.recover_bones(rig.skin)!!;
     assert(ragdoll.last_facing == FACE_DOWN && ragdoll.recoveries == 1);
 }
 
@@ -658,3 +663,300 @@ fn void test_ragdoll_animation_uses_a_world_joint_basis() @test {
     fixture.physics.update(physics::DEFAULT_FIXED_DT);
     assert(close_vec(fixture.scene.get(ragdoll.bone_nodes[1], RigidBody).current.position, { 1, 1.5f, 0 }));
 }
+
+fn void assert_recovery_publication(Fixture* fixture, Rig* rig, Ragdoll* ragdoll) @private {
+    fixture.physics.update_ragdolls();
+    fixture.scene.update_world();
+    foreach (index, node : ragdoll.bone_nodes) {
+        if (ragdoll.bone_modes[index] != SIMULATED
+            && ragdoll.recovery_status().phase != RagdollRecoveryPhase.COMPLETING) continue;
+        b3::WorldTransform native = fixture.physics.body(node)!!.transform();
+        maths::Transform actual = maths::transform_from_mat4(node.world);
+
+        assert((actual.position - (Vec3)native.p).length() <= 0.00002f);
+        assert(angle_between(actual.rotation, native.q) <= 0.0001f);
+
+        maths::Transform native_pose = { .position = native.p, .rotation = native.q, .scale = { 1, 1, 1 } };
+        maths::Transform mapped =
+          maths::transform_from_mat4(native_pose.to_mat4().mul(ragdoll.joint_in_bone[index].to_mat4()));
+        maths::Transform visible = maths::transform_from_mat4(rig.joints[ragdoll.bone_joints[index]].world);
+
+        assert((mapped.position - visible.position).length() <= 0.00002f);
+        assert(angle_between(mapped.rotation, visible.rotation) <= 0.0001f);
+    }
+}
+
+fn void enter_recovery(Fixture* fixture, Rig* rig, Ragdoll* ragdoll) @private {
+    fixture.physics.update(0);
+    fixture.physics.set_ragdoll_mode(rig.skin, SIMULATED);
+    ragdoll.weight = 1;
+    fixture.physics.update_ragdolls();
+    fixture.scene.update_world();
+    fixture.physics.recover_bones(rig.skin)!!;
+}
+
+fn void test_recovery_missing_body_and_invalid_settings_are_atomic() @test {
+    Fixture fixture;
+    setup(&fixture, weightless_desc());
+    defer teardown(&fixture);
+
+    Rig rig = add_chain(&fixture);
+    Ragdoll* ragdoll = build_two_bones(&fixture, &rig);
+    fixture.physics.set_ragdoll_mode(rig.skin, SIMULATED);
+    Vec3 character = world_position(rig.character);
+
+    assert(@catch(fixture.physics.recover_ragdoll(rig.skin, rig.character)) == physics::NO_BODY);
+    assert(close_vec(character, world_position(rig.character)) && ragdoll.recoveries == 0);
+
+    fixture.physics.update(0);
+    ragdoll.weight = 1;
+    fixture.physics.update_ragdolls();
+    fixture.scene.update_world();
+    fixture.physics.recover_bones(rig.skin)!!;
+    RagdollRecoverySettings settings = physics::default_ragdoll_recovery_settings();
+    settings.position_hertz = 1e30f;
+
+    assert(@catch(fixture.physics.recover_bones(rig.skin, settings)) == c3d::INVALID_ARGUMENT);
+
+    settings = physics::default_ragdoll_recovery_settings();
+    settings.max_force = -1;
+
+    assert(@catch(fixture.physics.recover_bones(rig.skin, settings)) == c3d::INVALID_ARGUMENT);
+    assert(ragdoll.recovery_status().participating == 2);
+    assert(ragdoll.bone_modes[0] == SIMULATED && ragdoll.recoveries == 0);
+
+    rig.joints[0].local.position.x += 1;
+    fixture.scene.update_world();
+
+    assert(@catch(fixture.physics.recover_ragdoll(rig.skin, rig.character)) == physics::RECOVERY_POSE_MISMATCH);
+    assert(close_vec(character, world_position(rig.character)) && ragdoll.recoveries == 0);
+    assert(ragdoll.recovery_status().participating == 2);
+}
+
+fn void test_recovery_lifecycle_and_completion() @test {
+    Fixture fixture;
+    setup(&fixture, weightless_desc());
+    defer teardown(&fixture);
+
+    Rig rig = add_chain(&fixture);
+    Ragdoll* ragdoll = build_two_bones(&fixture, &rig);
+    enter_recovery(&fixture, &rig, ragdoll);
+    assert(@catch(fixture.physics.finish_ragdoll_recovery(rig.skin)) == physics::RECOVERY_NOT_READY);
+
+    ragdoll.weight = 0;
+    rig.joints[0].local.position.x += 2;
+    fixture.scene.update_world();
+    fixture.physics.update(0);
+    assert(@catch(fixture.physics.finish_ragdoll_recovery(rig.skin)) == physics::RECOVERY_NOT_READY);
+    assert(ragdoll.recovery_status().phase == RagdollRecoveryPhase.BLOCKED);
+
+    rig.joints[0].local.position.x = 0;
+    fixture.scene.update_world();
+    fixture.physics.update(0);
+    b3::BodyId identity = fixture.physics.body(ragdoll.bone_nodes[0])!!;
+    identity.set_linear_velocity({ 0.1f, 0, 0 });
+    fixture.physics.update(0);
+    assert(@catch(fixture.physics.finish_ragdoll_recovery(rig.skin)) == physics::RECOVERY_NOT_READY);
+
+    identity.set_linear_velocity({});
+    fixture.physics.update(0);
+    fixture.physics.finish_ragdoll_recovery(rig.skin)!!;
+    assert(ragdoll.recovery_status().phase == RagdollRecoveryPhase.COMPLETING);
+    foreach (mode : ragdoll.bone_modes) assert(mode == ANIMATED);
+
+    rig.joints[0].local.position.x += 1;
+    assert_recovery_publication(&fixture, &rig, ragdoll);
+    assert(same_body(identity, fixture.physics.body(ragdoll.bone_nodes[0])!!));
+
+    fixture.physics.update(0);
+    assert(ragdoll.recovery_status().phase == RagdollRecoveryPhase.INACTIVE);
+}
+
+fn void test_recovery_masks_springs_and_restores_authoring() @test {
+    Fixture fixture;
+    setup(&fixture, weightless_desc());
+    defer teardown(&fixture);
+
+    Rig rig = add_chain(&fixture);
+    Ragdoll* ragdoll = build_driven(&fixture, &rig, REVOLUTE);
+    PhysicsJoint* authored = fixture.scene.get(ragdoll.bone_nodes[1], PhysicsJoint);
+    authored.desc.revolute.angle = { .enabled = true, .lower = -0.3f, .upper = 0.3f };
+    enter_recovery(&fixture, &rig, ragdoll);
+    b3::RevoluteJointId joint = fixture.physics.joint(ragdoll.bone_nodes[1])!!.as_revolute()!!;
+    fixture.physics.update(0);
+    assert(!joint.is_spring_enabled() && joint.is_limit_enabled());
+
+    ragdoll.bone_drives[1] = { .enabled = true, .hertz = 3, .damping_ratio = 0.7f };
+    ragdoll.drive_strength = 2;
+    fixture.physics.set_bone_mode(rig.skin, 1, SIMULATED);
+    assert(joint.is_spring_enabled() && joint.is_limit_enabled());
+    assert(math::abs(joint.spring_hertz() - 6) <= TOLERANCE);
+    assert(math::abs(joint.spring_damping_ratio() - 0.7f) <= TOLERANCE);
+    assert(ragdoll.recovery_status().participating == 1);
+
+    fixture.physics.set_ragdoll_mode(rig.skin, SIMULATED);
+    assert(ragdoll.recovery_status().phase == RagdollRecoveryPhase.INACTIVE);
+}
+
+fn void test_recovery_teleport_and_removal_cancel_transient_state() @test {
+    Fixture fixture;
+    setup(&fixture, weightless_desc());
+    defer teardown(&fixture);
+
+    Rig rig = add_chain(&fixture);
+    Ragdoll* ragdoll = build_two_bones(&fixture, &rig);
+    enter_recovery(&fixture, &rig, ragdoll);
+    Node* node = ragdoll.bone_nodes[0];
+    b3::BodyId body = fixture.physics.body(node)!!;
+    body.set_linear_velocity({ 1, 0, 0 });
+    fixture.physics.teleport(node, { 3, 2, 1 }, quaternion::IDENTITY);
+
+    assert(ragdoll.recovery_status().participating == 1);
+    assert(ragdoll.bone_modes[0] == SIMULATED && body.linear_velocity().x == 1);
+    assert(close_vec(body.position(), { 3, 2, 1 }));
+
+    physics::destroy_physics_world(&fixture.physics);
+    assert(ragdoll.recovery_status().phase == RagdollRecoveryPhase.INACTIVE);
+
+    fixture.physics = physics::create_physics_world(
+        allocator: mem,
+        assets: &fixture.assets,
+        scene: &fixture.scene,
+        desc: weightless_desc(),
+    )!!;
+    fixture.physics.update(0);
+    assert(ragdoll.recovery_status().phase == RagdollRecoveryPhase.INACTIVE);
+}
+
+fn void test_recovery_reentry_and_origin_shift() @test {
+    Fixture fixture;
+    setup(&fixture, weightless_desc());
+    defer teardown(&fixture);
+
+    Rig rig = add_chain(&fixture);
+    Ragdoll* ragdoll = build_two_bones(&fixture, &rig);
+    enter_recovery(&fixture, &rig, ragdoll);
+    ragdoll.weight = 0;
+    rig.joints[0].local.position.x = 0.1f;
+    fixture.scene.update_world();
+    fixture.physics.update(0);
+    RagdollRecoveryStatus before = ragdoll.recovery_status();
+    maths::Transform source = ragdoll.frozen[0];
+
+    Vec3 offset = { 8, 0, -4 };
+    fixture.scene.shift_origin(offset);
+    fixture.scene.update_world();
+    fixture.physics.shift_origin(&fixture.scene, offset);
+    assert_recovery_publication(&fixture, &rig, ragdoll);
+    assert(ragdoll.frozen[0].position == source.position);
+    assert(math::abs(ragdoll.recovery_status().position_error - before.position_error) <= TOLERANCE);
+
+    rig.joints[0].local.rotation = {};
+    fixture.physics.update(physics::DEFAULT_FIXED_DT);
+    assert(ragdoll.recovery_status().failure == c3d::INVALID_ARGUMENT);
+    assert(ragdoll.recovery_status().phase == RagdollRecoveryPhase.BLOCKED);
+}
+
+fn void check_recovery_contact_motion(bool wall, bool neighbour) @private {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Rig rig = add_rig(&fixture, getup_fixture::CONTACT_JOINT_POSITIONS[..], getup_fixture::CONTACT_PARENTS[..]);
+    RagdollBone[1] bones = { bone(0, length: getup_fixture::CONTACT_BONE_LENGTH) };
+    bones[0].radius = getup_fixture::CONTACT_BONE_RADIUS;
+    bones[0].density = getup_fixture::CONTACT_BONE_DENSITY;
+    Ragdoll* ragdoll = build(&fixture, &rig, bones[..]);
+    PhysicsBody* authoring = fixture.scene.get(ragdoll.bone_nodes[0], PhysicsBody);
+    authoring.colliders[0].local.position = getup_fixture::CONTACT_COM_OFFSET;
+    rig.joints[0].local.position = getup_fixture::CONTACT_JOINT_START;
+
+    Node* ground = fixture.scene.add_node(name: "ground")!!;
+    ground.local.position = getup_fixture::CONTACT_GROUND_POSITION;
+    ColliderDesc floor = physics::default_collider_desc(BOX);
+    floor.half_extents = getup_fixture::CONTACT_GROUND_HALF_EXTENTS;
+    fixture.scene.add_physics_body(ground, physics::default_body_desc(STATIC), (&floor)[:1])!!;
+
+    Node* obstacle = fixture.scene.add_node(name: "obstacle")!!;
+    obstacle.local.position = getup_fixture::CONTACT_BOX_POSITION;
+    ColliderDesc collider = physics::default_collider_desc(BOX);
+    collider.half_extents = wall ? (Vec3){ 0.15f, 0.8f, 2 } : getup_fixture::CONTACT_BOX_HALF_EXTENTS;
+    collider.density = getup_fixture::CONTACT_BOX_DENSITY;
+    fixture.scene.add_physics_body(
+        node: obstacle,
+        body: physics::default_body_desc(wall ? STATIC : DYNAMIC),
+        colliders: (&collider)[:1],
+    )!!;
+
+    fixture.scene.update_world();
+    enter_recovery(&fixture, &rig, ragdoll);
+    b3::BodyId body = fixture.physics.body(ragdoll.bone_nodes[0])!!;
+    assert((body.local_center() - getup_fixture::CONTACT_COM_OFFSET).length() <= TOLERANCE);
+
+    ragdoll.weight = 0;
+    float peak_penetration;
+    float peak_force;
+    float peak_torque;
+    uint contacts;
+    float time;
+    uint frame;
+    bool blocked;
+
+    while (time < getup_fixture::CONTACT_DURATION) {
+        float dt =
+          getup_fixture::FRAME_MULTIPLIERS[frame++ % getup_fixture::FRAME_MULTIPLIERS.len] * physics::DEFAULT_FIXED_DT;
+        time += dt;
+        rig.joints[0].local = getup_fixture::sample_contact_target(time, false);
+        if (frame % 2 == 1) rig.joints[0].local.rotation = -rig.joints[0].local.rotation;
+        rig.joints[1].local.position = { 0, 1, 0 };
+        rig.joints[2].local.position = { 0, 1, 0 };
+        fixture.scene.update_world();
+        fixture.physics.update(dt);
+        assert_recovery_publication(&fixture, &rig, ragdoll);
+
+        RagdollRecoveryStatus status = ragdoll.recovery_status();
+        assert(!status.failure && b3::is_valid_world_transform(body.transform()));
+        assert(body.type() == b3::BodyType.DYNAMIC);
+
+        peak_force = math::max(peak_force, status.force);
+        peak_torque = math::max(peak_torque, status.torque);
+
+        b3::ContactData[16] storage;
+        foreach (contact : body.contact_data(storage[..])) {
+            foreach (&manifold : contact.contact_manifolds()) {
+                foreach (point : manifold.contact_points()) {
+                    contacts++;
+                    peak_penetration = math::max(peak_penetration, -point.separation);
+                }
+            }
+        }
+
+        if (wall && time > 3 && time < 4) {
+            assert(status.phase == RagdollRecoveryPhase.BLOCKED);
+            assert(@catch(fixture.physics.finish_ragdoll_recovery(rig.skin)) == physics::RECOVERY_NOT_READY);
+            blocked = true;
+        }
+    }
+
+    assert(peak_force > 0 && peak_force <= 200.0001f && peak_torque <= 20.0001f);
+    assert(peak_penetration <= 0.025f);
+
+    if (wall) assert(blocked && contacts > 0);
+    if (neighbour) {
+        b3::BodyId other = fixture.physics.body(obstacle)!!;
+        assert(contacts > 0
+            && (other.position() - getup_fixture::CONTACT_BOX_POSITION).length() > getup_fixture::CONTACT_RESPONSE_LIMIT);
+    }
+
+    fixture.physics.finish_ragdoll_recovery(rig.skin)!!;
+    assert_recovery_publication(&fixture, &rig, ragdoll);
+}
+
+fn void test_recovery_wall_blocks_then_allows_retreat_and_completion() @test {
+    check_recovery_contact_motion(true, false);
+}
+
+fn void test_recovery_moves_a_dynamic_neighbour_with_bounded_actuation() @test {
+    check_recovery_contact_motion(false, true);
+}
+

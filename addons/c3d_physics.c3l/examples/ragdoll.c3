@@ -2,11 +2,15 @@ module ragdoll_example;
 
 import std::io;
 import std::math;
-import std::math::quaternion;
+import std::core::string;
+import std::core::mem::allocators;
+import std::time;
+import std::time::clock;
+import c3d::asset::image;
+import b3;
 import c3d;
-import c3d::anim;
 import c3d::asset;
-import c3d::asset::gltf;
+import c3d::anim;
 import c3d::camera;
 import c3d::debug;
 import c3d::geometry;
@@ -14,78 +18,75 @@ import c3d::gui;
 import c3d::light;
 import c3d::material;
 import c3d::maths;
-import c3d::model;
 import c3d::physics;
+import c3d::physics::getup_fixture;
 import c3d::platform;
 import c3d::render;
 import c3d::scene;
 import imgui;
-import ragdoll_bones;
 
-alias Quat @local = Quaternionf;
-
-const String MODEL_PATH @local = "../../examples/assets/quaternius/AnimationLibrary_Godot.glb";
-const String WALK_CLIP @local = "Walk_Loop";
-const String FACE_DOWN_CLIP @local = "Crawl_Exit"; // hands and knees to standing
-const String FACE_UP_CLIP @local = "GroundSit_Exit"; // sitting to standing
-const uint  MAX_BOXES @local = 256; // one node, one body and one draw per box
-const uint  SCENE_NODE_CAPACITY @local = MAX_BOXES + 128; // character nodes, bone nodes, level
-const float GROUND_SIZE @local = 40;
+const uint SCENE_NODE_CAPACITY @local = 384;
+const float GROUND_SIZE @local = 20;
 const float BOX_SIZE @local = 0.4f;
-const float BOX_DENSITY @local = 400;
-const float LAUNCH_SPEED @local = 14;
+const float BOX_DENSITY @local = 100;
+const float LAUNCH_SPEED @local = 8;
 const float SPAWN_DISTANCE @local = 1.5f;
-const float HIT_SPEED @local = 4; // meters per second; slower boxes bounce off the walking character
-const float FALLEN_SECONDS @local = 3;
-const float BLEND_OUT_SECONDS @local = 0.8f;
-const float CROSS_FADE_SECONDS @local = 0.3f;
-const int   RAGDOLL_GROUP @local = -1; // bones never collide with each other; joints hold them apart
-const float DRIVE_HERTZ @local = 6; // full drive keeps a fallen body in the walk pose; stiffer jitters light forearms
-const float DRIVE_DAMPING @local = 1; // limbs settle on the pose without swinging past it
+const float PREPARE_SECONDS @local = 1;
 const float FREE_LOOK_RADIANS_PER_PIXEL @local = 0.003f;
-const float FREE_PITCH_LIMIT @local = 1.5f; // avoids the poles, where the up vector degenerates
+const float FREE_PITCH_LIMIT @local = 1.5f;
 const float FREE_SPEED @local = 4;
 const float FREE_FAST_MULTIPLIER @local = 4;
-const Vec3  CAMERA_START @local = { 0, 1.6f, 5 };
-const Vec2  PANEL_POSITION @local = { 16, 16 };
-const Vec2  PANEL_SIZE @local = { 360, 220 };
-const Vec2  STATS_PANEL_POSITION @local = { 16, 252 };
-const Vec2  STATS_PANEL_SIZE @local = { 360, 300 };
+const Vec3 CAMERA_START @local = { 2.8f, 2.2f, 4.5f };
+const Vec3 NEIGHBOUR_POSITION @local = { 0.39f, 0.2f, 0.465f };
+const Vec3 BLOCKER_POSITION @local = { 0, 0.8f, 0 };
+const Vec3 BLOCKER_HALF_EXTENTS @local = { 0.55f, 0.08f, 0.55f };
+const Vec2 PANEL_POSITION @local = { 16, 16 };
+const Vec2 PANEL_SIZE @local = { 370, 390 };
+const Vec2 STATS_PANEL_POSITION @local = { 16, 418 };
+const Vec2 STATS_PANEL_SIZE @local = { 370, 270 };
+const ZString[RagdollRecoveryPhase::len] RECOVERY_NAMES @local = {
+    "inactive", "tracking", "blocked", "ready", "completing",
+};
 
 enum Phase @local {
-    WALKING,
+    PREPARING,
     FALLEN,
     RECOVERING,
+    STANDING,
 }
 
-const ZString[Phase::len] PHASE_NAMES @local = { "walking", "fallen", "recovering" };
-
 struct FreeCamera @local {
-    Vec3  position;
+    Vec3 position;
     float yaw;
     float pitch;
 }
 
-struct Character @local {
-    Node*  root;
-    Node*  skin;
-    ClipId walk;
-    ClipId face_down_get_up;
-    ClipId face_up_get_up;
-    float  get_up_seconds;
-    Phase  phase;
-    float  timer;
+struct ExampleCharacter @local {
+    Humanoid humanoid;
+    RagdollFacing facing;
+    Phase phase;
+    float timer;
+    fault last_error;
 }
 
 struct Level @local {
     GeometryId box_geometry;
     MaterialId box_material;
-    Node*      camera_node;
+    Node* camera_node;
+    Node* blocker;
+    Node* neighbour;
+    Vec3 neighbour_start;
 }
 
 struct Controls @local {
     PhysicsDebugOptions draw;
-    bool                ragdoll_now;
+    bool supine;
+    bool prone;
+    bool recover_now;
+    bool drop_now;
+    bool neighbour;
+    bool obstruction;
+    bool automatic_weight;
 }
 
 fn Vec3 free_forward(FreeCamera* camera) @local {
@@ -128,175 +129,254 @@ fn void apply_free_camera(
     camera_node.local.rotation = maths::look_rotation(forward, up);
 }
 
-fn Level? build_level(AssetStore* assets, Scene* scene, PhysicsWorld* physics) @local {
+fn Level? build_level(
+    AssetStore* assets,
+    Scene* scene,
+    PhysicsWorld* physics,
+    bool create_bodies = true,
+) @local {
     Level level;
     GeometryId ground_geometry;
+    GeometryId blocker_geometry;
     MaterialId ground_material;
+    MaterialId blocker_material;
     @pool() {
         Geometry ground = geometry::plane(tmem, GROUND_SIZE, GROUND_SIZE);
-        ground_geometry = assets.add_geometry(&ground, "ragdoll/ground")!;
+        ground_geometry = assets.find_geometry("ragdoll/ground") ?? assets.add_geometry(&ground, "ragdoll/ground")!;
         Geometry box = geometry::box(
             allocator: tmem,
-            width:     BOX_SIZE,
-            height:    BOX_SIZE,
-            depth:     BOX_SIZE,
+            width: BOX_SIZE,
+            height: BOX_SIZE,
+            depth: BOX_SIZE,
         );
-        level.box_geometry = assets.add_geometry(&box, "ragdoll/box")!;
-        StandardParams ground_params = material::STANDARD_PARAMS_DEFAULT;
-        ground_params.base_color = { 0.45f, 0.5f, 0.45f, 1 };
-        ground_params.metallic = 0;
-        ground_params.roughness = 0.9f;
-        ground_material = assets.add_material(material::standard(ground_params), "ragdoll/ground_material")!;
-        StandardParams box_params = material::STANDARD_PARAMS_DEFAULT;
-        box_params.base_color = { 0.85f, 0.55f, 0.2f, 1 };
-        box_params.metallic = 0;
-        box_params.roughness = 0.6f;
-        level.box_material = assets.add_material(material::standard(box_params), "ragdoll/box_material")!;
+        level.box_geometry = assets.find_geometry("ragdoll/box") ?? assets.add_geometry(&box, "ragdoll/box")!;
+        Geometry blocker = geometry::box(
+            allocator: tmem,
+            width: BLOCKER_HALF_EXTENTS.x * 2,
+            height: BLOCKER_HALF_EXTENTS.y * 2,
+            depth: BLOCKER_HALF_EXTENTS.z * 2,
+        );
+        blocker_geometry = assets.find_geometry("ragdoll/blocker") ?? assets.add_geometry(&blocker, "ragdoll/blocker")!;
+
+        StandardParams params = material::STANDARD_PARAMS_DEFAULT;
+        params.base_color = { 0.34f, 0.39f, 0.36f, 1 };
+        params.roughness = 0.9f;
+        ground_material = assets.find_material("ragdoll/ground_material")
+          ?? assets.add_material(material::standard(params), "ragdoll/ground_material")!;
+        params.base_color = { 0.9f, 0.55f, 0.15f, 1 };
+        level.box_material = assets.find_material("ragdoll/box_material")
+          ?? assets.add_material(material::standard(params), "ragdoll/box_material")!;
+        params.base_color = { 0.65f, 0.22f, 0.18f, 1 };
+        blocker_material = assets.find_material("ragdoll/blocker_material")
+          ?? assets.add_material(material::standard(params), "ragdoll/blocker_material")!;
     };
 
     Node* ground = scene.add_mesh(ground_geometry, ground_material, name: "ground")!;
+    level.blocker = scene.add_mesh(blocker_geometry, blocker_material, name: "static_blocker")!;
+    level.blocker.local.position = BLOCKER_POSITION;
+    level.blocker.visible = false;
     Node* sun = scene.add_light(light::directional({ 1, 0.95f, 0.85f }, 3), name: "sun")!;
     sun.local.rotation = maths::look_rotation(((Vec3){ -0.4f, -1, -0.3f }).normalize(), { 0, 1, 0 });
     scene.background = { .kind = COLOR, .color = { 0.55f, 0.7f, 0.9f, 1 } };
     level.camera_node = scene.add_camera(camera::perspective_deg(60, 0.05f), name: "camera")!;
     scene.update_world();
+    if (!create_bodies) return level;
 
-    ColliderDesc ground_collider = physics::default_collider_desc(MESH);
-    ground_collider.geometry = ground_geometry;
+    ColliderDesc ground_collider = physics::default_collider_desc(BOX);
+    ground_collider.half_extents = { GROUND_SIZE * 0.5f, 0.1f, GROUND_SIZE * 0.5f };
+    ground_collider.local.position.y = -0.1f;
+    ground_collider.material.friction = 0.4f;
     physics.add_body(ground, physics::default_body_desc(STATIC), (&ground_collider)[:1])!;
+
+    ColliderDesc blocker_collider = physics::default_collider_desc(BOX);
+    blocker_collider.half_extents = BLOCKER_HALF_EXTENTS;
+    physics.add_body(level.blocker, physics::default_body_desc(STATIC), (&blocker_collider)[:1])!;
+    physics.set_enabled(level.blocker, false);
     return level;
 }
 
-fn ClipId? find_clip(AssetStore* assets, ClipId[] clips, String name) @local {
-    foreach (clip : clips) {
-        if (assets.clip(clip).data.name == name) return clip;
-    }
-    return NOT_FOUND~;
-}
-
-fn Character? build_character(AssetStore* assets, Scene* scene) @local {
-    ModelId model = gltf::load_model(assets, MODEL_PATH)!;
-    Character character = { .root = model::instantiate(assets, scene, model, name: "character")! };
-    ModelInstance* instance = scene.get(character.root, ModelInstance);
-    for (usz node_index = 0; node_index < instance.nodes.len; node_index++) {
-        Node* node = instance.present_node(node_index);
-        if (!node) continue;
-        if (scene.has(node, SkinBinding)) character.skin = node;
-    }
-    if (!character.skin) return NOT_FOUND~;
-    character.walk = find_clip(assets, instance.clips, WALK_CLIP)!;
-    character.face_down_get_up = find_clip(assets, instance.clips, FACE_DOWN_CLIP)!;
-    character.face_up_get_up = find_clip(assets, instance.clips, FACE_UP_CLIP)!;
-    anim::add_animator(scene, character.root).play(assets, character.walk)!;
-    anim::update(assets, scene, 0);
-    scene.update_world();
-
-    Skeleton* skeleton = &assets.skeleton(scene.get(character.skin, SkinBinding).skeleton).data;
-    RagdollBone[ragdoll_bones::RIGIFY_BONE_COUNT] bones;
-    ragdoll_bones::rigify_bones(skeleton, bones[..], DRIVE_HERTZ, DRIVE_DAMPING)!;
-    RagdollDesc desc = physics::default_ragdoll_desc();
-    desc.bones = bones[..];
-    desc.filter.group = RAGDOLL_GROUP;
-    scene.build_ragdoll(assets, character.skin, desc)!;
-    io::printfn("%s: %d joints, %d ragdoll bones", MODEL_PATH, skeleton.parents.len, bones.len);
-    return character;
-}
-
-fn void cross_fade_to(Animator* animator, AssetStore* assets, ClipId clip) @local {
-    animator.play(assets, clip, { .fade_in = CROSS_FADE_SECONDS })!!;
-    uint last = animator.action_count - 1;
-    if (last > 0) animator.cross_fade(animator.order[last - 1], animator.order[last], CROSS_FADE_SECONDS)!!;
-}
-
-fn bool is_bone(Node* node, Character* character) @local => node.parent == character.skin;
-
-fn bool was_hit(PhysicsWorld* physics, Character* character) @local {
-    foreach (hit : physics.hits()) {
-        if (hit.approach_speed < HIT_SPEED) continue;
-        if (is_bone(hit.a, character) || is_bone(hit.b, character)) return true;
-    }
-    return false;
-}
-
-fn void advance_character(
-    Character* character,
-    AssetStore* assets,
-    Scene* scene,
-    PhysicsWorld* physics,
-    bool ragdoll_now,
-    float delta_seconds,
-) @local {
-    Ragdoll* ragdoll = scene.get(character.skin, Ragdoll);
-    character.timer += delta_seconds;
-    switch (character.phase) {
-        case WALKING:
-            if (!ragdoll_now && !was_hit(physics, character)) return;
-            physics.set_ragdoll_mode(character.skin, SIMULATED);
-            ragdoll.weight = 1;
-            character.phase = FALLEN;
-            character.timer = 0;
-        case FALLEN:
-            if (character.timer < FALLEN_SECONDS) return;
-            RagdollFacing facing = physics.recover_ragdoll(character.skin, character.root);
-            ClipId get_up = facing == FACE_DOWN ? character.face_down_get_up : character.face_up_get_up;
-            cross_fade_to(scene.get(character.root, Animator), assets, get_up);
-            character.get_up_seconds = assets.clip(get_up).data.duration;
-            character.phase = RECOVERING;
-            character.timer = 0;
-        case RECOVERING:
-            ragdoll.weight = math::max(1 - character.timer / BLEND_OUT_SECONDS, 0.0f);
-            if (character.timer < character.get_up_seconds - CROSS_FADE_SECONDS) return;
-            cross_fade_to(scene.get(character.root, Animator), assets, character.walk);
-            character.phase = WALKING;
-    }
-}
-
-fn void throw_box(
+fn Node*? add_box(
     Scene* scene,
     PhysicsWorld* physics,
     Level* level,
-    FreeCamera* camera,
+    Vec3 position,
+    Vec3 velocity = {},
 ) @local {
-    Vec3 forward = free_forward(camera);
-    Node*? added = scene.add_mesh(level.box_geometry, level.box_material, name: "box");
-    if (catch added) return;
-    Node* node = added;
-    node.local.position = camera.position + forward * SPAWN_DISTANCE;
+    Node* node = scene.add_mesh(level.box_geometry, level.box_material, name: "movable_box")!;
+    defer catch scene.remove(node);
+    node.local.position = position;
     scene.update_world();
 
     ColliderDesc collider = physics::default_collider_desc(BOX);
     collider.half_extents = (Vec3){ BOX_SIZE, BOX_SIZE, BOX_SIZE } * 0.5f;
     collider.density = BOX_DENSITY;
+    collider.material.friction = 0.4f;
+    collider.contact_events = true;
     collider.hit_events = true;
     BodyDesc body = physics::default_body_desc(DYNAMIC);
-    body.linear_velocity = forward * LAUNCH_SPEED;
+    body.linear_velocity = velocity;
     body.bullet = true;
-    if (catch excuse = physics.add_body(node, body, (&collider)[:1])) {
-        io::eprintfn("add_body failed: %s", excuse);
-        scene.remove(node);
+    physics.add_body(node, body, (&collider)[:1])!;
+    return node;
+}
+
+fn void prepare_character(
+    ExampleCharacter* character,
+    Scene* scene,
+    PhysicsWorld* physics,
+    RagdollFacing facing,
+) @local {
+    physics.set_ragdoll_mode(character.humanoid.skin, ANIMATED);
+    character.humanoid.character.local = maths::TRANSFORM_IDENTITY;
+
+    character.facing = facing;
+    character.phase = PREPARING;
+    character.timer = 0;
+    character.last_error = {};
+    Ragdoll* ragdoll = scene.get(character.humanoid.skin, Ragdoll);
+    ragdoll.weight = 1;
+}
+
+fn void begin_recovery(ExampleCharacter* character, Scene* scene, PhysicsWorld* physics) @local {
+    if (character.phase == PREPARING || character.phase == STANDING) {
+        physics.set_ragdoll_mode(character.humanoid.skin, SIMULATED);
     }
+
+    RagdollFacing? facing = physics.recover_ragdoll(character.humanoid.skin, character.humanoid.character);
+    if (catch excuse = facing) {
+        character.last_error = excuse;
+        if (character.phase != RECOVERING) character.phase = FALLEN;
+        return;
+    }
+
+    character.facing = facing;
+    character.phase = RECOVERING;
+    character.timer = 0;
+    character.last_error = {};
+    scene.get(character.humanoid.skin, Ragdoll).weight = 1;
+}
+
+fn void update_requests(
+    ExampleCharacter* character,
+    Scene* scene,
+    PhysicsWorld* physics,
+    Controls* controls,
+    float delta_seconds,
+) @local {
+    character.timer += delta_seconds;
+    if (controls.supine || controls.prone) {
+        prepare_character(
+            character: character,
+            scene: scene,
+            physics: physics,
+            facing: controls.prone ? FACE_DOWN : FACE_UP,
+        );
+        controls.automatic_weight = true;
+        return;
+    }
+
+    if (controls.drop_now) {
+        physics.set_ragdoll_mode(character.humanoid.skin, SIMULATED);
+        character.phase = FALLEN;
+        scene.get(character.humanoid.skin, Ragdoll).weight = 1;
+        return;
+    }
+
+    if (controls.recover_now || (character.phase == PREPARING && character.timer >= PREPARE_SECONDS)) {
+        begin_recovery(character, scene, physics);
+    }
+}
+
+fn void sample_character(ExampleCharacter* character, Scene* scene, Controls* controls) @local {
+    switch (character.phase) {
+        case PREPARING:
+        case FALLEN:
+            getup_fixture::sample_getup(&character.humanoid, character.facing, 0);
+        case RECOVERING:
+            getup_fixture::sample_getup(&character.humanoid, character.facing, character.timer);
+            if (controls.automatic_weight) {
+                scene.get(character.humanoid.skin, Ragdoll).weight =
+                  math::max(1 - character.timer / getup_fixture::SOURCE_FADE_TIME, 0.0f);
+            }
+        case STANDING:
+            getup_fixture::sample_standing(&character.humanoid);
+    }
+}
+
+fn void finish_character(ExampleCharacter* character, Scene* scene, PhysicsWorld* physics) @local {
+    if (character.phase != RECOVERING || character.timer < getup_fixture::STANDING_TIME) return;
+    Ragdoll* ragdoll = scene.get(character.humanoid.skin, Ragdoll);
+    if (ragdoll.weight != 0) return;
+    if (catch excuse = physics.finish_ragdoll_recovery(character.humanoid.skin)) {
+        character.last_error = excuse;
+        return;
+    }
+
+    character.phase = STANDING;
+    character.last_error = {};
 }
 
 fn void? draw_panel(
     render::Renderer* renderer,
-    Character* character,
+    ExampleCharacter* character,
     Scene* scene,
+    Level* level,
     Controls* controls,
 ) @local {
     imgui::set_next_window_pos(PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
     imgui::set_next_window_size(PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
-    if (imgui::begin("Ragdoll", null, {})) {
-        imgui::text("Left click throws a box, R ragdolls now");
-        imgui::text("Right drag looks, WASDQE move, Shift fast");
+    if (imgui::begin("Physical get-up", null, {})) {
+        controls.supine = imgui::button("Supine get-up");
+        imgui::same_line();
+        controls.prone = imgui::button("Prone get-up");
+        controls.recover_now = imgui::button("Recover / re-enter (R)");
+        imgui::same_line();
+        controls.drop_now = imgui::button("Release (F)");
+        imgui::checkbox("Static obstruction", &controls.obstruction);
+        controls.neighbour = imgui::button("Place movable neighbour");
         imgui::checkbox("Colliders", &controls.draw.colliders);
+        imgui::same_line();
         imgui::checkbox("Joints", &controls.draw.joints);
+        imgui::checkbox("Contacts", &controls.draw.contacts);
+        imgui::checkbox("Automatic source-weight fade", &controls.automatic_weight);
+
+        Ragdoll* ragdoll = scene.get(character.humanoid.skin, Ragdoll);
+        if (!controls.automatic_weight) {
+            imgui::slider_float(
+                label: "Source weight",
+                v: &ragdoll.weight,
+                v_min: 0,
+                v_max: 1,
+            );
+        }
+        imgui::slider_float(
+            label: "Ordinary joint drive",
+            v: &ragdoll.drive_strength,
+            v_min: 0,
+            v_max: 1,
+        );
+
+        RagdollRecoveryStatus status = ragdoll.recovery_status();
         imgui::separator();
-        Ragdoll* ragdoll = scene.get(character.skin, Ragdoll);
-        imgui::slider_float("Drive", &ragdoll.drive_strength, 0, 1);
-        imgui::text("Phase: %s   weight: %.2f", PHASE_NAMES[character.phase.ordinal], ragdoll.weight);
+        imgui::text(
+            "%s: %.2f s   source weight: %.2f",
+            character.facing == FACE_UP ? "Supine" : "Prone",
+            character.timer,
+            ragdoll.weight,
+        );
+        imgui::text("Recovery: %s   bodies: %u", RECOVERY_NAMES[status.phase.ordinal], status.participating);
+        imgui::text("Target error: %.5f m / %.5f rad", status.position_error, status.angle_error);
+        imgui::text("Motion: %.4f m/s / %.4f rad/s", status.linear_speed, status.angular_speed);
+        imgui::text("Actuator: %.3f N / %.3f Nm", status.force, status.torque);
+        if (status.failure) imgui::text("Recovery fault: %s", string::tformat_zstr("%s", status.failure));
+        if (character.last_error) imgui::text("Last request: %s", string::tformat_zstr("%s", character.last_error));
+        if (level.neighbour) {
+            float displacement = (level.neighbour.world_position() - level.neighbour_start).length();
+            imgui::text("Neighbour displacement: %.3f m", displacement);
+        }
+        imgui::text("Left click: box. Right drag: look. WASDQE: move.");
     }
     imgui::end();
-
     imgui::set_next_window_pos(STATS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
     imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
     return gui::stats_panel(renderer);
@@ -313,7 +393,12 @@ fn void? draw_frame(
     renderer.begin_frame(info)!;
     defer catch render::abort_frame(renderer);
     if (renderer.has_output) {
-        renderer.render_view(scene, camera_node, renderer.default_view, debug)!;
+        renderer.render_view(
+            scene: scene,
+            camera_node: camera_node,
+            view: renderer.default_view,
+            debug: debug,
+        )!;
         renderer.finish_view(renderer.default_view)!;
         OverlayContext overlay = renderer.begin_overlay()!;
         gui_renderer.record(&overlay)!;
@@ -330,48 +415,86 @@ fn void? run(
     PhysicsWorld* physics,
 ) @local {
     Level level = build_level(assets, scene, physics)!;
-    Character character = build_character(assets, scene)!;
+    ExampleCharacter character = { .humanoid = getup_fixture::create_humanoid(assets, scene)! };
+    getup_fixture::sample_getup(&character.humanoid, FACE_UP, 0);
+    scene.update_world();
+    physics.update(0);
+    physics.update_ragdolls();
+    scene.update_world();
+
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
     debug::DebugDraw debug = debug::create_debug_draw(mem);
     defer debug::destroy_debug_draw(&debug);
 
-    FreeCamera camera = { .position = CAMERA_START, .yaw = (float)math::PI };
-    Controls controls;
+    FreeCamera camera = { .position = CAMERA_START, .yaw = -2.59f, .pitch = -0.25f };
+    Controls controls = { .automatic_weight = true, .draw = { .colliders = true } };
     renderer.prepare_scene(scene)!;
 
     while (window.poll()) {
         Input* input = &window.input;
         if (input.key_released(platform::Scancode.ESCAPE) && !input.keyboard_captured_by_gui) break;
         float delta = window.clock.delta;
+
         gui_renderer.new_frame();
         defer {
             if (gui_renderer.frame_open) gui_renderer.finish_frame();
         }
+        controls.supine = false;
+        controls.prone = false;
+        controls.recover_now = false;
+        controls.drop_now = false;
+        controls.neighbour = false;
         draw_panel(
-            renderer:  renderer,
+            renderer: renderer,
             character: &character,
-            scene:     scene,
-            controls:  &controls,
+            scene: scene,
+            level: &level,
+            controls: &controls,
         )!;
 
-        if (!input.mouse_captured_by_gui && input.button_pressed(platform::MouseButton.LEFT)) {
-            throw_box(scene: scene, physics: physics, level: &level, camera: &camera);
+        if (!input.keyboard_captured_by_gui) {
+            controls.recover_now = controls.recover_now || input.key_pressed(platform::Scancode.R);
+            controls.drop_now = controls.drop_now || input.key_pressed(platform::Scancode.F);
         }
-        controls.ragdoll_now = !input.keyboard_captured_by_gui && input.key_pressed(platform::Scancode.R);
-        apply_free_camera(camera: &camera, input: input, camera_node: level.camera_node, delta_seconds: delta);
-
-        anim::update(assets, scene, delta);
-        scene.update_world();
-        physics.update(delta);
-        advance_character(
-            character:     &character,
-            assets:        assets,
-            scene:         scene,
-            physics:       physics,
-            ragdoll_now:   controls.ragdoll_now,
+        update_requests(
+            character: &character,
+            scene: scene,
+            physics: physics,
+            controls: &controls,
             delta_seconds: delta,
         );
+
+        if (controls.obstruction != physics.is_enabled(level.blocker)) {
+            physics.set_enabled(level.blocker, controls.obstruction);
+            level.blocker.visible = controls.obstruction;
+        }
+        if (controls.neighbour) {
+            if (level.neighbour) scene.remove(level.neighbour);
+            level.neighbour = add_box(
+                scene: scene,
+                physics: physics,
+                level: &level,
+                position: NEIGHBOUR_POSITION,
+            )!;
+            level.neighbour_start = NEIGHBOUR_POSITION;
+        }
+        if (!input.mouse_captured_by_gui && input.button_pressed(platform::MouseButton.LEFT)) {
+            Vec3 forward = free_forward(&camera);
+            if (catch excuse = add_box(
+                scene: scene,
+                physics: physics,
+                level: &level,
+                position: camera.position + forward * SPAWN_DISTANCE,
+                velocity: forward * LAUNCH_SPEED,
+            )) io::eprintfn("add_box failed: %s", excuse);
+        }
+
+        apply_free_camera(camera: &camera, input: input, camera_node: level.camera_node, delta_seconds: delta);
+        sample_character(&character, scene, &controls);
+        scene.update_world();
+        physics.update(delta);
+        finish_character(&character, scene, physics);
         physics.update_ragdolls();
         scene.flush_removals();
         scene.update_world();
@@ -379,20 +502,53 @@ fn void? run(
         debug.clear();
         physics.debug_draw(&debug, controls.draw);
         gui_renderer.finish_frame();
-
         platform::sync_window(window, renderer);
         draw_frame(
-            renderer:     renderer,
-            scene:        scene,
-            camera_node:  level.camera_node,
+            renderer: renderer,
+            scene: scene,
+            camera_node: level.camera_node,
             gui_renderer: &gui_renderer,
-            debug:        &debug,
-            info:         { .time = window.clock.total, .delta = window.clock.delta },
+            debug: &debug,
+            info: { .time = window.clock.total, .delta = window.clock.delta },
         )!;
     }
 }
 
-fn int main() {
+fn int main(String[] args) {
+    String captures;
+    bool cpu_observation;
+    uint first_scenario;
+    uint scenario_limit = 4;
+    for (usz index = 1; index < args.len; index++) {
+        if (args[index] == "--acceptance" && index + 1 < args.len) {
+            captures = args[++index];
+        } else if (args[index] == "--case" && index + 1 < args.len) {
+            switch (args[++index]) {
+                case "supine": first_scenario = 0;
+                case "prone": first_scenario = 1;
+                case "blocked": first_scenario = 2;
+                case "neighbour": first_scenario = 3;
+                default: return 1;
+            }
+            scenario_limit = first_scenario + 1;
+        } else if (args[index] == "--cpu-observation") {
+            cpu_observation = true;
+        } else {
+            io::eprintn(
+                x: "Usage: ragdoll [--acceptance existing-output-directory [--case supine|prone|blocked|neighbour] | --cpu-observation]",
+            );
+            return 1;
+        }
+    }
+
+    if (cpu_observation) {
+        if (catch excuse = observe_cpu_cost()) {
+            io::eprintfn("CPU observation failed: %s", excuse);
+            return 1;
+        }
+        return 0;
+    }
+
     platform::Window window = platform::create_window(platform::default_window_desc("c3d ragdoll", 1280, 720))!!;
     defer platform::destroy_window(&window);
 
@@ -419,6 +575,29 @@ fn int main() {
     )!!;
     defer physics::destroy_physics_world(&physics);
 
+    if (captures.len) {
+
+        io::printfn(
+            "adapter,%s,width,1280,height,720,validation,true,humanoid_dataset,%s,contact_dataset,%s",
+            renderer.adapter_name,
+            getup_fixture::DATASET,
+            getup_fixture::CONTACT_DATASET,
+        );
+        for (uint scenario = first_scenario; scenario < scenario_limit; scenario++) {
+            if (catch excuse = run_acceptance(
+                window: &window,
+                renderer: &renderer,
+                assets: &assets,
+                directory: captures,
+                scenario: scenario,
+            )) {
+                io::eprintfn("Acceptance failed: %s", excuse);
+                return 1;
+            }
+        }
+        return 0;
+    }
+
     if (catch excuse = run(
         window:   &window,
         renderer: &renderer,
@@ -431,4 +610,614 @@ fn int main() {
     }
     io::printfn("closed after %d frames, %.2fs", window.clock.frame, window.clock.total);
     return 0;
+}
+
+fn void? observe_cpu_cost() @local {
+    const uint WARMUP = 120;
+    const uint SAMPLES = 1080;
+    foreach (active : (bool[2]){ false, true }) {
+        TrackingAllocator tracking;
+        tracking.init(mem);
+        defer tracking.free();
+
+        AssetStore assets = asset::create_asset_store(&tracking, asset::default_asset_store_desc());
+        defer asset::destroy_asset_store(&assets);
+
+        Scene scene = scene::create_scene(&tracking, { .max_nodes = SCENE_NODE_CAPACITY });
+        defer scene::destroy_scene(&scene);
+
+        physics::register_physics(&scene)!;
+        PhysicsWorld physics = physics::create_physics_world(
+            allocator: &tracking,
+            assets: &assets,
+            scene: &scene,
+            desc: physics::default_physics_desc(),
+        )!;
+        defer physics::destroy_physics_world(&physics);
+
+        Level level = build_level(&assets, &scene, &physics)!;
+        Humanoid humanoid = getup_fixture::create_humanoid(&assets, &scene)!;
+        Ragdoll* ragdoll = scene.get(humanoid.skin, Ragdoll);
+        foreach (node : ragdoll.bone_nodes) scene.get(node, PhysicsBody).body.allow_sleep = false;
+        getup_fixture::sample_getup(&humanoid, FACE_UP, 0);
+        scene.update_world();
+        physics.update(0);
+        physics.set_ragdoll_mode(humanoid.skin, SIMULATED);
+        ragdoll.weight = 1;
+        physics.update_ragdolls();
+        scene.update_world();
+        if (active) physics.recover_ragdoll(humanoid.skin, humanoid.character)!;
+
+        ulong elapsed;
+        ulong peak;
+        uint steps;
+        sz allocation_start;
+
+        for (uint frame = 0; frame < WARMUP + SAMPLES; frame++) {
+            float time = (float)frame * physics::DEFAULT_FIXED_DT;
+            getup_fixture::sample_getup(&humanoid, FACE_UP, time);
+            ragdoll.weight = math::max(1 - time / getup_fixture::SOURCE_FADE_TIME, 0.0f);
+            scene.update_world();
+            if (frame == WARMUP) allocation_start = tracking.total_allocation_count();
+            time::Clock before = clock::now();
+            physics.update(physics::DEFAULT_FIXED_DT);
+            physics.update_ragdolls();
+            scene.update_world();
+            ulong duration = (ulong)(clock::now() - before);
+            if (frame >= WARMUP) {
+                elapsed += duration;
+                peak = math::max(peak, duration);
+                steps += physics.steps_last_update;
+            }
+        }
+
+        io::printfn(
+            "cpu,recovery,%s,bones,%d,warmup,%d,samples,%d,fixed_steps,%d,mean_us,%.6f,peak_us,%.6f,allocations,%d",
+            active,
+            getup_fixture::BONE_COUNT,
+            WARMUP,
+            SAMPLES,
+            steps,
+            (double)elapsed / SAMPLES / 1000,
+            (double)peak / 1000,
+            tracking.total_allocation_count() - allocation_start,
+        );
+    }
+}
+
+fn void? save_capture(Renderer* renderer, RenderTargetId target, String path) @local {
+    char[] pixels = mem::new_array(char, 1280 * 720 * 4);
+    defer free(pixels);
+    renderer.read_render_target(target, pixels)!;
+    image::write_png(
+        path: path,
+        width: 1280,
+        height: 720,
+        pixels: pixels,
+    )!;
+}
+
+fn void? run_acceptance(
+    platform::Window* window,
+    Renderer* renderer,
+    AssetStore* assets,
+    String directory,
+    uint scenario,
+) @local {
+    if (scenario == 3) return run_contact_acceptance(
+        window: window,
+        renderer: renderer,
+        assets: assets,
+        directory: directory,
+    );
+
+    Scene scene = scene::create_scene(mem, { .max_nodes = SCENE_NODE_CAPACITY });
+    defer scene::destroy_scene(&scene);
+    physics::register_physics(&scene)!;
+    PhysicsWorld physics = physics::create_physics_world(
+        allocator: mem,
+        assets: assets,
+        scene: &scene,
+        desc: physics::default_physics_desc(),
+    )!;
+    defer physics::destroy_physics_world(&physics);
+
+    RagdollFacing facing = scenario == 1 ? FACE_DOWN : FACE_UP;
+    String name = scenario == 0 ? "supine" : scenario == 1 ? "prone" : "blocked";
+    io::printfn("visual_setup,%s,level", name);
+    Level level = build_level(assets, &scene, &physics)!;
+    level.camera_node.local.position = CAMERA_START;
+    Vec3 direction = (Vec3){ 0, 0.7f, 0 } - CAMERA_START;
+    level.camera_node.local.rotation = maths::look_rotation(direction.normalize(), { 0, 1, 0 });
+
+    Controls controls = { .automatic_weight = true, .draw = { .colliders = true }, .obstruction = scenario == 2 };
+    physics.set_enabled(level.blocker, controls.obstruction);
+    level.blocker.visible = controls.obstruction;
+
+    io::printfn("visual_setup,%s,rig", name);
+    ExampleCharacter character = { .humanoid = getup_fixture::create_humanoid(assets, &scene)!, .facing = facing };
+    getup_fixture::sample_getup(&character.humanoid, facing, 0);
+    scene.update_world();
+    physics.update(0);
+    physics.update_ragdolls();
+    scene.update_world();
+
+    io::printfn("visual_setup,%s,recovery_entry", name);
+    begin_recovery(&character, &scene, &physics);
+    if (character.last_error) return character.last_error~;
+
+    GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
+    defer (void)gui::destroy_gui_renderer(&gui_renderer);
+    debug::DebugDraw debug = debug::create_debug_draw(mem);
+    defer debug::destroy_debug_draw(&debug);
+    RenderTargetId target = render::create_render_target(
+        renderer: renderer,
+        desc: render::render_target_desc(1280, 720, PixelFormat.RGBA8_SRGB),
+    )!;
+    defer (void)render::destroy_render_target(renderer, target);
+    ViewId capture_view = render::create_view(renderer, render::texture_view_desc(target, OutputMode.DISPLAY_LDR))!;
+    defer (void)render::destroy_view(renderer, capture_view);
+    renderer.prepare_scene(&scene)!;
+
+    float[5] capture_times = { 0, 2, 6, 12.5f, 18 };
+    uint next_capture;
+    usz frame;
+    float peak_position;
+    float peak_angle;
+    float peak_penetration;
+    float peak_force;
+    float peak_torque;
+    float completion_time;
+
+    while (next_capture < capture_times.len && window.poll()) {
+        float delta = frame == 0 ? 0
+          : getup_fixture::FRAME_MULTIPLIERS[(frame - 1) % getup_fixture::FRAME_MULTIPLIERS.len] * physics::DEFAULT_FIXED_DT;
+        frame++;
+        character.timer += delta;
+
+        gui_renderer.new_frame();
+        draw_panel(
+            renderer: renderer,
+            character: &character,
+            scene: &scene,
+            level: &level,
+            controls: &controls,
+        )!;
+        sample_character(&character, &scene, &controls);
+        scene.update_world();
+        physics.update(delta);
+
+        bool active = character.phase == RECOVERING;
+        finish_character(&character, &scene, &physics);
+        if (active && character.phase == STANDING) completion_time = character.timer;
+        physics.update_ragdolls();
+        scene.update_world();
+
+        Ragdoll* ragdoll = scene.get(character.humanoid.skin, Ragdoll);
+        RagdollRecoveryStatus status = ragdoll.recovery_status();
+        peak_force = math::max(peak_force, status.force);
+        peak_torque = math::max(peak_torque, status.torque);
+
+        if (active) {
+            foreach (index, node : ragdoll.bone_nodes) {
+                b3::BodyId body = physics.body(node)!;
+                b3::WorldTransform native = body.transform();
+                maths::Transform visible =
+                  maths::transform_from_mat4(character.humanoid.joints[ragdoll.bone_joints[index]].world);
+                maths::Transform bone = maths::transform_from_mat4(node.world);
+                Vec3 joint_position = body.world_point(ragdoll.joint_in_bone[index].position);
+                Quaternionf joint_rotation = native.q.mul(ragdoll.joint_in_bone[index].rotation).normalize();
+                peak_position = math::max(
+                    peak_position,
+                    (visible.position - joint_position).length(),
+                    (bone.position - (Vec3)native.p).length(),
+                );
+                foreach (difference : (Quaternionf[2]){
+                    visible.rotation.mul(joint_rotation.conjugate()),
+                    bone.rotation.mul(native.q.conjugate())
+                }) {
+                    Vec3 axis = { difference.i, difference.j, difference.k };
+                    peak_angle = math::max(peak_angle, 2 * math::atan2(axis.length(), math::abs(difference.l)));
+                }
+                b3::ContactData[32] storage;
+                foreach (contact : body.contact_data(storage[..])) {
+                    foreach (&manifold : contact.contact_manifolds()) {
+                        foreach (point : manifold.contact_points())
+                            peak_penetration = math::max(peak_penetration, -point.separation);
+                    }
+                }
+            }
+        }
+
+        debug.clear();
+        physics.debug_draw(&debug, controls.draw);
+        gui_renderer.finish_frame();
+        platform::sync_window(window, renderer);
+        renderer.begin_frame({ .time = character.timer, .delta = delta })!;
+        defer catch render::abort_frame(renderer);
+        renderer.render_view(
+            scene: &scene,
+            camera_node: level.camera_node,
+            view: capture_view,
+            debug: &debug,
+        )!;
+        renderer.finish_view(capture_view)!;
+        if (renderer.has_output) {
+            renderer.render_view(
+                scene: &scene,
+                camera_node: level.camera_node,
+                view: renderer.default_view,
+                debug: &debug,
+            )!;
+            renderer.finish_view(renderer.default_view)!;
+            OverlayContext overlay = renderer.begin_overlay()!;
+            gui_renderer.record(&overlay)!;
+            renderer.end_overlay(&overlay)!;
+        }
+        renderer.end_frame()!;
+
+        if (character.timer >= capture_times[next_capture]) {
+            String path = string::tformat(
+                "%s/%s-%d.png",
+                directory,
+                name,
+                next_capture,
+            );
+            save_capture(renderer, target, path)!;
+            io::printfn(
+                "capture,%s,time,%.6f,phase,%s,residual_m,%.6f,residual_rad,%.6f",
+                path,
+                character.timer,
+                status.phase,
+                status.position_error,
+                status.angle_error,
+            );
+            next_capture++;
+        }
+    }
+
+    io::printfn(
+        "visual,%s,frames,%d,completion,%.6f,position,%.9f,angle,%.9f,penetration,%.9f,force,%.6f,torque,%.6f",
+        name,
+        frame,
+        completion_time,
+        peak_position,
+        peak_angle,
+        peak_penetration,
+        peak_force,
+        peak_torque,
+    );
+    if (next_capture != capture_times.len || peak_position > 0.00002f || peak_angle > 0.0001f
+        || peak_penetration > getup_fixture::PENETRATION_LIMIT
+        || peak_force > 200.0001f || peak_torque > 20.0001f) return c3d::INVALID_ARGUMENT~;
+    if (scenario < 2 && character.phase != STANDING) return c3d::INVALID_ARGUMENT~;
+    if (scenario == 2 && character.phase != RECOVERING) return c3d::INVALID_ARGUMENT~;
+}
+
+fn void? check_neighbour_clearance(
+    PhysicsWorld* physics,
+    Node* neighbour,
+    Ragdoll* ragdoll,
+    Vec3 half_extents,
+) @local {
+    Vec3[8] corners;
+    for (uint corner = 0; corner < 8; corner++) {
+        Vec3 sign = { corner & 1 ? 1 : -1, corner & 2 ? 1 : -1, corner & 4 ? 1 : -1 };
+        corners[corner] = sign * half_extents;
+    }
+
+    b3::ShapeProxy proxy = { .points = &corners[0], .count = 8, .radius = 0 };
+    b3::BodyId box = physics.body(neighbour)!;
+    b3::ShapeId[32] storage;
+    b3::ShapeId[] overlaps = b3::world_overlap_shape_all(
+        world: physics.world,
+        origin: box.position(),
+        proxy: &proxy,
+        filter: b3::default_query_filter(),
+        buffer: storage[..],
+    );
+
+    uint participants;
+    foreach (shape : overlaps) {
+        b3::BodyId other = shape.body();
+        foreach (node : ragdoll.bone_nodes) {
+            b3::BodyId body = physics.body(node)!;
+            if (body.index1 == other.index1 && body.world0 == other.world0
+                && body.generation == other.generation) participants++;
+        }
+    }
+    io::printfn(
+        "initial_neighbour,overlapping_bones,%d,position,%s,mass_kg,%.6f",
+        participants,
+        box.position(),
+        box.mass(),
+    );
+    if (participants) return c3d::INVALID_ARGUMENT~;
+}
+
+fn Humanoid? create_contact_capsule(AssetStore* assets, Scene* scene) @local {
+    const uint JOINTS = 3;
+    Skeleton skeleton = {
+        .joint_names = alloc::new_array(assets.allocator, String, JOINTS),
+        .parents = alloc::new_array(assets.allocator, int, JOINTS),
+        .rest_pose = alloc::new_array(assets.allocator, maths::Transform, JOINTS),
+        .inverse_bind = alloc::new_array(assets.allocator, Mat4, JOINTS),
+    };
+    defer catch asset::free_skeleton(assets.allocator, &skeleton);
+
+    foreach (index, position : getup_fixture::CONTACT_JOINT_POSITIONS) {
+        skeleton.joint_names[index] = "contact_joint".copy(assets.allocator);
+        skeleton.parents[index] = getup_fixture::CONTACT_PARENTS[index];
+        skeleton.rest_pose[index] = maths::TRANSFORM_IDENTITY;
+        maths::Transform inverse = maths::TRANSFORM_IDENTITY;
+        inverse.position = -position;
+        skeleton.inverse_bind[index] = inverse.to_mat4();
+    }
+    SkeletonId skeleton_id = assets.add_skeleton_owned(&skeleton)!;
+    skeleton = {};
+
+    GeometryId geometry_id;
+    @pool() {
+        Geometry geometry = geometry::capsule(
+            allocator: tmem,
+            radius: getup_fixture::CONTACT_BONE_RADIUS,
+            height: getup_fixture::CONTACT_BONE_LENGTH - 2 * getup_fixture::CONTACT_BONE_RADIUS,
+            slices: 12,
+            stacks: 4,
+        );
+        maths::Transform placement = maths::TRANSFORM_IDENTITY;
+        placement.position =
+          getup_fixture::CONTACT_COM_OFFSET + (Vec3){ 0, getup_fixture::CONTACT_BONE_LENGTH * 0.5f, 0 };
+        geometry.transform(placement.to_mat4());
+        geometry.joints = alloc::new_array(tmem, ushort[<4>], geometry.positions.len);
+        geometry.weights = alloc::new_array(tmem, Vec4, geometry.positions.len);
+        geometry.weights[..] = { 1, 0, 0, 0 };
+        geometry_id = assets.add_geometry(&geometry)!;
+    };
+
+    StandardParams params = material::STANDARD_PARAMS_DEFAULT;
+    params.base_color = { 0.16f, 0.55f, 0.8f, 1 };
+    MaterialId material_id = assets.add_material(material::standard(params))!;
+
+    Humanoid rig = { .character = scene.add_node(name: "contact_capsule")! };
+    defer catch scene.remove(rig.character);
+    rig.skin = scene.add_mesh(
+        geometry: geometry_id,
+        material: material_id,
+        parent: rig.character,
+        name: "contact_skin",
+    )!;
+    rig.joints = alloc::new_array(scene.allocator, Node*, JOINTS);
+    scene.add(rig.skin, (SkinBinding){ .skeleton = skeleton_id, .joints = rig.joints });
+    foreach (index, position : getup_fixture::CONTACT_JOINT_POSITIONS) {
+        int parent = getup_fixture::CONTACT_PARENTS[index];
+        rig.joints[index] = scene.add_node(parent < 0 ? rig.character : rig.joints[parent], "contact_joint")!;
+        rig.joints[index].local.position =
+          parent < 0 ? position : position - getup_fixture::CONTACT_JOINT_POSITIONS[parent];
+    }
+    scene.update_world();
+
+    RagdollBone bone = physics::default_ragdoll_bone(0);
+    bone.radius = getup_fixture::CONTACT_BONE_RADIUS;
+    bone.density = getup_fixture::CONTACT_BONE_DENSITY;
+    bone.length = getup_fixture::CONTACT_BONE_LENGTH;
+    RagdollDesc desc = physics::default_ragdoll_desc();
+    desc.bones = (&bone)[:1];
+    scene.build_ragdoll(assets, rig.skin, desc)!;
+    Ragdoll* ragdoll = scene.get(rig.skin, Ragdoll);
+    scene.get(ragdoll.bone_nodes[0], PhysicsBody).colliders[0].local.position = getup_fixture::CONTACT_COM_OFFSET;
+    rig.joints[0].local = getup_fixture::sample_contact_target(0);
+    return rig;
+}
+
+fn void? run_contact_acceptance(
+    platform::Window* window,
+    Renderer* renderer,
+    AssetStore* assets,
+    String directory,
+) @local {
+    Scene scene = scene::create_scene(mem, { .max_nodes = SCENE_NODE_CAPACITY });
+    defer scene::destroy_scene(&scene);
+    physics::register_physics(&scene)!;
+    PhysicsWorld physics = physics::create_physics_world(
+        allocator: mem,
+        assets: assets,
+        scene: &scene,
+        desc: physics::default_physics_desc(),
+    )!;
+    defer physics::destroy_physics_world(&physics);
+
+    Level level = build_level(
+        assets: assets,
+        scene: &scene,
+        physics: &physics,
+        create_bodies: false,
+    )!;
+    scene.remove(level.blocker);
+    level.blocker = null;
+    level.camera_node.local.position = CAMERA_START;
+    level.camera_node.local.rotation =
+      maths::look_rotation(((Vec3){ 0.2f, 0.5f, 0 } - CAMERA_START).normalize(), { 0, 1, 0 });
+
+    Humanoid rig = create_contact_capsule(assets, &scene)!;
+    Node* ground = scene.add_node(name: "contact_ground")!;
+    ground.local.position = getup_fixture::CONTACT_GROUND_POSITION;
+    ColliderDesc floor = physics::default_collider_desc(BOX);
+    floor.half_extents = getup_fixture::CONTACT_GROUND_HALF_EXTENTS;
+    scene.add_physics_body(ground, physics::default_body_desc(STATIC), (&floor)[:1])!;
+
+    Node* neighbour = scene.add_mesh(level.box_geometry, level.box_material, name: "focused_neighbour")!;
+    neighbour.local.position = getup_fixture::CONTACT_BOX_POSITION;
+    neighbour.local.scale = getup_fixture::CONTACT_BOX_HALF_EXTENTS * (2 / BOX_SIZE);
+    ColliderDesc box = physics::default_collider_desc(BOX);
+    box.half_extents = getup_fixture::CONTACT_BOX_HALF_EXTENTS;
+    box.density = getup_fixture::CONTACT_BOX_DENSITY;
+    scene.add_physics_body(neighbour, physics::default_body_desc(DYNAMIC), (&box)[:1])!;
+    scene.update_world();
+    physics.update(0);
+
+    Ragdoll* ragdoll = scene.get(rig.skin, Ragdoll);
+    physics.set_ragdoll_mode(rig.skin, SIMULATED);
+    ragdoll.weight = 1;
+    physics.update_ragdolls();
+    scene.update_world();
+    check_neighbour_clearance(
+        physics: &physics,
+        neighbour: neighbour,
+        ragdoll: ragdoll,
+        half_extents: getup_fixture::CONTACT_BOX_HALF_EXTENTS,
+    )!;
+
+    physics.recover_bones(rig.skin)!;
+    ragdoll.weight = 0;
+    b3::BodyId body = physics.body(ragdoll.bone_nodes[0])!;
+    b3::BodyId neighbour_body = physics.body(neighbour)!;
+    io::printfn(
+        "focused_dataset,%s,capsule_mass_kg,%.9f,neighbour_mass_kg,%.9f",
+        getup_fixture::CONTACT_DATASET,
+        body.mass(),
+        neighbour_body.mass(),
+    );
+
+    GuiRenderer gui = gui::create_gui_renderer(mem, renderer, window)!;
+    defer (void)gui::destroy_gui_renderer(&gui);
+    debug::DebugDraw debug = debug::create_debug_draw(mem);
+    defer debug::destroy_debug_draw(&debug);
+    RenderTargetId target = render::create_render_target(
+        renderer: renderer,
+        desc: render::render_target_desc(1280, 720, PixelFormat.RGBA8_SRGB),
+    )!;
+    defer (void)render::destroy_render_target(renderer, target);
+    ViewId view = render::create_view(renderer, render::texture_view_desc(target, OutputMode.DISPLAY_LDR))!;
+    defer (void)render::destroy_view(renderer, view);
+    renderer.prepare_scene(&scene)!;
+
+    float[5] captures = { 0, 1, 2, 4, getup_fixture::CONTACT_DURATION };
+    uint next_capture;
+    uint frame;
+    uint contacts;
+    float time;
+    float peak_position;
+    float peak_angle;
+    float peak_penetration;
+    float peak_force;
+    float peak_torque;
+
+    while (next_capture < captures.len && window.poll()) {
+        float delta =
+          getup_fixture::FRAME_MULTIPLIERS[frame++ % getup_fixture::FRAME_MULTIPLIERS.len] * physics::DEFAULT_FIXED_DT;
+        time += delta;
+        rig.joints[0].local = getup_fixture::sample_contact_target(time);
+        if (frame % 2 == 1) rig.joints[0].local.rotation = -rig.joints[0].local.rotation;
+        rig.joints[1].local.position = { 0, 1, 0 };
+        rig.joints[2].local.position = { 0, 1, 0 };
+        scene.update_world();
+        physics.update(delta);
+
+        if (time >= getup_fixture::CONTACT_DURATION) {
+            physics.finish_ragdoll_recovery(rig.skin)!;
+        } else if (body.type() != b3::BodyType.DYNAMIC) {
+            return c3d::INVALID_ARGUMENT~;
+        }
+        physics.update_ragdolls();
+        scene.update_world();
+
+        RagdollRecoveryStatus status = ragdoll.recovery_status();
+        b3::WorldTransform native = body.transform();
+        maths::Transform visible = maths::transform_from_mat4(rig.joints[0].world);
+        maths::Transform bone = maths::transform_from_mat4(ragdoll.bone_nodes[0].world);
+        Vec3 mapped_position = body.world_point(ragdoll.joint_in_bone[0].position);
+        Quaternionf mapped_rotation = native.q.mul(ragdoll.joint_in_bone[0].rotation).normalize();
+        peak_position = math::max(
+            peak_position,
+            (visible.position - mapped_position).length(),
+            (bone.position - (Vec3)native.p).length(),
+        );
+        foreach (difference : (Quaternionf[2]){
+            visible.rotation.mul(mapped_rotation.conjugate()),
+            bone.rotation.mul(native.q.conjugate())
+        }) {
+            Vec3 axis = { difference.i, difference.j, difference.k };
+            peak_angle = math::max(peak_angle, 2 * math::atan2(axis.length(), math::abs(difference.l)));
+        }
+        peak_force = math::max(peak_force, status.force);
+        peak_torque = math::max(peak_torque, status.torque);
+
+        b3::ContactData[16] storage;
+        foreach (contact : body.contact_data(storage[..])) {
+            foreach (&manifold : contact.contact_manifolds()) {
+                foreach (point : manifold.contact_points())
+                    peak_penetration = math::max(peak_penetration, -point.separation);
+            }
+            foreach (shape : (b3::ShapeId[2]){ contact.shape_id_a, contact.shape_id_b }) {
+                b3::BodyId other = shape.body();
+                if (other.index1 == neighbour_body.index1 && other.generation == neighbour_body.generation) contacts++;
+            }
+        }
+
+        gui.new_frame();
+        if (imgui::begin("Focused ragdoll contact", null, {})) {
+            imgui::text("Time %.2f s", time);
+            imgui::text("Recovery: %s", RECOVERY_NAMES[status.phase.ordinal]);
+            imgui::text("Force %.3f N, torque %.3f Nm", status.force, status.torque);
+            imgui::text("Position %.5f m, angle %.5f rad", status.position_error, status.angle_error);
+            imgui::text("Neighbour %.3f m", (neighbour_body.position() - getup_fixture::CONTACT_BOX_POSITION).length());
+        }
+        imgui::end();
+        gui.finish_frame();
+
+        debug.clear();
+        physics.debug_draw(&debug, { .colliders = true });
+        platform::sync_window(window, renderer);
+        renderer.begin_frame({ .time = time, .delta = delta })!;
+        defer catch render::abort_frame(renderer);
+        renderer.render_view(
+            scene: &scene,
+            camera_node: level.camera_node,
+            view: view,
+            debug: &debug,
+        )!;
+        renderer.finish_view(view)!;
+        if (renderer.has_output) {
+            renderer.render_view(
+                scene: &scene,
+                camera_node: level.camera_node,
+                view: renderer.default_view,
+                debug: &debug,
+            )!;
+            renderer.finish_view(renderer.default_view)!;
+            OverlayContext overlay = renderer.begin_overlay()!;
+            gui.record(&overlay)!;
+            renderer.end_overlay(&overlay)!;
+        }
+        renderer.end_frame()!;
+
+        if (time >= captures[next_capture]) {
+            String path = string::tformat("%s/neighbour-%d.png", directory, next_capture);
+            save_capture(renderer, target, path)!;
+            io::printfn(
+                "capture,%s,time,%.6f,phase,%s",
+                path,
+                time,
+                status.phase,
+            );
+            next_capture++;
+        }
+    }
+
+    float displacement = (neighbour_body.position() - getup_fixture::CONTACT_BOX_POSITION).length();
+    io::printfn(
+        "visual,focused_neighbour,frames,%d,position,%.9f,angle,%.9f,penetration,%.9f,force,%.6f,torque,%.6f,neighbour,%.9f,neighbour_contact_samples,%d",
+        frame,
+        peak_position,
+        peak_angle,
+        peak_penetration,
+        peak_force,
+        peak_torque,
+        displacement,
+        contacts,
+    );
+    if (next_capture != captures.len || peak_position > 0.00002f || peak_angle > 0.0001f
+        || peak_penetration > getup_fixture::PENETRATION_LIMIT || peak_force > 200.0001f || peak_torque > 20.0001f
+        || displacement <= getup_fixture::CONTACT_RESPONSE_LIMIT || contacts == 0) return c3d::INVALID_ARGUMENT~;
 }

@@ -1343,3 +1343,34 @@ An immediate request has zero source velocity until a positive update establishe
 history. STEP request onsets retain their directional side through zero updates
 and use that side for the first traveled root endpoint; clocks and event times
 are unchanged.
+
+## Physical ragdoll recovery
+
+The physics add-on's `recover_ragdoll` and `recover_bones` are fallible requests. Call them before sampling fresh animation, while the preceding final joint worlds are untouched. Entry checks every selected native body and the mapped joint's agreement with its current pose. Missing bodies return `physics::NO_BODY`; excessive disagreement returns `physics::RECOVERY_POSE_MISMATCH`; invalid settings or transforms return `INVALID_ARGUMENT`. Failed requests preserve placement, modes, the prior recovery and counters. Whole-body entry returns the physical facing and moves the character horizontally to the hips; partial entry preserves character placement.
+
+Participants remain SIMULATED/DYNAMIC. At the start of `PhysicsWorld.update`, recovery captures fresh animation and the live weights. Their effective target weight remains `min(ragdoll.weight, 1) * bone_weight`; authoring weights must be finite and nonnegative. Each performed fixed step drives the same desired target using fresh native feedback, capped COM force and torque. Anatomical limits and native contacts remain active. The ordinary animation springs are masked for participants; edits to authored springs and `drive_strength` are applied when recovery ends. Recovery strength is independent of `drive_strength`.
+
+The default request uses 4 Hz position and angular response, damping ratio 1, and per-bone caps of 200 N and 20 Nm. Custom `RagdollRecoverySettings` are copied at entry. Finite positive frequencies/caps and nonnegative finite damping/tolerances are required; derived arithmetic must remain finite. These domains do not guarantee stability or convergence for every rig or timestep. Unreachable targets remain physical and may report `BLOCKED`.
+
+```c3
+if (recover_requested) {
+    facing = physics.recover_ragdoll(skin_node, character)!;
+}
+anim::update(&assets, &scene, dt);
+scene.update_world();
+physics.update(dt);
+if (finish_requested) {
+    if (catch excuse = physics.finish_ragdoll_recovery(skin_node)) {
+        if (excuse != physics::RECOVERY_NOT_READY) return excuse~;
+    }
+}
+physics.update_ragdolls();
+scene.update_world();
+physics.update_cloths();
+```
+
+Completion uses this update's captured zero effective weights, mapped-joint position/orientation residuals and absolute native COM/angular speeds. Weight edits after capture apply on the next update. Zero weight alone does not finish recovery. A successful `finish_ragdoll_recovery` changes authoring to ANIMATED without replacing or snapping bodies. It retains native publication for the completing set through every ragdoll pass in that update; ordinary animation ownership resumes on the next physics update.
+
+After `update_ragdolls` and the final scene refresh, participating bone nodes match native CURRENT and mapped skin joints apply their `joint_in_bone` mapping to that same pose. They receive no interpolation or second visible blend. Zero-step updates hold their native pose; repeated publication is idempotent. Unmapped children retain their captured local targets relative to the published parent. Nonparticipants retain ordinary ragdoll blending. Later IK that moves a participating joint ends this equality guarantee for that final pose.
+
+Explicit bone mode changes, including the current enum value, cancel that bone's recovery. Explicit teleports cancel active or completing recovery before moving the addressed body and keep the ordinary teleport mode/velocity behavior. Body/joint replacement, removal and world teardown cancel affected transient ownership; horizontal origin shifts translate retained world targets. Serialization v1 saves authoring and restarts with no active recovery or saved velocities. The `ragdoll` example shares explicit supine and prone get-up data with the package's CPU tests and exposes recovery status, obstruction and movable-neighbour controls.

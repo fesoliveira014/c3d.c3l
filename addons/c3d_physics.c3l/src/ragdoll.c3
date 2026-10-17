@@ -13,7 +13,6 @@ import b3;
 const float MIN_BONE_LENGTH @local = 0.0001f; // meters; a shorter child offset makes the bone a leaf
 const float MIN_AXIS_LENGTH @local = 0.0001f; // a shorter hinge axis has no direction
 const float SCALE_TOLERANCE @local = 0.0001f;
-const float MIN_HEADING_LENGTH @local = 0.3f; // a flattened heading shorter than this is too steep to set a yaw
 
 <*
  Who drives the bone bodies.
@@ -79,7 +78,8 @@ struct Ragdoll {
     float              weight;             // 0 animated pose, 1 ragdoll pose; every bone's fade
     float              drive_strength;     // 0 at build; scales every bone's drive hertz
     RagdollFacing      last_facing;        // what the last recover_ragdoll chose; FACE_UP before any
-    uint               recoveries;         // recover_ragdoll calls since build
+    uint               recoveries;         // successful whole-body recovery entries
+    RagdollRecovery    recovery;
 }
 
 <*
@@ -216,7 +216,12 @@ fn void Scene.remove_ragdoll(&self, Node* skin_node) {
 *>
 fn void PhysicsWorld.set_ragdoll_mode(&self, Node* skin_node, RagdollMode mode) {
     Ragdoll* ragdoll = self.scene.get(skin_node, Ragdoll);
-    for (usz bone = 0; bone < ragdoll.bone_nodes.len; bone++) switch_bone(self.scene, ragdoll, bone, mode);
+    for (usz bone = 0; bone < ragdoll.bone_nodes.len; bone++) switch_bone(
+        scene: self.scene,
+        ragdoll: ragdoll,
+        bone: bone,
+        mode: mode,
+    );
 }
 
 <*
@@ -232,82 +237,12 @@ fn void PhysicsWorld.set_bone_mode(
     usz bone,
     RagdollMode mode,
 ) {
-    switch_bone(self.scene, self.scene.get(skin_node, Ragdoll), bone, mode);
-}
-
-<*
- Stand the character where the hips lie and freeze the pose for blending out.
- Calls update_world.
- @param [&in] skin_node : "Carries the ragdoll."
- @param [&inout] character : "Ancestor of the skin node and its joint nodes; turned to get up."
- @return "Face down turns the character toward the head, face up toward the feet."
- @require self.scene.has(skin_node, Ragdoll)
- @require self.scene.get(skin_node, Ragdoll).bone_modes[0] == SIMULATED
-*>
-fn RagdollFacing PhysicsWorld.recover_ragdoll(&self, Node* skin_node, Node* character) {
-    Scene* scene = self.scene;
-    Ragdoll* ragdoll = scene.get(skin_node, Ragdoll);
-    Node*[] joints = scene.get(skin_node, SkinBinding).joints;
-    float alpha = self.desc.tuning.interpolate ? self.alpha : 1;
-    sample_joint_worlds(scene, ragdoll, joints, alpha);
-
-    RagdollFacing facing = FACE_UP;
-    Node* hips_node = ragdoll.bone_nodes[0];
-    if (scene.has(hips_node, RigidBody)) {
-        RigidBody* hips = scene.get(hips_node, RigidBody);
-        maths::Transform hips_pose = interpolate_pose(hips.previous, hips.current, alpha);
-        maths::Transform pose = maths::transform_from_mat4(character.world);
-        Quat standing = maths::transform_from_mat4(skin_node.world).rotation.mul(ragdoll.hips_bind_rotation);
-        // The fall in character axes, so a turn made before falling is not counted twice.
-        Quat fall = pose.rotation.conjugate().mul(hips_pose.rotation).mul(standing.conjugate()).mul(pose.rotation);
-        Vec3 forward = fall.rotate_vec3({ 0, 0, 1 });
-        Vec3 head = fall.rotate_vec3({ 0, 1, 0 });
-        if (forward.y < 0) facing = FACE_DOWN;
-        Vec3 heading = facing == FACE_DOWN ? head : -head;
-        heading.y = 0;
-        if (heading.length() <= MIN_HEADING_LENGTH) heading = { forward.x, 0, forward.z };
-        pose.position.x = hips_pose.position.x;
-        pose.position.z = hips_pose.position.z;
-        if (heading.length() > MIN_HEADING_LENGTH) {
-            Quat yaw = quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::atan2(heading.x, heading.z));
-            pose.rotation = pose.rotation.mul(yaw).normalize();
-        }
-        character.set_world_pose(pose.position, pose.rotation);
-    }
-    scene.update_world();
-
-    freeze_joints(ragdoll, joints);
-    return_simulated_bones(scene, ragdoll);
-    ragdoll.last_facing = facing;
-    ragdoll.recoveries++;
-    return facing;
-}
-
-<*
- Freeze the simulated bones' pose and return them to animated; the character stays.
- recover_ragdoll is the whole-body recovery.
- @param [&in] skin_node : "Carries the ragdoll."
- @require self.scene.has(skin_node, Ragdoll)
-*>
-fn void PhysicsWorld.recover_bones(&self, Node* skin_node) {
-    Scene* scene = self.scene;
-    Ragdoll* ragdoll = scene.get(skin_node, Ragdoll);
-    Node*[] joints = scene.get(skin_node, SkinBinding).joints;
-    sample_joint_worlds(scene, ragdoll, joints, self.desc.tuning.interpolate ? self.alpha : 1);
-    freeze_joints(ragdoll, joints);
-    return_simulated_bones(scene, ragdoll);
-}
-
-<*
- Blend ragdoll poses into joint nodes at each weight; call after update.
- While blending out, colliders follow the animated pose; animated bones at nonzero weight blend toward frozen.
-*>
-fn void PhysicsWorld.update_ragdolls(&self) {
-    Scene* scene = self.scene;
-    float alpha = self.desc.tuning.interpolate ? self.alpha : 1;
-    scene.@each(Ragdoll; entity, ragdoll) {
-        if (ragdoll.weight > 0) blend_ragdoll(scene, scene.node(entity), ragdoll, alpha);
-    };
+    switch_bone(
+        scene: self.scene,
+        ragdoll: self.scene.get(skin_node, Ragdoll),
+        bone: bone,
+        mode: mode,
+    );
 }
 
 <*
@@ -337,7 +272,8 @@ fn void drive_ragdolls(PhysicsWorld* world) @private {
             node.local = maths::transform_from_mat4(inverse_skin.mul(node.world));
         }
         foreach (usz index, mode : ragdoll.bone_modes) {
-            if (mode != SIMULATED || ragdoll.bone_parents[index] < 0 || !ragdoll.bone_drives[index].enabled) continue;
+            if (mode != SIMULATED || ragdoll.bone_parents[index] < 0 || !ragdoll.bone_drives[index].enabled
+                || ragdoll.recovery.bones[index].active) continue;
             drive_bone(scene, ragdoll, joints, index);
         }
     };
@@ -353,6 +289,7 @@ fn void drive_bone(
     Node* node = ragdoll.bone_nodes[bone];
     if (!scene.has(node, Joint)) return;
     Joint* joint = scene.get(node, Joint);
+    if (!joint.joint.is_valid()) return;
     JointDesc* desc = &scene.get(node, PhysicsJoint).desc;
     Quat parent = animated_bone_rotation(ragdoll, joints, (usz)ragdoll.bone_parents[bone]);
     Quat target = desc.anchor_frame.rotation.conjugate() * parent.conjugate()
@@ -391,7 +328,8 @@ fn void switch_bone(
     Ragdoll* ragdoll,
     usz bone,
     RagdollMode mode,
-) @local {
+) @private {
+    cancel_recovery_bone(ragdoll, bone);
     BodyKind kind = mode == SIMULATED ? DYNAMIC : KINEMATIC;
     Node* node = ragdoll.bone_nodes[bone];
     scene.get(node, PhysicsBody).body.kind = kind;
@@ -402,29 +340,7 @@ fn void switch_bone(
     body.body.set_type(body_type(kind));
 }
 
-fn void return_simulated_bones(Scene* scene, Ragdoll* ragdoll) @local {
-    foreach (usz bone, mode : ragdoll.bone_modes) {
-        if (mode == SIMULATED) switch_bone(scene, ragdoll, bone, ANIMATED);
-    }
-}
-
-// Simulated bones sample their bodies, every other joint the animated pose, before any node moves.
-fn void sample_joint_worlds(
-    Scene* scene,
-    Ragdoll* ragdoll,
-    Node*[] joints,
-    float alpha,
-) @local {
-    foreach (joint : ragdoll.joint_order) {
-        Mat4 animated = parent_world_of(ragdoll, joints, joint).mul(joints[joint].local.to_mat4());
-        ragdoll.joint_worlds[joint] = animated;
-        if (ragdoll.bone_modes[ragdoll.joint_owner[joint]] == SIMULATED) {
-            ragdoll.joint_worlds[joint] = joint_target_world(scene, ragdoll, joint, alpha) ?? animated;
-        }
-    }
-}
-
-fn void freeze_joints(Ragdoll* ragdoll, Node*[] joints) @local {
+fn void freeze_joints(Ragdoll* ragdoll, Node*[] joints) @private {
     foreach (joint : ragdoll.joint_order) {
         ragdoll.frozen[joint] = relative(parent_world_of(ragdoll, joints, joint), ragdoll.joint_worlds[joint]);
     }
@@ -435,7 +351,7 @@ fn void blend_ragdoll(
     Node* skin_node,
     Ragdoll* ragdoll,
     float alpha,
-) @local {
+) @private {
     Node*[] joints = scene.get(skin_node, SkinBinding).joints;
     float ragdoll_weight = math::min(ragdoll.weight, 1.0f);
     foreach (joint : ragdoll.joint_order) {
@@ -448,7 +364,12 @@ fn void blend_ragdoll(
             case ANIMATED:
                 target = ragdoll.frozen[joint];
             case SIMULATED:
-                if (try world = joint_target_world(scene, ragdoll, joint, alpha)) {
+                if (try world = joint_target_world(
+                    scene: scene,
+                    ragdoll: ragdoll,
+                    joint: joint,
+                    alpha: alpha,
+                )) {
                     target = relative(parent_world, world);
                 }
         }
@@ -460,7 +381,7 @@ fn void blend_ragdoll(
 }
 
 // A root joint's parent is a scene node; the others were written earlier in joint_order.
-fn Mat4 parent_world_of(Ragdoll* ragdoll, Node*[] joints, uint joint) @local {
+fn Mat4 parent_world_of(Ragdoll* ragdoll, Node*[] joints, uint joint) @private {
     if (joints[joint].transform_space == TransformSpace.WORLD) return matrix::IDENTITY4;
     int parent = ragdoll.parents[joint];
     return parent < 0 ? joints[joint].parent.world : ragdoll.joint_worlds[parent];
@@ -472,7 +393,7 @@ fn Mat4? joint_target_world(
     Ragdoll* ragdoll,
     uint joint,
     float alpha,
-) @local {
+) @private {
     int bone = ragdoll.joint_bone[joint];
     if (bone < 0) return NO_BODY~;
     Node* node = ragdoll.bone_nodes[bone];
@@ -575,14 +496,18 @@ fn Ragdoll? try_carve_ragdoll_block(Allocator allocator, usz bone_count, usz joi
     char*? block = alloc::malloc_try(allocator, (sz)measure.offset);
     if (catch block) return c3d::CAPACITY_EXCEEDED~;
     BlockCursor fill = { .base = block };
-    return carve_ragdoll(&fill, bone_count, joint_count);
+    Ragdoll ragdoll = carve_ragdoll(&fill, bone_count, joint_count);
+    ragdoll.recovery.bones[..] = {};
+    return ragdoll;
 }
 
 fn Ragdoll carve_ragdoll_block(Allocator allocator, usz bone_count, usz joint_count) @local {
     BlockCursor measure;
     carve_ragdoll(&measure, bone_count, joint_count);
     BlockCursor fill = { .base = alloc::malloc(allocator, (sz)measure.offset) };
-    return carve_ragdoll(&fill, bone_count, joint_count);
+    Ragdoll ragdoll = carve_ragdoll(&fill, bone_count, joint_count);
+    ragdoll.recovery.bones[..] = {};
+    return ragdoll;
 }
 
 // The bone node array comes first, so its pointer is the block base the removal hook frees.
@@ -601,14 +526,20 @@ fn Ragdoll carve_ragdoll(BlockCursor* cursor, usz bone_count, usz joint_count) @
         .joint_order   = carve(cursor, uint, joint_count),
         .frozen        = carve(cursor, maths::Transform, joint_count),
         .joint_worlds  = carve(cursor, Mat4, joint_count),
+        .recovery = {
+            .bones = carve(cursor, RecoveryBone, bone_count),
+            .animation = carve(cursor, maths::Transform, joint_count),
+            .targets = carve(cursor, maths::Transform, joint_count),
+        },
     };
 }
 
 fn void free_ragdoll(Entity entity, void* component, void* user) @private {
     Ragdoll* ragdoll = component;
+    cancel_ragdoll_recovery(ragdoll);
     alloc::free(*(Allocator*)user, ragdoll.bone_nodes.ptr);
 }
 
-fn maths::Transform relative(Mat4 parent_world, Mat4 world) @local {
+fn maths::Transform relative(Mat4 parent_world, Mat4 world) @private {
     return maths::transform_from_mat4(maths::inverse_affine(parent_world).mul(world));
 }

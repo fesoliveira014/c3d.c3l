@@ -5,6 +5,90 @@ fluid forces and pre-fractured breakables. Applications select `c3d_physics` and
 its native dependencies; core does not import the package. Register physics on
 the scene, create its world, and destroy the world before the scene/assets.
 
+## Ragdoll recovery
+
+`recover_ragdoll(skin_node, character, settings)` returns `RagdollFacing?` and
+`recover_bones(skin_node, settings)` returns `void?`. Settings default to
+`default_ragdoll_recovery_settings()`. Both select the currently SIMULATED bones
+and validate entry before changing placement or recovery state. Call before
+fresh animation, while the preceding final joint worlds remain intact.
+Whole-body recovery returns physical facing and applies horizontal hips
+placement; partial recovery leaves character placement unchanged.
+
+Missing bodies or anatomical joints return `NO_BODY` or `NO_JOINT`. A mismatch
+between mapped joints and native poses beyond the entry limits returns
+`RECOVERY_POSE_MISMATCH`; invalid settings or inputs return `INVALID_ARGUMENT`.
+
+Participants retain SIMULATED bone modes and DYNAMIC bodies. Each outer update
+captures fresh animation and `min(weight, 1) * bone_weight`; each fixed step
+tracks that target using current native feedback. Finite nonnegative authored
+weights retain their existing range, including per-bone values above one.
+Recovery applies a capped force at the centre of mass with gravity compensation
+and a capped shortest-arc angular PD torque through current world inertia.
+
+| Default setting | Value |
+| --- | --- |
+| Position and angular frequency | 4 Hz |
+| Damping ratio | 1 |
+| Per-body force and torque caps | 200 N; 20 N m |
+| Entry position and angle limits | 0.01 m; 0.01 rad |
+| Tracking diagnostic limits | 0.15 m; 0.3 rad |
+| Completion mapped-joint limits | 0.015 m; 0.02 rad |
+| Completion absolute COM and angular speed limits | 0.03 m/s; 0.05 rad/s |
+
+Custom settings must be finite. Frequencies and caps must be positive; damping
+and tolerances must be nonnegative. Nonfinite derived requests are rejected or
+block the active recovery without applying them. Arbitrary settings and rigs
+have no stability guarantee.
+
+Recovery temporarily masks legacy spherical/revolute animation springs while
+preserving their limits and authored values. `drive_strength` does not scale
+the separate recovery actuator. Ending recovery restores current authored
+spring enablement, frequency, damping and strength only to matching native
+identities. `Ragdoll.recovery_status()` reports INACTIVE, TRACKING, BLOCKED,
+READY or COMPLETING; participant count; mapped-joint target errors; absolute
+body speeds; applied force/torque maxima; and captured-input or arithmetic
+faults. BLOCKED is diagnostic: bodies remain physical.
+
+Call the fallible `finish_ragdoll_recovery(skin_node)` after `update` and before
+`update_ragdolls`. Completion requires this update's captured zero effective
+weights and settled pose/velocity limits. `RECOVERY_NOT_READY` keeps recovery
+active; `NO_RECOVERY` means no participants remain. Success changes authoring
+to ANIMATED without a transform snap or native identity replacement. Native
+poses remain published through that update; animation resumes on the next
+physics update. Setting global weight to zero alone does not finish recovery.
+
+Frame order is entry/re-entry, fresh animation and weights, `scene.update_world`,
+`physics.update`, optional checked completion, `physics.update_ragdolls`,
+`scene.update_world`, then cloth and debug consumers. Participating bone nodes
+publish native current poses; mapped joints apply `joint_in_bone` to those same
+poses. There is no interpolation or second visual blend. Updates without a
+fixed step hold native poses, and repeated ragdoll publication is idempotent.
+Unmapped children use captured local targets; nonparticipants keep ordinary
+behavior. Later IK changes to participants end the pose-equality guarantee.
+
+An explicit `set_bone_mode`, including the same enum value, cancels that bone's
+active or completing recovery; `set_ragdoll_mode` cancels all participants.
+Teleport cancels the addressed participant before moving it, retains ordinary
+mode/velocity semantics and does not record completion. Body replacement,
+removal and world teardown cancel affected recovery. Origin shifts translate
+world targets. Stale native identities never receive restored drive settings.
+
+The `ragdoll` example uses the shared humanoid and supine/prone motions in
+`examples/ragdoll_getup.c3`, also consumed by `physics_test`. Its controls expose
+obstruction, a movable neighbour and recovery status. `--acceptance <directory>`
+writes bounded visual captures and numeric checks to an existing directory;
+`--cpu-observation` runs a bounded CPU comparison. See
+[Animation](../../docs/animation.md) for the animation/ragdoll contract.
+
+| Prone get-up | Blocked recovery |
+| --- | --- |
+| ![Prone physical recovery](../../docs/images/ragdoll_recovery.png) | ![Recovery constrained by an obstruction](../../docs/images/ragdoll_blocked.png) |
+| The same dynamic capsules follow the get-up target. | An obstruction prevents completion without disabling simulation. |
+
+The [focused contact example](../../docs/images/ragdoll_contact.png) shows recovery
+forces pushing a movable neighbour while the bone remains simulated.
+
 ## Cloth
 
 `c3d::physics::cloth` simulates a mesh over an owned geometry copy with pinned vertices, node

@@ -53,8 +53,7 @@ never node pointers.
 - **Bodies** and **Characters**: tables; a click selects the node.
 - **Selected**: one block per physics component of the selected node. Body: state, Enabled, Wake, Rebuild,
   velocity editors, Teleport to origin and the contact list. Joint: force, torque and separations. Ragdoll:
-  per-bone mode and weight, the ragdoll weight and drive strength, and the last whole-body recovery. After a
-  `recover_ragdoll` whose hips bone has no body, the reading is `FACE_UP` without a computed facing.
+  per-bone mode and weight, ragdoll weight and drive strength, and the last successful whole-body recovery. The panel also shows the transient recovery phase, active bone count, mapped-joint target residuals, absolute body speeds and actuator force/torque. A missing required body returns `NO_BODY` and preserves the previous facing and recovery count.
   Character: the desc applied through `set_character_desc`, and the live state.
 - **Events**: the log, newest first.
 - **Queries**: a sphere, capsule or box cast and a box overlap; Show draws them into the sink.
@@ -89,3 +88,5 @@ recording and selects a chain link, then prints the sink peak, the replay's dive
 reading. `--draw-all` raises every draw flag, `--replay-default-mixes` opens replays with box3d's mixes,
 `--frames N` closes after N frames. Keys: P pause, N step, R start or stop recording, L open the replay, G
 drop the figure, H recover it; the character target moves the walker with the arrow keys.
+
+During physical recovery, mode edits cancel recovery for the selected bone, including a request for its existing mode. Weight edits change the next update's desired target; the visible bone and mapped joint continue to follow native CURRENT. Drive strength controls the ordinary animation springs and does not scale the recovery actuator. `BLOCKED` reports tracking outside the configured diagnostic tolerances or invalid captured input. It does not disable contacts or force completion. `COMPLETING` retains native publication through the current update; animation resumes on the next physics update.

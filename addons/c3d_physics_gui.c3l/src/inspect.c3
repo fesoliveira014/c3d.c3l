@@ -130,6 +130,18 @@ fn bool ragdoll_inspector(void* component) @local {
     foreach (bone, mode : ragdoll.bone_modes) {
         imgui::text("Bone %u: %s at %.2f", (uint)bone, @enum_name(RagdollMode, mode), ragdoll.bone_weights[bone]);
     }
+
+    RagdollRecoveryStatus recovery = ragdoll.recovery_status();
+    imgui::text(
+        "Recovery: %s, %u active bones",
+        @enum_name(RagdollRecoveryPhase, recovery.phase),
+        recovery.participating,
+    );
+    imgui::text("Residual: %.4f m, %.4f rad", recovery.position_error, recovery.angle_error);
+    imgui::text("Speed: %.4f m/s, %.4f rad/s", recovery.linear_speed, recovery.angular_speed);
+    imgui::text("Actuator: %.2f N, %.2f Nm", recovery.force, recovery.torque);
+    if (recovery.failure) imgui::text("Recovery failure: %s", string::tformat("%s", recovery.failure).zstr_tcopy());
+
     if (ragdoll.recoveries) {
         imgui::text("Last recovery: %s (%u)", @enum_name(RagdollFacing, ragdoll.last_facing), ragdoll.recoveries);
     }
