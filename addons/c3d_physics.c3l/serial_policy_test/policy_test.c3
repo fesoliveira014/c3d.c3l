@@ -40,7 +40,7 @@ fn void test_every_physics_component_has_an_explicit_serialization_policy() @tes
         { .slot = ecs::assigned_slot(Buoyancy)!!, .name = "buoyancy", .identity = BuoyancyAuthoring::typeid, .version = 1 },
         { .slot = ecs::assigned_slot(Wind)!!, .name = "wind", .identity = Wind::typeid, .version = 1 },
         { .slot = ecs::assigned_slot(Force)!!, .name = "force", .identity = Force::typeid, .version = 1 },
-        { .slot = ecs::assigned_slot(Cloth)!!, .name = "cloth", .identity = ClothSavedAuthoring::typeid, .phase = OWNER, .version = 3 },
+        { .slot = ecs::assigned_slot(Cloth)!!, .name = "cloth", .identity = ClothSavedAuthoring::typeid, .phase = OWNER, .version = 4 },
         { .slot = ecs::assigned_slot(Ragdoll)!!, .name = "ragdoll", .identity = RagdollAuthoring::typeid, .phase = OWNER, .version = 1 },
         { .slot = ecs::assigned_slot(Breakable)!!, .name = "breakable", .identity = BreakableAuthoring::typeid, .phase = OWNER, .version = 2 },
         { .slot = ecs::assigned_slot(RigidBody)!!, .transient = true },

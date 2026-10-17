@@ -58,6 +58,8 @@ struct ClothStats {
     uint   failed;
     uint   candidates;
     uint   contacts;
+    uint   ccd_iterations;
+    uint   impacts;
     double max_residual;
 }
 
@@ -91,8 +93,10 @@ struct ClothBody {
     uint[4]          native_identity;
     maths::Transform solved;   // pose of the last solved substep
     maths::Transform current;  // pose sampled by the current update
+    maths::Transform published; // pose used by the last accepted publication
     bool             live;     // owner alive with a built body this update
     bool             observed; // solved holds a pose sampled since the owner was last live
+    bool             published_observed;
 }
 
 <* Library-owned simulation state; its arrays are borrowed by readers. *>
@@ -144,6 +148,16 @@ struct ClothState {
     uint[]            canonical_vertices;
     ulong[]           adjacent_vertices;
     ClothSelfPrimitive[] self_primitives;
+    Vec3[]            sweep_start;
+    Aabb[]            sweep_bounds;
+    usz[]             path_heads;
+    ClothPathNode[]    path_nodes;
+    ContactIntervals[] path_values;
+    ContactMotion[]   body_motions;
+    usz               path_count;
+    double            sweep_begin;
+    double            sweep_end;
+    bool              sweep_active;
 }
 
 <* Retained source and settings; owned arrays are read-only. *>
@@ -279,6 +293,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         state.colliders[..] = desc.colliders[..];
         state.desc.colliders = state.colliders;
         state.bodies[..] = capture.bodies[..];
+        state.staged_bodies[..] = capture.bodies[..];
         state.shapes = state.shape_storage[:capture.shapes.len];
         state.shapes[..] = capture.shapes[..];
         state.assets = assets;
@@ -291,6 +306,10 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         state.predicted[..] = world[..];
         state.accelerations[..] = (Vec3){};
         state.published[..] = world[..];
+        if (desc.collisions.continuous) {
+            state.sweep_start[..] = world[..];
+            foreach (index, point : world) state.sweep_bounds[index] = { .min = point, .max = point };
+        }
         state.published_frame = node.world;
         state.inverse_masses[..] = 1;
         state.pins[..] = pins[..];
@@ -385,6 +404,8 @@ fn void PhysicsWorld.update_cloths(&self) {
             self.cloth_stats.publish_seconds += publication_seconds;
             self.cloth_stats.candidates += state.contact_result.candidates;
             self.cloth_stats.contacts += state.contact_result.contacts;
+            self.cloth_stats.ccd_iterations += state.contact_result.ccd_iterations;
+            self.cloth_stats.impacts += state.contact_result.impacts;
             self.cloth_stats.max_residual = math::max(self.cloth_stats.max_residual, state.contact_result.max_residual);
             self.cloth_stats.particles += (uint)state.positions.len;
             self.cloth_stats.constraints += (uint)(state.edges.len + state.bends.len);
@@ -410,7 +431,48 @@ fn void ClothState.shift_origin(&self, Vec3 offset) {
     foreach (&body : self.bodies) {
         body.solved.position -= offset;
         body.current.position -= offset;
+        body.published.position -= offset;
     }
+    foreach (&body : self.staged_bodies) {
+        body.solved.position -= offset;
+        body.current.position -= offset;
+        body.published.position -= offset;
+    }
+    foreach (&position : self.sweep_start) *position -= offset;
+    foreach (&bounds : self.sweep_bounds) {
+        bounds.min -= offset;
+        bounds.max -= offset;
+    }
+    foreach (&motion : self.body_motions) {
+        motion.last_position -= (ContactVector)offset;
+        for (uint axis = 0; axis < 3; axis++) {
+            motion.first.position[axis].min -= offset[axis];
+            motion.first.position[axis].max -= offset[axis];
+        }
+    }
+    foreach (&path : self.path_nodes[:self.path_count]) {
+        if (path.kind == LINEAR) {
+            path.start -= (ContactVector)offset;
+            path.end -= (ContactVector)offset;
+        }
+    }
+    foreach (&value : self.path_values[:self.path_count]) {
+        for (uint axis = 0; axis < 3; axis++) {
+            (*value)[axis].min -= offset[axis];
+            (*value)[axis].max -= offset[axis];
+        }
+    }
+    self.sweep_active = false;
+    self.path_count = 0;
+}
+
+<*
+ Reset collider observations without changing cloth positions or velocities.
+ @param [inout] component : "Borrowed mutably for this call; null or pending is unchanged."
+*>
+fn void reset_contact_history(Cloth* component) {
+    if (!component || !component.state) return;
+    foreach (&body : component.state.bodies) body.observed = body.published_observed = false;
 }
 
 <* Default cloth settings with no pins or ground. *>

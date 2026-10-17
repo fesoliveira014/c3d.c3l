@@ -24,6 +24,7 @@ fn void? solve_cloth(
     float damping = math::max(0.0f, 1 - desc.damping * dt);
     Vec3 acceleration = gravity * desc.gravity_scale;
     uint[] indices = state.assets.geometry(state.geometry).data.indices;
+    prepare_body_motions(state, false)!;
 
     for (uint substep = 1; substep <= total; substep++) {
         accumulate_wind(state, wind, indices);
@@ -40,11 +41,37 @@ fn void? solve_cloth(
               ? state.pin_targets[slot]
               : state.pin_anchors[slot] + (state.pin_targets[slot] - state.pin_anchors[slot]) * progress;
         }
+        filter_displacement(
+            world: world,
+            state: state,
+            start: state.positions,
+            proposed: state.predicted,
+            begin: (double)(substep - 1) / total,
+            end: (double)substep / total,
+        )!;
+        place_shapes(state, (double)substep / total)!;
 
-        place_shapes(state, progress)!;
         for (uint iteration = 0; iteration < desc.iterations; iteration++) {
+            if (desc.collisions.continuous) state.sweep_start[..] = state.predicted[..];
             project_constraints(state, state.edges, stretch);
+            filter_displacement(
+                world: world,
+                state: state,
+                start: state.sweep_start,
+                proposed: state.predicted,
+                begin: (double)substep / total,
+                end: (double)substep / total,
+            )!;
+            if (desc.collisions.continuous) state.sweep_start[..] = state.predicted[..];
             project_constraints(state, state.bends, bend);
+            filter_displacement(
+                world: world,
+                state: state,
+                start: state.sweep_start,
+                proposed: state.predicted,
+                begin: (double)substep / total,
+                end: (double)substep / total,
+            )!;
             (void)contact_pass(world: world, state: state, positions: state.predicted, apply: true)!;
         }
 
@@ -59,11 +86,28 @@ fn void? solve_cloth(
     finish_body_poses(state);
 }
 
-fn void? prepare_publication(PhysicsWorld* world, ClothState* state) @private {
+fn void? prepare_publication(PhysicsWorld* world, ClothState* state, bool solved) @private {
+    if (state.desc.collisions.continuous) {
+        state.sweep_start[..] = (solved ? state.positions : state.published)[..];
+        prepare_body_motions(state, !solved)!;
+    }
     state.published[..] = state.positions[..];
     foreach (slot, pin : state.pins) state.published[pin] = state.pin_targets[slot];
+    filter_displacement(
+        world: world,
+        state: state,
+        start: state.sweep_start,
+        proposed: state.published,
+        begin: solved ? 1 : 0,
+        end: 1,
+    )!;
     place_shapes(state, 1)!;
     resolve_contacts(world, state, state.published)!;
+    foreach (&body : state.bodies) {
+        if (!body.live) continue;
+        body.published = body.current;
+        body.published_observed = true;
+    }
 }
 
 fn void accumulate_wind(ClothState* state, Wind* wind, uint[] indices) @local {

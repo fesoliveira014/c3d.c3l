@@ -60,7 +60,7 @@ fn ClothDesc folded_desc(bool self_collision = true) @private {
     return desc;
 }
 
-fn void check_folded_contacts(ClothState* state) @private {
+fn void check_folded_contacts(ClothState* state, bool interior = true) @private {
     // The retained vertex projects inside lower triangle (0, 2, 1).
     SelfVector first = (SelfVector)state.published[0];
     SelfVector edge = (SelfVector)state.published[2] - first;
@@ -74,7 +74,7 @@ fn void check_folded_contacts(ClothState* state) @private {
     double denominator = edge_squared * other_squared - mixed * mixed;
     double along = (other_squared * relative.dot(edge) - mixed * relative.dot(other)) / denominator;
     double across = (edge_squared * relative.dot(other) - mixed * relative.dot(edge)) / denominator;
-    assert(along > 0 && across > 0 && along + across < 1);
+    if (interior) assert(along > 0 && across > 0 && along + across < 1);
     assert(distance >= 2.0 * state.desc.thickness - state.desc.collisions.contact_tolerance);
 
     // Lower diagonal (1, 2) crosses upper edge (10, 11) in projection.
@@ -90,7 +90,7 @@ fn void check_folded_contacts(ClothState* state) @private {
     double second_offset = second_edge.dot(offset);
     double first_along = (edge_mixed * second_offset - second_squared * first_offset) / (first_squared * second_squared - edge_mixed * edge_mixed);
     double second_along = (first_squared * second_offset - edge_mixed * first_offset) / (first_squared * second_squared - edge_mixed * edge_mixed);
-    assert(first_along > 0 && first_along < 1 && second_along > 0 && second_along < 1);
+    if (interior) assert(first_along > 0 && first_along < 1 && second_along > 0 && second_along < 1);
     SelfVector closest = offset + first_edge * first_along - second_edge * second_along;
     assert(closest.length() >= 2.0 * state.desc.thickness - state.desc.collisions.contact_tolerance);
 }

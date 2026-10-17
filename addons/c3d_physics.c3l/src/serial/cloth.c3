@@ -27,9 +27,11 @@ struct ClothSavedAuthoring @private {
     uint max_contacts;
     bool self_collision;
     ClothSeam[] seams;
+    bool continuous;
+    uint max_ccd_iterations;
 }
 
-uint[2] cloth_text_default_versions @private = { 1, 2 };
+uint[3] cloth_text_default_versions @private = { 1, 2, 3 };
 
 fn void? register_cloth_codec() @private {
     describe::register_reflected(ClothSeam)!;
@@ -42,8 +44,8 @@ fn void? register_cloth_codec() @private {
     )!;
     serial::register_described_type(
         $Type: ClothSavedAuthoring,
-        version: 3,
-        layout: 0x4a9eef94a46cba51,
+        version: 4,
+        layout: 0x26fe4e79f04356f3,
         defaults: &defaults_cloth_authoring,
     )!;
     serial::register_described_owner(Cloth, ClothSavedAuthoring, {
@@ -81,6 +83,8 @@ fn void defaults_cloth_authoring(void* value) @private {
         .max_contacts = desc.collisions.max_contacts,
         .self_collision = desc.collisions.self_collision,
         .seams = desc.seams,
+        .continuous = desc.collisions.continuous,
+        .max_ccd_iterations = desc.collisions.max_ccd_iterations,
     };
 }
 
@@ -135,6 +139,8 @@ fn void? project_cloth(void* component, void* value, serial::WriteContext* conte
         .max_contacts = desc.collisions.max_contacts,
         .self_collision = desc.collisions.self_collision,
         .seams = desc.seams,
+        .continuous = desc.collisions.continuous,
+        .max_ccd_iterations = desc.collisions.max_ccd_iterations,
     };
 }
 
@@ -161,6 +167,8 @@ fn ClothDesc? cloth_desc(ClothSavedAuthoring* source, serial::ReadContext* conte
             .max_candidates = source.max_candidates,
             .max_contacts = source.max_contacts,
             .self_collision = source.self_collision,
+            .continuous = source.continuous,
+            .max_ccd_iterations = source.max_ccd_iterations,
         },
         .seams = source.seams,
     };

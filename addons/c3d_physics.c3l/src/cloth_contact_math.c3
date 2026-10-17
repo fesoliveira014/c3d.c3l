@@ -54,6 +54,18 @@ struct ContactProjection @private {
     double residual;
 }
 
+struct ContactPairSample @private {
+    ContactIntervals[2] first;
+    ContactIntervals[MAX_CONTACT_HULL_POINTS] second;
+    uint first_count;
+    uint second_count;
+    ContactIntervals witness_first;
+    ContactIntervals witness_second;
+    uint[4] vertices;
+    double[4] coefficients;
+    double radius;
+}
+
 struct ContactPlane @local {
     ContactVector normal;
     ContactInterval support;
@@ -64,7 +76,7 @@ fn bool contact_arithmetic_supported() @private {
     return bitcast(@volatile_load(subnormal) * 2.0, ulong) == 2UL;
 }
 
-fn double? contact_adjacent(double value, bool upward) @local {
+fn double? contact_adjacent(double value, bool upward) @private {
     if (!math::is_finite(value)) return cloth::CONTACT_PRECISION_EXCEEDED~;
     ulong bits = bitcast(value, ulong);
     if (value == 0) {
@@ -117,7 +129,7 @@ fn ContactInterval? contact_divide(ContactInterval numerator, ContactInterval de
     return { .min = contact_adjacent(low, false)!, .max = contact_adjacent(high, true)! };
 }
 
-fn ContactInterval? contact_square(ContactInterval value) @local {
+fn ContactInterval? contact_square(ContactInterval value) @private {
     double first = value.min * value.min;
     double second = value.max * value.max;
     if (!math::is_finite(first) || !math::is_finite(second)) return cloth::CONTACT_PRECISION_EXCEEDED~;
@@ -125,7 +137,7 @@ fn ContactInterval? contact_square(ContactInterval value) @local {
     return { .min = math::max(0.0, contact_adjacent(low, false)!), .max = contact_adjacent(math::max(first, second), true)! };
 }
 
-fn ContactInterval? contact_root(ContactInterval value) @local {
+fn ContactInterval? contact_root(ContactInterval value) @private {
     if (value.max < 0) return cloth::CONTACT_PRECISION_EXCEEDED~;
     return {
         .min = math::max(0.0, contact_adjacent(math::sqrt(math::max(0.0, value.min)), false)!),
@@ -164,7 +176,7 @@ fn ContactVector contact_middle(ContactIntervals value) @private {
         value[2].min * 0.5 + value[2].max * 0.5 };
 }
 
-fn ContactFrame? contact_frame_of(maths::Transform pose) @local {
+fn ContactFrame? contact_frame_of(maths::Transform pose) @private {
     if (!contact_finite(pose.position)) return cloth::CONTACT_PRECISION_EXCEEDED~;
 
     ContactInterval[4] quaternion;
@@ -320,7 +332,7 @@ fn ContactIntervals? contact_triangle_witness(
     ContactIntervals second,
     ContactIntervals third,
     ContactVector weights,
-) @local {
+) @private {
     weights = math::max(weights, (ContactVector){});
     ContactInterval total = contact_add(contact_add(contact_value(weights.x), contact_value(weights.y))!, contact_value(weights.z))!;
     ContactIntervals sum = contact_vector_add(contact_vector_add(

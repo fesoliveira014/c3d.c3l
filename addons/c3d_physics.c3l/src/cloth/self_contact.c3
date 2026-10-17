@@ -110,7 +110,12 @@ fn bool self_pair_excluded(ClothState* state, ClothCandidate candidate) @local {
       || self_vertices_adjacent(state, first.second, second.second);
 }
 
-fn Aabb? self_bounds(Vec3[] positions, uint[] vertices, float thickness) @local {
+fn Aabb? self_bounds(
+    ClothState* state,
+    Vec3[] positions,
+    uint[] vertices,
+    float thickness,
+) @local {
     Vec3 low = positions[vertices[0]];
     Vec3 high = low;
     foreach (vertex : vertices) {
@@ -118,6 +123,10 @@ fn Aabb? self_bounds(Vec3[] positions, uint[] vertices, float thickness) @local 
         if (!finite_vector(position)) return CONTACT_PRECISION_EXCEEDED~;
         low = math::min(low, position);
         high = math::max(high, position);
+        if (state.sweep_active) {
+            low = math::min(low, state.sweep_bounds[vertex].min);
+            high = math::max(high, state.sweep_bounds[vertex].max);
+        }
     }
     Aabb result;
     for (uint axis = 0; axis < 3; axis++) {
@@ -142,7 +151,12 @@ fn usz? gather_self_candidates(ClothState* state, Vec3[] positions, usz count) @
     foreach (index, position : positions) {
         uint[1] vertices = { (uint)index };
         state.self_primitives[primitive_count++] = {
-            .bounds = self_bounds(positions, vertices[..], thickness)!,
+            .bounds = self_bounds(
+                state: state,
+                positions: positions,
+                vertices: vertices[..],
+                thickness: thickness,
+            )!,
             .index = (uint)index,
             .kind = VERTEX,
         };
@@ -150,14 +164,24 @@ fn usz? gather_self_candidates(ClothState* state, Vec3[] positions, usz count) @
     foreach (index, edge : state.edges) {
         uint[2] vertices = { edge.first, edge.second };
         state.self_primitives[primitive_count++] = {
-            .bounds = self_bounds(positions, vertices[..], thickness)!,
+            .bounds = self_bounds(
+                state: state,
+                positions: positions,
+                vertices: vertices[..],
+                thickness: thickness,
+            )!,
             .index = (uint)index,
             .kind = EDGE,
         };
     }
     foreach (index, face : state.faces) {
         state.self_primitives[primitive_count++] = {
-            .bounds = self_bounds(positions, face.vertices[..], thickness)!,
+            .bounds = self_bounds(
+                state: state,
+                positions: positions,
+                vertices: face.vertices[..],
+                thickness: thickness,
+            )!,
             .index = (uint)index,
             .kind = FACE,
         };
@@ -201,7 +225,7 @@ fn double[2] self_edge_weights(
     ContactVector first_end,
     ContactVector second_start,
     ContactVector second_end,
-) @local {
+) @private {
     ContactVector first = first_end - first_start;
     ContactVector second = second_end - second_start;
     ContactVector relative = first_start - second_start;

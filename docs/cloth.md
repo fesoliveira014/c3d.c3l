@@ -112,8 +112,9 @@ plane at `ground_height`.
 External contact samples cloth particles only, using `thickness` as the separation
 offset. A small collider can pass through an unsampled part of a large cloth face
 without touching a particle. Success does not guarantee full cloth-triangle/body
-nonintersection. Contacts are discrete and one-way: fast motion can tunnel, and cloth
-applies no impulse to bodies. Shapes follow final scene body poses, not rendered skin.
+nonintersection. Contacts are one-way: cloth applies no impulse to bodies. Discrete
+contact is the default; `continuous` enables swept particle contact. Shapes follow final
+scene body poses, not rendered skin.
 
 The private physics adapter checks entity, native world/body and cooked-snapshot
 generations during each owner-thread update. Missing owners or bodies contribute
@@ -132,8 +133,8 @@ is supported. Cloth adds no separate scaling convention.
 
 Each solved substep interpolates from the body's last solved pose to its final scene
 pose using shortest-path rotation. First observations and replaced or previously missing
-bodies use the current pose on both sides. A zero-step update checks the publication
-against current poses without advancing solved positions, velocities or body poses.
+bodies use the current pose on both sides. Separate solved and published observations
+keep zero-step publication from advancing solved positions, velocities or body poses.
 Pinned particles are never projected against bodies or ground. Their overlaps are
 excluded from separation enforcement and reported in `pinned_overlaps`.
 
@@ -146,8 +147,10 @@ and `default_cloth_desc()` provide these values:
 | `contact_iterations` | 8 | Final contact passes per substep or publication. |
 | `max_shapes` | 128 | Flattened collider leaves across the listed owners. |
 | `max_candidates` | 8192 | Candidate pairs retained in one pass. |
-| `max_contacts` | 4096 | Active contact records retained in one pass. |
+| `max_contacts` | 4096 | Active contact records and composed impact responses. |
 | `self_collision` | false | Vertex-face and edge-edge contact within this cloth. |
+| `continuous` | false | Sweep external contact and enabled self-contact. |
+| `max_ccd_iterations` | 64 | Distance advances per candidate path. |
 
 Tolerance must be finite and positive; iterations and capacities must be nonzero.
 Preparation sizes staging and contact buffers with checked arithmetic. Updates allocate
@@ -172,8 +175,8 @@ scene.add_cloth(&assets, node, desc)!;
 
 Self-contact checks both vertices against source faces and disjoint source-edge pairs
 within one Cloth. Successful publication has unsigned closest separation at least
-`2 * thickness - contact_tolerance` for each eligible pair. It is discrete: fast features
-can cross between checked positions. Different Cloth components do not collide with each other.
+`2 * thickness - contact_tolerance` for each eligible pair. Enable `continuous` to prevent
+crossing along the checked motion paths. Different Cloth components do not collide with each other.
 
 `ClothDesc.seams` copies pairs of source vertex indices. Preparation takes their transitive
 equivalence; duplicate and identity pairs are harmless. A vertex/face pair is excluded if
@@ -193,6 +196,41 @@ case when an axis is available, or fail with `CONTACT_PRECISION_EXCEEDED`. They 
 discarded as separated. Bounded passes can also fail on competing constraints; increasing
 `contact_iterations` allows more work without promising convergence for every fold.
 
+## Continuous contact
+
+```c3
+ClothDesc desc = cloth::default_cloth_desc();
+desc.collisions.continuous = true;
+desc.collisions.self_collision = true;
+scene.add_cloth(&assets, node, desc)!;
+```
+
+Continuous mode checks the proposed movement from each accepted configuration: velocity
+prediction with pins, each edge/bend correction batch, and contact corrections. Moving
+bodies use linear translation and shortest-path rotation between the final scene poses
+observed by successive updates. This does not recover motion omitted from those poses.
+The broad phase includes the rotational arc. Responses keep their curved paths and are
+checked against all selected contacts before the next configuration is accepted.
+
+The configured distance-advance bound applies to each candidate path. Exhaustion or a
+stalled advance reports `CONTACT_NONCONVERGENT`; unresolved initial overlap or competing
+constraints can report `CONTACT_UNRESOLVED`. Numerical uncertainty reports
+`CONTACT_PRECISION_EXCEEDED`. A failed path is never accepted as a miss. Prepared contact
+capacity also bounds composed responses; neither convergence nor capacity is guaranteed
+for arbitrary motion or topology.
+
+A zero-step update sweeps from the last published positions and body observations to
+the proposed publication using the current final pins and bodies. It leaves solved
+positions, velocities and solved pin/body anchors intact. The next performed step still
+starts from those solved anchors. A performed step publishes its accepted final state.
+
+`PhysicsWorld.teleport` resets the affected body's observations in referencing cloths
+after writing its new pose. Call `cloth::reset_contact_history(Cloth*)` after directly
+teleporting a listed collider through scene transforms. Reset and body replacement use
+current poses on both sides of the discontinuity; endpoint contacts still apply. Reset
+does not teleport the fabric or change its velocity. Ordinary pose edits without reset
+remain continuous motion.
+
 ## Arithmetic and update failures
 
 Consumers using cloth must compile with `--fp-math=strict`, or `"fp-math": "strict"`
@@ -208,11 +246,14 @@ and is NONE on success. `candidates` and `contacts` count observed work;
 and `unresolved` describe the last checked participating constraints, and
 `pinned_overlaps` counts excluded pin overlaps. A failed attempt does not report
 unvisited work as checked.
+`sweeps`, `ccd_iterations`, `impacts` and `resweeps` report continuous work;
+`vertex_face_impacts` and `edge_edge_impacts` identify the self-contact events.
 
 | Fault | Meaning |
 | --- | --- |
 | `c3d::CAPACITY_EXCEEDED` | Binding, candidate or contact storage is full; `stage` identifies the buffer. |
 | `cloth::CONTACT_UNRESOLVED` | The bounded contact passes could not satisfy all participating constraints. |
+| `cloth::CONTACT_NONCONVERGENT` | A CCD advance stalled or exhausted its iteration bound. |
 | `cloth::CONTACT_PRECISION_EXCEEDED` | Arithmetic, correction or float publication cannot establish the configured tolerance. |
 
 An update stages all performed substeps, velocities, pin/body observations and publication
@@ -234,11 +275,13 @@ the old local geometry may render elsewhere. Restoring a supported transform let
 updates retry. World-surface preservation is not guaranteed under an unrepresentable
 transform.
 
-With `C3D_PHYSICS_SERIAL`, the authoring codec stores these five collision fields along
-with the existing cloth settings, requested pins and collider references. It writes
-version 2. Version-1 JSONC receives the current collision defaults; version-1 binary
-is `c3d::UNSUPPORTED`. Restored cloth remains pending. Runtime contacts, diagnostics,
-native identities, buffers and histories are never serialized.
+With `C3D_PHYSICS_SERIAL`, authoring version 4 stores collision settings, requested pins,
+typed seam pairs and collider references. Version-1/2/3 JSONC defaults `continuous` to
+false and `max_ccd_iterations` to 64. Version-1/2 also defaults self-contact to false and
+seams to empty; version-1 receives the discrete collision defaults. Incompatible older
+binary layouts return `c3d::UNSUPPORTED` before destination mutation. Restored cloth
+remains pending. Runtime contacts, diagnostics, native identities, velocities, buffers
+and histories are never serialized.
 
 ## Frame order
 
@@ -266,7 +309,9 @@ solved anchors.
 
 Cloth state is world-space, so `PhysicsWorld.shift_origin(&scene, offset)` subtracts the
 offset from `positions`, `predicted`, `published`, the pin anchors and targets, the
-collision shape endpoints and the sampled body poses. Velocities are unchanged.
+collision shape endpoints, solved/published body observations and world-space sweep
+scratch. Cached path certificates are discarded and rebuilt on the next update.
+Velocities are unchanged.
 Publication is node-local through the inverse of the node's world matrix, and the cloth
 node is an ordinary parent node moved by `Scene.shift_origin`, so the published vertices
 do not change. `ground_height` is a world height and is not shifted.
@@ -293,7 +338,7 @@ world positions and contact separation before writing any stream. Solve and publ
 after preparation (the CPU triangle tree rebuilds only when a query asks for it).
 `PhysicsWorld.cloth_stats` holds the last update's solve and publication seconds, particle count
 and constraint count, pending owners skipped, failed cloth count, observed candidate/contact
-counts and maximum reported residual.
+counts, CCD iterations, impacts and maximum reported residual.
 
 Each revision uploads the position and normal streams only, 24 bytes per vertex: 26,136 bytes for the
 33×33 benchmark flag (counted in `Stats.upload_bytes`; see [Publishing geometry
@@ -306,9 +351,9 @@ flag, counted in `Stats.vertex_history_bytes`.
 
 ```text
 python scripts/build.py --example cloth
-addons/c3d_physics.c3l/build/cloth.exe [--scene flag|cape|both|contacts|fold] [--still] [--frames 300]
+addons/c3d_physics.c3l/build/cloth.exe [--scene flag|cape|both|contacts|fold|fast] [--still] [--frames 300]
 c3c build cloth --path addons/c3d_physics.c3l -O3
-addons/c3d_physics.c3l/build/cloth.exe --benchmark --scene flag|cape|both|contacts|fold [--still] [--ragdoll] [--publish whole|streams]
+addons/c3d_physics.c3l/build/cloth.exe --benchmark --scene flag|cape|both|contacts|fold|fast [--still] [--ragdoll] [--publish whole|streams]
 addons/c3d_physics.c3l/build/cloth.exe --benchmark --trace software|hardware [--validation]
 ```
 
@@ -338,6 +383,14 @@ failure and residual counters.
 
 ![Folded cloth with explicit seam pairs and self-contact enabled](images/cloth_self.png)
 
+The `fast` scene rotates a thin box by 90 degrees and translates it in one fixed step
+through a small cloth patch. Continuous and self-contact are enabled. It uses one
+substep/pass, zero structural stiffness and gravity, and damping that clears velocity
+on the following step, leaving the corrected surface visible. Reset repeats the sweep.
+The panel reports the accumulated swept impacts and current failure/residual counters.
+
+![Cloth after the fast rotating-box crossing](images/cloth_continuous.png)
+
 The benchmark renders one scene (the flag at 32x32 cells) at the default 4x8 settings to a
 1280x720 TAA and motion-blur view with 120 warm-up and 600 measured 60 Hz frames; `--ragdoll`
 drops the character at the end of the warm-up in a cape scene. `--validation` enables Vulkan
@@ -361,6 +414,6 @@ c3c test cloth_acceptance --path addons/c3d_physics.c3l/test/gpu
 ```
 
 No full cloth-feature/body-feature contact, collision against the rendered skin,
-continuous collision, tearing, soft pins, dihedral bending, skinned base pose, tangents,
+tearing, soft pins, dihedral bending, skinned base pose, tangents,
 GPU or crowd simulation. Parallel solving waits for a measured
 consumer need.
