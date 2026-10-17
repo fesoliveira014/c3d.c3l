@@ -73,11 +73,14 @@ fn void? collect_cloth(void* component, serial::WriteContext* context) @private 
     Cloth* owner = component;
     Mesh* mesh = context.scene.get(context.node, Mesh);
     if (!mesh) return cloth::NO_MESH~;
+
     GeometryId expected = owner.is_prepared() ? owner.state.geometry : owner.authoring.source;
     if (!c3d::same_id(mesh.geometry, expected)) return c3d::INVALID_ARGUMENT~;
+
     Mesh projected = *mesh;
     projected.geometry = owner.authoring.source;
     projected.vertex_motion = owner.authoring.source_vertex_motion;
+
     ClothDesc desc = owner.authoring.desc;
     cloth::check_cloth_desc(desc)!;
     GeometryAsset* source = context.assets.geometries.try_get(projected.geometry)!;
@@ -94,9 +97,9 @@ fn void? collect_cloth(void* component, serial::WriteContext* context) @private 
 fn void? project_cloth(void* component, void* value, serial::WriteContext* context) @private {
     Cloth* owner = component;
     ClothDesc desc = owner.authoring.desc;
-    serial::NodeReference[] colliders = alloc::new_array_try(tmem, serial::NodeReference, desc.colliders.len)
-      ?? c3d::CAPACITY_EXCEEDED~!;
+    serial::NodeReference[] colliders = alloc::new_array(tmem, serial::NodeReference, desc.colliders.len);
     foreach (index, entity : desc.colliders) colliders[index] = context.make_entity_reference(entity, true)!;
+
     *(ClothSavedAuthoring*)value = {
         .substeps = desc.substeps,
         .iterations = desc.iterations,
@@ -118,8 +121,9 @@ fn void? project_cloth(void* component, void* value, serial::WriteContext* conte
 }
 
 fn ClothDesc? cloth_desc(ClothSavedAuthoring* source, serial::ReadContext* context) @private {
-    Entity[] colliders = alloc::new_array_try(tmem, Entity, source.colliders.len) ?? c3d::CAPACITY_EXCEEDED~!;
+    Entity[] colliders = alloc::new_array(tmem, Entity, source.colliders.len);
     foreach (index, reference : source.colliders) colliders[index] = context.resolve_node_reference(reference, true)!.id;
+
     return {
         .substeps = source.substeps,
         .iterations = source.iterations,
@@ -147,6 +151,7 @@ fn void? validate_cloth(void* value, serial::ReadContext* context) @private {
     Mesh* mesh = context.authored(Mesh, Mesh, context.node.id)!;
     if (!mesh) return cloth::NO_MESH~;
     if (context.has_component(SkinBinding)) return c3d::UNSUPPORTED~;
+
     ClothDesc desc = cloth_desc(source, context)!;
     cloth::check_cloth_desc(desc)!;
     GeometryAsset* geometry = context.assets.geometries.try_get(mesh.geometry)!;

@@ -870,10 +870,12 @@ fn void? refresh_patch(AssetStore* assets, Scene* scene, GridLevel* level) @loca
 
 fn void? apply_cache_obstacle(GridCache* cache, CacheControls* controls, bool patch) @local {
     if (controls.action == ObstacleAction.NONE) return;
+
     if (controls.obstacle) {
         cache.cache.remove_obstacle(controls.obstacle)!;
         controls.obstacle = (ObstacleRef)0;
     }
+
     switch (controls.action) {
         case NONE:
             break;
@@ -886,6 +888,7 @@ fn void? apply_cache_obstacle(GridCache* cache, CacheControls* controls, bool pa
             if (controls.moved) base.x += 3;
             controls.obstacle = cache.cache.add_box_obstacle({ .min = base, .max = base + (Vec3){ 1, 1.5f, 2 } })!;
     }
+
     controls.action = ObstacleAction.NONE;
 }
 
@@ -1052,6 +1055,7 @@ fn void? run(
           : bounded_detail ? DETAIL_SCRATCH_BYTES : nav::DEFAULT_GRID_SCRATCH_BYTES,
     )!;
     defer nav::destroy_grid_tile_builder(&builder);
+
     GridCache cache;
     if (cache_mode) {
         GridRange extent = { .max_x = MAP_TILES, .max_z = MAP_TILES };
@@ -1077,6 +1081,7 @@ fn void? run(
         )!;
     }
     defer if (cache_mode) nav::destroy_grid_cache(&cache);
+
     NavMesh mesh = nav::create_nav_mesh(mem, cache_mode ? cache.mesh_desc() : builder.mesh_desc(MAP_TILES * MAP_TILES))!;
     defer nav::destroy_nav_mesh(&mesh);
     if (!cache_mode) {
@@ -1113,6 +1118,7 @@ fn void? run(
         scene:     scene,
     )!;
     defer nav::destroy_crowd(&crowd);
+
     Agents agents;
     bool agents_spawned;
     if (!cache_mode) {
@@ -1218,6 +1224,7 @@ fn void? run(
                 frame: frames,
             )!;
             apply_cache_obstacle(&cache, &cached, bounded_detail)!;
+
             cached.progress = cache.update(&mesh, 1);
             cached.failed += cached.progress.failed;
             cached.completed += cached.progress.installed + cached.progress.rebuilt;
@@ -1230,6 +1237,7 @@ fn void? run(
                 io::eprintfn("cached grid update failed: %s", cache.last_failure.reason);
                 if (cache_demo) return cache.last_failure.reason~;
             }
+
             if (!agents_spawned && !cached.progress.pending) {
                 spawn_agents(
                     assets: assets,
@@ -1274,6 +1282,7 @@ fn void? run(
         )!;
         if (frame_limit && frames >= frame_limit) break;
     }
+
     if (cache_demo) {
         io::printfn("cache demo: frames=%d completed=%d pending_work=%d failed=%d revision=%d", frames,
             cached.completed, cached.progress.pending, cached.failed, cache.source_revision);

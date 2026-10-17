@@ -24,6 +24,7 @@ fn void? solve_cloth(
     float damping = math::max(0.0f, 1 - desc.damping * dt);
     Vec3 acceleration = gravity * desc.gravity_scale;
     uint[] indices = state.assets.geometry(state.geometry).data.indices;
+
     for (uint substep = 1; substep <= total; substep++) {
         accumulate_wind(state, wind, indices);
         foreach (index, position : state.positions) {
@@ -32,24 +33,28 @@ fn void? solve_cloth(
             state.velocities[index] = velocity;
             state.predicted[index] = position + velocity * dt;
         }
+
         float progress = (float)substep / (float)total;
         foreach (slot, pin : state.pins) {
             state.predicted[pin] = substep == total
               ? state.pin_targets[slot]
               : state.pin_anchors[slot] + (state.pin_targets[slot] - state.pin_anchors[slot]) * progress;
         }
+
         place_shapes(state, progress)!;
         for (uint iteration = 0; iteration < desc.iterations; iteration++) {
             project_constraints(state, state.edges, stretch);
             project_constraints(state, state.bends, bend);
             (void)contact_pass(world: world, state: state, positions: state.predicted, apply: true)!;
         }
+
         resolve_contacts(world, state, state.predicted)!;
         foreach (index, &position : state.positions) {
             state.velocities[index] = (state.predicted[index] - *position) / dt;
             *position = state.predicted[index];
         }
     }
+
     state.pin_anchors[..] = state.pin_targets[..];
     finish_body_poses(state);
 }
