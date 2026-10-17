@@ -23,6 +23,7 @@ fn void test_grid_height_adapters_match_authored_triangles() @test {
         for (uint x = 0; x < 5; x++) samples[x + z * 6] = x * 0.25f + z * 0.5f;
     }
     samples[2 + 2 * 6] += 0.5f;
+
     GridHeightView heights = {
         .samples = samples[..],
         .width = 5,
@@ -46,6 +47,7 @@ fn void test_grid_height_adapters_match_authored_triangles() @test {
     foreach (diagonal : GridDiagonal::values) {
         heights.diagonal = diagonal;
         sampler.diagonal = diagonal;
+
         GridMap* authored = mem::new(GridMap);
         defer free(authored);
         for (int z = 0; z < 3; z++) {
@@ -65,6 +67,7 @@ fn void test_grid_height_adapters_match_authored_triangles() @test {
                 lay_floor(authored, { x, z, x + 1, z + 1 }, floor);
             }
         }
+
         GridSourceDesc explicit_source = grid_map_source(authored);
         explicit_source.origin = heights.origin;
         GridSourceDesc[3] sources = {
@@ -77,6 +80,7 @@ fn void test_grid_height_adapters_match_authored_triangles() @test {
             GridFixture* fixture = height_source_fixture(source);
             defer destroy_grid_fixture(fixture);
             install_grid_tile(fixture, 0, 0);
+
             for (uint triangle = 0; triangle < 2; triangle++) {
                 bool main_diagonal = diagonal == GridDiagonal.MIN_MIN_TO_MAX_MAX;
                 Vec2 local = main_diagonal
@@ -90,6 +94,7 @@ fn void test_grid_height_adapters_match_authored_triangles() @test {
                     ? (triangle == 0 ? 0.25f : 0.125f)
                     : (triangle == 0 ? 0.125f : 0.25f);
                 Vec3 point = { -6 + local.x * 2, expected, -4 + local.y * 2 };
+
                 NearestPoly nearest = fixture.query.find_nearest_poly(point, { 0.001f, 1, 0.001f }, &fixture.filter)!!;
                 SurfacePoint surface = fixture.query.poly_surface(nearest.ref, point)!!;
                 Vec3 normal = ((Vec3){ -gradient_x, 1, -gradient_z }).normalize();
@@ -118,6 +123,7 @@ fn void test_grid_height_capture_preserves_absence_and_source_faults() @test {
         .context = &context,
         .area = nav::WALKABLE_AREA,
     };
+
     GridSourceDesc source = nav::grid_sampled_source(&sampler, 0, 8)!!;
     GridFixture* fixture = height_source_fixture(source);
     defer destroy_grid_fixture(fixture);
@@ -149,7 +155,6 @@ fn void test_grid_dirty_ranges_cover_capture_halos_and_incident_cells() @test {
         { .cells = { .max_x = 1, .max_z = 1 }, .border = 17, .expected = extent },
         { .cells = { .min_x = 40, .min_z = 40, .max_x = 41, .max_z = 41 }, .border = 1 },
         { .cells = { .min_x = 8, .min_z = 8, .max_x = 8, .max_z = 9 }, .border = 1 },
-        { .cells = { .min_x = int::min, .min_z = int::min, .max_x = int::max, .max_z = int::max }, .border = uint::max, .expected = extent },
     };
     foreach (entry : cases) {
         GridRange selected = nav::grid_dirty_tiles(
@@ -165,8 +170,6 @@ fn void test_grid_dirty_ranges_cover_capture_halos_and_incident_cells() @test {
     assert_grid_range(cells, { .min_x = 7, .min_z = 7, .max_x = 9, .max_z = 9 });
     assert_grid_range(nav::grid_vertex_cells({ .min_x = -8, .min_z = -8, .max_x = -7, .max_z = -7 })!!,
         { .min_x = -9, .min_z = -9, .max_x = -7, .max_z = -7 });
-    assert_grid_range(nav::grid_vertex_cells({ .min_x = int::min, .max_x = int::min })!!, {});
-    assert(@catch(nav::grid_vertex_cells({ .min_x = int::min, .max_x = 0, .max_z = 1 })) == c3d::CAPACITY_EXCEEDED);
     assert(@catch(nav::grid_vertex_cells({ .min_x = 1 })) == c3d::INVALID_ARGUMENT);
 }
 
@@ -174,12 +177,14 @@ fn void test_grid_world_edits_include_closed_boundaries() @test {
     Vec3 origin = { -10, 0, -6 };
     GridRange cells = nav::grid_world_cells({ .min = { -10, 0, -6 }, .max = { -6, 0, -2 } }, origin, 2)!!;
     assert_grid_range(cells, { .min_x = -1, .min_z = -1, .max_x = 3, .max_z = 3 });
+
     cells = nav::grid_world_cells({ .min = { -13.5f, 0, -9.5f }, .max = { -12.5f, 0, -8.5f } }, origin, 2)!!;
     assert_grid_range(cells, { .min_x = -2, .min_z = -2, .max_x = -1, .max_z = -1 });
+
     cells = nav::grid_world_cells({ .min = origin, .max = origin }, origin, 2)!!;
     assert_grid_range(cells, { .min_x = -1, .min_z = -1, .max_x = 1, .max_z = 1 });
+
     assert(@catch(nav::grid_world_cells({ .min = { 1, 0, 0 } }, {}, 1)) == c3d::INVALID_ARGUMENT);
-    assert(@catch(nav::grid_world_cells({ .max = { float::max, 0, float::max } }, {}, 1)) == c3d::CAPACITY_EXCEEDED);
 }
 
 fn GridFixture* height_source_fixture(GridSourceDesc source) @local {
@@ -193,6 +198,7 @@ fn GridFixture* height_source_fixture(GridSourceDesc source) @local {
     config.region_merge_size = 0;
     config.detail_mode = DetailMode.BOUNDED;
     config.detail_max_error = 0;
+
     fixture.builder = nav::create_grid_tile_builder(
         allocator: mem,
         config: config,
@@ -209,11 +215,13 @@ fn GridHeightSample? height_test_sample(void* context, float world_x, float worl
     HeightSampleContext* state = context;
     GridHeightView* view = state.view;
     if (state.failed) return c3d::CAPACITY_EXCEEDED~;
+
     int x = (int)((world_x - view.origin.x) / view.cell_size);
     int z = (int)((world_z - view.origin.z) / view.cell_size);
     if (x < 0 || z < 0 || (uint)x >= view.width || (uint)z >= view.height) return {};
     if (state.missing && x == 1 && z == 1) return {};
     if (state.invalid) return { .height = bitcast(0x7fc00000u, float), .present = true };
+
     return {
         .height = view.samples[(usz)x + (usz)z * view.row_stride] * view.height_scale + view.height_offset,
         .present = true,

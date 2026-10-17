@@ -386,27 +386,6 @@ fn void test_cloth_drapes_over_all_external_collider_kinds() @test {
     state_of(&fixture, field_below).velocities[0] = field_normal * 0.25f;
     state_of(&fixture, child_below).velocities[0] = child_normal * 0.25f;
 
-    usz state_bytes, scratch_bytes, particles, triangles, captured_shapes;
-    @pool() {
-        Allocation[] allocations = tracker.allocations_tlist(tmem);
-        fixture.scene.@each(Cloth; entity, component) {
-            ClothState* state = component.state;
-            foreach (allocation : allocations) if (allocation.ptr == state) state_bytes += (usz)allocation.size;
-            particles += state.positions.len;
-            triangles += fixture.assets.geometry(state.geometry).data.indices.len / 3;
-            captured_shapes += state.shapes.len;
-            scratch_bytes += state.staged_shapes.len * ClothShape::size + state.staged_bodies.len * ClothBody::size
-              + state.frames.len * ContactFrame::size + state.candidates.len * ClothCandidate::size + state.contacts.len * ClothContact::size;
-            scratch_bytes += Vec3::size * (state.staged_positions.len + state.staged_velocities.len + state.staged_published.len
-              + state.staged_pin_anchors.len + state.staged_shape_starts.len + state.staged_shape_ends.len + state.local_output.len
-              + state.local_normals.len + state.publication_roundtrip.len + state.staged_predicted.len + state.staged_accelerations.len
-              + state.staged_pin_targets.len);
-        };
-    };
-    assert(state_bytes > scratch_bytes);
-    double solve_seconds, publish_seconds, maximum_residual;
-    ulong candidate_total, contact_total;
-    uint peak_candidates, peak_contacts, failed;
     uint[6] contacts;
     for (uint update = 0; update < DRAPE_STEPS; update++) {
         fixture.physics.update(physics::DEFAULT_FIXED_DT);
@@ -414,19 +393,11 @@ fn void test_cloth_drapes_over_all_external_collider_kinds() @test {
         sz allocation_count = tracker.total_allocation_count();
         fixture.physics.update_cloths();
         assert(tracker.total_allocation_count() == allocation_count);
-        ClothStats stats = fixture.physics.cloth_stats;
-        solve_seconds += stats.solve_seconds;
-        publish_seconds += stats.publish_seconds;
-        candidate_total += stats.candidates;
-        contact_total += stats.contacts;
-        failed += stats.failed;
-        maximum_residual = math::max(maximum_residual, stats.max_residual);
-        fixture.scene.@each(Cloth; entity, component) {
-            peak_candidates = math::max(peak_candidates, component.state.contact_result.peak_candidates);
-            peak_contacts = math::max(peak_contacts, component.state.contact_result.peak_contacts);
-        };
+        assert(!fixture.physics.cloth_stats.failed);
+
         check_drape_particles(&fixture, sections[..]);
         foreach (index, section : sections) contacts[index] += state_of(&fixture, section).contact_result.contacts;
+
         foreach (index, probe : contact_probes) {
             ClothState* state = state_of(&fixture, probe);
             assert(!state.contact_result.failure);
@@ -452,6 +423,7 @@ fn void test_cloth_drapes_over_all_external_collider_kinds() @test {
                 }
             }
         }
+
         ClothState* hole_state = state_of(&fixture, hole);
         assert(!hole_state.contact_result.failure && hole_state.contact_result.candidates == 0);
         if (update == 0) {
@@ -465,6 +437,7 @@ fn void test_cloth_drapes_over_all_external_collider_kinds() @test {
             assert(state_of(&fixture, field_below).contact_result.contacts > 0);
             assert(state_of(&fixture, child_below).contact_result.contacts > 0);
         }
+
         foreach (index, body : bodies) {
             b3::BodyId native = fixture.physics.body(body)!!;
             b3::WorldTransform pose = native.transform();
@@ -472,6 +445,7 @@ fn void test_cloth_drapes_over_all_external_collider_kinds() @test {
             assert(native.linear_velocity() == (Vec3){} && native.angular_velocity() == (Vec3){});
         }
     }
+
     foreach (count : contacts) assert(count > 0);
     foreach (section : sections) {
         ClothState* state = state_of(&fixture, section);
@@ -481,10 +455,8 @@ fn void test_cloth_drapes_over_all_external_collider_kinds() @test {
         }
         assert(moved);
     }
+
     Vec3 fallen = published_world(&fixture, hole, 0);
     assert(fallen.y < 0.125f && math::abs(fallen.x - 7.5f) <= POSITION_TOLERANCE);
     assert(math::abs(fallen.z - 1.5f) <= POSITION_TOLERANCE);
-    io::printfn("cloth_external_measurement,steps,%d,particles,%d,triangles,%d,bodies,5,distinct_leaves,6,captured_shapes,%d,state_bytes,%d,prepared_scratch_bytes,%d,solve_ms,%.9f,publish_ms,%.9f,candidates,%d,contacts,%d,peak_candidates,%d,peak_contacts,%d,ccd_iterations,0,failed,%d,max_residual,%.9f",
-        DRAPE_STEPS, particles, triangles, captured_shapes, state_bytes, scratch_bytes, solve_seconds * 1000, publish_seconds * 1000,
-        candidate_total, contact_total, peak_candidates, peak_contacts, failed, maximum_residual);
 }

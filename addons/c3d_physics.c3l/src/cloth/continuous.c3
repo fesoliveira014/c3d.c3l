@@ -55,6 +55,7 @@ fn void? sample_path_pair(
             sample: sample,
         );
     }
+
     bool vertex_face = candidate.kind == SELF_VERTEX_FACE;
     if (vertex_face) {
         uint[3] face = state.faces[candidate.self_pair[1]].vertices;
@@ -68,6 +69,7 @@ fn void? sample_path_pair(
     sample.second_count = 4 - sample.first_count;
     for (uint index = 0; index < sample.first_count; index++) sample.first[index] = state.path_values[state.path_heads[sample.vertices[index]]];
     for (uint index = 0; index < sample.second_count; index++) sample.second[index] = state.path_values[state.path_heads[sample.vertices[index + sample.first_count]]];
+
     if (vertex_face) {
         ContactVector weights = physics::contact_triangle_weights(
             point: physics::contact_middle(sample.first[0]),
@@ -197,6 +199,7 @@ fn double? remaining_separation(
     } else {
         foreach (vertex : sample.vertices) affine &= !state.path_nodes[state.path_heads[vertex]].curved;
     }
+
     if (!affine) {
         sample_path_pair(
             world: world,
@@ -207,6 +210,7 @@ fn double? remaining_separation(
         )!;
         return pair_separation(sample, direction);
     }
+
     sample_path_pair(
         world: world,
         state: state,
@@ -253,6 +257,7 @@ fn ClothImpact? sweep_candidate(PhysicsWorld* world, ClothState* state, ClothCan
         sample: &sample,
     )!;
     double speed = pair_speed(state, candidate, &sample)!;
+
     for (uint iteration = 0; iteration < state.desc.collisions.max_ccd_iterations; iteration++) {
         state.contact_result.ccd_iterations++;
         sample_path_pair(
@@ -274,6 +279,7 @@ fn ClothImpact? sweep_candidate(PhysicsWorld* world, ClothState* state, ClothCan
         impact.vertices = sample.vertices;
         impact.coefficients = sample.coefficients;
         impact.first_count = sample.first_count;
+
         if (remaining_separation(
             world: world,
             state: state,
@@ -287,6 +293,7 @@ fn ClothImpact? sweep_candidate(PhysicsWorld* world, ClothState* state, ClothCan
             if (fixed) foreach (vertex : impact.vertices) fixed &= state.inverse_masses[vertex] == 0;
             return fixed ? CONTACT_UNRESOLVED~ : CONTACT_PRECISION_EXCEEDED~;
         }
+
         bool respond = true;
         if (self_candidate(*candidate) && state.path_count > state.path_heads.len) {
             evaluate_paths(state, physics::contact_value(1))!;
@@ -308,6 +315,7 @@ fn ClothImpact? sweep_candidate(PhysicsWorld* world, ClothState* state, ClothCan
             return impact;
         }
         if (!(distance.lower > separation) || !(speed > 0)) return CONTACT_PRECISION_EXCEEDED~;
+
         if (self_candidate(*candidate) && state.path_count > state.path_heads.len) {
             double certified = certified_self_prefix(
                 world: world,
@@ -322,6 +330,7 @@ fn ClothImpact? sweep_candidate(PhysicsWorld* world, ClothState* state, ClothCan
                 continue;
             }
         }
+
         ContactInterval step = physics::contact_multiply(
             first: physics::contact_value(CLOTH_ADVANCE_FRACTION),
             second: physics::contact_divide(
@@ -353,6 +362,7 @@ fn double? certified_self_prefix(
         ClothPathNode* node = &state.path_nodes[index];
         if (node.kind == OFFSET && node.begin > impact.time) end = math::min(end, node.begin);
     }
+
     ContactPairSample first_sample;
     ContactPairSample last_sample;
     sample_path_pair(
@@ -372,6 +382,7 @@ fn double? certified_self_prefix(
     ContactIntervals direction = physics::contact_vector(impact.direction);
     ContactInterval length = physics::contact_length(direction)!;
     if (!(length.min > 0)) return impact.time;
+
     double fraction = 1;
     for (uint first = 0; first < impact.first_count; first++) {
         for (uint second = 0; second < last_sample.second_count; second++) {
@@ -424,6 +435,7 @@ fn void? respond_self_path(ClothState* state, ClothImpact impact) @local {
     );
     double squared = impact.direction.dot(impact.direction);
     if (!(squared > 0) || !math::is_finite(squared)) return CONTACT_PRECISION_EXCEEDED~;
+
     double impulse = self_path_impulse(
         state: state,
         impact: impact,
@@ -442,6 +454,7 @@ fn void? respond_self_path(ClothState* state, ClothImpact impact) @local {
     }
     if (!(impulse > 0)) return CONTACT_UNRESOLVED~;
     if (!math::is_finite(impulse)) return CONTACT_PRECISION_EXCEEDED~;
+
     foreach (index, vertex : impact.vertices) {
         double weight = state.inverse_masses[vertex];
         if (weight == 0 || impact.coefficients[index] == 0) continue;
@@ -501,6 +514,7 @@ fn void? filter_displacement(
     )!;
     state.sweep_active = true;
     defer state.sweep_active = false;
+
     uint responses;
     while (true) {
         state.contact_result.stage = ClothContactStage.CANDIDATES;
@@ -508,6 +522,7 @@ fn void? filter_displacement(
         usz candidates = physics::gather_cloth_candidates(world, state, proposed)!;
         candidates = gather_self_candidates(state, proposed, candidates)!;
         state.contact_result.stage = ClothContactStage.CONTACTS;
+
         ClothImpact earliest = { .time = 1 };
         ClothCandidate obstacle;
         uint contacts;
@@ -525,6 +540,7 @@ fn void? filter_displacement(
             }
         }
         if (!earliest.hit) break;
+
         state.contact_result.stage = ClothContactStage.RESOLVE;
         if (responses == state.contacts.len) {
             state.contact_result.stage = ClothContactStage.CONTACTS;
@@ -548,6 +564,7 @@ fn void? filter_displacement(
         }
         state.contact_result.resweeps++;
     }
+
     evaluate_paths(state, physics::contact_value(1))!;
     foreach (particle, head : state.path_heads) {
         ContactIntervals endpoint = state.path_values[head];

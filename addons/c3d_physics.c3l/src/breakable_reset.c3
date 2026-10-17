@@ -37,10 +37,8 @@ fn void? PhysicsWorld.reset_breakable(
     ) ?? c3d::UNSUPPORTED~!;
 
     @pool() {
-        maths::Transform[] poses = alloc::new_array_try(tmem, maths::Transform, previous.pieces.len)
-          ?? c3d::CAPACITY_EXCEEDED~!;
-        maths::Transform[] locals = alloc::new_array_try(tmem, maths::Transform, previous.pieces.len)
-          ?? c3d::CAPACITY_EXCEEDED~!;
+        maths::Transform[] poses = alloc::new_array(tmem, maths::Transform, previous.pieces.len);
+        maths::Transform[] locals = alloc::new_array(tmem, maths::Transform, previous.pieces.len);
         foreach (index, entity : previous.pieces) {
             if (!self.scene.world.is_alive(entity)) continue;
             Node* node = self.scene.node(entity);
@@ -134,6 +132,7 @@ fn void? check_breakable_reset_roles(PhysicsWorld* world, Node* root, BreakableS
         if (world.scene.has(node, PhysicsJoint) || world.scene.has(node, Joint) || world.scene.has(node, Ragdoll)) {
             return c3d::INVALID_ARGUMENT~;
         }
+
         usz owner_index = state.pieces.len + 1;
         if (node == root) owner_index = state.pieces.len;
         foreach (usz index, entity : state.pieces) if (c3d::same_id(entity, node.id)) owner_index = index;
@@ -141,6 +140,7 @@ fn void? check_breakable_reset_roles(PhysicsWorld* world, Node* root, BreakableS
         RigidBody* body = world.scene.get(node, RigidBody);
         if (!authored && !body) continue;
         if (owner_index == state.pieces.len + 1) return c3d::INVALID_ARGUMENT~;
+
         BreakableBodyOwner owner = state.runtime.bodies[owner_index];
         if (authored && authored.colliders.ptr != owner.colliders) return c3d::INVALID_ARGUMENT~;
         if (body && (!body.body.is_valid() || !same_breakable_body(body.body, owner.body))) return c3d::INVALID_ARGUMENT~;
@@ -156,6 +156,7 @@ fn void? check_breakable_reset_roles(PhysicsWorld* world, Node* root, BreakableS
         if (RigidBody* body = world.scene.get(node, RigidBody)) capacity = math::max(capacity, body.body.joint_count());
     }
     if (RigidBody* body = world.scene.get(root, RigidBody)) capacity = math::max(capacity, body.body.joint_count());
+
     b3::JointId[] joints = alloc::new_array_try(world.allocator, b3::JointId, capacity)
       ?? c3d::CAPACITY_EXCEEDED~!;
     defer alloc::free(world.allocator, joints.ptr);
@@ -208,14 +209,13 @@ fn maths::Transform? breakable_rest_parent(
 
 fn Weld[]? pending_breakable_reset_edges(PhysicsWorld* world, BreakableState* state) @local {
     if (state.alive_pieces < 2) return {};
-    uint[] indices = alloc::new_array_try(tmem, uint, state.alive_pieces) ?? c3d::CAPACITY_EXCEEDED~!;
-    uint[] offsets = alloc::new_array_try(tmem, uint, (sz)state.alive_pieces + 1) ?? c3d::CAPACITY_EXCEEDED~!;
-    maths::Transform[] poses = alloc::new_array_try(tmem, maths::Transform, state.alive_pieces)
-      ?? c3d::CAPACITY_EXCEEDED~!;
-    SnapshotHandle[] held = alloc::new_array_try(tmem, SnapshotHandle, state.runtime.geometries.len)
-      ?? c3d::CAPACITY_EXCEEDED~!;
+    uint[] indices = alloc::new_array(tmem, uint, state.alive_pieces);
+    uint[] offsets = alloc::new_array(tmem, uint, (sz)state.alive_pieces + 1);
+    maths::Transform[] poses = alloc::new_array(tmem, maths::Transform, state.alive_pieces);
+    SnapshotHandle[] held = alloc::new_array(tmem, SnapshotHandle, state.runtime.geometries.len);
     uint held_count;
     defer foreach (handle : held[:held_count]) release_snapshot(world.snapshots, handle);
+
     uint count;
     foreach (uint index, entity : state.pieces) {
         if (!world.scene.world.is_alive(entity)) continue;
@@ -228,6 +228,7 @@ fn Weld[]? pending_breakable_reset_edges(PhysicsWorld* world, BreakableState* st
         }
     }
     offsets[count] = held_count;
+
     Weld[] edges = build_breakable_graph(
         world: world,
         poses: poses,
@@ -246,6 +247,7 @@ fn Weld[]? pending_breakable_reset_edges(PhysicsWorld* world, BreakableState* st
 fn BreakableState*? copy_breakable_reset_state(PhysicsWorld* world, BreakableState* source, BreakableForm form) @local {
     Weld[] edges = source.welds;
     if (!source.runtime.prepared && source.recipe_kind == LEGACY_CURRENT_POSE) edges = pending_breakable_reset_edges(world, source)!;
+
     BreakableState* state = allocate_breakable(
         allocator: world.scene.allocator,
         piece_count: source.pieces.len,
@@ -268,6 +270,7 @@ fn BreakableState*? copy_breakable_reset_state(PhysicsWorld* world, BreakableSta
     state.runtime.materials[..] = source.runtime.materials[..];
     state.runtime.anchors[..] = source.runtime.anchors[..];
     state.runtime.prepared = true;
+
     foreach (&weld : state.welds) {
         weld.joint = {};
         weld.broken = !world.scene.world.is_alive(state.pieces[weld.piece_a])
@@ -293,8 +296,7 @@ fn void? stage_breakable_reset_bodies(
 ) @local {
     if (!state.alive_pieces) return;
     if (state.form == ASSEMBLY) {
-        ColliderDesc[] colliders = alloc::new_array_try(tmem, ColliderDesc, state.runtime.geometries.len)
-          ?? c3d::CAPACITY_EXCEEDED~!;
+        ColliderDesc[] colliders = alloc::new_array(tmem, ColliderDesc, state.runtime.geometries.len);
         uint count;
         foreach (uint index, entity : state.pieces) {
             if (!world.scene.world.is_alive(entity)) continue;
@@ -318,11 +320,12 @@ fn void? stage_breakable_reset_bodies(
         )!;
         return;
     }
+
     foreach (uint index, entity : state.pieces) {
         if (!world.scene.world.is_alive(entity)) continue;
         uint first = state.runtime.hull_offsets[index];
         uint count = state.runtime.hull_offsets[index + 1] - first;
-        ColliderDesc[] colliders = alloc::new_array_try(tmem, ColliderDesc, count) ?? c3d::CAPACITY_EXCEEDED~!;
+        ColliderDesc[] colliders = alloc::new_array(tmem, ColliderDesc, count);
         foreach (uint hull, &collider : colliders) {
             *collider = breakable_collider(
                 state: state,

@@ -112,10 +112,12 @@ fn void test_ragdoll_both_formats_preserve_configuration_and_match_public_restar
             Fixture fixture;
             create_fixture(&fixture);
             defer destroy_fixture(&fixture);
+
             Rig original = add_rig(&fixture.source, &fixture.assets, rig_model(&fixture));
             PhysicsWorld source_world = create_world(&fixture.source, &fixture.assets);
             defer physics::destroy_physics_world(&source_world);
             configure_rig(&source_world, &original);
+
             Node* independent = add_sphere(
                 scene: &fixture.source,
                 parent: original.root,
@@ -126,6 +128,7 @@ fn void test_ragdoll_both_formats_preserve_configuration_and_match_public_restar
             PhysicsBody* independent_body = fixture.source.get(independent, PhysicsBody);
             independent_body.body.linear_velocity = { 4, 5, 6 };
             independent_body.body.angular_velocity = { -1, -2, -3 };
+
             original.ragdoll.bone_nodes[1].local.position.x += 0.2f;
             fixture.source.update_world();
             PhysicsBody* original_body = fixture.source.get(original.ragdoll.bone_nodes[1], PhysicsBody);
@@ -135,6 +138,7 @@ fn void test_ragdoll_both_formats_preserve_configuration_and_match_public_restar
             original.ragdoll.recoveries = 7;
             original.ragdoll.last_facing = FACE_DOWN;
             original.ragdoll.frozen[0].position = { 99, 98, 97 };
+
             char[] bytes = encode(
                 scene: &fixture.source,
                 assets: &fixture.assets,
@@ -145,10 +149,12 @@ fn void test_ragdoll_both_formats_preserve_configuration_and_match_public_restar
             assert(original_body.body.angular_velocity == (Vec3){ 1, 2, 3 });
             assert(independent_body.body.linear_velocity == (Vec3){ 4, 5, 6 });
             assert(independent_body.body.angular_velocity == (Vec3){ -1, -2, -3 });
+
             Node* restored = decode(&fixture, bytes, text_mode)!!;
             PhysicsBody* independent_copy = fixture.destination.get(child_named(restored, "independent"), PhysicsBody);
             assert(independent_copy.body.linear_velocity == independent_body.body.linear_velocity);
             assert(independent_copy.body.angular_velocity == independent_body.body.angular_velocity);
+
             Node* skin = fixture.destination.get(restored, ModelInstance).present_node(1);
             Ragdoll* actual = fixture.destination.get(skin, Ragdoll);
             assert(actual.bone_weights == original.ragdoll.bone_weights && actual.bone_modes == original.ragdoll.bone_modes);
@@ -160,6 +166,7 @@ fn void test_ragdoll_both_formats_preserve_configuration_and_match_public_restar
             assert(actual.recoveries == 0 && actual.last_facing == FACE_UP);
             assert(actual.frozen[0].position == fixture.destination.get(skin, SkinBinding).joints[0].local.position);
             assert(fixture.destination.count(RigidBody) == 0 && fixture.destination.count(Joint) == 0);
+
             foreach (node : actual.bone_nodes) {
                 PhysicsBody* body = fixture.destination.get(node, PhysicsBody);
                 assert(body.status == PENDING && body.body.linear_velocity == (Vec3){} && body.body.angular_velocity == (Vec3){});
@@ -170,19 +177,23 @@ fn void test_ragdoll_both_formats_preserve_configuration_and_match_public_restar
                 root: restored,
                 text_mode: text_mode,
             )!!);
+
             Scene reference = scene::create_scene(mem, { .max_nodes = 32 });
             defer scene::destroy_scene(&reference);
             physics::register_physics(&reference)!!;
+
             Rig expected = add_rig(&reference, &fixture.assets, original.model);
             PhysicsWorld expected_world = create_world(&reference, &fixture.assets);
             defer physics::destroy_physics_world(&expected_world);
             configure_rig(&expected_world, &expected);
             foreach (index, node : expected.ragdoll.bone_nodes) node.local = actual.bone_nodes[index].local;
             reference.update_world();
+
             PhysicsWorld world = create_world(&fixture.destination, &fixture.assets);
             defer physics::destroy_physics_world(&world);
             world.update(0);
             expected_world.update(0);
+
             foreach (index, node : actual.bone_nodes) {
                 RigidBody* body = fixture.destination.get(node, RigidBody);
                 RigidBody* expected_body = reference.get(expected.ragdoll.bone_nodes[index], RigidBody);
@@ -190,12 +201,14 @@ fn void test_ragdoll_both_formats_preserve_configuration_and_match_public_restar
                 assert((body.current.position - expected_body.current.position).length() < 1e-4f);
                 assert(body.body.linear_velocity() == (Vec3){} && body.body.angular_velocity() == (Vec3){});
             }
+
             world.update(physics::DEFAULT_FIXED_DT);
             expected_world.update(physics::DEFAULT_FIXED_DT);
             world.update_ragdolls();
             expected_world.update_ragdolls();
             fixture.destination.update_world();
             reference.update_world();
+
             foreach (index, node : actual.bone_nodes) {
                 Node* expected_node = expected.ragdoll.bone_nodes[index];
                 assert((node.world_position() - expected_node.world_position()).length() < 1e-3f);
@@ -210,10 +223,12 @@ fn void test_ragdoll_mode_body_mismatch_is_rejected_before_attachment() @test {
         Fixture fixture;
         create_fixture(&fixture);
         defer destroy_fixture(&fixture);
+
         Rig original = add_rig(&fixture.source, &fixture.assets, rig_model(&fixture));
         PhysicsWorld world = create_world(&fixture.source, &fixture.assets);
         defer physics::destroy_physics_world(&world);
         configure_rig(&world, &original);
+
         String text = (String)encode(
             scene: &fixture.source,
             assets: &fixture.assets,
@@ -221,11 +236,13 @@ fn void test_ragdoll_mode_body_mismatch_is_rejected_before_attachment() @test {
             text_mode: true,
         )!!;
         String invalid = text.treplace("SIMULATED", "ANIMATED");
+
         SerialDiagnostic diagnostic = serial::create_serial_diagnostic(mem);
         defer serial::destroy_serial_diagnostic(&diagnostic);
         ReadOptions options = serial::READ_OPTIONS_DEFAULT;
         options.diagnostic = &diagnostic;
         uint before = fixture.destination.world.entities.free_count;
+
         assert(@catch(decode(
             fixture: &fixture,
             bytes: (char[])invalid,
@@ -245,11 +262,13 @@ fn void test_ragdoll_absent_model_bone_reference_reports_full_details_in_both_fo
             Fixture fixture;
             create_fixture(&fixture);
             defer destroy_fixture(&fixture);
+
             Rig original = add_rig(&fixture.source, &fixture.assets, rig_model(&fixture, true));
             ModelInstance* instance = fixture.source.get(original.root, ModelInstance);
             fixture.source.remove(instance.present_node(4));
             Node* replacement = fixture.source.add_node(original.root, "replacement")!!;
             assert(instance.present_node(4) == null && replacement.id.index == instance.node_entities[4].index);
+
             char[] bytes = encode(
                 scene: &fixture.source,
                 assets: &fixture.assets,
@@ -258,6 +277,7 @@ fn void test_ragdoll_absent_model_bone_reference_reports_full_details_in_both_fo
             )!!;
             SerialDiagnostic diagnostic = serial::create_serial_diagnostic(mem);
             defer serial::destroy_serial_diagnostic(&diagnostic);
+
             if (text_mode) {
                 String text = (String)bytes;
                 TextDocument document = serial::parse_text(
@@ -290,6 +310,7 @@ fn void test_ragdoll_absent_model_bone_reference_reports_full_details_in_both_fo
                     writer.write_uint(4);
                 }
             }
+
             ReadOptions options = serial::READ_OPTIONS_DEFAULT;
             options.diagnostic = &diagnostic;
             uint before = fixture.destination.world.entities.free_count;
@@ -299,6 +320,7 @@ fn void test_ragdoll_absent_model_bone_reference_reports_full_details_in_both_fo
                 text_mode: text_mode,
                 options: options,
             ));
+
             assert(failure == physics::NO_BODY, "text=%s fault=%s type=%s model=%s", text_mode, failure, diagnostic.type_name, diagnostic.model_key);
             assert(diagnostic.cause == physics::NO_BODY && diagnostic.type_name == "ragdoll");
             assert(diagnostic.node_path.len && diagnostic.has_bone_index && diagnostic.bone_index == 1);
@@ -319,12 +341,14 @@ fn void test_ragdoll_owned_block_failure_rolls_back_earlier_components() @test {
             Fixture fixture;
             create_fixture(&fixture, &failure);
             defer destroy_fixture(&fixture);
+
             Rig original = add_rig(&fixture.source, &fixture.assets, rig_model(&fixture));
             Ragdoll* source = original.ragdoll;
             failure.size = (char*)(source.recovery.targets.ptr + source.recovery.targets.len) - (char*)source.bone_nodes.ptr;
             Node* existing = fixture.destination.add_node(name: "untouched")!!;
             existing.local.position = { 4, 5, 6 };
             existing.visible = false;
+
             @pool() {
                 char[] bytes = encode(
                     scene: &fixture.source,
@@ -343,6 +367,7 @@ fn void test_ragdoll_owned_block_failure_rolls_back_earlier_components() @test {
                     options: options,
                 )) == c3d::CAPACITY_EXCEEDED);
                 failure.enabled = false;
+
                 assert(failure.failures == 1 && fixture.destination.world.entities.free_count == before);
                 assert(fixture.destination.count(ModelInstance) == 0 && fixture.destination.count(SkinBinding) == 0);
                 assert(fixture.destination.count(Ragdoll) == 0 && fixture.destination.count(PhysicsBody) == 0);
@@ -371,6 +396,7 @@ fn char[] edited_ragdoll_control(
             diagnostic: &diagnostic,
         )!!;
         defer serial::destroy_text_document(&document);
+
         String[3] names = { "weight", "bone_weights", "drive_strength" };
         uint token = serial::json_member(&document, ragdoll_value(&document), names[control]);
         if (control == 1) token += 2;
@@ -378,6 +404,7 @@ fn char[] edited_ragdoll_control(
         String replacement = serial::text_format_f32(bitcast(invalid, uint), storage[..])!!;
         return (char[])replace_token(text, document.values[token], replacement);
     }
+
     char[] changed = alloc::new_array(tmem, char, bytes.len);
     changed[..] = bytes[..];
     char[] payload = ragdoll_payload(changed);
@@ -394,6 +421,7 @@ fn char[] edited_ragdoll_control(
         }
         assert(found == 1);
     }
+
     Writer writer = serial::writer_over(payload[offset:float::size]);
     writer.write_float(invalid);
     return changed;
@@ -405,10 +433,12 @@ fn void test_ragdoll_control_domain_is_identical_for_readers_and_writers() @test
             Fixture fixture;
             create_fixture(&fixture);
             defer destroy_fixture(&fixture);
+
             Rig rig = add_rig(&fixture.source, &fixture.assets, rig_model(&fixture));
             PhysicsWorld world = create_world(&fixture.source, &fixture.assets);
             defer physics::destroy_physics_world(&world);
             configure_rig(&world, &rig);
+
             char[] valid = encode(
                 scene: &fixture.source,
                 assets: &fixture.assets,
@@ -424,6 +454,7 @@ fn void test_ragdoll_control_domain_is_identical_for_readers_and_writers() @test
             ReadOptions reading = serial::READ_OPTIONS_DEFAULT;
             reading.diagnostic = &diagnostic;
             uint before = fixture.destination.world.entities.free_count;
+
             foreach (uint control, pointer : controls) {
                 foreach (invalid : rejected) {
                     *pointer = invalid;
@@ -438,6 +469,7 @@ fn void test_ragdoll_control_domain_is_identical_for_readers_and_writers() @test
                     assert(diagnostic.has_bone_index == (control == 1));
                     if (control == 1) assert(diagnostic.bone_index == 1);
                 }
+
                 *pointer = original[control];
                 foreach (invalid : rejected) {
                     char[] edited = edited_ragdoll_control(
@@ -458,6 +490,7 @@ fn void test_ragdoll_control_domain_is_identical_for_readers_and_writers() @test
                     assert(fixture.destination.world.entities.free_count == before && fixture.destination.count(Ragdoll) == 0);
                 }
             }
+
             foreach (pointer : controls) *pointer = 0;
             char[] zero = encode(
                 scene: &fixture.source,
@@ -489,6 +522,7 @@ fn void test_ragdoll_recovery_serializes_only_existing_authoring() @test {
             world.update_ragdolls();
             fixture.source.update_world();
             world.recover_bones(original.skin)!!;
+
             if (stage == 1) world.set_bone_mode(original.skin, 1, ANIMATED);
             if (stage == 2) {
                 original.ragdoll.weight = 0;
@@ -497,6 +531,7 @@ fn void test_ragdoll_recovery_serializes_only_existing_authoring() @test {
                 world.update_ragdolls();
                 fixture.source.update_world();
             }
+
             char[] active = encode(
                 scene: &fixture.source,
                 assets: &fixture.assets,
@@ -516,10 +551,10 @@ fn void test_ragdoll_recovery_serializes_only_existing_authoring() @test {
 
             foreach (index, node : actual.bone_nodes) {
                 PhysicsBody* body = fixture.destination.get(node, PhysicsBody);
-
                 assert(body.body.kind == (actual.bone_modes[index] == SIMULATED ? DYNAMIC : KINEMATIC));
                 assert(body.body.linear_velocity == (Vec3){} && body.body.angular_velocity == (Vec3){});
             }
+
             foreach (usz index, mode : original.ragdoll.bone_modes) world.set_bone_mode(original.skin, index, mode);
             char[] ordinary = encode(
                 scene: &fixture.source,
@@ -527,7 +562,6 @@ fn void test_ragdoll_recovery_serializes_only_existing_authoring() @test {
                 root: original.root,
                 text_mode: false,
             )!!;
-
             assert(active == ordinary);
         };
     }

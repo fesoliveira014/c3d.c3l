@@ -436,6 +436,7 @@ fn void test_cloth_self_and_continuous_failure_preserves_world_motion() @test {
     create_fixture(&fixture, 0)!!;
     defer destroy_fixture(&fixture);
     configure(&fixture, 1, velocity_view(fixture.targets[1], ShadingPath.DEFERRED));
+
     Node* body = fixture.scene.add_node(name: "contact")!!;
     body.local.position.z = -10;
     fixture.scene.update_world();
@@ -447,6 +448,7 @@ fn void test_cloth_self_and_continuous_failure_preserves_world_motion() @test {
     boxes[3] = boxes[0];
     boxes[4] = boxes[0];
     fixture.physics.add_body(body, physics::default_body_desc(STATIC), boxes[:1])!!;
+
     Vec3[6] positions = {
         { -1, -1, 0 }, { 1, -1, 0 }, { 0, 1, 0 },
         { -0.8f, -0.9f, 1 }, { 1.2f, -0.9f, 1 }, { 0.2f, 1.1f, 1 },
@@ -467,6 +469,7 @@ fn void test_cloth_self_and_continuous_failure_preserves_world_motion() @test {
     desc.collisions.max_candidates = 16;
     fixture.scene.add_cloth(&fixture.assets, sheet, desc)!!;
     ClothState* state = fixture.scene.get(sheet, Cloth).state;
+
     step(&fixture, 0);
     assert(!state.contact_result.failure);
     for (uint vertex = 3; vertex < 6; vertex++) state.velocities[vertex].z = -2 / physics::DEFAULT_FIXED_DT;
@@ -484,6 +487,7 @@ fn void test_cloth_self_and_continuous_failure_preserves_world_motion() @test {
         assert(pixel_at(&fixture, view, centre).w > COVERED);
         check_velocity(velocity_at(&fixture, view, centre), {});
     }
+
     GeometryAsset* geometry = fixture.assets.geometry(state.geometry);
     uint revision = geometry.header.revision;
     fixture.physics.remove_body(body);
@@ -497,6 +501,7 @@ fn void test_cloth_self_and_continuous_failure_preserves_world_motion() @test {
     assert(geometry.header.revision == revision);
     render_views(&fixture, both[..]);
     foreach (view : both) check_velocity(velocity_at(&fixture, view, centre), {});
+
     sheet.local.position.x = NODE_STEP;
     step(&fixture, 0);
     assert(state.contact_result.failure == c3d::CAPACITY_EXCEEDED);

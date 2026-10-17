@@ -99,6 +99,7 @@ fn void sync_breakable(PhysicsWorld* world, Node* root, BreakableState* state) @
         state.status = LIVE;
         return;
     }
+
     if (state.form == ASSEMBLY) {
         if (state.status != LIVE && world.scene.has(root, RigidBody)) {
             if (catch excuse = refresh_breakable_body_owner(
@@ -141,6 +142,7 @@ fn void sync_breakable(PhysicsWorld* world, Node* root, BreakableState* state) @
                 return;
             }
         }
+
         if (catch excuse = bind_breakable_welds(
             world: world,
             root: root,
@@ -158,6 +160,7 @@ fn void sync_breakable(PhysicsWorld* world, Node* root, BreakableState* state) @
         enable_breakable_pieces(world, state);
         state.failure = {};
     }
+
     sync_breakable_anchors(world, root, state);
 }
 
@@ -249,6 +252,7 @@ fn bool breakable_joint_event(PhysicsWorld* world, Node* root, b3::JointId joint
     Breakable* component = world.scene.get(root, Breakable);
     if (!component) return false;
     BreakableState* state = component.state;
+
     foreach (uint index, &weld : state.welds) {
         if (!same_breakable_joint(weld.joint, joint)) continue;
         if (weld.broken) return true;
@@ -270,11 +274,13 @@ fn bool breakable_joint_event(PhysicsWorld* world, Node* root, b3::JointId joint
         );
         return true;
     }
+
     foreach (uint index, &anchor : state.runtime.anchors) {
         if (!same_breakable_joint(anchor.joint, joint)) continue;
         if (anchor.broken || anchor.pruned) return true;
         anchor.broken = true;
         state.alive_anchors--;
+
         push_breakable_event(
             world: world,
             root: root,
@@ -312,6 +318,7 @@ fn void sample_breakable(PhysicsWorld* world, Node* root, BreakableState* state)
         if (!reaction.matched) continue;
         weld.broken = true;
         state.alive_welds--;
+
         push_breakable_event(
             world: world,
             root: root,
@@ -326,6 +333,7 @@ fn void sample_breakable(PhysicsWorld* world, Node* root, BreakableState* state)
             phase: POST_FIXED_STEP,
         );
     }
+
     foreach (uint index, &anchor : state.runtime.anchors) {
         if (anchor.broken || anchor.pruned || !anchor.joint.is_valid()) continue;
         BreakableReaction reaction = sample_breakable_joint(
@@ -337,6 +345,7 @@ fn void sample_breakable(PhysicsWorld* world, Node* root, BreakableState* state)
         if (!reaction.matched) continue;
         anchor.broken = true;
         state.alive_anchors--;
+
         push_breakable_event(
             world: world,
             root: root,

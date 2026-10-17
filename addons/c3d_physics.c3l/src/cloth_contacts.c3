@@ -127,6 +127,7 @@ fn usz? capture_cloth_shapes(
     foreach (index, &collider : body.colliders) {
         if (!collider.shape.is_valid()) return NO_BODY~;
         if (world && collider.snapshot.generation) (void)cloth_snapshot(world, collider.snapshot)!;
+
         cloth::ClothShape shape = {
             .body = body_index,
             .kind = collider.kind,
@@ -135,6 +136,7 @@ fn usz? capture_cloth_shapes(
             .snapshot = collider.snapshot,
             .local = maths::TRANSFORM_IDENTITY,
         };
+
         if (collider.kind == COMPOUND && world) {
             b3::CompoundData* compound = cloth_snapshot(world, collider.snapshot)!.compound;
             for (int child = 0; child < compound.child_count(); child++) {
@@ -174,6 +176,7 @@ fn bool write_cloth_triangle(
         writer.failure = cloth::CONTACT_PRECISION_EXCEEDED;
         return false;
     }
+
     first *= writer.scale;
     second *= writer.scale;
     third *= writer.scale;
@@ -181,12 +184,14 @@ fn bool write_cloth_triangle(
         writer.failure = cloth::CONTACT_PRECISION_EXCEEDED;
         return false;
     }
+
     maths::Aabb triangle = { .min = math::min(first, math::min(second, third)), .max = math::max(first, math::max(second, third)) };
     if (!cloth_bounds_overlap(writer.query, triangle)) return true;
     if (*writer.count == writer.candidates.len) {
         writer.failure = c3d::CAPACITY_EXCEEDED;
         return false;
     }
+
     writer.candidates[(*writer.count)++] = {
         .particle = writer.particle,
         .shape = writer.shape,
@@ -239,10 +244,12 @@ fn usz? gather_cloth_candidates(PhysicsWorld* world, cloth::ClothState* state, V
         state.contact_result.candidates += (uint)count;
         state.contact_result.peak_candidates = math::max(state.contact_result.peak_candidates, (uint)count);
     }
+
     double reach = (double)state.desc.thickness + state.desc.collisions.contact_tolerance;
     foreach (position : positions) {
         if (!contact_finite(position)) return cloth::CONTACT_PRECISION_EXCEEDED~;
     }
+
     if (state.desc.collide_ground) {
         foreach (index, position : positions) {
             double height = state.sweep_active ? state.sweep_bounds[index].min.y : position.y;
@@ -254,6 +261,7 @@ fn usz? gather_cloth_candidates(PhysicsWorld* world, cloth::ClothState* state, V
 
     foreach (shape_index, &shape : state.shapes) {
         if (!state.bodies[shape.body].live) continue;
+
         RigidBody* body = world.scene.get(world.scene.node(state.bodies[shape.body].owner), RigidBody);
         Collider* collider = &body.colliders[shape.collider];
         b3::Mesh mesh;
@@ -269,6 +277,7 @@ fn usz? gather_cloth_candidates(PhysicsWorld* world, cloth::ClothState* state, V
             }
         }
         if (shape.kind == HEIGHT_FIELD) height_field = collider.shape.height_field()!;
+
         foreach (particle, position : positions) {
             maths::Aabb query = state.sweep_active
               ? cloth_swept_query_bounds(
@@ -279,6 +288,7 @@ fn usz? gather_cloth_candidates(PhysicsWorld* world, cloth::ClothState* state, V
               )!
               : contact_query_bounds(&state.frames[shape_index], position, reach)!;
             if (!cloth_bounds_overlap(query, shape.bounds)) continue;
+
             switch (shape.kind) {
                 case SPHERE:
                 case CAPSULE:
@@ -359,6 +369,7 @@ fn void? sample_cloth_external(
         )!;
         return;
     }
+
     if (shape.kind == SPHERE || shape.kind == CAPSULE) {
         sample.second_count = shape.kind == SPHERE ? 1 : 2;
         sample.second[0] = contact_point(frame, shape.start)!;
@@ -377,6 +388,7 @@ fn void? sample_cloth_external(
         sample.radius = shape.radius;
         return;
     }
+
     b3::HullData* hull = cloth_contact_hull(world, state, shape)!;
     if (hull.vertex_count <= 0 || hull.vertex_count > (int)MAX_CONTACT_HULL_POINTS) return cloth::CONTACT_PRECISION_EXCEEDED~;
     Vec3* points = (Vec3*)((char*)hull + hull.point_offset);
@@ -384,6 +396,7 @@ fn void? sample_cloth_external(
     b3::HullFace* faces = (b3::HullFace*)((char*)hull + hull.face_offset);
     sample.second_count = (uint)hull.vertex_count;
     for (uint index = 0; index < sample.second_count; index++) sample.second[index] = contact_point(frame, points[index])!;
+
     double best = double::max;
     for (int face = 0; face < hull.face_count; face++) {
         uint first_edge = faces[face].edge;
@@ -467,6 +480,7 @@ fn ContactProjection? project_cloth_convex(
     } else {
         hull = body.colliders[shape.collider].shape.hull()!;
     }
+
     Vec3* points = (Vec3*)((char*)hull + hull.point_offset);
     b3::HullHalfEdge* edges = (b3::HullHalfEdge*)((char*)hull + hull.edge_offset);
     b3::HullFace* faces = (b3::HullFace*)((char*)hull + hull.face_offset);
@@ -491,6 +505,7 @@ fn ContactProjection? project_cloth_convex(
             edge = edges[edge].next;
         }
     }
+
     return contact_convex(
         frame: &state.frames[candidate.shape],
         vertices: points[:hull.vertex_count],
@@ -516,6 +531,7 @@ fn maths::Aabb? cloth_swept_query_bounds(
     for (uint axis = 0; axis < 3; axis++) {
         point[axis] = { .min = state.sweep_bounds[particle].min[axis], .max = state.sweep_bounds[particle].max[axis] };
     }
+
     ContactIntervals relative = contact_vector_subtract(point, frame.position)!;
     ContactIntervals local;
     if (motion.constant_rotation || state.sweep_begin == state.sweep_end) {
@@ -524,6 +540,7 @@ fn maths::Aabb? cloth_swept_query_bounds(
         double radius = contact_length(relative)!.max;
         for (uint axis = 0; axis < 3; axis++) local[axis] = { .min = -radius, .max = radius };
     }
+
     maths::Aabb result;
     for (uint axis = 0; axis < 3; axis++) {
         result.min[axis] = contact_float_bound(contact_subtract(local[axis], contact_value(reach))!.min, false)!;
