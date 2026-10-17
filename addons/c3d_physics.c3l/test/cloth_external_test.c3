@@ -78,18 +78,18 @@ fn void test_cloth_drapes_over_all_external_collider_kinds() @test {
 
     Node* box_probe = add_external_probe(&fixture, { -12, 0.3f, 0 }, bodies[0].id);
     Node* hull_probe = add_external_probe(&fixture, { -6, 0.3f, 0 }, bodies[1].id);
-    Node* mesh_probe = add_external_probe(&fixture, { 0, -0.005f, 0 }, bodies[2].id);
-    Node* field_probe = add_external_probe(&fixture, { 6.5f, -0.005f, 0.5f }, bodies[3].id);
+    Node* mesh_probe = add_external_probe(&fixture, { 0, 0.005f, 0 }, bodies[2].id);
+    Node* field_probe = add_external_probe(&fixture, { 6.5f, 0.005f, 0.5f }, bodies[3].id);
     Node* hole_probe = add_external_probe(&fixture, { 7.5f, 0.1f, 1.5f }, bodies[3].id);
     Node* compound_box = add_external_probe(&fixture, { 14, 0.3f, 0 }, bodies[4].id);
-    Node* compound_mesh = add_external_probe(&fixture, { 16, -0.005f, 0 }, bodies[4].id);
+    Node* compound_mesh = add_external_probe(&fixture, { 16, 0.005f, 0 }, bodies[4].id);
     Node*[6] contact_probes = { box_probe, hull_probe, mesh_probe, field_probe, compound_box, compound_mesh };
 
     publish(&fixture);
     foreach (probe : contact_probes) {
         ClothState* state = state_of(&fixture, probe);
         assert(!state.contact_result.failure && state.contact_result.contacts > 0);
-        assert(published_world(&fixture, probe, 0).y >= -CONTACT_TOLERANCE);
+        assert(published_world(&fixture, probe, 0).y >= 0.01f - CONTACT_TOLERANCE);
     }
     assert(math::abs(published_world(&fixture, box_probe, 0).y - 0.51f) <= CONTACT_TOLERANCE);
     assert(math::abs(published_world(&fixture, hull_probe, 0).y - 0.51f) <= CONTACT_TOLERANCE);
