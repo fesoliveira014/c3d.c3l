@@ -116,10 +116,12 @@ fn void? GridCache.mark_dirty(&self, GridRange cells, ulong revision) {
         border_size: config.border_size,
         extent: self.desc.tiles,
     )!;
+
     if (revision != self.source_revision) {
         self.source_revision = revision;
         supersede_grid_jobs(self);
     }
+
     for (int z = affected.min_z; z < affected.max_z; z++) {
         for (int x = affected.min_x; x < affected.max_x; x++) request_grid_coordinate(self, grid_coordinate(self, x, z));
     }
@@ -162,6 +164,7 @@ fn GridCacheJob*? GridCache.capture_next(&self) {
         }
     }
     if (coordinate == uint::max) return NO_DIRTY_TILES~;
+
     GridCacheJob* job;
     foreach (&candidate : self.jobs) {
         if (candidate.state == JobState.FREE) {
@@ -181,6 +184,7 @@ fn GridCacheJob*? GridCache.capture_next(&self) {
     job.builder.source = self.source;
     job.builder.arena.clear();
     job.layer_count = 0;
+
     GridReference? captured = capture_grid_reference(&job.builder, job.tile_x, job.tile_z);
     if (catch excuse = captured) {
         self.last_failure = {
@@ -215,6 +219,7 @@ fn GridCommitResult? GridCache.commit(&self, GridCacheJob* job) {
         if (!record.pending && record.installed_revision != self.source_revision) record.dirty = true;
         return GridCommitResult.STALE;
     }
+
     if (job.state == JobState.FAILED) {
         record.dirty = true;
         self.last_failure = { .tile_x = job.tile_x, .tile_z = job.tile_z, .reason = job.failure, .stage = BuildStage.LAYERS };
@@ -231,12 +236,14 @@ fn GridCommitResult? GridCache.commit(&self, GridCacheJob* job) {
         free_grid_replacement(self.allocator, pending);
         record.dirty = true;
     }
+
     foreach (blob : job.blobs[:job.layer_count]) {
         char[]? copy = alloc::alloc_array_try(self.allocator, char, (sz)blob.len);
         if (catch copy) return c3d::CAPACITY_EXCEEDED~;
         pending.blobs[pending.count++] = copy;
         copy[..] = blob[..];
     }
+
     free_grid_replacement(self.allocator, record.pending);
     record.pending = pending;
     return GridCommitResult.STAGED;
@@ -255,6 +262,7 @@ fn GridUpdateResult GridCache.update(&self, NavMesh* mesh, uint budget = 1) {
             result.failed++;
             break;
         }
+
         uint coordinate = uint::max;
         foreach (index, record : self.tiles) {
             if (record.pending) {
@@ -262,6 +270,7 @@ fn GridUpdateResult GridCache.update(&self, NavMesh* mesh, uint budget = 1) {
                 break;
             }
         }
+
         if (coordinate == uint::max) {
             GridCacheJob*? captured = self.capture_next();
             if (catch excuse = captured) {
@@ -302,6 +311,7 @@ fn GridUpdateResult GridCache.update(&self, NavMesh* mesh, uint budget = 1) {
             result.installed++;
             continue;
         }
+
         if (!self.cache.update_count && !self.cache.request_count) break;
         result.attempted++;
         if (catch excuse = self.cache.update(mesh, 1)) {
@@ -312,6 +322,7 @@ fn GridUpdateResult GridCache.update(&self, NavMesh* mesh, uint budget = 1) {
         }
         result.rebuilt++;
     }
+
     foreach (record : self.tiles) {
         if (record.dirty || record.pending) result.pending++;
     }
@@ -361,8 +372,15 @@ fn GridCache? create_grid_cache(
     ulong count = (ulong)width * (ulong)height;
     if (count > uint::max || count > (ulong)sz::max / GridCacheTile::size) return c3d::CAPACITY_EXCEEDED~;
 
-    GridCache grid = { .allocator = allocator, .desc = desc, .source = source, .source_id = identity, .source_revision = revision };
+    GridCache grid = {
+        .allocator = allocator,
+        .desc = desc,
+        .source = source,
+        .source_id = identity,
+        .source_revision = revision,
+    };
     defer catch destroy_grid_cache(&grid);
+
     GridCacheTile[]? tiles = alloc::new_array_try(allocator, GridCacheTile, (sz)count);
     if (catch tiles) return c3d::CAPACITY_EXCEEDED~;
     grid.tiles = tiles;
@@ -370,6 +388,7 @@ fn GridCache? create_grid_cache(
         record.dirty = true;
         record.request = 1;
     }
+
     GridCacheJob[]? jobs = alloc::new_array_try(allocator, GridCacheJob, desc.build_slots);
     if (catch jobs) return c3d::CAPACITY_EXCEEDED~;
     grid.jobs = jobs;
@@ -381,6 +400,7 @@ fn GridCache? create_grid_cache(
             scratch_bytes: desc.slot_scratch_bytes,
         )!;
     }
+
     NavBuildConfig config = desc.config;
     grid.cache = create_tile_cache(
         allocator: allocator,
@@ -439,6 +459,7 @@ fn void? build_grid_cache_job(GridCacheJob* job) {
 
 fn void? build_grid_cache_products(GridCacheJob* job) @local {
     if (!job.reference.span_count) return;
+
     uint[MAX_GRID_FLOORS] masks;
     uint count = grid_cache_layer_masks(
         builder: &job.builder,
@@ -447,6 +468,7 @@ fn void? build_grid_cache_products(GridCacheJob* job) @local {
         tile_z: job.tile_z,
         output: masks[..],
     )!;
+
     for (uint index = 0; index < count; index++) {
         job.blobs[index] = pack_grid_cache_layer(
             builder: &job.builder,
@@ -473,6 +495,7 @@ fn void? publish_grid_coordinate(GridCache* grid, NavMesh* mesh, uint coordinate
     if (pending.source_id != grid.source_id || pending.source_revision != grid.source_revision || pending.request != record.request) {
         return c3d::INVALID_ARGUMENT~;
     }
+
     float size = grid.desc.config.tile_size * grid.desc.config.cell_size;
     Aabb bounds = {
         .min = { grid.source.origin.x + x * size, grid.source.min_height, grid.source.origin.z + z * size },
@@ -492,6 +515,7 @@ fn void? publish_grid_coordinate(GridCache* grid, NavMesh* mesh, uint coordinate
         output: record.layers[..],
         bounds: bounds,
     )!;
+
     record.installed_source = pending.source_id;
     record.installed_revision = pending.source_revision;
     pending.count = 0;
@@ -528,7 +552,7 @@ fn uint grid_coordinate(GridCache* grid, int x, int z) @local {
 }
 
 fn void? validate_grid_cache_source(GridSourceDesc source, NavBuildConfig config) @local {
-    if ((!source.floors && !source.capture) || (source.floors && source.capture)) return c3d::INVALID_ARGUMENT~;
+    if ((source.floors == null) == (source.capture == null)) return c3d::INVALID_ARGUMENT~;
     if (!detail_finite_vertex(source.origin) || !math::is_finite(source.min_height)
         || !math::is_finite(source.max_height) || source.min_height >= source.max_height) return c3d::INVALID_ARGUMENT~;
     if (source.cell_size != 0 && source.cell_size != config.cell_size) return c3d::INVALID_ARGUMENT~;
