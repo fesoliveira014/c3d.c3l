@@ -5,7 +5,7 @@ import c3d;
 import c3d::nav @public;
 import c3d::scene;
 
-struct CacheAllocationProbe (Allocator) @private {
+struct CacheAllocationProbe (Allocator) @local {
     Allocator backing;
 }
 
