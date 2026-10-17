@@ -25,6 +25,7 @@ fn void? solve_cloth(
     Vec3 acceleration = gravity * desc.gravity_scale;
     uint[] indices = state.assets.geometry(state.geometry).data.indices;
     prepare_body_motions(state, false)!;
+
     for (uint substep = 1; substep <= total; substep++) {
         accumulate_wind(state, wind, indices);
         foreach (index, position : state.positions) {
@@ -48,6 +49,7 @@ fn void? solve_cloth(
             end: (double)substep / total,
         )!;
         place_shapes(state, (double)substep / total)!;
+
         for (uint iteration = 0; iteration < desc.iterations; iteration++) {
             if (desc.collisions.continuous) state.sweep_start[..] = state.predicted[..];
             project_constraints(state, state.edges, stretch);
@@ -71,6 +73,7 @@ fn void? solve_cloth(
             )!;
             (void)contact_pass(world: world, state: state, positions: state.predicted, apply: true)!;
         }
+
         resolve_contacts(world, state, state.predicted)!;
         foreach (index, &position : state.positions) {
             state.velocities[index] = (state.predicted[index] - *position) / dt;

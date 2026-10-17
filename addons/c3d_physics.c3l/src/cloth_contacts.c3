@@ -359,6 +359,7 @@ fn void? sample_cloth_external(
         )!;
         return;
     }
+
     if (shape.kind == SPHERE || shape.kind == CAPSULE) {
         sample.second_count = shape.kind == SPHERE ? 1 : 2;
         sample.second[0] = contact_point(frame, shape.start)!;
@@ -377,6 +378,7 @@ fn void? sample_cloth_external(
         sample.radius = shape.radius;
         return;
     }
+
     b3::HullData* hull = cloth_contact_hull(world, state, shape)!;
     if (hull.vertex_count <= 0 || hull.vertex_count > (int)MAX_CONTACT_HULL_POINTS) return cloth::CONTACT_PRECISION_EXCEEDED~;
     Vec3* points = (Vec3*)((char*)hull + hull.point_offset);
@@ -384,6 +386,7 @@ fn void? sample_cloth_external(
     b3::HullFace* faces = (b3::HullFace*)((char*)hull + hull.face_offset);
     sample.second_count = (uint)hull.vertex_count;
     for (uint index = 0; index < sample.second_count; index++) sample.second[index] = contact_point(frame, points[index])!;
+
     double best = double::max;
     for (int face = 0; face < hull.face_count; face++) {
         uint first_edge = faces[face].edge;
@@ -516,6 +519,7 @@ fn maths::Aabb? cloth_swept_query_bounds(
     for (uint axis = 0; axis < 3; axis++) {
         point[axis] = { .min = state.sweep_bounds[particle].min[axis], .max = state.sweep_bounds[particle].max[axis] };
     }
+
     ContactIntervals relative = contact_vector_subtract(point, frame.position)!;
     ContactIntervals local;
     if (motion.constant_rotation || state.sweep_begin == state.sweep_end) {
@@ -524,6 +528,7 @@ fn maths::Aabb? cloth_swept_query_bounds(
         double radius = contact_length(relative)!.max;
         for (uint axis = 0; axis < 3; axis++) local[axis] = { .min = -radius, .max = radius };
     }
+
     maths::Aabb result;
     for (uint axis = 0; axis < 3; axis++) {
         result.min[axis] = contact_float_bound(contact_subtract(local[axis], contact_value(reach))!.min, false)!;
