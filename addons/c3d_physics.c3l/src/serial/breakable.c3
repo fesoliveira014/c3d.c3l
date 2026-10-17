@@ -200,8 +200,8 @@ fn BreakableSavedPiece[]? project_breakable_pieces(Breakable* owner, serial::Wri
     usz count;
     foreach (entity : state.pieces) if (context.scene.world.is_alive(entity)) count++;
     if (count < 2) return c3d::UNSUPPORTED~;
-    BreakableSavedPiece[] pieces = alloc::new_array_try(tmem, BreakableSavedPiece, (sz)count)
-      ?? c3d::CAPACITY_EXCEEDED~!;
+
+    BreakableSavedPiece[] pieces = alloc::new_array(tmem, BreakableSavedPiece, (sz)count);
     maths::Transform root_pose = serial_rigid_pose(serial_node_world(context.node))!;
     uint next;
     foreach (uint index, entity : state.pieces) {
@@ -211,6 +211,7 @@ fn BreakableSavedPiece[]? project_breakable_pieces(Breakable* owner, serial::Wri
         Node* ancestor = node.parent;
         while (ancestor && ancestor != context.node) ancestor = ancestor.parent;
         if (!ancestor) return c3d::INVALID_ARGUMENT~;
+
         BreakablePieceView captured = state.piece_view(index);
         pieces[next++] = {
             .node = reference,
@@ -280,6 +281,7 @@ fn bool serial_breakable_body_matches(
         }
         return true;
     }
+
     foreach (uint index, entity : state.pieces) {
         if (!c3d::same_id(entity, node.id)) continue;
         BreakablePieceView captured = state.piece_view(index);
@@ -303,9 +305,10 @@ fn void? collect_breakable(void* component, serial::WriteContext* context) @priv
     BreakableState* state = owner.state;
     (void)project_breakable_pieces(owner, context)!;
     if (state.recipe_kind == AUTHORED_REST) {
-        uint[] indices = serial_breakable_indices(state, context.scene)!;
+        uint[] indices = serial_breakable_indices(state, context.scene);
         (void)project_breakable_anchors(owner, context, indices)!;
     }
+
     for (Node* node = context.node; node; node = serial_next_descendant(context.node, node)) {
         if (node != context.node && context.scene.has(node, Breakable)) return BREAKABLE_EXISTS~;
         if (context.scene.has(node, PhysicsJoint) || context.scene.has(node, Joint) || context.scene.has(node, Ragdoll)) return c3d::INVALID_ARGUMENT~;
@@ -320,6 +323,7 @@ fn void? collect_breakable(void* component, serial::WriteContext* context) @priv
             context.omit_component(node, ecs::slot_of(RigidBody)!)!;
         }
     }
+
     if (!owner.is_prepared() && state.recipe_kind == LEGACY_CURRENT_POSE) return;
     foreach (entity : state.pieces) {
         if (!context.scene.world.is_alive(entity)) continue;
@@ -353,14 +357,13 @@ fn void? project_breakable(void* component, void* value, serial::WriteContext* c
         .strength = state.strength,
     };
     if (state.recipe_kind == LEGACY_CURRENT_POSE) return;
-    uint[] indices = serial_breakable_indices(state, context.scene)!;
-    authoring.welds = project_breakable_welds(state, indices)!;
+    uint[] indices = serial_breakable_indices(state, context.scene);
+    authoring.welds = project_breakable_welds(state, indices);
     authoring.anchors = project_breakable_anchors(owner, context, indices)!;
 }
 
 fn BreakablePieceView[]? restore_breakable_pieces(BreakableAuthoring* source, serial::ReadContext* context) @private {
-    BreakablePieceView[] pieces = alloc::new_array_try(tmem, BreakablePieceView, source.pieces.len)
-      ?? c3d::CAPACITY_EXCEEDED~!;
+    BreakablePieceView[] pieces = alloc::new_array(tmem, BreakablePieceView, source.pieces.len);
     foreach (index, saved : source.pieces) {
         Node* node = context.resolve_node_reference(saved.node, true)!;
         pieces[index] = {
@@ -385,6 +388,7 @@ fn void? validate_breakable(void* value, serial::ReadContext* context) @private 
         pieces: pieces,
         desc: source.desc,
     )!;
+
     uint body_slot = ecs::slot_of(PhysicsBody)!;
     uint joint_slot = ecs::slot_of(PhysicsJoint)!;
     uint ragdoll_slot = ecs::slot_of(Ragdoll)!;
@@ -398,10 +402,12 @@ fn void? validate_breakable(void* value, serial::ReadContext* context) @private 
         if ((mask & ecs::slot_bit(joint_slot)) || (mask & ecs::slot_bit(ragdoll_slot))) return c3d::INVALID_ARGUMENT~;
         if (node != context.node && (mask & ecs::slot_bit(breakable_slot))) return BREAKABLE_EXISTS~;
     }
+
     if (source.recipe_kind == LEGACY_CURRENT_POSE) {
         if (source.welds.len || source.anchors.len || source.evaluation != NATIVE_FORCE) return c3d::INVALID_ARGUMENT~;
         return;
     }
+
     BreakableRecipeDesc recipe = restore_breakable_recipe(source, context)!;
     check_breakable_recipe(
         scene: context.scene,
@@ -434,16 +440,15 @@ fn void? attach_breakable(void* value, serial::ReadContext* context) @private {
     )!;
 }
 
-fn uint[]? serial_breakable_indices(BreakableState* state, Scene* scene) @private {
-    uint[] indices = alloc::new_array_try(tmem, uint, state.pieces.len) ?? c3d::CAPACITY_EXCEEDED~!;
+fn uint[] serial_breakable_indices(BreakableState* state, Scene* scene) @private {
+    uint[] indices = alloc::new_array(tmem, uint, state.pieces.len);
     uint count;
     foreach (index, entity : state.pieces) indices[index] = scene.world.is_alive(entity) ? count++ : serial::INDEX_NONE;
     return indices;
 }
 
-fn BreakableWeldDesc[]? project_breakable_welds(BreakableState* state, uint[] indices) @private {
-    BreakableWeldDesc[] welds = alloc::new_array_try(tmem, BreakableWeldDesc, state.welds.len)
-      ?? c3d::CAPACITY_EXCEEDED~!;
+fn BreakableWeldDesc[] project_breakable_welds(BreakableState* state, uint[] indices) @private {
+    BreakableWeldDesc[] welds = alloc::new_array(tmem, BreakableWeldDesc, state.welds.len);
     uint count;
     foreach (uint index, weld : state.welds) {
         if (indices[weld.piece_a] == serial::INDEX_NONE || indices[weld.piece_b] == serial::INDEX_NONE) continue;
@@ -467,8 +472,7 @@ fn BreakableSavedAnchor[]? project_breakable_anchors(
     uint[] indices,
 ) @private {
     BreakableState* state = owner.state;
-    BreakableSavedAnchor[] anchors = alloc::new_array_try(tmem, BreakableSavedAnchor, state.runtime.anchors.len)
-      ?? c3d::CAPACITY_EXCEEDED~!;
+    BreakableSavedAnchor[] anchors = alloc::new_array(tmem, BreakableSavedAnchor, state.runtime.anchors.len);
     maths::Transform root_pose = serial_rigid_pose(serial_node_world(context.node))!;
     uint count;
     foreach (anchor : state.runtime.anchors) {
@@ -480,6 +484,7 @@ fn BreakableSavedAnchor[]? project_breakable_anchors(
         for (Node* ancestor = target; ancestor; ancestor = ancestor.parent) {
             if (context.scene.has(ancestor, Breakable) || context.scene.has(ancestor, Ragdoll)) return c3d::INVALID_ARGUMENT~;
         }
+
         maths::Transform piece_pose = compose_breakable_pose(root_pose, state.runtime.frames[authored.piece]);
         maths::Transform frame_a = compose_breakable_pose(piece_pose, authored.frame_a);
         maths::Transform frame_b = compose_breakable_pose(serial_rigid_pose(serial_node_world(target))!, authored.frame_b);
@@ -517,7 +522,7 @@ fn BreakableRecipeDesc? restore_breakable_recipe(BreakableAuthoring* source, ser
         .strength = source.strength,
         .evaluation = source.evaluation,
     };
-    recipe.anchors = alloc::new_array_try(tmem, BreakableAnchorDesc, source.anchors.len) ?? c3d::CAPACITY_EXCEEDED~!;
+    recipe.anchors = alloc::new_array(tmem, BreakableAnchorDesc, source.anchors.len);
     foreach (index, saved : source.anchors) {
         Node* target = context.resolve_node_reference(saved.target, true, c3d::INVALID_ARGUMENT)!;
         recipe.anchors[index] = {
@@ -537,8 +542,7 @@ fn BreakableRecipeDesc? restore_breakable_recipe(BreakableAuthoring* source, ser
 
 fn void? read_breakable_v1(serial::Reader* reader, serial::ReadContext* context) @private {
     BreakableAuthoringV1* legacy = context.read_value(BreakableAuthoringV1, reader)!;
-    BreakableSavedPiece[] pieces = alloc::new_array_try(tmem, BreakableSavedPiece, legacy.pieces.len)
-      ?? c3d::CAPACITY_EXCEEDED~!;
+    BreakableSavedPiece[] pieces = alloc::new_array(tmem, BreakableSavedPiece, legacy.pieces.len);
     foreach (index, saved : legacy.pieces) {
         pieces[index] = { .node = saved.node, .hulls = saved.hulls, .rest_frame = saved.rest_frame };
     }
