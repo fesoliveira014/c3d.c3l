@@ -22,7 +22,7 @@ struct ClothCounts @local {
     uint edges;
     uint bends;
     uint bodies;
-    uint shapes;
+    ClothCollisionDesc collisions;
 }
 
 struct EdgeRecord @local {
@@ -52,6 +52,11 @@ fn void? check_cloth_desc(ClothDesc desc) @private {
     if (!(desc.damping >= 0) || !math::is_finite(desc.damping)) return c3d::INVALID_ARGUMENT~;
     if (!(desc.thickness >= 0) || !math::is_finite(desc.thickness)) return c3d::INVALID_ARGUMENT~;
     if (!math::is_finite(desc.gravity_scale) || !math::is_finite(desc.ground_height)) return c3d::INVALID_ARGUMENT~;
+    ClothCollisionDesc collision = desc.collisions;
+    if (!math::is_finite(collision.contact_tolerance) || collision.contact_tolerance <= 0) return c3d::INVALID_ARGUMENT~;
+    if (!collision.contact_iterations || !collision.max_shapes || !collision.max_candidates || !collision.max_contacts) {
+        return c3d::INVALID_ARGUMENT~;
+    }
 }
 
 fn void? check_cloth_source(
@@ -162,7 +167,7 @@ fn ClothState*? allocate_cloth_state(
     uint edge_count,
     uint bend_count,
     uint body_count,
-    uint shape_count,
+    ClothCollisionDesc collisions,
 ) @private {
     ClothCounts counts = {
         .vertices = vertex_count,
@@ -170,10 +175,11 @@ fn ClothState*? allocate_cloth_state(
         .edges    = edge_count,
         .bends    = bend_count,
         .bodies   = body_count,
-        .shapes   = shape_count,
+        .collisions = collisions,
     };
     BlockCursor measure;
     carve_cloth_state(&measure, counts);
+    if (measure.offset > (usz)sz::max) return c3d::CAPACITY_EXCEEDED~;
     char*? allocation = alloc::malloc_try(allocator, (sz)measure.offset);
     if (catch allocation) return c3d::CAPACITY_EXCEEDED~;
     BlockCursor fill = { .base = allocation };
@@ -197,13 +203,32 @@ fn ClothState* carve_cloth_state(BlockCursor* cursor, ClothCounts counts) @local
         .bends          = physics::carve(cursor, ClothConstraint, counts.bends),
         .colliders      = physics::carve(cursor, Entity, counts.bodies),
         .bodies         = physics::carve(cursor, ClothBody, counts.bodies),
-        .shapes         = physics::carve(cursor, ClothShape, counts.shapes),
-        .shape_starts   = physics::carve(cursor, Vec3, counts.shapes),
-        .shape_ends     = physics::carve(cursor, Vec3, counts.shapes),
+        .shape_storage  = physics::carve(cursor, ClothShape, counts.collisions.max_shapes),
+        .shape_starts   = physics::carve(cursor, Vec3, counts.collisions.max_shapes),
+        .shape_ends     = physics::carve(cursor, Vec3, counts.collisions.max_shapes),
+        .staged_shapes = physics::carve(cursor, ClothShape, counts.collisions.max_shapes),
+        .staged_bodies = physics::carve(cursor, ClothBody, counts.bodies),
+        .staged_positions = physics::carve(cursor, Vec3, counts.vertices),
+        .staged_velocities = physics::carve(cursor, Vec3, counts.vertices),
+        .staged_published = physics::carve(cursor, Vec3, counts.vertices),
+        .staged_pin_anchors = physics::carve(cursor, Vec3, counts.pins),
+        .staged_shape_starts = physics::carve(cursor, Vec3, counts.collisions.max_shapes),
+        .staged_shape_ends = physics::carve(cursor, Vec3, counts.collisions.max_shapes),
+        .local_output = physics::carve(cursor, Vec3, counts.vertices),
+        .local_normals = physics::carve(cursor, Vec3, counts.vertices),
+        .publication_roundtrip = physics::carve(cursor, Vec3, counts.vertices),
+        .staged_predicted = physics::carve(cursor, Vec3, counts.vertices),
+        .staged_accelerations = physics::carve(cursor, Vec3, counts.vertices),
+        .staged_pin_targets = physics::carve(cursor, Vec3, counts.pins),
+        .frames = physics::carve(cursor, ContactFrame, counts.collisions.max_shapes),
+        .candidates = physics::carve(cursor, ClothCandidate, counts.collisions.max_candidates),
+        .contacts = physics::carve(cursor, ClothContact, counts.collisions.max_contacts),
     };
     if (!cursor.base) return null;
     states[0] = state;
     states[0].velocities[..] = (Vec3){};
+    states[0].shape_starts[..] = (Vec3){};
+    states[0].shape_ends[..] = (Vec3){};
     return states.ptr;
 }
 

@@ -8,13 +8,31 @@ the scene, create its world, and destroy the world before the scene/assets.
 ## Cloth
 
 `c3d::physics::cloth` simulates a mesh over an owned geometry copy with pinned vertices, node
-`Wind` drag, an optional ground and one-way contacts with the sphere and capsule colliders of the
-bodies listed in `ClothDesc.colliders`. Attach with `scene.add_cloth(&assets, node, desc)` and
+`Wind` drag, an optional ground and one-way particle contacts with sphere, capsule, box,
+hull, mesh, heightfield and compound colliders of the bodies listed in `ClothDesc.colliders`.
+Contacts are discrete; an unsampled cloth face can pass through a small collider.
+Attach with `scene.add_cloth(&assets, node, desc)` and
 call `physics.update_cloths()` once after `physics.update`, after final ragdoll/IK poses and
 `scene.update_world()`, before rendering. See [Cloth](../../docs/cloth.md) for the contract,
-faults, frame order and measurements; the `cloth` example shows a flag and a cape on the ragdoll
-character (`--scene flag|cape|both`). The manual Vulkan acceptance runs with
+faults, frame order and usage; the `cloth` example includes flag, cape and external-contact
+scenes (`--scene flag|cape|both|contacts`). The manual Vulkan acceptance runs with
 `c3c test cloth_acceptance --path addons/c3d_physics.c3l/test/gpu`.
+
+`ClothDesc.collisions` sets contact tolerance, iteration count and prepared shape,
+candidate and contact capacities. Native body/snapshot bindings are checked during updates;
+compound leaves are resolved and counted there because preparation has no world argument.
+Shapes use rigid physics' baked geometry and final scene body poses. Pinned body/ground
+overlaps are excluded from response and counted. A failed cloth retains committed simulation
+and histories while other cloths continue; inspect `ClothState.contact_result` and
+`PhysicsWorld.cloth_stats`. Moved-node publication is preserved only when its local float
+re-expression meets the configured tolerance. Otherwise REEXPRESSION reports
+`CONTACT_PRECISION_EXCEEDED`, keeps the old local bytes/revision, and the application-owned
+transform may place that geometry elsewhere.
+
+Cloth consumers require `fp-math=strict`, owner-thread round-to-nearest and gradual underflow.
+The library checks supported runtime conditions without changing arithmetic modes; runtime
+checks do not establish the consumer's compiler mode. Serialization stores collision authoring
+settings and restores pending cloth; runtime buffers, contact results and histories are excluded.
 
 ## Replaced assets
 

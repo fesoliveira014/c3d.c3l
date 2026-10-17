@@ -22,8 +22,8 @@ const float DEFAULT_BEND_STIFFNESS = 0.5f; // soft folds; 1 makes the sheet beha
 const float DEFAULT_CLOTH_DAMPING = 0.5f; // about 40% of velocity lost per second; higher values look submerged
 <* Contact offset of free particles, in metres. *>
 const float DEFAULT_CLOTH_THICKNESS = 0.01f; // keeps particles off contact surfaces; larger values show a visible gap
-<* Maximum listed bodies and primitive shapes one cloth tests. *>
-const uint MAX_CLOTH_COLLIDERS = 32; // bounds particle-by-shape work; the cape's bone capsules fit
+<* Maximum listed contact owners for one cloth. *>
+const uint MAX_CLOTH_COLLIDERS = 32; // bounds owner resolution; leaf storage has its own configured capacity
 
 <* Fixed-step integration and attachment settings for one cloth. *>
 struct ClothDesc {
@@ -38,6 +38,7 @@ struct ClothDesc {
     bool     collide_ground;
     float    ground_height;
     Entity[] colliders;
+    ClothCollisionDesc collisions;
 }
 
 <* Last cloth update's CPU solve and publication costs. *>
@@ -47,6 +48,10 @@ struct ClothStats {
     uint   particles;
     uint   constraints;
     uint   pending;
+    uint   failed;
+    uint   candidates;
+    uint   contacts;
+    double max_residual;
 }
 
 <* Distance between two particles kept near its rest length. *>
@@ -57,17 +62,26 @@ struct ClothConstraint {
     Vec3  rest_direction; // separates a pair that collapses onto one point
 }
 
-<* Body-local sphere or capsule kept outside of; equal endpoints make a sphere. *>
+<* Captured collider identity and body-local contact geometry. *>
 struct ClothShape {
     uint  body;
     Vec3  start;
     Vec3  end;
     float radius;
+    ColliderKind kind;
+    uint collider;
+    uint[3] native_identity;
+    bool compound_child;
+    uint child;
+    SnapshotHandle snapshot;
+    maths::Transform local;
+    Aabb bounds;
 }
 
 <* Listed rigid body whose final published pose moves its captured shapes. *>
 struct ClothBody {
     Entity           owner;
+    uint[4]          native_identity;
     maths::Transform solved;   // pose of the last solved substep
     maths::Transform current;  // pose sampled by the current update
     bool             live;     // owner alive with a built body this update
@@ -98,6 +112,27 @@ struct ClothState {
     ClothShape[]      shapes;
     Vec3[]            shape_starts;    // world, current substep
     Vec3[]            shape_ends;
+    ClothContactResult contact_result;
+    ClothShape[]      shape_storage;
+    ClothShape[]      staged_shapes;
+    ClothBody[]       staged_bodies;
+    Vec3[]            staged_positions;
+    Vec3[]            staged_velocities;
+    Vec3[]            staged_published;
+    Vec3[]            staged_pin_anchors;
+    Vec3[]            staged_shape_starts;
+    Vec3[]            staged_shape_ends;
+    Vec3[]            local_output;
+    Vec3[]            local_normals;
+    Vec3[]            publication_roundtrip;
+    Vec3[]            staged_predicted;
+    Vec3[]            staged_accelerations;
+    Vec3[]            staged_pin_targets;
+    Mat4              published_frame;
+    Aabb              local_bounds;
+    ContactFrame[]    frames;
+    ClothCandidate[]  candidates;
+    ClothContact[]    contacts;
 }
 
 <* Retained source and settings; owned arrays are read-only. *>
@@ -120,7 +155,7 @@ fn bool Cloth.is_prepared(&self) => self.state != null;
  Attach simulation over an owned geometry copy.
  @param [&inout] assets : "Owns the copy; outlives the cloth."
  @param [&in] node : "Live node with current, invertible world transform."
- @param desc : "Pins, collider ids and their sphere and capsule shapes are copied."
+ @param desc : "Pins, collider identities and settings are copied."
  @return? NO_MESH, CLOTH_EXISTS, physics::SOURCE_UNAVAILABLE, physics::NO_BODY
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
  @require self.world.is_registered(Cloth)
@@ -156,6 +191,7 @@ fn void? Scene.attach_cloth(
     if (self.has(node, Cloth)) return CLOTH_EXISTS~;
     check_cloth_desc(desc)!;
     if (!assets.geometries.is_live(mesh.geometry)) return c3d::INVALID_ID~;
+
     GeometryAsset* source = assets.geometry(mesh.geometry);
     check_cloth_source(
         scene:  self,
@@ -167,6 +203,7 @@ fn void? Scene.attach_cloth(
     @pool() {
         (void)unique_pins(desc.pins, (uint)source.data.positions.len)!;
     };
+
     ClothAuthoring* authoring = copy_authoring(self.allocator, desc)!;
     authoring.source = mesh.geometry;
     authoring.source_vertex_motion = mesh.vertex_motion;
@@ -185,12 +222,14 @@ fn void? Scene.attach_cloth(
 fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
     Cloth* component = scene.get(node, Cloth);
     if (component.is_prepared()) return;
+
     ClothAuthoring* authoring = component.authoring;
     ClothDesc desc = authoring.desc;
     scene::Mesh* mesh = scene.get(node, scene::Mesh);
     if (!mesh) return NO_MESH~;
     if (!c3d::same_id(mesh.geometry, authoring.source)) return c3d::INVALID_ARGUMENT~;
     if (!assets.geometries.is_live(authoring.source)) return c3d::INVALID_ID~;
+
     GeometryAsset* source = assets.geometry(authoring.source);
     check_cloth_source(
         scene: scene,
@@ -198,16 +237,19 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         mesh: mesh,
         source: source,
     )!;
+
     @pool() {
         uint vertex_count = (uint)source.data.positions.len;
         uint[] pins = unique_pins(desc.pins, vertex_count)!;
         Vec3[] world = alloc::new_array(tmem, Vec3, (sz)vertex_count);
         foreach (index, position : source.data.positions) world[index] = maths::transform_point(node.world, position);
         check_world_positions(world)!;
+
         ClothTopology topology = build_topology(&source.data, world)!;
-        ClothCapture capture = capture_colliders(scene, desc.colliders)!;
+        ClothCapture capture = capture_colliders(scene, desc.colliders, desc.collisions.max_shapes)!;
         GeometryId copy = copy_cloth_geometry(assets, &source.data)!;
         defer catch assets.remove_geometry(copy);
+
         ClothState* state = allocate_cloth_state(
             allocator:    scene.allocator,
             vertex_count: vertex_count,
@@ -215,21 +257,27 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
             edge_count:   (uint)topology.edges.len,
             bend_count:   (uint)topology.bends.len,
             body_count:   (uint)capture.bodies.len,
-            shape_count:  (uint)capture.shapes.len,
+            collisions:   desc.collisions,
         )!;
+
         state.desc = desc;
         state.desc.pins = state.pins;
         state.colliders[..] = desc.colliders[..];
         state.desc.colliders = state.colliders;
         state.bodies[..] = capture.bodies[..];
+        state.shapes = state.shape_storage[:capture.shapes.len];
         state.shapes[..] = capture.shapes[..];
         state.assets = assets;
         state.source = authoring.source;
         state.geometry = copy;
         state.source_vertex_motion = authoring.source_vertex_motion;
+
         state.rest[..] = source.data.positions[..];
         state.positions[..] = world[..];
+        state.predicted[..] = world[..];
+        state.accelerations[..] = (Vec3){};
         state.published[..] = world[..];
+        state.published_frame = node.world;
         state.inverse_masses[..] = 1;
         state.pins[..] = pins[..];
         foreach (slot, pin : pins) {
@@ -239,6 +287,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         }
         state.edges[..] = topology.edges[..];
         state.bends[..] = topology.bends[..];
+
         component.state = state;
         mesh.geometry = copy;
         mesh.vertex_motion = true;
@@ -290,7 +339,7 @@ fn void PhysicsWorld.update_cloths(&self) {
     self.cloth_update_serial = self.update_serial;
     self.cloth_stats = {};
     uint steps = self.steps_last_update;
-    PhysicsTuning* tuning = &self.desc.tuning;
+
     self.scene.@each(Cloth; Entity entity, Cloth* component) {
         if (!component.is_prepared()) {
             self.cloth_stats.pending++;
@@ -298,21 +347,30 @@ fn void PhysicsWorld.update_cloths(&self) {
             ClothState* state = component.state;
             Node* node = self.scene.node(entity);
             time::Clock started = clock::now();
-            foreach (slot, pin : state.pins) state.pin_targets[slot] = maths::transform_point(node.world, state.rest[pin]);
-            sample_bodies(self.scene, state);
-            if (steps) {
-                solve_cloth(
-                    state:   state,
-                    wind:    self.scene.get(node, Wind),
-                    gravity: tuning.gravity,
-                    step_dt: tuning.fixed_dt,
-                    steps:   steps,
-                );
+            double publication_seconds;
+            if (catch excuse = update_cloth(
+                world: self,
+                state: state,
+                node: node,
+                steps: steps,
+                publication_seconds: &publication_seconds,
+            )) {
+                state.contact_result.failure = excuse;
+                time::Clock reexpression_start = clock::now();
+                if (catch reexpression_failure = reexpress_cloth(state, node.world)) {
+                    state.contact_result.failure = reexpression_failure;
+                    state.contact_result.stage = ClothContactStage.REEXPRESSION;
+                }
+                publication_seconds += (clock::now() - reexpression_start).to_sec();
+                self.cloth_stats.failed++;
             }
-            time::Clock published = clock::now();
-            publish_cloth(state, node.world);
-            self.cloth_stats.solve_seconds += (published - started).to_sec();
-            self.cloth_stats.publish_seconds += (clock::now() - published).to_sec();
+
+            double total_seconds = (clock::now() - started).to_sec();
+            self.cloth_stats.solve_seconds += math::max(0.0, total_seconds - publication_seconds);
+            self.cloth_stats.publish_seconds += publication_seconds;
+            self.cloth_stats.candidates += state.contact_result.candidates;
+            self.cloth_stats.contacts += state.contact_result.contacts;
+            self.cloth_stats.max_residual = math::max(self.cloth_stats.max_residual, state.contact_result.max_residual);
             self.cloth_stats.particles += (uint)state.positions.len;
             self.cloth_stats.constraints += (uint)(state.edges.len + state.bends.len);
         }
@@ -324,6 +382,9 @@ fn void PhysicsWorld.update_cloths(&self) {
  @require offset.y == 0
 *>
 fn void ClothState.shift_origin(&self, Vec3 offset) {
+    self.published_frame.m03 -= offset.x;
+    self.published_frame.m13 -= offset.y;
+    self.published_frame.m23 -= offset.z;
     foreach (&position : self.positions) *position -= offset;
     foreach (&position : self.predicted) *position -= offset;
     foreach (&position : self.published) *position -= offset;
@@ -347,6 +408,7 @@ fn ClothDesc default_cloth_desc() {
         .damping           = DEFAULT_CLOTH_DAMPING,
         .thickness         = DEFAULT_CLOTH_THICKNESS,
         .gravity_scale     = 1,
+        .collisions        = default_cloth_collision_desc(),
     };
 }
 

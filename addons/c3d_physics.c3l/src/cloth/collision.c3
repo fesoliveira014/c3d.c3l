@@ -5,14 +5,10 @@ import c3d::ecs;
 import c3d::maths;
 import c3d::physics @public;
 import c3d::scene;
-import std::math;
-
-const float MIN_CONTACT_DISTANCE @private = 1e-7f; // metres; a closer particle leaves along a fixed perpendicular
-const Vec3 SPHERE_EXIT @private = { 0, 1, 0 }; // exit direction of a particle at a sphere's centre
-const float AXIS_ALIGNMENT_LIMIT @private = 0.9f; // above this, the perpendicular is built from X instead of Y
+import std::math::vector;
 
 struct ClothCapture @private {
-    ClothBody[]  bodies;
+    ClothBody[] bodies;
     ClothShape[] shapes;
 }
 
@@ -26,111 +22,128 @@ fn void? check_collider_owners(Scene* scene, Entity[] owners) @private {
     }
 }
 
-fn ClothCapture? capture_colliders(Scene* scene, Entity[] owners) @private {
+fn ClothCapture? capture_colliders(Scene* scene, Entity[] owners, uint max_shapes) @private {
     check_collider_owners(scene, owners)!;
     ClothCapture capture = {
         .bodies = alloc::new_array(tmem, ClothBody, (sz)owners.len),
-        .shapes = alloc::new_array(tmem, ClothShape, MAX_CLOTH_COLLIDERS),
+        .shapes = alloc::new_array(tmem, ClothShape, (sz)max_shapes),
     };
-    usz shape_count;
+
+    usz count;
     foreach (index, owner : owners) {
         RigidBody* body = scene.get(scene.node(owner), RigidBody);
-        if (!body) return physics::NO_BODY~;
-        capture.bodies[index] = { .owner = owner };
-        foreach (&collider : body.colliders) {
-            if (collider.kind != SPHERE && collider.kind != CAPSULE) continue;
-            if (shape_count == MAX_CLOTH_COLLIDERS) return c3d::CAPACITY_EXCEEDED~;
-            float half_height = collider.kind == CAPSULE ? collider.half_height : 0;
-            Vec3 half = collider.local.rotation.rotate_vec3({ 0, half_height, 0 });
-            capture.shapes[shape_count++] = {
-                .body   = (uint)index,
-                .start  = collider.local.position - half,
-                .end    = collider.local.position + half,
-                .radius = collider.radius,
-            };
-        }
+        if (!physics::cloth_body_live(body)) return physics::NO_BODY~;
+        capture.bodies[index] = { .owner = owner, .native_identity = physics::cloth_body_identity(body) };
+        count += physics::capture_cloth_shapes(
+            world: null,
+            body: body,
+            body_index: (uint)index,
+            output: capture.shapes[count..],
+        )!;
     }
-    capture.shapes = capture.shapes[:shape_count];
+
+    capture.shapes = capture.shapes[:count];
     return capture;
 }
 
-fn void sample_bodies(Scene* scene, ClothState* state) @private {
-    foreach (&body : state.bodies) {
-        body.live = scene.world.is_alive(body.owner) && scene.has(scene.node(body.owner), RigidBody);
+fn bool same_body_identity(uint[4] first, uint[4] second) @local {
+    foreach (index, value : first) if (value != second[index]) return false;
+    return true;
+}
+
+fn bool same_shape_binding(ClothShape* first, ClothShape* second) @local {
+    if (first.kind != second.kind || first.collider != second.collider || first.compound_child != second.compound_child
+        || first.child != second.child || first.snapshot.index != second.snapshot.index || first.snapshot.generation != second.snapshot.generation) return false;
+    foreach (index, value : first.native_identity) if (value != second.native_identity[index]) return false;
+    return first.start == second.start && first.end == second.end && first.radius == second.radius
+      && first.local.position == second.local.position && first.local.rotation.v == second.local.rotation.v
+      && first.bounds.min == second.bounds.min && first.bounds.max == second.bounds.max;
+}
+
+fn void? refresh_colliders(PhysicsWorld* world, ClothState* state) @private {
+    ClothShape[] previous = state.shapes;
+    usz count;
+    foreach (body_index, &body : state.bodies) {
+        body.live = world.scene.world.is_alive(body.owner);
+        RigidBody* rigid = body.live ? world.scene.get(world.scene.node(body.owner), RigidBody) : null;
+        body.live = physics::cloth_body_live(rigid);
         if (!body.live) {
             body.observed = false;
             continue;
         }
+
+        uint[4] identity = physics::cloth_body_identity(rigid);
+        if (!same_body_identity(body.native_identity, identity)) body.observed = false;
+        body.native_identity = identity;
+
+        usz first = count;
+        count += physics::capture_cloth_shapes(
+            world: world,
+            body: rigid,
+            body_index: (uint)body_index,
+            output: state.shape_storage[count..],
+        )!;
+
+        usz matching = first;
+        foreach (&old : previous) {
+            if (old.body != body_index) continue;
+            if (matching == count || !same_shape_binding(old, &state.shape_storage[matching])) {
+                body.observed = false;
+                break;
+            }
+            matching++;
+        }
+        if (matching != count) body.observed = false;
+    }
+
+    state.shapes = state.shape_storage[:count];
+}
+
+fn void sample_bodies(Scene* scene, ClothState* state) @private {
+    foreach (&body : state.bodies) {
+        body.live = scene.world.is_alive(body.owner);
+        RigidBody* rigid = body.live ? scene.get(scene.node(body.owner), RigidBody) : null;
+        body.live = physics::cloth_body_live(rigid);
+        if (!body.live) {
+            body.observed = false;
+            continue;
+        }
+
+        uint[4] identity = physics::cloth_body_identity(rigid);
+        if (!same_body_identity(body.native_identity, identity)) body.observed = false;
+        body.native_identity = identity;
+
         body.current = maths::transform_from_mat4(scene.node(body.owner).world);
         body.current.scale = { 1, 1, 1 };
         if (body.observed) continue;
+
         body.solved = body.current;
         body.observed = true;
     }
 }
 
-fn void place_shapes(ClothState* state, float progress) @private {
+fn void? place_shapes(ClothState* state, float progress) @private {
     foreach (index, &shape : state.shapes) {
         ClothBody* body = &state.bodies[shape.body];
         if (!body.live) continue;
         maths::Transform pose = interpolate_body(body.solved, body.current, progress);
-        state.shape_starts[index] = pose.position + pose.rotation.rotate_vec3(shape.start);
-        state.shape_ends[index] = pose.position + pose.rotation.rotate_vec3(shape.end);
-    }
-}
-
-fn void project_shapes(ClothState* state, Vec3[] positions) @private {
-    foreach (shape_index, &shape : state.shapes) {
-        if (!state.bodies[shape.body].live) continue;
-        Vec3 start = state.shape_starts[shape_index];
-        Vec3 end = state.shape_ends[shape_index];
-        float radius = shape.radius + state.desc.thickness;
-        foreach (index, &position : positions) {
-            if (state.inverse_masses[index] == 0) continue;
-            *position = outside_capsule(
-                point:  *position,
-                start:  start,
-                end:    end,
-                radius: radius,
-            );
-        }
+        state.frames[index] = physics::contact_frame(pose, shape.local)!;
+        state.shape_starts[index] = (Vec3)physics::contact_middle(physics::contact_point(&state.frames[index], shape.start)!);
+        state.shape_ends[index] = (Vec3)physics::contact_middle(physics::contact_point(&state.frames[index], shape.end)!);
+        if (!finite_vector(state.shape_starts[index]) || !finite_vector(state.shape_ends[index])) return CONTACT_PRECISION_EXCEEDED~;
     }
 }
 
 fn void finish_body_poses(ClothState* state) @private {
-    foreach (&body : state.bodies) {
-        if (body.live) body.solved = body.current;
-    }
+    foreach (&body : state.bodies) if (body.live) body.solved = body.current;
 }
 
 fn maths::Transform interpolate_body(maths::Transform solved, maths::Transform current, float progress) @local {
+    if (progress == 0) return solved;
+    if (progress == 1) return current;
     return {
         .position = solved.position + (current.position - solved.position) * progress,
         .rotation = solved.rotation.slerp(current.rotation, progress),
-        .scale    = { 1, 1, 1 },
+        .scale = { 1, 1, 1 },
     };
-}
-
-fn Vec3 outside_capsule(
-    Vec3 point,
-    Vec3 start,
-    Vec3 end,
-    float radius,
-) @private {
-    Vec3 axis = end - start;
-    float length_squared = axis.dot(axis);
-    float along = length_squared > 0 ? math::clamp((point - start).dot(axis) / length_squared, 0.0f, 1.0f) : 0;
-    Vec3 closest = start + axis * along;
-    Vec3 offset = point - closest;
-    float distance = offset.length();
-    if (distance >= radius) return point;
-    Vec3 direction = distance > MIN_CONTACT_DISTANCE ? offset / distance : centreline_exit(axis, length_squared);
-    return closest + direction * radius;
-}
-
-fn Vec3 centreline_exit(Vec3 axis, float length_squared) @local {
-    if (length_squared == 0) return SPHERE_EXIT;
-    Vec3 unit = axis / math::sqrt(length_squared);
-    Vec3 reference = math::abs(unit.y) < AXIS_ALIGNMENT_LIMIT ? (Vec3){ 0, 1, 0 } : (Vec3){ 1, 0, 0 };
-    return unit.cross(reference).normalize();
 }
