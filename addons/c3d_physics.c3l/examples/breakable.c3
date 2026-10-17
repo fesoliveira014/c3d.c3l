@@ -18,6 +18,7 @@ import c3d::scene;
 import std::io;
 import std::io::file;
 import std::math;
+import std::sort;
 import std::time;
 import std::time::clock;
 import imgui;
@@ -31,20 +32,31 @@ const float PROJECTILE_DENSITY @local = 8000; // a dense 1000 kg projectile make
 const float WALL_SPACING @private = 6;
 const float PIECE_PITCH @local = 0.508f; // 8 mm seams connect faces but leave diagonal pieces outside the 1 cm gap
 const float EXAMPLE_BREAK_FORCE @private = 40000; // supports the unhit wall while a dense projectile fractures it
+const float EXAMPLE_TWIST_LIMIT @local = 8000; // Nm; exposes torsional failure under the localized impact
+const float EXAMPLE_BENDING_LIMIT @local = 16000; // Nm; keeps the standing wall intact before impact
+const float ANCHOR_ROW_TOLERANCE @local = 1e-4f;
 const uint WINDOW_WIDTH @local = 1280;
 const uint WINDOW_HEIGHT @local = 720;
 const uint CAPTURE_CHANNELS @local = 4;
 const uint ACCEPTANCE_THROW_FRAME @local = 30;
+const uint FRAME_WARMUP @local = 60;
+const uint FRAME_SAMPLES @local = 300;
+const String RESET_FRAME_OPTION @local = "--reset-at=";
+const String RESET_CAPTURE_OPTION @local = "--capture-before-reset=";
 const float ORBIT_SENSITIVITY @local = 0.005f;
 
 struct Options @private {
     String model_path;
     String capture_path;
+    String reset_capture_path;
     uint walls;
     uint frames;
+    uint reset_frame;
     bool pieces;
     bool acceptance;
     bool benchmark;
+    bool anchored;
+    bool sampled;
 }
 
 struct Demo @private {
@@ -56,13 +68,22 @@ struct Demo @private {
     MaterialId piece_material;
     MaterialId alternate_material;
     MaterialId shot_material;
+    MaterialId anchor_material;
     ModelId model;
     Node*[MAX_WALLS] walls;
     uint wall_count;
     Node* projectiles;
+    Node* anchor_target;
     uint shot_count;
     double author_ms;
     uint breaks;
+    BreakableStrength strength;
+    BreakableEvaluation evaluation;
+    bool anchored;
+    bool have_break;
+    BreakCriterion last_criterion;
+    BreakSamplePhase last_phase;
+    BreakableStrength last_loads;
 }
 
 struct Controls @local {
@@ -71,6 +92,12 @@ struct Controls @local {
     bool sleeping;
     bool draw_shapes;
     bool rebuild;
+    float twist;
+    float bending;
+    bool anchored;
+    bool sampled;
+    bool reset_assembly;
+    bool reset_pieces;
 }
 
 fn Options? parse_options(String[] args) @local {
@@ -85,23 +112,34 @@ fn Options? parse_options(String[] args) @local {
             options.frames = arg[9..].to_uint()!;
         } else if (arg.starts_with("--capture=")) {
             options.capture_path = arg[10..];
+        } else if (arg.starts_with(RESET_FRAME_OPTION)) {
+            options.reset_frame = arg[RESET_FRAME_OPTION.len..].to_uint()!;
+        } else if (arg.starts_with(RESET_CAPTURE_OPTION)) {
+            options.reset_capture_path = arg[RESET_CAPTURE_OPTION.len..];
         } else if (arg == "--pieces") {
             options.pieces = true;
         } else if (arg == "--acceptance") {
             options.acceptance = true;
         } else if (arg == "--benchmark") {
             options.benchmark = true;
+        } else if (arg == "--anchors") {
+            options.anchored = true;
+        } else if (arg == "--sampled") {
+            options.sampled = true;
         } else {
             return c3d::INVALID_ARGUMENT~;
         }
     }
     if (!options.walls || options.walls > MAX_WALLS) return c3d::INVALID_ARGUMENT~;
     if (options.acceptance && !options.frames) options.frames = 300;
+    if (options.reset_capture_path.len && !options.reset_frame) return c3d::INVALID_ARGUMENT~;
+    if (options.reset_frame && options.frames && options.reset_frame >= options.frames) return c3d::INVALID_ARGUMENT~;
     return options;
 }
 
 fn void? create_demo(Allocator allocator, Demo* demo, String model_path) @private {
     demo.allocator = allocator;
+    demo.strength = physics::default_breakable_strength(EXAMPLE_BREAK_FORCE);
     demo.assets = asset::create_asset_store(allocator, asset::default_asset_store_desc());
     defer catch asset::destroy_asset_store(&demo.assets);
     if (model_path.len) demo.model = gltf::load_model(&demo.assets, model_path)!;
@@ -139,6 +177,9 @@ fn void? create_demo(Allocator allocator, Demo* demo, String model_path) @privat
     demo.shot_material = demo.assets.add_material(material::standard({
         .base_color = { 0.92f, 0.3f, 0.08f, 1 }, .roughness = 0.5f,
     }))!;
+    demo.anchor_material = demo.assets.add_material(material::standard({
+        .base_color = { 0.22f, 0.63f, 0.42f, 1 }, .roughness = 0.85f,
+    }))!;
     MaterialId ground_material = demo.assets.add_material(material::standard({
         .base_color = { 0.19f, 0.23f, 0.26f, 1 }, .roughness = 0.95f,
     }))!;
@@ -149,6 +190,7 @@ fn void? create_demo(Allocator allocator, Demo* demo, String model_path) @privat
     collider.half_extents = { 50, 0.5f, 50 };
     collider.local.position.y = -0.5f;
     demo.physics.add_body(floor, physics::default_body_desc(STATIC), (&collider)[:1])!;
+    demo.anchor_target = floor;
 }
 
 fn void destroy_demo(Demo* demo) @private {
@@ -186,8 +228,65 @@ fn Node*? add_wall(Demo* demo, Vec3 position, BreakableDesc desc) @local {
     demo.scene.update_world();
     time::Clock started = clock::now();
     demo.physics.add_breakable(root, desc)!;
+    if (demo.anchored || demo.evaluation == SAMPLED_REACTION) {
+        @pool() {
+            BreakableRecipeDesc recipe = capture_wall_recipe(demo, root, desc);
+            demo.physics.remove_breakable(root);
+            demo.physics.add_breakable_recipe(root, recipe)!;
+        };
+    }
     demo.author_ms += (double)(clock::now() - started) / 1_000_000;
     return root;
+}
+
+fn BreakableRecipeDesc capture_wall_recipe(Demo* demo, Node* root, BreakableDesc desc) @local {
+    BreakableState* source = demo.scene.get(root, Breakable).state;
+    BreakableRecipeDesc recipe = {
+        .settings = desc,
+        .strength = demo.strength,
+        .evaluation = demo.evaluation,
+        .pieces = alloc::new_array(tmem, BreakablePieceView, source.pieces.len),
+        .welds = alloc::new_array(tmem, BreakableWeldDesc, source.welds.len),
+    };
+    float lowest = float::max;
+    foreach (uint index, &piece : recipe.pieces) {
+        *piece = source.piece_view(index);
+        piece.hulls = alloc::clone_slice(tmem, piece.hulls);
+        lowest = math::min(lowest, piece.rest_frame.position.y);
+    }
+    foreach (uint index, &weld : recipe.welds) {
+        BreakableWeldView captured = source.weld_view(index);
+        *weld = {
+            .piece_a = captured.piece_a,
+            .piece_b = captured.piece_b,
+            .frame_a = captured.frame_a,
+            .frame_b = captured.frame_b,
+            .moment_axis = { 1, 0, 0 },
+        };
+    }
+    if (!demo.anchored) return recipe;
+    uint count;
+    foreach (piece : recipe.pieces) if (piece.rest_frame.position.y <= lowest + ANCHOR_ROW_TOLERANCE) count++;
+    recipe.anchors = alloc::new_array(tmem, BreakableAnchorDesc, count);
+    uint next;
+    Mat4 target_inverse = maths::inverse_affine(demo.anchor_target.world);
+    foreach (uint index, piece : recipe.pieces) {
+        if (piece.rest_frame.position.y > lowest + ANCHOR_ROW_TOLERANCE) continue;
+        maths::Transform frame_a = maths::TRANSFORM_IDENTITY;
+        if (!demo.model.generation) frame_a.position.y = -PIECE_SIZE * 0.5f;
+        Mat4 frame_world = root.world.mul(piece.rest_frame.to_mat4()).mul(frame_a.to_mat4());
+        recipe.anchors[next++] = {
+            .piece = index,
+            .target = demo.anchor_target.id,
+            .frame_a = frame_a,
+            .frame_b = maths::transform_from_mat4(target_inverse.mul(frame_world)),
+            .moment_axis = { 1, 0, 0 },
+            .strength_override = physics::default_breakable_strength(float::max),
+            .has_strength_override = true,
+        };
+        demo.scene.get(demo.scene.node(piece.node), scene::Mesh).material = demo.anchor_material;
+    }
+    return recipe;
 }
 
 fn void? rebuild_demo(Demo* demo, uint walls, BreakableDesc desc) @private {
@@ -197,6 +296,7 @@ fn void? rebuild_demo(Demo* demo, uint walls, BreakableDesc desc) @private {
     demo.projectiles = demo.scene.add_node(null, "projectiles")!;
     demo.shot_count = 0;
     demo.breaks = 0;
+    demo.have_break = false;
     demo.author_ms = 0;
 
     for (uint index = 0; index < walls; index++) {
@@ -205,6 +305,14 @@ fn void? rebuild_demo(Demo* demo, uint walls, BreakableDesc desc) @private {
         Node* wall = add_wall(demo, position, desc)!;
         demo.walls[demo.wall_count++] = wall;
     }
+}
+
+fn void? reset_demo(Demo* demo, BreakableForm form) @private {
+    demo.scene.update_world();
+    foreach (root : demo.walls[:demo.wall_count]) demo.physics.reset_breakable(root, form)!;
+    if (demo.projectiles) demo.scene.remove(demo.projectiles);
+    demo.projectiles = demo.scene.add_node(null, "projectiles")!;
+    demo.shot_count = 0;
 }
 
 fn Node*? throw_box(Demo* demo, Vec3 position, Vec3 direction, float speed) @private {
@@ -264,7 +372,7 @@ fn Vec3 aim_point(Demo* demo) @private {
 
 fn void draw_panel(Demo* demo, Controls* controls, float delta) @local {
     imgui::set_next_window_pos({ 16, 16 }, imgui::COND_FIRST_USE_EVER);
-    imgui::set_next_window_size({ 360, 305 }, imgui::COND_FIRST_USE_EVER);
+    imgui::set_next_window_size({ 390, 485 }, imgui::COND_FIRST_USE_EVER);
     if (imgui::begin("Breakable", null, {})) {
         imgui::text("Left click throws; right drag orbits; wheel zooms");
         imgui::slider_float(
@@ -274,24 +382,54 @@ fn void draw_panel(Demo* demo, Controls* controls, float delta) @local {
             v_max: 40,
         );
         imgui::slider_float(
-            label: "Break force",
+            label: "Force / wake threshold (N)",
             v: &controls.strength,
             v_min: 100,
             v_max: 100000,
         );
+        imgui::checkbox("Anchor bottom row", &controls.anchored);
+        imgui::checkbox("Sample force and moments", &controls.sampled);
+        if (controls.sampled) {
+            imgui::slider_float(
+                label: "Twist limit (N.m)",
+                v: &controls.twist,
+                v_min: 0,
+                v_max: 50000,
+            );
+            imgui::slider_float(
+                label: "Bending limit (N.m)",
+                v: &controls.bending,
+                v_min: 0,
+                v_max: 50000,
+            );
+        }
         imgui::checkbox("Sleep until hit", &controls.sleeping);
         imgui::checkbox("Draw collision", &controls.draw_shapes);
         controls.rebuild = imgui::button("Rebuild with these settings");
+        controls.reset_assembly = imgui::button("Reset to assembly");
+        imgui::same_line();
+        controls.reset_pieces = imgui::button("Reset to pieces");
         imgui::separator();
         BreakableState* state = demo.scene.get(demo.walls[0], Breakable).state;
         imgui::text("First wall: %s", state.form == ASSEMBLY ? "ASSEMBLY" : "PIECES");
         imgui::text("Pieces: %u / %llu; welds: %u / %llu",
             state.alive_pieces, state.pieces.len, state.alive_welds, state.welds.len);
+        imgui::text("Anchors: %u / %u", state.alive_anchors, state.anchor_count());
+        if (state.form == ASSEMBLY && state.anchor_count()) imgui::text("Anchors engage after wake.");
         imgui::text("Status: %s", state.status == LIVE ? "LIVE" : state.status == PENDING ? "PENDING" : "FAILED");
         if (state.status == FAILED) imgui::text("Weld binding failed; see the failure report.");
         b3::Counters counters = demo.physics.world.counters();
         imgui::text("Bodies %d, joints %d, awake %d", counters.body_count, counters.joint_count, demo.physics.world.awake_body_count());
         imgui::text("Breaks %llu / %u total; dropped %u", demo.physics.breaks().len, demo.breaks, demo.physics.dropped_events);
+        if (demo.have_break) {
+            imgui::text("Last criterion: %s", BreakCriterion::names[demo.last_criterion.ordinal]);
+            if (demo.last_phase == POST_FIXED_STEP) {
+                imgui::text("Sample: %.1f N, %.1f twist, %.1f bend N.m",
+                    demo.last_loads.force, demo.last_loads.twist, demo.last_loads.bending);
+            } else {
+                imgui::text("Native threshold; trigger load unavailable.");
+            }
+        }
         imgui::text("Steps %u, frame %.2f ms", demo.physics.steps_last_update, delta * 1000);
     }
     imgui::end();
@@ -315,8 +453,19 @@ fn void? run_window(Demo* demo, Options options) @local {
     BreakableDesc desc = physics::default_breakable_desc();
     desc.break_force = EXAMPLE_BREAK_FORCE;
     desc.sleep_until_hit = !options.pieces;
+    demo.anchored = options.anchored;
+    demo.evaluation = options.sampled ? SAMPLED_REACTION : NATIVE_FORCE;
+    if (options.sampled) demo.strength = { .force = EXAMPLE_BREAK_FORCE, .twist = EXAMPLE_TWIST_LIMIT, .bending = EXAMPLE_BENDING_LIMIT };
     rebuild_demo(demo, options.walls, desc)!;
-    Controls controls = { .strength = EXAMPLE_BREAK_FORCE, .speed = 15, .sleeping = !options.pieces };
+    Controls controls = {
+        .strength = EXAMPLE_BREAK_FORCE,
+        .speed = 15,
+        .sleeping = !options.pieces,
+        .twist = EXAMPLE_TWIST_LIMIT,
+        .bending = EXAMPLE_BENDING_LIMIT,
+        .anchored = options.anchored,
+        .sampled = options.sampled,
+    };
     Node* sun = demo.scene.add_light(light::directional({ 1, 0.95f, 0.88f }, 3), name: "sun")!;
     sun.local.rotation = maths::look_rotation(((Vec3){ -0.4f, -1, -0.5f }).normalize(), { 0, 1, 0 });
     demo.scene.ambient_color = { 0.55f, 0.65f, 0.8f };
@@ -332,7 +481,7 @@ fn void? run_window(Demo* demo, Options options) @local {
 
     RenderTargetId capture_target;
     ViewId capture_view;
-    if (options.capture_path.len) {
+    if (options.capture_path.len || options.reset_capture_path.len) {
         capture_target = render::create_render_target(
             renderer: &renderer,
             desc: render::render_target_desc(WINDOW_WIDTH, WINDOW_HEIGHT, PixelFormat.RGBA8_SRGB),
@@ -342,10 +491,14 @@ fn void? run_window(Demo* demo, Options options) @local {
         capture_view = render::create_view(&renderer, view)!;
     }
     io::printn("Left click throws; right drag orbits; wheel zooms; rebuild applies strength and form.");
+    io::printfn("adapter,%s,viewport,%d,%d,validation,true", renderer.adapter_name, WINDOW_WIDTH, WINDOW_HEIGHT);
     io::printfn("author_ms,%.6f,walls,%d", demo.author_ms, demo.wall_count);
     uint frame;
+    double[FRAME_SAMPLES] frame_samples;
+    uint sample_count;
     while (window.poll()) {
         if (options.frames && frame >= options.frames) break;
+        time::Clock frame_started = clock::now();
         Input* input = &window.input;
         if (input.key_pressed(platform::Scancode.ESCAPE) && !input.keyboard_captured_by_gui) break;
         float delta = options.acceptance ? physics::DEFAULT_FIXED_DT : window.clock.delta;
@@ -355,7 +508,21 @@ fn void? run_window(Demo* demo, Options options) @local {
         if (controls.rebuild) {
             desc.break_force = controls.strength;
             desc.sleep_until_hit = controls.sleeping;
+            demo.anchored = controls.anchored;
+            demo.evaluation = controls.sampled ? SAMPLED_REACTION : NATIVE_FORCE;
+            demo.strength = {
+                .force = controls.strength,
+                .twist = controls.sampled ? controls.twist : float::max,
+                .bending = controls.sampled ? controls.bending : float::max,
+            };
             rebuild_demo(demo, options.walls, desc)!;
+        }
+        if (controls.reset_assembly) reset_demo(demo, ASSEMBLY)!;
+        if (controls.reset_pieces) reset_demo(demo, PIECES)!;
+        if (options.reset_frame && frame == options.reset_frame) {
+            if (options.reset_capture_path.len) save_window_capture(&renderer, capture_target, options.reset_capture_path)!;
+            reset_demo(demo, controls.sleeping ? ASSEMBLY : PIECES)!;
+            io::printfn("reset_frame,%d,form,%s", frame, controls.sleeping ? "ASSEMBLY" : "PIECES");
         }
         if (!input.mouse_captured_by_gui) {
             if (input.button_down(platform::MouseButton.RIGHT)) {
@@ -389,6 +556,12 @@ fn void? run_window(Demo* demo, Options options) @local {
         demo.scene.update_world();
         demo.physics.update(delta);
         demo.breaks += (uint)demo.physics.breaks().len;
+        foreach (event : demo.physics.breaks()) {
+            demo.have_break = true;
+            demo.last_criterion = event.criterion;
+            demo.last_phase = event.phase;
+            demo.last_loads = event.loads;
+        }
         foreach (failure : demo.physics.build_failures()) io::eprintfn("Build failed: %s", failure.reason);
         demo.scene.update_world();
         debug.clear();
@@ -414,20 +587,33 @@ fn void? run_window(Demo* demo, Options options) @local {
             renderer.finish_view(capture_view)!;
         }
         renderer.end_frame()!;
+        if (options.acceptance && frame >= FRAME_WARMUP && sample_count < FRAME_SAMPLES) {
+            frame_samples[sample_count++] = (double)(clock::now() - frame_started) / 1_000_000;
+        }
         frame++;
     }
 
-    if (capture_target.generation) {
-        char[] pixels = alloc::new_array(demo.allocator, char, WINDOW_WIDTH * WINDOW_HEIGHT * CAPTURE_CHANNELS);
-        defer alloc::free(demo.allocator, pixels.ptr);
-        renderer.read_render_target(capture_target, pixels)!;
-        file::save(options.capture_path, pixels)!;
-    }
+    if (options.capture_path.len) save_window_capture(&renderer, capture_target, options.capture_path)!;
     renderer.log.check_validation()!;
     BreakableState* state = demo.scene.get(demo.walls[0], Breakable).state;
     io::printfn("frames,%d,breaks,%d,alive_welds,%d,form,%s", frame, demo.breaks, state.alive_welds,
         state.form == ASSEMBLY ? "ASSEMBLY" : "PIECES");
     if (options.acceptance && !demo.breaks) return c3d::INVALID_ARGUMENT~;
+    if (sample_count) {
+        foreach (index, milliseconds : frame_samples[:sample_count]) io::printfn("frame_cpu_ms,%d,%.6f", index + FRAME_WARMUP, milliseconds);
+        sort::quicksort(frame_samples[:sample_count]);
+        double median = (frame_samples[(sample_count - 1) / 2] + frame_samples[sample_count / 2]) * 0.5;
+        uint percentile = (sample_count * 95 + 99) / 100 - 1;
+        io::printfn("frame_cpu_summary,samples,%d,median_ms,%.6f,p95_ms,%.6f,views,%d",
+            sample_count, median, frame_samples[percentile], capture_target.generation ? 2 : 1);
+    }
+}
+
+fn void? save_window_capture(Renderer* renderer, RenderTargetId target, String path) @local {
+    char[] pixels = alloc::new_array(renderer.allocator, char, WINDOW_WIDTH * WINDOW_HEIGHT * CAPTURE_CHANNELS);
+    defer alloc::free(renderer.allocator, pixels.ptr);
+    renderer.read_render_target(target, pixels)!;
+    file::save(path, pixels)!;
 }
 
 fn int main(String[] args) {

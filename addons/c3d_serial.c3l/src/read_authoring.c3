@@ -41,6 +41,26 @@ macro ReadContext.authored(
     return ($Authoring*)value;
 }
 
+<*
+ Decode a registered described value for a compatibility reader.
+ @param [&inout] reader : "Bounded payload advanced through the described value."
+ @return "Borrow valid until this subtree read completes."
+ @return? c3d::INVALID_ID, c3d::UNSUPPORTED, c3d::ASSET_FORMAT_ERROR, c3d::CAPACITY_EXCEEDED
+ @require self.read_owned != null
+*>
+macro ReadContext.read_value(&self, $Type, Reader* reader) {
+    DescribedType* type = described_type($Type)!;
+    void* value = self.read_owned.acquire(1, type.descriptor.size, type.descriptor.alignment)!;
+    read_described_value(
+        type: type,
+        reader: reader,
+        context: self,
+        owned: self.read_owned,
+        value: value,
+    )!;
+    return ($Type*)value;
+}
+
 fn void*? read_component_authoring(
     ReadContext* context,
     Entity entity,

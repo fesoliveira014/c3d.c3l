@@ -6,6 +6,8 @@ import c3d::physics;
 import c3d::scene;
 import std::io;
 import std::math;
+import std::core::mem::allocators;
+import std::sort;
 import std::time;
 import std::time::clock;
 
@@ -14,6 +16,7 @@ const uint BENCHMARK_FRAMES @local = 600; // ten simulated seconds of the steady
 const uint BENCHMARK_REPEATS @local = 3;
 const uint LATENCY_FRAMES @local = 300;
 const usz RECORDING_BYTES @local = 4 * 1024 * 1024; // starting capacity for the recorded impact
+const uint RESET_SAMPLES @local = 32;
 
 fn bool belongs_to_wall(Node* node, Node* root) @local {
     for (Node* current = node; current; current = current.parent) {
@@ -121,5 +124,82 @@ fn void? run_benchmark() @private {
     }
     measure_latency(true)!;
     measure_latency(false)!;
+    for (uint run = 0; run < BENCHMARK_REPEATS; run++) {
+        measure_strength_evaluation(NATIVE_FORCE, run)!;
+        measure_strength_evaluation(SAMPLED_REACTION, run)!;
+    }
+    measure_reset()!;
     io::printfn("component_bytes,%d,event_bytes,%d", Breakable::size, BreakEvent::size);
+}
+
+fn void? measure_strength_evaluation(BreakableEvaluation evaluation, uint run) @local {
+    Demo demo;
+    create_demo(mem, &demo, "")!;
+    defer destroy_demo(&demo);
+    demo.anchored = true;
+    demo.evaluation = evaluation;
+    demo.strength = physics::default_breakable_strength(float::max);
+    BreakableDesc desc = physics::default_breakable_desc();
+    desc.sleep_until_hit = false;
+    desc.break_force = float::max;
+    rebuild_demo(&demo, MAX_WALLS, desc)!;
+
+    double elapsed;
+    for (uint frame = 0; frame < BENCHMARK_WARMUP + BENCHMARK_FRAMES; frame++) {
+        demo.scene.update_world();
+        time::Clock started = clock::now();
+        demo.physics.update(physics::DEFAULT_FIXED_DT);
+        double duration = (double)(clock::now() - started);
+        if (frame >= BENCHMARK_WARMUP) elapsed += duration;
+    }
+    uint pieces;
+    uint welds;
+    uint anchors;
+    foreach (root : demo.walls[:demo.wall_count]) {
+        BreakableState* state = demo.scene.get(root, Breakable).state;
+        if (state.alive_welds != state.welds.len || state.alive_anchors != state.anchor_count()) return c3d::INVALID_ARGUMENT~;
+        pieces += state.alive_pieces;
+        welds += state.alive_welds;
+        anchors += state.alive_anchors;
+    }
+    b3::Counters counters = demo.physics.world.counters();
+    io::printfn("strength_mode,%s,run,%d,walls,%d,pieces,%d,welds,%d,anchors,%d,update_ms,%.6f,bodies,%d,joints,%d,awake,%d,workers,%d",
+        evaluation == NATIVE_FORCE ? "NATIVE_FORCE" : "SAMPLED_REACTION", run, demo.wall_count, pieces, welds, anchors,
+        elapsed / BENCHMARK_FRAMES / 1_000_000, counters.body_count, counters.joint_count,
+        demo.physics.world.awake_body_count(), demo.physics.worker_count());
+}
+
+fn void? measure_reset() @local {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    {
+        Demo demo;
+        create_demo(&tracker, &demo, "")!;
+        defer destroy_demo(&demo);
+        demo.anchored = true;
+        demo.evaluation = SAMPLED_REACTION;
+        demo.strength = physics::default_breakable_strength(float::max);
+        BreakableDesc desc = physics::default_breakable_desc();
+        desc.sleep_until_hit = false;
+        desc.break_force = float::max;
+        rebuild_demo(&demo, 1, desc)!;
+        BreakableState* state = demo.scene.get(demo.walls[0], Breakable).state;
+        b3::BodyId target = demo.physics.body(demo.anchor_target)!;
+        double[RESET_SAMPLES] durations;
+        foreach (&duration : durations) {
+            time::Clock started = clock::now();
+            demo.physics.reset_breakable(demo.walls[0], PIECES)!;
+            *duration = (double)(clock::now() - started) / 1_000_000;
+            b3::Counters counters = demo.physics.world.counters();
+            if (!target.is_valid() || counters.body_count != state.pieces.len + 1
+                || counters.joint_count != state.welds.len + state.anchor_count()) return c3d::INVALID_ARGUMENT~;
+        }
+        foreach (index, duration : durations) io::printfn("reset_cpu_ms,%d,%.6f", index, duration);
+        sort::quicksort(durations[..]);
+        double median = (durations[RESET_SAMPLES / 2 - 1] + durations[RESET_SAMPLES / 2]) * 0.5;
+        io::printfn("reset,form,PIECES,samples,%d,pieces,%d,welds,%d,anchors,%d,median_ms,%.6f,max_ms,%.6f,c3_peak_bytes,%d",
+            RESET_SAMPLES, state.pieces.len, state.welds.len, state.anchor_count(), median, durations[^1], tracker.max_allocated());
+    }
+    if (tracker.has_leaks()) return c3d::INVALID_ARGUMENT~;
 }
