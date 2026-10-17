@@ -77,10 +77,16 @@ fn void check_authored_seams(Cloth* owner) @private {
 }
 
 fn char[] prior_cloth_text(String text, uint version) @private {
-    String first_field = version == 1 ? "\"contact_tolerance\"" : version == 2 ? "\"self_collision\"" : "\"continuous\"";
+    String first_field = version == 1
+      ? "\"contact_tolerance\""
+      : version == 2
+        ? "\"self_collision\""
+        : version == 3
+          ? "\"continuous\""
+          : "\"render_particles\"";
     sz field_start = text.index_of(first_field)!!;
     sz fields_start = text[:field_start].rindex_of_char(',')!!;
-    sz last_field = text.index_of("\"max_ccd_iterations\"")!!;
+    sz last_field = text.index_of("\"rest_angles\"")!!;
     sz fields_end = last_field + text[last_field..].index_of_char('}')!!;
     char[] legacy = alloc::new_array(tmem, char, text.len - (fields_end - fields_start));
     legacy[:fields_start] = ((char[])text[:fields_start])[..];
@@ -90,7 +96,7 @@ fn char[] prior_cloth_text(String text, uint version) @private {
     sz version_start = cloth_start + ((String)legacy[cloth_start..]).index_of("\"version\"")!!;
     sz version_value = version_start + ((String)legacy[version_start..]).index_of_char(':')!! + 1;
     while (legacy[version_value] == ' ') version_value++;
-    assert(legacy[version_value] == '4');
+    assert(legacy[version_value] == '5');
     legacy[version_value] = (char)('0' + version);
     return legacy;
 }
@@ -256,7 +262,7 @@ fn void test_cloth_late_authoring_copy_failure_rolls_back_body_and_mesh() @test 
 }
 
 fn void test_cloth_prior_text_defaults_contacts_and_prior_binary_is_unsupported() @test {
-    foreach (version : (uint[3]){ 1, 2, 3 }) @pool() {
+    foreach (version : (uint[4]){ 1, 2, 3, 4 }) @pool() {
         Fixture fixture;
         create_fixture(&fixture);
         defer destroy_fixture(&fixture);
@@ -273,7 +279,14 @@ fn void test_cloth_prior_text_defaults_contacts_and_prior_binary_is_unsupported(
         ClothCollisionDesc collisions = owner.authoring.desc.collisions;
         ClothCollisionDesc defaults = cloth::default_cloth_collision_desc();
         assert(!owner.is_prepared() && owner.state == null);
-        assert(!collisions.continuous && collisions.max_ccd_iterations == cloth::DEFAULT_CCD_ITERATIONS);
+        assert(!owner.authoring.desc.render_particles.len && !owner.authoring.desc.tangent_frame && owner.authoring.desc.tangent_uv_set == 0);
+        assert(!owner.authoring.desc.attachments.len && owner.authoring.desc.bend_mode == DISTANCE);
+        assert(owner.authoring.desc.bend_compliance == cloth::default_cloth_desc().bend_compliance && !owner.authoring.desc.rest_angles.len);
+        if (version < 4) {
+            assert(!collisions.continuous && collisions.max_ccd_iterations == cloth::DEFAULT_CCD_ITERATIONS);
+        } else {
+            assert(collisions.continuous && collisions.max_ccd_iterations == 96);
+        }
         if (version < 3) {
             assert(!collisions.self_collision && !owner.authoring.desc.seams.len);
         } else {
@@ -300,7 +313,7 @@ fn void test_cloth_prior_text_defaults_contacts_and_prior_binary_is_unsupported(
             text_mode: false,
         )!!;
         sz type_version = ((String)binary).index_of("cloth")!! + "cloth".len;
-        assert(binary[type_version] == 4);
+        assert(binary[type_version] == 5);
         binary[type_version] = (char)version;
         uint before = fixture.destination.world.entities.free_count;
         uint geometries = fixture.assets.geometries.free_count;
@@ -309,5 +322,85 @@ fn void test_cloth_prior_text_defaults_contacts_and_prior_binary_is_unsupported(
         assert(fixture.destination.world.entities.free_count == before);
         assert(fixture.assets.geometries.free_count == geometries);
         assert(fixture.destination.count(Cloth) == cloths);
+    };
+}
+
+fn void test_cloth_v5_materials_attachments_and_dihedral_round_trip() @test {
+    foreach (text_mode : (bool[2]){ false, true }) @pool() {
+        Fixture fixture;
+        create_fixture(&fixture);
+        defer destroy_fixture(&fixture);
+        serial::register_core_codecs()!!;
+
+        Vec3[6] positions = {
+            { 0, 0, 0 }, { 1, 0, 0 }, { 0, -1, 0 },
+            { 1, 0, 0 }, { 1, -1, 0.2f }, { 0, -1, 0 },
+        };
+        Vec2[6] uv1 = {
+            { 0, 0 }, { 1, 0 }, { 0, 1 },
+            { 1, 0 }, { 0, 0 }, { 1, 1 },
+        };
+        uint[6] indices = { 0, 2, 1, 3, 5, 4 };
+        Geometry geom = {
+            .positions = positions[..],
+            .uv1 = uv1[..],
+            .indices = indices[..],
+        };
+        geom.finalize();
+        GeometryId split_id = fixture.assets.add_geometry(&geom, "split_quad")!!;
+
+        Node* node = fixture.source.add_mesh(
+            geometry: split_id,
+            material: {},
+            parent: fixture.root,
+            name: "v5_fabric",
+        )!!;
+        uint[6] render_particles = { 0, 1, 2, 1, 3, 2 };
+        ClothAttachment[2] attachments = {
+            { .particle = 0, .weight = 1.0f, .compliance = 0.0f },
+            { .particle = 1, .weight = 0.75f, .compliance = 0.015f },
+        };
+        ClothRestAngle[1] rest_angles = {
+            { .first = 1, .second = 2, .angle = 0.4f },
+        };
+        ClothDesc desc = cloth::default_cloth_desc();
+        desc.render_particles = render_particles[..];
+        desc.tangent_frame = true;
+        desc.tangent_uv_set = 1;
+        desc.attachments = attachments[..];
+        desc.bend_mode = DIHEDRAL;
+        desc.bend_compliance = 0.005f;
+        desc.rest_angles = rest_angles[..];
+        fixture.source.update_world();
+        fixture.source.attach_cloth(assets: &fixture.assets, node: node, desc: desc)!!;
+
+        char[] bytes = encode(
+            scene: &fixture.source,
+            assets: &fixture.assets,
+            root: fixture.root,
+            text_mode: text_mode,
+        )!!;
+        Node* restored = decode(&fixture, bytes, text_mode)!!;
+        Node* restored_cloth = child_named(restored, "v5_fabric");
+        Cloth* owner = fixture.destination.get(restored_cloth, Cloth);
+        ClothDesc restored_desc = owner.authoring.desc;
+        assert(restored_desc.render_particles == render_particles[..]);
+        assert(restored_desc.tangent_frame && restored_desc.tangent_uv_set == 1);
+        assert(restored_desc.attachments.len == 2);
+        assert(restored_desc.attachments[1].particle == 1 && restored_desc.attachments[1].weight == 0.75f);
+        assert(restored_desc.bend_mode == DIHEDRAL && restored_desc.bend_compliance == 0.005f);
+        assert(restored_desc.rest_angles.len == 1 && restored_desc.rest_angles[0].angle == 0.4f);
+
+        PhysicsWorld world = create_world(&fixture.destination, &fixture.assets);
+        defer physics::destroy_physics_world(&world);
+        world.update(0);
+        cloth::prepare(&fixture.destination, &fixture.assets, restored_cloth)!!;
+        assert(owner.is_prepared() && owner.state.rest.len == 4 && owner.state.hinges.len == 1);
+        assert(bytes == encode(
+            scene: &fixture.destination,
+            assets: &fixture.assets,
+            root: restored,
+            text_mode: text_mode,
+        )!!);
     };
 }

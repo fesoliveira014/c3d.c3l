@@ -1,8 +1,11 @@
 # Cloth
 
 `c3d::physics::cloth`, in the physics add-on, simulates a triangle mesh with position-based
-dynamics: unit-mass particles, one distance constraint per unique triangle edge, one bend
-distance per edge shared by exactly two triangles, gravity, node `Wind` drag, damping, hard pins,
+dynamics: unit-mass particles, an optional render-to-physical particle weld map (`render_particles`),
+one distance constraint per unique physical triangle edge, distance or signed dihedral bending
+across interior edges (`ClothBendMode`, `bend_compliance`, `ClothRestAngle`), gravity, node `Wind` drag,
+damping, hard pins and weighted compliant XPBD attachments (`ClothAttachment`), deformed normal domains
+and opt-in deformed tangent frames (`tangent_frame`, `tangent_uv_set`),
 an optional ground plane and one-way particle contacts with every collider kind of listed
 rigid bodies, plus opt-in self-contact between cloth vertices, faces and edges. It imports
 the standard library, core and `c3d::physics`; it never creates GPU resources. Core supplies only editable geometry and
@@ -17,10 +20,10 @@ scene.add_cloth(&assets, flag_node, desc)!;
 ```
 
 `Scene.add_cloth` copies the node's Mesh geometry into a private asset (positions, indices, UV and
-color streams, computed normals, no tangents), builds the constraints from the current world
+color streams, computed normals, and optional tangents when `tangent_frame` is enabled), builds the constraints from the current world
 positions, and replaces `Mesh.geometry` with the copy and enables `Mesh.vertex_motion`. The
 source geometry is never written; two cloths on one source own separate copies. The node needs a
-current, invertible world matrix. Pins are copied, deduplicated and sorted; collider ids and
+current, invertible world matrix. Pins and attachments are validated and coalesced onto physical particles; collider ids and
 their binding metadata are copied (see [Collisions](#collisions)).
 
 | Fault | Cause |
@@ -31,13 +34,13 @@ their binding metadata are copied (see [Collisions](#collisions)).
 | `physics::SOURCE_UNAVAILABLE` | The source's CPU positions were released. |
 | `physics::NO_BODY` | A listed collider node has no built RigidBody. |
 | `c3d::UNSUPPORTED` | SkinBinding, morph weights or targets, joints, custom data, a bounds override, or a non-indexed or non-triangle topology. |
-| `c3d::INVALID_ARGUMENT` | Zero substeps, iterations or contact capacities, non-positive or non-finite contact tolerance, a stiffness outside `[0, 1]`, negative or non-finite damping or thickness, non-finite gravity scale or ground height, a pin, seam endpoint or index out of range, non-finite positions, a degenerate triangle, an edge shared by more than two triangles, or a collider listed twice. |
+| `c3d::INVALID_ARGUMENT` | Zero substeps, iterations or contact capacities, non-positive or non-finite contact tolerance, a stiffness outside `[0, 1]`, negative or non-finite damping, thickness or bend compliance, non-finite gravity scale or ground height, invalid `render_particles`, missing or invalid UVs when `tangent_frame` is true, invalid or conflicting `attachments`, invalid `rest_angles` or non-manifold/inconsistent interior hinge winding, a pin, seam endpoint or index out of range, non-finite positions, a degenerate triangle, an edge shared by more than two triangles, or a collider listed twice. |
 | `c3d::CAPACITY_EXCEEDED` | More than 32 listed collider owners, binding metadata exceeding `max_shapes`, a full geometry pool, state-size overflow, or a state block that cannot be allocated. |
 | `cloth::CONTACT_PRECISION_EXCEEDED` | A captured native shape bound cannot be represented conservatively. |
 
 Every fault leaves the Mesh, the component store and the asset counts as they were. Defaults: 4
 substeps, 8 iterations, stretch stiffness 1, bend stiffness 0.5, damping 0.5 per second,
-thickness 0.01 m, gravity scale 1, no pins, no ground, no colliders.
+thickness 0.01 m, gravity scale 1, no pins or attachments, identity particle mapping, normal-only publication (`tangent_frame = false`, `tangent_uv_set = 0`), `ClothBendMode.DISTANCE`, `bend_compliance = 0`, no rest-angle overrides, no ground, no colliders.
 `default_cloth_desc()` also installs the [collision defaults](#collisions).
 
 `Scene.remove_cloth` restores the source geometry and the previous `vertex_motion`, then removes
@@ -45,13 +48,44 @@ the component, whose hook removes the private geometry and frees runtime and aut
 node runs the same hook. The state outlives `destroy_physics_world`; destroy the scene before the
 asset store. While attached, do not replace or remove the Mesh, release the private geometry's CPU
 streams, change its topology, remove the source asset, or write the library-owned `ClothState`.
-To change pins, settings or the source, remove and attach again.
+To change pins, attachments, settings or the source, remove and attach again.
 
-Use two-sided materials without tangent-space normal maps or vertex displacement; the copy
-carries no tangents and recomputed normals follow the simulated surface. `Mesh.trace` is the
+### Physical particles, normal domains and tangent frames
+
+When `ClothDesc.render_particles` is empty, each source vertex is its own physical particle. When
+supplied, `render_particles.len` must match the source vertex count, map onto a dense range
+`0..particle_count - 1` (`particle_count >= 3`) with every physical particle referenced by a triangle,
+and map co-shared render vertices to identical rest positions. Co-shared render vertices that share an
+authored unit normal (within `1e-6`) share a normal domain so UV seams stay smooth while hard creases
+stay split.
+
+When `ClothDesc.tangent_frame` is true, `tangent_uv_set` (`0` for `uv0`, `1` for `uv1`) selects a
+populated finite UV stream. Preparation runs Mikk tangent generation on the source mesh to establish
+tangent domains and handedness signs (`w = ±1`), and each publication recomputes angle-weighted
+orthonormal tangents from the deformed triangles. Degenerate UV triangles fall back deterministically
+through accumulated corner tangents, the last committed tangent, the rest tangent transported by the
+reference triangle's current frame, and a world-axis projection. `Mesh.trace` is the
 application's choice. A traced cloth takes a vertex-motion posed slot: each simulation revision copies
 positions and normals into the slot and refits the trace data instead of rebuilding it, and the top level still
 rebuilds every revision. See `docs/scene_trace.md`, "Vertex-motion slots".
+
+### Attachments and dihedral bending
+
+`ClothDesc.attachments` supplies `ClothAttachment { uint particle; float weight; float compliance; }`
+records on physical particles (`weight` in `[0, 1]`, `compliance >= 0`). Legacy `pins` map through
+`render_particles` as hard attachments (`weight = 1`, `compliance = 0`). Zero-weight entries are
+ignored. When `compliance == 0` and `weight > 0`, the particle is a hard pin (`inverse_mass = 0`).
+When `compliance > 0` and `weight > 0`, the particle retains unit mass (`inverse_mass = 1`) and is
+pulled toward its interpolated anchor each substep by an XPBD unilateral attachment with
+`effective_compliance = compliance / weight`. Duplicate entries on one particle must agree on hard vs
+soft and on `effective_compliance`.
+
+Setting `ClothDesc.bend_mode = DIHEDRAL` replaces opposite-vertex distance bending with an analytic
+signed dihedral hinge constraint across each interior physical edge (`ClothBendMode.DISTANCE` remains
+the default and requires `bend_compliance == 0` and empty `rest_angles`). `ClothDesc.rest_angles`
+overrides the rest angle on canonical interior edges (`first < second`, `angle` in `(-pi, pi]`). Each
+substep projects hinges with XPBD compliance `bend_compliance` and certifies the continuous motion
+interval against edge collapse, triangle degeneracy, and `±pi` branch flips (`cloth::BEND_UNRESOLVED`).
 
 ## Pending authoring and preparation
 
@@ -240,7 +274,7 @@ prove the compiler's floating-point mode. Cloth never changes thread or process 
 
 Every prepared cloth exposes its read-only last-attempt result as
 `cloth.state.contact_result`. `failure` is zero on success; `stage` identifies failure
-in ARITHMETIC, BINDINGS, CANDIDATES, CONTACTS, RESOLVE, PUBLICATION or REEXPRESSION,
+in ARITHMETIC, BINDINGS, ATTACHMENT, BEND, CANDIDATES, CONTACTS, RESOLVE, PUBLICATION or REEXPRESSION,
 and is NONE on success. `candidates` and `contacts` count observed work;
 `peak_candidates` and `peak_contacts` report the largest retained sets. `max_residual`
 and `unresolved` describe the last checked participating constraints, and
@@ -255,6 +289,8 @@ unvisited work as checked.
 | `cloth::CONTACT_UNRESOLVED` | The bounded contact passes could not satisfy all participating constraints. |
 | `cloth::CONTACT_NONCONVERGENT` | A CCD advance stalled or exhausted its iteration bound. |
 | `cloth::CONTACT_PRECISION_EXCEEDED` | Arithmetic, correction or float publication cannot establish the configured tolerance. |
+| `cloth::BEND_UNRESOLVED` | A dihedral hinge collapsed, became non-finite, or crossed the `±pi` branch cut. |
+| `cloth::FRAME_UNRESOLVED` | Deformed normal or tangent frame reconstruction could not produce a finite unit frame. |
 
 An update stages all performed substeps, velocities, pin/body observations and publication
 before committing. On failure it keeps the last committed simulation and histories,
@@ -275,8 +311,11 @@ the old local geometry may render elsewhere. Restoring a supported transform let
 updates retry. World-surface preservation is not guaranteed under an unrepresentable
 transform.
 
-With `C3D_PHYSICS_SERIAL`, authoring version 4 stores collision settings, requested pins,
-typed seam pairs and collider references. Version-1/2/3 JSONC defaults `continuous` to
+With `C3D_PHYSICS_SERIAL`, authoring version 5 stores collision settings, requested pins,
+typed seam pairs, collider references, `render_particles`, `tangent_frame`, `tangent_uv_set`,
+`attachments`, `bend_mode`, `bend_compliance` and `rest_angles`. Version-1..4 JSONC defaults
+the version-5 material, attachment and dihedral fields to empty/false/`DISTANCE`/`0`.
+Version-1/2/3 JSONC defaults `continuous` to
 false and `max_ccd_iterations` to 64. Version-1/2 also defaults self-contact to false and
 seams to empty; version-1 receives the discrete collision defaults. Incompatible older
 binary layouts return `c3d::UNSUPPORTED` before destination mutation. Restored cloth
@@ -308,7 +347,7 @@ solved anchors.
 ## Rebasing the origin
 
 Cloth state is world-space, so `PhysicsWorld.shift_origin(&scene, offset)` subtracts the
-offset from `positions`, `predicted`, `published`, the pin anchors and targets, the
+offset from `positions`, `predicted`, `published`, the pin and soft-attachment anchors and targets, the
 collision shape endpoints, solved/published body observations and world-space sweep
 scratch. Cached path certificates are discarded and rebuilt on the next update.
 Velocities are unchanged.
@@ -321,8 +360,8 @@ do not change. `ground_height` is a world height and is not shifted.
 Per substep: wind accelerations from each triangle's area, unit normal and relative air velocity
 (`Wind.velocity` minus the mean corner velocity, clamped to `max_speed` when it is positive), as
 `drag * area * dot(relative, normal) * normal`, one third per corner; semi-implicit integration
-of gravity and wind; damping `max(0, 1 - damping * dt)`; prediction; pins; then `iterations`
-passes over edges, bends, the ground with its thickness offset, and
+of gravity and wind; damping `max(0, 1 - damping * dt)`; prediction; hard pins; then `iterations`
+passes over soft XPBD attachments, edges, distance or dihedral bends, the ground with its thickness offset, and
 the collider shapes and enabled self contacts, followed by bounded final contact resolution;
 velocities from the corrected displacement. A stiffness `s` is applied per pass as
 `1 - (1 - s)^(1 / iterations)`, which normalizes one isolated constraint, not a coupled mesh. A
@@ -332,7 +371,7 @@ Particles have unit mass, so the wind's effect falls as a mesh gets finer; scale
 vertex density (the example uses `2.5 * vertices / area`) to keep a response.
 
 Publication converts world positions through the inverse current node matrix into the private
-geometry, recomputes normals and bounds, and marks the position and normal streams dirty once when
+geometry, recomputes normals, optional tangents and bounds, and marks the position, normal and optional tangent streams dirty once when
 any local position changed; unchanged output keeps the revision. Publication checks reconstructed
 world positions and contact separation before writing any stream. Solve and publication allocate nothing
 after preparation (the CPU triangle tree rebuilds only when a query asks for it).
@@ -340,7 +379,7 @@ after preparation (the CPU triangle tree rebuilds only when a query asks for it)
 and constraint count, pending owners skipped, failed cloth count, observed candidate/contact
 counts, CCD iterations, impacts and maximum reported residual.
 
-Each revision uploads the position and normal streams only, 24 bytes per vertex: 26,136 bytes for the
+Each normal-only revision uploads the position and normal streams only, 24 bytes per vertex (40 bytes per vertex when `tangent_frame` is enabled): 26,136 bytes for the
 33×33 benchmark flag (counted in `Stats.upload_bytes`; see [Publishing geometry
 edits](post.md#publishing-geometry-edits)). A whole-block upload of the same flag is 47,264 bytes
 (positions, normals, UV and 16-bit indices). Each temporal view additionally
@@ -360,7 +399,7 @@ addons/c3d_physics.c3l/build/cloth.exe --benchmark --trace software|hardware [--
 Run from `addons/c3d_physics.c3l`: the character model path is relative to it, and from `build/` the
 cape scenes (`cape`, `both`) fault `ASSET_IO_ERROR`. The interactive scenes are a
 24×16-cell flag with a pinned edge and gusting wind, a 12×22-cell cape (0.5 × 0.95 m, top row
-pinned) parented to the `DEF-spine.003` joint of the walking quaternius character with all twelve
+attached with compliant outer shoulders, dihedral bending and tangent frames) parented to the `DEF-spine.003` joint of the walking quaternius character with all twelve
 ragdoll bone capsules listed as colliders and the ground on, or both. The panel toggles the
 ragdoll (bones go limp; turning it off freezes the pose and blends back to the walk over 0.8 s),
 collider guides drawn at the published body poses, TAA and motion blur. The cape uses
@@ -414,6 +453,6 @@ c3c test cloth_acceptance --path addons/c3d_physics.c3l/test/gpu
 ```
 
 No full cloth-feature/body-feature contact, collision against the rendered skin,
-tearing, soft pins, dihedral bending, skinned base pose, tangents,
+tearing, skinned base pose,
 GPU or crowd simulation. Parallel solving waits for a measured
 consumer need.

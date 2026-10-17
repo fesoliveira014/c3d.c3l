@@ -8,6 +8,35 @@ import std::math;
 
 const float MIN_CONSTRAINT_LENGTH @private = 1e-7f; // metres; a shorter pair separates along its rest direction
 
+fn void? certify_hinge_step(
+    ClothState* state,
+    Vec3[] start_positions,
+    Vec3[] end_positions,
+) @local {
+    if (!state.hinges.len) return;
+    uint max_ccd = state.desc.collisions.max_ccd_iterations;
+    foreach (&hinge : state.hinges) {
+        Vec3[4] start_pts = {
+            start_positions[hinge.p0],
+            start_positions[hinge.p1],
+            start_positions[hinge.p2],
+            start_positions[hinge.p3],
+        };
+        Vec3[4] end_pts = {
+            end_positions[hinge.p0],
+            end_positions[hinge.p1],
+            end_positions[hinge.p2],
+            end_positions[hinge.p3],
+        };
+        float? angle = certify_hinge_path(start_pts, end_pts, hinge.last_angle, max_ccd);
+        if (catch angle) {
+            state.contact_result.stage = ClothContactStage.BEND;
+            return BEND_UNRESOLVED~;
+        }
+        hinge.last_angle = angle;
+    }
+}
+
 fn void? solve_cloth(
     PhysicsWorld* world,
     ClothState* state,
@@ -23,17 +52,19 @@ fn void? solve_cloth(
     float bend = pass_stiffness(desc.bend_stiffness, desc.iterations);
     float damping = math::max(0.0f, 1 - desc.damping * dt);
     Vec3 acceleration = gravity * desc.gravity_scale;
-    uint[] indices = state.assets.geometry(state.geometry).data.indices;
     prepare_body_motions(state, false)!;
 
     for (uint substep = 1; substep <= total; substep++) {
-        accumulate_wind(state, wind, indices);
+        accumulate_wind(state, wind);
         foreach (index, position : state.positions) {
             if (state.inverse_masses[index] == 0) continue;
             Vec3 velocity = (state.velocities[index] + (acceleration + state.accelerations[index]) * dt) * damping;
             state.velocities[index] = velocity;
             state.predicted[index] = position + velocity * dt;
         }
+
+        state.soft_lambdas[..] = (Vec3){};
+        foreach (&hinge : state.hinges) hinge.lambda = 0;
 
         float progress = (float)substep / (float)total;
         foreach (slot, pin : state.pins) {
@@ -49,9 +80,28 @@ fn void? solve_cloth(
             begin: (double)(substep - 1) / total,
             end: (double)substep / total,
         )!;
+        certify_hinge_step(state, state.positions, state.predicted)!;
         place_shapes(state, (double)substep / total)!;
 
         for (uint iteration = 0; iteration < desc.iterations; iteration++) {
+            if (state.soft_attachments.len) {
+                if (desc.collisions.continuous) state.sweep_start[..] = state.predicted[..];
+                project_soft_attachments(
+                    state:         state,
+                    dt:            dt,
+                    progress:      progress,
+                    final_substep: substep == total,
+                )!;
+                filter_displacement(
+                    world:    world,
+                    state:    state,
+                    start:    state.sweep_start,
+                    proposed: state.predicted,
+                    begin:    (double)substep / total,
+                    end:      (double)substep / total,
+                )!;
+            }
+
             if (desc.collisions.continuous) state.sweep_start[..] = state.predicted[..];
             project_constraints(state, state.edges, stretch);
             filter_displacement(
@@ -62,8 +112,13 @@ fn void? solve_cloth(
                 begin: (double)substep / total,
                 end: (double)substep / total,
             )!;
+
             if (desc.collisions.continuous) state.sweep_start[..] = state.predicted[..];
-            project_constraints(state, state.bends, bend);
+            if (desc.bend_mode == DISTANCE) {
+                project_constraints(state, state.bends, bend);
+            } else {
+                project_dihedral_bends(state, dt)!;
+            }
             filter_displacement(
                 world: world,
                 state: state,
@@ -72,10 +127,12 @@ fn void? solve_cloth(
                 begin: (double)substep / total,
                 end: (double)substep / total,
             )!;
+
             (void)contact_pass(world: world, state: state, positions: state.predicted, apply: true)!;
         }
 
         resolve_contacts(world, state, state.predicted)!;
+        certify_hinge_step(state, state.positions, state.predicted)!;
         foreach (index, &position : state.positions) {
             state.velocities[index] = (state.predicted[index] - *position) / dt;
             *position = state.predicted[index];
@@ -83,6 +140,7 @@ fn void? solve_cloth(
     }
 
     state.pin_anchors[..] = state.pin_targets[..];
+    state.soft_anchors[..] = state.soft_targets[..];
     finish_body_poses(state);
 }
 
@@ -103,6 +161,7 @@ fn void? prepare_publication(PhysicsWorld* world, ClothState* state, bool solved
     )!;
     place_shapes(state, 1)!;
     resolve_contacts(world, state, state.published)!;
+    certify_hinge_step(state, state.positions, state.published)!;
     foreach (&body : state.bodies) {
         if (!body.live) continue;
         body.published = body.current;
@@ -110,13 +169,13 @@ fn void? prepare_publication(PhysicsWorld* world, ClothState* state, bool solved
     }
 }
 
-fn void accumulate_wind(ClothState* state, Wind* wind, uint[] indices) @local {
+fn void accumulate_wind(ClothState* state, Wind* wind) @local {
     state.accelerations[..] = (Vec3){};
     if (!wind || wind.drag == 0) return;
-    for (usz corner = 0; corner < indices.len; corner += 3) {
-        uint first = indices[corner];
-        uint second = indices[corner + 1];
-        uint third = indices[corner + 2];
+    for (usz corner = 0; corner < state.corners.len; corner += 3) {
+        uint first = state.corners[corner].particle;
+        uint second = state.corners[corner + 1].particle;
+        uint third = state.corners[corner + 2].particle;
         Vec3 cross = (state.positions[second] - state.positions[first]).cross(state.positions[third] - state.positions[first]);
         float doubled_area = cross.length();
         if (doubled_area == 0) continue;

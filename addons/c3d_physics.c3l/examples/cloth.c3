@@ -335,13 +335,23 @@ fn void? attach_cape(Demo* demo) @local {
     ClothDesc desc = cloth::default_cloth_desc();
     desc.collide_ground = true;
     desc.thickness = CAPE_THICKNESS;
+    desc.tangent_frame = true;
+    desc.bend_mode = DIHEDRAL;
+    desc.bend_compliance = 0.002f;
     Entity[ragdoll_bones::RIGIFY_BONE_COUNT] colliders;
     foreach (index, bone : ragdoll.bone_nodes) colliders[index] = bone.id;
     desc.colliders = colliders[..];
     @pool() {
-        uint[] pins = alloc::new_array(tmem, uint, (sz)(CAPE_COLUMNS + 1));
-        foreach (column, &pin : pins) *pin = (uint)column;
-        desc.pins = pins;
+        ClothAttachment[] attachments = alloc::new_array(tmem, ClothAttachment, (sz)(CAPE_COLUMNS + 1));
+        foreach (column, &attachment : attachments) {
+            bool outer = column == 0 || column == CAPE_COLUMNS;
+            *attachment = {
+                .particle   = (uint)column,
+                .weight     = 1.0f,
+                .compliance = outer ? 0.001f : 0.0f,
+            };
+        }
+        desc.attachments = attachments;
         demo.scene.add_cloth(&demo.assets, demo.character.cape, desc)!;
     };
 }
