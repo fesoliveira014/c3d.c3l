@@ -417,42 +417,23 @@ fn void? publish_cached_layers(
     TileRecord* record = &builder.tiles[index];
     LayerReplacement* pending = record.pending_layers;
     if (pending.request != record.requests) return c3d::INVALID_ARGUMENT~;
-    CachedLayer*[MAX_LAYERS] resident;
-    for (uint layer = 0; layer < record.layer_count; layer++) resident[layer] = cache.tile_by_ref(record.layers[layer])!;
-    uint free_slots;
-    for (CachedLayer* tile = cache.next_free_tile; tile; tile = tile.next) free_slots++;
-    if (pending.count > free_slots + record.layer_count) return c3d::CAPACITY_EXCEEDED~;
-    foreach (blob : pending.blobs[:pending.count]) {
-        LayerHeader* header = (LayerHeader*)blob.ptr;
-        foreach (&tile : cache.tiles) {
-            if (!tile.header || tile.header.tile_x != header.tile_x || tile.header.tile_z != header.tile_z
-                || tile.header.tile_layer != header.tile_layer) continue;
-            bool owned;
-            foreach (previous : resident[:record.layer_count]) {
-                if (previous == tile) owned = true;
-            }
-            if (!owned) return TILE_OCCUPIED~;
-        }
-    }
-    validate_precision_cache_replacement(cache, record.layers[:record.layer_count], pending.blobs[:pending.count])!;
     int x = (int)(index % builder.tiles_x);
     int z = (int)(index / builder.tiles_x);
-    replace_cached_runtime(cache: cache, mesh: mesh, x: x, z: z, blobs: pending.blobs[:pending.count])!;
-
-    // Runtime ownership and all capacity checks have succeeded; publication cannot fail.
-    finish_cached_rebuild(cache, record.layers[:record.layer_count]);
-    foreach (tile : resident[:record.layer_count]) (void)remove_cached_layer(cache, tile);
-    record.layers[..] = (CachedLayerRef)0;
-    record.layer_count = pending.count;
-    for (uint layer = 0; layer < pending.count; layer++) {
-        record.layers[layer] = insert_cached_layer(cache, pending.blobs[layer], { .free_data = true });
-    }
+    record.layer_count = publish_cached_layer_set(
+        cache: cache,
+        mesh: mesh,
+        tile_x: x,
+        tile_z: z,
+        previous: record.layers[:record.layer_count],
+        owned_blobs: pending.blobs[:pending.count],
+        output: record.layers[..],
+        bounds: builder.tile_bounds((uint)x, (uint)z),
+    )!;
     pending.count = 0;
     discard_pending_layers(builder, record);
     record.revision++;
     record.relink = false;
     record.relayer = false;
-    retouch_obstacles(cache, builder.tile_bounds((uint)x, (uint)z));
 }
 
 // An overflowed queue lost bounds, so every tile is rebuilt.

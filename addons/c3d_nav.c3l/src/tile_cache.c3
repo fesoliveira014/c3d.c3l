@@ -404,6 +404,9 @@ fn char[]? build_cached_runtime_blob(TileCache* cache, char[] blob, NavMesh* mes
     cache.arena.clear();
     Allocator arena = &cache.arena;
     TileCacheLayer layer = read_tile_cache_layer(tile.data, cache.scratch)!;
+    if (header.source_kind == CachedSourceKind.GRID) {
+        return build_grid_cache_runtime(cache, blob, mesh);
+    }
     if (header.detail_mode == DetailMode.BOUNDED) {
         return build_precision_cache_tile(cache: cache, tile: tile, layer: &layer, mesh: mesh);
     }
@@ -466,16 +469,77 @@ fn void? replace_cached_runtime(
     char[][] blobs,
 ) @private {
     if (blobs.len > MAX_TILES_AT) return c3d::CAPACITY_EXCEEDED~;
+
     char[][MAX_TILES_AT] runtime;
     uint count;
     defer catch {
         foreach (blob : runtime[:count]) alloc::free(mesh.allocator, blob.ptr);
     }
+
     foreach (blob : blobs) {
         char[] data = build_cached_runtime_blob(cache, blob, mesh)!;
         if (data.len) runtime[count++] = data;
     }
+
     replace_tile_data_at(mesh: mesh, tile_x: x, tile_z: z, owned_data: runtime[:count])!;
+}
+
+fn uint? publish_cached_layer_set(
+    TileCache* cache,
+    NavMesh* mesh,
+    int tile_x,
+    int tile_z,
+    CachedLayerRef[] previous,
+    char[][] owned_blobs,
+    CachedLayerRef[] output,
+    Aabb bounds,
+) @private {
+    if (previous.len > MAX_LAYERS || owned_blobs.len > output.len) return c3d::CAPACITY_EXCEEDED~;
+    CachedLayer*[MAX_LAYERS] resident;
+    bool grid_source;
+    foreach (index, ref : previous) {
+        resident[index] = cache.tile_by_ref(ref)!;
+        grid_source |= resident[index].header.source_kind == CachedSourceKind.GRID;
+    }
+
+    uint free_slots;
+    for (CachedLayer* tile = cache.next_free_tile; tile; tile = tile.next) free_slots++;
+    if (owned_blobs.len > free_slots + previous.len) return c3d::CAPACITY_EXCEEDED~;
+
+    foreach (index, blob : owned_blobs) {
+        validate_cached_layer_blob(cache, blob)!;
+        LayerHeader* header = (LayerHeader*)blob.ptr;
+        grid_source |= header.source_kind == CachedSourceKind.GRID;
+        if (header.tile_x != tile_x || header.tile_z != tile_z) return c3d::INVALID_ARGUMENT~;
+        foreach (earlier : owned_blobs[:index]) {
+            if (((LayerHeader*)earlier.ptr).tile_layer == header.tile_layer) return c3d::INVALID_ARGUMENT~;
+        }
+        CachedLayer* occupied = cached_layer_at(
+            cache: cache,
+            x: tile_x,
+            z: tile_z,
+            layer: header.tile_layer,
+        );
+        if (occupied && !contains_layer_ref(previous, cached_layer_ref(cache, occupied))) return TILE_OCCUPIED~;
+    }
+
+    validate_precision_cache_replacement(cache, previous, owned_blobs)!;
+    replace_cached_runtime(
+        cache: cache,
+        mesh: mesh,
+        x: tile_x,
+        z: tile_z,
+        blobs: owned_blobs,
+    )!;
+
+    // Runtime ownership and every capacity check precede the non-failing cache commit.
+    finish_cached_rebuild(cache, previous);
+    foreach (tile : resident[:previous.len]) (void)remove_cached_layer(cache, tile);
+    output[..] = (CachedLayerRef)0;
+    foreach (index, blob : owned_blobs) output[index] = insert_cached_layer(cache, blob, { .free_data = true });
+    retouch_obstacles(cache, bounds, grid_source);
+
+    return (uint)owned_blobs.len;
 }
 
 fn uint? update_cached_group(TileCache* cache, NavMesh* mesh, uint queue_index) @private {
@@ -486,6 +550,7 @@ fn uint? update_cached_group(TileCache* cache, NavMesh* mesh, uint queue_index) 
         finish_cached_rebuild(cache, stale[..]);
         return 0;
     }
+
     int x = found.header.tile_x;
     int z = found.header.tile_z;
     CachedLayerRef[MAX_LAYERS_AT] refs;
@@ -607,7 +672,11 @@ fn void shift_tile_cache(TileCache* cache, Vec3 offset) @private {
     foreach (&tile : cache.tiles) {
         if (tile.header) {
             shift_bounds(&tile.header.bounds, offset);
-            if (tile.header.detail_mode == DetailMode.BOUNDED) shift_cached_detail_reference(tile.data, offset);
+            if (tile.header.source_kind == CachedSourceKind.GRID) {
+                shift_cached_grid_reference(tile.data, offset);
+            } else if (tile.header.detail_mode == DetailMode.BOUNDED) {
+                shift_cached_detail_reference(tile.data, offset);
+            }
         }
     }
     foreach (&obstacle : cache.obstacles) {
@@ -625,10 +694,10 @@ fn void? queue_rebuild(TileCache* cache, CachedLayerRef ref) @private {
 }
 
 // A replaced layer takes a new ref, so live obstacles over its tile look up the layers they touch again.
-fn void retouch_obstacles(TileCache* cache, Aabb bounds) @private {
+fn void retouch_obstacles(TileCache* cache, Aabb bounds, bool grid_source) @private {
     foreach (&obstacle : cache.obstacles) {
         if (obstacle.state != PROCESSING && obstacle.state != PROCESSED) continue;
-        Aabb footprint = precision_obstacle_bounds(cache, obstacle);
+        Aabb footprint = obstacle_rebuild_bounds(cache, obstacle, grid_source);
         if (footprint.max.x < bounds.min.x || footprint.min.x > bounds.max.x) continue;
         if (footprint.max.z < bounds.min.z || footprint.min.z > bounds.max.z) continue;
         obstacle.touched_count = (char)query_obstacle_tiles(cache, obstacle, obstacle.touched[..]).count;
@@ -642,8 +711,19 @@ fn void? validate_cached_layer_blob(TileCache* cache, char[] data) @private {
         || header.width == 0 || header.height == 0 || header.width > cache.desc.width || header.height > cache.desc.height
         || header.detail_mode != cache.desc.detail_mode || !detail_finite_vertex(header.bounds.min)
         || !detail_finite_vertex(header.bounds.max) || header.hmin > header.hmax) return c3d::INVALID_ARGUMENT~;
+
     if (catch excuse = read_tile_cache_layer(data, cache.scratch)) return c3d::INVALID_ARGUMENT~;
-    if (header.detail_mode == DetailMode.BOUNDED) {
+
+    if (header.source_kind == CachedSourceKind.GRID) {
+        CachedGridReference reference = cached_grid_reference(data)!;
+        NavBuildConfig config = reference.header.config;
+        if (config.cell_size != cache.desc.cell_size || config.cell_height != cache.desc.cell_height
+            || config.tile_size != cache.desc.width || config.tile_size != cache.desc.height
+            || config.agent_height != cache.desc.walkable_height || config.agent_radius != cache.desc.walkable_radius
+            || config.agent_max_climb != cache.desc.walkable_climb || config.detail_mode != cache.desc.detail_mode
+            || config.clearance_mode != cache.desc.clearance_mode
+            || config.clearance_max_error != cache.desc.clearance_max_error) return c3d::INVALID_ARGUMENT~;
+    } else if (header.detail_mode == DetailMode.BOUNDED) {
         DetailReference? reference = cached_detail_reference(data);
         if (catch reference) return c3d::INVALID_ARGUMENT~;
         if (reference.cell_size != cache.desc.cell_size || reference.cell_height != cache.desc.cell_height
@@ -677,18 +757,18 @@ fn void? validate_precision_cache_replacement(
         uint count;
         foreach (&tile : cache.tiles) {
             if (!tile.header || contains_layer_ref(old_refs, cached_layer_ref(cache, tile))) continue;
-            if (precision_obstacle_affects(cache, obstacle, tile.header)) count++;
+            if (obstacle_affects_layer(cache, obstacle, tile.header)) count++;
         }
         foreach (blob : new_blobs) {
-            if (precision_obstacle_affects(cache, obstacle, (LayerHeader*)blob.ptr)) count++;
+            if (obstacle_affects_layer(cache, obstacle, (LayerHeader*)blob.ptr)) count++;
         }
         if (count > MAX_TOUCHED_TILES) return c3d::CAPACITY_EXCEEDED~;
     }
 }
 
-fn Aabb precision_obstacle_bounds(TileCache* cache, Obstacle* obstacle) @local {
+fn Aabb obstacle_rebuild_bounds(TileCache* cache, Obstacle* obstacle, bool grid_source) @local {
     Aabb box = obstacle.bounds();
-    if (cache.desc.detail_mode == DetailMode.BOUNDED) {
+    if (cache.desc.detail_mode == DetailMode.BOUNDED || grid_source) {
         float halo = ((float)math::ceil(cache.desc.walkable_radius / cache.desc.cell_size) + BORDER_PADDING) * cache.desc.cell_size;
         if (cache.desc.clearance_mode == ClearanceMode.SUB_CELL) {
             double radius = (double)cache.desc.walkable_radius + (double)cache.desc.clearance_max_error / 8;
@@ -701,21 +781,28 @@ fn Aabb precision_obstacle_bounds(TileCache* cache, Obstacle* obstacle) @local {
     return box;
 }
 
-fn bool precision_obstacle_affects(TileCache* cache, Obstacle* obstacle, LayerHeader* header) @local {
+fn bool obstacle_affects_layer(TileCache* cache, Obstacle* obstacle, LayerHeader* header) @local {
     if (header.min_x > header.max_x || header.min_z > header.max_z) return false;
-    return overlap_bounds(precision_obstacle_bounds(cache, obstacle), cache.tight_tile_bounds(header));
+    Aabb bounds = obstacle_rebuild_bounds(cache, obstacle, header.source_kind == CachedSourceKind.GRID);
+    return overlap_bounds(bounds, cache.tight_tile_bounds(header));
 }
 
 fn QueryResult query_obstacle_tiles(TileCache* cache, Obstacle* obstacle, CachedLayerRef[] output) @local {
-    if (cache.desc.detail_mode != DetailMode.BOUNDED) return cache.query_tiles(obstacle.bounds(), output);
+    bool coarse = cache.desc.detail_mode != DetailMode.BOUNDED;
     QueryResult result;
+    if (coarse) result = cache.query_tiles(obstacle.bounds(), output);
+
     foreach (&tile : cache.tiles) {
-        if (!tile.header || !precision_obstacle_affects(cache, obstacle, tile.header)) continue;
+        if (!tile.header) continue;
+        if (coarse && tile.header.source_kind != CachedSourceKind.GRID) continue;
+        CachedLayerRef ref = cached_layer_ref(cache, tile);
+        if (coarse && contains_layer_ref(output[:result.count], ref)) continue;
+        if (!obstacle_affects_layer(cache, obstacle, tile.header)) continue;
         if (result.count == output.len) {
             result.truncated = true;
             continue;
         }
-        output[result.count++] = cached_layer_ref(cache, tile);
+        output[result.count++] = ref;
     }
     return result;
 }

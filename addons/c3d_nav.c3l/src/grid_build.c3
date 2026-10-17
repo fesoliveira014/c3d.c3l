@@ -52,7 +52,7 @@ struct GridPairRange @local {
     bool         active;
 }
 
-struct GridPartialEdge @local {
+struct GridPartialEdge @private {
     GridPartialEdge* next;
     uint             first_column;
     uint             second_column;
@@ -129,14 +129,14 @@ fn GridReference? capture_grid_reference(GridTileBuilder* builder, int tile_x, i
         for (uint x = 0; x < tile.width; x++) {
             // Flat callbacks may leave the optional corner fields untouched.
             foreach (&floor : storage) *floor = {};
-            usz count = builder.source.floors(
-                context: builder.source.context,
+            usz count = capture_grid_floors(
+                source: &builder.source,
                 cell_x: reference.first_x + (int)x,
                 cell_z: reference.first_z + (int)z,
-                out_floors: storage[..],
-            );
+                output: storage[..],
+            )!;
             if (count > MAX_GRID_FLOORS) return c3d::INVALID_ARGUMENT~;
-            validate_grid_floors(storage[:count], &builder.source, DetailMode.BOUNDED)!;
+            validate_grid_floors(storage[:count], &builder.source, builder.config.detail_mode)!;
             if (count > (usz)(GRID_COMPACT_INDEX_LIMIT - reference.span_count)) return c3d::CAPACITY_EXCEEDED~;
 
             GridColumn* column = &reference.columns[x + z * tile.width];
@@ -522,7 +522,7 @@ fn void? append_grid_match(GridEdgeMatch[] output, usz* count, GridEdgeMatch mat
     (*count)++;
 }
 
-fn CompactHeightfield? grid_compact_reference(GridTileBuilder* builder, GridReference* reference) @local {
+fn CompactHeightfield? grid_compact_reference(GridTileBuilder* builder, GridReference* reference) @private {
     Allocator arena = &builder.arena;
     CompactCell[]? cells = alloc::new_array_try(arena, CompactCell, (sz)reference.columns.len);
     if (catch cells) return c3d::CAPACITY_EXCEEDED~;
@@ -624,7 +624,7 @@ fn GridPartialEdge*? connect_grid_edges(
     GridTileBuilder* builder,
     GridReference* reference,
     CompactHeightfield* compact,
-) @local {
+) @private {
     GridPartialEdge* partials;
     GridEdgeProfile[MAX_GRID_FLOORS] first_profiles;
     GridEdgeProfile[MAX_GRID_FLOORS] second_profiles;
@@ -737,7 +737,7 @@ fn void grid_edge_profiles(
     }
 }
 
-fn bool grid_core_column(GridReference* reference, uint column) @local {
+fn bool grid_core_column(GridReference* reference, uint column) @private {
     uint x = column % reference.width;
     uint z = column / reference.width;
     return x >= reference.border_size && x < reference.width - reference.border_size
@@ -749,7 +749,7 @@ fn void? filter_grid_regions(
     GridReference* reference,
     CompactHeightfield* compact,
     GridPartialEdge* partials,
-) @local {
+) @private {
     if (!builder.tile_config.min_region_area) return;
 
     sz mark = builder.arena.mark();
@@ -835,7 +835,7 @@ fn char[]? pack_grid_cells(
     GridPartialEdge* partials,
     int tile_x,
     int tile_z,
-) @local {
+) @private {
     uint cell_count;
     foreach (column_index, column : reference.columns) {
         if (!grid_core_column(reference, (uint)column_index)) continue;
@@ -959,7 +959,7 @@ fn char[]? pack_grid_cells(
 
             for (uint part = 0; part < polygons_per_cell; part++) {
                 uint polygon = polygon_base + part;
-                mesh.areas[polygon] = floor.area;
+                mesh.areas[polygon] = compact.areas[span];
                 mesh.regions[polygon] = (ushort)(cell_index + 1);
                 ushort[] indices = mesh.polys[(usz)polygon * stride * 2:stride];
                 if (triangles) {

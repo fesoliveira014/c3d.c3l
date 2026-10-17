@@ -10,6 +10,14 @@ import c3d;
 *>
 alias GridFloorsFn = fn usz (void* context, int cell_x, int cell_z, GridFloor[] out_floors);
 
+<*
+ Capture ordered floors with a recoverable source failure.
+ @param [inout] context : "Caller-owned source state."
+ @param [out] out_floors : "MAX_GRID_FLOORS entries."
+ @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+*>
+alias GridFloorsTryFn = fn usz? (void* context, int cell_x, int cell_z, GridFloor[] out_floors);
+
 <* Floors one grid cell may hold. *>
 const uint MAX_GRID_FLOORS = 16; // one voxel column with up to 15 overhangs
 
@@ -39,6 +47,8 @@ struct GridSourceDesc {
     float        max_height;
     GridFloorsFn floors;
     void*        context;
+    GridFloorsTryFn capture;
+    float        cell_size;
 }
 
 <* Heightfield and arena reused by every grid tile build. *>
@@ -66,65 +76,7 @@ fn char[]? GridTileBuilder.build(&self, int tile_x, int tile_z) {
         return build_bounded_grid(self, tile_x, tile_z);
     }
 
-    Allocator arena = &self.arena;
-    TileConfig* config = &self.tile_config;
-    Heightfield* heightfield = &self.heightfield;
-    heightfield.bounds = window_bounds(self, tile_x, tile_z);
-    heightfield.reset();
-    add_floor_spans(self, tile_x, tile_z)!;
-    heightfield.filter_walkable_low_height_spans(config.walkable_height);
-
-    CompactHeightfield compact = build_compact_heightfield(
-        allocator:       arena,
-        heightfield:     heightfield,
-        walkable_height: config.walkable_height,
-        walkable_climb:  config.walkable_climb,
-    )!;
-    if (compact.span_count == 0) return {};
-    if (config.walkable_radius > 0) compact.erode_walkable_area(arena, config.walkable_radius)!;
-    // Without a detail mesh a polygon's height comes from its outline, so each region keeps one floor height;
-    // the links return for the contours, which keep every corner of a step and join the regions across it.
-    CompactLinks[] links = unlink_height_changes(&compact, arena)!;
-    compact.build_regions_monotone(
-        scratch:           arena,
-        border_size:       config.border_size,
-        min_region_area:   config.min_region_area,
-        merge_region_area: config.merge_region_area,
-    )!;
-    foreach (index, span_links : links) compact.spans[index].links = span_links;
-
-    ContourSet contours = build_contours(
-        allocator:       arena,
-        scratch:         arena,
-        compact:         &compact,
-        max_error:       config.max_simplification_error,
-        max_edge_length: config.max_edge_length,
-        flags:           GRID_CONTOUR_FLAGS,
-    )!;
-    if (contours.contours.len == 0) return {};
-    // Regions meet on the tile border at steps, so those corners stay instead of being removed as redundant.
-    foreach (&contour : contours.contours) {
-        for (usz flag_word = 3; flag_word < contour.verts.len; flag_word += 4) {
-            contour.verts[flag_word] &= ~BORDER_VERTEX;
-        }
-    }
-    PolyMesh mesh = build_poly_mesh(
-        allocator:      arena,
-        scratch:        arena,
-        contours:       &contours,
-        verts_per_poly: config.verts_per_poly,
-    )!;
-    if (mesh.poly_count == 0) return {};
-
-    char[]? blob = alloc::alloc_array_try(arena, char, (sz)tile_mesh_size(&mesh));
-    if (catch blob) return c3d::CAPACITY_EXCEEDED~;
-    pack_tile_mesh(
-        mesh:   &mesh,
-        tile_x: tile_x,
-        tile_z: tile_z,
-        blob:   blob,
-    );
-    return blob;
+    return build_coarse_grid(self, tile_x, tile_z);
 }
 
 <*
@@ -178,7 +130,6 @@ fn NavBuildConfig default_grid_build_config(float cell_size) {
  Builder for tiles of tile_size cells over the grid; allocates the heightfield and arena once.
  @param scratch_bytes : "Arena of one tile build; its blob stays there until the next build."
  @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
- @require source.floors != null, source.max_height > source.min_height
 *>
 fn GridTileBuilder? create_grid_tile_builder(
     Allocator allocator,
@@ -186,10 +137,11 @@ fn GridTileBuilder? create_grid_tile_builder(
     GridSourceDesc source,
     usz scratch_bytes = DEFAULT_GRID_SCRATCH_BYTES,
 ) {
-    if (!source.floors) return c3d::INVALID_ARGUMENT~;
+    if ((source.floors == null) == (source.capture == null)) return c3d::INVALID_ARGUMENT~;
     if (!math::is_finite(source.origin.x) || !math::is_finite(source.origin.z)) return c3d::INVALID_ARGUMENT~;
     if (!math::is_finite(source.min_height) || !math::is_finite(source.max_height)) return c3d::INVALID_ARGUMENT~;
     if (source.min_height >= source.max_height) return c3d::INVALID_ARGUMENT~;
+    if (source.cell_size != 0 && source.cell_size != config.cell_size) return c3d::INVALID_ARGUMENT~;
 
     TileConfig tile = tile_config(config)!;
     double top_voxel = 1 + math::round(((double)source.max_height - source.min_height) / config.cell_height);
@@ -229,7 +181,7 @@ fn void destroy_grid_tile_builder(GridTileBuilder* builder) {
 }
 
 // The tile plus its border; the floor lies one voxel below min_height so a floor there is the span [0, 1).
-fn Aabb window_bounds(GridTileBuilder* builder, int tile_x, int tile_z) @local {
+fn Aabb window_bounds(GridTileBuilder* builder, int tile_x, int tile_z) @private {
     float border = builder.tile_config.border_size * builder.config.cell_size;
     Aabb bounds = builder.tile_bounds(tile_x, tile_z);
     bounds.min -= { border, builder.config.cell_height, border };
@@ -277,7 +229,13 @@ fn void? add_floor_spans(GridTileBuilder* builder, int tile_x, int tile_z) @loca
     GridFloor[MAX_GRID_FLOORS] floors;
     for (uint z = 0; z < heightfield.height; z++) {
         for (uint x = 0; x < heightfield.width; x++) {
-            usz count = source.floors(source.context, first_x + (int)x, first_z + (int)z, floors[..]);
+            foreach (&floor : floors) *floor = {};
+            usz count = capture_grid_floors(
+                source: source,
+                cell_x: first_x + (int)x,
+                cell_z: first_z + (int)z,
+                output: floors[..],
+            )!;
             if (count > floors.len) return c3d::INVALID_ARGUMENT~;
             validate_grid_floors(floors[:count], source, builder.config.detail_mode)!;
 
@@ -305,4 +263,90 @@ fn void? add_floor_spans(GridTileBuilder* builder, int tile_x, int tile_z) @loca
             }
         }
     }
+}
+
+fn char[]? build_coarse_grid(
+    GridTileBuilder* self,
+    int tile_x,
+    int tile_z,
+    Obstacle[] obstacles = {},
+    VolumeRecord[] volumes = {},
+) @private {
+    Allocator arena = &self.arena;
+    TileConfig* config = &self.tile_config;
+    Heightfield* heightfield = &self.heightfield;
+    heightfield.bounds = window_bounds(self, tile_x, tile_z);
+    heightfield.reset();
+    add_floor_spans(self, tile_x, tile_z)!;
+    heightfield.filter_walkable_low_height_spans(config.walkable_height);
+
+    CompactHeightfield compact = build_compact_heightfield(
+        allocator:       arena,
+        heightfield:     heightfield,
+        walkable_height: config.walkable_height,
+        walkable_climb:  config.walkable_climb,
+    )!;
+    if (compact.span_count == 0) return {};
+
+    foreach (&volume : volumes) apply_volume(&compact, volume);
+    bool has_obstacles;
+    foreach (obstacle : obstacles) {
+        has_obstacles |= obstacle.state != ObstacleState.EMPTY && obstacle.state != ObstacleState.REMOVING;
+    }
+    if (has_obstacles) {
+        DetailReference reference = build_detail_reference(arena, &compact, config.border_size)!;
+        foreach (&obstacle : obstacles) {
+            if (obstacle.state == ObstacleState.EMPTY || obstacle.state == ObstacleState.REMOVING) continue;
+            mark_precision_obstacle(
+                reference: &reference,
+                compact: &compact,
+                obstacle: obstacle,
+                agent_height: self.config.agent_height,
+            );
+        }
+    }
+
+    if (config.walkable_radius > 0) compact.erode_walkable_area(arena, config.walkable_radius)!;
+    // Coarse heights come from contours, so each region keeps one floor height.
+    CompactLinks[] links = unlink_height_changes(&compact, arena)!;
+    compact.build_regions_monotone(
+        scratch:           arena,
+        border_size:       config.border_size,
+        min_region_area:   config.min_region_area,
+        merge_region_area: config.merge_region_area,
+    )!;
+    foreach (index, span_links : links) compact.spans[index].links = span_links;
+
+    ContourSet contours = build_contours(
+        allocator:       arena,
+        scratch:         arena,
+        compact:         &compact,
+        max_error:       config.max_simplification_error,
+        max_edge_length: config.max_edge_length,
+        flags:           GRID_CONTOUR_FLAGS,
+    )!;
+    if (contours.contours.len == 0) return {};
+    // Regions meet on the tile border at steps, so those corners stay instead of being removed as redundant.
+    foreach (&contour : contours.contours) {
+        for (usz flag_word = 3; flag_word < contour.verts.len; flag_word += 4) {
+            contour.verts[flag_word] &= ~BORDER_VERTEX;
+        }
+    }
+    PolyMesh mesh = build_poly_mesh(
+        allocator:      arena,
+        scratch:        arena,
+        contours:       &contours,
+        verts_per_poly: config.verts_per_poly,
+    )!;
+    if (mesh.poly_count == 0) return {};
+
+    char[]? blob = alloc::alloc_array_try(arena, char, (sz)tile_mesh_size(&mesh));
+    if (catch blob) return c3d::CAPACITY_EXCEEDED~;
+    pack_tile_mesh(
+        mesh:   &mesh,
+        tile_x: tile_x,
+        tile_z: tile_z,
+        blob:   blob,
+    );
+    return blob;
 }

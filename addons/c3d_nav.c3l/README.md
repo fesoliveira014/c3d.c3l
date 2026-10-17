@@ -280,6 +280,31 @@ edges keep only reciprocal intervals satisfying climb and headroom, with minimum
 floor order resolving competing neighbors. Rejected intervals remain walls for pathfinding,
 raycasts, local movement and crowd boundaries.
 
+`GridSourceDesc` selects exactly one callback: `floors` for `GridFloorsFn`, or `capture` for the
+fallible `GridFloorsTryFn`. Both receive the same caller context. Source faults propagate without
+publication. A nonzero `GridSourceDesc.cell_size` must match the build configuration; zero leaves
+pitch selection to a generic floors callback.
+
+`grid_height_source(&view, min_height, max_height)` adapts a borrowed `GridHeightView` of row-major
+float vertices. `width` and `height` count vertices; `row_stride` counts samples and must be at
+least `width`. `origin.xz` is vertex `(0,0)`, `cell_size` is its pitch, and each world height is
+`sample * height_scale + height_offset`; origin Y is unused. Select `area` and `diagonal`
+explicitly. The source lattice must match the navigation grid. Resampling uses the sampler API.
+
+`grid_sampled_source(&sampler, min_height, max_height)` adapts a `GridHeightSampler`. Its fallible
+callback receives world XZ and produces `GridHeightSample { height, present }`, with height in
+world units. Both adapters capture four corners into one open-ceiling floor using the chosen two
+triangles, so they require `DetailMode.BOUNDED`. They do not sample or bound continuous features
+between those corners. An out-of-array cell or any missing sampled corner makes a cell empty;
+a successful present sample with a non-finite height returns `INVALID_ARGUMENT`. Captured heights
+must also lie within the declared height range. Callback faults remain distinct from absence.
+
+`GridRange` is half-open in XZ. `grid_vertex_cells` expands changed height vertices to every incident
+cell. `grid_world_cells` encloses a closed world-space edit and includes both sides of exact cell
+boundaries. `grid_dirty_tiles` selects every configured tile whose full capture window intersects
+the edited cells, including empty coordinates and negative coordinates; pass the actual
+`TileConfig.border_size`. Empty ranges stay empty and unrepresentable coordinate expansion faults.
+
 `NavMesh.install_tile_mesh(blob, connections, params)` replaces the tile at `params.tile_x`,
 `params.tile_z` and `params.tile_layer`, or only removes it when the blob is empty, and
 `GridTileBuilder.mesh_desc` gives the matching mesh layout. The application knows its edits, so it
@@ -317,6 +342,83 @@ The `navmesh` and `crowd` examples also accept `--sub-cell`, which enables bound
 and clearance together. Their panels show both error settings. Each example supplies an
 explicit scratch budget for the selected demonstration; the library's fixed capacity
 rules still apply.
+
+## Cached grid updates
+
+`GridCache` owns a fixed grid extent, detached build slots and one `TileCache`. It does not require
+a Scene, native system or worker scheduler. Direct `GridTileBuilder` construction remains available.
+
+```c3
+GridCacheDesc desc = nav::default_grid_cache_desc(
+    { .min_x = 0, .min_z = 0, .max_x = 2, .max_z = 2 }, config);
+GridCache grid = nav::create_grid_cache(
+    allocator: mem,
+    desc: desc,
+    source: source,
+    identity: (GridSourceId)1,
+    revision: 1,
+)!;
+defer nav::destroy_grid_cache(&grid);
+NavMesh mesh = nav::create_nav_mesh(mem, grid.mesh_desc())!;
+defer nav::destroy_nav_mesh(&mesh);
+
+grid.mark_dirty({ .min_x = 15, .min_z = 3, .max_x = 16, .max_z = 4 }, 2)!;
+GridUpdateResult progress = grid.update(&mesh, 1);
+```
+
+Creation marks every coordinate dirty. Each `update` budget unit attempts one complete XZ source
+replacement or obstacle rebuild; zero publishes nothing. `pending` counts remaining work, including
+source jobs and obstacle queues, rather than unique coordinates. Repeated edits coalesce. Set
+`max_cached_layers` for all resident layers, `build_slots` for detached concurrency, and both scratch
+capacities for the selected build configuration. Exhaustion returns explicit faults, and failed
+publication remains pending for retry. A held slot can cause `capture_next` to return `NO_FREE_SLOT`.
+
+Source identity is application-defined and nonzero. `mark_dirty(cells, revision)` names the current
+source revision, which never decreases. `set_source(source, identity, revision)` replaces the source
+and requests the entire extent; its origin and declared height bounds must stay unchanged. Job
+identity, revision and per-coordinate request generation reject superseded results. The installed
+identity and revision are available in `tiles`; stale completion cannot overwrite newer resident
+or pending data.
+
+Source descriptors, height arrays and callback contexts are borrowed during owner-thread capture.
+Keep adapter metadata fixed and source data stable during that call. `capture_next` copies the full
+source window and halo into an exclusive slot. `build_grid_cache_job(job)` may then run on a worker
+using only that copied data and its slot scratch. The owner calls `commit(job)` after the worker
+finishes. A successful commit stages output; owner-thread `update` publishes it. Join outstanding
+workers before destroying the coordinator. Source changes and live mesh publication stay on the
+owner thread; they do not modify a worker's captured data.
+
+A replacement publishes all layers at one XZ together with retained source data and installed
+revision. Failure keeps every old layer, reference and query link usable, including layers that a
+successful replacement removes. Different coordinates publish independently, so neighboring tiles
+may have different revisions while work drains across frames.
+
+Add and remove obstacles through `grid.cache.add_obstacle`, `add_box_obstacle`,
+`add_oriented_box_obstacle` and `remove_obstacle`; movement is removal followed by addition. Process
+these requests through `grid.update`, sharing the source update budget. Obstacle-only rebuilds use
+retained authored floors, ceilings, diagonals, labels and halo without rereading source callbacks.
+Source publication applies the same cache's current obstacle state. Bounded mode preserves the
+existing eight-touched-layer limit and rejects oversized footprints before mutation; coarse mode
+keeps its existing footprint limit. Obstacle, request and update capacities remain fixed.
+Retained grid obstacle selection includes agent height and the consumed source border in both modes,
+matching runtime marking and erosion. Ordinary coarse heightfield caches retain their existing selection.
+Retained grid cache records use checked source kind and version 103. These are runtime build records,
+not a portable persistence format.
+
+The grid example's `--cache` mode routes wall and authored-patch edits through this coordinator,
+updates at budget one before the crowd, and offers obstacle add/move/remove controls. Its overlay
+colors queued, applied and removing obstacle bounds; the panel shows pending work and failed attempts.
+The direct mode and existing detail, clearance and fan-in flags remain available.
+
+`--cache-demo` runs the existing 8 by 8 authored patch as four 4 by 4 coordinates, with a second floor
+on a narrow bridge. It adds, moves and removes a box obstacle on frames 24, 48 and 72, edits a border
+cell on frame 96, and raises a shared height vertex on frame 120. It uses one slot, budget one and a
+fixed crowd step, printing events, progress and final installed revisions. It defaults to 160 frames;
+`--frames` overrides that limit. The example enables Vulkan validation.
+
+```bash
+addons/c3d_nav.c3l/build/grid --cache-demo --sub-cell --radius 0.6 --clearance-error 0.5 --frames 160
+```
 
 ## Crowds
 
