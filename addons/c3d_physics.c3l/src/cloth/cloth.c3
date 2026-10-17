@@ -216,6 +216,7 @@ fn void? Scene.attach_cloth(
     if (self.has(node, Cloth)) return CLOTH_EXISTS~;
     check_cloth_desc(desc)!;
     if (!assets.geometries.is_live(mesh.geometry)) return c3d::INVALID_ID~;
+
     GeometryAsset* source = assets.geometry(mesh.geometry);
     check_cloth_source(
         scene:  self,
@@ -228,6 +229,7 @@ fn void? Scene.attach_cloth(
     @pool() {
         (void)unique_pins(desc.pins, (uint)source.data.positions.len)!;
     };
+
     ClothAuthoring* authoring = copy_authoring(self.allocator, desc)!;
     authoring.source = mesh.geometry;
     authoring.source_vertex_motion = mesh.vertex_motion;
@@ -246,12 +248,14 @@ fn void? Scene.attach_cloth(
 fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
     Cloth* component = scene.get(node, Cloth);
     if (component.is_prepared()) return;
+
     ClothAuthoring* authoring = component.authoring;
     ClothDesc desc = authoring.desc;
     scene::Mesh* mesh = scene.get(node, scene::Mesh);
     if (!mesh) return NO_MESH~;
     if (!c3d::same_id(mesh.geometry, authoring.source)) return c3d::INVALID_ARGUMENT~;
     if (!assets.geometries.is_live(authoring.source)) return c3d::INVALID_ID~;
+
     GeometryAsset* source = assets.geometry(authoring.source);
     check_cloth_source(
         scene: scene,
@@ -259,6 +263,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         mesh: mesh,
         source: source,
     )!;
+
     @pool() {
         uint vertex_count = (uint)source.data.positions.len;
         check_seams(desc.seams, vertex_count)!;
@@ -266,10 +271,12 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         Vec3[] world = alloc::new_array(tmem, Vec3, (sz)vertex_count);
         foreach (index, position : source.data.positions) world[index] = maths::transform_point(node.world, position);
         check_world_positions(world)!;
+
         ClothTopology topology = build_topology(&source.data, world)!;
         ClothCapture capture = capture_colliders(scene, desc.colliders, desc.collisions.max_shapes)!;
         GeometryId copy = copy_cloth_geometry(assets, &source.data)!;
         defer catch assets.remove_geometry(copy);
+
         ClothState* state = allocate_cloth_state(
             allocator:    scene.allocator,
             vertex_count: vertex_count,
@@ -280,6 +287,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
             body_count:   (uint)capture.bodies.len,
             collisions:   desc.collisions,
         )!;
+
         state.desc = desc;
         state.desc.pins = state.pins;
         state.colliders[..] = desc.colliders[..];
@@ -292,6 +300,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         state.source = authoring.source;
         state.geometry = copy;
         state.source_vertex_motion = authoring.source_vertex_motion;
+
         state.rest[..] = source.data.positions[..];
         state.positions[..] = world[..];
         state.predicted[..] = world[..];
@@ -312,6 +321,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         state.edges[..] = topology.edges[..];
         state.bends[..] = topology.bends[..];
         if (desc.collisions.self_collision) build_self_topology(state, source.data.indices);
+
         component.state = state;
         mesh.geometry = copy;
         mesh.vertex_motion = true;
@@ -363,6 +373,7 @@ fn void PhysicsWorld.update_cloths(&self) {
     self.cloth_update_serial = self.update_serial;
     self.cloth_stats = {};
     uint steps = self.steps_last_update;
+
     self.scene.@each(Cloth; Entity entity, Cloth* component) {
         if (!component.is_prepared()) {
             self.cloth_stats.pending++;
@@ -387,6 +398,7 @@ fn void PhysicsWorld.update_cloths(&self) {
                 publication_seconds += (clock::now() - reexpression_start).to_sec();
                 self.cloth_stats.failed++;
             }
+
             double total_seconds = (clock::now() - started).to_sec();
             self.cloth_stats.solve_seconds += math::max(0.0, total_seconds - publication_seconds);
             self.cloth_stats.publish_seconds += publication_seconds;

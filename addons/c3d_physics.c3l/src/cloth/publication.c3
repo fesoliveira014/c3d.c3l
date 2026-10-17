@@ -24,6 +24,7 @@ fn ClothState staged_cloth(ClothState* state) @local {
     staged.shape_starts = state.staged_shape_starts;
     staged.shape_ends = state.staged_shape_ends;
     staged.contact_result = {};
+
     staged.positions[..] = state.positions[..];
     staged.velocities[..] = state.velocities[..];
     staged.predicted[..] = state.predicted[..];
@@ -54,6 +55,7 @@ fn void commit_cloth(ClothState* state, ClothState* staged) @local {
 
 fn bool? stage_local_publication(ClothState* state, Mat4 world) @local {
     foreach (value : world.m) if (!math::is_finite(value)) return CONTACT_PRECISION_EXCEEDED~;
+
     ContactVector column_x = { world.m00, world.m10, world.m20 };
     ContactVector column_y = { world.m01, world.m11, world.m21 };
     ContactVector column_z = { world.m02, world.m12, world.m22 };
@@ -62,6 +64,7 @@ fn bool? stage_local_publication(ClothState* state, Mat4 world) @local {
     ContactVector row_z = column_x.cross(column_y);
     double determinant = column_x.dot(row_x);
     if (determinant == 0 || !math::is_finite(determinant)) return CONTACT_PRECISION_EXCEEDED~;
+
     row_x /= determinant;
     row_y /= determinant;
     row_z /= determinant;
@@ -76,14 +79,18 @@ fn bool? stage_local_publication(ClothState* state, Mat4 world) @local {
         ContactVector relative = (ContactVector)position - translation;
         Vec3 local = { (float)row_x.dot(relative), (float)row_y.dot(relative), (float)row_z.dot(relative) };
         if (!finite_vector(local)) return CONTACT_PRECISION_EXCEEDED~;
+
         Vec3 restored = maths::transform_point(world, local);
         if (!finite_vector(restored)) return CONTACT_PRECISION_EXCEEDED~;
+
         ContactInterval error = physics::contact_length(physics::contact_vector_subtract(physics::contact_vector((ContactVector)restored), physics::contact_vector((ContactVector)position))!)!;
         if (error.max > state.desc.collisions.contact_tolerance) return CONTACT_PRECISION_EXCEEDED~;
+
         state.local_output[index] = local;
         state.publication_roundtrip[index] = restored;
         changed |= local != geometry.data.positions[index];
     }
+
     state.local_bounds = geometry.data.bounds;
     if (!changed) return false;
 
@@ -120,12 +127,15 @@ fn void? update_cloth(
         state.contact_result = staged.contact_result;
         state.path_count = staged.path_count;
     }
+
     staged.contact_result.stage = ClothContactStage.ARITHMETIC;
     if (!physics::contact_arithmetic_supported()) return CONTACT_PRECISION_EXCEEDED~;
+
     staged.contact_result.stage = ClothContactStage.BINDINGS;
     refresh_colliders(world, &staged)!;
     foreach (slot, pin : staged.pins) staged.pin_targets[slot] = maths::transform_point(node.world, staged.rest[pin]);
     sample_bodies(world.scene, &staged);
+
     if (steps) {
         if (staged.desc.substeps > uint::max / steps) return c3d::CAPACITY_EXCEEDED~;
         solve_cloth(
@@ -141,12 +151,14 @@ fn void? update_cloth(
     time::Clock publication_start = clock::now();
     defer *publication_seconds += (clock::now() - publication_start).to_sec();
     prepare_publication(world, &staged, steps != 0)!;
+
     staged.contact_result.stage = ClothContactStage.PUBLICATION;
     bool changed = stage_local_publication(&staged, node.world)!;
     if (contact_pass(world: world, state: &staged, positions: staged.publication_roundtrip, apply: false)! != 0) {
         staged.contact_result.stage = ClothContactStage.PUBLICATION;
         return CONTACT_PRECISION_EXCEEDED~;
     }
+
     commit_cloth(state, &staged);
     state.local_bounds = staged.local_bounds;
     commit_local_publication(state, node.world, changed);

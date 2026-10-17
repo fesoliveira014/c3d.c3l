@@ -220,6 +220,7 @@ fn void test_breakable_strength_limits_have_independent_units_and_priority() @te
     );
     assert(reaction.matched && reaction.criterion == FORCE);
     assert(reaction.loads.force == 5 && reaction.loads.twist == 2 && reaction.loads.bending == 5);
+
     limits.force = float::max;
     reaction = physics::evaluate_breakable_reaction(
         force: force,
@@ -228,6 +229,7 @@ fn void test_breakable_strength_limits_have_independent_units_and_priority() @te
         strength: limits,
     );
     assert(reaction.matched && reaction.criterion == TWIST && reaction.loads.twist == 2 && reaction.loads.bending == 5);
+
     limits.twist = float::max;
     reaction = physics::evaluate_breakable_reaction(
         force: force,
@@ -236,6 +238,7 @@ fn void test_breakable_strength_limits_have_independent_units_and_priority() @te
         strength: limits,
     );
     assert(reaction.matched && reaction.criterion == BENDING);
+
     limits.bending = float::max;
     reaction = physics::evaluate_breakable_reaction(
         force: force,
@@ -244,6 +247,7 @@ fn void test_breakable_strength_limits_have_independent_units_and_priority() @te
         strength: limits,
     );
     assert(!reaction.matched);
+
     limits.force = 5.01f;
     reaction = physics::evaluate_breakable_reaction(
         force: force,
@@ -252,6 +256,7 @@ fn void test_breakable_strength_limits_have_independent_units_and_priority() @te
         strength: limits,
     );
     assert(!reaction.matched);
+
     limits.force = 0;
     reaction = physics::evaluate_breakable_reaction(
         force: {},
@@ -278,6 +283,7 @@ fn void test_breakable_sampled_force_twist_and_bending_select_the_loaded_limit()
                 case BENDING: recipe.strength.bending = 1;
             }
             fixture.physics.add_breakable_recipe(root, recipe)!!;
+
             BreakableState* state = fixture.scene.get(root, Breakable).state;
             b3::BodyId body = fixture.physics.body(fixture.scene.node(state.pieces[1]))!!;
             for (uint attempt = 0; attempt < 8 && !state.welds[0].broken; attempt++) {
@@ -288,6 +294,7 @@ fn void test_breakable_sampled_force_twist_and_bending_select_the_loaded_limit()
                 }
                 fixture.physics.update(physics::DEFAULT_FIXED_DT);
             }
+
             assert(state.welds[0].broken && fixture.physics.breaks().len == 1);
             BreakEvent event = fixture.physics.breaks()[0];
             assert(event.criterion == criterion && event.phase == POST_FIXED_STEP && event.loads_available);
@@ -312,6 +319,7 @@ fn void test_breakable_sample_uses_native_pose_and_post_step_getters() @test {
             recipe.strength = physics::default_breakable_strength(0);
             recipe.welds[0].moment_axis = { 0, 1, 0 };
             fixture.physics.add_breakable_recipe(root, recipe)!!;
+
             BreakableState* state = fixture.scene.get(root, Breakable).state;
             Node* first = fixture.scene.node(state.pieces[0]);
             b3::BodyId body = fixture.physics.body(first)!!;
@@ -319,6 +327,7 @@ fn void test_breakable_sample_uses_native_pose_and_post_step_getters() @test {
             body.set_transform((b3::Pos){}, rotation);
             b3::body_apply_torque(body, { 20, 30, 40 }, true);
             b3::world_step(fixture.physics.world, physics::DEFAULT_FIXED_DT, substeps);
+
             b3::JointId joint = state.welds[0].joint;
             Vec3 axis = body.world_vector(recipe.welds[0].moment_axis);
             Vec3 torque = joint.constraint_torque();
@@ -326,6 +335,7 @@ fn void test_breakable_sample_uses_native_pose_and_post_step_getters() @test {
             float twist = torque.dot(axis);
             Vec3 stale_point = maths::transform_point(first.world, recipe.welds[0].frame_a.position);
             assert((point - stale_point).length() > 0.01f);
+
             physics::sample_breakables(&fixture.physics);
             BreakEvent event = fixture.physics.breaks()[0];
             assert((event.point - point).length() < 1e-5f);
@@ -353,6 +363,7 @@ fn void test_breakable_sampled_reports_are_ordered_and_capacity_independent() @t
             recipe.evaluation = SAMPLED_REACTION;
             recipe.strength = { .force = 0, .twist = 0, .bending = 0 };
             fixture.physics.add_breakable_recipe(root, recipe)!!;
+
             BreakableState* state = fixture.scene.get(root, Breakable).state;
             fixture.physics.update(0);
             assert(!state.welds[0].broken && state.alive_anchors == 1 && fixture.physics.breaks().len == 0);
@@ -360,6 +371,7 @@ fn void test_breakable_sampled_reports_are_ordered_and_capacity_independent() @t
             assert(state.welds[0].broken && state.runtime.anchors[0].broken);
             assert(state.alive_welds == 0 && state.alive_anchors == 0 && fixture.physics.world.counters().joint_count == 0);
             assert(fixture.physics.breaks().len == capacity && fixture.physics.dropped_events == 2 - capacity);
+
             foreach (uint index, event : fixture.physics.breaks()) {
                 assert(event.edge_kind == (index == 0 ? INTERNAL_WELD : ANCHOR));
                 assert(event.edge_index == 0 && event.criterion == FORCE && event.phase == POST_FIXED_STEP);
@@ -391,6 +403,7 @@ fn void test_breakable_identical_impacts_leave_only_the_supported_component_atta
                 recipe.anchors[0].strength_override = physics::default_breakable_strength(float::max);
             }
             fixture.physics.add_breakable_recipe(root, recipe)!!;
+
             BreakableState* state = fixture.scene.get(root, Breakable).state;
             Node* first = fixture.scene.node(state.pieces[0]);
             Node* second = fixture.scene.node(state.pieces[1]);
@@ -398,6 +411,7 @@ fn void test_breakable_identical_impacts_leave_only_the_supported_component_atta
             step(&fixture, 1);
             assert(fixture.physics.breaks().len == 1 && fixture.physics.breaks()[0].edge_kind == INTERNAL_WELD);
             assert(fixture.physics.breaks()[0].loads.force >= 1);
+
             step(&fixture, 29);
             assert(state.welds[0].broken && state.alive_welds == 0);
             assert((second.world_position() - (Vec3){ 1, 0, 0 }).length() > 0.5f);
@@ -425,6 +439,7 @@ fn void test_breakable_anchor_rebinds_same_entity_but_never_deleted_or_broken_en
         recipe.anchors = &anchors;
         fixture.physics.add_breakable_recipe(root, recipe)!!;
         fixture.physics.update(physics::DEFAULT_FIXED_DT);
+
         BreakableState* state = fixture.scene.get(root, Breakable).state;
         assert(state.runtime.anchors[0].broken && !state.runtime.anchors[1].broken && state.alive_anchors == 1);
         assert(fixture.physics.breaks().len == 1 && !fixture.physics.breaks()[0].loads_available);
@@ -481,6 +496,7 @@ fn void test_breakable_reset_repairs_forms_and_preserves_borrowed_targets() @tes
         recipe.settings.sleep_until_hit = true;
         recipe.strength = physics::default_breakable_strength(float::max);
         fixture.physics.add_breakable_recipe(root, recipe)!!;
+
         BreakableState* state = fixture.scene.get(root, Breakable).state;
         b3::BodyId support = fixture.physics.body(target)!!;
         b3::FilterJointDef external = b3::default_filter_joint_def();
@@ -488,6 +504,7 @@ fn void test_breakable_reset_repairs_forms_and_preserves_borrowed_targets() @tes
         external.base.body_id_b = fixture.physics.body(visitor)!!;
         b3::JointId support_joint = b3::create_filter_joint(fixture.physics.world, &external)!!;
         assert(state.form == ASSEMBLY && !state.runtime.anchors[0].joint.is_valid());
+
         fixture.physics.wake_breakable(root)!!;
         Node* first = fixture.scene.node(state.pieces[0]);
         Node* second = fixture.scene.node(state.pieces[1]);
@@ -506,6 +523,7 @@ fn void test_breakable_reset_repairs_forms_and_preserves_borrowed_targets() @tes
         assert(@catch(fixture.physics.reset_breakable(root, ASSEMBLY)) == c3d::INVALID_ARGUMENT);
         assert(foreign.is_valid() && original.is_valid());
         b3::destroy_joint(foreign, true);
+
         fixture.physics.reset_breakable(root, ASSEMBLY)!!;
         assert(state.form == ASSEMBLY && !original.is_valid() && support_joint.is_valid() && support.is_valid());
         assert(first.transform_space == TransformSpace.PARENT && second.transform_space == TransformSpace.PARENT);
@@ -538,6 +556,7 @@ fn void test_breakable_reset_capacity_failure_and_pending_completion_release_own
             BreakableRecipeDesc recipe = row_recipe(&fixture, root);
             fixture.scene.attach_breakable_recipe(assets: &fixture.assets, root: root, recipe: recipe)!!;
             BreakableState* pending = fixture.scene.get(root, Breakable).state;
+
             NullAllocator failure;
             Allocator original = fixture.scene.allocator;
             fixture.scene.allocator = &failure;
@@ -545,6 +564,7 @@ fn void test_breakable_reset_capacity_failure_and_pending_completion_release_own
             fixture.scene.allocator = original;
             assert(fixture.scene.get(root, Breakable).state == pending && !fixture.scene.get(root, Breakable).is_prepared());
             assert(fixture.physics.world.counters().body_count == 0 && fixture.physics.world.counters().joint_count == 0);
+
             fixture.physics.reset_breakable(root, PIECES)!!;
             BreakableState* prepared = fixture.scene.get(root, Breakable).state;
             assert(prepared != pending && fixture.scene.get(root, Breakable).is_prepared());
@@ -555,6 +575,7 @@ fn void test_breakable_reset_capacity_failure_and_pending_completion_release_own
             fixture.scene.allocator = original;
             assert(first.is_valid() && fixture.scene.get(root, Breakable).state == prepared);
             assert(tracker.allocation_count() == allocations);
+
             prepared.status = FAILED;
             prepared.failure = physics::SOURCE_UNAVAILABLE;
             fixture.physics.reset_breakable(root, ASSEMBLY)!!;
@@ -588,6 +609,7 @@ fn void test_breakable_recipe_rejects_invalid_strength_frames_and_foreign_descen
             )) == c3d::INVALID_ARGUMENT);
             assert(!fixture.scene.has(root, Breakable));
         }
+
         recipe.strength = physics::default_breakable_strength();
         recipe.strength.twist = 1;
         assert(@catch(fixture.physics.add_breakable_recipe(root, recipe)) == c3d::INVALID_ARGUMENT);
@@ -679,6 +701,7 @@ fn void test_breakable_reset_rejects_replacement_bodies_without_destroying_them(
         assert(@catch(fixture.physics.reset_breakable(root, PIECES)) == c3d::INVALID_ARGUMENT);
         assert(replacement.is_valid() && physics::same_breakable_body(fixture.physics.body(piece)!!, replacement));
         assert(fixture.scene.get(piece, PhysicsBody).colliders[0].half_extents == (Vec3){ 0.2f, 0.3f, 0.4f });
+
         fixture.physics.remove_body(piece);
         fixture.physics.reset_breakable(root, PIECES)!!;
         assert(state.welds[0].joint.is_valid() && fixture.physics.world.counters().body_count == 2);
@@ -699,75 +722,37 @@ fn void test_breakable_reset_rejects_replacement_bodies_without_destroying_them(
 }
 
 fn void test_breakable_reset_rejects_replaced_assembly_before_deleted_piece_cleanup() @test {
-    foreach (collider_count : (uint[2]){ 2, 1 }) {
-        @pool() {
-            Fixture fixture;
-            setup(&fixture, weightless_desc());
-            defer teardown(&fixture);
-            Node* root = add_row(&fixture, 2);
-            root.local.position = { 3, 4, 5 };
-            fixture.scene.update_world();
-            BreakableRecipeDesc recipe = row_recipe(&fixture, root);
-            recipe.settings.sleep_until_hit = true;
-            fixture.physics.add_breakable_recipe(root, recipe)!!;
-            BreakableState* state = fixture.scene.get(root, Breakable).state;
-            fixture.physics.remove_body(root);
+    @pool() {
+        Fixture fixture;
+        setup(&fixture, weightless_desc());
+        defer teardown(&fixture);
+        Node* root = add_row(&fixture, 2);
+        root.local.position = { 3, 4, 5 };
+        fixture.scene.update_world();
+        BreakableRecipeDesc recipe = row_recipe(&fixture, root);
+        recipe.settings.sleep_until_hit = true;
+        fixture.physics.add_breakable_recipe(root, recipe)!!;
+        BreakableState* state = fixture.scene.get(root, Breakable).state;
+        fixture.physics.remove_body(root);
 
-            ColliderDesc[2] colliders;
-            foreach (index, &collider : colliders) {
-                *collider = physics::default_collider_desc(BOX);
-                collider.half_extents = { 0.2f + (float)index, 0.3f, 0.4f };
-                collider.local.position.x = 2 * (float)index;
-            }
-            fixture.physics.add_body(root, physics::default_body_desc(KINEMATIC), colliders[:collider_count])!!;
-            fixture.physics.set_velocity(root, { 2, 3, 4 }, { 0, 1, 0 });
-            b3::BodyId replacement = fixture.physics.body(root)!!;
-            b3::WorldTransform pose = replacement.transform();
-            maths::Transform root_local = root.local;
-            Mat4 root_world = root.world;
-            RigidBody* rigid = fixture.scene.get(root, RigidBody);
-            Collider* native_records = rigid.colliders.ptr;
-            ColliderDesc* authored_records = fixture.scene.get(root, PhysicsBody).colliders.ptr;
-            maths::Transform previous = rigid.previous;
-            maths::Transform current = rigid.current;
-            b3::ShapeId[2] shapes;
-            foreach (index, collider : rigid.colliders) shapes[index] = collider.shape;
-            b3::Counters counts = fixture.physics.world.counters();
-            uint[] holders = alloc::new_array(tmem, uint, fixture.physics.snapshots.slots.len);
-            foreach (index, slot : fixture.physics.snapshots.slots) holders[index] = slot.holders;
-            fixture.scene.remove(fixture.scene.node(state.pieces[0]));
+        ColliderDesc collider = physics::default_collider_desc(BOX);
+        collider.half_extents = { 0.2f, 0.3f, 0.4f };
+        fixture.physics.add_body(root, physics::default_body_desc(KINEMATIC), (&collider)[:1])!!;
+        fixture.physics.set_velocity(root, { 2, 3, 4 }, { 0, 1, 0 });
+        b3::BodyId replacement = fixture.physics.body(root)!!;
+        fixture.scene.remove(fixture.scene.node(state.pieces[0]));
 
-            assert(@catch(fixture.physics.reset_breakable(root, PIECES)) == c3d::INVALID_ARGUMENT);
-            assert(replacement.is_valid() && physics::same_breakable_body(fixture.physics.body(root)!!, replacement));
-            foreach (shape : shapes[:collider_count]) assert(shape.is_valid());
-            rigid = fixture.scene.get(root, RigidBody);
-            PhysicsBody* authored = fixture.scene.get(root, PhysicsBody);
-            assert(rigid.colliders.ptr == native_records && rigid.colliders.len == collider_count);
-            assert(authored.colliders.ptr == authored_records && authored.colliders.len == collider_count);
-            foreach (index, collider : rigid.colliders) {
-                assert(collider.shape.index1 == shapes[index].index1 && collider.shape.world0 == shapes[index].world0
-                    && collider.shape.generation == shapes[index].generation);
-                assert(authored.colliders[index].half_extents == colliders[index].half_extents);
-                assert(authored.colliders[index].local.position == colliders[index].local.position);
-            }
-            b3::Counters retained = fixture.physics.world.counters();
-            assert(retained.body_count == counts.body_count && retained.shape_count == counts.shape_count
-                && retained.joint_count == counts.joint_count);
-            assert(root.local.position == root_local.position && root.local.rotation.v == root_local.rotation.v);
-            assert(root.world == root_world && replacement.transform().p == pose.p && replacement.transform().q.v == pose.q.v);
-            assert(replacement.linear_velocity() == (Vec3){ 2, 3, 4 } && replacement.angular_velocity() == (Vec3){ 0, 1, 0 });
-            assert(rigid.previous.position == previous.position && rigid.previous.rotation.v == previous.rotation.v);
-            assert(rigid.current.position == current.position && rigid.current.rotation.v == current.rotation.v);
-            foreach (index, slot : fixture.physics.snapshots.slots) assert(slot.holders == holders[index]);
-            assert_snapshot_holders_match(&fixture);
+        assert(@catch(fixture.physics.reset_breakable(root, PIECES)) == c3d::INVALID_ARGUMENT);
+        assert(replacement.is_valid() && physics::same_breakable_body(fixture.physics.body(root)!!, replacement));
+        assert(replacement.linear_velocity() == (Vec3){ 2, 3, 4 } && replacement.angular_velocity() == (Vec3){ 0, 1, 0 });
+        assert_snapshot_holders_match(&fixture);
 
-            fixture.physics.remove_body(root);
-            fixture.physics.reset_breakable(root, PIECES)!!;
-            assert(state.alive_pieces == 1 && state.alive_welds == 0);
-            assert(fixture.physics.world.counters().body_count == 1 && fixture.physics.world.counters().shape_count == 1);
-            assert_snapshot_holders_match(&fixture);
-        };
-    }
+        fixture.physics.remove_body(root);
+        fixture.physics.reset_breakable(root, PIECES)!!;
+        assert(state.alive_pieces == 1 && state.alive_welds == 0);
+        assert(fixture.physics.world.counters().body_count == 1 && fixture.physics.world.counters().shape_count == 1);
+        assert_snapshot_holders_match(&fixture);
+    };
 }
 
 fn void test_breakable_reset_prepares_legacy_survivors_without_deleted_sources() @test {

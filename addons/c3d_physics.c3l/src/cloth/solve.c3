@@ -34,6 +34,7 @@ fn void? solve_cloth(
             state.velocities[index] = velocity;
             state.predicted[index] = position + velocity * dt;
         }
+
         float progress = (float)substep / (float)total;
         foreach (slot, pin : state.pins) {
             state.predicted[pin] = substep == total
@@ -80,6 +81,7 @@ fn void? solve_cloth(
             *position = state.predicted[index];
         }
     }
+
     state.pin_anchors[..] = state.pin_targets[..];
     finish_body_poses(state);
 }

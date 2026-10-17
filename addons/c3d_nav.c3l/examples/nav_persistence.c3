@@ -70,6 +70,7 @@ fn int main(String[] args) {
         io::printn("Usage: nav_persistence [--measure]");
         return 1;
     }
+
     if (catch excuse = run_example(measure)) {
         io::printfn("Navigation snapshot failed: %s", excuse);
         return 1;
@@ -86,10 +87,15 @@ fn int main(String[] args) {
 fn void? run_example(bool measure) @local {
     NavMesh mesh = create_example_mesh(mem)!;
     defer nav::destroy_nav_mesh(&mesh);
-    char[] snapshot = alloc::new_array_try(mem, char, (sz)mesh.snapshot_size()!) ?? c3d::CAPACITY_EXCEEDED~!;
+
+    char[]? snapshot = alloc::new_array_try(mem, char, (sz)mesh.snapshot_size()!);
+    if (catch snapshot) return c3d::CAPACITY_EXCEEDED~;
     defer free(snapshot);
-    char[] scratch = alloc::new_array_try(mem, char, SCRATCH_BYTES) ?? c3d::CAPACITY_EXCEEDED~!;
+
+    char[]? scratch = alloc::new_array_try(mem, char, SCRATCH_BYTES);
+    if (catch scratch) return c3d::CAPACITY_EXCEEDED~;
     defer free(scratch);
+
     NavSnapshotLimits limits = { .max_blob_bytes = snapshot.len, .max_staged_bytes = STAGED_BYTES };
     PolyRef original = mesh.poly_ref_base(mesh.tile_at(0, 0, 0));
     NavPolyKey key = mesh.poly_key(original)!;
@@ -108,6 +114,7 @@ fn void? run_example(bool measure) @local {
         time::Clock started = clock::now();
         (void)mesh.write_snapshot(snapshot, scratch)!;
         double written = (double)(clock::now() - started) / NANOSECONDS_PER_MICROSECOND;
+
         started = clock::now();
         mesh.read_snapshot(snapshot, scratch, limits)!;
         double read = (double)(clock::now() - started) / NANOSECONDS_PER_MICROSECOND;
@@ -116,6 +123,7 @@ fn void? run_example(bool measure) @local {
             read_samples[sample - WARMUP_COUNT] = read;
         }
     }
+
     sort::quicksort(write_samples[..]);
     sort::quicksort(read_samples[..]);
     io::printfn("Warmup: %d; samples: %d.", WARMUP_COUNT, SAMPLE_COUNT);
@@ -126,9 +134,11 @@ fn void? run_example(bool measure) @local {
 fn void? show_path(NavMesh* mesh) @local {
     NavQuery query = nav::create_nav_query(mem, mesh, 64)!;
     defer nav::destroy_nav_query(&query);
+
     QueryFilter filter = nav::default_query_filter();
     NearestPoly start = query.find_nearest_poly({ 0.5f, 0, 1 }, { 0.1f, 1, 0.1f }, &filter)!;
     NearestPoly end = query.find_nearest_poly({ 5.5f, 0, 1 }, { 0.1f, 1, 0.1f }, &filter)!;
+
     PolyRef[8] path;
     PathResult result = query.find_path(
         start_ref: start.ref,
@@ -146,10 +156,15 @@ fn void? measure_memory() @local {
     AllocationCounter counter = { .backing = mem };
     NavMesh mesh = create_example_mesh(&counter)!;
     defer nav::destroy_nav_mesh(&mesh);
-    char[] snapshot = alloc::new_array_try(mem, char, (sz)mesh.snapshot_size()!) ?? c3d::CAPACITY_EXCEEDED~!;
+
+    char[]? snapshot = alloc::new_array_try(mem, char, (sz)mesh.snapshot_size()!);
+    if (catch snapshot) return c3d::CAPACITY_EXCEEDED~;
     defer free(snapshot);
-    char[] scratch = alloc::new_array_try(mem, char, SCRATCH_BYTES) ?? c3d::CAPACITY_EXCEEDED~!;
+
+    char[]? scratch = alloc::new_array_try(mem, char, SCRATCH_BYTES);
+    if (catch scratch) return c3d::CAPACITY_EXCEEDED~;
     defer free(scratch);
+
     NavSnapshotLimits limits = { .max_blob_bytes = snapshot.len, .max_staged_bytes = STAGED_BYTES };
     (void)mesh.write_snapshot(snapshot, scratch)!;
 
@@ -158,6 +173,7 @@ fn void? measure_memory() @local {
     mesh.read_snapshot(snapshot, scratch, limits)!;
     usz staged_bytes = counter.peak_bytes - old_bytes;
     usz mesh_peak = counter.peak_bytes;
+
     usz read_scratch = minimum_scratch(
         mesh: &mesh,
         snapshot: snapshot,
@@ -170,6 +186,7 @@ fn void? measure_memory() @local {
         scratch: scratch,
         read: false,
     )!;
+
     io::printfn("Old live: %d bytes; staged: %d bytes.", old_bytes, staged_bytes);
     io::printfn("Resident after replace: %d bytes.", counter.live_bytes);
     io::printfn("Input/output shared buffer: %d bytes; scratch reserved: %d bytes.",
@@ -213,12 +230,14 @@ fn NavMesh? create_example_mesh(Allocator allocator) @local {
         .max_links = 128,
     })!;
     defer catch nav::destroy_nav_mesh(&mesh);
+
     int[4] coordinates = { 0, 0, 1, 2 };
     int[4] layers = { 0, 1, 0, 0 };
     foreach (index, x : coordinates) {
         int layer = layers[index];
         char[] built = example_tile(allocator, x, layer)!;
         defer alloc::free(allocator, built.ptr);
+
         OffMeshConnectionDesc[1] connections = { {
             .start = { 3, 0.4f, 1 },
             .end = { 5, 0.4f, 1 },
@@ -256,6 +275,7 @@ fn char[]? example_tile(Allocator allocator, int tile_x, int layer) @local {
     bool border = layer == 0 && tile_x < 2;
     uint edge = tile_x == 0 ? 2 : 0;
     if (border) polygons[nav::MAX_VERTS_PER_POLY + edge] = nav::PORTAL_EDGE | (ushort)(tile_x == 0 ? 2 : 0);
+
     ushort[1] regions;
     ushort[1] flags = { nav::POLY_FLAG_WALK };
     char[1] areas = { nav::WALKABLE_AREA };
@@ -270,6 +290,7 @@ fn char[]? example_tile(Allocator allocator, int tile_x, int layer) @local {
         { .vertices = { 3, 0, 4 }, .boundary_edges = 1 },
     };
     DetailPortal[1] portals = { { .edge = edge, .min = 0.1f, .max = 0.9f, .kind = HEIGHT_BORDER } };
+
     PolyMesh source = {
         .verts = vertices[..],
         .polys = polygons[..],
@@ -294,7 +315,8 @@ fn char[]? example_tile(Allocator allocator, int tile_x, int layer) @local {
             .portals = border ? portals[..] : (DetailPortal[]){},
         },
     };
-    char[] bytes = alloc::new_array_try(allocator, char, (sz)nav::tile_mesh_size(&source)) ?? c3d::CAPACITY_EXCEEDED~!;
+    char[]? bytes = alloc::new_array_try(allocator, char, (sz)nav::tile_mesh_size(&source));
+    if (catch bytes) return c3d::CAPACITY_EXCEEDED~;
     nav::pack_tile_mesh(mesh: &source, tile_x: tile_x, tile_z: 0, blob: bytes);
     return bytes;
 }

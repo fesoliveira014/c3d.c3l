@@ -443,6 +443,7 @@ fn void? Scene.attach_breakable_pieces(
         if (piece.hulls.len > uint::max - hull_count) return c3d::CAPACITY_EXCEEDED~;
         hull_count += piece.hulls.len;
     }
+
     BreakableState* state = allocate_breakable(
         allocator: self.allocator,
         piece_count: pieces.len,
@@ -453,6 +454,7 @@ fn void? Scene.attach_breakable_pieces(
     state.strength = { .force = desc.break_force, .twist = float::max, .bending = float::max };
     state.alive_pieces = (uint)pieces.len;
     state.form = desc.sleep_until_hit ? ASSEMBLY : PIECES;
+
     uint first;
     foreach (index, piece : pieces) {
         state.pieces[index] = piece.node;
@@ -519,6 +521,7 @@ fn void? Scene.attach_breakable_recipe(
         first_hull += (uint)piece.hulls.len;
     }
     state.runtime.hull_offsets[recipe.pieces.len] = first_hull;
+
     foreach (index, authored : recipe.welds) {
         state.welds[index] = {
             .piece_a = authored.piece_a,
@@ -569,6 +572,7 @@ fn void? PhysicsWorld.prepare_breakable(&self, Node* root) {
     check_breakable_ancestors(self.scene, root)!;
     check_breakable_roles(self.scene, root, root)!;
     maths::Transform root_pose = breakable_pose(root)!;
+
     @pool() {
         BreakablePieceView[] pieces = alloc::new_array(tmem, BreakablePieceView, pending.pieces.len);
         foreach (uint index, &piece : pieces) *piece = pending.piece_view(index);
@@ -581,6 +585,7 @@ fn void? PhysicsWorld.prepare_breakable(&self, Node* root) {
         )!;
         maths::Transform[] poses = alloc::new_array(tmem, maths::Transform, pending.pieces.len);
         foreach (index, piece : pieces) poses[index] = breakable_pose(self.scene.node(piece.node))!;
+
         SnapshotHandle[] held = alloc::new_array(tmem, SnapshotHandle, pending.runtime.geometries.len);
         uint held_count;
         defer foreach (handle : held[:held_count]) release_snapshot(self.snapshots, handle);
@@ -588,6 +593,7 @@ fn void? PhysicsWorld.prepare_breakable(&self, Node* root) {
             held[held_count] = acquire_hull(self, geometry)!;
             held_count++;
         }
+
         Weld[] edges = pending.welds;
         if (pending.recipe_kind == LEGACY_CURRENT_POSE) {
             edges = build_breakable_graph(
@@ -601,6 +607,7 @@ fn void? PhysicsWorld.prepare_breakable(&self, Node* root) {
         }
         check_recipe_poses(pending, poses, edges)!;
         check_breakable_anchor_frames(self, pending, poses)!;
+
         BreakableState* prepared = allocate_breakable(
             allocator: self.scene.allocator,
             piece_count: pending.pieces.len,
@@ -625,6 +632,7 @@ fn void? PhysicsWorld.prepare_breakable(&self, Node* root) {
         prepared.alive_welds = (uint)edges.len;
         prepared.alive_anchors = pending.alive_anchors;
         prepared.form = pending.form;
+
         if (prepared.desc.sleep_until_hit) {
             author_breakable_assembly(
                 world: self,
@@ -849,6 +857,7 @@ fn void? check_breakable_recipe(
         check_breakable_axis(weld.moment_axis)!;
         if (weld.has_strength_override) check_breakable_strength(weld.strength_override)!;
         check_breakable_evaluation(recipe.evaluation, recipe_weld_strength(recipe, weld))!;
+
         maths::Transform frame_a = compose_breakable_pose(recipe.pieces[weld.piece_a].rest_frame, weld.frame_a);
         maths::Transform frame_b = compose_breakable_pose(recipe.pieces[weld.piece_b].rest_frame, weld.frame_b);
         if (!breakable_frames_agree(frame_a, frame_b)) return c3d::INVALID_ARGUMENT~;
@@ -861,12 +870,14 @@ fn void? check_breakable_recipe(
         for (Node* ancestor = target; ancestor; ancestor = ancestor.parent) {
             if (ancestor == root) return c3d::INVALID_ARGUMENT~;
         }
+
         check_breakable_frame(anchor.frame_a)!;
         check_breakable_frame(anchor.frame_b)!;
         check_breakable_axis(anchor.moment_axis)!;
         if (anchor.has_target_strength) check_breakable_strength(anchor.target_strength)!;
         if (anchor.has_strength_override) check_breakable_strength(anchor.strength_override)!;
         check_breakable_evaluation(recipe.evaluation, recipe_anchor_strength(recipe, anchor))!;
+
         maths::Transform piece_pose = compose_breakable_pose(root_pose, recipe.pieces[anchor.piece].rest_frame);
         maths::Transform frame_a = compose_breakable_pose(piece_pose, anchor.frame_a);
         maths::Transform frame_b = compose_breakable_pose(breakable_pose(target)!, anchor.frame_b);
@@ -881,6 +892,7 @@ fn void? check_recipe_poses(BreakableState* state, maths::Transform[] poses, Wel
         Quat difference = expected.rotation.conjugate().mul(current.rotation).normalize();
         Vec3 imaginary = { difference.v.x, difference.v.y, difference.v.z };
         float angle = 2 * math::atan2(imaginary.length(), math::abs(difference.v.w));
+
         float magnitude;
         foreach (position : (Vec3[4]){
             poses[edge.piece_a].position,
@@ -890,6 +902,7 @@ fn void? check_recipe_poses(BreakableState* state, maths::Transform[] poses, Wel
         }) {
             foreach (coordinate : position) magnitude = math::max(magnitude, math::abs(coordinate));
         }
+
         float position_tolerance = math::max(REST_POSITION_TOLERANCE, magnitude * REST_POSITION_ROUNDOFF);
         if ((current.position - expected.position).length() <= position_tolerance && angle <= REST_ANGLE_TOLERANCE) continue;
         state.runtime.has_mismatch = true;
@@ -911,6 +924,7 @@ fn void? check_captured_pieces(
         if (!piece.hulls.len) return c3d::INVALID_ARGUMENT~;
         Node* node = scene.node(piece.node);
         if (node == root) return c3d::INVALID_ARGUMENT~;
+
         Node* ancestor = node;
         while (ancestor != root) {
             if (!ancestor) return c3d::INVALID_ARGUMENT~;
@@ -918,6 +932,7 @@ fn void? check_captured_pieces(
             ancestor = ancestor.parent;
         }
         foreach (earlier : pieces[:index]) if (c3d::same_id(earlier.node, piece.node)) return c3d::INVALID_ARGUMENT~;
+
         breakable_pose(node)!;
         maths::Transform frame = maths::transform_from_affine(piece.rest_frame.to_mat4()) ?? c3d::UNSUPPORTED~!;
         if (!collide::unit_scale(frame) || !collide::unit_scale(piece.rest_frame)) return c3d::UNSUPPORTED~;
@@ -1203,6 +1218,7 @@ fn void? author_breakable_assembly(
         }
     }
     state.runtime.assembly_count = (uint)colliders.len;
+
     BodyDesc body = default_body_desc(KINEMATIC);
     body.name = root.name;
     body.disabled = true;
@@ -1262,6 +1278,7 @@ fn void? bind_breakable_welds(
             evaluation: state.evaluation,
         )!;
     }
+
     if (!require_anchors) return;
     foreach (&anchor : state.runtime.anchors) {
         if (anchor.broken || anchor.pruned) continue;
