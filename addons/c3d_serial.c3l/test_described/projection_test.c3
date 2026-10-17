@@ -218,3 +218,58 @@ fn void test_interleaved_claims_preserve_each_nodes_projection_and_omission() @t
         }
     };
 }
+
+fn void? collect_absent_projected_number(void* component, WriteContext* context) @private {
+    ulong mode = ((Owner*)component).total;
+    if (mode == 5) {
+        context.project_absent_component(context.node.parent, (Owner){})!;
+        return;
+    }
+    if (mode == 1) context.omit_component(context.node.parent, ecs::assigned_slot(Number)!!)!;
+    context.project_absent_component(
+        context.node.parent,
+        (Number){ .count = 19, .gain = 0.25f, .target = context.node.id },
+    )!;
+    if (mode == 2) context.omit_component(context.node.parent, ecs::assigned_slot(Number)!!)!;
+    if (mode == 3) context.project_absent_component(context.node.parent, (Number){ .count = 20 })!;
+    if (mode == 4) context.omit_node(context.node.parent)!;
+}
+
+fn void test_absent_component_projection_exports_removed_component_and_rejects_conflicts() @test {
+    @pool() {
+        Fixture fixture;
+        create_fixture(&fixture);
+        defer destroy_fixture(&fixture);
+        serial::register_described(Owner, {
+            .name = "owner", .collect = &collect_absent_projected_number, .attach = &attach_owner,
+        })!!;
+        Node* source = fixture_tree(&fixture);
+        fixture.source.remove_component(source, Number);
+        assert(!fixture.source.has(source, Number));
+        foreach (text_mode : (bool[2]){ false, true }) {
+            Node* restored = text_mode
+              ? serial::read_subtree_text(&fixture.destination, &fixture.assets, fixture_text(&fixture, source))!!
+              : serial::read_subtree(&fixture.destination, &fixture.assets, fixture_bytes(&fixture, source))!!;
+            Number* projected = fixture.destination.get(restored, Number);
+            assert(projected != null && projected.count == 19 && projected.gain == 0.25f);
+            assert(c3d::same_id(projected.target, restored.first_child.id));
+            assert(!fixture.source.has(source, Number));
+            fixture.destination.remove(restored);
+        }
+        Owner* owner = fixture.source.get(source.first_child, Owner);
+        for (ulong mode = 1; mode <= 5; mode++) {
+            owner.total = mode;
+            assert(@catch(export_projection(&fixture, source, false)) == c3d::INVALID_ARGUMENT);
+            assert(@catch(export_projection(&fixture, source, true)) == c3d::INVALID_ARGUMENT);
+        }
+        owner.total = 0;
+        fixture.source.add(source, (Number){ .count = 21 });
+        assert(@catch(export_projection(&fixture, source, false)) == c3d::INVALID_ARGUMENT);
+        assert(@catch(export_projection(&fixture, source, true)) == c3d::INVALID_ARGUMENT);
+        fixture.source.remove_component(source, Number);
+        Node* conflict = fixture.source.add_node(source, "conflict")!!;
+        fixture.source.add(conflict, (Owner){});
+        assert(@catch(export_projection(&fixture, source, false)) == c3d::INVALID_ARGUMENT);
+        assert(@catch(export_projection(&fixture, source, true)) == c3d::INVALID_ARGUMENT);
+    };
+}

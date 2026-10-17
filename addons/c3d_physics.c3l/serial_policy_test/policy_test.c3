@@ -34,17 +34,19 @@ fn void test_every_physics_component_has_an_explicit_serialization_policy() @tes
     defer physics::destroy_physics_world(&world);
     uint registered_count = ecs::registered_type_count;
     physics::register_serial_codecs()!!;
-    ExpectedPolicy[10] expected = {
+    ExpectedPolicy[12] expected = {
         { .slot = ecs::assigned_slot(PhysicsBody)!!, .name = "physics_body", .identity = BodyAuthoring::typeid, .version = 1 },
         { .slot = ecs::assigned_slot(PhysicsJoint)!!, .name = "physics_joint", .identity = JointAuthoring::typeid, .phase = REFERENCES, .version = 1 },
         { .slot = ecs::assigned_slot(Buoyancy)!!, .name = "buoyancy", .identity = BuoyancyAuthoring::typeid, .version = 1 },
         { .slot = ecs::assigned_slot(Wind)!!, .name = "wind", .identity = Wind::typeid, .version = 1 },
         { .slot = ecs::assigned_slot(Force)!!, .name = "force", .identity = Force::typeid, .version = 1 },
-        { .slot = ecs::assigned_slot(Cloth)!!, .name = "cloth", .identity = ClothSavedAuthoring::typeid, .phase = OWNER, .version = 5 },
+        { .slot = ecs::assigned_slot(Cloth)!!, .name = "cloth", .identity = ClothSavedAuthoring::typeid, .phase = OWNER, .version = 6 },
+        { .slot = ecs::assigned_slot(CrowdCloth)!!, .name = "crowd_cloth", .identity = CrowdClothSavedAuthoring::typeid, .phase = BINDINGS, .version = 1 },
         { .slot = ecs::assigned_slot(Ragdoll)!!, .name = "ragdoll", .identity = RagdollAuthoring::typeid, .phase = OWNER, .version = 1 },
         { .slot = ecs::assigned_slot(Breakable)!!, .name = "breakable", .identity = BreakableAuthoring::typeid, .phase = OWNER, .version = 2 },
         { .slot = ecs::assigned_slot(RigidBody)!!, .transient = true },
         { .slot = ecs::assigned_slot(Joint)!!, .transient = true },
+        { .slot = ecs::assigned_slot(ClothOutput)!!, .transient = true },
     };
     assert(registered_count == core_count + expected.len);
     assert(ecs::registered_type_count == registered_count);

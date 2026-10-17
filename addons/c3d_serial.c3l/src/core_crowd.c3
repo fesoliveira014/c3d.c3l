@@ -85,7 +85,8 @@ struct CrowdAuthoringV3 @private {
     CrowdInstanceAuthoringV2[] playback;
 }
 
-struct CrowdAuthoringV4 @private {
+<* Crowd model, capacity, and placement authoring used by crowd preflight. *>
+struct CrowdAuthoringV4 {
     ModelId model;
     uint capacity;
     Aabb pose_bounds;

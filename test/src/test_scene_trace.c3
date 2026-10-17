@@ -192,6 +192,13 @@ fn void test_deformed_meshes_collect_posed_only_away_from_rest() @test {
         assert(collection.poses[0].skin == scene.get(skinned, SkinBinding));
         assert(collection.poses[1].skin == null && collection.poses[1].mesh == scene.get(weighted, Mesh));
         assert(collection.poses[5].skin == null && collection.poses[6].skin == null);
+
+        Mesh* rigid_mesh = scene.get(rigid, Mesh);
+        rigid_mesh.vertex_motion = true;
+        rigid_mesh.reset_vertex_history()!!;
+        render::TraceCollection motion_collection = collect_all(&fixture);
+        assert(motion_collection.poses[5].kind == render::TracePose.VERTEX_MOTION);
+        assert(motion_collection.poses[5].vertex_history_token == 1);
     };
 }
 

@@ -120,11 +120,11 @@ fn void layout_string(LayoutState* state, String value) @local {
 fn void layout_info(LayoutState* state, describe::Info* info) @local {
     layout_string(state, info.name);
     layout_string(state, describe::Kind::names[info.kind.ordinal]);
-    layout_integer(state, info.size);
+    layout_integer(state, info.authored_size ? info.authored_size : info.size);
     layout_integer(state, info.extent);
     if (info.kind == ARRAY || info.kind == SLICE) {
         layout_string(state, describe::Kind::names[info.element_kind.ordinal]);
-        layout_integer(state, info.element_size);
+        layout_integer(state, info.element_authored_size ? info.element_authored_size : info.element_size);
     }
     if (info.kind == ASSET) layout_string(state, AssetKind::names[info.metadata.asset_kind.ordinal]);
     if (info.kind == ENUM) {

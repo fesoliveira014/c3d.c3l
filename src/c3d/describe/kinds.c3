@@ -77,6 +77,54 @@ macro bool @transient($member) @private {
     $endif
 }
 
+macro bool @has_transient($Type) @private {
+    $switch $Type::kind:
+        $case STRUCT:
+            $foreach $member : $Type::members:
+                $if @transient($member) || @has_transient($Typefrom($member.type)):
+                    return true;
+                $endif
+            $endforeach
+            return false;
+        $case ARRAY:
+            return @has_transient($Typefrom($Type::inner));
+        $default:
+            return false;
+    $endswitch
+}
+
+macro usz @authored_size($Type) @private {
+    $if !@has_transient($Type):
+        return $Type::size;
+    $else
+        $switch $Type::kind:
+            $case STRUCT:
+                usz $offset = 0;
+                usz $max_align = 1;
+                $foreach $member : $Type::members:
+                    $if !@transient($member):
+                        var $Member = $Typefrom($member.type);
+                        usz $align = $Member::alignment;
+                        $if $align > $max_align:
+                            $max_align = $align;
+                        $endif
+                        $offset = ($offset + $align - 1) & ~($align - 1);
+                        $offset += @authored_size($Member);
+                    $endif
+                $endforeach
+                $if $offset == 0:
+                    return 0;
+                $else
+                    return ($offset + $max_align - 1) & ~($max_align - 1);
+                $endif
+            $case ARRAY:
+                return @authored_size($Typefrom($Type::inner)) * $Type::len;
+            $default:
+                return $Type::size;
+        $endswitch
+    $endif
+}
+
 macro bool @range_valid($Type, #minimum, #maximum) @private {
     $switch @kind($Type):
         $case ARRAY:

@@ -22,7 +22,12 @@ fn void? check_collider_owners(Scene* scene, Entity[] owners) @private {
     }
 }
 
-fn ClothCapture? capture_colliders(Scene* scene, Entity[] owners, uint max_shapes) @private {
+fn ClothCapture? capture_colliders(
+    Scene* scene,
+    Entity[] owners,
+    uint max_shapes,
+    PhysicsWorld* world = null,
+) @private {
     check_collider_owners(scene, owners)!;
     ClothCapture capture = {
         .bodies = alloc::new_array(tmem, ClothBody, (sz)owners.len),
@@ -35,7 +40,7 @@ fn ClothCapture? capture_colliders(Scene* scene, Entity[] owners, uint max_shape
         if (!physics::cloth_body_live(body)) return physics::NO_BODY~;
         capture.bodies[index] = { .owner = owner, .native_identity = physics::cloth_body_identity(body) };
         count += physics::capture_cloth_shapes(
-            world: null,
+            world: world,
             body: body,
             body_index: (uint)index,
             output: capture.shapes[count..],

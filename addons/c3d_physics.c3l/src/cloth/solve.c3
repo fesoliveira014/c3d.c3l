@@ -55,18 +55,28 @@ fn void? solve_cloth(
     prepare_body_motions(state, false)!;
 
     for (uint substep = 1; substep <= total; substep++) {
+        float prev_progress = (float)(substep - 1) / (float)total;
+        float progress = (float)substep / (float)total;
         accumulate_wind(state, wind);
         foreach (index, position : state.positions) {
             if (state.inverse_masses[index] == 0) continue;
+            Vec3 ref_prev = substep == 1
+              ? state.solved_reference[index]
+              : state.solved_reference[index]
+                + (state.current_reference[index] - state.solved_reference[index]) * prev_progress;
+            Vec3 ref_next = substep == total
+              ? state.current_reference[index]
+              : state.solved_reference[index]
+                + (state.current_reference[index] - state.solved_reference[index]) * progress;
+            Vec3 applied_transport = (ref_next - ref_prev) * state.transport[index];
             Vec3 velocity = (state.velocities[index] + (acceleration + state.accelerations[index]) * dt) * damping;
             state.velocities[index] = velocity;
-            state.predicted[index] = position + velocity * dt;
+            state.predicted[index] = position + applied_transport + velocity * dt;
         }
 
         state.soft_lambdas[..] = (Vec3){};
         foreach (&hinge : state.hinges) hinge.lambda = 0;
 
-        float progress = (float)substep / (float)total;
         foreach (slot, pin : state.pins) {
             state.predicted[pin] = substep == total
               ? state.pin_targets[slot]
@@ -139,11 +149,21 @@ fn void? solve_cloth(
         resolve_contacts(world, state, state.predicted)!;
         certify_hinge_step(state, state.positions, state.predicted)!;
         foreach (index, &position : state.positions) {
-            state.velocities[index] = (state.predicted[index] - *position) / dt;
+            Vec3 ref_prev = substep == 1
+              ? state.solved_reference[index]
+              : state.solved_reference[index]
+                + (state.current_reference[index] - state.solved_reference[index]) * prev_progress;
+            Vec3 ref_next = substep == total
+              ? state.current_reference[index]
+              : state.solved_reference[index]
+                + (state.current_reference[index] - state.solved_reference[index]) * progress;
+            Vec3 applied_transport = (ref_next - ref_prev) * state.transport[index];
+            state.velocities[index] = (state.predicted[index] - *position - applied_transport) / dt;
             *position = state.predicted[index];
         }
     }
 
+    state.solved_reference[..] = state.current_reference[..];
     state.pin_anchors[..] = state.pin_targets[..];
     state.soft_anchors[..] = state.soft_targets[..];
     finish_body_poses(state);
@@ -154,7 +174,14 @@ fn void? prepare_publication(PhysicsWorld* world, ClothState* state, bool solved
         state.sweep_start[..] = (solved ? state.positions : state.published)[..];
         prepare_body_motions(state, !solved)!;
     }
-    state.published[..] = state.positions[..];
+    if (solved) {
+        state.published[..] = state.positions[..];
+    } else {
+        foreach (index, position : state.positions) {
+            state.published[index] = position
+              + (state.current_reference[index] - state.solved_reference[index]) * state.transport[index];
+        }
+    }
     foreach (slot, pin : state.pins) state.published[pin] = state.pin_targets[slot];
     filter_displacement(
         world: world,
@@ -172,6 +199,7 @@ fn void? prepare_publication(PhysicsWorld* world, ClothState* state, bool solved
         end_positions:   state.published,
         commit_angle:    solved,
     )!;
+    state.published_reference[..] = state.current_reference[..];
     foreach (&body : state.bodies) {
         if (!body.live) continue;
         body.published = body.current;

@@ -191,4 +191,19 @@ fn void test_vertex_motion_slot_validity_keys_on_topology() @test {
     render::PosedTopology other = recorded;
     other.geometry.generation = 2;
     assert(!render::vertex_motion_slot_valid(recorded, other));
+
+    RetireList retire;
+    PosedTraceTable table = make_table(&retire);
+    defer destroy_table(&table, &retire);
+    table.begin_epoch(1);
+    uint index = table.claim(key_of(0), 0, &retire)!!;
+    PosedTraceRes* slot = &table.slots[index];
+    assert(slot.update_vertex_motion(0) && slot.pose_valid && slot.pose_serial == 1);
+    assert(!slot.update_vertex_motion(0) && slot.pose_serial == 1);
+    assert(slot.update_vertex_motion(1) && slot.vertex_history_token == 1 && slot.pose_serial == 2);
+    assert(!slot.update_vertex_motion(1) && slot.pose_serial == 2);
+    render::mark_posed_pending(&table, index);
+    render::discard_posed_trace(&table);
+    assert(!slot.pose_valid);
+    assert(slot.update_vertex_motion(1) && slot.pose_valid && slot.pose_serial == 3);
 }

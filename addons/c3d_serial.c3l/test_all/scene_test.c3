@@ -84,6 +84,10 @@ fn void assert_authoring(Fixture* fixture, Node* root) @private {
     assert(cloth.authoring.desc.pins == ((uint[3]){ 3, 1, 1 })[..]);
     assert(c3d::same_id(cloth.authoring.desc.colliders[0], child_named(root, "contact").id));
     assert(scene.has(fabric, NavSource) && c3d::same_id(scene.get(fabric, Mesh).geometry, fixture.box));
+    Node* crowd_cloth_node = child_named(root, "crowd_cloth");
+    CrowdCloth* crowd_cloth = scene.get(crowd_cloth_node, CrowdCloth);
+    assert(!crowd_cloth.is_prepared() && crowd_cloth.state.parts.len == 1 && crowd_cloth.state.parts[0].part == 0);
+    assert(crowd_cloth.state.parts[0].authoring.desc.stretch_stiffness == 0.8f);
     Breakable* breakable = scene.get(child_named(root, "breakable"), Breakable);
     assert(!breakable.is_prepared() && breakable.state.pieces.len == 2 && breakable.state.desc.break_force == 123);
     Node* navigation = child_named(root, "navigation");
@@ -207,6 +211,7 @@ fn void test_all_authored_components_round_trip_and_restore_snapshot_in_both_for
             );
             assert_presence(&fixture.destination, true);
             assert(fixture.destination.get(child_named(restored, "fabric"), Cloth).is_prepared());
+            assert(fixture.destination.get(child_named(restored, "crowd_cloth"), CrowdCloth).is_prepared());
             assert(fixture.destination.get(child_named(restored, "breakable"), Breakable).is_prepared());
             assert(fixture.destination.get(child_named(restored, "crowd"), AnimatedCrowd).is_prepared());
             assert(bytes == encode(

@@ -164,8 +164,9 @@ fn void test_registered_layout_pins_defaults_and_conflicts() @test {
     serial::described_type(Transform)!!.defaults(&transform);
     assert(transform.scale == (Vec3){ 1, 1, 1 } && transform.rotation.v.w == 1);
     Mesh mesh;
+    assert(serial::described_type(Mesh)!!.layout == 0x5e1d3cb5a05dfe89);
     serial::described_type(Mesh)!!.defaults(&mesh);
-    assert(mesh.cast_shadow && mesh.receive_shadow && mesh.trace);
+    assert(mesh.cast_shadow && mesh.receive_shadow && mesh.trace && mesh.vertex_history_token == 0);
 }
 
 fn void test_described_fields_round_trip_exact_bits_and_owned_storage() @test {

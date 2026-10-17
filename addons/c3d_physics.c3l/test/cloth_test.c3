@@ -10,6 +10,7 @@ import c3d::ecs;
 import c3d::geometry;
 import c3d::material;
 import c3d::maths;
+import c3d::model;
 import c3d::physics;
 import c3d::physics::cloth @public;
 import c3d::scene;
@@ -1287,4 +1288,232 @@ fn void test_shift_origin_moves_cloth_in_place() @test {
     foreach (index, position : shifted_geometry.data.positions) {
         assert(near(position, reference_geometry.data.positions[index], CONTACT_TOLERANCE));
     }
+}
+
+fn GeometryId add_skinned_quad(Fixture* fixture) @private {
+    GeometryId id;
+    @pool() {
+        Geometry quad = hanging_grid(tmem, 1);
+        quad.joints = alloc::new_array(tmem, ushort[<4>], 4);
+        quad.weights = alloc::new_array(tmem, Vec4, 4);
+        quad.joints[0] = { 0, 0, 0, 0 };
+        quad.joints[1] = { 0, 0, 0, 0 };
+        quad.joints[2] = { 1, 0, 0, 0 };
+        quad.joints[3] = { 1, 0, 0, 0 };
+        quad.weights[..] = (Vec4){ 1, 0, 0, 0 };
+        quad.finalize();
+        id = fixture.assets.add_geometry(&quad)!!;
+    };
+    return id;
+}
+
+fn SkeletonId add_two_joint_skeleton(Fixture* fixture) @private {
+    int[] parents = alloc::new_array(mem, int, 2);
+    parents[0] = -1;
+    parents[1] = 0;
+    Mat4[] inverse_bind = alloc::new_array(mem, Mat4, 2);
+    inverse_bind[0] = matrix::IDENTITY4;
+    inverse_bind[1] = matrix::IDENTITY4;
+    Skeleton skel = {
+        .parents      = parents,
+        .inverse_bind = inverse_bind,
+    };
+    return fixture.assets.add_skeleton_owned(&skel)!!;
+}
+
+fn void test_reference_transport_separates_carrier_motion_and_zero_step_observations() @test {
+    Fixture fixture;
+    setup(&fixture, weightless());
+    defer teardown(&fixture);
+
+    GeometryId source = add_grid(&fixture, 1);
+    Node* node = add_cloth_node(&fixture, source);
+    uint[2] pins = { 0, 1 };
+    float[4] transport = { 1.0f, 1.0f, 0.5f, 0.0f };
+    ClothDesc desc = pinned_desc(pins[..]);
+    desc.stretch_stiffness = 0;
+    desc.bend_stiffness = 0;
+    desc.damping = 0;
+    desc.gravity_scale = 0;
+    desc.transport = transport[..];
+
+    fixture.scene.add_cloth(&fixture.assets, node, desc, &fixture.physics)!!;
+    ClothState* state = state_of(&fixture, node);
+
+    // Zero-step update observes and publishes the reference without advancing solved_reference.
+    node.local.position = { 2, 0, 0 };
+    fixture.scene.update_world();
+    step(&fixture, 0);
+    assert(near(state.solved_reference[2], { 0, -1, 0 }));
+    assert(near(state.published_reference[2], { 2, -1, 0 }));
+
+    // A performed step applies transport once from (current_reference - solved_reference).
+    step(&fixture, physics::DEFAULT_FIXED_DT);
+    assert(near(state.positions[2], { 1.0f, -1, 0 }, POSITION_TOLERANCE));
+    assert(near(state.positions[3], { 1.0f, -1, 0 }, POSITION_TOLERANCE));
+    assert(near(state.velocities[2], { 0, 0, 0 }, POSITION_TOLERANCE));
+}
+
+fn void test_skinned_cloth_takeover_moves_mesh_to_child_and_restores_on_remove() @test {
+    Fixture fixture;
+    setup(&fixture, weightless());
+    defer teardown(&fixture);
+
+    GeometryId source = add_skinned_quad(&fixture);
+    SkeletonId skel = add_two_joint_skeleton(&fixture);
+    Node* j0 = fixture.scene.add_node(name: "j0")!!;
+    Node* j1 = fixture.scene.add_node(j0, "j1")!!;
+    Node* owner = add_cloth_node(&fixture, source);
+    Node*[] joints = alloc::new_array(mem, Node*, 2);
+    joints[0] = j0;
+    joints[1] = j1;
+    fixture.scene.add(owner, (SkinBinding){ .skeleton = skel, .joints = joints });
+    fixture.scene.get(owner, scene::Mesh).vertex_history_token = 5;
+    fixture.scene.update_world();
+
+    uint[2] pins = { 0, 1 };
+    ClothDesc desc = pinned_desc(pins[..]);
+    desc.stretch_stiffness = 0;
+    desc.bend_stiffness = 0;
+    float[4] transport = { 1, 1, 1, 1 };
+    desc.transport = transport[..];
+    fixture.scene.attach_cloth(&fixture.assets, owner, desc)!!;
+    assert(fixture.scene.has(owner, scene::Mesh) && fixture.scene.has(owner, SkinBinding));
+    assert(@catch(cloth::prepare(&fixture.scene, &fixture.assets, owner)) == c3d::INVALID_ARGUMENT);
+
+    fixture.physics.update(0);
+    cloth::prepare(
+        scene:  &fixture.scene,
+        assets: &fixture.assets,
+        node:   owner,
+        world:  &fixture.physics,
+    )!!;
+
+    Cloth* comp = fixture.scene.get(owner, Cloth);
+    assert(comp.is_prepared() && !fixture.scene.has(owner, scene::Mesh) && fixture.scene.has(owner, SkinBinding));
+    Node* out_node = fixture.scene.node(comp.state.output_node);
+    assert(out_node.parent == owner && out_node.visible && !fixture.scene.has(out_node, SkinBinding));
+    ClothOutput* marker = fixture.scene.get(out_node, ClothOutput);
+    scene::Mesh* out_mesh = fixture.scene.get(out_node, scene::Mesh);
+    assert(marker && c3d::same_id(marker.owner, owner.id) && !marker.crowd);
+    assert(out_mesh && out_mesh.vertex_motion && out_mesh.vertex_history_token == 6);
+
+    j1.local.position = { 0.5f, 0, 0 };
+    fixture.scene.update_world();
+    step(&fixture, physics::DEFAULT_FIXED_DT);
+    GeometryAsset* out_geom = fixture.assets.geometry(out_mesh.geometry);
+    assert(near(out_geom.data.positions[2], { 0.5f, -1, 0 }, CONTACT_TOLERANCE));
+
+    fixture.scene.remove_cloth(owner);
+    assert(!fixture.scene.has(owner, Cloth) && !fixture.scene.world.is_alive(out_node.id));
+    scene::Mesh* restored = fixture.scene.get(owner, scene::Mesh);
+    assert(restored && c3d::same_id(restored.geometry, source) && restored.vertex_history_token == 7);
+}
+
+fn void test_crowd_cloth_prepares_slots_reconciles_replacements_and_restores_batches() @test {
+    Fixture fixture;
+    setup(&fixture, weightless());
+    defer teardown(&fixture);
+
+    AnimationClip clip = {
+        .name     = "idle".copy(mem),
+        .duration = 1,
+        .tracks   = alloc::new_array(mem, Track, 1),
+        .targets  = alloc::new_array(mem, uint, 1),
+    };
+    clip.targets[0] = 0;
+    clip.tracks[0] = {
+        .target        = 0,
+        .path          = TargetPath.TRANSLATION,
+        .interpolation = Interpolation.STEP,
+        .times         = alloc::new_array(mem, float, 1),
+        .values        = alloc::new_array(mem, float, 3),
+    };
+    ClipId clip_id = fixture.assets.add_clip_owned(&clip, "idle")!!;
+
+    GeometryId source = add_grid(&fixture, 1);
+    NodeTemplate[] nodes = alloc::new_array(mem, NodeTemplate, 1);
+    nodes[0] = { .parent = -1, .name = "cape".copy(mem), .local = maths::TRANSFORM_IDENTITY, .visible = true };
+    ModelMesh[] meshes = alloc::new_array(mem, ModelMesh, 1);
+    meshes[0] = { .node = 0, .geometry = source, .material = fixture.material };
+    ClipId[] clips = alloc::new_array(mem, ClipId, 1);
+    clips[0] = clip_id;
+    ModelTemplate tmpl = { .nodes = nodes, .meshes = meshes, .clips = clips };
+    ModelId model = fixture.assets.add_model_owned(&tmpl, "crowd_cape")!!;
+
+    CrowdPose seed = { .clip = clip_id, .speed = 1, .loop = true };
+    CrowdInstance[2] instances = {
+        {
+            .placement = { .position = { 0, 0, 0 }, .rotation = quaternion::IDENTITY, .scale = { 1, 1, 1 } },
+            .pose      = seed,
+            .color     = { 1, 0, 0, 1 },
+        },
+        {
+            .placement = { .position = { 4, 0, 0 }, .rotation = quaternion::IDENTITY, .scale = { 1, 1, 1 } },
+            .pose      = seed,
+            .color     = { 0, 1, 0, 1 },
+        },
+    };
+    Node* crowd_node = model::add_crowd(
+        assets:      &fixture.assets,
+        scene:       &fixture.scene,
+        model:       model,
+        capacity:    2,
+        pose_bounds: { .min = { -2, -2, -2 }, .max = { 2, 2, 2 } },
+        instances:   instances[..],
+        name:        "crowd",
+    )!!;
+    fixture.scene.update_world();
+
+    uint[2] pins = { 0, 1 };
+    ClothDesc desc = pinned_desc(pins[..]);
+    fixture.scene.attach_crowd_cloth(
+        assets: &fixture.assets,
+        owner:  crowd_node,
+        part:   0,
+        desc:   desc,
+    )!!;
+    fixture.physics.update(0);
+    cloth::prepare_crowd_cloth(
+        world:  &fixture.physics,
+        assets: &fixture.assets,
+        owner:  crowd_node,
+    )!!;
+
+    CrowdCloth* cc = fixture.scene.get(crowd_node, CrowdCloth);
+    assert(cc && cc.is_prepared());
+    CrowdClothPart* part = cc.find_part(0)!!;
+    Node* batch_node = fixture.scene.node(part.original_batch);
+    assert(!batch_node.visible);
+    Node* out0 = fixture.scene.node(part.outputs[0]);
+    Node* out1 = fixture.scene.node(part.outputs[1]);
+    assert(out0.visible && out1.visible);
+    GeometryAsset* g0 = fixture.assets.geometry(fixture.scene.get(out0, scene::Mesh).geometry);
+    GeometryAsset* g1 = fixture.assets.geometry(fixture.scene.get(out1, scene::Mesh).geometry);
+    assert(near(g0.data.positions[0], { 0, 0, 0 }, POSITION_TOLERANCE));
+    assert(near(g1.data.positions[0], { 4, 0, 0 }, POSITION_TOLERANCE));
+
+    // Replace crowd with 1 instance at a new placement: slot 0 reseeds and advances history token, slot 1 hides.
+    ulong token0_before = fixture.scene.get(out0, scene::Mesh).vertex_history_token;
+    CrowdInstance[1] replacement = {
+        {
+            .placement = { .position = { 8, 0, 0 }, .rotation = quaternion::IDENTITY, .scale = { 1, 1, 1 } },
+            .pose      = seed,
+            .color     = { 0, 0, 1, 1 },
+        },
+    };
+    model::set_crowd(
+        assets:    &fixture.assets,
+        scene:     &fixture.scene,
+        node:      crowd_node,
+        instances: replacement[..],
+    )!!;
+    step(&fixture, physics::DEFAULT_FIXED_DT);
+    assert(out0.visible && !out1.visible);
+    assert(fixture.scene.get(out0, scene::Mesh).vertex_history_token == token0_before + 1);
+    assert(near(g0.data.positions[0], { 8, 0, 0 }, POSITION_TOLERANCE));
+
+    fixture.scene.remove_crowd_cloth(crowd_node);
+    assert(!fixture.scene.has(crowd_node, CrowdCloth) && batch_node.visible);
+    assert(!fixture.scene.world.is_alive(out0.id) && !fixture.scene.world.is_alive(out1.id));
 }

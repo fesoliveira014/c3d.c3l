@@ -129,6 +129,7 @@ struct Info {
     String name;
     Kind kind;
     usz size;
+    usz authored_size;
     usz alignment;
     typeid identity;
     Metadata metadata;
@@ -137,6 +138,7 @@ struct Info {
     EnumWriteFn write_enum;
     Kind element_kind;
     usz element_size;
+    usz element_authored_size;
     usz element_alignment;
     usz extent;
 }
@@ -162,6 +164,7 @@ struct Descriptor {
     String name;
     typeid identity;
     usz size;
+    usz authored_size;
     usz alignment;
     FieldsFn fields;
     FinishFn after;

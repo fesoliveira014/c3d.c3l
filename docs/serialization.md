@@ -44,7 +44,7 @@ and restart contracts are detailed in the built-in policy inventory below.
 Animator export projects owned transforms and Mesh morph weights to captured
 baselines; ordinary Mesh values preserve their explicit weights.
 
-There are 40 authored and 14 transient production component policies. The
+There are 41 authored and 15 transient production component policies. The
 registration calls install their description/default prerequisites idempotently.
 Consumers select each package and its normal dependencies, including `c3d_serial`
 for any adapter below; core has no reverse dependency on an add-on.
@@ -52,7 +52,7 @@ for any adapter below; core has no reverse dependency on an add-on.
 | Owner | Serialization feature | Registration | Authored / transient |
 | --- | --- | --- | --- |
 | Core | None | `serial::register_core_codecs()` | 19 / 0 |
-| Physics | `C3D_PHYSICS_SERIAL` | `physics::register_serial_codecs()` | 8 / 2 |
+| Physics | `C3D_PHYSICS_SERIAL` | `physics::register_serial_codecs()` | 9 / 3 |
 | Navigation | `C3D_NAV_SERIAL` | `nav::register_serial_codecs()` | 5 / 5 |
 | Character | `C3D_CHARACTER_SERIAL`, `C3D_PHYSICS_SERIAL` | `character::register_serial_codecs()` | 1 / 0 |
 | Character navigation | Also `C3D_CHARACTER_NAV`, `C3D_NAV_SERIAL` | Included by character registration | 1 / 0 |
@@ -74,7 +74,7 @@ Register the destination's component stores and removal hooks through its owner 
 
 ComponentCodec contains a static-lifetime name, positive version, RestorePhase and collect/write/read callbacks. Names must be unique across types. Registering a type again replaces its policy; a conflicting name fails without replacing the existing entry. Neither registration order nor C3 module/type names enter the stream.
 
-- collect is optional. It runs once before record numbering. `omit_node` and `omit_component` claim verified generated state. `set_local` and `set_transform` project authored placement, and `project_component` substitutes an existing component through its normal codec. Dynamic values are borrowed until the synchronous export returns. Claims affect scratch only; duplicate/conflicting projections and owner claims return `INVALID_ARGUMENT`.
+- collect is optional. It runs once before record numbering. `omit_node` and `omit_component` claim verified generated state. `set_local` and `set_transform` project authored placement, `project_component` substitutes an existing component through its normal codec, and `project_absent_component` re-emits an authored component that a prepared owner temporarily moved off a retained node. Dynamic values are borrowed until the synchronous export returns. Claims affect scratch only; duplicate/conflicting projections and owner claims return `INVALID_ARGUMENT`.
 - write runs twice, for measuring and filling. It must emit identical bytes against the same fixed scene state. It writes field-wise values and uses context helpers for references.
 - read receives exactly one bounded payload and attaches its registered component to context.node through the owner API/hook. It must consume the entire payload, retain no blob/context pointers, and free allocations not yet transferred if it fails. It may attach explicitly owned authoring components, but cannot create/reparent/remove nodes, mutate AssetStore or change unrelated scene state.
 
@@ -345,11 +345,16 @@ The plain physics manifest has no serialization dependency. PhysicsBody persists
 BodyDesc and all nested collider authoring with copied arrays and strings. It
 restores PENDING with cleared failure/revision state; no native body is created.
 PhysicsJoint restores in REFERENCES with a required model-aware endpoint and
-only its selected variant. Wind and Force persist their complete values; Buoyancy
-persists density and drag and resets submerged fraction. RigidBody and Joint are
-explicitly transient. Ordinary physics synchronization creates the native state.
-The package inventory discovers all ten physics component types through normal
-registration and verifies their explicit policies;
+only its selected variant. Cloth (v6) restores in OWNER and CrowdCloth (v1)
+restores in BINDINGS; prepared skinned Cloth projects its retained source Mesh
+with `project_absent_component` and omits its generated child output node, while
+prepared CrowdCloth omits its per-slot output children. Wind and Force persist
+their complete values; Buoyancy persists density and drag and resets submerged
+fraction. RigidBody, Joint and ClothOutput are explicitly transient, and
+ClothOutput's read-only collector rejects exporting a generated output child
+without its selected owner. Ordinary physics synchronization creates the native
+state. The package inventory discovers all twelve physics component types through
+normal registration and verifies their explicit policies;
 new unclassified physics components fail the package inventory.
 
 ## Navigation adapter

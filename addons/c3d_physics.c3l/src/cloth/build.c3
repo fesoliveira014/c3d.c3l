@@ -1,7 +1,9 @@
 module c3d::physics::cloth;
 
 import c3d;
+import c3d::anim;
 import c3d::asset;
+import c3d::ecs;
 import c3d::geometry;
 import c3d::physics @public;
 import c3d::scene;
@@ -19,6 +21,7 @@ struct ClothTopology @private {
 
 struct ClothCounts @local {
     uint               vertices;
+    uint               source_vertices;
     uint               material_vertices;
     uint               normal_domains;
     uint               corners;
@@ -29,7 +32,9 @@ struct ClothCounts @local {
     uint               bends;
     uint               hinges;
     uint               bodies;
+    uint               joints;
     bool               tangent_frame;
+    bool               crowd;
     ClothCollisionDesc collisions;
 }
 
@@ -40,7 +45,11 @@ struct EdgeRecord @local {
     bool forward;
 }
 
-fn ClothAuthoring* carve_authoring(BlockCursor* cursor, ClothDesc desc) @local {
+fn ClothAuthoring* carve_authoring(
+    BlockCursor* cursor,
+    ClothDesc desc,
+    Entity[] joint_entities = {},
+) @local {
     ClothAuthoring[] owners = physics::carve(cursor, ClothAuthoring, 1);
     uint[] pins = physics::carve(cursor, uint, desc.pins.len);
     Entity[] colliders = physics::carve(cursor, Entity, desc.colliders.len);
@@ -48,6 +57,8 @@ fn ClothAuthoring* carve_authoring(BlockCursor* cursor, ClothDesc desc) @local {
     uint[] render_particles = physics::carve(cursor, uint, desc.render_particles.len);
     ClothAttachment[] attachments = physics::carve(cursor, ClothAttachment, desc.attachments.len);
     ClothRestAngle[] rest_angles = physics::carve(cursor, ClothRestAngle, desc.rest_angles.len);
+    float[] transport = physics::carve(cursor, float, desc.transport.len);
+    Entity[] joints = physics::carve(cursor, Entity, joint_entities.len);
     if (!cursor.base) return null;
 
     pins[..] = desc.pins[..];
@@ -56,6 +67,8 @@ fn ClothAuthoring* carve_authoring(BlockCursor* cursor, ClothDesc desc) @local {
     render_particles[..] = desc.render_particles[..];
     attachments[..] = desc.attachments[..];
     rest_angles[..] = desc.rest_angles[..];
+    transport[..] = desc.transport[..];
+    joints[..] = joint_entities[..];
 
     ClothDesc copied = desc;
     copied.pins = pins;
@@ -64,21 +77,29 @@ fn ClothAuthoring* carve_authoring(BlockCursor* cursor, ClothDesc desc) @local {
     copied.render_particles = render_particles;
     copied.attachments = attachments;
     copied.rest_angles = rest_angles;
+    copied.transport = transport;
 
-    owners[0] = { .desc = copied };
+    owners[0] = {
+        .desc           = copied,
+        .joint_entities = joints,
+    };
     return owners.ptr;
 }
 
-fn ClothAuthoring*? copy_authoring(Allocator allocator, ClothDesc desc) @private {
+fn ClothAuthoring*? copy_authoring(
+    Allocator allocator,
+    ClothDesc desc,
+    Entity[] joint_entities = {},
+) @private {
     BlockCursor measure;
-    carve_authoring(&measure, desc);
+    carve_authoring(&measure, desc, joint_entities);
     if (measure.offset > (usz)sz::max) return c3d::CAPACITY_EXCEEDED~;
 
     char*? allocation = alloc::malloc_try(allocator, (sz)measure.offset);
     if (catch allocation) return c3d::CAPACITY_EXCEEDED~;
 
     BlockCursor fill = { .base = allocation };
-    return carve_authoring(&fill, desc);
+    return carve_authoring(&fill, desc, joint_entities);
 }
 
 fn void? check_cloth_desc(ClothDesc desc) @private {
@@ -90,6 +111,7 @@ fn void? check_cloth_desc(ClothDesc desc) @private {
     if (desc.tangent_uv_set > 1) return c3d::INVALID_ARGUMENT~;
     check_attachment_desc(desc.attachments)!;
     check_bend_desc(desc)!;
+    check_transport_desc(desc.transport)!;
 
     ClothCollisionDesc collision = desc.collisions;
     if (!math::is_finite(collision.contact_tolerance) || collision.contact_tolerance <= 0) return c3d::INVALID_ARGUMENT~;
@@ -101,14 +123,18 @@ fn void? check_cloth_desc(ClothDesc desc) @private {
 
 fn void? check_cloth_source(
     Scene* scene,
+    AssetStore* assets,
     Node* node,
     scene::Mesh* mesh,
     GeometryAsset* source,
 ) @private {
-    if (scene.has(node, SkinBinding) || mesh.morph_weights.len || mesh.has_bounds_override) return c3d::UNSUPPORTED~;
+    if (mesh.morph_weights.len || mesh.morph_weights.ptr != null || mesh.has_bounds_override) return c3d::UNSUPPORTED~;
+    if (node_in_lod_group(scene, node)) return c3d::UNSUPPORTED~;
+    check_cloth_material(assets, mesh.material, false)!;
+
     Geometry* data = &source.data;
     if (!data.positions.len) return physics::SOURCE_UNAVAILABLE~;
-    if (data.targets.len || data.joints.len || data.custom_data.len) return c3d::UNSUPPORTED~;
+    if (data.targets.len || source.target_count || data.channels.len || data.custom_data.len) return c3d::UNSUPPORTED~;
     if (data.topology != Topology.TRIANGLES || !data.indices.len) return c3d::UNSUPPORTED~;
     if (data.indices.len % 3) return c3d::INVALID_ARGUMENT~;
     foreach (index : data.indices) {
@@ -116,6 +142,17 @@ fn void? check_cloth_source(
     }
     foreach (position : data.positions) {
         if (!finite_vector(position)) return c3d::INVALID_ARGUMENT~;
+    }
+    if (scene.has(node, SkinBinding)) {
+        if (!data.joints.len && !data.weights.len) return c3d::UNSUPPORTED~;
+        check_skin_binding(
+            scene:  scene,
+            assets: assets,
+            node:   node,
+            data:   data,
+        )!;
+    } else if (data.joints.len || data.weights.len || source.shape.skinned) {
+        return c3d::UNSUPPORTED~;
     }
 }
 
@@ -125,6 +162,7 @@ fn void? check_cloth_authoring(Geometry* data, ClothDesc desc) @private {
 
     uint particle_count;
     uint[] render_to_particle = build_render_particle_map(data, desc.render_particles, &particle_count)!;
+    check_transport_authoring(desc.transport, particle_count)!;
 
     uint normal_domain_count;
     (void)build_normal_domains(data, render_to_particle, &normal_domain_count)!;
@@ -145,6 +183,7 @@ fn void? check_cloth_authoring(Geometry* data, ClothDesc desc) @private {
         data:               data,
         render_to_particle: render_to_particle,
         rest_positions:     rest,
+        edge_positions:     {},
         world_positions:    {},
         desc:               desc,
     )!;
@@ -160,6 +199,7 @@ fn ClothTopology? build_topology(
     Geometry* data,
     uint[] render_to_particle,
     Vec3[] rest_positions,
+    Vec3[] edge_positions,
     Vec3[] world_positions,
     ClothDesc desc,
 ) @private {
@@ -179,6 +219,12 @@ fn ClothTopology? build_topology(
         Vec3 rest_normal = (rest_positions[corners[1]] - rest_positions[corners[0]])
           .cross(rest_positions[corners[2]] - rest_positions[corners[0]]);
         if (rest_normal.length() * 0.5f <= MIN_TRIANGLE_AREA) return c3d::INVALID_ARGUMENT~;
+
+        if (edge_positions.len) {
+            Vec3 edge_normal = (edge_positions[corners[1]] - edge_positions[corners[0]])
+              .cross(edge_positions[corners[2]] - edge_positions[corners[0]]);
+            if (edge_normal.length() * 0.5f <= MIN_TRIANGLE_AREA) return c3d::INVALID_ARGUMENT~;
+        }
 
         if (world_positions.len) {
             Vec3 world_normal = (world_positions[corners[1]] - world_positions[corners[0]])
@@ -218,7 +264,9 @@ fn ClothTopology? build_topology(
     }
 
     bool[] matched_overrides = alloc::new_array(tmem, bool, (sz)desc.rest_angles.len);
-    Vec3[] edge_positions = world_positions.len ? world_positions : rest_positions;
+    Vec3[] constraint_positions = edge_positions.len
+      ? edge_positions
+      : (world_positions.len ? world_positions : rest_positions);
     ClothTopology topology = {
         .edges  = alloc::new_array(tmem, ClothConstraint, (sz)edge_count),
         .bends  = alloc::new_array(tmem, ClothConstraint, dihedral ? 0 : (sz)interior_count),
@@ -230,7 +278,7 @@ fn ClothTopology? build_topology(
     for (usz start = 0; start < records.len;) {
         usz end = start + 1;
         while (end < records.len && same_edge(records[start], records[end])) end++;
-        topology.edges[edge++] = rest_constraint(edge_positions, records[start].low, records[start].high);
+        topology.edges[edge++] = rest_constraint(constraint_positions, records[start].low, records[start].high);
         if (end - start == 2) {
             uint p0 = records[start].low;
             uint p1 = records[start].high;
@@ -238,7 +286,7 @@ fn ClothTopology? build_topology(
             uint p3 = records[start + 1].opposite;
 
             if (!dihedral) {
-                topology.bends[bend++] = rest_constraint(edge_positions, p2, p3);
+                topology.bends[bend++] = rest_constraint(constraint_positions, p2, p3);
             } else {
                 Vec3[4] rest_points = { rest_positions[p0], rest_positions[p1], rest_positions[p2], rest_positions[p3] };
                 double? evaluated_rest = evaluate_hinge_angle(rest_points);
@@ -290,6 +338,7 @@ fn ClothTopology? build_topology(
 fn ClothState*? allocate_cloth_state(
     Allocator allocator,
     uint vertex_count,
+    uint source_vertex_count,
     uint material_vertex_count,
     uint normal_domain_count,
     uint corner_count,
@@ -300,11 +349,14 @@ fn ClothState*? allocate_cloth_state(
     uint bend_count,
     uint hinge_count,
     uint body_count,
+    uint joint_count,
     bool tangent_frame,
+    bool crowd,
     ClothCollisionDesc collisions,
 ) @private {
     ClothCounts counts = {
         .vertices          = vertex_count,
+        .source_vertices   = source_vertex_count,
         .material_vertices = material_vertex_count,
         .normal_domains    = normal_domain_count,
         .corners           = corner_count,
@@ -315,7 +367,9 @@ fn ClothState*? allocate_cloth_state(
         .bends             = bend_count,
         .hinges            = hinge_count,
         .bodies            = body_count,
+        .joints            = joint_count,
         .tangent_frame     = tangent_frame,
+        .crowd             = crowd,
         .collisions        = collisions,
     };
     BlockCursor measure;
@@ -333,82 +387,94 @@ fn ClothState* carve_cloth_state(BlockCursor* cursor, ClothCounts counts) @local
     bool continuous = counts.collisions.continuous;
     bool tangents = counts.tangent_frame;
     ClothState state = {
-        .rest                    = physics::carve(cursor, Vec3, counts.vertices),
-        .positions               = physics::carve(cursor, Vec3, counts.vertices),
-        .velocities              = physics::carve(cursor, Vec3, counts.vertices),
-        .predicted               = physics::carve(cursor, Vec3, counts.vertices),
-        .accelerations           = physics::carve(cursor, Vec3, counts.vertices),
-        .published               = physics::carve(cursor, Vec3, counts.vertices),
-        .inverse_masses          = physics::carve(cursor, float, counts.vertices),
-        .pins                    = physics::carve(cursor, uint, counts.pins),
-        .pin_anchors             = physics::carve(cursor, Vec3, counts.pins),
-        .pin_targets             = physics::carve(cursor, Vec3, counts.pins),
-        .soft_attachments        = physics::carve(cursor, ClothSoftAttachment, counts.soft_attachments),
-        .soft_anchors            = physics::carve(cursor, Vec3, counts.soft_attachments),
-        .soft_targets            = physics::carve(cursor, Vec3, counts.soft_attachments),
-        .soft_lambdas            = physics::carve(cursor, Vec3, counts.soft_attachments),
-        .edges                   = physics::carve(cursor, ClothConstraint, counts.edges),
-        .bends                   = physics::carve(cursor, ClothConstraint, counts.bends),
-        .hinges                  = physics::carve(cursor, ClothHinge, counts.hinges),
-        .corners                 = physics::carve(cursor, ClothCorner, counts.corners),
-        .triangle_uvs            = physics::carve(cursor, ClothTriangleUv, counts.faces),
-        .material_particles      = physics::carve(cursor, uint, counts.material_vertices),
-        .material_normal_domains = physics::carve(cursor, uint, counts.material_vertices),
-        .material_ref_faces      = physics::carve(cursor, uint, counts.material_vertices),
-        .tangent_signs           = physics::carve(cursor, float, tangents ? counts.material_vertices : 0),
-        .rest_tangents           = physics::carve(cursor, Vec3, tangents ? counts.material_vertices : 0),
-        .committed_tangents      = physics::carve(cursor, Vec4, tangents ? counts.material_vertices : 0),
-        .normal_accum            = physics::carve(cursor, Vec3, counts.normal_domains),
-        .tangent_accum           = physics::carve(cursor, Vec3, tangents ? counts.material_vertices : 0),
-        .particle_local          = physics::carve(cursor, Vec3, counts.vertices),
-        .colliders               = physics::carve(cursor, Entity, counts.bodies),
-        .bodies                  = physics::carve(cursor, ClothBody, counts.bodies),
-        .shape_storage           = physics::carve(cursor, ClothShape, counts.collisions.max_shapes),
-        .shape_starts            = physics::carve(cursor, Vec3, counts.collisions.max_shapes),
-        .shape_ends              = physics::carve(cursor, Vec3, counts.collisions.max_shapes),
-        .staged_shapes           = physics::carve(cursor, ClothShape, counts.collisions.max_shapes),
-        .staged_bodies           = physics::carve(cursor, ClothBody, counts.bodies),
-        .staged_positions        = physics::carve(cursor, Vec3, counts.vertices),
-        .staged_velocities       = physics::carve(cursor, Vec3, counts.vertices),
-        .staged_published        = physics::carve(cursor, Vec3, counts.vertices),
-        .staged_pin_anchors      = physics::carve(cursor, Vec3, counts.pins),
-        .staged_soft_anchors     = physics::carve(cursor, Vec3, counts.soft_attachments),
-        .staged_soft_targets     = physics::carve(cursor, Vec3, counts.soft_attachments),
-        .staged_hinges           = physics::carve(cursor, ClothHinge, counts.hinges),
-        .staged_shape_starts     = physics::carve(cursor, Vec3, counts.collisions.max_shapes),
-        .staged_shape_ends       = physics::carve(cursor, Vec3, counts.collisions.max_shapes),
-        .local_output            = physics::carve(cursor, Vec3, counts.material_vertices),
-        .local_normals           = physics::carve(cursor, Vec3, counts.material_vertices),
-        .local_tangents          = physics::carve(cursor, Vec4, tangents ? counts.material_vertices : 0),
-        .publication_roundtrip   = physics::carve(cursor, Vec3, counts.vertices),
-        .staged_predicted        = physics::carve(cursor, Vec3, counts.vertices),
-        .staged_accelerations    = physics::carve(cursor, Vec3, counts.vertices),
-        .staged_pin_targets      = physics::carve(cursor, Vec3, counts.pins),
-        .frames                  = physics::carve(cursor, ContactFrame, counts.collisions.max_shapes),
-        .candidates              = physics::carve(cursor, ClothCandidate, counts.collisions.max_candidates),
-        .contacts                = physics::carve(cursor, ClothContact, counts.collisions.max_contacts),
-        .faces                   = physics::carve(cursor, ClothFace, self_collision ? counts.faces : 0),
-        .canonical_vertices      = physics::carve(cursor, uint, self_collision ? counts.vertices : 0),
-        .adjacent_vertices       = physics::carve(cursor, ulong, self_collision ? counts.edges : 0),
-        .self_primitives         = physics::carve(
+        .render_to_particle         = physics::carve(cursor, uint, counts.source_vertices),
+        .particle_sources           = physics::carve(cursor, uint, counts.vertices),
+        .transport                  = physics::carve(cursor, float, counts.vertices),
+        .rest                       = physics::carve(cursor, Vec3, counts.vertices),
+        .solved_reference           = physics::carve(cursor, Vec3, counts.vertices),
+        .published_reference        = physics::carve(cursor, Vec3, counts.vertices),
+        .current_reference          = physics::carve(cursor, Vec3, counts.vertices),
+        .positions                  = physics::carve(cursor, Vec3, counts.vertices),
+        .velocities                 = physics::carve(cursor, Vec3, counts.vertices),
+        .predicted                  = physics::carve(cursor, Vec3, counts.vertices),
+        .accelerations              = physics::carve(cursor, Vec3, counts.vertices),
+        .published                  = physics::carve(cursor, Vec3, counts.vertices),
+        .inverse_masses             = physics::carve(cursor, float, counts.vertices),
+        .pins                       = physics::carve(cursor, uint, counts.pins),
+        .pin_anchors                = physics::carve(cursor, Vec3, counts.pins),
+        .pin_targets                = physics::carve(cursor, Vec3, counts.pins),
+        .soft_attachments           = physics::carve(cursor, ClothSoftAttachment, counts.soft_attachments),
+        .soft_anchors               = physics::carve(cursor, Vec3, counts.soft_attachments),
+        .soft_targets               = physics::carve(cursor, Vec3, counts.soft_attachments),
+        .soft_lambdas               = physics::carve(cursor, Vec3, counts.soft_attachments),
+        .edges                      = physics::carve(cursor, ClothConstraint, counts.edges),
+        .bends                      = physics::carve(cursor, ClothConstraint, counts.bends),
+        .hinges                     = physics::carve(cursor, ClothHinge, counts.hinges),
+        .corners                    = physics::carve(cursor, ClothCorner, counts.corners),
+        .triangle_uvs               = physics::carve(cursor, ClothTriangleUv, counts.faces),
+        .material_particles         = physics::carve(cursor, uint, counts.material_vertices),
+        .material_normal_domains    = physics::carve(cursor, uint, counts.material_vertices),
+        .material_ref_faces         = physics::carve(cursor, uint, counts.material_vertices),
+        .tangent_signs              = physics::carve(cursor, float, tangents ? counts.material_vertices : 0),
+        .rest_tangents              = physics::carve(cursor, Vec3, tangents ? counts.material_vertices : 0),
+        .committed_tangents         = physics::carve(cursor, Vec4, tangents ? counts.material_vertices : 0),
+        .normal_accum               = physics::carve(cursor, Vec3, counts.normal_domains),
+        .tangent_accum              = physics::carve(cursor, Vec3, tangents ? counts.material_vertices : 0),
+        .particle_local             = physics::carve(cursor, Vec3, counts.vertices),
+        .source_reference_scratch   = physics::carve(cursor, Vec3, counts.joints ? counts.source_vertices : 0),
+        .palette_scratch            = physics::carve(cursor, SkinMat4, counts.joints),
+        .joint_entities             = physics::carve(cursor, Entity, counts.joints),
+        .colliders                  = physics::carve(cursor, Entity, counts.bodies),
+        .bodies                     = physics::carve(cursor, ClothBody, counts.bodies),
+        .shape_storage              = physics::carve(cursor, ClothShape, counts.collisions.max_shapes),
+        .shape_starts               = physics::carve(cursor, Vec3, counts.collisions.max_shapes),
+        .shape_ends                 = physics::carve(cursor, Vec3, counts.collisions.max_shapes),
+        .staged_shapes              = physics::carve(cursor, ClothShape, counts.collisions.max_shapes),
+        .staged_bodies              = physics::carve(cursor, ClothBody, counts.bodies),
+        .staged_solved_reference    = physics::carve(cursor, Vec3, counts.vertices),
+        .staged_published_reference = physics::carve(cursor, Vec3, counts.vertices),
+        .staged_positions           = physics::carve(cursor, Vec3, counts.vertices),
+        .staged_velocities          = physics::carve(cursor, Vec3, counts.vertices),
+        .staged_published           = physics::carve(cursor, Vec3, counts.vertices),
+        .staged_pin_anchors         = physics::carve(cursor, Vec3, counts.pins),
+        .staged_soft_anchors        = physics::carve(cursor, Vec3, counts.soft_attachments),
+        .staged_soft_targets        = physics::carve(cursor, Vec3, counts.soft_attachments),
+        .staged_hinges              = physics::carve(cursor, ClothHinge, counts.hinges),
+        .staged_shape_starts        = physics::carve(cursor, Vec3, counts.collisions.max_shapes),
+        .staged_shape_ends          = physics::carve(cursor, Vec3, counts.collisions.max_shapes),
+        .local_output               = physics::carve(cursor, Vec3, counts.material_vertices),
+        .local_normals              = physics::carve(cursor, Vec3, counts.material_vertices),
+        .local_tangents             = physics::carve(cursor, Vec4, tangents ? counts.material_vertices : 0),
+        .staged_colors              = physics::carve(cursor, Vec4, counts.crowd ? counts.material_vertices : 0),
+        .publication_roundtrip      = physics::carve(cursor, Vec3, counts.vertices),
+        .staged_predicted           = physics::carve(cursor, Vec3, counts.vertices),
+        .staged_accelerations       = physics::carve(cursor, Vec3, counts.vertices),
+        .staged_pin_targets         = physics::carve(cursor, Vec3, counts.pins),
+        .frames                     = physics::carve(cursor, ContactFrame, counts.collisions.max_shapes),
+        .candidates                 = physics::carve(cursor, ClothCandidate, counts.collisions.max_candidates),
+        .contacts                   = physics::carve(cursor, ClothContact, counts.collisions.max_contacts),
+        .faces                      = physics::carve(cursor, ClothFace, self_collision ? counts.faces : 0),
+        .canonical_vertices         = physics::carve(cursor, uint, self_collision ? counts.vertices : 0),
+        .adjacent_vertices          = physics::carve(cursor, ulong, self_collision ? counts.edges : 0),
+        .self_primitives            = physics::carve(
             cursor: cursor,
             $Type:  ClothSelfPrimitive,
             count:  self_collision ? (usz)counts.vertices + counts.edges + counts.faces : 0,
         ),
-        .sweep_start             = physics::carve(cursor, Vec3, continuous ? counts.vertices : 0),
-        .sweep_bounds            = physics::carve(cursor, Aabb, continuous ? counts.vertices : 0),
-        .path_heads              = physics::carve(cursor, usz, continuous ? counts.vertices : 0),
-        .path_nodes              = physics::carve(
+        .sweep_start                = physics::carve(cursor, Vec3, continuous ? counts.vertices : 0),
+        .sweep_bounds               = physics::carve(cursor, Aabb, continuous ? counts.vertices : 0),
+        .path_heads                 = physics::carve(cursor, usz, continuous ? counts.vertices : 0),
+        .path_nodes                 = physics::carve(
             cursor: cursor,
             $Type:  ClothPathNode,
             count:  continuous ? (usz)counts.vertices + 4UL * counts.collisions.max_contacts : 0,
         ),
-        .path_values             = physics::carve(
+        .path_values                = physics::carve(
             cursor: cursor,
             $Type:  ContactIntervals,
             count:  continuous ? (usz)counts.vertices + 4UL * counts.collisions.max_contacts : 0,
         ),
-        .body_motions            = physics::carve(cursor, ContactMotion, continuous ? counts.bodies : 0),
+        .body_motions               = physics::carve(cursor, ContactMotion, continuous ? counts.bodies : 0),
     };
     if (!cursor.base) return null;
     states[0] = state;

@@ -62,6 +62,12 @@ fn uint[]? build_render_particle_map(
     uint render_count = (uint)source.positions.len;
     uint[] map = alloc::new_array(tmem, uint, (sz)render_count);
 
+    if (source.joints.len || source.weights.len) {
+        if (source.joints.len != render_count || source.weights.len != render_count) {
+            return c3d::INVALID_ARGUMENT~;
+        }
+    }
+
     if (!render_particles.len) {
         foreach (index, &target : map) *target = (uint)index;
         *out_particle_count = render_count;
@@ -80,8 +86,16 @@ fn uint[]? build_render_particle_map(
                 first_render[particle] = (uint)index;
                 unique_count++;
                 if (particle > max_particle) max_particle = particle;
-            } else if (source.positions[index] != source.positions[first_render[particle]]) {
-                return c3d::INVALID_ARGUMENT~;
+            } else {
+                uint first = first_render[particle];
+                if (source.positions[index] != source.positions[first]) {
+                    return c3d::INVALID_ARGUMENT~;
+                }
+                if (source.joints.len
+                    && (source.joints[index] != source.joints[first]
+                        || source.weights[index] != source.weights[first])) {
+                    return c3d::INVALID_ARGUMENT~;
+                }
             }
             map[index] = particle;
         }
@@ -205,6 +219,8 @@ fn ClothMaterialPlan? build_material_plan(Geometry* source, ClothDesc desc) @pri
         Vec2[] selected_uv = select_tangent_uvs(source, desc)!;
 
         Geometry tangent_source = *source;
+        tangent_source.joints = {};
+        tangent_source.weights = {};
         if (!tangent_source.normals.len) {
             tangent_source.normals = alloc::new_array(tmem, Vec3, (sz)render_count);
             Vec3[] domain_accum = alloc::new_array(tmem, Vec3, (sz)normal_domain_count);

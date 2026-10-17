@@ -1,6 +1,7 @@
 module c3d::render;
 
 import c3d;
+import c3d::anim;
 import c3d::asset;
 import c3d::maths;
 import c3d::scene;
@@ -208,10 +209,13 @@ fn void evaluate_palette(
     Mat4[] inverse_bind,
     Vec3 origin = {},
 ) {
-    Mat4 inverse_mesh = maths::inverse_affine(maths::rebase(mesh_node.world, origin));
-    foreach (index, joint : binding.joints) {
-        palette[index] = bitcast(inverse_mesh.mul(maths::rebase(joint.world, origin)).mul(inverse_bind[index]), Mat4f);
-    }
+    anim::evaluate_skin_palette(
+        output:       palette,
+        mesh_node:    mesh_node,
+        binding:      binding,
+        inverse_bind: inverse_bind,
+        origin:       origin,
+    );
 }
 
 <*

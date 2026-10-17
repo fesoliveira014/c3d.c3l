@@ -169,16 +169,17 @@ fn void? finish_export(WriteContext* context, Node* root) @private {
     uint retained;
     foreach (node : state.ordered[:state.count]) {
         NodeProjection* projected = &state.projection[node.id.index];
-        ComponentMask mask = scene.world.mask(node.id);
+        ComponentMask mask = effective_component_mask(context, node);
         if (projected.node_owner) {
-            if (mask & ~(projected.omitted_components | transient_mask)) return c3d::INVALID_ARGUMENT~;
+            if (projected.projected_components) return c3d::INVALID_ARGUMENT~;
+            if (mask & ~transient_mask) return c3d::INVALID_ARGUMENT~;
             continue;
         }
         if (node != root && state.projection[node.parent.id.index].node_owner) return c3d::INVALID_ARGUMENT~;
-        mask &= ~(projected.omitted_components | transient_mask);
-        scene.world.@each_slot(node.id; uint slot) {
+        mask &= ~transient_mask;
+        for (uint slot = 0; slot < ecs::MAX_COMPONENT_TYPES; slot++) {
             if ((mask & ecs::slot_bit(slot)) && !codecs[slot].codec.name.len) return c3d::UNSUPPORTED~;
-        };
+        }
         used |= mask;
         projected.record = retained;
         state.ordered[retained++] = node;
@@ -220,16 +221,12 @@ fn void? write_components(WriteContext* context, Writer* writer) @private {
         ComponentMask bit = ecs::slot_bit(slot);
         uint count;
         foreach (node : state.ordered[:state.count]) {
-            if ((context.scene.world.mask(node.id) & bit)
-                && !(state.projection[node.id.index].omitted_components & bit)) {
-                count++;
-            }
+            if (effective_component_mask(context, node) & bit) count++;
         }
         writer.write_uint((uint)type_index);
         writer.write_uint(count);
         foreach (record, node : state.ordered[:state.count]) {
-            if (!(context.scene.world.mask(node.id) & bit)
-                || (state.projection[node.id.index].omitted_components & bit)) continue;
+            if (!(effective_component_mask(context, node) & bit)) continue;
             writer.write_uint((uint)record);
             uint expected = state.filling ? state.payload_sizes[payload_index] : 0;
             writer.write_uint(expected);

@@ -61,6 +61,7 @@ struct MeshCandidate {
     uint           lod_part;
     bool           impostor;
     bool           vertex_motion;
+    ulong          vertex_history_token;
 }
 
 <*
@@ -325,19 +326,20 @@ fn void include_mesh(
         return;
     }
     candidates[counts.visible] = {
-        .node           = node,
-        .geometry       = mesh.geometry,
-        .material       = mesh.material,
-        .skin           = skin,
-        .morph_weights  = morph_weights_of(assets, mesh),
-        .morph_channels = assets.geometry(mesh.geometry).data.channels,
-        .world_bounds   = world,
-        .ndc_depth      = center_depth(camera, world),
-        .view_depth     = center_view_depth(camera, world),
-        .receive_shadow = mesh.receive_shadow,
-        .instance_count = 1,
-        .vertex_motion  = mesh.vertex_motion,
-        .scene_identity = scene.identity,
+        .node                 = node,
+        .geometry             = mesh.geometry,
+        .material             = mesh.material,
+        .skin                 = skin,
+        .morph_weights        = morph_weights_of(assets, mesh),
+        .morph_channels       = assets.geometry(mesh.geometry).data.channels,
+        .world_bounds         = world,
+        .ndc_depth            = center_depth(camera, world),
+        .view_depth           = center_view_depth(camera, world),
+        .receive_shadow       = mesh.receive_shadow,
+        .instance_count       = 1,
+        .vertex_motion        = mesh.vertex_motion,
+        .vertex_history_token = mesh.vertex_history_token,
+        .scene_identity       = scene.identity,
     };
     counts.visible++;
 }
@@ -605,23 +607,24 @@ fn MeshCandidate[] extract_shadow_candidates(
                 Material* material = &assets.material(mesh.material).data;
                 if (casts_shadow(material, colored)) {
                     candidates[counts.visible++] = {
-                        .node           = node,
-                        .geometry       = mesh.geometry,
-                        .material       = mesh.material,
-                        .skin           = skin,
-                        .morph_weights  = morph_weights_of(assets, mesh),
-                        .morph_channels = assets.geometry(mesh.geometry).data.channels,
-                        .world_bounds   = spatial::mesh_world_bounds(
+                        .node                 = node,
+                        .geometry             = mesh.geometry,
+                        .material             = mesh.material,
+                        .skin                 = skin,
+                        .morph_weights        = morph_weights_of(assets, mesh),
+                        .morph_channels       = assets.geometry(mesh.geometry).data.channels,
+                        .world_bounds         = spatial::mesh_world_bounds(
                             assets: assets,
                             node:   node,
                             mesh:   mesh,
                             skin:   skin,
                             origin: origin,
                         ),
-                        .receive_shadow = mesh.receive_shadow,
-                        .instance_count = 1,
-                        .vertex_motion  = mesh.vertex_motion,
-                        .scene_identity = scene.identity,
+                        .receive_shadow       = mesh.receive_shadow,
+                        .instance_count       = 1,
+                        .vertex_motion        = mesh.vertex_motion,
+                        .vertex_history_token = mesh.vertex_history_token,
+                        .scene_identity       = scene.identity,
                     };
                 }
             }

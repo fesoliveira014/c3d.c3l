@@ -87,6 +87,27 @@ overrides the rest angle on canonical interior edges (`first < second`, `angle` 
 substep projects hinges with XPBD compliance `bend_compliance` and certifies the continuous motion
 interval against edge collapse, triangle degeneracy, and `±pi` branch flips (`cloth::BEND_UNRESOLVED`).
 
+### Skinned reference, transport and `CrowdCloth`
+
+An ordinary mesh node carrying a valid `SkinBinding` is supported as a skinned cloth owner. While
+pending, the owner retains both `Mesh` and `SkinBinding`. Preparing the cloth (`cloth::prepare(&scene, &assets, node, &physics)` or `scene.add_cloth(&assets, node, desc, &physics)`) moves the rendered
+`Mesh` to an owned unskinned child node carrying transient `ClothOutput` while leaving `SkinBinding`
+on the owner node so skeletal animation and skinning evaluation continue undisturbed. `Scene.remove_cloth`
+restores the source `Mesh` onto the owner node, increments `Mesh.vertex_history_token` to invalidate
+correspondence-based motion blur and trace caches, and removes the generated child node.
+
+`ClothDesc.transport` supplies an optional per-source-vertex weight in `[0, 1]` (co-shared render
+vertices must agree). During each fixed step, free particles receive `transport[p] * (current_ref[p] - solved_ref[p])`
+before gravity and constraint projection so skeletal motion carries the cloth naturally without
+double-counting on zero-step frames.
+
+For `AnimatedCrowd` owners, `scene.attach_crowd_cloth(&assets, crowd_node, part, desc)` attaches a
+`CrowdCloth` part recipe for a rigid or skinned crowd mesh part (`sway` and `fade` must be disabled),
+and `cloth::prepare_crowd_cloth(&physics, &assets, crowd_node)` hides the part's `InstancedMesh` batch
+and creates one unskinned `ClothOutput` child node per crowd placement slot. Active slots (`slot < crowd.count`)
+are simulated and published in owner-local space with `Mesh.base_color = crowd.colors[slot]`; inactive
+slots are hidden, and slot generation changes reseed the slot and advance `Mesh.vertex_history_token`.
+
 ## Pending authoring and preparation
 
 The shared [owner readiness table](owner_readiness.md) records preparation order
@@ -99,22 +120,23 @@ copies of the requested pins, seam pairs and collider identities. Its arrays are
 Requested pin order and duplicates are retained; preparation builds the separate
 sorted, deduplicated simulation pin list.
 
-`Cloth.is_prepared()` is false until `cloth::prepare(&scene, &assets, node)`
-installs the complete runtime and switches the Mesh to its private geometry.
+`Cloth.is_prepared()` is false until `cloth::prepare(&scene, &assets, node, world)`
+installs the complete runtime and switches the Mesh (or generated `ClothOutput` child for skinned owners) to its private geometry.
 Until then the existing Mesh remains unchanged and draws the authored source.
 Attachment validates retained source streams and pin/contact identities;
 world-space triangle constraints and native body readiness are validated during
-preparation, after node world matrices are current. Preparation reserves the configured
-contact buffers but has no `PhysicsWorld` argument. Actual compound leaves are resolved
+preparation, after node world matrices are current. Skinned cloths and `CrowdCloth`
+require a non-null `PhysicsWorld*` with `world.scene == &scene` and `world.assets == &assets`.
+Actual compound leaves are resolved
 and counted during the first update and again when bindings change; preparation success
 does not guarantee that those leaves fit `max_shapes`.
 
 For listed contact owners, run the ordinary physics update first so their
 `PhysicsBody` authoring acquires `RigidBody` mirrors. Preparation before that
-returns `physics::NO_BODY` and leaves cloth pending. A cloth with no listed
+returns `physics::NO_BODY` and leaves cloth pending. A rigid cloth with no listed
 contact bodies has no native-world preparation dependency.
 
-`cloth::prepare_subtree(&scene, &assets, root)` attempts every pending cloth
+`cloth::prepare_subtree(&scene, &assets, root, world)` attempts every pending `Cloth` and `CrowdCloth`
 under a root, including the root. Omit root or pass null for the whole scene.
 It returns the first fault and retains successful owners. Every failed owner
 keeps its source Mesh and authoring and releases staged private geometry/state.
@@ -124,8 +146,8 @@ Repeated preparation of a prepared owner is a no-op.
 Mesh or authoring, and reports their count in `cloth_stats.pending`. Normal
 prepared-cloth timing and update order are unchanged. `Scene.add_cloth` remains
 the combined attachment-and-preparation entry; its failure removes the partial
-authoring too. `Scene.remove_cloth` also removes pending authoring and restores the captured
-source geometry and original vertex-motion setting.
+authoring too. `Scene.remove_cloth` and `Scene.remove_crowd_cloth` also remove pending authoring and restore the captured
+source geometry, batch visibility and vertex history token.
 
 ## Collisions
 

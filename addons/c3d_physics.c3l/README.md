@@ -141,13 +141,18 @@ transform may place that geometry elsewhere.
 
 Cloth consumers require `fp-math=strict`, owner-thread round-to-nearest and gradual underflow.
 The library checks supported runtime conditions without changing arithmetic modes; runtime
-checks do not establish the consumer's compiler mode. Serialization stores collision authoring
-settings, seams, `render_particles`, `tangent_frame`, `tangent_uv_set`, `attachments`, `bend_mode`,
-`bend_compliance` and `rest_angles` in authoring version 5 and restores pending cloth; runtime buffers,
-contact results and histories are excluded. Version-1..4 JSONC defaults the version-5 material,
-attachment and dihedral fields to empty/false/`DISTANCE`/`0`. Version-1/2/3 JSONC defaults continuous
-contact off and the CCD limit to 64. Version-1/2 also defaults self-contact off and seams
-empty; incompatible older binary layouts are rejected before mutation.
+checks do not establish the consumer's compiler mode. Skinned `Mesh` + `SkinBinding` owners
+move their rendered `Mesh` to an owned `ClothOutput` child on preparation (`cloth::prepare` with
+`&physics`), and `CrowdCloth` (`scene.attach_crowd_cloth`, `cloth::prepare_crowd_cloth`) replaces
+crowd part batches with per-slot `ClothOutput` children while supporting per-particle reference
+`transport`. Serialization stores `Cloth` in authoring version 6 (including `transport`) and
+`CrowdCloth` in authoring version 1, projecting the retained source `Mesh` of prepared skinned
+cloths and omitting generated `ClothOutput` children; runtime buffers, contact results and
+histories are excluded. Version-1..5 JSONC defaults `transport` to empty; Version-1..4 JSONC
+defaults the version-5 material, attachment and dihedral fields to empty/false/`DISTANCE`/`0`.
+Version-1/2/3 JSONC defaults continuous contact off and the CCD limit to 64. Version-1/2 also
+defaults self-contact off and seams empty; incompatible older binary layouts are rejected before
+mutation.
 
 ## Replaced assets
 
