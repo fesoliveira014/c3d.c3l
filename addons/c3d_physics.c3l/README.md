@@ -5,6 +5,14 @@ fluid forces and pre-fractured breakables. Applications select `c3d_physics` and
 its native dependencies; core does not import the package. Register physics on
 the scene, create its world, and destroy the world before the scene/assets.
 
+World-free prepared convex queries use `CollisionCache`, `CollisionShape` and borrowed
+`CollisionShapeView` values in `c3d::physics`. A cache borrows one asset store and can share
+cooked hull sources with worlds created with the optional fifth `cache` argument. Destroy
+all borrowing worlds and prepared owners before the cache, then the store. Native length
+units remain fixed through those lifetimes. The direct `c3d::physics::collide` API remains
+available. See [Collision queries](../../docs/collision_queries.md) for supported shapes,
+capacity faults, query results and cache ownership.
+
 ## Ragdoll recovery
 
 `recover_ragdoll(skin_node, character, settings)` returns `RagdollFacing?` and

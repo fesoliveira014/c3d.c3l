@@ -10,6 +10,7 @@ import c3d::debug;
 import c3d::geometry;
 import c3d::gui;
 import c3d::maths;
+import c3d::physics;
 import c3d::physics::collide;
 import c3d::platform;
 import c3d::render;
@@ -40,7 +41,9 @@ const float SCATTER_HALF_MIN @local = 0.1f;
 const float SCATTER_HALF_MAX @local = 0.35f;
 
 struct Demo @local {
-    Shape[SHAPE_KIND_COUNT] shapes;
+    CollisionShape[SHAPE_KIND_COUNT] shapes;
+    CollisionShapeDesc[SHAPE_KIND_COUNT] descriptions;
+    Vec3[] hull_points;
     int                     kind_a;
     int                     kind_b;
     maths::Transform        pose_a;
@@ -114,21 +117,38 @@ fn Ray cursor_ray(
     return camera::screen_to_ray(&matrices, input.mouse_position, viewport);
 }
 
-fn Shape[SHAPE_KIND_COUNT] make_shapes(Hull* hull) @local {
-    return {
-        collide::sphere_shape(0.6f),
-        collide::capsule_shape(0.5f, 0.35f),
-        collide::box_shape({ 0.8f, 0.4f, 0.5f }),
-        collide::hull_shape(hull),
+fn CollisionShapeDesc[SHAPE_KIND_COUNT] make_shape_descriptions(GeometryId geometry) @local {
+    CollisionShapeDesc[SHAPE_KIND_COUNT] descriptions = {
+        physics::default_collision_shape_desc(physics::ColliderKind.SPHERE),
+        physics::default_collision_shape_desc(physics::ColliderKind.CAPSULE),
+        physics::default_collision_shape_desc(physics::ColliderKind.BOX),
+        physics::default_collision_shape_desc(physics::ColliderKind.HULL),
     };
+    descriptions[0].radius = 0.6f;
+    descriptions[1].radius = 0.35f;
+    descriptions[1].half_height = 0.5f;
+    descriptions[2].half_extents = { 0.8f, 0.4f, 0.5f };
+    descriptions[3].geometry = geometry;
+    return descriptions;
 }
 
-fn void draw_shape(debug::DebugDraw* draw, Shape shape, maths::Transform pose, uint rgba) @local {
+fn void draw_shape(
+    debug::DebugDraw* draw,
+    CollisionShapeDesc shape,
+    maths::Transform pose,
+    Vec3[] hull_points,
+    uint rgba,
+) @local {
     switch (shape.kind) {
         case SPHERE:
-            draw.circle(pose.position, { 1, 0, 0 }, shape.radius, rgba);
-            draw.circle(pose.position, { 0, 1, 0 }, shape.radius, rgba);
-            draw.circle(pose.position, { 0, 0, 1 }, shape.radius, rgba);
+            foreach (axis : (Vec3[3]){ { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } }) {
+                draw.circle(
+                    center: pose.position,
+                    normal: axis,
+                    radius: shape.radius,
+                    rgba: rgba,
+                );
+            }
         case CAPSULE:
             Vec3 axis = pose.rotation.rotate_vec3({ 0, 1, 0 });
             draw.capsule(
@@ -141,12 +161,16 @@ fn void draw_shape(debug::DebugDraw* draw, Shape shape, maths::Transform pose, u
         case BOX:
             draw.box(pose.to_mat4(), { .min = -shape.half_extents, .max = shape.half_extents }, rgba);
         case HULL:
-            foreach (local_point : collide::hull_points(shape)) {
+            foreach (local_point : hull_points) {
                 Vec3 point = pose.rotation.rotate_vec3(local_point) + pose.position;
                 draw.line(point - (Vec3){ MARKER_SIZE, 0, 0 }, point + (Vec3){ MARKER_SIZE, 0, 0 }, rgba);
                 draw.line(point - (Vec3){ 0, MARKER_SIZE, 0 }, point + (Vec3){ 0, MARKER_SIZE, 0 }, rgba);
                 draw.line(point - (Vec3){ 0, 0, MARKER_SIZE }, point + (Vec3){ 0, 0, MARKER_SIZE }, rgba);
             }
+        case MESH:
+        case HEIGHT_FIELD:
+        case COMPOUND:
+            unreachable();
     }
 }
 
@@ -167,30 +191,42 @@ fn void move_shape_b(Demo* demo, Input* input, float delta) @local {
     demo.pose_b.position += direction * (MOVE_SPEED * delta);
 }
 
-fn void draw_queries(debug::DebugDraw* draw, Demo* demo) @local {
-    Shape shape_a = demo.shapes[demo.kind_a];
-    Shape shape_b = demo.shapes[demo.kind_b];
-    draw_shape(draw, shape_a, demo.pose_a, debug::rgba(0.3f, 0.7f, 1));
-    draw_shape(draw, shape_b, demo.pose_b, debug::rgba(1, 0.8f, 0.3f));
-
-    collide::Manifold contact = collide::manifold(
-        a:      shape_a,
-        pose_a: demo.pose_a,
-        b:      shape_b,
-        pose_b: demo.pose_b,
+fn void? draw_queries(debug::DebugDraw* draw, Demo* demo) @local {
+    CollisionShapeView shape_a = demo.shapes[demo.kind_a].view();
+    CollisionShapeView shape_b = demo.shapes[demo.kind_b].view();
+    draw_shape(
+        draw: draw,
+        shape: demo.descriptions[demo.kind_a],
+        pose: demo.pose_a,
+        hull_points: demo.hull_points,
+        rgba: debug::rgba(0.3f, 0.7f, 1),
     );
-    for (uint index = 0; index < contact.count; index++) {
-        Vec3 point = contact.points[index].point;
+    draw_shape(
+        draw: draw,
+        shape: demo.descriptions[demo.kind_b],
+        pose: demo.pose_b,
+        hull_points: demo.hull_points,
+        rgba: debug::rgba(1, 0.8f, 0.3f),
+    );
+
+    CollisionContact[collide::MAX_MANIFOLD_POINTS] contacts;
+    usz count = shape_a.contacts(
+        pose_a: demo.pose_a,
+        other: shape_b,
+        pose_b: demo.pose_b,
+        output: contacts[..],
+    )!;
+    foreach (contact : contacts[:count]) {
+        Vec3 point = contact.point;
         draw_marker(draw, point, debug::rgba(1, 0.2f, 0.2f));
         draw.line(point, point + contact.normal * 0.5f, debug::rgba(1, 0.2f, 0.2f));
     }
 
-    Distance closest = collide::distance(
-        a:      shape_a,
+    Distance closest = shape_a.distance(
         pose_a: demo.pose_a,
-        b:      shape_b,
+        other: shape_b,
         pose_b: demo.pose_b,
-    );
+    )!;
     if (closest.distance > 0) draw.line(closest.point_a, closest.point_b, debug::rgba(0.3f, 1, 0.3f));
 
     Vec3 sweep = (demo.pose_a.position - demo.pose_b.position).normalize() * SWEEP_LENGTH;
@@ -201,15 +237,20 @@ fn void draw_queries(debug::DebugDraw* draw, Demo* demo) @local {
     spun.rotation = quaternion::from_axis_angle{float}(SPIN_AXIS.normalize(), demo.spin + SPIN_SPEED);
     collide::Sweep sweep_a = { .start = demo.pose_a, .end = spun };
     collide::Sweep sweep_b = { .start = demo.pose_b, .end = end };
-    if (try impact = collide::time_of_impact(
-        a:       shape_a,
+    if (try impact = shape_a.time_of_impact(
         sweep_a: sweep_a,
-        b:       shape_b,
+        other: shape_b,
         sweep_b: sweep_b,
     )) {
         maths::Transform touching = demo.pose_b;
         touching.position += sweep * impact.time;
-        draw_shape(draw, shape_b, touching, debug::rgba(1, 1, 1, 0.5f));
+        draw_shape(
+            draw: draw,
+            shape: demo.descriptions[demo.kind_b],
+            pose: touching,
+            hull_points: demo.hull_points,
+            rgba: debug::rgba(1, 1, 1, 0.5f),
+        );
         draw_marker(draw, impact.point, debug::rgba(1, 1, 1));
     }
 }
@@ -225,7 +266,7 @@ fn void shape_picker(String suffix, int* kind) @local {
     }
 }
 
-fn void draw_panel(Demo* demo, render::Renderer* renderer) @local {
+fn void? draw_panel(Demo* demo, render::Renderer* renderer) @local {
     imgui::set_next_window_pos(PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
     imgui::set_next_window_size(PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
     if (imgui::begin("Collision queries", null, {})) {
@@ -235,20 +276,20 @@ fn void draw_panel(Demo* demo, render::Renderer* renderer) @local {
         shape_picker("a", &demo.kind_a);
         imgui::separator_text("Shape B");
         shape_picker("b", &demo.kind_b);
-        collide::Manifold contact = collide::manifold(
-            a:      demo.shapes[demo.kind_a],
+        CollisionContact[collide::MAX_MANIFOLD_POINTS] contacts;
+        usz count = demo.shapes[demo.kind_a].view().contacts(
             pose_a: demo.pose_a,
-            b:      demo.shapes[demo.kind_b],
+            other: demo.shapes[demo.kind_b].view(),
             pose_b: demo.pose_b,
-        );
-        Distance closest = collide::distance(
-            a:      demo.shapes[demo.kind_a],
+            output: contacts[..],
+        )!;
+        Distance closest = demo.shapes[demo.kind_a].view().distance(
             pose_a: demo.pose_a,
-            b:      demo.shapes[demo.kind_b],
+            other: demo.shapes[demo.kind_b].view(),
             pose_b: demo.pose_b,
-        );
+        )!;
         imgui::separator_text("Results");
-        imgui::text("Manifold points: %u", contact.count);
+        imgui::text("Contact points: %llu", count);
         imgui::text("Distance: %.3f", (double)closest.distance);
     }
     imgui::end();
@@ -278,7 +319,9 @@ fn void? run(
     platform::Window* window,
     render::Renderer* renderer,
     Scene* scene,
-    Hull* hull,
+    AssetStore* assets,
+    CollisionCache* cache,
+    GeometryId geometry,
 ) @local {
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
@@ -290,12 +333,17 @@ fn void? run(
     camera_node.local.rotation = maths::look_rotation(SHAPE_A_POSITION - CAMERA_POSITION, { 0, 1, 0 });
 
     Demo demo = {
-        .shapes = make_shapes(hull),
+        .descriptions = make_shape_descriptions(geometry),
+        .hull_points = assets.geometry(geometry).data.positions,
         .kind_a = 2,
         .kind_b = 1,
         .pose_a = { .position = SHAPE_A_POSITION, .rotation = { 0, 0, 0, 1 }, .scale = { 1, 1, 1 } },
         .pose_b = { .position = SHAPE_B_START, .rotation = { 0, 0, 0, 1 }, .scale = { 1, 1, 1 } },
     };
+    defer foreach (&shape : demo.shapes) physics::destroy_collision_shape(shape);
+    foreach (index, &shape : demo.shapes) {
+        *shape = physics::create_collision_shape(mem, cache, demo.descriptions[index])!;
+    }
     renderer.prepare_scene(scene)!;
     Scatter scatter = create_scatter()!;
     defer destroy_scatter(&scatter);
@@ -323,14 +371,14 @@ fn void? run(
             pick_scatter_box(&scatter, ray);
             if (scatter.picked) io::printfn("picked box %d", scatter.picked_box);
         }
-        draw_panel(&demo, renderer);
+        draw_panel(&demo, renderer)!;
         imgui::set_next_window_pos(STATS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         gui::stats_panel(renderer)!;
 
         scene.update_world();
         draw.clear();
-        draw_queries(&draw, &demo);
+        draw_queries(&draw, &demo)!;
         draw_scatter(&draw, &scatter);
         gui_renderer.finish_frame();
 
@@ -364,18 +412,26 @@ fn int main() {
     Scene scene = scene::create_scene(mem, scene::default_scene_desc());
     defer scene::destroy_scene(&scene);
 
-    Hull hull;
+    GeometryId geometry;
     @pool() {
-        Geometry cone = geometry::cone(tmem, 0.6f, 1.2f, 12);
-        hull = collide::create_hull(cone.positions)!!;
+        Geometry cone = geometry::cone(
+            allocator: tmem,
+            radius: 0.6f,
+            height: 1.2f,
+            slices: 12,
+        );
+        geometry = assets.add_geometry(&cone)!!;
     };
-    defer collide::destroy_hull(&hull);
+    CollisionCache cache = physics::create_collision_cache(mem, &assets, physics::default_collision_cache_desc())!!;
+    defer physics::destroy_collision_cache(&cache)!!;
 
     if (catch excuse = run(
         window:   &window,
         renderer: &renderer,
         scene:    &scene,
-        hull:     &hull,
+        assets:   &assets,
+        cache:    &cache,
+        geometry: geometry,
     )) {
         io::eprintfn("collision math example failed: %s", excuse);
         return 1;

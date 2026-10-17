@@ -178,7 +178,7 @@ fn Collider? create_shape(PhysicsWorld* world, b3::BodyId body, ColliderDesc* de
             )!;
             return record;
         case HULL:
-            record.snapshot = acquire_hull(world, desc.geometry)!;
+            record.snapshot = acquire_hull(world.snapshots, desc.geometry)!;
             defer catch release_snapshot(world.snapshots, record.snapshot);
             CollisionSnapshot* snapshot = snapshot_of(world.snapshots, record.snapshot);
             record.wire = snapshot.wire;
@@ -191,7 +191,7 @@ fn Collider? create_shape(PhysicsWorld* world, b3::BodyId body, ColliderDesc* de
             )!;
             return record;
         case MESH:
-            record.snapshot = acquire_mesh(world, desc.geometry, desc.material_indices)!;
+            record.snapshot = acquire_mesh(world.snapshots, desc.geometry, desc.material_indices)!;
             defer catch release_snapshot(world.snapshots, record.snapshot);
             CollisionSnapshot* snapshot = snapshot_of(world.snapshots, record.snapshot);
             record.wire = snapshot.wire;
@@ -203,14 +203,14 @@ fn Collider? create_shape(PhysicsWorld* world, b3::BodyId body, ColliderDesc* de
             )!;
             return record;
         case HEIGHT_FIELD:
-            record.snapshot = acquire_height_field(world, desc)!;
+            record.snapshot = acquire_height_field(world.snapshots, desc)!;
             defer catch release_snapshot(world.snapshots, record.snapshot);
             CollisionSnapshot* snapshot = snapshot_of(world.snapshots, record.snapshot);
             record.wire = snapshot.wire;
             record.shape = b3::create_height_field_shape(body, &def, snapshot.height_field)!;
             return record;
         case COMPOUND:
-            record.snapshot = acquire_compound(world, desc)!;
+            record.snapshot = acquire_compound(world.snapshots, desc)!;
             defer catch release_snapshot(world.snapshots, record.snapshot);
             CollisionSnapshot* snapshot = snapshot_of(world.snapshots, record.snapshot);
             record.wire = snapshot.wire;

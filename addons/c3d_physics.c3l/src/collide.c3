@@ -258,7 +258,7 @@ fn Impact? cast(
 
 <*
  First contact of two shapes moving along their sweeps.
- An overlapped start reports time 0 and a zero normal.
+ A native overlap reports time 0 and a zero normal; an initial HIT may retain its normal.
  @return? b3::NO_HIT
  @require unit_scale(sweep_a.start) && unit_scale(sweep_a.end)
  @require unit_scale(sweep_b.start) && unit_scale(sweep_b.end)
