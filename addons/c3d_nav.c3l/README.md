@@ -420,6 +420,17 @@ fixed crowd step, printing events, progress and final installed revisions. It de
 addons/c3d_nav.c3l/build/grid --cache-demo --sub-cell --radius 0.6 --clearance-error 0.5 --frames 160
 ```
 
+## Baked snapshots
+
+`NavMesh.snapshot_size`, `write_snapshot` and `read_snapshot` save baked tiles and current polygon
+state to portable bytes, then replace an initialized mesh atomically. The caller owns byte buffers
+and bounded scratch; replacement uses the mesh allocator and configured capacities. Resolve saved
+`NavPolyKey` values after loading because runtime references change.
+
+See [baked navigation snapshots](../../docs/navigation_persistence.md) for the wire format, ownership,
+limits and query-state reset contract. The `nav_persistence` CPU example demonstrates save, replacement,
+key resolution and querying without a scene or GPU.
+
 ## Crowds
 
 A `Crowd` from `create_crowd(allocator, desc, &mesh, scene)` steers up to `desc.max_agents` agents

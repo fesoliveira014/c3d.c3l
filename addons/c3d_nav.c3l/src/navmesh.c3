@@ -263,21 +263,10 @@ fn TileRef? NavMesh.add_tile(
     TileRef last_ref = (TileRef)0,
 ) {
     validate_tile_data(data)!;
-    TileHeader* header = (TileHeader*)data.ptr;
-    if (self.tile_at(header.x, header.z, header.layer)) return TILE_OCCUPIED~;
-
-    MeshTile* slot = find_free_tile(self, last_ref)!;
-    require_free_links(
-        mesh:     self,
-        data:     data,
-        resident: null,
-        credit:   0,
-    )!;
-    return commit_tile(
-        mesh:     self,
-        slot:     slot,
-        data:     data,
-        flags:    flags,
+    return add_validated_tile(
+        mesh: self,
+        data: data,
+        flags: flags,
         last_ref: last_ref,
     );
 }
@@ -737,6 +726,31 @@ fn uint decode_poly(PolyRef ref) => (uint)((ulong)ref & ((1ul << POLY_BITS) - 1)
 fn uint tile_index(NavMesh* mesh, MeshTile* tile) @local => (uint)(tile - mesh.tiles.ptr);
 
 fn uint tile_hash(int x, int z, uint mask) @local => (TILE_HASH_X * (uint)x + TILE_HASH_Z * (uint)z) & mask;
+
+fn TileRef? add_validated_tile(
+    NavMesh* mesh,
+    char[] data,
+    TileFlags flags,
+    TileRef last_ref = (TileRef)0,
+) @private {
+    TileHeader* header = (TileHeader*)data.ptr;
+    if (mesh.tile_at(header.x, header.z, header.layer)) return TILE_OCCUPIED~;
+
+    MeshTile* slot = find_free_tile(mesh, last_ref)!;
+    require_free_links(
+        mesh:     mesh,
+        data:     data,
+        resident: null,
+        credit:   0,
+    )!;
+    return commit_tile(
+        mesh:     mesh,
+        slot:     slot,
+        data:     data,
+        flags:    flags,
+        last_ref: last_ref,
+    );
+}
 
 fn MeshTile*? find_free_tile(NavMesh* mesh, TileRef last_ref) @local {
     if (!last_ref) {

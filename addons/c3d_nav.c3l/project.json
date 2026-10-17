@@ -35,6 +35,10 @@
       "type": "test",
       "sources": [ "test/**" ]
     },
+    "nav_persistence": {
+      "type": "executable",
+      "sources": [ "examples/nav_persistence.c3" ]
+    },
     "navmesh": {
       "type": "executable",
       "sources": [ "examples/navmesh.c3" ]
