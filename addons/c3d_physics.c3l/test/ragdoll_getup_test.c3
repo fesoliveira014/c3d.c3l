@@ -1,6 +1,5 @@
 module c3d_physics_getup_test;
 
-import std::io;
 import std::math;
 import std::math::quaternion;
 import c3d;
@@ -46,7 +45,6 @@ fn void observe(
     foreach (index, node : ragdoll.bone_nodes) {
         b3::BodyId body = world.body(node)!!;
         b3::WorldTransform native = body.transform();
-
         assert(b3::is_valid_world_transform(native));
 
         Vec3 mapped_position = body.world_point(ragdoll.joint_in_bone[index].position);
@@ -63,6 +61,7 @@ fn void observe(
             rotation_distance(visible.rotation, mapped_rotation),
             rotation_distance(bone.rotation, native.q),
         );
+
         b3::ContactData[32] storage;
         foreach (contact : body.contact_data(storage[..])) {
             foreach (&manifold : contact.contact_manifolds()) {
@@ -120,7 +119,6 @@ fn void run_getup(RagdollFacing facing, bool obstructed = false) @private {
     ragdoll.weight = 1;
     world.update_ragdolls();
     scene.update_world();
-
     assert(world.recover_ragdoll(humanoid.skin, humanoid.character)!! == facing);
 
     b3::BodyId[getup_fixture::BONE_COUNT] identities;
@@ -143,6 +141,7 @@ fn void run_getup(RagdollFacing facing, bool obstructed = false) @private {
         ragdoll.weight = math::max(1 - time / getup_fixture::SOURCE_FADE_TIME, 0.0f);
         scene.update_world();
         world.update(dt);
+
         if (!completed) {
             observation.steps += world.steps_last_update;
             if (world.steps_last_update == 0) observation.zero_updates++;
@@ -175,39 +174,20 @@ fn void run_getup(RagdollFacing facing, bool obstructed = false) @private {
                 ragdoll: ragdoll,
                 observation: &observation,
             );
+
             foreach (index, node : ragdoll.bone_nodes) {
                 b3::BodyId body = world.body(node)!!;
-
                 assert(body.index1 == identities[index].index1 && body.generation == identities[index].generation);
                 assert(body.type() == (completing ? b3::BodyType.KINEMATIC : b3::BodyType.DYNAMIC));
 
                 if (index > 0) {
                     b3::JointId joint = world.joint(node)!!;
-
                     assert(joint.index1 == joint_identities[index].index1
                         && joint.generation == joint_identities[index].generation);
                 }
             }
         }
     }
-
-    io::printfn(
-        "getup,%s,blocked=%s,position=%.9f,angle=%.9f,penetration=%.9f,force=%.6f,torque=%.6f,tracking_position=%.6f,tracking_angle=%.6f,completion=%.6f,contacts=%d,steps=%d,zero=%d,multi=%d",
-        facing,
-        obstructed,
-        observation.position,
-        observation.angle,
-        observation.penetration,
-        observation.force,
-        observation.torque,
-        observation.tracking_position,
-        observation.tracking_angle,
-        observation.completion_time,
-        observation.contacts,
-        observation.steps,
-        observation.zero_updates,
-        observation.multiple_updates,
-    );
 
     assert(observation.position <= POSITION_TOLERANCE && observation.angle <= ANGLE_TOLERANCE);
     assert(observation.force <= 200 + CAP_TOLERANCE && observation.torque <= 20 + CAP_TOLERANCE);
@@ -220,7 +200,6 @@ fn void run_getup(RagdollFacing facing, bool obstructed = false) @private {
     } else {
         assert(completed);
         assert(ragdoll.recovery_status().phase == RagdollRecoveryPhase.INACTIVE);
-
         foreach (mode : ragdoll.bone_modes) assert(mode == ANIMATED);
     }
 }
