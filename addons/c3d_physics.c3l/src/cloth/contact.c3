@@ -130,15 +130,18 @@ fn usz? contact_pass(
     result.stage = ClothContactStage.CANDIDATES;
     usz candidates = physics::gather_cloth_candidates(world, state, positions)!;
     candidates = gather_self_candidates(state, positions, candidates)!;
+
     result.stage = ClothContactStage.CONTACTS;
     result.max_residual = 0;
     result.unresolved = 0;
     result.pinned_overlaps = 0;
+
     usz count;
     defer {
         result.contacts += (uint)count;
         result.peak_contacts = math::max(result.peak_contacts, (uint)count);
     }
+
     foreach (index, &candidate : state.candidates[:candidates]) {
         if (candidate.kind == SELF_VERTEX_FACE || candidate.kind == SELF_EDGE_EDGE) {
             double residual = self_contact_residual(state, candidate, positions)!;
@@ -162,8 +165,10 @@ fn usz? contact_pass(
             if (projection.residual > state.desc.collisions.contact_tolerance) result.pinned_overlaps++;
             continue;
         }
+
         result.max_residual = math::max(result.max_residual, projection.residual);
         if (projection.residual <= state.desc.collisions.contact_tolerance) continue;
+
         result.unresolved++;
         if (count == state.contacts.len) return c3d::CAPACITY_EXCEEDED~;
         state.contacts[count++] = {

@@ -25,9 +25,10 @@ fn void? check_collider_owners(Scene* scene, Entity[] owners) @private {
 fn ClothCapture? capture_colliders(Scene* scene, Entity[] owners, uint max_shapes) @private {
     check_collider_owners(scene, owners)!;
     ClothCapture capture = {
-        .bodies = alloc::new_array_try(tmem, ClothBody, (sz)owners.len) ?? c3d::CAPACITY_EXCEEDED~!,
-        .shapes = alloc::new_array_try(tmem, ClothShape, (sz)max_shapes) ?? c3d::CAPACITY_EXCEEDED~!,
+        .bodies = alloc::new_array(tmem, ClothBody, (sz)owners.len),
+        .shapes = alloc::new_array(tmem, ClothShape, (sz)max_shapes),
     };
+
     usz count;
     foreach (index, owner : owners) {
         RigidBody* body = scene.get(scene.node(owner), RigidBody);
@@ -40,6 +41,7 @@ fn ClothCapture? capture_colliders(Scene* scene, Entity[] owners, uint max_shape
             output: capture.shapes[count..],
         )!;
     }
+
     capture.shapes = capture.shapes[:count];
     return capture;
 }
@@ -69,9 +71,11 @@ fn void? refresh_colliders(PhysicsWorld* world, ClothState* state) @private {
             body.observed = false;
             continue;
         }
+
         uint[4] identity = physics::cloth_body_identity(rigid);
         if (!same_body_identity(body.native_identity, identity)) body.observed = false;
         body.native_identity = identity;
+
         usz first = count;
         count += physics::capture_cloth_shapes(
             world: world,
@@ -79,6 +83,7 @@ fn void? refresh_colliders(PhysicsWorld* world, ClothState* state) @private {
             body_index: (uint)body_index,
             output: state.shape_storage[count..],
         )!;
+
         usz matching = first;
         foreach (&old : previous) {
             if (old.body != body_index) continue;
@@ -90,6 +95,7 @@ fn void? refresh_colliders(PhysicsWorld* world, ClothState* state) @private {
         }
         if (matching != count) body.observed = false;
     }
+
     state.shapes = state.shape_storage[:count];
 }
 
@@ -102,12 +108,15 @@ fn void sample_bodies(Scene* scene, ClothState* state) @private {
             body.observed = false;
             continue;
         }
+
         uint[4] identity = physics::cloth_body_identity(rigid);
         if (!same_body_identity(body.native_identity, identity)) body.observed = false;
         body.native_identity = identity;
+
         body.current = maths::transform_from_mat4(scene.node(body.owner).world);
         body.current.scale = { 1, 1, 1 };
         if (body.observed) continue;
+
         body.solved = body.current;
         body.observed = true;
     }
