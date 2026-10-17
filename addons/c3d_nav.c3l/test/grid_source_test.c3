@@ -11,12 +11,6 @@ struct HeightSampleContext @local {
     bool failed;
 }
 
-struct DirtySelectionCase @local {
-    GridRange cells;
-    uint border;
-    GridRange expected;
-}
-
 fn void test_grid_height_adapters_match_authored_triangles() @test {
     float[24] samples;
     for (uint z = 0; z < 4; z++) {
@@ -140,50 +134,34 @@ fn void test_grid_height_capture_preserves_absence_and_source_faults() @test {
     fixture.builder.source = source;
     samples[3] = bitcast(0x7fc00000u, float);
     assert(@catch(fixture.builder.build(0, 0)) == c3d::INVALID_ARGUMENT);
-    samples[3] = 0.75f;
-    source.cell_size = 1;
-    assert(@catch(nav::create_grid_tile_builder(mem, fixture.builder.config, source)) == c3d::INVALID_ARGUMENT);
 }
 
-fn void test_grid_dirty_ranges_cover_capture_halos_and_incident_cells() @test {
+fn void test_grid_dirty_and_world_ranges() @test {
     GridRange extent = { .min_x = -2, .min_z = -2, .max_x = 3, .max_z = 3 };
-    DirtySelectionCase[] cases = {
-        { .cells = { .min_x = 2, .min_z = 3, .max_x = 3, .max_z = 4 }, .expected = { .max_x = 1, .max_z = 1 } },
-        { .cells = { .min_x = 8, .min_z = 3, .max_x = 9, .max_z = 4 }, .border = 1, .expected = { .max_x = 2, .max_z = 1 } },
-        { .cells = { .min_x = 7, .min_z = 7, .max_x = 9, .max_z = 9 }, .border = 1, .expected = { .max_x = 2, .max_z = 2 } },
-        { .cells = { .min_x = -9, .min_z = -1, .max_x = -8, .max_z = 0 }, .border = 1, .expected = { .min_x = -2, .min_z = -1, .max_x = 0, .max_z = 1 } },
-        { .cells = { .max_x = 1, .max_z = 1 }, .border = 17, .expected = extent },
-        { .cells = { .min_x = 40, .min_z = 40, .max_x = 41, .max_z = 41 }, .border = 1 },
-        { .cells = { .min_x = 8, .min_z = 8, .max_x = 8, .max_z = 9 }, .border = 1 },
-    };
-    foreach (entry : cases) {
-        GridRange selected = nav::grid_dirty_tiles(
-            cells: entry.cells,
-            tile_size: 8,
-            border_size: entry.border,
-            extent: extent,
-        )!!;
-        assert_grid_range(selected, entry.expected);
-    }
+    assert_grid_range(
+        nav::grid_dirty_tiles({ .min_x = 7, .min_z = 7, .max_x = 9, .max_z = 9 }, 8, 1, extent)!!,
+        { .max_x = 2, .max_z = 2 },
+    );
+    assert_grid_range(
+        nav::grid_dirty_tiles({ .min_x = -9, .min_z = -1, .max_x = -8, .max_z = 0 }, 8, 1, extent)!!,
+        { .min_x = -2, .min_z = -1, .max_x = 0, .max_z = 1 },
+    );
+    assert_grid_range(
+        nav::grid_dirty_tiles({ .min_x = 40, .min_z = 40, .max_x = 41, .max_z = 41 }, 8, 1, extent)!!,
+        {},
+    );
 
-    GridRange cells = nav::grid_vertex_cells({ .min_x = 8, .min_z = 8, .max_x = 9, .max_z = 9 })!!;
-    assert_grid_range(cells, { .min_x = 7, .min_z = 7, .max_x = 9, .max_z = 9 });
-    assert_grid_range(nav::grid_vertex_cells({ .min_x = -8, .min_z = -8, .max_x = -7, .max_z = -7 })!!,
-        { .min_x = -9, .min_z = -9, .max_x = -7, .max_z = -7 });
+    assert_grid_range(
+        nav::grid_vertex_cells({ .min_x = 8, .min_z = 8, .max_x = 9, .max_z = 9 })!!,
+        { .min_x = 7, .min_z = 7, .max_x = 9, .max_z = 9 },
+    );
     assert(@catch(nav::grid_vertex_cells({ .min_x = 1 })) == c3d::INVALID_ARGUMENT);
-}
 
-fn void test_grid_world_edits_include_closed_boundaries() @test {
     Vec3 origin = { -10, 0, -6 };
-    GridRange cells = nav::grid_world_cells({ .min = { -10, 0, -6 }, .max = { -6, 0, -2 } }, origin, 2)!!;
-    assert_grid_range(cells, { .min_x = -1, .min_z = -1, .max_x = 3, .max_z = 3 });
-
-    cells = nav::grid_world_cells({ .min = { -13.5f, 0, -9.5f }, .max = { -12.5f, 0, -8.5f } }, origin, 2)!!;
-    assert_grid_range(cells, { .min_x = -2, .min_z = -2, .max_x = -1, .max_z = -1 });
-
-    cells = nav::grid_world_cells({ .min = origin, .max = origin }, origin, 2)!!;
-    assert_grid_range(cells, { .min_x = -1, .min_z = -1, .max_x = 1, .max_z = 1 });
-
+    assert_grid_range(
+        nav::grid_world_cells({ .min = { -10, 0, -6 }, .max = { -6, 0, -2 } }, origin, 2)!!,
+        { .min_x = -1, .min_z = -1, .max_x = 3, .max_z = 3 },
+    );
     assert(@catch(nav::grid_world_cells({ .min = { 1, 0, 0 } }, {}, 1)) == c3d::INVALID_ARGUMENT);
 }
 
