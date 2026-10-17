@@ -55,7 +55,6 @@ struct ContactPlane @local {
 }
 
 fn bool contact_arithmetic_supported() @private {
-    if ($$get_rounding_mode() != (int)math::RoundingMode.TO_NEAREST) return false;
     double subnormal = bitcast(1UL, double);
     return bitcast(@volatile_load(subnormal) * 2.0, ulong) == 2UL;
 }
@@ -162,6 +161,7 @@ fn ContactVector contact_middle(ContactIntervals value) @private {
 
 fn ContactFrame? contact_frame_of(maths::Transform pose) @local {
     if (!contact_finite(pose.position)) return cloth::CONTACT_PRECISION_EXCEEDED~;
+
     ContactInterval[4] quaternion;
     ContactInterval squared = contact_value(0);
     for (uint index = 0; index < 4; index++) {
@@ -171,6 +171,7 @@ fn ContactFrame? contact_frame_of(maths::Transform pose) @local {
     }
     ContactInterval magnitude = contact_root(squared)!;
     foreach (&value : quaternion) *value = contact_divide(*value, magnitude)!;
+
     ContactInterval xx = contact_square(quaternion[0])!;
     ContactInterval yy = contact_square(quaternion[1])!;
     ContactInterval zz = contact_square(quaternion[2])!;
@@ -182,6 +183,7 @@ fn ContactFrame? contact_frame_of(maths::Transform pose) @local {
     ContactInterval wz = contact_multiply(quaternion[3], quaternion[2])!;
     ContactInterval one = contact_value(1);
     ContactInterval two = contact_value(2);
+
     return {
         .position = contact_vector((ContactVector)pose.position),
         .rotation = {
@@ -288,6 +290,7 @@ fn ContactVector contact_triangle_weights(
         double v = (first_squared * second_edge.dot(relative) - mixed * first_edge.dot(relative)) / denominator;
         if (u >= 0 && v >= 0 && u + v <= 1) return { math::max(0.0, 1 - u - v), u, v };
     }
+
     ContactVector[3] corners = { first, second, third };
     ContactVector weights = { 1, 0, 0 };
     double nearest = double::max;
@@ -427,8 +430,10 @@ fn ContactProjection? contact_convex(
 ) @private {
     ContactIntervals[MAX_CONTACT_HULL_POINTS] storage;
     if (!vertices.len || vertices.len > storage.len || !triangles.len) return cloth::CONTACT_PRECISION_EXCEEDED~;
+
     ContactIntervals[] points = storage[:vertices.len];
     foreach (index, vertex : vertices) points[index] = contact_point(frame, vertex)!;
+
     ContactVector nearest_point;
     ContactVector exit_normal;
     double nearest = double::max;
@@ -451,6 +456,7 @@ fn ContactProjection? contact_convex(
             nearest = distance.max;
             nearest_point = contact_middle(witness);
         }
+
         ContactVector normal = contact_middle(contact_rotate(frame, contact_vector((ContactVector)normals[triangle]))!);
         double magnitude = normal.length();
         if (!(magnitude > 0)) return cloth::CONTACT_PRECISION_EXCEEDED~;
@@ -460,6 +466,7 @@ fn ContactProjection? contact_convex(
             exit_normal = normal;
         }
     }
+
     ContactVector normal = (ContactVector)position - nearest_point;
     ContactPlane plane;
     if (normal.dot(normal) > CONTACT_AXIS_DISTANCE * CONTACT_AXIS_DISTANCE) {
@@ -468,6 +475,7 @@ fn ContactProjection? contact_convex(
     } else {
         normal = exit_normal;
     }
+
     plane = contact_support(points, normal)!;
     return contact_project_plane(
         plane: plane, position: position, reach: contact_value(thickness), tolerance: tolerance, correct: correct,

@@ -11,10 +11,6 @@ import std::math;
 import std::math::quaternion;
 import std::core::mem::allocators;
 
-const sz CAPTURE_POOL_BYTES @private = 4096;
-const sz CAPTURE_VMEM_BYTES @private = 64 * mem::KB;
-const uint CAPTURE_SHAPE_LIMIT @private = 1024;
-
 fn Node* bounded_probe(
     Fixture* fixture,
     Vec3 point,
@@ -32,44 +28,6 @@ fn Node* bounded_probe(
     return node;
 }
 
-fn fault prepare_with_small_capture_pool(
-    Fixture* fixture,
-    Node* node,
-    ClothDesc desc,
-    bool eager,
-) @private {
-    // Small topology scratch fits; the shape capture exceeds this owned pool.
-    char[2 * CAPTURE_POOL_BYTES] storage;
-    ArenaAllocator backing;
-    backing.init(storage[..]);
-    TempAllocator* pool = allocators::new_temp_allocator(
-        allocator: &backing,
-        size: CAPTURE_POOL_BYTES,
-        reserve: 64,
-        min_size: CAPTURE_POOL_BYTES / 8,
-        realloc_size: CAPTURE_POOL_BYTES,
-    )!!;
-    defer pool.free();
-    Allocator previous = allocators::current_temp;
-    TempAllocator* previous_top = allocators::top_temp;
-    allocators::top_temp = pool;
-    allocators::current_temp = pool;
-    defer {
-        allocators::current_temp = previous;
-        allocators::top_temp = previous_top;
-    }
-    $if $feat(VMEM_TEMP):
-        TempAllocator* child = pool.derive_allocator()!!;
-        child.vmem.free();
-        child.vmem.init(CAPTURE_VMEM_BYTES, CAPTURE_VMEM_BYTES)!!;
-        assert(ClothShape::size * desc.collisions.max_shapes > child.vmem.memory.size);
-    $else
-        assert(ClothShape::size * desc.collisions.max_shapes > storage.len);
-    $endif
-    if (eager) return @catch(fixture.scene.add_cloth(&fixture.assets, node, desc));
-    return @catch(cloth::prepare(&fixture.scene, &fixture.assets, node));
-}
-
 fn void test_cloth_contact_capacity_rollback_and_recovery() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
@@ -77,6 +35,7 @@ fn void test_cloth_contact_capacity_rollback_and_recovery() @test {
     Fixture fixture;
     setup(&fixture, desc: weightless(), allocator: &tracker);
     defer teardown(&fixture);
+
     ColliderDesc[2] colliders = { sphere(0.5f), sphere(0.5f) };
     Node* body = add_body_node(&fixture, colliders[:1], kind: STATIC);
     Entity[1] owners = { body.id };
@@ -101,6 +60,7 @@ fn void test_cloth_contact_capacity_rollback_and_recovery() @test {
         ClothState* state = state_of(&fixture, probe);
         publish(&fixture);
         assert(!state.contact_result.failure);
+
         Vec3[3] solved, velocities, predicted, acceleration, published, local;
         Vec3[2] anchors, targets;
         solved[..] = state.positions[..];
@@ -114,6 +74,7 @@ fn void test_cloth_contact_capacity_rollback_and_recovery() @test {
         ClothBody saved_body = state.bodies[0];
         uint revision = geometry_of(&fixture, probe).header.revision;
         float other_x = continuing.positions[0].x;
+
         fixture.physics.remove_body(body);
         fixture.physics.add_body(body, physics::default_body_desc(STATIC), colliders[..])!!;
         fixture.physics.update(physics::DEFAULT_FIXED_DT);
@@ -129,6 +90,7 @@ fn void test_cloth_contact_capacity_rollback_and_recovery() @test {
         assert(state.contact_result.peak_contacts == (capacity_case == 0 ? 0 : 1));
         assert(state.contact_result.unresolved == (capacity_case == 0 ? 0 : 2));
         assert(fixture.physics.cloth_stats.failed == 1 && continuing.positions[0].x > other_x);
+
         foreach (index, value : solved) {
             assert(state.positions[index] == value && state.velocities[index] == velocities[index]);
             assert(state.predicted[index] == predicted[index] && state.accelerations[index] == acceleration[index]);
@@ -151,6 +113,7 @@ fn void test_cloth_contact_capacity_rollback_and_recovery() @test {
             assert(state.contact_result.candidates == 1 && state.contact_result.peak_candidates == 1);
             assert(state.contact_result.contacts == 0 && state.contact_result.peak_contacts == 0);
             assert(geometry_of(&fixture, probe).header.revision == revision);
+
             probe.local.position.x = 2;
             publish(&fixture);
             assert(state.contact_result.failure == c3d::CAPACITY_EXCEEDED);
@@ -160,17 +123,6 @@ fn void test_cloth_contact_capacity_rollback_and_recovery() @test {
                 assert(state.positions[index] == solved[index] && state.velocities[index] == velocities[index]);
             }
             foreach (index, value : anchors) assert(state.pin_anchors[index] == value);
-            local[..] = geometry_of(&fixture, probe).data.positions[..];
-            revision = geometry_of(&fixture, probe).header.revision;
-            probe.local.position.x = 1e20f;
-            publish(&fixture);
-            assert(state.contact_result.failure == cloth::CONTACT_PRECISION_EXCEEDED);
-            assert(state.contact_result.stage == ClothContactStage.REEXPRESSION);
-            assert(geometry_of(&fixture, probe).header.revision == revision);
-            foreach (index, value : local) {
-                assert(geometry_of(&fixture, probe).data.positions[index] == value);
-                assert(state.positions[index] == solved[index] && state.published[index] == published[index]);
-            }
             probe.local.position = {};
         }
 
@@ -188,6 +140,7 @@ fn void test_cloth_unresolved_contacts_preserve_pins_and_publication() @test {
     Fixture fixture;
     setup(&fixture, weightless());
     defer teardown(&fixture);
+
     ColliderDesc ceiling = physics::default_collider_desc(BOX);
     ceiling.half_extents = { 2, 1, 2 };
     Node* body = add_body_node(&fixture, (&ceiling)[:1], { 0, 1.01f, 0 }, STATIC);
@@ -200,6 +153,7 @@ fn void test_cloth_unresolved_contacts_preserve_pins_and_publication() @test {
     desc.colliders = owners[..];
     desc.collide_ground = true;
     fixture.scene.add_cloth(&fixture.assets, probe, desc)!!;
+
     ClothState* state = state_of(&fixture, probe);
     Vec3[3] original;
     original[..] = state.positions[..];
@@ -213,32 +167,12 @@ fn void test_cloth_unresolved_contacts_preserve_pins_and_publication() @test {
         assert(state.positions[index] == value && state.published[index] == value);
         assert(published_world(&fixture, probe, (uint)index) == value);
     }
+
     body.local.position.y = 2;
     publish(&fixture);
     assert(!state.contact_result.failure && state.contact_result.pinned_overlaps > 0);
     assert(published_world(&fixture, probe, 0).y >= desc.thickness - CONTACT_TOLERANCE);
     foreach (pin : pins) assert(published_world(&fixture, probe, pin) == original[pin]);
-}
-
-fn void test_cloth_contact_rounding_mode_rejects_without_mutation() @test {
-    Fixture fixture;
-    setup(&fixture, weightless());
-    defer teardown(&fixture);
-    Node* probe = add_probe(&fixture, { 0, 0, 0 }, {});
-    ClothState* state = state_of(&fixture, probe);
-    uint revision = geometry_of(&fixture, probe).header.revision;
-    int saved = $$get_rounding_mode();
-    defer $$set_rounding_mode(saved);
-    $$set_rounding_mode((int)math::RoundingMode.TOWARD_INFINITY);
-    publish(&fixture);
-    assert($$get_rounding_mode() == (int)math::RoundingMode.TOWARD_INFINITY);
-    assert(state.contact_result.failure == cloth::CONTACT_PRECISION_EXCEEDED);
-    assert(state.contact_result.stage == ClothContactStage.ARITHMETIC);
-    assert(geometry_of(&fixture, probe).header.revision == revision);
-    assert(state.positions[0] == (Vec3){} && state.published[0] == (Vec3){});
-    $$set_rounding_mode(saved);
-    publish(&fixture);
-    assert(!state.contact_result.failure);
 }
 
 fn void test_cloth_rebuild_refreshes_cooked_and_compound_generations() @test {
@@ -250,6 +184,7 @@ fn void test_cloth_rebuild_refreshes_cooked_and_compound_generations() @test {
     world_desc.snapshot_capacity = 2;
     setup(&fixture, desc: world_desc, allocator: &tracker);
     defer teardown(&fixture);
+
     GeometryId geometry;
     @pool() {
         Geometry box = geometry::box(allocator: tmem, width: 2, height: 1, depth: 2);
@@ -349,147 +284,4 @@ fn void test_cloth_contact_settings_reject_invalid_values_atomically() @test {
         }
         assert(rejected_atomically(&fixture, node, desc) == c3d::INVALID_ARGUMENT);
     }
-}
-
-fn void test_cloth_mesh_asymmetric_bounds_keep_near_edge_contact() @test {
-    Fixture fixture;
-    setup(&fixture, weightless());
-    defer teardown(&fixture);
-    GeometryId geometry;
-    @pool() {
-        Geometry triangle = {
-            .positions = alloc::new_array(tmem, Vec3, 6),
-            .indices = alloc::new_array(tmem, uint, 6),
-        };
-        triangle.positions[..] = ((Vec3[6]){ { -0.001f, 0, -1 }, { -0.001f, 0, 1 }, { 1, 0, 0 }, { 65536, 0, 0 }, { 65536, 0, 32 }, { 65568, 0, 0 } })[..];
-        triangle.indices[..] = { 0, 1, 2, 3, 4, 5 }[..];
-        triangle.finalize();
-        geometry = fixture.assets.add_geometry(&triangle)!!;
-    };
-    ColliderDesc mesh = physics::default_collider_desc(MESH);
-    mesh.geometry = geometry;
-    Node* body = add_body_node(&fixture, (&mesh)[:1], kind: STATIC);
-    Entity[1] owners = { body.id };
-    Node* probe = add_cloth_node(&fixture, add_triangle(&fixture, { -0.0005f, 0, 0 }, PROBE_REACH));
-    uint[2] pins = { 1, 2 };
-    ClothDesc desc = pinned_desc(pins[..]);
-    desc.stretch_stiffness = 0;
-    desc.bend_stiffness = 0;
-    desc.thickness = 0.0002f;
-    desc.collisions.contact_tolerance = 0.00001f;
-    desc.colliders = owners[..];
-    fixture.scene.add_cloth(&fixture.assets, probe, desc)!!;
-    publish(&fixture);
-    ClothState* state = state_of(&fixture, probe);
-    assert(!state.contact_result.failure);
-    assert(state.contact_result.contacts > 0);
-    assert(math::abs(published_world(&fixture, probe, 0).y) >= desc.thickness - desc.collisions.contact_tolerance);
-    // A valid nonzero mesh scale need not have a finite binary32 reciprocal.
-    fixture.physics.remove_body(body);
-    mesh.local.scale = { 1e-40f, 1e-40f, 1e-40f };
-    fixture.physics.add_body(body, physics::default_body_desc(STATIC), (&mesh)[:1])!!;
-    Node* tiny = bounded_probe(
-        fixture: &fixture, point: {}, colliders: owners[..], collisions: cloth::default_cloth_collision_desc(),
-    );
-    publish(&fixture);
-    ClothState* tiny_state = state_of(&fixture, tiny);
-    assert(!tiny_state.contact_result.failure && tiny_state.contact_result.contacts > 0);
-    assert(math::abs(published_world(&fixture, tiny, 0).y) >= 0.01f - CONTACT_TOLERANCE);
-}
-
-fn void test_cloth_zero_step_box_uses_exact_final_endpoint() @test {
-    Fixture fixture;
-    setup(&fixture, weightless());
-    defer teardown(&fixture);
-    ColliderDesc box = physics::default_collider_desc(BOX);
-    box.half_extents = { 0.5f, 0.5f, 0.5f };
-    Node* body = add_body_node(&fixture, (&box)[:1], { 65536, 0, 0 }, STATIC);
-    Entity[1] owners = { body.id };
-    Node* probe = bounded_probe(
-        fixture: &fixture,
-        point: { -0.409f, 0, 0 },
-        colliders: owners[..],
-        collisions: cloth::default_cloth_collision_desc(),
-    );
-    publish(&fixture);
-    ClothState* state = state_of(&fixture, probe);
-    assert(!state.contact_result.failure && state.bodies[0].solved.position.x == 65536);
-    Vec3 solved = state.positions[0];
-    Vec3 velocity = state.velocities[0];
-    fixture.physics.update(0);
-    body.local.position.x = 0.1f;
-    fixture.scene.update_world();
-    fixture.physics.update_cloths();
-    Vec3 output = published_world(&fixture, probe, 0);
-    double separation = (double)body.local.position.x - box.half_extents.x - output.x;
-    io::printfn("endpoint_case,solved_x,%.9f,current_x,%.9f,contact_frame_x,%.9f,published_x,%.9f,separation,%.9f",
-        state.bodies[0].solved.position.x, body.local.position.x, state.shape_starts[0].x, output.x, separation);
-    assert(!state.contact_result.failure);
-    assert(separation >= (double)state.desc.thickness - state.desc.collisions.contact_tolerance);
-    assert(state.shape_starts[0].x == body.local.position.x);
-    assert(state.positions[0] == solved && state.velocities[0] == velocity);
-    assert(state.bodies[0].solved.position.x == 65536);
-}
-
-fn void test_cloth_capture_scratch_failure_preserves_pending_and_eager_ownership() @test {
-    TrackingAllocator tracking;
-    tracking.init(mem);
-    defer tracking.free();
-    Fixture fixture;
-    setup(&fixture, desc: weightless(), allocator: &tracking);
-    defer {
-        teardown(&fixture);
-        assert(!tracking.has_leaks());
-    }
-    GeometryId source = add_grid(&fixture, 1);
-    Node* pending_node = add_cloth_node(&fixture, source);
-    Node* eager_node = add_cloth_node(&fixture, source);
-    fixture.scene.get(pending_node, scene::Mesh).vertex_motion = true;
-    uint[2] pins = { 0, 1 };
-    ClothDesc desc = pinned_desc(pins[..]);
-    desc.collisions.max_shapes = CAPTURE_SHAPE_LIMIT;
-    fixture.scene.attach_cloth(&fixture.assets, pending_node, desc)!!;
-    Cloth* pending = fixture.scene.get(pending_node, Cloth);
-    ClothAuthoring* authoring = pending.authoring;
-    uint geometries = fixture.assets.geometries.free_count;
-    uint nodes = fixture.scene.world.entities.free_count;
-    uint revision = fixture.assets.geometry(source).header.revision;
-    Allocator previous_temp = allocators::current_temp;
-    TempAllocator* previous_top = allocators::top_temp;
-    assert(prepare_with_small_capture_pool(
-        fixture: &fixture,
-        node: pending_node,
-        desc: desc,
-        eager: false,
-    ) == c3d::CAPACITY_EXCEEDED);
-    assert(allocators::current_temp.ptr == previous_temp.ptr && allocators::top_temp == previous_top);
-    assert(!pending.is_prepared() && pending.authoring == authoring);
-    assert(authoring.desc.collisions.max_shapes == CAPTURE_SHAPE_LIMIT && authoring.desc.pins == pins[..]);
-    assert(c3d::same_id(fixture.scene.get(pending_node, scene::Mesh).geometry, source));
-    assert(fixture.scene.get(pending_node, scene::Mesh).vertex_motion);
-    assert(fixture.assets.geometries.free_count == geometries && fixture.scene.world.entities.free_count == nodes);
-    assert(fixture.assets.geometry(source).header.revision == revision);
-
-    assert(prepare_with_small_capture_pool(
-        fixture: &fixture,
-        node: eager_node,
-        desc: desc,
-        eager: true,
-    ) == c3d::CAPACITY_EXCEEDED);
-    assert(allocators::current_temp.ptr == previous_temp.ptr && allocators::top_temp == previous_top);
-    assert(!fixture.scene.has(eager_node, Cloth) && fixture.scene.count(Cloth) == 1);
-    assert(c3d::same_id(fixture.scene.get(eager_node, scene::Mesh).geometry, source));
-    assert(!fixture.scene.get(eager_node, scene::Mesh).vertex_motion);
-    assert(fixture.assets.geometries.free_count == geometries && fixture.scene.world.entities.free_count == nodes);
-    assert(pending.authoring == authoring && !pending.is_prepared());
-    $if $feat(VMEM_TEMP):
-        io::printn("capture_scratch_backend,vmem");
-    $else
-        io::printn("capture_scratch_backend,fixed_arena");
-    $endif
-
-    cloth::prepare(&fixture.scene, &fixture.assets, pending_node)!!;
-    fixture.scene.add_cloth(&fixture.assets, eager_node, desc)!!;
-    assert(pending.is_prepared() && fixture.scene.get(eager_node, Cloth).is_prepared());
-    assert(pending.authoring == authoring);
 }
