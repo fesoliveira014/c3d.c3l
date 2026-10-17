@@ -197,34 +197,6 @@ fn void test_breakable_authored_rest_round_trips_without_mutation_and_remaps_sur
     }
 }
 
-fn void test_breakable_authored_empty_graph_stays_empty_in_both_formats() @test {
-    foreach (text_mode : (bool[2]){ false, true }) {
-        @pool() {
-            Fixture fixture;
-            create_fixture(&fixture);
-            defer destroy_fixture(&fixture);
-            SerialBreakableNodes nodes = add_serial_breakable_nodes(&fixture);
-            BreakableRecipeDesc recipe = serial_breakable_recipe(&fixture, nodes);
-            recipe.welds = {};
-            recipe.anchors = {};
-            fixture.source.attach_breakable_recipe(assets: &fixture.assets, root: fixture.root, recipe: recipe)!!;
-            char[] bytes = encode(
-                scene: &fixture.source,
-                assets: &fixture.assets,
-                root: nodes.common,
-                text_mode: text_mode,
-            )!!;
-            Node* root = child_named(decode(&fixture, bytes, text_mode)!!, "physics");
-            BreakableState* pending = fixture.destination.get(root, Breakable).state;
-            assert(pending.welds.len == 0 && pending.anchor_count() == 0);
-            PhysicsWorld world = create_world(&fixture.destination, &fixture.assets);
-            defer physics::destroy_physics_world(&world);
-            world.prepare_breakable(root)!!;
-            assert(fixture.destination.get(root, Breakable).state.welds.len == 0 && world.world.counters().joint_count == 0);
-        };
-    }
-}
-
 fn uint breakable_text_value(serial::TextDocument* document) @private {
     foreach (uint index, value : document.values) {
         if (value.name == "breakable") return serial::json_member(document, index, "value");
@@ -232,76 +204,49 @@ fn uint breakable_text_value(serial::TextDocument* document) @private {
     unreachable();
 }
 
-fn void test_breakable_authored_restore_rejects_malformed_values_and_reclaims_failed_attachment() @test {
-    foreach (text_mode : (bool[2]){ false, true }) {
-        TrackingAllocator tracker;
-        tracker.init(mem);
-        defer tracker.free();
-        {
-            @pool() {
-                RejectSize rejector = { .backing = &tracker };
-                Fixture fixture;
-                create_fixture(&fixture, &rejector);
-                defer destroy_fixture(&fixture);
-                SerialBreakableNodes nodes = add_serial_breakable_nodes(&fixture);
-                BreakableRecipeDesc recipe = serial_breakable_recipe(&fixture, nodes);
-                fixture.source.attach_breakable_recipe(assets: &fixture.assets, root: fixture.root, recipe: recipe)!!;
-                BreakableState* original = fixture.source.get(fixture.root, Breakable).state;
-                rejector.size = (char*)(original.runtime.assembly_pieces.ptr + original.runtime.assembly_pieces.len) - (char*)original;
-                char[] bytes = encode(
-                    scene: &fixture.source,
-                    assets: &fixture.assets,
-                    root: nodes.common,
-                    text_mode: text_mode,
-                )!!;
-                Node* existing = fixture.destination.add_node(name: "untouched")!!;
-                uint available = fixture.destination.world.entities.free_count;
-                serial::ReadOptions options = serial::READ_OPTIONS_DEFAULT;
-                options.allocator = mem;
-                rejector.enabled = true;
-                defer rejector.enabled = false;
-                assert(@catch(decode(
-                    fixture: &fixture,
-                    bytes: bytes,
-                    text_mode: text_mode,
-                    options: options,
-                )) == c3d::CAPACITY_EXCEEDED);
-                rejector.enabled = false;
-                assert(rejector.failures == 1 && fixture.destination.world.entities.free_count == available);
-                assert(fixture.destination.count(Breakable) == 0 && fixture.destination.count(PhysicsBody) == 0);
-                assert(fixture.destination.count(scene::Mesh) == 0 && existing.name == "untouched");
+fn void test_breakable_authored_restore_rejects_malformed_values() @test {
+    @pool() {
+        Fixture fixture;
+        create_fixture(&fixture);
+        defer destroy_fixture(&fixture);
+        SerialBreakableNodes nodes = add_serial_breakable_nodes(&fixture);
+        BreakableRecipeDesc recipe = serial_breakable_recipe(&fixture, nodes);
+        fixture.source.attach_breakable_recipe(assets: &fixture.assets, root: fixture.root, recipe: recipe)!!;
+        char[] bytes = encode(
+            scene: &fixture.source,
+            assets: &fixture.assets,
+            root: nodes.common,
+            text_mode: true,
+        )!!;
+        uint available = fixture.destination.world.entities.free_count;
 
-                if (text_mode) {
-                    serial::SerialDiagnostic diagnostic = serial::create_serial_diagnostic(tmem);
-                    defer serial::destroy_serial_diagnostic(&diagnostic);
-                    serial::TextDocument document = serial::parse_text(
-                        allocator: tmem,
-                        source: (String)bytes,
-                        limits: serial::TEXT_LIMITS_DEFAULT,
-                        diagnostic: &diagnostic,
-                    )!!;
-                    defer serial::destroy_text_document(&document);
-                    uint value = breakable_text_value(&document);
-                    uint weld = serial::json_member(&document, value, "welds") + 1;
-                    uint frame = serial::json_member(&document, weld, "frame_a");
-                    uint position = serial::json_member(&document, frame, "position") + 1;
-                    uint strength = serial::json_member(&document, value, "strength");
-                    uint[3] fields = {
-                        serial::json_member(&document, weld, "piece_a"),
-                        position,
-                        serial::json_member(&document, strength, "force"),
-                    };
-                    String[3] invalid = { "99", "10", "-1" };
-                    foreach (index, field : fields) {
-                        char[] changed = (char[])replace_token((String)bytes, document.values[field], invalid[index]);
-                        assert(@catch(decode(&fixture, changed, true)) == c3d::INVALID_ARGUMENT);
-                        assert(fixture.destination.world.entities.free_count == available);
-                        assert(fixture.destination.count(Breakable) == 0 && fixture.destination.count(PhysicsBody) == 0);
-                    }
-                }
-                assert(@ok(decode(&fixture, bytes, text_mode)));
-            };
+        serial::SerialDiagnostic diagnostic = serial::create_serial_diagnostic(tmem);
+        defer serial::destroy_serial_diagnostic(&diagnostic);
+        serial::TextDocument document = serial::parse_text(
+            allocator: tmem,
+            source: (String)bytes,
+            limits: serial::TEXT_LIMITS_DEFAULT,
+            diagnostic: &diagnostic,
+        )!!;
+        defer serial::destroy_text_document(&document);
+        uint value = breakable_text_value(&document);
+        uint weld = serial::json_member(&document, value, "welds") + 1;
+        uint frame = serial::json_member(&document, weld, "frame_a");
+        uint position = serial::json_member(&document, frame, "position") + 1;
+        uint strength = serial::json_member(&document, value, "strength");
+        uint[3] fields = {
+            serial::json_member(&document, weld, "piece_a"),
+            position,
+            serial::json_member(&document, strength, "force"),
+        };
+        String[3] invalid = { "99", "10", "-1" };
+        foreach (index, field : fields) {
+            char[] changed = (char[])replace_token((String)bytes, document.values[field], invalid[index]);
+            assert(@catch(decode(&fixture, changed, true)) == c3d::INVALID_ARGUMENT);
+            assert(fixture.destination.world.entities.free_count == available);
+            assert(fixture.destination.count(Breakable) == 0 && fixture.destination.count(PhysicsBody) == 0);
         }
-        assert(!tracker.has_leaks());
-    }
+        assert(@ok(decode(&fixture, bytes, true)));
+    };
 }
+

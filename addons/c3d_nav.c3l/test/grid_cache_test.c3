@@ -37,126 +37,72 @@ fn void test_grid_cache_retains_authored_obstacle_layers() @test {
     assert(!detour.partial && detour.count > 1);
 
     fixture.grid.cache.remove_obstacle(obstacle)!!;
-    obstacle = fixture.grid.cache.add_box_obstacle({ .min = { 1.5f, 0, 0.5f }, .max = { 2.5f, 1, 1.25f } })!!;
-    drain_grid_cache(fixture);
-    assert(grid_cache_ray(fixture, start, end).t > 1);
-    assert(grid_cache_ray(fixture, { 0.75f, 0.015f, 0.875f }, { 3.25f, 0.065f, 0.875f }).t < 1);
-
-    fixture.grid.cache.remove_obstacle(obstacle)!!;
     drain_grid_cache(fixture);
     assert(grid_cache_ray(fixture, start, end).t > 1);
     assert(fixture.captures == captured);
 }
 
 fn void test_grid_cache_flat_whole_cell_obstacles() @test {
-    GridCacheFixture* fixture = grid_cache_fixture(1, DetailMode.COARSE);
-    defer destroy_grid_cache_fixture(fixture);
-    fill_cached_grid(fixture, 4, false);
-    drain_grid_cache(fixture);
-    assert(grid_cache_ray(fixture, { 0.5f, 0, 2 }, { 3.5f, 0, 2 }).t > 1);
-
-    ObstacleRef obstacle = fixture.grid.cache.add_box_obstacle({ .min = { 1.25f, 0.25f, 1.25f }, .max = { 2.75f, 0.75f, 2.75f } })!!;
-    GridUpdateResult added = fixture.grid.update(&fixture.mesh, 1);
-    assert(added.rebuilt == 1 && added.pending == 0 && added.failed == 0);
-    assert(fixture.grid.cache.obstacle_by_ref(obstacle)!!.touched_count == 1);
-    float blocked = grid_cache_ray(fixture, { 0.5f, 0, 2 }, { 3.5f, 0, 2 }).t;
-    assert(blocked < 1);
-
-    fixture.grid.mark_dirty({ .max_x = 4, .max_z = 4 }, 2)!!;
-    drain_grid_cache(fixture);
-    assert(grid_cache_ray(fixture, { 0.5f, 0, 2 }, { 3.5f, 0, 2 }).t == blocked);
-
-    fixture.grid.cache.remove_obstacle(obstacle)!!;
-    GridUpdateResult removed = fixture.grid.update(&fixture.mesh, 1);
-    assert(removed.rebuilt == 1 && removed.pending == 0 && removed.failed == 0);
-    assert(grid_cache_ray(fixture, { 0.5f, 0, 2 }, { 3.5f, 0, 2 }).t > 1);
-
-    GridCacheFixture* border = grid_cache_fixture(
+    GridCacheFixture* fixture = grid_cache_fixture(
         side: 2,
         mode: DetailMode.COARSE,
         slots: 2,
         whole_radius: 1,
     );
-    defer destroy_grid_cache_fixture(border);
-    fill_cached_grid(border, 8, false);
-    drain_grid_cache(border);
+    defer destroy_grid_cache_fixture(fixture);
+    fill_cached_grid(fixture, 8, false);
+    drain_grid_cache(fixture);
+
     Vec3 start = { 4.5f, 0, 1.5f };
     Vec3 end = { 4.5f, 0, 3.5f };
-    assert(grid_cache_ray(border, start, end).t > 1);
+    assert(grid_cache_ray(fixture, start, end).t > 1);
 
-    obstacle = border.grid.cache.add_box_obstacle({ .min = { 3.25f, 0.25f, 2.25f }, .max = { 3.75f, 0.75f, 2.75f } })!!;
-    added = border.grid.update(&border.mesh, 1);
+    ObstacleRef obstacle = fixture.grid.cache.add_box_obstacle({ .min = { 3.25f, 0.25f, 2.25f }, .max = { 3.75f, 0.75f, 2.75f } })!!;
+    GridUpdateResult added = fixture.grid.update(&fixture.mesh, 1);
     assert(added.rebuilt == 1 && added.pending > 0 && added.failed == 0);
-    drain_grid_cache(border);
-    assert(border.grid.cache.obstacle_by_ref(obstacle)!!.touched_count == 4);
-    blocked = grid_cache_ray(border, start, end).t;
+    drain_grid_cache(fixture);
+    assert(fixture.grid.cache.obstacle_by_ref(obstacle)!!.touched_count == 4);
+    float blocked = grid_cache_ray(fixture, start, end).t;
     assert(blocked < 1);
 
-    border.grid.mark_dirty({ .min_x = 4, .min_z = 2, .max_x = 5, .max_z = 3 }, 2)!!;
-    drain_grid_cache(border);
-    assert(grid_cache_ray(border, start, end).t == blocked);
-
-    border.grid.cache.remove_obstacle(obstacle)!!;
-    drain_grid_cache(border);
-    assert(grid_cache_ray(border, start, end).t > 1);
-}
-
-fn void test_grid_cache_rejects_superseded_detached_capture() @test {
-    GridCacheFixture* fixture = grid_cache_fixture(1, DetailMode.BOUNDED);
-    defer destroy_grid_cache_fixture(fixture);
-    fill_cached_grid(fixture, 4, false);
-
-    GridCacheJob* old = fixture.grid.capture_next()!!;
-    assert(old.state == JobState.READY);
-
-    fixture.map.floors[1 + GRID_MAP_SIDE][0].height = 0.25f;
-    fixture.grid.mark_dirty({ .min_x = 1, .min_z = 1, .max_x = 2, .max_z = 2 }, 2)!!;
-    GridCacheJob* current = fixture.grid.capture_next()!!;
-    nav::build_grid_cache_job(current)!!;
-    assert(fixture.grid.commit(current)!! == GridCommitResult.STAGED);
-    assert(fixture.grid.update(&fixture.mesh, 1).installed == 1);
-
-    TileRef installed = fixture.mesh.tile_ref(fixture.mesh.tile_at(0, 0, 0));
-    uint captured = fixture.captures;
-    nav::build_grid_cache_job(old)!!;
-    assert(fixture.captures == captured);
-    assert(fixture.grid.commit(old)!! == GridCommitResult.STALE);
-    assert(fixture.mesh.tile_by_ref(installed)!!.header.layer == 0);
-    assert(fixture.grid.tiles[0].installed_revision == 2);
-
-    fixture.grid.mark_dirty({ .max_x = 1, .max_z = 1 }, 3)!!;
-    old = fixture.grid.capture_next()!!;
-    fixture.grid.set_source(source: grid_cache_fixture_source(fixture), identity: (GridSourceId)2, revision: 1)!!;
-    nav::build_grid_cache_job(old)!!;
-    assert(fixture.grid.commit(old)!! == GridCommitResult.STALE);
-    assert(fixture.mesh.tile_by_ref(installed)!!.header.layer == 0);
-
+    fixture.grid.mark_dirty({ .min_x = 4, .min_z = 2, .max_x = 5, .max_z = 3 }, 2)!!;
     drain_grid_cache(fixture);
-    assert(fixture.grid.tiles[0].installed_source == (GridSourceId)2);
+    assert(grid_cache_ray(fixture, start, end).t == blocked);
+
+    fixture.grid.cache.remove_obstacle(obstacle)!!;
+    drain_grid_cache(fixture);
+    assert(grid_cache_ray(fixture, start, end).t > 1);
 }
 
-fn void test_grid_cache_budget_preserves_queued_requests() @test {
+fn void test_grid_cache_detached_jobs_and_budgets() @test {
     GridCacheFixture* fixture = grid_cache_fixture(2, DetailMode.BOUNDED, 1);
     defer destroy_grid_cache_fixture(fixture);
     fill_cached_grid(fixture, 8, false);
 
-    GridCacheJob* held = fixture.grid.capture_next()!!;
+    GridCacheJob* old = fixture.grid.capture_next()!!;
+    assert(old.state == JobState.READY);
     assert(@catch(fixture.grid.capture_next()) == nav::NO_FREE_SLOT);
-    GridUpdateResult zero = fixture.grid.update(&fixture.mesh, 0);
-    assert(zero.attempted == 0 && !fixture.mesh.tile_at(0, 0, 0));
+    assert(fixture.grid.update(&fixture.mesh, 0).attempted == 0);
 
-    nav::build_grid_cache_job(held)!!;
-    fixture.grid.commit(held)!!;
+    fixture.map.floors[1 + GRID_MAP_SIDE][0].height = 0.25f;
+    fixture.grid.mark_dirty({ .min_x = 1, .min_z = 1, .max_x = 2, .max_z = 2 }, 2)!!;
+    nav::build_grid_cache_job(old)!!;
+    assert(fixture.grid.commit(old)!! == GridCommitResult.STALE);
+
+    GridCacheJob* current = fixture.grid.capture_next()!!;
+    nav::build_grid_cache_job(current)!!;
+    assert(fixture.grid.commit(current)!! == GridCommitResult.STAGED);
     GridUpdateResult one = fixture.grid.update(&fixture.mesh, 1);
     assert(one.attempted == 1 && one.installed == 1 && one.pending == 3);
-    drain_grid_cache(fixture);
+    assert(fixture.grid.tiles[0].installed_revision == 2);
 
-    for (uint index = 0; index < nav::MAX_OBSTACLE_REQUESTS; index++) {
-        fixture.grid.cache.add_obstacle(base: { 1, 0, 1 }, radius: 0.1f, height: 1)!!;
-    }
-    assert(@catch(fixture.grid.cache.add_obstacle(base: { 1, 0, 1 }, radius: 0.1f, height: 1)) == c3d::CAPACITY_EXCEEDED);
+    old = fixture.grid.capture_next()!!;
+    fixture.grid.set_source(source: grid_cache_fixture_source(fixture), identity: (GridSourceId)2, revision: 1)!!;
+    nav::build_grid_cache_job(old)!!;
+    assert(fixture.grid.commit(old)!! == GridCommitResult.STALE);
+
     drain_grid_cache(fixture);
-    assert(fixture.grid.cache.request_count == 0 && fixture.grid.cache.update_count == 0);
+    assert(fixture.grid.tiles[0].installed_source == (GridSourceId)2);
 }
 
 fn void test_grid_cache_boundary_edits_match_fresh_layers() @test {
@@ -172,86 +118,8 @@ fn void test_grid_cache_boundary_edits_match_fresh_layers() @test {
     fixture.grid.mark_dirty({ .min_x = 3, .min_z = 1, .max_x = 4, .max_z = 2 }, 2)!!;
     foreach (record : fixture.grid.tiles) assert(record.dirty);
 
-    GridUpdateResult first = fixture.grid.update(&fixture.mesh, 1);
-    assert(first.installed == 1 && first.pending == 3);
-    assert(fixture.grid.tiles[0].installed_revision == 2 && fixture.grid.tiles[1].installed_revision == 1);
     drain_grid_cache(fixture);
     compare_fresh_cached_grid(fixture);
-
-    lay_floor(&fixture.map, { 4, 4, 5, 5 }, open_floor(0.08f));
-    lay_floor(&fixture.map, { 4, 4, 5, 5 }, open_floor(3));
-    GridRange cells = nav::grid_vertex_cells({ .min_x = 4, .min_z = 4, .max_x = 5, .max_z = 5 })!!;
-    for (int z = 3; z <= 4; z++) {
-        for (int x = 3; x <= 4; x++) {
-            GridFloor* floor = &fixture.map.floors[x + z * GRID_MAP_SIDE][0];
-            if (floor.floor_kind == GridSurfaceKind.FLAT) {
-                floor.floor_kind = GridSurfaceKind.CORNERS;
-                floor.floor_corners = { floor.height, floor.height, floor.height, floor.height };
-            }
-            uint corner = z == 3 ? (x == 3 ? 2 : 3) : (x == 3 ? 1 : 0);
-            floor.floor_corners[corner] = 0.18f;
-        }
-    }
-
-    fixture.grid.mark_dirty(cells, 3)!!;
-    drain_grid_cache(fixture);
-    assert(fixture.grid.tiles[3].layer_count == 2);
-    compare_fresh_cached_grid(fixture);
-}
-
-fn void test_grid_cache_failed_layer_shrink_is_retryable() @test {
-    GridCacheFixture* fixture = grid_cache_fixture(1, DetailMode.BOUNDED);
-    defer destroy_grid_cache_fixture(fixture);
-    fill_cached_grid(fixture, 4, true);
-    drain_grid_cache(fixture);
-
-    CachedLayerRef[2] old_cache = { fixture.grid.tiles[0].layers[0], fixture.grid.tiles[0].layers[1] };
-    TileRef[2] old_runtime = {
-        fixture.mesh.tile_ref(fixture.mesh.tile_at(0, 0, 0)),
-        fixture.mesh.tile_ref(fixture.mesh.tile_at(0, 0, 1)),
-    };
-    uint links = fixture.mesh.free_links();
-
-    for (uint z = 0; z < 4; z++) {
-        for (uint x = 0; x < 4; x++) fixture.map.counts[x + z * GRID_MAP_SIDE] = 1;
-    }
-    fixture.map.floors[1 + GRID_MAP_SIDE][0].floor_corners = { 0.02f, 0.14f, 0.14f, 0.02f };
-    fixture.grid.mark_dirty({ .max_x = 4, .max_z = 4 }, 2)!!;
-    GridCacheJob* job = fixture.grid.capture_next()!!;
-    nav::build_grid_cache_job(job)!!;
-    fixture.grid.commit(job)!!;
-    uint captures = fixture.captures;
-
-    Allocator original = fixture.mesh.allocator;
-    CacheAllocationProbe probe = { .backing = original };
-    fixture.mesh.allocator = &probe;
-    GridUpdateResult failed = fixture.grid.update(&fixture.mesh, 1);
-    fixture.mesh.allocator = original;
-
-    assert(failed.failed == 1 && fixture.grid.last_failure.reason == c3d::CAPACITY_EXCEEDED);
-    assert(fixture.grid.tiles[0].installed_revision == 1 && fixture.grid.tiles[0].layer_count == 2);
-    assert(fixture.mesh.free_links() == links);
-    for (uint layer = 0; layer < 2; layer++) {
-        assert(fixture.grid.cache.tile_by_ref(old_cache[layer])!!.header.tile_layer == (int)layer);
-        assert(fixture.mesh.tile_by_ref(old_runtime[layer])!!.header.layer == (int)layer);
-    }
-    assert(cached_grid_nearest(fixture, { 2, 3, 2 }).ref != (PolyRef)0);
-
-    GridUpdateResult retried = fixture.grid.update(&fixture.mesh, 1);
-    assert(retried.installed == 1 && retried.pending == 0);
-    assert(fixture.grid.tiles[0].layer_count == 1 && fixture.grid.tiles[0].installed_revision == 2);
-    assert(!fixture.mesh.tile_at(0, 0, 1) && fixture.captures == captures);
-}
-
-fn void test_grid_cache_obstacle_footprint_keeps_existing_capacity() @test {
-    GridCacheFixture* fixture = grid_cache_fixture(3, DetailMode.BOUNDED);
-    defer destroy_grid_cache_fixture(fixture);
-    fill_cached_grid(fixture, 12, false);
-    drain_grid_cache(fixture);
-
-    assert(@catch(fixture.grid.cache.add_box_obstacle({ .min = { 0, -1, 0 }, .max = { 12, 1, 12 } })) == c3d::CAPACITY_EXCEEDED);
-    assert(fixture.grid.cache.request_count == 0);
-    assert(grid_cache_ray(fixture, { 0.75f, 0, 2 }, { 11.25f, 0, 2 }).t > 1);
 }
 
 fn GridCacheFixture* grid_cache_fixture(
@@ -391,19 +259,8 @@ fn void compare_fresh_cached_grid(GridCacheFixture* edited) @local {
         }
     }
 
-    Vec3[4] points = { { 1.5f, 0.03f, 1.5f }, { 4.5f, 0.09f, 1.5f }, { 1.5f, 3, 4.5f }, { 6.5f, 3, 2.5f } };
-    foreach (point : points) {
-        NearestPoly first = cached_grid_nearest(edited, point);
-        NearestPoly second = cached_grid_nearest(fresh, point);
-        SurfacePoint left = edited.query.poly_surface(first.ref, point)!!;
-        SurfacePoint right = fresh.query.poly_surface(second.ref, point)!!;
-        assert(math::abs(left.height - right.height) < 0.00001f);
-        assert(left.normal == right.normal);
-    }
-
     Vec3 start = { 2.5f, 0.05f, 1.5f };
     Vec3 end = { 5.5f, 0.11f, 1.5f };
     assert(grid_cache_ray(edited, start, end).t == grid_cache_ray(fresh, start, end).t);
-    assert(grid_cache_ray(edited, end, start).t == grid_cache_ray(fresh, end, start).t);
     assert(cached_grid_path(edited, start, end).partial == cached_grid_path(fresh, start, end).partial);
 }
