@@ -434,19 +434,23 @@ fn void? build_contact_scene(Demo* demo) @local {
         GeometryId prism_id = demo.assets.add_geometry(&prism)!;
         GeometryId ramp_id = demo.assets.add_geometry(&ramp)!;
         GeometryId field_id = demo.assets.add_geometry(&field)!;
+
         Vec3[5] positions = { { -12, 0, 0 }, { -6, 0, 0 }, { 0, 0, 0 }, { 6, 0, 0 }, { 14, 0, 0 } };
         ColliderDesc[5] colliders;
         colliders[0] = physics::default_collider_desc(BOX);
         colliders[0].half_extents = { 0.75f, 0.5f, 0.6f };
         colliders[0].local.position = { 0.2f, 0.3f, 0 };
         colliders[0].local.rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, (float)math::PI / 2);
+
         colliders[1] = physics::default_collider_desc(HULL);
         colliders[1].geometry = prism_id;
         colliders[1].local.position = { 0.25f, 0.25f, 0 };
         colliders[1].local.scale = { 1, 2, 1 };
+
         colliders[2] = physics::default_collider_desc(MESH);
         colliders[2].geometry = ramp_id;
         colliders[2].local.scale = { 1, 2, 1 };
+
         float[16] heights;
         foreach (index, &height : heights) *height = (float)(index % 4);
         char[9] materials;
@@ -457,6 +461,7 @@ fn void? build_contact_scene(Demo* demo) @local {
         colliders[3].local.scale = { 1, 0.25f, 1 };
         colliders[3].material_indices = materials[..];
         colliders[3].face_materials = (&surface)[:1];
+
         CompoundChild[2] children;
         children[0] = physics::default_compound_child(BOX);
         children[0].half_extents = { 0.35f, 0.15f, 0.4f };
@@ -469,6 +474,7 @@ fn void? build_contact_scene(Demo* demo) @local {
         children[1].local.scale = { 0.5f, 2, 1 };
         colliders[4] = physics::default_collider_desc(COMPOUND);
         colliders[4].children = children[..];
+
         GeometryId[4] geometry_ids = { cube_id, prism_id, ramp_id, field_id };
         foreach (index, &collider : colliders) {
             Node* body = demo.scene.add_node(name: "contact body")!;
@@ -489,6 +495,7 @@ fn void? build_contact_scene(Demo* demo) @local {
             demo.drape_bodies[index] = body.id;
         }
         demo.drape_bodies[5] = demo.drape_bodies[4];
+
         float[5][6] bounds = {
             { -12.45f, -11.15f, -0.4f, 0.4f, 1.2f }, { -6.15f, -5.35f, -0.4f, 0.4f, 1.25f },
             { -0.6f, 0.6f, -0.4f, 0.4f, 0.45f }, { 6.15f, 6.85f, 0.15f, 0.85f, 0.35f },

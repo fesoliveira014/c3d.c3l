@@ -137,7 +137,7 @@ fn GridTileBuilder? create_grid_tile_builder(
     GridSourceDesc source,
     usz scratch_bytes = DEFAULT_GRID_SCRATCH_BYTES,
 ) {
-    if ((!source.floors && !source.capture) || (source.floors && source.capture)) return c3d::INVALID_ARGUMENT~;
+    if ((source.floors == null) == (source.capture == null)) return c3d::INVALID_ARGUMENT~;
     if (!math::is_finite(source.origin.x) || !math::is_finite(source.origin.z)) return c3d::INVALID_ARGUMENT~;
     if (!math::is_finite(source.min_height) || !math::is_finite(source.max_height)) return c3d::INVALID_ARGUMENT~;
     if (source.min_height >= source.max_height) return c3d::INVALID_ARGUMENT~;

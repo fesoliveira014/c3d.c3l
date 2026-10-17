@@ -104,7 +104,8 @@ fn usz? NavMesh.snapshot_size(&self) {
         if (self.tiles_at(tile.header.x, tile.header.z, layers[..]) > MAX_TILES_AT) {
             return INCOMPATIBLE_NAV_SNAPSHOT~;
         }
-        usz record_size = snapshot_tile_size(tile.header) ?? c3d::CAPACITY_EXCEEDED~!;
+        usz? record_size = snapshot_tile_size(tile.header);
+        if (catch record_size) return c3d::CAPACITY_EXCEEDED~;
         if (record_size > (usz)sz::max - SNAPSHOT_DIRECTORY_BYTES
             || record_size + SNAPSHOT_DIRECTORY_BYTES > (usz)sz::max - size) {
             return c3d::CAPACITY_EXCEEDED~;
@@ -129,7 +130,8 @@ fn usz? NavMesh.write_snapshot(&self, char[] output, char[] scratch) {
 
     ArenaAllocator arena;
     arena.init(scratch);
-    MeshTile*[] ordered = alloc::alloc_array_try(&arena, MeshTile*, (sz)count) ?? c3d::CAPACITY_EXCEEDED~!;
+    MeshTile*[]? ordered = alloc::alloc_array_try(&arena, MeshTile*, (sz)count);
+    if (catch ordered) return c3d::CAPACITY_EXCEEDED~;
     usz cursor;
     foreach (&tile : self.tiles) if (tile.header) ordered[cursor++] = tile;
     sort::quicksort(ordered, &compare_snapshot_tiles);
@@ -159,6 +161,7 @@ fn usz? NavMesh.write_snapshot(&self, char[] output, char[] scratch) {
         writer.integer(length, ulong::size);
         record_offset += length;
     }
+
     foreach (tile : ordered) write_snapshot_tile(&writer, tile);
     return size;
 }
@@ -339,6 +342,7 @@ fn usz? snapshot_native_size(TileHeader* header) @local {
 fn SnapshotHeader? read_snapshot_header(char[] input, NavMeshDesc destination) @local {
     if (input.len < SNAPSHOT_HEADER_BYTES) return INVALID_NAV_SNAPSHOT~;
     foreach (index, value : SNAPSHOT_MAGIC) if (input[index] != value) return INVALID_NAV_SNAPSHOT~;
+
     SnapshotReader reader = { .bytes = input, .offset = SNAPSHOT_MAGIC.len };
     uint marker = reader.word()!;
     if (marker != SNAPSHOT_ENDIAN_MARKER && marker != SNAPSHOT_SWAPPED_MARKER) return INVALID_NAV_SNAPSHOT~;
@@ -346,15 +350,18 @@ fn SnapshotHeader? read_snapshot_header(char[] input, NavMeshDesc destination) @
     if (reader.word()! != NAV_SNAPSHOT_VERSION || reader.word()! != SNAPSHOT_HEADER_BYTES) {
         return INCOMPATIBLE_NAV_SNAPSHOT~;
     }
+
     uint tile_count = reader.word()!;
     if (reader.integer(ulong::size)! != input.len) return INVALID_NAV_SNAPSHOT~;
     destination.origin = reader.vector()!;
     destination.tile_width = reader.real()!;
     destination.tile_height = reader.real()!;
     reader.zeros(SNAPSHOT_HEADER_PADDING_BYTES)!;
+
     if (!finite_point(destination.origin) || !math::is_finite(destination.tile_width)
         || !math::is_finite(destination.tile_height)
         || destination.tile_width <= 0 || destination.tile_height <= 0) return INVALID_NAV_SNAPSHOT~;
+
     return { .desc = destination, .tile_count = tile_count, .big_endian = reader.big_endian };
 }
 
@@ -364,6 +371,7 @@ fn SnapshotRecord? read_snapshot_record(SnapshotReader* reader) @local {
     record.key.z = reader.signed_word()!;
     record.key.layer = reader.signed_word()!;
     reader.zeros(uint::size)!;
+
     ulong offset = reader.integer(ulong::size)!;
     ulong length = reader.integer(ulong::size)!;
     if (offset > reader.bytes.len || length > reader.bytes.len - offset) return INVALID_NAV_SNAPSHOT~;
@@ -392,6 +400,7 @@ fn TileHeader? read_snapshot_tile_header(SnapshotReader* reader, NavPolyKey key)
     header.subdivision = reader.word()!;
     uint explicit_corners = reader.word()!;
     uint build_bv_tree = reader.word()!;
+
     if (detail_mode > (uint)DetailMode.BOUNDED || clearance_mode > (uint)ClearanceMode.SUB_CELL
         || explicit_corners > 1 || build_bv_tree > 1 || header.off_mesh_base == 0
         || (ulong)header.off_mesh_base + header.off_mesh_count >= 1ul << POLY_BITS
@@ -399,12 +408,14 @@ fn TileHeader? read_snapshot_tile_header(SnapshotReader* reader, NavPolyKey key)
         || (header.off_mesh_count && (ulong)header.off_mesh_base + header.off_mesh_count > MESH_NULL_INDEX)) {
         return INVALID_NAV_SNAPSHOT~;
     }
+
     header.detail_mode = (DetailMode)detail_mode;
     header.clearance_mode = (ClearanceMode)clearance_mode;
     header.explicit_corners = explicit_corners != 0;
     header.poly_count = header.off_mesh_base + header.off_mesh_count;
     header.vert_count = ground_vertices + header.off_mesh_count * 2;
     header.bv_node_count = build_bv_tree ? header.off_mesh_base * 2 - 1 : 0;
+
     header.walkable_height = reader.real()!;
     header.walkable_radius = reader.real()!;
     header.walkable_climb = reader.real()!;
@@ -416,10 +427,12 @@ fn TileHeader? read_snapshot_tile_header(SnapshotReader* reader, NavPolyKey key)
     header.clearance_max_error = reader.real()!;
     header.detail_origin = reader.vector()!;
     foreach (&correction : header.detail_origin_correction) *correction = reader.precise()!;
+
     if (header.detail_mode == DetailMode.COARSE
         && (header.detail_vertex_count || header.detail_triangle_count || header.detail_portal_count)) {
         return INVALID_NAV_SNAPSHOT~;
     }
+
     return header;
 }
 
@@ -429,6 +442,7 @@ fn SnapshotHeader? check_snapshot(NavMesh* destination, char[] input, NavSnapsho
     usz expected = snapshot_append_size(SNAPSHOT_HEADER_BYTES, header.tile_count, SNAPSHOT_DIRECTORY_BYTES)!;
     if (expected > input.len) return INVALID_NAV_SNAPSHOT~;
     if (header.tile_count > destination.tiles.len) return c3d::CAPACITY_EXCEEDED~;
+
     usz staged_bytes = snapshot_append_size(0, destination.tiles.len, MeshTile::size)!;
     staged_bytes = snapshot_append_size(staged_bytes, destination.lookup.len, MeshTile*::size)!;
     staged_bytes = snapshot_append_size(staged_bytes, destination.links.len, Link::size)!;
@@ -445,20 +459,24 @@ fn SnapshotHeader? check_snapshot(NavMesh* destination, char[] input, NavSnapsho
         SnapshotRecord record = read_snapshot_record(&directory)!;
         if (record.offset != expected || record.length < SNAPSHOT_TILE_HEADER_BYTES
             || (index && compare_snapshot_keys(previous, record.key) >= 0)) return INVALID_NAV_SNAPSHOT~;
+
         layers = index && previous.x == record.key.x && previous.z == record.key.z ? layers + 1 : 1;
         if (layers > MAX_TILES_AT) return INVALID_NAV_SNAPSHOT~;
         previous = record.key;
+
         SnapshotReader reader = {
             .bytes = input[record.offset:record.length],
             .big_endian = header.big_endian,
         };
         TileHeader tile = read_snapshot_tile_header(&reader, record.key)!;
         if (snapshot_tile_size(&tile)! != record.length) return INVALID_NAV_SNAPSHOT~;
+
         usz native_bytes = snapshot_native_size(&tile)!;
         if (native_bytes > limits.max_staged_bytes - staged_bytes) return c3d::CAPACITY_EXCEEDED~;
         staged_bytes += native_bytes;
         expected += record.length;
     }
+
     if (expected != input.len) return INVALID_NAV_SNAPSHOT~;
     return header;
 }
@@ -492,6 +510,7 @@ fn void write_snapshot_tile(SnapshotWriter* writer, MeshTile* tile) @local {
 
     foreach (vertex : tile.verts[:ground_vertices]) writer.vector(vertex);
     writer.pad();
+
     foreach (poly : tile.polys[:header.off_mesh_base]) {
         for (usz index = 0; index < MAX_VERTS_PER_POLY; index++) {
             writer.integer(index < poly.vert_count ? poly.verts[index] : 0, ushort::size);
@@ -505,6 +524,7 @@ fn void write_snapshot_tile(SnapshotWriter* writer, MeshTile* tile) @local {
         writer.offset += uint::size;
     }
     writer.pad();
+
     uint query_bounds_count = snapshot_query_bounds_count(header);
     if (query_bounds_count) {
         foreach (node : tile.bv_tree) {
@@ -519,8 +539,10 @@ fn void write_snapshot_tile(SnapshotWriter* writer, MeshTile* tile) @local {
         writer.offset += query_bounds_count * SNAPSHOT_QUERY_BOUNDS_BYTES;
     }
     writer.pad();
+
     foreach (corner : tile.detail_corners) writer.vector(corner);
     writer.pad();
+
     foreach (detail : tile.details) {
         writer.integer(detail.vertex_base, uint::size);
         writer.integer(detail.vertex_count, uint::size);
@@ -528,13 +550,16 @@ fn void write_snapshot_tile(SnapshotWriter* writer, MeshTile* tile) @local {
         writer.integer(detail.triangle_count, uint::size);
     }
     writer.pad();
+
     foreach (vertex : tile.detail_vertices) writer.vector(vertex);
     writer.pad();
+
     foreach (triangle : tile.detail_triangles) {
         foreach (vertex : triangle.vertices) writer.integer(vertex, ushort::size);
         writer.integer(triangle.boundary_edges, ushort::size);
     }
     writer.pad();
+
     foreach (portal : tile.detail_portals) {
         writer.integer(portal.polygon, uint::size);
         writer.integer(portal.edge, uint::size);
@@ -547,6 +572,7 @@ fn void write_snapshot_tile(SnapshotWriter* writer, MeshTile* tile) @local {
         writer.integer(portal.target, uint::size);
     }
     writer.pad();
+
     foreach (connection : tile.off_mesh) {
         writer.vector(connection.start);
         writer.vector(connection.end);
@@ -573,14 +599,18 @@ fn char[]? read_snapshot_tile(
     SnapshotReader reader = { .bytes = bytes, .big_endian = big_endian };
     TileHeader header = read_snapshot_tile_header(&reader, key)!;
     usz size = snapshot_native_size(&header)!;
-    char[] data = alloc::new_array_try(allocator, char, (sz)size) ?? c3d::CAPACITY_EXCEEDED~!;
+    char[]? data = alloc::new_array_try(allocator, char, (sz)size);
+    if (catch data) return c3d::CAPACITY_EXCEEDED~;
     defer catch alloc::free(allocator, data.ptr);
+
     *(TileHeader*)data.ptr = header;
     MeshTile tile;
     carve_tile_data(&tile, data);
+
     uint ground_vertices = header.vert_count - header.off_mesh_count * 2;
     foreach (&vertex : tile.verts[:ground_vertices]) *vertex = reader.vector()!;
     reader.pad()!;
+
     foreach (&poly : tile.polys[:header.off_mesh_base]) {
         foreach (&vertex : poly.verts) *vertex = (ushort)reader.integer(ushort::size)!;
         foreach (&neighbour : poly.neighbours) *neighbour = (ushort)reader.integer(ushort::size)!;
@@ -599,6 +629,7 @@ fn char[]? read_snapshot_tile(
         reader.zeros(uint::size)!;
     }
     reader.pad()!;
+
     BvNode[] query_bounds = tile.bv_tree[:snapshot_query_bounds_count(&header)];
     foreach (index, &bounds : query_bounds) {
         foreach (&minimum : bounds.min) *minimum = (ushort)reader.integer(ushort::size)!;
@@ -606,8 +637,10 @@ fn char[]? read_snapshot_tile(
         bounds.index = (int)index;
     }
     reader.pad()!;
+
     foreach (&corner : tile.detail_corners) *corner = reader.vector()!;
     reader.pad()!;
+
     foreach (&detail : tile.details) {
         detail.vertex_base = reader.word()!;
         detail.vertex_count = reader.word()!;
@@ -615,13 +648,16 @@ fn char[]? read_snapshot_tile(
         detail.triangle_count = reader.word()!;
     }
     reader.pad()!;
+
     foreach (&vertex : tile.detail_vertices) *vertex = reader.vector()!;
     reader.pad()!;
+
     foreach (&triangle : tile.detail_triangles) {
         foreach (&vertex : triangle.vertices) *vertex = (ushort)reader.integer(ushort::size)!;
         triangle.boundary_edges = (ushort)reader.integer(ushort::size)!;
     }
     reader.pad()!;
+
     foreach (&portal : tile.detail_portals) {
         portal.polygon = reader.word()!;
         portal.edge = reader.word()!;
@@ -636,6 +672,7 @@ fn char[]? read_snapshot_tile(
         portal.target = reader.word()!;
     }
     reader.pad()!;
+
     foreach (index, &connection : tile.off_mesh) {
         connection.start = reader.vector()!;
         connection.end = reader.vector()!;
@@ -652,6 +689,7 @@ fn char[]? read_snapshot_tile(
         connection.flags = (char)reader.integer(char::size)!;
         connection.side = (char)reader.integer(char::size)!;
         reader.zeros(SNAPSHOT_CONNECTION_PADDING_BYTES)!;
+
         uint vertex = ground_vertices + (uint)index * 2;
         tile.verts[vertex] = connection.start;
         tile.verts[vertex + 1] = connection.end;

@@ -95,6 +95,7 @@ fn void? evaluate_paths(ClothState* state, ContactInterval time) @private {
                         scale: time,
                     )!,
                 )!;
+
             case OFFSET:
                 ContactInterval progress = physics::contact_divide(
                     numerator: physics::contact_subtract(time, physics::contact_value(node.begin))!,
@@ -109,6 +110,7 @@ fn void? evaluate_paths(ClothState* state, ContactInterval time) @private {
                     first: state.path_values[node.parent],
                     second: physics::contact_vector_scale(physics::contact_vector(node.end), progress)!,
                 )!;
+
             case PLANE:
                 value = state.path_values[node.parent];
                 ContactIntervals normal = physics::contact_vector(node.normal);
@@ -215,6 +217,7 @@ fn void? append_plane_path(
             second: physics::contact_multiply(physics::contact_value(offset), length)!,
         )!.max;
     }
+
     evaluate_paths(state, physics::contact_value(0))!;
     ContactIntervals normal = physics::contact_vector(node.normal);
     ContactIntervals centre = physics::contact_vector((ContactVector){});

@@ -469,15 +469,18 @@ fn void? replace_cached_runtime(
     char[][] blobs,
 ) @private {
     if (blobs.len > MAX_TILES_AT) return c3d::CAPACITY_EXCEEDED~;
+
     char[][MAX_TILES_AT] runtime;
     uint count;
     defer catch {
         foreach (blob : runtime[:count]) alloc::free(mesh.allocator, blob.ptr);
     }
+
     foreach (blob : blobs) {
         char[] data = build_cached_runtime_blob(cache, blob, mesh)!;
         if (data.len) runtime[count++] = data;
     }
+
     replace_tile_data_at(mesh: mesh, tile_x: x, tile_z: z, owned_data: runtime[:count])!;
 }
 
@@ -547,6 +550,7 @@ fn uint? update_cached_group(TileCache* cache, NavMesh* mesh, uint queue_index) 
         finish_cached_rebuild(cache, stale[..]);
         return 0;
     }
+
     int x = found.header.tile_x;
     int z = found.header.tile_z;
     CachedLayerRef[MAX_LAYERS_AT] refs;
@@ -707,7 +711,9 @@ fn void? validate_cached_layer_blob(TileCache* cache, char[] data) @private {
         || header.width == 0 || header.height == 0 || header.width > cache.desc.width || header.height > cache.desc.height
         || header.detail_mode != cache.desc.detail_mode || !detail_finite_vertex(header.bounds.min)
         || !detail_finite_vertex(header.bounds.max) || header.hmin > header.hmax) return c3d::INVALID_ARGUMENT~;
+
     if (catch excuse = read_tile_cache_layer(data, cache.scratch)) return c3d::INVALID_ARGUMENT~;
+
     if (header.source_kind == CachedSourceKind.GRID) {
         CachedGridReference reference = cached_grid_reference(data)!;
         NavBuildConfig config = reference.header.config;

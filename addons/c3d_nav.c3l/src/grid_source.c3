@@ -63,9 +63,7 @@ fn GridSourceDesc? grid_height_source(GridHeightView* view, float min_height, fl
         area: view.area,
     )!;
     if (view.width < 2 || view.height < 2 || view.row_stride < view.width) return c3d::INVALID_ARGUMENT~;
-    if (view.width > int::max || view.height > int::max) return c3d::INVALID_ARGUMENT~;
     if (!math::is_finite(view.height_scale) || !math::is_finite(view.height_offset)) return c3d::INVALID_ARGUMENT~;
-    if (view.row_stride > (usz::max - view.width) / (usz)(view.height - 1)) return c3d::INVALID_ARGUMENT~;
     if ((usz)(view.height - 1) * view.row_stride + view.width > view.samples.len) return c3d::INVALID_ARGUMENT~;
 
     return {
@@ -124,6 +122,7 @@ fn GridRange? grid_dirty_tiles(
     long first_z = grid_floor_divide((long)cells.min_z - border_size, tile_size);
     long past_x = grid_floor_divide((long)cells.max_x + border_size - 1, tile_size) + 1;
     long past_z = grid_floor_divide((long)cells.max_z + border_size - 1, tile_size) + 1;
+
     GridRange result = {
         .min_x = (int)math::clamp(first_x, (long)extent.min_x, (long)extent.max_x),
         .min_z = (int)math::clamp(first_z, (long)extent.min_z, (long)extent.max_z),
@@ -163,25 +162,16 @@ fn GridRange? grid_world_cells(Aabb bounds, Vec3 origin, float cell_size) {
         || !math::is_finite(bounds.max.x) || !math::is_finite(bounds.max.z)) return c3d::INVALID_ARGUMENT~;
     if (bounds.min.x > bounds.max.x || bounds.min.z > bounds.max.z) return c3d::INVALID_ARGUMENT~;
 
-    PrecisionInterval size = precision_point(cell_size)!;
-    PrecisionInterval first_x = precision_divide(
-        precision_subtract(precision_point(bounds.min.x)!, precision_point(origin.x)!)!, size,
-    )!;
-    PrecisionInterval first_z = precision_divide(
-        precision_subtract(precision_point(bounds.min.z)!, precision_point(origin.z)!)!, size,
-    )!;
-    PrecisionInterval last_x = precision_divide(
-        precision_subtract(precision_point(bounds.max.x)!, precision_point(origin.x)!)!, size,
-    )!;
-    PrecisionInterval last_z = precision_divide(
-        precision_subtract(precision_point(bounds.max.z)!, precision_point(origin.z)!)!, size,
-    )!;
+    double first_x = ((double)bounds.min.x - origin.x) / cell_size;
+    double first_z = ((double)bounds.min.z - origin.z) / cell_size;
+    double last_x = ((double)bounds.max.x - origin.x) / cell_size;
+    double last_z = ((double)bounds.max.z - origin.z) / cell_size;
 
     // Closed edits touch both cells when an endpoint lies on their shared edge.
-    double min_x = math::ceil(first_x.min) - 1;
-    double min_z = math::ceil(first_z.min) - 1;
-    double max_x = math::floor(last_x.max) + 1;
-    double max_z = math::floor(last_z.max) + 1;
+    double min_x = math::ceil(first_x) - 1;
+    double min_z = math::ceil(first_z) - 1;
+    double max_x = math::floor(last_x) + 1;
+    double max_z = math::floor(last_z) + 1;
     if (min_x < int::min || min_z < int::min || max_x > int::max || max_z > int::max) {
         return c3d::CAPACITY_EXCEEDED~;
     }
@@ -228,8 +218,8 @@ fn usz? capture_height_view(
         if (!math::is_finite(height)) return c3d::INVALID_ARGUMENT~;
         corners[index] = height;
     }
-    out_floors[0] = height_grid_floor(corners, view.diagonal, view.area);
 
+    out_floors[0] = height_grid_floor(corners, view.diagonal, view.area);
     return 1;
 }
 
@@ -253,8 +243,8 @@ fn usz? capture_height_sampler(
         corners[index] = sample.height;
     }
     if (!present) return 0;
-    out_floors[0] = height_grid_floor(corners, sampler.diagonal, sampler.area);
 
+    out_floors[0] = height_grid_floor(corners, sampler.diagonal, sampler.area);
     return 1;
 }
 

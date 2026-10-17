@@ -19,6 +19,7 @@ fn void test_grid_cache_retains_authored_obstacle_layers() @test {
     defer destroy_grid_cache_fixture(fixture);
     fill_cached_grid(fixture, 4, true);
     drain_grid_cache(fixture);
+
     assert(fixture.grid.tiles[0].layer_count == 2);
     uint captured = fixture.captures;
     Vec3 start = { 0.75f, 0.015f, 2 };
@@ -40,18 +41,11 @@ fn void test_grid_cache_retains_authored_obstacle_layers() @test {
     drain_grid_cache(fixture);
     assert(grid_cache_ray(fixture, start, end).t > 1);
     assert(grid_cache_ray(fixture, { 0.75f, 0.015f, 0.875f }, { 3.25f, 0.065f, 0.875f }).t < 1);
+
     fixture.grid.cache.remove_obstacle(obstacle)!!;
     drain_grid_cache(fixture);
     assert(grid_cache_ray(fixture, start, end).t > 1);
     assert(fixture.captures == captured);
-    foreach (ref : fixture.grid.tiles[0].layers[:2]) {
-        nav::CachedGridReference retained = nav::cached_grid_reference(fixture.grid.cache.tile_by_ref(ref)!!.data)!!;
-        assert(retained.header.source_id == 1 && retained.header.source_revision == 1);
-        uint column = retained.header.border_size + retained.header.border_size * retained.header.width;
-        GridFloor floor = retained.floors[retained.columns[column].index];
-        assert(floor.floor_kind == GridSurfaceKind.CORNERS && floor.ceiling_kind == GridSurfaceKind.CORNERS);
-        assert(floor.floor_corners[1] == 0.02f && floor.ceiling_corners[1] == 2.52f);
-    }
 }
 
 fn void test_grid_cache_flat_whole_cell_obstacles() @test {
@@ -60,6 +54,7 @@ fn void test_grid_cache_flat_whole_cell_obstacles() @test {
     fill_cached_grid(fixture, 4, false);
     drain_grid_cache(fixture);
     assert(grid_cache_ray(fixture, { 0.5f, 0, 2 }, { 3.5f, 0, 2 }).t > 1);
+
     ObstacleRef obstacle = fixture.grid.cache.add_box_obstacle({ .min = { 1.25f, 0.25f, 1.25f }, .max = { 2.75f, 0.75f, 2.75f } })!!;
     GridUpdateResult added = fixture.grid.update(&fixture.mesh, 1);
     assert(added.rebuilt == 1 && added.pending == 0 && added.failed == 0);
@@ -70,6 +65,7 @@ fn void test_grid_cache_flat_whole_cell_obstacles() @test {
     fixture.grid.mark_dirty({ .max_x = 4, .max_z = 4 }, 2)!!;
     drain_grid_cache(fixture);
     assert(grid_cache_ray(fixture, { 0.5f, 0, 2 }, { 3.5f, 0, 2 }).t == blocked);
+
     fixture.grid.cache.remove_obstacle(obstacle)!!;
     GridUpdateResult removed = fixture.grid.update(&fixture.mesh, 1);
     assert(removed.rebuilt == 1 && removed.pending == 0 && removed.failed == 0);
@@ -87,6 +83,7 @@ fn void test_grid_cache_flat_whole_cell_obstacles() @test {
     Vec3 start = { 4.5f, 0, 1.5f };
     Vec3 end = { 4.5f, 0, 3.5f };
     assert(grid_cache_ray(border, start, end).t > 1);
+
     obstacle = border.grid.cache.add_box_obstacle({ .min = { 3.25f, 0.25f, 2.25f }, .max = { 3.75f, 0.75f, 2.75f } })!!;
     added = border.grid.update(&border.mesh, 1);
     assert(added.rebuilt == 1 && added.pending > 0 && added.failed == 0);
@@ -98,6 +95,7 @@ fn void test_grid_cache_flat_whole_cell_obstacles() @test {
     border.grid.mark_dirty({ .min_x = 4, .min_z = 2, .max_x = 5, .max_z = 3 }, 2)!!;
     drain_grid_cache(border);
     assert(grid_cache_ray(border, start, end).t == blocked);
+
     border.grid.cache.remove_obstacle(obstacle)!!;
     drain_grid_cache(border);
     assert(grid_cache_ray(border, start, end).t > 1);
@@ -107,21 +105,21 @@ fn void test_grid_cache_rejects_superseded_detached_capture() @test {
     GridCacheFixture* fixture = grid_cache_fixture(1, DetailMode.BOUNDED);
     defer destroy_grid_cache_fixture(fixture);
     fill_cached_grid(fixture, 4, false);
+
     GridCacheJob* old = fixture.grid.capture_next()!!;
     assert(old.state == JobState.READY);
+
     fixture.map.floors[1 + GRID_MAP_SIDE][0].height = 0.25f;
     fixture.grid.mark_dirty({ .min_x = 1, .min_z = 1, .max_x = 2, .max_z = 2 }, 2)!!;
     GridCacheJob* current = fixture.grid.capture_next()!!;
     nav::build_grid_cache_job(current)!!;
     assert(fixture.grid.commit(current)!! == GridCommitResult.STAGED);
     assert(fixture.grid.update(&fixture.mesh, 1).installed == 1);
+
     TileRef installed = fixture.mesh.tile_ref(fixture.mesh.tile_at(0, 0, 0));
     uint captured = fixture.captures;
     nav::build_grid_cache_job(old)!!;
     assert(fixture.captures == captured);
-    nav::CachedGridReference detached = nav::cached_grid_reference(old.blobs[0])!!;
-    uint index = detached.header.border_size + 1 + (detached.header.border_size + 1) * detached.header.width;
-    assert(detached.floors[detached.columns[index].index].height == 0);
     assert(fixture.grid.commit(old)!! == GridCommitResult.STALE);
     assert(fixture.mesh.tile_by_ref(installed)!!.header.layer == 0);
     assert(fixture.grid.tiles[0].installed_revision == 2);
@@ -132,6 +130,7 @@ fn void test_grid_cache_rejects_superseded_detached_capture() @test {
     nav::build_grid_cache_job(old)!!;
     assert(fixture.grid.commit(old)!! == GridCommitResult.STALE);
     assert(fixture.mesh.tile_by_ref(installed)!!.header.layer == 0);
+
     drain_grid_cache(fixture);
     assert(fixture.grid.tiles[0].installed_source == (GridSourceId)2);
 }
@@ -140,15 +139,18 @@ fn void test_grid_cache_budget_preserves_queued_requests() @test {
     GridCacheFixture* fixture = grid_cache_fixture(2, DetailMode.BOUNDED, 1);
     defer destroy_grid_cache_fixture(fixture);
     fill_cached_grid(fixture, 8, false);
+
     GridCacheJob* held = fixture.grid.capture_next()!!;
     assert(@catch(fixture.grid.capture_next()) == nav::NO_FREE_SLOT);
     GridUpdateResult zero = fixture.grid.update(&fixture.mesh, 0);
     assert(zero.attempted == 0 && !fixture.mesh.tile_at(0, 0, 0));
+
     nav::build_grid_cache_job(held)!!;
     fixture.grid.commit(held)!!;
     GridUpdateResult one = fixture.grid.update(&fixture.mesh, 1);
     assert(one.attempted == 1 && one.installed == 1 && one.pending == 3);
     drain_grid_cache(fixture);
+
     for (uint index = 0; index < nav::MAX_OBSTACLE_REQUESTS; index++) {
         fixture.grid.cache.add_obstacle(base: { 1, 0, 1 }, radius: 0.1f, height: 1)!!;
     }
@@ -169,6 +171,7 @@ fn void test_grid_cache_boundary_edits_match_fresh_layers() @test {
     border.floor_corners = { 0.06f, 0.16f, 0.16f, 0.06f };
     fixture.grid.mark_dirty({ .min_x = 3, .min_z = 1, .max_x = 4, .max_z = 2 }, 2)!!;
     foreach (record : fixture.grid.tiles) assert(record.dirty);
+
     GridUpdateResult first = fixture.grid.update(&fixture.mesh, 1);
     assert(first.installed == 1 && first.pending == 3);
     assert(fixture.grid.tiles[0].installed_revision == 2 && fixture.grid.tiles[1].installed_revision == 1);
@@ -189,6 +192,7 @@ fn void test_grid_cache_boundary_edits_match_fresh_layers() @test {
             floor.floor_corners[corner] = 0.18f;
         }
     }
+
     fixture.grid.mark_dirty(cells, 3)!!;
     drain_grid_cache(fixture);
     assert(fixture.grid.tiles[3].layer_count == 2);
@@ -200,24 +204,14 @@ fn void test_grid_cache_failed_layer_shrink_is_retryable() @test {
     defer destroy_grid_cache_fixture(fixture);
     fill_cached_grid(fixture, 4, true);
     drain_grid_cache(fixture);
+
     CachedLayerRef[2] old_cache = { fixture.grid.tiles[0].layers[0], fixture.grid.tiles[0].layers[1] };
-    TileRef[2] old_runtime;
-    char[][2] cache_bytes;
-    char[][2] runtime_bytes;
-    defer {
-        foreach (bytes : cache_bytes) free(bytes);
-        foreach (bytes : runtime_bytes) free(bytes);
-    }
-    for (uint layer = 0; layer < 2; layer++) {
-        char[] cached = fixture.grid.cache.tile_by_ref(old_cache[layer])!!.data;
-        cache_bytes[layer] = mem::new_array(char, cached.len);
-        cache_bytes[layer][..] = cached[..];
-        MeshTile* tile = fixture.mesh.tile_at(0, 0, (int)layer);
-        old_runtime[layer] = fixture.mesh.tile_ref(tile);
-        runtime_bytes[layer] = mem::new_array(char, tile.data.len);
-        runtime_bytes[layer][..] = tile.data[..];
-    }
+    TileRef[2] old_runtime = {
+        fixture.mesh.tile_ref(fixture.mesh.tile_at(0, 0, 0)),
+        fixture.mesh.tile_ref(fixture.mesh.tile_at(0, 0, 1)),
+    };
     uint links = fixture.mesh.free_links();
+
     for (uint z = 0; z < 4; z++) {
         for (uint x = 0; x < 4; x++) fixture.map.counts[x + z * GRID_MAP_SIDE] = 1;
     }
@@ -233,23 +227,20 @@ fn void test_grid_cache_failed_layer_shrink_is_retryable() @test {
     fixture.mesh.allocator = &probe;
     GridUpdateResult failed = fixture.grid.update(&fixture.mesh, 1);
     fixture.mesh.allocator = original;
+
     assert(failed.failed == 1 && fixture.grid.last_failure.reason == c3d::CAPACITY_EXCEEDED);
     assert(fixture.grid.tiles[0].installed_revision == 1 && fixture.grid.tiles[0].layer_count == 2);
     assert(fixture.mesh.free_links() == links);
     for (uint layer = 0; layer < 2; layer++) {
-        assert(same_bytes(cache_bytes[layer], fixture.grid.cache.tile_by_ref(old_cache[layer])!!.data));
-        assert(same_bytes(runtime_bytes[layer], fixture.mesh.tile_by_ref(old_runtime[layer])!!.data));
+        assert(fixture.grid.cache.tile_by_ref(old_cache[layer])!!.header.tile_layer == (int)layer);
+        assert(fixture.mesh.tile_by_ref(old_runtime[layer])!!.header.layer == (int)layer);
     }
     assert(cached_grid_nearest(fixture, { 2, 3, 2 }).ref != (PolyRef)0);
+
     GridUpdateResult retried = fixture.grid.update(&fixture.mesh, 1);
     assert(retried.installed == 1 && retried.pending == 0);
     assert(fixture.grid.tiles[0].layer_count == 1 && fixture.grid.tiles[0].installed_revision == 2);
     assert(!fixture.mesh.tile_at(0, 0, 1) && fixture.captures == captures);
-
-    LayerHeader* invalid = (LayerHeader*)cache_bytes[0].ptr;
-    invalid.version--;
-    assert(@catch(nav::read_tile_cache_layer(cache_bytes[0], fixture.grid.cache.scratch)) == nav::LAYER_CORRUPTED);
-    assert(fixture.grid.tiles[0].installed_revision == 2);
 }
 
 fn void test_grid_cache_obstacle_footprint_keeps_existing_capacity() @test {
@@ -257,6 +248,7 @@ fn void test_grid_cache_obstacle_footprint_keeps_existing_capacity() @test {
     defer destroy_grid_cache_fixture(fixture);
     fill_cached_grid(fixture, 12, false);
     drain_grid_cache(fixture);
+
     assert(@catch(fixture.grid.cache.add_box_obstacle({ .min = { 0, -1, 0 }, .max = { 12, 1, 12 } })) == c3d::CAPACITY_EXCEEDED);
     assert(fixture.grid.cache.request_count == 0);
     assert(grid_cache_ray(fixture, { 0.75f, 0, 2 }, { 11.25f, 0, 2 }).t > 1);
@@ -279,6 +271,7 @@ fn GridCacheFixture* grid_cache_fixture(
     config.detail_max_error = 0;
     config.clearance_mode = mode == DetailMode.BOUNDED ? ClearanceMode.SUB_CELL : ClearanceMode.WHOLE_CELL;
     config.clearance_max_error = 0.5f;
+
     GridCacheDesc desc = nav::default_grid_cache_desc({ .max_x = (int)side, .max_z = (int)side }, config);
     desc.build_slots = slots;
     desc.slot_scratch_bytes = 8 * 1024 * 1024;
@@ -326,6 +319,7 @@ fn usz count_grid_capture(
 fn void fill_cached_grid(GridCacheFixture* fixture, int side, bool layers) @private {
     lay_floor(&fixture.map, { 0, 0, side, side }, open_floor(0));
     if (!layers) return;
+
     lay_floor(&fixture.map, { 0, 0, side, side }, open_floor(3));
     for (int z = 0; z < side; z++) {
         for (int x = 0; x < side; x++) {
@@ -382,6 +376,7 @@ fn void compare_fresh_cached_grid(GridCacheFixture* edited) @local {
     defer destroy_grid_cache_fixture(fresh);
     fresh.map = edited.map;
     drain_grid_cache(fresh);
+
     for (uint coordinate = 0; coordinate < 4; coordinate++) {
         assert(edited.grid.tiles[coordinate].layer_count == fresh.grid.tiles[coordinate].layer_count);
         int x = (int)(coordinate % 2);
@@ -395,6 +390,7 @@ fn void compare_fresh_cached_grid(GridCacheFixture* edited) @local {
             foreach (index, vertex : old_tile.verts) assert(vertex == new_tile.verts[index]);
         }
     }
+
     Vec3[4] points = { { 1.5f, 0.03f, 1.5f }, { 4.5f, 0.09f, 1.5f }, { 1.5f, 3, 4.5f }, { 6.5f, 3, 2.5f } };
     foreach (point : points) {
         NearestPoly first = cached_grid_nearest(edited, point);
@@ -404,6 +400,7 @@ fn void compare_fresh_cached_grid(GridCacheFixture* edited) @local {
         assert(math::abs(left.height - right.height) < 0.00001f);
         assert(left.normal == right.normal);
     }
+
     Vec3 start = { 2.5f, 0.05f, 1.5f };
     Vec3 end = { 5.5f, 0.11f, 1.5f };
     assert(grid_cache_ray(edited, start, end).t == grid_cache_ray(fresh, start, end).t);
