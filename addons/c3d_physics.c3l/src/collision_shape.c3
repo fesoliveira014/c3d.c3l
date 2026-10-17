@@ -73,8 +73,10 @@ fn CollisionShape? create_collision_shape(Allocator allocator, CollisionCache* c
         if (!math::is_finite(scale) || scale == 0) return c3d::INVALID_ARGUMENT~;
     }
     if (desc.scale != (Vec3){ 1, 1, 1 }) return c3d::UNSUPPORTED~;
+
     CollisionShapeState state = { .allocator = allocator, .cache = cache.state };
     defer catch release_snapshot(state.cache, state.snapshot);
+
     Vec3 extents;
     switch (desc.kind) {
         case SPHERE:
@@ -123,6 +125,7 @@ fn CollisionShape? create_collision_shape(Allocator allocator, CollisionCache* c
         case COMPOUND:
             return c3d::UNSUPPORTED~;
     }
+
     if (desc.kind != HULL) state.bounds = { .min = -extents, .max = extents };
     CollisionShapeState* owned = alloc::new_try(allocator, CollisionShapeState) ?? c3d::CAPACITY_EXCEEDED~!;
     *owned = state;
@@ -155,6 +158,7 @@ fn void? check_collision_quantity(float value) @local {
 fn void? check_collision_hull_source(Vec3[] points) @private {
     if (points.len > MAX_COLLISION_SOURCE_POINTS) return c3d::CAPACITY_EXCEEDED~;
     if (points.len < 4) return b3::DEGENERATE_GEOMETRY~;
+
     Vec3 maximum;
     Vec3 lower = { float::max, float::max, float::max };
     Vec3 upper = -lower;
@@ -168,12 +172,14 @@ fn void? check_collision_hull_source(Vec3[] points) @private {
         lower = math::min(lower, shifted);
         upper = math::max(upper, shifted);
     }
+
     Vec3 span = upper - lower;
     check_collision_quantity(span.dot(span))!;
     Vec3 cross = { 2 * span.y * span.z, 2 * span.z * span.x, 2 * span.x * span.y };
     check_collision_quantity(cross.dot(cross))!;
     float longest = math::max(span.x, math::max(span.y, span.z));
     check_collision_quantity(1 / (longest * longest))!;
+
     float sum = maximum.x + maximum.y + maximum.z;
     float coordinate = math::max(maximum.x, math::max(maximum.y, maximum.z));
     float diagonal = COLLISION_SQRT3 * coordinate;
@@ -191,14 +197,17 @@ fn void? check_collision_hull(b3::HullData* hull) @local {
     check_collision_quantity(hull.inner_radius)!;
     if (!b3::is_valid_aabb(hull.aabb) || !b3::is_valid_matrix3(hull.central_inertia)
         || !b3::is_valid_vec3(hull.center)) return b3::DEGENERATE_GEOMETRY~;
+
     Vec3* points = (Vec3*)((char*)hull + hull.point_offset);
     foreach (point : points[:hull.vertex_count]) {
         if (!b3::is_valid_vec3(point)) return b3::DEGENERATE_GEOMETRY~;
     }
+
     b3::Plane* planes = (b3::Plane*)((char*)hull + hull.plane_offset);
     foreach (plane : planes[:hull.face_count]) {
         if (!b3::is_valid_plane(plane)) return b3::DEGENERATE_GEOMETRY~;
     }
+
     b3::HullFace* faces = (b3::HullFace*)((char*)hull + hull.face_offset);
     b3::HullHalfEdge* edges = (b3::HullHalfEdge*)((char*)hull + hull.edge_offset);
     foreach (face : faces[:hull.face_count]) {

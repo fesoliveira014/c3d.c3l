@@ -44,11 +44,13 @@ fn usz? CollisionShapeView.contacts(
         pose_b: pose_b,
     );
     if (found.count > output.len) return c3d::CAPACITY_EXCEEDED~;
+
     check_collision_vector(found.normal)!;
     foreach (point : found.points[:found.count]) {
         check_collision_vector(point.point)!;
         if (!math::is_finite(point.separation)) return c3d::UNSUPPORTED~;
     }
+
     foreach (index, point : found.points[:found.count]) {
         output[index] = {
             .point = point.point,
@@ -83,6 +85,7 @@ fn collide::Distance? CollisionShapeView.distance(
         b: other.state.shape,
         pose_b: pose_b,
     );
+
     check_collision_vector(found.point_a)!;
     check_collision_vector(found.point_b)!;
     check_collision_vector(found.normal)!;
@@ -112,6 +115,7 @@ fn collide::Impact? CollisionShapeView.cast(
         second: other.state,
         pose_b: pose_b,
     )!;
+
     Vec3 translation = translation_b - translation_a;
     check_collision_vector(translation)!;
     Vec3 local_translation = collision_rotate(pose_a.rotation.conjugate(), translation)!;
@@ -124,6 +128,7 @@ fn collide::Impact? CollisionShapeView.cast(
     )!;
     check_collision_world(self.state.bounds, pose_a, translation_a)!;
     check_collision_world(other.state.bounds, pose_b, translation_b)!;
+
     collide::Impact found = collide::cast(
         a: self.state.shape,
         pose_a: pose_a,
@@ -165,6 +170,7 @@ fn collide::Impact? CollisionShapeView.time_of_impact(
         second: other.state.bounds,
         sweep_b: sweep_b,
     )!;
+
     collide::Impact found = collide::time_of_impact(
         a: self.state.shape,
         sweep_a: sweep_a,
@@ -194,6 +200,7 @@ fn collide::ShapeRayHit? CollisionShapeView.ray_cast(
         || math::abs(direction.length() - 1) > collide::UNIT_SCALE_TOLERANCE) {
         return c3d::INVALID_ARGUMENT~;
     }
+
     check_collision_world(self.state.bounds, pose, {})!;
     Vec3 displacement = origin - pose.position;
     check_collision_vector(displacement)!;
@@ -203,6 +210,7 @@ fn collide::ShapeRayHit? CollisionShapeView.ray_cast(
     check_collision_vector(local_translation)!;
     Vec3 local_end = local_origin + local_translation;
     check_collision_vector(local_end)!;
+
     maths::Aabb ray_bounds = {
         .min = math::min(local_origin, local_end),
         .max = math::max(local_origin, local_end),
@@ -210,6 +218,7 @@ fn collide::ShapeRayHit? CollisionShapeView.ray_cast(
     check_collision_span(self.state.bounds, ray_bounds)!;
     check_collision_length(local_translation)!;
     check_collision_vector(origin + direction * max_distance)!;
+
     collide::ShapeRayHit found = collide::ray_cast(
         shape: self.state.shape,
         pose: pose,
@@ -355,6 +364,7 @@ fn void? check_collision_relative(
     Vec3 position = collision_rotate(inverse, displacement)!;
     Quat rotation = inverse.mul(pose_b.rotation).normalize();
     check_collision_vector(position + translation)!;
+
     maths::Aabb transformed = {
         .min = { float::max, float::max, float::max },
         .max = { -float::max, -float::max, -float::max },
@@ -371,6 +381,7 @@ fn void? check_collision_relative(
             transformed.max = math::max(transformed.max, math::max(start, end));
         }
     }
+
     Vec3 source_span = math::max(math::abs(first.max - first.min), math::abs(second.max - second.min));
     check_collision_span(first, transformed, source_span)!;
 }
@@ -385,6 +396,7 @@ fn void? check_collision_pair(
     check_collision_pose(pose_b)!;
     float radius = first.shape.radius + second.shape.radius;
     if (!math::is_finite(radius * radius)) return c3d::UNSUPPORTED~;
+
     check_collision_world(first.bounds, pose_a, {})!;
     check_collision_world(second.bounds, pose_b, {})!;
     check_collision_relative(
@@ -414,6 +426,7 @@ fn void? check_collision_sweeps(
     check_collision_vector(start_b)!;
     check_collision_vector(end_b)!;
     check_collision_vector(end_b - start_b)!;
+
     float first_radius = collision_rotation_bound(math::max(math::abs(first.min), math::abs(first.max)))!;
     float second_radius = collision_rotation_bound(math::max(math::abs(second.min), math::abs(second.max)))!;
     maths::Aabb moving_a = {
@@ -428,6 +441,7 @@ fn void? check_collision_sweeps(
     float relative_bound = collision_rotation_bound(span)!;
     Vec3 source_span = math::max(math::abs(first.max - first.min), math::abs(second.max - second.min));
     check_collision_contractions({ relative_bound, relative_bound, relative_bound }, source_span)!;
+
     Vec3[4] endpoints = {
         sweep_a.start.position,
         sweep_a.end.position,
@@ -455,6 +469,7 @@ fn float? collision_rotation_bound(Vec3 extent) @local {
     float coordinate = math::max(extent.x, math::max(extent.y, extent.z));
     double component = 1 + (double)collide::UNIT_SCALE_TOLERANCE;
     float rotation = collision_upper_bound(component * component)!;
+
     float product = collision_bound_product(rotation, coordinate)!;
     float first = collision_bound_sum(product, product)!;
     float second = collision_bound_sum(first, product)!;
@@ -462,6 +477,7 @@ fn float? collision_rotation_bound(Vec3 extent) @local {
     float third = collision_bound_sum(outer, outer)!;
     float native = collision_bound_sum(coordinate, collision_bound_sum(third, third)!)!;
     float standard = collision_bound_sum(third, third)!;
+
     float square = collision_bound_product(rotation, rotation)!;
     float twice = collision_bound_sum(square, square)!;
     float coefficient = collision_bound_sum(twice, twice)!;

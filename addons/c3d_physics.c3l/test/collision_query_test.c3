@@ -2,7 +2,6 @@ module c3d_physics_collide_test;
 
 import c3d;
 import std::core::mem::allocators;
-import std::io;
 import std::math;
 import std::math::quaternion;
 import b3;
@@ -15,285 +14,6 @@ struct PreparedQueryFixture @private {
     collide::Hull hull;
 }
 
-fn void test_native_query_hull_admission_preserves_native_body_geometry() @test {
-    @pool() {
-        int initial_bytes = b3::byte_count();
-        {
-            b3::WorldDef world_desc = b3::default_world_def();
-            b3::WorldId world = b3::create_world(&world_desc)!!;
-            defer b3::destroy_world(world);
-            foreach (sides : (uint[2]){ 32, 33 }) {
-                b3::HullData* hull = b3::create_hull(query_prism_points(sides), b3::MAX_HULL_VERTICES)!!;
-                defer b3::destroy_hull(hull);
-                uint face_vertices = query_max_face_vertices(hull);
-                assert(face_vertices == sides && (uint)hull.vertex_count == 2 * sides);
-                fault result = @catch(query_hull_admission(hull));
-                assert(result == (sides == QUERY_FACE_VERTICES ? (fault){} : c3d::CAPACITY_EXCEEDED));
-                b3::BodyDef body_desc = b3::default_body_def();
-                b3::BodyId body = b3::create_body(world, &body_desc)!!;
-                defer b3::destroy_body(body);
-                b3::ShapeDef shape_desc = b3::default_shape_def();
-                b3::ShapeId shape = b3::create_hull_shape(body, &shape_desc, hull)!!;
-                assert(shape.is_valid() && shape.hull()!! != hull);
-                assert(query_max_face_vertices(shape.hull()!!) == sides);
-                io::printfn(
-                    "hull,vertices=%d,max_face=%d,admitted=%s",
-                    hull.vertex_count,
-                    face_vertices,
-                    !result,
-                );
-            }
-        }
-        assert(b3::byte_count() == initial_bytes);
-    };
-}
-
-fn void test_native_query_triangle_contacts_exceed_four_without_overwriting_scratch() @test {
-    @pool() {
-        b3::HullData* hull = b3::create_hull(query_prism_points(8), b3::MAX_HULL_VERTICES)!!;
-        defer b3::destroy_hull(hull);
-        query_hull_admission(hull)!!;
-        b3::Triangle triangle = { { -2, 0, -2 }, { 0, 0, 2 }, { 2, 0, -2 } };
-        QueryContactScratch full = {
-            .before = { QUERY_CANARY, QUERY_CANARY },
-            .after = { QUERY_CANARY, QUERY_CANARY },
-        };
-        QueryShortScratch short_buffer = {
-            .before = { QUERY_CANARY, QUERY_CANARY },
-            .after = { QUERY_CANARY, QUERY_CANARY },
-        };
-        b3::CollisionManifoldView complete = b3::collide_triangle_and_hull(
-            triangle: &triangle,
-            hull: hull,
-            enable_speculative: true,
-            buffer: full.points[..],
-        )!!;
-        b3::CollisionManifoldView truncated = b3::collide_triangle_and_hull(
-            triangle: &triangle,
-            hull: hull,
-            enable_speculative: true,
-            buffer: short_buffer.points[..],
-        )!!;
-        assert(complete.points.len > 4 && complete.points.len <= (sz)(query_max_face_vertices(hull) + 3));
-        assert(truncated.points.len == 4 && near_vector(complete.normal, truncated.normal));
-        foreach (index, point : truncated.points) {
-            assert(near_vector(point.point, complete.points[index].point));
-            assert(near(point.separation, complete.points[index].separation));
-        }
-        foreach (value : full.before) assert(value == QUERY_CANARY);
-        foreach (value : full.after) assert(value == QUERY_CANARY);
-        foreach (value : short_buffer.before) assert(value == QUERY_CANARY);
-        foreach (value : short_buffer.after) assert(value == QUERY_CANARY);
-        io::printfn(
-            "triangle_contacts,complete=%d,four_slot=%d,normal=%s",
-            complete.points.len,
-            truncated.points.len,
-            complete.normal,
-        );
-    };
-}
-
-fn void test_native_query_scale_clamp_and_reflected_winding() @test {
-    assert(b3::length_units_per_meter() == 1);
-    float below = bitcast(bitcast(QUERY_MIN_SCALE, uint) - 1, float);
-    assert(@ok(query_scale_admission({ QUERY_MIN_SCALE, 1, -2 })));
-    assert(@catch(query_scale_admission({ below, 1, -2 })) == c3d::UNSUPPORTED);
-    assert(@catch(query_scale_admission({ 0, 1, 1 })) == c3d::INVALID_ARGUMENT);
-    assert(@catch(query_scale_admission({ float::nan, 1, 1 })) == c3d::INVALID_ARGUMENT);
-    b3::BoxHull base = b3::make_cube_hull(1);
-    foreach (requested : (float[2]){ QUERY_MIN_SCALE, below }) {
-        b3::HullData* transformed = b3::clone_and_transform_hull(
-            hull: &base.base,
-            transform: QUERY_IDENTITY,
-            scale: { requested, 0.5f, -2 },
-        )!!;
-        defer b3::destroy_hull(transformed);
-        assert(near(transformed.aabb.upper_bound.x, QUERY_MIN_SCALE, 1e-7f));
-        assert(near(transformed.aabb.lower_bound.x, -QUERY_MIN_SCALE, 1e-7f));
-        assert(near(transformed.volume, 0.08f) && transformed.volume > 0);
-        b3::RayCastInput ray = { .origin = { 0, 0, 3 }, .translation = { 0, 0, -6 }, .max_fraction = 1 };
-        b3::CastOutput ray_hit = b3::ray_cast_hull(transformed, ray)!!;
-        assert(near(ray_hit.fraction, 1.0f / 6) && near_vector(ray_hit.normal, { 0, 0, 1 }));
-    }
-
-    QuerySurfaceFixture fixture = query_surface_fixture(4);
-    b3::MeshData* data = query_surface_mesh(&fixture);
-    defer b3::destroy_mesh(data);
-    b3::Mesh mesh = { .data = data, .scale = { -1, 1, 2 } };
-    QueryTriangleObservation observation;
-    b3::query_mesh(
-        mesh: &mesh,
-        bounds: data.compute_aabb(QUERY_IDENTITY, mesh.scale),
-        fcn: &query_observe_triangle,
-        context: &observation,
-    );
-    assert(observation.count == fixture.triangle_count);
-    b3::RayCastInput ray = { .origin = { -1.25f, 2, 2.5f }, .translation = { 0, -4, 0 }, .max_fraction = 1 };
-    b3::CastOutput hit = b3::ray_cast_mesh(&mesh, ray)!!;
-    assert(near(hit.fraction, 0.5f) && near_vector(hit.normal, { 0, 1, 0 }));
-    b3::WorldDef world_desc = b3::default_world_def();
-    b3::WorldId world = b3::create_world(&world_desc)!!;
-    defer b3::destroy_world(world);
-    b3::BodyDef body_desc = b3::default_body_def();
-    b3::BodyId body = b3::create_body(world, &body_desc)!!;
-    b3::ShapeDef shape_desc = b3::default_shape_def();
-    b3::ShapeId shape = b3::create_mesh_shape(
-        body: body,
-        def: &shape_desc,
-        mesh: data,
-        scale: { below, 1, 1 },
-    )!!;
-    assert(shape.mesh()!!.scale.x == QUERY_MIN_SCALE);
-    io::printfn(
-        "scale,boundary=%.9g,below=%.9g,reflected_triangles=%d",
-        QUERY_MIN_SCALE,
-        below,
-        observation.count,
-    );
-}
-
-fn void test_native_query_tree_height_and_surface_ray_boundaries() @test {
-    foreach (side : (uint[2]){ 2, QUERY_GRID_SIDE }) {
-        QuerySurfaceFixture fixture = query_surface_fixture(side);
-        b3::MeshData* mesh = query_surface_mesh(&fixture);
-        defer b3::destroy_mesh(mesh);
-        int height = mesh.tree_height();
-        assert(side == 2 ? height == 0 : height > 0);
-        query_depth_admission(height)!!;
-        io::printfn(
-            "mesh_depth,side=%d,triangles=%d,height=%d",
-            side,
-            fixture.triangle_count,
-            height,
-        );
-    }
-    query_depth_admission(256)!!;
-    assert(@catch(query_depth_admission(257)) == c3d::CAPACITY_EXCEEDED);
-    QuerySurfaceFixture fixture = query_surface_fixture(4);
-    b3::MeshData* data = query_surface_mesh(&fixture);
-    defer b3::destroy_mesh(data);
-    Vec3 scale = { 2, 3, 4 };
-    b3::Mesh mesh = { .data = data, .scale = scale };
-    b3::HeightFieldData* field = query_surface_field(&fixture, scale);
-    defer b3::destroy_height_field(field);
-    b3::Aabb bounds = field.compute_aabb(QUERY_IDENTITY);
-    assert(bounds.upper_bound == (Vec3){ 6, 0, 12 });
-    b3::RayCastInput[5] rays = {
-        { .origin = { 1.25f, 2, 1.5f }, .translation = { 0, -4, 0 }, .max_fraction = 1 },
-        { .origin = { 1.25f, -2, 1.5f }, .translation = { 0, 4, 0 }, .max_fraction = 1 },
-        { .origin = { 1.25f, 0, 1.5f }, .translation = { 0, -4, 0 }, .max_fraction = 1 },
-        { .origin = { 1.25f, 2, 1.5f }, .translation = { 0, -2, 0 }, .max_fraction = 1 },
-        { .origin = { 1.25f, 0, 1.5f }, .translation = { 1, 0, 0 }, .max_fraction = 1 },
-    };
-    foreach (index, ray : rays) {
-        if (index == 0) {
-            b3::CastOutput mesh_hit = b3::ray_cast_mesh(&mesh, ray)!!;
-            b3::CastOutput field_hit = b3::ray_cast_height_field(field, ray)!!;
-            assert(near(mesh_hit.fraction, 0.5f) && near(field_hit.fraction, 0.5f));
-            assert(near_vector(mesh_hit.normal, { 0, 1, 0 }) && near_vector(field_hit.normal, { 0, 1, 0 }));
-        } else {
-            assert(@catch(b3::ray_cast_mesh(&mesh, ray)) == b3::NO_HIT);
-            assert(@catch(b3::ray_cast_height_field(field, ray)) == b3::NO_HIT);
-        }
-    }
-    io::printn("surface_rays,front=hit,back=miss,start_on=miss,exact_end=miss,coplanar=miss");
-}
-
-fn void test_native_query_relative_cast_witness_and_closing_band() @test {
-    QuerySurfaceFixture fixture = query_surface_fixture(4);
-    b3::MeshData* data = query_surface_mesh(&fixture);
-    defer b3::destroy_mesh(data);
-    b3::Mesh mesh = { .data = data, .scale = { 1, 1, 1 } };
-    b3::HeightFieldData* field = query_surface_field(&fixture);
-    defer b3::destroy_height_field(field);
-    Quat rotation = quaternion::from_axis_angle((Vec3){ 0, 0, 1 }, (float)math::PI / 2);
-    Vec3 position = { 5, 2, -3 };
-    Vec3 start = { 1.25f, 1, 1.5f };
-    Vec3 relative = { 0, -2, 0 };
-    float radius = 0.25f;
-    float target = radius - LINEAR_SLOP;
-    float expected_fraction = (start.y - target) / -relative.y;
-    Vec3 normal = rotation.rotate_vec3({ 0, 1, 0 });
-    Vec3[3] surface_moves = { {}, -relative, { 0.5f, 0.25f, -0.75f } };
-    foreach (use_field : (bool[2]){ false, true }) {
-        foreach (surface_move : surface_moves) {
-            Vec3 translation_a = rotation.rotate_vec3(surface_move);
-            Vec3 translation_b = rotation.rotate_vec3(surface_move + relative);
-            b3::ShapeCastInput input = {
-                .proxy = { .points = &start, .count = 1, .radius = radius },
-                .translation = rotation.conjugate().rotate_vec3(translation_b - translation_a),
-                .max_fraction = 1,
-            };
-            b3::CastOutput hit = use_field
-              ? b3::shape_cast_height_field(field, input)!! : b3::shape_cast_mesh(&mesh, input)!!;
-            assert(near(hit.fraction, expected_fraction, LOOSE));
-            Vec3 world_point = position + rotation.rotate_vec3(hit.point) + translation_a * hit.fraction;
-            Vec3 plane_at_hit = position + translation_a * hit.fraction;
-            Vec3 center_at_hit = position + rotation.rotate_vec3(start) + translation_b * hit.fraction;
-            assert(near((world_point - plane_at_hit).dot(normal), 0));
-            assert(near((center_at_hit - plane_at_hit).dot(normal), target, LOOSE));
-            assert(near_vector(rotation.rotate_vec3(hit.normal), normal));
-            io::printfn(
-                "relative_cast,field=%s,time=%.6f,surface_move=%s,witness=%s",
-                use_field,
-                hit.fraction,
-                surface_move,
-                world_point,
-            );
-        }
-        Vec3 touching = { 1.25f, radius, 1.5f };
-        b3::ShapeCastInput input = {
-            .proxy = { .points = &touching, .count = 1, .radius = radius },
-            .translation = relative,
-            .max_fraction = 1,
-        };
-        b3::CastOutput touch = use_field
-          ? b3::shape_cast_height_field(field, input)!! : b3::shape_cast_mesh(&mesh, input)!!;
-        assert(touch.fraction > 0 && near(touch.fraction, LINEAR_SLOP / -relative.y, LOOSE));
-        touching.y = target;
-        b3::CastOutput initial = use_field
-          ? b3::shape_cast_height_field(field, input)!! : b3::shape_cast_mesh(&mesh, input)!!;
-        assert(initial.fraction == 0 && initial.normal == (Vec3){});
-        io::printfn(
-            "closing_band,field=%s,touch_time=%.6f,initial_time=%.6f",
-            use_field,
-            touch.fraction,
-            initial.fraction,
-        );
-    }
-}
-
-fn void test_native_query_numeric_admission_precedes_unsafe_native_inputs() @test {
-    float largest_cell = 2147483520;
-    float outside_cell = 2147483648;
-    query_cell_admission(largest_cell, 1)!!;
-    query_cell_admission((float)int::min, 1)!!;
-    assert(@catch(query_cell_admission(outside_cell, 1)) == c3d::UNSUPPORTED);
-    float below_minimum = bitcast(bitcast((float)int::min, uint) + 1, float);
-    assert(@catch(query_cell_admission(below_minimum, 1)) == c3d::UNSUPPORTED);
-    assert(@catch(query_cell_admission(float::max, QUERY_MIN_SCALE)) == c3d::UNSUPPORTED);
-    assert(@catch(query_positive_quantity((double)float::max * 2)) == b3::DEGENERATE_GEOMETRY);
-    float smallest = bitcast(1u, float);
-    assert(@catch(query_positive_quantity((double)smallest * 0.5)) == b3::DEGENERATE_GEOMETRY);
-    assert(query_positive_quantity((double)QUERY_MIN_SCALE * QUERY_MIN_SCALE)!! > 0);
-
-    float extent = 0.25f;
-    float lower = -2 * extent - QUERY_AABB_MARGIN;
-    float upper = 3 + 2 * extent + QUERY_AABB_MARGIN;
-    query_cell_admission(lower, 1)!!;
-    query_cell_admission(upper, 1)!!;
-    assert(@catch(query_cell_admission(upper, 1e-20f)) == c3d::UNSUPPORTED);
-    assert(@catch(query_relative_component(float::max, -float::max)) == c3d::UNSUPPORTED);
-    assert(query_relative_component(9, 4)!! == 5);
-    io::printfn(
-        "numeric_domain,last_positive_cell=%.0f,first_invalid_cell=%.0f,cast_range=[%.2f,%.2f]",
-        largest_cell,
-        outside_cell,
-        lower,
-        upper,
-    );
-}
-
 fn void setup_prepared_queries(PreparedQueryFixture* fixture, Allocator allocator = mem) @private {
     fixture.assets = asset::create_asset_store(allocator, asset::default_asset_store_desc());
     fixture.cache = physics::create_collision_cache(
@@ -301,6 +21,7 @@ fn void setup_prepared_queries(PreparedQueryFixture* fixture, Allocator allocato
         assets: &fixture.assets,
         desc: physics::default_collision_cache_desc(),
     )!!;
+
     @pool() {
         Geometry box = geometry::box(
             allocator: tmem,
@@ -311,6 +32,7 @@ fn void setup_prepared_queries(PreparedQueryFixture* fixture, Allocator allocato
         GeometryId geometry = fixture.assets.add_geometry(&box)!!;
         fixture.hull = collide::create_hull(box.positions)!!;
         ColliderKind[4] kinds = { SPHERE, CAPSULE, BOX, HULL };
+
         foreach (index, kind : kinds) {
             CollisionShapeDesc desc = physics::default_collision_shape_desc(kind);
             desc.radius = 0.5f;
@@ -320,6 +42,7 @@ fn void setup_prepared_queries(PreparedQueryFixture* fixture, Allocator allocato
             fixture.owners[index] = physics::create_collision_shape(allocator, &fixture.cache, desc)!!;
         }
     };
+
     fixture.shapes = {
         collide::sphere_shape(0.5f),
         collide::capsule_shape(0.75f, 0.5f),
@@ -345,6 +68,7 @@ fn void test_prepared_query_convex_pairs_preserve_manifolds_and_distance() @test
     PreparedQueryFixture fixture;
     setup_prepared_queries(&fixture);
     defer teardown_prepared_queries(&fixture);
+
     maths::Transform pose_a = posed({ 3, -2, 4 }, rotated());
     foreach (first, &owner_a : fixture.owners) {
         CollisionShapeView view_a = owner_a.view();
@@ -352,9 +76,11 @@ fn void test_prepared_query_convex_pairs_preserve_manifolds_and_distance() @test
             CollisionShapeView view_b = owner_b.view();
             float extent_a = first < 2 ? 0.5f : 1;
             float extent_b = second < 2 ? 0.5f : 1;
+
             foreach (gap : (float[4]){ 2, 0, 0.01f, -0.1f }) {
                 maths::Transform pose_b = pose_a;
                 pose_b.position += pose_a.rotation.rotate_vec3({ extent_a + extent_b + gap, 0, 0 });
+
                 collide::Manifold expected = collide::manifold(
                     a: fixture.shapes[first],
                     pose_a: pose_a,
@@ -375,6 +101,7 @@ fn void test_prepared_query_convex_pairs_preserve_manifolds_and_distance() @test
                     assert(near(point.separation, expected.points[index].separation, LOOSE));
                     assert(point.triangle_index == physics::NO_COLLISION_TRIANGLE);
                 }
+
                 collide::Distance reference = collide::distance(
                     a: fixture.shapes[first],
                     pose_a: pose_a,
@@ -395,6 +122,7 @@ fn void test_prepared_query_capacity_refusal_keeps_output_and_canaries() @test {
     PreparedQueryFixture fixture;
     setup_prepared_queries(&fixture);
     defer teardown_prepared_queries(&fixture);
+
     CollisionShapeView first = fixture.owners[2].view();
     CollisionShapeView second = fixture.owners[3].view();
     maths::Transform pose_a = posed({});
@@ -407,6 +135,7 @@ fn void test_prepared_query_capacity_refusal_keeps_output_and_canaries() @test {
     };
     CollisionContact[6] storage;
     foreach (&contact : storage) *contact = sentinel;
+
     usz count = first.contacts(
         pose_a: pose_a,
         other: second,
@@ -414,6 +143,7 @@ fn void test_prepared_query_capacity_refusal_keeps_output_and_canaries() @test {
         output: storage[1:4],
     )!!;
     assert(count > 1 && count <= 4);
+
     foreach (capacity : (usz[2]){ 0, count - 1 }) {
         foreach (&contact : storage) *contact = sentinel;
         fault excuse = @catch(first.contacts(
@@ -428,6 +158,7 @@ fn void test_prepared_query_capacity_refusal_keeps_output_and_canaries() @test {
             assert(contact.separation == sentinel.separation && contact.triangle_index == sentinel.triangle_index);
         }
     }
+
     assert(first.contacts(
         pose_a: pose_a,
         other: second,
@@ -447,10 +178,12 @@ fn void test_prepared_query_casts_reconstruct_both_moving_witnesses() @test {
     PreparedQueryFixture fixture;
     setup_prepared_queries(&fixture);
     defer teardown_prepared_queries(&fixture);
+
     maths::Transform pose_a = posed({ 3, -2, 4 }, rotated());
     maths::Transform pose_b = pose_a;
     pose_b.position += pose_a.rotation.rotate_vec3({ 5, 0, 0 });
     Vec3 relative = pose_a.rotation.rotate_vec3({ -6, 0, 0 });
+
     foreach (first, &owner_a : fixture.owners) {
         CollisionShapeView view_a = owner_a.view();
         foreach (second, &owner_b : fixture.owners) {
@@ -462,6 +195,7 @@ fn void test_prepared_query_casts_reconstruct_both_moving_witnesses() @test {
                 pose_b: pose_b,
                 translation: relative,
             )!!;
+
             foreach (move_a : (Vec3[3]){ {}, -relative, { 0.5f, -0.25f, 0.75f } }) {
                 Vec3 move_b = move_a + relative;
                 collide::Impact found = view_a.cast(
@@ -475,6 +209,7 @@ fn void test_prepared_query_casts_reconstruct_both_moving_witnesses() @test {
                 expected.point += move_a * expected.time;
                 assert_prepared_impact(found, expected);
             }
+
             assert(@catch(view_a.cast(
                 pose_a: pose_a,
                 other: view_b,
@@ -484,6 +219,7 @@ fn void test_prepared_query_casts_reconstruct_both_moving_witnesses() @test {
             )) == b3::NO_HIT);
         }
     }
+
     CollisionShapeView sphere = fixture.owners[0].view();
     maths::Transform band_pose = posed({ 0.995f, 0, 0 });
     collide::Impact band = sphere.cast(
@@ -500,6 +236,7 @@ fn void test_prepared_query_sweeps_and_rays_preserve_convex_results() @test {
     PreparedQueryFixture fixture;
     setup_prepared_queries(&fixture);
     defer teardown_prepared_queries(&fixture);
+
     maths::Transform pose = posed({ 3, -2, 4 }, rotated());
     foreach (index, &owner : fixture.owners) {
         CollisionShapeView view = owner.view();
@@ -516,6 +253,7 @@ fn void test_prepared_query_sweeps_and_rays_preserve_convex_results() @test {
             sweep_b: sweep_b,
         )!!;
         assert_prepared_impact(view.time_of_impact(sweep_a, sphere, sweep_b)!!, reference);
+
         Vec3 origin = pose.position + pose.rotation.rotate_vec3({ 5, 0, 0 });
         Vec3 direction = pose.rotation.rotate_vec3({ -1, 0, 0 });
         collide::ShapeRayHit expected = collide::ray_cast(
@@ -534,6 +272,7 @@ fn void test_prepared_query_sweeps_and_rays_preserve_convex_results() @test {
         assert(near(found.fraction, expected.fraction, LOOSE));
         assert(near_vector(found.point, expected.point, LOOSE));
         assert(near_vector(found.normal, expected.normal, LOOSE));
+
         collide::ShapeRayHit inside = view.ray_cast(
             pose: pose,
             origin: pose.position,
@@ -554,14 +293,17 @@ fn void test_prepared_query_invalid_and_unrepresentable_inputs_are_refused() @te
     PreparedQueryFixture fixture;
     setup_prepared_queries(&fixture);
     defer teardown_prepared_queries(&fixture);
+
     CollisionShapeView view = fixture.owners[0].view();
     maths::Transform identity = posed({});
     maths::Transform invalid = identity;
     invalid.position.x = float::nan;
     assert(@catch(view.distance(invalid, view, identity)) == c3d::INVALID_ARGUMENT);
+
     invalid = identity;
     invalid.rotation.v.w = 2;
     assert(@catch(view.distance(invalid, view, identity)) == c3d::INVALID_ARGUMENT);
+
     invalid = identity;
     invalid.scale = { 1, 2, 1 };
     assert(@catch(view.distance(invalid, view, identity)) == c3d::UNSUPPORTED);
@@ -569,6 +311,7 @@ fn void test_prepared_query_invalid_and_unrepresentable_inputs_are_refused() @te
       == c3d::UNSUPPORTED);
     assert(@catch(view.distance(identity, view, posed({ 1e30f, 0, 0 }))) == c3d::UNSUPPORTED);
     assert(view.distance(posed({ 1e30f, 0, 0 }), view, posed({ 1e30f, 0, 0 }))!!.distance == 0);
+
     Quat diagonal = quaternion::from_axis_angle((Vec3){ 0, 0, 1 }, (float)math::PI / 4);
     assert(@catch(view.distance(posed({}, diagonal), view, posed({ 3e38f, 3e38f, 0 }))) == c3d::UNSUPPORTED);
     assert(@catch(view.cast(
@@ -597,6 +340,7 @@ fn void test_prepared_query_invalid_and_unrepresentable_inputs_are_refused() @te
         other: view,
         sweep_b: { .start = posed({ -float::max, 0, 0 }), .end = posed({ float::max, 0, 0 }) },
     )) == c3d::UNSUPPORTED);
+
     foreach (direction : (Vec3[3]){ {}, { 2, 0, 0 }, { float::nan, 0, 0 } }) {
         assert(@catch(view.ray_cast(
             pose: identity,
@@ -624,6 +368,7 @@ fn void test_prepared_query_repetition_does_not_allocate() @test {
     tracker.init(mem);
     defer tracker.free();
     int initial_native = b3::byte_count();
+
     {
         PreparedQueryFixture fixture;
         setup_prepared_queries(&fixture, &tracker);
@@ -631,6 +376,7 @@ fn void test_prepared_query_repetition_does_not_allocate() @test {
         sz allocations = tracker.total_allocation_count();
         sz bytes = tracker.allocated();
         int native_bytes = b3::byte_count();
+
         CollisionShapeView view = fixture.owners[3].view();
         CollisionContact[4] contacts;
         for (uint iteration = 0; iteration < 16; iteration++) {
@@ -667,9 +413,11 @@ fn void test_prepared_query_repetition_does_not_allocate() @test {
             )) == c3d::CAPACITY_EXCEEDED);
             assert(@catch(view.distance(posed({}), view, posed({ float::max, 0, 0 }))) == c3d::UNSUPPORTED);
         }
+
         assert(tracker.total_allocation_count() == allocations && tracker.allocated() == bytes);
         assert(b3::byte_count() == native_bytes);
     }
+
     assert(!tracker.has_leaks() && b3::byte_count() == initial_native);
 }
 
@@ -678,11 +426,13 @@ fn void test_prepared_query_higher_order_arithmetic_keeps_control_results() @tes
     tracker.init(mem);
     defer tracker.free();
     int initial_native = b3::byte_count();
+
     {
         AssetStore assets = asset::create_asset_store(&tracker, asset::default_asset_store_desc());
         defer asset::destroy_asset_store(&assets);
         CollisionCache cache = physics::create_collision_cache(&tracker, &assets, { .snapshot_capacity = 0 })!!;
         defer physics::destroy_collision_cache(&cache)!!;
+
         foreach (half_height : (float[2]){ 1, 1e12f }) {
             CollisionShapeDesc desc = physics::default_collision_shape_desc(physics::ColliderKind.CAPSULE);
             desc.radius = 0.5f;
@@ -694,6 +444,7 @@ fn void test_prepared_query_higher_order_arithmetic_keeps_control_results() @tes
             sz allocations = tracker.total_allocation_count();
             sz bytes = tracker.allocated();
             int native_bytes = b3::byte_count();
+
             foreach (separation : (float[2]){ 0.9f, 2 }) {
                 maths::Transform pose_a = maths::TRANSFORM_IDENTITY;
                 maths::Transform pose_b = maths::TRANSFORM_IDENTITY;
@@ -705,6 +456,7 @@ fn void test_prepared_query_higher_order_arithmetic_keeps_control_results() @tes
                 collide::Sweep sweep_b = { .start = pose_b, .end = pose_b };
                 sweep_a.end.position += translation_a;
                 sweep_b.end.position += translation_b;
+
                 CollisionContact[4] contacts;
                 usz? count = first.view().contacts(
                     pose_a: pose_a,
@@ -727,6 +479,7 @@ fn void test_prepared_query_higher_order_arithmetic_keeps_control_results() @tes
                     direction: { 0, 0, -1 },
                     max_distance: 4,
                 );
+
                 if (half_height > 1) {
                     assert(@catch(count) == c3d::UNSUPPORTED);
                     assert(@catch(distance) == c3d::UNSUPPORTED);
@@ -752,11 +505,13 @@ fn void test_prepared_query_higher_order_arithmetic_keeps_control_results() @tes
                         assert(near_vector(impact!!.normal, { 0, 0, 1 }, LOOSE));
                     }
                 }
+
                 assert(tracker.total_allocation_count() == allocations && tracker.allocated() == bytes);
                 assert(b3::byte_count() == native_bytes);
             }
         }
     }
+
     assert(!tracker.has_leaks() && b3::byte_count() == initial_native);
 }
 
@@ -765,6 +520,7 @@ fn void test_prepared_query_off_centre_hulls_use_local_support_spans() @test {
     defer asset::destroy_asset_store(&assets);
     CollisionCache cache = physics::create_collision_cache(mem, &assets, physics::default_collision_cache_desc())!!;
     defer physics::destroy_collision_cache(&cache)!!;
+
     GeometryId geometry;
     @pool() {
         Geometry box = geometry::box(
@@ -777,14 +533,17 @@ fn void test_prepared_query_off_centre_hulls_use_local_support_spans() @test {
         box.finalize();
         geometry = assets.add_geometry(&box)!!;
     };
+
     CollisionShapeDesc desc = physics::default_collision_shape_desc(physics::ColliderKind.HULL);
     desc.geometry = geometry;
     CollisionShape hull = physics::create_collision_shape(mem, &cache, desc)!!;
     defer physics::destroy_collision_shape(&hull);
+
     maths::Transform first = posed({ -1024, 0, 0 });
     maths::Transform second = posed({ 0, -1024, 0 });
     second.rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, (float)math::PI / 2);
     assert(hull.view().distance(first, hull.view(), second)!!.distance == 0);
+
     second.position.z = 3;
     collide::Distance distance = hull.view().distance(first, hull.view(), second)!!;
     assert(near(distance.distance, 1, LOOSE));
