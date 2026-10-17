@@ -41,11 +41,13 @@ fn CachedGridReference? cached_grid_reference(char[] blob) @private {
     usz offset = detail_reference_offset(LayerHeader::size + (usz)layer.width * layer.height * 3);
     if (offset > blob.len || layer.reference_bytes != blob.len - offset) return LAYER_CORRUPTED~;
     if (layer.reference_bytes < CachedGridHeader::size) return LAYER_CORRUPTED~;
+
     CachedGridHeader* header = (CachedGridHeader*)(blob.ptr + offset);
     offset += CachedGridHeader::size;
     if (!header.source_id || !header.floor_mask || (header.floor_mask & ~GRID_LAYER_MASK)) return LAYER_CORRUPTED~;
     if (!detail_finite_vertex(header.origin) || !math::is_finite(header.min_height)
         || !math::is_finite(header.max_height) || header.min_height >= header.max_height) return LAYER_CORRUPTED~;
+
     TileConfig? config = tile_config(header.config);
     if (catch config) return LAYER_CORRUPTED~;
     if (header.width != config.width || header.height != config.height || header.border_size != config.border_size
@@ -59,6 +61,7 @@ fn CachedGridReference? cached_grid_reference(char[] blob) @private {
     ulong columns_bytes = column_count * CompactCell::size;
     ulong floor_bytes = (ulong)header.floor_count * GridFloor::size;
     if (columns_bytes > blob.len - offset || floor_bytes != blob.len - offset - columns_bytes) return LAYER_CORRUPTED~;
+
     CompactCell[] columns = ((CompactCell*)(blob.ptr + offset))[:(usz)column_count];
     offset += (usz)columns_bytes;
     GridFloor[] floors = ((GridFloor*)(blob.ptr + offset))[:header.floor_count];
@@ -86,11 +89,12 @@ fn CachedGridReference? cached_grid_reference(char[] blob) @private {
 fn GridReference? unpack_grid_reference(Allocator allocator, CachedGridReference cached) @local {
     GridColumn[]? columns = alloc::new_array_try(allocator, GridColumn, (sz)cached.columns.len);
     if (catch columns) return c3d::CAPACITY_EXCEEDED~;
+
     foreach (index, column : cached.columns) {
         columns[index] = { .floors = cached.floors[column.index:column.count], .span_base = column.index };
     }
-    CachedGridHeader* header = cached.header;
 
+    CachedGridHeader* header = cached.header;
     return {
         .columns = columns,
         .width = header.width,
@@ -121,6 +125,7 @@ fn uint? grid_cache_layer_masks(
         }
         return 0;
     }
+
     ClearanceSource source = clearance_grid_source(
         builder: builder,
         captured: reference,
@@ -145,6 +150,7 @@ fn uint? grid_cache_layer_masks(
             if (floor.area != NULL_AREA) present |= 1u << grid_layer_root(roots[..], (uint)ordinal);
         }
     }
+
     uint count;
     for (uint root = 0; root < MAX_GRID_FLOORS; root++) {
         if (!(present & (1u << root))) continue;
@@ -175,9 +181,11 @@ fn char[]? pack_grid_cache_layer(
     ulong bytes = (ulong)offset + CachedGridHeader::size
         + (ulong)reference.columns.len * CompactCell::size + (ulong)reference.span_count * GridFloor::size;
     if (bytes > sz::max || bytes > uint::max) return c3d::CAPACITY_EXCEEDED~;
+
     char[]? storage = alloc::new_array_try(&builder.arena, char, (sz)bytes);
     if (catch storage) return c3d::CAPACITY_EXCEEDED~;
     char[] blob = storage;
+
     LayerHeader* header = (LayerHeader*)blob.ptr;
     *header = {
         .magic = LAYER_MAGIC,
@@ -236,6 +244,7 @@ fn char[]? pack_grid_cache_layer(
         .floor_mask = floor_mask,
     };
     offset += CachedGridHeader::size;
+
     CompactCell[] columns = ((CompactCell*)(blob.ptr + offset))[:reference.columns.len];
     offset += reference.columns.len * CompactCell::size;
     GridFloor[] floors = ((GridFloor*)(blob.ptr + offset))[:reference.span_count];
@@ -251,6 +260,7 @@ fn char[]? build_grid_cache_runtime(TileCache* cache, char[] blob, NavMesh* mesh
     CachedGridReference cached = cached_grid_reference(blob)!;
     LayerHeader* layer = (LayerHeader*)blob.ptr;
     GridReference reference = unpack_grid_reference(&cache.arena, cached)!;
+
     GridTileBuilder builder = {
         .config = cached.header.config,
         .tile_config = tile_config(cached.header.config)!,
@@ -269,6 +279,7 @@ fn char[]? build_grid_cache_runtime(TileCache* cache, char[] blob, NavMesh* mesh
     )!;
     VolumeRecord[] volumes;
     if (cache.desc.volume_source) volumes = cache.desc.volume_source(cache.desc.volume_source_context, source.bounds)!;
+
     char[] packed;
     if (builder.config.detail_mode == DetailMode.COARSE) {
         builder.source.floors = &retained_grid_floors;
@@ -317,6 +328,7 @@ fn char[]? build_grid_cache_runtime(TileCache* cache, char[] blob, NavMesh* mesh
         foreach (index, surface : source.surfaces) {
             if (!(cached.header.floor_mask & (1u << surface.ordinal))) compact.areas[index] = NULL_AREA;
         }
+
         GridPartialEdge* partials = connect_grid_edges(&builder, &reference, &compact)!;
         if (builder.tile_config.walkable_radius) compact.erode_walkable_area(&builder.arena, builder.tile_config.walkable_radius)!;
         filter_grid_regions(
@@ -373,6 +385,7 @@ fn void? mark_grid_cache_obstacles(
     foreach (index, &surface : source.surfaces) {
         if (compact.areas[index] == NULL_AREA) continue;
         compact.areas[index] = clearance_volume_area(source, surface, volumes)!;
+
         ClearancePoint first = clearance_source_point(
             source: source,
             column: surface.column,
@@ -386,6 +399,7 @@ fn void? mark_grid_cache_obstacles(
             cell_z: 1,
         )!;
         ClearanceRectangle square = { .min_x = first.x, .min_z = first.z, .max_x = last.x, .max_z = last.z };
+
         for (uint fan = 0; fan < 4; fan++) {
             if (!clearance_obstacle_meets(
                 source: source,
