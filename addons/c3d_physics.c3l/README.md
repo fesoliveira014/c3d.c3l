@@ -99,7 +99,10 @@ forces pushing a movable neighbour while the bone remains simulated.
 
 ## Cloth
 
-`c3d::physics::cloth` simulates a mesh over an owned geometry copy with pinned vertices, node
+`c3d::physics::cloth` simulates a mesh over an owned geometry copy with optional physical-to-render
+particle welding (`render_particles`), deformed normal domains and opt-in deformed tangent frames
+(`tangent_frame`, `tangent_uv_set`), hard pins and weighted compliant XPBD attachments (`ClothAttachment`),
+distance or signed dihedral bending (`ClothBendMode`, `bend_compliance`, `ClothRestAngle`), node
 `Wind` drag, an optional ground and one-way particle contacts with sphere, capsule, box,
 hull, mesh, heightfield and compound colliders of the bodies listed in `ClothDesc.colliders`.
 Contacts are discrete by default. Set `desc.collisions.continuous = true` to sweep
@@ -139,8 +142,10 @@ transform may place that geometry elsewhere.
 Cloth consumers require `fp-math=strict`, owner-thread round-to-nearest and gradual underflow.
 The library checks supported runtime conditions without changing arithmetic modes; runtime
 checks do not establish the consumer's compiler mode. Serialization stores collision authoring
-settings and seams in authoring version 4 and restores pending cloth; runtime buffers,
-contact results and histories are excluded. Version-1/2/3 JSONC defaults continuous
+settings, seams, `render_particles`, `tangent_frame`, `tangent_uv_set`, `attachments`, `bend_mode`,
+`bend_compliance` and `rest_angles` in authoring version 5 and restores pending cloth; runtime buffers,
+contact results and histories are excluded. Version-1..4 JSONC defaults the version-5 material,
+attachment and dihedral fields to empty/false/`DISTANCE`/`0`. Version-1/2/3 JSONC defaults continuous
 contact off and the CCD limit to 64. Version-1/2 also defaults self-contact off and seams
 empty; incompatible older binary layouts are rejected before mutation.
 

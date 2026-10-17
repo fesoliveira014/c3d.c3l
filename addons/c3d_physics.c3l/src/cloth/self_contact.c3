@@ -36,11 +36,17 @@ fn void? check_seams(ClothSeam[] seams, uint vertex_count) @private {
     }
 }
 
-fn void build_self_topology(ClothState* state, uint[] indices) @private {
+fn void build_self_topology(ClothState* state) @private {
     foreach (index, &canonical : state.canonical_vertices) *canonical = (uint)index;
     foreach (seam : state.desc.seams) {
-        uint first = canonical_vertex(state.canonical_vertices, seam.first);
-        uint second = canonical_vertex(state.canonical_vertices, seam.second);
+        uint first = canonical_vertex(
+            state.canonical_vertices,
+            map_render_vertex(state.desc.render_particles, seam.first),
+        );
+        uint second = canonical_vertex(
+            state.canonical_vertices,
+            map_render_vertex(state.desc.render_particles, seam.second),
+        );
         state.canonical_vertices[math::max(first, second)] = math::min(first, second);
     }
     foreach (index, &canonical : state.canonical_vertices) *canonical = canonical_vertex(state.canonical_vertices, (uint)index);
@@ -57,7 +63,13 @@ fn void build_self_topology(ClothState* state, uint[] indices) @private {
         if (!unique_count || state.adjacent_vertices[unique_count - 1] != key) state.adjacent_vertices[unique_count++] = key;
     }
     state.adjacent_vertices = state.adjacent_vertices[:unique_count];
-    foreach (index, &face : state.faces) face.vertices = { indices[3 * index], indices[3 * index + 1], indices[3 * index + 2] };
+    foreach (index, &face : state.faces) {
+        face.vertices = {
+            state.corners[3 * index].particle,
+            state.corners[3 * index + 1].particle,
+            state.corners[3 * index + 2].particle,
+        };
+    }
 }
 
 fn uint canonical_vertex(uint[] parents, uint vertex) @local {
