@@ -106,6 +106,7 @@ fn void test_cloth_both_formats_preserve_source_authoring_and_restore_pending() 
                 root: fixture.root,
                 text_mode: text_mode,
             )!!;
+
             PhysicsWorld source_world = create_world(&fixture.source, &fixture.assets);
             defer physics::destroy_physics_world(&source_world);
             assert(@catch(cloth::prepare(&fixture.source, &fixture.assets, node)) == physics::NO_BODY);
@@ -119,6 +120,7 @@ fn void test_cloth_both_formats_preserve_source_authoring_and_restore_pending() 
                 root: fixture.root,
                 text_mode: text_mode,
             )!!);
+
             source_world.update(physics::DEFAULT_FIXED_DT);
             source_world.update_cloths();
             assert(fixture.source.get(node, Cloth).state.contact_result.candidates > 0);
@@ -128,6 +130,7 @@ fn void test_cloth_both_formats_preserve_source_authoring_and_restore_pending() 
                 root: fixture.root,
                 text_mode: text_mode,
             )!!);
+
             uint free_geometry = fixture.assets.geometries.free_count;
             uint source_revision = fixture.assets.geometry(fixture.geometry).header.revision;
             Node* restored = decode(&fixture, bytes, text_mode)!!;
@@ -153,6 +156,7 @@ fn void test_cloth_both_formats_preserve_source_authoring_and_restore_pending() 
                 root: restored,
                 text_mode: text_mode,
             )!!);
+
             PhysicsWorld world = create_world(&fixture.destination, &fixture.assets);
             defer physics::destroy_physics_world(&world);
             assert(@catch(cloth::prepare_subtree(&fixture.destination, &fixture.assets, restored)) == physics::NO_BODY);

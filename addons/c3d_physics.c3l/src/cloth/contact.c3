@@ -149,6 +149,7 @@ fn usz? contact_pass(
             state.contacts[count++] = { .candidate = (uint)index };
             continue;
         }
+
         bool pinned = state.inverse_masses[candidate.particle] == 0;
         ContactProjection projection = evaluate_contact(
             world: world,

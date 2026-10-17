@@ -136,6 +136,7 @@ fn usz? gather_self_candidates(ClothState* state, Vec3[] positions, usz count) @
         state.contact_result.candidates += (uint)(count - previous_count);
         state.contact_result.peak_candidates = math::max(state.contact_result.peak_candidates, (uint)count);
     }
+
     usz primitive_count;
     float thickness = state.desc.thickness;
     foreach (index, position : positions) {
@@ -161,6 +162,7 @@ fn usz? gather_self_candidates(ClothState* state, Vec3[] positions, usz count) @
             .kind = FACE,
         };
     }
+
     sort::quicksort(state.self_primitives, &by_self_bound);
     foreach (index, first : state.self_primitives) {
         for (usz other = (usz)index + 1; other < state.self_primitives.len; other++) {
@@ -168,6 +170,7 @@ fn usz? gather_self_candidates(ClothState* state, Vec3[] positions, usz count) @
             if (second.bounds.min.x > first.bounds.max.x) break;
             if (second.bounds.min.y > first.bounds.max.y || first.bounds.min.y > second.bounds.max.y
                 || second.bounds.min.z > first.bounds.max.z || first.bounds.min.z > second.bounds.max.z) continue;
+
             ClothCandidate candidate;
             if (first.kind == VERTEX && second.kind == FACE) {
                 candidate = { .kind = SELF_VERTEX_FACE, .self_pair = { first.index, second.index } };
@@ -220,6 +223,7 @@ fn ClothSelfContact? evaluate_self_contact(ClothState* state, ClothCandidate* ca
     ClothSelfContact result;
     double reach = 2.0 * state.desc.thickness;
     if (reach <= state.desc.collisions.contact_tolerance) return result;
+
     bool vertex_face = candidate.kind == SELF_VERTEX_FACE;
     if (vertex_face) {
         uint[3] corners = state.faces[candidate.self_pair[1]].vertices;
@@ -229,6 +233,7 @@ fn ClothSelfContact? evaluate_self_contact(ClothState* state, ClothCandidate* ca
         ClothConstraint second = state.edges[candidate.self_pair[1]];
         result.vertices = { first.first, first.second, second.first, second.second };
     }
+
     ContactVector[4] points;
     foreach (index, vertex : result.vertices) points[index] = (ContactVector)positions[vertex];
     ContactVector normal;
@@ -262,9 +267,11 @@ fn ClothSelfContact? evaluate_self_contact(ClothState* state, ClothCandidate* ca
             }
         }
     }
+
     ContactInterval length = physics::contact_length(physics::contact_vector(normal))!;
     if (!(length.min > 0)) return CONTACT_PRECISION_EXCEEDED~;
     result.normal = normal / math::sqrt(normal.dot(normal));
+
     double separation = double::max;
     uint first_count = vertex_face ? 1 : 2;
     for (uint first = 0; first < first_count; first++) {
@@ -286,6 +293,7 @@ fn void? apply_self_contact(ClothState* state, ClothCandidate* candidate, Vec3[]
     ClothSelfContact contact = evaluate_self_contact(state, candidate, positions)!;
     float tolerance = state.desc.collisions.contact_tolerance;
     if (contact.residual <= tolerance) return;
+
     double denominator;
     foreach (index, vertex : contact.vertices) {
         double coefficient = contact.coefficients[index];
@@ -295,6 +303,7 @@ fn void? apply_self_contact(ClothState* state, ClothCandidate* candidate, Vec3[]
         state.contact_result.stage = ClothContactStage.RESOLVE;
         return CONTACT_UNRESOLVED~;
     }
+
     double displacement = (contact.residual + (double)tolerance / 4) / denominator;
     bool changed;
     foreach (index, vertex : contact.vertices) {

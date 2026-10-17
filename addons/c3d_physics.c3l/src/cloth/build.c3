@@ -40,6 +40,7 @@ fn ClothAuthoring*? copy_authoring(Allocator allocator, ClothDesc desc) @private
     sz seams_offset = mem::aligned_offset(colliders_offset + (sz)desc.colliders.len * Entity::size, ClothSeam::alignment);
     if (desc.seams.len > (usz)(sz::max - seams_offset) / ClothSeam::size) return c3d::CAPACITY_EXCEEDED~;
     sz bytes = seams_offset + (sz)desc.seams.len * ClothSeam::size;
+
     char*? allocation = alloc::malloc_try(allocator, bytes);
     if (catch allocation) return c3d::CAPACITY_EXCEEDED~;
     ClothAuthoring* copy = (ClothAuthoring*)allocation;
