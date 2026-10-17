@@ -25,16 +25,25 @@ struct ClothSavedAuthoring @private {
     uint max_shapes;
     uint max_candidates;
     uint max_contacts;
+    bool self_collision;
+    ClothSeam[] seams;
 }
 
-uint[1] cloth_text_default_versions @private = { 1 };
+uint[2] cloth_text_default_versions @private = { 1, 2 };
 
 fn void? register_cloth_codec() @private {
+    describe::register_reflected(ClothSeam)!;
     describe::register_reflected(ClothSavedAuthoring)!;
     serial::register_described_type(
+        $Type: ClothSeam,
+        version: 1,
+        layout: 0xfe476ea9aad09958,
+        defaults: &defaults_cloth_seam,
+    )!;
+    serial::register_described_type(
         $Type: ClothSavedAuthoring,
-        version: 2,
-        layout: 0x88a372e0d69da5cb,
+        version: 3,
+        layout: 0x4a9eef94a46cba51,
         defaults: &defaults_cloth_authoring,
     )!;
     serial::register_described_owner(Cloth, ClothSavedAuthoring, {
@@ -46,6 +55,10 @@ fn void? register_cloth_codec() @private {
         .attach = &attach_cloth,
         .text_default_versions = cloth_text_default_versions[..],
     })!;
+}
+
+fn void defaults_cloth_seam(void* value) @private {
+    *(ClothSeam*)value = {};
 }
 
 fn void defaults_cloth_authoring(void* value) @private {
@@ -66,6 +79,8 @@ fn void defaults_cloth_authoring(void* value) @private {
         .max_shapes = desc.collisions.max_shapes,
         .max_candidates = desc.collisions.max_candidates,
         .max_contacts = desc.collisions.max_contacts,
+        .self_collision = desc.collisions.self_collision,
+        .seams = desc.seams,
     };
 }
 
@@ -91,6 +106,7 @@ fn void? collect_cloth(void* component, serial::WriteContext* context) @private 
         source: source,
     )!;
     (void)cloth::unique_pins(desc.pins, (uint)source.data.positions.len)!;
+    cloth::check_seams(desc.seams, (uint)source.data.positions.len)!;
     context.project_component(context.node, projected)!;
 }
 
@@ -117,6 +133,8 @@ fn void? project_cloth(void* component, void* value, serial::WriteContext* conte
         .max_shapes = desc.collisions.max_shapes,
         .max_candidates = desc.collisions.max_candidates,
         .max_contacts = desc.collisions.max_contacts,
+        .self_collision = desc.collisions.self_collision,
+        .seams = desc.seams,
     };
 }
 
@@ -142,7 +160,9 @@ fn ClothDesc? cloth_desc(ClothSavedAuthoring* source, serial::ReadContext* conte
             .max_shapes = source.max_shapes,
             .max_candidates = source.max_candidates,
             .max_contacts = source.max_contacts,
+            .self_collision = source.self_collision,
         },
+        .seams = source.seams,
     };
 }
 
@@ -163,6 +183,7 @@ fn void? validate_cloth(void* value, serial::ReadContext* context) @private {
     )!;
     cloth::check_collider_owners(context.scene, desc.colliders)!;
     (void)cloth::unique_pins(desc.pins, (uint)geometry.data.positions.len)!;
+    cloth::check_seams(desc.seams, (uint)geometry.data.positions.len)!;
 }
 
 fn void? attach_cloth(void* value, serial::ReadContext* context) @private {

@@ -25,6 +25,12 @@ const float DEFAULT_CLOTH_THICKNESS = 0.01f; // keeps particles off contact surf
 <* Maximum listed contact owners for one cloth. *>
 const uint MAX_CLOTH_COLLIDERS = 32; // bounds owner resolution; leaf storage has its own configured capacity
 
+<* Source vertex equivalence used only for self-contact exclusions. *>
+struct ClothSeam {
+    uint first;
+    uint second;
+}
+
 <* Fixed-step integration and attachment settings for one cloth. *>
 struct ClothDesc {
     uint     substeps;
@@ -39,6 +45,7 @@ struct ClothDesc {
     float    ground_height;
     Entity[] colliders;
     ClothCollisionDesc collisions;
+    ClothSeam[] seams;
 }
 
 <* Last cloth update's CPU solve and publication costs. *>
@@ -90,7 +97,7 @@ struct ClothBody {
 
 <* Library-owned simulation state; its arrays are borrowed by readers. *>
 struct ClothState {
-    ClothDesc         desc;            // desc.pins and desc.colliders borrow pins and colliders
+    ClothDesc         desc;            // pins/colliders borrow state arrays; seams borrow owned authoring
     AssetStore*       assets;
     GeometryId        source;
     GeometryId        geometry;
@@ -133,6 +140,10 @@ struct ClothState {
     ContactFrame[]    frames;
     ClothCandidate[]  candidates;
     ClothContact[]    contacts;
+    ClothFace[]       faces;
+    uint[]            canonical_vertices;
+    ulong[]           adjacent_vertices;
+    ClothSelfPrimitive[] self_primitives;
 }
 
 <* Retained source and settings; owned arrays are read-only. *>
@@ -155,7 +166,7 @@ fn bool Cloth.is_prepared(&self) => self.state != null;
  Attach simulation over an owned geometry copy.
  @param [&inout] assets : "Owns the copy; outlives the cloth."
  @param [&in] node : "Live node with current, invertible world transform."
- @param desc : "Pins, collider identities and settings are copied."
+ @param desc : "Pins, seams, collider identities and settings are copied."
  @return? NO_MESH, CLOTH_EXISTS, physics::SOURCE_UNAVAILABLE, physics::NO_BODY
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
  @require self.world.is_registered(Cloth)
@@ -175,7 +186,7 @@ fn void? Scene.add_cloth(
  Attach cloth authoring while preserving its existing source mesh.
  @param [&in] assets : "Resolves retained source geometry; unchanged."
  @param [&in] node : "Live node carrying the source Mesh."
- @param desc : "Pins and collider identities are copied."
+ @param desc : "Pins, seams and collider identities are copied."
  @return? NO_MESH, CLOTH_EXISTS, physics::SOURCE_UNAVAILABLE
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
  @require self.world.is_registered(Cloth)
@@ -200,6 +211,7 @@ fn void? Scene.attach_cloth(
         source: source,
     )!;
     check_collider_owners(self, desc.colliders)!;
+    check_seams(desc.seams, (uint)source.data.positions.len)!;
     @pool() {
         (void)unique_pins(desc.pins, (uint)source.data.positions.len)!;
     };
@@ -240,6 +252,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
 
     @pool() {
         uint vertex_count = (uint)source.data.positions.len;
+        check_seams(desc.seams, vertex_count)!;
         uint[] pins = unique_pins(desc.pins, vertex_count)!;
         Vec3[] world = alloc::new_array(tmem, Vec3, (sz)vertex_count);
         foreach (index, position : source.data.positions) world[index] = maths::transform_point(node.world, position);
@@ -255,6 +268,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
             vertex_count: vertex_count,
             pin_count:    (uint)pins.len,
             edge_count:   (uint)topology.edges.len,
+            face_count:   (uint)(source.data.indices.len / 3),
             bend_count:   (uint)topology.bends.len,
             body_count:   (uint)capture.bodies.len,
             collisions:   desc.collisions,
@@ -287,6 +301,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         }
         state.edges[..] = topology.edges[..];
         state.bends[..] = topology.bends[..];
+        if (desc.collisions.self_collision) build_self_topology(state, source.data.indices);
 
         component.state = state;
         mesh.geometry = copy;

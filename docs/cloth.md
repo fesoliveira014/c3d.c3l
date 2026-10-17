@@ -4,8 +4,8 @@
 dynamics: unit-mass particles, one distance constraint per unique triangle edge, one bend
 distance per edge shared by exactly two triangles, gravity, node `Wind` drag, damping, hard pins,
 an optional ground plane and one-way particle contacts with every collider kind of listed
-rigid bodies. It imports the standard library, core and `c3d::physics`; it never
-creates GPU resources. Core supplies only editable geometry and
+rigid bodies, plus opt-in self-contact between cloth vertices, faces and edges. It imports
+the standard library, core and `c3d::physics`; it never creates GPU resources. Core supplies only editable geometry and
 [vertex motion history](post.md#edited-vertices).
 
 ## Attaching
@@ -31,7 +31,7 @@ their binding metadata are copied (see [Collisions](#collisions)).
 | `physics::SOURCE_UNAVAILABLE` | The source's CPU positions were released. |
 | `physics::NO_BODY` | A listed collider node has no built RigidBody. |
 | `c3d::UNSUPPORTED` | SkinBinding, morph weights or targets, joints, custom data, a bounds override, or a non-indexed or non-triangle topology. |
-| `c3d::INVALID_ARGUMENT` | Zero substeps, iterations or contact capacities, non-positive or non-finite contact tolerance, a stiffness outside `[0, 1]`, negative or non-finite damping or thickness, non-finite gravity scale or ground height, a pin or index out of range, non-finite positions, a degenerate triangle, an edge shared by more than two triangles, or a collider listed twice. |
+| `c3d::INVALID_ARGUMENT` | Zero substeps, iterations or contact capacities, non-positive or non-finite contact tolerance, a stiffness outside `[0, 1]`, negative or non-finite damping or thickness, non-finite gravity scale or ground height, a pin, seam endpoint or index out of range, non-finite positions, a degenerate triangle, an edge shared by more than two triangles, or a collider listed twice. |
 | `c3d::CAPACITY_EXCEEDED` | More than 32 listed collider owners, binding metadata exceeding `max_shapes`, a full geometry pool, state-size overflow, or a state block that cannot be allocated. |
 | `cloth::CONTACT_PRECISION_EXCEEDED` | A captured native shape bound cannot be represented conservatively. |
 
@@ -61,7 +61,7 @@ and pending draw behavior.
 `scene.attach_cloth(&assets, node, desc)` validates and attaches authoring without
 creating a private geometry asset or simulation state. `Cloth.authoring` owns the
 source geometry identity, original `vertex_motion` flag, complete descriptor and
-copies of the requested pins and collider identities. Its arrays are read-only.
+copies of the requested pins, seam pairs and collider identities. Its arrays are read-only.
 Requested pin order and duplicates are retained; preparation builds the separate
 sorted, deduplicated simulation pin list.
 
@@ -147,6 +147,7 @@ and `default_cloth_desc()` provide these values:
 | `max_shapes` | 128 | Flattened collider leaves across the listed owners. |
 | `max_candidates` | 8192 | Candidate pairs retained in one pass. |
 | `max_contacts` | 4096 | Active contact records retained in one pass. |
+| `self_collision` | false | Vertex-face and edge-edge contact within this cloth. |
 
 Tolerance must be finite and positive; iterations and capacities must be nonzero.
 Preparation sizes staging and contact buffers with checked arithmetic. Updates allocate
@@ -155,9 +156,42 @@ removing and attaching the cloth again. The default capacities are finite limits
 a guarantee that arbitrary collider sets fit.
 
 Each structural pass is followed by a contact pass. Up to `contact_iterations` final
-passes then resolve ground and body contacts together and check the complete residual.
-Successful publication leaves every participating free particle at separation at least
-`thickness - contact_tolerance`. Unresolved competing constraints fail the cloth update.
+passes then resolve ground, body and enabled self contacts together and check the complete
+residual. Successful publication leaves every participating free particle at external
+separation of at least `thickness - contact_tolerance`. Unresolved competing constraints fail the cloth update.
+
+## Self-contact and seams
+
+```c3
+ClothSeam[2] seams = { { .first = 4, .second = 12 }, { .first = 5, .second = 13 } };
+ClothDesc desc = cloth::default_cloth_desc();
+desc.collisions.self_collision = true;
+desc.seams = seams[..];
+scene.add_cloth(&assets, node, desc)!;
+```
+
+Self-contact checks both vertices against source faces and disjoint source-edge pairs
+within one Cloth. Successful publication has unsigned closest separation at least
+`2 * thickness - contact_tolerance` for each eligible pair. It is discrete: fast features
+can cross between checked positions. Different Cloth components do not collide with each other.
+
+`ClothDesc.seams` copies pairs of source vertex indices. Preparation takes their transitive
+equivalence; duplicate and identity pairs are harmless. A vertex/face pair is excluded if
+the vertex is equivalent to a face corner or shares a source edge with one after applying
+that equivalence. An edge pair is excluded if any endpoint pair is equivalent or shares
+such a source edge. Exclusion covers incidence and one edge ring, not a whole connected
+component. Coincident positions alone never create equivalence. Seams change only collision
+exclusions; they do not join particle positions or add mechanical constraints.
+
+Source face and unique edge identities stay fixed while expanded bounds are rebuilt and
+sorted in prepared storage each pass. Self and external contacts share `max_candidates`
+and `max_contacts`; dense folds can exceed those limits. Response uses inverse-mass-weighted
+vertex/face and edge/edge corrections. Pins have zero response weight and stay exact. A
+movable feature separates from fixed features; a conflicting fully pinned eligible pair
+fails with `CONTACT_UNRESOLVED`. Collapsed intermediate features use a checked reduced
+case when an axis is available, or fail with `CONTACT_PRECISION_EXCEEDED`. They are never
+discarded as separated. Bounded passes can also fail on competing constraints; increasing
+`contact_iterations` allows more work without promising convergence for every fold.
 
 ## Arithmetic and update failures
 
@@ -244,8 +278,8 @@ Per substep: wind accelerations from each triangle's area, unit normal and relat
 `drag * area * dot(relative, normal) * normal`, one third per corner; semi-implicit integration
 of gravity and wind; damping `max(0, 1 - damping * dt)`; prediction; pins; then `iterations`
 passes over edges, bends, the ground with its thickness offset, and
-the collider shapes, followed by bounded final contact resolution; velocities from the corrected
-displacement. A stiffness `s` is applied per pass as
+the collider shapes and enabled self contacts, followed by bounded final contact resolution;
+velocities from the corrected displacement. A stiffness `s` is applied per pass as
 `1 - (1 - s)^(1 / iterations)`, which normalizes one isolated constraint, not a coupled mesh. A
 pair that collapses onto one point separates along its rest direction. `Wind.lift` is unused.
 
@@ -272,9 +306,9 @@ flag, counted in `Stats.vertex_history_bytes`.
 
 ```text
 python scripts/build.py --example cloth
-addons/c3d_physics.c3l/build/cloth.exe [--scene flag|cape|both|contacts] [--still] [--frames 300]
+addons/c3d_physics.c3l/build/cloth.exe [--scene flag|cape|both|contacts|fold] [--still] [--frames 300]
 c3c build cloth --path addons/c3d_physics.c3l -O3
-addons/c3d_physics.c3l/build/cloth.exe --benchmark --scene flag|cape|both|contacts [--still] [--ragdoll] [--publish whole|streams]
+addons/c3d_physics.c3l/build/cloth.exe --benchmark --scene flag|cape|both|contacts|fold [--still] [--ragdoll] [--publish whole|streams]
 addons/c3d_physics.c3l/build/cloth.exe --benchmark --trace software|hardware [--validation]
 ```
 
@@ -296,6 +330,13 @@ box and mesh children. It uses the default discrete contact settings. The panel 
 and active-contact work, failed cloths and the maximum contact deficit.
 
 ![Pinned cloth sheets over box, hull, mesh, heightfield and compound colliders](images/cloth_contacts.png)
+
+The `fold` scene displays a strip with two copied seam pairs and self-contact enabled.
+Pinned rows on both sides of the seam hold the fold, with gravity disabled and damping
+set to 3 per second. The panel shows the 0.02 m self-contact gap and the same candidate,
+failure and residual counters.
+
+![Folded cloth with explicit seam pairs and self-contact enabled](images/cloth_self.png)
 
 The benchmark renders one scene (the flag at 32x32 cells) at the default 4x8 settings to a
 1280x720 TAA and motion-blur view with 120 warm-up and 600 measured 60 Hz frames; `--ragdoll`
@@ -319,7 +360,7 @@ when running the target directly:
 c3c test cloth_acceptance --path addons/c3d_physics.c3l/test/gpu
 ```
 
-No self-collision, full cloth-feature/body-feature contact, collision against the rendered skin,
+No full cloth-feature/body-feature contact, collision against the rendered skin,
 continuous collision, tearing, soft pins, dihedral bending, skinned base pose, tangents,
 GPU or crowd simulation. Parallel solving waits for a measured
 consumer need.
