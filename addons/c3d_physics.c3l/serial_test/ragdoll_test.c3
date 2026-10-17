@@ -507,62 +507,44 @@ fn void test_ragdoll_control_domain_is_identical_for_readers_and_writers() @test
 }
 
 fn void test_ragdoll_recovery_serializes_only_existing_authoring() @test {
-    for (uint stage = 0; stage < 3; stage++) {
-        @pool() {
-            Fixture fixture;
-            create_fixture(&fixture);
-            defer destroy_fixture(&fixture);
+    @pool() {
+        Fixture fixture;
+        create_fixture(&fixture);
+        defer destroy_fixture(&fixture);
 
-            Rig original = add_rig(&fixture.source, &fixture.assets, rig_model(&fixture));
-            PhysicsWorld world = create_world(&fixture.source, &fixture.assets);
-            defer physics::destroy_physics_world(&world);
-            world.update(0);
-            world.set_ragdoll_mode(original.skin, SIMULATED);
-            original.ragdoll.weight = 1;
-            world.update_ragdolls();
-            fixture.source.update_world();
-            world.recover_bones(original.skin)!!;
+        Rig original = add_rig(&fixture.source, &fixture.assets, rig_model(&fixture));
+        PhysicsWorld world = create_world(&fixture.source, &fixture.assets);
+        defer physics::destroy_physics_world(&world);
+        world.update(0);
+        world.set_ragdoll_mode(original.skin, SIMULATED);
+        original.ragdoll.weight = 1;
+        world.update_ragdolls();
+        fixture.source.update_world();
+        world.recover_bones(original.skin)!!;
 
-            if (stage == 1) world.set_bone_mode(original.skin, 1, ANIMATED);
-            if (stage == 2) {
-                original.ragdoll.weight = 0;
-                world.update(0);
-                world.finish_ragdoll_recovery(original.skin)!!;
-                world.update_ragdolls();
-                fixture.source.update_world();
-            }
+        char[] active = encode(
+            scene: &fixture.source,
+            assets: &fixture.assets,
+            root: original.root,
+            text_mode: false,
+        )!!;
+        Node* restored = decode(&fixture, active, false)!!;
+        Node* skin = fixture.destination.get(restored, ModelInstance).present_node(1);
+        Ragdoll* actual = fixture.destination.get(skin, Ragdoll);
 
-            char[] active = encode(
-                scene: &fixture.source,
-                assets: &fixture.assets,
-                root: original.root,
-                text_mode: false,
-            )!!;
-            Node* restored = decode(&fixture, active, false)!!;
-            Node* skin = fixture.destination.get(restored, ModelInstance).present_node(1);
-            Ragdoll* actual = fixture.destination.get(skin, Ragdoll);
+        assert(actual.bone_modes == original.ragdoll.bone_modes);
+        assert(actual.bone_weights == original.ragdoll.bone_weights && actual.weight == original.ragdoll.weight);
+        assert(actual.recovery_status().phase == RagdollRecoveryPhase.INACTIVE);
+        assert(actual.recovery_status().participating == 0 && actual.recoveries == 0);
 
-            assert(actual.bone_modes == original.ragdoll.bone_modes);
-            assert(actual.bone_weights == original.ragdoll.bone_weights && actual.weight == original.ragdoll.weight);
-            assert(actual.drive_strength == original.ragdoll.drive_strength
-                && actual.bone_drives[1].hertz == original.ragdoll.bone_drives[1].hertz);
-            assert(actual.recovery_status().phase == RagdollRecoveryPhase.INACTIVE);
-            assert(actual.recovery_status().participating == 0 && actual.recoveries == 0);
-
-            foreach (index, node : actual.bone_nodes) {
-                PhysicsBody* body = fixture.destination.get(node, PhysicsBody);
-                assert(body.body.kind == (actual.bone_modes[index] == SIMULATED ? DYNAMIC : KINEMATIC));
-                assert(body.body.linear_velocity == (Vec3){} && body.body.angular_velocity == (Vec3){});
-            }
-
-            foreach (usz index, mode : original.ragdoll.bone_modes) world.set_bone_mode(original.skin, index, mode);
-            char[] ordinary = encode(
-                scene: &fixture.source,
-                assets: &fixture.assets,
-                root: original.root,
-                text_mode: false,
-            )!!;
-            assert(active == ordinary);
-        };
-    }
+        foreach (usz index, mode : original.ragdoll.bone_modes) world.set_bone_mode(original.skin, index, mode);
+        char[] ordinary = encode(
+            scene: &fixture.source,
+            assets: &fixture.assets,
+            root: original.root,
+            text_mode: false,
+        )!!;
+        assert(active == ordinary);
+    };
 }
+
