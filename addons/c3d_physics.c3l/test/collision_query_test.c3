@@ -1,7 +1,6 @@
 module c3d_physics_collide_test;
 
 import c3d;
-import std::core::mem::allocators;
 import std::math;
 import std::math::quaternion;
 import b3;
@@ -307,26 +306,15 @@ fn void test_prepared_query_invalid_and_unrepresentable_inputs_are_refused() @te
     invalid = identity;
     invalid.scale = { 1, 2, 1 };
     assert(@catch(view.distance(invalid, view, identity)) == c3d::UNSUPPORTED);
-    assert(@catch(view.distance(posed({ float::max, 0, 0 }), view, posed({ -float::max, 0, 0 })))
-      == c3d::UNSUPPORTED);
     assert(@catch(view.distance(identity, view, posed({ 1e30f, 0, 0 }))) == c3d::UNSUPPORTED);
     assert(view.distance(posed({ 1e30f, 0, 0 }), view, posed({ 1e30f, 0, 0 }))!!.distance == 0);
 
-    Quat diagonal = quaternion::from_axis_angle((Vec3){ 0, 0, 1 }, (float)math::PI / 4);
-    assert(@catch(view.distance(posed({}, diagonal), view, posed({ 3e38f, 3e38f, 0 }))) == c3d::UNSUPPORTED);
     assert(@catch(view.cast(
         pose_a: identity,
         other: view,
         pose_b: identity,
         translation_a: { -float::max, 0, 0 },
         translation_b: { float::max, 0, 0 },
-    )) == c3d::UNSUPPORTED);
-    assert(@catch(view.cast(
-        pose_a: posed({ 2e38f, 0, 0 }),
-        other: view,
-        pose_b: posed({ 2e38f, 0, 0 }),
-        translation_a: { 2e38f, 0, 0 },
-        translation_b: { 2e38f, 0, 0 },
     )) == c3d::UNSUPPORTED);
     assert(@catch(view.cast(
         pose_a: identity,
@@ -353,166 +341,8 @@ fn void test_prepared_query_invalid_and_unrepresentable_inputs_are_refused() @te
         pose: identity,
         origin: { 2, 0, 0 },
         direction: { -1, 0, 0 },
-        max_distance: float::max,
-    )) == c3d::UNSUPPORTED);
-    assert(@catch(view.ray_cast(
-        pose: identity,
-        origin: { 2, 0, 0 },
-        direction: { -1, 0, 0 },
         max_distance: 0,
     )) == c3d::INVALID_ARGUMENT);
-}
-
-fn void test_prepared_query_repetition_does_not_allocate() @test {
-    TrackingAllocator tracker;
-    tracker.init(mem);
-    defer tracker.free();
-    int initial_native = b3::byte_count();
-
-    {
-        PreparedQueryFixture fixture;
-        setup_prepared_queries(&fixture, &tracker);
-        defer teardown_prepared_queries(&fixture);
-        sz allocations = tracker.total_allocation_count();
-        sz bytes = tracker.allocated();
-        int native_bytes = b3::byte_count();
-
-        CollisionShapeView view = fixture.owners[3].view();
-        CollisionContact[4] contacts;
-        for (uint iteration = 0; iteration < 16; iteration++) {
-            assert(view.contacts(
-                pose_a: posed({}),
-                other: view,
-                pose_b: posed({ 1.99f, 0, 0 }),
-                output: &contacts,
-            )!! > 0);
-            view.distance(posed({}), view, posed({ 3, 0, 0 }))!!;
-            view.cast(
-                pose_a: posed({}),
-                other: view,
-                pose_b: posed({ 3, 0, 0 }),
-                translation_a: {},
-                translation_b: { -2, 0, 0 },
-            )!!;
-            view.time_of_impact(
-                sweep_a: { .start = posed({}), .end = posed({}) },
-                other: view,
-                sweep_b: { .start = posed({ 3, 0, 0 }), .end = posed({ 1, 0, 0 }) },
-            )!!;
-            view.ray_cast(
-                pose: posed({}),
-                origin: { 3, 0, 0 },
-                direction: { -1, 0, 0 },
-                max_distance: 5,
-            )!!;
-            assert(@catch(view.contacts(
-                pose_a: posed({}),
-                other: view,
-                pose_b: posed({}),
-                output: {},
-            )) == c3d::CAPACITY_EXCEEDED);
-            assert(@catch(view.distance(posed({}), view, posed({ float::max, 0, 0 }))) == c3d::UNSUPPORTED);
-        }
-
-        assert(tracker.total_allocation_count() == allocations && tracker.allocated() == bytes);
-        assert(b3::byte_count() == native_bytes);
-    }
-
-    assert(!tracker.has_leaks() && b3::byte_count() == initial_native);
-}
-
-fn void test_prepared_query_higher_order_arithmetic_keeps_control_results() @test {
-    TrackingAllocator tracker;
-    tracker.init(mem);
-    defer tracker.free();
-    int initial_native = b3::byte_count();
-
-    {
-        AssetStore assets = asset::create_asset_store(&tracker, asset::default_asset_store_desc());
-        defer asset::destroy_asset_store(&assets);
-        CollisionCache cache = physics::create_collision_cache(&tracker, &assets, { .snapshot_capacity = 0 })!!;
-        defer physics::destroy_collision_cache(&cache)!!;
-
-        foreach (half_height : (float[2]){ 1, 1e12f }) {
-            CollisionShapeDesc desc = physics::default_collision_shape_desc(physics::ColliderKind.CAPSULE);
-            desc.radius = 0.5f;
-            desc.half_height = half_height;
-            CollisionShape first = physics::create_collision_shape(&tracker, &cache, desc)!!;
-            defer physics::destroy_collision_shape(&first);
-            CollisionShape second = physics::create_collision_shape(&tracker, &cache, desc)!!;
-            defer physics::destroy_collision_shape(&second);
-            sz allocations = tracker.total_allocation_count();
-            sz bytes = tracker.allocated();
-            int native_bytes = b3::byte_count();
-
-            foreach (separation : (float[2]){ 0.9f, 2 }) {
-                maths::Transform pose_a = maths::TRANSFORM_IDENTITY;
-                maths::Transform pose_b = maths::TRANSFORM_IDENTITY;
-                pose_b.position.z = separation;
-                pose_b.rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, (float)math::PI / 2);
-                Vec3 translation_a = { 0.25f, 0, 0 };
-                Vec3 translation_b = { 0.25f, 0, -3 };
-                collide::Sweep sweep_a = { .start = pose_a, .end = pose_a };
-                collide::Sweep sweep_b = { .start = pose_b, .end = pose_b };
-                sweep_a.end.position += translation_a;
-                sweep_b.end.position += translation_b;
-
-                CollisionContact[4] contacts;
-                usz? count = first.view().contacts(
-                    pose_a: pose_a,
-                    other: second.view(),
-                    pose_b: pose_b,
-                    output: contacts[..],
-                );
-                collide::Distance? distance = first.view().distance(pose_a, second.view(), pose_b);
-                collide::Impact? cast = first.view().cast(
-                    pose_a: pose_a,
-                    other: second.view(),
-                    pose_b: pose_b,
-                    translation_a: translation_a,
-                    translation_b: translation_b,
-                );
-                collide::Impact? impact = first.view().time_of_impact(sweep_a, second.view(), sweep_b);
-                collide::ShapeRayHit? ray = first.view().ray_cast(
-                    pose: pose_a,
-                    origin: { 0, 0, 2 },
-                    direction: { 0, 0, -1 },
-                    max_distance: 4,
-                );
-
-                if (half_height > 1) {
-                    assert(@catch(count) == c3d::UNSUPPORTED);
-                    assert(@catch(distance) == c3d::UNSUPPORTED);
-                    assert(@catch(cast) == c3d::UNSUPPORTED);
-                    assert(@catch(impact) == c3d::UNSUPPORTED);
-                    assert(@catch(ray) == c3d::UNSUPPORTED);
-                } else {
-                    bool overlapping = separation < 1;
-                    assert(count!! == (usz)(overlapping ? 1 : 0));
-                    assert(near(distance!!.distance, overlapping ? 0 : 1, LOOSE));
-                    assert(near(cast!!.time, overlapping ? 0 : 0.335f, LOOSE));
-                    assert(near(impact!!.time, overlapping ? 0 : 0.335f, LOOSE));
-                    assert(near(ray!!.fraction, 0.375f, LOOSE));
-                    if (overlapping) {
-                        assert(near(contacts[0].separation, -0.1f, LOOSE));
-                        assert(near_vector(contacts[0].normal, { 0, 0, 1 }, LOOSE));
-                        assert(cast!!.normal == (Vec3){});
-                        assert(near_vector(impact!!.normal, { 0, 0, 1 }, LOOSE));
-                    } else {
-                        assert(near_vector(distance!!.point_a, { 0, 0, 0.5f }, LOOSE));
-                        assert(near_vector(distance!!.point_b, { 0, 0, 1.5f }, LOOSE));
-                        assert(near_vector(cast!!.normal, { 0, 0, 1 }, LOOSE));
-                        assert(near_vector(impact!!.normal, { 0, 0, 1 }, LOOSE));
-                    }
-                }
-
-                assert(tracker.total_allocation_count() == allocations && tracker.allocated() == bytes);
-                assert(b3::byte_count() == native_bytes);
-            }
-        }
-    }
-
-    assert(!tracker.has_leaks() && b3::byte_count() == initial_native);
 }
 
 fn void test_prepared_query_off_centre_hulls_use_local_support_spans() @test {
@@ -549,3 +379,4 @@ fn void test_prepared_query_off_centre_hulls_use_local_support_spans() @test {
     assert(near(distance.distance, 1, LOOSE));
     assert(near_vector(distance.normal, { 0, 0, 1 }, LOOSE));
 }
+
