@@ -1,10 +1,8 @@
 # Trace field compatibility inputs
 
-These immutable inputs were emitted by the actual Mesh version 1, InstancedMesh
+These immutable inputs were emitted by the Mesh version 1, InstancedMesh
 version 1 and LodGroup version 2 codecs at commit
-`9b7843c639250252efd851fbbf88e59b4aa48581`. Compiler: C3 0.8.3, default safe
-options. Binary and JSONC outputs were captured without modifying the historical
-writers or their registrations. `SHA256SUMS` records the exact file bytes.
+`9b7843c639250252efd851fbbf88e59b4aa48581`. `SHA256SUMS` records the exact file bytes.
 
 | Input | Component | Payload version |
 | --- | --- | ---: |
@@ -24,4 +22,4 @@ and trace off, receiving on, the same sway and fade, under a node at `(0,4,0)`.
 
 All use geometry key `trace_fields/box` and material key `trace_fields/material`.
 The read tests preload those assets and embed the old files directly. They never
-regenerate the oracle during a test.
+regenerate the inputs during a test.

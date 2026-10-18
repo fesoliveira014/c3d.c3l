@@ -21,7 +21,6 @@ const ulong BILLBOARD_LAYOUT @local = 0x2a7839a4c39e5ee2;
 const ulong MESH_LAYOUT @local = 0x81e7097de8b07d0c;
 const ulong MESH_V1_LAYOUT @local = 0x5e1d3cb5a05dfe89;
 
-// The shape before trace_sway; version-1 and version-2 LodGroup payloads read it.
 struct LodEffectsV1 @private {
     InstanceSway sway;
     InstanceFade fade;
@@ -30,7 +29,6 @@ struct LodEffectsV1 @private {
     bool trace;
 }
 
-// The shape before trace_only; version-1 Mesh payloads read it.
 struct MeshV1 @private {
     GeometryId geometry;
     MaterialId material;

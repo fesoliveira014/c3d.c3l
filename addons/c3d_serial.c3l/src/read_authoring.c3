@@ -115,7 +115,6 @@ fn void*? decode_authoring(
     return value;
 }
 
-// An older entry becomes the current shape when a compatibility entry names its shape and an upgrade.
 fn void*? upgrade_authoring(ReadContext* context, ReadAuthoring* entry, DescribedBinding* binding) @local {
     foreach (compatibility : binding.codec.binary_compatibility) {
         if (compatibility.version != entry.version || !compatibility.upgrade) continue;
