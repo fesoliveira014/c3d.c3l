@@ -1316,6 +1316,7 @@ fn void test_shift_origin_moves_cloth_in_place() @test {
     step(&shifted, physics::DEFAULT_FIXED_DT);
     step(&reference, physics::DEFAULT_FIXED_DT);
     assert(shifted.scene.get(resting_node, Cloth).activity() == RESTING);
+    assert(shifted.physics.cloth_stats.resting == 1);
     GeometryAsset* shifted_geometry = geometry_of(&shifted, shifted_node);
     GeometryAsset* reference_geometry = geometry_of(&reference, reference_node);
     foreach (index, position : shifted_geometry.data.positions) {
