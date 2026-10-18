@@ -37,7 +37,10 @@ const uint FLAG_COLUMNS @local = 24;
 const uint FLAG_ROWS @local = 16;
 const uint[2] DENSITY_FLAG_COLUMNS @local = { 12, FLAG_COLUMNS }; // the same flag at two tessellations
 const uint[2] DENSITY_FLAG_ROWS @local = { 8, FLAG_ROWS };
-const float DENSITY_FLAG_SPACING @local = 2.8f; // metres between the poles; keeps the streaming flags apart
+const float DENSITY_FLAG_SPACING @local = 2.4f; // metres between the bars; keeps the swinging flags apart
+const float DENSITY_BAR_HEIGHT @local = 2.4f; // metres above the ground
+const float DENSITY_WIND_SPEED @local = 1.5f; // m/s; below the speed at which a hung sheet starts to flutter
+const float DENSITY_WIND_HEADING @local = 90; // degrees off the flag plane; straight at the sheets
 const uint BENCHMARK_CELLS @local = 32; // a 33x33-vertex flag at the default 4x8 solver settings
 const float FLAG_WIDTH @local = 1.8f;
 const float FLAG_HEIGHT @local = 1.2f;
@@ -241,42 +244,79 @@ fn MaterialId? cloth_material(AssetStore* assets, Vec4 color) @local {
     return assets.add_material(material::standard({ .base_color = color, .roughness = 0.8f }, two_sided));
 }
 
-fn Node*? add_flag(
+fn Node*? add_sheet(
     Demo* demo,
-    Vec3 pole_position,
+    Vec3 position,
     uint columns,
     uint rows,
 ) @local {
-    MaterialId flag_material = cloth_material(&demo.assets, { 0.75f, 0.12f, 0.1f, 1 })!;
-    MaterialId pole_material = demo.assets.add_material(material::standard({
-        .base_color = { 0.55f, 0.55f, 0.58f, 1 }, .roughness = 0.4f, .metallic = 1,
-    }))!;
-    GeometryId flag_geometry;
-    GeometryId pole_geometry;
+    MaterialId material = cloth_material(&demo.assets, { 0.75f, 0.12f, 0.1f, 1 })!;
+    GeometryId sheet_geometry;
     @pool() {
-        Geometry flag = cloth_grid(
+        Geometry sheet = cloth_grid(
             allocator: tmem,
             columns:   columns,
             rows:      rows,
             width:     FLAG_WIDTH,
             height:    FLAG_HEIGHT,
         );
-        flag_geometry = demo.assets.add_geometry(&flag)!;
-        Geometry pole = geometry::cylinder(
-            allocator:     tmem,
-            radius_top:    POLE_RADIUS,
-            radius_bottom: POLE_RADIUS,
-            height:        POLE_HEIGHT,
-        );
-        pole_geometry = demo.assets.add_geometry(&pole)!;
+        sheet_geometry = demo.assets.add_geometry(&sheet)!;
     };
-    Node* pole = demo.scene.add_mesh(pole_geometry, pole_material, name: "pole")!;
-    pole.local.position = pole_position + (Vec3){ 0, POLE_HEIGHT * 0.5f, 0 };
-    Node* flag = demo.scene.add_mesh(flag_geometry, flag_material, name: "flag")!;
-    flag.local.position = pole_position + (Vec3){ POLE_RADIUS, POLE_HEIGHT - 0.1f, 0 };
+    Node* flag = demo.scene.add_mesh(sheet_geometry, material, name: "flag")!;
+    flag.local.position = position;
     demo.scene.get(flag, scene::Mesh).trace = demo.traced;
     demo.scene.add(flag, (Wind){});
     return flag;
+}
+
+fn Node*? add_support(Demo* demo, float length) @local {
+    MaterialId material = demo.assets.add_material(material::standard({
+        .base_color = { 0.55f, 0.55f, 0.58f, 1 }, .roughness = 0.4f, .metallic = 1,
+    }))!;
+    GeometryId support_geometry;
+    @pool() {
+        Geometry support = geometry::cylinder(
+            allocator:     tmem,
+            radius_top:    POLE_RADIUS,
+            radius_bottom: POLE_RADIUS,
+            height:        length,
+        );
+        support_geometry = demo.assets.add_geometry(&support)!;
+    };
+    return demo.scene.add_mesh(support_geometry, material, name: "pole");
+}
+
+fn Node*? add_flag(
+    Demo* demo,
+    Vec3 pole_position,
+    uint columns,
+    uint rows,
+) @local {
+    Node* pole = add_support(demo, POLE_HEIGHT)!;
+    pole.local.position = pole_position + (Vec3){ 0, POLE_HEIGHT * 0.5f, 0 };
+    return add_sheet(
+        demo:     demo,
+        position: pole_position + (Vec3){ POLE_RADIUS, POLE_HEIGHT - 0.1f, 0 },
+        columns:  columns,
+        rows:     rows,
+    );
+}
+
+fn Node*? add_hung_flag(
+    Demo* demo,
+    Vec3 bar_position,
+    uint columns,
+    uint rows,
+) @local {
+    Node* bar = add_support(demo, FLAG_WIDTH + 2 * POLE_RADIUS)!;
+    bar.local.position = bar_position + (Vec3){ FLAG_WIDTH * 0.5f, 0, 0 };
+    bar.local.rotation = quaternion::from_axis_angle((Vec3){ 0, 0, 1 }, (float)math::PI / 2);
+    return add_sheet(
+        demo:     demo,
+        position: bar_position - (Vec3){ 0, POLE_RADIUS, 0 },
+        columns:  columns,
+        rows:     rows,
+    );
 }
 
 fn void? build_flag(Demo* demo) @local {
@@ -290,11 +330,11 @@ fn void? build_flag(Demo* demo) @local {
 
 fn void? build_densities(Demo* demo) @local {
     foreach (index, &flag : demo.density_flags) {
-        *flag = add_flag(
-            demo:          demo,
-            pole_position: POLE_POSITION + (Vec3){ (float)index * DENSITY_FLAG_SPACING, 0, 0 },
-            columns:       DENSITY_FLAG_COLUMNS[index],
-            rows:          DENSITY_FLAG_ROWS[index],
+        *flag = add_hung_flag(
+            demo:         demo,
+            bar_position: { (float)index * DENSITY_FLAG_SPACING, DENSITY_BAR_HEIGHT, 0 },
+            columns:      DENSITY_FLAG_COLUMNS[index],
+            rows:         DENSITY_FLAG_ROWS[index],
         )!;
     }
 }
@@ -407,8 +447,8 @@ fn void? attach_density_flags(Demo* demo) @local {
     foreach (index, flag : demo.density_flags) {
         ClothDesc desc = cloth::default_cloth_desc();
         @pool() {
-            uint[] pins = alloc::new_array(tmem, uint, (sz)(DENSITY_FLAG_ROWS[index] + 1));
-            foreach (row, &pin : pins) *pin = (uint)row * (DENSITY_FLAG_COLUMNS[index] + 1);
+            uint[] pins = alloc::new_array(tmem, uint, (sz)(DENSITY_FLAG_COLUMNS[index] + 1));
+            foreach (column, &pin : pins) *pin = (uint)column;
             desc.pins = pins;
             demo.scene.add_cloth(&demo.assets, flag, desc)!;
         };
@@ -1080,8 +1120,8 @@ fn void? create_demo(
             demo.camera.local.position = POLE_POSITION + (Vec3){ 1.4f, POLE_HEIGHT - 0.6f, 4.2f };
             demo.camera.local.rotation = maths::look_rotation(((Vec3){ -0.25f, 0, -1 }).normalize(), { 0, 1, 0 });
         case DENSITIES:
-            demo.camera.local.position = POLE_POSITION + (Vec3){ DENSITY_FLAG_SPACING * 0.5f + 1.2f, POLE_HEIGHT - 0.6f, 6.4f };
-            demo.camera.local.rotation = maths::look_rotation(((Vec3){ -0.05f, 0, -1 }).normalize(), { 0, 1, 0 });
+            demo.camera.local.position = { (DENSITY_FLAG_SPACING + FLAG_WIDTH) * 0.5f, DENSITY_BAR_HEIGHT - 0.4f, 5.6f };
+            demo.camera.local.rotation = maths::look_rotation(((Vec3){ 0, -0.05f, -1 }).normalize(), { 0, 1, 0 });
         case CAPE:
             demo.camera.local.position = CHARACTER_POSITION + (Vec3){ 0.6f, 1.5f, 2.6f };
             demo.camera.local.rotation = maths::look_rotation(((Vec3){ -0.2f, -0.18f, -1 }).normalize(), { 0, 1, 0 });
@@ -1113,8 +1153,8 @@ fn void? create_demo(
     }
     demo.scene.update_world();
     attach_cloths(demo)!;
-    demo.wind_speed = DEFAULT_WIND_SPEED;
-    demo.wind_heading = DEFAULT_WIND_HEADING;
+    demo.wind_speed = scenario == DENSITIES ? DENSITY_WIND_SPEED : DEFAULT_WIND_SPEED;
+    demo.wind_heading = scenario == DENSITIES ? DENSITY_WIND_HEADING : DEFAULT_WIND_HEADING;
     demo.gusts = true;
 }
 

@@ -686,9 +686,11 @@ mean and 95th-percentile staging and commit wall times beside the summed solve t
 cloth states. `--cpu-only` steps the scene without a renderer, which keeps rasteriser threads from competing
 with the job pool. `--cells N` sets the benchmark flag's cells per side (default 32).
 
-The `densities` scene hangs the same 1.8 m by 1.2 m flag at 12x8 and 24x16 cells on two poles side by side in
-the same gusts. Areal mass and the aerodynamic forces keep the two motions alike. The example drives every
-flag, cape and crowd with a plain `Wind.velocity`; it sets no `Wind.drag`.
+The `densities` scene hangs the same 1.8 m by 1.2 m flag from two bars side by side, at 12x8 and 24x16 cells,
+with the top row pinned and a 1.5 m/s wind that blows straight at the sheets, under the example's gusts. The
+two sheets swing together to within about a centimetre. Areal mass and the aerodynamic forces make that possible;
+the wrinkles of a free edge or of a pole flag still differ with the resolution. The example drives every
+flag, cape and crowd with a plain `Wind.velocity` and sets no `Wind.drag`.
 
 The `fast` scene rotates a thin box by 90 degrees and translates it in one fixed step
 through a small cloth patch. Continuous and self-contact are enabled. It uses one
