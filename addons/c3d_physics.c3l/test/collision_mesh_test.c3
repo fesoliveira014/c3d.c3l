@@ -575,7 +575,12 @@ fn void test_mesh_preparation_and_queries_refuse_unsupported_inputs() @test {
 
     maths::Transform pose = surface_pose();
     CollisionContact[collide::MAX_MANIFOLD_POINTS] contacts;
-    assert(@catch(first.view().contacts(pose, second.view(), pose, contacts[..])) == c3d::UNSUPPORTED);
+    assert(@catch(first.view().contacts(
+        pose_a: pose,
+        other: second.view(),
+        pose_b: pose,
+        output: contacts[..],
+    )) == c3d::UNSUPPORTED);
     assert(@catch(first.view().distance(pose, second.view(), pose)) == c3d::UNSUPPORTED);
     assert(@catch(first.view().cast(
         pose_a: pose,

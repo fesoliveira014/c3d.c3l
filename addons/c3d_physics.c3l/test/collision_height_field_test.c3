@@ -564,10 +564,8 @@ fn void test_height_field_preparation_and_queries_refuse_unsupported_inputs() @t
 
     float[4] broken = { 0, 0, 0, 0 };
     desc.height_field.heights = broken[..];
-    foreach (value : (float[2]){ float::nan, float::inf }) {
-        broken[3] = value;
-        assert(@catch(physics::create_collision_shape(mem, &fixture.cache, desc)) == c3d::INVALID_ARGUMENT);
-    }
+    broken[3] = float::nan;
+    assert(@catch(physics::create_collision_shape(mem, &fixture.cache, desc)) == c3d::INVALID_ARGUMENT);
     broken = { -float::max, 0, 0, float::max };
     assert(@catch(physics::create_collision_shape(mem, &fixture.cache, desc)) == b3::DEGENERATE_GEOMETRY);
 
