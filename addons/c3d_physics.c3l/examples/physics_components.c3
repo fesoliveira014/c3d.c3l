@@ -36,6 +36,8 @@ const uint  PERCENTILE_95 @local = 95;
 const uint  PERCENT @local = 100; // the percentile index rounds up to the next sample
 const usz   BENCHMARK_DEBUG_LINES @local = 1 << 19; // 16 MiB of vertices; holds every collider line of the stress scene
 const uint  BENCHMARK_DEBUG_WARMUP @local = 3;      // draws before timing, so the sink's pages are resident
+const uint  FNV_OFFSET_BASIS @local = 2166136261;   // 32-bit FNV-1a; equal sinks give equal checksums at any worker count
+const uint  FNV_PRIME @local = 16777619;
 const uint  SCENE_NODE_CAPACITY @local = MAX_SPAWNED + STRESS_BODIES + LEVEL_NODES;
 const uint  TIMING_WINDOW @local = 60;
 const float STRESS_SPACING @local = 1.5f;
@@ -755,6 +757,14 @@ fn void run_on_pool(
     ));
 }
 
+fn uint vertex_checksum(debug::DebugDraw* sink) @local {
+    usz words = (usz)sink.vertices.len() * (debug::DebugVertex::size / uint::size);
+    uint[] contents = ((uint*)sink.vertices.entries)[:words];
+    uint hash = FNV_OFFSET_BASIS;
+    foreach (word : contents) hash = (hash ^ word) * FNV_PRIME;
+    return hash;
+}
+
 fn uint percentile_index(uint frames) @local {
     return (frames * PERCENTILE_95 + PERCENT - 1) / PERCENT - 1;
 }
@@ -786,9 +796,9 @@ fn void? measure_debug_draw(
     sort::quicksort(samples);
 
     io::printfn(
-        "debug_draw,sink,%s,capacity,%d,workers,%d,frames,%d,mean_ms,%.6f,p95_ms,%.6f,lines,%d,dropped,%d",
+        "debug_draw,sink,%s,capacity,%d,workers,%d,frames,%d,mean_ms,%.6f,p95_ms,%.6f,lines,%d,dropped,%d,checksum,%08x",
         sink_name, (ulong)capacity, workers, frames, total / frames, samples[percentile_index(frames)],
-        (ulong)(sink.vertices.len() / 2), (ulong)sink.dropped,
+        (ulong)(sink.vertices.len() / 2), (ulong)sink.dropped, vertex_checksum(&sink),
     );
 }
 
