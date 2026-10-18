@@ -325,8 +325,8 @@ remain continuous motion.
 ## Arithmetic and update failures
 
 Consumers using cloth must compile with `--fp-math=strict`, or `"fp-math": "strict"`
-in their project settings. The update's owner thread must use round-to-nearest and
-gradual underflow. Runtime checks detect unsupported arithmetic conditions but do not
+in their project settings. The update's owner thread, and every thread that stages cloth through
+`set_parallel`, must use round-to-nearest and gradual underflow. Runtime checks detect unsupported arithmetic conditions but do not
 prove the compiler's floating-point mode. Cloth never changes thread or process modes.
 
 Every prepared cloth exposes its read-only last-attempt result as
@@ -444,6 +444,11 @@ write happen in phases 1 and 3, on the calling thread.
 **Thread-safety contract.** While `update_cloths` runs, the application must not mutate the scene, the asset
 store or the physics world, and must not step the world: workers read all three. The calling thread owns
 `update_cloths` and `set_parallel`; do not call `set_parallel` during an update.
+
+Cloth arithmetic needs round-to-nearest and gradual underflow (see [Arithmetic and update
+failures](#arithmetic-and-update-failures)); worker threads must run in that mode too. Every item runs the
+arithmetic check on the thread that stages it and fails with `CONTACT_PRECISION_EXCEEDED` when gradual
+underflow is off there.
 
 **Determinism.** One cloth's arithmetic is the same on every thread, and items share no mutable state, so
 positions, velocities and published geometry are bit-identical to the serial path for every worker count
