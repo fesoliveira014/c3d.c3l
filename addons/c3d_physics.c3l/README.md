@@ -130,8 +130,9 @@ rests: it skips the solve and publication until a trigger wakes it (reference mo
 `sleep_speed * fixed_dt`, a moving listed collider near the cloth, a `Wind` or gravity change, a cut
 request or `wake()`). `Cloth.sleep()` and `CrowdCloth.sleep_slot(slot)` hold a cloth instead; a held
 cloth ignores every trigger until `wake()` or `wake_slot(slot)`. Holds are meant for unseen cloth, because
-a held skinned cloth stays frozen in its owner's frame. A wake carries the particles by the reference
-motion since the cloth stopped. `Cloth.activity()` reports the state and `PhysicsWorld.cloth_stats`
+a held skinned cloth stays frozen in its owner's frame. A wake carries a cloth on a rigid owner by the
+owner's motion since its last publication, which keeps the drawn shape under rotation, and carries a
+skinned cloth or crowd slot particle by particle by its reference displacement. `Cloth.activity()` reports the state and `PhysicsWorld.cloth_stats`
 counts resting and held cloths. Publication marks only the changed vertex range of each stream, so
 resting cloth leaves the geometry revision untouched. Rest and hold state is not serialized.
 

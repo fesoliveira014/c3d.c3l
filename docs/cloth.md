@@ -439,14 +439,22 @@ Holds are meant for unseen cloth. A held cloth stays as published: a held skinne
 its owner's frame while the skeleton animates, and a held crowd slot keeps its last colour. A hold on a
 crowd slot ends when the slot gets a new instance, so the new instance starts awake.
 
-**Waking.** The first update after a wake carries the particles by the reference motion since the cloth
-stopped: positions and predictions move by `current_reference - solved_reference`, velocities are zero,
-the solved reference becomes the current one and pin and attachment anchors equal their targets. A held
-or resting cloth draws at fixed node-local positions, so a translating owner keeps the drawn shape; the
-carry adds the displacement without rotating it. An explicit `wake()` also resets the listed bodies'
-pose history, so a collider that moved while the cloth was held does not sweep through it. A wake is
-committed with the update that carried it: if that update fails, the cloth keeps its activity and
-positions, and the wake request stays pending.
+**Waking.** The first update after a wake carries the particles to where the reference went while the
+cloth stopped, sets velocities to zero, makes the solved reference the current one and sets pin and
+attachment anchors equal to their targets. A held or resting cloth draws at fixed node-local positions, so the
+carry depends on the reference:
+
+- A cloth on a rigid owner (a Mesh node without a `SkinBinding`) moves rigidly by
+  `node.world * inverse(published_frame)`, the owner's motion since the last publication. The drawn shape
+  and every edge length hold under rotation as well as translation.
+- A skinned cloth and a crowd slot move each particle by `current_reference - solved_reference`, which keeps
+  pins and free particles consistent. A crowd slot cannot use its owner's motion: it draws under the owner
+  node while its reference follows the instance placement. A reference that rotated while the cloth was
+  held shears these two; holds are for unseen cloth.
+
+An explicit `wake()` also resets the listed bodies' pose history, so a collider that moved while the cloth
+was held does not sweep through it. A wake is committed with the update that carried it: if that update
+fails, the cloth keeps its activity and positions, and the wake request stays pending.
 
 **Skipped work.** A resting cloth skips the solve and publication after its trigger check; a held cloth
 skips everything after the ownership checks. Neither marks geometry dirty, so the renderer sees no new

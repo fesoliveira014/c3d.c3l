@@ -145,13 +145,21 @@ fn bool rest_disturbed(PhysicsWorld* world, ClothState* state, Wind* wind) @priv
     return bodies_disturbed(state, threshold);
 }
 
-fn void carry_waking_cloth(ClothState* state) @private {
+fn void carry_waking_cloth(ClothState* state, Mat4* rigid_frame) @private {
     if (!state.settle.resting && !state.settle.wake_requested) return;
 
-    foreach (particle, reference : state.current_reference) {
-        Vec3 displacement = reference - state.solved_reference[particle];
-        state.positions[particle] += displacement;
-        state.predicted[particle] += displacement;
+    if (rigid_frame) {
+        Mat4 motion = rigid_frame.mul(maths::inverse_affine(state.published_frame));
+        foreach (particle, position : state.positions) {
+            state.positions[particle] = maths::transform_point(motion, position);
+            state.predicted[particle] = maths::transform_point(motion, state.predicted[particle]);
+        }
+    } else {
+        foreach (particle, reference : state.current_reference) {
+            Vec3 displacement = reference - state.solved_reference[particle];
+            state.positions[particle] += displacement;
+            state.predicted[particle] += displacement;
+        }
     }
     state.velocities[..] = (Vec3){};
     state.solved_reference[..] = state.current_reference[..];

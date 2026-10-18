@@ -1197,7 +1197,8 @@ fn ClothUpdateKind? update_crowd_slot(
 
     staged.contact_result.stage = ClothContactStage.BINDINGS;
     refresh_colliders(world, &staged)!;
-    carry_waking_cloth(&staged);
+    // The slot draws under the owner, which does not follow the placement that moves its reference.
+    carry_waking_cloth(&staged, null);
     sample_bodies(scene, &staged);
     foreach (pin_slot, pin : staged.pins) {
         staged.pin_anchors[pin_slot] = staged.solved_reference[pin];

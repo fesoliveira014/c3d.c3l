@@ -146,6 +146,39 @@ fn void test_held_cloth_ignores_triggers_and_carries_on_wake() @test {
     foreach (velocity : state.velocities) assert(velocity.length() < SLEEP_SPEED);
 }
 
+fn void test_held_cloth_carries_a_rotated_rigid_owner_without_shear() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* node = add_cloth_node(&fixture, add_grid(&fixture, GRID_CELLS));
+    uint[2] corners = { 0, GRID_CELLS };
+    fixture.scene.add_cloth(&fixture.assets, node, resting_desc(corners[..]))!!;
+    Cloth* cloth = fixture.scene.get(node, Cloth);
+    ClothState* state = cloth.state;
+    settle(&fixture, node);
+    cloth.sleep();
+
+    float[] edge_lengths = alloc::new_array(tmem, float, state.edges.len);
+    foreach (index, edge : state.edges) {
+        edge_lengths[index] = (state.positions[edge.first] - state.positions[edge.second]).length();
+    }
+
+    node.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, (float)math::PI / 2);
+    node.local.position = { 1, 0.5f, -0.25f };
+    for (uint update = 0; update < HELD_UPDATES; update++) step(&fixture, physics::DEFAULT_FIXED_DT);
+
+    cloth.wake();
+    step(&fixture, 0);
+    foreach (index, edge : state.edges) {
+        float length = (state.positions[edge.first] - state.positions[edge.second]).length();
+        assert(math::abs(length - edge_lengths[index]) <= CONTACT_TOLERANCE);
+    }
+    foreach (index, position : state.positions) assert(near(position, published_world(&fixture, node, (uint)index)));
+
+    step(&fixture, physics::DEFAULT_FIXED_DT);
+    foreach (velocity : state.velocities) assert(velocity.length() < SLEEP_SPEED);
+}
+
 fn void test_cloth_marks_changed_ranges_and_nothing_at_rest() @test {
     Fixture fixture;
     setup(&fixture, weightless());

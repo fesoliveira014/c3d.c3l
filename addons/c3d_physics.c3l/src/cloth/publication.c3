@@ -260,7 +260,7 @@ fn ClothUpdateKind? update_cloth(
 
     staged.contact_result.stage = ClothContactStage.BINDINGS;
     refresh_colliders(world, &staged)!;
-    carry_waking_cloth(&staged);
+    carry_waking_cloth(&staged, staged.skinned ? null : &node.world);
     sample_bodies(world.scene, &staged);
     foreach (slot, pin : staged.pins) {
         staged.pin_anchors[slot] = staged.solved_reference[pin];
