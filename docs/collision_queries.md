@@ -29,14 +29,40 @@ defer physics::destroy_collision_shape(&shape);
 CollisionShapeView view = shape.view();
 ```
 
-`CollisionShapeDesc` contains geometry/source values, without body filtering, events, density,
-friction or restitution. Preparation currently supports unit-scale `SPHERE`, `CAPSULE`, `BOX`
-and `HULL`. Supply positive finite dimensions, or a live hull `geometry` from the cache's store.
+`CollisionShapeDesc` contains scale and geometry/source values, without body filtering, events,
+density, friction or restitution. Preparation supports `SPHERE`, `CAPSULE`, `BOX` and `HULL`.
+Supply positive finite dimensions, or a live hull `geometry` from the cache's store.
 The capsule segment is local Y, with length `2 * half_height`; it must be at least one native
 linear slop. Box half-extents must be at least `0.2 * native linear slop`. At the default native
 unit setting these limits are 0.005 and 0.001 respectively. Smaller positive values return
-`UNSUPPORTED` instead of accepting native clamping. `MESH`, `HEIGHT_FIELD`, `COMPOUND` and
-nonunit prepared scale currently return `UNSUPPORTED`.
+`UNSUPPORTED` instead of accepting native clamping. `MESH`, `HEIGHT_FIELD` and `COMPOUND`
+currently return `UNSUPPORTED`.
+
+### Prepared scale
+
+`scale` applies in the shape's local axes when the shape is prepared. Query poses stay rigid.
+A zero or nonfinite component returns `INVALID_ARGUMENT` before any native call. The limits
+above apply to the scaled dimensions; scaled values whose arithmetic overflows or underflows
+return `DEGENERATE_GEOMETRY`.
+
+| Kind | Accepted scale | `UNSUPPORTED` |
+| --- | --- | --- |
+| `SPHERE` | components of equal magnitude; any sign pattern | unequal magnitudes |
+| `CAPSULE` | components of equal magnitude; any sign pattern | unequal magnitudes, scaled segment below the limit |
+| `BOX` | any diagonal scale; half-extents multiply by the magnitudes | a scaled half-extent below the limit |
+| `HULL` | any diagonal scale, including mirrored | a magnitude below 0.01 |
+
+A mirrored sphere, capsule or box is the same shape as the unmirrored one. A mirrored hull keeps
+outward-facing normals.
+
+A scaled hull is cooked once from the unit hull with the scale baked into its points; queries
+never scale at query time. The scaled cook is a separate cache entry keyed by the geometry
+revision and the exact scale components. Matching requests share the entry,
+and any different component creates another one. The entry for unit scale is the one worlds use,
+and bodies are unaffected by scaled entries. A scaled hull that is not cached yet can occupy two
+slots, its unit cook and its scaled cook, and the unit cook stays cached afterwards. A rejected
+preparation releases what it held and leaves entries that bodies use valid. The hull limits below
+apply to the scaled cook.
 
 Hull preparation retains the native cooked hull, with at most 128 vertices. Query owners admit
 at most 32 vertices per face so native contact clipping stays within its fixed scratch capacity;
@@ -124,7 +150,8 @@ wherever the `Hull` value lives, until `destroy_hull`. Boxes allocate nothing; e
 box hull on the stack.
 
 Poses are `maths::Transform` with unit scale (within `UNIT_SCALE_TOLERANCE`, so a pose decomposed
-from a world matrix qualifies). Scaled shapes are not supported: bake the scale into the shape.
+from a world matrix qualifies). Scaled shapes are not supported here: bake the scale into the shape,
+or prepare a scaled `CollisionShape`.
 
 ## Queries
 
@@ -179,4 +206,6 @@ Results past a cap are dropped.
 module that imports both `c3d::physics::collide` and `b3` writes these three qualified.
 
 The `collision_math` example prepares cached convex owners, moves one shape against another,
-and draws the manifold points, the closest-point segment and the swept contact.
+and draws the manifold points, the closest-point segment and the swept contact. Each shape has
+scale controls, uniform for the sphere and capsule and per axis for the box and hull, and a
+reflection toggle. A refused scale shows its fault in the panel.

@@ -9,8 +9,11 @@ World-free prepared convex queries use `CollisionCache`, `CollisionShape` and bo
 `CollisionShapeView` values in `c3d::physics`. A cache borrows one asset store and can share
 cooked hull sources with worlds created with the optional fifth `cache` argument. Destroy
 all borrowing worlds and prepared owners before the cache, then the store. Native length
-units remain fixed through those lifetimes. The direct `c3d::physics::collide` API remains
-available. See [Collision queries](../../docs/collision_queries.md) for supported shapes,
+units remain fixed through those lifetimes. Prepared shapes take a preparation scale: equal
+magnitude for spheres and capsules, diagonal and mirrored for boxes and hulls. Scaled hulls are
+cooked once per geometry revision and exact scale, and identical requests share the entry.
+The direct `c3d::physics::collide` API remains available. See
+[Collision queries](../../docs/collision_queries.md) for supported shapes, the scale domain,
 capacity faults, query results and cache ownership.
 
 ## Ragdoll recovery
