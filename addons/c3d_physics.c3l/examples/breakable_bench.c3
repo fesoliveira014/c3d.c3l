@@ -17,6 +17,9 @@ const uint BENCHMARK_REPEATS @local = 3;
 const uint LATENCY_FRAMES @local = 300;
 const usz RECORDING_BYTES @local = 4 * 1024 * 1024; // starting capacity for the recorded impact
 const uint RESET_SAMPLES @local = 32;
+const uint LARGE_WALL_SIDE @local = 32; // 1,024 pieces and 523,776 pairs; the graph scratch is 16 bytes per pair, about 8 MiB
+const ulong CHECKSUM_BASIS @local = 0xcbf2_9ce4_8422_2325; // FNV-1a offset basis
+const ulong CHECKSUM_PRIME @local = 0x0000_0100_0000_01b3; // FNV-1a prime
 
 fn bool belongs_to_wall(Node* node, Node* root) @local {
     for (Node* current = node; current; current = current.parent) {
@@ -117,7 +120,53 @@ fn void? measure_latency(bool sleeping) @local {
     io::printfn("replay,%s,frames,%d,matched", sleeping ? "ASSEMBLY" : "PIECES", replay.frame_count());
 }
 
-fn void? run_benchmark() @private {
+fn ulong mix_checksum(ulong checksum, uint value) @local {
+    return (checksum ^ value) * CHECKSUM_PRIME;
+}
+
+fn ulong mix_vector(ulong checksum, Vec3 value) @local {
+    for (usz axis = 0; axis < 3; axis++) checksum = mix_checksum(checksum, bitcast(value[axis], uint));
+    return checksum;
+}
+
+fn ulong mix_frame(ulong checksum, maths::Transform frame) @local {
+    checksum = mix_vector(checksum, frame.position);
+    for (usz lane = 0; lane < 4; lane++) checksum = mix_checksum(checksum, bitcast(frame.rotation.v[lane], uint));
+    return mix_vector(checksum, frame.scale);
+}
+
+fn ulong graph_checksum(BreakableState* state) @local {
+    ulong checksum = CHECKSUM_BASIS;
+    for (uint index = 0; index < state.welds.len; index++) {
+        BreakableWeldView weld = state.weld_view(index);
+        checksum = mix_checksum(checksum, weld.piece_a);
+        checksum = mix_checksum(checksum, weld.piece_b);
+        checksum = mix_vector(checksum, weld.anchor);
+        checksum = mix_frame(checksum, weld.frame_a);
+        checksum = mix_frame(checksum, weld.frame_b);
+    }
+    return checksum;
+}
+
+fn void? measure_authoring(uint workers, uint wall_side, uint run) @local {
+    Demo demo;
+    create_demo(mem, &demo, "", wall_side)!;
+    defer destroy_demo(&demo);
+    if (workers) start_workers(&demo, workers)!;
+
+    BreakableDesc desc = physics::default_breakable_desc();
+    desc.break_force = float::max;
+    rebuild_demo(&demo, 1, desc)!;
+    BreakableState* state = demo.scene.get(demo.walls[0], Breakable).state;
+    io::printfn("authoring,workers,%d,side,%d,run,%d,pieces,%d,edges,%d,author_ms,%.6f,graph_checksum,%016x",
+        workers, wall_side, run, state.pieces.len, state.welds.len, demo.author_ms, graph_checksum(state));
+}
+
+fn void? run_benchmark(uint workers) @private {
+    for (uint run = 0; run < BENCHMARK_REPEATS; run++) {
+        measure_authoring(workers, WALL_SIDE, run)!;
+        measure_authoring(workers, LARGE_WALL_SIDE, run)!;
+    }
     for (uint run = 0; run < BENCHMARK_REPEATS; run++) {
         measure_idle(true, run)!;
         measure_idle(false, run)!;
