@@ -122,6 +122,7 @@ struct ClothBody {
 <* Library-owned simulation state; its arrays are borrowed by readers. *>
 struct ClothState {
     ClothDesc            desc; // pins/colliders borrow state arrays; other slices borrow owned authoring
+    usz                  allocation_bytes; // size of the state's allocation block
     AssetStore*          assets;
     GeometryId           source;
     uint                 source_revision;
