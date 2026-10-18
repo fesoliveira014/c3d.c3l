@@ -339,7 +339,7 @@ parts on vertex skinning at every level: one binding posing every source at ever
 savings of the levels.
 
 A batch with a [quadtree](instancing.md#quadtree-selection) selects its own nodes on the GPU in the same way,
-per view. A node cannot hold both a quadtree batch and a `LodGroup`: `render_view` faults `UNSUPPORTED`.
+per view. A node cannot hold both a quadtree batch and a `LodGroup`: `Scene.set_instance_quadtree` faults `UNSUPPORTED`, and `render_view` does when the group is added afterwards.
 
 Retiring any referenced geometry, material or shader skips the whole group.
 Asset edits that invalidate its rigid/instanced form also skip it. Render and
