@@ -12,7 +12,7 @@ struct Mesh {
     bool       cast_shadow;
     bool       receive_shadow;
     bool       trace;
-    bool       trace_only; // traced, never drawn; raster views skip it
+    bool       trace_only; // traced, never drawn; raster, picking and the scene index skip it
     float[]    morph_weights;
     bool       has_bounds_override;
     Aabb       local_bounds;

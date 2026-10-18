@@ -18,7 +18,7 @@ An instance enters the trace when all of these hold:
 - the material's alpha mode is `OPAQUE` or `MASK`;
 - the material has no custom vertex stage, or its shader poses the trace geometry in the row's form ([custom trace poses](#custom-trace-poses)).
 
-`Mesh.trace_only` marks a mesh that is traced but never drawn: raster views and shadow layers skip it, and trace collection takes it like any traced mesh, so its node must be effectively visible. Picking and the scene index still see it.
+`Mesh.trace_only` marks a mesh that is traced but never drawn: raster views and shadow layers skip it, and trace collection takes it like any traced mesh, so its node must be effectively visible. Picking, the scene index and impostor capture skip it: its rest geometry is not what it traces as.
 
 A mesh contributes one instance at its node's world matrix. An instanced batch contributes one instance per live transform, at `node.world * transforms[i]`. Camera layers and frusta play no part: an object behind the camera traces like any other. Every row carries its node's `layers`, which hit shading tests against `Light.layers`.
 

@@ -244,7 +244,9 @@ macro void @each_impostor_part(Scene* scene, Node* subject, Mat4 inverse; @body(
             }
         } else if (scene.has(node, Mesh)) {
             Mesh* mesh = scene.get(node, Mesh);
-            @body((ImpostorPart){ .geometry = mesh.geometry, .material = mesh.material, .world = local, .color = { 1, 1, 1, 1 } });
+            if (!mesh.trace_only) {
+                @body((ImpostorPart){ .geometry = mesh.geometry, .material = mesh.material, .world = local, .color = { 1, 1, 1, 1 } });
+            }
         }
     }
 }
