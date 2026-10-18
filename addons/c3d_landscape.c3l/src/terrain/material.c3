@@ -22,16 +22,22 @@ struct TerrainParams @private {
     float   cell_size;
     float   height_scale;
     uint    layer_count;
-    uint    border_edges; // bit per BorderEdge that has a linked neighbour and a valid ring row
-    uint[3] padding;      // a whole number of the block's 16-byte alignment
+    uint    border_edges;     // bit per BorderEdge that has a linked neighbour and a valid ring row
+    uint    slope_projection; // SlopeProjection ordinal; TERRAIN_PROJECTION_TRIPLANAR mirrors TRIPLANAR
+    float   triplanar_sharpness;
+    uint    padding;          // a whole number of the block's 16-byte alignment
 }
 
 $assert TerrainParams::size == 32;
+$assert (uint)SlopeProjection.TRIPLANAR.ordinal == 1;
 
 // Descs come from files as well as code, so every value check is a fault; negated so NaN faults too.
 fn uint? check_terrain_desc(AssetStore* assets, TerrainDesc* desc) @private {
     if (!(desc.cell_size > 0) || !(desc.height_scale > 0)) return c3d::INVALID_ARGUMENT~;
     if (!(desc.lod_threshold >= 0) || !(desc.lod_hysteresis >= 0)) return c3d::INVALID_ARGUMENT~;
+    float sharpness = desc.triplanar_sharpness;
+    bool sharpness_valid = sharpness >= MIN_TRIPLANAR_SHARPNESS && sharpness <= MAX_TRIPLANAR_SHARPNESS;
+    if (desc.slope_projection == TRIPLANAR && !sharpness_valid) return c3d::INVALID_ARGUMENT~;
     if (!assets.textures.is_live(desc.height_map)) return c3d::INVALID_ID~;
     check_height_map(assets.texture(desc.height_map))!;
     if (desc.control_map.generation) {
@@ -155,10 +161,12 @@ fn MaterialId? add_terrain_material(
     uint layer_count,
 ) @private {
     TerrainParams params = {
-        .texels       = assets.texture(desc.height_map).desc.width,
-        .cell_size    = desc.cell_size,
-        .height_scale = desc.height_scale,
-        .layer_count  = layer_count,
+        .texels              = assets.texture(desc.height_map).desc.width,
+        .cell_size           = desc.cell_size,
+        .height_scale        = desc.height_scale,
+        .layer_count         = layer_count,
+        .slope_projection    = (uint)desc.slope_projection.ordinal,
+        .triplanar_sharpness = desc.triplanar_sharpness,
     };
     TextureSlot[material::MAX_CUSTOM_TEXTURE_SLOTS] slots = material::CUSTOM_SLOTS_DEFAULT;
     slots[HEIGHT_SLOT] = material::texture_slot(desc.height_map);

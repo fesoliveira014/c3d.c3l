@@ -12,10 +12,14 @@ import c3d::landscape::water;
 import c3d::scene;
 import c3d::serial;
 
+const char[*] TERRAIN_V1_BINARY @private = $embed("fixtures/terrain_v1.bin");
+const char[*] TERRAIN_V1_TEXT @private = $embed("fixtures/terrain_v1.json");
+
 fn void test_serial_layout_registration() @test {
     landscape::register_serial_codecs()!!;
-    assert(serial::described_type(TerrainDesc)!!.version == 1);
-    assert(serial::described_type(TerrainDesc)!!.layout == 0x7638a7507fa65b33);
+    assert(serial::described_type(TerrainDesc)!!.version == 2);
+    assert(serial::described_type(TerrainDesc)!!.layout == 0xbbb8c4e5931f82a4);
+    assert(serial::described_type(landscape::TerrainDescV1)!!.layout == 0x7638a7507fa65b33);
     assert(serial::described_type(TerrainTile)!!.layout == 0x3fe780c7be5416e1);
     assert(serial::described_type(landscape::TerrainSetAuthoring)!!.layout == 0x6b17270c6b53663f);
     assert(serial::described_type(ScatterRules)!!.layout == 0x40955fefc693491e);
@@ -31,6 +35,22 @@ fn void test_serial_layout_registration() @test {
         assert(schema.contains("density_channel") && schema.contains("lod_threshold")
           && schema.contains("ripple_drift"));
     };
+}
+
+fn void test_terrain_v1_fixtures_read_with_default_projection() @test {
+    foreach (text_mode : (bool[2]){ false, true }) {
+        @pool() {
+            Fixture fixture;
+            create_fixture(&fixture);
+            defer destroy_fixture(&fixture);
+
+            char[] bytes = text_mode ? TERRAIN_V1_TEXT[..] : TERRAIN_V1_BINARY[..];
+            Node* ground = decode(&fixture, bytes, text_mode)!!;
+            TerrainDesc* desc = &fixture.destination.get(ground, Terrain).desc;
+            assert(desc.height_scale == 4 && desc.lod_threshold == 123 && !desc.cast_shadow);
+            assert(desc.slope_projection == TOP && desc.triplanar_sharpness == terrain::DEFAULT_TRIPLANAR_SHARPNESS);
+        };
+    }
 }
 
 fn void test_landscape_both_encodings_restore_pending_authoring_and_prepare() @test {
@@ -83,6 +103,8 @@ fn void test_landscape_both_encodings_restore_pending_authoring_and_prepare() @t
                 Node* ground = child_named(restored, "ground");
                 Node* plants = child_named(restored, "plants");
                 Node* lake = child_named(restored, "water");
+                TerrainDesc* restored_desc = &fixture.destination.get(ground, Terrain).desc;
+                assert(restored_desc.slope_projection == TRIPLANAR && restored_desc.triplanar_sharpness == 7);
                 assert(!terrain::is_prepared(&fixture.destination, ground));
                 assert(!foliage::is_prepared(&fixture.destination, plants));
                 assert(!water::is_prepared(&fixture.destination, lake));

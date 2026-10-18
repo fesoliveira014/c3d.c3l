@@ -113,8 +113,10 @@ particle welding (`render_particles`), deformed normal domains and opt-in deform
 (`tangent_frame`, `tangent_uv_set`), hard pins and weighted compliant XPBD attachments (`ClothAttachment`),
 distance or signed dihedral bending (`ClothBendMode`, `bend_compliance`, `ClothRestAngle`), skinned
 reference transport (`transport`), crowd cloth (`CrowdCloth`), authored cut paths and bounded tearing
-(`ClothCutPath`, `ClothTearLimits`, `request_cut`, `cut_result`), node
-`Wind` drag, an optional ground and one-way particle contacts with sphere, capsule, box,
+(`ClothCutPath`, `ClothTearLimits`, `request_cut`, `cut_result`), areal particle mass
+(`ClothDesc.density`), quadratic drag and lift from the node's `Wind` velocity
+(`ClothDesc.drag_coefficient`, `lift_coefficient`; cloth ignores `Wind.drag` and `Wind.lift`),
+an optional ground and one-way particle contacts with sphere, capsule, box,
 hull, mesh, heightfield and compound colliders of the bodies listed in `ClothDesc.colliders`.
 Contacts are discrete by default. Set `desc.collisions.continuous = true` to sweep
 prediction, structural/pin corrections and contact responses against interpolated final
@@ -130,14 +132,15 @@ Attach with `scene.add_cloth(&assets, node, desc)` and
 call `physics.update_cloths()` once after `physics.update`, after final ragdoll/IK poses and
 `scene.update_world()`, before rendering. See [Cloth](../../docs/cloth.md) for the contract,
 faults, frame order and usage; the `cloth` example includes flag, cape, external-contact,
-seamed-fold, fast-crossing, flag-field and cape-crowd scenes (`--scene flag|cape|both|contacts|fold|fast|field|crowd`).
+seamed-fold, fast-crossing, flag-field, cape-crowd and tessellation-comparison scenes
+(`--scene flag|cape|both|contacts|fold|fast|field|crowd|densities`).
 The manual Vulkan acceptance runs with
 `c3c test cloth_acceptance --path addons/c3d_physics.c3l/test/gpu`.
 
 A cloth whose free particles stay under `ClothDesc.sleep_speed` for `sleep_steps` simulated steps
 rests: it skips the solve and publication until a trigger wakes it (reference motion past
-`sleep_speed * fixed_dt`, a moving listed collider near the cloth, a `Wind` or gravity change, a cut
-request or `wake()`). `Cloth.sleep()` and `CrowdCloth.sleep_slot(slot)` hold a cloth instead; a held
+`sleep_speed * fixed_dt`, a moving listed collider near the cloth, a change of the `Wind` velocity or
+maximum speed, a gravity change, a cut request or `wake()`). `Cloth.sleep()` and `CrowdCloth.sleep_slot(slot)` hold a cloth instead; a held
 cloth ignores every trigger until `wake()` or `wake_slot(slot)`. Holds are meant for unseen cloth, because
 a held skinned cloth stays frozen in its owner's frame. A wake carries a cloth on a rigid owner by the
 owner's motion since its last publication, which keeps the drawn shape under rotation, and carries a
@@ -191,6 +194,63 @@ mutation.
 A body keeps the collision snapshot it cooked when `replace_geometry` or `replace_texture` replaces its
 source. Bodies created afterwards, and world rebuilds, cook the current revision. The geometry copy a cloth
 owns is private to the cloth: do not replace or edit it.
+
+## Height-field windows
+
+A `TEXTURE` height field cooks the whole map into one native object, so an edit re-cooks every sample. A window
+cooks part of it: `HeightField.window` is `{ x, z, count_x, count_z }` in cells, and a window reads
+`count_x + 1` by `count_z + 1` samples starting at `x, z`. All zero covers the whole map. A window needs a
+`TEXTURE` source of 8-bit or `R16_UINT` samples, since only those convert into a fixed range; a window on a
+`HEIGHTS` source, one with a zero count or one past the map faults `INVALID_ARGUMENT`, and an `RGBA32_FLOAT`
+map faults `UNSUPPORTED`. A window's collider is placed by its node, like any height field: its origin is the
+body origin.
+
+A windowed field quantizes over the unscaled range 0 to 1, which is `0` to `scale.y` metres. Whole-map
+fields keep the range of their own samples and cook as before. Equal quantization is what lets windows of
+one map, and [tiles](../../docs/terrain.md#tile-sets) of one set at equal `height_scale`, meet exactly, and an
+edit never re-quantizes another window. The snapshot key adds the window to the texture, revision, scale and
+material indices, so each window takes one snapshot slot. The application sizes `PhysicsDesc.snapshot_capacity`
+for the windows plus its other shapes: a window that finds no free slot fails to build with `CAPACITY_EXCEEDED`,
+reported in `build_failures` at the update, and `add_height_field_windows` does not check. A re-cooked window leaves
+its previous entry unheld, and a full table reclaims it.
+
+```c3
+physics::add_height_field_windows(
+    scene:        &scene,
+    assets:       &assets,
+    node:         terrain_node.id,
+    collider:     &collider,
+    window_cells: 256,
+)!;
+// write texels in place, then:
+assets.mark_texture_dirty(height_map);
+physics::mark_height_field_windows_changed(&scene, terrain_node.id, { .x = x, .z = z, .columns = columns, .rows = rows })!;
+world.update(dt); // re-cooks the marked windows only
+```
+
+- `add_height_field_windows` creates one child node per window under the node, at the window origin
+  `(x * scale.x, 0, z * scale.z)`, each with a static `PhysicsBody` holding one windowed collider copied from the
+  template, and a `HeightFieldWindows` component on the node that owns them. The template is a `HEIGHT_FIELD`
+  collider over a `TEXTURE` source whose `window` is ignored; per-cell `material_indices` cover the whole map and
+  are cut per window. Edge windows take the remaining cells. The node's world matrix is current when the call
+  is made. The bodies build on the next update.
+- Windows share the samples on their common edge, so `mark_height_field_windows_changed` marks every window
+  whose sample range `[x, x + count]` meets the rectangle, given in samples of the map, which are its texels. An
+  edit on a shared edge marks two windows and one on a shared corner marks four. It returns how many it marked.
+- A marked window is rebuilt synchronously by the next `PhysicsWorld.update`; an unmarked one is never rebuilt, so
+  a body resting on it keeps its contact and its sleep. The rebuilt window has the one-step contact gap of any
+  `mark_changed`. `PhysicsCounters.pending_bodies` counts the bodies marked and not yet built.
+- To change `window_cells`, call `remove_height_field_windows` and `add_height_field_windows` again. Removing the
+  node removes its window nodes with it, and the component's remove hook frees its list.
+- Separate height fields carry no adjacency, so a body can catch on the edge of an internal seam. A sphere of
+  radius 0.5 m rolling at 4 m/s over a flat seam loses 1.9 % of its speed and rises 6 mm; at 1 m/s it is
+  unaffected, and at 8 m/s it loses 3.5 %. A whole field does not disturb it.
+
+With `C3D_PHYSICS_SERIAL`, `HeightFieldWindows` is a described owner whose payload is `{ window_cells, collider }`.
+Export omits the window bodies and nodes, validating each node's `HeightFieldWindowOwner` marker, and loading
+regenerates them through `add_height_field_windows`, so a restored terrain has its windows again with no
+application call. `PhysicsBody` authoring is version 2 for the new `window` field; version 1 payloads still read,
+with a zero window, in both formats.
 
 ## Breakables
 

@@ -12,7 +12,7 @@ const float RIGID_TOLERANCE @private = 0.0001f; // rounding left by composing no
 <*
  Borrowed world-space view of one terrain's heights.
  Invalidated by replacing, releasing or removing the height map, or by removing the terrain.
- The border ring is read in place: take a new view after a tile link or a neighbour edit.
+ The border ring is read in place and only its edge mask is captured: take a new view after a tile links or unlinks.
 *>
 struct HeightView {
     ushort[] texels;       // borrowed; row-major, x fastest

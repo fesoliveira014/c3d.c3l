@@ -73,7 +73,11 @@ fn void*? read_component_authoring(
         DescribedBinding* binding = codecs[slot].described;
         if (!binding || binding.type.descriptor.identity != identity) return c3d::UNSUPPORTED~;
         if (entry.value) return entry.value;
-        if (entry.version != binding.type.version) return c3d::UNSUPPORTED~;
+        UpgradeFn upgrade;
+        if (entry.version != binding.type.version) {
+            upgrade = find_upgrade(binding, entry.version);
+            if (!upgrade) return c3d::UNSUPPORTED~;
+        }
         ReadContext previous = *context;
         defer *context = previous;
         context.node = context.nodes[entry.record];
@@ -82,11 +86,11 @@ fn void*? read_component_authoring(
         context.version = entry.version;
         void* value = context.read_owned.acquire(1, binding.type.descriptor.size, binding.type.descriptor.alignment)!;
         Reader reader = reader_over(entry.bytes);
-        if (catch excuse = read_described_value(
-            type: binding.type,
+        if (catch excuse = read_authoring_value(
+            binding: binding,
+            upgrade: upgrade,
             reader: &reader,
             context: context,
-            owned: context.read_owned,
             value: value,
         )) return component_diagnostic(
             diagnostic: context.diagnostic,
@@ -98,6 +102,35 @@ fn void*? read_component_authoring(
         return value;
     }
     return (void*)null;
+}
+
+// An older payload decodes through its owner's explicit upgrade; the current one through the described type.
+fn void? read_authoring_value(
+    DescribedBinding* binding,
+    UpgradeFn upgrade,
+    Reader* reader,
+    ReadContext* context,
+    void* value,
+) @local {
+    if (!upgrade) {
+        return read_described_value(
+            type: binding.type,
+            reader: reader,
+            context: context,
+            owned: context.read_owned,
+            value: value,
+        );
+    }
+
+    binding.type.defaults(value);
+    return upgrade(reader, context, value);
+}
+
+fn UpgradeFn find_upgrade(DescribedBinding* binding, uint version) @local {
+    foreach (compatibility : binding.codec.binary_compatibility) {
+        if (compatibility.version == version) return compatibility.upgrade;
+    }
+    return null;
 }
 
 fn void? initialize_binary_authoring(

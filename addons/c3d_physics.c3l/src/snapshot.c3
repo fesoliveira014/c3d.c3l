@@ -10,6 +10,8 @@ import c3d::maths;
 import b3;
 
 const usz  RGBA_CHANNELS @local = 4;
+const float SAMPLE_RANGE_MINIMUM @local = 0; // 8-bit and R16_UINT samples convert into 0 to 1; windows share this range
+const float SAMPLE_RANGE_MAXIMUM @local = 1;
 const b3::Transform IDENTITY_FRAME @private = { .q = quaternion::IDENTITY };
 
 <*
@@ -46,6 +48,7 @@ struct CollisionSnapshot {
     SnapshotKind         kind;
     ulong                content;    // hash of component data baked into the box3d object; 0 when none
     Vec3                 scale;      // exact scale baked into a hull variant or height field; zero for unscaled data
+    HeightFieldWindow    window;     // the cells a texture height field covers; zero for whole maps and other kinds
     SnapshotSource[]     sources;    // empty for component-sourced data
     b3::HullData*        hull;
     b3::MeshData*        mesh;
@@ -68,10 +71,16 @@ struct SnapshotTable {
 }
 
 struct SnapshotKey @local {
-    SnapshotKind     kind;
-    ulong            content;
-    Vec3             scale;
-    SnapshotSource[] sources;
+    SnapshotKind      kind;
+    ulong             content;
+    Vec3              scale;
+    HeightFieldWindow window;
+    SnapshotSource[]  sources;
+}
+
+struct HeightRange @local {
+    float minimum;
+    float maximum;
 }
 
 fn SnapshotTable*? create_snapshot_table(Allocator allocator, AssetStore* assets, CollisionCacheDesc desc) @private {
@@ -229,6 +238,7 @@ fn SnapshotHandle? acquire_height_field(
             return acquire_height_map(
                 table: table,
                 texture: field.texture,
+                window: field.window,
                 scale: scale,
                 material_indices: material_indices,
                 query: query,
@@ -236,41 +246,47 @@ fn SnapshotHandle? acquire_height_field(
     }
 }
 
-// Texture sources share one slot per texture revision, scale and material indices, like asset meshes.
+// Texture sources share one slot per texture revision, window, scale and material indices, like asset meshes.
 // Called inside a caller's @pool: the samples live in tmem until box3d copies them.
 fn SnapshotHandle? acquire_height_map(
     SnapshotTable* table,
     TextureId texture,
+    HeightFieldWindow window,
     Vec3 scale,
     char[] material_indices,
     bool query,
 ) @local {
-    if (query) {
-        check_height_map(table.assets, texture)!;
+    if (query) check_height_map(table.assets, texture)!;
 
-        TextureDesc source = table.assets.texture(texture).desc;
+    HeightGrid grid = height_grid(table.assets.texture(texture).desc, window)!;
+    if (query) {
         check_collision_height_grid(
-            count_x: source.width,
-            count_z: source.height,
-            sample_count: (usz)source.width * source.height,
+            count_x: grid.samples_x,
+            count_z: grid.samples_z,
+            sample_count: (usz)grid.samples_x * grid.samples_z,
             material_count: material_indices.len,
         )!;
     }
 
     SnapshotSource[1] sources = { current_texture_source(table, texture) };
     ulong content = material_indices.len ? fnv64a::hash(material_indices) : 0;
+    SnapshotKey key = {
+        .kind    = HEIGHT_FIELD,
+        .content = content,
+        .scale   = scale,
+        .window  = window,
+        .sources = sources[..],
+    };
     foreach (usz index, &slot : table.slots) {
-        if (matches(slot, { .kind = HEIGHT_FIELD, .content = content, .scale = scale, .sources = sources[..] })) {
-            return hold(table, index);
-        }
+        if (matches(slot, key)) return hold(table, index);
     }
 
     TextureAsset* record = table.assets.texture(texture);
     if (!record.pixels.len) return SOURCE_UNAVAILABLE~;
     HeightField samples = {
-        .heights = height_map_samples(record, tmem),
-        .count_x = record.desc.width,
-        .count_z = record.desc.height,
+        .heights = height_map_samples(record, grid, tmem),
+        .count_x = grid.samples_x,
+        .count_z = grid.samples_z,
     };
     if (query) {
         check_collision_height_samples(
@@ -282,38 +298,53 @@ fn SnapshotHandle? acquire_height_map(
     }
 
     usz index = reserve_slot(table)!;
-    CollisionSnapshot snapshot = cook_height_field(table, samples, scale, material_indices)!;
+    CollisionSnapshot snapshot = cook_height_field(
+        table: table,
+        field: samples,
+        scale: scale,
+        material_indices: material_indices,
+        full_range: !window_covers_map(window),
+    )!;
     snapshot.content = content;
     snapshot.scale = scale;
+    snapshot.window = window;
     snapshot.sources = copy_sources(table.allocator, sources[..]);
     return occupy(table, index, snapshot);
 }
 
+// Whole fields quantize over their own range; windows share one, so neighbours meet exactly and an edit leaves the others alone.
 fn CollisionSnapshot? cook_height_field(
     SnapshotTable* table,
     HeightField field,
     Vec3 scale,
     char[] material_indices,
+    bool full_range = false,
 ) @local {
-    float minimum = field.heights[0];
-    float maximum = field.heights[0];
-    foreach (height : field.heights) {
-        minimum = math::min(minimum, height);
-        maximum = math::max(maximum, height);
-    }
+    HeightRange range = { .minimum = SAMPLE_RANGE_MINIMUM, .maximum = SAMPLE_RANGE_MAXIMUM };
+    if (!full_range) range = measure_range(field.heights);
+
     b3::HeightFieldDef def = {
         .heights               = field.heights.ptr,
         .material_indices      = material_indices.len ? material_indices.ptr : null,
         .scale                 = scale,
         .count_x               = (int)field.count_x,
         .count_z               = (int)field.count_z,
-        .global_minimum_height = minimum,
-        .global_maximum_height = maximum,
+        .global_minimum_height = range.minimum,
+        .global_maximum_height = range.maximum,
     };
     b3::HeightFieldData* data = b3::create_height_field(&def)!;
     Vec3[] wire;
     if (table.cache_wireframes) wire = height_field_wire(table.allocator, field, scale);
     return { .kind = HEIGHT_FIELD, .height_field = data, .wire = wire };
+}
+
+fn HeightRange measure_range(float[] heights) @local {
+    HeightRange range = { .minimum = heights[0], .maximum = heights[0] };
+    foreach (height : heights) {
+        range.minimum = math::min(range.minimum, height);
+        range.maximum = math::max(range.maximum, height);
+    }
+    return range;
 }
 
 fn SnapshotHandle? acquire_compound(SnapshotTable* table, ColliderDesc* desc) @private {
@@ -458,7 +489,7 @@ fn usz? first_free_slot(SnapshotTable* table) @local {
 
 fn bool matches(CollisionSnapshot* slot, SnapshotKey key) @local {
     if (!is_occupied(slot) || slot.kind != key.kind || slot.content != key.content) return false;
-    if (slot.scale != key.scale) return false;
+    if (slot.scale != key.scale || !same_window(slot.window, key.window)) return false;
     if (slot.sources.len != key.sources.len) return false;
     foreach (index, source : key.sources) {
         SnapshotSource held = slot.sources[index];
@@ -467,6 +498,11 @@ fn bool matches(CollisionSnapshot* slot, SnapshotKey key) @local {
         if (held.revision != source.revision) return false;
     }
     return true;
+}
+
+fn bool same_window(HeightFieldWindow first, HeightFieldWindow second) @local {
+    return first.x == second.x && first.z == second.z
+        && first.count_x == second.count_x && first.count_z == second.count_z;
 }
 
 fn SnapshotSource current_source(SnapshotTable* table, GeometryId geometry) @local {
@@ -511,18 +547,32 @@ fn usz? height_texel_bytes(PixelFormat format) @private {
 }
 
 // Red channel only; the store allocator aligns pixels for the ushort and float views.
-fn float[] height_map_samples(TextureAsset* texture, Allocator allocator) @local {
-    usz count = (usz)texture.desc.width * texture.desc.height;
-    float[] samples = alloc::new_array(allocator, float, (sz)count);
+fn float[] height_map_samples(TextureAsset* texture, HeightGrid grid, Allocator allocator) @local {
+    float[] samples = alloc::new_array(allocator, float, (sz)((usz)grid.samples_x * grid.samples_z));
+    usz width = texture.desc.width;
     switch (texture.desc.format) {
         case RGBA8_UNORM:
-            foreach (usz index, &sample : samples) *sample = texture.pixels[index * RGBA_CHANNELS] / 255.0f;
+            for (usz row = 0; row < grid.samples_z; row++) {
+                char* source = texture.pixels.ptr + ((grid.z + row) * width + grid.x) * RGBA_CHANNELS;
+                float* target = samples.ptr + row * grid.samples_x;
+                for (usz column = 0; column < grid.samples_x; column++) {
+                    target[column] = source[column * RGBA_CHANNELS] / 255.0f;
+                }
+            }
         case R16_UINT:
             ushort* texels = (ushort*)texture.pixels.ptr;
-            foreach (usz index, &sample : samples) *sample = texels[index] / 65535.0f;
+            for (usz row = 0; row < grid.samples_z; row++) {
+                ushort* source = texels + (grid.z + row) * width + grid.x;
+                float* target = samples.ptr + row * grid.samples_x;
+                for (usz column = 0; column < grid.samples_x; column++) target[column] = source[column] / 65535.0f;
+            }
         case RGBA32_FLOAT:
             float* texels = (float*)texture.pixels.ptr;
-            foreach (usz index, &sample : samples) *sample = texels[index * RGBA_CHANNELS];
+            for (usz row = 0; row < grid.samples_z; row++) {
+                float* source = texels + ((grid.z + row) * width + grid.x) * RGBA_CHANNELS;
+                float* target = samples.ptr + row * grid.samples_x;
+                for (usz column = 0; column < grid.samples_x; column++) target[column] = source[column * RGBA_CHANNELS];
+            }
         case RGBA8_SRGB:
         case RGBA16_FLOAT:
         case BC1_RGBA_UNORM:

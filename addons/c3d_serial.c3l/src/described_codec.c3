@@ -30,10 +30,20 @@ alias AttachFn = fn void? (void* value, ReadContext* context);
 *>
 alias ValidateFn = fn void? (void* value, ReadContext* context);
 
-<* Explicit reader for one older component payload version. *>
+<*
+ Decode one older payload into the current authoring value, for a reader that borrows it before attachment.
+ @param [&inout] reader : "Bounded payload of the older version."
+ @param [&inout] context : "Acquire retained storage with read_owned."
+ @param [&out] value : "Current authoring type with its defaults applied."
+ @return "Success or the owner's unchanged fault."
+*>
+alias UpgradeFn = fn void? (Reader* reader, ReadContext* context, void* value);
+
+<* Explicit reader for one older component payload version; upgrade is optional. *>
 struct BinaryCompatibility {
     uint version;
     ReadFn read;
+    UpgradeFn upgrade;
 }
 
 <* Portable identity and attachment of a described component. *>

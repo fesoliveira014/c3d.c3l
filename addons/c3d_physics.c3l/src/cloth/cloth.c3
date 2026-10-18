@@ -20,6 +20,14 @@ const float DEFAULT_STRETCH_STIFFNESS = 1; // edges hold their rest length; lowe
 const float DEFAULT_BEND_STIFFNESS = 0.5f; // soft folds; 1 makes the sheet behave like card
 <* Linear velocity damping, per second. *>
 const float DEFAULT_CLOTH_DAMPING = 0.5f; // about 40% of velocity lost per second; higher values look submerged
+<* Cloth areal mass, in kg/m². *>
+const float DEFAULT_CLOTH_DENSITY = 0.2f; // light fabric; a particle carries a third of each adjacent triangle
+<* Dimensionless normal-force coefficient on each cloth triangle. *>
+const float DEFAULT_CLOTH_DRAG_COEFFICIENT = 1.2f; // flat plate facing the wind
+<* Dimensionless coefficient of the sin 2a lift on each cloth triangle. *>
+const float DEFAULT_CLOTH_LIFT_COEFFICIENT = 0.6f; // flat-plate lift peaks near 45 degrees
+<* Air density for cloth aerodynamics, in kg/m³. *>
+const float AIR_DENSITY = 1.225f; // sea level; box3d's rigid-body wind uses the same value
 <* Contact offset of free particles, in metres. *>
 const float DEFAULT_CLOTH_THICKNESS = 0.01f; // keeps particles off contact surfaces; larger values show a visible gap
 <* Maximum listed contact owners for one cloth. *>
@@ -42,6 +50,9 @@ struct ClothDesc {
     float             damping;
     float             thickness;
     float             gravity_scale;
+    float             density;          // kg/m²; a particle's mass is density times a third of its adjacent rest triangle area
+    float             drag_coefficient; // dimensionless normal-force coefficient on each triangle
+    float             lift_coefficient; // dimensionless coefficient of the sin 2a lift on each triangle
     uint[]            pins;
     bool              collide_ground;
     float             ground_height;
@@ -171,6 +182,7 @@ struct ClothState {
     float[]              inverse_mass_storage;
     double[]             particle_masses;
     double[]             particle_mass_storage;
+    double[]             base_masses;
     uint[]               particle_bases;
     uint[]               split_parents;
     uint[]               pins;                // unique and ascending physical particle IDs
@@ -871,6 +883,9 @@ fn ClothDesc default_cloth_desc() {
         .damping           = DEFAULT_CLOTH_DAMPING,
         .thickness         = DEFAULT_CLOTH_THICKNESS,
         .gravity_scale     = 1,
+        .density           = DEFAULT_CLOTH_DENSITY,
+        .drag_coefficient  = DEFAULT_CLOTH_DRAG_COEFFICIENT,
+        .lift_coefficient  = DEFAULT_CLOTH_LIFT_COEFFICIENT,
         .collisions        = default_cloth_collision_desc(),
         .tears             = default_cloth_tear_limits(),
         .sleep_steps       = DEFAULT_CLOTH_SLEEP_STEPS,

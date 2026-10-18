@@ -118,6 +118,9 @@ fn void? check_cloth_desc(ClothDesc desc) @private {
     if (!(desc.damping >= 0) || !math::is_finite(desc.damping)) return c3d::INVALID_ARGUMENT~;
     if (!(desc.thickness >= 0) || !math::is_finite(desc.thickness)) return c3d::INVALID_ARGUMENT~;
     if (!math::is_finite(desc.gravity_scale) || !math::is_finite(desc.ground_height)) return c3d::INVALID_ARGUMENT~;
+    if (!(desc.density > 0) || !math::is_finite(desc.density)) return c3d::INVALID_ARGUMENT~;
+    if (!(desc.drag_coefficient >= 0) || !math::is_finite(desc.drag_coefficient)) return c3d::INVALID_ARGUMENT~;
+    if (!(desc.lift_coefficient >= 0) || !math::is_finite(desc.lift_coefficient)) return c3d::INVALID_ARGUMENT~;
     if (!(desc.sleep_speed >= 0) || !math::is_finite(desc.sleep_speed)) return c3d::INVALID_ARGUMENT~;
     if (desc.tangent_uv_set > 1) return c3d::INVALID_ARGUMENT~;
     check_attachment_desc(desc.attachments)!;
@@ -316,6 +319,7 @@ fn ClothState* carve_cloth_state(BlockCursor* cursor, ClothCounts counts) @local
         .published_storage             = physics::carve(cursor, Vec3, counts.vertices),
         .inverse_mass_storage          = physics::carve(cursor, float, counts.vertices),
         .particle_mass_storage         = physics::carve(cursor, double, has_cuts ? counts.vertices : 0),
+        .base_masses                   = physics::carve(cursor, double, has_cuts ? counts.base_vertices : 0),
         .particle_bases                = physics::carve(cursor, uint, has_cuts ? counts.vertices : 0),
         .split_parents                 = physics::carve(cursor, uint, has_cuts ? counts.vertices : 0),
         .pin_storage                   = physics::carve(cursor, uint, counts.pins),

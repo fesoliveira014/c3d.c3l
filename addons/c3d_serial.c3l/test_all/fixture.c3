@@ -28,6 +28,8 @@ import std::io::path;
 import std::math;
 
 const uint MAX_AUDIO_VOICES @private = 4; // the fixture plays one emitter per copy; refusals are harmless
+const uint GROUND_WINDOW_CELLS @private = 64; // the 128-cell ground splits into two windows along each axis
+const uint GROUND_WINDOW_COUNT @private = 4;
 
 struct Fixture @private {
     AssetStore assets;
@@ -268,6 +270,9 @@ fn void add_physics(Fixture* fixture) @private {
     cloth.pins = &pins;
     cloth.colliders = (&anchor.id)[:1];
     cloth.stretch_stiffness = 0.75f;
+    cloth.density = 0.35f;
+    cloth.drag_coefficient = 0.9f;
+    cloth.lift_coefficient = 0.45f;
     scene.attach_cloth(assets: &fixture.assets, node: fabric, desc: cloth)!!;
     scene.add_nav_source(fabric)!!;
     NodeTemplate[] cloth_nodes = alloc::new_array(mem, NodeTemplate, 1);
@@ -289,6 +294,9 @@ fn void add_physics(Fixture* fixture) @private {
     uint[1] crowd_pins = { 0 };
     crowd_cloth.pins = &crowd_pins;
     crowd_cloth.stretch_stiffness = 0.8f;
+    crowd_cloth.density = 0.5f;
+    crowd_cloth.drag_coefficient = 1.1f;
+    crowd_cloth.lift_coefficient = 0.3f;
     scene.attach_crowd_cloth(
         assets: &fixture.assets,
         owner: crowd,
@@ -371,6 +379,15 @@ fn void add_landscape(Fixture* fixture) @private {
         assets: &fixture.assets,
         node: ground,
         desc: terrain,
+    )!!;
+    ColliderDesc ground_collider = physics::default_collider_desc(HEIGHT_FIELD);
+    ground_collider.height_field = { .source = TEXTURE, .texture = height };
+    physics::add_height_field_windows(
+        scene:        scene,
+        assets:       &fixture.assets,
+        node:         ground.id,
+        collider:     &ground_collider,
+        window_cells: GROUND_WINDOW_CELLS,
     )!!;
     Node* tiles = scene.add_node(name: "terrain-set")!!;
     scene.add(tiles, (TerrainSet){ .texels = 129, .cell_size = 1, .height_scale = 4 });
