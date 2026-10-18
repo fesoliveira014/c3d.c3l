@@ -972,6 +972,10 @@ fn void test_ring_refreshes_on_edge_link_and_band_edits() @test {
     );
     assert(ring_revision(&sets, north_west) != stale_revision);
     assert(ring_row(&sets, north_west, RING_SOUTH)[INTERIOR_ROW] == edited);
+
+    sets.base.scene.remove_component(sets.node, TerrainSet);
+    assert_ring_empty(&sets, north_west, RING_SOUTH);
+    assert_ring_empty(&sets, south_west, RING_NORTH);
 }
 
 fn void test_tile_added_to_a_prepared_terrain_binds_a_ring() @test {
