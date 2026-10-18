@@ -606,22 +606,20 @@ stiffer, roughly by the inverse of the particle mass in kilograms. To keep the o
 compliance by that inverse mass: the example's cape (0.4 kg/m² over 0.475 m² is 0.19 kg on 299 particles) has
 about 1570 per kilogram, so its bend compliance 2.0 becomes about 3100 and its outer attachment
 compliance 0.001 becomes about 1.6. Across that cape's range the drape depends on density and wind far
-more than on the compliances: attachment compliance from 0.002 to 157 changes nothing visible, and a
-hinge compliance of 0 (a rigid shell) resolves too.
+more than on the compliances.
 
 The defaults need no retuning for the areal mass: a default `ClothDesc` with `bend_mode = DIHEDRAL` and no
-`bend_compliance` (a hard hinge) stays resolvable at 0.2 kg/m² on free sheets, in still air and in wind
-(`test_default_dihedral_cloth_stays_resolvable`). The fragile case is a cloth that starts in contact with a
-collider. If the contact must push a particle by more than a hinge's size in one substep, the update fails
-with `BEND_UNRESOLVED`, and for some compliances the cloth then stays unresolved. Start cloth clear of its
-colliders: the example's cape starts 0.22 m behind the chest joint, where it resolves for every compliance
-tried, while at 0.17 m it failed for some, with or without areal mass.
+`bend_compliance` (a hard hinge) stays resolvable at 0.2 kg/m² on free sheets, at rest and in wind. The
+fragile case is a cloth that starts in contact with a collider. If the contact must push a particle by more
+than a hinge's size in one substep, the update fails with `BEND_UNRESOLVED`, and for some compliances the
+cloth then stays unresolved. Start cloth clear of its colliders, as the example's cape does.
 
 **Aerodynamics.** Cloth reads only `Wind.velocity` and `Wind.max_speed`. `Wind.drag` and `Wind.lift`
 apply to rigid bodies; cloth uses `ClothDesc.drag_coefficient` (default 1.2) and `lift_coefficient`
 (default 0.6), both dimensionless, and `cloth::AIR_DENSITY` (1.225 kg/m³). Cloth no longer skips wind
-when `Wind.drag` is zero: a node without a `Wind` component has still air, and a triangle with zero
-relative speed gets no force.
+when `Wind.drag` is zero. A node without a `Wind` component gets no aerodynamic force at all; a `Wind`
+with zero velocity gives still-air drag against the cloth's own motion. A triangle with zero relative speed
+gets no force.
 
 For each triangle, with area `A`, any unit normal `n`, relative velocity `v` (`Wind.velocity` minus the
 mean corner velocity, clamped to `max_speed` when it is positive), `v_hat = v / |v|` and `s = dot(v_hat, n)`:
@@ -639,12 +637,9 @@ sheet in a wind that blows along its plane feels no force: there is no skin fric
 
 **Tessellation.** Areal mass removes the mass and force part of the mismatch between tessellations only.
 Position-based stiffness still depends on the resolution at a fixed iteration count, so a finer mesh sags a
-little more. `test_flag_motion_matches_across_tessellations` runs one 1 m by 1 m sheet, pinned along its top
-edge, at 8x8 and 16x16 cells in a steady 1.5 m/s wind: after 120 steps the free-edge midpoints are 0.0018 m
-apart (worst 0.005 m over steps 31 to 120). The 16x16 and 32x32 sheets differ more, by 0.0107 m at step 120
-(worst 0.020 m), because the remaining gap is that stiffness effect, and more iterations shrink it: with 16
-iterations the gap is 0.0022 m at step 120 (worst 0.010 m). From about 2.5 m/s the sheet flutters, and the
-motion is chaotic enough that tessellations agree only statistically; compare time averages there.
+little more; more iterations shrink that gap. In a steady breeze, sheets of different tessellation pinned
+along one edge move together closely. Once the sheet flutters, the motion is chaotic enough that
+tessellations agree only statistically; compare time averages there.
 
 ## Example
 
@@ -701,7 +696,7 @@ with the job pool. `--cells N` sets the benchmark flag's cells per side (default
 
 The `densities` scene hangs the same 1.8 m by 1.2 m flag from two bars side by side, at 12x8 and 24x16 cells,
 with the top row pinned and a 1.5 m/s wind that blows straight at the sheets, under the example's gusts. The
-two sheets swing together to within about a centimetre. Areal mass and the aerodynamic forces make that possible;
+two sheets swing together. Areal mass and the aerodynamic forces make that possible;
 the wrinkles of a free edge or of a pole flag still differ with the resolution. The example drives every
 flag, cape and crowd with a plain `Wind.velocity` and sets no `Wind.drag`. The cape and crowd capes use a
 heavier 0.4 kg/m² fabric and half the wind, so they hang from the shoulders instead of flying flat.
