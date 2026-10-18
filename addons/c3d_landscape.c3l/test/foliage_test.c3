@@ -5,7 +5,6 @@ import std::math::quaternion;
 import std::sort;
 import c3d;
 import c3d::asset;
-import c3d::camera;
 import c3d::ecs;
 import c3d::geometry;
 import c3d::landscape::foliage;
@@ -44,14 +43,11 @@ const float SCALE_HIGH @local = 1.2f;
 const uint EDIT_SIDE @local = 9;
 const uint CELL_EDGE_TEXEL @local = 64; // 32 m, a cell edge: the edit reaches into the cell before it
 const uint QUADRANT_TEXELS @local = 65; // the first quadrant's side; the second takes the other 64
-const uint SMALL_SCENE_NODES @local = 48; // a camera, a ground, a layer and up to 36 cells; not 64
-const uint BUDGET_SCENE_NODES @local = 80; // a camera, a ground, a layer, up to 36 cells and the fillers; not 64 cells
+const uint SMALL_SCENE_NODES @local = 47; // a ground, a layer and up to 36 cells; not 64
+const uint BUDGET_SCENE_NODES @local = 79; // a ground, a layer, up to 36 cells and the fillers; not 64 cells
 const uint FILLER_NODES @local = 20; // removing them makes room for all 64 cells
 const uint INVALID_DESCS @local = 10;
 const uint RGBA8_BYTES @local = 4;
-const float OUTPUT_HEIGHT @local = 1080;
-const float CAMERA_FOV_DEGREES @local = 60;
-const float CAMERA_NEAR @local = 0.1f;
 const float FULL_DENSITY_BELOW @local = 0.37f; // of the extent: two red texels of four, then the blend
 const float NO_DENSITY_ABOVE @local = 0.63f;
 const Vec3 HALF_BEND_WIND @local = { 3, 0, 4 }; // 5 m/s against a full bend at 10
@@ -98,7 +94,6 @@ struct Fixture @local {
     GeometryId geometry;
     MaterialId material;
     TextureId  full_density; // 255 in every channel
-    Node*      camera;
 }
 
 struct InstanceBits @local {
@@ -167,7 +162,6 @@ fn void setup(Fixture* fixture, Allocator allocator = mem, uint max_nodes = 0) @
     fixture.material = fixture.assets.add_material(material::standard())!!;
     char[4] full = { 255, 255, 255, 255 };
     fixture.full_density = add_density_map(fixture, 1, full[..]);
-    fixture.camera = fixture.scene.add_camera(camera::perspective_deg(CAMERA_FOV_DEGREES, CAMERA_NEAR))!!;
 }
 
 fn void teardown(Fixture* fixture) @local {
@@ -291,12 +285,7 @@ fn Node* add_layer(Fixture* fixture, FoliageDesc desc) @local {
 }
 
 fn void? try_update(Fixture* fixture, Vec3 wind = {}) @local {
-    terrain::update(
-        scene:                &fixture.scene,
-        assets:               &fixture.assets,
-        camera_node:          fixture.camera,
-        output_height_pixels: OUTPUT_HEIGHT,
-    )!;
+    terrain::update(&fixture.scene, &fixture.assets)!;
     return foliage::update(&fixture.scene, &fixture.assets, wind);
 }
 
@@ -305,12 +294,7 @@ fn void update_landscape(Fixture* fixture, Vec3 wind = {}) @local {
 }
 
 fn void update_terrain(Fixture* fixture) @local {
-    terrain::update(
-        scene:                &fixture.scene,
-        assets:               &fixture.assets,
-        camera_node:          fixture.camera,
-        output_height_pixels: OUTPUT_HEIGHT,
-    )!!;
+    terrain::update(&fixture.scene, &fixture.assets)!!;
 }
 
 fn FoliageRuntime* runtime_of(Fixture* fixture, Node* layer) @local => fixture.scene.get(layer, FoliageRuntime);

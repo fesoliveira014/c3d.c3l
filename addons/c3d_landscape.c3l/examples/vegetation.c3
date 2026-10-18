@@ -593,12 +593,7 @@ fn void? run_interactive(Options options) @local {
             pitch:       fly_camera.pitch,
         );
         scene.update_world();
-        terrain::update(
-            scene:                &scene,
-            assets:               &assets,
-            camera_node:          demo.camera_node,
-            output_height_pixels: (float)max(renderer.output_height, 1u),
-        )!;
+        terrain::update(&scene, &assets)!;
         foliage::update(&scene, &assets, controls_wind(&wind, window.clock.total))!;
 
         vegetation_panel(
@@ -808,7 +803,6 @@ fn void? run_segments(
     Options options = demo.options;
     uint frames = options.segment_frames;
     uint measured = Segment::len * frames;
-    float output_height = (float)options.height;
     Vec3 steady_wind = wind_velocity(STEADY_WIND_SPEED, WIND_HEADING_DEGREES);
 
     for (uint frame = 0; frame < WARMUP_FRAMES + measured + render::FRAMES_IN_FLIGHT; frame++) {
@@ -837,12 +831,7 @@ fn void? run_segments(
         }
 
         demo.scene.update_world();
-        terrain::update(
-            scene:                demo.scene,
-            assets:               demo.assets,
-            camera_node:          demo.camera_node,
-            output_height_pixels: output_height,
-        )!;
+        terrain::update(demo.scene, demo.assets)!;
         Vec3 wind = steady_wind;
         if (segment == Segment.GUST) {
             wind = wind_velocity(STEADY_WIND_SPEED * gust_share((double)frame * TIME_STEP), WIND_HEADING_DEGREES);

@@ -27,9 +27,9 @@ fn uint node_index(TerrainRuntime* runtime, QuadNode node) @private {
     return runtime.level_offset[node.level] + node.z * level_side(runtime, node.level) + node.x;
 }
 
-// A selection partitions the extent into quadtree nodes, so it never holds more than the finest level.
-fn uint finest_chunk_count(TerrainRuntime* runtime) @private {
-    return level_side(runtime, 0) * level_side(runtime, 0);
+// The root is the last node and the only one of the top level.
+fn uint node_count(TerrainRuntime* runtime) @private {
+    return runtime.level_offset[runtime.level_count - 1] + 1;
 }
 
 fn QuadNode child_of(QuadNode node, uint child) @private {
@@ -69,18 +69,12 @@ fn TerrainRuntime? create_runtime(Allocator allocator, uint texels) @private {
     ushort[]? maximum = alloc::new_array_try(allocator, ushort, (sz)nodes);
     if (catch maximum) return c3d::CAPACITY_EXCEEDED~;
     runtime.maximum = maximum;
-    defer catch alloc::free(allocator, runtime.maximum.ptr);
-    bool[]? split = alloc::new_array_try(allocator, bool, (sz)nodes);
-    if (catch split) return c3d::CAPACITY_EXCEEDED~;
-    runtime.split = split;
-    runtime.stale = true;
     return runtime;
 }
 
 fn void free_runtime(TerrainRuntime* runtime) @private {
     alloc::free(runtime.allocator, runtime.minimum.ptr);
     alloc::free(runtime.allocator, runtime.maximum.ptr);
-    alloc::free(runtime.allocator, runtime.split.ptr);
     *runtime = {};
 }
 

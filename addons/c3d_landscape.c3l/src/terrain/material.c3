@@ -194,6 +194,7 @@ fn InstancedMesh? create_batch(
         .material       = owned,
         .transforms     = transforms,
         .colors         = colors,
+        .count          = capacity,
         .cast_shadow    = desc.cast_shadow,
         .receive_shadow = desc.receive_shadow,
         .trace          = false,
