@@ -456,13 +456,12 @@ fn void test_cloth_wind_and_ground_projection() @test {
     setup(&fixture, weightless());
     defer teardown(&fixture);
     Node* windy = add_cloth_node(&fixture, add_grid(&fixture, 4));
-    Node* calm = add_cloth_node(&fixture, add_grid(&fixture, 4));
+    Node* calm = add_cloth_node(&fixture, add_grid(&fixture, 4)); // no Wind component: still air
     calm.local.position = { 5, 0, 0 };
     fixture.scene.update_world();
     fixture.scene.add_cloth(&fixture.assets, windy, pinned_desc(top_row(4)))!!;
     fixture.scene.add_cloth(&fixture.assets, calm, pinned_desc(top_row(4)))!!;
-    fixture.scene.add(windy, (Wind){ .velocity = { 0, 0, 10 }, .drag = 1 });
-    fixture.scene.add(calm, (Wind){ .velocity = { 0, 0, 10 } });
+    fixture.scene.add(windy, (Wind){ .velocity = { 0, 0, 10 } });
     ClothState* windy_state = state_of(&fixture, windy);
     ClothState* calm_state = state_of(&fixture, calm);
     Vec3[25] calm_start;
@@ -562,7 +561,7 @@ fn void test_cloth_step_has_no_allocations() @test {
     GeometryId resting_grid = add_grid(&fixture, 1);
     sz before = tracker.allocation_count();
     Node* node = add_cloth_node(&fixture, grid);
-    fixture.scene.add(node, (Wind){ .velocity = { 0, 0, 4 }, .drag = 0.5f });
+    fixture.scene.add(node, (Wind){ .velocity = { 0, 0, 4 } });
     fixture.scene.add_cloth(&fixture.assets, node, pinned_desc(top_row(GRID_CELLS)))!!;
     Node* resting = add_cloth_node(&fixture, resting_grid);
     uint[4] corners = { 0, 1, 2, 3 };
