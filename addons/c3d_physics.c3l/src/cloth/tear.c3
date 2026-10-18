@@ -984,9 +984,8 @@ fn void apply_topology_mapping(
 
         if (state.base_has_soft[base_particle]) {
             uint slot = soft_count++;
-            float effective_compliance = (float)(
-                (double)state.base_soft_compliance[base_particle] / state.particle_mass_storage[active_particle]
-            );
+            double share = state.particle_mass_storage[active_particle] / state.base_masses[base_particle];
+            float effective_compliance = (float)((double)state.base_soft_compliance[base_particle] / share);
             state.soft_attachment_storage[slot] = {
                 .particle             = active_particle,
                 .effective_compliance = effective_compliance,
