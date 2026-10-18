@@ -6,7 +6,7 @@ import c3d::physics @public;
 import std::math;
 
 const double CLOTH_ADVANCE_FRACTION @local = 0.9;
-const double MIN_RESPONSE_SHARE @local = 0.25; // minimum simplex weight share for a movable vertex with positive separation deficit
+const double MIN_RESPONSE_SHARE @local = 0.25; // torn seams only; coincident seam halves stall on near-zero barycentric weights
 
 struct ClothPathDistance @local {
     double lower;
@@ -437,7 +437,7 @@ fn void? respond_self_path(ClothState* state, ClothImpact impact) @local {
     double squared = impact.direction.dot(impact.direction);
     if (!(squared > 0) || !math::is_finite(squared)) return CONTACT_PRECISION_EXCEEDED~;
 
-    balance_self_coefficients(state, &impact, starts)!;
+    if (torn_seam_contact(state, impact)) balance_self_coefficients(state, &impact, starts)!;
 
     double impulse = self_path_impulse(
         state: state,
@@ -468,6 +468,18 @@ fn void? respond_self_path(ClothState* state, ClothImpact impact) @local {
             begin: impact.time,
         )!;
     }
+}
+
+fn bool torn_seam_contact(ClothState* state, ClothImpact impact) @local {
+    if (!state.cut_paths.len) return false;
+
+    for (uint first = 0; first < impact.first_count; first++) {
+        uint first_base = state.particle_bases[impact.vertices[first]];
+        for (uint second = impact.first_count; second < 4; second++) {
+            if (state.particle_bases[impact.vertices[second]] == first_base) return true;
+        }
+    }
+    return false;
 }
 
 fn void? balance_self_coefficients(

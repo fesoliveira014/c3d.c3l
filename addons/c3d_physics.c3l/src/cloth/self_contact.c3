@@ -254,16 +254,20 @@ fn double[2] self_edge_weights(
     double first_offset = first.dot(relative);
     double second_offset = second.dot(relative);
     double denominator = first_squared * second_squared - mixed * mixed;
+
     if (denominator <= PARALLEL_EDGE_DENOMINATOR_TOLERANCE * first_squared * second_squared
         && first_squared > 0 && second_squared > 0) {
-        double s0 = -first_offset / first_squared;
-        double s1 = (mixed - first_offset) / first_squared;
-        double low = math::max(0.0, math::min(s0, s1));
-        double high = math::min(1.0, math::max(s0, s1));
-        double along_first = low <= high ? 0.5 * (low + high) : math::clamp(0.5 * (s0 + s1), 0.0, 1.0);
+        double second_start_along = -first_offset / first_squared;
+        double second_end_along = (mixed - first_offset) / first_squared;
+        double low = math::max(0.0, math::min(second_start_along, second_end_along));
+        double high = math::min(1.0, math::max(second_start_along, second_end_along));
+        double along_first = low <= high
+          ? 0.5 * (low + high)
+          : math::clamp(0.5 * (second_start_along + second_end_along), 0.0, 1.0);
         double along_second = math::clamp((mixed * along_first + second_offset) / second_squared, 0.0, 1.0);
         return { along_first, along_second };
     }
+
     double along_first = denominator > 0
       ? math::clamp((mixed * second_offset - first_offset * second_squared) / denominator, 0.0, 1.0) : 0;
     double along_second = second_squared > 0

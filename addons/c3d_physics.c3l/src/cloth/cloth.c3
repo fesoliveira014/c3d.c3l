@@ -271,7 +271,7 @@ struct ClothState {
     uint[]               pending_requests;
     uint                 pending_request_count;
     uint[]               selected_paths_scratch;
-    uint[]               sector_uf_scratch;
+    uint[]               sector_scratch;
     uint[]               sector_root_scratch;
     uint[]               split_group_starts;
     uint[]               split_group_counts;
@@ -618,112 +618,15 @@ fn void? prepare(
             state.joint_entities[..] = authoring.joint_entities[..];
         }
 
-        state.render_to_particle[..] = material_plan.render_to_particle[..];
-        state.particle_source_storage[:particle_count] = material_plan.particle_sources[..];
-        if (desc.transport.len) {
-            state.transport_storage[:particle_count] = desc.transport[..];
-        } else {
-            state.transport_storage[..] = 0;
-        }
-
-        state.rest_storage[:particle_count] = rest[..];
-        state.solved_reference_storage[:particle_count] = initial_positions[..];
-        state.current_reference_storage[:particle_count] = initial_positions[..];
-        if (state.staged_current_reference.len) {
-            state.staged_current_reference[:particle_count] = initial_positions[..];
-        }
-        state.position_storage[:particle_count] = initial_positions[..];
-        state.predicted_storage[:particle_count] = initial_positions[..];
-        state.acceleration_storage[..] = (Vec3){};
-        state.published_storage[:particle_count] = initial_positions[..];
-        if (desc.collisions.continuous) {
-            state.sweep_start_storage[:particle_count] = initial_positions[..];
-            foreach (index, point : initial_positions) {
-                state.sweep_bounds_storage[index] = { .min = point, .max = point };
-            }
-        }
+        seed_cloth_topology(
+            state:             state,
+            sector_plan:       &sector_plan,
+            material_plan:     &material_plan,
+            attachment_plan:   &attachment_plan,
+            rest:              rest,
+            initial_positions: initial_positions,
+        );
         state.published_frame = node.world;
-
-        state.corners[..] = material_plan.corners[..];
-        state.triangle_uvs[..] = material_plan.triangle_uvs[..];
-        state.material_particles[..] = material_plan.material_particles[..];
-        state.material_normal_domains[..] = material_plan.material_normal_domains[..];
-        state.material_ref_faces[..] = material_plan.material_ref_faces[..];
-        if (desc.tangent_frame) {
-            state.tangent_signs[..] = material_plan.tangent_signs[..];
-            state.rest_tangents[..] = material_plan.rest_tangents[..];
-            state.committed_tangents[..] = material_plan.initial_tangents[..];
-            state.local_tangents[..] = material_plan.initial_tangents[..];
-        }
-
-        if (sector_plan.cut_paths.len) {
-            foreach (pin : attachment_plan.pins) state.base_pinned[pin] = true;
-            foreach (soft : attachment_plan.soft) {
-                state.base_has_soft[soft.particle] = true;
-                state.base_soft_compliance[soft.particle] = soft.effective_compliance;
-            }
-            state.corner_sectors[..] = sector_plan.corner_sectors[..];
-            state.sector_bases[..] = sector_plan.sector_bases[..];
-            state.sector_shares[..] = sector_plan.sector_shares[..];
-            state.base_edges[..] = sector_plan.base_edges[..];
-            state.interior_edges[..] = sector_plan.interior_edges[..];
-            state.cut_paths[..] = sector_plan.cut_paths[..];
-            state.cut_path_edges[..] = sector_plan.cut_path_edges[..];
-            foreach (index, &cut_path : sector_plan.cut_paths) {
-                state.cut_results[index] = { .path_id = cut_path.id };
-                state.staged_cut_results[index] = { .path_id = cut_path.id };
-            }
-            foreach (sector, base_particle : sector_plan.sector_bases) {
-                state.committed_sector_to_particle[sector] = base_particle;
-                state.staged_sector_to_particle[sector] = base_particle;
-            }
-            state.material_sectors[..] = material_plan.material_sectors[..];
-            state.material_base_normal_domains[..] = material_plan.material_normal_domains[..];
-
-            apply_topology_mapping(
-                state:              state,
-                edge_cut:           state.committed_edge_cut,
-                sector_to_particle: state.committed_sector_to_particle,
-                is_staged:          false,
-            );
-        } else {
-            state.inverse_mass_storage[:particle_count] = 1;
-            state.pin_storage[..] = attachment_plan.pins[..];
-            foreach (slot, pin : attachment_plan.pins) {
-                state.inverse_mass_storage[pin] = 0;
-                state.pin_anchor_storage[slot] = initial_positions[pin];
-                state.pin_target_storage[slot] = initial_positions[pin];
-            }
-            state.soft_attachment_storage[..] = attachment_plan.soft[..];
-            foreach (slot, attachment : attachment_plan.soft) {
-                state.soft_anchor_storage[slot] = initial_positions[attachment.particle];
-                state.soft_target_storage[slot] = initial_positions[attachment.particle];
-                state.soft_lambda_storage[slot] = {};
-            }
-            state.edge_storage[..] = sector_plan.base_edges[..];
-            state.bend_storage[..] = sector_plan.initial_bends[..];
-            state.hinge_storage[..] = sector_plan.initial_hinges[..];
-            rebind_active_slices(
-                state:     state,
-                is_staged: false,
-                particles: particle_count,
-                pins:      (uint)attachment_plan.pins.len,
-                soft:      (uint)attachment_plan.soft.len,
-                edges:     (uint)sector_plan.base_edges.len,
-                bends:     (uint)sector_plan.initial_bends.len,
-                hinges:    (uint)sector_plan.initial_hinges.len,
-            );
-            if (state.canonical_vertex_storage.len) {
-                build_self_topology(state);
-            }
-        }
-        state.committed_particle_count = state.active_particle_count;
-        state.committed_pin_count = (uint)state.pins.len;
-        state.committed_soft_count = (uint)state.soft_attachments.len;
-        state.committed_edge_count = (uint)state.edges.len;
-        state.committed_bend_count = (uint)state.bends.len;
-        state.committed_hinge_count = (uint)state.hinges.len;
-        state.staged_hinges[:state.committed_hinge_count] = state.hinges[..];
 
         authoring.captured_mesh = *mesh;
         state.captured_mesh = *mesh;

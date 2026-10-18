@@ -8,9 +8,9 @@ import std::sort;
 
 const double OPENING_RELAXATION @local = 0.5; // half-step Gauss-Seidel damping; prevents oscillation between coupled opening pairs
 const double OPENING_AXIS_EPSILON @local = 1e-8; // minimum candidate axis length and centroid separation along the axis
-const double OPENING_DENOM_EPSILON @local = 1e-12; // minimum effective inverse-mass sum for a two-vertex opening projection
+const double OPENING_DENOMINATOR_EPSILON @local = 1e-12; // minimum effective inverse-mass sum for a two-vertex opening projection
 const double OPENING_ZERO_GAP_EPSILON @local = 1e-12; // maximum start gap along an orthogonal cut-edge normal for duplicated endpoints
-const double OPENING_MIN_PADDING @local = 1e-4; // metres; minimum solver margin above target_gap so float rounding keeps gap1.min >= target_gap
+const double OPENING_MIN_PADDING @local = 1e-4; // metres; minimum solver margin above target_gap so float rounding keeps end_gap.min >= target_gap
 const double OPENING_TILT_FACTOR @local = 0.25; // tangent-direction blend added when a pure in-plane normal is blocked
 
 struct ClothOpeningPair @private {
@@ -25,6 +25,11 @@ struct ClothOpeningPair @private {
     uint             cut_edge_high_parent;
 }
 
+struct ClothPreSplitAdjacency @local {
+    uint[]  canonical;
+    ulong[] adjacent;
+}
+
 struct ClothSplitGroup @local {
     bool   movable;
     uint   start;
@@ -32,21 +37,17 @@ struct ClothSplitGroup @local {
     double mass;
 }
 
-fn bool pre_split_vertices_adjacent(
-    uint[] pre_canonical,
-    ulong[] pre_adjacent,
-    uint first,
-    uint second,
-) @local {
-    first = pre_canonical[first];
-    second = pre_canonical[second];
+fn bool pre_split_vertices_adjacent(ClothPreSplitAdjacency adjacency, uint first, uint second) @local {
+    first = adjacency.canonical[first];
+    second = adjacency.canonical[second];
     if (first == second) return true;
+
     ulong key = self_edge_key(first, second);
     usz low;
-    usz high = pre_adjacent.len;
+    usz high = adjacency.adjacent.len;
     while (low < high) {
         usz middle = low + (high - low) / 2;
-        ulong found = pre_adjacent[middle];
+        ulong found = adjacency.adjacent[middle];
         if (found == key) return true;
         if (found < key) {
             low = middle + 1;
@@ -60,27 +61,27 @@ fn bool pre_split_vertices_adjacent(
 fn bool pre_split_pair_excluded(
     ClothState* state,
     ClothCandidate candidate,
-    uint[] pre_canonical,
-    ulong[] pre_adjacent,
+    ClothPreSplitAdjacency adjacency,
 ) @local {
     if (candidate.kind == SELF_VERTEX_FACE) {
         uint vertex_parent = state.split_parents[candidate.self_pair[0]];
         foreach (corner : state.faces[candidate.self_pair[1]].vertices) {
             uint corner_parent = state.split_parents[corner];
-            if (pre_split_vertices_adjacent(pre_canonical, pre_adjacent, vertex_parent, corner_parent)) return true;
+            if (pre_split_vertices_adjacent(adjacency, vertex_parent, corner_parent)) return true;
         }
         return false;
     }
+
     ClothConstraint first = state.edges[candidate.self_pair[0]];
     ClothConstraint second = state.edges[candidate.self_pair[1]];
     uint first_start = state.split_parents[first.first];
     uint first_end = state.split_parents[first.second];
     uint second_start = state.split_parents[second.first];
     uint second_end = state.split_parents[second.second];
-    return pre_split_vertices_adjacent(pre_canonical, pre_adjacent, first_start, second_start)
-      || pre_split_vertices_adjacent(pre_canonical, pre_adjacent, first_start, second_end)
-      || pre_split_vertices_adjacent(pre_canonical, pre_adjacent, first_end, second_start)
-      || pre_split_vertices_adjacent(pre_canonical, pre_adjacent, first_end, second_end);
+    return pre_split_vertices_adjacent(adjacency, first_start, second_start)
+      || pre_split_vertices_adjacent(adjacency, first_start, second_end)
+      || pre_split_vertices_adjacent(adjacency, first_end, second_start)
+      || pre_split_vertices_adjacent(adjacency, first_end, second_end);
 }
 
 fn ContactVector particle_sector_centroid(
@@ -163,7 +164,12 @@ fn bool admit_opening_axis_at_zero(
             ContactInterval? projection = physics::contact_dot(unit_interval, delta);
             if (catch projection) return false;
 
-            if (is_duplicated_cut_edge_pair(&candidate_pair, state, first_vertex, second_vertex)) {
+            if (is_duplicated_cut_edge_pair(
+                pair:          &candidate_pair,
+                state:         state,
+                first_vertex:  first_vertex,
+                second_vertex: second_vertex,
+            )) {
                 if (!(projection.min >= -OPENING_ZERO_GAP_EPSILON)
                     || !(projection.max <= OPENING_ZERO_GAP_EPSILON)) {
                     return false;
@@ -327,8 +333,7 @@ fn void? select_opening_axis(
 fn usz? gather_opening_pairs(
     ClothState* state,
     Vec3[] positions,
-    uint[] pre_canonical,
-    ulong[] pre_adjacent,
+    ClothPreSplitAdjacency adjacency,
 ) @local {
     usz primitive_count;
     float thickness = state.desc.thickness;
@@ -345,6 +350,7 @@ fn usz? gather_opening_pairs(
             .kind  = VERTEX,
         };
     }
+
     foreach (index, edge : state.edges) {
         uint[2] vertices = { edge.first, edge.second };
         state.self_primitive_storage[primitive_count++] = {
@@ -358,6 +364,7 @@ fn usz? gather_opening_pairs(
             .kind  = EDGE,
         };
     }
+
     foreach (index, face : state.faces) {
         state.self_primitive_storage[primitive_count++] = {
             .bounds = self_bounds(
@@ -399,7 +406,7 @@ fn usz? gather_opening_pairs(
             }
 
             if (self_pair_excluded(state, candidate)) continue;
-            if (!pre_split_pair_excluded(state, candidate, pre_canonical, pre_adjacent)) continue;
+            if (!pre_split_pair_excluded(state, candidate, adjacency)) continue;
 
             if (pair_count == state.opening_pairs.len
                 || pair_count == state.candidates.len
@@ -435,7 +442,7 @@ fn void build_split_groups(
     uint pre_particle_count,
 ) @local {
     uint particle_count = state.active_particle_count;
-    uint[] counts = state.sector_uf_scratch[:pre_particle_count];
+    uint[] counts = state.sector_scratch[:pre_particle_count];
     counts[..] = 0;
 
     for (uint particle = 0; particle < particle_count; particle++) {
@@ -538,9 +545,10 @@ fn void? solve_opening_displacements(
                         double first_mass = state.particle_masses[first_vertex];
                         double second_mass = state.particle_masses[second_vertex];
                         double denominator = 1.0 / first_mass + 1.0 / second_mass;
-                        if (!math::is_finite(denominator) || !(denominator > OPENING_DENOM_EPSILON)) {
+                        if (!math::is_finite(denominator) || !(denominator > OPENING_DENOMINATOR_EPSILON)) {
                             return OPENING_UNRESOLVED~;
                         }
+
                         double scale = deficit / denominator;
                         work[first_vertex] += axis * (scale / first_mass);
                         work[second_vertex] -= axis * (scale / second_mass);
@@ -554,9 +562,10 @@ fn void? solve_opening_displacements(
                           ? (1.0 / second_mass - 1.0 / second_group.mass)
                           : 0.0;
                         double denominator = first_denominator + second_denominator;
-                        if (!math::is_finite(denominator) || !(denominator > OPENING_DENOM_EPSILON)) {
+                        if (!math::is_finite(denominator) || !(denominator > OPENING_DENOMINATOR_EPSILON)) {
                             return OPENING_UNRESOLVED~;
                         }
+
                         double scale = deficit / denominator;
                         if (first_group.movable) {
                             uint[] members = state.split_group_members[first_group.start:first_group.count];
@@ -566,6 +575,7 @@ fn void? solve_opening_displacements(
                                 work[member] += axis * (scale * coefficient);
                             }
                         }
+
                         if (second_group.movable) {
                             uint[] members = state.split_group_members[second_group.start:second_group.count];
                             foreach (member : members) {
@@ -589,6 +599,7 @@ fn void? solve_opening_displacements(
         foreach (member : members) {
             weighted_sum += work[member] * state.particle_masses[member];
         }
+
         ContactVector drift = weighted_sum / group.mass - (ContactVector)start_positions[parent_id];
         foreach (member : members) {
             work[member] -= drift;
@@ -700,6 +711,7 @@ fn usz collect_strain_triggered_paths(
             || state.cut_results[path_index].outcome == ClothCutOutcome.REFUSED) {
             continue;
         }
+
         bool triggered;
         for (uint edge_offset = 0; edge_offset < path.edge_count; edge_offset++) {
             uint interior_index = state.cut_path_edges[path.edge_start + edge_offset];
@@ -709,6 +721,7 @@ fn usz collect_strain_triggered_paths(
             uint high_particle = state.staged_sector_to_particle[interior_edge.high_sector0];
             float rest_length = interior_edge.base_edge.rest_length;
             if (!(rest_length > 0)) continue;
+
             float current_length = (state.positions[high_particle] - state.positions[low_particle]).length();
             float strain = math::max(0.0f, (current_length - rest_length) / rest_length);
             if (strain >= path.strain_threshold) {
@@ -716,6 +729,7 @@ fn usz collect_strain_triggered_paths(
                 break;
             }
         }
+
         if (triggered) {
             selected_paths[selected_count++] = (uint)path_index;
         }
@@ -736,6 +750,7 @@ fn usz consume_pending_cut_requests(
                 break;
             }
         }
+
         if (!exists) {
             selected_paths[selected_count++] = request_index;
         }
@@ -744,40 +759,11 @@ fn usz consume_pending_cut_requests(
     return selected_count;
 }
 
-fn void reconstruct_split_velocities(
-    ClothState* state,
-    uint pre_particle_count,
-    float dt,
-) @local {
-    for (uint parent_id = 0; parent_id < pre_particle_count; parent_id++) {
-        ClothSplitGroup group = lookup_split_group(state, parent_id);
-        if (!group.movable) continue;
-
-        uint[] members = state.split_group_members[group.start:group.count];
-        ContactVector base_velocity = (ContactVector)state.velocities[parent_id];
-        ContactVector weighted_velocity;
-        foreach (member : members) {
-            ContactVector displacement = (ContactVector)state.predicted[member]
-              - (ContactVector)state.positions[member];
-            ContactVector member_velocity = base_velocity + displacement / (double)dt;
-            weighted_velocity += member_velocity * state.particle_masses[member];
-        }
-        ContactVector velocity_drift = weighted_velocity / group.mass - base_velocity;
-        foreach (member : members) {
-            ContactVector displacement = (ContactVector)state.predicted[member]
-              - (ContactVector)state.positions[member];
-            ContactVector member_velocity = base_velocity + displacement / (double)dt - velocity_drift;
-            state.velocities[member] = (Vec3)member_velocity;
-        }
-    }
-}
-
 fn void? evaluate_substep_cuts(
     PhysicsWorld* world,
     ClothState* state,
     uint substep,
     uint total,
-    float dt,
 ) @private {
     if (!state.cut_paths.len) return;
 
@@ -829,12 +815,11 @@ fn void? evaluate_substep_cuts(
         return;
     }
 
-    usz pair_count = gather_opening_pairs(
-        state:         state,
-        positions:     state.positions,
-        pre_canonical: state.pre_split_canonical[:pre_particle_count],
-        pre_adjacent:  state.pre_split_adjacent[:pre_adjacent_count],
-    )!;
+    ClothPreSplitAdjacency adjacency = {
+        .canonical = state.pre_split_canonical[:pre_particle_count],
+        .adjacent  = state.pre_split_adjacent[:pre_adjacent_count],
+    };
+    usz pair_count = gather_opening_pairs(state, state.positions, adjacency)!;
 
     if (!pair_count) return;
 
@@ -885,8 +870,6 @@ fn void? evaluate_substep_cuts(
         state.contact_result.stage = ClothContactStage.OPENING;
         return OPENING_UNRESOLVED~;
     }
-
-    reconstruct_split_velocities(state, pre_particle_count, dt);
 
     state.positions[..] = state.predicted[..];
     if (state.desc.collisions.continuous) {

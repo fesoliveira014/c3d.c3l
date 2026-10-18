@@ -372,6 +372,9 @@ fn void split_material_vertices_by_sector(
     first_sector[..] = uint::max;
 
     uint[] corner_material_vertices = alloc::new_array(tmem, uint, (sz)corner_count);
+    uint[] first_split_corner = alloc::new_array(tmem, uint, (sz)base_material_count);
+    uint[] next_split_corner = alloc::new_array(tmem, uint, (sz)corner_count);
+    first_split_corner[..] = uint::max;
     uint split_material_count = base_material_count;
 
     for (uint corner_index = 0; corner_index < corner_count; corner_index++) {
@@ -384,13 +387,19 @@ fn void split_material_vertices_by_sector(
             corner_material_vertices[corner_index] = base_vertex;
         } else {
             uint assigned = uint::max;
-            for (uint earlier = 0; earlier < corner_index; earlier++) {
-                if (plan.corners[earlier].material_vertex == base_vertex && corner_sectors[earlier] == sector) {
+            for (uint earlier = first_split_corner[base_vertex];
+                 earlier != uint::max;
+                 earlier = next_split_corner[earlier]) {
+                if (corner_sectors[earlier] == sector) {
                     assigned = corner_material_vertices[earlier];
                     break;
                 }
             }
-            if (assigned == uint::max) assigned = split_material_count++;
+            if (assigned == uint::max) {
+                assigned = split_material_count++;
+                next_split_corner[corner_index] = first_split_corner[base_vertex];
+                first_split_corner[base_vertex] = (uint)corner_index;
+            }
             corner_material_vertices[corner_index] = assigned;
         }
     }
@@ -446,6 +455,7 @@ fn void split_material_vertices_by_sector(
             }
             plan.geometry.uv0 = split_uv0;
         }
+
         if (plan.geometry.uv1.len) {
             Vec2[] split_uv1 = alloc::new_array(tmem, Vec2, (sz)split_material_count);
             split_uv1[:base_material_count] = plan.geometry.uv1[..];
@@ -454,6 +464,7 @@ fn void split_material_vertices_by_sector(
             }
             plan.geometry.uv1 = split_uv1;
         }
+
         if (plan.geometry.colors.len) {
             Vec4[] split_colors = alloc::new_array(tmem, Vec4, (sz)split_material_count);
             split_colors[:base_material_count] = plan.geometry.colors[..];
@@ -462,6 +473,7 @@ fn void split_material_vertices_by_sector(
             }
             plan.geometry.colors = split_colors;
         }
+
         if (tangent_frame) {
             float[] split_signs = alloc::new_array(tmem, float, (sz)split_material_count);
             Vec3[] split_rest_tangents = alloc::new_array(tmem, Vec3, (sz)split_material_count);
@@ -471,6 +483,7 @@ fn void split_material_vertices_by_sector(
             split_rest_tangents[:base_material_count] = plan.rest_tangents[..];
             split_initial_tangents[:base_material_count] = plan.initial_tangents[..];
             split_geometry_tangents[:base_material_count] = plan.geometry.tangents[..];
+
             for (uint vertex = base_material_count; vertex < split_material_count; vertex++) {
                 uint base_vertex = base_vertices[vertex];
                 split_signs[vertex] = plan.tangent_signs[base_vertex];
@@ -478,6 +491,7 @@ fn void split_material_vertices_by_sector(
                 split_initial_tangents[vertex] = plan.initial_tangents[base_vertex];
                 split_geometry_tangents[vertex] = plan.geometry.tangents[base_vertex];
             }
+
             plan.tangent_signs = split_signs;
             plan.rest_tangents = split_rest_tangents;
             plan.initial_tangents = split_initial_tangents;

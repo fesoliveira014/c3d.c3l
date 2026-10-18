@@ -137,6 +137,11 @@ centroid-conserving half-space opening solver and certified over the affine `t i
 do not re-trigger the same automatic path and freeze the cloth; explicit `request_cut(id)` calls can retry a
 refused path.
 
+The opening moves positions only: split particles keep their parent's velocity, so a cut conserves
+momentum and adds no separation speed. Continuous self-contact between vertices of a torn seam (active
+particles that share a base particle) raises each movable vertex's response share to at least 0.25 so
+the coincident halves separate; every other contact keeps its barycentric response.
+
 ## Pending authoring and preparation
 
 The shared [owner readiness table](owner_readiness.md) records preparation order

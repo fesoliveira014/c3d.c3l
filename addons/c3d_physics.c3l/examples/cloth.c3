@@ -331,11 +331,12 @@ fn void? attach_flag(Demo* demo) @local {
         uint[] pins = alloc::new_array(tmem, uint, (sz)(demo.flag_rows + 1));
         foreach (row, &pin : pins) *pin = (uint)row * (demo.flag_columns + 1);
         desc.pins = pins;
-        uint mid_row = demo.flag_rows / 2;
-        uint start_col = demo.flag_columns / 4;
-        uint[] cut_vertices = alloc::new_array(tmem, uint, (sz)(demo.flag_columns - start_col + 1));
+
+        uint middle_row = demo.flag_rows / 2;
+        uint first_column = demo.flag_columns / 4;
+        uint[] cut_vertices = alloc::new_array(tmem, uint, (sz)(demo.flag_columns - first_column + 1));
         foreach (index, &vertex : cut_vertices) {
-            *vertex = mid_row * (demo.flag_columns + 1) + start_col + (uint)index;
+            *vertex = middle_row * (demo.flag_columns + 1) + first_column + (uint)index;
         }
         ClothCutPath[1] cuts = { { .id = TEAR_PATH_ID, .vertices = cut_vertices } };
         desc.cuts = cuts[..];
@@ -366,11 +367,12 @@ fn void? attach_cape(Demo* demo) @local {
             };
         }
         desc.attachments = attachments;
-        uint mid_col = CAPE_COLUMNS / 2;
-        uint start_row = CAPE_ROWS / 3;
-        uint[] cut_vertices = alloc::new_array(tmem, uint, (sz)(CAPE_ROWS - start_row + 1));
+
+        uint middle_column = CAPE_COLUMNS / 2;
+        uint first_row = CAPE_ROWS / 3;
+        uint[] cut_vertices = alloc::new_array(tmem, uint, (sz)(CAPE_ROWS - first_row + 1));
         foreach (index, &vertex : cut_vertices) {
-            *vertex = (start_row + (uint)index) * (CAPE_COLUMNS + 1) + mid_col;
+            *vertex = (first_row + (uint)index) * (CAPE_COLUMNS + 1) + middle_column;
         }
         ClothCutPath[1] cuts = { { .id = TEAR_PATH_ID, .vertices = cut_vertices } };
         desc.cuts = cuts[..];
@@ -897,7 +899,7 @@ fn void panel(
                 imgui::text(
                     "Cut #%u: %s (attempts %u)",
                     TEAR_PATH_ID,
-                    cut_result.is_cut ? "APPLIED" : "INTACT",
+                    cut_result.is_cut ? "APPLIED" : (cut_result.outcome == REFUSED ? "REFUSED" : "INTACT"),
                     cut_result.attempts,
                 );
             }

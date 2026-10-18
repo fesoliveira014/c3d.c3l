@@ -263,8 +263,9 @@ fn void test_cloth_tear_free_opening_certificate_and_recontact() @test {
         assert(cloth.state.contact_result.max_residual <= 0.0001f);
         assert(mesh.vertex_history_token == token_before + 1);
         assert(c3d::same_id(mesh.geometry, geometry_before));
+        assert((cloth.state.velocities[6] - cloth.state.velocities[1]).length() <= 1e-3f);
+        assert((cloth.state.velocities[7] - cloth.state.velocities[4]).length() <= 1e-3f);
 
-        cloth.state.velocities[..] = (Vec3){};
         cloth.request_cut(10)!!;
         fixture.physics.update(1.0f / 240.0f);
         fixture.physics.update_cloths();
@@ -272,7 +273,6 @@ fn void test_cloth_tear_free_opening_certificate_and_recontact() @test {
         assert(second_result.outcome == ALREADY_CUT && second_result.is_cut);
         assert(mesh.vertex_history_token == token_before + 1);
 
-        cloth.state.velocities[..] = (Vec3){};
         uint total_self_contacts;
         for (uint step = 0; step < 60; step++) {
             fixture.physics.update(1.0f / 240.0f);
@@ -428,7 +428,7 @@ fn void test_cloth_tear_refusal_cases_and_whole_update_atomicity() @test {
         scene::Mesh* mesh = tracked.scene.get(node, scene::Mesh);
         mesh.vertex_history_token = 10;
 
-        sz allocated_before = tracker.allocated();
+        sz allocations_before = tracker.total_allocation_count();
         cloth.request_cut(10)!!;
         for (uint step = 0; step < 20; step++) {
             tracked.physics.update(1.0f / 240.0f);
@@ -436,7 +436,7 @@ fn void test_cloth_tear_refusal_cases_and_whole_update_atomicity() @test {
         }
         assert(cloth.cut_result(10)!!.outcome == APPLIED && cloth.cut_result(10)!!.is_cut);
         assert(mesh.vertex_history_token == 11);
-        assert(tracker.allocated() == allocated_before);
+        assert(tracker.total_allocation_count() == allocations_before);
     };
 }
 

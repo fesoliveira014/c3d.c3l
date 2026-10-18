@@ -208,20 +208,20 @@ fn void? check_tear_desc(ClothDesc desc) @private {
     }
 }
 
-fn uint corner_uf_find(uint[] parents, uint corner) @local {
-    uint root = corner;
+fn uint union_find_root(uint[] parents, uint element) @local {
+    uint root = element;
     while (parents[root] != root) root = parents[root];
-    while (parents[corner] != root) {
-        uint next = parents[corner];
-        parents[corner] = root;
-        corner = next;
+    while (parents[element] != root) {
+        uint next = parents[element];
+        parents[element] = root;
+        element = next;
     }
     return root;
 }
 
-fn void corner_uf_union(uint[] parents, uint first_corner, uint second_corner) @local {
-    uint first_root = corner_uf_find(parents, first_corner);
-    uint second_root = corner_uf_find(parents, second_corner);
+fn void union_find_merge(uint[] parents, uint first_element, uint second_element) @local {
+    uint first_root = union_find_root(parents, first_element);
+    uint second_root = union_find_root(parents, second_element);
     if (first_root != second_root) {
         parents[math::max(first_root, second_root)] = math::min(first_root, second_root);
     }
@@ -313,6 +313,7 @@ fn ClothSectorPlan? build_sector_plan(
             };
         }
     }
+
     sort::quicksort(records, &by_tear_edge);
 
     bool dihedral = desc.bend_mode == DIHEDRAL;
@@ -491,6 +492,7 @@ fn ClothSectorPlan? build_sector_plan(
     foreach (cut : desc.cuts) {
         total_path_edges += cut.vertices.len - 1;
     }
+
     ClothCutPathMeta[] cut_paths = alloc::new_array(tmem, ClothCutPathMeta, (sz)desc.cuts.len);
     uint[] cut_path_edges = alloc::new_array(tmem, uint, (sz)total_path_edges);
     bool[] base_vertex_in_cut = alloc::new_array(tmem, bool, (sz)base_particle_count);
@@ -544,6 +546,7 @@ fn ClothSectorPlan? build_sector_plan(
             .strain_threshold = cut.strain_threshold,
         };
     }
+
     sort::quicksort(cut_paths, &by_cut_path_id);
 
     uint[] corner_sectors = alloc::new_array(tmem, uint, (sz)corner_count);
@@ -554,8 +557,8 @@ fn ClothSectorPlan? build_sector_plan(
 
     foreach (&interior_edge : interior_edges) {
         if (!interior_edge.in_authored_cut) {
-            corner_uf_union(union_parents, interior_edge.low_corner0, interior_edge.low_corner1);
-            corner_uf_union(union_parents, interior_edge.high_corner0, interior_edge.high_corner1);
+            union_find_merge(union_parents, interior_edge.low_corner0, interior_edge.low_corner1);
+            union_find_merge(union_parents, interior_edge.high_corner0, interior_edge.high_corner1);
         }
     }
 
@@ -569,7 +572,7 @@ fn ClothSectorPlan? build_sector_plan(
             corner_sectors[corner_index] = base_particle;
             continue;
         }
-        uint root = corner_uf_find(union_parents, (uint)corner_index);
+        uint root = union_find_root(union_parents, (uint)corner_index);
         if (root_sector[root] == uint::max) {
             if (!base_assigned[base_particle]) {
                 base_assigned[base_particle] = true;
@@ -600,11 +603,13 @@ fn ClothSectorPlan? build_sector_plan(
         uint p0 = render_to_particle[data.indices[corner0]];
         uint p1 = render_to_particle[data.indices[corner1]];
         uint p2 = render_to_particle[data.indices[corner2]];
-        ContactVector r0 = (ContactVector)rest_positions[p0];
-        ContactVector r1 = (ContactVector)rest_positions[p1];
-        ContactVector r2 = (ContactVector)rest_positions[p2];
-        double area = 0.5 * (r1 - r0).cross(r2 - r0).length();
+
+        ContactVector rest0 = (ContactVector)rest_positions[p0];
+        ContactVector rest1 = (ContactVector)rest_positions[p1];
+        ContactVector rest2 = (ContactVector)rest_positions[p2];
+        double area = 0.5 * (rest1 - rest0).cross(rest2 - rest0).length();
         if (!math::is_finite(area) || !(area > 0)) return c3d::INVALID_ARGUMENT~;
+
         uint[3] face_corners = { corner0, corner1, corner2 };
         uint[3] face_particles = { p0, p1, p2 };
         for (uint side = 0; side < 3; side++) {
@@ -612,6 +617,7 @@ fn ClothSectorPlan? build_sector_plan(
             base_area[face_particles[side]] += area;
         }
     }
+
     for (uint sector = 0; sector < sector_count; sector++) {
         uint base_particle = sector_bases[sector];
         if (!(sector_area[sector] > 0) || !(base_area[base_particle] > 0)) return c3d::INVALID_ARGUMENT~;
@@ -638,6 +644,7 @@ fn ClothSectorPlan? build_sector_plan(
                 cut_adjacent[p2] = true;
             }
         }
+
         foreach (seam : desc.seams) {
             uint first_particle = render_to_particle[seam.first];
             uint second_particle = render_to_particle[seam.second];
@@ -666,6 +673,125 @@ fn ClothSectorPlan? build_sector_plan(
         .cut_paths           = cut_paths,
         .cut_path_edges      = cut_path_edges,
     };
+}
+
+fn void seed_cloth_topology(
+    ClothState* state,
+    ClothSectorPlan* sector_plan,
+    ClothMaterialPlan* material_plan,
+    ClothAttachmentPlan* attachment_plan,
+    Vec3[] rest,
+    Vec3[] initial_positions,
+) @private {
+    uint particle_count = (uint)rest.len;
+    state.render_to_particle[..] = material_plan.render_to_particle[..];
+    state.particle_source_storage[:particle_count] = material_plan.particle_sources[..];
+    if (state.desc.transport.len) {
+        state.transport_storage[:particle_count] = state.desc.transport[..];
+    } else {
+        state.transport_storage[..] = 0;
+    }
+
+    state.rest_storage[:particle_count] = rest[..];
+    state.solved_reference_storage[:particle_count] = initial_positions[..];
+    state.current_reference_storage[:particle_count] = initial_positions[..];
+    if (state.staged_current_reference.len) {
+        state.staged_current_reference[:particle_count] = initial_positions[..];
+    }
+    state.position_storage[:particle_count] = initial_positions[..];
+    state.predicted_storage[:particle_count] = initial_positions[..];
+    state.acceleration_storage[..] = (Vec3){};
+    state.published_storage[:particle_count] = initial_positions[..];
+    if (state.desc.collisions.continuous) {
+        state.sweep_start_storage[:particle_count] = initial_positions[..];
+        foreach (index, point : initial_positions) {
+            state.sweep_bounds_storage[index] = { .min = point, .max = point };
+        }
+    }
+
+    state.corners[..] = material_plan.corners[..];
+    state.triangle_uvs[..] = material_plan.triangle_uvs[..];
+    state.material_particles[..] = material_plan.material_particles[..];
+    state.material_normal_domains[..] = material_plan.material_normal_domains[..];
+    state.material_ref_faces[..] = material_plan.material_ref_faces[..];
+    if (state.desc.tangent_frame) {
+        state.tangent_signs[..] = material_plan.tangent_signs[..];
+        state.rest_tangents[..] = material_plan.rest_tangents[..];
+        state.committed_tangents[..] = material_plan.initial_tangents[..];
+        state.local_tangents[..] = material_plan.initial_tangents[..];
+    }
+
+    if (sector_plan.cut_paths.len) {
+        foreach (pin : attachment_plan.pins) state.base_pinned[pin] = true;
+        foreach (soft : attachment_plan.soft) {
+            state.base_has_soft[soft.particle] = true;
+            state.base_soft_compliance[soft.particle] = soft.effective_compliance;
+        }
+
+        state.corner_sectors[..] = sector_plan.corner_sectors[..];
+        state.sector_bases[..] = sector_plan.sector_bases[..];
+        state.sector_shares[..] = sector_plan.sector_shares[..];
+        state.base_edges[..] = sector_plan.base_edges[..];
+        state.interior_edges[..] = sector_plan.interior_edges[..];
+        state.cut_paths[..] = sector_plan.cut_paths[..];
+        state.cut_path_edges[..] = sector_plan.cut_path_edges[..];
+        state.material_sectors[..] = material_plan.material_sectors[..];
+        state.material_base_normal_domains[..] = material_plan.material_normal_domains[..];
+
+        foreach (index, &cut_path : sector_plan.cut_paths) {
+            state.cut_results[index] = { .path_id = cut_path.id };
+            state.staged_cut_results[index] = { .path_id = cut_path.id };
+        }
+        foreach (sector, base_particle : sector_plan.sector_bases) {
+            state.committed_sector_to_particle[sector] = base_particle;
+            state.staged_sector_to_particle[sector] = base_particle;
+        }
+
+        apply_topology_mapping(
+            state:              state,
+            edge_cut:           state.committed_edge_cut,
+            sector_to_particle: state.committed_sector_to_particle,
+            is_staged:          false,
+        );
+    } else {
+        state.inverse_mass_storage[:particle_count] = 1;
+        state.pin_storage[..] = attachment_plan.pins[..];
+        foreach (slot, pin : attachment_plan.pins) {
+            state.inverse_mass_storage[pin] = 0;
+            state.pin_anchor_storage[slot] = initial_positions[pin];
+            state.pin_target_storage[slot] = initial_positions[pin];
+        }
+
+        state.soft_attachment_storage[..] = attachment_plan.soft[..];
+        foreach (slot, attachment : attachment_plan.soft) {
+            state.soft_anchor_storage[slot] = initial_positions[attachment.particle];
+            state.soft_target_storage[slot] = initial_positions[attachment.particle];
+            state.soft_lambda_storage[slot] = {};
+        }
+
+        state.edge_storage[..] = sector_plan.base_edges[..];
+        state.bend_storage[..] = sector_plan.initial_bends[..];
+        state.hinge_storage[..] = sector_plan.initial_hinges[..];
+        rebind_active_slices(
+            state:     state,
+            is_staged: false,
+            particles: particle_count,
+            pins:      (uint)attachment_plan.pins.len,
+            soft:      (uint)attachment_plan.soft.len,
+            edges:     (uint)sector_plan.base_edges.len,
+            bends:     (uint)sector_plan.initial_bends.len,
+            hinges:    (uint)sector_plan.initial_hinges.len,
+        );
+        if (state.canonical_vertex_storage.len) build_self_topology(state);
+    }
+
+    state.committed_particle_count = state.active_particle_count;
+    state.committed_pin_count = (uint)state.pins.len;
+    state.committed_soft_count = (uint)state.soft_attachments.len;
+    state.committed_edge_count = (uint)state.edges.len;
+    state.committed_bend_count = (uint)state.bends.len;
+    state.committed_hinge_count = (uint)state.hinges.len;
+    state.staged_hinges[:state.committed_hinge_count] = state.hinges[..];
 }
 
 fn void rebind_active_slices(
@@ -733,6 +859,7 @@ fn void rebind_active_slices(
         state.soft_lambdas = state.soft_lambda_storage[:soft];
         state.hinges = state.staged_hinges[:hinges];
     }
+
     state.desc.pins = state.pins;
     state.desc.transport = state.transport;
 }
@@ -867,7 +994,9 @@ fn void apply_topology_mapping(
             );
         }
     }
+
     sort::quicksort(state.edge_storage[:raw_count], &by_constraint_edge);
+
     for (usz index = 0; index < raw_count; index++) {
         if (!edge_count
             || state.edge_storage[edge_count - 1].first != state.edge_storage[index].first
@@ -901,6 +1030,7 @@ fn void apply_topology_mapping(
                 state.bend_storage[bend_count++] = bend;
             } else {
                 ClothHinge hinge = interior_edge.base_hinge;
+
                 if (is_staged && old_hinge_index < state.hinges.len) {
                     ClothHinge existing = state.hinges[old_hinge_index];
                     if (state.particle_bases[existing.p0] == interior_edge.low_base
@@ -912,11 +1042,14 @@ fn void apply_topology_mapping(
                         old_hinge_index++;
                     }
                 }
+
                 if (edge_cut[interior_index]) continue;
+
                 hinge.p0 = p0;
                 hinge.p1 = p1;
                 hinge.p2 = p2;
                 hinge.p3 = p3;
+
                 if (is_staged) {
                     state.staged_hinges[hinge_count++] = hinge;
                 } else {
@@ -950,7 +1083,7 @@ fn void reassign_normal_domains(ClothState* state, uint particle_count) @local {
     }
     uint next_domain = max_base_domain + 1;
 
-    uint[] first_split_vertex = state.sector_uf_scratch;
+    uint[] first_split_vertex = state.sector_scratch;
     uint[] next_split_vertex = state.sector_root_scratch;
     first_split_vertex[:particle_count] = uint::max;
 
@@ -976,6 +1109,7 @@ fn void reassign_normal_domains(ClothState* state, uint particle_count) @local {
         }
         state.material_normal_domains[material_vertex] = assigned;
     }
+
     foreach (&corner : state.corners) {
         corner.normal_domain = state.material_normal_domains[corner.material_vertex];
     }
@@ -1012,6 +1146,7 @@ fn void commit_staged_topology(ClothState* state, ClothState* staged) @private {
             }
         }
     }
+
     state.committed_particle_count = staged.active_particle_count;
     state.committed_pin_count = (uint)staged.pins.len;
     state.committed_soft_count = (uint)staged.soft_attachments.len;
@@ -1073,16 +1208,16 @@ fn bool split_topology_sectors(ClothState* state) @private {
         state.split_parents[particle] = particle;
     }
 
-    uint[] union_parents = state.sector_uf_scratch[:sector_count];
+    uint[] union_parents = state.sector_scratch[:sector_count];
     for (uint sector = 0; sector < sector_count; sector++) union_parents[sector] = sector;
 
     foreach (interior_index, &interior_edge : state.interior_edges) {
         if (!state.staged_edge_cut[interior_index]) {
             if (interior_edge.low_sector0 != interior_edge.low_sector1) {
-                corner_uf_union(union_parents, interior_edge.low_sector0, interior_edge.low_sector1);
+                union_find_merge(union_parents, interior_edge.low_sector0, interior_edge.low_sector1);
             }
             if (interior_edge.high_sector0 != interior_edge.high_sector1) {
-                corner_uf_union(union_parents, interior_edge.high_sector0, interior_edge.high_sector1);
+                union_find_merge(union_parents, interior_edge.high_sector0, interior_edge.high_sector1);
             }
         }
     }
@@ -1095,7 +1230,7 @@ fn bool split_topology_sectors(ClothState* state) @private {
     uint next_particle = old_particle_count;
     for (uint sector = 0; sector < sector_count; sector++) {
         uint old_particle = state.staged_sector_to_particle[sector];
-        uint root = corner_uf_find(union_parents, sector);
+        uint root = union_find_root(union_parents, sector);
         if (first_root[old_particle] == uint::max) {
             first_root[old_particle] = root;
             root_particle[root] = old_particle;

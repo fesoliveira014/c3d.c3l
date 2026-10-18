@@ -70,11 +70,11 @@ fn ClothAuthoring* carve_authoring(
     transport[..] = desc.transport[..];
     usz cut_vertex_cursor;
     foreach (index, cut : desc.cuts) {
-        uint[] dst = cut_vertices[cut_vertex_cursor:cut.vertices.len];
-        dst[..] = cut.vertices[..];
+        uint[] copied_vertices = cut_vertices[cut_vertex_cursor:cut.vertices.len];
+        copied_vertices[..] = cut.vertices[..];
         cut_vertex_cursor += cut.vertices.len;
         cuts[index] = cut;
-        cuts[index].vertices = dst;
+        cuts[index].vertices = copied_vertices;
     }
     joints[..] = joint_entities[..];
 
@@ -290,7 +290,7 @@ fn ClothState* carve_cloth_state(BlockCursor* cursor, ClothCounts counts) @local
     bool continuous = counts.collisions.continuous;
     bool tangents = counts.tangent_frame;
     bool has_cuts = counts.cut_paths > 0;
-    uint sector_scratch_len = has_cuts ? math::max(counts.sectors, counts.material_vertices) : 0;
+    uint sector_scratch_count = has_cuts ? math::max(counts.sectors, counts.material_vertices) : 0;
     ClothState state = {
         .base_particle_count           = counts.base_vertices,
         .active_particle_count         = counts.base_vertices,
@@ -406,8 +406,8 @@ fn ClothState* carve_cloth_state(BlockCursor* cursor, ClothCounts counts) @local
         .staged_cut_results            = physics::carve(cursor, ClothCutResult, counts.cut_paths),
         .pending_requests              = physics::carve(cursor, uint, counts.max_requests),
         .selected_paths_scratch        = physics::carve(cursor, uint, counts.cut_paths),
-        .sector_uf_scratch             = physics::carve(cursor, uint, sector_scratch_len),
-        .sector_root_scratch           = physics::carve(cursor, uint, sector_scratch_len),
+        .sector_scratch                = physics::carve(cursor, uint, sector_scratch_count),
+        .sector_root_scratch           = physics::carve(cursor, uint, sector_scratch_count),
         .split_group_starts            = physics::carve(cursor, uint, has_cuts ? counts.vertices : 0),
         .split_group_counts            = physics::carve(cursor, uint, has_cuts ? counts.vertices : 0),
         .split_group_members           = physics::carve(cursor, uint, has_cuts ? counts.vertices : 0),

@@ -181,7 +181,6 @@ fn void? solve_cloth(
             state:   state,
             substep: substep,
             total:   total,
-            dt:      dt,
         )!;
     }
 
