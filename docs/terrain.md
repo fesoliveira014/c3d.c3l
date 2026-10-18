@@ -183,6 +183,10 @@ neighbour that prepares later links to the tiles already there, so load order do
 - The set creates no terrain, loads nothing and unloads nothing. Streaming stays with the application: it adds
   tiles when their data arrives and removes them when it leaves.
 
+**Foliage.** A tile takes one [foliage layer](vegetation.md#tiled-worlds). Its candidates are keyed by the
+set's grid, so placement does not depend on the order tiles are added, and its `cell_size` must divide
+`tile_extent()`.
+
 **Authoring contract.** Neighbouring tiles duplicate their shared edge row and column, so the edge texels of two
 neighbours are equal. Cut tiles from one map with an overlap of one row or column, as the example does. Nothing
 checks the texels.
