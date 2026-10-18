@@ -306,12 +306,10 @@ fn void? project_dihedral_bends(ClothState* state, float dt) @private {
         // Bounding the turn, not the target, keeps the compliant equilibrium; the window stops a
         // substep from turning past pi, where the unwrap against the committed angle would flip branch.
         double linear_turn = gradient_sum * delta_lambda;
-        double turn_limit = math::min(
-            MAX_HINGE_PROJECTION_TURN,
-            math::max(0.0, MAX_HINGE_PROJECTION_TURN - math::abs(unwrapped_angle - committed_angle)),
-        );
-        bool leaving_window = (unwrapped_angle - committed_angle) * linear_turn > 0;
-        double allowed_turn = leaving_window ? turn_limit : MAX_HINGE_PROJECTION_TURN;
+        double committed_offset = unwrapped_angle - committed_angle;
+        double allowed_turn = committed_offset * linear_turn > 0
+          ? math::max(0.0, MAX_HINGE_PROJECTION_TURN - math::abs(committed_offset))
+          : MAX_HINGE_PROJECTION_TURN;
         if (math::abs(linear_turn) > allowed_turn) {
             delta_lambda *= allowed_turn / math::abs(linear_turn);
         }
