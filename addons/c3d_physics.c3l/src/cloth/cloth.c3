@@ -366,6 +366,7 @@ fn void? Scene.attach_cloth(
     scene::Mesh* mesh = self.get(node, scene::Mesh);
     if (!mesh) return NO_MESH~;
     if (self.has(node, Cloth)) return CLOTH_EXISTS~;
+    if (self.has(node, ClothOutput)) return c3d::INVALID_ARGUMENT~;
     check_cloth_desc(desc)!;
     if (!assets.geometries.is_live(mesh.geometry)) return c3d::INVALID_ID~;
 
@@ -490,6 +491,7 @@ fn void? prepare(
     Cloth* component = scene.get(node, Cloth);
     if (component.is_prepared()) return;
 
+    if (scene.has(node, ClothOutput)) return c3d::INVALID_ARGUMENT~;
     if (world && (world.scene != scene || world.assets != assets)) return c3d::INVALID_ARGUMENT~;
 
     ClothAuthoring* authoring = component.authoring;
