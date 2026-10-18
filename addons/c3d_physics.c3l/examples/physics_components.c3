@@ -769,7 +769,7 @@ fn uint percentile_index(uint frames) @local {
     return (frames * PERCENTILE_95 + PERCENT - 1) / PERCENT - 1;
 }
 
-fn void? measure_debug_draw(
+fn void measure_debug_draw(
     PhysicsWorld* physics,
     String sink_name,
     usz capacity,
@@ -874,14 +874,14 @@ fn void? run_benchmark(Options options) @local {
             capacity:  BENCHMARK_DEBUG_LINES,
             frames:    options.benchmark_frames,
             workers:   options.workers,
-        )!;
+        );
         measure_debug_draw(
             physics:   &physics,
             sink_name: "default",
             capacity:  debug::DEBUG_LINE_CAPACITY,
             frames:    options.benchmark_frames,
             workers:   options.workers,
-        )!;
+        );
     }
 }
 

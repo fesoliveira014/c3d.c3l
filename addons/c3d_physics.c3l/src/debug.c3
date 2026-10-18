@@ -87,7 +87,7 @@ fn void draw_colliders(PhysicsWorld* world, debug::DebugDraw* sink) @local {
 }
 
 fn bool draw_colliders_parallel(PhysicsWorld* world, debug::DebugDraw* sink) @local {
-    uint body_count = world.scene.world.count(RigidBody);
+    uint body_count = world.scene.count(RigidBody);
     uint chunk_count = (body_count + PARALLEL_BODY_CHUNK - 1) / PARALLEL_BODY_CHUNK;
     if (chunk_count < 2) return false;
 
@@ -137,6 +137,8 @@ fn void draw_chunk_range(void* data, uint first, uint count) @local {
         uint chunk_bodies = math::min(PARALLEL_BODY_CHUNK, draw.body_count - first_body);
         usz first_line = draw.chunk_lines[chunk];
         usz lines = draw.chunk_lines[chunk + 1] - first_line;
+
+        // The exact capacity keeps push off the null allocator.
         debug::DebugDraw slice = {
             .capacity = lines,
             .vertices = { .capacity = (sz)lines * 2, .entries = draw.vertices + first_line * 2 },
