@@ -606,7 +606,7 @@ fn void? prepare_crowd_cloth_part(
             state.triangle_uvs[..] = material_plan.triangle_uvs[..];
             state.material_particles[..] = material_plan.material_particles[..];
             state.material_normal_domains[..] = material_plan.material_normal_domains[..];
-            state.material_ref_faces[..] = material_plan.material_ref_faces[..];
+            state.material_reference_faces[..] = material_plan.material_reference_faces[..];
             if (desc.tangent_frame) {
                 state.tangent_signs[..] = material_plan.tangent_signs[..];
                 state.rest_tangents[..] = material_plan.rest_tangents[..];
