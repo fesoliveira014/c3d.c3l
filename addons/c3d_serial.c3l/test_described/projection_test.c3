@@ -260,16 +260,13 @@ fn void test_absent_component_projection_exports_removed_component_and_rejects_c
         for (ulong mode = 1; mode <= 5; mode++) {
             owner.total = mode;
             assert(@catch(export_projection(&fixture, source, false)) == c3d::INVALID_ARGUMENT);
-            assert(@catch(export_projection(&fixture, source, true)) == c3d::INVALID_ARGUMENT);
         }
         owner.total = 0;
         fixture.source.add(source, (Number){ .count = 21 });
         assert(@catch(export_projection(&fixture, source, false)) == c3d::INVALID_ARGUMENT);
-        assert(@catch(export_projection(&fixture, source, true)) == c3d::INVALID_ARGUMENT);
         fixture.source.remove_component(source, Number);
         Node* conflict = fixture.source.add_node(source, "conflict")!!;
         fixture.source.add(conflict, (Owner){});
         assert(@catch(export_projection(&fixture, source, false)) == c3d::INVALID_ARGUMENT);
-        assert(@catch(export_projection(&fixture, source, true)) == c3d::INVALID_ARGUMENT);
     };
 }

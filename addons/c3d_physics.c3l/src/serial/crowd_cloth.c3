@@ -4,11 +4,9 @@ import c3d;
 import c3d::asset;
 import c3d::describe;
 import c3d::ecs;
-import c3d::maths;
 import c3d::physics::cloth @public;
 import c3d::scene;
 import c3d::serial;
-import std::math;
 
 struct CrowdClothPartAuthoring @private {
     uint part;
@@ -85,7 +83,12 @@ fn void? collect_crowd_cloth(void* component, serial::WriteContext* context) @pr
         }
 
         if (part_record.prepared) {
-            if (!cloth::valid_crowd_part_runtime(context.scene, context.node, crowd, part_record)) {
+            if (!cloth::valid_crowd_part_runtime(
+                scene:       context.scene,
+                owner:       context.node,
+                crowd:       crowd,
+                part_record: part_record,
+            )) {
                 return c3d::INVALID_ARGUMENT~;
             }
             foreach (slot, state : part_record.states) {

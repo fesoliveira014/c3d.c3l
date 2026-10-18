@@ -1337,7 +1337,12 @@ fn void test_reference_transport_separates_carrier_motion_and_zero_step_observat
     desc.gravity_scale = 0;
     desc.transport = transport[..];
 
-    fixture.scene.add_cloth(&fixture.assets, node, desc, &fixture.physics)!!;
+    fixture.scene.add_cloth(
+        assets: &fixture.assets,
+        node:   node,
+        desc:   desc,
+        world:  &fixture.physics,
+    )!!;
     ClothState* state = state_of(&fixture, node);
 
     // Zero-step update observes current_reference and publishes positions without advancing solved_reference.

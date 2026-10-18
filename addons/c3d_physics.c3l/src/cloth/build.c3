@@ -145,7 +145,7 @@ fn void? check_cloth_geometry(GeometryAsset* source) @private {
     }
 }
 
-fn void? check_cloth_source(
+fn void? check_cloth_mesh(
     Scene* scene,
     AssetStore* assets,
     Node* node,
@@ -156,6 +156,22 @@ fn void? check_cloth_source(
     if (node_in_lod_group(scene, node)) return c3d::UNSUPPORTED~;
     check_cloth_material(assets, mesh.material, false)!;
     check_cloth_geometry(source)!;
+}
+
+fn void? check_cloth_source(
+    Scene* scene,
+    AssetStore* assets,
+    Node* node,
+    scene::Mesh* mesh,
+    GeometryAsset* source,
+) @private {
+    check_cloth_mesh(
+        scene:  scene,
+        assets: assets,
+        node:   node,
+        mesh:   mesh,
+        source: source,
+    )!;
 
     Geometry* data = &source.data;
     if (scene.has(node, SkinBinding)) {
@@ -256,11 +272,14 @@ fn ClothState*? allocate_cloth_state(
         .crowd              = crowd,
         .collisions         = collisions,
     };
+
     BlockCursor measure;
     carve_cloth_state(&measure, counts);
     if (measure.offset > (usz)sz::max) return c3d::CAPACITY_EXCEEDED~;
+
     char*? allocation = alloc::malloc_try(allocator, (sz)measure.offset);
     if (catch allocation) return c3d::CAPACITY_EXCEEDED~;
+
     BlockCursor fill = { .base = allocation };
     return carve_cloth_state(&fill, counts);
 }

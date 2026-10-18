@@ -60,6 +60,7 @@ fn void build_self_topology(ClothState* state) @private {
         if (first != second) state.adjacent_vertex_storage[adjacent_count++] = self_edge_key(first, second);
     }
     sort::quicksort(state.adjacent_vertex_storage[:adjacent_count]);
+
     usz unique_count;
     foreach (key : state.adjacent_vertex_storage[:adjacent_count]) {
         if (!unique_count || state.adjacent_vertex_storage[unique_count - 1] != key) {
@@ -67,6 +68,7 @@ fn void build_self_topology(ClothState* state) @private {
         }
     }
     state.adjacent_vertices = state.adjacent_vertex_storage[:unique_count];
+
     foreach (index, &face : state.faces) {
         face.vertices = {
             state.corners[3 * index].particle,

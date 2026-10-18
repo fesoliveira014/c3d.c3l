@@ -84,8 +84,10 @@ Setting `ClothDesc.bend_mode = DIHEDRAL` replaces opposite-vertex distance bendi
 signed dihedral hinge constraint across each interior physical edge (`ClothBendMode.DISTANCE` remains
 the default and requires `bend_compliance == 0` and empty `rest_angles`). `ClothDesc.rest_angles`
 overrides the rest angle on canonical interior edges (`first < second`, `angle` in `(-pi, pi]`). Each
-substep projects hinges with XPBD compliance `bend_compliance` and certifies the continuous motion
-interval against edge collapse, triangle degeneracy, and `±pi` branch flips (`cloth::BEND_UNRESOLVED`).
+substep projects hinges with XPBD compliance `bend_compliance` toward a target that stays within
+1.25 rad of the hinge's tracked angle, so a hinge far from rest recovers over several substeps along
+its tracked winding. The continuous motion of each substep is certified against edge collapse,
+triangle degeneracy, and a half turn or more (`cloth::BEND_UNRESOLVED`).
 
 ### Skinned reference, transport and `CrowdCloth`
 
@@ -338,7 +340,7 @@ unvisited work as checked.
 | `cloth::CONTACT_UNRESOLVED` | The bounded contact passes could not satisfy all participating constraints. |
 | `cloth::CONTACT_NONCONVERGENT` | A CCD advance stalled or exhausted its iteration bound. |
 | `cloth::CONTACT_PRECISION_EXCEEDED` | Arithmetic, correction or float publication cannot establish the configured tolerance. |
-| `cloth::BEND_UNRESOLVED` | A dihedral hinge collapsed, became non-finite, or crossed the `±pi` branch cut. |
+| `cloth::BEND_UNRESOLVED` | A dihedral hinge collapsed, became non-finite, or turned half a revolution within one substep. |
 | `cloth::FRAME_UNRESOLVED` | Deformed normal or tangent frame reconstruction could not produce a finite unit frame. |
 | `cloth::OPENING_UNRESOLVED` | A requested or strain-triggered cut path could not be opened and certified within its reserves and tolerances. |
 

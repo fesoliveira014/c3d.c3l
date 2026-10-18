@@ -407,7 +407,13 @@ fn void? initial_cloth_publication(
 
     state.contact_result.stage = ClothContactStage.PUBLICATION;
     bool changed = stage_local_positions(state, frame, true)!;
-    if (contact_pass(world: world, state: state, positions: state.publication_roundtrip, apply: false)! != 0) {
+    usz unresolved = contact_pass(
+        world:     world,
+        state:     state,
+        positions: state.publication_roundtrip,
+        apply:     false,
+    )!;
+    if (unresolved != 0) {
         state.contact_result.stage = ClothContactStage.PUBLICATION;
         return CONTACT_PRECISION_EXCEEDED~;
     }
@@ -427,17 +433,25 @@ fn void? initial_cloth_publication(
             state.sweep_bounds[index] = { .min = point, .max = point };
         }
     }
+
     foreach (slot, pin : state.pins) {
         state.pin_anchors[slot] = state.current_reference[pin];
         state.pin_targets[slot] = state.current_reference[pin];
     }
+
     foreach (slot, attachment : state.soft_attachments) {
         state.soft_anchors[slot] = state.current_reference[attachment.particle];
         state.soft_targets[slot] = state.current_reference[attachment.particle];
         state.soft_lambdas[slot] = {};
     }
+
     finish_body_poses(state);
-    commit_local_publication(state, frame, changed, colors_changed);
+    commit_local_publication(
+        state:          state,
+        world:          frame,
+        changed:        changed,
+        colors_changed: colors_changed,
+    );
     state.contact_result.stage = ClothContactStage.NONE;
 }
 
@@ -498,12 +512,13 @@ fn void? prepare(
 
     @pool() {
         check_seams(desc.seams, (uint)source.data.positions.len)!;
+
         uint particle_count;
         uint[] render_to_particle = build_render_particle_map(&source.data, desc.render_particles, &particle_count)!;
         uint[] particle_sources = alloc::new_array(tmem, uint, (sz)particle_count);
         foreach (render_vertex, particle : render_to_particle) particle_sources[particle] = (uint)render_vertex;
-
         check_transport_authoring(desc.transport, particle_count)!;
+
         ClothAttachmentPlan attachment_plan = build_attachment_plan(
             legacy_pins:        desc.pins,
             render_to_particle: render_to_particle,
@@ -514,9 +529,9 @@ fn void? prepare(
         Vec3[] rest = alloc::new_array(tmem, Vec3, (sz)particle_count);
         Vec3[] edge_positions = alloc::new_array(tmem, Vec3, (sz)particle_count);
         foreach (particle, source_vertex : particle_sources) {
-            Vec3 local_pos = source.data.positions[source_vertex];
-            rest[particle] = local_pos;
-            edge_positions[particle] = maths::transform_point(node.world, local_pos);
+            Vec3 local_position = source.data.positions[source_vertex];
+            rest[particle] = local_position;
+            edge_positions[particle] = maths::transform_point(node.world, local_position);
         }
         check_world_positions(edge_positions)!;
 
@@ -553,12 +568,14 @@ fn void? prepare(
             desc:           desc,
             corner_sectors: sector_plan.corner_sectors,
         )!;
+
         ClothCapture capture = capture_colliders(
             scene:      scene,
             owners:     desc.colliders,
             max_shapes: desc.collisions.max_shapes,
             world:      world,
         )!;
+
         GeometryId copy = assets.add_geometry(&material_plan.geometry)!;
         defer catch assets.remove_geometry(copy);
 
@@ -593,12 +610,14 @@ fn void? prepare(
         state.source_revision = authoring.source_revision;
         state.geometry = copy;
         state.source_vertex_motion = authoring.source_vertex_motion;
+
         state.skinned = authoring.skinned;
         state.skeleton = authoring.skeleton;
         state.skeleton_revision = authoring.skeleton_revision;
         if (authoring.skinned) {
             state.joint_entities[..] = authoring.joint_entities[..];
         }
+
         state.render_to_particle[..] = material_plan.render_to_particle[..];
         state.particle_source_storage[:particle_count] = material_plan.particle_sources[..];
         if (desc.transport.len) {

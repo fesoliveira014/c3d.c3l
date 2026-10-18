@@ -53,12 +53,14 @@ fn void? evaluate_skin_positions(
         float[<4>][4] m1 = palette[joints.y];
         float[<4>][4] m2 = palette[joints.z];
         float[<4>][4] m3 = palette[joints.w];
+
         float[<4>][4] skin = {
             weights.x * m0[0] + weights.y * m1[0] + weights.z * m2[0] + weights.w * m3[0],
             weights.x * m0[1] + weights.y * m1[1] + weights.z * m2[1] + weights.w * m3[1],
             weights.x * m0[2] + weights.y * m1[2] + weights.z * m2[2] + weights.w * m3[2],
             weights.x * m0[3] + weights.y * m1[3] + weights.z * m2[3] + weights.w * m3[3],
         };
+
         float[<4>] local4 = skin[0] * position.x + skin[1] * position.y + skin[2] * position.z + skin[3];
         Vec3 local = { local4.x, local4.y, local4.z };
         Vec3 transformed = maths::transform_point(world, local);
