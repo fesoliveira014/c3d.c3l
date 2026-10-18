@@ -152,7 +152,7 @@ scene.get(node, InstancedMesh).trace = false;
 scene.set_instance_quadtree(node, parents[..], 96, 0.25f)!;
 ```
 
-`Scene.set_instance_quadtree` copies `parents` into arrays the component owns, allocated from the scene's allocator on first use and freed with the component, builds the leaf mask (an instance no other instance names as parent) and advances `InstanceQuadtree.revision`, which record edits never advance. Empty `parents` disable the mode. It faults `INVALID_ARGUMENT` when `check_instance_quadtree` rejects the parents: the length differs from the live count, a parent is out of range, the parents form a cycle, or an instance has more than `MAX_QUADTREE_DEPTH` (8) ancestors. It faults `UNSUPPORTED` while the batch has `trace` set or its node carries a `LodGroup`.
+`Scene.set_instance_quadtree` copies `parents` into arrays the component owns, allocated from the scene's allocator on first use and freed with the component, builds the leaf mask (an instance no other instance names as parent) and advances `InstanceQuadtree.revision`, which record edits never advance. Empty `parents` disable the mode. It faults `INVALID_ARGUMENT` when `check_instance_quadtree` rejects the parents: the length differs from the live count, a parent is out of range, the parents form a cycle, or an instance has more than `MAX_QUADTREE_DEPTH` (8) ancestors. It faults `UNSUPPORTED` while the batch has `trace` set, one of its instances mirrors space or its node carries a `LodGroup`.
 
 - **Rule.** A leaf never splits. Any other node splits when its size exceeds `split_pixels`; a node that split in the view's previous rendering stays split until its size falls below `split_pixels / (1 + hysteresis)`. A node draws when every ancestor splits and it does not.
 - **Size.** The projected height, in pixels of the view's working extent (`render_scale` included), of the sphere that bounds the geometry under the instance matrix. It is infinite at the sphere's centre, so a node around the camera splits.
@@ -163,7 +163,7 @@ scene.set_instance_quadtree(node, parents[..], 96, 0.25f)!;
 
 Constraints the batch keeps:
 
-- The batch has no mirrored instance, because records pack unmirrored instances first and a mirrored instance would move the records off their parents.
+- The batch has no mirrored instance, because records pack unmirrored instances first and a mirrored instance would move the records off their parents. `Scene.set_instance_quadtree` faults `UNSUPPORTED` while an instance mirrors, and `Scene.set_instances` faults `UNSUPPORTED` when a new transform mirrors, before it changes the batch. An in-place edit that mirrors an instance is caught by the `validate_quadtree` contract below.
 - `trace` stays unset: tracing walks every instance.
 - `Scene.resize_instances` and `Scene.set_instances` fault `UNSUPPORTED` when they change the count of a batch with a quadtree; disable the mode with empty `parents` first.
 - A `LodGroup` added to the node after the quadtree was set makes `render_view` fault `UNSUPPORTED`; two selections on one batch are undefined.

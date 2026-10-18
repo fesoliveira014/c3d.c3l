@@ -1019,6 +1019,13 @@ fn void test_quadtree_rejects_malformed_parents() @test {
     )!!);
     assert(@catch(fixture.scene.set_instance_quadtree(node, parents[..], 100, 0.25f)) == c3d::UNSUPPORTED);
     assert(batch.quadtree.parents.len == 0 && batch.quadtree.revision == 0);
+
+    Transform[3] flipped = { at({ 0, 0, 0 }), mirrored_at({ 3, 0, 0 }), at({ 6, 0, 0 }) };
+    Node* mirroring = fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 3, flipped[..])!!;
+    InstancedMesh* mirroring_batch = fixture.scene.get(mirroring, InstancedMesh);
+    mirroring_batch.trace = false;
+    assert(@catch(fixture.scene.set_instance_quadtree(mirroring, parents[..], 100, 0.25f)) == c3d::UNSUPPORTED);
+    assert(mirroring_batch.quadtree.parents.len == 0 && mirroring_batch.quadtree.revision == 0);
 }
 
 fn void test_quadtree_leaf_mask_and_revision() @test {
@@ -1039,6 +1046,12 @@ fn void test_quadtree_leaf_mask_and_revision() @test {
     fixture.scene.mark_instances_dirty(node);
     assert(batch.quadtree.revision == revision);
     assert(@catch(fixture.scene.resize_instances(node, 4)) == c3d::UNSUPPORTED);
+
+    Transform[5] flipped = transforms;
+    flipped[3].scale.x = -1;
+    uint batch_revision = batch.revision;
+    assert(@catch(fixture.scene.set_instances(node, flipped[..])) == c3d::UNSUPPORTED);
+    assert(batch.revision == batch_revision && batch.transforms[3].scale.x == 1);
 
     fixture.scene.update_world();
     SceneIndex index = spatial::create_scene_index(mem, 5);

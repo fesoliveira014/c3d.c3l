@@ -205,7 +205,14 @@ fn void? Scene.set_instances(&self, Node* node, Transform[] transforms, Vec4[] c
     InstancedMesh* batch = self.get(node, InstancedMesh);
     if (transforms.len > batch.transforms.len) return c3d::CAPACITY_EXCEEDED~;
     if (colors.len > transforms.len) return c3d::INVALID_ARGUMENT~;
-    if (batch.quadtree.parents.len && transforms.len != batch.count) return c3d::UNSUPPORTED~;
+    if (batch.quadtree.parents.len) {
+        if (transforms.len != batch.count) return c3d::UNSUPPORTED~;
+
+        foreach (transform : transforms) {
+            if (transform_mirrored(transform)) return c3d::UNSUPPORTED~;
+        }
+    }
+
     fill_instances(batch, transforms, colors);
     advance_revision(batch);
 }
@@ -230,7 +237,7 @@ fn void? Scene.set_instance_quadtree(
         InstanceQuadtree candidate = { .parents = parents };
         check_instance_quadtree(&candidate, batch.count)!;
 
-        if (batch.trace || self.has(node, LodGroup)) return c3d::UNSUPPORTED~;
+        if (batch.trace || batch.mirrored_count() || self.has(node, LodGroup)) return c3d::UNSUPPORTED~;
 
         if (!quadtree.parents.ptr) {
             quadtree.parents = alloc::new_array(self.allocator, uint, batch.transforms.len);
