@@ -457,7 +457,8 @@ was held does not sweep through it. A wake is committed with the update that car
 fails, the cloth keeps its activity and positions, and the wake request stays pending.
 
 **Skipped work.** A resting cloth skips the solve and publication after its trigger check; a held cloth
-skips everything after the ownership checks. Neither marks geometry dirty, so the renderer sees no new
+skips everything after the ownership checks except mirroring the owner's layers, world matrix and visibility
+onto a skinned or crowd output node. Neither marks geometry dirty, so the renderer sees no new
 revision. A resting crowd slot still publishes an instance colour change. `ClothStats.resting` and
 `ClothStats.held` count the cloths that skipped the update; `particles` and `constraints` sum the cloths
 that simulated.

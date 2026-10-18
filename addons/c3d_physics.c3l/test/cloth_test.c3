@@ -268,7 +268,7 @@ fn void test_cloth_rejects_invalid_input_atomically() @test {
     Node* plain = add_cloth_node(&fixture, shared_id);
     uint[1] bad_pin = { 4 };
     assert(rejected_atomically(&fixture, plain, pinned_desc(bad_pin[..])) == c3d::INVALID_ARGUMENT);
-    ClothDesc[7] invalid;
+    ClothDesc[8] invalid;
     foreach (&entry : invalid) *entry = desc;
     invalid[0].substeps = 0;
     invalid[1].iterations = 0;
@@ -277,6 +277,7 @@ fn void test_cloth_rejects_invalid_input_atomically() @test {
     invalid[4].damping = -1;
     invalid[5].thickness = float::inf;
     invalid[6].gravity_scale = float::nan;
+    invalid[7].sleep_speed = -1;
     foreach (entry : invalid) assert(rejected_atomically(&fixture, plain, entry) == c3d::INVALID_ARGUMENT);
 
     GeometryId indexed_id = add_grid(&fixture, 1);

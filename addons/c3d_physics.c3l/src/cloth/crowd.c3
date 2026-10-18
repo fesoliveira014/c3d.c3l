@@ -1046,6 +1046,7 @@ fn void update_crowd_cloths(PhysicsWorld* world, uint steps) @private {
                     if (reseeded) component.state.held_slots[slot] = false;
                     bool held = component.state.held_slots[slot];
                     if (held) {
+                        sync_crowd_output(out_node, owner, batch_node);
                         state.contact_result = {};
                         tally_cloth(
                             stats:               &world.cloth_stats,
@@ -1157,8 +1158,7 @@ fn ClothUpdateKind? update_crowd_slot(
                 commit_color_publication(state);
                 part_record.published_colors[slot] = crowd.colors[slot];
             }
-            out_node.world = owner.world;
-            out_node.visible_effective = owner.visible_effective && out_node.visible;
+            sync_crowd_output(out_node, owner, batch_node);
             return RESTED;
         }
     }
@@ -1307,6 +1307,12 @@ fn bool? probe_crowd_slot_rest(
 
     probe.contact_result = {};
     return false;
+}
+
+fn void sync_crowd_output(Node* out_node, Node* owner, Node* batch_node) @local {
+    out_node.layers = batch_node.layers;
+    out_node.world = owner.world;
+    out_node.visible_effective = owner.visible_effective && out_node.visible;
 }
 
 fn void fill_slot_colors(ClothState* state, CrowdClothPart* part_record, Vec4 instance_color) @local {
