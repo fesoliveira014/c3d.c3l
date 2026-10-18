@@ -35,6 +35,12 @@ const uint HEIGHT @local = 720;
 const uint SCENE_NODE_CAPACITY @local = 256; // character joints, ragdoll bones, level
 const uint FLAG_COLUMNS @local = 24;
 const uint FLAG_ROWS @local = 16;
+const uint[2] DENSITY_FLAG_COLUMNS @local = { 12, FLAG_COLUMNS }; // the same flag at two tessellations
+const uint[2] DENSITY_FLAG_ROWS @local = { 8, FLAG_ROWS };
+const float DENSITY_FLAG_SPACING @local = 2.4f; // metres between the bars; keeps the swinging flags apart
+const float DENSITY_BAR_HEIGHT @local = 2.4f; // metres above the ground
+const float DENSITY_WIND_SPEED @local = 1.5f; // m/s; below the speed at which a hung sheet starts to flutter
+const float DENSITY_WIND_HEADING @local = 90; // degrees off the flag plane; straight at the sheets
 const uint BENCHMARK_CELLS @local = 32; // a 33x33-vertex flag at the default 4x8 solver settings
 const float FLAG_WIDTH @local = 1.8f;
 const float FLAG_HEIGHT @local = 1.2f;
@@ -45,12 +51,15 @@ const uint CAPE_COLUMNS @local = 12;
 const uint CAPE_ROWS @local = 22;
 const float CAPE_WIDTH @local = 0.5f;
 const float CAPE_LENGTH @local = 0.95f;
-const float CAPE_BACK_OFFSET @local = 0.17f; // metres behind the chest joint; clears the 0.13 m chest capsule
+const float CAPE_BACK_OFFSET @local = 0.22f; // metres behind the chest joint; clears the 0.13 m chest capsule, and below 0.20 the cape starts in contact with the bones and its first updates fail
 const float CAPE_SHOULDER_HEIGHT @local = 0.12f; // metres above the chest joint
 const String CAPE_JOINT @local = "DEF-spine.003";
 const float CAPE_THICKNESS @local = 0.02f; // metres; keeps the cape off the skin that lies outside the bone capsules
-const float CAPE_BEND_COMPLIANCE @local = 2.0f; // soft enough to drape over the shoulders; 0 makes a rigid shell
-const float CAPE_EDGE_COMPLIANCE @local = 0.001f; // m/N; the outer collar corners yield slightly under a tug
+const float CAPE_DENSITY @local = 0.4f; // kg/m²; wool. At the default 0.2 a breeze lifts the cape off the back, and heavier hangs but swings less
+const float CAPE_INVERSE_PARTICLE_MASS @local = (float)((CAPE_COLUMNS + 1) * (CAPE_ROWS + 1)) / (CAPE_DENSITY * CAPE_WIDTH * CAPE_LENGTH); // 1/kg; XPBD compliances act on this mass
+const float CAPE_BEND_COMPLIANCE @local = 2.0f * CAPE_INVERSE_PARTICLE_MASS; // the unit-mass softness 2.0 scaled to real mass; 0 makes a rigid shell
+const float CAPE_EDGE_COMPLIANCE @local = 0.001f * CAPE_INVERSE_PARTICLE_MASS; // m/N; the unit-mass value scaled to real mass; the outer collar corners yield slightly under a tug
+const float CAPE_WIND_SHARE @local = 0.5f; // the wearer shields the cape; at 3 m/s it would fly flat, and a lower share trades flutter for a hang
 const Vec3 CHARACTER_POSITION @local = { -1.4f, 0, 0.6f };
 const Vec3 CHARACTER_FACING @local = { -0.45f, 0, -1 }; // three-quarter back view from the camera
 const String MODEL_PATH @local = "../../examples/assets/quaternius/AnimationLibrary_Godot.glb";
@@ -59,9 +68,8 @@ const int RAGDOLL_GROUP @local = -1; // bones never collide with each other; joi
 const float DRIVE_HERTZ @local = 6;
 const float DRIVE_DAMPING @local = 1;
 const float BLEND_OUT_SECONDS @local = 0.8f;
-const float AIR_RESPONSE @local = 2.5f; // per second: particle acceleration per m/s of normal wind, at any resolution
-const float DEFAULT_WIND_SPEED @local = 6;
-const float DEFAULT_WIND_HEADING @local = 35; // degrees off the flag plane; drag acts on the normal component only
+const float DEFAULT_WIND_SPEED @local = 3; // m/s; a breeze that flaps the flag; the pressure grows with the square of the normal speed
+const float DEFAULT_WIND_HEADING @local = 35; // degrees off the flag plane; wind along the plane exerts no force on a flat sheet
 const float GUST_SHARE @local = 0.35f; // fraction of the speed a gust adds or removes
 const float GUST_RATE @local = 0.7f; // radians per second
 const uint WARMUP_FRAMES @local = 120; // two simulated seconds settle the cloth before measuring
@@ -101,10 +109,11 @@ enum Scenario @local {
     FAST,
     FIELD,
     CROWD,
+    DENSITIES,
 }
 
 const String[Scenario::len] SCENARIO_NAMES @local = {
-    "flag", "cape", "both", "contacts", "fold", "fast", "field", "crowd",
+    "flag", "cape", "both", "contacts", "fold", "fast", "field", "crowd", "densities",
 };
 
 struct Options @local {
@@ -160,6 +169,7 @@ struct Demo @local {
     bool         simulated;
     bool         traced;
     Node*        flag;
+    Node*[2]     density_flags;
     uint         flag_columns;
     uint         flag_rows;
     Character    character;
@@ -237,51 +247,99 @@ fn MaterialId? cloth_material(AssetStore* assets, Vec4 color) @local {
     return assets.add_material(material::standard({ .base_color = color, .roughness = 0.8f }, two_sided));
 }
 
-// Particles have unit mass, so drag scales with vertex density to keep the response resolution-independent.
-fn Wind grid_wind(
+fn Node*? add_sheet(
+    Demo* demo,
+    Vec3 position,
     uint columns,
     uint rows,
-    float width,
-    float height,
 ) @local {
-    return { .drag = AIR_RESPONSE * (float)((columns + 1) * (rows + 1)) / (width * height) };
-}
-
-fn void? build_flag(Demo* demo) @local {
-    MaterialId flag_material = cloth_material(&demo.assets, { 0.75f, 0.12f, 0.1f, 1 })!;
-    MaterialId pole_material = demo.assets.add_material(material::standard({
-        .base_color = { 0.55f, 0.55f, 0.58f, 1 }, .roughness = 0.4f, .metallic = 1,
-    }))!;
-    GeometryId flag_geometry;
-    GeometryId pole_geometry;
+    MaterialId material = cloth_material(&demo.assets, { 0.75f, 0.12f, 0.1f, 1 })!;
+    GeometryId sheet_geometry;
     @pool() {
-        Geometry flag = cloth_grid(
+        Geometry sheet = cloth_grid(
             allocator: tmem,
-            columns:   demo.flag_columns,
-            rows:      demo.flag_rows,
+            columns:   columns,
+            rows:      rows,
             width:     FLAG_WIDTH,
             height:    FLAG_HEIGHT,
         );
-        flag_geometry = demo.assets.add_geometry(&flag, "cloth/flag")!;
-        Geometry pole = geometry::cylinder(
+        sheet_geometry = demo.assets.add_geometry(&sheet)!;
+    };
+    Node* flag = demo.scene.add_mesh(sheet_geometry, material, name: "flag")!;
+    flag.local.position = position;
+    demo.scene.get(flag, scene::Mesh).trace = demo.traced;
+    demo.scene.add(flag, (Wind){});
+    return flag;
+}
+
+fn Node*? add_support(Demo* demo, float length) @local {
+    MaterialId material = demo.assets.add_material(material::standard({
+        .base_color = { 0.55f, 0.55f, 0.58f, 1 }, .roughness = 0.4f, .metallic = 1,
+    }))!;
+    GeometryId support_geometry;
+    @pool() {
+        Geometry support = geometry::cylinder(
             allocator:     tmem,
             radius_top:    POLE_RADIUS,
             radius_bottom: POLE_RADIUS,
-            height:        POLE_HEIGHT,
+            height:        length,
         );
-        pole_geometry = demo.assets.add_geometry(&pole, "cloth/pole")!;
+        support_geometry = demo.assets.add_geometry(&support)!;
     };
-    Node* pole = demo.scene.add_mesh(pole_geometry, pole_material, name: "pole")!;
-    pole.local.position = POLE_POSITION + (Vec3){ 0, POLE_HEIGHT * 0.5f, 0 };
-    demo.flag = demo.scene.add_mesh(flag_geometry, flag_material, name: "flag")!;
-    demo.flag.local.position = POLE_POSITION + (Vec3){ POLE_RADIUS, POLE_HEIGHT - 0.1f, 0 };
-    demo.scene.get(demo.flag, scene::Mesh).trace = demo.traced;
-    demo.scene.add(demo.flag, grid_wind(
-        columns: demo.flag_columns,
-        rows:    demo.flag_rows,
-        width:   FLAG_WIDTH,
-        height:  FLAG_HEIGHT,
-    ));
+    return demo.scene.add_mesh(support_geometry, material, name: "pole");
+}
+
+fn Node*? add_flag(
+    Demo* demo,
+    Vec3 pole_position,
+    uint columns,
+    uint rows,
+) @local {
+    Node* pole = add_support(demo, POLE_HEIGHT)!;
+    pole.local.position = pole_position + (Vec3){ 0, POLE_HEIGHT * 0.5f, 0 };
+    return add_sheet(
+        demo:     demo,
+        position: pole_position + (Vec3){ POLE_RADIUS, POLE_HEIGHT - 0.1f, 0 },
+        columns:  columns,
+        rows:     rows,
+    );
+}
+
+fn Node*? add_hung_flag(
+    Demo* demo,
+    Vec3 bar_position,
+    uint columns,
+    uint rows,
+) @local {
+    Node* bar = add_support(demo, FLAG_WIDTH + 2 * POLE_RADIUS)!;
+    bar.local.position = bar_position + (Vec3){ FLAG_WIDTH * 0.5f, 0, 0 };
+    bar.local.rotation = quaternion::from_axis_angle((Vec3){ 0, 0, 1 }, (float)math::PI / 2);
+    return add_sheet(
+        demo:     demo,
+        position: bar_position - (Vec3){ 0, POLE_RADIUS, 0 },
+        columns:  columns,
+        rows:     rows,
+    );
+}
+
+fn void? build_flag(Demo* demo) @local {
+    demo.flag = add_flag(
+        demo:          demo,
+        pole_position: POLE_POSITION,
+        columns:       demo.flag_columns,
+        rows:          demo.flag_rows,
+    )!;
+}
+
+fn void? build_densities(Demo* demo) @local {
+    foreach (index, &flag : demo.density_flags) {
+        *flag = add_hung_flag(
+            demo:         demo,
+            bar_position: { (float)index * DENSITY_FLAG_SPACING, DENSITY_BAR_HEIGHT, 0 },
+            columns:      DENSITY_FLAG_COLUMNS[index],
+            rows:         DENSITY_FLAG_ROWS[index],
+        )!;
+    }
 }
 
 fn ClipId? find_clip(AssetStore* assets, ClipId[] clips, String name) @local {
@@ -365,12 +423,7 @@ fn void? build_character(Demo* demo) @local {
     )!;
     character.cape.local = maths::transform_from_mat4(maths::inverse_affine(chest.world).mul(placement.to_mat4()));
     scene.get(character.cape, scene::Mesh).trace = demo.traced;
-    scene.add(character.cape, grid_wind(
-        columns: CAPE_COLUMNS,
-        rows:    CAPE_ROWS,
-        width:   CAPE_WIDTH,
-        height:  CAPE_LENGTH,
-    ));
+    scene.add(character.cape, (Wind){});
     scene.update_world();
 }
 
@@ -391,6 +444,18 @@ fn void? attach_flag(Demo* demo) @local {
         desc.cuts = cuts[..];
         demo.scene.add_cloth(&demo.assets, demo.flag, desc)!;
     };
+}
+
+fn void? attach_density_flags(Demo* demo) @local {
+    foreach (index, flag : demo.density_flags) {
+        ClothDesc desc = cloth::default_cloth_desc();
+        @pool() {
+            uint[] pins = alloc::new_array(tmem, uint, (sz)(DENSITY_FLAG_COLUMNS[index] + 1));
+            foreach (column, &pin : pins) *pin = (uint)column;
+            desc.pins = pins;
+            demo.scene.add_cloth(&demo.assets, flag, desc)!;
+        };
+    }
 }
 
 fn uint field_columns(uint count) @local => (uint)math::ceil(math::sqrt((float)count));
@@ -434,12 +499,7 @@ fn void? build_field(Demo* demo) @local {
         flag.local.position = base + (Vec3){ POLE_RADIUS, FIELD_POLE_HEIGHT - 0.1f, 0 };
         demo.scene.get(*flag, scene::Mesh).trace = demo.traced;
         if (index % FIELD_WIND_STRIDE == 0) {
-            demo.scene.add(*flag, grid_wind(
-                columns: FIELD_FLAG_COLUMNS,
-                rows:    FIELD_FLAG_ROWS,
-                width:   FIELD_FLAG_WIDTH,
-                height:  FIELD_FLAG_HEIGHT,
-            ));
+            demo.scene.add(*flag, (Wind){});
         }
     }
 }
@@ -617,18 +677,14 @@ fn void? build_crowd(Demo* demo, uint count) @local {
         )!;
     };
 
-    demo.scene.add(demo.crowd, grid_wind(
-        columns: CAPE_COLUMNS,
-        rows:    CAPE_ROWS,
-        width:   CAPE_WIDTH,
-        height:  CAPE_LENGTH,
-    ));
+    demo.scene.add(demo.crowd, (Wind){});
     demo.scene.update_world();
 }
 
 fn void? attach_crowd_cape(Demo* demo) @local {
     ClothDesc desc = cloth::default_cloth_desc();
     desc.thickness = CAPE_THICKNESS;
+    desc.density = CAPE_DENSITY;
 
     @pool() {
         uint[] pins = alloc::new_array(tmem, uint, (sz)(CAPE_COLUMNS + 1));
@@ -658,6 +714,7 @@ fn void? attach_cape(Demo* demo) @local {
     desc.tangent_frame = true;
     desc.bend_mode = DIHEDRAL;
     desc.bend_compliance = CAPE_BEND_COMPLIANCE;
+    desc.density = CAPE_DENSITY;
 
     Entity[ragdoll_bones::RIGIFY_BONE_COUNT] colliders;
     foreach (index, bone : ragdoll.bone_nodes) colliders[index] = bone.id;
@@ -699,6 +756,7 @@ fn void tear_cloths(Demo* demo) @local {
 fn void? attach_cloths(Demo* demo) @local {
     if (!demo.simulated) return;
     if (demo.flag) attach_flag(demo)!;
+    if (demo.density_flags[0]) attach_density_flags(demo)!;
     if (demo.character.cape) attach_cape(demo)!;
     if (demo.scenario == CONTACTS) attach_contact_cloths(demo)!;
     if (demo.fold) attach_fold(demo)!;
@@ -713,6 +771,7 @@ fn void? attach_cloths(Demo* demo) @local {
 fn void? reset_cloths(Demo* demo) @local {
     if (!demo.simulated) return;
     if (demo.flag) demo.scene.remove_cloth(demo.flag);
+    foreach (node : demo.density_flags) if (node) demo.scene.remove_cloth(node);
     if (demo.character.cape) demo.scene.remove_cloth(demo.character.cape);
     if (demo.fold) demo.scene.remove_cloth(demo.fold);
     if (demo.fast) demo.scene.remove_cloth(demo.fast);
@@ -1060,10 +1119,14 @@ fn void? create_demo(
     if (scenario == FAST) build_fast(demo)!;
     if (scenario == FIELD) build_field(demo)!;
     if (scenario == CROWD) build_crowd(demo, crowd_count)!;
+    if (scenario == DENSITIES) build_densities(demo)!;
     switch (scenario) {
         case FLAG:
             demo.camera.local.position = POLE_POSITION + (Vec3){ 1.4f, POLE_HEIGHT - 0.6f, 4.2f };
             demo.camera.local.rotation = maths::look_rotation(((Vec3){ -0.25f, 0, -1 }).normalize(), { 0, 1, 0 });
+        case DENSITIES:
+            demo.camera.local.position = { (DENSITY_FLAG_SPACING + FLAG_WIDTH) * 0.5f, DENSITY_BAR_HEIGHT - 0.4f, 5.6f };
+            demo.camera.local.rotation = maths::look_rotation(((Vec3){ 0, -0.05f, -1 }).normalize(), { 0, 1, 0 });
         case CAPE:
             demo.camera.local.position = CHARACTER_POSITION + (Vec3){ 0.6f, 1.5f, 2.6f };
             demo.camera.local.rotation = maths::look_rotation(((Vec3){ -0.2f, -0.18f, -1 }).normalize(), { 0, 1, 0 });
@@ -1095,8 +1158,8 @@ fn void? create_demo(
     }
     demo.scene.update_world();
     attach_cloths(demo)!;
-    demo.wind_speed = DEFAULT_WIND_SPEED;
-    demo.wind_heading = DEFAULT_WIND_HEADING;
+    demo.wind_speed = scenario == DENSITIES ? DENSITY_WIND_SPEED : DEFAULT_WIND_SPEED;
+    demo.wind_heading = scenario == DENSITIES ? DENSITY_WIND_HEADING : DEFAULT_WIND_HEADING;
     demo.gusts = true;
 }
 
@@ -1115,8 +1178,9 @@ fn void apply_wind(Demo* demo, double time) @local {
     float heading = math::deg_to_rad(demo.wind_heading);
     Vec3 velocity = { math::cos(heading) * speed, 0, math::sin(heading) * speed };
     if (demo.flag) demo.scene.get(demo.flag, Wind).velocity = velocity;
-    if (demo.character.cape) demo.scene.get(demo.character.cape, Wind).velocity = velocity;
-    if (demo.crowd) demo.scene.get(demo.crowd, Wind).velocity = velocity;
+    foreach (flag : demo.density_flags) if (flag) demo.scene.get(flag, Wind).velocity = velocity;
+    if (demo.character.cape) demo.scene.get(demo.character.cape, Wind).velocity = velocity * CAPE_WIND_SHARE;
+    if (demo.crowd) demo.scene.get(demo.crowd, Wind).velocity = velocity * CAPE_WIND_SHARE;
     foreach (flag : demo.field) {
         if (Wind* field_wind = demo.scene.get(flag, Wind)) field_wind.velocity = velocity;
     }
@@ -1175,6 +1239,8 @@ fn void step_demo(Demo* demo, float delta, double time) @local {
     demo.scene.update_world();
 
     uint flag_revision = cloth_revision(demo, demo.flag);
+    uint[2] density_revisions;
+    foreach (index, flag : demo.density_flags) density_revisions[index] = cloth_revision(demo, flag);
     uint cape_revision = cloth_revision(demo, demo.character.cape);
     uint fold_revision = cloth_revision(demo, demo.fold);
     uint fast_revision = cloth_revision(demo, demo.fast);
@@ -1188,6 +1254,7 @@ fn void step_demo(Demo* demo, float delta, double time) @local {
     }
     if (demo.whole_publication) {
         publish_whole(demo, demo.flag, flag_revision);
+        foreach (index, flag : demo.density_flags) publish_whole(demo, flag, density_revisions[index]);
         publish_whole(demo, demo.character.cape, cape_revision);
         publish_whole(demo, demo.fold, fold_revision);
         publish_whole(demo, demo.fast, fast_revision);
@@ -1759,7 +1826,7 @@ fn Options? parse_options(String[] args) @local {
 fn int main(String[] args) {
     Options? options = parse_options(args);
     if (catch excuse = options) {
-        io::eprintn("Use cloth [--scene flag|cape|both|contacts|fold|fast|field|crowd] [--still] [--frames count]");
+        io::eprintn("Use cloth [--scene flag|cape|both|contacts|fold|fast|field|crowd|densities] [--still] [--frames count]");
         io::eprintn("  [--count n] [--hold]    (field: count of flags, hold the far half; crowd: count of characters)");
         io::eprintn("  [--workers n]    (stage cloths on n job pool workers; 0 stages on the calling thread)");
         io::eprintn("  [--cells n]    (benchmark flag size in cells per side; default 32)");

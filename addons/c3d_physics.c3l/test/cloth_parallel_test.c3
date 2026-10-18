@@ -48,7 +48,7 @@ fn ParallelScene build_parallel_scene(Fixture* fixture) @private {
     Node* body = add_body_node(fixture, (&ball)[:1], PARALLEL_BALL_POSITION);
 
     Node* draped = add_cloth_node(fixture, add_grid(fixture, GRID_CELLS));
-    fixture.scene.add(draped, (Wind){ .velocity = PARALLEL_WIND, .drag = 0.5f });
+    fixture.scene.add(draped, (Wind){ .velocity = PARALLEL_WIND });
     Entity[1] colliders = { body.id };
     ClothDesc draped_desc = pinned_desc(top_row(GRID_CELLS));
     draped_desc.colliders = colliders[..];

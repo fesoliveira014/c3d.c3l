@@ -113,8 +113,10 @@ particle welding (`render_particles`), deformed normal domains and opt-in deform
 (`tangent_frame`, `tangent_uv_set`), hard pins and weighted compliant XPBD attachments (`ClothAttachment`),
 distance or signed dihedral bending (`ClothBendMode`, `bend_compliance`, `ClothRestAngle`), skinned
 reference transport (`transport`), crowd cloth (`CrowdCloth`), authored cut paths and bounded tearing
-(`ClothCutPath`, `ClothTearLimits`, `request_cut`, `cut_result`), node
-`Wind` drag, an optional ground and one-way particle contacts with sphere, capsule, box,
+(`ClothCutPath`, `ClothTearLimits`, `request_cut`, `cut_result`), areal particle mass
+(`ClothDesc.density`), quadratic drag and lift from the node's `Wind` velocity
+(`ClothDesc.drag_coefficient`, `lift_coefficient`; cloth ignores `Wind.drag` and `Wind.lift`),
+an optional ground and one-way particle contacts with sphere, capsule, box,
 hull, mesh, heightfield and compound colliders of the bodies listed in `ClothDesc.colliders`.
 Contacts are discrete by default. Set `desc.collisions.continuous = true` to sweep
 prediction, structural/pin corrections and contact responses against interpolated final
@@ -130,14 +132,15 @@ Attach with `scene.add_cloth(&assets, node, desc)` and
 call `physics.update_cloths()` once after `physics.update`, after final ragdoll/IK poses and
 `scene.update_world()`, before rendering. See [Cloth](../../docs/cloth.md) for the contract,
 faults, frame order and usage; the `cloth` example includes flag, cape, external-contact,
-seamed-fold, fast-crossing, flag-field and cape-crowd scenes (`--scene flag|cape|both|contacts|fold|fast|field|crowd`).
+seamed-fold, fast-crossing, flag-field, cape-crowd and tessellation-comparison scenes
+(`--scene flag|cape|both|contacts|fold|fast|field|crowd|densities`).
 The manual Vulkan acceptance runs with
 `c3c test cloth_acceptance --path addons/c3d_physics.c3l/test/gpu`.
 
 A cloth whose free particles stay under `ClothDesc.sleep_speed` for `sleep_steps` simulated steps
 rests: it skips the solve and publication until a trigger wakes it (reference motion past
-`sleep_speed * fixed_dt`, a moving listed collider near the cloth, a `Wind` or gravity change, a cut
-request or `wake()`). `Cloth.sleep()` and `CrowdCloth.sleep_slot(slot)` hold a cloth instead; a held
+`sleep_speed * fixed_dt`, a moving listed collider near the cloth, a change of the `Wind` velocity or
+maximum speed, a gravity change, a cut request or `wake()`). `Cloth.sleep()` and `CrowdCloth.sleep_slot(slot)` hold a cloth instead; a held
 cloth ignores every trigger until `wake()` or `wake_slot(slot)`. Holds are meant for unseen cloth, because
 a held skinned cloth stays frozen in its owner's frame. A wake carries a cloth on a rigid owner by the
 owner's motion since its last publication, which keeps the drawn shape under rotation, and carries a

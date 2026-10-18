@@ -15,6 +15,10 @@ import c3d::physics;
 import c3d::physics::cloth @public;
 import c3d::scene;
 
+const double TEAR_PATCH_AREA @private = 2; // two unit quads
+const double CORNER_ADJACENT_AREA @private = 1; // two half-unit triangles meet at the uncut corner
+const double CUT_VERTEX_ADJACENT_AREA @private = 1.5; // three half-unit triangles meet at each cut vertex
+
 fn Geometry create_tear_patch_geometry(Allocator allocator) @local {
     Vec3[] positions = alloc::new_array(allocator, Vec3, 8);
     positions[..] = ((Vec3[8]){
@@ -180,20 +184,24 @@ fn void test_cloth_tear_splits_mass_and_attachment_stiffness() @test {
         assert(cloth.cut_result(10)!!.outcome == APPLIED);
         assert(cloth.state.active_particle_count == 8);
 
+        double density = (double)desc.density;
         double total_mass;
         foreach (mass : cloth.state.particle_masses) total_mass += mass;
-        assert(math::abs(total_mass - 6.0) <= 2e-6);
+        assert(math::abs(total_mass - density * TEAR_PATCH_AREA) <= 2e-6);
 
+        assert(math::abs(cloth.state.particle_masses[0] - density * CORNER_ADJACENT_AREA / 3) <= 1e-6);
+
+        double cut_vertex_mass = density * CUT_VERTEX_ADJACENT_AREA / 3;
         double mass_1_a = cloth.state.particle_masses[1];
         double mass_1_b = cloth.state.particle_masses[6];
         double mass_4_a = cloth.state.particle_masses[4];
         double mass_4_b = cloth.state.particle_masses[7];
-        assert(math::abs((mass_1_a + mass_1_b) - 1.0) <= 1e-6);
-        assert(math::abs((mass_4_a + mass_4_b) - 1.0) <= 1e-6);
-        assert(math::abs(math::min(mass_1_a, mass_1_b) - 1.0 / 3.0) <= 1e-6);
-        assert(math::abs(math::max(mass_1_a, mass_1_b) - 2.0 / 3.0) <= 1e-6);
-        assert(math::abs(math::min(mass_4_a, mass_4_b) - 1.0 / 3.0) <= 1e-6);
-        assert(math::abs(math::max(mass_4_a, mass_4_b) - 2.0 / 3.0) <= 1e-6);
+        assert(math::abs((mass_1_a + mass_1_b) - cut_vertex_mass) <= 1e-6);
+        assert(math::abs((mass_4_a + mass_4_b) - cut_vertex_mass) <= 1e-6);
+        assert(math::abs(math::min(mass_1_a, mass_1_b) - cut_vertex_mass / 3.0) <= 1e-6);
+        assert(math::abs(math::max(mass_1_a, mass_1_b) - cut_vertex_mass * 2.0 / 3.0) <= 1e-6);
+        assert(math::abs(math::min(mass_4_a, mass_4_b) - cut_vertex_mass / 3.0) <= 1e-6);
+        assert(math::abs(math::max(mass_4_a, mass_4_b) - cut_vertex_mass * 2.0 / 3.0) <= 1e-6);
 
         assert(cloth.state.soft_attachments.len == 4);
         double stiffness_sum_1;

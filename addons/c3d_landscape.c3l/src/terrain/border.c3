@@ -35,8 +35,8 @@ fn sz border_source_index(BorderEdge edge, uint texels, sz along) @private {
  @param edges : "Border edge bits, as TerrainRuntime.ring_edges holds."
  @return "Rectangles of the one-texel strips along the edges set in the mask; the others are empty."
 *>
-fn TexelRect[4] ring_strips(uint texels, uint edges) {
-    TexelRect[4] strips;
+fn TexelRect[BorderEdge::len] ring_strips(uint texels, uint edges) {
+    TexelRect[BorderEdge::len] strips;
     foreach (edge : BorderEdge::values) {
         if (!(edges & edge.bit())) continue;
 

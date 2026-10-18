@@ -388,6 +388,38 @@ void main() {
 }
 `;
 
+const String GRADIENT_SAMPLE_FRAGMENT = `#version 460
+#include "generated/shader_abi.glsl"
+#include "c3d_abi.glsl"
+#include "standard_surface.glsl"
+layout(location = 0) in vec3 v_world_pos;
+layout(location = 1) in vec3 v_normal;
+layout(location = 0) out vec4 out_color;
+layout(push_constant) uniform Push { uint64_t vertex_root_gpu; uint64_t fragment_root_gpu; } pc;
+void main() {
+    DrawRoot draw = DrawRoot(pc.fragment_root_gpu);
+    FrameRoot frame = FrameRoot(draw.frame);
+    material_mip_bias = frame.mip_bias;
+    CustomMaterialGpu material = CustomMaterialGpu(draw.material);
+    vec2 uv = v_world_pos.zy;
+    StandardMaterialSample surface_sample = sample_standard_material_grad(
+        StandardMaterialRoot(material.references[0]).material,
+        normalize(v_normal),
+        vec4(0.0, 0.0, 1.0, 1.0),
+        MaterialUvGrad(uv, dFdx(uv), dFdy(uv)),
+        vec3(0.0, 0.0, 1.0),
+        !gl_FrontFacing
+    );
+    out_color = surface_sample.base_color + vec4(surface_sample.normal, 0.0);
+}
+`;
+
+fn void test_gradient_material_sampling_compiles_in_process() @test {
+    char[] spirv = compile::compile_glsl(mem, GRADIENT_SAMPLE_FRAGMENT, ShaderStage.FRAGMENT)!!;
+    defer free(spirv.ptr);
+    assert(spirv.len >= SPIRV_MAGIC.len && spirv.len % 4 == 0);
+}
+
 fn void test_compile_glsl_resolves_caller_includes() @test {
     ShaderInclude[1] includes = { { .name = "app/params.glsl", .text = CALLER_INCLUDE_TEXT } };
     char[] spirv = compile::compile_glsl(

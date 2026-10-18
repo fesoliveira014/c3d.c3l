@@ -5,6 +5,7 @@ import c3d::asset;
 import c3d::camera;
 import c3d::landscape;
 import c3d::landscape::terrain;
+import c3d::light;
 import c3d::material;
 import c3d::maths;
 import c3d::render @public;
@@ -46,6 +47,35 @@ const float PROBE_BEND_Z @local = 0.35f;
 const float RING_AGREEMENT @local = 1e-5f; // float rounding of the shared texel's two gradients, which use the same four heights
 const float ONE_SIDED_DISAGREEMENT @local = 0.01f; // far above the agreement, so a missing ring fails
 const float CPU_SHADER_AGREEMENT @local = 1e-5f; // float rounding of two evaluations of the same texels
+const uint SLOPE_TARGET_SIZE @local = 64;
+const uint SLOPE_TEXELS @local = 257; // two finest chunks per side
+const float SLOPE_CELL_SIZE @local = 0.25f; // a 24 m wall falls within one cell
+const float SLOPE_HEIGHT_SCALE @local = 24;
+const uint PLATEAU_TEXELS @local = 128; // texels below this along x and z are high; the walls fall away past them
+const float WALL_PLANE @local = 31.875f; // metres: the middle of the one-cell run between texels 127 and 128
+const float VIEW_DISTANCE @local = 10; // from the wall or the ground, so both views share one pixel scale
+const float VIEW_HEIGHT @local = 12;
+const float VIEW_ALONG_WALL @local = 16;
+const float GROUND_VIEW_X @local = 40;
+const float FAR_NODE_OFFSET @local = 200; // separates the two terrains drawn in one scene
+const float SLOPE_NEAR @local = 0.1f;
+const uint SLOPE_FRAMES @local = 2;
+const uint CHECKER_TEXELS @local = 8;
+const uint CHECKER_SQUARE_TEXELS @local = 4;
+const float CHECKER_PERIOD @local = 2; // metres of terrain per repeat of the checker texture
+const float PERIOD_TOLERANCE @local = 1; // pixels
+const float MIN_CONTRAST @local = 0.25f; // of linear luminance; a stretched checker shows none along the fall line
+const uint PATCH_SIZE @local = 8; // pixels square at the middle of the view
+const double SLOPE_TIME_STEP @local = 1.0 / 60.0;
+const char[4] NORMAL_FLAT @local = { 128, 128, 255, 255 };
+const char[4] NORMAL_ALONG_U @local = { 191, 128, 238, 255 }; // 30 degrees toward +u
+const char[4] NORMAL_AGAINST_U @local = { 64, 128, 238, 255 };
+const char[4] NORMAL_ALONG_V @local = { 128, 191, 238, 255 }; // 30 degrees toward +v
+const float GROUND_LIT_MIN @local = 0.1f; // a flat unmapped ground is dark under the horizontal light
+const float FLAT_MAP_TOLERANCE @local = 0.03f; // of the unmapped brightness
+const float ALONG_U_MIN_RATIO @local = 1.2f; // of the flat brightness; the diffuse cos 30 + sin 30 gives 1.37
+const float AGAINST_U_MAX_RATIO @local = 0.55f; // diffuse (cos 30 - sin 30) gives 0.37
+const float DEFERRED_TOLERANCE @local = 0.05f; // of the forward brightness, including G-buffer quantization
 
 struct ReadbackRoot @local {
     gpu::GpuAddress output;
@@ -587,6 +617,338 @@ fn void test_tile_edge_normals_agree_across_a_seam() @test {
     );
     assert(east_west <= RING_AGREEMENT && north_south <= RING_AGREEMENT);
     assert(east_west_one_sided >= ONE_SIDED_DISAGREEMENT && north_south_one_sided >= ONE_SIDED_DISAGREEMENT);
+    check_validation(&fixture.renderer);
+}
+
+struct SlopeFixture @local {
+    AssetStore     assets;
+    Scene          scene;
+    Renderer       renderer;
+    RenderTargetId target;
+    ViewId         view;
+    Node*          camera_node;
+    TextureId      cliff;
+}
+
+struct ViewPose @local {
+    Vec3 position;
+    Vec3 forward;
+    Vec3 up;
+}
+
+fn TextureId add_cliff(AssetStore* assets) @local {
+    TextureId texture;
+    @pool() {
+        ushort[] texels = alloc::new_array(tmem, ushort, (sz)SLOPE_TEXELS * SLOPE_TEXELS);
+        for (uint z = 0; z < SLOPE_TEXELS; z++) {
+            for (uint x = 0; x < SLOPE_TEXELS; x++) {
+                bool plateau = x < PLATEAU_TEXELS && z < PLATEAU_TEXELS;
+                texels[z * SLOPE_TEXELS + x] = plateau ? ushort::max : 0;
+            }
+        }
+        material::TextureDesc desc = material::texture_2d_desc(SLOPE_TEXELS, SLOPE_TEXELS, R16_UINT);
+        desc.generate_mips = false;
+        texture = assets.add_texture(desc, ((char*)texels.ptr)[:texels.len * ushort::size])!!;
+    };
+    return texture;
+}
+
+fn TextureId add_checker(AssetStore* assets) @local {
+    char[CHECKER_TEXELS * CHECKER_TEXELS * 4] texels;
+    for (uint y = 0; y < CHECKER_TEXELS; y++) {
+        for (uint x = 0; x < CHECKER_TEXELS; x++) {
+            bool light = ((x / CHECKER_SQUARE_TEXELS + y / CHECKER_SQUARE_TEXELS) & 1) != 0;
+            char level = light ? 255 : 0;
+            char[4] texel = { level, level, level, 255 };
+            texels[(y * CHECKER_TEXELS + x) * 4 : 4] = texel[..];
+        }
+    }
+    material::TextureDesc desc = material::texture_2d_desc(CHECKER_TEXELS, CHECKER_TEXELS, RGBA8_UNORM);
+    desc.generate_mips = false;
+    return assets.add_texture(desc, texels[..])!!;
+}
+
+fn TextureId add_constant_texture(AssetStore* assets, char[4] texel) @local {
+    return assets.add_texture(material::texture_2d_desc(1, 1, RGBA8_UNORM), texel[..])!!;
+}
+
+fn void? create_slope_fixture(SlopeFixture* fixture) @local {
+    fixture.assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    fixture.scene = scene::create_scene(mem, scene::default_scene_desc());
+    fixture.scene.background = { .kind = COLOR, .color = { 0, 0, 0, 1 } };
+    fixture.scene.ambient_color = { 1, 1, 1 };
+    fixture.scene.ambient_intensity = 1;
+    terrain::register_terrain(&fixture.scene, &fixture.assets)!;
+    fixture.cliff = add_cliff(&fixture.assets);
+    fixture.camera_node = fixture.scene.add_camera(camera::perspective_deg(60, SLOPE_NEAR, CAMERA_FAR))!;
+
+    fixture.renderer = render::create_renderer(
+        allocator: mem,
+        assets:    &fixture.assets,
+        desc:      { .validation = true, .application_name = "terrain_slope_acceptance" },
+    )!;
+    fixture.target = render::create_render_target(
+        renderer: &fixture.renderer,
+        desc:     render::render_target_desc(SLOPE_TARGET_SIZE, SLOPE_TARGET_SIZE, PixelFormat.RGBA32_FLOAT),
+    )!;
+    ViewDesc view_desc = render::texture_view_desc(fixture.target);
+    view_desc.post.anti_aliasing = AntiAliasing.NONE;
+    fixture.view = render::create_view(&fixture.renderer, view_desc)!;
+}
+
+fn void destroy_slope_fixture(SlopeFixture* fixture) @local {
+    render::wait_frames(&fixture.renderer)!!;
+    render::destroy_renderer(&fixture.renderer);
+    scene::destroy_scene(&fixture.scene);
+    asset::destroy_asset_store(&fixture.assets);
+}
+
+fn Node*? add_cliff_terrain(
+    SlopeFixture* fixture,
+    MaterialId layer,
+    SlopeProjection projection,
+    Vec3 position,
+) @local {
+    TerrainDesc desc = terrain::default_terrain_desc();
+    desc.height_map = fixture.cliff;
+    desc.cell_size = SLOPE_CELL_SIZE;
+    desc.height_scale = SLOPE_HEIGHT_SCALE;
+    desc.layers[0] = layer;
+    desc.lod_threshold = 0;
+    desc.slope_projection = projection;
+
+    Node* node = fixture.scene.add_node()!;
+    node.local.position = position;
+    fixture.scene.update_world();
+    terrain::add_terrain(
+        scene:  &fixture.scene,
+        assets: &fixture.assets,
+        node:   node,
+        desc:   desc,
+    )!;
+    return node;
+}
+
+fn ViewPose wall_view(Vec3 origin, bool facing_x) @local {
+    if (facing_x) {
+        return {
+            .position = origin + (Vec3){ WALL_PLANE + VIEW_DISTANCE, VIEW_HEIGHT, VIEW_ALONG_WALL },
+            .forward  = { -1, 0, 0 },
+            .up       = { 0, 1, 0 },
+        };
+    }
+    return {
+        .position = origin + (Vec3){ VIEW_ALONG_WALL, VIEW_HEIGHT, WALL_PLANE + VIEW_DISTANCE },
+        .forward  = { 0, 0, -1 },
+        .up       = { 0, 1, 0 },
+    };
+}
+
+fn ViewPose ground_view(Vec3 origin) @local {
+    return {
+        .position = origin + (Vec3){ GROUND_VIEW_X, VIEW_DISTANCE, VIEW_ALONG_WALL },
+        .forward  = { 0, -1, 0 },
+        .up       = { 0, 0, -1 },
+    };
+}
+
+fn Vec4[]? render_slope_view(SlopeFixture* fixture, ViewPose pose) @local {
+    Renderer* renderer = &fixture.renderer;
+    fixture.camera_node.local.position = pose.position;
+    fixture.camera_node.local.rotation = maths::look_rotation(pose.forward, pose.up);
+
+    for (uint frame = 0; frame < SLOPE_FRAMES; frame++) {
+        fixture.scene.update_world();
+        terrain::update(
+            scene:                &fixture.scene,
+            assets:               &fixture.assets,
+            camera_node:          fixture.camera_node,
+            output_height_pixels: SLOPE_TARGET_SIZE,
+        )!;
+
+        renderer.begin_frame({ .time = (double)frame * SLOPE_TIME_STEP, .delta = (float)SLOPE_TIME_STEP })!;
+        defer catch render::abort_frame(renderer);
+        renderer.render_view(&fixture.scene, fixture.camera_node, fixture.view)!;
+        renderer.finish_view(fixture.view)!;
+        renderer.end_frame()!;
+    }
+
+    Vec4[] pixels = alloc::new_array(tmem, Vec4, (usz)SLOPE_TARGET_SIZE * SLOPE_TARGET_SIZE);
+    renderer.read_render_target(fixture.target, ((char*)pixels.ptr)[:pixels.len * Vec4::size])!;
+    return pixels;
+}
+
+fn float luminance(Vec4 pixel) @local => (pixel.x + pixel.y + pixel.z) / 3;
+
+fn float[SLOPE_TARGET_SIZE] column_scan(Vec4[] pixels, uint column) @local {
+    float[SLOPE_TARGET_SIZE] values;
+    for (uint row = 0; row < SLOPE_TARGET_SIZE; row++) {
+        values[row] = luminance(pixels[row * SLOPE_TARGET_SIZE + column]);
+    }
+    return values;
+}
+
+fn float[SLOPE_TARGET_SIZE] row_scan(Vec4[] pixels, uint row) @local {
+    float[SLOPE_TARGET_SIZE] values;
+    for (uint column = 0; column < SLOPE_TARGET_SIZE; column++) {
+        values[column] = luminance(pixels[row * SLOPE_TARGET_SIZE + column]);
+    }
+    return values;
+}
+
+// A scan with fewer than two crossings, such as a stretched checker, has no period and reports zero.
+fn float checker_period(float[] values) @local {
+    float lowest = float::max;
+    float highest = -float::max;
+    foreach (value : values) {
+        lowest = math::min(lowest, value);
+        highest = math::max(highest, value);
+    }
+    if (highest - lowest < MIN_CONTRAST) return 0;
+
+    float middle = (lowest + highest) / 2;
+    float first;
+    float last;
+    uint crossings;
+    for (usz index = 0; index + 1 < values.len; index++) {
+        if (values[index] >= middle || values[index + 1] < middle) continue;
+
+        last = (float)index + (middle - values[index]) / (values[index + 1] - values[index]);
+        if (!crossings) first = last;
+        crossings++;
+    }
+    return crossings < 2 ? 0 : (last - first) / (float)(crossings - 1);
+}
+
+fn float patch_brightness(Vec4[] pixels) @local {
+    foreach (pixel : pixels) {
+        assert(math::is_finite(pixel.x) && math::is_finite(pixel.y) && math::is_finite(pixel.z));
+    }
+
+    float total;
+    uint start = (SLOPE_TARGET_SIZE - PATCH_SIZE) / 2;
+    for (uint row = start; row < start + PATCH_SIZE; row++) {
+        for (uint column = start; column < start + PATCH_SIZE; column++) {
+            total += luminance(pixels[row * SLOPE_TARGET_SIZE + column]);
+        }
+    }
+    return total / (float)(PATCH_SIZE * PATCH_SIZE);
+}
+
+fn void test_triplanar_cliff_keeps_texel_density() @test {
+    SlopeFixture fixture;
+    create_slope_fixture(&fixture)!!;
+    defer destroy_slope_fixture(&fixture);
+
+    UvTransform tiling = { .scale = { 1 / CHECKER_PERIOD, 1 / CHECKER_PERIOD } };
+    StandardParams params = {
+        .base_color     = { 1, 1, 1, 1 },
+        .roughness      = 1,
+        .base_color_map = material::texture_slot(texture: add_checker(&fixture.assets), transform: tiling),
+    };
+    MaterialId layer = fixture.assets.add_material(material::standard(params))!!;
+    Node*[2] nodes;
+    foreach (index, projection : SlopeProjection::values) {
+        Vec3 position = { FAR_NODE_OFFSET * (float)index, 0, 0 };
+        nodes[index] = add_cliff_terrain(&fixture, layer, projection, position)!!;
+    }
+
+    float[2] ground_periods;
+    float[2] wall_periods;
+    foreach (index, node : nodes) {
+        @pool() {
+            Vec3 origin = node.local.position;
+            Vec4[] ground = render_slope_view(&fixture, ground_view(origin))!!;
+            ground_periods[index] = checker_period(row_scan(ground, SLOPE_TARGET_SIZE / 2)[..]);
+
+            Vec4[] wall = render_slope_view(&fixture, wall_view(origin, true))!!;
+            wall_periods[index] = checker_period(column_scan(wall, SLOPE_TARGET_SIZE / 2)[..]);
+        };
+    }
+    foreach (period : ground_periods) assert(period > PERIOD_TOLERANCE);
+
+    usz top = SlopeProjection.TOP.ordinal;
+    usz triplanar = SlopeProjection.TRIPLANAR.ordinal;
+    float top_difference = math::abs(wall_periods[top] - ground_periods[top]);
+    float triplanar_difference = math::abs(wall_periods[triplanar] - ground_periods[triplanar]);
+    io::printfn(
+        "Checker period in pixels, ground and wall: top %g %g triplanar %g %g",
+        ground_periods[top],
+        wall_periods[top],
+        ground_periods[triplanar],
+        wall_periods[triplanar],
+    );
+    assert(top_difference > PERIOD_TOLERANCE, "The top projection's wall keeps the ground's period.");
+    assert(triplanar_difference <= PERIOD_TOLERANCE, "The triplanar wall period is off by %g.", triplanar_difference);
+    check_validation(&fixture.renderer);
+}
+
+fn void select_normal_map(SlopeFixture* fixture, MaterialId layer, TextureId normal_map) @local {
+    TextureSlot slot = normal_map.generation ? material::texture_slot(texture: normal_map) : (TextureSlot){};
+    fixture.assets.material(layer).data.standard.normal_map = slot;
+    fixture.assets.mark_material_dirty(layer);
+}
+
+fn float view_brightness(SlopeFixture* fixture, MaterialId layer, TextureId normal_map, ViewPose pose) @local {
+    select_normal_map(fixture, layer, normal_map);
+    @pool() {
+        return patch_brightness(render_slope_view(fixture, pose)!!);
+    };
+}
+
+fn void test_triplanar_normal_map_follows_the_plane() @test {
+    SlopeFixture fixture;
+    create_slope_fixture(&fixture)!!;
+    defer destroy_slope_fixture(&fixture);
+    fixture.scene.ambient_intensity = 0;
+    Node* sun = fixture.scene.add_light(light::directional({ 1, 1, 1 }, 3, shadow: false))!!;
+    sun.local.rotation = maths::look_rotation((Vec3){ -1, 0, -1 }.normalize(), { 0, 1, 0 });
+
+    TextureId flat_map = add_constant_texture(&fixture.assets, NORMAL_FLAT);
+    TextureId along_u_map = add_constant_texture(&fixture.assets, NORMAL_ALONG_U);
+    TextureId against_u_map = add_constant_texture(&fixture.assets, NORMAL_AGAINST_U);
+    TextureId along_v_map = add_constant_texture(&fixture.assets, NORMAL_ALONG_V);
+    StandardParams params = { .base_color = { 1, 1, 1, 1 }, .roughness = 1, .normal_scale = 1 };
+    MaterialId layer = fixture.assets.add_material(material::standard(params))!!;
+    add_cliff_terrain(&fixture, layer, SlopeProjection.TRIPLANAR, {})!!;
+    Vec3 top_origin = { FAR_NODE_OFFSET, 0, 0 };
+    add_cliff_terrain(&fixture, layer, SlopeProjection.TOP, top_origin)!!;
+
+    foreach (facing_x : (bool[2]){ true, false }) {
+        ViewPose view = wall_view({}, facing_x);
+        float unmapped = view_brightness(&fixture, layer, {}, view);
+        float level = view_brightness(&fixture, layer, flat_map, view);
+        float lifted = view_brightness(&fixture, layer, along_u_map, view);
+        float lowered = view_brightness(&fixture, layer, against_u_map, view);
+        io::printfn(
+            "Wall facing %s brightness: unmapped %g flat %g toward u %g against u %g",
+            facing_x ? "+x" : "+z",
+            unmapped,
+            level,
+            lifted,
+            lowered,
+        );
+        assert(unmapped > 0);
+        assert(math::abs(level - unmapped) <= FLAT_MAP_TOLERANCE * unmapped, "A flat map moved the normal.");
+        assert(lifted >= ALONG_U_MIN_RATIO * level, "A map tilted along +u did not turn toward the plane's u axis.");
+        assert(lowered <= AGAINST_U_MAX_RATIO * level, "A map tilted against +u did not turn away from it.");
+    }
+
+    float top_ground = view_brightness(&fixture, layer, along_v_map, ground_view(top_origin));
+    float triplanar_ground = view_brightness(&fixture, layer, along_v_map, ground_view({}));
+    io::printfn("Ground brightness with a map tilted along +v: top %g triplanar %g", top_ground, triplanar_ground);
+    assert(top_ground > GROUND_LIT_MIN, "The tilted map did not light the flat ground.");
+    assert(math::abs(triplanar_ground - top_ground) <= FLAT_MAP_TOLERANCE * top_ground, "The ground frames differ.");
+
+    ViewDesc desc = fixture.renderer.views.get(fixture.view).desc;
+    ViewPose view = wall_view({}, true);
+    float forward_brightness = view_brightness(&fixture, layer, along_u_map, view);
+    desc.shading = ShadingPath.DEFERRED;
+    render::configure_view(&fixture.renderer, fixture.view, desc)!!;
+    float deferred_brightness = view_brightness(&fixture, layer, along_u_map, view);
+    io::printfn("Wall facing +x toward u: forward %g deferred %g", forward_brightness, deferred_brightness);
+    float deferred_difference = math::abs(deferred_brightness - forward_brightness);
+    assert(deferred_difference <= DEFERRED_TOLERANCE * forward_brightness, "The G-buffer fragment differs.");
     check_validation(&fixture.renderer);
 }
 
