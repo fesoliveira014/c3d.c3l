@@ -351,7 +351,9 @@ fn void shape_controls(
 
     if (changed) prepare_slot(slot, descriptions[slot.kind], cache);
     if (slot.refusal) {
-        imgui::text_colored(FAULT_COLOR, "Scale refused: %s", string::tformat_zstr("%s", slot.refusal));
+        @pool() {
+            imgui::text_colored(FAULT_COLOR, "Scale refused: %s", string::tformat_zstr("%s", slot.refusal));
+        };
     }
 }
 
@@ -444,6 +446,8 @@ fn void? run(
 
     prepare_slot(&demo.slot_a, demo.descriptions[demo.slot_a.kind], cache);
     prepare_slot(&demo.slot_b, demo.descriptions[demo.slot_b.kind], cache);
+    if (demo.slot_a.refusal) return demo.slot_a.refusal~;
+    if (demo.slot_b.refusal) return demo.slot_b.refusal~;
 
     renderer.prepare_scene(scene)!;
     Scatter scatter = create_scatter()!;
