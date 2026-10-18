@@ -403,6 +403,61 @@ positions with pins at the current anchors (contact correction touches that publ
 attachment holds without inventing elapsed time, and a later step interpolates from the last
 solved anchors.
 
+## Parallel staging
+
+`PhysicsWorld.set_parallel(ParallelFor)` lets the application run cloth staging on its own worker
+threads. `ParallelFor` holds a function `run(context, range, data, count, batch)` and its `context`: `run`
+calls `range(data, first, count)` over `[0, count)` in batches of `batch` items, in any order and
+concurrently, and returns only after every range finished. A zero `ParallelFor` (the default, or
+`set_parallel({})`) stages on the calling thread. Physics imports no job library; `ParallelRangeFn` has
+`c3d::job::RangeFn`'s signature, so a `JobPool` adapter is a few lines:
+
+```c3
+fn void run_on_pool(void* context, ParallelRangeFn range, void* data, uint count, uint batch) {
+    JobPool* pool = context;
+    pool.wait(pool.run(range: range, data: data, count: count, batch: batch));
+}
+```
+
+`update_cloths` runs three phases:
+
+1. **Collect**, serial. It checks ownership of each prepared cloth and crowd slot, reconciles crowd slot
+   outputs, handles held cloth and held slots (their ownership check and the mirror of the owner's layers,
+   world matrix and visibility onto an output node), and lists every other prepared ordinary cloth and active
+   crowd slot in ECS order: ordinary cloth first, then crowd slots by owner, part and slot.
+2. **Stage**, through `ParallelFor`, one range item per listed cloth or slot. An item runs the whole update
+   up to its material frames (reference sampling, collider refresh, the solve, contact passes, tearing,
+   publication staging and the rest probe) and then copies its accepted result into its own `ClothState`.
+   An item records its fault and its outcome in its state and nothing else.
+3. **Commit**, serial, in the list's order. For each item it copies the changed vertex ranges into the
+   private geometry and marks them dirty, resets vertex histories, writes the output node (layers, world
+   matrix, visibility, crowd slot generation and instance), re-expresses a failed item's mesh, and adds the
+   item to `ClothStats`.
+
+A staged item reads the scene (nodes, components, transforms), the asset store (source geometry,
+skeletons, models) and the box3d shape data of its listed bodies, and writes only its own `ClothState`. The
+box3d queries it uses (the shape getters, bounds, `query_mesh` and `query_height_field`) only read. It
+allocates nothing and uses no temp allocator, so `run` may call `range` from any thread, including threads
+that never touched the allocator. Scene writes, asset-store marks, `ClothStats` and every other shared
+write happen in phases 1 and 3, on the calling thread.
+
+**Thread-safety contract.** While `update_cloths` runs, the application must not mutate the scene, the asset
+store or the physics world, and must not step the world: workers read all three. The calling thread owns
+`update_cloths` and `set_parallel`; do not call `set_parallel` during an update.
+
+**Determinism.** One cloth's arithmetic is the same on every thread, and items share no mutable state, so
+positions, velocities and published geometry are bit-identical to the serial path for every worker count
+and range order. A failing item does not stop the others; it is re-expressed in phase 3 as before.
+
+Parallelism is across cloths and crowd slots. One cloth still solves on one thread, so a scene of a single
+large cloth sees no gain. `ClothStats.solve_seconds` is the sum of the items' solve times, which is CPU time
+and can exceed the frame under parallel staging; `stage_seconds` and `commit_seconds` are the wall times of
+phases 2 and 3.
+
+Every `ClothState` carries a small work record, and the world keeps one pointer per scene node slot for the
+list. A crowd slot's state also owns its joint palette scratch, 64 bytes per joint, so slots do not share a
+buffer.
+
 ## Rest and holds
 
 A cloth is `AWAKE`, `RESTING` or `HELD` (`ClothActivity`). `Cloth.activity()` reports it;
@@ -500,7 +555,8 @@ vertex whose value differs from the geometry, copies only that span and calls
 keeps the revision. Publication checks reconstructed
 world positions and contact separation before writing any stream. Solve and publication allocate nothing
 after preparation (the CPU triangle tree rebuilds only when a query asks for it).
-`PhysicsWorld.cloth_stats` holds the last update's solve and publication seconds, particle count
+`PhysicsWorld.cloth_stats` holds the last update's solve and publication seconds, the wall seconds of the
+staging and commit phases, particle count
 and constraint count of the simulated cloths, pending owners skipped, resting and held cloths skipped,
 failed cloth count, observed candidate/contact counts, CCD iterations, impacts and maximum reported
 residual.
@@ -517,9 +573,10 @@ flag, counted in `Stats.vertex_history_bytes`.
 
 ```text
 python scripts/build.py --example cloth
-addons/c3d_physics.c3l/build/cloth.exe [--scene flag|cape|both|contacts|fold|fast|field] [--count 64] [--hold] [--still] [--frames 300]
+addons/c3d_physics.c3l/build/cloth.exe [--scene flag|cape|both|contacts|fold|fast|field|crowd] [--count 64] [--workers 4] [--hold] [--still] [--frames 300]
 c3c build cloth --path addons/c3d_physics.c3l -O3
-addons/c3d_physics.c3l/build/cloth.exe --benchmark --scene flag|cape|both|contacts|fold|fast|field [--count 64] [--hold] [--still] [--ragdoll] [--publish whole|streams]
+addons/c3d_physics.c3l/build/cloth.exe --benchmark --scene flag|cape|both|contacts|fold|fast|field|crowd [--count 64] [--workers 4] [--hold] [--still] [--ragdoll] [--publish whole|streams]
+addons/c3d_physics.c3l/build/cloth.exe --benchmark --cpu-only --scene flag|field|crowd [--count 100] [--workers 4]
 addons/c3d_physics.c3l/build/cloth.exe --benchmark --trace software|hardware [--validation]
 ```
 
@@ -554,6 +611,16 @@ hang still, fall under `sleep_speed` and rest. The `H` key, the panel checkbox a
 half of the grid with `Cloth.sleep()` and release it with `wake()`. The panel shows the resting and held
 counts, and the benchmark prints the mean simulated, resting and held cloth counts beside the solve,
 publish and upload figures.
+
+`--workers N` creates a `c3d::job` `JobPool` with N workers and installs the adapter above with
+`set_parallel`; 0 (the default) stages on the calling thread. The example's project selects `c3d_job`; the
+physics package does not. The `crowd` scene builds `--count` (default 100) walking characters of the
+quaternius model in a square grid, each wearing a 12×22-cell cape that hangs from the chest node of its
+template: the example adds the cape as a rigid mesh part on the `DEF-spine.003` node, and
+`CrowdCloth` simulates it per slot with the top row pinned and distance bending. The benchmark prints the
+mean and 95th-percentile staging and commit wall times beside the summed solve time, and the bytes of all
+cloth states. `--cpu-only` steps the scene without a renderer, which keeps rasteriser threads from competing
+with the job pool.
 
 The `fast` scene rotates a thin box by 90 degrees and translates it in one fixed step
 through a small cloth patch. Continuous and self-contact are enabled. It uses one
