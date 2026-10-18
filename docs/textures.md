@@ -508,6 +508,52 @@ count or record structure, use [Replacing a texture](#replacing-a-texture). Do n
 or release either source between preparation and submission. Current cube and BC
 mirrors remain usable after explicit release, just like ordinary 2D textures.
 
+## Editing a region
+
+Mark the texels an in-place edit changed instead of the whole texture, and the renderer uploads only those texels:
+
+```c3
+TextureAsset* source = assets.texture(texture);
+// write the new texels into source.pixels
+assets.mark_texture_region_dirty(texture, 0, { .x = 8, .y = 4, .width = 16, .height = 8, .depth = 1 })!;
+renderer.upload(texture)!;
+```
+
+- A `TextureRegion` is a texel box of one mip level. `z` and `depth` count the layers of a cube texture or the
+  slices of a volume; a 2D texture uses `z` 0 and `depth` 1.
+- The call advances the revision once. It faults `c3d::INVALID_ID` for a dead id and `c3d::INVALID_ARGUMENT` for a
+  mip the texture does not name, a box outside the mip's extent, or a texture with no texels (an empty storage
+  texture).
+- A mip-zero texture names mip 0 only, generated mips included. A texture with supplied mips names any supplied
+  level; edit that level's bytes.
+- `mark_texture_dirty`, a replacement and `release_texture_cpu` change or drop the source as a whole, so they
+  empty the log of marks.
+
+**Log.** Each texture keeps its last `TEXTURE_REGION_MARKS` (4) marks with the revision each produced. When the
+log is full, the two oldest marks merge into their bounding box if they share a mip. If they do not, the oldest
+mark is dropped, and a reader older than it re-uploads the whole texture. Nothing clears the log, so every
+renderer reads it independently. `TextureAsset.regions_since(revision, per_mip)` answers `NONE` (nothing changed),
+`REGIONS` (one union region per mip in `per_mip`) or `WHOLE` (the log does not reach back to the revision).
+
+**Partial upload.** A renderer copies only the marked regions into its image when all of these hold:
+- its image is current at an earlier revision and `regions_since` answers `REGIONS` for it;
+- the image shape is unchanged;
+- the format is uncompressed, and the texture is not a storage texture;
+- the texture does not combine generated mips with the `THRESHOLD` alpha-coverage policy, whose scale depends on
+  every texel of a level;
+- the image has no upload staged in the open frame that is not yet recorded, which a residency change leaves.
+
+Otherwise the whole texture is staged. Each region is staged once per mip and copied with the barriers any upload
+of a resident image records. `Stats.upload_bytes` counts the staged texels of the boxes.
+
+**Mips.**
+- With generated mips, the renderer filters the edited layers' levels in temporary memory from the CPU pixels and
+  copies, for each level, the box the edit reaches: the mip-0 box scaled to the level and widened to every texel
+  whose filter reads it. Filtering costs what a whole upload costs, because the smallest level averages the whole
+  image; the staged and copied bytes follow the boxes.
+- With supplied mips, each marked level's box is copied from that level's bytes.
+- A streamed texture copies only the levels of its resident chain.
+
 ## Replacing a texture
 
 A replacement swaps the content of a live texture under its id and key. Every material, environment and
