@@ -380,7 +380,12 @@ fn TraceCollection collect_trace_instances(
             SkinBinding* skin = scene.get(node, SkinBinding);
             if (!spatial::mesh_is_live(assets, mesh, skin) || !material_dependencies_live(assets, mesh.material)) {
                 collection.dangling++;
-            } else if (traceable(assets, mesh.geometry, mesh.material, PoseForm.SINGLE)) {
+            } else if (traceable(
+                assets:   assets,
+                geometry: mesh.geometry,
+                material: mesh.material,
+                form:     PoseForm.SINGLE,
+            )) {
                 TraceInstance record = trace_record(
                     assets:      assets,
                     entity:      entity,
@@ -420,12 +425,22 @@ fn TraceCollection collect_trace_instances(
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
         Node* node = scene.node(entity);
         if (node.visible_effective && batch.trace && batch.count && !spatial::animated_lod_owns_node(scene, node)) {
-            TracePoseSource source = crowd_part_source(scene, node, entity, batch);
+            TracePoseSource source = crowd_part_source(
+                scene:  scene,
+                node:   node,
+                entity: entity,
+                batch:  batch,
+            );
             PoseForm form = source.crowd ? PoseForm.NONE : PoseForm.INSTANCED;
             if (!spatial::instanced_mesh_is_live(assets, batch)
                 || !material_dependencies_live(assets, batch.material)) {
                 collection.dangling++;
-            } else if (traceable(assets, batch.geometry, batch.material, form)) {
+            } else if (traceable(
+                assets:   assets,
+                geometry: batch.geometry,
+                material: batch.material,
+                form:     form,
+            )) {
                 AnimatedCrowd* crowd = source.crowd;
                 bool custom = custom_vertex_stage(assets, &assets.material(batch.material).data);
                 bool sways = batch.sway.amplitude != 0;

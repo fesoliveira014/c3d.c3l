@@ -174,7 +174,13 @@ fn Quat facing_camera() @private => quaternion::from_axis_angle{float}(FACING_AX
 fn GeometryId? add_displaced_surface(Fixture* fixture) @private {
     GeometryId surface;
     @pool() {
-        Geometry plane = geometry::plane(tmem, 2, 2, SURFACE_SEGMENTS, SURFACE_SEGMENTS);
+        Geometry plane = geometry::plane(
+            allocator:  tmem,
+            width:      2,
+            depth:      2,
+            segments_x: SURFACE_SEGMENTS,
+            segments_z: SURFACE_SEGMENTS,
+        );
         plane.bounds = { .min = { -1, -DISPLACE_BOUND, -1 }, .max = { 1, DISPLACE_BOUND, 1 } };
         surface = fixture.assets.add_geometry(&plane)!;
     };
@@ -184,7 +190,13 @@ fn GeometryId? add_displaced_surface(Fixture* fixture) @private {
 fn GeometryId? add_tall_slab(Fixture* fixture) @private {
     GeometryId slab;
     @pool() {
-        Geometry shape = geometry::box(tmem, 2, 2, SLAB_DEPTH, SLAB_SEGMENTS);
+        Geometry shape = geometry::box(
+            allocator: tmem,
+            width:     2,
+            height:    2,
+            depth:     SLAB_DEPTH,
+            segments:  SLAB_SEGMENTS,
+        );
         slab = fixture.assets.add_geometry(&shape)!;
     };
     return slab;
@@ -193,7 +205,13 @@ fn GeometryId? add_tall_slab(Fixture* fixture) @private {
 fn GeometryId? add_half_transparent_surface(Fixture* fixture) @private {
     GeometryId surface;
     @pool() {
-        Geometry plane = geometry::plane(tmem, 2, 2, SURFACE_SEGMENTS, SURFACE_SEGMENTS);
+        Geometry plane = geometry::plane(
+            allocator:  tmem,
+            width:      2,
+            depth:      2,
+            segments_x: SURFACE_SEGMENTS,
+            segments_z: SURFACE_SEGMENTS,
+        );
         plane.colors = alloc::new_array(tmem, Vec4, plane.positions.len);
         foreach (index, position : plane.positions) plane.colors[index] = { 1, 1, 1, position.x < 0 ? LOW_ALPHA : 1 };
         surface = fixture.assets.add_geometry(&plane)!;

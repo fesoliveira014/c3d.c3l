@@ -94,7 +94,12 @@ fn void test_trace_fields_round_trip_in_both_encodings() @test {
         GeometryId geometry = fixture.assets.find_geometry("trace_fields/box")!!;
         MaterialId material = fixture.assets.find_material("trace_fields/material")!!;
         Node* root = fixture.source.add_node(name: "root")!!;
-        Node* mesh = fixture.source.add_mesh(geometry, material, parent: root, name: "mesh")!!;
+        Node* mesh = fixture.source.add_mesh(
+            geometry: geometry,
+            material: material,
+            parent:   root,
+            name:     "mesh",
+        )!!;
         fixture.source.get(mesh, Mesh).trace_only = true;
         Transform[1] transforms = { maths::TRANSFORM_IDENTITY };
         Node* batch = fixture.source.add_instanced_mesh(
