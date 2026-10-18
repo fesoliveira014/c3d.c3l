@@ -30,6 +30,29 @@ const float DEFAULT_LOD_THRESHOLD = 512; // drawn cells under 2.8 px; halving it
 const float DEFAULT_LOD_HYSTERESIS = 0.25f; // merges below 410 px; wider re-selects less, keeps finer chunks longer
 
 <*
+ Smallest normal-weight exponent of a triplanar terrain.
+*>
+const float MIN_TRIPLANAR_SHARPNESS = 1;
+
+<*
+ Largest normal-weight exponent of a triplanar terrain.
+*>
+const float MAX_TRIPLANAR_SHARPNESS = 64; // a blend between two planes spans about 2 degrees of slope: a hard switch
+
+<*
+ Exponent applied to the normal's axis components to weight the three planes.
+*>
+const float DEFAULT_TRIPLANAR_SHARPNESS = 4; // a blend between two planes spans about 30 degrees of slope
+
+<*
+ Surface that layer textures are projected onto.
+*>
+enum SlopeProjection {
+    TOP,       // along the terrain's up axis; layers stretch along the fall line of steep slopes
+    TRIPLANAR, // along all three terrain axes, blended by the normal; three times the layer samples
+}
+
+<*
  Texels of a height map; columns along x, rows along z.
 *>
 struct TexelRect {
@@ -59,6 +82,8 @@ struct TerrainDesc {
     MaterialId[material::MAX_CUSTOM_MATERIAL_REFERENCES] layers; // STANDARD materials, leading; zero ids unused
     float      lod_threshold;  // projected chunk diameter in output pixels above which a chunk splits
     float      lod_hysteresis; // a split chunk merges below lod_threshold / (1 + lod_hysteresis)
+    SlopeProjection slope_projection; // how the layers' textures project onto the surface
+    float      triplanar_sharpness; // plane-weight exponent in MIN_ to MAX_TRIPLANAR_SHARPNESS; read under TRIPLANAR
     bool       cast_shadow;
     bool       receive_shadow;
 }
@@ -77,6 +102,7 @@ struct TerrainRuntime {
     Allocator                allocator;
     MaterialId               material;         // owned; removed with the runtime
     TextureId                border_ring;      // owned; zero until the terrain carries a TerrainTile
+    uint                     ring_edges;       // BorderEdge bits whose ring row holds a linked neighbour's texels
     uint                     texels;           // per side of the accepted height map
     uint                     level_count;      // level 0 is the finest
     uint                     revision;         // height-map revision the bounds reflect
@@ -99,10 +125,11 @@ struct TerrainRuntime {
 *>
 fn TerrainDesc default_terrain_desc() {
     return {
-        .lod_threshold  = DEFAULT_LOD_THRESHOLD,
-        .lod_hysteresis = DEFAULT_LOD_HYSTERESIS,
-        .cast_shadow    = true,
-        .receive_shadow = true,
+        .lod_threshold       = DEFAULT_LOD_THRESHOLD,
+        .lod_hysteresis      = DEFAULT_LOD_HYSTERESIS,
+        .triplanar_sharpness = DEFAULT_TRIPLANAR_SHARPNESS,
+        .cast_shadow         = true,
+        .receive_shadow      = true,
     };
 }
 

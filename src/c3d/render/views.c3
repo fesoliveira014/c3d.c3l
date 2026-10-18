@@ -691,6 +691,7 @@ struct ViewRecord {
     post::ViewExposure                   auto_exposure;
     post::ViewFocus                      focus;
     LodHistory                          lod_history;
+    QuadtreeHistory                      quadtree_history;
     gpu::TextureState[VIEW_TARGET_COUNT] frame_states;
     ClusterBuffers                       clusters;
     gpu::GpuAddress                      cluster_root;
@@ -1044,6 +1045,7 @@ fn void? reset_view_history(Renderer* renderer, ViewId view) {
     record.auto_exposure.history.invalidate();
     record.focus.history.invalidate();
     reset_lod_history(&record.lod_history);
+    reset_quadtree_history(&record.quadtree_history);
 }
 
 fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
@@ -1205,6 +1207,7 @@ fn void forget_view_history(Renderer* renderer, ViewRecord* record) @private {
     record.fog_history = {};
     record.cloud_history = {};
     free_lod_history(renderer, &record.lod_history);
+    free_quadtree_history(renderer, &record.quadtree_history);
 }
 
 fn void release_view(Renderer* renderer, ViewRecord* record) @private {

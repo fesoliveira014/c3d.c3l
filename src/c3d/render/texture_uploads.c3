@@ -179,7 +179,10 @@ fn void discard_uploads(Renderer* renderer) @private {
 
     renderer.pending_geometry_uploads.clear();
 
-    foreach (index : renderer.pending_instance_uploads) renderer.instances.slots[index].revision = 0;
+    foreach (index : renderer.pending_instance_uploads) {
+        renderer.instances.slots[index].revision = 0;
+        renderer.instances.slots[index].quadtree_revision = 0;
+    }
     renderer.pending_instance_uploads.clear();
 
     foreach (&material : renderer.materials) material.revision = 0;

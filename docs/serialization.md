@@ -355,7 +355,7 @@ persists `{ window_cells, collider }`; export omits its window nodes and their b
 node's transient `HeightFieldWindowOwner`, and loading regenerates them through
 `add_height_field_windows`.
 PhysicsJoint restores in REFERENCES with a required model-aware endpoint and
-only its selected variant. Cloth (v8) restores in OWNER and CrowdCloth (v3)
+only its selected variant. Cloth (v9) restores in OWNER and CrowdCloth (v4)
 restores in BINDINGS; prepared skinned Cloth projects its retained source Mesh
 with `project_absent_component` and omits its generated child output node, while
 prepared CrowdCloth omits its per-slot output children. Wind and Force persist
@@ -384,12 +384,14 @@ The independent package inventory checks all ten normally registered types.
 
 Physics registration also installs the Cloth OWNER and CrowdCloth BINDINGS policies. Export projects
 ordinary Mesh records to retained source geometry and vertex-motion, preserving
-all other Mesh fields and leaving the source scene untouched. The Cloth payload (version 8) and
-CrowdCloth payload (version 3) retain complete settings, requested pin order/duplicates, explicit `ClothSeam` pairs,
+all other Mesh fields and leaving the source scene untouched. The Cloth payload (version 9) and
+CrowdCloth payload (version 4) retain complete settings, requested pin order/duplicates, explicit `ClothSeam` pairs,
 required collider references, `render_particles`, `tangent_frame`, `tangent_uv_set`,
 `attachments`, `bend_mode`, `bend_compliance`, `rest_angles`, `transport`, `cuts` (`ClothCutPath`),
-`tears` (`ClothTearLimits`), `sleep_speed` and `sleep_steps`. Rest and hold state is runtime-only and is
-not written: a restored cloth starts awake. Older JSONC versions default `sleep_speed` to `0` and
+`tears` (`ClothTearLimits`), `sleep_speed`, `sleep_steps`, `density`, `drag_coefficient` and
+`lift_coefficient`. Rest and hold state is runtime-only and is not written: a restored cloth starts awake.
+Older JSONC versions default `density` to 0.2, `drag_coefficient` to 1.2 and `lift_coefficient` to 0.6,
+version-7 and older default `sleep_speed` to `0` and
 `sleep_steps` to 30, `tears` to `default_cloth_tear_limits()`
 (`opening_iterations = 32`, `max_requests = 0`) and other newer fields to empty, false, `0`,
 `DISTANCE` and `0`; version-1/2/3 JSONC defaults
@@ -493,6 +495,10 @@ fields in VALUE; the set's neighbour links are runtime state, rebuilt when the
 tiles prepare. Foliage restores its ground reference and copied
 scatter, sway, fade, render and optional LOD authoring in OWNER. Prepare terrain
 before foliage, and publish world matrices before dependent preparation.
+The Terrain payload is version 2, which adds `slope_projection` and
+`triplanar_sharpness`; version 1 payloads in both encodings read `TOP` and the
+default sharpness. The Foliage payload is version 2, which adds
+`rules.slope_normal`; version 1 payloads in both encodings read `FACE`.
 Foliage cells and water mirrors are omitted only through verified ownership.
 See [landscape serialization](../addons/c3d_landscape.c3l/src/serial/README.md).
 

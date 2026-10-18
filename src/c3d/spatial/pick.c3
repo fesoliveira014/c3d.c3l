@@ -140,6 +140,8 @@ fn PickHit[] pick(
             );
             Aabb local = assets.geometry(batch.geometry).data.bounds;
             foreach (uint index, transform : batch.transforms[:batch.count]) {
+                if (!batch.is_leaf(index)) continue;
+
                 SceneEntry entry = instance_entry(
                     node:      node,
                     index:     index,

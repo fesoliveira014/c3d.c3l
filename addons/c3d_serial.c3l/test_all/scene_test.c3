@@ -83,12 +83,16 @@ fn void assert_authoring(Fixture* fixture, Node* root) @private {
     Cloth* cloth = scene.get(fabric, Cloth);
     assert(!cloth.is_prepared() && c3d::same_id(cloth.authoring.source, fixture.box));
     assert(cloth.authoring.desc.pins == ((uint[3]){ 3, 1, 1 })[..]);
+    assert(cloth.authoring.desc.density == 0.35f);
+    assert(cloth.authoring.desc.drag_coefficient == 0.9f && cloth.authoring.desc.lift_coefficient == 0.45f);
     assert(c3d::same_id(cloth.authoring.desc.colliders[0], child_named(root, "contact").id));
     assert(scene.has(fabric, NavSource) && c3d::same_id(scene.get(fabric, Mesh).geometry, fixture.box));
     Node* crowd_cloth_node = child_named(root, "crowd_cloth");
     CrowdCloth* crowd_cloth = scene.get(crowd_cloth_node, CrowdCloth);
     assert(!crowd_cloth.is_prepared() && crowd_cloth.state.parts.len == 1 && crowd_cloth.state.parts[0].part == 0);
-    assert(crowd_cloth.state.parts[0].authoring.desc.stretch_stiffness == 0.8f);
+    ClothDesc crowd_desc = crowd_cloth.state.parts[0].authoring.desc;
+    assert(crowd_desc.stretch_stiffness == 0.8f && crowd_desc.density == 0.5f);
+    assert(crowd_desc.drag_coefficient == 1.1f && crowd_desc.lift_coefficient == 0.3f);
     Breakable* breakable = scene.get(child_named(root, "breakable"), Breakable);
     assert(!breakable.is_prepared() && breakable.state.pieces.len == 2 && breakable.state.desc.break_force == 123);
     Node* navigation = child_named(root, "navigation");

@@ -28,13 +28,13 @@ struct PhysicsBody {
 }
 
 <*
- Air flow on body shapes and cloth each fixed step; cloth ignores lift.
+ Air flow on body shapes and cloth each fixed step.
 *>
 struct Wind {
     Vec3  velocity;
-    float drag;
-    float lift;
-    float max_speed;
+    float drag;      // rigid bodies only; cloth uses ClothDesc.drag_coefficient
+    float lift;      // rigid bodies only; cloth uses ClothDesc.lift_coefficient
+    float max_speed; // m/s; cloth caps the relative speed to it when positive
 }
 
 <*
