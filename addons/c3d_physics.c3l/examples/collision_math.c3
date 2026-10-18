@@ -88,6 +88,7 @@ const String[SHAPE_KIND_COUNT] KIND_NAMES @local = { "Sphere", "Capsule", "Box",
 
 struct Options @local {
     bool   acceptance;
+    bool   benchmark;
     uint   frames;
     String capture_path;
 }
@@ -155,6 +156,8 @@ fn Options? parse_options(String[] args) @local {
         String arg = args[index];
         if (arg == "--acceptance") {
             options.acceptance = true;
+        } else if (arg == "--benchmark") {
+            options.benchmark = true;
         } else if (arg.starts_with("--frames=")) {
             options.frames = arg[9..].to_uint()!;
         } else if (arg.starts_with("--capture=")) {
@@ -164,6 +167,7 @@ fn Options? parse_options(String[] args) @local {
         }
     }
     if ((options.capture_path.len || options.frames) && !options.acceptance) return c3d::INVALID_ARGUMENT~;
+    if (options.benchmark && options.acceptance) return c3d::INVALID_ARGUMENT~;
     if (options.acceptance && !options.frames) options.frames = ACCEPTANCE_FRAMES;
 
     return options;
@@ -1116,7 +1120,7 @@ fn void? run_acceptance(
 fn int main(String[] args) {
     Options? options = parse_options(args);
     if (catch excuse = options) {
-        io::eprintn("Use collision_math [--acceptance [--frames=count] [--capture=path.rgba]]");
+        io::eprintn("Use collision_math [--acceptance [--frames=count] [--capture=path.rgba] | --benchmark]");
         return 1;
     }
 
@@ -1143,6 +1147,14 @@ fn int main(String[] args) {
     FieldSource field = make_field_source();
     CollisionCache cache = physics::create_collision_cache(mem, &assets, physics::default_collision_cache_desc())!!;
     defer physics::destroy_collision_cache(&cache)!!;
+
+    if (options.benchmark) {
+        if (catch excuse = run_benchmark(&assets, cone)) {
+            io::eprintfn("collision math benchmark failed: %s", excuse);
+            return 1;
+        }
+        return 0;
+    }
 
     if (options.acceptance) {
         if (catch excuse = run_acceptance(

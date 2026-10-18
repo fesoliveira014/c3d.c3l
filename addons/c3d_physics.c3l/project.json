@@ -68,7 +68,7 @@
     },
     "collision_math": {
       "type": "executable",
-      "sources": [ "examples/collision_math.c3" ]
+      "sources": [ "examples/collision_math.c3", "examples/collision_math_bench.c3" ]
     }
   }
 }
