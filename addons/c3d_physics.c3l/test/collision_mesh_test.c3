@@ -16,6 +16,7 @@ const float DROP_COLUMN @private = 4; // ramp run where the probe falls onto the
 const float DROP_START_HEIGHT @private = 4;
 const float DROP_DISTANCE @private = 4; // probe travel when only the probe moves
 const float MESH_RISE @private = 2; // mesh travel when only the mesh moves, the same relative motion as half the drop
+const float CAPSULE_HALF_HEIGHT @private = 0.75f;
 const float HOVER_GAP @private = 0.01f; // inside the native speculative margin of four linear slops
 const float BAND_OVERLAP @private = 0.01f; // starting overlap that puts a cast inside the native closing band
 const float RAY_COLUMN @private = 3;
@@ -138,7 +139,7 @@ fn maths::Transform surface_pose() @private => posed({ 3, -2, 4 }, rotated());
 
 fn Vec3 surface_point(maths::Transform pose, Vec3 local) @private => pose.position + pose.rotation.rotate_vec3(local);
 
-fn void test_mesh_contacts_press_a_sphere_into_a_plane_triangle() @test {
+fn void test_mesh_contacts_press_round_shapes_into_a_plane_triangle() @test {
     MeshQueryFixture fixture;
     setup_mesh_queries(&fixture);
     defer teardown_mesh_queries(&fixture);
@@ -147,6 +148,11 @@ fn void test_mesh_contacts_press_a_sphere_into_a_plane_triangle() @test {
     defer physics::destroy_collision_shape(&surface);
     CollisionShape probe = probe_sphere(mem, &fixture.cache);
     defer physics::destroy_collision_shape(&probe);
+    CollisionShapeDesc capsule_desc = scaled_shape_desc(CAPSULE, { 1, 1, 1 });
+    capsule_desc.radius = PROBE_RADIUS;
+    capsule_desc.half_height = CAPSULE_HALF_HEIGHT;
+    CollisionShape capsule = physics::create_collision_shape(mem, &fixture.cache, capsule_desc)!!;
+    defer physics::destroy_collision_shape(&capsule);
 
     maths::Transform pose = surface_pose();
     float depth = 0.1f;
@@ -178,6 +184,25 @@ fn void test_mesh_contacts_press_a_sphere_into_a_plane_triangle() @test {
     assert(near_vector(contacts[0].normal, -up, LOOSE));
     assert(near_vector(contacts[0].point, midpoint, LOOSE));
     assert(contacts[0].triangle_index == 0);
+
+    maths::Transform lying = posed(
+        surface_point(pose, { -1, PROBE_RADIUS - depth, -1 }),
+        pose.rotation.mul(rotated()),
+    );
+    count = surface.view().contacts(
+        pose_a: pose,
+        other: capsule.view(),
+        pose_b: lying,
+        output: contacts[..],
+    )!!;
+    assert(count == 2);
+    foreach (contact : contacts[:count]) {
+        assert(near(contact.separation, -depth, LOOSE));
+        assert(near_vector(contact.normal, up, LOOSE));
+
+        Vec3 local_point = pose.rotation.conjugate().rotate_vec3(contact.point - pose.position);
+        assert(near(math::abs(local_point.x + 1), CAPSULE_HALF_HEIGHT, LOOSE));
+    }
 
     maths::Transform hovering = posed(surface_point(pose, { -1, PROBE_RADIUS + HOVER_GAP, -1 }));
     count = surface.view().contacts(
