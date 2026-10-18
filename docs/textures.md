@@ -543,8 +543,10 @@ renderer reads it independently. `TextureAsset.regions_since(revision, per_mip)`
   every texel of a level;
 - the image has no upload staged in the open frame that is not yet recorded, which a residency change leaves.
 
-Otherwise the whole texture is staged. Each region is staged once per mip and copied with the barriers any upload
-of a resident image records. `Stats.upload_bytes` counts the staged texels of the boxes.
+Otherwise the whole texture is staged. A mark on a compressed or storage texture, or on generated mips with
+`THRESHOLD` coverage, is accepted and advances the revision, and the renderer stages that texture whole. Each
+region is staged once per mip and copied with the barriers any upload of a resident image records.
+`Stats.upload_bytes` counts the staged texels of the boxes.
 
 **Mips.**
 - With generated mips, the renderer filters the edited layers' levels in temporary memory from the CPU pixels and
