@@ -39,9 +39,11 @@ struct ClothSavedAuthoring @private {
     float[] transport;
     ClothCutPath[] cuts;
     ClothTearLimits tears;
+    float sleep_speed;
+    uint sleep_steps;
 }
 
-uint[6] cloth_text_default_versions @private = { 1, 2, 3, 4, 5, 6 };
+uint[7] cloth_text_default_versions @private = { 1, 2, 3, 4, 5, 6, 7 };
 
 fn void? register_cloth_codec() @private {
     describe::register_reflected(ClothSeam)!;
@@ -82,8 +84,8 @@ fn void? register_cloth_codec() @private {
     )!;
     serial::register_described_type(
         $Type: ClothSavedAuthoring,
-        version: 7,
-        layout: 0x12911e3cd68aec15,
+        version: 8,
+        layout: 0x08721fd8ff5a4708,
         defaults: &defaults_cloth_authoring,
     )!;
     serial::register_described_owner(Cloth, ClothSavedAuthoring, {
@@ -150,6 +152,8 @@ fn void defaults_cloth_authoring(void* value) @private {
         .transport = desc.transport,
         .cuts = desc.cuts,
         .tears = desc.tears,
+        .sleep_speed = desc.sleep_speed,
+        .sleep_steps = desc.sleep_steps,
     };
 }
 
@@ -275,6 +279,8 @@ fn void? project_cloth_recipe(ClothDesc desc, ClothSavedAuthoring* value, serial
         .transport = desc.transport,
         .cuts = desc.cuts,
         .tears = desc.tears,
+        .sleep_speed = desc.sleep_speed,
+        .sleep_steps = desc.sleep_steps,
     };
 }
 
@@ -320,6 +326,8 @@ fn ClothDesc? cloth_desc(ClothSavedAuthoring* source, serial::ReadContext* conte
         .transport = source.transport,
         .cuts = source.cuts,
         .tears = source.tears,
+        .sleep_speed = source.sleep_speed,
+        .sleep_steps = source.sleep_steps,
     };
 }
 
