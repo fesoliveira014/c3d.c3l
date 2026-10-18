@@ -201,6 +201,8 @@ the rows that are valid.
 - The fragment stage reads a ring row only where a central difference crosses a present edge. An edge without a
   linked neighbour stays one-sided, and every other pixel shades as before. The ring has no corners: the stage
   never samples diagonally.
+- `TerrainRuntime.ring_edges` mirrors the mask for CPU reads, and `terrain::ring_strips(texels, edges)` returns
+  the one-texel strip along each masked border: the texels whose smooth normals read the ring.
 - The ring is created with the tile at `prepare` and removed with its terrain. A terrain without `TerrainTile` has
   no ring: slot 2 is empty and the mask is zero. The 1,032 bytes at 129 texels and 8,200 bytes at 1,025 live on the
   CPU and on the GPU.

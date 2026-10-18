@@ -91,6 +91,8 @@ struct ScatterInputs {
     Mat4 ground_world;
     uint ground_revision;  // the ground's height-map revision after its last refresh
     uint density_revision;
+    uint ring_revision;    // revision of the ground's border ring; 0 off a set and for FACE layers, which never read it
+    uint ring_edges;       // the ground's linked edges when the ring was read; 0 for FACE layers
 }
 
 <*
@@ -430,7 +432,9 @@ fn void? refresh_layer(
             current: current,
         );
     }
-    if (placed.ground_revision == current.ground_revision) return;
+    bool ground_changed = placed.ground_revision != current.ground_revision;
+    bool ring_changed = placed.ring_revision != current.ring_revision || placed.ring_edges != current.ring_edges;
+    if (!ground_changed && !ring_changed) return;
 
     ScatterFrame frame = scatter_frame(
         scene:  scene,
@@ -438,18 +442,36 @@ fn void? refresh_layer(
         node:   node,
         desc:   desc,
     )!;
-    TerrainRefresh refresh = scene.get(scene.node(desc.ground), TerrainRuntime).last_refresh;
-    // Only the last refresh is kept: a layer that missed an earlier one re-places whole.
-    CellRange range = placed.ground_revision == refresh.revision_before
-      ? cells_meeting(&frame, runtime, refresh.rect)
-      : whole_grid(runtime);
-    place_cells(
+
+    CellRange[1 + RING_STRIPS] ranges;
+    usz count;
+    if (ground_changed) {
+        TerrainRefresh refresh = scene.get(scene.node(desc.ground), TerrainRuntime).last_refresh;
+        // Only the last refresh is kept: a layer that missed an earlier one re-places whole.
+        ranges[count++] = placed.ground_revision == refresh.revision_before
+          ? cells_meeting(&frame, runtime, refresh.rect)
+          : whole_grid(runtime);
+    }
+    if (ring_changed) {
+        // An edge that lost its neighbour read the ring when it was placed.
+        TexelRect[RING_STRIPS] strips = terrain::ring_strips(
+            frame.ground.texels_per_side,
+            placed.ring_edges | current.ring_edges,
+        );
+        foreach (strip : strips) {
+            if (strip.columns) ranges[count++] = cells_meeting(&frame, runtime, strip);
+        }
+    }
+
+    place_ranges(
         scene:   scene,
         frame:   &frame,
         runtime: runtime,
-        range:   range,
+        ranges:  ranges[:count],
     );
     placed.ground_revision = current.ground_revision;
+    placed.ring_revision = current.ring_revision;
+    placed.ring_edges = current.ring_edges;
 }
 
 // A count pass costs milliseconds, so a failed re-scatter waits for an input or the free node count to change.
@@ -514,12 +536,20 @@ fn ScatterInputs? current_inputs(
     }
     if (!assets.textures.is_live(desc.rules.density_map)) return c3d::INVALID_ID~;
     Node* ground = scene.node(desc.ground);
-    return {
+    TerrainRuntime* ground_runtime = scene.get(ground, TerrainRuntime);
+    ScatterInputs inputs = {
         .layer_world      = node.world,
         .ground_world     = ground.world,
-        .ground_revision  = scene.get(ground, TerrainRuntime).last_refresh.revision_after,
+        .ground_revision  = ground_runtime.last_refresh.revision_after,
         .density_revision = assets.textures.get(desc.rules.density_map).header.revision,
     };
+
+    // A FACE layer never reads the ring, so a ring change must not re-place it.
+    if (desc.rules.slope_normal == SMOOTH && ground_runtime.border_ring.generation) {
+        inputs.ring_revision = assets.textures.get(ground_runtime.border_ring).header.revision;
+        inputs.ring_edges = ground_runtime.ring_edges;
+    }
+    return inputs;
 }
 
 fn bool same_inputs(ScatterInputs first, ScatterInputs second) @private {

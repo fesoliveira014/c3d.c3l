@@ -1402,3 +1402,41 @@ fn void test_foliage_cell_size_must_divide_the_tile_extent() @test {
     loose.cell_size = NON_DIVISOR_CELL;
     add_layer(&fixture, loose);
 }
+
+fn void test_neighbour_ring_change_replaces_only_smooth_layers_along_the_edge() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Node* set_node = add_tile_set(&fixture);
+    Node* west = add_tile(&fixture, set_node, 0, 0);
+    Node* east = add_tile(&fixture, set_node, 1, 0);
+    FoliageDesc desc = layer_desc(&fixture, west);
+    desc.rules.max_slope = ORDER_SLOPE_LIMIT;
+    Node* faceted = add_layer_node(&fixture, set_node, west);
+    try_add_layer(&fixture, faceted, desc)!!;
+    desc.rules.slope_normal = SMOOTH;
+    Node* smooth = add_layer_node(&fixture, set_node, west);
+    try_add_layer(&fixture, smooth, desc)!!;
+    update_landscape(&fixture);
+
+    TexelRect inner_column = { .x = 1, .z = 0, .columns = 1, .rows = TEXELS };
+    ushort* texels = (ushort*)fixture.assets.texture(height_map_of(&fixture, east)).pixels.ptr;
+    for (uint row = 0; row < TEXELS; row++) texels[row * TEXELS + inner_column.x] = ushort::max;
+    fixture.assets.mark_texture_dirty(height_map_of(&fixture, east));
+    terrain::mark_dirty(&fixture.scene, east, inner_column);
+    terrain::refresh_neighbour_rings(
+        scene:  &fixture.scene,
+        assets: &fixture.assets,
+        tile:   east,
+        rect:   inner_column,
+    );
+    Node* fresh = add_layer_node(&fixture, set_node, west);
+    try_add_layer(&fixture, fresh, desc)!!;
+    assert(!same_layers(&fixture, smooth, fresh));
+
+    update_landscape(&fixture);
+    assert_same_layers(&fixture, smooth, fresh);
+    assert(runtime_of(&fixture, smooth).placed_cells == TILE_CELLS);
+    assert(runtime_of(&fixture, faceted).placed_cells == 0);
+}

@@ -66,12 +66,11 @@ fn HeightView? height_view(Scene* scene, AssetStore* assets, Entity node) {
     return view;
 }
 
-// The ring and its mask are read without the store's mutable accessors, which would take the store as inout.
+// The pool read keeps the store read-only; AssetStore.texture takes it as inout.
 fn void capture_border(HeightView* view, AssetStore* assets, TerrainRuntime* runtime) @private {
     TextureAsset* ring = assets.textures.get(runtime.border_ring);
     view.border = ((ushort*)ring.pixels.ptr)[:(usz)view.texels_per_side * BorderEdge::len];
-    char[] block = assets.materials.get(runtime.material).data.custom.param_block;
-    view.border_edges = ((TerrainParams*)block.ptr).border_edges;
+    view.border_edges = runtime.ring_edges;
 }
 
 <*
