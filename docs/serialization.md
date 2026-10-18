@@ -13,7 +13,7 @@ Light, ProbeVolume, Atmosphere, HeightFog, ReflectionProbe, Decal and CloudLayer
 VALUE phase. Light is version 3, with `source_radius` and `source_angle`; version-1 and
 version-2 binary and JSONC payloads, which lack them, read them as zero, and
 version-1 payloads read `volumetric` as true. A negative or non-finite extent, or an angle of `PI / 2` or more,
-faults `INVALID_ARGUMENT` on read and on write. Mesh copies its morph-weight array into ordinary Scene ownership.
+faults `INVALID_ARGUMENT` on read and on write. Mesh is version 2, with `trace_only`; version-1 binary and JSONC payloads read it as false. Mesh copies its morph-weight array into ordinary Scene ownership.
 The other value components use fixed-size copying attachment. ProbeVolume,
 Atmosphere, HeightFog, ReflectionProbe and CloudLayer use their existing owner validity
 predicates on both export and decoded authoring before attachment. CloudLayer's
@@ -21,11 +21,13 @@ predicates on both export and decoded authoring before attachment. CloudLayer's
 
 InstancedMesh and BillboardBatch also restore in the VALUE phase through
 private authoring descriptions. They retain capacity and live entries in copied
-storage. Instanced batches preserve flags, sway, fade and bounds overrides. Unused
+storage. Instanced batches preserve flags, sway, fade and bounds overrides.
+InstancedMesh is version 2, with `trace_sway`; version-1 payloads read it as false. Unused
 transforms restart at identity, unused colors at white and unused billboards at
 `BILLBOARD_DEFAULT`. Bounds caches and revisions restart under normal owner rules.
 
-LodGroup authoring version 2 restores in BINDINGS, after its source owners.
+LodGroup authoring version 3 restores in BINDINGS, after its source owners. Its common effects
+carry `trace_sway`; version-1 and version-2 binary and JSONC payloads read it as false.
 Rigid groups preserve ordered affine parts, levels, capacities, live placements,
 common effects and terminal impostors. Version-1 binary and JSONC authoring still
 reads as rigid. Animated groups preserve their source-owner reference, levels,

@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": 0,
+      "parent": null,
+      "name": "mesh",
+      "local": {
+        "position": [
+          1,
+          2,
+          3
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 5,
+      "visible": true,
+      "components": {
+        "c3d.Mesh": {
+          "version": 1,
+          "value": {
+            "geometry": "trace_fields/box",
+            "material": "trace_fields/material",
+            "cast_shadow": false,
+            "receive_shadow": true,
+            "trace": true,
+            "morph_weights": [
+              0.25
+            ],
+            "has_bounds_override": true,
+            "local_bounds": {
+              "min": [
+                -1,
+                -2,
+                -3
+              ],
+              "max": [
+                3,
+                2,
+                1
+              ]
+            },
+            "vertex_motion": true
+          }
+        }
+      }
+    }
+  ]
+}

@@ -164,7 +164,7 @@ fn void test_registered_layout_pins_defaults_and_conflicts() @test {
     serial::described_type(Transform)!!.defaults(&transform);
     assert(transform.scale == (Vec3){ 1, 1, 1 } && transform.rotation.v.w == 1);
     Mesh mesh;
-    assert(serial::described_type(Mesh)!!.layout == 0x5e1d3cb5a05dfe89);
+    assert(serial::described_type(Mesh)!!.layout == 0x81e7097de8b07d0c);
     serial::described_type(Mesh)!!.defaults(&mesh);
     assert(mesh.cast_shadow && mesh.receive_shadow && mesh.trace && mesh.vertex_history_token == 0);
 }

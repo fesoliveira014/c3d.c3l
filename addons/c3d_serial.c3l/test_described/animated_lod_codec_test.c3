@@ -346,14 +346,17 @@ fn void test_animated_lod_codec_backward_rigid_v1_binary_and_text() @test {
 
 fn void test_animated_lod_codec_layout_fingerprints() @test {
     describe::register_core_values()!!;
+    describe::register_reflected(LodEffectsV1)!!;
     describe::register_reflected(LodAuthoringV1)!!;
     describe::register_reflected(ModelSkin)!!;
     describe::register_reflected(AnimatedLodPartAuthoring)!!;
     describe::register_reflected(AnimatedLodDescAuthoring)!!;
+    describe::register_reflected(LodAuthoringV2)!!;
     describe::register_reflected(LodAuthoring)!!;
     assert(serial::description_layout(describe::get(LodAuthoringV1)!!)!! == 0xdb17924ea7b43e3f);
     assert(serial::description_layout(describe::get(ModelSkin)!!)!! == 0x03ef0a55ec3ccd1c);
     assert(serial::description_layout(describe::get(AnimatedLodPartAuthoring)!!)!! == 0x67066c59b87af8fe);
     assert(serial::description_layout(describe::get(AnimatedLodDescAuthoring)!!)!! == 0xa65aa93a04287bbc);
-    assert(serial::description_layout(describe::get(LodAuthoring)!!)!! == 0x8ed85fe0b352d50f);
+    assert(serial::description_layout(describe::get(LodAuthoringV2)!!)!! == 0x8ed85fe0b352d50f);
+    assert(serial::description_layout(describe::get(LodAuthoring)!!)!! == 0xa073cd1a57d78766);
 }

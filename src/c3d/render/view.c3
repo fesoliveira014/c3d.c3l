@@ -1372,17 +1372,19 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
             shadow_pipeline_for(self, false, depth_only_vertex_variant({}))!;
         }
         scene.@each(Mesh; Entity entity, Mesh* mesh) {
-            bool casts = shadows_enabled && mesh.cast_shadow && scene.node(entity).visible_effective;
-            MeshPreparation prepared = prepare_mesh(
-                renderer:    self,
-                geometry_id: mesh.geometry,
-                material_id: mesh.material,
-                morphed:     mesh.morph_weights.len > 0,
-                depth:       casts || prepass,
-                soft_shadows: soft_shadows,
-            )!;
-            sheen |= prepared.sheen;
-            scene_reads |= prepared.scene_reads;
+            if (!mesh.trace_only) {
+                bool casts = shadows_enabled && mesh.cast_shadow && scene.node(entity).visible_effective;
+                MeshPreparation prepared = prepare_mesh(
+                    renderer:    self,
+                    geometry_id: mesh.geometry,
+                    material_id: mesh.material,
+                    morphed:     mesh.morph_weights.len > 0,
+                    depth:       casts || prepass,
+                    soft_shadows: soft_shadows,
+                )!;
+                sheen |= prepared.sheen;
+                scene_reads |= prepared.scene_reads;
+            }
         };
         scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
             bool casts = shadows_enabled && batch.cast_shadow && scene.node(entity).visible_effective;

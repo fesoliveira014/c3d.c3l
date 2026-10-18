@@ -1,0 +1,169 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": 0,
+      "parent": null,
+      "name": "lod_group",
+      "local": {
+        "position": [
+          0,
+          4,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "c3d.LodGroup": {
+          "version": 2,
+          "value": {
+            "desc": {
+              "levels": [
+                {
+                  "first_part": 0,
+                  "part_count": 1,
+                  "min_screen_size": 0
+                }
+              ],
+              "parts": [
+                {
+                  "geometry": "trace_fields/box",
+                  "material": "trace_fields/material",
+                  "local": [
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1
+                  ]
+                }
+              ],
+              "has_bounds_override": false,
+              "local_bounds": {
+                "min": [
+                  0,
+                  0,
+                  0
+                ],
+                "max": [
+                  0,
+                  0,
+                  0
+                ]
+              }
+            },
+            "mode": "INSTANCED",
+            "capacity": 3,
+            "transforms": [
+              {
+                "position": [
+                  1,
+                  2,
+                  3
+                ],
+                "rotation": [
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "scale": [
+                  1,
+                  1,
+                  1
+                ]
+              }
+            ],
+            "colors": [
+              [
+                0.100000001,
+                0.200000003,
+                0.300000012,
+                1
+              ]
+            ],
+            "effects": {
+              "sway": {
+                "direction": [
+                  1,
+                  0,
+                  0
+                ],
+                "amplitude": 0.5,
+                "frequency": 0.800000012,
+                "lean": 0.100000001,
+                "wavelength": 3,
+                "variation": 0.200000003,
+                "weight": "HEIGHT"
+              },
+              "fade": {
+                "start": 10,
+                "end": 20
+              },
+              "cast_shadow": false,
+              "receive_shadow": true,
+              "trace": false
+            },
+            "has_impostor": false,
+            "impostor": {
+              "atlas": null,
+              "bounds": {
+                "center": [
+                  0,
+                  0,
+                  0
+                ],
+                "radius": 0
+              },
+              "frames_per_side": 0,
+              "cell_size": 0
+            },
+            "impostor_min_screen_size": 0,
+            "animated": false,
+            "animated_desc": {
+              "levels": [],
+              "parts": [],
+              "has_bounds_override": false,
+              "local_bounds": {
+                "min": [
+                  0,
+                  0,
+                  0
+                ],
+                "max": [
+                  0,
+                  0,
+                  0
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

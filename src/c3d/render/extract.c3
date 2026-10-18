@@ -104,7 +104,7 @@ fn MeshCandidate[] extract_candidates(
     Frustum clip_frustum = { .planes = { [0] = clip_plane }, .plane_count = 1 };
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         Node* node = scene.node(entity);
-        if (node.visible_effective && (layers & node.layers) != 0) {
+        if (node.visible_effective && (layers & node.layers) != 0 && !mesh.trace_only) {
             include_mesh(
                 candidates:   candidates,
                 scene:        scene,
@@ -599,7 +599,8 @@ fn MeshCandidate[] extract_shadow_candidates(
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         Node* node = scene.node(entity);
 
-        if (!spatial::animated_lod_owns_node(scene, node) && node.visible_effective && mesh.cast_shadow) {
+        if (!spatial::animated_lod_owns_node(scene, node) && node.visible_effective && mesh.cast_shadow
+            && !mesh.trace_only) {
             SkinBinding* skin = scene.get(node, SkinBinding);
             if (!spatial::mesh_is_live(assets, mesh, skin)) {
                 counts.dangling++;

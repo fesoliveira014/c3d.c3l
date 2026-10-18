@@ -181,8 +181,8 @@ fn void? validate_animator(void* value, ReadContext* context) @local {
 
             Entity node = model.nodes[target];
             if (!node.generation) continue;
-            Mesh* mesh = context.authored(Mesh, Mesh, node)!;
-            if (mesh && mesh.morph_weights.len != track.stride()) return c3d::INVALID_ARGUMENT~;
+            AuthoredMorphs morphs = authored_morphs(context, node)!;
+            if (morphs.present && morphs.count != track.stride()) return c3d::INVALID_ARGUMENT~;
         }
     }
 
@@ -192,6 +192,23 @@ fn void? validate_animator(void* value, ReadContext* context) @local {
             if (!math::is_finite(duration) || duration <= 0) return c3d::INVALID_ARGUMENT~;
         }
     }
+}
+
+struct AuthoredMorphs @local {
+    bool present;
+    usz  count;
+}
+
+// The morph weights of the node's authored Mesh, whichever version the document holds.
+fn AuthoredMorphs? authored_morphs(ReadContext* context, Entity node) @local {
+    Mesh*? current = context.authored(Mesh, Mesh, node);
+    if (try mesh = current) return mesh ? { .present = true, .count = mesh.morph_weights.len } : {};
+    if (catch excuse = current) {
+        if (excuse != c3d::UNSUPPORTED) return excuse~;
+    }
+
+    MeshV1* legacy = context.authored(Mesh, MeshV1, node)!;
+    return legacy ? { .present = true, .count = legacy.morph_weights.len } : {};
 }
 
 fn void? attach_animator(void* value, ReadContext* context) @local {

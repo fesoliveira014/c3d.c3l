@@ -2,6 +2,7 @@ module c3d::test::scene_trace;
 
 import c3d;
 import c3d::asset;
+import c3d::camera;
 import c3d::geometry;
 import c3d::material;
 import c3d::maths;
@@ -228,6 +229,49 @@ fn void test_custom_vertex_stage_keeps_meshes_out_whatever_trace_says() @test {
     @pool() {
         render::TraceInstance[] records = collect(&fixture);
         assert(records.len == 1 && same_entity(records[0].entity, fragment_only.id));
+    };
+}
+
+fn void test_trace_only_mesh_traces_and_never_draws() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Scene* scene = &fixture.scene;
+    Node* camera_node = scene.add_camera(camera::perspective_deg(60, 0.1f))!!;
+    camera_node.local.position = { 0, 0, 5 };
+    Node* drawn = scene.add_mesh(fixture.box, fixture.opaque, name: "drawn")!!;
+    Node* helper = scene.add_mesh(fixture.box, fixture.opaque, name: "helper")!!;
+    scene.get(helper, Mesh).trace_only = true;
+    Node* hidden = scene.add_mesh(fixture.box, fixture.opaque, name: "hidden")!!;
+    scene.get(hidden, Mesh).trace_only = true;
+    hidden.visible = false;
+    scene.update_world();
+
+    @pool() {
+        render::TraceCollection collection = collect_all(&fixture);
+        assert(collection.records.len == 2);
+        assert(same_entity(collection.records[0].entity, drawn.id) && same_entity(collection.records[1].entity, helper.id));
+
+        Camera* camera = scene.get(camera_node, Camera);
+        CameraMatrices matrices = camera::derive_matrices(*camera, camera_node.world, { 1600, 900 });
+        render::ExtractCounts counts;
+        render::MeshCandidate[] candidates = render::extract_candidates(
+            allocator: tmem,
+            scene:     scene,
+            assets:    &fixture.assets,
+            camera:    &matrices,
+            layers:    scene::DEFAULT_LAYERS,
+            counts:    &counts,
+        );
+        assert(candidates.len == 1 && candidates[0].node == drawn);
+        render::ExtractCounts shadow_counts;
+        render::MeshCandidate[] casters = render::extract_shadow_candidates(
+            allocator:   tmem,
+            scene:       scene,
+            assets:      &fixture.assets,
+            fade_origin: {},
+            counts:      &shadow_counts,
+        );
+        assert(casters.len == 1 && casters[0].node == drawn);
     };
 }
 

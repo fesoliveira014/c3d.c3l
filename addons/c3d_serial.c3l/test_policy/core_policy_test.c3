@@ -21,7 +21,7 @@ fn void test_every_registered_core_component_has_one_expected_policy() @test {
     assert(ecs::registered_type_count == 0);
     serial::register_core_codecs()!!;
     ExpectedPolicy[19] expected = {
-        { .slot = ecs::assigned_slot(Mesh)!!, .version = 1, .name = "c3d.Mesh",
+        { .slot = ecs::assigned_slot(Mesh)!!, .version = 2, .name = "c3d.Mesh",
             .identity = Mesh::typeid, .component_description = true },
         { .slot = ecs::assigned_slot(Camera)!!, .version = 1, .name = "c3d.Camera",
             .identity = Camera::typeid, .component_description = true },
@@ -39,11 +39,11 @@ fn void test_every_registered_core_component_has_one_expected_policy() @test {
             .identity = Decal::typeid, .component_description = true },
         { .slot = ecs::assigned_slot(CloudLayer)!!, .version = 1, .name = "c3d.CloudLayer",
             .identity = CloudLayer::typeid, .component_description = true },
-        { .slot = ecs::assigned_slot(InstancedMesh)!!, .version = 1, .name = "c3d.InstancedMesh",
+        { .slot = ecs::assigned_slot(InstancedMesh)!!, .version = 2, .name = "c3d.InstancedMesh",
             .identity = InstanceAuthoring::typeid },
         { .slot = ecs::assigned_slot(BillboardBatch)!!, .version = 1, .name = "c3d.BillboardBatch",
             .identity = BillboardAuthoring::typeid },
-        { .slot = ecs::assigned_slot(LodGroup)!!, .phase = BINDINGS, .version = 2,
+        { .slot = ecs::assigned_slot(LodGroup)!!, .phase = BINDINGS, .version = 3,
             .name = "c3d.LodGroup", .identity = LodAuthoring::typeid },
         { .slot = ecs::assigned_slot(ModelInstance)!!, .version = 1, .name = "c3d.ModelInstance",
             .identity = ModelAuthoring::typeid, .phase = REFERENCES },
