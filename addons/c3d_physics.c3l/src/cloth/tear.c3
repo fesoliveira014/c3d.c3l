@@ -12,6 +12,8 @@ import std::sort;
 <* Default half-space projection passes per opening attempt. *>
 const uint DEFAULT_OPENING_ITERATIONS = 32; // projection passes before OPENING_UNRESOLVED; cost linear in opening pairs per cut
 
+const float UNREFERENCED_INVERSE_MASS @private = 1; // a vertex in no triangle keeps unit mass and moves under gravity alone
+
 <* Last execution status of an authored cut path. *>
 enum ClothCutOutcome : uint {
     NONE,
@@ -350,6 +352,7 @@ fn ClothSectorPlan? build_sector_plan(
         uint first = render_to_particle[data.indices[3 * triangle]];
         uint second = render_to_particle[data.indices[3 * triangle + 1]];
         uint third = render_to_particle[data.indices[3 * triangle + 2]];
+
         float area = (constraint_positions[second] - constraint_positions[first])
           .cross(constraint_positions[third] - constraint_positions[first])
           .length() * 0.5f;
@@ -773,7 +776,7 @@ fn void seed_cloth_topology(
         );
     } else {
         foreach (particle, mass : sector_plan.base_masses) {
-            state.inverse_mass_storage[particle] = mass > 0 ? (float)(1.0 / mass) : 1; // a particle of no triangle has no constraint or force
+            state.inverse_mass_storage[particle] = mass > 0 ? (float)(1.0 / mass) : UNREFERENCED_INVERSE_MASS;
         }
         state.pin_storage[..] = attachment_plan.pins[..];
         foreach (slot, pin : attachment_plan.pins) {
