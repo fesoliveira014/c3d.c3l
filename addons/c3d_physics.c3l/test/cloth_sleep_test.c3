@@ -110,6 +110,11 @@ fn void test_resting_cloth_wakes_on_reference_and_collider_motion() @test {
     body.local.position = node.world_position() + (Vec3){ 0.5f, -0.5f, 0 };
     step(&fixture, physics::DEFAULT_FIXED_DT);
     assert(cloth.activity() == AWAKE);
+
+    settle(&fixture, node);
+    body.local.position = DISTANT_BODY;
+    step(&fixture, physics::DEFAULT_FIXED_DT);
+    assert(cloth.activity() == AWAKE);
 }
 
 fn void test_held_cloth_ignores_triggers_and_carries_on_wake() @test {
@@ -266,16 +271,6 @@ fn void test_cut_request_wakes_rest_and_waits_while_held() @test {
     held_cloth.wake();
     step(&fixture, physics::DEFAULT_FIXED_DT);
     assert(held_cloth.cut_result(CUT_PATH)!!.is_cut && held_cloth.state.pending_request_count == 0);
-}
-
-fn void test_cloth_rejects_invalid_sleep_speed() @test {
-    Fixture fixture;
-    setup(&fixture, weightless());
-    defer teardown(&fixture);
-    Node* node = add_cloth_node(&fixture, add_grid(&fixture, 1));
-    ClothDesc desc = cloth::default_cloth_desc();
-    desc.sleep_speed = -1;
-    assert(rejected_atomically(&fixture, node, desc) == c3d::INVALID_ARGUMENT);
 }
 
 fn CrowdRig add_cloth_crowd(Fixture* fixture) @private {

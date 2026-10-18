@@ -216,6 +216,7 @@ fn ClothUpdateKind? update_cloth(
     if (held) {
         state.contact_result = { .stage = ClothContactStage.PUBLICATION };
         check_ordinary_output_ownership(world.scene, state, node)!;
+        sync_skinned_output(world.scene, state, node);
         state.contact_result = {};
         return HELD;
     }

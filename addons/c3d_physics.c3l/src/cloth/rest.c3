@@ -224,8 +224,10 @@ fn bool bodies_disturbed(ClothState* state, float threshold) @local {
             cloth_bounds = cloth_contact_bounds(state);
             bounds_ready = true;
         }
-        Aabb placed = maths::aabb_transform(shape.bounds, body.current.to_mat4().mul(shape.local.to_mat4()));
-        if (bounds_overlap(placed, cloth_bounds)) return true;
+        Mat4 shape_local = shape.local.to_mat4();
+        Aabb placed = maths::aabb_transform(shape.bounds, body.current.to_mat4().mul(shape_local));
+        Aabb rested = maths::aabb_transform(shape.bounds, body.rested.to_mat4().mul(shape_local));
+        if (bounds_overlap(placed, cloth_bounds) || bounds_overlap(rested, cloth_bounds)) return true;
     }
     return false;
 }
