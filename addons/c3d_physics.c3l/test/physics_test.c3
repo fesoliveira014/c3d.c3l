@@ -1671,7 +1671,6 @@ fn void test_full_sink_stops_generating_and_counts_drops() @test {
     Node* hull = add_geometry_body(&fixture, HULL, STATIC);
     add_box(&fixture, { 12, 0, 0 }, STATIC);
     assert(fixture.scene.get(hull, RigidBody).colliders[0].wire.len >= 2);
-    fixture.scene.update_world();
 
     debug::DebugDraw whole = debug::create_debug_draw(mem, 1 << 12);
     defer debug::destroy_debug_draw(&whole);
@@ -1679,7 +1678,7 @@ fn void test_full_sink_stops_generating_and_counts_drops() @test {
     usz total = (usz)whole.vertices.len() / 2;
     assert(whole.dropped == 0);
 
-    usz capacity = 12 + debug::DEBUG_CIRCLE_SEGMENTS + 1;
+    usz capacity = 12 + debug::DEBUG_CIRCLE_SEGMENTS + 1; // ends inside the first sphere; every later collider is refused whole
     debug::DebugDraw bounded = debug::create_debug_draw(mem, capacity);
     defer debug::destroy_debug_draw(&bounded);
     fixture.physics.debug_draw(&bounded, { .colliders = true });
@@ -1741,7 +1740,6 @@ fn void test_parallel_debug_draw_equals_serial() @test {
     setup(&fixture);
     defer teardown(&fixture);
     add_mixed_bodies(&fixture);
-    fixture.scene.update_world();
 
     debug::DebugDraw serial = debug::create_debug_draw(mem, 1 << 16);
     defer debug::destroy_debug_draw(&serial);
@@ -1766,7 +1764,6 @@ fn void test_parallel_debug_draw_declines_a_short_sink() @test {
     setup(&fixture);
     defer teardown(&fixture);
     add_mixed_bodies(&fixture);
-    fixture.scene.update_world();
 
     debug::DebugDraw whole = debug::create_debug_draw(mem, 1 << 16);
     defer debug::destroy_debug_draw(&whole);
