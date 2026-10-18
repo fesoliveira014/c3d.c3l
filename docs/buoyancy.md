@@ -95,8 +95,9 @@ F = −(linear_drag / 8 + ½ · ρ · C_d · A_cell(v̂_rel) · |v_rel|) · v_re
 - The force is applied at the cell centre, so a fluid moving past a body also turns it.
 - The magnitude of `F` is limited to `m_cell · |v_rel| / fixed_dt`, with `m_cell` one eighth of the body's mass,
   so one explicit step cannot reverse the cell's velocity relative to the fluid. The limit binds when
-  `linear_drag · fraction > mass / fixed_dt` (60 N·s/m per kilogram at 60 Hz). Below that, it never changes a
-  body that has linear drag alone; above it, the drag is weaker than `linear_drag` states.
+  `linear_drag · fraction > mass / fixed_dt`; fully submerged, that is `linear_drag` above `mass / fixed_dt`
+  (60 N·s/m for a 1 kg body at 60 Hz, 36,000 N·s/m for 600 kg). Below that, it never changes a body that has
+  linear drag alone; above it, the drag is weaker than `linear_drag` states.
 - The terminal speed of a body sinking through a fluid on quadratic drag alone is
   `sqrt(2 (m − ρ V) g / (ρ C_d A))`, with `A` the sum of the eight cells' projected areas.
 
