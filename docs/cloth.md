@@ -84,10 +84,11 @@ Setting `ClothDesc.bend_mode = DIHEDRAL` replaces opposite-vertex distance bendi
 signed dihedral hinge constraint across each interior physical edge (`ClothBendMode.DISTANCE` remains
 the default and requires `bend_compliance == 0` and empty `rest_angles`). `ClothDesc.rest_angles`
 overrides the rest angle on canonical interior edges (`first < second`, `angle` in `(-pi, pi]`). Each
-substep projects hinges with XPBD compliance `bend_compliance` toward a target that stays within
-1.25 rad of the hinge's tracked angle, so a hinge far from rest recovers over several substeps along
-its tracked winding. The continuous motion of each substep is certified against edge collapse,
-triangle degeneracy, and a half turn or more (`cloth::BEND_UNRESOLVED`).
+substep projects hinges with XPBD compliance `bend_compliance`; a substep's corrections turn a hinge
+at most 1.25 rad away from its tracked angle, so a hinge far from rest recovers over several substeps
+along its tracked winding without changing the compliant equilibrium. The continuous motion of each
+substep is certified against edge collapse, triangle degeneracy, and a half turn or more
+(`cloth::BEND_UNRESOLVED`).
 
 ### Skinned reference, transport and `CrowdCloth`
 
