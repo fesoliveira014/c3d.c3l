@@ -70,6 +70,15 @@ const double NANOSECONDS_PER_MILLISECOND @local = 1_000_000;
 const double PERCENTILE_95 @local = 0.95;
 const uint CAPTURE_CHANNELS @local = 4;
 const uint TEAR_PATH_ID @local = 1;
+const uint FIELD_DEFAULT_COUNT @local = 64; // flags in the field scene; solve cost grows linearly with the awake ones
+const uint FIELD_FLAG_COLUMNS @local = 8;
+const uint FIELD_FLAG_ROWS @local = 6;
+const float FIELD_FLAG_WIDTH @local = 0.9f;
+const float FIELD_FLAG_HEIGHT @local = 0.6f;
+const float FIELD_POLE_HEIGHT @local = 1.4f;
+const float FIELD_SPACING @local = 2.2f; // metres between poles; keeps neighbouring flags apart
+const uint FIELD_WIND_STRIDE @local = 4; // one flag in this many flutters; the others hang still and rest
+const float FIELD_SLEEP_SPEED @local = 0.05f; // m/s; a flag hanging in still air falls under it within seconds
 
 enum Scenario @local {
     FLAG,
@@ -78,9 +87,10 @@ enum Scenario @local {
     CONTACTS,
     FOLD,
     FAST,
+    FIELD,
 }
 
-const String[Scenario::len] SCENARIO_NAMES @local = { "flag", "cape", "both", "contacts", "fold", "fast" };
+const String[Scenario::len] SCENARIO_NAMES @local = { "flag", "cape", "both", "contacts", "fold", "fast", "field" };
 
 struct Options @local {
     bool      benchmark;
@@ -88,10 +98,12 @@ struct Options @local {
     bool      whole_publication;
     bool      ragdoll;
     bool      tear;
+    bool      hold;
     bool      traced;
     bool      validation;
     TraceKind trace_kind;
     Scenario  scenario;
+    uint      count;
     uint      frames;
     String    capture_path;
 }
@@ -127,6 +139,10 @@ struct Demo @local {
     Node*        fold;
     Node*        fast;
     Node*        fast_body;
+    Node*[]      field;
+    uint[]       field_revisions;
+    bool         field_held;
+    uint         field_count;
     uint         fast_frame;
     uint         fast_impacts;
     Node*[6]     drapes;
@@ -145,6 +161,7 @@ struct Controls @local {
     bool ragdoll;
     bool tear;
     bool reset;
+    bool hold;
 }
 
 fn Geometry cloth_grid(
@@ -344,6 +361,83 @@ fn void? attach_flag(Demo* demo) @local {
     };
 }
 
+fn uint field_columns(uint count) @local => (uint)math::ceil(math::sqrt((float)count));
+
+fn Vec3 field_position(uint index, uint columns) @local {
+    return { (float)(index % columns) * FIELD_SPACING, 0, -(float)(index / columns) * FIELD_SPACING };
+}
+
+fn void? build_field(Demo* demo) @local {
+    MaterialId flag_material = cloth_material(&demo.assets, { 0.2f, 0.45f, 0.8f, 1 })!;
+    MaterialId pole_material = demo.assets.add_material(material::standard({
+        .base_color = { 0.55f, 0.55f, 0.58f, 1 }, .roughness = 0.4f, .metallic = 1,
+    }))!;
+    GeometryId flag_geometry;
+    GeometryId pole_geometry;
+    @pool() {
+        Geometry flag = cloth_grid(
+            allocator: tmem,
+            columns:   FIELD_FLAG_COLUMNS,
+            rows:      FIELD_FLAG_ROWS,
+            width:     FIELD_FLAG_WIDTH,
+            height:    FIELD_FLAG_HEIGHT,
+        );
+        flag_geometry = demo.assets.add_geometry(&flag, "cloth/field_flag")!;
+        Geometry pole = geometry::cylinder(
+            allocator:     tmem,
+            radius_top:    POLE_RADIUS,
+            radius_bottom: POLE_RADIUS,
+            height:        FIELD_POLE_HEIGHT,
+        );
+        pole_geometry = demo.assets.add_geometry(&pole, "cloth/field_pole")!;
+    };
+    demo.field = alloc::new_array(mem, Node*, (sz)demo.field_count);
+    demo.field_revisions = alloc::new_array(mem, uint, (sz)demo.field_count);
+    uint columns = field_columns(demo.field_count);
+    foreach (index, &flag : demo.field) {
+        Vec3 base = field_position((uint)index, columns);
+        Node* pole = demo.scene.add_mesh(pole_geometry, pole_material, name: "pole")!;
+        pole.local.position = base + (Vec3){ 0, FIELD_POLE_HEIGHT * 0.5f, 0 };
+        *flag = demo.scene.add_mesh(flag_geometry, flag_material, name: "flag")!;
+        flag.local.position = base + (Vec3){ POLE_RADIUS, FIELD_POLE_HEIGHT - 0.1f, 0 };
+        demo.scene.get(*flag, scene::Mesh).trace = demo.traced;
+        if (index % FIELD_WIND_STRIDE == 0) {
+            demo.scene.add(*flag, grid_wind(
+                columns: FIELD_FLAG_COLUMNS,
+                rows:    FIELD_FLAG_ROWS,
+                width:   FIELD_FLAG_WIDTH,
+                height:  FIELD_FLAG_HEIGHT,
+            ));
+        }
+    }
+}
+
+fn void? attach_field(Demo* demo) @local {
+    foreach (flag : demo.field) {
+        ClothDesc desc = cloth::default_cloth_desc();
+        desc.sleep_speed = FIELD_SLEEP_SPEED;
+        @pool() {
+            uint[] pins = alloc::new_array(tmem, uint, (sz)(FIELD_FLAG_ROWS + 1));
+            foreach (row, &pin : pins) *pin = (uint)row * (FIELD_FLAG_COLUMNS + 1);
+            desc.pins = pins;
+            demo.scene.add_cloth(&demo.assets, flag, desc)!;
+        };
+    }
+}
+
+fn void set_field_held(Demo* demo, bool held) @local {
+    demo.field_held = held;
+    if (!demo.simulated) return;
+    for (uint index = demo.field_count / 2; index < demo.field_count; index++) {
+        Cloth* cloth = demo.scene.get(demo.field[index], Cloth);
+        if (held) {
+            cloth.sleep();
+        } else {
+            cloth.wake();
+        }
+    }
+}
+
 fn void? attach_cape(Demo* demo) @local {
     Ragdoll* ragdoll = demo.scene.get(demo.character.skin, Ragdoll);
     ClothDesc desc = cloth::default_cloth_desc();
@@ -397,6 +491,10 @@ fn void? attach_cloths(Demo* demo) @local {
     if (demo.scenario == CONTACTS) attach_contact_cloths(demo)!;
     if (demo.fold) attach_fold(demo)!;
     if (demo.fast) attach_fast(demo)!;
+    if (demo.field.len) {
+        attach_field(demo)!;
+        if (demo.field_held) set_field_held(demo, true);
+    }
 }
 
 fn void? reset_cloths(Demo* demo) @local {
@@ -406,6 +504,7 @@ fn void? reset_cloths(Demo* demo) @local {
     if (demo.fold) demo.scene.remove_cloth(demo.fold);
     if (demo.fast) demo.scene.remove_cloth(demo.fast);
     foreach (node : demo.drapes) if (node) demo.scene.remove_cloth(node);
+    foreach (node : demo.field) demo.scene.remove_cloth(node);
     return attach_cloths(demo);
 }
 
@@ -682,6 +781,7 @@ fn void? create_demo(
     uint flag_columns,
     uint flag_rows,
     bool simulated,
+    uint field_count = 0,
     bool traced = false,
 ) @local {
     demo.scenario = scenario;
@@ -689,9 +789,10 @@ fn void? create_demo(
     demo.traced = traced;
     demo.flag_columns = flag_columns;
     demo.flag_rows = flag_rows;
+    demo.field_count = field_count;
     demo.assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
     defer catch asset::destroy_asset_store(&demo.assets);
-    demo.scene = scene::create_scene(mem, { .max_nodes = SCENE_NODE_CAPACITY });
+    demo.scene = scene::create_scene(mem, { .max_nodes = SCENE_NODE_CAPACITY + 2 * field_count });
     defer catch scene::destroy_scene(&demo.scene);
     physics::register_physics(&demo.scene)!;
     demo.physics = physics::create_physics_world(
@@ -731,6 +832,7 @@ fn void? create_demo(
     if (scenario == CONTACTS) build_contact_scene(demo)!;
     if (scenario == FOLD) build_fold(demo)!;
     if (scenario == FAST) build_fast(demo)!;
+    if (scenario == FIELD) build_field(demo)!;
     switch (scenario) {
         case FLAG:
             demo.camera.local.position = POLE_POSITION + (Vec3){ 1.4f, POLE_HEIGHT - 0.6f, 4.2f };
@@ -750,6 +852,13 @@ fn void? create_demo(
         case BOTH:
             demo.camera.local.position = { 0.2f, 2.3f, 6.8f };
             demo.camera.local.rotation = maths::look_rotation(((Vec3){ 0, -0.05f, -1 }).normalize(), { 0, 1, 0 });
+        case FIELD:
+            uint columns = field_columns(field_count);
+            float extent = (float)columns * FIELD_SPACING;
+            Vec3 centre = { extent * 0.5f, FIELD_POLE_HEIGHT * 0.5f, -extent * 0.5f };
+            demo.camera.local.position = centre + (Vec3){ 0, extent * 0.55f, extent * 0.9f };
+            Vec3 view = (centre - demo.camera.local.position).normalize();
+            demo.camera.local.rotation = maths::look_rotation(view, { 0, 1, 0 });
     }
     demo.scene.update_world();
     attach_cloths(demo)!;
@@ -759,6 +868,8 @@ fn void? create_demo(
 }
 
 fn void destroy_demo(Demo* demo) @local {
+    alloc::free(mem, demo.field.ptr);
+    alloc::free(mem, demo.field_revisions.ptr);
     physics::destroy_physics_world(&demo.physics);
     scene::destroy_scene(&demo.scene);
     asset::destroy_asset_store(&demo.assets);
@@ -771,6 +882,9 @@ fn void apply_wind(Demo* demo, double time) @local {
     Vec3 velocity = { math::cos(heading) * speed, 0, math::sin(heading) * speed };
     if (demo.flag) demo.scene.get(demo.flag, Wind).velocity = velocity;
     if (demo.character.cape) demo.scene.get(demo.character.cape, Wind).velocity = velocity;
+    foreach (flag : demo.field) {
+        if (Wind* field_wind = demo.scene.get(flag, Wind)) field_wind.velocity = velocity;
+    }
 }
 
 fn void set_ragdoll(Demo* demo, bool enabled) @local {
@@ -830,6 +944,7 @@ fn void step_demo(Demo* demo, float delta, double time) @local {
     uint fast_revision = cloth_revision(demo, demo.fast);
     uint[6] drape_revisions;
     foreach (index, node : demo.drapes) drape_revisions[index] = cloth_revision(demo, node);
+    foreach (index, flag : demo.field) demo.field_revisions[index] = cloth_revision(demo, flag);
     demo.physics.update_cloths();
     if (demo.fast) {
         demo.fast_frame++;
@@ -841,6 +956,7 @@ fn void step_demo(Demo* demo, float delta, double time) @local {
         publish_whole(demo, demo.fold, fold_revision);
         publish_whole(demo, demo.fast, fast_revision);
         foreach (index, node : demo.drapes) publish_whole(demo, node, drape_revisions[index]);
+        foreach (index, flag : demo.field) publish_whole(demo, flag, demo.field_revisions[index]);
     }
 }
 
@@ -864,6 +980,7 @@ fn void panel(
         imgui::text("Scene: %s", SCENARIO_NAMES[demo.scenario.ordinal]);
         imgui::text("Solve %.3f ms, publish %.3f ms", stats.solve_seconds * 1000, stats.publish_seconds * 1000);
         imgui::text("Particles %u, constraints %u", stats.particles, stats.constraints);
+        imgui::text("Resting %u, held %u", stats.resting, stats.held);
         imgui::text("Contacts: %u candidates, %u contacts", stats.candidates, stats.contacts);
         if (demo.fold) imgui::text("Self contact enabled, 2 copied seam pairs, gap 0.02 m");
         if (demo.fast) {
@@ -905,6 +1022,7 @@ fn void panel(
             }
             controls.tear = imgui::button("Tear cloth (T)");
         }
+        if (demo.field.len) imgui::checkbox("Hold far half (H)", &controls.hold);
         controls.reset = imgui::button("Reset cloth");
     }
     imgui::end();
@@ -920,10 +1038,12 @@ fn void? run_interactive(Options options) @local {
         flag_columns: FLAG_COLUMNS,
         flag_rows:    FLAG_ROWS,
         simulated:    !options.still,
+        field_count:  options.count,
     )!;
     defer destroy_demo(&demo);
     demo.whole_publication = options.whole_publication;
     if (options.tear) tear_cloths(&demo);
+    if (options.hold) set_field_held(&demo, true);
     Renderer renderer = platform::create_window_renderer(
         allocator: mem,
         window: &window,
@@ -935,7 +1055,7 @@ fn void? run_interactive(Options options) @local {
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
     debug::DebugDraw guides = debug::create_debug_draw(mem);
     defer debug::destroy_debug_draw(&guides);
-    Controls controls = { .taa = true, .motion_blur = true };
+    Controls controls = { .taa = true, .motion_blur = true, .hold = options.hold };
     Controls applied;
     double elapsed;
     float frame_ms;
@@ -947,6 +1067,9 @@ fn void? run_interactive(Options options) @local {
             demo.whole_publication = !demo.whole_publication;
         }
         bool key_tear = window.input.key_pressed(platform::Scancode.T) && !window.input.keyboard_captured_by_gui;
+        if (window.input.key_pressed(platform::Scancode.H) && !window.input.keyboard_captured_by_gui) {
+            controls.hold = !controls.hold;
+        }
         time::Clock started = clock::now();
         @pool() {
             gui_renderer.new_frame();
@@ -968,6 +1091,7 @@ fn void? run_interactive(Options options) @local {
                 controls.ragdoll = demo.character.ragdoll;
             }
             if (controls.tear || key_tear) tear_cloths(&demo);
+            if (controls.hold != demo.field_held) set_field_held(&demo, controls.hold);
             if (controls.reset) reset_cloths(&demo)!;
             elapsed += window.clock.delta;
             step_demo(&demo, window.clock.delta, elapsed);
@@ -1042,6 +1166,7 @@ fn void? run_benchmark(Options options) @local {
         flag_columns: BENCHMARK_CELLS,
         flag_rows:    BENCHMARK_CELLS,
         simulated:    !options.still,
+        field_count:  options.count,
         traced:       options.traced,
     )!;
     defer destroy_demo(&demo);
@@ -1083,6 +1208,8 @@ fn void? run_benchmark(Options options) @local {
     Series blas_updates;
     Series tlas_builds;
     Series upload_series;
+    Series resting_series;
+    Series held_series;
     Series pose_ms;
     Series acceleration_ms;
     Series trace_gpu_ms;
@@ -1093,6 +1220,7 @@ fn void? run_benchmark(Options options) @local {
         double time = (double)frame * STEP_SECONDS;
         if (options.ragdoll && frame == WARMUP_FRAMES) set_ragdoll(&demo, true);
         if (options.tear && frame == WARMUP_FRAMES) tear_cloths(&demo);
+        if (options.hold && frame == WARMUP_FRAMES) set_field_held(&demo, true);
         step_demo(&demo, STEP_SECONDS, time);
         if ((demo.scenario == CONTACTS || demo.scenario == FAST) && demo.physics.cloth_stats.failed) return cloth::CONTACT_UNRESOLVED~;
         renderer.begin_frame({ .time = time, .delta = STEP_SECONDS })!;
@@ -1110,6 +1238,8 @@ fn void? run_benchmark(Options options) @local {
             blas_updates.add(renderer.stats.blas_updates);
             tlas_builds.add(renderer.stats.tlas_builds);
             upload_series.add(renderer.stats.upload_bytes);
+            resting_series.add(demo.physics.cloth_stats.resting);
+            held_series.add(demo.physics.cloth_stats.held);
         }
         Stats* stats = &renderer.stats;
         if (stats.gpu_timing_state == GpuTimingState.READY && stats.gpu_frame_index != last_gpu_frame
@@ -1148,6 +1278,16 @@ fn void? run_benchmark(Options options) @local {
         stats.ccd_iterations
     );
     io::printfn("publication,%s", demo.whole_publication ? "whole" : "streams");
+    double cloths = (double)demo.scene.count(Cloth);
+    double resting = resting_series.total / MEASURED_FRAMES;
+    double held = held_series.total / MEASURED_FRAMES;
+    io::printfn(
+        "cloths,%.0f,simulated_mean,%.2f,resting_mean,%.2f,held_mean,%.2f",
+        cloths,
+        cloths - resting - held,
+        resting,
+        held,
+    );
     io::printfn("resolution,%dx%d,particles,%d,constraints,%d", WIDTH, HEIGHT, stats.particles, stats.constraints);
     io::printfn(
         "frames,%d,warmup,%d,substeps,%d,iterations,%d",
@@ -1189,7 +1329,7 @@ fn Scenario? scenario_named(String name) @local {
 }
 
 fn Options? parse_options(String[] args) @local {
-    Options options = { .scenario = BOTH };
+    Options options = { .scenario = BOTH, .count = FIELD_DEFAULT_COUNT };
     for (usz index = 1; index < args.len; index++) {
         if (args[index] == "--benchmark") {
             options.benchmark = true;
@@ -1203,6 +1343,10 @@ fn Options? parse_options(String[] args) @local {
             options.ragdoll = true;
         } else if (args[index] == "--tear") {
             options.tear = true;
+        } else if (args[index] == "--hold") {
+            options.hold = true;
+        } else if (args[index] == "--count" && index + 1 < args.len) {
+            options.count = args[++index].to_uint()!;
         } else if (args[index] == "--validation") {
             options.validation = true;
         } else if (args[index] == "--trace" && index + 1 < args.len) {
@@ -1226,14 +1370,19 @@ fn Options? parse_options(String[] args) @local {
         }
     }
     if ((options.traced || options.validation) && !options.benchmark) return c3d::INVALID_ARGUMENT~;
-    if (options.ragdoll && (!options.benchmark || (options.scenario == FLAG || options.scenario == CONTACTS || options.scenario == FOLD || options.scenario == FAST))) return c3d::INVALID_ARGUMENT~;
+    if (options.hold && options.scenario != FIELD) return c3d::INVALID_ARGUMENT~;
+    if (options.scenario == FIELD && !options.count) return c3d::INVALID_ARGUMENT~;
+    if (options.ragdoll && (!options.benchmark || (options.scenario != CAPE && options.scenario != BOTH))) {
+        return c3d::INVALID_ARGUMENT~;
+    }
     return options;
 }
 
 fn int main(String[] args) {
     Options? options = parse_options(args);
     if (catch excuse = options) {
-        io::eprintn("Use cloth [--scene flag|cape|both|contacts|fold|fast] [--still] [--frames count]");
+        io::eprintn("Use cloth [--scene flag|cape|both|contacts|fold|fast|field] [--still] [--frames count]");
+        io::eprintn("  [--count flags] [--hold]    (field scene: count of flags; hold the far half)");
         io::eprintn("  [--publish whole|streams]");
         io::eprintn("  [--benchmark [--ragdoll] [--capture path.rgba] [--trace software|hardware] [--validation]]");
         io::eprintn("Run timings without --validation; the validation layers inflate them.");

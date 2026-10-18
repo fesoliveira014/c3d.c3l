@@ -72,6 +72,7 @@ fn void commit_cloth(ClothState* state, ClothState* staged) @private {
     state.shapes[..] = staged.shapes[..];
     state.shape_starts[..] = staged.shape_starts[..];
     state.shape_ends[..] = staged.shape_ends[..];
+    state.settle = staged.settle;
 }
 
 fn bool? stage_local_positions(ClothState* state, Mat4 world, bool force_changed = false) @private {
@@ -117,15 +118,17 @@ fn bool? stage_local_positions(ClothState* state, Mat4 world, bool force_changed
         state.publication_roundtrip[index] = restored;
     }
 
-    bool changed = force_changed;
+    state.spans = {};
     foreach (material_vertex, particle : state.material_particles) {
         Vec3 local = state.particle_local[particle];
         state.local_output[material_vertex] = local;
-        changed |= local != geometry.data.positions[material_vertex];
+        if (local != geometry.data.positions[material_vertex]) {
+            include_vertex(&state.spans.positions, (usz)material_vertex);
+        }
     }
 
     state.local_bounds = geometry.data.bounds;
-    return changed;
+    return force_changed || !state.spans.positions.is_empty();
 }
 
 fn void? stage_material_frames(ClothState* state, bool changed) @private {
@@ -152,6 +155,11 @@ fn void? stage_material_frames(ClothState* state, bool changed) @private {
     staged.positions = state.local_output;
     staged.finalize();
     state.local_bounds = staged.bounds;
+
+    state.spans.normals = differing_range(geometry.data.normals, state.local_normals);
+    if (state.desc.tangent_frame) {
+        state.spans.tangents = differing_range(geometry.data.tangents, state.local_tangents);
+    }
 }
 
 fn void commit_local_publication(
@@ -160,40 +168,70 @@ fn void commit_local_publication(
     bool changed,
     bool colors_changed = false,
 ) @private {
-    if (changed || colors_changed) {
+    if (changed) {
         GeometryAsset* geometry = state.assets.geometry(state.geometry);
-        if (changed) {
-            geometry.data.positions[..] = state.local_output[..];
-            geometry.data.normals[..] = state.local_normals[..];
-            if (state.desc.tangent_frame) {
-                geometry.data.tangents[..] = state.local_tangents[..];
-                state.committed_tangents[..] = state.local_tangents[..];
-            }
-            geometry.data.bounds = state.local_bounds;
+        ClothSpans spans = state.spans;
+        copy_vertices(geometry.data.positions, state.local_output, spans.positions);
+        copy_vertices(geometry.data.normals, state.local_normals, spans.normals);
+        if (state.desc.tangent_frame) {
+            copy_vertices(geometry.data.tangents, state.local_tangents, spans.tangents);
+            state.committed_tangents[..] = state.local_tangents[..];
         }
-        if (colors_changed && state.staged_colors.len) {
-            geometry.data.colors[..] = state.staged_colors[..];
-        }
-        state.assets.mark_geometry_streams_dirty(
-            state.geometry,
-            {
-                .positions = changed,
-                .normals   = changed,
-                .tangents  = changed && state.desc.tangent_frame,
-                .colors    = colors_changed,
-            },
-        );
+        geometry.data.bounds = state.local_bounds;
+
+        mark_vertices(state, { .positions = true }, spans.positions);
+        mark_vertices(state, { .normals = true }, spans.normals);
+        mark_vertices(state, { .tangents = true }, spans.tangents);
     }
+    if (colors_changed && state.staged_colors.len) commit_color_publication(state);
     state.published_frame = world;
 }
 
-fn void? update_cloth(
+fn void commit_color_publication(ClothState* state) @private {
+    GeometryAsset* geometry = state.assets.geometry(state.geometry);
+    VertexRange span = differing_range(geometry.data.colors, state.staged_colors);
+    copy_vertices(geometry.data.colors, state.staged_colors, span);
+    mark_vertices(state, { .colors = true }, span);
+}
+
+macro void copy_vertices(target, source, VertexRange span) @local {
+    usz count = (usz)(span.end - span.first);
+    target[span.first:count] = source[span.first:count];
+}
+
+fn void mark_vertices(ClothState* state, GeometryStreams stream, VertexRange span) @local {
+    if (span.is_empty()) return;
+
+    state.assets.mark_geometry_range_dirty(state.geometry, stream, span.first, span.end - span.first);
+}
+
+fn ClothUpdateKind? update_cloth(
     PhysicsWorld* world,
     ClothState* state,
     Node* node,
+    bool held,
     uint steps,
     double* publication_seconds,
 ) @private {
+    if (held) {
+        state.contact_result = { .stage = ClothContactStage.PUBLICATION };
+        check_ordinary_output_ownership(world.scene, state, node)!;
+        sync_skinned_output(world.scene, state, node);
+        state.contact_result = {};
+        return HELD;
+    }
+
+    Wind* wind = world.scene.get(node, Wind);
+    if (is_quiescent(state)) {
+        bool disturbed = probe_ordinary_rest(
+            world: world,
+            state: state,
+            node:  node,
+            wind:  wind,
+        )!;
+        if (!disturbed) return RESTED;
+    }
+
     ClothState staged = staged_cloth(state);
     defer {
         state.contact_result = staged.contact_result;
@@ -223,6 +261,8 @@ fn void? update_cloth(
 
     staged.contact_result.stage = ClothContactStage.BINDINGS;
     refresh_colliders(world, &staged)!;
+    carry_waking_cloth(&staged, staged.skinned ? null : &node.world);
+    sample_bodies(world.scene, &staged);
     foreach (slot, pin : staged.pins) {
         staged.pin_anchors[slot] = staged.solved_reference[pin];
         staged.pin_targets[slot] = staged.current_reference[pin];
@@ -231,14 +271,13 @@ fn void? update_cloth(
         staged.soft_anchors[slot] = staged.solved_reference[attachment.particle];
         staged.soft_targets[slot] = staged.current_reference[attachment.particle];
     }
-    sample_bodies(world.scene, &staged);
 
     if (steps) {
         if (staged.desc.substeps > uint::max / steps) return c3d::CAPACITY_EXCEEDED~;
         solve_cloth(
             world: world,
             state: &staged,
-            wind: world.scene.get(node, Wind),
+            wind: wind,
             gravity: world.desc.tuning.gravity,
             step_dt: world.desc.tuning.fixed_dt,
             steps: steps,
@@ -258,6 +297,12 @@ fn void? update_cloth(
 
     staged.contact_result.stage = ClothContactStage.MATERIAL;
     stage_material_frames(&staged, changed)!;
+    note_settling(
+        world: world,
+        state: &staged,
+        wind:  wind,
+        steps: steps,
+    );
 
     if (staged.cut_applied_this_update) {
         staged.contact_result.stage = ClothContactStage.PUBLICATION;
@@ -269,15 +314,50 @@ fn void? update_cloth(
 
     commit_cloth(state, &staged);
     state.local_bounds = staged.local_bounds;
+    state.spans = staged.spans;
     commit_local_publication(state, node.world, changed);
-
-    if (state.skinned && world.scene.world.is_alive(state.output_node)) {
-        Node* out_node = world.scene.node(state.output_node);
-        out_node.layers = node.layers;
-        out_node.world = node.world;
-        out_node.visible_effective = node.visible_effective && out_node.visible;
-    }
+    sync_skinned_output(world.scene, state, node);
     staged.contact_result.stage = ClothContactStage.NONE;
+    return SIMULATED;
+}
+
+fn bool? probe_ordinary_rest(
+    PhysicsWorld* world,
+    ClothState* state,
+    Node* node,
+    Wind* wind,
+) @local {
+    ClothState probe = probe_cloth(state);
+    defer state.contact_result = probe.contact_result;
+
+    probe.contact_result.stage = ClothContactStage.PUBLICATION;
+    check_ordinary_output_ownership(world.scene, &probe, node)!;
+
+    probe.contact_result.stage = ClothContactStage.REFERENCE;
+    sample_ordinary_reference(
+        scene:  world.scene,
+        assets: world.assets,
+        owner:  node,
+        state:  &probe,
+    )!;
+
+    probe.contact_result.stage = ClothContactStage.BINDINGS;
+    refresh_colliders(world, &probe)!;
+    sample_bodies(world.scene, &probe);
+    if (rest_disturbed(world, &probe, wind)) return true;
+
+    probe.contact_result = {};
+    sync_skinned_output(world.scene, state, node);
+    return false;
+}
+
+fn void sync_skinned_output(Scene* scene, ClothState* state, Node* node) @local {
+    if (!state.skinned || !scene.world.is_alive(state.output_node)) return;
+
+    Node* out_node = scene.node(state.output_node);
+    out_node.layers = node.layers;
+    out_node.world = node.world;
+    out_node.visible_effective = node.visible_effective && out_node.visible;
 }
 
 fn void? reexpress_cloth(ClothState* state, Mat4 world) @private {

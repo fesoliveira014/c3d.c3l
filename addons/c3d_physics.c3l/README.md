@@ -124,9 +124,20 @@ Attach with `scene.add_cloth(&assets, node, desc)` and
 call `physics.update_cloths()` once after `physics.update`, after final ragdoll/IK poses and
 `scene.update_world()`, before rendering. See [Cloth](../../docs/cloth.md) for the contract,
 faults, frame order and usage; the `cloth` example includes flag, cape, external-contact,
-seamed-fold and fast-crossing scenes (`--scene flag|cape|both|contacts|fold|fast`). The manual Vulkan
-acceptance runs with
+seamed-fold, fast-crossing and flag-field scenes (`--scene flag|cape|both|contacts|fold|fast|field`).
+The manual Vulkan acceptance runs with
 `c3c test cloth_acceptance --path addons/c3d_physics.c3l/test/gpu`.
+
+A cloth whose free particles stay under `ClothDesc.sleep_speed` for `sleep_steps` simulated steps
+rests: it skips the solve and publication until a trigger wakes it (reference motion past
+`sleep_speed * fixed_dt`, a moving listed collider near the cloth, a `Wind` or gravity change, a cut
+request or `wake()`). `Cloth.sleep()` and `CrowdCloth.sleep_slot(slot)` hold a cloth instead; a held
+cloth ignores every trigger until `wake()` or `wake_slot(slot)`. Holds are meant for unseen cloth, because
+a held skinned cloth stays frozen in its owner's frame. A wake carries a cloth on a rigid owner by the
+owner's motion since its last publication, which keeps the drawn shape under rotation, and carries a
+skinned cloth or crowd slot particle by particle by its reference displacement. `Cloth.activity()` reports the state and `PhysicsWorld.cloth_stats`
+counts resting and held cloths. Publication marks only the changed vertex range of each stream, so
+resting cloth leaves the geometry revision untouched. Rest and hold state is not serialized.
 
 `ClothDesc.collisions` sets contact tolerance, iteration count and prepared shape,
 candidate and contact capacities. Native body/snapshot bindings are checked during updates;
@@ -152,10 +163,10 @@ move their rendered `Mesh` to an owned `ClothOutput` child on preparation (`clot
 crowd part batches with per-slot `ClothOutput` children while supporting per-particle reference
 `transport`. Use `scene.remove_cloth` and `scene.remove_crowd_cloth` (not `scene.remove_component`)
 to remove cloth components so the source `Mesh` or crowd batch is restored and generated
-`ClothOutput` children are deleted. Serialization stores `Cloth` in authoring version 7 (including `cuts` and `tears`) and
-`CrowdCloth` in authoring version 2, projecting the retained source `Mesh` of prepared skinned
+`ClothOutput` children are deleted. Serialization stores `Cloth` in authoring version 8 (including `cuts`, `tears`, `sleep_speed` and
+`sleep_steps`) and `CrowdCloth` in authoring version 3, projecting the retained source `Mesh` of prepared skinned
 cloths and omitting generated `ClothOutput` children; runtime buffers, cut state, contact results and
-histories are excluded. Older JSONC payloads default `cuts` to empty and `tears` to `default_cloth_tear_limits()` (`opening_iterations = 32`, `max_requests = 0`); Version-1..5 JSONC defaults `transport` to empty; Version-1..4 JSONC
+histories are excluded. Older JSONC payloads default `sleep_speed` to 0 and `sleep_steps` to 30, `cuts` to empty and `tears` to `default_cloth_tear_limits()` (`opening_iterations = 32`, `max_requests = 0`); Version-1..5 JSONC defaults `transport` to empty; Version-1..4 JSONC
 defaults the version-5 material, attachment and dihedral fields to empty/false/`DISTANCE`/`0`.
 Version-1/2/3 JSONC defaults continuous contact off and the CCD limit to 64. Version-1/2 also
 defaults self-contact off and seams empty; incompatible older binary layouts are rejected before

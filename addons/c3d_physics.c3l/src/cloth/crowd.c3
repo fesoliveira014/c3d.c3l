@@ -45,6 +45,7 @@ struct CrowdClothPart {
 <* Heap state of a CrowdCloth component. *>
 struct CrowdClothState {
     CrowdClothPart[] parts;
+    bool[]           held_slots; // runtime holds, one per crowd slot; never serialized
 }
 
 <* Multi-part cloth attachment on an AnimatedCrowd owner node. *>
@@ -205,9 +206,13 @@ fn void? Scene.attach_crowd_cloth(
     if (!self.has(owner, CrowdCloth)) {
         CrowdClothState* state = alloc::new_try(self.allocator, CrowdClothState) ?? c3d::CAPACITY_EXCEEDED~!;
         defer catch alloc::free(self.allocator, state);
+        bool[] held_slots = alloc::new_array_try(self.allocator, bool, (sz)crowd.placements.len)
+            ?? c3d::CAPACITY_EXCEEDED~!;
+        defer catch alloc::free(self.allocator, held_slots.ptr);
         CrowdClothPart[] parts = alloc::new_array_try(self.allocator, CrowdClothPart, 1) ?? c3d::CAPACITY_EXCEEDED~!;
         parts[0] = part_record;
         state.parts = parts;
+        state.held_slots = held_slots;
         self.add(owner, (CrowdCloth){ .state = state });
         return;
     }
@@ -354,6 +359,7 @@ fn void free_crowd_cloth(Entity entity, void* raw, void* user) @private {
         alloc::free(allocator, entry.authoring);
     }
     alloc::free(allocator, component.state.parts.ptr);
+    alloc::free(allocator, component.state.held_slots.ptr);
     alloc::free(allocator, component.state);
     *component = {};
 }
@@ -738,6 +744,7 @@ fn void? seed_crowd_slot_state(
     ClothState* state,
     uint slot,
 ) @local {
+    state.settle = {};
     if (state.cut_paths.len) {
         state.committed_edge_cut[..] = false;
         state.staged_edge_cut[..] = false;
@@ -838,10 +845,7 @@ fn void? seed_crowd_slot_state(
         body.published_observed = false;
     }
 
-    Vec4 instance_color = crowd.colors[slot];
-    foreach (vertex, base_color : part_record.source_colors) {
-        state.staged_colors[vertex] = base_color * instance_color;
-    }
+    fill_slot_colors(state, part_record, crowd.colors[slot]);
 }
 
 fn void deactivate_all_part_outputs(Scene* scene, CrowdClothPart* part_record) @local {
@@ -1039,9 +1043,25 @@ fn void update_crowd_cloths(PhysicsWorld* world, uint steps) @private {
                         continue;
                     }
 
+                    if (reseeded) component.state.held_slots[slot] = false;
+                    bool held = component.state.held_slots[slot];
+                    if (held) {
+                        sync_crowd_output(out_node, owner, batch_node);
+                        state.contact_result = {};
+                        tally_cloth(
+                            stats:               &world.cloth_stats,
+                            state:               state,
+                            kind:                ClothUpdateKind.HELD,
+                            total_seconds:       0,
+                            publication_seconds: 0,
+                        );
+                        continue;
+                    }
+
                     time::Clock started = clock::now();
                     double publication_seconds;
-                    if (catch excuse = update_crowd_slot(
+                    ClothUpdateKind kind = SIMULATED;
+                    ClothUpdateKind? updated = update_crowd_slot(
                         world:               world,
                         owner:               owner,
                         batch_node:          batch_node,
@@ -1055,9 +1075,10 @@ fn void update_crowd_cloths(PhysicsWorld* world, uint steps) @private {
                         steps:               steps,
                         reseeded:            reseeded,
                         publication_seconds: &publication_seconds,
-                    )) {
+                    );
+                    if (catch excuse = updated) {
                         state.contact_result.failure = excuse;
-                        if (!reseeded && excuse != OWNERSHIP_CHANGED) {
+                        if (!reseeded && excuse != OWNERSHIP_CHANGED && !state.settle.resting) {
                             time::Clock reexpression_start = clock::now();
                             if (catch reexpression_failure = reexpress_cloth(state, owner.world)) {
                                 state.contact_result.failure = reexpression_failure;
@@ -1066,22 +1087,16 @@ fn void update_crowd_cloths(PhysicsWorld* world, uint steps) @private {
                             publication_seconds += (clock::now() - reexpression_start).to_sec();
                         }
                         world.cloth_stats.failed++;
+                    } else {
+                        kind = updated;
                     }
 
-                    double total_seconds = (clock::now() - started).to_sec();
-                    world.cloth_stats.solve_seconds += math::max(0.0, total_seconds - publication_seconds);
-                    world.cloth_stats.publish_seconds += publication_seconds;
-                    world.cloth_stats.candidates += state.contact_result.candidates;
-                    world.cloth_stats.contacts += state.contact_result.contacts;
-                    world.cloth_stats.ccd_iterations += state.contact_result.ccd_iterations;
-                    world.cloth_stats.impacts += state.contact_result.impacts;
-                    world.cloth_stats.max_residual = math::max(
-                        world.cloth_stats.max_residual,
-                        state.contact_result.max_residual,
-                    );
-                    world.cloth_stats.particles += (uint)state.positions.len;
-                    world.cloth_stats.constraints += (uint)(
-                        state.edges.len + state.bends.len + state.hinges.len + state.soft_attachments.len
+                    tally_cloth(
+                        stats:               &world.cloth_stats,
+                        state:               state,
+                        kind:                kind,
+                        total_seconds:       (clock::now() - started).to_sec(),
+                        publication_seconds: publication_seconds,
                     );
                 }
             }
@@ -1089,7 +1104,7 @@ fn void update_crowd_cloths(PhysicsWorld* world, uint steps) @private {
     };
 }
 
-fn void? update_crowd_slot(
+fn ClothUpdateKind? update_crowd_slot(
     PhysicsWorld* world,
     Node* owner,
     Node* batch_node,
@@ -1126,6 +1141,28 @@ fn void? update_crowd_slot(
         out_mesh.reset_vertex_history();
     }
 
+    Wind* wind = scene.get(owner, Wind);
+    if (is_quiescent(state)) {
+        bool disturbed = probe_crowd_slot_rest(
+            world:       world,
+            owner:       owner,
+            crowd:       crowd,
+            part_record: part_record,
+            state:       state,
+            slot:        slot,
+            wind:        wind,
+        )!;
+        if (!disturbed) {
+            if (crowd.colors[slot] != part_record.published_colors[slot]) {
+                fill_slot_colors(state, part_record, crowd.colors[slot]);
+                commit_color_publication(state);
+                part_record.published_colors[slot] = crowd.colors[slot];
+            }
+            sync_crowd_output(out_node, owner, batch_node);
+            return RESTED;
+        }
+    }
+
     ClothState staged = staged_cloth(state);
     defer {
         state.contact_result = staged.contact_result;
@@ -1156,15 +1193,13 @@ fn void? update_crowd_slot(
     }
 
     bool colors_changed = reseeded || crowd.colors[slot] != part_record.published_colors[slot];
-    if (colors_changed && !reseeded) {
-        Vec4 instance_color = crowd.colors[slot];
-        foreach (vertex, base_color : part_record.source_colors) {
-            state.staged_colors[vertex] = base_color * instance_color;
-        }
-    }
+    if (colors_changed && !reseeded) fill_slot_colors(state, part_record, crowd.colors[slot]);
 
     staged.contact_result.stage = ClothContactStage.BINDINGS;
     refresh_colliders(world, &staged)!;
+    // The slot draws under the owner, which does not follow the placement that moves its reference.
+    carry_waking_cloth(&staged, null);
+    sample_bodies(scene, &staged);
     foreach (pin_slot, pin : staged.pins) {
         staged.pin_anchors[pin_slot] = staged.solved_reference[pin];
         staged.pin_targets[pin_slot] = staged.current_reference[pin];
@@ -1173,14 +1208,13 @@ fn void? update_crowd_slot(
         staged.soft_anchors[soft_slot] = staged.solved_reference[attachment.particle];
         staged.soft_targets[soft_slot] = staged.current_reference[attachment.particle];
     }
-    sample_bodies(scene, &staged);
 
     if (steps) {
         if (staged.desc.substeps > uint::max / steps) return c3d::CAPACITY_EXCEEDED~;
         solve_cloth(
             world:   world,
             state:   &staged,
-            wind:    scene.get(owner, Wind),
+            wind:    wind,
             gravity: world.desc.tuning.gravity,
             step_dt: world.desc.tuning.fixed_dt,
             steps:   steps,
@@ -1206,6 +1240,12 @@ fn void? update_crowd_slot(
 
     staged.contact_result.stage = ClothContactStage.MATERIAL;
     stage_material_frames(&staged, changed)!;
+    note_settling(
+        world: world,
+        state: &staged,
+        wind:  wind,
+        steps: steps,
+    );
 
     if (staged.cut_applied_this_update && !reseeded) {
         staged.contact_result.stage = ClothContactStage.PUBLICATION;
@@ -1214,6 +1254,7 @@ fn void? update_crowd_slot(
 
     commit_cloth(state, &staged);
     state.local_bounds = staged.local_bounds;
+    state.spans = staged.spans;
     commit_local_publication(
         state:          state,
         world:          owner.world,
@@ -1233,4 +1274,49 @@ fn void? update_crowd_slot(
     out_node.world = owner.world;
     out_node.visible_effective = owner.visible_effective && out_node.visible;
     staged.contact_result.stage = ClothContactStage.NONE;
+    return SIMULATED;
+}
+
+fn bool? probe_crowd_slot_rest(
+    PhysicsWorld* world,
+    Node* owner,
+    AnimatedCrowd* crowd,
+    CrowdClothPart* part_record,
+    ClothState* state,
+    uint slot,
+    Wind* wind,
+) @local {
+    ClothState probe = probe_cloth(state);
+    defer state.contact_result = probe.contact_result;
+
+    probe.contact_result.stage = ClothContactStage.REFERENCE;
+    sample_crowd_slot_reference(
+        assets:        world.assets,
+        owner:         owner,
+        crowd:         crowd,
+        part_record:   part_record,
+        state:         &probe,
+        slot:          slot,
+        out_reference: probe.current_reference,
+    )!;
+
+    probe.contact_result.stage = ClothContactStage.BINDINGS;
+    refresh_colliders(world, &probe)!;
+    sample_bodies(world.scene, &probe);
+    if (rest_disturbed(world, &probe, wind)) return true;
+
+    probe.contact_result = {};
+    return false;
+}
+
+fn void sync_crowd_output(Node* out_node, Node* owner, Node* batch_node) @local {
+    out_node.layers = batch_node.layers;
+    out_node.world = owner.world;
+    out_node.visible_effective = owner.visible_effective && out_node.visible;
+}
+
+fn void fill_slot_colors(ClothState* state, CrowdClothPart* part_record, Vec4 instance_color) @local {
+    foreach (vertex, base_color : part_record.source_colors) {
+        state.staged_colors[vertex] = base_color * instance_color;
+    }
 }

@@ -24,6 +24,8 @@ const float DEFAULT_CLOTH_DAMPING = 0.5f; // about 40% of velocity lost per seco
 const float DEFAULT_CLOTH_THICKNESS = 0.01f; // keeps particles off contact surfaces; larger values show a visible gap
 <* Maximum listed contact owners for one cloth. *>
 const uint MAX_CLOTH_COLLIDERS = 32; // bounds owner resolution; leaf storage has its own configured capacity
+<* Consecutive slow simulated steps before a cloth rests. *>
+const uint DEFAULT_CLOTH_SLEEP_STEPS = 30; // half a second at 60 Hz; fewer steps rest cloth that is only pausing
 
 <* Source vertex equivalence used only for self-contact exclusions. *>
 struct ClothSeam {
@@ -56,6 +58,8 @@ struct ClothDesc {
     float[]           transport;
     ClothCutPath[]    cuts;
     ClothTearLimits   tears;
+    float             sleep_speed; // m/s; a cloth whose fastest particle stays under it rests; 0 never rests (default)
+    uint              sleep_steps; // consecutive simulated steps under sleep_speed before resting (default 30)
 }
 
 <* Last cloth update's CPU solve and publication costs. *>
@@ -65,6 +69,8 @@ struct ClothStats {
     uint   particles;
     uint   constraints;
     uint   pending;
+    uint   resting;
+    uint   held;
     uint   failed;
     uint   candidates;
     uint   contacts;
@@ -104,9 +110,11 @@ struct ClothBody {
     maths::Transform solved;   // pose of the last solved substep
     maths::Transform current;  // pose sampled by the current update
     maths::Transform published; // pose used by the last accepted publication
+    maths::Transform rested;    // pose recorded when the cloth began resting
     bool             live;     // owner alive with a built body this update
     bool             observed; // solved holds a pose sampled since the owner was last live
     bool             published_observed;
+    bool             rested_live; // owner had a built body when the cloth began resting
 }
 
 <* Library-owned simulation state; its arrays are borrowed by readers. *>
@@ -270,6 +278,8 @@ struct ClothState {
     ClothCutResult[]     staged_cut_results;
     uint[]               pending_requests;
     uint                 pending_request_count;
+    ClothSettle          settle;
+    ClothSpans           spans;
     uint[]               selected_paths_scratch;
     uint[]               sector_scratch;
     uint[]               sector_root_scratch;
@@ -286,6 +296,7 @@ struct ClothState {
 <* Retained source and settings; owned arrays are read-only. *>
 struct ClothAuthoring {
     ClothDesc   desc;
+    bool        held; // runtime hold; never serialized
     GeometryId  source;
     uint        source_revision;
     bool        source_vertex_motion;
@@ -772,17 +783,21 @@ fn void PhysicsWorld.update_cloths(&self) {
         } else {
             ClothState* state = component.state;
             Node* node = self.scene.node(entity);
+            bool held = component.authoring.held;
             time::Clock started = clock::now();
             double publication_seconds;
-            if (catch excuse = update_cloth(
-                world: self,
-                state: state,
-                node: node,
-                steps: steps,
+            ClothUpdateKind kind = SIMULATED;
+            ClothUpdateKind? updated = update_cloth(
+                world:               self,
+                state:               state,
+                node:                node,
+                held:                held,
+                steps:               steps,
                 publication_seconds: &publication_seconds,
-            )) {
+            );
+            if (catch excuse = updated) {
                 state.contact_result.failure = excuse;
-                if (excuse != OWNERSHIP_CHANGED) {
+                if (excuse != OWNERSHIP_CHANGED && !held && !state.settle.resting) {
                     time::Clock reexpression_start = clock::now();
                     if (catch reexpression_failure = reexpress_cloth(state, node.world)) {
                         state.contact_result.failure = reexpression_failure;
@@ -791,19 +806,16 @@ fn void PhysicsWorld.update_cloths(&self) {
                     publication_seconds += (clock::now() - reexpression_start).to_sec();
                 }
                 self.cloth_stats.failed++;
+            } else {
+                kind = updated;
             }
 
-            double total_seconds = (clock::now() - started).to_sec();
-            self.cloth_stats.solve_seconds += math::max(0.0, total_seconds - publication_seconds);
-            self.cloth_stats.publish_seconds += publication_seconds;
-            self.cloth_stats.candidates += state.contact_result.candidates;
-            self.cloth_stats.contacts += state.contact_result.contacts;
-            self.cloth_stats.ccd_iterations += state.contact_result.ccd_iterations;
-            self.cloth_stats.impacts += state.contact_result.impacts;
-            self.cloth_stats.max_residual = math::max(self.cloth_stats.max_residual, state.contact_result.max_residual);
-            self.cloth_stats.particles += (uint)state.positions.len;
-            self.cloth_stats.constraints += (uint)(
-                state.edges.len + state.bends.len + state.hinges.len + state.soft_attachments.len
+            tally_cloth(
+                stats:               &self.cloth_stats,
+                state:               state,
+                kind:                kind,
+                total_seconds:       (clock::now() - started).to_sec(),
+                publication_seconds: publication_seconds,
             );
         }
     };
@@ -836,11 +848,13 @@ fn void ClothState.shift_origin(&self, Vec3 offset) {
         body.solved.position -= offset;
         body.current.position -= offset;
         body.published.position -= offset;
+        body.rested.position -= offset;
     }
     foreach (&body : self.staged_bodies) {
         body.solved.position -= offset;
         body.current.position -= offset;
         body.published.position -= offset;
+        body.rested.position -= offset;
     }
     foreach (&position : self.sweep_start) *position -= offset;
     foreach (&bounds : self.sweep_bounds) {
@@ -891,6 +905,7 @@ fn ClothDesc default_cloth_desc() {
         .gravity_scale     = 1,
         .collisions        = default_cloth_collision_desc(),
         .tears             = default_cloth_tear_limits(),
+        .sleep_steps       = DEFAULT_CLOTH_SLEEP_STEPS,
     };
 }
 

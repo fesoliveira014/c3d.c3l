@@ -50,6 +50,8 @@ fn Node* add_cloth_fixture(Fixture* fixture, uint candidate_capacity = 2048) @pr
     desc.gravity_scale = 0.2f;
     desc.collide_ground = true;
     desc.ground_height = -3;
+    desc.sleep_speed = 0.35f;
+    desc.sleep_steps = 17;
     desc.collisions = {
         .contact_tolerance = 0.0002f,
         .contact_iterations = 12,
@@ -90,7 +92,9 @@ fn char[] prior_cloth_text(String text, uint version) @private {
             ? "\"render_particles\""
             : version == 5
               ? "\"transport\""
-              : "\"cuts\"";
+              : version == 6
+                ? "\"cuts\""
+                : "\"sleep_speed\"";
     sz field_start = text.index_of(first_field)!!;
     sz fields_start = text[:field_start].rindex_of_char(',')!!;
     sz tears_field = text.index_of("\"tears\"")!!;
@@ -104,7 +108,7 @@ fn char[] prior_cloth_text(String text, uint version) @private {
     sz version_start = cloth_start + ((String)legacy[cloth_start..]).index_of("\"version\"")!!;
     sz version_value = version_start + ((String)legacy[version_start..]).index_of_char(':')!! + 1;
     while (legacy[version_value] == ' ') version_value++;
-    assert(legacy[version_value] == '7');
+    assert(legacy[version_value] == '8');
     legacy[version_value] = (char)('0' + version);
     return legacy;
 }
@@ -161,6 +165,7 @@ fn void test_cloth_both_formats_preserve_source_authoring_and_restore_pending() 
             assert(owner.authoring.desc.colliders.len == 1);
             assert(fixture.destination.node(owner.authoring.desc.colliders[0]).name == "contact");
             assert(owner.authoring.desc.gravity_scale == 0.2f && owner.authoring.desc.ground_height == -3);
+            assert(owner.authoring.desc.sleep_speed == 0.35f && owner.authoring.desc.sleep_steps == 17);
             ClothCollisionDesc collisions = owner.authoring.desc.collisions;
             assert(collisions.self_collision);
             assert(collisions.continuous && collisions.max_ccd_iterations == 96);
@@ -270,7 +275,7 @@ fn void test_cloth_late_authoring_copy_failure_rolls_back_body_and_mesh() @test 
 }
 
 fn void test_cloth_prior_text_defaults_contacts_and_prior_binary_is_unsupported() @test {
-    foreach (version : (uint[6]){ 1, 2, 3, 4, 5, 6 }) @pool() {
+    foreach (version : (uint[7]){ 1, 2, 3, 4, 5, 6, 7 }) @pool() {
         Fixture fixture;
         create_fixture(&fixture);
         defer destroy_fixture(&fixture);
@@ -288,6 +293,7 @@ fn void test_cloth_prior_text_defaults_contacts_and_prior_binary_is_unsupported(
         ClothCollisionDesc defaults = cloth::default_cloth_collision_desc();
         assert(!owner.is_prepared() && owner.state == null);
         assert(!owner.authoring.desc.cuts.len);
+        assert(owner.authoring.desc.sleep_speed == 0 && owner.authoring.desc.sleep_steps == cloth::DEFAULT_CLOTH_SLEEP_STEPS);
         assert(owner.authoring.desc.tears.opening_iterations == cloth::DEFAULT_OPENING_ITERATIONS);
         assert(!owner.authoring.desc.transport.len);
         assert(!owner.authoring.desc.render_particles.len && !owner.authoring.desc.tangent_frame && owner.authoring.desc.tangent_uv_set == 0);
@@ -324,7 +330,7 @@ fn void test_cloth_prior_text_defaults_contacts_and_prior_binary_is_unsupported(
             text_mode: false,
         )!!;
         sz type_version = ((String)binary).index_of("cloth")!! + "cloth".len;
-        assert(binary[type_version] == 7);
+        assert(binary[type_version] == 8);
         binary[type_version] = (char)version;
         uint before = fixture.destination.world.entities.free_count;
         uint geometries = fixture.assets.geometries.free_count;
@@ -551,7 +557,25 @@ fn void test_skinned_cloth_and_crowd_cloth_round_trip_and_reject_orphan_output()
     };
 }
 
-fn void test_cloth_v7_cuts_and_crowd_v2_round_trip_and_restart_intact() @test {
+fn char[] prior_crowd_text(String text, String first_field, uint version) @private {
+    sz crowd_start = text.index_of("\"crowd_cloth\"")!!;
+    sz field_start = crowd_start + text[crowd_start..].index_of(first_field)!!;
+    sz fields_start = text[:field_start].rindex_of_char(',')!!;
+    sz last_field = field_start + text[field_start..].index_of("\"sleep_steps\"")!!;
+    sz fields_end = last_field + text[last_field..].index_of_char('}')!!;
+    char[] legacy = alloc::new_array(tmem, char, text.len - (fields_end - fields_start));
+    legacy[:fields_start] = ((char[])text[:fields_start])[..];
+    legacy[fields_start..] = ((char[])text[fields_end..])[..];
+
+    sz version_field = crowd_start + ((String)legacy[crowd_start..]).index_of("\"version\"")!!;
+    sz version_value = version_field + ((String)legacy[version_field..]).index_of_char(':')!! + 1;
+    while (legacy[version_value] == ' ') version_value++;
+    assert(legacy[version_value] == '3');
+    legacy[version_value] = (char)('0' + version);
+    return legacy;
+}
+
+fn void test_cloth_v8_cuts_and_crowd_v3_round_trip_and_restart_intact() @test {
     foreach (text_mode : (bool[2]){ false, true }) @pool() {
         Fixture fixture;
         create_fixture(&fixture);
@@ -594,6 +618,8 @@ fn void test_cloth_v7_cuts_and_crowd_v2_round_trip_and_restart_intact() @test {
         };
         desc.collisions.self_collision = true;
         desc.collisions.continuous = true;
+        desc.sleep_speed = 0.35f;
+        desc.sleep_steps = 17;
 
         Node* node = fixture.source.add_mesh(
             geometry: patch_id,
@@ -673,6 +699,10 @@ fn void test_cloth_v7_cuts_and_crowd_v2_round_trip_and_restart_intact() @test {
         assert(restored_cloth.authoring.desc.cuts[0].vertices == cut_vertices[..]);
         assert(restored_cloth.authoring.desc.cuts[0].strain_trigger && restored_cloth.authoring.desc.cuts[0].strain_threshold == 0.25f);
         assert(restored_cloth.authoring.desc.tears.max_requests == 2 && restored_cloth.authoring.desc.tears.opening_iterations == 32);
+        assert(restored_cloth.authoring.desc.sleep_speed == 0.35f && restored_cloth.authoring.desc.sleep_steps == 17);
+        CrowdCloth* restored_crowd = fixture.destination.get(child_named(restored, "tear_crowd"), CrowdCloth);
+        ClothDesc restored_crowd_desc = restored_crowd.find_part(0)!!.authoring.desc;
+        assert(restored_crowd_desc.sleep_speed == 0.35f && restored_crowd_desc.sleep_steps == 17);
 
         PhysicsWorld restored_world = create_world(&fixture.destination, &fixture.assets);
         defer physics::destroy_physics_world(&restored_world);
@@ -690,28 +720,20 @@ fn void test_cloth_v7_cuts_and_crowd_v2_round_trip_and_restart_intact() @test {
 
         if (text_mode) {
             String full_text = (String)pending_bytes;
-            sz crowd_start = full_text.index_of("\"crowd_cloth\"")!!;
-            sz cuts_field = crowd_start + full_text[crowd_start..].index_of("\"cuts\"")!!;
-            sz fields_start = full_text[:cuts_field].rindex_of_char(',')!!;
-            sz tears_field = cuts_field + full_text[cuts_field..].index_of("\"tears\"")!!;
-            sz fields_end = tears_field + full_text[tears_field..].index_of_char('}')!! + 1;
-            char[] v1_text = alloc::new_array(tmem, char, full_text.len - (fields_end - fields_start));
-            v1_text[:fields_start] = ((char[])full_text[:fields_start])[..];
-            v1_text[fields_start..] = ((char[])full_text[fields_end..])[..];
-
-            sz version_field = crowd_start + ((String)v1_text[crowd_start..]).index_of("\"version\"")!!;
-            sz version_value = version_field + ((String)v1_text[version_field..]).index_of_char(':')!! + 1;
-            while (v1_text[version_value] == ' ') version_value++;
-            assert(v1_text[version_value] == '2');
-            v1_text[version_value] = '1';
-
-            Node* v1_restored = decode(&fixture, v1_text, true)!!;
-            CrowdCloth* v1_crowd = fixture.destination.get(child_named(v1_restored, "tear_crowd"), CrowdCloth);
-            ClothDesc v1_desc = v1_crowd.find_part(0)!!.authoring.desc;
-            ClothTearLimits default_tears = cloth::default_cloth_tear_limits();
-            assert(!v1_desc.cuts.len);
-            assert(v1_desc.tears.max_requests == default_tears.max_requests);
-            assert(v1_desc.tears.opening_iterations == default_tears.opening_iterations);
+            foreach (version : (uint[2]){ 1, 2 }) {
+                String first_field = version == 1 ? "\"cuts\"" : "\"sleep_speed\"";
+                char[] prior_text = prior_crowd_text(full_text, first_field, version);
+                Node* prior_restored = decode(&fixture, prior_text, true)!!;
+                CrowdCloth* prior_crowd = fixture.destination.get(child_named(prior_restored, "tear_crowd"), CrowdCloth);
+                ClothDesc prior_desc = prior_crowd.find_part(0)!!.authoring.desc;
+                assert(prior_desc.sleep_speed == 0 && prior_desc.sleep_steps == cloth::DEFAULT_CLOTH_SLEEP_STEPS);
+                if (version == 2) {
+                    assert(prior_desc.cuts.len == 1 && prior_desc.tears.max_requests == 2);
+                } else {
+                    assert(!prior_desc.cuts.len);
+                    assert(prior_desc.tears.max_requests == cloth::default_cloth_tear_limits().max_requests);
+                }
+            }
         }
     };
 }
