@@ -134,6 +134,15 @@ payload consumption; it does not attach components or invoke owner validation.
 All acquisitions, including partial failed reads, are released when the outer
 read exits.
 
+A `BinaryCompatibility` entry names either a `read` callback or an `older`
+described type with an `upgrade` callback. An upgrade entry decodes the stored
+payload as the older shape, fills a current-shape value from the type defaults and
+copies the older fields into it. `ReadContext.authored` of an entry's component
+then returns the upgraded value, so owner validation sees the same shape for
+current and older entries. The upgraded value borrows from the read context like
+any decoded value. Mesh version 1, InstancedMesh version 1 and LodGroup versions
+1 and 2 use upgrade entries.
+
 Finite floats/doubles preserve their bits with nine/seventeen significant digits
 and direct conversion into the destination width. Negative zero is `-0.0`.
 Non-finite values use `"f32:xxxxxxxx"` or `"f64:xxxxxxxxxxxxxxxx"`, fixed-width

@@ -112,13 +112,13 @@ struct LodAuthoring @private {
 }
 
 BinaryCompatibility[1] instances_binary_compatibility @local = {
-    { .version = 1, .read = &read_instances_v1 },
+    { .version = 1, .older = InstanceAuthoringV1::typeid, .upgrade = &upgrade_instances_v1 },
 };
 uint[1] instances_text_default_versions @local = { 1 };
 
 BinaryCompatibility[2] lod_binary_compatibility @local = {
-    { .version = 1, .read = &read_lod_v1 },
-    { .version = 2, .read = &read_lod_v2 },
+    { .version = 1, .older = LodAuthoringV1::typeid, .upgrade = &upgrade_lod_v1 },
+    { .version = 2, .older = LodAuthoringV2::typeid, .upgrade = &upgrade_lod_v2 },
 };
 uint[2] lod_text_default_versions @local = { 1, 2 };
 
@@ -430,20 +430,9 @@ fn AnimatedLodDescAuthoring? project_animated_lod(LodGroupState* state, WriteCon
     };
 }
 
-fn void? read_instances_v1(Reader* reader, ReadContext* context) @local {
-    InstanceAuthoringV1 legacy;
-    Acquisitions owned = { .allocator = context.allocator };
-    defer owned.release();
-
-    read_described_value(
-        type: described_type(InstanceAuthoringV1)!,
-        reader: reader,
-        context: context,
-        owned: &owned,
-        value: &legacy,
-    )!;
-
-    InstanceAuthoring source = {
+fn void? upgrade_instances_v1(void* older, void* current, ReadContext* context) @local {
+    InstanceAuthoringV1* legacy = older;
+    *(InstanceAuthoring*)current = {
         .geometry = legacy.geometry,
         .material = legacy.material,
         .capacity = legacy.capacity,
@@ -457,8 +446,6 @@ fn void? read_instances_v1(Reader* reader, ReadContext* context) @local {
         .sway = legacy.sway,
         .fade = legacy.fade,
     };
-
-    attach_instances(&source, context)!;
 }
 
 fn LodEffects lod_effects_from_v1(LodEffectsV1 legacy) @local {
@@ -471,20 +458,9 @@ fn LodEffects lod_effects_from_v1(LodEffectsV1 legacy) @local {
     };
 }
 
-fn void? read_lod_v2(Reader* reader, ReadContext* context) @local {
-    LodAuthoringV2 legacy;
-    Acquisitions owned = { .allocator = context.allocator };
-    defer owned.release();
-
-    read_described_value(
-        type: described_type(LodAuthoringV2)!,
-        reader: reader,
-        context: context,
-        owned: &owned,
-        value: &legacy,
-    )!;
-
-    LodAuthoring source = {
+fn void? upgrade_lod_v2(void* older, void* current, ReadContext* context) @local {
+    LodAuthoringV2* legacy = older;
+    *(LodAuthoring*)current = {
         .desc = legacy.desc,
         .mode = legacy.mode,
         .capacity = legacy.capacity,
@@ -497,24 +473,11 @@ fn void? read_lod_v2(Reader* reader, ReadContext* context) @local {
         .animated = legacy.animated,
         .animated_desc = legacy.animated_desc,
     };
-
-    attach_lod(&source, context)!;
 }
 
-fn void? read_lod_v1(Reader* reader, ReadContext* context) @local {
-    LodAuthoringV1 legacy;
-    Acquisitions owned = { .allocator = context.allocator };
-    defer owned.release();
-
-    read_described_value(
-        type: described_type(LodAuthoringV1)!,
-        reader: reader,
-        context: context,
-        owned: &owned,
-        value: &legacy,
-    )!;
-
-    LodAuthoring source = {
+fn void? upgrade_lod_v1(void* older, void* current, ReadContext* context) @local {
+    LodAuthoringV1* legacy = older;
+    *(LodAuthoring*)current = {
         .desc = legacy.desc,
         .mode = legacy.mode,
         .capacity = legacy.capacity,
@@ -525,6 +488,4 @@ fn void? read_lod_v1(Reader* reader, ReadContext* context) @local {
         .impostor = legacy.impostor,
         .impostor_min_screen_size = legacy.impostor_min_screen_size,
     };
-
-    attach_lod(&source, context)!;
 }

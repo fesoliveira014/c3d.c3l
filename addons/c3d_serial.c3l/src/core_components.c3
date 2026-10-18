@@ -52,7 +52,7 @@ BinaryCompatibility[2] light_binary_compatibility @local = {
 uint[2] light_text_default_versions @local = { 1, 2 };
 
 BinaryCompatibility[1] mesh_binary_compatibility @local = {
-    { .version = 1, .read = &read_mesh_v1 },
+    { .version = 1, .older = MeshV1::typeid, .upgrade = &upgrade_mesh_v1 },
 };
 uint[1] mesh_text_default_versions @local = { 1 };
 
@@ -258,19 +258,9 @@ fn void? attach_mesh(void* value, ReadContext* context) @local {
     context.scene.add(context.node, mesh);
 }
 
-fn void? read_mesh_v1(Reader* reader, ReadContext* context) @local {
-    MeshV1 legacy;
-    Acquisitions owned = { .allocator = context.allocator };
-    defer owned.release();
-    read_described_value(
-        type: described_type(MeshV1)!,
-        reader: reader,
-        context: context,
-        owned: &owned,
-        value: &legacy,
-    )!;
-
-    Mesh mesh = {
+fn void? upgrade_mesh_v1(void* older, void* current, ReadContext* context) @local {
+    MeshV1* legacy = older;
+    *(Mesh*)current = {
         .geometry = legacy.geometry,
         .material = legacy.material,
         .cast_shadow = legacy.cast_shadow,
@@ -281,7 +271,6 @@ fn void? read_mesh_v1(Reader* reader, ReadContext* context) @local {
         .local_bounds = legacy.local_bounds,
         .vertex_motion = legacy.vertex_motion,
     };
-    attach_mesh(&mesh, context)!;
 }
 
 fn void? project_mesh(void* component, void* value, WriteContext* context) @local {

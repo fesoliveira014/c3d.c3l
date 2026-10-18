@@ -25,7 +25,6 @@ struct ReadAuthoringIndex @private {
 
 <*
  Borrow another component's decoded authoring before attachment.
- @param $Authoring : "The current shape, or an older shape a compatibility reader covers."
  @param node : "Node from this document's resolved references."
  @return "Read-only borrow, or null for an absent component."
  @return? c3d::INVALID_ID, c3d::UNSUPPORTED, c3d::ASSET_FORMAT_ERROR, c3d::CAPACITY_EXCEEDED
@@ -72,13 +71,8 @@ fn void*? read_component_authoring(
     ReadAuthoring* entry = find_read_authoring(context, record, slot);
     if (entry) {
         DescribedBinding* binding = codecs[slot].described;
-        if (!binding) return c3d::UNSUPPORTED~;
-
-        bool current = binding.type.descriptor.identity == identity;
-        if (entry.value) return current ? entry.value : c3d::UNSUPPORTED~;
-
-        DescribedType* type = current ? binding.type : older_authoring_type(binding, identity, entry.version)!;
-        if (current && entry.version != type.version) return c3d::UNSUPPORTED~;
+        if (!binding || binding.type.descriptor.identity != identity) return c3d::UNSUPPORTED~;
+        if (entry.value) return entry.value;
 
         ReadContext previous = *context;
         defer *context = previous;
@@ -86,32 +80,53 @@ fn void*? read_component_authoring(
         context.record = entry.record;
         context.slot = slot;
         context.version = entry.version;
-        void* value = context.read_owned.acquire(1, type.descriptor.size, type.descriptor.alignment)!;
-        Reader reader = reader_over(entry.bytes);
-        if (catch excuse = read_described_value(
-            type: type,
-            reader: &reader,
-            context: context,
-            owned: context.read_owned,
-            value: value,
-        )) return component_diagnostic(
-            diagnostic: context.diagnostic,
-            record: entry.record,
-            type_name: binding.codec.name,
-            cause: excuse,
-        )~;
-        // An older shape is decoded on each request: the attachment reads the cached current shape only.
-        if (current) entry.value = value;
+        void* value;
+        if (entry.version == binding.type.version) {
+            value = decode_authoring(context, entry, binding.type, binding)!;
+        } else {
+            value = upgrade_authoring(context, entry, binding)!;
+        }
+        entry.value = value;
         return value;
     }
     return (void*)null;
 }
 
-// The registered shape a compatibility reader of the binding covers at the version, which a caller may borrow.
-fn DescribedType*? older_authoring_type(DescribedBinding* binding, typeid identity, uint version) @local {
-    DescribedType* older = find_described_type(identity)!;
+fn void*? decode_authoring(
+    ReadContext* context,
+    ReadAuthoring* entry,
+    DescribedType* type,
+    DescribedBinding* binding,
+) @local {
+    void* value = context.read_owned.acquire(1, type.descriptor.size, type.descriptor.alignment)!;
+    Reader reader = reader_over(entry.bytes);
+    if (catch excuse = read_described_value(
+        type: type,
+        reader: &reader,
+        context: context,
+        owned: context.read_owned,
+        value: value,
+    )) return component_diagnostic(
+        diagnostic: context.diagnostic,
+        record: entry.record,
+        type_name: binding.codec.name,
+        cause: excuse,
+    )~;
+    return value;
+}
+
+// An older entry becomes the current shape when a compatibility entry names its shape and an upgrade.
+fn void*? upgrade_authoring(ReadContext* context, ReadAuthoring* entry, DescribedBinding* binding) @local {
     foreach (compatibility : binding.codec.binary_compatibility) {
-        if (compatibility.version == version && older.version == version) return older;
+        if (compatibility.version != entry.version || !compatibility.upgrade) continue;
+
+        DescribedType* older = find_described_type(compatibility.older)!;
+        void* before = decode_authoring(context, entry, older, binding)!;
+        DescribedType* type = binding.type;
+        void* current = context.read_owned.acquire(1, type.descriptor.size, type.descriptor.alignment)!;
+        type.defaults(current);
+        compatibility.upgrade(before, current, context)!;
+        return current;
     }
     return c3d::UNSUPPORTED~;
 }

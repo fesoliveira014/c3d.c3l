@@ -30,10 +30,24 @@ alias AttachFn = fn void? (void* value, ReadContext* context);
 *>
 alias ValidateFn = fn void? (void* value, ReadContext* context);
 
-<* Explicit reader for one older component payload version. *>
+<*
+ Upgrade a decoded older authoring shape into the current one.
+ @param [&in] older : "Decoded older shape; arrays borrow the read context."
+ @param [&out] current : "Starts at the current shape's defaults."
+ @param [&inout] context : "Resolves assets and node references."
+ @return "Success or the fault of an invalid older value."
+*>
+alias UpgradeFn = fn void? (void* older, void* current, ReadContext* context);
+
+<*
+ One older component payload version, read by a reader or upgraded from its shape.
+ An upgrade names a registered older shape; authored borrows and attachment then see the current shape.
+*>
 struct BinaryCompatibility {
     uint version;
     ReadFn read;
+    typeid older;
+    UpgradeFn upgrade;
 }
 
 <* Portable identity and attachment of a described component. *>
@@ -100,9 +114,12 @@ fn void? register_described_binding(
         if (entry.codec.name == codec.name && index != slot) return c3d::INVALID_ARGUMENT~;
     }
     foreach (index, compatibility : codec.binary_compatibility) {
-        if (!compatibility.version || compatibility.version >= type.version || !compatibility.read) {
+        bool upgrades = (bool)compatibility.older && compatibility.upgrade;
+        bool partial = (bool)compatibility.older != (compatibility.upgrade != null);
+        if (!compatibility.version || compatibility.version >= type.version || partial) {
             return c3d::INVALID_ARGUMENT~;
         }
+        if (compatibility.read ? upgrades : !upgrades) return c3d::INVALID_ARGUMENT~;
         foreach (previous : codec.binary_compatibility[:index]) {
             if (previous.version == compatibility.version) return c3d::INVALID_ARGUMENT~;
         }
@@ -159,7 +176,18 @@ fn void? read_described_component(Reader* reader, ReadContext* context) @local {
     DescribedBinding* binding = codecs[context.slot].described;
     if (context.version != binding.type.version) {
         foreach (compatibility : binding.codec.binary_compatibility) {
-            if (compatibility.version == context.version) return compatibility.read(reader, context);
+            if (compatibility.version != context.version) continue;
+            if (compatibility.read) return compatibility.read(reader, context);
+
+            void* value = read_component_authoring(
+                context:  context,
+                entity:   context.node.id,
+                slot:     context.slot,
+                identity: binding.type.descriptor.identity,
+            )!;
+            reader.offset = reader.bytes.len;
+            if (binding.codec.validate) binding.codec.validate(value, context)!;
+            return binding.codec.attach(value, context);
         }
         return c3d::UNSUPPORTED~;
     }
