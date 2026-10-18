@@ -121,33 +121,43 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture, bool full
             );
         }
 
+        TextureRegion[material::TEXTURE_MIP_CAPACITY] regions;
+        bool regional = reuse && same_chain
+            && texture_regions_stageable(
+                renderer: renderer,
+                record:   record,
+                mirror:   mirror,
+                regions:  regions[..],
+            );
         TextureMipChain chain;
         TextureMipLayout layout;
 
-        switch (record.source_kind) {
-            case MIP_ZERO:
-                chain = create_texture_mips(
-                    allocator: tmem,
-                    desc: desc,
-                    pixels: record.pixels,
-                    first_mip: base,
-                )!;
-                layout = {
-                    .total_bytes = chain.pixels.len,
-                    .mip_count = chain.mip_count,
-                    .layer_count = chain.layer_count,
-                    .offsets = chain.offsets,
-                };
+        if (!regional) {
+            switch (record.source_kind) {
+                case MIP_ZERO:
+                    chain = create_texture_mips(
+                        allocator: tmem,
+                        desc: desc,
+                        pixels: record.pixels,
+                        first_mip: base,
+                    )!;
+                    layout = {
+                        .total_bytes = chain.pixels.len,
+                        .mip_count = chain.mip_count,
+                        .layer_count = chain.layer_count,
+                        .offsets = chain.offsets,
+                    };
 
-            case SUPPLIED_MIPS:
-                layout = supplied_texture_mip_layout(desc, record.supplied_mips, first_mip: base)!;
+                case SUPPLIED_MIPS:
+                    layout = supplied_texture_mip_layout(desc, record.supplied_mips, first_mip: base)!;
 
-            case EMPTY:
-                layout = { .mip_count = desc.mip_levels, .layer_count = desc.layers };
+                case EMPTY:
+                    layout = { .mip_count = desc.mip_levels, .layer_count = desc.layers };
+            }
         }
 
         defer {
-            if (record.source_kind == TextureSourceKind.MIP_ZERO) destroy_texture_mips(&chain);
+            if (!regional && record.source_kind == TextureSourceKind.MIP_ZERO) destroy_texture_mips(&chain);
         }
 
         uint mip_count = description.mip_levels;
@@ -206,7 +216,15 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture, bool full
             .before = mirror.state,
         };
 
-        if (layout.total_bytes) {
+        if (regional) {
+            stage_texture_regions(
+                renderer: renderer,
+                record:   record,
+                pending:  &pending,
+                regions:  regions[..],
+                base:     base,
+            )!;
+        } else if (layout.total_bytes) {
             Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
             gpu::MappedGpuSpan staging = slot.upload.take(&renderer.device, layout.total_bytes, UPLOAD_RING_ALIGNMENT)!;
 
