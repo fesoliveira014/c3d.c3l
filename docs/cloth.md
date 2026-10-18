@@ -592,7 +592,7 @@ python scripts/build.py --example cloth
 addons/c3d_physics.c3l/build/cloth.exe [--scene flag|cape|both|contacts|fold|fast|field|crowd] [--count 64] [--workers 4] [--hold] [--still] [--frames 300]
 c3c build cloth --path addons/c3d_physics.c3l -O3
 addons/c3d_physics.c3l/build/cloth.exe --benchmark --scene flag|cape|both|contacts|fold|fast|field|crowd [--count 64] [--workers 4] [--hold] [--still] [--ragdoll] [--publish whole|streams]
-addons/c3d_physics.c3l/build/cloth.exe --benchmark --cpu-only --scene flag|field|crowd [--count 100] [--workers 4]
+addons/c3d_physics.c3l/build/cloth.exe --benchmark --cpu-only --scene flag|field|crowd [--count 100] [--workers 4] [--cells 32]
 addons/c3d_physics.c3l/build/cloth.exe --benchmark --trace software|hardware [--validation]
 ```
 
@@ -636,7 +636,7 @@ template: the example adds the cape as a rigid mesh part on the `DEF-spine.003` 
 `CrowdCloth` simulates it per slot with the top row pinned and distance bending. The benchmark prints the
 mean and 95th-percentile staging and commit wall times beside the summed solve time, and the bytes of all
 cloth states. `--cpu-only` steps the scene without a renderer, which keeps rasteriser threads from competing
-with the job pool.
+with the job pool. `--cells N` sets the benchmark flag's cells per side (default 32).
 
 The `fast` scene rotates a thin box by 90 degrees and translates it in one fixed step
 through a small cloth patch. Continuous and self-contact are enabled. It uses one
