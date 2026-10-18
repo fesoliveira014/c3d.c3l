@@ -14,7 +14,7 @@ const uint  WINDOW_CELLS @private = 32;
 const uint  FLAT_SAMPLES @private = 17; // 16 cells, two 8-cell windows along each axis
 const uint  FLAT_WINDOW_CELLS @private = 8;
 const float HEIGHT_SCALE @private = 20;
-const float HEIGHT_QUANTUM @private = HEIGHT_SCALE / 65535; // the coarsest step a seam mismatch could hide in
+const float SAME_HIT_TOLERANCE @private = 0.00001f; // rounding only: both cook the same quantized samples
 const float RAY_START_HEIGHT @private = 100;
 const float RAY_LENGTH @private = 200;
 const uint  SETTLE_UPDATES @private = 240;
@@ -191,10 +191,10 @@ fn void test_height_field_windows_match_the_whole_field() @test {
         }
         RayHit expected = whole[index];
         RayHit actual = tiled!!;
-        assert(math::abs(actual.point.y - expected.point.y) < HEIGHT_QUANTUM / 4);
-        assert(math::abs(actual.normal.x - expected.normal.x) < 0.0001f);
-        assert(math::abs(actual.normal.y - expected.normal.y) < 0.0001f);
-        assert(math::abs(actual.normal.z - expected.normal.z) < 0.0001f);
+        assert(math::abs(actual.point.y - expected.point.y) < SAME_HIT_TOLERANCE);
+        assert(math::abs(actual.normal.x - expected.normal.x) < SAME_HIT_TOLERANCE);
+        assert(math::abs(actual.normal.y - expected.normal.y) < SAME_HIT_TOLERANCE);
+        assert(math::abs(actual.normal.z - expected.normal.z) < SAME_HIT_TOLERANCE);
         assert(actual.node.parent == terrain);
     }
     assert(holes == 2);
