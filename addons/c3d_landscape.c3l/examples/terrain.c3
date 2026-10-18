@@ -7,6 +7,7 @@ import std::time;
 import std::time::clock;
 import c3d;
 import c3d::asset;
+import c3d::asset::image;
 import c3d::camera;
 import c3d::geometry;
 import c3d::gui;
@@ -69,6 +70,10 @@ const float LOD_THRESHOLD_MAX @local = 2048;
 const double NANOSECONDS_PER_MICROSECOND @local = 1_000;
 const double NANOSECONDS_PER_MILLISECOND @local = 1_000_000;
 const double MICROSECONDS_PER_MILLISECOND @local = 1_000;
+const Vec2 CAPTURE_TARGET @local = { 0.5f, 0.4595f }; // on the x seam, where the default map's edge texels bend most
+const float CAPTURE_HEIGHT @local = 24; // metres above the target; the camera looks straight down at it
+const uint CAPTURE_SETTLE_FRAMES @local = 8; // uploads and the shadow cascades settle on a still camera
+const uint RGBA8_BYTES @local = 4;
 const String[Segment::len] SEGMENT_NAMES @local = { "still", "sweep", "hover", "edit" };
 
 const Pass[8] REPORTED_PASSES @local = {
@@ -120,6 +125,7 @@ struct Options @local {
     uint        height;
     bool        hide_terrain;
     bool        tiles;
+    String      capture;
 }
 
 struct Demo @local {
@@ -347,6 +353,7 @@ fn Options? parse_options(String[] args) @local {
                 $endif
             case "--validation": options.validation = true;
             case "--hide-terrain": options.hide_terrain = true;
+            case "--capture": options.capture = option_value(args, &index)!;
             case "--tiles":
                 switch (option_value(args, &index)!) {
                     case "2x2": options.tiles = true;
@@ -384,6 +391,7 @@ fn Options? parse_options(String[] args) @local {
     }
     if (options.volumetric_fog && !options.sky) return c3d::INVALID_ARGUMENT~;
     if (options.tiles && options.benchmark) return c3d::INVALID_ARGUMENT~;
+    if (options.capture.len && options.benchmark) return c3d::INVALID_ARGUMENT~;
     if (!options.width) options.width = options.benchmark ? BENCHMARK_WIDTH : WINDOW_WIDTH;
     if (!options.height) options.height = options.benchmark ? BENCHMARK_HEIGHT : WINDOW_HEIGHT;
     return options;
@@ -1020,7 +1028,86 @@ fn bool? run_benchmark(Options options) @local {
     return print_results(options, &result);
 }
 
-<* View a generated terrain interactively, or run the scripted benchmark. *>
+// ----------------------------------------------------------------------------- capture
+
+fn void? pose_capture(Demo* demo) @local {
+    Vec3 target = extent_point(demo, CAPTURE_TARGET);
+    HeightView view = ground_view(demo, target)!;
+    target.y = landscape_ground::ground_under(&view, target, 0);
+    demo.camera_node.local.position = target + (Vec3){ 0, CAPTURE_HEIGHT, 0 };
+    demo.camera_node.local.rotation = maths::look_rotation({ 0, -1, 0 }, { 0, 0, -1 });
+}
+
+fn void? run_capture(Options options) @local {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    Renderer renderer = render::create_renderer(
+        allocator: mem,
+        assets:    &assets,
+        desc:      {
+            .validation       = true,
+            .application_name = "c3d_terrain_capture",
+            .ray_queries      = options.traced_shadows,
+        },
+    )!;
+    defer render::destroy_renderer(&renderer);
+    RenderTargetId target = render::create_render_target(
+        renderer: &renderer,
+        desc:     render::render_target_desc(options.width, options.height, PixelFormat.RGBA8_UNORM),
+    )!;
+    ViewDesc view_desc = configure_desc(render::texture_view_desc(target, OutputMode.DISPLAY_LDR), options);
+    view_desc.post.anti_aliasing = AntiAliasing.NONE;
+    ViewId view = render::create_view(&renderer, view_desc)!;
+    Scene scene = scene::create_scene(mem, { .max_nodes = SCENE_NODE_CAPACITY });
+    defer scene::destroy_scene(&scene);
+    physics::register_physics(&scene)!;
+    terrain::register_terrain(&scene, &assets)!;
+    PhysicsWorld physics = physics::create_physics_world(
+        allocator: mem,
+        assets:    &assets,
+        scene:     &scene,
+        desc:      physics::default_physics_desc(),
+    )!;
+    defer physics::destroy_physics_world(&physics);
+
+    Demo demo = build_demo(
+        options: options,
+        assets:  &assets,
+        scene:   &scene,
+        physics: &physics,
+    )!;
+    pose_capture(&demo)!;
+    scene.update_world();
+    renderer.prepare_scene(&scene)!;
+    for (uint frame = 0; frame < CAPTURE_SETTLE_FRAMES; frame++) {
+        terrain::update(
+            scene:                &scene,
+            assets:               &assets,
+            camera_node:          demo.camera_node,
+            output_height_pixels: (float)options.height,
+        )!;
+        render_offscreen(
+            renderer:    &renderer,
+            scene:       &scene,
+            camera_node: demo.camera_node,
+            view:        view,
+            frame:       frame,
+        )!;
+    }
+    render::wait_frames(&renderer)!;
+
+    char[] pixels = alloc::new_array(mem, char, (sz)options.width * options.height * RGBA8_BYTES);
+    defer alloc::free(mem, pixels.ptr);
+    renderer.read_render_target(target, pixels)!;
+    image::write_png(
+        path:   options.capture,
+        width:  options.width,
+        height: options.height,
+        pixels: pixels,
+    )!;
+}
+
+<* View a generated terrain interactively, run the scripted benchmark, or capture one frame. *>
 fn int main(String[] args) {
     Options? parsed = parse_options(args);
     if (catch excuse = parsed) {
@@ -1028,11 +1115,18 @@ fn int main(String[] args) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--shadows atlas|traced] [--size 1025|2049|4097] [--layers 1|4] [--lod-threshold PIXELS] "
-              "[--width W] [--height H] [--hide-terrain] [--tiles 2x2] [--sky] [--volumetric-fog].");
+              "[--width W] [--height H] [--hide-terrain] [--tiles 2x2] [--capture FILE.png] [--sky] [--volumetric-fog].");
         }
         return 1;
     }
     Options options = parsed;
+    if (options.capture.len) {
+        if (catch excuse = run_capture(options)) {
+            io::eprintfn("terrain capture failed: %s", excuse);
+            return 1;
+        }
+        return 0;
+    }
     if (!options.benchmark) {
         if (catch excuse = run_interactive(options)) {
             io::eprintfn("terrain example failed: %s", excuse);

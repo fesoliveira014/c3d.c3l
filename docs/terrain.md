@@ -346,6 +346,10 @@ camera beside the physics ray height, and the LOD threshold.
 overlap, each with its own control map and collider. Painting is off and the benchmark is unavailable with it: an
 edit does not reach the neighbouring tile's duplicated edge.
 
+`--capture FILE.png` renders one frame without a window, from a fixed camera straight above a point of the tile
+seam where the default map's edge texels bend most, and writes it as a PNG. It is meant for `--tiles 2x2` at the
+default size and takes `--width`, `--height`, `--shading` and `--shadows`; it excludes `--benchmark`.
+
 `--benchmark [frames]` renders to an offscreen target without a window and runs a scripted, deterministic path
 of four segments of `frames` steps (default 300) at 1/60 s after 60 warm-up frames: still, a low sweep across
 level boundaries, a hover bobbing at a split threshold, and an edit line that stamps a 49 × 49 bump every 30
