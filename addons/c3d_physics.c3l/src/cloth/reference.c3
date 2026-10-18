@@ -47,13 +47,13 @@ fn void? check_cloth_material(AssetStore* assets, MaterialId material, bool requ
         if (require_live) return c3d::INVALID_ID~;
         return;
     }
-    Material* mat = &assets.material(material).data;
-    if (mat.kind != MaterialKind.CUSTOM) return;
-    if (!assets.shaders.is_live(mat.custom.shader)) {
+    Material* material_data = &assets.material(material).data;
+    if (material_data.kind != MaterialKind.CUSTOM) return;
+    if (!assets.shaders.is_live(material_data.custom.shader)) {
         if (require_live) return c3d::INVALID_ID~;
         return;
     }
-    CustomVertex* vertex = &assets.shader(mat.custom.shader).desc.vertex;
+    CustomVertex* vertex = &assets.shader(material_data.custom.shader).desc.vertex;
     if (vertex.shaded.len || vertex.depth.len || vertex.instanced_shaded.len
         || vertex.instanced_depth.len || vertex.velocity.len || vertex.instanced_velocity.len) {
         return c3d::UNSUPPORTED~;
@@ -128,8 +128,8 @@ fn void? evaluate_rigid_particles(Mat4 world, Vec3[] rest, Vec3[] out_particles)
     foreach (value : world.m) {
         if (!math::is_finite(value)) return c3d::INVALID_ARGUMENT~;
     }
-    foreach (particle, local_pos : rest) {
-        Vec3 point = maths::transform_point(world, local_pos);
+    foreach (particle, local_position : rest) {
+        Vec3 point = maths::transform_point(world, local_position);
         if (!finite_vector(point)) return c3d::INVALID_ARGUMENT~;
         out_particles[particle] = point;
     }

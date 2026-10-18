@@ -460,7 +460,12 @@ fn void prepare_scene(
     particle::prepare_subtree(scene, root)!!;
     model::prepare_crowd_subtree(assets, scene, root)!!;
     systems.physics.update(0);
-    cloth::prepare_subtree(scene, assets, root, &systems.physics)!!;
+    cloth::prepare_subtree(
+        scene:  scene,
+        assets: assets,
+        root:   root,
+        world:  &systems.physics,
+    )!!;
     systems.physics.prepare_breakable_subtree(root)!!;
     NavSyncResult result = nav::nav_sync(
         builder: &systems.builder,

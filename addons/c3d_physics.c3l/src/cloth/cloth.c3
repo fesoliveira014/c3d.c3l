@@ -329,7 +329,13 @@ fn void? initial_cloth_publication(
 
     state.contact_result.stage = ClothContactStage.PUBLICATION;
     bool changed = stage_local_positions(state, frame, true)!;
-    if (contact_pass(world: world, state: state, positions: state.publication_roundtrip, apply: false)! != 0) {
+    usz unresolved = contact_pass(
+        world:     world,
+        state:     state,
+        positions: state.publication_roundtrip,
+        apply:     false,
+    )!;
+    if (unresolved != 0) {
         state.contact_result.stage = ClothContactStage.PUBLICATION;
         return CONTACT_PRECISION_EXCEEDED~;
     }
@@ -349,17 +355,25 @@ fn void? initial_cloth_publication(
             state.sweep_bounds[index] = { .min = point, .max = point };
         }
     }
+
     foreach (slot, pin : state.pins) {
         state.pin_anchors[slot] = state.current_reference[pin];
         state.pin_targets[slot] = state.current_reference[pin];
     }
+
     foreach (slot, attachment : state.soft_attachments) {
         state.soft_anchors[slot] = state.current_reference[attachment.particle];
         state.soft_targets[slot] = state.current_reference[attachment.particle];
         state.soft_lambdas[slot] = {};
     }
+
     finish_body_poses(state);
-    commit_local_publication(state, frame, changed, colors_changed);
+    commit_local_publication(
+        state:          state,
+        world:          frame,
+        changed:        changed,
+        colors_changed: colors_changed,
+    );
     state.contact_result.stage = ClothContactStage.NONE;
 }
 
@@ -512,12 +526,14 @@ fn void? prepare(
         state.source_revision = authoring.source_revision;
         state.geometry = copy;
         state.source_vertex_motion = authoring.source_vertex_motion;
+
         state.skinned = authoring.skinned;
         state.skeleton = authoring.skeleton;
         state.skeleton_revision = authoring.skeleton_revision;
         if (authoring.skinned) {
             state.joint_entities[..] = authoring.joint_entities[..];
         }
+
         state.render_to_particle[..] = material_plan.render_to_particle[..];
         state.particle_sources[..] = material_plan.particle_sources[..];
         if (desc.transport.len) {

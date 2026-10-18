@@ -106,9 +106,11 @@ uint[3] crowd_text_default_versions @local = { 1, 2, 3 };
 
 <*
  Read the authored model handle of a staged AnimatedCrowd component during import validation.
- @return? c3d::INVALID_ARGUMENT
+ @param entity : "Node from this document's resolved references."
+ @return? c3d::INVALID_ARGUMENT, c3d::INVALID_ID, c3d::UNSUPPORTED, c3d::ASSET_FORMAT_ERROR, c3d::CAPACITY_EXCEEDED
+ @require self.read_owned != null
 *>
-fn ModelId? ReadContext.authored_crowd_model(&self, Entity entity = {}) {
+fn ModelId? ReadContext.authored_crowd_model(&self, Entity entity) {
     CrowdAuthoringV4* crowd = self.authored(AnimatedCrowd, CrowdAuthoringV4, entity)!;
     if (!crowd) return c3d::INVALID_ARGUMENT~;
     return crowd.model;

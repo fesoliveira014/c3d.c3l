@@ -4,11 +4,9 @@ import c3d;
 import c3d::asset;
 import c3d::describe;
 import c3d::ecs;
-import c3d::maths;
 import c3d::physics::cloth @public;
 import c3d::scene;
 import c3d::serial;
-import std::math;
 
 struct ClothSavedAuthoring @private {
     uint substeps;
@@ -134,6 +132,7 @@ fn void? collect_cloth_output(void* component, serial::WriteContext* context) @p
     if (!context.scene.world.is_alive(output.owner)) return c3d::INVALID_ARGUMENT~;
     Node* owner = context.scene.node(output.owner);
     if (!context.contains_node(owner) || context.node.parent != owner) return c3d::INVALID_ARGUMENT~;
+
     if (!output.crowd) {
         Cloth* cloth = context.scene.get(owner, Cloth);
         if (!cloth || !cloth.is_prepared() || !cloth.authoring.skinned
@@ -142,6 +141,7 @@ fn void? collect_cloth_output(void* component, serial::WriteContext* context) @p
         }
         return;
     }
+
     CrowdCloth* crowd = context.scene.get(owner, CrowdCloth);
     if (!crowd || !crowd.state) return c3d::INVALID_ARGUMENT~;
     foreach (&part : crowd.state.parts) {
@@ -186,6 +186,7 @@ fn void? collect_cloth(void* component, serial::WriteContext* context) @private 
             return c3d::INVALID_ARGUMENT~;
         }
     }
+
     GeometryAsset* source = context.assets.geometries.try_get(owner.authoring.source)!;
     if (source.header.revision != owner.authoring.source_revision) return c3d::INVALID_ARGUMENT~;
 
@@ -310,13 +311,16 @@ fn void? validate_cloth(void* value, serial::ReadContext* context) @private {
           || skin.joints.len != skeleton.data.inverse_bind.len) {
             return c3d::INVALID_ARGUMENT~;
         }
-        foreach (joint_ref : skin.joints) (void)context.resolve_node_reference(joint_ref, true)!;
-        if (mesh.morph_weights.len || mesh.has_bounds_override) {
-            return c3d::UNSUPPORTED~;
-        }
-        if (cloth::node_in_lod_group(context.scene, context.node)) return c3d::UNSUPPORTED~;
-        cloth::check_cloth_material(context.assets, mesh.material, false)!;
-        cloth::check_cloth_geometry(geometry)!;
+        foreach (joint_reference : skin.joints) (void)context.resolve_node_reference(joint_reference, true)!;
+
+        cloth::check_cloth_mesh(
+            scene:  context.scene,
+            assets: context.assets,
+            node:   context.node,
+            mesh:   mesh,
+            source: geometry,
+        )!;
+
         if (!geometry.data.joints.len && !geometry.data.weights.len) return c3d::UNSUPPORTED~;
         cloth::check_skin_geometry(&geometry.data, skin.joints.len)!;
     } else {

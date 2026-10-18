@@ -246,6 +246,7 @@ fn void? update_cloth(
     commit_cloth(state, &staged);
     state.local_bounds = staged.local_bounds;
     commit_local_publication(state, node.world, changed);
+
     if (state.skinned && world.scene.world.is_alive(state.output_node)) {
         Node* out_node = world.scene.node(state.output_node);
         out_node.layers = node.layers;
