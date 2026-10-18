@@ -233,8 +233,9 @@ fn void collect_held_cloth(PhysicsWorld* world, ClothState* state, Node* node) @
 }
 
 fn ClothUpdateKind? stage_ordinary_cloth(PhysicsWorld* world, ClothState* state, uint steps) @private {
-    ClothWork* item = &state.work;
-    Node* node = item.node;
+    ClothWork* work = &state.work;
+    Node* node = work.node;
+
     Wind* wind = world.scene.get(node, Wind);
     if (is_quiescent(state)) {
         bool disturbed = probe_ordinary_rest(
@@ -299,7 +300,7 @@ fn ClothUpdateKind? stage_ordinary_cloth(PhysicsWorld* world, ClothState* state,
     }
 
     time::Clock publication_start = clock::now();
-    defer item.publication_seconds += (clock::now() - publication_start).to_sec();
+    defer work.publication_seconds += (clock::now() - publication_start).to_sec();
     prepare_publication(world, &staged, steps != 0)!;
 
     staged.contact_result.stage = ClothContactStage.PUBLICATION;
@@ -318,8 +319,8 @@ fn ClothUpdateKind? stage_ordinary_cloth(PhysicsWorld* world, ClothState* state,
         steps: steps,
     );
 
-    item.changed = changed;
-    item.reset_history = staged.cut_applied_this_update;
+    work.changed = changed;
+    work.reset_history = staged.cut_applied_this_update;
     commit_cloth(state, &staged);
     state.local_bounds = staged.local_bounds;
     state.spans = staged.spans;
@@ -328,11 +329,12 @@ fn ClothUpdateKind? stage_ordinary_cloth(PhysicsWorld* world, ClothState* state,
 }
 
 fn void commit_ordinary_cloth(PhysicsWorld* world, ClothState* state) @private {
-    ClothWork* item = &state.work;
-    Node* node = item.node;
-    if (item.failure) {
-        state.contact_result.failure = item.failure;
-        if (item.failure == OWNERSHIP_CHANGED) {
+    ClothWork* work = &state.work;
+    Node* node = work.node;
+
+    if (work.failure) {
+        state.contact_result.failure = work.failure;
+        if (work.failure == OWNERSHIP_CHANGED) {
             deactivate_output_node(world.scene, state.output_node);
         } else if (!state.settle.resting) {
             if (catch reexpression_failure = reexpress_cloth(state, node.world)) {
@@ -344,14 +346,14 @@ fn void commit_ordinary_cloth(PhysicsWorld* world, ClothState* state) @private {
         return;
     }
 
-    if (item.kind == SIMULATED) {
-        if (item.reset_history) {
+    if (work.kind == SIMULATED) {
+        if (work.reset_history) {
             scene::Mesh* output_mesh = state.skinned
                 ? world.scene.get(world.scene.node(state.output_node), scene::Mesh)
                 : world.scene.get(node, scene::Mesh);
             output_mesh.reset_vertex_history();
         }
-        commit_local_publication(state, node.world, item.changed);
+        commit_local_publication(state, node.world, work.changed);
     }
     sync_skinned_output(world.scene, state, node);
 }

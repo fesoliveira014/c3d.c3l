@@ -1072,12 +1072,12 @@ fn void collect_crowd_cloths(PhysicsWorld* world) @private {
 fn ClothUpdateKind? stage_crowd_slot(PhysicsWorld* world, ClothState* state, uint steps) @private {
     Scene* scene = world.scene;
     AssetStore* assets = world.assets;
-    ClothWork* item = &state.work;
-    Node* owner = item.node;
-    AnimatedCrowd* crowd = item.crowd;
-    CrowdClothPart* part_record = item.part_record;
-    uint slot = item.slot;
-    bool reseeded = item.reseeded;
+    ClothWork* work = &state.work;
+    Node* owner = work.node;
+    AnimatedCrowd* crowd = work.crowd;
+    CrowdClothPart* part_record = work.part_record;
+    uint slot = work.slot;
+    bool reseeded = work.reseeded;
 
     if (reseeded) {
         state.contact_result = {};
@@ -1090,11 +1090,11 @@ fn ClothUpdateKind? stage_crowd_slot(PhysicsWorld* world, ClothState* state, uin
             state:       state,
             slot:        slot,
         )) {
-            item.clear_generation = true;
+            work.clear_generation = true;
             return REFERENCE_UNAVAILABLE~;
         }
         state.contact_result.stage = ClothContactStage.PUBLICATION;
-        item.reset_history = true;
+        work.reset_history = true;
     }
 
     Wind* wind = scene.get(owner, Wind);
@@ -1109,8 +1109,8 @@ fn ClothUpdateKind? stage_crowd_slot(PhysicsWorld* world, ClothState* state, uin
             wind:        wind,
         )!;
         if (!disturbed) {
-            item.colors_changed = crowd.colors[slot] != part_record.published_colors[slot];
-            if (item.colors_changed) fill_slot_colors(state, part_record, crowd.colors[slot]);
+            work.colors_changed = crowd.colors[slot] != part_record.published_colors[slot];
+            if (work.colors_changed) fill_slot_colors(state, part_record, crowd.colors[slot]);
             return RESTED;
         }
     }
@@ -1174,7 +1174,7 @@ fn ClothUpdateKind? stage_crowd_slot(PhysicsWorld* world, ClothState* state, uin
     }
 
     time::Clock publication_start = clock::now();
-    defer item.publication_seconds += (clock::now() - publication_start).to_sec();
+    defer work.publication_seconds += (clock::now() - publication_start).to_sec();
     prepare_publication(world, &staged, steps != 0)!;
 
     staged.contact_result.stage = ClothContactStage.PUBLICATION;
@@ -1199,9 +1199,9 @@ fn ClothUpdateKind? stage_crowd_slot(PhysicsWorld* world, ClothState* state, uin
         steps: steps,
     );
 
-    if (staged.cut_applied_this_update && !reseeded) item.reset_history = true;
-    item.changed = changed;
-    item.colors_changed = colors_changed;
+    if (staged.cut_applied_this_update && !reseeded) work.reset_history = true;
+    work.changed = changed;
+    work.colors_changed = colors_changed;
     commit_cloth(state, &staged);
     state.local_bounds = staged.local_bounds;
     state.spans = staged.spans;
@@ -1211,19 +1211,19 @@ fn ClothUpdateKind? stage_crowd_slot(PhysicsWorld* world, ClothState* state, uin
 
 fn void commit_crowd_slot(PhysicsWorld* world, ClothState* state) @private {
     Scene* scene = world.scene;
-    ClothWork* item = &state.work;
-    Node* owner = item.node;
-    CrowdClothPart* part_record = item.part_record;
-    uint slot = item.slot;
+    ClothWork* work = &state.work;
+    Node* owner = work.node;
+    CrowdClothPart* part_record = work.part_record;
+    uint slot = work.slot;
 
-    if (item.reset_history) item.output_mesh.reset_vertex_history();
+    if (work.reset_history) work.output_mesh.reset_vertex_history();
 
-    if (item.failure) {
-        item.output_node.layers = item.batch_node.layers;
-        if (item.clear_generation) part_record.slot_generations[slot] = 0;
+    if (work.failure) {
+        work.output_node.layers = work.batch_node.layers;
+        if (work.clear_generation) part_record.slot_generations[slot] = 0;
 
-        state.contact_result.failure = item.failure;
-        if (!item.reseeded && !state.settle.resting) {
+        state.contact_result.failure = work.failure;
+        if (!work.reseeded && !state.settle.resting) {
             if (catch reexpression_failure = reexpress_cloth(state, owner.world)) {
                 state.contact_result.failure = reexpression_failure;
                 state.contact_result.stage = ClothContactStage.REEXPRESSION;
@@ -1233,25 +1233,25 @@ fn void commit_crowd_slot(PhysicsWorld* world, ClothState* state) @private {
         return;
     }
 
-    if (item.kind == SIMULATED) {
+    if (work.kind == SIMULATED) {
         commit_local_publication(
             state:          state,
             world:          owner.world,
-            changed:        item.changed,
-            colors_changed: item.colors_changed,
+            changed:        work.changed,
+            colors_changed: work.colors_changed,
         );
-        if (item.reseeded) {
-            part_record.slot_generations[slot] = item.live_generation;
-            ClothOutput* marker = scene.get(item.output_node, ClothOutput);
-            marker.instance = { .index = slot, .generation = item.live_generation };
-            item.output_node.visible = true;
+        if (work.reseeded) {
+            part_record.slot_generations[slot] = work.live_generation;
+            ClothOutput* marker = scene.get(work.output_node, ClothOutput);
+            marker.instance = { .index = slot, .generation = work.live_generation };
+            work.output_node.visible = true;
         }
-    } else if (item.colors_changed) {
+    } else if (work.colors_changed) {
         commit_color_publication(state);
     }
-    if (item.colors_changed) part_record.published_colors[slot] = item.crowd.colors[slot];
+    if (work.colors_changed) part_record.published_colors[slot] = work.crowd.colors[slot];
 
-    sync_crowd_output(item.output_node, owner, item.batch_node);
+    sync_crowd_output(work.output_node, owner, work.batch_node);
 }
 
 fn bool? probe_crowd_slot_rest(

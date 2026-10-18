@@ -29,10 +29,10 @@ struct ClothWork @private {
     fault           failure;
     bool            changed;
     bool            colors_changed;
-    bool            reset_history;
-    bool            clear_generation;
+    bool            reset_history;      // the commit resets the output mesh's vertex history
+    bool            clear_generation;   // the commit clears the slot's recorded generation
     double          stage_seconds;
-    double          publication_seconds;
+    double          publication_seconds; // the staged share; the commit adds its own
 }
 
 struct ClothStageContext @local {
@@ -42,6 +42,7 @@ struct ClothStageContext @local {
 
 fn void collect_cloth_work(PhysicsWorld* world) @private {
     world.cloth_work_count = 0;
+
     world.scene.@each(Cloth; Entity entity, Cloth* component) {
         if (!component.is_prepared()) {
             world.cloth_stats.pending++;
@@ -85,6 +86,7 @@ fn void stage_cloth_range(void* data, uint first, uint count) @local {
 fn void stage_cloth_item(PhysicsWorld* world, ClothState* state, uint steps) @local {
     ClothWork* work = &state.work;
     time::Clock started = clock::now();
+
     switch (work.source) {
         case ORDINARY:
             ClothUpdateKind? ordinary = stage_ordinary_cloth(world, state, steps);
@@ -115,6 +117,7 @@ fn void commit_cloth_work(PhysicsWorld* world) @private {
 fn void commit_cloth_item(PhysicsWorld* world, ClothState* state) @local {
     ClothWork* work = &state.work;
     time::Clock started = clock::now();
+
     switch (work.source) {
         case ORDINARY:
             commit_ordinary_cloth(world, state);
