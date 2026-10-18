@@ -106,15 +106,20 @@ fn TerrainDesc default_terrain_desc() {
 }
 
 <*
- Register Terrain and TerrainRuntime and the runtime's remove hook.
- @param [&inout] scene : "Gains the Terrain and TerrainRuntime stores."
+ Register the terrain and tile set components and their remove hooks.
+ @param [&inout] scene : "Gains the terrain and tile stores; must not move."
  @param [&inout] assets : "Loses each removed terrain's material; outlives the scene."
  @return? c3d::CAPACITY_EXCEEDED
 *>
 fn void? register_terrain(Scene* scene, AssetStore* assets) {
     scene.register(Terrain)!;
     scene.register(TerrainRuntime)!;
+    scene.register(TerrainSet)!;
+    scene.register(TerrainTile)!;
     scene.set_remove_hook(TerrainRuntime, &remove_runtime, assets);
+    scene.set_remove_hook(Terrain, &remove_tile_link, scene);
+    scene.set_remove_hook(TerrainTile, &remove_tile_link, scene);
+    scene.set_remove_hook(TerrainSet, &remove_set, null);
 }
 
 <*
@@ -170,7 +175,8 @@ fn void? attach_terrain(
 fn bool is_prepared(Scene* scene, Node* node) => scene.has(node, TerrainRuntime);
 
 <*
- Prepare a pending terrain atomically; prepared terrain is unchanged.
+ Prepare a pending terrain atomically; a prepared tile relinks.
+ A prepared tile that fails its set's checks faults and is left unlinked.
  @param [&inout] scene : "Registered with register_terrain."
  @param [&inout] assets : "The store given to register_terrain."
  @param [&in] node : "Carries Terrain."
@@ -178,11 +184,17 @@ fn bool is_prepared(Scene* scene, Node* node) => scene.has(node, TerrainRuntime)
  @require scene.has(node, Terrain)
 *>
 fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
-    if (is_prepared(scene, node)) return;
+    if (is_prepared(scene, node)) return relink_tile(scene, node);
     TerrainDesc desc = scene.get(node, Terrain).desc;
     uint layer_count = check_terrain_desc(assets, &desc)!;
     TextureAsset* height_map = assets.texture(desc.height_map);
     uint texels = height_map.desc.width;
+    check_tile(
+        scene:  scene,
+        node:   node,
+        desc:   &desc,
+        texels: texels,
+    )!;
     bool shader_created, grid_created;
     ShaderId shader = terrain_shader(assets, &shader_created)!;
     defer catch if (shader_created) assets.remove_shader(shader);
@@ -207,6 +219,8 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         .rect            = whole_map(texels),
     };
     refresh_bounds(&runtime, height_texels(height_map), whole_map(texels));
+    link_tile(scene, node)!;
+    defer catch unlink_tile(scene, node.id);
     InstancedMesh batch = create_batch(
         allocator: scene.allocator,
         grid:      grid,

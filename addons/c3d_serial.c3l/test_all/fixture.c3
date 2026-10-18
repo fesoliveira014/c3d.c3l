@@ -372,6 +372,16 @@ fn void add_landscape(Fixture* fixture) @private {
         node: ground,
         desc: terrain,
     )!!;
+    Node* tiles = scene.add_node(name: "terrain-set")!!;
+    scene.add(tiles, (TerrainSet){ .texels = 129, .cell_size = 1, .height_scale = 4 });
+    Node* tile = scene.add_node(tiles, "terrain-tile")!!;
+    scene.add(tile, (TerrainTile){ .x = 0, .z = 0 });
+    terrain::attach_terrain(
+        scene: scene,
+        assets: &fixture.assets,
+        node: tile,
+        desc: terrain,
+    )!!;
     Node* plants = scene.add_node(name: "foliage")!!;
     FoliageDesc foliage = foliage::default_foliage_desc();
     foliage.geometry = fixture.box;
