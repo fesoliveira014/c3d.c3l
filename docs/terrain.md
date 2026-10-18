@@ -274,7 +274,13 @@ scene.get(ground, PhysicsBody).mark_changed();
   rings. After it, call `TerrainSet.propagate_edit`:
 
   ```c3
-  set.propagate_edit(scene: &scene, assets: &assets, tile: tile.id, rect: rect)!;
+  uint changed = set.propagate_edit(scene: &scene, assets: &assets, tile: tile.id, rect: rect)!;
+  foreach (direction : TerrainNeighbour::values) {
+      if (changed & ((uint)1 << direction.ordinal)) {
+          Entity neighbour = set.neighbour(tile.id, direction)!;
+          // mark_changed on its body once the stroke ends
+      }
+  }
   ```
 
   - It copies the rectangle's edge rows and columns, corners included, into the duplicated texels of each
@@ -287,8 +293,12 @@ scene.get(ground, PhysicsBody).mark_changed();
     `mark_dirty` rectangle.
   - A tile that is not linked to the set faults `INVALID_ARGUMENT`. A tile whose height map no longer passes the
     checks faults like `height_view`; a neighbour whose map does not conform is skipped.
-  - A live collider is not re-cooked: call `mark_changed` on every tile body whose texels changed, the
-    neighbours included.
+  - The result is a mask: bit `n` is set when the neighbour of `TerrainNeighbour` ordinal `n` had texels change
+    (`WEST` 0, `EAST` 1, `NORTH` 2, `SOUTH` 3, then `NORTH_WEST`, `NORTH_EAST`, `SOUTH_WEST`, `SOUTH_EAST`).
+    `set.neighbour(tile, direction)` names the tile. A neighbour that was skipped or already held the values has
+    no bit, and a repeated call returns 0.
+  - A live collider is not re-cooked: call `mark_changed` on the body of the edited tile and of each tile in the
+    mask, and on no other tile.
 - The renderer re-uploads the whole height map on each revision (8 MiB at 2049², 32 MiB at 4097²).
 - A live physics body is not re-cooked on a texture revision. `mark_changed` rebuilds the whole field on the
   next `PhysicsWorld.update`, so call it once when a stroke ends: collision is stale during the stroke and

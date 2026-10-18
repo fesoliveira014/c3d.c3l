@@ -24,6 +24,7 @@ struct EdgeWrite @private {
 <*
  Copy a tile edit's edge texels into its neighbours and refresh the rings that read them.
  Call after writing the tile's texels, marking its height map dirty and calling mark_dirty on the tile.
+ Call mark_changed on the bodies of the edited tile and of the neighbours in the result.
  @param [&inout] scene : "Registered with register_terrain."
  @param [&inout] assets : "The store given to register_terrain."
  @param tile : "A tile linked to this set."
@@ -31,9 +32,10 @@ struct EdgeWrite @private {
  @require rect.columns > 0 && rect.rows > 0
  @require rect.x + rect.columns <= self.texels
  @require rect.z + rect.rows <= self.texels
+ @return "Bit n is set when the TerrainNeighbour of ordinal n changed; set.neighbour names its tile."
  @return? c3d::INVALID_ARGUMENT, c3d::INVALID_ID, c3d::UNSUPPORTED
 *>
-fn void? TerrainSet.propagate_edit(
+fn uint? TerrainSet.propagate_edit(
     &self,
     Scene* scene,
     AssetStore* assets,
@@ -50,6 +52,7 @@ fn void? TerrainSet.propagate_edit(
     )!;
     EdgeWrite[TerrainNeighbour::len] writes;
     uint count;
+    uint changed_neighbours;
     foreach (direction : TerrainNeighbour::values) {
         if (try strip = shared_strip(direction, self.texels, rect) && try neighbour = self.neighbour(tile, direction)) {
             ushort[]? texels = conforming_texels(
@@ -73,6 +76,7 @@ fn void? TerrainSet.propagate_edit(
             mark_dirty(scene, node, strip.target);
             writes[count] = { .neighbour = neighbour, .target = strip.target };
             count++;
+            changed_neighbours |= (uint)1 << direction.ordinal;
         }
     }
     // Every copy lands first: a ring row reads texels of the tiles around it.
@@ -90,6 +94,7 @@ fn void? TerrainSet.propagate_edit(
             rect:   write.target,
         );
     }
+    return changed_neighbours;
 }
 
 // A neighbour across a side duplicates the tile's edge row or column there; none across no side.

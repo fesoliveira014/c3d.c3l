@@ -1067,8 +1067,8 @@ fn void assert_changed_only_inside(ushort[] before, ushort[] after, TexelRect re
     }
 }
 
-fn void SetFixture.propagate(&self, Node* tile, TexelRect rect) {
-    self.set.propagate_edit(
+fn uint SetFixture.propagate(&self, Node* tile, TexelRect rect) {
+    return self.set.propagate_edit(
         scene:  &self.base.scene,
         assets: &self.base.assets,
         tile:   tile.id,
@@ -1076,7 +1076,7 @@ fn void SetFixture.propagate(&self, Node* tile, TexelRect rect) {
     )!!;
 }
 
-fn void SetFixture.edit_and_propagate(
+fn uint SetFixture.edit_and_propagate(
     &self,
     Node* tile,
     TexelRect rect,
@@ -1084,8 +1084,10 @@ fn void SetFixture.edit_and_propagate(
 ) {
     write_random_texels(&self.base, self.base.scene.get(tile, Terrain).desc.height_map, rect, seed);
     terrain::mark_dirty(&self.base.scene, tile, rect);
-    self.propagate(tile, rect);
+    return self.propagate(tile, rect);
 }
+
+fn uint neighbour_bit(TerrainNeighbour direction) @local => (uint)1 << direction.ordinal;
 
 // Tiles in grid order, x fastest.
 fn void SetFixture.assert_rings_hold_neighbours(&self, Node*[4] tiles) {
@@ -1123,7 +1125,8 @@ fn void test_propagated_edge_edit_leaves_other_neighbours_alone() @test {
         ushort[] untouched = alloc::new_array(tmem, ushort, (usz)SMALL_TEXELS * SMALL_TEXELS);
         untouched[..] = tile_texels(&sets, north_east)[..];
 
-        sets.edit_and_propagate(north_west, mid_edge, SEED);
+        uint changed = sets.edit_and_propagate(north_west, mid_edge, SEED);
+        assert(changed == neighbour_bit(TerrainNeighbour.EAST));
 
         ushort[] edited = tile_texels(&sets, north_west);
         ushort[] east = tile_texels(&sets, north_east);
@@ -1139,7 +1142,7 @@ fn void test_propagated_edge_edit_leaves_other_neighbours_alone() @test {
         sets.assert_rings_hold_neighbours(tiles);
 
         uint settled_revision = height_revision(&sets, north_east);
-        sets.propagate(north_west, mid_edge);
+        assert(sets.propagate(north_west, mid_edge) == 0);
         assert(height_revision(&sets, north_east) == settled_revision);
     };
 }
@@ -1175,7 +1178,11 @@ fn void test_propagated_edit_keeps_edges_and_corners_equal() @test {
         }
         ushort stale_ring_texel = ring_row(&sets, south_east, RING_NORTH)[0];
 
-        sets.edit_and_propagate(north_west, edit, SEED + 1);
+        uint changed = sets.edit_and_propagate(north_west, edit, SEED + 1);
+        uint expected = neighbour_bit(TerrainNeighbour.EAST)
+          | neighbour_bit(TerrainNeighbour.SOUTH)
+          | neighbour_bit(TerrainNeighbour.SOUTH_EAST);
+        assert(changed == expected);
 
         ushort[] edited = tile_texels(&sets, north_west);
         ushort[] east = tile_texels(&sets, north_east);
