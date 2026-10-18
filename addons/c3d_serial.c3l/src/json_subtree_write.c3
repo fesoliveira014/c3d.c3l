@@ -69,8 +69,7 @@ fn String? write_subtree_json(
 fn void? collect_text_omissions(WriteContext* context, TextWriteOptions options) @local {
     uint count;
     foreach (record, node : context.state.ordered[:context.state.count]) {
-        ComponentMask retained = context.scene.world.mask(node.id)
-          & ~context.state.projection[node.id.index].omitted_components;
+        ComponentMask retained = effective_component_mask(context, node);
         foreach (slot : context.state.slots[:context.state.type_count]) {
             if (!(retained & ecs::slot_bit(slot)) || codecs[slot].described) continue;
             if (!options.omit_binary_only) {
@@ -90,8 +89,7 @@ fn void? collect_text_omissions(WriteContext* context, TextWriteOptions options)
     defer catch clear_omission_report(report);
     uint index;
     foreach (record, node : context.state.ordered[:context.state.count]) {
-        ComponentMask retained = context.scene.world.mask(node.id)
-          & ~context.state.projection[node.id.index].omitted_components;
+        ComponentMask retained = effective_component_mask(context, node);
         foreach (slot : context.state.slots[:context.state.type_count]) {
             if (!(retained & ecs::slot_bit(slot)) || codecs[slot].described) continue;
             OmittedComponent* entry = &report.components[index++];
@@ -125,7 +123,7 @@ fn void? emit_subtree_json(WriteContext* context, JsonOutput* output, TextWriteO
         output.unsigned("layers", node.layers)!;
         output.boolean("visible", node.visible)!;
         output.begin("components", true)!;
-        ComponentMask retained = context.scene.world.mask(node.id) & ~projection.omitted_components;
+        ComponentMask retained = effective_component_mask(context, node);
         foreach (slot : context.state.slots[:context.state.type_count]) {
             if (!(retained & ecs::slot_bit(slot)) || !codecs[slot].described) continue;
             context.slot = slot;

@@ -125,6 +125,7 @@ Entry entry = {
         .name = Type::qname,
         .identity = Type::typeid,
         .size = Type::size,
+        .authored_size = describe::@authored_size(Type),
         .alignment = Type::alignment,
     },
 };

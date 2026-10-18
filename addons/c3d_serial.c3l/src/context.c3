@@ -27,6 +27,7 @@ struct NodeProjection @private {
     uint record;
     sz claim_head;
     ComponentMask omitted_components;
+    ComponentMask projected_components;
     ulong node_owner;
     ulong local_owner;
     bool selected;
@@ -95,6 +96,7 @@ struct ReadContext {
 fn void? WriteContext.omit_node(&self, Node* node) {
     NodeProjection* projected = projection_of(self, node)!;
     ulong owner = owner_of(self)!;
+    if (projected.projected_components) return c3d::INVALID_ARGUMENT~;
     if (projected.node_owner && projected.node_owner != owner) return c3d::INVALID_ARGUMENT~;
     projected.node_owner = owner;
 }
@@ -148,6 +150,22 @@ macro void? WriteContext.project_component(&self, Node* node, component) {
     claim.projected = value.ptr;
 }
 
+<*
+ Project a component removed from a live node by the current owner.
+ @param [&in] node : "Selected node without the live component."
+ @param component : "Dynamic storage outlives this synchronous export."
+ @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @require self.state.collecting
+*>
+macro void? WriteContext.project_absent_component(&self, Node* node, component) {
+    var $Type = $Typeof(component);
+    uint slot = ecs::assigned_slot($Type) ?? c3d::INVALID_ARGUMENT~!;
+    ComponentClaim* claim = absent_component_projection_claim(self, node, slot)!;
+    $Type[] value = alloc::new_array_try(tmem, $Type, 1) ?? c3d::CAPACITY_EXCEEDED~!;
+    value[0] = component;
+    claim.projected = value.ptr;
+}
+
 fn ComponentClaim*? component_projection_claim(WriteContext* context, Node* node, uint slot) @private {
     NodeProjection* projected = projection_of(context, node)!;
     ComponentMask bit = ecs::slot_bit(slot);
@@ -165,6 +183,34 @@ fn ComponentClaim*? component_projection_claim(WriteContext* context, Node* node
         slot: slot,
         owner: owner,
     );
+}
+
+fn ComponentClaim*? absent_component_projection_claim(WriteContext* context, Node* node, uint slot) @private {
+    NodeProjection* projected = projection_of(context, node)!;
+    ComponentMask bit = ecs::slot_bit(slot);
+    if (projected.node_owner
+        || (context.scene.world.mask(node.id) & bit)
+        || (projected.omitted_components & bit)
+        || (projected.projected_components & bit)
+        || codecs[slot].transient
+        || codecs[slot].codec.collect
+        || !codecs[slot].codec.name.len) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+    ulong owner = owner_of(context)!;
+    if (find_component_claim(context.state, projected, slot)) return c3d::INVALID_ARGUMENT~;
+    projected.projected_components |= bit;
+    return append_component_claim(
+        state: context.state,
+        projected: projected,
+        slot: slot,
+        owner: owner,
+    );
+}
+
+fn ComponentMask effective_component_mask(WriteContext* context, Node* node) @private {
+    NodeProjection* projected = &context.state.projection[node.id.index];
+    return (context.scene.world.mask(node.id) | projected.projected_components) & ~projected.omitted_components;
 }
 
 fn void* projected_component(WriteContext* context, Node* node, uint slot) @private {

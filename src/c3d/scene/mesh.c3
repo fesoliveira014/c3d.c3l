@@ -16,4 +16,10 @@ struct Mesh {
     bool       has_bounds_override;
     Aabb       local_bounds;
     bool       vertex_motion;
+    ulong      vertex_history_token @tag("transient", true);
 }
+
+<*
+ Advance the vertex correspondence token so views reject their prior vertex history.
+*>
+fn void Mesh.reset_vertex_history(&self) => self.vertex_history_token++;

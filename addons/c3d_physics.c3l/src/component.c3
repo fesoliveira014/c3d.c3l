@@ -116,6 +116,9 @@ fn void? register_physics(Scene* scene) {
     scene.set_remove_hook(Ragdoll, &free_ragdoll, scene.hook_allocator);
     scene.register(Cloth)!;
     scene.set_remove_hook(Cloth, &cloth::free_cloth, scene.hook_allocator);
+    scene.register(ClothOutput)!;
+    scene.register(CrowdCloth)!;
+    scene.set_remove_hook(CrowdCloth, &cloth::free_crowd_cloth, scene.hook_allocator);
 }
 
 fn PhysicsBody? try_copy_physics_body(Allocator allocator, BodyDesc body, ColliderDesc[] colliders) @private {

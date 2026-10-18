@@ -97,6 +97,7 @@ struct TracePoseSource @private {
     uint           part;          // CROWD: index into crowd.parts
     Scene*         scene;         // ANIMATED_LOD: source scene, borrowed for this collection
     LodGroupState* lod;           // animated level-zero descriptor, borrowed for this collection
+    ulong          vertex_history_token; // VERTEX_MOTION: correspondence token of the source mesh
 }
 
 struct TraceCollection @private {
@@ -392,7 +393,13 @@ fn TraceCollection collect_trace_instances(
                     );
                 }
                 collection.records[count] = record;
-                collection.poses[count++] = { .kind = pose, .node = node, .mesh = mesh, .skin = posed_skin };
+                collection.poses[count++] = {
+                    .kind                 = pose,
+                    .node                 = node,
+                    .mesh                 = mesh,
+                    .skin                 = posed_skin,
+                    .vertex_history_token = mesh.vertex_history_token,
+                };
             }
         }
     };
@@ -475,6 +482,10 @@ fn TraceCollection collect_trace_instances(
                         TraceInstance base_record = { .geometry = draw.geometry, .material = draw.material };
                         candidate = trace_animated_lod_candidate(&pose, &base_record, &selection);
                         if (candidate.source_mesh && !candidate.source_mesh.trace) continue;
+                        if (candidate.source_mesh) {
+                            pose.mesh = candidate.source_mesh;
+                            pose.vertex_history_token = candidate.source_mesh.vertex_history_token;
+                        }
 
                         AnimatedLodPartBinding* binding = candidate.animated_lod;
                         bool morphed = assets.geometry(draw.geometry).target_count && binding.weight_count;
@@ -813,6 +824,7 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
             record.bottom_level = mirror.blas.handle;
             record.nodes = mirror.trace.nodes;
             record.primitives = mirror.trace.primitives;
+            if (motion_row) record.pose_serial = pose.vertex_history_token;
         } else if (shared_slot) {
             point_at_posed_slot(record, &posed.slots[slot], mirror);
             renderer.stats.trace_posed_instances++;

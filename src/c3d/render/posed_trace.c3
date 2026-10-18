@@ -66,6 +66,7 @@ struct PosedTraceRes {
     usz                              update_scratch_size;
     usz                              blas_bytes;
     char[]                           pose;                // inputs of the last recorded posing
+    ulong                            vertex_history_token; // token of the last recorded vertex-motion pose
     bool                             pose_valid;
     bool                             pending;             // touched by the current recording
     bool                             aliased;             // the root addresses a compute skinning binding's pose
@@ -148,6 +149,17 @@ fn bool PosedTraceKey.equals(self, PosedTraceKey other) @operator(==) {
 fn bool PosedTraceRes.update_pose(&self, char[] inputs) {
     if (self.pose_valid && mem::equals(self.pose.ptr, inputs.ptr, (sz)inputs.len)) return false;
     mem::copy(self.pose.ptr, inputs.ptr, (sz)inputs.len);
+    self.pose_valid = true;
+    self.pose_serial++;
+    return true;
+}
+
+<*
+ Keep the vertex correspondence token on a vertex-motion slot; true when it changed.
+*>
+fn bool PosedTraceRes.update_vertex_motion(&self, ulong token) {
+    if (self.pose_valid && self.vertex_history_token == token) return false;
+    self.vertex_history_token = token;
     self.pose_valid = true;
     self.pose_serial++;
     return true;
@@ -626,7 +638,7 @@ fn void? acquire_posed_streams(
         if (held) {
             if (slot.built_revision == mirror.revision) return;
             slot.built_revision = mirror.revision;
-            slot.pose_serial++;
+            slot.pose_valid = false;
             table.motion_copies.push(index);
             mark_posed_pending(table, index);
             return;
@@ -795,9 +807,8 @@ fn void? resolve_posed_instance(
         .joints_u16   = mirror.layout.flags.joints_u16,
     };
     if (source.kind == TracePose.VERTEX_MOTION) {
-        if (!slot.pose_valid) {
-            slot.pose_valid = true;
-            slot.pose_serial++;
+        if (slot.update_vertex_motion(source.vertex_history_token)) {
+            mark_posed_pending(table, index);
         }
     } else if (slot.compared_epoch != table.epoch) {
         slot.compared_epoch = table.epoch;
@@ -858,6 +869,7 @@ fn PosedDraw? claim_trace_pose(
             if (mesh_morphs(renderer.assets, source.mesh)) candidate.morph_weights = source.mesh.morph_weights;
             candidate.morph_channels = renderer.assets.geometry(record.geometry).data.channels;
             candidate.vertex_motion = source.mesh.vertex_motion;
+            candidate.vertex_history_token = source.mesh.vertex_history_token;
         case CROWD:
             candidate.batch = source.batch;
             candidate.crowd = source.crowd;

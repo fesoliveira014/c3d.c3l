@@ -3,6 +3,9 @@ module c3d_physics_serial_test;
 import c3d;
 import c3d::asset;
 import c3d::ecs;
+import c3d::material;
+import c3d::maths;
+import c3d::model;
 import c3d::physics @public;
 import c3d::physics::cloth;
 import c3d::scene;
@@ -83,10 +86,12 @@ fn char[] prior_cloth_text(String text, uint version) @private {
         ? "\"self_collision\""
         : version == 3
           ? "\"continuous\""
-          : "\"render_particles\"";
+          : version == 4
+            ? "\"render_particles\""
+            : "\"transport\"";
     sz field_start = text.index_of(first_field)!!;
     sz fields_start = text[:field_start].rindex_of_char(',')!!;
-    sz last_field = text.index_of("\"rest_angles\"")!!;
+    sz last_field = text.index_of("\"transport\"")!!;
     sz fields_end = last_field + text[last_field..].index_of_char('}')!!;
     char[] legacy = alloc::new_array(tmem, char, text.len - (fields_end - fields_start));
     legacy[:fields_start] = ((char[])text[:fields_start])[..];
@@ -96,7 +101,7 @@ fn char[] prior_cloth_text(String text, uint version) @private {
     sz version_start = cloth_start + ((String)legacy[cloth_start..]).index_of("\"version\"")!!;
     sz version_value = version_start + ((String)legacy[version_start..]).index_of_char(':')!! + 1;
     while (legacy[version_value] == ' ') version_value++;
-    assert(legacy[version_value] == '5');
+    assert(legacy[version_value] == '6');
     legacy[version_value] = (char)('0' + version);
     return legacy;
 }
@@ -262,7 +267,7 @@ fn void test_cloth_late_authoring_copy_failure_rolls_back_body_and_mesh() @test 
 }
 
 fn void test_cloth_prior_text_defaults_contacts_and_prior_binary_is_unsupported() @test {
-    foreach (version : (uint[4]){ 1, 2, 3, 4 }) @pool() {
+    foreach (version : (uint[5]){ 1, 2, 3, 4, 5 }) @pool() {
         Fixture fixture;
         create_fixture(&fixture);
         defer destroy_fixture(&fixture);
@@ -279,6 +284,7 @@ fn void test_cloth_prior_text_defaults_contacts_and_prior_binary_is_unsupported(
         ClothCollisionDesc collisions = owner.authoring.desc.collisions;
         ClothCollisionDesc defaults = cloth::default_cloth_collision_desc();
         assert(!owner.is_prepared() && owner.state == null);
+        assert(!owner.authoring.desc.transport.len);
         assert(!owner.authoring.desc.render_particles.len && !owner.authoring.desc.tangent_frame && owner.authoring.desc.tangent_uv_set == 0);
         assert(!owner.authoring.desc.attachments.len && owner.authoring.desc.bend_mode == DISTANCE);
         assert(owner.authoring.desc.bend_compliance == cloth::default_cloth_desc().bend_compliance && !owner.authoring.desc.rest_angles.len);
@@ -313,7 +319,7 @@ fn void test_cloth_prior_text_defaults_contacts_and_prior_binary_is_unsupported(
             text_mode: false,
         )!!;
         sz type_version = ((String)binary).index_of("cloth")!! + "cloth".len;
-        assert(binary[type_version] == 5);
+        assert(binary[type_version] == 6);
         binary[type_version] = (char)version;
         uint before = fixture.destination.world.entities.free_count;
         uint geometries = fixture.assets.geometries.free_count;
@@ -402,5 +408,140 @@ fn void test_cloth_v5_materials_attachments_and_dihedral_round_trip() @test {
             root: restored,
             text_mode: text_mode,
         )!!);
+    };
+}
+
+fn void test_skinned_cloth_and_crowd_cloth_round_trip_and_reject_orphan_output() @test {
+    foreach (text_mode : (bool[2]){ false, true }) @pool() {
+        Fixture fixture;
+        create_fixture(&fixture);
+        defer destroy_fixture(&fixture);
+        serial::register_core_codecs()!!;
+
+        Vec3[4] positions = { { 0, 0, 0 }, { 1, 0, 0 }, { 0, -1, 0 }, { 1, -1, 0 } };
+        ushort[<4>][4] joints = {
+            { 0, 0, 0, 0 }, { 0, 0, 0, 0 }, { 1, 0, 0, 0 }, { 1, 0, 0, 0 },
+        };
+        Vec4[4] weights = { { 1, 0, 0, 0 }, { 1, 0, 0, 0 }, { 1, 0, 0, 0 }, { 1, 0, 0, 0 } };
+        uint[6] indices = { 0, 2, 1, 1, 2, 3 };
+        Geometry skinned_geom = {
+            .positions = positions[..],
+            .joints    = joints[..],
+            .weights   = weights[..],
+            .indices   = indices[..],
+        };
+        skinned_geom.finalize();
+        GeometryId skinned_id = fixture.assets.add_geometry(&skinned_geom, "skinned_quad")!!;
+
+        int[] parents = alloc::new_array(mem, int, 2);
+        parents[0] = -1;
+        parents[1] = 0;
+        Mat4[] inverse_bind = alloc::new_array(mem, Mat4, 2);
+        inverse_bind[0] = matrix::IDENTITY4;
+        inverse_bind[1] = matrix::IDENTITY4;
+        Skeleton skeleton = { .parents = parents, .inverse_bind = inverse_bind };
+        SkeletonId skeleton_id = fixture.assets.add_skeleton_owned(&skeleton, "two_joint_skel")!!;
+
+        Node* j0 = fixture.source.add_node(fixture.root, "j0")!!;
+        Node* j1 = fixture.source.add_node(j0, "j1")!!;
+        Node* skin_owner = fixture.source.add_mesh(
+            geometry: skinned_id,
+            material: {},
+            parent:   fixture.root,
+            name:     "skinned_cloth",
+        )!!;
+        Node*[] joint_nodes = alloc::new_array(mem, Node*, 2);
+        joint_nodes[0] = j0;
+        joint_nodes[1] = j1;
+        fixture.source.add(skin_owner, (SkinBinding){ .skeleton = skeleton_id, .joints = joint_nodes });
+
+        uint[2] pins = { 0, 1 };
+        float[4] transport = { 1.0f, 1.0f, 0.5f, 0.25f };
+        ClothDesc desc = cloth::default_cloth_desc();
+        desc.pins = pins[..];
+        desc.transport = transport[..];
+        fixture.source.update_world();
+        fixture.source.attach_cloth(&fixture.assets, skin_owner, desc)!!;
+
+        Geometry rigid_geom = {
+            .positions = positions[..],
+            .indices   = indices[..],
+        };
+        rigid_geom.finalize();
+        GeometryId rigid_id = fixture.assets.add_geometry(&rigid_geom, "rigid_quad")!!;
+        MaterialId material_id = fixture.assets.add_material(material::standard(), "crowd_mat")!!;
+        NodeTemplate[] template_nodes = alloc::new_array(mem, NodeTemplate, 1);
+        template_nodes[0] = { .parent = -1, .name = "cape".copy(mem), .local = maths::TRANSFORM_IDENTITY, .visible = true };
+        ModelMesh[] template_meshes = alloc::new_array(mem, ModelMesh, 1);
+        template_meshes[0] = { .node = 0, .geometry = rigid_id, .material = material_id };
+        ModelTemplate model_template = { .nodes = template_nodes, .meshes = template_meshes };
+        ModelId model_id = fixture.assets.add_model_owned(&model_template, "crowd_cape_model")!!;
+        Node* crowd_owner = fixture.source.add_node(fixture.root, "crowd_owner")!!;
+        model::attach_crowd(
+            assets:      &fixture.assets,
+            scene:       &fixture.source,
+            node:        crowd_owner,
+            model:       model_id,
+            capacity:    2,
+            pose_bounds: { .min = { -2, -2, -2 }, .max = { 2, 2, 2 } },
+        )!!;
+        fixture.source.attach_crowd_cloth(
+            assets: &fixture.assets,
+            owner:  crowd_owner,
+            part:   0,
+            desc:   desc,
+        )!!;
+
+        char[] pending_bytes = encode(
+            scene:     &fixture.source,
+            assets:    &fixture.assets,
+            root:      fixture.root,
+            text_mode: text_mode,
+        )!!;
+
+        PhysicsWorld source_world = create_world(&fixture.source, &fixture.assets);
+        defer physics::destroy_physics_world(&source_world);
+        source_world.update(0);
+        model::prepare_crowd_subtree(&fixture.assets, &fixture.source, fixture.root)!!;
+        cloth::prepare_subtree(
+            scene:  &fixture.source,
+            assets: &fixture.assets,
+            root:   fixture.root,
+            world:  &source_world,
+        )!!;
+        assert(!fixture.source.has(skin_owner, Mesh));
+        Node* out_child = fixture.source.node(fixture.source.get(skin_owner, Cloth).state.output_node);
+        assert(fixture.source.has(out_child, ClothOutput) && fixture.source.has(out_child, Mesh));
+
+        // Exporting the generated output child alone must fail via the ClothOutput transient collector.
+        serial::SerialDiagnostic diagnostic = { .allocator = tmem };
+        fault orphan_fault = @catch(encode(
+            scene:     &fixture.source,
+            assets:    &fixture.assets,
+            root:      out_child,
+            text_mode: text_mode,
+            options:   { .diagnostic = &diagnostic },
+        ));
+        assert(orphan_fault == c3d::INVALID_ARGUMENT);
+        assert(diagnostic.type_name == ClothOutput::qname);
+
+        char[] prepared_bytes = encode(
+            scene:     &fixture.source,
+            assets:    &fixture.assets,
+            root:      fixture.root,
+            text_mode: text_mode,
+        )!!;
+        assert(prepared_bytes == pending_bytes);
+
+        Node* restored = decode(&fixture, prepared_bytes, text_mode)!!;
+        Node* restored_skin = child_named(restored, "skinned_cloth");
+        Cloth* restored_cloth = fixture.destination.get(restored_skin, Cloth);
+        assert(restored_cloth && !restored_cloth.is_prepared());
+        assert(fixture.destination.has(restored_skin, Mesh) && fixture.destination.has(restored_skin, SkinBinding));
+        assert(restored_cloth.authoring.desc.transport == transport[..]);
+        Node* restored_crowd = child_named(restored, "crowd_owner");
+        CrowdCloth* restored_crowd_cloth = fixture.destination.get(restored_crowd, CrowdCloth);
+        assert(restored_crowd_cloth && !restored_crowd_cloth.is_prepared());
+        assert(restored_crowd_cloth.find_part(0)!!.authoring.desc.transport == transport[..]);
     };
 }

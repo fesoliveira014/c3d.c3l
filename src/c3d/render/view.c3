@@ -1938,10 +1938,12 @@ fn void bind_previous_instances(
     previous.instances_end = span.end > offset ? span.end - offset : 0;
 }
 
-fn VertexHistory vertex_history_of(AssetStore* assets, MeshCandidate* candidate, PoseRecord* pose) @local {
+fn VertexHistory vertex_history_of(AssetStore* assets, MeshCandidate* candidate, PoseRecord* pose) @private {
     if (!pose) return VertexHistory.INVALID;
     GeometryAsset* geometry = assets.geometry(candidate.geometry);
-    if (!c3d::same_id(pose.vertex_geometry, candidate.geometry) || pose.vertices.len != geometry.data.positions.len) {
+    if (!c3d::same_id(pose.vertex_geometry, candidate.geometry)
+      || pose.vertices.len != geometry.data.positions.len
+      || pose.vertex_history_token != candidate.vertex_history_token) {
         return VertexHistory.INVALID;
     }
     return pose.vertex_revision == geometry.header.revision ? VertexHistory.UNCHANGED : VertexHistory.CHANGED;

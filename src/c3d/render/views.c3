@@ -138,6 +138,7 @@ struct PoseRecord {
     Vec3[]            vertices;        // base positions of a vertex_motion mesh; capacity outlives tracking
     GeometryId        vertex_geometry; // source of vertices; zero when the last rendering did not track
     uint              vertex_revision; // geometry revision vertices were copied at
+    ulong             vertex_history_token; // correspondence token vertices were copied at
     AnimatedLodPose*  animated_lod;
 }
 
@@ -264,6 +265,7 @@ fn void ViewHistory.commit(
         if (!same_scene || !c3d::same_id(self.owners[index], candidate.node.id)) {
             self.poses[index].instance_revision = 0;
             self.poses[index].vertex_geometry = {};
+            self.poses[index].vertex_history_token = 0;
             if (self.seen[index] != self.serial) {
                 free_animated_lod_pose(allocator, self.poses[index].animated_lod);
                 self.poses[index].animated_lod = null;
@@ -483,10 +485,12 @@ fn void commit_pose(
             assets:      assets,
             pose:        pose,
             geometry_id: candidate.geometry,
+            token:       candidate.vertex_history_token,
         );
     } else {
         pose.vertex_geometry = {};
         pose.vertex_revision = 0;
+        pose.vertex_history_token = 0;
     }
     if (candidate.skin) {
         SkinBinding* binding = candidate.skin;
@@ -565,6 +569,7 @@ fn void capture_vertices(
     AssetStore* assets,
     PoseRecord* pose,
     GeometryId geometry_id,
+    ulong token,
 ) @local {
     GeometryAsset* geometry = assets.geometry(geometry_id);
     Vec3[] positions = geometry.data.positions;
@@ -573,7 +578,13 @@ fn void capture_vertices(
         pose.vertices = alloc::new_array(allocator, Vec3, positions.len);
         pose.vertex_geometry = {};
     }
-    if (c3d::same_id(pose.vertex_geometry, geometry_id) && pose.vertex_revision == geometry.header.revision) return;
+    bool same_token = pose.vertex_history_token == token;
+    pose.vertex_history_token = token;
+    if (same_token
+      && c3d::same_id(pose.vertex_geometry, geometry_id)
+      && pose.vertex_revision == geometry.header.revision) {
+        return;
+    }
     pose.vertices[..] = positions[..];
     pose.vertex_geometry = geometry_id;
     pose.vertex_revision = geometry.header.revision;

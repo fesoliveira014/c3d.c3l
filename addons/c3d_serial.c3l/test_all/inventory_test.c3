@@ -27,12 +27,12 @@ import c3d::serial @public;
 import std::io::path;
 import std::math;
 
-const uint AUTHORED_TYPES @private = 40;
-const uint TRANSIENT_TYPES @private = 14;
+const uint AUTHORED_TYPES @private = 41;
+const uint TRANSIENT_TYPES @private = 15;
 
 fn uint[] policy_slots() @private {
     uint[] slots = alloc::new_array(tmem, uint, AUTHORED_TYPES + TRANSIENT_TYPES);
-    slots[..] = ((uint[54]){
+    slots[..] = ((uint[56]){
         ecs::assigned_slot(Mesh)!!, ecs::assigned_slot(Camera)!!, ecs::assigned_slot(Light)!!,
         ecs::assigned_slot(ProbeVolume)!!, ecs::assigned_slot(Atmosphere)!!, ecs::assigned_slot(HeightFog)!!,
         ecs::assigned_slot(ReflectionProbe)!!, ecs::assigned_slot(Decal)!!, ecs::assigned_slot(CloudLayer)!!,
@@ -42,12 +42,14 @@ fn uint[] policy_slots() @private {
         ecs::assigned_slot(IkChain)!!, ecs::assigned_slot(FootIk)!!, ecs::assigned_slot(LookAt)!!,
         ecs::assigned_slot(PhysicsBody)!!, ecs::assigned_slot(PhysicsJoint)!!, ecs::assigned_slot(Wind)!!,
         ecs::assigned_slot(Force)!!, ecs::assigned_slot(Buoyancy)!!, ecs::assigned_slot(Cloth)!!,
+        ecs::assigned_slot(CrowdCloth)!!,
         ecs::assigned_slot(Ragdoll)!!, ecs::assigned_slot(Breakable)!!, ecs::assigned_slot(NavSource)!!,
         ecs::assigned_slot(NavVolume)!!, ecs::assigned_slot(NavLink)!!, ecs::assigned_slot(NavObstacle)!!,
         ecs::assigned_slot(NavAgent)!!, ecs::assigned_slot(Character)!!, ecs::assigned_slot(NavDriven)!!,
         ecs::assigned_slot(Terrain)!!, ecs::assigned_slot(Foliage)!!, ecs::assigned_slot(Water)!!,
         ecs::assigned_slot(ParticleSystem)!!, ecs::assigned_slot(AudioEmitter)!!, ecs::assigned_slot(AudioListener)!!,
-        ecs::assigned_slot(RigidBody)!!, ecs::assigned_slot(Joint)!!, ecs::assigned_slot(NavSourceRuntime)!!,
+        ecs::assigned_slot(RigidBody)!!, ecs::assigned_slot(Joint)!!, ecs::assigned_slot(ClothOutput)!!,
+        ecs::assigned_slot(NavSourceRuntime)!!,
         ecs::assigned_slot(NavVolumeRuntime)!!, ecs::assigned_slot(NavLinkRuntime)!!,
         ecs::assigned_slot(NavObstacleRuntime)!!, ecs::assigned_slot(CrowdAgentRuntime)!!,
         ecs::assigned_slot(TerrainRuntime)!!, ecs::assigned_slot(FoliageRuntime)!!,

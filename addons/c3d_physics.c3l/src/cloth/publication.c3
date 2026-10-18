@@ -10,8 +10,9 @@ import std::math;
 import std::time;
 import std::time::clock;
 
-fn ClothState staged_cloth(ClothState* state) @local {
+fn ClothState staged_cloth(ClothState* state) @private {
     ClothState staged = *state;
+    staged.solved_reference = state.staged_solved_reference;
     staged.positions = state.staged_positions;
     staged.velocities = state.staged_velocities;
     staged.predicted = state.staged_predicted;
@@ -28,6 +29,7 @@ fn ClothState staged_cloth(ClothState* state) @local {
     staged.shape_ends = state.staged_shape_ends;
     staged.contact_result = {};
 
+    staged.solved_reference[..] = state.solved_reference[..];
     staged.positions[..] = state.positions[..];
     staged.velocities[..] = state.velocities[..];
     staged.predicted[..] = state.predicted[..];
@@ -44,7 +46,8 @@ fn ClothState staged_cloth(ClothState* state) @local {
     return staged;
 }
 
-fn void commit_cloth(ClothState* state, ClothState* staged) @local {
+fn void commit_cloth(ClothState* state, ClothState* staged) @private {
+    state.solved_reference[..] = staged.solved_reference[..];
     state.positions[..] = staged.positions[..];
     state.velocities[..] = staged.velocities[..];
     state.predicted[..] = staged.predicted[..];
@@ -62,7 +65,7 @@ fn void commit_cloth(ClothState* state, ClothState* staged) @local {
     state.shape_ends[..] = staged.shape_ends[..];
 }
 
-fn bool? stage_local_positions(ClothState* state, Mat4 world) @local {
+fn bool? stage_local_positions(ClothState* state, Mat4 world, bool force_changed = false) @private {
     foreach (value : world.m) if (!math::is_finite(value)) return CONTACT_PRECISION_EXCEEDED~;
 
     ContactVector column_x = { world.m00, world.m10, world.m20 };
@@ -105,7 +108,7 @@ fn bool? stage_local_positions(ClothState* state, Mat4 world) @local {
         state.publication_roundtrip[index] = restored;
     }
 
-    bool changed;
+    bool changed = force_changed;
     foreach (material_vertex, particle : state.material_particles) {
         Vec3 local = state.particle_local[particle];
         state.local_output[material_vertex] = local;
@@ -116,7 +119,7 @@ fn bool? stage_local_positions(ClothState* state, Mat4 world) @local {
     return changed;
 }
 
-fn void? stage_material_frames(ClothState* state, bool changed) @local {
+fn void? stage_material_frames(ClothState* state, bool changed) @private {
     if (!changed) return;
 
     compute_material_frames(
@@ -142,22 +145,33 @@ fn void? stage_material_frames(ClothState* state, bool changed) @local {
     state.local_bounds = staged.bounds;
 }
 
-fn void commit_local_publication(ClothState* state, Mat4 world, bool changed) @local {
-    if (changed) {
+fn void commit_local_publication(
+    ClothState* state,
+    Mat4 world,
+    bool changed,
+    bool colors_changed = false,
+) @private {
+    if (changed || colors_changed) {
         GeometryAsset* geometry = state.assets.geometry(state.geometry);
-        geometry.data.positions[..] = state.local_output[..];
-        geometry.data.normals[..] = state.local_normals[..];
-        if (state.desc.tangent_frame) {
-            geometry.data.tangents[..] = state.local_tangents[..];
-            state.committed_tangents[..] = state.local_tangents[..];
+        if (changed) {
+            geometry.data.positions[..] = state.local_output[..];
+            geometry.data.normals[..] = state.local_normals[..];
+            if (state.desc.tangent_frame) {
+                geometry.data.tangents[..] = state.local_tangents[..];
+                state.committed_tangents[..] = state.local_tangents[..];
+            }
+            geometry.data.bounds = state.local_bounds;
         }
-        geometry.data.bounds = state.local_bounds;
+        if (colors_changed && state.staged_colors.len) {
+            geometry.data.colors[..] = state.staged_colors[..];
+        }
         state.assets.mark_geometry_streams_dirty(
             state.geometry,
             {
-                .positions = true,
-                .normals   = true,
-                .tangents  = state.desc.tangent_frame,
+                .positions = changed,
+                .normals   = changed,
+                .tangents  = changed && state.desc.tangent_frame,
+                .colors    = colors_changed,
             },
         );
     }
@@ -180,11 +194,26 @@ fn void? update_cloth(
     staged.contact_result.stage = ClothContactStage.ARITHMETIC;
     if (!physics::contact_arithmetic_supported()) return CONTACT_PRECISION_EXCEEDED~;
 
+    staged.contact_result.stage = ClothContactStage.PUBLICATION;
+    check_ordinary_output_ownership(world.scene, &staged, node)!;
+
+    staged.contact_result.stage = ClothContactStage.REFERENCE;
+    sample_ordinary_reference(
+        scene:  world.scene,
+        assets: world.assets,
+        owner:  node,
+        state:  &staged,
+    )!;
+
     staged.contact_result.stage = ClothContactStage.BINDINGS;
     refresh_colliders(world, &staged)!;
-    foreach (slot, pin : staged.pins) staged.pin_targets[slot] = maths::transform_point(node.world, staged.rest[pin]);
+    foreach (slot, pin : staged.pins) {
+        staged.pin_anchors[slot] = staged.solved_reference[pin];
+        staged.pin_targets[slot] = staged.current_reference[pin];
+    }
     foreach (slot, attachment : staged.soft_attachments) {
-        staged.soft_targets[slot] = maths::transform_point(node.world, staged.rest[attachment.particle]);
+        staged.soft_anchors[slot] = staged.solved_reference[attachment.particle];
+        staged.soft_targets[slot] = staged.current_reference[attachment.particle];
     }
     sample_bodies(world.scene, &staged);
 
@@ -217,6 +246,13 @@ fn void? update_cloth(
     commit_cloth(state, &staged);
     state.local_bounds = staged.local_bounds;
     commit_local_publication(state, node.world, changed);
+
+    if (state.skinned && world.scene.world.is_alive(state.output_node)) {
+        Node* out_node = world.scene.node(state.output_node);
+        out_node.layers = node.layers;
+        out_node.world = node.world;
+        out_node.visible_effective = node.visible_effective && out_node.visible;
+    }
     staged.contact_result.stage = ClothContactStage.NONE;
 }
 

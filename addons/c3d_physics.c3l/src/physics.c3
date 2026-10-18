@@ -559,6 +559,16 @@ fn void PhysicsWorld.shift_origin(&self, Scene* scene, Vec3 offset) {
     scene.@each(Cloth; Entity entity, Cloth* cloth) {
         if (cloth.is_prepared()) cloth.state.shift_origin(offset);
     };
+    scene.@each(CrowdCloth; Entity entity, CrowdCloth* crowd_cloth) {
+        if (crowd_cloth.state) {
+            foreach (&part : crowd_cloth.state.parts) {
+                if (!part.prepared) continue;
+                foreach (state : part.states) {
+                    if (state) state.shift_origin(offset);
+                }
+            }
+        }
+    };
 }
 
 <*

@@ -14,6 +14,7 @@ fn bool? visit(
         .name = name,
         .kind = describe::@kind(Type),
         .size = Type::size,
+        .authored_size = describe::@authored_size(Type),
         .alignment = Type::alignment,
         .identity = Type::typeid,
         .metadata = metadata,
@@ -31,6 +32,7 @@ fn bool? visit(
             var $Element = $Typefrom(Type::inner);
             info.element_kind = describe::@kind($Element);
             info.element_size = $Element::size;
+            info.element_authored_size = describe::@authored_size($Element);
             info.element_alignment = $Element::alignment;
             $if Type::kind == ARRAY:
                 info.extent = Type::len;

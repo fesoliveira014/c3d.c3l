@@ -47,6 +47,7 @@ fn bool? walk_descriptor(
         .name = name.len ? name : descriptor.name,
         .kind = STRUCT,
         .size = descriptor.size,
+        .authored_size = descriptor.authored_size ? descriptor.authored_size : descriptor.size,
         .alignment = descriptor.alignment,
         .identity = descriptor.identity,
     };

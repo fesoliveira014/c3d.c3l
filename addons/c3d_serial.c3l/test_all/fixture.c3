@@ -270,6 +270,31 @@ fn void add_physics(Fixture* fixture) @private {
     cloth.stretch_stiffness = 0.75f;
     scene.attach_cloth(assets: &fixture.assets, node: fabric, desc: cloth)!!;
     scene.add_nav_source(fabric)!!;
+    NodeTemplate[] cloth_nodes = alloc::new_array(mem, NodeTemplate, 1);
+    cloth_nodes[0] = { .parent = -1, .name = "cloth_part".copy(mem), .local = maths::TRANSFORM_IDENTITY, .visible = true };
+    ModelMesh[] cloth_meshes = alloc::new_array(mem, ModelMesh, 1);
+    cloth_meshes[0] = { .node = 0, .geometry = fixture.box, .material = fixture.material };
+    ModelTemplate cloth_template = { .nodes = cloth_nodes, .meshes = cloth_meshes };
+    ModelId cloth_model = fixture.assets.add_model_owned(&cloth_template, "cloth_model")!!;
+    Node* crowd = scene.add_node(name: "crowd_cloth")!!;
+    model::attach_crowd(
+        assets: &fixture.assets,
+        scene: scene,
+        node: crowd,
+        model: cloth_model,
+        capacity: 2,
+        pose_bounds: { .min = { -1, -1, -1 }, .max = { 1, 1, 1 } },
+    )!!;
+    ClothDesc crowd_cloth = cloth::default_cloth_desc();
+    uint[1] crowd_pins = { 0 };
+    crowd_cloth.pins = &crowd_pins;
+    crowd_cloth.stretch_stiffness = 0.8f;
+    scene.attach_crowd_cloth(
+        assets: &fixture.assets,
+        owner: crowd,
+        part: 0,
+        desc: crowd_cloth,
+    )!!;
     Node* breakable = scene.add_node(name: "breakable")!!;
     BreakablePieceView[2] pieces;
     foreach (index, &piece : pieces) {
@@ -435,7 +460,12 @@ fn void prepare_scene(
     particle::prepare_subtree(scene, root)!!;
     model::prepare_crowd_subtree(assets, scene, root)!!;
     systems.physics.update(0);
-    cloth::prepare_subtree(scene, assets, root)!!;
+    cloth::prepare_subtree(
+        scene:  scene,
+        assets: assets,
+        root:   root,
+        world:  &systems.physics,
+    )!!;
     systems.physics.prepare_breakable_subtree(root)!!;
     NavSyncResult result = nav::nav_sync(
         builder: &systems.builder,

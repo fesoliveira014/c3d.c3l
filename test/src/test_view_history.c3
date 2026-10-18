@@ -6,7 +6,7 @@ import c3d::asset;
 import c3d::geometry;
 import c3d::material;
 import c3d::maths;
-import c3d::render;
+import c3d::render @public;
 import c3d::render::post;
 import c3d::scene;
 import gpu;
@@ -946,4 +946,122 @@ fn void test_vertex_history_reuses_and_frees_storage() @test {
     assert(holds(pose, fixture.assets.geometry(fixture.quad).data.positions));
     destroy_vertex_fixture(&fixture, &tracker);
     assert(!tracker.has_leaks());
+}
+
+fn void test_vertex_history_token_resets_across_views() @test {
+    VertexFixture fixture = create_vertex_fixture();
+    defer destroy_vertex_fixture(&fixture);
+    Mesh* mesh = fixture.scene.add(fixture.node, (Mesh){
+        .geometry      = fixture.quad,
+        .vertex_motion = true,
+    });
+
+    MeshCandidate[1] candidates = { {
+        .node                 = fixture.node,
+        .geometry             = fixture.quad,
+        .vertex_motion        = true,
+        .vertex_history_token = mesh.vertex_history_token,
+    } };
+    fixture.first.commit(
+        allocator:  mem,
+        assets:     &fixture.assets,
+        scene:      &fixture.scene,
+        candidates: candidates[..],
+        view_proj:  matrix::IDENTITY4,
+        time:       0,
+    );
+    fixture.first.publish();
+    fixture.second.commit(
+        allocator:  mem,
+        assets:     &fixture.assets,
+        scene:      &fixture.scene,
+        candidates: candidates[..],
+        view_proj:  matrix::IDENTITY4,
+        time:       0,
+    );
+    fixture.second.publish();
+
+    uint revision_before = fixture.assets.geometry(fixture.quad).header.revision;
+    foreach (&position : fixture.assets.geometry(fixture.quad).data.positions) *position += { 2, 0, 0 };
+    assert(fixture.assets.geometry(fixture.quad).header.revision == revision_before);
+    mesh.reset_vertex_history();
+    assert(mesh.vertex_history_token == 1);
+    candidates[0].vertex_history_token = mesh.vertex_history_token;
+
+    PoseRecord* first_pose = fixture.first.previous_pose(&fixture.scene, fixture.node);
+    PoseRecord* second_pose = fixture.second.previous_pose(&fixture.scene, fixture.node);
+    assert(render::vertex_history_of(&fixture.assets, &candidates[0], first_pose) == render::VertexHistory.INVALID);
+    assert(render::vertex_history_of(&fixture.assets, &candidates[0], second_pose) == render::VertexHistory.INVALID);
+
+    fixture.first.commit(
+        allocator:  mem,
+        assets:     &fixture.assets,
+        scene:      &fixture.scene,
+        candidates: candidates[..],
+        view_proj:  matrix::IDENTITY4,
+        time:       0,
+    );
+    fixture.first.publish();
+    first_pose = fixture.first.previous_pose(&fixture.scene, fixture.node);
+    assert(render::vertex_history_of(&fixture.assets, &candidates[0], first_pose) == render::VertexHistory.UNCHANGED);
+    assert(holds(first_pose, fixture.assets.geometry(fixture.quad).data.positions));
+    assert(render::vertex_history_of(&fixture.assets, &candidates[0], second_pose) == render::VertexHistory.INVALID);
+
+    fixture.second.commit(
+        allocator:  mem,
+        assets:     &fixture.assets,
+        scene:      &fixture.scene,
+        candidates: candidates[..],
+        view_proj:  matrix::IDENTITY4,
+        time:       0,
+    );
+    fixture.second.publish();
+    second_pose = fixture.second.previous_pose(&fixture.scene, fixture.node);
+    assert(render::vertex_history_of(&fixture.assets, &candidates[0], second_pose) == render::VertexHistory.UNCHANGED);
+    assert(holds(second_pose, fixture.assets.geometry(fixture.quad).data.positions));
+}
+
+fn void test_evaluate_skin_positions_matches_joint_palette() @test {
+    Scene scene = scene::create_scene(mem, { .max_nodes = NODE_CAPACITY });
+    defer scene::destroy_scene(&scene);
+    AssetStore assets = create_store();
+    defer asset::destroy_asset_store(&assets);
+    SkeletonId skeleton_id = add_identity_skeleton(&assets, 2);
+
+    Node* mesh_node = scene.add_node(name: "mesh")!!;
+    mesh_node.local.position = { 1, 0, 0 };
+    Node* j0 = scene.add_node(parent: mesh_node, name: "j0")!!;
+    j0.local.position = { 2, 0, 0 };
+    Node* j1 = scene.add_node(parent: mesh_node, name: "j1")!!;
+    j1.local.position = { 0, 4, 0 };
+    scene.update_world();
+
+    Node*[2] joints = { j0, j1 };
+    SkinBinding binding = { .skeleton = skeleton_id, .joints = joints[..] };
+    Skeleton* skeleton = &assets.skeleton(skeleton_id).data;
+    float[<4>][4][2] palette;
+    anim::evaluate_skin_palette(
+        output:       palette[..],
+        mesh_node:    mesh_node,
+        binding:      &binding,
+        inverse_bind: skeleton.inverse_bind,
+    );
+
+    Vec3[2] rest = { { 0, 0, 0 }, { 1, 0, 0 } };
+    ushort[<4>][2] joint_indices = { { 0, 1, 0, 0 }, { 1, 0, 0, 0 } };
+    Vec4[2] weights = { { 0.5f, 0.5f, 0, 0 }, { 1, 0, 0, 0 } };
+    Geometry source = {
+        .positions = rest[..],
+        .joints    = joint_indices[..],
+        .weights   = weights[..],
+    };
+    Vec3[2] out;
+    anim::evaluate_skin_positions(
+        output:  out[..],
+        source:  &source,
+        palette: palette[..],
+        world:   mesh_node.world,
+    )!!;
+    assert((out[0] - (Vec3){ 2, 2, 0 }).length() < 1e-5f);
+    assert((out[1] - (Vec3){ 2, 4, 0 }).length() < 1e-5f);
 }
