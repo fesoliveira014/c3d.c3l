@@ -87,6 +87,8 @@ const float CROWD_SPEED_MIN @local = 0.8f;
 const float CROWD_SPEED_MAX @local = 1.2f;
 const uint CROWD_SEED @local = 20261018;
 const float RANDOM_RANGE @local = 16777216; // 2^24, the bits of a generator word that become a fraction
+const ulong CHECKSUM_BASIS @local = 14695981039346656037UL; // FNV-1a 64-bit offset basis
+const ulong CHECKSUM_PRIME @local = 1099511628211UL; // FNV-1a 64-bit prime
 const String FOOT_JOINT @local = "DEF-foot.L";
 const String TOE_JOINT @local = "DEF-toe.L";
 
@@ -1390,21 +1392,40 @@ fn void print_trace_report(
 
 fn uint cloth_total(Demo* demo) @local => demo.scene.count(Cloth) + demo.crowd_count;
 
-fn ulong state_bytes(Demo* demo) @local {
-    ulong total;
+struct StateTotals @local {
+    ulong bytes;
+    ulong checksum; // FNV-1a style fold of the bits of every position and velocity; bitwise-equal runs give equal sums
+}
+
+fn void StateTotals.add(&self, ClothState* state) {
+    self.bytes += state.allocation_bytes;
+    foreach (position : state.positions) {
+        for (usz axis = 0; axis < 3; axis++) self.mix(bitcast(position[axis], uint));
+    }
+    foreach (velocity : state.velocities) {
+        for (usz axis = 0; axis < 3; axis++) self.mix(bitcast(velocity[axis], uint));
+    }
+}
+
+fn void StateTotals.mix(&self, uint bits) {
+    self.checksum = (self.checksum ^ bits) * CHECKSUM_PRIME;
+}
+
+fn StateTotals state_totals(Demo* demo) @local {
+    StateTotals totals = { .checksum = CHECKSUM_BASIS };
     demo.scene.@each(Cloth; entity, cloth) {
-        if (cloth.state) total += cloth.state.allocation_bytes;
+        if (cloth.state) totals.add(cloth.state);
     };
     demo.scene.@each(CrowdCloth; entity, crowd_cloth) {
         if (crowd_cloth.state) {
             foreach (&part : crowd_cloth.state.parts) {
                 foreach (state : part.states) {
-                    if (state) total += state.allocation_bytes;
+                    if (state) totals.add(state);
                 }
             }
         }
     };
-    return total;
+    return totals;
 }
 
 fn void print_update_timings(
@@ -1425,7 +1446,8 @@ fn void print_update_timings(
         mean(commit_ms),
         percentile(commit_ms, PERCENTILE_95),
     );
-    io::printfn("state_bytes,%d", state_bytes(demo));
+    StateTotals totals = state_totals(demo);
+    io::printfn("state_bytes,%d,state_checksum,%x", totals.bytes, totals.checksum);
 }
 
 // Steps the scene without a renderer, so rasteriser threads do not compete with the job pool.
