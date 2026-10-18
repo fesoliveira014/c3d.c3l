@@ -229,7 +229,9 @@ fn void? prepare_publication(PhysicsWorld* world, ClothState* state, bool solved
 
 fn void accumulate_wind(ClothState* state, Wind* wind) @local {
     state.accelerations[..] = (Vec3){};
-    if (!wind || wind.drag == 0) return;
+    if (!wind) return;
+    float drag_scale = 0.5f * AIR_DENSITY * state.desc.drag_coefficient;
+    float lift_scale = AIR_DENSITY * state.desc.lift_coefficient;
     for (usz corner = 0; corner < state.corners.len; corner += 3) {
         uint first = state.corners[corner].particle;
         uint second = state.corners[corner + 1].particle;
@@ -241,8 +243,17 @@ fn void accumulate_wind(ClothState* state, Wind* wind) @local {
         Vec3 relative = wind.velocity
           - (state.velocities[first] + state.velocities[second] + state.velocities[third]) / 3;
         float speed = relative.length();
-        if (wind.max_speed > 0 && speed > wind.max_speed) relative *= wind.max_speed / speed;
-        Vec3 share = normal * (wind.drag * doubled_area * 0.5f * relative.dot(normal) / 3);
+        if (speed == 0) continue;
+        if (wind.max_speed > 0 && speed > wind.max_speed) {
+            relative *= wind.max_speed / speed;
+            speed = wind.max_speed;
+        }
+        Vec3 direction = relative / speed;
+        float side = direction.dot(normal);
+        float dynamic_area = speed * speed * doubled_area * 0.5f;
+        Vec3 force = normal * (drag_scale * dynamic_area * side * math::abs(side))
+          + (normal - direction * side) * (lift_scale * dynamic_area * side);
+        Vec3 share = force / 3;
         state.accelerations[first] += share * state.inverse_masses[first];
         state.accelerations[second] += share * state.inverse_masses[second];
         state.accelerations[third] += share * state.inverse_masses[third];
