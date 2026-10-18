@@ -546,7 +546,7 @@ addons/c3d_physics.c3l/build/physics_components.exe --stress --benchmark 300 --d
 ```
 
 `--debug-draw` times `debug_draw` of the colliders into a sink that holds every line and into a
-default sink, and prints a checksum of the sink's vertices that is equal for every `--workers` value.
+default sink, and prints a checksum of the sink's vertices that is equal for every `--workers` value at the same frame count.
 `--workers n` runs `c3d_job` workers; 0, the default, draws on the calling thread.
 
 ## Rebasing the origin
