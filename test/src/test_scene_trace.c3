@@ -351,6 +351,70 @@ fn void test_trace_only_mesh_traces_and_never_draws() @test {
     };
 }
 
+fn void test_sway_rows_yield_posed_slots_to_other_kinds() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Scene* scene = &fixture.scene;
+    Transform[2] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
+    transforms[1].position = { 3, 0, 0 };
+    Node* swaying = scene.add_instanced_mesh(
+        geometry:   fixture.box,
+        material:   fixture.opaque,
+        capacity:   2,
+        transforms: transforms[..],
+        name:       "swaying",
+    )!!;
+    InstancedMesh* swaying_batch = scene.get(swaying, InstancedMesh);
+    swaying_batch.sway = { .direction = { 1, 0, 0 }, .amplitude = 0.2f, .frequency = 1 };
+    swaying_batch.trace_sway = true;
+    MaterialId custom = fixture.assets.add_material(material::custom(add_posed_shader(&fixture, false, true)))!!;
+    Node* newcomer = scene.add_instanced_mesh(
+        geometry:   fixture.box,
+        material:   custom,
+        capacity:   1,
+        transforms: transforms[:1],
+        name:       "newcomer",
+    )!!;
+    newcomer.visible = false;
+    scene.update_world();
+
+    RetireList retire;
+    retire.init(mem);
+    defer retire.free();
+    PosedTraceTable table = render::create_posed_trace_table(mem, 2);
+    defer render::free_posed_trace_storage(&table);
+
+    @pool() {
+        render::TraceCollection first = collect_all(&fixture);
+        assert(first.records.len == 2 && first.poses[0].kind == render::TracePose.SWAY);
+        table.begin_epoch(1);
+        foreach (index, &pose : first.poses) {
+            PosedTraceKey key = render::trace_pose_key(scene.identity, pose, &first.records[index]);
+            assert(@ok(table.claim(key, 0, &retire)));
+        }
+        assert(retire.len() == 0);
+
+        newcomer.visible = true;
+        scene.update_world();
+        render::TraceCollection second = collect_all(&fixture);
+        assert(second.records.len == 3);
+        assert(second.poses[0].kind == render::TracePose.CUSTOM);
+        assert(second.poses[1].kind == render::TracePose.SWAY && second.poses[2].kind == render::TracePose.SWAY);
+        table.begin_epoch(2);
+        uint admitted;
+        foreach (index, &pose : second.poses) {
+            PosedTraceKey key = render::trace_pose_key(scene.identity, pose, &second.records[index]);
+            if (@ok(table.claim(key, 1, &retire))) {
+                admitted++;
+            } else {
+                assert(pose.kind == render::TracePose.SWAY);
+            }
+        }
+        assert(admitted == 2);
+        assert(table.lookup.has_key(render::trace_pose_key(scene.identity, &second.poses[0], &second.records[0])));
+    };
+}
+
 fn void test_bounds_override_bounds_without_excluding() @test {
     Fixture fixture = make_fixture();
     defer destroy_fixture(&fixture);

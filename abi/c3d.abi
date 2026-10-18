@@ -436,6 +436,19 @@ root InstanceEffectsGpu {
     uint    _pad0;
 }
 
+root TraceSwayPoseRoot {
+    GpuAddress  source;       // rest geometry root
+    GpuAddress  posed;        // posed geometry root
+    uint        vertex_count;
+    uint        flags;        // DRAW_SWAY_VERTEX_ALPHA selects the bend weight from vertex alpha
+    uint        _pad0;
+    uint        _pad1;
+    InstanceGpu instance;     // the batch instance the row came from
+    mat4        part_local;   // placement of the part within the instance; identity for a batch
+    SwayGpu     sway;         // the batch's sway at this frame's time
+    vec4        anchor;       // InstanceEffectsGpu.anchor of the batch
+}
+
 const uint MAX_ACTIVE_MORPH_TARGETS = 8;
 
 root MorphWeightsGpu {

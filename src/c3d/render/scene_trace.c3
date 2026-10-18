@@ -60,6 +60,7 @@ enum TracePose @private {
     ANIMATED_LOD,  // one logical base part of an ordinary model or crowd
     VERTEX_MOTION, // a mesh whose positions the application rewrites between revisions
     CUSTOM,        // a custom material's trace-pose stage poses the geometry
+    SWAY,          // one instance of a batch or LOD group under the built-in sway
 }
 
 enum PoseForm @private {
@@ -100,10 +101,10 @@ struct TracePoseSource @private {
     Mesh*          mesh;          // MESH
     SkinBinding*   skin;          // MESH; null for a morph-only mesh
     AnimatedCrowd* crowd;         // CROWD
-    InstancedMesh* batch;         // CROWD: the part's batch; CUSTOM instanced: the source batch
-    uint           part;          // CROWD: index into crowd.parts
-    Scene*         scene;         // ANIMATED_LOD: source scene, borrowed for this collection
-    LodGroupState* lod;           // animated level-zero descriptor, borrowed for this collection
+    InstancedMesh* batch;         // CROWD: the part's batch; CUSTOM instanced and SWAY: the source batch
+    uint           part;          // CROWD: index into crowd.parts; SWAY: the LOD group's part
+    Scene*         scene;         // ANIMATED_LOD and SWAY: source scene, borrowed for this collection
+    LodGroupState* lod;           // animated level-zero descriptor, or the group a SWAY row follows
     ulong          vertex_history_token; // VERTEX_MOTION: correspondence token of the source mesh
     MaterialId     material;      // CUSTOM: the row's custom material
     gpu::PipelineHandle pipeline; // CUSTOM: the published trace-pose form, set with the row
@@ -430,6 +431,8 @@ fn TraceCollection collect_trace_instances(
                 bool sways = batch.sway.amplitude != 0;
                 if (custom) {
                     source = { .kind = TracePose.CUSTOM, .node = node, .batch = batch, .material = batch.material };
+                } else if (batch.trace_sway && sways && !crowd) {
+                    source = { .kind = TracePose.SWAY, .node = node, .batch = batch, .scene = scene };
                 } else if (sways) {
                     collection.sway_at_rest++;
                 }
@@ -450,6 +453,8 @@ fn TraceCollection collect_trace_instances(
                     if (crowd) {
                         Mat4 placement = maths::rebase(node.world, origin).mul(crowd.placements[index].to_mat4());
                         record.bounds = maths::aabb_transform(crowd.pose_bounds, placement);
+                    } else if (source.kind == TracePose.SWAY) {
+                        record.bounds = grow_by_sway_reach(record.bounds, batch.sway);
                     }
                     collection.records[count] = record;
                     collection.poses[count++] = source;
@@ -472,6 +477,7 @@ fn TraceCollection collect_trace_instances(
                 collection.dangling++;
             } else {
                 bool collected;
+                bool sway_posed = !state.animated && state.effects.trace_sway && state.effects.sway.amplitude != 0;
                 for (uint part = base.first_part; part < base.first_part + base.part_count; part++) {
                     LodPart draw = state.desc.parts[part];
                     if (!traceable(assets, draw.geometry, draw.material)) continue;
@@ -497,6 +503,8 @@ fn TraceCollection collect_trace_instances(
                         pose.kind = binding.skinned || morphed ? TracePose.ANIMATED_LOD
                           : candidate.source_mesh && candidate.source_mesh.vertex_motion
                           ? TracePose.VERTEX_MOTION : TracePose.REST;
+                    } else if (sway_posed) {
+                        pose = { .kind = TracePose.SWAY, .node = node, .lod = state, .part = part, .scene = scene };
                     }
 
                     collected |= state.count > 0;
@@ -520,6 +528,7 @@ fn TraceCollection collect_trace_instances(
                         );
                         record.lod_identity = state.identity;
                         record.part_index = state.animated ? state.animated.parts[part].mesh_index : part;
+                        if (sway_posed) record.bounds = grow_by_sway_reach(record.bounds, state.effects.sway);
                         if (state.animated) {
                             record.bounds = spatial::animated_lod_part_bounds(
                                 assets: assets,
@@ -536,13 +545,38 @@ fn TraceCollection collect_trace_instances(
                         collection.poses[count++] = pose;
                     }
                 }
-                if (collected && state.effects.sway.amplitude != 0) collection.sway_at_rest++;
+                if (collected && state.effects.sway.amplitude != 0 && !sway_posed) collection.sway_at_rest++;
             }
         }
     };
     collection.records = collection.records[:count];
     collection.poses = collection.poses[:count];
+    sway_rows_last(allocator, &collection);
     return collection;
+}
+
+// A batch of swaying instances can fill every posed slot, so its rows claim after the other kinds do.
+fn void sway_rows_last(Allocator allocator, TraceCollection* collection) @private {
+    usz count = collection.records.len;
+    usz sway;
+    foreach (&pose : collection.poses) {
+        if (pose.kind == TracePose.SWAY) sway++;
+    }
+    if (!sway || sway == count) return;
+
+    TraceInstance[] records = alloc::new_array(allocator, TraceInstance, (sz)count);
+    defer alloc::free(allocator, records.ptr);
+    TracePoseSource[] poses = alloc::new_array(allocator, TracePoseSource, (sz)count);
+    defer alloc::free(allocator, poses.ptr);
+    usz front;
+    usz back = count - sway;
+    foreach (index, &pose : collection.poses) {
+        usz target = pose.kind == TracePose.SWAY ? back++ : front++;
+        records[target] = collection.records[index];
+        poses[target] = *pose;
+    }
+    collection.records[..] = records[..];
+    collection.poses[..] = poses[..];
 }
 
 // The crowd part a batch node draws, or the plain source of an ordinary batch.
@@ -568,6 +602,12 @@ fn TracePoseSource crowd_part_source(
         };
     }
     return source;
+}
+
+// The sway moves vertices up to its reach along each axis, in world space, after the row's matrix.
+fn Aabb grow_by_sway_reach(Aabb bounds, InstanceSway sway) @local {
+    Vec3 reach = sway.reach();
+    return { .min = bounds.min - reach, .max = bounds.max + reach };
 }
 
 fn MeshCandidate trace_animated_lod_candidate(
@@ -747,6 +787,7 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
     renderer.stats.trace_posed_overflow = 0;
     renderer.stats.trace_deform_overflow = 0;
     usz kept;
+    Entity sway_rest_node;
     foreach (index, &record : records) {
         TracePoseSource* pose = &collection.poses[index];
         bool posed_row = pose.kind != TracePose.REST;
@@ -765,7 +806,7 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
             streams:        cpu_present || geometry_current(renderer, record.geometry),
         );
         bool motion_row = pose.kind == TracePose.VERTEX_MOTION;
-        bool deforming_row = pose.kind == TracePose.CUSTOM;
+        bool deforming_row = pose.kind == TracePose.CUSTOM || pose.kind == TracePose.SWAY;
         PosedTraceKey key;
         if (posed_row) key = trace_pose_key(scene, pose, record);
         bool motion_held = motion_row && vertex_motion_held(
@@ -834,9 +875,13 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
                         renderer.stats.trace_deform_overflow++;
                         continue;
                     }
-                    if (!motion_row) {
+                    if (!motion_row && pose.kind != TracePose.SWAY) {
                         renderer.stats.trace_posed_overflow++;
                         continue;
+                    }
+                    if (pose.kind == TracePose.SWAY && !c3d::same_id(sway_rest_node, record.entity)) {
+                        renderer.stats.trace_sway_at_rest++;
+                        sway_rest_node = record.entity;
                     }
                     // No free slot: the row traces through the shared geometry, rebuilt per revision.
                     posed_row = false;

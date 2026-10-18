@@ -35,6 +35,7 @@ enum ComputeSlot @private {
     TRACE_POSE_U16,
     TRACE_POSE_INSTANCED,
     TRACE_POSE_INSTANCED_U16,
+    TRACE_SWAY,
     TRACE_REFIT,
     SSAO,
     RT_AO,
@@ -183,6 +184,8 @@ fn ComputeSlotTarget compute_slot_target(Renderer* renderer, ComputeSlot slot) @
             .shader = TRACE_POSE,
             .flags = shader::SHADER_FLAG_INSTANCED | shader::SHADER_FLAG_SKINNED_U16,
             .debug_name = "trace_pose_instanced_u16" };
+        case TRACE_SWAY: return { .pipeline = &renderer.posed_trace.sway_pipeline,
+            .shader = TRACE_SWAY, .debug_name = "trace_sway" };
         case TRACE_REFIT: return { .pipeline = &renderer.posed_trace.refit_pipeline,
             .shader = TRACE_REFIT, .debug_name = "trace_refit" };
         case SSAO: return { .pipeline = &renderer.ambient_occlusion_pipelines.ssao,

@@ -904,6 +904,30 @@ $assert $reflect(InstanceEffectsGpu.fade_end).offset == 100;
 $assert $reflect(InstanceEffectsGpu.fade_transition).offset == 104;
 $assert $reflect(InstanceEffectsGpu._pad0).offset == 108;
 
+struct TraceSwayPoseRoot {
+    GpuAddress  source;
+    GpuAddress  posed;
+    uint        vertex_count;
+    uint        flags;
+    uint        _pad0;
+    uint        _pad1;
+    InstanceGpu instance;
+    Mat4f       part_local;
+    SwayGpu     sway;
+    Vec4f       anchor;
+}
+$assert TraceSwayPoseRoot::size == 272;
+$assert $reflect(TraceSwayPoseRoot.source).offset == 0;
+$assert $reflect(TraceSwayPoseRoot.posed).offset == 8;
+$assert $reflect(TraceSwayPoseRoot.vertex_count).offset == 16;
+$assert $reflect(TraceSwayPoseRoot.flags).offset == 20;
+$assert $reflect(TraceSwayPoseRoot._pad0).offset == 24;
+$assert $reflect(TraceSwayPoseRoot._pad1).offset == 28;
+$assert $reflect(TraceSwayPoseRoot.instance).offset == 32;
+$assert $reflect(TraceSwayPoseRoot.part_local).offset == 160;
+$assert $reflect(TraceSwayPoseRoot.sway).offset == 224;
+$assert $reflect(TraceSwayPoseRoot.anchor).offset == 256;
+
 struct MorphWeightsGpu {
     uint[8]  indices;
     float[8] weights;
