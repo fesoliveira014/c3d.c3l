@@ -96,19 +96,19 @@ struct TraceInstance @private {
 $assert TraceInstance::size == 272;
 
 struct TracePoseSource @private {
-    TracePose      kind;
-    Node*          node;          // the mesh node, or the part batch node
-    Mesh*          mesh;          // MESH
-    SkinBinding*   skin;          // MESH; null for a morph-only mesh
-    AnimatedCrowd* crowd;         // CROWD
-    InstancedMesh* batch;         // CROWD: the part's batch; CUSTOM instanced and SWAY: the source batch
-    uint           part;          // CROWD: index into crowd.parts; SWAY: the LOD group's part
-    Scene*         scene;         // ANIMATED_LOD and SWAY: source scene, borrowed for this collection
-    LodGroupState* lod;           // animated level-zero descriptor, or the group a SWAY row follows
-    ulong          vertex_history_token; // VERTEX_MOTION: correspondence token of the source mesh
-    MaterialId     material;      // CUSTOM: the row's custom material
-    gpu::PipelineHandle pipeline; // CUSTOM: the published trace-pose form, set with the row
-    bool           reads_time;    // CUSTOM: the published stage poses every frame
+    TracePose           kind;
+    Node*               node;                 // the mesh node, or the part batch node
+    Mesh*               mesh;                 // MESH
+    SkinBinding*        skin;                 // MESH; null for a morph-only mesh
+    AnimatedCrowd*      crowd;                // CROWD
+    InstancedMesh*      batch;                // CROWD: the part's batch; CUSTOM instanced and SWAY: the source batch
+    uint                part;                 // CROWD: index into crowd.parts; SWAY: the LOD group's part
+    Scene*              scene;                // ANIMATED_LOD and SWAY: source scene, borrowed for this collection
+    LodGroupState*      lod;                  // animated level-zero descriptor, or the group a SWAY row follows
+    ulong               vertex_history_token; // VERTEX_MOTION: correspondence token of the source mesh
+    MaterialId          material;             // CUSTOM: the row's custom material
+    gpu::PipelineHandle pipeline;             // CUSTOM: the published trace-pose form, set with the row
+    bool                reads_time;           // CUSTOM: the published stage poses every frame
 }
 
 struct TraceCollection @private {
@@ -446,6 +446,7 @@ fn TraceCollection collect_trace_instances(
                 bool sways = batch.sway.amplitude != 0;
                 if (custom) {
                     source = { .kind = TracePose.CUSTOM, .node = node, .batch = batch, .material = batch.material };
+                    if (sways) collection.sway_at_rest++;
                 } else if (batch.trace_sway && sways && !crowd) {
                     source = { .kind = TracePose.SWAY, .node = node, .batch = batch, .scene = scene };
                 } else if (sways) {
@@ -585,6 +586,7 @@ fn void sway_rows_last(Allocator allocator, TraceCollection* collection) @privat
     defer alloc::free(allocator, records.ptr);
     TracePoseSource[] poses = alloc::new_array(allocator, TracePoseSource, (sz)count);
     defer alloc::free(allocator, poses.ptr);
+
     usz front;
     usz back = count - sway;
     foreach (index, &pose : collection.poses) {
@@ -592,6 +594,7 @@ fn void sway_rows_last(Allocator allocator, TraceCollection* collection) @privat
         records[target] = collection.records[index];
         poses[target] = *pose;
     }
+
     collection.records[..] = records[..];
     collection.poses[..] = poses[..];
 }
@@ -833,6 +836,18 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
             cpu_present: cpu_present,
             proven:      proven,
         );
+        // A tree built for a rigid row has no depth table; a refit needs one, and only the CPU arrays can rebuild it.
+        if (deforming_row && same_asset && mirror.trace.revision == revision && !mirror.trace.depth_starts) {
+            bool rebuildable = proven && cpu_present;
+            if (software && pose.kind == TracePose.SWAY && !rebuildable) {
+                // A swayed row has a rest form to fall back to; a custom row has none.
+                posed_row = false;
+                count_sway_at_rest(renderer, &sway_rest_node, record.entity);
+            } else {
+                source = trace_source(0, revision, rebuildable);
+            }
+        }
+
         // A posed row builds its own bottom level from the posed streams; it needs the rest streams only.
         if (posed_row && hardware_source == TraceSource.REUSE) {
             hardware_source = proven && (cpu_present || geometry_current(renderer, record.geometry))
@@ -842,10 +857,6 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
             // The held slot refits from the rest tree and updates its own bottom level.
             source = TraceSource.REUSE;
             hardware_source = TraceSource.REUSE;
-        }
-        // A tree built for a rigid row has no depth table; a refit needs one.
-        if (deforming_row && same_asset && mirror.trace.revision == revision && !mirror.trace.depth_starts) {
-            source = trace_source(0, revision, proven && cpu_present);
         }
         bool unavailable = (software && source == TraceSource.SKIP) || (hardware && hardware_source == TraceSource.SKIP);
         if (unavailable) {
@@ -896,10 +907,7 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
                         renderer.stats.trace_posed_overflow++;
                         continue;
                     }
-                    if (pose.kind == TracePose.SWAY && !c3d::same_id(sway_rest_node, record.entity)) {
-                        renderer.stats.trace_sway_at_rest++;
-                        sway_rest_node = record.entity;
-                    }
+                    if (pose.kind == TracePose.SWAY) count_sway_at_rest(renderer, &sway_rest_node, record.entity);
                     // No free slot: the row traces through the shared geometry, rebuilt per revision.
                     posed_row = false;
                     hardware_source = blas_source(
@@ -956,6 +964,14 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
         records[kept++] = *record;
     }
     return records[:kept];
+}
+
+// A batch or group counts once, however many of its rows trace at rest.
+fn void count_sway_at_rest(Renderer* renderer, Entity* last_counted, Entity entity) @local {
+    if (c3d::same_id(*last_counted, entity)) return;
+
+    renderer.stats.trace_sway_at_rest++;
+    *last_counted = entity;
 }
 
 // The published trace-pose form's pipeline; a form the backend rejects leaves the row out.

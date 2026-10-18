@@ -420,6 +420,30 @@ fn void test_swaying_instances_trace_at_their_swayed_pose_including_one_off_came
     }
 }
 
+fn void test_swaying_batch_without_arrays_for_a_depth_table_traces_at_rest() @test {
+    TraceRig rig;
+    create_trace_rig(&rig, false)!!;
+    defer destroy_trace_rig(&rig);
+    GeometryId slab = add_tall_slab(&rig.fixture)!!;
+    Node* batch_node = add_upright_batch(&rig, slab, rig.fixture.plain)!!;
+    InstancedMesh* batch = rig.harness.scene.get(batch_node, InstancedMesh);
+    batch.sway = swaying_toward_the_camera(SWAY_AMPLITUDE);
+    Renderer* renderer = &rig.fixture.renderer;
+
+    render_rig(&rig, SWAY_FIRST_TIME)!!;
+    uint traced = renderer.stats.trace_instances;
+    assert(traced == 2 && renderer.stats.trace_sway_at_rest == 1);
+
+    // The rest tree has no depth table and the arrays that could rebuild one are gone.
+    rig.fixture.assets.release_geometry_cpu(slab);
+    batch.trace_sway = true;
+    render_rig(&rig, SWAY_FIRST_TIME)!!;
+    report_pose_counts(renderer, "swaying, no arrays for a depth table");
+    assert(renderer.stats.trace_instances == traced && renderer.stats.trace_skipped == 0);
+    assert(renderer.stats.trace_posed_instances == 0 && renderer.stats.trace_sway_at_rest == 1);
+    check_validation(renderer);
+}
+
 fn void test_swaying_lod_groups_trace_at_their_swayed_pose() @test {
     foreach (ray_queries : TRACE_KINDS) {
         foreach (instanced : INSTANCED_MODES) {
