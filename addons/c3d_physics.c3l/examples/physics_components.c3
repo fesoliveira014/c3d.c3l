@@ -778,6 +778,7 @@ fn void? measure_debug_draw(
 ) @local {
     debug::DebugDraw sink = debug::create_debug_draw(mem, capacity);
     defer debug::destroy_debug_draw(&sink);
+
     for (uint warmup = 0; warmup < BENCHMARK_DEBUG_WARMUP; warmup++) {
         sink.clear();
         physics.debug_draw(&sink, { .colliders = true });
