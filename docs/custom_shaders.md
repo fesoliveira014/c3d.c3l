@@ -17,7 +17,7 @@ ShaderDesc desc = {
 ShaderId shader = assets.add_shader(&desc, "pulse")!;
 ```
 
-Every byte array is copied. `fragment` is required. `vertex` is optional; when present both forms are required: `shaded` for the forward pass and `depth` for the shadow atlas, so a deformation is applied to the caster too. `instanced_shaded` and `instanced_depth` are the same pair compiled with `INSTANCED`, for [instanced batches](instancing.md); they are optional and need the plain pair. `velocity` is the source compiled with `VELOCITY` and `instanced_velocity` the source compiled with `VELOCITY` and `INSTANCED`, for the [velocity pass](#velocity-form); both are optional, `velocity` needs the plain pair, and `instanced_velocity` needs the instanced pair and `velocity`. `traced_fragment.hardware` and `traced_fragment.software` are the forward stage compiled for views that trace shadows ([traced shadows](#traced-shadows)); either may be empty or supplied alone, and neither is validated. `weighted_fragment.shaded`, `weighted_fragment.traced.hardware` and `weighted_fragment.traced.software` are the forward stage compiled with `WEIGHTED_BLEND` for views that compose blended surfaces by weight ([weighted transparency](#weighted-transparency)); each may be empty or supplied alone, and none is validated. `add_shader` and `replace_shader` fault `INVALID_ARGUMENT` on an empty fragment, a half pair, an instanced or velocity form without the forms it needs, or a `gbuffer` stage with nonzero [`scene_reads`](#scene-reads). `param_block_size` is the byte size of the payload the shader reads; zero means none, and a shader whose size is zero must not read `parameters` (the address is zero). `asset::copy_shader_desc` and `asset::free_shader_desc` deep-copy and free a desc with any allocator.
+Every byte array is copied. `fragment` is required. `vertex` is optional; when present both forms are required: `shaded` for the forward pass and `depth` for the shadow atlas, so a deformation is applied to the caster too. `instanced_shaded` and `instanced_depth` are the same pair compiled with `INSTANCED`, for [instanced batches](instancing.md); they are optional and need the plain pair. `velocity` is the source compiled with `VELOCITY` and `instanced_velocity` the source compiled with `VELOCITY` and `INSTANCED`, for the [velocity pass](#velocity-form); both are optional, `velocity` needs the plain pair, and `instanced_velocity` needs the instanced pair and `velocity`. `traced_fragment.hardware` and `traced_fragment.software` are the forward stage compiled for views that trace shadows ([traced shadows](#traced-shadows)); either may be empty or supplied alone, and neither is validated. `weighted_fragment.shaded`, `weighted_fragment.traced.hardware` and `weighted_fragment.traced.software` are the forward stage compiled with `WEIGHTED_BLEND` for views that compose blended surfaces by weight ([weighted transparency](#weighted-transparency)); each may be empty or supplied alone, and none is validated. `trace_pose` holds the compute sources that pose the shader's geometry for [scene traces](#trace-pose): `single` for a mesh, `instanced` for one instance of a batch, and `reads_time` when the stage reads the frame time; both forms are optional. `add_shader` and `replace_shader` fault `INVALID_ARGUMENT` on an empty fragment, a half pair, an instanced or velocity form without the forms it needs, a `trace_pose.single` without `vertex.shaded`, a `trace_pose.instanced` without `vertex.instanced_shaded`, or a `gbuffer` stage with nonzero [`scene_reads`](#scene-reads). `param_block_size` is the byte size of the payload the shader reads; zero means none, and a shader whose size is zero must not read `parameters` (the address is zero). `asset::copy_shader_desc` and `asset::free_shader_desc` deep-copy and free a desc with any allocator.
 
 The SPIR-V can come from anywhere: `$embed`ed `.spv` files, a build step, or the in-process compiler below.
 
@@ -225,11 +225,12 @@ A custom or package stage starts with the prelude, `generated/shader_abi.glsl` (
 | `gbuffer_output.glsl` | `write_gbuffer`, outputs at locations 0 to 4 |
 | `vertex_pull.glsl` | `pull_vec2`, `pull_vec3`, `pull_vec4`, `pull_triangle`, `GEOMETRY_*` |
 | `view_clip.glsl` | `gl_ClipDistance[1]` (redeclared) and `view_clip_distance` ([clip plane](views.md#clip-plane)); vertex stages only |
-| `instance_effects.glsl` | `instance_anchor`, `instance_fade_scale`, `sway_offset` ([sway and fade](instancing.md#sway-and-distance-fade); the blocks are `c3d_abi.glsl`'s `InstanceEffectsGpu` and `SwayGpu`) |
+| `instance_effects.glsl` | `instance_anchor`, `instance_fade_scale`, `sway_height_weight`, `sway_offset` ([sway and fade](instancing.md#sway-and-distance-fade); the blocks are `c3d_abi.glsl`'s `InstanceEffectsGpu` and `SwayGpu`) |
 | `mesh_vertex.glsl` | the push block, outputs 0 to 6, `gl_ClipDistance[1]` and `view_clip_distance` (through `view_clip.glsl`), `MeshVertexInput`, `pull_mesh_vertex`, `apply_mesh_deformation`, `write_mesh_outputs` (five arguments in `VELOCITY` forms), `previous_mesh_position` (`VELOCITY`; starts from the view's retained base positions of a [`vertex_motion`](post.md#edited-vertices) mesh), `instance_source`, `instance_bend_weight` and `apply_instance_effects` (`INSTANCED`), `apply_previous_instance_effects` (`VELOCITY` with `INSTANCED`) |
+| `trace_pose.glsl` | the compute push block and group size, `TracePoseVertex`, `trace_pose_vertex`, `trace_pose_write`, `trace_pose_instance` ([trace pose](#trace-pose)); compute stages only |
 | `scene_trace.glsl` | as in [Scene tracing](scene_trace.md) |
 
-`blend_output.glsl` is probed plain and with `WEIGHTED_BLEND`; `shadows.glsl` and `standard_shading.glsl` are probed plain, with `RT_SHADOWS`, with `RT_SHADOWS` and `SCENE_TRACE_BVH`, and each of those two with `RT_SHADOWS_HARD`; `lights.glsl` in fragment and vertex stages; `mesh_vertex.glsl` plain, with `INSTANCED`, `DEPTH_ONLY`, both, `VELOCITY`, and `VELOCITY` with `INSTANCED`; `instance_effects.glsl` in vertex and compute stages; `scene_trace.glsl` in compute with each trace kind.
+`blend_output.glsl` is probed plain and with `WEIGHTED_BLEND`; `shadows.glsl` and `standard_shading.glsl` are probed plain, with `RT_SHADOWS`, with `RT_SHADOWS` and `SCENE_TRACE_BVH`, and each of those two with `RT_SHADOWS_HARD`; `lights.glsl` in fragment and vertex stages; `mesh_vertex.glsl` plain, with `INSTANCED`, `DEPTH_ONLY`, both, `VELOCITY`, and `VELOCITY` with `INSTANCED`; `instance_effects.glsl` in vertex and compute stages; `trace_pose.glsl` in compute stages; `scene_trace.glsl` in compute with each trace kind.
 
 ### Traced shadows
 
@@ -502,7 +503,7 @@ Limits of a custom vertex stage:
   alpha coverage unbiased, so a masked custom material keeps the unbiased sample for its alpha:
   a biased one cuts different coverage than the prepass tests `EQUAL` against.
 - A displaced mesh needs an authored `Mesh.local_bounds` override when the displacement can leave the geometry bounds; culling and shadow fitting use bounds, not vertices. The override is a bound only and does not keep the mesh out of [scene traces](scene_trace.md#what-traces). A displaced batch sets `InstancedMesh.local_bounds` with `has_bounds_override`; its instances are then not culled one by one, though a blended one still lists and sorts every instance. The built-in sway needs no override: it grows the bound itself and keeps per-instance culling.
-- A material with a custom vertex stage never traces, whatever `Mesh.trace` says: the renderer sees the stage, not the displacement. A stage that displaces nothing and should trace draws through the built-in vertex stage.
+- A material with a custom vertex stage traces only through a [trace-pose stage](#trace-pose), whatever `Mesh.trace` says: the renderer sees the stage, not the displacement. A stage that displaces nothing and should trace draws through the built-in vertex stage.
 - A displacement that changes the surface orientation must adjust `vertex.normal` and `vertex.tangent` itself; the pulse example is a uniform translation and leaves them alone.
 - SPIR-V without the clip-distance write, compiled before `view_clip.glsl` existed or from a stage that writes its outputs without it, draws unclipped in a clipped view; its shaded, depth and velocity forms still agree with each other. A shader without a velocity form gets its velocity from the built-in `mesh` variant, which clips, so a moving, unclipped custom surface behind the plane carries camera-only motion there.
 - Compile every form of a shader from the same `mesh_vertex.glsl` and `view_clip.glsl`: forms built against different versions leave holes along the cut.
@@ -535,6 +536,54 @@ Motion blur, TAA, screen-space GI, temporal ambient occlusion and the reflection
 - The previous displacement uses the current material parameters at the previous time, so a parameter edit shows no motion of its own.
 - Call `render::reset_view_history` after a jump in `FrameInfo.time` (a seek, a loaded save), as after a camera cut.
 - `jitter_time.z` and `previous_time` are floats: from 65,536 s (about 18 h) each rounds to within 1/256 s and their difference is off by up to 1/128 s, up to about half of a 60 Hz step. An application that runs that long wraps its time and calls `render::reset_view_history` at the wrap, which is itself a time jump.
+
+## Trace pose
+
+A custom vertex stage displaces vertices that [scene traces](scene_trace.md) never see. `ShaderDesc.trace_pose` supplies the same displacement as a compute stage: for each traced row it writes the posed positions, normals and tangents of the row's geometry into a renderer-owned slot, and every trace consumer reads hits through that slot. `trace_pose.single` poses a mesh and needs `vertex.shaded`; `trace_pose.instanced`, the same source compiled with `INSTANCED`, poses one instance of a batch and needs `vertex.instanced_shaded`. Rows are posed by the revision the renderer published, so a replacement the backend rejected keeps posing with the previous forms. The cost, capacity, `Mesh.local_bounds` rule and BLAS policy are on the [scene trace](scene_trace.md#custom-trace-poses) page.
+
+The stage includes `trace_pose.glsl`, which declares the 16-byte compute push block, a 64-lane group and these helpers:
+
+| Helper | Meaning |
+| --- | --- |
+| `TracePoseVertex trace_pose_vertex(uint index)` | Rest vertex `index`: `position`, `normal`, `tangent`, `uv0`, `uv1`, `color`, with the defaults `pull_mesh_vertex` gives a missing stream |
+| `void trace_pose_write(uint index, vec3 position, vec3 normal, vec4 tangent)` | Writes the posed vertex; a stream the geometry lacks is not written, and the tangent keeps its `w` |
+| `InstanceGpu trace_pose_instance()` | The instance record raster reads through `instance_source`, for the `instanced` form only |
+
+The push block addresses a generated `TraceCustomPoseRoot` (`pc.root_gpu`):
+
+| Field | Meaning |
+| --- | --- |
+| `source`, `posed` | Roots of the rest and the posed geometry; the helpers use them |
+| `material` | The row's `CustomMaterialGpu`, whose `parameters` and `slots` the stage reads as the vertex stage does |
+| `instance` | The row's `InstanceGpu`; zero for a mesh |
+| `time` | `FrameRoot.jitter_time.z` of the frame |
+| `vertex_count` | Vertices of the geometry; the stage returns for an index past it |
+
+```glsl
+#version 460
+#include "generated/shader_abi.glsl"
+#include "c3d_abi.glsl"
+#include "trace_pose.glsl"
+
+void main() {
+    TraceCustomPoseRoot root = TraceCustomPoseRoot(pc.root_gpu);
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= root.vertex_count) return;
+
+    PulseParams params = PulseParams(CustomMaterialGpu(root.material).parameters);
+    TracePoseVertex vertex = trace_pose_vertex(index);
+    vec3 position = pulse_position(vertex.position, root.time, params.motion);
+    trace_pose_write(index, position, vertex.normal, vertex.tangent);
+}
+```
+
+Keep the displacement the vertex stage applies in a function both stages include, so the two cannot drift. Scope:
+
+- The stage sees `TraceCustomPoseRoot` and nothing else. A vertex stage that reads the camera, lights or other frame data cannot be reproduced; its displacement must come from the material, the instance record and the time.
+- The pose is in the geometry's space, before the row's matrix, as a vertex stage's `vertex.position` is. The stage adjusts `normal` and `tangent` itself where its displacement turns the surface.
+- It runs again only when its inputs change: the material's revision, the revisions of the asset textures in its slots, the shader's revision, the instance record and, with `reads_time`, the time. Set `reads_time` for a stage that reads `root.time`; without it the pose is not refreshed as time moves. A render target in a slot is not tracked.
+- Skin, morph targets and `Mesh.vertex_motion` do not apply to a custom row, and a part of a `LodGroup` or of a crowd with a custom vertex stage stays out of the trace.
+- The stage keeps its surface inside the bound the row uses: `Mesh.local_bounds` when `has_bounds_override` is set, else the geometry's bound. Give a flat geometry that is displaced a bound with thickness.
 
 ## In-process compilation
 

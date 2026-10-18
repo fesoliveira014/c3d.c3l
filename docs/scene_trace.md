@@ -16,7 +16,9 @@ An instance enters the trace when all of these hold:
 - its geometry, material and, for a skinned mesh, skeleton ids are live, and a custom material's shader is live;
 - the geometry has `TRIANGLES` topology;
 - the material's alpha mode is `OPAQUE` or `MASK`;
-- the material has no custom vertex stage.
+- the material has no custom vertex stage, or its shader poses the trace geometry in the row's form ([custom trace poses](#custom-trace-poses)).
+
+`Mesh.trace_only` marks a mesh that is traced but never drawn: raster views and shadow layers skip it, and trace collection takes it like any traced mesh, so its node must be effectively visible. Picking and the scene index still see it.
 
 A mesh contributes one instance at its node's world matrix. An instanced batch contributes one instance per live transform, at `node.world * transforms[i]`. Camera layers and frusta play no part: an object behind the camera traces like any other. Every row carries its node's `layers`, which hit shading tests against `Light.layers`.
 
@@ -26,18 +28,25 @@ A mesh contributes one instance at its node's world matrix. An instanced batch c
 | Mesh with a skin binding over a geometry with joints, or morph weights that select a target | At its raster pose, in both kinds (see [Posed instances](#posed-instances)) |
 | Crowd part batch | Only with `add_crowd(trace: true)`: one slot per distinct pose in the part batch, at the placement's raster pose, boxed by the crowd's `pose_bounds` |
 | `InstancedMesh` or `LodGroup` with sway | At its rest pose, counted in `Stats.trace_sway_at_rest`; the error is bounded by the sway reach |
-| Material with a custom vertex stage, water included | Never |
+| The same with `trace_sway` | Each instance at its swayed pose, up to the posed capacity ([custom trace poses](#custom-trace-poses)) |
+| Mesh or `InstancedMesh` of a material with a custom vertex stage and a trace-pose stage | At the pose the stage computes ([custom trace poses](#custom-trace-poses)) |
+| Any other material with a custom vertex stage | Never |
 
 A custom vertex stage can move vertices anywhere, and the renderer sees the stage, not the displacement, so a material
-with one never traces, whatever `trace` says. A stage that displaces nothing and should trace draws through the built-in
-vertex stage.
+with one traces only when its shader also supplies a trace-pose stage, whatever `trace` says. A stage that displaces
+nothing and should trace draws through the built-in vertex stage.
 
 A bounds override (`has_bounds_override`) is a bound for culling and shadow fitting only; it does not keep a mesh out of
 the trace.
 
-A swaying batch or LOD group traces at its rest pose: a traced shadow of a swaying tree stays still while atlas shadows
-sway, and a shadow ray from a swayed leaf can meet the tree's own rest geometry. `Stats.trace_sway_at_rest` counts the
-swaying batches and LOD groups traced this way this frame. Clear `trace` to keep one out.
+A swaying batch or LOD group traces at its rest pose unless `InstancedMesh.trace_sway` or `LodEffects.trace_sway` is set:
+a traced shadow of a swaying tree stays still while atlas shadows sway, and a shadow ray from a swayed leaf can meet
+the tree's own rest geometry. `Stats.trace_sway_at_rest` counts the swaying batches and LOD groups traced this way this
+frame, including those whose rows found no posed slot. Clear `trace` to keep one out.
+
+Coverage ignores the geometry's vertex alpha on every row of a batch or LOD group whose sway takes its bend weight from
+it (`SwayWeight.VERTEX_ALPHA`), at rest or posed: raster consumes that alpha, so a masked material is not cut by it in
+either image.
 
 ## Posed instances
 
@@ -50,7 +59,7 @@ A skinned mesh, a morphed mesh or both traces at the pose raster draws in the sa
 - **Cost.** A slot holds 24 bytes per vertex (40 with tangents) of posed streams, a 112-byte root, 32 bytes per node of refit copy, and on the CPU 64 bytes per joint plus 80 bytes with morph targets. A geometry that can deform adds a depth table to its rest trace allocation: 4 bytes per node plus 132 bytes. The example Mannequin holds 205 KB of streams over its two parts. A skinned mesh in bind pose still takes a slot. With no traced consumer in a frame nothing is allocated or recorded.
 - **Closed frames.** A preparation outside a frame poses and refits in its own submission and reads the current pose.
 - **Compute skinning.** With [compute skinning](animation.md#compute-skinning) on, a slot whose mesh or crowd part has a posed binding this frame takes that pose instead of running its own pose pass; its streams stay allocated, unwritten. The rule and its exceptions are on the animation page.
-- **Stats.** `trace_posed_instances`, `trace_posed_shared`, `trace_posed_overflow`, `trace_posed_bytes`, `trace_poses`, `trace_poses_reused`, `trace_refits` and `blas_updates` (this frame). Posing and refits run under `Pass.TRACE_POSE`.
+- **Stats.** `trace_posed_instances`, `trace_posed_shared`, `trace_posed_overflow`, `trace_deform_overflow`, `trace_posed_bytes`, `trace_poses`, `trace_poses_reused`, `trace_refits` and `blas_updates` (this frame). Posing and refits run under `Pass.TRACE_POSE`.
 - **Hardware.** Each slot owns one bottom level created with `allow_update` and `prefer_fast_trace`: a full build when the slot is new, rebuilt or its source geometry changed, and an in-place update each frame the pose changes. Static bottom levels keep `prefer_fast_trace` alone. A pose change rebuilds the top level too. Updates and builds share the batched scratch described under [Hardware lifetime](#hardware-lifetime). `Stats.blas_updates` counts the updates; a full posed build counts in `blas_builds`. Both kinds refit rather than rebuild, so a strong pose traces slower than rest. A geometry whose vertex or primitive counts change replaces the slot's bottom level.
 
 ### Vertex-motion slots
@@ -62,6 +71,19 @@ A traced `Mesh` with `vertex_motion` and neither a skin binding nor selected mor
 - **Capacity.** Slots count against `RendererDesc.max_posed_trace_instances`. With none free the mesh traces through the shared geometry and rebuilds it every revision, as a mesh without `vertex_motion` does; it is not counted in `trace_posed_overflow`.
 - **Top level.** The top level still rebuilds on every revision, and the trace revision advances, as for skin and morph poses.
 - **Cost.** A slot holds the same bytes as other posed slots, and the geometry's rest tree gains the depth table at its first trace upload. A static `vertex_motion` mesh keeps a slot.
+
+### Custom trace poses
+
+A shader's `trace_pose` forms pose the trace geometry of a custom material that has a vertex stage ([custom shaders](custom_shaders.md#trace-pose)). `single` poses a mesh and `instanced` poses one instance of an `InstancedMesh`; a form needs the vertex form of the same kind. The built-in sway is posed the same way for a batch or LOD group with `trace_sway`. Both take posed slots and the paths of [Posed instances](#posed-instances): the compute pass writes the positions, normals and tangents into a renderer-owned slot, the software kind refits a copy of the rest tree, and the hardware kind builds or updates the slot's bottom level.
+
+- **Re-posing.** A row poses again when its inputs change: for a custom stage, the material's revision, the revisions of its asset textures, the shader's revision, the instance record of an instanced row and, with `CustomTracePose.reads_time`, the frame time; for the sway, the instance record and the sway at the frame time. A still scene keeps its pose, and with it the trace revision. A sway moves with the frame time, so a swaying row poses whenever the time moves. A closed preparation poses at the last frame's time.
+- **Hardware.** The first pose of a slot builds its bottom level in full. So does a re-pose of a custom stage without `reads_time`, because an edit may reshape the surface and an update would keep the first pose's tree. A `reads_time` stage and the sway update in place, as skin does. `Stats.blas_builds` and `blas_updates` count them.
+- **Software.** A geometry posed by a custom stage or the sway keeps the depth table of its rest tree, as a skinned geometry does, so the refit has what it needs.
+- **Bounds.** A custom-posed mesh takes `Mesh.local_bounds` when `has_bounds_override` is set, else the geometry's bound. A custom-posed instance takes the geometry's bound under its matrix. The stage keeps its surface inside that bound, as a displaced geometry needs one to be culled; the top level does not see past it. A swayed row's bound grows by the sway reach.
+- **Capacity.** Rows share `RendererDesc.max_posed_trace_instances` with every other posed kind. A custom row without a slot is left out of the trace and counted in `Stats.trace_deform_overflow`. A swayed row without a slot traces at rest and counts once for its batch or group in `Stats.trace_sway_at_rest`. Each preparation claims swayed rows after every other kind, so a vegetation layer that holds every slot yields them to a character that appears later; its rows trace at rest until slots free again.
+- **Cost.** A slot costs what [Posed instances](#posed-instances) lists. A pose also takes 40 bytes of the frame's upload ring per custom row plus 128 bytes of instance record for an instanced one, and 272 bytes per swayed row. The pose dispatch runs one thread per vertex; a stage that reads time poses and updates every frame.
+- **Limits.** A custom stage sees only its material, the instance record and the time ([custom shaders](custom_shaders.md#trace-pose)): it cannot reproduce a vertex stage that reads the camera or other frame data, and skin, morph targets and `vertex_motion` do not apply to a custom row. A `LodGroup` part and a crowd part with a custom vertex stage stay out of the trace. The sway applies no fade, which depends on the view, so every instance traces.
+- **Published stages.** A row is posed by the stage the renderer published. When the store's newest revision was rejected and the published one lacks the form the row needs, or a pose pipeline the backend rejects, the row is left out and counted in `Stats.trace_skipped`; a rejected pipeline also counts in `Stats.shader_rejections`.
 
 ### Animated crowds
 

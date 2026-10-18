@@ -123,7 +123,7 @@ button, and the post panel's "Path tracing" header edits bounces, samples per fr
   emitters and bright environment texels converge slowly and show as isolated bright pixels at low
   sample counts. No denoiser.
 - Physical lobes beyond the Standard prefix (clearcoat, sheen, specular, anisotropy, transmission)
-  are not sampled; `BLEND` surfaces and custom vertex stages are not traced, and skinned and morphed meshes trace at their raster pose; crowd placements trace only through
+  are not sampled; `BLEND` surfaces and custom vertex stages without a [trace-pose stage](custom_shaders.md#trace-pose) are not traced, and skinned and morphed meshes trace at their raster pose; crowd placements trace only through
   `add_crowd(trace: true)`; custom shader code does not run at hits.
 - Light nodes are gated by the camera's `layers`. A light skips a hit whose node `layers` do not intersect
   `Light.layers`, as in raster; emission is unmasked. Camera layers do not hide geometry from the trace.
