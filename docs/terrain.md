@@ -70,8 +70,8 @@ Every view and shadow layer of the frame draws the selection of the camera given
 
 ## TerrainDesc
 
-`terrain::default_terrain_desc()` sets `lod_threshold = 512`, `lod_hysteresis = 0.25` and both shadow flags;
-the maps, scales and layers are the application's. Every value is checked by `add_terrain` and faults rather
+`terrain::default_terrain_desc()` sets `lod_threshold = 512`, `lod_hysteresis = 0.25`, `slope_projection = TOP`,
+`triplanar_sharpness = 4` and both shadow flags; the maps, scales and layers are the application's. Every value is checked by `add_terrain` and faults rather
 than asserts, since descs also come from files.
 
 | Field | Rule |
@@ -83,6 +83,8 @@ than asserts, since descs also come from files.
 | `layers` | Up to four live `STANDARD` materials, leading; zero ids after the last one |
 | `lod_threshold` | Projected chunk diameter in output pixels above which a chunk splits; zero or more |
 | `lod_hysteresis` | A split chunk merges below `lod_threshold / (1 + lod_hysteresis)`; zero or more |
+| `slope_projection` | `TOP` projects the layers from above; `TRIPLANAR` projects them along all three axes ([slope projection](#slope-projection)) |
+| `triplanar_sharpness` | Exponent of the plane weights: `MIN_TRIPLANAR_SHARPNESS` (1) to `MAX_TRIPLANAR_SHARPNESS` (64), finite; read under `TRIPLANAR` and checked under both |
 | `cast_shadow`, `receive_shadow` | Copied onto the batch at every `update` |
 
 **Height maps.** `image::load_texture_r16` loads a 16-bit PNG as `R16_UINT`; an 8-bit file widens by 257, so
@@ -98,8 +100,28 @@ format would curve the weights, so it faults `UNSUPPORTED`.
 
 **Layers.** Each layer is an ordinary `STANDARD` material, referenced through the custom material's
 `references` (see [materials](materials.md)). The stage samples every set layer on every pixel and blends the
-samples by weight; a layer without tangents takes derivative normals. Tiling comes from each layer's own
-`TextureSlot` transforms over `uv0`, which is terrain-local metres: a `scale` of 0.25 repeats a map every 4 m.
+samples by weight; a layer without tangents takes derivative normals, and a `TRIPLANAR` terrain gives it the plane's
+frame instead. Tiling comes from each layer's own `TextureSlot` transforms over `uv0`, which is terrain-local metres:
+a `scale` of 0.25 repeats a map every 4 m.
+
+## Slope projection
+
+With `TOP`, every layer samples its maps at terrain-local `x` and `z`, so a steep slope stretches the textures along the
+fall line. `TRIPLANAR` projects the layers along the terrain's three axes and blends the results by the surface normal.
+
+- The planes are X (`uv` = local `z`, `y`), Y (local `x`, `z`, the `TOP` coordinates) and Z (local `x`, `y`), all in
+  terrain-local metres. A layer's own `TextureSlot` transforms apply to each plane as they do to `uv0`. The maps'
+  UV-set selection is ignored: the projection replaces both sets.
+- The weight of a plane is the matching component of the smooth local normal, the one lighting uses, raised to
+  `triplanar_sharpness` and normalised. Higher values narrow the blends: the transition between two planes spans about
+  30 degrees of slope at 4 and 2 degrees at 64. A flat surface weighs only the Y plane, so it shades as with `TOP`.
+- Each plane has its own tangent frame, so normal maps keep their orientation: `+u` and `+v` of the map follow the
+  plane's axes projected onto the surface, as the derivative frames of `TOP` do on the Y plane. The planes' world
+  normals blend and the sum is normalised.
+- Every layer is sampled on every plane in every pixel, three times the layer samples of `TOP`, with gradients taken
+  from the projected coordinates, so the blend has no seams. `triplanar_sharpness` does not change the cost.
+- `slope_projection` and `triplanar_sharpness` are baked into the terrain's material when it is prepared. Changing
+  them afterwards needs the `Terrain` component removed and added again.
 
 ## Level of detail
 
@@ -334,7 +356,7 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
 | `add_terrain`, `height_view`, `update` | `c3d::UNSUPPORTED` | Height map not `R16_UINT`, not a `MIP_ZERO` source, or a layered, 3D or cube texture |
 | `add_terrain` | `c3d::UNSUPPORTED` | Control map not `RGBA8_UNORM` |
 | `add_terrain`, `height_view`, `update` | `c3d::INVALID_ARGUMENT` | Not square, a side outside the list, pixel bytes not `side² × 2` |
-| `add_terrain` | `c3d::INVALID_ARGUMENT` | A non-positive scale, a negative or NaN tunable, no layer 0, a layer after an unset one, a layer that is not `STANDARD`, a shared key naming another asset kind |
+| `add_terrain` | `c3d::INVALID_ARGUMENT` | A non-positive scale, a negative or NaN tunable, a `triplanar_sharpness` outside its range or not finite, no layer 0, a layer after an unset one, a layer that is not `STANDARD`, a shared key naming another asset kind |
 | `add_terrain`, `prepare` | `c3d::INVALID_ARGUMENT` | A tile that does not match its set, or shares a coordinate with a linked tile ([tile sets](#tile-sets)) |
 | `add_terrain` | `c3d::CAPACITY_EXCEEDED` | Store pool full or an allocation failed |
 | `TerrainSet.neighbour` | `NOT_FOUND` | The tile is not linked, or has no linked neighbour in the direction |
@@ -357,9 +379,10 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
   chunk and, on temporal views, 64 B per chunk of previous matrices the stage ignores.
 - Normals at a map border with no linked neighbour use one-sided differences. Between linked tiles they are central
   differences through the [border ring](#tile-sets), as current as its last refresh.
-- Every set layer is sampled on every pixel, whatever its weight; four layers is the limit.
-- Layers are projected from above: `uv0` is terrain-local x and z, so on steep slopes and cliffs the layer
-  textures stretch along the fall line.
+- Every set layer is sampled on every pixel, whatever its weight; four layers is the limit. `TRIPLANAR` samples each
+  on three planes.
+- Under `TOP`, layers are projected from above: `uv0` is terrain-local x and z, so on steep slopes and cliffs the layer
+  textures stretch along the fall line. Use [`TRIPLANAR`](#slope-projection) for them.
 - Edits re-upload the whole height map; with a collider, the end of a stroke re-cooks the whole field.
 - Updates run on the calling thread and change scene structure, so they never run inside a job range;
   `sample_height` and `sample_normal` may.

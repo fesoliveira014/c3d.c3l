@@ -8,10 +8,12 @@ import c3d::ecs;
 import c3d::landscape::foliage @public;
 import c3d::landscape::terrain @public;
 import c3d::landscape::water @public;
+import c3d::material;
 import c3d::scene;
 import c3d::serial;
 
-const ulong TERRAIN_LAYOUT @private = 0x7638a7507fa65b33;
+const ulong TERRAIN_V1_LAYOUT @private = 0x7638a7507fa65b33;
+const ulong TERRAIN_LAYOUT @private = 0xbbb8c4e5931f82a4;
 const ulong TERRAIN_TILE_LAYOUT @private = 0x3fe780c7be5416e1;
 const ulong TERRAIN_SET_LAYOUT @private = 0x6b17270c6b53663f;
 const ulong SCATTER_LAYOUT @private = 0x788326d1092caa6b;
@@ -19,6 +21,23 @@ const ulong SWAY_LAYOUT @private = 0x750cddc9cb008976;
 const ulong FOLIAGE_LAYOUT @private = 0x20330122082bd780;
 const ulong WAVE_LAYOUT @private = 0xb7ea583c7a255cb9;
 const ulong WATER_LAYOUT @private = 0x74434d01389bb922;
+
+struct TerrainDescV1 @private {
+    TextureId  height_map;
+    TextureId  control_map;
+    float      cell_size;
+    float      height_scale;
+    MaterialId[material::MAX_CUSTOM_MATERIAL_REFERENCES] layers;
+    float      lod_threshold;
+    float      lod_hysteresis;
+    bool       cast_shadow;
+    bool       receive_shadow;
+}
+
+serial::BinaryCompatibility[1] terrain_binary_compatibility @local = {
+    { .version = 1, .read = &read_terrain_v1 },
+};
+uint[1] terrain_text_default_versions @local = { 1 };
 
 struct TerrainSetAuthoring @private {
     uint  texels;
@@ -47,7 +66,14 @@ struct FoliageAuthoring @private {
 *>
 fn void? register_serial_codecs() {
     serial::register_core_value_types()!;
-    register_value(TerrainDesc, TERRAIN_LAYOUT, &defaults_terrain)!;
+    register_value(TerrainDescV1, TERRAIN_V1_LAYOUT, &defaults_terrain_v1)!;
+    describe::register_reflected(TerrainDesc)!;
+    serial::register_described_type(
+        $Type: TerrainDesc,
+        version: 2,
+        layout: TERRAIN_LAYOUT,
+        defaults: &defaults_terrain,
+    )!;
     register_value(TerrainTile, TERRAIN_TILE_LAYOUT, &defaults_terrain_tile)!;
     register_value(TerrainSetAuthoring, TERRAIN_SET_LAYOUT, &defaults_terrain_set)!;
     register_value(ScatterRules, SCATTER_LAYOUT, &defaults_scatter)!;
@@ -62,6 +88,8 @@ fn void? register_serial_codecs() {
         .project = &project_terrain,
         .validate = &validate_terrain,
         .attach = &attach_terrain,
+        .binary_compatibility = terrain_binary_compatibility[..],
+        .text_default_versions = terrain_text_default_versions[..],
     })!;
     serial::register_described(TerrainTile, { .name = "terrain_tile", .phase = VALUE })!;
     serial::register_described_owner(TerrainSet, TerrainSetAuthoring, {
@@ -105,6 +133,17 @@ macro void? register_value($Type, ulong layout, serial::DefaultsFn defaults) @pr
 }
 
 fn void defaults_terrain(void* value) @private => *(TerrainDesc*)value = terrain::default_terrain_desc();
+
+fn void defaults_terrain_v1(void* value) @private {
+    TerrainDesc defaults = terrain::default_terrain_desc();
+    *(TerrainDescV1*)value = {
+        .lod_threshold = defaults.lod_threshold,
+        .lod_hysteresis = defaults.lod_hysteresis,
+        .cast_shadow = defaults.cast_shadow,
+        .receive_shadow = defaults.receive_shadow,
+    };
+}
+
 fn void defaults_terrain_tile(void* value) @private => *(TerrainTile*)value = {};
 fn void defaults_terrain_set(void* value) @private => *(TerrainSetAuthoring*)value = {};
 fn void defaults_scatter(void* value) @private => *(ScatterRules*)value = foliage::default_foliage_desc().rules;
@@ -222,6 +261,23 @@ fn void? attach_terrain(void* value, serial::ReadContext* context) @private {
         node: context.node,
         desc: *(TerrainDesc*)value,
     )!;
+}
+
+fn void? read_terrain_v1(serial::Reader* reader, serial::ReadContext* context) @private {
+    TerrainDescV1* legacy = context.read_value(TerrainDescV1, reader)!;
+    TerrainDesc desc = terrain::default_terrain_desc();
+    desc.height_map = legacy.height_map;
+    desc.control_map = legacy.control_map;
+    desc.cell_size = legacy.cell_size;
+    desc.height_scale = legacy.height_scale;
+    desc.layers = legacy.layers;
+    desc.lod_threshold = legacy.lod_threshold;
+    desc.lod_hysteresis = legacy.lod_hysteresis;
+    desc.cast_shadow = legacy.cast_shadow;
+    desc.receive_shadow = legacy.receive_shadow;
+
+    validate_terrain(&desc, context)!;
+    attach_terrain(&desc, context)!;
 }
 
 fn void? attach_terrain_set(void* value, serial::ReadContext* context) @private {
