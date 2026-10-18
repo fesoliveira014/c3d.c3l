@@ -200,12 +200,24 @@ fn HeightFieldWindows? try_copy_windows(
     ColliderDesc* collider,
 ) @local {
     BlockCursor measure;
-    carve_windows(&measure, window_cells, columns, rows, collider);
+    carve_windows(
+        cursor:       &measure,
+        window_cells: window_cells,
+        columns:      columns,
+        rows:         rows,
+        collider:     collider,
+    );
     char*? block = alloc::malloc_try(allocator, (sz)measure.offset);
     if (catch block) return c3d::CAPACITY_EXCEEDED~;
 
     BlockCursor fill = { .base = block };
-    return carve_windows(&fill, window_cells, columns, rows, collider);
+    return carve_windows(
+        cursor:       &fill,
+        window_cells: window_cells,
+        columns:      columns,
+        rows:         rows,
+        collider:     collider,
+    );
 }
 
 // One walk serves both passes, like the body copy: with a null base it only measures.

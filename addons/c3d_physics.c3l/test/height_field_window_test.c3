@@ -114,7 +114,12 @@ fn Node* add_window_terrain(Fixture* fixture, ColliderDesc* collider, uint windo
     return terrain;
 }
 
-fn Node* add_sphere(Fixture* fixture, Vec3 position, Vec3 velocity = {}, Vec3 spin = {}) @private {
+fn Node* add_sphere(
+    Fixture* fixture,
+    Vec3 position,
+    Vec3 velocity = {},
+    Vec3 spin = {},
+) @private {
     Node* node = fixture.scene.add_node(name: "sphere")!!;
     node.local.position = position;
     fixture.scene.update_world();
@@ -266,10 +271,10 @@ fn void test_sphere_rolls_across_a_window_seam() @test {
     add_window_terrain(&fixture, &collider, FLAT_WINDOW_CELLS);
     float ground = FLAT_LEVEL * HEIGHT_SCALE / 65535;
     Node* sphere = add_sphere(
-        &fixture,
-        { ROLL_START_X, ground + SPHERE_RADIUS, ROLL_START_Z },
-        { ROLL_SPEED, 0, 0 },
-        { 0, 0, -ROLL_SPEED / SPHERE_RADIUS },
+        fixture:  &fixture,
+        position: { ROLL_START_X, ground + SPHERE_RADIUS, ROLL_START_Z },
+        velocity: { ROLL_SPEED, 0, 0 },
+        spin:     { 0, 0, -ROLL_SPEED / SPHERE_RADIUS },
     );
     run_updates(&fixture, ROLL_SETTLE_UPDATES);
 
