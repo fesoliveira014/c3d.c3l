@@ -529,6 +529,26 @@ addons/c3d_physics.c3l/build/physics_components.exe --stress --benchmark 600
 It prints the mean and 95th-percentile milliseconds over the given number of fixed steps, after
 a settling period, with the body counts by kind. `--stress` adds about twenty thousand static bodies.
 
+## Debug draw cost
+
+`PhysicsWorld.debug_draw` stops generating collider lines once the sink is full and adds the number
+of lines it skipped to `DebugDraw.dropped`, so the drawn lines and the dropped count are those of a
+draw that generated everything. Past that point each collider costs only a count of its lines.
+
+With `physics.set_parallel(...)` installed and more than 256 bodies, collider lines are generated on
+the application's workers when they all fit in the sink's remaining capacity. Each range
+writes its own slice of the sink, so the result is bit-identical to the serial draw. A sink that
+cannot hold them draws serially. The ranges read box3d body and shape state; do not
+step or edit the world while `debug_draw` runs.
+
+```powershell
+addons/c3d_physics.c3l/build/physics_components.exe --stress --benchmark 300 --debug-draw --workers 8
+```
+
+`--debug-draw` times `debug_draw` of the colliders into a sink that holds every line and into a
+default sink, and prints a checksum of the sink's vertices that is equal for every `--workers` value.
+`--workers n` runs `c3d_job` workers; 0, the default, draws on the calling thread.
+
 ## Rebasing the origin
 
 After `Scene.shift_origin(offset)` and `scene.update_world()`, call
