@@ -43,13 +43,14 @@ fn void CopyFailure.release(&self, void* pointer, bool aligned) @dynamic {
 fn void test_physics_serial_registration() @test {
     physics::register_serial_codecs()!!;
     assert(serial::described_type(CollisionFilter)!!.layout == 0xada86db77bf9d58b);
-    assert(serial::described_type(ColliderDesc)!!.layout == 0xdd2a19f055eaf423);
-    assert(serial::described_type(physics::BodyAuthoring)!!.layout == 0xed9972ba2248fa8b);
+    assert(serial::described_type(ColliderDesc)!!.layout == 0xf3ffcc18d6404c63);
+    assert(serial::described_type(physics::BodyAuthoring)!!.layout == 0xc7083025384ef72b);
     assert(serial::described_type(physics::JointAuthoring)!!.layout == 0x448b33882e32ee3e);
     @pool() {
         String schema = serial::write_schema(tmem)!!;
         assert(schema.contains("physics_body") && schema.contains("physics_joint"));
-        assert(schema.contains("height_field") && schema.contains("face_materials"));
+        assert(schema.contains("height_field") && schema.contains("face_materials") && schema.contains("window"));
+        assert(schema.contains("height_field_windows") && schema.contains("window_cells"));
     };
 }
 

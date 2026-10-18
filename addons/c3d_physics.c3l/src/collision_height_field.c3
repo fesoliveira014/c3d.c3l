@@ -65,6 +65,8 @@ fn void? check_collision_height_samples(
 }
 
 fn void? check_collision_height_source(HeightField field, Vec3 scale, char[] material_indices) @private {
+    if (!window_covers_map(field.window)) return c3d::INVALID_ARGUMENT~;
+
     check_collision_height_grid(
         count_x: field.count_x,
         count_z: field.count_z,

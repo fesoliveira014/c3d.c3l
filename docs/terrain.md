@@ -287,13 +287,37 @@ Physics refuses a collider-local offset on a height field, which is why the node
 The landscape test builds its collider with the same code and checks that `sample_height` equals a downward
 ray cast at 1,024 points, before and after an edit.
 
+A terrain that is edited tiles the collider into windows, so a stroke re-cooks the part it touched and not the
+whole map:
+
+```c3
+physics::add_height_field_windows(
+    scene:        &scene,
+    assets:       &assets,
+    node:         terrain_node.id,
+    collider:     &collider,
+    window_cells: 256,
+)!;
+```
+
+- Each window is a static body on a child node of the terrain node, cooked from its own `window_cells`-square
+  part of the height map. Windows quantize over the full height range, `0` to `height_scale`, so they meet
+  exactly at their seams and an edit never changes the quantization of another window.
+- [Tiles](#tile-sets) of one set each get their own windows. Tiles with equal `height_scale` quantize over the same
+  range, so they meet exactly at the tile seam too.
+- Separate height fields carry no adjacency in the physics engine, so a body can catch on the edge of an internal
+  seam. A sphere of radius 0.5 m rolling at 4 m/s over a flat seam loses 1.9 % of its speed and rises 6 mm.
+  The package README lists the window contracts.
+
 ## Edits
 
 ```c3
 // write texels in place, then:
 assets.mark_texture_dirty(desc.height_map);
 terrain::mark_dirty(&scene, ground, { .x = x, .z = z, .columns = columns, .rows = rows });
-// once a stroke of edits ends:
+// once a stroke of edits ends, with the collider tiled into windows:
+physics::mark_height_field_windows_changed(&scene, ground.id, { .x = x, .z = z, .columns = columns, .rows = rows })!;
+// or, with one collider over the whole map:
 scene.get(ground, PhysicsBody).mark_changed();
 ```
 
@@ -309,7 +333,7 @@ scene.get(ground, PhysicsBody).mark_changed();
   foreach (direction : TerrainNeighbour::values) {
       if (changed & ((uint)1 << direction.ordinal)) {
           Entity neighbour = set.neighbour(tile.id, direction)!;
-          // mark_changed on its body once the stroke ends
+          // mark the windows its copied strip touches once the stroke ends
       }
   }
   ```
@@ -328,12 +352,14 @@ scene.get(ground, PhysicsBody).mark_changed();
     (`WEST` 0, `EAST` 1, `NORTH` 2, `SOUTH` 3, then `NORTH_WEST`, `NORTH_EAST`, `SOUTH_WEST`, `SOUTH_EAST`).
     `set.neighbour(tile, direction)` names the tile. A neighbour that was skipped or already held the values has
     no bit, and a repeated call returns 0.
-  - A live collider is not re-cooked: call `mark_changed` on the body of the edited tile and of each tile in the
-    mask, and on no other tile.
+  - A live collider is not re-cooked: mark the windows (or call `mark_changed` on the body) of the edited tile
+    and of each tile in the mask, and of no other tile. The copied strip is the neighbour's edge row or column
+    across the side, over the same texels as the rectangle along it.
 - The renderer re-uploads the whole height map on each revision (8 MiB at 2049², 32 MiB at 4097²).
 - A live physics body is not re-cooked on a texture revision. `mark_changed` rebuilds the whole field on the
-  next `PhysicsWorld.update`, so call it once when a stroke ends: collision is stale during the stroke and
-  correct after it.
+  next `PhysicsWorld.update`; `mark_height_field_windows_changed` rebuilds only the windows whose samples meet the
+  rectangle, and a rectangle on a window edge marks both windows. Mark once when a stroke ends: collision is stale
+  during the stroke and correct after it, and a body resting on an unmarked window keeps its contact.
 - A revision whose map fails the checks, or whose side differs from the accepted side, is rejected: `update`
   returns the fault, keeps the old bounds and hides the terrain (batch count 0) until a conforming revision,
   which rebuilds everything.
@@ -417,7 +443,8 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
   on three planes.
 - Under `TOP`, layers are projected from above: `uv0` is terrain-local x and z, so on steep slopes and cliffs the layer
   textures stretch along the fall line. Use [`TRIPLANAR`](#slope-projection) for them.
-- Edits re-upload the whole height map; with a collider, the end of a stroke re-cooks the whole field.
+- Edits re-upload the whole height map; with a collider, the end of a stroke re-cooks the whole field, or only the
+  windows it touched when the collider is tiled into [windows](#physics-collider).
 - Updates run on the calling thread and change scene structure, so they never run inside a job range;
   `sample_height` and `sample_normal` may.
 
@@ -430,11 +457,14 @@ the frame rate and B released ends the stroke, P toggles the collider, T toggles
 cursor (a 6 m/s velocity change) through `spatial::pick` with the terrain's layer left out. The panel shows chunks per level, LOD switches, the height and normal under the
 camera beside the physics ray height, and the LOD threshold.
 
+The collider is tiled into 256-cell windows, and the end of a stroke re-cooks only the windows it touched.
+`--collision-window CELLS` sets the window size; 0 builds one collider over the whole map.
+
 `--tiles 2x2` builds the same landscape as a [tile set](#tile-sets) of four tiles cut from the map with a one-texel
 overlap, each with its own control map and collider. B paints across tile edges: the brush stamps every tile its
 square reaches, leaves a tile's shared west column and north row to the neighbour that owns them, and calls
-`propagate_edit` for each stamped tile. The end of a stroke re-cooks the colliders of the stamped tiles and of the
-neighbours in the returned masks only. The benchmark is unavailable with it, since it measures the one terrain node's
+`propagate_edit` for each stamped tile. The end of a stroke re-cooks the windows of the stamped tiles and of the
+neighbours in the returned masks that the edited texels touch. The benchmark is unavailable with it, since it measures the one terrain node's
 batch and runtime.
 
 `--capture FILE.png` renders one frame without a window, from a fixed camera straight above a point of the tile
@@ -501,7 +531,8 @@ CPU, Windows host, median of three runs (range):
 | `selection_us` p99, sweep | 3.0 to 3.2 | 6.0 to 6.2 |
 
 The full bounds build runs at load, not per frame. The edit an application pays for is the whole-texture
-re-upload and, with a collider, the physics re-cook at the end of a stroke.
+re-upload and, with a collider, the physics re-cook at the end of a stroke: the windows it touched, or the whole
+field when the collider is not tiled.
 
 ### WSL, llvmpipe, 1920 × 1080
 
@@ -527,5 +558,20 @@ The still segment uploads nothing after its first frame and the hover segment sw
 first second. A sweep frame that re-selects uploads 128 B per chunk (up to 21 KiB at 2049, 31 KiB at 4097). A
 stamp frame's update, bounds refresh included, stays under 0.13 ms; the whole-texture re-upload and the
 physics re-cook are the costs of an edit.
+
+Collision re-cook at the end of the same stroke, WSL on the i9-14900K, `--opt O3`, a 160 × 90 viewport (these
+lines do not depend on it), 300 frames per segment. The default collider is tiled into 256-cell windows;
+`--collision-window 0` builds one collider over the whole map:
+
+| Line | 2049 | 4097 |
+| --- | ---: | ---: |
+| `physics_recook_windows` (windows the stroke touched) | 2 | 4 |
+| `physics_recook_ms` (those windows) | 7.4 to 10.3 | 17.5 to 20.6 |
+| `physics_recook_window_ms` | 3.7 to 5.2 | 4.4 to 5.2 |
+| `physics_whole_recook_ms` (one cook of the whole field) | 292 to 347 | 1,106 to 1,114 |
+| `physics_recook_ms` with `--collision-window 0` (`mark_changed`) | 321 to 454 | 1,180 to 1,224 |
+
+A window costs by its samples: on the 2049 map and one stamp, 0.9 ms at 128 cells, 3.7 to 5.2 ms at 256 and
+16 ms at 512. The ranges are three to five runs on a shared host.
 
 Preparation order and pending draw behavior are listed in the [owner readiness table](owner_readiness.md).
