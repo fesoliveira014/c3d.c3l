@@ -64,8 +64,10 @@ struct ClothDesc {
 
 <* Last cloth update's CPU solve and publication costs. *>
 struct ClothStats {
-    double solve_seconds;
+    double solve_seconds;  // summed over items, so CPU time under parallel staging
     double publish_seconds;
+    double stage_seconds;  // wall time of the staging phase
+    double commit_seconds; // wall time of the commit phase
     uint   particles;
     uint   constraints;
     uint   pending;
@@ -120,6 +122,7 @@ struct ClothBody {
 <* Library-owned simulation state; its arrays are borrowed by readers. *>
 struct ClothState {
     ClothDesc            desc; // pins/colliders borrow state arrays; other slices borrow owned authoring
+    usz                  allocation_bytes; // size of the state's allocation block
     AssetStore*          assets;
     GeometryId           source;
     uint                 source_revision;
@@ -280,6 +283,7 @@ struct ClothState {
     uint                 pending_request_count;
     ClothSettle          settle;
     ClothSpans           spans;
+    ClothWork            work;
     uint[]               selected_paths_scratch;
     uint[]               sector_scratch;
     uint[]               sector_root_scratch;
@@ -770,6 +774,7 @@ fn void Scene.remove_cloth(&self, Node* node) {
 
 <*
  Solve prepared cloth after final poses; pending cloth remains unchanged.
+ Stages cloth concurrently when a ParallelFor is set; the scene must not change meanwhile.
  @require self.cloth_update_serial != self.update_serial
 *>
 fn void PhysicsWorld.update_cloths(&self) {
@@ -777,50 +782,9 @@ fn void PhysicsWorld.update_cloths(&self) {
     self.cloth_stats = {};
     uint steps = self.steps_last_update;
 
-    self.scene.@each(Cloth; Entity entity, Cloth* component) {
-        if (!component.is_prepared()) {
-            self.cloth_stats.pending++;
-        } else {
-            ClothState* state = component.state;
-            Node* node = self.scene.node(entity);
-            bool held = component.authoring.held;
-            time::Clock started = clock::now();
-            double publication_seconds;
-            ClothUpdateKind kind = SIMULATED;
-            ClothUpdateKind? updated = update_cloth(
-                world:               self,
-                state:               state,
-                node:                node,
-                held:                held,
-                steps:               steps,
-                publication_seconds: &publication_seconds,
-            );
-            if (catch excuse = updated) {
-                state.contact_result.failure = excuse;
-                if (excuse != OWNERSHIP_CHANGED && !held && !state.settle.resting) {
-                    time::Clock reexpression_start = clock::now();
-                    if (catch reexpression_failure = reexpress_cloth(state, node.world)) {
-                        state.contact_result.failure = reexpression_failure;
-                        state.contact_result.stage = ClothContactStage.REEXPRESSION;
-                    }
-                    publication_seconds += (clock::now() - reexpression_start).to_sec();
-                }
-                self.cloth_stats.failed++;
-            } else {
-                kind = updated;
-            }
-
-            tally_cloth(
-                stats:               &self.cloth_stats,
-                state:               state,
-                kind:                kind,
-                total_seconds:       (clock::now() - started).to_sec(),
-                publication_seconds: publication_seconds,
-            );
-        }
-    };
-
-    update_crowd_cloths(self, steps);
+    collect_cloth_work(self);
+    stage_cloth_work(self, steps);
+    commit_cloth_work(self);
 }
 
 <*

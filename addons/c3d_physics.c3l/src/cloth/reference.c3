@@ -165,10 +165,7 @@ fn void? check_ordinary_output_ownership(Scene* scene, ClothState* state, Node* 
         return;
     }
 
-    if (!valid_skinned_output_node(scene, state, owner)) {
-        deactivate_output_node(scene, state.output_node);
-        return OWNERSHIP_CHANGED~;
-    }
+    if (!valid_skinned_output_node(scene, state, owner)) return OWNERSHIP_CHANGED~;
 }
 
 fn void? sample_ordinary_reference(

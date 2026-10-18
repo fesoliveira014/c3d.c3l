@@ -28,6 +28,16 @@ alias FrictionMixFn = fn float(float friction_a, SurfaceMaterialId surface_a, fl
 *>
 alias RestitutionMixFn = fn float(float restitution_a, SurfaceMaterialId surface_a, float restitution_b, SurfaceMaterialId surface_b);
 
+<*
+ Work over items [first, first + count) of data.
+*>
+alias ParallelRangeFn = fn void(void* data, uint first, uint count);
+
+<*
+ Run range over [0, count) in batches of batch items, and return when every range finished.
+*>
+alias ParallelForFn = fn void(void* context, ParallelRangeFn range, void* data, uint count, uint batch);
+
 <* Earth gravity, Y up, meters per second squared. *>
 const Vec3  DEFAULT_GRAVITY = { 0, -9.81f, 0 };
 <* Fixed step of sixty hertz. *>
@@ -341,6 +351,14 @@ struct PhysicsDebugOptions {
 }
 
 <*
+ Caller-supplied fork-join over index ranges; a zero value runs serially.
+*>
+struct ParallelFor {
+    ParallelForFn run;
+    void*         context;
+}
+
+<*
  Owner of one box3d world, its collision snapshots and the frame event lists.
 *>
 struct PhysicsWorld {
@@ -377,6 +395,9 @@ struct PhysicsWorld {
     void*          fluid_context;
     b3::record::Recording* recording; // null when idle
     ClothStats     cloth_stats;
+    ClothState*[]  cloth_work;          // scene node capacity; every staged item owns a distinct live node
+    uint           cloth_work_count;
+    ParallelFor    parallel;
     ulong          update_serial;       // advanced by every update, zero-step ones included
     ulong          cloth_update_serial; // update_serial of the last update_cloths
 }
@@ -461,6 +482,13 @@ fn void PhysicsWorld.set_tuning(&self, PhysicsTuning tuning) {
     world.set_friction_callback((b3::FrictionFn)tuning.friction_mix);
     world.set_restitution_callback((b3::RestitutionFn)tuning.restitution_mix);
     self.desc.tuning = tuning;
+}
+
+<*
+ Run cloth staging through parallel; ranges may run concurrently and must all finish before run returns.
+*>
+fn void PhysicsWorld.set_parallel(&self, ParallelFor parallel) {
+    self.parallel = parallel;
 }
 
 <*
@@ -740,6 +768,7 @@ fn PhysicsWorld? create_physics_world(
         .joint_event_storage   = alloc::new_array(allocator, JointEvent, desc.event_capacity),
         .break_storage         = alloc::new_array(allocator, BreakEvent, desc.event_capacity),
         .failure_storage       = alloc::new_array(allocator, BuildFailure, desc.event_capacity),
+        .cloth_work            = alloc::new_array(allocator, ClothState*, (sz)scene.nodes.len),
     };
 }
 
@@ -786,6 +815,7 @@ fn void destroy_physics_world(PhysicsWorld* world) {
     alloc::free(world.allocator, world.joint_event_storage.ptr);
     alloc::free(world.allocator, world.failure_storage.ptr);
     alloc::free(world.allocator, world.break_storage.ptr);
+    alloc::free(world.allocator, world.cloth_work.ptr);
     *world = {};
 }
 

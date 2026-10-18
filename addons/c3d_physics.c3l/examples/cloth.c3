@@ -8,6 +8,7 @@ import c3d::camera;
 import c3d::debug;
 import c3d::geometry;
 import c3d::gui;
+import c3d::job;
 import c3d::light;
 import c3d::material;
 import c3d::maths;
@@ -79,6 +80,17 @@ const float FIELD_POLE_HEIGHT @local = 1.4f;
 const float FIELD_SPACING @local = 2.2f; // metres between poles; keeps neighbouring flags apart
 const uint FIELD_WIND_STRIDE @local = 4; // one flag in this many flutters; the others hang still and rest
 const float FIELD_SLEEP_SPEED @local = 0.05f; // m/s; a flag hanging in still air falls under it within seconds
+const uint CROWD_DEFAULT_COUNT @local = 100; // characters in the crowd scene; each wears one cape
+const float CROWD_SPACING @local = 1.6f; // metres between characters; keeps neighbouring capes apart
+const float CROWD_POSE_MARGIN @local = 1; // metres around the rest bounds; the walk clip stays inside
+const float CROWD_SPEED_MIN @local = 0.8f;
+const float CROWD_SPEED_MAX @local = 1.2f;
+const uint CROWD_SEED @local = 20261018;
+const float RANDOM_RANGE @local = 16777216; // 2^24, the bits of a generator word that become a fraction
+const ulong CHECKSUM_BASIS @local = 14695981039346656037UL; // FNV-1a 64-bit offset basis
+const ulong CHECKSUM_PRIME @local = 1099511628211UL; // FNV-1a 64-bit prime
+const String FOOT_JOINT @local = "DEF-foot.L";
+const String TOE_JOINT @local = "DEF-toe.L";
 
 enum Scenario @local {
     FLAG,
@@ -88,9 +100,12 @@ enum Scenario @local {
     FOLD,
     FAST,
     FIELD,
+    CROWD,
 }
 
-const String[Scenario::len] SCENARIO_NAMES @local = { "flag", "cape", "both", "contacts", "fold", "fast", "field" };
+const String[Scenario::len] SCENARIO_NAMES @local = {
+    "flag", "cape", "both", "contacts", "fold", "fast", "field", "crowd",
+};
 
 struct Options @local {
     bool      benchmark;
@@ -100,10 +115,12 @@ struct Options @local {
     bool      tear;
     bool      hold;
     bool      traced;
+    bool      cpu_only;
     bool      validation;
     TraceKind trace_kind;
     Scenario  scenario;
     uint      count;
+    uint      workers;
     uint      frames;
     String    capture_path;
 }
@@ -116,6 +133,15 @@ struct Series @local {
 fn void Series.add(&self, double value) {
     self.total += value;
     self.peak = math::max(self.peak, value);
+}
+
+struct Random @local {
+    uint state;
+}
+
+fn float Random.next(&self) {
+    self.state = self.state * 1664525 + 1013904223;
+    return (float)(self.state >> 8) / RANDOM_RANGE;
 }
 
 struct Character @local {
@@ -143,6 +169,11 @@ struct Demo @local {
     uint[]       field_revisions;
     bool         field_held;
     uint         field_count;
+    JobPool      jobs;
+    bool         pooled;
+    Node*        crowd;
+    uint         crowd_count;
+    uint         crowd_cape_part;
     uint         fast_frame;
     uint         fast_impacts;
     Node*[6]     drapes;
@@ -438,6 +469,186 @@ fn void set_field_held(Demo* demo, bool held) @local {
     }
 }
 
+fn uint? template_node(ModelTemplate* template, String name) @local {
+    foreach (index, &node : template.nodes) {
+        if (node.name == name) return (uint)index;
+    }
+    return NOT_FOUND~;
+}
+
+fn Mat4 template_world(ModelTemplate* template, uint node) @local {
+    Mat4 world = matrix::IDENTITY4;
+    for (int current = (int)node; current >= 0; current = template.nodes[current].parent) {
+        world = template.nodes[current].local.to_mat4().mul(world);
+    }
+    return world;
+}
+
+fn void run_on_pool(
+    void* context,
+    ParallelRangeFn range,
+    void* data,
+    uint count,
+    uint batch,
+) @local {
+    JobPool* pool = context;
+    pool.wait(pool.run(
+        range: range,
+        data:  data,
+        count: count,
+        batch: batch,
+    ));
+}
+
+// Grows the loaded character by a rigid cape on its chest node; the store owns the grown arrays.
+fn uint? add_cape_part(AssetStore* assets, ModelId model) @local {
+    ModelTemplate* template = &assets.model(model).data;
+    uint chest = template_node(template, CAPE_JOINT)!;
+    Mat4 chest_world = template_world(template, chest);
+    Vec3 forward = maths::translation(template_world(template, template_node(template, TOE_JOINT)!))
+        - maths::translation(template_world(template, template_node(template, FOOT_JOINT)!));
+    Vec3 facing = ((Vec3){ forward.x, 0, forward.z }).normalize();
+
+    Quat heading = quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::atan2(facing.x, facing.z));
+    Vec3 right = heading.rotate_vec3({ -1, 0, 0 });
+    maths::Transform placement = {
+        .position = maths::translation(chest_world) + (Vec3){ 0, CAPE_SHOULDER_HEIGHT, 0 }
+            - facing * CAPE_BACK_OFFSET - right * (CAPE_WIDTH * 0.5f),
+        .rotation = heading.mul(quaternion::from_axis_angle{float}({ 0, 1, 0 }, (float)math::PI)),
+        .scale    = { 1, 1, 1 },
+    };
+
+    GeometryId cape_geometry;
+    @pool() {
+        Geometry cape = cloth_grid(
+            allocator: tmem,
+            columns:   CAPE_COLUMNS,
+            rows:      CAPE_ROWS,
+            width:     CAPE_WIDTH,
+            height:    CAPE_LENGTH,
+        );
+        cape_geometry = assets.add_geometry(&cape, "cloth/crowd_cape")!;
+    };
+    MaterialId cape_material = cloth_material(assets, { 0.12f, 0.2f, 0.55f, 1 })!;
+
+    usz node_count = template.nodes.len;
+    NodeTemplate[] nodes = alloc::new_array_try(assets.allocator, NodeTemplate, (sz)node_count + 1)
+        ?? c3d::CAPACITY_EXCEEDED~!;
+    defer catch alloc::free(assets.allocator, nodes.ptr);
+    usz mesh_count = template.meshes.len;
+    ModelMesh[] meshes = alloc::new_array_try(assets.allocator, ModelMesh, (sz)mesh_count + 1)
+        ?? c3d::CAPACITY_EXCEEDED~!;
+    defer catch alloc::free(assets.allocator, meshes.ptr);
+
+    nodes[:node_count] = template.nodes[..];
+    nodes[node_count] = {
+        .parent  = (int)chest,
+        .name    = "cape".copy(assets.allocator),
+        .local   = maths::transform_from_mat4(maths::inverse_affine(chest_world).mul(placement.to_mat4())),
+        .layers  = template.nodes[chest].layers,
+        .visible = true,
+    };
+
+    meshes[:mesh_count] = template.meshes[..];
+    meshes[mesh_count] = { .node = (uint)node_count, .geometry = cape_geometry, .material = cape_material };
+
+    alloc::free(assets.allocator, template.nodes.ptr);
+    alloc::free(assets.allocator, template.meshes.ptr);
+    template.nodes = nodes;
+    template.meshes = meshes;
+    return (uint)mesh_count;
+}
+
+fn Aabb crowd_bounds(AssetStore* assets, ModelTemplate* template) @local {
+    Aabb bounds = assets.geometry(template.meshes[0].geometry).data.bounds;
+    foreach (&mesh : template.meshes) bounds = maths::aabb_merge(bounds, assets.geometry(mesh.geometry).data.bounds);
+
+    Vec3 margin = { CROWD_POSE_MARGIN, CROWD_POSE_MARGIN, CROWD_POSE_MARGIN };
+    return { .min = bounds.min - margin, .max = bounds.max + margin };
+}
+
+fn maths::Transform crowd_placement(uint index, uint columns, Random* random) @local {
+    return {
+        .position = {
+            ((float)(index % columns) - (float)columns * 0.5f) * CROWD_SPACING,
+            0,
+            -(float)(index / columns) * CROWD_SPACING,
+        },
+        .rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, random.next() * (float)math::PI * 2),
+        .scale    = { 1, 1, 1 },
+    };
+}
+
+fn void? build_crowd(Demo* demo, uint count) @local {
+    AssetStore* assets = &demo.assets;
+    ModelId model = gltf::load_model(assets, MODEL_PATH)!;
+    demo.crowd_cape_part = add_cape_part(assets, model)!;
+    ModelTemplate* template = &assets.model(model).data;
+    ClipId walk = find_clip(assets, template.clips, WALK_CLIP)!;
+    float duration = assets.clip(walk).data.duration;
+    Aabb bounds = crowd_bounds(assets, template);
+
+    uint columns = field_columns(count);
+    Random random = { .state = CROWD_SEED };
+    @pool() {
+        CrowdInstance[] instances = alloc::new_array(tmem, CrowdInstance, (sz)count);
+        foreach (index, &instance : instances) {
+            *instance = {
+                .placement = crowd_placement((uint)index, columns, &random),
+                .pose      = {
+                    .clip  = walk,
+                    .time  = random.next() * duration,
+                    .speed = CROWD_SPEED_MIN + (CROWD_SPEED_MAX - CROWD_SPEED_MIN) * random.next(),
+                    .loop  = true,
+                },
+                .color     = { 1, 1, 1, 1 },
+            };
+        }
+
+        demo.crowd = model::add_crowd(
+            assets:      assets,
+            scene:       &demo.scene,
+            model:       model,
+            capacity:    count,
+            pose_bounds: bounds,
+            instances:   instances,
+            name:        "crowd",
+        )!;
+    };
+
+    demo.scene.add(demo.crowd, grid_wind(
+        columns: CAPE_COLUMNS,
+        rows:    CAPE_ROWS,
+        width:   CAPE_WIDTH,
+        height:  CAPE_LENGTH,
+    ));
+    demo.scene.update_world();
+}
+
+fn void? attach_crowd_cape(Demo* demo) @local {
+    ClothDesc desc = cloth::default_cloth_desc();
+    desc.thickness = CAPE_THICKNESS;
+
+    @pool() {
+        uint[] pins = alloc::new_array(tmem, uint, (sz)(CAPE_COLUMNS + 1));
+        foreach (column, &pin : pins) *pin = (uint)column;
+        desc.pins = pins;
+        demo.scene.attach_crowd_cloth(
+            assets: &demo.assets,
+            owner:  demo.crowd,
+            part:   demo.crowd_cape_part,
+            desc:   desc,
+        )!;
+    };
+
+    demo.physics.update(0);
+    cloth::prepare_crowd_cloth(
+        world:  &demo.physics,
+        assets: &demo.assets,
+        owner:  demo.crowd,
+    )!;
+}
+
 fn void? attach_cape(Demo* demo) @local {
     Ragdoll* ragdoll = demo.scene.get(demo.character.skin, Ragdoll);
     ClothDesc desc = cloth::default_cloth_desc();
@@ -495,6 +706,7 @@ fn void? attach_cloths(Demo* demo) @local {
         attach_field(demo)!;
         if (demo.field_held) set_field_held(demo, true);
     }
+    if (demo.crowd) attach_crowd_cape(demo)!;
 }
 
 fn void? reset_cloths(Demo* demo) @local {
@@ -505,6 +717,7 @@ fn void? reset_cloths(Demo* demo) @local {
     if (demo.fast) demo.scene.remove_cloth(demo.fast);
     foreach (node : demo.drapes) if (node) demo.scene.remove_cloth(node);
     foreach (node : demo.field) demo.scene.remove_cloth(node);
+    if (demo.crowd) demo.scene.remove_crowd_cloth(demo.crowd);
     return attach_cloths(demo);
 }
 
@@ -783,6 +996,8 @@ fn void? create_demo(
     bool simulated,
     uint field_count = 0,
     bool traced = false,
+    uint crowd_count = 0,
+    uint workers = 0,
 ) @local {
     demo.scenario = scenario;
     demo.simulated = simulated;
@@ -790,9 +1005,10 @@ fn void? create_demo(
     demo.flag_columns = flag_columns;
     demo.flag_rows = flag_rows;
     demo.field_count = field_count;
+    demo.crowd_count = crowd_count;
     demo.assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
     defer catch asset::destroy_asset_store(&demo.assets);
-    demo.scene = scene::create_scene(mem, { .max_nodes = SCENE_NODE_CAPACITY + 2 * field_count });
+    demo.scene = scene::create_scene(mem, { .max_nodes = SCENE_NODE_CAPACITY + 2 * field_count + 2 * crowd_count });
     defer catch scene::destroy_scene(&demo.scene);
     physics::register_physics(&demo.scene)!;
     demo.physics = physics::create_physics_world(
@@ -802,6 +1018,15 @@ fn void? create_demo(
         desc:      physics::default_physics_desc(),
     )!;
     defer catch physics::destroy_physics_world(&demo.physics);
+    if (workers) {
+        JobPoolDesc jobs = job::default_job_pool_desc();
+        jobs.worker_count = workers;
+        jobs.background_workers = job::default_background_workers(workers);
+        demo.jobs = job::create_job_pool(mem, jobs)!;
+        demo.pooled = true;
+        demo.physics.set_parallel({ .run = &run_on_pool, .context = &demo.jobs });
+    }
+    defer catch if (demo.pooled) job::destroy_job_pool(&demo.jobs);
 
     MaterialId ground_material = demo.assets.add_material(material::standard({
         .base_color = { 0.22f, 0.27f, 0.2f, 1 }, .roughness = 0.95f,
@@ -833,6 +1058,7 @@ fn void? create_demo(
     if (scenario == FOLD) build_fold(demo)!;
     if (scenario == FAST) build_fast(demo)!;
     if (scenario == FIELD) build_field(demo)!;
+    if (scenario == CROWD) build_crowd(demo, crowd_count)!;
     switch (scenario) {
         case FLAG:
             demo.camera.local.position = POLE_POSITION + (Vec3){ 1.4f, POLE_HEIGHT - 0.6f, 4.2f };
@@ -859,6 +1085,12 @@ fn void? create_demo(
             demo.camera.local.position = centre + (Vec3){ 0, extent * 0.55f, extent * 0.9f };
             Vec3 view = (centre - demo.camera.local.position).normalize();
             demo.camera.local.rotation = maths::look_rotation(view, { 0, 1, 0 });
+        case CROWD:
+            float extent = (float)field_columns(crowd_count) * CROWD_SPACING;
+            Vec3 centre = { 0, 1, -extent * 0.5f };
+            demo.camera.local.position = centre + (Vec3){ 0, extent * 0.5f, extent * 0.9f };
+            Vec3 view = (centre - demo.camera.local.position).normalize();
+            demo.camera.local.rotation = maths::look_rotation(view, { 0, 1, 0 });
     }
     demo.scene.update_world();
     attach_cloths(demo)!;
@@ -870,6 +1102,7 @@ fn void? create_demo(
 fn void destroy_demo(Demo* demo) @local {
     alloc::free(mem, demo.field.ptr);
     alloc::free(mem, demo.field_revisions.ptr);
+    if (demo.pooled) job::destroy_job_pool(&demo.jobs);
     physics::destroy_physics_world(&demo.physics);
     scene::destroy_scene(&demo.scene);
     asset::destroy_asset_store(&demo.assets);
@@ -882,6 +1115,7 @@ fn void apply_wind(Demo* demo, double time) @local {
     Vec3 velocity = { math::cos(heading) * speed, 0, math::sin(heading) * speed };
     if (demo.flag) demo.scene.get(demo.flag, Wind).velocity = velocity;
     if (demo.character.cape) demo.scene.get(demo.character.cape, Wind).velocity = velocity;
+    if (demo.crowd) demo.scene.get(demo.crowd, Wind).velocity = velocity;
     foreach (flag : demo.field) {
         if (Wind* field_wind = demo.scene.get(flag, Wind)) field_wind.velocity = velocity;
     }
@@ -921,6 +1155,7 @@ fn void step_demo(Demo* demo, float delta, double time) @local {
         ragdoll.weight = math::max(ragdoll.weight - delta / BLEND_OUT_SECONDS, 0.0f);
     }
     if (demo.character.root) anim::update(&demo.assets, &demo.scene, delta);
+    if (demo.crowd) anim::crowd_update(&demo.assets, &demo.scene, delta);
     demo.scene.update_world();
     demo.physics.update(delta);
     if (demo.character.root && !demo.character.ragdoll) {
@@ -979,6 +1214,7 @@ fn void panel(
         uint history_bytes = renderer.stats.vertex_history_bytes;
         imgui::text("Scene: %s", SCENARIO_NAMES[demo.scenario.ordinal]);
         imgui::text("Solve %.3f ms, publish %.3f ms", stats.solve_seconds * 1000, stats.publish_seconds * 1000);
+        imgui::text("Stage %.3f ms, commit %.3f ms", stats.stage_seconds * 1000, stats.commit_seconds * 1000);
         imgui::text("Particles %u, constraints %u", stats.particles, stats.constraints);
         imgui::text("Resting %u, held %u", stats.resting, stats.held);
         imgui::text("Contacts: %u candidates, %u contacts", stats.candidates, stats.contacts);
@@ -1039,6 +1275,8 @@ fn void? run_interactive(Options options) @local {
         flag_rows:    FLAG_ROWS,
         simulated:    !options.still,
         field_count:  options.count,
+        crowd_count:  options.scenario == CROWD ? options.count : 0,
+        workers:      options.workers,
     )!;
     defer destroy_demo(&demo);
     demo.whole_publication = options.whole_publication;
@@ -1158,6 +1396,120 @@ fn void print_trace_report(
     );
 }
 
+fn uint cloth_total(Demo* demo) @local => demo.scene.count(Cloth) + demo.crowd_count;
+
+struct StateTotals @local {
+    ulong bytes;
+    ulong checksum; // FNV-1a style fold of the bits of every position and velocity; bitwise-equal runs give equal sums
+}
+
+fn void StateTotals.add(&self, ClothState* state) {
+    self.bytes += state.allocation_bytes;
+
+    foreach (position : state.positions) {
+        for (usz axis = 0; axis < 3; axis++) self.mix(bitcast(position[axis], uint));
+    }
+    foreach (velocity : state.velocities) {
+        for (usz axis = 0; axis < 3; axis++) self.mix(bitcast(velocity[axis], uint));
+    }
+}
+
+fn void StateTotals.mix(&self, uint bits) {
+    self.checksum = (self.checksum ^ bits) * CHECKSUM_PRIME;
+}
+
+fn StateTotals state_totals(Demo* demo) @local {
+    StateTotals totals = { .checksum = CHECKSUM_BASIS };
+
+    demo.scene.@each(Cloth; entity, cloth) {
+        if (cloth.state) totals.add(cloth.state);
+    };
+    demo.scene.@each(CrowdCloth; entity, crowd_cloth) {
+        if (crowd_cloth.state) {
+            foreach (&part : crowd_cloth.state.parts) {
+                foreach (state : part.states) {
+                    if (state) totals.add(state);
+                }
+            }
+        }
+    };
+
+    return totals;
+}
+
+fn void print_update_timings(
+    Demo* demo,
+    uint workers,
+    double[] solve_ms,
+    double[] publish_ms,
+    double[] stage_ms,
+    double[] commit_ms,
+) @local {
+    io::printfn("solve_ms,mean,%.4f,p95,%.4f", mean(solve_ms), percentile(solve_ms, PERCENTILE_95));
+    io::printfn("publish_ms,mean,%.4f,p95,%.4f", mean(publish_ms), percentile(publish_ms, PERCENTILE_95));
+    io::printfn(
+        "workers,%d,stage_ms,mean,%.4f,p95,%.4f,commit_ms,mean,%.4f,p95,%.4f",
+        workers,
+        mean(stage_ms),
+        percentile(stage_ms, PERCENTILE_95),
+        mean(commit_ms),
+        percentile(commit_ms, PERCENTILE_95),
+    );
+    StateTotals totals = state_totals(demo);
+    io::printfn("state_bytes,%d,state_checksum,%x", totals.bytes, totals.checksum);
+}
+
+// Steps the scene without a renderer, so rasteriser threads do not compete with the job pool.
+fn void? run_cpu_benchmark(Options options) @local {
+    Demo demo;
+    create_demo(
+        demo:         &demo,
+        scenario:     options.scenario,
+        flag_columns: BENCHMARK_CELLS,
+        flag_rows:    BENCHMARK_CELLS,
+        simulated:    !options.still,
+        field_count:  options.count,
+        crowd_count:  options.scenario == CROWD ? options.count : 0,
+        workers:      options.workers,
+    )!;
+    defer destroy_demo(&demo);
+    demo.gusts = false;
+    if (options.hold) set_field_held(&demo, true);
+
+    double[MEASURED_FRAMES] solve_ms;
+    double[MEASURED_FRAMES] publish_ms;
+    double[MEASURED_FRAMES] stage_ms;
+    double[MEASURED_FRAMES] commit_ms;
+    for (uint frame = 0; frame < WARMUP_FRAMES + MEASURED_FRAMES; frame++) {
+        step_demo(&demo, STEP_SECONDS, (double)frame * STEP_SECONDS);
+        if (frame < WARMUP_FRAMES) continue;
+
+        ClothStats stats = demo.physics.cloth_stats;
+        uint sample = frame - WARMUP_FRAMES;
+        solve_ms[sample] = stats.solve_seconds * 1000;
+        publish_ms[sample] = stats.publish_seconds * 1000;
+        stage_ms[sample] = stats.stage_seconds * 1000;
+        commit_ms[sample] = stats.commit_seconds * 1000;
+    }
+
+    io::printfn("scene,%s,simulated,%s,cpu_only,true", SCENARIO_NAMES[options.scenario.ordinal], demo.simulated);
+    io::printfn(
+        "cloths,%d,particles,%d,constraints,%d",
+        cloth_total(&demo),
+        demo.physics.cloth_stats.particles,
+        demo.physics.cloth_stats.constraints,
+    );
+    io::printfn("frames,%d,warmup,%d", MEASURED_FRAMES, WARMUP_FRAMES);
+    print_update_timings(
+        demo:       &demo,
+        workers:    options.workers,
+        solve_ms:   solve_ms[..],
+        publish_ms: publish_ms[..],
+        stage_ms:   stage_ms[..],
+        commit_ms:  commit_ms[..],
+    );
+}
+
 fn void? run_benchmark(Options options) @local {
     Demo demo;
     create_demo(
@@ -1168,6 +1520,8 @@ fn void? run_benchmark(Options options) @local {
         simulated:    !options.still,
         field_count:  options.count,
         traced:       options.traced,
+        crowd_count:  options.scenario == CROWD ? options.count : 0,
+        workers:      options.workers,
     )!;
     defer destroy_demo(&demo);
     demo.gusts = false;
@@ -1199,6 +1553,8 @@ fn void? run_benchmark(Options options) @local {
     ViewId view = render::create_view(&renderer, view_desc)!;
     double[MEASURED_FRAMES] solve_ms;
     double[MEASURED_FRAMES] publish_ms;
+    double[MEASURED_FRAMES] stage_ms;
+    double[MEASURED_FRAMES] commit_ms;
     double[MEASURED_FRAMES] gpu_ms;
     usz gpu_samples;
     ulong upload_bytes;
@@ -1231,6 +1587,8 @@ fn void? run_benchmark(Options options) @local {
         if (frame >= WARMUP_FRAMES && frame < WARMUP_FRAMES + MEASURED_FRAMES) {
             solve_ms[frame - WARMUP_FRAMES] = demo.physics.cloth_stats.solve_seconds * 1000;
             publish_ms[frame - WARMUP_FRAMES] = demo.physics.cloth_stats.publish_seconds * 1000;
+            stage_ms[frame - WARMUP_FRAMES] = demo.physics.cloth_stats.stage_seconds * 1000;
+            commit_ms[frame - WARMUP_FRAMES] = demo.physics.cloth_stats.commit_seconds * 1000;
             upload_bytes += renderer.stats.upload_bytes;
             history_bytes += renderer.stats.vertex_history_bytes;
             trace_build_ms.add(renderer.stats.trace_build_ms);
@@ -1278,7 +1636,7 @@ fn void? run_benchmark(Options options) @local {
         stats.ccd_iterations
     );
     io::printfn("publication,%s", demo.whole_publication ? "whole" : "streams");
-    double cloths = (double)demo.scene.count(Cloth);
+    double cloths = (double)cloth_total(&demo);
     double resting = resting_series.total / MEASURED_FRAMES;
     double held = held_series.total / MEASURED_FRAMES;
     io::printfn(
@@ -1296,8 +1654,14 @@ fn void? run_benchmark(Options options) @local {
         demo.fast ? 1 : cloth::DEFAULT_CLOTH_SUBSTEPS,
         demo.fast ? 1 : cloth::DEFAULT_CLOTH_ITERATIONS
     );
-    io::printfn("solve_ms,mean,%.4f,p95,%.4f", mean(solve_ms[..]), percentile(solve_ms[..], PERCENTILE_95));
-    io::printfn("publish_ms,mean,%.4f,p95,%.4f", mean(publish_ms[..]), percentile(publish_ms[..], PERCENTILE_95));
+    print_update_timings(
+        demo:       &demo,
+        workers:    options.workers,
+        solve_ms:   solve_ms[..],
+        publish_ms: publish_ms[..],
+        stage_ms:   stage_ms[..],
+        commit_ms:  commit_ms[..],
+    );
     io::printfn("upload_bytes_per_frame,%.0f", (double)upload_bytes / MEASURED_FRAMES);
     io::printfn("vertex_history_bytes_per_frame,%.0f", (double)history_bytes / MEASURED_FRAMES);
     if (gpu_samples) {
@@ -1330,6 +1694,7 @@ fn Scenario? scenario_named(String name) @local {
 
 fn Options? parse_options(String[] args) @local {
     Options options = { .scenario = BOTH, .count = FIELD_DEFAULT_COUNT };
+    bool counted;
     for (usz index = 1; index < args.len; index++) {
         if (args[index] == "--benchmark") {
             options.benchmark = true;
@@ -1347,6 +1712,11 @@ fn Options? parse_options(String[] args) @local {
             options.hold = true;
         } else if (args[index] == "--count" && index + 1 < args.len) {
             options.count = args[++index].to_uint()!;
+            counted = true;
+        } else if (args[index] == "--workers" && index + 1 < args.len) {
+            options.workers = args[++index].to_uint()!;
+        } else if (args[index] == "--cpu-only") {
+            options.cpu_only = true;
         } else if (args[index] == "--validation") {
             options.validation = true;
         } else if (args[index] == "--trace" && index + 1 < args.len) {
@@ -1369,9 +1739,13 @@ fn Options? parse_options(String[] args) @local {
             return c3d::INVALID_ARGUMENT~;
         }
     }
-    if ((options.traced || options.validation) && !options.benchmark) return c3d::INVALID_ARGUMENT~;
+    if ((options.traced || options.validation || options.cpu_only) && !options.benchmark) return c3d::INVALID_ARGUMENT~;
+    if (options.cpu_only && (options.traced || options.validation || options.ragdoll || options.capture_path.len)) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+    if (options.scenario == CROWD && !counted) options.count = CROWD_DEFAULT_COUNT;
     if (options.hold && options.scenario != FIELD) return c3d::INVALID_ARGUMENT~;
-    if (options.scenario == FIELD && !options.count) return c3d::INVALID_ARGUMENT~;
+    if ((options.scenario == FIELD || options.scenario == CROWD) && !options.count) return c3d::INVALID_ARGUMENT~;
     if (options.ragdoll && (!options.benchmark || (options.scenario != CAPE && options.scenario != BOTH))) {
         return c3d::INVALID_ARGUMENT~;
     }
@@ -1381,14 +1755,21 @@ fn Options? parse_options(String[] args) @local {
 fn int main(String[] args) {
     Options? options = parse_options(args);
     if (catch excuse = options) {
-        io::eprintn("Use cloth [--scene flag|cape|both|contacts|fold|fast|field] [--still] [--frames count]");
-        io::eprintn("  [--count flags] [--hold]    (field scene: count of flags; hold the far half)");
+        io::eprintn("Use cloth [--scene flag|cape|both|contacts|fold|fast|field|crowd] [--still] [--frames count]");
+        io::eprintn("  [--count n] [--hold]    (field: count of flags, hold the far half; crowd: count of characters)");
+        io::eprintn("  [--workers n]    (stage cloths on n job pool workers; 0 stages on the calling thread)");
         io::eprintn("  [--publish whole|streams]");
-        io::eprintn("  [--benchmark [--ragdoll] [--capture path.rgba] [--trace software|hardware] [--validation]]");
+        io::eprintn("  [--benchmark [--cpu-only] [--ragdoll] [--capture path.rgba]");
+        io::eprintn("    [--trace software|hardware] [--validation]]");
         io::eprintn("Run timings without --validation; the validation layers inflate them.");
         return 1;
     }
-    fault excuse = options.benchmark ? @catch(run_benchmark(options)) : @catch(run_interactive(options));
+    fault excuse;
+    if (options.benchmark) {
+        excuse = options.cpu_only ? @catch(run_cpu_benchmark(options)) : @catch(run_benchmark(options));
+    } else {
+        excuse = @catch(run_interactive(options));
+    }
     if (excuse) {
         io::eprintfn("Cloth example failed: %s", excuse);
         return 1;

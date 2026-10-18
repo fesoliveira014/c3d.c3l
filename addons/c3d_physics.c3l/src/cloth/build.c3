@@ -282,7 +282,9 @@ fn ClothState*? allocate_cloth_state(
     if (catch allocation) return c3d::CAPACITY_EXCEEDED~;
 
     BlockCursor fill = { .base = allocation };
-    return carve_cloth_state(&fill, counts);
+    ClothState* state = carve_cloth_state(&fill, counts);
+    state.allocation_bytes = measure.offset;
+    return state;
 }
 
 fn ClothState* carve_cloth_state(BlockCursor* cursor, ClothCounts counts) @local {

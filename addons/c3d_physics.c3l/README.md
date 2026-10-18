@@ -126,7 +126,7 @@ Attach with `scene.add_cloth(&assets, node, desc)` and
 call `physics.update_cloths()` once after `physics.update`, after final ragdoll/IK poses and
 `scene.update_world()`, before rendering. See [Cloth](../../docs/cloth.md) for the contract,
 faults, frame order and usage; the `cloth` example includes flag, cape, external-contact,
-seamed-fold, fast-crossing and flag-field scenes (`--scene flag|cape|both|contacts|fold|fast|field`).
+seamed-fold, fast-crossing, flag-field and cape-crowd scenes (`--scene flag|cape|both|contacts|fold|fast|field|crowd`).
 The manual Vulkan acceptance runs with
 `c3c test cloth_acceptance --path addons/c3d_physics.c3l/test/gpu`.
 
@@ -140,6 +140,14 @@ owner's motion since its last publication, which keeps the drawn shape under rot
 skinned cloth or crowd slot particle by particle by its reference displacement. `Cloth.activity()` reports the state and `PhysicsWorld.cloth_stats`
 counts resting and held cloths. Publication marks only the changed vertex range of each stream, so
 resting cloth leaves the geometry revision untouched. Rest and hold state is not serialized.
+
+`physics.set_parallel({ .run = ..., .context = ... })` stages cloths and crowd slots on the application's
+own worker threads, for example a `c3d::job` pool through a few-line adapter (the package imports no job
+library; the `cloth` example's `--workers N` shows it). `update_cloths` collects the cloths that
+simulate, stages them in parallel, each writing only its own `ClothState`, and commits asset-store marks and
+scene-node writes serially in ECS order. The application must not mutate the scene or step the world
+while `update_cloths` runs. Results are bit-identical to the serial path for any worker count; a zero
+`ParallelFor` stages on the calling thread. See [Cloth](../../docs/cloth.md#parallel-staging).
 
 `ClothDesc.collisions` sets contact tolerance, iteration count and prepared shape,
 candidate and contact capacities. Native body/snapshot bindings are checked during updates;
@@ -157,7 +165,7 @@ re-expression meets the configured tolerance. Otherwise REEXPRESSION reports
 `CONTACT_PRECISION_EXCEEDED`, keeps the old local bytes/revision, and the application-owned
 transform may place that geometry elsewhere.
 
-Cloth consumers require `fp-math=strict`, owner-thread round-to-nearest and gradual underflow.
+Cloth consumers require `fp-math=strict`, owner-thread (and staging-thread) round-to-nearest and gradual underflow.
 The library checks supported runtime conditions without changing arithmetic modes; runtime
 checks do not establish the consumer's compiler mode. Skinned `Mesh` + `SkinBinding` owners
 move their rendered `Mesh` to an owned `ClothOutput` child on preparation (`cloth::prepare` with
