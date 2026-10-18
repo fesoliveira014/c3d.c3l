@@ -17,7 +17,7 @@ const uint BENCHMARK_REPEATS @local = 3;
 const uint LATENCY_FRAMES @local = 300;
 const usz RECORDING_BYTES @local = 4 * 1024 * 1024; // starting capacity for the recorded impact
 const uint RESET_SAMPLES @local = 32;
-const uint LARGE_WALL_SIDE @local = 32; // 1,024 pieces and 523,776 pairs; the graph scratch is 16 bytes per pair, about 8 MiB
+const uint LARGE_WALL_SIDE @local = 32; // 1,024 pieces and 523,776 pairs; the graph reserves 24 bytes per pair, about 12 MiB, and writes only the connected pairs
 const ulong CHECKSUM_BASIS @local = 0xcbf2_9ce4_8422_2325; // FNV-1a offset basis
 const ulong CHECKSUM_PRIME @local = 0x0000_0100_0000_01b3; // FNV-1a prime
 

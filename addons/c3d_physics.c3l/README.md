@@ -251,13 +251,13 @@ example uses 0.5 m cubes on a 0.508 m pitch: face gaps are below the default
 Deriving the graph tests every piece pair. `physics.set_parallel({ .run = ..., .context = ... })`
 spreads those tests over the application's workers, the same `ParallelFor` that stages cloth.
 Preparation, and the reset of a pending breakable, acquire the hulls and compute their bounds on the
-calling thread. Each range then tests its own pairs against immutable hulls and bounds and writes only
-its own result slots. The calling thread builds the welds from the slots in piece-pair order, so the
-graph is bit-identical for any worker count, and a zero `ParallelFor` runs the same code on the calling
-thread. The slots are temporary: 16 bytes per piece pair, released with the caller's temporary scope.
-When they cannot be allocated, the call fails with `CAPACITY_EXCEEDED`. The application must not mutate
-the scene or the world while preparation or a reset runs. Explicit recipes carry their own welds and
-derive none.
+calling thread. Each range then tests its own pairs against immutable hulls and bounds and appends
+every connected pair, with its anchor, to a shared candidate list. The calling thread orders the
+candidates by piece pair and builds the welds, so the graph is bit-identical for any worker count, and
+a zero `ParallelFor` runs the same code on the calling thread. The list reserves 24 bytes of the
+caller's temporary scope per piece pair and writes only the connected pairs; when the reservation
+cannot be made, the call fails with `CAPACITY_EXCEEDED`. The application must not mutate the scene or
+the world while preparation or a reset runs. Explicit recipes carry their own welds and derive none.
 
 ## Explicit recipes and strengths
 
