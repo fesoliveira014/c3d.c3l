@@ -24,14 +24,14 @@ const float DENSE_HALF_SIDE @local = 0.5f; // a one metre cube
 const float DENSE_DENSITY @local = 3000; // three times the fluid: it sinks to a terminal speed
 const float DRAG_COEFFICIENT @local = 1;
 const float TERMINAL_SECONDS @local = 10; // about thirty time constants of the cube's approach
-const float TERMINAL_TOLERANCE @local = 0.0001f; // relative; measured 4e-6 at 1/60 and 8e-6 at 1/120, float rounding of the velocity update
+const float TERMINAL_TOLERANCE @local = 0.0001f; // relative; measured 4e-6 at 1/60 and 8e-6 at 1/120, float rounding
 const float STRONG_DRAG_COEFFICIENT @local = 1e6f; // unclamped, one step would throw the body past the current
 const float CURRENT_SPEED @local = 5; // metres per second
-const float REVERSAL_TOLERANCE @local = 0.0001f; // metres per second; float rounding of eight cell forces and the velocity update
+const float REVERSAL_TOLERANCE @local = 0.0001f; // metres per second; float rounding of the velocity update
 const uint CURRENT_STEPS @local = 30; // the clamped body reaches the current on the first step
 const float DRIFT_TOLERANCE @local = 0.0001f; // metres per second; measured 1e-6 once the raft's drift settles
 const uint COMPARED_STEPS @local = 120;
-const float REST_TOLERANCE @local = 0.0001f; // metres and metres per second; measured 1e-8 m and 1.3e-7 m/s, float rounding of the cell fractions
+const float REST_TOLERANCE @local = 0.0001f; // metres and m/s; measured 1e-8 and 1.3e-7, float rounding
 const float DROP_HEIGHT @local = 1.5f; // above the surface: the raft splashes in and bobs
 
 struct FluidSurface @local {
@@ -373,12 +373,14 @@ fn void test_quadratic_drag_reaches_terminal_velocity() @test {
     float mass = DENSE_DENSITY * volume;
     float cell_area = (side / 2) * (side / 2); // a cell is half the box along each axis
     float swept_area = cell_area * physics::BUOYANCY_CELLS; // the cells fall side by side and one behind the other
-    float net_weight = (mass - physics::DEFAULT_FLUID_DENSITY * volume) * 9.81f;
-    float expected = math::sqrt(2 * net_weight / (physics::DEFAULT_FLUID_DENSITY * DRAG_COEFFICIENT * swept_area));
+    float net_weight = (mass - physics::DEFAULT_FLUID_DENSITY * volume) * -physics::DEFAULT_GRAVITY.y;
+    float drag_scale = physics::DEFAULT_FLUID_DENSITY * DRAG_COEFFICIENT * swept_area;
+    float expected = math::sqrt(2 * net_weight / drag_scale);
 
     foreach (time_step : (float[2]){ 1.0f / 60, 1.0f / 120 }) {
         float speed = terminal_speed(time_step);
-        assert(math::abs(speed - expected) <= TERMINAL_TOLERANCE * expected, "%f against %f at %f s", speed, expected, time_step);
+        float error = math::abs(speed - expected);
+        assert(error <= TERMINAL_TOLERANCE * expected, "%f against %f at %f s", speed, expected, time_step);
     }
 }
 
@@ -454,16 +456,19 @@ fn void test_floating_body_at_equilibrium_stays_put_under_quadratic_drag() @test
         worst_offset = max(worst_offset, math::abs(body_height(&fixture, node) - equilibrium_height()));
         worst_speed = max(worst_speed, body_velocity(&fixture, node).length());
     }
-    assert(worst_offset <= REST_TOLERANCE && worst_speed <= REST_TOLERANCE, "offset %e, speed %e", worst_offset, worst_speed);
+    assert(worst_offset <= REST_TOLERANCE, "offset %e", worst_offset);
+    assert(worst_speed <= REST_TOLERANCE, "speed %e", worst_speed);
 }
 
 fn bool same_body_state(Fixture* first, Node* first_node, Fixture* second, Node* second_node) @local {
-    RigidBody* a = first.scene.get(first_node, RigidBody);
-    RigidBody* b = second.scene.get(second_node, RigidBody);
-    return a.current.position == b.current.position
-        && a.current.rotation.v == b.current.rotation.v
-        && first.physics.body(first_node)!!.linear_velocity() == second.physics.body(second_node)!!.linear_velocity()
-        && first.physics.body(first_node)!!.angular_velocity() == second.physics.body(second_node)!!.angular_velocity();
+    RigidBody* first_body = first.scene.get(first_node, RigidBody);
+    RigidBody* second_body = second.scene.get(second_node, RigidBody);
+    b3::BodyId first_native = first.physics.body(first_node)!!;
+    b3::BodyId second_native = second.physics.body(second_node)!!;
+    return first_body.current.position == second_body.current.position
+        && first_body.current.rotation.v == second_body.current.rotation.v
+        && first_native.linear_velocity() == second_native.linear_velocity()
+        && first_native.angular_velocity() == second_native.angular_velocity();
 }
 
 fn void test_height_only_surface_equals_a_zero_velocity_sampler() @test {
