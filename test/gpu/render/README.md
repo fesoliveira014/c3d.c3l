@@ -11,7 +11,8 @@ batch (a root, four children and sixteen grandchildren) is drawn by two views at
 level, every leaf area has exactly one drawn node on its path to the root, the probe pixel shows the selected level's color and
 `Stats.instances_visible` counts the drawn nodes in each culling pass, shadow layer included. A camera that moves from near to
 far keeps its split nodes through hysteresis; an ordinary `configure_view` and a record-only edit keep that history and
-`set_instance_quadtree` drops it. A `LodGroup` added to the node after the quadtree makes `render_view` fault `UNSUPPORTED`.
+`set_instance_quadtree` drops it. A `LodGroup` added to the node after the quadtree makes `render_view` fault `UNSUPPORTED`. With
+a culling arena too small for the batch's lists, the batch draws its leaves in every pass and `Stats.quadtree_fallbacks` counts it.
 
 The vertex-motion cases in `test_vertex_motion.c3` move a stationary quad's base
 positions and compare the centre velocity with the CPU projection (2e-3 UV) on

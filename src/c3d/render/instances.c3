@@ -51,6 +51,7 @@ struct GpuInstances {
     uint               lod_unmirrored_count;
     gpu::GpuAllocation quadtree_allocation;
     gpu::GpuAddress    quadtree_nodes;
+    gpu::GpuAddress    quadtree_leaves;
     uint               quadtree_capacity;
     uint               quadtree_revision; // 0 forces an upload: a quadtree revision is never 0
     uint               quadtree_count;

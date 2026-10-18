@@ -9,6 +9,8 @@ import c3d::spatial @public;
 import gpu;
 import std::math;
 
+const uint QUADTREE_VIEW_PASSES @private = 2; // view and depth prepass; one more per shadow layer
+
 struct QuadtreeHistoryValue @private {
     ulong  scene;
     Entity owner;
@@ -43,6 +45,8 @@ struct QuadtreeSelection @private {
     gpu::GpuAddress       current;
     gpu::GpuAddress       previous;
     bool                  history_valid;
+    bool                  fallback;
+    CullArena             arena;
     Camera                camera;
     Vec3                  camera_position;
     float                 height_pixels;
@@ -63,9 +67,10 @@ fn void? resolve_quadtree_nodes(Renderer* renderer, uint index, InstancedMesh* b
     GpuInstances* slot = &renderer.instances.slots[index];
     InstanceQuadtree* quadtree = &batch.quadtree;
 
+    usz leaves_at = align_up(batch.transforms.len * QuadtreeNodeGpu::size, STREAM_ALIGNMENT);
     if (slot.quadtree_capacity < batch.transforms.len) {
         gpu::AllocationDesc desc = {
-            .size         = batch.transforms.len * QuadtreeNodeGpu::size,
+            .size         = leaves_at + batch.transforms.len * uint::size,
             .alignment    = STREAM_ALIGNMENT,
             .memory_class = gpu::MemoryClass.GPU_PRIVATE,
             .access       = { .graphics },
@@ -85,26 +90,67 @@ fn void? resolve_quadtree_nodes(Renderer* renderer, uint index, InstancedMesh* b
         }
         slot.quadtree_allocation = allocation;
         slot.quadtree_nodes = address;
+        slot.quadtree_leaves = (gpu::GpuAddress)((ulong)address + leaves_at);
         slot.quadtree_capacity = (uint)batch.transforms.len;
     }
 
-    usz bytes = (usz)batch.count * QuadtreeNodeGpu::size;
+    usz nodes_bytes = (usz)batch.count * QuadtreeNodeGpu::size;
+    usz leaves_bytes = (usz)quadtree.leaf_count * uint::size;
     Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
-    gpu::MappedGpuSpan staging = frame.upload.take(&renderer.device, bytes, STREAM_ALIGNMENT)!;
+    gpu::MappedGpuSpan staging = frame.upload.take(&renderer.device, nodes_bytes + leaves_bytes, STREAM_ALIGNMENT)!;
     QuadtreeNodeGpu[] nodes = ((QuadtreeNodeGpu*)staging.bytes.ptr)[:batch.count];
+    uint[] leaves = ((uint*)(staging.bytes.ptr + nodes_bytes))[:quadtree.leaf_count];
     foreach (instance, &node : nodes) *node = { .parent = quadtree.parents[instance], .children = 0 };
     foreach (parent : quadtree.parents) {
         if (parent != scene::QUADTREE_ROOT) nodes[parent].children++;
     }
+    uint leaf_next;
+    foreach (uint instance, leaf : quadtree.leaves) {
+        if (leaf) leaves[leaf_next++] = instance;
+    }
 
     gpu::GpuSpan destination = gpu::get_allocation_span(&renderer.device, slot.quadtree_allocation)!;
-    renderer.pending_copies.push({ .src = staging.span, .dst = destination.checked_subspan(0, bytes)! });
+    renderer.pending_copies.push({
+        .src = staging.span.checked_subspan(0, nodes_bytes)!,
+        .dst = destination.checked_subspan(0, nodes_bytes)!,
+    });
+    renderer.pending_copies.push({
+        .src = staging.span.checked_subspan(nodes_bytes, leaves_bytes)!,
+        .dst = destination.checked_subspan(leaves_at, leaves_bytes)!,
+    });
     renderer.pending_instance_uploads.push(index);
 
     slot.quadtree_revision = quadtree.revision;
     slot.quadtree_count = batch.count;
     renderer.stats.uploads++;
-    renderer.stats.upload_bytes += (uint)bytes;
+    renderer.stats.upload_bytes += (uint)(nodes_bytes + leaves_bytes);
+}
+
+fn void? reserve_quadtree_cull(Renderer* renderer, QuadtreeSelection* selection) @private {
+    acquire_instance_culling(renderer)!;
+    CullArena* shared = &renderer.cull_arenas[renderer.frame_index % FRAMES_IN_FLIGHT];
+    CullArena reserved = *shared;
+    uint count = selection.batch.count;
+    bool blended = renderer.assets.material(selection.batch.material).data.common.alpha_mode == AlphaMode.BLEND;
+    uint passes = QUADTREE_VIEW_PASSES + renderer.max_shadow_layers;
+
+    for (uint pass = 0; pass < passes; pass++) {
+        arena_place(&reserved, CULL_ARGS_STRIDE)!;
+        if (pass == 0 && blended) {
+            if (count > MAX_SORTED_INSTANCES) return c3d::CAPACITY_EXCEEDED~;
+
+            arena_place(&reserved, align_up(
+                sorted_list_bytes(count) + (usz)sort_capacity(count) * ulong::size,
+                STREAM_ALIGNMENT,
+            ))!;
+        } else {
+            arena_place(&reserved, align_up((usz)count * uint::size, STREAM_ALIGNMENT))!;
+        }
+    }
+
+    selection.arena = *shared;
+    selection.arena.capacity = reserved.head;
+    shared.head = reserved.head;
 }
 
 fn void? prepare_quadtree_selection(
@@ -115,12 +161,20 @@ fn void? prepare_quadtree_selection(
     InstancedMesh* batch = selection.batch;
     MeshCandidate resolved = { .node = selection.node, .batch = batch, .scene_identity = scene_identity };
     resolve_instances(renderer, &resolved)!;
+
     InstanceKey key = {
         .scene = scene_identity,
         .node  = selection.node.id,
         .kind  = shader::INSTANCE_KIND_MESH,
     };
     selection.instances = &renderer.instances.slots[renderer.instances.lookup.get(key)!!];
+
+    if (catch excuse = reserve_quadtree_cull(renderer, selection)) {
+        if (excuse != c3d::CAPACITY_EXCEEDED) return excuse~;
+
+        selection.fallback = true;
+        renderer.stats.quadtree_fallbacks++;
+    }
 
     QuadtreeHistoryEntry* history = selection.history;
     QuadtreeHistoryValue previous = history.committed;
@@ -132,9 +186,10 @@ fn void? prepare_quadtree_selection(
         .owner    = selection.node.id,
         .revision = batch.quadtree.revision,
         .count    = batch.count,
-        .valid    = true,
+        .valid    = !selection.fallback,
     };
     history.dirty = true;
+    if (selection.fallback) return;
 
     if (history.capacity < batch.transforms.len) {
         usz capacity = batch.transforms.len;
@@ -159,6 +214,7 @@ fn void? prepare_quadtree_selection(
         history.capacity = (uint)capacity;
         selection.history_valid = false;
     }
+
     selection.current = offset_by_instances(history.address, (history.committed_slot ^ 1) * history.capacity, uint::size);
     selection.previous = offset_by_instances(history.address, history.committed_slot * history.capacity, uint::size);
 }
@@ -185,6 +241,7 @@ fn QuadtreeSelection[]? prepare_quadtree_view(
         retire_quadtree_history(renderer, histories);
         histories.entries = alloc::new_array(renderer.allocator, QuadtreeHistoryEntry, scene.nodes.len);
     }
+
     uint* cursor = &histories.first;
     while (*cursor) {
         QuadtreeHistoryEntry* entry = &histories.entries[*cursor - 1];
@@ -198,6 +255,7 @@ fn QuadtreeSelection[]? prepare_quadtree_view(
             cursor = &entry.next;
         }
     }
+
     if (!batches) return {};
 
     QuadtreeSelection[] selections = alloc::new_array(tmem, QuadtreeSelection, batches);
@@ -225,19 +283,23 @@ fn QuadtreeSelection[]? prepare_quadtree_view(
             count++;
         }
     };
+
     return selections[:count];
 }
 
 fn void? record_quadtree_selection(Renderer* renderer, QuadtreeSelection[] selections) @private {
-    if (!selections.len) return;
+    bool selecting;
+    foreach (selection : selections) selecting |= !selection.fallback;
+    if (!selecting) return;
 
-    acquire_instance_culling(renderer)!;
     Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     @profile_pass(renderer, Pass.INSTANCE_CULL) {
         gpu::Barrier prepared = { .before = { .transfer, .compute, .vertex_shader }, .after = { .compute } };
         gpu::cmd_barrier(&renderer.commands, &prepared)!;
         gpu::cmd_bind_pipeline(&renderer.commands, renderer.instance_cull_pipeline)!;
         foreach (&selection : selections) {
+            if (selection.fallback) continue;
+
             InstancedMesh* batch = selection.batch;
             Camera* camera = &selection.camera;
             Aabb bounds = renderer.assets.geometry(batch.geometry).data.bounds;
@@ -274,10 +336,51 @@ fn void? record_quadtree_selection(Renderer* renderer, QuadtreeSelection[] selec
     }!;
 }
 
-fn CullRange? prepare_unselected_range(Renderer* renderer, CullItem* item) @private {
-    MeshCandidate empty = *item.candidate;
-    empty.instance_count = 0;
-    return prepare_cull_range(renderer, &empty, item.geometry);
+fn void? prepare_quadtree_cull(Renderer* renderer, CullItem* item, bool culling) @private {
+    MeshCandidate* candidate = item.candidate;
+    QuadtreeSelection* selection = candidate.quadtree;
+    Aabb? bound = cull_bound(candidate, item.geometry);
+    item.bounded = culling && @ok(bound);
+    item.bound = bound ?? item.geometry.bounds;
+
+    if (selection.fallback) {
+        MeshCandidate leaves = *candidate;
+        leaves.instance_count = selection.batch.quadtree.leaf_count;
+        *item.range = prepare_cull_range(renderer, &leaves, item.geometry)!;
+        item.range.visible = selection.instances.quadtree_leaves;
+        item.range.indexed = true;
+        item.sorted = false;
+        return;
+    }
+
+    usz args_at = arena_place(&selection.arena, CULL_ARGS_STRIDE)!;
+    usz visible_at = item.sorted
+      ? arena_place_sorted(&selection.arena, candidate.instance_count)!
+      : arena_place(&selection.arena, (usz)candidate.instance_count * uint::size)!;
+    usz bytes = indirect_args_bytes(&item.geometry.layout);
+    item.args_address = (gpu::GpuAddress)((ulong)selection.arena.address + args_at);
+    *item.range = {
+        .args    = selection.arena.span.checked_subspan(args_at, bytes)!,
+        .count   = candidate.instance_count,
+        .first   = candidate.instance_first,
+        .visible = (gpu::GpuAddress)((ulong)selection.arena.address + visible_at),
+        .culled  = true,
+    };
+    if (item.sorted) {
+        item.keys_address = (gpu::GpuAddress)((ulong)item.range.visible + sorted_list_bytes(candidate.instance_count));
+        acquire_compute_pipeline(
+            renderer:   renderer,
+            pipeline:   &renderer.instance_sort_pipeline,
+            shader:     INSTANCE_SORT,
+            debug_name: "instance_sort",
+        )!;
+    }
+
+    Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan staging = frame.upload.take(&renderer.device, bytes, STREAM_ALIGNMENT)!;
+    write_indirect_args(staging.bytes, &item.geometry.layout, 0);
+    renderer.pending_copies.push({ .src = staging.span, .dst = item.range.args });
+    clear_cull_counters(renderer)!;
 }
 
 fn void publish_quadtree_history(QuadtreeHistory* history) @private {

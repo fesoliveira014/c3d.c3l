@@ -20,6 +20,7 @@ const float QUADTREE_HYSTERESIS @private = 0.5f; // a child 7 units away spans 1
 const float QUADTREE_NEAR @private = 4;
 const float QUADTREE_FAR @private = 7;
 const uint QUADTREE_PASSES @private = 3; // shadow layer, depth prepass and view
+const usz QUADTREE_TIGHT_ARENA_BYTES @private = 256; // the counter, then room for one of three passes
 const Vec3 QUADTREE_PROBE @private = { 0.5f, 0.5f, 0.05f }; // centre of a grandchild on the front face
 
 struct QuadtreeScene @private {
@@ -314,4 +315,28 @@ fn void test_quadtree_with_lod_group_faults() @test {
     assert(@catch(fixture.renderer.render_view(&target.scene, target.near_camera, fixture.view)) == c3d::UNSUPPORTED);
     render::abort_frame(&fixture.renderer);
     check_validation(&fixture.renderer);
+}
+
+fn void test_quadtree_arena_overflow_draws_the_leaves() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture, instance_cull_bytes: QUADTREE_TIGHT_ARENA_BYTES)!!;
+    defer destroy_fixture(&fixture);
+    QuadtreeScene target = create_quadtree_scene(&fixture)!!;
+    defer scene::destroy_scene(&target.scene);
+    gpu::MappedGpuSpan readback = create_quadtree_readback(&fixture.renderer)!!;
+    defer free_quadtree_readback(&fixture.renderer, readback);
+    Renderer* renderer = &fixture.renderer;
+
+    uint far_pixel = settle_quadtree_view(
+        fixture:  &fixture,
+        target:   &target,
+        view:     fixture.view,
+        camera:   target.far_camera,
+        readback: readback,
+        uv:       quadtree_probe_uv(&target, target.far_camera),
+    )!!;
+    assert(renderer.stats.quadtree_fallbacks == 1);
+    assert(renderer.stats.cull_dispatches == 0 && renderer.stats.instances_tested == 0);
+    check_channels(far_pixel, BLUE);
+    check_validation(renderer);
 }

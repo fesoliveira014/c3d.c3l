@@ -243,10 +243,14 @@ fn void? prepare_cull_stage(Renderer* renderer, CullItem[] items, bool culling) 
             prepare_lod_cull(renderer, item, culling)!;
             continue;
         }
+        if (item.candidate.quadtree) {
+            prepare_quadtree_cull(renderer, item, culling)!;
+            continue;
+        }
         Aabb? bound = cull_bound(item.candidate, item.geometry);
         item.bounded = culling && @ok(bound);
         item.bound = bound ?? item.geometry.bounds;
-        if (item.bounded || item.sorted || item.candidate.quadtree) eligible++;
+        if (item.bounded || item.sorted) eligible++;
     }
     CullArena* arena = &renderer.cull_arenas[slot_index];
     usz? args_offset = c3d::CAPACITY_EXCEEDED~;
@@ -263,8 +267,8 @@ fn void? prepare_cull_stage(Renderer* renderer, CullItem[] items, bool culling) 
     uint culled;
     uint sorted;
     foreach (&item : items) {
-        if (item.candidate.lod) continue;
-        if (item.bounded || item.sorted || item.candidate.quadtree) {
+        if (item.candidate.lod || item.candidate.quadtree) continue;
+        if (item.bounded || item.sorted) {
             uint slot = args_index++;
             if (try block = args_offset) {
                 usz? list_offset = item.sorted
@@ -298,8 +302,7 @@ fn void? prepare_cull_stage(Renderer* renderer, CullItem[] items, bool culling) 
                 renderer.stats.cull_overflows++;
             }
         }
-        *item.range = item.candidate.quadtree
-          ? prepare_unselected_range(renderer, item)! : prepare_cull_range(renderer, item.candidate, item.geometry)!;
+        *item.range = prepare_cull_range(renderer, item.candidate, item.geometry)!;
     }
     if (!culled) return;
     if (sorted) {
