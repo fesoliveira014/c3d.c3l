@@ -157,6 +157,7 @@ fn void create_fixture(
         .max_scale = 1.5f,
         .min_tint = { 0.1f, 0.2f, 0.3f },
         .max_tint = { 0.7f, 0.8f, 0.9f },
+        .slope_normal = SMOOTH,
     };
     plants.sway = {
         .amplitude = 0.3f,

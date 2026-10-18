@@ -28,6 +28,14 @@ const uint MAX_STRATA_PER_SIDE = 1024; // 1,048,576 candidates per cell; a full 
 const InstanceFade DEFAULT_FADE = { .start = 60, .end = 90 }; // grass; the fade end is the far edge of every pass
 
 <*
+ Terrain normal that the slope limit reads.
+*>
+enum SlopeNormal {
+    FACE,   // the height field's triangle under the point, as the physics collider has it
+    SMOOTH, // the blended normal the terrain shades with
+}
+
+<*
  Wind response of a layer, scaled by the wind speed at each update.
 *>
 struct SwayTemplate {
@@ -44,17 +52,18 @@ struct SwayTemplate {
  Where candidates grow and how each placed instance varies.
 *>
 struct ScatterRules {
-    TextureId density_map;     // linear RGBA8_UNORM over the ground's extent, terrain UV [0, 1]
-    uint      density_channel; // 0 to 3: red, green, blue, alpha
-    float     spacing;         // metres between candidate strata; one candidate per stratum
-    uint      seed;
-    float     max_slope;       // radians between up and the ground's face normal
-    float     min_altitude;    // world y
-    float     max_altitude;
-    float     min_scale;
-    float     max_scale;
-    Vec3      min_tint;        // instance colour; multiplies the material's base colour
-    Vec3      max_tint;
+    TextureId   density_map;     // linear RGBA8_UNORM over the ground's extent, terrain UV [0, 1]
+    uint        density_channel; // 0 to 3: red, green, blue, alpha
+    float       spacing;         // metres between candidate strata; one candidate per stratum
+    uint        seed;
+    float       max_slope;       // radians between up and the normal that slope_normal selects
+    float       min_altitude;    // world y
+    float       max_altitude;
+    float       min_scale;
+    float       max_scale;
+    Vec3        min_tint;        // instance colour; multiplies the material's base colour
+    Vec3        max_tint;
+    SlopeNormal slope_normal;
 }
 
 <*

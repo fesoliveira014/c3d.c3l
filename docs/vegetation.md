@@ -94,7 +94,8 @@ ground, the spacing and the seed are the application's. `add_foliage` checks eve
 | `rules.density_channel` | 0 to 3: red, green, blue, alpha |
 | `rules.spacing` | Metres between candidate strata; positive; at most `MAX_STRATA_PER_SIDE` (1024) strata per cell edge |
 | `rules.seed` | Any value; two layers with one seed place the same candidates |
-| `rules.max_slope` | Radians between up and the ground's face normal, in [0, π/2] |
+| `rules.max_slope` | Radians between up and the normal `slope_normal` selects, in [0, π/2] |
+| `rules.slope_normal` | `FACE` (default): the height field's face normal. `SMOOTH`: the normal the terrain shades with |
 | `rules.min_altitude`, `rules.max_altitude` | World y after the terrain node's placement; `min <= max` |
 | `rules.min_scale`, `rules.max_scale` | Uniform scale; `0 < min <= max`, finite |
 | `rules.min_tint`, `rules.max_tint` | Instance colour, multiplying the material's base colour; finite |
@@ -128,8 +129,10 @@ are layer-local cell indices, except on a [terrain tile](#tiled-worlds), where t
    and its foliage line up.
 2. **Height**: `terrain::sample_height` at its world x and z.
 3. **Altitude**: `min_altitude <= height <= max_altitude`, in world y.
-4. **Slope**: `terrain::sample_normal(...).y >= cos(max_slope)`. This is the face normal of the height field's
-   triangle, so the limit follows the faceted surface, not the smooth normals the terrain draws with.
+4. **Slope**: the selected normal's `y >= cos(max_slope)`. `FACE` reads `terrain::sample_normal`, the face normal
+   of the height field's triangle, so the limit follows the faceted surface. `SMOOTH` reads
+   `terrain::sample_smooth_normal`, the normal the terrain draws with, so the limit follows the shaded surface.
+   The default is `FACE`.
 5. **Instance**: on the ground, turned about Y, uniformly scaled, tinted, all from hash channels.
 
 Stages 2 to 4 only remove, so a cell never holds more instances than its density-stage count.
@@ -295,7 +298,9 @@ The copied authoring LOD pointer and its slices remain library-owned; do not rep
 - One terrain node per layer; a [tiled world](#tiled-worlds) takes one layer per tile. Candidates outside the
   ground's extent are rejected.
 - One density channel per layer, `RGBA8_UNORM` only.
-- The slope limit reads the height field's faceted face normal, not the smooth drawn normal.
+- `SMOOTH` on a [tile](#tiled-worlds) reads the ground's border ring as of the last placement. A candidate within
+  one texel of a linked edge does not follow a neighbour's edit or a link change until the layer re-places:
+  neither changes the ground's own height map, which is what triggers it.
 - `VERTEX_ALPHA` layers consume vertex alpha whether or not the wind blows.
 - No level of detail: every layer draws one level and relies on its fade.
 - The desc is fixed after `add_foliage`; so are the cells' layer bits, taken from the layer node at creation.

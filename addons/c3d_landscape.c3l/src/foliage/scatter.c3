@@ -222,6 +222,13 @@ fn uint count_cell(ScatterFrame* frame, uint column, uint row) @private {
     return count;
 }
 
+fn Vec3? slope_normal_at(ScatterFrame* frame, Candidate* candidate) @private {
+    switch (frame.rules.slope_normal) {
+        case FACE: return terrain::sample_normal(&frame.ground, candidate.world_x, candidate.world_z);
+        case SMOOTH: return terrain::sample_smooth_normal(&frame.ground, candidate.world_x, candidate.world_z);
+    }
+}
+
 // Every filter after the density stage only removes, so a cell never outgrows its count.
 fn uint place_cell(
     ScatterFrame* frame,
@@ -243,7 +250,7 @@ fn uint place_cell(
         float? height = terrain::sample_height(&frame.ground, at.world_x, at.world_z);
         if (catch height) continue;
         if (height < rules.min_altitude || height > rules.max_altitude) continue;
-        Vec3? normal = terrain::sample_normal(&frame.ground, at.world_x, at.world_z);
+        Vec3? normal = slope_normal_at(frame, &at);
         if (catch normal) continue;
         if (normal.y < frame.min_normal_y) continue;
 

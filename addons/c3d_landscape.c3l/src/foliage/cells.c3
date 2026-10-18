@@ -8,7 +8,7 @@ import c3d::maths;
 import c3d::scene;
 import std::math;
 
-const float EDIT_REACH_TEXELS @private = 2; // a texel shapes the triangles on both sides; one more covers rounding
+const float EDIT_REACH_TEXELS @private = 2; // a texel reaches one texel in face normals and two in smooth normals
 
 struct CellRange @private {
     uint first_column;
