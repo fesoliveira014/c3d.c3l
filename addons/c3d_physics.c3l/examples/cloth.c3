@@ -1484,7 +1484,12 @@ fn void? run_cpu_benchmark(Options options) @local {
     }
 
     io::printfn("scene,%s,simulated,%s,cpu_only,true", SCENARIO_NAMES[options.scenario.ordinal], demo.simulated);
-    io::printfn("cloths,%d,particles,%d,constraints,%d", cloth_total(&demo), demo.physics.cloth_stats.particles, demo.physics.cloth_stats.constraints);
+    io::printfn(
+        "cloths,%d,particles,%d,constraints,%d",
+        cloth_total(&demo),
+        demo.physics.cloth_stats.particles,
+        demo.physics.cloth_stats.constraints,
+    );
     io::printfn("frames,%d,warmup,%d", MEASURED_FRAMES, WARMUP_FRAMES);
     print_update_timings(
         demo:       &demo,
@@ -1745,7 +1750,8 @@ fn int main(String[] args) {
         io::eprintn("  [--count n] [--hold]    (field: count of flags, hold the far half; crowd: count of characters)");
         io::eprintn("  [--workers n]    (stage cloths on n job pool workers; 0 stages on the calling thread)");
         io::eprintn("  [--publish whole|streams]");
-        io::eprintn("  [--benchmark [--cpu-only] [--ragdoll] [--capture path.rgba] [--trace software|hardware] [--validation]]");
+        io::eprintn("  [--benchmark [--cpu-only] [--ragdoll] [--capture path.rgba]");
+        io::eprintn("    [--trace software|hardware] [--validation]]");
         io::eprintn("Run timings without --validation; the validation layers inflate them.");
         return 1;
     }

@@ -7,7 +7,7 @@ import c3d::scene;
 import std::time;
 import std::time::clock;
 
-const uint CLOTH_STAGE_BATCH @private = 1; // items per range; one item is a whole cloth update, dearer than a range's fork
+const uint CLOTH_STAGE_BATCH @private = 1; // items per range; an item is a whole cloth update, dearer than a fork
 
 enum ClothWorkSource @private {
     ORDINARY,
