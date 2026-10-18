@@ -420,9 +420,11 @@ fn void? prepare(
 
     @pool() {
         check_seams(desc.seams, (uint)source.data.positions.len)!;
+
         ClothMaterialPlan material_plan = build_material_plan(&source.data, desc)!;
         uint particle_count = material_plan.particle_count;
         check_transport_authoring(desc.transport, particle_count)!;
+
         ClothAttachmentPlan attachment_plan = build_attachment_plan(
             legacy_pins:        desc.pins,
             render_to_particle: material_plan.render_to_particle,
@@ -433,9 +435,9 @@ fn void? prepare(
         Vec3[] rest = alloc::new_array(tmem, Vec3, (sz)particle_count);
         Vec3[] edge_positions = alloc::new_array(tmem, Vec3, (sz)particle_count);
         foreach (particle, source_vertex : material_plan.particle_sources) {
-            Vec3 local_pos = source.data.positions[source_vertex];
-            rest[particle] = local_pos;
-            edge_positions[particle] = maths::transform_point(node.world, local_pos);
+            Vec3 local_position = source.data.positions[source_vertex];
+            rest[particle] = local_position;
+            edge_positions[particle] = maths::transform_point(node.world, local_position);
         }
         check_world_positions(edge_positions)!;
 
@@ -464,12 +466,14 @@ fn void? prepare(
             world_positions:    authoring.skinned ? initial_positions : {},
             desc:               desc,
         )!;
+
         ClothCapture capture = capture_colliders(
             scene:      scene,
             owners:     desc.colliders,
             max_shapes: desc.collisions.max_shapes,
             world:      world,
         )!;
+
         GeometryId copy = assets.add_geometry(&material_plan.geometry)!;
         defer catch assets.remove_geometry(copy);
 
@@ -537,6 +541,7 @@ fn void? prepare(
             }
         }
         state.published_frame = node.world;
+
         state.inverse_masses[..] = 1;
         state.pins[..] = attachment_plan.pins[..];
         foreach (slot, pin : attachment_plan.pins) {
@@ -544,6 +549,7 @@ fn void? prepare(
             state.pin_anchors[slot] = initial_positions[pin];
             state.pin_targets[slot] = initial_positions[pin];
         }
+
         state.soft_attachments[..] = attachment_plan.soft[..];
         foreach (slot, attachment : attachment_plan.soft) {
             state.soft_anchors[slot] = initial_positions[attachment.particle];

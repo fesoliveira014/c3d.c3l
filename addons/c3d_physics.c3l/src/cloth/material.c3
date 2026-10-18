@@ -327,7 +327,7 @@ fn ClothMaterialPlan? build_material_plan(Geometry* source, ClothDesc desc) @pri
       ? alloc::new_array(tmem, Vec3, (sz)plan.material_vertex_count)
       : {};
 
-    compute_material_frames(
+    if (catch compute_material_frames(
         corners:                 plan.corners,
         triangle_uvs:            plan.triangle_uvs,
         material_normal_domains: plan.material_normal_domains,
@@ -341,7 +341,9 @@ fn ClothMaterialPlan? build_material_plan(Geometry* source, ClothDesc desc) @pri
         tangent_accum:           tangent_accum,
         out_normals:             plan.geometry.normals,
         out_tangents:            plan.geometry.tangents,
-    )!;
+    )) {
+        return c3d::INVALID_ARGUMENT~;
+    }
 
     if (desc.tangent_frame) plan.initial_tangents[..] = plan.geometry.tangents[..];
     plan.geometry.finalize();
@@ -466,11 +468,11 @@ fn void? compute_material_frames(
                 Vec3[3] triangle_positions = { p0, p1, p2 };
                 uint[3] material_vertices = { c0.material_vertex, c1.material_vertex, c2.material_vertex };
                 for (uint corner = 0; corner < 3; corner++) {
-                    Vec3 prev_edge = triangle_positions[(corner + 2) % 3] - triangle_positions[corner];
+                    Vec3 previous_edge = triangle_positions[(corner + 2) % 3] - triangle_positions[corner];
                     Vec3 next_edge = triangle_positions[(corner + 1) % 3] - triangle_positions[corner];
-                    float edge_product = prev_edge.length() * next_edge.length();
+                    float edge_product = previous_edge.length() * next_edge.length();
                     if (edge_product > UV_AREA_EPSILON) {
-                        float cosine = math::clamp(prev_edge.dot(next_edge) / edge_product, -1.0f, 1.0f);
+                        float cosine = math::clamp(previous_edge.dot(next_edge) / edge_product, -1.0f, 1.0f);
                         float angle = (float)math::acos((double)cosine);
                         tangent_accum[material_vertices[corner]] += unit_tangent * angle;
                     }

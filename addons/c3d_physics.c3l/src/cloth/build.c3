@@ -378,11 +378,14 @@ fn ClothState*? allocate_cloth_state(
         .crowd             = crowd,
         .collisions        = collisions,
     };
+
     BlockCursor measure;
     carve_cloth_state(&measure, counts);
     if (measure.offset > (usz)sz::max) return c3d::CAPACITY_EXCEEDED~;
+
     char*? allocation = alloc::malloc_try(allocator, (sz)measure.offset);
     if (catch allocation) return c3d::CAPACITY_EXCEEDED~;
+
     BlockCursor fill = { .base = allocation };
     return carve_cloth_state(&fill, counts);
 }
