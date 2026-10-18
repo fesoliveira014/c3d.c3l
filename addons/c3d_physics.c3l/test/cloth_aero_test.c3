@@ -17,6 +17,75 @@ const float PLATE_ANGLE @private = 30; // degrees between the plate and the wind
 const float PLATE_WIND_SPEED @private = 8;
 const uint PLATE_CELLS @private = 4;
 const float PLATE_TOLERANCE @private = 0.01f;
+const uint MASS_CELLS @private = 4;
+const Vec3 ORPHAN_POSITION @private = { 3, -3, 0 };
+const float MASS_NODE_SCALE @private = 2; // the mass follows the world-space area, not the authored one
+const float MASS_TOLERANCE @private = 1e-5f; // relative, for float inverse masses
+const uint INTERIOR_TRIANGLES @private = 6; // triangles around a vertex of the regular grid
+const uint EDGE_TRIANGLES @private = 3;
+const uint ANTI_DIAGONAL_CORNER_TRIANGLES @private = 2; // the corners on the grid's split diagonal
+const uint DIAGONAL_CORNER_TRIANGLES @private = 1;
+
+fn uint adjacent_triangles(uint row, uint column, uint cells) @private {
+    bool on_row_edge = row == 0 || row == cells;
+    bool on_column_edge = column == 0 || column == cells;
+    if (!on_row_edge && !on_column_edge) return INTERIOR_TRIANGLES;
+    if (!on_row_edge || !on_column_edge) return EDGE_TRIANGLES;
+
+    bool split_corner = (row == 0 && column == cells) || (row == cells && column == 0);
+    return split_corner ? ANTI_DIAGONAL_CORNER_TRIANGLES : DIAGONAL_CORNER_TRIANGLES;
+}
+
+fn void test_cloth_mass_is_areal() @test {
+    Fixture fixture;
+    setup(&fixture, weightless());
+    defer teardown(&fixture);
+    Node* node = add_cloth_node(&fixture, add_grid(&fixture, MASS_CELLS));
+    node.local.scale = { MASS_NODE_SCALE, MASS_NODE_SCALE, MASS_NODE_SCALE };
+    fixture.scene.update_world();
+    ClothDesc desc = cloth::default_cloth_desc();
+    fixture.scene.add_cloth(&fixture.assets, node, desc)!!;
+    ClothState* state = state_of(&fixture, node);
+
+    uint side = MASS_CELLS + 1;
+    float triangle_area = 0.5f * (MASS_NODE_SCALE / MASS_CELLS) * (MASS_NODE_SCALE / MASS_CELLS);
+    double total_mass;
+    for (uint row = 0; row < side; row++) {
+        for (uint column = 0; column < side; column++) {
+            double mass = 1.0 / state.inverse_masses[row * side + column];
+            double expected = (double)desc.density * adjacent_triangles(row, column, MASS_CELLS) * triangle_area / 3;
+            assert(math::abs(mass - expected) <= MASS_TOLERANCE * expected);
+            total_mass += mass;
+        }
+    }
+
+    double sheet_area = MASS_NODE_SCALE * MASS_NODE_SCALE;
+    assert(math::abs(total_mass - desc.density * sheet_area) <= MASS_TOLERANCE * total_mass);
+}
+
+fn void test_vertex_in_no_triangle_keeps_unit_mass() @test {
+    Fixture fixture;
+    setup(&fixture, weightless());
+    defer teardown(&fixture);
+    GeometryId geometry;
+    @pool() {
+        Geometry grid = hanging_grid(tmem, 1);
+        Vec3[] positions = alloc::new_array(tmem, Vec3, grid.positions.len + 1);
+        positions[:grid.positions.len] = grid.positions[..];
+        positions[grid.positions.len] = ORPHAN_POSITION;
+        grid.positions = positions;
+        grid.finalize();
+        geometry = fixture.assets.add_geometry(&grid)!!;
+    };
+    Node* node = add_cloth_node(&fixture, geometry);
+    ClothDesc desc = cloth::default_cloth_desc();
+    fixture.scene.add_cloth(&fixture.assets, node, desc)!!;
+    ClothState* state = state_of(&fixture, node);
+
+    uint orphan = (uint)state.positions.len - 1;
+    assert(state.inverse_masses[orphan] == 1);
+    assert(state.inverse_masses[0] != 1);
+}
 
 struct FlagPose @private {
     Vec3  edge_midpoint;
@@ -83,9 +152,6 @@ fn Geometry tilted_plate(Allocator allocator, uint cells, float angle_degrees, b
     return plate;
 }
 
-<*
- Acceleration of every free particle of a pinned plate after one substep, divided by the expected value.
-*>
 fn Vec3 plate_acceleration(ClothDesc desc, bool flipped) @private {
     Fixture fixture;
     setup(&fixture, weightless());
