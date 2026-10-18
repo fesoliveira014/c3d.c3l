@@ -10,7 +10,7 @@ const float COLLISION_SPECULATIVE_SLOPS @local = 4; // native contact margin, in
 
 $assert COLLISION_TRIANGLE_POINTS == 2 * MAX_COLLISION_FACE_VERTICES;
 
-struct MeshPair @local {
+struct SurfacePair @local {
     CollisionShapeState* surface;
     maths::Transform surface_pose;
     CollisionShapeState* convex;
@@ -18,7 +18,7 @@ struct MeshPair @local {
     bool convex_first;
 }
 
-struct MeshContactWriter @local {
+struct SurfaceContactWriter @local {
     b3::Transform surface_in_convex;
     maths::Transform convex_pose;
     collide::Shape shape;
@@ -30,21 +30,22 @@ struct MeshContactWriter @local {
     b3::LocalManifoldPoint[COLLISION_TRIANGLE_POINTS] scratch;
 }
 
-struct MeshDistanceSearch @local {
+struct SurfaceDistanceSearch @local {
     b3::ShapeProxy proxy;
     b3::Transform convex_in_surface;
     b3::DistanceOutput nearest;
+    bool measured;
     fault failure;
 }
 
-fn usz? mesh_contacts(
+fn usz? surface_contacts(
     CollisionShapeState* first,
     maths::Transform pose_a,
     CollisionShapeState* second,
     maths::Transform pose_b,
     CollisionContact[] output,
 ) @private {
-    MeshPair pair = admit_mesh_pair(
+    SurfacePair pair = admit_surface_pair(
         first: first,
         pose_a: pose_a,
         second: second,
@@ -56,7 +57,7 @@ fn usz? mesh_contacts(
     query = { .min = query.min - margin, .max = query.max + margin };
 
     b3::BoxHull box_storage;
-    MeshContactWriter writer = {
+    SurfaceContactWriter writer = {
         .surface_in_convex = collide::relative(pair.convex_pose, pair.surface_pose),
         .convex_pose = pair.convex_pose,
         .shape = pair.convex.shape,
@@ -67,10 +68,10 @@ fn usz? mesh_contacts(
         writer.hull = collide::hull_data_of(&writer.shape, &box_storage);
     }
 
-    b3::query_mesh(
-        mesh: &pair.surface.mesh,
+    query_surface_triangles(
+        surface: pair.surface,
         bounds: { .lower_bound = query.min, .upper_bound = query.max },
-        fcn: &write_mesh_contacts,
+        callback: &write_surface_contacts,
         context: &writer,
     );
     if (writer.failure) return writer.failure~;
@@ -78,13 +79,13 @@ fn usz? mesh_contacts(
     return writer.count;
 }
 
-fn collide::Distance? mesh_distance(
+fn collide::Distance? surface_distance(
     CollisionShapeState* first,
     maths::Transform pose_a,
     CollisionShapeState* second,
     maths::Transform pose_b,
 ) @private {
-    MeshPair pair = admit_mesh_pair(
+    SurfacePair pair = admit_surface_pair(
         first: first,
         pose_a: pose_a,
         second: second,
@@ -93,18 +94,19 @@ fn collide::Distance? mesh_distance(
 
     collide::Proxy proxy;
     collide::proxy_of(&pair.convex.shape, &proxy);
-    MeshDistanceSearch search = {
+    SurfaceDistanceSearch search = {
         .proxy = proxy.proxy,
         .convex_in_surface = collide::relative(pair.surface_pose, pair.convex_pose),
         .nearest = { .distance = float::max },
     };
-    b3::query_mesh(
-        mesh: &pair.surface.mesh,
+    query_surface_triangles(
+        surface: pair.surface,
         bounds: collision_surface_enumeration(pair.surface.bounds)!,
-        fcn: &measure_mesh_triangle,
+        callback: &measure_surface_triangle,
         context: &search,
     );
     if (search.failure) return search.failure~;
+    if (!search.measured) return b3::NO_HIT~;
 
     b3::DistanceOutput nearest = search.nearest;
     collide::Distance found = {
@@ -130,7 +132,7 @@ fn collide::Distance? mesh_distance(
     return found;
 }
 
-fn collide::Impact? mesh_cast(
+fn collide::Impact? surface_cast(
     CollisionShapeState* first,
     maths::Transform pose_a,
     CollisionShapeState* second,
@@ -138,7 +140,7 @@ fn collide::Impact? mesh_cast(
     Vec3 translation_a,
     Vec3 translation_b,
 ) @private {
-    MeshPair pair = admit_mesh_pair(
+    SurfacePair pair = admit_surface_pair(
         first: first,
         pose_a: pose_a,
         second: second,
@@ -169,15 +171,19 @@ fn collide::Impact? mesh_cast(
         placed[index] = convex_in_surface.q.rotate_vec3(point) + convex_in_surface.p;
     }
 
-    b3::CastOutput hit = b3::shape_cast_mesh(
-        mesh: &pair.surface.mesh,
-        input: {
-            .proxy = { .points = &placed, .count = proxy.proxy.count, .radius = proxy.proxy.radius },
-            .translation = local_translation,
-            .max_fraction = 1,
-            .can_encroach = false,
-        },
-    )!;
+    b3::ShapeCastInput input = {
+        .proxy = { .points = &placed, .count = proxy.proxy.count, .radius = proxy.proxy.radius },
+        .translation = local_translation,
+        .max_fraction = 1,
+        .can_encroach = false,
+    };
+    b3::CastOutput hit;
+    if (pair.surface.mesh.data) {
+        hit = b3::shape_cast_mesh(&pair.surface.mesh, input)!;
+    } else {
+        check_collision_cells(pair.surface, placed[:proxy.proxy.count], proxy.proxy.radius)!;
+        hit = b3::shape_cast_height_field(pair.surface.height_field, input)!;
+    }
 
     Vec3 normal = collide::to_world_direction(pair.surface_pose, hit.normal);
     collide::Impact found = {
@@ -190,7 +196,7 @@ fn collide::Impact? mesh_cast(
     return found;
 }
 
-fn collide::Impact? mesh_time_of_impact(
+fn collide::Impact? surface_time_of_impact(
     CollisionShapeView first,
     collide::Sweep sweep_a,
     CollisionShapeView second,
@@ -217,17 +223,21 @@ fn collide::Impact? mesh_time_of_impact(
     );
 }
 
-fn collide::ShapeRayHit? mesh_ray_cast(
-    b3::Mesh* mesh,
+fn collide::ShapeRayHit? surface_ray_cast(
+    CollisionShapeState* surface,
     maths::Transform pose,
     Vec3 local_origin,
     Vec3 local_translation,
 ) @private {
-    b3::CastOutput hit = b3::ray_cast_mesh(mesh, {
-        .origin = local_origin,
-        .translation = local_translation,
-        .max_fraction = 1,
-    })!;
+    b3::RayCastInput input = { .origin = local_origin, .translation = local_translation, .max_fraction = 1 };
+    b3::CastOutput hit;
+    if (surface.mesh.data) {
+        hit = b3::ray_cast_mesh(&surface.mesh, input)!;
+    } else {
+        Vec3[1] origin = { local_origin };
+        check_collision_cells(surface, origin[..], 0)!;
+        hit = b3::ray_cast_height_field(surface.height_field, input)!;
+    }
 
     return {
         .point = collide::to_world(pose, hit.point),
@@ -236,13 +246,13 @@ fn collide::ShapeRayHit? mesh_ray_cast(
     };
 }
 
-fn MeshPair? admit_mesh_pair(
+fn SurfacePair? admit_surface_pair(
     CollisionShapeState* first,
     maths::Transform pose_a,
     CollisionShapeState* second,
     maths::Transform pose_b,
 ) @local {
-    if (first.mesh.data && second.mesh.data) return c3d::UNSUPPORTED~;
+    if (collision_is_surface(first) && collision_is_surface(second)) return c3d::UNSUPPORTED~;
     check_collision_pair(
         first: first,
         pose_a: pose_a,
@@ -250,7 +260,7 @@ fn MeshPair? admit_mesh_pair(
         pose_b: pose_b,
     )!;
 
-    if (first.mesh.data) {
+    if (collision_is_surface(first)) {
         return { .surface = first, .surface_pose = pose_a, .convex = second, .convex_pose = pose_b };
     }
 
@@ -259,14 +269,14 @@ fn MeshPair? admit_mesh_pair(
 
 fn bool collision_orientation_unchanged(Quat start, Quat end) @local => start.v == end.v || start.v == -end.v;
 
-fn bool write_mesh_contacts(
+fn bool write_surface_contacts(
     Vec3 first,
     Vec3 second,
     Vec3 third,
     int triangle_index,
     void* context,
 ) @local {
-    MeshContactWriter* writer = context;
+    SurfaceContactWriter* writer = context;
     if (writer.failure) return false;
 
     b3::Transform frame = writer.surface_in_convex;
@@ -283,7 +293,7 @@ fn bool write_mesh_contacts(
     return true;
 }
 
-fn void? append_triangle_contacts(MeshContactWriter* writer, b3::Triangle* triangle, int triangle_index) @local {
+fn void? append_triangle_contacts(SurfaceContactWriter* writer, b3::Triangle* triangle, int triangle_index) @local {
     Vec3 normal;
     b3::LocalManifoldPoint[] points;
     b3::CollisionManifold manifold;
@@ -329,14 +339,16 @@ fn void? append_triangle_contacts(MeshContactWriter* writer, b3::Triangle* trian
     }
 }
 
-fn bool measure_mesh_triangle(
+fn bool measure_surface_triangle(
     Vec3 first,
     Vec3 second,
     Vec3 third,
     int triangle_index,
     void* context,
 ) @local {
-    MeshDistanceSearch* search = context;
+    SurfaceDistanceSearch* search = context;
+    if (search.failure || search.nearest.distance == 0) return false;
+
     Vec3[3] corners = { first, second, third };
     b3::DistanceOutput? found = b3::shape_distance({
         .proxy_a = { .points = &corners, .count = 3 },
@@ -349,7 +361,33 @@ fn bool measure_mesh_triangle(
         return false;
     }
 
+    search.measured = true;
     if (found.distance < search.nearest.distance) search.nearest = found;
 
     return found.distance > 0;
+}
+
+fn void query_surface_triangles(
+    CollisionShapeState* surface,
+    b3::Aabb bounds,
+    b3::MeshQueryFn callback,
+    void* context,
+) @local {
+    if (surface.mesh.data) {
+        b3::query_mesh(
+            mesh: &surface.mesh,
+            bounds: bounds,
+            fcn: callback,
+            context: context,
+        );
+        return;
+    }
+
+    query_height_field_cells(
+        field: surface.height_field,
+        field_bounds: surface.bounds,
+        bounds: bounds,
+        callback: callback,
+        context: context,
+    );
 }

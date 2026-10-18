@@ -202,6 +202,10 @@ fn void destroy_collision_shape(CollisionShape* shape) {
     *shape = {};
 }
 
+fn bool collision_is_surface(CollisionShapeState* state) @private {
+    return state.mesh.data != null || state.height_field != null;
+}
+
 fn float? collision_uniform_scale(Vec3 magnitude) @local {
     if (magnitude.x != magnitude.y || magnitude.y != magnitude.z) return c3d::UNSUPPORTED~;
     return magnitude.x;

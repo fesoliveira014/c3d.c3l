@@ -7,6 +7,10 @@ import b3;
 const usz HEIGHT_FIELD_HEADER_BYTES @local = 96; // sizeof(b3HeightFieldData) in box3d's types.h
 const usz HEIGHT_FIELD_ALIGNMENT @local = 8; // box3d aligns each array of the cooked blob to this
 const usz HEIGHT_FIELD_SAMPLE_BYTES @local = 2; // one quantized 16-bit height per grid point
+const float COLLISION_NATIVE_AABB_MARGIN @local = 0.05f; // native B3_MAX_AABB_MARGIN at one length unit per metre
+const float COLLISION_CELL_ROUNDING_GROWTH @local = 1.0001f; // absorbs the binary32 rounding of the native clip
+const double CELL_INDEX_MINIMUM @local = (double)int::min; // native cell indices are signed ints
+const double CELL_INDEX_MAXIMUM @local = (double)int::max; // exact in binary64; as a float it would round up to 2^31
 
 // Reflection is refused rather than converted to a mesh; the grid spacing must have a finite reciprocal.
 fn void? check_collision_height_scale(Vec3 scale) @private {
@@ -124,6 +128,42 @@ fn void query_height_field_cells(
         fcn: callback,
         context: context,
     );
+}
+
+// Every cell index the native cast forms lies inside the field grown by twice the proxy extent and the margin, so
+// one outward-rounded envelope per grid axis covers the clipped ends, the corners and the row and column crossings.
+fn void? check_collision_cells(CollisionShapeState* surface, Vec3[] points, float radius) @private {
+    float margin = collision_bound_product(COLLISION_NATIVE_AABB_MARGIN, b3::length_units_per_meter())!;
+    foreach (axis : (usz[2]){ 0, 2 }) {
+        float lowest = float::max;
+        float highest = -float::max;
+        foreach (point : points) {
+            lowest = math::min(lowest, point[axis]);
+            highest = math::max(highest, point[axis]);
+        }
+
+        float extent = collision_upper_bound(((double)highest - lowest) / 2 + radius)!;
+        float reach = collision_bound_sum(collision_bound_sum(extent, extent)!, margin)!;
+        float field_reach = math::max(math::abs(surface.bounds.min[axis]), math::abs(surface.bounds.max[axis]));
+        float envelope = collision_bound_product(
+            collision_bound_sum(field_reach, reach)!,
+            COLLISION_CELL_ROUNDING_GROWTH,
+        )!;
+
+        float spacing = surface.field_scale[axis];
+        if (!collision_cell_index_fits(envelope, spacing) || !collision_cell_index_fits(-envelope, spacing)) {
+            return c3d::UNSUPPORTED~;
+        }
+    }
+}
+
+// Mirrors the native conversion: a binary32 division, then a floor compared against the exact int limits.
+fn bool collision_cell_index_fits(float coordinate, float spacing) @local {
+    float quotient = coordinate / spacing;
+    if (!math::is_finite(quotient)) return false;
+
+    double cell = math::floor((double)quotient);
+    return cell >= CELL_INDEX_MINIMUM && cell <= CELL_INDEX_MAXIMUM;
 }
 
 fn usz aligned_height_field_bytes(usz bytes) @local {
