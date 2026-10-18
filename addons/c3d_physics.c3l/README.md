@@ -209,8 +209,10 @@ A windowed field quantizes over the unscaled range 0 to 1, which is `0` to `scal
 fields keep the range of their own samples and cook as before. Equal quantization is what lets windows of
 one map, and [tiles](../../docs/terrain.md#tile-sets) of one set at equal `height_scale`, meet exactly, and an
 edit never re-quantizes another window. The snapshot key adds the window to the texture, revision, scale and
-material indices, so each window owns one cooked entry; size `PhysicsDesc.snapshot_capacity` for the
-windows plus the other shapes. A re-cooked window leaves its previous entry unheld, and a full table reclaims it.
+material indices, so each window takes one snapshot slot. The application sizes `PhysicsDesc.snapshot_capacity`
+for the windows plus its other shapes: a window that finds no free slot fails to build with `CAPACITY_EXCEEDED`,
+reported in `build_failures` at the update, and `add_height_field_windows` does not check. A re-cooked window leaves
+its previous entry unheld, and a full table reclaims it.
 
 ```c3
 physics::add_height_field_windows(
