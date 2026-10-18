@@ -528,6 +528,51 @@ fn void test_published_stage_the_store_no_longer_matches_leaves_its_row_out_and_
     check_validation(renderer);
 }
 
+fn void test_pose_inputs_follow_the_published_stage_through_a_rejected_replacement() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        TraceRig rig;
+        create_trace_rig(&rig, ray_queries)!!;
+        defer destroy_trace_rig(&rig);
+        ShaderId shader = add_displace_shader(&rig.fixture, false)!!;
+        add_displaced_mesh(&rig, add_displace_material(&rig.fixture, shader, STILL_RATE)!!)!!;
+        Renderer* renderer = &rig.fixture.renderer;
+
+        render_rig(&rig, POSE_TIMES[0])!!;
+        report_pose_counts(renderer, "published, first frame");
+        assert(renderer.stats.trace_poses == 1);
+
+        asset::ShaderDesc rejected = displace_shader_desc(
+            fixture:         &rig.fixture,
+            reads_time:      false,
+            instanced:       false,
+            posed:           true,
+            broken_fragment: true,
+        )!!;
+        defer asset::free_shader_desc(rig.fixture.allocator, &rejected);
+        rig.fixture.assets.replace_shader(shader, &rejected)!!;
+        render_rig(&rig, POSE_TIMES[0])!!;
+        posed_assert_agreement(rig.harness.results, "rejected replacement", flat_faces: false);
+        report_pose_counts(renderer, "rejected replacement");
+        assert(renderer.stats.shader_rejections == 1);
+        assert(renderer.stats.trace_instances == 1 && renderer.stats.trace_poses == 0);
+
+        asset::ShaderDesc accepted = displace_shader_desc(
+            fixture:         &rig.fixture,
+            reads_time:      false,
+            instanced:       false,
+            posed:           true,
+            broken_fragment: false,
+        )!!;
+        defer asset::free_shader_desc(rig.fixture.allocator, &accepted);
+        rig.fixture.assets.replace_shader(shader, &accepted)!!;
+        render_rig(&rig, POSE_TIMES[0])!!;
+        posed_assert_agreement(rig.harness.results, "published replacement", flat_faces: false);
+        report_pose_counts(renderer, "published replacement");
+        assert(renderer.stats.trace_instances == 1 && renderer.stats.trace_poses == 1);
+        check_validation(renderer);
+    }
+}
+
 fn void test_posed_slots_run_out_per_kind() @test {
     TraceRig rig;
     create_trace_rig(&rig, false, max_posed_trace_instances: 1)!!;

@@ -241,16 +241,19 @@ fn void test_custom_pose_inputs_drive_the_pose_serial() @test {
     slot.pose = alloc::new_array(mem, char, CustomPoseInputs::size);
     InstanceGpu instance;
 
+    uint published = assets.shader(shader).header.revision;
+
     foreach (reads_time : (bool[2]){ false, true }) {
         slot.pose_valid = false;
         slot.pose_serial = 0;
         for (uint frame = 0; frame < 4; frame++) {
             CustomPoseInputs inputs = render::custom_pose_inputs(
-                assets:     &assets,
-                material:   material,
-                instance:   instance,
-                time:       0.25f * (float)frame,
-                reads_time: reads_time,
+                assets:          &assets,
+                material:        material,
+                shader_revision: published,
+                instance:        instance,
+                time:            0.25f * (float)frame,
+                reads_time:      reads_time,
             );
             bool posed = slot.update_pose(((char*)&inputs)[:CustomPoseInputs::size]);
             assert(posed == (frame == 0 || reads_time));
@@ -259,21 +262,47 @@ fn void test_custom_pose_inputs_drive_the_pose_serial() @test {
         ulong serial = slot.pose_serial;
         assets.mark_texture_dirty(height_map);
         CustomPoseInputs edited = render::custom_pose_inputs(
-            assets:     &assets,
-            material:   material,
-            instance:   instance,
-            time:       0,
-            reads_time: reads_time,
+            assets:          &assets,
+            material:        material,
+            shader_revision: published,
+            instance:        instance,
+            time:            0,
+            reads_time:      reads_time,
         );
         assert(slot.update_pose(((char*)&edited)[:CustomPoseInputs::size]) && slot.pose_serial == serial + 1);
+
         assets.mark_material_dirty(material);
         CustomPoseInputs remarked = render::custom_pose_inputs(
-            assets:     &assets,
-            material:   material,
-            instance:   instance,
-            time:       0,
-            reads_time: reads_time,
+            assets:          &assets,
+            material:        material,
+            shader_revision: published,
+            instance:        instance,
+            time:            0,
+            reads_time:      reads_time,
         );
         assert(slot.update_pose(((char*)&remarked)[:CustomPoseInputs::size]) && slot.pose_serial == serial + 2);
+
+        // A newer store revision the renderer has not published poses nothing new.
+        assets.mark_shader_dirty(shader);
+        CustomPoseInputs unpublished = render::custom_pose_inputs(
+            assets:          &assets,
+            material:        material,
+            shader_revision: published,
+            instance:        instance,
+            time:            0,
+            reads_time:      reads_time,
+        );
+        assert(!slot.update_pose(((char*)&unpublished)[:CustomPoseInputs::size]) && slot.pose_serial == serial + 2);
+
+        published = assets.shader(shader).header.revision;
+        CustomPoseInputs republished = render::custom_pose_inputs(
+            assets:          &assets,
+            material:        material,
+            shader_revision: published,
+            instance:        instance,
+            time:            0,
+            reads_time:      reads_time,
+        );
+        assert(slot.update_pose(((char*)&republished)[:CustomPoseInputs::size]) && slot.pose_serial == serial + 3);
     }
 }

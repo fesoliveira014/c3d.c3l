@@ -120,7 +120,7 @@ struct CustomPoseInputs @private {
     uint                                                  material_revision;
     uint                                                  shader_revision;
     float                                                 time; // zero unless the stage reads time
-    uint                                                  padding;
+    uint                                                  _pad0;
     CustomPoseTexture[material::MAX_CUSTOM_TEXTURE_SLOTS] textures;
     InstanceGpu                                           instance; // zero for a single mesh
 }
@@ -505,13 +505,17 @@ fn char[] pose_inputs(Renderer* renderer, TracePoseSource* source, TraceInstance
         case CUSTOM:
             InstanceGpu instance;
             if (source.batch) instance = trace_placement(renderer, source, record).instance;
+
+            ShaderRes* published = &renderer.shaders[renderer.assets.material(source.material).data.custom.shader.index];
             CustomPoseInputs custom = custom_pose_inputs(
-                assets:     renderer.assets,
-                material:   source.material,
-                instance:   instance,
-                time:       (float)renderer.info.time,
-                reads_time: source.reads_time,
+                assets:          renderer.assets,
+                material:        source.material,
+                shader_revision: published.revision,
+                instance:        instance,
+                time:            (float)renderer.info.time,
+                reads_time:      source.reads_time,
             );
+
             mem::copy(inputs.ptr, &custom, CustomPoseInputs::size);
             return inputs;
         case SWAY:
@@ -585,6 +589,7 @@ fn char[] pose_inputs(Renderer* renderer, TracePoseSource* source, TraceInstance
 fn CustomPoseInputs custom_pose_inputs(
     AssetStore* assets,
     MaterialId material,
+    uint shader_revision,
     InstanceGpu instance,
     float time,
     bool reads_time,
@@ -592,7 +597,7 @@ fn CustomPoseInputs custom_pose_inputs(
     MaterialAsset* record = assets.material(material);
     CustomPoseInputs inputs = {
         .material_revision = record.header.revision,
-        .shader_revision   = assets.shader(record.data.custom.shader).header.revision,
+        .shader_revision   = shader_revision,
         .time              = reads_time ? time : 0,
         .instance          = instance,
     };
