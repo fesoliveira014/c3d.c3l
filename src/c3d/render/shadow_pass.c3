@@ -446,6 +446,7 @@ fn void? record_shadows(
         fade_origin: effects_view.fade_origin,
         counts: &counts,
         lod: effects_view.lod,
+        quadtrees: effects_view.quadtrees,
         origin: renderer.frame_origin,
         colored: renderer.frame_colored_shadows,
     );

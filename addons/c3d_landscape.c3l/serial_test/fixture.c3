@@ -122,6 +122,8 @@ fn void create_fixture(
     terrain_desc.layers[0] = layer;
     terrain_desc.lod_threshold = 123;
     terrain_desc.lod_hysteresis = 0.4f;
+    terrain_desc.slope_projection = TRIPLANAR;
+    terrain_desc.triplanar_sharpness = 7;
     terrain_desc.cast_shadow = false;
     terrain_desc.receive_shadow = false;
     terrain::attach_terrain(
@@ -157,6 +159,7 @@ fn void create_fixture(
         .max_scale = 1.5f,
         .min_tint = { 0.1f, 0.2f, 0.3f },
         .max_tint = { 0.7f, 0.8f, 0.9f },
+        .slope_normal = SMOOTH,
     };
     plants.sway = {
         .amplitude = 0.3f,

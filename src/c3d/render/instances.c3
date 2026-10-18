@@ -49,6 +49,12 @@ struct GpuInstances {
     gpu::GpuAddress    lod_unmirrored_indices;
     gpu::GpuAddress    lod_mirrored_indices;
     uint               lod_unmirrored_count;
+    gpu::GpuAllocation quadtree_allocation;
+    gpu::GpuAddress    quadtree_nodes;
+    gpu::GpuAddress    quadtree_leaves;
+    uint               quadtree_capacity;
+    uint               quadtree_revision; // 0 forces an upload: a quadtree revision is never 0
+    uint               quadtree_count;
 }
 
 <*
@@ -118,6 +124,9 @@ fn void InstanceTable.sweep(&self, ulong frame_index, RetireList* retire) {
     foreach (&slot : self.slots) {
         if (!slot.key.scene || frame_index - slot.last_seen <= INSTANCE_ABSENCE_FRAMES) continue;
         if (slot.allocation.is_valid()) retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = slot.allocation });
+        if (slot.quadtree_allocation.is_valid()) {
+            retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = slot.quadtree_allocation });
+        }
         self.lookup.remove(slot.key);
         *slot = {};
     }
@@ -405,13 +414,17 @@ fn gpu::GpuAddress? resolve_instances(Renderer* renderer, MeshCandidate* candida
         }
         return slot.records;
     }
-    if (needs_upload(
+    bool stale = needs_upload(
         slot: slot,
         key: key,
         batch: candidate.batch,
         world: candidate.node.world,
         origin: renderer.frame_origin,
-    )) {
+    );
+    bool quadtree = candidate.batch.quadtree.parents.len != 0;
+    if (quadtree && (stale || quadtree_nodes_stale(slot, candidate.batch))) candidate.batch.validate_quadtree();
+
+    if (stale) {
         upload_instance_records(
             renderer: renderer,
             index:    index,
@@ -421,6 +434,7 @@ fn gpu::GpuAddress? resolve_instances(Renderer* renderer, MeshCandidate* candida
             part:     candidate.crowd_part,
         )!;
     }
+    if (quadtree && quadtree_nodes_stale(slot, candidate.batch)) resolve_quadtree_nodes(renderer, index, candidate.batch)!;
     return slot.records;
 }
 
@@ -521,6 +535,7 @@ fn void? upload_instance_records(
 fn void free_instance_buffers(Renderer* renderer) @private {
     foreach (&slot : renderer.instances.slots) {
         if (slot.allocation.is_valid()) (void)gpu::free_allocation(&renderer.device, &slot.allocation);
+        if (slot.quadtree_allocation.is_valid()) (void)gpu::free_allocation(&renderer.device, &slot.quadtree_allocation);
     }
     destroy_instance_table(&renderer.instances);
 }

@@ -180,6 +180,7 @@ fn void? resolve_shadow_set(
                 .history     = effects_view.history,
                 .fade_origin = shadow_view.matrices.position,
                 .lod         = effects_view.lod,
+                .quadtrees   = effects_view.quadtrees,
             };
             shadow_effects.blocks.init(tmem);
             set_effects = &shadow_effects;

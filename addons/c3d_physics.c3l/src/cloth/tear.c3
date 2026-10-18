@@ -12,6 +12,8 @@ import std::sort;
 <* Default half-space projection passes per opening attempt. *>
 const uint DEFAULT_OPENING_ITERATIONS = 32; // projection passes before OPENING_UNRESOLVED; cost linear in opening pairs per cut
 
+const float UNREFERENCED_INVERSE_MASS @private = 1; // a vertex in no triangle keeps unit mass and moves under gravity alone
+
 <* Last execution status of an authored cut path. *>
 enum ClothCutOutcome : uint {
     NONE,
@@ -85,6 +87,7 @@ struct ClothSectorPlan @private {
     uint[]              corner_sectors;
     uint[]              sector_bases;
     double[]            sector_shares;
+    double[]            base_masses;
     ClothConstraint[]   base_edges;
     ClothConstraint[]   initial_bends;
     ClothHinge[]        initial_hinges;
@@ -344,6 +347,21 @@ fn ClothSectorPlan? build_sector_plan(
       ? edge_positions
       : (world_positions.len ? world_positions : rest_positions);
 
+    double[] base_masses = alloc::new_array(tmem, double, (sz)base_particle_count);
+    for (usz triangle = 0; triangle < triangle_count; triangle++) {
+        uint first = render_to_particle[data.indices[3 * triangle]];
+        uint second = render_to_particle[data.indices[3 * triangle + 1]];
+        uint third = render_to_particle[data.indices[3 * triangle + 2]];
+
+        float area = (constraint_positions[second] - constraint_positions[first])
+          .cross(constraint_positions[third] - constraint_positions[first])
+          .length() * 0.5f;
+        double share = (double)desc.density * area / 3;
+        base_masses[first] += share;
+        base_masses[second] += share;
+        base_masses[third] += share;
+    }
+
     ClothConstraint[] base_edges = alloc::new_array(tmem, ClothConstraint, (sz)edge_count);
     ClothConstraint[] initial_bends = alloc::new_array(tmem, ClothConstraint, dihedral ? 0 : (sz)interior_count);
     ClothHinge[] initial_hinges = alloc::new_array(tmem, ClothHinge, dihedral ? (sz)interior_count : 0);
@@ -482,6 +500,7 @@ fn ClothSectorPlan? build_sector_plan(
             .max_soft            = soft_count,
             .max_requests        = 0,
             .opening_iterations  = opening_iterations,
+            .base_masses         = base_masses,
             .base_edges          = base_edges,
             .initial_bends       = initial_bends,
             .initial_hinges      = initial_hinges,
@@ -666,6 +685,7 @@ fn ClothSectorPlan? build_sector_plan(
         .corner_sectors      = corner_sectors,
         .sector_bases        = sector_bases,
         .sector_shares       = sector_shares,
+        .base_masses         = base_masses,
         .base_edges          = base_edges,
         .initial_bends       = initial_bends,
         .initial_hinges      = initial_hinges,
@@ -731,6 +751,7 @@ fn void seed_cloth_topology(
         state.corner_sectors[..] = sector_plan.corner_sectors[..];
         state.sector_bases[..] = sector_plan.sector_bases[..];
         state.sector_shares[..] = sector_plan.sector_shares[..];
+        state.base_masses[..] = sector_plan.base_masses[..];
         state.base_edges[..] = sector_plan.base_edges[..];
         state.interior_edges[..] = sector_plan.interior_edges[..];
         state.cut_paths[..] = sector_plan.cut_paths[..];
@@ -754,7 +775,9 @@ fn void seed_cloth_topology(
             is_staged:          false,
         );
     } else {
-        state.inverse_mass_storage[:particle_count] = 1;
+        foreach (particle, mass : sector_plan.base_masses) {
+            state.inverse_mass_storage[particle] = mass > 0 ? (float)(1.0 / mass) : UNREFERENCED_INVERSE_MASS;
+        }
         state.pin_storage[..] = attachment_plan.pins[..];
         foreach (slot, pin : attachment_plan.pins) {
             state.inverse_mass_storage[pin] = 0;
@@ -936,7 +959,7 @@ fn void apply_topology_mapping(
     state.particle_mass_storage[:particle_count] = 0;
     foreach (sector, active_particle : sector_to_particle) {
         uint base_particle = state.sector_bases[sector];
-        state.particle_mass_storage[active_particle] += state.sector_shares[sector];
+        state.particle_mass_storage[active_particle] += state.sector_shares[sector] * state.base_masses[base_particle];
         state.particle_bases[active_particle] = base_particle;
         state.particle_source_storage[active_particle] = state.particle_source_storage[base_particle];
         state.rest_storage[active_particle] = state.rest_storage[base_particle];
@@ -964,9 +987,8 @@ fn void apply_topology_mapping(
 
         if (state.base_has_soft[base_particle]) {
             uint slot = soft_count++;
-            float effective_compliance = (float)(
-                (double)state.base_soft_compliance[base_particle] / state.particle_mass_storage[active_particle]
-            );
+            double share = state.particle_mass_storage[active_particle] / state.base_masses[base_particle];
+            float effective_compliance = (float)((double)state.base_soft_compliance[base_particle] / share);
             state.soft_attachment_storage[slot] = {
                 .particle             = active_particle,
                 .effective_compliance = effective_compliance,

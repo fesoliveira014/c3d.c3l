@@ -15,6 +15,8 @@ const usz INSTANCE_CULL_ARENA_BYTES = 16 << 20; // per slot on the device; insta
 const usz CULL_ARGS_STRIDE @private = 32; // one indirect command at STREAM_ALIGNMENT
 const usz CULL_COUNTER_BYTES @private = 64; // one batch counter and six selected/visible LOD counters, aligned for copies
 $assert scene::MAX_LOD_CHOICES == shader::LOD_LEVEL_COUNT;
+$assert scene::MAX_QUADTREE_DEPTH == shader::MAX_QUADTREE_DEPTH;
+$assert scene::QUADTREE_ROOT == shader::QUADTREE_ROOT;
 
 struct CullArena @private {
     gpu::GpuAllocation allocation;
@@ -241,6 +243,10 @@ fn void? prepare_cull_stage(Renderer* renderer, CullItem[] items, bool culling) 
             prepare_lod_cull(renderer, item, culling)!;
             continue;
         }
+        if (item.candidate.quadtree) {
+            prepare_quadtree_cull(renderer, item, culling)!;
+            continue;
+        }
         Aabb? bound = cull_bound(item.candidate, item.geometry);
         item.bounded = culling && @ok(bound);
         item.bound = bound ?? item.geometry.bounds;
@@ -261,7 +267,7 @@ fn void? prepare_cull_stage(Renderer* renderer, CullItem[] items, bool culling) 
     uint culled;
     uint sorted;
     foreach (&item : items) {
-        if (item.candidate.lod) continue;
+        if (item.candidate.lod || item.candidate.quadtree) continue;
         if (item.bounded || item.sorted) {
             uint slot = args_index++;
             if (try block = args_offset) {
@@ -355,6 +361,10 @@ fn void? record_instance_cull(Renderer* renderer, CullItem[] items) @private {
                     ? shader::INSTANCE_KIND_BILLBOARD : shader::INSTANCE_KIND_MESH,
                 .depth_axis       = item.depth_axis,
             };
+            if (item.candidate.quadtree) {
+                root.lod_mode = shader::QUADTREE_CULL;
+                root.lod_current = item.candidate.quadtree.current;
+            }
             if (item.candidate.lod) {
                 root.lod_mode = shader::LOD_CULL;
                 root.lod_current = item.candidate.lod.current;

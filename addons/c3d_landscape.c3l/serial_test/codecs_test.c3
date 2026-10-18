@@ -12,15 +12,20 @@ import c3d::landscape::water;
 import c3d::scene;
 import c3d::serial;
 
+const char[*] TERRAIN_V1_BINARY @private = $embed("fixtures/terrain_v1.bin");
+const char[*] TERRAIN_V1_TEXT @private = $embed("fixtures/terrain_v1.json");
+
 fn void test_serial_layout_registration() @test {
     landscape::register_serial_codecs()!!;
-    assert(serial::described_type(TerrainDesc)!!.version == 1);
-    assert(serial::described_type(TerrainDesc)!!.layout == 0x7638a7507fa65b33);
+    assert(serial::described_type(TerrainDesc)!!.version == 2);
+    assert(serial::described_type(TerrainDesc)!!.layout == 0xbbb8c4e5931f82a4);
+    assert(serial::described_type(landscape::TerrainDescV1)!!.layout == 0x7638a7507fa65b33);
     assert(serial::described_type(TerrainTile)!!.layout == 0x3fe780c7be5416e1);
     assert(serial::described_type(landscape::TerrainSetAuthoring)!!.layout == 0x6b17270c6b53663f);
-    assert(serial::described_type(ScatterRules)!!.layout == 0x788326d1092caa6b);
+    assert(serial::described_type(ScatterRules)!!.layout == 0x40955fefc693491e);
     assert(serial::described_type(SwayTemplate)!!.layout == 0x750cddc9cb008976);
-    assert(serial::described_type(landscape::FoliageAuthoring)!!.layout == 0x20330122082bd780);
+    assert(serial::described_type(landscape::FoliageAuthoring)!!.version == 2);
+    assert(serial::described_type(landscape::FoliageAuthoring)!!.layout == 0x797c3ed45915c1ed);
     assert(serial::described_type(Wave)!!.layout == 0xb7ea583c7a255cb9);
     assert(serial::described_type(WaterDesc)!!.layout == 0x74434d01389bb922);
     @pool() {
@@ -30,6 +35,22 @@ fn void test_serial_layout_registration() @test {
         assert(schema.contains("density_channel") && schema.contains("lod_threshold")
           && schema.contains("ripple_drift"));
     };
+}
+
+fn void test_terrain_v1_fixtures_read_with_default_projection() @test {
+    foreach (text_mode : (bool[2]){ false, true }) {
+        @pool() {
+            Fixture fixture;
+            create_fixture(&fixture);
+            defer destroy_fixture(&fixture);
+
+            char[] bytes = text_mode ? TERRAIN_V1_TEXT[..] : TERRAIN_V1_BINARY[..];
+            Node* ground = decode(&fixture, bytes, text_mode)!!;
+            TerrainDesc* desc = &fixture.destination.get(ground, Terrain).desc;
+            assert(desc.height_scale == 4 && desc.lod_threshold == 123 && !desc.cast_shadow);
+            assert(desc.slope_projection == TOP && desc.triplanar_sharpness == terrain::DEFAULT_TRIPLANAR_SHARPNESS);
+        };
+    }
 }
 
 fn void test_landscape_both_encodings_restore_pending_authoring_and_prepare() @test {
@@ -82,6 +103,8 @@ fn void test_landscape_both_encodings_restore_pending_authoring_and_prepare() @t
                 Node* ground = child_named(restored, "ground");
                 Node* plants = child_named(restored, "plants");
                 Node* lake = child_named(restored, "water");
+                TerrainDesc* restored_desc = &fixture.destination.get(ground, Terrain).desc;
+                assert(restored_desc.slope_projection == TRIPLANAR && restored_desc.triplanar_sharpness == 7);
                 assert(!terrain::is_prepared(&fixture.destination, ground));
                 assert(!foliage::is_prepared(&fixture.destination, plants));
                 assert(!water::is_prepared(&fixture.destination, lake));
@@ -92,6 +115,7 @@ fn void test_landscape_both_encodings_restore_pending_authoring_and_prepare() @t
                 assert(child_named(ground, "authored-child") != null);
                 FoliageDesc* desc = &fixture.destination.get(plants, Foliage).desc;
                 assert(c3d::same_id(desc.ground, ground.id) && (desc.lod != null) == with_lod);
+                assert(desc.rules.slope_normal == SMOOTH);
                 if (with_lod) {
                     assert(desc.lod.parts[0].local.m00 == -1 && desc.lod.parts[0].local.m01 == 0.25f);
                     assert(desc.lod.parts[0].local.m03 == 2 && desc.lod.parts[0].local.m13 == 3

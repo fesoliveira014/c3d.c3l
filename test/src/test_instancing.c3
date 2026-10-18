@@ -981,3 +981,95 @@ fn void test_world_batch_bounds_and_removal_stay_with_its_parent() @test {
         assert(fixture.assets.geometries.is_live(fixture.box));
     }
 }
+
+fn void test_quadtree_rejects_malformed_parents() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    uint[scene::MAX_QUADTREE_DEPTH + 2] chain;
+    foreach (index, &parent : chain) *parent = index ? (uint)index - 1 : scene::QUADTREE_ROOT;
+    InstanceQuadtree tree = { .parents = chain[:scene::MAX_QUADTREE_DEPTH + 1] };
+    scene::check_instance_quadtree(&tree, scene::MAX_QUADTREE_DEPTH + 1)!!;
+
+    tree.parents = chain[..];
+    assert(@catch(scene::check_instance_quadtree(&tree, scene::MAX_QUADTREE_DEPTH + 2)) == c3d::INVALID_ARGUMENT);
+    uint[3] cycle = { 1, 2, 0 };
+    tree.parents = cycle[..];
+    assert(@catch(scene::check_instance_quadtree(&tree, 3)) == c3d::INVALID_ARGUMENT);
+    uint[3] stray = { scene::QUADTREE_ROOT, 0, 3 };
+    tree.parents = stray[..];
+    assert(@catch(scene::check_instance_quadtree(&tree, 3)) == c3d::INVALID_ARGUMENT);
+    uint[2] short_parents = { scene::QUADTREE_ROOT, 0 };
+    tree.parents = short_parents[..];
+    assert(@catch(scene::check_instance_quadtree(&tree, 3)) == c3d::INVALID_ARGUMENT);
+
+    Transform[3] transforms = { at({ 0, 0, 0 }), at({ 3, 0, 0 }), at({ 6, 0, 0 }) };
+    Node* node = fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 3, transforms[..])!!;
+    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
+    uint[3] parents = { scene::QUADTREE_ROOT, 0, 0 };
+    assert(@catch(fixture.scene.set_instance_quadtree(node, parents[..], 100, 0.25f)) == c3d::UNSUPPORTED);
+    assert(batch.quadtree.parents.len == 0 && batch.quadtree.revision == 0);
+
+    batch.trace = false;
+    LodLevel[1] levels = {{ .first_part = 0, .part_count = 1, .min_screen_size = 0 }};
+    LodPart[1] parts = {{ .geometry = fixture.box, .material = fixture.red, .local = matrix::IDENTITY4 }};
+    fixture.scene.add(node, scene::create_lod_group(
+        allocator: fixture.scene.allocator,
+        assets:    &fixture.assets,
+        desc:      { .levels = levels[..], .parts = parts[..] },
+    )!!);
+    assert(@catch(fixture.scene.set_instance_quadtree(node, parents[..], 100, 0.25f)) == c3d::UNSUPPORTED);
+    assert(batch.quadtree.parents.len == 0 && batch.quadtree.revision == 0);
+
+    Transform[3] flipped = { at({ 0, 0, 0 }), mirrored_at({ 3, 0, 0 }), at({ 6, 0, 0 }) };
+    Node* mirroring = fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 3, flipped[..])!!;
+    InstancedMesh* mirroring_batch = fixture.scene.get(mirroring, InstancedMesh);
+    mirroring_batch.trace = false;
+    assert(@catch(fixture.scene.set_instance_quadtree(mirroring, parents[..], 100, 0.25f)) == c3d::UNSUPPORTED);
+    assert(mirroring_batch.quadtree.parents.len == 0 && mirroring_batch.quadtree.revision == 0);
+}
+
+fn void test_quadtree_leaf_mask_and_revision() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Transform[5] transforms = { at({ 0, 0, 0 }), at({ 3, 0, 0 }), at({ 6, 0, 0 }), at({ 9, 0, 0 }), at({ 12, 0, 0 }) };
+    Node* node = fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 5, transforms[..])!!;
+    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
+    batch.trace = false;
+    uint[5] parents = { scene::QUADTREE_ROOT, 0, 0, 1, 1 };
+    fixture.scene.set_instance_quadtree(node, parents[..], 100, 0.25f)!!;
+
+    bool[5] expected_leaves = { false, false, true, true, true };
+    assert(batch.quadtree.leaves == expected_leaves[..] && batch.quadtree.leaf_count == 3);
+    uint revision = batch.quadtree.revision;
+    assert(revision != 0);
+
+    fixture.scene.mark_instances_dirty(node);
+    assert(batch.quadtree.revision == revision);
+    assert(@catch(fixture.scene.resize_instances(node, 4)) == c3d::UNSUPPORTED);
+
+    Transform[5] flipped = transforms;
+    flipped[3].scale.x = -1;
+    uint batch_revision = batch.revision;
+    assert(@catch(fixture.scene.set_instances(node, flipped[..])) == c3d::UNSUPPORTED);
+    assert(batch.revision == batch_revision && batch.transforms[3].scale.x == 1);
+
+    fixture.scene.update_world();
+    SceneIndex index = spatial::create_scene_index(mem, 5);
+    defer spatial::destroy_scene_index(&index);
+    index.refresh(&fixture.assets, &fixture.scene)!!;
+    assert(index.count == 3);
+    foreach (offset, entry : index.entries[:3]) assert(entry.instance_index == offset + 2);
+    @pool() {
+        foreach (instance, transform : transforms) {
+            Ray ray = { .origin = { transform.position.x, 0, 10 }, .direction = { 0, 0, -1 } };
+            PickHit[] hits = spatial::pick(tmem, &fixture.assets, &fixture.scene, ray, spatial::PICK_OPTIONS_DEFAULT);
+            assert(hits.len == (expected_leaves[instance] ? 1 : 0));
+        }
+    };
+
+    fixture.scene.set_instance_quadtree(node, parents[..], 100, 0.25f)!!;
+    assert(batch.quadtree.revision != revision);
+    fixture.scene.set_instance_quadtree(node, {}, 0, 0)!!;
+    index.refresh(&fixture.assets, &fixture.scene)!!;
+    assert(index.count == 5 && batch.is_leaf(0));
+}

@@ -1,9 +1,9 @@
 # Cloth
 
 `c3d::physics::cloth`, in the physics add-on, simulates a triangle mesh with position-based
-dynamics: unit-mass particles, an optional render-to-physical particle weld map (`render_particles`),
+dynamics: particles with areal mass (`ClothDesc.density`), an optional render-to-physical particle weld map (`render_particles`),
 one distance constraint per unique physical triangle edge, distance or signed dihedral bending
-across interior edges (`ClothBendMode`, `bend_compliance`, `ClothRestAngle`), gravity, node `Wind` drag,
+across interior edges (`ClothBendMode`, `bend_compliance`, `ClothRestAngle`), gravity, node `Wind` aerodynamics,
 damping, hard pins and weighted compliant XPBD attachments (`ClothAttachment`), deformed normal domains
 and opt-in deformed tangent frames (`tangent_frame`, `tangent_uv_set`),
 an optional ground plane and one-way particle contacts with every collider kind of listed
@@ -75,7 +75,7 @@ rebuilds every revision. See `docs/scene_trace.md`, "Vertex-motion slots".
 records on physical particles (`weight` in `[0, 1]`, `compliance >= 0`). Legacy `pins` map through
 `render_particles` as hard attachments (`weight = 1`, `compliance = 0`). Zero-weight entries are
 ignored. When `compliance == 0` and `weight > 0`, the particle is a hard pin (`inverse_mass = 0`).
-When `compliance > 0` and `weight > 0`, the particle retains unit mass (`inverse_mass = 1`) and is
+When `compliance > 0` and `weight > 0`, the particle keeps its areal mass (see [Mass and wind](#mass-and-wind)) and is
 pulled toward its interpolated anchor each substep by a compliant XPBD positional attachment with
 `effective_compliance = compliance / weight`. Duplicate entries on one particle must agree on hard vs
 soft and on `effective_compliance`.
@@ -495,7 +495,7 @@ for any of these:
 - A listed collider body moved by more than that distance while its placed shape bounds overlap the
   cloth's world bounds expanded by `thickness + contact_tolerance`. A rotation counts as moving the
   shape's farthest bounding point.
-- The owner's `Wind` appeared, was removed or changed value, or the world gravity changed.
+- The owner's `Wind` appeared, was removed or changed its `velocity` or `max_speed`, or the world gravity changed.
 - A listed body went live or dead, or had its contact history reset by `PhysicsWorld.teleport`,
   `cloth::reset_contact_history` or a rebuilt shape.
 - A cut request is pending.
@@ -551,14 +551,13 @@ do not change. `ground_height` is a world height and is not shifted.
 ## Solver and publication
 
 Per substep: wind accelerations from each triangle's area, unit normal and relative air velocity
-(`Wind.velocity` minus the mean corner velocity, clamped to `max_speed` when it is positive), as
-`drag * area * dot(relative, normal) * normal`, one third per corner; semi-implicit integration
+(see [Mass and wind](#mass-and-wind)), one third of the force per corner; semi-implicit integration
 of gravity and wind; damping `max(0, 1 - damping * dt)`; prediction; hard pins; then `iterations`
 passes over soft XPBD attachments, edges, distance or dihedral bends, the ground with its thickness offset, and
 the collider shapes and enabled self contacts, followed by bounded final contact resolution;
 velocities from the corrected displacement. A stiffness `s` is applied per pass as
 `1 - (1 - s)^(1 / iterations)`, which normalizes one isolated constraint, not a coupled mesh. A
-pair that collapses onto one point separates along its rest direction. `Wind.lift` is unused.
+pair that collapses onto one point separates along its rest direction.
 
 With `ClothBendMode.DISTANCE`, edges and bends project in color-major order. Preparation greedy-colors each
 array so that no two constraints of a color share a particle, then stores it color by color. Inside a color,
@@ -568,9 +567,6 @@ the bend mode and has no setting of its own; for a given mesh, `ClothDesc` and u
 are deterministic. An array that needs more than 32 colors keeps its previous order. With
 `ClothBendMode.DIHEDRAL`, edges keep the ascending order and hinges the order of the interior edges, whose
 state they carry.
-
-Particles have unit mass, so the wind's effect falls as a mesh gets finer; scale `Wind.drag` with
-vertex density (the example uses `2.5 * vertices / area`) to keep a response.
 
 Publication converts world positions through the inverse current node matrix into the private
 geometry, recomputes normals, optional tangents and bounds, and publishes changed ranges: for each of
@@ -594,13 +590,64 @@ see [Publishing geometry edits](post.md#publishing-geometry-edits)). When every 
 writes 12 bytes per vertex of previous positions through the frame ring, 13,068 bytes for that
 flag, counted in `Stats.vertex_history_bytes`.
 
+## Mass and wind
+
+**Areal mass.** `ClothDesc.density` (kg/m², default 0.2) sets each particle's mass to
+`density * (sum of the areas of its adjacent rest triangles) / 3`, measured on the world-scaled rest
+positions that the edge rest lengths use. The total mass is `density * area` at any tessellation,
+and a finer mesh has lighter particles. Hard pins have zero inverse mass. With cut paths a sector's
+mass is its rest-area share of the base particle's mass, and the compliance of a split attachment
+divides by the share, so the sectors' stiffness still sums to the authored stiffness. A vertex in no
+triangle keeps unit mass and moves under gravity alone.
+
+Soft attachments and dihedral hinges are XPBD constraints in physical units, so their compliance acts
+against the real particle mass. A compliance tuned for the old unit-mass particles now reads much
+stiffer, roughly by the inverse of the particle mass in kilograms. To keep the old softness, multiply the
+compliance by that inverse mass: the example's cape (0.4 kg/m² over 0.475 m² is 0.19 kg on 299 particles) has
+about 1570 per kilogram, so its bend compliance 2.0 becomes about 3100 and its outer attachment
+compliance 0.001 becomes about 1.6. Across that cape's range the drape depends on density and wind far
+more than on the compliances.
+
+The defaults need no retuning for the areal mass: a default `ClothDesc` with `bend_mode = DIHEDRAL` and no
+`bend_compliance` (a hard hinge) stays resolvable at 0.2 kg/m² on free sheets, at rest and in wind. The
+fragile case is a cloth that starts in contact with a collider. If the contact must push a particle by more
+than a hinge's size in one substep, the update fails with `BEND_UNRESOLVED`, and for some compliances the
+cloth then stays unresolved. Start cloth clear of its colliders, as the example's cape does.
+
+**Aerodynamics.** Cloth reads only `Wind.velocity` and `Wind.max_speed`. `Wind.drag` and `Wind.lift`
+apply to rigid bodies; cloth uses `ClothDesc.drag_coefficient` (default 1.2) and `lift_coefficient`
+(default 0.6), both dimensionless, and `cloth::AIR_DENSITY` (1.225 kg/m³). Cloth no longer skips wind
+when `Wind.drag` is zero. A node without a `Wind` component gets no aerodynamic force at all; a `Wind`
+with zero velocity gives still-air drag against the cloth's own motion. A triangle with zero relative speed
+gets no force.
+
+For each triangle, with area `A`, any unit normal `n`, relative velocity `v` (`Wind.velocity` minus the
+mean corner velocity, clamped to `max_speed` when it is positive), `v_hat = v / |v|` and `s = dot(v_hat, n)`:
+
+```text
+F_drag = 0.5 * rho * C_d * A * |v|^2 * s * |s| * n
+F_lift = rho * C_l * A * |v|^2 * s * (n - s * v_hat)
+```
+
+Both forms are unchanged when `n` flips to `-n`, so winding does not matter. With `alpha` the angle between
+the wind and the plane, `|s| = sin(alpha)` and `|n - s * v_hat| = cos(alpha)`, so the lift has magnitude
+`0.5 * rho * C_l * A * |v|^2 * sin(2 * alpha)`, vanishes along and across the wind, and acts toward the
+leeward side. Each corner takes a third of the force and accelerates by it times the inverse mass. A flat
+sheet in a wind that blows along its plane feels no force: there is no skin friction.
+
+**Tessellation.** Areal mass removes the mass and force part of the mismatch between tessellations only.
+Position-based stiffness still depends on the resolution at a fixed iteration count, so a finer mesh sags a
+little more; more iterations shrink that gap. In a steady breeze, sheets of different tessellation pinned
+along one edge move together closely. Once the sheet flutters, the motion is chaotic enough that
+tessellations agree only statistically; compare time averages there.
+
 ## Example
 
 ```text
 python scripts/build.py --example cloth
-addons/c3d_physics.c3l/build/cloth.exe [--scene flag|cape|both|contacts|fold|fast|field|crowd] [--count 64] [--workers 4] [--hold] [--still] [--frames 300]
+addons/c3d_physics.c3l/build/cloth.exe [--scene flag|cape|both|contacts|fold|fast|field|crowd|densities] [--count 64] [--workers 4] [--hold] [--still] [--frames 300]
 c3c build cloth --path addons/c3d_physics.c3l -O3
-addons/c3d_physics.c3l/build/cloth.exe --benchmark --scene flag|cape|both|contacts|fold|fast|field|crowd [--count 64] [--workers 4] [--hold] [--still] [--ragdoll] [--publish whole|streams]
+addons/c3d_physics.c3l/build/cloth.exe --benchmark --scene flag|cape|both|contacts|fold|fast|field|crowd|densities [--count 64] [--workers 4] [--hold] [--still] [--ragdoll] [--publish whole|streams]
 addons/c3d_physics.c3l/build/cloth.exe --benchmark --cpu-only --scene flag|field|crowd [--count 100] [--workers 4] [--cells 32]
 addons/c3d_physics.c3l/build/cloth.exe --benchmark --trace software|hardware [--validation]
 ```
@@ -646,6 +693,13 @@ template: the example adds the cape as a rigid mesh part on the `DEF-spine.003` 
 mean and 95th-percentile staging and commit wall times beside the summed solve time, and the bytes of all
 cloth states. `--cpu-only` steps the scene without a renderer, which keeps rasteriser threads from competing
 with the job pool. `--cells N` sets the benchmark flag's cells per side (default 32).
+
+The `densities` scene hangs the same 1.8 m by 1.2 m flag from two bars side by side, at 12x8 and 24x16 cells,
+with the top row pinned and a 1.5 m/s wind that blows straight at the sheets, under the example's gusts. The
+two sheets swing together. Areal mass and the aerodynamic forces make that possible;
+the wrinkles of a free edge or of a pole flag still differ with the resolution. The example drives every
+flag, cape and crowd with a plain `Wind.velocity` and sets no `Wind.drag`. The cape and crowd capes use a
+heavier 0.4 kg/m² fabric and half the wind, so they hang from the shoulders instead of flying flat.
 
 The `fast` scene rotates a thin box by 90 degrees and translates it in one fixed step
 through a small cloth patch. Continuous and self-contact are enabled. It uses one
