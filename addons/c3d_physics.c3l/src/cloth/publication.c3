@@ -221,7 +221,7 @@ fn ClothUpdateKind? update_cloth(
     }
 
     Wind* wind = world.scene.get(node, Wind);
-    if (state.settle.resting && !state.settle.wake_requested) {
+    if (is_quiescent(state)) {
         bool disturbed = probe_ordinary_rest(
             world: world,
             state: state,

@@ -22,6 +22,7 @@ const float PUSH_SIZE @private = 4;
 const uint PUSHED_VERTEX @private = 12; // centre of the 5x5 vertex grid
 const float PUSH_RADIUS @private = 0.3f;
 const uint HOLD_CAPACITY @private = 2;
+const uint CUT_PATH @private = 10;
 
 struct CrowdRig @private {
     Node*     node;
@@ -199,6 +200,39 @@ fn void test_failed_update_keeps_activity() @test {
     step(&fixture, 0);
     assert(fixture.physics.cloth_stats.failed == 0);
     assert(cloth.activity() == AWAKE);
+}
+
+fn Node* add_cutting_cloth(Fixture* fixture) @private {
+    Node* node = add_cloth_node(fixture, add_grid(fixture, 2, 2));
+    uint[2] cut_vertices = { 4, 7 };
+    ClothCutPath[1] cuts = { { .id = CUT_PATH, .vertices = cut_vertices[..] } };
+    ClothDesc desc = resting_desc(top_row(2));
+    desc.cuts = cuts[..];
+    fixture.scene.add_cloth(&fixture.assets, node, desc)!!;
+    return node;
+}
+
+fn void test_cut_request_wakes_rest_and_waits_while_held() @test {
+    Fixture fixture;
+    setup(&fixture, weightless());
+    defer teardown(&fixture);
+    Node* resting = add_cutting_cloth(&fixture);
+    Node* held = add_cutting_cloth(&fixture);
+    settle(&fixture, resting);
+    Cloth* resting_cloth = fixture.scene.get(resting, Cloth);
+    Cloth* held_cloth = fixture.scene.get(held, Cloth);
+
+    held_cloth.sleep();
+    resting_cloth.request_cut(CUT_PATH)!!;
+    held_cloth.request_cut(CUT_PATH)!!;
+    step(&fixture, physics::DEFAULT_FIXED_DT);
+    assert(resting_cloth.activity() == AWAKE && resting_cloth.cut_result(CUT_PATH)!!.is_cut);
+    assert(held_cloth.activity() == HELD && !held_cloth.cut_result(CUT_PATH)!!.is_cut);
+    assert(held_cloth.state.pending_request_count == 1);
+
+    held_cloth.wake();
+    step(&fixture, physics::DEFAULT_FIXED_DT);
+    assert(held_cloth.cut_result(CUT_PATH)!!.is_cut && held_cloth.state.pending_request_count == 0);
 }
 
 fn void test_cloth_rejects_invalid_sleep_speed() @test {

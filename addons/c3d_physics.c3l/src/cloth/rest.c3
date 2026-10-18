@@ -127,9 +127,12 @@ fn ClothState probe_cloth(ClothState* state) @private {
     return probe;
 }
 
+fn bool is_quiescent(ClothState* state) @private {
+    return state.settle.resting && !state.settle.wake_requested && !state.pending_request_count;
+}
+
 fn bool rest_disturbed(PhysicsWorld* world, ClothState* state, Wind* wind) @private {
     ClothSettle* settle = &state.settle;
-    if (state.pending_request_count) return true;
     if (world.desc.tuning.gravity != settle.gravity) return true;
     if ((wind != null) != settle.wind_present) return true;
     if (wind && wind_differs(wind, &settle.wind)) return true;

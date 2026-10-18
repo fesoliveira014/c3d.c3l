@@ -1141,7 +1141,7 @@ fn ClothUpdateKind? update_crowd_slot(
     }
 
     Wind* wind = scene.get(owner, Wind);
-    if (state.settle.resting && !state.settle.wake_requested) {
+    if (is_quiescent(state)) {
         bool disturbed = probe_crowd_slot_rest(
             world:       world,
             owner:       owner,
