@@ -548,6 +548,7 @@ fn uint? add_cape_part(AssetStore* assets, ModelId model) @local {
         .layers  = template.nodes[chest].layers,
         .visible = true,
     };
+
     meshes[:mesh_count] = template.meshes[..];
     meshes[mesh_count] = { .node = (uint)node_count, .geometry = cape_geometry, .material = cape_material };
 
@@ -561,6 +562,7 @@ fn uint? add_cape_part(AssetStore* assets, ModelId model) @local {
 fn Aabb crowd_bounds(AssetStore* assets, ModelTemplate* template) @local {
     Aabb bounds = assets.geometry(template.meshes[0].geometry).data.bounds;
     foreach (&mesh : template.meshes) bounds = maths::aabb_merge(bounds, assets.geometry(mesh.geometry).data.bounds);
+
     Vec3 margin = { CROWD_POSE_MARGIN, CROWD_POSE_MARGIN, CROWD_POSE_MARGIN };
     return { .min = bounds.min - margin, .max = bounds.max + margin };
 }
@@ -602,6 +604,7 @@ fn void? build_crowd(Demo* demo, uint count) @local {
                 .color     = { 1, 1, 1, 1 },
             };
         }
+
         demo.crowd = model::add_crowd(
             assets:      assets,
             scene:       &demo.scene,
@@ -612,6 +615,7 @@ fn void? build_crowd(Demo* demo, uint count) @local {
             name:        "crowd",
         )!;
     };
+
     demo.scene.add(demo.crowd, grid_wind(
         columns: CAPE_COLUMNS,
         rows:    CAPE_ROWS,
@@ -624,6 +628,7 @@ fn void? build_crowd(Demo* demo, uint count) @local {
 fn void? attach_crowd_cape(Demo* demo) @local {
     ClothDesc desc = cloth::default_cloth_desc();
     desc.thickness = CAPE_THICKNESS;
+
     @pool() {
         uint[] pins = alloc::new_array(tmem, uint, (sz)(CAPE_COLUMNS + 1));
         foreach (column, &pin : pins) *pin = (uint)column;
@@ -635,6 +640,7 @@ fn void? attach_crowd_cape(Demo* demo) @local {
             desc:   desc,
         )!;
     };
+
     demo.physics.update(0);
     cloth::prepare_crowd_cloth(
         world:  &demo.physics,
@@ -1399,6 +1405,7 @@ struct StateTotals @local {
 
 fn void StateTotals.add(&self, ClothState* state) {
     self.bytes += state.allocation_bytes;
+
     foreach (position : state.positions) {
         for (usz axis = 0; axis < 3; axis++) self.mix(bitcast(position[axis], uint));
     }
@@ -1413,6 +1420,7 @@ fn void StateTotals.mix(&self, uint bits) {
 
 fn StateTotals state_totals(Demo* demo) @local {
     StateTotals totals = { .checksum = CHECKSUM_BASIS };
+
     demo.scene.@each(Cloth; entity, cloth) {
         if (cloth.state) totals.add(cloth.state);
     };
@@ -1425,6 +1433,7 @@ fn StateTotals state_totals(Demo* demo) @local {
             }
         }
     };
+
     return totals;
 }
 

@@ -55,6 +55,7 @@ fn void collect_cloth_work(PhysicsWorld* world) @private {
             }
         }
     };
+
     collect_crowd_cloths(world);
 }
 
@@ -69,10 +70,17 @@ fn void stage_cloth_work(PhysicsWorld* world, uint steps) @private {
 
     time::Clock started = clock::now();
     if (world.parallel.run) {
-        world.parallel.run(world.parallel.context, &stage_cloth_range, &context, count, CLOTH_STAGE_BATCH);
+        world.parallel.run(
+            context: world.parallel.context,
+            range:   &stage_cloth_range,
+            data:    &context,
+            count:   count,
+            batch:   CLOTH_STAGE_BATCH,
+        );
     } else {
         stage_cloth_range(&context, 0, count);
     }
+
     world.cloth_stats.stage_seconds = (clock::now() - started).to_sec();
 }
 
@@ -103,14 +111,17 @@ fn void stage_cloth_item(PhysicsWorld* world, ClothState* state, uint steps) @lo
                 work.kind = crowd_slot;
             }
     }
+
     work.stage_seconds = (clock::now() - started).to_sec();
 }
 
 fn void commit_cloth_work(PhysicsWorld* world) @private {
     time::Clock started = clock::now();
+
     foreach (state : world.cloth_work[:world.cloth_work_count]) {
         commit_cloth_item(world, state);
     }
+
     world.cloth_stats.commit_seconds = (clock::now() - started).to_sec();
 }
 

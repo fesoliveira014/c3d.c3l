@@ -413,9 +413,20 @@ concurrently, and returns only after every range finished. A zero `ParallelFor` 
 `c3d::job::RangeFn`'s signature, so a `JobPool` adapter is a few lines:
 
 ```c3
-fn void run_on_pool(void* context, ParallelRangeFn range, void* data, uint count, uint batch) {
+fn void run_on_pool(
+    void* context,
+    ParallelRangeFn range,
+    void* data,
+    uint count,
+    uint batch,
+) {
     JobPool* pool = context;
-    pool.wait(pool.run(range: range, data: data, count: count, batch: batch));
+    pool.wait(pool.run(
+        range: range,
+        data:  data,
+        count: count,
+        batch: batch,
+    ));
 }
 ```
 

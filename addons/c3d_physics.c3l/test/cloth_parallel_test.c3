@@ -99,18 +99,36 @@ fn bool same_scene(
     Fixture* second,
     ParallelScene* second_scene,
 ) @private {
-    if (!same_cloth(first, state_of(first, first_scene.draped), second, state_of(second, second_scene.draped))) {
+    if (!same_cloth(
+        first_fixture:  first,
+        first:          state_of(first, first_scene.draped),
+        second_fixture: second,
+        second:         state_of(second, second_scene.draped),
+    )) {
         return false;
     }
-    if (!same_cloth(first, state_of(first, first_scene.torn), second, state_of(second, second_scene.torn))) {
+    if (!same_cloth(
+        first_fixture:  first,
+        first:          state_of(first, first_scene.torn),
+        second_fixture: second,
+        second:         state_of(second, second_scene.torn),
+    )) {
         return false;
     }
 
     CrowdClothPart* first_part = first.scene.get(first_scene.crowd.node, CrowdCloth).find_part(0)!!;
     CrowdClothPart* second_part = second.scene.get(second_scene.crowd.node, CrowdCloth).find_part(0)!!;
     foreach (slot, state : first_part.states) {
-        if (!same_cloth(first, state, second, second_part.states[slot])) return false;
+        if (!same_cloth(
+            first_fixture:  first,
+            first:          state,
+            second_fixture: second,
+            second:         second_part.states[slot],
+        )) {
+            return false;
+        }
     }
+
     return true;
 }
 
@@ -139,7 +157,12 @@ fn void test_cloth_staging_order_does_not_change_results() @test {
         step(&reversed, dt);
         contacts += serial.physics.cloth_stats.contacts;
         assert(serial.physics.cloth_stats.failed == 0 && reversed.physics.cloth_stats.failed == 0);
-        assert(same_scene(&serial, &serial_scene, &reversed, &reversed_scene));
+        assert(same_scene(
+            first:        &serial,
+            first_scene:  &serial_scene,
+            second:       &reversed,
+            second_scene: &reversed_scene,
+        ));
     }
 
     assert(order.runs == PARALLEL_UPDATES);

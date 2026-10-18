@@ -1202,9 +1202,11 @@ fn ClothUpdateKind? stage_crowd_slot(PhysicsWorld* world, ClothState* state, uin
     if (staged.cut_applied_this_update && !reseeded) work.reset_history = true;
     work.changed = changed;
     work.colors_changed = colors_changed;
+
     commit_cloth(state, &staged);
     state.local_bounds = staged.local_bounds;
     state.spans = staged.spans;
+
     staged.contact_result.stage = ClothContactStage.NONE;
     return SIMULATED;
 }
@@ -1249,6 +1251,7 @@ fn void commit_crowd_slot(PhysicsWorld* world, ClothState* state) @private {
     } else if (work.colors_changed) {
         commit_color_publication(state);
     }
+
     if (work.colors_changed) part_record.published_colors[slot] = work.crowd.colors[slot];
 
     sync_crowd_output(work.output_node, owner, work.batch_node);

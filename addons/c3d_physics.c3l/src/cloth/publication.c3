@@ -321,9 +321,11 @@ fn ClothUpdateKind? stage_ordinary_cloth(PhysicsWorld* world, ClothState* state,
 
     work.changed = changed;
     work.reset_history = staged.cut_applied_this_update;
+
     commit_cloth(state, &staged);
     state.local_bounds = staged.local_bounds;
     state.spans = staged.spans;
+
     staged.contact_result.stage = ClothContactStage.NONE;
     return SIMULATED;
 }
@@ -355,6 +357,7 @@ fn void commit_ordinary_cloth(PhysicsWorld* world, ClothState* state) @private {
         }
         commit_local_publication(state, node.world, work.changed);
     }
+
     sync_skinned_output(world.scene, state, node);
 }
 
