@@ -691,6 +691,26 @@ fn TexelRect? stamp_brush(
     return stamped;
 }
 
+// The texels the stamp raised; NOT_FOUND when the position lies off the height map.
+fn TexelRect? stamp_terrain(
+    Scene* scene,
+    AssetStore* assets,
+    Node* terrain_node,
+    Vec3 position,
+    float rise,
+) @local {
+    HeightView view = terrain::height_view(scene, assets, terrain_node.id)!;
+    TexelPoint center = texel_under(&view, position)!;
+    return stamp_brush(
+        scene:        scene,
+        assets:       assets,
+        terrain_node: terrain_node,
+        center:       center,
+        rise:         rise,
+        limit:        { .columns = view.texels_per_side, .rows = view.texels_per_side },
+    );
+}
+
 <*
  Raise the ground under a world position with one brush stamp.
  @param [&inout] scene
@@ -707,18 +727,17 @@ fn bool? stamp_under(
     Vec3 position,
     float rise,
 ) {
-    HeightView view = terrain::height_view(scene, assets, terrain_node.id)!;
-    TexelPoint? center = texel_under(&view, position);
-    if (catch center) return false;
-
-    stamp_brush(
+    TexelRect? stamped = stamp_terrain(
         scene:        scene,
         assets:       assets,
         terrain_node: terrain_node,
-        center:       center,
+        position:     position,
         rise:         rise,
-        limit:        { .columns = view.texels_per_side, .rows = view.texels_per_side },
-    )!;
+    );
+    if (catch excuse = stamped) {
+        if (excuse == NOT_FOUND) return false;
+        return excuse~;
+    }
     return true;
 }
 
@@ -729,10 +748,35 @@ fn TexelRect owned_texels(TerrainSet* set, Entity tile, uint texels) @local {
     return { .x = west, .z = north, .columns = texels - west, .rows = texels - north };
 }
 
-// Flags the tile's entry in Ground.terrain_nodes.
-fn void mark_edited(Ground* ground, Entity tile, bool[] edited) @local {
+// Texels of a tile edit that a neighbour duplicates: its edge row or column across a side, the same texels along it.
+fn TexelRect neighbour_texels(TerrainNeighbour direction, uint texels, TexelRect rect) @local {
+    return {
+        .x       = direction.x_offset < 0 ? texels - 1 : (direction.x_offset > 0 ? 0 : rect.x),
+        .z       = direction.z_offset < 0 ? texels - 1 : (direction.z_offset > 0 ? 0 : rect.z),
+        .columns = direction.x_offset != 0 ? 1 : rect.columns,
+        .rows    = direction.z_offset != 0 ? 1 : rect.rows,
+    };
+}
+
+// Grows the rectangle to cover the added texels; an empty one takes them.
+fn void grow_edit(TexelRect* edited, TexelRect added) @local {
+    if (!edited.columns) {
+        *edited = added;
+        return;
+    }
+
+    uint last_x = max(edited.x + edited.columns, added.x + added.columns);
+    uint last_z = max(edited.z + edited.rows, added.z + added.rows);
+    edited.x = min(edited.x, added.x);
+    edited.z = min(edited.z, added.z);
+    edited.columns = last_x - edited.x;
+    edited.rows = last_z - edited.z;
+}
+
+// Grows the entry of the tile in Ground.terrain_nodes.
+fn void mark_edited(Ground* ground, Entity tile, TexelRect added, TexelRect[] edited) @local {
     foreach (index, candidate : ground.tiles) {
-        if (c3d::same_id(candidate.id, tile)) edited[index] = true;
+        if (c3d::same_id(candidate.id, tile)) grow_edit(&edited[index], added);
     }
 }
 
@@ -742,7 +786,7 @@ fn void mark_edited(Ground* ground, Entity tile, bool[] edited) @local {
  @param [&inout] assets
  @param [&in] ground : "Added by add_ground or add_ground_tiles."
  @param rise : "Height texel units added at the brush centre."
- @param edited : "One flag per Ground.terrain_nodes entry; set for every terrain the stamp changed."
+ @param edited : "One rectangle per Ground.terrain_nodes entry, grown to cover the texels the stamp changed in it."
  @return "False when the position lies off the height map."
  @return? c3d::INVALID_ID, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT
 *>
@@ -752,18 +796,22 @@ fn bool? stamp_ground(
     Ground* ground,
     Vec3 position,
     float rise,
-    bool[] edited,
+    TexelRect[] edited,
 ) {
     if (ground.tile_extent <= 0) {
-        bool stamped = stamp_under(
+        TexelRect? stamped = stamp_terrain(
             scene:        scene,
             assets:       assets,
             terrain_node: ground.node,
             position:     position,
             rise:         rise,
-        )!;
-        if (stamped) edited[0] = true;
-        return stamped;
+        );
+        if (catch excuse = stamped) {
+            if (excuse == NOT_FOUND) return false;
+            return excuse~;
+        }
+        grow_edit(&edited[0], stamped);
+        return true;
     }
     Node* home = ground.terrain_at(position);
     HeightView view = terrain::height_view(scene, assets, home.id)!;
@@ -805,12 +853,17 @@ fn bool? stamp_ground(
             tile:   tile.id,
             rect:   stamps[index],
         )!;
-        edited[index] = true;
+        grow_edit(&edited[index], stamps[index]);
 
         foreach (direction : TerrainNeighbour::values) {
             if (!(changed_neighbours & ((uint)1 << direction.ordinal))) continue;
 
-            mark_edited(ground, set.neighbour(tile.id, direction)!, edited);
+            mark_edited(
+                ground: ground,
+                tile:   set.neighbour(tile.id, direction)!,
+                added:  neighbour_texels(direction, view.texels_per_side, stamps[index]),
+                edited: edited,
+            );
         }
     }
     return true;

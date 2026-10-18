@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": 0,
+      "parent": null,
+      "name": "physics",
+      "local": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "physics_body": {
+          "version": 1,
+          "value": {
+            "body": {
+              "kind": "STATIC",
+              "name": "",
+              "linear_velocity": [
+                0,
+                0,
+                0
+              ],
+              "angular_velocity": [
+                0,
+                0,
+                0
+              ],
+              "linear_damping": 0,
+              "angular_damping": 0,
+              "gravity_scale": 1,
+              "allow_sleep": true,
+              "bullet": false,
+              "disabled": false,
+              "locks": {
+                "linear_x": false,
+                "linear_y": false,
+                "linear_z": false,
+                "angular_x": false,
+                "angular_y": false,
+                "angular_z": false
+              }
+            },
+            "colliders": [
+              {
+                "kind": "HEIGHT_FIELD",
+                "local": {
+                  "position": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    2,
+                    3,
+                    4
+                  ]
+                },
+                "radius": 0,
+                "half_height": 0,
+                "half_extents": [
+                  0,
+                  0,
+                  0
+                ],
+                "geometry": null,
+                "height_field": {
+                  "source": "TEXTURE",
+                  "heights": [],
+                  "count_x": 0,
+                  "count_z": 0,
+                  "texture": "heights"
+                },
+                "children": [],
+                "density": 7,
+                "explosion_scale": 1,
+                "material": {
+                  "friction": 0.600000024,
+                  "restitution": 0,
+                  "rolling_resistance": 0,
+                  "tangent_velocity": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "id": "0"
+                },
+                "face_materials": [],
+                "material_indices": [],
+                "sensor": false,
+                "contact_events": false,
+                "hit_events": false,
+                "filter": {
+                  "category": "1",
+                  "mask": "18446744073709551615",
+                  "group": 5
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

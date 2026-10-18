@@ -94,7 +94,8 @@
         "test_manual_exposure.c3",
         "test_auto_exposure.c3",
         "test_posed_trace.c3",
-        "test_texture_fidelity.c3"
+        "test_texture_fidelity.c3",
+        "test_texture_regions.c3"
       ]
     }
   }

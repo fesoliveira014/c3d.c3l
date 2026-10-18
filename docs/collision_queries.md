@@ -186,6 +186,12 @@ at the scaled spacing, so the local bounds are `[0, scale.x * (count_x - 1)]` by
 `[scale.y * lowest, scale.y * highest]` by `[0, scale.z * (count_z - 1)]`. Each cell splits along the
 diagonal from its far-left corner to its near-right corner, and front faces point toward positive y.
 
+A `TEXTURE` field may carry a `window`, `{ x, z, count_x, count_z }` in cells, that prepares only
+`count_x + 1` by `count_z + 1` samples of the map; all zero covers the whole map. A window quantizes over the
+fixed range 0 to 1, where a whole field quantizes over its own samples, so windows of one map meet exactly. It
+faults `INVALID_ARGUMENT` on a `HEIGHTS` source, with a zero count or past the map, and `UNSUPPORTED` on an
+`RGBA32_FLOAT` map. The window is part of the entry key.
+
 The scale is baked at cook time and is positive. A zero or nonfinite component returns
 `INVALID_ARGUMENT`, a negative component returns `UNSUPPORTED`, and a spacing whose reciprocal is not
 finite returns `DEGENERATE_GEOMETRY`. A source is validated before any native call:
@@ -205,7 +211,7 @@ under the authored heights by at most one step, `max(highest - lowest, 0.005) / 
 a field never reproduces its samples exactly. Every preparation reads the retained surface, including one
 that reuses an entry a body cooked.
 
-A texture field is keyed by texture, revision, exact scale and material content. A raw field is keyed by a
+A texture field is keyed by texture, revision, window, exact scale and material content. A raw field is keyed by a
 64-bit FNV-1a hash of its counts, sample bits and material and hole bytes, and by its exact scale. Equal
 content in a different array shares one entry, and a changed sample, hole or scale makes a new one. The
 cache keeps no copy of the samples to compare against, so a hash collision would share an entry cooked from

@@ -25,6 +25,17 @@ storage. Instanced batches preserve flags, sway, fade and bounds overrides. Unus
 transforms restart at identity, unused colors at white and unused billboards at
 `BILLBOARD_DEFAULT`. Bounds caches and revisions restart under normal owner rules.
 
+InstancedMesh authoring version 2 adds the batch's quadtree: the parent of each
+instance, `split_pixels` and `hysteresis`. A batch without a quadtree writes empty
+parents and zero for both. Reading attaches the batch, then calls
+`Scene.set_instance_quadtree`, which rebuilds the leaf mask and advances the
+topology revision. Its `INVALID_ARGUMENT` and `UNSUPPORTED` faults propagate and
+remove the batch again, so parents that do not match the live count, a negative or
+non-finite `split_pixels` or `hysteresis`, a traced batch or a mirrored instance
+fail the read. Writing a batch that breaks the same contract faults
+`INVALID_ARGUMENT`. Version-1 binary and JSONC payloads have no
+quadtree and read as batches without one.
+
 LodGroup authoring version 2 restores in BINDINGS, after its source owners.
 Rigid groups preserve ordered affine parts, levels, capacities, live placements,
 common effects and terminal impostors. Version-1 binary and JSONC authoring still
@@ -44,7 +55,7 @@ and restart contracts are detailed in the built-in policy inventory below.
 Animator export projects owned transforms and Mesh morph weights to captured
 baselines; ordinary Mesh values preserve their explicit weights.
 
-There are 43 authored and 15 transient production component policies. The
+There are 44 authored and 16 transient production component policies. The
 registration calls install their description/default prerequisites idempotently.
 Consumers select each package and its normal dependencies, including `c3d_serial`
 for any adapter below; core has no reverse dependency on an add-on.
@@ -52,7 +63,7 @@ for any adapter below; core has no reverse dependency on an add-on.
 | Owner | Serialization feature | Registration | Authored / transient |
 | --- | --- | --- | --- |
 | Core | None | `serial::register_core_codecs()` | 19 / 0 |
-| Physics | `C3D_PHYSICS_SERIAL` | `physics::register_serial_codecs()` | 9 / 3 |
+| Physics | `C3D_PHYSICS_SERIAL` | `physics::register_serial_codecs()` | 10 / 4 |
 | Navigation | `C3D_NAV_SERIAL` | `nav::register_serial_codecs()` | 5 / 5 |
 | Character | `C3D_CHARACTER_SERIAL`, `C3D_PHYSICS_SERIAL` | `character::register_serial_codecs()` | 1 / 0 |
 | Character navigation | Also `C3D_CHARACTER_NAV`, `C3D_NAV_SERIAL` | Included by character registration | 1 / 0 |
@@ -131,6 +142,11 @@ the normal version/layout, framing, depth and reference checks, including full
 payload consumption; it does not attach components or invoke owner validation.
 All acquisitions, including partial failed reads, are released when the outer
 read exits.
+
+A `BinaryCompatibility` entry may also carry an `upgrade`. `ReadContext.authored` rejects a payload of an older
+version with `UNSUPPORTED`, so an owner that other owners inspect before attachment, as a body is inspected by
+ragdolls and breakable anchors, supplies an `upgrade` that decodes the older payload into the current authoring
+type. The result lives until the subtree read finishes: acquire retained storage with `read_owned`.
 
 Finite floats/doubles preserve their bits with nine/seventeen significant digits
 and direct conversion into the destination width. Negative zero is `-0.0`.
@@ -341,9 +357,14 @@ schema export and reproducible CPU-only or Vulkan runs.
 
 Select `c3d_serial`, enable `C3D_PHYSICS_SERIAL`, and call
 `physics::register_serial_codecs()` alongside `physics::register_physics(scene)`.
-The plain physics manifest has no serialization dependency. PhysicsBody persists
-BodyDesc and all nested collider authoring with copied arrays and strings. It
-restores PENDING with cleared failure/revision state; no native body is created.
+The plain physics manifest has no serialization dependency. PhysicsBody (v2) persists
+BodyDesc and all nested collider authoring with copied arrays and strings, including a height field's
+window. It restores PENDING with cleared failure/revision state; no native body is created. Version 1
+payloads, which predate the window, read in both formats with a zero window; a Ragdoll or Breakable
+that inspects a version 1 body reads it through the same upgrade. HeightFieldWindows restores in OWNER and
+persists `{ window_cells, collider }`; export omits its window nodes and their bodies after validating each
+node's transient `HeightFieldWindowOwner`, and loading regenerates them through
+`add_height_field_windows`.
 PhysicsJoint restores in REFERENCES with a required model-aware endpoint and
 only its selected variant. Cloth (v9) restores in OWNER and CrowdCloth (v4)
 restores in BINDINGS; prepared skinned Cloth projects its retained source Mesh
@@ -354,7 +375,7 @@ coefficient and resets submerged fraction, and v1 payloads read a drag
 coefficient of 0. RigidBody, Joint and ClothOutput are explicitly transient, and
 ClothOutput's read-only collector rejects exporting a generated output child
 without its selected owner. Ordinary physics synchronization creates the native
-state. The package inventory discovers all twelve physics component types through
+state. The package inventory discovers all fourteen physics component types through
 normal registration and verifies their explicit policies;
 new unclassified physics components fail the package inventory.
 

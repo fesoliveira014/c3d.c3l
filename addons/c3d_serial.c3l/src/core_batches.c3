@@ -8,13 +8,29 @@ import c3d::model;
 import c3d::scene;
 import std::math;
 
-const ulong INSTANCES_LAYOUT @local = 0x59d3aec48200fec8;
+const ulong INSTANCES_V1_LAYOUT @local = 0x59d3aec48200fec8;
+const ulong INSTANCES_LAYOUT @local = 0x7f422a9bb5bb80ce;
 const ulong BILLBOARDS_LAYOUT @local = 0x0e6e17ed81a957bb;
 const ulong LOD_V1_LAYOUT @local = 0xdb17924ea7b43e3f;
 const ulong LOD_LAYOUT @local = 0x8ed85fe0b352d50f;
 const ulong ANIMATED_LOD_SKIN_LAYOUT @local = 0x03ef0a55ec3ccd1c;
 const ulong ANIMATED_LOD_PART_LAYOUT @local = 0x67066c59b87af8fe;
 const ulong ANIMATED_LOD_DESC_LAYOUT @local = 0xa65aa93a04287bbc;
+
+struct InstanceAuthoringV1 @private {
+    GeometryId geometry;
+    MaterialId material;
+    uint capacity;
+    Transform[] transforms;
+    Vec4[] colors;
+    bool cast_shadow;
+    bool receive_shadow;
+    bool trace;
+    bool has_bounds_override;
+    Aabb local_bounds;
+    InstanceSway sway;
+    InstanceFade fade;
+}
 
 struct InstanceAuthoring @private {
     GeometryId geometry;
@@ -29,6 +45,9 @@ struct InstanceAuthoring @private {
     Aabb local_bounds;
     InstanceSway sway;
     InstanceFade fade;
+    uint[] quadtree_parents;
+    float split_pixels;
+    float hysteresis;
 }
 
 struct BillboardAuthoring @private {
@@ -79,12 +98,18 @@ struct LodAuthoring @private {
     AnimatedLodDescAuthoring animated_desc;
 }
 
+BinaryCompatibility[1] instances_binary_compatibility @local = {
+    { .version = 1, .read = &read_instances_v1 },
+};
+uint[1] instances_text_default_versions @local = { 1 };
+
 BinaryCompatibility[1] lod_binary_compatibility @local = {
     { .version = 1, .read = &read_lod_v1 },
 };
 uint[1] lod_text_default_versions @local = { 1 };
 
 fn void? register_core_batch_codecs() @private {
+    describe::register_reflected(InstanceAuthoringV1)!;
     describe::register_reflected(InstanceAuthoring)!;
     describe::register_reflected(BillboardAuthoring)!;
     describe::register_reflected(LodAuthoringV1)!;
@@ -93,7 +118,13 @@ fn void? register_core_batch_codecs() @private {
     describe::register_reflected(AnimatedLodDescAuthoring)!;
     describe::register_reflected(LodAuthoring)!;
 
-    register_core_value(InstanceAuthoring, INSTANCES_LAYOUT, &defaults_instances)!;
+    register_core_value(InstanceAuthoringV1, INSTANCES_V1_LAYOUT, &defaults_instances_v1)!;
+    register_described_type(
+        $Type: InstanceAuthoring,
+        version: 2,
+        layout: INSTANCES_LAYOUT,
+        defaults: &defaults_instances,
+    )!;
     register_core_value(BillboardAuthoring, BILLBOARDS_LAYOUT, &defaults_billboards)!;
     register_core_value(LodAuthoringV1, LOD_V1_LAYOUT, &defaults_lod_v1)!;
     register_core_value(ModelSkin, ANIMATED_LOD_SKIN_LAYOUT, &defaults_animated_lod_skin)!;
@@ -107,7 +138,11 @@ fn void? register_core_batch_codecs() @private {
     )!;
 
     register_described_owner(InstancedMesh, InstanceAuthoring, {
-        .name = "c3d.InstancedMesh", .project = &project_instances, .attach = &attach_instances,
+        .name = "c3d.InstancedMesh",
+        .project = &project_instances,
+        .attach = &attach_instances,
+        .binary_compatibility = instances_binary_compatibility[..],
+        .text_default_versions = instances_text_default_versions[..],
     })!;
     register_described_owner(BillboardBatch, BillboardAuthoring, {
         .name = "c3d.BillboardBatch", .project = &project_billboards, .attach = &attach_billboards,
@@ -120,6 +155,10 @@ fn void? register_core_batch_codecs() @private {
         .binary_compatibility = lod_binary_compatibility[..],
         .text_default_versions = lod_text_default_versions[..],
     })!;
+}
+
+fn void defaults_instances_v1(void* value) @local {
+    *(InstanceAuthoringV1*)value = { .capacity = 1, .cast_shadow = true, .receive_shadow = true, .trace = true };
 }
 
 fn void defaults_instances(void* value) @local {
@@ -152,7 +191,10 @@ fn void defaults_lod(void* value) @local {
 
 fn void? project_instances(void* component, void* value, WriteContext* context) @local {
     InstancedMesh* batch = component;
+    bool has_quadtree = batch.quadtree.parents.len > 0;
     if (!scene::instance_effects_valid(batch.sway, batch.fade)) return c3d::INVALID_ARGUMENT~;
+    if (has_quadtree && !scene::instance_quadtree_valid(batch)) return c3d::INVALID_ARGUMENT~;
+
     *(InstanceAuthoring*)value = {
         .geometry = batch.geometry,
         .material = batch.material,
@@ -166,6 +208,9 @@ fn void? project_instances(void* component, void* value, WriteContext* context) 
         .local_bounds = batch.local_bounds,
         .sway = batch.sway,
         .fade = batch.fade,
+        .quadtree_parents = batch.quadtree.parents,
+        .split_pixels = has_quadtree ? batch.quadtree.split_pixels : 0,
+        .hysteresis = has_quadtree ? batch.quadtree.hysteresis : 0,
     };
 }
 
@@ -213,6 +258,20 @@ fn void? attach_instances(void* value, ReadContext* context) @local {
         return c3d::INVALID_ARGUMENT~;
     }
     if (!scene::instance_effects_valid(source.sway, source.fade)) return c3d::INVALID_ARGUMENT~;
+
+    add_instances(source, context)!;
+    if (!source.quadtree_parents.len) return;
+
+    defer catch context.scene.remove_component(context.node, InstancedMesh);
+    context.scene.set_instance_quadtree(
+        node: context.node,
+        parents: source.quadtree_parents,
+        split_pixels: source.split_pixels,
+        hysteresis: source.hysteresis,
+    )!;
+}
+
+fn void? add_instances(InstanceAuthoring* source, ReadContext* context) @local {
     Allocator allocator = context.scene.allocator;
     Transform[] transforms = alloc::new_array_try(allocator, Transform, (sz)source.capacity)
       ?? c3d::CAPACITY_EXCEEDED~!;
@@ -362,6 +421,37 @@ fn AnimatedLodDescAuthoring? project_animated_lod(LodGroupState* state, WriteCon
         .has_bounds_override = state.mode == SINGLE && state.desc.has_bounds_override,
         .local_bounds = state.mode == SINGLE ? state.desc.local_bounds : (Aabb){},
     };
+}
+
+fn void? read_instances_v1(Reader* reader, ReadContext* context) @local {
+    InstanceAuthoringV1 legacy;
+    Acquisitions owned = { .allocator = context.allocator };
+    defer owned.release();
+
+    read_described_value(
+        type: described_type(InstanceAuthoringV1)!,
+        reader: reader,
+        context: context,
+        owned: &owned,
+        value: &legacy,
+    )!;
+
+    InstanceAuthoring source = {
+        .geometry = legacy.geometry,
+        .material = legacy.material,
+        .capacity = legacy.capacity,
+        .transforms = legacy.transforms,
+        .colors = legacy.colors,
+        .cast_shadow = legacy.cast_shadow,
+        .receive_shadow = legacy.receive_shadow,
+        .trace = legacy.trace,
+        .has_bounds_override = legacy.has_bounds_override,
+        .local_bounds = legacy.local_bounds,
+        .sway = legacy.sway,
+        .fade = legacy.fade,
+    };
+
+    attach_instances(&source, context)!;
 }
 
 fn void? read_lod_v1(Reader* reader, ReadContext* context) @local {

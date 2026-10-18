@@ -221,6 +221,8 @@ fn void? Scene.set_instances(&self, Node* node, Transform[] transforms, Vec4[] c
  Copy the batch's quadtree topology and advance its topology revision; empty parents disable the mode.
  @param [&in] node : "Carries an InstancedMesh."
  @param parents : "One per live instance."
+ @param split_pixels : "Finite and not negative when parents are given."
+ @param hysteresis : "Finite and not negative when parents are given."
  @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
  @require self.has(node, InstancedMesh)
 *>
@@ -234,7 +236,7 @@ fn void? Scene.set_instance_quadtree(
     InstancedMesh* batch = self.get(node, InstancedMesh);
     InstanceQuadtree* quadtree = &batch.quadtree;
     if (parents.len) {
-        InstanceQuadtree candidate = { .parents = parents };
+        InstanceQuadtree candidate = { .parents = parents, .split_pixels = split_pixels, .hysteresis = hysteresis };
         check_instance_quadtree(&candidate, batch.count)!;
 
         if (batch.trace || batch.mirrored_count() || self.has(node, LodGroup)) return c3d::UNSUPPORTED~;
