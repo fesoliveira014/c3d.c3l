@@ -602,7 +602,12 @@ triangle keeps unit mass and moves under gravity alone.
 
 Soft attachments and dihedral hinges are XPBD constraints in physical units, so their compliance acts
 against the real particle mass. A compliance tuned for the old unit-mass particles now reads much
-stiffer (roughly by the inverse of the particle mass in kilograms); retune it.
+stiffer, roughly by the inverse of the particle mass in kilograms. To keep the old softness, multiply the
+compliance by that inverse mass: the example's cape (0.4 kg/m² over 0.475 m² is 0.19 kg on 299 particles) has
+about 1570 per kilogram, so its bend compliance 2.0 becomes about 3100 and its outer attachment
+compliance 0.001 becomes about 1.6. Across that cape's range the drape depends on density and wind far
+more than on the compliances: attachment compliance from 0.002 to 157 changes nothing visible, and a
+hinge compliance of 0 (a rigid shell) fails to resolve on light particles.
 
 **Aerodynamics.** Cloth reads only `Wind.velocity` and `Wind.max_speed`. `Wind.drag` and `Wind.lift`
 apply to rigid bodies; cloth uses `ClothDesc.drag_coefficient` (default 1.2) and `lift_coefficient`
@@ -690,7 +695,8 @@ The `densities` scene hangs the same 1.8 m by 1.2 m flag from two bars side by s
 with the top row pinned and a 1.5 m/s wind that blows straight at the sheets, under the example's gusts. The
 two sheets swing together to within about a centimetre. Areal mass and the aerodynamic forces make that possible;
 the wrinkles of a free edge or of a pole flag still differ with the resolution. The example drives every
-flag, cape and crowd with a plain `Wind.velocity` and sets no `Wind.drag`.
+flag, cape and crowd with a plain `Wind.velocity` and sets no `Wind.drag`. The cape and crowd capes use a
+heavier 0.4 kg/m² fabric and half the wind, so they hang from the shoulders instead of flying flat.
 
 The `fast` scene rotates a thin box by 90 degrees and translates it in one fixed step
 through a small cloth patch. Continuous and self-contact are enabled. It uses one

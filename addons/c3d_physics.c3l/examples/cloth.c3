@@ -55,8 +55,11 @@ const float CAPE_BACK_OFFSET @local = 0.17f; // metres behind the chest joint; c
 const float CAPE_SHOULDER_HEIGHT @local = 0.12f; // metres above the chest joint
 const String CAPE_JOINT @local = "DEF-spine.003";
 const float CAPE_THICKNESS @local = 0.02f; // metres; keeps the cape off the skin that lies outside the bone capsules
-const float CAPE_BEND_COMPLIANCE @local = 2.0f; // soft enough to drape over the shoulders; 0 makes a rigid shell
-const float CAPE_EDGE_COMPLIANCE @local = 0.001f; // m/N; the outer collar corners yield slightly under a tug
+const float CAPE_DENSITY @local = 0.4f; // kg/m²; wool. At the default 0.2 a breeze lifts the cape off the back, and heavier hangs but swings less
+const float CAPE_INVERSE_PARTICLE_MASS @local = (float)((CAPE_COLUMNS + 1) * (CAPE_ROWS + 1)) / (CAPE_DENSITY * CAPE_WIDTH * CAPE_LENGTH); // 1/kg; XPBD compliances act on this mass
+const float CAPE_BEND_COMPLIANCE @local = 2.0f * CAPE_INVERSE_PARTICLE_MASS; // the unit-mass softness 2.0 scaled to real mass; 0 makes a rigid shell that fails to resolve
+const float CAPE_EDGE_COMPLIANCE @local = 0.001f * CAPE_INVERSE_PARTICLE_MASS; // m/N; the unit-mass value scaled to real mass; the outer collar corners yield slightly under a tug
+const float CAPE_WIND_SHARE @local = 0.5f; // the wearer shields the cape; at 3 m/s it would fly flat, and a lower share trades flutter for a hang
 const Vec3 CHARACTER_POSITION @local = { -1.4f, 0, 0.6f };
 const Vec3 CHARACTER_FACING @local = { -0.45f, 0, -1 }; // three-quarter back view from the camera
 const String MODEL_PATH @local = "../../examples/assets/quaternius/AnimationLibrary_Godot.glb";
@@ -681,6 +684,7 @@ fn void? build_crowd(Demo* demo, uint count) @local {
 fn void? attach_crowd_cape(Demo* demo) @local {
     ClothDesc desc = cloth::default_cloth_desc();
     desc.thickness = CAPE_THICKNESS;
+    desc.density = CAPE_DENSITY;
 
     @pool() {
         uint[] pins = alloc::new_array(tmem, uint, (sz)(CAPE_COLUMNS + 1));
@@ -710,6 +714,7 @@ fn void? attach_cape(Demo* demo) @local {
     desc.tangent_frame = true;
     desc.bend_mode = DIHEDRAL;
     desc.bend_compliance = CAPE_BEND_COMPLIANCE;
+    desc.density = CAPE_DENSITY;
 
     Entity[ragdoll_bones::RIGIFY_BONE_COUNT] colliders;
     foreach (index, bone : ragdoll.bone_nodes) colliders[index] = bone.id;
@@ -1174,8 +1179,8 @@ fn void apply_wind(Demo* demo, double time) @local {
     Vec3 velocity = { math::cos(heading) * speed, 0, math::sin(heading) * speed };
     if (demo.flag) demo.scene.get(demo.flag, Wind).velocity = velocity;
     foreach (flag : demo.density_flags) if (flag) demo.scene.get(flag, Wind).velocity = velocity;
-    if (demo.character.cape) demo.scene.get(demo.character.cape, Wind).velocity = velocity;
-    if (demo.crowd) demo.scene.get(demo.crowd, Wind).velocity = velocity;
+    if (demo.character.cape) demo.scene.get(demo.character.cape, Wind).velocity = velocity * CAPE_WIND_SHARE;
+    if (demo.crowd) demo.scene.get(demo.crowd, Wind).velocity = velocity * CAPE_WIND_SHARE;
     foreach (flag : demo.field) {
         if (Wind* field_wind = demo.scene.get(flag, Wind)) field_wind.velocity = velocity;
     }
