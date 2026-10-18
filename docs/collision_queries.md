@@ -205,12 +205,14 @@ under the authored heights by at most one step, `max(highest - lowest, 0.005) / 
 a field never reproduces its samples exactly. Every preparation reads the retained surface, including one
 that reuses an entry a body cooked.
 
-A texture field is keyed by texture, revision, exact scale and material content. A raw field is keyed by
-its content: the counts, the exact sample bits, the exact scale and the material bytes. Equal content in a
-different array shares one entry, and a changed sample, hole or scale makes a new one. A raw entry is freed
-when its last holder releases it, and a texture entry stays cached for matching preparations, as a mesh
-entry does. Worlds use the same keys, so bodies with equal raw content share one entry as well. A rejected
-preparation releases what it held and does not affect bodies that use the same entry.
+A texture field is keyed by texture, revision, exact scale and material content. A raw field is keyed by a
+64-bit FNV-1a hash of its counts, sample bits and material and hole bytes, and by its exact scale. Equal
+content in a different array shares one entry, and a changed sample, hole or scale makes a new one. The
+cache keeps no copy of the samples to compare against, so a hash collision would share an entry cooked from
+different samples. A raw entry is freed when its last holder releases it, and a texture entry stays cached
+for matching preparations, as a mesh entry does. Worlds use the same keys, so bodies with equal raw content
+share one entry as well. A rejected preparation releases what it held and does not affect bodies that use
+the same entry.
 
 The pair table above applies. Differences from a mesh:
 
