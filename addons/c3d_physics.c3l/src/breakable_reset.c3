@@ -465,7 +465,8 @@ fn void install_breakable_reset_bodies(
         Entity entity = index == state.pieces.len ? root.id : state.pieces[index];
         Node* node = world.scene.node(entity);
         world.scene.add(node, body.authored);
-        world.scene.add(node, body.rigid);
+        RigidBody* rigid = world.scene.add(node, body.rigid);
+        world.roles.add_body(entity, rigid);
         remember_breakable_body(
             world: world,
             state: state,

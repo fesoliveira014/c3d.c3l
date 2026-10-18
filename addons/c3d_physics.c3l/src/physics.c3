@@ -281,6 +281,7 @@ struct RigidBody {
     Collider[]       colliders;
     maths::Aabb      solid_bounds; // body space: union of the colliders with density; dynamic bodies only
     float            solid_volume; // cubic metres: their mass over density; dynamic bodies only
+    uint             moving_index; // position in the world's moving-body list; dynamic and kinematic bodies only
 }
 
 <*
@@ -363,8 +364,9 @@ struct ParallelFor {
 *>
 struct PhysicsWorld {
     Allocator      allocator;
-    SnapshotTable* snapshots;      // heap, so the RigidBody removal hook keeps a stable address
+    SnapshotTable* snapshots;      // heap, so the roles block keeps a stable address
     bool           owns_snapshots;
+    BodyRoles*     roles;          // heap, so the removal hooks keep a stable address while the world moves by value
     b3::WorldId    world;
     AssetStore*    assets;
     Scene*         scene;
@@ -748,13 +750,15 @@ fn PhysicsWorld? create_physics_world(
         .cache_wireframes = desc.cache_wireframes,
     })!;
     snapshots.borrowers++;
-    scene.set_remove_hook(RigidBody, &remove_rigid_body, snapshots);
+    BodyRoles* roles = create_body_roles(allocator, scene, snapshots);
+    scene.set_remove_hook(RigidBody, &remove_rigid_body, roles);
     scene.set_remove_hook(Joint, &remove_joint_component, null);
 
     return {
         .allocator             = allocator,
         .snapshots             = snapshots,
         .owns_snapshots        = cache == null,
+        .roles                 = roles,
         .world                 = world,
         .assets                = assets,
         .scene                 = scene,
@@ -806,6 +810,7 @@ fn void destroy_physics_world(PhysicsWorld* world) {
     world.snapshots.borrowers--;
     if (world.owns_snapshots) destroy_snapshot_table(world.snapshots);
 
+    destroy_body_roles(world.allocator, world.roles);
     alloc::free(world.allocator, world.orphan_scratch.ptr);
     alloc::free(world.allocator, world.contact_begin_storage.ptr);
     alloc::free(world.allocator, world.contact_end_storage.ptr);

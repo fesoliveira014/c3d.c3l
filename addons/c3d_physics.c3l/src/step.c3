@@ -49,12 +49,13 @@ fn void PhysicsWorld.update(&self, float dt) {
     observe_ragdoll_recoveries(self);
 
     float alpha = self.desc.tuning.interpolate ? self.alpha : 1;
-    self.scene.@each(RigidBody; entity, body) {
-        if (body.kind == DYNAMIC) {
-            maths::Transform pose = interpolate_pose(body.previous, body.current, alpha);
-            self.scene.node(entity).set_world_pose(pose.position, pose.rotation);
-        }
-    };
+    foreach (entity : self.roles.moving_bodies()) {
+        RigidBody* body = self.scene.world.get(entity, RigidBody);
+        if (body.kind != DYNAMIC) continue;
+
+        maths::Transform pose = interpolate_pose(body.previous, body.current, alpha);
+        self.scene.node(entity).set_world_pose(pose.position, pose.rotation);
+    }
     if (self.mover_pass.write) self.mover_pass.write(self.mover_pass.context, self, alpha);
 }
 
@@ -71,13 +72,14 @@ fn maths::Transform interpolate_pose(maths::Transform previous, maths::Transform
 
 fn void begin_step(PhysicsWorld* world, float fixed_dt, float step_offset) @local {
     apply_step_forces(world, step_offset);
-    world.scene.@each(RigidBody; entity, body) {
+    foreach (entity : world.roles.moving_bodies()) {
+        RigidBody* body = world.scene.world.get(entity, RigidBody);
         body.previous = body.current;
         if (body.kind == KINEMATIC) {
             maths::Transform target = maths::transform_from_mat4(world.scene.node(entity).world);
             body.body.set_target_transform({ .p = (b3::Pos)target.position, .q = target.rotation }, fixed_dt, true);
         }
-    };
+    }
 }
 
 fn void end_step(PhysicsWorld* world) @local {
@@ -287,7 +289,7 @@ fn void? build_body_at(
         solid = measure_solids(records);
     }
 
-    world.scene.add(node, (RigidBody){
+    RigidBody* rigid = world.scene.add(node, (RigidBody){
         .body         = body_id,
         .kind         = desc.kind,
         .previous     = pose,
@@ -296,6 +298,7 @@ fn void? build_body_at(
         .solid_bounds = solid.bounds,
         .solid_volume = solid.volume,
     });
+    world.roles.add_body(node.id, rigid);
     physics_body.status = LIVE;
 }
 
@@ -304,11 +307,6 @@ fn void destroy_rigid_body(SnapshotTable* table, b3::BodyId body, Collider[] col
     b3::destroy_body(body);
     foreach (&collider : colliders) release_snapshot(table, collider.snapshot);
     alloc::free(table.allocator, colliders.ptr);
-}
-
-fn void remove_rigid_body(Entity entity, void* component, void* user) @private {
-    RigidBody* body = component;
-    destroy_rigid_body(user, body.body, body.colliders);
 }
 
 fn Node*? node_of(PhysicsWorld* world, b3::ShapeId shape) @private {
