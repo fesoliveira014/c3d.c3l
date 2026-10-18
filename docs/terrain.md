@@ -269,8 +269,7 @@ Vec3 smooth = terrain::sample_smooth_normal(&view, x, z)!;
 - The view borrows the store's texels. In-place edits keep it valid and it reads the new heights; replacing,
   releasing or removing the height map, or removing the terrain, invalidates it. It keeps the node transform
   and the ring's edge mask of the moment it was taken, and reads the ring in place: take a new view after a
-  tile links or unlinks or after `refresh_neighbour_rings`. Several threads may read one view while nothing
-  edits the texels.
+  tile links or unlinks. Several threads may read one view while nothing edits the texels.
 
 ## Physics collider
 
