@@ -31,10 +31,24 @@ struct JointAuthoring @private {
     ParallelJoint[] parallel;
 }
 
-struct BuoyancyAuthoring @private {
+const ulong BUOYANCY_V1_LAYOUT @local = 0xf4af0c421ff3e4fa;
+const ulong BUOYANCY_LAYOUT @local = 0x496968a7efc736b9;
+
+struct BuoyancyAuthoringV1 @private {
     float fluid_density;
     float linear_drag;
 }
+
+struct BuoyancyAuthoring @private {
+    float fluid_density;
+    float linear_drag;
+    float drag_coefficient;
+}
+
+serial::BinaryCompatibility[1] buoyancy_binary_compatibility @local = {
+    { .version = 1, .read = &read_buoyancy_v1 },
+};
+uint[1] buoyancy_text_default_versions @local = { 1 };
 
 <*
  Register physics authoring codecs and transient native mirrors.
@@ -45,10 +59,17 @@ fn void? register_serial_codecs() {
     register_serial_value_types()!;
     describe::register_reflected(BodyAuthoring)!;
     describe::register_reflected(JointAuthoring)!;
+    describe::register_reflected(BuoyancyAuthoringV1)!;
     describe::register_reflected(BuoyancyAuthoring)!;
     register_physics_value(BodyAuthoring, 0xed9972ba2248fa8b, &defaults_body_authoring)!;
     register_physics_value(JointAuthoring, 0x448b33882e32ee3e, &defaults_joint_authoring)!;
-    register_physics_value(BuoyancyAuthoring, 0xf4af0c421ff3e4fa, &defaults_buoyancy_authoring)!;
+    register_physics_value(BuoyancyAuthoringV1, BUOYANCY_V1_LAYOUT, &defaults_buoyancy_authoring_v1)!;
+    serial::register_described_type(
+        $Type: BuoyancyAuthoring,
+        version: 2,
+        layout: BUOYANCY_LAYOUT,
+        defaults: &defaults_buoyancy_authoring,
+    )!;
     serial::register_described_owner(PhysicsBody, BodyAuthoring, {
         .name = "physics_body",
         .phase = VALUE,
@@ -68,6 +89,8 @@ fn void? register_serial_codecs() {
         .project = &project_buoyancy,
         .validate = &validate_buoyancy,
         .attach = &attach_buoyancy,
+        .binary_compatibility = buoyancy_binary_compatibility[..],
+        .text_default_versions = buoyancy_text_default_versions[..],
     })!;
     serial::register_described(Wind, { .name = "wind", .project = &project_wind, .validate = &validate_wind })!;
     serial::register_described(Force, { .name = "force", .project = &project_force, .validate = &validate_force })!;
@@ -93,6 +116,10 @@ fn void defaults_joint_authoring(void* value) @private {
         .force_threshold = defaults.force_threshold,
         .torque_threshold = defaults.torque_threshold,
     };
+}
+
+fn void defaults_buoyancy_authoring_v1(void* value) @private {
+    *(BuoyancyAuthoringV1*)value = { .fluid_density = DEFAULT_FLUID_DENSITY };
 }
 
 fn void defaults_buoyancy_authoring(void* value) @private {
@@ -183,16 +210,37 @@ fn void? attach_joint(void* value, serial::ReadContext* context) @private {
 
 fn void? project_buoyancy(void* component, void* value, serial::WriteContext* context) @private {
     Buoyancy* buoyancy = component;
-    if (!buoyancy_authoring_valid(buoyancy.fluid_density, buoyancy.linear_drag)) return c3d::INVALID_ARGUMENT~;
-    *(BuoyancyAuthoring*)value = { .fluid_density = buoyancy.fluid_density, .linear_drag = buoyancy.linear_drag };
+    if (!buoyancy_authoring_valid(buoyancy.fluid_density, buoyancy.linear_drag, buoyancy.drag_coefficient)) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+
+    *(BuoyancyAuthoring*)value = {
+        .fluid_density    = buoyancy.fluid_density,
+        .linear_drag      = buoyancy.linear_drag,
+        .drag_coefficient = buoyancy.drag_coefficient,
+    };
 }
 
 fn void? validate_buoyancy(void* value, serial::ReadContext* context) @private {
     BuoyancyAuthoring* source = value;
-    if (!buoyancy_authoring_valid(source.fluid_density, source.linear_drag)) return c3d::INVALID_ARGUMENT~;
+    if (!buoyancy_authoring_valid(source.fluid_density, source.linear_drag, source.drag_coefficient)) {
+        return c3d::INVALID_ARGUMENT~;
+    }
 }
 
 fn void? attach_buoyancy(void* value, serial::ReadContext* context) @private {
     BuoyancyAuthoring* source = value;
-    context.scene.add(context.node, (Buoyancy){ .fluid_density = source.fluid_density, .linear_drag = source.linear_drag });
+    context.scene.add(context.node, (Buoyancy){
+        .fluid_density    = source.fluid_density,
+        .linear_drag      = source.linear_drag,
+        .drag_coefficient = source.drag_coefficient,
+    });
+}
+
+fn void? read_buoyancy_v1(serial::Reader* reader, serial::ReadContext* context) @private {
+    BuoyancyAuthoringV1* legacy = context.read_value(BuoyancyAuthoringV1, reader)!;
+    BuoyancyAuthoring source = { .fluid_density = legacy.fluid_density, .linear_drag = legacy.linear_drag };
+
+    validate_buoyancy(&source, context)!;
+    attach_buoyancy(&source, context)!;
 }

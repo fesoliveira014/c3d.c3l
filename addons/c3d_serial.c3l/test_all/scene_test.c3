@@ -77,7 +77,8 @@ fn void assert_authoring(Fixture* fixture, Node* root) @private {
     PhysicsJoint* joint = scene.get(body, PhysicsJoint);
     assert(c3d::same_id(joint.desc.other, child_named(root, "contact").id) && joint.desc.distance.length == 1.25f);
     assert(scene.get(body, Wind).lift == 0.4f && scene.get(body, Force).local_point == (Vec3){ 7, 8, 9 });
-    assert(scene.get(body, Buoyancy).fluid_density == 1025 && scene.get(body, Buoyancy).submerged_fraction == 0);
+    Buoyancy* buoyancy = scene.get(body, Buoyancy);
+    assert(buoyancy.fluid_density == 1025 && buoyancy.drag_coefficient == 0.4f && buoyancy.submerged_fraction == 0);
     Node* fabric = child_named(root, "fabric");
     Cloth* cloth = scene.get(fabric, Cloth);
     assert(!cloth.is_prepared() && c3d::same_id(cloth.authoring.source, fixture.box));

@@ -55,7 +55,7 @@ fn void test_physics_owner_scalars_share_finite_domains_in_both_encodings() @tes
         float*[6] force_fields = {
             &force.force.x, &force.force.y, &force.force.z, &force.local_point.x, &force.local_point.y, &force.local_point.z,
         };
-        float*[2] buoyancy_fields = { &buoyancy.fluid_density, &buoyancy.linear_drag };
+        float*[3] buoyancy_fields = { &buoyancy.fluid_density, &buoyancy.linear_drag, &buoyancy.drag_coefficient };
         float*[9] body_fields = {
             &body.linear_velocity.x, &body.linear_velocity.y, &body.linear_velocity.z,
             &body.angular_velocity.x, &body.angular_velocity.y, &body.angular_velocity.z,

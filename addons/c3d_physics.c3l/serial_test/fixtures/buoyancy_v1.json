@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": 0,
+      "parent": null,
+      "name": "physics",
+      "local": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "buoyancy": {
+          "version": 1,
+          "value": {
+            "fluid_density": 1025,
+            "linear_drag": 7
+          }
+        }
+      }
+    }
+  ]
+}

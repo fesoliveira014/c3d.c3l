@@ -19,6 +19,14 @@ const double ERROR_TIME_STEP @local = 0.37;
 const float QUERY_TOLERANCE @local = 0.0001f; // metres; float rounding of the rotated node
 const float MATRIX_TOLERANCE @local = 0.00001f;
 const float SCROLL_TOLERANCE @local = 0.0001f; // texture-space periods; float rounding of the segment change
+const float DIFFERENCE_STEP @local = 0.015625f; // 2^-6 metres and seconds: exact in float, no rounding of its own
+const float KINEMATIC_TOLERANCE @local = 0.004f; // metres per second; measures 2.1e-3, the inversion residual
+const float NORMAL_TOLERANCE @local = 0.004f; // length of a unit vector difference; measures 1.7e-3
+const Vec2[3] DETAIL_POINTS @local = { { 1, 2 }, { -7, 4.5f }, { 9.5f, -9.5f } }; // node-local metres
+const double[2] DETAIL_TIMES @local = { 2.25, 6.5 }; // seconds, exact in float
+const Vec3 CURRENT @local = { 0.5f, 0, -0.25f }; // metres per second
+const float SAMPLER_OFFSET @local = 0.25f; // seconds, exact in float
+const Vec3 ORIGIN_SHIFT @local = { 40, 0, -24 }; // metres; moves the 20 m body well off its old position
 const Vec3 WATER_POSITION @local = { 3, -2, 5 };
 const float WATER_YAW_DEGREES @local = 30;
 const uint WATER_LAYER @local = 1 << 3;
@@ -139,6 +147,47 @@ fn float? height_at(SurfaceView* view, float world_x, float world_z, double time
         world_z: world_z,
         time:    time,
     );
+}
+
+struct SurfaceSlopes @local {
+    float x;
+    float z;
+    float time;
+}
+
+// Central differences of the public height, the reference the analytic detail is compared with.
+fn SurfaceSlopes slopes_at(SurfaceView* view, Vec3 point, double time) @local {
+    float step = DIFFERENCE_STEP;
+    float east = height_over(view, { point.x + step, 0, point.z }, time);
+    float west = height_over(view, { point.x - step, 0, point.z }, time);
+    float north = height_over(view, { point.x, 0, point.z + step }, time);
+    float south = height_over(view, { point.x, 0, point.z - step }, time);
+    float later = height_over(view, point, time + (double)step);
+    float earlier = height_over(view, point, time - (double)step);
+
+    return {
+        .x    = (east - west) / (2 * step),
+        .z    = (north - south) / (2 * step),
+        .time = (later - earlier) / (2 * step),
+    };
+}
+
+fn float height_over(SurfaceView* view, Vec3 point, double time) @local {
+    return height_at(
+        view:    view,
+        world_x: point.x,
+        world_z: point.z,
+        time:    time,
+    )!!;
+}
+
+fn WaterSample detail_at(SurfaceView* view, Vec3 point, double time) @local {
+    return water::sample_surface_detail(
+        view:    view,
+        world_x: point.x,
+        world_z: point.z,
+        time:    time,
+    )!!;
 }
 
 fn float largest_inversion_error(Fixture* fixture, WaterDesc desc) @local {
@@ -425,6 +474,89 @@ fn void test_surface_follows_the_node_pose() @test {
     Vec3 outside = maths::transform_point(node.world, { 10.1f, 0, 0 });
     height_at(&view, inside.x, inside.z, 0)!!;
     assert_fault(@catch(height_at(&view, outside.x, outside.z, 0)), NOT_FOUND, "A point past the edge");
+
+    WaterSample[DETAIL_POINTS.len] before;
+    foreach (index, local : DETAIL_POINTS) {
+        Vec3 world = maths::transform_point(node.world, { local.x, 0, local.y });
+        before[index] = detail_at(&view, world, DETAIL_TIMES[0]);
+    }
+
+    fixture.scene.shift_origin(ORIGIN_SHIFT);
+    fixture.scene.update_world();
+    SurfaceView shifted_view = water::surface_view(&fixture.scene, &fixture.assets, node.id)!!;
+    foreach (index, local : DETAIL_POINTS) {
+        Vec3 world = maths::transform_point(node.world, { local.x, 0, local.y });
+        WaterSample after = detail_at(&shifted_view, world, DETAIL_TIMES[0]);
+        assert(math::abs(after.height - before[index].height) <= QUERY_TOLERANCE);
+        assert((after.normal - before[index].normal).length() <= QUERY_TOLERANCE);
+        assert((after.velocity - before[index].velocity).length() <= QUERY_TOLERANCE);
+    }
+
+    Vec3 shifted_centre = maths::transform_point(node.world, { 0, 0, 0 });
+    WaterSample? stale = water::sample_surface_detail(
+        view:    &view,
+        world_x: shifted_centre.x,
+        world_z: shifted_centre.z,
+        time:    DETAIL_TIMES[0],
+    );
+    assert_fault(@catch(stale), NOT_FOUND, "A view taken before the shift");
+}
+
+fn void test_surface_detail_follows_the_public_surface() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* node = add_water_node(
+        fixture:     &fixture,
+        desc:        calm_desc(),
+        position:    WATER_POSITION,
+        yaw_degrees: WATER_YAW_DEGREES,
+    );
+    SurfaceView view = water::surface_view(&fixture.scene, &fixture.assets, node.id)!!;
+    WaterFluid fluid = { .view = view, .current = CURRENT };
+
+    foreach (local : DETAIL_POINTS) {
+        Vec3 point = maths::transform_point(node.world, { local.x, 0, local.y });
+        foreach (time : DETAIL_TIMES) {
+            WaterSample detail = detail_at(&view, point, time);
+            SurfaceSlopes slopes = slopes_at(&view, point, time);
+            assert(detail.height == height_over(&view, point, time));
+
+            float kinematic = detail.velocity.y - (detail.velocity.x * slopes.x + detail.velocity.z * slopes.z);
+            float kinematic_error = math::abs(kinematic - slopes.time);
+            assert(kinematic_error <= KINEMATIC_TOLERANCE, "kinematic error %e at %f s", kinematic_error, time);
+
+            Vec3 graph_normal = { -slopes.x, 1, -slopes.z };
+            float normal_error = (detail.normal - graph_normal.normalize()).length();
+            assert(normal_error <= NORMAL_TOLERANCE, "normal error %e at %f s", normal_error, time);
+
+            fluid.time = time;
+            Vec3 velocity;
+            float height = water::fluid_sample(
+                context:     &fluid,
+                x:           point.x,
+                z:           point.z,
+                step_offset: SAMPLER_OFFSET,
+                velocity:    &velocity,
+            )!!;
+
+            WaterSample offset_detail = detail_at(&view, point, time + (double)SAMPLER_OFFSET);
+            assert(height == offset_detail.height);
+            assert(velocity == offset_detail.velocity + CURRENT);
+        }
+    }
+
+    Vec3 velocity;
+    Vec3 outside = maths::transform_point(node.world, { 2 * calm_desc().extent, 0, 0 });
+
+    float? sampled = water::fluid_sample(
+        context:     &fluid,
+        x:           outside.x,
+        z:           outside.z,
+        step_offset: 0,
+        velocity:    &velocity,
+    );
+    assert_fault(@catch(sampled), NOT_FOUND, "A point past the edge");
 }
 
 fn void test_mirror_reflects_the_viewing_camera() @test {

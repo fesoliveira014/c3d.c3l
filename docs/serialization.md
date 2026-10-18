@@ -316,7 +316,7 @@ their existing contracts. Existing shared runtime validators also govern seriali
 | --- | --- | --- |
 | Wind | `velocity` components, `drag`, `lift`, `max_speed` | Finite; no added range restriction |
 | Force | `force` and `local_point` components | Finite; no added range restriction |
-| Buoyancy | `fluid_density`, `linear_drag` | Finite; no added range restriction |
+| Buoyancy | `fluid_density`, `linear_drag`, `drag_coefficient` | Finite; no added range restriction |
 | PhysicsBody | BodyDesc `linear_velocity` and `angular_velocity` components, `linear_damping`, `angular_damping`, `gravity_scale` | Finite; no added range restriction |
 | Animator | Action `speed`; 1D/2D blend-space coordinates, parameter and `speed` | Finite; negative speeds allowed |
 | Animator | Action and blend-space `weight` | Finite and nonnegative; no upper cap |
@@ -349,8 +349,9 @@ only its selected variant. Cloth (v8) restores in OWNER and CrowdCloth (v3)
 restores in BINDINGS; prepared skinned Cloth projects its retained source Mesh
 with `project_absent_component` and omits its generated child output node, while
 prepared CrowdCloth omits its per-slot output children. Wind and Force persist
-their complete values; Buoyancy persists density and drag and resets submerged
-fraction. RigidBody, Joint and ClothOutput are explicitly transient, and
+their complete values; Buoyancy (v2) persists density, linear drag and drag
+coefficient and resets submerged fraction, and v1 payloads read a drag
+coefficient of 0. RigidBody, Joint and ClothOutput are explicitly transient, and
 ClothOutput's read-only collector rejects exporting a generated output child
 without its selected owner. Ordinary physics synchronization creates the native
 state. The package inventory discovers all twelve physics component types through

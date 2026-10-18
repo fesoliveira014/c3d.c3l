@@ -19,10 +19,25 @@ const float RAFT_DRAG @local = 3000; // newton-seconds per metre; damps the raft
 const float LOW_SHORE_X @local = 0; // west of this line the analytic surface lies LOW_SHORE_DEPTH lower
 const float LOW_SHORE_DEPTH @local = 5;
 const float DRY_SHORE_Z @local = 20; // north of this line there is no fluid at all
+const float DEEP_LEVEL @local = 1000; // above every body in the drag tests, so each cell stays fully submerged
+const float DENSE_HALF_SIDE @local = 0.5f; // a one metre cube
+const float DENSE_DENSITY @local = 3000; // three times the fluid: it sinks to a terminal speed
+const float DRAG_COEFFICIENT @local = 1;
+const float TERMINAL_SECONDS @local = 10; // about twenty time constants of the cube's approach
+const float TERMINAL_TOLERANCE @local = 0.0001f; // relative; measured 4e-6 at 1/60 and 8e-6 at 1/120, float rounding
+const float STRONG_DRAG_COEFFICIENT @local = 1e6f; // unclamped, one step would throw the body past the current
+const float CURRENT_SPEED @local = 5; // metres per second
+const float REVERSAL_TOLERANCE @local = 0.0001f; // metres per second; float rounding of the velocity update
+const uint CURRENT_STEPS @local = 30; // the clamped body reaches the current on the first step
+const float DRIFT_TOLERANCE @local = 0.0001f; // metres per second; measured 1e-6 once the raft's drift settles
+const uint COMPARED_STEPS @local = 120;
+const float REST_TOLERANCE @local = 0.0001f; // metres and m/s; measured 1e-8 and 1.3e-7, float rounding
+const float DROP_HEIGHT @local = 1.5f; // above the surface: the raft splashes in and bobs
 
 struct FluidSurface @local {
     float  level;
     bool   shores;
+    Vec3   velocity;
     uint   samples;
     float[RECORDED_SAMPLES] step_offsets;
 }
@@ -42,7 +57,29 @@ fn float? analytic_surface(void* context, float x, float z, float step_offset) @
     return surface.level;
 }
 
-fn void setup(Fixture* fixture, FluidSurface* surface) @local {
+fn float? analytic_sampler(
+    void* context,
+    float x,
+    float z,
+    float step_offset,
+    Vec3* velocity,
+) @local {
+    FluidSurface* surface = context;
+    float height = analytic_surface(
+        context:     context,
+        x:           x,
+        z:           z,
+        step_offset: step_offset,
+    )!;
+    *velocity = surface.velocity;
+    return height;
+}
+
+fn void setup(
+    Fixture* fixture,
+    FluidSurface* surface,
+    PhysicsDesc desc = physics::default_physics_desc(),
+) @local {
     fixture.assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
     fixture.scene = scene::create_scene(mem, scene::default_scene_desc());
     physics::register_physics(&fixture.scene)!!;
@@ -50,7 +87,7 @@ fn void setup(Fixture* fixture, FluidSurface* surface) @local {
         allocator: mem,
         assets:    &fixture.assets,
         scene:     &fixture.scene,
-        desc:      physics::default_physics_desc(),
+        desc:      desc,
     )!!;
     fixture.physics.set_fluid_surface(&analytic_surface, surface);
 }
@@ -74,12 +111,17 @@ fn Node* add_floater(
     Vec3 position,
     ColliderDesc[] colliders,
     float drag,
+    float drag_coefficient = 0,
 ) @local {
     Node* node = fixture.scene.add_node()!!;
     node.local.position = position;
     fixture.scene.update_world();
     fixture.physics.add_body(node, physics::default_body_desc(DYNAMIC), colliders)!!;
-    fixture.scene.add(node, (Buoyancy){ .fluid_density = physics::DEFAULT_FLUID_DENSITY, .linear_drag = drag });
+    fixture.scene.add(node, (Buoyancy){
+        .fluid_density    = physics::DEFAULT_FLUID_DENSITY,
+        .linear_drag      = drag,
+        .drag_coefficient = drag_coefficient,
+    });
     return node;
 }
 
@@ -90,6 +132,13 @@ fn void settle(Fixture* fixture) @local {
 fn float fraction_of(Fixture* fixture, Node* node) @local => fixture.scene.get(node, Buoyancy).submerged_fraction;
 
 fn float body_height(Fixture* fixture, Node* node) @local => fixture.scene.get(node, RigidBody).current.position.y;
+
+fn Vec3 body_velocity(Fixture* fixture, Node* node) @local => fixture.physics.body(node)!!.linear_velocity();
+
+fn float equilibrium_height() @local {
+    float height = 2 * RAFT_HALF_EXTENTS.y;
+    return FLUID_LEVEL - 0.6f * height + RAFT_HALF_EXTENTS.y;
+}
 
 fn void test_lighter_box_settles_at_its_density_line() @test {
     FluidSurface surface = { .level = FLUID_LEVEL };
@@ -300,4 +349,176 @@ fn void test_two_collider_body_floats_at_its_summed_volume() @test {
     assert(math::abs(fraction_of(&fixture, node) - 0.6f) <= DENSITY_TOLERANCE);
     float expected_origin = FLUID_LEVEL - 0.6f * height + height / 2;
     assert(math::abs(body_height(&fixture, node) - expected_origin) <= DRAFT_TOLERANCE);
+}
+
+fn float terminal_speed(float time_step) @local {
+    PhysicsDesc desc = physics::default_physics_desc();
+    desc.tuning.fixed_dt = time_step;
+
+    FluidSurface surface = { .level = DEEP_LEVEL };
+    Fixture fixture;
+    setup(&fixture, &surface, desc);
+    defer teardown(&fixture);
+    ColliderDesc cube = box({ DENSE_HALF_SIDE, DENSE_HALF_SIDE, DENSE_HALF_SIDE }, DENSE_DENSITY);
+    Node* node = add_floater(
+        fixture:          &fixture,
+        position:         { 0, 0, 0 },
+        colliders:        (&cube)[:1],
+        drag:             0,
+        drag_coefficient: DRAG_COEFFICIENT,
+    );
+
+    uint steps = (uint)(TERMINAL_SECONDS / time_step);
+    for (uint step = 0; step < steps; step++) fixture.physics.update(time_step);
+    return -body_velocity(&fixture, node).y;
+}
+
+fn void test_quadratic_drag_reaches_terminal_velocity() @test {
+    float side = 2 * DENSE_HALF_SIDE;
+    float volume = side * side * side;
+    float mass = DENSE_DENSITY * volume;
+    float frontal_area = side * side;
+    float net_weight = (mass - physics::DEFAULT_FLUID_DENSITY * volume) * -physics::DEFAULT_GRAVITY.y;
+    float drag_scale = physics::DEFAULT_FLUID_DENSITY * DRAG_COEFFICIENT * frontal_area;
+    float expected = math::sqrt(2 * net_weight / drag_scale);
+
+    foreach (time_step : (float[2]){ 1.0f / 60, 1.0f / 120 }) {
+        float speed = terminal_speed(time_step);
+        float error = math::abs(speed - expected);
+        assert(error <= TERMINAL_TOLERANCE * expected, "%f against %f at %f s", speed, expected, time_step);
+    }
+}
+
+fn void test_drag_clamp_prevents_reversal() @test {
+    PhysicsDesc desc = physics::default_physics_desc();
+    desc.tuning.gravity = {};
+
+    FluidSurface surface = { .level = DEEP_LEVEL, .velocity = { CURRENT_SPEED, 0, 0 } };
+    Fixture fixture;
+    setup(&fixture, &surface, desc);
+    defer teardown(&fixture);
+    fixture.physics.set_fluid_sampler(&analytic_sampler, &surface);
+    ColliderDesc cube = box({ DENSE_HALF_SIDE, DENSE_HALF_SIDE, DENSE_HALF_SIDE }, physics::DEFAULT_FLUID_DENSITY);
+    Node* node = add_floater(
+        fixture:          &fixture,
+        position:         { 0, 0, 0 },
+        colliders:        (&cube)[:1],
+        drag:             0,
+        drag_coefficient: STRONG_DRAG_COEFFICIENT,
+    );
+
+    float previous;
+    for (uint step = 0; step < CURRENT_STEPS; step++) {
+        fixture.physics.update(fixture.physics.desc.tuning.fixed_dt);
+        float speed = body_velocity(&fixture, node).x;
+        assert(speed <= CURRENT_SPEED + REVERSAL_TOLERANCE, "step %d overshot the current at %f", step, speed);
+        assert(speed >= previous - REVERSAL_TOLERANCE, "step %d slowed to %f", step, speed);
+        previous = speed;
+    }
+
+    assert(math::abs(previous - CURRENT_SPEED) <= REVERSAL_TOLERANCE);
+}
+
+fn void test_moving_fluid_carries_a_floating_body() @test {
+    FluidSurface surface = { .level = FLUID_LEVEL, .velocity = { 2, 0, 0 } };
+    Fixture fixture;
+    setup(&fixture, &surface);
+    defer teardown(&fixture);
+    fixture.physics.set_fluid_sampler(&analytic_sampler, &surface);
+    ColliderDesc raft = box(RAFT_HALF_EXTENTS, 600);
+    Node* node = add_floater(
+        fixture:          &fixture,
+        position:         { 0, equilibrium_height(), 0 },
+        colliders:        (&raft)[:1],
+        drag:             RAFT_DRAG,
+        drag_coefficient: DRAG_COEFFICIENT,
+    );
+
+    settle(&fixture);
+    assert(math::abs(body_velocity(&fixture, node).x - surface.velocity.x) <= DRIFT_TOLERANCE);
+    assert(fixture.scene.get(node, RigidBody).current.position.x > 0);
+    assert(math::abs(fraction_of(&fixture, node) - 0.6f) <= DENSITY_TOLERANCE);
+    assert(math::abs(body_height(&fixture, node) - equilibrium_height()) <= DRAFT_TOLERANCE);
+}
+
+fn void test_floating_body_at_equilibrium_stays_put_under_quadratic_drag() @test {
+    FluidSurface surface = { .level = FLUID_LEVEL };
+    Fixture fixture;
+    setup(&fixture, &surface);
+    defer teardown(&fixture);
+    fixture.physics.set_fluid_sampler(&analytic_sampler, &surface);
+    ColliderDesc raft = box(RAFT_HALF_EXTENTS, 600);
+    Node* node = add_floater(
+        fixture:          &fixture,
+        position:         { 0, equilibrium_height(), 0 },
+        colliders:        (&raft)[:1],
+        drag:             RAFT_DRAG,
+        drag_coefficient: DRAG_COEFFICIENT,
+    );
+
+    float worst_offset;
+    float worst_speed;
+    for (uint step = 0; step < SETTLE_STEPS; step++) {
+        fixture.physics.update(fixture.physics.desc.tuning.fixed_dt);
+        worst_offset = max(worst_offset, math::abs(body_height(&fixture, node) - equilibrium_height()));
+        worst_speed = max(worst_speed, body_velocity(&fixture, node).length());
+    }
+
+    assert(worst_offset <= REST_TOLERANCE, "offset %e", worst_offset);
+    assert(worst_speed <= REST_TOLERANCE, "speed %e", worst_speed);
+}
+
+fn bool same_body_state(
+    Fixture* first,
+    Node* first_node,
+    Fixture* second,
+    Node* second_node,
+) @local {
+    RigidBody* first_body = first.scene.get(first_node, RigidBody);
+    RigidBody* second_body = second.scene.get(second_node, RigidBody);
+    b3::BodyId first_native = first.physics.body(first_node)!!;
+    b3::BodyId second_native = second.physics.body(second_node)!!;
+
+    return first_body.current.position == second_body.current.position
+        && first_body.current.rotation.v == second_body.current.rotation.v
+        && first_native.linear_velocity() == second_native.linear_velocity()
+        && first_native.angular_velocity() == second_native.angular_velocity();
+}
+
+fn void test_height_only_surface_equals_a_zero_velocity_sampler() @test {
+    FluidSurface surface_context = { .level = FLUID_LEVEL };
+    FluidSurface sampler_context = { .level = FLUID_LEVEL };
+    Fixture with_surface;
+    setup(&with_surface, &surface_context);
+    defer teardown(&with_surface);
+    Fixture with_sampler;
+    setup(&with_sampler, &sampler_context);
+    defer teardown(&with_sampler);
+    with_sampler.physics.set_fluid_sampler(&analytic_sampler, &sampler_context);
+
+    ColliderDesc raft = box(RAFT_HALF_EXTENTS, 600);
+    Node*[2] nodes;
+    foreach (index, fixture : (Fixture*[2]){ &with_surface, &with_sampler }) {
+        nodes[index] = add_floater(
+            fixture:          fixture,
+            position:         { 0, DROP_HEIGHT, 0 },
+            colliders:        (&raft)[:1],
+            drag:             RAFT_DRAG,
+            drag_coefficient: DRAG_COEFFICIENT,
+        );
+    }
+
+    for (uint step = 0; step < COMPARED_STEPS; step++) {
+        with_surface.physics.update(with_surface.physics.desc.tuning.fixed_dt);
+        with_sampler.physics.update(with_sampler.physics.desc.tuning.fixed_dt);
+        bool same = same_body_state(
+            first:       &with_surface,
+            first_node:  nodes[0],
+            second:      &with_sampler,
+            second_node: nodes[1],
+        );
+        assert(same, "bodies diverged at step %d", step);
+    }
+
+    assert(fraction_of(&with_surface, nodes[0]) > 0);
 }

@@ -23,8 +23,8 @@ fn bool force_authoring_valid(Force force) @local {
     return finite_authoring_vector(force.force) && finite_authoring_vector(force.local_point);
 }
 
-fn bool buoyancy_authoring_valid(float fluid_density, float linear_drag) @private {
-    return math::is_finite(fluid_density) && math::is_finite(linear_drag);
+fn bool buoyancy_authoring_valid(float fluid_density, float linear_drag, float drag_coefficient) @private {
+    return math::is_finite(fluid_density) && math::is_finite(linear_drag) && math::is_finite(drag_coefficient);
 }
 
 fn void? project_wind(void* component, void* value, serial::WriteContext* context) @private {
