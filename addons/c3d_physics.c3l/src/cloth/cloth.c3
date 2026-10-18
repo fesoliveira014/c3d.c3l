@@ -292,8 +292,10 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
 
     @pool() {
         check_seams(desc.seams, (uint)source.data.positions.len)!;
+
         ClothMaterialPlan material_plan = build_material_plan(&source.data, desc)!;
         uint particle_count = material_plan.particle_count;
+
         ClothAttachmentPlan attachment_plan = build_attachment_plan(
             legacy_pins:        desc.pins,
             render_to_particle: material_plan.render_to_particle,
@@ -304,9 +306,9 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         Vec3[] rest = alloc::new_array(tmem, Vec3, (sz)particle_count);
         Vec3[] world = alloc::new_array(tmem, Vec3, (sz)particle_count);
         foreach (particle, source_vertex : material_plan.particle_sources) {
-            Vec3 local_pos = source.data.positions[source_vertex];
-            rest[particle] = local_pos;
-            world[particle] = maths::transform_point(node.world, local_pos);
+            Vec3 local_position = source.data.positions[source_vertex];
+            rest[particle] = local_position;
+            world[particle] = maths::transform_point(node.world, local_position);
         }
         check_world_positions(world)!;
 
@@ -317,7 +319,9 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
             world_positions:    world,
             desc:               desc,
         )!;
+
         ClothCapture capture = capture_colliders(scene, desc.colliders, desc.collisions.max_shapes)!;
+
         GeometryId copy = assets.add_geometry(&material_plan.geometry)!;
         defer catch assets.remove_geometry(copy);
 
@@ -361,6 +365,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
             foreach (index, point : world) state.sweep_bounds[index] = { .min = point, .max = point };
         }
         state.published_frame = node.world;
+
         state.inverse_masses[..] = 1;
         state.pins[..] = attachment_plan.pins[..];
         foreach (slot, pin : attachment_plan.pins) {
@@ -368,6 +373,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
             state.pin_anchors[slot] = world[pin];
             state.pin_targets[slot] = world[pin];
         }
+
         state.soft_attachments[..] = attachment_plan.soft[..];
         foreach (slot, attachment : attachment_plan.soft) {
             state.soft_anchors[slot] = world[attachment.particle];

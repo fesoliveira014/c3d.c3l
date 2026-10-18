@@ -253,11 +253,14 @@ fn void test_cloth_dihedral_bending_rest_angles_and_certification() @test {
 
     GeometryId quad_id;
     GeometryId flipped_quad_id;
+    GeometryId lifted_quad_id;
     @pool() {
         Geometry hinge_geometry = hinge_quad(tmem, 0);
         quad_id = fixture.assets.add_geometry(&hinge_geometry)!!;
         Geometry flipped_geometry = hinge_quad(tmem, 0, true);
         flipped_quad_id = fixture.assets.add_geometry(&flipped_geometry)!!;
+        Geometry lifted_geometry = hinge_quad(tmem, 0.37f);
+        lifted_quad_id = fixture.assets.add_geometry(&lifted_geometry)!!;
     };
 
     Node* distance_flipped_node = add_cloth_node(&fixture, flipped_quad_id);
@@ -331,6 +334,20 @@ fn void test_cloth_dihedral_bending_rest_angles_and_certification() @test {
     ClothState* large_state = state_of(&fixture, large_fold_node);
     assert(!large_state.contact_result.failure);
     assert(large_state.hinges[0].last_angle > 1.0f);
+
+    Node* long_way_node = add_cloth_node(&fixture, lifted_quad_id);
+    uint[3] single_wing_pins = { 0, 1, 2 };
+    ClothRestAngle[1] long_way_override = { { .first = 1, .second = 2, .angle = -3.0f } };
+    ClothDesc long_way_desc = large_desc;
+    long_way_desc.pins = single_wing_pins[..];
+    long_way_desc.substeps = 1;
+    long_way_desc.iterations = 32;
+    long_way_desc.rest_angles = long_way_override[..];
+    fixture.scene.add_cloth(&fixture.assets, long_way_node, long_way_desc)!!;
+    for (uint step_index = 0; step_index < 25; step_index++) step(&fixture, physics::DEFAULT_FIXED_DT);
+    ClothState* long_way_state = state_of(&fixture, long_way_node);
+    assert(!long_way_state.contact_result.failure);
+    assert(math::abs(long_way_state.hinges[0].last_angle + 3.0f) <= 0.05f);
 
     Node* soft_hinge_node = add_cloth_node(&fixture, quad_id);
     ClothRestAngle[1] soft_override = { { .first = 1, .second = 2, .angle = 0.7f } };

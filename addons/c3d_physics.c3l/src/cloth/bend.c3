@@ -6,11 +6,10 @@ import c3d::physics @public;
 import std::math;
 
 const double MIN_HINGE_EDGE @local = 1e-8; // metres; a shorter hinge axis has no stable unit direction
-const double MIN_HINGE_TRIG @local = 0.25; // unitless sin^2 + cos^2 floor rejecting near-zero normal pairs
 const double MIN_HINGE_GRADIENT @local = 1e-12; // rad^2/m^2 floor before XPBD scalar division
 const double HALF_TURN_TIE_EPSILON @local = 1e-15; // radians; snaps the -pi half-turn tie onto +pi
-const double MAX_HINGE_SUBSTEP_TURN @local = math::PI * 0.5; // radians; quarter-turn bound per certified interval
-const double MAX_HINGE_PROJECTION_TURN @local = 1.25; // radians; clamps one Newton step below the quarter-turn bound
+const double MAX_HINGE_START_OFFSET @local = math::PI * 0.5; // radians; a path start further from the tracked angle is unresolved
+const double MAX_HINGE_PROJECTION_TURN @local = 1.25; // radians; bounds one Newton step and the substep target window, keeping the unwrap on the committed branch
 const usz MAX_HINGE_SUBDIVISIONS @local = 64; // interval stack bound; cost linear in bisections per hinge
 
 <* Bending constraint formulation across interior triangle hinges. *>
@@ -42,6 +41,22 @@ struct ClothHingeSample @private {
     ContactVector[4] gradients;
 }
 
+struct ClothHingeFrame @local {
+    ContactVector edge_vector;
+    ContactVector first_wing;
+    ContactVector second_wing;
+    ContactVector edge_axis;
+    ContactVector n0;
+    ContactVector n1;
+    ContactVector normal_cross;
+    double        edge_length;
+    double        area0;
+    double        area1;
+    double        sine;
+    double        cosine;
+    double        angle;
+}
+
 fn void? check_bend_desc(ClothDesc desc) @private {
     if ((uint)desc.bend_mode > (uint)ClothBendMode.DIHEDRAL) return c3d::INVALID_ARGUMENT~;
     if (!(desc.bend_compliance >= 0) || !math::is_finite(desc.bend_compliance)) return c3d::INVALID_ARGUMENT~;
@@ -68,85 +83,50 @@ fn double wrap_dihedral_angle(double angle) @private {
     return wrapped;
 }
 
-fn double? evaluate_hinge_angle(Vec3[4] points) @private {
+fn ClothHingeFrame? evaluate_hinge_frame(Vec3[4] points) @local {
     foreach (point : points) {
         if (!finite_vector(point)) return BEND_UNRESOLVED~;
     }
 
     ContactVector p0 = (ContactVector)points[0];
-    ContactVector p1 = (ContactVector)points[1];
-    ContactVector p2 = (ContactVector)points[2];
-    ContactVector p3 = (ContactVector)points[3];
+    ClothHingeFrame frame = {
+        .edge_vector = (ContactVector)points[1] - p0,
+        .first_wing  = (ContactVector)points[2] - p0,
+        .second_wing = (ContactVector)points[3] - p0,
+    };
 
-    ContactVector edge_vector = p1 - p0;
-    ContactVector first_wing = p2 - p0;
-    ContactVector second_wing = p3 - p0;
+    frame.edge_length = frame.edge_vector.length();
+    if (!(frame.edge_length > MIN_HINGE_EDGE) || !math::is_finite(frame.edge_length)) return BEND_UNRESOLVED~;
+    frame.edge_axis = frame.edge_vector / frame.edge_length;
 
-    double edge_length = edge_vector.length();
-    if (!(edge_length > MIN_HINGE_EDGE) || !math::is_finite(edge_length)) return BEND_UNRESOLVED~;
-    ContactVector edge_axis = edge_vector / edge_length;
-
-    ContactVector n0_raw = edge_vector.cross(first_wing);
-    ContactVector n1_raw = second_wing.cross(edge_vector);
-    double area0 = n0_raw.length();
-    double area1 = n1_raw.length();
-    if (!(area0 > 2.0 * MIN_TRIANGLE_AREA) || !(area1 > 2.0 * MIN_TRIANGLE_AREA)
-        || !math::is_finite(area0) || !math::is_finite(area1)) {
+    ContactVector n0_raw = frame.edge_vector.cross(frame.first_wing);
+    ContactVector n1_raw = frame.second_wing.cross(frame.edge_vector);
+    frame.area0 = n0_raw.length();
+    frame.area1 = n1_raw.length();
+    if (!(frame.area0 > 2.0 * MIN_TRIANGLE_AREA) || !(frame.area1 > 2.0 * MIN_TRIANGLE_AREA)
+        || !math::is_finite(frame.area0) || !math::is_finite(frame.area1)) {
         return BEND_UNRESOLVED~;
     }
 
-    ContactVector n0 = n0_raw / area0;
-    ContactVector n1 = n1_raw / area1;
-    ContactVector normal_cross = n0.cross(n1);
-    double sine = edge_axis.dot(normal_cross);
-    double cosine = n0.dot(n1);
-    double denominator = sine * sine + cosine * cosine;
-    if (!(denominator > MIN_HINGE_TRIG) || !math::is_finite(denominator)) return BEND_UNRESOLVED~;
+    frame.n0 = n0_raw / frame.area0;
+    frame.n1 = n1_raw / frame.area1;
+    frame.normal_cross = frame.n0.cross(frame.n1);
+    frame.sine = frame.edge_axis.dot(frame.normal_cross);
+    frame.cosine = frame.n0.dot(frame.n1);
+    frame.angle = math::abs(frame.sine) <= HALF_TURN_TIE_EPSILON && frame.cosine < 0
+      ? math::PI
+      : math::atan2(frame.sine, frame.cosine);
+    return frame;
+}
 
-    double angle = math::abs(sine) <= HALF_TURN_TIE_EPSILON && cosine < 0 ? math::PI : math::atan2(sine, cosine);
-    if (!math::is_finite(angle)) return BEND_UNRESOLVED~;
-    return angle;
+fn double? evaluate_hinge_angle(Vec3[4] points) @private {
+    return evaluate_hinge_frame(points).angle;
 }
 
 fn ClothHingeSample? evaluate_hinge_sample(Vec3[4] points) @private {
-    foreach (point : points) {
-        if (!finite_vector(point)) return BEND_UNRESOLVED~;
-    }
+    ClothHingeFrame frame = evaluate_hinge_frame(points)!;
 
-    ContactVector p0 = (ContactVector)points[0];
-    ContactVector p1 = (ContactVector)points[1];
-    ContactVector p2 = (ContactVector)points[2];
-    ContactVector p3 = (ContactVector)points[3];
-
-    ContactVector edge_vector = p1 - p0;
-    ContactVector first_wing = p2 - p0;
-    ContactVector second_wing = p3 - p0;
-
-    double edge_length = edge_vector.length();
-    if (!(edge_length > MIN_HINGE_EDGE) || !math::is_finite(edge_length)) return BEND_UNRESOLVED~;
-    ContactVector edge_axis = edge_vector / edge_length;
-
-    ContactVector n0_raw = edge_vector.cross(first_wing);
-    ContactVector n1_raw = second_wing.cross(edge_vector);
-    double area0 = n0_raw.length();
-    double area1 = n1_raw.length();
-    if (!(area0 > 2.0 * MIN_TRIANGLE_AREA) || !(area1 > 2.0 * MIN_TRIANGLE_AREA)
-        || !math::is_finite(area0) || !math::is_finite(area1)) {
-        return BEND_UNRESOLVED~;
-    }
-
-    ContactVector n0 = n0_raw / area0;
-    ContactVector n1 = n1_raw / area1;
-    ContactVector normal_cross = n0.cross(n1);
-    double sine = edge_axis.dot(normal_cross);
-    double cosine = n0.dot(n1);
-    double denominator = sine * sine + cosine * cosine;
-    if (!(denominator > MIN_HINGE_TRIG) || !math::is_finite(denominator)) return BEND_UNRESOLVED~;
-
-    double angle = math::abs(sine) <= HALF_TURN_TIE_EPSILON && cosine < 0 ? math::PI : math::atan2(sine, cosine);
-    if (!math::is_finite(angle)) return BEND_UNRESOLVED~;
-
-    ClothHingeSample sample = { .angle = angle };
+    ClothHingeSample sample = { .angle = frame.angle };
     for (uint vertex = 0; vertex < 4; vertex++) {
         for (uint axis = 0; axis < 3; axis++) {
             ContactVector basis;
@@ -156,16 +136,18 @@ fn ClothHingeSample? evaluate_hinge_sample(Vec3[4] points) @private {
             ContactVector d_first = vertex == 0 ? -basis : (vertex == 2 ? basis : (ContactVector){});
             ContactVector d_second = vertex == 0 ? -basis : (vertex == 3 ? basis : (ContactVector){});
 
-            ContactVector dn0_raw = d_edge.cross(first_wing) + edge_vector.cross(d_first);
-            ContactVector dn1_raw = d_second.cross(edge_vector) + second_wing.cross(d_edge);
+            ContactVector dn0_raw = d_edge.cross(frame.first_wing) + frame.edge_vector.cross(d_first);
+            ContactVector dn1_raw = d_second.cross(frame.edge_vector) + frame.second_wing.cross(d_edge);
 
-            ContactVector d_axis = (d_edge - edge_axis * edge_axis.dot(d_edge)) / edge_length;
-            ContactVector dn0 = (dn0_raw - n0 * n0.dot(dn0_raw)) / area0;
-            ContactVector dn1 = (dn1_raw - n1 * n1.dot(dn1_raw)) / area1;
+            ContactVector d_axis = (d_edge - frame.edge_axis * frame.edge_axis.dot(d_edge)) / frame.edge_length;
+            ContactVector dn0 = (dn0_raw - frame.n0 * frame.n0.dot(dn0_raw)) / frame.area0;
+            ContactVector dn1 = (dn1_raw - frame.n1 * frame.n1.dot(dn1_raw)) / frame.area1;
 
-            double d_sine = d_axis.dot(normal_cross) + edge_axis.dot(dn0.cross(n1) + n0.cross(dn1));
-            double d_cosine = dn0.dot(n1) + n0.dot(dn1);
-            double d_angle = (cosine * d_sine - sine * d_cosine) / denominator;
+            double d_sine = d_axis.dot(frame.normal_cross)
+              + frame.edge_axis.dot(dn0.cross(frame.n1) + frame.n0.cross(dn1));
+            double d_cosine = dn0.dot(frame.n1) + frame.n0.dot(dn1);
+            // Unit normals orthogonal to the unit axis keep sine^2 + cosine^2 == 1, the atan2 denominator.
+            double d_angle = frame.cosine * d_sine - frame.sine * d_cosine;
             if (!math::is_finite(d_angle)) return BEND_UNRESOLVED~;
             sample.gradients[vertex][axis] = d_angle;
         }
@@ -210,11 +192,8 @@ fn float? certify_hinge_path(
     float last_angle,
 ) @private {
     double start_angle = evaluate_hinge_angle(start_points)!;
-    double end_angle = evaluate_hinge_angle(end_points)!;
     double initial_offset = wrap_dihedral_angle(start_angle - (double)last_angle);
-    if (math::abs(initial_offset) >= MAX_HINGE_SUBSTEP_TURN) {
-        return BEND_UNRESOLVED~;
-    }
+    if (math::abs(initial_offset) >= MAX_HINGE_START_OFFSET) return BEND_UNRESOLVED~;
 
     bool moved;
     for (uint index = 0; index < 4; index++) {
@@ -228,7 +207,7 @@ fn float? certify_hinge_path(
     usz steps;
     double previous_angle = start_angle;
     double total_turn;
-    double min_area_sq = 4.0 * (double)MIN_TRIANGLE_AREA * (double)MIN_TRIANGLE_AREA;
+    double min_area_squared = 4.0 * (double)MIN_TRIANGLE_AREA * (double)MIN_TRIANGLE_AREA;
 
     Vec3 start_edge = start_points[1] - start_points[0];
     Vec3 end_edge = end_points[1] - end_points[0];
@@ -251,17 +230,17 @@ fn float? certify_hinge_path(
         ContactIntervals n1 = hinge_interval_cross(second_interval, edge_interval)!;
         ContactIntervals normal_cross = hinge_interval_cross(n0, n1)!;
 
-        ContactInterval edge_len_sq = physics::contact_dot(edge_interval, edge_interval)!;
-        ContactInterval area0_sq = physics::contact_dot(n0, n0)!;
-        ContactInterval area1_sq = physics::contact_dot(n1, n1)!;
-        ContactInterval cos_interval = physics::contact_dot(n0, n1)!;
-        ContactInterval sin_interval = physics::contact_dot(edge_interval, normal_cross)!;
+        ContactInterval edge_length_squared = physics::contact_dot(edge_interval, edge_interval)!;
+        ContactInterval area0_squared = physics::contact_dot(n0, n0)!;
+        ContactInterval area1_squared = physics::contact_dot(n1, n1)!;
+        ContactInterval cosine_interval = physics::contact_dot(n0, n1)!;
+        ContactInterval sine_interval = physics::contact_dot(edge_interval, normal_cross)!;
 
-        bool non_degenerate = edge_len_sq.min > MIN_HINGE_EDGE * MIN_HINGE_EDGE
-          && area0_sq.min > min_area_sq
-          && area1_sq.min > min_area_sq;
-        bool branch_safe = cos_interval.min > 0 || cos_interval.max < 0
-          || sin_interval.min > 0 || sin_interval.max < 0;
+        bool non_degenerate = edge_length_squared.min > MIN_HINGE_EDGE * MIN_HINGE_EDGE
+          && area0_squared.min > min_area_squared
+          && area1_squared.min > min_area_squared;
+        bool branch_safe = cosine_interval.min > 0 || cosine_interval.max < 0
+          || sine_interval.min > 0 || sine_interval.max < 0;
 
         if (non_degenerate && branch_safe) {
             float progress = (float)span.max;
@@ -270,9 +249,7 @@ fn float? certify_hinge_path(
                 sub_end[index] = start_points[index] + (end_points[index] - start_points[index]) * progress;
             }
             double sub_angle = evaluate_hinge_angle(sub_end)!;
-            double turn = wrap_dihedral_angle(sub_angle - previous_angle);
-            if (math::abs(turn) >= MAX_HINGE_SUBSTEP_TURN) return BEND_UNRESOLVED~;
-            total_turn += turn;
+            total_turn += wrap_dihedral_angle(sub_angle - previous_angle);
             if (math::abs(total_turn) >= math::PI) return BEND_UNRESOLVED~;
             previous_angle = sub_angle;
             continue;
@@ -285,7 +262,7 @@ fn float? certify_hinge_path(
     }
 
     double unwrapped_end = (double)last_angle + initial_offset + total_turn;
-    if (!math::is_finite(end_angle) || !math::is_finite(unwrapped_end)) return BEND_UNRESOLVED~;
+    if (!math::is_finite(unwrapped_end)) return BEND_UNRESOLVED~;
     return (float)unwrapped_end;
 }
 
@@ -316,21 +293,26 @@ fn void? project_dihedral_bends(ClothState* state, float dt) @private {
         for (uint corner = 0; corner < 4; corner++) {
             gradient_sum += weights[corner] * evaluated.gradients[corner].dot(evaluated.gradients[corner]);
         }
-        double denominator = gradient_sum + alpha_h;
-        if (!math::is_finite(gradient_sum) || !(gradient_sum > MIN_HINGE_GRADIENT)
-            || !math::is_finite(denominator) || !(denominator > 0)) {
+        if (!math::is_finite(gradient_sum) || !(gradient_sum > MIN_HINGE_GRADIENT)) {
             state.contact_result.stage = ClothContactStage.BEND;
             return BEND_UNRESOLVED~;
         }
 
-        double unwrapped_angle = (double)hinge.last_angle
-          + wrap_dihedral_angle(evaluated.angle - (double)hinge.last_angle);
-        double residual = unwrapped_angle - (double)hinge.rest_angle;
-        double delta_lambda = -(residual + alpha_h * (double)hinge.lambda) / denominator;
+        double committed_angle = (double)hinge.last_angle;
+        double unwrapped_angle = committed_angle + wrap_dihedral_angle(evaluated.angle - committed_angle);
+        double target_angle = math::clamp(
+            (double)hinge.rest_angle,
+            committed_angle - MAX_HINGE_PROJECTION_TURN,
+            committed_angle + MAX_HINGE_PROJECTION_TURN,
+        );
+        double residual = unwrapped_angle - target_angle;
+        double delta_lambda = -(residual + alpha_h * (double)hinge.lambda) / (gradient_sum + alpha_h);
+
         double linear_turn = math::abs(gradient_sum * delta_lambda);
         if (linear_turn > MAX_HINGE_PROJECTION_TURN) {
             delta_lambda *= MAX_HINGE_PROJECTION_TURN / linear_turn;
         }
+
         double next_lambda = (double)hinge.lambda + delta_lambda;
         if (!math::is_finite(delta_lambda) || !math::is_finite(next_lambda) || !math::is_finite((float)next_lambda)) {
             state.contact_result.stage = ClothContactStage.BEND;
@@ -353,8 +335,7 @@ fn void? project_dihedral_bends(ClothState* state, float dt) @private {
             end_points[corner] = rounded;
         }
 
-        float? certified_angle = certify_hinge_path(start_points, end_points, (float)unwrapped_angle);
-        if (catch certified_angle) {
+        if (catch certify_hinge_path(start_points, end_points, (float)unwrapped_angle)) {
             state.contact_result.stage = ClothContactStage.BEND;
             return BEND_UNRESOLVED~;
         }
