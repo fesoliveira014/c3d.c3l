@@ -31,7 +31,12 @@ fn sz border_source_index(BorderEdge edge, uint texels, sz along) @private {
 
 // A tile gets its ring as it gets its owned material, so the material's slot is bound before the first draw.
 fn TextureId? attach_border_ring(AssetStore* assets, MaterialId material, uint texels) @private {
-    TextureDesc desc = material::texture_2d_desc(texels, (uint)BorderEdge::len, R16_UINT, "terrain_border_ring");
+    TextureDesc desc = material::texture_2d_desc(
+        width:      texels,
+        height:     (uint)BorderEdge::len,
+        format:     R16_UINT,
+        debug_name: "terrain_border_ring",
+    );
     desc.generate_mips = false;
     TextureId ring;
     @pool() {
@@ -76,10 +81,18 @@ fn void refresh_border_ring(
     bool changed;
     foreach (edge : BorderEdge::values) {
         ushort[] row = ring[edge.ordinal * texels : texels];
-        if (try source = neighbour_texels(scene, assets, set, node.id, edge, texels)) {
+        ushort[]? source = neighbour_texels(
+            scene:  scene,
+            assets: assets,
+            set:    set,
+            tile:   node.id,
+            edge:   edge,
+            texels: texels,
+        );
+        if (try heights = source) {
             edges |= edge.bit();
             foreach (along, &value : row) {
-                ushort sample = source[border_source_index(edge, texels, along)];
+                ushort sample = heights[border_source_index(edge, texels, along)];
                 changed |= *value != sample;
                 *value = sample;
             }
@@ -113,7 +126,12 @@ fn void refresh_edge_neighbours(
 
         TerrainNeighbour direction = edge.neighbour;
         if (try position = find_link_at(set.state, x + direction.x_offset, z + direction.z_offset)) {
-            refresh_border_ring(scene, assets, scene.node(set.state.links[position].tile), set);
+            refresh_border_ring(
+                scene:  scene,
+                assets: assets,
+                node:   scene.node(set.state.links[position].tile),
+                set:    set,
+            );
         }
     }
 }

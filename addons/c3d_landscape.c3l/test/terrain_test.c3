@@ -863,14 +863,23 @@ fn uint ring_revision(SetFixture* sets, Node* tile) @local {
     return sets.base.assets.texture(runtime_of(sets, tile).border_ring).header.revision;
 }
 
+fn uint material_revision(SetFixture* sets, Node* tile) @local {
+    return sets.base.assets.material(runtime_of(sets, tile).material).header.revision;
+}
+
 fn uint border_edges(SetFixture* sets, Node* tile) @local {
     char[] block = sets.base.assets.material(runtime_of(sets, tile).material).data.custom.param_block;
     return *(uint*)(block.ptr + BORDER_EDGES_OFFSET);
 }
 
 // The neighbour's texel one step inside its own border, at a position along the shared edge.
-fn ushort inner_texel(SetFixture* sets, Node* neighbour, uint edge, uint along) @local {
-    ushort[] heights = texels_of(sets, sets.base.scene.get(neighbour, Terrain).desc.height_map);
+fn ushort SetFixture.inner_texel(
+    &self,
+    Node* neighbour,
+    uint edge,
+    uint along,
+) {
+    ushort[] heights = texels_of(self, self.base.scene.get(neighbour, Terrain).desc.height_map);
     uint inside = SMALL_TEXELS - 2;
     switch (edge) {
         case RING_NORTH: return heights[inside * SMALL_TEXELS + along];
@@ -880,10 +889,15 @@ fn ushort inner_texel(SetFixture* sets, Node* neighbour, uint edge, uint along) 
     }
 }
 
-fn void assert_ring_holds(SetFixture* sets, Node* tile, uint edge, Node* neighbour) @local {
-    assert((border_edges(sets, tile) & (1u << edge)) != 0);
-    foreach (along, value : ring_row(sets, tile, edge)) {
-        assert(value == inner_texel(sets, neighbour, edge, (uint)along));
+fn void SetFixture.assert_ring_holds(
+    &self,
+    Node* tile,
+    uint edge,
+    Node* neighbour,
+) {
+    assert((border_edges(self, tile) & (1u << edge)) != 0);
+    foreach (along, value : ring_row(self, tile, edge)) {
+        assert(value == self.inner_texel(neighbour, edge, (uint)along));
     }
 }
 
@@ -906,23 +920,36 @@ fn void test_border_ring_holds_neighbour_texels() @test {
     assert(c3d::same_id(bound.texture.asset, runtime.border_ring));
     assert_ring_empty(&sets, north_west, RING_NORTH);
     assert_ring_empty(&sets, north_west, RING_WEST);
-    assert_ring_holds(&sets, north_west, RING_EAST, north_east);
-    assert_ring_holds(&sets, north_west, RING_SOUTH, south_west);
+    sets.assert_ring_holds(north_west, RING_EAST, north_east);
+    sets.assert_ring_holds(north_west, RING_SOUTH, south_west);
 
     assert_ring_empty(&sets, north_east, RING_NORTH);
     assert_ring_empty(&sets, north_east, RING_EAST);
-    assert_ring_holds(&sets, north_east, RING_WEST, north_west);
-    assert_ring_holds(&sets, north_east, RING_SOUTH, south_east);
+    sets.assert_ring_holds(north_east, RING_WEST, north_west);
+    sets.assert_ring_holds(north_east, RING_SOUTH, south_east);
 
     assert_ring_empty(&sets, south_west, RING_SOUTH);
     assert_ring_empty(&sets, south_west, RING_WEST);
-    assert_ring_holds(&sets, south_west, RING_NORTH, north_west);
-    assert_ring_holds(&sets, south_west, RING_EAST, south_east);
+    sets.assert_ring_holds(south_west, RING_NORTH, north_west);
+    sets.assert_ring_holds(south_west, RING_EAST, south_east);
 
     assert_ring_empty(&sets, south_east, RING_SOUTH);
     assert_ring_empty(&sets, south_east, RING_EAST);
-    assert_ring_holds(&sets, south_east, RING_NORTH, north_east);
-    assert_ring_holds(&sets, south_east, RING_WEST, south_west);
+    sets.assert_ring_holds(south_east, RING_NORTH, north_east);
+    sets.assert_ring_holds(south_east, RING_WEST, south_west);
+
+    Node*[4] tiles = { north_west, north_east, south_west, south_east };
+    uint[4] ring_revisions;
+    uint[4] block_revisions;
+    foreach (index, tile : tiles) {
+        ring_revisions[index] = ring_revision(&sets, tile);
+        block_revisions[index] = material_revision(&sets, tile);
+    }
+    terrain::prepare_subtree(&sets.base.scene, &sets.base.assets, sets.node)!!;
+    foreach (index, tile : tiles) {
+        assert(ring_revision(&sets, tile) == ring_revisions[index]);
+        assert(material_revision(&sets, tile) == block_revisions[index]);
+    }
 }
 
 fn void test_ring_refreshes_on_edge_link_and_band_edits() @test {
@@ -937,14 +964,14 @@ fn void test_ring_refreshes_on_edge_link_and_band_edits() @test {
     uint settled_revision = ring_revision(&sets, north_west);
     sets.base.scene.remove_component(south_east, TerrainTile);
     assert(ring_revision(&sets, north_west) == settled_revision);
-    assert_ring_holds(&sets, north_west, RING_EAST, north_east);
-    assert_ring_holds(&sets, north_west, RING_SOUTH, south_west);
+    sets.assert_ring_holds(north_west, RING_EAST, north_east);
+    sets.assert_ring_holds(north_west, RING_SOUTH, south_west);
 
     TextureId departed_ring = runtime_of(&sets, north_east).border_ring;
     sets.base.scene.remove(north_east);
     assert(!sets.base.assets.textures.is_live(departed_ring));
     assert_ring_empty(&sets, north_west, RING_EAST);
-    assert_ring_holds(&sets, north_west, RING_SOUTH, south_west);
+    sets.assert_ring_holds(north_west, RING_SOUTH, south_west);
 
     assert_ring_empty(&sets, south_east, RING_NORTH);
     assert_ring_empty(&sets, south_east, RING_WEST);
@@ -995,6 +1022,22 @@ fn void test_tile_added_to_a_prepared_terrain_binds_a_ring() @test {
     sets.base.scene.add(plain, (TerrainTile){ .x = 1, .z = 0 });
     terrain::prepare(&sets.base.scene, &sets.base.assets, plain)!!;
     assert(runtime_of(&sets, plain).border_ring.generation != 0);
-    assert_ring_holds(&sets, plain, RING_WEST, west);
-    assert_ring_holds(&sets, west, RING_EAST, plain);
+    sets.assert_ring_holds(plain, RING_WEST, west);
+    sets.assert_ring_holds(west, RING_EAST, plain);
+}
+
+fn void test_retiled_terrain_empties_the_rows_of_the_cell_it_left() @test {
+    SetFixture sets;
+    setup_set(&sets, mem);
+    defer teardown_set(&sets);
+    Node* west = add_tile_with_own_map(&sets, 0, 0);
+    Node* east = add_tile_with_own_map(&sets, 1, 0);
+    sets.assert_ring_holds(west, RING_EAST, east);
+
+    sets.base.scene.get(east, TerrainTile).x = 2;
+    east.local.position.x = 2 * sets.set.tile_extent();
+    terrain::prepare(&sets.base.scene, &sets.base.assets, east)!!;
+    assert(sets.set.is_linked(east.id));
+    assert_ring_empty(&sets, west, RING_EAST);
+    assert_ring_empty(&sets, east, RING_WEST);
 }

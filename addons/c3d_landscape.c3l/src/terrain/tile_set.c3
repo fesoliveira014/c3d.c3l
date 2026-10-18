@@ -185,35 +185,56 @@ fn void? link_tile(Scene* scene, AssetStore* assets, Node* node) @private {
     state.count++;
 }
 
-// The tile's own ring empties and its former neighbours drop their rows toward it.
-fn void unlink_tile(Scene* scene, Entity tile) @private {
-    Node* node = scene.node(tile);
-    TerrainSet* set = parent_set(scene, node);
-    if (!set || !set.state) return;
+// Removes the tile's link and leaves every ring as it is; the link's former cell is the result.
+fn TerrainSetLink? drop_link(Scene* scene, Entity tile) @private {
+    TerrainSet* set = parent_set(scene, scene.node(tile));
+    if (!set || !set.state) return NOT_FOUND~;
 
     TerrainSetState* state = set.state;
-    if (try position = find_link(state, tile)) {
-        TerrainSetLink departed = state.links[position];
-        state.count--;
-        state.links[position] = state.links[state.count];
-        // A prepare that fails after linking has not added the runtime yet.
-        if (scene.has(node, TerrainRuntime)) refresh_border_ring(scene, state.assets, node, set);
-        refresh_edge_neighbours(
+    sz position = find_link(state, tile)!;
+    TerrainSetLink departed = state.links[position];
+    state.count--;
+    state.links[position] = state.links[state.count];
+    return departed;
+}
+
+// The tile's own ring empties and the tiles around the cell it left drop their rows toward it.
+fn void release_rings(Scene* scene, Entity tile, TerrainSetLink departed) @private {
+    Node* node = scene.node(tile);
+    TerrainSet* set = parent_set(scene, node);
+    // A prepare that fails after linking has not added the runtime yet.
+    if (scene.has(node, TerrainRuntime)) {
+        refresh_border_ring(
             scene:  scene,
-            assets: state.assets,
+            assets: set.state.assets,
+            node:   node,
             set:    set,
-            x:      departed.x,
-            z:      departed.z,
-            edges:  ALL_BORDER_EDGES,
         );
     }
+    refresh_edge_neighbours(
+        scene:  scene,
+        assets: set.state.assets,
+        set:    set,
+        x:      departed.x,
+        z:      departed.z,
+        edges:  ALL_BORDER_EDGES,
+    );
+}
+
+fn void unlink_tile(Scene* scene, Entity tile) @private {
+    if (try departed = drop_link(scene, tile)) release_rings(scene, tile, departed);
 }
 
 // The tile's ring reads its neighbours' texels and their rings read the tile's.
 fn void refresh_tile_rings(Scene* scene, AssetStore* assets, Node* node) @private {
     TerrainTile* tile = scene.get(node, TerrainTile);
     TerrainSet* set = parent_set(scene, node);
-    refresh_border_ring(scene, assets, node, set);
+    refresh_border_ring(
+        scene:  scene,
+        assets: assets,
+        node:   node,
+        set:    set,
+    );
     refresh_edge_neighbours(
         scene:  scene,
         assets: assets,
@@ -225,10 +246,14 @@ fn void refresh_tile_rings(Scene* scene, AssetStore* assets, Node* node) @privat
 }
 
 // Re-validates a prepared tile; a failure leaves it unlinked.
+// The rings keep their rows while it is checked, so a tile that stays valid uploads nothing.
 fn void? relink_tile(Scene* scene, AssetStore* assets, Node* node) @private {
     if (!scene.has(node, TerrainTile)) return;
 
-    unlink_tile(scene, node.id);
+    TerrainSetLink? departed = drop_link(scene, node.id);
+    defer catch {
+        if (try link = departed) release_rings(scene, node.id, link);
+    }
     TerrainRuntime* runtime = scene.get(node, TerrainRuntime);
     check_tile(
         scene:  scene,
@@ -241,6 +266,17 @@ fn void? relink_tile(Scene* scene, AssetStore* assets, Node* node) @private {
     }
     link_tile(scene, assets, node)!;
     refresh_tile_rings(scene, assets, node);
+    // A tile that changed cells leaves its old neighbours holding rows toward it.
+    if (try link = departed) {
+        refresh_edge_neighbours(
+            scene:  scene,
+            assets: assets,
+            set:    parent_set(scene, node),
+            x:      link.x,
+            z:      link.z,
+            edges:  ALL_BORDER_EDGES,
+        );
+    }
 }
 
 // A hook runs inside the removal, so the tile's parent and its set are still alive.
@@ -257,7 +293,12 @@ fn void remove_set(Entity entity, void* component, void* user) @private {
     uint tiles = state.count;
     state.count = 0;
     foreach (link : state.links[:tiles]) {
-        refresh_border_ring(scene, state.assets, scene.node(link.tile), set);
+        refresh_border_ring(
+            scene:  scene,
+            assets: state.assets,
+            node:   scene.node(link.tile),
+            set:    set,
+        );
     }
     alloc::free(state.allocator, state.links.ptr);
     alloc::free(state.allocator, state);
