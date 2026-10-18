@@ -122,6 +122,7 @@ struct Options @local {
     uint      count;
     uint      workers;
     uint      frames;
+    uint      cells;
     String    capture_path;
 }
 
@@ -1465,8 +1466,8 @@ fn void? run_cpu_benchmark(Options options) @local {
     create_demo(
         demo:         &demo,
         scenario:     options.scenario,
-        flag_columns: BENCHMARK_CELLS,
-        flag_rows:    BENCHMARK_CELLS,
+        flag_columns: options.cells,
+        flag_rows:    options.cells,
         simulated:    !options.still,
         field_count:  options.count,
         crowd_count:  options.scenario == CROWD ? options.count : 0,
@@ -1515,8 +1516,8 @@ fn void? run_benchmark(Options options) @local {
     create_demo(
         demo:         &demo,
         scenario:     options.scenario,
-        flag_columns: BENCHMARK_CELLS,
-        flag_rows:    BENCHMARK_CELLS,
+        flag_columns: options.cells,
+        flag_rows:    options.cells,
         simulated:    !options.still,
         field_count:  options.count,
         traced:       options.traced,
@@ -1693,7 +1694,7 @@ fn Scenario? scenario_named(String name) @local {
 }
 
 fn Options? parse_options(String[] args) @local {
-    Options options = { .scenario = BOTH, .count = FIELD_DEFAULT_COUNT };
+    Options options = { .scenario = BOTH, .count = FIELD_DEFAULT_COUNT, .cells = BENCHMARK_CELLS };
     bool counted;
     for (usz index = 1; index < args.len; index++) {
         if (args[index] == "--benchmark") {
@@ -1715,6 +1716,8 @@ fn Options? parse_options(String[] args) @local {
             counted = true;
         } else if (args[index] == "--workers" && index + 1 < args.len) {
             options.workers = args[++index].to_uint()!;
+        } else if (args[index] == "--cells" && index + 1 < args.len) {
+            options.cells = args[++index].to_uint()!;
         } else if (args[index] == "--cpu-only") {
             options.cpu_only = true;
         } else if (args[index] == "--validation") {
@@ -1740,6 +1743,7 @@ fn Options? parse_options(String[] args) @local {
         }
     }
     if ((options.traced || options.validation || options.cpu_only) && !options.benchmark) return c3d::INVALID_ARGUMENT~;
+    if (!options.cells || (options.cells != BENCHMARK_CELLS && !options.benchmark)) return c3d::INVALID_ARGUMENT~;
     if (options.cpu_only && (options.traced || options.validation || options.ragdoll || options.capture_path.len)) {
         return c3d::INVALID_ARGUMENT~;
     }
@@ -1758,6 +1762,7 @@ fn int main(String[] args) {
         io::eprintn("Use cloth [--scene flag|cape|both|contacts|fold|fast|field|crowd] [--still] [--frames count]");
         io::eprintn("  [--count n] [--hold]    (field: count of flags, hold the far half; crowd: count of characters)");
         io::eprintn("  [--workers n]    (stage cloths on n job pool workers; 0 stages on the calling thread)");
+        io::eprintn("  [--cells n]    (benchmark flag size in cells per side; default 32)");
         io::eprintn("  [--publish whole|streams]");
         io::eprintn("  [--benchmark [--cpu-only] [--ragdoll] [--capture path.rgba]");
         io::eprintn("    [--trace software|hardware] [--validation]]");

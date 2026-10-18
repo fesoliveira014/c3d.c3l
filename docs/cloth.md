@@ -34,7 +34,7 @@ their binding metadata are copied (see [Collisions](#collisions)).
 | `physics::SOURCE_UNAVAILABLE` | The source's CPU positions were released. |
 | `physics::NO_BODY` | A listed collider node has no built RigidBody. |
 | `c3d::UNSUPPORTED` | SkinBinding, morph weights or targets, joints, custom data, a bounds override, or a non-indexed or non-triangle topology. |
-| `c3d::INVALID_ARGUMENT` | Zero substeps, iterations or contact capacities, non-positive or non-finite contact tolerance, a stiffness outside `[0, 1]`, negative or non-finite damping, thickness or bend compliance, non-finite gravity scale or ground height, invalid `render_particles`, missing or invalid UVs when `tangent_frame` is true, invalid or conflicting `attachments`, invalid `rest_angles` or non-manifold/inconsistent interior hinge winding, a pin, seam endpoint or index out of range, non-finite positions, a degenerate triangle, an edge shared by more than two triangles, or a collider listed twice. |
+| `c3d::INVALID_ARGUMENT` | Zero substeps, iterations or contact capacities, non-positive or non-finite contact tolerance, a stiffness outside `[0, 1]`, negative or non-finite damping, thickness or bend compliance, non-finite gravity scale or ground height, invalid `render_particles`, missing or invalid UVs when `tangent_frame` is true, invalid or conflicting `attachments`, invalid `rest_angles` or non-manifold/inconsistent interior hinge winding, a pin, seam endpoint or index out of range, non-finite positions, a degenerate triangle, an edge shared by more than two triangles, a collider listed twice, or a node that carries a `ClothOutput` marker (an output node the library created). |
 | `c3d::CAPACITY_EXCEEDED` | More than 32 listed collider owners, binding metadata exceeding `max_shapes`, a full geometry pool, state-size overflow, or a state block that cannot be allocated. |
 | `cloth::CONTACT_PRECISION_EXCEEDED` | A captured native shape bound cannot be represented conservatively. |
 
@@ -560,6 +560,15 @@ velocities from the corrected displacement. A stiffness `s` is applied per pass 
 `1 - (1 - s)^(1 / iterations)`, which normalizes one isolated constraint, not a coupled mesh. A
 pair that collapses onto one point separates along its rest direction. `Wind.lift` is unused.
 
+With `ClothBendMode.DISTANCE`, edges and bends project in color-major order. Preparation greedy-colors each
+array so that no two constraints of a color share a particle, then stores it color by color. Inside a color,
+edges stay in ascending `(first, second)` order and bends in the order of their interior edges. A topology
+change after a tear recolors with scratch carved at preparation, so it allocates nothing. The order follows
+the bend mode and has no setting of its own; for a given mesh, `ClothDesc` and update sequence the results
+are deterministic. An array that needs more than 32 colors keeps its previous order. With
+`ClothBendMode.DIHEDRAL`, edges keep the ascending order and hinges the order of the interior edges, whose
+state they carry.
+
 Particles have unit mass, so the wind's effect falls as a mesh gets finer; scale `Wind.drag` with
 vertex density (the example uses `2.5 * vertices / area`) to keep a response.
 
@@ -592,7 +601,7 @@ python scripts/build.py --example cloth
 addons/c3d_physics.c3l/build/cloth.exe [--scene flag|cape|both|contacts|fold|fast|field|crowd] [--count 64] [--workers 4] [--hold] [--still] [--frames 300]
 c3c build cloth --path addons/c3d_physics.c3l -O3
 addons/c3d_physics.c3l/build/cloth.exe --benchmark --scene flag|cape|both|contacts|fold|fast|field|crowd [--count 64] [--workers 4] [--hold] [--still] [--ragdoll] [--publish whole|streams]
-addons/c3d_physics.c3l/build/cloth.exe --benchmark --cpu-only --scene flag|field|crowd [--count 100] [--workers 4]
+addons/c3d_physics.c3l/build/cloth.exe --benchmark --cpu-only --scene flag|field|crowd [--count 100] [--workers 4] [--cells 32]
 addons/c3d_physics.c3l/build/cloth.exe --benchmark --trace software|hardware [--validation]
 ```
 
@@ -636,7 +645,7 @@ template: the example adds the cape as a rigid mesh part on the `DEF-spine.003` 
 `CrowdCloth` simulates it per slot with the top row pinned and distance bending. The benchmark prints the
 mean and 95th-percentile staging and commit wall times beside the summed solve time, and the bytes of all
 cloth states. `--cpu-only` steps the scene without a renderer, which keeps rasteriser threads from competing
-with the job pool.
+with the job pool. `--cells N` sets the benchmark flag's cells per side (default 32).
 
 The `fast` scene rotates a thin box by 90 degrees and translates it in one fixed step
 through a small cloth patch. Continuous and self-contact are enabled. It uses one
