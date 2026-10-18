@@ -160,7 +160,7 @@ re-expression meets the configured tolerance. Otherwise REEXPRESSION reports
 `CONTACT_PRECISION_EXCEEDED`, keeps the old local bytes/revision, and the application-owned
 transform may place that geometry elsewhere.
 
-Cloth consumers require `fp-math=strict`, owner-thread round-to-nearest and gradual underflow.
+Cloth consumers require `fp-math=strict`, owner-thread (and staging-thread) round-to-nearest and gradual underflow.
 The library checks supported runtime conditions without changing arithmetic modes; runtime
 checks do not establish the consumer's compiler mode. Skinned `Mesh` + `SkinBinding` owners
 move their rendered `Mesh` to an owned `ClothOutput` child on preparation (`cloth::prepare` with
