@@ -32,7 +32,7 @@ struct ClothMaterialPlan @private {
     uint[]            particle_sources;
     uint[]            material_particles;
     uint[]            material_normal_domains;
-    uint[]            material_ref_faces;
+    uint[]            material_reference_faces;
     float[]           tangent_signs;
     Vec3[]            rest_tangents;
     Vec4[]            initial_tangents;
@@ -177,11 +177,11 @@ fn ClothMaterialPlan? build_material_plan(Geometry* source, ClothDesc desc) @pri
         plan.material_vertex_count = render_count;
         plan.material_particles = render_to_particle;
         plan.material_normal_domains = render_normal_domains;
-        plan.material_ref_faces = alloc::new_array(tmem, uint, (sz)render_count);
+        plan.material_reference_faces = alloc::new_array(tmem, uint, (sz)render_count);
 
         foreach (corner_index, source_vertex : source.indices) {
             uint face = (uint)(corner_index / 3);
-            plan.material_ref_faces[source_vertex] = face;
+            plan.material_reference_faces[source_vertex] = face;
             plan.corners[corner_index] = {
                 .source_vertex   = source_vertex,
                 .material_vertex = source_vertex,
@@ -244,7 +244,7 @@ fn ClothMaterialPlan? build_material_plan(Geometry* source, ClothDesc desc) @pri
         plan.material_vertex_count = material_count;
         plan.material_particles = alloc::new_array(tmem, uint, (sz)material_count);
         plan.material_normal_domains = alloc::new_array(tmem, uint, (sz)material_count);
-        plan.material_ref_faces = alloc::new_array(tmem, uint, (sz)material_count);
+        plan.material_reference_faces = alloc::new_array(tmem, uint, (sz)material_count);
         plan.tangent_signs = alloc::new_array(tmem, float, (sz)material_count);
         plan.rest_tangents = alloc::new_array(tmem, Vec3, (sz)material_count);
         plan.initial_tangents = alloc::new_array(tmem, Vec4, (sz)material_count);
@@ -267,7 +267,7 @@ fn ClothMaterialPlan? build_material_plan(Geometry* source, ClothDesc desc) @pri
                 seen_material[material_vertex] = true;
                 plan.material_particles[material_vertex] = particle;
                 plan.material_normal_domains[material_vertex] = normal_domain;
-                plan.material_ref_faces[material_vertex] = (uint)(corner_index / 3);
+                plan.material_reference_faces[material_vertex] = (uint)(corner_index / 3);
                 plan.tangent_signs[material_vertex] = sign;
                 plan.rest_tangents[material_vertex] = rest_tangent;
             }
@@ -312,19 +312,19 @@ fn ClothMaterialPlan? build_material_plan(Geometry* source, ClothDesc desc) @pri
       : {};
 
     if (catch compute_material_frames(
-        corners:                 plan.corners,
-        triangle_uvs:            plan.triangle_uvs,
-        material_normal_domains: plan.material_normal_domains,
-        material_ref_faces:      plan.material_ref_faces,
-        tangent_signs:           plan.tangent_signs,
-        rest_tangents:           plan.rest_tangents,
-        rest_positions:          particle_rest,
-        current_positions:       particle_rest,
-        committed_tangents:      plan.initial_tangents,
-        normal_accum:            normal_accum,
-        tangent_accum:           tangent_accum,
-        out_normals:             plan.geometry.normals,
-        out_tangents:            plan.geometry.tangents,
+        corners:                  plan.corners,
+        triangle_uvs:             plan.triangle_uvs,
+        material_normal_domains:  plan.material_normal_domains,
+        material_reference_faces: plan.material_reference_faces,
+        tangent_signs:            plan.tangent_signs,
+        rest_tangents:            plan.rest_tangents,
+        rest_positions:           particle_rest,
+        current_positions:        particle_rest,
+        committed_tangents:       plan.initial_tangents,
+        normal_accum:             normal_accum,
+        tangent_accum:            tangent_accum,
+        out_normals:              plan.geometry.normals,
+        out_tangents:             plan.geometry.tangents,
     )) {
         return c3d::INVALID_ARGUMENT~;
     }
@@ -409,7 +409,7 @@ fn void? compute_material_frames(
     ClothCorner[] corners,
     ClothTriangleUv[] triangle_uvs,
     uint[] material_normal_domains,
-    uint[] material_ref_faces,
+    uint[] material_reference_faces,
     float[] tangent_signs,
     Vec3[] rest_tangents,
     Vec3[] rest_positions,
@@ -485,7 +485,7 @@ fn void? compute_material_frames(
                 corners:           corners,
                 rest_positions:    rest_positions,
                 current_positions: current_positions,
-                face_index:        material_ref_faces[vertex],
+                face_index:        material_reference_faces[vertex],
                 rest_vector:       rest_tangents[vertex],
             );
             Vec3 direction = resolve_tangent_direction(
