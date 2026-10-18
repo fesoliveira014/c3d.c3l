@@ -33,6 +33,8 @@ const float BENCHMARK_BOX_HEIGHT @local = 2;
 const uint  BENCHMARK_SETTLE_FRAMES @local = 300; // five simulated seconds, so the dropped boxes sleep before timing
 const uint  PERCENTILE_95 @local = 95;
 const uint  PERCENT @local = 100; // the percentile index rounds up to the next sample
+const usz   BENCHMARK_DEBUG_LINES @local = 1 << 19; // 16 MiB of vertices; holds every collider line of the stress scene
+const uint  BENCHMARK_DEBUG_WARMUP @local = 3;      // draws before timing, so the sink's pages are resident
 const uint  SCENE_NODE_CAPACITY @local = MAX_SPAWNED + STRESS_BODIES + LEVEL_NODES;
 const uint  TIMING_WINDOW @local = 60;
 const float STRESS_SPACING @local = 1.5f;
@@ -71,6 +73,7 @@ const SurfaceMaterialId GRIP_SURFACE @local = (SurfaceMaterialId)4;
 
 struct Options @local {
     bool stress;
+    bool debug_draw;
     uint benchmark_frames;
 }
 
@@ -691,6 +694,8 @@ fn Options? parse_options(String[] args) @local {
         String arg = args[index];
         if (arg == "--stress") {
             options.stress = true;
+        } else if (arg == "--debug-draw") {
+            options.debug_draw = true;
         } else if (arg == "--benchmark" && index + 1 < args.len) {
             uint frames = args[++index].to_uint()!;
             if (!frames) return c3d::INVALID_ARGUMENT~;
@@ -699,6 +704,7 @@ fn Options? parse_options(String[] args) @local {
             return c3d::INVALID_ARGUMENT~;
         }
     }
+    if (options.debug_draw && !options.benchmark_frames) return c3d::INVALID_ARGUMENT~;
     return options;
 }
 
@@ -727,6 +733,42 @@ fn void? drop_benchmark_boxes(Scene* scene, Level* level) @local {
         };
         scene.add_physics_body(node, physics::default_body_desc(DYNAMIC), (&collider)[:1])!;
     }
+}
+
+fn uint percentile_index(uint frames) @local {
+    return (frames * PERCENTILE_95 + PERCENT - 1) / PERCENT - 1;
+}
+
+fn void? measure_debug_draw(
+    PhysicsWorld* physics,
+    String sink_name,
+    usz capacity,
+    uint frames,
+) @local {
+    debug::DebugDraw sink = debug::create_debug_draw(mem, capacity);
+    defer debug::destroy_debug_draw(&sink);
+    for (uint warmup = 0; warmup < BENCHMARK_DEBUG_WARMUP; warmup++) {
+        sink.clear();
+        physics.debug_draw(&sink, { .colliders = true });
+    }
+
+    double[] samples = mem::new_array(double, frames);
+    defer free(samples.ptr);
+    double total;
+    foreach (&sample : samples) {
+        sink.clear();
+        time::Clock started = clock::now();
+        physics.debug_draw(&sink, { .colliders = true });
+        *sample = (double)(long)started.to_now() / 1_000_000;
+        total += *sample;
+    }
+    sort::quicksort(samples);
+
+    io::printfn(
+        "debug_draw,sink,%s,capacity,%d,frames,%d,mean_ms,%.6f,p95_ms,%.6f,lines,%d,dropped,%d",
+        sink_name, (ulong)capacity, frames, total / frames, samples[percentile_index(frames)],
+        (ulong)(sink.vertices.len() / 2), (ulong)sink.dropped,
+    );
 }
 
 fn void? run_benchmark(Options options) @local {
@@ -774,12 +816,27 @@ fn void? run_benchmark(Options options) @local {
     sort::quicksort(samples);
 
     BodyCounts counts = count_bodies(&scene);
-    uint percentile = (options.benchmark_frames * PERCENTILE_95 + PERCENT - 1) / PERCENT - 1;
     io::printfn(
         "physics_update,stress,%d,frames,%d,mean_ms,%.6f,p95_ms,%.6f,first_update_ms,%.3f,static,%d,kinematic,%d,dynamic,%d,awake,%d",
-        options.stress ? 1 : 0, options.benchmark_frames, total / options.benchmark_frames, samples[percentile],
+        options.stress ? 1 : 0, options.benchmark_frames, total / options.benchmark_frames,
+        samples[percentile_index(options.benchmark_frames)],
         first_update_ms, counts.statics, counts.kinematics, counts.dynamics, physics.world.awake_body_count(),
     );
+
+    if (options.debug_draw) {
+        measure_debug_draw(
+            physics:   &physics,
+            sink_name: "unbounded",
+            capacity:  BENCHMARK_DEBUG_LINES,
+            frames:    options.benchmark_frames,
+        )!;
+        measure_debug_draw(
+            physics:   &physics,
+            sink_name: "default",
+            capacity:  debug::DEBUG_LINE_CAPACITY,
+            frames:    options.benchmark_frames,
+        )!;
+    }
 }
 
 fn int main(String[] args) {
