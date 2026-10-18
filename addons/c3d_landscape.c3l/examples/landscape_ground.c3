@@ -25,6 +25,9 @@ const uint LAYER_COUNT = 4;
 <* Tiles along each side of a tiled ground. *>
 const uint TILES_PER_SIDE = 2; // four tiles, each a quarter of the height map
 
+<* Tiles of a tiled ground. *>
+const uint TILE_COUNT = TILES_PER_SIDE * TILES_PER_SIDE;
+
 <* Node layer bit of the terrain, left out of picks. *>
 const uint TERRAIN_LAYER = 1 << 1;
 
@@ -126,7 +129,7 @@ struct Ground {
     TerrainDesc desc;        // of the terrain; of a tiled ground, the settings every tile shares
     float       extent;      // metres along each side
     float       tile_extent; // metres along each tile side; zero when the ground is one terrain
-    Node*[TILES_PER_SIDE * TILES_PER_SIDE] tiles; // row-major, x fastest; null when the ground is one terrain
+    Node*[TILE_COUNT] tiles; // row-major, x fastest; null when the ground is one terrain
 }
 
 <* Walking or flying viewpoint over the ground. *>
@@ -630,41 +633,62 @@ fn void apply_fly_camera(
     if (!fly_camera.flying) fly_camera.position.y = fly_camera.ground + EYE_HEIGHT;
 }
 
-fn void stamp_brush(
+struct TexelPoint @local {
+    int column;
+    int row;
+}
+
+// The texel nearest a world position.
+fn TexelPoint? texel_under(HeightView* view, Vec3 position) @local {
+    Vec3 local = maths::transform_point(view.local_from_world, position);
+    float column = math::round(local.x / view.cell_size);
+    float row = math::round(local.z / view.cell_size);
+    float last = (float)(view.texels_per_side - 1);
+    if (column < 0 || row < 0 || column > last || row > last) return NOT_FOUND~;
+    return { .column = (int)column, .row = (int)row };
+}
+
+// The centre may lie off the map; only the texels of the brush's square inside the limit are raised.
+fn TexelRect? stamp_brush(
     Scene* scene,
     AssetStore* assets,
     Node* terrain_node,
-    uint center_x,
-    uint center_z,
+    TexelPoint center,
     float rise,
+    TexelRect limit,
 ) @local {
     TextureId height_map = scene.get(terrain_node, Terrain).desc.height_map;
     TextureAsset* record = assets.texture(height_map);
     uint side = record.desc.width;
     ushort* texels = (ushort*)record.pixels.ptr;
-    uint first_x = center_x > BRUSH_RADIUS ? center_x - BRUSH_RADIUS : 0;
-    uint first_z = center_z > BRUSH_RADIUS ? center_z - BRUSH_RADIUS : 0;
-    uint last_x = min(center_x + BRUSH_RADIUS, side - 1);
-    uint last_z = min(center_z + BRUSH_RADIUS, side - 1);
+    int radius = (int)BRUSH_RADIUS;
+    int first_x = max(center.column - radius, (int)limit.x);
+    int first_z = max(center.row - radius, (int)limit.z);
+    int last_x = min(center.column + radius, (int)(limit.x + limit.columns) - 1);
+    int last_z = min(center.row + radius, (int)(limit.z + limit.rows) - 1);
+    if (first_x > last_x || first_z > last_z) return NOT_FOUND~;
+
     float radius_squared = (float)(BRUSH_RADIUS * BRUSH_RADIUS);
-    for (uint z = first_z; z <= last_z; z++) {
-        for (uint x = first_x; x <= last_x; x++) {
-            float offset_x = (float)x - (float)center_x;
-            float offset_z = (float)z - (float)center_z;
+    for (int z = first_z; z <= last_z; z++) {
+        for (int x = first_x; x <= last_x; x++) {
+            float offset_x = (float)(x - center.column);
+            float offset_z = (float)(z - center.row);
             float falloff = 1 - (offset_x * offset_x + offset_z * offset_z) / radius_squared;
             if (falloff <= 0) continue;
-            usz index = (usz)z * side + x;
+            usz index = (usz)z * side + (usz)x;
             uint raised = (uint)texels[index] + (uint)(rise * falloff + 0.5f);
             texels[index] = (ushort)min(raised, (uint)ushort::max);
         }
     }
+    TexelRect stamped = {
+        .x       = (uint)first_x,
+        .z       = (uint)first_z,
+        .columns = (uint)(last_x - first_x + 1),
+        .rows    = (uint)(last_z - first_z + 1),
+    };
     assets.mark_texture_dirty(height_map);
-    terrain::mark_dirty(scene, terrain_node, {
-        .x       = first_x,
-        .z       = first_z,
-        .columns = last_x - first_x + 1,
-        .rows    = last_z - first_z + 1,
-    });
+    terrain::mark_dirty(scene, terrain_node, stamped);
+    return stamped;
 }
 
 <*
@@ -684,18 +708,92 @@ fn bool? stamp_under(
     float rise,
 ) {
     HeightView view = terrain::height_view(scene, assets, terrain_node.id)!;
-    Vec3 local = maths::transform_point(view.local_from_world, position);
-    float column = math::round(local.x / view.cell_size);
-    float row = math::round(local.z / view.cell_size);
-    float last = (float)(view.texels_per_side - 1);
-    if (column < 0 || row < 0 || column > last || row > last) return false;
+    TexelPoint? center = texel_under(&view, position);
+    if (catch center) return false;
+
     stamp_brush(
         scene:        scene,
         assets:       assets,
         terrain_node: terrain_node,
-        center_x:     (uint)column,
-        center_z:     (uint)row,
+        center:       center,
         rise:         rise,
-    );
+        limit:        { .columns = view.texels_per_side, .rows = view.texels_per_side },
+    )!;
+    return true;
+}
+
+// A tile stamps neither its west column nor its north row when a neighbour has them; propagate_edit copies them in.
+fn TexelRect owned_texels(TerrainSet* set, Entity tile, uint texels) @local {
+    uint west = @ok(set.neighbour(tile, TerrainNeighbour.WEST)) ? 1 : 0;
+    uint north = @ok(set.neighbour(tile, TerrainNeighbour.NORTH)) ? 1 : 0;
+    return { .x = west, .z = north, .columns = texels - west, .rows = texels - north };
+}
+
+<*
+ Raise the ground under a world position with one brush stamp, across tile edges when the ground is tiled.
+ @param [&inout] scene
+ @param [&inout] assets
+ @param [&in] ground : "Added by add_ground or add_ground_tiles."
+ @param rise : "Height texel units added at the brush centre."
+ @return "False when the position lies off the height map."
+ @return? c3d::INVALID_ID, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT
+*>
+fn bool? stamp_ground(
+    Scene* scene,
+    AssetStore* assets,
+    Ground* ground,
+    Vec3 position,
+    float rise,
+) {
+    if (ground.tile_extent <= 0) {
+        return stamp_under(
+            scene:        scene,
+            assets:       assets,
+            terrain_node: ground.node,
+            position:     position,
+            rise:         rise,
+        );
+    }
+    Node* home = ground.terrain_at(position);
+    HeightView view = terrain::height_view(scene, assets, home.id)!;
+    TexelPoint? center = texel_under(&view, position);
+    if (catch center) return false;
+
+    TerrainSet* set = scene.get(ground.node, TerrainSet);
+    int span = (int)view.texels_per_side - 1;
+    TerrainTile* home_cell = scene.get(home, TerrainTile);
+
+    TexelRect[TILE_COUNT] stamps;
+    bool[TILE_COUNT] stamped;
+    foreach (index, tile : ground.tiles) {
+        TerrainTile* cell = scene.get(tile, TerrainTile);
+        TexelPoint tile_center = {
+            .column = center.column + (home_cell.x - cell.x) * span,
+            .row    = center.row + (home_cell.z - cell.z) * span,
+        };
+        TexelRect? stamp = stamp_brush(
+            scene:        scene,
+            assets:       assets,
+            terrain_node: tile,
+            center:       tile_center,
+            rise:         rise,
+            limit:        owned_texels(set, tile.id, view.texels_per_side),
+        );
+        if (try rect = stamp) {
+            stamps[index] = rect;
+            stamped[index] = true;
+        }
+    }
+    // Every stamp lands first: a ring row reads texels of the tiles around it.
+    foreach (index, tile : ground.tiles) {
+        if (!stamped[index]) continue;
+
+        set.propagate_edit(
+            scene:  scene,
+            assets: assets,
+            tile:   tile.id,
+            rect:   stamps[index],
+        )!;
+    }
     return true;
 }
