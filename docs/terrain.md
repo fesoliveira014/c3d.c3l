@@ -200,6 +200,8 @@ the rows that are valid.
 - The fragment stage reads a ring row only where a central difference crosses a present edge. An edge without a
   linked neighbour stays one-sided, and every other pixel shades as before. The ring has no corners: the stage
   never samples diagonally.
+- `TerrainRuntime.ring_edges` mirrors the mask for CPU reads, and `terrain::ring_strips(texels, edges)` returns
+  the one-texel strip along each masked border: the texels whose smooth normals read the ring.
 - The ring is created with the tile at `prepare` and removed with its terrain. A terrain without `TerrainTile` has
   no ring: slot 2 is empty and the mask is zero. The 1,032 bytes at 129 texels and 8,200 bytes at 1,025 live on the
   CPU and on the GPU.
@@ -214,9 +216,9 @@ the rows that are valid.
   `refresh_neighbour_rings` alone is for an application that keeps the neighbours' edge texels equal itself. A bare
   `mark_dirty` on a set tile leaves the neighbours' rings stale.
 
-CPU queries (`height_view`, `sample_height`, `sample_normal`) stay within one tile; a point outside it is
-`NOT_FOUND`. Each tile keeps its own collider, height map revision and `mark_dirty` rectangle: an edit of one tile
-does not reach its neighbours' texels.
+CPU queries (`height_view`, `sample_height`, `sample_normal`, `sample_smooth_normal`) stay within one tile; a
+point outside it is `NOT_FOUND`. Each tile keeps its own collider, height map revision and `mark_dirty` rectangle:
+an edit of one tile does not reach its neighbours' texels.
 
 Serialization stores the set's `texels`, `cell_size` and `height_scale` and each tile's coordinates; the links are
 rebuilt when the tiles prepare (see [serialization](serialization.md#landscape-particle-and-audio-adapters)).
@@ -227,18 +229,26 @@ rebuilt when the tiles prepare (see [serialization](serialization.md#landscape-p
 HeightView view = terrain::height_view(&scene, &assets, ground.id)!;
 float height = terrain::sample_height(&view, x, z)!;
 Vec3 normal = terrain::sample_normal(&view, x, z)!;
+Vec3 smooth = terrain::sample_smooth_normal(&view, x, z)!;
 ```
 
-- `height_view` captures the texels, side, scales and the node's world matrix; it allocates nothing, so build
-  one per frame. It faults `c3d::INVALID_ID` for a dead node, a node without `Terrain` or a dead height map,
-  and `UNSUPPORTED` or `INVALID_ARGUMENT` for a map that no longer passes `add_terrain`'s checks (a released
-  CPU copy included).
+- `height_view` captures the texels, side, scales, the tile's [border ring](#tile-sets) and the node's world
+  matrix; it allocates nothing, so build one per frame. It faults `c3d::INVALID_ID` for a dead node, a node
+  without `Terrain` or a dead height map, and `UNSUPPORTED` or `INVALID_ARGUMENT` for a map that no longer
+  passes `add_terrain`'s checks (a released CPU copy included).
 - `sample_height` returns the world height on the height field's triangles: each cell splits along its
   diagonal from `(x + 1, z)` to `(x, z + 1)`, as box3d's height field does. `sample_normal` returns the face
-  normal of that triangle. A point outside the extent is `NOT_FOUND`, never a clamp.
+  normal of that triangle, the physics convention. A point outside the extent is `NOT_FOUND`, never a clamp.
+- `sample_smooth_normal` returns the normal the fragment stage shades with at the point: the gradients of the
+  four surrounding texels, blended bilinearly. A gradient is a central difference, taking the ring's texel
+  across an edge that has a linked neighbour and a one-sided difference at any other map edge. It reads the
+  same texels as the shader and agrees to float rounding, so the two tiles of a linked seam give the same
+  normal there.
 - The view borrows the store's texels. In-place edits keep it valid and it reads the new heights; replacing,
   releasing or removing the height map, or removing the terrain, invalidates it. It keeps the node transform
-  of the moment it was taken. Several threads may read one view while nothing edits the texels.
+  and the ring's edge mask of the moment it was taken, and reads the ring in place: take a new view after a
+  tile links or unlinks or after `refresh_neighbour_rings`. Several threads may read one view while nothing
+  edits the texels.
 
 ## Physics collider
 
@@ -365,7 +375,7 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
 | `TerrainSet.neighbour` | `NOT_FOUND` | The tile is not linked, or has no linked neighbour in the direction |
 | `update` | `c3d::INVALID_ID` | The height map was removed |
 | `update` | `c3d::INVALID_ARGUMENT` | A revision whose side differs from the accepted one |
-| `sample_height`, `sample_normal` | `NOT_FOUND` | The point is outside the extent |
+| `sample_height`, `sample_normal`, `sample_smooth_normal` | `NOT_FOUND` | The point is outside the extent |
 
 ## Limits
 

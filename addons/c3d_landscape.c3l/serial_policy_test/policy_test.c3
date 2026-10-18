@@ -14,6 +14,7 @@ struct ExpectedPolicy @private {
     String name;
     typeid identity;
     RestorePhase phase;
+    uint version;
 }
 
 fn void test_every_landscape_component_has_one_expected_serialization_policy() @test {
@@ -30,14 +31,16 @@ fn void test_every_landscape_component_has_one_expected_serialization_policy() @
     uint registered_count = ecs::registered_type_count;
     landscape::register_serial_codecs()!!;
     ExpectedPolicy[5] authored = {
-        { .slot = ecs::assigned_slot(Terrain)!!, .name = "terrain", .identity = TerrainDesc::typeid, .phase = VALUE },
+        { .slot = ecs::assigned_slot(Terrain)!!, .name = "terrain", .identity = TerrainDesc::typeid,
+            .phase = VALUE, .version = 1 },
         { .slot = ecs::assigned_slot(TerrainSet)!!, .name = "terrain_set",
-            .identity = TerrainSetAuthoring::typeid, .phase = VALUE },
+            .identity = TerrainSetAuthoring::typeid, .phase = VALUE, .version = 1 },
         { .slot = ecs::assigned_slot(TerrainTile)!!, .name = "terrain_tile",
-            .identity = TerrainTile::typeid, .phase = VALUE },
+            .identity = TerrainTile::typeid, .phase = VALUE, .version = 1 },
         { .slot = ecs::assigned_slot(Foliage)!!, .name = "foliage",
-            .identity = FoliageAuthoring::typeid, .phase = OWNER },
-        { .slot = ecs::assigned_slot(Water)!!, .name = "water", .identity = WaterDesc::typeid, .phase = VALUE },
+            .identity = FoliageAuthoring::typeid, .phase = OWNER, .version = 2 },
+        { .slot = ecs::assigned_slot(Water)!!, .name = "water", .identity = WaterDesc::typeid,
+            .phase = VALUE, .version = 1 },
     };
     uint[5] transient = {
         ecs::assigned_slot(TerrainRuntime)!!, ecs::assigned_slot(FoliageRuntime)!!,
@@ -55,7 +58,8 @@ fn void test_every_landscape_component_has_one_expected_serialization_policy() @
             if (policy.slot != slot) continue;
             matches++;
             assert(policies == 1 && entry.described && !entry.transient);
-            assert(entry.codec.name == policy.name && entry.codec.phase == policy.phase && entry.codec.version == 1);
+            assert(entry.codec.name == policy.name && entry.codec.phase == policy.phase
+              && entry.codec.version == policy.version);
             assert(entry.described.type.descriptor.identity == policy.identity);
         }
         foreach (expected : transient) {

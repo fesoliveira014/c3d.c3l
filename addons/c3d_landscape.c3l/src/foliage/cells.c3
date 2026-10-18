@@ -8,7 +8,8 @@ import c3d::maths;
 import c3d::scene;
 import std::math;
 
-const float EDIT_REACH_TEXELS @private = 2; // a texel shapes the triangles on both sides; one more covers rounding
+const float EDIT_REACH_TEXELS @private = 2; // a texel reaches one texel in face normals and two in smooth normals
+const usz RING_STRIPS @private = 4; // one per border of a tile
 
 struct CellRange @private {
     uint first_column;
@@ -96,38 +97,88 @@ fn void place_cells(
 ) @private {
     for (uint row = range.first_row; row < range.end_row; row++) {
         for (uint column = range.first_column; column < range.end_column; column++) {
-            Entity cell = runtime.cells[row * runtime.cells_per_side + column];
-            if (!cell.generation) continue;
-            Node* node = scene.node(cell);
-            if (runtime.desc.lod) {
-                LodGroupState* state = scene.get(node, LodGroup).state;
-                runtime.instances -= state.count;
-                uint count = place_cell(
-                    frame:      frame,
-                    column:     column,
-                    row:        row,
-                    transforms: state.transforms,
-                    colors:     state.colors,
-                );
-                scene.publish_lod_instances(node, count);
-                runtime.instances += count;
-                runtime.placed_cells++;
-                continue;
-            }
-            InstancedMesh* batch = scene.get(node, InstancedMesh);
-            runtime.instances -= batch.count;
-            batch.count = place_cell(
-                frame:      frame,
-                column:     column,
-                row:        row,
-                transforms: batch.transforms,
-                colors:     batch.colors,
+            place_existing_cell(
+                scene:   scene,
+                frame:   frame,
+                runtime: runtime,
+                column:  column,
+                row:     row,
             );
-            runtime.instances += batch.count;
-            scene.mark_instances_dirty(node);
-            runtime.placed_cells++;
         }
     }
+}
+
+// Each cell once, where ranges overlap.
+fn void place_ranges(
+    Scene* scene,
+    ScatterFrame* frame,
+    FoliageRuntime* runtime,
+    CellRange[] ranges,
+) @private {
+    foreach (index, range : ranges) {
+        for (uint row = range.first_row; row < range.end_row; row++) {
+            for (uint column = range.first_column; column < range.end_column; column++) {
+                if (in_ranges(ranges[:index], column, row)) continue;
+
+                place_existing_cell(
+                    scene:   scene,
+                    frame:   frame,
+                    runtime: runtime,
+                    column:  column,
+                    row:     row,
+                );
+            }
+        }
+    }
+}
+
+fn bool in_ranges(CellRange[] ranges, uint column, uint row) @private {
+    foreach (range : ranges) {
+        if (column >= range.first_column && column < range.end_column
+          && row >= range.first_row && row < range.end_row) return true;
+    }
+    return false;
+}
+
+fn void place_existing_cell(
+    Scene* scene,
+    ScatterFrame* frame,
+    FoliageRuntime* runtime,
+    uint column,
+    uint row,
+) @private {
+    Entity cell = runtime.cells[row * runtime.cells_per_side + column];
+    if (!cell.generation) return;
+
+    Node* node = scene.node(cell);
+    if (runtime.desc.lod) {
+        LodGroupState* state = scene.get(node, LodGroup).state;
+        runtime.instances -= state.count;
+        uint count = place_cell(
+            frame:      frame,
+            column:     column,
+            row:        row,
+            transforms: state.transforms,
+            colors:     state.colors,
+        );
+        scene.publish_lod_instances(node, count);
+        runtime.instances += count;
+        runtime.placed_cells++;
+        return;
+    }
+
+    InstancedMesh* batch = scene.get(node, InstancedMesh);
+    runtime.instances -= batch.count;
+    batch.count = place_cell(
+        frame:      frame,
+        column:     column,
+        row:        row,
+        transforms: batch.transforms,
+        colors:     batch.colors,
+    );
+    runtime.instances += batch.count;
+    scene.mark_instances_dirty(node);
+    runtime.placed_cells++;
 }
 
 // All or nothing: counts, then the node budget, then every allocation, before any cell changes.
