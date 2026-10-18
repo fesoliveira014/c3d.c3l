@@ -20,6 +20,7 @@ const float TOLERANCE @private = 0.0001f;
 const usz   RGBA_CHANNELS @private = 4;
 const uint  SETTLE_UPDATES @private = 120;
 const float CONTACT_SLOP @private = 0.01f; // box3d's speculative margin; resting points sit within it
+const uint  PARALLEL_DRAW_BOXES @private = 600; // more bodies than two chunks of a parallel draw, so the draw forks
 const SurfaceMaterialId ROCK_SURFACE @private = (SurfaceMaterialId)7;
 const SurfaceMaterialId ICE_SURFACE @private = (SurfaceMaterialId)9;
 const SurfaceMaterialId GROUND_SURFACE @private = (SurfaceMaterialId)3;
@@ -1689,6 +1690,98 @@ fn void test_full_sink_stops_generating_and_counts_drops() @test {
         assert(vertex.rgba == whole.vertices[index].rgba);
         assert(close_vec(vertex.position, whole.vertices[index].position, 0));
     }
+}
+
+struct ReverseRuns @private {
+    uint forks;
+    uint ranges;
+}
+
+fn void run_ranges_in_reverse(
+    void* context,
+    ParallelRangeFn range,
+    void* data,
+    uint count,
+    uint batch,
+) @private {
+    ReverseRuns* runs = context;
+    runs.forks++;
+    for (uint index = count; index > 0; index--) {
+        runs.ranges++;
+        range(data, index - 1, 1);
+    }
+}
+
+fn void add_mixed_bodies(Fixture* fixture) @private {
+    ColliderDesc sphere = physics::default_collider_desc(SPHERE);
+    sphere.radius = 0.5f;
+    ColliderDesc capsule = physics::default_collider_desc(CAPSULE);
+    capsule.radius = 0.25f;
+    capsule.half_height = 0.5f;
+
+    add_static_body(fixture, sphere, { 0, 5, 0 });
+    for (uint index = 0; index < PARALLEL_DRAW_BOXES; index++) {
+        BodyKind kind = index % 7 == 0 ? DYNAMIC : STATIC;
+        add_box(fixture, { (float)(index % 30) * 2, 10, (float)(index / 30) * 2 }, kind);
+    }
+    add_static_body(fixture, capsule, { 0, 5, 3 });
+    add_geometry_body(fixture, HULL, STATIC);
+}
+
+fn void assert_same_lines(debug::DebugDraw* first, debug::DebugDraw* second, usz lines) @private {
+    assert((usz)first.vertices.len() / 2 >= lines && (usz)second.vertices.len() / 2 >= lines);
+    for (sz index = 0; index < (sz)lines * 2; index++) {
+        assert(first.vertices[index].rgba == second.vertices[index].rgba);
+        assert(close_vec(first.vertices[index].position, second.vertices[index].position, 0));
+    }
+}
+
+fn void test_parallel_debug_draw_equals_serial() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    add_mixed_bodies(&fixture);
+    fixture.scene.update_world();
+
+    debug::DebugDraw serial = debug::create_debug_draw(mem, 1 << 16);
+    defer debug::destroy_debug_draw(&serial);
+    serial.aabb({ .min = { -1, -1, -1 }, .max = { 1, 1, 1 } }, debug::COLOR_WHITE);
+    fixture.physics.debug_draw(&serial, { .colliders = true });
+
+    ReverseRuns runs;
+    fixture.physics.set_parallel({ .run = &run_ranges_in_reverse, .context = &runs });
+    debug::DebugDraw forked = debug::create_debug_draw(mem, 1 << 16);
+    defer debug::destroy_debug_draw(&forked);
+    forked.aabb({ .min = { -1, -1, -1 }, .max = { 1, 1, 1 } }, debug::COLOR_WHITE);
+    fixture.physics.debug_draw(&forked, { .colliders = true });
+
+    assert(runs.forks == 1 && runs.ranges == 3);
+    assert(serial.vertices.len() == forked.vertices.len());
+    assert(serial.dropped == 0 && forked.dropped == 0);
+    assert_same_lines(&serial, &forked, (usz)serial.vertices.len() / 2);
+}
+
+fn void test_parallel_debug_draw_declines_a_short_sink() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    add_mixed_bodies(&fixture);
+    fixture.scene.update_world();
+
+    debug::DebugDraw whole = debug::create_debug_draw(mem, 1 << 16);
+    defer debug::destroy_debug_draw(&whole);
+    fixture.physics.debug_draw(&whole, { .colliders = true });
+    usz total = (usz)whole.vertices.len() / 2;
+
+    ReverseRuns runs;
+    fixture.physics.set_parallel({ .run = &run_ranges_in_reverse, .context = &runs });
+    debug::DebugDraw short_sink = debug::create_debug_draw(mem, total - 1);
+    defer debug::destroy_debug_draw(&short_sink);
+    fixture.physics.debug_draw(&short_sink, { .colliders = true });
+
+    assert(runs.forks == 0);
+    assert((usz)short_sink.vertices.len() / 2 == total - 1 && short_sink.dropped == 1);
+    assert_same_lines(&whole, &short_sink, total - 1);
 }
 
 fn void test_replace_geometry_keeps_live_body_snapshot() @test {
