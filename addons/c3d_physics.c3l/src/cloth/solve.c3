@@ -37,6 +37,22 @@ fn void? certify_hinge_step(
     }
 }
 
+fn Vec3 substep_transport(
+    ClothState* state,
+    sz index,
+    uint substep,
+    uint total,
+    float previous_progress,
+    float progress,
+) @local {
+    Vec3 solved = state.solved_reference[index];
+    Vec3 current = state.current_reference[index];
+    Vec3 delta = current - solved;
+    Vec3 previous_reference = substep == 1 ? solved : solved + delta * previous_progress;
+    Vec3 next_reference = substep == total ? current : solved + delta * progress;
+    return (next_reference - previous_reference) * state.transport[index];
+}
+
 fn void? solve_cloth(
     PhysicsWorld* world,
     ClothState* state,
@@ -55,23 +71,22 @@ fn void? solve_cloth(
     prepare_body_motions(state, false)!;
 
     for (uint substep = 1; substep <= total; substep++) {
-        float prev_progress = (float)(substep - 1) / (float)total;
+        float previous_progress = (float)(substep - 1) / (float)total;
         float progress = (float)substep / (float)total;
         accumulate_wind(state, wind);
         foreach (index, position : state.positions) {
             if (state.inverse_masses[index] == 0) continue;
-            Vec3 ref_prev = substep == 1
-              ? state.solved_reference[index]
-              : state.solved_reference[index]
-                + (state.current_reference[index] - state.solved_reference[index]) * prev_progress;
-            Vec3 ref_next = substep == total
-              ? state.current_reference[index]
-              : state.solved_reference[index]
-                + (state.current_reference[index] - state.solved_reference[index]) * progress;
-            Vec3 applied_transport = (ref_next - ref_prev) * state.transport[index];
+            Vec3 transport = substep_transport(
+                state:             state,
+                index:             index,
+                substep:           substep,
+                total:             total,
+                previous_progress: previous_progress,
+                progress:          progress,
+            );
             Vec3 velocity = (state.velocities[index] + (acceleration + state.accelerations[index]) * dt) * damping;
             state.velocities[index] = velocity;
-            state.predicted[index] = position + applied_transport + velocity * dt;
+            state.predicted[index] = position + transport + velocity * dt;
         }
 
         state.soft_lambdas[..] = (Vec3){};
@@ -149,16 +164,15 @@ fn void? solve_cloth(
         resolve_contacts(world, state, state.predicted)!;
         certify_hinge_step(state, state.positions, state.predicted)!;
         foreach (index, &position : state.positions) {
-            Vec3 ref_prev = substep == 1
-              ? state.solved_reference[index]
-              : state.solved_reference[index]
-                + (state.current_reference[index] - state.solved_reference[index]) * prev_progress;
-            Vec3 ref_next = substep == total
-              ? state.current_reference[index]
-              : state.solved_reference[index]
-                + (state.current_reference[index] - state.solved_reference[index]) * progress;
-            Vec3 applied_transport = (ref_next - ref_prev) * state.transport[index];
-            state.velocities[index] = (state.predicted[index] - *position - applied_transport) / dt;
+            Vec3 transport = substep_transport(
+                state:             state,
+                index:             index,
+                substep:           substep,
+                total:             total,
+                previous_progress: previous_progress,
+                progress:          progress,
+            );
+            state.velocities[index] = (state.predicted[index] - *position - transport) / dt;
             *position = state.predicted[index];
         }
     }
@@ -199,7 +213,6 @@ fn void? prepare_publication(PhysicsWorld* world, ClothState* state, bool solved
         end_positions:   state.published,
         commit_angle:    solved,
     )!;
-    state.published_reference[..] = state.current_reference[..];
     foreach (&body : state.bodies) {
         if (!body.live) continue;
         body.published = body.current;

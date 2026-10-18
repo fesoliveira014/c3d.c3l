@@ -12,12 +12,6 @@ import std::math;
 import std::time;
 import std::time::clock;
 
-<* Authored cloth configuration for one logical crowd part. *>
-struct CrowdClothPartDesc {
-    uint      part;
-    ClothDesc cloth;
-}
-
 <* Per-part cloth authoring and prepared per-slot runtime on a crowd owner. *>
 struct CrowdClothPart {
     ClothAuthoring* authoring;
@@ -79,6 +73,60 @@ fn CrowdClothPart*? CrowdCloth.find_part(&self, uint part) {
     return NOT_FOUND~;
 }
 
+fn void? check_crowd_part_source_geometry(
+    AssetStore* assets,
+    ModelTemplate* template,
+    uint part,
+    ClothDesc desc,
+    bool* out_skinned = null,
+    SkeletonId* out_skeleton = null,
+    uint* out_skeleton_revision = null,
+    uint* out_joint_count = null,
+) @private {
+    if ((usz)part >= template.meshes.len) return c3d::INVALID_ARGUMENT~;
+
+    ModelMesh* model_mesh = &template.meshes[part];
+    if (model_mesh.default_morph_weights.len) return c3d::UNSUPPORTED~;
+    check_cloth_material(assets, model_mesh.material, true)!;
+
+    GeometryAsset* source = assets.geometries.try_get(model_mesh.geometry)!;
+    check_cloth_geometry(source)!;
+    Geometry* data = &source.data;
+
+    bool skinned;
+    SkeletonId skeleton;
+    uint skeleton_revision;
+    uint joint_count;
+    foreach (&skin : template.skins) {
+        if (skin.mesh_node == model_mesh.node) {
+            skinned = true;
+            skeleton = skin.skeleton;
+            SkeletonAsset* skeleton_record = assets.skeletons.try_get(skin.skeleton)!;
+            if (!skin.joint_nodes.len
+                || skin.joint_nodes.len != skeleton_record.data.parents.len
+                || skin.joint_nodes.len != skeleton_record.data.inverse_bind.len) {
+                return c3d::INVALID_ARGUMENT~;
+            }
+            skeleton_revision = skeleton_record.header.revision;
+            joint_count = (uint)skin.joint_nodes.len;
+            check_skin_geometry(data, skin.joint_nodes.len)!;
+            break;
+        }
+    }
+    if (!skinned) {
+        if (data.joints.len || data.weights.len || source.shape.skinned) return c3d::UNSUPPORTED~;
+    }
+
+    @pool() {
+        check_cloth_authoring(data, desc)!;
+    };
+
+    if (out_skinned) *out_skinned = skinned;
+    if (out_skeleton) *out_skeleton = skeleton;
+    if (out_skeleton_revision) *out_skeleton_revision = skeleton_revision;
+    if (out_joint_count) *out_joint_count = joint_count;
+}
+
 <*
  Attach copied cloth authoring for one logical mesh part of an AnimatedCrowd owner.
  @param [&inout] self : "Scene with physics registered."
@@ -109,45 +157,23 @@ fn void? Scene.attach_crowd_cloth(
 
     ModelAsset* model_record = assets.models.try_get(crowd.model)!;
     ModelTemplate* template = &model_record.data;
-    if (part >= template.meshes.len) return c3d::INVALID_ARGUMENT~;
-
-    ModelMesh* model_mesh = &template.meshes[part];
-    if (model_mesh.default_morph_weights.len) return c3d::UNSUPPORTED~;
-    check_cloth_material(assets, model_mesh.material, true)!;
-
-    GeometryAsset* source = assets.geometries.try_get(model_mesh.geometry)!;
-    Geometry* data = &source.data;
-    if (!data.positions.len) return physics::SOURCE_UNAVAILABLE~;
-    if (data.targets.len || source.target_count || data.channels.len || data.custom_data.len) {
-        return c3d::UNSUPPORTED~;
-    }
-    if (data.topology != Topology.TRIANGLES || !data.indices.len) return c3d::UNSUPPORTED~;
-    if (data.indices.len % 3) return c3d::INVALID_ARGUMENT~;
-    foreach (index : data.indices) {
-        if (index >= data.positions.len) return c3d::INVALID_ARGUMENT~;
-    }
-    foreach (position : data.positions) {
-        if (!finite_vector(position)) return c3d::INVALID_ARGUMENT~;
-    }
-
     bool skinned;
     SkeletonId skeleton;
     uint skeleton_revision;
     uint joint_count;
-    foreach (&skin : template.skins) {
-        if (skin.mesh_node == model_mesh.node) {
-            skinned = true;
-            skeleton = skin.skeleton;
-            SkeletonAsset* skel_record = assets.skeletons.try_get(skin.skeleton)!;
-            skeleton_revision = skel_record.header.revision;
-            joint_count = (uint)skin.joint_nodes.len;
-            check_skin_geometry(data, skin.joint_nodes.len)!;
-            break;
-        }
-    }
-    if (!skinned) {
-        if (data.joints.len || data.weights.len || source.shape.skinned) return c3d::UNSUPPORTED~;
-    }
+    check_crowd_part_source_geometry(
+        assets:                assets,
+        template:              template,
+        part:                  part,
+        desc:                  desc,
+        out_skinned:           &skinned,
+        out_skeleton:          &skeleton,
+        out_skeleton_revision: &skeleton_revision,
+        out_joint_count:       &joint_count,
+    )!;
+
+    ModelMesh* model_mesh = &template.meshes[part];
+    GeometryAsset* source = assets.geometry(model_mesh.geometry);
 
     if (crowd.is_prepared()) {
         if (part >= crowd.parts.len) return c3d::INVALID_ARGUMENT~;
@@ -159,10 +185,6 @@ fn void? Scene.attach_crowd_cloth(
         if (batch.sway.amplitude != 0 || batch.fade.end != 0) return c3d::UNSUPPORTED~;
         check_cloth_material(assets, batch.material, true)!;
     }
-
-    @pool() {
-        check_cloth_authoring(data, desc)!;
-    };
 
     ClothAuthoring* authoring = copy_authoring(self.allocator, desc)!;
     defer catch alloc::free(self.allocator, authoring);
@@ -216,7 +238,8 @@ fn void? Scene.attach_crowd_cloth(
  @param [&inout] assets : "Owns the model, source geometries and private per-slot copies."
  @param [&in] owner : "Live node carrying AnimatedCrowd and CrowdCloth."
  @param part : "Specific logical part index, or uint::max to prepare all pending parts."
- @return? NO_MESH, OWNERSHIP_CHANGED, physics::SOURCE_UNAVAILABLE, physics::NO_BODY
+ @return? NO_MESH, OWNERSHIP_CHANGED, REFERENCE_UNAVAILABLE, physics::SOURCE_UNAVAILABLE, physics::NO_BODY
+ @return? CONTACT_UNRESOLVED, CONTACT_NONCONVERGENT, CONTACT_PRECISION_EXCEEDED, FRAME_UNRESOLVED, BEND_UNRESOLVED
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
 *>
 fn void? prepare_crowd_cloth(
@@ -229,14 +252,15 @@ fn void? prepare_crowd_cloth(
         return c3d::INVALID_ARGUMENT~;
     }
     Scene* scene = world.scene;
+    CrowdCloth* component = scene.get(owner, CrowdCloth);
+    if (!component.state || !component.state.parts.len) return c3d::INVALID_ARGUMENT~;
+    if (part == uint::max && component.is_prepared()) return;
+
     if (node_in_lod_group(scene, owner)) return c3d::UNSUPPORTED~;
 
     AnimatedCrowd* crowd = scene.get(owner, AnimatedCrowd);
     if (!crowd) return NO_MESH~;
     if (!crowd.is_prepared()) return c3d::INVALID_ARGUMENT~;
-
-    CrowdCloth* component = scene.get(owner, CrowdCloth);
-    if (!component.state || !component.state.parts.len) return c3d::INVALID_ARGUMENT~;
 
     if (part != uint::max) {
         CrowdClothPart*? found = component.find_part(part);
@@ -302,14 +326,10 @@ fn void Scene.remove_crowd_cloth(&self, Node* owner, uint part = uint::max) {
     }
 
     usz next_len = component.state.parts.len - 1;
-    CrowdClothPart[] next_parts = alloc::new_array(self.allocator, CrowdClothPart, (sz)next_len);
-    usz cursor;
-    foreach (usz index, entry : component.state.parts) {
-        if (index == found_index) continue;
-        next_parts[cursor++] = entry;
+    if (found_index < next_len) {
+        component.state.parts[found_index:next_len - found_index] = component.state.parts[found_index + 1..];
     }
-    alloc::free(self.allocator, component.state.parts.ptr);
-    component.state.parts = next_parts;
+    component.state.parts = component.state.parts[:next_len];
 }
 
 fn void free_crowd_cloth(Entity entity, void* raw, void* user) @private {
@@ -326,50 +346,50 @@ fn void free_crowd_cloth(Entity entity, void* raw, void* user) @private {
     *component = {};
 }
 
-fn void destroy_crowd_cloth_part_storage(Allocator allocator, CrowdClothPart* part_rec) @local {
-    foreach (state : part_rec.states) {
+fn void destroy_crowd_cloth_part_storage(Allocator allocator, CrowdClothPart* part_record) @local {
+    foreach (state : part_record.states) {
         if (!state) continue;
         if (state.assets && state.assets.geometries.is_live(state.geometry)) {
             state.assets.remove_geometry(state.geometry);
         }
         alloc::free(allocator, state);
     }
-    alloc::free(allocator, part_rec.states.ptr);
-    alloc::free(allocator, part_rec.outputs.ptr);
-    alloc::free(allocator, part_rec.slot_generations.ptr);
-    alloc::free(allocator, part_rec.published_colors.ptr);
-    alloc::free(allocator, part_rec.source_colors.ptr);
-    alloc::free(allocator, part_rec.palette_scratch.ptr);
-    part_rec.states = {};
-    part_rec.outputs = {};
-    part_rec.slot_generations = {};
-    part_rec.published_colors = {};
-    part_rec.source_colors = {};
-    part_rec.palette_scratch = {};
-    part_rec.prepared = false;
+    alloc::free(allocator, part_record.states.ptr);
+    alloc::free(allocator, part_record.outputs.ptr);
+    alloc::free(allocator, part_record.slot_generations.ptr);
+    alloc::free(allocator, part_record.published_colors.ptr);
+    alloc::free(allocator, part_record.source_colors.ptr);
+    alloc::free(allocator, part_record.palette_scratch.ptr);
+    part_record.states = {};
+    part_record.outputs = {};
+    part_record.slot_generations = {};
+    part_record.published_colors = {};
+    part_record.source_colors = {};
+    part_record.palette_scratch = {};
+    part_record.prepared = false;
 }
 
 fn void release_crowd_cloth_part(
     Scene* scene,
     Node* owner,
-    CrowdClothPart* part_rec,
+    CrowdClothPart* part_record,
     bool restore_batch,
 ) @local {
-    foreach (out_entity : part_rec.outputs) {
+    foreach (out_entity : part_record.outputs) {
         if (out_entity.generation && scene.world.is_alive(out_entity)) {
             Node* out_node = scene.node(out_entity);
             if (out_node.parent == owner) scene.remove(out_node);
         }
     }
-    if (restore_batch && part_rec.prepared
-        && part_rec.original_batch.generation && scene.world.is_alive(part_rec.original_batch)) {
-        Node* batch_node = scene.node(part_rec.original_batch);
+    if (restore_batch && part_record.prepared
+        && part_record.original_batch.generation && scene.world.is_alive(part_record.original_batch)) {
+        Node* batch_node = scene.node(part_record.original_batch);
         if (batch_node.parent == owner) {
-            batch_node.visible = part_rec.original_visible;
-            batch_node.visible_effective = owner.visible_effective && part_rec.original_visible;
+            batch_node.visible = part_record.original_visible;
+            batch_node.visible_effective = owner.visible_effective && part_record.original_visible;
         }
     }
-    destroy_crowd_cloth_part_storage(scene.allocator, part_rec);
+    destroy_crowd_cloth_part_storage(scene.allocator, part_record);
 }
 
 fn void? prepare_crowd_cloth_part(
@@ -377,18 +397,18 @@ fn void? prepare_crowd_cloth_part(
     AssetStore* assets,
     Node* owner,
     AnimatedCrowd* crowd,
-    CrowdClothPart* part_rec,
+    CrowdClothPart* part_record,
 ) @local {
     Scene* scene = world.scene;
-    if (!c3d::same_id(crowd.model, part_rec.model)) return c3d::INVALID_ID~;
-    ModelAsset* model_record = assets.models.try_get(part_rec.model)!;
-    if (model_record.header.revision != part_rec.model_revision) return c3d::INVALID_ID~;
-    if (part_rec.part >= crowd.parts.len || part_rec.part >= model_record.data.meshes.len) {
+    if (!c3d::same_id(crowd.model, part_record.model)) return c3d::INVALID_ID~;
+    ModelAsset* model_record = assets.models.try_get(part_record.model)!;
+    if (model_record.header.revision != part_record.model_revision) return c3d::INVALID_ID~;
+    if (part_record.part >= crowd.parts.len || part_record.part >= model_record.data.meshes.len) {
         return c3d::INVALID_ARGUMENT~;
     }
 
-    CrowdPart* crowd_part = &crowd.parts[part_rec.part];
-    if (crowd_part.skinned != part_rec.skinned || crowd_part.template_node != part_rec.template_node) {
+    CrowdPart* crowd_part = &crowd.parts[part_record.part];
+    if (crowd_part.skinned != part_record.skinned || crowd_part.template_node != part_record.template_node) {
         return c3d::INVALID_ID~;
     }
     if (!scene.world.is_alive(crowd_part.batch)) return NO_MESH~;
@@ -397,24 +417,23 @@ fn void? prepare_crowd_cloth_part(
     InstancedMesh* batch = scene.get(batch_node, InstancedMesh);
     if (!batch) return NO_MESH~;
     if (batch.sway.amplitude != 0 || batch.fade.end != 0) return c3d::UNSUPPORTED~;
-    if (!c3d::same_id(batch.geometry, part_rec.source)) return c3d::INVALID_ID~;
+    if (!c3d::same_id(batch.geometry, part_record.source)) return c3d::INVALID_ID~;
     check_cloth_material(assets, batch.material, true)!;
 
-    GeometryAsset* source = assets.geometries.try_get(part_rec.source)!;
-    if (source.header.revision != part_rec.source_revision) return c3d::INVALID_ID~;
+    GeometryAsset* source = assets.geometries.try_get(part_record.source)!;
+    if (source.header.revision != part_record.source_revision) return c3d::INVALID_ID~;
 
-    if (part_rec.skinned) {
-        SkeletonAsset* skel_record = assets.skeletons.try_get(part_rec.skeleton)!;
-        if (skel_record.header.revision != part_rec.skeleton_revision) return c3d::INVALID_ID~;
-        if (crowd.joint_count != part_rec.joint_count) return c3d::INVALID_ARGUMENT~;
-        check_skin_geometry(&source.data, part_rec.joint_count)!;
+    if (part_record.skinned) {
+        SkeletonAsset* skeleton_record = assets.skeletons.try_get(part_record.skeleton)!;
+        if (skeleton_record.header.revision != part_record.skeleton_revision) return c3d::INVALID_ID~;
+        if (crowd.joint_count != part_record.joint_count) return c3d::INVALID_ARGUMENT~;
+        check_skin_geometry(&source.data, part_record.joint_count)!;
     }
 
     uint capacity = (uint)crowd.placements.len;
     if (!capacity || crowd.count > capacity || crowd.colors.len < capacity) return c3d::INVALID_ARGUMENT~;
 
-    ClothDesc desc = part_rec.authoring.desc;
-    check_cloth_desc(desc)!;
+    ClothDesc desc = part_record.authoring.desc;
     check_collider_owners(scene, desc.colliders)!;
 
     @pool() {
@@ -455,24 +474,24 @@ fn void? prepare_crowd_cloth_part(
 
         Allocator allocator = scene.allocator;
         uint material_vertex_count = material_plan.material_vertex_count;
-        part_rec.states = alloc::new_array_try(allocator, ClothState*, (sz)capacity) ?? c3d::CAPACITY_EXCEEDED~!;
-        defer catch release_crowd_cloth_part(scene, owner, part_rec, false);
+        part_record.states = alloc::new_array_try(allocator, ClothState*, (sz)capacity) ?? c3d::CAPACITY_EXCEEDED~!;
+        defer catch release_crowd_cloth_part(scene, owner, part_record, false);
 
-        part_rec.outputs = alloc::new_array_try(allocator, Entity, (sz)capacity) ?? c3d::CAPACITY_EXCEEDED~!;
-        part_rec.slot_generations = alloc::new_array_try(allocator, uint, (sz)capacity) ?? c3d::CAPACITY_EXCEEDED~!;
-        part_rec.published_colors = alloc::new_array_try(allocator, Vec4, (sz)capacity) ?? c3d::CAPACITY_EXCEEDED~!;
-        part_rec.source_colors = alloc::new_array_try(allocator, Vec4, (sz)material_vertex_count)
+        part_record.outputs = alloc::new_array_try(allocator, Entity, (sz)capacity) ?? c3d::CAPACITY_EXCEEDED~!;
+        part_record.slot_generations = alloc::new_array_try(allocator, uint, (sz)capacity) ?? c3d::CAPACITY_EXCEEDED~!;
+        part_record.published_colors = alloc::new_array_try(allocator, Vec4, (sz)capacity) ?? c3d::CAPACITY_EXCEEDED~!;
+        part_record.source_colors = alloc::new_array_try(allocator, Vec4, (sz)material_vertex_count)
             ?? c3d::CAPACITY_EXCEEDED~!;
-        if (part_rec.skinned && part_rec.joint_count) {
-            part_rec.palette_scratch = alloc::new_array_try(allocator, SkinMat4, (sz)part_rec.joint_count)
+        if (part_record.skinned && part_record.joint_count) {
+            part_record.palette_scratch = alloc::new_array_try(allocator, SkinMat4, (sz)part_record.joint_count)
                 ?? c3d::CAPACITY_EXCEEDED~!;
         }
 
         if (material_plan.geometry.colors.len == material_vertex_count) {
-            part_rec.source_colors[..] = material_plan.geometry.colors[..];
+            part_record.source_colors[..] = material_plan.geometry.colors[..];
         } else {
-            part_rec.source_colors[..] = { 1, 1, 1, 1 };
-            material_plan.geometry.colors = part_rec.source_colors;
+            part_record.source_colors[..] = { 1, 1, 1, 1 };
+            material_plan.geometry.colors = part_record.source_colors;
         }
 
         for (uint slot = 0; slot < capacity; slot++) {
@@ -494,13 +513,13 @@ fn void? prepare_crowd_cloth_part(
                 bend_count:            (uint)topology.bends.len,
                 hinge_count:           (uint)topology.hinges.len,
                 body_count:            (uint)capture.bodies.len,
-                joint_count:           part_rec.skinned ? part_rec.joint_count : 0,
+                joint_count:           part_record.skinned ? part_record.joint_count : 0,
                 tangent_frame:         desc.tangent_frame,
                 crowd:                 true,
                 collisions:            desc.collisions,
             )!;
             state_linked = true;
-            part_rec.states[slot] = state;
+            part_record.states[slot] = state;
 
             state.desc = desc;
             state.desc.pins = state.pins;
@@ -511,13 +530,13 @@ fn void? prepare_crowd_cloth_part(
             state.shapes = state.shape_storage[:capture.shapes.len];
             state.shapes[..] = capture.shapes[..];
             state.assets = assets;
-            state.source = part_rec.source;
-            state.source_revision = part_rec.source_revision;
+            state.source = part_record.source;
+            state.source_revision = part_record.source_revision;
             state.geometry = copy;
-            state.skinned = part_rec.skinned;
+            state.skinned = part_record.skinned;
             state.crowd = true;
-            state.skeleton = part_rec.skeleton;
-            state.skeleton_revision = part_rec.skeleton_revision;
+            state.skeleton = part_record.skeleton;
+            state.skeleton_revision = part_record.skeleton_revision;
             state.render_to_particle[..] = material_plan.render_to_particle[..];
             state.particle_sources[..] = material_plan.particle_sources[..];
             if (desc.transport.len) {
@@ -529,7 +548,6 @@ fn void? prepare_crowd_cloth_part(
 
             state.rest[..] = rest[..];
             state.solved_reference[..] = edge_positions[..];
-            state.published_reference[..] = edge_positions[..];
             state.current_reference[..] = edge_positions[..];
             state.positions[..] = edge_positions[..];
             state.predicted[..] = edge_positions[..];
@@ -580,7 +598,7 @@ fn void? prepare_crowd_cloth_part(
             scene.add(out_node, (ClothOutput){
                 .owner = owner.id,
                 .crowd = true,
-                .part  = part_rec.part,
+                .part  = part_record.part,
             });
             scene.add(out_node, (scene::Mesh){
                 .geometry             = copy,
@@ -592,42 +610,42 @@ fn void? prepare_crowd_cloth_part(
                 .vertex_history_token = 1,
             });
             state.output_node = out_node.id;
-            part_rec.outputs[slot] = out_node.id;
+            part_record.outputs[slot] = out_node.id;
         }
 
-        part_rec.capacity = capacity;
+        part_record.capacity = capacity;
         for (uint slot = 0; slot < crowd.count; slot++) {
-            ClothState* state = part_rec.states[slot];
-            Node* out_node = scene.node(part_rec.outputs[slot]);
+            ClothState* state = part_record.states[slot];
+            Node* out_node = scene.node(part_record.outputs[slot]);
             seed_crowd_slot_state(
-                assets:   assets,
-                owner:    owner,
-                crowd:    crowd,
-                part_rec: part_rec,
-                state:    state,
-                slot:     slot,
+                assets:      assets,
+                owner:       owner,
+                crowd:       crowd,
+                part_record: part_record,
+                state:       state,
+                slot:        slot,
             )!;
             initial_cloth_publication(world, state, owner.world, true)!;
 
-            uint gen = crowd.playback.slots[slot].generation;
-            part_rec.slot_generations[slot] = gen;
-            part_rec.published_colors[slot] = crowd.colors[slot];
+            uint generation = crowd.playback.slots[slot].generation;
+            part_record.slot_generations[slot] = generation;
+            part_record.published_colors[slot] = crowd.colors[slot];
             ClothOutput* marker = scene.get(out_node, ClothOutput);
-            marker.instance = { .index = slot, .generation = gen };
+            marker.instance = { .index = slot, .generation = generation };
             out_node.visible = true;
             out_node.visible_effective = owner.visible_effective;
         }
 
-        part_rec.playback_identity = crowd.playback;
-        part_rec.original_batch = crowd_part.batch;
-        part_rec.original_visible = batch_node.visible;
-        part_rec.material = batch.material;
-        part_rec.cast_shadow = batch.cast_shadow;
-        part_rec.receive_shadow = batch.receive_shadow;
-        part_rec.trace = batch.trace;
+        part_record.playback_identity = crowd.playback;
+        part_record.original_batch = crowd_part.batch;
+        part_record.original_visible = batch_node.visible;
+        part_record.material = batch.material;
+        part_record.cast_shadow = batch.cast_shadow;
+        part_record.receive_shadow = batch.receive_shadow;
+        part_record.trace = batch.trace;
         batch_node.visible = false;
         batch_node.visible_effective = false;
-        part_rec.prepared = true;
+        part_record.prepared = true;
     };
 }
 
@@ -635,7 +653,7 @@ fn void? sample_crowd_slot_reference(
     AssetStore* assets,
     Node* owner,
     AnimatedCrowd* crowd,
-    CrowdClothPart* part_rec,
+    CrowdClothPart* part_record,
     ClothState* state,
     uint slot,
     Vec3[] out_reference,
@@ -643,31 +661,28 @@ fn void? sample_crowd_slot_reference(
     foreach (value : owner.world.m) {
         if (!math::is_finite(value)) return REFERENCE_UNAVAILABLE~;
     }
-    if (slot >= crowd.count || crowd.count > part_rec.capacity) return REFERENCE_UNAVAILABLE~;
-    if (!assets.geometries.is_live(part_rec.source)) return REFERENCE_UNAVAILABLE~;
+    if (slot >= crowd.count || crowd.count > part_record.capacity) return REFERENCE_UNAVAILABLE~;
+    if (!assets.geometries.is_live(part_record.source)) return REFERENCE_UNAVAILABLE~;
 
-    GeometryAsset* source = assets.geometry(part_rec.source);
-    if (source.header.revision != part_rec.source_revision) return REFERENCE_UNAVAILABLE~;
+    GeometryAsset* source = assets.geometry(part_record.source);
+    if (source.header.revision != part_record.source_revision) return REFERENCE_UNAVAILABLE~;
 
-    if (part_rec.skinned) {
-        if (!assets.skeletons.is_live(part_rec.skeleton)) return REFERENCE_UNAVAILABLE~;
-        SkeletonAsset* skel_record = assets.skeleton(part_rec.skeleton);
-        if (skel_record.header.revision != part_rec.skeleton_revision) return REFERENCE_UNAVAILABLE~;
-        if (crowd.joint_count != part_rec.joint_count) return REFERENCE_UNAVAILABLE~;
-        if ((usz)(slot + 1) * part_rec.joint_count > crowd.palettes.len) return REFERENCE_UNAVAILABLE~;
+    if (part_record.skinned) {
+        if (!assets.skeletons.is_live(part_record.skeleton)) return REFERENCE_UNAVAILABLE~;
+        SkeletonAsset* skeleton_record = assets.skeleton(part_record.skeleton);
+        if (skeleton_record.header.revision != part_record.skeleton_revision) return REFERENCE_UNAVAILABLE~;
+        if (crowd.joint_count != part_record.joint_count) return REFERENCE_UNAVAILABLE~;
+        if ((usz)(slot + 1) * part_record.joint_count > crowd.palettes.len) return REFERENCE_UNAVAILABLE~;
 
         Mat4 instance_world = owner.world.mul(crowd.placements[slot].to_mat4());
-        Mat4[] slot_palette = crowd.palettes[(usz)slot * part_rec.joint_count:part_rec.joint_count];
-        foreach (joint_idx, mat : slot_palette) {
-            foreach (entry : mat.m) {
-                if (!math::is_finite(entry)) return REFERENCE_UNAVAILABLE~;
-            }
-            part_rec.palette_scratch[joint_idx] = bitcast(mat, SkinMat4);
+        Mat4[] slot_palette = crowd.palettes[(usz)slot * part_record.joint_count:part_record.joint_count];
+        foreach (joint_index, mat : slot_palette) {
+            part_record.palette_scratch[joint_index] = bitcast(mat, SkinMat4);
         }
         if (catch anim::evaluate_skin_positions(
             output:  state.source_reference_scratch,
             source:  &source.data,
-            palette: part_rec.palette_scratch,
+            palette: part_record.palette_scratch,
             world:   instance_world,
         )) {
             return REFERENCE_UNAVAILABLE~;
@@ -675,15 +690,10 @@ fn void? sample_crowd_slot_reference(
         foreach (particle, source_vertex : state.particle_sources) {
             out_reference[particle] = state.source_reference_scratch[source_vertex];
         }
-        foreach (render_vertex, particle : state.render_to_particle) {
-            if (state.source_reference_scratch[render_vertex] != out_reference[particle]) {
-                return REFERENCE_UNAVAILABLE~;
-            }
-        }
         return;
     }
 
-    Mat4 part_world = owner.world.mul(crowd.part_transform(slot, part_rec.part));
+    Mat4 part_world = owner.world.mul(crowd.part_transform(slot, part_record.part));
     if (catch evaluate_rigid_particles(part_world, state.rest, out_reference)) {
         return REFERENCE_UNAVAILABLE~;
     }
@@ -712,7 +722,7 @@ fn void? seed_crowd_slot_state(
     AssetStore* assets,
     Node* owner,
     AnimatedCrowd* crowd,
-    CrowdClothPart* part_rec,
+    CrowdClothPart* part_record,
     ClothState* state,
     uint slot,
 ) @local {
@@ -720,33 +730,32 @@ fn void? seed_crowd_slot_state(
         assets:        assets,
         owner:         owner,
         crowd:         crowd,
-        part_rec:      part_rec,
+        part_record:   part_record,
         state:         state,
         slot:          slot,
         out_reference: state.current_reference,
     )!;
 
-    Mat4 slot_basis = part_rec.skinned
+    Mat4 slot_basis = part_record.skinned
         ? owner.world.mul(crowd.placements[slot].to_mat4())
-        : owner.world.mul(crowd.part_transform(slot, part_rec.part));
+        : owner.world.mul(crowd.part_transform(slot, part_record.part));
     update_slot_rest_constraints(state, slot_basis);
 
     foreach (&hinge : state.hinges) {
-        Vec3[4] world_pts = {
+        Vec3[4] world_points = {
             state.current_reference[hinge.p0],
             state.current_reference[hinge.p1],
             state.current_reference[hinge.p2],
             state.current_reference[hinge.p3],
         };
-        ClothHingeSample? sample = evaluate_hinge_sample(world_pts);
-        if (catch sample) return c3d::INVALID_ARGUMENT~;
-        hinge.last_angle = (float)sample.angle;
+        double? evaluated = evaluate_hinge_angle(world_points);
+        if (catch evaluated) return c3d::INVALID_ARGUMENT~;
+        hinge.last_angle = (float)evaluated;
         hinge.lambda = 0;
     }
     state.staged_hinges[..] = state.hinges[..];
 
     state.solved_reference[..] = state.current_reference[..];
-    state.published_reference[..] = state.current_reference[..];
     state.positions[..] = state.current_reference[..];
     state.predicted[..] = state.current_reference[..];
     state.published[..] = state.current_reference[..];
@@ -780,66 +789,68 @@ fn void? seed_crowd_slot_state(
     }
 
     Vec4 instance_color = crowd.colors[slot];
-    foreach (vertex, base_color : part_rec.source_colors) {
+    foreach (vertex, base_color : part_record.source_colors) {
         state.staged_colors[vertex] = base_color * instance_color;
     }
 }
 
-fn void deactivate_all_part_outputs(Scene* scene, CrowdClothPart* part_rec) @local {
-    foreach (out_entity : part_rec.outputs) {
+fn void deactivate_all_part_outputs(Scene* scene, CrowdClothPart* part_record) @local {
+    foreach (out_entity : part_record.outputs) {
         deactivate_output_node(scene, out_entity);
     }
-    if (part_rec.slot_generations.len) part_rec.slot_generations[..] = 0;
+    if (part_record.slot_generations.len) part_record.slot_generations[..] = 0;
+}
+
+fn bool valid_crowd_part_runtime(
+    Scene* scene,
+    Node* owner,
+    AnimatedCrowd* crowd,
+    CrowdClothPart* part_record,
+    Node** out_batch_node = null,
+) @private {
+    if (!crowd || !crowd.is_prepared()) return false;
+    if (crowd.playback != part_record.playback_identity) return false;
+    if (crowd.placements.len != part_record.capacity || crowd.count > part_record.capacity
+        || crowd.colors.len < part_record.capacity) {
+        return false;
+    }
+    if (!c3d::same_id(crowd.model, part_record.model) || (usz)part_record.part >= crowd.parts.len) {
+        return false;
+    }
+
+    CrowdPart* crowd_part = &crowd.parts[part_record.part];
+    if (!c3d::same_id(crowd_part.batch, part_record.original_batch)
+        || !scene.world.is_alive(part_record.original_batch)) {
+        return false;
+    }
+    Node* batch_node = scene.node(part_record.original_batch);
+    if (batch_node.parent != owner || batch_node.visible) return false;
+    if (part_record.outputs.len != part_record.states.len || part_record.outputs.len != (usz)part_record.capacity) {
+        return false;
+    }
+    if (out_batch_node) *out_batch_node = batch_node;
+    return true;
 }
 
 fn void? check_crowd_part_runtime(
     Scene* scene,
     AssetStore* assets,
     Node* owner,
-    CrowdClothPart* part_rec,
+    CrowdClothPart* part_record,
     AnimatedCrowd** out_crowd,
     Node** out_batch_node,
 ) @local {
     if (node_in_lod_group(scene, owner)) return OWNERSHIP_CHANGED~;
     AnimatedCrowd* crowd = scene.get(owner, AnimatedCrowd);
-    if (!crowd || !crowd.is_prepared()) return OWNERSHIP_CHANGED~;
-    if (crowd.playback != part_rec.playback_identity) return OWNERSHIP_CHANGED~;
-    if (crowd.placements.len != part_rec.capacity || crowd.count > part_rec.capacity
-        || crowd.colors.len < part_rec.capacity) {
+    Node* batch_node;
+    if (!valid_crowd_part_runtime(scene, owner, crowd, part_record, &batch_node)) {
         return OWNERSHIP_CHANGED~;
     }
-    if (!c3d::same_id(crowd.model, part_rec.model)) return OWNERSHIP_CHANGED~;
-    if (part_rec.part >= crowd.parts.len) return OWNERSHIP_CHANGED~;
-
-    CrowdPart* crowd_part = &crowd.parts[part_rec.part];
-    if (!c3d::same_id(crowd_part.batch, part_rec.original_batch)
-        || !scene.world.is_alive(part_rec.original_batch)) {
-        return OWNERSHIP_CHANGED~;
-    }
-    Node* batch_node = scene.node(part_rec.original_batch);
-    if (batch_node.parent != owner || batch_node.visible) return OWNERSHIP_CHANGED~;
-    InstancedMesh* batch = scene.get(batch_node, InstancedMesh);
-    if (!batch || !c3d::same_id(batch.geometry, part_rec.source) || !c3d::same_id(batch.material, part_rec.material)
-        || batch.sway.amplitude != 0 || batch.fade.end != 0) {
-        return OWNERSHIP_CHANGED~;
-    }
-
-    if (!assets.models.is_live(part_rec.model)
-        || assets.model(part_rec.model).header.revision != part_rec.model_revision) {
+    if (!assets.models.is_live(part_record.model)
+        || assets.model(part_record.model).header.revision != part_record.model_revision) {
         return REFERENCE_UNAVAILABLE~;
     }
-    if (!assets.geometries.is_live(part_rec.source)
-        || assets.geometry(part_rec.source).header.revision != part_rec.source_revision) {
-        return REFERENCE_UNAVAILABLE~;
-    }
-    if (part_rec.skinned) {
-        if (!assets.skeletons.is_live(part_rec.skeleton)
-            || assets.skeleton(part_rec.skeleton).header.revision != part_rec.skeleton_revision
-            || crowd.joint_count != part_rec.joint_count) {
-            return REFERENCE_UNAVAILABLE~;
-        }
-    }
-    if (catch check_cloth_material(assets, batch.material, true)) {
+    if (part_record.skinned && crowd.joint_count != part_record.joint_count) {
         return REFERENCE_UNAVAILABLE~;
     }
 
@@ -847,40 +858,48 @@ fn void? check_crowd_part_runtime(
     *out_batch_node = batch_node;
 }
 
+fn bool valid_crowd_slot_output(
+    Scene* scene,
+    Node* owner,
+    CrowdClothPart* part_record,
+    ClothState* state,
+    uint slot,
+    Node** out_node = null,
+    scene::Mesh** out_mesh = null,
+) @private {
+    Entity out_entity = part_record.outputs[slot];
+    if (!out_entity.generation || !scene.world.is_alive(out_entity) || !state) return false;
+    Node* node = scene.node(out_entity);
+    ClothOutput* marker = scene.get(node, ClothOutput);
+    scene::Mesh* mesh = scene.get(node, scene::Mesh);
+    if (node.parent != owner
+        || !marker
+        || !c3d::same_id(marker.owner, owner.id)
+        || !marker.crowd
+        || marker.part != part_record.part
+        || !mesh
+        || !c3d::same_id(mesh.geometry, state.geometry)
+        || scene.has(node, SkinBinding)) {
+        return false;
+    }
+    if (out_node) *out_node = node;
+    if (out_mesh) *out_mesh = mesh;
+    return true;
+}
+
 fn void? check_crowd_slot_output(
     Scene* scene,
-    AssetStore* assets,
     Node* owner,
-    CrowdClothPart* part_rec,
+    CrowdClothPart* part_record,
     ClothState* state,
     uint slot,
     Node** out_node,
     scene::Mesh** out_mesh,
 ) @local {
-    Entity out_entity = part_rec.outputs[slot];
-    if (!out_entity.generation || !scene.world.is_alive(out_entity)) return OWNERSHIP_CHANGED~;
-    Node* node = scene.node(out_entity);
-    if (node.parent != owner
-        || node.transform_space != TransformSpace.PARENT
-        || node.local.position != (Vec3){}
-        || node.local.rotation.v != maths::TRANSFORM_IDENTITY.rotation.v
-        || node.local.scale != (Vec3){ 1, 1, 1 }) {
-        deactivate_output_node(scene, out_entity);
+    if (!valid_crowd_slot_output(scene, owner, part_record, state, slot, out_node, out_mesh)) {
+        deactivate_output_node(scene, part_record.outputs[slot]);
         return OWNERSHIP_CHANGED~;
     }
-    ClothOutput* marker = scene.get(node, ClothOutput);
-    scene::Mesh* mesh = scene.get(node, scene::Mesh);
-    if (!marker || !c3d::same_id(marker.owner, owner.id) || !marker.crowd || marker.part != part_rec.part
-        || !mesh || !c3d::same_id(mesh.geometry, state.geometry) || scene.has(node, SkinBinding)) {
-        deactivate_output_node(scene, out_entity);
-        return OWNERSHIP_CHANGED~;
-    }
-    if (!assets.geometries.is_live(state.geometry)) {
-        deactivate_output_node(scene, out_entity);
-        return OWNERSHIP_CHANGED~;
-    }
-    *out_node = node;
-    *out_mesh = mesh;
 }
 
 fn void update_crowd_cloths(PhysicsWorld* world, uint steps) @private {
@@ -890,20 +909,20 @@ fn void update_crowd_cloths(PhysicsWorld* world, uint steps) @private {
     scene.@each(CrowdCloth; Entity owner_entity, CrowdCloth* component) {
         if (component.state) {
             Node* owner = scene.node(owner_entity);
-            foreach (&part_rec : component.state.parts) {
-                if (!part_rec.prepared || !part_rec.states.len) {
+            foreach (&part_record : component.state.parts) {
+                if (!part_record.prepared || !part_record.states.len) {
                     world.cloth_stats.pending++;
                     continue;
                 }
 
                 AnimatedCrowd* crowd;
                 Node* batch_node;
-                if (catch excuse = check_crowd_part_runtime(scene, assets, owner, part_rec, &crowd, &batch_node)) {
-                    deactivate_all_part_outputs(scene, part_rec);
+                if (catch excuse = check_crowd_part_runtime(scene, assets, owner, part_record, &crowd, &batch_node)) {
+                    deactivate_all_part_outputs(scene, part_record);
                     ClothContactStage stage = excuse == REFERENCE_UNAVAILABLE
                         ? ClothContactStage.REFERENCE
                         : ClothContactStage.PUBLICATION;
-                    part_rec.states[0].contact_result = {
+                    part_record.states[0].contact_result = {
                         .failure = excuse,
                         .stage   = stage,
                     };
@@ -912,35 +931,34 @@ fn void update_crowd_cloths(PhysicsWorld* world, uint steps) @private {
                 }
 
                 // Reconcile inactive and replaced slots before any numerical work.
-                for (uint slot = crowd.count; slot < part_rec.capacity; slot++) {
-                    deactivate_output_node(scene, part_rec.outputs[slot]);
-                    part_rec.slot_generations[slot] = 0;
+                for (uint slot = crowd.count; slot < part_record.capacity; slot++) {
+                    deactivate_output_node(scene, part_record.outputs[slot]);
+                    part_record.slot_generations[slot] = 0;
                 }
                 for (uint slot = 0; slot < crowd.count; slot++) {
-                    uint live_gen = crowd.playback.slots[slot].generation;
-                    if (live_gen != part_rec.slot_generations[slot]) {
-                        deactivate_output_node(scene, part_rec.outputs[slot]);
+                    uint live_generation = crowd.playback.slots[slot].generation;
+                    if (live_generation != part_record.slot_generations[slot]) {
+                        deactivate_output_node(scene, part_record.outputs[slot]);
                     }
                 }
 
                 for (uint slot = 0; slot < crowd.count; slot++) {
-                    ClothState* state = part_rec.states[slot];
-                    uint live_gen = crowd.playback.slots[slot].generation;
-                    bool reseeded = live_gen != part_rec.slot_generations[slot];
+                    ClothState* state = part_record.states[slot];
+                    uint live_generation = crowd.playback.slots[slot].generation;
+                    bool reseeded = live_generation != part_record.slot_generations[slot];
 
                     Node* out_node;
                     scene::Mesh* out_mesh;
                     if (catch excuse = check_crowd_slot_output(
-                        scene:    scene,
-                        assets:   assets,
-                        owner:    owner,
-                        part_rec: part_rec,
-                        state:    state,
-                        slot:     slot,
-                        out_node: &out_node,
-                        out_mesh: &out_mesh,
+                        scene:       scene,
+                        owner:       owner,
+                        part_record: part_record,
+                        state:       state,
+                        slot:        slot,
+                        out_node:    &out_node,
+                        out_mesh:    &out_mesh,
                     )) {
-                        part_rec.slot_generations[slot] = 0;
+                        part_record.slot_generations[slot] = 0;
                         state.contact_result = {
                             .failure = excuse,
                             .stage   = ClothContactStage.PUBLICATION,
@@ -956,12 +974,12 @@ fn void update_crowd_cloths(PhysicsWorld* world, uint steps) @private {
                         owner:               owner,
                         batch_node:          batch_node,
                         crowd:               crowd,
-                        part_rec:            part_rec,
+                        part_record:         part_record,
                         state:               state,
                         out_node:            out_node,
                         out_mesh:            out_mesh,
                         slot:                slot,
-                        live_gen:            live_gen,
+                        live_generation:     live_generation,
                         steps:               steps,
                         reseeded:            reseeded,
                         publication_seconds: &publication_seconds,
@@ -1004,12 +1022,12 @@ fn void? update_crowd_slot(
     Node* owner,
     Node* batch_node,
     AnimatedCrowd* crowd,
-    CrowdClothPart* part_rec,
+    CrowdClothPart* part_record,
     ClothState* state,
     Node* out_node,
     scene::Mesh* out_mesh,
     uint slot,
-    uint live_gen,
+    uint live_generation,
     uint steps,
     bool reseeded,
     double* publication_seconds,
@@ -1022,18 +1040,18 @@ fn void? update_crowd_slot(
         state.contact_result = {};
         state.contact_result.stage = ClothContactStage.REFERENCE;
         if (catch seed_crowd_slot_state(
-            assets:   assets,
-            owner:    owner,
-            crowd:    crowd,
-            part_rec: part_rec,
-            state:    state,
-            slot:     slot,
+            assets:      assets,
+            owner:       owner,
+            crowd:       crowd,
+            part_record: part_record,
+            state:       state,
+            slot:        slot,
         )) {
-            part_rec.slot_generations[slot] = 0;
+            part_record.slot_generations[slot] = 0;
             return REFERENCE_UNAVAILABLE~;
         }
         state.contact_result.stage = ClothContactStage.PUBLICATION;
-        out_mesh.reset_vertex_history()!;
+        out_mesh.reset_vertex_history();
     }
 
     ClothState staged = staged_cloth(state);
@@ -1051,17 +1069,17 @@ fn void? update_crowd_slot(
             assets:        assets,
             owner:         owner,
             crowd:         crowd,
-            part_rec:      part_rec,
+            part_record:   part_record,
             state:         &staged,
             slot:          slot,
             out_reference: staged.current_reference,
         )!;
     }
 
-    bool colors_changed = reseeded || crowd.colors[slot] != part_rec.published_colors[slot];
+    bool colors_changed = reseeded || crowd.colors[slot] != part_record.published_colors[slot];
     if (colors_changed && !reseeded) {
         Vec4 instance_color = crowd.colors[slot];
-        foreach (vertex, base_color : part_rec.source_colors) {
+        foreach (vertex, base_color : part_record.source_colors) {
             state.staged_colors[vertex] = base_color * instance_color;
         }
     }
@@ -1109,13 +1127,13 @@ fn void? update_crowd_slot(
     commit_local_publication(state, owner.world, changed, colors_changed);
 
     if (reseeded) {
-        part_rec.slot_generations[slot] = live_gen;
+        part_record.slot_generations[slot] = live_generation;
         ClothOutput* marker = scene.get(out_node, ClothOutput);
-        marker.instance = { .index = slot, .generation = live_gen };
+        marker.instance = { .index = slot, .generation = live_generation };
         out_node.visible = true;
     }
     if (colors_changed) {
-        part_rec.published_colors[slot] = crowd.colors[slot];
+        part_record.published_colors[slot] = crowd.colors[slot];
     }
     out_node.world = owner.world;
     out_node.visible_effective = owner.visible_effective && out_node.visible;

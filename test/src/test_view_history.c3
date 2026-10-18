@@ -955,8 +955,6 @@ fn void test_vertex_history_token_resets_across_views() @test {
         .geometry      = fixture.quad,
         .vertex_motion = true,
     });
-    Mesh max_mesh = { .vertex_history_token = ulong::max };
-    assert(@catch(max_mesh.reset_vertex_history()) == c3d::CAPACITY_EXCEEDED);
 
     MeshCandidate[1] candidates = { {
         .node                 = fixture.node,
@@ -986,7 +984,7 @@ fn void test_vertex_history_token_resets_across_views() @test {
     uint rev_before = fixture.assets.geometry(fixture.quad).header.revision;
     foreach (&position : fixture.assets.geometry(fixture.quad).data.positions) *position += { 2, 0, 0 };
     assert(fixture.assets.geometry(fixture.quad).header.revision == rev_before);
-    mesh.reset_vertex_history()!!;
+    mesh.reset_vertex_history();
     assert(mesh.vertex_history_token == 1);
     candidates[0].vertex_history_token = mesh.vertex_history_token;
 

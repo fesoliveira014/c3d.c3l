@@ -36,7 +36,9 @@ fn void evaluate_skin_palette(
  @param [&in] source : "CPU geometry with positions, joints and weights."
  @param palette : "Float joint palette matrices."
  @param world : "Finite affine world matrix."
- @return? c3d::INVALID_ARGUMENT, c3d::ASSET_DATA_UNAVAILABLE
+ @return? c3d::INVALID_ARGUMENT
+ @require output.len == source.positions.len && source.positions.len > 0
+ @require source.joints.len == source.positions.len && source.weights.len == source.positions.len && palette.len > 0
 *>
 fn void? evaluate_skin_positions(
     Vec3[] output,
@@ -44,32 +46,9 @@ fn void? evaluate_skin_positions(
     float[<4>][4][] palette,
     Mat4 world,
 ) {
-    if (!source) return c3d::INVALID_ARGUMENT~;
-    if (!source.positions.len || !source.joints.len || !source.weights.len) {
-        return c3d::ASSET_DATA_UNAVAILABLE~;
-    }
-    if (output.len != source.positions.len
-      || source.joints.len != source.positions.len
-      || source.weights.len != source.positions.len
-      || !palette.len
-      || !skin_affine_finite(world)) {
-        return c3d::INVALID_ARGUMENT~;
-    }
-    foreach (&matrix : palette) {
-        if (!skin_palette_finite(*matrix)) return c3d::INVALID_ARGUMENT~;
-    }
-
     foreach (index, position : source.positions) {
         Vec4 weights = source.weights[index];
         ushort[<4>] joints = source.joints[index];
-        if (!skin_vec3_finite(position) || !skin_vec4_finite(weights)) return c3d::INVALID_ARGUMENT~;
-        if ((usz)joints.x >= palette.len
-          || (usz)joints.y >= palette.len
-          || (usz)joints.z >= palette.len
-          || (usz)joints.w >= palette.len) {
-            return c3d::INVALID_ARGUMENT~;
-        }
-
         float[<4>][4] m0 = palette[joints.x];
         float[<4>][4] m1 = palette[joints.y];
         float[<4>][4] m2 = palette[joints.z];
@@ -82,8 +61,6 @@ fn void? evaluate_skin_positions(
         };
         float[<4>] local4 = skin[0] * position.x + skin[1] * position.y + skin[2] * position.z + skin[3];
         Vec3 local = { local4.x, local4.y, local4.z };
-        if (!skin_vec3_finite(local)) return c3d::INVALID_ARGUMENT~;
-
         Vec3 transformed = maths::transform_point(world, local);
         if (!skin_vec3_finite(transformed)) return c3d::INVALID_ARGUMENT~;
         output[index] = transformed;
@@ -92,26 +69,4 @@ fn void? evaluate_skin_positions(
 
 fn bool skin_vec3_finite(Vec3 v) @local {
     return math::is_finite(v.x) && math::is_finite(v.y) && math::is_finite(v.z);
-}
-
-fn bool skin_vec4_finite(Vec4 v) @local {
-    return math::is_finite(v.x) && math::is_finite(v.y) && math::is_finite(v.z) && math::is_finite(v.w);
-}
-
-fn bool skin_column_finite(float[<4>] col) @local {
-    return math::is_finite(col.x) && math::is_finite(col.y) && math::is_finite(col.z) && math::is_finite(col.w);
-}
-
-fn bool skin_palette_finite(float[<4>][4] matrix) @local {
-    return skin_column_finite(matrix[0])
-      && skin_column_finite(matrix[1])
-      && skin_column_finite(matrix[2])
-      && skin_column_finite(matrix[3]);
-}
-
-fn bool skin_affine_finite(Mat4 world) @local {
-    return math::is_finite(world.m00) && math::is_finite(world.m01) && math::is_finite(world.m02) && math::is_finite(world.m03)
-      && math::is_finite(world.m10) && math::is_finite(world.m11) && math::is_finite(world.m12) && math::is_finite(world.m13)
-      && math::is_finite(world.m20) && math::is_finite(world.m21) && math::is_finite(world.m22) && math::is_finite(world.m23)
-      && world.m30 == 0 && world.m31 == 0 && world.m32 == 0 && world.m33 == 1;
 }

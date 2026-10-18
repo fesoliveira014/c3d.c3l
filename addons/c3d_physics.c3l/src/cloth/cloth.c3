@@ -126,7 +126,6 @@ struct ClothState {
     float[]              transport;
     Vec3[]               rest;                // node-local, per physical particle
     Vec3[]               solved_reference;    // world, end of the last solved substep
-    Vec3[]               published_reference; // world, last accepted publication
     Vec3[]               current_reference;   // world, sampled by the current update
     Vec3[]               positions;           // world, last solved
     Vec3[]               velocities;
@@ -168,7 +167,6 @@ struct ClothState {
     ClothShape[]         staged_shapes;
     ClothBody[]          staged_bodies;
     Vec3[]               staged_solved_reference;
-    Vec3[]               staged_published_reference;
     Vec3[]               staged_positions;
     Vec3[]               staged_velocities;
     Vec3[]               staged_published;
@@ -236,6 +234,7 @@ fn bool Cloth.is_prepared(&self) => self.state != null;
  @param desc : "Pins, seams, collider identities and settings are copied."
  @param [inout] world : "Required when preparing a skinned source."
  @return? NO_MESH, CLOTH_EXISTS, physics::SOURCE_UNAVAILABLE, physics::NO_BODY
+ @return? CONTACT_UNRESOLVED, CONTACT_NONCONVERGENT, CONTACT_PRECISION_EXCEEDED, FRAME_UNRESOLVED, BEND_UNRESOLVED
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
  @require self.world.is_registered(Cloth)
 *>
@@ -344,7 +343,6 @@ fn void? initial_cloth_publication(
     state.velocities[..] = (Vec3){};
     state.accelerations[..] = (Vec3){};
     state.solved_reference[..] = state.current_reference[..];
-    state.published_reference[..] = state.current_reference[..];
     if (state.desc.collisions.continuous) {
         state.sweep_start[..] = state.published[..];
         foreach (index, point : state.published) {
@@ -372,6 +370,7 @@ fn void? initial_cloth_publication(
  @param [&in] node : "Carries Cloth and its source Mesh; world matrix current."
  @param [inout] world : "Required when preparing a skinned source."
  @return? NO_MESH, physics::SOURCE_UNAVAILABLE, physics::NO_BODY
+ @return? CONTACT_UNRESOLVED, CONTACT_NONCONVERGENT, CONTACT_PRECISION_EXCEEDED, FRAME_UNRESOLVED, BEND_UNRESOLVED
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
  @require scene.has(node, Cloth)
 *>
@@ -394,7 +393,7 @@ fn void? prepare(
     if (!assets.geometries.is_live(authoring.source)) return c3d::INVALID_ID~;
 
     GeometryAsset* source = assets.geometry(authoring.source);
-    if (source.header.revision != authoring.source_revision) return c3d::INVALID_ARGUMENT~;
+    if (authoring.skinned && source.header.revision != authoring.source_revision) return c3d::INVALID_ARGUMENT~;
     check_cloth_source(
         scene:  scene,
         assets: assets,
@@ -403,7 +402,6 @@ fn void? prepare(
         source: source,
     )!;
     if (scene.has(node, SkinBinding) != authoring.skinned) return c3d::INVALID_ARGUMENT~;
-    if (mesh.vertex_history_token == ulong::max) return c3d::CAPACITY_EXCEEDED~;
 
     SkinBinding* binding;
     if (authoring.skinned) {
@@ -434,7 +432,6 @@ fn void? prepare(
 
         Vec3[] rest = alloc::new_array(tmem, Vec3, (sz)particle_count);
         Vec3[] edge_positions = alloc::new_array(tmem, Vec3, (sz)particle_count);
-        Vec3[] world_positions = alloc::new_array(tmem, Vec3, (sz)particle_count);
         foreach (particle, source_vertex : material_plan.particle_sources) {
             Vec3 local_pos = source.data.positions[source_vertex];
             rest[particle] = local_pos;
@@ -442,31 +439,29 @@ fn void? prepare(
         }
         check_world_positions(edge_positions)!;
 
+        Vec3[] initial_positions = edge_positions;
         if (authoring.skinned) {
+            initial_positions = alloc::new_array(tmem, Vec3, (sz)particle_count);
             SkinMat4[] palette_scratch = alloc::new_array(tmem, SkinMat4, (sz)binding.joints.len);
             Vec3[] source_scratch = alloc::new_array(tmem, Vec3, (sz)source.data.positions.len);
             evaluate_skinned_particles(
-                mesh_node:          node,
-                binding:            binding,
-                inverse_bind:       assets.skeleton(authoring.skeleton).data.inverse_bind,
-                source:             &source.data,
-                render_to_particle: material_plan.render_to_particle,
-                particle_sources:   material_plan.particle_sources,
-                palette_scratch:    palette_scratch,
-                source_scratch:     source_scratch,
-                out_particles:      world_positions,
+                mesh_node:        node,
+                binding:          binding,
+                inverse_bind:     assets.skeleton(authoring.skeleton).data.inverse_bind,
+                source:           &source.data,
+                particle_sources: material_plan.particle_sources,
+                palette_scratch:  palette_scratch,
+                source_scratch:   source_scratch,
+                out_particles:    initial_positions,
             )!;
-        } else {
-            world_positions[..] = edge_positions[..];
         }
-        check_world_positions(world_positions)!;
 
         ClothTopology topology = build_topology(
             data:               &source.data,
             render_to_particle: material_plan.render_to_particle,
             rest_positions:     rest,
             edge_positions:     edge_positions,
-            world_positions:    world_positions,
+            world_positions:    authoring.skinned ? initial_positions : {},
             desc:               desc,
         )!;
         ClothCapture capture = capture_colliders(
@@ -499,6 +494,7 @@ fn void? prepare(
         )!;
         defer catch alloc::free(scene.allocator, state);
 
+        authoring.source_revision = source.header.revision;
         state.desc = desc;
         state.desc.pins = state.pins;
         state.colliders[..] = desc.colliders[..];
@@ -528,16 +524,15 @@ fn void? prepare(
         state.desc.transport = state.transport;
 
         state.rest[..] = rest[..];
-        state.solved_reference[..] = world_positions[..];
-        state.published_reference[..] = world_positions[..];
-        state.current_reference[..] = world_positions[..];
-        state.positions[..] = world_positions[..];
-        state.predicted[..] = world_positions[..];
+        state.solved_reference[..] = initial_positions[..];
+        state.current_reference[..] = initial_positions[..];
+        state.positions[..] = initial_positions[..];
+        state.predicted[..] = initial_positions[..];
         state.accelerations[..] = (Vec3){};
-        state.published[..] = world_positions[..];
+        state.published[..] = initial_positions[..];
         if (desc.collisions.continuous) {
-            state.sweep_start[..] = world_positions[..];
-            foreach (index, point : world_positions) {
+            state.sweep_start[..] = initial_positions[..];
+            foreach (index, point : initial_positions) {
                 state.sweep_bounds[index] = { .min = point, .max = point };
             }
         }
@@ -546,13 +541,13 @@ fn void? prepare(
         state.pins[..] = attachment_plan.pins[..];
         foreach (slot, pin : attachment_plan.pins) {
             state.inverse_masses[pin] = 0;
-            state.pin_anchors[slot] = world_positions[pin];
-            state.pin_targets[slot] = world_positions[pin];
+            state.pin_anchors[slot] = initial_positions[pin];
+            state.pin_targets[slot] = initial_positions[pin];
         }
         state.soft_attachments[..] = attachment_plan.soft[..];
         foreach (slot, attachment : attachment_plan.soft) {
-            state.soft_anchors[slot] = world_positions[attachment.particle];
-            state.soft_targets[slot] = world_positions[attachment.particle];
+            state.soft_anchors[slot] = initial_positions[attachment.particle];
+            state.soft_targets[slot] = initial_positions[attachment.particle];
             state.soft_lambdas[slot] = {};
         }
 
@@ -604,7 +599,7 @@ fn void? prepare(
             out_node.visible_effective = node.visible_effective;
             component.state = state;
         } else {
-            mesh.reset_vertex_history()!;
+            mesh.reset_vertex_history();
             component.state = state;
             mesh.geometry = copy;
             mesh.vertex_motion = true;
@@ -619,6 +614,8 @@ fn void? prepare(
  @param [in] root : "Null selects the scene root; root is included."
  @param [inout] world : "Required when preparing skinned or crowd cloth."
  @return? NO_MESH, physics::SOURCE_UNAVAILABLE, physics::NO_BODY
+ @return? CONTACT_UNRESOLVED, CONTACT_NONCONVERGENT, CONTACT_PRECISION_EXCEEDED, FRAME_UNRESOLVED, BEND_UNRESOLVED
+ @return? REFERENCE_UNAVAILABLE, OWNERSHIP_CHANGED
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
 *>
 fn void? prepare_subtree(
@@ -644,8 +641,8 @@ fn void? prepare_subtree(
             }
         }
     };
-    if (scene.world.is_registered(CrowdCloth)) {
-        scene.@each(CrowdCloth; entity, crowd_cloth) {
+    scene.@each(CrowdCloth; entity, crowd_cloth) {
+        if (!crowd_cloth.is_prepared()) {
             Node* node = scene.node(entity);
             Node* ancestor = node;
             while (ancestor && ancestor != root) ancestor = ancestor.parent;
@@ -658,8 +655,8 @@ fn void? prepare_subtree(
                     if (!failure) failure = excuse;
                 }
             }
-        };
-    }
+        }
+    };
     if (failure) return failure~;
 }
 
@@ -676,24 +673,19 @@ fn void Scene.remove_cloth(&self, Node* node) {
         ulong next_token = state.captured_mesh.vertex_history_token;
         if (state.output_node.generation && self.world.is_alive(state.output_node)) {
             Node* out_node = self.node(state.output_node);
-            ClothOutput* marker = self.get(out_node, ClothOutput);
-            if (out_node.parent == node
-                && marker
-                && c3d::same_id(marker.owner, node.id)
-                && !marker.crowd) {
-                scene::Mesh* out_mesh = self.get(out_node, scene::Mesh);
-                if (out_mesh && out_mesh.vertex_history_token > next_token) {
+            if (scene::Mesh* out_mesh = self.get(out_node, scene::Mesh)) {
+                if (out_mesh.vertex_history_token > next_token) {
                     next_token = out_mesh.vertex_history_token;
                 }
-                self.remove(out_node);
             }
+            self.remove(out_node);
         }
         state.output_node = {};
         if (!self.has(node, scene::Mesh)) {
             scene::Mesh restored = state.captured_mesh;
             restored.geometry = authoring.source;
             restored.vertex_motion = authoring.source_vertex_motion;
-            restored.vertex_history_token = next_token < ulong::max ? next_token + 1 : ulong::max;
+            restored.vertex_history_token = next_token + 1;
             self.add(node, restored);
         }
     } else if (self.has(node, scene::Mesh)) {
@@ -701,9 +693,7 @@ fn void Scene.remove_cloth(&self, Node* node) {
         if (!state || c3d::same_id(mesh.geometry, state.geometry)) {
             mesh.geometry = authoring.source;
             mesh.vertex_motion = authoring.source_vertex_motion;
-            if (state && mesh.vertex_history_token < ulong::max) {
-                mesh.vertex_history_token++;
-            }
+            if (state) mesh.reset_vertex_history();
         }
     }
     self.remove_component(node, Cloth);
@@ -760,9 +750,7 @@ fn void PhysicsWorld.update_cloths(&self) {
         }
     };
 
-    if (self.scene.world.is_registered(CrowdCloth)) {
-        update_crowd_cloths(self, steps);
-    }
+    update_crowd_cloths(self, steps);
 }
 
 <*
@@ -774,10 +762,8 @@ fn void ClothState.shift_origin(&self, Vec3 offset) {
     self.published_frame.m13 -= offset.y;
     self.published_frame.m23 -= offset.z;
     foreach (&position : self.solved_reference) *position -= offset;
-    foreach (&position : self.published_reference) *position -= offset;
     foreach (&position : self.current_reference) *position -= offset;
     foreach (&position : self.staged_solved_reference) *position -= offset;
-    foreach (&position : self.staged_published_reference) *position -= offset;
     foreach (&position : self.positions) *position -= offset;
     foreach (&position : self.predicted) *position -= offset;
     foreach (&position : self.published) *position -= offset;

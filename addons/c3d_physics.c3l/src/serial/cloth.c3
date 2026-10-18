@@ -156,8 +156,6 @@ fn void? collect_cloth_output(void* component, serial::WriteContext* context) @p
 
 fn void? collect_cloth(void* component, serial::WriteContext* context) @private {
     Cloth* owner = component;
-    ClothDesc desc = owner.authoring.desc;
-    cloth::check_cloth_desc(desc)!;
 
     if (!owner.authoring.skinned) {
         if (context.scene.has(context.node, SkinBinding)) return c3d::INVALID_ARGUMENT~;
@@ -166,21 +164,11 @@ fn void? collect_cloth(void* component, serial::WriteContext* context) @private 
 
         GeometryId expected = owner.is_prepared() ? owner.state.geometry : owner.authoring.source;
         if (!c3d::same_id(mesh.geometry, expected)) return c3d::INVALID_ARGUMENT~;
+        (void)context.assets.geometries.try_get(owner.authoring.source)!;
 
         Mesh projected = *mesh;
         projected.geometry = owner.authoring.source;
         projected.vertex_motion = owner.authoring.source_vertex_motion;
-
-        GeometryAsset* source = context.assets.geometries.try_get(projected.geometry)!;
-        if (source.header.revision != owner.authoring.source_revision) return c3d::INVALID_ARGUMENT~;
-        cloth::check_cloth_source(
-            scene: context.scene,
-            assets: context.assets,
-            node: context.node,
-            mesh: &projected,
-            source: source,
-        )!;
-        cloth::check_cloth_authoring(&source.data, desc)!;
         context.project_component(context.node, projected)!;
         return;
     }
@@ -208,57 +196,17 @@ fn void? collect_cloth(void* component, serial::WriteContext* context) @private 
         Mesh projected = *mesh;
         projected.geometry = owner.authoring.source;
         projected.vertex_motion = owner.authoring.source_vertex_motion;
-        cloth::check_cloth_source(
-            scene: context.scene,
-            assets: context.assets,
-            node: context.node,
-            mesh: &projected,
-            source: source,
-        )!;
-        cloth::check_cloth_authoring(&source.data, desc)!;
         context.project_component(context.node, projected)!;
         return;
     }
 
-    if (context.scene.has(context.node, Mesh) || !context.scene.world.is_alive(owner.state.output_node)) {
+    if (!cloth::valid_skinned_output_node(context.scene, owner.state, context.node)) {
         return c3d::INVALID_ARGUMENT~;
     }
     Node* out_node = context.scene.node(owner.state.output_node);
-    ClothOutput* marker = context.scene.get(out_node, ClothOutput);
-    Mesh* out_mesh = context.scene.get(out_node, Mesh);
-    if (out_node.parent != context.node
-      || out_node.transform_space != TransformSpace.PARENT
-      || out_node.local.position != (Vec3){}
-      || out_node.local.rotation.v != maths::TRANSFORM_IDENTITY.rotation.v
-      || out_node.local.scale != (Vec3){ 1, 1, 1 }
-      || !out_node.visible
-      || !marker
-      || !c3d::same_id(marker.owner, context.node.id)
-      || marker.crowd
-      || !out_mesh
-      || !c3d::same_id(out_mesh.geometry, owner.state.geometry)
-      || !c3d::same_id(out_mesh.material, owner.state.captured_mesh.material)
-      || out_mesh.cast_shadow != owner.state.captured_mesh.cast_shadow
-      || out_mesh.receive_shadow != owner.state.captured_mesh.receive_shadow
-      || out_mesh.trace != owner.state.captured_mesh.trace
-      || !out_mesh.vertex_motion
-      || out_mesh.morph_weights.len != 0
-      || out_mesh.morph_weights.ptr != null
-      || out_mesh.has_bounds_override
-      || context.scene.has(out_node, SkinBinding)) {
-        return c3d::INVALID_ARGUMENT~;
-    }
     Mesh projected = owner.state.captured_mesh;
     projected.geometry = owner.authoring.source;
     projected.vertex_motion = owner.authoring.source_vertex_motion;
-    cloth::check_cloth_source(
-        scene: context.scene,
-        assets: context.assets,
-        node: context.node,
-        mesh: &projected,
-        source: source,
-    )!;
-    cloth::check_cloth_authoring(&source.data, desc)!;
 
     context.omit_component(out_node, ecs::slot_of(Mesh)!)!;
     context.omit_node(out_node)!;
@@ -363,26 +311,14 @@ fn void? validate_cloth(void* value, serial::ReadContext* context) @private {
             return c3d::INVALID_ARGUMENT~;
         }
         foreach (joint_ref : skin.joints) (void)context.resolve_node_reference(joint_ref, true)!;
-        if (mesh.morph_weights.len || mesh.morph_weights.ptr != null || mesh.has_bounds_override) {
+        if (mesh.morph_weights.len || mesh.has_bounds_override) {
             return c3d::UNSUPPORTED~;
         }
         if (cloth::node_in_lod_group(context.scene, context.node)) return c3d::UNSUPPORTED~;
         cloth::check_cloth_material(context.assets, mesh.material, false)!;
-        Geometry* data = &geometry.data;
-        if (!data.positions.len) return physics::SOURCE_UNAVAILABLE~;
-        if (data.targets.len || geometry.target_count || data.channels.len || data.custom_data.len) {
-            return c3d::UNSUPPORTED~;
-        }
-        if (data.topology != Topology.TRIANGLES || !data.indices.len) return c3d::UNSUPPORTED~;
-        if (data.indices.len % 3) return c3d::INVALID_ARGUMENT~;
-        foreach (index : data.indices) {
-            if (index >= data.positions.len) return c3d::INVALID_ARGUMENT~;
-        }
-        foreach (position : data.positions) {
-            if (!cloth::finite_vector(position)) return c3d::INVALID_ARGUMENT~;
-        }
-        if (!data.joints.len && !data.weights.len) return c3d::UNSUPPORTED~;
-        cloth::check_skin_geometry(data, skin.joints.len)!;
+        cloth::check_cloth_geometry(geometry)!;
+        if (!geometry.data.joints.len && !geometry.data.weights.len) return c3d::UNSUPPORTED~;
+        cloth::check_skin_geometry(&geometry.data, skin.joints.len)!;
     } else {
         cloth::check_cloth_source(
             scene: context.scene,

@@ -560,19 +560,17 @@ fn void reset_cloth_body_contact_history(Scene* scene, Entity owner) @private {
             }
         }
     };
-    if (scene.world.is_registered(cloth::CrowdCloth)) {
-        scene.@each(cloth::CrowdCloth; entity, crowd_cloth) {
-            if (crowd_cloth.state) {
-                foreach (&part_rec : crowd_cloth.state.parts) {
-                    if (!part_rec.prepared) continue;
-                    foreach (state : part_rec.states) {
-                        if (!state) continue;
-                        foreach (&body : state.bodies) {
-                            if (c3d::same_id(body.owner, owner)) body.observed = body.published_observed = false;
-                        }
+    scene.@each(cloth::CrowdCloth; entity, crowd_cloth) {
+        if (crowd_cloth.state) {
+            foreach (&part : crowd_cloth.state.parts) {
+                if (!part.prepared) continue;
+                foreach (state : part.states) {
+                    if (!state) continue;
+                    foreach (&body : state.bodies) {
+                        if (c3d::same_id(body.owner, owner)) body.observed = body.published_observed = false;
                     }
                 }
             }
-        };
-    }
+        }
+    };
 }

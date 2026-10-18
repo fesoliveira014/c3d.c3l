@@ -21,9 +21,5 @@ struct Mesh {
 
 <*
  Advance the vertex correspondence token so views reject their prior vertex history.
- @return? c3d::CAPACITY_EXCEEDED
 *>
-fn void? Mesh.reset_vertex_history(&self) {
-    if (self.vertex_history_token == ulong::max) return c3d::CAPACITY_EXCEEDED~;
-    self.vertex_history_token++;
-}
+fn void Mesh.reset_vertex_history(&self) => self.vertex_history_token++;

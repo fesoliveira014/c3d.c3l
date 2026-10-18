@@ -145,7 +145,9 @@ checks do not establish the consumer's compiler mode. Skinned `Mesh` + `SkinBind
 move their rendered `Mesh` to an owned `ClothOutput` child on preparation (`cloth::prepare` with
 `&physics`), and `CrowdCloth` (`scene.attach_crowd_cloth`, `cloth::prepare_crowd_cloth`) replaces
 crowd part batches with per-slot `ClothOutput` children while supporting per-particle reference
-`transport`. Serialization stores `Cloth` in authoring version 6 (including `transport`) and
+`transport`. Use `scene.remove_cloth` and `scene.remove_crowd_cloth` (not `scene.remove_component`)
+to remove cloth components so the source `Mesh` or crowd batch is restored and generated
+`ClothOutput` children are deleted. Serialization stores `Cloth` in authoring version 6 (including `transport`) and
 `CrowdCloth` in authoring version 1, projecting the retained source `Mesh` of prepared skinned
 cloths and omitting generated `ClothOutput` children; runtime buffers, contact results and
 histories are excluded. Version-1..5 JSONC defaults `transport` to empty; Version-1..4 JSONC

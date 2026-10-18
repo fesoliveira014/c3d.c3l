@@ -195,7 +195,7 @@ fn void test_deformed_meshes_collect_posed_only_away_from_rest() @test {
 
         Mesh* rigid_mesh = scene.get(rigid, Mesh);
         rigid_mesh.vertex_motion = true;
-        rigid_mesh.reset_vertex_history()!!;
+        rigid_mesh.reset_vertex_history();
         render::TraceCollection motion_collection = collect_all(&fixture);
         assert(motion_collection.poses[5].kind == render::TracePose.VERTEX_MOTION);
         assert(motion_collection.poses[5].vertex_history_token == 1);

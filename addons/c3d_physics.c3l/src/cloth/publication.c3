@@ -13,7 +13,6 @@ import std::time::clock;
 fn ClothState staged_cloth(ClothState* state) @private {
     ClothState staged = *state;
     staged.solved_reference = state.staged_solved_reference;
-    staged.published_reference = state.staged_published_reference;
     staged.positions = state.staged_positions;
     staged.velocities = state.staged_velocities;
     staged.predicted = state.staged_predicted;
@@ -31,7 +30,6 @@ fn ClothState staged_cloth(ClothState* state) @private {
     staged.contact_result = {};
 
     staged.solved_reference[..] = state.solved_reference[..];
-    staged.published_reference[..] = state.published_reference[..];
     staged.positions[..] = state.positions[..];
     staged.velocities[..] = state.velocities[..];
     staged.predicted[..] = state.predicted[..];
@@ -50,7 +48,6 @@ fn ClothState staged_cloth(ClothState* state) @private {
 
 fn void commit_cloth(ClothState* state, ClothState* staged) @private {
     state.solved_reference[..] = staged.solved_reference[..];
-    state.published_reference[..] = staged.published_reference[..];
     state.positions[..] = staged.positions[..];
     state.velocities[..] = staged.velocities[..];
     state.predicted[..] = staged.predicted[..];

@@ -11,6 +11,8 @@ import c3d::physics @public;
 import c3d::scene;
 import std::math;
 
+alias SkinMat4 @private = float[<4>][4];
+
 <* Transient marker on an owned unskinned cloth output node. *>
 struct ClothOutput {
     Entity          owner;
@@ -72,6 +74,7 @@ fn void? check_skin_geometry(Geometry* data, usz joint_count) @private {
     }
 }
 
+<* @require scene.has(node, SkinBinding) *>
 fn void? check_skin_binding(
     Scene* scene,
     AssetStore* assets,
@@ -79,7 +82,6 @@ fn void? check_skin_binding(
     Geometry* data,
 ) @private {
     SkinBinding* binding = scene.get(node, SkinBinding);
-    if (!binding) return c3d::INVALID_ARGUMENT~;
     if (!assets.skeletons.is_live(binding.skeleton)) return c3d::INVALID_ID~;
     Skeleton* skeleton = &assets.skeleton(binding.skeleton).data;
     if (!binding.joints.len
@@ -95,14 +97,11 @@ fn void? check_skin_binding(
     check_skin_geometry(data, binding.joints.len)!;
 }
 
-alias SkinMat4 @private = float[<4>][4];
-
 fn void? evaluate_skinned_particles(
     Node* mesh_node,
     SkinBinding* binding,
     Mat4[] inverse_bind,
     Geometry* source,
-    uint[] render_to_particle,
     uint[] particle_sources,
     SkinMat4[] palette_scratch,
     Vec3[] source_scratch,
@@ -122,11 +121,6 @@ fn void? evaluate_skinned_particles(
     )!;
     foreach (particle, source_vertex : particle_sources) {
         out_particles[particle] = source_scratch[source_vertex];
-    }
-    foreach (render_vertex, particle : render_to_particle) {
-        if (source_scratch[render_vertex] != out_particles[particle]) {
-            return c3d::INVALID_ARGUMENT~;
-        }
     }
 }
 
@@ -148,6 +142,20 @@ fn void deactivate_output_node(Scene* scene, Entity output_entity) @private {
     out_node.visible_effective = false;
 }
 
+fn bool valid_skinned_output_node(Scene* scene, ClothState* state, Node* owner) @private {
+    if (scene.has(owner, scene::Mesh) || !scene.world.is_alive(state.output_node)) return false;
+    Node* out_node = scene.node(state.output_node);
+    ClothOutput* marker = scene.get(out_node, ClothOutput);
+    scene::Mesh* out_mesh = scene.get(out_node, scene::Mesh);
+    return out_node.parent == owner
+      && marker != null
+      && c3d::same_id(marker.owner, owner.id)
+      && !marker.crowd
+      && out_mesh != null
+      && c3d::same_id(out_mesh.geometry, state.geometry)
+      && !scene.has(out_node, SkinBinding);
+}
+
 fn void? check_ordinary_output_ownership(Scene* scene, ClothState* state, Node* owner) @private {
     if (!state.skinned) {
         scene::Mesh* mesh = scene.get(owner, scene::Mesh);
@@ -157,38 +165,7 @@ fn void? check_ordinary_output_ownership(Scene* scene, ClothState* state, Node* 
         return;
     }
 
-    if (scene.has(owner, scene::Mesh) || !scene.world.is_alive(state.output_node)) {
-        deactivate_output_node(scene, state.output_node);
-        return OWNERSHIP_CHANGED~;
-    }
-
-    Node* out_node = scene.node(state.output_node);
-    ClothOutput* marker = scene.get(out_node, ClothOutput);
-    scene::Mesh* out_mesh = scene.get(out_node, scene::Mesh);
-    if (out_node.parent != owner
-        || out_node.transform_space != TransformSpace.PARENT
-        || out_node.local.position != (Vec3){}
-        || out_node.local.rotation.v != maths::TRANSFORM_IDENTITY.rotation.v
-        || out_node.local.scale != (Vec3){ 1, 1, 1 }
-        || !out_node.visible
-        || !marker
-        || !c3d::same_id(marker.owner, owner.id)
-        || marker.crowd
-        || !out_mesh
-        || !c3d::same_id(out_mesh.geometry, state.geometry)
-        || !c3d::same_id(out_mesh.material, state.captured_mesh.material)
-        || out_mesh.cast_shadow != state.captured_mesh.cast_shadow
-        || out_mesh.receive_shadow != state.captured_mesh.receive_shadow
-        || out_mesh.trace != state.captured_mesh.trace
-        || !out_mesh.vertex_motion
-        || out_mesh.morph_weights.len != 0
-        || out_mesh.morph_weights.ptr != null
-        || out_mesh.has_bounds_override
-        || scene.has(out_node, SkinBinding)) {
-        deactivate_output_node(scene, state.output_node);
-        return OWNERSHIP_CHANGED~;
-    }
-    if (catch check_cloth_material(state.assets, out_mesh.material, false)) {
+    if (!valid_skinned_output_node(scene, state, owner)) {
         deactivate_output_node(scene, state.output_node);
         return OWNERSHIP_CHANGED~;
     }
@@ -239,14 +216,13 @@ fn void? sample_ordinary_reference(
     }
 
     return evaluate_skinned_particles(
-        mesh_node:          owner,
-        binding:            binding,
-        inverse_bind:       skeleton_record.data.inverse_bind,
-        source:             source_data,
-        render_to_particle: state.render_to_particle,
-        particle_sources:   state.particle_sources,
-        palette_scratch:    state.palette_scratch,
-        source_scratch:     state.source_reference_scratch,
-        out_particles:      state.current_reference,
+        mesh_node:        owner,
+        binding:          binding,
+        inverse_bind:     skeleton_record.data.inverse_bind,
+        source:           source_data,
+        particle_sources: state.particle_sources,
+        palette_scratch:  state.palette_scratch,
+        source_scratch:   state.source_reference_scratch,
+        out_particles:    state.current_reference,
     );
 }

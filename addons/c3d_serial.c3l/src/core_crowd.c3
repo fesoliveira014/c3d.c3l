@@ -85,8 +85,7 @@ struct CrowdAuthoringV3 @private {
     CrowdInstanceAuthoringV2[] playback;
 }
 
-<* Crowd model, capacity, and placement authoring used by crowd preflight. *>
-struct CrowdAuthoringV4 {
+struct CrowdAuthoringV4 @private {
     ModelId model;
     uint capacity;
     Aabb pose_bounds;
@@ -104,6 +103,16 @@ BinaryCompatibility[3] crowd_binary_compatibility @local = {
     { .version = 3, .read = &read_crowd_v3 },
 };
 uint[3] crowd_text_default_versions @local = { 1, 2, 3 };
+
+<*
+ Read the authored model handle of a staged AnimatedCrowd component during import validation.
+ @return? c3d::INVALID_ARGUMENT
+*>
+fn ModelId? ReadContext.authored_crowd_model(&self, Entity entity = {}) {
+    CrowdAuthoringV4* crowd = self.authored(AnimatedCrowd, CrowdAuthoringV4, entity)!;
+    if (!crowd) return c3d::INVALID_ARGUMENT~;
+    return crowd.model;
+}
 
 fn void? register_crowd_codec() @private {
     describe::register_reflected(CrowdPose)!;

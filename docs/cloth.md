@@ -93,20 +93,24 @@ An ordinary mesh node carrying a valid `SkinBinding` is supported as a skinned c
 pending, the owner retains both `Mesh` and `SkinBinding`. Preparing the cloth (`cloth::prepare(&scene, &assets, node, &physics)` or `scene.add_cloth(&assets, node, desc, &physics)`) moves the rendered
 `Mesh` to an owned unskinned child node carrying transient `ClothOutput` while leaving `SkinBinding`
 on the owner node so skeletal animation and skinning evaluation continue undisturbed. `Scene.remove_cloth`
-restores the source `Mesh` onto the owner node, increments `Mesh.vertex_history_token` to invalidate
-correspondence-based motion blur and trace caches, and removes the generated child node.
+and `Scene.remove_crowd_cloth` are the only valid component removal paths: they restore the source
+`Mesh` or hidden crowd batch, increment `Mesh.vertex_history_token` to invalidate correspondence-based
+motion blur and trace caches, and delete generated `ClothOutput` child nodes (calling `scene.remove_component`
+directly releases private state and geometry without undoing child/mesh takeover; whole-node `scene.remove(owner)`
+removes child nodes with the owner).
 
-`ClothDesc.transport` supplies an optional per-source-vertex weight in `[0, 1]` (co-shared render
-vertices must agree). During each fixed step, free particles receive `transport[p] * (current_ref[p] - solved_ref[p])`
-before gravity and constraint projection so skeletal motion carries the cloth naturally without
-double-counting on zero-step frames.
+`ClothDesc.transport` supplies an optional per-particle weight in `[0, 1]`, indexed by the physical
+particle (`render_particles` maps render vertices to particles). During each fixed step, free particles
+receive `transport[p] * (current_ref[p] - solved_ref[p])` before gravity and constraint projection so
+skeletal motion carries the cloth naturally without double-counting on zero-step frames.
 
 For `AnimatedCrowd` owners, `scene.attach_crowd_cloth(&assets, crowd_node, part, desc)` attaches a
 `CrowdCloth` part recipe for a rigid or skinned crowd mesh part (`sway` and `fade` must be disabled),
 and `cloth::prepare_crowd_cloth(&physics, &assets, crowd_node)` hides the part's `InstancedMesh` batch
 and creates one unskinned `ClothOutput` child node per crowd placement slot. Active slots (`slot < crowd.count`)
-are simulated and published in owner-local space with `Mesh.base_color = crowd.colors[slot]`; inactive
-slots are hidden, and slot generation changes reseed the slot and advance `Mesh.vertex_history_token`.
+are simulated and published in owner-local space with per-slot geometry vertex colors equal to the
+source vertex colors (or white) multiplied by `crowd.colors[slot]`; inactive slots are hidden, and slot
+generation changes reseed the slot and advance `Mesh.vertex_history_token`.
 
 ## Pending authoring and preparation
 

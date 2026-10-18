@@ -439,8 +439,8 @@ fn void test_skinned_cloth_and_crowd_cloth_round_trip_and_reject_orphan_output()
         Mat4[] inverse_bind = alloc::new_array(mem, Mat4, 2);
         inverse_bind[0] = matrix::IDENTITY4;
         inverse_bind[1] = matrix::IDENTITY4;
-        Skeleton skel = { .parents = parents, .inverse_bind = inverse_bind };
-        SkeletonId skel_id = fixture.assets.add_skeleton_owned(&skel, "two_joint_skel")!!;
+        Skeleton skeleton = { .parents = parents, .inverse_bind = inverse_bind };
+        SkeletonId skeleton_id = fixture.assets.add_skeleton_owned(&skeleton, "two_joint_skel")!!;
 
         Node* j0 = fixture.source.add_node(fixture.root, "j0")!!;
         Node* j1 = fixture.source.add_node(j0, "j1")!!;
@@ -453,7 +453,7 @@ fn void test_skinned_cloth_and_crowd_cloth_round_trip_and_reject_orphan_output()
         Node*[] joint_nodes = alloc::new_array(mem, Node*, 2);
         joint_nodes[0] = j0;
         joint_nodes[1] = j1;
-        fixture.source.add(skin_owner, (SkinBinding){ .skeleton = skel_id, .joints = joint_nodes });
+        fixture.source.add(skin_owner, (SkinBinding){ .skeleton = skeleton_id, .joints = joint_nodes });
 
         uint[2] pins = { 0, 1 };
         float[4] transport = { 1.0f, 1.0f, 0.5f, 0.25f };
@@ -469,13 +469,13 @@ fn void test_skinned_cloth_and_crowd_cloth_round_trip_and_reject_orphan_output()
         };
         rigid_geom.finalize();
         GeometryId rigid_id = fixture.assets.add_geometry(&rigid_geom, "rigid_quad")!!;
-        MaterialId mat_id = fixture.assets.add_material(material::standard(), "crowd_mat")!!;
-        NodeTemplate[] tmpl_nodes = alloc::new_array(mem, NodeTemplate, 1);
-        tmpl_nodes[0] = { .parent = -1, .name = "cape".copy(mem), .local = maths::TRANSFORM_IDENTITY, .visible = true };
-        ModelMesh[] tmpl_meshes = alloc::new_array(mem, ModelMesh, 1);
-        tmpl_meshes[0] = { .node = 0, .geometry = rigid_id, .material = mat_id };
-        ModelTemplate tmpl = { .nodes = tmpl_nodes, .meshes = tmpl_meshes };
-        ModelId model_id = fixture.assets.add_model_owned(&tmpl, "crowd_cape_model")!!;
+        MaterialId material_id = fixture.assets.add_material(material::standard(), "crowd_mat")!!;
+        NodeTemplate[] template_nodes = alloc::new_array(mem, NodeTemplate, 1);
+        template_nodes[0] = { .parent = -1, .name = "cape".copy(mem), .local = maths::TRANSFORM_IDENTITY, .visible = true };
+        ModelMesh[] template_meshes = alloc::new_array(mem, ModelMesh, 1);
+        template_meshes[0] = { .node = 0, .geometry = rigid_id, .material = material_id };
+        ModelTemplate model_template = { .nodes = template_nodes, .meshes = template_meshes };
+        ModelId model_id = fixture.assets.add_model_owned(&model_template, "crowd_cape_model")!!;
         Node* crowd_owner = fixture.source.add_node(fixture.root, "crowd_owner")!!;
         model::attach_crowd(
             assets:      &fixture.assets,
@@ -514,16 +514,16 @@ fn void test_skinned_cloth_and_crowd_cloth_round_trip_and_reject_orphan_output()
         assert(fixture.source.has(out_child, ClothOutput) && fixture.source.has(out_child, Mesh));
 
         // Exporting the generated output child alone must fail via the ClothOutput transient collector.
-        serial::SerialDiagnostic diag = { .allocator = tmem };
+        serial::SerialDiagnostic diagnostic = { .allocator = tmem };
         fault orphan_fault = @catch(encode(
             scene:     &fixture.source,
             assets:    &fixture.assets,
             root:      out_child,
             text_mode: text_mode,
-            options:   { .diagnostic = &diag },
+            options:   { .diagnostic = &diagnostic },
         ));
         assert(orphan_fault == c3d::INVALID_ARGUMENT);
-        assert(diag.type_name == ClothOutput::qname);
+        assert(diagnostic.type_name == ClothOutput::qname);
 
         char[] prepared_bytes = encode(
             scene:     &fixture.source,
@@ -540,8 +540,8 @@ fn void test_skinned_cloth_and_crowd_cloth_round_trip_and_reject_orphan_output()
         assert(fixture.destination.has(restored_skin, Mesh) && fixture.destination.has(restored_skin, SkinBinding));
         assert(restored_cloth.authoring.desc.transport == transport[..]);
         Node* restored_crowd = child_named(restored, "crowd_owner");
-        CrowdCloth* restored_cc = fixture.destination.get(restored_crowd, CrowdCloth);
-        assert(restored_cc && !restored_cc.is_prepared());
-        assert(restored_cc.find_part(0)!!.authoring.desc.transport == transport[..]);
+        CrowdCloth* restored_crowd_cloth = fixture.destination.get(restored_crowd, CrowdCloth);
+        assert(restored_crowd_cloth && !restored_crowd_cloth.is_prepared());
+        assert(restored_crowd_cloth.find_part(0)!!.authoring.desc.transport == transport[..]);
     };
 }

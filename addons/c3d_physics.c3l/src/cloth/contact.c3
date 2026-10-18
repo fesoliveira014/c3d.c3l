@@ -32,7 +32,6 @@ enum ClothContactStage : uint {
     ATTACHMENT,
     BEND,
     REFERENCE,
-    OPENING,
 }
 
 <* Prepared storage and convergence limits for cloth contacts. *>
