@@ -7,16 +7,20 @@ the scene, create its world, and destroy the world before the scene/assets.
 
 World-free prepared queries use `CollisionCache`, `CollisionShape` and borrowed
 `CollisionShapeView` values in `c3d::physics`. A cache borrows one asset store and can share
-cooked hull and mesh sources with worlds created with the optional fifth `cache` argument. Destroy
+cooked hull, mesh and height-field sources with worlds created with the optional fifth `cache` argument. Destroy
 all borrowing worlds and prepared owners before the cache, then the store. Native length
 units remain fixed through those lifetimes. Prepared shapes take a preparation scale: equal
-magnitude for spheres and capsules, diagonal and mirrored for boxes, hulls and meshes. Scaled hulls
+magnitude for spheres and capsules, diagonal and mirrored for boxes, hulls and meshes, positive and
+diagonal for height fields. Scaled hulls
 are cooked once per geometry revision and exact scale, and identical requests share the entry. A
-prepared mesh shares one unscaled cooked entry across scales and answers contacts, distance,
-translational casts, fixed-orientation sweeps and front-face rays against convex shapes; mesh pairs
-are `UNSUPPORTED`. The direct `c3d::physics::collide` API remains available. See
+prepared mesh shares one unscaled cooked entry across scales. A prepared height field, from a texture
+or from raw heights with optional holes, shares one entry per source and scale. Meshes and height fields
+answer contacts, distance, translational casts, fixed-orientation sweeps and front-face rays against
+convex shapes; surface pairs are `UNSUPPORTED`. The direct `c3d::physics::collide` API remains
+available. See
 [Collision queries](../../docs/collision_queries.md) for supported shapes, the scale domain,
-mesh semantics, capacity faults, query results and cache ownership.
+surface semantics, height-field holes and index limits, capacity faults, query results and cache
+ownership.
 
 ## Ragdoll recovery
 

@@ -51,10 +51,12 @@ struct CollisionShapeState @private {
     SnapshotHandle snapshot;
     collide::Shape shape;
     b3::Mesh mesh; // data is null for convex shapes
+    b3::HeightFieldData* height_field; // null unless the shape is a height field
+    Vec3 field_scale; // the scale baked into the height field; unused otherwise
     maths::Aabb bounds;
 }
 
-struct CollisionMeshAudit @local {
+struct CollisionTriangleAudit @private {
     usz triangles;
     fault failure;
 }
@@ -72,7 +74,7 @@ fn CollisionShapeDesc default_collision_shape_desc(ColliderKind kind) {
 }
 
 <*
- Prepare immutable scaled convex or mesh geometry for world-free queries.
+ Prepare immutable scaled convex, mesh or height-field geometry for world-free queries.
  @param [&inout] cache : "Borrowed; outlives the prepared owner."
  @return? c3d::INVALID_ARGUMENT, c3d::INVALID_ID, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
  @return? SOURCE_UNAVAILABLE, b3::DEGENERATE_GEOMETRY, b3::INVALID_DEFINITION
@@ -87,7 +89,6 @@ fn CollisionShape? create_collision_shape(Allocator allocator, CollisionCache* c
     CollisionShapeState state = { .allocator = allocator, .cache = cache.state };
     defer catch release_snapshot(state.cache, state.snapshot);
 
-    Vec3 extents;
     switch (desc.kind) {
         case SPHERE:
             check_collision_dimension(desc.radius)!;
@@ -96,7 +97,9 @@ fn CollisionShape? create_collision_shape(Allocator allocator, CollisionCache* c
             check_collision_quantity(radius * radius)!;
 
             state.shape = collide::sphere_shape(radius);
-            extents = { radius, radius, radius };
+
+            Vec3 extents = { radius, radius, radius };
+            state.bounds = { .min = -extents, .max = extents };
         case CAPSULE:
             check_collision_dimension(desc.radius)!;
             check_collision_dimension(desc.half_height)!;
@@ -110,9 +113,11 @@ fn CollisionShape? create_collision_shape(Allocator allocator, CollisionCache* c
             if (2 * half_height < COLLISION_LINEAR_SLOP * b3::length_units_per_meter()) {
                 return c3d::UNSUPPORTED~;
             }
-            extents = { radius, half_height + radius, radius };
+
+            Vec3 extents = { radius, half_height + radius, radius };
             check_collision_quantity(extents.y)!;
             state.shape = collide::capsule_shape(half_height, radius);
+            state.bounds = { .min = -extents, .max = extents };
         case BOX:
             float minimum = COLLISION_BOX_SLOP_FRACTION * (COLLISION_LINEAR_SLOP * b3::length_units_per_meter());
             Vec3 half = desc.half_extents * magnitude;
@@ -130,7 +135,7 @@ fn CollisionShape? create_collision_shape(Allocator allocator, CollisionCache* c
             check_collision_quantity(volume * (squared.x + squared.y))!;
             check_collision_quantity(8 * (half.x * half.y + half.x * half.z + half.y * half.z))!;
             state.shape = collide::box_shape(half);
-            extents = half;
+            state.bounds = { .min = -half, .max = half };
         case HULL:
             check_collision_scale_floor(magnitude)!;
 
@@ -159,11 +164,25 @@ fn CollisionShape? create_collision_shape(Allocator allocator, CollisionCache* c
             state.mesh = { .data = snapshot_of(cache.state, state.snapshot).mesh, .scale = desc.scale };
             state.bounds = check_collision_mesh(state.mesh)!;
         case HEIGHT_FIELD:
+            check_collision_height_scale(desc.scale)!;
+
+            @pool() {
+                state.snapshot = acquire_height_field(
+                    table: cache.state,
+                    field: desc.height_field,
+                    scale: desc.scale,
+                    material_indices: desc.material_indices,
+                    query: true,
+                )!;
+            };
+
+            state.height_field = snapshot_of(cache.state, state.snapshot).height_field;
+            state.field_scale = desc.scale;
+            state.bounds = check_collision_height_field(state.height_field)!;
         case COMPOUND:
             return c3d::UNSUPPORTED~;
     }
 
-    if (desc.kind != HULL && desc.kind != MESH) state.bounds = { .min = -extents, .max = extents };
     CollisionShapeState* owned = alloc::new_try(allocator, CollisionShapeState) ?? c3d::CAPACITY_EXCEEDED~!;
     *owned = state;
     cache.state.borrowers++;
@@ -183,6 +202,10 @@ fn void destroy_collision_shape(CollisionShape* shape) {
     *shape = {};
 }
 
+fn bool collision_is_surface(CollisionShapeState* state) @private {
+    return state.mesh.data != null || state.height_field != null;
+}
+
 fn float? collision_uniform_scale(Vec3 magnitude) @local {
     if (magnitude.x != magnitude.y || magnitude.y != magnitude.z) return c3d::UNSUPPORTED~;
     return magnitude.x;
@@ -198,7 +221,7 @@ fn void? check_collision_dimension(float value) @local {
     if (!math::is_finite(value) || value <= 0) return c3d::INVALID_ARGUMENT~;
 }
 
-fn void? check_collision_quantity(float value) @local {
+fn void? check_collision_quantity(float value) @private {
     if (!math::is_finite(value) || value <= 0) return b3::DEGENERATE_GEOMETRY~;
 }
 
@@ -279,10 +302,10 @@ fn maths::Aabb? check_collision_mesh(b3::Mesh mesh) @private {
         return b3::DEGENERATE_GEOMETRY~;
     }
 
-    CollisionMeshAudit audit;
+    CollisionTriangleAudit audit;
     b3::query_mesh(
         mesh: &mesh,
-        bounds: collision_mesh_enumeration(bounds)!,
+        bounds: collision_surface_enumeration(bounds)!,
         fcn: &audit_collision_triangle,
         context: &audit,
     );
@@ -292,7 +315,7 @@ fn maths::Aabb? check_collision_mesh(b3::Mesh mesh) @private {
     return bounds;
 }
 
-fn b3::Aabb? collision_mesh_enumeration(maths::Aabb bounds) @private {
+fn b3::Aabb? collision_surface_enumeration(maths::Aabb bounds) @private {
     Vec3 reach = math::max(math::abs(bounds.min), math::abs(bounds.max));
     float largest = math::max(reach.x, math::max(reach.y, reach.z));
     float reference = math::max(largest, b3::length_units_per_meter());
@@ -308,8 +331,8 @@ fn bool audit_collision_triangle(
     Vec3 third,
     int triangle_index,
     void* context,
-) @local {
-    CollisionMeshAudit* audit = context;
+) @private {
+    CollisionTriangleAudit* audit = context;
     Vec3 cross = (second - first).cross(third - first);
     float area = cross.dot(cross);
     if (!collision_vector_finite(first) || !collision_vector_finite(second) || !collision_vector_finite(third)

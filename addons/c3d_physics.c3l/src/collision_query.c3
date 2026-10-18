@@ -31,8 +31,8 @@ fn usz? CollisionShapeView.contacts(
     maths::Transform pose_b,
     CollisionContact[] output,
 ) {
-    if (self.state.mesh.data || other.state.mesh.data) {
-        return mesh_contacts(
+    if (collision_is_surface(self.state) || collision_is_surface(other.state)) {
+        return surface_contacts(
             first: self.state,
             pose_a: pose_a,
             second: other.state,
@@ -74,8 +74,8 @@ fn usz? CollisionShapeView.contacts(
 
 <*
  Unsigned native distance and world witnesses, including native zero-distance behavior.
- A mesh pair measures the whole retained surface.
- @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
+ A surface pair measures the whole retained surface; a surface without triangles has no hit.
+ @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, b3::NO_HIT
  @require self.state != null && other.state != null
 *>
 fn collide::Distance? CollisionShapeView.distance(
@@ -84,8 +84,8 @@ fn collide::Distance? CollisionShapeView.distance(
     CollisionShapeView other,
     maths::Transform pose_b,
 ) {
-    if (self.state.mesh.data || other.state.mesh.data) {
-        return mesh_distance(
+    if (collision_is_surface(self.state) || collision_is_surface(other.state)) {
+        return surface_distance(
             first: self.state,
             pose_a: pose_a,
             second: other.state,
@@ -130,8 +130,8 @@ fn collide::Impact? CollisionShapeView.cast(
         return c3d::INVALID_ARGUMENT~;
     }
 
-    if (self.state.mesh.data || other.state.mesh.data) {
-        return mesh_cast(
+    if (collision_is_surface(self.state) || collision_is_surface(other.state)) {
+        return surface_cast(
             first: self.state,
             pose_a: pose_a,
             second: other.state,
@@ -174,7 +174,7 @@ fn collide::Impact? CollisionShapeView.cast(
 }
 
 <*
- Native sweep hit in world space; a mesh pair accepts fixed orientations only.
+ Native sweep hit in world space; a surface pair accepts fixed orientations only.
  @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, b3::NO_HIT
  @require self.state != null && other.state != null
 *>
@@ -184,8 +184,8 @@ fn collide::Impact? CollisionShapeView.time_of_impact(
     CollisionShapeView other,
     collide::Sweep sweep_b,
 ) {
-    if (self.state.mesh.data || other.state.mesh.data) {
-        return mesh_time_of_impact(
+    if (collision_is_surface(self.state) || collision_is_surface(other.state)) {
+        return surface_time_of_impact(
             first: self,
             sweep_a: sweep_a,
             second: other,
@@ -223,7 +223,7 @@ fn collide::Impact? CollisionShapeView.time_of_impact(
 }
 
 <*
- Closest native ray hit; convex shapes keep inside-hit zero normals, meshes hit front faces only.
+ Closest native ray hit; convex shapes keep inside-hit zero normals, surfaces hit front faces only.
  @param direction : "Unit world direction."
  @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, b3::NO_HIT
  @require self.state != null
@@ -261,9 +261,9 @@ fn collide::ShapeRayHit? CollisionShapeView.ray_cast(
     check_collision_vector(origin + direction * max_distance)!;
 
     collide::ShapeRayHit found;
-    if (self.state.mesh.data) {
-        found = mesh_ray_cast(
-            mesh: &self.state.mesh,
+    if (collision_is_surface(self.state)) {
+        found = surface_ray_cast(
+            surface: self.state,
             pose: pose,
             local_origin: local_origin,
             local_translation: local_translation,

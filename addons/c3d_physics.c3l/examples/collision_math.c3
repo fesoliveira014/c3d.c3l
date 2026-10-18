@@ -38,9 +38,10 @@ const Vec2  PANEL_SIZE @local = { 440, 700 };
 const Vec2  STATS_PANEL_POSITION @local = { 884, 16 };
 const Vec2  STATS_PANEL_SIZE @local = { 380, 360 };
 const Vec4  FAULT_COLOR @local = { 1, 0.4f, 0.4f, 1 };
-const int   SHAPE_KIND_COUNT @local = 5;
+const int   SHAPE_KIND_COUNT @local = 6;
 const int   UNIFORM_SCALE_KIND_COUNT @local = 2; // sphere and capsule take one scale for every axis
 const int   MESH_KIND @local = 4;
+const int   HEIGHT_FIELD_KIND @local = 5;
 const float SCALE_MIN @local = 0.001f; // under the capsule, box, hull and mesh minimums, so their refusals can be shown
 const float SCALE_MAX @local = 4;
 const usz   CONTACT_CAPACITY @local = 64; // one hull manifold fits per triangle; more contacts report CAPACITY_EXCEEDED
@@ -64,14 +65,30 @@ const float ACCEPTANCE_STEP @local = 1.0f / 60;
 const Vec3  ACCEPTANCE_B_START @local = { 1.04f, 3, 0 };
 const Vec3  ACCEPTANCE_B_REST @local = { 1.04f, 1.35f, 0 }; // 0.3 above the reflected ramp's surface
 const Vec3  ACCEPTANCE_MESH_SCALE @local = { 1, 1.5f, 1 }; // the slot reflects X, so the mesh is also non-uniform
-const Vec3  ACCEPTANCE_CAMERA_POSITION @local = { 0.4f, 2.4f, 5.5f };
-const Vec3  ACCEPTANCE_CAMERA_TARGET @local = { 0.2f, 1.3f, 0 };
+const Vec3  ACCEPTANCE_CAMERA_POSITION @local = { 2.2f, 5, 5.4f };
+const Vec3  ACCEPTANCE_CAMERA_TARGET @local = { 2.2f, 0.8f, 0 };
+const Vec3  ACCEPTANCE_FIELD_POSITION @local = { 2.6f, 0.2f, -1.2f }; // the field's grid corner, beside the mesh
+const Vec3  ACCEPTANCE_FIELD_SCALE @local = { 0.6f, 1.2f, 0.6f }; // positive and non-uniform
+const uint[<2>] ACCEPTANCE_PRESSED_CELL @local = { 4, 2 };
+const uint[<2>] ACCEPTANCE_RAY_CELL @local = { 1, 3 };
+const float ACCEPTANCE_PRESS_DEPTH @local = 0.05f; // the probe sinks this far into the surface
+const float ACCEPTANCE_HOVER_HEIGHT @local = 0.35f; // the probe hangs this far above the plane of the hole
+const float ACCEPTANCE_RAY_HEIGHT @local = 3;
 const int   ACCEPTANCE_KIND_A @local = 4;
 const int   ACCEPTANCE_KIND_B @local = 0;
-const String[SHAPE_KIND_COUNT] KIND_NAMES @local = { "Sphere", "Capsule", "Box", "Hull", "Mesh" };
+const usz   ACCEPTANCE_SCENARIO_COUNT @local = 3;
+const uint  FIELD_COLUMNS @local = 7; // grid points along x
+const uint  FIELD_ROWS @local = 5; // grid points along z
+const uint  FIELD_HOLE_COLUMN @local = 3;
+const uint  FIELD_HOLE_ROW @local = 1;
+const float FIELD_COLUMN_RISE @local = 0.25f; // raw height gained per column
+const float FIELD_WAVE_HEIGHT @local = 0.3f;
+const float FIELD_WAVE_FREQUENCY @local = 0.9f; // radians per row
+const String[SHAPE_KIND_COUNT] KIND_NAMES @local = { "Sphere", "Capsule", "Box", "Hull", "Mesh", "Field" };
 
 struct Options @local {
     bool   acceptance;
+    bool   benchmark;
     uint   frames;
     String capture_path;
 }
@@ -86,8 +103,15 @@ struct ShapeSlot @local {
     fault              refusal;
 }
 
+struct FieldSource @local {
+    float[FIELD_COLUMNS * FIELD_ROWS] heights;
+    char[(FIELD_COLUMNS - 1) * (FIELD_ROWS - 1)] cells;
+}
+
 struct Demo @local {
     CollisionShapeDesc[SHAPE_KIND_COUNT] descriptions;
+    FieldSource* field;
+    Vec3 ray_origin;
     Vec3[] hull_points;
     Vec3[] mesh_points;
     uint[] mesh_indices;
@@ -113,6 +137,12 @@ struct QueryResults @local {
     fault            ray_fault;
 }
 
+struct AcceptanceScenario @local {
+    String       name;
+    Demo         demo;
+    QueryResults results;
+}
+
 struct Scatter @local {
     Aabb[] boxes;
     Bvh    tree;
@@ -126,6 +156,8 @@ fn Options? parse_options(String[] args) @local {
         String arg = args[index];
         if (arg == "--acceptance") {
             options.acceptance = true;
+        } else if (arg == "--benchmark") {
+            options.benchmark = true;
         } else if (arg.starts_with("--frames=")) {
             options.frames = arg[9..].to_uint()!;
         } else if (arg.starts_with("--capture=")) {
@@ -135,6 +167,7 @@ fn Options? parse_options(String[] args) @local {
         }
     }
     if ((options.capture_path.len || options.frames) && !options.acceptance) return c3d::INVALID_ARGUMENT~;
+    if (options.benchmark && options.acceptance) return c3d::INVALID_ARGUMENT~;
     if (options.acceptance && !options.frames) options.frames = ACCEPTANCE_FRAMES;
 
     return options;
@@ -225,13 +258,32 @@ fn Geometry make_ramp(Allocator allocator) @local {
     return ramp;
 }
 
-fn CollisionShapeDesc[SHAPE_KIND_COUNT] make_shape_descriptions(GeometryId cone, GeometryId ramp) @local {
+fn FieldSource make_field_source() @local {
+    FieldSource field;
+    for (uint row = 0; row < FIELD_ROWS; row++) {
+        for (uint column = 0; column < FIELD_COLUMNS; column++) {
+            float slope = FIELD_COLUMN_RISE * (float)column;
+            float wave = FIELD_WAVE_HEIGHT * math::sin(FIELD_WAVE_FREQUENCY * (float)row);
+            field.heights[row * FIELD_COLUMNS + column] = slope + wave;
+        }
+    }
+    field.cells[FIELD_HOLE_ROW * (FIELD_COLUMNS - 1) + FIELD_HOLE_COLUMN] = physics::HEIGHT_FIELD_HOLE;
+
+    return field;
+}
+
+fn CollisionShapeDesc[SHAPE_KIND_COUNT] make_shape_descriptions(
+    GeometryId cone,
+    GeometryId ramp,
+    FieldSource* field,
+) @local {
     CollisionShapeDesc[SHAPE_KIND_COUNT] descriptions = {
         physics::default_collision_shape_desc(physics::ColliderKind.SPHERE),
         physics::default_collision_shape_desc(physics::ColliderKind.CAPSULE),
         physics::default_collision_shape_desc(physics::ColliderKind.BOX),
         physics::default_collision_shape_desc(physics::ColliderKind.HULL),
         physics::default_collision_shape_desc(physics::ColliderKind.MESH),
+        physics::default_collision_shape_desc(physics::ColliderKind.HEIGHT_FIELD),
     };
     descriptions[0].radius = 0.6f;
     descriptions[1].radius = 0.35f;
@@ -239,6 +291,12 @@ fn CollisionShapeDesc[SHAPE_KIND_COUNT] make_shape_descriptions(GeometryId cone,
     descriptions[2].half_extents = { 0.8f, 0.4f, 0.5f };
     descriptions[3].geometry = cone;
     descriptions[4].geometry = ramp;
+    descriptions[HEIGHT_FIELD_KIND].height_field = {
+        .heights = field.heights[..],
+        .count_x = FIELD_COLUMNS,
+        .count_z = FIELD_ROWS,
+    };
+    descriptions[HEIGHT_FIELD_KIND].material_indices = field.cells[..];
 
     return descriptions;
 }
@@ -271,6 +329,71 @@ fn void draw_mesh(
         Vec3 front = (corners[1] - corners[0]).cross(corners[2] - corners[0]).normalize();
         draw.line(centre, centre + front * NORMAL_TICK, rgba);
     }
+}
+
+fn Vec3 field_corner(FieldSource* field, Vec3 scale, uint[<2>] cell) @local {
+    float height = field.heights[cell.y * FIELD_COLUMNS + cell.x];
+
+    return { (float)cell.x * scale.x, height * scale.y, (float)cell.y * scale.z };
+}
+
+fn void draw_height_field(
+    debug::DebugDraw* draw,
+    FieldSource* field,
+    Vec3 scale,
+    maths::Transform pose,
+    uint rgba,
+) @local {
+    for (uint row = 0; row + 1 < FIELD_ROWS; row++) {
+        for (uint column = 0; column + 1 < FIELD_COLUMNS; column++) {
+            if (field.cells[row * (FIELD_COLUMNS - 1) + column] == physics::HEIGHT_FIELD_HOLE) continue;
+
+            Vec3[4] corners = {
+                field_corner(field, scale, { column, row }),
+                field_corner(field, scale, { column + 1, row }),
+                field_corner(field, scale, { column, row + 1 }),
+                field_corner(field, scale, { column + 1, row + 1 }),
+            };
+            foreach (&corner : corners) *corner = pose.rotation.rotate_vec3(*corner) + pose.position;
+
+            draw.line(corners[0], corners[1], rgba);
+            draw.line(corners[1], corners[3], rgba);
+            draw.line(corners[3], corners[2], rgba);
+            draw.line(corners[2], corners[0], rgba);
+            draw.line(corners[2], corners[1], rgba);
+
+            uint[6] winding = { 0, 2, 1, 3, 1, 2 }; // the native split: corners 2 and 1 share the diagonal
+            for (usz triangle = 0; triangle < 2; triangle++) {
+                Vec3 first = corners[winding[3 * triangle]];
+                Vec3 second = corners[winding[3 * triangle + 1]];
+                Vec3 third = corners[winding[3 * triangle + 2]];
+                Vec3 centre = (first + second + third) / 3;
+                Vec3 front = (second - first).cross(third - first).normalize();
+                draw.line(centre, centre + front * NORMAL_TICK, rgba);
+            }
+        }
+    }
+}
+
+fn Vec3 field_cell_centre(
+    FieldSource* field,
+    Vec3 scale,
+    Vec3 corner,
+    uint[<2>] cell,
+) @local {
+    Vec3 near_right = field_corner(field, scale, { cell.x + 1, cell.y });
+    Vec3 far_left = field_corner(field, scale, { cell.x, cell.y + 1 });
+
+    return corner + (near_right + far_left) / 2;
+}
+
+fn Vec3 shape_centre(ShapeSlot* slot, maths::Transform pose) @local {
+    if (slot.kind != HEIGHT_FIELD_KIND) return pose.position;
+
+    Vec3 scale = slot.description.scale;
+    Vec3 middle = { scale.x * (float)(FIELD_COLUMNS - 1) / 2, 0, scale.z * (float)(FIELD_ROWS - 1) / 2 };
+
+    return pose.position + pose.rotation.rotate_vec3(middle);
 }
 
 fn void draw_shape(
@@ -320,6 +443,13 @@ fn void draw_shape(
                 rgba: rgba,
             );
         case HEIGHT_FIELD:
+            draw_height_field(
+                draw: draw,
+                field: demo.field,
+                scale: shape.scale,
+                pose: pose,
+                rgba: rgba,
+            );
         case COMPOUND:
             unreachable();
     }
@@ -370,7 +500,7 @@ fn void evaluate_queries(Demo* demo, QueryResults* results) @local {
         results.closest = closest;
     }
 
-    results.closing = (demo.pose_a.position - demo.pose_b.position).normalize() * SWEEP_LENGTH;
+    results.closing = (shape_centre(&demo.slot_a, demo.pose_a) - demo.pose_b.position).normalize() * SWEEP_LENGTH;
     Impact? impact = shape_a.cast(
         pose_a: demo.pose_a,
         other: shape_b,
@@ -401,7 +531,7 @@ fn void evaluate_queries(Demo* demo, QueryResults* results) @local {
 
     ShapeRayHit? ray = shape_a.ray_cast(
         pose: demo.pose_a,
-        origin: RAY_ORIGIN,
+        origin: demo.ray_origin,
         direction: RAY_DIRECTION,
         max_distance: RAY_LENGTH,
     );
@@ -480,7 +610,7 @@ fn void draw_queries(debug::DebugDraw* draw, Demo* demo, QueryResults* results) 
         draw_marker(draw, results.sweep_impact.point, debug::rgba(1, 0.5f, 0.1f));
     }
 
-    draw.line(RAY_ORIGIN, RAY_ORIGIN + RAY_DIRECTION * RAY_LENGTH, debug::rgba(0.6f, 0.4f, 1, 0.6f));
+    draw.line(demo.ray_origin, demo.ray_origin + RAY_DIRECTION * RAY_LENGTH, debug::rgba(0.6f, 0.4f, 1, 0.6f));
     if (!results.ray_fault) {
         draw_marker(draw, results.ray_hit.point, debug::rgba(0.8f, 0.6f, 1));
         draw.line(
@@ -701,9 +831,11 @@ fn void? draw_frame(
     return renderer.end_frame();
 }
 
-fn Demo make_demo(AssetStore* assets, GeometryId cone, GeometryId ramp) @local {
+fn Demo make_demo(AssetStore* assets, GeometryId cone, GeometryId ramp, FieldSource* field) @local {
     return {
-        .descriptions = make_shape_descriptions(cone, ramp),
+        .descriptions = make_shape_descriptions(cone, ramp, field),
+        .field = field,
+        .ray_origin = RAY_ORIGIN,
         .hull_points = assets.geometry(cone).data.positions,
         .mesh_points = assets.geometry(ramp).data.positions,
         .mesh_indices = assets.geometry(ramp).data.indices,
@@ -729,6 +861,7 @@ fn void? run_window(
     CollisionCache* cache,
     GeometryId cone,
     GeometryId ramp,
+    FieldSource* field,
 ) @local {
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
@@ -739,7 +872,7 @@ fn void? run_window(
     camera_node.local.position = CAMERA_POSITION;
     camera_node.local.rotation = maths::look_rotation(SHAPE_A_POSITION - CAMERA_POSITION, { 0, 1, 0 });
 
-    Demo demo = make_demo(assets, cone, ramp);
+    Demo demo = make_demo(assets, cone, ramp, field);
     defer physics::destroy_collision_shape(&demo.slot_a.shape);
     defer physics::destroy_collision_shape(&demo.slot_b.shape);
     prepare_demo_slots(&demo, cache)!;
@@ -796,9 +929,10 @@ fn void? run_window(
     }
 }
 
-fn void print_results(Demo* demo, QueryResults* results) @local {
+fn void print_results(String scenario, Demo* demo, QueryResults* results) @local {
+    io::printfn("scenario,%s", scenario);
     io::printfn(
-        "shapes,%s,%s,mesh_scale,%.3f,%.3f,%.3f",
+        "shapes,%s,%s,scale_a,%.3f,%.3f,%.3f",
         KIND_NAMES[demo.slot_a.kind],
         KIND_NAMES[demo.slot_b.kind],
         (double)demo.slot_a.description.scale.x,
@@ -861,6 +995,44 @@ fn void? save_capture(render::Renderer* renderer, RenderTargetId target, String 
     file::save(path, pixels)!;
 }
 
+fn void place_field_scenarios(AcceptanceScenario* solid, AcceptanceScenario* hole, FieldSource* field) @local {
+    foreach (scenario : (AcceptanceScenario*[2]){ solid, hole }) {
+        Demo* demo = &scenario.demo;
+        demo.slot_a = {
+            .kind = HEIGHT_FIELD_KIND,
+            .uniform_scale = 1,
+            .axis_scale = ACCEPTANCE_FIELD_SCALE,
+        };
+        demo.slot_b = { .kind = ACCEPTANCE_KIND_B, .uniform_scale = 1, .axis_scale = { 1, 1, 1 } };
+        demo.pose_a.position = ACCEPTANCE_FIELD_POSITION;
+    }
+
+    float radius = solid.demo.descriptions[ACCEPTANCE_KIND_B].radius;
+    Vec3 pressed = field_cell_centre(
+        field: field,
+        scale: ACCEPTANCE_FIELD_SCALE,
+        corner: ACCEPTANCE_FIELD_POSITION,
+        cell: ACCEPTANCE_PRESSED_CELL,
+    );
+    solid.demo.pose_b.position = pressed + (Vec3){ 0, radius - ACCEPTANCE_PRESS_DEPTH, 0 };
+    Vec3 aimed = field_cell_centre(
+        field: field,
+        scale: ACCEPTANCE_FIELD_SCALE,
+        corner: ACCEPTANCE_FIELD_POSITION,
+        cell: ACCEPTANCE_RAY_CELL,
+    );
+    solid.demo.ray_origin = aimed + (Vec3){ 0, ACCEPTANCE_RAY_HEIGHT, 0 };
+
+    Vec3 opening = field_cell_centre(
+        field: field,
+        scale: ACCEPTANCE_FIELD_SCALE,
+        corner: ACCEPTANCE_FIELD_POSITION,
+        cell: { FIELD_HOLE_COLUMN, FIELD_HOLE_ROW },
+    );
+    hole.demo.pose_b.position = opening + (Vec3){ 0, radius + ACCEPTANCE_HOVER_HEIGHT, 0 };
+    hole.demo.ray_origin = opening + (Vec3){ 0, ACCEPTANCE_RAY_HEIGHT, 0 };
+}
+
 fn void? run_acceptance(
     Options options,
     Scene* scene,
@@ -868,6 +1040,7 @@ fn void? run_acceptance(
     CollisionCache* cache,
     GeometryId cone,
     GeometryId ramp,
+    FieldSource* field,
 ) @local {
     render::Renderer renderer = render::create_renderer(
         allocator: mem,
@@ -891,28 +1064,41 @@ fn void? run_acceptance(
     Vec3 view_direction = ACCEPTANCE_CAMERA_TARGET - ACCEPTANCE_CAMERA_POSITION;
     camera_node.local.rotation = maths::look_rotation(view_direction, { 0, 1, 0 });
 
-    Demo demo = make_demo(assets, cone, ramp);
-    defer physics::destroy_collision_shape(&demo.slot_a.shape);
-    defer physics::destroy_collision_shape(&demo.slot_b.shape);
-    demo.slot_a = {
+    AcceptanceScenario[ACCEPTANCE_SCENARIO_COUNT] scenarios;
+    String[ACCEPTANCE_SCENARIO_COUNT] names = { "mesh", "height_field", "height_field_hole" };
+    foreach (index, &scenario : scenarios) {
+        scenario.name = names[index];
+        scenario.demo = make_demo(assets, cone, ramp, field);
+    }
+    defer {
+        foreach (&scenario : scenarios) {
+            physics::destroy_collision_shape(&scenario.demo.slot_a.shape);
+            physics::destroy_collision_shape(&scenario.demo.slot_b.shape);
+        }
+    }
+
+    scenarios[0].demo.slot_a = {
         .kind = ACCEPTANCE_KIND_A,
         .uniform_scale = 1,
         .axis_scale = ACCEPTANCE_MESH_SCALE,
         .reflected = true,
     };
-    demo.slot_b = { .kind = ACCEPTANCE_KIND_B, .uniform_scale = 1, .axis_scale = { 1, 1, 1 } };
-    prepare_demo_slots(&demo, cache)!;
+    scenarios[0].demo.slot_b = { .kind = ACCEPTANCE_KIND_B, .uniform_scale = 1, .axis_scale = { 1, 1, 1 } };
+    place_field_scenarios(&scenarios[1], &scenarios[2], field);
+    foreach (&scenario : scenarios) prepare_demo_slots(&scenario.demo, cache)!;
+
     renderer.prepare_scene(scene)!;
     io::printfn("adapter,%s,viewport,%d,%d,validation,true", renderer.adapter_name, VIEW_WIDTH, VIEW_HEIGHT);
 
-    QueryResults results;
     for (uint frame = 0; frame < options.frames; frame++) {
         float descent = math::min((float)frame / (float)ACCEPTANCE_DESCENT_FRAMES, 1.0f);
-        demo.pose_b.position = ACCEPTANCE_B_START + (ACCEPTANCE_B_REST - ACCEPTANCE_B_START) * descent;
+        scenarios[0].demo.pose_b.position = ACCEPTANCE_B_START + (ACCEPTANCE_B_REST - ACCEPTANCE_B_START) * descent;
         scene.update_world();
-        evaluate_queries(&demo, &results);
         draw.clear();
-        draw_queries(&draw, &demo, &results);
+        foreach (&scenario : scenarios) {
+            evaluate_queries(&scenario.demo, &scenario.results);
+            draw_queries(&draw, &scenario.demo, &scenario.results);
+        }
 
         renderer.begin_frame({ .time = (double)frame * ACCEPTANCE_STEP, .delta = ACCEPTANCE_STEP })!;
         defer catch render::abort_frame(&renderer);
@@ -928,13 +1114,13 @@ fn void? run_acceptance(
 
     if (options.capture_path.len) save_capture(&renderer, target, options.capture_path)!;
     renderer.log.check_validation()!;
-    print_results(&demo, &results);
+    foreach (&scenario : scenarios) print_results(scenario.name, &scenario.demo, &scenario.results);
 }
 
 fn int main(String[] args) {
     Options? options = parse_options(args);
     if (catch excuse = options) {
-        io::eprintn("Use collision_math [--acceptance [--frames=count] [--capture=path.rgba]]");
+        io::eprintn("Use collision_math [--acceptance [--frames=count] [--capture=path.rgba] | --benchmark]");
         return 1;
     }
 
@@ -958,8 +1144,17 @@ fn int main(String[] args) {
         Geometry ramp_source = make_ramp(tmem);
         ramp = assets.add_geometry(&ramp_source)!!;
     };
+    FieldSource field = make_field_source();
     CollisionCache cache = physics::create_collision_cache(mem, &assets, physics::default_collision_cache_desc())!!;
     defer physics::destroy_collision_cache(&cache)!!;
+
+    if (options.benchmark) {
+        if (catch excuse = run_benchmark(&assets, cone)) {
+            io::eprintfn("collision math benchmark failed: %s", excuse);
+            return 1;
+        }
+        return 0;
+    }
 
     if (options.acceptance) {
         if (catch excuse = run_acceptance(
@@ -969,6 +1164,7 @@ fn int main(String[] args) {
             cache: &cache,
             cone: cone,
             ramp: ramp,
+            field: &field,
         )) {
             io::eprintfn("collision math acceptance failed: %s", excuse);
             return 1;
@@ -996,6 +1192,7 @@ fn int main(String[] args) {
         cache:    &cache,
         cone:     cone,
         ramp:     ramp,
+        field:    &field,
     )) {
         io::eprintfn("collision math example failed: %s", excuse);
         return 1;

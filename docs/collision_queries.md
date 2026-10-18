@@ -30,13 +30,13 @@ CollisionShapeView view = shape.view();
 ```
 
 `CollisionShapeDesc` contains scale and geometry/source values, without body filtering, events,
-density, friction or restitution. Preparation supports `SPHERE`, `CAPSULE`, `BOX`, `HULL` and
-`MESH`. Supply positive finite dimensions, or a live hull or mesh `geometry` from the cache's store.
+density, friction or restitution. Preparation supports `SPHERE`, `CAPSULE`, `BOX`, `HULL`, `MESH` and
+`HEIGHT_FIELD`. Supply positive finite dimensions, a live hull or mesh `geometry` from the cache's store,
+or a height field source.
 The capsule segment is local Y, with length `2 * half_height`; it must be at least one native
 linear slop. Box half-extents must be at least `0.2 * native linear slop`. At the default native
 unit setting these limits are 0.005 and 0.001 respectively. Smaller positive values return
-`UNSUPPORTED` instead of accepting native clamping. `HEIGHT_FIELD` and `COMPOUND` currently
-return `UNSUPPORTED`.
+`UNSUPPORTED` instead of accepting native clamping. `COMPOUND` returns `UNSUPPORTED`.
 
 ### Prepared scale
 
@@ -52,9 +52,11 @@ return `DEGENERATE_GEOMETRY`.
 | `BOX` | any diagonal scale; half-extents multiply by the magnitudes | a scaled half-extent below the limit |
 | `HULL` | any diagonal scale, including mirrored | a magnitude below 0.01 |
 | `MESH` | any diagonal scale, including mirrored | a magnitude below 0.01 |
+| `HEIGHT_FIELD` | positive diagonal scale, baked at cook time | a negative component |
 
 A mirrored sphere, capsule or box is the same shape as the unmirrored one. A mirrored hull keeps
-outward-facing normals, and a mirrored mesh keeps its front faces.
+outward-facing normals, and a mirrored mesh keeps its front faces. A mirrored height field is
+`UNSUPPORTED`; it is never converted to a mesh.
 
 A scaled hull is cooked once from the unit hull with the scale baked into its points; queries
 never scale at query time. The scaled cook is a separate cache entry keyed by the geometry
@@ -129,10 +131,12 @@ build a broadphase.
 
 | Pair | Contacts | Distance | Cast | Sweep | Ray |
 | --- | --- | --- | --- | --- | --- |
-| convex and mesh, either order | yes | yes | yes, either or both moving | fixed orientations | against the mesh |
-| mesh and mesh | `UNSUPPORTED` | `UNSUPPORTED` | `UNSUPPORTED` | `UNSUPPORTED` | against either |
+| convex and surface, either order | yes | yes | yes, either or both moving | fixed orientations | against the surface |
+| surface and surface | `UNSUPPORTED` | `UNSUPPORTED` | `UNSUPPORTED` | `UNSUPPORTED` | against either |
 
 Convex means sphere, capsule, box or hull; convex pairs keep their native four-point manifold.
+A surface is a mesh or a height field, so a mesh and a height field is a surface pair too. The rules
+below apply to both kinds, and the next section lists what differs for height fields.
 
 - **Contacts.** Every native point of every triangle within the speculative margin is reported with
   the normal of that triangle's contact, from the first shape toward the second, and the triangle's
@@ -167,8 +171,64 @@ Convex means sphere, capsule, box or hull; convex pairs keep their native four-p
   fraction lies strictly between zero and one: an origin on the surface, a hit exactly at the maximum
   distance, and a coplanar or back-facing ray all return `b3::NO_HIT`.
 - **Admission.** Relative transforms, translations and proxy bounds must be finite, and the convex
-  higher-order bounds apply to meshes through their scaled bounds. An unrepresentable query returns
+  higher-order bounds apply to surfaces through their scaled bounds. An unrepresentable query returns
   `UNSUPPORTED`.
+
+### Prepared height fields
+
+A `HEIGHT_FIELD` description supplies `height_field` and optional `material_indices`. A `HEIGHTS`
+source holds row-major samples with x fastest, `count_x` columns and `count_z` rows, copied when
+cooked. A `TEXTURE` source reads the red channel of mip zero of a live texture in the cache's store
+(8-bit values divide by 255, `R16_UINT` by 65535, `RGBA32_FLOAT` is read as is), and the counts come from
+the texture. `material_indices` holds one byte per cell, `(count_x - 1) * (count_z - 1)` in all, and the
+byte `HEIGHT_FIELD_HOLE` marks a hole. The grid starts at the local origin and runs along positive x and z
+at the scaled spacing, so the local bounds are `[0, scale.x * (count_x - 1)]` by
+`[scale.y * lowest, scale.y * highest]` by `[0, scale.z * (count_z - 1)]`. Each cell splits along the
+diagonal from its far-left corner to its near-right corner, and front faces point toward positive y.
+
+The scale is baked at cook time and is positive. A zero or nonfinite component returns
+`INVALID_ARGUMENT`, a negative component returns `UNSUPPORTED`, and a spacing whose reciprocal is not
+finite returns `DEGENERATE_GEOMETRY`. A source is validated before any native call:
+
+- A count below two, a sample or material count that does not match the counts, or a nonfinite sample
+  returns `INVALID_ARGUMENT`.
+- Sample, offset and blob sizes that do not fit the native signed 32-bit integers return
+  `CAPACITY_EXCEEDED`.
+- A sample range or scaled bound that is not finite, and a retained cell that is nonfinite or has no
+  area, return `DEGENERATE_GEOMETRY`. A flat field is valid, and so is a field of only holes.
+- A texture that is not live returns `INVALID_ID`. One that is not a single-layer 2D mip-zero source in a
+  readable format returns `UNSUPPORTED`, and a texture whose pixels were released without a matching
+  cooked entry returns `SOURCE_UNAVAILABLE`.
+
+The native cook quantizes each height to 16 bits across the sample range. The retained surface lies
+under the authored heights by at most one step, `max(highest - lowest, 0.005) / 65535 * scale.y`, so
+a field never reproduces its samples exactly. Every preparation reads the retained surface, including one
+that reuses an entry a body cooked.
+
+A texture field is keyed by texture, revision, exact scale and material content. A raw field is keyed by
+its content: the counts, the exact sample bits, the exact scale and the material bytes. Equal content in a
+different array shares one entry, and a changed sample, hole or scale makes a new one. A raw entry is freed
+when its last holder releases it, and a texture entry stays cached for matching preparations, as a mesh
+entry does. Worlds use the same keys, so bodies with equal raw content share one entry as well. A rejected
+preparation releases what it held and does not affect bodies that use the same entry.
+
+The pair table above applies. Differences from a mesh:
+
+- **Holes.** Contacts skip hole cells, and casts and rays pass through them. A field of only holes
+  reports no contacts and `b3::NO_HIT` for distance, casts and rays.
+- **Distance.** The result is the minimum over the retained cells of the whole field, clipped to the
+  grid before the native cell loops run, so a query box that reaches far outside the field costs no more
+  than the field.
+- **Casts and rays.** The native traversal clips the sweep to the field grown by the proxy extent and a
+  native margin of 0.05 at the default unit setting. The grid indices of every clipped start and end, leading
+  and trailing corner, and row and column crossing lie inside the field grown by twice the extent and the
+  margin. A query whose indices cannot be represented as native signed 32-bit integers returns
+  `UNSUPPORTED`, for example a field with a very narrow spacing in x or z. A far-away pose is limited by
+  the admission bounds above, not by the field.
+- **One-point casts.** The native height field solves a one-point proxy without radius as a front-face
+  ray. No prepared shape produces that proxy, because every radius must be positive.
+- **Cost.** The native traversal visits the cells under the query footprint, not only the cells that
+  produce output.
 
 ### Sharing cooked geometry with worlds
 
@@ -179,7 +239,7 @@ wireframe policy, so that world's `PhysicsDesc.snapshot_capacity` and `cache_wir
 not override it. `default_collision_cache_desc()` provides 256 slots with wireframes enabled;
 a zero-slot cache still supports prepared primitives.
 
-Worlds, prepared hulls and prepared meshes reuse matching source/revision cooks. Native bodies still clone their
+Worlds, prepared hulls, prepared meshes and prepared height fields reuse matching cooks. Native bodies still clone their
 own hull shape data. A source edit creates a new immutable entry on the next acquisition; held
 older entries remain valid. As before, a live body adopts source edits only after
 `PhysicsBody.mark_changed()` requests a rebuild. Released CPU data does not invalidate a matching
@@ -246,8 +306,8 @@ two shapes' radii sum to less than one slop the stop falls short of the touch; a
 on it; above that it lies past it, by a full slop from two slops of radius on. A pose built from
 `time` can therefore overlap by up to one slop.
 
-Height field and compound shapes are world queries (`PhysicsWorld.raycast`, `overlap_sphere`), not
-these. A mesh is prepared as a `CollisionShape` and queried through its view.
+Compound shapes are world queries (`PhysicsWorld.raycast`, `overlap_sphere`), not
+these. A mesh or a height field is prepared as a `CollisionShape` and queried through its view.
 
 ## World queries
 
@@ -272,10 +332,13 @@ Results past a cap are dropped.
 `collide::Sweep`, `collide::Manifold` and `collide::ManifoldPoint` share names with `b3` types. A
 module that imports both `c3d::physics::collide` and `b3` writes these three qualified.
 
-The `collision_math` example prepares cached convex and mesh owners, moves one shape against
+The `collision_math` example prepares cached convex, mesh and height-field owners, moves one shape against
 another, and draws the contact points and normals, the closest-point segment, the cast with both
 translations, the swept contact and a ray. Each shape has scale controls, uniform for the sphere and
-capsule and per axis for the box, hull and mesh, and a reflection toggle. A refused scale or query
-shows its fault in the panel. `--acceptance [--frames=count] [--capture=path.rgba]` runs without a
-window: it renders a reflected, non-uniform mesh and a relative-motion cast from a fixed camera,
-prints the query results and saves a raw RGBA capture.
+capsule and per axis for the box, hull, mesh and height field, and a reflection toggle. A refused scale or
+query shows its fault in the panel; reflecting the height field shows `UNSUPPORTED`.
+`--acceptance [--frames=count] [--capture=path.rgba]` runs without a window: it renders a reflected,
+non-uniform mesh, a positive non-uniform height field with one hole, probes over solid cells and over the
+hole, and a relative-motion cast from a fixed camera, prints each scenario's query results and saves a raw
+RGBA capture. `--benchmark` runs without a window and prints cooking counts and sizes with and without a
+shared cache, owner reuse, and per-call query costs for one hull against a fixed height field.
