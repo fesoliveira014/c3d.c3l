@@ -42,42 +42,44 @@ fn Geometry split_seam_quad(
     };
     uint[6] indices = { 0, 2, 1, 3, 5, 4 };
 
-    Geometry geom = {
+    Geometry geometry = {
         .positions = alloc::new_array(allocator, Vec3, 6),
         .normals   = alloc::new_array(allocator, Vec3, 6),
         .indices   = alloc::new_array(allocator, uint, 6),
     };
-    geom.positions[..] = positions[..];
-    geom.normals[..] = normals[..];
-    geom.indices[..] = indices[..];
+    geometry.positions[..] = positions[..];
+    geometry.normals[..] = normals[..];
+    geometry.indices[..] = indices[..];
 
     if (use_uv1) {
-        geom.uv1 = alloc::new_array(allocator, Vec2, 6);
-        geom.uv1[..] = uvs[..];
+        geometry.uv1 = alloc::new_array(allocator, Vec2, 6);
+        geometry.uv1[..] = uvs[..];
     } else {
-        geom.uv0 = alloc::new_array(allocator, Vec2, 6);
-        geom.uv0[..] = uvs[..];
+        geometry.uv0 = alloc::new_array(allocator, Vec2, 6);
+        geometry.uv0[..] = uvs[..];
     }
-    geom.finalize();
-    return geom;
+    geometry.finalize();
+    return geometry;
 }
 
-fn Geometry hinge_quad(Allocator allocator, float flap_z = 0) @local {
+fn Geometry hinge_quad(Allocator allocator, float flap_z = 0, bool flip_second_winding = false) @local {
     Vec3[4] positions = {
         { -1, 0, flap_z },
         { 0, 1, 0 },
         { 0, -1, 0 },
         { 1, 0, flap_z },
     };
-    uint[6] indices = { 1, 2, 0, 2, 1, 3 };
-    Geometry geom = {
+    uint[6] indices = flip_second_winding
+      ? (uint[6]){ 1, 2, 0, 1, 2, 3 }
+      : (uint[6]){ 1, 2, 0, 2, 1, 3 };
+    Geometry geometry = {
         .positions = alloc::new_array(allocator, Vec3, 4),
         .indices   = alloc::new_array(allocator, uint, 6),
     };
-    geom.positions[..] = positions[..];
-    geom.indices[..] = indices[..];
-    geom.finalize();
-    return geom;
+    geometry.positions[..] = positions[..];
+    geometry.indices[..] = indices[..];
+    geometry.finalize();
+    return geometry;
 }
 
 fn void test_cloth_material_splits_tangents_and_uv_fallback() @test {
@@ -89,12 +91,12 @@ fn void test_cloth_material_splits_tangents_and_uv_fallback() @test {
     GeometryId uv1_id;
     GeometryId degenerate_uv_id;
     @pool() {
-        Geometry g0 = split_seam_quad(tmem);
-        source_id = fixture.assets.add_geometry(&g0)!!;
-        Geometry g1 = split_seam_quad(tmem, false, true);
-        uv1_id = fixture.assets.add_geometry(&g1)!!;
-        Geometry g2 = split_seam_quad(tmem, true, false);
-        degenerate_uv_id = fixture.assets.add_geometry(&g2)!!;
+        Geometry source_geometry = split_seam_quad(tmem);
+        source_id = fixture.assets.add_geometry(&source_geometry)!!;
+        Geometry uv1_geometry = split_seam_quad(tmem, false, true);
+        uv1_id = fixture.assets.add_geometry(&uv1_geometry)!!;
+        Geometry degenerate_uv_geometry = split_seam_quad(tmem, true, false);
+        degenerate_uv_id = fixture.assets.add_geometry(&degenerate_uv_geometry)!!;
     };
 
     uint[6] render_particles = { 0, 1, 2, 1, 3, 2 };
@@ -132,7 +134,7 @@ fn void test_cloth_material_splits_tangents_and_uv_fallback() @test {
     assert(state.rest.len == 4);
     assert(state.normal_accum.len == 6);
 
-    for (uint i = 0; i < 6; i++) step(&fixture, physics::DEFAULT_FIXED_DT);
+    for (uint step_index = 0; step_index < 6; step_index++) step(&fixture, physics::DEFAULT_FIXED_DT);
 
     Geometry* runtime = &fixture.assets.geometry(state.geometry).data;
     assert(runtime.tangents.len == runtime.positions.len);
@@ -145,22 +147,23 @@ fn void test_cloth_material_splits_tangents_and_uv_fallback() @test {
     assert((runtime.normals[m1_first] - runtime.normals[m1_second]).length() > 0.05f);
     assert(runtime.tangents[m1_first].w * runtime.tangents[m1_second].w < 0);
 
-    foreach (v, normal : runtime.normals) {
+    foreach (vertex_index, normal : runtime.normals) {
         assert(math::abs(normal.length() - 1.0f) <= 1e-4f);
-        Vec4 tangent = runtime.tangents[v];
-        Vec3 dir = { tangent.x, tangent.y, tangent.z };
-        assert(math::abs(dir.length() - 1.0f) <= 1e-4f);
-        assert(math::abs(normal.dot(dir)) <= 1e-4f);
+        Vec4 tangent = runtime.tangents[vertex_index];
+        Vec3 direction = { tangent.x, tangent.y, tangent.z };
+        assert(math::abs(direction.length() - 1.0f) <= 1e-4f);
+        assert(math::abs(normal.dot(direction)) <= 1e-4f);
         assert(tangent.w == 1.0f || tangent.w == -1.0f);
     }
 
-    Vec3 saved_pos = runtime.positions[m2_first];
-    uint saved_rev = fixture.assets.geometry(state.geometry).header.revision;
+    Vec3 saved_position = runtime.positions[m2_first];
+    uint saved_revision = fixture.assets.geometry(state.geometry).header.revision;
     state.positions[2] = state.positions[0];
     publish(&fixture);
     assert(state.contact_result.failure == cloth::FRAME_UNRESOLVED);
-    assert(fixture.assets.geometry(state.geometry).header.revision == saved_rev);
-    assert(runtime.positions[m2_first] == saved_pos);
+    assert(state.contact_result.stage == ClothContactStage.MATERIAL);
+    assert(fixture.assets.geometry(state.geometry).header.revision == saved_revision);
+    assert(runtime.positions[m2_first] == saved_position);
     state.positions[2] = state.published[2];
 
     Node* uv1_node = add_cloth_node(&fixture, uv1_id);
@@ -172,11 +175,11 @@ fn void test_cloth_material_splits_tangents_and_uv_fallback() @test {
     fixture.scene.add_cloth(&fixture.assets, fallback_node, desc)!!;
     step(&fixture, physics::DEFAULT_FIXED_DT);
     ClothState* fallback_state = state_of(&fixture, fallback_node);
-    Geometry* fallback_geom = &fixture.assets.geometry(fallback_state.geometry).data;
-    foreach (v, normal : fallback_geom.normals) {
-        Vec4 tangent = fallback_geom.tangents[v];
-        Vec3 dir = { tangent.x, tangent.y, tangent.z };
-        assert(math::abs(dir.length() - 1.0f) <= 1e-4f && math::abs(normal.dot(dir)) <= 1e-4f);
+    Geometry* fallback_geometry = &fixture.assets.geometry(fallback_state.geometry).data;
+    foreach (vertex_index, normal : fallback_geometry.normals) {
+        Vec4 tangent = fallback_geometry.tangents[vertex_index];
+        Vec3 direction = { tangent.x, tangent.y, tangent.z };
+        assert(math::abs(direction.length() - 1.0f) <= 1e-4f && math::abs(normal.dot(direction)) <= 1e-4f);
     }
 }
 
@@ -209,7 +212,7 @@ fn void test_cloth_weighted_compliant_attachments_and_coalescing() @test {
 
     float[3] sags;
     float[3] compliances = { 0.0f, 0.002f, 0.05f };
-    foreach (idx, compliance : compliances) {
+    foreach (index, compliance : compliances) {
         Node* node = add_cloth_node(&fixture, grid);
         ClothAttachment[3] attachments = {
             { .particle = 0, .weight = 1.0f, .compliance = 0.0f },
@@ -223,9 +226,9 @@ fn void test_cloth_weighted_compliant_attachments_and_coalescing() @test {
         assert(state.inverse_masses[0] == 0);
         assert((compliance == 0.0f) == (state.inverse_masses[2] == 0));
 
-        for (uint step_idx = 0; step_idx < 12; step_idx++) step(&fixture, physics::DEFAULT_FIXED_DT);
+        for (uint step_index = 0; step_index < 12; step_index++) step(&fixture, physics::DEFAULT_FIXED_DT);
         assert((state.published[0] - (Vec3){ 0, 0, 0 }).length() <= POSITION_TOLERANCE);
-        sags[idx] = -state.published[2].y;
+        sags[index] = -state.published[2].y;
     }
     assert(sags[0] <= POSITION_TOLERANCE);
     assert(sags[1] > 1e-4f && sags[2] > sags[1] + 1e-3f);
@@ -238,7 +241,7 @@ fn void test_cloth_weighted_compliant_attachments_and_coalescing() @test {
     ClothDesc partial_desc = cloth::default_cloth_desc();
     partial_desc.attachments = partial_attachments[..];
     fixture.scene.add_cloth(&fixture.assets, partial_node, partial_desc)!!;
-    for (uint step_idx = 0; step_idx < 12; step_idx++) step(&fixture, physics::DEFAULT_FIXED_DT);
+    for (uint step_index = 0; step_index < 12; step_index++) step(&fixture, physics::DEFAULT_FIXED_DT);
     float partial_sag = -state_of(&fixture, partial_node).published[2].y;
     assert(partial_sag > sags[1] + 1e-4f);
 }
@@ -249,13 +252,27 @@ fn void test_cloth_dihedral_bending_rest_angles_and_certification() @test {
     defer teardown(&fixture);
 
     GeometryId quad_id;
+    GeometryId flipped_quad_id;
     @pool() {
-        Geometry g = hinge_quad(tmem, 0);
-        quad_id = fixture.assets.add_geometry(&g)!!;
+        Geometry hinge_geometry = hinge_quad(tmem, 0);
+        quad_id = fixture.assets.add_geometry(&hinge_geometry)!!;
+        Geometry flipped_geometry = hinge_quad(tmem, 0, true);
+        flipped_quad_id = fixture.assets.add_geometry(&flipped_geometry)!!;
     };
 
-    Node* invalid_node = add_cloth_node(&fixture, quad_id);
+    Node* distance_flipped_node = add_cloth_node(&fixture, flipped_quad_id);
     uint[2] hinge_pins = { 1, 2 };
+    ClothDesc distance_desc = cloth::default_cloth_desc();
+    distance_desc.pins = hinge_pins[..];
+    distance_desc.bend_mode = DISTANCE;
+    fixture.scene.add_cloth(&fixture.assets, distance_flipped_node, distance_desc)!!;
+
+    Node* dihedral_flipped_node = add_cloth_node(&fixture, flipped_quad_id);
+    ClothDesc dihedral_flipped_desc = distance_desc;
+    dihedral_flipped_desc.bend_mode = DIHEDRAL;
+    assert(@catch(fixture.scene.add_cloth(&fixture.assets, dihedral_flipped_node, dihedral_flipped_desc)) == c3d::INVALID_ARGUMENT);
+
+    Node* invalid_node = add_cloth_node(&fixture, quad_id);
     ClothDesc bad = cloth::default_cloth_desc();
     bad.pins = hinge_pins[..];
     bad.bend_mode = DIHEDRAL;
@@ -279,7 +296,7 @@ fn void test_cloth_dihedral_bending_rest_angles_and_certification() @test {
 
     float[2] target_signs = { 0.7f, -0.7f };
     float[2] solved_angles;
-    foreach (idx, target : target_signs) {
+    foreach (index, target : target_signs) {
         Node* node = add_cloth_node(&fixture, quad_id);
         ClothRestAngle[1] overrides = {
             { .first = 1, .second = 2, .angle = target },
@@ -295,11 +312,25 @@ fn void test_cloth_dihedral_bending_rest_angles_and_certification() @test {
         assert(state.hinges.len == 1 && !state.bends.len);
         assert(math::abs(state.hinges[0].rest_angle - target) <= 1e-6f);
 
-        for (uint step_idx = 0; step_idx < 25; step_idx++) step(&fixture, physics::DEFAULT_FIXED_DT);
-        solved_angles[idx] = state.hinges[0].last_angle;
+        for (uint step_index = 0; step_index < 25; step_index++) step(&fixture, physics::DEFAULT_FIXED_DT);
+        solved_angles[index] = state.hinges[0].last_angle;
     }
     assert(solved_angles[0] > 0.35f && solved_angles[1] < -0.35f);
     assert(math::abs(solved_angles[0] + solved_angles[1]) <= 1e-2f);
+
+    Node* large_fold_node = add_cloth_node(&fixture, quad_id);
+    ClothRestAngle[1] large_override = { { .first = 1, .second = 2, .angle = 2.4f } };
+    ClothDesc large_desc = cloth::default_cloth_desc();
+    large_desc.pins = hinge_pins[..];
+    large_desc.bend_mode = DIHEDRAL;
+    large_desc.bend_compliance = 0.0f;
+    large_desc.damping = 0.4f;
+    large_desc.rest_angles = large_override[..];
+    fixture.scene.add_cloth(&fixture.assets, large_fold_node, large_desc)!!;
+    for (uint step_index = 0; step_index < 25; step_index++) step(&fixture, physics::DEFAULT_FIXED_DT);
+    ClothState* large_state = state_of(&fixture, large_fold_node);
+    assert(!large_state.contact_result.failure);
+    assert(large_state.hinges[0].last_angle > 1.0f);
 
     Node* soft_hinge_node = add_cloth_node(&fixture, quad_id);
     ClothRestAngle[1] soft_override = { { .first = 1, .second = 2, .angle = 0.7f } };
@@ -310,18 +341,31 @@ fn void test_cloth_dihedral_bending_rest_angles_and_certification() @test {
     soft_desc.damping = 0.2f;
     soft_desc.rest_angles = soft_override[..];
     fixture.scene.add_cloth(&fixture.assets, soft_hinge_node, soft_desc)!!;
-    for (uint step_idx = 0; step_idx < 25; step_idx++) step(&fixture, physics::DEFAULT_FIXED_DT);
+    for (uint step_index = 0; step_index < 25; step_index++) step(&fixture, physics::DEFAULT_FIXED_DT);
     ClothState* soft_state = state_of(&fixture, soft_hinge_node);
     float soft_angle = soft_state.hinges[0].last_angle;
     assert(soft_angle > 0.0f && soft_angle < solved_angles[0] * 0.5f);
 
-    uint saved_rev = fixture.assets.geometry(soft_state.geometry).header.revision;
+    uint saved_revision = fixture.assets.geometry(soft_state.geometry).header.revision;
     Vec3 saved_flap = soft_state.published[0];
     soft_state.positions[0] = { 0, 0, 0 };
     publish(&fixture);
     assert(soft_state.contact_result.failure == cloth::BEND_UNRESOLVED);
-    assert(fixture.assets.geometry(soft_state.geometry).header.revision == saved_rev);
+    assert(fixture.assets.geometry(soft_state.geometry).header.revision == saved_revision);
     assert(soft_state.published[0] == saved_flap);
+
+    Node* capsule_body = fixture.scene.add_node()!!;
+    ColliderDesc zero_capsule = physics::default_collider_desc(CAPSULE);
+    zero_capsule.radius = 0.25f;
+    zero_capsule.half_height = 0.0f;
+    fixture.physics.add_body(capsule_body, physics::default_body_desc(STATIC), (&zero_capsule)[:1])!!;
+    Node* capsule_cloth_node = add_cloth_node(&fixture, quad_id);
+    ClothDesc capsule_cloth_desc = cloth::default_cloth_desc();
+    capsule_cloth_desc.pins = hinge_pins[..];
+    capsule_cloth_desc.colliders = (&capsule_body.id)[:1];
+    fixture.scene.add_cloth(&fixture.assets, capsule_cloth_node, capsule_cloth_desc)!!;
+    ClothState* capsule_cloth_state = state_of(&fixture, capsule_cloth_node);
+    assert(capsule_cloth_state.shapes.len == 1 && capsule_cloth_state.shapes[0].kind == SPHERE);
 
     TrackingAllocator tracker;
     tracker.init(mem);
@@ -330,12 +374,12 @@ fn void test_cloth_dihedral_bending_rest_angles_and_certification() @test {
         Fixture tracked;
         setup(&tracked, weightless(), &tracker);
         defer teardown(&tracked);
-        GeometryId g_id;
+        GeometryId hinge_id;
         @pool() {
-            Geometry g = hinge_quad(tmem, 0.1f);
-            g_id = tracked.assets.add_geometry(&g)!!;
+            Geometry hinge_geometry = hinge_quad(tmem, 0.1f);
+            hinge_id = tracked.assets.add_geometry(&hinge_geometry)!!;
         };
-        Node* tracked_node = add_cloth_node(&tracked, g_id);
+        Node* tracked_node = add_cloth_node(&tracked, hinge_id);
         ClothDesc tracked_desc = cloth::default_cloth_desc();
         tracked_desc.pins = hinge_pins[..];
         tracked_desc.bend_mode = DIHEDRAL;
@@ -344,7 +388,7 @@ fn void test_cloth_dihedral_bending_rest_angles_and_certification() @test {
         step(&tracked, physics::DEFAULT_FIXED_DT);
 
         sz allocated_before = tracker.allocated();
-        for (uint i = 0; i < 5; i++) step(&tracked, physics::DEFAULT_FIXED_DT);
+        for (uint step_index = 0; step_index < 5; step_index++) step(&tracked, physics::DEFAULT_FIXED_DT);
         assert(tracker.allocated() == allocated_before);
     }
     assert(!tracker.has_leaks());

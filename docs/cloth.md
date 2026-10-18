@@ -76,7 +76,7 @@ records on physical particles (`weight` in `[0, 1]`, `compliance >= 0`). Legacy 
 `render_particles` as hard attachments (`weight = 1`, `compliance = 0`). Zero-weight entries are
 ignored. When `compliance == 0` and `weight > 0`, the particle is a hard pin (`inverse_mass = 0`).
 When `compliance > 0` and `weight > 0`, the particle retains unit mass (`inverse_mass = 1`) and is
-pulled toward its interpolated anchor each substep by an XPBD unilateral attachment with
+pulled toward its interpolated anchor each substep by a compliant XPBD positional attachment with
 `effective_compliance = compliance / weight`. Duplicate entries on one particle must agree on hard vs
 soft and on `effective_compliance`.
 
@@ -274,7 +274,7 @@ prove the compiler's floating-point mode. Cloth never changes thread or process 
 
 Every prepared cloth exposes its read-only last-attempt result as
 `cloth.state.contact_result`. `failure` is zero on success; `stage` identifies failure
-in ARITHMETIC, BINDINGS, ATTACHMENT, BEND, CANDIDATES, CONTACTS, RESOLVE, PUBLICATION or REEXPRESSION,
+in ARITHMETIC, BINDINGS, ATTACHMENT, BEND, CANDIDATES, CONTACTS, RESOLVE, PUBLICATION, MATERIAL or REEXPRESSION,
 and is NONE on success. `candidates` and `contacts` count observed work;
 `peak_candidates` and `peak_contacts` report the largest retained sets. `max_residual`
 and `unresolved` describe the last checked participating constraints, and

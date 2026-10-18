@@ -5,7 +5,11 @@ import c3d::maths;
 import c3d::physics @public;
 import std::math;
 
-<* Weighted compliant or hard target for one physical particle. *>
+<*
+ Target attachment for one physical particle.
+ A zero weight disables the entry without conflicting with other records on the same particle;
+ a weight in (0, 1] scales positive compliance as compliance / weight, or selects a hard pin when compliance is zero.
+*>
 struct ClothAttachment {
     uint  particle;
     float weight;
@@ -40,8 +44,6 @@ fn ClothAttachmentPlan? build_attachment_plan(
     ClothAttachment[] attachments,
     uint particle_count,
 ) @private {
-    check_attachment_desc(attachments)!;
-
     uint render_count = (uint)render_to_particle.len;
     bool[] has_hard = alloc::new_array(tmem, bool, (sz)particle_count);
     bool[] has_soft = alloc::new_array(tmem, bool, (sz)particle_count);
@@ -64,7 +66,6 @@ fn ClothAttachmentPlan? build_attachment_plan(
         }
 
         float effective = attachment.compliance / attachment.weight;
-        if (!math::is_finite(effective) || !(effective > 0)) return c3d::INVALID_ARGUMENT~;
         if (has_hard[particle]) return c3d::INVALID_ARGUMENT~;
         if (has_soft[particle] && soft_effective[particle] != effective) return c3d::INVALID_ARGUMENT~;
 
@@ -107,23 +108,12 @@ fn void? project_soft_attachments(
 ) @private {
     if (!state.soft_attachments.len) return;
     double step_squared = (double)dt * (double)dt;
-    if (!math::is_finite(step_squared) || !(step_squared > 0)) {
-        state.contact_result.stage = ClothContactStage.ATTACHMENT;
-        return c3d::INVALID_ARGUMENT~;
-    }
 
     foreach (slot, attachment : state.soft_attachments) {
         uint particle = attachment.particle;
         double inv_mass = (double)state.inverse_masses[particle];
-        if (inv_mass == 0) continue;
-
         double alpha_h = (double)attachment.effective_compliance / step_squared;
         double denominator = inv_mass + alpha_h;
-        if (!math::is_finite(alpha_h) || !(alpha_h > 0)
-            || !math::is_finite(denominator) || !(denominator > inv_mass)) {
-            state.contact_result.stage = ClothContactStage.ATTACHMENT;
-            return c3d::INVALID_ARGUMENT~;
-        }
 
         Vec3 target = final_substep
           ? state.soft_targets[slot]

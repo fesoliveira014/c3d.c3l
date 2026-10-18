@@ -156,7 +156,6 @@ struct ClothState {
     Vec3[]               staged_pin_anchors;
     Vec3[]               staged_soft_anchors;
     Vec3[]               staged_soft_targets;
-    Vec3[]               staged_soft_lambdas;
     ClothHinge[]         staged_hinges;
     Vec3[]               staged_shape_starts;
     Vec3[]               staged_shape_ends;

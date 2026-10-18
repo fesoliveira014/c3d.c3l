@@ -15,21 +15,20 @@ fn void? certify_hinge_step(
     bool commit_angle = true,
 ) @local {
     if (!state.hinges.len) return;
-    uint max_ccd = state.desc.collisions.max_ccd_iterations;
     foreach (&hinge : state.hinges) {
-        Vec3[4] start_pts = {
+        Vec3[4] start_points = {
             start_positions[hinge.p0],
             start_positions[hinge.p1],
             start_positions[hinge.p2],
             start_positions[hinge.p3],
         };
-        Vec3[4] end_pts = {
+        Vec3[4] end_points = {
             end_positions[hinge.p0],
             end_positions[hinge.p1],
             end_positions[hinge.p2],
             end_positions[hinge.p3],
         };
-        float? angle = certify_hinge_path(start_pts, end_pts, hinge.last_angle, max_ccd);
+        float? angle = certify_hinge_path(start_points, end_points, hinge.last_angle);
         if (catch angle) {
             state.contact_result.stage = ClothContactStage.BEND;
             return BEND_UNRESOLVED~;

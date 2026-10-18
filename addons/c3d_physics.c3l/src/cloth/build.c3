@@ -129,13 +129,7 @@ fn void? check_cloth_authoring(Geometry* data, ClothDesc desc) @private {
     uint normal_domain_count;
     (void)build_normal_domains(data, render_to_particle, &normal_domain_count)!;
 
-    if (desc.tangent_frame) {
-        Vec2[] selected_uv = desc.tangent_uv_set == 0 ? data.uv0 : data.uv1;
-        if (selected_uv.len != render_count) return c3d::INVALID_ARGUMENT~;
-        foreach (uv : selected_uv) {
-            if (!math::is_finite(uv.x) || !math::is_finite(uv.y)) return c3d::INVALID_ARGUMENT~;
-        }
-    }
+    if (desc.tangent_frame) (void)select_tangent_uvs(data, desc)!;
 
     (void)build_attachment_plan(
         legacy_pins:        desc.pins,
@@ -154,19 +148,6 @@ fn void? check_cloth_authoring(Geometry* data, ClothDesc desc) @private {
         world_positions:    {},
         desc:               desc,
     )!;
-}
-
-fn uint[]? unique_pins(uint[] requested, uint vertex_count) @private {
-    uint[] pins = alloc::new_array(tmem, uint, (sz)requested.len);
-    pins[..] = requested[..];
-    sort::quicksort(pins);
-    usz count;
-    foreach (pin : pins) {
-        if (pin >= vertex_count) return c3d::INVALID_ARGUMENT~;
-        if (count && pins[count - 1] == pin) continue;
-        pins[count++] = pin;
-    }
-    return pins[:count];
 }
 
 fn void? check_world_positions(Vec3[] world) @private {
@@ -218,6 +199,7 @@ fn ClothTopology? build_topology(
     }
     sort::quicksort(records, &by_edge);
 
+    bool dihedral = desc.bend_mode == DIHEDRAL;
     usz edge_count;
     usz interior_count;
     for (usz start = 0; start < records.len;) {
@@ -225,7 +207,7 @@ fn ClothTopology? build_topology(
         while (end < records.len && same_edge(records[start], records[end])) end++;
         if (end - start > 2) return c3d::INVALID_ARGUMENT~;
         if (end - start == 2) {
-            if (records[start].forward == records[start + 1].forward
+            if ((dihedral && records[start].forward == records[start + 1].forward)
                 || records[start].opposite == records[start + 1].opposite) {
                 return c3d::INVALID_ARGUMENT~;
             }
@@ -236,12 +218,7 @@ fn ClothTopology? build_topology(
     }
 
     bool[] matched_overrides = alloc::new_array(tmem, bool, (sz)desc.rest_angles.len);
-    foreach (override : desc.rest_angles) {
-        if (override.second >= rest_positions.len) return c3d::INVALID_ARGUMENT~;
-    }
-
     Vec3[] edge_positions = world_positions.len ? world_positions : rest_positions;
-    bool dihedral = desc.bend_mode == DIHEDRAL;
     ClothTopology topology = {
         .edges  = alloc::new_array(tmem, ClothConstraint, (sz)edge_count),
         .bends  = alloc::new_array(tmem, ClothConstraint, dihedral ? 0 : (sz)interior_count),
@@ -263,11 +240,11 @@ fn ClothTopology? build_topology(
             if (!dihedral) {
                 topology.bends[bend++] = rest_constraint(edge_positions, p2, p3);
             } else {
-                Vec3[4] rest_pts = { rest_positions[p0], rest_positions[p1], rest_positions[p2], rest_positions[p3] };
-                ClothHingeSample? rest_sample = evaluate_hinge_sample(rest_pts);
-                if (catch rest_sample) return c3d::INVALID_ARGUMENT~;
+                Vec3[4] rest_points = { rest_positions[p0], rest_positions[p1], rest_positions[p2], rest_positions[p3] };
+                double? evaluated_rest = evaluate_hinge_angle(rest_points);
+                if (catch evaluated_rest) return c3d::INVALID_ARGUMENT~;
 
-                float rest_angle = (float)rest_sample.angle;
+                float rest_angle = (float)evaluated_rest;
                 foreach (override_index, override : desc.rest_angles) {
                     if (override.first == p0 && override.second == p1) {
                         matched_overrides[override_index] = true;
@@ -278,15 +255,15 @@ fn ClothTopology? build_topology(
 
                 float last_angle = rest_angle;
                 if (world_positions.len) {
-                    Vec3[4] world_pts = {
+                    Vec3[4] world_points = {
                         world_positions[p0],
                         world_positions[p1],
                         world_positions[p2],
                         world_positions[p3],
                     };
-                    ClothHingeSample? world_sample = evaluate_hinge_sample(world_pts);
-                    if (catch world_sample) return c3d::INVALID_ARGUMENT~;
-                    last_angle = (float)world_sample.angle;
+                    double? evaluated_world = evaluate_hinge_angle(world_points);
+                    if (catch evaluated_world) return c3d::INVALID_ARGUMENT~;
+                    last_angle = (float)evaluated_world;
                 }
 
                 topology.hinges[bend++] = {
@@ -397,7 +374,6 @@ fn ClothState* carve_cloth_state(BlockCursor* cursor, ClothCounts counts) @local
         .staged_pin_anchors      = physics::carve(cursor, Vec3, counts.pins),
         .staged_soft_anchors     = physics::carve(cursor, Vec3, counts.soft_attachments),
         .staged_soft_targets     = physics::carve(cursor, Vec3, counts.soft_attachments),
-        .staged_soft_lambdas     = physics::carve(cursor, Vec3, counts.soft_attachments),
         .staged_hinges           = physics::carve(cursor, ClothHinge, counts.hinges),
         .staged_shape_starts     = physics::carve(cursor, Vec3, counts.collisions.max_shapes),
         .staged_shape_ends       = physics::carve(cursor, Vec3, counts.collisions.max_shapes),

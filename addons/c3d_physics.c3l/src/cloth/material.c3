@@ -7,18 +7,15 @@ import c3d::maths;
 import c3d::physics @public;
 import std::math;
 
-const float FRAME_VECTOR_EPSILON @private = 1e-6f;
-const float UV_AREA_EPSILON @local = 1e-20f;
+const float FRAME_VECTOR_EPSILON @private = 1e-6f; // minimum length for normalizing frame normals and tangents
+const float UV_AREA_EPSILON @local = 1e-20f; // minimum UV triangle area and edge product before fallback
 
-<* Prepared routing and tangent reference for one triangle corner. *>
+<* Prepared routing for one triangle corner. *>
 struct ClothCorner {
-    uint  source_vertex;
-    uint  material_vertex;
-    uint  particle;
-    uint  normal_domain;
-    uint  tangent_domain;
-    float tangent_sign;
-    Vec3  rest_tangent;
+    uint source_vertex;
+    uint material_vertex;
+    uint particle;
+    uint normal_domain;
 }
 
 struct ClothTriangleUv @private {
@@ -46,6 +43,15 @@ struct ClothMaterialPlan @private {
 
 fn uint map_render_vertex(uint[] render_particles, uint render_vertex) @private {
     return render_particles.len ? render_particles[render_vertex] : render_vertex;
+}
+
+fn Vec2[]? select_tangent_uvs(Geometry* source, ClothDesc desc) @private {
+    Vec2[] selected_uv = desc.tangent_uv_set == 0 ? source.uv0 : source.uv1;
+    if (selected_uv.len != source.positions.len) return c3d::INVALID_ARGUMENT~;
+    foreach (uv : selected_uv) {
+        if (!math::is_finite(uv.x) || !math::is_finite(uv.y)) return c3d::INVALID_ARGUMENT~;
+    }
+    return selected_uv;
 }
 
 fn uint[]? build_render_particle_map(
@@ -113,13 +119,17 @@ fn uint[]? build_normal_domains(
     }
 
     uint[] domains = alloc::new_array(tmem, uint, (sz)render_count);
+    uint[] bucket_heads = alloc::new_array(tmem, uint, (sz)render_count);
+    uint[] next_in_bucket = alloc::new_array(tmem, uint, (sz)render_count);
+    bucket_heads[..] = uint::max;
+    next_in_bucket[..] = uint::max;
+
     uint domain_count;
     for (uint vertex = 0; vertex < render_count; vertex++) {
         uint assigned = uint::max;
         uint particle = render_to_particle[vertex];
 
-        for (uint earlier = 0; earlier < vertex; earlier++) {
-            if (render_to_particle[earlier] != particle) continue;
+        for (uint earlier = bucket_heads[particle]; earlier != uint::max; earlier = next_in_bucket[earlier]) {
             if (unit_authored.len
                 && (unit_authored[earlier] - unit_authored[vertex]).length() > FRAME_VECTOR_EPSILON) {
                 continue;
@@ -128,7 +138,11 @@ fn uint[]? build_normal_domains(
             break;
         }
 
-        if (assigned == uint::max) assigned = domain_count++;
+        if (assigned == uint::max) {
+            assigned = domain_count++;
+            next_in_bucket[vertex] = bucket_heads[particle];
+            bucket_heads[particle] = vertex;
+        }
         domains[vertex] = assigned;
     }
 
@@ -173,9 +187,6 @@ fn ClothMaterialPlan? build_material_plan(Geometry* source, ClothDesc desc) @pri
                 .material_vertex = source_vertex,
                 .particle        = render_to_particle[source_vertex],
                 .normal_domain   = render_normal_domains[source_vertex],
-                .tangent_domain  = source_vertex,
-                .tangent_sign    = 1,
-                .rest_tangent    = { 1, 0, 0 },
             };
         }
 
@@ -191,12 +202,7 @@ fn ClothMaterialPlan? build_material_plan(Geometry* source, ClothDesc desc) @pri
         };
         plan.geometry.positions[..] = source.positions[..];
     } else {
-        if (desc.tangent_uv_set > 1) return c3d::INVALID_ARGUMENT~;
-        Vec2[] selected_uv = desc.tangent_uv_set == 0 ? source.uv0 : source.uv1;
-        if (selected_uv.len != render_count) return c3d::INVALID_ARGUMENT~;
-        foreach (uv : selected_uv) {
-            if (!math::is_finite(uv.x) || !math::is_finite(uv.y)) return c3d::INVALID_ARGUMENT~;
-        }
+        Vec2[] selected_uv = select_tangent_uvs(source, desc)!;
 
         Geometry tangent_source = *source;
         if (!tangent_source.normals.len) {
@@ -215,9 +221,9 @@ fn ClothMaterialPlan? build_material_plan(Geometry* source, ClothDesc desc) @pri
                 domain_accum[render_normal_domains[i2]] += cross;
             }
             foreach (&accum : domain_accum) {
-                float len = accum.length();
-                if (!(len > 2 * MIN_TRIANGLE_AREA)) return c3d::INVALID_ARGUMENT~;
-                *accum /= len;
+                float length = accum.length();
+                if (!(length > 2 * MIN_TRIANGLE_AREA)) return c3d::INVALID_ARGUMENT~;
+                *accum /= length;
             }
             foreach (vertex, &normal : tangent_source.normals) {
                 *normal = domain_accum[render_normal_domains[vertex]];
@@ -271,9 +277,6 @@ fn ClothMaterialPlan? build_material_plan(Geometry* source, ClothDesc desc) @pri
                 .material_vertex = material_vertex,
                 .particle        = particle,
                 .normal_domain   = normal_domain,
-                .tangent_domain  = material_vertex,
-                .tangent_sign    = sign,
-                .rest_tangent    = rest_tangent,
             };
         }
 
@@ -309,19 +312,19 @@ fn ClothMaterialPlan? build_material_plan(Geometry* source, ClothDesc desc) @pri
       : {};
 
     compute_material_frames(
-        corners:                plan.corners,
-        triangle_uvs:           plan.triangle_uvs,
+        corners:                 plan.corners,
+        triangle_uvs:            plan.triangle_uvs,
         material_normal_domains: plan.material_normal_domains,
-        material_ref_faces:     plan.material_ref_faces,
-        tangent_signs:          plan.tangent_signs,
-        rest_tangents:          plan.rest_tangents,
-        rest_positions:         particle_rest,
-        current_positions:      particle_rest,
-        committed_tangents:     plan.initial_tangents,
-        normal_accum:           normal_accum,
-        tangent_accum:          tangent_accum,
-        out_normals:            plan.geometry.normals,
-        out_tangents:           plan.geometry.tangents,
+        material_ref_faces:      plan.material_ref_faces,
+        tangent_signs:           plan.tangent_signs,
+        rest_tangents:           plan.rest_tangents,
+        rest_positions:          particle_rest,
+        current_positions:       particle_rest,
+        committed_tangents:      plan.initial_tangents,
+        normal_accum:            normal_accum,
+        tangent_accum:           tangent_accum,
+        out_normals:             plan.geometry.normals,
+        out_tangents:            plan.geometry.tangents,
     )!;
 
     if (desc.tangent_frame) plan.initial_tangents[..] = plan.geometry.tangents[..];
@@ -371,33 +374,33 @@ fn Vec3 transport_face_vector(
     uint face_index,
     Vec3 rest_vector,
 ) @local {
-    usz base = (usz)face_index * 3;
-    if (base + 2 >= corners.len || !finite_vector(rest_vector)) return {};
+    if (!finite_vector(rest_vector)) return {};
 
+    usz base = (usz)face_index * 3;
     uint p0 = corners[base].particle;
     uint p1 = corners[base + 1].particle;
     uint p2 = corners[base + 2].particle;
 
-    Vec3 r_edge = rest_positions[p1] - rest_positions[p0];
-    Vec3 r_norm = r_edge.cross(rest_positions[p2] - rest_positions[p0]);
-    Vec3 c_edge = current_positions[p1] - current_positions[p0];
-    Vec3 c_norm = c_edge.cross(current_positions[p2] - current_positions[p0]);
-    if (r_edge.length() <= FRAME_VECTOR_EPSILON || r_norm.length() <= 2 * MIN_TRIANGLE_AREA
-        || c_edge.length() <= FRAME_VECTOR_EPSILON || c_norm.length() <= 2 * MIN_TRIANGLE_AREA) {
+    Vec3 rest_edge = rest_positions[p1] - rest_positions[p0];
+    Vec3 rest_normal = rest_edge.cross(rest_positions[p2] - rest_positions[p0]);
+    Vec3 current_edge = current_positions[p1] - current_positions[p0];
+    Vec3 current_normal = current_edge.cross(current_positions[p2] - current_positions[p0]);
+    if (rest_edge.length() <= FRAME_VECTOR_EPSILON || rest_normal.length() <= 2 * MIN_TRIANGLE_AREA
+        || current_edge.length() <= FRAME_VECTOR_EPSILON || current_normal.length() <= 2 * MIN_TRIANGLE_AREA) {
         return {};
     }
 
-    r_edge = r_edge.normalize();
-    r_norm = r_norm.normalize();
-    Vec3 r_binorm = r_norm.cross(r_edge);
+    rest_edge = rest_edge.normalize();
+    rest_normal = rest_normal.normalize();
+    Vec3 rest_binormal = rest_normal.cross(rest_edge);
 
-    c_edge = c_edge.normalize();
-    c_norm = c_norm.normalize();
-    Vec3 c_binorm = c_norm.cross(c_edge);
+    current_edge = current_edge.normalize();
+    current_normal = current_normal.normalize();
+    Vec3 current_binormal = current_normal.cross(current_edge);
 
-    return c_edge * rest_vector.dot(r_edge)
-      + c_binorm * rest_vector.dot(r_binorm)
-      + c_norm * rest_vector.dot(r_norm);
+    return current_edge * rest_vector.dot(rest_edge)
+      + current_binormal * rest_vector.dot(rest_binormal)
+      + current_normal * rest_vector.dot(rest_normal);
 }
 
 fn void? compute_material_frames(
@@ -428,11 +431,11 @@ fn void? compute_material_frames(
         Vec3 p1 = current_positions[c1.particle];
         Vec3 p2 = current_positions[c2.particle];
 
-        Vec3 e1 = p1 - p0;
-        Vec3 e2 = p2 - p0;
-        Vec3 cross = e1.cross(e2);
+        Vec3 first_edge = p1 - p0;
+        Vec3 second_edge = p2 - p0;
+        Vec3 cross = first_edge.cross(second_edge);
         if (!finite_vector(cross)) return FRAME_UNRESOLVED~;
-        if (out_tangents.len && !(cross.length() > 2 * MIN_TRIANGLE_AREA)) return FRAME_UNRESOLVED~;
+        if (cross.length() <= 2 * MIN_TRIANGLE_AREA) continue;
 
         normal_accum[c0.normal_domain] += cross;
         normal_accum[c1.normal_domain] += cross;
@@ -440,20 +443,20 @@ fn void? compute_material_frames(
 
         if (out_tangents.len && triangle_uvs[face].valid) {
             ClothTriangleUv uv = triangle_uvs[face];
-            Vec3 raw_tangent = e1 * uv.c1 + e2 * uv.c2;
+            Vec3 raw_tangent = first_edge * uv.c1 + second_edge * uv.c2;
             float raw_length = raw_tangent.length();
             if (finite_vector(raw_tangent) && raw_length > UV_AREA_EPSILON) {
                 Vec3 unit_tangent = raw_tangent / raw_length;
-                Vec3[3] tri_pos = { p0, p1, p2 };
-                uint[3] domains = { c0.tangent_domain, c1.tangent_domain, c2.tangent_domain };
+                Vec3[3] triangle_positions = { p0, p1, p2 };
+                uint[3] material_vertices = { c0.material_vertex, c1.material_vertex, c2.material_vertex };
                 for (uint corner = 0; corner < 3; corner++) {
-                    Vec3 prev_edge = tri_pos[(corner + 2) % 3] - tri_pos[corner];
-                    Vec3 next_edge = tri_pos[(corner + 1) % 3] - tri_pos[corner];
-                    float prod = prev_edge.length() * next_edge.length();
-                    if (prod > UV_AREA_EPSILON) {
-                        float cosine = math::clamp(prev_edge.dot(next_edge) / prod, -1.0f, 1.0f);
+                    Vec3 prev_edge = triangle_positions[(corner + 2) % 3] - triangle_positions[corner];
+                    Vec3 next_edge = triangle_positions[(corner + 1) % 3] - triangle_positions[corner];
+                    float edge_product = prev_edge.length() * next_edge.length();
+                    if (edge_product > UV_AREA_EPSILON) {
+                        float cosine = math::clamp(prev_edge.dot(next_edge) / edge_product, -1.0f, 1.0f);
                         float angle = (float)math::acos((double)cosine);
-                        tangent_accum[domains[corner]] += unit_tangent * angle;
+                        tangent_accum[material_vertices[corner]] += unit_tangent * angle;
                     }
                 }
             }
@@ -463,7 +466,6 @@ fn void? compute_material_frames(
     foreach (&accum : normal_accum) {
         float length = accum.length();
         if (!finite_vector(*accum)) return FRAME_UNRESOLVED~;
-        if (out_tangents.len && !(length > 2 * MIN_TRIANGLE_AREA)) return FRAME_UNRESOLVED~;
         if (length > 0) *accum /= length;
     }
 

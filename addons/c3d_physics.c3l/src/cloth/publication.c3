@@ -21,7 +21,6 @@ fn ClothState staged_cloth(ClothState* state) @local {
     staged.pin_targets = state.staged_pin_targets;
     staged.soft_anchors = state.staged_soft_anchors;
     staged.soft_targets = state.staged_soft_targets;
-    staged.soft_lambdas = state.staged_soft_lambdas;
     staged.hinges = state.staged_hinges;
     staged.bodies = state.staged_bodies;
     staged.shape_storage = state.staged_shapes;
@@ -38,7 +37,6 @@ fn ClothState staged_cloth(ClothState* state) @local {
     staged.pin_targets[..] = state.pin_targets[..];
     staged.soft_anchors[..] = state.soft_anchors[..];
     staged.soft_targets[..] = state.soft_targets[..];
-    staged.soft_lambdas[..] = state.soft_lambdas[..];
     staged.hinges[..] = state.hinges[..];
     staged.bodies[..] = state.bodies[..];
     staged.shape_starts[..] = state.shape_starts[..];
@@ -56,7 +54,6 @@ fn void commit_cloth(ClothState* state, ClothState* staged) @local {
     state.pin_targets[..] = staged.pin_targets[..];
     state.soft_anchors[..] = staged.soft_anchors[..];
     state.soft_targets[..] = staged.soft_targets[..];
-    state.soft_lambdas[..] = staged.soft_lambdas[..];
     state.hinges[..] = staged.hinges[..];
     state.bodies[..] = staged.bodies[..];
     state.shapes = state.shape_storage[:staged.shapes.len];
