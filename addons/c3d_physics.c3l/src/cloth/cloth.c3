@@ -610,6 +610,7 @@ fn void? prepare(
             body_count:            (uint)capture.bodies.len,
             joint_count:           authoring.skinned ? (uint)authoring.joint_entities.len : 0,
             tangent_frame:         desc.tangent_frame,
+            dihedral:              desc.bend_mode == DIHEDRAL,
             crowd:                 false,
             collisions:            desc.collisions,
         )!;

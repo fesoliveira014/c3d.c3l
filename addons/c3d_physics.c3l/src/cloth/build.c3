@@ -36,6 +36,7 @@ struct ClothCounts @local {
     uint               bodies;
     uint               joints;
     bool               tangent_frame;
+    bool               dihedral;
     bool               crowd;
     ClothCollisionDesc collisions;
 }
@@ -244,6 +245,7 @@ fn ClothState*? allocate_cloth_state(
     uint body_count,
     uint joint_count,
     bool tangent_frame,
+    bool dihedral,
     bool crowd,
     ClothCollisionDesc collisions,
 ) @private {
@@ -270,6 +272,7 @@ fn ClothState*? allocate_cloth_state(
         .bodies             = body_count,
         .joints             = joint_count,
         .tangent_frame      = tangent_frame,
+        .dihedral           = dihedral,
         .crowd              = crowd,
         .collisions         = collisions,
     };
@@ -411,7 +414,7 @@ fn ClothState* carve_cloth_state(BlockCursor* cursor, ClothCounts counts) @local
         .selected_paths_scratch        = physics::carve(cursor, uint, counts.cut_paths),
         .sector_scratch                = physics::carve(cursor, uint, sector_scratch_count),
         .sector_root_scratch           = physics::carve(cursor, uint, sector_scratch_count),
-        .constraint_order_scratch      = physics::carve(cursor, uint, has_cuts ? counts.edges : 0),
+        .constraint_order_scratch      = physics::carve(cursor, uint, has_cuts && !counts.dihedral ? counts.edges : 0),
         .split_group_starts            = physics::carve(cursor, uint, has_cuts ? counts.vertices : 0),
         .split_group_counts            = physics::carve(cursor, uint, has_cuts ? counts.vertices : 0),
         .split_group_members           = physics::carve(cursor, uint, has_cuts ? counts.vertices : 0),

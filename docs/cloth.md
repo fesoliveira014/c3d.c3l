@@ -560,14 +560,14 @@ velocities from the corrected displacement. A stiffness `s` is applied per pass 
 `1 - (1 - s)^(1 / iterations)`, which normalizes one isolated constraint, not a coupled mesh. A
 pair that collapses onto one point separates along its rest direction. `Wind.lift` is unused.
 
-Edges and distance bends project in color-major order. Preparation greedy-colors each array so that no
-two constraints of a color share a particle, then stores it color by color. Inside a color, edges stay in
-ascending `(first, second)` order and bends in the order of their interior edges. A topology change after a
-tear recolors with scratch carved at preparation, so it allocates nothing. The order is a property of the
-mesh and has no setting. It replaced the previous order, which moved the Gauss-Seidel order and so changed
-the results of existing cloth once; for a given mesh, `ClothDesc` and update sequence they stay
-deterministic. An array that needs more than 32 colors keeps its previous order. Dihedral hinges keep the
-order of the interior edges, whose state they carry.
+With `ClothBendMode.DISTANCE`, edges and bends project in color-major order. Preparation greedy-colors each
+array so that no two constraints of a color share a particle, then stores it color by color. Inside a color,
+edges stay in ascending `(first, second)` order and bends in the order of their interior edges. A topology
+change after a tear recolors with scratch carved at preparation, so it allocates nothing. The order follows
+the bend mode and has no setting of its own; for a given mesh, `ClothDesc` and update sequence the results
+are deterministic. An array that needs more than 32 colors keeps its previous order. With
+`ClothBendMode.DIHEDRAL`, edges keep the ascending order and hinges the order of the interior edges, whose
+state they carry.
 
 Particles have unit mass, so the wind's effect falls as a mesh gets finer; scale `Wind.drag` with
 vertex density (the example uses `2.5 * vertices / area`) to keep a response.

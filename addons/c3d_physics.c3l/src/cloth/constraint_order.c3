@@ -2,14 +2,7 @@ module c3d::physics::cloth;
 
 const uint MAX_CONSTRAINT_COLORS @private = 32; // one bit per color in a particle's used mask
 
-<*
- Order constraints color-major so constraints of one color share no particle.
- Leaves the order unchanged when MAX_CONSTRAINT_COLORS colors do not suffice.
- @param [inout] constraints : "Reordered in place; the incoming order is kept within a color."
- @param [inout] used_colors : "Scratch with one entry per particle."
- @param [inout] destinations : "Scratch with one entry per constraint."
- @require destinations.len == constraints.len
-*>
+// Stable within a color; more than MAX_CONSTRAINT_COLORS colors keeps the incoming order.
 fn void order_constraints_by_color(
     ClothConstraint[] constraints,
     uint[] used_colors,

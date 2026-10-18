@@ -541,6 +541,7 @@ fn void? prepare_crowd_cloth_part(
                 body_count:            (uint)capture.bodies.len,
                 joint_count:           part_record.skinned ? part_record.joint_count : 0,
                 tangent_frame:         desc.tangent_frame,
+                dihedral:              desc.bend_mode == DIHEDRAL,
                 crowd:                 true,
                 collisions:            desc.collisions,
             )!;
