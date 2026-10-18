@@ -309,6 +309,15 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer TracePoseRoo
     uint _pad0;
 };
 
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer TraceCustomPoseRoot {
+    uint64_t source;
+    uint64_t posed;
+    uint64_t material;
+    uint64_t instance;
+    float time;
+    uint vertex_count;
+};
+
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer TraceRefitRoot {
     uint64_t geometry;
     uint64_t source_nodes;

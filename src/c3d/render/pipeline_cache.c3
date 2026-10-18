@@ -17,12 +17,14 @@ const usz KEY_COLOR_TARGETS = 5; // the five G-buffer channels; keeps the key at
 <*
  Which stages of a key come from a store shader instead of the registry.
  gbuffer selects the shader's G-buffer fragment in place of fragment.
+ trace_pose selects its trace-pose compute form; the key's vertex flags name the single or instanced form.
 *>
 bitstruct CustomStages : uint {
-    bool vertex   : 0;
-    bool fragment : 1;
-    bool compute  : 2;
-    bool gbuffer  : 3;
+    bool vertex     : 0;
+    bool fragment   : 1;
+    bool compute    : 2;
+    bool gbuffer    : 3;
+    bool trace_pose : 4;
 }
 
 enum ComputeSlot @private {
@@ -273,6 +275,7 @@ fn void? acquire_compute_slot(Renderer* renderer, ComputeSlot slot) @private {
  @require !key.custom.fragment || custom.fragment.len > 0
  @require !key.custom.gbuffer || custom.fragment.len > 0
  @require !key.custom.compute || custom.compute.len > 0
+ @require !key.custom.trace_pose || custom.compute.len > 0
 *>
 fn gpu::PipelineHandle? PipelineCache.get(
     &self,
@@ -451,11 +454,25 @@ fn ShaderVariant custom_fragment_variant(asset::ShaderDesc* stages, uint fragmen
 }
 
 <*
+ Key of a custom material's trace-pose pipeline; the published shader and revision are filled in at lookup.
+ @param instanced : "Selects the form that poses one instance of a batch."
+ @pure
+*>
+fn PipelineKey trace_pose_pipeline_key(bool instanced) {
+    return {
+        .vertex = { .flags = instanced ? shader::SHADER_FLAG_INSTANCED : 0 },
+        .custom = { .trace_pose = true },
+    };
+}
+
+<*
  Stage bytes a custom key selects from a shader record.
  @param [&in] stages : "Record holding the forms the key's flags select."
  @pure
 *>
 fn CustomStageSource custom_stage_source(asset::ShaderDesc* stages, PipelineKey key) {
+    if (key.custom.trace_pose) return { .compute = trace_pose_form(&stages.trace_pose, key.vertex.flags) @pure };
+
     return {
         .vertex   = custom_vertex_form(&stages.vertex, key.vertex.flags) @pure,
         .fragment = key.custom.gbuffer ? stages.gbuffer : custom_fragment_form(stages, key.fragment.flags) @pure,
@@ -471,6 +488,10 @@ fn char[] custom_fragment_form(asset::ShaderDesc* stages, uint fragment_flags) @
     return traced.hardware;
 }
 
+fn char[] trace_pose_form(asset::CustomTracePose* pose, uint flags) @private {
+    return (flags & shader::SHADER_FLAG_INSTANCED) != 0 ? pose.instanced : pose.single;
+}
+
 fn char[] custom_vertex_form(asset::CustomVertex* vertex, uint flags) @private {
     bool instanced = (flags & shader::SHADER_FLAG_INSTANCED) != 0;
     if (flags & shader::SHADER_FLAG_DEPTH_ONLY) return instanced ? vertex.instanced_depth : vertex.depth;
@@ -479,6 +500,7 @@ fn char[] custom_vertex_form(asset::CustomVertex* vertex, uint flags) @private {
 }
 
 fn bool key_stages_present(PipelineKey key, asset::ShaderDesc* stages) @private {
+    if (key.custom.trace_pose) return custom_stage_source(stages, key).compute.len > 0;
     if (key.custom.vertex && custom_stage_source(stages, key).vertex.len == 0) return false;
     if (key.custom.fragment && custom_fragment_form(stages, key.fragment.flags).len == 0) return false;
     return !key.custom.gbuffer || stages.gbuffer.len > 0;
@@ -543,10 +565,11 @@ fn gpu::PipelineHandle? create_pipeline(
     CustomStageSource* custom,
     PipelineCreationCounters* counters = null,
 ) @private {
-    if (key.custom.compute) {
+    if (key.custom.compute || key.custom.trace_pose) {
+        ZString compute_name = key.custom.trace_pose ? "custom_trace_pose" : "custom_compute";
         gpu::ComputePipelineDesc compute_desc = {
-            .shader     = { .spirv = custom.compute, .debug_name = "custom_compute" },
-            .debug_name = "custom_compute",
+            .shader     = { .spirv = custom.compute, .debug_name = compute_name },
+            .debug_name = compute_name,
         };
         std::time::Clock started = clock::now();
         if (counters) counters.calls++;

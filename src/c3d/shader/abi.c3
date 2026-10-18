@@ -378,6 +378,22 @@ $assert $reflect(TracePoseRoot.morph).offset == 24;
 $assert $reflect(TracePoseRoot.palette_joints).offset == 32;
 $assert $reflect(TracePoseRoot._pad0).offset == 36;
 
+struct TraceCustomPoseRoot {
+    GpuAddress source;
+    GpuAddress posed;
+    GpuAddress material;
+    GpuAddress instance;
+    float      time;
+    uint       vertex_count;
+}
+$assert TraceCustomPoseRoot::size == 40;
+$assert $reflect(TraceCustomPoseRoot.source).offset == 0;
+$assert $reflect(TraceCustomPoseRoot.posed).offset == 8;
+$assert $reflect(TraceCustomPoseRoot.material).offset == 16;
+$assert $reflect(TraceCustomPoseRoot.instance).offset == 24;
+$assert $reflect(TraceCustomPoseRoot.time).offset == 32;
+$assert $reflect(TraceCustomPoseRoot.vertex_count).offset == 36;
+
 struct TraceRefitRoot {
     GpuAddress geometry;
     GpuAddress source_nodes;

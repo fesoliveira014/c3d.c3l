@@ -305,6 +305,7 @@
     { "include": "view_clip.glsl", "stage": "vert", "defines": [] },
     { "include": "instance_effects.glsl", "stage": "vert", "defines": [] },
     { "include": "instance_effects.glsl", "stage": "comp", "defines": [] },
+    { "include": "trace_pose.glsl", "stage": "comp", "defines": [] },
     { "include": "mesh_vertex.glsl", "stage": "vert", "defines": [] },
     { "include": "mesh_vertex.glsl", "stage": "vert", "defines": ["INSTANCED"] },
     { "include": "mesh_vertex.glsl", "stage": "vert", "defines": ["DEPTH_ONLY"] },

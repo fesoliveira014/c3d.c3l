@@ -119,6 +119,15 @@ root TracePoseRoot {
     uint       _pad0;
 }
 
+root TraceCustomPoseRoot {
+    GpuAddress source;       // rest geometry root
+    GpuAddress posed;        // posed geometry root: positions, normals and tangents
+    GpuAddress material;     // the row's CustomMaterialGpu
+    GpuAddress instance;     // InstanceGpu the trace path wrote for this row; 0 for a single mesh
+    float      time;         // FrameRoot jitter_time.z of this frame
+    uint       vertex_count;
+}
+
 root TraceRefitRoot {
     GpuAddress geometry;
     GpuAddress source_nodes;

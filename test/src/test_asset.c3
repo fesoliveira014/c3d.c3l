@@ -653,6 +653,32 @@ fn void test_shader_traced_fragment_forms_are_copied_and_replaceable() @test {
     assert(!store.shaders.is_live(id));
 }
 
+fn void test_shader_trace_pose_forms_are_copied_and_replaceable() @test {
+    AssetStore store = make_store();
+    defer asset::destroy_asset_store(&store);
+    char[4] fragment = { 1, 2, 3, 4 };
+    char[3] vertex = { 5, 6, 7 };
+    char[2] single = { 8, 9 };
+    char[2] instanced = { 10, 11 };
+    ShaderDesc desc = make_shader_desc(fragment[..], vertex[..], vertex[..]);
+    desc.vertex.instanced_shaded = vertex[..];
+    desc.vertex.instanced_depth = vertex[..];
+    desc.trace_pose = { .single = single[..], .instanced = instanced[..], .reads_time = true };
+    ShaderId id = store.add_shader(&desc)!!;
+    single[0] = 0;
+    instanced[0] = 0;
+
+    ShaderAsset* record = store.shader(id);
+    CustomTracePose* pose = &record.desc.trace_pose;
+    assert(pose.single.ptr != &single[0] && pose.instanced.ptr != &instanced[0]);
+    assert(pose.single.len == 2 && pose.single[0] == 8 && pose.instanced.len == 2 && pose.instanced[1] == 11);
+    assert(pose.reads_time);
+
+    ShaderDesc without = make_shader_desc(fragment[..], vertex[..], vertex[..]);
+    store.replace_shader(id, &without)!!;
+    assert(record.header.revision == 2 && pose.single.len == 0 && pose.instanced.len == 0 && !pose.reads_time);
+}
+
 fn void test_copy_and_free_shader_desc_round_trip_the_weighted_forms() @test {
     char[4] fragment = { 1, 2, 3, 4 };
     char[3] shaded = { 5, 6, 7 };
