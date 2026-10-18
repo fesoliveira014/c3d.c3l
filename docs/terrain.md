@@ -187,6 +187,28 @@ neighbour that prepares later links to the tiles already there, so load order do
 neighbours are equal. Cut tiles from one map with an overlap of one row or column, as the example does. Nothing
 checks the texels.
 
+**Border ring.** A tile shades its edge texels from central differences, so it needs the texel just outside its
+border. Each tile owns a `R16_UINT` texture of `texels × 4` in material slot 2, one row for each edge neighbour in the
+order north, south, west and east. A row holds the neighbour's texels one step inside the neighbour's own border: the
+shared edge is duplicated, so that is the texel outside this tile. `TerrainParams.border_edges` is a four-bit mask of
+the rows that are valid.
+
+- The fragment stage reads a ring row only where a central difference crosses a present edge. An edge without a
+  linked neighbour stays one-sided, and every other pixel shades as before. The ring has no corners: the stage
+  never samples diagonally.
+- The ring is created with the tile at `prepare` and removed with its terrain. A terrain without `TerrainTile` has
+  no ring: slot 2 is empty and the mask is zero. The 1,032 bytes at 129 texels and 8,200 bytes at 1,025 live on the
+  CPU and on the GPU.
+- A ring is rebuilt from the neighbours' height texels when an edge neighbour links or unlinks; a diagonal link
+  leaves it alone. A tile that leaves its set, by removing its `TerrainTile` or its set, gets an empty ring. A
+  neighbour whose height map no longer conforms counts as missing.
+- `terrain::refresh_neighbour_rings(scene, assets, tile, rect)` rebuilds the rings that read an edit of the tile's
+  texels. It reaches only the neighbours across an edge whose outer two texel bands, the shared edge and the row
+  inside it, the rectangle intersects. Each rebuild changes the ring's revision only when a texel or the mask
+  changed.
+- A bare `mark_dirty` on a set tile leaves the neighbours' rings stale. `TerrainSet.propagate_edit` is the edit
+  entry point for set tiles: it copies the edge texels into the neighbours and calls `refresh_neighbour_rings`.
+
 CPU queries (`height_view`, `sample_height`, `sample_normal`) stay within one tile; a point outside it is
 `NOT_FOUND`. Each tile keeps its own collider, height map revision and `mark_dirty` rectangle: an edit of one tile
 does not reach its neighbours' texels.
@@ -243,6 +265,8 @@ scene.get(ground, PhysicsBody).mark_changed();
   since the last `update`. The next `update` sees the revision change and refreshes only the chunks the
   rectangle touches and their ancestors. A revision change without `mark_dirty` rebuilds the whole bounds
   tree, as does a new pixel array.
+- On a [set tile](#tile-sets), `mark_dirty` does not reach the neighbours' border rings: call
+  `terrain::refresh_neighbour_rings` with the same rectangle.
 - The renderer re-uploads the whole height map on each revision (8 MiB at 2049², 32 MiB at 4097²).
 - A live physics body is not re-cooked on a texture revision. `mark_changed` rebuilds the whole field on the
   next `PhysicsWorld.update`, so call it once when a stroke ends: collision is stale during the stroke and
@@ -258,7 +282,7 @@ scene.get(ground, PhysicsBody).mark_changed();
 
 Remove the `Terrain` component, or the node. A [tile](#tile-sets) also leaves its set's links. The next `update` removes the node's `InstancedMesh` and
 `TerrainRuntime` first thing, so a removed terrain never draws a stale frame; a removed node's batch goes with
-the node. The runtime's remove hook frees its arrays and removes the terrain's own material. Removing
+the node. The runtime's remove hook frees its arrays and removes the terrain's own material and border ring. Removing
 `TerrainRuntime` directly is not supported.
 
 The shared shader (`"c3d_landscape/terrain_shader"`) and chunk grid (`"c3d_landscape/terrain_grid"`) are
@@ -324,8 +348,8 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
   motion and the camera produce velocity.
 - The velocity pass redraws every chunk on temporal views. A re-selection frame uploads 128 B per selected
   chunk and, on temporal views, 64 B per chunk of previous matrices the stage ignores.
-- Normals at a tile border, between linked tiles too, use one-sided differences, so matching edge texels still
-  leave a shading seam.
+- Normals at a map border with no linked neighbour use one-sided differences. Between linked tiles they are central
+  differences through the [border ring](#tile-sets), as current as its last refresh.
 - Every set layer is sampled on every pixel, whatever its weight; four layers is the limit.
 - Layers are projected from above: `uv0` is terrain-local x and z, so on steep slopes and cliffs the layer
   textures stretch along the fall line.

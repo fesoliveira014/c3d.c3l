@@ -10,9 +10,9 @@ description. LOD cells own one core instanced group; all parts share scatter,
 tint, sway and fade. The null descriptor keeps the single-mesh path.
 See [whole-object LOD](../../docs/lod.md) for ownership and selection contracts.
 
-The terrain's material and grid, and the water material, are owned by their components. Do not replace or edit
-them. The height map and control map belong to the application: replacing the height map with the same side
-length refreshes the whole map; another side length hides the batch until a conforming revision.
+The terrain's material and grid, a tile's border ring, and the water material, are owned by their components. Do not
+replace or edit them. The height map and control map belong to the application: replacing the height map with the
+same side length refreshes the whole map; another side length hides the batch until a conforming revision.
 
 ```powershell
 c3c test landscape_test --path addons/c3d_landscape.c3l
