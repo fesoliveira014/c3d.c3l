@@ -95,17 +95,18 @@ F = −(linear_drag / 8 + ½ · ρ · C_d · A(v̂_rel) / 8 · |v_rel|) · v_rel
 - The force is applied at the cell centre, so a fluid moving past a body also turns it.
 - The magnitude of `F` is limited to `m_cell · |v_rel| / fixed_dt`, with `m_cell` one eighth of the body's mass,
   so one explicit step cannot reverse the cell's velocity relative to the fluid. The limit binds when
-  `linear_drag · fraction > mass / fixed_dt`; fully submerged, that is `linear_drag` above `mass / fixed_dt`
-  (60 N·s/m for a 1 kg body at 60 Hz, 36,000 N·s/m for 600 kg). Below that, it never changes a body that has
-  linear drag alone; above it, the drag is weaker than `linear_drag` states.
+  `(linear_drag + ½ · ρ · C_d · A(v̂_rel) · |v_rel|) · fraction > mass / fixed_dt`, so with `C_d > 0` it also binds
+  at high relative speed. With linear drag alone and a fully submerged body, that is `linear_drag` above
+  `mass / fixed_dt` (60 N·s/m for a 1 kg body at 60 Hz, 36,000 N·s/m for 600 kg); below that, it never changes
+  such a body. Where it binds, the drag is weaker than the formula states.
 - The terminal speed of a body sinking through a fluid on quadratic drag alone is
   `sqrt(2 (m − ρ V) g / (ρ C_d A))`, with `A` the bounds' projected area along the fall.
 
 ## Interactions
 
 - Buoyant lift uses the world's gravity; `gravity_scale` does not scale it.
-- A submerged cell applies its force with `wake: true`, so a floating body does not sleep; see
-  [Sleep](#sleep).
+- A submerged cell applies its force with `wake: true`, which keeps a floating body awake apart from one step
+  every 0.5 s; see [Sleep](#sleep).
 - The fluid's velocity enters only through the drag's relative velocity: a body with `linear_drag = 0` and
   `drag_coefficient = 0` feels no current.
 

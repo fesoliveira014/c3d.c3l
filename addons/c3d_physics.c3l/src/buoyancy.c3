@@ -12,10 +12,10 @@ import b3;
 alias FluidSurfaceFn = fn float? (void* context, float x, float z, float step_offset);
 
 <*
- Fluid surface height at (x, z), writing the fluid velocity there; an empty optional means no fluid.
- The velocity is unspecified when the optional is empty.
- @param [&out] velocity : "Fluid velocity in metres per second."
+ Fluid height and velocity at a point; an empty optional means no fluid.
+ @param [in] context : "The pointer given at install."
  @param step_offset : "Seconds from the update's first fixed step to this one."
+ @param [&out] velocity : "Metres per second; unspecified when the optional is empty."
 *>
 alias FluidSampleFn = fn float? (void* context, float x, float z, float step_offset, Vec3* velocity);
 
@@ -85,6 +85,7 @@ fn Vec3 CellDrag.force(&self, Vec3 relative_velocity, float fraction) {
         + self.face_areas.y * math::abs(relative_velocity.dot(self.axes[1]))
         + self.face_areas.z * math::abs(relative_velocity.dot(self.axes[2]));
     Vec3 force = relative_velocity * -((self.linear + self.quadratic * swept_volume_rate) * fraction);
+
     float limit = self.force_per_speed * relative_velocity.length();
     float magnitude = force.length();
     return magnitude > limit ? force * (limit / magnitude) : force;
@@ -136,6 +137,7 @@ fn void apply_buoyancy(
     float vertical_half = math::abs(axes[0].y) * half_cell.x
         + math::abs(axes[1].y) * half_cell.y
         + math::abs(axes[2].y) * half_cell.z;
+
     Vec3 cell_lift = -world.desc.tuning.gravity * (buoyancy.fluid_density * body.solid_volume / BUOYANCY_CELLS);
     Vec3 box_faces = { box_size.y * box_size.z, box_size.x * box_size.z, box_size.x * box_size.y };
     CellDrag drag = {
@@ -150,7 +152,12 @@ fn void apply_buoyancy(
     foreach (octant : CELL_OCTANTS) {
         Vec3 point = body.current.position + rotation.rotate_vec3(center + octant * half_cell);
         Vec3 fluid_velocity;
-        float? surface = sample_fluid(world, point, step_offset, &fluid_velocity);
+        float? surface = sample_fluid(
+            world:       world,
+            point:       point,
+            step_offset: step_offset,
+            velocity:    &fluid_velocity,
+        );
         if (catch surface) continue;
 
         float fraction = math::clamp((surface - point.y) / (2 * vertical_half) + 0.5f, 0.0f, 1.0f);
@@ -165,6 +172,7 @@ fn void apply_buoyancy(
             wake:  true,
         );
     }
+
     buoyancy.submerged_fraction = submerged / BUOYANCY_CELLS;
 }
 

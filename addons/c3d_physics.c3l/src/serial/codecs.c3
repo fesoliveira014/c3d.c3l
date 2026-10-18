@@ -213,6 +213,7 @@ fn void? project_buoyancy(void* component, void* value, serial::WriteContext* co
     if (!buoyancy_authoring_valid(buoyancy.fluid_density, buoyancy.linear_drag, buoyancy.drag_coefficient)) {
         return c3d::INVALID_ARGUMENT~;
     }
+
     *(BuoyancyAuthoring*)value = {
         .fluid_density    = buoyancy.fluid_density,
         .linear_drag      = buoyancy.linear_drag,
@@ -239,6 +240,7 @@ fn void? attach_buoyancy(void* value, serial::ReadContext* context) @private {
 fn void? read_buoyancy_v1(serial::Reader* reader, serial::ReadContext* context) @private {
     BuoyancyAuthoringV1* legacy = context.read_value(BuoyancyAuthoringV1, reader)!;
     BuoyancyAuthoring source = { .fluid_density = legacy.fluid_density, .linear_drag = legacy.linear_drag };
+
     validate_buoyancy(&source, context)!;
     attach_buoyancy(&source, context)!;
 }

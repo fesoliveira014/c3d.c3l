@@ -132,6 +132,7 @@ fn WaterSample? sample_surface_detail(
     WaveGpu[] waves = view.waves[:view.wave_count];
     SurfaceFrame frame = wave_frame(waves, rest, drawn_time);
     float height = maths::transform_point(view.world, { local.x, wave_height(waves, rest, drawn_time), local.z }).y;
+
     return {
         .height   = height,
         .normal   = maths::transform_dir(view.world, frame.bitangent.cross(frame.tangent).normalize()),

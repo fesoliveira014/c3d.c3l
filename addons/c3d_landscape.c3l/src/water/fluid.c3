@@ -31,6 +31,7 @@ fn float? fluid_sample(
         world_z: z,
         time:    fluid.time + step_offset,
     )!;
+
     *velocity = sample.velocity + fluid.current;
     return sample.height;
 }

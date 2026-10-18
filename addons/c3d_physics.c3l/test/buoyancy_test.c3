@@ -65,7 +65,12 @@ fn float? analytic_sampler(
     Vec3* velocity,
 ) @local {
     FluidSurface* surface = context;
-    float height = analytic_surface(context, x, z, step_offset)!;
+    float height = analytic_surface(
+        context:     context,
+        x:           x,
+        z:           z,
+        step_offset: step_offset,
+    )!;
     *velocity = surface.velocity;
     return height;
 }
@@ -349,6 +354,7 @@ fn void test_two_collider_body_floats_at_its_summed_volume() @test {
 fn float terminal_speed(float time_step) @local {
     PhysicsDesc desc = physics::default_physics_desc();
     desc.tuning.fixed_dt = time_step;
+
     FluidSurface surface = { .level = DEEP_LEVEL };
     Fixture fixture;
     setup(&fixture, &surface, desc);
@@ -386,6 +392,7 @@ fn void test_quadratic_drag_reaches_terminal_velocity() @test {
 fn void test_drag_clamp_prevents_reversal() @test {
     PhysicsDesc desc = physics::default_physics_desc();
     desc.tuning.gravity = {};
+
     FluidSurface surface = { .level = DEEP_LEVEL, .velocity = { CURRENT_SPEED, 0, 0 } };
     Fixture fixture;
     setup(&fixture, &surface, desc);
@@ -408,6 +415,7 @@ fn void test_drag_clamp_prevents_reversal() @test {
         assert(speed >= previous - REVERSAL_TOLERANCE, "step %d slowed to %f", step, speed);
         previous = speed;
     }
+
     assert(math::abs(previous - CURRENT_SPEED) <= REVERSAL_TOLERANCE);
 }
 
@@ -455,15 +463,22 @@ fn void test_floating_body_at_equilibrium_stays_put_under_quadratic_drag() @test
         worst_offset = max(worst_offset, math::abs(body_height(&fixture, node) - equilibrium_height()));
         worst_speed = max(worst_speed, body_velocity(&fixture, node).length());
     }
+
     assert(worst_offset <= REST_TOLERANCE, "offset %e", worst_offset);
     assert(worst_speed <= REST_TOLERANCE, "speed %e", worst_speed);
 }
 
-fn bool same_body_state(Fixture* first, Node* first_node, Fixture* second, Node* second_node) @local {
+fn bool same_body_state(
+    Fixture* first,
+    Node* first_node,
+    Fixture* second,
+    Node* second_node,
+) @local {
     RigidBody* first_body = first.scene.get(first_node, RigidBody);
     RigidBody* second_body = second.scene.get(second_node, RigidBody);
     b3::BodyId first_native = first.physics.body(first_node)!!;
     b3::BodyId second_native = second.physics.body(second_node)!!;
+
     return first_body.current.position == second_body.current.position
         && first_body.current.rotation.v == second_body.current.rotation.v
         && first_native.linear_velocity() == second_native.linear_velocity()
@@ -480,6 +495,7 @@ fn void test_height_only_surface_equals_a_zero_velocity_sampler() @test {
     setup(&with_sampler, &sampler_context);
     defer teardown(&with_sampler);
     with_sampler.physics.set_fluid_sampler(&analytic_sampler, &sampler_context);
+
     ColliderDesc raft = box(RAFT_HALF_EXTENTS, 600);
     Node*[2] nodes;
     foreach (index, fixture : (Fixture*[2]){ &with_surface, &with_sampler }) {
@@ -495,7 +511,14 @@ fn void test_height_only_surface_equals_a_zero_velocity_sampler() @test {
     for (uint step = 0; step < COMPARED_STEPS; step++) {
         with_surface.physics.update(with_surface.physics.desc.tuning.fixed_dt);
         with_sampler.physics.update(with_sampler.physics.desc.tuning.fixed_dt);
-        assert(same_body_state(&with_surface, nodes[0], &with_sampler, nodes[1]), "bodies diverged at step %d", step);
+        bool same = same_body_state(
+            first:       &with_surface,
+            first_node:  nodes[0],
+            second:      &with_sampler,
+            second_node: nodes[1],
+        );
+        assert(same, "bodies diverged at step %d", step);
     }
+
     assert(fraction_of(&with_surface, nodes[0]) > 0);
 }
