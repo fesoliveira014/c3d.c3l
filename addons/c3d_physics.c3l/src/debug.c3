@@ -18,6 +18,9 @@ const uint  COLLIDER_SENSOR @local = 0xFF33FFFF;
 const float CONTACT_POINT_SIZE @local = 0.05f;
 const float TRANSFORM_AXIS_LENGTH @local = 0.25f; // metres at joint_scale 1; visible beside a unit body
 const float HEX_CHANNEL_SCALE @local = 1.0f / 255;
+const usz   BOX_LINES @local = 12; // the edges of one DebugDraw.box
+const usz   SPHERE_LINES @local = 3 * debug::DEBUG_CIRCLE_SEGMENTS; // three DebugDraw.circle calls
+const usz   CAPSULE_LINES @local = 6 * debug::DEBUG_CIRCLE_SEGMENTS + 4; // six DebugDraw.circle calls and four side lines
 
 <*
  Append collider wireframes, contacts, bounds and joints to the sink.
@@ -64,47 +67,77 @@ fn draw::DebugDraw box3d_draw(debug::DebugDraw* sink, PhysicsDebugOptions option
 
 fn void draw_colliders(PhysicsWorld* world, debug::DebugDraw* sink) @local {
     world.scene.@each(RigidBody; entity, body) {
-        uint color = body_color(body);
-        Mat4 body_world = body.current.to_mat4();
-        foreach (&collider : body.colliders) {
-            switch (collider.kind) {
-                case BOX:
-                    Mat4 shape_world = body_world.mul(collider.local.to_mat4());
-                    sink.box(shape_world, { .min = -collider.half_extents, .max = collider.half_extents }, color);
-                case SPHERE:
-                    Vec3 center = maths::transform_point(body_world, collider.local.position);
-                    sink.circle(center, { 1, 0, 0 }, collider.radius, color);
-                    sink.circle(center, { 0, 1, 0 }, collider.radius, color);
-                    sink.circle(center, { 0, 0, 1 }, collider.radius, color);
-                case CAPSULE:
-                    Vec3 center = maths::transform_point(body_world, collider.local.position);
-                    Vec3 axis = maths::transform_dir(body_world, collider.local.rotation.rotate_vec3({ 0, 1, 0 })).normalize();
-                    sink.capsule(
-                        center:      center,
-                        axis:        axis,
-                        half_height: collider.half_height,
-                        radius:      collider.radius,
-                        rgba:        color,
-                    );
-                case HULL:
-                case MESH:
-                    draw_wire(
-                        sink:  sink,
-                        world: body_world.mul(collider.local.to_mat4()),
-                        wire:  collider.wire,
-                        color: color,
-                    );
-                case HEIGHT_FIELD:
-                case COMPOUND:
-                    draw_wire(
-                        sink:  sink,
-                        world: body_world,
-                        wire:  collider.wire,
-                        color: color,
-                    );
-            }
+        if (sink_is_full(sink)) {
+            foreach (&collider : body.colliders) sink.dropped += collider_line_count(collider);
+        } else {
+            draw_body(sink, body);
         }
     };
+}
+
+fn void draw_body(debug::DebugDraw* sink, RigidBody* body) @local {
+    uint color = body_color(body);
+    Mat4 body_world = body.current.to_mat4();
+    foreach (&collider : body.colliders) {
+        if (sink_is_full(sink)) {
+            sink.dropped += collider_line_count(collider);
+            continue;
+        }
+
+        switch (collider.kind) {
+            case BOX:
+                Mat4 shape_world = body_world.mul(collider.local.to_mat4());
+                sink.box(shape_world, { .min = -collider.half_extents, .max = collider.half_extents }, color);
+            case SPHERE:
+                Vec3 center = maths::transform_point(body_world, collider.local.position);
+                sink.circle(center, { 1, 0, 0 }, collider.radius, color);
+                sink.circle(center, { 0, 1, 0 }, collider.radius, color);
+                sink.circle(center, { 0, 0, 1 }, collider.radius, color);
+            case CAPSULE:
+                Vec3 center = maths::transform_point(body_world, collider.local.position);
+                Vec3 axis = maths::transform_dir(body_world, collider.local.rotation.rotate_vec3({ 0, 1, 0 })).normalize();
+                sink.capsule(
+                    center:      center,
+                    axis:        axis,
+                    half_height: collider.half_height,
+                    radius:      collider.radius,
+                    rgba:        color,
+                );
+            case HULL:
+            case MESH:
+                draw_wire(
+                    sink:  sink,
+                    world: body_world.mul(collider.local.to_mat4()),
+                    wire:  collider.wire,
+                    color: color,
+                );
+            case HEIGHT_FIELD:
+            case COMPOUND:
+                draw_wire(
+                    sink:  sink,
+                    world: body_world,
+                    wire:  collider.wire,
+                    color: color,
+                );
+        }
+    }
+}
+
+fn bool sink_is_full(debug::DebugDraw* sink) @local {
+    return (usz)sink.vertices.len() / 2 >= sink.capacity;
+}
+
+fn usz collider_line_count(Collider* collider) @local {
+    switch (collider.kind) {
+        case BOX:     return BOX_LINES;
+        case SPHERE:  return SPHERE_LINES;
+        case CAPSULE: return CAPSULE_LINES;
+        case HULL:
+        case MESH:
+        case HEIGHT_FIELD:
+        case COMPOUND:
+            return collider.wire.len / 2;
+    }
 }
 
 fn void draw_wire(

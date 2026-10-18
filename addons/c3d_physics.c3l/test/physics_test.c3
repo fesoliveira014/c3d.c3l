@@ -1652,6 +1652,45 @@ fn void test_widened_flags_add_segments() @test {
     }
 }
 
+fn void test_full_sink_stops_generating_and_counts_drops() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    ColliderDesc sphere = physics::default_collider_desc(SPHERE);
+    sphere.radius = 0.5f;
+    ColliderDesc capsule = physics::default_collider_desc(CAPSULE);
+    capsule.radius = 0.25f;
+    capsule.half_height = 0.5f;
+
+    add_box(&fixture, { 0, 0, 0 }, STATIC);
+    add_static_body(&fixture, sphere, { 3, 0, 0 });
+    add_static_body(&fixture, sphere, { 6, 0, 0 });
+    add_static_body(&fixture, capsule, { 9, 0, 0 });
+    Node* hull = add_geometry_body(&fixture, HULL, STATIC);
+    add_box(&fixture, { 12, 0, 0 }, STATIC);
+    assert(fixture.scene.get(hull, RigidBody).colliders[0].wire.len >= 2);
+    fixture.scene.update_world();
+
+    debug::DebugDraw whole = debug::create_debug_draw(mem, 1 << 12);
+    defer debug::destroy_debug_draw(&whole);
+    fixture.physics.debug_draw(&whole, { .colliders = true });
+    usz total = (usz)whole.vertices.len() / 2;
+    assert(whole.dropped == 0);
+
+    usz capacity = 12 + debug::DEBUG_CIRCLE_SEGMENTS + 1;
+    debug::DebugDraw bounded = debug::create_debug_draw(mem, capacity);
+    defer debug::destroy_debug_draw(&bounded);
+    fixture.physics.debug_draw(&bounded, { .colliders = true });
+
+    assert((usz)bounded.vertices.len() / 2 == capacity);
+    assert(bounded.dropped == total - capacity);
+    foreach (index, vertex : bounded.vertices) {
+        assert(vertex.rgba == whole.vertices[index].rgba);
+        assert(close_vec(vertex.position, whole.vertices[index].position, 0));
+    }
+}
+
 fn void test_replace_geometry_keeps_live_body_snapshot() @test {
     Fixture fixture;
     setup(&fixture);
