@@ -8,13 +8,15 @@ import std::math;
 import std::sort;
 import b3;
 
-const uint BREAKABLE_PAIR_BATCH @local = 1024; // pairs per range; most end at a bounds test, so ranges stay long to amortize one claim; 512 ranges at 1,024 pieces
+const uint BREAKABLE_PAIR_BATCH @local = 1024; // pairs per range; amortizes one claim, 512 ranges at 1,024 pieces
 
 struct BreakableEdgeCandidate @local {
     ulong key; // first piece in the high word, second piece in the low word
     float[3] anchor;
     bool failed;
 }
+
+$assert BreakableEdgeCandidate::size == 24; // the reserve per piece pair; a Vec3 anchor would make it 32
 
 struct BreakablePairResult @local {
     bool connected;
@@ -70,7 +72,9 @@ fn BreakablePairResult? nearest_hull_pair(BreakablePairJob* job, uint first, uin
                 job.hulls[second_hull],
                 body_frame(relative_breakable_pose(job.poses[first], job.poses[second])),
             )!;
-            if (closest.distance > job.gap || (result.connected && closest.distance >= result.nearest.distance)) continue;
+            bool rejected = closest.distance > job.gap
+                || (result.connected && closest.distance >= result.nearest.distance);
+            if (rejected) continue;
 
             result = { .connected = true, .nearest = closest };
         }
@@ -123,7 +127,7 @@ fn uint breakable_pair_row(uint piece_count, uint pair) @local {
     return low;
 }
 
-fn void evaluate_near_pair(BreakablePairJob* job, uint first, uint second) @local @noinline {
+fn void evaluate_near_pair(BreakablePairJob* job, uint first, uint second) @local {
     if (try result = nearest_hull_pair(job, first, second)) {
         if (result.connected) {
             add_breakable_candidate(
@@ -213,7 +217,8 @@ fn Weld[]? build_breakable_graph(
     }
 
     // One entry per pair is the worst case; only the connected pairs are ever written, so most of it stays untouched.
-    BreakableEdgeCandidate[] candidates = alloc::alloc_array_try(tmem, BreakableEdgeCandidate, pair_count) ?? c3d::CAPACITY_EXCEEDED~!;
+    BreakableEdgeCandidate[] candidates = alloc::alloc_array_try(tmem, BreakableEdgeCandidate, pair_count)
+      ?? c3d::CAPACITY_EXCEEDED~!;
 
     BreakablePairJob job = {
         .piece_count = (uint)poses.len,

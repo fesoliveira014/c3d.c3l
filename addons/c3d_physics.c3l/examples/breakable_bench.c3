@@ -17,7 +17,7 @@ const uint BENCHMARK_REPEATS @local = 3;
 const uint LATENCY_FRAMES @local = 300;
 const usz RECORDING_BYTES @local = 4 * 1024 * 1024; // starting capacity for the recorded impact
 const uint RESET_SAMPLES @local = 32;
-const uint LARGE_WALL_SIDE @local = 32; // 1,024 pieces and 523,776 pairs; the graph reserves 24 bytes per pair, about 12 MiB, and writes only the connected pairs
+const uint LARGE_WALL_SIDE @local = 32; // 1,024 pieces and 523,776 pairs; the graph reserves about 12 MiB for them
 const ulong CHECKSUM_BASIS @local = 0xcbf2_9ce4_8422_2325; // FNV-1a offset basis
 const ulong CHECKSUM_PRIME @local = 0x0000_0100_0000_01b3; // FNV-1a prime
 
@@ -150,7 +150,12 @@ fn ulong graph_checksum(BreakableState* state) @local {
 
 fn void? measure_authoring(uint workers, uint wall_side, uint run) @local {
     Demo demo;
-    create_demo(mem, &demo, "", wall_side)!;
+    create_demo(
+        allocator: mem,
+        demo: &demo,
+        model_path: "",
+        wall_side: wall_side,
+    )!;
     defer destroy_demo(&demo);
     if (workers) start_workers(&demo, workers)!;
 
