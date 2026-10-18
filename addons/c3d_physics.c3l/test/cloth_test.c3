@@ -586,6 +586,12 @@ fn void test_cloth_step_has_no_allocations() @test {
     held.wake();
     step(&fixture, physics::DEFAULT_FIXED_DT);
     assert(tracker.total_allocation_count() == allocations);
+
+    ReverseOrder order;
+    fixture.physics.set_parallel({ .run = &run_in_reverse, .context = &order });
+    for (uint update = 0; update < PARALLEL_ALLOCATION_UPDATES; update++) step(&fixture, physics::DEFAULT_FIXED_DT);
+    assert(order.runs == PARALLEL_ALLOCATION_UPDATES && tracker.total_allocation_count() == allocations);
+    fixture.physics.set_parallel({});
     fixture.scene.remove(node);
     fixture.scene.remove(resting);
     assert(tracker.allocation_count() == before);
