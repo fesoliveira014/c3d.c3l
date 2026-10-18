@@ -10,7 +10,7 @@ import c3d::maths;
 import b3;
 
 const usz  RGBA_CHANNELS @local = 4;
-const b3::Transform IDENTITY_FRAME @local = { .q = quaternion::IDENTITY };
+const b3::Transform IDENTITY_FRAME @private = { .q = quaternion::IDENTITY };
 
 <*
  Kind of cooked data a snapshot holds.
@@ -161,7 +161,12 @@ fn SnapshotHandle? acquire_scaled_hull(SnapshotTable* table, GeometryId geometry
     });
 }
 
-fn SnapshotHandle? acquire_mesh(SnapshotTable* table, GeometryId geometry, char[] material_indices) @private {
+fn SnapshotHandle? acquire_mesh(
+    SnapshotTable* table,
+    GeometryId geometry,
+    char[] material_indices,
+    bool query = false,
+) @private {
     SnapshotSource[1] sources = { current_source(table, geometry) };
     ulong content = material_indices.len ? fnv64a::hash(material_indices) : 0;
     foreach (usz index, &slot : table.slots) {
@@ -170,6 +175,7 @@ fn SnapshotHandle? acquire_mesh(SnapshotTable* table, GeometryId geometry, char[
 
     Geometry* source = &table.assets.geometry(geometry).data;
     if (!source.positions.len) return SOURCE_UNAVAILABLE~;
+    if (query) check_collision_mesh_source(source, material_indices)!;
     usz index = reserve_slot(table)!;
     Allocator allocator = table.allocator;
     uint[] indices = source.indices;

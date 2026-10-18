@@ -232,7 +232,7 @@ fn collide::ShapeRayHit? CollisionShapeView.ray_cast(
     return found;
 }
 
-fn bool collision_vector_finite(Vec3 value) @local {
+fn bool collision_vector_finite(Vec3 value) @private {
     return math::is_finite(value.x) && math::is_finite(value.y) && math::is_finite(value.z);
 }
 
@@ -491,7 +491,7 @@ fn float? collision_bound_sum(float first, float second) @local {
     return collision_upper_bound((double)first + second);
 }
 
-fn float? collision_bound_product(float first, float second) @local {
+fn float? collision_bound_product(float first, float second) @private {
     return collision_upper_bound((double)first * second);
 }
 

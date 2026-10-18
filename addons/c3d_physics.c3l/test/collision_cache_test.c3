@@ -305,10 +305,15 @@ fn void test_collision_shape_preparation_refuses_unsupported_and_degenerate_inpu
     desc.radius = float::max;
     assert(@catch(physics::create_collision_shape(mem, &fixture.cache, desc)) == b3::DEGENERATE_GEOMETRY);
 
-    foreach (kind : (ColliderKind[3]){ MESH, HEIGHT_FIELD, COMPOUND }) {
+    foreach (kind : (ColliderKind[2]){ HEIGHT_FIELD, COMPOUND }) {
         desc = physics::default_collision_shape_desc(kind);
         assert(@catch(physics::create_collision_shape(mem, &fixture.cache, desc)) == c3d::UNSUPPORTED);
     }
+
+    desc = physics::default_collision_shape_desc(physics::ColliderKind.MESH);
+    desc.geometry = fixture.geometry;
+    CollisionShape surface = physics::create_collision_shape(mem, &fixture.cache, desc)!!;
+    physics::destroy_collision_shape(&surface);
 
     desc = physics::default_collision_shape_desc(physics::ColliderKind.CAPSULE);
     desc.radius = 0.5f;
@@ -439,4 +444,79 @@ fn void test_scaled_hull_variants_share_entries_and_leave_unit_bodies_usable() @
 
     world.update(0);
     assert(scene.get(node, RigidBody).body.is_valid() && table.slots[unit.index].hull == unit_hull);
+}
+
+fn void test_mesh_owners_share_one_unscaled_entry_with_bodies_and_across_scales() @test {
+    CacheLifetimeFixture fixture;
+    setup_cache_lifetime(&fixture);
+    defer teardown_cache_lifetime(&fixture);
+
+    Scene scene = scene::create_scene(mem, { .max_nodes = 2 });
+    defer scene::destroy_scene(&scene);
+    physics::register_physics(&scene)!!;
+
+    PhysicsWorld world = physics::create_physics_world(
+        allocator: mem,
+        assets: &fixture.assets,
+        scene: &scene,
+        desc: physics::default_physics_desc(),
+        cache: &fixture.cache,
+    )!!;
+    defer physics::destroy_physics_world(&world);
+
+    Node* node = scene.add_node(name: "mesh_body")!!;
+    scene.update_world();
+    ColliderDesc collider = physics::default_collider_desc(physics::ColliderKind.MESH);
+    collider.geometry = fixture.geometry;
+    world.add_body(node, physics::default_body_desc(STATIC), (&collider)[:1])!!;
+
+    SnapshotTable* table = fixture.cache.state;
+    SnapshotHandle body_entry = scene.get(node, RigidBody).colliders[0].snapshot;
+    fixture.assets.release_geometry_cpu(fixture.geometry);
+
+    CollisionShapeDesc desc = physics::default_collision_shape_desc(physics::ColliderKind.MESH);
+    desc.geometry = fixture.geometry;
+    CollisionShape unit = physics::create_collision_shape(mem, &fixture.cache, desc)!!;
+    defer physics::destroy_collision_shape(&unit);
+
+    desc.scale = { -2, 1, 0.5f };
+    CollisionShape scaled = physics::create_collision_shape(mem, &fixture.cache, desc)!!;
+    defer physics::destroy_collision_shape(&scaled);
+
+    assert(unit.state.snapshot.index == body_entry.index && scaled.state.snapshot.index == body_entry.index);
+    assert(unit.state.mesh.data == table.slots[body_entry.index].mesh);
+    assert(scaled.state.mesh.data == unit.state.mesh.data);
+    assert(table.slots[body_entry.index].holders == 3);
+    assert(unit.state.mesh.scale == (Vec3){ 1, 1, 1 } && scaled.state.mesh.scale == desc.scale);
+    assert(near_vector(unit.state.bounds.max, { 0.5f, 0.5f, 0.5f }));
+    assert(near_vector(scaled.state.bounds.min, { -1, -0.5f, -0.25f }));
+    assert(near_vector(scaled.state.bounds.max, { 1, 0.5f, 0.25f }));
+}
+
+fn void test_mesh_owners_keep_their_revision_after_cpu_source_release() @test {
+    CacheLifetimeFixture fixture;
+    setup_cache_lifetime(&fixture);
+    defer teardown_cache_lifetime(&fixture);
+
+    CollisionShapeDesc desc = physics::default_collision_shape_desc(physics::ColliderKind.MESH);
+    desc.geometry = fixture.geometry;
+    CollisionShape old = physics::create_collision_shape(mem, &fixture.cache, desc)!!;
+    defer physics::destroy_collision_shape(&old);
+    b3::MeshData* old_mesh = old.state.mesh.data;
+
+    foreach (&point : fixture.assets.geometry(fixture.geometry).data.positions) *point *= 2;
+    fixture.assets.mark_geometry_dirty(fixture.geometry);
+    CollisionShape revised = physics::create_collision_shape(mem, &fixture.cache, desc)!!;
+    defer physics::destroy_collision_shape(&revised);
+    assert(old.state.mesh.data == old_mesh && revised.state.mesh.data != old_mesh);
+    assert(near(old.state.bounds.max.x, 0.5f) && near(revised.state.bounds.max.x, 1));
+
+    fixture.assets.release_geometry_cpu(fixture.geometry);
+    CollisionShape shared = physics::create_collision_shape(mem, &fixture.cache, desc)!!;
+    defer physics::destroy_collision_shape(&shared);
+    assert(shared.state.mesh.data == revised.state.mesh.data);
+
+    fixture.assets.mark_geometry_dirty(fixture.geometry);
+    assert(@catch(physics::create_collision_shape(mem, &fixture.cache, desc)) == physics::SOURCE_UNAVAILABLE);
+    assert(fixture.cache.state.borrowers == 3);
 }
