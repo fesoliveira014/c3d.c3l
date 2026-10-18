@@ -18,6 +18,7 @@ const float DEFAULT_BREAK_FORCE = 2000; // tune to piece mass and expected loads
 const float REST_POSITION_TOLERANCE @local = 1e-4f; // metres; allow float reconstruction without visible separation
 const float REST_POSITION_ROUNDOFF @local = 1e-6f; // coordinate-relative; cover accumulated float transform rounding
 const float REST_ANGLE_TOLERANCE @local = 1e-4f; // radians; allow float reconstruction without tightening a weld
+const uint ANCHOR_SLOT_BIT @private = 0x8000_0000; // welds and anchors share one slot table; the top bit tells them apart
 const usz BREAKABLE_STORAGE_PADDING @local = 12 * mem::DEFAULT_MEM_ALIGNMENT + BreakableBodyOwner::size + uint::size;
 
 <* Representation of an intact or released fracture graph. *>
@@ -1265,11 +1266,13 @@ fn void? bind_breakable_welds(
     bool require_anchors = true,
 ) @private {
     defer catch destroy_breakable_welds(state);
-    foreach (&weld : state.welds) {
+    foreach (uint index, &weld : state.welds) {
         if (weld.broken) continue;
         weld.joint = create_breakable_weld(
             world: world,
             root: root.id,
+            kind: INTERNAL_WELD,
+            index: index,
             body_a: world.scene.get(world.scene.node(state.pieces[weld.piece_a]), RigidBody).body,
             body_b: world.scene.get(world.scene.node(state.pieces[weld.piece_b]), RigidBody).body,
             frame_a: weld.frame_a,
@@ -1280,11 +1283,13 @@ fn void? bind_breakable_welds(
     }
 
     if (!require_anchors) return;
-    foreach (&anchor : state.runtime.anchors) {
+    foreach (uint index, &anchor : state.runtime.anchors) {
         if (anchor.broken || anchor.pruned) continue;
         anchor.joint = create_breakable_weld(
             world: world,
             root: root.id,
+            kind: ANCHOR,
+            index: index,
             body_a: world.scene.get(world.scene.node(state.pieces[anchor.authored.piece]), RigidBody).body,
             body_b: breakable_anchor_target(world, anchor.authored.target)!,
             frame_a: anchor.authored.frame_a,
@@ -1392,6 +1397,8 @@ fn void? check_breakable_anchor_frames(
 fn b3::JointId? create_breakable_weld(
     PhysicsWorld* world,
     Entity root,
+    BreakableEdgeKind kind,
+    uint index,
     b3::BodyId body_a,
     b3::BodyId body_b,
     maths::Transform frame_a,
@@ -1407,7 +1414,34 @@ fn b3::JointId? create_breakable_weld(
     desc.base.force_threshold = evaluation == NATIVE_FORCE ? strength.force : float::max;
     desc.base.collide_connected = false;
     desc.base.user_data = pack_entity(root);
-    return b3::create_weld_joint(world.world, &desc);
+    b3::JointId joint = b3::create_weld_joint(world.world, &desc)!;
+    defer catch b3::destroy_joint(joint, true);
+    record_breakable_joint(
+        world: world,
+        joint: joint,
+        kind:  kind,
+        index: index,
+    )!;
+    return joint;
+}
+
+// The slot is a hint: breakable_joint_event accepts it only when the edge still holds the event's joint.
+fn void? record_breakable_joint(
+    PhysicsWorld* world,
+    b3::JointId joint,
+    BreakableEdgeKind kind,
+    uint index,
+) @private {
+    usz needed = (usz)joint.index1 + 1;
+    if (needed > world.joint_slots.len) {
+        usz capacity = needed;
+        if (world.joint_slots.len * 2 > capacity) capacity = world.joint_slots.len * 2;
+        uint[] grown = alloc::new_array_try(world.allocator, uint, (sz)capacity) ?? c3d::CAPACITY_EXCEEDED~!;
+        grown[:world.joint_slots.len] = world.joint_slots[..];
+        alloc::free(world.allocator, world.joint_slots.ptr);
+        world.joint_slots = grown;
+    }
+    world.joint_slots[joint.index1] = kind == ANCHOR ? index | ANCHOR_SLOT_BIT : index;
 }
 
 fn void enable_breakable_pieces(PhysicsWorld* world, BreakableState* state) @private {

@@ -400,6 +400,7 @@ struct PhysicsWorld {
     ClothState*[]  cloth_work;          // scene node capacity; every staged item owns a distinct live node
     uint           cloth_work_count;
     ParallelFor    parallel;
+    uint[]         joint_slots;         // by native joint index: the owning weld or anchor slot, verified by the event handler
     ulong          update_serial;       // advanced by every update, zero-step ones included
     ulong          cloth_update_serial; // update_serial of the last update_cloths
 }
@@ -823,6 +824,7 @@ fn void destroy_physics_world(PhysicsWorld* world) {
     alloc::free(world.allocator, world.failure_storage.ptr);
     alloc::free(world.allocator, world.break_storage.ptr);
     alloc::free(world.allocator, world.cloth_work.ptr);
+    alloc::free(world.allocator, world.joint_slots.ptr);
     *world = {};
 }
 
