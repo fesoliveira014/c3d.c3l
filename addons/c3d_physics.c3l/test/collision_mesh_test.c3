@@ -22,6 +22,7 @@ const float RAY_COLUMN @private = 3;
 const float RAY_DROP @private = 3.5f; // ray origin height above the surface
 const float RAY_LENGTH @private = 10;
 const uint HEXAGON_SIDES @private = 6;
+const usz CONTACT_ROWS @private = 16; // holds the hexagon's points and the box astride the fold
 const float TINY_TRIANGLE_SIDE @private = 0.0005f; // area 1.25e-7, under the native cook tolerance of 2.5e-7
 
 struct MeshQueryFixture @private {
@@ -204,7 +205,7 @@ fn void test_mesh_contacts_report_every_native_hull_point_on_each_triangle() @te
     defer physics::destroy_collision_shape(&box);
 
     maths::Transform pose = surface_pose();
-    CollisionContact[16] contacts;
+    CollisionContact[CONTACT_ROWS] contacts;
 
     maths::Transform on_flat = posed(surface_point(pose, { -1, 0, 1 }), pose.rotation);
     usz count = surface.view().contacts(
@@ -572,6 +573,9 @@ fn void test_mesh_preparation_and_queries_refuse_unsupported_inputs() @test {
 
     desc.scale = { 1, -below_minimum, 1 };
     assert(@catch(physics::create_collision_shape(mem, &fixture.cache, desc)) == c3d::UNSUPPORTED);
+
+    desc.scale = { float::max, 1, 1 };
+    assert(@catch(physics::create_collision_shape(mem, &fixture.cache, desc)) == b3::DEGENERATE_GEOMETRY);
 
     GeometryId tiny = add_mesh_geometry(
         &fixture.assets,
