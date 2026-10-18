@@ -2,12 +2,16 @@ module c3d::serial::test_described;
 
 import c3d;
 import c3d::asset;
+import c3d::describe;
 import c3d::geometry;
 import c3d::material;
 import c3d::maths;
 import c3d::scene;
 import c3d::serial @public;
 import std::math;
+
+const char[] INSTANCES_V1_BINARY @local = $embed("../../../test/fixtures/instances_v1/instances-v1.bin");
+const char[] INSTANCES_V1_TEXT @local = $embed("../../../test/fixtures/instances_v1/instances-v1.jsonc");
 
 fn Node* child_named(Node* parent, String name) @private {
     for (Node* child = parent.first_child; child; child = child.next_sibling) {
@@ -251,4 +255,229 @@ fn void test_core_batch_copy_failures_leave_no_attached_component() @test {
         assert(@catch(lod_entry.described.codec.attach(&lod, &context)) == c3d::CAPACITY_EXCEEDED);
         assert(!fixture.destination.has(node, LodGroup) && !counter.outstanding);
     };
+}
+
+fn void test_instanced_quadtree_round_trips() @test {
+    @pool() {
+        Fixture fixture;
+        create_fixture(&fixture);
+        defer destroy_fixture(&fixture);
+        serial::register_core_codecs()!!;
+
+        Geometry geometry = geometry::box(
+            allocator: tmem,
+            width: 1,
+            height: 1,
+            depth: 1,
+        );
+        GeometryId geometry_id = fixture.assets.add_geometry(&geometry, "box")!!;
+        MaterialId material_id = fixture.assets.add_material(material::basic({}), "white")!!;
+
+        Transform[7] transforms;
+        foreach (index, &transform : transforms) {
+            *transform = maths::TRANSFORM_IDENTITY;
+            transform.position = { (float)index, 0, 0 };
+        }
+        Node* root = fixture.source.add_node(name: "root")!!;
+        Node* source_node = fixture.source.add_instanced_mesh(
+            geometry: geometry_id,
+            material: material_id,
+            capacity: 8,
+            transforms: transforms[..],
+            parent: root,
+            name: "tree",
+        )!!;
+        InstancedMesh* source_batch = fixture.source.get(source_node, InstancedMesh);
+        source_batch.trace = false;
+        uint[7] parents = { scene::QUADTREE_ROOT, 0, 0, 1, 1, 2, 2 };
+        fixture.source.set_instance_quadtree(source_node, parents[..], 96, 0.25f)!!;
+
+        char[] bytes = serial::write_subtree(
+            allocator: tmem,
+            scene: &fixture.source,
+            assets: &fixture.assets,
+            root: root,
+        )!!;
+        String text = serial::write_subtree_text(
+            allocator: tmem,
+            scene: &fixture.source,
+            assets: &fixture.assets,
+            root: root,
+        )!!;
+
+        for (uint encoding = 0; encoding < 2; encoding++) {
+            Node* restored = encoding == 0
+              ? serial::read_subtree(&fixture.destination, &fixture.assets, bytes)!!
+              : serial::read_subtree_text(&fixture.destination, &fixture.assets, text)!!;
+            InstancedMesh* batch = fixture.destination.get(child_named(restored, "tree"), InstancedMesh);
+            assert(batch.count == 7 && batch.transforms.len == 8);
+            assert(batch.quadtree.parents == parents[..]);
+            assert(batch.quadtree.parents.ptr != source_batch.quadtree.parents.ptr);
+            assert(batch.quadtree.split_pixels == 96 && batch.quadtree.hysteresis == 0.25f);
+            assert(batch.quadtree.leaves == source_batch.quadtree.leaves);
+            assert(batch.quadtree.leaf_count == 4 && batch.quadtree.revision != 0);
+            batch.validate_quadtree();
+
+            assert(bytes == serial::write_subtree(
+                allocator: tmem,
+                scene: &fixture.destination,
+                assets: &fixture.assets,
+                root: restored,
+            )!!);
+            assert(text == serial::write_subtree_text(
+                allocator: tmem,
+                scene: &fixture.destination,
+                assets: &fixture.assets,
+                root: restored,
+            )!!);
+            fixture.destination.remove(restored);
+        }
+    };
+}
+
+fn void test_instanced_quadtree_attach_faults_leave_no_component() @test {
+    @pool() {
+        Fixture fixture;
+        create_fixture(&fixture);
+        defer destroy_fixture(&fixture);
+        serial::register_core_codecs()!!;
+
+        Node* node = fixture.destination.add_node()!!;
+        ReadContext context = { .scene = &fixture.destination, .assets = &fixture.assets, .node = node };
+        serial::CodecEntry* entry = &serial::codecs[c3d::ecs::assigned_slot(InstancedMesh)!!];
+        uint[2] parents = { scene::QUADTREE_ROOT, 0 };
+        Transform[2] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
+        InstanceAuthoring source = {
+            .capacity = 2,
+            .transforms = transforms[..],
+            .trace = true,
+            .quadtree_parents = parents[..],
+            .split_pixels = 96,
+            .hysteresis = 0.25f,
+        };
+
+        assert(@catch(entry.described.codec.attach(&source, &context)) == c3d::UNSUPPORTED);
+        assert(!fixture.destination.has(node, InstancedMesh));
+
+        source.trace = false;
+        source.quadtree_parents = parents[:1];
+        assert(@catch(entry.described.codec.attach(&source, &context)) == c3d::INVALID_ARGUMENT);
+        assert(!fixture.destination.has(node, InstancedMesh));
+
+        source.quadtree_parents = parents[..];
+        source.split_pixels = float::nan;
+        assert(@catch(entry.described.codec.attach(&source, &context)) == c3d::INVALID_ARGUMENT);
+        assert(!fixture.destination.has(node, InstancedMesh));
+
+        source.split_pixels = 96;
+        source.transforms[1].scale.x = -1;
+        assert(@catch(entry.described.codec.attach(&source, &context)) == c3d::UNSUPPORTED);
+        assert(!fixture.destination.has(node, InstancedMesh));
+
+        source.transforms[1].scale.x = 1;
+        entry.described.codec.attach(&source, &context)!!;
+        assert(fixture.destination.get(node, InstancedMesh).quadtree.parents == parents[..]);
+    };
+}
+
+fn void test_instanced_quadtree_writers_reject_a_broken_contract() @test {
+    @pool() {
+        Fixture fixture;
+        create_fixture(&fixture);
+        defer destroy_fixture(&fixture);
+        serial::register_core_codecs()!!;
+
+        Transform[2] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
+        Node* root = fixture.source.add_node()!!;
+        Node* node = fixture.source.add_instanced_mesh(
+            geometry: (GeometryId){},
+            material: (MaterialId){},
+            capacity: 2,
+            transforms: transforms[..],
+            parent: root,
+        )!!;
+        InstancedMesh* batch = fixture.source.get(node, InstancedMesh);
+        batch.trace = false;
+        uint[2] parents = { scene::QUADTREE_ROOT, 0 };
+        fixture.source.set_instance_quadtree(node, parents[..], 96, 0.25f)!!;
+        String valid = fixture_text(&fixture, root);
+
+        for (uint broken = 0; broken < 3; broken++) {
+            if (broken == 0) {
+                batch.trace = true;
+            } else if (broken == 1) {
+                batch.transforms[1].scale.x = -1;
+                fixture.source.mark_instances_dirty(node);
+            } else {
+                batch.quadtree.hysteresis = float::nan;
+            }
+            assert(@catch(serial::write_subtree(
+                allocator: tmem,
+                scene: &fixture.source,
+                assets: &fixture.assets,
+                root: root,
+            )) == c3d::INVALID_ARGUMENT);
+            assert(@catch(serial::write_subtree_text(
+                allocator: tmem,
+                scene: &fixture.source,
+                assets: &fixture.assets,
+                root: root,
+            )) == c3d::INVALID_ARGUMENT);
+            batch.trace = false;
+            batch.transforms[1].scale.x = 1;
+            fixture.source.mark_instances_dirty(node);
+            batch.quadtree.hysteresis = 0.25f;
+        }
+        assert(fixture_text(&fixture, root) == valid);
+    };
+}
+
+fn void test_instanced_v1_fixtures_read_without_a_quadtree() @test {
+    @pool() {
+        Fixture fixture;
+        create_fixture(&fixture);
+        defer destroy_fixture(&fixture);
+        serial::register_core_codecs()!!;
+
+        Geometry geometry = geometry::box(
+            allocator: tmem,
+            width: 1,
+            height: 1,
+            depth: 1,
+        );
+        GeometryId geometry_id = fixture.assets.add_geometry(&geometry, "instances_v1/box")!!;
+        MaterialId material_id = fixture.assets.add_material(material::basic({}), "instances_v1/material")!!;
+
+        for (uint encoding = 0; encoding < 2; encoding++) {
+            Node* restored = encoding == 0
+              ? serial::read_subtree(&fixture.destination, &fixture.assets, INSTANCES_V1_BINARY)!!
+              : serial::read_subtree_text(
+                    scene: &fixture.destination,
+                    assets: &fixture.assets,
+                    text: (String)INSTANCES_V1_TEXT,
+                )!!;
+            InstancedMesh* batch = fixture.destination.get(restored, InstancedMesh);
+            assert(batch.count == 5 && batch.transforms.len == 6 && batch.colors.len == 6);
+            assert(c3d::same_id(batch.geometry, geometry_id) && c3d::same_id(batch.material, material_id));
+            assert(batch.transforms[4].position == (Vec3){ 4, 0, -4 });
+            assert(batch.colors[0] == (Vec4){ 0.1f, 0.2f, 0.3f, 1 });
+            assert(batch.transforms[5].scale == (Vec3){ 1, 1, 1 } && batch.colors[5] == (Vec4){ 1, 1, 1, 1 });
+            assert(batch.cast_shadow && !batch.receive_shadow && !batch.trace);
+            assert(batch.fade.start == 10 && batch.fade.end == 20);
+            assert(restored.local.position == (Vec3){ 3, -1, 5 } && restored.layers == 5);
+
+            assert(!batch.quadtree.parents.len && !batch.quadtree.leaves.len && !batch.quadtree.revision);
+            assert(batch.quadtree.split_pixels == 0 && batch.quadtree.hysteresis == 0);
+            assert(batch.is_leaf(0) && batch.leaf_instances() == 5);
+            fixture.destination.remove(restored);
+        }
+    };
+}
+
+fn void test_instanced_codec_layout_fingerprints() @test {
+    describe::register_core_values()!!;
+    describe::register_reflected(InstanceAuthoringV1)!!;
+    describe::register_reflected(InstanceAuthoring)!!;
+    assert(serial::description_layout(describe::get(InstanceAuthoringV1)!!)!! == 0x59d3aec48200fec8);
+    assert(serial::description_layout(describe::get(InstanceAuthoring)!!)!! == 0x7f422a9bb5bb80ce);
 }

@@ -25,6 +25,17 @@ storage. Instanced batches preserve flags, sway, fade and bounds overrides. Unus
 transforms restart at identity, unused colors at white and unused billboards at
 `BILLBOARD_DEFAULT`. Bounds caches and revisions restart under normal owner rules.
 
+InstancedMesh authoring version 2 adds the batch's quadtree: the parent of each
+instance, `split_pixels` and `hysteresis`. A batch without a quadtree writes empty
+parents and zero for both. Reading attaches the batch, then calls
+`Scene.set_instance_quadtree`, which rebuilds the leaf mask and advances the
+topology revision. Its `INVALID_ARGUMENT` and `UNSUPPORTED` faults propagate and
+remove the batch again, so parents that do not match the live count, a negative or
+non-finite `split_pixels` or `hysteresis`, a traced batch or a mirrored instance
+fail the read. Writing a batch that breaks the same contract faults
+`INVALID_ARGUMENT`. Version-1 binary and JSONC payloads have no
+quadtree and read as batches without one.
+
 LodGroup authoring version 2 restores in BINDINGS, after its source owners.
 Rigid groups preserve ordered affine parts, levels, capacities, live placements,
 common effects and terminal impostors. Version-1 binary and JSONC authoring still
