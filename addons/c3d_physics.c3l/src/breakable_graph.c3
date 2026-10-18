@@ -6,7 +6,7 @@ import std::collections::list;
 import std::math;
 import b3;
 
-const uint BREAKABLE_PAIR_BATCH @local = 256; // piece pairs per range; most end at the bounds test, so a range holds many to amortize one claim
+const uint BREAKABLE_PAIR_BATCH @local = 1024; // pairs per range; most end at a bounds test, so ranges stay long to amortize one claim; 512 ranges at 1,024 pieces
 
 enum BreakablePairState : uint @local {
     NONE,
@@ -59,13 +59,16 @@ fn b3::DistanceOutput? hull_pair_distance(
 
 fn BreakablePairSlot nearest_hull_pair(BreakablePairJob* job, uint first, uint second) @local {
     BreakablePairSlot nearest;
-    b3::Transform placement = body_frame(relative_breakable_pose(job.poses[first], job.poses[second]));
 
     for (uint first_hull = job.offsets[first]; first_hull < job.offsets[first + 1]; first_hull++) {
         for (uint second_hull = job.offsets[second]; second_hull < job.offsets[second + 1]; second_hull++) {
             if (!breakable_bounds_near(job.bounds[first_hull], job.bounds[second_hull], job.gap)) continue;
 
-            b3::DistanceOutput? closest = hull_pair_distance(job.hulls[first_hull], job.hulls[second_hull], placement);
+            b3::DistanceOutput? closest = hull_pair_distance(
+                job.hulls[first_hull],
+                job.hulls[second_hull],
+                body_frame(relative_breakable_pose(job.poses[first], job.poses[second])),
+            );
             if (catch excuse = closest) {
                 // The owner thread evaluates this hull pair again and propagates the same fault.
                 return { .state = FAILED, .first_hull = first_hull, .second_hull = second_hull };
@@ -83,19 +86,29 @@ fn BreakablePairSlot nearest_hull_pair(BreakablePairJob* job, uint first, uint s
     return nearest;
 }
 
+fn ulong breakable_row_start(uint piece_count, uint row) @local {
+    return (ulong)row * (2 * (ulong)piece_count - row - 1) / 2;
+}
+
+fn uint breakable_pair_row(uint piece_count, uint pair) @local {
+    uint low;
+    uint high = piece_count - 2;
+    while (low < high) {
+        uint middle = (low + high + 1) / 2;
+        if (breakable_row_start(piece_count, middle) <= pair) {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+    return low;
+}
+
 fn void evaluate_breakable_pairs(void* data, uint first_pair, uint count) @local {
     BreakablePairJob* job = data;
 
-    uint first;
-    uint row_length = job.piece_count - 1;
-    uint skipped = first_pair;
-    while (skipped >= row_length) {
-        skipped -= row_length;
-        first++;
-        row_length--;
-    }
-
-    uint second = first + 1 + skipped;
+    uint first = breakable_pair_row(job.piece_count, first_pair);
+    uint second = first + 1 + (uint)(first_pair - breakable_row_start(job.piece_count, first));
     foreach (&slot : job.slots[first_pair:count]) {
         *slot = nearest_hull_pair(job, first, second);
 
