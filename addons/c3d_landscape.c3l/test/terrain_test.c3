@@ -29,6 +29,14 @@ const float CAMERA_NEAR @local = 0.1f;
 const uint EDIT_SIDE @local = 9;
 const ushort MAP_LOW @local = 1000; // generated maps stay inside [MAP_LOW, MAP_HIGH]; edits write 0 and 65535
 const ushort MAP_HIGH @local = 64000;
+const uint RING_NORTH @local = 0; // the border ring's rows and the bits of the tile's edge mask, in this order
+const uint RING_SOUTH @local = 1;
+const uint RING_WEST @local = 2;
+const uint RING_EAST @local = 3;
+const usz BORDER_EDGES_OFFSET @local = 16; // in the material block, after texels, cell_size, height_scale and layer_count
+const uint BORDER_SLOT @local = 2;
+const uint BAND_ROW @local = 1; // the row inside a tile's edge that its neighbour's ring holds
+const uint INTERIOR_ROW @local = 60;
 
 struct Fixture @local {
     AssetStore   assets;
@@ -830,4 +838,159 @@ fn void test_prepare_revalidates_a_moved_tile() @test {
     east.local.position.x -= CELL_SIZE;
     terrain::prepare(&sets.base.scene, &sets.base.assets, east)!!;
     assert(c3d::same_id(sets.set.neighbour(west.id, EAST)!!, east.id));
+}
+
+fn Node* add_tile_with_own_map(SetFixture* sets, int x, int z) @local {
+    Node* node = add_tile_node(sets, x, z);
+    TerrainDesc desc = terrain_desc(&sets.base, add_height_map(&sets.base, SMALL_TEXELS, SEED + (ulong)(x + 2 * z)));
+    try_add_terrain(&sets.base, node, desc)!!;
+    return node;
+}
+
+fn ushort[] texels_of(SetFixture* sets, TextureId texture) @local {
+    TextureAsset* record = sets.base.assets.texture(texture);
+    return ((ushort*)record.pixels.ptr)[:record.pixels.len / ushort::size];
+}
+
+fn TerrainRuntime* runtime_of(SetFixture* sets, Node* tile) @local => sets.base.scene.get(tile, TerrainRuntime);
+
+fn ushort[] ring_row(SetFixture* sets, Node* tile, uint edge) @local {
+    ushort[] ring = texels_of(sets, runtime_of(sets, tile).border_ring);
+    return ring[edge * SMALL_TEXELS : SMALL_TEXELS];
+}
+
+fn uint ring_revision(SetFixture* sets, Node* tile) @local {
+    return sets.base.assets.texture(runtime_of(sets, tile).border_ring).header.revision;
+}
+
+fn uint border_edges(SetFixture* sets, Node* tile) @local {
+    char[] block = sets.base.assets.material(runtime_of(sets, tile).material).data.custom.param_block;
+    return *(uint*)(block.ptr + BORDER_EDGES_OFFSET);
+}
+
+// The neighbour's texel one step inside its own border, at a position along the shared edge.
+fn ushort inner_texel(SetFixture* sets, Node* neighbour, uint edge, uint along) @local {
+    ushort[] heights = texels_of(sets, sets.base.scene.get(neighbour, Terrain).desc.height_map);
+    uint inside = SMALL_TEXELS - 2;
+    switch (edge) {
+        case RING_NORTH: return heights[inside * SMALL_TEXELS + along];
+        case RING_SOUTH: return heights[SMALL_TEXELS + along];
+        case RING_WEST: return heights[along * SMALL_TEXELS + inside];
+        default: return heights[along * SMALL_TEXELS + 1];
+    }
+}
+
+fn void assert_ring_holds(SetFixture* sets, Node* tile, uint edge, Node* neighbour) @local {
+    assert((border_edges(sets, tile) & (1u << edge)) != 0);
+    foreach (along, value : ring_row(sets, tile, edge)) {
+        assert(value == inner_texel(sets, neighbour, edge, (uint)along));
+    }
+}
+
+fn void assert_ring_empty(SetFixture* sets, Node* tile, uint edge) @local {
+    assert((border_edges(sets, tile) & (1u << edge)) == 0);
+    foreach (value : ring_row(sets, tile, edge)) assert(value == 0);
+}
+
+fn void test_border_ring_holds_neighbour_texels() @test {
+    SetFixture sets;
+    setup_set(&sets, mem);
+    defer teardown_set(&sets);
+    Node* north_west = add_tile_with_own_map(&sets, 0, 0);
+    Node* north_east = add_tile_with_own_map(&sets, 1, 0);
+    Node* south_west = add_tile_with_own_map(&sets, 0, 1);
+    Node* south_east = add_tile_with_own_map(&sets, 1, 1);
+
+    TerrainRuntime* runtime = runtime_of(&sets, north_west);
+    TextureSlot bound = sets.base.assets.material(runtime.material).data.custom.slots[BORDER_SLOT];
+    assert(c3d::same_id(bound.texture.asset, runtime.border_ring));
+    assert_ring_empty(&sets, north_west, RING_NORTH);
+    assert_ring_empty(&sets, north_west, RING_WEST);
+    assert_ring_holds(&sets, north_west, RING_EAST, north_east);
+    assert_ring_holds(&sets, north_west, RING_SOUTH, south_west);
+
+    assert_ring_empty(&sets, north_east, RING_NORTH);
+    assert_ring_empty(&sets, north_east, RING_EAST);
+    assert_ring_holds(&sets, north_east, RING_WEST, north_west);
+    assert_ring_holds(&sets, north_east, RING_SOUTH, south_east);
+
+    assert_ring_empty(&sets, south_west, RING_SOUTH);
+    assert_ring_empty(&sets, south_west, RING_WEST);
+    assert_ring_holds(&sets, south_west, RING_NORTH, north_west);
+    assert_ring_holds(&sets, south_west, RING_EAST, south_east);
+
+    assert_ring_empty(&sets, south_east, RING_SOUTH);
+    assert_ring_empty(&sets, south_east, RING_EAST);
+    assert_ring_holds(&sets, south_east, RING_NORTH, north_east);
+    assert_ring_holds(&sets, south_east, RING_WEST, south_west);
+}
+
+fn void test_ring_refreshes_on_edge_link_and_band_edits() @test {
+    SetFixture sets;
+    setup_set(&sets, mem);
+    defer teardown_set(&sets);
+    Node* north_west = add_tile_with_own_map(&sets, 0, 0);
+    Node* north_east = add_tile_with_own_map(&sets, 1, 0);
+    Node* south_west = add_tile_with_own_map(&sets, 0, 1);
+    Node* south_east = add_tile_with_own_map(&sets, 1, 1);
+
+    uint settled_revision = ring_revision(&sets, north_west);
+    sets.base.scene.remove_component(south_east, TerrainTile);
+    assert(ring_revision(&sets, north_west) == settled_revision);
+    assert_ring_holds(&sets, north_west, RING_EAST, north_east);
+    assert_ring_holds(&sets, north_west, RING_SOUTH, south_west);
+
+    TextureId departed_ring = runtime_of(&sets, north_east).border_ring;
+    sets.base.scene.remove(north_east);
+    assert(!sets.base.assets.textures.is_live(departed_ring));
+    assert_ring_empty(&sets, north_west, RING_EAST);
+    assert_ring_holds(&sets, north_west, RING_SOUTH, south_west);
+
+    assert_ring_empty(&sets, south_east, RING_NORTH);
+    assert_ring_empty(&sets, south_east, RING_WEST);
+    assert_ring_empty(&sets, south_west, RING_EAST);
+
+    TextureId south_map = sets.base.scene.get(south_west, Terrain).desc.height_map;
+    ushort[] south_texels = texels_of(&sets, south_map);
+    ushort edited = south_texels[BAND_ROW * SMALL_TEXELS + INTERIOR_ROW] ^ 0x5a5a;
+    south_texels[BAND_ROW * SMALL_TEXELS + INTERIOR_ROW] = edited;
+    uint stale_revision = ring_revision(&sets, north_west);
+    terrain::refresh_neighbour_rings(
+        scene:  &sets.base.scene,
+        assets: &sets.base.assets,
+        tile:   south_west,
+        rect:   { .x = INTERIOR_ROW, .z = INTERIOR_ROW, .columns = 1, .rows = 1 },
+    );
+    assert(ring_revision(&sets, north_west) == stale_revision);
+    assert(ring_row(&sets, north_west, RING_SOUTH)[INTERIOR_ROW] != edited);
+
+    terrain::refresh_neighbour_rings(
+        scene:  &sets.base.scene,
+        assets: &sets.base.assets,
+        tile:   south_west,
+        rect:   { .x = INTERIOR_ROW, .z = BAND_ROW, .columns = 1, .rows = 1 },
+    );
+    assert(ring_revision(&sets, north_west) != stale_revision);
+    assert(ring_row(&sets, north_west, RING_SOUTH)[INTERIOR_ROW] == edited);
+}
+
+fn void test_tile_added_to_a_prepared_terrain_binds_a_ring() @test {
+    SetFixture sets;
+    setup_set(&sets, mem);
+    defer teardown_set(&sets);
+    Node* west = add_tile_with_own_map(&sets, 0, 0);
+
+    float extent = sets.set.tile_extent();
+    Node* plain = sets.base.scene.add_node(sets.node)!!;
+    plain.local.position = { extent, 0, 0 };
+    TerrainDesc desc = terrain_desc(&sets.base, add_height_map(&sets.base, SMALL_TEXELS, SEED + 1));
+    try_add_terrain(&sets.base, plain, desc)!!;
+    assert(!runtime_of(&sets, plain).border_ring.generation);
+    assert(border_edges(&sets, plain) == 0);
+
+    sets.base.scene.add(plain, (TerrainTile){ .x = 1, .z = 0 });
+    terrain::prepare(&sets.base.scene, &sets.base.assets, plain)!!;
+    assert(runtime_of(&sets, plain).border_ring.generation != 0);
+    assert_ring_holds(&sets, plain, RING_WEST, west);
+    assert_ring_holds(&sets, west, RING_EAST, plain);
 }
