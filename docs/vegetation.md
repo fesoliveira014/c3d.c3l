@@ -89,7 +89,7 @@ ground, the spacing and the seed are the application's. `add_foliage` checks eve
 | --- | --- |
 | `geometry`, `material` | Live; one pair per layer |
 | `ground` | A node carrying `Terrain`; the layer grows on its height field |
-| `cell_size` | Metres along a cell edge; positive; at most `MAX_CELLS_PER_SIDE` (1024) cells per side over the ground |
+| `cell_size` | Metres along a cell edge; positive; at most `MAX_CELLS_PER_SIDE` (1024) cells per side over the ground; a divisor of `tile_extent()` on a [tile](#tiled-worlds) |
 | `rules.density_map` | Linear `RGBA8_UNORM`, one mip, 2D, over the ground's extent in terrain UV [0, 1] |
 | `rules.density_channel` | 0 to 3: red, green, blue, alpha |
 | `rules.spacing` | Metres between candidate strata; positive; at most `MAX_STRATA_PER_SIDE` (1024) strata per cell edge |
@@ -111,12 +111,14 @@ remove `Foliage`, call `update` and add the layer again.
 **Grid.** The grid is square in the layer node's frame from its origin: `ceil(extent / cell_size)` cells per
 side, with `extent = (texels - 1) · terrain cell_size`. Cell `(column, row)` covers layer-local x in
 `[column · cell_size, (column + 1) · cell_size)` and z likewise. Placing the layer node at the ground node's
-pose covers the terrain exactly; cells past the ground's extent are clipped by rejection.
+pose covers the terrain exactly; cells past the ground's extent are clipped by rejection. A [tile](#tiled-worlds)
+has exactly `extent / cell_size` cells per side.
 
 **Candidates.** A cell has `strata = max(round(cell_size / spacing), 1)` strata per side and one candidate
 per stratum, jittered inside it. A candidate's key is `pcg(pcg(pcg(pcg(seed) ^ column) ^ row) ^ candidate)`
 (the permutation of `noise.glsl`'s `pcg_hash`), and each random value is its own channel of that key. Nothing
-carries state between candidates or cells, so a cell places the same instances in any order.
+carries state between candidates or cells, so a cell places the same instances in any order. `column` and `row`
+are layer-local cell indices, except on a [terrain tile](#tiled-worlds), where they index the tile set's grid.
 
 **Stages.** Each candidate passes, in order:
 
@@ -131,6 +133,38 @@ carries state between candidates or cells, so a cell places the same instances i
 5. **Instance**: on the ground, turned about Y, uniformly scaled, tinted, all from hash channels.
 
 Stages 2 to 4 only remove, so a cell never holds more instances than its density-stage count.
+
+## Tiled worlds
+
+A layer grows on one terrain node. A world built as a [tile set](terrain.md#tile-sets) takes one layer per
+tile: a child of the set node at its tile's local transform, with `ground` naming the tile node.
+
+**Keys.** When the ground carries `TerrainTile { x, z }`, a candidate's `column` and `row` are the cell's indices
+in the set's grid, `tile · cells_per_tile + local` on each axis, with `cells_per_tile = tile_extent() / cell_size`.
+One seed on every tile therefore gives each tile its own candidates, and a tile places the same instances
+whatever order the tiles are added, loaded or prepared in. Position, yaw, scale and tint stay functions of the
+key. Tile `(0, 0)` has the keys of a terrain outside a set, and a negative coordinate indexes modulo 2^32. A
+ground without `TerrainTile` keeps layer-local keys, bit for bit.
+
+**Divisibility.** `cell_size` must divide `tile_extent()`: the ratio `tile_extent() / cell_size` must lie within
+1e-4 of an integer, relative to the ratio. Otherwise `add_foliage` and `prepare` fault `INVALID_ARGUMENT`. The grid
+then has exactly `cells_per_tile` cells per side and its cell edges fall on the tile's edges. Inside the tolerance
+the grid drifts at most a tenth of a texel on a 1025-texel tile, and a candidate past the extent is rejected like
+any other outside it.
+
+**Edge ownership.** Cells are half-open ranges of the set's grid: tile `t` owns the cells
+`[t · cells_per_tile, (t + 1) · cells_per_tile)` on each axis, and no two tiles share a cell. A candidate comes
+from one cell, so exactly one tile places it. A position on a shared edge belongs to the cell on its high side,
+the higher-index tile, as at any cell boundary; a candidate that float rounding moves onto the edge of the cell
+it came from stays with that cell's tile. The density stage accepts positions up to and including the tile's own
+extent, so it never drops a candidate for lying on its tile's edge.
+
+- The layer must sit at its tile's pose. At another pose its cells do not line up with the tile and the
+  candidates outside the tile are rejected.
+- Change a tile's coordinates only by removing its layer and adding it again: a layer takes them when it
+  scatters.
+- A ground that carries `TerrainTile` without a `TerrainSet` parent, as after removing the set, faults
+  `INVALID_ARGUMENT` at `prepare` and `update`; a prepared layer keeps its cells.
 
 ## Cells and re-placement
 
@@ -238,6 +272,7 @@ The copied authoring LOD pointer and its slices remain library-owned; do not rep
 | --- | --- | --- |
 | `register_foliage` | `c3d::CAPACITY_EXCEEDED` | No component type slot left |
 | `add_foliage` | `c3d::INVALID_ARGUMENT` | A desc value outside its rule (NaN included) or more than `MAX_CELLS_PER_SIDE` cells per side |
+| `add_foliage`, `prepare`, `update` | `c3d::INVALID_ARGUMENT` | A tile ground whose `cell_size` does not divide `tile_extent()`, or without a `TerrainSet` parent ([tiled worlds](#tiled-worlds)) |
 | `add_foliage` | `c3d::INVALID_ID` | Dead geometry or material |
 | `add_foliage`, `prepare`, `prepare_subtree` | `terrain::NOT_PREPARED` | Ground authoring exists but its runtime is pending; prepare terrain and retry |
 | `add_foliage`, `update` | `c3d::INVALID_ID` | Ground dead or without `Terrain`; density map dead; ground height map dead |
@@ -257,8 +292,8 @@ The copied authoring LOD pointer and its slices remain library-owned; do not rep
   untraced by default, so it casts no traced shadow. A traced
   layer's cells walk every instance each frame in a view that traces.
 - One material per layer: merge bark and leaves into one masked atlas with bark alpha at 1.
-- One terrain node per layer; a tiled world needs one layer per tile. Candidates outside the ground's extent
-  are rejected.
+- One terrain node per layer; a [tiled world](#tiled-worlds) takes one layer per tile. Candidates outside the
+  ground's extent are rejected.
 - One density channel per layer, `RGBA8_UNORM` only.
 - The slope limit reads the height field's faceted face normal, not the smooth drawn normal.
 - `VERTEX_ALPHA` layers consume vertex alpha whether or not the wind blows.

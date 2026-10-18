@@ -11,19 +11,22 @@ import std::math;
 
 const uint HEIGHT_SLOT @private = 0; // mirrored as TERRAIN_HEIGHT_SLOT in landscape/terrain_height.glsl
 const uint CONTROL_SLOT @private = 1; // mirrored as TERRAIN_CONTROL_SLOT in landscape/terrain_height.glsl
+const uint BORDER_SLOT @private = 2; // mirrored as TERRAIN_BORDER_SLOT in landscape/terrain_height.glsl
 const uint SKIRT_EDGES @private = 4;
 const uint QUAD_INDICES @private = 6;
 const String SHADER_KEY @private = "c3d_landscape/terrain_shader";
 const String GRID_KEY @private = "c3d_landscape/terrain_grid";
 
 struct TerrainParams @private {
-    uint  texels; // mirrored as TerrainParams in landscape/terrain_height.glsl
-    float cell_size;
-    float height_scale;
-    uint  layer_count;
+    uint    texels; // mirrored as TerrainParams in landscape/terrain_height.glsl
+    float   cell_size;
+    float   height_scale;
+    uint    layer_count;
+    uint    border_edges; // bit per BorderEdge that has a linked neighbour and a valid ring row
+    uint[3] padding;      // a whole number of the block's 16-byte alignment
 }
 
-$assert TerrainParams::size == 16;
+$assert TerrainParams::size == 32;
 
 // Descs come from files as well as code, so every value check is a fault; negated so NaN faults too.
 fn uint? check_terrain_desc(AssetStore* assets, TerrainDesc* desc) @private {

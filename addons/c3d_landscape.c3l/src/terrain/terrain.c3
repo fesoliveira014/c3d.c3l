@@ -76,6 +76,7 @@ struct Terrain {
 struct TerrainRuntime {
     Allocator                allocator;
     MaterialId               material;         // owned; removed with the runtime
+    TextureId                border_ring;      // owned; zero until the terrain carries a TerrainTile
     uint                     texels;           // per side of the accepted height map
     uint                     level_count;      // level 0 is the finest
     uint                     revision;         // height-map revision the bounds reflect
@@ -119,7 +120,7 @@ fn void? register_terrain(Scene* scene, AssetStore* assets) {
     scene.set_remove_hook(TerrainRuntime, &remove_runtime, assets);
     scene.set_remove_hook(Terrain, &remove_tile_link, scene);
     scene.set_remove_hook(TerrainTile, &remove_tile_link, scene);
-    scene.set_remove_hook(TerrainSet, &remove_set, null);
+    scene.set_remove_hook(TerrainSet, &remove_set, scene);
 }
 
 <*
@@ -184,7 +185,7 @@ fn bool is_prepared(Scene* scene, Node* node) => scene.has(node, TerrainRuntime)
  @require scene.has(node, Terrain)
 *>
 fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
-    if (is_prepared(scene, node)) return relink_tile(scene, node);
+    if (is_prepared(scene, node)) return relink_tile(scene, assets, node);
     TerrainDesc desc = scene.get(node, Terrain).desc;
     uint layer_count = check_terrain_desc(assets, &desc)!;
     TextureAsset* height_map = assets.texture(desc.height_map);
@@ -208,9 +209,15 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
     )!;
     defer catch assets.remove_material(owned);
 
+    bool tiled = scene.has(node, TerrainTile);
+    TextureId ring;
+    if (tiled) ring = attach_border_ring(assets, owned, texels)!;
+    defer catch if (ring.generation) assets.remove_texture(ring);
+
     TerrainRuntime runtime = create_runtime(scene.allocator, texels)!;
     defer catch free_runtime(&runtime);
     runtime.material = owned;
+    runtime.border_ring = ring;
     runtime.revision = height_map.header.revision;
     runtime.pixels = height_map.pixels.ptr;
     runtime.last_refresh = {
@@ -219,7 +226,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         .rect            = whole_map(texels),
     };
     refresh_bounds(&runtime, height_texels(height_map), whole_map(texels));
-    link_tile(scene, node)!;
+    link_tile(scene, assets, node)!;
     defer catch unlink_tile(scene, node.id);
     InstancedMesh batch = create_batch(
         allocator: scene.allocator,
@@ -231,6 +238,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
 
     scene.add(node, batch);
     scene.add(node, runtime);
+    if (tiled) refresh_tile_rings(scene, assets, node);
 }
 
 <*
@@ -374,6 +382,7 @@ fn void remove_runtime(Entity entity, void* component, void* user) @private {
     TerrainRuntime* runtime = component;
     AssetStore* assets = user;
     assets.remove_material(runtime.material);
+    if (runtime.border_ring.generation) assets.remove_texture(runtime.border_ring);
     free_runtime(runtime);
 }
 

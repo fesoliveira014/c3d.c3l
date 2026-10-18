@@ -231,7 +231,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         node:   node,
         desc:   &desc,
     )!;
-    uint cells_per_side = (uint)math::ceil(frame.extent / desc.cell_size);
+    uint cells_per_side = frame.grid.cells_per_side;
     if (cells_per_side > MAX_CELLS_PER_SIDE) return c3d::INVALID_ARGUMENT~;
 
     ScatterInputs inputs = current_inputs(
