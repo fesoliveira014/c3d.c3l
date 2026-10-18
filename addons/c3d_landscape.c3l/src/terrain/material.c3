@@ -36,9 +36,8 @@ fn uint? check_terrain_desc(AssetStore* assets, TerrainDesc* desc) @private {
     if (!(desc.cell_size > 0) || !(desc.height_scale > 0)) return c3d::INVALID_ARGUMENT~;
     if (!(desc.lod_threshold >= 0) || !(desc.lod_hysteresis >= 0)) return c3d::INVALID_ARGUMENT~;
     float sharpness = desc.triplanar_sharpness;
-    if (!(sharpness >= MIN_TRIPLANAR_SHARPNESS) || !(sharpness <= MAX_TRIPLANAR_SHARPNESS)) {
-        return c3d::INVALID_ARGUMENT~;
-    }
+    bool sharpness_valid = sharpness >= MIN_TRIPLANAR_SHARPNESS && sharpness <= MAX_TRIPLANAR_SHARPNESS;
+    if (desc.slope_projection == TRIPLANAR && !sharpness_valid) return c3d::INVALID_ARGUMENT~;
     if (!assets.textures.is_live(desc.height_map)) return c3d::INVALID_ID~;
     check_height_map(assets.texture(desc.height_map))!;
     if (desc.control_map.generation) {

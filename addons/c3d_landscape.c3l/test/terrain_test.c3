@@ -472,6 +472,10 @@ fn void test_triplanar_sharpness_outside_its_range_is_invalid_argument() @test {
 
     desc.triplanar_sharpness = terrain::MAX_TRIPLANAR_SHARPNESS;
     try_add_terrain(&fixture, node, desc)!!;
+
+    desc.slope_projection = TOP;
+    desc.triplanar_sharpness = 0;
+    try_add_terrain(&fixture, fixture.scene.add_node()!!, desc)!!;
 }
 
 fn void test_selection_ignores_camera_facing() @test {

@@ -83,7 +83,7 @@ struct TerrainDesc {
     float      lod_threshold;  // projected chunk diameter in output pixels above which a chunk splits
     float      lod_hysteresis; // a split chunk merges below lod_threshold / (1 + lod_hysteresis)
     SlopeProjection slope_projection; // how the layers' textures project onto the surface
-    float      triplanar_sharpness; // exponent of the plane weights, MIN_TRIPLANAR_SHARPNESS to MAX_TRIPLANAR_SHARPNESS
+    float      triplanar_sharpness; // plane-weight exponent in MIN_ to MAX_TRIPLANAR_SHARPNESS; read under TRIPLANAR
     bool       cast_shadow;
     bool       receive_shadow;
 }
