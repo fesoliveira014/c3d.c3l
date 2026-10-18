@@ -34,35 +34,35 @@ enum DrawList {
  Mesh or batch range with bounds in the view's coordinate space.
 *>
 struct MeshCandidate {
-    Node*          node;
-    GeometryId     geometry;
-    MaterialId     material;
-    SkinBinding*   skin;
-    float[]        morph_weights;
-    MorphChannel[] morph_channels;
-    Aabb           world_bounds;
-    float          ndc_depth;
-    float          view_depth;
-    bool           receive_shadow;
-    InstancedMesh* batch;
-    BillboardBatch* billboards;
-    ulong          scene_identity;
-    AnimatedCrowd* crowd;
+    Node*                   node;
+    GeometryId              geometry;
+    MaterialId              material;
+    SkinBinding*            skin;
+    float[]                 morph_weights;
+    MorphChannel[]          morph_channels;
+    Aabb                    world_bounds;
+    float                   ndc_depth;
+    float                   view_depth;
+    bool                    receive_shadow;
+    InstancedMesh*          batch;
+    BillboardBatch*         billboards;
+    ulong                   scene_identity;
+    AnimatedCrowd*          crowd;
     AnimatedLodPartBinding* animated_lod;
-    ModelInstance* model_instance;
-    Node*          source_node;
-    Mesh*          source_mesh;
-    uint           crowd_part;
-    uint           instance_first;
-    uint           instance_count;
-    bool           mirrored;
-    LodSelection*  lod;
-    QuadtreeSelection* quadtree;
-    uint           lod_level;
-    uint           lod_part;
-    bool           impostor;
-    bool           vertex_motion;
-    ulong          vertex_history_token;
+    ModelInstance*          model_instance;
+    Node*                   source_node;
+    Mesh*                   source_mesh;
+    uint                    crowd_part;
+    uint                    instance_first;
+    uint                    instance_count;
+    bool                    mirrored;
+    LodSelection*           lod;
+    QuadtreeSelection*      quadtree;
+    uint                    lod_level;
+    uint                    lod_part;
+    bool                    impostor;
+    bool                    vertex_motion;
+    ulong                   vertex_history_token;
 }
 
 <*

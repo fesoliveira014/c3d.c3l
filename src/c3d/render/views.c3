@@ -691,7 +691,7 @@ struct ViewRecord {
     post::ViewExposure                   auto_exposure;
     post::ViewFocus                      focus;
     LodHistory                          lod_history;
-    QuadtreeHistory                     quadtree_history;
+    QuadtreeHistory                      quadtree_history;
     gpu::TextureState[VIEW_TARGET_COUNT] frame_states;
     ClusterBuffers                       clusters;
     gpu::GpuAddress                      cluster_root;

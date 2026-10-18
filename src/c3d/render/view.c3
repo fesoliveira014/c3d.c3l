@@ -310,6 +310,7 @@ fn void? record_raster_view(
             camera: *camera,
             matrices: matrices,
         )!;
+
         QuadtreeSelection[] quadtrees = prepare_quadtree_view(
             renderer: renderer,
             record: record,
