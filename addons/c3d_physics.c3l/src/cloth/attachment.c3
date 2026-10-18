@@ -111,9 +111,9 @@ fn void? project_soft_attachments(
 
     foreach (slot, attachment : state.soft_attachments) {
         uint particle = attachment.particle;
-        double inv_mass = (double)state.inverse_masses[particle];
+        double inverse_mass = (double)state.inverse_masses[particle];
         double alpha_h = (double)attachment.effective_compliance / step_squared;
-        double denominator = inv_mass + alpha_h;
+        double denominator = inverse_mass + alpha_h;
 
         Vec3 target = final_substep
           ? state.soft_targets[slot]
@@ -123,7 +123,7 @@ fn void? project_soft_attachments(
         ContactVector lambda = (ContactVector)state.soft_lambdas[slot];
         ContactVector delta_lambda = -(residual + lambda * alpha_h) / denominator;
         ContactVector next_lambda = lambda + delta_lambda;
-        ContactVector next_position = (ContactVector)state.predicted[particle] + delta_lambda * inv_mass;
+        ContactVector next_position = (ContactVector)state.predicted[particle] + delta_lambda * inverse_mass;
 
         Vec3 rounded_lambda = (Vec3)next_lambda;
         Vec3 rounded_position = (Vec3)next_position;
