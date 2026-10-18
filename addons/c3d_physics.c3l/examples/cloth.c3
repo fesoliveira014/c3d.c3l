@@ -48,6 +48,8 @@ const float CAPE_BACK_OFFSET @local = 0.17f; // metres behind the chest joint; c
 const float CAPE_SHOULDER_HEIGHT @local = 0.12f; // metres above the chest joint
 const String CAPE_JOINT @local = "DEF-spine.003";
 const float CAPE_THICKNESS @local = 0.02f; // metres; keeps the cape off the skin that lies outside the bone capsules
+const float CAPE_BEND_COMPLIANCE @local = 2.0f; // soft enough to drape over the shoulders; 0 makes a rigid shell
+const float CAPE_EDGE_COMPLIANCE @local = 0.001f; // m/N; the outer collar corners yield slightly under a tug
 const Vec3 CHARACTER_POSITION @local = { -1.4f, 0, 0.6f };
 const Vec3 CHARACTER_FACING @local = { -0.45f, 0, -1 }; // three-quarter back view from the camera
 const String MODEL_PATH @local = "../../examples/assets/quaternius/AnimationLibrary_Godot.glb";
@@ -335,13 +337,24 @@ fn void? attach_cape(Demo* demo) @local {
     ClothDesc desc = cloth::default_cloth_desc();
     desc.collide_ground = true;
     desc.thickness = CAPE_THICKNESS;
+    desc.tangent_frame = true;
+    desc.bend_mode = DIHEDRAL;
+    desc.bend_compliance = CAPE_BEND_COMPLIANCE;
+
     Entity[ragdoll_bones::RIGIFY_BONE_COUNT] colliders;
     foreach (index, bone : ragdoll.bone_nodes) colliders[index] = bone.id;
     desc.colliders = colliders[..];
     @pool() {
-        uint[] pins = alloc::new_array(tmem, uint, (sz)(CAPE_COLUMNS + 1));
-        foreach (column, &pin : pins) *pin = (uint)column;
-        desc.pins = pins;
+        ClothAttachment[] attachments = alloc::new_array(tmem, ClothAttachment, (sz)(CAPE_COLUMNS + 1));
+        foreach (column, &attachment : attachments) {
+            bool outer = column == 0 || column == CAPE_COLUMNS;
+            *attachment = {
+                .particle   = (uint)column,
+                .weight     = 1.0f,
+                .compliance = outer ? CAPE_EDGE_COMPLIANCE : 0.0f,
+            };
+        }
+        desc.attachments = attachments;
         demo.scene.add_cloth(&demo.assets, demo.character.cape, desc)!;
     };
 }

@@ -28,6 +28,9 @@ enum ClothContactStage : uint {
     RESOLVE,
     PUBLICATION,
     REEXPRESSION,
+    MATERIAL,
+    ATTACHMENT,
+    BEND,
 }
 
 <* Prepared storage and convergence limits for cloth contacts. *>

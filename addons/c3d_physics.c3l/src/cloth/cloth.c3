@@ -31,21 +31,28 @@ struct ClothSeam {
     uint second;
 }
 
-<* Fixed-step integration and attachment settings for one cloth. *>
+<* Fixed-step integration, material routing and attachment settings for one cloth. *>
 struct ClothDesc {
-    uint     substeps;
-    uint     iterations;
-    float    stretch_stiffness;
-    float    bend_stiffness;
-    float    damping;
-    float    thickness;
-    float    gravity_scale;
-    uint[]   pins;
-    bool     collide_ground;
-    float    ground_height;
-    Entity[] colliders;
+    uint              substeps;
+    uint              iterations;
+    float             stretch_stiffness;
+    float             bend_stiffness;
+    float             damping;
+    float             thickness;
+    float             gravity_scale;
+    uint[]            pins;
+    bool              collide_ground;
+    float             ground_height;
+    Entity[]          colliders;
     ClothCollisionDesc collisions;
-    ClothSeam[] seams;
+    ClothSeam[]       seams;
+    uint[]            render_particles;
+    bool              tangent_frame;
+    uint              tangent_uv_set;
+    ClothAttachment[] attachments;
+    ClothBendMode     bend_mode;
+    float             bend_compliance;
+    ClothRestAngle[]  rest_angles;
 }
 
 <* Last cloth update's CPU solve and publication costs. *>
@@ -101,63 +108,83 @@ struct ClothBody {
 
 <* Library-owned simulation state; its arrays are borrowed by readers. *>
 struct ClothState {
-    ClothDesc         desc;            // pins/colliders borrow state arrays; seams borrow owned authoring
-    AssetStore*       assets;
-    GeometryId        source;
-    GeometryId        geometry;
-    bool              source_vertex_motion;
-    Vec3[]            rest;            // node-local
-    Vec3[]            positions;       // world, last solved
-    Vec3[]            velocities;
-    Vec3[]            predicted;
-    Vec3[]            accelerations;
-    Vec3[]            published;       // world, last publication
-    float[]           inverse_masses;
-    uint[]            pins;            // unique and ascending
-    Vec3[]            pin_anchors;     // world, end of the last solved substep
-    Vec3[]            pin_targets;     // world, final pose of the current update
-    ClothConstraint[] edges;
-    ClothConstraint[] bends;
-    Entity[]          colliders;
-    ClothBody[]       bodies;
-    ClothShape[]      shapes;
-    Vec3[]            shape_starts;    // world, current substep
-    Vec3[]            shape_ends;
-    ClothContactResult contact_result;
-    ClothShape[]      shape_storage;
-    ClothShape[]      staged_shapes;
-    ClothBody[]       staged_bodies;
-    Vec3[]            staged_positions;
-    Vec3[]            staged_velocities;
-    Vec3[]            staged_published;
-    Vec3[]            staged_pin_anchors;
-    Vec3[]            staged_shape_starts;
-    Vec3[]            staged_shape_ends;
-    Vec3[]            local_output;
-    Vec3[]            local_normals;
-    Vec3[]            publication_roundtrip;
-    Vec3[]            staged_predicted;
-    Vec3[]            staged_accelerations;
-    Vec3[]            staged_pin_targets;
-    Mat4              published_frame;
-    Aabb              local_bounds;
-    ContactFrame[]    frames;
-    ClothCandidate[]  candidates;
-    ClothContact[]    contacts;
-    ClothFace[]       faces;
-    uint[]            canonical_vertices;
-    ulong[]           adjacent_vertices;
+    ClothDesc            desc; // pins/colliders borrow state arrays; other slices borrow owned authoring
+    AssetStore*          assets;
+    GeometryId           source;
+    GeometryId           geometry;
+    bool                 source_vertex_motion;
+    Vec3[]               rest;            // node-local, per physical particle
+    Vec3[]               positions;       // world, last solved
+    Vec3[]               velocities;
+    Vec3[]               predicted;
+    Vec3[]               accelerations;
+    Vec3[]               published;       // world, last publication
+    float[]              inverse_masses;
+    uint[]               pins;            // unique and ascending physical particle IDs
+    Vec3[]               pin_anchors;     // world, end of the last solved substep
+    Vec3[]               pin_targets;     // world, final pose of the current update
+    ClothSoftAttachment[] soft_attachments;
+    Vec3[]               soft_anchors;    // world, end of the last solved substep
+    Vec3[]               soft_targets;    // world, final pose of the current update
+    Vec3[]               soft_lambdas;    // substep XPBD multipliers
+    ClothConstraint[]    edges;
+    ClothConstraint[]    bends;
+    ClothHinge[]         hinges;
+    ClothCorner[]        corners;
+    ClothTriangleUv[]    triangle_uvs;
+    uint[]               material_particles;
+    uint[]               material_normal_domains;
+    uint[]               material_reference_faces;
+    float[]              tangent_signs;
+    Vec3[]               rest_tangents;
+    Vec4[]               committed_tangents;
+    Vec3[]               normal_accum;
+    Vec3[]               tangent_accum;
+    Vec3[]               particle_local;
+    Entity[]             colliders;
+    ClothBody[]          bodies;
+    ClothShape[]         shapes;
+    Vec3[]               shape_starts;    // world, current substep
+    Vec3[]               shape_ends;
+    ClothContactResult   contact_result;
+    ClothShape[]         shape_storage;
+    ClothShape[]         staged_shapes;
+    ClothBody[]          staged_bodies;
+    Vec3[]               staged_positions;
+    Vec3[]               staged_velocities;
+    Vec3[]               staged_published;
+    Vec3[]               staged_pin_anchors;
+    Vec3[]               staged_soft_anchors;
+    Vec3[]               staged_soft_targets;
+    ClothHinge[]         staged_hinges;
+    Vec3[]               staged_shape_starts;
+    Vec3[]               staged_shape_ends;
+    Vec3[]               local_output;
+    Vec3[]               local_normals;
+    Vec4[]               local_tangents;
+    Vec3[]               publication_roundtrip;
+    Vec3[]               staged_predicted;
+    Vec3[]               staged_accelerations;
+    Vec3[]               staged_pin_targets;
+    Mat4                 published_frame;
+    Aabb                 local_bounds;
+    ContactFrame[]       frames;
+    ClothCandidate[]     candidates;
+    ClothContact[]       contacts;
+    ClothFace[]          faces;
+    uint[]               canonical_vertices;
+    ulong[]              adjacent_vertices;
     ClothSelfPrimitive[] self_primitives;
-    Vec3[]            sweep_start;
-    Aabb[]            sweep_bounds;
-    usz[]             path_heads;
-    ClothPathNode[]    path_nodes;
-    ContactIntervals[] path_values;
-    ContactMotion[]   body_motions;
-    usz               path_count;
-    double            sweep_begin;
-    double            sweep_end;
-    bool              sweep_active;
+    Vec3[]               sweep_start;
+    Aabb[]               sweep_bounds;
+    usz[]                path_heads;
+    ClothPathNode[]      path_nodes;
+    ContactIntervals[]   path_values;
+    ContactMotion[]      body_motions;
+    usz                  path_count;
+    double               sweep_begin;
+    double               sweep_end;
+    bool                 sweep_active;
 }
 
 <* Retained source and settings; owned arrays are read-only. *>
@@ -225,9 +252,8 @@ fn void? Scene.attach_cloth(
         source: source,
     )!;
     check_collider_owners(self, desc.colliders)!;
-    check_seams(desc.seams, (uint)source.data.positions.len)!;
     @pool() {
-        (void)unique_pins(desc.pins, (uint)source.data.positions.len)!;
+        check_cloth_authoring(&source.data, desc)!;
     };
 
     ClothAuthoring* authoring = copy_authoring(self.allocator, desc)!;
@@ -265,27 +291,55 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
     )!;
 
     @pool() {
-        uint vertex_count = (uint)source.data.positions.len;
-        check_seams(desc.seams, vertex_count)!;
-        uint[] pins = unique_pins(desc.pins, vertex_count)!;
-        Vec3[] world = alloc::new_array(tmem, Vec3, (sz)vertex_count);
-        foreach (index, position : source.data.positions) world[index] = maths::transform_point(node.world, position);
+        check_seams(desc.seams, (uint)source.data.positions.len)!;
+
+        ClothMaterialPlan material_plan = build_material_plan(&source.data, desc)!;
+        uint particle_count = material_plan.particle_count;
+
+        ClothAttachmentPlan attachment_plan = build_attachment_plan(
+            legacy_pins:        desc.pins,
+            render_to_particle: material_plan.render_to_particle,
+            attachments:        desc.attachments,
+            particle_count:     particle_count,
+        )!;
+
+        Vec3[] rest = alloc::new_array(tmem, Vec3, (sz)particle_count);
+        Vec3[] world = alloc::new_array(tmem, Vec3, (sz)particle_count);
+        foreach (particle, source_vertex : material_plan.particle_sources) {
+            Vec3 local_position = source.data.positions[source_vertex];
+            rest[particle] = local_position;
+            world[particle] = maths::transform_point(node.world, local_position);
+        }
         check_world_positions(world)!;
 
-        ClothTopology topology = build_topology(&source.data, world)!;
+        ClothTopology topology = build_topology(
+            data:               &source.data,
+            render_to_particle: material_plan.render_to_particle,
+            rest_positions:     rest,
+            world_positions:    world,
+            desc:               desc,
+        )!;
+
         ClothCapture capture = capture_colliders(scene, desc.colliders, desc.collisions.max_shapes)!;
-        GeometryId copy = copy_cloth_geometry(assets, &source.data)!;
+
+        GeometryId copy = assets.add_geometry(&material_plan.geometry)!;
         defer catch assets.remove_geometry(copy);
 
         ClothState* state = allocate_cloth_state(
-            allocator:    scene.allocator,
-            vertex_count: vertex_count,
-            pin_count:    (uint)pins.len,
-            edge_count:   (uint)topology.edges.len,
-            face_count:   (uint)(source.data.indices.len / 3),
-            bend_count:   (uint)topology.bends.len,
-            body_count:   (uint)capture.bodies.len,
-            collisions:   desc.collisions,
+            allocator:             scene.allocator,
+            vertex_count:          particle_count,
+            material_vertex_count: material_plan.material_vertex_count,
+            normal_domain_count:   material_plan.normal_domain_count,
+            corner_count:          (uint)material_plan.corners.len,
+            pin_count:             (uint)attachment_plan.pins.len,
+            soft_count:            (uint)attachment_plan.soft.len,
+            edge_count:            (uint)topology.edges.len,
+            face_count:            (uint)(source.data.indices.len / 3),
+            bend_count:            (uint)topology.bends.len,
+            hinge_count:           (uint)topology.hinges.len,
+            body_count:            (uint)capture.bodies.len,
+            tangent_frame:         desc.tangent_frame,
+            collisions:            desc.collisions,
         )!;
 
         state.desc = desc;
@@ -301,7 +355,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         state.geometry = copy;
         state.source_vertex_motion = authoring.source_vertex_motion;
 
-        state.rest[..] = source.data.positions[..];
+        state.rest[..] = rest[..];
         state.positions[..] = world[..];
         state.predicted[..] = world[..];
         state.accelerations[..] = (Vec3){};
@@ -311,16 +365,40 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
             foreach (index, point : world) state.sweep_bounds[index] = { .min = point, .max = point };
         }
         state.published_frame = node.world;
+
         state.inverse_masses[..] = 1;
-        state.pins[..] = pins[..];
-        foreach (slot, pin : pins) {
+        state.pins[..] = attachment_plan.pins[..];
+        foreach (slot, pin : attachment_plan.pins) {
             state.inverse_masses[pin] = 0;
             state.pin_anchors[slot] = world[pin];
             state.pin_targets[slot] = world[pin];
         }
+
+        state.soft_attachments[..] = attachment_plan.soft[..];
+        foreach (slot, attachment : attachment_plan.soft) {
+            state.soft_anchors[slot] = world[attachment.particle];
+            state.soft_targets[slot] = world[attachment.particle];
+            state.soft_lambdas[slot] = {};
+        }
+
         state.edges[..] = topology.edges[..];
         state.bends[..] = topology.bends[..];
-        if (desc.collisions.self_collision) build_self_topology(state, source.data.indices);
+        state.hinges[..] = topology.hinges[..];
+        state.staged_hinges[..] = topology.hinges[..];
+
+        state.corners[..] = material_plan.corners[..];
+        state.triangle_uvs[..] = material_plan.triangle_uvs[..];
+        state.material_particles[..] = material_plan.material_particles[..];
+        state.material_normal_domains[..] = material_plan.material_normal_domains[..];
+        state.material_reference_faces[..] = material_plan.material_reference_faces[..];
+        if (desc.tangent_frame) {
+            state.tangent_signs[..] = material_plan.tangent_signs[..];
+            state.rest_tangents[..] = material_plan.rest_tangents[..];
+            state.committed_tangents[..] = material_plan.initial_tangents[..];
+            state.local_tangents[..] = material_plan.initial_tangents[..];
+        }
+
+        if (desc.collisions.self_collision) build_self_topology(state);
 
         component.state = state;
         mesh.geometry = copy;
@@ -408,7 +486,9 @@ fn void PhysicsWorld.update_cloths(&self) {
             self.cloth_stats.impacts += state.contact_result.impacts;
             self.cloth_stats.max_residual = math::max(self.cloth_stats.max_residual, state.contact_result.max_residual);
             self.cloth_stats.particles += (uint)state.positions.len;
-            self.cloth_stats.constraints += (uint)(state.edges.len + state.bends.len);
+            self.cloth_stats.constraints += (uint)(
+                state.edges.len + state.bends.len + state.hinges.len + state.soft_attachments.len
+            );
         }
     };
 }
@@ -426,6 +506,8 @@ fn void ClothState.shift_origin(&self, Vec3 offset) {
     foreach (&position : self.published) *position -= offset;
     foreach (&position : self.pin_anchors) *position -= offset;
     foreach (&position : self.pin_targets) *position -= offset;
+    foreach (&position : self.soft_anchors) *position -= offset;
+    foreach (&position : self.soft_targets) *position -= offset;
     foreach (&position : self.shape_starts) *position -= offset;
     foreach (&position : self.shape_ends) *position -= offset;
     foreach (&body : self.bodies) {
