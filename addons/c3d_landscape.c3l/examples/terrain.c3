@@ -1115,7 +1115,8 @@ fn int main(String[] args) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--shadows atlas|traced] [--size 1025|2049|4097] [--layers 1|4] [--lod-threshold PIXELS] "
-              "[--width W] [--height H] [--hide-terrain] [--tiles 2x2] [--capture FILE.png] [--sky] [--volumetric-fog].");
+              "[--width W] [--height H] [--hide-terrain] [--tiles 2x2] [--capture FILE.png] [--sky] "
+              "[--volumetric-fog].");
         }
         return 1;
     }
