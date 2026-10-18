@@ -202,7 +202,8 @@ the orbital velocity of the water at that point. For a wave with phase rate `ω 
 The kinematic condition `velocity.y − velocity.xz · ∇h = ∂h/∂t` holds against central differences of
 `sample_surface`, and the normal is parallel to `(−∂h/∂x, 1, −∂h/∂z)`. On the calm set they agree within
 2.1 mm/s and 0.0017 (the test bounds are 4 mm/s and 0.004); the residual is the inversion's, which falls to
-about 2e-5 at steepness 0.05.
+about 2e-5 at steepness 0.05. One sample of the choppy set costs 129 ns against 101 ns for `sample_surface`
+(c3c 0.8.3 `-O3`, WSL, one thread, 400,000 samples, one run).
 
 ## Time
 
