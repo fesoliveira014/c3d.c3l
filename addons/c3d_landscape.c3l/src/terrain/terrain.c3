@@ -102,6 +102,7 @@ struct TerrainRuntime {
     Allocator                allocator;
     MaterialId               material;         // owned; removed with the runtime
     TextureId                border_ring;      // owned; zero until the terrain carries a TerrainTile
+    uint                     ring_edges;       // BorderEdge bits whose ring row holds a linked neighbour's texels
     uint                     texels;           // per side of the accepted height map
     uint                     level_count;      // level 0 is the finest
     uint                     revision;         // height-map revision the bounds reflect

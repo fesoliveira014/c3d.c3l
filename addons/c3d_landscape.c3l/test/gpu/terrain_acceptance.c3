@@ -46,6 +46,7 @@ const float PROBE_BEND_X @local = 0.3f; // radians per texel; bends the surface 
 const float PROBE_BEND_Z @local = 0.35f;
 const float RING_AGREEMENT @local = 1e-5f; // float rounding of the shared texel's two gradients, which use the same four heights
 const float ONE_SIDED_DISAGREEMENT @local = 0.01f; // far above the agreement, so a missing ring fails
+const float CPU_SHADER_AGREEMENT @local = 1e-5f; // float rounding of two evaluations of the same texels
 const uint SLOPE_TARGET_SIZE @local = 64;
 const uint SLOPE_TEXELS @local = 257; // two finest chunks per side
 const float SLOPE_CELL_SIZE @local = 0.25f; // a 24 m wall falls within one cell
@@ -399,6 +400,12 @@ struct ProbeParams @local {
     char[PROBE_PARAMS_SIZE] bytes;
 }
 
+struct ProbePoint @local {
+    Vec2 texel_position;
+    uint tile;      // index into SeamFixture.tiles
+    bool one_sided; // clears the tile's edge mask, as before the ring
+}
+
 struct ProbeInput @local {
     Vec2 texel_position;
     uint height_slot; // dispatch texture of the tile's height map
@@ -539,15 +546,24 @@ fn Vec4[PROBE_COUNT]? read_seam_normals(SeamFixture* fixture) @local {
         { 40.5f, 0 },                // south-west tile, north edge
     };
     uint[4] owners = { 0, 1, 0, 2 };
+    ProbePoint[PROBE_COUNT] probes;
+    foreach (probe, owner : owners) {
+        probes[probe] = { .texel_position = points[probe], .tile = owner };
+        probes[probe + owners.len] = { .texel_position = points[probe], .tile = owner, .one_sided = true };
+    }
+    return read_probe_normals(fixture, probes);
+}
+
+fn Vec4[PROBE_COUNT]? read_probe_normals(SeamFixture* fixture, ProbePoint[PROBE_COUNT] probes) @local {
     Renderer* renderer = &fixture.renderer;
     ProbeRoot root = { .output = renderer.buffer_address(fixture.output) };
-    foreach (probe, owner : owners) {
-        Node* tile = fixture.tiles[owner];
-        root.params[probe] = tile_params(fixture, tile, true);
-        root.params[probe + owners.len] = tile_params(fixture, tile, false);
-        ProbeInput input = { .texel_position = points[probe], .height_slot = 2 * owner, .border_slot = 2 * owner + 1 };
-        root.inputs[probe] = input;
-        root.inputs[probe + owners.len] = input;
+    foreach (index, probe : probes) {
+        root.params[index] = tile_params(fixture, fixture.tiles[probe.tile], !probe.one_sided);
+        root.inputs[index] = {
+            .texel_position = probe.texel_position,
+            .height_slot    = 2 * probe.tile,
+            .border_slot    = 2 * probe.tile + 1,
+        };
     }
     DispatchTexture[6] textures;
     foreach (index, tile : fixture.tiles) {
@@ -933,5 +949,38 @@ fn void test_triplanar_normal_map_follows_the_plane() @test {
     io::printfn("Wall facing +x toward u: forward %g deferred %g", forward_brightness, deferred_brightness);
     float deferred_difference = math::abs(deferred_brightness - forward_brightness);
     assert(deferred_difference <= DEFERRED_TOLERANCE * forward_brightness, "The G-buffer fragment differs.");
+    check_validation(&fixture.renderer);
+}
+
+fn void test_cpu_smooth_normal_matches_shader() @test {
+    SeamFixture fixture;
+    create_seam_fixture(&fixture)!!;
+    defer destroy_seam_fixture(&fixture);
+
+    ProbePoint[PROBE_COUNT] probes = {
+        { .texel_position = { 40.25f, 60.75f }, .tile = 0 },                  // inside the north-west tile
+        { .texel_position = { 90.5f, 33.25f }, .tile = 1 },                   // inside the north-east tile
+        { .texel_position = { 0, 60.5f }, .tile = 0 },                        // map edge with no neighbour
+        { .texel_position = { 0, 0 }, .tile = 0 },                            // map corner
+        { .texel_position = { PROBE_TEXELS - 1, 60.5f }, .tile = 0 },         // seam, east edge
+        { .texel_position = { 0, 60.5f }, .tile = 1 },                        // seam, west edge of the neighbour
+        { .texel_position = { 127.5f, 60.5f }, .tile = 0 },                   // between the last two texels
+        { .texel_position = { PROBE_TEXELS - 1, PROBE_TEXELS - 1 }, .tile = 0 }, // east and south seams
+    };
+    fixture.scene.update_world();
+    Vec4[PROBE_COUNT] shader_normals = read_probe_normals(&fixture, probes)!!;
+    float worst;
+    foreach (index, probe : probes) {
+        Node* tile = fixture.tiles[probe.tile];
+        HeightView view = terrain::height_view(&fixture.scene, &fixture.assets, tile.id)!!;
+        Vec3 world = maths::transform_point(
+            tile.world,
+            { probe.texel_position.x * view.cell_size, 0, probe.texel_position.y * view.cell_size },
+        );
+        Vec3 normal = terrain::sample_smooth_normal(&view, world.x, world.z)!!;
+        worst = max(worst, (normal - shader_normals[index].xyz).length());
+    }
+    io::printfn("CPU smooth normal against the shader: worst distance %g over %d points", worst, probes.len);
+    assert(worst <= CPU_SHADER_AGREEMENT);
     check_validation(&fixture.renderer);
 }

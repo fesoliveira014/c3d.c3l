@@ -11,14 +11,17 @@ import c3d::landscape::water @public;
 import c3d::material;
 import c3d::scene;
 import c3d::serial;
+import std::math;
 
 const ulong TERRAIN_V1_LAYOUT @private = 0x7638a7507fa65b33;
 const ulong TERRAIN_LAYOUT @private = 0xbbb8c4e5931f82a4;
 const ulong TERRAIN_TILE_LAYOUT @private = 0x3fe780c7be5416e1;
 const ulong TERRAIN_SET_LAYOUT @private = 0x6b17270c6b53663f;
-const ulong SCATTER_LAYOUT @private = 0x788326d1092caa6b;
+const ulong SCATTER_V1_LAYOUT @private = 0x788326d1092caa6b;
+const ulong SCATTER_LAYOUT @private = 0x40955fefc693491e;
 const ulong SWAY_LAYOUT @private = 0x750cddc9cb008976;
-const ulong FOLIAGE_LAYOUT @private = 0x20330122082bd780;
+const ulong FOLIAGE_V1_LAYOUT @private = 0x20330122082bd780;
+const ulong FOLIAGE_LAYOUT @private = 0x797c3ed45915c1ed;
 const ulong WAVE_LAYOUT @private = 0xb7ea583c7a255cb9;
 const ulong WATER_LAYOUT @private = 0x74434d01389bb922;
 
@@ -45,6 +48,34 @@ struct TerrainSetAuthoring @private {
     float height_scale;
 }
 
+struct ScatterRulesV1 @private {
+    TextureId density_map;
+    uint density_channel;
+    float spacing;
+    uint seed;
+    float max_slope;
+    float min_altitude;
+    float max_altitude;
+    float min_scale;
+    float max_scale;
+    Vec3 min_tint;
+    Vec3 max_tint;
+}
+
+struct FoliageAuthoringV1 @private {
+    GeometryId geometry;
+    MaterialId material;
+    LodDesc[] lod;
+    Entity ground;
+    float cell_size;
+    ScatterRulesV1 rules;
+    SwayTemplate sway;
+    InstanceFade fade;
+    bool cast_shadow;
+    bool receive_shadow;
+    bool trace;
+}
+
 struct FoliageAuthoring @private {
     GeometryId geometry;
     MaterialId material;
@@ -58,6 +89,11 @@ struct FoliageAuthoring @private {
     bool receive_shadow;
     bool trace;
 }
+
+serial::BinaryCompatibility[1] foliage_binary_compatibility @local = {
+    { .version = 1, .read = &read_foliage_v1 },
+};
+uint[1] foliage_text_default_versions @local = { 1 };
 
 <*
  Register landscape authoring codecs and generated-state ownership.
@@ -76,9 +112,17 @@ fn void? register_serial_codecs() {
     )!;
     register_value(TerrainTile, TERRAIN_TILE_LAYOUT, &defaults_terrain_tile)!;
     register_value(TerrainSetAuthoring, TERRAIN_SET_LAYOUT, &defaults_terrain_set)!;
+    register_value(ScatterRulesV1, SCATTER_V1_LAYOUT, &defaults_scatter_v1)!;
     register_value(ScatterRules, SCATTER_LAYOUT, &defaults_scatter)!;
     register_value(SwayTemplate, SWAY_LAYOUT, &defaults_sway)!;
-    register_value(FoliageAuthoring, FOLIAGE_LAYOUT, &defaults_foliage)!;
+    register_value(FoliageAuthoringV1, FOLIAGE_V1_LAYOUT, &defaults_foliage_v1)!;
+    describe::register_reflected(FoliageAuthoring)!;
+    serial::register_described_type(
+        $Type: FoliageAuthoring,
+        version: 2,
+        layout: FOLIAGE_LAYOUT,
+        defaults: &defaults_foliage,
+    )!;
     register_value(Wave, WAVE_LAYOUT, &defaults_wave)!;
     register_value(WaterDesc, WATER_LAYOUT, &defaults_water)!;
     serial::register_described_owner(Terrain, TerrainDesc, {
@@ -106,6 +150,8 @@ fn void? register_serial_codecs() {
         .project = &project_foliage,
         .validate = &validate_foliage,
         .attach = &attach_foliage,
+        .binary_compatibility = foliage_binary_compatibility[..],
+        .text_default_versions = foliage_text_default_versions[..],
     })!;
     serial::register_described_owner(Water, WaterDesc, {
         .name = "water",
@@ -146,8 +192,14 @@ fn void defaults_terrain_v1(void* value) @private {
 
 fn void defaults_terrain_tile(void* value) @private => *(TerrainTile*)value = {};
 fn void defaults_terrain_set(void* value) @private => *(TerrainSetAuthoring*)value = {};
+fn void defaults_scatter_v1(void* value) @private {
+    *(ScatterRulesV1*)value = scatter_rules_v1(foliage::default_foliage_desc().rules);
+}
 fn void defaults_scatter(void* value) @private => *(ScatterRules*)value = foliage::default_foliage_desc().rules;
 fn void defaults_sway(void* value) @private => *(SwayTemplate*)value = foliage::default_foliage_desc().sway;
+fn void defaults_foliage_v1(void* value) @private {
+    *(FoliageAuthoringV1*)value = foliage_authoring_v1(foliage_value(foliage::default_foliage_desc()));
+}
 fn void defaults_foliage(void* value) @private {
     *(FoliageAuthoring*)value = foliage_value(foliage::default_foliage_desc());
 }
@@ -183,6 +235,70 @@ fn FoliageDesc foliage_desc(FoliageAuthoring* value) @private {
         .cast_shadow = value.cast_shadow,
         .receive_shadow = value.receive_shadow,
         .trace = value.trace,
+    };
+}
+
+fn ScatterRulesV1 scatter_rules_v1(ScatterRules rules) @private {
+    return {
+        .density_map     = rules.density_map,
+        .density_channel = rules.density_channel,
+        .spacing         = rules.spacing,
+        .seed            = rules.seed,
+        .max_slope       = rules.max_slope,
+        .min_altitude    = rules.min_altitude,
+        .max_altitude    = rules.max_altitude,
+        .min_scale       = rules.min_scale,
+        .max_scale       = rules.max_scale,
+        .min_tint        = rules.min_tint,
+        .max_tint        = rules.max_tint,
+    };
+}
+
+fn ScatterRules scatter_rules_from_v1(ScatterRulesV1 legacy) @private {
+    return {
+        .density_map     = legacy.density_map,
+        .density_channel = legacy.density_channel,
+        .spacing         = legacy.spacing,
+        .seed            = legacy.seed,
+        .max_slope       = legacy.max_slope,
+        .min_altitude    = legacy.min_altitude,
+        .max_altitude    = legacy.max_altitude,
+        .min_scale       = legacy.min_scale,
+        .max_scale       = legacy.max_scale,
+        .min_tint        = legacy.min_tint,
+        .max_tint        = legacy.max_tint,
+    };
+}
+
+fn FoliageAuthoringV1 foliage_authoring_v1(FoliageAuthoring value) @private {
+    return {
+        .geometry       = value.geometry,
+        .material       = value.material,
+        .lod            = value.lod,
+        .ground         = value.ground,
+        .cell_size      = value.cell_size,
+        .rules          = scatter_rules_v1(value.rules),
+        .sway           = value.sway,
+        .fade           = value.fade,
+        .cast_shadow    = value.cast_shadow,
+        .receive_shadow = value.receive_shadow,
+        .trace          = value.trace,
+    };
+}
+
+fn FoliageAuthoring foliage_authoring_from_v1(FoliageAuthoringV1 legacy) @private {
+    return {
+        .geometry       = legacy.geometry,
+        .material       = legacy.material,
+        .lod            = legacy.lod,
+        .ground         = legacy.ground,
+        .cell_size      = legacy.cell_size,
+        .rules          = scatter_rules_from_v1(legacy.rules),
+        .sway           = legacy.sway,
+        .fade           = legacy.fade,
+        .cast_shadow    = legacy.cast_shadow,
+        .receive_shadow = legacy.receive_shadow,
+        .trace          = legacy.trace,
     };
 }
 
@@ -296,6 +412,13 @@ fn void? attach_foliage(void* value, serial::ReadContext* context) @private {
         node: context.node,
         desc: foliage_desc((FoliageAuthoring*)value),
     )!;
+}
+
+fn void? read_foliage_v1(serial::Reader* reader, serial::ReadContext* context) @private {
+    FoliageAuthoringV1* legacy = context.read_value(FoliageAuthoringV1, reader)!;
+    FoliageAuthoring source = foliage_authoring_from_v1(*legacy);
+    validate_foliage(&source, context)!;
+    attach_foliage(&source, context)!;
 }
 
 fn void? attach_water(void* value, serial::ReadContext* context) @private {
