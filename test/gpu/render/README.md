@@ -63,6 +63,16 @@ creates a pipeline. A second case renders a forward and a deferred view of one c
 transmissive Physical slab in the sun's path: the second view binds the first one's shadow set. Both run with no
 validation error or warning and compare no pixels.
 
+The view-texture cases in `test_view_textures.c3` draw one custom material, whose slot 0 is view-provided, in three views
+in one frame after two producer views have rendered a red and a green backdrop into their targets. The first view provides
+the red target, the second the green one, and the third provides nothing and shows the stage's fallback. Each view's centre
+pixel is read back. A second case follows one view through a second slot, a clear, an ordinary `configure_view` that keeps the
+binding, a destroyed target that reads as absent, and `destroy_view`, whose recycled record starts without bindings. A third
+checks that a target no view has rendered is in the sampled state after the consumer view records, and a fourth that a built-in
+material and an out-of-range slot fault `UNSUPPORTED` and `INVALID_ARGUMENT` when uploaded. All run with no validation
+error. The validation layer cannot see the layout of a bindless descriptor, so the readied state is asserted from the
+renderer's tracked state, and that assertion fails when the ready step is removed.
+
 Build the repository once so `shaders/spv/` exists, then invoke this project
 separately:
 
