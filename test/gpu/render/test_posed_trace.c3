@@ -151,9 +151,9 @@ fn void posed_set_frame(PosedHarness* harness, PosedRig* rig, uint frame) @priva
     harness.scene.update_world();
 }
 
-fn void? posed_render(Fixture* fixture, PosedHarness* harness, TraceKind kind) @private {
+fn void? posed_render(Fixture* fixture, PosedHarness* harness, TraceKind kind, double time = 0) @private {
     Renderer* renderer = &fixture.renderer;
-    renderer.begin_frame()!;
+    renderer.begin_frame({ .time = time })!;
     defer catch render::abort_frame(renderer);
     renderer.render_view(&harness.scene, harness.camera, fixture.view)!;
     Camera* camera = harness.scene.get(harness.camera, Camera);

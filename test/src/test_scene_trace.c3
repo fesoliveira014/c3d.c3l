@@ -29,10 +29,10 @@ fn Fixture make_fixture() @local {
     fixture.assets = asset::create_asset_store(mem, {
         .max_geometries = 6,
         .max_textures   = asset::BUILTIN_TEXTURE_COUNT,
-        .max_materials  = 8,
+        .max_materials  = 14,
         .max_samplers   = asset::BUILTIN_SAMPLER_COUNT,
         .max_skeletons  = 2,
-        .max_shaders    = 2,
+        .max_shaders    = 8,
     });
     @pool() {
         Geometry box = geometry::box(tmem, 1, 1, 1);
@@ -115,6 +115,22 @@ fn ShaderId add_custom_shader(Fixture* fixture, bool vertex_stage) @local {
     char[4] stage = { 1, 2, 3, 4 };
     asset::ShaderDesc desc = { .fragment = stage[..] };
     if (vertex_stage) desc.vertex = { .shaded = stage[..], .depth = stage[..] };
+    return fixture.assets.add_shader(&desc)!!;
+}
+
+fn ShaderId add_posed_shader(Fixture* fixture, bool single, bool instanced) @local {
+    char[4] stage = { 1, 2, 3, 4 };
+    asset::ShaderDesc desc = {
+        .fragment = stage[..],
+        .vertex   = {
+            .shaded           = stage[..],
+            .depth            = stage[..],
+            .instanced_shaded = stage[..],
+            .instanced_depth  = stage[..],
+        },
+    };
+    if (single) desc.trace_pose.single = stage[..];
+    if (instanced) desc.trace_pose.instanced = stage[..];
     return fixture.assets.add_shader(&desc)!!;
 }
 
@@ -232,6 +248,65 @@ fn void test_custom_vertex_stage_keeps_meshes_out_whatever_trace_says() @test {
     };
 }
 
+fn void test_custom_trace_pose_makes_a_custom_stage_traceable() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Scene* scene = &fixture.scene;
+    MaterialId single = fixture.assets.add_material(material::custom(add_posed_shader(&fixture, true, false)))!!;
+    MaterialId instanced = fixture.assets.add_material(material::custom(add_posed_shader(&fixture, false, true)))!!;
+    MaterialId unposed = fixture.assets.add_material(material::custom(add_custom_shader(&fixture, true)))!!;
+    Node* displaced = scene.add_mesh(fixture.box, single, name: "displaced")!!;
+    Mesh* displaced_mesh = scene.get(displaced, Mesh);
+    displaced_mesh.has_bounds_override = true;
+    displaced_mesh.local_bounds = { .min = { -2, -1, -2 }, .max = { 2, 1, 2 } };
+    scene.add_mesh(fixture.box, instanced, name: "wrong_form")!!;
+    scene.add_mesh(fixture.box, unposed, name: "unposed")!!;
+    Transform[2] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
+    transforms[1].position = { 3, 0, 0 };
+    Node* posed_batch = scene.add_instanced_mesh(
+        geometry:   fixture.box,
+        material:   instanced,
+        capacity:   2,
+        transforms: transforms[..],
+        name:       "posed_batch",
+    )!!;
+    scene.add_instanced_mesh(
+        geometry:   fixture.box,
+        material:   single,
+        capacity:   2,
+        transforms: transforms[..],
+        name:       "wrong_batch_form",
+    )!!;
+    scene.update_world();
+
+    @pool() {
+        render::TraceCollection collection = collect_all(&fixture);
+        assert(collection.records.len == 3);
+        assert(same_entity(collection.records[0].entity, displaced.id));
+        assert(collection.poses[0].kind == render::TracePose.CUSTOM && collection.poses[0].mesh == displaced_mesh);
+        Aabb bound = maths::aabb_transform(displaced_mesh.local_bounds, displaced.world);
+        assert(same_box(collection.records[0].bounds, bound));
+        for (uint index = 1; index <= 2; index++) {
+            assert(same_entity(collection.records[index].entity, posed_batch.id));
+            assert(collection.records[index].instance_index == index - 1);
+            assert(collection.poses[index].kind == render::TracePose.CUSTOM);
+            assert(collection.poses[index].batch == scene.get(posed_batch, InstancedMesh));
+        }
+    };
+
+    char[4] stage = { 1, 2, 3, 4 };
+    asset::ShaderDesc without_vertex = { .fragment = stage[..], .trace_pose = { .single = stage[..] } };
+    assert(@catch(fixture.assets.add_shader(&without_vertex)) == c3d::INVALID_ARGUMENT);
+    asset::ShaderDesc without_instanced_vertex = {
+        .fragment   = stage[..],
+        .vertex     = { .shaded = stage[..], .depth = stage[..] },
+        .trace_pose = { .instanced = stage[..] },
+    };
+    assert(@catch(fixture.assets.add_shader(&without_instanced_vertex)) == c3d::INVALID_ARGUMENT);
+    ShaderId plain = add_custom_shader(&fixture, false);
+    assert(@catch(fixture.assets.replace_shader(plain, &without_vertex)) == c3d::INVALID_ARGUMENT);
+}
+
 fn void test_trace_only_mesh_traces_and_never_draws() @test {
     Fixture fixture = make_fixture();
     defer destroy_fixture(&fixture);
@@ -249,7 +324,8 @@ fn void test_trace_only_mesh_traces_and_never_draws() @test {
     @pool() {
         render::TraceCollection collection = collect_all(&fixture);
         assert(collection.records.len == 2);
-        assert(same_entity(collection.records[0].entity, drawn.id) && same_entity(collection.records[1].entity, helper.id));
+        assert(same_entity(collection.records[0].entity, drawn.id));
+        assert(same_entity(collection.records[1].entity, helper.id));
 
         Camera* camera = scene.get(camera_node, Camera);
         CameraMatrices matrices = camera::derive_matrices(*camera, camera_node.world, { 1600, 900 });

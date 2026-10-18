@@ -59,6 +59,13 @@ enum TracePose @private {
     CROWD,         // one placement of a crowd part batch
     ANIMATED_LOD,  // one logical base part of an ordinary model or crowd
     VERTEX_MOTION, // a mesh whose positions the application rewrites between revisions
+    CUSTOM,        // a custom material's trace-pose stage poses the geometry
+}
+
+enum PoseForm @private {
+    NONE,      // a custom vertex stage keeps the row out
+    SINGLE,    // a custom stage poses a mesh through CustomTracePose.single
+    INSTANCED, // a custom stage poses one instance through CustomTracePose.instanced
 }
 
 struct TraceInstance @private {
@@ -93,11 +100,14 @@ struct TracePoseSource @private {
     Mesh*          mesh;          // MESH
     SkinBinding*   skin;          // MESH; null for a morph-only mesh
     AnimatedCrowd* crowd;         // CROWD
-    InstancedMesh* batch;         // CROWD: the part's batch
+    InstancedMesh* batch;         // CROWD: the part's batch; CUSTOM instanced: the source batch
     uint           part;          // CROWD: index into crowd.parts
     Scene*         scene;         // ANIMATED_LOD: source scene, borrowed for this collection
     LodGroupState* lod;           // animated level-zero descriptor, borrowed for this collection
     ulong          vertex_history_token; // VERTEX_MOTION: correspondence token of the source mesh
+    MaterialId     material;      // CUSTOM: the row's custom material
+    gpu::PipelineHandle pipeline; // CUSTOM: the published trace-pose form, set with the row
+    bool           reads_time;    // CUSTOM: the published stage poses every frame
 }
 
 struct TraceCollection @private {
@@ -369,7 +379,7 @@ fn TraceCollection collect_trace_instances(
             SkinBinding* skin = scene.get(node, SkinBinding);
             if (!spatial::mesh_is_live(assets, mesh, skin) || !material_dependencies_live(assets, mesh.material)) {
                 collection.dangling++;
-            } else if (traceable(assets, mesh.geometry, mesh.material)) {
+            } else if (traceable(assets, mesh.geometry, mesh.material, PoseForm.SINGLE)) {
                 TraceInstance record = trace_record(
                     assets:      assets,
                     entity:      entity,
@@ -382,13 +392,15 @@ fn TraceCollection collect_trace_instances(
                 );
                 // Raster skins only a geometry with joints; a binding over another draws morphs alone.
                 SkinBinding* posed_skin = skin && geometry_has_joints(assets.geometry(mesh.geometry)) ? skin : null;
-                TracePose pose = mesh_trace_pose(assets, mesh, posed_skin);
-                if (pose == TracePose.MESH) {
+                bool custom = custom_vertex_stage(assets, &assets.material(mesh.material).data);
+                TracePose pose = custom ? TracePose.CUSTOM : mesh_trace_pose(assets, mesh, posed_skin);
+                // A custom stage poses its own displacement: skin, morph targets and vertex_motion play no part.
+                if (pose == TracePose.MESH || pose == TracePose.CUSTOM) {
                     record.bounds = spatial::mesh_world_bounds(
                         assets: assets,
                         node:   node,
                         mesh:   mesh,
-                        skin:   posed_skin,
+                        skin:   custom ? null : posed_skin,
                         origin: origin,
                     );
                 }
@@ -399,6 +411,7 @@ fn TraceCollection collect_trace_instances(
                     .mesh                 = mesh,
                     .skin                 = posed_skin,
                     .vertex_history_token = mesh.vertex_history_token,
+                    .material             = mesh.material,
                 };
             }
         }
@@ -406,26 +419,19 @@ fn TraceCollection collect_trace_instances(
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
         Node* node = scene.node(entity);
         if (node.visible_effective && batch.trace && batch.count && !spatial::animated_lod_owns_node(scene, node)) {
+            TracePoseSource source = crowd_part_source(scene, node, entity, batch);
+            PoseForm form = source.crowd ? PoseForm.NONE : PoseForm.INSTANCED;
             if (!spatial::instanced_mesh_is_live(assets, batch)
                 || !material_dependencies_live(assets, batch.material)) {
                 collection.dangling++;
-            } else if (traceable(assets, batch.geometry, batch.material)) {
-                if (batch.sway.amplitude != 0) collection.sway_at_rest++;
-
-                TracePoseSource source = { .node = node };
-                AnimatedCrowd* crowd = scene.get(node.parent, AnimatedCrowd);
-                if (crowd) {
-                    foreach (uint part, &crowd_part : crowd.parts) {
-                        if (!c3d::same_id(crowd_part.batch, entity)) continue;
-
-                        source = {
-                            .kind = crowd_part.skinned || crowd_part.weight_count ? TracePose.CROWD : TracePose.REST,
-                            .node = node,
-                            .crowd = crowd,
-                            .batch = batch,
-                            .part = part,
-                        };
-                    }
+            } else if (traceable(assets, batch.geometry, batch.material, form)) {
+                AnimatedCrowd* crowd = source.crowd;
+                bool custom = custom_vertex_stage(assets, &assets.material(batch.material).data);
+                bool sways = batch.sway.amplitude != 0;
+                if (custom) {
+                    source = { .kind = TracePose.CUSTOM, .node = node, .batch = batch, .material = batch.material };
+                } else if (sways) {
+                    collection.sway_at_rest++;
                 }
 
                 foreach (uint index, transform : batch.transforms[:batch.count]) {
@@ -438,16 +444,15 @@ fn TraceCollection collect_trace_instances(
                         layers:         node.layers,
                         cast_shadow:    batch.cast_shadow,
                         instance_index: index,
-                        local:          source.crowd ? crowd.part_transform(index, source.part) : transform.to_mat4(),
+                        local:          crowd ? crowd.part_transform(index, source.part) : transform.to_mat4(),
                         origin:         origin,
                     );
-                    TracePoseSource instance = source;
-                    if (source.crowd) {
+                    if (crowd) {
                         Mat4 placement = maths::rebase(node.world, origin).mul(crowd.placements[index].to_mat4());
                         record.bounds = maths::aabb_transform(crowd.pose_bounds, placement);
                     }
                     collection.records[count] = record;
-                    collection.poses[count++] = instance;
+                    collection.poses[count++] = source;
                 }
             }
         }
@@ -538,6 +543,31 @@ fn TraceCollection collect_trace_instances(
     collection.records = collection.records[:count];
     collection.poses = collection.poses[:count];
     return collection;
+}
+
+// The crowd part a batch node draws, or the plain source of an ordinary batch.
+fn TracePoseSource crowd_part_source(
+    Scene* scene,
+    Node* node,
+    Entity entity,
+    InstancedMesh* batch,
+) @local {
+    TracePoseSource source = { .node = node };
+    AnimatedCrowd* crowd = scene.get(node.parent, AnimatedCrowd);
+    if (!crowd) return source;
+
+    foreach (uint part, &crowd_part : crowd.parts) {
+        if (!c3d::same_id(crowd_part.batch, entity)) continue;
+
+        source = {
+            .kind = crowd_part.skinned || crowd_part.weight_count ? TracePose.CROWD : TracePose.REST,
+            .node = node,
+            .crowd = crowd,
+            .batch = batch,
+            .part = part,
+        };
+    }
+    return source;
 }
 
 fn MeshCandidate trace_animated_lod_candidate(
@@ -715,6 +745,7 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
     renderer.stats.trace_posed_instances = 0;
     renderer.stats.trace_posed_shared = 0;
     renderer.stats.trace_posed_overflow = 0;
+    renderer.stats.trace_deform_overflow = 0;
     usz kept;
     foreach (index, &record : records) {
         TracePoseSource* pose = &collection.poses[index];
@@ -734,6 +765,7 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
             streams:        cpu_present || geometry_current(renderer, record.geometry),
         );
         bool motion_row = pose.kind == TracePose.VERTEX_MOTION;
+        bool deforming_row = pose.kind == TracePose.CUSTOM;
         PosedTraceKey key;
         if (posed_row) key = trace_pose_key(scene, pose, record);
         bool motion_held = motion_row && vertex_motion_held(
@@ -753,6 +785,10 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
             source = TraceSource.REUSE;
             hardware_source = TraceSource.REUSE;
         }
+        // A tree built for a rigid row has no depth table; a refit needs one.
+        if (deforming_row && same_asset && mirror.trace.revision == revision && !mirror.trace.depth_starts) {
+            source = trace_source(0, revision, proven && cpu_present);
+        }
         bool unavailable = (software && source == TraceSource.SKIP) || (hardware && hardware_source == TraceSource.SKIP);
         if (unavailable) {
             renderer.stats.trace_skipped++;
@@ -761,7 +797,17 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
 
         mirror = resolve_geometry(renderer, record.geometry)!;
         MaterialRes* material = resolve_material(renderer, record.material)!;
-        if (!published_without_vertex_stage(renderer, record.material)) continue;
+        if (!published_stage_matches(renderer, record.material, pose)) {
+            renderer.stats.trace_skipped++;
+            continue;
+        }
+        if (pose.kind == TracePose.CUSTOM) {
+            bool ready = resolve_custom_trace_pose(renderer, record.material, pose)!;
+            if (!ready) {
+                renderer.stats.trace_skipped++;
+                continue;
+            }
+        }
         uint slot;
         bool shared_slot;
         char[] inputs;
@@ -784,11 +830,15 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
             } else {
                 uint? claimed = posed.claim(key, renderer.frame_index, &renderer.pending_upload_retire);
                 if (catch claimed) {
+                    if (pose.kind == TracePose.CUSTOM) {
+                        renderer.stats.trace_deform_overflow++;
+                        continue;
+                    }
                     if (!motion_row) {
                         renderer.stats.trace_posed_overflow++;
                         continue;
                     }
-                    // No free slot: the mesh traces through the shared geometry, rebuilt per revision.
+                    // No free slot: the row traces through the shared geometry, rebuilt per revision.
                     posed_row = false;
                     hardware_source = blas_source(
                         built_revision: same_asset ? mirror.blas.revision : 0,
@@ -814,7 +864,7 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
                 renderer:      renderer,
                 mirror:        mirror,
                 tree:          renderer.assets.triangle_bvh(record.geometry)!!,
-                vertex_motion: motion_row && posed_row,
+                deforms:       (motion_row && posed_row) || deforming_row,
             )!;
             mirror.trace.revision = revision;
         }
@@ -844,6 +894,22 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
         records[kept++] = *record;
     }
     return records[:kept];
+}
+
+// The published trace-pose form's pipeline; a form the backend rejects leaves the row out.
+fn bool? resolve_custom_trace_pose(Renderer* renderer, MaterialId material, TracePoseSource* pose) @local {
+    ShaderRes* published = &renderer.shaders[renderer.assets.material(material).data.custom.shader.index];
+    gpu::PipelineHandle? pipeline = custom_pipeline(renderer, published, trace_pose_pipeline_key(pose.batch != null));
+    if (catch excuse = pipeline) {
+        if (excuse == PIPELINE_REJECTED) return false;
+        if (excuse != gpu::SHADER_INVALID && excuse != gpu::PIPELINE_CREATE_FAILED) return excuse~;
+
+        renderer.stats.shader_rejections++;
+        return false;
+    }
+    pose.pipeline = pipeline;
+    pose.reads_time = published.desc.trace_pose.reads_time;
+    return true;
 }
 
 // Only a list the store proved reaches a build: the backend checks no index range.
@@ -1025,13 +1091,13 @@ fn void? upload_trace_geometry(
     Renderer* renderer,
     GpuGeometry* mirror,
     Bvh* tree,
-    bool vertex_motion,
+    bool deforms,
 ) @local {
     usz node_bytes = tree.nodes.len * BvhNodeGpu::size;
     usz primitives_offset = align_up(node_bytes, STREAM_ALIGNMENT);
     usz primitive_end = primitives_offset + tree.primitives.len * uint::size;
-    // Only a skinned, morphed or vertex-motion geometry can be posed and refit.
-    bool deformable = mirror.layout.flags.skinned || mirror.layout.flags.has_morphs || vertex_motion;
+    // Only a skinned or morphed geometry, or one a row deforms, can be posed and refit.
+    bool deformable = mirror.layout.flags.skinned || mirror.layout.flags.has_morphs || deforms;
     usz depth_starts_offset = deformable ? align_up(primitive_end, STREAM_ALIGNMENT) : 0;
     usz depth_order_offset = depth_starts_offset + (bvh::BVH_MAX_DEPTH + 1) * uint::size;
     usz total_bytes = deformable ? depth_order_offset + tree.nodes.len * uint::size : primitive_end;
@@ -1178,12 +1244,20 @@ fn void write_trace_instance(TraceInstanceGpu* row, TraceInstance* record, Vec3 
     };
 }
 
-// Raster draws the published revision, which may still hold a vertex stage the store's newest revision dropped.
-fn bool published_without_vertex_stage(Renderer* renderer, MaterialId material) @local {
+// Raster draws the published revision, whose vertex stage and trace-pose forms may differ from the store's newest.
+fn bool published_stage_matches(Renderer* renderer, MaterialId material, TracePoseSource* pose) @local {
     Material* data = &renderer.assets.material(material).data;
     if (data.kind != MaterialKind.CUSTOM) return true;
+
     ShaderRes* published = &renderer.shaders[data.custom.shader.index];
-    return published.revision != 0 && !published.desc.vertex.shaded.len;
+    if (published.revision == 0) return false;
+    if (!published.desc.vertex.shaded.len) return pose.kind != TracePose.CUSTOM;
+
+    return pose.kind == TracePose.CUSTOM && trace_pose_form(&published.desc.trace_pose, pose_form_flags(pose)).len > 0;
+}
+
+fn uint pose_form_flags(TracePoseSource* pose) @private {
+    return pose.batch ? shader::SHADER_FLAG_INSTANCED : 0;
 }
 
 fn bool material_dependencies_live(AssetStore* assets, MaterialId material) @local {
@@ -1192,17 +1266,32 @@ fn bool material_dependencies_live(AssetStore* assets, MaterialId material) @loc
     return assets.shaders.is_live(data.custom.shader) && @ok(check_custom_references(assets, &data.custom));
 }
 
-fn bool traceable(AssetStore* assets, GeometryId geometry, MaterialId material) @local {
+// The renderer sees a custom stage, not what it displaces, so a custom vertex stage keeps the row out
+// unless the shader poses the trace geometry in the row's form.
+fn bool traceable(
+    AssetStore* assets,
+    GeometryId geometry,
+    MaterialId material,
+    PoseForm form = PoseForm.NONE,
+) @local {
     Material* data = &assets.material(material).data;
     return assets.geometry(geometry).data.topology == Topology.TRIANGLES
         && data.common.alpha_mode != AlphaMode.BLEND
-        && !custom_vertex_stage(assets, data);
+        && (!custom_vertex_stage(assets, data) || custom_trace_pose(assets, data, form));
 }
 
-// The renderer sees a custom stage, not what it displaces, so any custom vertex stage keeps the mesh out.
 fn bool custom_vertex_stage(AssetStore* assets, Material* material) @private {
     if (material.kind != MaterialKind.CUSTOM) return false;
     return assets.shader(material.custom.shader).desc.vertex.shaded.len > 0;
+}
+
+fn bool custom_trace_pose(AssetStore* assets, Material* material, PoseForm form) @local {
+    CustomTracePose* pose = &assets.shader(material.custom.shader).desc.trace_pose;
+    switch (form) {
+        case NONE: return false;
+        case SINGLE: return pose.single.len > 0;
+        case INSTANCED: return pose.instanced.len > 0;
+    }
 }
 
 fn bool geometry_has_joints(GeometryAsset* record) @local {
