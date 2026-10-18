@@ -132,19 +132,19 @@ fn void? stage_material_frames(ClothState* state, bool changed) @private {
     if (!changed) return;
 
     compute_material_frames(
-        corners:                 state.corners,
-        triangle_uvs:            state.triangle_uvs,
-        material_normal_domains: state.material_normal_domains,
-        material_ref_faces:      state.material_ref_faces,
-        tangent_signs:           state.tangent_signs,
-        rest_tangents:           state.rest_tangents,
-        rest_positions:          state.rest,
-        current_positions:       state.particle_local,
-        committed_tangents:      state.committed_tangents,
-        normal_accum:            state.normal_accum,
-        tangent_accum:           state.tangent_accum,
-        out_normals:             state.local_normals,
-        out_tangents:            state.local_tangents,
+        corners:                  state.corners,
+        triangle_uvs:             state.triangle_uvs,
+        material_normal_domains:  state.material_normal_domains,
+        material_reference_faces: state.material_reference_faces,
+        tangent_signs:            state.tangent_signs,
+        rest_tangents:            state.rest_tangents,
+        rest_positions:           state.rest,
+        current_positions:        state.particle_local,
+        committed_tangents:       state.committed_tangents,
+        normal_accum:             state.normal_accum,
+        tangent_accum:            state.tangent_accum,
+        out_normals:              state.local_normals,
+        out_tangents:             state.local_tangents,
     )!;
 
     GeometryAsset* geometry = state.assets.geometry(state.geometry);
