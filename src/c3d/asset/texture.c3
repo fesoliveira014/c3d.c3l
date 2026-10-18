@@ -35,6 +35,7 @@ struct TextureAsset {
     TextureSourceKind source_kind;
     char[] pixels;
     TextureMipData[] supplied_mips;
+    TextureRegionLog regions;
 }
 
 <*
@@ -261,7 +262,10 @@ fn TextureAsset* AssetStore.texture(&self, TextureId texture) {
  @require self.textures.is_live(texture)
 *>
 fn void AssetStore.mark_texture_dirty(&self, TextureId texture) {
-    self.textures.get(texture).header.revision++;
+    TextureAsset* record = self.textures.get(texture);
+
+    record.header.revision++;
+    record.regions = {};
 }
 
 <*
@@ -313,6 +317,7 @@ fn void free_texture_source(Allocator allocator, TextureAsset* record) @private 
 
     record.pixels = {};
     record.supplied_mips = {};
+    record.regions = {};
 }
 
 fn void? check_format_use(TextureDesc desc) @private {
