@@ -17,7 +17,7 @@ TracePoseVertex trace_pose_vertex(uint index) {
     return pull_trace_pose_vertex(GeometryRoot(root.source), index);
 }
 
-// Posed vertex i. The streams the rest geometry lacks are not written; tangent keeps its w.
+// Posed vertex i. The streams the rest geometry lacks are not written. The tangent is stored as given: pass the rest tangent's w.
 void trace_pose_write(uint index, vec3 position, vec3 normal, vec4 tangent) {
     TraceCustomPoseRoot root = TraceCustomPoseRoot(pc.root_gpu);
     write_trace_pose(GeometryRoot(root.source), GeometryRoot(root.posed), index, position, normal, tangent);

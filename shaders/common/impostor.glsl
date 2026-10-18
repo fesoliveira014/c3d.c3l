@@ -68,8 +68,7 @@ InstanceGpu impostor_instance(DrawRoot draw, uint source) {
 }
 
 float impostor_bend(InstanceEffectsGpu effects, vec3 local) {
-    float height = clamp((local.y - effects.anchor.y) * effects.anchor.w, 0.0, 1.0);
-    return height * height;
+    return sway_height_weight(effects.anchor, local.y);
 }
 
 vec3 impostor_world(DrawRoot draw, InstanceGpu instance, mat4 model, vec3 local, bool previous) {

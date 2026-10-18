@@ -658,13 +658,17 @@ fn TraceSwayPoseRoot sway_pose_root(Renderer* renderer, TracePoseSource* source,
         origin:        renderer.frame_origin,
         world_shift:   source.scene.world_shift,
     );
+    Mat4 inverse = maths::inverse_affine(bitcast(placement.instance.model, Mat4).mul(bitcast(placement.part_local, Mat4)));
     return {
-        .vertex_count = renderer.geometries[record.geometry.index].layout.vertex_count,
-        .flags        = sway.weight == SwayWeight.VERTEX_ALPHA ? shader::DRAW_SWAY_VERTEX_ALPHA : 0,
-        .instance     = placement.instance,
-        .part_local   = placement.part_local,
-        .sway         = effects.sway,
-        .anchor       = effects.anchor,
+        .vertex_count    = renderer.geometries[record.geometry.index].layout.vertex_count,
+        .flags           = sway.weight == SwayWeight.VERTEX_ALPHA ? shader::DRAW_SWAY_VERTEX_ALPHA : 0,
+        .instance        = placement.instance,
+        .part_local      = placement.part_local,
+        .sway            = effects.sway,
+        .anchor          = effects.anchor,
+        .inverse_model_0 = { inverse.m00, inverse.m10, inverse.m20, 0 },
+        .inverse_model_1 = { inverse.m01, inverse.m11, inverse.m21, 0 },
+        .inverse_model_2 = { inverse.m02, inverse.m12, inverse.m22, 0 },
     };
 }
 

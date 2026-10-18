@@ -605,6 +605,9 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer TraceSwayPo
     mat4 part_local;
     SwayGpu sway;
     vec4 anchor;
+    vec4 inverse_model_0;
+    vec4 inverse_model_1;
+    vec4 inverse_model_2;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer MorphWeightsGpu {

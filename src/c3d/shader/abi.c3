@@ -916,8 +916,11 @@ struct TraceSwayPoseRoot {
     Mat4f       part_local;
     SwayGpu     sway;
     Vec4f       anchor;
+    Vec4f       inverse_model_0;
+    Vec4f       inverse_model_1;
+    Vec4f       inverse_model_2;
 }
-$assert TraceSwayPoseRoot::size == 272;
+$assert TraceSwayPoseRoot::size == 320;
 $assert $reflect(TraceSwayPoseRoot.source).offset == 0;
 $assert $reflect(TraceSwayPoseRoot.posed).offset == 8;
 $assert $reflect(TraceSwayPoseRoot.vertex_count).offset == 16;
@@ -928,6 +931,9 @@ $assert $reflect(TraceSwayPoseRoot.instance).offset == 32;
 $assert $reflect(TraceSwayPoseRoot.part_local).offset == 160;
 $assert $reflect(TraceSwayPoseRoot.sway).offset == 224;
 $assert $reflect(TraceSwayPoseRoot.anchor).offset == 256;
+$assert $reflect(TraceSwayPoseRoot.inverse_model_0).offset == 272;
+$assert $reflect(TraceSwayPoseRoot.inverse_model_1).offset == 288;
+$assert $reflect(TraceSwayPoseRoot.inverse_model_2).offset == 304;
 
 struct MorphWeightsGpu {
     uint[8]  indices;

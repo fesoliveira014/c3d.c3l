@@ -32,6 +32,7 @@ void main() {
 
     vec3 world = (model * vec4(vertex.position, 1.0)).xyz;
     vec3 swayed = apply_trace_sway(root, world, bend_weight);
-    vec3 position = vertex.position + inverse(mat3(model)) * (swayed - world);
+    mat3 inverse_model = mat3(root.inverse_model_0.xyz, root.inverse_model_1.xyz, root.inverse_model_2.xyz);
+    vec3 position = vertex.position + inverse_model * (swayed - world);
     write_trace_pose(source, GeometryRoot(root.posed), index, position, vertex.normal, vertex.tangent);
 }

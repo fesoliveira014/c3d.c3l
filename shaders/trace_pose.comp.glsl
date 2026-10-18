@@ -2,29 +2,13 @@
 #include "generated/shader_abi.glsl"
 #include "c3d_abi.glsl"
 #include "deform.glsl"
+#include "trace_pose_streams.glsl"
 
 layout(local_size_x = TRACE_POSE_GROUP_SIZE, local_size_y = 1, local_size_z = 1) in;
 
 layout(push_constant) uniform Push {
     uint64_t root_gpu;
 } pc;
-
-GPU_DECLARE_WRITEONLY_ARRAY_REF(PosedStream, float);
-
-void store_vec3(uint64_t stream, uint index, vec3 value) {
-    PosedStream values = PosedStream(stream);
-    values.values[3u * index] = value.x;
-    values.values[3u * index + 1u] = value.y;
-    values.values[3u * index + 2u] = value.z;
-}
-
-void store_vec4(uint64_t stream, uint index, vec4 value) {
-    PosedStream values = PosedStream(stream);
-    values.values[4u * index] = value.x;
-    values.values[4u * index + 1u] = value.y;
-    values.values[4u * index + 2u] = value.z;
-    values.values[4u * index + 3u] = value.w;
-}
 
 // The order and functions of apply_mesh_deformation in mesh_vertex.glsl: morph, then skin; tangent w is kept.
 // INSTANCED poses every source of a crowd part: x is the vertex, y the source, and the source picks its palette
@@ -63,7 +47,5 @@ void main() {
         tangent.xyz = mat3(skin) * tangent.xyz;
     }
 
-    store_vec3(posed.positions, posed_index, position);
-    if (normals) store_vec3(posed.normals, posed_index, normal);
-    if (tangents) store_vec4(posed.tangents, posed_index, tangent);
+    write_trace_pose(source, posed, posed_index, position, normal, tangent);
 }
