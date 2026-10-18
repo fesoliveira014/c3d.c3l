@@ -226,8 +226,8 @@ fn bool body_moved(ClothBody* body, float reach, float threshold) @local {
     if ((body.current.position - body.rested.position).length() > threshold) return true;
 
     Quaternionf relative = body.current.rotation * body.rested.rotation.conjugate();
-    Vec3 half_turn = { relative.i, relative.j, relative.k };
-    return 2 * reach * half_turn.length() > threshold;
+    Vec3 vector_part = { relative.i, relative.j, relative.k };
+    return 2 * reach * vector_part.length() > threshold;
 }
 
 fn float shape_reach(ClothShape* shape) @local {
