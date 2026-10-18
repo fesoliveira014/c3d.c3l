@@ -86,6 +86,9 @@ fn ScatterFrame? scatter_frame(
     };
 }
 
+// A tile of a set has a whole number of cells within the tolerance; any other ground covers its remainder.
+fn float cell_count(float ratio, bool in_set) @private => in_set ? math::round(ratio) : math::ceil(ratio);
+
 // A tile of a set indexes its cells in the set's grid, so one seed gives every tile its own candidates.
 fn LayerGrid? layer_grid(
     Scene* scene,
@@ -95,13 +98,13 @@ fn LayerGrid? layer_grid(
 ) @private {
     Node* node = scene.node(ground);
     TerrainTile* tile = scene.get(node, TerrainTile);
-    if (!tile) return { .cells_per_side = (uint)math::ceil(extent / cell_size) };
+    if (!tile) return { .cells_per_side = (uint)cell_count(extent / cell_size, false) };
 
     TerrainSet* set = node.parent ? scene.get(node.parent, TerrainSet) : null;
     if (!set) return c3d::INVALID_ARGUMENT~;
 
     float ratio = set.tile_extent() / cell_size;
-    float cells = math::round(ratio);
+    float cells = cell_count(ratio, true);
     if (!(math::abs(ratio - cells) <= CELL_RATIO_TOLERANCE * ratio)) return c3d::INVALID_ARGUMENT~;
 
     uint cells_per_side = (uint)cells;

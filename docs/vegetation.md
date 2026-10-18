@@ -148,9 +148,9 @@ ground without `TerrainTile` keeps layer-local keys, bit for bit.
 
 **Divisibility.** `cell_size` must divide `tile_extent()`: the ratio `tile_extent() / cell_size` must lie within
 1e-4 of an integer, relative to the ratio. Otherwise `add_foliage` and `prepare` fault `INVALID_ARGUMENT`. The grid
-then has exactly `cells_per_tile` cells per side and its cell edges fall on the tile's edges. Inside the tolerance
-the grid drifts at most a tenth of a texel on a 1025-texel tile, and a candidate past the extent is rejected like
-any other outside it.
+then has exactly `cells_per_tile` cells per side and its cell edges fall on the tile's edges, and
+`MAX_CELLS_PER_SIDE` bounds that rounded count. Inside the tolerance the grid drifts at most a tenth of a texel on a
+1025-texel tile, and a candidate past the extent is rejected like any other outside it.
 
 **Edge ownership.** Cells are half-open ranges of the set's grid: tile `t` owns the cells
 `[t · cells_per_tile, (t + 1) · cells_per_tile)` on each axis, and no two tiles share a cell. A candidate comes

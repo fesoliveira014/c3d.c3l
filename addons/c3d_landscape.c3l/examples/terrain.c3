@@ -139,6 +139,7 @@ struct Demo @local {
     MaterialId    crate_material;
     uint          crate_count;
     Node*         decal_node;
+    bool[landscape_ground::TILE_COUNT] edited_terrains; // Ground.terrain_nodes entries a stroke changed
 }
 
 struct HoverPose @local {
@@ -282,8 +283,13 @@ fn Vec3 extent_point(Demo* demo, Vec2 fraction) @local {
 }
 
 // A re-cook rebuilds the whole field, so collision follows a stroke once it ends, not while it is painted.
-fn void end_stroke(Scene* scene, Node* terrain_node) @local {
-    if (scene.has(terrain_node, PhysicsBody)) scene.get(terrain_node, PhysicsBody).mark_changed();
+fn void end_stroke(Demo* demo) @local {
+    foreach (index, node : demo.ground.terrain_nodes()) {
+        if (!demo.edited_terrains[index]) continue;
+
+        demo.edited_terrains[index] = false;
+        if (demo.scene.has(node, PhysicsBody)) demo.scene.get(node, PhysicsBody).mark_changed();
+    }
 }
 
 fn ViewDesc configure_desc(ViewDesc desc, Options options) @local {
@@ -428,11 +434,7 @@ fn void? terrain_panel(Demo* demo, FlyCamera* fly_camera, float delta) @local {
     imgui::set_next_window_size(PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
     if (imgui::begin("Terrain", null, {})) {
         imgui::text("Right drag looks, WASD move, Shift fast; F flies, Q and E sink and rise");
-        if (demo.options.tiles) {
-            imgui::text("G drops a crate, P toggles the collider, click pushes a crate; painting is off");
-        } else {
-            imgui::text("G drops a crate, B paints, P toggles the collider, click pushes a crate");
-        }
+        imgui::text("G drops a crate, B paints, P toggles the collider, click pushes a crate");
         imgui::text("T toggles the ground decal");
         uint chunks;
         uint lod_switches;
@@ -583,20 +585,21 @@ fn void? run_interactive(Options options) @local {
                     add_terrain_colliders(&demo)!;
                 }
             }
-            bool brush_held = input.key_down(platform::Scancode.B) && !options.tiles;
+            bool brush_held = input.key_down(platform::Scancode.B);
             float rise = brush.rise(brush_held, delta);
             if (rise > 0) {
-                bool stamped = landscape_ground::stamp_under(
-                    scene:        &scene,
-                    assets:       &assets,
-                    terrain_node: demo.ground.node,
-                    position:     fly_camera.position,
-                    rise:         rise,
+                bool stamped = landscape_ground::stamp_ground(
+                    scene:    &scene,
+                    assets:   &assets,
+                    ground:   &demo.ground,
+                    position: fly_camera.position,
+                    rise:     rise,
+                    edited:   demo.edited_terrains[..],
                 )!;
                 if (stamped) painting = true;
             }
             if (!brush_held && painting) {
-                end_stroke(&scene, demo.ground.node);
+                end_stroke(&demo);
                 painting = false;
             }
         }
@@ -785,12 +788,13 @@ fn void? run_segments(
         )!;
         bool stamped = timed && segment == Segment.EDIT && segment_step % STAMP_PERIOD == 0;
         if (stamped) {
-            landscape_ground::stamp_under(
-                scene:        demo.scene,
-                assets:       demo.assets,
-                terrain_node: demo.ground.node,
-                position:     demo.camera_node.local.position,
-                rise:         landscape_ground::BRUSH_RISE,
+            landscape_ground::stamp_ground(
+                scene:    demo.scene,
+                assets:   demo.assets,
+                ground:   &demo.ground,
+                position: demo.camera_node.local.position,
+                rise:     landscape_ground::BRUSH_RISE,
+                edited:   demo.edited_terrains[..],
             )!;
         }
 
@@ -834,7 +838,7 @@ fn void? run_segments(
     }
     result.level_count = runtime.level_count;
 
-    end_stroke(demo.scene, demo.ground.node);
+    end_stroke(demo);
     time::Clock recook_started = clock::now();
     demo.physics.update(TIME_STEP);
     result.physics_recook_ms = elapsed_ms(recook_started);
