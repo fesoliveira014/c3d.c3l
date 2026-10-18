@@ -15,6 +15,8 @@ const usz INSTANCE_CULL_ARENA_BYTES = 16 << 20; // per slot on the device; insta
 const usz CULL_ARGS_STRIDE @private = 32; // one indirect command at STREAM_ALIGNMENT
 const usz CULL_COUNTER_BYTES @private = 64; // one batch counter and six selected/visible LOD counters, aligned for copies
 $assert scene::MAX_LOD_CHOICES == shader::LOD_LEVEL_COUNT;
+$assert scene::MAX_QUADTREE_DEPTH == shader::MAX_QUADTREE_DEPTH;
+$assert scene::QUADTREE_ROOT == shader::QUADTREE_ROOT;
 
 struct CullArena @private {
     gpu::GpuAllocation allocation;
@@ -244,7 +246,7 @@ fn void? prepare_cull_stage(Renderer* renderer, CullItem[] items, bool culling) 
         Aabb? bound = cull_bound(item.candidate, item.geometry);
         item.bounded = culling && @ok(bound);
         item.bound = bound ?? item.geometry.bounds;
-        if (item.bounded || item.sorted) eligible++;
+        if (item.bounded || item.sorted || item.candidate.quadtree) eligible++;
     }
     CullArena* arena = &renderer.cull_arenas[slot_index];
     usz? args_offset = c3d::CAPACITY_EXCEEDED~;
@@ -262,7 +264,7 @@ fn void? prepare_cull_stage(Renderer* renderer, CullItem[] items, bool culling) 
     uint sorted;
     foreach (&item : items) {
         if (item.candidate.lod) continue;
-        if (item.bounded || item.sorted) {
+        if (item.bounded || item.sorted || item.candidate.quadtree) {
             uint slot = args_index++;
             if (try block = args_offset) {
                 usz? list_offset = item.sorted
@@ -296,7 +298,8 @@ fn void? prepare_cull_stage(Renderer* renderer, CullItem[] items, bool culling) 
                 renderer.stats.cull_overflows++;
             }
         }
-        *item.range = prepare_cull_range(renderer, item.candidate, item.geometry)!;
+        *item.range = item.candidate.quadtree
+          ? prepare_unselected_range(renderer, item)! : prepare_cull_range(renderer, item.candidate, item.geometry)!;
     }
     if (!culled) return;
     if (sorted) {
@@ -355,6 +358,10 @@ fn void? record_instance_cull(Renderer* renderer, CullItem[] items) @private {
                     ? shader::INSTANCE_KIND_BILLBOARD : shader::INSTANCE_KIND_MESH,
                 .depth_axis       = item.depth_axis,
             };
+            if (item.candidate.quadtree) {
+                root.lod_mode = shader::QUADTREE_CULL;
+                root.lod_current = item.candidate.quadtree.current;
+            }
             if (item.candidate.lod) {
                 root.lod_mode = shader::LOD_CULL;
                 root.lod_current = item.candidate.lod.current;
