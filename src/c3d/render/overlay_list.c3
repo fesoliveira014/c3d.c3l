@@ -814,6 +814,7 @@ fn void? check_rect_refs(
         case RENDER_TARGET:
             if (!targets.is_live(rect.texture.target)) return c3d::INVALID_ID~;
             if (c3d::same_id(rect.texture.target, output)) return c3d::INVALID_ARGUMENT~;
+        case VIEW: return c3d::INVALID_ARGUMENT~;
     }
 }
 

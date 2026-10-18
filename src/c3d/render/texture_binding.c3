@@ -72,6 +72,19 @@ fn TextureBinding? resolve_texture_slot(
 
     SamplerRes* sampler_mirror = resolve ? resolve_sampler(renderer, sampler)! : &renderer.samplers[sampler.index];
 
+    if (slot.texture.kind == TextureRefKind.VIEW) {
+        if (!custom_read) return c3d::UNSUPPORTED~;
+        if (slot.texture.view_slot >= material::MAX_VIEW_TEXTURES) return c3d::INVALID_ARGUMENT~;
+
+        // The flagged index selects the drawing view's texture in the shader; the slot reads as absent without one.
+        return {
+            .sampler = sampler,
+            .sampler_revision = sampler_mirror.revision,
+            .texture_index = (gpu::TextureIndex)(shader::VIEW_TEXTURE_FLAG | slot.texture.view_slot),
+            .sampler_index = sampler_mirror.index,
+        };
+    }
+
     if (slot.texture.kind == TextureRefKind.RENDER_TARGET && renderer.targets.is_live(slot.texture.target)) {
         TargetRecord* target = renderer.targets.get(slot.texture.target);
         target.sample_pending = true;

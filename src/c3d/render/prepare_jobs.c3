@@ -339,6 +339,7 @@ fn void append_prepare_slot(
         listed.push({ .kind = PrepareUnitKind.SAMPLER, .sampler = sampler,
             .revision = renderer.assets.sampler(sampler).header.revision });
     }
+    if (slot.texture.kind == TextureRefKind.VIEW) return;
     if (slot.texture.kind == TextureRefKind.RENDER_TARGET && renderer.targets.is_live(slot.texture.target)) return;
     TextureId texture = slot.texture.kind == TextureRefKind.ASSET && renderer.assets.textures.is_live(slot.texture.asset)
         ? slot.texture.asset : asset::TEXTURE_WHITE;
