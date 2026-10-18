@@ -143,7 +143,9 @@ ancestor splits and it does not, so the drawn nodes partition the extent. The si
 the sphere that bounds the node's box, in pixels of the view's working extent with `render_scale` included. The
 sphere is taken from the box's bounding box in world space: a node turned by 45° about Y measures up to 1.41
 times larger than an unturned one. The selection reads no camera rotation, so turning in place never
-re-selects. A change of `lod_threshold` or `lod_hysteresis` keeps every view's history.
+re-selects. A change of `lod_threshold` or `lod_hysteresis` keeps every view's history; `update` copies the
+values onto the quadtree [without checking them](instancing.md#quadtree-selection), so keep them finite and not
+negative after `add_terrain` has validated them.
 
 - Two views of one terrain, such as a split screen or a mirror, draw different levels when their cameras are at
   different distances, and a shadow layer draws the levels of the view it belongs to.
