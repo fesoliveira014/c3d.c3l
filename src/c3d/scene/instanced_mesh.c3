@@ -72,7 +72,7 @@ struct InstanceSpan {
 
 <*
  Per-view level-of-detail selection over a batch whose instances form a quadtree.
- revision, leaves and leaf_count are kept by the library; applications call set_quadtree.
+ revision, leaves and leaf_count are kept by the library; applications call Scene.set_instance_quadtree.
 *>
 struct InstanceQuadtree {
     uint[] parents;      // parent instance per instance; QUADTREE_ROOT for a root; empty disables the mode
@@ -207,52 +207,6 @@ fn void? check_instance_quadtree(InstanceQuadtree* quadtree, uint count) {
             depth++;
         }
     }
-}
-
-<*
- Copy the batch's quadtree topology and advance its topology revision; empty parents disable the mode.
- @param allocator : "The scene's allocator; owns the copies until the component is removed."
- @param parents : "One per live instance."
- @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
-*>
-fn void? InstancedMesh.set_quadtree(
-    &self,
-    Allocator allocator,
-    uint[] parents,
-    float split_pixels,
-    float hysteresis,
-) {
-    InstanceQuadtree* quadtree = &self.quadtree;
-    if (parents.len) {
-        InstanceQuadtree candidate = { .parents = parents };
-        check_instance_quadtree(&candidate, self.count)!;
-
-        if (self.trace) return c3d::UNSUPPORTED~;
-
-        if (!quadtree.parents.ptr) {
-            quadtree.parents = alloc::new_array(allocator, uint, self.transforms.len);
-            quadtree.leaves = alloc::new_array(allocator, bool, self.transforms.len);
-        }
-    }
-
-    if (quadtree.parents.ptr) {
-        quadtree.parents = quadtree.parents.ptr[:parents.len];
-        quadtree.leaves = quadtree.leaves.ptr[:parents.len];
-        quadtree.parents[..] = parents[..];
-        quadtree.leaves[..] = true;
-        foreach (parent : parents) {
-            if (parent != QUADTREE_ROOT) quadtree.leaves[parent] = false;
-        }
-    }
-
-    quadtree.leaf_count = 0;
-    foreach (leaf : quadtree.leaves) {
-        if (leaf) quadtree.leaf_count++;
-    }
-
-    quadtree.split_pixels = split_pixels;
-    quadtree.hysteresis = hysteresis;
-    quadtree.revision = quadtree.revision == uint::max ? 1 : quadtree.revision + 1;
 }
 
 <*

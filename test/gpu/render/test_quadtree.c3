@@ -64,9 +64,13 @@ fn QuadtreeScene? create_quadtree_scene(Fixture* fixture, bool sunlit = false) @
         transforms: transforms[..],
         colors:     colors[..],
     )!;
-    InstancedMesh* batch = result.scene.get(result.mesh, InstancedMesh);
-    batch.trace = false;
-    batch.set_quadtree(result.scene.allocator, result.parents[..], QUADTREE_SPLIT_PIXELS, QUADTREE_HYSTERESIS)!;
+    result.scene.get(result.mesh, InstancedMesh).trace = false;
+    result.scene.set_instance_quadtree(
+        node:         result.mesh,
+        parents:      result.parents[..],
+        split_pixels: QUADTREE_SPLIT_PIXELS,
+        hysteresis:   QUADTREE_HYSTERESIS,
+    )!;
     result.near_camera = result.scene.add_camera(camera::perspective_deg(60, 0.1f))!;
     result.near_camera.local.position = { 0, 0, QUADTREE_NEAR };
     result.far_camera = result.scene.add_camera(camera::perspective_deg(60, 0.1f))!;
@@ -112,14 +116,16 @@ fn uint? render_quadtree_frame(
     defer catch render::abort_frame(renderer);
     renderer.render_view(&target.scene, camera, view)!;
     render::QuadtreeHistoryEntry* history = &renderer.views.get(view).quadtree_history.entries[target.mesh.id.index];
-    usz offset = (usz)(history.committed_slot ^ 1) * history.capacity * uint::size;
-    gpu::GpuSpan source = gpu::get_allocation_span(&renderer.device, history.allocation)!;
-    gpu::Barrier produced = { .before = { .compute, .vertex_shader }, .after = { .transfer } };
-    gpu::cmd_barrier(&renderer.commands, &produced)!;
-    gpu::BufferCopyDesc copy = { .src = source.checked_subspan(offset, readback.bytes.len)!, .dst = readback.span };
-    gpu::cmd_copy_buffer(&renderer.commands, &copy)!;
-    gpu::Barrier copied = { .before = { .transfer }, .after = { .host } };
-    gpu::cmd_barrier(&renderer.commands, &copied)!;
+    if (history.allocation.is_valid()) {
+        usz offset = (usz)(history.committed_slot ^ 1) * history.capacity * uint::size;
+        gpu::GpuSpan source = gpu::get_allocation_span(&renderer.device, history.allocation)!;
+        gpu::Barrier produced = { .before = { .compute, .vertex_shader }, .after = { .transfer } };
+        gpu::cmd_barrier(&renderer.commands, &produced)!;
+        gpu::BufferCopyDesc copy = { .src = source.checked_subspan(offset, readback.bytes.len)!, .dst = readback.span };
+        gpu::cmd_copy_buffer(&renderer.commands, &copy)!;
+        gpu::Barrier copied = { .before = { .transfer }, .after = { .host } };
+        gpu::cmd_barrier(&renderer.commands, &copied)!;
+    }
     sample(fixture, render::read_view_color(view), uv)!;
     record_readback(fixture)!;
     renderer.finish_view(view)!;
@@ -254,7 +260,12 @@ fn void test_quadtree_history_follows_the_topology_revision() @test {
     assert(batch.quadtree.revision == revision);
     assert(check_quadtree_selection(readback, target.parents[..]) == QUADTREE_NEAR_DRAWN);
 
-    batch.set_quadtree(target.scene.allocator, target.parents[..], QUADTREE_SPLIT_PIXELS, QUADTREE_HYSTERESIS)!!;
+    target.scene.set_instance_quadtree(
+        node:         target.mesh,
+        parents:      target.parents[..],
+        split_pixels: QUADTREE_SPLIT_PIXELS,
+        hysteresis:   QUADTREE_HYSTERESIS,
+    )!!;
     render_quadtree_frame(&fixture, &target, fixture.view, target.far_camera, readback)!!;
     assert(check_quadtree_selection(readback, target.parents[..]) == QUADTREE_FAR_DRAWN);
     render_quadtree_frame(&fixture, &target, fixture.view, target.far_camera, readback)!!;

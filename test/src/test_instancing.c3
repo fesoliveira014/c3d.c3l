@@ -1006,7 +1006,18 @@ fn void test_quadtree_rejects_malformed_parents() @test {
     Node* node = fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 3, transforms[..])!!;
     InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
     uint[3] parents = { scene::QUADTREE_ROOT, 0, 0 };
-    assert(@catch(batch.set_quadtree(fixture.scene.allocator, parents[..], 100, 0.25f)) == c3d::UNSUPPORTED);
+    assert(@catch(fixture.scene.set_instance_quadtree(node, parents[..], 100, 0.25f)) == c3d::UNSUPPORTED);
+    assert(batch.quadtree.parents.len == 0 && batch.quadtree.revision == 0);
+
+    batch.trace = false;
+    LodLevel[1] levels = {{ .first_part = 0, .part_count = 1, .min_screen_size = 0 }};
+    LodPart[1] parts = {{ .geometry = fixture.box, .material = fixture.red, .local = matrix::IDENTITY4 }};
+    fixture.scene.add(node, scene::create_lod_group(
+        allocator: fixture.scene.allocator,
+        assets:    &fixture.assets,
+        desc:      { .levels = levels[..], .parts = parts[..] },
+    )!!);
+    assert(@catch(fixture.scene.set_instance_quadtree(node, parents[..], 100, 0.25f)) == c3d::UNSUPPORTED);
     assert(batch.quadtree.parents.len == 0 && batch.quadtree.revision == 0);
 }
 
@@ -1018,7 +1029,7 @@ fn void test_quadtree_leaf_mask_and_revision() @test {
     InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
     batch.trace = false;
     uint[5] parents = { scene::QUADTREE_ROOT, 0, 0, 1, 1 };
-    batch.set_quadtree(fixture.scene.allocator, parents[..], 100, 0.25f)!!;
+    fixture.scene.set_instance_quadtree(node, parents[..], 100, 0.25f)!!;
 
     bool[5] expected_leaves = { false, false, true, true, true };
     assert(batch.quadtree.leaves == expected_leaves[..] && batch.quadtree.leaf_count == 3);
@@ -1043,9 +1054,9 @@ fn void test_quadtree_leaf_mask_and_revision() @test {
         }
     };
 
-    batch.set_quadtree(fixture.scene.allocator, parents[..], 100, 0.25f)!!;
+    fixture.scene.set_instance_quadtree(node, parents[..], 100, 0.25f)!!;
     assert(batch.quadtree.revision != revision);
-    batch.set_quadtree(fixture.scene.allocator, {}, 0, 0)!!;
+    fixture.scene.set_instance_quadtree(node, {}, 0, 0)!!;
     index.refresh(&fixture.assets, &fixture.scene)!!;
     assert(index.count == 5 && batch.is_leaf(0));
 }

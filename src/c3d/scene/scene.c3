@@ -211,6 +211,54 @@ fn void? Scene.set_instances(&self, Node* node, Transform[] transforms, Vec4[] c
 }
 
 <*
+ Copy the batch's quadtree topology and advance its topology revision; empty parents disable the mode.
+ @param [&in] node : "Carries an InstancedMesh."
+ @param parents : "One per live instance."
+ @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
+ @require self.has(node, InstancedMesh)
+*>
+fn void? Scene.set_instance_quadtree(
+    &self,
+    Node* node,
+    uint[] parents,
+    float split_pixels,
+    float hysteresis,
+) {
+    InstancedMesh* batch = self.get(node, InstancedMesh);
+    InstanceQuadtree* quadtree = &batch.quadtree;
+    if (parents.len) {
+        InstanceQuadtree candidate = { .parents = parents };
+        check_instance_quadtree(&candidate, batch.count)!;
+
+        if (batch.trace || self.has(node, LodGroup)) return c3d::UNSUPPORTED~;
+
+        if (!quadtree.parents.ptr) {
+            quadtree.parents = alloc::new_array(self.allocator, uint, batch.transforms.len);
+            quadtree.leaves = alloc::new_array(self.allocator, bool, batch.transforms.len);
+        }
+    }
+
+    if (quadtree.parents.ptr) {
+        quadtree.parents = quadtree.parents.ptr[:parents.len];
+        quadtree.leaves = quadtree.leaves.ptr[:parents.len];
+        quadtree.parents[..] = parents[..];
+        quadtree.leaves[..] = true;
+        foreach (parent : parents) {
+            if (parent != QUADTREE_ROOT) quadtree.leaves[parent] = false;
+        }
+    }
+
+    quadtree.leaf_count = 0;
+    foreach (leaf : quadtree.leaves) {
+        if (leaf) quadtree.leaf_count++;
+    }
+
+    quadtree.split_pixels = split_pixels;
+    quadtree.hysteresis = hysteresis;
+    quadtree.revision = quadtree.revision == uint::max ? 1 : quadtree.revision + 1;
+}
+
+<*
  Declare in-place edits of transforms or colors to the renderer.
  @param [&in] node : "Carries an InstancedMesh."
  @require self.has(node, InstancedMesh)
