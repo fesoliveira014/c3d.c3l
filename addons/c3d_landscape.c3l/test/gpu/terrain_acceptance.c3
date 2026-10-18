@@ -3,6 +3,7 @@ module c3d_landscape_acceptance;
 import c3d;
 import c3d::asset;
 import c3d::camera;
+import c3d::landscape;
 import c3d::landscape::terrain;
 import c3d::material;
 import c3d::maths;
@@ -15,6 +16,7 @@ import std::io;
 import std::math;
 
 const char[*] READBACK_SOURCE @local = $embed("readback.comp.glsl");
+const char[*] NORMAL_PROBE_SOURCE @local = $embed("normal_probe.comp.glsl");
 const uint READBACK_POINTS @local = 2; // mirrored as READBACK_POINTS in readback.comp.glsl
 const uint TARGET_SIZE @local = 64;
 const uint TERRAIN_TEXELS @local = 257; // four finest chunks, so a reversal re-pairs every record index
@@ -34,6 +36,15 @@ const Vec3 DECAL_SIZE @local = { 160, 160, 100 }; // metres; local z is the proj
 const Vec4 DECAL_COLOR @local = { 1, 0, 0, 1 };
 const float DECAL_TOLERANCE @local = 0.02f; // the core decal tolerance, including G-buffer quantization
 const float DECAL_MIN_DIFFERENCE @local = 0.1f; // far above the tolerance, so an unchanged colour fails
+const uint PROBE_COUNT @local = 8; // mirrored as PROBE_COUNT in normal_probe.comp.glsl
+const uint PROBE_TEXELS @local = 129; // one chunk per tile
+const uint PROBE_PARAMS_SIZE @local = 32; // the terrain material's parameter block
+const usz PROBE_BORDER_EDGES_OFFSET @local = 16; // in that block, after texels, cell_size, height_scale and layer_count
+const float PROBE_HEIGHT_SCALE @local = 24;
+const float PROBE_BEND_X @local = 0.3f; // radians per texel; bends the surface enough that one-sided slopes differ across a seam
+const float PROBE_BEND_Z @local = 0.35f;
+const float RING_AGREEMENT @local = 1e-5f; // float rounding of the shared texel's two gradients, which use the same four heights
+const float ONE_SIDED_DISAGREEMENT @local = 0.01f; // far above the agreement, so a missing ring fails
 
 struct ReadbackRoot @local {
     gpu::GpuAddress output;
@@ -351,5 +362,214 @@ fn void test_terrain_receives_decals_on_both_paths() @test {
     Vec4 excluded_deferred = render_terrain_color(&fixture, ShadingPath.DEFERRED);
     assert(color_difference(excluded_forward, plain_forward) <= DECAL_TOLERANCE);
     assert(color_difference(excluded_deferred, plain_deferred) <= DECAL_TOLERANCE);
+    check_validation(&fixture.renderer);
+}
+
+struct ProbeParams @local {
+    char[PROBE_PARAMS_SIZE] bytes;
+}
+
+struct ProbeInput @local {
+    Vec2 texel_position;
+    uint height_slot;
+    uint border_slot;
+}
+$assert ProbeInput::size == 16;
+
+struct ProbeRoot @local {
+    gpu::GpuAddress            output;
+    ulong                      padding;
+    ProbeParams[PROBE_COUNT]   params;
+    ProbeInput[PROBE_COUNT]    inputs;
+}
+$assert ProbeRoot::size == 16 + PROBE_COUNT * PROBE_PARAMS_SIZE + PROBE_COUNT * ProbeInput::size;
+
+struct ProbeOutput @local {
+    Vec4[PROBE_COUNT] normals;
+}
+
+struct SeamFixture @local {
+    AssetStore         assets;
+    Scene              scene;
+    Renderer           renderer;
+    Node*[3]           tiles; // north-west, north-east and south-west of a 2 x 2 set
+    ComputeShaderId    shader;
+    BufferId           output;
+    gpu::MappedGpuSpan readback;
+}
+
+fn ushort seam_height(uint global_x, uint global_z) @local {
+    float along_x = 0.25f * math::sin((float)global_x * PROBE_BEND_X);
+    float along_z = 0.25f * math::cos((float)global_z * PROBE_BEND_Z);
+    return (ushort)((0.5f + along_x + along_z) * (float)ushort::max);
+}
+
+// Tiles are cut from one surface and overlap by a row and a column, as terrain tile sets require.
+fn TextureId add_seam_map(AssetStore* assets, uint column, uint row) @local {
+    TextureId texture;
+    @pool() {
+        ushort[] texels = alloc::new_array(tmem, ushort, (sz)PROBE_TEXELS * PROBE_TEXELS);
+        for (uint z = 0; z < PROBE_TEXELS; z++) {
+            for (uint x = 0; x < PROBE_TEXELS; x++) {
+                uint global_x = column * (PROBE_TEXELS - 1) + x;
+                uint global_z = row * (PROBE_TEXELS - 1) + z;
+                texels[z * PROBE_TEXELS + x] = seam_height(global_x, global_z);
+            }
+        }
+        material::TextureDesc desc = material::texture_2d_desc(PROBE_TEXELS, PROBE_TEXELS, R16_UINT);
+        desc.generate_mips = false;
+        texture = assets.add_texture(desc, ((char*)texels.ptr)[:texels.len * ushort::size])!!;
+    };
+    return texture;
+}
+
+fn void? create_seam_fixture(SeamFixture* fixture) @local {
+    fixture.assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    fixture.scene = scene::create_scene(mem, scene::default_scene_desc());
+    terrain::register_terrain(&fixture.scene, &fixture.assets)!;
+
+    StandardParams grass = { .base_color = { 0.5f, 0.6f, 0.3f, 1 }, .roughness = 1 };
+    MaterialId layer = fixture.assets.add_material(material::standard(grass))!;
+    float cell_size = 1;
+    TerrainSet set = { .texels = PROBE_TEXELS, .cell_size = cell_size, .height_scale = PROBE_HEIGHT_SCALE };
+    Node* set_node = fixture.scene.add_node()!;
+    fixture.scene.add(set_node, set);
+    for (uint index = 0; index < 4; index++) {
+        uint column = index % 2;
+        uint row = index / 2;
+        TerrainDesc desc = terrain::default_terrain_desc();
+        desc.height_map = add_seam_map(&fixture.assets, column, row);
+        desc.cell_size = cell_size;
+        desc.height_scale = PROBE_HEIGHT_SCALE;
+        desc.layers[0] = layer;
+        Node* tile = fixture.scene.add_node(set_node)!;
+        tile.local.position = { (float)column * set.tile_extent(), 0, (float)row * set.tile_extent() };
+        fixture.scene.add(tile, (TerrainTile){ .x = (int)column, .z = (int)row });
+        terrain::add_terrain(
+            scene:  &fixture.scene,
+            assets: &fixture.assets,
+            node:   tile,
+            desc:   desc,
+        )!;
+        if (index < fixture.tiles.len) fixture.tiles[index] = tile;
+    }
+
+    char[] spirv = compile::compile_glsl(
+        allocator: mem,
+        source:    (String)NORMAL_PROBE_SOURCE[..],
+        stage:     ShaderStage.COMPUTE,
+        includes:  landscape::LANDSCAPE_SHADER_INCLUDES[..],
+    )!;
+    defer alloc::free(mem, spirv.ptr);
+    ComputeShaderDesc shader_desc = { .compute = spirv };
+    fixture.shader = fixture.assets.add_compute_shader(&shader_desc)!;
+
+    fixture.renderer = render::create_renderer(
+        allocator: mem,
+        assets:    &fixture.assets,
+        desc:      { .validation = true, .application_name = "terrain_seam_acceptance" },
+    )!;
+    fixture.output = fixture.renderer.create_buffer({
+        .size       = ProbeOutput::size,
+        .debug_name = "terrain_seam_output",
+    })!;
+    gpu::AllocationDesc readback_desc = {
+        .size         = ProbeOutput::size,
+        .alignment    = 16,
+        .memory_class = gpu::MemoryClass.CPU_READ,
+        .access       = { .graphics },
+        .debug_name   = "terrain_seam_readback",
+    };
+    fixture.readback = gpu::allocate_mapped_memory(&fixture.renderer.device, &readback_desc)!;
+}
+
+fn void destroy_seam_fixture(SeamFixture* fixture) @local {
+    render::wait_frames(&fixture.renderer)!!;
+    gpu::GpuAllocation allocation = fixture.readback.span.allocation();
+    gpu::free_allocation(&fixture.renderer.device, &allocation)!!;
+    render::destroy_renderer(&fixture.renderer);
+    scene::destroy_scene(&fixture.scene);
+    asset::destroy_asset_store(&fixture.assets);
+}
+
+fn ProbeParams tile_params(SeamFixture* fixture, Node* tile, bool border_edges) @local {
+    ProbeParams params;
+    char[] block = fixture.assets.material(fixture.scene.get(tile, TerrainRuntime).material).data.custom.param_block;
+    params.bytes[..] = block[..];
+    if (!border_edges) *(uint*)&params.bytes[PROBE_BORDER_EDGES_OFFSET] = 0;
+    return params;
+}
+
+// Probes 0 to 3 use the tiles' own blocks; probes 4 to 7 repeat them with the edge mask cleared, as before the ring.
+fn Vec4[PROBE_COUNT]? read_seam_normals(SeamFixture* fixture) @local {
+    Vec2[4] points = {
+        { PROBE_TEXELS - 1, 60.5f }, // north-west tile, east edge
+        { 0, 60.5f },                // north-east tile, west edge
+        { 40.5f, PROBE_TEXELS - 1 }, // north-west tile, south edge
+        { 40.5f, 0 },                // south-west tile, north edge
+    };
+    uint[4] owners = { 0, 1, 0, 2 };
+    Renderer* renderer = &fixture.renderer;
+    ProbeRoot root = { .output = renderer.buffer_address(fixture.output) };
+    foreach (probe, owner : owners) {
+        Node* tile = fixture.tiles[owner];
+        root.params[probe] = tile_params(fixture, tile, true);
+        root.params[probe + owners.len] = tile_params(fixture, tile, false);
+        ProbeInput input = { .texel_position = points[probe], .height_slot = 2 * owner, .border_slot = 2 * owner + 1 };
+        root.inputs[probe] = input;
+        root.inputs[probe + owners.len] = input;
+    }
+    DispatchTexture[6] textures;
+    foreach (index, tile : fixture.tiles) {
+        textures[2 * index] = render::read_texture(fixture.scene.get(tile, Terrain).desc.height_map);
+        textures[2 * index + 1] = render::read_texture(fixture.scene.get(tile, TerrainRuntime).border_ring);
+    }
+    BufferId[1] writes = { fixture.output };
+    renderer.begin_frame()!;
+    defer catch render::abort_frame(renderer);
+    renderer.dispatch({
+        .shader   = fixture.shader,
+        .root     = ((char*)&root)[:ProbeRoot::size],
+        .groups   = { 1, 1, 1 },
+        .writes   = writes[..],
+        .textures = textures[..],
+    })!;
+    gpu::Barrier copied_writes = { .before = { .all }, .after = { .transfer } };
+    gpu::cmd_barrier(&renderer.commands, &copied_writes)!;
+    gpu::BufferCopyDesc buffer_copy = {
+        .src = gpu::get_allocation_span(&renderer.device, renderer.buffers.get(fixture.output).allocation)!,
+        .dst = fixture.readback.span,
+    };
+    gpu::cmd_copy_buffer(&renderer.commands, &buffer_copy)!;
+    gpu::Barrier host_read = { .before = { .transfer }, .after = { .host } };
+    gpu::cmd_barrier(&renderer.commands, &host_read)!;
+    renderer.end_frame()!;
+    render::wait_frames(renderer)!;
+    gpu::invalidate_mapped_span(&renderer.device, fixture.readback.span)!;
+    return ((ProbeOutput*)fixture.readback.bytes.ptr).normals;
+}
+
+fn float normal_distance(Vec4 first, Vec4 second) @local {
+    return (first.xyz - second.xyz).length();
+}
+
+fn void test_tile_edge_normals_agree_across_a_seam() @test {
+    SeamFixture fixture;
+    create_seam_fixture(&fixture)!!;
+    defer destroy_seam_fixture(&fixture);
+
+    Vec4[PROBE_COUNT] normals = read_seam_normals(&fixture)!!;
+    float east_west = normal_distance(normals[0], normals[1]);
+    float north_south = normal_distance(normals[2], normals[3]);
+    float east_west_one_sided = normal_distance(normals[4], normals[5]);
+    float north_south_one_sided = normal_distance(normals[6], normals[7]);
+    io::printfn("Seam normal distance with the ring: east-west %g north-south %g", east_west, north_south);
+    io::printfn(
+        "Seam normal distance one-sided: east-west %g north-south %g",
+        east_west_one_sided,
+        north_south_one_sided,
+    );
+    assert(east_west <= RING_AGREEMENT && north_south <= RING_AGREEMENT);
+    assert(east_west_one_sided >= ONE_SIDED_DISAGREEMENT && north_south_one_sided >= ONE_SIDED_DISAGREEMENT);
     check_validation(&fixture.renderer);
 }
