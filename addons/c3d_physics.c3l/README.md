@@ -248,6 +248,17 @@ Edge/corner contacts also count; the rule does not measure shared face area. Ove
 example uses 0.5 m cubes on a 0.508 m pitch: face gaps are below the default
 0.01 m threshold, diagonal gaps are above it, producing 112 welds.
 
+Deriving the graph tests every piece pair. `physics.set_parallel({ .run = ..., .context = ... })`
+spreads those tests over the application's workers, the same `ParallelFor` that stages cloth.
+Preparation, and the reset of a pending breakable, acquire the hulls and compute their bounds on the
+calling thread. Each range then tests its own pairs against immutable hulls and bounds and writes only
+its own result slots. The calling thread builds the welds from the slots in piece-pair order, so the
+graph is bit-identical for any worker count, and a zero `ParallelFor` runs the same code on the calling
+thread. The slots are temporary: 16 bytes per piece pair, released with the caller's temporary scope.
+When they cannot be allocated, the call fails with `CAPACITY_EXCEEDED`. The application must not mutate
+the scene or the world while preparation or a reset runs. Explicit recipes carry their own welds and
+derive none.
+
 ## Explicit recipes and strengths
 
 `BreakableRecipeDesc` contains ordered `BreakablePieceView` values, internal
@@ -552,6 +563,7 @@ addons/c3d_physics.c3l/build/breakable.exe --frames=120 --acceptance --capture=f
 addons/c3d_physics.c3l/build/breakable.exe --anchors --sampled --acceptance --frames=480 --reset-at=420
 c3c build breakable --path addons/c3d_physics.c3l -O3
 addons/c3d_physics.c3l/build/breakable.exe --benchmark
+addons/c3d_physics.c3l/build/breakable.exe --benchmark --workers 4
 ```
 
 Left click launches a box; right drag orbits and the wheel zooms. The panel
@@ -575,6 +587,11 @@ counts. Timed updates exclude geometry/node creation and world-transform
 publication. Maximum strength retains the complete graph during idle runs;
 PIECES does not imply that its native bodies are asleep. Timing results and
 manual acceptance records belong to the corresponding change evidence.
+
+`--workers n` runs graph derivation on a `c3d_job` pool of n workers; 0, the default, uses the calling
+thread. The example's project selects `c3d_job`; the package does not. The benchmark's `authoring`
+lines give the time to author one 8×8 and one 32×32 piece wall, and a checksum of the resulting graph,
+which is equal for every worker count.
 
 ![An impact opens the authored wall](images/breakable.png)
 The anchored example before and after restoring its captured rest recipe:
