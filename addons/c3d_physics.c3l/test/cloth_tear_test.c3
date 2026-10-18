@@ -518,7 +518,12 @@ fn void test_crowd_cloth_tear_isolates_slots_and_reseeds_intact() @test {
         desc.attachments = attachments[..];
         desc.cuts = cuts[..];
 
-        fixture.scene.attach_crowd_cloth(&fixture.assets, crowd_node, 0, desc)!!;
+        fixture.scene.attach_crowd_cloth(
+            assets: &fixture.assets,
+            owner:  crowd_node,
+            part:   0,
+            desc:   desc,
+        )!!;
         fixture.physics.update(0);
         cloth::prepare_crowd_cloth(&fixture.physics, &fixture.assets, crowd_node)!!;
 

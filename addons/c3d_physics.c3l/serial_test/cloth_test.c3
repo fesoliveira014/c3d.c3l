@@ -620,7 +620,12 @@ fn void test_cloth_v7_cuts_and_crowd_v2_round_trip_and_restart_intact() @test {
             capacity:    1,
             pose_bounds: { .min = { -2, -2, -2 }, .max = { 2, 2, 2 } },
         )!!;
-        fixture.source.attach_crowd_cloth(&fixture.assets, crowd_owner, 0, desc)!!;
+        fixture.source.attach_crowd_cloth(
+            assets: &fixture.assets,
+            owner:  crowd_owner,
+            part:   0,
+            desc:   desc,
+        )!!;
 
         char[] pending_bytes = encode(
             scene:     &fixture.source,
@@ -633,7 +638,12 @@ fn void test_cloth_v7_cuts_and_crowd_v2_round_trip_and_restart_intact() @test {
         defer physics::destroy_physics_world(&source_world);
         source_world.update(0);
         model::prepare_crowd_subtree(&fixture.assets, &fixture.source, fixture.root)!!;
-        cloth::prepare_subtree(&fixture.source, &fixture.assets, fixture.root, &source_world)!!;
+        cloth::prepare_subtree(
+            scene:  &fixture.source,
+            assets: &fixture.assets,
+            root:   fixture.root,
+            world:  &source_world,
+        )!!;
 
         Cloth* source_cloth = fixture.source.get(node, Cloth);
         source_cloth.request_cut(10)!!;
@@ -668,7 +678,12 @@ fn void test_cloth_v7_cuts_and_crowd_v2_round_trip_and_restart_intact() @test {
         defer physics::destroy_physics_world(&restored_world);
         restored_world.update(0);
         model::prepare_crowd_subtree(&fixture.assets, &fixture.destination, restored)!!;
-        cloth::prepare_subtree(&fixture.destination, &fixture.assets, restored, &restored_world)!!;
+        cloth::prepare_subtree(
+            scene:  &fixture.destination,
+            assets: &fixture.assets,
+            root:   restored,
+            world:  &restored_world,
+        )!!;
         assert(restored_cloth.is_prepared() && restored_cloth.state.active_particle_count == 6);
         assert(restored_cloth.state.pending_request_count == 0);
         assert(!restored_cloth.cut_result(10)!!.is_cut);
