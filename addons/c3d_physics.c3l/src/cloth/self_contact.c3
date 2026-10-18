@@ -7,6 +7,8 @@ import std::math;
 import std::math::vector;
 import std::sort;
 
+const double PARALLEL_EDGE_DENOMINATOR_TOLERANCE @local = 1e-12; // relative Gram determinant below which two segments are treated as parallel
+
 enum ClothSelfKind @private {
     VERTEX,
     EDGE,
@@ -55,15 +57,17 @@ fn void build_self_topology(ClothState* state) @private {
     foreach (edge : state.edges) {
         uint first = state.canonical_vertices[edge.first];
         uint second = state.canonical_vertices[edge.second];
-        if (first != second) state.adjacent_vertices[adjacent_count++] = self_edge_key(first, second);
+        if (first != second) state.adjacent_vertex_storage[adjacent_count++] = self_edge_key(first, second);
     }
-    sort::quicksort(state.adjacent_vertices[:adjacent_count]);
+    sort::quicksort(state.adjacent_vertex_storage[:adjacent_count]);
 
     usz unique_count;
-    foreach (key : state.adjacent_vertices[:adjacent_count]) {
-        if (!unique_count || state.adjacent_vertices[unique_count - 1] != key) state.adjacent_vertices[unique_count++] = key;
+    foreach (key : state.adjacent_vertex_storage[:adjacent_count]) {
+        if (!unique_count || state.adjacent_vertex_storage[unique_count - 1] != key) {
+            state.adjacent_vertex_storage[unique_count++] = key;
+        }
     }
-    state.adjacent_vertices = state.adjacent_vertices[:unique_count];
+    state.adjacent_vertices = state.adjacent_vertex_storage[:unique_count];
 
     foreach (index, &face : state.faces) {
         face.vertices = {
@@ -85,11 +89,11 @@ fn uint canonical_vertex(uint[] parents, uint vertex) @local {
     return root;
 }
 
-fn ulong self_edge_key(uint first, uint second) @local {
+fn ulong self_edge_key(uint first, uint second) @private {
     return (ulong)math::min(first, second) << 32 | (ulong)math::max(first, second);
 }
 
-fn bool self_vertices_adjacent(ClothState* state, uint first, uint second) @local {
+fn bool self_vertices_adjacent(ClothState* state, uint first, uint second) @private {
     first = state.canonical_vertices[first];
     second = state.canonical_vertices[second];
     if (first == second) return true;
@@ -109,7 +113,7 @@ fn bool self_vertices_adjacent(ClothState* state, uint first, uint second) @loca
     return false;
 }
 
-fn bool self_pair_excluded(ClothState* state, ClothCandidate candidate) @local {
+fn bool self_pair_excluded(ClothState* state, ClothCandidate candidate) @private {
     if (candidate.kind == SELF_VERTEX_FACE) {
         foreach (corner : state.faces[candidate.self_pair[1]].vertices) {
             if (self_vertices_adjacent(state, candidate.self_pair[0], corner)) return true;
@@ -129,7 +133,7 @@ fn Aabb? self_bounds(
     Vec3[] positions,
     uint[] vertices,
     float thickness,
-) @local {
+) @private {
     Vec3 low = positions[vertices[0]];
     Vec3 high = low;
     foreach (vertex : vertices) {
@@ -164,7 +168,7 @@ fn usz? gather_self_candidates(ClothState* state, Vec3[] positions, usz count) @
     float thickness = state.desc.thickness;
     foreach (index, position : positions) {
         uint[1] vertices = { (uint)index };
-        state.self_primitives[primitive_count++] = {
+        state.self_primitive_storage[primitive_count++] = {
             .bounds = self_bounds(
                 state: state,
                 positions: positions,
@@ -177,7 +181,7 @@ fn usz? gather_self_candidates(ClothState* state, Vec3[] positions, usz count) @
     }
     foreach (index, edge : state.edges) {
         uint[2] vertices = { edge.first, edge.second };
-        state.self_primitives[primitive_count++] = {
+        state.self_primitive_storage[primitive_count++] = {
             .bounds = self_bounds(
                 state: state,
                 positions: positions,
@@ -189,7 +193,7 @@ fn usz? gather_self_candidates(ClothState* state, Vec3[] positions, usz count) @
         };
     }
     foreach (index, face : state.faces) {
-        state.self_primitives[primitive_count++] = {
+        state.self_primitive_storage[primitive_count++] = {
             .bounds = self_bounds(
                 state: state,
                 positions: positions,
@@ -201,6 +205,7 @@ fn usz? gather_self_candidates(ClothState* state, Vec3[] positions, usz count) @
         };
     }
 
+    state.self_primitives = state.self_primitive_storage[:primitive_count];
     sort::quicksort(state.self_primitives, &by_self_bound);
     foreach (index, first : state.self_primitives) {
         for (usz other = (usz)index + 1; other < state.self_primitives.len; other++) {
@@ -227,7 +232,7 @@ fn usz? gather_self_candidates(ClothState* state, Vec3[] positions, usz count) @
     return count;
 }
 
-fn int by_self_bound(ClothSelfPrimitive first, ClothSelfPrimitive second) @local {
+fn int by_self_bound(ClothSelfPrimitive first, ClothSelfPrimitive second) @private {
     if (first.bounds.min.x != second.bounds.min.x) return first.bounds.min.x < second.bounds.min.x ? -1 : 1;
     if (first.kind != second.kind) return first.kind < second.kind ? -1 : 1;
     if (first.index != second.index) return first.index < second.index ? -1 : 1;
@@ -249,6 +254,20 @@ fn double[2] self_edge_weights(
     double first_offset = first.dot(relative);
     double second_offset = second.dot(relative);
     double denominator = first_squared * second_squared - mixed * mixed;
+
+    if (denominator <= PARALLEL_EDGE_DENOMINATOR_TOLERANCE * first_squared * second_squared
+        && first_squared > 0 && second_squared > 0) {
+        double second_start_along = -first_offset / first_squared;
+        double second_end_along = (mixed - first_offset) / first_squared;
+        double low = math::max(0.0, math::min(second_start_along, second_end_along));
+        double high = math::min(1.0, math::max(second_start_along, second_end_along));
+        double along_first = low <= high
+          ? 0.5 * (low + high)
+          : math::clamp(0.5 * (second_start_along + second_end_along), 0.0, 1.0);
+        double along_second = math::clamp((mixed * along_first + second_offset) / second_squared, 0.0, 1.0);
+        return { along_first, along_second };
+    }
+
     double along_first = denominator > 0
       ? math::clamp((mixed * second_offset - first_offset * second_squared) / denominator, 0.0, 1.0) : 0;
     double along_second = second_squared > 0

@@ -115,6 +115,34 @@ are simulated and published in owner-local space with per-slot geometry vertex c
 source vertex colors (or white) multiplied by `crowd.colors[slot]`; inactive slots are hidden, and slot
 generation changes reseed the slot and advance `Mesh.vertex_history_token`.
 
+### Authored cut paths and tearing
+
+`ClothDesc.cuts` lists authored `ClothCutPath { uint id; uint[] vertices; bool strain_trigger; float strain_threshold; }`
+chains over physical particle IDs (`id != 0`, unique across the cloth, `vertices.len >= 2`, consecutive
+vertices connected by an interior physical edge). `ClothDesc.tears` (`ClothTearLimits`) configures
+`max_requests` (default 0, defaulting to `cuts.len`) and `opening_iterations` (default 32). Preparation
+pre-splits material vertices across potential cut sectors and computes rest-area mass shares and
+partitioned soft-attachment compliances so runtime cuts allocate nothing and never rewrite the triangle
+index buffer.
+
+Call `cloth.request_cut(id)` (or `crowd_cloth.request_cut(part, instance, id)`) on a prepared owner to
+queue an explicit cut for the next performed substep, or enable `strain_trigger = true` with a positive
+`strain_threshold` so the path triggers when an intact interior edge along the path satisfies
+`(length - rest_length) / rest_length >= strain_threshold`. Triggered and requested paths are processed
+in ascending `id` order. When `self_collision` is enabled, newly split seam pairs are separated by a
+centroid-conserving half-space opening solver and certified over the affine `t in [0, 1]` trajectory
+(including positive-thickness CCD resweep when `continuous` is enabled) before committing and advancing
+`Mesh.vertex_history_token`. Any uncertified opening rolls back the entire cloth update with
+`cloth::OPENING_UNRESOLVED` (`stage == OPENING`) and records `ClothCutOutcome.REFUSED` (`failure == cloth::OPENING_UNRESOLVED`, `stage == OPENING`) in
+`cloth.cut_result(id)`. Refused strain-triggered paths latch (`outcome == REFUSED`) so subsequent updates
+do not re-trigger the same automatic path and freeze the cloth; explicit `request_cut(id)` calls can retry a
+refused path.
+
+The opening moves positions only: split particles keep their parent's velocity, so a cut conserves
+momentum and adds no separation speed. Continuous self-contact between vertices of a torn seam (active
+particles that share a base particle) raises each movable vertex's response share to at least 0.25 so
+the coincident halves separate; every other contact keeps its barycentric response.
+
 ## Pending authoring and preparation
 
 The shared [owner readiness table](owner_readiness.md) records preparation order
@@ -320,6 +348,7 @@ unvisited work as checked.
 | `cloth::CONTACT_PRECISION_EXCEEDED` | Arithmetic, correction or float publication cannot establish the configured tolerance. |
 | `cloth::BEND_UNRESOLVED` | A dihedral hinge collapsed, became non-finite, or turned half a revolution within one substep. |
 | `cloth::FRAME_UNRESOLVED` | Deformed normal or tangent frame reconstruction could not produce a finite unit frame. |
+| `cloth::OPENING_UNRESOLVED` | A requested or strain-triggered cut path could not be opened and certified within its reserves and tolerances. |
 
 An update stages all performed substeps, velocities, pin/body observations and publication
 before committing. On failure it keeps the last committed simulation and histories,
@@ -340,16 +369,17 @@ the old local geometry may render elsewhere. Restoring a supported transform let
 updates retry. World-surface preservation is not guaranteed under an unrepresentable
 transform.
 
-With `C3D_PHYSICS_SERIAL`, authoring version 5 stores collision settings, requested pins,
-typed seam pairs, collider references, `render_particles`, `tangent_frame`, `tangent_uv_set`,
-`attachments`, `bend_mode`, `bend_compliance` and `rest_angles`. Version-1..4 JSONC defaults
-the version-5 material, attachment and dihedral fields to empty/false/`DISTANCE`/`0`.
+With `C3D_PHYSICS_SERIAL`, Cloth authoring version 7 and CrowdCloth authoring version 2 store
+collision settings, requested pins, typed seam pairs, collider references, `render_particles`,
+`tangent_frame`, `tangent_uv_set`, `attachments`, `bend_mode`, `bend_compliance`, `rest_angles`,
+`transport`, `cuts` (`ClothCutPath`) and `tears` (`ClothTearLimits`). Older JSONC payloads default
+`tears` to `default_cloth_tear_limits()` (`opening_iterations = 32`, `max_requests = 0`) and other newer fields to empty/false/`DISTANCE`/`0`.
 Version-1/2/3 JSONC defaults `continuous` to
 false and `max_ccd_iterations` to 64. Version-1/2 also defaults self-contact to false and
 seams to empty; version-1 receives the discrete collision defaults. Incompatible older
 binary layouts return `c3d::UNSUPPORTED` before destination mutation. Restored cloth
-remains pending. Runtime contacts, diagnostics, native identities, velocities, buffers
-and histories are never serialized.
+remains pending. Runtime contacts, diagnostics, native identities, velocities, buffers,
+cut state and histories are never serialized.
 
 ## Frame order
 

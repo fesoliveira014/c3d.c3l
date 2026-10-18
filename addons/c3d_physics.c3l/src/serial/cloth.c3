@@ -37,14 +37,18 @@ struct ClothSavedAuthoring @private {
     float bend_compliance;
     ClothRestAngle[] rest_angles;
     float[] transport;
+    ClothCutPath[] cuts;
+    ClothTearLimits tears;
 }
 
-uint[5] cloth_text_default_versions @private = { 1, 2, 3, 4, 5 };
+uint[6] cloth_text_default_versions @private = { 1, 2, 3, 4, 5, 6 };
 
 fn void? register_cloth_codec() @private {
     describe::register_reflected(ClothSeam)!;
     describe::register_reflected(ClothAttachment)!;
     describe::register_reflected(ClothRestAngle)!;
+    describe::register_reflected(ClothCutPath)!;
+    describe::register_reflected(ClothTearLimits)!;
     describe::register_reflected(ClothSavedAuthoring)!;
     serial::register_described_type(
         $Type: ClothSeam,
@@ -65,9 +69,21 @@ fn void? register_cloth_codec() @private {
         defaults: &defaults_cloth_rest_angle,
     )!;
     serial::register_described_type(
+        $Type: ClothCutPath,
+        version: 1,
+        layout: 0x194f332270e8c8dc,
+        defaults: &defaults_cloth_cut_path,
+    )!;
+    serial::register_described_type(
+        $Type: ClothTearLimits,
+        version: 1,
+        layout: 0x4abf68fd1a972e55,
+        defaults: &defaults_cloth_tear_limits,
+    )!;
+    serial::register_described_type(
         $Type: ClothSavedAuthoring,
-        version: 6,
-        layout: 0x1343001935221bd8,
+        version: 7,
+        layout: 0x12911e3cd68aec15,
         defaults: &defaults_cloth_authoring,
     )!;
     serial::register_described_owner(Cloth, ClothSavedAuthoring, {
@@ -92,6 +108,14 @@ fn void defaults_cloth_attachment(void* value) @private {
 
 fn void defaults_cloth_rest_angle(void* value) @private {
     *(ClothRestAngle*)value = {};
+}
+
+fn void defaults_cloth_cut_path(void* value) @private {
+    *(ClothCutPath*)value = {};
+}
+
+fn void defaults_cloth_tear_limits(void* value) @private {
+    *(ClothTearLimits*)value = cloth::default_cloth_tear_limits();
 }
 
 fn void defaults_cloth_authoring(void* value) @private {
@@ -124,6 +148,8 @@ fn void defaults_cloth_authoring(void* value) @private {
         .bend_compliance = desc.bend_compliance,
         .rest_angles = desc.rest_angles,
         .transport = desc.transport,
+        .cuts = desc.cuts,
+        .tears = desc.tears,
     };
 }
 
@@ -247,6 +273,8 @@ fn void? project_cloth_recipe(ClothDesc desc, ClothSavedAuthoring* value, serial
         .bend_compliance = desc.bend_compliance,
         .rest_angles = desc.rest_angles,
         .transport = desc.transport,
+        .cuts = desc.cuts,
+        .tears = desc.tears,
     };
 }
 
@@ -290,6 +318,8 @@ fn ClothDesc? cloth_desc(ClothSavedAuthoring* source, serial::ReadContext* conte
         .bend_compliance = source.bend_compliance,
         .rest_angles = source.rest_angles,
         .transport = source.transport,
+        .cuts = source.cuts,
+        .tears = source.tears,
     };
 }
 

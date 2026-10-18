@@ -31,6 +31,7 @@ struct ClothMaterialPlan @private {
     uint[]            render_to_particle;
     uint[]            particle_sources;
     uint[]            material_particles;
+    uint[]            material_sectors;
     uint[]            material_normal_domains;
     uint[]            material_reference_faces;
     float[]           tangent_signs;
@@ -164,7 +165,11 @@ fn uint[]? build_normal_domains(
     return domains;
 }
 
-fn ClothMaterialPlan? build_material_plan(Geometry* source, ClothDesc desc) @private {
+fn ClothMaterialPlan? build_material_plan(
+    Geometry* source,
+    ClothDesc desc,
+    uint[] corner_sectors = {},
+) @private {
     uint render_count = (uint)source.positions.len;
     uint corner_count = (uint)source.indices.len;
     uint triangle_count = corner_count / 3;
@@ -319,10 +324,16 @@ fn ClothMaterialPlan? build_material_plan(Geometry* source, ClothDesc desc) @pri
         plan.initial_tangents[..] = generated.tangents[..];
     }
 
+    if (desc.cuts.len > 0 && corner_sectors.len == corner_count) {
+        split_material_vertices_by_sector(&plan, corner_sectors, desc.tangent_frame);
+    } else {
+        plan.material_sectors = plan.material_particles;
+    }
+
     Vec3[] particle_rest = alloc::new_array(tmem, Vec3, (sz)particle_count);
     foreach (particle, source_vertex : particle_sources) particle_rest[particle] = source.positions[source_vertex];
 
-    Vec3[] normal_accum = alloc::new_array(tmem, Vec3, (sz)normal_domain_count);
+    Vec3[] normal_accum = alloc::new_array(tmem, Vec3, (sz)plan.normal_domain_count);
     Vec3[] tangent_accum = desc.tangent_frame
       ? alloc::new_array(tmem, Vec3, (sz)plan.material_vertex_count)
       : {};
@@ -348,6 +359,157 @@ fn ClothMaterialPlan? build_material_plan(Geometry* source, ClothDesc desc) @pri
     if (desc.tangent_frame) plan.initial_tangents[..] = plan.geometry.tangents[..];
     plan.geometry.finalize();
     return plan;
+}
+
+fn void split_material_vertices_by_sector(
+    ClothMaterialPlan* plan,
+    uint[] corner_sectors,
+    bool tangent_frame,
+) @local {
+    uint corner_count = (uint)plan.corners.len;
+    uint base_material_count = plan.material_vertex_count;
+    uint[] first_sector = alloc::new_array(tmem, uint, (sz)base_material_count);
+    first_sector[..] = uint::max;
+
+    uint[] corner_material_vertices = alloc::new_array(tmem, uint, (sz)corner_count);
+    uint[] first_split_corner = alloc::new_array(tmem, uint, (sz)base_material_count);
+    uint[] next_split_corner = alloc::new_array(tmem, uint, (sz)corner_count);
+    first_split_corner[..] = uint::max;
+    uint split_material_count = base_material_count;
+
+    for (uint corner_index = 0; corner_index < corner_count; corner_index++) {
+        uint base_vertex = plan.corners[corner_index].material_vertex;
+        uint sector = corner_sectors[corner_index];
+        if (first_sector[base_vertex] == uint::max) {
+            first_sector[base_vertex] = sector;
+            corner_material_vertices[corner_index] = base_vertex;
+        } else if (first_sector[base_vertex] == sector) {
+            corner_material_vertices[corner_index] = base_vertex;
+        } else {
+            uint assigned = uint::max;
+            for (uint earlier = first_split_corner[base_vertex];
+                 earlier != uint::max;
+                 earlier = next_split_corner[earlier]) {
+                if (corner_sectors[earlier] == sector) {
+                    assigned = corner_material_vertices[earlier];
+                    break;
+                }
+            }
+            if (assigned == uint::max) {
+                assigned = split_material_count++;
+                next_split_corner[corner_index] = first_split_corner[base_vertex];
+                first_split_corner[base_vertex] = (uint)corner_index;
+            }
+            corner_material_vertices[corner_index] = assigned;
+        }
+    }
+
+    uint[] material_sectors = alloc::new_array(tmem, uint, (sz)split_material_count);
+    for (uint vertex = 0; vertex < base_material_count; vertex++) {
+        material_sectors[vertex] = first_sector[vertex] != uint::max
+          ? first_sector[vertex]
+          : plan.material_particles[vertex];
+    }
+
+    if (split_material_count > base_material_count) {
+        uint[] base_vertices = alloc::new_array(tmem, uint, (sz)split_material_count);
+        uint[] reference_faces = alloc::new_array(tmem, uint, (sz)split_material_count);
+        reference_faces[:base_material_count] = plan.material_reference_faces[..];
+
+        for (uint corner_index = 0; corner_index < corner_count; corner_index++) {
+            uint split_vertex = corner_material_vertices[corner_index];
+            uint base_vertex = plan.corners[corner_index].material_vertex;
+            base_vertices[split_vertex] = base_vertex;
+            material_sectors[split_vertex] = corner_sectors[corner_index];
+            if (split_vertex >= base_material_count) reference_faces[split_vertex] = corner_index / 3;
+            plan.corners[corner_index].material_vertex = split_vertex;
+        }
+
+        uint[] split_particles = alloc::new_array(tmem, uint, (sz)split_material_count);
+        uint[] split_normal_domains = alloc::new_array(tmem, uint, (sz)split_material_count);
+        split_particles[:base_material_count] = plan.material_particles[..];
+        split_normal_domains[:base_material_count] = plan.material_normal_domains[..];
+        for (uint vertex = base_material_count; vertex < split_material_count; vertex++) {
+            uint base_vertex = base_vertices[vertex];
+            split_particles[vertex] = plan.material_particles[base_vertex];
+            split_normal_domains[vertex] = plan.material_normal_domains[base_vertex];
+        }
+        plan.material_particles = split_particles;
+        plan.material_normal_domains = split_normal_domains;
+        plan.material_reference_faces = reference_faces;
+
+        Vec3[] split_positions = alloc::new_array(tmem, Vec3, (sz)split_material_count);
+        Vec3[] split_normals = alloc::new_array(tmem, Vec3, (sz)split_material_count);
+        split_positions[:base_material_count] = plan.geometry.positions[..];
+        for (uint vertex = base_material_count; vertex < split_material_count; vertex++) {
+            split_positions[vertex] = plan.geometry.positions[base_vertices[vertex]];
+        }
+        plan.geometry.positions = split_positions;
+        plan.geometry.normals = split_normals;
+
+        if (plan.geometry.uv0.len) {
+            Vec2[] split_uv0 = alloc::new_array(tmem, Vec2, (sz)split_material_count);
+            split_uv0[:base_material_count] = plan.geometry.uv0[..];
+            for (uint vertex = base_material_count; vertex < split_material_count; vertex++) {
+                split_uv0[vertex] = plan.geometry.uv0[base_vertices[vertex]];
+            }
+            plan.geometry.uv0 = split_uv0;
+        }
+
+        if (plan.geometry.uv1.len) {
+            Vec2[] split_uv1 = alloc::new_array(tmem, Vec2, (sz)split_material_count);
+            split_uv1[:base_material_count] = plan.geometry.uv1[..];
+            for (uint vertex = base_material_count; vertex < split_material_count; vertex++) {
+                split_uv1[vertex] = plan.geometry.uv1[base_vertices[vertex]];
+            }
+            plan.geometry.uv1 = split_uv1;
+        }
+
+        if (plan.geometry.colors.len) {
+            Vec4[] split_colors = alloc::new_array(tmem, Vec4, (sz)split_material_count);
+            split_colors[:base_material_count] = plan.geometry.colors[..];
+            for (uint vertex = base_material_count; vertex < split_material_count; vertex++) {
+                split_colors[vertex] = plan.geometry.colors[base_vertices[vertex]];
+            }
+            plan.geometry.colors = split_colors;
+        }
+
+        if (tangent_frame) {
+            float[] split_signs = alloc::new_array(tmem, float, (sz)split_material_count);
+            Vec3[] split_rest_tangents = alloc::new_array(tmem, Vec3, (sz)split_material_count);
+            Vec4[] split_initial_tangents = alloc::new_array(tmem, Vec4, (sz)split_material_count);
+            Vec4[] split_geometry_tangents = alloc::new_array(tmem, Vec4, (sz)split_material_count);
+            split_signs[:base_material_count] = plan.tangent_signs[..];
+            split_rest_tangents[:base_material_count] = plan.rest_tangents[..];
+            split_initial_tangents[:base_material_count] = plan.initial_tangents[..];
+            split_geometry_tangents[:base_material_count] = plan.geometry.tangents[..];
+
+            for (uint vertex = base_material_count; vertex < split_material_count; vertex++) {
+                uint base_vertex = base_vertices[vertex];
+                split_signs[vertex] = plan.tangent_signs[base_vertex];
+                split_rest_tangents[vertex] = plan.rest_tangents[base_vertex];
+                split_initial_tangents[vertex] = plan.initial_tangents[base_vertex];
+                split_geometry_tangents[vertex] = plan.geometry.tangents[base_vertex];
+            }
+
+            plan.tangent_signs = split_signs;
+            plan.rest_tangents = split_rest_tangents;
+            plan.initial_tangents = split_initial_tangents;
+            plan.geometry.tangents = split_geometry_tangents;
+        }
+
+        uint[] split_indices = alloc::new_array(tmem, uint, (sz)corner_count);
+        for (uint corner_index = 0; corner_index < corner_count; corner_index++) {
+            split_indices[corner_index] = corner_material_vertices[corner_index];
+        }
+        plan.geometry.indices = split_indices;
+        plan.material_vertex_count = split_material_count;
+    }
+
+    plan.material_sectors = material_sectors;
+    if (plan.normal_domain_count < plan.material_vertex_count) {
+        plan.normal_domain_count = plan.material_vertex_count;
+    }
 }
 
 fn Vec3? resolve_tangent_direction(
@@ -481,14 +643,12 @@ fn void? compute_material_frames(
         }
     }
 
-    foreach (&accum : normal_accum) {
-        float length = accum.length();
-        if (!finite_vector(*accum)) return FRAME_UNRESOLVED~;
-        if (length > 0) *accum /= length;
-    }
-
     foreach (vertex, &out_normal : out_normals) {
-        *out_normal = normal_accum[material_normal_domains[vertex]];
+        Vec3 accum = normal_accum[material_normal_domains[vertex]];
+        float length = accum.length();
+        if (!finite_vector(accum)) return FRAME_UNRESOLVED~;
+        if (out_tangents.len && !(length > 2 * MIN_TRIANGLE_AREA)) return FRAME_UNRESOLVED~;
+        *out_normal = length > 0 ? accum / length : (Vec3){};
     }
 
     if (out_tangents.len) {
