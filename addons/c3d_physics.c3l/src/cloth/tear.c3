@@ -770,14 +770,21 @@ fn void seed_cloth_topology(
         }
 
         state.edge_storage[..] = sector_plan.base_edges[..];
+        state.bend_storage[..] = sector_plan.initial_bends[..];
         @pool() {
-            order_edges_by_color(
-                edges:        state.edge_storage,
-                used_colors:  alloc::new_array(tmem, uint, (sz)particle_count),
-                destinations: alloc::new_array(tmem, uint, (sz)state.edge_storage.len),
+            uint[] used_colors = alloc::new_array(tmem, uint, (sz)particle_count);
+            uint[] destinations = alloc::new_array(tmem, uint, (sz)state.edge_storage.len);
+            order_constraints_by_color(
+                constraints:  state.edge_storage,
+                used_colors:  used_colors,
+                destinations: destinations,
+            );
+            order_constraints_by_color(
+                constraints:  state.bend_storage,
+                used_colors:  used_colors,
+                destinations: destinations[:state.bend_storage.len],
             );
         };
-        state.bend_storage[..] = sector_plan.initial_bends[..];
         state.hinge_storage[..] = sector_plan.initial_hinges[..];
         rebind_active_slices(
             state:     state,
@@ -1012,10 +1019,10 @@ fn void apply_topology_mapping(
         }
     }
 
-    order_edges_by_color(
-        edges:        state.edge_storage[:edge_count],
+    order_constraints_by_color(
+        constraints:  state.edge_storage[:edge_count],
         used_colors:  state.sector_scratch[:particle_count],
-        destinations: state.edge_order_scratch[:edge_count],
+        destinations: state.constraint_order_scratch[:edge_count],
     );
 
     uint bend_count;
@@ -1071,6 +1078,12 @@ fn void apply_topology_mapping(
             }
         }
     }
+
+    order_constraints_by_color(
+        constraints:  state.bend_storage[:bend_count],
+        used_colors:  state.sector_scratch[:particle_count],
+        destinations: state.constraint_order_scratch[:bend_count],
+    );
 
     rebind_active_slices(
         state:     state,

@@ -287,7 +287,7 @@ struct ClothState {
     uint[]               selected_paths_scratch;
     uint[]               sector_scratch;
     uint[]               sector_root_scratch;
-    uint[]               edge_order_scratch;
+    uint[]               constraint_order_scratch;
     uint[]               split_group_starts;
     uint[]               split_group_counts;
     uint[]               split_group_members;

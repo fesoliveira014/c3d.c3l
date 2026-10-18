@@ -411,7 +411,7 @@ fn ClothState* carve_cloth_state(BlockCursor* cursor, ClothCounts counts) @local
         .selected_paths_scratch        = physics::carve(cursor, uint, counts.cut_paths),
         .sector_scratch                = physics::carve(cursor, uint, sector_scratch_count),
         .sector_root_scratch           = physics::carve(cursor, uint, sector_scratch_count),
-        .edge_order_scratch            = physics::carve(cursor, uint, has_cuts ? counts.edges : 0),
+        .constraint_order_scratch      = physics::carve(cursor, uint, has_cuts ? counts.edges : 0),
         .split_group_starts            = physics::carve(cursor, uint, has_cuts ? counts.vertices : 0),
         .split_group_counts            = physics::carve(cursor, uint, has_cuts ? counts.vertices : 0),
         .split_group_members           = physics::carve(cursor, uint, has_cuts ? counts.vertices : 0),

@@ -25,7 +25,7 @@ const float PROBE_THICKNESS @private = 0.02f;
 const float PROBE_REACH @private = 4; // metres from the free vertex to each pinned corner, outside every probed shape
 const uint CONTACT_UPDATES @private = 120;
 const float BONE_RADIUS @private = 0.1f;
-const float SHIFT_OFFSET @private = 256; // one cell; float spacing at this distance stays below the comparison tolerance
+const float SHIFT_OFFSET @private = 16; // metres; rounding at this distance keeps the shifted run within the comparison tolerance
 const uint SHIFT_PRE_UPDATES @private = 20;
 
 struct Fixture @private {
