@@ -10,6 +10,7 @@ import c3d::maths;
 import b3;
 
 const usz  RGBA_CHANNELS @local = 4;
+const b3::Transform IDENTITY_FRAME @local = { .q = quaternion::IDENTITY };
 
 <*
  Kind of cooked data a snapshot holds.
@@ -44,6 +45,7 @@ struct SnapshotSource {
 struct CollisionSnapshot {
     SnapshotKind         kind;
     ulong                content;    // hash of component data baked into the box3d object; 0 when none
+    Vec3                 scale;      // exact scale baked into a hull variant; zero for unscaled data
     SnapshotSource[]     sources;    // empty for component-sourced data
     b3::HullData*        hull;
     b3::MeshData*        mesh;
@@ -68,6 +70,7 @@ struct SnapshotTable {
 struct SnapshotKey @local {
     SnapshotKind     kind;
     ulong            content;
+    Vec3             scale;
     SnapshotSource[] sources;
 }
 
@@ -126,6 +129,35 @@ fn SnapshotHandle? acquire_hull(SnapshotTable* table, GeometryId geometry, bool 
         .sources = captured_sources,
         .hull    = hull,
         .wire    = wire,
+    });
+}
+
+fn SnapshotHandle? acquire_scaled_hull(SnapshotTable* table, GeometryId geometry, Vec3 scale) @private {
+    SnapshotSource[1] sources = { current_source(table, geometry) };
+    foreach (usz index, &slot : table.slots) {
+        if (matches(slot, { .kind = HULL, .scale = scale, .sources = sources[..] })) return hold(table, index);
+    }
+
+    SnapshotHandle unit = acquire_hull(table, geometry, query: true)!;
+    defer release_snapshot(table, unit);
+    b3::HullData* unit_hull = snapshot_of(table, unit).hull;
+    check_collision_hull_scale(unit_hull, scale)!;
+
+    usz index = reserve_slot(table)!;
+    SnapshotSource[] captured_sources = alloc::new_array_try(table.allocator, SnapshotSource, 1)
+      ?? c3d::CAPACITY_EXCEEDED~!;
+    defer catch alloc::free(table.allocator, captured_sources.ptr);
+    captured_sources[0] = sources[0];
+
+    b3::HullData* hull = b3::clone_and_transform_hull(unit_hull, IDENTITY_FRAME, scale)!;
+    defer catch b3::destroy_hull(hull);
+
+    // Query owners never draw a variant, so it carries no wireframe.
+    return occupy(table, index, {
+        .kind    = HULL,
+        .scale   = scale,
+        .sources = captured_sources,
+        .hull    = hull,
     });
 }
 
@@ -358,6 +390,7 @@ fn usz? first_free_slot(SnapshotTable* table) @local {
 
 fn bool matches(CollisionSnapshot* slot, SnapshotKey key) @local {
     if (!is_occupied(slot) || slot.kind != key.kind || slot.content != key.content) return false;
+    if (slot.scale != key.scale) return false;
     if (slot.sources.len != key.sources.len) return false;
     foreach (index, source : key.sources) {
         SnapshotSource held = slot.sources[index];

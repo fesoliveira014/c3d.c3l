@@ -300,11 +300,6 @@ fn void test_collision_shape_preparation_refuses_unsupported_and_degenerate_inpu
     defer teardown_cache_lifetime(&fixture);
 
     CollisionShapeDesc desc = physics::default_collision_shape_desc(physics::ColliderKind.SPHERE);
-    desc.radius = 0.5f;
-    desc.scale.x = 2;
-    assert(@catch(physics::create_collision_shape(mem, &fixture.cache, desc)) == c3d::UNSUPPORTED);
-
-    desc.scale = { 1, 1, 1 };
     desc.radius = float::nan;
     assert(@catch(physics::create_collision_shape(mem, &fixture.cache, desc)) == c3d::INVALID_ARGUMENT);
     desc.radius = float::max;
@@ -341,3 +336,100 @@ fn void test_collision_shape_preparation_refuses_unsupported_and_degenerate_inpu
     assert(fixture.cache.state.borrowers == 0);
 }
 
+fn void test_collision_shape_scale_domain_refuses_values_outside_each_kind() @test {
+    CacheLifetimeFixture fixture;
+    setup_cache_lifetime(&fixture);
+    defer teardown_cache_lifetime(&fixture);
+
+    CollisionShapeDesc hull = cache_hull_desc(fixture.geometry);
+    float hull_minimum = 0.01f;
+    float below_minimum = bitcast(bitcast(hull_minimum, uint) - 1, float);
+    hull.scale = { 1, -hull_minimum, 1 };
+    CollisionShape thin = physics::create_collision_shape(mem, &fixture.cache, hull)!!;
+    physics::destroy_collision_shape(&thin);
+    hull.scale = { 1, -below_minimum, 1 };
+    assert(@catch(physics::create_collision_shape(mem, &fixture.cache, hull)) == c3d::UNSUPPORTED);
+
+    foreach (invalid : (float[3]){ 0, float::nan, float::inf }) {
+        hull.scale = { 1, invalid, 1 };
+        assert(@catch(physics::create_collision_shape(mem, &fixture.cache, hull)) == c3d::INVALID_ARGUMENT);
+    }
+
+    foreach (kind : (ColliderKind[2]){ SPHERE, CAPSULE }) {
+        CollisionShapeDesc round = physics::default_collision_shape_desc(kind);
+        round.radius = 0.5f;
+        round.half_height = 0.75f;
+        round.scale = { 1, 2, 1 };
+        assert(@catch(physics::create_collision_shape(mem, &fixture.cache, round)) == c3d::UNSUPPORTED);
+    }
+
+    CollisionShapeDesc capsule = physics::default_collision_shape_desc(physics::ColliderKind.CAPSULE);
+    capsule.radius = 0.5f;
+    capsule.half_height = 0.75f;
+    capsule.scale = { 0.003f, 0.003f, 0.003f };
+    assert(@catch(physics::create_collision_shape(mem, &fixture.cache, capsule)) == c3d::UNSUPPORTED);
+
+    CollisionShapeDesc box = physics::default_collision_shape_desc(physics::ColliderKind.BOX);
+    box.half_extents = { 0.5f, 0.5f, 0.5f };
+    box.scale = { 1, 0.0021f, 1 };
+    CollisionShape flat = physics::create_collision_shape(mem, &fixture.cache, box)!!;
+    physics::destroy_collision_shape(&flat);
+    box.scale = { 1, 0.0019f, 1 };
+    assert(@catch(physics::create_collision_shape(mem, &fixture.cache, box)) == c3d::UNSUPPORTED);
+
+    assert(fixture.cache.state.borrowers == 0);
+    foreach (slot : fixture.cache.state.slots) assert(slot.holders == 0);
+}
+
+fn void test_scaled_hull_variants_share_entries_and_leave_unit_bodies_usable() @test {
+    CacheLifetimeFixture fixture;
+    setup_cache_lifetime(&fixture);
+    defer teardown_cache_lifetime(&fixture);
+
+    Scene scene = scene::create_scene(mem, { .max_nodes = 2 });
+    defer scene::destroy_scene(&scene);
+    physics::register_physics(&scene)!!;
+    PhysicsWorld world = physics::create_physics_world(
+        allocator: mem,
+        assets: &fixture.assets,
+        scene: &scene,
+        desc: physics::default_physics_desc(),
+        cache: &fixture.cache,
+    )!!;
+    defer physics::destroy_physics_world(&world);
+
+    Node* node = scene.add_node(name: "unit_hull")!!;
+    scene.update_world();
+    ColliderDesc collider = physics::default_collider_desc(physics::ColliderKind.HULL);
+    collider.geometry = fixture.geometry;
+    world.add_body(node, physics::default_body_desc(STATIC), (&collider)[:1])!!;
+    SnapshotTable* table = fixture.cache.state;
+    SnapshotHandle unit = scene.get(node, RigidBody).colliders[0].snapshot;
+    b3::HullData* unit_hull = table.slots[unit.index].hull;
+
+    CollisionShapeDesc desc = cache_hull_desc(fixture.geometry);
+    desc.scale = { 2, 0.5f, -1 };
+    CollisionShape first = physics::create_collision_shape(mem, &fixture.cache, desc)!!;
+    defer physics::destroy_collision_shape(&first);
+    CollisionShape second = physics::create_collision_shape(mem, &fixture.cache, desc)!!;
+    defer physics::destroy_collision_shape(&second);
+
+    assert(second.state.snapshot.index == first.state.snapshot.index);
+    assert(second.state.shape.hull == first.state.shape.hull && first.state.shape.hull != unit_hull);
+    assert(table.slots[first.state.snapshot.index].holders == 2 && table.slots[unit.index].holders == 1);
+    assert(near_vector(first.state.bounds.max, { 1, 0.25f, 0.5f }) && near(unit_hull.aabb.upper_bound.x, 0.5f));
+
+    desc.scale = { 2, 0.5f, 1 };
+    CollisionShape other = physics::create_collision_shape(mem, &fixture.cache, desc)!!;
+    defer physics::destroy_collision_shape(&other);
+
+    assert(other.state.snapshot.index != first.state.snapshot.index);
+    assert(other.state.shape.hull != first.state.shape.hull);
+
+    desc.scale = { 3, 1, 1 };
+    assert(@catch(physics::create_collision_shape(mem, &fixture.cache, desc)) == c3d::CAPACITY_EXCEEDED);
+    assert(table.slots[unit.index].holders == 1 && table.borrowers == 4);
+
+    world.update(0);
+    assert(scene.get(node, RigidBody).body.is_valid() && table.slots[unit.index].hull == unit_hull);
+}
