@@ -77,6 +77,10 @@ fn void test_cloth_rests_after_settling_and_wakes_on_wind_change() @test {
     step(&fixture, physics::DEFAULT_FIXED_DT);
     assert(fixture.physics.cloth_stats.resting == 1);
 
+    fixture.scene.get(node, Wind).drag = 2;
+    step(&fixture, physics::DEFAULT_FIXED_DT);
+    assert(cloth.activity() == RESTING);
+
     fixture.scene.get(node, Wind).velocity = { 5, 0, 0 };
     step(&fixture, physics::DEFAULT_FIXED_DT);
     assert(cloth.activity() == AWAKE);
