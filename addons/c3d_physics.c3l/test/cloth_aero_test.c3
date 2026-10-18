@@ -18,6 +18,8 @@ const float PLATE_WIND_SPEED @private = 8;
 const uint PLATE_CELLS @private = 4;
 const float PLATE_TOLERANCE @private = 0.01f;
 const uint MASS_CELLS @private = 4;
+const uint RESOLVABLE_CELLS @private = 8;
+const uint RESOLVABLE_STEPS @private = 600;
 const Vec3 ORPHAN_POSITION @private = { 3, -3, 0 };
 const float MASS_NODE_SCALE @private = 2; // the mass follows the world-space area, not the authored one
 const float MASS_TOLERANCE @private = 1e-5f; // relative, for float inverse masses
@@ -85,6 +87,25 @@ fn void test_vertex_in_no_triangle_keeps_unit_mass() @test {
     uint orphan = (uint)state.positions.len - 1;
     assert(state.inverse_masses[orphan] == 1);
     assert(state.inverse_masses[0] != 1);
+}
+
+fn void test_default_dihedral_cloth_stays_resolvable() @test {
+    float[2] wind_speeds = { 0, FLAG_WIND_SPEED };
+    foreach (wind_speed : wind_speeds) {
+        Fixture fixture;
+        setup(&fixture);
+        defer teardown(&fixture);
+        Node* node = add_cloth_node(&fixture, add_grid(&fixture, RESOLVABLE_CELLS));
+        ClothDesc desc = pinned_desc(top_row(RESOLVABLE_CELLS));
+        desc.bend_mode = DIHEDRAL;
+        fixture.scene.add_cloth(&fixture.assets, node, desc)!!;
+        if (wind_speed > 0) fixture.scene.add(node, (Wind){ .velocity = { 0, 0, wind_speed } });
+
+        for (uint update = 0; update < RESOLVABLE_STEPS; update++) {
+            step(&fixture, physics::DEFAULT_FIXED_DT);
+            assert(fixture.physics.cloth_stats.failed == 0);
+        }
+    }
 }
 
 struct FlagPose @private {

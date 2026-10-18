@@ -607,7 +607,15 @@ compliance by that inverse mass: the example's cape (0.4 kg/m² over 0.475 m² i
 about 1570 per kilogram, so its bend compliance 2.0 becomes about 3100 and its outer attachment
 compliance 0.001 becomes about 1.6. Across that cape's range the drape depends on density and wind far
 more than on the compliances: attachment compliance from 0.002 to 157 changes nothing visible, and a
-hinge compliance of 0 (a rigid shell) fails to resolve on light particles.
+hinge compliance of 0 (a rigid shell) resolves too.
+
+The defaults need no retuning for the areal mass: a default `ClothDesc` with `bend_mode = DIHEDRAL` and no
+`bend_compliance` (a hard hinge) stays resolvable at 0.2 kg/m² on free sheets, in still air and in wind
+(`test_default_dihedral_cloth_stays_resolvable`). The fragile case is a cloth that starts in contact with a
+collider. If the contact must push a particle by more than a hinge's size in one substep, the update fails
+with `BEND_UNRESOLVED`, and for some compliances the cloth then stays unresolved. Start cloth clear of its
+colliders: the example's cape starts 0.22 m behind the chest joint, where it resolves for every compliance
+tried, while at 0.17 m it failed for some, with or without areal mass.
 
 **Aerodynamics.** Cloth reads only `Wind.velocity` and `Wind.max_speed`. `Wind.drag` and `Wind.lift`
 apply to rigid bodies; cloth uses `ClothDesc.drag_coefficient` (default 1.2) and `lift_coefficient`
