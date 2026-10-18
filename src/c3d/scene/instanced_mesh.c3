@@ -190,12 +190,16 @@ fn uint InstancedMesh.mirrored_count(&self) {
 }
 
 <*
- Check that the parents form a quadtree over count instances.
- @param [&in] quadtree : "Only parents are read."
+ Check that the parents form a quadtree over count instances and the thresholds are usable.
+ @param [&in] quadtree : "Only parents, split_pixels and hysteresis are read."
  @return? c3d::INVALID_ARGUMENT
 *>
 fn void? check_instance_quadtree(InstanceQuadtree* quadtree, uint count) {
     if (quadtree.parents.len != count) return c3d::INVALID_ARGUMENT~;
+
+    // Negated so NaN faults too.
+    if (!(quadtree.split_pixels >= 0) || !math::is_finite(quadtree.split_pixels)) return c3d::INVALID_ARGUMENT~;
+    if (!(quadtree.hysteresis >= 0) || !math::is_finite(quadtree.hysteresis)) return c3d::INVALID_ARGUMENT~;
 
     foreach (parent : quadtree.parents) {
         uint ancestor = parent;

@@ -1008,6 +1008,10 @@ fn void test_quadtree_rejects_malformed_parents() @test {
     uint[3] parents = { scene::QUADTREE_ROOT, 0, 0 };
     assert(@catch(fixture.scene.set_instance_quadtree(node, parents[..], 100, 0.25f)) == c3d::UNSUPPORTED);
     assert(batch.quadtree.parents.len == 0 && batch.quadtree.revision == 0);
+    assert(@catch(fixture.scene.set_instance_quadtree(node, parents[..], float::nan, 0.25f)) == c3d::INVALID_ARGUMENT);
+    assert(@catch(fixture.scene.set_instance_quadtree(node, parents[..], 100, float::nan)) == c3d::INVALID_ARGUMENT);
+    assert(@catch(fixture.scene.set_instance_quadtree(node, parents[..], float::inf, 0.25f)) == c3d::INVALID_ARGUMENT);
+    assert(batch.quadtree.parents.len == 0 && batch.quadtree.revision == 0);
 
     batch.trace = false;
     LodLevel[1] levels = {{ .first_part = 0, .part_count = 1, .min_screen_size = 0 }};

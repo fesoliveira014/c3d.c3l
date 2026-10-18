@@ -365,6 +365,11 @@ fn void test_instanced_quadtree_attach_faults_leave_no_component() @test {
         assert(!fixture.destination.has(node, InstancedMesh));
 
         source.quadtree_parents = parents[..];
+        source.split_pixels = float::nan;
+        assert(@catch(entry.described.codec.attach(&source, &context)) == c3d::INVALID_ARGUMENT);
+        assert(!fixture.destination.has(node, InstancedMesh));
+
+        source.split_pixels = 96;
         source.transforms[1].scale.x = -1;
         assert(@catch(entry.described.codec.attach(&source, &context)) == c3d::UNSUPPORTED);
         assert(!fixture.destination.has(node, InstancedMesh));
@@ -397,12 +402,14 @@ fn void test_instanced_quadtree_writers_reject_a_broken_contract() @test {
         fixture.source.set_instance_quadtree(node, parents[..], 96, 0.25f)!!;
         String valid = fixture_text(&fixture, root);
 
-        for (uint broken = 0; broken < 2; broken++) {
+        for (uint broken = 0; broken < 3; broken++) {
             if (broken == 0) {
                 batch.trace = true;
-            } else {
+            } else if (broken == 1) {
                 batch.transforms[1].scale.x = -1;
                 fixture.source.mark_instances_dirty(node);
+            } else {
+                batch.quadtree.hysteresis = float::nan;
             }
             assert(@catch(serial::write_subtree(
                 allocator: tmem,
@@ -419,6 +426,7 @@ fn void test_instanced_quadtree_writers_reject_a_broken_contract() @test {
             batch.trace = false;
             batch.transforms[1].scale.x = 1;
             fixture.source.mark_instances_dirty(node);
+            batch.quadtree.hysteresis = 0.25f;
         }
         assert(fixture_text(&fixture, root) == valid);
     };
