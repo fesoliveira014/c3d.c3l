@@ -38,12 +38,13 @@ struct BatchKey @private {
     GeometryId      geometry;
     uint            geometry_revision;
     uint            batch_revision;
+    uint            quadtree_revision;
     uint            count;
     SceneEntryFlags flags;
     uint            refresh;            // refresh that last wrote or kept the batch's entries
 }
 // Refresh compares keys bytewise, so the key holds no padding.
-$assert BatchKey::size == 100;
+$assert BatchKey::size == 104;
 
 <*
  Entries of one scene with a tree over their bounds.
@@ -137,7 +138,7 @@ fn void? SceneIndex.refresh(&self, AssetStore* assets, Scene* scene) {
                     batch:  batch,
                     first:  needed,
                 );
-                needed += batch.count;
+                needed += batch.leaf_instances();
             } else {
                 dangling++;
             }
@@ -334,13 +335,14 @@ fn bool store_batch(
         batch:  batch,
     );
     GeometryAsset* record = assets.geometry(batch.geometry);
-    bool fits = first + batch.count <= index.entries.len;
+    bool fits = first + batch.leaf_instances() <= index.entries.len;
     BatchKey key = {
         .world             = node.world,
         .entity            = node.id,
         .geometry          = batch.geometry,
         .geometry_revision = record.header.revision,
         .batch_revision    = batch.revision,
+        .quadtree_revision = batch.quadtree.revision,
         .count             = batch.count,
         .flags             = flags,
         .refresh           = index.refreshes - 1,
@@ -357,6 +359,8 @@ fn bool store_batch(
     usz slot = first;
     foreach (uint instance, transform : batch.transforms[:batch.count]) {
         if (slot == index.entries.len) break;
+        if (!batch.is_leaf(instance)) continue;
+
         SceneEntry entry = instance_entry(
             node:      node,
             index:     instance,
