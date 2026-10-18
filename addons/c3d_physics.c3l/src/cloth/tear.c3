@@ -770,6 +770,13 @@ fn void seed_cloth_topology(
         }
 
         state.edge_storage[..] = sector_plan.base_edges[..];
+        @pool() {
+            order_edges_by_color(
+                edges:        state.edge_storage,
+                used_colors:  alloc::new_array(tmem, uint, (sz)particle_count),
+                destinations: alloc::new_array(tmem, uint, (sz)state.edge_storage.len),
+            );
+        };
         state.bend_storage[..] = sector_plan.initial_bends[..];
         state.hinge_storage[..] = sector_plan.initial_hinges[..];
         rebind_active_slices(
@@ -1004,6 +1011,12 @@ fn void apply_topology_mapping(
             state.edge_storage[edge_count++] = state.edge_storage[index];
         }
     }
+
+    order_edges_by_color(
+        edges:        state.edge_storage[:edge_count],
+        used_colors:  state.sector_scratch[:particle_count],
+        destinations: state.edge_order_scratch[:edge_count],
+    );
 
     uint bend_count;
     uint hinge_count;
