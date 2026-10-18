@@ -56,6 +56,22 @@ struct SurfaceView {
 }
 
 <*
+ Height, normal and fluid velocity of the water surface at a world point.
+*>
+struct WaterSample {
+    float height;
+    Vec3  normal;
+    Vec3  velocity; // Gerstner orbital velocity of the surface point
+}
+
+// Local-space derivatives of a drawn point's position by its rest position and by time.
+struct SurfaceFrame @private {
+    Vec3 tangent;   // by rest x
+    Vec3 bitangent; // by rest z
+    Vec3 velocity;  // by time
+}
+
+<*
  View of the node's water surface in world space.
  @param [&in] scene
  @param [&in] assets
@@ -93,6 +109,38 @@ fn float? sample_surface(
 ) {
     Vec3 local = maths::transform_point(view.local_from_world, { world_x, 0, world_z });
     float drawn_time = shader_time(time);
+    Vec2 rest = rest_point(view, local, drawn_time)!;
+    WaveGpu[] waves = view.waves[:view.wave_count];
+    return maths::transform_point(view.world, { local.x, wave_height(waves, rest, drawn_time), local.z }).y;
+}
+
+<*
+ Sample height, normal and orbital velocity of the surface at a world point and time.
+ @param [&in] view
+ @param time : "Seconds; the FrameInfo.time the surface is drawn at."
+ @return? NOT_FOUND
+*>
+fn WaterSample? sample_surface_detail(
+    SurfaceView* view,
+    float world_x,
+    float world_z,
+    double time,
+) {
+    Vec3 local = maths::transform_point(view.local_from_world, { world_x, 0, world_z });
+    float drawn_time = shader_time(time);
+    Vec2 rest = rest_point(view, local, drawn_time)!;
+    WaveGpu[] waves = view.waves[:view.wave_count];
+    SurfaceFrame frame = wave_frame(waves, rest, drawn_time);
+    float height = maths::transform_point(view.world, { local.x, wave_height(waves, rest, drawn_time), local.z }).y;
+    return {
+        .height   = height,
+        .normal   = maths::transform_dir(view.world, frame.bitangent.cross(frame.tangent).normalize()),
+        .velocity = maths::transform_dir(view.world, frame.velocity),
+    };
+}
+
+// The rest point drawn over the local point, by the same fixed-point inversion for every query.
+fn Vec2? rest_point(SurfaceView* view, Vec3 local, float drawn_time) @private {
     WaveGpu[] waves = view.waves[:view.wave_count];
     Vec2 query = { local.x, local.z };
     Vec2 rest = query;
@@ -102,7 +150,7 @@ fn float? sample_surface(
     if (rest.x < view.rest_min.x || rest.y < view.rest_min.y || rest.x > view.rest_max.x || rest.y > view.rest_max.y) {
         return NOT_FOUND~;
     }
-    return maths::transform_point(view.world, { local.x, wave_height(waves, rest, drawn_time), local.z }).y;
+    return rest;
 }
 
 // Twin of write_frame_root's (float)info.time in render/view.c3: queries see the time the stage sees.
@@ -124,6 +172,21 @@ fn float wave_height(WaveGpu[] waves, Vec2 rest, float time) @private {
     float height;
     foreach (&wave : waves) height += wave.amplitude * math::sin(wave_angle(wave, rest, time));
     return height;
+}
+
+fn SurfaceFrame wave_frame(WaveGpu[] waves, Vec2 rest, float time) @private {
+    SurfaceFrame frame = { .tangent = { 1, 0, 0 }, .bitangent = { 0, 0, 1 } };
+    foreach (&wave : waves) {
+        float angle = wave_angle(wave, rest, time);
+        Vec2 crest_shift = wave.direction * (wave.shift * math::sin(angle));
+        Vec3 per_radian = { -crest_shift.x, wave.amplitude * math::cos(angle), -crest_shift.y };
+        Vec2 radians_per_metre = wave.direction * ((float)math::PI * 2 * wave.cycles_per_metre);
+        float radians_per_second = (float)math::PI * 2 * wave.cycles_per_second;
+        frame.tangent += per_radian * radians_per_metre.x;
+        frame.bitangent += per_radian * radians_per_metre.y;
+        frame.velocity -= per_radian * radians_per_second;
+    }
+    return frame;
 }
 
 fn WaveGpu pack_wave(Wave* wave, uint wave_count) @private {
