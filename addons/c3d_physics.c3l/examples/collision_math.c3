@@ -153,6 +153,7 @@ fn void draw_shape(
     uint rgba,
 ) @local {
     Vec3 magnitude = math::abs(shape.scale);
+
     switch (shape.kind) {
         case SPHERE:
             foreach (axis : (Vec3[3]){ { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } }) {
@@ -274,6 +275,7 @@ fn Vec3 slot_scale(ShapeSlot* slot) @local {
     Vec3 scale = slot.axis_scale;
     if (slot.kind < UNIFORM_SCALE_KIND_COUNT) scale = { slot.uniform_scale, slot.uniform_scale, slot.uniform_scale };
     if (slot.reflected) scale.x = -scale.x;
+
     return scale;
 }
 
@@ -305,6 +307,7 @@ fn bool shape_picker(String suffix, int* kind) @local {
         };
         if (index + 1 < SHAPE_KIND_COUNT) imgui::same_line();
     }
+
     return changed;
 }
 
@@ -321,6 +324,7 @@ fn bool scale_slider(String name, String suffix, float* value) @local {
             flags:  { .logarithmic = true },
         );
     };
+
     return changed;
 }
 
@@ -437,8 +441,10 @@ fn void? run(
     };
     defer physics::destroy_collision_shape(&demo.slot_a.shape);
     defer physics::destroy_collision_shape(&demo.slot_b.shape);
+
     prepare_slot(&demo.slot_a, demo.descriptions[demo.slot_a.kind], cache);
     prepare_slot(&demo.slot_b, demo.descriptions[demo.slot_b.kind], cache);
+
     renderer.prepare_scene(scene)!;
     Scatter scatter = create_scatter()!;
     defer destroy_scatter(&scatter);

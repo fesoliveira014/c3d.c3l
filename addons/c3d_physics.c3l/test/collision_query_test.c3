@@ -5,12 +5,21 @@ import std::math;
 import std::math::quaternion;
 import b3;
 
+const float PROBE_RADIUS @private = 0.5f;
+const float PROBE_OVERLAP @private = 0.1f;
+
 struct PreparedQueryFixture @private {
     AssetStore assets;
     CollisionCache cache;
     CollisionShape[4] owners;
     collide::Shape[4] shapes;
     collide::Hull hull;
+}
+
+struct ScaledProbe @private {
+    Vec3 center;
+    Vec3 normal;
+    float distance;
 }
 
 fn void setup_prepared_queries(PreparedQueryFixture* fixture, Allocator allocator = mem) @private {
@@ -380,15 +389,6 @@ fn void test_prepared_query_off_centre_hulls_use_local_support_spans() @test {
     assert(near_vector(distance.normal, { 0, 0, 1 }, LOOSE));
 }
 
-struct ScaledProbe @private {
-    Vec3 center;
-    Vec3 normal;
-    float distance;
-}
-
-const float PROBE_RADIUS @private = 0.5f;
-const float PROBE_OVERLAP @private = 0.1f;
-
 fn void assert_probes_touch_scaled_shape(
     CollisionShapeView shape,
     CollisionShapeView probe,
@@ -453,14 +453,17 @@ fn void test_scaled_box_and_reflected_hull_report_scaled_distances_and_outward_n
     box_desc.half_extents = { 0.5f, 0.5f, 0.5f };
     CollisionShape box = physics::create_collision_shape(mem, &cache, box_desc)!!;
     defer physics::destroy_collision_shape(&box);
+
     CollisionShapeDesc hull_desc = scaled_shape_desc(HULL, { -2, 0.5f, 1 });
     hull_desc.geometry = off_centre;
     CollisionShape hull = physics::create_collision_shape(mem, &cache, hull_desc)!!;
     defer physics::destroy_collision_shape(&hull);
+
     CollisionShape probe = probe_sphere(mem, &cache);
     defer physics::destroy_collision_shape(&probe);
 
     maths::Transform pose = posed({ 3, -2, 4 }, rotated());
+
     ScaledProbe[3] box_probes = {
         { .center = { 1.7f, 0, 0 }, .normal = { 1, 0, 0 }, .distance = 0.2f },
         { .center = { 0, 1.2f, 0 }, .normal = { 0, 1, 0 }, .distance = 0.2f },
@@ -487,15 +490,18 @@ fn void test_sphere_and_capsule_with_all_axis_sign_changes_use_the_scaled_radius
     sphere_desc.radius = 0.25f;
     CollisionShape sphere = physics::create_collision_shape(mem, &cache, sphere_desc)!!;
     defer physics::destroy_collision_shape(&sphere);
+
     CollisionShapeDesc capsule_desc = scaled_shape_desc(CAPSULE, { -2, -2, -2 });
     capsule_desc.radius = 0.125f;
     capsule_desc.half_height = 0.25f;
     CollisionShape capsule = physics::create_collision_shape(mem, &cache, capsule_desc)!!;
     defer physics::destroy_collision_shape(&capsule);
+
     CollisionShape probe = probe_sphere(mem, &cache);
     defer physics::destroy_collision_shape(&probe);
 
     maths::Transform pose = posed({ 3, -2, 4 }, rotated());
+
     ScaledProbe[1] sphere_probes = {
         { .center = { 0.75f, 1, 0 }, .normal = { 0.6f, 0.8f, 0 }, .distance = 0.25f },
     };
@@ -513,6 +519,7 @@ fn void test_scaled_convex_queries_allocate_nothing() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
     defer tracker.free();
+
     AssetStore assets = asset::create_asset_store(&tracker, asset::default_asset_store_desc());
     CollisionCache cache = physics::create_collision_cache(&tracker, &assets, physics::default_collision_cache_desc())!!;
 
@@ -530,9 +537,11 @@ fn void test_scaled_convex_queries_allocate_nothing() @test {
     CollisionShapeDesc box_desc = scaled_shape_desc(BOX, { 2, 1, -0.5f });
     box_desc.half_extents = { 0.5f, 0.5f, 0.5f };
     CollisionShape box = physics::create_collision_shape(&tracker, &cache, box_desc)!!;
+
     CollisionShapeDesc hull_desc = scaled_shape_desc(HULL, { -2, 0.5f, 1 });
     hull_desc.geometry = geometry;
     CollisionShape hull = physics::create_collision_shape(&tracker, &cache, hull_desc)!!;
+
     CollisionShape probe = probe_sphere(&tracker, &cache);
 
     maths::Transform pose = posed({ 3, -2, 4 }, rotated());

@@ -344,9 +344,11 @@ fn void test_collision_shape_scale_domain_refuses_values_outside_each_kind() @te
     CollisionShapeDesc hull = cache_hull_desc(fixture.geometry);
     float hull_minimum = 0.01f;
     float below_minimum = bitcast(bitcast(hull_minimum, uint) - 1, float);
+
     hull.scale = { 1, -hull_minimum, 1 };
     CollisionShape thin = physics::create_collision_shape(mem, &fixture.cache, hull)!!;
     physics::destroy_collision_shape(&thin);
+
     hull.scale = { 1, -below_minimum, 1 };
     assert(@catch(physics::create_collision_shape(mem, &fixture.cache, hull)) == c3d::UNSUPPORTED);
 
@@ -374,6 +376,7 @@ fn void test_collision_shape_scale_domain_refuses_values_outside_each_kind() @te
     box.scale = { 1, 0.0021f, 1 };
     CollisionShape flat = physics::create_collision_shape(mem, &fixture.cache, box)!!;
     physics::destroy_collision_shape(&flat);
+
     box.scale = { 1, 0.0019f, 1 };
     assert(@catch(physics::create_collision_shape(mem, &fixture.cache, box)) == c3d::UNSUPPORTED);
 
@@ -389,6 +392,7 @@ fn void test_scaled_hull_variants_share_entries_and_leave_unit_bodies_usable() @
     Scene scene = scene::create_scene(mem, { .max_nodes = 2 });
     defer scene::destroy_scene(&scene);
     physics::register_physics(&scene)!!;
+
     PhysicsWorld world = physics::create_physics_world(
         allocator: mem,
         assets: &fixture.assets,
@@ -403,14 +407,17 @@ fn void test_scaled_hull_variants_share_entries_and_leave_unit_bodies_usable() @
     ColliderDesc collider = physics::default_collider_desc(physics::ColliderKind.HULL);
     collider.geometry = fixture.geometry;
     world.add_body(node, physics::default_body_desc(STATIC), (&collider)[:1])!!;
+
     SnapshotTable* table = fixture.cache.state;
     SnapshotHandle unit = scene.get(node, RigidBody).colliders[0].snapshot;
     b3::HullData* unit_hull = table.slots[unit.index].hull;
 
     CollisionShapeDesc desc = cache_hull_desc(fixture.geometry);
     desc.scale = { 2, 0.5f, -1 };
+
     CollisionShape first = physics::create_collision_shape(mem, &fixture.cache, desc)!!;
     defer physics::destroy_collision_shape(&first);
+
     CollisionShape second = physics::create_collision_shape(mem, &fixture.cache, desc)!!;
     defer physics::destroy_collision_shape(&second);
 

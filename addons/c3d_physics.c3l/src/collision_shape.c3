@@ -82,16 +82,20 @@ fn CollisionShape? create_collision_shape(Allocator allocator, CollisionCache* c
     switch (desc.kind) {
         case SPHERE:
             check_collision_dimension(desc.radius)!;
+
             float radius = desc.radius * collision_uniform_scale(magnitude)!;
             check_collision_quantity(radius * radius)!;
+
             state.shape = collide::sphere_shape(radius);
             extents = { radius, radius, radius };
         case CAPSULE:
             check_collision_dimension(desc.radius)!;
             check_collision_dimension(desc.half_height)!;
+
             float factor = collision_uniform_scale(magnitude)!;
             float radius = desc.radius * factor;
             float half_height = desc.half_height * factor;
+
             check_collision_quantity(radius * radius)!;
             check_collision_quantity(half_height * half_height)!;
             if (2 * half_height < COLLISION_LINEAR_SLOP * b3::length_units_per_meter()) {
@@ -122,12 +126,14 @@ fn CollisionShape? create_collision_shape(Allocator allocator, CollisionCache* c
             foreach (component : magnitude) {
                 if (component < MIN_COLLISION_HULL_SCALE) return c3d::UNSUPPORTED~;
             }
+
             if (!cache.state.assets.geometries.is_live(desc.geometry)) return c3d::INVALID_ID~;
             if (desc.scale == (Vec3){ 1, 1, 1 }) {
                 state.snapshot = acquire_hull(cache.state, desc.geometry, query: true)!;
             } else {
                 state.snapshot = acquire_scaled_hull(cache.state, desc.geometry, desc.scale)!;
             }
+
             b3::HullData* hull = snapshot_of(cache.state, state.snapshot).hull;
             check_collision_hull(hull)!;
             state.shape = { .kind = collide::ShapeKind.HULL, .hull = hull };
@@ -217,6 +223,7 @@ fn void? check_collision_hull_scale(b3::HullData* hull, Vec3 scale) @private {
             if (!math::is_finite(coordinate)) return b3::DEGENERATE_GEOMETRY~;
         }
     }
+
     check_collision_hull_source(scaled[:hull.vertex_count])!;
 }
 
