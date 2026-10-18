@@ -7,6 +7,7 @@ import c3d::camera;
 import c3d::debug;
 import c3d::geometry;
 import c3d::gui;
+import c3d::job;
 import c3d::light;
 import c3d::material;
 import c3d::maths;
@@ -50,6 +51,7 @@ struct Options @private {
     String capture_path;
     String reset_capture_path;
     uint walls;
+    uint workers;
     uint frames;
     uint reset_frame;
     bool pieces;
@@ -70,6 +72,9 @@ struct Demo @private {
     MaterialId shot_material;
     MaterialId anchor_material;
     ModelId model;
+    uint wall_side;
+    JobPool jobs;
+    bool pooled;
     Node*[MAX_WALLS] walls;
     uint wall_count;
     Node* projectiles;
@@ -108,6 +113,8 @@ fn Options? parse_options(String[] args) @local {
             options.model_path = args[++index];
         } else if (arg == "--walls" && index + 1 < args.len) {
             options.walls = args[++index].to_uint()!;
+        } else if (arg == "--workers" && index + 1 < args.len) {
+            options.workers = args[++index].to_uint()!;
         } else if (arg.starts_with("--frames=")) {
             options.frames = arg[9..].to_uint()!;
         } else if (arg.starts_with("--capture=")) {
@@ -137,13 +144,19 @@ fn Options? parse_options(String[] args) @local {
     return options;
 }
 
-fn void? create_demo(Allocator allocator, Demo* demo, String model_path) @private {
+fn void? create_demo(
+    Allocator allocator,
+    Demo* demo,
+    String model_path,
+    uint wall_side = WALL_SIDE,
+) @private {
     demo.allocator = allocator;
+    demo.wall_side = wall_side;
     demo.strength = physics::default_breakable_strength(EXAMPLE_BREAK_FORCE);
     demo.assets = asset::create_asset_store(allocator, asset::default_asset_store_desc());
     defer catch asset::destroy_asset_store(&demo.assets);
     if (model_path.len) demo.model = gltf::load_model(&demo.assets, model_path)!;
-    uint per_wall = WALL_SIDE * WALL_SIDE + 1;
+    uint per_wall = wall_side * wall_side + 1;
     if (demo.model.generation) per_wall = (uint)demo.assets.model(demo.model).data.nodes.len + 1;
     demo.scene = scene::create_scene(allocator, { .max_nodes = MAX_WALLS * per_wall + MAX_SHOTS + 16 });
     defer catch scene::destroy_scene(&demo.scene);
@@ -195,8 +208,34 @@ fn void? create_demo(Allocator allocator, Demo* demo, String model_path) @privat
 
 fn void destroy_demo(Demo* demo) @private {
     physics::destroy_physics_world(&demo.physics);
+    if (demo.pooled) job::destroy_job_pool(&demo.jobs);
     scene::destroy_scene(&demo.scene);
     asset::destroy_asset_store(&demo.assets);
+}
+
+fn void run_on_pool(
+    void* context,
+    ParallelRangeFn range,
+    void* data,
+    uint count,
+    uint batch,
+) @local {
+    JobPool* pool = context;
+    pool.wait(pool.run(
+        range: range,
+        data:  data,
+        count: count,
+        batch: batch,
+    ));
+}
+
+fn void? start_workers(Demo* demo, uint workers) @private {
+    JobPoolDesc desc = job::default_job_pool_desc();
+    desc.worker_count = workers;
+    desc.background_workers = job::default_background_workers(workers);
+    demo.jobs = job::create_job_pool(demo.allocator, desc)!;
+    demo.pooled = true;
+    demo.physics.set_parallel({ .run = &run_on_pool, .context = &demo.jobs });
 }
 
 fn Node*? add_wall(Demo* demo, Vec3 position, BreakableDesc desc) @local {
@@ -209,8 +248,8 @@ fn Node*? add_wall(Demo* demo, Vec3 position, BreakableDesc desc) @local {
     defer catch demo.scene.remove(root);
     root.local.position = position;
     if (!demo.model.generation) {
-        for (uint row = 0; row < WALL_SIDE; row++) {
-            for (uint column = 0; column < WALL_SIDE; column++) {
+        for (uint row = 0; row < demo.wall_side; row++) {
+            for (uint column = 0; column < demo.wall_side; column++) {
                 Node* piece = demo.scene.add_mesh(
                     geometry: demo.cube,
                     material: (row + column) % 2 ? demo.alternate_material : demo.piece_material,
@@ -218,7 +257,7 @@ fn Node*? add_wall(Demo* demo, Vec3 position, BreakableDesc desc) @local {
                     name: "piece",
                 )!;
                 piece.local.position = {
-                    ((float)column - (WALL_SIDE - 1) * 0.5f) * PIECE_PITCH,
+                    ((float)column - (float)(demo.wall_side - 1) * 0.5f) * PIECE_PITCH,
                     (float)row * PIECE_PITCH + PIECE_SIZE * 0.5f,
                     0,
                 };
@@ -623,7 +662,7 @@ fn int main(String[] args) {
         return 1;
     }
     if (options.benchmark) {
-        if (catch excuse = run_benchmark()) {
+        if (catch excuse = run_benchmark(options.workers)) {
             io::eprintfn("Benchmark failed: %s", excuse);
             return 1;
         }
@@ -635,6 +674,12 @@ fn int main(String[] args) {
         return 1;
     }
     defer destroy_demo(&demo);
+    if (options.workers) {
+        if (catch excuse = start_workers(&demo, options.workers)) {
+            io::eprintfn("Worker setup failed: %s", excuse);
+            return 1;
+        }
+    }
     if (catch excuse = run_window(&demo, options)) {
         io::eprintfn("Breakable example failed: %s", excuse);
         return 1;
