@@ -10,9 +10,9 @@ description. LOD cells own one core instanced group; all parts share scatter,
 tint, sway and fade. The null descriptor keeps the single-mesh path.
 See [whole-object LOD](../../docs/lod.md) for ownership and selection contracts.
 
-The terrain's material and grid, and the water material, are owned by their components. Do not replace or edit
-them. The height map and control map belong to the application: replacing the height map with the same side
-length refreshes the whole map; another side length hides the batch until a conforming revision.
+The terrain's material and grid, a tile's border ring, and the water material, are owned by their components. Do not
+replace or edit them. The height map and control map belong to the application: replacing the height map with the
+same side length refreshes the whole map; another side length hides the batch until a conforming revision.
 
 ```powershell
 c3c test landscape_test --path addons/c3d_landscape.c3l
@@ -37,7 +37,8 @@ Preparing foliage while its ground terrain is pending returns `terrain::NOT_PREP
 retains the foliage authoring. Water has no landscape preparation dependency.
 Publish node world matrices before preparing foliage or water.
 
-A prepared owner is a no-op for preparation. Each pending owner either receives
+A prepared owner is a no-op for preparation, except a terrain [tile](../../docs/terrain.md#tile-sets), which
+re-validates and relinks. Each pending owner either receives
 complete runtime or remains pending with its authoring intact. A subtree pass
 attempts all matching owners and returns its first fault; successful owners are
 retained. Failed terrain/water preparation removes only cache assets that the

@@ -489,7 +489,7 @@ fn void PhysicsWorld.set_tuning(&self, PhysicsTuning tuning) {
 }
 
 <*
- Run cloth staging through parallel; ranges may run concurrently and must all finish before run returns.
+ Run cloth staging, breakable graph building and debug collider generation through parallel.
 *>
 fn void PhysicsWorld.set_parallel(&self, ParallelFor parallel) {
     self.parallel = parallel;

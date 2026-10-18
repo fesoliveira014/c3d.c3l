@@ -20,6 +20,7 @@ const char[*] WATER_FRAGMENT_SPIRV @private = $embed("../shaders/spv/water_fragm
 const char[*] WATER_FRAGMENT_RT_SHADOWS_SPIRV @private = $embed("../shaders/spv/water_fragment_rt_shadows.spv");
 const char[*] WATER_FRAGMENT_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV @private = $embed("../shaders/spv/water_fragment_rt_shadows_scene_trace_bvh.spv");
 const char[*] INCLUDE_LANDSCAPE_TERRAIN_HEIGHT_TEXT @private = $embed("../shaders/include/landscape/terrain_height.glsl");
+const char[*] INCLUDE_LANDSCAPE_TERRAIN_NORMAL_TEXT @private = $embed("../shaders/include/landscape/terrain_normal.glsl");
 const char[*] INCLUDE_LANDSCAPE_TERRAIN_SURFACE_TEXT @private = $embed("../shaders/include/landscape/terrain_surface.glsl");
 const char[*] INCLUDE_LANDSCAPE_WATER_REFLECTION_TEXT @private = $embed("../shaders/include/landscape/water_reflection.glsl");
 const char[*] INCLUDE_LANDSCAPE_WATER_WAVES_TEXT @private = $embed("../shaders/include/landscape/water_waves.glsl");
@@ -27,8 +28,9 @@ const char[*] INCLUDE_LANDSCAPE_WATER_WAVES_TEXT @private = $embed("../shaders/i
 <*
  GLSL includes of this package, by the name a shader writes.
 *>
-const asset::ShaderInclude[4] LANDSCAPE_SHADER_INCLUDES = {
+const asset::ShaderInclude[5] LANDSCAPE_SHADER_INCLUDES = {
     { .name = "landscape/terrain_height.glsl", .text = (String)INCLUDE_LANDSCAPE_TERRAIN_HEIGHT_TEXT[..] },
+    { .name = "landscape/terrain_normal.glsl", .text = (String)INCLUDE_LANDSCAPE_TERRAIN_NORMAL_TEXT[..] },
     { .name = "landscape/terrain_surface.glsl", .text = (String)INCLUDE_LANDSCAPE_TERRAIN_SURFACE_TEXT[..] },
     { .name = "landscape/water_reflection.glsl", .text = (String)INCLUDE_LANDSCAPE_WATER_REFLECTION_TEXT[..] },
     { .name = "landscape/water_waves.glsl", .text = (String)INCLUDE_LANDSCAPE_WATER_WAVES_TEXT[..] },

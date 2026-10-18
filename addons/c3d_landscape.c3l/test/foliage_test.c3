@@ -2,6 +2,7 @@ module c3d_foliage_test;
 
 import std::math;
 import std::math::quaternion;
+import std::sort;
 import c3d;
 import c3d::asset;
 import c3d::camera;
@@ -28,6 +29,7 @@ const Vec3 STEP_GROUND_POSITION @local = { 0, -2, 0 }; // terraces at -2, 0 and 
 const float BAND_LOW @local = -1;
 const float BAND_HIGH @local = 1;
 const float SLOPE_LIMIT @local = (float)math::PI * 0.25f;
+const float SPLIT_SLOPE_LIMIT @local = 0.7912f; // atan(32.375 / 32): face and smooth disagree inside the cell at 32 m
 const float ORDER_SLOPE_LIMIT @local = (float)math::PI / 3; // keeps about half of a random ground's candidates
 const Vec3 ROTATED_GROUND_POSITION @local = { 3, -2, 5 };
 const float ROTATED_GROUND_YAW_DEGREES @local = 30;
@@ -57,6 +59,16 @@ const Vec3 GALE_WIND @local = { 30, 0, 40 };
 const float EDITED_SPACING @local = SPACING * 0.5f; // four times the candidates a cell has room for
 const uint EDITED_SEED @local = SEED + 1;
 const float EDITED_LEAN @local = 1.5f; // outside [0, 1]: validate_effects rejects it
+const int TILE_GRID @local = 2; // tiles along each edge of the test set
+const uint TILE_LAYERS @local = 4; // TILE_GRID squared
+const uint TILE_CELLS @local = 8; // layer cells along one tile edge: EXTENT / LAYER_CELL
+const uint CELL_CANDIDATES @local = 64; // at SPACING over LAYER_CELL
+const uint TILE_CANDIDATES @local = TILE_CELLS * TILE_CELLS * CELL_CANDIDATES; // all pass full density on flat ground
+const float NON_DIVISOR_CELL @local = 7; // 64 m over 7 m is 9.14 cells
+const float OFF_DIVISOR_CELL @local = LAYER_CELL * 1.001f; // a ratio 1e-3 off an integer: outside the tolerance
+const float NEAR_DIVISOR_CELL @local = LAYER_CELL * 1.00005f; // a ratio 5e-5 off an integer: inside it
+const float LIMIT_RATIO @local = (float)foliage::MAX_CELLS_PER_SIDE * 1.00005f; // 5e-5 over the cell limit
+const float LIMIT_CELL @local = EXTENT / LIMIT_RATIO;
 
 const SwayTemplate TEST_SWAY @local = {
     .amplitude       = 0.2f,
@@ -195,12 +207,7 @@ fn ushort ground_texel(Ground shape, uint x, ulong* state) @local {
     }
 }
 
-fn Node* add_ground(
-    Fixture* fixture,
-    Ground shape,
-    Vec3 position = {},
-    float yaw_degrees = 0,
-) @local {
+fn TerrainDesc ground_desc(Fixture* fixture, Ground shape) @local {
     TextureId height_map;
     @pool() {
         char[] pixels = alloc::new_array(tmem, char, (sz)(TEXELS * TEXELS * ushort::size));
@@ -218,6 +225,16 @@ fn Node* add_ground(
     desc.cell_size = TERRAIN_CELL;
     desc.height_scale = height_scale_of(shape);
     desc.layers[0] = fixture.material;
+    return desc;
+}
+
+fn Node* add_ground(
+    Fixture* fixture,
+    Ground shape,
+    Vec3 position = {},
+    float yaw_degrees = 0,
+) @local {
+    TerrainDesc desc = ground_desc(fixture, shape);
     Node* node = fixture.scene.add_node()!!;
     node.local.position = position;
     node.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::deg_to_rad(yaw_degrees));
@@ -321,18 +338,23 @@ fn bool same_bits(InstanceBits first, InstanceBits second) @local {
       && first.color == second.color;
 }
 
-fn void assert_same_layers(Fixture* fixture, Node* first, Node* second) @local {
-    assert(cell_count(fixture, first) == cell_count(fixture, second));
+fn bool same_layers(Fixture* fixture, Node* first, Node* second) @local {
+    if (cell_count(fixture, first) != cell_count(fixture, second)) return false;
     for (usz index = 0; index < cell_count(fixture, first); index++) {
         InstancedMesh* a = cell_batch(fixture, first, index);
         InstancedMesh* b = cell_batch(fixture, second, index);
-        assert((a == null) == (b == null));
+        if ((a == null) != (b == null)) return false;
         if (!a) continue;
-        assert(a.count == b.count);
+        if (a.count != b.count) return false;
         for (uint instance = 0; instance < a.count; instance++) {
-            assert(same_bits(instance_bits(a, instance), instance_bits(b, instance)));
+            if (!same_bits(instance_bits(a, instance), instance_bits(b, instance))) return false;
         }
     }
+    return true;
+}
+
+fn void assert_same_layers(Fixture* fixture, Node* first, Node* second) @local {
+    assert(same_layers(fixture, first, second));
 }
 
 fn CellCopy[] copy_cells(Allocator allocator, Fixture* fixture, Node* layer) @local {
@@ -379,10 +401,15 @@ fn void assert_layer_on_ground(Fixture* fixture, Node* layer, Node* ground) @loc
     }
 }
 
-fn bool keeps(HeightView* view, Vec3 world, Filter filter) @local {
+fn bool keeps(HeightView* view, Vec3 world, Filter filter, ScatterRules* rules) @local {
     switch (filter) {
         case SLOPE:
-            return terrain::sample_normal(view, world.x, world.z)!!.y >= math::cos(SLOPE_LIMIT);
+            Vec3 normal;
+            switch (rules.slope_normal) {
+                case FACE: normal = terrain::sample_normal(view, world.x, world.z)!!;
+                case SMOOTH: normal = terrain::sample_smooth_normal(view, world.x, world.z)!!;
+            }
+            return normal.y >= math::cos(rules.max_slope);
         case ALTITUDE:
             float height = terrain::sample_height(view, world.x, world.z)!!;
             return height >= BAND_LOW && height <= BAND_HIGH;
@@ -397,6 +424,7 @@ fn void assert_filtered(
     Filter filter,
 ) @local {
     Entity ground = fixture.scene.get(every, Foliage).desc.ground;
+    ScatterRules* rules = &fixture.scene.get(filtered, Foliage).desc.rules;
     HeightView view = terrain::height_view(&fixture.scene, &fixture.assets, ground)!!;
     uint kept;
     uint removed;
@@ -407,7 +435,7 @@ fn void assert_filtered(
         if (!all) continue;
         uint next;
         for (uint instance = 0; instance < all.count; instance++) {
-            if (!keeps(&view, instance_world(every, all, instance), filter)) {
+            if (!keeps(&view, instance_world(every, all, instance), filter, rules)) {
                 removed++;
                 continue;
             }
@@ -593,6 +621,34 @@ fn void test_slope_limit_removes_exactly_the_steep_candidates() @test {
         every:    every,
         filter:   SLOPE,
     );
+}
+
+fn void test_smooth_slope_normal_selects_by_the_drawn_surface() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Node* ground = add_ground(&fixture, RAMP);
+    FoliageDesc desc = layer_desc(&fixture, ground);
+    Node* every = add_layer(&fixture, desc);
+    desc.rules.max_slope = SPLIT_SLOPE_LIMIT;
+    Node* faceted = add_layer(&fixture, desc);
+    desc.rules.slope_normal = SMOOTH;
+    Node* smooth = add_layer(&fixture, desc);
+
+    assert_filtered(
+        fixture:  &fixture,
+        filtered: faceted,
+        every:    every,
+        filter:   SLOPE,
+    );
+    assert_filtered(
+        fixture:  &fixture,
+        filtered: smooth,
+        every:    every,
+        filter:   SLOPE,
+    );
+    assert(!same_layers(&fixture, faceted, smooth));
 }
 
 fn void test_altitude_band_removes_exactly_the_candidates_outside_it() @test {
@@ -1236,4 +1292,160 @@ fn void test_shift_foliage_does_not_rescatter() @test {
         assert(runtime_of(&fixture, layer).count_passes == count_passes);
         foreach (copy : before) assert(cell_unchanged(&fixture, layer, copy));
     };
+}
+
+fn Node* add_tile_set(Fixture* fixture) @local {
+    Node* node = fixture.scene.add_node()!!;
+    fixture.scene.add(node, (TerrainSet){
+        .texels       = TEXELS,
+        .cell_size    = TERRAIN_CELL,
+        .height_scale = RANDOM_HEIGHT_SCALE,
+    });
+    return node;
+}
+
+fn Node* add_tile(Fixture* fixture, Node* set_node, int x, int z) @local {
+    TerrainDesc desc = ground_desc(fixture, FLAT);
+    Node* tile = fixture.scene.add_node(set_node)!!;
+    tile.local.position = { (float)x * EXTENT, 0, (float)z * EXTENT };
+    fixture.scene.add(tile, (TerrainTile){ .x = x, .z = z });
+    fixture.scene.update_world();
+    terrain::add_terrain(
+        scene:  &fixture.scene,
+        assets: &fixture.assets,
+        node:   tile,
+        desc:   desc,
+    )!!;
+    return tile;
+}
+
+// At the ground's pose under the same parent, so layer-local and terrain-local coordinates coincide.
+fn Node* add_layer_node(Fixture* fixture, Node* parent, Node* ground) @local {
+    Node* node = fixture.scene.add_node(parent)!!;
+    node.local = ground.local;
+    fixture.scene.update_world();
+    return node;
+}
+
+// Layers are returned in grid order, whatever order the tiles were added in.
+fn Node*[TILE_LAYERS] add_tile_layers(Fixture* fixture, int[2][TILE_LAYERS] order) @local {
+    Node* set_node = add_tile_set(fixture);
+    Node*[TILE_LAYERS] layers;
+    foreach (coordinates : order) {
+        Node* tile = add_tile(fixture, set_node, coordinates[0], coordinates[1]);
+        Node* layer = add_layer_node(fixture, set_node, tile);
+        try_add_layer(fixture, layer, layer_desc(fixture, tile))!!;
+        layers[coordinates[1] * TILE_GRID + coordinates[0]] = layer;
+    }
+    return layers;
+}
+
+fn void assert_distinct_positions(Fixture* fixture, Node*[] layers) @local {
+    @pool() {
+        ulong[] positions = alloc::new_array(tmem, ulong, (sz)TILE_CANDIDATES * layers.len);
+        usz count;
+        foreach (layer : layers) {
+            for (usz index = 0; index < cell_count(fixture, layer); index++) {
+                InstancedMesh* batch = cell_batch(fixture, layer, index);
+                if (!batch) continue;
+                for (uint instance = 0; instance < batch.count; instance++) {
+                    Vec3 world = instance_world(layer, batch, instance);
+                    positions[count] = ((ulong)bitcast(world.x, uint) << 32) | (ulong)bitcast(world.z, uint);
+                    count++;
+                }
+            }
+        }
+        assert(count == positions.len);
+        quicksort(positions);
+        for (usz index = 1; index < count; index++) assert(positions[index] != positions[index - 1]);
+    };
+}
+
+fn void test_foliage_placement_is_independent_of_tile_order() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    int[2][TILE_LAYERS] forward = { { 0, 0 }, { 1, 0 }, { 0, 1 }, { 1, 1 } };
+    int[2][TILE_LAYERS] reverse = { { 1, 1 }, { 0, 1 }, { 1, 0 }, { 0, 0 } };
+    Node*[TILE_LAYERS] in_forward = add_tile_layers(&fixture, forward);
+    Node*[TILE_LAYERS] in_reverse = add_tile_layers(&fixture, reverse);
+
+    for (usz tile = 0; tile < TILE_LAYERS; tile++) {
+        assert(same_layers(&fixture, in_forward[tile], in_reverse[tile]));
+        assert(runtime_of(&fixture, in_forward[tile]).instances == TILE_CANDIDATES);
+    }
+    assert(!same_layers(&fixture, in_forward[0], in_forward[1]));
+    assert(!same_layers(&fixture, in_forward[0], in_forward[2]));
+    assert_distinct_positions(&fixture, in_forward[..]);
+    assert_distinct_positions(&fixture, in_reverse[..]);
+}
+
+fn void test_foliage_cell_size_must_divide_the_tile_extent() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* set_node = add_tile_set(&fixture);
+    Node* tile = add_tile(&fixture, set_node, 0, 0);
+    Node* layer = add_layer_node(&fixture, set_node, tile);
+    FoliageDesc desc = layer_desc(&fixture, tile);
+
+    desc.cell_size = NON_DIVISOR_CELL;
+    assert(@catch(try_add_layer(&fixture, layer, desc)) == c3d::INVALID_ARGUMENT);
+    desc.cell_size = OFF_DIVISOR_CELL;
+    assert(@catch(try_add_layer(&fixture, layer, desc)) == c3d::INVALID_ARGUMENT);
+    assert(!fixture.scene.has(layer, Foliage) && !fixture.scene.has(layer, FoliageRuntime));
+
+    desc.cell_size = NEAR_DIVISOR_CELL;
+    try_add_layer(&fixture, layer, desc)!!;
+    assert(runtime_of(&fixture, layer).cells_per_side == TILE_CELLS);
+
+    char[RGBA8_BYTES] empty;
+    Node* limit_layer = add_layer_node(&fixture, set_node, tile);
+    FoliageDesc limit = layer_desc(&fixture, tile, add_density_map(&fixture, 1, empty[..]));
+    limit.cell_size = LIMIT_CELL;
+    try_add_layer(&fixture, limit_layer, limit)!!;
+    assert(runtime_of(&fixture, limit_layer).cells_per_side == foliage::MAX_CELLS_PER_SIDE);
+
+    Node* loose_ground = add_ground(&fixture, FLAT);
+    FoliageDesc loose = layer_desc(&fixture, loose_ground);
+    loose.cell_size = NON_DIVISOR_CELL;
+    add_layer(&fixture, loose);
+}
+
+fn void test_neighbour_ring_change_replaces_only_smooth_layers_along_the_edge() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Node* set_node = add_tile_set(&fixture);
+    Node* west = add_tile(&fixture, set_node, 0, 0);
+    Node* east = add_tile(&fixture, set_node, 1, 0);
+    FoliageDesc desc = layer_desc(&fixture, west);
+    desc.rules.max_slope = ORDER_SLOPE_LIMIT;
+    Node* faceted = add_layer_node(&fixture, set_node, west);
+    try_add_layer(&fixture, faceted, desc)!!;
+    desc.rules.slope_normal = SMOOTH;
+    Node* smooth = add_layer_node(&fixture, set_node, west);
+    try_add_layer(&fixture, smooth, desc)!!;
+    update_landscape(&fixture);
+
+    TexelRect inner_column = { .x = 1, .z = 0, .columns = 1, .rows = TEXELS };
+    ushort* texels = (ushort*)fixture.assets.texture(height_map_of(&fixture, east)).pixels.ptr;
+    for (uint row = 0; row < TEXELS; row++) texels[row * TEXELS + inner_column.x] = ushort::max;
+    fixture.assets.mark_texture_dirty(height_map_of(&fixture, east));
+    terrain::mark_dirty(&fixture.scene, east, inner_column);
+    terrain::refresh_neighbour_rings(
+        scene:  &fixture.scene,
+        assets: &fixture.assets,
+        tile:   east,
+        rect:   inner_column,
+    );
+    Node* fresh = add_layer_node(&fixture, set_node, west);
+    try_add_layer(&fixture, fresh, desc)!!;
+    assert(!same_layers(&fixture, smooth, fresh));
+
+    update_landscape(&fixture);
+    assert_same_layers(&fixture, smooth, fresh);
+    assert(runtime_of(&fixture, smooth).placed_cells == TILE_CELLS);
+    assert(runtime_of(&fixture, faceted).placed_cells == 0);
 }

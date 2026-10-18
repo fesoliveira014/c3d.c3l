@@ -251,6 +251,17 @@ Edge/corner contacts also count; the rule does not measure shared face area. Ove
 example uses 0.5 m cubes on a 0.508 m pitch: face gaps are below the default
 0.01 m threshold, diagonal gaps are above it, producing 112 welds.
 
+Deriving the graph tests every piece pair. `physics.set_parallel({ .run = ..., .context = ... })`
+spreads those tests over the application's workers, the same `ParallelFor` that stages cloth.
+Preparation, and the reset of a pending breakable, acquire the hulls and compute their bounds on the
+calling thread. Each range then tests its own pairs against immutable hulls and bounds and appends
+every connected pair, with its anchor, to a shared candidate list. The calling thread orders the
+candidates by piece pair and builds the welds, so the graph is bit-identical for any worker count, and
+a zero `ParallelFor` runs the same code on the calling thread. The list reserves 24 bytes of the
+caller's temporary scope per piece pair and writes only the connected pairs; when the reservation
+cannot be made, the call fails with `CAPACITY_EXCEEDED`. The application must not mutate the scene or
+the world while preparation or a reset runs. Explicit recipes carry their own welds and derive none.
+
 ## Explicit recipes and strengths
 
 `BreakableRecipeDesc` contains ordered `BreakablePieceView` values, internal
@@ -532,6 +543,26 @@ addons/c3d_physics.c3l/build/physics_components.exe --stress --benchmark 600
 It prints the mean and 95th-percentile milliseconds over the given number of fixed steps, after
 a settling period, with the body counts by kind. `--stress` adds about twenty thousand static bodies.
 
+## Debug draw cost
+
+`PhysicsWorld.debug_draw` stops generating collider lines once the sink is full and adds the number
+of lines it skipped to `DebugDraw.dropped`, so the drawn lines and the dropped count are those of a
+draw that generated everything. Past that point each collider costs only a count of its lines.
+
+With `physics.set_parallel(...)` installed and more than 256 bodies, collider lines are generated on
+the application's workers when they all fit in the sink's remaining capacity. Each range
+writes its own slice of the sink, so the result is bit-identical to the serial draw. A sink that
+cannot hold them draws serially. The ranges read box3d body and shape state; do not
+step or edit the world while `debug_draw` runs.
+
+```powershell
+addons/c3d_physics.c3l/build/physics_components.exe --stress --benchmark 300 --debug-draw --workers 8
+```
+
+`--debug-draw` times `debug_draw` of the colliders into a sink that holds every line and into a
+default sink, and prints a checksum of the sink's vertices that is equal for every `--workers` value at the same frame count.
+`--workers n` runs `c3d_job` workers; 0, the default, draws on the calling thread.
+
 ## Rebasing the origin
 
 After `Scene.shift_origin(offset)` and `scene.update_world()`, call
@@ -555,6 +586,7 @@ addons/c3d_physics.c3l/build/breakable.exe --frames=120 --acceptance --capture=f
 addons/c3d_physics.c3l/build/breakable.exe --anchors --sampled --acceptance --frames=480 --reset-at=420
 c3c build breakable --path addons/c3d_physics.c3l -O3
 addons/c3d_physics.c3l/build/breakable.exe --benchmark
+addons/c3d_physics.c3l/build/breakable.exe --benchmark --workers 4
 ```
 
 Left click launches a box; right drag orbits and the wheel zooms. The panel
@@ -578,6 +610,11 @@ counts. Timed updates exclude geometry/node creation and world-transform
 publication. Maximum strength retains the complete graph during idle runs;
 PIECES does not imply that its native bodies are asleep. Timing results and
 manual acceptance records belong to the corresponding change evidence.
+
+`--workers n` runs graph derivation on a `c3d_job` pool of n workers; 0, the default, uses the calling
+thread. The example's project selects `c3d_job`; the package does not. The benchmark's `authoring`
+lines give the time to author one 8×8 and one 32×32 piece wall, and a checksum of the resulting graph,
+which is equal for every worker count.
 
 ![An impact opens the authored wall](images/breakable.png)
 The anchored example before and after restoring its captured rest recipe:

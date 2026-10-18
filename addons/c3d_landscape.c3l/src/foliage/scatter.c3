@@ -10,6 +10,7 @@ import std::math;
 const uint RGBA8_BYTES @private = 4;
 const float TEXEL_UNIT_MAX @private = 255;
 const float HASH_UNIT_SCALE @private = 1.0f / 16777216.0f; // the top 24 bits, which a float holds exactly
+const float CELL_RATIO_TOLERANCE @private = 1e-4f; // relative; the grid drifts at most a tenth of a texel on a 1025-texel tile
 
 enum Channel @private {
     JITTER_X,
@@ -20,12 +21,19 @@ enum Channel @private {
     TINT,
 }
 
+struct LayerGrid @private {
+    uint cells_per_side;
+    uint first_column;  // set-global index of the tile's first column, modulo 2^32; 0 outside a set
+    uint first_row;
+}
+
 struct ScatterFrame @private {
     HeightView    ground;
     ScatterRules* rules;
     Mat4          layer_world;
     float         layer_height;  // world y of the layer origin
     float         cell_size;
+    LayerGrid     grid;
     uint          strata;        // candidates along one cell edge
     float         extent;        // metres along one edge of the ground terrain
     char[]        density;       // RGBA8 texels, row-major
@@ -55,18 +63,55 @@ fn ScatterFrame? scatter_frame(
     if (!assets.textures.is_live(desc.rules.density_map)) return c3d::INVALID_ID~;
     TextureAsset* density = assets.textures.get(desc.rules.density_map);
     check_density_map(density)!;
+    float extent = (float)(ground.texels_per_side - 1) * ground.cell_size;
+    LayerGrid grid = layer_grid(
+        scene:     scene,
+        ground:    desc.ground,
+        extent:    extent,
+        cell_size: desc.cell_size,
+    )!;
     return {
         .ground         = ground,
         .rules          = &desc.rules,
         .layer_world    = node.world,
         .layer_height   = maths::translation(node.world).y,
         .cell_size      = desc.cell_size,
+        .grid           = grid,
         .strata         = max((uint)math::round(desc.cell_size / desc.rules.spacing), 1u),
-        .extent         = (float)(ground.texels_per_side - 1) * ground.cell_size,
+        .extent         = extent,
         .density        = density.pixels,
         .density_width  = density.desc.width,
         .density_height = density.desc.height,
         .min_normal_y   = math::cos(desc.rules.max_slope),
+    };
+}
+
+// A tile of a set has a whole number of cells within the tolerance; any other ground covers its remainder.
+fn float cell_count(float ratio, bool in_set) @private => in_set ? math::round(ratio) : math::ceil(ratio);
+
+// A tile of a set indexes its cells in the set's grid, so one seed gives every tile its own candidates.
+fn LayerGrid? layer_grid(
+    Scene* scene,
+    Entity ground,
+    float extent,
+    float cell_size,
+) @private {
+    Node* node = scene.node(ground);
+    TerrainTile* tile = scene.get(node, TerrainTile);
+    if (!tile) return { .cells_per_side = (uint)cell_count(extent / cell_size, false) };
+
+    TerrainSet* set = node.parent ? scene.get(node.parent, TerrainSet) : null;
+    if (!set) return c3d::INVALID_ARGUMENT~;
+
+    float ratio = set.tile_extent() / cell_size;
+    float cells = cell_count(ratio, true);
+    if (!(math::abs(ratio - cells) <= CELL_RATIO_TOLERANCE * ratio)) return c3d::INVALID_ARGUMENT~;
+
+    uint cells_per_side = (uint)cells;
+    return {
+        .cells_per_side = cells_per_side,
+        .first_column   = (uint)((long)tile.x * cells_per_side),
+        .first_row      = (uint)((long)tile.z * cells_per_side),
     };
 }
 
@@ -106,8 +151,8 @@ fn Candidate candidate_at(
 ) @private {
     uint key = candidate_key(
         seed:      frame.rules.seed,
-        column:    column,
-        row:       row,
+        column:    column + frame.grid.first_column,
+        row:       row + frame.grid.first_row,
         candidate: candidate,
     );
     float stratum = frame.cell_size / (float)frame.strata;
@@ -180,6 +225,13 @@ fn uint count_cell(ScatterFrame* frame, uint column, uint row) @private {
     return count;
 }
 
+fn Vec3? slope_normal_at(ScatterFrame* frame, Candidate* candidate) @private {
+    switch (frame.rules.slope_normal) {
+        case FACE: return terrain::sample_normal(&frame.ground, candidate.world_x, candidate.world_z);
+        case SMOOTH: return terrain::sample_smooth_normal(&frame.ground, candidate.world_x, candidate.world_z);
+    }
+}
+
 // Every filter after the density stage only removes, so a cell never outgrows its count.
 fn uint place_cell(
     ScatterFrame* frame,
@@ -201,7 +253,7 @@ fn uint place_cell(
         float? height = terrain::sample_height(&frame.ground, at.world_x, at.world_z);
         if (catch height) continue;
         if (height < rules.min_altitude || height > rules.max_altitude) continue;
-        Vec3? normal = terrain::sample_normal(&frame.ground, at.world_x, at.world_z);
+        Vec3? normal = slope_normal_at(frame, &at);
         if (catch normal) continue;
         if (normal.y < frame.min_normal_y) continue;
 

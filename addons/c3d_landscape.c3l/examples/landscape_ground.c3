@@ -22,6 +22,12 @@ const float CELL_SIZE = 1;
 <* Material layers of the ground: grass, dirt, rock and snow. *>
 const uint LAYER_COUNT = 4;
 
+<* Tiles along each side of a tiled ground. *>
+const uint TILES_PER_SIDE = 2; // four tiles, each a quarter of the height map
+
+<* Tiles of a tiled ground. *>
+const uint TILE_COUNT = TILES_PER_SIDE * TILES_PER_SIDE;
+
 <* Node layer bit of the terrain, left out of picks. *>
 const uint TERRAIN_LAYER = 1 << 1;
 
@@ -119,9 +125,11 @@ struct LayerLook @local {
 
 <* The example landscape's terrain node and the desc it was added with. *>
 struct Ground {
-    Node*       node;
-    TerrainDesc desc;
-    float       extent; // metres along each side
+    Node*       node;        // the terrain node, or the node of the tile set
+    TerrainDesc desc;        // of the terrain; of a tiled ground, the settings every tile shares
+    float       extent;      // metres along each side
+    float       tile_extent; // metres along each tile side; zero when the ground is one terrain
+    Node*[TILE_COUNT] tiles; // row-major, x fastest; null when the ground is one terrain
 }
 
 <* Walking or flying viewpoint over the ground. *>
@@ -136,6 +144,24 @@ struct FlyCamera {
 <* Held brush that stamps at a fixed period whatever the frame rate. *>
 struct Brush {
     float seconds; // held time not yet stamped
+}
+
+<*
+ Nodes that carry a Terrain.
+ @return "The terrain node, or the tile nodes."
+*>
+fn Node*[] Ground.terrain_nodes(&self) {
+    return self.tile_extent > 0 ? self.tiles[..] : (&self.node)[:1];
+}
+
+<*
+ The terrain node whose extent holds a world position, or the nearest one.
+*>
+fn Node* Ground.terrain_at(&self, Vec3 position) {
+    if (self.tile_extent <= 0) return self.node;
+    uint column = (uint)math::clamp(math::floor(position.x / self.tile_extent), 0.0f, (float)(TILES_PER_SIDE - 1));
+    uint row = (uint)math::clamp(math::floor(position.z / self.tile_extent), 0.0f, (float)(TILES_PER_SIDE - 1));
+    return self.tiles[row * TILES_PER_SIDE + column];
 }
 
 <*
@@ -240,7 +266,12 @@ fn float smooth_band(float value, float start, float width) @local {
 fn char unit_to_byte(float value) @local => (char)(math::clamp(value, 0.0f, 1.0f) * (float)char::max + 0.5f);
 
 // Layer weights of grass, dirt, rock and snow in the red, green, blue and alpha channels.
-fn TextureId? add_control_map(AssetStore* assets, ushort[] heights, uint texels) @local {
+fn TextureId? add_control_map(
+    AssetStore* assets,
+    ushort[] heights,
+    uint texels,
+    String key = "terrain/control",
+) @local {
     TextureId control;
     @pool() {
         char[] pixels = alloc::new_array(tmem, char, (sz)((usz)CONTROL_SIZE * CONTROL_SIZE * RGBA8_BYTES));
@@ -279,7 +310,7 @@ fn TextureId? add_control_map(AssetStore* assets, ushort[] heights, uint texels)
             format:     RGBA8_UNORM,
             debug_name: "terrain_control",
         );
-        control = assets.add_texture(desc, pixels, "terrain/control")!;
+        control = assets.add_texture(desc, pixels, key)!;
     };
     return control;
 }
@@ -361,6 +392,17 @@ fn bool is_map_size(uint size) {
     return false;
 }
 
+fn TerrainDesc? ground_desc(AssetStore* assets, uint layers, float lod_threshold) @local {
+    TerrainDesc desc = terrain::default_terrain_desc();
+    for (uint index = 0; index < layers; index++) {
+        desc.layers[index] = add_layer(assets, LAYER_LOOKS[index], index)!;
+    }
+    desc.cell_size = CELL_SIZE;
+    desc.height_scale = HEIGHT_SCALE;
+    desc.lod_threshold = lod_threshold;
+    return desc;
+}
+
 <*
  Generate the example landscape and add its terrain node.
  @param [&inout] scene : "Registered with terrain::register_terrain."
@@ -379,7 +421,7 @@ fn Ground? add_ground(
     uint layers,
     float lod_threshold,
 ) {
-    TerrainDesc desc = terrain::default_terrain_desc();
+    TerrainDesc desc = ground_desc(assets, layers, lod_threshold)!;
     desc.height_map = add_height_map(assets, size)!;
     TextureAsset* heights = assets.texture(desc.height_map);
     desc.control_map = add_control_map(
@@ -387,12 +429,6 @@ fn Ground? add_ground(
         heights: ((ushort*)heights.pixels.ptr)[:(usz)size * size],
         texels:  size,
     )!;
-    for (uint index = 0; index < layers; index++) {
-        desc.layers[index] = add_layer(assets, LAYER_LOOKS[index], index)!;
-    }
-    desc.cell_size = CELL_SIZE;
-    desc.height_scale = HEIGHT_SCALE;
-    desc.lod_threshold = lod_threshold;
 
     Node* node = scene.add_node(name: "terrain")!;
     node.layers = TERRAIN_LAYER;
@@ -404,6 +440,109 @@ fn Ground? add_ground(
         desc:   desc,
     )!;
     return { .node = node, .desc = desc, .extent = (float)(size - 1) * CELL_SIZE };
+}
+
+// Neighbouring tiles overlap by one row or column of texels, so their shared edge texels are equal.
+fn TextureId? add_height_tile(
+    AssetStore* assets,
+    ushort[] whole,
+    uint size,
+    uint column,
+    uint row,
+) @local {
+    uint texels = (size - 1) / TILES_PER_SIDE + 1;
+    uint first_x = column * (texels - 1);
+    uint first_z = row * (texels - 1);
+    TextureDesc desc = material::texture_2d_desc(
+        width:      texels,
+        height:     texels,
+        format:     R16_UINT,
+        debug_name: "terrain_height_tile",
+    );
+    desc.generate_mips = false;
+    TextureId tile;
+    @pool() {
+        char[] pixels = alloc::new_array(tmem, char, (sz)((usz)texels * texels * ushort::size));
+        ushort[] heights = ((ushort*)pixels.ptr)[:(usz)texels * texels];
+        for (uint z = 0; z < texels; z++) {
+            usz source = (usz)(first_z + z) * size + first_x;
+            heights[(usz)z * texels : texels] = whole[source : texels];
+        }
+        tile = assets.add_texture(desc, pixels)!;
+    };
+    return tile;
+}
+
+<*
+ Generate the example landscape as a set of tiles cut from one height map.
+ @param [&inout] scene : "Registered with terrain::register_terrain."
+ @param [&inout] assets : "The store given to register_terrain."
+ @param size : "Height-map texels per side of the whole landscape."
+ @param layers : "Material layers generated, grass first."
+ @param lod_threshold : "Chunk split threshold in output pixels."
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT, c3d::INVALID_ID, c3d::UNSUPPORTED
+ @require is_map_size(size)
+ @require layers > 0 && layers <= LAYER_COUNT
+*>
+fn Ground? add_ground_tiles(
+    Scene* scene,
+    AssetStore* assets,
+    uint size,
+    uint layers,
+    float lod_threshold,
+) {
+    TerrainDesc desc = ground_desc(assets, layers, lod_threshold)!;
+    TextureId whole = add_height_map(assets, size)!;
+    defer assets.remove_texture(whole);
+    ushort[] whole_heights = ((ushort*)assets.texture(whole).pixels.ptr)[:(usz)size * size];
+
+    uint texels = (size - 1) / TILES_PER_SIDE + 1;
+    float tile_extent = (float)(texels - 1) * CELL_SIZE;
+    Node* set_node = scene.add_node(name: "terrain_set")!;
+    scene.add(set_node, (TerrainSet){
+        .texels       = texels,
+        .cell_size    = CELL_SIZE,
+        .height_scale = HEIGHT_SCALE,
+    });
+    Ground ground = {
+        .node        = set_node,
+        .desc        = desc,
+        .extent      = (float)(size - 1) * CELL_SIZE,
+        .tile_extent = tile_extent,
+    };
+    for (uint row = 0; row < TILES_PER_SIDE; row++) {
+        for (uint column = 0; column < TILES_PER_SIDE; column++) {
+            TerrainDesc tile_desc = desc;
+            tile_desc.height_map = add_height_tile(
+                assets: assets,
+                whole:  whole_heights,
+                size:   size,
+                column: column,
+                row:    row,
+            )!;
+            TextureAsset* heights = assets.texture(tile_desc.height_map);
+            tile_desc.control_map = add_control_map(
+                assets:  assets,
+                heights: ((ushort*)heights.pixels.ptr)[:(usz)texels * texels],
+                texels:  texels,
+                key:     "",
+            )!;
+
+            Node* tile = scene.add_node(set_node, "terrain_tile")!;
+            tile.layers = TERRAIN_LAYER;
+            tile.local.position = { (float)column * tile_extent, 0, (float)row * tile_extent };
+            scene.add(tile, (TerrainTile){ .x = (int)column, .z = (int)row });
+            terrain::add_terrain(
+                scene:  scene,
+                assets: assets,
+                node:   tile,
+                desc:   tile_desc,
+            )!;
+            ground.tiles[row * TILES_PER_SIDE + column] = tile;
+        }
+    }
+    scene.update_world();
+    return ground;
 }
 
 <*
@@ -494,41 +633,62 @@ fn void apply_fly_camera(
     if (!fly_camera.flying) fly_camera.position.y = fly_camera.ground + EYE_HEIGHT;
 }
 
-fn void stamp_brush(
+struct TexelPoint @local {
+    int column;
+    int row;
+}
+
+// The texel nearest a world position.
+fn TexelPoint? texel_under(HeightView* view, Vec3 position) @local {
+    Vec3 local = maths::transform_point(view.local_from_world, position);
+    float column = math::round(local.x / view.cell_size);
+    float row = math::round(local.z / view.cell_size);
+    float last = (float)(view.texels_per_side - 1);
+    if (column < 0 || row < 0 || column > last || row > last) return NOT_FOUND~;
+    return { .column = (int)column, .row = (int)row };
+}
+
+// The centre may lie off the map; only the texels of the brush's square inside the limit are raised.
+fn TexelRect? stamp_brush(
     Scene* scene,
     AssetStore* assets,
     Node* terrain_node,
-    uint center_x,
-    uint center_z,
+    TexelPoint center,
     float rise,
+    TexelRect limit,
 ) @local {
     TextureId height_map = scene.get(terrain_node, Terrain).desc.height_map;
     TextureAsset* record = assets.texture(height_map);
     uint side = record.desc.width;
     ushort* texels = (ushort*)record.pixels.ptr;
-    uint first_x = center_x > BRUSH_RADIUS ? center_x - BRUSH_RADIUS : 0;
-    uint first_z = center_z > BRUSH_RADIUS ? center_z - BRUSH_RADIUS : 0;
-    uint last_x = min(center_x + BRUSH_RADIUS, side - 1);
-    uint last_z = min(center_z + BRUSH_RADIUS, side - 1);
+    int radius = (int)BRUSH_RADIUS;
+    int first_x = max(center.column - radius, (int)limit.x);
+    int first_z = max(center.row - radius, (int)limit.z);
+    int last_x = min(center.column + radius, (int)(limit.x + limit.columns) - 1);
+    int last_z = min(center.row + radius, (int)(limit.z + limit.rows) - 1);
+    if (first_x > last_x || first_z > last_z) return NOT_FOUND~;
+
     float radius_squared = (float)(BRUSH_RADIUS * BRUSH_RADIUS);
-    for (uint z = first_z; z <= last_z; z++) {
-        for (uint x = first_x; x <= last_x; x++) {
-            float offset_x = (float)x - (float)center_x;
-            float offset_z = (float)z - (float)center_z;
+    for (int z = first_z; z <= last_z; z++) {
+        for (int x = first_x; x <= last_x; x++) {
+            float offset_x = (float)(x - center.column);
+            float offset_z = (float)(z - center.row);
             float falloff = 1 - (offset_x * offset_x + offset_z * offset_z) / radius_squared;
             if (falloff <= 0) continue;
-            usz index = (usz)z * side + x;
+            usz index = (usz)z * side + (usz)x;
             uint raised = (uint)texels[index] + (uint)(rise * falloff + 0.5f);
             texels[index] = (ushort)min(raised, (uint)ushort::max);
         }
     }
+    TexelRect stamped = {
+        .x       = (uint)first_x,
+        .z       = (uint)first_z,
+        .columns = (uint)(last_x - first_x + 1),
+        .rows    = (uint)(last_z - first_z + 1),
+    };
     assets.mark_texture_dirty(height_map);
-    terrain::mark_dirty(scene, terrain_node, {
-        .x       = first_x,
-        .z       = first_z,
-        .columns = last_x - first_x + 1,
-        .rows    = last_z - first_z + 1,
-    });
+    terrain::mark_dirty(scene, terrain_node, stamped);
+    return stamped;
 }
 
 <*
@@ -548,18 +708,110 @@ fn bool? stamp_under(
     float rise,
 ) {
     HeightView view = terrain::height_view(scene, assets, terrain_node.id)!;
-    Vec3 local = maths::transform_point(view.local_from_world, position);
-    float column = math::round(local.x / view.cell_size);
-    float row = math::round(local.z / view.cell_size);
-    float last = (float)(view.texels_per_side - 1);
-    if (column < 0 || row < 0 || column > last || row > last) return false;
+    TexelPoint? center = texel_under(&view, position);
+    if (catch center) return false;
+
     stamp_brush(
         scene:        scene,
         assets:       assets,
         terrain_node: terrain_node,
-        center_x:     (uint)column,
-        center_z:     (uint)row,
+        center:       center,
         rise:         rise,
-    );
+        limit:        { .columns = view.texels_per_side, .rows = view.texels_per_side },
+    )!;
+    return true;
+}
+
+// A tile stamps neither its west column nor its north row when a neighbour has them; propagate_edit copies them in.
+fn TexelRect owned_texels(TerrainSet* set, Entity tile, uint texels) @local {
+    uint west = @ok(set.neighbour(tile, TerrainNeighbour.WEST)) ? 1 : 0;
+    uint north = @ok(set.neighbour(tile, TerrainNeighbour.NORTH)) ? 1 : 0;
+    return { .x = west, .z = north, .columns = texels - west, .rows = texels - north };
+}
+
+// Flags the tile's entry in Ground.terrain_nodes.
+fn void mark_edited(Ground* ground, Entity tile, bool[] edited) @local {
+    foreach (index, candidate : ground.tiles) {
+        if (c3d::same_id(candidate.id, tile)) edited[index] = true;
+    }
+}
+
+<*
+ Raise the ground under a world position with one brush stamp, across tile edges when the ground is tiled.
+ @param [&inout] scene
+ @param [&inout] assets
+ @param [&in] ground : "Added by add_ground or add_ground_tiles."
+ @param rise : "Height texel units added at the brush centre."
+ @param edited : "One flag per Ground.terrain_nodes entry; set for every terrain the stamp changed."
+ @return "False when the position lies off the height map."
+ @return? c3d::INVALID_ID, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT
+*>
+fn bool? stamp_ground(
+    Scene* scene,
+    AssetStore* assets,
+    Ground* ground,
+    Vec3 position,
+    float rise,
+    bool[] edited,
+) {
+    if (ground.tile_extent <= 0) {
+        bool stamped = stamp_under(
+            scene:        scene,
+            assets:       assets,
+            terrain_node: ground.node,
+            position:     position,
+            rise:         rise,
+        )!;
+        if (stamped) edited[0] = true;
+        return stamped;
+    }
+    Node* home = ground.terrain_at(position);
+    HeightView view = terrain::height_view(scene, assets, home.id)!;
+    TexelPoint? center = texel_under(&view, position);
+    if (catch center) return false;
+
+    TerrainSet* set = scene.get(ground.node, TerrainSet);
+    int span = (int)view.texels_per_side - 1;
+    TerrainTile* home_cell = scene.get(home, TerrainTile);
+
+    TexelRect[TILE_COUNT] stamps;
+    bool[TILE_COUNT] stamped;
+    foreach (index, tile : ground.tiles) {
+        TerrainTile* cell = scene.get(tile, TerrainTile);
+        TexelPoint tile_center = {
+            .column = center.column + (home_cell.x - cell.x) * span,
+            .row    = center.row + (home_cell.z - cell.z) * span,
+        };
+        TexelRect? stamp = stamp_brush(
+            scene:        scene,
+            assets:       assets,
+            terrain_node: tile,
+            center:       tile_center,
+            rise:         rise,
+            limit:        owned_texels(set, tile.id, view.texels_per_side),
+        );
+        if (try rect = stamp) {
+            stamps[index] = rect;
+            stamped[index] = true;
+        }
+    }
+    // Every stamp lands first: a ring row reads texels of the tiles around it.
+    foreach (index, tile : ground.tiles) {
+        if (!stamped[index]) continue;
+
+        uint changed_neighbours = set.propagate_edit(
+            scene:  scene,
+            assets: assets,
+            tile:   tile.id,
+            rect:   stamps[index],
+        )!;
+        edited[index] = true;
+
+        foreach (direction : TerrainNeighbour::values) {
+            if (!(changed_neighbours & ((uint)1 << direction.ordinal))) continue;
+
+            mark_edited(ground, set.neighbour(tile.id, direction)!, edited);
+        }
+    }
     return true;
 }
