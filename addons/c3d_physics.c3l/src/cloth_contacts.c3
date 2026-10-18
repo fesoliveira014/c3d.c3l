@@ -79,6 +79,9 @@ fn void? cloth_shape_geometry(Collider* collider, cloth::ClothShape* shape) @loc
         case SPHERE:
             return cloth_sphere(shape, collider.shape.sphere()!);
         case CAPSULE:
+            if (collider.shape.type() == b3::ShapeType.SPHERE) {
+                return cloth_sphere(shape, collider.shape.sphere()!);
+            }
             return cloth_capsule(shape, collider.shape.capsule()!);
         case BOX:
         case HULL:

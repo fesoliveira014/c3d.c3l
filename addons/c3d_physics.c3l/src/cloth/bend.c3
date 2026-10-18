@@ -148,15 +148,16 @@ fn ContactIntervals? hinge_interval_cross(ContactIntervals first, ContactInterva
     };
 }
 
-fn ContactIntervals? hinge_interval_lerp(
-    Vec3 start,
-    Vec3 end,
-    ContactInterval one_minus_t,
+fn ContactIntervals? hinge_edge_interval(
+    Vec3 start_edge,
+    Vec3 end_edge,
     ContactInterval t,
 ) @local {
+    ContactVector base = (ContactVector)start_edge;
+    ContactVector delta = (ContactVector)end_edge - base;
     return physics::contact_vector_add(
-        physics::contact_vector_scale(physics::contact_vector((ContactVector)start), one_minus_t)!,
-        physics::contact_vector_scale(physics::contact_vector((ContactVector)end), t)!,
+        physics::contact_vector(base),
+        physics::contact_vector_scale(physics::contact_vector(delta), t)!,
     );
 }
 
@@ -184,25 +185,27 @@ fn float? certify_hinge_path(
     stack[0] = { .min = 0.0, .max = 1.0 };
     usz pending = 1;
     uint steps;
+    uint step_budget = (uint)math::min((usz)max_steps * 8, MAX_HINGE_SUBDIVISIONS);
     double prev_angle = start_sample.angle;
     double total_turn;
     double min_area_sq = 4.0 * (double)MIN_TRIANGLE_AREA * (double)MIN_TRIANGLE_AREA;
 
+    Vec3 start_u = start_points[1] - start_points[0];
+    Vec3 end_u = end_points[1] - end_points[0];
+    Vec3 start_v = start_points[2] - start_points[0];
+    Vec3 end_v = end_points[2] - end_points[0];
+    Vec3 start_w = start_points[3] - start_points[0];
+    Vec3 end_w = end_points[3] - end_points[0];
+
     while (pending > 0) {
         steps++;
-        if (steps > max_steps) return BEND_UNRESOLVED~;
+        if (steps > step_budget) return BEND_UNRESOLVED~;
 
         ContactInterval t = stack[--pending];
-        ContactInterval one_minus_t = physics::contact_subtract(physics::contact_value(1.0), t)!;
 
-        ContactIntervals p0 = hinge_interval_lerp(start_points[0], end_points[0], one_minus_t, t)!;
-        ContactIntervals p1 = hinge_interval_lerp(start_points[1], end_points[1], one_minus_t, t)!;
-        ContactIntervals p2 = hinge_interval_lerp(start_points[2], end_points[2], one_minus_t, t)!;
-        ContactIntervals p3 = hinge_interval_lerp(start_points[3], end_points[3], one_minus_t, t)!;
-
-        ContactIntervals u = physics::contact_vector_subtract(p1, p0)!;
-        ContactIntervals v = physics::contact_vector_subtract(p2, p0)!;
-        ContactIntervals w = physics::contact_vector_subtract(p3, p0)!;
+        ContactIntervals u = hinge_edge_interval(start_u, end_u, t)!;
+        ContactIntervals v = hinge_edge_interval(start_v, end_v, t)!;
+        ContactIntervals w = hinge_edge_interval(start_w, end_w, t)!;
 
         ContactIntervals n0 = hinge_interval_cross(u, v)!;
         ContactIntervals n1 = hinge_interval_cross(w, u)!;
@@ -277,15 +280,7 @@ fn void? project_dihedral_bends(ClothState* state, float dt) @private {
         }
 
         double weight_sum = weights[0] + weights[1] + weights[2] + weights[3];
-        if (weight_sum == 0) {
-            float? certified_static = certify_hinge_path(start_points, start_points, hinge.last_angle, max_ccd);
-            if (catch certified_static) {
-                state.contact_result.stage = ClothContactStage.BEND;
-                return BEND_UNRESOLVED~;
-            }
-            hinge.last_angle = certified_static;
-            continue;
-        }
+        if (weight_sum == 0) continue;
 
         double grad_sum;
         for (uint corner = 0; corner < 4; corner++) {
@@ -322,14 +317,12 @@ fn void? project_dihedral_bends(ClothState* state, float dt) @private {
             end_points[corner] = rounded;
         }
 
-        float? certified_angle = certify_hinge_path(start_points, end_points, hinge.last_angle, max_ccd);
-        if (catch certified_angle) {
+        if (catch certify_hinge_path(start_points, end_points, (float)evaluated.angle, max_ccd)) {
             state.contact_result.stage = ClothContactStage.BEND;
             return BEND_UNRESOLVED~;
         }
 
         hinge.lambda = (float)next_lambda;
-        hinge.last_angle = certified_angle;
         for (uint corner = 0; corner < 4; corner++) {
             state.predicted[indices[corner]] = end_points[corner];
         }

@@ -12,6 +12,7 @@ fn void? certify_hinge_step(
     ClothState* state,
     Vec3[] start_positions,
     Vec3[] end_positions,
+    bool commit_angle = true,
 ) @local {
     if (!state.hinges.len) return;
     uint max_ccd = state.desc.collisions.max_ccd_iterations;
@@ -33,7 +34,7 @@ fn void? certify_hinge_step(
             state.contact_result.stage = ClothContactStage.BEND;
             return BEND_UNRESOLVED~;
         }
-        hinge.last_angle = angle;
+        if (commit_angle) hinge.last_angle = angle;
     }
 }
 
@@ -80,7 +81,12 @@ fn void? solve_cloth(
             begin: (double)(substep - 1) / total,
             end: (double)substep / total,
         )!;
-        certify_hinge_step(state, state.positions, state.predicted)!;
+        certify_hinge_step(
+            state:           state,
+            start_positions: state.positions,
+            end_positions:   state.predicted,
+            commit_angle:    false,
+        )!;
         place_shapes(state, (double)substep / total)!;
 
         for (uint iteration = 0; iteration < desc.iterations; iteration++) {
@@ -161,7 +167,12 @@ fn void? prepare_publication(PhysicsWorld* world, ClothState* state, bool solved
     )!;
     place_shapes(state, 1)!;
     resolve_contacts(world, state, state.published)!;
-    certify_hinge_step(state, state.positions, state.published)!;
+    certify_hinge_step(
+        state:           state,
+        start_positions: state.positions,
+        end_positions:   state.published,
+        commit_angle:    solved,
+    )!;
     foreach (&body : state.bodies) {
         if (!body.live) continue;
         body.published = body.current;

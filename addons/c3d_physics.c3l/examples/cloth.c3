@@ -337,7 +337,7 @@ fn void? attach_cape(Demo* demo) @local {
     desc.thickness = CAPE_THICKNESS;
     desc.tangent_frame = true;
     desc.bend_mode = DIHEDRAL;
-    desc.bend_compliance = 0.002f;
+    desc.bend_compliance = 2.0f;
     Entity[ragdoll_bones::RIGIFY_BONE_COUNT] colliders;
     foreach (index, bone : ragdoll.bone_nodes) colliders[index] = bone.id;
     desc.colliders = colliders[..];
