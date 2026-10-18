@@ -119,6 +119,7 @@ struct Options @local {
     uint        width;
     uint        height;
     bool        hide_terrain;
+    bool        tiles;
 }
 
 struct Demo @local {
@@ -168,19 +169,48 @@ fn void? add_terrain_collider(PhysicsWorld* physics, Node* node, TerrainDesc des
     return physics.add_body(node, physics::default_body_desc(STATIC), (&collider)[:1]);
 }
 
+fn void? add_terrain_colliders(Demo* demo) @local {
+    foreach (node : demo.ground.terrain_nodes()) {
+        add_terrain_collider(demo.physics, node, demo.scene.get(node, Terrain).desc)!;
+    }
+}
+
+fn void remove_terrain_colliders(Demo* demo) @local {
+    foreach (node : demo.ground.terrain_nodes()) demo.physics.remove_body(node);
+}
+
+fn bool has_terrain_colliders(Demo* demo) @local {
+    return demo.scene.has(demo.ground.terrain_nodes()[0], PhysicsBody);
+}
+
+fn HeightView? ground_view(Demo* demo, Vec3 position) @local {
+    return terrain::height_view(demo.scene, demo.assets, demo.ground.terrain_at(position).id);
+}
+
 fn Demo? build_demo(
     Options options,
     AssetStore* assets,
     Scene* scene,
     PhysicsWorld* physics,
 ) @local {
-    Ground ground = landscape_ground::add_ground(
-        scene:         scene,
-        assets:        assets,
-        size:          options.size,
-        layers:        options.layers,
-        lod_threshold: options.lod_threshold,
-    )!;
+    Ground ground;
+    if (options.tiles) {
+        ground = landscape_ground::add_ground_tiles(
+            scene:         scene,
+            assets:        assets,
+            size:          options.size,
+            layers:        options.layers,
+            lod_threshold: options.lod_threshold,
+        )!;
+    } else {
+        ground = landscape_ground::add_ground(
+            scene:         scene,
+            assets:        assets,
+            size:          options.size,
+            layers:        options.layers,
+            lod_threshold: options.lod_threshold,
+        )!;
+    }
     ground.node.visible = !options.hide_terrain;
     Demo demo = {
         .options = options,
@@ -189,7 +219,7 @@ fn Demo? build_demo(
         .physics = physics,
         .ground  = ground,
     };
-    add_terrain_collider(physics, ground.node, ground.desc)!;
+    add_terrain_colliders(&demo)!;
 
     @pool() {
         Geometry crate = geometry::box(tmem, CRATE_SIZE, CRATE_SIZE, CRATE_SIZE);
@@ -317,6 +347,11 @@ fn Options? parse_options(String[] args) @local {
                 $endif
             case "--validation": options.validation = true;
             case "--hide-terrain": options.hide_terrain = true;
+            case "--tiles":
+                switch (option_value(args, &index)!) {
+                    case "2x2": options.tiles = true;
+                    default: return c3d::INVALID_ARGUMENT~;
+                }
             case "--shading":
                 switch (option_value(args, &index)!) {
                     case "forward": options.shading = ShadingPath.FORWARD;
@@ -348,6 +383,7 @@ fn Options? parse_options(String[] args) @local {
         }
     }
     if (options.volumetric_fog && !options.sky) return c3d::INVALID_ARGUMENT~;
+    if (options.tiles && options.benchmark) return c3d::INVALID_ARGUMENT~;
     if (!options.width) options.width = options.benchmark ? BENCHMARK_WIDTH : WINDOW_WIDTH;
     if (!options.height) options.height = options.benchmark ? BENCHMARK_HEIGHT : WINDOW_HEIGHT;
     return options;
@@ -384,23 +420,39 @@ fn void? terrain_panel(Demo* demo, FlyCamera* fly_camera, float delta) @local {
     imgui::set_next_window_size(PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
     if (imgui::begin("Terrain", null, {})) {
         imgui::text("Right drag looks, WASD move, Shift fast; F flies, Q and E sink and rise");
-        imgui::text("G drops a crate, B paints, P toggles the collider, click pushes a crate");
-        imgui::text("T toggles the ground decal");
-        TerrainRuntime* runtime = demo.scene.get(demo.ground.node, TerrainRuntime);
-        InstancedMesh* batch = demo.scene.get(demo.ground.node, InstancedMesh);
-        imgui::text("Chunks: %u   LOD switches: %u", batch.count, runtime.lod_switches);
-        for (uint level = 0; level < runtime.level_count; level++) {
-            imgui::text("  level %u: %u", level, runtime.chunks_per_level[level]);
+        if (demo.options.tiles) {
+            imgui::text("G drops a crate, P toggles the collider, click pushes a crate; painting is off");
+        } else {
+            imgui::text("G drops a crate, B paints, P toggles the collider, click pushes a crate");
         }
-        Terrain* authored = demo.scene.get(demo.ground.node, Terrain);
+        imgui::text("T toggles the ground decal");
+        uint chunks;
+        uint lod_switches;
+        uint level_count;
+        uint[terrain::MAX_TERRAIN_LEVELS] chunks_per_level;
+        foreach (node : demo.ground.terrain_nodes()) {
+            TerrainRuntime* runtime = demo.scene.get(node, TerrainRuntime);
+            chunks += demo.scene.get(node, InstancedMesh).count;
+            lod_switches += runtime.lod_switches;
+            level_count = runtime.level_count;
+            for (uint level = 0; level < level_count; level++) {
+                chunks_per_level[level] += runtime.chunks_per_level[level];
+            }
+        }
+        imgui::text("Chunks: %u   LOD switches: %u", chunks, lod_switches);
+        for (uint level = 0; level < level_count; level++) {
+            imgui::text("  level %u: %u", level, chunks_per_level[level]);
+        }
+        float lod_threshold = demo.scene.get(demo.ground.terrain_nodes()[0], Terrain).desc.lod_threshold;
         imgui::slider_float(
             label: "LOD threshold",
-            v:     &authored.desc.lod_threshold,
+            v:     &lod_threshold,
             v_min: 0,
             v_max: LOD_THRESHOLD_MAX,
         );
-        HeightView view = terrain::height_view(demo.scene, demo.assets, demo.ground.node.id)!;
+        foreach (node : demo.ground.terrain_nodes()) demo.scene.get(node, Terrain).desc.lod_threshold = lod_threshold;
         Vec3 position = fly_camera.position;
+        HeightView view = ground_view(demo, position)!;
         if (try height = terrain::sample_height(&view, position.x, position.z)) {
             imgui::text("Terrain height %.3f m", height);
         } else {
@@ -418,7 +470,7 @@ fn void? terrain_panel(Demo* demo, FlyCamera* fly_camera, float delta) @local {
         imgui::text(
             "%s, collider %s, crates %u",
             fly_camera.flying ? "Flying" : "Walking",
-            demo.scene.has(demo.ground.node, PhysicsBody) ? "on" : "off",
+            has_terrain_colliders(demo) ? "on" : "off",
             demo.crate_count,
         );
         imgui::text("Frame: %.2f ms", delta * 1000);
@@ -488,8 +540,8 @@ fn void? run_interactive(Options options) @local {
 
     FlyCamera fly_camera = { .position = extent_point(&demo, STILL_POSITION), .yaw = STILL_YAW };
     if (!options.benchmark) {
-        HeightView start_view = terrain::height_view(&scene, &assets, demo.ground.node.id)!;
         Vec3 ahead = fly_camera.position + landscape_ground::look_direction(fly_camera.yaw, 0) * DECAL_DISTANCE;
+        HeightView start_view = ground_view(&demo, ahead)!;
         ahead.y = landscape_ground::ground_under(&start_view, ahead, fly_camera.ground);
         add_ground_decal(&demo, ahead)!;
     }
@@ -505,24 +557,25 @@ fn void? run_interactive(Options options) @local {
             if (gui_renderer.frame_open) gui_renderer.finish_frame();
         }
 
-        HeightView view = terrain::height_view(&scene, &assets, demo.ground.node.id)!;
+        HeightView view = ground_view(&demo, fly_camera.position)!;
         if (!input.keyboard_captured_by_gui) {
             if (input.key_pressed(platform::Scancode.F)) fly_camera.flying = !fly_camera.flying;
             if (input.key_pressed(platform::Scancode.G)) {
                 Vec3 heading = landscape_ground::look_direction(fly_camera.yaw, 0);
                 Vec3 ahead = fly_camera.position + heading * CRATE_DROP_DISTANCE;
-                ahead.y = landscape_ground::ground_under(&view, ahead, fly_camera.ground) + CRATE_DROP_HEIGHT;
+                HeightView ahead_view = ground_view(&demo, ahead)!;
+                ahead.y = landscape_ground::ground_under(&ahead_view, ahead, fly_camera.ground) + CRATE_DROP_HEIGHT;
                 drop_crate(&demo, ahead);
             }
             if (input.key_pressed(platform::Scancode.T) && demo.decal_node) demo.decal_node.visible = !demo.decal_node.visible;
             if (input.key_pressed(platform::Scancode.P)) {
-                if (scene.has(demo.ground.node, PhysicsBody)) {
-                    physics.remove_body(demo.ground.node);
+                if (has_terrain_colliders(&demo)) {
+                    remove_terrain_colliders(&demo);
                 } else {
-                    add_terrain_collider(&physics, demo.ground.node, demo.ground.desc)!;
+                    add_terrain_colliders(&demo)!;
                 }
             }
-            bool brush_held = input.key_down(platform::Scancode.B);
+            bool brush_held = input.key_down(platform::Scancode.B) && !options.tiles;
             float rise = brush.rise(brush_held, delta);
             if (rise > 0) {
                 bool stamped = landscape_ground::stamp_under(
@@ -975,7 +1028,7 @@ fn int main(String[] args) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--shadows atlas|traced] [--size 1025|2049|4097] [--layers 1|4] [--lod-threshold PIXELS] "
-              "[--width W] [--height H] [--hide-terrain] [--sky] [--volumetric-fog].");
+              "[--width W] [--height H] [--hide-terrain] [--tiles 2x2] [--sky] [--volumetric-fog].");
         }
         return 1;
     }
