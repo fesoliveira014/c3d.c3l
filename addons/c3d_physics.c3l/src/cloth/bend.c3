@@ -9,7 +9,7 @@ const double MIN_HINGE_EDGE @local = 1e-8; // metres; a shorter hinge axis has n
 const double MIN_HINGE_GRADIENT @local = 1e-12; // rad^2/m^2 floor before XPBD scalar division
 const double HALF_TURN_TIE_EPSILON @local = 1e-15; // radians; snaps the -pi half-turn tie onto +pi
 const double MAX_HINGE_START_OFFSET @local = math::PI * 0.5; // radians; a path start further from the tracked angle is unresolved
-const double MAX_HINGE_PROJECTION_TURN @local = 1.25; // radians; bounds one Newton step and the substep target window, keeping the unwrap on the committed branch
+const double MAX_HINGE_PROJECTION_TURN @local = 1.25; // radians; bounds one Newton step and the solver's turn away from the committed angle per substep, keeping the unwrap on the committed branch
 const usz MAX_HINGE_SUBDIVISIONS @local = 64; // interval stack bound; cost linear in bisections per hinge
 
 <* Bending constraint formulation across interior triangle hinges. *>
@@ -300,17 +300,18 @@ fn void? project_dihedral_bends(ClothState* state, float dt) @private {
 
         double committed_angle = (double)hinge.last_angle;
         double unwrapped_angle = committed_angle + wrap_dihedral_angle(evaluated.angle - committed_angle);
-        double target_angle = math::clamp(
-            (double)hinge.rest_angle,
-            committed_angle - MAX_HINGE_PROJECTION_TURN,
-            committed_angle + MAX_HINGE_PROJECTION_TURN,
-        );
-        double residual = unwrapped_angle - target_angle;
+        double residual = unwrapped_angle - (double)hinge.rest_angle;
         double delta_lambda = -(residual + alpha_h * (double)hinge.lambda) / (gradient_sum + alpha_h);
 
-        double linear_turn = math::abs(gradient_sum * delta_lambda);
-        if (linear_turn > MAX_HINGE_PROJECTION_TURN) {
-            delta_lambda *= MAX_HINGE_PROJECTION_TURN / linear_turn;
+        // Bounding the turn, not the target, keeps the compliant equilibrium; the window stops a
+        // substep from turning past pi, where the unwrap against the committed angle would flip branch.
+        double linear_turn = gradient_sum * delta_lambda;
+        double committed_offset = unwrapped_angle - committed_angle;
+        double allowed_turn = committed_offset * linear_turn > 0
+          ? math::max(0.0, MAX_HINGE_PROJECTION_TURN - math::abs(committed_offset))
+          : MAX_HINGE_PROJECTION_TURN;
+        if (math::abs(linear_turn) > allowed_turn) {
+            delta_lambda *= allowed_turn / math::abs(linear_turn);
         }
 
         double next_lambda = (double)hinge.lambda + delta_lambda;
