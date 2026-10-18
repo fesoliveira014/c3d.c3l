@@ -34,6 +34,7 @@ struct TerrainSet {
 
 <*
  Grid coordinates of a terrain tile within its parent TerrainSet.
+ Remove it before reparenting a linked tile; reparenting does not unlink.
 *>
 struct TerrainTile {
     int x;

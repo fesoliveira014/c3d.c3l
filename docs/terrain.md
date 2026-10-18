@@ -174,9 +174,12 @@ neighbour that prepares later links to the tiles already there, so load order do
 - Removing a tile's node, its `TerrainTile` or its `Terrain` unlinks it through a removal hook. The tile's former
   neighbours then see no neighbour there. Removing the `TerrainSet` frees the table and leaves the tiles as
   ordinary terrains.
-- Moving a linked tile (its transform, its `TerrainTile` or its parent) is unsupported until its next `prepare`.
-  `prepare` on a prepared tile re-validates it and relinks it; on a mismatch it faults, leaves the terrain drawing
-  and leaves the tile unlinked.
+- Changing a linked tile's transform or `TerrainTile` is unsupported until its next `prepare`. `prepare` on a
+  prepared tile re-validates it and relinks it; on a mismatch it faults, leaves the terrain drawing and leaves the
+  tile unlinked.
+- A parent change does not recover. `Scene.reparent` runs no hook, so the tile would stay in its old set's links.
+  Unlink a linked tile before reparenting it, by removing its `TerrainTile` while it is still under the set, then
+  add the `TerrainTile` again under the new set and `prepare`.
 - The set creates no terrain, loads nothing and unloads nothing. Streaming stays with the application: it adds
   tiles when their data arrives and removes them when it leaves.
 

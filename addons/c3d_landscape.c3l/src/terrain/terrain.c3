@@ -235,7 +235,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
 
 <*
  Prepare every pending terrain in a subtree, retaining successful owners.
- @param [&inout] scene : "Registered; prepared owners remain unchanged."
+ @param [&inout] scene : "Registered; prepared tiles relink, other prepared owners are unchanged."
  @param [&inout] assets : "Receives generated resources during preparation."
  @param [in] root : "Null selects the scene root; root is included."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
