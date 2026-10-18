@@ -202,10 +202,7 @@ fn void note_settling(
 }
 
 fn bool wind_differs(Wind* current, Wind* recorded) @local {
-    return current.velocity != recorded.velocity
-        || current.drag != recorded.drag
-        || current.lift != recorded.lift
-        || current.max_speed != recorded.max_speed;
+    return current.velocity != recorded.velocity || current.max_speed != recorded.max_speed;
 }
 
 fn bool bodies_disturbed(ClothState* state, float threshold) @local {

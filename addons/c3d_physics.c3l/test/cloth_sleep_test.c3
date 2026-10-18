@@ -62,7 +62,7 @@ fn void test_cloth_rests_after_settling_and_wakes_on_wind_change() @test {
     setup(&fixture, weightless());
     defer teardown(&fixture);
     Node* node = add_cloth_node(&fixture, add_grid(&fixture, GRID_CELLS));
-    fixture.scene.add(node, (Wind){ .velocity = { 0, 0, 4 } });
+    fixture.scene.add(node, (Wind){ .velocity = { 4, 0, 0 } }); // along the flat sheet: wind that exerts no force
     fixture.scene.add_cloth(&fixture.assets, node, resting_desc(top_row(GRID_CELLS)))!!;
     Cloth* cloth = fixture.scene.get(node, Cloth);
 
@@ -77,7 +77,11 @@ fn void test_cloth_rests_after_settling_and_wakes_on_wind_change() @test {
     step(&fixture, physics::DEFAULT_FIXED_DT);
     assert(fixture.physics.cloth_stats.resting == 1);
 
-    fixture.scene.get(node, Wind).velocity = { 0, 0, 5 };
+    fixture.scene.get(node, Wind).drag = 2;
+    step(&fixture, physics::DEFAULT_FIXED_DT);
+    assert(cloth.activity() == RESTING);
+
+    fixture.scene.get(node, Wind).velocity = { 5, 0, 0 };
     step(&fixture, physics::DEFAULT_FIXED_DT);
     assert(cloth.activity() == AWAKE);
 
@@ -122,7 +126,7 @@ fn void test_held_cloth_ignores_triggers_and_carries_on_wake() @test {
     setup(&fixture, weightless());
     defer teardown(&fixture);
     Node* node = add_cloth_node(&fixture, add_grid(&fixture, GRID_CELLS));
-    fixture.scene.add(node, (Wind){ .velocity = { 0, 0, 4 } });
+    fixture.scene.add(node, (Wind){ .velocity = { 4, 0, 0 } }); // along the flat sheet: wind that exerts no force
     fixture.scene.add_cloth(&fixture.assets, node, resting_desc(top_row(GRID_CELLS)))!!;
     Cloth* cloth = fixture.scene.get(node, Cloth);
     ClothState* state = cloth.state;
@@ -136,7 +140,7 @@ fn void test_held_cloth_ignores_triggers_and_carries_on_wake() @test {
 
     Vec3 displacement = { 1, 0.5f, -0.25f };
     node.local.position = displacement;
-    fixture.scene.get(node, Wind).velocity = { 0, 0, 9 };
+    fixture.scene.get(node, Wind).velocity = { 9, 0, 0 };
     for (uint update = 0; update < HELD_UPDATES; update++) step(&fixture, physics::DEFAULT_FIXED_DT);
     assert(cloth.activity() == HELD);
     assert(fixture.physics.cloth_stats.held == 1);
@@ -314,7 +318,7 @@ fn CrowdRig add_cloth_crowd(Fixture* fixture) @private {
         instances:   instances[..],
         name:        "crowd",
     )!!;
-    fixture.scene.add(crowd_node, (Wind){ .velocity = { 0, 0, 5 }, .drag = 1 });
+    fixture.scene.add(crowd_node, (Wind){ .velocity = { 0, 0, 5 } });
     fixture.scene.update_world();
 
     uint[2] pins = { 0, 1 };
