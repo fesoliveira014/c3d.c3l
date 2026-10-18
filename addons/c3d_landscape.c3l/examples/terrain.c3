@@ -139,6 +139,7 @@ struct Demo @local {
     MaterialId    crate_material;
     uint          crate_count;
     Node*         decal_node;
+    bool[landscape_ground::TILE_COUNT] edited_terrains; // Ground.terrain_nodes entries a stroke changed
 }
 
 struct HoverPose @local {
@@ -283,7 +284,10 @@ fn Vec3 extent_point(Demo* demo, Vec2 fraction) @local {
 
 // A re-cook rebuilds the whole field, so collision follows a stroke once it ends, not while it is painted.
 fn void end_stroke(Demo* demo) @local {
-    foreach (node : demo.ground.terrain_nodes()) {
+    foreach (index, node : demo.ground.terrain_nodes()) {
+        if (!demo.edited_terrains[index]) continue;
+
+        demo.edited_terrains[index] = false;
         if (demo.scene.has(node, PhysicsBody)) demo.scene.get(node, PhysicsBody).mark_changed();
     }
 }
@@ -590,6 +594,7 @@ fn void? run_interactive(Options options) @local {
                     ground:   &demo.ground,
                     position: fly_camera.position,
                     rise:     rise,
+                    edited:   demo.edited_terrains[..],
                 )!;
                 if (stamped) painting = true;
             }
@@ -783,12 +788,13 @@ fn void? run_segments(
         )!;
         bool stamped = timed && segment == Segment.EDIT && segment_step % STAMP_PERIOD == 0;
         if (stamped) {
-            landscape_ground::stamp_under(
-                scene:        demo.scene,
-                assets:       demo.assets,
-                terrain_node: demo.ground.node,
-                position:     demo.camera_node.local.position,
-                rise:         landscape_ground::BRUSH_RISE,
+            landscape_ground::stamp_ground(
+                scene:    demo.scene,
+                assets:   demo.assets,
+                ground:   &demo.ground,
+                position: demo.camera_node.local.position,
+                rise:     landscape_ground::BRUSH_RISE,
+                edited:   demo.edited_terrains[..],
             )!;
         }
 

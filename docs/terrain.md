@@ -401,7 +401,8 @@ camera beside the physics ray height, and the LOD threshold.
 `--tiles 2x2` builds the same landscape as a [tile set](#tile-sets) of four tiles cut from the map with a one-texel
 overlap, each with its own control map and collider. B paints across tile edges: the brush stamps every tile its
 square reaches, leaves a tile's shared west column and north row to the neighbour that owns them, and calls
-`propagate_edit` for each stamped tile. The benchmark is unavailable with it, since it measures the one terrain node's
+`propagate_edit` for each stamped tile. The end of a stroke re-cooks the colliders of the stamped tiles and of the
+neighbours in the returned masks only. The benchmark is unavailable with it, since it measures the one terrain node's
 batch and runtime.
 
 `--capture FILE.png` renders one frame without a window, from a fixed camera straight above a point of the tile

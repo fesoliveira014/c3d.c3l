@@ -729,12 +729,20 @@ fn TexelRect owned_texels(TerrainSet* set, Entity tile, uint texels) @local {
     return { .x = west, .z = north, .columns = texels - west, .rows = texels - north };
 }
 
+// Flags the tile's entry in Ground.terrain_nodes.
+fn void mark_edited(Ground* ground, Entity tile, bool[] edited) @local {
+    foreach (index, candidate : ground.tiles) {
+        if (c3d::same_id(candidate.id, tile)) edited[index] = true;
+    }
+}
+
 <*
  Raise the ground under a world position with one brush stamp, across tile edges when the ground is tiled.
  @param [&inout] scene
  @param [&inout] assets
  @param [&in] ground : "Added by add_ground or add_ground_tiles."
  @param rise : "Height texel units added at the brush centre."
+ @param edited : "One flag per Ground.terrain_nodes entry; set for every terrain the stamp changed."
  @return "False when the position lies off the height map."
  @return? c3d::INVALID_ID, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT
 *>
@@ -744,15 +752,18 @@ fn bool? stamp_ground(
     Ground* ground,
     Vec3 position,
     float rise,
+    bool[] edited,
 ) {
     if (ground.tile_extent <= 0) {
-        return stamp_under(
+        bool stamped = stamp_under(
             scene:        scene,
             assets:       assets,
             terrain_node: ground.node,
             position:     position,
             rise:         rise,
-        );
+        )!;
+        if (stamped) edited[0] = true;
+        return stamped;
     }
     Node* home = ground.terrain_at(position);
     HeightView view = terrain::height_view(scene, assets, home.id)!;
@@ -788,12 +799,19 @@ fn bool? stamp_ground(
     foreach (index, tile : ground.tiles) {
         if (!stamped[index]) continue;
 
-        set.propagate_edit(
+        uint changed_neighbours = set.propagate_edit(
             scene:  scene,
             assets: assets,
             tile:   tile.id,
             rect:   stamps[index],
         )!;
+        edited[index] = true;
+
+        foreach (direction : TerrainNeighbour::values) {
+            if (!(changed_neighbours & ((uint)1 << direction.ordinal))) continue;
+
+            mark_edited(ground, set.neighbour(tile.id, direction)!, edited);
+        }
     }
     return true;
 }
