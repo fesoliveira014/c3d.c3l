@@ -17,6 +17,7 @@ const char[*] ANCHORED_BREAKABLE_V1_TEXT @private = $embed("fixtures/anchored_br
 const uint MAP_SAMPLES @private = 5; // four cells, two 2-cell windows along each axis
 const uint WINDOW_CELLS @private = 2;
 const uint WINDOW_COUNT @private = 4;
+const uint SMALL_SCENE_NODES @private = 4; // the root and the document node leave room for two windows of four
 
 fn TextureId add_map(Fixture* fixture) @private {
     ushort[MAP_SAMPLES * MAP_SAMPLES] samples;
@@ -77,6 +78,38 @@ fn void test_height_field_windows_round_trip_regenerates_the_windows_once() @tes
                 root: restored,
                 text_mode: text_mode,
             )!!);
+        };
+    }
+}
+
+fn void test_height_field_windows_load_that_runs_out_of_nodes_leaves_nothing_behind() @test {
+    foreach (text_mode : (bool[2]){ false, true }) {
+        @pool() {
+            Fixture fixture;
+            create_fixture(&fixture, mem, SMALL_SCENE_NODES);
+            defer destroy_fixture(&fixture);
+
+            ColliderDesc collider = physics::default_collider_desc(HEIGHT_FIELD);
+            collider.height_field = { .source = TEXTURE, .texture = add_map(&fixture) };
+            physics::add_height_field_windows(
+                scene:        &fixture.source,
+                assets:       &fixture.assets,
+                node:         fixture.root.id,
+                collider:     &collider,
+                window_cells: WINDOW_CELLS,
+            )!!;
+            char[] bytes = encode(
+                scene: &fixture.source,
+                assets: &fixture.assets,
+                root: fixture.root,
+                text_mode: text_mode,
+            )!!;
+
+            uint free_nodes = fixture.destination.world.entities.free_count;
+            assert(@catch(decode(&fixture, bytes, text_mode)) == c3d::CAPACITY_EXCEEDED);
+            assert(fixture.destination.world.entities.free_count == free_nodes);
+            assert(fixture.destination.count(HeightFieldWindows) == 0 && fixture.destination.count(PhysicsBody) == 0);
+            assert(fixture.destination.count(HeightFieldWindowOwner) == 0);
         };
     }
 }

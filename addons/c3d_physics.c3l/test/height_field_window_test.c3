@@ -29,6 +29,7 @@ const float SPEED_LOSS_LIMIT @private = 0.05f; // of the rolling speed
 const float HOP_LIMIT @private = 0.02f; // metres of rise above the rolling height
 const float HEADING_LIMIT @private = 0.02f; // radians
 const ushort FLAT_LEVEL @private = 6554; // a tenth of the range
+const uint  FLOAT_TEXEL_BYTES @private = 16;
 
 struct Fixture @private {
     AssetStore   assets;
@@ -298,7 +299,8 @@ fn void test_windowed_field_validation() @test {
     TextureId texture = add_flat_map(&fixture);
     float[4] heights;
     ColliderDesc on_heights = physics::default_collider_desc(HEIGHT_FIELD);
-    on_heights.height_field = { .heights = heights[..], .count_x = 2, .count_z = 2, .window = { .count_x = 1, .count_z = 1 } };
+    on_heights.height_field = { .heights = heights[..], .count_x = 2, .count_z = 2 };
+    on_heights.height_field.window = { .count_x = 1, .count_z = 1 };
     assert(add_body_fault(&fixture, on_heights) == c3d::INVALID_ARGUMENT);
 
     HeightFieldWindow[5] invalid = {
@@ -319,10 +321,10 @@ fn void test_windowed_field_validation() @test {
     Node* edge_window = add_terrain_node(&fixture);
     fixture.physics.add_body(edge_window, physics::default_body_desc(STATIC), (&inside)[:1])!!;
 
-    float[FLAT_SAMPLES * FLAT_SAMPLES] floats;
     TextureDesc float_desc = material::texture_2d_desc(FLAT_SAMPLES, FLAT_SAMPLES, RGBA32_FLOAT);
     float_desc.generate_mips = false;
-    TextureId float_texture = fixture.assets.add_texture(float_desc, alloc::new_array(tmem, char, (sz)(floats.len * 16)))!!;
+    char[] float_pixels = alloc::new_array(tmem, char, (sz)(FLAT_SAMPLES * FLAT_SAMPLES * FLOAT_TEXEL_BYTES));
+    TextureId float_texture = fixture.assets.add_texture(float_desc, float_pixels)!!;
     ColliderDesc float_window = map_collider(float_texture);
     float_window.height_field.window = { .count_x = 4, .count_z = 4 };
     assert(add_body_fault(&fixture, float_window) == c3d::UNSUPPORTED);
