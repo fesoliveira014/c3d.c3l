@@ -179,7 +179,7 @@ macro carve_copy(BlockCursor* cursor, source) @local {
     return copy;
 }
 
-fn void free_physics_body(Entity entity, void* component, void* user) @local {
+fn void free_physics_body(Entity entity, void* component, void* user) @private {
     PhysicsBody* physics_body = component;
     alloc::free(*(Allocator*)user, physics_body.colliders.ptr);
 }

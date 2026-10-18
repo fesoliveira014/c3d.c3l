@@ -232,3 +232,36 @@ fn void test_world_rebuild_restores_the_moving_list() @test {
     assert_moving_list_is_exact(&fixture);
     assert(fixture.physics.roles.moving_bodies().len == 1);
 }
+
+fn void test_orphaned_body_is_removed_on_the_next_update() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Node* kept = add_body(&fixture, DYNAMIC, { 0, 0, 0 });
+    Node* orphan = add_body(&fixture, STATIC, { 0, -5, 0 });
+    fixture.scene.remove_component(orphan, PhysicsBody);
+    assert(fixture.scene.has(orphan, RigidBody));
+    assert(fixture.physics.roles.orphans_dirty);
+
+    fixture.physics.update(0);
+    assert(!fixture.scene.has(orphan, RigidBody));
+    assert(fixture.scene.has(kept, RigidBody));
+    assert(fixture.physics.world.counters().body_count == 1);
+    assert(!fixture.physics.roles.orphans_dirty);
+
+    physics::destroy_physics_world(&fixture.physics);
+    create_world(&fixture);
+    fixture.physics.update(0);
+    assert(fixture.scene.has(kept, RigidBody));
+
+    Node* moving_orphan = add_body(&fixture, DYNAMIC, { 4, 0, 0 });
+    fixture.scene.remove_component(moving_orphan, PhysicsBody);
+    assert(fixture.physics.roles.orphans_dirty);
+
+    fixture.physics.update(0);
+    assert(!fixture.scene.has(moving_orphan, RigidBody));
+    assert(fixture.scene.has(kept, RigidBody));
+    assert(fixture.physics.world.counters().body_count == 1);
+    assert_moving_list_is_exact(&fixture);
+}

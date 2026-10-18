@@ -201,11 +201,14 @@ fn void push_sensor(
 
 fn void sync_bodies(PhysicsWorld* world) @local {
     Scene* scene = world.scene;
-    usz orphan_count;
-    scene.@each(RigidBody; entity, body) {
-        if (!scene.world.has(entity, PhysicsBody)) world.orphan_scratch[orphan_count++] = entity;
-    };
-    foreach (entity : world.orphan_scratch[:orphan_count]) scene.remove_component(scene.node(entity), RigidBody);
+    if (world.roles.orphans_dirty) {
+        usz orphan_count;
+        scene.@each(RigidBody; entity, body) {
+            if (!scene.world.has(entity, PhysicsBody)) world.orphan_scratch[orphan_count++] = entity;
+        };
+        foreach (entity : world.orphan_scratch[:orphan_count]) scene.remove_component(scene.node(entity), RigidBody);
+        world.roles.orphans_dirty = false;
+    }
 
     scene.@each(PhysicsBody; entity, physics_body) {
         Node* node = scene.node(entity);

@@ -752,6 +752,7 @@ fn PhysicsWorld? create_physics_world(
     snapshots.borrowers++;
     BodyRoles* roles = create_body_roles(allocator, scene, snapshots);
     scene.set_remove_hook(RigidBody, &remove_rigid_body, roles);
+    scene.set_remove_hook(PhysicsBody, &remove_physics_body, roles);
     scene.set_remove_hook(Joint, &remove_joint_component, null);
 
     return {
@@ -801,6 +802,7 @@ fn void destroy_physics_world(PhysicsWorld* world) {
         physics_joint.status = PENDING;
     };
     scene.set_remove_hook(RigidBody, null, null);
+    scene.set_remove_hook(PhysicsBody, &free_physics_body, scene.hook_allocator);
     scene.set_remove_hook(Joint, null, null);
     if (world.recording) {
         record::world_stop_recording(world.world);
