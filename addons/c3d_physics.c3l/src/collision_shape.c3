@@ -7,9 +7,12 @@ import c3d::physics::collide;
 import std::math;
 import b3;
 
-const uint MAX_COLLISION_FACE_VERTICES @local = 32; // two clipped faces fit the native 64-vertex scratch
-const float MIN_COLLISION_HULL_SCALE @local = 0.01f; // native floor; box3d pushes smaller components away from zero
-const float COLLISION_LINEAR_SLOP @local = 0.005f; // native linear slop at one length unit per metre
+const uint MAX_COLLISION_FACE_VERTICES @private = 32; // two clipped faces fit the native 64-vertex scratch
+const float MIN_COLLISION_SCALE @local = 0.01f; // box3d pushes smaller hull components away from zero
+const float COLLISION_LINEAR_SLOP @private = 0.005f; // native linear slop at one length unit per metre
+const int MAX_COLLISION_MESH_HEIGHT @local = 256; // native mesh traversal stack holds this many node pointers
+const float COLLISION_TRIANGLE_AREA_FLOOR @local = 1.17549435e-35f; // twin of b3 TRIANGLE_AREA_FLOOR, the native 1000 * FLT_MIN
+const float COLLISION_ENUMERATION_GROWTH @local = 4; // keeps boundary triangles inside the inclusive whole-surface box
 const float COLLISION_BOX_SLOP_FRACTION @local = 0.2f; // native box half-extents are floored at this fraction
 const usz COLLISION_HULL_WORK_BASE @local = 242_112; // pinned 128-vertex builder, largest supported pointer layout
 const usz COLLISION_HULL_WORK_PER_POINT @local = 60; // one native work vertex and one shifted Vec3
@@ -47,7 +50,13 @@ struct CollisionShapeState @private {
     SnapshotTable* cache;
     SnapshotHandle snapshot;
     collide::Shape shape;
+    b3::Mesh mesh; // data is null for convex shapes
     maths::Aabb bounds;
+}
+
+struct CollisionMeshAudit @local {
+    usz triangles;
+    fault failure;
 }
 
 <*
@@ -63,7 +72,7 @@ fn CollisionShapeDesc default_collision_shape_desc(ColliderKind kind) {
 }
 
 <*
- Prepare immutable scaled convex geometry for world-free queries.
+ Prepare immutable scaled convex or mesh geometry for world-free queries.
  @param [&inout] cache : "Borrowed; outlives the prepared owner."
  @return? c3d::INVALID_ARGUMENT, c3d::INVALID_ID, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
  @return? SOURCE_UNAVAILABLE, b3::DEGENERATE_GEOMETRY, b3::INVALID_DEFINITION
@@ -123,9 +132,7 @@ fn CollisionShape? create_collision_shape(Allocator allocator, CollisionCache* c
             state.shape = collide::box_shape(half);
             extents = half;
         case HULL:
-            foreach (component : magnitude) {
-                if (component < MIN_COLLISION_HULL_SCALE) return c3d::UNSUPPORTED~;
-            }
+            check_collision_scale_floor(magnitude)!;
 
             if (!cache.state.assets.geometries.is_live(desc.geometry)) return c3d::INVALID_ID~;
             if (desc.scale == (Vec3){ 1, 1, 1 }) {
@@ -139,12 +146,24 @@ fn CollisionShape? create_collision_shape(Allocator allocator, CollisionCache* c
             state.shape = { .kind = collide::ShapeKind.HULL, .hull = hull };
             state.bounds = { .min = hull.aabb.lower_bound, .max = hull.aabb.upper_bound };
         case MESH:
+            check_collision_scale_floor(magnitude)!;
+
+            if (!cache.state.assets.geometries.is_live(desc.geometry)) return c3d::INVALID_ID~;
+            state.snapshot = acquire_mesh(
+                table: cache.state,
+                geometry: desc.geometry,
+                material_indices: desc.material_indices,
+                query: true,
+            )!;
+
+            state.mesh = { .data = snapshot_of(cache.state, state.snapshot).mesh, .scale = desc.scale };
+            state.bounds = check_collision_mesh(state.mesh)!;
         case HEIGHT_FIELD:
         case COMPOUND:
             return c3d::UNSUPPORTED~;
     }
 
-    if (desc.kind != HULL) state.bounds = { .min = -extents, .max = extents };
+    if (desc.kind != HULL && desc.kind != MESH) state.bounds = { .min = -extents, .max = extents };
     CollisionShapeState* owned = alloc::new_try(allocator, CollisionShapeState) ?? c3d::CAPACITY_EXCEEDED~!;
     *owned = state;
     cache.state.borrowers++;
@@ -167,6 +186,12 @@ fn void destroy_collision_shape(CollisionShape* shape) {
 fn float? collision_uniform_scale(Vec3 magnitude) @local {
     if (magnitude.x != magnitude.y || magnitude.y != magnitude.z) return c3d::UNSUPPORTED~;
     return magnitude.x;
+}
+
+fn void? check_collision_scale_floor(Vec3 magnitude) @local {
+    foreach (component : magnitude) {
+        if (component < MIN_COLLISION_SCALE) return c3d::UNSUPPORTED~;
+    }
 }
 
 fn void? check_collision_dimension(float value) @local {
@@ -225,6 +250,76 @@ fn void? check_collision_hull_scale(b3::HullData* hull, Vec3 scale) @private {
     }
 
     check_collision_hull_source(scaled[:hull.vertex_count])!;
+}
+
+// The native cook reads indices and material indices unchecked, so query owners validate authored arrays first.
+fn void? check_collision_mesh_source(Geometry* source, char[] material_indices) @private {
+    uint[] indices = source.indices;
+    usz index_count = indices.len ? indices.len : source.positions.len;
+    if (source.positions.len > int::max || index_count > int::max) return c3d::CAPACITY_EXCEEDED~;
+    if (index_count % 3 != 0) return c3d::INVALID_ARGUMENT~;
+    if (material_indices.len && material_indices.len != index_count / 3) return c3d::INVALID_ARGUMENT~;
+
+    foreach (position : source.positions) {
+        if (!collision_vector_finite(position)) return c3d::INVALID_ARGUMENT~;
+    }
+
+    foreach (index : indices) {
+        if (index >= source.positions.len) return c3d::INVALID_ARGUMENT~;
+    }
+}
+
+// Reads the retained surface through the scaled view, so entries cooked by bodies are checked the same way.
+fn maths::Aabb? check_collision_mesh(b3::Mesh mesh) @private {
+    if (mesh.data.tree_height() > MAX_COLLISION_MESH_HEIGHT) return c3d::CAPACITY_EXCEEDED~;
+
+    b3::Aabb native = mesh.data.compute_aabb(IDENTITY_FRAME, mesh.scale);
+    maths::Aabb bounds = { .min = native.lower_bound, .max = native.upper_bound };
+    if (!collision_vector_finite(bounds.min) || !collision_vector_finite(bounds.max)) {
+        return b3::DEGENERATE_GEOMETRY~;
+    }
+
+    CollisionMeshAudit audit;
+    b3::query_mesh(
+        mesh: &mesh,
+        bounds: collision_mesh_enumeration(bounds)!,
+        fcn: &audit_collision_triangle,
+        context: &audit,
+    );
+    if (audit.failure) return audit.failure~;
+    if (!audit.triangles) return b3::DEGENERATE_GEOMETRY~;
+
+    return bounds;
+}
+
+fn b3::Aabb? collision_mesh_enumeration(maths::Aabb bounds) @private {
+    Vec3 reach = math::max(math::abs(bounds.min), math::abs(bounds.max));
+    float largest = math::max(reach.x, math::max(reach.y, reach.z));
+    float reference = math::max(largest, b3::length_units_per_meter());
+    float half = collision_bound_product(reference, COLLISION_ENUMERATION_GROWTH)!;
+    Vec3 extent = { half, half, half };
+
+    return { .lower_bound = -extent, .upper_bound = extent };
+}
+
+fn bool audit_collision_triangle(
+    Vec3 first,
+    Vec3 second,
+    Vec3 third,
+    int triangle_index,
+    void* context,
+) @local {
+    CollisionMeshAudit* audit = context;
+    Vec3 cross = (second - first).cross(third - first);
+    float area = cross.dot(cross);
+    if (!collision_vector_finite(first) || !collision_vector_finite(second) || !collision_vector_finite(third)
+        || !math::is_finite(area) || area <= COLLISION_TRIANGLE_AREA_FLOOR) {
+        audit.failure = b3::DEGENERATE_GEOMETRY;
+        return false;
+    }
+
+    audit.triangles++;
+    return true;
 }
 
 fn void? check_collision_hull(b3::HullData* hull) @local {

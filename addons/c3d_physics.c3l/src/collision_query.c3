@@ -19,7 +19,7 @@ struct CollisionContact {
 }
 
 <*
- Complete native convex manifold in caller storage.
+ Complete native contact set of two prepared shapes in caller storage.
  @param output : "Caller-owned; contents are unspecified on failure."
  @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
  @require self.state != null && other.state != null
@@ -31,6 +31,16 @@ fn usz? CollisionShapeView.contacts(
     maths::Transform pose_b,
     CollisionContact[] output,
 ) {
+    if (self.state.mesh.data || other.state.mesh.data) {
+        return mesh_contacts(
+            first: self.state,
+            pose_a: pose_a,
+            second: other.state,
+            pose_b: pose_b,
+            output: output,
+        );
+    }
+
     check_collision_pair(
         first: self.state,
         pose_a: pose_a,
@@ -64,6 +74,7 @@ fn usz? CollisionShapeView.contacts(
 
 <*
  Unsigned native distance and world witnesses, including native zero-distance behavior.
+ A mesh pair measures the whole retained surface.
  @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
  @require self.state != null && other.state != null
 *>
@@ -73,6 +84,15 @@ fn collide::Distance? CollisionShapeView.distance(
     CollisionShapeView other,
     maths::Transform pose_b,
 ) {
+    if (self.state.mesh.data || other.state.mesh.data) {
+        return mesh_distance(
+            first: self.state,
+            pose_a: pose_a,
+            second: other.state,
+            pose_b: pose_b,
+        );
+    }
+
     check_collision_pair(
         first: self.state,
         pose_a: pose_a,
@@ -109,6 +129,18 @@ fn collide::Impact? CollisionShapeView.cast(
     if (!collision_vector_finite(translation_a) || !collision_vector_finite(translation_b)) {
         return c3d::INVALID_ARGUMENT~;
     }
+
+    if (self.state.mesh.data || other.state.mesh.data) {
+        return mesh_cast(
+            first: self.state,
+            pose_a: pose_a,
+            second: other.state,
+            pose_b: pose_b,
+            translation_a: translation_a,
+            translation_b: translation_b,
+        );
+    }
+
     check_collision_pair(
         first: self.state,
         pose_a: pose_a,
@@ -142,7 +174,7 @@ fn collide::Impact? CollisionShapeView.cast(
 }
 
 <*
- Native rotational sweep hit in world space.
+ Native sweep hit in world space; a mesh pair accepts fixed orientations only.
  @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, b3::NO_HIT
  @require self.state != null && other.state != null
 *>
@@ -152,6 +184,15 @@ fn collide::Impact? CollisionShapeView.time_of_impact(
     CollisionShapeView other,
     collide::Sweep sweep_b,
 ) {
+    if (self.state.mesh.data || other.state.mesh.data) {
+        return mesh_time_of_impact(
+            first: self,
+            sweep_a: sweep_a,
+            second: other,
+            sweep_b: sweep_b,
+        );
+    }
+
     check_collision_pair(
         first: self.state,
         pose_a: sweep_a.start,
@@ -182,7 +223,7 @@ fn collide::Impact? CollisionShapeView.time_of_impact(
 }
 
 <*
- Closest native convex ray hit, preserving inside-hit zero normals.
+ Closest native ray hit; convex shapes keep inside-hit zero normals, meshes hit front faces only.
  @param direction : "Unit world direction."
  @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, b3::NO_HIT
  @require self.state != null
@@ -219,24 +260,34 @@ fn collide::ShapeRayHit? CollisionShapeView.ray_cast(
     check_collision_length(local_translation)!;
     check_collision_vector(origin + direction * max_distance)!;
 
-    collide::ShapeRayHit found = collide::ray_cast(
-        shape: self.state.shape,
-        pose: pose,
-        origin: origin,
-        direction: direction,
-        max_distance: max_distance,
-    )!;
+    collide::ShapeRayHit found;
+    if (self.state.mesh.data) {
+        found = mesh_ray_cast(
+            mesh: &self.state.mesh,
+            pose: pose,
+            local_origin: local_origin,
+            local_translation: local_translation,
+        )!;
+    } else {
+        found = collide::ray_cast(
+            shape: self.state.shape,
+            pose: pose,
+            origin: origin,
+            direction: direction,
+            max_distance: max_distance,
+        )!;
+    }
     check_collision_vector(found.point)!;
     check_collision_vector(found.normal)!;
     if (!math::is_finite(found.fraction)) return c3d::UNSUPPORTED~;
     return found;
 }
 
-fn bool collision_vector_finite(Vec3 value) @local {
+fn bool collision_vector_finite(Vec3 value) @private {
     return math::is_finite(value.x) && math::is_finite(value.y) && math::is_finite(value.z);
 }
 
-fn void? check_collision_vector(Vec3 value) @local {
+fn void? check_collision_vector(Vec3 value) @private {
     if (!collision_vector_finite(value)) return c3d::UNSUPPORTED~;
 }
 
@@ -245,7 +296,7 @@ fn void? check_collision_length(Vec3 value) @local {
     if (!math::is_finite(value.dot(value))) return c3d::UNSUPPORTED~;
 }
 
-fn void? check_collision_pose(maths::Transform pose) @local {
+fn void? check_collision_pose(maths::Transform pose) @private {
     if (!collision_vector_finite(pose.position) || !collision_vector_finite(pose.scale)) {
         return c3d::INVALID_ARGUMENT~;
     }
@@ -267,7 +318,7 @@ fn Vec3 collision_bound_corner(maths::Aabb bounds, uint corner) @local {
     };
 }
 
-fn Vec3? collision_rotate(Quat rotation, Vec3 point) @local {
+fn Vec3? collision_rotate(Quat rotation, Vec3 point) @private {
     Quat product = rotation.mul((Quat){ .v = { point.x, point.y, point.z, 0 } });
     foreach (component : product.v) if (!math::is_finite(component)) return c3d::UNSUPPORTED~;
     Vec3 result = product.mul(rotation.conjugate()).v.xyz;
@@ -303,7 +354,7 @@ fn Vec3? collision_matrix_rotate(Quat rotation, Vec3 point) @local {
     return result;
 }
 
-fn void? check_collision_world(maths::Aabb bounds, maths::Transform pose, Vec3 translation) @local {
+fn void? check_collision_world(maths::Aabb bounds, maths::Transform pose, Vec3 translation) @private {
     check_collision_vector(pose.position + translation)!;
     for (uint corner = 0; corner < COLLISION_BOUND_CORNERS; corner++) {
         Vec3 rotated = collision_rotate(pose.rotation, collision_bound_corner(bounds, corner))!;
@@ -351,13 +402,12 @@ fn void? check_collision_contractions(Vec3 span, Vec3 local_span) @local {
     (void)collision_bound_dot(support_axis, support_span)!;
 }
 
-fn void? check_collision_relative(
-    maths::Aabb first,
+fn maths::Aabb? collision_relative_bounds(
     maths::Transform pose_a,
     maths::Aabb second,
     maths::Transform pose_b,
     Vec3 translation = {},
-) @local {
+) @private {
     Vec3 displacement = pose_b.position - pose_a.position;
     check_collision_vector(displacement)!;
     Quat inverse = pose_a.rotation.conjugate();
@@ -382,6 +432,17 @@ fn void? check_collision_relative(
         }
     }
 
+    return transformed;
+}
+
+fn void? check_collision_relative(
+    maths::Aabb first,
+    maths::Transform pose_a,
+    maths::Aabb second,
+    maths::Transform pose_b,
+    Vec3 translation = {},
+) @private {
+    maths::Aabb transformed = collision_relative_bounds(pose_a, second, pose_b, translation)!;
     Vec3 source_span = math::max(math::abs(first.max - first.min), math::abs(second.max - second.min));
     check_collision_span(first, transformed, source_span)!;
 }
@@ -391,7 +452,7 @@ fn void? check_collision_pair(
     maths::Transform pose_a,
     CollisionShapeState* second,
     maths::Transform pose_b,
-) @local {
+) @private {
     check_collision_pose(pose_a)!;
     check_collision_pose(pose_b)!;
     float radius = first.shape.radius + second.shape.radius;
@@ -455,7 +516,7 @@ fn void? check_collision_sweeps(
     }
 }
 
-fn float? collision_upper_bound(double value) @local {
+fn float? collision_upper_bound(double value) @private {
     if (!math::is_finite(value) || value > float::max) return c3d::UNSUPPORTED~;
     float upper = (float)value;
     if ((double)upper < value) upper = bitcast(bitcast(upper, uint) + 1, float);
@@ -487,11 +548,11 @@ fn float? collision_rotation_bound(Vec3 extent) @local {
     return math::max(native, math::max(standard, matrix));
 }
 
-fn float? collision_bound_sum(float first, float second) @local {
+fn float? collision_bound_sum(float first, float second) @private {
     return collision_upper_bound((double)first + second);
 }
 
-fn float? collision_bound_product(float first, float second) @local {
+fn float? collision_bound_product(float first, float second) @private {
     return collision_upper_bound((double)first * second);
 }
 
@@ -505,7 +566,7 @@ fn float? collision_bound_cross(float first, float second) @local {
     return collision_bound_sum(product, product);
 }
 
-fn void? check_collision_impact(collide::Impact impact) @local {
+fn void? check_collision_impact(collide::Impact impact) @private {
     check_collision_vector(impact.point)!;
     check_collision_vector(impact.normal)!;
     if (!math::is_finite(impact.time)) return c3d::UNSUPPORTED~;

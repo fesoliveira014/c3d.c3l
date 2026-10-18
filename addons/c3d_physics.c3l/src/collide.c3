@@ -15,7 +15,7 @@ const uint MAX_MANIFOLD_POINTS = 4; // mirrors b3::MAX_MANIFOLD_POINTS
 *>
 const float UNIT_SCALE_TOLERANCE = 1e-4f; // a pose decomposed from a world matrix reads 0.99999994
 
-const uint BOX_CORNER_COUNT @local = 8;
+const uint BOX_CORNER_COUNT @private = 8;
 
 $assert (int)MAX_MANIFOLD_POINTS == b3::MAX_MANIFOLD_POINTS;
 $assert b3::MAX_HULL_VERTICES == b3::MAX_SHAPE_CAST_POINTS;
@@ -101,7 +101,7 @@ struct ShapeRayHit {
     float fraction;
 }
 
-struct Proxy @local {
+struct Proxy @private {
     b3::ShapeProxy proxy;
     Vec3[BOX_CORNER_COUNT] corners;
 }
@@ -391,7 +391,7 @@ fn Manifold manifold_ordered(
     return result;
 }
 
-fn void proxy_of(Shape* shape, Proxy* proxy) @local {
+fn void proxy_of(Shape* shape, Proxy* proxy) @private {
     switch (shape.kind) {
         case SPHERE:
             proxy.corners[0] = { 0, 0, 0 };
@@ -412,7 +412,7 @@ fn void proxy_of(Shape* shape, Proxy* proxy) @local {
     }
 }
 
-fn b3::Capsule capsule_of(Shape* shape) @local {
+fn b3::Capsule capsule_of(Shape* shape) @private {
     return {
         .center1 = { 0, -shape.half_height, 0 },
         .center2 = { 0, shape.half_height, 0 },
@@ -424,13 +424,13 @@ fn b3::BoxHull box_hull_of(Shape* shape) @local {
     return b3::make_box_hull(shape.half_extents.x, shape.half_extents.y, shape.half_extents.z);
 }
 
-fn b3::HullData* hull_data_of(Shape* shape, b3::BoxHull* storage) @local {
+fn b3::HullData* hull_data_of(Shape* shape, b3::BoxHull* storage) @private {
     if (shape.kind == ShapeKind.HULL) return shape.hull;
     *storage = box_hull_of(shape);
     return &storage.base;
 }
 
-fn b3::Transform relative(maths::Transform pose_a, maths::Transform pose_b) @local {
+fn b3::Transform relative(maths::Transform pose_a, maths::Transform pose_b) @private {
     Quat inverse = pose_a.rotation.conjugate();
     return {
         .p = inverse.rotate_vec3(pose_b.position - pose_a.position),
@@ -447,6 +447,6 @@ fn b3::Sweep box3d_sweep(Sweep sweep) @local {
     };
 }
 
-fn Vec3 to_world(maths::Transform pose, Vec3 point) @local => pose.rotation.rotate_vec3(point) + pose.position;
+fn Vec3 to_world(maths::Transform pose, Vec3 point) @private => pose.rotation.rotate_vec3(point) + pose.position;
 
-fn Vec3 to_world_direction(maths::Transform pose, Vec3 direction) @local => pose.rotation.rotate_vec3(direction);
+fn Vec3 to_world_direction(maths::Transform pose, Vec3 direction) @private => pose.rotation.rotate_vec3(direction);
