@@ -391,7 +391,8 @@ struct PhysicsWorld {
     BuildFailure[] failure_storage;
     uint           failure_count;
     MoverPass      mover_pass;
-    FluidSurfaceFn fluid_surface;  // null: no fluid, buoyancy applies nothing
+    FluidSampleFn  fluid_sampler;  // only one of the two is set; both null: no fluid, buoyancy applies nothing
+    FluidSurfaceFn fluid_surface;
     void*          fluid_context;
     b3::record::Recording* recording; // null when idle
     ClothStats     cloth_stats;

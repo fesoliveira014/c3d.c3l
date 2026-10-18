@@ -1,12 +1,15 @@
 # Buoyancy
 
-The `c3d_physics` add-on lifts dynamic bodies out of a fluid whose surface the application installs. A
-`Buoyancy` component on a node with a dynamic body receives, every fixed step, the lift of the fluid it
-displaces and a linear drag, from a surface function `PhysicsWorld.set_fluid_surface` stores per world. The
-physics package knows nothing about where the surface comes from: an analytic level, a tide, or the landscape
-add-on's water through the adapter in [water](water.md#buoyancy). Neither package imports the other.
+The `c3d_physics` add-on lifts dynamic bodies out of a fluid the application installs. A `Buoyancy` component on
+a node with a dynamic body receives, every fixed step, the lift of the fluid it displaces and the drag of the
+fluid moving past it, from a surface function (`PhysicsWorld.set_fluid_surface`) or a sampler that also reports
+the fluid's velocity (`PhysicsWorld.set_fluid_sampler`), stored per world. The physics package knows nothing
+about where the fluid comes from: an analytic level, a tide, a current, or the landscape add-on's water through
+`water::fluid_sample` ([water](water.md#buoyancy)). Neither package imports the other.
 
-## Installing a surface
+## Installing a fluid
+
+A height-only surface is a fluid at rest:
 
 ```c3
 alias FluidSurfaceFn = fn float? (void* context, float x, float z, float step_offset);
@@ -26,23 +29,36 @@ physics.set_fluid_surface(&pond_level, &pond);
 scene.add(raft, (Buoyancy){ .fluid_density = physics::DEFAULT_FLUID_DENSITY, .linear_drag = 3000 });
 ```
 
+A moving fluid reports its velocity beside the height:
+
+```c3
+alias FluidSampleFn = fn float? (void* context, float x, float z, float step_offset, Vec3* velocity);
+
+physics.set_fluid_sampler(&river_sample, &river);
+```
+
 - The function returns the world height of the surface over a point; an empty optional means no fluid there,
-  and that cell receives nothing.
-- One surface per world. A second call replaces the first; `null` removes it, and every body's
-  `submerged_fraction` reads 0 from the next step. The caller keeps the context alive while it is installed.
+  and that cell receives nothing. A sampler writes the fluid's velocity in metres per second into `velocity`;
+  the value is unspecified when the optional is empty. A surface reports zero velocity.
+- One fluid per world. Each install, of either kind, replaces the previous one; `null` removes it, and every
+  body's `submerged_fraction` reads 0 from the next step. The caller keeps the context alive while it is
+  installed.
 - `step_offset` is the time from the update's first fixed step to the one being taken: step index × fixed dt.
-  An application whose surface moves adds it to the frame time it stored in the context, so every step of a
+  An application whose fluid moves adds it to the frame time it stored in the context, so every step of a
   multi-step update samples its own time.
 - The function runs serially inside `PhysicsWorld.update`, once per cell and step.
+- The application sets the context (the frame time, a retaken `SurfaceView`) before `PhysicsWorld.update`. After
+  a water update or an origin shift it takes the water view again ([water](water.md#buoyancy)).
 
 ## The cell model
 
-`Buoyancy` has two authored fields and one the world writes:
+`Buoyancy` has three authored fields and one the world writes:
 
 | Field | Meaning |
 | --- | --- |
 | `fluid_density` | Kilograms per cubic metre; `DEFAULT_FLUID_DENSITY` is fresh water, 1000 |
 | `linear_drag` | Newton-seconds per metre on the whole body fully submerged |
+| `drag_coefficient` | Dimensionless C_d on each cell's cross-section; 0 keeps only linear drag |
 | `submerged_fraction` | Written each step: the mean submersion of the body's cells, in [0, 1] |
 
 The authored fields are not checked in the step loop, as `Wind` and `Force` are not: keep them non-negative and
@@ -53,21 +69,51 @@ finite.
   their mass over density. Zero-density colliders, the usual sensor, add neither, so a body floats at its
   mass-weighted density. Compound, height-field and mesh colliders are static only and never measured.
 - Each step the box splits into `BUOYANCY_CELLS` (8) octant cells. Each cell centre goes to world space with the
-  body's current pose; the surface is sampled there; the cell's fraction is
+  body's current pose; the fluid is sampled there; the cell's fraction is
   `clamp((surface − y) / h + 0.5, 0, 1)`, with `h` the rotated cell's world height span, so a tilted body still
   submerges each cell over its full height.
-- A submerged cell receives, at its centre, `(−gravity · ρ · V / 8 − v · drag / 8) · fraction`, with the
-  world's `tuning.gravity` (not the body's `gravity_scale`: a scaled body is lighter, not less buoyant) and `v`
-  the velocity of the body at the cell centre. A cell with fraction 0 receives nothing.
+- A submerged cell receives, at its centre, `−gravity · ρ · V / 8 · fraction` of lift, with the world's
+  `tuning.gravity` (not the body's `gravity_scale`: a scaled body is lighter, not less buoyant), and the drag
+  below. A cell with fraction 0 receives nothing.
 - At rest on a flat surface a body settles where its mean fraction equals `ρ_body / ρ_fluid`, whatever its
   shape.
 
+## Drag
+
+With `v_rel = v − v_fluid`, the velocity of the body at the cell centre relative to the fluid there, a cell's
+drag is
+
+```
+F = −(linear_drag / 8 + ½ · ρ · C_d · A_cell(v̂_rel) · |v_rel|) · v_rel · fraction
+```
+
+- `A_cell(d)` is the cell box's area projected on the plane perpendicular to `d`: the sum of the areas of its
+  three face pairs, each weighted by `|d · axis|` of the body axis normal to it. It is square metres, so `C_d`
+  is dimensionless. A cell is half the box along each axis, so eight cells together project twice the body
+  box's area in every direction: choose `C_d` for the cells (half the textbook coefficient of a cube, which is
+  about 1.05).
+- The force is applied at the cell centre, so a fluid moving past a body also turns it.
+- The magnitude of `F` is limited to `m_cell · |v_rel| / fixed_dt`, with `m_cell` one eighth of the body's mass,
+  so one explicit step cannot reverse the cell's velocity relative to the fluid. The limit binds when
+  `linear_drag · fraction > mass / fixed_dt` (60 N·s/m per kilogram at 60 Hz). Below that, it never changes a
+  body that has linear drag alone; above it, the drag is weaker than `linear_drag` states.
+- The terminal speed of a body sinking through a fluid on quadratic drag alone is
+  `sqrt(2 (m − ρ V) g / (ρ C_d A))`, with `A` the sum of the eight cells' projected areas.
+
+## Interactions
+
+- Buoyant lift uses the world's gravity; `gravity_scale` does not scale it.
+- A submerged cell applies its force with `wake: true`, so a floating body does not sleep; see
+  [Sleep](#sleep).
+- The fluid's velocity enters only through the drag's relative velocity: a body with `linear_drag = 0` and
+  `drag_coefficient = 0` feels no current.
+
 ## Rebasing the origin
 
-`PhysicsWorld.shift_origin` moves bodies but not the surface. A `FluidSurfaceFn` that
+`PhysicsWorld.shift_origin` moves bodies but not the fluid. A `FluidSurfaceFn` or `FluidSampleFn` that
 reads world `x` and `z` must be given the shifted coordinates by the application, for
 example by capturing the accumulated offset, or the body floats against a displaced
-surface after the shift.
+surface after the shift. A `SurfaceView` of the water add-on is taken again after the shift.
 
 ## Sleep
 
@@ -80,7 +126,10 @@ sleeps. A body with no submerged cell receives no force and no wake, and sleeps 
 `physics_test`'s buoyancy group runs over an analytic surface: a light box settles at its density line, a
 heavy one sinks, bodies out of the fluid sleep while floaters never sleep through two consecutive steps, every
 sample carries its step offset, a second install replaces the first, a sphere and a box of equal volume float
-alike, and a body of two colliders floats at its summed volume.
+alike, and a body of two colliders floats at its summed volume. Quadratic drag is checked against the analytic
+terminal speed at two fixed steps; the limit keeps a strongly dragged body from overshooting a current; a
+floating body drifts at the speed of a uniform current and stays put at equilibrium; and a height-only surface
+and a zero-velocity sampler give bitwise-equal bodies in one run.
 
 `physics.update` per fixed step on WSL (`-O3`, one thread, medians of three runs), 1 m boxes at density 600
 over the water example's calm waves through the water adapter:

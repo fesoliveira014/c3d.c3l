@@ -520,7 +520,7 @@ contacts are kept, so a resting stack stays asleep. Cloth positions, pin anchors
 targets, collision shapes and the sampled body poses move with it; nothing allocates.
 Call it between `end_frame` and the next `physics.update`. A recording captures the
 shift as `set_transform` calls of every body, and replay reproduces it. The
-`FluidSurfaceFn` of buoyancy belongs to the application and must follow the shift.
+`FluidSurfaceFn` or `FluidSampleFn` of buoyancy belongs to the application and must follow the shift.
 See `docs/large_world.md` for the full order.
 
 ## Example and checks
