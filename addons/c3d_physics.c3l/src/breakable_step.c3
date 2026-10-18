@@ -200,13 +200,14 @@ fn void fail_breakable_binding(
 }
 
 fn void sync_breakable_anchors(PhysicsWorld* world, Node* root, BreakableState* state) @local {
-    foreach (&anchor : state.runtime.anchors) {
+    foreach (uint index, &anchor : state.runtime.anchors) {
         if (anchor.broken || anchor.pruned) continue;
         if (catch excuse = sync_breakable_anchor(
             world: world,
             root: root,
             state: state,
             anchor: anchor,
+            index: index,
         )) {
             if (anchor.joint.is_valid()) b3::destroy_joint(anchor.joint, true);
             anchor.joint = {};
@@ -223,6 +224,7 @@ fn void? sync_breakable_anchor(
     Node* root,
     BreakableState* state,
     BreakableAnchor* anchor,
+    uint index,
 ) @local {
     b3::BodyId target = breakable_anchor_target(world, anchor.authored.target)!;
     Node* piece = world.scene.node(state.pieces[anchor.authored.piece]);
@@ -239,6 +241,8 @@ fn void? sync_breakable_anchor(
     anchor.joint = create_breakable_weld(
         world: world,
         root: root.id,
+        kind: ANCHOR,
+        index: index,
         body_a: body.body,
         body_b: target,
         frame_a: anchor.authored.frame_a,
@@ -253,30 +257,13 @@ fn bool breakable_joint_event(PhysicsWorld* world, Node* root, b3::JointId joint
     if (!component) return false;
     BreakableState* state = component.state;
 
-    foreach (uint index, &weld : state.welds) {
-        if (!same_breakable_joint(weld.joint, joint)) continue;
-        if (weld.broken) return true;
-        weld.broken = true;
-        state.alive_welds--;
-
-        push_breakable_event(
-            world: world,
-            root: root,
-            first: state.pieces[weld.piece_a],
-            second: state.pieces[weld.piece_b],
-            joint: joint,
-            frame: weld.frame_a,
-            kind: INTERNAL_WELD,
-            index: index,
-            limits: weld.strength,
-            reaction: {},
-            phase: NATIVE_THRESHOLD,
-        );
-        return true;
-    }
-
-    foreach (uint index, &anchor : state.runtime.anchors) {
-        if (!same_breakable_joint(anchor.joint, joint)) continue;
+    if ((usz)joint.index1 >= world.joint_slots.len) return false;
+    uint slot = world.joint_slots[joint.index1];
+    uint index = slot & ~ANCHOR_SLOT_BIT;
+    if (slot & ANCHOR_SLOT_BIT) {
+        if (index >= state.runtime.anchors.len) return false;
+        BreakableAnchor* anchor = &state.runtime.anchors[index];
+        if (!same_breakable_joint(anchor.joint, joint)) return false;
         if (anchor.broken || anchor.pruned) return true;
         anchor.broken = true;
         state.alive_anchors--;
@@ -296,7 +283,28 @@ fn bool breakable_joint_event(PhysicsWorld* world, Node* root, b3::JointId joint
         );
         return true;
     }
-    return false;
+
+    if (index >= state.welds.len) return false;
+    Weld* weld = &state.welds[index];
+    if (!same_breakable_joint(weld.joint, joint)) return false;
+    if (weld.broken) return true;
+    weld.broken = true;
+    state.alive_welds--;
+
+    push_breakable_event(
+        world: world,
+        root: root,
+        first: state.pieces[weld.piece_a],
+        second: state.pieces[weld.piece_b],
+        joint: joint,
+        frame: weld.frame_a,
+        kind: INTERNAL_WELD,
+        index: index,
+        limits: weld.strength,
+        reaction: {},
+        phase: NATIVE_THRESHOLD,
+    );
+    return true;
 }
 
 fn void sample_breakables(PhysicsWorld* world) @private {

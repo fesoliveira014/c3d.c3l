@@ -169,3 +169,19 @@ fn void test_cloth_staging_order_does_not_change_results() @test {
     assert(contacts > 0);
     assert(serial.scene.get(serial_scene.torn, Cloth).cut_result(PARALLEL_CUT_PATH)!!.is_cut);
 }
+
+fn void test_cloth_is_refused_on_a_node_that_carries_an_output_marker() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Node* marked = add_cloth_node(&fixture, add_grid(&fixture, 1));
+    fixture.scene.add(marked, (ClothOutput){ .owner = marked.id, .crowd = true });
+    assert(rejected_atomically(&fixture, marked, cloth::default_cloth_desc()) == c3d::INVALID_ARGUMENT);
+
+    Node* attached = add_cloth_node(&fixture, add_grid(&fixture, 1));
+    fixture.scene.attach_cloth(&fixture.assets, attached, cloth::default_cloth_desc())!!;
+    fixture.scene.add(attached, (ClothOutput){ .owner = attached.id });
+    assert(@catch(cloth::prepare(&fixture.scene, &fixture.assets, attached)) == c3d::INVALID_ARGUMENT);
+    assert(!fixture.scene.get(attached, Cloth).is_prepared());
+}

@@ -12,11 +12,19 @@ import c3d::scene;
 import c3d::serial;
 
 const ulong TERRAIN_LAYOUT @private = 0x7638a7507fa65b33;
+const ulong TERRAIN_TILE_LAYOUT @private = 0x3fe780c7be5416e1;
+const ulong TERRAIN_SET_LAYOUT @private = 0x6b17270c6b53663f;
 const ulong SCATTER_LAYOUT @private = 0x788326d1092caa6b;
 const ulong SWAY_LAYOUT @private = 0x750cddc9cb008976;
 const ulong FOLIAGE_LAYOUT @private = 0x20330122082bd780;
 const ulong WAVE_LAYOUT @private = 0xb7ea583c7a255cb9;
 const ulong WATER_LAYOUT @private = 0x74434d01389bb922;
+
+struct TerrainSetAuthoring @private {
+    uint  texels;
+    float cell_size;
+    float height_scale;
+}
 
 struct FoliageAuthoring @private {
     GeometryId geometry;
@@ -40,6 +48,8 @@ struct FoliageAuthoring @private {
 fn void? register_serial_codecs() {
     serial::register_core_value_types()!;
     register_value(TerrainDesc, TERRAIN_LAYOUT, &defaults_terrain)!;
+    register_value(TerrainTile, TERRAIN_TILE_LAYOUT, &defaults_terrain_tile)!;
+    register_value(TerrainSetAuthoring, TERRAIN_SET_LAYOUT, &defaults_terrain_set)!;
     register_value(ScatterRules, SCATTER_LAYOUT, &defaults_scatter)!;
     register_value(SwayTemplate, SWAY_LAYOUT, &defaults_sway)!;
     register_value(FoliageAuthoring, FOLIAGE_LAYOUT, &defaults_foliage)!;
@@ -52,6 +62,14 @@ fn void? register_serial_codecs() {
         .project = &project_terrain,
         .validate = &validate_terrain,
         .attach = &attach_terrain,
+    })!;
+    serial::register_described(TerrainTile, { .name = "terrain_tile", .phase = VALUE })!;
+    serial::register_described_owner(TerrainSet, TerrainSetAuthoring, {
+        .name = "terrain_set",
+        .phase = VALUE,
+        .project = &project_terrain_set,
+        .validate = &validate_terrain_set,
+        .attach = &attach_terrain_set,
     })!;
     serial::register_described_owner(Foliage, FoliageAuthoring, {
         .name = "foliage",
@@ -87,6 +105,8 @@ macro void? register_value($Type, ulong layout, serial::DefaultsFn defaults) @pr
 }
 
 fn void defaults_terrain(void* value) @private => *(TerrainDesc*)value = terrain::default_terrain_desc();
+fn void defaults_terrain_tile(void* value) @private => *(TerrainTile*)value = {};
+fn void defaults_terrain_set(void* value) @private => *(TerrainSetAuthoring*)value = {};
 fn void defaults_scatter(void* value) @private => *(ScatterRules*)value = foliage::default_foliage_desc().rules;
 fn void defaults_sway(void* value) @private => *(SwayTemplate*)value = foliage::default_foliage_desc().sway;
 fn void defaults_foliage(void* value) @private {
@@ -132,6 +152,21 @@ fn void? project_terrain(void* component, void* value, serial::WriteContext* con
     terrain::check_terrain_desc(context.assets, (TerrainDesc*)value)!;
 }
 
+fn bool terrain_set_valid(TerrainSetAuthoring* authoring) @private {
+    return authoring.texels > 1 && authoring.cell_size > 0 && authoring.height_scale > 0;
+}
+
+fn void? project_terrain_set(void* component, void* value, serial::WriteContext* context) @private {
+    TerrainSet* set = component;
+    TerrainSetAuthoring* authoring = value;
+    *authoring = {
+        .texels       = set.texels,
+        .cell_size    = set.cell_size,
+        .height_scale = set.height_scale,
+    };
+    if (!terrain_set_valid(authoring)) return c3d::INVALID_ARGUMENT~;
+}
+
 fn void? project_foliage(void* component, void* value, serial::WriteContext* context) @private {
     FoliageDesc desc = ((Foliage*)component).desc;
     foliage::check_authoring(context.scene, context.assets, &desc)!;
@@ -146,6 +181,10 @@ fn void? project_water(void* component, void* value, serial::WriteContext* conte
 fn void? validate_terrain(void* value, serial::ReadContext* context) @private {
     if (context.has_component(InstancedMesh)) return c3d::INVALID_ARGUMENT~;
     terrain::check_terrain_desc(context.assets, (TerrainDesc*)value)!;
+}
+
+fn void? validate_terrain_set(void* value, serial::ReadContext* context) @private {
+    if (!terrain_set_valid((TerrainSetAuthoring*)value)) return c3d::INVALID_ARGUMENT~;
 }
 
 fn void? validate_foliage(void* value, serial::ReadContext* context) @private {
@@ -183,6 +222,15 @@ fn void? attach_terrain(void* value, serial::ReadContext* context) @private {
         node: context.node,
         desc: *(TerrainDesc*)value,
     )!;
+}
+
+fn void? attach_terrain_set(void* value, serial::ReadContext* context) @private {
+    TerrainSetAuthoring* authoring = value;
+    context.scene.add(context.node, (TerrainSet){
+        .texels       = authoring.texels,
+        .cell_size    = authoring.cell_size,
+        .height_scale = authoring.height_scale,
+    });
 }
 
 fn void? attach_foliage(void* value, serial::ReadContext* context) @private {

@@ -3,6 +3,7 @@ module physics_components_example;
 import std::io;
 import std::math;
 import std::math::quaternion;
+import std::sort;
 import std::time;
 import std::time::clock;
 import c3d;
@@ -26,6 +27,12 @@ const uint  MAX_SPAWNED @local = 1024; // one node, one body and one draw per sp
 const uint  STRESS_SIDE @local = 142;
 const uint  STRESS_BODIES @local = STRESS_SIDE * STRESS_SIDE; // about 20 000 static bodies; the per-body pass measurement
 const uint  LEVEL_NODES @local = 64;
+const uint  BENCHMARK_BOX_SIDE @local = 16; // 256 dynamic boxes; the size of the moving-body list
+const float BENCHMARK_BOX_SPACING @local = 1.5f;
+const float BENCHMARK_BOX_HEIGHT @local = 2;
+const uint  BENCHMARK_SETTLE_FRAMES @local = 300; // five simulated seconds, so the dropped boxes sleep before timing
+const uint  PERCENTILE_95 @local = 95;
+const uint  PERCENT @local = 100; // the percentile index rounds up to the next sample
 const uint  SCENE_NODE_CAPACITY @local = MAX_SPAWNED + STRESS_BODIES + LEVEL_NODES;
 const uint  TIMING_WINDOW @local = 60;
 const float STRESS_SPACING @local = 1.5f;
@@ -61,6 +68,17 @@ const SurfaceMaterialId GROUND_SURFACE @local = (SurfaceMaterialId)1;
 const SurfaceMaterialId CONVEYOR_SURFACE @local = (SurfaceMaterialId)2;
 const SurfaceMaterialId ICE_SURFACE @local = (SurfaceMaterialId)3;
 const SurfaceMaterialId GRIP_SURFACE @local = (SurfaceMaterialId)4;
+
+struct Options @local {
+    bool stress;
+    uint benchmark_frames;
+}
+
+struct BodyCounts @local {
+    uint statics;
+    uint kinematics;
+    uint dynamics;
+}
 
 struct FreeCamera @local {
     Vec3  position;
@@ -560,6 +578,7 @@ fn void? run(
     Scene* scene,
     PhysicsWorld* physics,
     Level* level,
+    bool stress,
 ) @local {
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
@@ -573,7 +592,7 @@ fn void? run(
     Spawned* spawned = mem::new(Spawned);
     defer free(spawned);
     Timing timing;
-    Controls controls = { .draw = { .colliders = true } };
+    Controls controls = { .draw = { .colliders = true }, .stress = stress };
     renderer.prepare_scene(scene)!;
 
     while (window.poll()) {
@@ -666,7 +685,117 @@ fn void? run(
     }
 }
 
-fn int main() {
+fn Options? parse_options(String[] args) @local {
+    Options options;
+    for (usz index = 1; index < args.len; index++) {
+        String arg = args[index];
+        if (arg == "--stress") {
+            options.stress = true;
+        } else if (arg == "--benchmark" && index + 1 < args.len) {
+            uint frames = args[++index].to_uint()!;
+            if (!frames) return c3d::INVALID_ARGUMENT~;
+            options.benchmark_frames = frames;
+        } else {
+            return c3d::INVALID_ARGUMENT~;
+        }
+    }
+    return options;
+}
+
+fn BodyCounts count_bodies(Scene* scene) @local {
+    BodyCounts counts;
+    scene.@each(RigidBody; Entity entity, RigidBody* body) {
+        switch (body.kind) {
+            case STATIC:    counts.statics++;
+            case KINEMATIC: counts.kinematics++;
+            case DYNAMIC:   counts.dynamics++;
+        }
+    };
+    return counts;
+}
+
+fn void? drop_benchmark_boxes(Scene* scene, Level* level) @local {
+    ColliderDesc collider = physics::default_collider_desc(BOX);
+    collider.half_extents = { 0.5f, 0.5f, 0.5f };
+    float origin = -(float)(BENCHMARK_BOX_SIDE - 1) * BENCHMARK_BOX_SPACING * 0.5f;
+    for (uint index = 0; index < BENCHMARK_BOX_SIDE * BENCHMARK_BOX_SIDE; index++) {
+        Node* node = scene.add_mesh(level.box_geometry, level.box_material, name: "box")!;
+        node.local.position = {
+            origin + (float)(index % BENCHMARK_BOX_SIDE) * BENCHMARK_BOX_SPACING,
+            BENCHMARK_BOX_HEIGHT,
+            origin + (float)(index / BENCHMARK_BOX_SIDE) * BENCHMARK_BOX_SPACING,
+        };
+        scene.add_physics_body(node, physics::default_body_desc(DYNAMIC), (&collider)[:1])!;
+    }
+}
+
+fn void? run_benchmark(Options options) @local {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+
+    Scene scene = scene::create_scene(mem, { .max_nodes = SCENE_NODE_CAPACITY });
+    defer scene::destroy_scene(&scene);
+    physics::register_physics(&scene)!;
+    Level level = build_level(&assets, &scene)!;
+    defer {
+        if (level.stress_nodes.len) toggle_stress(&scene, &level, false);
+    }
+
+    PhysicsWorld physics = physics::create_physics_world(
+        allocator: mem,
+        assets:    &assets,
+        scene:     &scene,
+        desc:      physics::default_physics_desc(),
+    )!;
+    defer physics::destroy_physics_world(&physics);
+
+    if (options.stress) toggle_stress(&scene, &level, true);
+    drop_benchmark_boxes(&scene, &level)!;
+    scene.update_world();
+
+    time::Clock started = clock::now();
+    physics.update(physics::DEFAULT_FIXED_DT);
+    double first_update_ms = (double)(long)started.to_now() / 1_000_000;
+    for (uint frame = 0; frame < BENCHMARK_SETTLE_FRAMES; frame++) {
+        scene.update_world();
+        physics.update(physics::DEFAULT_FIXED_DT);
+    }
+
+    double[] samples = mem::new_array(double, options.benchmark_frames);
+    defer free(samples.ptr);
+    double total;
+    foreach (&sample : samples) {
+        scene.update_world();
+        started = clock::now();
+        physics.update(physics::DEFAULT_FIXED_DT);
+        *sample = (double)(long)started.to_now() / 1_000_000;
+        total += *sample;
+    }
+    sort::quicksort(samples);
+
+    BodyCounts counts = count_bodies(&scene);
+    uint percentile = (options.benchmark_frames * PERCENTILE_95 + PERCENT - 1) / PERCENT - 1;
+    io::printfn(
+        "physics_update,stress,%d,frames,%d,mean_ms,%.6f,p95_ms,%.6f,first_update_ms,%.3f,static,%d,kinematic,%d,dynamic,%d,awake,%d",
+        options.stress ? 1 : 0, options.benchmark_frames, total / options.benchmark_frames, samples[percentile],
+        first_update_ms, counts.statics, counts.kinematics, counts.dynamics, physics.world.awake_body_count(),
+    );
+}
+
+fn int main(String[] args) {
+    Options? options = parse_options(args);
+    if (catch excuse = options) {
+        io::eprintfn("Invalid options: %s", excuse);
+        return 1;
+    }
+    if (options.benchmark_frames) {
+        if (catch excuse = run_benchmark(options)) {
+            io::eprintfn("Benchmark failed: %s", excuse);
+            return 1;
+        }
+        return 0;
+    }
+
     platform::Window window = platform::create_window(platform::default_window_desc("c3d physics components", 1280, 720))!!;
     defer platform::destroy_window(&window);
 
@@ -701,6 +830,7 @@ fn int main() {
         scene:    &scene,
         physics:  &physics,
         level:    &level,
+        stress:   options.stress,
     )) {
         io::eprintfn("physics components example failed: %s", excuse);
         return 1;

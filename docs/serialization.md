@@ -46,7 +46,7 @@ and restart contracts are detailed in the built-in policy inventory below.
 Animator export projects owned transforms and Mesh morph weights to captured
 baselines; ordinary Mesh values preserve their explicit weights.
 
-There are 41 authored and 15 transient production component policies. The
+There are 43 authored and 15 transient production component policies. The
 registration calls install their description/default prerequisites idempotently.
 Consumers select each package and its normal dependencies, including `c3d_serial`
 for any adapter below; core has no reverse dependency on an add-on.
@@ -58,7 +58,7 @@ for any adapter below; core has no reverse dependency on an add-on.
 | Navigation | `C3D_NAV_SERIAL` | `nav::register_serial_codecs()` | 5 / 5 |
 | Character | `C3D_CHARACTER_SERIAL`, `C3D_PHYSICS_SERIAL` | `character::register_serial_codecs()` | 1 / 0 |
 | Character navigation | Also `C3D_CHARACTER_NAV`, `C3D_NAV_SERIAL` | Included by character registration | 1 / 0 |
-| Landscape | `C3D_LANDSCAPE_SERIAL` | `landscape::register_serial_codecs()` | 3 / 5 |
+| Landscape | `C3D_LANDSCAPE_SERIAL` | `landscape::register_serial_codecs()` | 5 / 5 |
 | Particles | `C3D_PARTICLE_SERIAL` | `particle::register_serial_codecs()` | 1 / 1 |
 | Audio | `C3D_AUDIO_SERIAL` | `audio::register_serial_codecs()` | 2 / 1 |
 
@@ -327,7 +327,7 @@ their existing contracts. Existing shared runtime validators also govern seriali
 | --- | --- | --- |
 | Wind | `velocity` components, `drag`, `lift`, `max_speed` | Finite; no added range restriction |
 | Force | `force` and `local_point` components | Finite; no added range restriction |
-| Buoyancy | `fluid_density`, `linear_drag` | Finite; no added range restriction |
+| Buoyancy | `fluid_density`, `linear_drag`, `drag_coefficient` | Finite; no added range restriction |
 | PhysicsBody | BodyDesc `linear_velocity` and `angular_velocity` components, `linear_damping`, `angular_damping`, `gravity_scale` | Finite; no added range restriction |
 | Animator | Action `speed`; 1D/2D blend-space coordinates, parameter and `speed` | Finite; negative speeds allowed |
 | Animator | Action and blend-space `weight` | Finite and nonnegative; no upper cap |
@@ -360,8 +360,9 @@ only its selected variant. Cloth (v8) restores in OWNER and CrowdCloth (v3)
 restores in BINDINGS; prepared skinned Cloth projects its retained source Mesh
 with `project_absent_component` and omits its generated child output node, while
 prepared CrowdCloth omits its per-slot output children. Wind and Force persist
-their complete values; Buoyancy persists density and drag and resets submerged
-fraction. RigidBody, Joint and ClothOutput are explicitly transient, and
+their complete values; Buoyancy (v2) persists density, linear drag and drag
+coefficient and resets submerged fraction, and v1 payloads read a drag
+coefficient of 0. RigidBody, Joint and ClothOutput are explicitly transient, and
 ClothOutput's read-only collector rejects exporting a generated output child
 without its selected owner. Ordinary physics synchronization creates the native
 state. The package inventory discovers all twelve physics component types through
@@ -488,7 +489,9 @@ check ordinary registration with and without navigation.
 ## Landscape, particle and audio adapters
 
 Terrain and Water restore complete descriptors in VALUE, with no generated
-material, batch or mirror. Foliage restores its ground reference and copied
+material, batch or mirror. TerrainSet and TerrainTile restore their authored
+fields in VALUE; the set's neighbour links are runtime state, rebuilt when the
+tiles prepare. Foliage restores its ground reference and copied
 scatter, sway, fade, render and optional LOD authoring in OWNER. Prepare terrain
 before foliage, and publish world matrices before dependent preparation.
 Foliage cells and water mirrors are omitted only through verified ownership.

@@ -450,8 +450,9 @@ application's wind mapped onto each layer's sway. Terrain edits re-place only th
 benchmark.
 
 It also draws water bodies: Gerstner waves over the scene's colour and depth snapshots, planar mirror or
-screen-space reflections with an environment fallback, lit foam and wind-scrolled ripples, and CPU heights that
-match the drawn surface, which the application hands to the physics add-on's buoyancy. See
+screen-space reflections with an environment fallback, lit foam and wind-scrolled ripples, and CPU heights,
+normals and velocities that match the drawn surface, which `water::fluid_sample` hands to the physics add-on's
+buoyancy. See
 [water](docs/water.md); `python3 scripts/build.py --example water` runs its example and scripted benchmark.
 
 Add c3d and its dependencies to your `project.json`. A C3 library manifest cannot declare features,

@@ -37,7 +37,7 @@ fn void test_every_physics_component_has_an_explicit_serialization_policy() @tes
     ExpectedPolicy[12] expected = {
         { .slot = ecs::assigned_slot(PhysicsBody)!!, .name = "physics_body", .identity = BodyAuthoring::typeid, .version = 1 },
         { .slot = ecs::assigned_slot(PhysicsJoint)!!, .name = "physics_joint", .identity = JointAuthoring::typeid, .phase = REFERENCES, .version = 1 },
-        { .slot = ecs::assigned_slot(Buoyancy)!!, .name = "buoyancy", .identity = BuoyancyAuthoring::typeid, .version = 1 },
+        { .slot = ecs::assigned_slot(Buoyancy)!!, .name = "buoyancy", .identity = BuoyancyAuthoring::typeid, .version = 2 },
         { .slot = ecs::assigned_slot(Wind)!!, .name = "wind", .identity = Wind::typeid, .version = 1 },
         { .slot = ecs::assigned_slot(Force)!!, .name = "force", .identity = Force::typeid, .version = 1 },
         { .slot = ecs::assigned_slot(Cloth)!!, .name = "cloth", .identity = ClothSavedAuthoring::typeid, .phase = OWNER, .version = 8 },

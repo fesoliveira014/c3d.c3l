@@ -100,6 +100,7 @@ fn uint Scene.add_static_mesh_bodies(&self, Node* root, CollisionFilter filter =
 
 <*
  Register physics components and their resource removal hooks.
+ Call before create_physics_world; a later call replaces the world's PhysicsBody hook.
  @param [&inout] scene : "Gains body, joint, force, ragdoll, fracture and cloth stores."
  @return? c3d::CAPACITY_EXCEEDED
 *>
@@ -179,7 +180,7 @@ macro carve_copy(BlockCursor* cursor, source) @local {
     return copy;
 }
 
-fn void free_physics_body(Entity entity, void* component, void* user) @local {
+fn void free_physics_body(Entity entity, void* component, void* user) @private {
     PhysicsBody* physics_body = component;
     alloc::free(*(Allocator*)user, physics_body.colliders.ptr);
 }

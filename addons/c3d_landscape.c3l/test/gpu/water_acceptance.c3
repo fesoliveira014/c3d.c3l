@@ -91,22 +91,6 @@ struct Fixture @local {
     gpu::MappedGpuSpan readback;
 }
 
-struct Lake @local {
-    SurfaceView view;
-    double      time;
-}
-
-// The reference adapter of docs/water.md: one water body, the update's base time.
-fn float? lake_height(void* context, float x, float z, float step_offset) @local {
-    Lake* lake = context;
-    return water::sample_surface(
-        view:    &lake.view,
-        world_x: x,
-        world_z: z,
-        time:    lake.time + step_offset,
-    );
-}
-
 fn void? create_fixture(Fixture* fixture) @local {
     fixture.assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
     fixture.scene = scene::create_scene(mem, scene::default_scene_desc());
@@ -372,12 +356,12 @@ fn void check_twin(Fixture* fixture, Wave[] waves) @local {
         float resting = water::sample_surface(view: &surface, world_x: 0, world_z: 0, time: time)!!;
         float bottom = resting - POST_SUBMERSION;
         Node* post = add_post(fixture, bottom);
-        Lake lake = { .view = surface, .time = time };
-        fixture.physics.set_fluid_surface(&lake_height, &lake);
+        WaterFluid lake = { .view = surface, .time = time };
+        fixture.physics.set_fluid_sampler(&water::fluid_sample, &lake);
         fixture.physics.update(fixture.physics.desc.tuning.fixed_dt);
         assert(fixture.physics.steps_last_update == 1);
         float fraction = fixture.scene.get(post, Buoyancy).submerged_fraction;
-        fixture.physics.set_fluid_surface(null, null);
+        fixture.physics.set_fluid_sampler(null, null);
         fixture.scene.remove(post);
 
         Vec4[] depths = render_and_read(

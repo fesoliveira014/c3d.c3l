@@ -7,6 +7,7 @@ import std::time;
 import std::time::clock;
 import c3d;
 import c3d::asset;
+import c3d::asset::image;
 import c3d::camera;
 import c3d::geometry;
 import c3d::gui;
@@ -69,6 +70,10 @@ const float LOD_THRESHOLD_MAX @local = 2048;
 const double NANOSECONDS_PER_MICROSECOND @local = 1_000;
 const double NANOSECONDS_PER_MILLISECOND @local = 1_000_000;
 const double MICROSECONDS_PER_MILLISECOND @local = 1_000;
+const Vec2 CAPTURE_TARGET @local = { 0.5f, 0.4595f }; // on the x seam, where the default map's edge texels bend most
+const float CAPTURE_HEIGHT @local = 24; // metres above the target; the camera looks straight down at it
+const uint CAPTURE_SETTLE_FRAMES @local = 8; // uploads and the shadow cascades settle on a still camera
+const uint RGBA8_BYTES @local = 4;
 const String[Segment::len] SEGMENT_NAMES @local = { "still", "sweep", "hover", "edit" };
 
 const Pass[8] REPORTED_PASSES @local = {
@@ -119,6 +124,8 @@ struct Options @local {
     uint        width;
     uint        height;
     bool        hide_terrain;
+    bool        tiles;
+    String      capture;
 }
 
 struct Demo @local {
@@ -168,19 +175,48 @@ fn void? add_terrain_collider(PhysicsWorld* physics, Node* node, TerrainDesc des
     return physics.add_body(node, physics::default_body_desc(STATIC), (&collider)[:1]);
 }
 
+fn void? add_terrain_colliders(Demo* demo) @local {
+    foreach (node : demo.ground.terrain_nodes()) {
+        add_terrain_collider(demo.physics, node, demo.scene.get(node, Terrain).desc)!;
+    }
+}
+
+fn void remove_terrain_colliders(Demo* demo) @local {
+    foreach (node : demo.ground.terrain_nodes()) demo.physics.remove_body(node);
+}
+
+fn bool has_terrain_colliders(Demo* demo) @local {
+    return demo.scene.has(demo.ground.terrain_nodes()[0], PhysicsBody);
+}
+
+fn HeightView? ground_view(Demo* demo, Vec3 position) @local {
+    return terrain::height_view(demo.scene, demo.assets, demo.ground.terrain_at(position).id);
+}
+
 fn Demo? build_demo(
     Options options,
     AssetStore* assets,
     Scene* scene,
     PhysicsWorld* physics,
 ) @local {
-    Ground ground = landscape_ground::add_ground(
-        scene:         scene,
-        assets:        assets,
-        size:          options.size,
-        layers:        options.layers,
-        lod_threshold: options.lod_threshold,
-    )!;
+    Ground ground;
+    if (options.tiles) {
+        ground = landscape_ground::add_ground_tiles(
+            scene:         scene,
+            assets:        assets,
+            size:          options.size,
+            layers:        options.layers,
+            lod_threshold: options.lod_threshold,
+        )!;
+    } else {
+        ground = landscape_ground::add_ground(
+            scene:         scene,
+            assets:        assets,
+            size:          options.size,
+            layers:        options.layers,
+            lod_threshold: options.lod_threshold,
+        )!;
+    }
     ground.node.visible = !options.hide_terrain;
     Demo demo = {
         .options = options,
@@ -189,7 +225,7 @@ fn Demo? build_demo(
         .physics = physics,
         .ground  = ground,
     };
-    add_terrain_collider(physics, ground.node, ground.desc)!;
+    add_terrain_colliders(&demo)!;
 
     @pool() {
         Geometry crate = geometry::box(tmem, CRATE_SIZE, CRATE_SIZE, CRATE_SIZE);
@@ -317,6 +353,12 @@ fn Options? parse_options(String[] args) @local {
                 $endif
             case "--validation": options.validation = true;
             case "--hide-terrain": options.hide_terrain = true;
+            case "--capture": options.capture = option_value(args, &index)!;
+            case "--tiles":
+                switch (option_value(args, &index)!) {
+                    case "2x2": options.tiles = true;
+                    default: return c3d::INVALID_ARGUMENT~;
+                }
             case "--shading":
                 switch (option_value(args, &index)!) {
                     case "forward": options.shading = ShadingPath.FORWARD;
@@ -348,6 +390,8 @@ fn Options? parse_options(String[] args) @local {
         }
     }
     if (options.volumetric_fog && !options.sky) return c3d::INVALID_ARGUMENT~;
+    if (options.tiles && options.benchmark) return c3d::INVALID_ARGUMENT~;
+    if (options.capture.len && options.benchmark) return c3d::INVALID_ARGUMENT~;
     if (!options.width) options.width = options.benchmark ? BENCHMARK_WIDTH : WINDOW_WIDTH;
     if (!options.height) options.height = options.benchmark ? BENCHMARK_HEIGHT : WINDOW_HEIGHT;
     return options;
@@ -384,23 +428,39 @@ fn void? terrain_panel(Demo* demo, FlyCamera* fly_camera, float delta) @local {
     imgui::set_next_window_size(PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
     if (imgui::begin("Terrain", null, {})) {
         imgui::text("Right drag looks, WASD move, Shift fast; F flies, Q and E sink and rise");
-        imgui::text("G drops a crate, B paints, P toggles the collider, click pushes a crate");
-        imgui::text("T toggles the ground decal");
-        TerrainRuntime* runtime = demo.scene.get(demo.ground.node, TerrainRuntime);
-        InstancedMesh* batch = demo.scene.get(demo.ground.node, InstancedMesh);
-        imgui::text("Chunks: %u   LOD switches: %u", batch.count, runtime.lod_switches);
-        for (uint level = 0; level < runtime.level_count; level++) {
-            imgui::text("  level %u: %u", level, runtime.chunks_per_level[level]);
+        if (demo.options.tiles) {
+            imgui::text("G drops a crate, P toggles the collider, click pushes a crate; painting is off");
+        } else {
+            imgui::text("G drops a crate, B paints, P toggles the collider, click pushes a crate");
         }
-        Terrain* authored = demo.scene.get(demo.ground.node, Terrain);
+        imgui::text("T toggles the ground decal");
+        uint chunks;
+        uint lod_switches;
+        uint level_count;
+        uint[terrain::MAX_TERRAIN_LEVELS] chunks_per_level;
+        foreach (node : demo.ground.terrain_nodes()) {
+            TerrainRuntime* runtime = demo.scene.get(node, TerrainRuntime);
+            chunks += demo.scene.get(node, InstancedMesh).count;
+            lod_switches += runtime.lod_switches;
+            level_count = runtime.level_count;
+            for (uint level = 0; level < level_count; level++) {
+                chunks_per_level[level] += runtime.chunks_per_level[level];
+            }
+        }
+        imgui::text("Chunks: %u   LOD switches: %u", chunks, lod_switches);
+        for (uint level = 0; level < level_count; level++) {
+            imgui::text("  level %u: %u", level, chunks_per_level[level]);
+        }
+        float lod_threshold = demo.scene.get(demo.ground.terrain_nodes()[0], Terrain).desc.lod_threshold;
         imgui::slider_float(
             label: "LOD threshold",
-            v:     &authored.desc.lod_threshold,
+            v:     &lod_threshold,
             v_min: 0,
             v_max: LOD_THRESHOLD_MAX,
         );
-        HeightView view = terrain::height_view(demo.scene, demo.assets, demo.ground.node.id)!;
+        foreach (node : demo.ground.terrain_nodes()) demo.scene.get(node, Terrain).desc.lod_threshold = lod_threshold;
         Vec3 position = fly_camera.position;
+        HeightView view = ground_view(demo, position)!;
         if (try height = terrain::sample_height(&view, position.x, position.z)) {
             imgui::text("Terrain height %.3f m", height);
         } else {
@@ -418,7 +478,7 @@ fn void? terrain_panel(Demo* demo, FlyCamera* fly_camera, float delta) @local {
         imgui::text(
             "%s, collider %s, crates %u",
             fly_camera.flying ? "Flying" : "Walking",
-            demo.scene.has(demo.ground.node, PhysicsBody) ? "on" : "off",
+            has_terrain_colliders(demo) ? "on" : "off",
             demo.crate_count,
         );
         imgui::text("Frame: %.2f ms", delta * 1000);
@@ -488,8 +548,8 @@ fn void? run_interactive(Options options) @local {
 
     FlyCamera fly_camera = { .position = extent_point(&demo, STILL_POSITION), .yaw = STILL_YAW };
     if (!options.benchmark) {
-        HeightView start_view = terrain::height_view(&scene, &assets, demo.ground.node.id)!;
         Vec3 ahead = fly_camera.position + landscape_ground::look_direction(fly_camera.yaw, 0) * DECAL_DISTANCE;
+        HeightView start_view = ground_view(&demo, ahead)!;
         ahead.y = landscape_ground::ground_under(&start_view, ahead, fly_camera.ground);
         add_ground_decal(&demo, ahead)!;
     }
@@ -505,24 +565,25 @@ fn void? run_interactive(Options options) @local {
             if (gui_renderer.frame_open) gui_renderer.finish_frame();
         }
 
-        HeightView view = terrain::height_view(&scene, &assets, demo.ground.node.id)!;
+        HeightView view = ground_view(&demo, fly_camera.position)!;
         if (!input.keyboard_captured_by_gui) {
             if (input.key_pressed(platform::Scancode.F)) fly_camera.flying = !fly_camera.flying;
             if (input.key_pressed(platform::Scancode.G)) {
                 Vec3 heading = landscape_ground::look_direction(fly_camera.yaw, 0);
                 Vec3 ahead = fly_camera.position + heading * CRATE_DROP_DISTANCE;
-                ahead.y = landscape_ground::ground_under(&view, ahead, fly_camera.ground) + CRATE_DROP_HEIGHT;
+                HeightView ahead_view = ground_view(&demo, ahead)!;
+                ahead.y = landscape_ground::ground_under(&ahead_view, ahead, fly_camera.ground) + CRATE_DROP_HEIGHT;
                 drop_crate(&demo, ahead);
             }
             if (input.key_pressed(platform::Scancode.T) && demo.decal_node) demo.decal_node.visible = !demo.decal_node.visible;
             if (input.key_pressed(platform::Scancode.P)) {
-                if (scene.has(demo.ground.node, PhysicsBody)) {
-                    physics.remove_body(demo.ground.node);
+                if (has_terrain_colliders(&demo)) {
+                    remove_terrain_colliders(&demo);
                 } else {
-                    add_terrain_collider(&physics, demo.ground.node, demo.ground.desc)!;
+                    add_terrain_colliders(&demo)!;
                 }
             }
-            bool brush_held = input.key_down(platform::Scancode.B);
+            bool brush_held = input.key_down(platform::Scancode.B) && !options.tiles;
             float rise = brush.rise(brush_held, delta);
             if (rise > 0) {
                 bool stamped = landscape_ground::stamp_under(
@@ -967,7 +1028,86 @@ fn bool? run_benchmark(Options options) @local {
     return print_results(options, &result);
 }
 
-<* View a generated terrain interactively, or run the scripted benchmark. *>
+// ----------------------------------------------------------------------------- capture
+
+fn void? pose_capture(Demo* demo) @local {
+    Vec3 target = extent_point(demo, CAPTURE_TARGET);
+    HeightView view = ground_view(demo, target)!;
+    target.y = landscape_ground::ground_under(&view, target, 0);
+    demo.camera_node.local.position = target + (Vec3){ 0, CAPTURE_HEIGHT, 0 };
+    demo.camera_node.local.rotation = maths::look_rotation({ 0, -1, 0 }, { 0, 0, -1 });
+}
+
+fn void? run_capture(Options options) @local {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    Renderer renderer = render::create_renderer(
+        allocator: mem,
+        assets:    &assets,
+        desc:      {
+            .validation       = true,
+            .application_name = "c3d_terrain_capture",
+            .ray_queries      = options.traced_shadows,
+        },
+    )!;
+    defer render::destroy_renderer(&renderer);
+    RenderTargetId target = render::create_render_target(
+        renderer: &renderer,
+        desc:     render::render_target_desc(options.width, options.height, PixelFormat.RGBA8_UNORM),
+    )!;
+    ViewDesc view_desc = configure_desc(render::texture_view_desc(target, OutputMode.DISPLAY_LDR), options);
+    view_desc.post.anti_aliasing = AntiAliasing.NONE;
+    ViewId view = render::create_view(&renderer, view_desc)!;
+    Scene scene = scene::create_scene(mem, { .max_nodes = SCENE_NODE_CAPACITY });
+    defer scene::destroy_scene(&scene);
+    physics::register_physics(&scene)!;
+    terrain::register_terrain(&scene, &assets)!;
+    PhysicsWorld physics = physics::create_physics_world(
+        allocator: mem,
+        assets:    &assets,
+        scene:     &scene,
+        desc:      physics::default_physics_desc(),
+    )!;
+    defer physics::destroy_physics_world(&physics);
+
+    Demo demo = build_demo(
+        options: options,
+        assets:  &assets,
+        scene:   &scene,
+        physics: &physics,
+    )!;
+    pose_capture(&demo)!;
+    scene.update_world();
+    renderer.prepare_scene(&scene)!;
+    for (uint frame = 0; frame < CAPTURE_SETTLE_FRAMES; frame++) {
+        terrain::update(
+            scene:                &scene,
+            assets:               &assets,
+            camera_node:          demo.camera_node,
+            output_height_pixels: (float)options.height,
+        )!;
+        render_offscreen(
+            renderer:    &renderer,
+            scene:       &scene,
+            camera_node: demo.camera_node,
+            view:        view,
+            frame:       frame,
+        )!;
+    }
+    render::wait_frames(&renderer)!;
+
+    char[] pixels = alloc::new_array(mem, char, (sz)options.width * options.height * RGBA8_BYTES);
+    defer alloc::free(mem, pixels.ptr);
+    renderer.read_render_target(target, pixels)!;
+    image::write_png(
+        path:   options.capture,
+        width:  options.width,
+        height: options.height,
+        pixels: pixels,
+    )!;
+}
+
+<* View a generated terrain interactively, run the scripted benchmark, or capture one frame. *>
 fn int main(String[] args) {
     Options? parsed = parse_options(args);
     if (catch excuse = parsed) {
@@ -975,11 +1115,19 @@ fn int main(String[] args) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--shadows atlas|traced] [--size 1025|2049|4097] [--layers 1|4] [--lod-threshold PIXELS] "
-              "[--width W] [--height H] [--hide-terrain] [--sky] [--volumetric-fog].");
+              "[--width W] [--height H] [--hide-terrain] [--tiles 2x2] [--capture FILE.png] [--sky] "
+              "[--volumetric-fog].");
         }
         return 1;
     }
     Options options = parsed;
+    if (options.capture.len) {
+        if (catch excuse = run_capture(options)) {
+            io::eprintfn("terrain capture failed: %s", excuse);
+            return 1;
+        }
+        return 0;
+    }
     if (!options.benchmark) {
         if (catch excuse = run_interactive(options)) {
             io::eprintfn("terrain example failed: %s", excuse);

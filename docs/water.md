@@ -19,8 +19,8 @@ application renders the reflection with.
 
 The module imports the standard library, core (`c3d`), `c3d::landscape` (its SPIR-V) and
 `c3d::landscape::terrain` (a query predicate); it never imports `gpu`, `c3d::render` or `c3d::physics`.
-Buoyancy lives in the physics add-on ([buoyancy](buoyancy.md)); the application connects the two with the
-adapter under [Buoyancy](#buoyancy). Core never imports the module.
+Buoyancy lives in the physics add-on ([buoyancy](buoyancy.md)); the application connects the two by installing
+`fluid_sample` ([Buoyancy](#buoyancy)). Core never imports the module.
 
 ```bash
 python3 scripts/build.py --example water
@@ -43,7 +43,7 @@ for failure, retry and shared-asset ownership.
 ## Select the package
 
 Select `c3d_landscape` as for [terrain](terrain.md#select-the-package). Water needs nothing else; the example
-and the buoyancy adapter also select `c3d_physics` and `b3`.
+and an application that installs `fluid_sample` on a physics world also select `c3d_physics` and `b3`.
 
 ## Calling order
 
@@ -59,7 +59,7 @@ water::add_water(
     node:   lake,
     desc:   desc,
 )!;
-physics.set_fluid_surface(&lake_height, &lake_surface);
+physics.set_fluid_sampler(&water::fluid_sample, &lake_fluid);
 
 // every frame, after moving the camera
 scene.update_world();
@@ -72,7 +72,7 @@ water::update(
     time:           now,
 )!;
 // the mirror view's clip plane (The mirror)
-lake_surface = { .view = water::surface_view(&scene, &assets, lake.id)!, .time = now };
+lake_fluid = { .view = water::surface_view(&scene, &assets, lake.id)!, .time = now, .current = current };
 physics.update(delta);
 scene.update_world();
 // the mirror view first, then the main view
@@ -179,6 +179,31 @@ one thread):
 
 The test bounds are 1.1 mm (calm) and 6.8 mm (choppy); the device test checks the drawn surface against
 `sample_surface` within 1 cm. One sample of the choppy set costs 91 to 109 ns with three iterations.
+
+## Surface detail
+
+```c3
+WaterSample sample = water::sample_surface_detail(
+    view:    &view,
+    world_x: x,
+    world_z: z,
+    time:    now,
+)!;
+```
+
+`sample_surface_detail` returns, with the same inversion and the same faults as `sample_surface`, the world
+`height` (equal to `sample_surface` bit for bit), the unit `normal` and the `velocity` of the surface point in
+metres per second. Both are analytic derivatives of the drawn map at the inverted rest point `p`, in the
+node's frame turned to world space: the tangents are `∂P/∂p.x` and `∂P/∂p.y`, the normal is the normalised
+cross product of the second with the first, as the stage computes it, and the velocity is `∂P/∂t` at fixed `p`,
+the orbital velocity of the water at that point. For a wave with phase rate `ω = 2π · c / λ`, the point moves by
+`(s · λ / (2π · N) · d · sin θ · ω, −a · cos θ · ω)` per second.
+
+The kinematic condition `velocity.y − velocity.xz · ∇h = ∂h/∂t` holds against central differences of
+`sample_surface`, and the normal is parallel to `(−∂h/∂x, 1, −∂h/∂z)`. On the calm set they agree within
+2.1 mm/s and 0.0017 (the test bounds are 4 mm/s and 0.004); the residual is the inversion's, which falls to
+about 2e-5 at steepness 0.05. One sample of the choppy set costs 129 ns against 101 ns for `sample_surface`
+(c3c 0.8.3 `-O3`, WSL, one thread, 400,000 samples, one run).
 
 ## Time
 
@@ -306,34 +331,24 @@ renderer.render_view(scene, viewing_camera, main_view)!;
 
 ## Buoyancy
 
-The physics add-on's `Buoyancy` component samples a fluid surface the application installs per world
-([buoyancy](buoyancy.md)). The adapter over one water body, kept identical by hand in the example; the device
-test runs the same function over its own context struct:
+The physics add-on's `Buoyancy` component samples a fluid the application installs per world
+([buoyancy](buoyancy.md)). `fluid_sample` is a ready sampler over one water body, with the physics add-on's
+`FluidSampleFn` signature and no import of it:
 
 ```c3
-struct LakeSurface {
-    SurfaceView view;
-    double      time; // the FrameInfo.time of the physics update's first step
-}
-
-fn float? lake_height(
-    void* context,
-    float x,
-    float z,
-    float step_offset,
-) {
-    LakeSurface* lake = context;
-    return water::sample_surface(
-        view:    &lake.view,
-        world_x: x,
-        world_z: z,
-        time:    lake.time + step_offset,
-    );
-}
+WaterFluid lake_fluid = { .view = view, .time = now, .current = { 0.5f, 0, 0 } };
+physics.set_fluid_sampler(&water::fluid_sample, &lake_fluid);
 ```
 
-Several water bodies: hold one view per body and return the first that does not fault; `NOT_FOUND` outside
-each body's extent means no fluid there.
+`WaterFluid` holds the `SurfaceView`, the `FrameInfo.time` of the physics update's first step and a uniform
+current in metres per second. `fluid_sample` returns the height `sample_surface_detail` finds at
+`time + step_offset`, so every fixed step samples its own time, and writes the orbital velocity plus the
+current. Outside the body's rest rectangle it is `NOT_FOUND`: no fluid there.
+
+Each frame, after `water::update` and `set_desc`, take the view again, set the time and current, then call
+`physics.update`. Take the view again after an origin shift as well: a stale view answers for the old position.
+Several water bodies: hold one `WaterFluid` per body and a sampler of your own that returns the first body that
+does not fault.
 
 ## Removal
 
@@ -352,7 +367,7 @@ body on the same node. Destroy the scene before the store.
 | `add_water`, `set_desc` | `c3d::CAPACITY_EXCEEDED` | A store pool full, or no scene node left for the mirror |
 | `update` | `c3d::INVALID_ARGUMENT` | The viewing camera's local transform is not finite |
 | `surface_view` | `c3d::INVALID_ID` | Dead entity, no water body, the owned material removed |
-| `sample_surface` | `NOT_FOUND` | The point's rest position lies outside the rest rectangle |
+| `sample_surface`, `sample_surface_detail`, `fluid_sample` | `NOT_FOUND` | The point's rest position lies outside the rest rectangle |
 
 ## Limits
 
@@ -402,7 +417,10 @@ grass or tree grows under 0.3 m above the water. The sky is a generated equirect
 disc, the scene's environment and background. The lake is `default_water_desc()` at 120 m with a generated
 tiling ripple normal map (4 m tiles) and a generated foam colour, on its own layer bit. The mirror view renders
 at `MIRROR_RENDER_SCALE` with the lines above. `--crates 16|256` drops 1 m crates (density 600, drag
-3000 N·s/m) over the middle 40 m, each with `Buoyancy` over the adapter above.
+3000 N·s/m, well under the 36,000 N·s/m at which the drag limit binds, drag coefficient 1) over the middle
+40 m, each with `Buoyancy` over `fluid_sample`; they bob on the orbital motion of the waves, and
+`--current X,Z` adds a uniform current in m/s that carries them (not with `--benchmark`, whose settle gate
+expects still water).
 
 Right drag looks, WASD moves, F flies, B raises the ground under the camera (the ground collider re-cooks when
 the key lifts). The panel switches the reflection source, the mirror's resolution, the waves (calm or zero),

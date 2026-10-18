@@ -112,7 +112,12 @@ fn void test_physics_body_both_formats_copy_all_nested_authoring() @test {
             fixture.source.add_physics_body(fixture.root, body, &colliders)!!;
             fixture.source.add(fixture.root, (Wind){ .velocity = { 1, 2, 3 }, .drag = 0.3f, .lift = 0.4f, .max_speed = 8 });
             fixture.source.add(fixture.root, (Force){ .force = { 4, 5, 6 }, .local_point = { 7, 8, 9 } });
-            fixture.source.add(fixture.root, (Buoyancy){ .fluid_density = 1025, .linear_drag = 7, .submerged_fraction = 0.75f });
+            fixture.source.add(fixture.root, (Buoyancy){
+                .fluid_density      = 1025,
+                .linear_drag        = 7,
+                .drag_coefficient   = 0.4f,
+                .submerged_fraction = 0.75f,
+            });
             fixture.source.get(fixture.root, PhysicsBody).status = FAILED;
             fixture.source.get(fixture.root, PhysicsBody).failure = physics::SOURCE_UNAVAILABLE;
             char[] bytes = encode(
@@ -136,7 +141,9 @@ fn void test_physics_body_both_formats_copy_all_nested_authoring() @test {
                 assert(collider.height_field.heights == heights[..]);
                 assert((ulong)collider.material.id == ulong::max);
             }
-            assert(fixture.destination.get(restored, Buoyancy).submerged_fraction == 0);
+            Buoyancy* buoyancy = fixture.destination.get(restored, Buoyancy);
+            assert(buoyancy.fluid_density == 1025 && buoyancy.linear_drag == 7 && buoyancy.drag_coefficient == 0.4f);
+            assert(buoyancy.submerged_fraction == 0);
             assert(fixture.destination.get(restored, Wind).lift == 0.4f);
             assert(fixture.destination.get(restored, Force).local_point == (Vec3){ 7, 8, 9 });
             assert(bytes == encode(

@@ -261,7 +261,7 @@ fn void add_physics(Fixture* fixture) @private {
     scene.add_physics_joint(body, joint)!!;
     scene.add(body, (Wind){ .velocity = { 1, 2, 3 }, .drag = 0.3f, .lift = 0.4f, .max_speed = 8 });
     scene.add(body, (Force){ .force = { 4, 5, 6 }, .local_point = { 7, 8, 9 } });
-    scene.add(body, (Buoyancy){ .fluid_density = 1025, .linear_drag = 7 });
+    scene.add(body, (Buoyancy){ .fluid_density = 1025, .linear_drag = 7, .drag_coefficient = 0.4f });
     Node* fabric = scene.add_mesh(geometry: fixture.box, material: fixture.material, name: "fabric")!!;
     ClothDesc cloth = cloth::default_cloth_desc();
     uint[3] pins = { 3, 1, 1 };
@@ -370,6 +370,16 @@ fn void add_landscape(Fixture* fixture) @private {
         scene: scene,
         assets: &fixture.assets,
         node: ground,
+        desc: terrain,
+    )!!;
+    Node* tiles = scene.add_node(name: "terrain-set")!!;
+    scene.add(tiles, (TerrainSet){ .texels = 129, .cell_size = 1, .height_scale = 4 });
+    Node* tile = scene.add_node(tiles, "terrain-tile")!!;
+    scene.add(tile, (TerrainTile){ .x = 0, .z = 0 });
+    terrain::attach_terrain(
+        scene: scene,
+        assets: &fixture.assets,
+        node: tile,
         desc: terrain,
     )!!;
     Node* plants = scene.add_node(name: "foliage")!!;

@@ -287,6 +287,7 @@ struct ClothState {
     uint[]               selected_paths_scratch;
     uint[]               sector_scratch;
     uint[]               sector_root_scratch;
+    uint[]               constraint_order_scratch;
     uint[]               split_group_starts;
     uint[]               split_group_counts;
     uint[]               split_group_members;
@@ -366,6 +367,7 @@ fn void? Scene.attach_cloth(
     scene::Mesh* mesh = self.get(node, scene::Mesh);
     if (!mesh) return NO_MESH~;
     if (self.has(node, Cloth)) return CLOTH_EXISTS~;
+    if (self.has(node, ClothOutput)) return c3d::INVALID_ARGUMENT~;
     check_cloth_desc(desc)!;
     if (!assets.geometries.is_live(mesh.geometry)) return c3d::INVALID_ID~;
 
@@ -490,6 +492,7 @@ fn void? prepare(
     Cloth* component = scene.get(node, Cloth);
     if (component.is_prepared()) return;
 
+    if (scene.has(node, ClothOutput)) return c3d::INVALID_ARGUMENT~;
     if (world && (world.scene != scene || world.assets != assets)) return c3d::INVALID_ARGUMENT~;
 
     ClothAuthoring* authoring = component.authoring;
@@ -607,6 +610,7 @@ fn void? prepare(
             body_count:            (uint)capture.bodies.len,
             joint_count:           authoring.skinned ? (uint)authoring.joint_entities.len : 0,
             tangent_frame:         desc.tangent_frame,
+            dihedral:              desc.bend_mode == DIHEDRAL,
             crowd:                 false,
             collisions:            desc.collisions,
         )!;
