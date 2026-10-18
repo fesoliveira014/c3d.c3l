@@ -268,6 +268,9 @@ fn void add_physics(Fixture* fixture) @private {
     cloth.pins = &pins;
     cloth.colliders = (&anchor.id)[:1];
     cloth.stretch_stiffness = 0.75f;
+    cloth.density = 0.35f;
+    cloth.drag_coefficient = 0.9f;
+    cloth.lift_coefficient = 0.45f;
     scene.attach_cloth(assets: &fixture.assets, node: fabric, desc: cloth)!!;
     scene.add_nav_source(fabric)!!;
     NodeTemplate[] cloth_nodes = alloc::new_array(mem, NodeTemplate, 1);
@@ -289,6 +292,9 @@ fn void add_physics(Fixture* fixture) @private {
     uint[1] crowd_pins = { 0 };
     crowd_cloth.pins = &crowd_pins;
     crowd_cloth.stretch_stiffness = 0.8f;
+    crowd_cloth.density = 0.5f;
+    crowd_cloth.drag_coefficient = 1.1f;
+    crowd_cloth.lift_coefficient = 0.3f;
     scene.attach_crowd_cloth(
         assets: &fixture.assets,
         owner: crowd,
