@@ -416,11 +416,13 @@ fn void? stage_breakable_reset_welds(
     BreakableState* state,
     BreakableStagedBody[] bodies,
 ) @local {
-    foreach (&weld : state.welds) {
+    foreach (uint index, &weld : state.welds) {
         if (weld.broken) continue;
         weld.joint = create_breakable_weld(
             world: world,
             root: root.id,
+            kind: INTERNAL_WELD,
+            index: index,
             body_a: bodies[weld.piece_a].rigid.body,
             body_b: bodies[weld.piece_b].rigid.body,
             frame_a: weld.frame_a,
@@ -429,11 +431,13 @@ fn void? stage_breakable_reset_welds(
             evaluation: state.evaluation,
         )!;
     }
-    foreach (&anchor : state.runtime.anchors) {
+    foreach (uint index, &anchor : state.runtime.anchors) {
         if (anchor.pruned) continue;
         anchor.joint = create_breakable_weld(
             world: world,
             root: root.id,
+            kind: ANCHOR,
+            index: index,
             body_a: bodies[anchor.authored.piece].rigid.body,
             body_b: breakable_anchor_target(world, anchor.authored.target)!,
             frame_a: anchor.authored.frame_a,
@@ -465,7 +469,8 @@ fn void install_breakable_reset_bodies(
         Entity entity = index == state.pieces.len ? root.id : state.pieces[index];
         Node* node = world.scene.node(entity);
         world.scene.add(node, body.authored);
-        world.scene.add(node, body.rigid);
+        RigidBody* rigid = world.scene.add(node, body.rigid);
+        world.roles.add_body(entity, rigid);
         remember_breakable_body(
             world: world,
             state: state,

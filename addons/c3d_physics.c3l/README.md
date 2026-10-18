@@ -510,6 +510,25 @@ universal fracture latency. An unanchored remainder may tip under a strong impac
 Native record/replay includes the body/joint mutations, but does not recreate scene
 components or re-dispatch BreakEvent values.
 
+## Update cost
+
+The world keeps a list of its dynamic and kinematic bodies. The previous-pose copy and kinematic
+target of each fixed step and the pose write-back visit that list, so static bodies add no work
+there. The scan for bodies whose `PhysicsBody` was removed runs only after such a removal.
+A breakable weld or anchor event finds its edge through a slot table keyed by the native joint
+index and takes it only while the edge still holds that joint. The pass over authored
+`PhysicsBody` components that finds pending builds still visits every authored body each update.
+
+`physics_components` times `physics.update` without a window or renderer:
+
+```powershell
+c3c build physics_components --path addons/c3d_physics.c3l -O3
+addons/c3d_physics.c3l/build/physics_components.exe --stress --benchmark 600
+```
+
+It prints the mean and 95th-percentile milliseconds over the given number of fixed steps, after
+a settling period, with the body counts by kind. `--stress` adds about twenty thousand static bodies.
+
 ## Rebasing the origin
 
 After `Scene.shift_origin(offset)` and `scene.update_world()`, call
