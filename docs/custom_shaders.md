@@ -541,7 +541,7 @@ Motion blur, TAA, screen-space GI, temporal ambient occlusion and the reflection
 
 A custom vertex stage displaces vertices that [scene traces](scene_trace.md) never see. `ShaderDesc.trace_pose` supplies the same displacement as a compute stage: for each traced row it writes the posed positions, normals and tangents of the row's geometry into a renderer-owned slot, and every trace consumer reads hits through that slot. `trace_pose.single` poses a mesh and needs `vertex.shaded`; `trace_pose.instanced`, the same source compiled with `INSTANCED`, poses one instance of a batch and needs `vertex.instanced_shaded`. Rows are posed by the revision the renderer published, so a replacement the backend rejected keeps posing with the previous forms. The cost, capacity, `Mesh.local_bounds` rule and BLAS policy are on the [scene trace](scene_trace.md#custom-trace-poses) page.
 
-The stage includes `trace_pose.glsl`, which declares the 16-byte compute push block, a 64-lane group and these helpers:
+The stage includes `trace_pose.glsl`, which declares the compute push block, one `uint64_t root_gpu`, a 64-lane group and these helpers:
 
 | Helper | Meaning |
 | --- | --- |
@@ -581,7 +581,7 @@ Keep the displacement the vertex stage applies in a function both stages include
 
 - The stage sees `TraceCustomPoseRoot` and nothing else. A vertex stage that reads the camera, lights or other frame data cannot be reproduced; its displacement must come from the material, the instance record and the time.
 - The pose is in the geometry's space, before the row's matrix, as a vertex stage's `vertex.position` is. The stage adjusts `normal` and `tangent` itself where its displacement turns the surface.
-- It runs again only when its inputs change: the material's revision, the revisions of the asset textures in its slots, the shader's revision, the instance record and, with `reads_time`, the time. Set `reads_time` for a stage that reads `root.time`; without it the pose is not refreshed as time moves. A render target in a slot is not tracked.
+- It runs again only when its inputs change: the material's revision, the revisions of the asset textures in its slots, the shader's revision, the instance record and, with `reads_time`, the time. Set `reads_time` for a stage that reads `root.time`; without it the pose is not refreshed as time moves. Neither a render target in a slot nor a Standard material in `CustomParams.references` is tracked.
 - Skin, morph targets and `Mesh.vertex_motion` do not apply to a custom row, and a part of a `LodGroup` or of a crowd with a custom vertex stage stays out of the trace.
 - The stage keeps its surface inside the bound the row uses: `Mesh.local_bounds` when `has_bounds_override` is set, else the geometry's bound. Give a flat geometry that is displaced a bound with thickness.
 

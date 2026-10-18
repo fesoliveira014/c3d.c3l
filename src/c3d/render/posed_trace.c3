@@ -947,6 +947,7 @@ fn void? resolve_posed_instance(
     } else if (source.kind == TracePose.CUSTOM) {
         dispatch.pipeline = source.pipeline;
     }
+
     if (source.kind == TracePose.VERTEX_MOTION) {
         if (slot.update_vertex_motion(source.vertex_history_token)) {
             mark_posed_pending(table, index);
