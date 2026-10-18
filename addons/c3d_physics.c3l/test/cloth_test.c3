@@ -327,7 +327,8 @@ fn void test_cloth_pins_follow_final_pose_without_steps() @test {
     fixture.scene.update_world();
     uint revision = geometry_of(&fixture, node).header.revision;
     fixture.physics.update_cloths();
-    assert(geometry_of(&fixture, node).header.revision == revision + 1);
+    uint published_revision = geometry_of(&fixture, node).header.revision;
+    assert(published_revision > revision);
     foreach (pin : pins) assert(near(published_world(&fixture, node, pin), maths::transform_point(node.world, state.rest[pin])));
     for (uint vertex = 3; vertex < 9; vertex++) {
         assert(near(published_world(&fixture, node, vertex), solved[vertex]));
@@ -337,7 +338,7 @@ fn void test_cloth_pins_follow_final_pose_without_steps() @test {
 
     fixture.physics.update(0);
     fixture.physics.update_cloths();
-    assert(geometry_of(&fixture, node).header.revision == revision + 1);
+    assert(geometry_of(&fixture, node).header.revision == published_revision);
 }
 
 fn void test_cloth_final_pose_after_multiple_steps() @test {

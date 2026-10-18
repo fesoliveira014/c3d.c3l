@@ -17,6 +17,10 @@ const uint ZERO_STEP_UPDATES @private = 3;
 const uint HELD_UPDATES @private = 6;
 const float COLLIDER_RADIUS @private = 0.1f;
 const Vec3 DISTANT_BODY @private = { 10, 0, 0 };
+const uint PUSH_CELLS @private = 4;
+const float PUSH_SIZE @private = 4;
+const uint PUSHED_VERTEX @private = 12; // centre of the 5x5 vertex grid
+const float PUSH_RADIUS @private = 0.3f;
 const uint HOLD_CAPACITY @private = 2;
 
 struct CrowdRig @private {
@@ -139,6 +143,37 @@ fn void test_held_cloth_ignores_triggers_and_carries_on_wake() @test {
 
     step(&fixture, physics::DEFAULT_FIXED_DT);
     foreach (velocity : state.velocities) assert(velocity.length() < SLEEP_SPEED);
+}
+
+fn void test_cloth_marks_changed_ranges_and_nothing_at_rest() @test {
+    Fixture fixture;
+    setup(&fixture, weightless());
+    defer teardown(&fixture);
+    ColliderDesc ball = sphere(PUSH_RADIUS);
+    Node* body = add_body_node(&fixture, (&ball)[:1], { 1.8f, -2, 0 });
+    Entity[1] colliders = { body.id };
+    Node* pushed = add_cloth_node(&fixture, add_grid(&fixture, PUSH_CELLS, PUSH_SIZE));
+    uint[2] pins = { 0, PUSH_CELLS };
+    ClothDesc desc = pinned_desc(pins[..]);
+    desc.stretch_stiffness = 0;
+    desc.bend_stiffness = 0;
+    desc.colliders = colliders[..];
+    fixture.scene.add_cloth(&fixture.assets, pushed, desc)!!;
+    Node* resting = add_resting_cloth(&fixture);
+    settle(&fixture, resting);
+
+    GeometryId pushed_geometry = fixture.scene.get(pushed, scene::Mesh).geometry;
+    fixture.assets.clear_geometry_dirty(pushed_geometry);
+    uint resting_revision = revision_of(&fixture, resting);
+    step(&fixture, physics::DEFAULT_FIXED_DT);
+
+    VertexRange[GeometryStream::len] ranges = fixture.assets.geometry(pushed_geometry).dirty.ranges;
+    VertexRange positions = ranges[GeometryStream.POSITIONS.ordinal];
+    assert(positions.first == PUSHED_VERTEX && positions.end == PUSHED_VERTEX + 1);
+    foreach (stream : GeometryStream::values) {
+        if (stream != GeometryStream.POSITIONS) assert(ranges[stream.ordinal].is_empty());
+    }
+    assert(revision_of(&fixture, resting) == resting_revision);
 }
 
 fn void test_failed_update_keeps_activity() @test {

@@ -279,6 +279,7 @@ struct ClothState {
     uint[]               pending_requests;
     uint                 pending_request_count;
     ClothSettle          settle;
+    ClothSpans           spans;
     uint[]               selected_paths_scratch;
     uint[]               sector_scratch;
     uint[]               sector_root_scratch;

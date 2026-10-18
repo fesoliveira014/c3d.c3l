@@ -1253,6 +1253,7 @@ fn ClothUpdateKind? update_crowd_slot(
 
     commit_cloth(state, &staged);
     state.local_bounds = staged.local_bounds;
+    state.spans = staged.spans;
     commit_local_publication(
         state:          state,
         world:          owner.world,

@@ -32,6 +32,13 @@ struct ClothSettle {
     Vec3 gravity;
 }
 
+<* Material-vertex ranges whose staged values differ from the geometry. *>
+struct ClothSpans {
+    VertexRange positions;
+    VertexRange normals;
+    VertexRange tangents;
+}
+
 <*
  Hold the cloth still until wake; triggers do not wake it.
 *>
@@ -270,4 +277,17 @@ fn void tally_cloth(
                 state.edges.len + state.bends.len + state.hinges.len + state.soft_attachments.len
             );
     }
+}
+
+fn void include_vertex(VertexRange* range, usz vertex) @private {
+    if (range.is_empty()) range.first = (uint)vertex;
+    range.end = (uint)vertex + 1;
+}
+
+macro VertexRange differing_range(current, staged) @private {
+    VertexRange range;
+    foreach (vertex, value : staged) {
+        if (value != current[vertex]) include_vertex(&range, (usz)vertex);
+    }
+    return range;
 }

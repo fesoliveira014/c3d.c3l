@@ -118,15 +118,17 @@ fn bool? stage_local_positions(ClothState* state, Mat4 world, bool force_changed
         state.publication_roundtrip[index] = restored;
     }
 
-    bool changed = force_changed;
+    state.spans = {};
     foreach (material_vertex, particle : state.material_particles) {
         Vec3 local = state.particle_local[particle];
         state.local_output[material_vertex] = local;
-        changed |= local != geometry.data.positions[material_vertex];
+        if (local != geometry.data.positions[material_vertex]) {
+            include_vertex(&state.spans.positions, (usz)material_vertex);
+        }
     }
 
     state.local_bounds = geometry.data.bounds;
-    return changed;
+    return force_changed || !state.spans.positions.is_empty();
 }
 
 fn void? stage_material_frames(ClothState* state, bool changed) @private {
@@ -153,6 +155,11 @@ fn void? stage_material_frames(ClothState* state, bool changed) @private {
     staged.positions = state.local_output;
     staged.finalize();
     state.local_bounds = staged.bounds;
+
+    state.spans.normals = differing_range(geometry.data.normals, state.local_normals);
+    if (state.desc.tangent_frame) {
+        state.spans.tangents = differing_range(geometry.data.tangents, state.local_tangents);
+    }
 }
 
 fn void commit_local_publication(
@@ -161,37 +168,41 @@ fn void commit_local_publication(
     bool changed,
     bool colors_changed = false,
 ) @private {
-    if (changed || colors_changed) {
+    if (changed) {
         GeometryAsset* geometry = state.assets.geometry(state.geometry);
-        if (changed) {
-            geometry.data.positions[..] = state.local_output[..];
-            geometry.data.normals[..] = state.local_normals[..];
-            if (state.desc.tangent_frame) {
-                geometry.data.tangents[..] = state.local_tangents[..];
-                state.committed_tangents[..] = state.local_tangents[..];
-            }
-            geometry.data.bounds = state.local_bounds;
+        ClothSpans spans = state.spans;
+        copy_vertices(geometry.data.positions, state.local_output, spans.positions);
+        copy_vertices(geometry.data.normals, state.local_normals, spans.normals);
+        if (state.desc.tangent_frame) {
+            copy_vertices(geometry.data.tangents, state.local_tangents, spans.tangents);
+            state.committed_tangents[..] = state.local_tangents[..];
         }
-        if (colors_changed && state.staged_colors.len) {
-            geometry.data.colors[..] = state.staged_colors[..];
-        }
-        state.assets.mark_geometry_streams_dirty(
-            state.geometry,
-            {
-                .positions = changed,
-                .normals   = changed,
-                .tangents  = changed && state.desc.tangent_frame,
-                .colors    = colors_changed,
-            },
-        );
+        geometry.data.bounds = state.local_bounds;
+
+        mark_vertices(state, { .positions = true }, spans.positions);
+        mark_vertices(state, { .normals = true }, spans.normals);
+        mark_vertices(state, { .tangents = true }, spans.tangents);
     }
+    if (colors_changed && state.staged_colors.len) commit_color_publication(state);
     state.published_frame = world;
 }
 
 fn void commit_color_publication(ClothState* state) @private {
     GeometryAsset* geometry = state.assets.geometry(state.geometry);
-    geometry.data.colors[..] = state.staged_colors[..];
-    state.assets.mark_geometry_streams_dirty(state.geometry, { .colors = true });
+    VertexRange span = differing_range(geometry.data.colors, state.staged_colors);
+    copy_vertices(geometry.data.colors, state.staged_colors, span);
+    mark_vertices(state, { .colors = true }, span);
+}
+
+macro void copy_vertices(target, source, VertexRange span) @local {
+    usz count = (usz)(span.end - span.first);
+    target[span.first:count] = source[span.first:count];
+}
+
+fn void mark_vertices(ClothState* state, GeometryStreams stream, VertexRange span) @local {
+    if (span.is_empty()) return;
+
+    state.assets.mark_geometry_range_dirty(state.geometry, stream, span.first, span.end - span.first);
 }
 
 fn ClothUpdateKind? update_cloth(
@@ -302,6 +313,7 @@ fn ClothUpdateKind? update_cloth(
 
     commit_cloth(state, &staged);
     state.local_bounds = staged.local_bounds;
+    state.spans = staged.spans;
     commit_local_publication(state, node.world, changed);
     sync_skinned_output(world.scene, state, node);
     staged.contact_result.stage = ClothContactStage.NONE;
