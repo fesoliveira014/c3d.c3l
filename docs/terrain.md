@@ -185,7 +185,8 @@ neighbour that prepares later links to the tiles already there, so load order do
 
 **Authoring contract.** Neighbouring tiles duplicate their shared edge row and column, so the edge texels of two
 neighbours are equal. Cut tiles from one map with an overlap of one row or column, as the example does. Nothing
-checks the texels.
+checks the texels, and an edit does not copy them: the application keeps the shared edge texels of neighbouring
+tiles equal across an edit.
 
 **Border ring.** A tile shades its edge texels from central differences, so it needs the texel just outside its
 border. Each tile owns a `R16_UINT` texture of `texels × 4` in material slot 2, one row for each edge neighbour in the
@@ -206,8 +207,9 @@ the rows that are valid.
   texels. It reaches only the neighbours across an edge whose outer two texel bands, the shared edge and the row
   inside it, the rectangle intersects. Each rebuild changes the ring's revision only when a texel or the mask
   changed.
-- A bare `mark_dirty` on a set tile leaves the neighbours' rings stale. `TerrainSet.propagate_edit` is the edit
-  entry point for set tiles: it copies the edge texels into the neighbours and calls `refresh_neighbour_rings`.
+- After editing a set tile's height texels within its outer two texel bands, the application calls
+  `terrain::refresh_neighbour_rings` with the edited rectangle. A bare `mark_dirty` on a set tile leaves the
+  neighbours' rings stale.
 
 CPU queries (`height_view`, `sample_height`, `sample_normal`) stay within one tile; a point outside it is
 `NOT_FOUND`. Each tile keeps its own collider, height map revision and `mark_dirty` rectangle: an edit of one tile
@@ -266,7 +268,8 @@ scene.get(ground, PhysicsBody).mark_changed();
   rectangle touches and their ancestors. A revision change without `mark_dirty` rebuilds the whole bounds
   tree, as does a new pixel array.
 - On a [set tile](#tile-sets), `mark_dirty` does not reach the neighbours' border rings: call
-  `terrain::refresh_neighbour_rings` with the same rectangle.
+  `terrain::refresh_neighbour_rings` with the same rectangle, and write the same value into the neighbour's
+  duplicated edge texel when an edit changes an edge texel.
 - The renderer re-uploads the whole height map on each revision (8 MiB at 2049², 32 MiB at 4097²).
 - A live physics body is not re-cooked on a texture revision. `mark_changed` rebuilds the whole field on the
   next `PhysicsWorld.update`, so call it once when a stroke ends: collision is stale during the stroke and

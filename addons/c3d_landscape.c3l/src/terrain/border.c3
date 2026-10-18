@@ -133,7 +133,7 @@ fn uint touched_edges(uint texels, TexelRect rect) @private {
  @param [&inout] scene
  @param [&inout] assets : "The store given to register_terrain."
  @param [&in] tile : "A tile linked to its set."
- @param rect : "Texels written in the tile's height map."
+ @param rect : "Texels written in place in the tile's height map."
  @require scene.has(tile, TerrainTile), scene.has(tile, TerrainRuntime)
  @require parent_set(scene, tile) != null && parent_set(scene, tile).is_linked(tile.id)
  @require rect.columns > 0 && rect.rows > 0
