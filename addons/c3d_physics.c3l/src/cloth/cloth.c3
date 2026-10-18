@@ -68,6 +68,7 @@ struct ClothStats {
     double publish_seconds;
     double stage_seconds;  // wall time of the staging phase
     double commit_seconds; // wall time of the commit phase
+    double edge_seconds;   // wall time of the edge projection, summed over items
     uint   particles;
     uint   constraints;
     uint   pending;
@@ -189,6 +190,12 @@ struct ClothState {
     Vec3[]               soft_lambda_storage;
     ClothConstraint[]    edges;
     ClothConstraint[]    edge_storage;
+    ClothConstraint[]    coloured_edges;
+    ClothConstraint[]    coloured_edge_storage;
+    uint[]               edge_colour_starts;
+    uint[]               edge_colour_start_storage;
+    uint                 edge_colour_count;
+    double               edge_seconds;
     ClothConstraint[]    bends;
     ClothConstraint[]    bend_storage;
     ClothHinge[]         hinges;

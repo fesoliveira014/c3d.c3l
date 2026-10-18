@@ -1172,6 +1172,7 @@ fn ClothUpdateKind? stage_crowd_slot(PhysicsWorld* world, ClothState* state, uin
             steps:   steps,
         )!;
     }
+    work.edge_seconds = staged.edge_seconds;
 
     time::Clock publication_start = clock::now();
     defer work.publication_seconds += (clock::now() - publication_start).to_sec();

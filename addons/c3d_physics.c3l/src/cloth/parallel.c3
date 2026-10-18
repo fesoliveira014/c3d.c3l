@@ -32,6 +32,7 @@ struct ClothWork @private {
     bool            reset_history;      // the commit resets the output mesh's vertex history
     bool            clear_generation;   // the commit clears the slot's recorded generation
     double          stage_seconds;
+    double          edge_seconds;
     double          publication_seconds; // the staged share; the commit adds its own
 }
 
@@ -69,7 +70,7 @@ fn void stage_cloth_work(PhysicsWorld* world, uint steps) @private {
     uint count = world.cloth_work_count;
 
     time::Clock started = clock::now();
-    if (world.parallel.run) {
+    if (world.parallel.run && count > 1) {
         world.parallel.run(
             context: world.parallel.context,
             range:   &stage_cloth_range,

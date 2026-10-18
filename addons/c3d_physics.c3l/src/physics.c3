@@ -398,6 +398,8 @@ struct PhysicsWorld {
     ClothState*[]  cloth_work;          // scene node capacity; every staged item owns a distinct live node
     uint           cloth_work_count;
     ParallelFor    parallel;
+    bool           cloth_uncoloured;    // measurement switch: project edges in sorted order
+    uint           cloth_edge_batch;    // measurement switch: edges per range, 0 for the default
     ulong          update_serial;       // advanced by every update, zero-step ones included
     ulong          cloth_update_serial; // update_serial of the last update_cloths
 }

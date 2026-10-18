@@ -783,6 +783,7 @@ fn void seed_cloth_topology(
             hinges:    (uint)sector_plan.initial_hinges.len,
         );
         if (state.canonical_vertex_storage.len) build_self_topology(state);
+        colour_edges(state);
     }
 
     state.committed_particle_count = state.active_particle_count;

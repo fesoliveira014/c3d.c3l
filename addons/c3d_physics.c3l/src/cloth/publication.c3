@@ -298,6 +298,7 @@ fn ClothUpdateKind? stage_ordinary_cloth(PhysicsWorld* world, ClothState* state,
             steps: steps,
         )!;
     }
+    work.edge_seconds = staged.edge_seconds;
 
     time::Clock publication_start = clock::now();
     defer work.publication_seconds += (clock::now() - publication_start).to_sec();

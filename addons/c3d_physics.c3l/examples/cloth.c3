@@ -92,6 +92,8 @@ const ulong CHECKSUM_PRIME @local = 1099511628211UL; // FNV-1a 64-bit prime
 const String FOOT_JOINT @local = "DEF-foot.L";
 const String TOE_JOINT @local = "DEF-toe.L";
 
+usz fork_total @local; // fork-joins issued through the pool adapter; the adapter runs on the calling thread only
+
 enum Scenario @local {
     FLAG,
     CAPE,
@@ -122,7 +124,12 @@ struct Options @local {
     uint      count;
     uint      workers;
     uint      frames;
+    uint      cells;
+    uint      edge_batch;
+    bool      uncoloured;
     String    capture_path;
+    String    dump_path;
+    uint      dump_frame;
 }
 
 struct Series @local {
@@ -183,6 +190,7 @@ struct Demo @local {
     float        wind_heading;
     bool         gusts;
     bool         whole_publication;
+    bool         flag_cuts;
 }
 
 struct Controls @local {
@@ -387,7 +395,7 @@ fn void? attach_flag(Demo* demo) @local {
             *vertex = middle_row * (demo.flag_columns + 1) + first_column + (uint)index;
         }
         ClothCutPath[1] cuts = { { .id = TEAR_PATH_ID, .vertices = cut_vertices } };
-        desc.cuts = cuts[..];
+        if (demo.flag_cuts) desc.cuts = cuts[..];
         demo.scene.add_cloth(&demo.assets, demo.flag, desc)!;
     };
 }
@@ -492,6 +500,7 @@ fn void run_on_pool(
     uint batch,
 ) @local {
     JobPool* pool = context;
+    fork_total++;
     pool.wait(pool.run(
         range: range,
         data:  data,
@@ -998,8 +1007,10 @@ fn void? create_demo(
     bool traced = false,
     uint crowd_count = 0,
     uint workers = 0,
+    bool cuts = true,
 ) @local {
     demo.scenario = scenario;
+    demo.flag_cuts = cuts;
     demo.simulated = simulated;
     demo.traced = traced;
     demo.flag_columns = flag_columns;
@@ -1465,23 +1476,32 @@ fn void? run_cpu_benchmark(Options options) @local {
     create_demo(
         demo:         &demo,
         scenario:     options.scenario,
-        flag_columns: BENCHMARK_CELLS,
-        flag_rows:    BENCHMARK_CELLS,
+        flag_columns: options.cells ? options.cells : BENCHMARK_CELLS,
+        flag_rows:    options.cells ? options.cells : BENCHMARK_CELLS,
         simulated:    !options.still,
         field_count:  options.count,
         crowd_count:  options.scenario == CROWD ? options.count : 0,
         workers:      options.workers,
+        cuts:         options.tear,
     )!;
     defer destroy_demo(&demo);
     demo.gusts = false;
+    demo.physics.cloth_uncoloured = options.uncoloured;
+    demo.physics.cloth_edge_batch = options.edge_batch;
     if (options.hold) set_field_held(&demo, true);
 
     double[MEASURED_FRAMES] solve_ms;
     double[MEASURED_FRAMES] publish_ms;
     double[MEASURED_FRAMES] stage_ms;
     double[MEASURED_FRAMES] commit_ms;
+    double[MEASURED_FRAMES] edge_ms;
+    usz forks_before;
     for (uint frame = 0; frame < WARMUP_FRAMES + MEASURED_FRAMES; frame++) {
         step_demo(&demo, STEP_SECONDS, (double)frame * STEP_SECONDS);
+        if (frame + 1 == WARMUP_FRAMES) forks_before = fork_total;
+        if (options.dump_path.len && frame + 1 == (options.dump_frame ? options.dump_frame : WARMUP_FRAMES)) {
+            dump_positions(&demo, options.dump_path)!;
+        }
         if (frame < WARMUP_FRAMES) continue;
 
         ClothStats stats = demo.physics.cloth_stats;
@@ -1490,6 +1510,7 @@ fn void? run_cpu_benchmark(Options options) @local {
         publish_ms[sample] = stats.publish_seconds * 1000;
         stage_ms[sample] = stats.stage_seconds * 1000;
         commit_ms[sample] = stats.commit_seconds * 1000;
+        edge_ms[sample] = stats.edge_seconds * 1000;
     }
 
     io::printfn("scene,%s,simulated,%s,cpu_only,true", SCENARIO_NAMES[options.scenario.ordinal], demo.simulated);
@@ -1500,6 +1521,20 @@ fn void? run_cpu_benchmark(Options options) @local {
         demo.physics.cloth_stats.constraints,
     );
     io::printfn("frames,%d,warmup,%d", MEASURED_FRAMES, WARMUP_FRAMES);
+    if (demo.flag && demo.scene.has(demo.flag, Cloth)) {
+        ClothState* flag_state = demo.scene.get(demo.flag, Cloth).state;
+        io::printfn(
+            "edges,%d,edge_colours,%d,edge_batch,%d,coloured,%s",
+            flag_state.edges.len,
+            flag_state.edge_colour_count,
+            options.edge_batch,
+            !options.uncoloured && flag_state.edge_colour_count > 0,
+        );
+        print_colour_check(flag_state);
+    }
+    io::printfn("edge_ms,mean,%.4f,p95,%.4f", mean(edge_ms[..]), percentile(edge_ms[..], PERCENTILE_95));
+    io::printfn("forks_per_frame,%.2f", (double)(fork_total - forks_before) / MEASURED_FRAMES);
+    if (demo.pooled) print_fork_cost(&demo, options.workers);
     print_update_timings(
         demo:       &demo,
         workers:    options.workers,
@@ -1508,6 +1543,55 @@ fn void? run_cpu_benchmark(Options options) @local {
         stage_ms:   stage_ms[..],
         commit_ms:  commit_ms[..],
     );
+}
+
+const uint FORK_COST_ROUNDS @local = 2000;
+
+fn void print_colour_check(ClothState* state) @local {
+    uint conflicts;
+    io::printf("colour_sizes");
+    @pool() {
+        uint[] stamps = alloc::new_array(tmem, uint, (sz)state.positions.len);
+        for (uint colour = 0; colour < state.edge_colour_count; colour++) {
+            uint first = state.edge_colour_starts[colour];
+            uint count = state.edge_colour_starts[colour + 1] - first;
+            io::printf(",%d", count);
+            foreach (edge : state.coloured_edges[first:count]) {
+                if (stamps[edge.first] == colour + 1) conflicts++;
+                if (stamps[edge.second] == colour + 1) conflicts++;
+                stamps[edge.first] = colour + 1;
+                stamps[edge.second] = colour + 1;
+            }
+        }
+    };
+    io::printfn("");
+    io::printfn("colour_conflicts,%d,coloured_edges,%d", conflicts, state.coloured_edges.len);
+}
+
+fn void empty_range(void* data, uint first, uint count) @local {}
+
+fn void print_fork_cost(Demo* demo, uint workers) @local {
+    time::Clock started = clock::now();
+    for (uint round = 0; round < FORK_COST_ROUNDS; round++) {
+        run_on_pool(
+            context: &demo.jobs,
+            range:   &empty_range,
+            data:    null,
+            count:   workers + 1,
+            batch:   1,
+        );
+    }
+    io::printfn("fork_us,%.2f", (clock::now() - started).to_sec() * 1_000_000 / FORK_COST_ROUNDS);
+}
+
+fn void? dump_positions(Demo* demo, String path) @local {
+    ClothState* state = demo.scene.get(demo.flag, Cloth).state;
+    File file = file::open(path, "wb")!;
+    defer (void)file.close();
+    foreach (position : state.positions) {
+        Vec3 value = position;
+        file.write(((char*)&value)[:Vec3::size])!;
+    }
 }
 
 fn void? run_benchmark(Options options) @local {
@@ -1735,6 +1819,16 @@ fn Options? parse_options(String[] args) @local {
             options.frames = args[++index].to_uint()!;
         } else if (args[index] == "--capture" && index + 1 < args.len) {
             options.capture_path = args[++index];
+        } else if (args[index] == "--cells" && index + 1 < args.len) {
+            options.cells = args[++index].to_uint()!;
+        } else if (args[index] == "--edge-batch" && index + 1 < args.len) {
+            options.edge_batch = args[++index].to_uint()!;
+        } else if (args[index] == "--uncoloured") {
+            options.uncoloured = true;
+        } else if (args[index] == "--dump" && index + 1 < args.len) {
+            options.dump_path = args[++index];
+        } else if (args[index] == "--dump-frame" && index + 1 < args.len) {
+            options.dump_frame = args[++index].to_uint()!;
         } else {
             return c3d::INVALID_ARGUMENT~;
         }
@@ -1758,6 +1852,8 @@ fn int main(String[] args) {
         io::eprintn("Use cloth [--scene flag|cape|both|contacts|fold|fast|field|crowd] [--still] [--frames count]");
         io::eprintn("  [--count n] [--hold]    (field: count of flags, hold the far half; crowd: count of characters)");
         io::eprintn("  [--workers n]    (stage cloths on n job pool workers; 0 stages on the calling thread)");
+        io::eprintn("  [--cells n] [--edge-batch n] [--uncoloured] [--dump path]    (flag size, edge colouring prototype)");
+        io::eprintn("  [--dump-frame n]    (frame after which --dump writes the flag positions; default 120)");
         io::eprintn("  [--publish whole|streams]");
         io::eprintn("  [--benchmark [--cpu-only] [--ragdoll] [--capture path.rgba]");
         io::eprintn("    [--trace software|hardware] [--validation]]");

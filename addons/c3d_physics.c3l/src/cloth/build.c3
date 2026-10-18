@@ -293,6 +293,7 @@ fn ClothState* carve_cloth_state(BlockCursor* cursor, ClothCounts counts) @local
     bool continuous = counts.collisions.continuous;
     bool tangents = counts.tangent_frame;
     bool has_cuts = counts.cut_paths > 0;
+    bool colourable = !has_cuts && !counts.crowd;
     uint sector_scratch_count = has_cuts ? math::max(counts.sectors, counts.material_vertices) : 0;
     ClothState state = {
         .base_particle_count           = counts.base_vertices,
@@ -323,6 +324,8 @@ fn ClothState* carve_cloth_state(BlockCursor* cursor, ClothCounts counts) @local
         .soft_target_storage           = physics::carve(cursor, Vec3, counts.soft_attachments),
         .soft_lambda_storage           = physics::carve(cursor, Vec3, counts.soft_attachments),
         .edge_storage                  = physics::carve(cursor, ClothConstraint, counts.edges),
+        .coloured_edge_storage         = physics::carve(cursor, ClothConstraint, colourable ? counts.base_edges : 0),
+        .edge_colour_start_storage     = physics::carve(cursor, uint, colourable ? (usz)counts.base_edges + 1 : 0),
         .bend_storage                  = physics::carve(cursor, ClothConstraint, counts.bends),
         .hinge_storage                 = physics::carve(cursor, ClothHinge, counts.hinges),
         .corners                       = physics::carve(cursor, ClothCorner, counts.corners),

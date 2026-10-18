@@ -5,6 +5,10 @@ import c3d::asset;
 import c3d::maths;
 import c3d::physics @public;
 import std::math;
+import std::time;
+import std::time::clock;
+
+const uint EDGE_BATCH_DEFAULT @private = 256; // edges per range; a colour that fits one range runs inline
 
 const float MIN_CONSTRAINT_LENGTH @private = 1e-7f; // metres; a shorter pair separates along its rest direction
 
@@ -133,7 +137,7 @@ fn void? solve_cloth(
             }
 
             if (desc.collisions.continuous) state.sweep_start[..] = state.predicted[..];
-            project_constraints(state, state.edges, stretch);
+            project_edges(world, state, stretch);
             filter_displacement(
                 world: world,
                 state: state,
@@ -249,7 +253,7 @@ fn void accumulate_wind(ClothState* state, Wind* wind) @local {
     }
 }
 
-fn void project_constraints(ClothState* state, ClothConstraint[] constraints, float stiffness) @local {
+fn void project_constraints(ClothState* state, ClothConstraint[] constraints, float stiffness) @private {
     foreach (&constraint : constraints) {
         float first_weight = state.inverse_masses[constraint.first];
         float second_weight = state.inverse_masses[constraint.second];
@@ -266,4 +270,48 @@ fn void project_constraints(ClothState* state, ClothConstraint[] constraints, fl
 
 fn float pass_stiffness(float stiffness, uint iterations) @local {
     return 1 - math::pow(1 - stiffness, 1 / (float)iterations);
+}
+
+struct EdgeKernel @local {
+    ClothState*      state;
+    ClothConstraint* edges;
+    float            stiffness;
+}
+
+fn void project_edge_range(void* data, uint first, uint count) @local {
+    EdgeKernel* kernel = data;
+    project_constraints(kernel.state, kernel.edges[first:count], kernel.stiffness);
+}
+
+fn void project_edges(PhysicsWorld* world, ClothState* state, float stiffness) @local {
+    time::Clock started = clock::now();
+
+    if (!state.edge_colour_count || world.cloth_uncoloured) {
+        project_constraints(state, state.edges, stiffness);
+    } else {
+        bool forked = world.parallel.run && world.cloth_work_count == 1;
+        uint batch = world.cloth_edge_batch ? world.cloth_edge_batch : EDGE_BATCH_DEFAULT;
+        for (uint colour = 0; colour < state.edge_colour_count; colour++) {
+            uint first = state.edge_colour_starts[colour];
+            uint count = state.edge_colour_starts[colour + 1] - first;
+            if (forked && count > batch) {
+                EdgeKernel kernel = {
+                    .state     = state,
+                    .edges     = &state.coloured_edges[first],
+                    .stiffness = stiffness,
+                };
+                world.parallel.run(
+                    context: world.parallel.context,
+                    range:   &project_edge_range,
+                    data:    &kernel,
+                    count:   count,
+                    batch:   batch,
+                );
+            } else {
+                project_constraints(state, state.coloured_edges[first:count], stiffness);
+            }
+        }
+    }
+
+    state.edge_seconds += (clock::now() - started).to_sec();
 }

@@ -280,6 +280,7 @@ fn void tally_cloth(
         case HELD:
             stats.held++;
         case SIMULATED:
+            stats.edge_seconds += state.work.edge_seconds;
             stats.candidates += state.contact_result.candidates;
             stats.contacts += state.contact_result.contacts;
             stats.ccd_iterations += state.contact_result.ccd_iterations;
