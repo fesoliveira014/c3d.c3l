@@ -7,6 +7,13 @@ import c3d::asset;
 import c3d::maths;
 import b3;
 
+struct HeightGrid @private {
+    uint x;
+    uint z;
+    uint samples_x;
+    uint samples_z;
+}
+
 fn void? check_collider(PhysicsWorld* world, ColliderDesc* desc, BodyKind kind) @private {
     switch (desc.kind) {
         case SPHERE:
@@ -31,13 +38,14 @@ fn void? check_collider(PhysicsWorld* world, ColliderDesc* desc, BodyKind kind) 
             HeightField field = desc.height_field;
             switch (field.source) {
                 case HEIGHTS:
+                    if (!window_covers_map(field.window)) return c3d::INVALID_ARGUMENT~;
                     if (field.count_x < 2 || field.count_z < 2) return c3d::INVALID_ARGUMENT~;
                     if (field.heights.len != (usz)field.count_x * field.count_z) return c3d::INVALID_ARGUMENT~;
                     return check_cell_materials(desc, field.count_x, field.count_z);
                 case TEXTURE:
                     check_height_map(world.assets, field.texture)!;
-                    TextureDesc source = world.assets.texture(field.texture).desc;
-                    return check_cell_materials(desc, source.width, source.height);
+                    HeightGrid grid = height_grid(world.assets.texture(field.texture).desc, field.window)!;
+                    return check_cell_materials(desc, grid.samples_x, grid.samples_z);
             }
         case COMPOUND:
             if (kind != STATIC) return STATIC_ONLY~;
@@ -110,6 +118,26 @@ fn void? check_height_map(AssetStore* assets, TextureId texture) @private {
     if (source.width < 2 || source.height < 2) return c3d::INVALID_ARGUMENT~;
     usz texels = (usz)source.width * source.height;
     if (record.pixels.len && record.pixels.len != texels * texel_bytes) return c3d::INVALID_ARGUMENT~;
+}
+
+fn bool window_covers_map(HeightFieldWindow window) @private {
+    return !window.x && !window.z && !window.count_x && !window.count_z;
+}
+
+// The window's own samples include its far row and column, which the next window shares.
+fn HeightGrid? height_grid(TextureDesc source, HeightFieldWindow window) @private {
+    if (window_covers_map(window)) return { .samples_x = source.width, .samples_z = source.height };
+    if (!window.count_x || !window.count_z) return c3d::INVALID_ARGUMENT~;
+    if ((usz)window.x + window.count_x >= source.width || (usz)window.z + window.count_z >= source.height) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+    if (source.format == RGBA32_FLOAT) return c3d::UNSUPPORTED~;
+    return {
+        .x         = window.x,
+        .z         = window.z,
+        .samples_x = window.count_x + 1,
+        .samples_z = window.count_z + 1,
+    };
 }
 
 fn void? check_cell_materials(ColliderDesc* desc, uint count_x, uint count_z) @local {
