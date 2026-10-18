@@ -37,6 +37,8 @@ const usz BORDER_EDGES_OFFSET @local = 16; // in the material block, after texel
 const uint BORDER_SLOT @local = 2; // the material slot of the border ring
 const uint BAND_ROW @local = 1; // the row inside a tile's edge that its neighbour's ring holds
 const uint INTERIOR_ROW @local = 60; // clear of both outer bands of a 129-texel tile
+const float SEAM_AGREEMENT @local = 1e-6f; // both sides difference the same four heights
+const float ONE_SIDED_DISAGREEMENT @local = 0.01f; // random texels: far above the agreement, so a missing ring fails
 
 struct Fixture @local {
     AssetStore   assets;
@@ -1040,4 +1042,38 @@ fn void test_retiled_terrain_empties_the_rows_of_the_cell_it_left() @test {
     assert(sets.set.is_linked(east.id));
     assert_ring_empty(&sets, west, RING_EAST);
     assert_ring_empty(&sets, east, RING_WEST);
+}
+
+fn void test_smooth_normal_agrees_across_a_linked_seam() @test {
+    SetFixture sets;
+    setup_set(&sets, mem);
+    defer teardown_set(&sets);
+    Node* west = add_tile_with_own_map(&sets, 0, 0);
+    Node* east = add_tile_with_own_map(&sets, 1, 0);
+    ushort[] west_texels = texels_of(&sets, sets.base.scene.get(west, Terrain).desc.height_map);
+    ushort[] east_texels = texels_of(&sets, sets.base.scene.get(east, Terrain).desc.height_map);
+    for (uint row = 0; row < SMALL_TEXELS; row++) {
+        east_texels[row * SMALL_TEXELS] = west_texels[row * SMALL_TEXELS + SMALL_TEXELS - 1];
+    }
+    terrain::refresh_neighbour_rings(
+        scene:  &sets.base.scene,
+        assets: &sets.base.assets,
+        tile:   east,
+        rect:   { .x = 0, .z = 0, .columns = 1, .rows = SMALL_TEXELS },
+    );
+    sets.base.scene.update_world();
+
+    HeightView west_view = terrain::height_view(&sets.base.scene, &sets.base.assets, west.id)!!;
+    HeightView east_view = terrain::height_view(&sets.base.scene, &sets.base.assets, east.id)!!;
+    float seam_x = sets.set.tile_extent();
+    float along_z = ((float)INTERIOR_ROW + 0.25f) * CELL_SIZE;
+    Vec3 west_normal = terrain::sample_smooth_normal(&west_view, seam_x, along_z)!!;
+    Vec3 east_normal = terrain::sample_smooth_normal(&east_view, seam_x, along_z)!!;
+    assert((west_normal - east_normal).length() <= SEAM_AGREEMENT);
+
+    west_view.border_edges = 0;
+    east_view.border_edges = 0;
+    Vec3 west_one_sided = terrain::sample_smooth_normal(&west_view, seam_x, along_z)!!;
+    Vec3 east_one_sided = terrain::sample_smooth_normal(&east_view, seam_x, along_z)!!;
+    assert((west_one_sided - east_one_sided).length() >= ONE_SIDED_DISAGREEMENT);
 }
