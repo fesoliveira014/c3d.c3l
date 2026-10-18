@@ -328,7 +328,7 @@ fn ClothState* carve_cloth_state(BlockCursor* cursor, ClothCounts counts) @local
         .material_sectors              = physics::carve(cursor, uint, has_cuts ? counts.material_vertices : 0),
         .material_normal_domains       = physics::carve(cursor, uint, counts.material_vertices),
         .material_base_normal_domains  = physics::carve(cursor, uint, has_cuts ? counts.material_vertices : 0),
-        .material_ref_faces            = physics::carve(cursor, uint, counts.material_vertices),
+        .material_reference_faces      = physics::carve(cursor, uint, counts.material_vertices),
         .tangent_signs                 = physics::carve(cursor, float, tangents ? counts.material_vertices : 0),
         .rest_tangents                 = physics::carve(cursor, Vec3, tangents ? counts.material_vertices : 0),
         .committed_tangents            = physics::carve(cursor, Vec4, tangents ? counts.material_vertices : 0),

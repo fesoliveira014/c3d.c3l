@@ -188,7 +188,7 @@ struct ClothState {
     uint[]               material_sectors;
     uint[]               material_normal_domains;
     uint[]               material_base_normal_domains;
-    uint[]               material_ref_faces;
+    uint[]               material_reference_faces;
     float[]              tangent_signs;
     Vec3[]               rest_tangents;
     Vec4[]               committed_tangents;

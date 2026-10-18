@@ -414,7 +414,7 @@ fn void split_material_vertices_by_sector(
     if (split_material_count > base_material_count) {
         uint[] base_vertices = alloc::new_array(tmem, uint, (sz)split_material_count);
         uint[] reference_faces = alloc::new_array(tmem, uint, (sz)split_material_count);
-        reference_faces[:base_material_count] = plan.material_ref_faces[..];
+        reference_faces[:base_material_count] = plan.material_reference_faces[..];
 
         for (uint corner_index = 0; corner_index < corner_count; corner_index++) {
             uint split_vertex = corner_material_vertices[corner_index];
@@ -436,7 +436,7 @@ fn void split_material_vertices_by_sector(
         }
         plan.material_particles = split_particles;
         plan.material_normal_domains = split_normal_domains;
-        plan.material_ref_faces = reference_faces;
+        plan.material_reference_faces = reference_faces;
 
         Vec3[] split_positions = alloc::new_array(tmem, Vec3, (sz)split_material_count);
         Vec3[] split_normals = alloc::new_array(tmem, Vec3, (sz)split_material_count);
