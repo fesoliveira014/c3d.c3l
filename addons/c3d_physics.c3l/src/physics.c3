@@ -489,7 +489,7 @@ fn void PhysicsWorld.set_tuning(&self, PhysicsTuning tuning) {
 }
 
 <*
- Run cloth staging and breakable graph building through parallel.
+ Run cloth staging, breakable graph building and debug collider generation through parallel.
 *>
 fn void PhysicsWorld.set_parallel(&self, ParallelFor parallel) {
     self.parallel = parallel;

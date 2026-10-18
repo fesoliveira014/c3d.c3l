@@ -57,7 +57,8 @@
     },
     "physics_components": {
       "type": "executable",
-      "sources": [ "examples/physics_components.c3" ]
+      "sources": [ "examples/physics_components.c3" ],
+      "dependencies": [ "c3d_physics", "c3d_job", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "b3", "cgltf", "ufbx", "shaderc" ]
     },
     "vehicle": {
       "type": "executable",

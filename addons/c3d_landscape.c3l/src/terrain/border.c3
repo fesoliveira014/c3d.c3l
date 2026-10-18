@@ -48,7 +48,23 @@ fn TextureId? attach_border_ring(AssetStore* assets, MaterialId material, uint t
     return ring;
 }
 
-// A neighbour whose map was replaced since the last update may not conform yet; its edge reads as missing.
+// A tile whose map was replaced since the last update may not conform yet.
+fn ushort[]? conforming_texels(
+    Scene* scene,
+    AssetStore* assets,
+    Entity tile,
+    uint texels,
+) @private {
+    TerrainDesc* desc = &scene.get(scene.node(tile), Terrain).desc;
+    if (!assets.textures.is_live(desc.height_map)) return c3d::INVALID_ID~;
+
+    TextureAsset* texture = assets.textures.get(desc.height_map);
+    check_height_map(texture)!;
+    if (texture.desc.width != texels) return c3d::INVALID_ARGUMENT~;
+    return height_texels(texture);
+}
+
+// A neighbour whose map does not conform yet reads as missing.
 fn ushort[]? neighbour_texels(
     Scene* scene,
     AssetStore* assets,
@@ -57,14 +73,12 @@ fn ushort[]? neighbour_texels(
     BorderEdge edge,
     uint texels,
 ) @private {
-    Entity neighbour = set.neighbour(tile, edge.neighbour)!;
-    TerrainDesc* desc = &scene.get(scene.node(neighbour), Terrain).desc;
-    if (!assets.textures.is_live(desc.height_map)) return c3d::INVALID_ID~;
-
-    TextureAsset* texture = assets.textures.get(desc.height_map);
-    check_height_map(texture)!;
-    if (texture.desc.width != texels) return c3d::INVALID_ARGUMENT~;
-    return height_texels(texture);
+    return conforming_texels(
+        scene:  scene,
+        assets: assets,
+        tile:   set.neighbour(tile, edge.neighbour)!,
+        texels: texels,
+    );
 }
 
 // Rebuilds the tile's ring from its linked edge neighbours; an unlinked tile gets an empty ring and no edges.

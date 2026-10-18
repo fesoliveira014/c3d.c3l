@@ -189,8 +189,7 @@ set's grid, so placement does not depend on the order tiles are added, and its `
 
 **Authoring contract.** Neighbouring tiles duplicate their shared edge row and column, so the edge texels of two
 neighbours are equal. Cut tiles from one map with an overlap of one row or column, as the example does. Nothing
-checks the texels, and an edit does not copy them: the application keeps the shared edge texels of neighbouring
-tiles equal across an edit.
+checks the texels; [`TerrainSet.propagate_edit`](#edits) keeps them equal across an edit.
 
 **Border ring.** A tile shades its edge texels from central differences, so it needs the texel just outside its
 border. Each tile owns a `R16_UINT` texture of `texels × 4` in material slot 2, one row for each edge neighbour in the
@@ -211,9 +210,9 @@ the rows that are valid.
   texels. It reaches only the neighbours across an edge whose outer two texel bands, the shared edge and the row
   inside it, the rectangle intersects. Each rebuild changes the ring's revision only when a texel or the mask
   changed.
-- After editing a set tile's height texels within its outer two texel bands, the application calls
-  `terrain::refresh_neighbour_rings` with the edited rectangle. A bare `mark_dirty` on a set tile leaves the
-  neighbours' rings stale.
+- After editing a set tile, call [`TerrainSet.propagate_edit`](#edits), which refreshes the rings.
+  `refresh_neighbour_rings` alone is for an application that keeps the neighbours' edge texels equal itself. A bare
+  `mark_dirty` on a set tile leaves the neighbours' rings stale.
 
 CPU queries (`height_view`, `sample_height`, `sample_normal`) stay within one tile; a point outside it is
 `NOT_FOUND`. Each tile keeps its own collider, height map revision and `mark_dirty` rectangle: an edit of one tile
@@ -271,9 +270,35 @@ scene.get(ground, PhysicsBody).mark_changed();
   since the last `update`. The next `update` sees the revision change and refreshes only the chunks the
   rectangle touches and their ancestors. A revision change without `mark_dirty` rebuilds the whole bounds
   tree, as does a new pixel array.
-- On a [set tile](#tile-sets), `mark_dirty` does not reach the neighbours' border rings: call
-  `terrain::refresh_neighbour_rings` with the same rectangle, and write the same value into the neighbour's
-  duplicated edge texel when an edit changes an edge texel.
+- On a [set tile](#tile-sets), `mark_dirty` reaches neither the neighbours' duplicated edge texels nor their border
+  rings. After it, call `TerrainSet.propagate_edit`:
+
+  ```c3
+  uint changed = set.propagate_edit(scene: &scene, assets: &assets, tile: tile.id, rect: rect)!;
+  foreach (direction : TerrainNeighbour::values) {
+      if (changed & ((uint)1 << direction.ordinal)) {
+          Entity neighbour = set.neighbour(tile.id, direction)!;
+          // mark_changed on its body once the stroke ends
+      }
+  }
+  ```
+
+  - It copies the rectangle's edge rows and columns, corners included, into the duplicated texels of each
+    neighbour, edges and diagonals. A corner texel reaches all three tiles that share it.
+  - A neighbour whose texels change gets `mark_texture_dirty` and a `mark_dirty` rectangle of the copied strip, so
+    its bounds refresh at the next `update`. A neighbour that already holds the values keeps its revision.
+  - It then refreshes the [border rings](#tile-sets) that read the changed texels: those of the tile's own
+    neighbours, and those beside each neighbour it changed.
+  - Only edge strips are copied, so retained state does not grow, and each tile keeps its own revision and
+    `mark_dirty` rectangle.
+  - A tile that is not linked to the set faults `INVALID_ARGUMENT`. A tile whose height map no longer passes the
+    checks faults like `height_view`; a neighbour whose map does not conform is skipped.
+  - The result is a mask: bit `n` is set when the neighbour of `TerrainNeighbour` ordinal `n` had texels change
+    (`WEST` 0, `EAST` 1, `NORTH` 2, `SOUTH` 3, then `NORTH_WEST`, `NORTH_EAST`, `SOUTH_WEST`, `SOUTH_EAST`).
+    `set.neighbour(tile, direction)` names the tile. A neighbour that was skipped or already held the values has
+    no bit, and a repeated call returns 0.
+  - A live collider is not re-cooked: call `mark_changed` on the body of the edited tile and of each tile in the
+    mask, and on no other tile.
 - The renderer re-uploads the whole height map on each revision (8 MiB at 2049², 32 MiB at 4097²).
 - A live physics body is not re-cooked on a texture revision. `mark_changed` rebuilds the whole field on the
   next `PhysicsWorld.update`, so call it once when a stroke ends: collision is stale during the stroke and
@@ -374,8 +399,11 @@ cursor (a 6 m/s velocity change) through `spatial::pick` with the terrain's laye
 camera beside the physics ray height, and the LOD threshold.
 
 `--tiles 2x2` builds the same landscape as a [tile set](#tile-sets) of four tiles cut from the map with a one-texel
-overlap, each with its own control map and collider. Painting is off and the benchmark is unavailable with it: an
-edit does not reach the neighbouring tile's duplicated edge.
+overlap, each with its own control map and collider. B paints across tile edges: the brush stamps every tile its
+square reaches, leaves a tile's shared west column and north row to the neighbour that owns them, and calls
+`propagate_edit` for each stamped tile. The end of a stroke re-cooks the colliders of the stamped tiles and of the
+neighbours in the returned masks only. The benchmark is unavailable with it, since it measures the one terrain node's
+batch and runtime.
 
 `--capture FILE.png` renders one frame without a window, from a fixed camera straight above a point of the tile
 seam where the default map's edge texels bend most, and writes it as a PNG. It is meant for `--tiles 2x2` at the
