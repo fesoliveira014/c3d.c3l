@@ -67,6 +67,7 @@ const float STEP_SECONDS @local = 1.0f / 60;
 const double NANOSECONDS_PER_MILLISECOND @local = 1_000_000;
 const double PERCENTILE_95 @local = 0.95;
 const uint CAPTURE_CHANNELS @local = 4;
+const uint TEAR_PATH_ID @local = 1;
 
 enum Scenario @local {
     FLAG,
@@ -84,6 +85,7 @@ struct Options @local {
     bool      still;
     bool      whole_publication;
     bool      ragdoll;
+    bool      tear;
     bool      traced;
     bool      validation;
     TraceKind trace_kind;
@@ -139,6 +141,7 @@ struct Controls @local {
     bool motion_blur;
     bool colliders;
     bool ragdoll;
+    bool tear;
     bool reset;
 }
 
@@ -326,6 +329,14 @@ fn void? attach_flag(Demo* demo) @local {
         uint[] pins = alloc::new_array(tmem, uint, (sz)(demo.flag_rows + 1));
         foreach (row, &pin : pins) *pin = (uint)row * (demo.flag_columns + 1);
         desc.pins = pins;
+        uint mid_row = demo.flag_rows / 2;
+        uint start_col = demo.flag_columns / 4;
+        uint[] cut_vertices = alloc::new_array(tmem, uint, (sz)(demo.flag_columns - start_col + 1));
+        foreach (index, &vertex : cut_vertices) {
+            *vertex = mid_row * (demo.flag_columns + 1) + start_col + (uint)index;
+        }
+        ClothCutPath[1] cuts = { { .id = TEAR_PATH_ID, .vertices = cut_vertices } };
+        desc.cuts = cuts[..];
         demo.scene.add_cloth(&demo.assets, demo.flag, desc)!;
     };
 }
@@ -352,8 +363,26 @@ fn void? attach_cape(Demo* demo) @local {
             };
         }
         desc.attachments = attachments;
+        uint mid_col = CAPE_COLUMNS / 2;
+        uint start_row = CAPE_ROWS / 3;
+        uint[] cut_vertices = alloc::new_array(tmem, uint, (sz)(CAPE_ROWS - start_row + 1));
+        foreach (index, &vertex : cut_vertices) {
+            *vertex = (start_row + (uint)index) * (CAPE_COLUMNS + 1) + mid_col;
+        }
+        ClothCutPath[1] cuts = { { .id = TEAR_PATH_ID, .vertices = cut_vertices } };
+        desc.cuts = cuts[..];
         demo.scene.add_cloth(&demo.assets, demo.character.cape, desc)!;
     };
+}
+
+fn void tear_cloths(Demo* demo) @local {
+    if (!demo.simulated) return;
+    if (demo.flag && demo.scene.has(demo.flag, Cloth)) {
+        (void)demo.scene.get(demo.flag, Cloth).request_cut(TEAR_PATH_ID);
+    }
+    if (demo.character.cape && demo.scene.has(demo.character.cape, Cloth)) {
+        (void)demo.scene.get(demo.character.cape, Cloth).request_cut(TEAR_PATH_ID);
+    }
 }
 
 fn void? attach_cloths(Demo* demo) @local {
@@ -859,6 +888,18 @@ fn void panel(
         imgui::checkbox("Collider guides", &controls.colliders);
         imgui::checkbox("TAA", &controls.taa);
         imgui::checkbox("Motion blur", &controls.motion_blur);
+        Node* tear_target = demo.flag ? demo.flag : demo.character.cape;
+        if (tear_target && demo.scene.has(tear_target, Cloth)) {
+            if (try cut_result = demo.scene.get(tear_target, Cloth).cut_result(TEAR_PATH_ID)) {
+                imgui::text(
+                    "Cut #%u: %s (attempts %u)",
+                    TEAR_PATH_ID,
+                    cut_result.is_cut ? "APPLIED" : "INTACT",
+                    cut_result.attempts,
+                );
+            }
+            controls.tear = imgui::button("Tear cloth (T)");
+        }
         controls.reset = imgui::button("Reset cloth");
     }
     imgui::end();
@@ -877,6 +918,7 @@ fn void? run_interactive(Options options) @local {
     )!;
     defer destroy_demo(&demo);
     demo.whole_publication = options.whole_publication;
+    if (options.tear) tear_cloths(&demo);
     Renderer renderer = platform::create_window_renderer(
         allocator: mem,
         window: &window,
@@ -899,6 +941,7 @@ fn void? run_interactive(Options options) @local {
         if (window.input.key_pressed(platform::Scancode.U) && !window.input.keyboard_captured_by_gui) {
             demo.whole_publication = !demo.whole_publication;
         }
+        bool key_tear = window.input.key_pressed(platform::Scancode.T) && !window.input.keyboard_captured_by_gui;
         time::Clock started = clock::now();
         @pool() {
             gui_renderer.new_frame();
@@ -919,6 +962,7 @@ fn void? run_interactive(Options options) @local {
                 set_ragdoll(&demo, controls.ragdoll);
                 controls.ragdoll = demo.character.ragdoll;
             }
+            if (controls.tear || key_tear) tear_cloths(&demo);
             if (controls.reset) reset_cloths(&demo)!;
             elapsed += window.clock.delta;
             step_demo(&demo, window.clock.delta, elapsed);
@@ -1043,6 +1087,7 @@ fn void? run_benchmark(Options options) @local {
     for (uint frame = 0; frame < total_frames; frame++) {
         double time = (double)frame * STEP_SECONDS;
         if (options.ragdoll && frame == WARMUP_FRAMES) set_ragdoll(&demo, true);
+        if (options.tear && frame == WARMUP_FRAMES) tear_cloths(&demo);
         step_demo(&demo, STEP_SECONDS, time);
         if ((demo.scenario == CONTACTS || demo.scenario == FAST) && demo.physics.cloth_stats.failed) return cloth::CONTACT_UNRESOLVED~;
         renderer.begin_frame({ .time = time, .delta = STEP_SECONDS })!;
@@ -1151,6 +1196,8 @@ fn Options? parse_options(String[] args) @local {
             options.whole_publication = mode == "whole";
         } else if (args[index] == "--ragdoll") {
             options.ragdoll = true;
+        } else if (args[index] == "--tear") {
+            options.tear = true;
         } else if (args[index] == "--validation") {
             options.validation = true;
         } else if (args[index] == "--trace" && index + 1 < args.len) {

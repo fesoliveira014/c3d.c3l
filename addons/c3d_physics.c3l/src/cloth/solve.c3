@@ -13,7 +13,7 @@ fn void? certify_hinge_step(
     Vec3[] start_positions,
     Vec3[] end_positions,
     bool commit_angle = true,
-) @local {
+) @private {
     if (!state.hinges.len) return;
     foreach (&hinge : state.hinges) {
         Vec3[4] start_points = {
@@ -175,6 +175,14 @@ fn void? solve_cloth(
             state.velocities[index] = (state.predicted[index] - *position - transport) / dt;
             *position = state.predicted[index];
         }
+
+        evaluate_substep_cuts(
+            world:   world,
+            state:   state,
+            substep: substep,
+            total:   total,
+            dt:      dt,
+        )!;
     }
 
     state.solved_reference[..] = state.current_reference[..];
@@ -236,9 +244,9 @@ fn void accumulate_wind(ClothState* state, Wind* wind) @local {
         float speed = relative.length();
         if (wind.max_speed > 0 && speed > wind.max_speed) relative *= wind.max_speed / speed;
         Vec3 share = normal * (wind.drag * doubled_area * 0.5f * relative.dot(normal) / 3);
-        state.accelerations[first] += share;
-        state.accelerations[second] += share;
-        state.accelerations[third] += share;
+        state.accelerations[first] += share * state.inverse_masses[first];
+        state.accelerations[second] += share * state.inverse_masses[second];
+        state.accelerations[third] += share * state.inverse_masses[third];
     }
 }
 

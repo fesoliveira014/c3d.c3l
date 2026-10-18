@@ -6,6 +6,7 @@ import c3d::physics @public;
 import std::math;
 
 const double CLOTH_ADVANCE_FRACTION @local = 0.9;
+const double MIN_RESPONSE_SHARE @local = 0.25; // minimum simplex weight share for a movable vertex with positive separation deficit
 
 struct ClothPathDistance @local {
     double lower;
@@ -13,7 +14,7 @@ struct ClothPathDistance @local {
     ContactVector direction;
 }
 
-struct ClothImpact @local {
+struct ClothImpact @private {
     bool hit;
     double time;
     ContactVector direction;
@@ -22,7 +23,7 @@ struct ClothImpact @local {
     uint first_count;
 }
 
-fn bool self_candidate(ClothCandidate candidate) @local {
+fn bool self_candidate(ClothCandidate candidate) @private {
     return candidate.kind == SELF_VERTEX_FACE || candidate.kind == SELF_EDGE_EDGE;
 }
 
@@ -242,7 +243,7 @@ fn double? remaining_separation(
     return lower;
 }
 
-fn ClothImpact? sweep_candidate(PhysicsWorld* world, ClothState* state, ClothCandidate* candidate) @local {
+fn ClothImpact? sweep_candidate(PhysicsWorld* world, ClothState* state, ClothCandidate* candidate) @private {
     state.contact_result.sweeps++;
     double reach = state.desc.thickness * (self_candidate(*candidate) ? 2.0 : 1.0);
     double tolerance = state.desc.collisions.contact_tolerance;
@@ -436,6 +437,8 @@ fn void? respond_self_path(ClothState* state, ClothImpact impact) @local {
     double squared = impact.direction.dot(impact.direction);
     if (!(squared > 0) || !math::is_finite(squared)) return CONTACT_PRECISION_EXCEEDED~;
 
+    balance_self_coefficients(state, &impact, starts)!;
+
     double impulse = self_path_impulse(
         state: state,
         impact: impact,
@@ -465,6 +468,95 @@ fn void? respond_self_path(ClothState* state, ClothImpact impact) @local {
             begin: impact.time,
         )!;
     }
+}
+
+fn void? balance_self_coefficients(
+    ClothState* state,
+    ClothImpact* impact,
+    ContactVector[4] starts,
+) @local {
+    bool[4] active;
+    bool needs_balance = mark_deficit_vertices(
+        state:   state,
+        impact:  *impact,
+        starts:  starts,
+        time:    1,
+        active:  &active,
+    )!;
+    for (usz index = state.path_heads.len; index < state.path_count; index++) {
+        ClothPathNode* node = &state.path_nodes[index];
+        if (node.kind != OFFSET || node.begin <= impact.time) continue;
+        needs_balance |= mark_deficit_vertices(
+            state:   state,
+            impact:  *impact,
+            starts:  starts,
+            time:    node.begin,
+            active:  &active,
+        )!;
+    }
+    if (!needs_balance) return;
+
+    double first_sum;
+    for (uint first = 0; first < impact.first_count; first++) {
+        double share = impact.coefficients[first];
+        if (active[first] && share < MIN_RESPONSE_SHARE) share = MIN_RESPONSE_SHARE;
+        impact.coefficients[first] = share;
+        first_sum += share;
+    }
+    if (first_sum > 0) {
+        for (uint first = 0; first < impact.first_count; first++) {
+            impact.coefficients[first] /= first_sum;
+        }
+    }
+
+    double second_sum;
+    for (uint second = impact.first_count; second < 4; second++) {
+        double share = -impact.coefficients[second];
+        if (active[second] && share < MIN_RESPONSE_SHARE) share = MIN_RESPONSE_SHARE;
+        impact.coefficients[second] = -share;
+        second_sum += share;
+    }
+    if (second_sum > 0) {
+        for (uint second = impact.first_count; second < 4; second++) {
+            impact.coefficients[second] /= second_sum;
+        }
+    }
+}
+
+fn bool? mark_deficit_vertices(
+    ClothState* state,
+    ClothImpact impact,
+    ContactVector[4] starts,
+    double time,
+    bool[4]* active,
+) @local {
+    evaluate_paths(state, physics::contact_value(time))!;
+    double progress = (time - impact.time) / (1 - impact.time);
+    double squared = impact.direction.dot(impact.direction);
+    double target = (2.0 * state.desc.thickness + (double)state.desc.collisions.contact_tolerance / 4) * math::sqrt(squared);
+    bool needs_balance;
+    for (uint first = 0; first < impact.first_count; first++) {
+        for (uint second = impact.first_count; second < 4; second++) {
+            uint first_vertex = impact.vertices[first];
+            uint second_vertex = impact.vertices[second];
+            ContactVector delta = physics::contact_middle(state.path_values[state.path_heads[first_vertex]])
+              - physics::contact_middle(state.path_values[state.path_heads[second_vertex]]);
+            double initial = (starts[first] - starts[second]).dot(impact.direction);
+            double deficit = initial * (1 - progress) + target * progress - delta.dot(impact.direction);
+            if (deficit <= 0) continue;
+
+            double first_mass = state.inverse_masses[first_vertex];
+            double second_mass = state.inverse_masses[second_vertex];
+            if (first_mass > 0) (*active)[first] = true;
+            if (second_mass > 0) (*active)[second] = true;
+            double weight = first_mass * impact.coefficients[first]
+              - second_mass * impact.coefficients[second];
+            if (weight < MIN_RESPONSE_SHARE * (first_mass + second_mass)) {
+                needs_balance = true;
+            }
+        }
+    }
+    return needs_balance;
 }
 
 fn double? self_path_impulse(

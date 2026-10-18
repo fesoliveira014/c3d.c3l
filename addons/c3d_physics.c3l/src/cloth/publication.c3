@@ -12,24 +12,26 @@ import std::time::clock;
 
 fn ClothState staged_cloth(ClothState* state) @private {
     ClothState staged = *state;
-    staged.solved_reference = state.staged_solved_reference;
-    staged.positions = state.staged_positions;
-    staged.velocities = state.staged_velocities;
-    staged.predicted = state.staged_predicted;
-    staged.accelerations = state.staged_accelerations;
-    staged.published = state.staged_published;
-    staged.pin_anchors = state.staged_pin_anchors;
-    staged.pin_targets = state.staged_pin_targets;
-    staged.soft_anchors = state.staged_soft_anchors;
-    staged.soft_targets = state.staged_soft_targets;
-    staged.hinges = state.staged_hinges;
+    rebind_active_slices(
+        state:     &staged,
+        is_staged: true,
+        particles: state.committed_particle_count,
+        pins:      state.committed_pin_count,
+        soft:      state.committed_soft_count,
+        edges:     state.committed_edge_count,
+        bends:     state.committed_bend_count,
+        hinges:    state.committed_hinge_count,
+    );
     staged.bodies = state.staged_bodies;
     staged.shape_storage = state.staged_shapes;
     staged.shape_starts = state.staged_shape_starts;
     staged.shape_ends = state.staged_shape_ends;
     staged.contact_result = {};
+    staged.topology_dirty = false;
+    staged.cut_applied_this_update = false;
 
     staged.solved_reference[..] = state.solved_reference[..];
+    staged.current_reference[..] = state.current_reference[..];
     staged.positions[..] = state.positions[..];
     staged.velocities[..] = state.velocities[..];
     staged.predicted[..] = state.predicted[..];
@@ -43,11 +45,18 @@ fn ClothState staged_cloth(ClothState* state) @private {
     staged.bodies[..] = state.bodies[..];
     staged.shape_starts[..] = state.shape_starts[..];
     staged.shape_ends[..] = state.shape_ends[..];
+    if (state.cut_paths.len) {
+        staged.staged_edge_cut[..] = state.committed_edge_cut[..];
+        staged.staged_sector_to_particle[..] = state.committed_sector_to_particle[..];
+        staged.staged_cut_results[..] = state.cut_results[..];
+    }
     return staged;
 }
 
 fn void commit_cloth(ClothState* state, ClothState* staged) @private {
+    commit_staged_topology(state, staged);
     state.solved_reference[..] = staged.solved_reference[..];
+    state.current_reference[..] = staged.current_reference[..];
     state.positions[..] = staged.positions[..];
     state.velocities[..] = staged.velocities[..];
     state.predicted[..] = staged.predicted[..];
@@ -190,6 +199,13 @@ fn void? update_cloth(
         state.contact_result = staged.contact_result;
         state.path_count = staged.path_count;
     }
+    defer (catch excuse) {
+        if (staged.topology_dirty) {
+            state.topology_dirty = true;
+            restore_committed_topology(state);
+        }
+        if (steps) record_refused_cuts(state, &staged, excuse);
+    }
 
     staged.contact_result.stage = ClothContactStage.ARITHMETIC;
     if (!physics::contact_arithmetic_supported()) return CONTACT_PRECISION_EXCEEDED~;
@@ -234,7 +250,7 @@ fn void? update_cloth(
     prepare_publication(world, &staged, steps != 0)!;
 
     staged.contact_result.stage = ClothContactStage.PUBLICATION;
-    bool changed = stage_local_positions(&staged, node.world)!;
+    bool changed = stage_local_positions(&staged, node.world, staged.cut_applied_this_update)!;
     if (contact_pass(world: world, state: &staged, positions: staged.publication_roundtrip, apply: false)! != 0) {
         staged.contact_result.stage = ClothContactStage.PUBLICATION;
         return CONTACT_PRECISION_EXCEEDED~;
@@ -242,6 +258,14 @@ fn void? update_cloth(
 
     staged.contact_result.stage = ClothContactStage.MATERIAL;
     stage_material_frames(&staged, changed)!;
+
+    if (staged.cut_applied_this_update) {
+        staged.contact_result.stage = ClothContactStage.PUBLICATION;
+        scene::Mesh* out_mesh = state.skinned
+            ? world.scene.get(world.scene.node(state.output_node), scene::Mesh)
+            : world.scene.get(node, scene::Mesh);
+        out_mesh.reset_vertex_history();
+    }
 
     commit_cloth(state, &staged);
     state.local_bounds = staged.local_bounds;

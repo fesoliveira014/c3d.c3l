@@ -19,19 +19,21 @@ struct CrowdClothSavedAuthoring @private {
     CrowdClothPartAuthoring[] parts;
 }
 
+uint[1] crowd_cloth_text_default_versions @private = { 1 };
+
 fn void? register_crowd_cloth_codec() @private {
     describe::register_reflected(CrowdClothPartAuthoring)!;
     describe::register_reflected(CrowdClothSavedAuthoring)!;
     serial::register_described_type(
         $Type: CrowdClothPartAuthoring,
         version: 1,
-        layout: 0xcb65f4fd2d137930,
+        layout: 0x700a385f5754ebd3,
         defaults: &defaults_crowd_cloth_part,
     )!;
     serial::register_described_type(
         $Type: CrowdClothSavedAuthoring,
-        version: 1,
-        layout: 0xb81640a6a67efd0a,
+        version: 2,
+        layout: 0xbacbdba407da247d,
         defaults: &defaults_crowd_cloth_authoring,
     )!;
     serial::register_described_owner(CrowdCloth, CrowdClothSavedAuthoring, {
@@ -41,6 +43,7 @@ fn void? register_crowd_cloth_codec() @private {
         .project = &project_crowd_cloth,
         .validate = &validate_crowd_cloth,
         .attach = &attach_crowd_cloth,
+        .text_default_versions = crowd_cloth_text_default_versions[..],
     })!;
 }
 

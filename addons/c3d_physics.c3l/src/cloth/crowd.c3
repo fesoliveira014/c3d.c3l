@@ -438,32 +438,43 @@ fn void? prepare_crowd_cloth_part(
 
     @pool() {
         check_seams(desc.seams, (uint)source.data.positions.len)!;
-        ClothMaterialPlan material_plan = build_material_plan(&source.data, desc)!;
-        uint particle_count = material_plan.particle_count;
+        uint particle_count;
+        uint[] render_to_particle = build_render_particle_map(&source.data, desc.render_particles, &particle_count)!;
+        uint[] particle_sources = alloc::new_array(tmem, uint, (sz)particle_count);
+        foreach (render_vertex, particle : render_to_particle) particle_sources[particle] = (uint)render_vertex;
+
         check_transport_authoring(desc.transport, particle_count)!;
         ClothAttachmentPlan attachment_plan = build_attachment_plan(
             legacy_pins:        desc.pins,
-            render_to_particle: material_plan.render_to_particle,
+            render_to_particle: render_to_particle,
             attachments:        desc.attachments,
             particle_count:     particle_count,
         )!;
 
         Vec3[] rest = alloc::new_array(tmem, Vec3, (sz)particle_count);
         Vec3[] edge_positions = alloc::new_array(tmem, Vec3, (sz)particle_count);
-        foreach (particle, source_vertex : material_plan.particle_sources) {
+        foreach (particle, source_vertex : particle_sources) {
             Vec3 local_pos = source.data.positions[source_vertex];
             rest[particle] = local_pos;
             edge_positions[particle] = maths::transform_point(owner.world, local_pos);
         }
         check_world_positions(edge_positions)!;
 
-        ClothTopology topology = build_topology(
-            data:               &source.data,
-            render_to_particle: material_plan.render_to_particle,
-            rest_positions:     rest,
-            edge_positions:     edge_positions,
-            world_positions:    {},
-            desc:               desc,
+        ClothSectorPlan sector_plan = build_sector_plan(
+            data:                &source.data,
+            render_to_particle:  render_to_particle,
+            base_particle_count: particle_count,
+            pin_count:           (uint)attachment_plan.pins.len,
+            soft_count:          (uint)attachment_plan.soft.len,
+            rest_positions:      rest,
+            edge_positions:      edge_positions,
+            world_positions:     {},
+            desc:                desc,
+        )!;
+        ClothMaterialPlan material_plan = build_material_plan(
+            source:         &source.data,
+            desc:           desc,
+            corner_sectors: sector_plan.corner_sectors,
         )!;
         ClothCapture capture = capture_colliders(
             scene:      scene,
@@ -501,17 +512,14 @@ fn void? prepare_crowd_cloth_part(
 
             ClothState* state = allocate_cloth_state(
                 allocator:             allocator,
-                vertex_count:          particle_count,
+                sector_plan:           &sector_plan,
                 source_vertex_count:   (uint)source.data.positions.len,
                 material_vertex_count: material_vertex_count,
                 normal_domain_count:   material_plan.normal_domain_count,
                 corner_count:          (uint)material_plan.corners.len,
-                pin_count:             (uint)attachment_plan.pins.len,
-                soft_count:            (uint)attachment_plan.soft.len,
-                edge_count:            (uint)topology.edges.len,
                 face_count:            (uint)(source.data.indices.len / 3),
-                bend_count:            (uint)topology.bends.len,
-                hinge_count:           (uint)topology.hinges.len,
+                bend_count:            (uint)sector_plan.initial_bends.len,
+                hinge_count:           (uint)sector_plan.initial_hinges.len,
                 body_count:            (uint)capture.bodies.len,
                 joint_count:           part_record.skinned ? part_record.joint_count : 0,
                 tangent_frame:         desc.tangent_frame,
@@ -522,7 +530,6 @@ fn void? prepare_crowd_cloth_part(
             part_record.states[slot] = state;
 
             state.desc = desc;
-            state.desc.pins = state.pins;
             state.colliders[..] = desc.colliders[..];
             state.desc.colliders = state.colliders;
             state.bodies[..] = capture.bodies[..];
@@ -538,45 +545,31 @@ fn void? prepare_crowd_cloth_part(
             state.skeleton = part_record.skeleton;
             state.skeleton_revision = part_record.skeleton_revision;
             state.render_to_particle[..] = material_plan.render_to_particle[..];
-            state.particle_sources[..] = material_plan.particle_sources[..];
+            state.particle_source_storage[:particle_count] = material_plan.particle_sources[..];
             if (desc.transport.len) {
-                state.transport[..] = desc.transport[..];
+                state.transport_storage[:particle_count] = desc.transport[..];
             } else {
-                state.transport[..] = 0;
+                state.transport_storage[..] = 0;
             }
-            state.desc.transport = state.transport;
 
-            state.rest[..] = rest[..];
-            state.solved_reference[..] = edge_positions[..];
-            state.current_reference[..] = edge_positions[..];
-            state.positions[..] = edge_positions[..];
-            state.predicted[..] = edge_positions[..];
-            state.accelerations[..] = (Vec3){};
-            state.published[..] = edge_positions[..];
+            state.rest_storage[:particle_count] = rest[..];
+            state.solved_reference_storage[:particle_count] = edge_positions[..];
+            state.current_reference_storage[:particle_count] = edge_positions[..];
+            if (state.staged_current_reference.len) {
+                state.staged_current_reference[:particle_count] = edge_positions[..];
+            }
+            state.position_storage[:particle_count] = edge_positions[..];
+            state.predicted_storage[:particle_count] = edge_positions[..];
+            state.acceleration_storage[..] = (Vec3){};
+            state.published_storage[:particle_count] = edge_positions[..];
             if (desc.collisions.continuous) {
-                state.sweep_start[..] = edge_positions[..];
+                state.sweep_start_storage[:particle_count] = edge_positions[..];
                 foreach (index, point : edge_positions) {
-                    state.sweep_bounds[index] = { .min = point, .max = point };
+                    state.sweep_bounds_storage[index] = { .min = point, .max = point };
                 }
             }
             state.published_frame = owner.world;
-            state.inverse_masses[..] = 1;
-            state.pins[..] = attachment_plan.pins[..];
-            foreach (pin_slot, pin : attachment_plan.pins) {
-                state.inverse_masses[pin] = 0;
-                state.pin_anchors[pin_slot] = edge_positions[pin];
-                state.pin_targets[pin_slot] = edge_positions[pin];
-            }
-            state.soft_attachments[..] = attachment_plan.soft[..];
-            foreach (soft_slot, attachment : attachment_plan.soft) {
-                state.soft_anchors[soft_slot] = edge_positions[attachment.particle];
-                state.soft_targets[soft_slot] = edge_positions[attachment.particle];
-                state.soft_lambdas[soft_slot] = {};
-            }
-            state.edges[..] = topology.edges[..];
-            state.bends[..] = topology.bends[..];
-            state.hinges[..] = topology.hinges[..];
-            state.staged_hinges[..] = topology.hinges[..];
+
             state.corners[..] = material_plan.corners[..];
             state.triangle_uvs[..] = material_plan.triangle_uvs[..];
             state.material_particles[..] = material_plan.material_particles[..];
@@ -588,7 +581,75 @@ fn void? prepare_crowd_cloth_part(
                 state.committed_tangents[..] = material_plan.initial_tangents[..];
                 state.local_tangents[..] = material_plan.initial_tangents[..];
             }
-            if (desc.collisions.self_collision) build_self_topology(state);
+
+            if (sector_plan.cut_paths.len) {
+                foreach (pin : attachment_plan.pins) state.base_pinned[pin] = true;
+                foreach (soft : attachment_plan.soft) {
+                    state.base_has_soft[soft.particle] = true;
+                    state.base_soft_compliance[soft.particle] = soft.effective_compliance;
+                }
+                state.corner_sectors[..] = sector_plan.corner_sectors[..];
+                state.sector_bases[..] = sector_plan.sector_bases[..];
+                state.sector_shares[..] = sector_plan.sector_shares[..];
+                state.base_edges[..] = sector_plan.base_edges[..];
+                state.interior_edges[..] = sector_plan.interior_edges[..];
+                state.cut_paths[..] = sector_plan.cut_paths[..];
+                state.cut_path_edges[..] = sector_plan.cut_path_edges[..];
+                foreach (index, &cut_path : sector_plan.cut_paths) {
+                    state.cut_results[index] = { .path_id = cut_path.id };
+                    state.staged_cut_results[index] = { .path_id = cut_path.id };
+                }
+                foreach (sector, base_particle : sector_plan.sector_bases) {
+                    state.committed_sector_to_particle[sector] = base_particle;
+                    state.staged_sector_to_particle[sector] = base_particle;
+                }
+                state.material_sectors[..] = material_plan.material_sectors[..];
+                state.material_base_normal_domains[..] = material_plan.material_normal_domains[..];
+
+                apply_topology_mapping(
+                    state:              state,
+                    edge_cut:           state.committed_edge_cut,
+                    sector_to_particle: state.committed_sector_to_particle,
+                    is_staged:          false,
+                );
+            } else {
+                state.inverse_mass_storage[:particle_count] = 1;
+                state.pin_storage[..] = attachment_plan.pins[..];
+                foreach (pin_slot, pin : attachment_plan.pins) {
+                    state.inverse_mass_storage[pin] = 0;
+                    state.pin_anchor_storage[pin_slot] = edge_positions[pin];
+                    state.pin_target_storage[pin_slot] = edge_positions[pin];
+                }
+                state.soft_attachment_storage[..] = attachment_plan.soft[..];
+                foreach (soft_slot, attachment : attachment_plan.soft) {
+                    state.soft_anchor_storage[soft_slot] = edge_positions[attachment.particle];
+                    state.soft_target_storage[soft_slot] = edge_positions[attachment.particle];
+                    state.soft_lambda_storage[soft_slot] = {};
+                }
+                state.edge_storage[..] = sector_plan.base_edges[..];
+                state.bend_storage[..] = sector_plan.initial_bends[..];
+                state.hinge_storage[..] = sector_plan.initial_hinges[..];
+                rebind_active_slices(
+                    state:     state,
+                    is_staged: false,
+                    particles: particle_count,
+                    pins:      (uint)attachment_plan.pins.len,
+                    soft:      (uint)attachment_plan.soft.len,
+                    edges:     (uint)sector_plan.base_edges.len,
+                    bends:     (uint)sector_plan.initial_bends.len,
+                    hinges:    (uint)sector_plan.initial_hinges.len,
+                );
+                if (state.canonical_vertex_storage.len) {
+                    build_self_topology(state);
+                }
+            }
+            state.committed_particle_count = state.active_particle_count;
+            state.committed_pin_count = (uint)state.pins.len;
+            state.committed_soft_count = (uint)state.soft_attachments.len;
+            state.committed_edge_count = (uint)state.edges.len;
+            state.committed_bend_count = (uint)state.bends.len;
+            state.committed_hinge_count = (uint)state.hinges.len;
+            state.staged_hinges[:state.committed_hinge_count] = state.hinges[..];
 
             Node* out_node = scene.add_node(parent: owner, name: "crowd_cloth_output")!;
             out_node.visible = false;
@@ -700,6 +761,14 @@ fn void? sample_crowd_slot_reference(
 }
 
 fn void update_slot_rest_constraints(ClothState* state, Mat4 slot_basis) @local {
+    foreach (&edge : state.base_edges) {
+        Vec3 p0 = maths::transform_point(slot_basis, state.rest_storage[edge.first]);
+        Vec3 p1 = maths::transform_point(slot_basis, state.rest_storage[edge.second]);
+        Vec3 delta = p1 - p0;
+        float length = delta.length();
+        edge.rest_length = length;
+        edge.rest_direction = length > 0 ? delta / length : COLLAPSED_AXIS;
+    }
     foreach (&edge : state.edges) {
         Vec3 p0 = maths::transform_point(slot_basis, state.rest[edge.first]);
         Vec3 p1 = maths::transform_point(slot_basis, state.rest[edge.second]);
@@ -707,6 +776,21 @@ fn void update_slot_rest_constraints(ClothState* state, Mat4 slot_basis) @local 
         float length = delta.length();
         edge.rest_length = length;
         edge.rest_direction = length > 0 ? delta / length : COLLAPSED_AXIS;
+    }
+    foreach (&interior_edge : state.interior_edges) {
+        Vec3 first_edge_point = maths::transform_point(slot_basis, state.rest_storage[interior_edge.base_edge.first]);
+        Vec3 second_edge_point = maths::transform_point(slot_basis, state.rest_storage[interior_edge.base_edge.second]);
+        Vec3 edge_delta = second_edge_point - first_edge_point;
+        float edge_length = edge_delta.length();
+        interior_edge.base_edge.rest_length = edge_length;
+        interior_edge.base_edge.rest_direction = edge_length > 0 ? edge_delta / edge_length : COLLAPSED_AXIS;
+
+        Vec3 first_bend_point = maths::transform_point(slot_basis, state.rest_storage[interior_edge.base_bend.first]);
+        Vec3 second_bend_point = maths::transform_point(slot_basis, state.rest_storage[interior_edge.base_bend.second]);
+        Vec3 bend_delta = second_bend_point - first_bend_point;
+        float bend_length = bend_delta.length();
+        interior_edge.base_bend.rest_length = bend_length;
+        interior_edge.base_bend.rest_direction = bend_length > 0 ? bend_delta / bend_length : COLLAPSED_AXIS;
     }
     foreach (&bend : state.bends) {
         Vec3 p0 = maths::transform_point(slot_basis, state.rest[bend.first]);
@@ -726,6 +810,32 @@ fn void? seed_crowd_slot_state(
     ClothState* state,
     uint slot,
 ) @local {
+    if (state.cut_paths.len) {
+        state.committed_edge_cut[..] = false;
+        state.staged_edge_cut[..] = false;
+        foreach (sector, base_particle : state.sector_bases) {
+            state.committed_sector_to_particle[sector] = base_particle;
+            state.staged_sector_to_particle[sector] = base_particle;
+        }
+        foreach (index, &cut_path : state.cut_paths) {
+            state.cut_results[index] = { .path_id = cut_path.id };
+            state.staged_cut_results[index] = { .path_id = cut_path.id };
+        }
+        state.pending_request_count = 0;
+        apply_topology_mapping(
+            state:              state,
+            edge_cut:           state.committed_edge_cut,
+            sector_to_particle: state.committed_sector_to_particle,
+            is_staged:          false,
+        );
+        state.committed_particle_count = state.active_particle_count;
+        state.committed_pin_count = (uint)state.pins.len;
+        state.committed_soft_count = (uint)state.soft_attachments.len;
+        state.committed_edge_count = (uint)state.edges.len;
+        state.committed_bend_count = (uint)state.bends.len;
+        state.committed_hinge_count = (uint)state.hinges.len;
+    }
+
     sample_crowd_slot_reference(
         assets:        assets,
         owner:         owner,
@@ -741,7 +851,7 @@ fn void? seed_crowd_slot_state(
         : owner.world.mul(crowd.part_transform(slot, part_record.part));
     update_slot_rest_constraints(state, slot_basis);
 
-    foreach (&hinge : state.hinges) {
+    foreach (hinge_index, &hinge : state.hinges) {
         Vec3[4] world_points = {
             state.current_reference[hinge.p0],
             state.current_reference[hinge.p1],
@@ -752,10 +862,17 @@ fn void? seed_crowd_slot_state(
         if (catch evaluated) return c3d::INVALID_ARGUMENT~;
         hinge.last_angle = (float)evaluated;
         hinge.lambda = 0;
+        if (hinge_index < state.interior_edges.len) {
+            state.interior_edges[hinge_index].base_hinge.last_angle = hinge.last_angle;
+            state.interior_edges[hinge_index].base_hinge.lambda = 0;
+        }
     }
-    state.staged_hinges[..] = state.hinges[..];
+    state.staged_hinges[:state.committed_hinge_count] = state.hinges[..];
 
     state.solved_reference[..] = state.current_reference[..];
+    if (state.staged_current_reference.len) {
+        state.staged_current_reference[:state.committed_particle_count] = state.current_reference[..];
+    }
     state.positions[..] = state.current_reference[..];
     state.predicted[..] = state.current_reference[..];
     state.published[..] = state.current_reference[..];
@@ -1059,6 +1176,13 @@ fn void? update_crowd_slot(
         state.contact_result = staged.contact_result;
         state.path_count = staged.path_count;
     }
+    defer (catch excuse) {
+        if (staged.topology_dirty) {
+            state.topology_dirty = true;
+            restore_committed_topology(state);
+        }
+        if (steps) record_refused_cuts(state, &staged, excuse);
+    }
 
     staged.contact_result.stage = ClothContactStage.ARITHMETIC;
     if (!physics::contact_arithmetic_supported()) return CONTACT_PRECISION_EXCEEDED~;
@@ -1113,7 +1237,7 @@ fn void? update_crowd_slot(
     prepare_publication(world, &staged, steps != 0)!;
 
     staged.contact_result.stage = ClothContactStage.PUBLICATION;
-    bool changed = stage_local_positions(&staged, owner.world, reseeded)!;
+    bool changed = stage_local_positions(&staged, owner.world, reseeded || staged.cut_applied_this_update)!;
     if (contact_pass(world: world, state: &staged, positions: staged.publication_roundtrip, apply: false)! != 0) {
         staged.contact_result.stage = ClothContactStage.PUBLICATION;
         return CONTACT_PRECISION_EXCEEDED~;
@@ -1121,6 +1245,11 @@ fn void? update_crowd_slot(
 
     staged.contact_result.stage = ClothContactStage.MATERIAL;
     stage_material_frames(&staged, changed)!;
+
+    if (staged.cut_applied_this_update && !reseeded) {
+        staged.contact_result.stage = ClothContactStage.PUBLICATION;
+        out_mesh.reset_vertex_history();
+    }
 
     commit_cloth(state, &staged);
     state.local_bounds = staged.local_bounds;

@@ -102,7 +102,9 @@ forces pushing a movable neighbour while the bone remains simulated.
 `c3d::physics::cloth` simulates a mesh over an owned geometry copy with optional physical-to-render
 particle welding (`render_particles`), deformed normal domains and opt-in deformed tangent frames
 (`tangent_frame`, `tangent_uv_set`), hard pins and weighted compliant XPBD attachments (`ClothAttachment`),
-distance or signed dihedral bending (`ClothBendMode`, `bend_compliance`, `ClothRestAngle`), node
+distance or signed dihedral bending (`ClothBendMode`, `bend_compliance`, `ClothRestAngle`), skinned
+reference transport (`transport`), crowd cloth (`CrowdCloth`), authored cut paths and bounded tearing
+(`ClothCutPath`, `ClothTearLimits`, `request_cut`, `cut_result`), node
 `Wind` drag, an optional ground and one-way particle contacts with sphere, capsule, box,
 hull, mesh, heightfield and compound colliders of the bodies listed in `ClothDesc.colliders`.
 Contacts are discrete by default. Set `desc.collisions.continuous = true` to sweep
@@ -147,10 +149,10 @@ move their rendered `Mesh` to an owned `ClothOutput` child on preparation (`clot
 crowd part batches with per-slot `ClothOutput` children while supporting per-particle reference
 `transport`. Use `scene.remove_cloth` and `scene.remove_crowd_cloth` (not `scene.remove_component`)
 to remove cloth components so the source `Mesh` or crowd batch is restored and generated
-`ClothOutput` children are deleted. Serialization stores `Cloth` in authoring version 6 (including `transport`) and
-`CrowdCloth` in authoring version 1, projecting the retained source `Mesh` of prepared skinned
-cloths and omitting generated `ClothOutput` children; runtime buffers, contact results and
-histories are excluded. Version-1..5 JSONC defaults `transport` to empty; Version-1..4 JSONC
+`ClothOutput` children are deleted. Serialization stores `Cloth` in authoring version 7 (including `cuts` and `tears`) and
+`CrowdCloth` in authoring version 2, projecting the retained source `Mesh` of prepared skinned
+cloths and omitting generated `ClothOutput` children; runtime buffers, cut state, contact results and
+histories are excluded. Older JSONC payloads default `cuts` to empty and `tears` to `default_cloth_tear_limits()` (`opening_iterations = 32`, `max_requests = 0`); Version-1..5 JSONC defaults `transport` to empty; Version-1..4 JSONC
 defaults the version-5 material, attachment and dihedral fields to empty/false/`DISTANCE`/`0`.
 Version-1/2/3 JSONC defaults continuous contact off and the CCD limit to 64. Version-1/2 also
 defaults self-contact off and seams empty; incompatible older binary layouts are rejected before
