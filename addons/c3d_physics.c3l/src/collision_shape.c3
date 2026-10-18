@@ -7,9 +7,9 @@ import c3d::physics::collide;
 import std::math;
 import b3;
 
-const uint MAX_COLLISION_FACE_VERTICES @local = 32; // two clipped faces fit the native 64-vertex scratch
+const uint MAX_COLLISION_FACE_VERTICES @private = 32; // two clipped faces fit the native 64-vertex scratch
 const float MIN_COLLISION_SCALE @local = 0.01f; // box3d pushes smaller hull components away from zero
-const float COLLISION_LINEAR_SLOP @local = 0.005f; // native linear slop at one length unit per metre
+const float COLLISION_LINEAR_SLOP @private = 0.005f; // native linear slop at one length unit per metre
 const int MAX_COLLISION_MESH_HEIGHT @local = 256; // native mesh traversal stack holds this many node pointers
 const float COLLISION_TRIANGLE_AREA_FLOOR @local = 1.17549435e-35f; // twin of b3 TRIANGLE_AREA_FLOOR, the native 1000 * FLT_MIN
 const float COLLISION_ENUMERATION_GROWTH @local = 4; // keeps boundary triangles inside the inclusive whole-surface box
