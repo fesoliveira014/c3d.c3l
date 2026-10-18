@@ -29,10 +29,14 @@ const Vec3  SHAPE_A_POSITION @local = { 0, 1, 0 };
 const Vec3  SHAPE_B_START @local = { -2.5f, 1.2f, 0.3f };
 const Vec3  CAMERA_POSITION @local = { 0, 4, 8 };
 const Vec2  PANEL_POSITION @local = { 16, 16 };
-const Vec2  PANEL_SIZE @local = { 380, 300 };
-const Vec2  STATS_PANEL_POSITION @local = { 16, 332 };
+const Vec2  PANEL_SIZE @local = { 380, 480 };
+const Vec2  STATS_PANEL_POSITION @local = { 884, 16 };
 const Vec2  STATS_PANEL_SIZE @local = { 380, 360 };
+const Vec4  FAULT_COLOR @local = { 1, 0.4f, 0.4f, 1 };
 const int   SHAPE_KIND_COUNT @local = 4;
+const int   UNIFORM_SCALE_KIND_COUNT @local = 2; // sphere and capsule take one scale for every axis
+const float SCALE_MIN @local = 0.001f; // under the capsule, box and hull minimums, so their refusals can be shown
+const float SCALE_MAX @local = 4;
 const uint  SCATTER_BOXES @local = 64;
 const uint  SCATTER_SEED @local = 0x2545f491;
 const Vec3  SCATTER_MIN @local = { -6, 0, -7 }; // behind the shapes, in view of the camera
@@ -40,12 +44,21 @@ const Vec3  SCATTER_MAX @local = { 6, 3, -2 };
 const float SCATTER_HALF_MIN @local = 0.1f;
 const float SCATTER_HALF_MAX @local = 0.35f;
 
+struct ShapeSlot @local {
+    int                kind;
+    float              uniform_scale;
+    Vec3               axis_scale;
+    bool               reflected;
+    CollisionShape     shape;
+    CollisionShapeDesc description;
+    fault              refusal;
+}
+
 struct Demo @local {
-    CollisionShape[SHAPE_KIND_COUNT] shapes;
     CollisionShapeDesc[SHAPE_KIND_COUNT] descriptions;
     Vec3[] hull_points;
-    int                     kind_a;
-    int                     kind_b;
+    ShapeSlot               slot_a;
+    ShapeSlot               slot_b;
     maths::Transform        pose_a;
     maths::Transform        pose_b;
     float                   spin;
@@ -139,13 +152,15 @@ fn void draw_shape(
     Vec3[] hull_points,
     uint rgba,
 ) @local {
+    Vec3 magnitude = math::abs(shape.scale);
+
     switch (shape.kind) {
         case SPHERE:
             foreach (axis : (Vec3[3]){ { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } }) {
                 draw.circle(
                     center: pose.position,
                     normal: axis,
-                    radius: shape.radius,
+                    radius: shape.radius * magnitude.x,
                     rgba: rgba,
                 );
             }
@@ -154,15 +169,16 @@ fn void draw_shape(
             draw.capsule(
                 center:      pose.position,
                 axis:        axis,
-                half_height: shape.half_height,
-                radius:      shape.radius,
+                half_height: shape.half_height * magnitude.x,
+                radius:      shape.radius * magnitude.x,
                 rgba:        rgba,
             );
         case BOX:
-            draw.box(pose.to_mat4(), { .min = -shape.half_extents, .max = shape.half_extents }, rgba);
+            Vec3 half = shape.half_extents * magnitude;
+            draw.box(pose.to_mat4(), { .min = -half, .max = half }, rgba);
         case HULL:
             foreach (local_point : hull_points) {
-                Vec3 point = pose.rotation.rotate_vec3(local_point) + pose.position;
+                Vec3 point = pose.rotation.rotate_vec3(local_point * shape.scale) + pose.position;
                 draw.line(point - (Vec3){ MARKER_SIZE, 0, 0 }, point + (Vec3){ MARKER_SIZE, 0, 0 }, rgba);
                 draw.line(point - (Vec3){ 0, MARKER_SIZE, 0 }, point + (Vec3){ 0, MARKER_SIZE, 0 }, rgba);
                 draw.line(point - (Vec3){ 0, 0, MARKER_SIZE }, point + (Vec3){ 0, 0, MARKER_SIZE }, rgba);
@@ -192,18 +208,18 @@ fn void move_shape_b(Demo* demo, Input* input, float delta) @local {
 }
 
 fn void? draw_queries(debug::DebugDraw* draw, Demo* demo) @local {
-    CollisionShapeView shape_a = demo.shapes[demo.kind_a].view();
-    CollisionShapeView shape_b = demo.shapes[demo.kind_b].view();
+    CollisionShapeView shape_a = demo.slot_a.shape.view();
+    CollisionShapeView shape_b = demo.slot_b.shape.view();
     draw_shape(
         draw: draw,
-        shape: demo.descriptions[demo.kind_a],
+        shape: demo.slot_a.description,
         pose: demo.pose_a,
         hull_points: demo.hull_points,
         rgba: debug::rgba(0.3f, 0.7f, 1),
     );
     draw_shape(
         draw: draw,
-        shape: demo.descriptions[demo.kind_b],
+        shape: demo.slot_b.description,
         pose: demo.pose_b,
         hull_points: demo.hull_points,
         rgba: debug::rgba(1, 0.8f, 0.3f),
@@ -246,7 +262,7 @@ fn void? draw_queries(debug::DebugDraw* draw, Demo* demo) @local {
         touching.position += sweep * impact.time;
         draw_shape(
             draw: draw,
-            shape: demo.descriptions[demo.kind_b],
+            shape: demo.slot_b.description,
             pose: touching,
             hull_points: demo.hull_points,
             rgba: debug::rgba(1, 1, 1, 0.5f),
@@ -255,37 +271,122 @@ fn void? draw_queries(debug::DebugDraw* draw, Demo* demo) @local {
     }
 }
 
-fn void shape_picker(String suffix, int* kind) @local {
+fn Vec3 slot_scale(ShapeSlot* slot) @local {
+    Vec3 scale = slot.axis_scale;
+    if (slot.kind < UNIFORM_SCALE_KIND_COUNT) scale = { slot.uniform_scale, slot.uniform_scale, slot.uniform_scale };
+    if (slot.reflected) scale.x = -scale.x;
+
+    return scale;
+}
+
+fn void prepare_slot(ShapeSlot* slot, CollisionShapeDesc base, CollisionCache* cache) @local {
+    CollisionShapeDesc description = base;
+    description.scale = slot_scale(slot);
+    CollisionShape? prepared = physics::create_collision_shape(mem, cache, description);
+    if (catch excuse = prepared) {
+        slot.refusal = excuse;
+        return;
+    }
+
+    physics::destroy_collision_shape(&slot.shape);
+    slot.shape = prepared;
+    slot.description = description;
+    slot.refusal = {};
+}
+
+fn bool shape_picker(String suffix, int* kind) @local {
     ZString[SHAPE_KIND_COUNT] names = { "Sphere", "Capsule", "Box", "Hull" };
+    bool changed;
     for (int index = 0; index < SHAPE_KIND_COUNT; index++) {
         @pool() {
             ZString label = string::tformat("%s##%s", names[index], suffix).zstr_tcopy();
-            if (imgui::radio_button(label, *kind == index)) *kind = index;
+            if (imgui::radio_button(label, *kind == index)) {
+                *kind = index;
+                changed = true;
+            }
         };
         if (index + 1 < SHAPE_KIND_COUNT) imgui::same_line();
     }
+
+    return changed;
 }
 
-fn void? draw_panel(Demo* demo, render::Renderer* renderer) @local {
+fn bool scale_slider(String name, String suffix, float* value) @local {
+    bool changed;
+    @pool() {
+        ZString label = string::tformat("%s##%s", name, suffix).zstr_tcopy();
+        changed = imgui::slider_float_ex(
+            label:  label,
+            v:      value,
+            v_min:  SCALE_MIN,
+            v_max:  SCALE_MAX,
+            format: "%.4f",
+            flags:  { .logarithmic = true },
+        );
+    };
+
+    return changed;
+}
+
+fn void shape_controls(
+    ShapeSlot* slot,
+    String suffix,
+    CollisionShapeDesc[SHAPE_KIND_COUNT] descriptions,
+    CollisionCache* cache,
+) @local {
+    bool changed = shape_picker(suffix, &slot.kind);
+
+    if (slot.kind < UNIFORM_SCALE_KIND_COUNT) {
+        changed |= scale_slider("Scale", suffix, &slot.uniform_scale);
+    } else {
+        changed |= scale_slider("Scale X", suffix, &slot.axis_scale.x);
+        changed |= scale_slider("Scale Y", suffix, &slot.axis_scale.y);
+        changed |= scale_slider("Scale Z", suffix, &slot.axis_scale.z);
+    }
+
+    @pool() {
+        ZString label = string::tformat("Reflect X##%s", suffix).zstr_tcopy();
+        changed |= imgui::checkbox(label, &slot.reflected);
+    };
+
+    if (changed) prepare_slot(slot, descriptions[slot.kind], cache);
+    if (slot.refusal) {
+        @pool() {
+            imgui::text_colored(FAULT_COLOR, "Scale refused: %s", string::tformat_zstr("%s", slot.refusal));
+        };
+    }
+}
+
+fn void? draw_panel(Demo* demo, CollisionCache* cache) @local {
     imgui::set_next_window_pos(PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
     imgui::set_next_window_size(PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
     if (imgui::begin("Collision queries", null, {})) {
         imgui::text("Arrows and Page Up/Down move shape B");
         imgui::text("Left click highlights the nearest grey box");
         imgui::separator_text("Shape A");
-        shape_picker("a", &demo.kind_a);
+        shape_controls(
+            slot:         &demo.slot_a,
+            suffix:       "a",
+            descriptions: demo.descriptions,
+            cache:        cache,
+        );
         imgui::separator_text("Shape B");
-        shape_picker("b", &demo.kind_b);
+        shape_controls(
+            slot:         &demo.slot_b,
+            suffix:       "b",
+            descriptions: demo.descriptions,
+            cache:        cache,
+        );
         CollisionContact[collide::MAX_MANIFOLD_POINTS] contacts;
-        usz count = demo.shapes[demo.kind_a].view().contacts(
+        usz count = demo.slot_a.shape.view().contacts(
             pose_a: demo.pose_a,
-            other: demo.shapes[demo.kind_b].view(),
+            other: demo.slot_b.shape.view(),
             pose_b: demo.pose_b,
             output: contacts[..],
         )!;
-        Distance closest = demo.shapes[demo.kind_a].view().distance(
+        Distance closest = demo.slot_a.shape.view().distance(
             pose_a: demo.pose_a,
-            other: demo.shapes[demo.kind_b].view(),
+            other: demo.slot_b.shape.view(),
             pose_b: demo.pose_b,
         )!;
         imgui::separator_text("Results");
@@ -335,15 +436,19 @@ fn void? run(
     Demo demo = {
         .descriptions = make_shape_descriptions(geometry),
         .hull_points = assets.geometry(geometry).data.positions,
-        .kind_a = 2,
-        .kind_b = 1,
+        .slot_a = { .kind = 2, .uniform_scale = 1, .axis_scale = { 1, 1, 1 } },
+        .slot_b = { .kind = 1, .uniform_scale = 1, .axis_scale = { 1, 1, 1 } },
         .pose_a = { .position = SHAPE_A_POSITION, .rotation = { 0, 0, 0, 1 }, .scale = { 1, 1, 1 } },
         .pose_b = { .position = SHAPE_B_START, .rotation = { 0, 0, 0, 1 }, .scale = { 1, 1, 1 } },
     };
-    defer foreach (&shape : demo.shapes) physics::destroy_collision_shape(shape);
-    foreach (index, &shape : demo.shapes) {
-        *shape = physics::create_collision_shape(mem, cache, demo.descriptions[index])!;
-    }
+    defer physics::destroy_collision_shape(&demo.slot_a.shape);
+    defer physics::destroy_collision_shape(&demo.slot_b.shape);
+
+    prepare_slot(&demo.slot_a, demo.descriptions[demo.slot_a.kind], cache);
+    prepare_slot(&demo.slot_b, demo.descriptions[demo.slot_b.kind], cache);
+    if (demo.slot_a.refusal) return demo.slot_a.refusal~;
+    if (demo.slot_b.refusal) return demo.slot_b.refusal~;
+
     renderer.prepare_scene(scene)!;
     Scatter scatter = create_scatter()!;
     defer destroy_scatter(&scatter);
@@ -371,7 +476,7 @@ fn void? run(
             pick_scatter_box(&scatter, ray);
             if (scatter.picked) io::printfn("picked box %d", scatter.picked_box);
         }
-        draw_panel(&demo, renderer)!;
+        draw_panel(&demo, cache)!;
         imgui::set_next_window_pos(STATS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         gui::stats_panel(renderer)!;

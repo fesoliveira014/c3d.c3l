@@ -5,12 +5,21 @@ import std::math;
 import std::math::quaternion;
 import b3;
 
+const float PROBE_RADIUS @private = 0.5f;
+const float PROBE_OVERLAP @private = 0.1f;
+
 struct PreparedQueryFixture @private {
     AssetStore assets;
     CollisionCache cache;
     CollisionShape[4] owners;
     collide::Shape[4] shapes;
     collide::Hull hull;
+}
+
+struct ScaledProbe @private {
+    Vec3 center;
+    Vec3 normal;
+    float distance;
 }
 
 fn void setup_prepared_queries(PreparedQueryFixture* fixture, Allocator allocator = mem) @private {
@@ -380,3 +389,200 @@ fn void test_prepared_query_off_centre_hulls_use_local_support_spans() @test {
     assert(near_vector(distance.normal, { 0, 0, 1 }, LOOSE));
 }
 
+fn void assert_probes_touch_scaled_shape(
+    CollisionShapeView shape,
+    CollisionShapeView probe,
+    maths::Transform pose,
+    ScaledProbe[] probes,
+) @private {
+    foreach (expected : probes) {
+        Vec3 normal = pose.rotation.rotate_vec3(expected.normal);
+
+        maths::Transform apart = posed(pose.position + pose.rotation.rotate_vec3(expected.center));
+        collide::Distance found = shape.distance(pose, probe, apart)!!;
+        assert(near(found.distance, expected.distance, LOOSE));
+        assert(near_vector(found.normal, normal, LOOSE));
+
+        Vec3 pressed = expected.center - expected.normal * (expected.distance + PROBE_OVERLAP);
+        maths::Transform overlapping = posed(pose.position + pose.rotation.rotate_vec3(pressed));
+        CollisionContact[collide::MAX_MANIFOLD_POINTS] contacts;
+        usz count = shape.contacts(
+            pose_a: pose,
+            other: probe,
+            pose_b: overlapping,
+            output: contacts[..],
+        )!!;
+        assert(count > 0);
+        assert(near_vector(contacts[0].normal, normal, LOOSE));
+        assert(near(contacts[0].separation, -PROBE_OVERLAP, LOOSE));
+    }
+}
+
+fn CollisionShapeDesc scaled_shape_desc(ColliderKind kind, Vec3 scale) @private {
+    CollisionShapeDesc desc = physics::default_collision_shape_desc(kind);
+    desc.scale = scale;
+    return desc;
+}
+
+fn CollisionShape probe_sphere(Allocator allocator, CollisionCache* cache) @private {
+    CollisionShapeDesc desc = scaled_shape_desc(SPHERE, { 1, 1, 1 });
+    desc.radius = PROBE_RADIUS;
+    return physics::create_collision_shape(allocator, cache, desc)!!;
+}
+
+fn void test_scaled_box_and_reflected_hull_report_scaled_distances_and_outward_normals() @test {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    CollisionCache cache = physics::create_collision_cache(mem, &assets, physics::default_collision_cache_desc())!!;
+    defer physics::destroy_collision_cache(&cache)!!;
+
+    GeometryId off_centre;
+    @pool() {
+        Geometry box = geometry::box(
+            allocator: tmem,
+            width: 2,
+            height: 2,
+            depth: 2,
+        );
+        foreach (&point : box.positions) point.x += 2;
+        box.finalize();
+        off_centre = assets.add_geometry(&box)!!;
+    };
+
+    CollisionShapeDesc box_desc = scaled_shape_desc(BOX, { 2, 1, -0.5f });
+    box_desc.half_extents = { 0.5f, 0.5f, 0.5f };
+    CollisionShape box = physics::create_collision_shape(mem, &cache, box_desc)!!;
+    defer physics::destroy_collision_shape(&box);
+
+    CollisionShapeDesc hull_desc = scaled_shape_desc(HULL, { -2, 0.5f, 1 });
+    hull_desc.geometry = off_centre;
+    CollisionShape hull = physics::create_collision_shape(mem, &cache, hull_desc)!!;
+    defer physics::destroy_collision_shape(&hull);
+
+    CollisionShape probe = probe_sphere(mem, &cache);
+    defer physics::destroy_collision_shape(&probe);
+
+    maths::Transform pose = posed({ 3, -2, 4 }, rotated());
+
+    ScaledProbe[3] box_probes = {
+        { .center = { 1.7f, 0, 0 }, .normal = { 1, 0, 0 }, .distance = 0.2f },
+        { .center = { 0, 1.2f, 0 }, .normal = { 0, 1, 0 }, .distance = 0.2f },
+        { .center = { 0, 0, 0.95f }, .normal = { 0, 0, 1 }, .distance = 0.2f },
+    };
+    assert_probes_touch_scaled_shape(box.view(), probe.view(), pose, box_probes[..]);
+
+    ScaledProbe[4] hull_probes = {
+        { .center = { -6.75f, 0, 0 }, .normal = { -1, 0, 0 }, .distance = 0.25f },
+        { .center = { -1.2f, 0, 0 }, .normal = { 1, 0, 0 }, .distance = 0.3f },
+        { .center = { -4, 1.2f, 0 }, .normal = { 0, 1, 0 }, .distance = 0.2f },
+        { .center = { -4, 0, 1.6f }, .normal = { 0, 0, 1 }, .distance = 0.1f },
+    };
+    assert_probes_touch_scaled_shape(hull.view(), probe.view(), pose, hull_probes[..]);
+}
+
+fn void test_sphere_and_capsule_with_all_axis_sign_changes_use_the_scaled_radius() @test {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    CollisionCache cache = physics::create_collision_cache(mem, &assets, physics::default_collision_cache_desc())!!;
+    defer physics::destroy_collision_cache(&cache)!!;
+
+    CollisionShapeDesc sphere_desc = scaled_shape_desc(SPHERE, { -2, -2, -2 });
+    sphere_desc.radius = 0.25f;
+    CollisionShape sphere = physics::create_collision_shape(mem, &cache, sphere_desc)!!;
+    defer physics::destroy_collision_shape(&sphere);
+
+    CollisionShapeDesc capsule_desc = scaled_shape_desc(CAPSULE, { -2, -2, -2 });
+    capsule_desc.radius = 0.125f;
+    capsule_desc.half_height = 0.25f;
+    CollisionShape capsule = physics::create_collision_shape(mem, &cache, capsule_desc)!!;
+    defer physics::destroy_collision_shape(&capsule);
+
+    CollisionShape probe = probe_sphere(mem, &cache);
+    defer physics::destroy_collision_shape(&probe);
+
+    maths::Transform pose = posed({ 3, -2, 4 }, rotated());
+
+    ScaledProbe[1] sphere_probes = {
+        { .center = { 0.75f, 1, 0 }, .normal = { 0.6f, 0.8f, 0 }, .distance = 0.25f },
+    };
+    assert_probes_touch_scaled_shape(sphere.view(), probe.view(), pose, sphere_probes[..]);
+
+    ScaledProbe[3] capsule_probes = {
+        { .center = { 0.95f, 0.3f, 0 }, .normal = { 1, 0, 0 }, .distance = 0.2f },
+        { .center = { 0, 1.4f, 0 }, .normal = { 0, 1, 0 }, .distance = 0.15f },
+        { .center = { 0, -1.4f, 0 }, .normal = { 0, -1, 0 }, .distance = 0.15f },
+    };
+    assert_probes_touch_scaled_shape(capsule.view(), probe.view(), pose, capsule_probes[..]);
+}
+
+fn void test_scaled_convex_queries_allocate_nothing() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+
+    AssetStore assets = asset::create_asset_store(&tracker, asset::default_asset_store_desc());
+    CollisionCache cache = physics::create_collision_cache(&tracker, &assets, physics::default_collision_cache_desc())!!;
+
+    GeometryId geometry;
+    @pool() {
+        Geometry box = geometry::box(
+            allocator: tmem,
+            width: 2,
+            height: 2,
+            depth: 2,
+        );
+        geometry = assets.add_geometry(&box)!!;
+    };
+
+    CollisionShapeDesc box_desc = scaled_shape_desc(BOX, { 2, 1, -0.5f });
+    box_desc.half_extents = { 0.5f, 0.5f, 0.5f };
+    CollisionShape box = physics::create_collision_shape(&tracker, &cache, box_desc)!!;
+
+    CollisionShapeDesc hull_desc = scaled_shape_desc(HULL, { -2, 0.5f, 1 });
+    hull_desc.geometry = geometry;
+    CollisionShape hull = physics::create_collision_shape(&tracker, &cache, hull_desc)!!;
+
+    CollisionShape probe = probe_sphere(&tracker, &cache);
+
+    maths::Transform pose = posed({ 3, -2, 4 }, rotated());
+    maths::Transform touching = posed(pose.position + pose.rotation.rotate_vec3({ 1.4f, 0, 0 }));
+    maths::Transform apart = posed(pose.position + pose.rotation.rotate_vec3({ 6, 0, 0 }));
+    maths::Transform approaching = posed(pose.position + pose.rotation.rotate_vec3({ 5, 0, 0 }));
+    Vec3 inward = pose.rotation.rotate_vec3({ -1, 0, 0 });
+    CollisionContact[collide::MAX_MANIFOLD_POINTS] contacts;
+    sz allocations = tracker.total_allocation_count();
+
+    assert(box.view().contacts(
+        pose_a: pose,
+        other: probe.view(),
+        pose_b: touching,
+        output: contacts[..],
+    )!! > 0);
+    assert(hull.view().distance(pose, box.view(), apart)!!.distance > 0);
+    assert(box.view().cast(
+        pose_a: pose,
+        other: probe.view(),
+        pose_b: approaching,
+        translation_a: {},
+        translation_b: inward * 4,
+    )!!.time > 0);
+    assert(hull.view().time_of_impact(
+        sweep_a: { .start = pose, .end = pose },
+        other: probe.view(),
+        sweep_b: { .start = approaching, .end = touching },
+    )!!.time > 0);
+    assert(box.view().ray_cast(
+        pose: pose,
+        origin: approaching.position,
+        direction: inward,
+        max_distance: 10,
+    )!!.fraction > 0);
+    assert(tracker.total_allocation_count() == allocations);
+
+    physics::destroy_collision_shape(&probe);
+    physics::destroy_collision_shape(&hull);
+    physics::destroy_collision_shape(&box);
+    physics::destroy_collision_cache(&cache)!!;
+    asset::destroy_asset_store(&assets);
+    assert(!tracker.has_leaks());
+}
