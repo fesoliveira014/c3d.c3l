@@ -64,8 +64,8 @@ fn void? add_height_field_windows(
     if (scene.world.has(node, HeightFieldWindows)) return c3d::INVALID_ARGUMENT~;
 
     MapCells map = check_window_template(assets, collider, window_cells)!;
-    uint columns = (map.x + window_cells - 1) / window_cells;
-    uint rows = (map.z + window_cells - 1) / window_cells;
+    uint columns = map.x / window_cells + (map.x % window_cells ? 1 : 0);
+    uint rows = map.z / window_cells + (map.z % window_cells ? 1 : 0);
 
     HeightFieldWindows windows = try_copy_windows(
         allocator:    scene.allocator,
