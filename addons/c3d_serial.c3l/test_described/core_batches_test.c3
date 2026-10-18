@@ -375,6 +375,55 @@ fn void test_instanced_quadtree_attach_faults_leave_no_component() @test {
     };
 }
 
+fn void test_instanced_quadtree_writers_reject_a_broken_contract() @test {
+    @pool() {
+        Fixture fixture;
+        create_fixture(&fixture);
+        defer destroy_fixture(&fixture);
+        serial::register_core_codecs()!!;
+
+        Transform[2] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
+        Node* root = fixture.source.add_node()!!;
+        Node* node = fixture.source.add_instanced_mesh(
+            geometry: (GeometryId){},
+            material: (MaterialId){},
+            capacity: 2,
+            transforms: transforms[..],
+            parent: root,
+        )!!;
+        InstancedMesh* batch = fixture.source.get(node, InstancedMesh);
+        batch.trace = false;
+        uint[2] parents = { scene::QUADTREE_ROOT, 0 };
+        fixture.source.set_instance_quadtree(node, parents[..], 96, 0.25f)!!;
+        String valid = fixture_text(&fixture, root);
+
+        for (uint broken = 0; broken < 2; broken++) {
+            if (broken == 0) {
+                batch.trace = true;
+            } else {
+                batch.transforms[1].scale.x = -1;
+                fixture.source.mark_instances_dirty(node);
+            }
+            assert(@catch(serial::write_subtree(
+                allocator: tmem,
+                scene: &fixture.source,
+                assets: &fixture.assets,
+                root: root,
+            )) == c3d::INVALID_ARGUMENT);
+            assert(@catch(serial::write_subtree_text(
+                allocator: tmem,
+                scene: &fixture.source,
+                assets: &fixture.assets,
+                root: root,
+            )) == c3d::INVALID_ARGUMENT);
+            batch.trace = false;
+            batch.transforms[1].scale.x = 1;
+            fixture.source.mark_instances_dirty(node);
+        }
+        assert(fixture_text(&fixture, root) == valid);
+    };
+}
+
 fn void test_instanced_v1_fixtures_read_without_a_quadtree() @test {
     @pool() {
         Fixture fixture;

@@ -191,9 +191,10 @@ fn void defaults_lod(void* value) @local {
 
 fn void? project_instances(void* component, void* value, WriteContext* context) @local {
     InstancedMesh* batch = component;
-    if (!scene::instance_effects_valid(batch.sway, batch.fade)) return c3d::INVALID_ARGUMENT~;
-
     bool has_quadtree = batch.quadtree.parents.len > 0;
+    if (!scene::instance_effects_valid(batch.sway, batch.fade)) return c3d::INVALID_ARGUMENT~;
+    if (has_quadtree && !scene::instance_quadtree_valid(batch)) return c3d::INVALID_ARGUMENT~;
+
     *(InstanceAuthoring*)value = {
         .geometry = batch.geometry,
         .material = batch.material,
