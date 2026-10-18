@@ -22,6 +22,9 @@ const float CELL_SIZE = 1;
 <* Material layers of the ground: grass, dirt, rock and snow. *>
 const uint LAYER_COUNT = 4;
 
+<* Tiles along each side of a tiled ground. *>
+const uint TILES_PER_SIDE = 2; // four tiles, each a quarter of the height map
+
 <* Node layer bit of the terrain, left out of picks. *>
 const uint TERRAIN_LAYER = 1 << 1;
 
@@ -119,9 +122,11 @@ struct LayerLook @local {
 
 <* The example landscape's terrain node and the desc it was added with. *>
 struct Ground {
-    Node*       node;
-    TerrainDesc desc;
-    float       extent; // metres along each side
+    Node*       node;        // the terrain node, or the node of the tile set
+    TerrainDesc desc;        // of the terrain; of a tiled ground, the settings every tile shares
+    float       extent;      // metres along each side
+    float       tile_extent; // metres along each tile side; zero when the ground is one terrain
+    Node*[TILES_PER_SIDE * TILES_PER_SIDE] tiles; // row-major, x fastest; null when the ground is one terrain
 }
 
 <* Walking or flying viewpoint over the ground. *>
@@ -136,6 +141,24 @@ struct FlyCamera {
 <* Held brush that stamps at a fixed period whatever the frame rate. *>
 struct Brush {
     float seconds; // held time not yet stamped
+}
+
+<*
+ Nodes that carry a Terrain.
+ @return "The terrain node, or the tile nodes."
+*>
+fn Node*[] Ground.terrain_nodes(&self) {
+    return self.tile_extent > 0 ? self.tiles[..] : (&self.node)[:1];
+}
+
+<*
+ The terrain node whose extent holds a world position, or the nearest one.
+*>
+fn Node* Ground.terrain_at(&self, Vec3 position) {
+    if (self.tile_extent <= 0) return self.node;
+    uint column = (uint)math::clamp(math::floor(position.x / self.tile_extent), 0.0f, (float)(TILES_PER_SIDE - 1));
+    uint row = (uint)math::clamp(math::floor(position.z / self.tile_extent), 0.0f, (float)(TILES_PER_SIDE - 1));
+    return self.tiles[row * TILES_PER_SIDE + column];
 }
 
 <*
@@ -240,7 +263,12 @@ fn float smooth_band(float value, float start, float width) @local {
 fn char unit_to_byte(float value) @local => (char)(math::clamp(value, 0.0f, 1.0f) * (float)char::max + 0.5f);
 
 // Layer weights of grass, dirt, rock and snow in the red, green, blue and alpha channels.
-fn TextureId? add_control_map(AssetStore* assets, ushort[] heights, uint texels) @local {
+fn TextureId? add_control_map(
+    AssetStore* assets,
+    ushort[] heights,
+    uint texels,
+    String key = "terrain/control",
+) @local {
     TextureId control;
     @pool() {
         char[] pixels = alloc::new_array(tmem, char, (sz)((usz)CONTROL_SIZE * CONTROL_SIZE * RGBA8_BYTES));
@@ -279,7 +307,7 @@ fn TextureId? add_control_map(AssetStore* assets, ushort[] heights, uint texels)
             format:     RGBA8_UNORM,
             debug_name: "terrain_control",
         );
-        control = assets.add_texture(desc, pixels, "terrain/control")!;
+        control = assets.add_texture(desc, pixels, key)!;
     };
     return control;
 }
@@ -361,6 +389,17 @@ fn bool is_map_size(uint size) {
     return false;
 }
 
+fn TerrainDesc? ground_desc(AssetStore* assets, uint layers, float lod_threshold) @local {
+    TerrainDesc desc = terrain::default_terrain_desc();
+    for (uint index = 0; index < layers; index++) {
+        desc.layers[index] = add_layer(assets, LAYER_LOOKS[index], index)!;
+    }
+    desc.cell_size = CELL_SIZE;
+    desc.height_scale = HEIGHT_SCALE;
+    desc.lod_threshold = lod_threshold;
+    return desc;
+}
+
 <*
  Generate the example landscape and add its terrain node.
  @param [&inout] scene : "Registered with terrain::register_terrain."
@@ -379,7 +418,7 @@ fn Ground? add_ground(
     uint layers,
     float lod_threshold,
 ) {
-    TerrainDesc desc = terrain::default_terrain_desc();
+    TerrainDesc desc = ground_desc(assets, layers, lod_threshold)!;
     desc.height_map = add_height_map(assets, size)!;
     TextureAsset* heights = assets.texture(desc.height_map);
     desc.control_map = add_control_map(
@@ -387,12 +426,6 @@ fn Ground? add_ground(
         heights: ((ushort*)heights.pixels.ptr)[:(usz)size * size],
         texels:  size,
     )!;
-    for (uint index = 0; index < layers; index++) {
-        desc.layers[index] = add_layer(assets, LAYER_LOOKS[index], index)!;
-    }
-    desc.cell_size = CELL_SIZE;
-    desc.height_scale = HEIGHT_SCALE;
-    desc.lod_threshold = lod_threshold;
 
     Node* node = scene.add_node(name: "terrain")!;
     node.layers = TERRAIN_LAYER;
@@ -404,6 +437,109 @@ fn Ground? add_ground(
         desc:   desc,
     )!;
     return { .node = node, .desc = desc, .extent = (float)(size - 1) * CELL_SIZE };
+}
+
+// Neighbouring tiles overlap by one row or column of texels, so their shared edge texels are equal.
+fn TextureId? add_height_tile(
+    AssetStore* assets,
+    ushort[] whole,
+    uint size,
+    uint column,
+    uint row,
+) @local {
+    uint texels = (size - 1) / TILES_PER_SIDE + 1;
+    uint first_x = column * (texels - 1);
+    uint first_z = row * (texels - 1);
+    TextureDesc desc = material::texture_2d_desc(
+        width:      texels,
+        height:     texels,
+        format:     R16_UINT,
+        debug_name: "terrain_height_tile",
+    );
+    desc.generate_mips = false;
+    TextureId tile;
+    @pool() {
+        char[] pixels = alloc::new_array(tmem, char, (sz)((usz)texels * texels * ushort::size));
+        ushort[] heights = ((ushort*)pixels.ptr)[:(usz)texels * texels];
+        for (uint z = 0; z < texels; z++) {
+            usz source = (usz)(first_z + z) * size + first_x;
+            heights[(usz)z * texels : texels] = whole[source : texels];
+        }
+        tile = assets.add_texture(desc, pixels)!;
+    };
+    return tile;
+}
+
+<*
+ Generate the example landscape as a set of tiles cut from one height map.
+ @param [&inout] scene : "Registered with terrain::register_terrain."
+ @param [&inout] assets : "The store given to register_terrain."
+ @param size : "Height-map texels per side of the whole landscape."
+ @param layers : "Material layers generated, grass first."
+ @param lod_threshold : "Chunk split threshold in output pixels."
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT, c3d::INVALID_ID, c3d::UNSUPPORTED
+ @require is_map_size(size)
+ @require layers > 0 && layers <= LAYER_COUNT
+*>
+fn Ground? add_ground_tiles(
+    Scene* scene,
+    AssetStore* assets,
+    uint size,
+    uint layers,
+    float lod_threshold,
+) {
+    TerrainDesc desc = ground_desc(assets, layers, lod_threshold)!;
+    TextureId whole = add_height_map(assets, size)!;
+    defer assets.remove_texture(whole);
+    ushort[] whole_heights = ((ushort*)assets.texture(whole).pixels.ptr)[:(usz)size * size];
+
+    uint texels = (size - 1) / TILES_PER_SIDE + 1;
+    float tile_extent = (float)(texels - 1) * CELL_SIZE;
+    Node* set_node = scene.add_node(name: "terrain_set")!;
+    scene.add(set_node, (TerrainSet){
+        .texels       = texels,
+        .cell_size    = CELL_SIZE,
+        .height_scale = HEIGHT_SCALE,
+    });
+    Ground ground = {
+        .node        = set_node,
+        .desc        = desc,
+        .extent      = (float)(size - 1) * CELL_SIZE,
+        .tile_extent = tile_extent,
+    };
+    for (uint row = 0; row < TILES_PER_SIDE; row++) {
+        for (uint column = 0; column < TILES_PER_SIDE; column++) {
+            TerrainDesc tile_desc = desc;
+            tile_desc.height_map = add_height_tile(
+                assets: assets,
+                whole:  whole_heights,
+                size:   size,
+                column: column,
+                row:    row,
+            )!;
+            TextureAsset* heights = assets.texture(tile_desc.height_map);
+            tile_desc.control_map = add_control_map(
+                assets:  assets,
+                heights: ((ushort*)heights.pixels.ptr)[:(usz)texels * texels],
+                texels:  texels,
+                key:     "",
+            )!;
+
+            Node* tile = scene.add_node(set_node, "terrain_tile")!;
+            tile.layers = TERRAIN_LAYER;
+            tile.local.position = { (float)column * tile_extent, 0, (float)row * tile_extent };
+            scene.add(tile, (TerrainTile){ .x = (int)column, .z = (int)row });
+            terrain::add_terrain(
+                scene:  scene,
+                assets: assets,
+                node:   tile,
+                desc:   tile_desc,
+            )!;
+            ground.tiles[row * TILES_PER_SIDE + column] = tile;
+        }
+    }
+    scene.update_world();
+    return ground;
 }
 
 <*

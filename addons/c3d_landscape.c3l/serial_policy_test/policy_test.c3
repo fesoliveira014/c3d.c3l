@@ -29,8 +29,12 @@ fn void test_every_landscape_component_has_one_expected_serialization_policy() @
     register_scene(&scene, &assets);
     uint registered_count = ecs::registered_type_count;
     landscape::register_serial_codecs()!!;
-    ExpectedPolicy[3] authored = {
+    ExpectedPolicy[5] authored = {
         { .slot = ecs::assigned_slot(Terrain)!!, .name = "terrain", .identity = TerrainDesc::typeid, .phase = VALUE },
+        { .slot = ecs::assigned_slot(TerrainSet)!!, .name = "terrain_set",
+            .identity = TerrainSetAuthoring::typeid, .phase = VALUE },
+        { .slot = ecs::assigned_slot(TerrainTile)!!, .name = "terrain_tile",
+            .identity = TerrainTile::typeid, .phase = VALUE },
         { .slot = ecs::assigned_slot(Foliage)!!, .name = "foliage",
             .identity = FoliageAuthoring::typeid, .phase = OWNER },
         { .slot = ecs::assigned_slot(Water)!!, .name = "water", .identity = WaterDesc::typeid, .phase = VALUE },

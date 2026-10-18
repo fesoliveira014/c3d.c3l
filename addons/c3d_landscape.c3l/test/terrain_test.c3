@@ -685,3 +685,149 @@ fn void test_replaced_height_map_refreshes_whole_map() @test {
     assert(refreshed.x == 0 && refreshed.z == 0);
     assert(refreshed.columns == TWO_LEVEL_TEXELS && refreshed.rows == TWO_LEVEL_TEXELS);
 }
+
+struct SetFixture @local {
+    Fixture     base;
+    Node*       node;
+    TerrainSet* set;
+    TerrainDesc desc;
+}
+
+fn void setup_set(SetFixture* sets, Allocator allocator) @local {
+    Fixture* fixture = &sets.base;
+    fixture.assets = asset::create_asset_store(allocator, asset::default_asset_store_desc());
+    fixture.scene = scene::create_scene(allocator, scene::default_scene_desc());
+    terrain::register_terrain(&fixture.scene, &fixture.assets)!!;
+    fixture.layer = fixture.assets.add_material(material::standard({ .base_color = { 1, 1, 1, 1 }, .roughness = 1 }))!!;
+
+    sets.node = fixture.scene.add_node(name: "set")!!;
+    fixture.scene.add(sets.node, (TerrainSet){
+        .texels       = SMALL_TEXELS,
+        .cell_size    = CELL_SIZE,
+        .height_scale = HEIGHT_SCALE,
+    });
+    sets.set = fixture.scene.get(sets.node, TerrainSet);
+    sets.desc = terrain_desc(fixture, add_height_map(fixture, SMALL_TEXELS, SEED));
+}
+
+fn void teardown_set(SetFixture* sets) @local {
+    scene::destroy_scene(&sets.base.scene);
+    asset::destroy_asset_store(&sets.base.assets);
+}
+
+fn Node* add_tile_node(SetFixture* sets, int x, int z) @local {
+    float extent = sets.set.tile_extent();
+    Node* node = sets.base.scene.add_node(sets.node)!!;
+    node.local.position = { (float)x * extent, 0, (float)z * extent };
+    sets.base.scene.add(node, (TerrainTile){ .x = x, .z = z });
+    return node;
+}
+
+fn Node* add_prepared_tile(SetFixture* sets, int x, int z) @local {
+    Node* node = add_tile_node(sets, x, z);
+    try_add_terrain(&sets.base, node, sets.desc)!!;
+    return node;
+}
+
+fn void assert_tile_rejected(SetFixture* sets, Node* tile, TerrainDesc desc) @local {
+    assert(@catch(try_add_terrain(&sets.base, tile, desc)) == c3d::INVALID_ARGUMENT);
+    assert(!sets.set.is_linked(tile.id) && !sets.base.scene.has(tile, TerrainRuntime));
+}
+
+fn void test_terrain_set_rejects_incompatible_tiles() @test {
+    SetFixture sets;
+    setup_set(&sets, mem);
+    defer teardown_set(&sets);
+    Node* first = add_prepared_tile(&sets, 0, 0);
+
+    TerrainDesc finer_map = terrain_desc(&sets.base, add_height_map(&sets.base, TWO_LEVEL_TEXELS, SEED));
+    assert_tile_rejected(&sets, add_tile_node(&sets, 1, 0), finer_map);
+
+    TerrainDesc wide_cells = sets.desc;
+    wide_cells.cell_size = CELL_SIZE * 2;
+    assert_tile_rejected(&sets, add_tile_node(&sets, 1, 0), wide_cells);
+
+    TerrainDesc tall = sets.desc;
+    tall.height_scale = HEIGHT_SCALE * 2;
+    assert_tile_rejected(&sets, add_tile_node(&sets, 1, 0), tall);
+
+    TerrainDesc eager_lod = sets.desc;
+    eager_lod.lod_threshold = sets.desc.lod_threshold + 1;
+    assert_tile_rejected(&sets, add_tile_node(&sets, 1, 0), eager_lod);
+
+    TerrainDesc extra_layer = sets.desc;
+    extra_layer.layers[1] = sets.base.assets.add_material(material::standard())!!;
+    assert_tile_rejected(&sets, add_tile_node(&sets, 1, 0), extra_layer);
+
+    Node* shifted = add_tile_node(&sets, 1, 0);
+    shifted.local.position.x += CELL_SIZE;
+    assert_tile_rejected(&sets, shifted, sets.desc);
+
+    Node* turned = add_tile_node(&sets, 1, 0);
+    turned.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::deg_to_rad(TERRAIN_YAW_DEGREES));
+    assert_tile_rejected(&sets, turned, sets.desc);
+
+    assert_tile_rejected(&sets, add_tile_node(&sets, 0, 0), sets.desc);
+
+    Node* second = add_prepared_tile(&sets, 1, 0);
+    assert(c3d::same_id(sets.set.neighbour(first.id, EAST)!!, second.id));
+}
+
+fn void test_terrain_set_links_neighbours_and_unlinks_on_removal() @test {
+    TrackingAllocator tracking;
+    tracking.init(mem);
+    defer tracking.free();
+    SetFixture sets;
+    setup_set(&sets, &tracking);
+    TerrainSet* set = sets.set;
+    Node* north_west = add_prepared_tile(&sets, 0, 0);
+    Node* north_east = add_prepared_tile(&sets, 1, 0);
+    Node* south_west = add_prepared_tile(&sets, 0, 1);
+    Node* south_east = add_prepared_tile(&sets, 1, 1);
+
+    assert(c3d::same_id(set.neighbour(north_west.id, EAST)!!, north_east.id));
+    assert(c3d::same_id(set.neighbour(north_west.id, SOUTH)!!, south_west.id));
+    assert(c3d::same_id(set.neighbour(north_west.id, SOUTH_EAST)!!, south_east.id));
+    assert(@catch(set.neighbour(north_west.id, WEST)) == NOT_FOUND);
+    assert(c3d::same_id(set.neighbour(north_east.id, SOUTH_WEST)!!, south_west.id));
+    assert(c3d::same_id(set.neighbour(south_east.id, WEST)!!, south_west.id));
+    assert(c3d::same_id(set.neighbour(south_east.id, NORTH)!!, north_east.id));
+    assert(c3d::same_id(set.neighbour(south_east.id, NORTH_WEST)!!, north_west.id));
+    assert(@catch(set.neighbour(south_east.id, SOUTH_EAST)) == NOT_FOUND);
+
+    Entity removed = north_east.id;
+    sets.base.scene.remove(north_east);
+    assert(!set.is_linked(removed));
+    assert(@catch(set.neighbour(north_west.id, EAST)) == NOT_FOUND);
+    assert(@catch(set.neighbour(south_west.id, NORTH_EAST)) == NOT_FOUND);
+    assert(@catch(set.neighbour(south_east.id, NORTH)) == NOT_FOUND);
+    assert(c3d::same_id(set.neighbour(north_west.id, SOUTH)!!, south_west.id));
+
+    sets.base.scene.remove_component(south_west, TerrainTile);
+    assert(!set.is_linked(south_west.id) && sets.base.scene.has(south_west, TerrainRuntime));
+    assert(@catch(set.neighbour(north_west.id, SOUTH)) == NOT_FOUND);
+
+    sets.base.scene.remove_component(south_east, Terrain);
+    assert(!set.is_linked(south_east.id));
+    assert(@catch(set.neighbour(north_west.id, SOUTH_EAST)) == NOT_FOUND);
+
+    teardown_set(&sets);
+    assert(!tracking.has_leaks());
+}
+
+fn void test_prepare_revalidates_a_moved_tile() @test {
+    SetFixture sets;
+    setup_set(&sets, mem);
+    defer teardown_set(&sets);
+    Node* west = add_prepared_tile(&sets, 0, 0);
+    Node* east = add_prepared_tile(&sets, 1, 0);
+
+    east.local.position.x += CELL_SIZE;
+    assert(@catch(terrain::prepare(&sets.base.scene, &sets.base.assets, east)) == c3d::INVALID_ARGUMENT);
+    assert(!sets.set.is_linked(east.id) && terrain::is_prepared(&sets.base.scene, east));
+    assert(@catch(sets.set.neighbour(west.id, EAST)) == NOT_FOUND);
+
+    east.local.position.x -= CELL_SIZE;
+    terrain::prepare(&sets.base.scene, &sets.base.assets, east)!!;
+    assert(c3d::same_id(sets.set.neighbour(west.id, EAST)!!, east.id));
+}

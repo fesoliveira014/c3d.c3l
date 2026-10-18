@@ -16,6 +16,8 @@ fn void test_serial_layout_registration() @test {
     landscape::register_serial_codecs()!!;
     assert(serial::described_type(TerrainDesc)!!.version == 1);
     assert(serial::described_type(TerrainDesc)!!.layout == 0x7638a7507fa65b33);
+    assert(serial::described_type(TerrainTile)!!.layout == 0x3fe780c7be5416e1);
+    assert(serial::described_type(landscape::TerrainSetAuthoring)!!.layout == 0x6b17270c6b53663f);
     assert(serial::described_type(ScatterRules)!!.layout == 0x788326d1092caa6b);
     assert(serial::described_type(SwayTemplate)!!.layout == 0x750cddc9cb008976);
     assert(serial::described_type(landscape::FoliageAuthoring)!!.layout == 0x20330122082bd780);
@@ -24,6 +26,7 @@ fn void test_serial_layout_registration() @test {
     @pool() {
         String schema = serial::write_schema(tmem)!!;
         assert(schema.contains("terrain") && schema.contains("foliage") && schema.contains("water"));
+        assert(schema.contains("terrain_set") && schema.contains("terrain_tile"));
         assert(schema.contains("density_channel") && schema.contains("lod_threshold")
           && schema.contains("ripple_drift"));
     };
@@ -135,6 +138,67 @@ fn void test_landscape_both_encodings_restore_pending_authoring_and_prepare() @t
                 )!!);
             };
         }
+    }
+}
+
+fn void test_tile_set_authoring_restores_pending_and_links_on_preparation() @test {
+    foreach (text_mode : (bool[2]){ false, true }) {
+        @pool() {
+            Fixture fixture;
+            create_fixture(&fixture);
+            defer destroy_fixture(&fixture);
+            TerrainDesc tile_desc = fixture.source.get(fixture.terrain_node, Terrain).desc;
+            Node* set_node = fixture.source.add_node(fixture.root, "tiles")!!;
+            fixture.source.add(set_node, (TerrainSet){ .texels = 129, .cell_size = 1, .height_scale = 4 });
+            foreach (column : (int[2]){ 0, 1 }) {
+                Node* tile = fixture.source.add_node(set_node, "tile")!!;
+                tile.local.position = { (float)column * 128, 0, 0 };
+                fixture.source.add(tile, (TerrainTile){ .x = column, .z = 0 });
+                terrain::attach_terrain(
+                    scene: &fixture.source,
+                    assets: &fixture.assets,
+                    node: tile,
+                    desc: tile_desc,
+                )!!;
+            }
+            char[] bytes = encode(
+                scene: &fixture.source,
+                assets: &fixture.assets,
+                root: set_node,
+                text_mode: text_mode,
+            )!!;
+
+            Node* restored = decode(&fixture, bytes, text_mode)!!;
+            TerrainSet* set = fixture.destination.get(restored, TerrainSet);
+            assert(set.texels == 129 && set.cell_size == 1 && set.height_scale == 4 && set.state == null);
+            Node* west = restored.first_child;
+            Node* east = west.next_sibling;
+            if (fixture.destination.get(west, TerrainTile).x != 0) @swap(west, east);
+            assert(fixture.destination.get(east, TerrainTile).x == 1 && !set.is_linked(west.id));
+            assert(bytes == encode(
+                scene: &fixture.destination,
+                assets: &fixture.assets,
+                root: restored,
+                text_mode: text_mode,
+            )!!);
+
+            prepare_all(&fixture.destination, &fixture.assets, restored);
+            assert(c3d::same_id(set.neighbour(west.id, EAST)!!, east.id));
+            assert(bytes == encode(
+                scene: &fixture.destination,
+                assets: &fixture.assets,
+                root: restored,
+                text_mode: text_mode,
+            )!!);
+
+            fixture.source.get(set_node, TerrainSet).texels = 1;
+            assert(@catch(encode(
+                scene: &fixture.source,
+                assets: &fixture.assets,
+                root: set_node,
+                text_mode: text_mode,
+            )) == c3d::INVALID_ARGUMENT);
+        };
     }
 }
 

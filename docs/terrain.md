@@ -54,8 +54,9 @@ terrain::update(
 renderer.render_view(&scene, camera, view)!;
 ```
 
-- `register_terrain` runs once per scene after `create_scene`. It registers `Terrain` and `TerrainRuntime`
-  and installs the runtime's remove hook with the store; the store outlives the scene.
+- `register_terrain` runs once per scene after `create_scene`. It registers `Terrain`, `TerrainRuntime`,
+  `TerrainSet` and `TerrainTile`, and installs their remove hooks. The store outlives the scene, and the scene
+  stays at its address: the tile hooks hold it.
 - `add_terrain` attaches a terrain to an existing node that carries no `InstancedMesh` and no `Terrain`, and
   builds everything at once: the bounds tree, the owned material and the node's `InstancedMesh`, with room for
   the finest chunk count. It faults as listed under [Faults](#faults) and then leaves the node and store as they
@@ -127,8 +128,71 @@ along its z axis. Its translation is the height offset: there is no offset field
 drawn surface, the queries and a collider alike. Rendering takes any transform; queries need translation and
 rotation about Y only (a `@require` of `height_view`).
 
-Larger worlds are tiles: one terrain node each, with its own collider. Skirts cover the cracks between tiles
-at different levels.
+Larger worlds are [tile sets](#tile-sets): a grid of terrain nodes under one parent, each with its own collider.
+Skirts cover the cracks between tiles at different levels.
+
+## Tile sets
+
+A `TerrainSet` on a parent node holds the settings shared by a grid of tiles. Each tile is a child node that
+carries an ordinary `Terrain` and a `TerrainTile { x, z }` with its grid coordinates:
+
+```c3
+float extent = (float)(texels - 1) * cell_size; // TerrainSet.tile_extent()
+scene.add(set_node, (TerrainSet){ .texels = texels, .cell_size = cell_size, .height_scale = height_scale });
+foreach (tile : tiles) {
+    Node* node = scene.add_node(set_node)!;
+    node.local.position = { (float)tile.x * extent, 0, (float)tile.z * extent };
+    scene.add(node, (TerrainTile){ .x = tile.x, .z = tile.z });
+    terrain::add_terrain(
+        scene:  &scene,
+        assets: &assets,
+        node:   node,
+        desc:   tile.desc,
+    )!;
+}
+```
+
+`TerrainSet.tile_extent()` is `(texels - 1) · cell_size`, the side of one tile in metres.
+
+**Validation.** `prepare` (and so `add_terrain`) checks a tile that carries `TerrainTile` and faults
+`INVALID_ARGUMENT` on any mismatch, leaving it pending and never linked. A tile must:
+
+- be a direct child of a node that carries `TerrainSet`;
+- have a height map of exactly the set's `texels`, and the set's `cell_size` and `height_scale`;
+- have the same `lod_threshold`, `lod_hysteresis` and `layers` as every tile already linked;
+- have a `PARENT`-space transform relative to the set node that is a pure translation to
+  `(x · tile_extent, 0, z · tile_extent)`: no rotation and unit scale, within 1e-4;
+- not share its `(x, z)` with a linked tile. The first tile prepared at a coordinate keeps it.
+
+Floats compare exactly. Tiles may differ in height map, control map and shadow flags.
+
+**Links.** A tile that passes links to its present neighbours at that `prepare`, edges and diagonals. The set
+records the linked tiles; `TerrainSet.is_linked(tile)` and `TerrainSet.neighbour(tile, direction)` read them, with
+eight `TerrainNeighbour` directions (north is toward lower z) and `NOT_FOUND` for a missing neighbour. A
+neighbour that prepares later links to the tiles already there, so load order does not matter.
+
+- Removing a tile's node, its `TerrainTile` or its `Terrain` unlinks it through a removal hook. The tile's former
+  neighbours then see no neighbour there. Removing the `TerrainSet` frees the table and leaves the tiles as
+  ordinary terrains.
+- Changing a linked tile's transform or `TerrainTile` is unsupported until its next `prepare`. `prepare` on a
+  prepared tile re-validates it and relinks it; on a mismatch it faults, leaves the terrain drawing and leaves the
+  tile unlinked.
+- A parent change does not recover. `Scene.reparent` runs no hook, so the tile would stay in its old set's links.
+  Unlink a linked tile before reparenting it, by removing its `TerrainTile` while it is still under the set, then
+  add the `TerrainTile` again under the new set and `prepare`.
+- The set creates no terrain, loads nothing and unloads nothing. Streaming stays with the application: it adds
+  tiles when their data arrives and removes them when it leaves.
+
+**Authoring contract.** Neighbouring tiles duplicate their shared edge row and column, so the edge texels of two
+neighbours are equal. Cut tiles from one map with an overlap of one row or column, as the example does. Nothing
+checks the texels.
+
+CPU queries (`height_view`, `sample_height`, `sample_normal`) stay within one tile; a point outside it is
+`NOT_FOUND`. Each tile keeps its own collider, height map revision and `mark_dirty` rectangle: an edit of one tile
+does not reach its neighbours' texels.
+
+Serialization stores the set's `texels`, `cell_size` and `height_scale` and each tile's coordinates; the links are
+rebuilt when the tiles prepare (see [serialization](serialization.md#landscape-particle-and-audio-adapters)).
 
 ## Height queries
 
@@ -192,7 +256,7 @@ scene.get(ground, PhysicsBody).mark_changed();
 
 ## Removal
 
-Remove the `Terrain` component, or the node. The next `update` removes the node's `InstancedMesh` and
+Remove the `Terrain` component, or the node. A [tile](#tile-sets) also leaves its set's links. The next `update` removes the node's `InstancedMesh` and
 `TerrainRuntime` first thing, so a removed terrain never draws a stale frame; a removed node's batch goes with
 the node. The runtime's remove hook frees its arrays and removes the terrain's own material. Removing
 `TerrainRuntime` directly is not supported.
@@ -240,7 +304,9 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
 | `add_terrain` | `c3d::UNSUPPORTED` | Control map not `RGBA8_UNORM` |
 | `add_terrain`, `height_view`, `update` | `c3d::INVALID_ARGUMENT` | Not square, a side outside the list, pixel bytes not `side² × 2` |
 | `add_terrain` | `c3d::INVALID_ARGUMENT` | A non-positive scale, a negative or NaN tunable, no layer 0, a layer after an unset one, a layer that is not `STANDARD`, a shared key naming another asset kind |
+| `add_terrain`, `prepare` | `c3d::INVALID_ARGUMENT` | A tile that does not match its set, or shares a coordinate with a linked tile ([tile sets](#tile-sets)) |
 | `add_terrain` | `c3d::CAPACITY_EXCEEDED` | Store pool full or an allocation failed |
+| `TerrainSet.neighbour` | `NOT_FOUND` | The tile is not linked, or has no linked neighbour in the direction |
 | `update` | `c3d::INVALID_ID` | The height map was removed |
 | `update` | `c3d::INVALID_ARGUMENT` | A revision whose side differs from the accepted one |
 | `sample_height`, `sample_normal` | `NOT_FOUND` | The point is outside the extent |
@@ -258,7 +324,8 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
   motion and the camera produce velocity.
 - The velocity pass redraws every chunk on temporal views. A re-selection frame uploads 128 B per selected
   chunk and, on temporal views, 64 B per chunk of previous matrices the stage ignores.
-- Normals at a tile border use one-sided differences, so matching edge texels still leave a shading seam.
+- Normals at a tile border, between linked tiles too, use one-sided differences, so matching edge texels still
+  leave a shading seam.
 - Every set layer is sampled on every pixel, whatever its weight; four layers is the limit.
 - Layers are projected from above: `uv0` is terrain-local x and z, so on steep slopes and cliffs the layer
   textures stretch along the fall line.
@@ -274,6 +341,10 @@ drops a crate onto the height-field collider, B held raises a bump under the cam
 the frame rate and B released ends the stroke, P toggles the collider, T toggles a decal on the ground ahead of the start pose, and a click tosses the crate under the
 cursor (a 6 m/s velocity change) through `spatial::pick` with the terrain's layer left out. The panel shows chunks per level, LOD switches, the height and normal under the
 camera beside the physics ray height, and the LOD threshold.
+
+`--tiles 2x2` builds the same landscape as a [tile set](#tile-sets) of four tiles cut from the map with a one-texel
+overlap, each with its own control map and collider. Painting is off and the benchmark is unavailable with it: an
+edit does not reach the neighbouring tile's duplicated edge.
 
 `--benchmark [frames]` renders to an offscreen target without a window and runs a scripted, deterministic path
 of four segments of `frames` steps (default 300) at 1/60 s after 60 warm-up frames: still, a low sweep across

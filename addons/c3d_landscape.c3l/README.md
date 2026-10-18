@@ -37,7 +37,8 @@ Preparing foliage while its ground terrain is pending returns `terrain::NOT_PREP
 retains the foliage authoring. Water has no landscape preparation dependency.
 Publish node world matrices before preparing foliage or water.
 
-A prepared owner is a no-op for preparation. Each pending owner either receives
+A prepared owner is a no-op for preparation, except a terrain [tile](../../docs/terrain.md#tile-sets), which
+re-validates and relinks. Each pending owner either receives
 complete runtime or remains pending with its authoring intact. A subtree pass
 attempts all matching owners and returns its first fault; successful owners are
 retained. Failed terrain/water preparation removes only cache assets that the
