@@ -557,10 +557,17 @@ fn void test_cloth_step_has_no_allocations() @test {
     setup(&fixture, allocator: &tracker);
     defer teardown(&fixture);
     GeometryId grid = add_grid(&fixture, GRID_CELLS);
+    GeometryId resting_grid = add_grid(&fixture, 1);
     sz before = tracker.allocation_count();
     Node* node = add_cloth_node(&fixture, grid);
     fixture.scene.add(node, (Wind){ .velocity = { 0, 0, 4 }, .drag = 0.5f });
     fixture.scene.add_cloth(&fixture.assets, node, pinned_desc(top_row(GRID_CELLS)))!!;
+    Node* resting = add_cloth_node(&fixture, resting_grid);
+    uint[4] corners = { 0, 1, 2, 3 };
+    ClothDesc resting_desc = pinned_desc(corners[..]);
+    resting_desc.sleep_speed = 1;
+    resting_desc.sleep_steps = 1;
+    fixture.scene.add_cloth(&fixture.assets, resting, resting_desc)!!;
     step(&fixture, physics::DEFAULT_FIXED_DT);
     sz allocations = tracker.total_allocation_count();
     for (uint update = 0; update < 120; update++) {
@@ -568,8 +575,17 @@ fn void test_cloth_step_has_no_allocations() @test {
         float dt = update % 3 == 0 ? 0 : (update % 3 == 1 ? physics::DEFAULT_FIXED_DT : 2 * physics::DEFAULT_FIXED_DT);
         step(&fixture, dt);
     }
+    assert(fixture.scene.get(resting, Cloth).activity() == RESTING);
+
+    Cloth* held = fixture.scene.get(node, Cloth);
+    held.sleep();
+    for (uint update = 0; update < 6; update++) step(&fixture, physics::DEFAULT_FIXED_DT);
+    assert(fixture.physics.cloth_stats.held == 1 && fixture.physics.cloth_stats.resting == 1);
+    held.wake();
+    step(&fixture, physics::DEFAULT_FIXED_DT);
     assert(tracker.total_allocation_count() == allocations);
     fixture.scene.remove(node);
+    fixture.scene.remove(resting);
     assert(tracker.allocation_count() == before);
 }
 
@@ -1270,8 +1286,23 @@ fn void test_shift_origin_moves_cloth_in_place() @test {
     shifted.scene.update_world();
     shifted.scene.add_cloth(&shifted.assets, shifted_node, pinned_desc(pins))!!;
     reference.scene.add_cloth(&reference.assets, reference_node, pinned_desc(pins))!!;
+
+    ColliderDesc ball = sphere(0.2f);
+    Node* body = add_body_node(&shifted, (&ball)[:1], offset + (Vec3){ 0.5f, -0.5f, 0 });
+    Entity[1] colliders = { body.id };
+    Node* resting_node = add_cloth_node(&shifted, add_grid(&shifted, 1));
+    resting_node.local.position = offset;
+    shifted.scene.update_world();
+    uint[4] corners = { 0, 1, 2, 3 };
+    ClothDesc resting_desc = pinned_desc(corners[..]);
+    resting_desc.sleep_speed = 0.1f;
+    resting_desc.sleep_steps = 1;
+    resting_desc.colliders = colliders[..];
+    shifted.scene.add_cloth(&shifted.assets, resting_node, resting_desc)!!;
+
     for (uint update = 0; update < SHIFT_PRE_UPDATES; update++) step(&shifted, physics::DEFAULT_FIXED_DT);
     for (uint update = 0; update < SHIFT_PRE_UPDATES; update++) step(&reference, physics::DEFAULT_FIXED_DT);
+    assert(shifted.scene.get(resting_node, Cloth).activity() == RESTING);
 
     ClothState* state = state_of(&shifted, shifted_node);
     Vec3 corner_before = state.positions[GRID_CELLS * (GRID_CELLS + 1) + GRID_CELLS];
@@ -1283,6 +1314,7 @@ fn void test_shift_origin_moves_cloth_in_place() @test {
 
     step(&shifted, physics::DEFAULT_FIXED_DT);
     step(&reference, physics::DEFAULT_FIXED_DT);
+    assert(shifted.scene.get(resting_node, Cloth).activity() == RESTING);
     GeometryAsset* shifted_geometry = geometry_of(&shifted, shifted_node);
     GeometryAsset* reference_geometry = geometry_of(&reference, reference_node);
     foreach (index, position : shifted_geometry.data.positions) {

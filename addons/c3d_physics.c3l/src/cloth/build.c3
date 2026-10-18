@@ -117,6 +117,7 @@ fn void? check_cloth_desc(ClothDesc desc) @private {
     if (!(desc.damping >= 0) || !math::is_finite(desc.damping)) return c3d::INVALID_ARGUMENT~;
     if (!(desc.thickness >= 0) || !math::is_finite(desc.thickness)) return c3d::INVALID_ARGUMENT~;
     if (!math::is_finite(desc.gravity_scale) || !math::is_finite(desc.ground_height)) return c3d::INVALID_ARGUMENT~;
+    if (!(desc.sleep_speed >= 0) || !math::is_finite(desc.sleep_speed)) return c3d::INVALID_ARGUMENT~;
     if (desc.tangent_uv_set > 1) return c3d::INVALID_ARGUMENT~;
     check_attachment_desc(desc.attachments)!;
     check_bend_desc(desc)!;
