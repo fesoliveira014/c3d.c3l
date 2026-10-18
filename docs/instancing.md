@@ -118,6 +118,7 @@ Before the kept aggregate and the stamped history, the same runs took 0.786, 2.8
 | `instances_visible` | Same frame as `instances_tested` | Instances that survived, faded ones excluded; never above `instances_tested` |
 | `indirect_draws` | This frame | Unchanged: culled and unculled ranges alike |
 | `batches_faded` | This frame | View batches inside the frustum and wholly past their [fade band](#sway-and-distance-fade); they list no range and record no draw |
+| `quadtree_fallbacks` | This frame | [Quadtree batches](#quadtree-selection) drawn at their leaves because the arena had no room for their lists |
 
 `instances_tested` and `instances_visible` describe one earlier frame together and count listed ranges only; an aborted frame reports nothing. `stats_panel` shows them as a percentage.
 
@@ -140,6 +141,35 @@ A batch whose material has `alpha_mode == BLEND` draws its instances back to fro
 | 103,823 | 36 | 0.135 | 0.199 | 0.259 |
 
   At 10,648 cubes one of the three 720p runs read 0.192 ms. The sort's work does not depend on the resolution; the small cloud's 1440p reading (0.162 ms) is above its 720p one for a reason not isolated here, and above the 0.10 ms the sort was planned to stay under at that count. Showing the cloud adds to `cpu_record` 0.008 ms at 10,648 and 0.021 ms at 103,823 without validation, and 0.053 and 0.113 ms with it: the validation layer's per-dispatch cost is most of the recording cost of the sort steps. `INSTANCE_SORT_BLOCK` (1,024 keys, 8 KiB of shared memory per group) sets the step count: 2,048 (16 KiB) would take 16,384 instances in 10 steps instead of 15. It stays at 1,024 until a measured workload asks for the change.
+
+## Quadtree selection
+
+An `InstancedMesh` whose instances are the nodes of a quadtree selects, per view, which nodes draw. Every node is an instance. The application builds the tree once and gives each instance its parent:
+
+```c3
+uint[5] parents = { scene::QUADTREE_ROOT, 0, 0, 0, 0 };
+scene.get(node, InstancedMesh).trace = false;
+scene.set_instance_quadtree(node, parents[..], 96, 0.25f)!;
+```
+
+`Scene.set_instance_quadtree` copies `parents` into arrays the component owns, allocated from the scene's allocator on first use and freed with the component, builds the leaf mask (an instance no other instance names as parent) and advances `InstanceQuadtree.revision`, which record edits never advance. Empty `parents` disable the mode. It faults `INVALID_ARGUMENT` when `check_instance_quadtree` rejects the parents: the length differs from the live count, a parent is out of range, the parents form a cycle, or an instance has more than `MAX_QUADTREE_DEPTH` (8) ancestors. It faults `UNSUPPORTED` while the batch has `trace` set, one of its instances mirrors space or its node carries a `LodGroup`.
+
+- **Rule.** A leaf never splits. Any other node splits when its size exceeds `split_pixels`; a node that split in the view's previous rendering stays split until its size falls below `split_pixels / (1 + hysteresis)`. A node draws when every ancestor splits and it does not.
+- **Size.** The projected height, in pixels of the view's working extent (`render_scale` included), of the sphere that bounds the geometry under the instance matrix. It is infinite at the sphere's centre, so a node around the camera splits.
+- **Passes.** One selection dispatch per quadtree batch and view, counted in `Stats.cull_dispatches` and timed with `Pass.INSTANCE_CULL`, records the view's selection. The view, its depth prepass and each of its shadow layers then run their culling dispatch over that selection with their own frustum, so a shadow layer casts what its view draws. A quadtree batch runs the culling dispatch even with `instance_culling` off or `has_bounds_override` set, with open planes. The batch reserves its lists for the view, the depth prepass and every shadow layer from the culling arena when its selection is prepared, as a [LOD group](lod.md#gpu-drawing) does. When the arena has no room, the batch skips the selection and draws its leaves, unculled, in every pass of that rendering, and its history is dropped; `Stats.quadtree_fallbacks` counts it.
+- **History.** Each view keeps one word per instance of the batch's capacity, twice, for the split flags of its previous and current rendering. It is valid while the owner entity and generation, `quadtree.revision` and the live count are unchanged; record edits, an ordinary `configure_view` and an origin shift keep it. `reset_view_history` invalidates it; a view resize or destroy frees it. A batch the view did not select for more than `INSTANCE_ABSENCE_FRAMES` frames releases the view's history of it. A submitted frame publishes it and an aborted one discards it. A view without a valid history selects without hysteresis.
+- **Cost.** Shared by every view, the renderer keeps 12 bytes per instance of capacity (parent and child count, and the leaf index list the fallback draws), uploaded when the revision or the count changes. Each view adds 8 bytes per instance of capacity. A selection invocation reads the records of its node and of at most `MAX_QUADTREE_DEPTH` ancestors.
+- **Sway and fade.** Both apply as for any batch; fade applies after the selection.
+
+Constraints the batch keeps:
+
+- The batch has no mirrored instance, because records pack unmirrored instances first and a mirrored instance would move the records off their parents. `Scene.set_instance_quadtree` faults `UNSUPPORTED` while an instance mirrors, and `Scene.set_instances` faults `UNSUPPORTED` when a new transform mirrors, before it changes the batch. An in-place edit that mirrors an instance is caught by the `validate_quadtree` contract below.
+- `trace` stays unset: tracing walks every instance.
+- `Scene.resize_instances` and `Scene.set_instances` fault `UNSUPPORTED` when they change the count of a batch with a quadtree; disable the mode with empty `parents` first.
+- A `LodGroup` added to the node after the quadtree was set makes `render_view` fault `UNSUPPORTED`; two selections on one batch are undefined.
+- `InstancedMesh.validate_quadtree` states the contract the renderer checks when it uploads the batch's records or topology: well-formed parents, `trace` unset, no mirrored instance.
+
+Picking, `SceneIndex` and impostor baking visit the leaves only: they are the one view-independent set that covers the tree without overlap. `InstancedMesh.is_leaf` and `leaf_instances` expose it. The batch bound that culling and shadow fitting use stays the union of every instance, because the renderer draws non-leaf nodes.
 
 ## Sway and distance fade
 
@@ -211,7 +241,7 @@ A custom material whose shader has a vertex stage draws a batch only when the sh
 
 ## Picking
 
-`spatial::pick` tests a batch's aggregate bound, then each live instance. A hit carries the batch node, `instanced = true` and `instance_index`.
+`spatial::pick` tests a batch's aggregate bound, then each live instance, or each leaf of a [quadtree batch](#quadtree-selection). A hit carries the batch node, `instanced = true` and `instance_index`.
 
 Example: `python3 scripts/build.py --example instancing`. `--fade-field` adds 4,096 fading cell batches around the scene and the stats panel shows `Faded batches`; `--gpu-timings` needs the profile add-on; `--benchmark` runs the headless benchmark ([Benchmarking](benchmarking.md#instancing-benchmark)). `B` bobs one row of 316 props and `U` switches how the row is published, between `mark_instances_range_dirty` and `mark_instances_dirty`; the stats panel shows `Upload bytes`, and `--instance-edit range|whole` starts either mode, in the benchmark too, where the CSV column `upload_bytes` reads 40,832 against 12,781,952 per frame, the three-instance trio included.
 

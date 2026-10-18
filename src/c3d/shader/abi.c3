@@ -51,6 +51,12 @@ const uint LOD_SELECT = 1;
 const uint LOD_CULL = 2;
 const uint LOD_FINALIZE = 3;
 const uint LOD_LEVEL_COUNT = 6;
+const uint QUADTREE_SELECT = 4;
+const uint QUADTREE_CULL = 5;
+const uint QUADTREE_SPLIT = 1;
+const uint QUADTREE_DRAW = 2;
+const uint QUADTREE_ROOT = 4294967295;
+const uint MAX_QUADTREE_DEPTH = 8;
 const uint BILLBOARD_CAMERA = 0;
 const uint BILLBOARD_DIRECTIONAL = 1;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8;
@@ -704,6 +710,14 @@ $assert $reflect(LodMetadataGpu.parity).offset == 4;
 $assert $reflect(LodMetadataGpu._pad0).offset == 8;
 $assert $reflect(LodMetadataGpu._pad1).offset == 12;
 
+struct QuadtreeNodeGpu {
+    uint parent;
+    uint children;
+}
+$assert QuadtreeNodeGpu::size == 8;
+$assert $reflect(QuadtreeNodeGpu.parent).offset == 0;
+$assert $reflect(QuadtreeNodeGpu.children).offset == 4;
+
 struct LodHistoryGpu {
     Mat4f model;
     uint  level;
@@ -768,8 +782,15 @@ struct InstanceCullRoot {
     uint       lod_level_count;
     uint       lod_count_visible;
     GpuAddress lod_source_args;
+    GpuAddress quadtree_nodes;
+    uint       quadtree_history_valid;
+    float      quadtree_split_pixels;
+    float      quadtree_hysteresis;
+    float      quadtree_height_pixels;
+    uint       _pad9;
+    uint       _pad10;
 }
-$assert InstanceCullRoot::size == 368;
+$assert InstanceCullRoot::size == 400;
 $assert $reflect(InstanceCullRoot.instances).offset == 0;
 $assert $reflect(InstanceCullRoot.bounds_instances).offset == 8;
 $assert $reflect(InstanceCullRoot.visible).offset == 16;
@@ -803,6 +824,13 @@ $assert $reflect(InstanceCullRoot.lod_history_valid).offset == 348;
 $assert $reflect(InstanceCullRoot.lod_level_count).offset == 352;
 $assert $reflect(InstanceCullRoot.lod_count_visible).offset == 356;
 $assert $reflect(InstanceCullRoot.lod_source_args).offset == 360;
+$assert $reflect(InstanceCullRoot.quadtree_nodes).offset == 368;
+$assert $reflect(InstanceCullRoot.quadtree_history_valid).offset == 376;
+$assert $reflect(InstanceCullRoot.quadtree_split_pixels).offset == 380;
+$assert $reflect(InstanceCullRoot.quadtree_hysteresis).offset == 384;
+$assert $reflect(InstanceCullRoot.quadtree_height_pixels).offset == 388;
+$assert $reflect(InstanceCullRoot._pad9).offset == 392;
+$assert $reflect(InstanceCullRoot._pad10).offset == 396;
 
 struct InstanceSortRoot {
     GpuAddress keys;

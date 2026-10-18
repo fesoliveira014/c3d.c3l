@@ -59,6 +59,7 @@
         "test_crowd_variants.c3",
         "test_instance_cull.c3",
         "test_lod.c3",
+        "test_quadtree.c3",
         "test_impostor.c3",
         "test_instance_sort.c3",
         "test_billboards.c3",

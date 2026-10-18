@@ -240,6 +240,8 @@ macro void @each_impostor_part(Scene* scene, Node* subject, Mat4 inverse; @body(
         } else if (scene.has(node, InstancedMesh)) {
             InstancedMesh* batch = scene.get(node, InstancedMesh);
             for (uint instance = 0; instance < batch.count; instance++) {
+                if (!batch.is_leaf(instance)) continue;
+
                 @body((ImpostorPart){ .geometry = batch.geometry, .material = batch.material, .world = local.mul(batch.transforms[instance].to_mat4()), .color = batch.colors[instance] });
             }
         } else if (scene.has(node, Mesh)) {

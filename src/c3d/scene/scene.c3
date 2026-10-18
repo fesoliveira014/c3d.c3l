@@ -179,12 +179,13 @@ fn Node*? Scene.add_instanced_mesh(
 <*
  Change the live count; new slots are identity and white.
  @param [&in] node : "Carries an InstancedMesh."
- @return? c3d::CAPACITY_EXCEEDED
+ @return? c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
  @require self.has(node, InstancedMesh)
 *>
 fn void? Scene.resize_instances(&self, Node* node, uint count) {
     InstancedMesh* batch = self.get(node, InstancedMesh);
     if (count > batch.transforms.len) return c3d::CAPACITY_EXCEEDED~;
+    if (batch.quadtree.parents.len && count != batch.count) return c3d::UNSUPPORTED~;
     if (count > batch.count) {
         batch.transforms[batch.count:count - batch.count] = maths::TRANSFORM_IDENTITY;
         batch.colors[batch.count:count - batch.count] = INSTANCE_COLOR_DEFAULT;
@@ -197,15 +198,71 @@ fn void? Scene.resize_instances(&self, Node* node, uint count) {
  Replace the live instances with copies of the slices.
  @param [&in] node : "Carries an InstancedMesh."
  @param colors : "Slots past its end are white."
- @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
  @require self.has(node, InstancedMesh)
 *>
 fn void? Scene.set_instances(&self, Node* node, Transform[] transforms, Vec4[] colors = {}) {
     InstancedMesh* batch = self.get(node, InstancedMesh);
     if (transforms.len > batch.transforms.len) return c3d::CAPACITY_EXCEEDED~;
     if (colors.len > transforms.len) return c3d::INVALID_ARGUMENT~;
+    if (batch.quadtree.parents.len) {
+        if (transforms.len != batch.count) return c3d::UNSUPPORTED~;
+
+        foreach (transform : transforms) {
+            if (transform_mirrored(transform)) return c3d::UNSUPPORTED~;
+        }
+    }
+
     fill_instances(batch, transforms, colors);
     advance_revision(batch);
+}
+
+<*
+ Copy the batch's quadtree topology and advance its topology revision; empty parents disable the mode.
+ @param [&in] node : "Carries an InstancedMesh."
+ @param parents : "One per live instance."
+ @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
+ @require self.has(node, InstancedMesh)
+*>
+fn void? Scene.set_instance_quadtree(
+    &self,
+    Node* node,
+    uint[] parents,
+    float split_pixels,
+    float hysteresis,
+) {
+    InstancedMesh* batch = self.get(node, InstancedMesh);
+    InstanceQuadtree* quadtree = &batch.quadtree;
+    if (parents.len) {
+        InstanceQuadtree candidate = { .parents = parents };
+        check_instance_quadtree(&candidate, batch.count)!;
+
+        if (batch.trace || batch.mirrored_count() || self.has(node, LodGroup)) return c3d::UNSUPPORTED~;
+
+        if (!quadtree.parents.ptr) {
+            quadtree.parents = alloc::new_array(self.allocator, uint, batch.transforms.len);
+            quadtree.leaves = alloc::new_array(self.allocator, bool, batch.transforms.len);
+        }
+    }
+
+    if (quadtree.parents.ptr) {
+        quadtree.parents = quadtree.parents.ptr[:parents.len];
+        quadtree.leaves = quadtree.leaves.ptr[:parents.len];
+        quadtree.parents[..] = parents[..];
+        quadtree.leaves[..] = true;
+        foreach (parent : parents) {
+            if (parent != QUADTREE_ROOT) quadtree.leaves[parent] = false;
+        }
+    }
+
+    quadtree.leaf_count = 0;
+    foreach (leaf : quadtree.leaves) {
+        if (leaf) quadtree.leaf_count++;
+    }
+
+    quadtree.split_pixels = split_pixels;
+    quadtree.hysteresis = hysteresis;
+    quadtree.revision = quadtree.revision == uint::max ? 1 : quadtree.revision + 1;
 }
 
 <*

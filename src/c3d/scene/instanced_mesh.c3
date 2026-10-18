@@ -11,6 +11,16 @@ import std::math;
 const uint INSTANCE_RANGE_MARKS = 4; // 56 B per batch; a renderer slot more marks behind uploads the whole batch
 
 <*
+ Sentinel parent of a quadtree root instance.
+*>
+const uint QUADTREE_ROOT = uint::max; // mirrored as QUADTREE_ROOT in c3d.abi
+
+<*
+ Longest chain of ancestors a quadtree instance may have.
+*>
+const uint MAX_QUADTREE_DEPTH = 8; // mirrored as MAX_QUADTREE_DEPTH in c3d.abi; each selection thread walks this many ancestors
+
+<*
  Source of a swaying vertex's bend weight.
 *>
 enum SwayWeight {
@@ -61,6 +71,19 @@ struct InstanceSpan {
 }
 
 <*
+ Per-view level-of-detail selection over a batch whose instances form a quadtree.
+ revision, leaves and leaf_count are kept by the library; applications call Scene.set_instance_quadtree.
+*>
+struct InstanceQuadtree {
+    uint[] parents;      // parent instance per instance; QUADTREE_ROOT for a root; empty disables the mode
+    float  split_pixels; // a node splits when its projected height exceeds this many pixels of the view's working extent
+    float  hysteresis;   // a split node merges below split_pixels / (1 + hysteresis)
+    uint   revision;     // topology revision: advanced when parents change, never by record edits; never 0 once set
+    bool[] leaves;       // per instance: no other instance names it as parent
+    uint   leaf_count;
+}
+
+<*
  Span a range mark edited and the batch revision the mark produced.
 *>
 struct InstanceRangeMark {
@@ -99,6 +122,7 @@ struct InstancedMesh {
     uint              revision; // compared for equality only; never 0, so a renderer slot at 0 always uploads
     InstanceAggregate aggregate;
     InstanceRangeLog  ranges;
+    InstanceQuadtree  quadtree;
 }
 
 <*
@@ -166,6 +190,40 @@ fn uint InstancedMesh.mirrored_count(&self) {
 }
 
 <*
+ Check that the parents form a quadtree over count instances.
+ @param [&in] quadtree : "Only parents are read."
+ @return? c3d::INVALID_ARGUMENT
+*>
+fn void? check_instance_quadtree(InstanceQuadtree* quadtree, uint count) {
+    if (quadtree.parents.len != count) return c3d::INVALID_ARGUMENT~;
+
+    foreach (parent : quadtree.parents) {
+        uint ancestor = parent;
+        uint depth;
+        while (ancestor != QUADTREE_ROOT) {
+            if (ancestor >= count || depth == MAX_QUADTREE_DEPTH) return c3d::INVALID_ARGUMENT~;
+
+            ancestor = quadtree.parents[ancestor];
+            depth++;
+        }
+    }
+}
+
+<*
+ Whether the instance has no children; true for every instance of a batch without a quadtree.
+*>
+fn bool InstancedMesh.is_leaf(&self, uint instance) {
+    return !self.quadtree.parents.len || self.quadtree.leaves[instance];
+}
+
+<*
+ Count of instances the CPU walkers visit: the leaves, or every live instance.
+*>
+fn uint InstancedMesh.leaf_instances(&self) {
+    return self.quadtree.parents.len ? self.quadtree.leaf_count : self.count;
+}
+
+<*
  World-space distance the sway can move a vertex along each axis.
  @require self.amplitude == 0 || self.direction.length() > 0
 *>
@@ -179,6 +237,12 @@ fn Vec3 InstanceSway.reach(self) {
  @require instance_effects_valid(self.sway, self.fade)
 *>
 fn void InstancedMesh.validate_effects(&self) {}
+
+<*
+ Check the programming contract of the batch's quadtree.
+ @require instance_quadtree_valid(self)
+*>
+fn void InstancedMesh.validate_quadtree(&self) {}
 
 <*
  Whether the transform mirrors space.
@@ -210,9 +274,19 @@ fn bool instance_effects_valid(InstanceSway sway, InstanceFade fade) {
       && math::is_finite(fade.end);
 }
 
+<*
+ Whether the quadtree is well formed and the batch can draw it.
+ Instance records pack unmirrored instances first, so a mirrored instance would move the records off their parents.
+*>
+fn bool instance_quadtree_valid(InstancedMesh* batch) {
+    return @ok(check_instance_quadtree(&batch.quadtree, batch.count)) && !batch.trace && batch.mirrored_count() == 0;
+}
+
 fn void free_instanced_mesh(Entity entity, void* component, void* user) @private {
     InstancedMesh* batch = (InstancedMesh*)component;
     Allocator allocator = *(Allocator*)user;
     alloc::free(allocator, batch.transforms.ptr);
     alloc::free(allocator, batch.colors.ptr);
+    alloc::free(allocator, batch.quadtree.parents.ptr);
+    alloc::free(allocator, batch.quadtree.leaves.ptr);
 }

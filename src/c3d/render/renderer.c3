@@ -420,6 +420,7 @@ fn void? Renderer.end_frame(&self) {
                 record.fog_history.publish();
                 record.cloud_history.publish();
                 publish_lod_history(&record.lod_history);
+                publish_quadtree_history(&record.quadtree_history);
             }
             submitted = true;
         };
@@ -1204,6 +1205,7 @@ fn void abort_frame(Renderer* renderer) {
             record.fog_history.discard();
             record.cloud_history.discard();
             discard_lod_history(&record.lod_history);
+            discard_quadtree_history(&record.quadtree_history);
         }
     }
     foreach (&record : renderer.views.items) {

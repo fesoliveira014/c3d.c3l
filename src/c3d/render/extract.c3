@@ -34,34 +34,35 @@ enum DrawList {
  Mesh or batch range with bounds in the view's coordinate space.
 *>
 struct MeshCandidate {
-    Node*          node;
-    GeometryId     geometry;
-    MaterialId     material;
-    SkinBinding*   skin;
-    float[]        morph_weights;
-    MorphChannel[] morph_channels;
-    Aabb           world_bounds;
-    float          ndc_depth;
-    float          view_depth;
-    bool           receive_shadow;
-    InstancedMesh* batch;
-    BillboardBatch* billboards;
-    ulong          scene_identity;
-    AnimatedCrowd* crowd;
+    Node*                   node;
+    GeometryId              geometry;
+    MaterialId              material;
+    SkinBinding*            skin;
+    float[]                 morph_weights;
+    MorphChannel[]          morph_channels;
+    Aabb                    world_bounds;
+    float                   ndc_depth;
+    float                   view_depth;
+    bool                    receive_shadow;
+    InstancedMesh*          batch;
+    BillboardBatch*         billboards;
+    ulong                   scene_identity;
+    AnimatedCrowd*          crowd;
     AnimatedLodPartBinding* animated_lod;
-    ModelInstance* model_instance;
-    Node*          source_node;
-    Mesh*          source_mesh;
-    uint           crowd_part;
-    uint           instance_first;
-    uint           instance_count;
-    bool           mirrored;
-    LodSelection*  lod;
-    uint           lod_level;
-    uint           lod_part;
-    bool           impostor;
-    bool           vertex_motion;
-    ulong          vertex_history_token;
+    ModelInstance*          model_instance;
+    Node*                   source_node;
+    Mesh*                   source_mesh;
+    uint                    crowd_part;
+    uint                    instance_first;
+    uint                    instance_count;
+    bool                    mirrored;
+    LodSelection*           lod;
+    QuadtreeSelection*      quadtree;
+    uint                    lod_level;
+    uint                    lod_part;
+    bool                    impostor;
+    bool                    vertex_motion;
+    ulong                   vertex_history_token;
 }
 
 <*
@@ -85,6 +86,7 @@ struct ExtractCounts {
  @param [&inout] counts : "Zeroed first, then accumulated."
  @param clip_plane : "Culls bounds wholly on its negative side; zero culls nothing."
  @param lod : "View selections indexed by scene node slot."
+ @param quadtrees : "View quadtree selections; a quadtree batch without one is skipped."
  @param origin : "Absolute origin shared by camera and clip plane."
 *>
 fn MeshCandidate[] extract_candidates(
@@ -96,6 +98,7 @@ fn MeshCandidate[] extract_candidates(
     ExtractCounts* counts,
     Plane clip_plane = {},
     LodSelection[] lod = {},
+    QuadtreeSelection[] quadtrees = {},
     Vec3 origin = {},
 ) {
     *counts = {};
@@ -130,6 +133,7 @@ fn MeshCandidate[] extract_candidates(
                 camera:       camera,
                 clip_frustum: &clip_frustum,
                 counts:       counts,
+                quadtrees:    quadtrees,
                 origin:       origin,
             );
         }
@@ -386,6 +390,7 @@ fn void include_batch(
     CameraMatrices* camera,
     Frustum* clip_frustum,
     ExtractCounts* counts,
+    QuadtreeSelection[] quadtrees,
     Vec3 origin,
 ) @local {
     if (spatial::animated_lod_owns_node(scene, node)) return;
@@ -394,6 +399,13 @@ fn void include_batch(
         counts.dangling++;
         return;
     }
+
+    QuadtreeSelection* quadtree = batch.quadtree.parents.len ? find_quadtree_selection(quadtrees, node) : null;
+    if (batch.quadtree.parents.len && !quadtree) {
+        counts.dangling++;
+        return;
+    }
+
     batch.validate_effects();
     Aabb world = spatial::instanced_world_bounds(
         assets: assets,
@@ -420,6 +432,7 @@ fn void include_batch(
         .receive_shadow = batch.receive_shadow,
         .batch          = batch,
         .scene_identity = scene.identity,
+        .quadtree       = quadtree,
     };
     attach_crowd(scene, &template);
     emit_batch_candidates(candidates, counts, template);
@@ -449,7 +462,7 @@ fn bool past_fade_band(InstanceFade fade, Aabb world_bounds, Vec3 fade_origin) @
     return nearest.distance(fade_origin) > fade.end;
 }
 
-fn bool batch_is_drawable(AssetStore* assets, InstancedMesh* batch) @local {
+fn bool batch_is_drawable(AssetStore* assets, InstancedMesh* batch) @private {
     return spatial::instanced_mesh_is_live(assets, batch) && instanced_material_drawable(assets, batch);
 }
 
@@ -580,6 +593,7 @@ fn float center_depth(CameraMatrices* camera, Aabb world) @local {
  @param fade_origin : "View camera position batch fades are measured from."
  @param [&inout] counts : "Reset, then populated for broad caster inclusion."
  @param lod : "Parent view selections indexed by scene node slot."
+ @param quadtrees : "Parent view quadtree selections; a quadtree batch without one is skipped."
  @param origin : "Absolute origin of bounds and fade coordinates."
  @param colored : "Blended meshes cast into the translucent maps."
 *>
@@ -590,6 +604,7 @@ fn MeshCandidate[] extract_shadow_candidates(
     Vec3 fade_origin,
     ExtractCounts* counts,
     LodSelection[] lod = {},
+    QuadtreeSelection[] quadtrees = {},
     Vec3 origin = {},
     bool colored = false,
 ) {
@@ -634,7 +649,9 @@ fn MeshCandidate[] extract_shadow_candidates(
         Node* node = scene.node(entity);
 
         if (!spatial::animated_lod_owns_node(scene, node) && batch.count && node.visible_effective && batch.cast_shadow) {
-            if (!batch_is_drawable(assets, batch)) {
+            QuadtreeSelection* quadtree = batch.quadtree.parents.len ? find_quadtree_selection(quadtrees, node) : null;
+
+            if (!batch_is_drawable(assets, batch) || (batch.quadtree.parents.len && !quadtree)) {
                 counts.dangling++;
             } else if (casts_shadow(&assets.material(batch.material).data, colored)) {
                 batch.validate_effects();
@@ -655,6 +672,7 @@ fn MeshCandidate[] extract_shadow_candidates(
                         .receive_shadow = batch.receive_shadow,
                         .batch          = batch,
                         .scene_identity = scene.identity,
+                        .quadtree       = quadtree,
                     };
                     attach_crowd(scene, &template);
                     emit_batch_candidates(candidates, counts, template);

@@ -310,6 +310,14 @@ fn void? record_raster_view(
             camera: *camera,
             matrices: matrices,
         )!;
+
+        QuadtreeSelection[] quadtrees = prepare_quadtree_view(
+            renderer: renderer,
+            record: record,
+            scene: scene,
+            camera: *camera,
+            matrices: matrices,
+        )!;
         MeshCandidate[] candidates;
         instrumentation::@scope("view.extract") {
             ExtractCounts counts;
@@ -322,6 +330,7 @@ fn void? record_raster_view(
                 counts:     &counts,
                 clip_plane: maths::rebase_plane(record.desc.clip_plane, renderer.frame_origin),
                 lod: lod,
+                quadtrees: quadtrees,
                 origin: renderer.frame_origin,
             );
             renderer.stats.culled += counts.culled;
@@ -336,6 +345,7 @@ fn void? record_raster_view(
             .history     = temporal ? &record.history : null,
             .fade_origin = matrices.position,
             .lod = lod,
+            .quadtrees = quadtrees,
         };
         effects_view.blocks.init(tmem);
 
@@ -650,6 +660,7 @@ fn void? record_raster_view(
             gpu::GpuAddress probe_trace = prepare_probe_updates(renderer, scene)!;
             record_pending_copies(renderer, &renderer.commands)!;
             record_lod_selection(renderer, lod)!;
+            record_quadtree_selection(renderer, quadtrees)!;
             record_probe_volumes(renderer, scene, &environments, probe_trace)!;
             record_instance_cull(renderer, view_culls)!;
             record_instance_sort(renderer, view_culls)!;
