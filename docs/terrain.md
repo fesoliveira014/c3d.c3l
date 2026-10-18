@@ -2,16 +2,18 @@
 
 Terrain chunks use core [camera-relative instance packing](large_world.md).
 Supply the camera's absolute position in `FrameInfo.reference_position`; height
-queries and terrain selection retain their existing CPU coordinate contracts.
-Reference changes preserve temporal motion for unchanged chunks.
+queries keep their CPU coordinate contracts. A reference change keeps every view's level
+selection and preserves temporal motion for unchanged chunks.
 
 The `c3d_landscape` add-on (`addons/c3d_landscape.c3l`, module `c3d::landscape::terrain`) draws a
-height-mapped ground from an `R16_UINT` height map. A `Terrain` component on a node selects, once per frame,
-the level of each chunk of a quadtree for one camera. The selected chunks are the instances of the node's own
-`InstancedMesh`, drawn with a custom material from the package's shaders, so they take part in every view,
-shadow layer, depth prepass, G-buffer and velocity pass through core's instanced path. Up to four `STANDARD`
-layer materials blend through an RGBA control map. CPU height queries follow the physics height-field
-convention, so a height-field collider on the same node touches the drawn surface.
+height-mapped ground from an `R16_UINT` height map. A `Terrain` component on a node builds a quadtree of
+chunks as the instances of the node's own `InstancedMesh`, drawn with a custom material from the package's
+shaders, so they take part in every view, shadow layer, depth prepass, G-buffer and velocity pass through
+core's instanced path. The renderer selects the levels per view on the GPU ([quadtree
+selection](instancing.md#quadtree-selection)): every view and every shadow layer draws the levels its own
+camera asks for. Up to four `STANDARD` layer materials blend through an RGBA control map. CPU height queries
+follow the physics height-field convention, so a height-field collider on the same node touches the drawn
+surface.
 
 The package imports only the standard library and `c3d`; core never imports it and has no terrain feature
 flag. Its root module `c3d::landscape` holds the generated constants of its shader package, including
@@ -45,12 +47,7 @@ terrain::add_terrain(
 )!;
 
 scene.update_world();
-terrain::update(
-    scene:                &scene,
-    assets:               &assets,
-    camera_node:          camera,
-    output_height_pixels: (float)output_height,
-)!;
+terrain::update(&scene, &assets)!;
 renderer.render_view(&scene, camera, view)!;
 ```
 
@@ -58,15 +55,17 @@ renderer.render_view(&scene, camera, view)!;
   `TerrainSet` and `TerrainTile`, and installs their remove hooks. The store outlives the scene, and the scene
   stays at its address: the tile hooks hold it.
 - `add_terrain` attaches a terrain to an existing node that carries no `InstancedMesh` and no `Terrain`, and
-  builds everything at once: the bounds tree, the owned material and the node's `InstancedMesh`, with room for
-  the finest chunk count. It faults as listed under [Faults](#faults) and then leaves the node and store as they
-  were.
-- `update` runs every frame after the camera and the terrain nodes moved and before the frame's first
-  `render_view`. It refreshes changed bounds, selects every terrain's chunks and writes them into each batch in
-  place. It allocates nothing and marks a batch only when its selection or its bounds changed, so a still
-  camera uploads nothing. A fault from one terrain does not stop the others; `update` returns the first one.
+  builds everything at once: the bounds tree, the owned material and the node's `InstancedMesh`, with one
+  instance for every quadtree node and the [quadtree](#level-of-detail) installed. It faults as listed under
+  [Faults](#faults) and then leaves the node and store as they were.
+- `update` runs every frame before the frame's first `render_view`, after height edits. It refreshes changed
+  bounds, rewrites the node records when the bounds changed and applies the `lod_threshold`, `lod_hysteresis`
+  and shadow fields of `Terrain`. It takes no camera and no output size: the views select their own levels. It
+  allocates nothing on an ordinary frame and marks a batch only when its bounds changed, so a still frame
+  uploads nothing. A fault from one terrain does not stop the others; `update` returns the first one.
 
-Every view and shadow layer of the frame draws the selection of the camera given to `update`.
+`update(scene, assets)` replaces the four-argument form: callers drop `camera_node` and
+`output_height_pixels`, and `TerrainRuntime.chunks_per_level` and `lod_switches` no longer exist.
 
 ## TerrainDesc
 
@@ -81,8 +80,8 @@ than asserts, since descs also come from files.
 | `cell_size` | Metres between texel centres along x and z; positive |
 | `height_scale` | Metres at texel 65535: `height = height_scale × texel / 65535`; positive |
 | `layers` | Up to four live `STANDARD` materials, leading; zero ids after the last one |
-| `lod_threshold` | Projected chunk diameter in output pixels above which a chunk splits; zero or more |
-| `lod_hysteresis` | A split chunk merges below `lod_threshold / (1 + lod_hysteresis)`; zero or more |
+| `lod_threshold` | Projected node diameter, in pixels of the view's working extent, above which a node splits; zero or more |
+| `lod_hysteresis` | A split node merges below `lod_threshold / (1 + lod_hysteresis)`; zero or more |
 | `cast_shadow`, `receive_shadow` | Copied onto the batch at every `update` |
 
 **Height maps.** `image::load_texture_r16` loads a 16-bit PNG as `R16_UINT`; an 8-bit file widens by 257, so
@@ -108,18 +107,32 @@ finest, and a 2049 map has five levels. Every chunk draws the same shared grid o
 skirt ring that hangs from its edges down to the chunk's lowest height, so neighbours at different levels
 leave no crack. Skirts shade with the normal of the edge they hang from.
 
-Each `update` walks the tree from the root over the whole extent. A chunk's size is
-`camera::projected_size` of its bounding sphere at `output_height_pixels`, from the camera node's position: it
-reads no camera rotation, so turning in place never re-selects. A chunk splits above `lod_threshold` and
-merges below `lod_threshold / (1 + lod_hysteresis)`; a camera resting at a boundary does not flicker. Pass the
-height of the output the threshold is tuned for; a view of another height sees chunks of the same levels.
+**The batch.** Every node of the tree is an instance, finest level first: 85 at 1025 texels, 341 at 2049 and
+1,365 at 4097, which is 170 KiB of 128 B records on the GPU. The instance matrix maps the grid's unit box onto the
+node's box, its footprint and its lowest and highest height; the colour carries the chunk record: the texel
+origin, the span in texels and the height the skirts hang down to. `add_terrain` gives each instance its parent
+once, with `Scene.set_instance_quadtree`; `update` changes the topology only to hide the batch after a
+rejected height-map revision and to install it again. Each tile of a [set](#tile-sets) is a batch of its own.
 
-A selection partitions the extent, so it never holds more chunks than the finest level: 64, 256 and 1,024 at
-1025, 2049 and 4097. That is the batch capacity fixed at `add_terrain`. `lod_threshold = 0` selects the finest
-level everywhere, the full-resolution grid through the same chunk instances.
+**Selection.** Each view, its depth prepass and each of its shadow layers select on the GPU from the node
+records. A node splits when its size exceeds `lod_threshold`, and a node that split in the view's previous
+rendering stays split until its size falls below `lod_threshold / (1 + lod_hysteresis)`. A node draws when every
+ancestor splits and it does not, so the drawn nodes partition the extent. The size is the projected height of
+the sphere that bounds the node's box, in pixels of the view's working extent with `render_scale` included. The
+sphere is taken from the box's bounding box in world space: a node turned by 45° about Y measures up to 1.41
+times larger than an unturned one. The selection reads no camera rotation, so turning in place never
+re-selects. A change of `lod_threshold` or `lod_hysteresis` keeps every view's history.
 
-`TerrainRuntime.chunks_per_level` and `lod_switches` report the last selection; the batch's `count` is its
-size.
+- Two views of one terrain, such as a split screen or a mirror, draw different levels when their cameras are at
+  different distances, and a shadow layer draws the levels of the view it belongs to.
+- The history is per view and lives in the renderer. A height edit rewrites the records and keeps it; a new
+  topology, which only a rejected height-map revision causes, drops it once.
+- `lod_threshold = 0` selects the finest level everywhere, the full-resolution grid through the same chunk
+  instances.
+- A pixel is a pixel of the view that selects: a view of another height, or a `render_scale` below 1, sees the
+  levels of its own pixel count.
+- The renderer reports the drawn nodes of a frame, over all its passes, as `Stats.instances_visible`, and
+  `Stats.quadtree_fallbacks` counts batches that drew their finest level because the culling arena had no room.
 
 ## The node
 
@@ -278,8 +291,9 @@ scene.get(ground, PhysicsBody).mark_changed();
 
 - `mark_dirty` unions the rectangle into the terrain's pending one; the union must cover every texel written
   since the last `update`. The next `update` sees the revision change and refreshes only the chunks the
-  rectangle touches and their ancestors. A revision change without `mark_dirty` rebuilds the whole bounds
-  tree, as does a new pixel array.
+  rectangle touches and their ancestors, then rewrites the node records and marks the batch, which uploads
+  its records again, up to 170 KiB at 4097 texels. A revision change without `mark_dirty` rebuilds the whole
+  bounds tree, as does a new pixel array. The quadtree keeps its topology, so no view loses its history.
 - On a [set tile](#tile-sets), `mark_dirty` reaches neither the neighbours' duplicated edge texels nor their border
   rings. After it, call `TerrainSet.propagate_edit`:
 
@@ -314,8 +328,9 @@ scene.get(ground, PhysicsBody).mark_changed();
   next `PhysicsWorld.update`, so call it once when a stroke ends: collision is stale during the stroke and
   correct after it.
 - A revision whose map fails the checks, or whose side differs from the accepted side, is rejected: `update`
-  returns the fault, keeps the old bounds and hides the terrain (batch count 0) until a conforming revision,
-  which rebuilds everything.
+  returns the fault, keeps the old bounds and hides the terrain (batch count 0, quadtree disabled) until a
+  conforming revision, which rebuilds everything and installs the quadtree again; each view then selects
+  without hysteresis for one frame.
 - `TerrainRuntime.last_refresh` keeps the last accepted refresh until the next one: the height-map revisions
   before and after it and the rectangle it covered, the whole map unless it took a `mark_dirty` rectangle. A
   rejected revision leaves it. Consumers that follow the ground, such as [vegetation](vegetation.md), read it.
@@ -340,9 +355,10 @@ defines retries, subtree selection and ownership.
 
 ## Picking
 
-`spatial::pick` sees the terrain's chunk boxes, or the flat top of the unit grid at triangle precision, not the
-drawn heights. The terrain's own queries are the supported hit. Give the terrain node its own layer bit and
-leave it out of `PickOptions.layers`, as the example does; the scene index sees chunk boxes too.
+`spatial::pick` sees the leaves of the quadtree, the finest chunk boxes, or the flat top of the unit grid at
+triangle precision, not the drawn heights; the larger nodes are views' selections and take no part. The terrain's
+own queries are the supported hit. Give the terrain node its own layer bit and leave it out of
+`PickOptions.layers`, as the example does; the scene index sees the finest chunk boxes too.
 
 ## Shadows
 
@@ -371,6 +387,7 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
 | `add_terrain`, `height_view`, `update` | `c3d::INVALID_ARGUMENT` | Not square, a side outside the list, pixel bytes not `side² × 2` |
 | `add_terrain` | `c3d::INVALID_ARGUMENT` | A non-positive scale, a negative or NaN tunable, no layer 0, a layer after an unset one, a layer that is not `STANDARD`, a shared key naming another asset kind |
 | `add_terrain`, `prepare` | `c3d::INVALID_ARGUMENT` | A tile that does not match its set, or shares a coordinate with a linked tile ([tile sets](#tile-sets)) |
+| `add_terrain`, `prepare`, `update` | `c3d::UNSUPPORTED` | The node carries a `LodGroup`, which cannot share a batch with a quadtree |
 | `add_terrain` | `c3d::CAPACITY_EXCEEDED` | Store pool full or an allocation failed |
 | `TerrainSet.neighbour` | `NOT_FOUND` | The tile is not linked, or has no linked neighbour in the direction |
 | `update` | `c3d::INVALID_ID` | The height map was removed |
@@ -379,17 +396,16 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
 
 ## Limits
 
-- One selection per frame, for the camera given to `update`: a view far from it (a shadow cascade, a capture
-  or mirror view) draws that camera's levels.
 - The batch never traces (`trace = false`, and its custom vertex stage keeps it out whatever `trace` says). Under traced
   shadows ridges do not shadow valleys, though other
   objects still cast onto the terrain; ray-traced ambient occlusion, reflections, probes and path tracing do
   not see it.
 - Level changes pop and carry no motion vector; temporal history rejection handles them. The velocity forms
-  ignore per-instance previous matrices: a re-selection reuses record indices for other chunks, so only node
-  motion and the camera produce velocity.
-- The velocity pass redraws every chunk on temporal views. A re-selection frame uploads 128 B per selected
-  chunk and, on temporal views, 64 B per chunk of previous matrices the stage ignores.
+  ignore per-instance previous matrices: a chunk's shape comes from its record, so only node motion and the
+  camera produce velocity.
+- The velocity pass redraws every chunk on temporal views. A frame after a bounds change uploads 128 B per node
+  and, on temporal views, 64 B per node of previous matrices the stage ignores: up to 170 KiB and 85 KiB at 4097
+  texels.
 - Normals at a map border with no linked neighbour use one-sided differences. Between linked tiles they are central
   differences through the [border ring](#tile-sets), as current as its last refresh.
 - Every set layer is sampled on every pixel, whatever its weight; four layers is the limit.
@@ -405,7 +421,7 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
 control map from height and slope and four tiled layers, then walks the camera over it. F toggles flight, G
 drops a crate onto the height-field collider, B held raises a bump under the camera at a fixed rate whatever
 the frame rate and B released ends the stroke, P toggles the collider, T toggles a decal on the ground ahead of the start pose, and a click tosses the crate under the
-cursor (a 6 m/s velocity change) through `spatial::pick` with the terrain's layer left out. The panel shows chunks per level, LOD switches, the height and normal under the
+cursor (a 6 m/s velocity change) through `spatial::pick` with the terrain's layer left out. The panel shows the node count, the instances drawn over all passes, the height and normal under the
 camera beside the physics ray height, and the LOD threshold.
 
 `--tiles 2x2` builds the same landscape as a [tile set](#tile-sets) of four tiles cut from the map with a one-texel
@@ -422,11 +438,14 @@ default size and takes `--width`, `--height`, `--shading` and `--shadows`; it ex
 `--benchmark [frames]` renders to an offscreen target without a window and runs a scripted, deterministic path
 of four segments of `frames` steps (default 300) at 1/60 s after 60 warm-up frames: still, a low sweep across
 level boundaries, a hover bobbing at a split threshold, and an edit line that stamps a 49 × 49 bump every 30
-frames. It prints one line per metric and two gates, and exits 1 when a gate fails:
+frames. It prints one line per metric and one gate, and exits 1 when the gate fails:
 
 - `gate still_uploads`: the still segment uploads 0 bytes and never changes the batch revision after its first
-  frame;
-- `gate hover_switches`: the hover segment switches no level after its first second.
+  frame.
+
+`update_us` times `terrain::update` and `drawn` is `Stats.instances_visible`. The selection runs on the GPU and
+the renderer reports no per-level counts, so the benchmark prints no level or switch lines; the hysteresis is
+tested in the core quadtree acceptance.
 
 Switches: `--gpu-timings` (build with `python3 scripts/build.py --target terrain --opt O3 --define
 C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib c3d_profile`), `--shading forward|deferred`,
@@ -442,8 +461,9 @@ Interactive runs always validate; benchmark runs validate only with `--validatio
 ### RTX 4090, driver 610.88, 2560 × 1440
 
 Windows host, `--opt O3` with GPU timings, atlas shadows, three runs of each case (48 in all); medians, and
-per-pass run-to-run ranges within ±1 %. Both gates pass in every run. GPU pass medians of the still segment,
-in ms:
+per-pass run-to-run ranges within ±1 %. Both gates passed in every run. These runs predate the GPU selection: the
+levels were chosen on the CPU, and the Instance cull column holds only the cull of the chosen chunks. GPU pass
+medians of the still segment, in ms:
 
 | Case | Prepass | G-buffer | Shadow atlas | Forward opaque | Lighting | Velocity | Instance cull |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -478,32 +498,33 @@ CPU, Windows host, median of three runs (range):
 | `selection_us` median, still | 1.9 | 3.4 to 3.6 |
 | `selection_us` p99, sweep | 3.0 to 3.2 | 6.0 to 6.2 |
 
+`selection_us` timed the CPU selection that `update` no longer runs.
+
 The full bounds build runs at load, not per frame. The edit an application pays for is the whole-texture
 re-upload and, with a collider, the physics re-cook at the end of a stroke.
 
 ### WSL, llvmpipe, 1920 × 1080
 
 llvmpipe is a CPU Vulkan implementation: its frame and pass times are environment only, never GPU numbers.
-CPU-side lines (bounds, edits, selection) are the terrain's own work on an i9-14900K.
+CPU-side lines (bounds, edits, update) are the terrain's own work on an i9-14900K.
 
-Scripted benchmark, 1920 × 1080, atlas shadows, four layers, 300 frames per segment (2049 forward and
-deferred, 4097 forward; `--opt O3`). Both gates pass in every run.
+Scripted benchmark, 1920 × 1080, atlas shadows, four layers, 2049 and 4097 forward; `--opt O3`. The gate passes
+in every run. The `bounds_build_ms`, `edit_update_ms` and `physics_recook_ms` lines come from 300 frames per
+segment; the `update_us` and `drawn` lines from 100 frames per segment.
 
 | Line | 2049 | 4097 |
 | --- | ---: | ---: |
 | `bounds_build_ms` (full rebuild, median of five) | 0.19 to 0.24 | 2.23 |
 | `edit_update_ms` median / p99 (49 × 49 stamp) | 0.009 to 0.011 / 0.042 to 0.053 | 0.019 / 0.125 |
-| `edit_upload_bytes` (whole height map plus records) | 8,414,978 | 33,600,514 |
+| `edit_upload_bytes` (whole height map plus node records) | 8,440,450 | 33,745,538 |
 | `physics_recook_ms` (whole field at stroke end) | 252 to 258 | 1,131 |
-| `selection_us` median, still / sweep / hover / edit | 2.5 / 2.6 / 2.3 / 2.6 | 4.5 / 4.7 / 3.9 / 5.0 |
-| `selection_us` p99, sweep / hover | 4.6 to 10.1 / 3.6 to 3.7 | 9.2 / 10.2 |
-| `chunks` median, still / sweep / hover / edit | 130 / 145 / 79 / 142 | 193 / 229 / 124 / 232 |
-| `lod_switches_per_second`, sweep / hover | 15.4 / 3.2 | 56.0 / 6.0 |
+| `update_us` median, still / sweep / hover / edit | 0.41 / 0.85 / 0.42 / 0.47 | 0.64 / 0.83 / 0.67 / 0.77 |
+| `drawn` median, still / sweep / hover / edit (instances over all passes) | 369 / 359 / 241 / 294 | 472 / 484 / 253 / 371 |
 | `frame_ms` median, still (environment only) | 687 to 711 | 834 |
 
-The still segment uploads nothing after its first frame and the hover segment switches no level after its
-first second. A sweep frame that re-selects uploads 128 B per chunk (up to 21 KiB at 2049, 31 KiB at 4097). A
-stamp frame's update, bounds refresh included, stays under 0.13 ms; the whole-texture re-upload and the
-physics re-cook are the costs of an edit.
+The still, sweep and hover segments upload nothing after their first frame: moving the camera changes no
+record. A stamp frame uploads the whole height map and the node records (43,648 B at 2049, 174,720 B at 4097),
+and its update, bounds refresh and record rewrite included, stays under 0.13 ms; the whole-texture re-upload and
+the physics re-cook are the costs of an edit.
 
 Preparation order and pending draw behavior are listed in the [owner readiness table](owner_readiness.md).

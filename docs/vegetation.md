@@ -57,12 +57,7 @@ foliage::add_foliage(
 
 // every frame
 scene.update_world();
-terrain::update(
-    scene:                &scene,
-    assets:               &assets,
-    camera_node:          camera,
-    output_height_pixels: (float)output_height,
-)!;
+terrain::update(&scene, &assets)!;
 foliage::update(&scene, &assets, wind_velocity)!;
 renderer.render_view(&scene, camera, view)!;
 ```
