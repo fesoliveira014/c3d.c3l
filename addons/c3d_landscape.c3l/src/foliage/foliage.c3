@@ -343,7 +343,8 @@ fn void? check_authoring(Scene* scene, AssetStore* assets, FoliageDesc* desc) @p
     TextureAsset* height_map = assets.textures.try_get(ground.height_map)!;
     terrain::check_height_map(height_map)!;
     float extent = (float)(height_map.desc.width - 1) * ground.cell_size;
-    if (!(math::ceil(extent / desc.cell_size) <= MAX_CELLS_PER_SIDE)) return c3d::INVALID_ARGUMENT~;
+    float cells = cell_count(extent / desc.cell_size, scene.world.has(desc.ground, TerrainTile));
+    if (!(cells <= MAX_CELLS_PER_SIDE)) return c3d::INVALID_ARGUMENT~;
     if (!assets.textures.is_live(desc.rules.density_map)) return c3d::INVALID_ID~;
     check_density_map(assets.textures.get(desc.rules.density_map))!;
 }
