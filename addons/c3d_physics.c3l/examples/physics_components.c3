@@ -12,6 +12,7 @@ import c3d::camera;
 import c3d::debug;
 import c3d::geometry;
 import c3d::gui;
+import c3d::job;
 import c3d::light;
 import c3d::material;
 import c3d::maths;
@@ -75,6 +76,7 @@ struct Options @local {
     bool stress;
     bool debug_draw;
     uint benchmark_frames;
+    uint workers;
 }
 
 struct BodyCounts @local {
@@ -696,6 +698,8 @@ fn Options? parse_options(String[] args) @local {
             options.stress = true;
         } else if (arg == "--debug-draw") {
             options.debug_draw = true;
+        } else if (arg == "--workers" && index + 1 < args.len) {
+            options.workers = args[++index].to_uint()!;
         } else if (arg == "--benchmark" && index + 1 < args.len) {
             uint frames = args[++index].to_uint()!;
             if (!frames) return c3d::INVALID_ARGUMENT~;
@@ -704,7 +708,7 @@ fn Options? parse_options(String[] args) @local {
             return c3d::INVALID_ARGUMENT~;
         }
     }
-    if (options.debug_draw && !options.benchmark_frames) return c3d::INVALID_ARGUMENT~;
+    if ((options.debug_draw || options.workers) && !options.benchmark_frames) return c3d::INVALID_ARGUMENT~;
     return options;
 }
 
@@ -735,6 +739,22 @@ fn void? drop_benchmark_boxes(Scene* scene, Level* level) @local {
     }
 }
 
+fn void run_on_pool(
+    void* context,
+    ParallelRangeFn range,
+    void* data,
+    uint count,
+    uint batch,
+) @local {
+    JobPool* pool = context;
+    pool.wait(pool.run(
+        range: range,
+        data:  data,
+        count: count,
+        batch: batch,
+    ));
+}
+
 fn uint percentile_index(uint frames) @local {
     return (frames * PERCENTILE_95 + PERCENT - 1) / PERCENT - 1;
 }
@@ -744,6 +764,7 @@ fn void? measure_debug_draw(
     String sink_name,
     usz capacity,
     uint frames,
+    uint workers,
 ) @local {
     debug::DebugDraw sink = debug::create_debug_draw(mem, capacity);
     defer debug::destroy_debug_draw(&sink);
@@ -765,8 +786,8 @@ fn void? measure_debug_draw(
     sort::quicksort(samples);
 
     io::printfn(
-        "debug_draw,sink,%s,capacity,%d,frames,%d,mean_ms,%.6f,p95_ms,%.6f,lines,%d,dropped,%d",
-        sink_name, (ulong)capacity, frames, total / frames, samples[percentile_index(frames)],
+        "debug_draw,sink,%s,capacity,%d,workers,%d,frames,%d,mean_ms,%.6f,p95_ms,%.6f,lines,%d,dropped,%d",
+        sink_name, (ulong)capacity, workers, frames, total / frames, samples[percentile_index(frames)],
         (ulong)(sink.vertices.len() / 2), (ulong)sink.dropped,
     );
 }
@@ -790,6 +811,18 @@ fn void? run_benchmark(Options options) @local {
         desc:      physics::default_physics_desc(),
     )!;
     defer physics::destroy_physics_world(&physics);
+
+    JobPool jobs;
+    if (options.workers) {
+        JobPoolDesc jobs_desc = job::default_job_pool_desc();
+        jobs_desc.worker_count = options.workers;
+        jobs_desc.background_workers = job::default_background_workers(options.workers);
+        jobs = job::create_job_pool(mem, jobs_desc)!;
+        physics.set_parallel({ .run = &run_on_pool, .context = &jobs });
+    }
+    defer {
+        if (options.workers) job::destroy_job_pool(&jobs);
+    }
 
     if (options.stress) toggle_stress(&scene, &level, true);
     drop_benchmark_boxes(&scene, &level)!;
@@ -829,12 +862,14 @@ fn void? run_benchmark(Options options) @local {
             sink_name: "unbounded",
             capacity:  BENCHMARK_DEBUG_LINES,
             frames:    options.benchmark_frames,
+            workers:   options.workers,
         )!;
         measure_debug_draw(
             physics:   &physics,
             sink_name: "default",
             capacity:  debug::DEBUG_LINE_CAPACITY,
             frames:    options.benchmark_frames,
+            workers:   options.workers,
         )!;
     }
 }
