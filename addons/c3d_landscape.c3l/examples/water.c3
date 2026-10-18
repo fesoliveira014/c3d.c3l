@@ -67,6 +67,7 @@ const float SHORE_CLEARANCE @local = 0.3f; // metres above the water under which
 const float CRATE_SIZE @local = 1;
 const float CRATE_DENSITY @local = 600; // floats at 0.6 of its height
 const float CRATE_DRAG @local = 3000; // newton-seconds per metre: a damping ratio near 0.4 at the density line
+const float CRATE_DRAG_COEFFICIENT @local = 0.5f; // half a cube's 1.05: the eight cells project twice its face
 const float CRATE_FIELD @local = 40; // metres across the crates' square; the bed lies 2.6 m down at its corners
 const float CRATE_DROP_HEIGHT @local = 2;
 const uint DEFAULT_CRATES @local = 16;
@@ -183,6 +184,7 @@ struct Options @local {
     Reflection  reflection;
     float       mirror_scale;
     uint        crates;
+    Vec3        current;
     bool        ssgi;
     bool        sky;
     bool        volumetric_fog;
@@ -191,12 +193,6 @@ struct Options @local {
     bool        ripples;
     uint        width;
     uint        height;
-}
-
-// The reference adapter of docs/water.md: one water body, the physics update's base time.
-struct LakeSurface @local {
-    SurfaceView view;
-    double      time; // the FrameInfo.time of the physics update's first step
 }
 
 struct Mirror @local {
@@ -228,7 +224,7 @@ struct Demo @local {
     Mirror        mirror;
     Capture       capture;
     Node*[]       crates;
-    LakeSurface   surface;
+    WaterFluid    fluid; // view and time are the physics update's first step
 }
 
 struct Controls @local {
@@ -260,21 +256,6 @@ struct BenchmarkResult @local {
     uint          settle_count;
     float         settle_worst;
     bool          timestamps;
-}
-
-fn float? lake_height(
-    void* context,
-    float x,
-    float z,
-    float step_offset,
-) @local {
-    LakeSurface* lake = context;
-    return water::sample_surface(
-        view:    &lake.view,
-        world_x: x,
-        world_z: z,
-        time:    lake.time + step_offset,
-    );
 }
 
 fn Vec3 wind_velocity(float speed, float heading_degrees) @local {
@@ -589,7 +570,11 @@ fn void? add_crates(Demo* demo) @local {
         collider.half_extents = { CRATE_SIZE * 0.5f, CRATE_SIZE * 0.5f, CRATE_SIZE * 0.5f };
         collider.density = CRATE_DENSITY;
         demo.physics.add_body(node, physics::default_body_desc(DYNAMIC), (&collider)[:1])!;
-        demo.scene.add(node, (Buoyancy){ .fluid_density = physics::DEFAULT_FLUID_DENSITY, .linear_drag = CRATE_DRAG });
+        demo.scene.add(node, (Buoyancy){
+            .fluid_density    = physics::DEFAULT_FLUID_DENSITY,
+            .linear_drag      = CRATE_DRAG,
+            .drag_coefficient = CRATE_DRAG_COEFFICIENT,
+        });
         demo.crates[index] = node;
     }
 }
@@ -817,7 +802,7 @@ fn void? build_demo(Demo* demo) @local {
         name: "camera",
     )!;
     add_crates(demo)!;
-    demo.physics.set_fluid_surface(&lake_height, &demo.surface);
+    demo.physics.set_fluid_sampler(&water::fluid_sample, &demo.fluid);
     scene.update_world();
 }
 
@@ -876,7 +861,11 @@ fn double? step_scene(
         lake:        demo.lake,
         mirror_view: demo.mirror.view,
     )!;
-    demo.surface = { .view = water::surface_view(scene, demo.assets, demo.lake.id)!, .time = time };
+    demo.fluid = {
+        .view    = water::surface_view(scene, demo.assets, demo.lake.id)!,
+        .time    = time,
+        .current = demo.options.current,
+    };
     time::Clock started = clock::now();
     demo.physics.update(delta);
     double physics_us = (double)(long)started.to_now() / NANOSECONDS_PER_MICROSECOND;
@@ -908,6 +897,11 @@ fn String? option_value(String[] args, usz* index) @local {
     if (*index + 1 >= args.len) return c3d::INVALID_ARGUMENT~;
     (*index)++;
     return args[*index];
+}
+
+fn Vec3? parse_current(String text) @local {
+    sz comma = text.index_of_char(',')!;
+    return { text[:comma].to_float()!, 0, text[comma + 1..].to_float()! };
 }
 
 fn Options? parse_options(String[] args) @local {
@@ -964,6 +958,7 @@ fn Options? parse_options(String[] args) @local {
             case "--crates":
                 options.crates = option_value(args, &index)!.to_uint()!;
                 if (options.crates != DEFAULT_CRATES && options.crates != MANY_CRATES) return c3d::INVALID_ARGUMENT~;
+            case "--current": options.current = parse_current(option_value(args, &index)!)!;
             case "--ssgi": options.ssgi = true;
             case "--traced": options.traced = true;
             case "--capture": options.capture = true;
@@ -981,6 +976,7 @@ fn Options? parse_options(String[] args) @local {
         }
     }
     if (options.volumetric_fog && !options.sky) return c3d::INVALID_ARGUMENT~;
+    if (options.benchmark && options.current != (Vec3){}) return c3d::INVALID_ARGUMENT~;
     if (!options.width) options.width = options.benchmark ? BENCHMARK_WIDTH : WINDOW_WIDTH;
     if (!options.height) options.height = options.benchmark ? BENCHMARK_HEIGHT : WINDOW_HEIGHT;
     return options;
@@ -1657,7 +1653,7 @@ fn int main(String[] args) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--size 1025|2049|4097] [--reflection planar|march|env] [--mirror-scale 0.5|1] [--crates 16|256] "
-              "[--ssgi] [--traced] [--capture] [--ripples on|off] [--width W] [--height H] [--sky] "
+              "[--current X,Z] [--ssgi] [--traced] [--capture] [--ripples on|off] [--width W] [--height H] [--sky] "
               "[--volumetric-fog].");
         }
         return 1;

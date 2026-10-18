@@ -416,7 +416,9 @@ grass or tree grows under 0.3 m above the water. The sky is a generated equirect
 disc, the scene's environment and background. The lake is `default_water_desc()` at 120 m with a generated
 tiling ripple normal map (4 m tiles) and a generated foam colour, on its own layer bit. The mirror view renders
 at `MIRROR_RENDER_SCALE` with the lines above. `--crates 16|256` drops 1 m crates (density 600, drag
-3000 N·s/m) over the middle 40 m, each with `Buoyancy` over the adapter above.
+3000 N·s/m, drag coefficient 0.5) over the middle 40 m, each with `Buoyancy` over `fluid_sample`; they bob on the
+orbital motion of the waves, and `--current X,Z` adds a uniform current in m/s that carries them (not with
+`--benchmark`, whose settle gate expects still water).
 
 Right drag looks, WASD moves, F flies, B raises the ground under the camera (the ground collider re-cooks when
 the key lifts). The panel switches the reflection source, the mirror's resolution, the waves (calm or zero),
