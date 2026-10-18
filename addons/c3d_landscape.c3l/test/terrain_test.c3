@@ -39,6 +39,7 @@ const uint BAND_ROW @local = 1; // the row inside a tile's edge that its neighbo
 const uint INTERIOR_ROW @local = 60; // clear of both outer bands of a 129-texel tile
 const float SEAM_AGREEMENT @local = 1e-6f; // both sides difference the same four heights
 const float ONE_SIDED_DISAGREEMENT @local = 0.01f; // random texels: far above the agreement, so a missing ring fails
+const uint MID_EDGE_ROW @local = 40; // an edit from here stays clear of both corners of a 129-texel tile
 
 struct Fixture @local {
     AssetStore   assets;
@@ -1076,4 +1077,191 @@ fn void test_smooth_normal_agrees_across_a_linked_seam() @test {
     Vec3 west_one_sided = terrain::sample_smooth_normal(&west_view, seam_x, along_z)!!;
     Vec3 east_one_sided = terrain::sample_smooth_normal(&east_view, seam_x, along_z)!!;
     assert((west_one_sided - east_one_sided).length() >= ONE_SIDED_DISAGREEMENT);
+}
+
+fn uint height_revision(SetFixture* sets, Node* tile) @local {
+    return sets.base.assets.texture(sets.base.scene.get(tile, Terrain).desc.height_map).header.revision;
+}
+
+fn ushort[] tile_texels(SetFixture* sets, Node* tile) @local {
+    return texels_of(sets, sets.base.scene.get(tile, Terrain).desc.height_map);
+}
+
+fn bool is_inside(TexelRect rect, uint column, uint row) @local {
+    return column >= rect.x && column < rect.x + rect.columns && row >= rect.z && row < rect.z + rect.rows;
+}
+
+fn bool same_rect(TexelRect first, TexelRect second) @local {
+    return first.x == second.x && first.z == second.z && first.columns == second.columns && first.rows == second.rows;
+}
+
+fn void assert_changed_only_inside(ushort[] before, ushort[] after, TexelRect rect) @local {
+    foreach (index, texel : after) {
+        uint column = (uint)(index % SMALL_TEXELS);
+        uint row = (uint)(index / SMALL_TEXELS);
+        if (!is_inside(rect, column, row)) assert(texel == before[index]);
+    }
+}
+
+fn uint SetFixture.propagate(&self, Node* tile, TexelRect rect) {
+    return self.set.propagate_edit(
+        scene:  &self.base.scene,
+        assets: &self.base.assets,
+        tile:   tile.id,
+        rect:   rect,
+    )!!;
+}
+
+fn uint SetFixture.edit_and_propagate(
+    &self,
+    Node* tile,
+    TexelRect rect,
+    ulong seed,
+) {
+    write_random_texels(&self.base, self.base.scene.get(tile, Terrain).desc.height_map, rect, seed);
+    terrain::mark_dirty(&self.base.scene, tile, rect);
+    return self.propagate(tile, rect);
+}
+
+fn uint neighbour_bit(TerrainNeighbour direction) @local => (uint)1 << direction.ordinal;
+
+// Tiles in grid order, x fastest.
+fn void SetFixture.assert_rings_hold_neighbours(&self, Node*[4] tiles) {
+    self.assert_ring_holds(tiles[0], RING_EAST, tiles[1]);
+    self.assert_ring_holds(tiles[0], RING_SOUTH, tiles[2]);
+    self.assert_ring_holds(tiles[1], RING_WEST, tiles[0]);
+    self.assert_ring_holds(tiles[1], RING_SOUTH, tiles[3]);
+    self.assert_ring_holds(tiles[2], RING_NORTH, tiles[0]);
+    self.assert_ring_holds(tiles[2], RING_EAST, tiles[3]);
+    self.assert_ring_holds(tiles[3], RING_NORTH, tiles[1]);
+    self.assert_ring_holds(tiles[3], RING_WEST, tiles[2]);
+}
+
+fn void test_propagated_edge_edit_leaves_other_neighbours_alone() @test {
+    SetFixture sets;
+    setup_set(&sets, mem);
+    defer teardown_set(&sets);
+    Node* north_west = add_tile_with_own_map(&sets, 0, 0);
+    Node* north_east = add_tile_with_own_map(&sets, 1, 0);
+    Node* south_west = add_tile_with_own_map(&sets, 0, 1);
+    Node* south_east = add_tile_with_own_map(&sets, 1, 1);
+    Node*[4] tiles = { north_west, north_east, south_west, south_east };
+
+    uint last = SMALL_TEXELS - 1;
+    uint first_column = SMALL_TEXELS - EDIT_SIDE;
+    TexelRect mid_edge = { .x = first_column, .z = MID_EDGE_ROW, .columns = EDIT_SIDE, .rows = EDIT_SIDE };
+    TexelRect east_of_mid = { .x = 0, .z = MID_EDGE_ROW, .columns = 1, .rows = EDIT_SIDE };
+
+    @pool() {
+        uint[3] revisions = {
+            height_revision(&sets, north_east),
+            height_revision(&sets, south_west),
+            height_revision(&sets, south_east),
+        };
+        ushort[] untouched = alloc::new_array(tmem, ushort, (usz)SMALL_TEXELS * SMALL_TEXELS);
+        untouched[..] = tile_texels(&sets, north_east)[..];
+
+        uint changed = sets.edit_and_propagate(north_west, mid_edge, SEED);
+        assert(changed == neighbour_bit(TerrainNeighbour.EAST));
+
+        ushort[] edited = tile_texels(&sets, north_west);
+        ushort[] east = tile_texels(&sets, north_east);
+        for (uint row = MID_EDGE_ROW; row < MID_EDGE_ROW + EDIT_SIDE; row++) {
+            assert(edited[row * SMALL_TEXELS + last] == east[row * SMALL_TEXELS]);
+        }
+        assert_changed_only_inside(untouched, east, east_of_mid);
+        assert(height_revision(&sets, north_east) != revisions[0]);
+        assert(same_rect(runtime_of(&sets, north_east).pending, east_of_mid));
+        assert(height_revision(&sets, south_west) == revisions[1]);
+        assert(height_revision(&sets, south_east) == revisions[2]);
+        assert(!runtime_of(&sets, south_west).has_pending && !runtime_of(&sets, south_east).has_pending);
+        sets.assert_rings_hold_neighbours(tiles);
+
+        uint settled_revision = height_revision(&sets, north_east);
+        assert(sets.propagate(north_west, mid_edge) == 0);
+        assert(height_revision(&sets, north_east) == settled_revision);
+    };
+}
+
+fn void test_propagated_edit_keeps_edges_and_corners_equal() @test {
+    SetFixture sets;
+    setup_set(&sets, mem);
+    defer teardown_set(&sets);
+    Node* north_west = add_tile_with_own_map(&sets, 0, 0);
+    Node* north_east = add_tile_with_own_map(&sets, 1, 0);
+    Node* south_west = add_tile_with_own_map(&sets, 0, 1);
+    Node* south_east = add_tile_with_own_map(&sets, 1, 1);
+    Node*[4] tiles = { north_west, north_east, south_west, south_east };
+
+    uint last = SMALL_TEXELS - 1;
+    uint first_edit = SMALL_TEXELS - EDIT_SIDE;
+    TexelRect edit = { .x = first_edit, .z = first_edit, .columns = EDIT_SIDE, .rows = EDIT_SIDE };
+    Node*[3] neighbours = { north_east, south_west, south_east };
+    TexelRect[3] strips = {
+        { .x = 0, .z = first_edit, .columns = 1, .rows = EDIT_SIDE },
+        { .x = first_edit, .z = 0, .columns = EDIT_SIDE, .rows = 1 },
+        { .x = 0, .z = 0, .columns = 1, .rows = 1 },
+    };
+
+    @pool() {
+        ushort[][3] before;
+        uint[3] revisions;
+        foreach (index, neighbour : neighbours) {
+            ushort[] texels = tile_texels(&sets, neighbour);
+            before[index] = alloc::new_array(tmem, ushort, texels.len);
+            before[index][..] = texels[..];
+            revisions[index] = height_revision(&sets, neighbour);
+        }
+        ushort stale_ring_texel = ring_row(&sets, south_east, RING_NORTH)[0];
+
+        uint changed = sets.edit_and_propagate(north_west, edit, SEED + 1);
+        uint expected = neighbour_bit(TerrainNeighbour.EAST)
+          | neighbour_bit(TerrainNeighbour.SOUTH)
+          | neighbour_bit(TerrainNeighbour.SOUTH_EAST);
+        assert(changed == expected);
+
+        ushort[] edited = tile_texels(&sets, north_west);
+        ushort[] east = tile_texels(&sets, north_east);
+        ushort[] south = tile_texels(&sets, south_west);
+        ushort[] diagonal = tile_texels(&sets, south_east);
+        for (uint row = first_edit; row <= last; row++) {
+            assert(edited[row * SMALL_TEXELS + last] == east[row * SMALL_TEXELS]);
+        }
+        for (uint column = first_edit; column <= last; column++) {
+            assert(edited[last * SMALL_TEXELS + column] == south[column]);
+        }
+        ushort shared = edited[last * SMALL_TEXELS + last];
+        assert(east[last * SMALL_TEXELS] == shared && south[last] == shared && diagonal[0] == shared);
+
+        foreach (index, neighbour : neighbours) {
+            assert(height_revision(&sets, neighbour) != revisions[index]);
+            TerrainRuntime* runtime = runtime_of(&sets, neighbour);
+            assert(runtime.has_pending && same_rect(runtime.pending, strips[index]));
+            assert_changed_only_inside(before[index], tile_texels(&sets, neighbour), strips[index]);
+        }
+        sets.assert_rings_hold_neighbours(tiles);
+        assert(ring_row(&sets, south_east, RING_NORTH)[0] != stale_ring_texel);
+    };
+}
+
+fn void test_propagate_edit_rejects_an_entity_that_is_not_a_linked_tile() @test {
+    SetFixture sets;
+    setup_set(&sets, mem);
+    defer teardown_set(&sets);
+    Node* tile = add_tile_with_own_map(&sets, 0, 0);
+    Node* plain = sets.base.scene.add_node(sets.node)!!;
+    Node* departed = add_tile_with_own_map(&sets, 1, 0);
+    Entity removed = departed.id;
+    sets.base.scene.remove(departed);
+
+    TexelRect edit = { .columns = 1, .rows = 1 };
+    foreach (entity : (Entity[]){ plain.id, removed }) {
+        assert(@catch(sets.set.propagate_edit(
+            scene:  &sets.base.scene,
+            assets: &sets.base.assets,
+            tile:   entity,
+            rect:   edit,
+        )) == c3d::INVALID_ARGUMENT);
+    }
+    assert(sets.set.is_linked(tile.id));
 }

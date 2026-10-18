@@ -67,6 +67,8 @@ const uint TILE_CANDIDATES @local = TILE_CELLS * TILE_CELLS * CELL_CANDIDATES; /
 const float NON_DIVISOR_CELL @local = 7; // 64 m over 7 m is 9.14 cells
 const float OFF_DIVISOR_CELL @local = LAYER_CELL * 1.001f; // a ratio 1e-3 off an integer: outside the tolerance
 const float NEAR_DIVISOR_CELL @local = LAYER_CELL * 1.00005f; // a ratio 5e-5 off an integer: inside it
+const float LIMIT_RATIO @local = (float)foliage::MAX_CELLS_PER_SIDE * 1.00005f; // 5e-5 over the cell limit
+const float LIMIT_CELL @local = EXTENT / LIMIT_RATIO;
 
 const SwayTemplate TEST_SWAY @local = {
     .amplitude       = 0.2f,
@@ -1396,6 +1398,13 @@ fn void test_foliage_cell_size_must_divide_the_tile_extent() @test {
     desc.cell_size = NEAR_DIVISOR_CELL;
     try_add_layer(&fixture, layer, desc)!!;
     assert(runtime_of(&fixture, layer).cells_per_side == TILE_CELLS);
+
+    char[RGBA8_BYTES] empty;
+    Node* limit_layer = add_layer_node(&fixture, set_node, tile);
+    FoliageDesc limit = layer_desc(&fixture, tile, add_density_map(&fixture, 1, empty[..]));
+    limit.cell_size = LIMIT_CELL;
+    try_add_layer(&fixture, limit_layer, limit)!!;
+    assert(runtime_of(&fixture, limit_layer).cells_per_side == foliage::MAX_CELLS_PER_SIDE);
 
     Node* loose_ground = add_ground(&fixture, FLAT);
     FoliageDesc loose = layer_desc(&fixture, loose_ground);
