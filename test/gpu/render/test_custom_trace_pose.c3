@@ -32,6 +32,8 @@ const uint SLAB_SEGMENTS @private = 8;
 const float LOD_PART_RAISE @private = 0.3f;           // moves the part in its object, which the height weight reads
 const float SIDE_INSTANCE_X @private = 6;             // well outside the half width of 1.7 at the surface
 const float SWAY_AMPLITUDE @private = 0.4f;
+const float MASK_BEND_AMPLITUDE @private = 0.2f;
+const float LOW_ALPHA @private = 0.1f;                // below the fixture mask's cutoff of 0.5
 const double[3] POSE_TIMES @private = { 0.0, 0.4, 0.8 };
 const double SWAY_FIRST_TIME @private = 0.3;
 const double SWAY_SECOND_TIME @private = 0.6;
@@ -186,6 +188,17 @@ fn GeometryId? add_tall_slab(Fixture* fixture) @private {
         slab = fixture.assets.add_geometry(&shape)!;
     };
     return slab;
+}
+
+fn GeometryId? add_half_transparent_surface(Fixture* fixture) @private {
+    GeometryId surface;
+    @pool() {
+        Geometry plane = geometry::plane(tmem, 2, 2, SURFACE_SEGMENTS, SURFACE_SEGMENTS);
+        plane.colors = alloc::new_array(tmem, Vec4, plane.positions.len);
+        foreach (index, position : plane.positions) plane.colors[index] = { 1, 1, 1, position.x < 0 ? LOW_ALPHA : 1 };
+        surface = fixture.assets.add_geometry(&plane)!;
+    };
+    return surface;
 }
 
 fn Node*? add_displaced_mesh(TraceRig* rig, MaterialId material) @private {
@@ -439,6 +452,33 @@ fn void test_swaying_lod_groups_trace_at_their_swayed_pose() @test {
             assert(renderer.stats.trace_sway_at_rest == 0);
             check_validation(renderer);
         }
+    }
+}
+
+fn void test_masked_layer_with_a_vertex_alpha_bend_alpha_tests_like_raster() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        TraceRig rig;
+        create_trace_rig(&rig, ray_queries)!!;
+        defer destroy_trace_rig(&rig);
+        Node* batch_node = add_side_by_side_batch(
+            rig:      &rig,
+            surface:  add_half_transparent_surface(&rig.fixture)!!,
+            material: rig.fixture.masked,
+            rotation: facing_camera(),
+            count:    1,
+        )!!;
+        InstancedMesh* batch = rig.harness.scene.get(batch_node, InstancedMesh);
+
+        batch.sway = swaying_toward_the_camera(0, SwayWeight.VERTEX_ALPHA);
+        render_rig(&rig, SWAY_FIRST_TIME)!!;
+        posed_assert_agreement(rig.harness.results, "vertex alpha bend at rest", flat_faces: false);
+
+        batch.sway = swaying_toward_the_camera(MASK_BEND_AMPLITUDE, SwayWeight.VERTEX_ALPHA);
+        batch.trace_sway = true;
+        render_rig(&rig, SWAY_FIRST_TIME)!!;
+        posed_assert_agreement(rig.harness.results, "vertex alpha bend swayed", flat_faces: false);
+        assert(rig.fixture.renderer.stats.trace_posed_instances == 1);
+        check_validation(&rig.fixture.renderer);
     }
 }
 

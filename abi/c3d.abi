@@ -66,6 +66,7 @@ root GeometryRoot {
 const uint BVH_STACK_DEPTH = 32;
 const uint TRACE_INSTANCE_ALPHA_MASK = 1;
 const uint TRACE_INSTANCE_DOUBLE_SIDED = 2;
+const uint TRACE_INSTANCE_BEND_FROM_ALPHA = 4; // vertex alpha drives the sway bend, so coverage ignores it
 const uint TRACE_MASK_ALL = 1;
 const uint TRACE_MASK_SHADOW_CASTER = 2;
 

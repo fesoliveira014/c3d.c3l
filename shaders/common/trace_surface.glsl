@@ -592,6 +592,7 @@ TraceSurface surface_from_hit(SceneTraceRoot scene, SceneHit hit, vec3 ray_direc
 }
 
 // Coverage sources match the raster masked caster in depth_only.frag.glsl, sampled at the base level.
+// Vertex alpha that drives the sway bend is consumed, as in write_mesh_outputs.
 bool trace_surface_passes(TraceInstanceGpu instance, SceneHit hit) {
     GeometryRoot geometry = GeometryRoot(instance.geometry);
     uvec3 corners = pull_triangle(geometry, hit.primitive);
@@ -636,7 +637,8 @@ bool trace_surface_passes(TraceInstanceGpu instance, SceneHit hit) {
         default:
             return true;
     }
-    if ((geometry.flags & GEOMETRY_HAS_COLORS) != 0u) {
+    bool alpha_bends = (instance.flags & TRACE_INSTANCE_BEND_FROM_ALPHA) != 0u;
+    if ((geometry.flags & GEOMETRY_HAS_COLORS) != 0u && !alpha_bends) {
         alpha *= pull_vec4(geometry.colors, corners.x).a * weights.x
             + pull_vec4(geometry.colors, corners.y).a * weights.y
             + pull_vec4(geometry.colors, corners.z).a * weights.z;

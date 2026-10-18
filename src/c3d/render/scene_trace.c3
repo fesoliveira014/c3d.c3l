@@ -439,16 +439,17 @@ fn TraceCollection collect_trace_instances(
 
                 foreach (uint index, transform : batch.transforms[:batch.count]) {
                     TraceInstance record = trace_record(
-                        assets:         assets,
-                        entity:         entity,
-                        geometry:       batch.geometry,
-                        material:       batch.material,
-                        world:          node.world,
-                        layers:         node.layers,
-                        cast_shadow:    batch.cast_shadow,
-                        instance_index: index,
-                        local:          crowd ? crowd.part_transform(index, source.part) : transform.to_mat4(),
-                        origin:         origin,
+                        assets:            assets,
+                        entity:            entity,
+                        geometry:          batch.geometry,
+                        material:          batch.material,
+                        world:             node.world,
+                        layers:            node.layers,
+                        cast_shadow:       batch.cast_shadow,
+                        instance_index:    index,
+                        local:             crowd ? crowd.part_transform(index, source.part) : transform.to_mat4(),
+                        origin:            origin,
+                        vertex_alpha_bend: batch.sway.weight == SwayWeight.VERTEX_ALPHA,
                     );
                     if (crowd) {
                         Mat4 placement = maths::rebase(node.world, origin).mul(crowd.placements[index].to_mat4());
@@ -525,6 +526,7 @@ fn TraceCollection collect_trace_instances(
                             instance_index: instance,
                             local: local,
                             origin: origin,
+                            vertex_alpha_bend: state.effects.sway.weight == SwayWeight.VERTEX_ALPHA,
                         );
                         record.lod_identity = state.identity;
                         record.part_index = state.animated ? state.animated.parts[part].mesh_index : part;
@@ -1364,10 +1366,12 @@ fn TraceInstance trace_record(
     uint instance_index = 0,
     Mat4 local = matrix::IDENTITY4,
     Vec3 origin = {},
+    bool vertex_alpha_bend = false,
 ) @local {
     Material* data = &assets.material(material).data;
     uint flags = data.common.alpha_mode == AlphaMode.MASK ? shader::TRACE_INSTANCE_ALPHA_MASK : 0;
     if (data.common.double_sided) flags |= shader::TRACE_INSTANCE_DOUBLE_SIDED;
+    if (vertex_alpha_bend) flags |= shader::TRACE_INSTANCE_BEND_FROM_ALPHA;
     TraceInstance record = {
         .entity        = entity,
         .flags         = flags,

@@ -23,6 +23,7 @@ const uint MAX_DISPATCH_TEXTURES = 8u;
 const uint BVH_STACK_DEPTH = 32u;
 const uint TRACE_INSTANCE_ALPHA_MASK = 1u;
 const uint TRACE_INSTANCE_DOUBLE_SIDED = 2u;
+const uint TRACE_INSTANCE_BEND_FROM_ALPHA = 4u;
 const uint TRACE_MASK_ALL = 1u;
 const uint TRACE_MASK_SHADOW_CASTER = 2u;
 const uint TRACE_POSE_GROUP_SIZE = 64u;
