@@ -1414,6 +1414,7 @@ fn b3::JointId? create_breakable_weld(
     desc.base.force_threshold = evaluation == NATIVE_FORCE ? strength.force : float::max;
     desc.base.collide_connected = false;
     desc.base.user_data = pack_entity(root);
+
     b3::JointId joint = b3::create_weld_joint(world.world, &desc)!;
     defer catch b3::destroy_joint(joint, true);
     record_breakable_joint(

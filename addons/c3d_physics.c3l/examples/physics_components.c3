@@ -32,6 +32,7 @@ const float BENCHMARK_BOX_SPACING @local = 1.5f;
 const float BENCHMARK_BOX_HEIGHT @local = 2;
 const uint  BENCHMARK_SETTLE_FRAMES @local = 300; // five simulated seconds, so the dropped boxes sleep before timing
 const uint  PERCENTILE_95 @local = 95;
+const uint  PERCENT @local = 100; // the percentile index rounds up to the next sample
 const uint  SCENE_NODE_CAPACITY @local = MAX_SPAWNED + STRESS_BODIES + LEVEL_NODES;
 const uint  TIMING_WINDOW @local = 60;
 const float STRESS_SPACING @local = 1.5f;
@@ -773,7 +774,7 @@ fn void? run_benchmark(Options options) @local {
     sort::quicksort(samples);
 
     BodyCounts counts = count_bodies(&scene);
-    uint percentile = (options.benchmark_frames * PERCENTILE_95 + 99) / 100 - 1;
+    uint percentile = (options.benchmark_frames * PERCENTILE_95 + PERCENT - 1) / PERCENT - 1;
     io::printfn(
         "physics_update,stress,%d,frames,%d,mean_ms,%.6f,p95_ms,%.6f,first_update_ms,%.3f,static,%d,kinematic,%d,dynamic,%d,awake,%d",
         options.stress ? 1 : 0, options.benchmark_frames, total / options.benchmark_frames, samples[percentile],

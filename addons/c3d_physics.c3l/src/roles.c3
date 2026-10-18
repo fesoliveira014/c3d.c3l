@@ -46,6 +46,13 @@ fn void BodyRoles.remove_body(&self, RigidBody* body) {
     self.scene.world.get(moved, RigidBody).moving_index = body.moving_index;
 }
 
+fn void BodyRoles.set_kind(&self, Entity entity, RigidBody* body, BodyKind kind) {
+    bool was_moving = body.kind != STATIC;
+    if (was_moving && kind == STATIC) self.remove_body(body);
+    body.kind = kind;
+    if (!was_moving && kind != STATIC) self.add_body(entity, body);
+}
+
 fn void remove_rigid_body(Entity entity, void* component, void* user) @private {
     RigidBody* body = component;
     BodyRoles* roles = user;

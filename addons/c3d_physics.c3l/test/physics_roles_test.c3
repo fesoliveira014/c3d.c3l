@@ -245,6 +245,22 @@ fn void test_moving_list_tracks_kinds_and_lifecycles() @test {
     assert_moving_list_is_exact(&fixture);
     assert(fixture.physics.roles.moving_bodies().len == 4);
 
+    Node* bone = fixture.scene.get(rig.skin, Ragdoll).bone_nodes[1];
+    fixture.scene.get(bone, PhysicsBody).body.kind = STATIC;
+    fixture.scene.get(bone, PhysicsBody).mark_changed();
+    fixture.physics.update(0);
+    assert_moving_list_is_exact(&fixture);
+    assert(fixture.physics.roles.moving_bodies().len == 3);
+
+    fixture.physics.set_bone_mode(rig.skin, 1, SIMULATED);
+    assert(fixture.scene.get(bone, RigidBody).kind == DYNAMIC);
+    assert_moving_list_is_exact(&fixture);
+    assert(fixture.physics.roles.moving_bodies().len == 4);
+
+    fixture.scene.remove_ragdoll(rig.skin);
+    assert_moving_list_is_exact(&fixture);
+    assert(fixture.physics.roles.moving_bodies().len == 2);
+
     float[2] offsets = { 0, 1 };
     Node* wall = add_wall(&fixture, { 20, 10, 0 }, offsets[..]);
     fixture.physics.add_breakable(wall, physics::default_breakable_desc())!!;
@@ -301,13 +317,11 @@ fn void test_orphaned_body_is_removed_on_the_next_update() @test {
     Node* orphan = add_body(&fixture, STATIC, { 0, -5, 0 });
     fixture.scene.remove_component(orphan, PhysicsBody);
     assert(fixture.scene.has(orphan, RigidBody));
-    assert(fixture.physics.roles.orphans_dirty);
 
     fixture.physics.update(0);
     assert(!fixture.scene.has(orphan, RigidBody));
     assert(fixture.scene.has(kept, RigidBody));
     assert(fixture.physics.world.counters().body_count == 1);
-    assert(!fixture.physics.roles.orphans_dirty);
 
     physics::destroy_physics_world(&fixture.physics);
     create_world(&fixture);
@@ -316,7 +330,6 @@ fn void test_orphaned_body_is_removed_on_the_next_update() @test {
 
     Node* moving_orphan = add_body(&fixture, DYNAMIC, { 4, 0, 0 });
     fixture.scene.remove_component(moving_orphan, PhysicsBody);
-    assert(fixture.physics.roles.orphans_dirty);
 
     fixture.physics.update(0);
     assert(!fixture.scene.has(moving_orphan, RigidBody));

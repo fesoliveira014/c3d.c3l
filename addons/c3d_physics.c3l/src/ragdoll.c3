@@ -217,7 +217,7 @@ fn void Scene.remove_ragdoll(&self, Node* skin_node) {
 fn void PhysicsWorld.set_ragdoll_mode(&self, Node* skin_node, RagdollMode mode) {
     Ragdoll* ragdoll = self.scene.get(skin_node, Ragdoll);
     for (usz bone = 0; bone < ragdoll.bone_nodes.len; bone++) switch_bone(
-        scene: self.scene,
+        world: self,
         ragdoll: ragdoll,
         bone: bone,
         mode: mode,
@@ -238,7 +238,7 @@ fn void PhysicsWorld.set_bone_mode(
     RagdollMode mode,
 ) {
     switch_bone(
-        scene: self.scene,
+        world: self,
         ragdoll: self.scene.get(skin_node, Ragdoll),
         bone: bone,
         mode: mode,
@@ -324,7 +324,7 @@ fn Quat animated_bone_rotation(Ragdoll* ragdoll, Node*[] joints, usz bone) @loca
 }
 
 fn void switch_bone(
-    Scene* scene,
+    PhysicsWorld* world,
     Ragdoll* ragdoll,
     usz bone,
     RagdollMode mode,
@@ -332,11 +332,11 @@ fn void switch_bone(
     cancel_recovery_bone(ragdoll, bone);
     BodyKind kind = mode == SIMULATED ? DYNAMIC : KINEMATIC;
     Node* node = ragdoll.bone_nodes[bone];
-    scene.get(node, PhysicsBody).body.kind = kind;
+    world.scene.get(node, PhysicsBody).body.kind = kind;
     ragdoll.bone_modes[bone] = mode;
-    if (!scene.has(node, RigidBody)) return;
-    RigidBody* body = scene.get(node, RigidBody);
-    body.kind = kind;
+    if (!world.scene.has(node, RigidBody)) return;
+    RigidBody* body = world.scene.get(node, RigidBody);
+    world.roles.set_kind(node.id, body, kind);
     body.body.set_type(body_type(kind));
 }
 

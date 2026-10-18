@@ -100,6 +100,7 @@ fn uint Scene.add_static_mesh_bodies(&self, Node* root, CollisionFilter filter =
 
 <*
  Register physics components and their resource removal hooks.
+ Call before create_physics_world; a later call replaces the world's PhysicsBody hook.
  @param [&inout] scene : "Gains body, joint, force, ragdoll, fracture and cloth stores."
  @return? c3d::CAPACITY_EXCEEDED
 *>

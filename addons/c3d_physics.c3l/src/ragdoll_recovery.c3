@@ -178,7 +178,7 @@ fn void? PhysicsWorld.finish_ragdoll_recovery(&self, Node* skin_node) {
     foreach (usz index, &bone : ragdoll.recovery.bones) {
         if (!bone.active) continue;
         switch_bone(
-            scene: self.scene,
+            world: self,
             ragdoll: ragdoll,
             bone: index,
             mode: ANIMATED,
