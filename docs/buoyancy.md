@@ -58,7 +58,7 @@ physics.set_fluid_sampler(&river_sample, &river);
 | --- | --- |
 | `fluid_density` | Kilograms per cubic metre; `DEFAULT_FLUID_DENSITY` is fresh water, 1000 |
 | `linear_drag` | Newton-seconds per metre on the whole body fully submerged |
-| `drag_coefficient` | Dimensionless C_d on each cell's cross-section; 0 keeps only linear drag |
+| `drag_coefficient` | Dimensionless C_d on the solid bounds' projected area; 0 keeps only linear drag |
 | `submerged_fraction` | Written each step: the mean submersion of the body's cells, in [0, 1] |
 
 The authored fields are not checked in the step loop, as `Wind` and `Force` are not: keep them non-negative and
@@ -80,18 +80,18 @@ finite.
 
 ## Drag
 
-With `v_rel = v − v_fluid`, the velocity of the body at the cell centre relative to the fluid there, a cell's
-drag is
+With `v_rel = v − v_fluid`, the velocity of the body at the cell centre relative to the fluid there, and `A(d)` the
+area of the solid bounds projected on the plane perpendicular to `d` (the sum of the areas of the box's three face
+pairs, each weighted by `|d · axis|` of the body axis normal to it), a cell's drag is
 
 ```
-F = −(linear_drag / 8 + ½ · ρ · C_d · A_cell(v̂_rel) · |v_rel|) · v_rel · fraction
+F = −(linear_drag / 8 + ½ · ρ · C_d · A(v̂_rel) / 8 · |v_rel|) · v_rel · fraction
 ```
 
-- `A_cell(d)` is the cell box's area projected on the plane perpendicular to `d`: the sum of the areas of its
-  three face pairs, each weighted by `|d · axis|` of the body axis normal to it. It is square metres, so `C_d`
-  is dimensionless. A cell is half the box along each axis, so eight cells together project twice the body
-  box's area in every direction: choose `C_d` for the cells (half the textbook coefficient of a cube, which is
-  about 1.05).
+- Each cell carries an eighth of the body's projected area, so a fully submerged body moving at one velocity feels
+  `½ · ρ · C_d · A · |v| · v`: `C_d` is the usual whole-body coefficient on the bounds' projected area, in square
+  metres, and is dimensionless. A cube's is about 1.05. A partly submerged body scales with the submerged
+  fraction.
 - The force is applied at the cell centre, so a fluid moving past a body also turns it.
 - The magnitude of `F` is limited to `m_cell · |v_rel| / fixed_dt`, with `m_cell` one eighth of the body's mass,
   so one explicit step cannot reverse the cell's velocity relative to the fluid. The limit binds when
@@ -99,7 +99,7 @@ F = −(linear_drag / 8 + ½ · ρ · C_d · A_cell(v̂_rel) · |v_rel|) · v_re
   (60 N·s/m for a 1 kg body at 60 Hz, 36,000 N·s/m for 600 kg). Below that, it never changes a body that has
   linear drag alone; above it, the drag is weaker than `linear_drag` states.
 - The terminal speed of a body sinking through a fluid on quadratic drag alone is
-  `sqrt(2 (m − ρ V) g / (ρ C_d A))`, with `A` the sum of the eight cells' projected areas.
+  `sqrt(2 (m − ρ V) g / (ρ C_d A))`, with `A` the bounds' projected area along the fall.
 
 ## Interactions
 

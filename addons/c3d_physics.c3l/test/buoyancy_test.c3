@@ -23,7 +23,7 @@ const float DEEP_LEVEL @local = 1000; // above every body in the drag tests, so 
 const float DENSE_HALF_SIDE @local = 0.5f; // a one metre cube
 const float DENSE_DENSITY @local = 3000; // three times the fluid: it sinks to a terminal speed
 const float DRAG_COEFFICIENT @local = 1;
-const float TERMINAL_SECONDS @local = 10; // about thirty time constants of the cube's approach
+const float TERMINAL_SECONDS @local = 10; // about twenty time constants of the cube's approach
 const float TERMINAL_TOLERANCE @local = 0.0001f; // relative; measured 4e-6 at 1/60 and 8e-6 at 1/120, float rounding
 const float STRONG_DRAG_COEFFICIENT @local = 1e6f; // unclamped, one step would throw the body past the current
 const float CURRENT_SPEED @local = 5; // metres per second
@@ -371,10 +371,9 @@ fn void test_quadratic_drag_reaches_terminal_velocity() @test {
     float side = 2 * DENSE_HALF_SIDE;
     float volume = side * side * side;
     float mass = DENSE_DENSITY * volume;
-    float cell_area = (side / 2) * (side / 2); // a cell is half the box along each axis
-    float swept_area = cell_area * physics::BUOYANCY_CELLS; // the cells fall side by side and one behind the other
+    float frontal_area = side * side;
     float net_weight = (mass - physics::DEFAULT_FLUID_DENSITY * volume) * -physics::DEFAULT_GRAVITY.y;
-    float drag_scale = physics::DEFAULT_FLUID_DENSITY * DRAG_COEFFICIENT * swept_area;
+    float drag_scale = physics::DEFAULT_FLUID_DENSITY * DRAG_COEFFICIENT * frontal_area;
     float expected = math::sqrt(2 * net_weight / drag_scale);
 
     foreach (time_step : (float[2]){ 1.0f / 60, 1.0f / 120 }) {

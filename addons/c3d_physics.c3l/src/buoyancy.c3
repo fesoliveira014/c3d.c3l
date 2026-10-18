@@ -41,7 +41,7 @@ const Vec3[BUOYANCY_CELLS] CELL_OCTANTS @private = {
 struct Buoyancy {
     float fluid_density;      // kilograms per cubic metre
     float linear_drag;        // newton-seconds per metre on the whole body fully submerged
-    float drag_coefficient;   // dimensionless C_d on each cell's cross-section; 0 keeps only linear drag
+    float drag_coefficient;   // dimensionless C_d on the solid bounds' projected area; 0 keeps only linear drag
     float submerged_fraction; // written each step: mean cell submersion in [0, 1]
 }
 
@@ -50,11 +50,11 @@ struct SolidMeasure @private {
     float       volume;
 }
 
-// A body's drag constants at its current pose; each cell has the same face areas.
+// A body's drag constants at its current pose; the eight cells share the body's projected area equally.
 struct CellDrag @private {
     float   linear;          // newton-seconds per metre of one cell fully submerged
     float   quadratic;       // half the fluid density times the drag coefficient
-    Vec3    face_areas;      // square metres of one cell's faces normal to each body axis
+    Vec3    face_areas;      // square metres of one cell's share of the bounds' faces normal to each body axis
     Vec3[3] axes;            // body axes in world space
     float   force_per_speed; // newtons per metre per second: a cell's mass over the fixed step
 }
@@ -123,8 +123,8 @@ fn void apply_buoyancy(
     buoyancy.submerged_fraction = 0;
     if (!(world.fluid_sampler || world.fluid_surface) || body.kind != DYNAMIC || !(body.solid_volume > 0)) return;
 
-    Vec3 half_cell = (body.solid_bounds.max - body.solid_bounds.min) / 4;
-    Vec3 cell_size = half_cell * 2;
+    Vec3 box_size = body.solid_bounds.max - body.solid_bounds.min;
+    Vec3 half_cell = box_size / 4;
     Vec3 center = (body.solid_bounds.min + body.solid_bounds.max) / 2;
     Quat rotation = body.current.rotation;
     Vec3[3] axes = {
@@ -137,10 +137,11 @@ fn void apply_buoyancy(
         + math::abs(axes[1].y) * half_cell.y
         + math::abs(axes[2].y) * half_cell.z;
     Vec3 cell_lift = -world.desc.tuning.gravity * (buoyancy.fluid_density * body.solid_volume / BUOYANCY_CELLS);
+    Vec3 box_faces = { box_size.y * box_size.z, box_size.x * box_size.z, box_size.x * box_size.y };
     CellDrag drag = {
         .linear          = buoyancy.linear_drag / BUOYANCY_CELLS,
         .quadratic       = 0.5f * buoyancy.fluid_density * buoyancy.drag_coefficient,
-        .face_areas      = { cell_size.y * cell_size.z, cell_size.x * cell_size.z, cell_size.x * cell_size.y },
+        .face_areas      = box_faces / (float)BUOYANCY_CELLS,
         .axes            = axes,
         .force_per_speed = body.body.mass() / BUOYANCY_CELLS / world.desc.tuning.fixed_dt,
     };
