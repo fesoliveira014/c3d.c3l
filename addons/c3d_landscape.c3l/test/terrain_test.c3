@@ -34,9 +34,9 @@ const uint RING_SOUTH @local = 1;
 const uint RING_WEST @local = 2;
 const uint RING_EAST @local = 3;
 const usz BORDER_EDGES_OFFSET @local = 16; // in the material block, after texels, cell_size, height_scale and layer_count
-const uint BORDER_SLOT @local = 2;
+const uint BORDER_SLOT @local = 2; // the material slot of the border ring
 const uint BAND_ROW @local = 1; // the row inside a tile's edge that its neighbour's ring holds
-const uint INTERIOR_ROW @local = 60;
+const uint INTERIOR_ROW @local = 60; // clear of both outer bands of a 129-texel tile
 
 struct Fixture @local {
     AssetStore   assets;

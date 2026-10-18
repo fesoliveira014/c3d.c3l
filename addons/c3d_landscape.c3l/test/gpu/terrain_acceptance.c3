@@ -371,16 +371,16 @@ struct ProbeParams @local {
 
 struct ProbeInput @local {
     Vec2 texel_position;
-    uint height_slot;
-    uint border_slot;
+    uint height_slot; // dispatch texture of the tile's height map
+    uint border_slot; // dispatch texture of its border ring
 }
 $assert ProbeInput::size == 16;
 
 struct ProbeRoot @local {
-    gpu::GpuAddress            output;
-    ulong                      padding;
-    ProbeParams[PROBE_COUNT]   params;
-    ProbeInput[PROBE_COUNT]    inputs;
+    gpu::GpuAddress          output;
+    ulong                    padding; // keeps the parameter blocks 16-byte aligned
+    ProbeParams[PROBE_COUNT] params;
+    ProbeInput[PROBE_COUNT]  inputs;
 }
 $assert ProbeRoot::size == 16 + PROBE_COUNT * PROBE_PARAMS_SIZE + PROBE_COUNT * ProbeInput::size;
 
