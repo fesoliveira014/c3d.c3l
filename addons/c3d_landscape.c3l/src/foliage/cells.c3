@@ -9,7 +9,7 @@ import c3d::scene;
 import std::math;
 
 const float EDIT_REACH_TEXELS @private = 2; // a texel reaches one texel in face normals and two in smooth normals
-const usz RING_STRIPS @private = 4; // one per border of a tile
+const usz RING_STRIPS @private = 4; // one per border of a tile; twin of BorderEdge::len, the length ring_strips returns
 
 struct CellRange @private {
     uint first_column;

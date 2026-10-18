@@ -12,6 +12,7 @@ const uint TERRAIN_BORDER_SOUTH = 1u;
 const uint TERRAIN_BORDER_WEST = 2u;
 const uint TERRAIN_BORDER_EAST = 3u;
 const float TERRAIN_TEXEL_MAX = 65535.0; // height = height_scale * texel / 65535, the physics height-field rule
+const uint TERRAIN_PROJECTION_TRIPLANAR = 1u; // mirrored as SlopeProjection.TRIPLANAR in terrain/terrain.c3
 
 // Mirrors TerrainParams in terrain/material.c3.
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer TerrainParams {
@@ -20,7 +21,9 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Te
     float height_scale;
     uint layer_count;
     uint border_edges;
-    uint padding[3];
+    uint slope_projection;
+    float triplanar_sharpness;
+    uint padding;
 };
 
 // R16_UINT heights: only the integer view of the heap may read them.

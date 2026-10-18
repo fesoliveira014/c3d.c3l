@@ -453,6 +453,34 @@ fn void test_invalid_desc_values_are_invalid_argument() @test {
     assert(!fixture.scene.has(node, Terrain) && !fixture.scene.has(node, InstancedMesh));
 }
 
+fn void test_triplanar_sharpness_outside_its_range_is_invalid_argument() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* node = fixture.scene.add_node()!!;
+
+    TerrainDesc desc = terrain_desc(&fixture, add_height_map(&fixture, SMALL_TEXELS, SEED));
+    desc.slope_projection = TRIPLANAR;
+    float[4] rejected = {
+        terrain::MIN_TRIPLANAR_SHARPNESS - 0.5f,
+        terrain::MAX_TRIPLANAR_SHARPNESS + 1,
+        float::inf,
+        float::nan,
+    };
+    foreach (sharpness : rejected) {
+        desc.triplanar_sharpness = sharpness;
+        assert(@catch(try_add_terrain(&fixture, node, desc)) == c3d::INVALID_ARGUMENT);
+        assert(!fixture.scene.has(node, Terrain) && !fixture.scene.has(node, InstancedMesh));
+    }
+
+    desc.triplanar_sharpness = terrain::MAX_TRIPLANAR_SHARPNESS;
+    try_add_terrain(&fixture, node, desc)!!;
+
+    desc.slope_projection = TOP;
+    desc.triplanar_sharpness = 0;
+    try_add_terrain(&fixture, fixture.scene.add_node()!!, desc)!!;
+}
+
 fn void test_selection_ignores_camera_facing() @test {
     Fixture fixture;
     setup(&fixture);
