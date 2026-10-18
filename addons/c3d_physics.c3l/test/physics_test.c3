@@ -677,12 +677,15 @@ fn void test_capacity_failure_waits_for_mark_changed() @test {
     setup(&fixture, desc);
     defer teardown(&fixture);
 
-    float[9] heights;
-    ColliderDesc collider = height_field_collider(heights[..]);
+    float[9] flat;
+    float[9] bump;
+    bump[4] = 1;
+    ColliderDesc first_collider = height_field_collider(flat[..]);
+    ColliderDesc second_collider = height_field_collider(bump[..]);
     Node* first = add_static_node(&fixture);
-    fixture.physics.add_body(first, physics::default_body_desc(STATIC), (&collider)[:1])!!;
+    fixture.physics.add_body(first, physics::default_body_desc(STATIC), (&first_collider)[:1])!!;
     Node* second = add_static_node(&fixture, { 5, 0, 0 });
-    fixture.scene.add_physics_body(second, physics::default_body_desc(STATIC), (&collider)[:1])!!;
+    fixture.scene.add_physics_body(second, physics::default_body_desc(STATIC), (&second_collider)[:1])!!;
     fixture.physics.update(0);
     PhysicsBody* physics_body = fixture.scene.get(second, PhysicsBody);
     assert(physics_body.status == FAILED);
@@ -704,8 +707,10 @@ fn void test_partial_build_failure_releases_snapshots() @test {
     setup(&fixture, desc);
     defer teardown(&fixture);
 
-    float[9] heights;
-    ColliderDesc[2] colliders = { height_field_collider(heights[..]), height_field_collider(heights[..]) };
+    float[9] flat;
+    float[9] bump;
+    bump[4] = 1;
+    ColliderDesc[2] colliders = { height_field_collider(flat[..]), height_field_collider(bump[..]) };
     assert(add_body_fault(&fixture, STATIC, colliders[..]) == c3d::CAPACITY_EXCEEDED);
     assert(occupied_snapshots(&fixture.physics) == 0);
 }
@@ -737,11 +742,13 @@ fn void test_snapshot_holders_match_after_churn() @test {
         *node = add_static_node(&fixture, { index * 3.0f, 3, 0 });
         fixture.scene.add_physics_body(*node, physics::default_body_desc(DYNAMIC), crate[..])!!;
     }
-    float[9] heights;
-    ColliderDesc terrain = height_field_collider(heights[..]);
-    for (uint index = 0; index < 2; index++) {
+    float[9] flat;
+    float[9] bump;
+    bump[4] = 1;
+    ColliderDesc[2] terrain = { height_field_collider(flat[..]), height_field_collider(bump[..]) };
+    foreach (index, &collider : terrain) {
         Node* node = add_static_node(&fixture, { index * 5.0f, -2, 0 });
-        fixture.scene.add_physics_body(node, physics::default_body_desc(STATIC), (&terrain)[:1])!!;
+        fixture.scene.add_physics_body(node, physics::default_body_desc(STATIC), collider[:1])!!;
     }
     fixture.physics.update(0);
     assert_holders_match(&fixture);

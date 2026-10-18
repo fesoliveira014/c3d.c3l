@@ -45,7 +45,7 @@ struct SnapshotSource {
 struct CollisionSnapshot {
     SnapshotKind         kind;
     ulong                content;    // hash of component data baked into the box3d object; 0 when none
-    Vec3                 scale;      // exact scale baked into a hull variant; zero for unscaled data
+    Vec3                 scale;      // exact scale baked into a hull variant or height field; zero for unscaled data
     SnapshotSource[]     sources;    // empty for component-sourced data
     b3::HullData*        hull;
     b3::MeshData*        mesh;
@@ -202,48 +202,99 @@ fn SnapshotHandle? acquire_mesh(
     });
 }
 
-fn SnapshotHandle? acquire_height_field(SnapshotTable* table, ColliderDesc* desc) @private {
-    switch (desc.height_field.source) {
+fn SnapshotHandle? acquire_height_field(
+    SnapshotTable* table,
+    HeightField field,
+    Vec3 scale,
+    char[] material_indices,
+    bool query = false,
+) @private {
+    switch (field.source) {
         case HEIGHTS:
+            if (query) check_collision_height_source(field, scale, material_indices)!;
+
+            ulong content = height_samples_content(field, material_indices);
+            foreach (usz index, &slot : table.slots) {
+                if (matches(slot, { .kind = HEIGHT_FIELD, .content = content, .scale = scale })) {
+                    return hold(table, index);
+                }
+            }
+
             usz index = reserve_slot(table)!;
-            CollisionSnapshot snapshot = cook_height_field(table, desc, desc.height_field)!;
+            CollisionSnapshot snapshot = cook_height_field(table, field, scale, material_indices)!;
+            snapshot.content = content;
+            snapshot.scale = scale;
             return occupy(table, index, snapshot);
         case TEXTURE:
-            return acquire_height_map(table, desc);
+            return acquire_height_map(
+                table: table,
+                texture: field.texture,
+                scale: scale,
+                material_indices: material_indices,
+                query: query,
+            );
     }
 }
 
 // Texture sources share one slot per texture revision, scale and material indices, like asset meshes.
-// Called inside build_body's @pool: the samples live in tmem until box3d copies them.
-fn SnapshotHandle? acquire_height_map(SnapshotTable* table, ColliderDesc* desc) @local {
-    TextureId texture = desc.height_field.texture;
+// Called inside a caller's @pool: the samples live in tmem until box3d copies them.
+fn SnapshotHandle? acquire_height_map(
+    SnapshotTable* table,
+    TextureId texture,
+    Vec3 scale,
+    char[] material_indices,
+    bool query,
+) @local {
+    if (query) {
+        check_height_map(table.assets, texture)!;
+
+        TextureDesc source = table.assets.texture(texture).desc;
+        check_collision_height_grid(
+            count_x: source.width,
+            count_z: source.height,
+            sample_count: (usz)source.width * source.height,
+            material_count: material_indices.len,
+        )!;
+    }
+
     SnapshotSource[1] sources = { current_texture_source(table, texture) };
-    Fnv64a hash;
-    hash.init();
-    @hash_value(&hash, desc.local.scale);
-    hash.update(desc.material_indices);
-    ulong content = (ulong)hash;
+    ulong content = material_indices.len ? fnv64a::hash(material_indices) : 0;
     foreach (usz index, &slot : table.slots) {
-        if (matches(slot, { .kind = HEIGHT_FIELD, .content = content, .sources = sources[..] })) {
+        if (matches(slot, { .kind = HEIGHT_FIELD, .content = content, .scale = scale, .sources = sources[..] })) {
             return hold(table, index);
         }
     }
 
     TextureAsset* record = table.assets.texture(texture);
     if (!record.pixels.len) return SOURCE_UNAVAILABLE~;
-    usz index = reserve_slot(table)!;
     HeightField samples = {
         .heights = height_map_samples(record, tmem),
         .count_x = record.desc.width,
         .count_z = record.desc.height,
     };
-    CollisionSnapshot snapshot = cook_height_field(table, desc, samples)!;
+    if (query) {
+        check_collision_height_samples(
+            heights: samples.heights,
+            scale: scale,
+            count_x: samples.count_x,
+            count_z: samples.count_z,
+        )!;
+    }
+
+    usz index = reserve_slot(table)!;
+    CollisionSnapshot snapshot = cook_height_field(table, samples, scale, material_indices)!;
     snapshot.content = content;
+    snapshot.scale = scale;
     snapshot.sources = copy_sources(table.allocator, sources[..]);
     return occupy(table, index, snapshot);
 }
 
-fn CollisionSnapshot? cook_height_field(SnapshotTable* table, ColliderDesc* desc, HeightField field) @local {
+fn CollisionSnapshot? cook_height_field(
+    SnapshotTable* table,
+    HeightField field,
+    Vec3 scale,
+    char[] material_indices,
+) @local {
     float minimum = field.heights[0];
     float maximum = field.heights[0];
     foreach (height : field.heights) {
@@ -252,8 +303,8 @@ fn CollisionSnapshot? cook_height_field(SnapshotTable* table, ColliderDesc* desc
     }
     b3::HeightFieldDef def = {
         .heights               = field.heights.ptr,
-        .material_indices      = desc.material_indices.len ? desc.material_indices.ptr : null,
-        .scale                 = desc.local.scale,
+        .material_indices      = material_indices.len ? material_indices.ptr : null,
+        .scale                 = scale,
         .count_x               = (int)field.count_x,
         .count_z               = (int)field.count_z,
         .global_minimum_height = minimum,
@@ -261,7 +312,7 @@ fn CollisionSnapshot? cook_height_field(SnapshotTable* table, ColliderDesc* desc
     };
     b3::HeightFieldData* data = b3::create_height_field(&def)!;
     Vec3[] wire;
-    if (table.cache_wireframes) wire = height_field_wire(table.allocator, field, desc.local.scale);
+    if (table.cache_wireframes) wire = height_field_wire(table.allocator, field, scale);
     return { .kind = HEIGHT_FIELD, .height_field = data, .wire = wire };
 }
 
@@ -349,6 +400,17 @@ fn ulong body_revision_sum(PhysicsWorld* world, PhysicsBody* physics_body) @priv
         }
     }
     return sum;
+}
+
+// Exact sample bits, so equal authoring in different arrays shares one entry; the dimensions fix how the bytes split.
+fn ulong height_samples_content(HeightField field, char[] material_indices) @local {
+    Fnv64a hash;
+    hash.init();
+    @hash_value(&hash, field.count_x);
+    @hash_value(&hash, field.count_z);
+    hash.update(((char*)field.heights.ptr)[:field.heights.len * float::size]);
+    hash.update(material_indices);
+    return (ulong)hash;
 }
 
 fn bool is_occupied(CollisionSnapshot* slot) @private => slot.generation % 2 == 1;

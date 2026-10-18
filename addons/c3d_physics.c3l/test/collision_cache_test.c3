@@ -3,6 +3,7 @@ module c3d_physics_collide_test;
 import c3d;
 import c3d::asset;
 import c3d::geometry;
+import c3d::material;
 import c3d::maths;
 import c3d::physics @public;
 import c3d::physics::cloth;
@@ -305,10 +306,14 @@ fn void test_collision_shape_preparation_refuses_unsupported_and_degenerate_inpu
     desc.radius = float::max;
     assert(@catch(physics::create_collision_shape(mem, &fixture.cache, desc)) == b3::DEGENERATE_GEOMETRY);
 
-    foreach (kind : (ColliderKind[2]){ HEIGHT_FIELD, COMPOUND }) {
-        desc = physics::default_collision_shape_desc(kind);
-        assert(@catch(physics::create_collision_shape(mem, &fixture.cache, desc)) == c3d::UNSUPPORTED);
-    }
+    desc = physics::default_collision_shape_desc(physics::ColliderKind.COMPOUND);
+    assert(@catch(physics::create_collision_shape(mem, &fixture.cache, desc)) == c3d::UNSUPPORTED);
+
+    float[4] flat;
+    desc = physics::default_collision_shape_desc(physics::ColliderKind.HEIGHT_FIELD);
+    desc.height_field = { .heights = flat[..], .count_x = 2, .count_z = 2 };
+    CollisionShape field = physics::create_collision_shape(mem, &fixture.cache, desc)!!;
+    physics::destroy_collision_shape(&field);
 
     desc = physics::default_collision_shape_desc(physics::ColliderKind.MESH);
     desc.geometry = fixture.geometry;
@@ -519,4 +524,167 @@ fn void test_mesh_owners_keep_their_revision_after_cpu_source_release() @test {
     fixture.assets.mark_geometry_dirty(fixture.geometry);
     assert(@catch(physics::create_collision_shape(mem, &fixture.cache, desc)) == physics::SOURCE_UNAVAILABLE);
     assert(fixture.cache.state.borrowers == 3);
+}
+
+fn TextureId add_field_texture(AssetStore* assets, ushort[] samples, uint width, uint height) @private {
+    material::TextureDesc desc = material::texture_2d_desc(width, height, R16_UINT);
+    desc.generate_mips = false;
+    return assets.add_texture(desc, ((char*)samples.ptr)[:samples.len * ushort::size])!!;
+}
+
+fn void test_raw_height_field_owners_share_equal_content_and_release_at_the_final_hold() @test {
+    CacheLifetimeFixture fixture;
+    setup_cache_lifetime(&fixture, 6);
+    defer teardown_cache_lifetime(&fixture);
+
+    Scene scene = scene::create_scene(mem, { .max_nodes = 2 });
+    defer scene::destroy_scene(&scene);
+    physics::register_physics(&scene)!!;
+
+    PhysicsWorld world = physics::create_physics_world(
+        allocator: mem,
+        assets: &fixture.assets,
+        scene: &scene,
+        desc: physics::default_physics_desc(),
+        cache: &fixture.cache,
+    )!!;
+    defer physics::destroy_physics_world(&world);
+
+    float[9] heights = { 0, 1, 2, 0, 1, 2, 0, 1, 2 };
+    float[9] copy = heights;
+    ColliderDesc collider = physics::default_collider_desc(physics::ColliderKind.HEIGHT_FIELD);
+    collider.height_field = { .heights = heights[..], .count_x = 3, .count_z = 3 };
+    collider.local.scale = { 2, 1, 1 };
+    Node* node = scene.add_node(name: "terrain")!!;
+    scene.update_world();
+    world.add_body(node, physics::default_body_desc(STATIC), (&collider)[:1])!!;
+
+    SnapshotTable* table = fixture.cache.state;
+    SnapshotHandle body_entry = scene.get(node, RigidBody).colliders[0].snapshot;
+    CollisionShapeDesc desc = physics::default_collision_shape_desc(physics::ColliderKind.HEIGHT_FIELD);
+    desc.height_field = { .heights = copy[..], .count_x = 3, .count_z = 3 };
+    desc.scale = { 2, 1, 1 };
+    CollisionShape shared = physics::create_collision_shape(mem, &fixture.cache, desc)!!;
+    defer physics::destroy_collision_shape(&shared);
+    assert(shared.state.snapshot.index == body_entry.index);
+    assert(shared.state.height_field == table.slots[body_entry.index].height_field);
+    assert(table.slots[body_entry.index].holders == 2);
+
+    copy[4] = 3;
+    CollisionShape sample = physics::create_collision_shape(mem, &fixture.cache, desc)!!;
+    copy[4] = 1;
+    char[4] holes = { physics::HEIGHT_FIELD_HOLE, 0, 0, 0 };
+    desc.material_indices = holes[..];
+    CollisionShape hole = physics::create_collision_shape(mem, &fixture.cache, desc)!!;
+    desc.material_indices = {};
+    desc.scale = { 2, 1, 1.5f };
+    CollisionShape stretched = physics::create_collision_shape(mem, &fixture.cache, desc)!!;
+    defer physics::destroy_collision_shape(&stretched);
+
+    SnapshotHandle[3] changed_entries = { sample.state.snapshot, hole.state.snapshot, stretched.state.snapshot };
+    foreach (index, entry : changed_entries) {
+        assert(entry.index != body_entry.index);
+        assert(table.slots[entry.index].holders == 1);
+        foreach (other : changed_entries[index + 1..]) assert(entry.index != other.index);
+    }
+    assert(table.slots[body_entry.index].holders == 2);
+
+    SnapshotHandle sample_entry = sample.state.snapshot;
+    physics::destroy_collision_shape(&sample);
+    physics::destroy_collision_shape(&hole);
+    assert(table.slots[sample_entry.index].height_field == null);
+    assert(table.slots[body_entry.index].holders == 2);
+}
+
+fn void test_rejected_height_field_owner_leaves_the_body_entry_valid() @test {
+    CacheLifetimeFixture fixture;
+    setup_cache_lifetime(&fixture);
+    defer teardown_cache_lifetime(&fixture);
+
+    Scene scene = scene::create_scene(mem, { .max_nodes = 2 });
+    defer scene::destroy_scene(&scene);
+    physics::register_physics(&scene)!!;
+
+    PhysicsWorld world = physics::create_physics_world(
+        allocator: mem,
+        assets: &fixture.assets,
+        scene: &scene,
+        desc: physics::default_physics_desc(),
+        cache: &fixture.cache,
+    )!!;
+    defer physics::destroy_physics_world(&world);
+
+    float[4] flat;
+    Vec3 degenerate = { 1e-12f, 1, 1e-12f }; // worlds accept it; its cells are far below the native triangle floor
+    ColliderDesc collider = physics::default_collider_desc(physics::ColliderKind.HEIGHT_FIELD);
+    collider.height_field = { .heights = flat[..], .count_x = 2, .count_z = 2 };
+    collider.local.scale = degenerate;
+    Node* node = scene.add_node(name: "terrain")!!;
+    scene.update_world();
+    world.add_body(node, physics::default_body_desc(STATIC), (&collider)[:1])!!;
+
+    SnapshotTable* table = fixture.cache.state;
+    SnapshotHandle body_entry = scene.get(node, RigidBody).colliders[0].snapshot;
+    b3::HeightFieldData* cooked = table.slots[body_entry.index].height_field;
+    CollisionShapeDesc desc = physics::default_collision_shape_desc(physics::ColliderKind.HEIGHT_FIELD);
+    desc.height_field = { .heights = flat[..], .count_x = 2, .count_z = 2 };
+    desc.scale = degenerate;
+    assert(@catch(physics::create_collision_shape(mem, &fixture.cache, desc)) == b3::DEGENERATE_GEOMETRY);
+
+    assert(table.slots[body_entry.index].holders == 1 && table.slots[body_entry.index].height_field == cooked);
+    assert(table.borrowers == 1);
+    world.update(0);
+    assert(scene.get(node, RigidBody).body.is_valid());
+}
+
+fn void test_height_map_owners_share_entries_with_bodies_across_revisions() @test {
+    CacheLifetimeFixture fixture;
+    setup_cache_lifetime(&fixture);
+    defer teardown_cache_lifetime(&fixture);
+
+    Scene scene = scene::create_scene(mem, { .max_nodes = 2 });
+    defer scene::destroy_scene(&scene);
+    physics::register_physics(&scene)!!;
+
+    PhysicsWorld world = physics::create_physics_world(
+        allocator: mem,
+        assets: &fixture.assets,
+        scene: &scene,
+        desc: physics::default_physics_desc(),
+        cache: &fixture.cache,
+    )!!;
+    defer physics::destroy_physics_world(&world);
+
+    ushort[9] samples = { 0, 100, 200, 0, 100, 200, 0, 100, 200 };
+    TextureId texture = add_field_texture(&fixture.assets, samples[..], 3, 3);
+    ColliderDesc collider = physics::default_collider_desc(physics::ColliderKind.HEIGHT_FIELD);
+    collider.height_field = { .source = TEXTURE, .texture = texture };
+    collider.local.scale = { 2, 1, 1 };
+    Node* node = scene.add_node(name: "terrain")!!;
+    scene.update_world();
+    world.add_body(node, physics::default_body_desc(STATIC), (&collider)[:1])!!;
+
+    SnapshotTable* table = fixture.cache.state;
+    SnapshotHandle body_entry = scene.get(node, RigidBody).colliders[0].snapshot;
+    CollisionShapeDesc desc = physics::default_collision_shape_desc(physics::ColliderKind.HEIGHT_FIELD);
+    desc.height_field = { .source = TEXTURE, .texture = texture };
+    desc.scale = { 2, 1, 1 };
+    CollisionShape shared = physics::create_collision_shape(mem, &fixture.cache, desc)!!;
+    defer physics::destroy_collision_shape(&shared);
+    assert(shared.state.snapshot.index == body_entry.index);
+    assert(table.slots[body_entry.index].holders == 2);
+
+    desc.scale = { 2, 1, 1.5f };
+    CollisionShape stretched = physics::create_collision_shape(mem, &fixture.cache, desc)!!;
+    defer physics::destroy_collision_shape(&stretched);
+    assert(stretched.state.snapshot.index != body_entry.index);
+
+    fixture.assets.mark_texture_dirty(texture);
+    desc.scale = { 2, 1, 1 };
+    CollisionShape revised = physics::create_collision_shape(mem, &fixture.cache, desc)!!;
+    defer physics::destroy_collision_shape(&revised);
+    assert(revised.state.snapshot.index != body_entry.index);
+    assert(revised.state.snapshot.index != stretched.state.snapshot.index);
+    assert(shared.state.height_field == table.slots[body_entry.index].height_field);
+    assert(table.slots[body_entry.index].holders == 2);
 }

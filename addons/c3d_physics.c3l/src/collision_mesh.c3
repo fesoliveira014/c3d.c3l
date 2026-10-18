@@ -100,7 +100,7 @@ fn collide::Distance? mesh_distance(
     };
     b3::query_mesh(
         mesh: &pair.surface.mesh,
-        bounds: collision_mesh_enumeration(pair.surface.bounds)!,
+        bounds: collision_surface_enumeration(pair.surface.bounds)!,
         fcn: &measure_mesh_triangle,
         context: &search,
     );

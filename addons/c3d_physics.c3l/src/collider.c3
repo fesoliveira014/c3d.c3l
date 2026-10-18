@@ -35,7 +35,9 @@ fn void? check_collider(PhysicsWorld* world, ColliderDesc* desc, BodyKind kind) 
                     if (field.heights.len != (usz)field.count_x * field.count_z) return c3d::INVALID_ARGUMENT~;
                     return check_cell_materials(desc, field.count_x, field.count_z);
                 case TEXTURE:
-                    return check_height_map(world, desc);
+                    check_height_map(world.assets, field.texture)!;
+                    TextureDesc source = world.assets.texture(field.texture).desc;
+                    return check_cell_materials(desc, source.width, source.height);
             }
         case COMPOUND:
             if (kind != STATIC) return STATIC_ONLY~;
@@ -98,10 +100,9 @@ fn void? check_source(PhysicsWorld* world, GeometryId geometry) @local {
 }
 
 // Pixels are checked only when present: released ones may still match a cooked snapshot.
-fn void? check_height_map(PhysicsWorld* world, ColliderDesc* desc) @local {
-    TextureId texture = desc.height_field.texture;
-    if (!world.assets.textures.is_live(texture)) return c3d::INVALID_ID~;
-    TextureAsset* record = world.assets.texture(texture);
+fn void? check_height_map(AssetStore* assets, TextureId texture) @private {
+    if (!assets.textures.is_live(texture)) return c3d::INVALID_ID~;
+    TextureAsset* record = assets.texture(texture);
     TextureDesc source = record.desc;
     if (record.source_kind != MIP_ZERO) return c3d::UNSUPPORTED~;
     usz texel_bytes = height_texel_bytes(source.format)!;
@@ -109,7 +110,6 @@ fn void? check_height_map(PhysicsWorld* world, ColliderDesc* desc) @local {
     if (source.width < 2 || source.height < 2) return c3d::INVALID_ARGUMENT~;
     usz texels = (usz)source.width * source.height;
     if (record.pixels.len && record.pixels.len != texels * texel_bytes) return c3d::INVALID_ARGUMENT~;
-    return check_cell_materials(desc, source.width, source.height);
 }
 
 fn void? check_cell_materials(ColliderDesc* desc, uint count_x, uint count_z) @local {
@@ -203,7 +203,12 @@ fn Collider? create_shape(PhysicsWorld* world, b3::BodyId body, ColliderDesc* de
             )!;
             return record;
         case HEIGHT_FIELD:
-            record.snapshot = acquire_height_field(world.snapshots, desc)!;
+            record.snapshot = acquire_height_field(
+                table: world.snapshots,
+                field: desc.height_field,
+                scale: desc.local.scale,
+                material_indices: desc.material_indices,
+            )!;
             defer catch release_snapshot(world.snapshots, record.snapshot);
             CollisionSnapshot* snapshot = snapshot_of(world.snapshots, record.snapshot);
             record.wire = snapshot.wire;
