@@ -103,6 +103,9 @@ fn void assert_authoring(Fixture* fixture, Node* root) @private {
     Node* ground = child_named(root, "terrain");
     assert(scene.get(ground, Terrain).desc.height_scale == 4 && scene.get(ground, Terrain).desc.lod_threshold == 123);
     assert(!terrain::is_prepared(scene, ground));
+    HeightFieldWindows* windows = scene.get(ground, HeightFieldWindows);
+    assert(windows.window_cells == GROUND_WINDOW_CELLS && windows.nodes.len == GROUND_WINDOW_COUNT);
+    assert(scene.count(HeightFieldWindowOwner) == GROUND_WINDOW_COUNT);
     Node* plants = child_named(root, "foliage");
     assert(scene.get(plants, Foliage).desc.rules.seed == 53 && c3d::same_id(scene.get(plants, Foliage).desc.ground, ground.id));
     assert(!foliage::is_prepared(scene, plants));

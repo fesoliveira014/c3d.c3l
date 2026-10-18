@@ -7,6 +7,11 @@ import c3d::ecs;
 import c3d::maths;
 import c3d::scene;
 
+struct MapCells @private {
+    uint x;
+    uint z;
+}
+
 <*
  Rectangle of height-map samples, columns along x and rows along z.
 *>
@@ -57,22 +62,10 @@ fn void? add_height_field_windows(
 ) {
     if (!scene.world.is_alive(node)) return c3d::INVALID_ID~;
     if (scene.world.has(node, HeightFieldWindows)) return c3d::INVALID_ARGUMENT~;
-    if (collider.kind != HEIGHT_FIELD || collider.height_field.source != TEXTURE) return c3d::INVALID_ARGUMENT~;
 
-    check_height_map(assets, collider.height_field.texture)!;
-    TextureDesc source = assets.texture(collider.height_field.texture).desc;
-    uint cells_x = source.width - 1;
-    uint cells_z = source.height - 1;
-    if (collider.material_indices.len && collider.material_indices.len != (usz)cells_x * cells_z) {
-        return c3d::INVALID_ARGUMENT~;
-    }
-    uint columns = (cells_x + window_cells - 1) / window_cells;
-    uint rows = (cells_z + window_cells - 1) / window_cells;
-    HeightFieldWindow first_window = {
-        .count_x = math::min(window_cells, cells_x),
-        .count_z = math::min(window_cells, cells_z),
-    };
-    (void)height_grid(source, first_window)!;
+    MapCells map = check_window_template(assets, collider, window_cells)!;
+    uint columns = (map.x + window_cells - 1) / window_cells;
+    uint rows = (map.z + window_cells - 1) / window_cells;
 
     HeightFieldWindows windows = try_copy_windows(
         allocator:    scene.allocator,
@@ -94,8 +87,8 @@ fn void? add_height_field_windows(
             HeightFieldWindow window = {
                 .x       = column * window_cells,
                 .z       = row * window_cells,
-                .count_x = math::min(window_cells, cells_x - column * window_cells),
-                .count_z = math::min(window_cells, cells_z - row * window_cells),
+                .count_x = math::min(window_cells, map.x - column * window_cells),
+                .count_z = math::min(window_cells, map.z - row * window_cells),
             };
             Node* window_node = scene.add_node(terrain, string::tformat("terrain_window_%d_%d", column, row))!;
             windows.nodes[created++] = window_node.id;
@@ -109,7 +102,7 @@ fn void? add_height_field_windows(
             @pool() {
                 ColliderDesc window_collider = windows.collider;
                 window_collider.height_field.window = window;
-                window_collider.material_indices = window_materials(windows.collider.material_indices, cells_x, window);
+                window_collider.material_indices = window_materials(windows.collider.material_indices, map.x, window);
                 scene.add(window_node, try_copy_physics_body(
                     allocator: scene.allocator,
                     body:      default_body_desc(STATIC),
@@ -173,6 +166,25 @@ fn void remove_height_field_windows(Scene* scene, Entity node) {
         if (scene.world.is_alive(entity)) scene.remove(scene.node(entity));
     }
     scene.world.remove(node, HeightFieldWindows);
+}
+
+// The template must be a texture field whose first window builds; later windows are never larger.
+fn MapCells? check_window_template(AssetStore* assets, ColliderDesc* collider, uint window_cells) @private {
+    if (collider.kind != HEIGHT_FIELD || collider.height_field.source != TEXTURE) return c3d::INVALID_ARGUMENT~;
+
+    check_height_map(assets, collider.height_field.texture)!;
+    TextureDesc source = assets.texture(collider.height_field.texture).desc;
+    MapCells map = { .x = source.width - 1, .z = source.height - 1 };
+    if (collider.material_indices.len && collider.material_indices.len != (usz)map.x * map.z) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+
+    HeightFieldWindow first_window = {
+        .count_x = math::min(window_cells, map.x),
+        .count_z = math::min(window_cells, map.z),
+    };
+    (void)height_grid(source, first_window)!;
+    return map;
 }
 
 fn void free_height_field_windows(Entity entity, void* component, void* user) @private {

@@ -28,6 +28,8 @@ import std::io::path;
 import std::math;
 
 const uint MAX_AUDIO_VOICES @private = 4; // the fixture plays one emitter per copy; refusals are harmless
+const uint GROUND_WINDOW_CELLS @private = 64; // the 128-cell ground splits into two windows along each axis
+const uint GROUND_WINDOW_COUNT @private = 4;
 
 struct Fixture @private {
     AssetStore assets;
@@ -371,6 +373,15 @@ fn void add_landscape(Fixture* fixture) @private {
         assets: &fixture.assets,
         node: ground,
         desc: terrain,
+    )!!;
+    ColliderDesc ground_collider = physics::default_collider_desc(HEIGHT_FIELD);
+    ground_collider.height_field = { .source = TEXTURE, .texture = height };
+    physics::add_height_field_windows(
+        scene:        scene,
+        assets:       &fixture.assets,
+        node:         ground.id,
+        collider:     &ground_collider,
+        window_cells: GROUND_WINDOW_CELLS,
     )!!;
     Node* tiles = scene.add_node(name: "terrain-set")!!;
     scene.add(tiles, (TerrainSet){ .texels = 129, .cell_size = 1, .height_scale = 4 });
