@@ -25,6 +25,7 @@ enum PreparePipelinePass @private {
     GBUFFER,
     DEPTH,
     VELOCITY,
+    TRACE_POSE,
 }
 
 struct PreparePipelineUnit @private {
@@ -148,6 +149,7 @@ fn PipelineKey? prepare_cache_key(Renderer* renderer, PreparePipelineUnit* reque
         case VELOCITY:
             key.custom = { .vertex = (instanced ? desc.vertex.instanced_velocity : desc.vertex.velocity).len > 0 };
             if (key.custom.vertex) key.vertex = { .shader = MESH, .flags = shader::SHADER_FLAG_VELOCITY | instanced };
+        case TRACE_POSE:
         case REGISTRY:
     }
 
@@ -295,6 +297,7 @@ fn void list_mesh_pipelines(
     bool crowd_part = false,
     bool posed = false,
     bool soft_shadows = false,
+    bool trace_sway = false,
 ) @private {
     bool deforms = instanced ? crowd_part && (morphed || crowd) : morphed || skinned;
     if (renderer.compute_skinning && deforms && (flags.skinned || flags.has_morphs)) {
@@ -383,6 +386,15 @@ fn void list_mesh_pipelines(
             list_prepare_compute(requests, ComputeSlot.TRACE_POSE);
             list_prepare_compute(requests, ComputeSlot.TRACE_POSE_U16);
             list_prepare_compute(requests, ComputeSlot.TRACE_REFIT);
+        }
+        if (traces && trace_sway) list_prepare_compute(requests, ComputeSlot.TRACE_SWAY);
+        if (traces && custom.generation) {
+            list_prepare_key(
+                requests: requests,
+                key: trace_pose_pipeline_key(instanced),
+                pass: PreparePipelinePass.TRACE_POSE,
+                shader: custom,
+            );
         }
 
         DrawList list = view_draw_list(

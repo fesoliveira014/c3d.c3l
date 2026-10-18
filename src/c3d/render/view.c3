@@ -1400,6 +1400,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
                 crowd:       part.crowd != null && part.crowd.parts[part.crowd_part].skinned,
                 crowd_part:  part.crowd != null,
                 soft_shadows: soft_shadows,
+                trace_sway:  batch.trace_sway && batch.sway.amplitude != 0 && part.crowd == null,
             )!;
             sheen |= prepared.sheen;
             scene_reads |= prepared.scene_reads;
@@ -1427,6 +1428,8 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
                         crowd: group.state.animated != null && binding.skinned,
                         skinned: group.state.animated == null || binding.skinned,
                         soft_shadows: soft_shadows,
+                        trace_sway: group.state.animated == null && group.state.effects.trace_sway
+                            && group.state.effects.sway.amplitude != 0,
                     )!;
                     sheen |= prepared.sheen;
                     scene_reads |= prepared.scene_reads;
@@ -1536,6 +1539,7 @@ fn MeshPreparation? prepare_mesh(
     bool skinned = true,
     bool crowd_part = false,
     bool soft_shadows = false,
+    bool trace_sway = false,
 ) @private {
     if (!renderer.assets.geometries.is_live(geometry_id) || !renderer.assets.materials.is_live(material_id)) {
         renderer.stats.dangling_refs++;
@@ -1572,6 +1576,7 @@ fn MeshPreparation? prepare_mesh(
             skinned: skinned,
             crowd_part: crowd_part,
             soft_shadows: soft_shadows,
+            trace_sway: trace_sway,
         );
         acquire_prepare_pipelines(renderer, requests.array_view())!;
     };
