@@ -403,12 +403,66 @@ positions with pins at the current anchors (contact correction touches that publ
 attachment holds without inventing elapsed time, and a later step interpolates from the last
 solved anchors.
 
+## Rest and holds
+
+A cloth is `AWAKE`, `RESTING` or `HELD` (`ClothActivity`). `Cloth.activity()` reports it;
+`CrowdCloth.slot_activity(slot)` reports a crowd slot, which is `RESTING` when every prepared part of
+the slot rests.
+
+**Resting.** `ClothDesc.sleep_speed` (m/s, default 0, which never rests) and `sleep_steps` (default 30)
+set the rule. After each update that performed steps, if no particle with a nonzero inverse mass moves
+at `sleep_speed` or faster, the update's steps join a run; otherwise the run resets. The cloth rests
+when the run reaches `sleep_steps`. Zero-step updates neither count nor reset the run. Resting zeroes the
+velocities and records the owner's `Wind` (its presence and value), the world gravity and the pose of
+every listed collider body.
+
+**Triggers.** A resting cloth still samples its reference and its collider bodies each update, and wakes
+for any of these:
+
+- Any particle's reference moved from its last solved position by more than `sleep_speed * fixed_dt`.
+  This covers rigid owners, skinned owners, pins, attachments and transport.
+- A listed collider body moved by more than that distance while its placed shape bounds overlap the
+  cloth's world bounds expanded by `thickness + contact_tolerance`. A rotation counts as moving the
+  shape's farthest bounding point.
+- The owner's `Wind` appeared, was removed or changed value, or the world gravity changed.
+- A listed body went live or dead, or had its contact history reset by `PhysicsWorld.teleport`,
+  `cloth::reset_contact_history` or a rebuilt shape.
+- A cut request is pending.
+- The application called `wake()`.
+
+**Holding.** `Cloth.sleep()` and `CrowdCloth.sleep_slot(slot)` hold a cloth, awake or resting, from the
+next update and zero its velocities. A held cloth ignores every trigger and a cut request stays pending
+until `wake()` (`wake_slot(slot)`). A hold set on a pending cloth applies when it prepares. Holds are
+runtime state; the application decides them, and the library never holds a cloth for visibility.
+
+Holds are meant for unseen cloth. A held cloth stays as published: a held skinned cloth stays frozen in
+its owner's frame while the skeleton animates, and a held crowd slot keeps its last colour. A hold on a
+crowd slot ends when the slot gets a new instance, so the new instance starts awake.
+
+**Waking.** The first update after a wake carries the particles by the reference motion since the cloth
+stopped: positions and predictions move by `current_reference - solved_reference`, velocities are zero,
+the solved reference becomes the current one and pin and attachment anchors equal their targets. A held
+or resting cloth draws at fixed node-local positions, so a translating owner keeps the drawn shape; the
+carry adds the displacement without rotating it. An explicit `wake()` also resets the listed bodies'
+pose history, so a collider that moved while the cloth was held does not sweep through it. A wake is
+committed with the update that carried it: if that update fails, the cloth keeps its activity and
+positions, and the wake request stays pending.
+
+**Skipped work.** A resting cloth skips the solve and publication after its trigger check; a held cloth
+skips everything after the ownership checks. Neither marks geometry dirty, so the renderer sees no new
+revision. A resting crowd slot still publishes an instance colour change. `ClothStats.resting` and
+`ClothStats.held` count the cloths that skipped the update; `particles` and `constraints` sum the cloths
+that simulated.
+
+Activity and holds are not serialized. A restored cloth is pending, then awake; `sleep_speed` and
+`sleep_steps` are authored and serialized.
+
 ## Rebasing the origin
 
 Cloth state is world-space, so `PhysicsWorld.shift_origin(&scene, offset)` subtracts the
 offset from `positions`, `predicted`, `published`, the pin and soft-attachment anchors and targets, the
-collision shape endpoints, solved/published body observations and world-space sweep
-scratch. Cached path certificates are discarded and rebuilt on the next update.
+collision shape endpoints, solved/published/rested body observations and world-space sweep
+scratch. A resting or held cloth keeps its activity. Cached path certificates are discarded and rebuilt on the next update.
 Velocities are unchanged.
 Publication is node-local through the inverse of the node's world matrix, and the cloth
 node is an ordinary parent node moved by `Scene.shift_origin`, so the published vertices
@@ -430,17 +484,22 @@ Particles have unit mass, so the wind's effect falls as a mesh gets finer; scale
 vertex density (the example uses `2.5 * vertices / area`) to keep a response.
 
 Publication converts world positions through the inverse current node matrix into the private
-geometry, recomputes normals, optional tangents and bounds, and marks the position, normal and optional tangent streams dirty once when
-any local position changed; unchanged output keeps the revision. Publication checks reconstructed
+geometry, recomputes normals, optional tangents and bounds, and publishes changed ranges: for each of
+the position, normal, optional tangent and crowd colour streams it finds the first and last material
+vertex whose value differs from the geometry, copies only that span and calls
+`mark_geometry_range_dirty` once for the stream. Unchanged streams are not marked; unchanged output
+keeps the revision. Publication checks reconstructed
 world positions and contact separation before writing any stream. Solve and publication allocate nothing
 after preparation (the CPU triangle tree rebuilds only when a query asks for it).
 `PhysicsWorld.cloth_stats` holds the last update's solve and publication seconds, particle count
-and constraint count, pending owners skipped, failed cloth count, observed candidate/contact
-counts, CCD iterations, impacts and maximum reported residual.
+and constraint count of the simulated cloths, pending owners skipped, resting and held cloths skipped,
+failed cloth count, observed candidate/contact counts, CCD iterations, impacts and maximum reported
+residual.
 
-Each normal-only revision uploads the position and normal streams only, 24 bytes per vertex (40 bytes per vertex when `tangent_frame` is enabled): 26,136 bytes for the
-33×33 benchmark flag (counted in `Stats.upload_bytes`; see [Publishing geometry
-edits](post.md#publishing-geometry-edits)). A whole-block upload of the same flag is 47,264 bytes
+A revision uploads only the changed vertex range of each changed stream (counted in `Stats.upload_bytes`;
+see [Publishing geometry edits](post.md#publishing-geometry-edits)). When every vertex changes that is
+24 bytes per vertex (40 bytes per vertex when `tangent_frame` is enabled): 26,136 bytes for the
+33×33 benchmark flag. A whole-block upload of the same flag is 47,264 bytes
 (positions, normals, UV and 16-bit indices). Each temporal view additionally
 writes 12 bytes per vertex of previous positions through the frame ring, 13,068 bytes for that
 flag, counted in `Stats.vertex_history_bytes`.
@@ -449,9 +508,9 @@ flag, counted in `Stats.vertex_history_bytes`.
 
 ```text
 python scripts/build.py --example cloth
-addons/c3d_physics.c3l/build/cloth.exe [--scene flag|cape|both|contacts|fold|fast] [--still] [--frames 300]
+addons/c3d_physics.c3l/build/cloth.exe [--scene flag|cape|both|contacts|fold|fast|field] [--count 64] [--hold] [--still] [--frames 300]
 c3c build cloth --path addons/c3d_physics.c3l -O3
-addons/c3d_physics.c3l/build/cloth.exe --benchmark --scene flag|cape|both|contacts|fold|fast [--still] [--ragdoll] [--publish whole|streams]
+addons/c3d_physics.c3l/build/cloth.exe --benchmark --scene flag|cape|both|contacts|fold|fast|field [--count 64] [--hold] [--still] [--ragdoll] [--publish whole|streams]
 addons/c3d_physics.c3l/build/cloth.exe --benchmark --trace software|hardware [--validation]
 ```
 
@@ -480,6 +539,12 @@ set to 3 per second. The panel shows the 0.02 m self-contact gap and the same ca
 failure and residual counters.
 
 ![Folded cloth with explicit seam pairs and self-contact enabled](images/cloth_self.png)
+
+The `field` scene builds `--count` small flags in a square grid. Every fourth flag has wind; the others
+hang still, fall under `sleep_speed` and rest. The `H` key, the panel checkbox and `--hold` hold the far
+half of the grid with `Cloth.sleep()` and release it with `wake()`. The panel shows the resting and held
+counts, and the benchmark prints the mean simulated, resting and held cloth counts beside the solve,
+publish and upload figures.
 
 The `fast` scene rotates a thin box by 90 degrees and translates it in one fixed step
 through a small cloth patch. Continuous and self-contact are enabled. It uses one
@@ -510,8 +575,3 @@ when running the target directly:
 ```text
 c3c test cloth_acceptance --path addons/c3d_physics.c3l/test/gpu
 ```
-
-No full cloth-feature/body-feature contact, collision against the rendered skin,
-tearing, skinned base pose,
-GPU or crowd simulation. Parallel solving waits for a measured
-consumer need.

@@ -376,7 +376,7 @@ ordinary Mesh records to retained source geometry and vertex-motion, preserving
 all other Mesh fields and leaving the source scene untouched. The Cloth payload (version 8) and
 CrowdCloth payload (version 3) retain complete settings, requested pin order/duplicates, explicit `ClothSeam` pairs,
 required collider references, `render_particles`, `tangent_frame`, `tangent_uv_set`,
-`attachments`, `bend_mode`, `bend_compliance`, `rest_angles`, `transport`, `cuts` (`ClothCutPath`)
+`attachments`, `bend_mode`, `bend_compliance`, `rest_angles`, `transport`, `cuts` (`ClothCutPath`),
 `tears` (`ClothTearLimits`), `sleep_speed` and `sleep_steps`. Rest and hold state is runtime-only and is
 not written: a restored cloth starts awake. Older JSONC versions default `sleep_speed` to `0` and
 `sleep_steps` to 30, `tears` to `default_cloth_tear_limits()`
