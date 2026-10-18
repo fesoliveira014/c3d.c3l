@@ -4,39 +4,7 @@
 #include "custom_material.glsl"
 #include "lights.glsl"
 #include "standard_surface.glsl"
-#include "landscape/terrain_height.glsl"
-
-// One-sided on the map's border, so a tile edge shades from its own texels only.
-vec2 terrain_gradient(uint height_texture, TerrainParams params, ivec2 texel) {
-    ivec2 last = ivec2(int(params.texels) - 1);
-    ivec2 low = max(texel - 1, ivec2(0));
-    ivec2 high = min(texel + 1, last);
-    float rise_x = terrain_height(height_texture, params, ivec2(high.x, texel.y))
-        - terrain_height(height_texture, params, ivec2(low.x, texel.y));
-    float rise_z = terrain_height(height_texture, params, ivec2(texel.x, high.y))
-        - terrain_height(height_texture, params, ivec2(texel.x, low.y));
-    return vec2(rise_x / float(high.x - low.x), rise_z / float(high.y - low.y)) / params.cell_size;
-}
-
-// Integer heights have no filtered read: blend the four surrounding texels' gradients by hand.
-vec3 terrain_local_normal(uint height_texture, TerrainParams params, vec2 texel_position) {
-    ivec2 last = ivec2(int(params.texels) - 1);
-    ivec2 base = min(ivec2(floor(texel_position)), last);
-    ivec2 next = min(base + 1, last);
-    vec2 weight = texel_position - vec2(base);
-    vec2 near_row = mix(
-        terrain_gradient(height_texture, params, base),
-        terrain_gradient(height_texture, params, ivec2(next.x, base.y)),
-        weight.x
-    );
-    vec2 far_row = mix(
-        terrain_gradient(height_texture, params, ivec2(base.x, next.y)),
-        terrain_gradient(height_texture, params, next),
-        weight.x
-    );
-    vec2 gradient = mix(near_row, far_row, weight.y);
-    return normalize(vec3(-gradient.x, 1.0, -gradient.y));
-}
+#include "landscape/terrain_normal.glsl"
 
 vec4 terrain_layer_weights(
     CustomMaterialGpu material,
@@ -64,7 +32,12 @@ StandardMaterialSample terrain_surface(
 ) {
     TerrainParams params = TerrainParams(material.parameters);
     vec2 texel_position = uv1 * float(params.texels - 1u);
-    vec3 local_normal = terrain_local_normal(material.slots[TERRAIN_HEIGHT_SLOT].texture_index, params, texel_position);
+    vec3 local_normal = terrain_local_normal(
+        material.slots[TERRAIN_HEIGHT_SLOT].texture_index,
+        material.slots[TERRAIN_BORDER_SLOT].texture_index,
+        params,
+        texel_position
+    );
     vec3 normal = normalize(mat3(draw.normal_0.xyz, draw.normal_1.xyz, draw.normal_2.xyz) * local_normal);
     vec4 weights = terrain_layer_weights(material, params, uv0, uv1, frame.mip_bias);
     GeometryRoot geometry = GeometryRoot(draw.geometry);
