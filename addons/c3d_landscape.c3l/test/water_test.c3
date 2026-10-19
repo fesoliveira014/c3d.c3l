@@ -1223,10 +1223,11 @@ fn void test_ocean_phase_is_world_anchored() @test {
     Fixture fixture;
     setup(&fixture);
     defer teardown(&fixture);
-    Node* first = add_water_node(&fixture, ocean_desc(), FIRST_OCEAN);
-    Node* second = add_water_node(&fixture, ocean_desc(), SECOND_OCEAN);
-    Node* body_first = add_water_node(&fixture, calm_desc(), FIRST_OCEAN);
-    Node* body_second = add_water_node(&fixture, calm_desc(), SECOND_OCEAN);
+    // A turn about Y turns the waves with the node: oceans that share it share their crests.
+    Node* first = add_water_node(&fixture, ocean_desc(), FIRST_OCEAN, WATER_YAW_DEGREES);
+    Node* second = add_water_node(&fixture, ocean_desc(), SECOND_OCEAN, WATER_YAW_DEGREES);
+    Node* body_first = add_water_node(&fixture, calm_desc(), FIRST_OCEAN, WATER_YAW_DEGREES);
+    Node* body_second = add_water_node(&fixture, calm_desc(), SECOND_OCEAN, WATER_YAW_DEGREES);
     update_water(&fixture, {}, ANCHOR_TIME);
 
     float height = anchor_height(&fixture, first, SHARED_POINT);
