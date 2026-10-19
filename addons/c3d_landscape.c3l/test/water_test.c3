@@ -36,7 +36,7 @@ const double SEA_FRAME_STEP @local = 0.015625; // 1/64 s: exact in float
 const float SEA_TRANSITION @local = 2; // seconds
 const uint SEA_SETTLE_FRAMES @local = 32; // frames past the blend: the steady sea must stay continuous too
 const Vec2 STORM_WIND @local = { 12, 5 }; // metres per second along world x and z
-const Vec2[3] SEA_POINTS @local = { { 0, 0 }, { 2.5f, -1.5f }, { -3, 4 } }; // metres, near the origin where the bound holds
+const Vec2[3] SEA_POINTS @local = { { 0, 0 }, { 2.5f, -1.5f }, { -3, 4 } }; // near the origin, where the bound holds
 const float CREST_COUPLING @local = 2.5f; // 1 / (1 - k) rounded up, k = 0.56 the table's mean steepness
 
 struct Fixture @local {
