@@ -340,10 +340,12 @@ provides nothing for it reads it as absent, and the stage's own fallback runs.
 
 `FrameRoot.selection_camera` holds the camera that selected the pass's [quadtree](instancing.md#quadtree-selection) levels: `xyz` is its position relative to the frame origin and `w` its pixel scale, `working_height / (2 tan(fov_y / 2))` for a perspective camera and `working_height / ortho_height` for an orthographic one. The working height includes `render_scale`. `FrameRoot.previous_selection_camera` is the same camera one rendering earlier. A vertex stage that morphs a quadtree batch reads both, so the surface it draws agrees with the selection, and with the previous rendering's surface for motion vectors.
 
+`FRAME_SELECTION_ORTHOGRAPHIC` (bit 11 of `FrameRoot.flags`, 2048) is set when the selecting camera is orthographic, which selects by size and gives no morph. It describes the selecting camera, not the root's own `proj`: a shadow layer's `proj` is the light's, orthographic for every directional cascade. `quadtree_selection_orthographic(frame)` in `quadtree_morph.glsl` reads it. It is clear in a probe update.
+
 - **Main view.** It writes its own camera. Its depth prepass, G-buffer, velocity and scene-read passes share its frame root.
-- **Shadow layers.** A layer is drawn for a view, so it writes the owning view's camera, not the light's: the casters it draws are the nodes the view selected. A layer shared by several views carries the camera of the view that recorded it.
+- **Shadow layers.** A layer is drawn for a view, so it writes the owning view's camera and flag, not the light's: the casters it draws are the nodes the view selected. A layer shared by several views carries the camera of the view that recorded it.
 - **Mirror views.** A mirror view is a view that selects for itself and writes its own camera.
-- **Closed frames.** The path tracer writes its own camera. A probe update has no camera and writes zero in both fields; it draws no quadtree batch.
+- **Closed frames.** The path tracer writes its own camera. A probe update has no camera and writes zero in both fields and leaves the flag clear; it draws no quadtree batch.
 - **Previous camera.** A temporal view keeps the camera of its last published rendering and moves it to the current frame origin. Without a valid history, which a camera cut or `reset_view_history` leaves, and for a view that keeps none, it equals the current camera.
 
 ## Reading a target back
