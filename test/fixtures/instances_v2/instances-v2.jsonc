@@ -1,0 +1,207 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": 0,
+      "parent": null,
+      "name": "quadtree_instances",
+      "local": {
+        "position": [
+          3,
+          -1,
+          5
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 5,
+      "visible": true,
+      "components": {
+        "c3d.InstancedMesh": {
+          "version": 2,
+          "value": {
+            "geometry": "instances_v2/box",
+            "material": "instances_v2/material",
+            "capacity": 6,
+            "transforms": [
+              {
+                "position": [
+                  0,
+                  0,
+                  -0.0
+                ],
+                "rotation": [
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "scale": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              {
+                "position": [
+                  1,
+                  0,
+                  -1
+                ],
+                "rotation": [
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "scale": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              {
+                "position": [
+                  2,
+                  0,
+                  -2
+                ],
+                "rotation": [
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "scale": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              {
+                "position": [
+                  3,
+                  0,
+                  -3
+                ],
+                "rotation": [
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "scale": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              {
+                "position": [
+                  4,
+                  0,
+                  -4
+                ],
+                "rotation": [
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "scale": [
+                  1,
+                  1,
+                  1
+                ]
+              }
+            ],
+            "colors": [
+              [
+                0.100000001,
+                0.200000003,
+                0.300000012,
+                1
+              ],
+              [
+                0.200000003,
+                0.200000003,
+                0.300000012,
+                1
+              ],
+              [
+                0.300000012,
+                0.200000003,
+                0.300000012,
+                1
+              ],
+              [
+                0.400000006,
+                0.200000003,
+                0.300000012,
+                1
+              ],
+              [
+                0.5,
+                0.200000003,
+                0.300000012,
+                1
+              ]
+            ],
+            "cast_shadow": true,
+            "receive_shadow": false,
+            "trace": false,
+            "has_bounds_override": false,
+            "local_bounds": {
+              "min": [
+                0,
+                0,
+                0
+              ],
+              "max": [
+                0,
+                0,
+                0
+              ]
+            },
+            "sway": {
+              "direction": [
+                0,
+                0,
+                0
+              ],
+              "amplitude": 0,
+              "frequency": 0,
+              "lean": 0,
+              "wavelength": 0,
+              "variation": 0,
+              "weight": "HEIGHT"
+            },
+            "fade": {
+              "start": 10,
+              "end": 20
+            },
+            "quadtree_parents": [
+              4294967295,
+              0,
+              0,
+              0,
+              0
+            ],
+            "split_pixels": 96,
+            "hysteresis": 0.25
+          }
+        }
+      }
+    }
+  ]
+}
